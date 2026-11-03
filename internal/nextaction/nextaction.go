@@ -193,6 +193,27 @@ type Engine struct {
 	// confidentiality control: it decides whether an already-authorized
 	// suggestion is worth showing here, not whether its content may be seen.
 	displayWorld string
+	// sourceFilter, when set, excludes sources before they are queried. The
+	// wiring site uses it for page placement (visible_on) and to drop
+	// context-aware sources whose type the page is not about. See
+	// [WithSourceFilter].
+	sourceFilter func(id string, src dataentryconfig.NextActionSource) bool
+	// current identifies the suggestion the reader has on screen. See
+	// [WithCurrent].
+	current *Current
+}
+
+// Current identifies the suggestion a reader already has on screen, as the
+// client echoes it back: source, entity and variant.
+type Current struct {
+	Source   string
+	EntityID string
+	Variant  string
+}
+
+// matches reports whether s is the suggestion c identifies.
+func (c *Current) matches(s Suggestion) bool {
+	return c != nil && c.Source == s.Source && c.EntityID == s.EntityID && c.Variant == s.Key.Variant
 }
 
 // Option configures an [Engine] at construction.
@@ -218,6 +239,30 @@ func WithOptions(fn OptionFunc) Option {
 // `visible_worlds` are unaffected in either case.
 func WithDisplayWorld(world string) Option {
 	return func(e *Engine) { e.displayWorld = world }
+}
+
+// WithSourceFilter excludes every source for which keep returns false, before
+// the source is queried. Like visible_worlds it is applied per source rather
+// than to the winner, so the band short-circuit stays honest: a lower band's
+// suggestion still surfaces when a higher band's sources are all excluded.
+func WithSourceFilter(keep func(id string, src dataentryconfig.NextActionSource) bool) Option {
+	return func(e *Engine) { e.sourceFilter = keep }
+}
+
+// WithCurrent names the suggestion the reader already has on screen, so it
+// stays put while they move between pages.
+//
+// Showing a suggestion starts its cooldown. Without this, every page that
+// asks again would find the shown suggestion in cooldown and offer the next
+// one, so the "one thing" would change on every click and a few clicks would
+// spend a band. With it, the current suggestion is exempt from cooldown and
+// wins the pick within its band, as long as it is still produced here by an
+// eligible source. It cannot make a suggestion appear that the request would
+// not otherwise produce, and a higher band still outranks it.
+//
+// Nil: accepted, means no suggestion is on screen.
+func WithCurrent(c *Current) Option {
+	return func(e *Engine) { e.current = c }
 }
 
 // WithMatchers supplies the per-source condition matchers. Without it a
@@ -450,7 +495,7 @@ func (e *Engine) eligibleFromSource(
 	}
 
 	if len(cands) > e.cap {
-		cands = cands[:e.cap]
+		cands = e.truncateKeepingCurrent(id, cands)
 	}
 
 	sugs := make([]Suggestion, 0, len(cands))
@@ -477,7 +522,7 @@ func (e *Engine) eligibleFromSource(
 			continue
 		}
 		lastShown, everShown := shown[sug.Key]
-		if everShown && inCooldown(src, lastShown, now) {
+		if everShown && !e.cooldownExempt(src, sug) && inCooldown(src, lastShown, now) {
 			continue
 		}
 		out = append(out, sug)
@@ -485,19 +530,61 @@ func (e *Engine) eligibleFromSource(
 	return out, nil
 }
 
+// truncateKeepingCurrent cuts cands to the cap. The suggestion on screen is
+// kept even when it falls past the cap, in the last slot, so a store order
+// that moves cannot swap it out (see [WithCurrent]).
+func (e *Engine) truncateKeepingCurrent(id string, cands []Candidate) []Candidate {
+	kept := cands[:e.cap]
+	if e.current == nil || e.current.Source != id {
+		return kept
+	}
+	for _, c := range kept {
+		if c.Entity != nil && c.Entity.ID == e.current.EntityID {
+			return kept
+		}
+	}
+	for _, c := range cands[e.cap:] {
+		if c.Entity != nil && c.Entity.ID == e.current.EntityID {
+			out := append([]Candidate(nil), kept[:e.cap-1]...)
+			return append(out, c)
+		}
+	}
+	return kept
+}
+
+// cooldownExempt reports whether the impression cooldown is skipped for sug.
+//
+// Two cases. The suggestion already on screen (see [WithCurrent]), so asking
+// again does not replace it. And every context-aware suggestion: it is about
+// the entity the reader is looking at, so hiding it for a day because they
+// looked at that entity yesterday would make it vanish exactly when it is
+// relevant. The data-entry handler records no impressions for those, and
+// "Seen it" snoozes them for [Cooldown] instead. Snooze, dismiss and mute
+// still suppress both.
+func (e *Engine) cooldownExempt(src dataentryconfig.NextActionSource, sug Suggestion) bool {
+	return src.Context != "" || e.current.matches(sug)
+}
+
 // inCooldown reports whether a suggestion shown at lastShown is still
 // within its source's cooldown at now.
 func inCooldown(src dataentryconfig.NextActionSource, lastShown, now time.Time) bool {
-	cooldown := DefaultCooldown
+	return now.Before(lastShown.Add(Cooldown(src)))
+}
+
+// Cooldown is the source's `cooldown:`, or [DefaultCooldown] when it sets
+// none. For a query source it is how long an impression hides a suggestion.
+// A context source records no impressions, so for it the cooldown is how
+// long "Seen it" hides the suggestion.
+func Cooldown(src dataentryconfig.NextActionSource) time.Duration {
 	if src.Cooldown != "" {
 		// Already validated at config load; a parse failure here means the
 		// config was constructed in code, so fall back rather than fail the
 		// whole page for one malformed source.
-		if d, perr := dataentryconfig.ParseNextActionDuration(src.Cooldown); perr == nil {
-			cooldown = d
+		if d, err := dataentryconfig.ParseNextActionDuration(src.Cooldown); err == nil {
+			return d
 		}
 	}
-	return now.Before(lastShown.Add(cooldown))
+	return DefaultCooldown
 }
 
 // sourceIDsForBand returns the ids in a band, sorted for determinism. Sort
@@ -522,6 +609,9 @@ func (e *Engine) sourceIDsForBand(bandID string) []string {
 		if !src.VisibleInWorld(e.displayWorld) {
 			continue
 		}
+		if e.sourceFilter != nil && !e.sourceFilter(id, src) {
+			continue
+		}
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
@@ -544,6 +634,13 @@ func (e *Engine) sourceIDsForBand(bandID string) []string {
 func (e *Engine) pick(user string, eligible []Suggestion, now time.Time) Suggestion {
 	if len(eligible) == 1 {
 		return eligible[0]
+	}
+	// The suggestion on screen keeps its place rather than being re-rolled
+	// against candidates the reader has not seen. See WithCurrent.
+	for _, s := range eligible {
+		if e.current.matches(s) {
+			return s
+		}
 	}
 	// Sort by key so the input order (map iteration inside a source) cannot
 	// shift the choice; the seed alone decides.

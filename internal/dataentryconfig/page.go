@@ -35,6 +35,10 @@ type Page struct {
 	Badge string `yaml:"badge,omitempty" json:"badge,omitempty"`
 	// Tabs are the views of the page, in tab-bar order. At least one.
 	Tabs []PageTab `yaml:"tabs" json:"tabs"`
+	// Suggestions switches next-action suggestions on or off for this view,
+	// overriding next_action_surfaces. Nil: accepted, means inherit. See
+	// [Config.NextActionsEnabled].
+	Suggestions *bool `yaml:"suggestions,omitempty" json:"suggestions,omitempty"`
 }
 
 // PageTab is one tab of a [Page]: a navigation destination with an id for

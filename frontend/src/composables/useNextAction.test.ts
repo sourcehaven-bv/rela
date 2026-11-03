@@ -208,18 +208,22 @@ describe('useNextAction', () => {
       expect(na.busy.value).toBe(false)
     })
 
-    // Acknowledge is "seen it" — the impression is already recorded, so it
-    // clears the slot without another round trip.
-    it('acknowledge clears the slot without further feedback', async () => {
+    // Acknowledge is "seen it". It clears the slot at once, and reports
+    // `seen` so the server can hide a context suggestion, which has no
+    // impression to do it. It does not re-resolve.
+    it('acknowledge clears the slot and reports seen', async () => {
       mockGet.mockResolvedValue({ suggestion: suggestion() })
       const na = useNextAction()
       await na.loadOnce()
       mockFeedback.mockClear()
+      mockGet.mockClear()
 
       na.acknowledge()
 
       expect(na.suggestion.value).toBeNull()
-      expect(mockFeedback).not.toHaveBeenCalled()
+      expect(mockFeedback).toHaveBeenCalledTimes(1)
+      expect(mockFeedback).toHaveBeenCalledWith(expect.objectContaining({ kind: 'seen' }))
+      expect(mockGet).not.toHaveBeenCalled()
     })
   })
 

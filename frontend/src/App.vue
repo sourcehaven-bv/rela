@@ -23,6 +23,7 @@ import { useBackTarget } from '@/composables/useBackTarget'
 import { unknownWorldQuery } from '@/composables/useWorld'
 import ActivityBar from '@/components/common/ActivityBar.vue'
 import RlAppShell from 'rela-components/components/layout/RlAppShell.vue'
+import NextActionCard from '@/components/NextActionCard.vue'
 import RlPageHeader from 'rela-components/components/layout/RlPageHeader.vue'
 import RlViewTabs from 'rela-components/components/layout/RlViewTabs.vue'
 import SpaceCreateMenu from '@/components/common/SpaceCreateMenu.vue'
@@ -328,6 +329,10 @@ watch(
         aria-controls="main-sidebar"
         @click="navOpen = !navOpen"
       />
+      <!-- One suggestion slot for every page, above the routed view. The
+           server applies the operator's placement for the page, so the card
+           is always mounted and simply renders nothing where none is owed. -->
+      <NextActionCard />
       <RouterView />
       <RlToastHost :toasts="toasts" @dismiss="dismissToast" />
       <ScriptErrorDialog />

@@ -119,7 +119,7 @@ from boundaries; placement is presentation only, documented as such.
 Config (`internal/dataentryconfig`):
 
 - `NextActionSurface` closed enum + `Config.NextActionSurfaces map[NextActionSurface]bool`
-(raises the `Config` plimsoll pin 26 -> 27, the documented format-mirror
+(raises the `Config` plimsoll pin 28 -> 29, the documented format-mirror
 exception).
 - `Suggestions *bool` field (`yaml:"suggestions"`) on List, Kanban, Calendar,
 Gantt, ViewConfig, DocumentConfig, Page, DashboardConfig.
@@ -173,7 +173,8 @@ suggestion in cooldown and return a different one.
 - `internal/configedit/allowlist.go` (new keys)
 - `frontend/src/composables/useNextAction.ts`, new `nextActionPlacement.ts`,
 `frontend/src/App.vue`, `DashboardView.vue`, `NextActionCard.vue`,
-`SidebarFooter.vue`, `api/entities.ts`, `types/config.ts` + tests
+`i18n/locales/{en,nl}.json`, `SidebarFooter.vue`, `api/entities.ts`,
+`types/config.ts` + tests
 - `docs-project/entities/guides/GUIDE-data-entry.md` (regenerate `docs/`)
 - e2e: `e2e/tests/next-action-surfaces.spec.ts`
 

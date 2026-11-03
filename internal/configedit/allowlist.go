@@ -356,6 +356,11 @@ var locked = map[File][]string{
 		"git.**", "palette.**",
 		"documents.**", "feeds.**", "caldav.**", "commands.**", "actions.**", "webhooks.**",
 		"pages.**", "next_action_bands.**", "next_actions.**", "account.**", "lists.*.create_world",
+		// Where suggestions appear (TKT-6EEXXE), locked like next_actions.
+		// Calendars and gantts carry the key too, but those trees are
+		// editable whole (calendars.**, gantts.**).
+		"next_action_surfaces.*", "dashboard.suggestions", "dashboards.*.suggestions",
+		"lists.*.suggestions", "kanbans.*.suggestions", "views.*.suggestions",
 		"lists.*.columns.[].face", "dashboard.cards.[].columns.[].face",
 		"dashboards.*.cards.[].columns.[].face",
 		// Busy columns are list-only (TKT-TU3XH4); the load refuses them here.

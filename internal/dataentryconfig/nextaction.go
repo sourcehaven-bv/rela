@@ -283,6 +283,12 @@ type NextActionSource struct {
 	// has said something deliberate. The reserved name `default` names the
 	// default world.
 	VisibleWorlds []string `yaml:"visible_worlds,omitempty" json:"visible_worlds,omitempty"`
+
+	// VisibleOn is an ALLOW LIST of pages this suggestion may appear on: a
+	// surface kind ("list") or a surface and view ("list:open-tasks",
+	// "entity:task"). Nil (the default) matches every page. Presentational
+	// only, like VisibleWorlds. See [NextActionSource.VisibleOnSurface].
+	VisibleOn []string `yaml:"visible_on,omitempty" json:"visible_on,omitempty"`
 }
 
 // VisibleInWorld reports whether a suggestion from this source may be shown to

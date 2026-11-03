@@ -37,8 +37,9 @@ import (
 //     does not apply on this path.
 //   - Count  -> GraphCount over the type, for the entity-less first-run case.
 //     Uses the ungated count deliberately: see countCandidates.
-//   - Context -> not reachable from the dashboard; a context-aware source is
-//     resolved against the entity being viewed, which is a later surface.
+//   - Context -> the entity the page is about (see contextCandidates). The
+//     page's source filter already dropped context sources for any other
+//     type, so this only runs on a page about an entity of src.Context.
 //
 // # The condition rides along with the query
 //
@@ -62,7 +63,7 @@ import (
 // decline to push, never widen — so the divergence is tolerated rather than
 // threaded through queryService.
 func (a *App) nextActionCandidates(
-	meta *metamodel.Metamodel, lookup nextaction.MatcherFunc,
+	meta *metamodel.Metamodel, lookup nextaction.MatcherFunc, page nextActionPage,
 ) nextaction.CandidateFunc {
 	return func(
 		ctx context.Context, id string, src dataentryconfig.NextActionSource,
@@ -85,10 +86,9 @@ func (a *App) nextActionCandidates(
 			return a.countCandidates(ctx, src.Count, src.CountUngated)
 		case src.Query != "":
 			return a.queryCandidates(ctx, src.Query, nextActionPrefilters(ctx, meta, lookup, id, src))
+		case src.Context != "":
+			return a.contextCandidates(ctx, src, page.entityID)
 		default:
-			// A context-aware source has no dashboard candidates. Not an
-			// error: the same config serves both surfaces, and each ignores
-			// the other's sources.
 			return nil, nil
 		}
 	}
@@ -244,7 +244,7 @@ func nextActionSourceWorld(
 // Labels come from the entity's display title, which the read gate has
 // already approved — this is why the resolution belongs here and not in the
 // SPA: a client-side fetch would be a second read surface to gate.
-func (a *App) nextActionOptions() nextaction.OptionFunc {
+func (a *App) nextActionOptions(meta *metamodel.Metamodel) nextaction.OptionFunc {
 	return func(
 		ctx context.Context, src dataentryconfig.NextActionSource, query string, limit int,
 	) ([]nextaction.PickOption, error) {
@@ -267,7 +267,6 @@ func (a *App) nextActionOptions() nextaction.OptionFunc {
 			entities = entities[:limit]
 		}
 		out := make([]nextaction.PickOption, 0, len(entities))
-		s := a.State()
 		ctx = primeVerdicts(ctx, a.fieldResolver, entities)
 		for _, e := range entities {
 			// Redact BEFORE safeDisplayTitle: its guard is presence-based
@@ -281,10 +280,8 @@ func (a *App) nextActionOptions() nextaction.OptionFunc {
 				// display property would otherwise render a PARTIAL title,
 				// leaking the readable half and confirming a hidden half
 				// exists (the BUG-R9EHKV leak class).
-				// One snapshot for the whole loop (captured above): two
-				// State() loads can observe different metamodels if a reload
-				// lands mid-resolve.
-				Label: safeDisplayTitle(s.Meta, red),
+				// The request's snapshot, taken once in the handler.
+				Label: safeDisplayTitle(meta, red),
 			})
 		}
 		return out, nil

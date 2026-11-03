@@ -8,10 +8,17 @@
  * could show two different suggestions at once, which breaks the one-slot
  * promise the whole design rests on.
  */
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, effectScope } from 'vue'
+import { useRoute } from 'vue-router'
 import { getNextAction, sendNextActionFeedback } from '@/api'
 import { useSchemaStore } from '@/stores'
 import { useWorld } from '@/composables/useWorld'
+import {
+  nextActionPlacement,
+  placementKey,
+  type NextActionPlacement,
+} from '@/utils/nextActionPlacement'
+import type { NextActionCurrent } from '@/api/entities'
 import type { NextActionSuggestion, NextActionProminence, NextActionFeedbackKind } from '@/types'
 
 const suggestion = ref<NextActionSuggestion | null>(null)
@@ -31,31 +38,81 @@ const expanded = ref(false)
 /** The suggestion whose impression has already been reported, if any. */
 const shownKey = ref<string | null>(null)
 /**
- * The DISPLAY world the current suggestion was resolved for, or null when
- * nothing has been resolved yet.
+ * The question the current suggestion answers, as `world + placement`, or
+ * null when nothing has been resolved yet.
  *
- * The latch is the world rather than a boolean because a source may declare
- * `visible_worlds:`, so the answer to "what is the one thing?" differs per
- * world. A plain "already loaded" flag would keep serving the first world's
- * answer for the rest of the session — see loadFor.
+ * The answer to "what is the one thing?" differs per DISPLAY world (a source
+ * may declare `visible_worlds:`) and per PAGE (placement, and context sources
+ * about the viewed entity). A plain "already loaded" flag would keep serving
+ * the first page's answer for the rest of the session — see loadOnce.
  */
-let loadedWorld: string | null = null
+let loadedKey: string | null = null
+/** Cancels the request in flight when a newer one supersedes it. */
+let inFlight: AbortController | null = null
 /**
- * Whether the world watcher has been registered.
- *
- * Registered ONCE for the singleton, not once per consumer. The watcher has
- * no component scope to be disposed with — `useNextAction()` is called from
- * two long-lived components and from tests — so a per-consumer watch would
- * accumulate live watchers for the session, each firing its own reload on a
- * world change.
+ * Bumped per request. A response is applied only if it is still the latest,
+ * so a slow answer for the previous page cannot overwrite the current one
+ * even where the abort did not land in time.
  */
-let worldWatchRegistered = false
-/** Stops the world watcher. Test-only, paired with __resetNextActionForTest. */
-let stopWorldWatch: (() => void) | null = null
+let requestSeq = 0
+/**
+ * The entity type whose changes can change the current answer, from the
+ * server's `context_type`. Empty when no context source applies to the page,
+ * so a graph change triggers no refresh there.
+ */
+let refreshType = ''
+/** Pending debounced refresh, see refreshForChange. */
+let refreshTimer: ReturnType<typeof setTimeout> | null = null
+/** How long refreshForChange waits for more changes before it resolves. */
+export const REFRESH_DEBOUNCE_MS = 1000
+/**
+ * The suggestion each page last showed, by request key, most recent last.
+ *
+ * Sent back as `current` when the reader returns to that page. One
+ * on-screen value is not enough once pages differ (`visible_on`): after a
+ * list, a kanban and the list again, the list's suggestion is no longer on
+ * screen, its impression puts it in cooldown, and without this the list
+ * would offer the next one on every round trip.
+ */
+const lastByPage = new Map<string, NextActionCurrent>()
+/** Bound on lastByPage: entity pages give one key per entity. */
+const LAST_BY_PAGE_CAP = 20
+/**
+ * Whether the page watcher has been registered.
+ *
+ * Registered ONCE for the singleton, not once per consumer, and in a
+ * detached effect scope so it outlives the component that happened to
+ * register it. A per-consumer watch would accumulate live watchers for the
+ * session, each firing its own reload on a navigation.
+ */
+let pageWatchRegistered = false
+/** Stops the page watcher. Test-only, paired with __resetNextActionForTest. */
+let stopPageWatch: (() => void) | null = null
 
 /** Identity of a suggestion for impression de-duplication. */
-function suggestionKey(s: NextActionSuggestion): string {
+function suggestionKey(s: NextActionSuggestion | NextActionCurrent): string {
   return `${s.source}\u0000${s.entity_id ?? ''}\u0000${s.variant ?? ''}`
+}
+
+function asCurrent(s: NextActionSuggestion): NextActionCurrent {
+  return { source: s.source, entity_id: s.entity_id, variant: s.variant }
+}
+
+function rememberForPage(key: string, s: NextActionSuggestion) {
+  lastByPage.delete(key)
+  lastByPage.set(key, asCurrent(s))
+  if (lastByPage.size > LAST_BY_PAGE_CAP) {
+    const oldest = lastByPage.keys().next().value
+    if (oldest !== undefined) lastByPage.delete(oldest)
+  }
+}
+
+/** Forget s on every page: the reader answered it, so no page should keep it. */
+function forgetAnswered(s: NextActionSuggestion) {
+  const k = suggestionKey(s)
+  for (const [page, cur] of lastByPage) {
+    if (suggestionKey(cur) === k) lastByPage.delete(page)
+  }
 }
 
 /**
@@ -69,10 +126,17 @@ export function __resetNextActionForTest() {
   acting.value = false
   expanded.value = false
   shownKey.value = null
-  loadedWorld = null
-  stopWorldWatch?.()
-  stopWorldWatch = null
-  worldWatchRegistered = false
+  loadedKey = null
+  inFlight?.abort()
+  inFlight = null
+  requestSeq = 0
+  refreshType = ''
+  if (refreshTimer) clearTimeout(refreshTimer)
+  refreshTimer = null
+  lastByPage.clear()
+  stopPageWatch?.()
+  stopPageWatch = null
+  pageWatchRegistered = false
 }
 
 export function useNextAction() {
@@ -108,21 +172,63 @@ export function useNextAction() {
    * client.
    */
   const { worldParam } = useWorld()
+  // Undefined outside a router (a component test), like useWorld's: the page
+  // is then `other`.
+  const route = useRoute() as ReturnType<typeof useRoute> | undefined
 
-  async function load(world = worldParam.value) {
-    loadedWorld = world ?? ''
+  /** The page being viewed, as the server's placement needs it. */
+  const placement = computed<NextActionPlacement>(() =>
+    route ? nextActionPlacement(route) : { surface: 'other' }
+  )
+  const requestKey = computed(
+    () => `${worldParam.value ?? ''}\u0001${placementKey(placement.value)}`
+  )
+
+  /**
+   * Resolve for the current world and page.
+   *
+   * `sticky` sends a suggestion as `current`, so the server keeps it if it is
+   * still eligible here: the one this page last showed, else the one on
+   * screen. A navigation is sticky: the reader has not answered the
+   * suggestion, and swapping it on every click would use up the queue through
+   * the impression cooldown. A reload after feedback or an action is not: the
+   * reader answered it, and the slot should move on.
+   */
+  async function load(sticky = false) {
+    const key = requestKey.value
+    loadedKey = key
+    inFlight?.abort()
+    const controller = new AbortController()
+    inFlight = controller
+    const seq = ++requestSeq
+    const s = suggestion.value
+    const current = sticky ? (lastByPage.get(key) ?? (s ? asCurrent(s) : undefined)) : undefined
     try {
-      const res = await getNextAction(world)
+      const res = await getNextAction(
+        worldParam.value,
+        { placement: placement.value, current },
+        controller.signal
+      )
+      if (seq !== requestSeq) return
       suggestion.value = res.suggestion
+      refreshType = res.context_type ?? ''
+      if (res.suggestion) rememberForPage(key, res.suggestion)
       // The impression is NOT reported here. `load()` also runs after
       // feedback, so reporting from it would mark the REPLACEMENT suggestion
       // as shown before it had been rendered — starting a 24h cooldown for
       // something the user never saw. `markShown()` is called by the
       // component that actually displays it.
     } catch (err) {
+      if (seq !== requestSeq) return
       // An advisory surface must never break the page it sits on.
       console.error('next-action load failed:', err)
       suggestion.value = null
+      refreshType = ''
+      // Not latched: the page has not been answered, so the next loadOnce
+      // for it tries again.
+      if (loadedKey === key) loadedKey = null
+    } finally {
+      if (inFlight === controller) inFlight = null
     }
   }
 
@@ -148,30 +254,50 @@ export function useNextAction() {
   }
 
   /**
-   * Resolve for the world currently being browsed, reusing the resolved
-   * suggestion when that world has already been answered.
+   * Resolve for the current world and page, reusing the resolved suggestion
+   * when that question has already been answered.
    *
-   * Once per WORLD, not once per session. Two components render the same
-   * suggestion (page card + status bar), so a second resolve for the same
-   * world would double the impression and could surface two different
-   * suggestions at once. But a source may be scoped by `visible_worlds:`, so
-   * a different world is a genuinely different question — reusing the
-   * previous world's answer there would leave a stale suggestion on screen.
+   * Two components render the same suggestion (page card + status bar), so a
+   * second resolve for the same page would double the impression and could
+   * surface two different suggestions at once. A different world or page is a
+   * genuinely different question, so it resolves again.
    */
   async function loadOnce() {
-    const world = worldParam.value ?? ''
-    if (loadedWorld === world) return
-    await load(worldParam.value)
+    if (loadedKey === requestKey.value) return
+    await load(true)
   }
 
-  // Re-resolve whenever the browsed world changes, so switching world does not
-  // leave the previous world's suggestion on screen. Once for the singleton —
-  // see worldWatchRegistered.
-  if (!worldWatchRegistered) {
-    worldWatchRegistered = true
-    stopWorldWatch = watch(worldParam, () => {
-      void loadOnce()
+  // Re-resolve whenever the world or the page changes, so a navigation does
+  // not leave the previous page's suggestion on screen. Once for the
+  // singleton; see pageWatchRegistered.
+  if (!pageWatchRegistered) {
+    pageWatchRegistered = true
+    const scope = effectScope(true)
+    scope.run(() => {
+      watch(requestKey, () => {
+        void loadOnce()
+      })
     })
+    stopPageWatch = () => scope.stop()
+  }
+
+  /**
+   * Re-resolve after an entity of `type` changed, when a context source can
+   * apply to the page and is about that type (the server's `context_type`).
+   * An edit may have settled the suggestion about the viewed entity, or made
+   * one owed. Every other page keeps its answer until the next navigation.
+   *
+   * Debounced: a bulk import sends one change per entity, and every open
+   * page would otherwise resolve once per change.
+   */
+  function refreshForChange(type: string) {
+    if (!refreshType) return
+    if (type && type !== refreshType) return
+    if (refreshTimer) clearTimeout(refreshTimer)
+    refreshTimer = setTimeout(() => {
+      refreshTimer = null
+      void load(true)
+    }, REFRESH_DEBOUNCE_MS)
   }
 
   async function respond(kind: NextActionFeedbackKind, duration?: string) {
@@ -190,6 +316,7 @@ export function useNextAction() {
         kind,
         duration,
       })
+      forgetAnswered(s)
       expanded.value = false
       await load()
     } catch (err) {
@@ -199,10 +326,24 @@ export function useNextAction() {
     }
   }
 
-  /** "Seen it" — the impression is already recorded, so just clear the slot. */
+  /**
+   * "Seen it": clear the slot and tell the server. For most suggestions the
+   * impression already hides it and the server does nothing; a context
+   * suggestion has no impression, so the server snoozes it for the source's
+   * cooldown. Without that, the next refresh would bring it straight back.
+   */
   function acknowledge() {
+    const s = suggestion.value
     suggestion.value = null
     expanded.value = false
+    if (!s) return
+    forgetAnswered(s)
+    sendNextActionFeedback({
+      source: s.source,
+      entity_id: s.entity_id,
+      variant: s.variant,
+      kind: 'seen',
+    }).catch((err) => console.error('next-action acknowledge failed:', err))
   }
 
   return {
@@ -216,16 +357,19 @@ export function useNextAction() {
     isStatusBar,
     loadOnce,
     markShown,
+    refreshForChange,
     respond,
     acknowledge,
     // Re-resolve the slot for a caller that has just INVALIDATED the current
     // answer by acting on it — an `action:` offer that ran (BUG-G2BASF).
     //
-    // Unconditional where loadOnce is latched: the world has not changed,
+    // Unconditional where loadOnce is latched: the page has not changed,
     // which is exactly why loadOnce would decline, but the graph underneath it
-    // has. It re-latches loadedWorld to the current world as a side effect of
-    // load(), so a later world switch still resolves. No impression is
+    // has. Not sticky: the reader acted on the suggestion. No impression is
     // reported; see load().
-    reload: () => load(),
+    reload: () => {
+      if (suggestion.value) forgetAnswered(suggestion.value)
+      return load()
+    },
   }
 }
