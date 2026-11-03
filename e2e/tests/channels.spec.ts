@@ -621,18 +621,9 @@ placedTest.describe("channel placement", () => {
     await alice.expectChannel(ROOM.label);
 
     // The generated view shows properties and the body, then one section per
-    // relation. The one channels block sits between them.
-    await expect(alice.panel).toHaveCount(1);
-    await expect(alice.page.locator(".view-section").last()).toBeVisible();
-    // Its neighbours on the page: the body above, a relation section below.
-    const prev = alice.page.locator(".view-section:has(+ .channels-panel)");
-    const next = alice.page.locator(".channels-panel + .view-section");
-    await expect(prev).toContainText("Implement user authentication system.");
-    await expect(next.locator(".cards-grid, table, ul").first()).toBeVisible();
-    const top = async (l: typeof prev) => (await l.boundingBox())!.y;
-    const panelTop = await top(alice.panel);
-    expect(await top(prev)).toBeLessThan(panelTop);
-    expect(await top(next)).toBeGreaterThan(panelTop);
+    // relation. The one channels block sits between the body and the first
+    // relation section.
+    await alice.expectPanelBetweenSections("Implement user authentication system.");
 
     // It still works where it sits.
     await alice.post("Placed above the relations");
