@@ -174,14 +174,21 @@ type InboxView struct {
 	// part of the answer on any wire; the live hub uses it to tell which
 	// moved markers can change this inbox.
 	Reader channels.Reader `json:"-"`
-	// noWaiting is set when the request left the waiting kind out.
-	noWaiting bool
-	// waiting holds, per entry of Entries and in its order, what
-	// [WaitingMessages] needs to read and render the waiting message.
-	waiting []waitingRef
-	// config is the configuration the entries were gated under.
-	// [WaitingMessages] renders only under the same one.
-	config *realtimecfg.Compiled
+	// page is the waiting kind as [InboxView.HasWaiting] and
+	// [WaitingMessages] need it.
+	page waitingPage
+}
+
+// waitingPage is the waiting kind of an inbox page as later steps need
+// it: whether the request left the kind out, and what [WaitingMessages]
+// needs to add the waiting messages. That is, per entry of Entries and in
+// its order, how to read and render its waiting message, and the
+// configuration the entries were gated under. WaitingMessages renders
+// only under the same configuration.
+type waitingPage struct {
+	omitted bool
+	refs    []waitingRef
+	config  *realtimecfg.Compiled
 }
 
 // waitingRef is what [WaitingMessages] needs of one waiting entry: the
@@ -218,7 +225,7 @@ func (v InboxView) Summary() InboxSummary {
 
 // HasWaiting reports whether the answer carries the waiting entries: the
 // request asked for the waiting kind.
-func (v InboxView) HasWaiting() bool { return !v.noWaiting }
+func (v InboxView) HasWaiting() bool { return !v.page.omitted }
 
 // waitingJSON are the JSON keys of the [InboxView] fields that belong to
 // the waiting kind. MarshalJSON drops only these from an answer without
@@ -229,7 +236,7 @@ var waitingJSON = []string{"entries", "count", "truncated", "next_cursor"}
 func (v InboxView) MarshalJSON() ([]byte, error) {
 	type plain InboxView
 	b, err := json.Marshal(plain(v))
-	if err != nil || !v.noWaiting {
+	if err != nil || !v.page.omitted {
 		return b, err
 	}
 	var fields map[string]json.RawMessage
@@ -464,7 +471,7 @@ func (s *Service) Inbox(ctx context.Context, req InboxRequest) (InboxView, error
 	if !identity.Valid() {
 		return InboxView{}, noPrincipal()
 	}
-	view := InboxView{Notice: UntrustedNotice, noWaiting: !waiting}
+	view := InboxView{Notice: UntrustedNotice, page: waitingPage{omitted: !waiting}}
 	view.Reader, _ = callReader(c)
 	if waiting {
 		view.Entries = []InboxEntry{}
@@ -474,7 +481,7 @@ func (s *Service) Inbox(ctx context.Context, req InboxRequest) (InboxView, error
 		return view, nil
 	}
 	run := inboxRun{s: s, c: c}
-	view.config = c.snap.Config
+	view.page.config = c.snap.Config
 	w := c.snap.Config.Waiting()
 	view.WaitingTypes = slices.Sorted(maps.Keys(w.States))
 	got, err := run.gather(&view, kinds, cur == nil, identity.ID())
@@ -559,7 +566,7 @@ func (r inboxRun) page(view *InboxView, items []inboxItem, cur *inboxCursor, lim
 	}
 	for _, it := range items {
 		view.Entries = append(view.Entries, it.entry)
-		view.waiting = append(view.waiting, waitingRef{
+		view.page.refs = append(view.page.refs, waitingRef{
 			key: it.key, cause: it.entry.Session.Cause, moderator: it.moderator,
 		})
 	}

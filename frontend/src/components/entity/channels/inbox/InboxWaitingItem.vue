@@ -35,7 +35,7 @@ import {
   presentationView,
   rowDecisions,
 } from '@/components/entity/channels/channelView'
-import { handleChannelRefusal, shownPending } from '@/components/entity/channels/decisionGlue'
+import { blockedPending, handleChannelRefusal, type RefusalTarget } from '../decisionGlue'
 import { useChannelLinks } from '@/components/entity/channels/useChannelLinks'
 import { usePendingKeys } from '@/components/entity/channels/usePendingKeys'
 import { useSessionDecisions } from '@/components/entity/channels/useSessionDecisions'
@@ -108,8 +108,8 @@ const target = computed(() => {
   }
 })
 
-function handle(err: unknown, hasForm: boolean): string | undefined {
-  return handleChannelRefusal(err, hasForm, {
+function handle(err: unknown, target: RefusalTarget): string | undefined {
+  return handleChannelRefusal(err, target, {
     refetch: () => void props.refetch(),
     gone: () => void props.refetch(),
     reloadSchema: () => {
@@ -120,7 +120,7 @@ function handle(err: unknown, hasForm: boolean): string | undefined {
   })
 }
 
-const { pending, set: setPending } = usePendingKeys((err) => handle(err, false))
+const { pending, set: setPending } = usePendingKeys((err) => handle(err, 'toast'))
 
 const decisionsApi = useSessionDecisions({
   channelType: () => ct.value,
@@ -151,7 +151,7 @@ const decisionsApi = useSessionDecisions({
   ui: {
     confirm,
     toast: (m) => ui.error(m),
-    handle,
+    handle: (err, hasForm) => handle(err, hasForm ? 'form' : 'toast'),
     // The inbox moves the focus once it has read itself again.
     focusRow: () => true,
     focusHeader: () => {},
@@ -171,7 +171,7 @@ const ownChoices = computed(() =>
 const shownDecisions = computed(() =>
   rowDecisions(decisions.value, choices.value, decisionSeq.value)
 )
-const blocked = computed(() => shownPending(pending.value, deciding.value))
+const blocked = computed(() => (deciding.value ? blockedPending(pending.value) : pending.value))
 
 const presentation = computed(() =>
   presentationView(schema.channelPresentations.get(typeName.value))

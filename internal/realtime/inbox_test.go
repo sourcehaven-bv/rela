@@ -734,7 +734,7 @@ func TestInboxView_MarshalJSON(t *testing.T) {
 	}
 	slices.Sort(all)
 	require.Equal(t, all, keys(v))
-	v.noWaiting = true
+	v.page.omitted = true
 	want := slices.DeleteFunc(slices.Clone(all), func(k string) bool { return slices.Contains(waitingJSON, k) })
 	require.Equal(t, want, keys(v))
 }

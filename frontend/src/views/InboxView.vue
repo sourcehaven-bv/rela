@@ -36,8 +36,8 @@ import PageLayout from '@/components/common/PageLayout.vue'
 import PageTitle from '@/components/common/PageTitle.vue'
 import RlInbox from 'rela-components/components/channel/RlInbox.vue'
 import RlCallout from 'rela-components/components/feedback/RlCallout.vue'
-import InboxWaitingItem from '@/components/inbox/InboxWaitingItem.vue'
-import InboxAnswerDrawer from '@/components/inbox/InboxAnswerDrawer.vue'
+import InboxWaitingItem from '@/components/entity/channels/inbox/InboxWaitingItem.vue'
+import InboxAnswerDrawer from '@/components/entity/channels/inbox/InboxAnswerDrawer.vue'
 import type {
   InboxMentionRow,
   InboxRowLink,

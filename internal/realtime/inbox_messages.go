@@ -37,7 +37,7 @@ var ErrInboxReader = errors.New("realtime: the inbox view was answered for anoth
 // v must be the caller's own answer: a view whose reader is not the
 // caller's is refused with [ErrInboxReader].
 func WaitingMessages(ctx context.Context, s *Service, v InboxView) (InboxView, error) {
-	if len(v.waiting) == 0 {
+	if len(v.page.refs) == 0 {
 		return v, nil
 	}
 	c, err := s.begin(ctx)
@@ -55,12 +55,12 @@ func WaitingMessages(ctx context.Context, s *Service, v InboxView) (InboxView, e
 	// the entries then keep no message, as if the reload came first. Each
 	// entry pairs with its waitingRef by index; a view whose two lists
 	// differ in length was not built by Service.Inbox.
-	if c.snap.Degraded || c.snap.Config != v.config || len(v.waiting) != len(v.Entries) {
+	if c.snap.Degraded || c.snap.Config != v.page.config || len(v.page.refs) != len(v.Entries) {
 		return v, nil
 	}
 	cfg := c.snap.Config
 	var refs []channels.MessageRef
-	for _, w := range v.waiting {
+	for _, w := range v.page.refs {
 		if _, ok := cfg.ChannelType(w.key.Type); ok && w.cause > 0 {
 			refs = append(refs, channels.MessageRef{Key: w.key, Seq: w.cause})
 		}
@@ -73,9 +73,9 @@ func WaitingMessages(ctx context.Context, s *Service, v InboxView) (InboxView, e
 	if err != nil {
 		return InboxView{}, fmt.Errorf("realtime: read waiting messages: %w", err)
 	}
-	rs := make([]*renderer, len(v.waiting))
+	rs := make([]*renderer, len(v.page.refs))
 	var ids []string
-	for i, w := range v.waiting {
+	for i, w := range v.page.refs {
 		m, ok := got[channels.MessageRef{Key: w.key, Seq: w.cause}]
 		ct, declared := cfg.ChannelType(w.key.Type)
 		if !ok || !declared {
@@ -98,7 +98,7 @@ func WaitingMessages(ctx context.Context, s *Service, v InboxView) (InboxView, e
 		}
 	}
 	v.Entries = slices.Clone(v.Entries)
-	for i, w := range v.waiting {
+	for i, w := range v.page.refs {
 		if rs[i] == nil {
 			continue
 		}

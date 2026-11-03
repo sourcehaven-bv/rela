@@ -74,7 +74,7 @@ import RlChannelDecisions from 'rela-components/components/channel/RlChannelDeci
 import RlChannelSession from 'rela-components/components/channel/RlChannelSession.vue'
 import EntityPickerModal from '@/components/forms/EntityPickerModal.vue'
 import ChannelTextDialog from './ChannelTextDialog.vue'
-import { handleChannelRefusal, shownPending as blockedPending } from './decisionGlue'
+import { blockedPending, handleChannelRefusal, type RefusalTarget } from './decisionGlue'
 import { useChannelLinks } from './useChannelLinks'
 import { useChannelPaging } from './useChannelPaging'
 import { useExpiryClock } from './useExpiryClock'
@@ -238,8 +238,8 @@ const formError = ref<string>()
 const fieldErrors = ref<Record<string, string>>({})
 
 /** Answers a refusal; returns the message when it belongs in the form. */
-function handle(err: unknown, hasForm: boolean): string | undefined {
-  return handleChannelRefusal(err, hasForm, {
+function handle(err: unknown, target: RefusalTarget): string | undefined {
+  return handleChannelRefusal(err, target, {
     refetch: () => void ch.refetch(),
     gone: () => emit('gone'),
     reloadSchema: () => {
@@ -250,7 +250,7 @@ function handle(err: unknown, hasForm: boolean): string | undefined {
   })
 }
 
-const { pending, set: setPending, run: runPending } = usePendingKeys((err) => handle(err, false))
+const { pending, set: setPending, run: runPending } = usePendingKeys((err) => handle(err, 'toast'))
 
 // --- Composer ----------------------------------------------------------------
 
@@ -272,7 +272,7 @@ const channelView = useTemplateRef<InstanceType<typeof RlChannel>>('channelView'
  * the posting decision's own key shows it as sending.
  */
 const shownPending = computed<ReadonlySet<string>>(() =>
-  blockedPending(pending.value, submitting.value || deciding.value)
+  submitting.value || deciding.value ? blockedPending(pending.value) : pending.value
 )
 
 const replyQuoteView = computed(() => {
@@ -353,7 +353,7 @@ async function onPost(event: ChannelPostEvent) {
       emit('startSent')
     }
   } catch (err) {
-    formError.value = handle(err, true)
+    formError.value = handle(err, 'form')
   } finally {
     submitting.value = false
   }
@@ -385,7 +385,7 @@ async function onSave(event: ChannelEditEvent) {
     await ch.edit(event.seq, converted.props)
     stopEditing()
   } catch (err) {
-    formError.value = handle(err, true)
+    formError.value = handle(err, 'form')
   } finally {
     submitting.value = false
   }
@@ -434,7 +434,7 @@ const decisionsApi = useSessionDecisions({
   ui: {
     confirm,
     toast: (m) => ui.error(m),
-    handle,
+    handle: (err, hasForm) => handle(err, hasForm ? 'form' : 'toast'),
     focusRow: (seq) => channelView.value?.focusRow(seq) ?? false,
     focusHeader: () => sessionHeader.value?.focus(),
   },
@@ -544,7 +544,7 @@ async function submitRemove(reason: string) {
     await ch.remove(seq, reason || undefined)
     removing.value = null
   } catch (err) {
-    removeError.value = handle(err, true)
+    removeError.value = handle(err, 'form')
     if (removeError.value === undefined) removing.value = null
   } finally {
     removeBusy.value = false
@@ -584,7 +584,7 @@ async function onLifecycle(op: string) {
 
 const { loadingOlder, onLoadOlder, onLoadNewest, onJump } = useChannelPaging(
   ch,
-  (err) => handle(err, false),
+  (err) => handle(err, 'toast'),
   (seq) => channelView.value?.reveal(seq)
 )
 
