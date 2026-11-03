@@ -567,3 +567,238 @@ describe('useAutoSave target identity', () => {
     expect(h.autoSave.status.value).toBe('error')
   })
 })
+
+// Found by useAutoSave.twoClients.prop.test.ts.
+describe('useAutoSave across saves of one tab', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    vi.mocked(entitiesApi.getEntity).mockReset()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  const entity = (over: Partial<Entity>) => ({ id: 'TKT-001', type: 'ticket', ...over }) as Entity
+
+  it('merges a second 412 in one save against the body the first merge used', async () => {
+    const h = harness({ properties: {}, content: 'a\n-\nb\n-\nc' })
+    const refused = conflict412({ content: { expected: 'x', actual: 'y' } })
+    h.updateMock.mockRejectedValueOnce(refused).mockRejectedValueOnce(refused)
+    vi.mocked(entitiesApi.getEntity)
+      .mockResolvedValueOnce(
+        entity({ content: 'A1\n-\nb\n-\nc', _versions: versions({ content: 't-9' }) })
+      )
+      .mockResolvedValueOnce(
+        entity({ content: 'A2\n-\nb\n-\nC', _versions: versions({ content: 't-10' }) })
+      )
+    h.autoSave.scheduleContentSave('a\n-\nB\n-\nc')
+    await vi.runAllTimersAsync()
+    expect(h.autoSave.contentError.value).toBeNull()
+    expect(bodyOf(h.updateMock, 2)).toEqual({
+      content: 'A2\n-\nB\n-\nC',
+      preconditions: { content: 't-10' },
+    })
+  })
+
+  it('merges a second 412 in one save against the relations the first merge used', async () => {
+    const buildRelationsBody = vi.fn(() => ({
+      implements: {
+        data: [
+          { type: 'feature', id: 'F1' },
+          { type: 'feature', id: 'F2' },
+        ],
+      },
+    }))
+    const h = harness({ properties: {}, relations: { implements: ['F1'] } }, { buildRelationsBody })
+    const refused = conflict412({ relations: { expected: 'x', actual: 'y' } })
+    h.updateMock.mockRejectedValueOnce(refused).mockRejectedValueOnce(refused)
+    const included = { F3: { id: 'F3', type: 'feature', properties: {} } }
+    vi.mocked(entitiesApi.getEntity)
+      .mockResolvedValueOnce(
+        entity({
+          relations: { implements: ['F1', 'F3'] },
+          included,
+          _versions: versions({ relations: 't-9' }),
+        })
+      )
+      // They removed F3 again before the merged resend landed.
+      .mockResolvedValueOnce(
+        entity({ relations: { implements: ['F1'] }, _versions: versions({ relations: 't-10' }) })
+      )
+    h.autoSave.scheduleRelationsChange()
+    await vi.runAllTimersAsync()
+
+    const third = bodyOf(h.updateMock, 2) as {
+      relations: { implements: { data: { id: string }[] } }
+      preconditions: unknown
+    }
+    expect(third.relations.implements.data.map((e) => e.id).sort()).toEqual(['F1', 'F2'])
+    expect(third.preconditions).toEqual({ relations: 't-10' })
+  })
+
+  it('rebases typing onto its own merged save instead of reporting a conflict', async () => {
+    const h = harness({ properties: {}, content: 'a\n-\nb' })
+    h.updateMock.mockRejectedValueOnce(conflict412({ content: { expected: 'x', actual: 'y' } }))
+    vi.mocked(entitiesApi.getEntity).mockResolvedValueOnce(
+      entity({ content: 'a\n-\nB', _versions: versions({ content: 't-9' }) })
+    )
+    let answer!: (e: Entity) => void
+    h.updateMock.mockImplementationOnce(() => new Promise<Entity>((r) => (answer = r)))
+    h.autoSave.scheduleContentSave('A\n-\nb')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(bodyOf(h.updateMock, 1).content).toBe('A\n-\nB')
+
+    // The user keeps typing while the merged save is on its way.
+    h.contentRef.value = 'A2\n-\nb'
+    h.autoSave.scheduleContentSave('A2\n-\nb')
+    answer(entity({ content: 'A\n-\nB', _versions: versions({ content: 't-10' }) }))
+    await vi.runAllTimersAsync()
+
+    expect(bodyOf(h.updateMock, 2)).toEqual({
+      content: 'A2\n-\nB',
+      preconditions: { content: 't-10' },
+    })
+    expect(h.autoSave.contentError.value).toBeNull()
+  })
+
+  it('keeps a conflicting value on screen when a later save answers', async () => {
+    const h = harness({ properties: { status: 'open', title: 'T' } })
+    h.updateMock.mockRejectedValueOnce(
+      conflict412({ properties: { status: { expected: 'a', actual: 'b' } } })
+    )
+    vi.mocked(entitiesApi.getEntity).mockResolvedValueOnce(
+      entity({ properties: { status: 'blocked', title: 'T' }, _versions: versions() })
+    )
+    h.formData.value.status = 'done'
+    h.autoSave.scheduleFieldSave('status', 'done')
+    await vi.runAllTimersAsync()
+
+    h.updateMock.mockResolvedValueOnce(
+      entity({ properties: { status: 'blocked', title: 'T2' }, _versions: versions() })
+    )
+    h.formData.value.title = 'T2'
+    h.autoSave.scheduleFieldSave('title', 'T2')
+    await vi.runAllTimersAsync()
+
+    expect(h.formData.value).toEqual({ status: 'done', title: 'T2' })
+    expect(h.autoSave.fieldErrors.value.status).toBe(conflictMessage())
+  })
+
+  it('keeps a value whose save failed on screen when a later save answers', async () => {
+    const h = harness({ properties: { status: 'open', title: 'T' } })
+    h.updateMock.mockRejectedValueOnce(
+      new ApiError('unavailable', { kind: 'http', status: 503, original: null })
+    )
+    h.formData.value.status = 'done'
+    h.autoSave.scheduleFieldSave('status', 'done')
+    await vi.runAllTimersAsync()
+
+    h.updateMock.mockResolvedValueOnce(
+      entity({ properties: { status: 'open', title: 'T2' }, _versions: versions() })
+    )
+    h.formData.value.title = 'T2'
+    h.autoSave.scheduleFieldSave('title', 'T2')
+    await vi.runAllTimersAsync()
+
+    expect(h.formData.value).toEqual({ status: 'done', title: 'T2' })
+    expect(h.autoSave.fieldErrors.value.status).toBeTruthy()
+
+    // Editing it again sends it, and the error clears once it is saved.
+    h.autoSave.scheduleFieldSave('status', 'done')
+    await vi.runAllTimersAsync()
+    expect(bodyOf(h.updateMock, 2).properties).toEqual({ status: 'done' })
+  })
+
+  it('releases a field once a later save of it goes through', async () => {
+    const h = harness({ properties: { status: 'open', title: 'T' } })
+    let fail!: (e: unknown) => void
+    h.updateMock.mockImplementationOnce(() => new Promise<Entity>((_, r) => (fail = r)))
+    h.formData.value.status = 'v1'
+    h.autoSave.scheduleFieldSave('status', 'v1')
+    await vi.advanceTimersByTimeAsync(1000)
+
+    // A second save of the field queues behind the first, which then fails.
+    h.updateMock.mockResolvedValueOnce(
+      entity({ properties: { status: 'v2', title: 'T' }, _versions: versions() })
+    )
+    h.formData.value.status = 'v2'
+    h.autoSave.scheduleFieldSave('status', 'v2')
+    await vi.advanceTimersByTimeAsync(1000)
+    fail(new ApiError('unavailable', { kind: 'http', status: 503, original: null }))
+    await vi.runAllTimersAsync()
+    expect(h.autoSave.fieldErrors.value.status).toBeUndefined()
+    expect(h.autoSave.unsavedFields().props).toEqual([])
+
+    // So a later answer shows the field's server value.
+    h.updateMock.mockResolvedValueOnce(
+      entity({ properties: { status: 'theirs', title: 'T2' }, _versions: versions() })
+    )
+    h.formData.value.title = 'T2'
+    h.autoSave.scheduleFieldSave('title', 'T2')
+    await vi.runAllTimersAsync()
+    expect(h.formData.value.status).toBe('theirs')
+  })
+
+  it('rebases typing onto their body when it already held the save', async () => {
+    const h = harness({ properties: {}, content: 'a\n-\nb' })
+    let refuse!: (e: unknown) => void
+    h.updateMock.mockImplementationOnce(() => new Promise<Entity>((_, r) => (refuse = r)))
+    // Their body already holds our edit, so nothing is written for it.
+    vi.mocked(entitiesApi.getEntity).mockResolvedValueOnce(
+      entity({ content: 'A\n-\nB', _versions: versions({ content: 't-9' }) })
+    )
+    h.autoSave.scheduleContentSave('A\n-\nb')
+    await vi.advanceTimersByTimeAsync(1000)
+
+    // The user keeps typing before the 412 is answered.
+    h.contentRef.value = 'A2\n-\nb'
+    h.autoSave.scheduleContentSave('A2\n-\nb')
+    h.updateMock.mockResolvedValueOnce(
+      entity({ content: 'A2\n-\nB', _versions: versions({ content: 't-10' }) })
+    )
+    refuse(conflict412({ content: { expected: 'x', actual: 'y' } }))
+    await vi.runAllTimersAsync()
+
+    expect(bodyOf(h.updateMock, 1)).toEqual({
+      content: 'A2\n-\nB',
+      preconditions: { content: 't-9' },
+    })
+    expect(h.autoSave.contentError.value).toBeNull()
+  })
+
+  it('reports a held field to commitImmediately', async () => {
+    const h = harness({ properties: { status: 'open' } })
+    h.updateMock.mockRejectedValueOnce(
+      new ApiError('unavailable', { kind: 'http', status: 503, original: null })
+    )
+    h.formData.value.status = 'done'
+    h.autoSave.scheduleFieldSave('status', 'done')
+    await vi.runAllTimersAsync()
+
+    const result = await h.autoSave.commitImmediately()
+    expect(result.settled).toBe(true)
+    expect(result.error).toBeTruthy()
+  })
+
+  it('reverts the body to the one its merged save wrote', async () => {
+    const h = harness({ properties: {}, content: 'a\n-\nb' })
+    h.updateMock.mockRejectedValueOnce(conflict412({ content: { expected: 'x', actual: 'y' } }))
+    vi.mocked(entitiesApi.getEntity).mockResolvedValueOnce(
+      entity({ content: 'a\n-\nB', _versions: versions({ content: 't-9' }) })
+    )
+    let answer!: (e: Entity) => void
+    h.updateMock.mockImplementationOnce(() => new Promise<Entity>((r) => (answer = r)))
+    h.autoSave.scheduleContentSave('A\n-\nb')
+    await vi.advanceTimersByTimeAsync(1000)
+    h.contentRef.value = 'A2\n-\nb'
+    h.autoSave.scheduleContentSave('A2\n-\nb')
+    answer(entity({ content: 'A\n-\nB', _versions: versions({ content: 't-10' }) }))
+    await vi.advanceTimersByTimeAsync(10)
+
+    // Reverted before the typing is sent.
+    h.autoSave.revertContent()
+    expect(h.contentRef.value).toBe('A\n-\nB')
+  })
+})

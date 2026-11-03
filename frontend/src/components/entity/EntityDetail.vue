@@ -271,11 +271,14 @@ const sectionReorder = useSectionReorder({
   view: viewData,
   reload: async () => {
     const world = worldParam.value
-    const outcome = await session.read((signal) => fetchView(props.entityType, props.entityId, world, signal), {
-      quiet: true,
-      shows: viewRow,
-      land: (view) => applyView(view, world),
-    })
+    const outcome = await session.read(
+      (signal) => fetchView(props.entityType, props.entityId, world, signal),
+      {
+        quiet: true,
+        shows: viewRow,
+        land: (view) => applyView(view, world),
+      }
+    )
     if (outcome.kind === 'failed') throw outcome.error
   },
 })
@@ -592,7 +595,9 @@ const contentAutoSave = shallowRef<ContentAutoSave | null>(null)
 // Whether the row on screen is the one `target` names.
 function showing(target: AutoSaveTarget): boolean {
   const ent = entry.value
-  return ent !== undefined && ent !== null && ent.type === target.type && servedRef.value === target.id
+  return (
+    ent !== undefined && ent !== null && ent.type === target.type && servedRef.value === target.id
+  )
 }
 
 function makeContentAutoSave(target: AutoSaveTarget): ContentAutoSave {
@@ -719,11 +724,21 @@ async function acceptSuggestion(c: Comment) {
       const nextSections = view.sections.map((s) =>
         isEntryContentSection(s) ? { ...s, content: res.content } : s
       )
-      viewData.value = { ...view, entry: { ...view.entry, content: res.content }, sections: nextSections }
+      viewData.value = {
+        ...view,
+        entry: { ...view.entry, content: res.content },
+        sections: nextSections,
+      }
     }
     if (res.warnings && res.warnings.length > 0) {
       const codes = [...new Set(res.warnings.map((w) => w.code))].join(', ')
-      uiStore.warning(t('entity.suggestion.appliedWithWarnings', { n: res.warnings.length, codes }, res.warnings.length))
+      uiStore.warning(
+        t(
+          'entity.suggestion.appliedWithWarnings',
+          { n: res.warnings.length, codes },
+          res.warnings.length
+        )
+      )
     }
     closeTextComment()
     await loadView()
@@ -987,7 +1002,6 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
-
 // Commands — separate fetch, abortable to survive rapid navigation
 // (BUG-6C3V: a stale fetch resolving against an unmounted component).
 let commandsAbort: AbortController | null = null
@@ -1124,6 +1138,27 @@ function viewRow(view: ViewResponse | null): string | undefined {
 // lands. A view of another row replaces the autosave instance; the replaced
 // one keeps writing to its own row (autoSaveFor).
 function applyView(view: ViewResponse | null, world: string | undefined) {
+  // A body whose save did not go through stays on screen, next to its
+  // error, when its row is read again: autosave keeps it held.
+  const shown = viewData.value?.entry
+  const save = contentAutoSave.value
+  const row = viewRow(view)
+  if (
+    view?.entry &&
+    shown &&
+    save &&
+    row === viewRow(viewData.value) &&
+    row === rowKey(save.target)
+  ) {
+    if (save.unsavedFields().content) {
+      const content = shown.content
+      view = {
+        ...view,
+        entry: { ...view.entry, content },
+        sections: view.sections.map((s) => (isEntryContentSection(s) ? { ...s, content } : s)),
+      }
+    }
+  }
   viewData.value = view
   viewWorld.value = world
   // Seed the autosave baseline so the first toggle's no-op suppression can
@@ -1262,7 +1297,9 @@ function anchorId(sectionId: string, id: string): string | undefined {
 // owned entities along. Said in the confirm without a count, which would
 // need a read.
 const ownsEntities = computed(() =>
-  [...schemaStore.relationTypes.values()].some((rt) => rt.owning && rt.from.includes(props.entityType)),
+  [...schemaStore.relationTypes.values()].some(
+    (rt) => rt.owning && rt.from.includes(props.entityType)
+  )
 )
 
 async function requestDelete() {
@@ -1315,7 +1352,9 @@ async function requestDelete() {
 // from `[]` (none declared), but this page renders nothing for both, so the
 // distinction is collapsed HERE, once, rather than carried into every reader.
 const copyOffers = computed<CopyOffer[]>(() => entry.value?._copies ?? [])
-const conversionOffers = computed<ConversionOffer[]>(() => entry.value?._conversions?.filter((o) => o.allowed) ?? [])
+const conversionOffers = computed<ConversionOffer[]>(
+  () => entry.value?._conversions?.filter((o) => o.allowed) ?? []
+)
 // The body editor's task-item recipes, and the entity they convert from.
 const taskItemSource = computed(() =>
   entry.value ? { id: entry.value.id, face: entry.value._world?.face ?? '' } : undefined
@@ -1327,7 +1366,10 @@ function conversionDone(id: string, face: string) {
   conversionOffer.value = null
   if (offer) {
     uiStore.success(t('entity.convertedTo', { type: offer.to }))
-    router.push({ path: `/entity/${offer.to}/${id}${face ? `@${face}` : ''}`, query: { ...route.query } })
+    router.push({
+      path: `/entity/${offer.to}/${id}${face ? `@${face}` : ''}`,
+      query: { ...route.query },
+    })
   }
 }
 
@@ -1630,7 +1672,14 @@ const actions = computed<EntityAction[]>(() => {
   }
   if (editTarget.value) {
     const to = editTarget.value
-    out.push({ id: 'edit', label: t('common.edit'), group: 'edit', icon: 'edit', shortcut: 'E', run: () => void router.push(to) })
+    out.push({
+      id: 'edit',
+      label: t('common.edit'),
+      group: 'edit',
+      icon: 'edit',
+      shortcut: 'E',
+      run: () => void router.push(to),
+    })
   }
   for (const f of faceOptions.value ?? []) {
     out.push({
@@ -1643,7 +1692,13 @@ const actions = computed<EntityAction[]>(() => {
   }
   if (showHistory.value && historyTarget.value) {
     const to = historyTarget.value
-    out.push({ id: 'history', label: t('entity.history'), group: 'view', icon: 'history', run: () => void router.push(to) })
+    out.push({
+      id: 'history',
+      label: t('entity.history'),
+      group: 'view',
+      icon: 'history',
+      run: () => void router.push(to),
+    })
   }
   const exportAddress = servedRef.value
   for (const format of exportFormats.value) {
@@ -1668,7 +1723,13 @@ const actions = computed<EntityAction[]>(() => {
     })
   }
   if (canDuplicate.value) {
-    out.push({ id: 'duplicate', label: t('entity.duplicateAction'), group: 'manage', icon: 'copy', run: () => (showDuplicateModal.value = true) })
+    out.push({
+      id: 'duplicate',
+      label: t('entity.duplicateAction'),
+      group: 'manage',
+      icon: 'copy',
+      run: () => (showDuplicateModal.value = true),
+    })
   }
   if (canDelete.value) {
     out.push({
@@ -1685,7 +1746,9 @@ const actions = computed<EntityAction[]>(() => {
 })
 
 // On a phone, Edit and Delete keep their own buttons; the rest is overflow.
-const overflowActions = computed(() => actions.value.filter((a) => a.id !== 'edit' && a.id !== 'delete'))
+const overflowActions = computed(() =>
+  actions.value.filter((a) => a.id !== 'edit' && a.id !== 'delete')
+)
 
 /*
  * When the desktop row does not fit beside the title, it keeps the commands
@@ -1695,11 +1758,8 @@ const overflowActions = computed(() => actions.value.filter((a) => a.id !== 'edi
 const headerEl = ref<HTMLElement | null>(null)
 const headerInfoEl = ref<HTMLElement | null>(null)
 const headerActionsEl = ref<HTMLElement | null>(null)
-const { compact: compactActions } = useActionsFit(
-  headerEl,
-  headerInfoEl,
-  headerActionsEl,
-  () => actions.value.map((a) => a.id).join('|')
+const { compact: compactActions } = useActionsFit(headerEl, headerInfoEl, headerActionsEl, () =>
+  actions.value.map((a) => a.id).join('|')
 )
 const compactOverflowActions = computed(() =>
   actions.value.filter((a) => a.id !== 'edit' && !a.id.startsWith('command:'))
@@ -2112,7 +2172,6 @@ onBeforeUnmount(() => {
   void contentAutoSave.value?.commitImmediately()
 })
 
-
 // A write from elsewhere (a board move, another tab, a script) reaches this
 // view only through the server's entity:changed event; the view is fetched
 // imperatively, so no cache invalidation reaches it. The event names the type,
@@ -2260,11 +2319,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 </script>
 
 <template>
-  <div
-    class="entity-detail"
-    :data-testid="`page-state-${pageState}`"
-    :style="stickyOffsetStyle"
-  >
+  <div class="entity-detail" :data-testid="`page-state-${pageState}`" :style="stickyOffsetStyle">
     <!-- Deliberately empty while loading below the threshold: no spinner,
          no reserved block, no layout spring. The ActivityBar carries the
          navigation case; this only paints for a slow cold load. -->
@@ -2304,7 +2359,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           >
             {{ t('entity.prev') }} <RlKbd keys="P" />
           </RlButton>
-          <RlButton v-else variant="secondary" size="sm" icon="arrow-left" disabled>{{ t('entity.prev') }}</RlButton>
+          <RlButton v-else variant="secondary" size="sm" icon="arrow-left" disabled>{{
+            t('entity.prev')
+          }}</RlButton>
           <span class="scope-nav-progress">[{{ scopeNav.current }}/{{ scopeNav.total }}]</span>
           <span class="scope-nav-label">{{ scopeNav.label }}</span>
           <RlButton
@@ -2403,7 +2460,10 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             @edit="onTitleEdit"
             @commit="saveTitle"
           />
-          <div v-if="entry?._lease || presence.viewers.value.length || presence.more.value" class="header-presence">
+          <div
+            v-if="entry?._lease || presence.viewers.value.length || presence.more.value"
+            class="header-presence"
+          >
             <PresenceAvatars :viewers="presence.viewers.value" :more="presence.more.value" />
             <LeaseBadge :lease="entry?._lease" />
           </div>
@@ -2424,23 +2484,23 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             {{ cmd.label }}
           </RlButton>
           <template v-if="!compactActions">
-          <RlButton
-            v-for="a in detailActions"
-            :key="`action-${a.id}`"
-            variant="secondary"
-            :disabled="detailActionBusy"
-            @click="runDetailAction(a, $event)"
-          >
-            {{ a.label }}
-          </RlButton>
-          <FaceMenu :faces="faceOptions" @select="goToFace" />
-          <!--
+            <RlButton
+              v-for="a in detailActions"
+              :key="`action-${a.id}`"
+              variant="secondary"
+              :disabled="detailActionBusy"
+              @click="runDetailAction(a, $event)"
+            >
+              {{ a.label }}
+            </RlButton>
+            <FaceMenu :faces="faceOptions" @select="goToFace" />
+            <!--
             Copy affordances (RULING 9). Renders nothing when no offer is
             allowed — a denied copy is ABSENT, not disabled — and nothing under
             a world, where copyOffers is empty; see its comment for why.
           -->
-          <CopyMenu :offers="copyOffers" :busy="copyBusy" @invoke="runCopy" />
-          <ConversionMenu :offers="conversionOffers" @choose="conversionOffer = $event" />
+            <CopyMenu :offers="copyOffers" :busy="copyBusy" @invoke="runCopy" />
+            <ConversionMenu :offers="conversionOffers" @choose="conversionOffer = $event" />
           </template>
           <!--
             The page-header create menu: sections that opted into
@@ -2468,27 +2528,36 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             must, which is the trap this header just walked into three times.
           -->
           <template v-if="!compactActions">
-          <RlButton v-if="showHistory && historyTarget" :as="RouterLink" :to="historyTarget" variant="secondary">
-            {{ t('entity.history') }}
-          </RlButton>
-          <!--
+            <RlButton
+              v-if="showHistory && historyTarget"
+              :as="RouterLink"
+              :to="historyTarget"
+              variant="secondary"
+            >
+              {{ t('entity.history') }}
+            </RlButton>
+            <!--
             Exports what is on screen (BUG-PLZDPR): the served face's address,
             and the page's world, in which the export resolves the entry's links.
           -->
-          <ExportMenu :url-for="exportUrlFor(entityRef(entry))" />
-          <AddToPileMenu :addresses="() => (entry ? [entityRef(entry)] : [])" size="md" :new-label="t('entity.addToNewPile')" />
-          <!--
+            <ExportMenu :url-for="exportUrlFor(entityRef(entry))" />
+            <AddToPileMenu
+              :addresses="() => (entry ? [entityRef(entry)] : [])"
+              size="md"
+              :new-label="t('entity.addToNewPile')"
+            />
+            <!--
             Duplicate. Gated on `inline_create` rather than `_actions` (there is
             no `create` key on an entity response); the action list gates on the
             SAME computed.
           -->
-          <RlButton v-if="canDuplicate" variant="secondary" @click="showDuplicateModal = true">
-            {{ t('entity.duplicateAction') }}
-          </RlButton>
-          <RlButton v-if="canDelete" variant="secondary" tone="danger" @click="requestDelete">
-            {{ t('common.delete') }}
-            <template #trailing><RlKbd keys="Del" /></template>
-          </RlButton>
+            <RlButton v-if="canDuplicate" variant="secondary" @click="showDuplicateModal = true">
+              {{ t('entity.duplicateAction') }}
+            </RlButton>
+            <RlButton v-if="canDelete" variant="secondary" tone="danger" @click="requestDelete">
+              {{ t('common.delete') }}
+              <template #trailing><RlKbd keys="Del" /></template>
+            </RlButton>
           </template>
           <EntityActionsMenu v-else :actions="compactOverflowActions" class="desktop-overflow" />
         </div>
@@ -2990,7 +3059,11 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="row in group.rows" :id="anchorId(section.sectionId, row.entityId)" :key="row.entityId">
+                    <tr
+                      v-for="row in group.rows"
+                      :id="anchorId(section.sectionId, row.entityId)"
+                      :key="row.entityId"
+                    >
                       <td v-for="(cell, idx) in row.cells" :key="idx">
                         <a
                           v-if="cell.link"
@@ -3042,7 +3115,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             <table v-else class="data-table">
               <thead>
                 <tr>
-                  <th v-if="sectionReorder.movable(section)" class="order-col"><span class="rl-visually-hidden">{{ t('entity.order') }}</span></th>
+                  <th v-if="sectionReorder.movable(section)" class="order-col">
+                    <span class="rl-visually-hidden">{{ t('entity.order') }}</span>
+                  </th>
                   <th v-for="col in section.columns" :key="col.property || col.relation">
                     {{ col.label || col.property || col.relation }}
                   </th>
@@ -3060,7 +3135,15 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                   v-for="row in section.rows"
                   :id="anchorId(section.sectionId, row.entityId)"
                   :key="row.entityId"
-                  v-bind="sectionReorder.movable(section) ? { rowId: row.entityId, title: sectionRowLabel(row), group: `section-${sectionIndex}` } : {}"
+                  v-bind="
+                    sectionReorder.movable(section)
+                      ? {
+                          rowId: row.entityId,
+                          title: sectionRowLabel(row),
+                          group: `section-${sectionIndex}`,
+                        }
+                      : {}
+                  "
                   @reorder="(move: RowMove) => sectionReorder.onReorder(sectionIndex, move)"
                 >
                   <td v-for="(cell, idx) in row.cells" :key="idx">
@@ -3108,7 +3191,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                 </component>
               </tbody>
             </table>
-            <span v-if="sectionReorder.movable(section)" class="rl-visually-hidden" role="status">{{ sectionReorder.statusOf(sectionIndex) }}</span>
+            <span v-if="sectionReorder.movable(section)" class="rl-visually-hidden" role="status">{{
+              sectionReorder.statusOf(sectionIndex)
+            }}</span>
           </div>
 
           <!-- display: nested — a two-level parent→child tree.
@@ -3199,7 +3284,12 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                 <!-- The server withheld children; say so rather than letting the
                      list read as complete. -->
                 <div v-if="node.hasMoreChildren" class="nested-children nested-more">
-                  {{ t('entity.showingChildren', { shown: node.children?.length ?? 0, total: node.childCount }) }}
+                  {{
+                    t('entity.showingChildren', {
+                      shown: node.children?.length ?? 0,
+                      total: node.childCount,
+                    })
+                  }}
                 </div>
               </details>
             </div>
@@ -3243,7 +3333,11 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 
         <!-- Channels (TKT-91BK6F). Self-gating: renders nothing unless
              realtime.yaml attaches a channel type to this entity type. -->
-        <ChannelsPanel :entity-type="entityType" :entity-id="entityRef(entry)" :world="worldParam" />
+        <ChannelsPanel
+          :entity-type="entityType"
+          :entity-id="entityRef(entry)"
+          :world="worldParam"
+        />
       </div>
 
       <!-- The ADDRESS, not the bare id: a command acts on the face on screen. -->

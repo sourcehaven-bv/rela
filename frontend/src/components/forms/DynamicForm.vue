@@ -667,11 +667,16 @@ async function loadEntity(force = false) {
     // unmodified server state, before the spreads below hand it to the form
     // (TKT-DPBQ7S). Taken before mutation, and cloned, so the baseline can
     // never alias the form's working copy.
+    // A field whose save failed or conflicted keeps the user's value on
+    // screen, next to its error: autosave keeps it held across the snapshot.
+    const unsaved = _autoSaveInstance.value?.unsavedFields()
+    const keptProps = Object.fromEntries((unsaved?.props ?? []).map((k) => [k, formData.value[k]]))
+    const keptContent = unsaved?.content ? content.value : undefined
     recordServerBaseline(entity)
-    formData.value = { ...entity.properties }
+    formData.value = { ...entity.properties, ...keptProps }
     relations.value = entity.relations ? { ...entity.relations } : {}
     resetConfirmedRelations(relations.value)
-    content.value = entity.content || ''
+    content.value = keptContent ?? (entity.content || '')
     // TKT-G7N5: per-entity affordances from the server. The wire keys
     // are always present on per-entity GET (possibly empty); we
     // default to empty maps so the filter / readonly / options paths
