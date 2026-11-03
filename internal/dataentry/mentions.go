@@ -22,7 +22,9 @@ import (
 // Each id resolves to the face the request's world serves among the faces
 // the principal may read ([visibility.Resolver.ResolveIDsErr]), the same
 // resolution relation neighbors use, so a mention of an entity whose type
-// has faces links like any other. The header comes back gated and redacted
+// has faces links like any other. An id a rename retired resolves to the
+// entity under its new id ([visibility.Resolver.ResolveMentions]), and the
+// mention carries that id. The header comes back gated and redacted
 // (DEC-ZBI39P): a mention of an entity the principal may not read is
 // dropped, and a survivor whose display property is hidden falls back to
 // its id (BUG-R9EHKV).
@@ -50,7 +52,7 @@ func collectMentions(
 	}
 	slices.Sort(ids)
 
-	served, err := vis.Resolver().ResolveIDsErr(ctx, worldFromContext(ctx).visibility(), ids)
+	served, err := vis.Resolver().ResolveMentions(ctx, worldFromContext(ctx).visibility(), ids)
 	if err != nil {
 		slog.WarnContext(ctx, "mentions: store lookup failed", "ids", len(ids), "err", err)
 		return nil
@@ -60,7 +62,11 @@ func collectMentions(
 	}
 	out := make(map[string]v1.Mention, len(served))
 	for id, h := range served {
-		out[id] = buildMention(headerEntity(h), meta)
+		m := buildMention(headerEntity(h), meta)
+		if h.ID != id {
+			m.ID = h.ID
+		}
+		out[id] = m
 	}
 	return out
 }

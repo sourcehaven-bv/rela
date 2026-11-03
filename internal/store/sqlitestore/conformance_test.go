@@ -98,6 +98,7 @@ func TestConformance(t *testing.T) {
 		},
 		Attachments: true,
 		TxRollback:  true,
+		RetiredIDs:  true,
 		Versioning:  true,
 		VersionTags: true,
 		SweepNow: func(t *testing.T, s store.Store) {

@@ -163,8 +163,11 @@ type DBTX interface {
 // +1 exported / +1 method (TKT-Q6AKUN): MentionSources, the optional
 // store.MentionIndex capability. Its helpers are free functions in mentions.go.
 //
-//plimsoll:max-exported-methods=46
-//plimsoll:max-methods=56
+// +1 exported / +1 method (TKT-J6GISC3): Successors, the optional
+// store.RetiredIDs capability. Its helpers are free functions in retired.go.
+//
+//plimsoll:max-exported-methods=47
+//plimsoll:max-methods=57
 type Store struct {
 	db           DBTX
 	searchTitles SearchTitles

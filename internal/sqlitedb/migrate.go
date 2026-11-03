@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 30
+const schemaVersion = 31
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -310,6 +310,13 @@ var migrations = []migration{
 		// messages stored before it were written under no mention rule.
 		to:    30,
 		apply: sqlSteps(channelMentionsDDL),
+	},
+	{
+		// v30 → v31: the ids renames retired (TKT-J6GISC3). A new table; no
+		// backfill, because renames before it rewrote nothing and left no
+		// record of the old id.
+		to:    31,
+		apply: sqlSteps(retiredIDsDDL),
 	},
 }
 

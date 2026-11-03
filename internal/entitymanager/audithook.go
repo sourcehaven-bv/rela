@@ -103,6 +103,27 @@ func (m *Manager) recordRenameAudit(ctx context.Context, oldID string, after *en
 	})
 }
 
+// recordMentionRewriteAudit records that a rename rewrote another entity's
+// body, on a store that rewrites mention text (TKT-J6GISC3). The store edits
+// the body below the ACL, so this record is the trail of that edit: it names
+// the rewritten row, carries the renamer as principal, and says which rename
+// caused it in TriggeredBy.
+func recordMentionRewriteAudit(ctx context.Context, m *Manager, oldID, newID string, rw entity.MentionRewrite) {
+	summary := "rewrote mentions of " + oldID + " to " + newID
+	if !rw.Face.IsImplicit() {
+		summary += " in face " + string(rw.Face)
+	}
+	m.deps.Audit.Record(audit.Record{
+		Time:        time.Now().UTC(),
+		Op:          audit.OpUpdateEntity,
+		Subject:     &audit.Subject{Kind: "entity", Type: rw.Type, ID: rw.ID},
+		Principal:   principal.From(ctx),
+		TriggeredBy: "rename:" + oldID + "->" + newID,
+		AssertedBy:  audit.AssertedByFrom(ctx),
+		Summary:     summary,
+	})
+}
+
 // updateEntitySummary builds an update-entity record's Summary
 // from the old / new entity state. Returns "updated" if no
 // property names changed (content-only edit or no diff at all);

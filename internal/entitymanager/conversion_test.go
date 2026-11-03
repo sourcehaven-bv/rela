@@ -990,3 +990,49 @@ func (h *conversionHooks) RecordRelationVersion(_ context.Context, v entitymanag
 func (*conversionHooks) RelationRecordID(context.Context, entity.RelationKey) (int64, error) {
 	return fakeLineageID, nil
 }
+
+// TestConvert_RewritesMentionsAndAuditsThem pins the conversion side of
+// TKT-J6GISC3 on a store that rewrites mention text: the converted row keeps
+// the rewritten self-mention, and each other rewritten body gets an audit
+// record naming the rename that caused it.
+func TestConvert_RewritesMentionsAndAuditsThem(t *testing.T) {
+	t.Parallel()
+	f := newConversionFixture(t, conversionOptions{})
+	ctx := context.Background()
+	note := entity.New("NOTE-1", "note")
+	note.SetString("title", "Quick note")
+	note.Content = "This is `NOTE-1`."
+	if err := f.st.CreateEntity(ctx, note); err != nil {
+		t.Fatalf("seed note: %v", err)
+	}
+	peer := entity.New("PEER-1", "peer")
+	peer.Content = "See `NOTE-1`."
+	if err := f.st.CreateEntity(ctx, peer); err != nil {
+		t.Fatalf("seed peer: %v", err)
+	}
+
+	result, err := f.conv.Convert(ctx, entitymanager.ConversionRequest{Definition: "note-to-task", SourceID: "NOTE-1"})
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	newID := result.Entity.ID
+	if want := "This is `" + newID + "`."; result.Entity.Content != want {
+		t.Errorf("converted content = %q, want %q", result.Entity.Content, want)
+	}
+	got, err := f.st.GetEntity(ctx, peer.Ref())
+	if err != nil {
+		t.Fatalf("read peer: %v", err)
+	}
+	if want := "See `" + newID + "`."; got.Content != want {
+		t.Errorf("peer content = %q, want %q", got.Content, want)
+	}
+	var rewrites []audit.Record
+	for _, r := range f.auditOps(audit.OpUpdateEntity) {
+		if r.TriggeredBy == "rename:NOTE-1->"+newID {
+			rewrites = append(rewrites, r)
+		}
+	}
+	if len(rewrites) != 1 || rewrites[0].Subject.ID != peer.ID || rewrites[0].Subject.Type != peer.Type {
+		t.Errorf("mention rewrite audit = %+v", rewrites)
+	}
+}

@@ -3068,6 +3068,31 @@ page. It is shown by default. It is hidden when `mentioned_by_panel` is
 `false`, and when the type's view collects backlinks itself through a
 [`mentioned_by` step](#backlinks-mentioned_by).
 
+#### Mentions after a rename
+
+A rename or a type conversion that gives an entity a new id keeps the
+mentions of its old id working. How depends on the storage backend:
+
+- **Files (the default backend):** the rename rewrites every entity body
+  that mentions the old id, so the files name the new id. Each rewritten
+  body is recorded in the audit log as an update caused by the rename, and
+  shows up in version control like any other edit. The rewrite does not
+  reach:
+  - relation bodies;
+  - deleted entities;
+  - a body that mentions more ids than the mention index keeps;
+  - a mention of the old id that is added after the rename.
+
+  If a body cannot be rewritten, the rename still succeeds and the server
+  logs a warning.
+- **SQLite and PostgreSQL:** the rename leaves the bodies as they are. The
+  old id is retired: it points at the new id, and no new entity can take it.
+  A mention of the old id, written before or after the rename, links to the
+  entity and counts as one of its backlinks. The new id stays reserved too,
+  even after its entity is deleted, so an unrelated entity cannot inherit
+  those mentions. Renaming the entity back onto its old id is allowed and
+  ends the retirement.
+
 ### Duplicating an entity
 
 The entity detail page offers a **Duplicate** action for every type you may
@@ -3128,8 +3153,15 @@ commands, the header create menu and **Edit** in the row. Every other action,
 including History, Export, Duplicate, Delete and the conversions, moves into the
 "⋯" menu. The title keeps a minimum width, and button labels do not wrap.
 
-The conversion form shows mapped destination fields and any
-required fields that still need values. Its preview lists relations that will
+The conversion form asks for the destination fields the mapping does not
+fill. Each field uses the widget, label and order of the destination type's
+create form; a field that form leaves out gets the default widget for its
+property type. Required fields come first. The other fields sit under
+**More fields**, which opens when one of them has an error. A required field
+stays in the form even when the create form hides it. File properties are not
+in the form: they are set on the new entity after the conversion. When the
+mapping does not set the body, the form edits it in the same markdown editor
+as the entity form. Its preview lists relations that will
 be remapped or dropped; the user confirms before saving. The form has two
 steps: **Review** runs the preview, and when it passes the button changes to
 **Convert**, which saves. A refused preview or conversion shows its error in the

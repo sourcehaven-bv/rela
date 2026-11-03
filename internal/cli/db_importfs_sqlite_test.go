@@ -196,6 +196,7 @@ func TestDBImportFS_SQLiteTablesAreAccounted(t *testing.T) {
 		"channel_mentions":   "not copied yet: fs channels live in .rela/channels (TKT-DD8B6I)",
 		"channel_types":      "not copied yet: recorded again when the server first starts on the database",
 		"channel_type_refs":  "not copied yet: recorded again when the server first starts on the database",
+		"retired_ids":        "nothing to copy: an fs rename rewrites mentions and retires no id",
 	}
 	// The full-text index, FTS5's shadow tables and the backlink fan-out are
 	// filled by triggers on entities, so the entity copy fills them.

@@ -145,8 +145,11 @@ func parseTime(s string) (time.Time, error) { return time.Parse(time.RFC3339Nano
 // +1 exported / +1 method (TKT-6I2OPG): Rollup, the optional store.Rollupper
 // capability. Its SQL builder is free functions in rollup.go.
 //
-//plimsoll:max-methods=56
-//plimsoll:max-exported-methods=38
+// +1 exported / +1 method (TKT-J6GISC3): Successors, the optional
+// store.RetiredIDs capability. Its helpers are free functions in retired.go.
+//
+//plimsoll:max-methods=57
+//plimsoll:max-exported-methods=39
 type Store struct {
 	db *sql.DB
 

@@ -68,3 +68,14 @@ func mentionSourcesOf(
 	}
 	return idx.MentionSources(ctx, target, after, limit)
 }
+
+// successorsOf answers [store.RetiredIDs] for a decorator. A store that does
+// not retire ids has none to report, so it answers with an empty map: unlike
+// a missing mention index, that answer is true rather than unknown.
+func successorsOf(ctx context.Context, s store.Store, ids []string) (map[string]string, error) {
+	retired, ok := s.(store.RetiredIDs)
+	if !ok {
+		return map[string]string{}, nil
+	}
+	return retired.Successors(ctx, ids)
+}

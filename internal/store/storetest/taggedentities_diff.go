@@ -116,6 +116,12 @@ func (h *tagHarness) runRandomTagHistory(t *testing.T, seed uint64) {
 	rng := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
 	ids := []string{"FEAT-1", "FEAT-2", "FEAT-3"}
 	alive := map[string]*lifecycle{}
+	// reserved holds the ids a rename retired, by the lifecycle that retired
+	// them, on a store with [store.RetiredIDs]: no create may take one, and
+	// only its own lifecycle may rename back onto it. A deleted lifecycle that
+	// retired an id keeps its last id reserved too, as the successor.
+	_, retires := s.(store.RetiredIDs)
+	reserved := map[string]*lifecycle{}
 	var tags []*lifecycle // tags[k] is the lifecycle tag t<k> was put on
 	body := 0
 	next := func() string { body++; return fmt.Sprint("b", body) }
@@ -125,6 +131,9 @@ func (h *tagHarness) runRandomTagHistory(t *testing.T, seed uint64) {
 		lc := alive[id]
 		switch op := rng.IntN(5); {
 		case lc == nil && op < 4:
+			if reserved[id] != nil {
+				continue
+			}
 			require.NoError(t, s.CreateEntity(ctx(), feature(id, next())))
 			h.sweepNow(t, s)
 			alive[id] = &lifecycle{id: id}
@@ -135,10 +144,16 @@ func (h *tagHarness) runRandomTagHistory(t *testing.T, seed uint64) {
 			h.sweepNow(t, s)
 		case op == 1:
 			to := ids[rng.IntN(len(ids))]
-			if alive[to] != nil {
+			if alive[to] != nil || (reserved[to] != nil && reserved[to] != lc) {
 				continue
 			}
 			renameWithVersion(t, s, id, to, fmt.Sprint("b", body))
+			if retires {
+				delete(reserved, to)
+				if id != to {
+					reserved[id] = lc
+				}
+			}
 			delete(alive, id)
 			lc.id = to
 			alive[to] = lc
@@ -146,6 +161,12 @@ func (h *tagHarness) runRandomTagHistory(t *testing.T, seed uint64) {
 			deleteWithVersion(t, s, id)
 			delete(alive, id)
 			lc.deleted = true
+			for _, holder := range reserved {
+				if holder == lc {
+					reserved[id] = lc
+					break
+				}
+			}
 		default:
 			name := fmt.Sprint("t", len(tags))
 			_, err := tg.TagCurrent(ctx(), tagReq(t, entity.Ref{ID: id}, name))

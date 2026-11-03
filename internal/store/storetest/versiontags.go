@@ -370,7 +370,12 @@ func (h *tagHarness) runLifecycleTests(t *testing.T) {
 		renameAToBWithVersion(t, s, "body")
 		requireTagAt(t, tg, entity.Ref{ID: "FEAT-B"}, "base", 1)
 
-		// A later entity on the freed id does not inherit the tag.
+		// A later entity on the freed id does not inherit the tag. A store
+		// with store.RetiredIDs keeps the id reserved, so none can take it.
+		if _, retires := s.(store.RetiredIDs); retires {
+			require.ErrorIs(t, s.CreateEntity(ctx(), feature("FEAT-A", "unrelated")), store.ErrConflict)
+			return
+		}
 		require.NoError(t, s.CreateEntity(ctx(), feature("FEAT-A", "unrelated")))
 		h.sweepNow(t, s)
 		requireNoTag(t, tg, entity.Ref{ID: "FEAT-A"}, "base")

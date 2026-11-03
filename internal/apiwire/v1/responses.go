@@ -1819,6 +1819,9 @@ type ActionResponse struct {
 // `entity.InaccessibleReason` value as a string so the wire shape stays
 // stable across reason-enum additions.
 type Mention struct {
+	// ID is the id the entity carries now, set only when the mention names
+	// an id a rename retired (TKT-J6GISC3). The SPA links to it.
+	ID                 string `json:"id,omitempty"`
 	Type               string `json:"type"`
 	Title              string `json:"title"`
 	Inaccessible       bool   `json:"inaccessible,omitempty"`

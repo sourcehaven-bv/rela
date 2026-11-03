@@ -33,9 +33,10 @@ func renameEntity(
 		return nil, translateRenameErr(err, oldID, newID)
 	}
 	return &entity.RenameResult{
-		OldID:            oldID,
-		NewID:            newID,
-		RelationsUpdated: res.RelationsUpdated,
+		OldID:             oldID,
+		NewID:             newID,
+		RelationsUpdated:  res.RelationsUpdated,
+		MentionsRewritten: res.MentionsRewritten,
 	}, nil
 }
 

@@ -84,9 +84,7 @@ describe('markdown', () => {
       // container (styles/markdown-content.css). This asserts the structural
       // contract that styling relies on: GFM table markdown must produce a
       // real <table> with header and body cells, not a paragraph of pipes.
-      const result = renderMarkdown(
-        '| Kans | Niveau |\n| --- | --- |\n| 1 | Onwaarschijnlijk |',
-      )
+      const result = renderMarkdown('| Kans | Niveau |\n| --- | --- |\n| 1 | Onwaarschijnlijk |')
       expect(result).toContain('<table>')
       expect(result).toContain('<th>Kans</th>')
       expect(result).toContain('<td>Onwaarschijnlijk</td>')
@@ -166,7 +164,7 @@ describe('markdown', () => {
       // Pin position: a single <br> must sit between "foo" and "bar",
       // not merely be present somewhere in the paragraph.
       const childTags = Array.from(paragraphs[0].childNodes).map((n) =>
-        n.nodeType === Node.ELEMENT_NODE ? (n as Element).tagName.toLowerCase() : '#text',
+        n.nodeType === Node.ELEMENT_NODE ? (n as Element).tagName.toLowerCase() : '#text'
       )
       expect(childTags).toContain('br')
       expect(paragraphs[0].querySelectorAll('br').length).toBe(1)
@@ -185,7 +183,12 @@ describe('markdown', () => {
     describe('refResolver (entity-ID code spans)', () => {
       // A reusable resolver covering the seed below; each test passes only
       // the IDs it expects to hit, mirroring the server-side mentions map.
-      function makeResolver(map: Record<string, { type: string; title: string; inaccessible?: boolean; inaccessibleReason?: string }>) {
+      function makeResolver(
+        map: Record<
+          string,
+          { type: string; title: string; inaccessible?: boolean; inaccessibleReason?: string }
+        >
+      ) {
         return (id: string) => map[id] ?? null
       }
 
@@ -209,11 +212,22 @@ describe('markdown', () => {
         expect(result).toContain('Data Entry Web UI')
       })
 
+      it('links a renamed entity at its current id and keeps the old id out of the href', () => {
+        const resolver = (id: string) =>
+          id === 'FEAT-1' ? { type: 'ticket', title: 'Converted', targetId: 'TKT-9' } : null
+        const result = renderMarkdown('see `FEAT-1`', resolver)
+        expect(result).toContain('href="/entity/ticket/TKT-9"')
+        expect(result).toContain('Converted')
+      })
+
       it('carries the page world on the link so the target opens in it', () => {
         const resolver = makeResolver({
           'POL-1': { type: 'policy', title: 'Access policy' },
         })
-        const result = renderMarkdown('see `POL-1`', { refResolver: resolver, world: 'draft review' })
+        const result = renderMarkdown('see `POL-1`', {
+          refResolver: resolver,
+          world: 'draft review',
+        })
         expect(result).toContain('href="/entity/policy/POL-1?world=draft%20review"')
       })
 
@@ -383,10 +397,7 @@ describe('markdown', () => {
         const resolver = makeResolver({
           'TKT-LXYHQ': { type: 'ticket', title: 'Resolve refs' },
         })
-        const result = renderMarkdown(
-          '`TKT-LXYHQ` is real, `TKT-NOPE` is not',
-          resolver,
-        )
+        const result = renderMarkdown('`TKT-LXYHQ` is real, `TKT-NOPE` is not', resolver)
         expect(result).toContain('href="/entity/ticket/TKT-LXYHQ"')
         expect(result).toContain('<code>TKT-NOPE</code>')
       })
@@ -572,7 +583,7 @@ describe('markdown', () => {
         return Array.from(el.querySelectorAll('*')).flatMap((e) =>
           Array.from(e.attributes)
             .map((a) => a.name)
-            .filter((n) => /^on/i.test(n)),
+            .filter((n) => /^on/i.test(n))
         )
       }
       function hrefs(el: Element): string[] {
@@ -588,11 +599,15 @@ describe('markdown', () => {
           expect(d.textContent).toContain('label')
         })
         it('script elements', async () => {
-          const d = await render(`<svg ${NS}><script>alert(1)${CLOSE_SCRIPT}<text>label</text></svg>`)
+          const d = await render(
+            `<svg ${NS}><script>alert(1)${CLOSE_SCRIPT}<text>label</text></svg>`
+          )
           expect(d.querySelector('script')).toBeNull()
         })
         it('javascript: URLs', async () => {
-          const d = await render(`<svg ${NS}><a href="javascript:alert(1)"><text>x</text></a></svg>`)
+          const d = await render(
+            `<svg ${NS}><a href="javascript:alert(1)"><text>x</text></a></svg>`
+          )
           expect(hrefs(d).some((h) => /javascript:/i.test(h))).toBe(false)
         })
       })
@@ -603,7 +618,9 @@ describe('markdown', () => {
       // survives while the payload does not.
       describe('strips from inside a foreignObject label', () => {
         it('img with an onerror handler — and the img itself', async () => {
-          const d = await render(`<svg ${NS}>${label('<img src="x" onerror="alert(1)"/><span>L</span>')}</svg>`)
+          const d = await render(
+            `<svg ${NS}>${label('<img src="x" onerror="alert(1)"/><span>L</span>')}</svg>`
+          )
           expect(eventHandlers(d)).toEqual([])
           // Handler-stripped is not enough: strict mermaid already does that
           // and still emits the element, which fetches an attacker-chosen URL.
@@ -611,7 +628,9 @@ describe('markdown', () => {
           expect(d.textContent).toContain('L')
         })
         it('script elements', async () => {
-          const d = await render(`<svg ${NS}>${label(`<script>alert(1)${CLOSE_SCRIPT}<span>L</span>`)}</svg>`)
+          const d = await render(
+            `<svg ${NS}>${label(`<script>alert(1)${CLOSE_SCRIPT}<span>L</span>`)}</svg>`
+          )
           expect(d.querySelector('script')).toBeNull()
           expect(d.textContent).toContain('L')
         })
@@ -621,11 +640,15 @@ describe('markdown', () => {
           expect(d.textContent).toContain('L')
         })
         it('handlers on the label wrapper itself', async () => {
-          const d = await render(`<svg ${NS}><foreignObject><div ${XH} onclick="alert(1)">L</div></foreignObject></svg>`)
+          const d = await render(
+            `<svg ${NS}><foreignObject><div ${XH} onclick="alert(1)">L</div></foreignObject></svg>`
+          )
           expect(eventHandlers(d)).toEqual([])
         })
         it('iframes and other embedded media', async () => {
-          const d = await render(`<svg ${NS}>${label('<iframe src="javascript:alert(1)"></iframe>L')}</svg>`)
+          const d = await render(
+            `<svg ${NS}>${label('<iframe src="javascript:alert(1)"></iframe>L')}</svg>`
+          )
           expect(d.querySelector('iframe')).toBeNull()
         })
       })
@@ -636,7 +659,7 @@ describe('markdown', () => {
       // choosing — and it must never reach the document.
       it('ignores a spoofed pairing attribute and leaves none behind', async () => {
         const d = await render(
-          `<svg ${NS}><rect data-rela-label-slot="0"/><g id="real">${label('Real')}</g></svg>`,
+          `<svg ${NS}><rect data-rela-label-slot="0"/><g id="real">${label('Real')}</g></svg>`
         )
         expect(d.querySelector('rect')!.textContent).toBe('')
         expect(d.querySelector('#real')!.textContent).toBe('Real')
@@ -658,7 +681,9 @@ describe('markdown', () => {
       // broken configurations too.
       describe('preserves what mermaid actually emits', () => {
         it('flowchart label markup: wrapper, .nodeLabel, <p>, <br>, style', async () => {
-          const d = await render(`<svg ${NS} viewBox="0 0 100 50"><g class="node"><rect width="40" height="20"></rect>${realLabel}</g><path class="edge" d="M0,0 L10,10"></path></svg>`)
+          const d = await render(
+            `<svg ${NS} viewBox="0 0 100 50"><g class="node"><rect width="40" height="20"></rect>${realLabel}</g><path class="edge" d="M0,0 L10,10"></path></svg>`
+          )
           expect(d.querySelector('svg')).toBeTruthy()
           expect(d.querySelector('rect')).toBeTruthy()
           expect(d.querySelector('path')).toBeTruthy()
@@ -675,7 +700,9 @@ describe('markdown', () => {
         })
 
         it('sequence-diagram SVG <text> labels', async () => {
-          const d = await render(`<svg ${NS}><text>Alice</text><line x1="0" y1="0" x2="9" y2="9"/></svg>`)
+          const d = await render(
+            `<svg ${NS}><text>Alice</text><line x1="0" y1="0" x2="9" y2="9"/></svg>`
+          )
           expect(d.textContent).toContain('Alice')
           expect(d.querySelector('line')).toBeTruthy()
         })
@@ -686,7 +713,7 @@ describe('markdown', () => {
         it('each label with its own shape', async () => {
           const d = await render(
             `<svg ${NS}><g id="one"><rect/>${label('<span>First</span>')}</g>` +
-              `<g id="two"><rect/>${label('<span>Second</span>')}</g></svg>`,
+              `<g id="two"><rect/>${label('<span>Second</span>')}</g></svg>`
           )
           expect(d.querySelector('#one')!.textContent).toBe('First')
           expect(d.querySelector('#two')!.textContent).toBe('Second')
@@ -725,7 +752,8 @@ describe('markdown', () => {
 
     it('is a no-op when no server URL is configured (undefined)', () => {
       const container = document.createElement('div')
-      container.innerHTML = '<pre><code class="language-plantuml">@startuml\nA->B\n@enduml</code></pre>'
+      container.innerHTML =
+        '<pre><code class="language-plantuml">@startuml\nA->B\n@enduml</code></pre>'
 
       const count = renderPlantUMLDiagrams(container, undefined)
 
@@ -876,7 +904,9 @@ describe('markdown', () => {
 
     it('wraps every table, not just the first', () => {
       const el = document.createElement('div')
-      el.innerHTML = wrapTablesForScroll('<table><tbody></tbody></table><p>x</p><table><tbody></tbody></table>')
+      el.innerHTML = wrapTablesForScroll(
+        '<table><tbody></tbody></table><p>x</p><table><tbody></tbody></table>'
+      )
       expect(el.querySelectorAll('.md-table-scroll').length).toBe(2)
     })
 
@@ -942,7 +972,9 @@ describe('markdown', () => {
 
     it('wraps a table inside a blockquote or list item', () => {
       const bq = parse(
-        wrapTablesForScroll('<blockquote><table><tbody><tr><td>q</td></tr></tbody></table></blockquote>')
+        wrapTablesForScroll(
+          '<blockquote><table><tbody><tr><td>q</td></tr></tbody></table></blockquote>'
+        )
       )
       expect(bq.querySelectorAll('blockquote > .md-table-scroll > table').length).toBe(1)
 
@@ -953,7 +985,9 @@ describe('markdown', () => {
     })
 
     it('collapses whitespace in the accessible name', () => {
-      const el = parse(wrapTablesForScroll('<table><thead><tr><th>a\n   b</th></tr></thead></table>'))
+      const el = parse(
+        wrapTablesForScroll('<table><thead><tr><th>a\n   b</th></tr></thead></table>')
+      )
       expect(el.querySelector('.md-table-scroll')?.getAttribute('aria-label')).toBe('Table: a b')
     })
 
@@ -962,5 +996,4 @@ describe('markdown', () => {
       expect(result).toContain('md-table-scroll')
     })
   })
-
 })
