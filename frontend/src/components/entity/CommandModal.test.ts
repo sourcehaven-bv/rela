@@ -31,8 +31,12 @@ describe('CommandModal confirm integration', () => {
             cancelLabel: state.cancelLabel,
             busy: state.busy,
             danger: state.danger,
-            onConfirm: () => { onConfirmEvent().catch(() => {}) },
-            onCancel: () => { onCancelEvent() },
+            onConfirm: () => {
+              onConfirmEvent().catch(() => {})
+            },
+            onCancel: () => {
+              onCancelEvent()
+            },
           }),
         ]
       },
@@ -49,9 +53,7 @@ describe('CommandModal confirm integration', () => {
   // role rather than by rela's old .modal-actions class.
   function modalActionButtons(): HTMLButtonElement[] {
     return Array.from(
-      document.querySelectorAll<HTMLButtonElement>(
-        '[role="alertdialog"] .rl-modal__footer button'
-      )
+      document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] .rl-modal__footer button')
     )
   }
 
@@ -61,9 +63,7 @@ describe('CommandModal confirm integration', () => {
     originalFetch = globalThis.fetch
     // Resolve immediately with an empty body so runCommand finishes quickly
     // when it does fire.
-    fetchSpy = vi.fn().mockResolvedValue(
-      new Response(null, { status: 200 })
-    )
+    fetchSpy = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
     globalThis.fetch = fetchSpy as never
   })
 

@@ -153,7 +153,7 @@ describe('EntityDetail accepting a suggestion', () => {
 
   // A kanban card shows its entity's comment count, and comment writes raise
   // no store event, so a change here must refetch the lists itself.
-  it('refetches the type\'s lists when a comment changes', async () => {
+  it("refetches the type's lists when a comment changes", async () => {
     const w = mount(EntityDetail, {
       props: { entityType: 'ticket', entityId: 'TKT-1' },
       global: { plugins: [pinia, PiniaColada] },

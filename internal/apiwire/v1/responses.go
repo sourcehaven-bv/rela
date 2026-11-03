@@ -1559,6 +1559,18 @@ type ViewSection struct {
 	// That is what keeps TKT-651W's read-only default intact and lets
 	// TestV1Views_NoAddOrLinkInfoOnSections keep asserting absence.
 	Create *ViewSectionCreate `json:"create,omitempty"`
+
+	// Totals names the entry properties shown under a table section
+	// (TKT-4Q2EIVZ). The values are not repeated here: a client reads them
+	// from the entry, which is already gated for the reader.
+	Totals []SectionTotal `json:"totals,omitempty"`
+}
+
+// SectionTotal is one line of [ViewSection.Totals].
+type SectionTotal struct {
+	Property string `json:"property"`
+	Label    string `json:"label,omitempty"`
+	Emphasis bool   `json:"emphasis,omitempty"`
 }
 
 // ViewSectionCreate describes a section's create-related affordance.
@@ -1669,6 +1681,10 @@ type ViewColumn struct {
 	Label    string `json:"label,omitempty"`
 	Relation string `json:"relation,omitempty"`
 	Link     string `json:"link,omitempty"`
+	// Render is "input" on a table column that may be edited in place
+	// (TKT-4Q2EIVZ), empty otherwise. A cell is an input only when its row's
+	// `_fields` verdict also allows the write.
+	Render string `json:"render,omitempty"`
 }
 
 // ViewRow represents a table row.
@@ -1681,6 +1697,12 @@ type ViewRow struct {
 	// Self addresses the ROW this entry describes, face included — the same
 	// contract as [EntityLinks.Self]. See [ViewEntity.Self].
 	Self string `json:"_self,omitempty"`
+	// Props and FieldAffordances carry the row's typed property values and
+	// per-field write verdicts, with the same contract as on [ViewEntity].
+	// Set only on a row whose columns include an editable one (TKT-4Q2EIVZ),
+	// so a read-only table is byte-identical to what it was before.
+	Props            map[string]any              `json:"_props,omitempty"`
+	FieldAffordances *map[string]FieldAffordance `json:"_fields,omitempty"`
 }
 
 // ViewTreeNode is one row of a `display: nested` section: an entity, its

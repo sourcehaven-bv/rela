@@ -332,8 +332,9 @@ every field it writes, and merges on a 412 (TKT-2VDVHF; API contract in
   then shows the other side's clean hunks with the user's lines in each
   conflicting region, so the user's next edit overwrites only those regions.
 - **A snapshot without `_versions` saves unguarded** until its first save
-  returns tokens. List-section rows are in that state today (TKT-MK9NJB), and
-  so is every incoming relation list (TKT-E9WXPU).
+  returns tokens. List-section and editable table rows are in that state today
+  (TKT-MK9NJB, TKT-4Q2EIVZ), and so is every incoming relation list
+  (TKT-E9WXPU).
 - **A 412 is never read as the client's own write** (BUG-04V034W). Tokens
   are derived from the value, so a value someone else writes back to one this
   client saved has the same token as that save; resending on it would

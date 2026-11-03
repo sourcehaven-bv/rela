@@ -2561,6 +2561,7 @@ sections:
 | `hide_empty`    | bool   | Leave the section out when the collection is empty (see below) |
 | `link`          | string | `detail` links entity titles to their detail pages      |
 | `create`        | map    | Offer a "create related entity" button (see below)      |
+| `totals`        | list   | Entry properties shown under the table (`table` mode; see Editable table cells) |
 
 Each entry under `fields:` takes:
 
@@ -2825,6 +2826,69 @@ caller may not edit still renders as display. Config can only narrow.
 A field belonging to a state machine renders its transition control instead of
 an ordinary widget when `render: input`; on `render: display` it renders the
 plain value.
+
+### Editable table cells and totals
+
+A `display: table` section can let readers edit some of its columns in place.
+Set `render: input` on each column that should edit:
+
+```yaml
+sections:
+  - heading: Quote lines
+    source: lines
+    display: table
+    columns:
+      - property: description
+        render: input
+      - property: quantity
+        render: input
+      - property: unit_price
+        render: input
+      - property: line_total     # read-only: no render
+    totals:
+      - property: subtotal
+      - property: vat
+        label: VAT
+      - property: total
+        emphasis: true
+```
+
+Each editable cell saves on its own, like a field in a properties section. The
+save indicator shows in the row's last cell, beside the edit button.
+
+Rules worth knowing:
+
+- **Per column only.** A section's `render:` does not apply to table columns.
+  Each column that should edit says `render: input` itself.
+- **The ACL still decides.** As with fields, `render: input` cannot grant a
+  write. A cell the reader may not write shows its value read-only.
+- **A plain property column only.** Config load refuses `render: input` on a
+  relation, face or busy column, and on a column with `link:`, because a click
+  on the cell would open the link instead of editing it.
+- **Not every property type.** Config load also refuses `render: input` on a
+  `file` property (edit files on the form) and on a computed, roll-up or
+  `external_ref` property, which no reader can write.
+- **Table sections only.** `render:` on a list column, a dashboard card column,
+  a `nested` level or a side-panel section is a config-load error.
+- **Up to 100 rows.** A section with more rows shows every cell read-only. Each
+  editable row keeps its own save state, and a section that long is more often
+  read than edited.
+
+`totals:` shows properties of the view's entry under the table, as a short
+list of label and value. Each entry takes:
+
+| Field      | Type   | Description                                                  |
+| ---------- | ------ | ------------------------------------------------------------ |
+| `property` | string | A property of the view's entry type. Required.                |
+| `label`    | string | Optional. Defaults to the property's label.                   |
+| `emphasis` | bool   | Optional. Marks the line that matters most, such as the total. |
+
+The values are not summed on the page. Use a `rollup:` property on the entry
+type when a total is computed from the rows (see the metamodel guide). After a
+cell in a section with totals saves, the page reloads the view, so a roll-up
+shows its new value. A total the reader may not see, or one that is not set,
+is left out rather than shown as zero. `totals:` is valid on `display: table`
+sections only.
 
 ### Widget Overrides
 

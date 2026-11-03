@@ -123,10 +123,7 @@ describe('CopyMenu', () => {
   })
 
   it('closes the menu after a choice', async () => {
-    const offers = [
-      offer({ name: 'a', label: 'A' }),
-      offer({ name: 'b', label: 'B' }),
-    ]
+    const offers = [offer({ name: 'a', label: 'A' }), offer({ name: 'b', label: 'B' })]
     const w = mount(CopyMenu, { props: { offers }, attachTo: document.body })
     await w.get('button').trigger('click')
     expect(menuItems()).toHaveLength(2)

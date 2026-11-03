@@ -215,6 +215,11 @@ type SectionRowData struct {
 	Content    string
 	// Self addresses the row, face included — see [v1.ViewRow.Self].
 	Self string
+	// Props and FieldVerdicts are set only when one of the row's columns is
+	// editable (TKT-4Q2EIVZ), with the same contract as on
+	// [SectionEntityData].
+	Props         map[string]any
+	FieldVerdicts map[string]v1.FieldAffordance
 }
 
 // GroupData holds a group of rows/entities for grouped table/card display.
@@ -280,6 +285,9 @@ type SectionData struct {
 	// (TKT-R4BMJM). Nil unless the section's config carries a `create:` block,
 	// which is what keeps TKT-651W's read-only default intact.
 	CreateInfo *SectionCreateInfo
+	// totals names the entry properties shown under a table (TKT-4Q2EIVZ).
+	// Unexported like hideEmpty: only the wire converter reads it.
+	totals []dataentryconfig.SectionTotal
 
 	// Tree holds the parent rows of a `display: nested` section, each with its
 	// own children. Empty for every other display mode.
@@ -385,8 +393,10 @@ func (h *viewsHandler) buildTableSection(
 			if def, ok := s.Meta.GetEntityDef(g.entityType); ok && (def.Label != "" || def.LabelPlural != "") {
 				gd.GroupName = def.GetLabelPlural()
 			}
+			editable := hasEditableColumn(cols)
 			for _, e := range g.entities {
-				gd.Rows = append(gd.Rows, buildSectionRow(s, cols, e, relValues))
+				row := buildSectionRow(s, cols, e, relValues)
+				gd.Rows = append(gd.Rows, withRowEditData(ctx, &h.affordances, row, e, editable))
 			}
 			sd.Groups = append(sd.Groups, gd)
 		}
@@ -397,8 +407,10 @@ func (h *viewsHandler) buildTableSection(
 	// for every target — instead of one relation query plus one
 	// entity load per row per column (TKT-1U8XYN).
 	relValues := h.resolveRelationColumns(ctx, s, sec.Columns, entities)
+	editable := hasEditableColumn(sec.Columns)
 	buildRow := func(e *entity.Entity) SectionRowData {
-		return buildSectionRow(s, sec.Columns, e, relValues)
+		row := buildSectionRow(s, sec.Columns, e, relValues)
+		return withRowEditData(ctx, &h.affordances, row, e, editable)
 	}
 	if sec.GroupBy == "" {
 		for _, e := range entities {
@@ -436,6 +448,31 @@ func (h *viewsHandler) buildTableSection(
 	}
 }
 
+// hasEditableColumn reports whether any column opts into in-place editing.
+func hasEditableColumn(cols []ListColumn) bool {
+	for _, c := range cols {
+		if c.Render == dataentryconfig.RenderInput {
+			return true
+		}
+	}
+	return false
+}
+
+// withRowEditData attaches the values and write verdicts an editable table
+// row needs (TKT-4Q2EIVZ). Both come from the same gated helpers as a cards
+// or list row, and the verdicts were primed for the whole section before the
+// display switch, so this adds no per-row query.
+func withRowEditData(
+	ctx context.Context, aff *affordanceService, row SectionRowData, e *entity.Entity, editable bool,
+) SectionRowData {
+	if !editable {
+		return row
+	}
+	row.Props = aff.copyVisibleProperties(ctx, e)
+	row.FieldVerdicts = aff.computeFieldAffordances(ctx, e)
+	return row
+}
+
 // buildSections builds template-ready section data from view sections and a view result.
 func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection, result *viewResult) []SectionData {
 	s := h.schema()
@@ -448,6 +485,7 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 			Display:      sec.Display,
 			EmptyMessage: sec.EmptyMessage,
 			hideEmpty:    sec.HideEmpty,
+			totals:       sec.Totals,
 		}
 
 		if sec.Source == "entry" {

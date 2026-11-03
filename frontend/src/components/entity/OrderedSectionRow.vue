@@ -76,9 +76,8 @@ function onHandleKey(event: KeyboardEvent) {
 
 <style scoped>
 /*
- * The table's cell rule lives in EntityDetail's scoped styles, which reach
- * the caller's cells but not this one, so the handle cell repeats its
- * border.
+ * EntityDetail's table cell rule skips this cell, so the handle cell keeps
+ * its narrow padding and repeats the border.
  */
 .ordered-row__handle-cell {
   width: 1px;

@@ -362,6 +362,9 @@ var locked = map[File][]string{
 		"dashboards.*.cards.[].columns.[].face",
 		// Busy columns are list-only (TKT-TU3XH4); the load refuses them here.
 		"dashboard.cards.[].columns.[].busy", "dashboards.*.cards.[].columns.[].busy",
+		// Editable columns are view-table-only (TKT-4Q2EIVZ); the load refuses them here.
+		"lists.*.columns.[].render", "dashboard.cards.[].columns.[].render",
+		"dashboards.*.cards.[].columns.[].render",
 	},
 }
 
