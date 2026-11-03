@@ -581,12 +581,14 @@ func renameActor(d *document, oldOwner, newOwner string) bool {
 	return changed
 }
 
-// DeleteOwner drops every pile owned by owner.
+// DeleteOwner drops every pile owned by owner and clears owner as the actor
+// of every item in anyone's pile.
 func (s *Store) DeleteOwner(ctx context.Context, owner string) error {
 	return s.write(ctx, func(d *document) (bool, error) {
 		before := len(d.Piles)
 		d.Piles = slices.DeleteFunc(d.Piles, func(p storedPile) bool { return p.Owner == owner })
-		return len(d.Piles) != before, nil
+		cleared := renameActor(d, owner, "")
+		return len(d.Piles) != before || cleared, nil
 	})
 }
 

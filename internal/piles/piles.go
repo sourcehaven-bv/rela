@@ -238,7 +238,9 @@ type Store interface {
 	// RenameOwner moves every pile owned by oldOwner to newOwner, and sets
 	// newOwner as the actor of every item oldOwner caused, in any pile.
 	RenameOwner(ctx context.Context, oldOwner, newOwner string) error
-	// DeleteOwner drops every pile owned by owner.
+	// DeleteOwner drops every pile owned by owner, and clears owner as the
+	// actor of every item in any pile, so a later entity with the same id is
+	// not named as its sender.
 	DeleteOwner(ctx context.Context, owner string) error
 	// DeleteFace drops every item naming exactly that face of id.
 	DeleteFace(ctx context.Context, id string, face entity.Face) error

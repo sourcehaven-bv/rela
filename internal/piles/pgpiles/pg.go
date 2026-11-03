@@ -556,13 +556,18 @@ func (s *Store) DeleteEntity(ctx context.Context, id string) error {
 	return nil
 }
 
-// DeleteOwner drops every pile owned by owner; items go with them through ON
-// DELETE CASCADE.
+// DeleteOwner drops every pile owned by owner, whose items go with them
+// through ON DELETE CASCADE, and clears owner as the actor of every item.
 func (s *Store) DeleteOwner(ctx context.Context, owner string) error {
-	if _, err := s.db.Exec(ctx, `DELETE FROM piles WHERE owner = $1`, owner); err != nil {
-		return fmt.Errorf("pgpiles: delete owned piles: %w", err)
-	}
-	return nil
+	return s.inTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `DELETE FROM piles WHERE owner = $1`, owner); err != nil {
+			return fmt.Errorf("pgpiles: delete owned piles: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE pile_items SET actor = '' WHERE actor = $1`, owner); err != nil {
+			return fmt.Errorf("pgpiles: clear actor: %w", err)
+		}
+		return nil
+	})
 }
 
 // DeleteFace drops items naming exactly that face of id.

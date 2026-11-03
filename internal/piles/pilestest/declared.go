@@ -243,6 +243,17 @@ func runEvictAndPrune(ctx context.Context, t *testing.T, f Factory) {
 		require.Equal(t, "P-NEW", mustPile(ctx, t, s, p).Items[0].Actor, "the actor owns no pile of their own")
 	})
 
+	t.Run("delete owner clears the actor on every pile", func(t *testing.T) {
+		s := f(t)
+		p := createKeyed(ctx, t, s, alice, nil)
+		add(ctx, t, s, p, []string{"A"}, piles.AddOptions{Now: at(1), MaxItems: bigCap,
+			Overflow: piles.EvictReadFirst, Actor: "P-GONE"})
+		require.NoError(t, s.DeleteOwner(ctx, "P-GONE"))
+		got := mustPile(ctx, t, s, p)
+		require.Len(t, got.Items, 1, "the item stays; only its actor goes")
+		require.Empty(t, got.Items[0].Actor)
+	})
+
 	t.Run("rename entity keeps actor, reason and read state", func(t *testing.T) {
 		s := f(t)
 		p := createKeyed(ctx, t, s, alice, nil)
