@@ -1049,7 +1049,7 @@ func viewSectionToV1(sec SectionData, owner map[string]*v1.EntityOwner) v1.ViewS
 	// Convert the nested tree
 	v1Sec.Truncated = sec.Truncated
 	v1Sec.Incomplete = sec.Incomplete
-	v1Sec.Entry = sec.entry
+	v1Sec.Source = sec.source
 	for _, node := range sec.Tree {
 		v1Sec.Tree = append(v1Sec.Tree, sectionTreeNodeToV1(node))
 	}

@@ -34,8 +34,8 @@ export function typesAt(
  * entry, or there is none, it is the number of sections, which puts the
  * block after the last one.
  */
-export function aboveRelationsIndex(sections: readonly { entry?: boolean }[]): number {
-  const i = sections.findIndex((s) => !s.entry)
+export function aboveRelationsIndex(sections: readonly { source?: string }[]): number {
+  const i = sections.findIndex((s) => s.source !== 'entry')
   return i === -1 ? sections.length : i
 }
 
@@ -56,7 +56,7 @@ export type PageItem<S> =
  * the sections change the block moves with its own key rather than
  * remounting, and keeps an open channel and its draft.
  */
-export function withAboveRelationsBlock<S extends { sectionId: string; entry?: boolean }>(
+export function withAboveRelationsBlock<S extends { sectionId: string; source?: string }>(
   sections: readonly S[]
 ): PageItem<S>[] {
   const items: PageItem<S>[] = sections.map((section, sectionIndex) => ({

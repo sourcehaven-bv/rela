@@ -58,7 +58,7 @@ function section(sectionId: string, entry: boolean): ViewSection {
     isEmpty: false,
     isGrouped: false,
     hasContent: entry,
-    ...(entry ? { entry: true } : { entities: [] }),
+    ...(entry ? { source: 'entry' } : { source: 'subs', entities: [] }),
   } as ViewSection
 }
 

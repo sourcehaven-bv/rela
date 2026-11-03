@@ -43,19 +43,27 @@ describe('typesAt', () => {
 })
 
 describe('aboveRelationsIndex', () => {
-  it.each<[string, { entry?: boolean }[], number]>([
-    ['generated view: properties, body, relations', [{ entry: true }, { entry: true }, {}, {}], 2],
-    ['custom view starting with a relation table', [{}, { entry: true }], 0],
-    ['only entry sections', [{ entry: true }, { entry: true }], 2],
+  it.each<[string, { source?: string }[], number]>([
+    [
+      'generated view: properties, body, relations',
+      [{ source: 'entry' }, { source: 'entry' }, { source: 'deps' }, { source: 'subs' }],
+      2,
+    ],
+    ['custom view starting with a relation table', [{ source: 'subs' }, { source: 'entry' }], 0],
+    ['only entry sections', [{ source: 'entry' }, { source: 'entry' }], 2],
     ['no sections', [], 0],
-    ['entry: false counts as not the entry', [{ entry: true }, { entry: false }], 1],
+    ['a collection source is not the entry', [{ source: 'entry' }, { source: 'subs' }], 1],
+    ['a section without a source is not the entry', [{ source: 'entry' }, {}], 1],
   ])('%s', (_name, sections, want) => {
     expect(aboveRelationsIndex(sections)).toBe(want)
   })
 })
 
 describe('withAboveRelationsBlock', () => {
-  const sec = (sectionId: string, entry = false) => ({ sectionId, entry })
+  const sec = (sectionId: string, entry = false) => ({
+    sectionId,
+    source: entry ? 'entry' : 'subs',
+  })
 
   it('puts the block at the index, keyed apart from the sections', () => {
     const items = withAboveRelationsBlock([sec('props', true), sec('subs'), sec('deps')])

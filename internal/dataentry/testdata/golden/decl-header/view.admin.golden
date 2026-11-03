@@ -118,7 +118,7 @@ body:
       ],
       "isGrouped": false,
       "hasContent": false,
-      "entry": true
+      "source": "entry"
     },
     {
       "heading": "",
@@ -128,7 +128,7 @@ body:
       "isGrouped": false,
       "content": "Alpha body.",
       "hasContent": true,
-      "entry": true
+      "source": "entry"
     },
     {
       "heading": "Children",
@@ -222,7 +222,8 @@ body:
         }
       ],
       "isGrouped": false,
-      "hasContent": false
+      "hasContent": false,
+      "source": "children"
     },
     {
       "heading": "Policies",
@@ -270,7 +271,8 @@ body:
         }
       ],
       "isGrouped": false,
-      "hasContent": false
+      "hasContent": false,
+      "source": "policies"
     },
     {
       "heading": "Watchers",
@@ -308,7 +310,8 @@ body:
         }
       ],
       "isGrouped": false,
-      "hasContent": false
+      "hasContent": false,
+      "source": "watchers"
     }
   ]
 }
