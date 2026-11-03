@@ -72,6 +72,7 @@ export { default as RlBulkActionBar } from './components/data/RlBulkActionBar.vu
 export { default as RlKbd } from './components/data/RlKbd.vue'
 export { default as RlCodeBlock } from './components/data/RlCodeBlock.vue'
 export { default as RlSortableList } from './components/data/RlSortableList.vue'
+export { default as RlTotals } from './components/data/RlTotals.vue'
 export { default as RlChangeList } from './components/data/RlChangeList.vue'
 export { default as RlChangeItem } from './components/data/RlChangeItem.vue'
 
@@ -183,7 +184,7 @@ export type {
   RowMove,
 } from './components/table/types'
 export type { SelectOption } from './components/form/types'
-export type { Person, RelatedItem, RelatedMeta, RelatedTone } from './components/data/types'
+export type { Person, RelatedItem, RelatedMeta, RelatedTone, TotalRow } from './components/data/types'
 export type { DateRange } from './components/form/RlDateRangeField.vue'
 export type { MessageTone, ToastAction, ToastMessage } from './components/feedback/types'
 export type { TimelineEntry, TimelineGroup } from './components/feedback/timeline'

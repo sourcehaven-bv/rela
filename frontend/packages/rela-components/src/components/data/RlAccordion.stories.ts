@@ -1,4 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/vue3-vite'
+import { expect, userEvent, within } from 'storybook/test'
+import { ref } from 'vue'
 import RlAccordion from './RlAccordion.vue'
 import RlProgressBar from '../feedback/RlProgressBar.vue'
 import RlText from '../../components/common/RlText.vue'
@@ -86,3 +88,55 @@ export const EpicList: Story = {
 }
 
 export const Collapsed: Story = { args: { open: false } }
+
+/**
+ * One item of a list, with a menu for the item. The menu sits beside the
+ * summary, so opening it does not fold the section. `divider` is off because
+ * the list around it separates its items.
+ */
+export const WithActions: Story = {
+  render: () => ({
+    components: { RlAccordion, RlText },
+    setup: () => ({ pressed: ref(0), open: ref(false) }),
+    template: `
+      <div style="max-width:560px">
+        <RlAccordion title="Hero" meta="Model your domain" :divider="false" :open="open" @toggle="open = $event">
+          <RlText as="p" size="sm" tone="muted">The block's fields go here.</RlText>
+          <template #actions>
+            <button type="button" class="rl-control rl-control--sm" @click="pressed++">Options</button>
+          </template>
+        </RlAccordion>
+        <RlText as="p" size="sm" tone="muted">Pressed {{ pressed }} times; {{ open ? 'open' : 'closed' }}.</RlText>
+      </div>
+    `,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: 'Options' }))
+    await expect(canvas.getByText('Pressed 1 times; closed.')).toBeInTheDocument()
+  },
+}
+
+/**
+ * A summary longer than the row truncates and gives way to the title, which
+ * keeps its full text.
+ */
+export const LongMeta: Story = {
+  args: {
+    title: 'Text',
+    count: undefined,
+    open: false,
+    meta: 'rela turns a YAML schema into typed entities, relations and a web app, and keeps every change in the audit log so nothing is lost.',
+  },
+  render: (args) => ({
+    components: { RlAccordion },
+    setup: () => ({ args }),
+    template: `<div style="width:420px"><RlAccordion v-bind="args">Body</RlAccordion></div>`,
+  }),
+  play: async ({ canvasElement }) => {
+    const title = canvasElement.querySelector<HTMLElement>('.rl-accordion__title')!
+    const meta = canvasElement.querySelector<HTMLElement>('.rl-accordion__meta')!
+    await expect(title.scrollWidth).toBeLessThanOrEqual(title.clientWidth)
+    await expect(meta.getBoundingClientRect().left).toBeGreaterThanOrEqual(title.getBoundingClientRect().right)
+  },
+}
