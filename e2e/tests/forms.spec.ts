@@ -50,13 +50,17 @@ test.describe('Create Form', () => {
     // AND we're still on the form. OR-assertion (hasError || stillOnForm)
     // was trivially true because submit() swallows waitForURL timeouts, so
     // we test the concrete invariant: no entity was created. (RR-UQ225)
+    // The create form POSTs ?dry_run=true on mount and per edit to learn the
+    // field affordances. Under load the mount's dry-run is sent after the
+    // listener is attached, so only a POST without it is a create.
     let postSeen = false;
-    const listener = (resp: import('@playwright/test').Response) => {
-      if (resp.url().includes('/api/v1/features') && resp.request().method() === 'POST') {
+    const listener = (req: import('@playwright/test').Request) => {
+      const url = new URL(req.url());
+      if (url.pathname === '/api/v1/features' && !url.searchParams.has('dry_run') && req.method() === 'POST') {
         postSeen = true;
       }
     };
-    appPage.on('response', listener);
+    appPage.on('request', listener);
     try {
       await formPage.submit();
       // Instead of a bare sleep, give the page a round-trip to settle by
@@ -67,7 +71,7 @@ test.describe('Create Form', () => {
         .poll(() => postSeen, { timeout: 500, intervals: [100, 100, 100, 100, 100] })
         .toBe(false);
     } finally {
-      appPage.off('response', listener);
+      appPage.off('request', listener);
     }
     expect(postSeen).toBe(false);
     expect(appPage.url()).toMatch(/\/form\/feature/);

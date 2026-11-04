@@ -44,8 +44,23 @@ const snapshotPath = path.join(here, 'fixture/snapshot.json')
 const serverUrl = inject('contractServerUrl')
 const TYPE = 'note'
 const NUM_RUNS = Number(process.env.CONTRACT_RUNS ?? 200)
-// sseFlushInterval in internal/dataentry/watcher.go.
-const BATCH_WINDOW_MS = 200
+// CONTRACT_SEED (and CONTRACT_PATH) replay a run fast-check reported.
+const SEED = process.env.CONTRACT_SEED
+  ? { seed: replaySeed(process.env.CONTRACT_SEED), path: process.env.CONTRACT_PATH }
+  : {}
+// A type no compared request touches; see sync in the run.
+const MARKER = 'marker'
+// Bounds the wait for an event the server owes. Reaching it is a failure.
+// A flush is 200ms and a live round 500ms. Kept short because fast-check
+// shrinks a failure by rerunning it, and each rerun may wait this long
+// before the seed is reported.
+const OWED_EVENT_MS = 5_000
+
+function replaySeed(raw: string): number {
+  const seed = Number(raw)
+  if (!Number.isInteger(seed)) throw new Error(`CONTRACT_SEED is not an integer: ${raw}`)
+  return seed
+}
 
 // Talks to the server directly, outside the code under comparison: for the
 // snapshot check, the per-run reset and the event stream.
@@ -103,7 +118,7 @@ type Op =
   | { k: 'get' | 'view' | 'presence' | 'mentions' | 'delete'; ref: number }
   | { k: 'list'; page: number; perPage: number }
   | { k: 'subscribe'; subs: { kind: LiveKind; ref: number }[] }
-  // Waits out the server's change batch; see the event check in the run.
+  // Waits until the server has reported every write so far; see sync.
   | { k: 'quiet' }
   | {
       k: 'patch'
@@ -315,7 +330,15 @@ async function apply(
 // Reads the server's event stream into `into` until `stop` aborts. Uses
 // node:http because happy-dom's fetch applies browser CORS rules.
 // Resolves with the connection id once the server has sent `ready`.
-function streamEvents(into: FakeEvent[], stop: AbortSignal): Promise<string> {
+// The last entity:changed frame of a flush carries an id; `flushEnds` gets
+// the length of `into` after each such frame. `closed.why` is set when the
+// stream ends before `stop` aborts.
+function streamEvents(
+  into: FakeEvent[],
+  flushEnds: number[],
+  closed: { why?: string },
+  stop: AbortSignal
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const req = http.get(
       `${serverUrl}/api/v1/_events`,
@@ -332,18 +355,45 @@ function streamEvents(into: FakeEvent[], stop: AbortSignal): Promise<string> {
             const event = /^event: (.*)$/m.exec(frame)?.[1]
             const data = /^data: (.*)$/m.exec(frame)?.[1]
             if (event === 'ready') resolve((JSON.parse(data!) as { conn: string }).conn)
-            else if (event && event !== 'ping') into.push({ event, data: data && JSON.parse(data) })
+            else if (event && event !== 'ping') {
+              into.push({ event, data: data && JSON.parse(data) })
+              if (event === 'entity:changed' && /^id: /m.test(frame)) flushEnds.push(into.length)
+            }
           }
+        })
+        res.on('end', () => {
+          if (!stop.aborted) closed.why ??= 'the server ended it'
         })
       }
     )
-    req.on('error', (err) => (stop.aborted ? resolve('') : reject(err)))
+    req.on('error', (err) => {
+      if (stop.aborted) return resolve('')
+      closed.why ??= err.message
+      reject(err)
+    })
   })
 }
 
-async function waitFor(cond: () => boolean, ms: number) {
-  const deadline = Date.now() + ms
-  while (!cond() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20))
+const isMarker = (e: FakeEvent) =>
+  e.event === 'entity:changed' && (e.data as { type?: string } | undefined)?.type === MARKER
+
+// Waits for `get` to return a value: an event the server owes on a stream
+// that `closed` describes. It fails at OWED_EVENT_MS, or at once when the
+// stream has closed, rather than going on, because what follows assumes it.
+async function until<T>(
+  get: () => T | undefined,
+  what: string,
+  closed: { why?: string }
+): Promise<T> {
+  const deadline = Date.now() + OWED_EVENT_MS
+  for (;;) {
+    const v = get()
+    if (v !== undefined) return v
+    if (closed.why)
+      throw new Error(`contract: the event stream closed (${closed.why}) before ${what}`)
+    if (Date.now() > deadline) throw new Error(`contract: the server never sent ${what}`)
+    await new Promise((r) => setTimeout(r, 20))
+  }
 }
 
 // Empties the server of notes and reports the last sequence number it used,
@@ -395,10 +445,32 @@ describe('fake API against rela-server', () => {
           api.getAxios().defaults.headers.common.Origin = serverUrl
 
           const stop = new AbortController()
+          const flushEnds: number[] = []
+          const closed: { why?: string } = {}
           // Resolves once the server has sent `ready`, so no write below is
           // made before the stream is listening.
-          server.conn = await streamEvents(server.events, stop.signal)
+          server.conn = await streamEvents(server.events, flushEnds, closed, stop.signal)
           try {
+            // The server counts store changes in a goroutine, so a write can
+            // reach a stream after its response has returned, and it reports
+            // them in batches. Whether the server has sent everything it owes
+            // for the writes so far is therefore told by an event, never by a
+            // delay. sync writes a marker and returns the event count at the
+            // end of the flush that reports it. The store emits changes in
+            // write order, so that flush also reports, or comes after, every
+            // earlier write, and no later write can join it.
+            const sync = async () => {
+              const from = server.events.length
+              await direct.post(`/${MARKER}s`, { properties: { title: 'sync' } })
+              return until(
+                () => {
+                  const at = server.events.findIndex((e, i) => i >= from && isMarker(e))
+                  return at < 0 ? undefined : flushEnds.find((end) => end > at)
+                },
+                'the entity:changed of a marker write',
+                closed
+              )
+            }
             const created: string[] = []
             // Each live subscription's answer when it was taken, read from the
             // server.
@@ -422,19 +494,16 @@ describe('fake API against rela-server', () => {
                 ...new Set(
                   side.events
                     .slice(from, to)
-                    .filter((e) => e.event === 'entity:changed')
+                    .filter((e) => e.event === 'entity:changed' && !isMarker(e))
                     .map((e) => JSON.stringify(e))
                 ),
               ].sort()
-            const marks = [{ server: 0, fake: 0 }]
-            const lastMark = () => marks[marks.length - 1]!
-            const caughtUp = () =>
-              changed(server, lastMark().server).length >= changed(fakeSide, lastMark().fake).length
+            // The first mark follows the reset's writes, which the server can
+            // still be reporting on this stream.
+            const marks = [{ server: await sync(), fake: fakeSide.events.length }]
             for (const [at, o] of ops.entries()) {
               if (o.k === 'quiet') {
-                await new Promise((r) => setTimeout(r, BATCH_WINDOW_MS + 100))
-                await waitFor(caughtUp, 2000)
-                marks.push({ server: server.events.length, fake: fakeSide.events.length })
+                marks.push({ server: await sync(), fake: fakeSide.events.length })
                 continue
               }
               const want = await apply(server, created, o, at)
@@ -463,8 +532,12 @@ describe('fake API against rela-server', () => {
             for (const [key, path] of server.subs) {
               if ((await read(path)) !== initial.get(key)) owed.push(key)
             }
-            await waitFor(() => caughtUp() && owed.every((k) => liveKeys(server).has(k)), 2000)
-            marks.push({ server: server.events.length, fake: fakeSide.events.length })
+            marks.push({ server: await sync(), fake: fakeSide.events.length })
+            await until(
+              () => (owed.every((k) => liveKeys(server).has(k)) ? true : undefined),
+              `live:changed for ${owed.join(', ')}`,
+              closed
+            )
             for (let i = 1; i < marks.length; i++) {
               expect(
                 changed(fakeSide, marks[i - 1]!.fake, marks[i]!.fake),
@@ -480,10 +553,6 @@ describe('fake API against rela-server', () => {
               owed.filter((k) => !fakeKeys.has(k)),
               'changed subscriptions the fake missed'
             ).toEqual([])
-            expect(
-              owed.filter((k) => !liveKeys(server).has(k)),
-              'changed subscriptions the server missed'
-            ).toEqual([])
           } finally {
             stop.abort()
             stream.close()
@@ -493,6 +562,7 @@ describe('fake API against rela-server', () => {
       {
         numRuns: NUM_RUNS,
         endOnFailure: false,
+        ...SEED,
         // A field changed after it was read: the one 412 a random sequence
         // reaches only rarely.
         examples: [

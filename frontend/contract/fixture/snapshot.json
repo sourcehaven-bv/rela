@@ -1,6 +1,21 @@
 {
   "schema": {
     "entities": {
+      "marker": {
+        "label": "Marker",
+        "plural": "markers",
+        "id_type": "sequential",
+        "id_prefix": "MARK",
+        "id_prefixes": [
+          "MARK"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "required": false
+          }
+        }
+      },
       "note": {
         "label": "Note",
         "plural": "notes",

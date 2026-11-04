@@ -59,14 +59,13 @@ export class FormPage extends BasePage {
     return this.wizardSteps.locator(".wizard-step-title").allInnerTexts();
   }
 
-  /** The 0-based index of the active wizard step (from the `active` pill). */
-  async activeStepIndex(): Promise<number> {
-    const count = await this.wizardSteps.count();
-    for (let i = 0; i < count; i++) {
-      const cls = (await this.wizardSteps.nth(i).getAttribute("class")) ?? "";
-      if (cls.includes("active")) return i;
-    }
-    return -1;
+  /**
+   * Asserts that the wizard step at the 0-based `index` is active. It
+   * retries, so it waits for the form to render after a reload and for a
+   * step change after Next.
+   */
+  async expectActiveStep(index: number) {
+    await expect(this.wizardSteps.nth(index)).toHaveClass(/\bactive\b/);
   }
 
   /** Toggle a checkbox field on/off by property name. */
@@ -355,6 +354,11 @@ export class FormPage extends BasePage {
   }
 
   async getSelectOptions(name: string): Promise<string[]> {
+    // count() does not wait. An edit form shows a placeholder until the
+    // entity loads, and the spinner only appears for a slow load, so
+    // navigateToEditForm can return before the select or its options exist.
+    await expect(this.page.locator(`#field-${name}`)).toBeVisible();
+    await expect(this.page.locator(`#field-${name} option`).first()).toBeAttached();
     const options = this.page.locator(`#field-${name} option`);
     const count = await options.count();
     const values: string[] = [];
