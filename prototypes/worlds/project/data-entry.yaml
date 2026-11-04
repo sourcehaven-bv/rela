@@ -187,8 +187,14 @@ next_actions:
   # a `done` draft may or may not already be published, and the search syntax
   # has no face predicate to narrow it further. Claiming "not published yet"
   # here would be a guess the picked candidate can contradict.
+  #
+  # Both sources are placed on the dashboard only, because the manual shows
+  # them there. Each page that displays a suggestion starts its cooldown, so
+  # list pages earlier in the manual would use up every candidate before the
+  # dashboard is reached.
   finished-draft:
     band: blocking
+    visible_on: [dashboard]
     source_world: editorial
     query: "type:policy prop:status=done"
     suggest: "The draft of {title} is marked done. Ready to publish it?"
@@ -205,6 +211,7 @@ next_actions:
   # someone working on the Dutch site and noise to everyone else.
   translate-procedure:
     band: housekeeping
+    visible_on: [dashboard]
     source_world: site-nl
     visible_worlds: [site-nl]
     query: "type:procedure prop:readiness=drilled"

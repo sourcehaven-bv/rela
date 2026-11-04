@@ -539,9 +539,7 @@ func sidebarPages(
 			wire.Links = pageTabLinks(cfg, meta, page.EntityType, tab)
 			tabs = append(tabs, wire)
 		}
-		out[id] = v1.SidebarPage{
-			Label: page.Label, Icon: page.Icon, EntityType: page.EntityType, Badge: page.Badge, Tabs: tabs,
-		}
+		out[id] = v1.SidebarPage{PageHeader: page.PageHeader, Tabs: tabs}
 	}
 	return out
 }

@@ -6,6 +6,10 @@
  * on the page. A `statusbar` suggestion is rendered by SidebarFooter instead, so
  * this component stays empty for it rather than duplicating the slot.
  *
+ * Mounted once, in App.vue above the routed page, so it appears on every
+ * page the operator's placement allows. The server decides that from the
+ * page the composable sends; this component does not filter.
+ *
  * When nothing is owed it renders NOTHING: no empty state, no "you're all
  * caught up" card. Silence is the normal condition of a well-configured
  * system, and a placeholder would turn that quiet into noise on every page.
@@ -13,23 +17,32 @@
 import { onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useNextAction } from '@/composables/useNextAction'
+import { useEvents } from '@/composables/useEvents'
 import NextActionOffers from './NextActionOffers.vue'
 
 const { t } = useI18n()
-const { suggestion, bandLabel, prominence, isPageLevel, loadOnce, markShown } = useNextAction()
+const { suggestion, bandLabel, prominence, isPageLevel, loadOnce, markShown, refreshForChange } =
+  useNextAction()
 
 onMounted(loadOnce)
 
 // Report the impression when this component actually RENDERS the suggestion —
 // not when it is resolved. The status-bar tier is rendered elsewhere, and a
 // suggestion replaced by feedback must not be counted before it is seen.
+// Watches the suggestion, because the card is mounted once for the whole app
+// and a navigation can swap one page-level suggestion for another. markShown
+// is idempotent per suggestion key.
 watch(
-  isPageLevel,
+  () => (isPageLevel.value ? suggestion.value : null),
   (shown) => {
     if (shown) void markShown()
   },
   { immediate: true }
 )
+
+// An edit may settle a suggestion about the viewed entity, or make one owed.
+const { on } = useEvents()
+on('entity:changed', (data) => refreshForChange(data.type ?? ''))
 </script>
 
 <template>
@@ -76,8 +89,15 @@ watch(
  * every rule silently ran on its fallback and nothing lined up with the
  * surrounding UI.
  */
+/*
+ * A sibling of the routed view in the main pane, which already pads both by
+ * the page gutters (App.vue), so the card adds no horizontal margin of its
+ * own. It must not shrink, or a full-height view (kanban, calendar, gantt)
+ * would squeeze it to nothing; the view below takes the remaining height.
+ */
 .na {
-  margin-bottom: 16px;
+  flex-shrink: 0;
+  margin-bottom: var(--rl-space-4);
 }
 
 /*

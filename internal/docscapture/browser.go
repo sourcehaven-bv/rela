@@ -53,6 +53,12 @@ func launch(parent context.Context, noSandbox bool) (*browser, error) {
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.Flag("headless", true),
 		chromedp.Flag("disable-gpu", true),
+		// Pin the UI language. The SPA picks its locale from the browser, and
+		// the region selectors match English accessible names, so a build on
+		// a machine set to another language would fail every page{} claim
+		// that CI passes.
+		chromedp.Flag("lang", "en-US"),
+		chromedp.Flag("accept-lang", "en-US"),
 	)
 	if path, ok := hasChrome(); ok {
 		opts = append(opts, chromedp.ExecPath(path))

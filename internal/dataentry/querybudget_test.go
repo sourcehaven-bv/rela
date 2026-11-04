@@ -151,7 +151,7 @@ func budgetConfig() *Config {
 		// the anchor. Every ticket is tracked by E1, so the tab's row count
 		// grows with n.
 		Pages: map[string]dataentryconfig.Page{
-			"epic": {Label: "Epic", EntityType: "epic", Tabs: []dataentryconfig.PageTab{{
+			"epic": {PageHeader: dataentryconfig.PageHeader{Label: "Epic", EntityType: "epic"}, Tabs: []dataentryconfig.PageTab{{
 				ID: "tickets", Label: "Tickets", List: "tickets", Scope: &dataentryconfig.PageTabScope{
 					Relation: "tracked-by", Direction: dataentryconfig.DirectionIncoming,
 				},

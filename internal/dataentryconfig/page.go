@@ -22,6 +22,18 @@ import (
 // the anchor, named in the URL as `/p/<page>/<entity>/<tab>`. Each tab shows
 // its view narrowed to what the anchor is related to (see [PageTabScope]).
 type Page struct {
+	PageHeader `yaml:",inline"`
+	// Tabs are the views of the page, in tab-bar order. At least one.
+	Tabs []PageTab `yaml:"tabs" json:"tabs"`
+	// Suggestions switches next-action suggestions on or off for this view,
+	// overriding next_action_surfaces. Nil: accepted, means inherit. See
+	// [Config.NextActionsEnabled].
+	Suggestions *bool `yaml:"suggestions,omitempty" json:"suggestions,omitempty"`
+}
+
+// PageHeader is what the header of a [Page] shows. The sidebar payload
+// (apiwire's SidebarPage) embeds it too, so the two cannot drift.
+type PageHeader struct {
 	// Label is the page title in the header, and the sidebar label of a
 	// `page:` navigation entry that sets none. Required. On an entity page
 	// the header shows the anchor's title, and Label names the kind of page.
@@ -33,8 +45,6 @@ type Page struct {
 	// Badge names a property of EntityType whose value the header shows as
 	// a pill beside the anchor's title. Only on an entity page.
 	Badge string `yaml:"badge,omitempty" json:"badge,omitempty"`
-	// Tabs are the views of the page, in tab-bar order. At least one.
-	Tabs []PageTab `yaml:"tabs" json:"tabs"`
 }
 
 // PageTab is one tab of a [Page]: a navigation destination with an id for

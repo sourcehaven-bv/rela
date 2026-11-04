@@ -2,7 +2,6 @@
 import { useI18n } from 'vue-i18n'
 import { ref, computed, onMounted, watch } from 'vue'
 import { useSchemaStore, useUIStore } from '@/stores'
-import NextActionCard from '@/components/NextActionCard.vue'
 import { searchEntities, analyze, getDashboard, getDashboardCard, ApiError } from '@/api'
 import { useWorld } from '@/composables/useWorld'
 import type { RouteLocationRaw } from 'vue-router'
@@ -344,12 +343,6 @@ watch([() => props.name, worldParam], () => void loadData())
     />
 
     <template v-else>
-      <!-- Above the cards, and independent of them: a suggestion is worth
-           showing even on a dashboard with nothing else on it. A named
-           dashboard shows it too, as it does the analysis summary: both are
-           project-wide, not part of any one dashboard's cards. -->
-      <NextActionCard />
-
       <!--
         No cards to show. Deliberately one state for three causes: no
         `dashboard:` configured, an empty `cards:`, and every card filtered out

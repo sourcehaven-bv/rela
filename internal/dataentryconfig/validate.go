@@ -45,11 +45,12 @@ var validTopLevelKeys = map[string]bool{
 	"pages":        true,
 	"palette":      true,
 
-	"next_action_bands": true,
-	"next_actions":      true,
-	"account":           true,
-	"piles":             true,
-	"channels":          true,
+	"next_action_bands":    true,
+	"next_action_surfaces": true,
+	"next_actions":         true,
+	"account":              true,
+	"piles":                true,
+	"channels":             true,
 }
 
 // Known typos with suggestions

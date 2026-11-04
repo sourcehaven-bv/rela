@@ -59,7 +59,7 @@ describe('useNextAction world scoping', () => {
 
     await na.loadOnce()
 
-    expect(mockGet).toHaveBeenCalledWith('editorial')
+    expect(mockGet).toHaveBeenCalledWith('editorial', expect.anything(), expect.anything())
   })
 
   // undefined rather than '' or 'default', so no empty ?world= is emitted —
@@ -69,7 +69,7 @@ describe('useNextAction world scoping', () => {
 
     await na.loadOnce()
 
-    expect(mockGet).toHaveBeenCalledWith(undefined)
+    expect(mockGet).toHaveBeenCalledWith(undefined, expect.anything(), expect.anything())
   })
 
   it('re-issues the request when the world changes', async () => {
@@ -83,7 +83,7 @@ describe('useNextAction world scoping', () => {
     await nextTick()
     await vi.waitFor(() => expect(mockGet).toHaveBeenCalledTimes(2))
 
-    expect(mockGet).toHaveBeenLastCalledWith('published')
+    expect(mockGet).toHaveBeenLastCalledWith('published', expect.anything(), expect.anything())
     // ...and the new world's answer replaces the old one, rather than the
     // previous world's suggestion being left on screen.
     expect(na.suggestion.value?.source).toBe('published-only')
@@ -134,7 +134,7 @@ describe('useNextAction world scoping', () => {
       await na.respond('dismiss')
 
       expect(mockGet).toHaveBeenCalledTimes(2)
-      expect(mockGet).toHaveBeenLastCalledWith('editorial')
+      expect(mockGet).toHaveBeenLastCalledWith('editorial', expect.anything(), expect.anything())
     })
   })
 })
