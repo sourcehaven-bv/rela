@@ -10,6 +10,10 @@
  * entry's generation; a form decision or "Other answer" emits `answer`, and
  * the inbox opens the channel in a drawer to start it there.
  *
+ * Each decision shows once, by the channel page's rule (placeDecisions): on
+ * the waiting message when it is shown and is the session's cause, else on
+ * the row's own line below it.
+ *
  * Choices show only while the waiting message has no reply (offersChoices).
  * With messages after it, the row says how many, and "Open channel" emits
  * `open`. No buttons show until the channel type's descriptor is held.
@@ -32,8 +36,8 @@ import RlChannelMessage from 'rela-components/components/channel/RlChannelMessag
 import {
   enumOptionsFor,
   messageView,
+  placeDecisions,
   presentationView,
-  rowDecisions,
 } from '@/components/entity/channels/channelView'
 import { blockedPending, handleChannelRefusal, type RefusalTarget } from '../decisionGlue'
 import { useChannelLinks } from '@/components/entity/channels/useChannelLinks'
@@ -88,7 +92,8 @@ const messages = computed(() => inboxMessages(props.entry))
  */
 const cause = computed(() => {
   const m = props.entry.message
-  return m && !m.removed ? props.entry.session.cause : undefined
+  const c = props.entry.session.cause
+  return m && !m.removed && c ? c : undefined
 })
 
 // A state or type the held descriptor lacks reloads it once.
@@ -145,6 +150,7 @@ const decisionsApi = useSessionDecisions({
     discardEdit: () => {},
     endReply: () => {},
     reply: () => {},
+    replying: () => undefined,
     select: () => false,
     showError: (m) => ui.error(m),
   },
@@ -167,9 +173,6 @@ const choices = computed(() =>
 )
 const ownChoices = computed(() =>
   decisionSeq.value === undefined ? undefined : choices.value.get(decisionSeq.value)
-)
-const shownDecisions = computed(() =>
-  rowDecisions(decisions.value, choices.value, decisionSeq.value)
 )
 const blocked = computed(() => (deciding.value ? blockedPending(pending.value) : pending.value))
 
@@ -201,6 +204,16 @@ const unfolded = ref(false)
 const folded = computed(() => !!view.value && foldable.value && !unfolded.value)
 /** A message that takes its decisions: shown and not removed. */
 const onMessage = computed(() => !!view.value && !view.value.removed)
+/**
+ * Each decision once, by the channel page's rule (TKT-A0RTC52): on the
+ * waiting message when it takes them and is the session's cause, else on
+ * the row's own line below.
+ */
+const placed = computed(() => {
+  const seq = decisionSeq.value
+  const onIt = onMessage.value && seq !== undefined && seq === props.entry.message?.seq
+  return placeDecisions(decisions.value, choices.value, onIt ? seq : undefined)
+})
 
 const newer = computed(() => newerCount(props.entry))
 const newerText = computed(() =>
@@ -253,7 +266,7 @@ const { entityHref, onOpenRef, onLogClick } = useChannelLinks(undefined)
         :entity-href="entityHref"
         :pending="blocked"
         :can-reply="false"
-        :decisions="held && onMessage && !folded ? shownDecisions : undefined"
+        :decisions="held && !folded ? placed.row : undefined"
         :choices="held && onMessage && !folded ? ownChoices : undefined"
         @decide="onDecideKey"
         @choose="onChooseKey"
@@ -272,15 +285,15 @@ const { entityHref, onOpenRef, onLogClick } = useChannelLinks(undefined)
         @decide="onChooseKey"
       />
       <RlChannelDecisions
-        v-if="shownDecisions.length"
-        :decisions="shownDecisions"
+        v-if="placed.row.length"
+        :decisions="placed.row"
         :pending="blocked"
         @decide="onDecideKey"
       />
     </template>
     <RlChannelDecisions
-      v-if="!onMessage && held && decisions.length"
-      :decisions="decisions"
+      v-if="held && placed.fallback.length"
+      :decisions="placed.fallback"
       :pending="blocked"
       @decide="onDecideKey"
     />

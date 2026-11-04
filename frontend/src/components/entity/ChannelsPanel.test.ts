@@ -847,9 +847,10 @@ describe('ChannelsPanel', () => {
       expect(stepper.find('[aria-current="step"]').text()).toContain('Detected')
       expect(messageEl(2).text()).toContain('Session entered Detected again')
       expect(messageEl(2).findAll('button')).toHaveLength(0)
-      const options = composerForm().findAll('[role="radio"]')
-      expect(options.map((o) => o.find('span').text())).toEqual(['Contained', 'Card'])
-      expect(options[1]!.attributes('aria-checked')).toBe('true')
+      // TKT-A0RTC52: Contained is a button in the stepper, so the composer
+      // offers only Card and shows no type picker.
+      expect(stepper.find('[data-decision="contained"]').exists()).toBe(true)
+      expect(composerForm().findAll('[role="radio"]')).toHaveLength(0)
     })
 
     // TKT-FPXTQJ AC 11: a type with entries to several states says it may
@@ -883,7 +884,9 @@ describe('ChannelsPanel', () => {
           channel: { ...sh.channel, session: branching },
         })
         await mountPanelIn(tc.language)
-        await composerForm().findAll('[role="radio"]')[0]!.trigger('click')
+        // A branching decision opens the form from its button (TKT-A0RTC52).
+        await w().find('.rl-channel-session [data-decision="contained"]').trigger('click')
+        await flushPromises()
         await flushPromises()
         expect(composerForm().text()).toContain(tc.hint)
       })
@@ -1116,8 +1119,9 @@ describe('ChannelsPanel', () => {
   })
 })
 
-// Session decisions as buttons (TKT-T9G1AE AC 3 to 11): the header and the
-// deciding message show one button per decision the caller may make now.
+// Session decisions as buttons (TKT-T9G1AE AC 3 to 11): one button per
+// decision the caller may make now, shown once (TKT-A0RTC52): on the
+// deciding message when it is held, else in the header.
 describe('ChannelsPanel session decisions', () => {
   const logType = (
     name: string,
@@ -1196,6 +1200,8 @@ describe('ChannelsPanel session decisions', () => {
   })
 
   const header = () => w().find('.rl-channel-session')
+  /** The deciding message, which holds the decisions while it is shown. */
+  const row = () => messageEl(12)
   const decision = (scope: ReturnType<VueWrapper['find']>, key: string) =>
     scope.find(`[data-decision="${key}"]`)
   const posted = (over: Partial<Message> = {}): PostResult => ({
@@ -1208,28 +1214,60 @@ describe('ChannelsPanel session decisions', () => {
     await flushPromises()
   }
 
-  it('posts approve from the header button and the buttons go once the session moves', async () => {
+  it('posts approve from the row button and the buttons go once the session moves', async () => {
+    await mountPanel()
+    api.postMessage.mockImplementation(async () => {
+      current = runHead(working, [])
+      return posted()
+    })
+    await click(decision(row(), 'approve'))
+    expect(api.postMessage).toHaveBeenCalledTimes(1)
+    expect(api.postMessage).toHaveBeenCalledWith(expect.anything(), 'approve', {}, 12, 4)
+    expect(w().findAll('[data-decision]')).toHaveLength(0)
+  })
+
+  // TKT-A0RTC52 AC 1: each decision once, and a way there from the header.
+  it('shows the buttons once, on the deciding message; the header has Go to decision', async () => {
+    await mountPanel()
+    expect(
+      row()
+        .findAll('[data-decision]')
+        .map((b) => b.attributes('data-decision'))
+    ).toEqual(['approve', 'revise', 'abandon', 'accept'])
+    expect(decision(messageEl(13), 'approve').exists()).toBe(false)
+    expect(
+      header()
+        .findAll('[data-decision]')
+        .map((b) => b.attributes('data-decision'))
+    ).toEqual(['jump'])
+    const jump = header().find('[data-testid="session-go-to-decision"]')
+    expect(jump.element.tagName).toBe('BUTTON')
+    expect(jump.text()).toBe('Go to decision')
+    // Every type is a button, so the composer has no picker.
+    expect(composerForm().findAll('[role="radio"]')).toHaveLength(0)
+  })
+
+  it('Go to decision focuses the first decision on the deciding message', async () => {
+    await mountPanel()
+    await header().find('[data-testid="session-go-to-decision"]').trigger('click')
+    expect(document.activeElement).toBe(decision(row(), 'approve').element)
+  })
+
+  it('a header decision returns the focus to the header', async () => {
+    api.getMessages.mockResolvedValue({
+      ...page([notice]),
+      channel: channel({ last_seq: 13, rev: 13, session: inReview }),
+      has_more: true,
+      next_after_rev: 13,
+    })
     await mountPanel()
     api.postMessage.mockImplementation(async () => {
       current = runHead(working, [])
       return posted()
     })
     await click(decision(header(), 'approve'))
-    expect(api.postMessage).toHaveBeenCalledTimes(1)
-    expect(api.postMessage).toHaveBeenCalledWith(expect.anything(), 'approve', {}, 12, 4)
-    expect(w().findAll('[data-decision]')).toHaveLength(0)
+    expect(api.postMessage).toHaveBeenCalledWith(expect.anything(), 'approve', {}, undefined, 4)
     expect(document.activeElement).toBe(header().element)
-  })
-
-  it('shows the same buttons on the deciding message and on no other', async () => {
-    await mountPanel()
-    expect(decision(messageEl(12), 'approve').exists()).toBe(true)
-    expect(decision(messageEl(13), 'approve').exists()).toBe(false)
-    expect(
-      header()
-        .findAll('[data-decision]')
-        .map((b) => b.attributes('data-decision'))
-    ).toEqual(['approve', 'revise', 'abandon', 'accept'])
   })
 
   it('focus returns to the row after a row decision', async () => {
@@ -1242,7 +1280,7 @@ describe('ChannelsPanel session decisions', () => {
     expect(document.activeElement).toBe(messageEl(12).element)
   })
 
-  it('the row buttons go when the cause is removed, the header stays', async () => {
+  it('the row buttons go when the cause is removed, the header takes them without a jump', async () => {
     api.getMessages.mockResolvedValue({
       ...page([
         msg(12, {
@@ -1256,6 +1294,97 @@ describe('ChannelsPanel session decisions', () => {
     await mountPanel()
     expect(messageEl(12).find('[data-decision]').exists()).toBe(false)
     expect(decision(header(), 'approve').exists()).toBe(true)
+    expect(decision(header(), 'jump').exists()).toBe(false)
+  })
+
+  // TKT-A0RTC52 AC 2: with the deciding message not shown, the header
+  // holds every decision and there is no jump.
+  describe('the header holds the decisions when the deciding message is not shown', () => {
+    const notHeld = page([notice])
+    const timerNotice = msg(13, {
+      ...notice,
+      props: { from: 'working', to: 'plan-review', generation: 4 },
+    })
+    const cases: { name: string; messages: Message[]; session?: Channel['session'] }[] = [
+      { name: 'the cause is not held', messages: notHeld.messages },
+      { name: 'a timer moved the session (no cause)', messages: [msg(12), timerNotice] },
+      { name: 'generation 0', messages: [msg(12)], session: { ...inReview, generation: 0 } },
+    ]
+    for (const tc of cases) {
+      it(tc.name, async () => {
+        if (tc.session) current = runHead(tc.session)
+        api.getMessages.mockResolvedValue({
+          ...page(tc.messages),
+          channel: channel({ last_seq: 13, rev: 13, session: tc.session ?? inReview }),
+          next_after_rev: 13,
+        })
+        await mountPanel()
+        expect(
+          header()
+            .findAll('[data-decision]')
+            .map((b) => b.attributes('data-decision'))
+        ).toEqual(['approve', 'revise', 'abandon', 'accept'])
+        expect(w().find('.rl-channel-message .rl-channel-decisions').exists()).toBe(false)
+      })
+    }
+  })
+
+  // TKT-A0RTC52 AC 7: a focused decision follows its group when it moves.
+  describe('focus follows the decisions', () => {
+    const removed = msg(12, {
+      rev: 14,
+      removed: { kind: 'moderator', by: { user: 'bob' }, at: '2026-03-01T10:00:00Z' },
+    })
+    async function removeCause() {
+      api.getMessages.mockResolvedValue({
+        ...page([removed]),
+        channel: channel({ last_seq: 13, rev: 14, session: inReview }),
+        next_after_rev: 14,
+      })
+      await liveFrame('channel')
+    }
+
+    it('from the row to the same decision in the header when the cause is removed', async () => {
+      await mountPanel()
+      ;(decision(row(), 'revise').element as HTMLElement).focus()
+      await removeCause()
+      expect(document.activeElement).toBe(decision(header(), 'revise').element)
+    })
+
+    it('from Go to decision to the first header decision when the cause is removed', async () => {
+      await mountPanel()
+      ;(decision(header(), 'jump').element as HTMLElement).focus()
+      await removeCause()
+      expect(document.activeElement).toBe(decision(header(), 'approve').element)
+    })
+
+    it('from the header to Go to decision when the cause is loaded', async () => {
+      api.getMessages.mockResolvedValue({
+        ...page([notice]),
+        channel: channel({ last_seq: 13, rev: 13, session: inReview }),
+        has_more: true,
+        next_before: 13,
+        next_after_rev: 13,
+      })
+      await mountPanel()
+      ;(decision(header(), 'approve').element as HTMLElement).focus()
+      api.getMessages.mockResolvedValue({
+        ...page([msg(12, { props: { body: 'the plan' } })]),
+        channel: channel({ last_seq: 13, rev: 13, session: inReview }),
+        next_after_rev: 13,
+      })
+      await click(buttonIn(w(), 'Load older messages'))
+      expect(decision(row(), 'approve').exists()).toBe(true)
+      expect(document.activeElement).toBe(decision(header(), 'jump').element)
+    })
+
+    it('a focus elsewhere stays where it is', async () => {
+      await mountPanel()
+      const field = composerForm().find('textarea').element as HTMLElement
+      field.focus()
+      await removeCause()
+      expect(document.activeElement).toBe(field)
+    })
   })
 
   it('shows no decision to a caller without the transitions', async () => {
@@ -1265,11 +1394,12 @@ describe('ChannelsPanel session decisions', () => {
   })
 
   // TKT-FPXTQJ AC 13: the form's Send carries the generation read at the
-  // click; switching the composer to another type drops it.
-  it('the Send of a form decision carries its generation; another type drops it', async () => {
+  // click; cancelling the decision drops it (TKT-A0RTC52: the type is not in
+  // the picker, so the composer's cancel is the way out).
+  it('the Send of a form decision carries its generation; a cancel drops it', async () => {
     await mountPanel()
     api.postMessage.mockResolvedValue(posted({ type: 'revise' }))
-    await click(decision(header(), 'revise'))
+    await click(decision(row(), 'revise'))
     await composerForm().find('textarea').setValue('redo the plan')
     await submitComposer()
     expect(api.postMessage).toHaveBeenLastCalledWith(
@@ -1280,36 +1410,46 @@ describe('ChannelsPanel session decisions', () => {
       4
     )
 
-    await click(decision(header(), 'revise'))
-    const card = composerForm()
-      .findAll('[role="radio"]')
-      .find((o) => o.text().includes('Card'))!
-    await card.trigger('click')
+    await click(decision(row(), 'revise'))
+    expect(composerForm().find('.rl-channel-composer__compose').text()).toContain('Revise plan')
+    await composerForm().find('button[aria-label="Cancel decision"]').trigger('click')
     await flushPromises()
-    const revise = composerForm()
-      .findAll('[role="radio"]')
-      .find((o) => o.text().includes('Revise plan'))!
-    await revise.trigger('click')
-    await flushPromises()
-    await composerForm().find('textarea').setValue('again')
+    expect(composerForm().find('.rl-channel-composer__compose').exists()).toBe(false)
+    // The composer is back on the type it offers, and focuses its field.
+    expect(composerForm().find('textarea').element).toBe(document.activeElement)
+    await typeBody('just a note')
     await submitComposer()
     expect(api.postMessage).toHaveBeenLastCalledWith(
       expect.anything(),
-      'revise',
-      { feedback: 'again' },
+      'card',
+      expect.anything(),
       undefined,
       undefined
     )
   })
 
-  it('Revise plan opens the composer and sends nothing', async () => {
+  it('Revise plan opens the composer in decision mode and sends nothing', async () => {
     await mountPanel()
-    await click(decision(header(), 'revise'))
+    await click(decision(row(), 'revise'))
     expect(api.postMessage).not.toHaveBeenCalled()
     const composer = w().findComponent(RlChannelComposer)
-    const checked = composerForm().find('[role="radio"][aria-checked="true"]')
-    expect(checked.text()).toContain('Revise plan')
+    expect(composerForm().find('.rl-channel-composer__compose').text()).toContain('Revise plan')
     expect(composer.find('textarea').element).toBe(document.activeElement)
+  })
+
+  it('a move drops the decision mode and the composer goes back to its own type', async () => {
+    await mountPanel()
+    await click(decision(row(), 'revise'))
+    current = runHead({ ...inReview, generation: 5 })
+    api.getMessages.mockResolvedValue({
+      ...page([]),
+      channel: channel({ last_seq: 14, rev: 14, session: { ...inReview, generation: 5 } }),
+      next_after_rev: 14,
+    })
+    await liveFrame('channel')
+    await flushPromises()
+    expect(composerForm().find('.rl-channel-composer__compose').exists()).toBe(false)
+    expect(toastTitles()).toContain('The session moved on. Choose again.')
   })
 
   it('asks before discarding an edit; cancel keeps the edit and sends nothing', async () => {
@@ -1318,35 +1458,29 @@ describe('ChannelsPanel session decisions', () => {
     await flushPromises()
     expect(composerForm().attributes('aria-label')).toBe('Edit message')
     confirm.mockResolvedValue(false)
-    await click(decision(header(), 'revise'))
+    await click(decision(row(), 'revise'))
     expect(confirm).toHaveBeenCalledTimes(1)
     expect(composerForm().attributes('aria-label')).toBe('Edit message')
     expect(api.postMessage).not.toHaveBeenCalled()
 
     confirm.mockResolvedValue(true)
-    await click(decision(header(), 'revise'))
+    await click(decision(row(), 'revise'))
     expect(composerForm().attributes('aria-label')).not.toBe('Edit message')
-    expect(composerForm().find('[role="radio"][aria-checked="true"]').text()).toContain(
-      'Revise plan'
-    )
+    expect(composerForm().find('.rl-channel-composer__compose').text()).toContain('Revise plan')
   })
 
-  it('a double click on the header and the row posts once', async () => {
+  it('a double click posts once', async () => {
     await mountPanel()
     let answer!: (r: PostResult) => void
     api.postMessage.mockReturnValue(new Promise<PostResult>((r) => (answer = r)))
-    await decision(header(), 'approve').trigger('click')
-    await decision(header(), 'approve').trigger('click')
-    await decision(messageEl(12), 'approve').trigger('click')
+    await decision(row(), 'approve').trigger('click')
+    await decision(row(), 'approve').trigger('click')
     await flushPromises()
     expect(api.postMessage).toHaveBeenCalledTimes(1)
-    const pending = decision(header(), 'approve')
+    const pending = decision(row(), 'approve')
     expect(pending.attributes('aria-disabled')).toBe('true')
     expect(pending.attributes('disabled')).toBeUndefined()
-    expect(decision(header(), 'revise').attributes('disabled')).toBeDefined()
-    // The row shows the same decision, so it shows the same pending state.
-    expect(decision(messageEl(12), 'approve').attributes('aria-disabled')).toBe('true')
-    expect(decision(messageEl(12), 'revise').attributes('disabled')).toBeDefined()
+    expect(decision(row(), 'revise').attributes('disabled')).toBeDefined()
     current = runHead(working, [])
     answer(posted())
     await flushPromises()
@@ -1358,7 +1492,7 @@ describe('ChannelsPanel session decisions', () => {
     await mountPanel()
     let answer!: (r: PostResult) => void
     api.postMessage.mockReturnValueOnce(new Promise<PostResult>((r) => (answer = r)))
-    await click(decision(header(), 'approve'))
+    await click(decision(row(), 'approve'))
     await typeBody('hello')
     await composerForm().trigger('submit')
     await flushPromises()
@@ -1379,8 +1513,8 @@ describe('ChannelsPanel session decisions', () => {
       current = runHead({ ...inReview, state: 'abandoned', final: true, generation: 5 }, [])
       return posted({ type: 'abandon' })
     })
-    await decision(header(), 'abandon').trigger('click')
-    await decision(header(), 'abandon').trigger('click')
+    await decision(row(), 'abandon').trigger('click')
+    await decision(row(), 'abandon').trigger('click')
     await flushPromises()
     expect(confirm).toHaveBeenCalledTimes(1)
     expect(confirm.mock.calls[0]![0]).toMatchObject({ danger: true })
@@ -1394,16 +1528,16 @@ describe('ChannelsPanel session decisions', () => {
   it('abandon asks first; cancel sends nothing and releases the lock', async () => {
     await mountPanel()
     confirm.mockResolvedValue(false)
-    await click(decision(header(), 'abandon'))
+    await click(decision(row(), 'abandon'))
     expect(api.postMessage).not.toHaveBeenCalled()
-    expect(decision(header(), 'approve').attributes('disabled')).toBeUndefined()
+    expect(decision(row(), 'approve').attributes('disabled')).toBeUndefined()
   })
 
   it('accept asks without the danger tone and names the final state', async () => {
     await mountPanel()
     confirm.mockResolvedValue(true)
     api.postMessage.mockResolvedValue(posted({ type: 'accept' }))
-    await click(decision(header(), 'accept'))
+    await click(decision(row(), 'accept'))
     expect(confirm.mock.calls[0]![0]).toMatchObject({
       danger: false,
       message: 'This ends the session in Accepted. You cannot undo it.',
@@ -1415,7 +1549,7 @@ describe('ChannelsPanel session decisions', () => {
     await mountPanel()
     let ok!: (v: boolean) => void
     confirm.mockReturnValue(new Promise<boolean>((r) => (ok = r)))
-    await decision(header(), 'accept').trigger('click')
+    await decision(row(), 'accept').trigger('click')
     await flushPromises()
     current = runHead(working, [])
     api.getMessages.mockResolvedValue({
@@ -1435,7 +1569,7 @@ describe('ChannelsPanel session decisions', () => {
     let ok!: (v: boolean) => void
     confirm.mockReturnValue(new Promise<boolean>((r) => (ok = r)))
     api.postMessage.mockRejectedValue(problem(409, 'session_moved', 'moved'))
-    await decision(header(), 'accept').trigger('click')
+    await decision(row(), 'accept').trigger('click')
     await flushPromises()
     // review -> working -> review: the same decisions, two generations on.
     const again = { ...inReview, generation: 6 }
@@ -1446,6 +1580,7 @@ describe('ChannelsPanel session decisions', () => {
       next_after_rev: 15,
     })
     await liveFrame('channel')
+    // No notice names the cause of generation 6, so the header holds them.
     expect(decision(header(), 'accept').exists()).toBe(true)
     ok(true)
     await flushPromises()
@@ -1460,9 +1595,9 @@ describe('ChannelsPanel session decisions', () => {
       current = runHead(inReview, ['revise'])
       return posted()
     })
-    await click(decision(header(), 'approve'))
+    await click(decision(row(), 'approve'))
     expect(
-      header()
+      row()
         .findAll('[data-decision]')
         .map((b) => b.attributes('data-decision'))
     ).toEqual(['revise'])
@@ -1472,7 +1607,7 @@ describe('ChannelsPanel session decisions', () => {
     await mountPanel()
     let answer!: (r: PostResult) => void
     api.postMessage.mockReturnValue(new Promise<PostResult>((r) => (answer = r)))
-    await click(decision(header(), 'approve'))
+    await click(decision(row(), 'approve'))
     // The page moves the session; the head that follows is held open.
     let headAnswer!: (h: ChannelHead) => void
     api.getChannelHead.mockReturnValueOnce(new Promise<ChannelHead>((r) => (headAnswer = r)))
@@ -1497,9 +1632,9 @@ describe('ChannelsPanel session decisions', () => {
       api.getChannelHead.mockRejectedValueOnce(problem(500, 'internal', 'server error'))
       return posted()
     })
-    await click(decision(header(), 'approve'))
+    await click(decision(row(), 'approve'))
     expect(toastTitles()).toContain('server error')
-    expect(decision(header(), 'revise').attributes('disabled')).toBeUndefined()
+    expect(decision(row(), 'revise').attributes('disabled')).toBeUndefined()
   })
 
   it('the channel closes during the request: no decisions after', async () => {
@@ -1513,7 +1648,7 @@ describe('ChannelsPanel session decisions', () => {
       })
       throw problem(409, 'channel_not_open', 'The channel is closed.')
     })
-    await click(decision(header(), 'approve'))
+    await click(decision(row(), 'approve'))
     expect(toastTitles()).toContain('The channel is closed.')
     expect(w().findAll('[data-decision]')).toHaveLength(0)
   })
@@ -1562,18 +1697,19 @@ describe('ChannelsPanel session decisions', () => {
           next_after_rev: 13,
         })
         api.postMessage.mockRejectedValue(problem(tc.status, tc.type, `refused as ${tc.type}`))
-        await click(decision(header(), 'approve'))
+        await click(decision(row(), 'approve'))
         if (tc.toast) expect(toastTitles()).toContain(tc.toast)
         if (tc.form) {
           expect(composerForm().text()).toContain(tc.form)
-          expect(composerForm().find('[role="radio"][aria-checked="true"]').text()).toContain(
+          // TKT-A0RTC52: the form is a decision at the click's generation.
+          expect(composerForm().find('.rl-channel-composer__compose').text()).toContain(
             'Approve plan'
           )
         }
         if (tc.type.startsWith('session_') || tc.status === 403) {
           expect(api.getChannelHead.mock.calls.length).toBeGreaterThan(heads)
         }
-        expect(decision(header(), 'revise').attributes('disabled')).toBeUndefined()
+        expect(decision(row(), 'revise').attributes('disabled')).toBeUndefined()
       })
     }
 
@@ -1582,9 +1718,9 @@ describe('ChannelsPanel session decisions', () => {
       api.postMessage.mockRejectedValue(
         new ApiError('Network down', { kind: 'network', original: null })
       )
-      await click(decision(header(), 'approve'))
+      await click(decision(row(), 'approve'))
       expect(toastTitles().length).toBeGreaterThan(0)
-      expect(decision(header(), 'revise').attributes('disabled')).toBeUndefined()
+      expect(decision(row(), 'revise').attributes('disabled')).toBeUndefined()
     })
   })
 })
@@ -1670,7 +1806,9 @@ describe('ChannelsPanel choices', () => {
     await flushPromises()
   }
 
-  it('shows the options on the question, and the answer decision only in the header', async () => {
+  // TKT-A0RTC52 AC 3: the choices stay on their question, the answer
+  // button shows nowhere, and the header points there.
+  it('shows the options on the question, no answer button, and Go to decision in the header', async () => {
     await mountPanel()
     const row = messageEl(12)
     const group = row.find('[role="group"][aria-label="Choices"]')
@@ -1680,9 +1818,29 @@ describe('ChannelsPanel choices', () => {
       'choice:12:other',
     ])
     expect(row.find('[data-decision="answer"]').exists()).toBe(false)
-    expect(header().findAll('[data-decision="answer"]')).toHaveLength(1)
+    expect(header().find('[data-decision="answer"]').exists()).toBe(false)
+    expect(header().find('[data-decision="jump"]').exists()).toBe(true)
+    // Other is the way to a free answer, so the picker leaves Answer out.
+    expect(composerForm().findAll('[role="radio"]')).toHaveLength(0)
     // While the buttons show, the options are not listed a second time.
     expect(row.find('.rl-channel-message__list').exists()).toBe(false)
+  })
+
+  it('Go to decision focuses the first choice', async () => {
+    await mountPanel()
+    await header().find('[data-decision="jump"]').trigger('click')
+    expect(document.activeElement).toBe(messageEl(12).find('[data-decision="choice:12:0"]').element)
+  })
+
+  // TKT-A0RTC52 AC 4: the reply Other started ends with the decision.
+  it('Other then cancel ends the reply', async () => {
+    await mountPanel()
+    await click(messageEl(12).find('[data-decision="choice:12:other"]'))
+    expect(composerForm().find('.rl-channel-composer__reply').exists()).toBe(true)
+    await composerForm().find('button[aria-label="Cancel decision"]').trigger('click')
+    await flushPromises()
+    expect(composerForm().find('.rl-channel-composer__compose').exists()).toBe(false)
+    expect(composerForm().find('.rl-channel-composer__reply').exists()).toBe(false)
   })
 
   it('a click on an option posts the answer as a reply at the head generation', async () => {
@@ -1696,8 +1854,7 @@ describe('ChannelsPanel choices', () => {
     await mountPanel()
     await click(messageEl(12).find('[data-decision="choice:12:other"]'))
     expect(api.postMessage).not.toHaveBeenCalled()
-    const checked = composerForm().find('[role="radio"][aria-checked="true"]')
-    expect(checked.text()).toContain('Answer')
+    expect(composerForm().find('.rl-channel-composer__compose').text()).toContain('Other answer')
     expect(composerForm().text()).toContain('robot')
     await composerForm().find('input[type="text"], textarea').setValue('Neither')
     await submitComposer()
@@ -2229,15 +2386,16 @@ describe('ChannelsPanel preset buttons', () => {
 
   it('plan review shows Approve and the form button', async () => {
     await mountPanel()
-    expect(keys(header())).toEqual(['answer', 'preset:decide:0', 'decide'])
-    expect(header().find('[data-decision="preset:decide:0"]').text()).toContain('Approve')
-    // The question's row shows its choices and the presets of other types.
+    // TKT-A0RTC52: the question's row holds every decision, once: its
+    // choices and the other decisions. The header points there.
+    expect(keys(header())).toEqual(['jump'])
+    expect(messageEl(12).find('[data-decision="preset:decide:0"]').text()).toContain('Approve')
     expect(keys(messageEl(12))).toEqual(['choice:12:0', 'choice:12:1', 'preset:decide:0', 'decide'])
   })
 
   it('Approve posts the preset', async () => {
     await mountPanel()
-    await header().find('[data-decision="preset:decide:0"]').trigger('click')
+    await messageEl(12).find('[data-decision="preset:decide:0"]').trigger('click')
     await flushPromises()
     await flushPromises()
     expect(api.postMessage).toHaveBeenCalledTimes(1)
@@ -2257,8 +2415,8 @@ describe('ChannelsPanel preset buttons', () => {
     api.postMessage.mockReturnValue(new Promise<PostResult>((r) => (answer = r)))
     await messageEl(12).find('[data-decision="choice:12:0"]').trigger('click')
     await flushPromises()
-    expect(header().find('[data-decision="preset:decide:0"]').attributes('disabled')).toBeDefined()
-    await header().find('[data-decision="preset:decide:0"]').trigger('click')
+    expect(messageEl(12).find('[data-decision="preset:decide:0"]').attributes('disabled')).toBeDefined()
+    await messageEl(12).find('[data-decision="preset:decide:0"]').trigger('click')
     await flushPromises()
     expect(api.postMessage).toHaveBeenCalledTimes(1)
     answer({
@@ -2303,7 +2461,7 @@ describe('ChannelsPanel preset buttons', () => {
     })
     confirm.mockResolvedValue(true)
     await mountPanel()
-    await header().find('[data-decision="allow"]').trigger('click')
+    await messageEl(12).find('[data-decision="allow"]').trigger('click')
     await flushPromises()
     await flushPromises()
     expect(confirm).toHaveBeenCalledWith(
@@ -2344,8 +2502,14 @@ describe('ChannelsPanel preset buttons', () => {
   it('a compose preset opens compose mode and posts the preset with the feedback', async () => {
     useComposePreset()
     await mountPanel()
-    expect(keys(header())).toEqual(['answer', 'preset:decide:0', 'preset:decide:1'])
-    await header().find('[data-decision="preset:decide:1"]').trigger('click')
+    expect(keys(header())).toEqual(['jump'])
+    expect(keys(messageEl(12))).toEqual([
+      'choice:12:0',
+      'choice:12:1',
+      'preset:decide:0',
+      'preset:decide:1',
+    ])
+    await messageEl(12).find('[data-decision="preset:decide:1"]').trigger('click')
     await flushPromises()
     await flushPromises()
     expect(confirm).not.toHaveBeenCalled()
@@ -2372,7 +2536,7 @@ describe('ChannelsPanel preset buttons', () => {
     await flushPromises()
     expect(composerForm().attributes('aria-label')).toBe('Edit message')
     confirm.mockResolvedValue(true)
-    await header().find('[data-decision="preset:decide:1"]').trigger('click')
+    await messageEl(12).find('[data-decision="preset:decide:1"]').trigger('click')
     await flushPromises()
     await flushPromises()
     expect(confirm).toHaveBeenCalledTimes(1)
@@ -2397,7 +2561,7 @@ describe('ChannelsPanel preset buttons', () => {
       ['room', { messages: { decide: { display: 'hidden' }, ask: { display: 'hidden' } } }],
     ])
     await mountPanel()
-    expect(keys(header())).toContain('preset:decide:0')
+    expect(keys(header())).toEqual(['jump'])
     expect(messageEl(12).find('[data-decision="preset:decide:0"]').exists()).toBe(true)
   })
 })

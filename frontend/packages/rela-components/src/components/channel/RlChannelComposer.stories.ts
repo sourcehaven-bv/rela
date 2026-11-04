@@ -1106,3 +1106,152 @@ export const ComposeModeDatetime: Story = {
     )
   },
 }
+
+/* Button types (TKT-A0RTC52) --------------------------------------------- */
+
+const dismissDecision: ChannelComposeView = {
+  key: 'dismiss#1',
+  type: 'dismiss',
+  label: 'Dismiss',
+  toLabel: 'Dismissed',
+  given: {},
+}
+
+/**
+ * A type a decision button stands for is left out of the picker; the
+ * button is the way in. Its form opens in decision mode, with the strip
+ * and Cancel decision, and no option checked. The picker stays one Tab stop.
+ * Cancel decision lets the app clear `compose`; the composer goes back to
+ * its default type and focuses its field.
+ */
+export const DecisionMode: Story = {
+  args: { ...breachArgs, buttonTypes: ['contained', 'dismiss'] },
+  render: (args) => ({
+    components: { RlChannelComposer },
+    setup() {
+      const compose = ref<ChannelComposeView | undefined>()
+      const onSelect = (type: string) => {
+        if (compose.value && compose.value.type !== type) compose.value = undefined
+      }
+      return { args, compose, onSelect, open: () => (compose.value = { ...dismissDecision }) }
+    },
+    template: `
+      <div style="max-width:640px">
+        <button type="button" @click="open()">Dismiss</button>
+        <RlChannelComposer v-bind="args" :compose="compose" @select="onSelect" @cancel-compose="compose = undefined" />
+      </div>`,
+  }),
+  play: async ({ args, canvasElement }) => {
+    const canvas = within(canvasElement)
+    // Only Text is left to pick, so there is no picker.
+    await expect(canvas.queryByRole('radiogroup', { name: 'Message type' })).toBeNull()
+    await expect(canvas.getByRole('textbox', { name: /Message/ })).toBeVisible()
+    await userEvent.click(canvas.getByRole('button', { name: 'Dismiss' }))
+    const strip = canvasElement.querySelector('.rl-channel-composer__compose')!
+    await expect(strip).toHaveTextContent('Dismiss')
+    const reason = canvas.getByRole('textbox', { name: /Reason/ })
+    await waitFor(() => expect(reason).toHaveFocus())
+    await expect(canvas.getByText('Sending this moves the session to Dismissed.')).toBeVisible()
+    await userEvent.type(reason, 'False alarm')
+    await userEvent.click(submitButton(canvasElement))
+    await expect(args.onPost).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: 'dismiss', values: { reason: 'False alarm' }, compose: 'dismiss#1' }),
+    )
+    await userEvent.click(canvas.getByRole('button', { name: 'Cancel decision' }))
+    await expect(canvasElement.querySelector('.rl-channel-composer__compose')).toBeNull()
+    await expect(canvas.queryByRole('textbox', { name: /Reason/ })).toBeNull()
+    await waitFor(() => expect(canvas.getByRole('textbox', { name: /Message/ })).toHaveFocus())
+  },
+}
+
+/**
+ * With a picker left, decision mode checks no option. Tab still reaches the
+ * picker; picking a type leaves the decision.
+ */
+export const DecisionModeWithPicker: Story = {
+  args: { ...breachArgs, buttonTypes: ['dismiss'] },
+  render: (args) => ({
+    components: { RlChannelComposer },
+    setup() {
+      const compose = ref<ChannelComposeView | undefined>({ ...dismissDecision })
+      const onSelect = (type: string) => {
+        if (compose.value && compose.value.type !== type) compose.value = undefined
+      }
+      return { args, compose, onSelect }
+    },
+    template: `
+      <div style="max-width:640px">
+        <button type="button">before</button>
+        <RlChannelComposer v-bind="args" :compose="compose" @select="onSelect" @cancel-compose="compose = undefined" />
+      </div>`,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const options = typeOptions(canvasElement)
+    await expect(options.map((o) => o.querySelector('span')!.textContent)).toEqual(['Contained', 'Text'])
+    for (const o of options) await expect(o).toHaveAttribute('aria-checked', 'false')
+    canvas.getByRole('button', { name: 'before' }).focus()
+    await userEvent.tab()
+    await expect(options[0]).toHaveFocus()
+    await userEvent.click(canvas.getByRole('radio', { name: 'Text' }))
+    await expect(canvasElement.querySelector('.rl-channel-composer__compose')).toBeNull()
+    await expect(canvas.getByRole('radio', { name: 'Text' })).toHaveAttribute('aria-checked', 'true')
+    await expect(canvas.queryByRole('radio', { name: /Dismiss/ })).toBeNull()
+  },
+}
+
+/**
+ * When every offered type is a button type, the picker lists them all, as
+ * it did before, so the composer never ends up with nothing to send.
+ */
+export const AllButtonTypes: Story = {
+  args: { ...breachArgs, postable: ['contained', 'dismiss'], buttonTypes: ['contained', 'dismiss'] },
+  play: async ({ canvasElement }) => {
+    const options = typeOptions(canvasElement)
+    await expect(options.map((o) => o.querySelector('span')!.textContent)).toEqual(['Contained', 'Dismiss'])
+    await expect(options[0]).toHaveAttribute('aria-checked', 'true')
+  },
+}
+
+/**
+ * `select(type)` of a button type succeeds only while `compose` names it;
+ * a type that stops being a button type keeps its selection. The app holds
+ * `buttonTypes` across a move, so the picker does not flicker.
+ */
+export const ButtonTypesSelect: Story = {
+  args: breachArgs,
+  render: (args) => ({
+    components: { RlChannelComposer },
+    setup() {
+      const composer = ref<ComposerHandle | null>(null)
+      const buttons = ref<string[]>(['dismiss'])
+      const answers = ref<boolean[]>([])
+      const pick = (t: string) => answers.value.push(composer.value!.select(t))
+      return { args, composer, buttons, answers, pick }
+    },
+    template: `
+      <div style="max-width:640px">
+        <RlChannelComposer ref="composer" v-bind="args" :button-types="buttons" />
+        <button type="button" @click="pick('dismiss')">select dismiss</button>
+        <button type="button" @click="pick('contained')">select contained</button>
+        <button type="button" @click="buttons = []">no buttons</button>
+        <button type="button" @click="buttons = ['contained']">contained button</button>
+        <output data-testid="answers">{{ answers.join(',') }}</output>
+      </div>`,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: 'select dismiss' }))
+    await userEvent.click(canvas.getByRole('button', { name: 'select contained' }))
+    await expect(canvas.getByTestId('answers')).toHaveTextContent('false,true')
+    await expect(canvas.getByRole('radio', { name: /Contained/ })).toHaveAttribute('aria-checked', 'true')
+    await userEvent.click(canvas.getByRole('button', { name: 'no buttons' }))
+    await expect(typeOptions(canvasElement)).toHaveLength(3)
+    await expect(canvas.getByRole('radio', { name: /Contained/ })).toHaveAttribute('aria-checked', 'true')
+    // Contained becomes a button type with no decision naming it: the
+    // selection goes back to the default.
+    await userEvent.click(canvas.getByRole('button', { name: 'contained button' }))
+    await expect(canvas.queryByRole('radio', { name: /Contained/ })).toBeNull()
+    await expect(canvas.getByRole('radio', { name: 'Text' })).toHaveAttribute('aria-checked', 'true')
+  },
+}

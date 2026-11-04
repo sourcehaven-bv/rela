@@ -4,6 +4,7 @@ import { expect, fn, userEvent, waitFor, within } from 'storybook/test'
 import RlChannel from './RlChannel.vue'
 import RlChannelComposer from './RlChannelComposer.vue'
 import RlChannelSession from './RlChannelSession.vue'
+import RlButton from '../common/RlButton.vue'
 import { lifecyclePendingKey } from './channelFields'
 import { firstVisible } from './channelAnchor'
 import { provideMessages } from '../../composables/useMessages'
@@ -775,5 +776,97 @@ export const QuietTypesShortRun: Story = {
     await expect(canvas.getAllByRole('button', { name: '2 messages: Progress' })).toHaveLength(2)
     await expect(canvasElement.querySelector('[data-seq="6"]')).not.toBeNull()
     await expect(canvasElement.querySelector('[data-seq="4"]')).toBeNull()
+  },
+}
+
+/*
+ * Each decision once (TKT-A0RTC52): the decisions sit on the waiting
+ * message, the header holds "Go to decision", and the composer leaves the
+ * button types out of its picker.
+ */
+type ChannelHandle = InstanceType<typeof RlChannel>
+
+export const DecisionsOnceWithJump: Story = {
+  args: {
+    title: 'Breach response',
+    messages: breachMessages,
+    messageTypes: breachMessageTypes,
+    postable: ['text', 'assessed', 'contained', 'dismiss'],
+    ephemeral: [],
+    presentation: undefined,
+    decisions: breachDecisions,
+    decisionSeq: 2,
+    buttonTypes: ['assessed', 'contained', 'dismiss'],
+    onDecide: fn(),
+  },
+  render: (args) => ({
+    components: { RlChannel, RlChannelComposer, RlChannelSession, RlButton },
+    setup() {
+      const channel = ref<ChannelHandle | null>(null)
+      const found = ref<boolean[]>([])
+      const go = (seq: number) => found.value.push(channel.value!.focusDecisions(seq))
+      return { args, channel, found, go, session: breachSessionDetected, transitions: breachTransitions }
+    },
+    template: `
+      <div style="height:100vh">
+        <RlChannel ref="channel" v-bind="args">
+          <template #session>
+            <RlChannelSession :session="session">
+              <template #decisions>
+                <RlButton variant="secondary" size="sm" data-decision="jump" @click="go(2)">Go to decision</RlButton>
+              </template>
+            </RlChannelSession>
+          </template>
+          <template #composer>
+            <RlChannelComposer
+              :message-types="args.messageTypes"
+              :postable="args.postable"
+              :transitions="transitions"
+              :button-types="args.buttonTypes"
+            />
+          </template>
+        </RlChannel>
+        <button type="button" data-testid="go-1" @click="go(1)">focus row 1</button>
+        <output data-testid="found">{{ found.join(',') }}</output>
+      </div>
+    `,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const header = canvasElement.querySelector<HTMLElement>('.rl-channel-session')!
+    await expect(within(header).queryByRole('group', { name: 'Decisions' })).toBeNull()
+    await expect(canvas.getAllByRole('button', { name: /Contained again/ })).toHaveLength(1)
+    await expect(canvas.queryByRole('radiogroup', { name: 'Message type' })).toBeNull()
+    await userEvent.click(within(header).getByRole('button', { name: 'Go to decision' }))
+    const row = canvasElement.querySelector<HTMLElement>('.rl-channel-message[data-seq="2"]')!
+    await expect(within(row).getByRole('button', { name: /Risk assessed/ })).toHaveFocus()
+    await userEvent.click(canvas.getByTestId('go-1'))
+    await expect(canvas.getByTestId('found')).toHaveTextContent('true,false')
+  },
+}
+
+/**
+ * Reply follows the composer's picker: with the only reply type a button
+ * type, nothing is left to reply with, so no row offers Reply.
+ */
+export const ReplyFollowsPicker: Story = {
+  args: {
+    messages: breachMessages,
+    messageTypes: breachMessageTypes,
+    postable: ['contained', 'dismiss'],
+    ephemeral: [],
+    presentation: undefined,
+    buttonTypes: ['contained'],
+  },
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).queryAllByRole('button', { name: /^Reply/ })).toHaveLength(0)
+  },
+}
+
+/** The safeguard: with every type a button type, the picker lists them all and Reply shows. */
+export const ReplyWhenAllButtonTypes: Story = {
+  args: { ...ReplyFollowsPicker.args, buttonTypes: ['contained', 'dismiss'] },
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).queryAllByRole('button', { name: /^Reply/ }).length).toBeGreaterThan(0)
   },
 }

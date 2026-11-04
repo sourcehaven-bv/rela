@@ -7,9 +7,11 @@
  * screen. It is a radio group, which is what it behaves like.
  *
  * Arrow keys move between options and the roving tabindex keeps the group a
- * single Tab stop, as the radio group pattern requires.
+ * single Tab stop, as the radio group pattern requires. When no option is
+ * checked, the first enabled one is the Tab stop, so the group stays
+ * reachable.
  */
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import RlIcon from '../common/RlIcon.vue'
 import type { IconName } from '../common/icons'
 
@@ -40,6 +42,12 @@ const props = withDefaults(
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 
 const root = ref<HTMLElement | null>(null)
+
+/** The option that takes Tab: the checked one, else the first enabled one. */
+const tabStop = computed(() => {
+  if (props.options.some((o) => o.value === props.modelValue && !o.disabled)) return props.modelValue
+  return props.options.find((o) => !o.disabled)?.value
+})
 
 function move(direction: 1 | -1) {
   const usable = props.options.filter((option) => !option.disabled)
@@ -76,7 +84,7 @@ function move(direction: 1 | -1) {
       :aria-checked="option.value === modelValue"
       :aria-label="iconOnly ? `${option.label}${option.srHint ?? ''}` : undefined"
       :disabled="option.disabled"
-      :tabindex="option.value === modelValue ? 0 : -1"
+      :tabindex="option.value === tabStop ? 0 : -1"
       @click="emit('update:modelValue', option.value)"
     >
       <RlIcon v-if="option.icon" :name="option.icon" :size="size === 'sm' ? 14 : 15" aria-hidden="true" />

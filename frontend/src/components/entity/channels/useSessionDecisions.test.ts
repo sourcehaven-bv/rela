@@ -113,6 +113,7 @@ function setup() {
       discardEdit: vi.fn(),
       endReply: vi.fn(),
       reply: vi.fn(),
+      replying: vi.fn((): number | undefined => undefined),
       select: vi.fn(() => true),
       showError: vi.fn(),
     },
@@ -241,6 +242,45 @@ describe('useSessionDecisions', () => {
     expect(s.deps.composer.showError).toHaveBeenCalledWith('Why is required')
   })
 
+  // TKT-A0RTC52: the type may be left out of the picker, so the form is a
+  // decision at the click's generation.
+  it('a form refusal records the click generation, so a move drops the form', async () => {
+    s.deps.post.mockRejectedValue(problem('invalid_message'))
+    s.deps.ui.handle.mockReturnValue('Why is required')
+    await s.d.onDecide('approve', 'header')
+    expect(s.d.formDecision.value).toMatchObject({ messageType: 'approve', generation: 4 })
+    expect(s.d.composeView.value).toMatchObject({ type: 'approve', given: {} })
+    s.move(5)
+    await nextTick()
+    expect(s.d.formDecision.value).toBeUndefined()
+    expect(s.deps.ui.toast).toHaveBeenCalledWith(STALE)
+  })
+
+  it('a form refusal during an edit records nothing and toasts', async () => {
+    s.deps.post.mockRejectedValue(problem('invalid_message'))
+    s.deps.ui.handle.mockReturnValue('Why is required')
+    s.deps.composer.editing.mockReturnValue(true)
+    s.deps.composer.select.mockReturnValue(false)
+    await s.d.onDecide('approve', 'header')
+    expect(s.d.formDecision.value).toBeUndefined()
+    expect(s.deps.ui.toast).toHaveBeenCalledWith('Why is required')
+  })
+
+  it('names the button types, and keeps them across the gap before the head refetch', async () => {
+    const before = s.d.buttonTypes.value
+    expect(before).toEqual(['accept', 'approve', 'revise'])
+    // The head moved on; the held actions are still of generation 4.
+    s.ch.head.value = head(5)
+    await nextTick()
+    expect(s.d.decisions.value).toEqual([])
+    expect(s.d.buttonTypes.value).toBe(before)
+    s.ch.actionsGeneration.value = 5
+    await nextTick()
+    expect(s.d.buttonTypes.value).toBe(before)
+    s.move(6, 'working')
+    expect(s.d.buttonTypes.value).toEqual([])
+  })
+
   it('a form decision asks before it discards an edit, ends a reply the type cannot carry, then selects it', async () => {
     s.deps.composer.editing.mockReturnValue(true)
     await s.d.onDecide('revise', 'header')
@@ -294,7 +334,9 @@ describe('useSessionDecisions form decisions', () => {
 
   it('the Send of the form type carries the generation read at the click', async () => {
     await s.d.onDecide('revise', 'header')
-    expect(s.d.formDecision.value).toEqual({ messageType: 'revise', generation: 3 })
+    // TKT-A0RTC52: a plain form decision is compose mode with nothing fixed.
+    expect(s.d.formDecision.value).toMatchObject({ messageType: 'revise', generation: 3 })
+    expect(s.d.composeView.value).toMatchObject({ type: 'revise', given: {} })
     await send('revise')
     expect(s.deps.post).toHaveBeenLastCalledWith('revise', {}, undefined, 3)
     expect(s.d.formDecision.value).toBeUndefined()
@@ -312,7 +354,7 @@ describe('useSessionDecisions form decisions', () => {
   it('switching the composer to another type ends the form decision without a message', async () => {
     await s.d.onDecide('revise', 'header')
     s.d.onComposerSelect('revise')
-    expect(s.d.formDecision.value).toEqual({ messageType: 'revise', generation: 3 })
+    expect(s.d.formDecision.value).toMatchObject({ messageType: 'revise', generation: 3 })
     s.d.onComposerSelect('approve')
     expect(s.d.formDecision.value).toBeUndefined()
     s.d.onComposerSelect('revise')
@@ -363,7 +405,7 @@ describe('useSessionDecisions form decisions', () => {
     await s.d.onDecide('revise', 'header')
     s.deps.post.mockRejectedValueOnce(problem('invalid_message'))
     await expect(send('revise')).rejects.toBeTruthy()
-    expect(s.d.formDecision.value).toEqual({ messageType: 'revise', generation: 3 })
+    expect(s.d.formDecision.value).toMatchObject({ messageType: 'revise', generation: 3 })
   })
 
   it('a channel switch ends the form decision', async () => {
@@ -469,6 +511,7 @@ function choiceSetup(withSession: boolean) {
       discardEdit: vi.fn(),
       endReply: vi.fn(),
       reply: vi.fn(),
+      replying: vi.fn((): number | undefined => undefined),
       select: vi.fn(() => true),
       showError: vi.fn(),
     },
@@ -558,6 +601,31 @@ describe('useSessionDecisions choices', () => {
     expect(s.deps.post).not.toHaveBeenCalled()
     await s.d.sendComposer('answer', { body: 'C' }, 10)
     expect(s.deps.post).toHaveBeenCalledWith('answer', { body: 'C' }, 10, 5)
+  })
+
+  // TKT-A0RTC52 AC 4: the reply ends with the decision that started it.
+  it('other then cancel ends the reply it started', async () => {
+    const s = choiceSetup(true)
+    await s.d.onChoose('choice:10:other')
+    expect(s.d.formDecision.value).toMatchObject({ messageType: 'answer', startedReply: 10 })
+    s.deps.composer.replying.mockReturnValue(10)
+    s.d.cancelCompose()
+    expect(s.d.formDecision.value).toBeUndefined()
+    expect(s.deps.composer.endReply).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancel keeps a reply the user started elsewhere since', async () => {
+    const s = choiceSetup(true)
+    await s.d.onChoose('choice:10:other')
+    s.deps.composer.replying.mockReturnValue(12)
+    s.d.cancelCompose()
+    expect(s.deps.composer.endReply).not.toHaveBeenCalled()
+  })
+
+  it('names the answer type as a button type while Other shows', () => {
+    const s = choiceSetup(true)
+    expect(s.d.buttonTypes.value).toEqual(['answer'])
+    expect(choiceSetup(false).d.buttonTypes.value).toEqual([])
   })
 
   it('other without session sends no generation', async () => {
@@ -709,6 +777,7 @@ function presetSetup(messages: Message[] = []) {
       discardEdit: vi.fn(),
       endReply: vi.fn(),
       reply: vi.fn(),
+      replying: vi.fn((): number | undefined => undefined),
       select: vi.fn(() => true),
       showError: vi.fn(),
     },
@@ -1176,7 +1245,11 @@ describe('useSessionDecisions with a known cause (TKT-V05706X)', () => {
     expect(await s.d.onAnswer('approve', 7)).toBe(true)
     expect(s.deps.composer.select).toHaveBeenCalledWith('approve')
     expect(s.deps.composer.reply).toHaveBeenCalledWith(7)
-    expect(s.d.formDecision.value).toEqual({ messageType: 'approve', generation: 4 })
+    expect(s.d.formDecision.value).toMatchObject({
+      messageType: 'approve',
+      generation: 4,
+      startedReply: 7,
+    })
     expect(s.d.deciding.value).toBe(false)
   })
 

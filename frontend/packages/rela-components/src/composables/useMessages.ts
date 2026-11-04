@@ -145,6 +145,7 @@ export type ChannelTextKey =
   | 'sessionPausedClosed'
   | 'sessionPausedArchived'
   | 'sessionShowAll'
+  | 'sessionGoToDecision'
   | 'sessionHideAll'
   | 'sessionContext'
   // Session decisions
@@ -466,6 +467,7 @@ const CHANNEL_TEXT: Record<ChannelTextKey, string> = {
   sessionPausedClosed: 'Paused while the channel is closed',
   sessionPausedArchived: 'Paused while the channel is archived',
   sessionShowAll: 'Show all states',
+  sessionGoToDecision: 'Go to decision',
   sessionHideAll: 'Hide the states',
   sessionContext: 'Session steps',
   decisions: 'Decisions',

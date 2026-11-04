@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
+import { defineComponent, h as render } from 'vue'
 import { useChannelSchemaStore } from '@/stores/channelSchema'
 import { useToasts } from 'rela-components/components/feedback/useToasts'
+import { registerEntityPlurals } from '@/api/entities'
 import type { ChannelTarget } from '@/api/channels'
 import type {
   ChannelHead,
@@ -28,7 +30,14 @@ vi.mock('@/api/channels', async (orig) => ({
   ...(await orig<typeof import('@/api/channels')>()),
   ...api,
 }))
-vi.mock('@/composables/useLiveSubscription', () => ({ useLiveSubscription: vi.fn() }))
+const subs = vi.hoisted(
+  () => [] as { path: () => string | null; onChange: () => void }[]
+)
+vi.mock('@/composables/useLiveSubscription', () => ({
+  useLiveSubscription: (_label: string, path: () => string | null, onChange: () => void) => {
+    subs.push({ path, onChange })
+  },
+}))
 vi.mock('@/composables/useEvents', () => ({ useEvents: () => ({ on: vi.fn() }) }))
 vi.mock('@/composables/useConfirm', () => ({ useConfirm: () => ({ confirm: vi.fn() }) }))
 vi.mock('vue-router', () => ({
@@ -126,6 +135,7 @@ function pageOf(messages: Message[], over: Partial<MessagePage> = {}): MessagePa
 let wrapper: VueWrapper | undefined
 
 beforeEach(() => {
+  subs.length = 0
   api.getChannelHead.mockReset().mockResolvedValue(head(7))
   api.getMessages.mockReset().mockResolvedValue(pageOf([ask, m(42)]))
   api.markChannelRead.mockReset().mockReturnValue(new Promise<never>(() => {}))
@@ -239,13 +249,15 @@ describe('OpenChannel start', () => {
     const w = mountOpen(choose('choice:41:other'))
     await settle()
     expect(w.emitted('started')).toHaveLength(1)
-    // The user switches the composer away: the form decision ends.
+    // The user switches the composer away: the form decision ends. Answer
+    // is a button type (Other), so the composer goes back to its own type
+    // (TKT-A0RTC52) and the send is a plain message.
     w.findComponent(RlChannelComposer).vm.$emit('select', 'text')
     await settle()
     await send(w, 'MySQL')
     expect(api.postMessage).toHaveBeenCalledWith(
       expect.anything(),
-      'answer',
+      'text',
       expect.objectContaining({ note: 'MySQL' }),
       41,
       undefined
@@ -283,5 +295,73 @@ describe('OpenChannel start', () => {
     expect(useToasts().toasts.value.map((t) => t.title)).toContain(
       'The session moved on. Choose again.'
     )
+  })
+})
+
+// TKT-A0RTC52 AC 7: two channels on one page; a move in one hands the focus
+// on inside that channel only.
+describe('OpenChannel focus follow with two channels', () => {
+  const removedAsk: Message = {
+    ...ask,
+    rev: 51,
+    removed: { kind: 'moderator', by: { user: 'bob' }, at: '2026-11-01T10:00:00Z' },
+  }
+
+  beforeEach(() => registerEntityPlurals(new Map([['ticket', 'tickets']])))
+
+  function mountTwo() {
+    const Host = defineComponent({
+      setup() {
+        return () =>
+          render('div', [
+            render(OpenChannel, {
+              entityType: 'ticket',
+              address: 'TKT-1',
+              channelType: runType,
+              'data-section': 'a',
+            }),
+            render(OpenChannel, {
+              entityType: 'ticket',
+              address: 'TKT-2',
+              channelType: runType,
+              'data-section': 'b',
+            }),
+          ])
+      },
+    })
+    wrapper = mount(Host, { attachTo: document.body })
+    return wrapper
+  }
+  const section = (w: VueWrapper, name: string) => w.find(`[data-section="${name}"]`)
+
+  /** Removes the question in channel TKT-1 and lets its live frame land. */
+  async function removeInA() {
+    api.getMessages.mockImplementation(async (t: ChannelTarget) =>
+      t.address === 'TKT-1'
+        ? pageOf([removedAsk], { channel: { ...head(7).channel, rev: 51 }, next_after_rev: 51 })
+        : pageOf([])
+    )
+    subs.find((x) => x.path()?.includes('TKT-1'))!.onChange()
+    await settle()
+  }
+
+  it('the channel that moved hands the focus on inside itself', async () => {
+    const w = mountTwo()
+    await settle()
+    const a = section(w, 'a')
+    ;(a.find('[data-decision="jump"]').element as HTMLElement).focus()
+    await removeInA()
+    expect(a.find('[data-decision="jump"]').exists()).toBe(false)
+    expect(document.activeElement).toBe(a.find('.rl-channel-session [data-decision]').element)
+  })
+
+  it('a focus in the other channel stays where it is', async () => {
+    const w = mountTwo()
+    await settle()
+    const jumpB = section(w, 'b').find('[data-decision="jump"]').element as HTMLElement
+    jumpB.focus()
+    await removeInA()
+    expect(section(w, 'a').find('.rl-channel-session [data-decision="answer"]').exists()).toBe(true)
+    expect(document.activeElement).toBe(jumpB)
   })
 })

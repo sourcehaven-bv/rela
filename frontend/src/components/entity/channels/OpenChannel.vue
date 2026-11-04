@@ -14,9 +14,14 @@
  * A channel type with a session gets the stepper in RlChannel's session
  * slot, and the composer marks the types whose post would move it.
  *
- * Session decisions (TKT-T9G1AE) are buttons in the stepper and on the
- * message that moved the session into its current state, and choices
- * (TKT-03FQPD) on a question's row; their logic is useSessionDecisions.
+ * Session decisions (TKT-T9G1AE) are buttons, and choices (TKT-03FQPD) sit
+ * on a question's row; their logic is useSessionDecisions. Each decision
+ * shows once (TKT-A0RTC52): on the message that moved the session into its
+ * current state when it is held, with a "Go to decision" button in the
+ * stepper, else in the stepper. The composer's type picker leaves out the
+ * types those buttons stand for. When the decisions change place, a
+ * focused decision button hands the focus to the same decision in the new
+ * place, else to "Go to decision", else to the stepper.
  *
  * It emits `gone` when the channel can no longer be shown: a refused read
  * (the reader lost access, or the channel was deleted) or a refusal that
@@ -72,6 +77,7 @@ import RlChannel from 'rela-components/components/channel/RlChannel.vue'
 import RlChannelComposer from 'rela-components/components/channel/RlChannelComposer.vue'
 import RlChannelDecisions from 'rela-components/components/channel/RlChannelDecisions.vue'
 import RlChannelSession from 'rela-components/components/channel/RlChannelSession.vue'
+import { useMessages } from 'rela-components/composables/useMessages'
 import EntityPickerModal from '@/components/forms/EntityPickerModal.vue'
 import ChannelTextDialog from './ChannelTextDialog.vue'
 import { blockedPending, handleChannelRefusal, type RefusalTarget } from './decisionGlue'
@@ -263,6 +269,7 @@ const editing = ref<ChannelEditing>()
 // the list at save time.
 let editProps: { seq: number; props: Message['props'] } | undefined
 const submitting = ref(false)
+const rlMessages = useMessages()
 const sessionHeader = useTemplateRef<InstanceType<typeof RlChannelSession>>('sessionHeader')
 const channelView = useTemplateRef<InstanceType<typeof RlChannel>>('channelView')
 
@@ -428,6 +435,7 @@ const decisionsApi = useSessionDecisions({
     discardEdit: onCancelEdit,
     endReply: () => (replyTo.value = null),
     reply: onReply,
+    replying: () => replyTo.value ?? undefined,
     select: (type) => composer.value?.select(type) ?? false,
     showError: (m) => (formError.value = m),
   },
@@ -440,6 +448,63 @@ const decisionsApi = useSessionDecisions({
   },
 })
 const { decisions, decisionSeq, deciding, onDecide, resetDecisions } = decisionsApi
+const placed = decisionsApi.placed
+const buttonTypes = decisionsApi.buttonTypes
+
+/** The header's "Go to decision": shown when the decisions sit on the waiting message. */
+const showJump = computed(() => decisions.value.length > 0 && decisionSeq.value !== undefined)
+
+function goToDecision() {
+  const seq = decisionSeq.value
+  if (seq !== undefined) channelView.value?.focusDecisions(seq)
+}
+
+// --- Focus when the decisions change place -------------------------------------
+//
+// The decisions move between the header and the waiting message when that
+// message is loaded or leaves the log. A focused decision button, or "Go
+// to decision", hands the focus on. Moved to the row: to "Go to decision",
+// so the page does not jump to the row. Moved to the header: to the same
+// decision there, else (from "Go to decision") to the first one. Else to
+// the header. Every lookup stays inside this channel's root.
+
+const root = useTemplateRef<HTMLElement>('root')
+/** The `data-decision` of the focused button before the move; undefined when none. */
+let movingKey: string | undefined
+
+const PLACES = '.rl-channel-session [data-decision], .rl-channel-message .rl-channel-decisions [data-decision]'
+
+watch(
+  () => placed.value.fallback.length > 0,
+  () => {
+    const active = document.activeElement
+    const own = active instanceof HTMLElement && root.value?.contains(active)
+    movingKey = own && active.matches(PLACES) ? (active.dataset.decision ?? undefined) : undefined
+  },
+  { flush: 'pre' }
+)
+watch(
+  () => placed.value.fallback.length > 0,
+  (inHeader) => {
+    const key = movingKey
+    movingKey = undefined
+    const el = root.value
+    // Nothing to hand on, or the focused button is still there.
+    if (key === undefined || !el || el.contains(document.activeElement)) return
+    const header = '.rl-channel-session'
+    const target = inHeader
+      ? (el.querySelector<HTMLElement>(`${header} [data-decision="${CSS.escape(key)}"]`) ??
+        (key === 'jump' ? el.querySelector<HTMLElement>(`${header} [data-decision]`) : null))
+      : el.querySelector<HTMLElement>(`${header} [data-testid="session-go-to-decision"]`)
+    if (target) {
+      target.focus({ preventScroll: true })
+      return
+    }
+    el.querySelector(header)?.scrollIntoView?.({ block: 'nearest' })
+    sessionHeader.value?.focus()
+  },
+  { flush: 'post' }
+)
 
 // --- A decision started from an inbox row ------------------------------------
 
@@ -606,7 +671,7 @@ const pickerTypes = picker.types
 </script>
 
 <template>
-  <div class="open-channel" data-testid="open-channel" @click="onLogClick">
+  <div ref="root" class="open-channel" data-testid="open-channel" @click="onLogClick">
     <RlBanner
       v-if="ch.error.value && !ch.head.value"
       tone="danger"
@@ -631,9 +696,10 @@ const pickerTypes = picker.types
       :enum-options="enumOptions"
       :entity-href="entityHref"
       :pending="shownPending"
-      :decisions="decisionsApi.rowDecisions.value"
+      :decisions="placed.row"
       :decision-seq="decisionSeq"
       :choices="decisionsApi.choices.value"
+      :button-types="buttonTypes"
       :has-older="ch.hasOlder.value"
       :has-newer="ch.hasNewer.value"
       :loading-older="loadingOlder"
@@ -657,12 +723,23 @@ const pickerTypes = picker.types
           :session="session.value"
           :compact="presentation?.session?.display === 'compact'"
         >
-          <template v-if="decisions.length" #decisions>
+          <template v-if="placed.fallback.length" #decisions>
             <RlChannelDecisions
-              :decisions="decisions"
+              :decisions="placed.fallback"
               :pending="shownPending"
               @decide="(key) => onDecide(key, 'header')"
             />
+          </template>
+          <template v-else-if="showJump" #decisions>
+            <RlButton
+              variant="secondary"
+              size="sm"
+              data-decision="jump"
+              data-testid="session-go-to-decision"
+              @click="goToDecision"
+            >
+              {{ rlMessages.channelText({ key: 'sessionGoToDecision' }) }}
+            </RlButton>
           </template>
         </RlChannelSession>
       </template>
@@ -680,6 +757,7 @@ const pickerTypes = picker.types
           :submitting="submitting"
           :blocked="deciding"
           :compose="decisionsApi.composeView.value"
+          :button-types="buttonTypes"
           :errors="fieldErrors"
           :error="formError"
           :time-zone-label="tz"
