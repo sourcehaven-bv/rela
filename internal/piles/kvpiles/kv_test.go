@@ -80,7 +80,7 @@ func TestFileLocker_TwoStoresLoseNothing(t *testing.T) {
 		for i := range perStore {
 			wg.Go(func() {
 				ref := entity.Ref{ID: fmt.Sprintf("R-%d-%d", si, i), Face: entity.Face("main")}
-				_, err := s.AddItems(ctx, "alice", p.ID, []entity.Ref{ref}, created, piles.MaxItems, piles.EvictOldest)
+				_, err := s.AddItems(ctx, "alice", p.ID, []entity.Ref{ref}, piles.AddOptions{Now: created, MaxItems: piles.MaxItems, Overflow: piles.EvictOldest})
 				errs <- err
 			})
 		}

@@ -28,8 +28,9 @@ import {
   PILE_NAME_NAV_PREFIX,
   PILE_NAV_PREFIX,
   PILES_GROUP_ID,
+  declaredPilesNavGroup,
   pileNamed,
-  pileStatus,
+  pileSummaryStatus,
   pilesNavGroup,
   toNavGroups,
 } from './sidebarNav'
@@ -152,8 +153,14 @@ const creatingPile = ref(false)
  * A `pile:` entry shows its pile's count like the Piles group does, and that
  * pile leaves the group, so it is not listed twice.
  */
-const pinnedPileNames = computed(
-  () => new Set(allItems.value.flatMap((item) => (item.pile ? [item.pile.toLowerCase()] : [])))
+const pinnedPileIds = computed(
+  () =>
+    new Set(
+      allItems.value.flatMap((item) => {
+        const pile = item.pile ? pileNamed(piles.piles.value, item.pile) : undefined
+        return pile ? [pile.id] : []
+      })
+    )
 )
 
 const configNavGroupsWithPiles = computed(() =>
@@ -162,7 +169,7 @@ const configNavGroupsWithPiles = computed(() =>
     items: group.items.map((item) => {
       if (!item.id.startsWith(PILE_NAME_NAV_PREFIX)) return item
       const pile = pileNamed(piles.piles.value, item.id.slice(PILE_NAME_NAV_PREFIX.length))
-      const status = pile ? pileStatus(pile.count) : undefined
+      const status = pile ? pileSummaryStatus(pile) : undefined
       return status ? { ...item, status } : item
     }),
   }))
@@ -171,16 +178,22 @@ const configNavGroupsWithPiles = computed(() =>
 /*
  * The Piles group goes first among the labelled groups. Unlabelled entries at
  * the top of the config, such as My tasks, stay above it: they read as the
- * space's own pinned rows.
+ * space's own pinned rows. The declared piles that no `pile:` entry places
+ * come just before it, in a group of their own.
  */
 const navGroups = computed(() => {
   const groups = configNavGroupsWithPiles.value
   if (!piles.available.value) return groups
-  const pilesGroup = pilesNavGroup(
-    piles.piles.value.filter((p) => !pinnedPileNames.value.has(p.name.toLowerCase()))
-  )
+  const unpinned = (p: { id: string }) => !pinnedPileIds.value.has(p.id)
+  const declaredGroup = declaredPilesNavGroup(piles.declared.value.filter(unpinned))
+  const pilesGroup = pilesNavGroup(piles.collected.value.filter(unpinned))
   const lead = groups[0] && !groups[0].label ? 1 : 0
-  return [...groups.slice(0, lead), pilesGroup, ...groups.slice(lead)]
+  return [
+    ...groups.slice(0, lead),
+    ...(declaredGroup ? [declaredGroup] : []),
+    pilesGroup,
+    ...groups.slice(lead),
+  ]
 })
 
 /*

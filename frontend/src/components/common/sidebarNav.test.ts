@@ -4,6 +4,7 @@ import type { SidebarGroup } from '@/types'
 import type { NavItemList } from '@/api/navItems'
 import {
   activeNavId,
+  declaredPilesNavGroup,
   expandGeneratedItems,
   navId,
   pileNamed,
@@ -428,5 +429,44 @@ describe('pileNamed', () => {
     ]
     expect(pileNamed(piles, 'Notifications')?.id).toBe('p1')
     expect(pileNamed(piles, 'Other')).toBeUndefined()
+  })
+})
+
+describe('declared piles', () => {
+  const inbox = {
+    id: 'PIL-INBOX',
+    name: 'Notifications',
+    icon: 'bell',
+    count: 5,
+    created: '',
+    updated: '',
+    key: 'inbox',
+    locked: true,
+    read_state: true,
+    unread: 2,
+  }
+  const favorites = {
+    ...inbox,
+    id: 'PIL-FAV',
+    name: 'Favorites',
+    key: 'favorites',
+    icon: 'star',
+    read_state: false,
+    unread: 0,
+  }
+
+  it('get an unlabelled group of their own, counting unread items on a feed', () => {
+    const group = declaredPilesNavGroup([inbox, favorites])!
+    expect(group.label).toBeUndefined()
+    expect(group.items.map((i) => i.id)).toEqual(['pile:PIL-INBOX', 'pile:PIL-FAV'])
+    expect(group.items[0]).toMatchObject({ icon: 'bell', status: { count: 2, label: '2 unread' } })
+    // A pile without read state counts all its items.
+    expect(group.items[1]).toMatchObject({ status: { count: 5 } })
+    expect(declaredPilesNavGroup([])).toBeNull()
+  })
+
+  it('are found by their key before any name', () => {
+    const own = { ...favorites, id: 'PIL-OWN', name: 'inbox', key: undefined, locked: false }
+    expect(pileNamed([own, inbox], 'inbox')?.id).toBe('PIL-INBOX')
   })
 })

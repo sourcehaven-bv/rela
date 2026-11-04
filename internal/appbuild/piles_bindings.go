@@ -67,6 +67,7 @@ func cascadePiles(svc *piles.Service) autocascade.PilePusher {
 	return autocascade.PilePushFunc(func(ctx context.Context, r autocascade.PileRequest) error {
 		_, err := svc.Push(ctx, piles.PushRequest{
 			Owner: r.Owner, Pile: r.Pile, Refs: []entity.Ref{r.Ref}, Create: r.Create,
+			Key: r.Key, Reason: r.Reason, SkipSelf: r.SkipSelf,
 		})
 		return err
 	})

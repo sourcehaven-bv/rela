@@ -17,11 +17,12 @@ import { decisionPendingKey } from 'rela-components/components/channel/channelFi
 import { problemType } from './channelErrors'
 import type { AppDecisionView } from './presetViews'
 import {
+  buttonTypesOf,
   choiceViews,
   decisionCause,
   decisionReplyTo,
   decisionViews,
-  rowDecisions as rowDecisionsOf,
+  placeDecisions,
 } from './channelView'
 
 /**
@@ -40,6 +41,8 @@ export interface DecisionChannel {
    * notice: the inbox row. Absent: decisionCause finds it in messages.
    */
   cause?: Readonly<Ref<number | undefined>>
+  /** The last read failure, if any. A failed head refetch ends the hold of the button types. */
+  error?: Readonly<Ref<unknown>>
 }
 
 /** The composer, as a decision that opens the form drives it. */
@@ -52,6 +55,8 @@ export interface DecisionComposer {
   endReply(): void
   /** Starts a reply to the message with seq. */
   reply(seq: number): void
+  /** The seq of the message being replied to, if any. */
+  replying(): number | undefined
   /** Selects the type; false when the composer does not offer it. */
   select(type: string): boolean
   /** Shows a refusal in the composer. */
@@ -121,6 +126,21 @@ export interface DecisionDeps {
  * session_moved refusal answers the send, on `resetDecisions()`, and when
  * a head frame brings another generation outside a send; only in that
  * last case is the user told the session moved on.
+ *
+ * Each decision shows once (TKT-A0RTC52): `placed` puts the decisions on
+ * the waiting message when it is held, else in the fallback place (the
+ * session header), and `buttonTypes` names the types those buttons stand
+ * for, which the composer leaves out of its picker. While the held
+ * `_actions` are of another generation than the head (between a move and
+ * the head refetch), `buttonTypes` keeps its last value, so the picker does
+ * not flicker on every move.
+ *
+ * A form decision in a channel with a session is always recorded with a
+ * compose record (given values empty unless a preset gives some), so the
+ * composer shows it in compose mode even when its type is not in the
+ * picker. A refused one-click post that opens the form records one too,
+ * at the click's generation. A form decision that started a reply (Other
+ * answer, onAnswer) ends that reply when it is cancelled.
  *
  * Choices (TKT-03FQPD) are the reply buttons of a question's options. They
  * share the lock and the pending keys with the decisions, so one click
@@ -227,11 +247,32 @@ export function useSessionDecisions(d: DecisionDeps) {
   })
   const choices = computed(() => choicesMemo.value.value)
 
-  // The row of the question that moved the session shows its choices, not
-  // the decision of the answer type as well; the stepper keeps that one.
-  const rowDecisions = computed(() =>
-    rowDecisionsOf(decisions.value, choices.value, decisionSeq.value)
-  )
+  // Each decision once: on the waiting message when it is held, else in the
+  // fallback place. The question's own answer button is left out where its
+  // choices show.
+  const placed = computed(() => placeDecisions(decisions.value, choices.value, decisionSeq.value))
+  const rowDecisions = computed(() => placed.value.row)
+
+  // The types the shown buttons stand for. Held across the gap between a
+  // move and the head refetch, when no decision can be built. A read error
+  // ends the hold, so a failed refetch does not keep the old types out of
+  // the picker.
+  const buttonTypes = computed<string[]>((prev) => {
+    const h = d.ch.head.value
+    const cs = h?.channel.session
+    const gap =
+      !!cs &&
+      !cs.final &&
+      !cs.stranded &&
+      h?.channel.state === 'open' &&
+      d.ch.actionsGeneration.value !== undefined &&
+      d.ch.actionsGeneration.value !== cs.generation &&
+      !d.ch.error?.value
+    if (gap) return prev ?? []
+    const next = buttonTypesOf(placed.value, choices.value, !!d.channelType().session)
+    const same = prev?.length === next.length && next.every((t, i) => prev[i] === t)
+    return prev && same ? prev : next
+  })
 
   const find = (key: string) => decisions.value.find((x) => x.key === key)
 
@@ -318,9 +359,19 @@ export function useSessionDecisions(d: DecisionDeps) {
       formDecision.value = undefined
   }
 
-  /** The user dropped the compose decision in the composer. */
+  /**
+   * The user dropped the decision in the composer. A reply the decision
+   * started ends with it, when it is still the composer's reply.
+   */
   function cancelCompose() {
+    const started = formDecision.value?.startedReply
     formDecision.value = undefined
+    if (started !== undefined && d.composer.replying() === started) d.composer.endReply()
+  }
+
+  /** Notes that the open form decision started the reply to seq. */
+  function noteReply(seq: number) {
+    if (formDecision.value) formDecision.value = { ...formDecision.value, startedReply: seq }
   }
 
   /** Releases the lock of a click in flight; for a channel switch. */
@@ -393,7 +444,7 @@ export function useSessionDecisions(d: DecisionDeps) {
     try {
       await d.post(view.messageType, presetProps(view.props), replyTo, generation)
     } catch (err) {
-      if (live()) await refused(err, view, live)
+      if (live()) await refused(err, view, generation, live)
       return false
     }
     if (!live()) return false
@@ -424,7 +475,10 @@ export function useSessionDecisions(d: DecisionDeps) {
     const live = () => mine === click && channel === d.channelKey()
     try {
       if (view.opensForm) {
-        if ((await openForm(view, generation, live, staleChoice)) && live()) d.composer.reply(seq)
+        if ((await openForm(view, generation, live, staleChoice)) && live()) {
+          d.composer.reply(seq)
+          noteReply(seq)
+        }
         return
       }
       if (await postView(key, view, seq, generation, live)) d.ui.focusRow(seq)
@@ -454,6 +508,7 @@ export function useSessionDecisions(d: DecisionDeps) {
       const view = { key: `answer:${seq}`, messageType, label, opensForm: true }
       if (!(await openForm(view, generation, live)) || !live()) return false
       d.composer.reply(seq)
+      noteReply(seq)
       return true
     } finally {
       if (mine === click) {
@@ -491,37 +546,41 @@ export function useSessionDecisions(d: DecisionDeps) {
       await nextTick()
       if (!live()) return false
     }
-    const compose = (view as AppDecisionView).compose ? composeOf(view) : undefined
-    if (compose) {
-      if (generation === undefined) {
-        // A compose Send needs a generation; without one it would post a
-        // plain form with no preset.
+    const preset = !!(view as AppDecisionView).compose
+    if (generation === undefined) {
+      // No session: nothing to record. A compose Send needs a generation;
+      // without one it would post a plain form with no preset.
+      if (preset) {
         onStale()
         return false
       }
-      // Recorded before the composer selects the type, so it renders
-      // compose mode before it moves the focus.
-      if (d.ch.head.value?.channel.session?.generation !== generation) {
-        formDecision.value = undefined
-        stale()
+      if (!(await select(view.messageType))) {
+        if (live()) onStale()
         return false
       }
-      formDecision.value = { messageType: view.messageType, generation, compose }
+      return live()
     }
-    if (!(await select(view.messageType))) {
-      if (compose && live()) formDecision.value = undefined
-      if (live()) onStale()
-      return false
-    }
-    if (!live()) return false
-    if (generation === undefined || compose) return true
+    // Recorded before the composer selects the type, so it renders compose
+    // mode, and may select a type its picker leaves out, before it moves
+    // the focus. A plain form decision gives no values.
     if (d.ch.head.value?.channel.session?.generation !== generation) {
       formDecision.value = undefined
       stale()
       return false
     }
-    formDecision.value = { messageType: view.messageType, generation }
-    return true
+    formDecision.value = {
+      messageType: view.messageType,
+      generation,
+      compose: composeOf(preset ? view : { ...view, props: undefined }),
+    }
+    if (!(await select(view.messageType))) {
+      if (live()) {
+        formDecision.value = undefined
+        onStale()
+      }
+      return false
+    }
+    return live()
   }
 
   /**
@@ -550,7 +609,12 @@ export function useSessionDecisions(d: DecisionDeps) {
    * opens the composer with the type and shows the server's message there;
    * during an edit it is a toast.
    */
-  async function refused(err: unknown, view: ChannelDecisionView, live: () => boolean) {
+  async function refused(
+    err: unknown,
+    view: ChannelDecisionView,
+    generation: number | undefined,
+    live: () => boolean
+  ) {
     if (problemType(err) === 'session_wrong_state') {
       stale()
       void d.ch.refetch()
@@ -558,14 +622,34 @@ export function useSessionDecisions(d: DecisionDeps) {
     }
     const message = d.ui.handle(err, !d.composer.editing())
     if (message === undefined) return
-    if ((await select(view.messageType)) && live()) d.composer.showError(message)
-    else if (live()) d.ui.toast(message)
+    // In a channel with a session the form is a decision at the click's
+    // generation, with no values fixed, so its Send is refused if the
+    // session moved meanwhile.
+    const record =
+      generation !== undefined &&
+      !d.composer.editing() &&
+      d.ch.head.value?.channel.session?.generation === generation
+    if (record) {
+      formDecision.value = {
+        messageType: view.messageType,
+        generation,
+        compose: composeOf({ ...view, props: undefined }),
+      }
+    }
+    if ((await select(view.messageType)) && live()) {
+      d.composer.showError(message)
+      return
+    }
+    if (record && live()) formDecision.value = undefined
+    if (live()) d.ui.toast(message)
   }
 
   return {
+    buttonTypes,
     choices,
     decisions,
     decisionSeq,
+    placed,
     rowDecisions,
     cancelCompose,
     composeView,
@@ -593,6 +677,8 @@ interface FormDecision {
   messageType: string
   generation: number
   compose?: ComposeRecord
+  /** The seq of the reply the decision started, ended with it on cancel. */
+  startedReply?: number
 }
 
 /**

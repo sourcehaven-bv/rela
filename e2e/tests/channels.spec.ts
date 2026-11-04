@@ -185,9 +185,11 @@ sessionTest.describe("channels with a session", () => {
       await p.expectChannel(ROOM.label);
       await p.expectSessionAt(SESSION.from);
     }
-    // Both may post Contained, but only the lead's moves the session, so
-    // only the lead sees it marked and the note.
-    await alice.expectTransitionMark(SESSION.messageLabel, true);
+    // Both may post Contained, but only the lead's moves the session. The
+    // lead gets it as a decision button in the header, and so not in the
+    // composer's picker (TKT-A0RTC52).
+    await alice.expectDecision(SESSION.messageLabel, true);
+    await alice.expectMessageType(SESSION.messageLabel, false);
     await bob.expectComposer();
     await bob.expectMessageType(SESSION.messageLabel, true);
     // Wrap-up has in: [contained], so neither is offered it yet.
@@ -202,7 +204,9 @@ sessionTest.describe("channels with a session", () => {
     await alice.expectMessage("Looking into it");
     await alice.expectMessageControl("Looking into it", "Edit", true);
 
-    await alice.selectMessageType(SESSION.messageLabel);
+    // The note is required, so the button opens the form in decision mode.
+    await alice.decide(SESSION.messageLabel);
+    await alice.expectComposeStrip(SESSION.messageLabel);
     await alice.expectSessionHint(`Sending this moves the session to ${SESSION.to}.`);
     await alice.post("Access revoked", SESSION.noteLabel);
 
@@ -242,26 +246,34 @@ decisionTest.describe("session decisions", () => {
       await p.expectSessionAt(DECISIONS.drafting);
     }
 
-    await alice.selectMessageType(DECISIONS.containedLabel);
+    // Nothing moved the session yet, so its decisions are in the header.
+    await alice.decide(DECISIONS.containedLabel);
     await alice.post("Ready for review", DECISIONS.noteLabel);
     for (const p of [alice, bob]) await p.expectSessionAt(DECISIONS.review);
 
-    // The lead may decide, in the header and on the message that asked;
-    // the member may not, so sees no button anywhere.
+    // The lead may decide, once, on the message that asked; the header
+    // points there (TKT-A0RTC52). The member may not, so sees no button.
     for (const label of [DECISIONS.approveLabel, DECISIONS.reviseLabel]) {
-      await alice.expectDecision(label, true);
       await alice.expectDecisionOnMessage("Ready for review", label, true);
+      await alice.expectDecision(label, false);
       await bob.expectDecision(label, false);
       await bob.expectDecisionOnMessage("Ready for review", label, false);
     }
+    await alice.expectGoToDecision(true);
+    await bob.expectGoToDecision(false);
+    await alice.goToDecision();
+    await alice.expectDecisionFocused("Ready for review", DECISIONS.approveLabel);
+    // Every type the lead may post is a button now, or Text.
+    await alice.expectMessageType(DECISIONS.reviseLabel, false);
 
     // Revise has a required field, so it opens the form.
-    await alice.decide(DECISIONS.reviseLabel);
+    await alice.decideOnMessage("Ready for review", DECISIONS.reviseLabel);
+    await alice.expectComposeStrip(DECISIONS.reviseLabel);
     await alice.post("Add the rollback plan", DECISIONS.feedbackLabel);
     for (const p of [alice, bob]) await p.expectSessionAt(DECISIONS.drafting);
     await alice.expectDecision(DECISIONS.approveLabel, false);
 
-    await alice.selectMessageType(DECISIONS.containedLabel);
+    await alice.decideOnMessage("Add the rollback plan", DECISIONS.containedLabel);
     await alice.post("Ready again", DECISIONS.noteLabel);
     for (const p of [alice, bob]) await p.expectSessionAt(DECISIONS.review);
 
@@ -299,15 +311,15 @@ composeDecisionTest.describe("compose decisions", () => {
       await p.expectSessionAt(DECISIONS.drafting);
     }
 
-    await alice.selectMessageType(DECISIONS.containedLabel);
+    await alice.decide(DECISIONS.containedLabel);
     await alice.post("Ready for review", DECISIONS.noteLabel);
     for (const p of [alice, bob]) await p.expectSessionAt(DECISIONS.review);
-    await alice.expectDecision(DECISIONS.requestChangesLabel, true);
-    await bob.expectDecision(DECISIONS.requestChangesLabel, false);
+    await alice.expectDecisionOnMessage("Ready for review", DECISIONS.requestChangesLabel, true);
+    await bob.expectDecisionOnMessage("Ready for review", DECISIONS.requestChangesLabel, false);
 
     // The topic is fixed, so it shows in the strip and has no field; the
     // focus goes to the empty required Feedback.
-    await alice.decide(DECISIONS.requestChangesLabel);
+    await alice.decideOnMessage("Ready for review", DECISIONS.requestChangesLabel);
     await alice.expectComposeStrip(DECISIONS.requestChangesLabel);
     await alice.expectComposeStrip(`${DECISIONS.topicLabel}: ${DECISIONS.topicValue}`);
     await alice.expectNoField(DECISIONS.topicLabel);
@@ -384,9 +396,11 @@ compactTest.describe("compact session header", () => {
       `Next state: ${DECISIONS.drafting}`,
       `Next state: ${DECISIONS.approved}`,
     ];
-    await alice.selectMessageType(DECISIONS.containedLabel);
+    await alice.decide(DECISIONS.containedLabel);
     await alice.post("Ready for review", DECISIONS.noteLabel);
     await alice.expectSessionContext(inReview);
+    // The decisions sit on the message; the compact header points there.
+    await alice.expectGoToDecision(true);
 
     // Unfolding shows the full list on its own row and removes the short
     // one, so one item carries aria-current.

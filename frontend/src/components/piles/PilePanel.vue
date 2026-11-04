@@ -11,6 +11,11 @@
  * Every item shown is one the owner may read in the current world; the
  * server leaves the rest out, so the count here, the sidebar count and the
  * step-through total agree.
+ *
+ * A declared pile (favorites, notifications) is locked: it has no rename or
+ * delete. One with read state is a feed rather than a collection: its items
+ * stay in time order, unread ones stand out, each says who caused it and
+ * why, and the head offers to mark items read.
  */
 import { computed, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
@@ -87,7 +92,25 @@ function typeLabel(type: string): string {
   return def?.label_plural || def?.label || type
 }
 
+const locked = computed(() => !!pile.value?.locked)
+const readState = computed(() => !!pile.value?.read_state)
+const unreadCount = computed(() => items.value.filter((i) => !i.read).length)
+
+/** Who caused an item and why, for a pile with read state. */
+function itemCause(item: PileItem): string {
+  if (item.actor && item.reason)
+    return t('piles.panel.cause', { actor: item.actor, reason: item.reason })
+  return item.actor || item.reason || ''
+}
+
+/** The trailing text of a row: the cause on a feed, the address otherwise. */
+function itemMeta(item: PileItem): string {
+  return readState.value ? itemCause(item) : item.address
+}
+
+/** A feed is one group in time order; a collection is grouped by type. */
 const groups = computed(() => {
+  if (readState.value) return [{ type: '', label: '', rows: items.value }]
   const out = new Map<string, PileItem[]>()
   for (const item of items.value) {
     const list = out.get(item.type)
@@ -163,6 +186,17 @@ async function removeTicked() {
   if (await piles.removeItems(p, addresses)) clearTicked()
 }
 
+async function markTickedRead() {
+  const p = pile.value
+  if (!p || ticked.value.size === 0) return
+  if (await piles.markRead(p, [...ticked.value])) clearTicked()
+}
+
+async function markAllRead() {
+  const p = pile.value
+  if (p) await piles.markRead(p)
+}
+
 async function copyIds() {
   const text = items.value.map((i) => i.address).join('\n')
   try {
@@ -223,6 +257,16 @@ const renaming = ref(false)
             size="sm"
           />
           <RlButton
+            v-if="readState && unreadCount"
+            variant="secondary"
+            size="sm"
+            icon="check"
+            data-testid="pile-read-all"
+            @click="markAllRead"
+          >
+            {{ t('piles.panel.markAllRead') }}
+          </RlButton>
+          <RlButton
             v-if="firstItemRoute"
             :as="RouterLink"
             :to="firstItemRoute"
@@ -261,16 +305,27 @@ const renaming = ref(false)
               </RlMenuItem>
               <RlMenuSeparator />
             </template>
-            <RlMenuItem icon="edit" data-testid="pile-rename" @click="renaming = true">{{
-              t('piles.panel.rename')
-            }}</RlMenuItem>
+            <RlMenuItem
+              v-if="!locked"
+              icon="edit"
+              data-testid="pile-rename"
+              @click="renaming = true"
+              >{{ t('piles.panel.rename') }}</RlMenuItem
+            >
             <RlMenuItem icon="copy" :disabled="!items.length" @click="copyIds">{{
               t('piles.panel.copyIds')
             }}</RlMenuItem>
-            <RlMenuSeparator />
-            <RlMenuItem icon="trash-2" tone="danger" data-testid="pile-delete" @click="deletePile">
-              {{ t('piles.panel.delete') }}
-            </RlMenuItem>
+            <template v-if="!locked">
+              <RlMenuSeparator />
+              <RlMenuItem
+                icon="trash-2"
+                tone="danger"
+                data-testid="pile-delete"
+                @click="deletePile"
+              >
+                {{ t('piles.panel.delete') }}
+              </RlMenuItem>
+            </template>
           </RlMenu>
         </div>
       </div>
@@ -299,6 +354,16 @@ const renaming = ref(false)
             </RlMenuItem>
           </RlMenu>
           <RlButton
+            v-if="readState"
+            size="sm"
+            variant="secondary"
+            icon="check"
+            data-testid="pile-mark-read"
+            @click="markTickedRead"
+          >
+            {{ t('piles.panel.markRead') }}
+          </RlButton>
+          <RlButton
             size="sm"
             variant="secondary"
             tone="danger"
@@ -320,12 +385,20 @@ const renaming = ref(false)
         size="sm"
       />
       <section v-for="g in groups" :key="g.type" class="pile-panel__group" data-testid="pile-group">
-        <RlSectionHeading :title="g.label" :count="g.rows.length" size="sm" :level="3" />
+        <RlSectionHeading
+          v-if="g.label"
+          :title="g.label"
+          :count="g.rows.length"
+          size="sm"
+          :level="3"
+        />
         <RlPanelListRow
           v-for="item in g.rows"
           :key="item.address"
+          :class="{ 'pile-panel__row--unread': readState && !item.read }"
           :label="item.title || item.id"
-          :meta="item.address"
+          :meta="itemMeta(item)"
+          :meta-highlight="readState && !item.read"
           checkable
           :checked="ticked.has(item.address)"
           :as="RouterLink"
@@ -358,6 +431,10 @@ const renaming = ref(false)
 
 .pile-panel__note {
   padding: var(--rl-space-4);
+}
+
+.pile-panel__row--unread :deep(.rl-panel-list-row__label) {
+  font-weight: 600;
 }
 
 .pile-panel__group + .pile-panel__group {

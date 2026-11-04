@@ -25,6 +25,7 @@ const PILE_ICON_LABELS = {
   heart: 'piles.icon.heart',
   clock: 'piles.icon.clock',
   target: 'piles.icon.target',
+  bell: 'piles.icon.bell',
 } as const
 
 type PileIconKey = (typeof PILE_ICON_LABELS)[keyof typeof PILE_ICON_LABELS]

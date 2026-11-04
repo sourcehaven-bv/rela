@@ -707,6 +707,8 @@ deps:
       - icondefs
       - ingestspec
       - metamodel
+      # piles.Icons, the allowlist a `piles.toggles` icon is checked against.
+      - piles
       - yamlscalar
     canUse:
       - rrulego

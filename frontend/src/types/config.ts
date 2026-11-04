@@ -67,6 +67,22 @@ export interface PilesConfig {
   actions: string[]
   /** Transform names; empty offers every registered transform. */
   export: string[]
+  /** Entity-page buttons that put the entity on a declared pile or take it off. */
+  toggles?: PileToggle[]
+}
+
+/** One `piles.toggles` entry. */
+export interface PileToggle {
+  /** The declared pile's key. */
+  pile: string
+  /** Shown while the entity is off the pile; defaults to the pile's icon. */
+  icon?: string
+  /** Shown while the entity is on the pile; defaults to `icon`. */
+  icon_active?: string
+  /** Defaults to the pile's name. */
+  label?: string
+  /** The types the button shows on; empty or absent shows it on all. */
+  entity_types?: string[]
 }
 
 /** A custom app surfaced in the SPA (HTML fetched from /api/v1/_apps/{id}). */

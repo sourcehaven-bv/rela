@@ -45,7 +45,9 @@ test.describe("busy indicator", () => {
 
     await channels.openEntity("feature", FEATURE);
     await channels.expectChannel(ROOM.label);
-    await channels.selectMessageType(RUN.startLabel);
+    // Start moves the session, so it is a decision button (TKT-A0RTC52).
+    // Nothing moved the session yet, so it sits in the header.
+    await channels.decide(RUN.startLabel);
     await channels.post("Planning the change", RUN.noteLabel);
     await channels.expectSessionAt(RUN.planning);
     await channels.expectActivityLine("Working…", true);
@@ -60,7 +62,8 @@ test.describe("busy indicator", () => {
 
     await channels.openEntity("feature", FEATURE);
     await channels.expectChannel(ROOM.label);
-    await channels.selectMessageType(RUN.finishLabel);
+    // Finish sits on the message that moved the session.
+    await channels.decideOnMessage("Planning the change", RUN.finishLabel);
     await channels.post("Plan written", RUN.noteLabel);
     await channels.expectSessionAt(RUN.done);
     await channels.expectActivityLine("Working…", false);

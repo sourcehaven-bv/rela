@@ -1662,7 +1662,9 @@ reloads the inbox; nothing is posted.
 
 When messages followed the waiting message, the row says how many, for
 example "3 newer messages". Read them in the drawer before you decide.
-The buttons stay on the row.
+The buttons stay on the row. As on the entity page, each decision shows
+once: on the waiting message, or below the row when the row shows no
+message that moved the session.
 
 The row shows only the decisions you may take, as on the entity page. A
 row whose session never moved, or that moved by a timer, shows no
@@ -4901,6 +4903,9 @@ navigation:
 - The pile is no longer listed in the Piles group, so it does not appear twice.
 - Without `label`, the row shows the pile name. Without `icon`, it shows the
   `layers` glyph.
+- `pile:` may also name the key of a [declared pile](#declared-piles), such as
+  `pile: inbox`. The key is matched before any name. On a pile with read
+  state, the row counts unread items rather than all items.
 
 #### Opening a list as a flyout
 
@@ -6603,12 +6608,64 @@ without a label, an unknown transform, and any unknown key inside the block.
 It warns when a `set:` action changes a property that no entity type declares,
 because that action would fail on every item.
 
+### Declared piles
+
+The schema can declare piles that every user has, such as Favorites and
+Notifications (see Declared Piles in the metamodel guide). These piles differ
+from the ones users make:
+
+- They appear in the sidebar in a group of their own, above the Piles group,
+  unless a `pile:` navigation entry places them elsewhere.
+- They are locked. The pile menu has no rename or delete.
+- They are not offered in **Add to pile**. A toggle on the entity page, or an
+  automation, fills them instead.
+
+A pile with `read_state: true` works like an inbox:
+
+- Its items are listed newest first, without grouping by type.
+- Unread items are shown in bold, and the sidebar row counts them.
+- Each item shows who caused it and why, for example "Bob completed a task".
+  The name is the person's title. When you cannot read that person, no name is
+  shown.
+- Tick items and choose **Mark read**, or choose **Mark all read**.
+- With `auto_read: on_open`, opening an entity marks it read on the pile.
+
+#### Toggles
+
+A toggle is a button next to the entity title that puts the entity on a
+declared pile, or takes it off again. It is how users mark favorites:
+
+```yaml
+piles:
+  toggles:
+    - pile: favorites
+      icon: star
+      label: Favorites
+    - pile: watching
+      icon: flag
+      entity_types: [ticket, risk]
+```
+
+| Field          | Required | Description                                                   |
+| -------------- | -------- | ------------------------------------------------------------- |
+| `pile`         | yes      | The key of a declared pile.                                   |
+| `icon`         | no       | The button icon. Defaults to the pile's icon.                 |
+| `icon_active`  | no       | The icon while the entity is on the pile. Defaults to `icon`. |
+| `label`        | no       | The name in the button's label. Defaults to the pile's name.  |
+| `entity_types` | no       | Show the button only on these types. Defaults to all types.   |
+
+The button is pressed while the entity is on the pile. Config validation
+rejects a toggle without `pile`, a pile the schema does not declare, a second
+toggle for the same pile, an unknown entity type and an icon that is not a pile
+icon. The pile icons are `layers`, `star`, `flag`, `bookmark`, `inbox`,
+`folder`, `tag`, `heart`, `clock`, `target` and `bell`.
+
 ### Limits
 
 - A user can have at most 50 piles. Creating a 51st is refused.
 - A pile holds at most 500 items. When you add to a full pile, the oldest
   items are dropped, so the pile keeps the 500 newest. An add never fails
-  because the pile is full.
+  because the pile is full. A declared pile drops read items first.
 - A push by someone else follows stricter limits; see Privacy below.
 - Renaming an entity keeps it on every pile under its new id. Deleting an
   entity removes it from every pile. Deleting one face removes only that face.
@@ -6639,6 +6696,10 @@ what fits and drops the rest. It creates a new pile only while you have fewer
 than 25 piles, so 25 of your 50 piles can only be filled by you. The server
 logs each such push with the pushing user, you as the target and the number of
 items. It does not log the pile name.
+
+Someone else cannot push to your declared piles, such as Favorites. The one
+exception is a `notify` automation, which adds to a declared pile with read
+state. There, a full pile drops your read items first, then the oldest.
 
 One small signal remains. The 500-item limit counts every stored item,
 including items you cannot currently read. So you may notice that an old item

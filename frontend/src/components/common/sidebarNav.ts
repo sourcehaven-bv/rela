@@ -282,10 +282,25 @@ export function pileNameNavId(name: string): string {
   return `${PILE_NAME_NAV_PREFIX}${name}`
 }
 
-/** The pile a `pile:` entry names, if the user has it. Names ignore case. */
+/**
+ * The pile a `pile:` entry names, if the user has it: a declared pile by its
+ * key, else any pile by name. Names ignore case.
+ */
 export function pileNamed(piles: readonly PileSummary[], name: string): PileSummary | undefined {
+  const byKey = piles.find((p) => p.key && p.key === name)
+  if (byKey) return byKey
   const wanted = name.toLowerCase()
   return piles.find((p) => p.name.toLowerCase() === wanted)
+}
+
+/**
+ * The count marker of a pile row: its unread items on a pile with read
+ * state, else all its items. None when that is zero.
+ */
+export function pileSummaryStatus(p: PileSummary): NavItemStatus | undefined {
+  if (!p.read_state) return pileStatus(p.count)
+  const n = p.unread ?? 0
+  return n > 0 ? { tone: 'info', label: t('piles.unreadCount', { n }, n), count: n } : undefined
 }
 
 /** The count marker a pile row shows; none for an empty pile. */
@@ -313,13 +328,31 @@ export function pilesNavGroup(piles: readonly PileSummary[]): NavGroup {
     id: PILES_GROUP_ID,
     label: t('nav.piles'),
     addLabel: t('nav.newPile'),
-    items: piles.map((p) => ({
-      id: pileNavId(p.id),
-      label: p.name,
-      icon: pileIcon(p.icon),
-      as: 'button' as const,
-      opensFlyout: true,
-      ...(p.count > 0 ? { status: pileStatus(p.count) } : {}),
-    })),
+    items: piles.map(pileNavItem),
+  }
+}
+
+/** The id of the sidebar group holding the declared piles. */
+export const DECLARED_PILES_GROUP_ID = 'group:declared-piles'
+
+/**
+ * The declared piles (favorites, notifications): an unlabelled group of their
+ * own, outside the Piles group, so they read as part of the app rather than
+ * as something the user made. None when there are none to show.
+ */
+export function declaredPilesNavGroup(piles: readonly PileSummary[]): NavGroup | null {
+  if (piles.length === 0) return null
+  return { id: DECLARED_PILES_GROUP_ID, items: piles.map(pileNavItem) }
+}
+
+function pileNavItem(p: PileSummary) {
+  const status = pileSummaryStatus(p)
+  return {
+    id: pileNavId(p.id),
+    label: p.name,
+    icon: pileIcon(p.icon),
+    as: 'button' as const,
+    opensFlyout: true,
+    ...(status ? { status } : {}),
   }
 }

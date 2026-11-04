@@ -71,6 +71,7 @@ type Action struct {
 	CreateRelation *CreateRelationAction
 	CreateEntity   *CreateEntityAction
 	AddToPile      *AddToPileAction
+	Notify         *NotifyAction
 	Lua            string // Inline Lua code to execute
 	LuaFile        string // Path to Lua script file in scripts/ directory
 	// AllowACLBypass: which rela.bypass_acl capabilities this Lua action
@@ -262,6 +263,10 @@ type Result struct {
 	// PilesToPush contains pile pushes of the triggering entity. They are
 	// best-effort: the cascade logs a failed push and never fails the write.
 	PilesToPush []PileToPush
+
+	// Notifications are the planned `notify` actions. Like PilesToPush they
+	// are best-effort.
+	Notifications []NotificationToSend
 
 	// Warnings contains validation warnings (allow save, show message).
 	Warnings []string

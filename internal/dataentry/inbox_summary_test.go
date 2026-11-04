@@ -30,7 +30,7 @@ func (e *inboxEnv) summary(t *testing.T, method, query string) (rec *httptest.Re
 	e.chans.reset()
 	rec = httptest.NewRecorder()
 	req := httptest.NewRequest(method, inboxSummaryPath+query, http.NoBody)
-	e.app.channels.serveInboxSummary(rec, req.WithContext(gateCtxFor(principalCtx("alice"), t, e.d)))
+	e.app.channels.handleV1InboxSummary(rec, req.WithContext(gateCtxFor(principalCtx("alice"), t, e.d)))
 	return rec, channelCost{entity: e.counting.Calls(), channel: e.chans.snapshot()}
 }
 
@@ -88,7 +88,7 @@ func TestInboxSummaryHandler_Shape(t *testing.T) {
 func TestInboxSummaryHandler_Errors(t *testing.T) {
 	serve := func(h *channelsHandler, method string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
-		h.serveInboxSummary(rec, httptest.NewRequest(method, inboxSummaryPath, http.NoBody))
+		h.handleV1InboxSummary(rec, httptest.NewRequest(method, inboxSummaryPath, http.NoBody))
 		return rec
 	}
 	requireProblem := func(t *testing.T, rec *httptest.ResponseRecorder, status int, typ string) v1.Error {
@@ -126,7 +126,7 @@ func TestInboxSummaryHandler_Errors(t *testing.T) {
 		requireProblem(t, serve(h, http.MethodGet), http.StatusForbidden, realtime.TypeNoPrincipal)
 		e := newInboxEnv(t, nil)
 		rec := httptest.NewRecorder()
-		e.app.channels.serveInboxSummary(rec, httptest.NewRequest(http.MethodGet, inboxSummaryPath, http.NoBody))
+		e.app.channels.handleV1InboxSummary(rec, httptest.NewRequest(http.MethodGet, inboxSummaryPath, http.NoBody))
 		requireProblem(t, rec, http.StatusForbidden, realtime.TypeNoPrincipal)
 	})
 	t.Run("row ceiling", func(t *testing.T) {

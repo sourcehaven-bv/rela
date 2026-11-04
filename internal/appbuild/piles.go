@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/lease"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/piles"
 	"github.com/Sourcehaven-BV/rela/internal/piles/kvpiles"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -74,7 +75,7 @@ func buildRefHolders(
 			return refHolders{}, err
 		}
 	}
-	if h.piles, err = newPilesService(h.pileStore, d, redactor, st, base.worlds); err != nil {
+	if h.piles, err = newPilesService(h.pileStore, base.meta, d, redactor, st, base.worlds); err != nil {
 		return refHolders{}, err
 	}
 	if h.leases, h.leaseShared, err = buildLeases(
@@ -142,12 +143,35 @@ func stopNewLocalOnError(base *SharedBase, l *realtime.Local, err error) {
 // and person type of the current ACL. Assembly and [NewFromCollaborators]
 // both build it here.
 func newPilesService(
-	backend piles.Store, d *acl.Declarative, redactor visibility.FieldRedactor, st store.Store, w worlds.Compiled,
+	backend piles.Store, meta *metamodel.Metamodel, d *acl.Declarative, redactor visibility.FieldRedactor,
+	st store.Store, w worlds.Compiled,
 ) (*piles.Service, error) {
 	return piles.NewService(backend, piles.Options{
 		OwnerExists: pileOwnerExists(d, redactor, st, w),
 		PersonType:  pilePersonType(d),
+		Declared:    declaredPiles(meta),
 	})
+}
+
+// declaredPiles converts the schema's `piles:` block for the piles service,
+// in key order.
+func declaredPiles(meta *metamodel.Metamodel) []piles.Declared {
+	if meta == nil {
+		return nil
+	}
+	out := make([]piles.Declared, 0, len(meta.Piles))
+	for _, key := range meta.PileKeys() {
+		d := meta.Piles[key]
+		icon := d.Icon
+		if icon == "" {
+			icon = piles.DefaultIcon
+		}
+		out = append(out, piles.Declared{
+			Key: key, Name: d.Name, Icon: icon, Bump: d.Bump(), ReadState: d.ReadState, AutoRead: d.ReadsOnOpen(),
+			ClearReadAfter: d.ClearReadDuration(), ExpireAfter: d.ExpireDuration(), Reasons: d.Reasons,
+		})
+	}
+	return out
 }
 
 // pileBackend returns the piles backend for st: the store's own (see

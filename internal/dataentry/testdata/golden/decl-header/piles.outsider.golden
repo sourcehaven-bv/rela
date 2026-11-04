@@ -27,6 +27,7 @@ body:
     "tag",
     "heart",
     "clock",
-    "target"
+    "target",
+    "bell"
   ]
 }

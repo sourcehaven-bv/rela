@@ -35,6 +35,6 @@ func TestMigration_SessionPrevious(t *testing.T) {
 	require.Empty(t, previous, "no backfill")
 	current, target, err := pgstore.Status(ctx, pool)
 	require.NoError(t, err)
-	require.Equal(t, 40, current)
+	require.Equal(t, 41, current)
 	require.Equal(t, target, current)
 }

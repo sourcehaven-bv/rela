@@ -252,6 +252,7 @@ const CHANNEL_TEXT_NL: Record<ChannelTextKey, string> = {
   sessionPausedClosed: 'Gepauzeerd zolang het kanaal gesloten is',
   sessionPausedArchived: 'Gepauzeerd zolang het kanaal gearchiveerd is',
   sessionShowAll: 'Alle stappen tonen',
+  sessionGoToDecision: 'Naar de beslissing',
   sessionHideAll: 'Stappen verbergen',
   sessionContext: 'Stappen van de sessie',
   decisions: 'Beslissingen',

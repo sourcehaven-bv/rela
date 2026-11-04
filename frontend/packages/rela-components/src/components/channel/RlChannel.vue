@@ -33,8 +33,9 @@
  * `decisionSeq` (the message that moved the session into its current
  * state) shows them and emits `decide` with `from: 'row'`. No other row
  * does. `focusRow(seq)` puts focus on a row without scrolling, for after a
- * decision removes the button that had it. `jumpTo(seq)` is the reply
- * quote's jump, also used by a message link.
+ * decision removes the button that had it. `focusDecisions(seq)` scrolls a
+ * row into view and focuses its first choice or decision button.
+ * `jumpTo(seq)` is the reply quote's jump, also used by a message link.
  *
  * `choices` are the reply buttons of open questions, keyed by the
  * question's seq; each row shows its own and emits `choose` with the key.
@@ -122,6 +123,12 @@ const props = withDefaults(
     decisionSeq?: number
     /** The reply buttons of open questions, by the question's seq. */
     choices?: ReadonlyMap<number, ChannelDecisionView[]>
+    /**
+     * The types a decision button stands for, as passed to the composer.
+     * Reply follows the composer's picker: it shows when a reply type is
+     * left to pick.
+     */
+    buttonTypes?: string[]
   }>(),
   {
     postable: () => [],
@@ -141,6 +148,7 @@ const props = withDefaults(
     decisions: undefined,
     decisionSeq: undefined,
     choices: undefined,
+    buttonTypes: () => [],
   },
 )
 
@@ -183,11 +191,16 @@ const lifecycleButtons = computed(() => {
   return props.lifecycle.filter((op) => allowed.has(op.name))
 })
 
-const canReply = computed(
-  () =>
-    props.state === 'open' &&
-    props.messageTypes.some((t) => t.reply && props.postable.includes(t.name)),
-)
+// The types the composer's picker offers: the postable ones without the
+// button types, or all of them when that would leave none (the composer's
+// safeguard). Reply shows when one of them can reply.
+const canReply = computed(() => {
+  if (props.state !== 'open') return false
+  const postable = props.messageTypes.filter((t) => props.postable.includes(t.name))
+  const buttons = new Set(props.buttonTypes)
+  const pickable = postable.filter((t) => !buttons.has(t.name))
+  return (pickable.length ? pickable : postable).some((t) => t.reply)
+})
 
 /* Quiet message types ------------------------------------------------- */
 
@@ -466,6 +479,21 @@ function loadOlder() {
 defineExpose({
   reveal,
   jumpTo,
+  /**
+   * Scrolls the row with seq into view and focuses the first usable button
+   * of its choices, else of its decisions (TKT-A0RTC52: the session
+   * header's "Go to decision"). False when the row is not shown or has no
+   * such button.
+   */
+  focusDecisions(seq: number): boolean {
+    const row = log.value?.querySelector<HTMLElement>(`[data-seq="${seq}"]`)
+    const usable = (sel: string) => row?.querySelector<HTMLElement>(`${sel} button:not([disabled])`)
+    const button = usable('.rl-channel-message__choices') ?? usable('.rl-channel-decisions')
+    if (!row || !button) return false
+    row.scrollIntoView?.({ block: 'nearest' })
+    button.focus({ preventScroll: true })
+    return true
+  },
   /** Moves focus to the row with seq, without scrolling; false when it is not shown. */
   focusRow(seq: number): boolean {
     const target = log.value?.querySelector<HTMLElement>(`[data-seq="${seq}"]`)

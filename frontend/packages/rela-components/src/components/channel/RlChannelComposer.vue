@@ -57,6 +57,15 @@
  * returns false, and changes nothing, during an edit or for a type that is
  * not offered.
  *
+ * `buttonTypes` names the message types a button on the page stands for
+ * now (session decision buttons, TKT-A0RTC52). The type picker leaves them
+ * out, so each decision is offered once; the button is the way in. Such a
+ * type is selected only while `compose` names it: a decision that opens
+ * the form passes it as `compose`, and the composer then shows it in
+ * compose mode. When `compose` stops naming it, the selection goes back to
+ * the default type. If leaving them out would leave nothing to pick, the
+ * picker offers every type as before, so the composer never disappears.
+ *
  * `compose` puts the composer in compose mode, for a decision that opens it
  * with some properties fixed (a preset button with `compose: true`). The app
  * owns it, as it owns `replyTo`. A new `compose.key` selects `compose.type`
@@ -64,7 +73,8 @@
  * empty, else the first field, and scrolls it into view. Each field wrapper
  * carries `data-field`, and the focus goes to the first focusable element in
  * it. In compose mode a strip above the fields shows the label and the fixed
- * values, with a cancel button that emits `cancelCompose`. The fixed
+ * values, with a cancel button that emits `cancelCompose` and then focuses
+ * the first field of what the composer shows next. The fixed
  * properties have no field, never enter the drafts and are not in the `post`
  * event; the app adds them. The event's `compose` names the key the composer
  * applied, so the app adds them only when the user saw them fixed. The hint
@@ -132,6 +142,8 @@ const props = withDefaults(
     blocked?: boolean
     /** A decision that opens the composer with fixed values; see the header comment. */
     compose?: ChannelComposeView
+    /** Types a button stands for now; left out of the picker. See the header comment. */
+    buttonTypes?: string[]
   }>(),
   {
     presentation: undefined,
@@ -147,6 +159,7 @@ const props = withDefaults(
     transitions: () => [],
     blocked: false,
     compose: undefined,
+    buttonTypes: () => [],
   },
 )
 
@@ -182,13 +195,29 @@ const offered = computed(() => {
   return [...first, ...list.filter((m) => !transitionByType.value.has(m.name))]
 })
 
+/**
+ * The types the picker offers: the offered ones without the button types,
+ * or all of them when that would leave none. An edit offers its own type.
+ */
+const pickable = computed(() => {
+  if (props.editing || !props.buttonTypes.length) return offered.value
+  const buttons = new Set(props.buttonTypes)
+  const list = offered.value.filter((m) => !buttons.has(m.name))
+  return list.length ? list : offered.value
+})
+
+/** Whether type may be the selection now: pickable, or the live compose decision's type. */
+function selectable(type: string): boolean {
+  return pickable.value.some((m) => m.name === type) || liveCompose()?.type === type
+}
+
 /** The type selected by default: the first that moves nothing, else the first. */
 function defaultType(list: ChannelMessageTypeDef[]): string {
   return (list.find((m) => !transitionByType.value.has(m.name)) ?? list[0])?.name ?? ''
 }
 
 const typeOptions = computed(() =>
-  offered.value.map((m) =>
+  pickable.value.map((m) =>
     transitionByType.value.has(m.name)
       ? { value: m.name, label: m.label, icon: 'workflow' as const, srHint: messages.channelSessionOptionHint() }
       : { value: m.name, label: m.label },
@@ -199,9 +228,21 @@ const typeOptions = computed(() =>
 const typeGone = computed(() => !!props.editing && offered.value.length === 0)
 
 const selected = ref('')
-const current = computed(
-  () => offered.value.find((m) => m.name === selected.value) ?? offered.value[0],
-)
+const current = computed(() => {
+  const name = selected.value
+  const own = name && selectable(name) ? offered.value.find((m) => m.name === name) : undefined
+  if (own) return own
+  // A selection that may not stay, such as the edited type after an edit,
+  // falls back to the live decision first, so the edit's end keeps it.
+  const c = liveCompose()
+  const live = c && offered.value.find((m) => m.name === c.type)
+  if (live) return live
+  // Before the first selection the first type stands in, so setting the
+  // default at mount reports it with a `select` event.
+  if (!name) return pickable.value[0]
+  const fallback = defaultType(pickable.value)
+  return pickable.value.find((m) => m.name === fallback)
+})
 
 /**
  * The `compose.key` the user left by selecting another type: compose mode
@@ -226,12 +267,17 @@ watch(
   },
 )
 
+// A selection that may no longer be selected goes to the live compose
+// decision, else the default: the type left the offered list, or is a button
+// type with no compose decision naming it (the decision was cancelled, sent
+// or went stale, or an edit of that type ended).
 watch(
-  offered,
-  (list) => {
+  [offered, pickable, () => props.compose?.key, () => props.compose?.type],
+  () => {
     // An edit sets and restores the selection itself; see the editing watcher.
     if (props.editing) return
-    if (!list.some((m) => m.name === selected.value)) selected.value = defaultType(list)
+    if (selected.value && selectable(selected.value)) return
+    selected.value = liveCompose()?.type ?? defaultType(pickable.value)
   },
   { immediate: true },
 )
@@ -243,7 +289,7 @@ watch(
  */
 let pickerFocused = false
 watch(
-  offered,
+  pickable,
   () => {
     const picker = form.value?.querySelector('.rl-channel-composer__types')
     pickerFocused = !!picker && picker.contains(document.activeElement)
@@ -251,7 +297,7 @@ watch(
   { flush: 'pre' },
 )
 watch(
-  offered,
+  pickable,
   () => {
     if (!pickerFocused) return
     pickerFocused = false
@@ -415,7 +461,7 @@ watch(
       // wins over the selection the edit put aside.
       const c = liveCompose()
       if (c) selected.value = c.type
-      else if (offered.value.some((m) => m.name === s.selected)) selected.value = s.selected
+      else if (selectable(s.selected)) selected.value = s.selected
     }
     const e = props.editing
     if (!e) return
@@ -495,6 +541,22 @@ async function submit() {
   }
 }
 
+/**
+ * The cancel button of compose mode. The app ends the decision; the button
+ * goes with it, so the focus moves to the first field of what is shown next.
+ */
+function cancelCompose() {
+  emit('cancelCompose')
+  void nextTick(() => {
+    focusField()
+    // A type with no fields: the picker's tab stop, else Send.
+    if (form.value?.contains(document.activeElement)) return
+    form.value
+      ?.querySelector<HTMLElement>('.rl-channel-composer__types [tabindex="0"], .rl-channel-composer__send')
+      ?.focus()
+  })
+}
+
 function cancelEdit() {
   localErrors.value = {}
   emit('cancelEdit')
@@ -548,7 +610,7 @@ function focusField() {
  * during an edit or when `type` is not offered now.
  */
 function select(type: string): boolean {
-  if (props.editing || !offered.value.some((m) => m.name === type)) return false
+  if (props.editing || !selectable(type)) return false
   selected.value = type
   void nextTick(focusField)
   return true
@@ -573,7 +635,7 @@ defineExpose({
     @keydown.ctrl.enter.prevent="submit"
   >
     <RlSegmentedControl
-      v-if="offered.length > 1"
+      v-if="pickable.length > 1"
       v-model="selected"
       class="rl-channel-composer__types"
       :label="t('messageType')"
@@ -594,7 +656,7 @@ defineExpose({
         <strong>{{ composing.label }}</strong>
         <span v-for="g in givenRows" :key="g.name" class="rl-channel-composer__given">{{ g.text }}</span>
       </span>
-      <RlIconButton icon="x" :label="t('cancelCompose')" :size="14" @click="emit('cancelCompose')" />
+      <RlIconButton icon="x" :label="t('cancelCompose')" :size="14" @click="cancelCompose" />
     </div>
 
     <RlBanner v-if="error" tone="danger" class="rl-channel-composer__banner">{{ error }}</RlBanner>
@@ -635,6 +697,7 @@ defineExpose({
           {{ t('cancel') }}
         </RlButton>
         <RlButton
+          class="rl-channel-composer__send"
           variant="primary"
           size="sm"
           icon="send"

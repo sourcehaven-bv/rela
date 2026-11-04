@@ -173,10 +173,10 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_piles", a.piles.handleV1Piles)
 	mux.HandleFunc("/api/v1/_piles/", a.piles.handleV1Piles)
 	mux.HandleFunc(inboxPath, func(w http.ResponseWriter, r *http.Request) {
-		a.channels.serveInbox(w, r, a.State().Meta)
+		a.channels.handleV1Inbox(w, r, a.State().Meta)
 	})
 	mux.HandleFunc(inboxSummaryPath, func(w http.ResponseWriter, r *http.Request) {
-		a.channels.serveInboxSummary(w, r)
+		a.channels.handleV1InboxSummary(w, r)
 	})
 	mux.HandleFunc(leasesPath, a.leases.handleV1Leases)
 	mux.HandleFunc(batchPath, a.batch.handleV1Batch)
