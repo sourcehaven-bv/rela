@@ -174,23 +174,42 @@ body:
                         "type": "object",
                         "properties": {
                           "from": {
-                            "type": "string"
-                          },
-                          "from_face": {
-                            "type": "string"
-                          },
-                          "index": {
-                            "type": "integer"
+                            "type": "object",
+                            "properties": {
+                              "face": {
+                                "type": "string",
+                                "description": "The face of an existing source, for a content-scoped relation"
+                              },
+                              "id": {
+                                "type": "string",
+                                "description": "The id of an existing entity"
+                              },
+                              "ref": {
+                                "type": "string",
+                                "description": "The ref of an entity of this batch"
+                              }
+                            },
+                            "description": "Exactly one of ref and id"
                           },
                           "to": {
-                            "type": "string"
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "description": "The id of an existing entity"
+                              },
+                              "ref": {
+                                "type": "string",
+                                "description": "The ref of an entity of this batch"
+                              }
+                            },
+                            "description": "Exactly one of ref and id"
                           },
                           "type": {
                             "type": "string"
                           }
                         },
                         "required": [
-                          "index",
                           "from",
                           "type",
                           "to"

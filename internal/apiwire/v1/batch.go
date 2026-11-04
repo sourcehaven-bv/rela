@@ -39,9 +39,11 @@ type BatchEnd struct {
 }
 
 // BatchResponse is the 200 answer of POST /api/v1/_batch, in request order.
+// A created relation is its [BatchRelation] with both ends named by ID, and
+// the tail face on From where the edge has one.
 type BatchResponse struct {
-	Entities  []BatchCreatedEntity   `json:"entities"`
-	Relations []BatchCreatedRelation `json:"relations"`
+	Entities  []BatchCreatedEntity `json:"entities"`
+	Relations []BatchRelation      `json:"relations"`
 }
 
 // BatchCreatedEntity is one created entity. Entity is the row as the
@@ -57,15 +59,6 @@ type BatchCreatedEntity struct {
 	Entity        *Entity   `json:"entity,omitempty"`
 	Warnings      []Warning `json:"warnings,omitempty"`
 	FollowUpError string    `json:"follow_up_error,omitempty"`
-}
-
-// BatchCreatedRelation is one created relation.
-type BatchCreatedRelation struct {
-	Index    int    `json:"index"`
-	From     string `json:"from"`
-	FromFace string `json:"from_face,omitempty"`
-	Type     string `json:"type"`
-	To       string `json:"to"`
 }
 
 // ErrorOperation names the operation of a batch request an [Error] is

@@ -1985,11 +1985,14 @@ exist: both answer 422 `target_not_found` with the same body.
     { "index": 1, "ref": "f", "id": "FEAT-K3P9", "entity": { "...": "..." } }
   ],
   "relations": [
-    { "index": 0, "from": "TKT-7Q2M", "type": "implements", "to": "FEAT-K3P9" },
-    { "index": 1, "from": "TKT-001", "type": "blocks", "to": "TKT-7Q2M" }
+    { "from": { "id": "TKT-7Q2M" }, "type": "implements", "to": { "id": "FEAT-K3P9" } },
+    { "from": { "id": "TKT-001" }, "type": "blocks", "to": { "id": "TKT-7Q2M" } }
   ]
 }
 ```
+
+- A created relation has the request's shape, with both ends named by `id`.
+  `from.face` is the tail face when the edge has one.
 
 - `entity` is the created entity with the properties you may read, as a GET
   shows them. It carries no relations, rollups or affordances. It is absent

@@ -2558,6 +2558,36 @@
       "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
       "at": "2026-11-04T10:10:00Z",
       "title": "The fields columns, create, display, empty_message, fields, … and totals appear together in 2 types across 2 components."
+    },
+    "concepts.data_clump-9ba8a6b2f7fe": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose. Accepted before under other ids; the ids moved when TKT-BO8CYG9 added types, and the types in the clump are unchanged.",
+      "at": "2026-11-04T15:30:00Z",
+      "title": "The fields columns, create_form, description, edit_form, filter_controls, … and title appear together in 3 types across 3 components."
+    },
+    "concepts.data_clump-645b4cf315ad": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose. Accepted before under other ids; the ids moved when TKT-BO8CYG9 added types, and the types in the clump are unchanged.",
+      "at": "2026-11-04T15:30:00Z",
+      "title": "The fields display, group_by, limit, list, query and title appear together in 3 types across 3 components."
+    },
+    "concepts.data_clump-c5f2b2b8cd5c": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose. Accepted before under other ids; the ids moved when TKT-BO8CYG9 added types, and the types in the clump are unchanged.",
+      "at": "2026-11-04T15:30:00Z",
+      "title": "The fields columns, create_form, edit_form, filter_controls, filters, … and title appear together in 3 types across 2 components."
+    },
+    "concepts.data_clump-ffb364413b93": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose. Accepted before under other ids; the ids moved when TKT-BO8CYG9 added types, and the types in the clump are unchanged.",
+      "at": "2026-11-04T15:30:00Z",
+      "title": "The fields entity_id, entity_type and title appear together in 7 types across 6 components."
+    },
+    "concepts.data_clump-8db1df412d32": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose. Accepted before under other ids; the ids moved when TKT-BO8CYG9 added types, and the types in the clump are unchanged.",
+      "at": "2026-11-04T15:30:00Z",
+      "title": "The fields columns, condition, create_form, description, detail_view, … and title appear together in 2 types across 2 components."
     }
   },
   "labels": {},
@@ -2567,8 +2597,8 @@
       "weight.structure": 936,
       "weight.layers": 0,
       "weight.vocabulary": 912,
-      "weight.types": 4028,
-      "weight.concepts": 7041,
+      "weight.types": 3981,
+      "weight.concepts": 7047,
       "weight.boundaries": 1478,
       "weight.data": 1297,
       "weight.security": 2300,
@@ -2578,7 +2608,7 @@
       "propagation_cost": 9.8
     },
     "min_weight": 0,
-    "at": "2026-11-04T12:04:38Z",
+    "at": "2026-11-04T15:40:00Z",
     "log": [
       {
         "at": "2026-10-28T13:29:24Z",
@@ -2713,6 +2743,28 @@
           "propagation_cost": [
             10.0,
             9.8
+          ]
+        }
+      },
+      {
+        "at": "2026-11-04T15:40:00Z",
+        "change": "loosen",
+        "reason": "Adding the batch types re-formed five accepted config data clumps (weights 303 -> 309); the clumped types are unchanged, TKT-BO8CYG9",
+        "metrics": {
+          "weight.concepts": [
+            7041,
+            7047
+          ]
+        }
+      },
+      {
+        "at": "2026-11-04T15:40:00Z",
+        "change": "tighten",
+        "reason": "Static metrics only; structure, security and profile need traces and hotspots, which the weekly scan has",
+        "metrics": {
+          "weight.types": [
+            4028,
+            3981
           ]
         }
       }

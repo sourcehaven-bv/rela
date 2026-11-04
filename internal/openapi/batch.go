@@ -42,10 +42,6 @@ func (g *Generator) addBatchRoute(spec *Spec) {
 		"warnings":        ArraySchema(&Schema{Type: "object"}),
 		"follow_up_error": {Type: "string", Description: "Set when an automation after the commit failed"},
 	}, []string{"index", "id"})
-	createdRel := ObjectSchema(map[string]*Schema{
-		"index": IntegerSchema(), "from": StringSchema(), "from_face": StringSchema(),
-		"type": StringSchema(), "to": StringSchema(),
-	}, []string{"index", "from", "type", "to"})
 
 	spec.Paths["/api/v1/_batch"] = PathItem{
 		Post: &Operation{
@@ -69,7 +65,7 @@ func (g *Generator) addBatchRoute(spec *Spec) {
 					Description: "Everything was written",
 					Content: jsonContent(ObjectSchema(map[string]*Schema{
 						"entities":  ArraySchema(created),
-						"relations": ArraySchema(createdRel),
+						"relations": ArraySchema(relation),
 					}, []string{"entities", "relations"})),
 				},
 				"400": {Description: "Invalid JSON, an unknown field, a bad ref, or too many operations",

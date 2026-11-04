@@ -452,7 +452,7 @@ func (h *batchHandler) response(
 	}
 	out := v1.BatchResponse{
 		Entities:  make([]v1.BatchCreatedEntity, len(res.Entities)),
-		Relations: make([]v1.BatchCreatedRelation, len(res.Relations)),
+		Relations: make([]v1.BatchRelation, len(res.Relations)),
 	}
 	for i, c := range res.Entities {
 		e := c.Entity
@@ -473,8 +473,10 @@ func (h *batchHandler) response(
 		out.Entities[i] = item
 	}
 	for j, rel := range res.Relations {
-		out.Relations[j] = v1.BatchCreatedRelation{
-			Index: j, From: rel.From, FromFace: rel.FromFace.String(), Type: rel.Type, To: rel.To,
+		out.Relations[j] = v1.BatchRelation{
+			From: v1.BatchEnd{ID: rel.From, Face: rel.FromFace.String()},
+			Type: rel.Type,
+			To:   v1.BatchEnd{ID: rel.To},
 		}
 	}
 	return out

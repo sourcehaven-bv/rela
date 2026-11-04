@@ -185,9 +185,9 @@ func TestBatch_CreatesEntitiesAndRelations(t *testing.T) {
 	require.NotNil(t, ticket.Entity)
 	require.Equal(t, "new ticket", ticket.Entity.Properties["title"])
 
-	require.Equal(t, []v1.BatchCreatedRelation{
-		{Index: 0, From: ticket.ID, Type: "implements", To: feature.ID},
-		{Index: 1, From: "TKT-001", Type: "blocks", To: ticket.ID},
+	require.Equal(t, []v1.BatchRelation{
+		{From: v1.BatchEnd{ID: ticket.ID}, Type: "implements", To: v1.BatchEnd{ID: feature.ID}},
+		{From: v1.BatchEnd{ID: "TKT-001"}, Type: "blocks", To: v1.BatchEnd{ID: ticket.ID}},
 	}, got.Relations)
 	require.Equal(t, 2, countOf(t, app.store, "ticket"))
 	require.Equal(t, 1, countOf(t, app.store, "feature"))
