@@ -192,6 +192,11 @@ export interface ViewSection {
   // True when a backlinks collection holds only part of the matching sources
   // (TKT-HF0D5W).
   incomplete?: boolean
+  // The section's configured `source:`: `entry` when it shows the entry
+  // itself, else a collection name. A channel type with `placement:
+  // above_relations` goes before the first section whose source is not
+  // `entry` (TKT-VXBE16H).
+  source?: string
   // The section's opt-in create affordance. Absent unless the section's config
   // carries a `create:` block AND the principal may create something the
   // relation reaches — the detail page is read-only by default (TKT-651W).

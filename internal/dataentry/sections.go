@@ -302,6 +302,12 @@ type SectionData struct {
 	// It is separate from Truncated, whose contract excludes budget stops.
 	Incomplete bool
 
+	// source is the section's `source:`, `entry` or a collection name. It
+	// reaches the wire as [v1.ViewSection.Source]. Unexported like
+	// hideEmpty: it never leaves this package except through that
+	// conversion.
+	source string
+
 	// hideEmpty is the section's `hide_empty:` setting. The section is
 	// dropped from the response by [omitHiddenEmpty], not here, because the
 	// affordance resolvers index sections in step with the view config.
@@ -485,6 +491,7 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 			Display:      sec.Display,
 			EmptyMessage: sec.EmptyMessage,
 			hideEmpty:    sec.HideEmpty,
+			source:       sec.Source,
 			totals:       sec.Totals,
 		}
 

@@ -20,7 +20,25 @@ type ChannelPresentation struct {
 	// Session presents the channel type's session header. Nil: the header
 	// folds by width, as without the key.
 	Session *SessionPresentation `yaml:"session,omitempty" json:"session,omitempty"`
+	// Placement says where the channel type sits on an entity page
+	// (TKT-VXBE16H). [ChannelPlacementAboveRelations] puts it before the
+	// first view section whose source is not the entry. Empty keeps it in
+	// the channels block at the end of the page.
+	Placement ChannelPlacement `yaml:"placement,omitempty" json:"placement,omitempty"`
 }
+
+// ChannelPlacement is where a channel type sits on an entity page; see
+// [ChannelPresentation.Placement]. The empty value is the end of the page.
+type ChannelPlacement string
+
+// ChannelPlacementAboveRelations places a channel type before the first
+// view section whose source is not the entry: after the properties and the
+// body of a generated view, before its relation sections.
+const ChannelPlacementAboveRelations ChannelPlacement = "above_relations"
+
+// channelPlacementValues lists the valid non-empty values of
+// [ChannelPlacement].
+var channelPlacementValues = []ChannelPlacement{ChannelPlacementAboveRelations}
 
 // SessionPresentation is how the web app shows a channel type's session
 // header (TKT-56TPOTE). [SessionDisplayCompact] folds the header at every
@@ -132,7 +150,7 @@ type BusyFacts struct {
 }
 
 var (
-	channelPresentationKeys = []string{"messages", "session"}
+	channelPresentationKeys = []string{"messages", "session", "placement"}
 	messagePresentationKeys = []string{"fields", "display"}
 	sessionPresentationKeys = []string{"display"}
 	channelFieldKeys        = []string{"property", "label", "placeholder", "help", "widget", "span", "hidden"}
@@ -162,12 +180,16 @@ var channelWidgetTypes = map[string][]string{
 
 // validateChannelsShape checks what the `channels:` block can be checked
 // for without realtime.yaml: known keys, a property on every field, no
-// property twice, a known widget, a span in range and a known display
-// value. data is the raw YAML, needed for the key checks.
+// property twice, a known widget, a span in range, and a known display and
+// placement value. data is the raw YAML, needed for the key checks.
 func validateChannelsShape(data []byte, cfg *Config) []string {
 	errs := channelsUnknownKeys(data)
 	for _, ctName := range sortedMapKeys(cfg.Channels) {
 		ct := cfg.Channels[ctName]
+		if ct.Placement != "" && !slices.Contains(channelPlacementValues, ct.Placement) {
+			errs = append(errs, fmt.Sprintf("channels.%s.placement: unknown value %q (valid values: %s)",
+				ctName, ct.Placement, displayList(channelPlacementValues)))
+		}
 		if sp := ct.Session; sp != nil && sp.Display != "" && !slices.Contains(sessionDisplayValues, sp.Display) {
 			errs = append(errs, fmt.Sprintf("channels.%s.session.display: unknown value %q (valid values: %s)",
 				ctName, sp.Display, displayList(sessionDisplayValues)))

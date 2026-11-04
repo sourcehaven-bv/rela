@@ -2522,6 +2522,12 @@
       "reason": "Design: api/views.ts is the views wire module; entity components consume its types by design.",
       "at": "2026-11-04T04:59:34Z",
       "title": "api/views.ts in api has most of its links to web/components/entity (weighted links: 3.2 to web/components/entity, 0.1 to api)."
+    },
+    "concepts.data_clump-bc995f935e51": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-11-04T10:10:00Z",
+      "title": "The fields columns, create, display, empty_message, fields, … and totals appear together in 2 types across 2 components."
     }
   },
   "labels": {},

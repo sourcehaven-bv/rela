@@ -7,8 +7,8 @@
  * With exactly one channel and nothing to create it opens that channel
  * directly. Otherwise RlEntityChannels lists them and the chosen one opens
  * below the list. One channel is open at a time, and while one is chosen
- * from the list, the list drops its live subscription (R18), so a page holds
- * one channel subscription and the entity's own; the list is read again when
+ * from the list, the list drops its live subscription (R18), so the section
+ * holds one channel subscription; the list is read again when
  * the open channel reports a lifecycle change or goes away. A channel that
  * opened directly keeps the list subscription, so a second channel created
  * meanwhile brings the list back, with the open channel still open.
@@ -29,8 +29,17 @@
  * Channel routes take no `?world=`: the server refuses a non-default world
  * there, and the address carries the face (R14). The page world goes on
  * entity links only.
+ *
+ * `types` and `exclude` narrow the section to some channel types: a page with
+ * a channel type placed above the relations has two sections (TKT-VXBE16H).
+ * The upper one names its types, the lower one excludes them, so a type the
+ * held schema does not know yet still shows below. Each lists and links only
+ * its own types, so a `?channel=` link for the other section's type leaves
+ * this one as it is. Each section holds at most two live keys:
+ * its list, or its list and the one channel open in single mode, or the
+ * channel chosen from the list.
  */
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { createChannel, type ChannelAnchor } from '@/api/channels'
@@ -50,6 +59,12 @@ const props = defineProps<{
   entityId: string
   /** The page world, for entity links. */
   world?: string
+  /** The channel types this section shows; absent, every type. */
+  types?: readonly string[]
+  /** Channel types this section leaves out. */
+  exclude?: readonly string[]
+  /** The heading; absent, "Channels". */
+  heading?: string
 }>()
 
 const { t } = useI18n()
@@ -70,8 +85,16 @@ const list = useEntityChannels(anchor, {
   live: () => !channelOpen.value || single.value,
 })
 
+/** Whether this section shows channels of the type. */
+function shows(type: string): boolean {
+  return (props.types === undefined || props.types.includes(type)) && !props.exclude?.includes(type)
+}
+
 const groups = computed(() =>
-  channelGroups(list.types.value, (name) => channelSchema.channelType(name))
+  channelGroups(
+    list.types.value.filter((tl) => shows(tl.type)),
+    (name) => channelSchema.channelType(name)
+  )
 )
 const rows = computed(() => groups.value.flatMap((g) => g.channels))
 const canCreate = computed(() => groups.value.some((g) => g.canCreate))
@@ -114,6 +137,7 @@ const open = computed(() => {
 })
 
 const visible = computed(() => groups.value.length > 0)
+const headingId = useId()
 
 // --- Deep link (?channel=) -----------------------------------------------------
 
@@ -133,7 +157,7 @@ function linkedKey(raw: unknown): string | null {
   const value = Array.isArray(raw) ? raw[0] : raw
   if (typeof value !== 'string' || value === '') return null
   const { channelType, name } = parseChannelKey(value)
-  return channelType ? channelKey(channelType, name) : null
+  return channelType && shows(channelType) ? channelKey(channelType, name) : null
 }
 
 function applyLink() {
@@ -264,9 +288,9 @@ async function submitCreate(title: string) {
 </script>
 
 <template>
-  <section v-if="visible" ref="root" class="channels-panel" aria-labelledby="channels-panel-title">
+  <section v-if="visible" ref="root" class="channels-panel" :aria-labelledby="headingId">
     <header class="channels-panel__header">
-      <h2 id="channels-panel-title">{{ t('channels.title') }}</h2>
+      <h2 :id="headingId">{{ heading ?? t('channels.title') }}</h2>
     </header>
     <div class="channels-panel__body">
       <RlEntityChannels

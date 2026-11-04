@@ -1537,6 +1537,38 @@ The server refuses `session.display` with any value other than `compact`,
 and any other key under `session`. A channel type without a session gets a
 warning, because the key has no effect there.
 
+### Channel placement
+
+On an entity page the channels come last, after the view sections, the
+documents, the "Mentioned by" list and the comments. On an entity with many
+relations that is far down the page. `placement: above_relations` moves a
+channel type up, so a session that waits on the reader is in view:
+
+```yaml
+channels:
+  run:
+    placement: above_relations
+```
+
+| Value | On the entity page |
+| --- | --- |
+| `above_relations` | The channel type sits directly before the first view section whose `source` is not `entry`. In a generated view that is after the properties and the body, before the first relation section. |
+| absent or empty | The channel type sits in the channels block at the end of the page. |
+
+- Channel types with the same placement share one block. When the
+  channel types attached to the entity type fall in both blocks, a block
+  with one channel type is headed with that type's label; otherwise the
+  heading is **Channels**. This follows the configuration, not what the
+  reader may read.
+- In a view of your own, the block goes before the first section that does
+  not show the entry itself, wherever that is. When every section shows the
+  entry, the block comes after the last section.
+- The placement applies on the entity page and in the detail panel, the
+  sidebar and the calendar preview.
+- Remove the key to put a channel type back at the end of the page.
+
+The server refuses any other value.
+
 ### Unread messages
 
 The channel list on an entity page shows a badge on each channel with

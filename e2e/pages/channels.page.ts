@@ -32,6 +32,24 @@ export class ChannelsPage extends BasePage {
     await expect(this.panel).toHaveCount(0, { timeout });
   }
 
+  /**
+   * Waits for the one channels block to sit between two view sections
+   * (TKT-VXBE16H): the one before it contains `textBefore`, and the one after
+   * it shows relation rows. Checks the order on screen as well as in the DOM.
+   */
+  async expectPanelBetweenSections(textBefore: string, timeout = 15_000) {
+    await expect(this.panel).toHaveCount(1, { timeout });
+    await expect(this.page.locator(".view-section").last()).toBeVisible({ timeout });
+    const before = this.page.locator(".view-section:has(+ .channels-panel)");
+    const after = this.page.locator(".channels-panel + .view-section");
+    await expect(before).toContainText(textBefore, { timeout });
+    await expect(after.locator(".cards-grid, table, ul").first()).toBeVisible({ timeout });
+    const top = async (l: Locator) => (await l.boundingBox())!.y;
+    const panelTop = await top(this.panel);
+    expect(await top(before)).toBeLessThan(panelTop);
+    expect(await top(after)).toBeGreaterThan(panelTop);
+  }
+
   /** Writes `text` in the field labelled `field` and sends it. */
   async post(text: string, field = 'Message') {
     await this.composer.getByRole('textbox', { name: field }).fill(text);
