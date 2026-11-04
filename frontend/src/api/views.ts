@@ -106,6 +106,10 @@ export interface ViewRow {
   content?: string
   // The row's address, face included. See ViewEntity._self.
   _self?: string
+  // Typed values and per-field write verdicts, as on ViewEntity. Present only
+  // on a row whose columns include an editable one (TKT-4Q2EIVZ).
+  _props?: Record<string, unknown>
+  _fields?: Record<string, FieldAffordance>
 }
 
 // Column definition
@@ -114,6 +118,17 @@ export interface ViewColumn {
   label?: string
   relation?: string
   link?: string
+  // 'input' on a column that may be edited in place (TKT-4Q2EIVZ). The row's
+  // `_fields` verdict still decides whether the reader may write it.
+  render?: 'input' | 'display'
+}
+
+// One line of a table section's totals (TKT-4Q2EIVZ). The value is the
+// entry's own property, read from the entry, never sent with the section.
+export interface SectionTotal {
+  property: string
+  label?: string
+  emphasis?: boolean
 }
 
 // Group of rows/entities
@@ -186,6 +201,8 @@ export interface ViewSection {
   // carries a `create:` block AND the principal may create something the
   // relation reaches — the detail page is read-only by default (TKT-651W).
   create?: ViewSectionCreate
+  // Entry properties shown under a table section (TKT-4Q2EIVZ).
+  totals?: SectionTotal[]
 }
 
 /**

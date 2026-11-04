@@ -1,9 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import {
-  buildDuplicatePrefill,
-  relationChoices,
-  defaultSelection,
-} from './duplicatePrefill'
+import { buildDuplicatePrefill, relationChoices, defaultSelection } from './duplicatePrefill'
 import type { Entity, RelationEntry } from '@/types/entity'
 import type { EntityType } from '@/types/schema'
 

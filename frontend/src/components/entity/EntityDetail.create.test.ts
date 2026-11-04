@@ -40,7 +40,12 @@ vi.mock('@/api/entities', async (orig) => ({
 }))
 vi.mock('vue-router', async (orig) => ({
   ...(await orig<typeof import('vue-router')>()),
-  useRoute: () => ({ query: {}, params: {}, path: '/entity/category/backend', fullPath: '/entity/category/backend' }),
+  useRoute: () => ({
+    query: {},
+    params: {},
+    path: '/entity/category/backend',
+    fullPath: '/entity/category/backend',
+  }),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
 }))
 

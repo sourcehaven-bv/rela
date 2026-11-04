@@ -7,8 +7,10 @@ withDefaults(
     tone?: 'default' | 'muted' | 'subtle'
     weight?: 'normal' | 'medium' | 'semibold'
     truncate?: boolean
+    /** Tabular figures, so digits line up down a column of numbers. */
+    numeric?: boolean
   }>(),
-  { as: 'span', size: 'md', tone: 'default', weight: 'normal', truncate: false },
+  { as: 'span', size: 'md', tone: 'default', weight: 'normal', truncate: false, numeric: false },
 )
 </script>
 
@@ -20,7 +22,7 @@ withDefaults(
       `rl-text--${size}`,
       `rl-text--${tone}`,
       `rl-text--${weight}`,
-      { 'rl-text--truncate': truncate },
+      { 'rl-text--truncate': truncate, 'rl-text--numeric': numeric },
     ]"
   >
     <slot />
@@ -38,6 +40,8 @@ withDefaults(
 .rl-text--default { color: var(--rl-color-text); }
 .rl-text--muted { color: var(--rl-color-text-muted); }
 .rl-text--subtle { color: var(--rl-color-text-subtle); }
+
+.rl-text--numeric { font-variant-numeric: tabular-nums; }
 
 .rl-text--normal { font-weight: var(--rl-font-weight-normal); }
 .rl-text--medium { font-weight: var(--rl-font-weight-medium); }

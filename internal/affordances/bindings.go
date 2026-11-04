@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
+	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -253,7 +254,7 @@ func coerceList(prop metamodel.PropertyDef, raw any) predicate.Value {
 
 // coerceScalar coerces a stored scalar to the predicate Value whose type
 // matches predicatefns.ScalarTypeForProp (the shared adapter): integer ->
-// Int, date/datetime -> Date, boolean -> Bool, everything else -> String.
+// Int, decimal -> Decimal, date/datetime -> Date, boolean -> Bool, everything else -> String.
 // The declared type — not the raw Go type — drives the choice, so the
 // bound Value's type always matches the field's DECLARED predicate type
 // (RR-4189H: a Number bound to an IntType field, or a String to a
@@ -266,6 +267,8 @@ func coerceScalar(prop *metamodel.PropertyDef, raw any) predicate.Value {
 	switch prop.Type {
 	case metamodel.PropertyTypeInteger:
 		return coerceInt(raw)
+	case metamodel.PropertyTypeDecimal:
+		return predicatefns.DecimalValue(raw)
 	case metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime:
 		return coerceDate(prop, raw)
 	case metamodel.PropertyTypeBoolean:

@@ -381,8 +381,8 @@ func (w *walker) walkUnaryMinus(x *ast.UnaryMinusOpExpr) (node, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !inner.resultType().equalsType(IntType) && !inner.resultType().equalsType(NumberType) {
-		return nil, &CompileError{Line: x.Line(), Reason: "unary minus requires int or number, got " + inner.resultType().typeName()}
+	if t := inner.resultType(); !t.equalsType(IntType) && !t.equalsType(NumberType) && !t.equalsType(DecimalType) {
+		return nil, &CompileError{Line: x.Line(), Reason: "unary minus requires int, decimal or number, got " + t.typeName()}
 	}
 	return &unaryMinusNode{expr: inner, typ: inner.resultType()}, nil
 }

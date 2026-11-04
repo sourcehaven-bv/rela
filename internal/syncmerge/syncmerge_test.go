@@ -22,6 +22,7 @@ entities:
     properties:
       title: {type: string}
       points: {type: integer}
+      price: {type: decimal}
       due: {type: date}
       at: {type: datetime}
       done: {type: boolean}
@@ -175,7 +176,7 @@ func TestMerge_Classification(t *testing.T) {
 
 // AC9: equality by meaning, and canonical write values.
 func TestEqualAndCanonical(t *testing.T) {
-	fs := fields(t, "title", "points", "due", "at", "done", "tags", "state", "kind", "basecamp")
+	fs := fields(t, "title", "points", "price", "due", "at", "done", "tags", "state", "kind", "basecamp")
 	f := map[string]Field{}
 	for _, x := range fs {
 		f[x.Name] = x
@@ -189,6 +190,8 @@ func TestEqualAndCanonical(t *testing.T) {
 		{"title", nil, []any{}},
 		{"points", int64(3), "3"},
 		{"points", 3.0, 3},
+		{"price", "12.50", "12.5"},
+		{"price", 0.1, "0.10"},
 		{"due", "2026-10-08", "2026-10-08T00:00:00Z"},
 		{"at", "2026-10-08T12:00:00+02:00", "2026-10-08T10:00:00Z"},
 		{"done", true, "true"},
@@ -210,6 +213,7 @@ func TestEqualAndCanonical(t *testing.T) {
 		{"title", "a", "A"},
 		{"title", "", "x"},
 		{"points", 3, 4},
+		{"price", "0.1", "0.11"},
 		{"tags", []any{"a", "a"}, []any{"a"}},
 		{"due", "2026-10-08", "2026-10-09"},
 	}
@@ -225,6 +229,8 @@ func TestEqualAndCanonical(t *testing.T) {
 		want  string
 	}{
 		{"points", "7", "int64:7"},
+		{"price", "12.50", "string:12.50"},
+		{"price", 0.5, "string:0.5"},
 		{"due", "2026-10-08T00:00:00Z", "string:2026-10-08"},
 		{"at", "2026-10-08T12:00:00+02:00", "string:2026-10-08T10:00:00Z"},
 		{"done", "false", "bool:false"},
@@ -240,7 +246,7 @@ func TestEqualAndCanonical(t *testing.T) {
 		}
 	}
 	// D6: theirs values that do not fit raise.
-	for field, bad := range map[string]any{"points": "lots", "state": "closed", "kind": "epic", "done": "maybe"} {
+	for field, bad := range map[string]any{"price": "1e3", "points": "lots", "state": "closed", "kind": "epic", "done": "maybe"} {
 		if _, err := Merge([]Field{f[field]}, &State{}, State{}, Theirs{Properties: props(field, bad)}); !errors.Is(err, ErrField) {
 			t.Errorf("%s=%v: err = %v", field, bad, err)
 		}

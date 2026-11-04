@@ -1,9 +1,9 @@
 <script setup lang="ts">
 // SectionEditForm — small useAutoSave host for one properties section.
 //
-// Owns: iteration over `fields`, widget resolution (schema or hint),
-// per-cell writability gating, an `useAutoSave` instance with the
-// content + relations channels disabled, and the verdict-flip watcher.
+// Owns: iteration over `fields`, widget resolution (schema or hint) and
+// per-cell writability gating. The autosave instance and its invariants live
+// in useSectionAutoSave.
 // Does NOT own: the section heading, layout placement of
 // AutoSaveIndicator, the spread-clone write-back to the host's
 // viewData (that's `onPropertyApplied`'s job).
@@ -12,21 +12,20 @@
 // entity-id change so this component's lifecycle handles route
 // navigation cleanly (RR-FB1D + RR-FB2A).
 
-import { computed, onBeforeUnmount, reactive, ref, watch, type Ref } from 'vue'
+import { computed } from 'vue'
 import type { Component } from 'vue'
 import type {
   FieldAffordance,
   PropertyDef,
-  Entity,
   AttachmentInfo,
   TransitionOption,
   FieldVersions,
 } from '@/types'
 import type { WidgetRoutingHint } from '@/widgets/types'
 import { defaultRegistry } from '@/widgets/registry'
-import { useAutoSave, type AutoSaveErrorInfo } from '@/composables/useAutoSave'
+import type { AutoSaveErrorInfo } from '@/composables/useAutoSave'
+import { useSectionAutoSave } from '@/composables/useSectionAutoSave'
 import { isFieldWritable, optionVerdictsFor } from '@/utils/affordances'
-import { isClearedForType } from '@/utils/formValue'
 import { fieldSpanStyle } from '@/utils/fieldSpan'
 import RlDetailField from 'rela-components/components/task/RlDetailField.vue'
 import TextareaWidget from '@/widgets/TextareaWidget.vue'
@@ -102,59 +101,18 @@ const props = defineProps<{
   onRelationChanged?: () => void
 }>()
 
-// Owner identity is frozen for the instance's lifetime. When the host
-// rekeys this component (entity-id change), a new instance is mounted
-// with a fresh owner.
-const owner = { type: props.entityType, id: props.entityId }
-
-// Local mirror of the section's properties. Spread independent of the
-// initialServerSnapshot baseline so widget edits don't leak into
-// useAutoSave's lastSeenServer (RR-FB2D NEW-10).
-const formData = reactive<Record<string, unknown>>({ ...props.initialValues })
-
-// Spread again for the autosave baseline; this is the value compared
-// against future emits for no-op suppression.
-const initialSnapshot = {
-  id: props.entityId,
-  type: props.entityType,
-  properties: { ...props.initialValues },
-  _versions: props.initialVersions,
-} satisfies Partial<Entity>
-
-// Adapter ref for AutoSaveOptions.formData — the composable only reads
-// shape (never writes) so a computed view is sufficient.
-const formDataRef = computed(() => formData) as unknown as Ref<Record<string, unknown>>
-
-const autoSave = useAutoSave({
-  target: owner,
-  initialServerSnapshot: initialSnapshot,
-  runWrite: props.runWrite,
-  disableContentChannel: true,
-  disableRelationsChannel: true,
-  formData: formDataRef,
-  // No-op closures for the disabled channels (RR-FB2D NEW-9).
-  contentRef: ref(''),
-  inverseToCanonical: new Map(),
-  buildRelationsBody: () => null,
-  applyServerContent: () => {},
-  applyServerProperty: (prop, value) => {
-    // Mirror DynamicForm's undefined-as-delete semantics
-    // (RR-FB2D NEW-5; DynamicForm L923-929 equivalent).
-    if (value === undefined) {
-      delete formData[prop]
-    } else {
-      formData[prop] = value
-    }
-    try {
-      props.onPropertyApplied(prop, value, owner)
-    } catch (e) {
-      // RR-UE3D: never roll back the local formData on host-callback
-      // failure. The server-confirmed value IS the truth; the host's
-      // job is to fix its reconciler.
-      console.error('SectionEditForm: onPropertyApplied threw', e)
-    }
-  },
+// The autosave host logic (frozen owner, baseline, reload merge, verdict
+// flip, flush on unmount) is shared with the editable table rows.
+const { formData, autoSave, updateField } = useSectionAutoSave({
+  entityType: props.entityType,
+  entityId: props.entityId,
+  initialValues: () => props.initialValues,
+  initialVersions: props.initialVersions,
+  fields: () => props.fields,
+  onPropertyApplied: (prop, value, owner) => props.onPropertyApplied(prop, value, owner),
   onError: (msg, info) => props.onError(msg, info),
+  onVerdictFlip: (prop, label) => props.onVerdictFlip?.(prop, label),
+  runWrite: props.runWrite,
 })
 
 // Precompute one widget per field. Stable across renders that don't
@@ -221,72 +179,9 @@ function isLongValue(field: SectionEditField): boolean {
   return String(formData[field.property] ?? '').length > 60
 }
 
-// The value shows at once. A field reads as its value between edits, so
-// waiting for the save to answer would flash the old one back first.
 function onFieldUpdate(field: SectionEditField, value: unknown) {
-  const def = field.kind === 'schema' ? field.propertyDef : undefined
-  if (isClearedForType(value, def)) {
-    delete formData[field.property]
-    autoSave.scheduleUnset(field.property)
-  } else {
-    formData[field.property] = value
-    autoSave.scheduleFieldSave(field.property, value)
-  }
+  updateField(field.property, value, field.kind === 'schema' ? field.propertyDef : undefined)
 }
-
-// Verdict-flip watcher (RR-FB1M + RR-FB2C). When a property's writable
-// flag goes true → false, drop the pending edit and surface a
-// dedicated notification — NOT through `onError`, to avoid the host's
-// 403 refetch path (RR-FB2C). The inverse direction (false → true,
-// permission restored) is intentionally silent (round-3 N-R3-1): the
-// cell becomes editable again with no destructive UX consequence to
-// warn about.
-watch(
-  () => props.fields,
-  (next, prev) => {
-    if (!prev) return
-    const prevByProp = new Map(prev.map((f) => [f.property, f]))
-    for (const nextField of next) {
-      const prevField = prevByProp.get(nextField.property)
-      if (!prevField) continue
-      const wasWritable = isFieldWritable(prevField.verdict)
-      const nowWritable = isFieldWritable(nextField.verdict)
-      if (wasWritable && !nowWritable) {
-        autoSave.revertField(nextField.property)
-        props.onVerdictFlip?.(nextField.property, nextField.label)
-      }
-    }
-  }
-)
-
-// The values can change under the form: the title edited in the heading, a
-// live update from another session, a reload after an error. Take them the
-// way a save response is taken, so a field with an edit still pending keeps
-// it. The host mirrors every applied value back into `initialValues`, so only
-// a real difference may start a merge, or the two would feed each other.
-watch(
-  () => props.initialValues,
-  (next) => {
-    const differs = props.fields.some(
-      (f) =>
-        JSON.stringify(next[f.property] ?? null) !== JSON.stringify(formData[f.property] ?? null)
-    )
-    if (!differs) return
-    autoSave.mergeServerResponse({
-      id: props.entityId,
-      type: props.entityType,
-      properties: next,
-    } as Entity)
-  }
-)
-
-onBeforeUnmount(() => {
-  // Flush any pending PATCH against this instance's frozen owner so
-  // navigating away mid-debounce doesn't silently drop the edit. The
-  // identity guard in handlePropertyApplied prevents the response
-  // from leaking into the new entity's view (RR-FB2A).
-  void autoSave.commitImmediately()
-})
 
 defineExpose({
   // Exposed for component-level tests; not part of the public API.

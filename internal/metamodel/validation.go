@@ -373,6 +373,9 @@ func (v Validator) validatePropertyValue(propName string, propDef *PropertyDef, 
 	case PropertyTypeInteger:
 		return validateIntegerValue(propName, propDef, val)
 
+	case PropertyTypeDecimal:
+		return validateDecimalValue(propName, propDef, val)
+
 	case PropertyTypeBoolean:
 		switch v := val.(type) {
 		case bool:

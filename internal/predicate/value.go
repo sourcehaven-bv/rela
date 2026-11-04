@@ -1,6 +1,10 @@
 package predicate
 
-import "time"
+import (
+	"math/big"
+	"strings"
+	"time"
+)
 
 // Value is the sealed sum type the evaluator operates on. The
 // unexported sealedValue method prevents external packages from
@@ -59,6 +63,61 @@ func NewInt(i int64) Int { return Int{v: i} }
 func (i Int) Int64() int64 { return i.v }
 func (Int) Type() Type     { return IntType }
 func (Int) sealedValue()   {}
+
+// Decimal is an exact decimal value backed by [big.Rat]. It is its own
+// variant so a decimal property compares and adds without binary float
+// drift: 0.1 + 0.2 == 0.3 holds. Only +, - and * apply to it, so every
+// result stays a finite decimal that [Decimal.Text] renders exactly.
+type Decimal struct{ v *big.Rat }
+
+// NewDecimal constructs a Decimal. It copies r, so the caller may keep
+// using r.
+//
+// Nil: rejected for r — a nil value is [Nil], not a Decimal.
+func NewDecimal(r *big.Rat) Decimal { return Decimal{v: new(big.Rat).Set(r)} }
+
+// Rat returns a copy of the underlying value.
+func (d Decimal) Rat() *big.Rat { return new(big.Rat).Set(d.v) }
+
+// Text renders the value in plain decimal notation with as few digits
+// after the point as represent it exactly ("12.5", "-3"). ok is false for
+// a value with no finite decimal form, which no Decimal operation
+// produces.
+func (d Decimal) Text() (text string, ok bool) {
+	return ratText(d.v)
+}
+
+func (Decimal) Type() Type   { return DecimalType }
+func (Decimal) sealedValue() {}
+
+// decimalBase2 and decimalBase5 are the prime factors of 10: a fraction is
+// a finite decimal exactly when its denominator has no other.
+const (
+	decimalBase2 = 2
+	decimalBase5 = 5
+)
+
+// ratText renders r with the fewest digits after the point that represent
+// it exactly. ok is false when the denominator has a prime factor other
+// than 2 and 5, which no finite decimal represents.
+func ratText(r *big.Rat) (string, bool) {
+	den := new(big.Int).Set(r.Denom())
+	two, five := big.NewInt(decimalBase2), big.NewInt(decimalBase5)
+	twos, fives := 0, 0
+	m := new(big.Int)
+	for m.Mod(den, two).Sign() == 0 {
+		den.Quo(den, two)
+		twos++
+	}
+	for m.Mod(den, five).Sign() == 0 {
+		den.Quo(den, five)
+		fives++
+	}
+	if den.Cmp(big.NewInt(1)) != 0 {
+		return "", false
+	}
+	return r.FloatString(max(twos, fives)), true
+}
 
 // Date is a concrete instant value backed by time.Time. It backs both
 // the metamodel `date` and `datetime` property types; comparison is
@@ -143,3 +202,37 @@ func NewList(elems []Value) List { return List{elems: elems} }
 func (l List) Elems() []Value { return l.elems }
 func (List) Type() Type       { return ListType{} }
 func (List) sealedValue()     {}
+
+// maxDecimalLiteral caps a decimal literal's length, as the metamodel caps
+// a stored decimal's.
+const maxDecimalLiteral = 64
+
+// parseDecimalText reads plain decimal notation, `[+-]?digits(.digits)?`.
+// Exponents are refused: big.Rat would accept "1e1000000" and build a
+// huge number from a short literal.
+func parseDecimalText(s string) (*big.Rat, bool) {
+	if s == "" || len(s) > maxDecimalLiteral {
+		return nil, false
+	}
+	body := strings.TrimLeft(s, "+-")
+	if len(s)-len(body) > 1 {
+		return nil, false
+	}
+	intPart, frac, hasPoint := strings.Cut(body, ".")
+	if !isDigits(intPart) || (hasPoint && !isDigits(frac)) {
+		return nil, false
+	}
+	return new(big.Rat).SetString(s)
+}
+
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := range len(s) {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}

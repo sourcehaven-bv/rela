@@ -977,6 +977,14 @@ type ListColumn struct {
 	// than Label, is never the first column, and a list has at most one.
 	// Lists only: dashboard card and view section columns refuse it.
 	Busy string `yaml:"busy" json:"busy,omitempty"`
+	// Render makes a property column of a `display: table` view section
+	// editable in place (TKT-4Q2EIVZ) when set to [RenderInput]. Like a
+	// section field's render, it can only downgrade: a cell is an input when
+	// the column opts in AND the reader may write the field. Only view
+	// section `columns:` and `columns_by_type:` take it; the section-level
+	// `render:` stays inert on a table, so no existing config becomes
+	// editable on upgrade.
+	Render string `yaml:"render,omitempty" json:"render,omitempty"`
 }
 
 // SortSpec defines a single sort criterion for a list or dashboard card.
@@ -2190,6 +2198,13 @@ type ViewSection struct {
 	// nothing, so no existing deployment grows a button on upgrade.
 	Create *SectionCreate `yaml:"create,omitempty" json:"create,omitempty"`
 
+	// Totals lists properties of the view's entry, shown under a
+	// `display: table` section as a block of label/value lines
+	// (TKT-4Q2EIVZ), typically `rollup:` properties summing the rows. Only
+	// the names travel with the section: the values are the entry's own,
+	// already gated for the reader, so a total never folds a hidden row.
+	Totals []SectionTotal `yaml:"totals,omitempty" json:"totals,omitempty"`
+
 	// Sort orders a FLAT section's rows (`list`, `table`, `cards`).
 	// ParentSort and ChildSort order each level of a `display: nested`
 	// section. The keys are mutually exclusive by display, and using the
@@ -2211,6 +2226,16 @@ type ViewSection struct {
 	Sort       []SortSpec `yaml:"sort,omitempty" json:"sort,omitempty"`
 	ParentSort []SortSpec `yaml:"parent_sort,omitempty" json:"parent_sort,omitempty"`
 	ChildSort  []SortSpec `yaml:"child_sort,omitempty" json:"child_sort,omitempty"`
+}
+
+// SectionTotal is one line of a section's [ViewSection.Totals].
+type SectionTotal struct {
+	// Property names a property of the view's entry type.
+	Property string `yaml:"property" json:"property"`
+	// Label overrides the property's own label.
+	Label string `yaml:"label,omitempty" json:"label,omitempty"`
+	// Emphasis marks the line that matters most, such as a grand total.
+	Emphasis bool `yaml:"emphasis,omitempty" json:"emphasis,omitempty"`
 }
 
 // SectionCreate declares HOW a section's create-related affordance behaves.

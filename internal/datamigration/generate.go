@@ -461,7 +461,7 @@ func enumTargets(subject string, live metamodel.ShapeProjection) []enumTarget {
 
 func isCoercible(toType string) bool {
 	switch toType {
-	case "string", "integer", "boolean", "date", "datetime":
+	case "string", "integer", "decimal", "boolean", "date", "datetime":
 		return true
 	}
 	return false

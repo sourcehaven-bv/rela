@@ -84,6 +84,8 @@ func coerceScalar(meta *metamodel.Metamodel, prop *metamodel.PropertyDef, raw an
 	switch prop.Type {
 	case metamodel.PropertyTypeInteger:
 		return coerceInt(raw)
+	case metamodel.PropertyTypeDecimal:
+		return DecimalValue(raw)
 	case metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime:
 		return coerceDate(prop, raw)
 	case metamodel.PropertyTypeBoolean:
@@ -118,6 +120,19 @@ func coerceInt(raw any) predicate.Value {
 		}
 	}
 	return predicate.NewNil()
+}
+
+// DecimalValue binds a stored decimal value (a string in decimal notation,
+// or a YAML/JSON number; see [metamodel.ParseDecimal]) as a predicate
+// Decimal. A value that is not a decimal binds Nil, as an off-type integer
+// does. Every binder of a decimal field goes through here, so the ACL and
+// the condition engine read a decimal the same way.
+func DecimalValue(raw any) predicate.Value {
+	r, _, err := metamodel.ParseDecimal(raw)
+	if err != nil {
+		return predicate.NewNil()
+	}
+	return predicate.NewDecimal(r)
 }
 
 // coerceDate binds a date/datetime field. YAML decodes an unquoted date

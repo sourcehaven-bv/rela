@@ -10,6 +10,7 @@ import (
 // every predicate consumer shares (RR-TBG91, RR-23W88J):
 //
 //   - integer            -> IntType
+//   - decimal            -> DecimalType (exact; see predicate.Decimal)
 //   - date / datetime     -> DateTypeWithLayout(field format) so string
 //     literals coerce against the field's declared layout at compile
 //   - boolean             -> BoolType
@@ -29,6 +30,8 @@ func ScalarType(meta *metamodel.Metamodel, typeName string) (predicate.Type, boo
 	switch typeName {
 	case metamodel.PropertyTypeInteger:
 		return predicate.IntType, true
+	case metamodel.PropertyTypeDecimal:
+		return predicate.DecimalType, true
 	case metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime:
 		// Layout is resolved per-property by ScalarTypeForProp; without a
 		// PropertyDef here we fall back to the bare DateType (default

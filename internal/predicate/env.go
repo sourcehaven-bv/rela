@@ -32,6 +32,11 @@ var (
 	BoolType   Type = primitiveType{"bool"}
 	NumberType Type = primitiveType{"number"}
 	IntType    Type = primitiveType{"int"}
+	// DecimalType is an exact decimal number (see [Decimal]). It never
+	// mixes with IntType or NumberType: operands of a comparison or of
+	// arithmetic must both be decimal, and a number or string literal
+	// opposite a decimal is coerced to one at compile.
+	DecimalType Type = primitiveType{"decimal"}
 	// DateType is the bare date type (no parse layout). It is
 	// equalsType-compatible with any DateTypeWithLayout(...) — see that
 	// constructor. Use DateTypeWithLayout at the metamodel->Env adapter

@@ -213,11 +213,11 @@ export class EntityPage extends BasePage {
     return this.sectionByHeading(heading).locator(`.property-row[data-property="${property}"]`);
   }
 
-  /** The edit control for a property. Its id (`inline-<property>`) is set on
-   *  the widget's own element rather than a wrapper. A toggle is live all the
-   *  time; any other value shows its control only once opened. */
+  /** The edit control for a property. Its id (`inline-<entity id>-<property>`)
+   *  is set on the widget's own element rather than a wrapper. A toggle is live
+   *  all the time; any other value shows its control only once opened. */
   private sectionFieldControl(heading: string, property: string) {
-    return this.sectionFieldRow(heading, property).locator(`#inline-${property}`);
+    return this.sectionFieldRow(heading, property).locator(`[id^="inline-"][id$="-${property}"]`);
   }
 
   /** Assert every field in a section keeps its label and value inside its
@@ -769,6 +769,69 @@ export class EntityPage extends BasePage {
 
   async expectRelatedRowText(id: string, text: string) {
     await expect(this.relatedRow(id)).toContainText(text);
+  }
+
+  // ── Table sections with editable cells and totals (TKT-4Q2EIVZ) ──────────
+
+  /** One cell of a `display: table` section row. The row is found by its
+   *  entity id, which an owned row carries as its anchor id, so an edit that
+   *  changes the row's text does not lose it. The column is found by its
+   *  header text. */
+  private async sectionTableCell(heading: string, rowId: string, column: string): Promise<Locator> {
+    const table = this.sectionByHeading(heading).locator('.data-table');
+    const headers = table.locator('thead th');
+    await expect(headers.filter({ hasText: column })).toHaveCount(1);
+    const labels = (await headers.allTextContents()).map((h) => h.trim());
+    const index = labels.indexOf(column);
+    if (index < 0) throw new Error(`no column "${column}" in ${heading}: ${labels.join(', ')}`);
+    return table.locator(`tbody tr[id="${rowId}"] > td`).nth(index);
+  }
+
+  /** Assert a cell offers an inline editor: it shows its value behind an
+   *  edit trigger. */
+  async expectTableCellEditable(heading: string, rowId: string, column: string) {
+    const cell = await this.sectionTableCell(heading, rowId, column);
+    await expect(cell.locator('.rl-inline-edit__trigger')).toBeVisible();
+  }
+
+  /** Assert a cell is read-only: no inline editor and no form control. */
+  async expectTableCellReadOnly(heading: string, rowId: string, column: string) {
+    const cell = await this.sectionTableCell(heading, rowId, column);
+    await expect(cell).toBeVisible();
+    await expect(cell.locator('.inline-property-value, .rl-inline-edit, input, select, textarea')).toHaveCount(0);
+  }
+
+  async expectTableCellText(heading: string, rowId: string, column: string, text: string) {
+    const cell = await this.sectionTableCell(heading, rowId, column);
+    await expect(cell).toHaveText(text);
+  }
+
+  /** Open a cell's inline editor, type `value` and keep it with Enter.
+   *
+   *  Waits for the row's autosave PATCH, which is debounced, so a caller that
+   *  reloads next does not race the save. */
+  async editTableCell(heading: string, rowId: string, column: string, value: string) {
+    const cell = await this.sectionTableCell(heading, rowId, column);
+    const patched = this.page.waitForResponse(
+      (r) => r.request().method() === 'PATCH' && r.url().includes(`/${rowId}`) && r.status() < 400,
+      { timeout: 5000 },
+    );
+    await cell.locator('.rl-inline-edit__trigger').click();
+    const input = cell.locator('.inline-property-control input');
+    await expect(input).toBeFocused();
+    await input.fill(value);
+    await input.press('Enter');
+    await expect(input).toBeHidden();
+    await patched;
+  }
+
+  /** Assert the totals block under a table section shows `label` with
+   *  `value`. */
+  async expectSectionTotal(heading: string, label: string, value: string) {
+    const row = this.sectionByHeading(heading)
+      .locator('.section-totals .rl-totals__row')
+      .filter({ has: this.page.locator('.rl-totals__label', { hasText: label }) });
+    await expect(row.locator('.rl-totals__value')).toHaveText(value);
   }
 
   // ── Scope navigation (prev/next within a list, search or pile) ───────────

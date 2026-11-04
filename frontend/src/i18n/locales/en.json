@@ -312,6 +312,8 @@
     "noItems": "No items",
     "order": "Order",
     "nestedTruncated": "Some rows were not shown because this section hit its size limit.",
+    "sectionTotals": "{heading} totals",
+    "totals": "Totals",
     "showingChildren": "Showing {shown} of {total}",
     "sectionIncomplete": "Only part of the matching entities are listed here.",
     "notFound": "{type} \"{id}\" could not be found.",
