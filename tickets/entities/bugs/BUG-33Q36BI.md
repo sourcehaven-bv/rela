@@ -5,7 +5,7 @@ title: Live view misses a change reverted before the next round
 description: A live view keeps a state the server reverted when the change and its revert both land between two live rounds; presence.spec.ts:60 flakes on it.
 priority: medium
 effort: m
-status: ready
+status: backlog
 ---
 
 ## Description
