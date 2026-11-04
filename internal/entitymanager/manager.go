@@ -3015,9 +3015,9 @@ func collectRenameAffectedRelations(ctx context.Context, st store.Store, id stri
 // CreateRelation creates the relation key names, validating endpoints and
 // the relation-type tuple against the metamodel. key.FromFace is the tail,
 // part of the relation's identity: two edges on one triple with different
-// tails are two relations (BUG-64MU2Q). A caller that reports a type-allowlist
-// mismatch itself can let the write through with
-// [entity.RelationOptions.TolerateTypeMismatch]. **No automation.**
+// tails are two relations (BUG-64MU2Q). An edge whose endpoint types the
+// relation does not allow is refused with [*InvalidRelationError].
+// **No automation.**
 func (m *Manager) CreateRelation(
 	ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
@@ -3137,14 +3137,10 @@ func prepareRelationFrom(
 			return nil, missingEndpoint("target", to, err)
 		}
 	}
+	// The relation's from/to types are a hard contract on every write
+	// surface (DEC-0D8UZX3), so a mismatch is always refused.
 	if vErr := metamodel.NewValidator(m.deps.Meta).ValidateRelation(relType, source.typ, target.typ); vErr != nil {
-		// A type-allowlist mismatch is the one tolerable failure: the caller
-		// opted in and reports it as a warning. An unknown relation type is
-		// never tolerated.
-		var mismatch *metamodel.InvalidRelationError
-		if !opts.TolerateTypeMismatch || !errors.As(vErr, &mismatch) {
-			return nil, &InvalidRelationError{Key: key, err: fmt.Errorf("invalid relation: %w", vErr)}
-		}
+		return nil, &InvalidRelationError{Key: key, err: fmt.Errorf("invalid relation: %w", vErr)}
 	}
 
 	rel := entity.NewRelation(from, relType, to)

@@ -114,12 +114,11 @@ func TestDanglingPeerRelationWrite_AllowedACL_422(t *testing.T) {
 	}
 }
 
-// TestTypeMismatchRelationWrite_Audited pins GitHub #1806 (ISMS
-// CONTROL-8-15): a type-allowlist mismatch keeps DEC-HWZHA's
-// write-with-warning answer, but the edge is written through the manager,
-// so it gets exactly one audit record naming the edge and the principal.
-// The old fallback wrote such an edge straight to the store, unaudited.
-func TestTypeMismatchRelationWrite_Audited(t *testing.T) {
+// TestTypeMismatchRelationWrite_RefusedUnaudited pins DEC-0D8UZX3 (GitHub
+// #1992) where GitHub #1806 (ISMS CONTROL-8-15) once pinned an audited
+// write: a type-allowlist mismatch is refused with 422, so no edge is stored
+// and no write is audited.
+func TestTypeMismatchRelationWrite_RefusedUnaudited(t *testing.T) {
 	sink := audit.NewMemory()
 	app := buildAppWithACLAndAudit(t, acl.NopACL{}, sink)
 
@@ -134,32 +133,14 @@ func TestTypeMismatchRelationWrite_Audited(t *testing.T) {
 	rec := httptest.NewRecorder()
 	app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 with warning, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "target_type_not_allowed") {
-		t.Errorf("expected target_type_not_allowed warning, got %s", rec.Body.String())
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "target_type_not_allowed") {
+		t.Fatalf("expected 422 target_type_not_allowed, got %d: %s", rec.Code, rec.Body.String())
 	}
 	key := entity.RelationKey{From: "TKT-001", Type: "belongs_to", To: "TKT-002"}
-	if _, err := app.store.GetRelation(t.Context(), key); err != nil {
-		t.Fatalf("mismatched edge not stored: %v", err)
+	if _, err := app.store.GetRelation(t.Context(), key); err == nil {
+		t.Fatal("refused edge was stored")
 	}
-
-	var creates []audit.Record
-	for _, r := range sink.Records() {
-		if r.Op == audit.OpCreateRelation {
-			creates = append(creates, r)
-		}
-	}
-	if len(creates) != 1 {
-		t.Fatalf("want exactly one create-relation audit record, got %d: %+v", len(creates), sink.Records())
-	}
-	got := creates[0]
-	want := audit.Subject{Kind: "relation", RelationType: "belongs_to", FromID: "TKT-001", ToID: "TKT-002"}
-	if got.Subject == nil || *got.Subject != want {
-		t.Errorf("audit subject = %+v, want %+v", got.Subject, want)
-	}
-	if got.Principal.User != who.User || got.Principal.Tool != who.Tool {
-		t.Errorf("audit principal = %+v, want %+v", got.Principal, who)
+	if recs := sink.Records(); len(recs) != 0 {
+		t.Errorf("refused write audited: %+v", recs)
 	}
 }
