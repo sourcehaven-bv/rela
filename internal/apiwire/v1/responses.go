@@ -1112,11 +1112,8 @@ type SidebarSpace struct {
 // (the anchor) and is addressed as `/p/<page>/<entity>/<tab>`. Badge names
 // the anchor's property the header shows beside its title.
 type SidebarPage struct {
-	Label      string           `json:"label"`
-	Icon       string           `json:"icon,omitempty"`
-	EntityType string           `json:"entity_type,omitempty"`
-	Badge      string           `json:"badge,omitempty"`
-	Tabs       []SidebarPageTab `json:"tabs"`
+	dataentryconfig.PageHeader
+	Tabs []SidebarPageTab `json:"tabs"`
 }
 
 // SidebarPageTab is one tab of a [SidebarPage]. View is the kind of view the

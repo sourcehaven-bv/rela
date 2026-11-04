@@ -40,11 +40,11 @@ func installPagesConfig(
 // whose only tab is.
 func testPages() map[string]dataentryconfig.Page {
 	return map[string]dataentryconfig.Page{
-		"tickets": {Label: "Tickets", Tabs: []dataentryconfig.PageTab{
+		"tickets": {PageHeader: dataentryconfig.PageHeader{Label: "Tickets"}, Tabs: []dataentryconfig.PageTab{
 			{ID: "table", Label: "Table", List: "all"},
 			{ID: "home", Label: "Home", Dashboard: dataentryconfig.DefaultDashboard, Permission: "admin:read"},
 		}},
-		"admin": {Label: "Admin", Icon: "folder", Tabs: []dataentryconfig.PageTab{
+		"admin": {PageHeader: dataentryconfig.PageHeader{Label: "Admin", Icon: "folder"}, Tabs: []dataentryconfig.PageTab{
 			{ID: "all", Label: "All", List: "all", Permission: "admin:read"},
 		}},
 	}
@@ -70,7 +70,7 @@ func TestPages_Sidebar(t *testing.T) {
 				{Label: "Admin work", Href: "/p/admin", Icon: "folder"},
 			}},
 		}, resp.Navigation)
-		require.Equal(t, v1.SidebarPage{Label: "Tickets", Tabs: []v1.SidebarPageTab{
+		require.Equal(t, v1.SidebarPage{PageHeader: dataentryconfig.PageHeader{Label: "Tickets"}, Tabs: []v1.SidebarPageTab{
 			{ID: "table", Label: "Table", View: "list", Target: "all"},
 			{ID: "home", Label: "Home", View: "dashboard"},
 		}}, resp.Pages["tickets"])

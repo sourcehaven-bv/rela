@@ -11,7 +11,7 @@ func TestValidatePages(t *testing.T) {
 	meta := testMetamodel()
 	lists := map[string]List{"tickets": {EntityType: "ticket"}}
 	pages := func(mut func(*Page)) map[string]Page {
-		p := Page{Label: "Tickets", Tabs: []PageTab{
+		p := Page{PageHeader: PageHeader{Label: "Tickets"}, Tabs: []PageTab{
 			{ID: "table", Label: "Table", List: "tickets"},
 			{ID: "home", Label: "Home", Dashboard: DefaultDashboard},
 		}}
@@ -140,7 +140,7 @@ navigation:
 func TestNavStatusEntries_PageList(t *testing.T) {
 	status := []NavStatusRule{{Tone: "new", Label: "x"}}
 	cfg := &Config{
-		Pages: map[string]Page{"work": {Label: "Work", Tabs: []PageTab{{ID: "t", Label: "T", List: "tickets"}}}},
+		Pages: map[string]Page{"work": {PageHeader: PageHeader{Label: "Work"}, Tabs: []PageTab{{ID: "t", Label: "T", List: "tickets"}}}},
 		Navigation: []NavigationEntry{
 			{Label: "Plain", List: "bugs", Status: status},
 			{Page: "work", Status: status},
@@ -170,7 +170,7 @@ func TestValidateEntityPages(t *testing.T) {
 		}
 	}
 	page := func(mut func(*Page)) map[string]Page {
-		p := Page{Label: "Category", EntityType: "category", Badge: "name", Tabs: []PageTab{
+		p := Page{PageHeader: PageHeader{Label: "Category", EntityType: "category", Badge: "name"}, Tabs: []PageTab{
 			{ID: "table", Label: "Table", List: "tickets",
 				Scope: &PageTabScope{Relation: "belongs-to", Direction: DirectionIncoming}},
 			{ID: "board", Label: "Board", Kanban: "board", Scope: &PageTabScope{Relation: "belongs-to"}},
@@ -181,7 +181,7 @@ func TestValidateEntityPages(t *testing.T) {
 		return map[string]Page{"cat": p}
 	}
 	ganttPage := func(scope *PageTabScope) map[string]Page {
-		return map[string]Page{"tk": {Label: "Ticket", EntityType: "ticket", Tabs: []PageTab{
+		return map[string]Page{"tk": {PageHeader: PageHeader{Label: "Ticket", EntityType: "ticket"}, Tabs: []PageTab{
 			{ID: "plan", Label: "Plan", Gantt: "plan", Scope: scope},
 		}}}
 	}
@@ -200,7 +200,7 @@ func TestValidateEntityPages(t *testing.T) {
 			`pages[cat]: badge property "nope" not in metamodel`},
 		{"badge without entity type", page(func(p *Page) { p.EntityType = ""; p.Tabs = p.Tabs[:0] }), nil,
 			"pages[cat]: badge needs entity_type"},
-		{"scope on a plain page", map[string]Page{"t": {Label: "T", Tabs: []PageTab{
+		{"scope on a plain page", map[string]Page{"t": {PageHeader: PageHeader{Label: "T"}, Tabs: []PageTab{
 			{ID: "a", Label: "A", List: "tickets", Scope: &PageTabScope{Relation: "belongs-to"}},
 		}}}, nil, "pages[t].tabs[a]: scope needs entity_type"},
 		{"tab without scope", page(func(p *Page) { p.Tabs[0].Scope = nil }), nil,
@@ -213,7 +213,7 @@ func TestValidateEntityPages(t *testing.T) {
 			`pages[cat].tabs[table]: scope.relation "belongs-to" does not connect "category" to "ticket" outgoing`},
 		{"relation that misses the row type", page(func(p *Page) { p.Tabs[0].List = "cats" }), nil,
 			`does not connect "category" to "category" incoming`},
-		{"ambiguous direction", map[string]Page{"tk": {Label: "T", EntityType: "ticket", Tabs: []PageTab{
+		{"ambiguous direction", map[string]Page{"tk": {PageHeader: PageHeader{Label: "T", EntityType: "ticket"}, Tabs: []PageTab{
 			{ID: "a", Label: "A", List: "tickets", Scope: &PageTabScope{Relation: "blocks"}},
 		}}}, nil, "pages[tk].tabs[a]: scope needs an explicit `direction:`"},
 		{"dashboard tab", page(func(p *Page) {
@@ -234,7 +234,7 @@ func TestValidateEntityPages(t *testing.T) {
 			g.Hierarchy = []string{"belongs-to"}
 			g.Sources = map[string]GanttSource{"ticket": {Label: "title"}, "category": {Label: "name"}}
 			c.Gantts["plan"] = g
-			c.Pages["tk"] = Page{Label: "C", EntityType: "category", Tabs: []PageTab{
+			c.Pages["tk"] = Page{PageHeader: PageHeader{Label: "C", EntityType: "category"}, Tabs: []PageTab{
 				{ID: "plan", Label: "Plan", Gantt: "plan", Scope: &PageTabScope{Root: true}},
 			}}
 		}, `no hierarchy relation of gantt "plan" runs from "category"`},

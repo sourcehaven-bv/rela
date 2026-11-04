@@ -26,7 +26,7 @@ func newIncomingTabApp(t *testing.T, mode metamodel.OrderableMode) *App {
 	app := newOrderableRelationsTestApp(t, mode)
 	installPagesConfig(app, map[string]dataentryconfig.List{"recipes": {EntityType: "recipe"}},
 		map[string]dataentryconfig.Page{
-			"stp": {Label: "Step", EntityType: "step", Tabs: []dataentryconfig.PageTab{
+			"stp": {PageHeader: dataentryconfig.PageHeader{Label: "Step", EntityType: "step"}, Tabs: []dataentryconfig.PageTab{
 				{ID: "recipes", Label: "Recipes", List: "recipes", Scope: &dataentryconfig.PageTabScope{
 					Relation: "has-step", Direction: dataentryconfig.DirectionIncoming,
 				}},

@@ -35,3 +35,6 @@ Context-aware sources resolve against the entity being viewed.
 - Because suggestions now appear on every page, list pages early in the worlds
 manual used up the `finished-draft` candidates before the dashboard was shown.
 The prototype places both of its sources on the dashboard only.
+- The page `suggestions:` switch made `dataentryconfig.Page` differ from the
+sidebar payload. Both now embed `dataentryconfig.PageHeader`, so the header
+fields are declared once.
