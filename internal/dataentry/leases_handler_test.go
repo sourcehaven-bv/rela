@@ -207,8 +207,18 @@ func leasePolicy(t *testing.T, app *App) *acl.Declarative {
 // blocks TKT-2), applies leasePolicy and wires a lease service.
 func newLeaseEnv(t *testing.T) *leaseEnv {
 	t.Helper()
+	return newLeaseEnvWith(t, nil)
+}
+
+// newLeaseEnvWith is newLeaseEnv with before run on the app first, while
+// the live worker has not started.
+func newLeaseEnvWith(t *testing.T, before func(app *App)) *leaseEnv {
+	t.Helper()
 	env := &leaseEnv{clock: &shiftedClock{}, expiry: &expiryHook{}}
 	env.liveEnv = newLiveEnv(t, func(app *App) {
+		if before != nil {
+			before(app)
+		}
 		seedEntity(app, ticket1("one"))
 		seedEntity(app, &entity.Entity{ID: "TKT-2", Type: "ticket", Properties: map[string]any{"title": "two"}})
 		seedEntity(app, feature("FEAT-1", "hidden"))

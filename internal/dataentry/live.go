@@ -73,6 +73,15 @@ type liveHub struct {
 
 	mu    sync.Mutex
 	conns map[string]*liveConn
+	// byFP is conns by share key, so a served GET finds its principal's
+	// subscriptions without scanning every stream (see live_served.go).
+	// Guarded by fpMu, which a GET takes without h.mu; lock order h.mu,
+	// then fpMu.
+	fpMu sync.Mutex
+	byFP map[string]map[*liveConn]struct{}
+	// gen counts the rounds that collected, so a round compares only the
+	// served responses recorded before it collected. Guarded by mu.
+	gen uint64
 	// pending holds the subscriptions a changed round could not replay: it
 	// skipped them while their PUT took the baseline, or had no room or time
 	// for them ([liveHub.fallback]). The next tick replays them, in a full
@@ -133,7 +142,7 @@ type liveHub struct {
 func newLiveHub(meta func() *metamodel.Metamodel) *liveHub {
 	return &liveHub{
 		meta: meta, window: liveWindow, slots: make(chan struct{}, liveParallel),
-		conns: make(map[string]*liveConn), kick: make(chan struct{}, 1),
+		conns: make(map[string]*liveConn), byFP: make(map[string]map[*liveConn]struct{}), kick: make(chan struct{}, 1),
 		reconfigured: make(chan struct{}, 1), presence: presence.New(), now: time.Now,
 		inboxGrid: LiveInboxGrid, roundCap: liveRoundCap, roundBudget: liveRoundBudget,
 	}
@@ -152,11 +161,13 @@ type liveConn struct {
 }
 
 // liveSub is one subscription. hash is the baseline: the PUT takes it
-// before answering, so the client's refetch after the 204 is at least as new
-// and any later change differs from it. It is empty only when that replay
-// did not finish; the round that then takes it also sends a frame, because
-// the client may have fetched a newer response than the baseline. syncing is
-// set while the PUT takes the baseline, and rounds skip the subscription.
+// before answering. The client's refetch after the 204, or after a frame,
+// can be newer than the baseline, and can show a change that is reverted
+// before the next tick; served records such responses (see live_served.go).
+// hash is empty only when that replay did not finish; the round that then
+// takes it also sends a frame, because the client may have fetched a newer
+// response than the baseline. syncing is set while the PUT takes the
+// baseline, and rounds skip the subscription.
 //
 // A change can land after the PUT's replay read the data and before the
 // baseline is stored. The client's refetch shows it, but the baseline does
@@ -202,6 +213,7 @@ type liveSub struct {
 	joined   string
 	left     string
 	recheck  bool
+	served   servedState
 }
 
 // liveTarget is a subscription a PUT asks for.
@@ -236,6 +248,12 @@ func (h *liveHub) register(p principal.Principal) *liveConn {
 	}
 	h.mu.Lock()
 	h.conns[c.id] = c
+	h.fpMu.Lock()
+	if h.byFP[c.fp] == nil {
+		h.byFP[c.fp] = make(map[*liveConn]struct{})
+	}
+	h.byFP[c.fp][c] = struct{}{}
+	h.fpMu.Unlock()
 	h.mu.Unlock()
 	return c
 }
@@ -246,6 +264,14 @@ func (h *liveHub) register(p principal.Principal) *liveConn {
 func (h *liveHub) unregister(c *liveConn) {
 	h.mu.Lock()
 	delete(h.conns, c.id)
+	h.fpMu.Lock()
+	if peers := h.byFP[c.fp]; peers != nil {
+		delete(peers, c)
+		if len(peers) == 0 {
+			delete(h.byFP, c.fp)
+		}
+	}
+	h.fpMu.Unlock()
 	h.presence.LeaveConn(c.id, h.now())
 	h.mu.Unlock()
 }
@@ -765,7 +791,7 @@ func (h *liveHub) replayRound(ctx context.Context, changed bool, only *roundFilt
 		return
 	}
 	start := time.Now()
-	pairs := h.collect(changed, only)
+	pairs, gen := h.collect(changed, only)
 	if len(pairs) == 0 {
 		return
 	}
@@ -811,14 +837,16 @@ func (h *liveHub) replayRound(ctx context.Context, changed bool, only *roundFilt
 		pairs = pairs[:started]
 	}
 
-	h.commitRound(pairs)
+	h.commitRound(pairs, gen)
 	slog.Debug("live: round", "replays", len(pairs), "overflow", overflow,
 		"duration_ms", time.Since(start).Milliseconds(),
 		"queries", stats.Queries(), "db_ms", stats.Duration().Milliseconds())
 }
 
-// commitRound stores the results of the replays that ran and frames the
-// subscriptions whose response moved.
+// commitRound stores the results of the replays that ran, of the round of
+// generation gen, and frames the subscriptions whose response moved: from
+// the baseline, or from a response served before the round collected
+// ([liveSub.servedMoved]).
 //
 // It holds h.mu across the whole loop, not per subscription (S1). The check
 // that a stream is still registered and the presence join that follows must
@@ -828,7 +856,7 @@ func (h *liveHub) replayRound(ctx context.Context, changed bool, only *roundFilt
 // opens and closes, and the next collect wait for the commit. It does no
 // I/O, only map updates, one per subscription of at most liveRoundCap
 // pairs.
-func (h *liveHub) commitRound(pairs []*replayPair) {
+func (h *liveHub) commitRound(pairs []*replayPair, gen uint64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, p := range pairs {
@@ -837,7 +865,8 @@ func (h *liveHub) commitRound(pairs []*replayPair) {
 			ref.conn.mu.Lock()
 			if s := ref.conn.subs[ref.key]; current && s == ref.sub {
 				if p.res.ok {
-					if s.hash != p.res.hash {
+					served := s.servedMoved(p.res.hash, gen)
+					if s.hash != p.res.hash || served {
 						// A late baseline frames too: the client may hold
 						// a newer response than the one it replaces.
 						ref.conn.markChanged(ref.key)
@@ -871,10 +900,12 @@ func (h *liveHub) commitRound(pairs []*replayPair) {
 // would replay to pending, with no fallback frame: the next grid tick
 // replays it (see live_inbox.go). A baseline round is not deferred; its
 // timing depends only on the client's own PUT.
-func (h *liveHub) collect(changed bool, only *roundFilter) []*replayPair {
+func (h *liveHub) collect(changed bool, only *roundFilter) (pairs []*replayPair, gen uint64) {
 	byKey := make(map[string]*replayPair)
 	now := h.inboxTickNow()
 	h.mu.Lock()
+	h.gen++
+	gen = h.gen
 	var due map[*liveSub]struct{}
 	if changed {
 		due, h.pending = h.pending, nil
@@ -883,8 +914,9 @@ func (h *liveHub) collect(changed bool, only *roundFilter) []*replayPair {
 		c.mu.Lock()
 		for key, s := range c.subs {
 			if s.syncing {
-				s.recheck = s.recheck || changed && (only == nil || s.presenceID != "" || s.channel || s.inbox ||
-					s.busy != "" && only.movesBusy(s.busy))
+				_, wasDue := due[s] // a served response left it pending
+				s.recheck = s.recheck || wasDue || changed && (only == nil || s.presenceID != "" || s.channel ||
+					s.inbox || s.busy != "" && only.movesBusy(s.busy))
 				continue
 			}
 			if !changed && s.hash != "" {
@@ -914,11 +946,11 @@ func (h *liveHub) collect(changed bool, only *roundFilter) []*replayPair {
 		keys = append(keys, k)
 	}
 	slices.Sort(keys)
-	pairs := make([]*replayPair, len(keys))
+	pairs = make([]*replayPair, len(keys))
 	for i, k := range keys {
 		pairs[i] = byKey[k]
 	}
-	return pairs
+	return pairs, gen
 }
 
 // collects reports whether a round with filter only takes s, of the
@@ -1058,7 +1090,7 @@ func replayHash(
 		status = http.StatusOK
 	}
 	return replayResult{
-		hash: fmt.Sprintf("%d:%x", status, hw.h.Sum(nil)), status: status, ok: true, probe: *probe, topic: topic.topic,
+		hash: liveHash(status, hw.h), status: status, ok: true, probe: *probe, topic: topic.topic,
 		reader: topic.reader, inbox: topic.inbox, busy: topic.busy,
 	}
 }

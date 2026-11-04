@@ -737,7 +737,7 @@ func TestLiveHub_UnfinishedReplayLeavesWithoutGrace(t *testing.T) {
 // framed, and the tracker sees no leave and no changed face.
 func TestLiveHub_FallbackKeepsTheJoin(t *testing.T) {
 	h, c, _ := joinedHub(t)
-	h.fallback(h.collect(true, nil), fullRound)
+	h.fallback(h.collectPairs(nil), fullRound)
 	if n := h.presence.Len(); n != 1 {
 		t.Fatalf("tracker holds %d entries after a fallback, want 1", n)
 	}
@@ -836,7 +836,7 @@ func TestLiveHub_SkippedPresenceReplayIsRescheduled(t *testing.T) {
 
 	// The next presence round is over the cap and skips the pairs past it in
 	// collect's order. Revoke the last of those as it starts.
-	pairs := h.collect(true, newRoundFilter([]string{face}, nil, false))
+	pairs := h.collectPairs(newRoundFilter([]string{face}, nil, false))
 	mu.Lock()
 	revoked = pairs[len(pairs)-1].owner.User
 	clear(replayed)
