@@ -1832,12 +1832,6 @@
       "at": "2026-10-28T13:29:07Z",
       "title": "The entry point serveAsset is never called in the traces."
     },
-    "security.untraced-f3d6c41be13b": {
-      "state": "accepted",
-      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
-      "at": "2026-10-28T13:29:07Z",
-      "title": "The entry point serveInbox is never called in the traces."
-    },
     "security.untraced-00dc006fb5f1": {
       "state": "accepted",
       "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
@@ -2516,6 +2510,18 @@
       "at": "2026-10-30T07:30:00Z",
       "title": "src holds 2 groups of files that neither refer to each other.",
       "size": 2
+    },
+    "security.untested_denial-0307204dce29": {
+      "state": "accepted",
+      "reason": "Design: the inbox is the signed-in caller's own, and realtime.Service.Inbox gates each row before it counts, so a signed-in caller is never refused. The one refusal is 403 no_principal for a request without an identity; the routes suite's identity-less requests stop at the 401 before the handler. Its 400s for a bad limit, kinds or cursor are input errors. TestInboxHandler_Errors covers both; archplan does not link it.",
+      "at": "2026-11-04T09:20:41Z",
+      "title": "No test shows handleV1Inbox refusing a caller."
+    },
+    "security.untested_denial-36d31cda4c0e": {
+      "state": "accepted",
+      "reason": "Design: the inbox is the signed-in caller's own, and realtime.Service.Inbox gates each row before it counts, so a signed-in caller is never refused. The one refusal is 403 no_principal for a request without an identity; the routes suite's identity-less requests stop at the 401 before the handler. TestInboxSummaryHandler_Errors covers it; archplan does not link it.",
+      "at": "2026-11-04T09:20:41Z",
+      "title": "No test shows handleV1InboxSummary refusing a caller."
     },
     "boundaries.misplaced_file-4808d4a84e87": {
       "state": "accepted",
