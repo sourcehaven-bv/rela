@@ -574,8 +574,10 @@ export function choiceViews(
 
 /**
  * The decisions the row of `decisionSeq` shows. When that message is also
- * a question with buttons, the decisions of its answer type are left out:
- * its choices post that type already. The stepper keeps them.
+ * a question with buttons, the button of its answer type is left out: its
+ * choices post that type already, and "Other answer" opens its form. The
+ * answer type's preset buttons stay, since a preset posts values no choice
+ * does.
  */
 export function rowDecisions(
   decisions: ChannelDecisionView[],
@@ -585,7 +587,54 @@ export function rowDecisions(
   const own = decisionSeq === undefined ? undefined : choices.get(decisionSeq)
   if (!own?.length) return decisions
   const answers = new Set(own.map((c) => c.messageType))
-  return decisions.filter((d) => !answers.has(d.messageType))
+  return decisions.filter((d) => !(answers.has(d.messageType) && d.key === d.messageType))
+}
+
+/** Where a surface shows the session decisions (TKT-A0RTC52). */
+export interface PlacedDecisions {
+  /** On the waiting message, when the surface shows it. */
+  row: ChannelDecisionView[]
+  /** In the surface's fallback place, when it does not. */
+  fallback: ChannelDecisionView[]
+}
+
+/**
+ * Places each decision once. With the waiting message shown
+ * (`decisionSeq` defined), the decisions go on it (`rowDecisions`) and the
+ * fallback place has none. Otherwise every decision goes to the fallback
+ * place: the session header on the entity page, the row's own line in the
+ * inbox. Never both.
+ */
+export function placeDecisions(
+  decisions: ChannelDecisionView[],
+  choices: ReadonlyMap<number, ChannelDecisionView[]>,
+  decisionSeq: number | undefined
+): PlacedDecisions {
+  if (decisionSeq === undefined) return { row: [], fallback: decisions }
+  return { row: rowDecisions(decisions, choices, decisionSeq), fallback: [] }
+}
+
+/**
+ * The message types a button shown on the surface stands for, sorted: the
+ * type of every placed decision, and in a channel with a session the answer
+ * type of choices that offer "Other answer". In a session only the waiting
+ * question shows choices, also when the state has no decisions. The
+ * composer leaves these types out of its type picker, so each is offered
+ * once.
+ */
+export function buttonTypesOf(
+  placed: PlacedDecisions,
+  choices: ReadonlyMap<number, ChannelDecisionView[]>,
+  hasSession: boolean
+): string[] {
+  const out = new Set<string>()
+  for (const v of [...placed.row, ...placed.fallback]) out.add(v.messageType)
+  if (hasSession) {
+    for (const [seq, list] of choices) {
+      for (const v of list) if (v.key === `choice:${seq}:other`) out.add(v.messageType)
+    }
+  }
+  return [...out].sort()
 }
 
 /**

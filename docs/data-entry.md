@@ -1656,7 +1656,9 @@ reloads the inbox; nothing is posted.
 
 When messages followed the waiting message, the row says how many, for
 example "3 newer messages". Read them in the drawer before you decide.
-The buttons stay on the row.
+The buttons stay on the row. As on the entity page, each decision shows
+once: on the waiting message, or below the row when the row shows no
+message that moved the session.
 
 The row shows only the decisions you may take, as on the entity page. A
 row whose session never moved, or that moved by a timer, shows no

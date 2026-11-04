@@ -239,6 +239,28 @@ export class ChannelsPage extends BasePage {
     await this.decisionIn(this.messages.filter({ hasText: text }), label).click();
   }
 
+  /** The header's "Go to decision" button (TKT-A0RTC52). */
+  private get goToDecisionButton(): Locator {
+    return this.session.getByRole("button", { name: "Go to decision", exact: true });
+  }
+
+  /** The session header shows "Go to decision", or does not. */
+  async expectGoToDecision(shown: boolean, timeout = 15_000) {
+    await expect(this.goToDecisionButton).toHaveCount(shown ? 1 : 0, { timeout });
+  }
+
+  /** Clicks "Go to decision" in the session header. */
+  async goToDecision() {
+    await this.goToDecisionButton.click();
+  }
+
+  /** The decision `label` on the message holding `text` has the focus and is in the viewport. */
+  async expectDecisionFocused(text: string, label: string, timeout = 15_000) {
+    const button = this.decisionIn(this.messages.filter({ hasText: text }), label);
+    await expect(button).toBeFocused({ timeout });
+    await expect(button).toBeInViewport();
+  }
+
   /** Accepts the in-app confirm dialog with the button `label`. */
   async confirmDialog(label?: string) {
     const dialog = this.page.locator('[role=dialog], [role=alertdialog]').last();

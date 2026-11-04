@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from '@storybook/vue3-vite'
 import { expect, userEvent, within } from 'storybook/test'
 import RlChannelSession from './RlChannelSession.vue'
 import RlChannelDecisions from './RlChannelDecisions.vue'
+import RlButton from '../common/RlButton.vue'
 import { provideMessages } from '../../composables/useMessages'
 import {
   breachDecisions,
@@ -490,5 +491,54 @@ export const AutoWide: Story = {
     await expect(fullList(canvasElement)).toBeVisible()
     await expect(contextItems(canvasElement)).toEqual([])
     await expect(canvasElement.querySelector('.rl-channel-session__toggle')).not.toBeVisible()
+  },
+}
+
+/*
+ * Go to decision (TKT-A0RTC52): when the decisions sit on the waiting
+ * message, the app puts one button in their place, which moves the focus
+ * there. It is navigation, so it is a plain secondary button.
+ */
+const withJump =
+  (compact: boolean, width?: string): Story['render'] =>
+  (args) => ({
+    components: { RlChannelSession, RlButton },
+    setup: () => ({ args: { ...args, compact } }),
+    template: `
+    <div :style="${width ? `'width:${width}'` : "''"}">
+      <RlChannelSession v-bind="args">
+        <template #decisions>
+          <RlButton variant="secondary" size="sm">Go to decision</RlButton>
+        </template>
+      </RlChannelSession>
+    </div>`,
+  })
+
+export const WithGoToDecision: Story = {
+  args: { session: breachSessionWaitingOnMe },
+  render: withJump(false),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByRole('button', { name: 'Go to decision' })).toBeVisible()
+    await expect(canvas.queryByRole('group', { name: 'Decisions' })).toBeNull()
+  },
+}
+
+/** The compact header keeps the jump visible next to the short list. */
+export const CompactWithGoToDecision: Story = {
+  args: { session: { ...breachSessionWaitingOnMe, previous: 'detected' } },
+  render: withJump(true, '60rem'),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByRole('button', { name: 'Go to decision' })).toBeVisible()
+    await expect(fullList(canvasElement)).not.toBeVisible()
+  },
+}
+
+export const NarrowWithGoToDecision: Story = {
+  args: { session: breachSessionWaitingOnMe },
+  render: withJump(false, '300px'),
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByRole('button', { name: 'Go to decision' })).toBeVisible()
   },
 }

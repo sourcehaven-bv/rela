@@ -261,6 +261,48 @@ describe('InboxWaitingItem', () => {
     expect(w.emitted('answer')).toEqual([[{ kind: 'decide', key: 'revise', generation: 7 }]])
   })
 
+  // TKT-A0RTC52: the inbox row places decisions as the channel page does.
+  it('a shown message that is no cause (cause 0) gets the decisions below it, once', async () => {
+    const w = await mountItem(
+      approval({ session: { ...approval().session, cause: 0 } })
+    )
+    expect(w.findAll('[data-decision="approve"]')).toHaveLength(1)
+    expect(w.find('.rl-channel-message [data-decision]').exists()).toBe(false)
+    expect(w.find('.inbox-waiting > .rl-channel-decisions [data-decision="approve"]').exists()).toBe(
+      true
+    )
+  })
+
+  it('a shown cause gets the decisions on the message, once', async () => {
+    const w = await mountItem(approval())
+    expect(w.findAll('[data-decision="approve"]')).toHaveLength(1)
+    expect(w.find('.rl-channel-message [data-decision="approve"]').exists()).toBe(true)
+  })
+
+  it('the answer type presets show on the question next to its choices', async () => {
+    const w = await mountItem(
+      question({
+        session: {
+          ...question().session,
+          transitions: [
+            {
+              message_type: 'answer',
+              to: 'working',
+              entry: 0,
+              button: { label: 'Skip it', props: { note: 'skip' } },
+            },
+          ],
+        },
+      })
+    )
+    const keys = w
+      .find('.rl-channel-message')
+      .findAll('[data-decision]')
+      .map((b) => b.attributes('data-decision'))
+    expect(keys).toEqual(['choice:41:0', 'choice:41:1', 'choice:41:other', 'preset:answer:0'])
+    expect(w.findAll('[data-decision="preset:answer:0"]')).toHaveLength(1)
+  })
+
   it('a declined confirm posts nothing', async () => {
     confirm.mockResolvedValue(false)
     const w = await mountItem(approval())

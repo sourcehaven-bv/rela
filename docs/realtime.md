@@ -393,8 +393,9 @@ The buttons show on a question only when all of these hold:
 
 Otherwise the options show as a bulleted list. When the question is also
 the message that holds the session's decision buttons, it shows the
-choices and not a second button for the answer type. The session header
-keeps that button.
+choices and not a second button for the answer type. The presets of the
+answer type stay, because they post values no option does. The session
+header then shows **Go to decision** instead of buttons.
 
 The server does not check that an answer is one of the options, and does
 not record that a question was answered. Outside a session, a second
@@ -2073,7 +2074,8 @@ A button appears only when you may use it. It is left out, not disabled.
 | **New channel** | The type is `many` and its `create` admits you. |
 | Session header | The channel type has a `session`. It shows on a closed or archived channel too. |
 | A message type marked as moving the session | Your post of that type would move the session now: see `_actions.transitions` below. |
-| A decision button, such as **Approve** | The channel is open, the session is neither ended nor stranded, and your post of the type would move the session now: the type is in `_actions.transitions` and `_actions.post`. It shows in the session header, and on the message that moved the session into its current state. |
+| A decision button, such as **Approve** | The channel is open, the session is neither ended nor stranded, and your post of the type would move the session now: the type is in `_actions.transitions` and `_actions.post`. It shows once: on the message that moved the session into its current state when the page shows that message, else in the session header. |
+| **Go to decision** | The decision buttons sit on the message that moved the session. It shows in the session header. |
 | A preset button, such as **Approve** on a `button:` entry | As for a decision button, and your post of the preset would take that entry: the entry is in `_actions.entries`. See "Preset buttons" below. |
 | A choice button, and **Other answer…** | The question's type has `choices`, and the rules under [Choices](#choices) hold. |
 
@@ -2137,7 +2139,10 @@ states in its place, set `display: compact` on the session in
 `data-entry.yaml`. See "Compact session header" in the data-entry guide.
 
 The composer lists the message types that would move the session first,
-each marked with an icon. It selects a type that moves nothing by
+each marked with an icon. A type that has a decision button on the page
+(see "Decision buttons" below) is left out of the list, because its button
+is the way to post it. If that would leave nothing to choose, the list
+shows every type. It selects a type that moves nothing by
 default, so a plain message does not move the session by accident. Only
 when every type you may post moves the session does it select the first of
 them, and the note below says the session will move. While a
@@ -2156,11 +2161,15 @@ example "Contained from Ann. Session moved from Detected to Contained."
 When someone else moves the session, the header and the marked types
 follow without a reload.
 
-**Decision buttons.** The session header shows one button for each
-decision you may make now, named by the message type's label. The same
-buttons show on the message that moved the session into its current state,
-when the page holds that message and it is not removed. A button posts a
-message: only a message moves a session.
+**Decision buttons.** The app shows one button for each decision you may
+make now, named by the message type's label. Each button shows once. It
+sits on the message that moved the session into its current state, when
+the page holds that message and it is not removed. Then the session header
+shows **Go to decision**, which scrolls to that message and focuses its
+first choice or decision button. Otherwise the buttons sit in the session
+header, for example when that message is on an older page, was removed,
+or a timer moved the session. The inbox places them by the same rule. A
+button posts a message: only a message moves a session.
 
 - The type's button stands for the entries your post could take
   (`_actions.entries`) that have no `button:`. Entries with a button show
@@ -2169,9 +2178,15 @@ message: only a message moves a session.
   no required property, none of those entries has a condition (`when`),
   no entry a person could fire before one of them has a `when`, and they
   all lead to one state.
-- Otherwise the button opens the composer with that type selected and its
-  first field focused. If you are editing a message, the app first asks
-  whether to discard the edit.
+- Otherwise the button opens the composer with that type and its first
+  field focused. A strip shows the button's label with a **Cancel
+  decision** button, as for a preset with `compose: true`. Cancel decision
+  puts the composer back on the type it selects by default and focuses its
+  first field. If you are editing a message, the app first asks whether to
+  discard the edit.
+- A decision button with only optional properties posts with one click,
+  so it gives no way to add a note. Post a plain message after it to add
+  one.
 - This rule reads only the entries your post could take, also in a file
   without `button:`. A branching type whose only entry you could take is
   an unguarded edge to one state is therefore a one-click decision for
@@ -2195,8 +2210,8 @@ message: only a message moves a session.
   generation when you clicked it. **Send** for that type posts with it. If
   the session moves on before you send, the app drops the decision and
   says "The session moved on. Choose again.". Choosing another type in the
-  composer drops it without a message, even if you switch back before you
-  send, and a plain message carries no generation.
+  composer or cancelling drops it without a message, and a plain message
+  carries no generation.
 - While a decision is in flight, the other decision buttons and **Send**
   are disabled. After a one-click decision, focus moves to the message you
   clicked on, or to the session header. The notice in the log announces
@@ -2230,11 +2245,11 @@ Revise opens the composer, where the owner can write the optional `note`.
   `decision_button`, change this; see "Button options" under
   [Sessions](#sessions).
 - If the server refuses the preset, for example because the file changed,
-  the composer opens with the type selected and shows why.
+  the composer opens with the type and shows why. It is a decision at the
+  generation of the click, so a session move drops it.
 - Preset buttons share the in-flight lock with the decision and choice
   buttons. On the message of a question with choices, the presets of the
-  answer type are left out, as its decision button is; the session header
-  keeps them.
+  answer type show next to the choices.
 - A decision type whose messages are folded or hidden with `display`
   still shows its preset buttons. The message a click posts may then be
   folded or hidden in the log.
@@ -2251,7 +2266,10 @@ open." If the answer type refuses the post, for
 example because of its `when:`, the composer opens with the answer type
 and shows why. **Other answer…** opens the composer with the answer type
 selected and the reply set; if you are editing a message, the app first
-asks whether to discard the edit. A list property shows as a bulleted
+asks whether to discard the edit. In a channel with a session it is a
+decision: the composer shows the **Cancel decision** strip, and cancelling
+also ends the reply. While **Other answer…** shows, the composer's list of
+types leaves out the answer type. A list property shows as a bulleted
 list of text.
 
 On a channel type with `typing: true`, the app tells the server you are

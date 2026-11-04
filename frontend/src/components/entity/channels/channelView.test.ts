@@ -32,6 +32,8 @@ import {
   nextExpiry,
   noticeView,
   parseChannelKey,
+  placeDecisions,
+  buttonTypesOf,
   presentationView,
   rowDecisions,
   sessionView,
@@ -1838,13 +1840,18 @@ describe('choices', () => {
     expect(rowDecisions(decisions, choices, undefined)).toBe(decisions)
   })
 
-  it('drops presets of the answer type', () => {
+  // TKT-A0RTC52: the header no longer keeps them, so the row does.
+  it('keeps presets of the answer type', () => {
     const choices = choiceViews(plain, head(), undefined, false, [q(1)])
     const decisions = [
+      { key: 'answer', messageType: 'answer', label: 'Answer' },
       { key: 'preset:answer:0', messageType: 'answer', label: 'Yes', props: { body: 'yes' } },
       { key: 'preset:go:1', messageType: 'go', label: 'Go now' },
     ]
-    expect(rowDecisions(decisions, choices, 1).map((d) => d.key)).toEqual(['preset:go:1'])
+    expect(rowDecisions(decisions, choices, 1).map((d) => d.key)).toEqual([
+      'preset:answer:0',
+      'preset:go:1',
+    ])
     expect(rowDecisions(decisions, choices, undefined)).toBe(decisions)
   })
 
@@ -1858,5 +1865,69 @@ describe('choices', () => {
     const [w] = messageViews([q(2)], () => ask, ctx)
     expect(w!.props?.options).toEqual(['A', 'B'])
     expect(w!.html).toBeUndefined()
+  })
+  // TKT-A0RTC52: each decision once, on the waiting message or in the fallback.
+  describe('placeDecisions', () => {
+    const decisions = [
+      { key: 'answer', messageType: 'answer', label: 'Answer', opensForm: true },
+      { key: 'preset:answer:0', messageType: 'answer', label: 'Yes', props: { body: 'yes' } },
+      { key: 'go', messageType: 'go', label: 'Go' },
+    ]
+
+    it('puts every decision in the fallback when the waiting message is not shown', () => {
+      const choices = choiceViews(plain, head(), undefined, false, [q(1)])
+      expect(placeDecisions(decisions, choices, undefined)).toEqual({ row: [], fallback: decisions })
+    })
+
+    it('puts the decisions on the row, never both', () => {
+      const placed = placeDecisions(decisions, new Map(), 1)
+      expect(placed).toEqual({ row: decisions, fallback: [] })
+    })
+
+    it('leaves the answer type button out where the choices show, and keeps its presets', () => {
+      const choices = choiceViews(plain, head(), undefined, false, [q(1)])
+      const placed = placeDecisions(decisions, choices, 1)
+      expect(placed.row.map((d) => d.key)).toEqual(['preset:answer:0', 'go'])
+      expect(placed.fallback).toEqual([])
+    })
+
+    it('an empty list places nothing', () => {
+      expect(placeDecisions([], new Map(), 1)).toEqual({ row: [], fallback: [] })
+      expect(placeDecisions([], new Map(), undefined)).toEqual({ row: [], fallback: [] })
+    })
+  })
+
+  describe('buttonTypesOf', () => {
+    const go = { key: 'go', messageType: 'go', label: 'Go' }
+    const yes = { key: 'preset:answer:0', messageType: 'answer', label: 'Yes', props: { body: 'yes' } }
+
+    it('names the type of every placed decision, sorted, once', () => {
+      const placed = { row: [go, yes], fallback: [] }
+      expect(buttonTypesOf(placed, new Map(), true)).toEqual(['answer', 'go'])
+      expect(buttonTypesOf({ row: [], fallback: [go] }, new Map(), true)).toEqual(['go'])
+    })
+
+    it('names the answer type when the waiting question offers Other in a session', () => {
+      const choices = choiceViews(withSession, head({ generation: 5 }), 5, false, [q(1)], 1)
+      const placed = { row: [go], fallback: [] }
+      expect(buttonTypesOf(placed, choices, true)).toEqual(['answer', 'go'])
+      // A state with no decisions still shows the question's Other answer.
+      expect(buttonTypesOf({ row: [], fallback: [] }, choices, true)).toEqual(['answer'])
+    })
+
+    it('leaves the answer type in the picker without Other or without a session', () => {
+      const noOther = choiceViews(
+        { ...plain, message_types: [{ ...ask, choices: { ...ask.choices!, other: false } }, answer] },
+        head(),
+        undefined,
+        false,
+        [q(1)]
+      )
+      const placed = { row: [go], fallback: [] }
+      expect(buttonTypesOf(placed, noOther, true)).toEqual(['go'])
+      const choices = choiceViews(plain, head(), undefined, false, [q(1)])
+      expect(buttonTypesOf(placed, choices, false)).toEqual(['go'])
+      expect(buttonTypesOf({ row: [], fallback: [] }, new Map(), true)).toEqual([])
+    })
   })
 })
