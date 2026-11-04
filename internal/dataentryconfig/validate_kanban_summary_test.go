@@ -10,7 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
-// summaryMetamodel adds an integer, an integer list and a date to
+// summaryMetamodel adds an integer, an integer list, a decimal and a date to
 // testMetamodel's ticket.
 func summaryMetamodel() *metamodel.Metamodel {
 	m := testMetamodel()
@@ -18,6 +18,7 @@ func summaryMetamodel() *metamodel.Metamodel {
 	ticket.Properties["value"] = metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger}
 	ticket.Properties["scores"] = metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger, List: true}
 	ticket.Properties["due"] = metamodel.PropertyDef{Type: metamodel.PropertyTypeDate}
+	ticket.Properties["amount"] = metamodel.PropertyDef{Type: metamodel.PropertyTypeDecimal}
 	ticket.Properties["closed_at"] = metamodel.PropertyDef{Type: metamodel.PropertyTypeDatetime}
 	m.Entities["ticket"] = ticket
 	return m
@@ -43,6 +44,9 @@ func TestValidateConfig_KanbanColumnSummary(t *testing.T) {
 		)},
 		{name: "min and max of an integer", kanban: board(
 			Summary{Function: SummaryMin, Property: "value"}, Summary{Function: SummaryMax, Property: "value"})},
+		{name: "sum, avg, min and max of a decimal", kanban: board(
+			Summary{Function: SummarySum, Property: "amount"}, Summary{Function: SummaryAvg, Property: "amount"},
+			Summary{Function: SummaryMin, Property: "amount"}, Summary{Function: SummaryMax, Property: "amount"})},
 		{name: "min of a date", kanban: board(Summary{Function: SummaryMin, Property: "due"})},
 		{name: "max of a datetime", kanban: board(Summary{Function: SummaryMax, Property: "closed_at"})},
 		{name: "on a columns_from board", kanban: Kanban{
@@ -58,14 +62,14 @@ func TestValidateConfig_KanbanColumnSummary(t *testing.T) {
 			wantErr: `function "" is not one of`},
 		{name: "sum without property", kanban: board(Summary{Function: SummarySum}),
 			wantErr: "column_summary[0]: sum needs a property"},
-		{name: "unknown property", kanban: board(Summary{Function: SummarySum, Property: "amount"}),
-			wantErr: `column_summary[0]: property "amount" not in entity "ticket"`},
+		{name: "unknown property", kanban: board(Summary{Function: SummarySum, Property: "nope"}),
+			wantErr: `column_summary[0]: property "nope" not in entity "ticket"`},
 		{name: "sum of a string", kanban: board(Summary{Function: SummarySum, Property: "assignee"}),
-			wantErr: `sum needs a property of type integer; "assignee" is "string"`},
+			wantErr: `sum needs a property of type integer, decimal; "assignee" is "string"`},
 		{name: "avg of a date", kanban: board(Summary{Function: SummaryAvg, Property: "due"}),
-			wantErr: `avg needs a property of type integer; "due" is "date"`},
+			wantErr: `avg needs a property of type integer, decimal; "due" is "date"`},
 		{name: "min of a string", kanban: board(Summary{Function: SummaryMin, Property: "assignee"}),
-			wantErr: `min needs a property of type integer, date, datetime; "assignee" is "string"`},
+			wantErr: `min needs a property of type integer, decimal, date, datetime; "assignee" is "string"`},
 		{name: "sum of a list", kanban: board(Summary{Function: SummarySum, Property: "scores"}),
 			wantErr: `property "scores" is a list`},
 		{name: "second entry indexed", kanban: board(Summary{Function: SummaryCount}, Summary{Function: SummarySum}),

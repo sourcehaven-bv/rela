@@ -144,6 +144,10 @@ func (g *Generator) propertyToSchema(prop metamodel.PropertyDef) *Schema {
 		base = &Schema{Type: "string", Format: "date-time"}
 	case metamodel.PropertyTypeInteger:
 		base = &Schema{Type: "integer"}
+	case metamodel.PropertyTypeDecimal:
+		// Decimal text keeps the value exact; a JSON number would pass
+		// through a binary float in most clients.
+		base = &Schema{Type: "string", Format: "decimal", Description: "Decimal text, such as 12.50"}
 	case metamodel.PropertyTypeBoolean:
 		base = &Schema{Type: "boolean"}
 	case metamodel.PropertyTypeFile:

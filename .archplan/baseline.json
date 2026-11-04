@@ -2522,6 +2522,12 @@
       "reason": "Design: the inbox is the signed-in caller's own, and realtime.Service.Inbox gates each row before it counts, so a signed-in caller is never refused. The one refusal is 403 no_principal for a request without an identity; the routes suite's identity-less requests stop at the 401 before the handler. TestInboxSummaryHandler_Errors covers it; archplan does not link it.",
       "at": "2026-11-04T09:20:41Z",
       "title": "No test shows handleV1InboxSummary refusing a caller."
+    },
+    "boundaries.misplaced_file-4808d4a84e87": {
+      "state": "accepted",
+      "reason": "Design: api/views.ts is the views wire module; entity components consume its types by design.",
+      "at": "2026-11-04T04:59:34Z",
+      "title": "api/views.ts in api has most of its links to web/components/entity (weighted links: 3.2 to web/components/entity, 0.1 to api)."
     }
   },
   "labels": {},

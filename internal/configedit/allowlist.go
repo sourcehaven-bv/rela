@@ -81,6 +81,7 @@ var editable = map[File][]string{
 		"entities.*.properties.*.max",
 		"entities.*.properties.*.min",
 		"entities.*.properties.*.required",
+		"entities.*.properties.*.scale",
 		"entities.*.properties.*.type",
 		"entities.*.properties.*.unique",
 		"entities.*.properties.*.values.[]",
@@ -109,6 +110,7 @@ var editable = map[File][]string{
 		"relations.*.properties.*.max",
 		"relations.*.properties.*.min",
 		"relations.*.properties.*.required",
+		"relations.*.properties.*.scale",
 		"relations.*.properties.*.type",
 		"relations.*.properties.*.unique",
 		"relations.*.properties.*.values.[]",
@@ -359,10 +361,18 @@ var locked = map[File][]string{
 		"git.**", "palette.**",
 		"documents.**", "feeds.**", "caldav.**", "commands.**", "actions.**", "webhooks.**",
 		"pages.**", "next_action_bands.**", "next_actions.**", "account.**", "lists.*.create_world",
+		// Where suggestions appear (TKT-6EEXXE), locked like next_actions.
+		// Calendars and gantts carry the key too, but those trees are
+		// editable whole (calendars.**, gantts.**).
+		"next_action_surfaces.*", "dashboard.suggestions", "dashboards.*.suggestions",
+		"lists.*.suggestions", "kanbans.*.suggestions", "views.*.suggestions",
 		"lists.*.columns.[].face", "dashboard.cards.[].columns.[].face",
 		"dashboards.*.cards.[].columns.[].face",
 		// Busy columns are list-only (TKT-TU3XH4); the load refuses them here.
 		"dashboard.cards.[].columns.[].busy", "dashboards.*.cards.[].columns.[].busy",
+		// Editable columns are view-table-only (TKT-4Q2EIVZ); the load refuses them here.
+		"lists.*.columns.[].render", "dashboard.cards.[].columns.[].render",
+		"dashboards.*.cards.[].columns.[].render",
 	},
 }
 

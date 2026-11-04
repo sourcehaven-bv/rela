@@ -83,6 +83,7 @@ func toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.PropertyDef) v
 		List:        propDef.List,
 		Min:         propDef.Min,
 		Max:         propDef.Max,
+		Scale:       propDef.Scale,
 		System:      propDef.System,
 	}
 	if d := propDef.Display; d != nil {

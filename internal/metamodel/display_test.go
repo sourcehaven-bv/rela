@@ -22,7 +22,7 @@ func TestParse_PropertyDisplay(t *testing.T) {
 		{name: "symbol", yaml: prop("        type: integer\n        display:\n          currency: \"€\"\n"),
 			wantErr: `is not an ISO 4217 code`},
 		{name: "on a string", yaml: prop("        type: string\n        display:\n          currency: EUR\n"),
-			wantErr: `display: currency needs an integer property, not "string"`},
+			wantErr: `display: currency needs an integer or decimal property, not "string"`},
 		{name: "on a list", yaml: prop("        type: integer\n        list: true\n        display:\n          currency: EUR\n"),
 			wantErr: "display: currency is not supported on a list property"},
 		{name: "empty display", yaml: prop("        type: integer\n        display: {}\n"),

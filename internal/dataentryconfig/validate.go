@@ -45,11 +45,12 @@ var validTopLevelKeys = map[string]bool{
 	"pages":        true,
 	"palette":      true,
 
-	"next_action_bands": true,
-	"next_actions":      true,
-	"account":           true,
-	"piles":             true,
-	"channels":          true,
+	"next_action_bands":    true,
+	"next_action_surfaces": true,
+	"next_actions":         true,
+	"account":              true,
+	"piles":                true,
+	"channels":             true,
 }
 
 // Known typos with suggestions
@@ -167,7 +168,7 @@ var sectionDisplayModesRenderingFields = map[string]bool{
 var sectionFieldWidgetTypes = map[string][]string{
 	WidgetText:        {metamodel.PropertyTypeString},
 	WidgetTextarea:    {metamodel.PropertyTypeString},
-	WidgetNumber:      {metamodel.PropertyTypeInteger},
+	WidgetNumber:      {metamodel.PropertyTypeInteger, metamodel.PropertyTypeDecimal},
 	WidgetCheckbox:    {metamodel.PropertyTypeBoolean},
 	WidgetDate:        {metamodel.PropertyTypeDate},
 	WidgetDatetime:    {metamodel.PropertyTypeDatetime},
@@ -822,6 +823,7 @@ func validateSidePanelSections(formID string, panel *SidePanelConfig) []string {
 				"form %q: side_panel section[%d] sets hide_empty, which a side panel does not support",
 				formID, i))
 		}
+		errs = append(errs, refuseSidePanelTableKeys(formID, i, sec)...)
 		for j, f := range sec.Fields {
 			errs = append(errs, validateSpan(f.Span,
 				fmt.Sprintf("form %q: side_panel section[%d] field[%d]", formID, i, j))...)
@@ -1246,6 +1248,7 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 		// Validate columns
 		busyColumns := 0
 		for i, c := range list.Columns {
+			errs = append(errs, refuseColumnRender(fmt.Sprintf("list %q: column[%d]", listID, i), c)...)
 			if c.Busy != "" {
 				errs = append(errs, checkListBusyColumn(listID, i, c, busyColumns > 0)...)
 				busyColumns++
@@ -1881,6 +1884,11 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 			// Busy columns are list-only (TKT-TU3XH4). Outside the source
 			// guards for the same reason as render: no metamodel is needed.
 			errs = append(errs, refuseSectionBusyColumns(viewID, i, s)...)
+			// Editable columns and totals (TKT-4Q2EIVZ) need at most the
+			// entry type, which is known whatever the source resolves to.
+			errs = append(errs, validateSectionColumnRender(viewID, i, s)...)
+			errs = append(errs, validateSectionInputColumnTypes(viewID, i, s, view, meta)...)
+			errs = append(errs, validateSectionTotals(viewID, i, s, view.Entry.Type, meta)...)
 
 			// Relation fields (TKT-CADCFX) need only the entry type, which is
 			// known whatever the section's source resolves to.
@@ -2656,6 +2664,7 @@ func validateDashboardCards(prefix string, cards []DashboardCard) []string {
 		// here, whatever its source or display.
 		for j, c := range card.Columns {
 			errs = append(errs, refuseListOnlyColumn(fmt.Sprintf("%s: card[%d] %q column[%d]", prefix, i, card.Title, j), c)...)
+			errs = append(errs, refuseColumnRender(fmt.Sprintf("%s: card[%d] %q column[%d]", prefix, i, card.Title, j), c)...)
 		}
 
 		// Validate sort directions

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"math/big"
 	"slices"
 	"time"
 )
@@ -108,6 +109,13 @@ func (s *evalState) evalArithmetic(ctx context.Context, n *arithmeticNode) (Valu
 		}
 		return evalIntArithmetic(n.op, a.v, b.v)
 	}
+	if a, ok := lhs.(Decimal); ok {
+		b, ok := rhs.(Decimal)
+		if !ok {
+			return nil, &EvalError{Reason: "arithmetic operands do not match compiled decimal type"}
+		}
+		return evalDecimalArithmetic(n.op, a.v, b.v)
+	}
 	a, aok := lhs.(Number)
 	b, bok := rhs.(Number)
 	if !aok || !bok {
@@ -135,6 +143,21 @@ func (s *evalState) evalArithmetic(ctx context.Context, n *arithmeticNode) (Valu
 	default:
 		return nil, &EvalError{Reason: "internal: unsupported arithmetic operator " + n.op}
 	}
+}
+
+func evalDecimalArithmetic(op string, a, b *big.Rat) (Value, error) {
+	out := new(big.Rat)
+	switch op {
+	case "+":
+		out.Add(a, b)
+	case "-":
+		out.Sub(a, b)
+	case "*":
+		out.Mul(a, b)
+	default:
+		return nil, &EvalError{Reason: "internal: unsupported decimal arithmetic operator " + op}
+	}
+	return Decimal{v: out}, nil
 }
 
 func evalIntArithmetic(op string, a, b int64) (Value, error) {
@@ -182,6 +205,8 @@ func (s *evalState) evalUnaryMinus(ctx context.Context, n *unaryMinusNode) (Valu
 		return NewInt(-x.v), nil
 	case Number:
 		return NewNumber(-x.v), nil
+	case Decimal:
+		return Decimal{v: new(big.Rat).Neg(x.v)}, nil
 	default:
 		return nil, &EvalError{Reason: "unary minus operand is not numeric"}
 	}
@@ -345,6 +370,9 @@ func valuesEqual(a, b Value) bool {
 	case Int:
 		bv, ok := b.(Int)
 		return ok && av.v == bv.v
+	case Decimal:
+		bv, ok := b.(Decimal)
+		return ok && av.v.Cmp(bv.v) == 0
 	case Date:
 		bv, ok := b.(Date)
 		return ok && av.v.Equal(bv.v)
@@ -389,6 +417,15 @@ func evalOrdered(op string, a, b Value) (Value, error) {
 		}
 		// coverage-ignore-end
 		return NewBool(cmpInt(op, av.v, bv.v)), nil
+	case Decimal:
+		bv, ok := b.(Decimal)
+		// coverage-ignore-start: defensive: compile-time checkRelational guarantees same-type operands; a Decimal
+		// lhs always has a Decimal rhs, so this drift guard is unreachable
+		if !ok {
+			return nil, &EvalError{Reason: fmt.Sprintf("internal: ordered cmp %q: rhs type %s mismatches lhs Decimal", op, b.Type().typeName())}
+		}
+		// coverage-ignore-end
+		return NewBool(cmpInt(op, int64(av.v.Cmp(bv.v)), 0)), nil
 	case Date:
 		bv, ok := b.(Date)
 		// coverage-ignore-start: defensive: compile-time checkRelational guarantees same-type operands; a Date lhs

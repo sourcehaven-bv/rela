@@ -75,6 +75,8 @@ func Match(rec Record, filter *Filter, propDef *metamodel.PropertyDef, m *metamo
 		return matchDate(val, filter, propDef)
 	case metamodel.PropertyTypeInteger:
 		return matchInteger(val, filter)
+	case metamodel.PropertyTypeDecimal:
+		return matchDecimal(val, filter)
 	case metamodel.PropertyTypeBoolean:
 		return matchBoolean(val, filter)
 	case metamodel.PropertyTypeEnum:
@@ -95,7 +97,7 @@ func Match(rec Record, filter *Filter, propDef *metamodel.PropertyDef, m *metamo
 // matchList checks if any element in a list matches the filter.
 // For = operator: returns true if ANY element equals the filter value
 // For != operator: returns true if NO element equals the filter value
-func matchList(list []string, filter *Filter, _ *metamodel.PropertyDef, _ *metamodel.Metamodel) (bool, error) {
+func matchList(list []string, filter *Filter, propDef *metamodel.PropertyDef, _ *metamodel.Metamodel) (bool, error) {
 	// An empty list is empty in the same sense an absent key is —
 	// delegated to propmatch so this path cannot drift from the scalar
 	// one (or from the store-side pushdown, which answers the same
@@ -109,6 +111,12 @@ func matchList(list []string, filter *Filter, _ *metamodel.PropertyDef, _ *metam
 			return propmatch.Decide([]string{}, op, filter.Value) == propmatch.Match, nil
 		}
 		return false, nil
+	}
+
+	// A decimal list compares by number, so "2.50" is a member of
+	// ["2.5"].
+	if propDef != nil && propDef.Type == metamodel.PropertyTypeDecimal {
+		return matchDecimalList(list, filter)
 	}
 
 	// For != operator, we want to return true only if NO element matches
@@ -172,8 +180,9 @@ func validateOperatorForType(op Operator, propDef *metamodel.PropertyDef, m *met
 			return fmt.Errorf("operator %q not supported for string property", op)
 		}
 
-	case metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime, metamodel.PropertyTypeInteger:
-		// Date, datetime and integer support: =, !=, <, <=, >, >=
+	case metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime, metamodel.PropertyTypeInteger,
+		metamodel.PropertyTypeDecimal:
+		// Date, datetime, integer and decimal support: =, !=, <, <=, >, >=
 		if op == OpRegex || op == OpFuzzy {
 			return fmt.Errorf("operator %q not supported for %s property", op, propType)
 		}
@@ -339,6 +348,74 @@ func matchInteger(val any, filter *Filter) (bool, error) {
 		return entityVal >= filterVal, nil
 	default:
 		return false, fmt.Errorf("operator %q not supported for integer", filter.Operator)
+	}
+}
+
+// matchDecimal matches a decimal property value numerically and exactly:
+// "12.50" equals "12.5", and "9" is less than "10".
+func matchDecimal(val any, filter *Filter) (bool, error) {
+	entityVal, _, err := metamodel.ParseDecimal(val)
+	if err != nil {
+		return false, fmt.Errorf("invalid decimal value: %w", err)
+	}
+	filterVal, _, err := metamodel.ParseDecimal(filter.Value)
+	if err != nil {
+		return false, fmt.Errorf("invalid decimal in filter %q: %w", filter.Value, err)
+	}
+	return decideOrdered(filter.Operator, entityVal.Cmp(filterVal), "decimal")
+}
+
+// matchDecimalList matches a list of decimals: = holds when any element
+// equals the value, != when none does, and an ordered operator when any
+// element satisfies it.
+func matchDecimalList(list []string, filter *Filter) (bool, error) {
+	filterVal, _, err := metamodel.ParseDecimal(filter.Value)
+	if err != nil {
+		return false, fmt.Errorf("invalid decimal in filter %q: %w", filter.Value, err)
+	}
+	op := filter.Operator
+	if op == OpNotEqual {
+		op = OpEqual
+	}
+	found := false
+	for _, s := range list {
+		r, _, err := metamodel.ParseDecimal(s)
+		if err != nil {
+			continue
+		}
+		ok, err := decideOrdered(op, r.Cmp(filterVal), "decimal")
+		if err != nil {
+			return false, err
+		}
+		if ok {
+			found = true
+			break
+		}
+	}
+	if filter.Operator == OpNotEqual {
+		return !found, nil
+	}
+	return found, nil
+}
+
+// decideOrdered applies a comparison operator to the result of a
+// three-way compare.
+func decideOrdered(op Operator, cmp int, typeName string) (bool, error) {
+	switch op {
+	case OpEqual:
+		return cmp == 0, nil
+	case OpNotEqual:
+		return cmp != 0, nil
+	case OpLess:
+		return cmp < 0, nil
+	case OpLessEqual:
+		return cmp <= 0, nil
+	case OpGreater:
+		return cmp > 0, nil
+	case OpGreaterEqual:
+		return cmp >= 0, nil
+	default:
+		return false, fmt.Errorf("operator %q not supported for %s", op, typeName)
 	}
 }
 

@@ -130,7 +130,7 @@ func predicateType(def metamodel.PropertyDef) predicate.Type {
 	switch def.Type {
 	case "boolean":
 		return predicate.BoolType
-	case "integer":
+	case "integer", "decimal":
 		return predicate.NumberType
 	default:
 		return predicate.StringType

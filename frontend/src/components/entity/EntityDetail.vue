@@ -43,7 +43,18 @@ import { makeRefResolver } from '@/utils/entityRefResolver'
 import BackButton from '@/components/common/BackButton.vue'
 import InaccessibleField from '@/components/common/InaccessibleField.vue'
 import PropertyDisplay from '@/components/common/PropertyDisplay.vue'
-import ViewTableCell from '@/components/entity/ViewTableCell.vue'
+import SectionTableRowCells from '@/components/entity/SectionTableRowCells.vue'
+import RlTotals from 'rela-components/components/data/RlTotals.vue'
+import type { TotalRow } from 'rela-components/components/data/types'
+import { sectionTotalRows } from '@/components/entity/sectionTotals'
+import {
+  applyPropertyToTableRow,
+  indexTableRows,
+  tableRowCount,
+  tableRowEditable,
+  tableRowKey,
+} from '@/components/entity/sectionTableRows'
+import type { AutoSaveOwner } from '@/composables/useSectionAutoSave'
 import type { PropertyItem } from '@/components/common/PropertyDisplay.vue'
 import { ChevronRight } from 'lucide-vue-next'
 import { defaultRegistry } from '@/widgets/registry'
@@ -2151,6 +2162,39 @@ function handleRowPropertyApplied(
   viewData.value = { ...view, sections: nextSections }
 }
 
+// ─── Inline edit on table rows (TKT-4Q2EIVZ) ─────────────────────────────
+
+// Table rows by owner, rebuilt when the view changes, as rowIndex is for
+// cards and list rows.
+const tableRowIndex = computed(() => indexTableRows(viewData.value?.sections))
+
+// Puts a saved value on the row on screen. A section with totals shows entry
+// properties the server derives from its rows, so a changed value reloads the
+// view; the session coalesces the reloads and waits until no write is held.
+function handleTableRowApplied(
+  section: ViewSection,
+  prop: string,
+  value: unknown,
+  owner: AutoSaveOwner
+) {
+  const view = viewData.value
+  const key = `${owner.type}/${owner.id}`
+  const loc = tableRowIndex.value.get(key)
+  const next = view && loc ? applyPropertyToTableRow(view.sections, loc, key, prop, value) : null
+  if (!view || !next || next === view.sections) return
+  viewData.value = { ...view, sections: next }
+  if (section.totals?.length) session.invalidate()
+}
+
+function totalRowsFor(section: ViewSection): TotalRow[] {
+  const ent = entry.value
+  return sectionTotalRows(
+    section.totals,
+    ent?.properties,
+    ent ? schemaStore.getEntityType(ent.type) : undefined
+  )
+}
+
 function scrollToSection(sectionId: string) {
   const el = document.getElementById(sectionId)
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -3064,48 +3108,28 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                       :id="anchorId(section.sectionId, row.entityId)"
                       :key="row.entityId"
                     >
-                      <td v-for="(cell, idx) in row.cells" :key="idx">
-                        <a
-                          v-if="cell.link"
-                          :href="cell.link"
-                          @click="
-                            onCellLinkClick(
-                              $event,
-                              {
-                                id: cell.entityId || row.entityId,
-                                type: cell.entityType || row.entityType,
-                              },
-                              cell.link
-                            )
-                          "
-                        >
-                          <ViewTableCell
-                            :values="cell.values"
-                            :property="(group.columns ?? section.columns)?.[idx]?.property"
-                            :entity-type="row.entityType"
-                          />
-                        </a>
-                        <template v-else>
-                          <ViewTableCell
-                            :values="cell.values"
-                            :property="(group.columns ?? section.columns)?.[idx]?.property"
-                            :entity-type="row.entityType"
-                            :entity-id="entityRef({ id: row.entityId, _self: row._self })"
-                          />
-                        </template>
-                      </td>
-                      <td class="actions-cell">
-                        <button
-                          v-if="row.editFormId"
-                          class="icon-btn"
-                          :title="t('common.edit')"
-                          @click="
-                            navigateToEdit(row.editFormId, { id: row.entityId, _self: row._self })
-                          "
-                        >
-                          &#9998;
-                        </button>
-                      </td>
+                      <SectionTableRowCells
+                        :key="tableRowKey(row)"
+                        :row="row"
+                        :columns="group.columns ?? section.columns ?? []"
+                        :editable="
+                          tableRowEditable(
+                            row,
+                            group.columns ?? section.columns ?? [],
+                            tableRowCount(section),
+                            INLINE_EDIT_ROW_CAP
+                          )
+                        "
+                        :on-property-applied="
+                          (prop: string, value: unknown, owner: AutoSaveOwner) =>
+                            handleTableRowApplied(section, prop, value, owner)
+                        "
+                        :run-write="runSessionWrite"
+                        :on-error="handleSectionEditError"
+                        :on-verdict-flip="handleVerdictFlip"
+                        @link-click="onCellLinkClick"
+                        @edit="navigateToEdit"
+                      />
                     </tr>
                   </tbody>
                 </table>
@@ -3146,51 +3170,41 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                   "
                   @reorder="(move: RowMove) => sectionReorder.onReorder(sectionIndex, move)"
                 >
-                  <td v-for="(cell, idx) in row.cells" :key="idx">
-                    <a
-                      v-if="cell.link"
-                      :href="cell.link"
-                      @click="
-                        onCellLinkClick(
-                          $event,
-                          {
-                            id: cell.entityId || row.entityId,
-                            type: cell.entityType || row.entityType,
-                          },
-                          cell.link
-                        )
-                      "
-                    >
-                      <ViewTableCell
-                        :values="cell.values"
-                        :property="section.columns?.[idx]?.property"
-                        :entity-type="row.entityType"
-                      />
-                    </a>
-                    <template v-else>
-                      <ViewTableCell
-                        :values="cell.values"
-                        :property="section.columns?.[idx]?.property"
-                        :entity-type="row.entityType"
-                        :entity-id="entityRef({ id: row.entityId, _self: row._self })"
-                      />
-                    </template>
-                  </td>
-                  <td class="actions-cell">
-                    <button
-                      v-if="row.editFormId"
-                      class="icon-btn"
-                      :title="t('common.edit')"
-                      @click="
-                        navigateToEdit(row.editFormId, { id: row.entityId, _self: row._self })
-                      "
-                    >
-                      &#9998;
-                    </button>
-                  </td>
+                  <SectionTableRowCells
+                    :key="tableRowKey(row)"
+                    :row="row"
+                    :columns="section.columns ?? []"
+                    :editable="
+                      tableRowEditable(
+                        row,
+                        section.columns ?? [],
+                        tableRowCount(section),
+                        INLINE_EDIT_ROW_CAP
+                      )
+                    "
+                    :on-property-applied="
+                      (prop: string, value: unknown, owner: AutoSaveOwner) =>
+                        handleTableRowApplied(section, prop, value, owner)
+                    "
+                    :run-write="runSessionWrite"
+                    :on-error="handleSectionEditError"
+                    :on-verdict-flip="handleVerdictFlip"
+                    @link-click="onCellLinkClick"
+                    @edit="navigateToEdit"
+                  />
                 </component>
               </tbody>
             </table>
+            <RlTotals
+              v-if="section.totals?.length"
+              class="section-totals"
+              :rows="totalRowsFor(section)"
+              :label="
+                section.heading
+                  ? t('entity.sectionTotals', { heading: section.heading })
+                  : t('entity.totals')
+              "
+            />
             <span v-if="sectionReorder.movable(section)" class="rl-visually-hidden" role="status">{{
               sectionReorder.statusOf(sectionIndex)
             }}</span>
@@ -4015,8 +4029,11 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   font-size: var(--font-size-base);
 }
 
+/* Row cells render in SectionTableRowCells, a child component, so the cell
+   rules reach them through :deep(). The reorder handle cell keeps its own
+   rule (OrderedSectionRow). */
 .data-table th,
-.data-table td {
+.data-table :deep(td:not(.ordered-row__handle-cell)) {
   padding: 10px 12px;
   text-align: left;
   border-bottom: 1px solid var(--rl-color-border);
@@ -4028,20 +4045,26 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   background: var(--rl-color-bg-hover);
 }
 
-.data-table td {
+.data-table :deep(td:not(.ordered-row__handle-cell)) {
   color: var(--rl-color-text);
+}
+
+/* Set by EditableRowCells on an integer or decimal input column. */
+.data-table :deep(td.data-table-cell--numeric) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .data-table tbody tr:hover {
   background: var(--rl-color-bg-hover);
 }
 
-.data-table a {
+.data-table :deep(a) {
   color: var(--rl-color-accent);
   text-decoration: none;
 }
 
-.data-table a:hover {
+.data-table :deep(a:hover) {
   text-decoration: underline;
 }
 
@@ -4049,23 +4072,8 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   width: 60px;
 }
 
-.actions-cell {
-  text-align: center;
-}
-
-.icon-btn {
-  background: none;
-  border: none;
-  color: var(--rl-color-text-muted);
-  cursor: pointer;
-  padding: 4px 8px;
-  font-size: var(--font-size-base);
-  border-radius: var(--radius-sm);
-}
-
-.icon-btn:hover {
-  background: var(--rl-color-bg-hover);
-  color: var(--rl-color-text);
+.section-totals {
+  margin-top: var(--space-sm);
 }
 
 @media (max-width: 768px) {

@@ -190,7 +190,7 @@ recovery mechanism, so a step that finds nothing left to do does nothing.
 | `map_values: {entity, property, mapping}` | remaps enum values (scalar and list properties); unmapped values are left and reported |
 | `set_default: {entity, property, value, only_missing}` | backfills a value (`only_missing` defaults to true) |
 | `recompute_computed: {entity}` | recomputes all materialized computed properties for an entity type in dependency order |
-| `convert: {entity, property, to_type, from_format?, to_format?}` | coerces values to `string`/`integer`/`boolean`/`date`/`datetime`, restructuring scalar↔list to match the schema; unconvertible values are **left in place** and reported |
+| `convert: {entity, property, to_type, from_format?, to_format?}` | coerces values to `string`/`integer`/`decimal`/`boolean`/`date`/`datetime`, restructuring scalar↔list to match the schema; unconvertible values are **left in place** and reported |
 | `drop_property: {entity, property}` | deletes orphaned values (only for properties the new schema no longer declares) |
 | `drop_entities: {type}` / `drop_relations: {type}` | deletes records of a type the new schema no longer declares |
 | `lua: {entity, script}` | the escape hatch — see below |

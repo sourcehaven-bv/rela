@@ -31,3 +31,4 @@ export { RelationOrderPage } from './relation-order.page';
 export { KanbanWallPage } from './kanban-wall.page';
 export { PilesPage } from './piles.page';
 export { PresencePage, LeaseClient } from './presence.page';
+export { NextActionPage } from './next-action.page';

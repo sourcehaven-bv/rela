@@ -539,9 +539,7 @@ func sidebarPages(
 			wire.Links = pageTabLinks(cfg, meta, page.EntityType, tab)
 			tabs = append(tabs, wire)
 		}
-		out[id] = v1.SidebarPage{
-			Label: page.Label, Icon: page.Icon, EntityType: page.EntityType, Badge: page.Badge, Tabs: tabs,
-		}
+		out[id] = v1.SidebarPage{PageHeader: page.PageHeader, Tabs: tabs}
 	}
 	return out
 }
@@ -1010,6 +1008,9 @@ func viewSectionToV1(sec SectionData, owner map[string]*v1.EntityOwner) v1.ViewS
 	// The opt-in create affordance. Nil for every section that did not
 	// declare `create:`, which keeps the response byte-identical there.
 	v1Sec.Create = sectionCreateToV1(sec.CreateInfo)
+	for _, t := range sec.totals {
+		v1Sec.Totals = append(v1Sec.Totals, v1.SectionTotal(t))
+	}
 
 	// Convert fields
 	for _, f := range sec.Fields {
@@ -1069,6 +1070,7 @@ func viewColumnsToV1(cols []ListColumn) []v1.ViewColumn {
 			Label:    col.Label,
 			Relation: col.Relation,
 			Link:     col.Link,
+			Render:   col.Render,
 		})
 	}
 	return out
@@ -1083,6 +1085,11 @@ func viewRowToV1(row SectionRowData) v1.ViewRow {
 		EditFormID: row.EditFormID,
 		Content:    row.Content,
 		Self:       row.Self,
+		Props:      row.Props,
+	}
+	if row.FieldAffordances != nil {
+		fa := row.FieldAffordances
+		v1Row.FieldAffordances = &fa
 	}
 	for _, cell := range row.Cells {
 		v1Row.Cells = append(v1Row.Cells, v1.ViewCell(cell))

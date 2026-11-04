@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { formatSummary, NO_VALUE, type SummarizedEntity } from './summary'
-import { formatAmount, formatDate, formatDatetime } from './format'
+import { formatAmount, formatDate, formatDatetime, formatDisplayNumber } from './format'
 import type { PropertyDef } from '@/types'
 
 const e = (properties: Record<string, unknown>, redacted?: string[]): SummarizedEntity => ({
@@ -56,5 +56,34 @@ describe('formatSummary', () => {
     const hidden = [e({ v: 3 }), e({}, ['v'])]
     expect(formatSummary({ function: 'sum', property: 'v' }, hidden, int)).toBe('Total: 3 (partial)')
     expect(formatSummary({ function: 'count' }, hidden, undefined)).toBe('Count: 2')
+  })
+
+  // TKT-DTUAG3U: decimals aggregate exactly, never through a JS number.
+  describe('over a decimal property', () => {
+    const dec: PropertyDef = { type: 'decimal' }
+    const prices = [e({ p: '0.10' }), e({ p: '0.20' }), e({ p: 0.3 }), e({ p: 'x' }), e({})]
+
+    it('sums without float error, at the largest scale among the values', () => {
+      expect(formatSummary({ function: 'sum', property: 'p' }, prices, dec)).toBe('Total: 0.60')
+    })
+
+    it('averages with two digits more than the values', () => {
+      expect(formatSummary({ function: 'avg', property: 'p' }, [e({ p: '1' }), e({ p: '2' })], dec)).toBe('Average: 1.50')
+      expect(formatSummary({ function: 'avg', property: 'p' }, [], dec)).toBe(`Average: ${NO_VALUE}`)
+    })
+
+    it('picks the extremes numerically', () => {
+      const set = [e({ p: '9' }), e({ p: '10' }), e({ p: '-0.5' })]
+      expect(formatSummary({ function: 'min', property: 'p' }, set, dec)).toBe('Minimum: -0.5')
+      expect(formatSummary({ function: 'max', property: 'p' }, set, dec)).toBe('Maximum: 10')
+    })
+
+    it('honours the currency and the scale', () => {
+      const money: PropertyDef = { type: 'decimal', scale: 2, display: { currency: 'EUR' } }
+      expect(formatSummary({ function: 'sum', property: 'p' }, prices, money)).toBe(`Total: ${formatDisplayNumber('0.60', money)}`)
+      expect(formatSummary({ function: 'avg', property: 'p' }, [e({ p: '1' }), e({ p: '2' })], money)).toBe(
+        `Average: ${formatDisplayNumber('1.50', money)}`,
+      )
+    })
   })
 })

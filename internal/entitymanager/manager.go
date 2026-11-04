@@ -1536,6 +1536,7 @@ func (m *Manager) updateCore(
 		return nil, fmt.Errorf("entitymanager: %s: %w (stored %q, body %q)",
 			e.ID, ErrTypeImmutable, oldEntity.Type, e.Type)
 	}
+	storeDecimalsAsText(m.deps.Meta, e.Type, e.Properties)
 	if err := m.deps.Computed.Evaluate(ctx, e); err != nil {
 		return nil, err
 	}
