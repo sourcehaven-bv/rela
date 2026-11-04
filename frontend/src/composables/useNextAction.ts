@@ -177,9 +177,7 @@ export function useNextAction() {
   const route = useRoute() as ReturnType<typeof useRoute> | undefined
 
   /** The page being viewed, as the server's placement needs it. */
-  const placement = computed<NextActionPlacement>(() =>
-    route ? nextActionPlacement(route) : { surface: 'other' }
-  )
+  const placement = computed<NextActionPlacement>(() => nextActionPlacement(route))
   const requestKey = computed(
     () => `${worldParam.value ?? ''}\u0001${placementKey(placement.value)}`
   )

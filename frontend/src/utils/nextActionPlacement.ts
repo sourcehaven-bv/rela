@@ -27,7 +27,8 @@ export type NextActionSurface =
   | 'other'
 
 export interface NextActionPlacement {
-  surface: NextActionSurface
+  /** The kind of page; sent as the `surface` query parameter. */
+  kind: NextActionSurface
   /** The view id; for the entity page, the entity type. */
   view?: string
   /** The entity the page is about, as its address. */
@@ -45,44 +46,48 @@ function param(route: RouteLike, key: string): string | undefined {
   return s ? String(s) : undefined
 }
 
-/** The placement for a route. A route that is not about the data is `other`. */
-export function nextActionPlacement(route: RouteLike): NextActionPlacement {
+/**
+ * The placement for a route. A route that is not about the data is `other`,
+ * and so is no route at all (a component mounted outside a router).
+ */
+export function nextActionPlacement(route: RouteLike | undefined): NextActionPlacement {
+  if (!route) return { kind: 'other' }
   const p = (key: string) => param(route, key)
   switch (route.name) {
     case 'dashboard':
-      return { surface: 'dashboard' }
+      return { kind: 'dashboard' }
     case 'named-dashboard':
-      return { surface: 'dashboard', view: p('name') }
+      return { kind: 'dashboard', view: p('name') }
     case 'list':
-      return { surface: 'list', view: p('id') }
+      return { kind: 'list', view: p('id') }
     case 'kanban':
-      return { surface: 'kanban', view: p('id') }
+      return { kind: 'kanban', view: p('id') }
     case 'calendar':
-      return { surface: 'calendar', view: p('id') }
+      return { kind: 'calendar', view: p('id') }
     case 'gantt':
-      return { surface: 'gantt', view: p('id') }
+      return { kind: 'gantt', view: p('id') }
     case 'entity':
-      return { surface: 'entity', view: p('type'), entity: p('id') }
+      return { kind: 'entity', view: p('type'), entity: p('id') }
     case 'form-create':
-      return { surface: 'form', view: p('id') }
+      return { kind: 'form', view: p('id') }
     case 'form-edit':
-      return { surface: 'form', view: p('id'), entity: p('entityId') }
+      return { kind: 'form', view: p('id'), entity: p('entityId') }
     case 'document':
-      return { surface: 'document', view: p('name'), entity: p('entityId') }
+      return { kind: 'document', view: p('name'), entity: p('entityId') }
     case 'standalone-document':
-      return { surface: 'document', view: p('name') }
+      return { kind: 'document', view: p('name') }
     case 'page':
-      return { surface: 'page', view: p('page') }
+      return { kind: 'page', view: p('page') }
     case 'entity-page':
-      return { surface: 'page', view: p('page'), entity: p('entity') }
+      return { kind: 'page', view: p('page'), entity: p('entity') }
     case 'search':
-      return { surface: 'search' }
+      return { kind: 'search' }
     default:
-      return { surface: 'other' }
+      return { kind: 'other' }
   }
 }
 
 /** A stable identity for a placement, for latching and change detection. */
 export function placementKey(p: NextActionPlacement): string {
-  return `${p.surface}\u0000${p.view ?? ''}\u0000${p.entity ?? ''}`
+  return `${p.kind}\u0000${p.view ?? ''}\u0000${p.entity ?? ''}`
 }

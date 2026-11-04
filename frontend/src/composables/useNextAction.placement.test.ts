@@ -74,7 +74,7 @@ describe('useNextAction page scoping', () => {
     await useNextAction().loadOnce()
     expect(mockGet).toHaveBeenCalledWith(
       undefined,
-      { placement: { surface: 'entity', view: 'task', entity: 'TASK-9' }, current: undefined },
+      { placement: { kind: 'entity', view: 'task', entity: 'TASK-9' }, current: undefined },
       expect.any(AbortSignal)
     )
   })
@@ -91,7 +91,7 @@ describe('useNextAction page scoping', () => {
     expect(mockGet).toHaveBeenLastCalledWith(
       undefined,
       {
-        placement: { surface: 'list', view: 'open' },
+        placement: { kind: 'list', view: 'open' },
         current: { source: 'stale', entity_id: 'TASK-1', variant: undefined },
       },
       expect.any(AbortSignal)

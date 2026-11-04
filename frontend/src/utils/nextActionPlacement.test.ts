@@ -8,25 +8,25 @@ import { nextActionPlacement, placementKey } from './nextActionPlacement'
  */
 describe('nextActionPlacement', () => {
   const cases: [string, ReturnType<typeof nextActionPlacement>][] = [
-    ['/dashboard', { surface: 'dashboard' }],
-    ['/dashboard/ops', { surface: 'dashboard', view: 'ops' }],
-    ['/list/open-tasks', { surface: 'list', view: 'open-tasks' }],
-    ['/kanban/board', { surface: 'kanban', view: 'board' }],
-    ['/calendar/due', { surface: 'calendar', view: 'due' }],
-    ['/gantt/plan', { surface: 'gantt', view: 'plan' }],
-    ['/entity/task/TASK-1', { surface: 'entity', view: 'task', entity: 'TASK-1' }],
-    ['/form/new-task', { surface: 'form', view: 'new-task' }],
-    ['/form/edit-task/TASK-1', { surface: 'form', view: 'edit-task', entity: 'TASK-1' }],
-    ['/document/report/TASK-1', { surface: 'document', view: 'report', entity: 'TASK-1' }],
-    ['/document/overview', { surface: 'document', view: 'overview' }],
-    ['/p/home', { surface: 'page', view: 'home' }],
-    ['/p/task-page/TASK-1/details', { surface: 'page', view: 'task-page', entity: 'TASK-1' }],
-    ['/search', { surface: 'search' }],
-    ['/settings', { surface: 'other' }],
-    ['/analyze', { surface: 'other' }],
-    ['/conflicts', { surface: 'other' }],
-    ['/history/task/TASK-1', { surface: 'other' }],
-    ['/app/tool', { surface: 'other' }],
+    ['/dashboard', { kind: 'dashboard' }],
+    ['/dashboard/ops', { kind: 'dashboard', view: 'ops' }],
+    ['/list/open-tasks', { kind: 'list', view: 'open-tasks' }],
+    ['/kanban/board', { kind: 'kanban', view: 'board' }],
+    ['/calendar/due', { kind: 'calendar', view: 'due' }],
+    ['/gantt/plan', { kind: 'gantt', view: 'plan' }],
+    ['/entity/task/TASK-1', { kind: 'entity', view: 'task', entity: 'TASK-1' }],
+    ['/form/new-task', { kind: 'form', view: 'new-task' }],
+    ['/form/edit-task/TASK-1', { kind: 'form', view: 'edit-task', entity: 'TASK-1' }],
+    ['/document/report/TASK-1', { kind: 'document', view: 'report', entity: 'TASK-1' }],
+    ['/document/overview', { kind: 'document', view: 'overview' }],
+    ['/p/home', { kind: 'page', view: 'home' }],
+    ['/p/task-page/TASK-1/details', { kind: 'page', view: 'task-page', entity: 'TASK-1' }],
+    ['/search', { kind: 'search' }],
+    ['/settings', { kind: 'other' }],
+    ['/analyze', { kind: 'other' }],
+    ['/conflicts', { kind: 'other' }],
+    ['/history/task/TASK-1', { kind: 'other' }],
+    ['/app/tool', { kind: 'other' }],
   ]
 
   for (const [path, want] of cases) {
@@ -39,12 +39,12 @@ describe('nextActionPlacement', () => {
   }
 
   it('maps an unnamed route to other', () => {
-    expect(nextActionPlacement({ name: undefined, params: {} })).toEqual({ surface: 'other' })
+    expect(nextActionPlacement({ name: undefined, params: {} })).toEqual({ kind: 'other' })
   })
 
   it('keys placements by every field', () => {
-    const a = placementKey({ surface: 'entity', view: 'task', entity: 'T-1' })
-    expect(placementKey({ surface: 'entity', view: 'task', entity: 'T-2' })).not.toBe(a)
-    expect(placementKey({ surface: 'entity', view: 'task', entity: 'T-1' })).toBe(a)
+    const a = placementKey({ kind: 'entity', view: 'task', entity: 'T-1' })
+    expect(placementKey({ kind: 'entity', view: 'task', entity: 'T-2' })).not.toBe(a)
+    expect(placementKey({ kind: 'entity', view: 'task', entity: 'T-1' })).toBe(a)
   })
 })

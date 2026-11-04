@@ -556,7 +556,7 @@ export async function getNextAction(
   if (world) params.world = world
   const { placement, current } = request
   if (placement) {
-    params.surface = placement.surface
+    params.surface = placement.kind
     if (placement.view) params.view = placement.view
     if (placement.entity) params.entity = placement.entity
   }
