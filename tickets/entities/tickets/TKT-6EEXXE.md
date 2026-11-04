@@ -29,3 +29,9 @@ Suggestions work on every page: list, kanban, calendar, gantt, entity detail,
 documents, pages and the dashboard. The operator configures where they appear
 globally (per surface kind) and per view (on, off, or a source allowlist).
 Context-aware sources resolve against the entity being viewed.
+
+## Notes
+
+- Because suggestions now appear on every page, list pages early in the worlds
+manual used up the `finished-draft` candidates before the dashboard was shown.
+The prototype places both of its sources on the dashboard only.
