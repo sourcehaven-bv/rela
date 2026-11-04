@@ -27,3 +27,9 @@ the caller, plus warnings and follow-up errors per operation.
 - OpenAPI entry, and the docs-project source of
 `docs/data-entry/api-reference.md`: replace the stale "no transaction primitive"
 text and the "out of scope" line.
+
+## Notes
+
+- A created relation in the 200 answer reuses the request's relation shape,
+with both ends named by `id` and the tail face on `from`. A separate wire type
+duplicated `entity.RelationKey` (archplan data clump).
