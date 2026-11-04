@@ -119,9 +119,8 @@ func countEdges(
 }
 
 // InvalidRelationError is a relation create the metamodel refuses: an unknown
-// relation type, or a type-allowlist mismatch the caller did not tolerate with
-// [entity.RelationOptions.TolerateTypeMismatch]. Its text stays
-// "invalid relation: ...".
+// relation type, or an endpoint whose type the relation does not allow
+// (DEC-0D8UZX3). Its text stays "invalid relation: ...".
 type InvalidRelationError struct {
 	Key entity.RelationKey
 	err error
@@ -129,6 +128,16 @@ type InvalidRelationError struct {
 
 func (e *InvalidRelationError) Error() string { return e.err.Error() }
 func (e *InvalidRelationError) Unwrap() error { return e.err }
+
+// TypeNotAllowedCode is [metamodel.CodeSourceTypeNotAllowed] or
+// [metamodel.CodeTargetTypeNotAllowed] when an endpoint type is refused, and
+// "" for an unknown relation type.
+func (e *InvalidRelationError) TypeNotAllowedCode() string {
+	if mismatch, ok := errors.AsType[*metamodel.InvalidRelationError](e.err); ok {
+		return mismatch.Code
+	}
+	return ""
+}
 
 // RelationCreateError is a refused create of [Manager.ReplaceRelations],
 // naming the edge. It wraps the refusal, so errors.Is and errors.As see
@@ -174,11 +183,9 @@ type RelationCreate struct {
 // A refused create is a [*RelationCreateError] naming the edge. A create whose
 // edge already exists fails with [ErrRelationAlreadyExists]; a remove whose
 // edge is already gone is skipped. A create the type allowlist refuses fails
-// with [*InvalidRelationError] unless its options set
-// [entity.RelationOptions.TolerateTypeMismatch]; then it is written and
-// audited like any other create (GitHub #1806). Every other create and every
-// remove is still authorized before that error is returned, so a denied write
-// is reported as a denial.
+// the whole replace with [*InvalidRelationError] (DEC-0D8UZX3). Every other
+// create and every remove is still authorized before that error is returned,
+// so a denied write is reported as a denial.
 //
 // A refused replace changes no edge on any store and records no version and
 // no write audit; a denied one records the denial, as every denied write
@@ -269,9 +276,9 @@ func (rp *relationReplace) prepare(ctx context.Context) error {
 		}
 		seen[c.Key] = true
 		rel, err := prepareRelationCreate(ctx, m, c.Key, c.Opts)
-		if _, soft := errors.AsType[*InvalidRelationError](err); soft {
+		if _, refused := errors.AsType[*InvalidRelationError](err); refused {
 			if invalid == nil {
-				invalid = err
+				invalid = &RelationCreateError{Key: c.Key, Err: err}
 			}
 			continue
 		}

@@ -426,6 +426,9 @@ export class FakeServer {
           isGrouped: false,
           ...(e.content !== '' ? { content: e.content } : {}),
           hasContent: e.content !== '',
+          // The server echoes the configured source and omits an empty one
+          // (TKT-VXBE16H).
+          ...(s.source ? { source: s.source } : {}),
         })
         continue
       }
@@ -452,6 +455,7 @@ export class FakeServer {
         fields,
         isGrouped: false,
         hasContent: false,
+        ...(s.source ? { source: s.source } : {}),
       })
     }
     // A view's entry has no relations token (api-reference.md, "Per-field

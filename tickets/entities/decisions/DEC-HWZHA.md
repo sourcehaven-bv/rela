@@ -22,6 +22,8 @@ consequences: |-
     **Write-with-warnings (200 + warnings)**
     Everything else that today's drafts wanted to 422 on. The API performs the requested write and returns the warnings in the response so UIs can surface them non-blockingly. Subsequent `analyze` runs flag the same conditions. Examples: target-type mismatch against the relation's allowed `to` set, missing target ID, unknown meta keys (closed-schema violation), required-meta unset, target entity type not in `from` allowlist. These are all conditions a hand-editor can produce and rela's `analyze_*` tools already detect.
 
+    **Superseded in part by DEC-0D8UZX3 (2026-11-04).** The two type-allowlist conditions above (target type not in `to`, source type not in `from`) are no longer write-with-warnings. Every write surface refuses them with 422 `target_type_not_allowed` / `source_type_not_allowed` before any write. The other conditions in this class still warn.
+
     ## Response shape additions
 
     Write endpoints that perform the work despite warnings return their normal 200 body augmented with a `warnings: []` array. Each warning is a structured object: `{code, path, detail}` where `code` is a stable identifier matching what `analyze_*` would surface, `path` is a JSON-face-style location, and `detail` is human-readable. Empty array (or omitted field) means no warnings.

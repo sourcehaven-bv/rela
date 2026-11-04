@@ -1832,12 +1832,6 @@
       "at": "2026-10-28T13:29:07Z",
       "title": "The entry point serveAsset is never called in the traces."
     },
-    "security.untraced-f3d6c41be13b": {
-      "state": "accepted",
-      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
-      "at": "2026-10-28T13:29:07Z",
-      "title": "The entry point serveInbox is never called in the traces."
-    },
     "security.untraced-00dc006fb5f1": {
       "state": "accepted",
       "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
@@ -2541,11 +2535,29 @@
       "at": "2026-11-04T00:45:00Z",
       "title": "PilePush (lua) and PilePush (mcp) share most of their fields."
     },
+    "security.untested_denial-0307204dce29": {
+      "state": "accepted",
+      "reason": "Design: the inbox is the signed-in caller's own, and realtime.Service.Inbox gates each row before it counts, so a signed-in caller is never refused. The one refusal is 403 no_principal for a request without an identity; the routes suite's identity-less requests stop at the 401 before the handler. Its 400s for a bad limit, kinds or cursor are input errors. TestInboxHandler_Errors covers both; archplan does not link it.",
+      "at": "2026-11-04T09:20:41Z",
+      "title": "No test shows handleV1Inbox refusing a caller."
+    },
+    "security.untested_denial-36d31cda4c0e": {
+      "state": "accepted",
+      "reason": "Design: the inbox is the signed-in caller's own, and realtime.Service.Inbox gates each row before it counts, so a signed-in caller is never refused. The one refusal is 403 no_principal for a request without an identity; the routes suite's identity-less requests stop at the 401 before the handler. TestInboxSummaryHandler_Errors covers it; archplan does not link it.",
+      "at": "2026-11-04T09:20:41Z",
+      "title": "No test shows handleV1InboxSummary refusing a caller."
+    },
     "boundaries.misplaced_file-4808d4a84e87": {
       "state": "accepted",
       "reason": "Design: api/views.ts is the views wire module; entity components consume its types by design.",
       "at": "2026-11-04T04:59:34Z",
       "title": "api/views.ts in api has most of its links to web/components/entity (weighted links: 3.2 to web/components/entity, 0.1 to api)."
+    },
+    "concepts.data_clump-bc995f935e51": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-11-04T10:10:00Z",
+      "title": "The fields columns, create, display, empty_message, fields, … and totals appear together in 2 types across 2 components."
     }
   },
   "labels": {},

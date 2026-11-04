@@ -175,6 +175,22 @@ func TestChannelsPresentation_Validate(t *testing.T) {
 		{"session on unknown type", "channels: {hall: {session: {display: compact}}}",
 			`realtime.yaml declares no channel type "hall"`},
 		{"session docs example", docsYAMLAfter(t, "### Compact session header"), ""},
+
+		{"placement above relations", "channels: {run: {placement: above_relations}}", ""},
+		{"placement empty", `channels: {run: {placement: ""}}`, ""},
+		{"placement null", "channels: {run: {placement: null}}", ""},
+		{"placement with session", "channels: {run: {placement: above_relations, session: {display: compact}}}", ""},
+		{"placement tab not yet", "channels: {run: {placement: tab}}",
+			`channels.run.placement: unknown value "tab" (valid values: above_relations)`},
+		{"placement bad value", "channels: {room: {placement: sidebar}}",
+			`channels.room.placement: unknown value "sidebar" (valid values: above_relations)`},
+		{"placement wrong case", "channels: {run: {placement: Above_Relations}}",
+			`channels.run.placement: unknown value "Above_Relations"`},
+		{"placement on unknown type", "channels: {hall: {placement: above_relations}}",
+			`realtime.yaml declares no channel type "hall"`},
+		{"placement misspelled key", "channels: {run: {placment: above_relations}}",
+			`channels.run: unknown key "placment" (valid keys: messages, session, placement)`},
+		{"placement docs example", docsYAMLAfter(t, "### Channel placement"), ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -242,10 +258,10 @@ func TestChannelsUnknownKeys_Sorted(t *testing.T) {
 		"  alpha: {x: 1}\n" +
 		"  mid: {messages: {q: {y: 1}, c: {y: 1}}}\n")
 	want := []string{
-		`channels.alpha: unknown key "x" (valid keys: messages, session)`,
+		`channels.alpha: unknown key "x" (valid keys: messages, session, placement)`,
 		`channels.mid.messages.c: unknown key "y" (valid keys: fields, display)`,
 		`channels.mid.messages.q: unknown key "y" (valid keys: fields, display)`,
-		`channels.zed: unknown key "x" (valid keys: messages, session)`,
+		`channels.zed: unknown key "x" (valid keys: messages, session, placement)`,
 		`channels.zed.messages.a: unknown key "y" (valid keys: fields, display)`,
 		`channels.zed.messages.b: unknown key "y" (valid keys: fields, display)`,
 	}

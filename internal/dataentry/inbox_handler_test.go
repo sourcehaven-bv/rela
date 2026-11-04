@@ -187,7 +187,7 @@ func (e *inboxEnv) get(t *testing.T, method, query string) (rec *httptest.Respon
 	e.chans.reset()
 	rec = httptest.NewRecorder()
 	req := httptest.NewRequest(method, inboxPath+query, http.NoBody)
-	e.app.channels.serveInbox(rec, req.WithContext(gateCtxFor(principalCtx("alice"), t, e.d)), e.app.State().Meta)
+	e.app.channels.handleV1Inbox(rec, req.WithContext(gateCtxFor(principalCtx("alice"), t, e.d)), e.app.State().Meta)
 	return rec, channelCost{entity: e.counting.Calls(), channel: e.chans.snapshot()}
 }
 
@@ -447,7 +447,7 @@ func (s stubInbox) Inbox(context.Context, realtime.InboxRequest) (realtime.Inbox
 func TestInboxHandler_Errors(t *testing.T) {
 	serve := func(h *channelsHandler, method, query string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
-		h.serveInbox(rec, httptest.NewRequest(method, inboxPath+query, http.NoBody), nil)
+		h.handleV1Inbox(rec, httptest.NewRequest(method, inboxPath+query, http.NoBody), nil)
 		return rec
 	}
 	requireProblem := func(t *testing.T, rec *httptest.ResponseRecorder, status int, typ string) v1.Error {
@@ -480,7 +480,7 @@ func TestInboxHandler_Errors(t *testing.T) {
 		requireProblem(t, serve(h, http.MethodGet, ""), http.StatusForbidden, realtime.TypeNoPrincipal)
 		e := newInboxEnv(t, nil)
 		rec := httptest.NewRecorder()
-		e.app.channels.serveInbox(rec, httptest.NewRequest(http.MethodGet, inboxPath, http.NoBody), nil)
+		e.app.channels.handleV1Inbox(rec, httptest.NewRequest(http.MethodGet, inboxPath, http.NoBody), nil)
 		requireProblem(t, rec, http.StatusForbidden, realtime.TypeNoPrincipal)
 	})
 

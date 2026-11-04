@@ -167,6 +167,24 @@ transforms:
     command: ["cp", "{in}", "{out}"]
     produces: text/plain
 YAML
+    # Realtime is off without a realtime.yaml, and the inbox routes then
+    # answer 404 before any access check. One channel type turns it on.
+    cat >"$WORK/project/realtime.yaml" <<'YAML'
+version: 1
+channel_types:
+  seqtrace-room:
+    label: Room
+    attach_to: [task]
+    cardinality: one
+    roles:
+      member: { from: attached }
+    message_types:
+      text:
+        label: Text
+        properties:
+          body: { type: markdown, required: true }
+        post: [member]
+YAML
 fi
 RELA_DATABASE_URL="$DSN" "$WORK/rela" --project "$WORK/project" dev seed --scale "$SCALE"
 
@@ -246,7 +264,8 @@ req "delete task as editor" "$BOB" DELETE "/api/v1/tasks/TSK-SEQTRACE"
 if [[ ${SEQTRACE_SUITE:-} == routes ]]; then
     for p in _me _schema _config _sidebar _nav_status _nav_items _dashboard _conflicts _commands _transforms \
         _piles _settings _palette _theme/export _git/status _copies _leases _openapi.json _feeds/ _documents/ \
-        _templates/ _views/ _apps/ _next_action "_comments/tasks/$TASK" "_history/tasks/$TASK"; do
+        _templates/ _views/ _apps/ _next_action _inbox _inbox/summary \
+        "_comments/tasks/$TASK" "_history/tasks/$TASK"; do
         req "route GET /api/v1/$p as reader" "$CAROL" GET "/api/v1/$p"
     done
     req "route GET /api/help/task as reader" "$CAROL" GET "/api/help/task"

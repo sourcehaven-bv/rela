@@ -230,6 +230,13 @@ export interface ChannelPresentation {
    * every width; absent, it folds only in a narrow panel.
    */
   session?: { display?: string }
+  /**
+   * Where the channel type sits on an entity page. `above_relations` puts it
+   * before the first view section that does not show the entry; absent, it
+   * sits in the channels block at the end of the page.
+   */
+  // A value from a newer server reads as the default.
+  placement?: 'above_relations' | (string & {})
 }
 
 export interface RelationProperty {

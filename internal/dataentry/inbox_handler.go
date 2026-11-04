@@ -27,7 +27,7 @@ type inboxReader interface {
 	Inbox(ctx context.Context, req realtime.InboxRequest) (realtime.InboxView, error)
 }
 
-// serveInbox answers GET /api/v1/_inbox?limit=&cursor=&kinds=: the
+// handleV1Inbox answers GET /api/v1/_inbox?limit=&cursor=&kinds=: the
 // sessions that wait on the caller now, the channels with unread messages,
 // and the unread messages that mention the caller or reply to the caller.
 // kinds is a comma list of waiting, unread, mention and reply; all by
@@ -38,7 +38,7 @@ type inboxReader interface {
 // accepted, for channels not wired.
 //
 //archplan:auth=required
-func (h *channelsHandler) serveInbox(w http.ResponseWriter, r *http.Request, meta *metamodel.Metamodel) {
+func (h *channelsHandler) handleV1Inbox(w http.ResponseWriter, r *http.Request, meta *metamodel.Metamodel) {
 	if h == nil || h.inbox == nil || !h.on.Enabled() {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", realtimeOffTitle, "")
 		return
@@ -75,7 +75,7 @@ func (h *channelsHandler) serveInbox(w http.ResponseWriter, r *http.Request, met
 	writeV1JSON(w, http.StatusOK, wireInbox(got, meta))
 }
 
-// serveInboxSummary answers GET /api/v1/_inbox/summary: the counts of the
+// handleV1InboxSummary answers GET /api/v1/_inbox/summary: the counts of the
 // default first page of the caller's inbox, for a badge. It is a
 // projection of the same [realtime.Service.Inbox] call the inbox route
 // makes with no query, so it reveals nothing that route does not, and
@@ -85,7 +85,7 @@ func (h *channelsHandler) serveInbox(w http.ResponseWriter, r *http.Request, met
 // A nil *channelsHandler is accepted, for channels not wired.
 //
 //archplan:auth=required
-func (h *channelsHandler) serveInboxSummary(w http.ResponseWriter, r *http.Request) {
+func (h *channelsHandler) handleV1InboxSummary(w http.ResponseWriter, r *http.Request) {
 	if h == nil || h.inbox == nil || !h.on.Enabled() {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", realtimeOffTitle, "")
 		return

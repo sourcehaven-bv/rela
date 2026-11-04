@@ -166,15 +166,15 @@ func TestV1UpdateEntity_PropertiesUnsetAndRelations_Together(t *testing.T) {
 		},
 	})
 	seedEntity(app, &entity.Entity{
-		ID:         "FEAT-001",
-		Type:       "feature",
-		Properties: map[string]any{"title": "Feature"},
+		ID:         "TKT-002",
+		Type:       "ticket",
+		Properties: map[string]any{"title": "Other"},
 	})
 
 	body := `{
 		"properties":{"title":"Updated"},
 		"properties_unset":["status"],
-		"relations":{"blocks":{"data":[{"type":"feature","id":"FEAT-001"}]}}
+		"relations":{"blocks":{"data":[{"type":"ticket","id":"TKT-002"}]}}
 	}`
 	code, resp := patchTicketJSON(t, app, body)
 	if code != http.StatusOK {
@@ -188,8 +188,8 @@ func TestV1UpdateEntity_PropertiesUnsetAndRelations_Together(t *testing.T) {
 	}
 	// Relation written
 	edges := app.reader.outgoingRelations(context.Background(), "TKT-001")
-	if len(edges) != 1 || edges[0].Type != "blocks" || edges[0].To != "FEAT-001" {
-		t.Errorf("expected one blocks→FEAT-001 edge, got %+v", edges)
+	if len(edges) != 1 || edges[0].Type != "blocks" || edges[0].To != "TKT-002" {
+		t.Errorf("expected one blocks→TKT-002 edge, got %+v", edges)
 	}
 }
 

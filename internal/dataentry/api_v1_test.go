@@ -3377,10 +3377,8 @@ func TestV1UpdateEntity_Relations_UnknownTarget(t *testing.T) {
 }
 
 // TestV1UpdateEntity_Relations_SourceTypeMismatch asserts that using a
-// relation whose `from` list doesn't include the source type surfaces
-// as a warning (DEC-HWZHA: soft condition, 200 with structured warning).
-// The edge is written so analyze_* can surface the inconsistency on the
-// next run; the storage layer is intentionally permissive.
+// relation whose `from` list doesn't include the source type is refused
+// with 422 source_type_not_allowed and stores nothing (DEC-0D8UZX3).
 func TestV1UpdateEntity_Relations_SourceTypeMismatch(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
@@ -3395,11 +3393,11 @@ func TestV1UpdateEntity_Relations_SourceTypeMismatch(t *testing.T) {
 		strings.NewReader(`{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-002"}]}}}`))
 	rec := httptest.NewRecorder()
 	app.write.handleV1UpdateEntity(rec, req, "feature", "features", "FEAT-001")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 (soft condition), got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "source_type_not_allowed") {
+		t.Fatalf("expected 422 source_type_not_allowed, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "source_type_not_allowed") {
-		t.Fatalf("response missing source_type_not_allowed warning, got: %s", rec.Body.String())
+	if edges := app.reader.outgoingRelations(context.Background(), "FEAT-001"); len(edges) != 0 {
+		t.Errorf("refused edge stored: %+v", edges)
 	}
 }
 

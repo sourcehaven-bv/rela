@@ -101,9 +101,11 @@ func New(base storage.FS, root string, opts ...Option) (*Store, error) {
 }
 
 // lockWrite takes the mutex and the cross-process lock for one write.
+// It returns with s.mu held on purpose: the returned unlock releases it.
 func (s *Store) lockWrite(ctx context.Context) (unlock func(), err error) {
 	s.mu.Lock()
 	if s.locker == nil {
+		// nosemgrep: trailofbits.go.missing-unlock-before-return.missing-unlock-before-return
 		return s.mu.Unlock, nil
 	}
 	release, err := s.locker.Lock(ctx)
@@ -111,6 +113,7 @@ func (s *Store) lockWrite(ctx context.Context) (unlock func(), err error) {
 		s.mu.Unlock()
 		return nil, fmt.Errorf("filecomments: %w", err)
 	}
+	// nosemgrep: trailofbits.go.missing-unlock-before-return.missing-unlock-before-return
 	return func() { release(); s.mu.Unlock() }, nil
 }
 

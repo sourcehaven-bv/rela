@@ -119,9 +119,9 @@ afterEach(() => {
   wrapper = undefined
 })
 
-async function mountSection() {
+async function mountSection(types?: string[]) {
   wrapper = mount(ChannelsSection, {
-    props: { entityType: 'ticket', entityId: 'TKT-1' },
+    props: { entityType: 'ticket', entityId: 'TKT-1', types },
     global: { stubs: { OpenChannel: OpenChannelStub } },
     attachTo: document.body,
   })
@@ -195,6 +195,39 @@ describe('ChannelsSection ?channel= deep link', () => {
     await flushPromises()
     await flushPromises()
     expect(opened(w)).toBe('topic/old')
+  })
+})
+
+// TKT-VXBE16H: with a channel type placed above the relations the page has
+// two sections, each narrowed to its own types. A link belongs to the
+// section that shows its type; the other one leaves its list as it is.
+describe('ChannelsSection narrowed to some channel types', () => {
+  it('counts only its own types', async () => {
+    // Unnarrowed, case and topic/x are two rows and nothing opens. Narrowed
+    // to topic, its one channel opens directly (single mode).
+    expect(opened(await mountSection())).toBeNull()
+    wrapper?.unmount()
+    expect(opened(await mountSection(['topic']))).toBe('topic/x')
+  })
+
+  it.each([
+    { name: 'an open channel', query: 'topic/x' },
+    { name: 'a closed channel', query: 'topic/old' },
+  ])('ignores a link to $name of a type it does not show', async ({ query }) => {
+    route.query = { channel: query }
+    const w = await mountSection(['case'])
+    expect(opened(w)).toBe('case/')
+    // It does not switch to the all filter to look for it.
+    expect(states()).toEqual(['open'])
+    expect(scrolled).not.toHaveBeenCalled()
+  })
+
+  it('opens a link to a type it shows', async () => {
+    route.query = { channel: 'topic/old' }
+    const w = await mountSection(['topic'])
+    expect(opened(w)).toBe('topic/old')
+    expect(states()).toEqual(['open', undefined])
+    expect(scrolled).toHaveBeenCalled()
   })
 })
 

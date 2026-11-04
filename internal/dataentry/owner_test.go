@@ -276,24 +276,23 @@ func TestOwner_ViewCarriesOwnerAndRelatedSection(t *testing.T) {
 	}
 }
 
-// The type-allowlist fallback writes the store directly, so it applies the
-// owning rules itself. `holds` is project -> task; a task as the source is a
-// soft condition that takes the fallback.
-func TestOwner_FallbackWriteAppliesOwningRules(t *testing.T) {
+// A PATCH that would give an owned entity a second owner is refused with
+// 422 owning_rule and writes nothing; one to a free target is written.
+func TestOwner_PatchAppliesOwningRules(t *testing.T) {
 	app := newOwnedApp(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
 	seedTitled(app, "PRJ-1", "project", "Launch")
-	seedTitled(app, "TASK-1", "task", "Source")
+	seedTitled(app, "PRJ-2", "project", "Second")
 	seedTitled(app, "TASK-2", "task", "Owned")
 	seedTitled(app, "TASK-3", "task", "Free")
 	seedRelation(app, &entity.Relation{From: "PRJ-1", Type: "holds", To: "TASK-2"})
 
 	patch := func(target string) *httptest.ResponseRecorder {
 		body := `{"relations":{"holds":{"data":[{"type":"task","id":"` + target + `"}]}}}`
-		req := httptest.NewRequest(http.MethodPatch, "/api/v1/tasks/TASK-1", strings.NewReader(body))
+		req := httptest.NewRequest(http.MethodPatch, "/api/v1/projects/PRJ-2", strings.NewReader(body))
 		rec := httptest.NewRecorder()
-		app.write.handleV1UpdateEntity(rec, req, "task", "tasks", "TASK-1")
+		app.write.handleV1UpdateEntity(rec, req, "project", "projects", "PRJ-2")
 		return rec
 	}
 
@@ -303,7 +302,7 @@ func TestOwner_FallbackWriteAppliesOwningRules(t *testing.T) {
 		t.Fatalf("second owner: got %d %s, want 422 owning_rule", rec.Code, rec.Body)
 	}
 	if _, err := app.store.GetRelation(t.Context(),
-		entity.RelationKey{From: "TASK-1", Type: "holds", To: "TASK-2"}); err == nil {
+		entity.RelationKey{From: "PRJ-2", Type: "holds", To: "TASK-2"}); err == nil {
 		t.Fatal("refused edge was written")
 	}
 
@@ -311,7 +310,7 @@ func TestOwner_FallbackWriteAppliesOwningRules(t *testing.T) {
 		t.Fatalf("free target: got %d %s, want 200", rec.Code, rec.Body)
 	}
 	if _, err := app.store.GetRelation(t.Context(),
-		entity.RelationKey{From: "TASK-1", Type: "holds", To: "TASK-3"}); err != nil {
+		entity.RelationKey{From: "PRJ-2", Type: "holds", To: "TASK-3"}); err != nil {
 		t.Fatalf("edge to a free target was not written: %v", err)
 	}
 }

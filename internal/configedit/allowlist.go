@@ -201,6 +201,9 @@ var editable = map[File][]string{
 		// A compact session header (TKT-56TPOTE) only folds the state list
 		// in the web app; it restricts nothing.
 		"channels.*.session.display",
+		// A placement (TKT-VXBE16H) only moves the channel type on the
+		// entity page; it restricts nothing.
+		"channels.*.placement",
 
 		// A busy column (TKT-TU3XH4) is display only, like a kanban busy
 		// card field; the save checks it against realtime.yaml.

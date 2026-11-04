@@ -462,6 +462,18 @@ export function addCompactSession(dir: string): void {
   writeAtomic(file, `${yaml.trimEnd()}\nchannels:\n  ${ROOM.type}:\n    session:\n      display: compact\n`);
 }
 
+/**
+ * Places ROOM above the relations on the entity page (TKT-VXBE16H): adds
+ * `channels.room.placement: above_relations` to the data-entry.yaml written
+ * by the fixture.
+ */
+export function addRoomAboveRelations(dir: string): void {
+  const file = path.join(dir, "data-entry.yaml");
+  const yaml = fs.readFileSync(file, "utf8");
+  if (/^channels:/m.test(yaml)) throw new Error("addRoomAboveRelations: data-entry.yaml already has a channels block");
+  writeAtomic(file, `${yaml.trimEnd()}\nchannels:\n  ${ROOM.type}:\n    placement: above_relations\n`);
+}
+
 /** Adds an `owner` string property to `feature` in the schema.yaml in dir. */
 export function addFeatureOwner(dir: string): void {
   const schemaFile = path.join(dir, "schema.yaml");
