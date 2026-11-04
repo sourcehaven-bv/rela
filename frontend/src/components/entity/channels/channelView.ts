@@ -617,21 +617,21 @@ export function placeDecisions(
 /**
  * The message types a button shown on the surface stands for, sorted: the
  * type of every placed decision, and in a channel with a session the answer
- * type of the waiting message's choices when they offer "Other answer".
- * The composer leaves these out of its type picker, so each decision is
- * offered once.
+ * type of choices that offer "Other answer". In a session only the waiting
+ * question shows choices, also when the state has no decisions. The
+ * composer leaves these types out of its type picker, so each is offered
+ * once.
  */
 export function buttonTypesOf(
   placed: PlacedDecisions,
   choices: ReadonlyMap<number, ChannelDecisionView[]>,
-  decisionSeq: number | undefined,
   hasSession: boolean
 ): string[] {
   const out = new Set<string>()
   for (const v of [...placed.row, ...placed.fallback]) out.add(v.messageType)
-  if (hasSession && decisionSeq !== undefined) {
-    for (const v of choices.get(decisionSeq) ?? []) {
-      if (v.key === `choice:${decisionSeq}:other`) out.add(v.messageType)
+  if (hasSession) {
+    for (const [seq, list] of choices) {
+      for (const v of list) if (v.key === `choice:${seq}:other`) out.add(v.messageType)
     }
   }
   return [...out].sort()

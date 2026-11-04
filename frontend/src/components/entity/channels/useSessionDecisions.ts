@@ -41,6 +41,8 @@ export interface DecisionChannel {
    * notice: the inbox row. Absent: decisionCause finds it in messages.
    */
   cause?: Readonly<Ref<number | undefined>>
+  /** The last read failure, if any. A failed head refetch ends the hold of the button types. */
+  error?: Readonly<Ref<unknown>>
 }
 
 /** The composer, as a decision that opens the form drives it. */
@@ -252,7 +254,9 @@ export function useSessionDecisions(d: DecisionDeps) {
   const rowDecisions = computed(() => placed.value.row)
 
   // The types the shown buttons stand for. Held across the gap between a
-  // move and the head refetch, when no decision can be built.
+  // move and the head refetch, when no decision can be built. A read error
+  // ends the hold, so a failed refetch does not keep the old types out of
+  // the picker.
   const buttonTypes = computed<string[]>((prev) => {
     const h = d.ch.head.value
     const cs = h?.channel.session
@@ -262,15 +266,12 @@ export function useSessionDecisions(d: DecisionDeps) {
       !cs.stranded &&
       h?.channel.state === 'open' &&
       d.ch.actionsGeneration.value !== undefined &&
-      d.ch.actionsGeneration.value !== cs.generation
+      d.ch.actionsGeneration.value !== cs.generation &&
+      !d.ch.error?.value
     if (gap) return prev ?? []
-    const next = buttonTypesOf(
-      placed.value,
-      choices.value,
-      decisionSeq.value,
-      !!d.channelType().session
-    )
-    return prev && JSON.stringify(prev) === JSON.stringify(next) ? prev : next
+    const next = buttonTypesOf(placed.value, choices.value, !!d.channelType().session)
+    const same = prev?.length === next.length && next.every((t, i) => prev[i] === t)
+    return prev && same ? prev : next
   })
 
   const find = (key: string) => decisions.value.find((x) => x.key === key)

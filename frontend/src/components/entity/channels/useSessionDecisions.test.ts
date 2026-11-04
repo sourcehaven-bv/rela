@@ -86,6 +86,7 @@ type TestChannel = DecisionChannel & {
   messages: Ref<Message[]>
   hasNewer: Ref<boolean>
   actionsGeneration: Ref<number | undefined>
+  error: Ref<unknown>
 }
 
 function setup() {
@@ -97,6 +98,7 @@ function setup() {
     messages: ref<Message[]>([]),
     hasNewer: ref(false),
     actionsGeneration,
+    error: ref<unknown>(undefined),
     refreshHead: vi.fn(async () => {}),
     refetch: vi.fn(async () => {}),
   } as unknown as TestChannel
@@ -256,6 +258,20 @@ describe('useSessionDecisions', () => {
     expect(s.deps.ui.toast).toHaveBeenCalledWith(STALE)
   })
 
+  it('a form refusal after the session moved records nothing and toasts', async () => {
+    s.deps.post.mockImplementation(async () => {
+      s.move(5)
+      throw problem('invalid_message')
+    })
+    s.deps.ui.handle.mockReturnValue('Why is required')
+    // The type is a button type, so the composer cannot select it without a decision.
+    s.deps.composer.select.mockReturnValue(false)
+    await s.d.onDecide('approve', 'header')
+    expect(s.d.formDecision.value).toBeUndefined()
+    expect(s.deps.composer.showError).not.toHaveBeenCalled()
+    expect(s.deps.ui.toast).toHaveBeenCalledWith('Why is required')
+  })
+
   it('a form refusal during an edit records nothing and toasts', async () => {
     s.deps.post.mockRejectedValue(problem('invalid_message'))
     s.deps.ui.handle.mockReturnValue('Why is required')
@@ -278,6 +294,16 @@ describe('useSessionDecisions', () => {
     await nextTick()
     expect(s.d.buttonTypes.value).toBe(before)
     s.move(6, 'working')
+    expect(s.d.buttonTypes.value).toEqual([])
+  })
+
+  it('ends the hold of the button types when the head refetch fails', async () => {
+    expect(s.d.buttonTypes.value).toEqual(['accept', 'approve', 'revise'])
+    s.ch.head.value = head(5)
+    await nextTick()
+    expect(s.d.buttonTypes.value).toEqual(['accept', 'approve', 'revise'])
+    s.ch.error.value = new Error('offline')
+    await nextTick()
     expect(s.d.buttonTypes.value).toEqual([])
   })
 
@@ -676,6 +702,15 @@ describe('useSessionDecisions choices', () => {
       expect(s.deps.post).not.toHaveBeenCalled()
     }
   )
+
+  it('without a session, Other opens the answer form with nothing recorded', async () => {
+    const s = choiceSetup(false)
+    await s.d.onChoose('choice:10:other')
+    expect(s.deps.composer.select).toHaveBeenCalledWith('answer')
+    expect(s.d.formDecision.value).toBeUndefined()
+    expect(s.d.composeView.value).toBeUndefined()
+    expect(s.deps.ui.toast).not.toHaveBeenCalled()
+  })
 
   it('without a session, Other the composer no longer offers says the question is closed', async () => {
     const s = choiceSetup(false)

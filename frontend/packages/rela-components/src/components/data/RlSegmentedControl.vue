@@ -51,7 +51,8 @@ const tabStop = computed(() => {
 
 function move(direction: 1 | -1) {
   const usable = props.options.filter((option) => !option.disabled)
-  const current = usable.findIndex((option) => option.value === props.modelValue)
+  // With nothing checked, move from the tab stop, which holds the focus.
+  const current = usable.findIndex((option) => option.value === tabStop.value)
   const next = usable[(current + direction + usable.length) % usable.length]
   if (!next) return
 

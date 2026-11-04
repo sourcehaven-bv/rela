@@ -349,16 +349,16 @@ describe('OpenChannel focus follow with two channels', () => {
     const w = mountTwo()
     await settle()
     const a = section(w, 'a')
-    ;(a.find('[data-decision="jump"]').element as HTMLElement).focus()
+    ;(a.find('[data-testid="session-go-to-decision"]').element as HTMLElement).focus()
     await removeInA()
-    expect(a.find('[data-decision="jump"]').exists()).toBe(false)
+    expect(a.find('[data-testid="session-go-to-decision"]').exists()).toBe(false)
     expect(document.activeElement).toBe(a.find('.rl-channel-session [data-decision]').element)
   })
 
   it('a focus in the other channel stays where it is', async () => {
     const w = mountTwo()
     await settle()
-    const jumpB = section(w, 'b').find('[data-decision="jump"]').element as HTMLElement
+    const jumpB = section(w, 'b').find('[data-testid="session-go-to-decision"]').element as HTMLElement
     jumpB.focus()
     await removeInA()
     expect(section(w, 'a').find('.rl-channel-session [data-decision="answer"]').exists()).toBe(true)

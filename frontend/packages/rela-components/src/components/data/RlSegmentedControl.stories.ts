@@ -108,3 +108,24 @@ export const NoneChecked: Story = {
     await expect(canvas.getByRole('radio', { name: 'Week' })).toHaveFocus()
   },
 }
+
+/** With nothing checked, the arrows move from the focused tab stop. */
+export const NoneCheckedArrows: Story = {
+  args: {
+    modelValue: '',
+    options: [
+      { value: 'day', label: 'Day' },
+      { value: 'week', label: 'Week' },
+      { value: 'month', label: 'Month' },
+    ],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.tab()
+    await expect(canvas.getByRole('radio', { name: 'Day' })).toHaveFocus()
+    await userEvent.keyboard('{ArrowLeft}')
+    const month = canvas.getByRole('radio', { name: 'Month' })
+    await expect(month).toHaveAttribute('aria-checked', 'true')
+    await expect(month).toHaveFocus()
+  },
+}

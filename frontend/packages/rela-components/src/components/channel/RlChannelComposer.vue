@@ -231,7 +231,17 @@ const selected = ref('')
 const current = computed(() => {
   const name = selected.value
   const own = name && selectable(name) ? offered.value.find((m) => m.name === name) : undefined
-  return own ?? pickable.value[0]
+  if (own) return own
+  // A selection that may not stay, such as the edited type after an edit,
+  // falls back to the live decision first, so the edit's end keeps it.
+  const c = liveCompose()
+  const live = c && offered.value.find((m) => m.name === c.type)
+  if (live) return live
+  // Before the first selection the first type stands in, so setting the
+  // default at mount reports it with a `select` event.
+  if (!name) return pickable.value[0]
+  const fallback = defaultType(pickable.value)
+  return pickable.value.find((m) => m.name === fallback)
 })
 
 /**
@@ -257,15 +267,17 @@ watch(
   },
 )
 
-// A selection that may no longer be selected goes to the default: the type
-// left the offered list, or became a button type with no compose decision
-// naming it (the decision was cancelled, sent or went stale).
+// A selection that may no longer be selected goes to the live compose
+// decision, else the default: the type left the offered list, or is a button
+// type with no compose decision naming it (the decision was cancelled, sent
+// or went stale, or an edit of that type ended).
 watch(
   [offered, pickable, () => props.compose?.key, () => props.compose?.type],
   () => {
     // An edit sets and restores the selection itself; see the editing watcher.
     if (props.editing) return
-    if (!selected.value || !selectable(selected.value)) selected.value = defaultType(pickable.value)
+    if (selected.value && selectable(selected.value)) return
+    selected.value = liveCompose()?.type ?? defaultType(pickable.value)
   },
   { immediate: true },
 )
@@ -535,7 +547,14 @@ async function submit() {
  */
 function cancelCompose() {
   emit('cancelCompose')
-  void nextTick(focusField)
+  void nextTick(() => {
+    focusField()
+    // A type with no fields: the picker's tab stop, else Send.
+    if (form.value?.contains(document.activeElement)) return
+    form.value
+      ?.querySelector<HTMLElement>('.rl-channel-composer__types [tabindex="0"], .rl-channel-composer__send')
+      ?.focus()
+  })
 }
 
 function cancelEdit() {
@@ -591,7 +610,7 @@ function focusField() {
  * during an edit or when `type` is not offered now.
  */
 function select(type: string): boolean {
-  if (props.editing || !offered.value.some((m) => m.name === type) || !selectable(type)) return false
+  if (props.editing || !selectable(type)) return false
   selected.value = type
   void nextTick(focusField)
   return true
@@ -678,6 +697,7 @@ defineExpose({
           {{ t('cancel') }}
         </RlButton>
         <RlButton
+          class="rl-channel-composer__send"
           variant="primary"
           size="sm"
           icon="send"

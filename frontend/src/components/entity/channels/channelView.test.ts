@@ -1903,17 +1903,19 @@ describe('choices', () => {
 
     it('names the type of every placed decision, sorted, once', () => {
       const placed = { row: [go, yes], fallback: [] }
-      expect(buttonTypesOf(placed, new Map(), 1, true)).toEqual(['answer', 'go'])
-      expect(buttonTypesOf({ row: [], fallback: [go] }, new Map(), undefined, true)).toEqual(['go'])
+      expect(buttonTypesOf(placed, new Map(), true)).toEqual(['answer', 'go'])
+      expect(buttonTypesOf({ row: [], fallback: [go] }, new Map(), true)).toEqual(['go'])
     })
 
     it('names the answer type when the waiting question offers Other in a session', () => {
       const choices = choiceViews(withSession, head({ generation: 5 }), 5, false, [q(1)], 1)
       const placed = { row: [go], fallback: [] }
-      expect(buttonTypesOf(placed, choices, 1, true)).toEqual(['answer', 'go'])
+      expect(buttonTypesOf(placed, choices, true)).toEqual(['answer', 'go'])
+      // A state with no decisions still shows the question's Other answer.
+      expect(buttonTypesOf({ row: [], fallback: [] }, choices, true)).toEqual(['answer'])
     })
 
-    it('leaves the answer type in the picker without Other, without a session, or off the waiting row', () => {
+    it('leaves the answer type in the picker without Other or without a session', () => {
       const noOther = choiceViews(
         { ...plain, message_types: [{ ...ask, choices: { ...ask.choices!, other: false } }, answer] },
         head(),
@@ -1922,11 +1924,10 @@ describe('choices', () => {
         [q(1)]
       )
       const placed = { row: [go], fallback: [] }
-      expect(buttonTypesOf(placed, noOther, 1, true)).toEqual(['go'])
+      expect(buttonTypesOf(placed, noOther, true)).toEqual(['go'])
       const choices = choiceViews(plain, head(), undefined, false, [q(1)])
-      expect(buttonTypesOf(placed, choices, 1, false)).toEqual(['go'])
-      expect(buttonTypesOf(placed, choices, 2, true)).toEqual(['go'])
-      expect(buttonTypesOf({ row: [], fallback: [] }, new Map(), undefined, true)).toEqual([])
+      expect(buttonTypesOf(placed, choices, false)).toEqual(['go'])
+      expect(buttonTypesOf({ row: [], fallback: [] }, new Map(), true)).toEqual([])
     })
   })
 })

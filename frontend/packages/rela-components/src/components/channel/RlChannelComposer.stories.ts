@@ -1201,6 +1201,89 @@ export const DecisionModeWithPicker: Story = {
 }
 
 /**
+ * An edit of a message of another button type, while a decision is open:
+ * the edit ends back in the decision, which stays.
+ */
+export const EditButtonTypeKeepsDecision: Story = {
+  args: { ...breachArgs, buttonTypes: ['contained', 'dismiss'] },
+  render: (args) => ({
+    components: { RlChannelComposer },
+    setup() {
+      const compose = ref<ChannelComposeView | undefined>({ ...dismissDecision })
+      const editing = ref<ChannelEditing | undefined>()
+      const onSelect = (type: string) => {
+        if (compose.value && compose.value.type !== type) compose.value = undefined
+      }
+      const start = () => (editing.value = { seq: 2, type: 'contained', values: { note: 'Revoked.' } })
+      return { args, compose, editing, onSelect, start, end: () => (editing.value = undefined) }
+    },
+    template: `
+      <div style="max-width:640px">
+        <button type="button" @click="start()">edit</button>
+        <button type="button" @click="end()">end</button>
+        <RlChannelComposer v-bind="args" :compose="compose" :editing="editing" @select="onSelect" />
+      </div>`,
+  }),
+  play: async ({ args, canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: 'edit' }))
+    await expect(canvasElement.querySelector('.rl-channel-composer__compose')).toBeNull()
+    await userEvent.click(canvas.getByRole('button', { name: 'end' }))
+    await expect(canvasElement.querySelector('.rl-channel-composer__compose')).toHaveTextContent('Dismiss')
+    await expect(canvas.getByRole('textbox', { name: /Reason/ })).toBeVisible()
+    await expect(args.onSelect).not.toHaveBeenCalledWith('text')
+  },
+}
+
+/** Cancel decision to a type with no fields: the focus goes to the picker. */
+export const CancelToNoFields: Story = {
+  args: {
+    ...breachArgs,
+    messageTypes: breachMessageTypes.map((m) => (m.name === 'text' ? { ...m, properties: [] } : m)),
+    buttonTypes: ['dismiss'],
+  },
+  render: (args) => ({
+    components: { RlChannelComposer },
+    setup() {
+      const compose = ref<ChannelComposeView | undefined>({ ...dismissDecision })
+      return { args, compose }
+    },
+    template: `
+      <div style="max-width:640px">
+        <RlChannelComposer v-bind="args" :compose="compose" @cancel-compose="compose = undefined" />
+      </div>`,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: 'Cancel decision' }))
+    await waitFor(() => expect(canvas.getByRole('radio', { name: 'Text' })).toHaveFocus())
+  },
+}
+
+/** Cancel decision goes back to the default type, with no other type on the way. */
+export const CancelSelectsDefault: Story = {
+  args: { ...breachArgs, buttonTypes: ['dismiss'] },
+  render: (args) => ({
+    components: { RlChannelComposer },
+    setup() {
+      const compose = ref<ChannelComposeView | undefined>({ ...dismissDecision })
+      return { args, compose }
+    },
+    template: `
+      <div style="max-width:640px">
+        <RlChannelComposer v-bind="args" :compose="compose" @cancel-compose="compose = undefined" />
+      </div>`,
+  }),
+  play: async ({ args, canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: 'Cancel decision' }))
+    await expect(canvas.getByRole('radio', { name: 'Text' })).toHaveAttribute('aria-checked', 'true')
+    await expect(args.onSelect).not.toHaveBeenCalledWith('contained')
+    await expect(args.onSelect).toHaveBeenLastCalledWith('text')
+  },
+}
+
+/**
  * When every offered type is a button type, the picker lists them all, as
  * it did before, so the composer never ends up with nothing to send.
  */

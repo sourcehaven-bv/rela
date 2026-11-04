@@ -1239,7 +1239,7 @@ describe('ChannelsPanel session decisions', () => {
       header()
         .findAll('[data-decision]')
         .map((b) => b.attributes('data-decision'))
-    ).toEqual(['jump'])
+    ).toEqual([])
     const jump = header().find('[data-testid="session-go-to-decision"]')
     expect(jump.element.tagName).toBe('BUTTON')
     expect(jump.text()).toBe('Go to decision')
@@ -1251,6 +1251,15 @@ describe('ChannelsPanel session decisions', () => {
     await mountPanel()
     await header().find('[data-testid="session-go-to-decision"]').trigger('click')
     expect(document.activeElement).toBe(decision(row(), 'approve').element)
+  })
+
+  it('Go to decision reaches the decision in flight, which stays focusable', async () => {
+    await mountPanel()
+    api.postMessage.mockReturnValue(new Promise(() => {}))
+    await click(decision(row(), 'approve'))
+    await header().find('[data-testid="session-go-to-decision"]').trigger('click')
+    expect(document.activeElement).toBe(decision(row(), 'approve').element)
+    expect(decision(row(), 'approve').attributes('aria-busy')).toBe('true')
   })
 
   it('a header decision returns the focus to the header', async () => {
@@ -1294,7 +1303,7 @@ describe('ChannelsPanel session decisions', () => {
     await mountPanel()
     expect(messageEl(12).find('[data-decision]').exists()).toBe(false)
     expect(decision(header(), 'approve').exists()).toBe(true)
-    expect(decision(header(), 'jump').exists()).toBe(false)
+    expect(header().find('[data-testid="session-go-to-decision"]').exists()).toBe(false)
   })
 
   // TKT-A0RTC52 AC 2: with the deciding message not shown, the header
@@ -1353,7 +1362,7 @@ describe('ChannelsPanel session decisions', () => {
 
     it('from Go to decision to the first header decision when the cause is removed', async () => {
       await mountPanel()
-      ;(decision(header(), 'jump').element as HTMLElement).focus()
+      ;(header().find('[data-testid="session-go-to-decision"]').element as HTMLElement).focus()
       await removeCause()
       expect(document.activeElement).toBe(decision(header(), 'approve').element)
     })
@@ -1375,7 +1384,7 @@ describe('ChannelsPanel session decisions', () => {
       })
       await click(buttonIn(w(), 'Load older messages'))
       expect(decision(row(), 'approve').exists()).toBe(true)
-      expect(document.activeElement).toBe(decision(header(), 'jump').element)
+      expect(document.activeElement).toBe(header().find('[data-testid="session-go-to-decision"]').element)
     })
 
     it('a focus elsewhere stays where it is', async () => {
@@ -1819,7 +1828,7 @@ describe('ChannelsPanel choices', () => {
     ])
     expect(row.find('[data-decision="answer"]').exists()).toBe(false)
     expect(header().find('[data-decision="answer"]').exists()).toBe(false)
-    expect(header().find('[data-decision="jump"]').exists()).toBe(true)
+    expect(header().find('[data-testid="session-go-to-decision"]').exists()).toBe(true)
     // Other is the way to a free answer, so the picker leaves Answer out.
     expect(composerForm().findAll('[role="radio"]')).toHaveLength(0)
     // While the buttons show, the options are not listed a second time.
@@ -1828,7 +1837,7 @@ describe('ChannelsPanel choices', () => {
 
   it('Go to decision focuses the first choice', async () => {
     await mountPanel()
-    await header().find('[data-decision="jump"]').trigger('click')
+    await header().find('[data-testid="session-go-to-decision"]').trigger('click')
     expect(document.activeElement).toBe(messageEl(12).find('[data-decision="choice:12:0"]').element)
   })
 
@@ -2388,7 +2397,8 @@ describe('ChannelsPanel preset buttons', () => {
     await mountPanel()
     // TKT-A0RTC52: the question's row holds every decision, once: its
     // choices and the other decisions. The header points there.
-    expect(keys(header())).toEqual(['jump'])
+    expect(keys(header())).toEqual([])
+    expect(header().find('[data-testid="session-go-to-decision"]').exists()).toBe(true)
     expect(messageEl(12).find('[data-decision="preset:decide:0"]').text()).toContain('Approve')
     expect(keys(messageEl(12))).toEqual(['choice:12:0', 'choice:12:1', 'preset:decide:0', 'decide'])
   })
@@ -2502,7 +2512,8 @@ describe('ChannelsPanel preset buttons', () => {
   it('a compose preset opens compose mode and posts the preset with the feedback', async () => {
     useComposePreset()
     await mountPanel()
-    expect(keys(header())).toEqual(['jump'])
+    expect(keys(header())).toEqual([])
+    expect(header().find('[data-testid="session-go-to-decision"]').exists()).toBe(true)
     expect(keys(messageEl(12))).toEqual([
       'choice:12:0',
       'choice:12:1',
@@ -2561,7 +2572,8 @@ describe('ChannelsPanel preset buttons', () => {
       ['room', { messages: { decide: { display: 'hidden' }, ask: { display: 'hidden' } } }],
     ])
     await mountPanel()
-    expect(keys(header())).toEqual(['jump'])
+    expect(keys(header())).toEqual([])
+    expect(header().find('[data-testid="session-go-to-decision"]').exists()).toBe(true)
     expect(messageEl(12).find('[data-decision="preset:decide:0"]').exists()).toBe(true)
   })
 })

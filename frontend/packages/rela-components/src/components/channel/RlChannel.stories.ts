@@ -813,7 +813,7 @@ export const DecisionsOnceWithJump: Story = {
           <template #session>
             <RlChannelSession :session="session">
               <template #decisions>
-                <RlButton variant="secondary" size="sm" data-decision="jump" @click="go(2)">Go to decision</RlButton>
+                <RlButton variant="secondary" size="sm" @click="go(2)">Go to decision</RlButton>
               </template>
             </RlChannelSession>
           </template>

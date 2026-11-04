@@ -454,9 +454,16 @@ const buttonTypes = decisionsApi.buttonTypes
 /** The header's "Go to decision": shown when the decisions sit on the waiting message. */
 const showJump = computed(() => decisions.value.length > 0 && decisionSeq.value !== undefined)
 
+/**
+ * Focuses the first usable button on the waiting message. The button of a
+ * decision in flight stays usable for focus. With none, it shows the
+ * message itself.
+ */
 function goToDecision() {
   const seq = decisionSeq.value
-  if (seq !== undefined) channelView.value?.focusDecisions(seq)
+  const view = channelView.value
+  if (seq === undefined || !view) return
+  if (!view.focusDecisions(seq)) view.reveal(seq)
 }
 
 // --- Focus when the decisions change place -------------------------------------
@@ -469,33 +476,41 @@ function goToDecision() {
 // the header. Every lookup stays inside this channel's root.
 
 const root = useTemplateRef<HTMLElement>('root')
-/** The `data-decision` of the focused button before the move; undefined when none. */
-let movingKey: string | undefined
+/**
+ * What had the focus before the move: a decision button's `data-decision`,
+ * `jump` for "Go to decision", undefined for anything else.
+ */
+let moving: { key: string } | 'jump' | undefined
 
 const PLACES = '.rl-channel-session [data-decision], .rl-channel-message .rl-channel-decisions [data-decision]'
+const JUMP = '[data-testid="session-go-to-decision"]'
 
 watch(
   () => placed.value.fallback.length > 0,
   () => {
     const active = document.activeElement
     const own = active instanceof HTMLElement && root.value?.contains(active)
-    movingKey = own && active.matches(PLACES) ? (active.dataset.decision ?? undefined) : undefined
+    if (!own) moving = undefined
+    else if (active.matches(JUMP)) moving = 'jump'
+    else if (active.matches(PLACES) && active.dataset.decision) moving = { key: active.dataset.decision }
+    else moving = undefined
   },
   { flush: 'pre' }
 )
 watch(
   () => placed.value.fallback.length > 0,
   (inHeader) => {
-    const key = movingKey
-    movingKey = undefined
+    const from = moving
+    moving = undefined
     const el = root.value
     // Nothing to hand on, or the focused button is still there.
-    if (key === undefined || !el || el.contains(document.activeElement)) return
+    if (from === undefined || !el || el.contains(document.activeElement)) return
     const header = '.rl-channel-session'
-    const target = inHeader
-      ? (el.querySelector<HTMLElement>(`${header} [data-decision="${CSS.escape(key)}"]`) ??
-        (key === 'jump' ? el.querySelector<HTMLElement>(`${header} [data-decision]`) : null))
-      : el.querySelector<HTMLElement>(`${header} [data-testid="session-go-to-decision"]`)
+    const target = !inHeader
+      ? el.querySelector<HTMLElement>(`${header} ${JUMP}`)
+      : from === 'jump'
+        ? el.querySelector<HTMLElement>(`${header} [data-decision]`)
+        : el.querySelector<HTMLElement>(`${header} [data-decision="${CSS.escape(from.key)}"]`)
     if (target) {
       target.focus({ preventScroll: true })
       return
@@ -734,7 +749,6 @@ const pickerTypes = picker.types
             <RlButton
               variant="secondary"
               size="sm"
-              data-decision="jump"
               data-testid="session-go-to-decision"
               @click="goToDecision"
             >

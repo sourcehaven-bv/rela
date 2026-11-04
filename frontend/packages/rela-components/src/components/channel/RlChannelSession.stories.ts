@@ -508,7 +508,7 @@ const withJump =
     <div :style="${width ? `'width:${width}'` : "''"}">
       <RlChannelSession v-bind="args">
         <template #decisions>
-          <RlButton variant="secondary" size="sm" data-decision="jump">Go to decision</RlButton>
+          <RlButton variant="secondary" size="sm">Go to decision</RlButton>
         </template>
       </RlChannelSession>
     </div>`,

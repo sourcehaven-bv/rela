@@ -34,8 +34,8 @@
  * state) shows them and emits `decide` with `from: 'row'`. No other row
  * does. `focusRow(seq)` puts focus on a row without scrolling, for after a
  * decision removes the button that had it. `focusDecisions(seq)` scrolls a
- * row into view and focuses its first choice or decision button. `jumpTo(seq)` is the reply
- * quote's jump, also used by a message link.
+ * row into view and focuses its first choice or decision button.
+ * `jumpTo(seq)` is the reply quote's jump, also used by a message link.
  *
  * `choices` are the reply buttons of open questions, keyed by the
  * question's seq; each row shows its own and emits `choose` with the key.
@@ -487,7 +487,8 @@ defineExpose({
    */
   focusDecisions(seq: number): boolean {
     const row = log.value?.querySelector<HTMLElement>(`[data-seq="${seq}"]`)
-    const button = row?.querySelector<HTMLElement>('.rl-channel-decisions button:not([disabled])')
+    const usable = (sel: string) => row?.querySelector<HTMLElement>(`${sel} button:not([disabled])`)
+    const button = usable('.rl-channel-message__choices') ?? usable('.rl-channel-decisions')
     if (!row || !button) return false
     row.scrollIntoView?.({ block: 'nearest' })
     button.focus({ preventScroll: true })
