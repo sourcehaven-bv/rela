@@ -10,10 +10,12 @@ import {
   DECISIONS,
   INBOX,
   POLICY_ROOM,
+  QUIET,
   ROOM,
   SESSION,
   addCompactSession,
   addFeatureOwner,
+  addQuietRun,
   addRoomAboveRelations,
   setFeatureOwner,
   writePolicyRealtime,
@@ -549,6 +551,74 @@ inboxTest.describe("answering from the inbox", () => {
     await bob.expectReply(question, "After the audit");
     await bob.expectReply(second, "Both of them");
     await bob.expectSessionAt(INBOX.approved);
+  });
+});
+
+// A room where a member, standing in for an agent, posts quiet progress and
+// moves the session between working states (TKT-LKIVLR2).
+const quietTest = base.extend<ChannelFixtures>({
+  serverUrl: async ({ testProject, serverBinary }, use, testInfo) => {
+    writeRoomProject(testProject, { quiet: true });
+    addQuietRun(testProject);
+    addFeatureOwner(testProject);
+    setFeatureOwner(testProject, FEATURE, CHANNEL_USERS.lead);
+    await serveWithPrincipalHeader(serverBinary, testProject, testInfo, use, CHANNEL_USERS.lead);
+  },
+  as: asFixture,
+});
+
+quietTest.describe("quiet messages across session notices", () => {
+  quietTest.describe.configure({ timeout: 120_000 });
+
+  quietTest("progress and working moves fold into one line; a wait stays in view", async ({ as }) => {
+    const alice = await as(CHANNEL_USERS.lead);
+    const bob = await as(CHANNEL_USERS.member);
+    await alice.openEntity("feature", FEATURE);
+    await alice.expectChannel(ROOM.label);
+    await bob.openEntity("feature", FEATURE);
+    await bob.expectChannel(ROOM.label);
+    const post = (type: string, body: string) =>
+      bob.postOverApi("features", FEATURE, ROOM.type, type, { body });
+    await post("text", "Please pick this up.");
+    await alice.expectMessage("Please pick this up.");
+    await post(QUIET.progressType, "Reading the code.");
+    await post(QUIET.stepType, "Start building.");
+    await post(QUIET.progressType, "Writing the fold.");
+    await post(QUIET.stepType, "Back to planning.");
+    await post(QUIET.progressType, "Planning the tests.");
+
+    const moved = (from: string, to: string) => `Session moved from ${from} to ${to}`;
+    const fold = `5 messages, 2 session steps: ${QUIET.progressLabel}, ${QUIET.stepLabel}`;
+    await alice.expectFold(fold);
+    await alice.expectFoldCount(1);
+    // In Planning, a working state, the owner's decision is in the header,
+    // so the step that caused it stays folded.
+    await alice.expectDecision(QUIET.approveLabel, true);
+    await alice.expectGoToDecision(false);
+    await alice.expectNotice(moved(QUIET.planning, QUIET.building), false);
+    await alice.toggleFold(fold, true);
+    await alice.expectNotice(moved(QUIET.planning, QUIET.building), true);
+    await alice.expectNotice(moved(QUIET.building, QUIET.planning), true);
+    await alice.toggleFold(fold, false);
+
+    // The plan moves the session into a state that waits for the owner: that
+    // move and the plan, with its decision, stay in view after the fold.
+    const plan = "Ship behind a flag first";
+    await bob.postOverApi("features", FEATURE, ROOM.type, QUIET.planType, { plan });
+    await alice.expectNotice(moved(QUIET.planning, QUIET.review), true);
+    await alice.expectDecisionOnMessage(plan, QUIET.approveLabel, true);
+    await alice.expectGoToDecision(true);
+    await alice.expectFold(fold);
+
+    // After the owner's decision, the move back to Planning stays in view
+    // next to it, and new progress folds after it.
+    await alice.decideOnMessage(plan, QUIET.approveLabel);
+    await alice.expectSessionAt(QUIET.planning);
+    await alice.expectNotice(moved(QUIET.review, QUIET.planning), true);
+    await post(QUIET.progressType, "Picking the next step.");
+    await alice.expectFold(`1 message: ${QUIET.progressLabel}`);
+    await alice.expectNotice(moved(QUIET.review, QUIET.planning), true);
+    await alice.expectFoldCount(2);
   });
 });
 

@@ -269,6 +269,35 @@ export class ChannelsPage extends BasePage {
     await (label ? buttons.filter({ hasText: new RegExp(`^${label}$`) }) : buttons).last().click();
   }
 
+  // --- Quiet messages (TKT-LKIVLR2) -----------------------------------------
+
+  /** The fold line whose text is `text` (its accessible name). */
+  private fold(text: string): Locator {
+    return this.channel.getByRole('button', { name: text, exact: true });
+  }
+
+  /** The log shows the fold line `text`, or does not. */
+  async expectFold(text: string, shown = true, timeout = 15_000) {
+    await expect(this.fold(text)).toHaveCount(shown ? 1 : 0, { timeout });
+  }
+
+  /** The log holds `count` fold lines. */
+  async expectFoldCount(count: number, timeout = 15_000) {
+    await expect(this.channel.locator('button.rl-channel-fold')).toHaveCount(count, { timeout });
+  }
+
+  /** Expands or collapses the fold line `text` and checks `aria-expanded`. */
+  async toggleFold(text: string, expanded: boolean) {
+    await this.fold(text).click();
+    await expect(this.fold(text)).toHaveAttribute('aria-expanded', String(expanded));
+  }
+
+  /** The session notice `text` (such as `Session moved from A to B`) shows in the log, or does not. */
+  async expectNotice(text: string, shown: boolean, timeout = 15_000) {
+    const notice = this.channel.locator('.rl-channel-message__notice').filter({ hasText: text });
+    await expect(notice).toHaveCount(shown ? 1 : 0, { timeout });
+  }
+
   // --- Choices (TKT-03FQPD) -------------------------------------------------
 
   /**

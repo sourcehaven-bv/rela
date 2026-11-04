@@ -58,3 +58,30 @@ export const Dutch: Story = {
     await expect(within(canvasElement).getByRole('button', { name: '3 berichten: Claim, Progress' })).toBeVisible()
   },
 }
+
+/** A run with session notices names the session steps apart (TKT-LKIVLR2). */
+export const WithStateChanges: Story = {
+  args: { count: 4, moves: 2, labels: ['Progress'] },
+  play: async ({ canvasElement }) => {
+    const button = within(canvasElement).getByRole('button', { name: '4 messages, 2 session steps: Progress' })
+    await expect(button).toHaveAttribute('aria-expanded', 'false')
+  },
+}
+
+/** One session step reads in the singular, in Dutch too. */
+export const DutchWithStateChange: Story = {
+  args: { count: 2, moves: 1, labels: ['Voortgang'] },
+  render: (args) => ({
+    components: { RlChannelFold },
+    setup() {
+      provideMessages(NL_MESSAGES)
+      return { args }
+    },
+    template: '<RlChannelFold v-bind="args" />',
+  }),
+  play: async ({ canvasElement }) => {
+    await expect(
+      within(canvasElement).getByRole('button', { name: '2 berichten, 1 sessiestap: Voortgang' }),
+    ).toBeVisible()
+  },
+}

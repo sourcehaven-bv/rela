@@ -446,6 +446,7 @@ const decisionsApi = useSessionDecisions({
     focusRow: (seq) => channelView.value?.focusRow(seq) ?? false,
     focusHeader: () => sessionHeader.value?.focus(),
   },
+  quiet: (type) => !!presentation.value?.messages?.[type]?.display,
 })
 const { decisions, decisionSeq, deciding, onDecide, resetDecisions } = decisionsApi
 const placed = decisionsApi.placed

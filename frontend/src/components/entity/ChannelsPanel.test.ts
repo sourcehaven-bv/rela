@@ -2284,6 +2284,144 @@ describe('ChannelsPanel quiet types', () => {
     expect(document.activeElement).toBe(button)
     expect(button.textContent).toContain('2 messages: Progress')
   })
+
+  // Session notices between quiet messages (TKT-LKIVLR2).
+  /** A notice of a move from review into the working state, at generation 6. */
+  const resumed = (seq: number, cause: number) =>
+    msg(seq, {
+      type: 'session',
+      author: { user: 'system', system: true },
+      triggered_by: 'session:room',
+      props: { from: 'review', to: 'working', generation: 6, cause },
+      _actions: [],
+    })
+  const noticeRow = (seq: number) => messageEl(seq).find('.rl-channel-message__notice')
+
+  it('progress across working notices folds into one line', async () => {
+    serve([
+      m(10, 'text'),
+      m(11, 'progress'),
+      resumed(12, 11),
+      m(13, 'progress'),
+      resumed(14, 13),
+      m(15, 'progress'),
+    ])
+    await mountPanel()
+    expect(folds()).toHaveLength(1)
+    expect(folds()[0]!.text()).toBe('3 messages, 2 session steps: Progress')
+    expect(messageEl(12).exists()).toBe(false)
+    await click(folds()[0]!)
+    expect(folds()[0]!.attributes('aria-expanded')).toBe('true')
+    expect(folds()[0]!.attributes('aria-controls')).toBeTruthy()
+    expect(noticeRow(12).text()).toContain('Session moved from Review to Working')
+    expect(noticeRow(14).exists()).toBe(true)
+    await click(folds()[0]!)
+    expect(messageEl(12).exists()).toBe(false)
+  })
+
+  it('a waiting notice ends the fold and keeps the decisions on its cause', async () => {
+    current = runHead(review, ['approve'])
+    serve(
+      [m(10, 'progress'), resumed(11, 10), m(12, 'progress'), m(13, 'text'), notice(14, 'review', 13)],
+      review
+    )
+    await mountPanel()
+    expect(folds()).toHaveLength(1)
+    expect(folds()[0]!.text()).toBe('2 messages, 1 session step: Progress')
+    expect(noticeRow(14).text()).toContain('Session moved from Working to Review')
+    expect(messageEl(13).find('[data-decision="approve"]').exists()).toBe(true)
+    expect(w().find('[data-testid="session-go-to-decision"]').exists()).toBe(true)
+  })
+
+  it('a working state with a quiet cause puts the decisions in the header', async () => {
+    const owner = { ...working, transitions: [{ message_type: 'approve', to: 'review' }] }
+    current = runHead(owner, ['approve'])
+    serve([m(10, 'text'), m(11, 'progress'), m(12, 'progress'), resumed(13, 12), m(14, 'progress')], owner)
+    await mountPanel()
+    expect(folds()).toHaveLength(1)
+    expect(folds()[0]!.text()).toBe('3 messages, 1 session step: Progress')
+    expect(messageEl(12).exists()).toBe(false)
+    expect(w().find('.rl-channel-session [data-decision="approve"]').exists()).toBe(true)
+    expect(w().find('[data-testid="session-go-to-decision"]').exists()).toBe(false)
+  })
+
+  it('a notice that folds on arrival is announced alone', async () => {
+    serve([m(10, 'text'), m(11, 'progress')])
+    await mountPanel()
+    await liveAdds([resumed(12, 11), m(13, 'progress')])
+    expect(folds()).toHaveLength(1)
+    expect(messageEl(12).exists()).toBe(false)
+    expect(announcement()).toBe('Session moved from Review to Working.')
+  })
+
+  it('a notice is announced once, when it arrives as a row', async () => {
+    serve([m(10, 'text'), m(11, 'progress')])
+    await mountPanel()
+    await liveAdds([resumed(12, 11)])
+    expect(noticeRow(12).exists()).toBe(true)
+    expect(announcement()).toBe('Session moved from Review to Working.')
+    // The next batch folds the notice; only its shown message is announced.
+    await liveAdds([m(13, 'progress'), m(14, 'text')])
+    expect(messageEl(12).exists()).toBe(false)
+    expect(folds()).toHaveLength(1)
+    expect(announcement()).not.toBe('')
+    expect(announcement()).not.toContain('Session moved')
+  })
+
+  it('focus on a notice row moves to the fold that takes it', async () => {
+    serve([m(10, 'text'), m(11, 'progress')])
+    await mountPanel()
+    await liveAdds([resumed(12, 11)])
+    ;(messageEl(12).element as HTMLElement).focus()
+    await liveAdds([m(13, 'progress')])
+    expect(messageEl(12).exists()).toBe(false)
+    expect(folds()).toHaveLength(1)
+    expect(document.activeElement).toBe(folds()[0]!.element)
+  })
+
+  it('focus on a notice row stays on it when an expanded fold takes it', async () => {
+    serve([m(10, 'text'), m(11, 'progress')])
+    await mountPanel()
+    await click(folds()[0]!)
+    await liveAdds([resumed(12, 11)])
+    ;(messageEl(12).element as HTMLElement).focus()
+    await liveAdds([m(13, 'progress')])
+    expect(folds()[0]!.attributes('aria-expanded')).toBe('true')
+    expect(document.activeElement).toBe(messageEl(12).element)
+  })
+
+  it('focus on a fold button follows the fold when older messages re-key it', async () => {
+    serve([resumed(12, 11), m(13, 'progress')], working, { has_more: true, next_before: 12 })
+    await mountPanel()
+    ;(folds()[0]!.element as HTMLElement).focus()
+    serve([m(10, 'progress'), m(11, 'progress')])
+    await click(buttonIn(w(), 'Load older messages'))
+    expect(folds()).toHaveLength(1)
+    expect(folds()[0]!.text()).toBe('3 messages, 1 session step: Progress')
+    expect(document.activeElement).toBe(folds()[0]!.element)
+  })
+
+  it('focus on an expanded fold button stays on the fold button when older messages re-key it', async () => {
+    serve([resumed(12, 11), m(13, 'progress')], working, { has_more: true, next_before: 12 })
+    await mountPanel()
+    await click(folds()[0]!)
+    expect(folds()[0]!.attributes('aria-expanded')).toBe('true')
+    ;(folds()[0]!.element as HTMLElement).focus()
+    serve([m(10, 'progress'), m(11, 'progress')])
+    await click(buttonIn(w(), 'Load older messages'))
+    expect(folds()).toHaveLength(1)
+    expect(folds()[0]!.attributes('aria-expanded')).toBe('true')
+    expect(document.activeElement).toBe(folds()[0]!.element)
+  })
+
+  it('reply quote to a folded notice expands its run', async () => {
+    serve([m(10, 'progress'), resumed(11, 10), m(12, 'progress'), m(13, 'text', { reply_to: 11 })])
+    await mountPanel()
+    expect(messageEl(11).exists()).toBe(false)
+    await click(quote(13))
+    expect(folds()[0]!.attributes('aria-expanded')).toBe('true')
+    expect(document.activeElement).toBe(messageEl(11).element)
+  })
 })
 
 describe('ChannelsPanel preset buttons', () => {

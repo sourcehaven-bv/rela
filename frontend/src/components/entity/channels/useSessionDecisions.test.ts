@@ -1275,6 +1275,62 @@ describe('useSessionDecisions with a known cause (TKT-V05706X)', () => {
     expect(d.decisionSeq.value).toBeUndefined()
   })
 
+  it('a quiet cause in a working state leaves the decisions in the header (TKT-LKIVLR2)', () => {
+    const s = setup()
+    const progress: Message = { ...question, type: 'progress' }
+    s.ch.messages.value = [progress]
+    s.ch.head.value!.channel.session!.status = 'working'
+    const cause = ref<number | undefined>(7)
+    const quiet = (type: string) => type === 'progress'
+    const d = useSessionDecisions({ ...s.deps, ch: { ...s.ch, cause }, quiet })
+    expect(d.decisions.value.length).toBeGreaterThan(0)
+    expect(d.decisionSeq.value).toBeUndefined()
+    expect(d.placed.value.row).toEqual([])
+    expect(d.placed.value.fallback.length).toBe(d.decisions.value.length)
+  })
+
+  it('a decision from the header still replies to the quiet cause', async () => {
+    const s = setup()
+    s.ch.messages.value = [{ ...question, type: 'progress' }]
+    s.ch.head.value!.channel.session!.status = 'working'
+    const cause = ref<number | undefined>(question.seq)
+    const d = useSessionDecisions({
+      ...s.deps,
+      ch: { ...s.ch, cause },
+      quiet: (type) => type === 'progress',
+    })
+    expect(d.decisionSeq.value).toBeUndefined()
+    s.deps.ui.confirm.mockResolvedValue(true)
+    await d.onDecide('approve', 'header')
+    expect(s.deps.post).toHaveBeenCalledWith('approve', {}, question.seq, expect.any(Number))
+    expect(s.deps.ui.focusRow).not.toHaveBeenCalled()
+  })
+
+  it('a quiet cause in a waiting state keeps the decisions on it', () => {
+    const s = setup()
+    s.ch.messages.value = [{ ...question, type: 'progress' }]
+    const cause = ref<number | undefined>(7)
+    const d = useSessionDecisions({
+      ...s.deps,
+      ch: { ...s.ch, cause },
+      quiet: (type) => type === 'progress',
+    })
+    expect(d.decisionSeq.value).toBe(7)
+  })
+
+  it('a shown cause in a working state keeps the decisions on it', () => {
+    const s = setup()
+    s.ch.messages.value = [question]
+    s.ch.head.value!.channel.session!.status = 'working'
+    const cause = ref<number | undefined>(7)
+    const d = useSessionDecisions({
+      ...s.deps,
+      ch: { ...s.ch, cause },
+      quiet: (type) => type === 'progress',
+    })
+    expect(d.decisionSeq.value).toBe(7)
+  })
+
   it('onAnswer opens the type as a reply, recorded at the generation', async () => {
     const s = setup()
     expect(await s.d.onAnswer('approve', 7)).toBe(true)

@@ -46,12 +46,17 @@ const removed = (seq: number): ChannelMessageView => ({
   rev: seq,
   removed: { kind: 'author' },
 })
-const notice = (seq: number): ChannelMessageView => ({
+const notice = (
+  seq: number,
+  toStatus?: 'working' | 'input_required' | 'completed'
+): ChannelMessageView => ({
   seq,
   rev: seq,
   type: 'session',
-  notice: { fromLabel: 'A', toLabel: 'B', reentry: false },
+  notice: { fromLabel: 'A', toLabel: 'B', reentry: false, ...(toStatus ? { toStatus } : {}) },
 })
+/** A session notice into a working state: quiet (TKT-LKIVLR2). */
+const moved = (seq: number) => notice(seq, 'working')
 
 /** A compact picture of the rows: a seq for a message, `[seqs shown|expanded]` for a fold. */
 function shape(rows: ChannelRow[]): (number | string)[] {
@@ -78,6 +83,99 @@ describe('foldMessages', () => {
       name: 'two runs split by a notice',
       messages: [m(1, 'progress'), notice(2), m(3, 'progress')],
       want: ['[1]', 2, '[3]'],
+    },
+    // Session notices between quiet messages (TKT-LKIVLR2).
+    {
+      name: 'working notice between collapsed joins the run',
+      messages: [m(1, 'progress'), moved(2), m(3, 'progress')],
+      want: ['[1,2,3]'],
+    },
+    {
+      name: 'several notices and runs fold into one',
+      messages: [
+        m(1, 'progress'),
+        moved(2),
+        m(3, 'progress'),
+        moved(4),
+        moved(5),
+        m(6, 'progress'),
+        m(7, 'text'),
+      ],
+      want: ['[1,2,3,4,5,6]', 7],
+    },
+    {
+      name: 'waiting notice ends the run',
+      messages: [m(1, 'progress'), notice(2, 'input_required'), m(3, 'progress')],
+      want: ['[1]', 2, '[3]'],
+    },
+    {
+      name: 'final notice ends the run',
+      messages: [m(1, 'progress'), notice(2, 'completed'), m(3, 'progress')],
+      want: ['[1]', 2, '[3]'],
+    },
+    {
+      name: 'notice into an unknown state ends the run',
+      messages: [m(1, 'progress'), notice(2), m(3, 'progress')],
+      want: ['[1]', 2, '[3]'],
+    },
+    {
+      name: 'leading working notice after a shown message is a row',
+      messages: [m(1, 'text'), moved(2), m(3, 'progress'), m(4, 'progress')],
+      want: [1, 2, '[3,4]'],
+    },
+    {
+      name: 'trailing working notice before a shown message is a row',
+      messages: [m(1, 'progress'), moved(2), m(3, 'text')],
+      want: ['[1]', 2, 3],
+    },
+    {
+      name: 'working notice after a waiting notice is a row',
+      messages: [m(1, 'progress'), notice(2, 'input_required'), moved(3), m(4, 'progress')],
+      want: ['[1]', 2, 3, '[4]'],
+    },
+    {
+      name: 'working notice after a hidden member joins the run',
+      messages: [m(1, 'claim'), moved(2), m(3, 'progress')],
+      want: ['[2,3]'],
+    },
+    {
+      name: 'working notice before a hidden member joins the run',
+      messages: [m(1, 'progress'), moved(2), m(3, 'claim'), m(4, 'text')],
+      want: ['[1,2]', 4],
+    },
+    {
+      name: 'notices in a hidden-only run stay rows',
+      messages: [m(1, 'text'), m(2, 'claim'), moved(3), m(4, 'claim'), moved(5), m(6, 'claim')],
+      want: [1, 3, 5],
+    },
+    {
+      name: 'removed and notice inside a run join it',
+      messages: [m(1, 'progress'), removed(2), moved(3), m(4, 'progress')],
+      want: ['[1,2,3,4]'],
+    },
+    {
+      name: 'kept working notice ends the run',
+      messages: [m(1, 'progress'), moved(2), m(3, 'progress')],
+      over: { keep: new Set([2]) },
+      want: ['[1]', 2, '[3]'],
+    },
+    {
+      name: 'working notice with the toggle on is a row',
+      messages: [m(1, 'progress'), moved(2), m(3, 'progress')],
+      over: { showAll: true },
+      want: [1, 2, 3],
+    },
+    {
+      name: 'working notice without quiet types is a row',
+      messages: [m(1, 'text'), moved(2), m(3, 'text')],
+      over: { displayOf: () => undefined },
+      want: [1, 2, 3],
+    },
+    {
+      name: 'expanding a run with notices shows them in order',
+      messages: [m(1, 'progress'), m(2, 'claim'), moved(3), m(4, 'progress')],
+      over: { expanded: new Set([1]) },
+      want: ['[1,3,4|open]'],
     },
     {
       name: 'collapsed, hidden, collapsed is one run',
@@ -178,6 +276,43 @@ describe('foldMessages', () => {
     expect(fold!.kind === 'fold' && fold.seqs).toEqual([1, 2, 3, 4])
   })
 
+  it('counts messages and notices apart and leaves notices out of the labels', () => {
+    const [fold] = foldMessages(
+      [m(1, 'progress'), moved(2), removed(3), m(4, 'note'), moved(5), m(6, 'progress')],
+      opts()
+    )
+    expect(fold).toMatchObject({ kind: 'fold', count: 4, moves: 2, labels: ['Progress', 'Note'] })
+    const [plain] = foldMessages([m(1, 'progress'), m(2, 'progress')], opts())
+    expect(plain).toMatchObject({ kind: 'fold', count: 2, moves: 0 })
+  })
+
+  it('counts a re-entry into a working state as a session step', () => {
+    const reentered: ChannelMessageView = {
+      ...moved(2),
+      notice: { fromLabel: 'B', toLabel: 'B', reentry: true, toStatus: 'working' },
+    }
+    const [fold] = foldMessages([m(1, 'progress'), reentered, m(3, 'progress')], opts())
+    expect(fold).toMatchObject({ kind: 'fold', count: 2, moves: 1, seqs: [1, 2, 3] })
+  })
+
+  it('a trailing notice joins the fold when the next quiet message arrives', () => {
+    const before = foldMessages([m(1, 'text'), m(2, 'progress'), moved(3)], opts())
+    expect(shape(before)).toEqual([1, '[2]', 3])
+    const after = foldMessages([m(1, 'text'), m(2, 'progress'), moved(3), m(4, 'progress')], opts())
+    expect(shape(after)).toEqual([1, '[2,3,4]'])
+    expect(after[1]).toMatchObject({ kind: 'fold', key: 'fold-2' })
+  })
+
+  it('prepend joins a leading notice and re-keys the fold', () => {
+    const page = [moved(3), m(4, 'progress'), m(5, 'progress')]
+    expect(shape(foldMessages(page, opts()))).toEqual([3, '[4,5]'])
+    const prepended = [m(1, 'progress'), m(2, 'progress'), ...page]
+    const rows = foldMessages(prepended, opts())
+    expect(shape(rows)).toEqual(['[1,2,3,4,5]'])
+    expect(rows[0]).toMatchObject({ kind: 'fold', key: 'fold-1' })
+    expect(rowFor(rows, 3)).toBe(rows[0])
+  })
+
   it('fold key unchanged after append', () => {
     const before = foldMessages([m(1, 'text'), m(2, 'progress')], opts())
     const after = foldMessages(
@@ -224,6 +359,14 @@ describe('rowFor and shownAs', () => {
     expect(rowFor(rows, 7)).toBeUndefined()
     const hiddenOnly = foldMessages([m(1, 'text'), m(2, 'claim'), m(3, 'text')], opts())
     expect(rowFor(hiddenOnly, 2)).toBe(hiddenOnly[1])
+  })
+
+  it('finds and folds a notice inside a run', () => {
+    const rows = foldMessages([m(1, 'progress'), moved(2), m(3, 'progress')], opts())
+    expect(rowFor(rows, 2)).toBe(rows[0])
+    expect(shownAs(rows, 2)).toBe('folded')
+    const open = foldMessages([m(1, 'progress'), moved(2), m(3, 'progress')], opts({ expanded: new Set([1]) }))
+    expect(shownAs(open, 2)).toBe('full')
   })
 
   it('says how a message renders', () => {

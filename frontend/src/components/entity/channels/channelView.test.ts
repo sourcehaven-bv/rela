@@ -725,10 +725,16 @@ describe('sessions', () => {
         fromLabel: 'Detected',
         toLabel: 'Contained',
         reentry: false,
+        toStatus: 'input_required',
       })
       expect(
         noticeView({ ...notice, props: { from: 'contained', to: 'assessed' } }, breach.session)
-      ).toEqual({ fromLabel: 'Contained', toLabel: 'Risk assessed', reentry: false })
+      ).toEqual({
+        fromLabel: 'Contained',
+        toLabel: 'Risk assessed',
+        reentry: false,
+        toStatus: 'working',
+      })
     })
 
     it('marks a re-entry and falls back to the name of a removed state', () => {
@@ -741,6 +747,18 @@ describe('sessions', () => {
       })
     })
 
+    it('carries the status of the target state, and none without a descriptor (TKT-LKIVLR2)', () => {
+      const to = (state: string) => ({ ...notice, props: { from: 'detected', to: state } })
+      expect(noticeView(to('notified'), breach.session)?.toStatus).toBe('completed')
+      expect(noticeView(to('dismissed'), breach.session)?.toStatus).toBe('cancelled')
+      expect(noticeView(to('gone'), breach.session)).not.toHaveProperty('toStatus')
+      expect(noticeView(to('assessed'), undefined)).toEqual({
+        fromLabel: 'detected',
+        toLabel: 'assessed',
+        reentry: false,
+      })
+    })
+
     it('does not take a message named session without the marker for a notice', () => {
       expect(noticeView({ ...notice, triggered_by: undefined }, breach.session)).toBeUndefined()
       expect(noticeView({ ...notice, triggered_by: 'trigger:x' }, breach.session)).toBeUndefined()
@@ -748,7 +766,7 @@ describe('sessions', () => {
 
     it('sets the notice on the message view and no card fields', () => {
       const [view] = messageViews([notice], () => undefined, { tz: 'UTC', session: breach.session })
-      expect(view!.notice).toEqual({ fromLabel: 'Detected', toLabel: 'Contained', reentry: false })
+      expect(view!.notice).toEqual({ fromLabel: 'Detected', toLabel: 'Contained', reentry: false, toStatus: 'input_required' })
       expect(view!.html).toBeUndefined()
     })
   })
