@@ -17,7 +17,7 @@ test.describe("Wizard (multi-step) forms", () => {
 
     // The conditional "Assignment" step is hidden until `done` is checked.
     expect(await formPage.wizardStepTitles()).toEqual(["Basics", "Status"]);
-    expect(await formPage.activeStepIndex()).toBe(0);
+    await formPage.expectActiveStep(0);
     // Only step 1's fields are shown.
     expect(await formPage.isFieldVisible("title")).toBeTruthy();
     expect(await formPage.isFieldVisible("status")).toBeFalsy();
@@ -46,13 +46,13 @@ test.describe("Wizard (multi-step) forms", () => {
 
     await formPage.fillField("title", "Wizard task");
     await formPage.clickNext();
-    expect(await formPage.activeStepIndex()).toBe(1);
+    await formPage.expectActiveStep(1);
     expect(formPage.readStepParam()).toBe("1");
     // Step 2 (Status, since done is unchecked) is shown.
     expect(await formPage.isFieldVisible("status")).toBeTruthy();
 
     await formPage.clickBack();
-    expect(await formPage.activeStepIndex()).toBe(0);
+    await formPage.expectActiveStep(0);
     expect(formPage.readStepParam()).toBe("0");
     // Value entered on step 1 is preserved across back/next.
     expect(await formPage.getFieldValue("title")).toBe("Wizard task");
@@ -67,13 +67,13 @@ test.describe("Wizard (multi-step) forms", () => {
     // Jump forward to the last step (Status, index 1 while Assignment hidden)
     // without going through Next — a deliberate pill click is not gated.
     await formPage.clickStep(1);
-    expect(await formPage.activeStepIndex()).toBe(1);
+    await formPage.expectActiveStep(1);
     expect(formPage.readStepParam()).toBe("1");
     expect(await formPage.isFieldVisible("status")).toBeTruthy();
 
     // Jump back to the first step by clicking its pill.
     await formPage.clickStep(0);
-    expect(await formPage.activeStepIndex()).toBe(0);
+    await formPage.expectActiveStep(0);
     expect(await formPage.isFieldVisible("title")).toBeTruthy();
   });
 
@@ -86,7 +86,7 @@ test.describe("Wizard (multi-step) forms", () => {
 
     await appPage.reload();
     await formPage.waitForSpinnerToDisappear();
-    expect(await formPage.activeStepIndex()).toBe(1);
+    await formPage.expectActiveStep(1);
   });
 
   test("required_when blocks Next until the conditional field is filled", async ({
@@ -98,17 +98,17 @@ test.describe("Wizard (multi-step) forms", () => {
     await formPage.fillField("title", "Needs assignee");
     await formPage.setCheckbox("done", true); // reveals Assignment + makes assignee required
     await formPage.clickNext(); // Basics -> Assignment
-    expect(await formPage.activeStepIndex()).toBe(1);
+    await formPage.expectActiveStep(1);
 
     // assignee is empty and required_when is true -> Next is blocked.
     await formPage.clickNext();
-    expect(await formPage.activeStepIndex()).toBe(1);
+    await formPage.expectActiveStep(1);
     expect(await formPage.hasValidationError()).toBeTruthy();
 
     // Fill it and Next advances.
     await formPage.fillField("assignee", "alice");
     await formPage.clickNext();
-    expect(await formPage.activeStepIndex()).toBe(2);
+    await formPage.expectActiveStep(2);
   });
 
   test("Create with a missing required field on an earlier step flags it and jumps back", async ({
@@ -120,11 +120,11 @@ test.describe("Wizard (multi-step) forms", () => {
     // Leave the required `title` (step 0) empty; jump to the last step (Status,
     // index 1 while Assignment is hidden) and try to Create.
     await formPage.clickStep(1);
-    expect(await formPage.activeStepIndex()).toBe(1);
+    await formPage.expectActiveStep(1);
     await formPage.clickCreate();
 
     // Bounced back to step 0, which is flagged, with a summary shown.
-    expect(await formPage.activeStepIndex()).toBe(0);
+    await formPage.expectActiveStep(0);
     expect(await formPage.erroredStepIndices()).toContain(0);
     const summary = await formPage.errorSummaryText();
     expect(summary).toContain("attention");

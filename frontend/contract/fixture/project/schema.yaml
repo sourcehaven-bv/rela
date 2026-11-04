@@ -18,3 +18,12 @@ entities:
         type: note_status
       summary:
         type: string
+  # Written only by the contract test, outside the requests it compares. The
+  # flush that reports a marker write reports, or follows, every earlier write.
+  marker:
+    label: Marker
+    id_type: sequential
+    id_prefix: MARK
+    properties:
+      title:
+        type: string
