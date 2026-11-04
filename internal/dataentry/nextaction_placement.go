@@ -10,6 +10,7 @@ import (
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/nextaction"
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
 )
 
 // nextActionPage is the page a suggestion is resolved for: which surface,
@@ -117,13 +118,13 @@ func (p nextActionPage) keeps(_ string, src dataentryconfig.NextActionSource) bo
 
 // nextActionCurrent reads the suggestion the client has on screen. Absent
 // when the client sends no source.
-func nextActionCurrent(r *http.Request) *nextaction.Current {
+func nextActionCurrent(r *http.Request) *userstate.Key {
 	q := r.URL.Query()
 	src := q.Get("current_source")
 	if src == "" {
 		return nil
 	}
-	return &nextaction.Current{
+	return &userstate.Key{
 		Source:   src,
 		EntityID: q.Get("current_entity"),
 		Variant:  q.Get("current_variant"),

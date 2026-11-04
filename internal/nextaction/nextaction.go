@@ -200,7 +200,7 @@ type Engine struct {
 	sourceFilter func(id string, src dataentryconfig.NextActionSource) bool
 	// current identifies the suggestion the reader has on screen. See
 	// [WithCurrent].
-	current *Current
+	current *userstate.Key
 	// format renders a property value for a message. See [WithValueFormatter].
 	format ValueFormatter
 }
@@ -211,17 +211,12 @@ type Engine struct {
 // engine's own rendering ([FormatValue]).
 type ValueFormatter func(entityType, property string, v any) (text string, ok bool)
 
-// Current identifies the suggestion a reader already has on screen, as the
-// client echoes it back: source, entity and variant.
-type Current struct {
-	Source   string
-	EntityID string
-	Variant  string
-}
-
-// matches reports whether s is the suggestion c identifies.
-func (c *Current) matches(s Suggestion) bool {
-	return c != nil && c.Source == s.Source && c.EntityID == s.EntityID && c.Variant == s.Key.Variant
+// isCurrent reports whether s is the suggestion the reader has on screen
+// (see [WithCurrent]). The key's User is not compared: an engine resolves
+// for one reader, and the client does not send it.
+func (e *Engine) isCurrent(s Suggestion) bool {
+	c := e.current
+	return c != nil && c.Source == s.Key.Source && c.EntityID == s.Key.EntityID && c.Variant == s.Key.Variant
 }
 
 // Option configures an [Engine] at construction.
@@ -268,8 +263,11 @@ func WithSourceFilter(keep func(id string, src dataentryconfig.NextActionSource)
 // eligible source. It cannot make a suggestion appear that the request would
 // not otherwise produce, and a higher band still outranks it.
 //
+// The key's Source, EntityID and Variant identify the suggestion, as the
+// client echoes them back; its User is ignored.
+//
 // Nil: accepted, means no suggestion is on screen.
-func WithCurrent(c *Current) Option {
+func WithCurrent(c *userstate.Key) Option {
 	return func(e *Engine) { e.current = c }
 }
 
@@ -577,7 +575,7 @@ func (e *Engine) truncateKeepingCurrent(id string, cands []Candidate) []Candidat
 // "Seen it" snoozes them for [Cooldown] instead. Snooze, dismiss and mute
 // still suppress both.
 func (e *Engine) cooldownExempt(src dataentryconfig.NextActionSource, sug Suggestion) bool {
-	return src.Context != "" || e.current.matches(sug)
+	return src.Context != "" || e.isCurrent(sug)
 }
 
 // inCooldown reports whether a suggestion shown at lastShown is still
@@ -653,7 +651,7 @@ func (e *Engine) pick(user string, eligible []Suggestion, now time.Time) Suggest
 	// The suggestion on screen keeps its place rather than being re-rolled
 	// against candidates the reader has not seen. See WithCurrent.
 	for _, s := range eligible {
-		if e.current.matches(s) {
+		if e.isCurrent(s) {
 			return s
 		}
 	}

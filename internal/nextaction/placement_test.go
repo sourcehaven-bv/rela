@@ -44,7 +44,7 @@ func TestResolve_CurrentIsExemptFromCooldown(t *testing.T) {
 	require.True(t, ok)
 	require.NoError(t, first.MarkShown(ctx, got, base))
 
-	sticky, err := nextaction.New(cfg, st, fn, nextaction.WithCurrent(&nextaction.Current{
+	sticky, err := nextaction.New(cfg, st, fn, nextaction.WithCurrent(&userstate.Key{
 		Source: got.Source, EntityID: got.EntityID, Variant: got.Key.Variant,
 	}))
 	require.NoError(t, err)
@@ -72,7 +72,7 @@ func TestResolve_CurrentWinsItsBandOnly(t *testing.T) {
 	ctx := context.Background()
 	for _, id := range []string{"T-1", "T-2", "T-3"} {
 		eng := newEngineWith(t, twoBandConfig(), fn,
-			nextaction.WithCurrent(&nextaction.Current{Source: "urgent", EntityID: id}))
+			nextaction.WithCurrent(&userstate.Key{Source: "urgent", EntityID: id}))
 		got, ok, err := eng.Resolve(ctx, testUser, base)
 		require.NoError(t, err)
 		require.True(t, ok)
@@ -80,7 +80,7 @@ func TestResolve_CurrentWinsItsBandOnly(t *testing.T) {
 	}
 
 	eng := newEngineWith(t, twoBandConfig(), fn,
-		nextaction.WithCurrent(&nextaction.Current{Source: "quip", EntityID: "Q-1"}))
+		nextaction.WithCurrent(&userstate.Key{Source: "quip", EntityID: "Q-1"}))
 	got, _, err := eng.Resolve(ctx, testUser, base)
 	require.NoError(t, err)
 	require.Equal(t, "urgent", got.Source, "a higher band pre-empts the current suggestion")
@@ -146,7 +146,7 @@ func TestResolve_CurrentDoesNotLiftSuppression(t *testing.T) {
 			"urgent": {Band: "blocking", Query: "type:task", Suggest: "urgent"},
 		},
 	}
-	current := nextaction.WithCurrent(&nextaction.Current{Source: "urgent", EntityID: "T-1"})
+	current := nextaction.WithCurrent(&userstate.Key{Source: "urgent", EntityID: "T-1"})
 
 	t.Run("snoozed", func(t *testing.T) {
 		t.Parallel()
@@ -189,7 +189,7 @@ func TestResolve_CapKeepsCurrent(t *testing.T) {
 			"urgent": {Band: "blocking", Query: "type:task", Suggest: "urgent"},
 		},
 	}
-	eng := newEngineWith(t, cfg, fn, nextaction.WithCurrent(&nextaction.Current{Source: "urgent", EntityID: last}))
+	eng := newEngineWith(t, cfg, fn, nextaction.WithCurrent(&userstate.Key{Source: "urgent", EntityID: last}))
 	got, ok, err := eng.Resolve(context.Background(), testUser, base)
 	require.NoError(t, err)
 	require.True(t, ok)

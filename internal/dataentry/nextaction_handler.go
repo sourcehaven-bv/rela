@@ -362,7 +362,7 @@ func nextActionDisplayWorld(ctx context.Context) string {
 }
 
 func (a *App) nextActionEngine(
-	st *Schema, displayWorld string, page nextActionPage, current *nextaction.Current,
+	st *Schema, displayWorld string, page nextActionPage, current *userstate.Key,
 ) (*nextaction.Engine, NextActionRequestScope, bool) {
 	// One snapshot for the whole request, taken by the caller: State() reads
 	// an atomic face, and two reads could observe different snapshots if a

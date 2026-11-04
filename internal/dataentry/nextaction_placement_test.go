@@ -16,8 +16,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/nextaction"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
 )
 
 // withPlacement republishes the config with one list view over `ticket`
@@ -325,12 +325,12 @@ func TestNextAction_UnplacedIsTheDashboard(t *testing.T) {
 }
 
 func TestNextActionCurrent(t *testing.T) {
-	parse := func(q string) *nextaction.Current {
+	parse := func(q string) *userstate.Key {
 		return nextActionCurrent(httptest.NewRequest(http.MethodGet, "/api/v1/_next_action?"+q, http.NoBody))
 	}
 	require.Nil(t, parse(""), "no source is no current")
 	require.Nil(t, parse("current_entity=T-1"), "an entity without a source is no current")
-	require.Equal(t, &nextaction.Current{Source: "s", EntityID: "T-1", Variant: "v"},
+	require.Equal(t, &userstate.Key{Source: "s", EntityID: "T-1", Variant: "v"},
 		parse("current_source=s&current_entity=T-1&current_variant=v"))
 }
 
