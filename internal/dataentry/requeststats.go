@@ -315,7 +315,7 @@ var fixedRouteWords = map[string]bool{
 	// SPA client routes.
 	"list": true, "kanban": true, "calendar": true, "gantt": true, "document": true, "form": true,
 	"p": true, "search": true, "settings": true, "dashboard": true,
-	"_action": true, "_actions": true, "_analyze": true, "_apps": true, "_attachments": true,
+	"_action": true, "_actions": true, "_analyze": true, "_apps": true, "_attachments": true, "_batch": true,
 	"_caldav": true, "_commands": true, "_comments": true, "_config": true, "_conflicts": true,
 	"_copies": true, "_conversions": true, "_custom": true, "_dashboard": true, "_documents": true, "_events": true,
 	"_export": true, "_feeds": true, "_gantts": true, "_git": true, "_history": true,

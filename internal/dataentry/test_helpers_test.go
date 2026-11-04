@@ -343,6 +343,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		paths:            paths,
 		provision:        newProvisionSeam(app),
 	}
+	app.batch = newBatchHandler(app, svc.Store(), svc.EntityManager())
 }
 
 // rebindVisibleSearcher re-derives the generic visible-search wrapper

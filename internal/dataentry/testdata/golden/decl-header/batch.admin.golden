@@ -1,0 +1,15 @@
+request: POST /api/v1/_batch
+identity: header admin@example.test
+status: 501
+reads: GraphQueryHeaders=1 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "type": "https://rela.dev/errors/atomic_batch_unsupported",
+  "title": "Atomic batch not supported",
+  "status": 501,
+  "detail": "this deployment's store cannot roll a failed write back; see capabilities.atomic_batch on /api/v1/_schema",
+  "instance": "/api/v1/_batch"
+}

@@ -179,6 +179,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 		a.channels.handleV1InboxSummary(w, r)
 	})
 	mux.HandleFunc(leasesPath, a.leases.handleV1Leases)
+	mux.HandleFunc(batchPath, a.batch.handleV1Batch)
 	mux.HandleFunc(leasesPath+"/", a.leases.handleV1Leases)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
 	mux.HandleFunc("/api/v1/_views/", a.views.handleV1Views)
@@ -1750,6 +1751,8 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 		Types:      make(map[string]v1.CustomType),
 		Worlds:     schemaWorlds(r.Context(), s.Meta),
 		WorldOrder: metamodel.WorldOrderOf(s.Meta),
+		// Fixed by the store the app was wired with (TKT-ZMPDZ3R).
+		Capabilities: v1.Capabilities{AtomicBatch: store.TxRollsBack(a.store)},
 	}
 
 	for name, def := range s.Meta.Entities {

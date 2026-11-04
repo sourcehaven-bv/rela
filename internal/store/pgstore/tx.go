@@ -96,3 +96,7 @@ func (s *Store) Tx(ctx context.Context, fn func(store.Store) error) error {
 	}
 	return nil
 }
+
+// TxRollsBack implements [store.TxRollback]: an error from a Tx callback
+// rolls the whole transaction back.
+func (s *Store) TxRollsBack() bool { return true }

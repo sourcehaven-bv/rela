@@ -360,3 +360,15 @@ narrower name such as `/_create_aggregate`? Should MCP get the same tool?
 configurable?
 5. Should the batch be allowed to create a row the caller cannot read
 afterwards? The single create allows it today, and the response is redacted.
+
+### Owner answers (DEC-ODU65KR)
+
+1. fs and memory answer 501 `atomic_batch_unsupported`; support is
+advertised as `capabilities.atomic_batch` on `/api/v1/_schema`, decided once at
+wiring.
+2. Automations and cascades run after commit as follow-ups and are not part
+of the atomic unit in v1. A follow-up failure is reported per operation.
+3. `POST /api/v1/_batch`, creates only, no MCP tool in v1.
+4. Fixed limits: 100 operations and a 1 MiB body.
+5. A batch may create rows the caller cannot read afterwards; the response
+redacts them.

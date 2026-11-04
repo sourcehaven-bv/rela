@@ -183,5 +183,8 @@ body:
   "world_order": [
     "published",
     "editorial"
-  ]
+  ],
+  "capabilities": {
+    "atomic_batch": false
+  }
 }

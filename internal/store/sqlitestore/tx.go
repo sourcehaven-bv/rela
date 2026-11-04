@@ -131,3 +131,7 @@ func TxConn(s store.Store) (conn *sql.Conn, ok bool) {
 	}
 	return view.conn, true
 }
+
+// TxRollsBack implements [store.TxRollback]: an error from a Tx callback
+// rolls the whole transaction back.
+func (s *Store) TxRollsBack() bool { return true }

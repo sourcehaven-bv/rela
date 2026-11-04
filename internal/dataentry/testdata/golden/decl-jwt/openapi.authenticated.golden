@@ -18,6 +18,286 @@ body:
     }
   ],
   "paths": {
+    "/api/v1/_batch": {
+      "post": {
+        "operationId": "createBatch",
+        "summary": "Create several entities and the relations between them, atomically",
+        "description": "Writes every entity and relation, or none. At most 100 operations and 1 MiB. Automations run after the commit and are not part of it. Answers 501 when the deployment's store cannot roll back; see capabilities.atomic_batch on /api/v1/_schema. An error is a problem whose operation {kind, index, ref} names the operation it is about; a 403 adds rule_kind and rule_id.",
+        "tags": [
+          "Batch"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "entities": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "content": {
+                          "type": "string"
+                        },
+                        "face": {
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": "string",
+                          "description": "Only for a type with manual ids"
+                        },
+                        "prefix": {
+                          "type": "string",
+                          "description": "One of the type's id prefixes"
+                        },
+                        "properties": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        },
+                        "ref": {
+                          "type": "string",
+                          "description": "A name for this entity within the batch; unique"
+                        },
+                        "type": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type"
+                      ]
+                    }
+                  },
+                  "relations": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "from": {
+                          "type": "object",
+                          "properties": {
+                            "face": {
+                              "type": "string",
+                              "description": "The face of an existing source, for a content-scoped relation"
+                            },
+                            "id": {
+                              "type": "string",
+                              "description": "The id of an existing entity"
+                            },
+                            "ref": {
+                              "type": "string",
+                              "description": "The ref of an entity of this batch"
+                            }
+                          },
+                          "description": "Exactly one of ref and id"
+                        },
+                        "to": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "description": "The id of an existing entity"
+                            },
+                            "ref": {
+                              "type": "string",
+                              "description": "The ref of an entity of this batch"
+                            }
+                          },
+                          "description": "Exactly one of ref and id"
+                        },
+                        "type": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "from",
+                        "type",
+                        "to"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Everything was written",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entities": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "entity": {
+                            "type": "object",
+                            "description": "The created entity; absent when you may not read it"
+                          },
+                          "face": {
+                            "type": "string"
+                          },
+                          "follow_up_error": {
+                            "type": "string",
+                            "description": "Set when an automation after the commit failed"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "index": {
+                            "type": "integer"
+                          },
+                          "ref": {
+                            "type": "string"
+                          },
+                          "warnings": {
+                            "type": "array",
+                            "items": {
+                              "type": "object"
+                            }
+                          }
+                        },
+                        "required": [
+                          "index",
+                          "id"
+                        ]
+                      }
+                    },
+                    "relations": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "from": {
+                            "type": "object",
+                            "properties": {
+                              "face": {
+                                "type": "string",
+                                "description": "The face of an existing source, for a content-scoped relation"
+                              },
+                              "id": {
+                                "type": "string",
+                                "description": "The id of an existing entity"
+                              },
+                              "ref": {
+                                "type": "string",
+                                "description": "The ref of an entity of this batch"
+                              }
+                            },
+                            "description": "Exactly one of ref and id"
+                          },
+                          "to": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "description": "The id of an existing entity"
+                              },
+                              "ref": {
+                                "type": "string",
+                                "description": "The ref of an entity of this batch"
+                              }
+                            },
+                            "description": "Exactly one of ref and id"
+                          },
+                          "type": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "from",
+                          "type",
+                          "to"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "entities",
+                    "relations"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON, an unknown field, a bad ref, or too many operations",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "An operation is not allowed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "An id is already taken, or the batch creates the same relation twice",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request body too large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "An operation is invalid, or a relation end does not exist",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "This deployment cannot write a batch atomically",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/_leases": {
       "get": {
         "operationId": "listOwnLeases",

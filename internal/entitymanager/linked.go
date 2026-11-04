@@ -100,7 +100,11 @@ func CreateLinked(ctx context.Context, m *Manager, lc LinkedCreate) (*LinkedResu
 		return t.run(store.ContextInTx(ctx), view)
 	})
 	if err != nil {
-		if t.created != nil && finishKept(ctx, m, t.created, t.warnings, t.written, opts.SkipAutomation) {
+		// On a store that rolls back nothing stayed, and a read-back could
+		// find another caller's create that took the freed id.
+		if t.created != nil && !store.TxRollsBack(m.deps.Store) &&
+			finishKept(ctx, m, t.created, t.warnings, t.written, opts.SkipAutomation) {
+
 			return nil, &KeptEntityError{Entity: t.created, Err: err}
 		}
 		return nil, err

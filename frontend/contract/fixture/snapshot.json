@@ -60,6 +60,9 @@
         "readable": true,
         "default": true
       }
+    },
+    "capabilities": {
+      "atomic_batch": false
     }
   },
   "config": {

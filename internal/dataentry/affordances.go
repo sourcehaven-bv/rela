@@ -603,6 +603,15 @@ func writeAffordanceDenialError(w http.ResponseWriter, denial AffordanceDenialEr
 func (a *App) denyAffordance(
 	ctx context.Context, w http.ResponseWriter, target *entityPkg.Entity, denial AffordanceDenialError,
 ) {
+	recordAffordanceDenial(ctx, a.auditSink, target, denial)
+	writeAffordanceDenialError(w, denial)
+}
+
+// recordAffordanceDenial records the `denied-write` audit row of
+// App.denyAffordance, for a caller that writes its own 403 body.
+func recordAffordanceDenial(
+	ctx context.Context, sink audit.Audit, target *entityPkg.Entity, denial AffordanceDenialError,
+) {
 	var subject *audit.Subject
 	if target != nil {
 		subject = &audit.Subject{
@@ -616,7 +625,7 @@ func (a *App) denyAffordance(
 	if denial.Attribution != "" {
 		summary += " attribution=" + denial.Attribution
 	}
-	a.auditSink.Record(audit.Record{
+	sink.Record(audit.Record{
 		Time:        time.Now().UTC(),
 		Op:          audit.OpDeniedWrite,
 		Subject:     subject,
@@ -625,7 +634,6 @@ func (a *App) denyAffordance(
 		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     summary,
 	})
-	writeAffordanceDenialError(w, denial)
 }
 
 // RelationOp identifies which relation-write operation a caller is

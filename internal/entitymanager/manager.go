@@ -979,9 +979,26 @@ func finishCreate(
 	// hard-errors) the entity is still on disk, so the audit log must
 	// already reflect it. Recording after the cascade left a window
 	// where a committed write produced no audit record.
+	recordCreate(ctx, m, created)
+	return createFollowUps(ctx, m, result, skipAutomation)
+}
+
+// recordCreate writes the audit record of the durable create of created and
+// notifies the aliases of it: the part of [finishCreate] that must follow
+// every committed create.
+func recordCreate(ctx context.Context, m *Manager, created *entity.Entity) {
 	m.recordEntityAudit(ctx, audit.OpCreateEntity, created, "created")
 	notifyAliasesOfCreate(ctx, m.deps.AliasRewriter, created.ID, created.Face)
+}
 
+// createFollowUps runs the on-create automations and the cascade of
+// result.Entity, after [recordCreate]: the part of [finishCreate] whose
+// failure leaves the entity written. On an error, result holds what was
+// done before it.
+func createFollowUps(
+	ctx context.Context, m *Manager, result *entity.CreateResult, skipAutomation bool,
+) (*entity.CreateResult, error) {
+	created := result.Entity
 	runAutomation := m.deps.Automations != nil && !skipAutomation
 	if !runAutomation {
 		return result, nil
