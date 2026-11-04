@@ -274,6 +274,9 @@ function stateLabel(session: ChannelSessionSchema | undefined, name: string): st
  * A state the descriptor no longer has shows by its name. A notice names
  * no waiting roles: it is history, and the current configuration cannot
  * say whom the session waited for then. The stepper shows the current wait.
+ * `toStatus` is the status the descriptor gives the target state, so a
+ * notice into a working state may fold with quiet messages; it is absent
+ * without a descriptor or for a state it does not have.
  */
 export function noticeView(
   m: Message,
@@ -282,10 +285,12 @@ export function noticeView(
   if (!isSessionNotice(m)) return undefined
   const from = typeof m.props?.from === 'string' ? m.props.from : ''
   const to = typeof m.props?.to === 'string' ? m.props.to : ''
+  const toStatus = session?.states.find((st) => st.name === to)?.status
   return {
     fromLabel: stateLabel(session, from),
     toLabel: stateLabel(session, to),
     reentry: from === to,
+    ...(toStatus ? { toStatus } : {}),
   }
 }
 

@@ -7,18 +7,24 @@
  * Terms:
  *
  * - A quiet type is a message type with a display value.
+ * - A quiet notice is a session notice into a `working` state
+ *   (`notice.toStatus`). A notice into a state that waits, a final state or
+ *   a state the app does not know is not quiet.
  * - A run is a sequence of adjacent messages of quiet types with no other
  *   row between them. A hidden message continues a run. A removed message
- *   between two members of a run joins it, unless it is kept. A session
- *   notice, a kept row or any other message ends a run.
+ *   or a quiet notice between two members of a run joins it, unless it is
+ *   kept. Any other notice, a kept row or any other message ends a run. A
+ *   quiet notice with no open run, or after the last member, is a row of its
+ *   own, so the state change that follows a shown message stays in view.
  * - A kept row is a message of a quiet type that is shown in full anyway:
  *   its seq is in `keep` (the decision cause, a question with choices, a
  *   reply target the reader asked for, or a row kept earlier), or its
  *   `actions` hold a message-type action.
  *
- * The collapsed and removed messages of a run become one fold row; its
- * hidden messages become no row. A run without collapsed messages becomes no
- * row, except that its removed messages stay rows of their own.
+ * The collapsed and removed messages and the notices of a run become one
+ * fold row; its hidden messages become no row. A run without collapsed
+ * messages becomes no row, except that its removed messages and notices
+ * stay rows of their own.
  */
 import { CHANNEL_OPERATIONS } from './channelFields'
 import type { ChannelMessageDisplay, ChannelMessageView } from './types'
@@ -43,8 +49,12 @@ export interface ChannelFoldRow {
   last: number
   /** Every member of the run, hidden ones included; expanding adds them all. */
   seqs: number[]
-  /** The messages the fold shows when expanded: collapsed and removed ones. */
+  /** The messages the fold shows when expanded: collapsed, removed and notices. */
   messages: ChannelMessageView[]
+  /** How many of `messages` are not session notices. */
+  count: number
+  /** How many of `messages` are session notices: the session steps. */
+  moves: number
   /** The type labels of the collapsed messages, in first-seen order. */
   labels: string[]
   expanded: boolean
@@ -77,25 +87,32 @@ function quietDisplay(m: ChannelMessageView, opts: FoldOptions): ChannelMessageD
   return opts.displayOf(m.type)
 }
 
+/** Whether m is a quiet notice that is not kept: it may join a run. */
+function quietNotice(m: ChannelMessageView, opts: FoldOptions): boolean {
+  return !m.removed && m.notice?.toStatus === 'working' && !opts.keep.has(m.seq)
+}
+
 /** Turns the held messages, oldest first, into the rows to render. */
 export function foldMessages(messages: readonly ChannelMessageView[], opts: FoldOptions): ChannelRow[] {
   if (opts.showAll) return messages.map((message) => ({ kind: 'message', message }))
   const rows: ChannelRow[] = []
   let run: { members: ChannelMessageView[]; collapsed: number } | undefined
-  /** Removed messages after the run, waiting to see whether the run goes on. */
+  /** Removed messages and quiet notices after the run, waiting to see whether it goes on. */
   let pending: ChannelMessageView[] = []
 
   const closeRun = () => {
     if (run && run.collapsed > 0) rows.push(foldRow(run.members, opts))
-    // Without a fold line, the run's removed messages stay rows of their own.
-    else for (const message of run?.members ?? []) if (message.removed) rows.push({ kind: 'message', message })
+    // Without a fold line, the run's removed messages and notices stay rows of their own.
+    else
+      for (const message of run?.members ?? [])
+        if (message.removed || message.notice) rows.push({ kind: 'message', message })
     run = undefined
     for (const message of pending) rows.push({ kind: 'message', message })
     pending = []
   }
 
   for (const m of messages) {
-    if (run && m.removed && !m.notice && !opts.keep.has(m.seq)) {
+    if (run && ((m.removed && !m.notice && !opts.keep.has(m.seq)) || quietNotice(m, opts))) {
       pending.push(m)
       continue
     }
@@ -115,10 +132,13 @@ export function foldMessages(messages: readonly ChannelMessageView[], opts: Fold
 }
 
 function foldRow(members: ChannelMessageView[], opts: FoldOptions): ChannelFoldRow {
-  const shown = members.filter((m) => m.removed || (m.type && opts.displayOf(m.type) === 'collapsed'))
+  const shown = members.filter(
+    (m) => m.removed || m.notice || (m.type && opts.displayOf(m.type) === 'collapsed'),
+  )
+  const moves = shown.filter((m) => m.notice).length
   const labels: string[] = []
   for (const m of shown) {
-    if (!m.type) continue
+    if (!m.type || m.notice) continue
     const label = opts.labelOf(m.type)
     if (!labels.includes(label)) labels.push(label)
   }
@@ -131,6 +151,8 @@ function foldRow(members: ChannelMessageView[], opts: FoldOptions): ChannelFoldR
     last: seqs[seqs.length - 1]!,
     seqs,
     messages: shown,
+    count: shown.length - moves,
+    moves,
     labels,
     expanded: seqs.some((s) => opts.expanded.has(s)),
   }

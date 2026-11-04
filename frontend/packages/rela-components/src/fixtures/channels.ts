@@ -636,6 +636,39 @@ export const runMessages: ChannelMessageView[] = [
 ]
 
 /**
+ * A session notice of the run: a move between two states, into a state of
+ * the given status (TKT-LKIVLR2: a move into a working state folds with the
+ * progress around it).
+ */
+export function runNotice(
+  seq: number,
+  fromLabel: string,
+  toLabel: string,
+  toStatus: 'working' | 'input_required' = 'working',
+): ChannelMessageView {
+  return { ...breachNotice(seq, fromLabel, toLabel), notice: { fromLabel, toLabel, reentry: false, toStatus } }
+}
+
+/**
+ * An agent run that moves through working states while it reports
+ * progress, then waits for review: one fold for the progress and the moves
+ * between them, the move into Review in full.
+ */
+export const movingRunMessages: ChannelMessageView[] = [
+  runMessage(1, 'text', 'Please pick this up.'),
+  runMessage(2, 'claim'),
+  runNotice(3, 'Queued', 'Planning'),
+  runMessage(4, 'progress', 'Reading the code.'),
+  runNotice(5, 'Planning', 'Implementing'),
+  runMessage(6, 'progress', 'Writing the fold.'),
+  runMessage(7, 'progress', 'Writing the tests.'),
+  runNotice(8, 'Implementing', 'Testing'),
+  runMessage(9, 'progress', 'Tests pass.'),
+  runNotice(10, 'Testing', 'Review', 'input_required'),
+  runMessage(11, 'plan', 'Ready for review.'),
+]
+
+/**
  * A long run for the scroll stories: plain messages with a collapsed
  * `progress` and a hidden `claim` after every third one.
  */

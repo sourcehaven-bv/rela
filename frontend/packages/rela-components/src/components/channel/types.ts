@@ -256,6 +256,12 @@ export interface ChannelNoticeView {
   toLabel: string
   /** The session entered the state it was already in. */
   reentry: boolean
+  /**
+   * The status of the state the session moved into, from the channel
+   * type's session; absent when the app does not know the state. Only
+   * `working` lets the notice fold with quiet messages (see `channelFold.ts`).
+   */
+  toStatus?: ChannelSessionStatus
 }
 
 /**

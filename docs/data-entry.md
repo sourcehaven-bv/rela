@@ -1416,11 +1416,29 @@ channels:
 
 A run is a sequence of adjacent messages of quiet types, that is, types
 with `collapsed` or `hidden`. A hidden message does not end a run, and it
-stays hidden when you expand the run. Any other message, or a session
-notice, ends a run. A removed message between two messages of a run joins
-the run: it counts in the line, and shows as a removed message when you
-expand the run. In a run without a collapsed message, a removed message
-stays a row of its own.
+stays hidden when you expand the run. Any other message ends a run. A
+removed message between two messages of a run joins the run: it counts in
+the line, and shows as a removed message when you expand the run. In a run
+without a collapsed message, a removed message stays a row of its own.
+
+A session notice, such as "Session moved from Planning to Implementing",
+joins a run in the same way when two things hold:
+
+- the session moved into a state with `status: working`;
+- the notice stands between two messages of the run. A hidden message
+  counts as a message of the run here.
+
+The line then also counts the session steps, that is, the moves and
+re-entries, such as "5 messages, 2 session steps: Progress". It shows them
+in order when you expand the run. An agent that reports progress and
+moves through working states gets one line, not one line per state.
+
+A move into a state that waits for someone, or into a final state, ends
+the run and stays in view. So does a move into a state the configuration
+no longer has. A move right after a message that is shown in full, for
+example after your own decision, stays in view as well, and so does a
+move at the end of a run. In a run without a collapsed message, the
+notices stay rows of their own.
 
 When a channel type has a quiet type, the channel header shows a **Show
 all messages** button. Press it to show every message in full; press it
@@ -1431,7 +1449,9 @@ Some messages of a quiet type are always shown in full, so that you never
 miss something you must act on or asked for:
 
 - the message that moved the session, when it carries the decision
-  buttons;
+  buttons. In a state with `status: working`, the decision buttons of a
+  quiet message show in the session header instead, so the message stays
+  in its run;
 - a question with choice buttons;
 - a message with an action you may run, such as **Record as decision**;
 - a message a reply quotes, after you click the quote. If it is folded,
@@ -1443,7 +1463,10 @@ decide or answer.
 A screen reader announces a new message only when it is shown in full. A
 new message that is hidden or folded is not announced. When it is shown in
 full later, because its choice buttons or decision buttons arrive, it is
-announced then. An ephemeral signal
+announced then. A session notice is the exception: a move is always
+announced, also when it joins a run, because the session header does not
+announce it. A notice is announced once, also when it first shows in full
+and joins a run when the next message arrives. An ephemeral signal
 of a quiet type, `collapsed` or `hidden`, is not shown in the signal area
 until you press **Show all messages**. When every loaded message is
 hidden, the log says so, and points to **Show all messages**.

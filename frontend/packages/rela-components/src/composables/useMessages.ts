@@ -620,9 +620,11 @@ export interface Messages {
   channelNewNotices: (args: { notices: string[]; messages?: string }) => string
   /**
    * The fold line of a run of collapsed messages: `3 messages: Claim,
-   * Progress`. `labels` are the type labels in first-seen order.
+   * Progress`, or with session notices in the run `3 messages, 2 session
+   * steps: Progress`. `count` leaves the notices out; `moves` counts
+   * them. `labels` are the type labels in first-seen order.
    */
-  channelFold: (args: { count: number; labels: string[] }) => string
+  channelFold: (args: { count: number; labels: string[]; moves: number }) => string
   /**
    * Announced when loading older messages added only messages that are
    * not shown: `4 older messages are hidden. Use Show all messages to see
@@ -908,7 +910,10 @@ export const DEFAULT_MESSAGES: Messages = {
   channelNewMessages: ({ count, type, author }) =>
     count === 1 && type ? `${type}${author ? ` from ${author}` : ''}` : `${count} new messages`,
   channelNewNotices: ({ notices, messages }) => `${[...(messages ? [messages] : []), ...notices].join('. ')}.`,
-  channelFold: ({ count, labels }) => `${count} ${count === 1 ? 'message' : 'messages'}: ${labels.join(', ')}`,
+  channelFold: ({ count, labels, moves }) =>
+    `${count} ${count === 1 ? 'message' : 'messages'}${
+      moves > 0 ? `, ${moves} ${moves === 1 ? 'session step' : 'session steps'}` : ''
+    }: ${labels.join(', ')}`,
   channelOlderHidden: ({ count }) =>
     `${count} older ${count === 1 ? 'message is' : 'messages are'} hidden. Use Show all messages to see them.`,
   channelSessionMoved: ({ from, to }) => `Session moved from ${from} to ${to}`,

@@ -120,6 +120,28 @@ export const INBOX = {
   approveLabel: "Approve",
 } as const;
 
+/**
+ * The agent-run session on ROOM when RoomOptions.quiet is set
+ * (TKT-LKIVLR2). A member, standing in for an agent, posts Progress and
+ * moves between Planning and Building with Step; both types are quiet
+ * (addQuietRun) and do not count as unread. Plan moves the session to
+ * Plan review, which waits for the feature's owner (addFeatureOwner), who
+ * approves it back to Planning. The owner may also Approve in Planning, a
+ * working state, so that decision shows in the session header.
+ */
+export const QUIET = {
+  label: "Agent run",
+  planning: "Planning",
+  building: "Building",
+  review: "Plan review",
+  progressType: "progress",
+  progressLabel: "Progress",
+  stepType: "step",
+  stepLabel: "Step",
+  planType: "plan",
+  approveLabel: "Approve",
+} as const;
+
 /** The face-anchored channel type on the faced project's `policy`. */
 export const POLICY_ROOM = {
   type: "policy-room",
@@ -163,12 +185,17 @@ export interface RoomOptions {
    * schema. Cannot be combined with `session` or `decisions`.
    */
   run?: boolean;
+  /**
+   * Gives the room the session of QUIET instead, with its progress, step,
+   * plan and approve types. Cannot be combined with another session.
+   */
+  quiet?: boolean;
 }
 
 /** realtime.yaml for the feature project. */
 export function roomRealtimeYaml(opts: RoomOptions = {}): string {
-  if ([opts.session, opts.decisions, opts.run, opts.inbox].filter(Boolean).length > 1) {
-    throw new Error("RoomOptions: session, decisions, run and inbox are exclusive");
+  if ([opts.session, opts.decisions, opts.run, opts.inbox, opts.quiet].filter(Boolean).length > 1) {
+    throw new Error("RoomOptions: session, decisions, run, inbox and quiet are exclusive");
   }
   if (opts.inbox && opts.choices) {
     throw new Error("RoomOptions: inbox brings its own question types");
@@ -330,7 +357,57 @@ export function roomRealtimeYaml(opts: RoomOptions = {}): string {
         approved: { label: ${INBOX.approved}, final: true, status: completed }
 `
     : "";
-  const ownerRole = opts.run || opts.inbox ? "\n      owner:  { from: entity.owner }" : "";
+  const quietTypes = opts.quiet
+    ? `
+      ${QUIET.progressType}:
+        label: ${QUIET.progressLabel}
+        properties:
+          body: { type: markdown, required: true, max: 2000, label: ${QUIET.progressLabel} }
+        post: [member, lead]
+        unread: false
+      ${QUIET.stepType}:
+        label: ${QUIET.stepLabel}
+        properties:
+          body: { type: markdown, required: true, max: 2000, label: ${QUIET.stepLabel} }
+        post: [member, lead]
+        unread: false
+      ${QUIET.planType}:
+        label: Plan
+        properties:
+          plan: { type: string, required: true, label: Plan }
+        post: [member, lead]
+      approve:
+        label: ${QUIET.approveLabel}
+        properties:
+          note: { type: string, label: Note }
+        post: [owner]`
+    : "";
+  const quietSession = opts.quiet
+    ? `    session:
+      label: ${QUIET.label}
+      initial: planning
+      states:
+        planning:
+          label: ${QUIET.planning}
+          status: working
+          on:
+            ${QUIET.stepType}: { to: building, roles: [member] }
+            ${QUIET.planType}: { to: review, roles: [member] }
+            approve: { to: planning, roles: [owner] }
+        building:
+          label: ${QUIET.building}
+          status: working
+          on:
+            ${QUIET.stepType}: { to: planning, roles: [member] }
+            ${QUIET.planType}: { to: review, roles: [member] }
+        review:
+          label: ${QUIET.review}
+          waiting_for: [owner]
+          on:
+            approve: { to: planning, roles: [owner] }
+`
+    : "";
+  const ownerRole = opts.run || opts.inbox || opts.quiet ? "\n      owner:  { from: entity.owner }" : "";
   const session = opts.session
     ? `    session:
       label: ${SESSION.label}
@@ -359,14 +436,14 @@ channel_types:
         label: Text
         properties:
           body: { type: markdown, required: true, max: 2000, label: ${ROOM.messageLabel} }
-        post: [member, lead]${contained}${decisionTypes}${choiceTypes}${runTypes}${inboxTypes}
+        post: [member, lead]${contained}${decisionTypes}${choiceTypes}${runTypes}${inboxTypes}${quietTypes}
     lifecycle:
       close:  { roles: [lead], label: Close }
       reopen: { roles: [lead], label: Reopen }
     message_ops:
       edit_own:   { roles: [member, lead] }
       delete_own: { roles: [member, lead] }
-${session}${decisionSession}${runSession}${inboxSession}`;
+${session}${decisionSession}${runSession}${inboxSession}${quietSession}`;
 }
 
 /** acl.yaml for the feature project: everyone reads, two may post. */
@@ -472,6 +549,19 @@ export function addRoomAboveRelations(dir: string): void {
   const yaml = fs.readFileSync(file, "utf8");
   if (/^channels:/m.test(yaml)) throw new Error("addRoomAboveRelations: data-entry.yaml already has a channels block");
   writeAtomic(file, `${yaml.trimEnd()}\nchannels:\n  ${ROOM.type}:\n    placement: above_relations\n`);
+}
+
+/**
+ * Makes QUIET's progress and step types quiet (TKT-LKIVLR2): adds
+ * `display: collapsed` for both under `channels.room.messages` in the
+ * data-entry.yaml written by the fixture.
+ */
+export function addQuietRun(dir: string): void {
+  const file = path.join(dir, "data-entry.yaml");
+  const yaml = fs.readFileSync(file, "utf8");
+  if (/^channels:/m.test(yaml)) throw new Error("addQuietRun: data-entry.yaml already has a channels block");
+  const messages = [QUIET.progressType, QUIET.stepType].map((t) => `      ${t}:\n        display: collapsed\n`).join("");
+  writeAtomic(file, `${yaml.trimEnd()}\nchannels:\n  ${ROOM.type}:\n    messages:\n${messages}`);
 }
 
 /** Adds an `owner` string property to `feature` in the schema.yaml in dir. */

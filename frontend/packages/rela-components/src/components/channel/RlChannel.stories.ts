@@ -29,7 +29,9 @@ import {
   questionMessage,
   questionMessageTypes,
   longRunMessages,
+  movingRunMessages,
   runMessage,
+  runNotice,
   runMessages,
   runMessageTypes,
   runPresentation,
@@ -868,5 +870,82 @@ export const ReplyWhenAllButtonTypes: Story = {
   args: { ...ReplyFollowsPicker.args, buttonTypes: ['contained', 'dismiss'] },
   play: async ({ canvasElement }) => {
     await expect(within(canvasElement).queryAllByRole('button', { name: /^Reply/ }).length).toBeGreaterThan(0)
+  },
+}
+
+/**
+ * Progress across moves between working states folds into one line; the
+ * move into a state that waits stays in full (TKT-LKIVLR2). Expanding the
+ * line shows the moves in order between the progress notes.
+ */
+export const QuietTypesAcrossNotices: Story = {
+  name: 'Quiet types across session notices',
+  args: { ...quietArgs, title: 'Agent run', messages: movingRunMessages },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const fold = canvas.getByRole('button', { name: '4 messages, 3 session steps: Progress' })
+    await expect(canvas.getAllByRole('button', { name: /Progress$/ })).toHaveLength(1)
+    await expect(canvasElement.querySelector('[data-seq="5"]')).toBeNull()
+    await expect(canvasElement.querySelector('[data-seq="10"]')).toHaveTextContent('Session moved from Testing to Review')
+    await userEvent.click(fold)
+    await expect(fold).toHaveAttribute('aria-expanded', 'true')
+    const list = canvasElement.querySelector(`#${fold.getAttribute('aria-controls')}`)!
+    const seqs = [...list.querySelectorAll<HTMLElement>('[data-seq]')].map((el) => Number(el.dataset.seq))
+    await expect(seqs).toEqual([3, 4, 5, 6, 7, 8, 9])
+    await expect(fold).toHaveFocus()
+    await userEvent.keyboard('{Enter}')
+    await expect(fold).toHaveAttribute('aria-expanded', 'false')
+  },
+}
+
+/**
+ * Moves into a state that waits stay in full; when a config reload makes
+ * that state a working one, they fold, and the row the reader had at the
+ * top keeps its place: the fold line that takes it stands where it stood.
+ */
+export const QuietTypesNoticesRefold: Story = {
+  name: 'Quiet types, notices re-fold',
+  args: { ...quietArgs, title: 'Agent run' },
+  render: (args) => ({
+    components: { RlChannel },
+    setup() {
+      const build = (status: 'working' | 'input_required') =>
+        Array.from({ length: 60 }, (_, i) => {
+          const seq = i + 1
+          if (seq % 4 === 0) return runNotice(seq, 'Planning', 'Implementing', status)
+          return runMessage(seq, seq % 12 === 1 ? 'text' : 'progress', `Message ${seq}.`)
+        })
+      const messages = ref<ChannelMessageView[]>(build('input_required'))
+      const reload = () => (messages.value = build('working'))
+      return { args, messages, reload }
+    },
+    template: `
+      <div>
+        <button type="button" data-testid="reload-working" @click="reload">Reload as working</button>
+        <div style="height:400px">
+          <RlChannel v-bind="args" :messages="messages" />
+        </div>
+      </div>`,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const log = canvas.getByRole('log')
+    log.style.overflowAnchor = 'none'
+    await waitFor(() => expect(isAtBottom(log)).toBe(true))
+    const notice = log.querySelector<HTMLElement>('[data-seq="28"]')!
+    log.scrollTop += notice.getBoundingClientRect().top - log.getBoundingClientRect().top - 2
+    log.dispatchEvent(new Event('scroll'))
+    await new Promise((r) => setTimeout(r, 50))
+    const anchor = firstVisible(log)!
+    await expect(anchor).toMatchObject({ seq: 28 })
+    await userEvent.click(canvas.getByTestId('reload-working'))
+    await waitFor(() => expect(canvasElement.querySelector('[data-seq="28"]')).toBeNull())
+    const holder = log.querySelector<HTMLElement>('[data-fold-first="26"] > button')!
+    await waitFor(() =>
+      expect(
+        Math.abs(holder.getBoundingClientRect().top - log.getBoundingClientRect().top - anchor.offset),
+      ).toBeLessThan(2),
+    )
+    await expect(isAtBottom(log)).toBe(false)
   },
 }

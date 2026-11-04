@@ -49,10 +49,15 @@
  *
  * Message types whose presentation sets `display` are quiet: `collapsed`
  * runs fold into one line that expands in place, `hidden` messages are left
- * out (see `channelFold.ts`). A row the reader must act on or asked for is
- * kept in full for the rest of the mount. The header then offers a toggle
- * that shows every message, and only messages shown in full are announced;
- * a new quiet message that becomes kept later is announced then.
+ * out (see `channelFold.ts`). A session notice into a working state between
+ * quiet messages folds with them. A row the reader must act on or asked for
+ * is kept in full for the rest of the mount. The header then offers a
+ * toggle that shows every message. Only messages shown in full are
+ * announced, and every new session notice, also a folded one, since the
+ * stepper is not a live region; a new quiet message that becomes kept later
+ * is announced then. When a row that has focus folds away (a notice joining
+ * a fold on the next append) or its fold is rebuilt, focus moves to the row
+ * that now holds it.
  * `reveal(seq)` shows, scrolls to and focuses a held message, expanding or
  * keeping it as needed.
  */
@@ -351,7 +356,8 @@ function announce(next: ChannelMessageView[], prev: ChannelMessageView[]) {
   }
   const last = prev[prev.length - 1]!.seq
   const fresh = next.filter((m) => m.seq > last && !m.removed)
-  const added = quiet ? fresh.filter((m) => shownAs(rows.value, m.seq) === 'full') : fresh
+  // A notice is announced also when it folds: the stepper is not a live region.
+  const added = quiet ? fresh.filter((m) => m.notice || shownAs(rows.value, m.seq) === 'full') : fresh
   const oldest = next[0]?.seq ?? Infinity
   for (const seq of silenced) if (seq < oldest) silenced.delete(seq)
   if (quiet) for (const m of fresh) if (!added.includes(m)) silenced.add(m.seq)
@@ -390,6 +396,50 @@ watch([showAll, expanded, revealed, () => props.presentation], () => {
   rowChangeAnchor = undefined
   if (given !== 'skip') keepView(given)
 })
+
+/**
+ * The row in the log that has focus, before the rows change: a message
+ * row's seq, or a fold button's first seq with `fold` set. Undefined when
+ * focus is elsewhere, or on a decision button: the decisions hand their
+ * focus on themselves when they move to the session header (TKT-A0RTC52).
+ */
+function focusedRow(): { seq: number; fold: boolean } | undefined {
+  const active = document.activeElement
+  if (!(active instanceof HTMLElement) || !log.value?.contains(active)) return undefined
+  if (active.closest('[data-decision]')) return undefined
+  const fold = active.closest<HTMLElement>('[data-fold-first]')
+  if (fold && active.closest('.rl-channel-fold')) return { seq: Number(fold.dataset.foldFirst), fold: true }
+  const row = active.closest<HTMLElement>('[data-seq]')
+  return row ? { seq: Number(row.dataset.seq), fold: false } : undefined
+}
+
+// A row with focus that folds away, or a fold that is rebuilt under a new
+// key, takes focus with it; focus then goes to the row that now holds the
+// seq. A fold button's focus stays on a fold button. Only a seq still held
+// is followed: a row that left the page, after Jump to latest or the held
+// cap, leaves focus where the browser puts it.
+watch(
+  rows,
+  () => {
+    const from = focusedRow()
+    if (from === undefined) return
+    void nextTick(() => {
+      const el = log.value
+      // Focus that moved on, rather than got lost, stays where it went.
+      const active = document.activeElement
+      if (!el || (active && active !== document.body)) return
+      if (!props.messages.some((m) => m.seq === from.seq)) return
+      const row = rowFor(rows.value, from.seq)
+      const foldButton =
+        row?.kind === 'fold' ? el.querySelector<HTMLElement>(`[data-fold-seq="${row.last}"] .rl-channel-fold`) : null
+      const target = from.fold
+        ? (foldButton ?? el.querySelector<HTMLElement>(`[data-seq="${from.seq}"]`))
+        : (el.querySelector<HTMLElement>(`[data-seq="${from.seq}"]`) ?? foldButton)
+      target?.focus({ preventScroll: true })
+    })
+  },
+  { flush: 'pre' },
+)
 
 function toggleFold(row: ChannelFoldRow) {
   const el = log.value
@@ -560,7 +610,8 @@ defineExpose({
           </li>
           <li v-else :data-fold-seq="row.last" :data-fold-first="row.first">
             <RlChannelFold
-              :count="row.messages.length"
+              :count="row.count"
+              :moves="row.moves"
               :labels="row.labels"
               :expanded="row.expanded"
               :controls="`${foldId}-${row.first}`"

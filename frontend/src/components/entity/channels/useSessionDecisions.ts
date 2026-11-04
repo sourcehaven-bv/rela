@@ -98,6 +98,14 @@ export interface DecisionDeps {
   submitting: Ref<boolean>
   composer: DecisionComposer
   ui: DecisionUI
+  /**
+   * Whether messages of the type are quiet in the log (a presentation
+   * `display`). Absent: no type is quiet. It reads the type only: a quiet
+   * cause that the log shows in full anyway, for its type action or with
+   * Show all messages, still puts the decisions in the header in a working
+   * state, so they do not move when the reader toggles the view.
+   */
+  quiet?: (type: string) => boolean
 }
 
 /**
@@ -199,11 +207,28 @@ export function useSessionDecisions(d: DecisionDeps) {
   )
   const decisions = computed(() => memo.value.value)
 
-  /** The message that moved the session into its current state, when held. */
-  const decisionSeq = computed(() => {
+  /**
+   * The message that moved the session into its current state, when held.
+   * A decision replies to it.
+   */
+  const causeSeq = computed(() => {
     if (!decisions.value.length) return undefined
-    if (d.ch.cause) return d.ch.cause.value
-    return decisionCause(d.ch.messages.value, d.ch.head.value?.channel.session)
+    const session = d.ch.head.value?.channel.session
+    return d.ch.cause ? d.ch.cause.value : decisionCause(d.ch.messages.value, session)
+  })
+
+  /**
+   * The message that carries the decision buttons: the cause, when held.
+   * Undefined in a working state whose cause is a quiet message: such a
+   * state does not wait on the reader, so its decisions sit in the session
+   * header and the cause stays folded with the quiet messages around it
+   * (TKT-LKIVLR2). A decision there still replies to the cause.
+   */
+  const decisionSeq = computed(() => {
+    const seq = causeSeq.value
+    if (seq === undefined || d.ch.head.value?.channel.session?.status !== 'working' || !d.quiet) return seq
+    const type = d.ch.messages.value.find((m) => m.seq === seq)?.type
+    return type && d.quiet(type) ? undefined : seq
   })
 
   // The choices also read the held messages. That ref is replaced on every
@@ -395,7 +420,8 @@ export function useSessionDecisions(d: DecisionDeps) {
     const mine = ++click
     const channel = d.channelKey()
     const generation = d.ch.head.value?.channel.session?.generation ?? 0
-    const cause = decisionSeq.value
+    const cause = causeSeq.value
+    const placedOn = decisionSeq.value
     const live = () => mine === click && channel === d.channelKey()
     try {
       if (view.opensForm) {
@@ -419,7 +445,7 @@ export function useSessionDecisions(d: DecisionDeps) {
       }
       const replyTo = decisionReplyTo(d.ch.messages.value, cause, d.messageType(view.messageType))
       if (!(await postView(key, view, replyTo, generation, live))) return
-      if (from === 'row' && cause !== undefined && d.ui.focusRow(cause)) return
+      if (from === 'row' && placedOn !== undefined && d.ui.focusRow(placedOn)) return
       d.ui.focusHeader()
     } finally {
       if (mine === click) {

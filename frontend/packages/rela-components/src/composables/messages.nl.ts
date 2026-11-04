@@ -336,7 +336,10 @@ export const NL_MESSAGES: Messages = {
       : `${count} ${count === 1 ? 'nieuw bericht' : 'nieuwe berichten'}`,
   channelNewNotices: ({ notices, messages }) =>
     `${[...(messages ? [messages] : []), ...notices].join('. ')}.`,
-  channelFold: ({ count, labels }) => `${count} ${count === 1 ? 'bericht' : 'berichten'}: ${labels.join(', ')}`,
+  channelFold: ({ count, labels, moves }) =>
+    `${count} ${count === 1 ? 'bericht' : 'berichten'}${
+      moves > 0 ? `, ${moves} ${moves === 1 ? 'sessiestap' : 'sessiestappen'}` : ''
+    }: ${labels.join(', ')}`,
   channelOlderHidden: ({ count }) =>
     `${count} ${count === 1 ? 'ouder bericht is' : 'oudere berichten zijn'} verborgen. Gebruik Alle berichten tonen om ze te zien.`,
   channelSessionMoved: ({ from, to }) => `Sessie van ${from} naar ${to}`,

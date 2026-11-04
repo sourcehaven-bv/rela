@@ -2,7 +2,8 @@
 /**
  * The fold line of a run of collapsed messages in a channel log: one button
  * that says how many messages it stands for and of which types, such as
- * `3 messages: Claim, Progress`.
+ * `3 messages: Claim, Progress`, and how many session notices it holds,
+ * such as `3 messages, 2 session steps: Progress`.
  *
  * The text is the button's name and does not change with the state;
  * `aria-expanded` carries it. `controls` is the id of the list that holds
@@ -15,21 +16,23 @@ import { useMessages } from '../../composables/useMessages'
 
 const props = withDefaults(
   defineProps<{
-    /** How many messages the run shows when expanded. */
+    /** How many messages the run shows when expanded, not counting session notices. */
     count: number
+    /** How many session notices the run shows when expanded. */
+    moves?: number
     /** The type labels of those messages, in first-seen order. */
     labels: string[]
     expanded: boolean
     /** The id of the expanded run's list; ignored while collapsed. */
     controls?: string
   }>(),
-  { controls: undefined },
+  { controls: undefined, moves: 0 },
 )
 
 const emit = defineEmits<{ toggle: [] }>()
 
 const strings = useMessages()
-const text = computed(() => strings.channelFold({ count: props.count, labels: props.labels }))
+const text = computed(() => strings.channelFold({ count: props.count, labels: props.labels, moves: props.moves }))
 </script>
 
 <template>
