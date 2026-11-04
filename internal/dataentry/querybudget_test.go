@@ -654,8 +654,9 @@ func TestQueryBudget_EdgeWarningsAreSizeIndependent(t *testing.T) {
 			}
 			data = append(data, v1.ResourceIdentifier{Type: "ticket", ID: e.ID})
 		}
-		// A peer that does not exist, so the warning path is exercised too.
-		data = append(data, v1.ResourceIdentifier{Type: "ticket", ID: "TKT-9999"})
+		// A peer declared with the wrong type, so the warning path is
+		// exercised too. A missing peer would be refused (DEC-0D8UZX3).
+		data[0].Type = "feature"
 		// A second peer type, so the pin covers one gate round per type.
 		features := []v1.ResourceIdentifier{{Type: "feature", ID: "F1"}, {Type: "feature", ID: "F2"}}
 		desired := map[string]v1.RelationsUpdate{
@@ -666,8 +667,8 @@ func TestQueryBudget_EdgeWarningsAreSizeIndependent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(ws) != 1 || ws[0].Code != "target_not_found" {
-			t.Fatalf("warnings = %+v, want one target_not_found", ws)
+		if len(ws) != 1 || ws[0].Code != "target_type_mismatch" {
+			t.Fatalf("warnings = %+v, want one target_type_mismatch", ws)
 		}
 	})
 	assertBudget(t, "edge warnings", small, large, edgeWarningsBudget, detail)

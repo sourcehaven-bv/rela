@@ -11,12 +11,23 @@ func (e *RelationNotFoundError) Error() string {
 	return "unknown relation: " + e.Name
 }
 
-// InvalidRelationError is returned when a relation is not valid between two entity types.
+// Codes of an [InvalidRelationError]: which end of the edge has a type the
+// relation does not allow. They are stable, and the data-entry API returns
+// them as its error codes.
+const (
+	CodeSourceTypeNotAllowed = "source_type_not_allowed"
+	CodeTargetTypeNotAllowed = "target_type_not_allowed"
+)
+
+// InvalidRelationError is returned when a relation is not valid between two
+// entity types. Code is [CodeSourceTypeNotAllowed] or
+// [CodeTargetTypeNotAllowed].
 type InvalidRelationError struct {
 	Relation string
 	From     string
 	To       string
 	Message  string
+	Code     string
 }
 
 func (e *InvalidRelationError) Error() string {
