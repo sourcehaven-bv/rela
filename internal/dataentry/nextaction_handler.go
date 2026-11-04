@@ -377,6 +377,7 @@ func (a *App) nextActionEngine(
 		nextaction.WithDisplayWorld(displayWorld),
 		nextaction.WithSourceFilter(page.keeps),
 		nextaction.WithCurrent(current),
+		nextaction.WithValueFormatter(nextActionValueFormatter(st.Meta)),
 	}
 	var (
 		lookup nextaction.MatcherFunc

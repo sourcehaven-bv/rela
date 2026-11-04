@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
@@ -517,4 +518,51 @@ func (g gatedNextActionMatcher) Prefilters(ctx context.Context, meta *metamodel.
 // MatchAll implements [nextaction.BatchMatcher].
 func (g gatedNextActionMatcher) MatchAll(ctx context.Context, es []*entityPkg.Entity) ([]bool, error) {
 	return g.page.MatchAllWith(ctx, es, traversalGateFromContext(ctx).GateTraversal, pageMatch(g.st))
+}
+
+// nextActionValueFormatter renders message values the way the schema
+// describes them: an enum value as its label, a date in its property's
+// `format:` layout. The label rule is the one the metamodel API serves
+// ([toV1PropertyDef]): a custom type's labels win over inline ones.
+func nextActionValueFormatter(meta *metamodel.Metamodel) nextaction.ValueFormatter {
+	return func(entityType, property string, v any) (string, bool) {
+		if meta == nil {
+			return "", false
+		}
+		def, ok := meta.GetEntityDef(entityType)
+		if !ok {
+			return "", false
+		}
+		pd, ok := def.Properties[property]
+		if !ok {
+			return "", false
+		}
+		if t, ok := v.(time.Time); ok && pd.Format != "" {
+			return t.Format(pd.Format), true
+		}
+		labels := pd.Labels
+		if ct, ok := meta.Types[pd.Type]; ok {
+			labels = ct.Labels
+		}
+		if len(labels) == 0 {
+			return "", false
+		}
+		switch t := v.(type) {
+		case string:
+			if l, ok := labels[t]; ok {
+				return l, true
+			}
+		case []any:
+			parts := make([]string, 0, len(t))
+			for _, item := range t {
+				s := nextaction.FormatValue(item)
+				if l, ok := labels[s]; ok {
+					s = l
+				}
+				parts = append(parts, s)
+			}
+			return strings.Join(parts, ", "), true
+		}
+		return "", false
+	}
 }

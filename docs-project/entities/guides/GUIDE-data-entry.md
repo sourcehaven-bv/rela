@@ -3666,7 +3666,7 @@ next_actions:
 | `condition` | Refines `query`'s candidates with a predicate expression — the only place date arithmetic works. See below. |
 | `context` | Instead of `query`: an entity type. The candidate is the entity the page shows, on pages about an entity of that type. See [Where suggestions appear](#where-suggestions-appear). |
 | `count` | Instead of `query`: fires on `"<entity_type> == 0"` — the first-run case. |
-| `suggest` | **Required.** The message. `{property}` interpolates from the candidate; `{id}` is the entity id. |
+| `suggest` | **Required.** The message. `{property}` inserts a stored property of the candidate, and `{id}` its id. Only stored properties exist, so a computed value such as a day count cannot be inserted. An enum value reads as its label. A date reads in the property's `format:`, otherwise as `2026-11-03`, or `2026-11-03 14:05` when it has a time of day. A placeholder that names no value stays as written. |
 | `actions` | The affordances offered. See below. |
 | `cooldown` | How long after being *shown* to stay quiet. Defaults to 24h. On a `context` source: how long "Seen it" hides the suggestion. |
 | `key_props` | Properties that make a re-triggered condition count as **new** — see below. |
@@ -3690,7 +3690,7 @@ next_actions:
     band: blocking
     query: "type:proposal prop:status=sent"
     condition: "days_between(entity.sent_on, today()) >= 11"
-    suggest: "{title} has been out {days} days with no reply. Chase it?"
+    suggest: "{title} was sent on {sent_on} and has had no reply. Chase it?"
 ```
 
 That is the shape `query` alone cannot express: "how long has this been

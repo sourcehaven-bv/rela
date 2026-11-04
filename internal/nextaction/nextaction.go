@@ -201,7 +201,15 @@ type Engine struct {
 	// current identifies the suggestion the reader has on screen. See
 	// [WithCurrent].
 	current *Current
+	// format renders a property value for a message. See [WithValueFormatter].
+	format ValueFormatter
 }
+
+// ValueFormatter renders one property value of an entity for a message, e.g.
+// an enum value as its label. Supplied by the wiring site, which knows the
+// metamodel this package must not import. ok=false falls back to the
+// engine's own rendering ([FormatValue]).
+type ValueFormatter func(entityType, property string, v any) (text string, ok bool)
 
 // Current identifies the suggestion a reader already has on screen, as the
 // client echoes it back: source, entity and variant.
@@ -263,6 +271,13 @@ func WithSourceFilter(keep func(id string, src dataentryconfig.NextActionSource)
 // Nil: accepted, means no suggestion is on screen.
 func WithCurrent(c *Current) Option {
 	return func(e *Engine) { e.current = c }
+}
+
+// WithValueFormatter supplies the schema-aware rendering of message values.
+// Without it a message shows enum values as stored and dates in the
+// [FormatValue] layout.
+func WithValueFormatter(fn ValueFormatter) Option {
+	return func(e *Engine) { e.format = fn }
 }
 
 // WithMatchers supplies the per-source condition matchers. Without it a
@@ -501,7 +516,7 @@ func (e *Engine) eligibleFromSource(
 	sugs := make([]Suggestion, 0, len(cands))
 	keys := make([]userstate.Key, 0, len(cands))
 	for _, c := range cands {
-		sug := buildSuggestion(id, bandID, src, c)
+		sug := buildSuggestion(id, bandID, src, c, e.format)
 		sug.Key.User = user
 		sugs = append(sugs, sug)
 		keys = append(keys, sug.Key)
@@ -674,7 +689,7 @@ func keyString(k userstate.Key) string {
 
 // buildSuggestion assembles the suggestion for one candidate.
 func buildSuggestion(
-	id, bandID string, src dataentryconfig.NextActionSource, c Candidate,
+	id, bandID string, src dataentryconfig.NextActionSource, c Candidate, format ValueFormatter,
 ) Suggestion {
 	s := Suggestion{
 		Source:  id,
@@ -695,7 +710,7 @@ func buildSuggestion(
 			s.Key.Variant = variantFor(src.KeyProps, c.Entity)
 		}
 	}
-	s.Message = interpolate(src.Suggest, c.Entity)
+	s.Message = interpolate(src.Suggest, c.Entity, format)
 	return s
 }
 
@@ -716,7 +731,7 @@ func variantFor(props []string, e *entity.Entity) string {
 // placeholder is left verbatim: silently emptying it would turn a config typo
 // into a message with a hole in it, which reads as a product bug rather than
 // as the operator error it is.
-func interpolate(tmpl string, e *entity.Entity) string {
+func interpolate(tmpl string, e *entity.Entity, format ValueFormatter) string {
 	if e == nil || !strings.ContainsRune(tmpl, '{') {
 		return tmpl
 	}
@@ -736,7 +751,7 @@ func interpolate(tmpl string, e *entity.Entity) string {
 		closeIdx += open
 		name := rest[open+1 : closeIdx]
 		b.WriteString(rest[:open])
-		if v := propString(e, name); v != "" {
+		if v := messageValue(e, name, format); v != "" {
 			b.WriteString(v)
 		} else {
 			b.WriteString(rest[open : closeIdx+1])
@@ -761,6 +776,58 @@ func propString(e *entity.Entity, name string) string {
 		return s
 	}
 	return fmt.Sprint(v)
+}
+
+// messageValue renders one placeholder for a message: through format when it
+// knows the property, otherwise through [FormatValue]. Keys keep using
+// [propString], so a change in how a value reads never resets a deferral.
+func messageValue(e *entity.Entity, name string, format ValueFormatter) string {
+	if name == "id" {
+		return e.ID
+	}
+	v, ok := e.Properties[name]
+	if !ok || v == nil {
+		return ""
+	}
+	if format != nil {
+		if text, ok := format(e.Type, name, v); ok {
+			return text
+		}
+	}
+	return FormatValue(v)
+}
+
+// FormatValue renders a property value as message text. A date with no time
+// of day reads as 2006-01-02, any other time as 2006-01-02 15:04; Go's
+// default rendering ("2026-11-03 00:00:00 +0000 UTC") is never shown. A list
+// joins its items with ", ".
+func FormatValue(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return t
+	case time.Time:
+		if t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 && t.Nanosecond() == 0 {
+			return t.Format(time.DateOnly)
+		}
+		return t.Format("2006-01-02 15:04")
+	case *time.Time:
+		if t == nil {
+			return ""
+		}
+		return FormatValue(*t)
+	case []any:
+		parts := make([]string, 0, len(t))
+		for _, item := range t {
+			parts = append(parts, FormatValue(item))
+		}
+		return strings.Join(parts, ", ")
+	case []string:
+		return strings.Join(t, ", ")
+	default:
+		return fmt.Sprint(t)
+	}
 }
 
 // MarkShown records that a suggestion was surfaced, starting its cooldown.
