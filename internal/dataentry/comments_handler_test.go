@@ -392,9 +392,11 @@ func TestComments_SchemaExposesCommentable(t *testing.T) {
 		app.handleV1Schema(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
 		require.Equal(t, http.StatusOK, rec.Code)
 
-		var raw map[string]map[string]map[string]any
+		var raw struct {
+			Entities map[string]map[string]any `json:"entities"`
+		}
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw))
-		for name, et := range raw["entities"] {
+		for name, et := range raw.Entities {
 			_, present := et["commentable"]
 			require.False(t, present, "type %q leaked a commentable key with no comments block", name)
 		}

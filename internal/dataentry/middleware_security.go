@@ -289,6 +289,15 @@ var nonBrowserExemptPrefixes = []string{
 	// cross-origin request keeps the same-origin check. No trailing slash, so
 	// that GET /api/v1/_leases is covered too.
 	leasesPath,
+	// The atomic batch create (TKT-BO8CYG9). It writes what POST on the data
+	// routes writes, which are exempt through isNonBrowserExemptV1Path, and
+	// it is meant for scripts and agents. Like those routes, and unlike the
+	// MCP entry above, it is exempt in every identity mode: it rides the
+	// same write gates, and creates no requirement of its own. The same
+	// no-cookie, no-Origin, no-Sec-Fetch shape is required, so a browser
+	// request keeps the same-origin check. The match is a prefix, as for
+	// every entry here; no route other than this one starts with it.
+	batchPath,
 	// NOTE: the /api/v1 data + schema routes are also non-browser exempt, but
 	// they can't be a static prefix ({plural} varies per type), so they're
 	// matched by isNonBrowserExemptV1Path (folded into isCSRFExempt) rather

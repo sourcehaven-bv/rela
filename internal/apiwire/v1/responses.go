@@ -520,6 +520,18 @@ type Schema struct {
 	// object cannot carry. A world switcher lists them in this order. Absent
 	// when the schema declares no worlds.
 	WorldOrder []string `json:"world_order,omitempty"`
+	// Capabilities lists what this deployment's storage supports. Always
+	// present.
+	Capabilities Capabilities `json:"capabilities"`
+}
+
+// Capabilities lists optional API surfaces whose availability depends on
+// the deployment's storage, decided once when the server is wired.
+type Capabilities struct {
+	// AtomicBatch reports that POST /api/v1/_batch is served: the store
+	// rolls a failed transaction back. False on the markdown-file and
+	// memory stores, where that endpoint answers 501.
+	AtomicBatch bool `json:"atomic_batch"`
 }
 
 // World is the JSON representation of one declared world — a named
@@ -928,6 +940,13 @@ type Error struct {
 	// conversion created before a later step failed, so a client can point
 	// at it instead of converting again into a duplicate.
 	EntityID string `json:"entity_id,omitempty"`
+	// Operation names the operation of a POST /api/v1/_batch request the
+	// error is about. Absent for an error about the request as a whole.
+	Operation *ErrorOperation `json:"operation,omitempty"`
+	// RuleKind and RuleID are set on a 403 of a batch request: the kind of
+	// gate that refused (acl, affordance, ...) and the rule's id.
+	RuleKind string `json:"rule_kind,omitempty"`
+	RuleID   string `json:"rule_id,omitempty"`
 }
 
 // FieldError represents a validation error on a specific field.

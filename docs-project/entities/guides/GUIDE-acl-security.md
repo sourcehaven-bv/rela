@@ -1737,6 +1737,27 @@ take them.
   own leases, which a cross-site page cannot read. A request with a cookie
   and a foreign origin is still refused.
 
+## Batch create
+
+`POST /api/v1/_batch` creates several entities and their relations in one
+store transaction (TKT-BO8CYG9, DEC-ODU65KR). It is served only on a store
+that rolls back (SQLite, PostgreSQL); other stores answer 501.
+
+- **Every operation is checked as the caller, before the transaction.** Each
+  entity passes the create ACL and the create field gate, and each relation
+  the relation gate, exactly as a single create does. One refusal fails the
+  whole batch and writes nothing.
+- **A hidden end is a missing end.** An existing relation end the caller
+  cannot read answers 422 `target_not_found`, with the same body as an id
+  that does not exist.
+- **A row the caller may create but not read is redacted.** The response
+  gives its id and ref only, not its content.
+- **Audit and notifications follow the commit.** A rolled-back batch leaves
+  no audit records, no events and no rows. A denied operation is recorded as
+  `denied-write`, as on a single create.
+- **Scripts and agents may call it without a browser origin,** like the data
+  routes. A request with a cookie keeps the same-origin check.
+
 ## Presence
 
 Presence shows who has an entity open (TKT-MHXH87). A client joins by

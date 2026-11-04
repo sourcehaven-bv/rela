@@ -166,8 +166,11 @@ type DBTX interface {
 // +1 exported / +1 method (TKT-J6GISC3): Successors, the optional
 // store.RetiredIDs capability. Its helpers are free functions in retired.go.
 //
-//plimsoll:max-exported-methods=47
-//plimsoll:max-methods=57
+// +1 exported / +1 method: TxRollsBack, the optional store.TxRollback
+// capability (TKT-ZMPDZ3R).
+//
+//plimsoll:max-exported-methods=48
+//plimsoll:max-methods=58
 type Store struct {
 	db           DBTX
 	searchTitles SearchTitles

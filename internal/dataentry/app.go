@@ -407,6 +407,8 @@ type App struct {
 	// write owns the entity/relation CRUD + clone + conflict-resolve write
 	// nucleus (TKT-R68TV8 M5.4).
 	write *writeHandler
+	// batch owns POST /api/v1/_batch, the atomic multi-create (TKT-BO8CYG9).
+	batch *batchHandler
 	// views owns the read-only view-assembly surface: view traversal,
 	// section building, and the /_views, /_sidepanel, /_sidebar endpoints
 	// (TKT-R68TV8). This surface never mutates.
@@ -1579,6 +1581,7 @@ func NewApp(
 		paths:            paths,
 		provision:        newProvisionSeam(app),
 	}
+	app.batch = newBatchHandler(app, st, em)
 
 	// Nudge the operator to make a conscious virus-scan choice: if the
 	// metamodel has file properties with no scan command configured (and no

@@ -14,6 +14,10 @@ export interface Schema {
   // The declared worlds in schema.yaml order, which a JSON object cannot
   // carry. Absent when the schema declares no worlds.
   world_order?: string[]
+  // What the deployment's storage supports. atomic_batch: POST
+  // /api/v1/_batch is served (the store rolls a failed write back). The
+  // server always sends it; it is optional for a server too old to.
+  capabilities?: { atomic_batch: boolean }
 }
 
 // WorldInfo mirrors v1.World. See internal/dataentry/schemaworlds.go.

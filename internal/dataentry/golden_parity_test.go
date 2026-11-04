@@ -457,6 +457,9 @@ var goldenWrites = []goldenEndpoint{
 		body: `{"lease_id":"0123456789abcdef0123456789abcdef"}`},
 	{slug: "lease-release", method: http.MethodPost, path: "/api/v1/_leases/release",
 		body: `{"lease_id":"0123456789abcdef0123456789abcdef"}`},
+	// The corpus store does not roll back, so every caller gets the 501.
+	{slug: "batch", method: http.MethodPost, path: "/api/v1/_batch",
+		body: `{"entities":[{"type":"ticket","properties":{"title":"x"}}]}`},
 	// No event stream is open, so every caller gets the unknown-stream answer.
 	{slug: "live-subscriptions", method: http.MethodPut, path: "/api/v1/_events/nope/subscriptions",
 		body: `{"subscriptions":[{"key":"k","path":"/api/v1/tickets/TKT-1"}]}`},

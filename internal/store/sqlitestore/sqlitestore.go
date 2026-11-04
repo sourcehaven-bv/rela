@@ -148,8 +148,11 @@ func parseTime(s string) (time.Time, error) { return time.Parse(time.RFC3339Nano
 // +1 exported / +1 method (TKT-J6GISC3): Successors, the optional
 // store.RetiredIDs capability. Its helpers are free functions in retired.go.
 //
-//plimsoll:max-methods=57
-//plimsoll:max-exported-methods=39
+// +1 exported / +1 method: TxRollsBack, the optional store.TxRollback
+// capability (TKT-ZMPDZ3R).
+//
+//plimsoll:max-methods=58
+//plimsoll:max-exported-methods=40
 type Store struct {
 	db *sql.DB
 

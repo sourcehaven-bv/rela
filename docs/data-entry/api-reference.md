@@ -533,10 +533,11 @@ the same edge are not failures: the reconciler switches between update and
 create when it finds the edge in the other state, and answers 409 `conflict`
 only if the edge keeps flipping under it.
 
-The store interface (internal/store/store.go) intentionally has no
-transaction primitive — adding one would fight the pluggable-backends goal
-(FEAT-CO4YP). For a local-first tool with single-writer-typical workloads,
-the documented gap is acceptable.
+A PATCH does not use a store transaction, so this gap holds on every
+backend. For a local-first tool with single-writer-typical workloads, the
+documented gap is acceptable. To create several entities and their relations
+all or nothing, use [`POST /api/v1/_batch`](#batch-create-_batch) on a
+backend that rolls back.
 
 ## No-op suppression
 
@@ -1084,8 +1085,9 @@ that's expected and documents the scope.
   (surfaced via `analyze`), never enforced at write time.
 - **Granular relations diff verbs** (à la GraphQL `connect`/`disconnect`).
   v1 is replacement-only at the list level + upsert at the per-edge level.
-- **Cross-entity atomic transactions.** A single PATCH targets one entity;
-  there is no batch / transaction surface across entities.
+- **Cross-entity atomic updates.** A single PATCH targets one entity. The
+  only atomic surface across entities is
+  [`POST /api/v1/_batch`](#batch-create-_batch), and it only creates.
 
 ## Affordances: `_fields` and `_relations` (TKT-G7N5)
 
@@ -1894,3 +1896,110 @@ names the error.
 A claim on an entity you already hold is `lease_held` naming you: renew
 instead. Release answers 204 whether or not the lease existed, so it says
 nothing about other people's leases.
+
+## Batch create (`/_batch`)
+
+`POST /api/v1/_batch` creates several entities and the relations between them
+in one store transaction (TKT-BO8CYG9, DEC-ODU65KR). Either everything is
+written, or nothing is. It only creates: it does not update or delete.
+
+### Availability
+
+Only a store that rolls back a failed transaction serves the endpoint: the
+SQLite and PostgreSQL builds. The markdown-file and memory stores answer 501
+`atomic_batch_unsupported`, because a failure there would leave part of the
+batch written. `GET /api/v1/_schema` says which applies:
+
+```json
+{ "capabilities": { "atomic_batch": true } }
+```
+
+The value is fixed when the server starts.
+
+### Request
+
+```json
+{
+  "entities": [
+    { "ref": "t", "type": "ticket", "properties": { "title": "Fix login" } },
+    { "ref": "f", "type": "feature", "properties": { "title": "Login" } }
+  ],
+  "relations": [
+    { "from": { "ref": "t" }, "type": "implements", "to": { "ref": "f" } },
+    { "from": { "id": "TKT-001" }, "type": "blocks", "to": { "ref": "t" } }
+  ]
+}
+```
+
+- An entity has a `type`, and optionally `ref`, `properties`, `content`,
+  `face`, `prefix`, and `id` (only for a type with manual ids). The server
+  assigns every other id.
+- `ref` is a name for the entity within this request. It must be unique.
+- A relation end is either `{"ref": ...}`, an entity of this request, or
+  `{"id": ...}`, an existing entity. A `from` that is an existing entity may
+  add `face` for a content-scoped relation. A relation carries no properties.
+- At most 100 entities and relations together, and a body of at most 1 MiB.
+  Both limits are fixed.
+- Unknown fields are refused. The request cannot skip automations.
+
+### Checks
+
+Every operation is checked as the caller before anything is written, with the
+checks a single create runs: create access, the field gates, the relation
+gates, the schema, and whether the relation type allows the two entity types.
+One refusal fails the whole batch.
+
+An existing end you cannot read is treated exactly like one that does not
+exist: both answer 422 `target_not_found` with the same body.
+
+### Response
+
+200 lists every created entity and relation in request order:
+
+```json
+{
+  "entities": [
+    { "index": 0, "ref": "t", "id": "TKT-7Q2M", "entity": { "...": "..." } },
+    { "index": 1, "ref": "f", "id": "FEAT-K3P9", "entity": { "...": "..." } }
+  ],
+  "relations": [
+    { "index": 0, "from": "TKT-7Q2M", "type": "implements", "to": "FEAT-K3P9" },
+    { "index": 1, "from": "TKT-001", "type": "blocks", "to": "TKT-7Q2M" }
+  ]
+}
+```
+
+- `entity` is the created entity with the properties you may read, as a GET
+  shows them. It carries no relations, rollups or affordances. It is absent
+  when you may create that type but not read it.
+- `warnings` lists soft validation findings, as on a single create. Like
+  `entity`, it is absent when you may not read the row.
+- Automations, cascades, notifications and the audit log run after the
+  commit. They are not part of the transaction. When one fails, the entity
+  carries `follow_up_error: "follow_up_failed"`. The batch stays committed.
+
+### Errors
+
+Errors are `application/problem+json`. `operation` names the operation the
+error is about, as `{kind: "entity" | "relation", index, ref?}`. Where a field
+is at fault, `errors[0].source.pointer` is a JSON pointer into the request,
+for example `/relations/1/to/ref`.
+
+| Status | Error | When |
+| --- | --- | --- |
+| 400 | `invalid_json` | bad JSON, an unknown field, or data after the JSON object |
+| 400 | `batch_invalid` | no operations or more than 100, a duplicate or unknown `ref`, an end with both or neither of `ref` and `id`, or a `face` where none is allowed |
+| 403 | `forbidden` | an operation is not allowed; `rule_kind` and `rule_id` name the rule |
+| 409 | `conflict` | an `id` is already taken, or the batch creates the same relation twice |
+| 413 | `body_too_large` | the body is over 1 MiB |
+| 422 | `target_not_found` | an existing end does not exist or you cannot read it |
+| 422 | `validation_failed` | an unknown type, a bad face or id option, or a schema violation |
+| 500 | `batch_failed` | a store fault; nothing was written, so the batch can be retried |
+| 422 | `face_required` | a faced type needs a face |
+| 422 | `source_type_not_allowed`, `target_type_not_allowed` | the relation type does not allow that entity type at that end |
+| 501 | `atomic_batch_unsupported` | the store cannot roll back |
+
+Like the data routes, the endpoint accepts a request without a browser origin
+and without a cookie, so a script or agent can call it. A request with a
+cookie needs a same-origin `Origin`. The route is in the OpenAPI spec. There is
+no MCP tool for it.

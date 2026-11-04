@@ -234,6 +234,27 @@ type Transactor interface {
 	Tx(ctx context.Context, fn func(Store) error) error
 }
 
+// TxRollback is the optional capability of a store whose [Transactor.Tx]
+// rolls back: an error from fn leaves none of fn's writes and delivers none
+// of its events. pgstore and sqlitestore have it; fsstore and memstore keep
+// the writes made before the error and do not.
+//
+// It is a fixed property of the backend, so a caller may decide once, at
+// wiring, whether to offer an all-or-nothing write.
+type TxRollback interface {
+	// TxRollsBack reports that a failed Tx leaves nothing written.
+	TxRollsBack() bool
+}
+
+// TxRollsBack reports whether st, with its [Decorator] layers removed, has
+// [TxRollback].
+//
+// Nil: accepted; a nil st does not roll back.
+func TxRollsBack(st Store) bool {
+	r, ok := Innermost(st).(TxRollback)
+	return ok && r.TxRollsBack()
+}
+
 // Freshness exposes the store's overall "last modified" timestamp, covering
 // entity and relation writes. Consumers maintaining derived state (search
 // indexes, graph caches, projections) compare this against their own
