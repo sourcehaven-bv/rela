@@ -164,7 +164,7 @@ func (e *mentionEnv) serve(t *testing.T, user, method, path, body string) (*http
 	}
 	ctx := e.ctx(t, user)
 	if strings.HasPrefix(path, inboxPath) {
-		e.app.channels.serveInbox(rec, req.WithContext(ctx), e.app.State().Meta)
+		e.app.channels.handleV1Inbox(rec, req.WithContext(ctx), e.app.State().Meta)
 	} else {
 		e.app.handleV1DynamicRoutes(rec, req.WithContext(ctx))
 	}
