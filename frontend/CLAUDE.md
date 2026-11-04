@@ -355,8 +355,9 @@ every field it writes, and merges on a 412 (TKT-2VDVHF; API contract in
   a value without showing it with an error, and that no conflict is
   reported against a tab's own write.
 - **A snapshot without `_versions` saves unguarded** until its first save
-  returns tokens. List-section rows are in that state today (TKT-MK9NJB), and
-  so is every incoming relation list (TKT-E9WXPU).
+  returns tokens. List-section and editable table rows are in that state today
+  (TKT-MK9NJB, TKT-4Q2EIVZ), and so is every incoming relation list
+  (TKT-E9WXPU).
 - **A 412 is never read as the client's own write** (BUG-04V034W). Tokens
   are derived from the value, so a value someone else writes back to one this
   client saved has the same token as that save; resending on it would

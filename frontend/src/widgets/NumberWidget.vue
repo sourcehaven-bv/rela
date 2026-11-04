@@ -14,6 +14,7 @@ import type { WidgetProps } from './types'
 import { useStringValue } from './useStringValue'
 import { useSchemaStore } from '@/stores/schema'
 import { formatDisplayNumber } from '@/utils/format'
+import { isNumericProperty } from '@/types/schema'
 
 const props = defineProps<WidgetProps>()
 const schemaStore = useSchemaStore()
@@ -33,16 +34,19 @@ const displayValue = computed(() => {
   return formatDisplayNumber(props.modelValue, def) ?? stringValue.value
 })
 
-// An integer's declared range (TKT-BRAM1A) bounds the input's stepper. Read
-// from the def, not the widget's `max` prop, which is a file's attachment
-// cap. An out-of-range value is a warning, not an error (DEC-HWZHA): the
-// server saves it and warns. Native min/max would instead make the browser
-// refuse to submit the form, so they are set only while the value is empty
-// or in range, where they cannot fail.
+const isDecimal = computed(() => props.propertyDef?.type === 'decimal')
+
+// An integer's or decimal's declared range (TKT-BRAM1A) bounds the input's
+// stepper. Read from the def, not the widget's `max` prop, which is a file's
+// attachment cap. An out-of-range value is a warning, not an error
+// (DEC-HWZHA): the server saves it and warns. Native min/max would instead
+// make the browser refuse to submit the form, so they are set only while the
+// value is empty or in range, where they cannot fail. A JavaScript number is
+// close enough for this check; the server's check is exact.
 const bounds = computed(() => {
   const none = { min: undefined, max: undefined }
   const def = props.propertyDef
-  if (def?.type !== 'integer') return none
+  if (!def || !isNumericProperty(def)) return none
   const raw = props.modelValue
   const n = typeof raw === 'number' ? raw : raw == null || raw === '' ? undefined : Number(raw)
   if (
@@ -54,8 +58,31 @@ const bounds = computed(() => {
   return { min: def.min, max: def.max }
 })
 
+// A decimal's stepper moves by its smallest declared digit, so `scale: 2`
+// steps by 0.01. Without a scale any number of digits is valid ("any"); the
+// browser's default step of 1 would mark 12.5 invalid. A value with more
+// digits than the scale is a warning too (DEC-HWZHA), so like `bounds` the
+// step is dropped while it would make the browser refuse to submit.
+const step = computed(() => {
+  if (!isDecimal.value) return undefined
+  const scale = props.propertyDef?.scale
+  if (scale === undefined || fractionDigits(props.modelValue) > scale) return 'any'
+  return scale === 0 ? '1' : `0.${'0'.repeat(scale - 1)}1`
+})
+
+function fractionDigits(value: unknown): number {
+  const point = String(value ?? '').indexOf('.')
+  return point < 0 ? 0 : String(value).length - point - 1
+}
+
 function onInput(event: Event) {
   const raw = (event.target as HTMLInputElement).value
+  // A decimal is emitted as the text typed, never as a JavaScript number:
+  // "12.50" keeps its trailing zero and 0.1 stays exact (TKT-DTUAG3U).
+  if (isDecimal.value) {
+    emit('update:modelValue', raw)
+    return
+  }
   const num = parseInt(raw, 10)
   // Preserve FieldRenderer behaviour: emit the parsed integer, or the
   // raw string when it isn't a valid integer (e.g. mid-typing "-").
@@ -75,6 +102,7 @@ function onInput(event: Event) {
     :value="stringValue"
     :min="bounds.min"
     :max="bounds.max"
+    :step="step"
     :placeholder="placeholder"
     :disabled="disabled"
     @input="onInput"

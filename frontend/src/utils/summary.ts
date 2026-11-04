@@ -4,16 +4,25 @@
  * The kanban column header is the first user. The spec type (`Summary`) is
  * shared so that list footers, group_by headers and dashboard cards can use
  * the same function later. The server validates the spec, so this code
- * trusts its shape: count has no property, sum and avg aggregate an integer,
- * min and max an integer, date or datetime.
+ * trusts its shape: count has no property, sum and avg aggregate an integer
+ * or decimal, min and max an integer, decimal, date or datetime.
  */
 import type { PropertyDef, Summary, SummaryFunction } from '@/types'
 import { t } from '@/i18n'
+import {
+  compareDecimals,
+  decimalText,
+  divideDecimal,
+  parseDecimal,
+  sumDecimals,
+  type Decimal,
+} from './decimal'
 import {
   browserTimeZone,
   formatAmount,
   formatDate,
   formatDatetime,
+  formatDecimal,
   formatDisplayNumber,
   numericValue,
 } from './format'
@@ -75,6 +84,8 @@ function summaryValue(
     return (propDef.type === 'date' ? formatDate(pick) : formatDatetime(pick, tz)) ?? pick
   }
 
+  if (propDef?.type === 'decimal') return decimalSummary(spec.function, raw, propDef)
+
   const numbers = raw.map(numericValue).filter((n): n is number => n !== undefined)
   let result: number
   switch (spec.function) {
@@ -94,6 +105,40 @@ function summaryValue(
       return NO_VALUE
   }
   return formatDisplayNumber(result, propDef) ?? formatAmount(result)
+}
+
+// The extra digits an average of decimals keeps beyond its inputs' scale,
+// so the average of 1 and 2 reads 1.50 rather than rounding to 2.
+const AVG_EXTRA_DIGITS = 2
+
+// A summary over a decimal property, computed exactly (TKT-DTUAG3U). A
+// JavaScript number would turn a column of prices into 0.30000000000000004.
+function decimalSummary(fn: SummaryFunction, raw: unknown[], propDef: PropertyDef): string {
+  const values = raw.map(parseDecimal).filter((d): d is Decimal => d !== undefined)
+  let result: Decimal
+  switch (fn) {
+    case 'sum':
+      result = sumDecimals(values)
+      break
+    case 'avg': {
+      if (values.length === 0) return NO_VALUE
+      const total = sumDecimals(values)
+      const scale = propDef.scale ?? total.scale + AVG_EXTRA_DIGITS
+      result = divideDecimal(total, values.length, scale)
+      break
+    }
+    case 'min':
+    case 'max': {
+      if (values.length === 0) return NO_VALUE
+      const sign = fn === 'min' ? -1 : 1
+      result = values.reduce((best, v) => (compareDecimals(v, best) * sign > 0 ? v : best))
+      break
+    }
+    default:
+      return NO_VALUE
+  }
+  const text = decimalText(result)
+  return formatDisplayNumber(text, propDef) ?? formatDecimal(text, undefined, propDef.scale) ?? text
 }
 
 // The earliest or latest of the date values, as the stored string so the

@@ -433,6 +433,36 @@ func TestQueryBudget_ViewSectionCreateAddsNoStoreReads(t *testing.T) {
 	assertBudget(t, "view section create", small, large, viewSectionBudget, detail)
 }
 
+// The same view with an editable table column (TKT-4Q2EIVZ). Each row then
+// carries its values and write verdicts, which come from verdicts primed once
+// per section, so the read count must not move from the plain view.
+func TestQueryBudget_ViewEditableTableAddsNoStoreReads(t *testing.T) {
+	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+		t.Helper()
+		view := app.State().Cfg.Views["ticket"]
+		sections := append([]dataentryconfig.ViewSection(nil), view.Sections...)
+		cols := append([]dataentryconfig.ListColumn(nil), sections[0].Columns...)
+		for i := range cols {
+			if cols[i].Property != "" && cols[i].Link == "" {
+				cols[i].Render = dataentryconfig.RenderInput
+				break
+			}
+		}
+		sections[0].Columns = cols
+		view.Sections = sections
+		app.State().Cfg.Views["ticket"] = view
+
+		rec := viewsAs(ctx, t, app, d, "ticket", "TKT-0001")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("view: %d %s", rec.Code, rec.Body)
+		}
+		if !strings.Contains(rec.Body.String(), `"_props"`) {
+			t.Fatalf("no editable row data, so this budget proves nothing: %s", rec.Body)
+		}
+	})
+	assertBudget(t, "view editable table", small, large, viewSectionBudget, detail)
+}
+
 // A structured search (the dashboard card shape). Before batching: 2 +
 // 6×hits reads from the per-hit affordance membership walks.
 func TestQueryBudget_SearchIsSizeIndependent(t *testing.T) {

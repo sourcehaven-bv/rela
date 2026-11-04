@@ -1,6 +1,8 @@
 package testutil
 
 import (
+	"fmt"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -182,6 +184,9 @@ func (b *EntityBuilder) generatePropertyValue(_ string, prop metamodel.PropertyD
 		return RandomString()
 	case metamodel.PropertyTypeInteger:
 		return RandomInt(1, 100)
+	case metamodel.PropertyTypeDecimal:
+		const maxCents = 99
+		return fmt.Sprintf("%d.%02d", RandomInt(1, 100), RandomInt(0, maxCents))
 	case metamodel.PropertyTypeBoolean:
 		return RandomBool()
 	case metamodel.PropertyTypeDate:

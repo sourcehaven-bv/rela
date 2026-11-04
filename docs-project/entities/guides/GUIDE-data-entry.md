@@ -2641,6 +2641,7 @@ sections:
 | `hide_empty`    | bool   | Leave the section out when the collection is empty (see below) |
 | `link`          | string | `detail` links entity titles to their detail pages      |
 | `create`        | map    | Offer a "create related entity" button (see below)      |
+| `totals`        | list   | Entry properties shown under the table (`table` mode; see Editable table cells) |
 
 Each entry under `fields:` takes:
 
@@ -2906,6 +2907,69 @@ A field belonging to a state machine renders its transition control instead of
 an ordinary widget when `render: input`; on `render: display` it renders the
 plain value.
 
+### Editable table cells and totals
+
+A `display: table` section can let readers edit some of its columns in place.
+Set `render: input` on each column that should edit:
+
+```yaml
+sections:
+  - heading: Quote lines
+    source: lines
+    display: table
+    columns:
+      - property: description
+        render: input
+      - property: quantity
+        render: input
+      - property: unit_price
+        render: input
+      - property: line_total     # read-only: no render
+    totals:
+      - property: subtotal
+      - property: vat
+        label: VAT
+      - property: total
+        emphasis: true
+```
+
+Each editable cell saves on its own, like a field in a properties section. The
+save indicator shows in the row's last cell, beside the edit button.
+
+Rules worth knowing:
+
+- **Per column only.** A section's `render:` does not apply to table columns.
+  Each column that should edit says `render: input` itself.
+- **The ACL still decides.** As with fields, `render: input` cannot grant a
+  write. A cell the reader may not write shows its value read-only.
+- **A plain property column only.** Config load refuses `render: input` on a
+  relation, face or busy column, and on a column with `link:`, because a click
+  on the cell would open the link instead of editing it.
+- **Not every property type.** Config load also refuses `render: input` on a
+  `file` property (edit files on the form) and on a computed, roll-up or
+  `external_ref` property, which no reader can write.
+- **Table sections only.** `render:` on a list column, a dashboard card column,
+  a `nested` level or a side-panel section is a config-load error.
+- **Up to 100 rows.** A section with more rows shows every cell read-only. Each
+  editable row keeps its own save state, and a section that long is more often
+  read than edited.
+
+`totals:` shows properties of the view's entry under the table, as a short
+list of label and value. Each entry takes:
+
+| Field      | Type   | Description                                                  |
+| ---------- | ------ | ------------------------------------------------------------ |
+| `property` | string | A property of the view's entry type. Required.                |
+| `label`    | string | Optional. Defaults to the property's label.                   |
+| `emphasis` | bool   | Optional. Marks the line that matters most, such as the total. |
+
+The values are not summed on the page. Use a `rollup:` property on the entry
+type when a total is computed from the rows (see the metamodel guide). After a
+cell in a section with totals saves, the page reloads the view, so a roll-up
+shows its new value. A total the reader may not see, or one that is not set,
+is left out rather than shown as zero. `totals:` is valid on `display: table`
+sections only.
+
 ### Widget Overrides
 
 By default the widget is chosen from the property's declared type — `boolean`
@@ -2924,7 +2988,7 @@ fields:
 | -------------- | ----------------------------- |
 | `text`         | string                        |
 | `textarea`     | string                        |
-| `number`       | integer                       |
+| `number`       | integer, decimal              |
 | `checkbox`     | boolean                       |
 | `date`         | date                          |
 | `datetime`     | datetime                      |
@@ -3651,7 +3715,7 @@ card says that some values are hidden.
 **`table`** shows matching entities as a compact table. It supports the same `columns` format as
 list definitions (with `property`, `label`, `sortable`, `link`), plus `sort` and `limit` to control
 ordering and row count. Cells render as they do in a list: an enum value is a badge with its label
-and style, an integer property with `display: {currency: ...}` is an amount, and a date is formatted
+and style, an integer or decimal property with `display: {currency: ...}` is an amount, and a date is formatted
 in the reader's locale. A table card with several columns usually needs `width: wide` or
 `width: full` (see [Card width](#card-width-width)).
 
@@ -4335,14 +4399,19 @@ board: `value` has `display: {currency: EUR}` in `schema.yaml` (see
 | `property` | string | The property to aggregate. Required for every function except `count`, which counts the cards and takes no property. |
 | `label`    | string | Optional. Text before the value. Defaults to "Count", "Total", "Average", "Minimum" or "Maximum". |
 
-`sum` and `avg` need a single-valued `integer` property. `min` and `max`
-also accept a `date` or `datetime` property, and show the earliest or latest
+`sum` and `avg` need a single-valued `integer` or `decimal` property. `min`
+and `max` also accept a `date` or `datetime` property, and show the earliest or latest
 date. Config load checks this, and reports an unknown function, a missing
 property, or a property on `count`.
 
 A value is formatted the way the property is formatted everywhere else: a
 currency property shows as money, a date as a date. Numbers use the format
 of the reader's browser language. A whole number shows no decimals.
+
+A `decimal` property is summed exactly, without the rounding errors of binary
+numbers: 0.10 plus 0.20 is 0.30. A sum shows as many digits as the value with
+the most. An average keeps two more digits than its values, or the property's
+`scale:` when it declares one, and rounds half away from zero.
 
 The summaries cover the cards on the board: the cards the reader may see,
 after the board's filters. A card without a value adds nothing to `sum`,
@@ -4512,7 +4581,7 @@ card:
 | `show_label` | Optional. Default `true`.                                                    |
 
 The value renders as the property renders elsewhere. An enum shows as a badge
-in the colour from its `styles:` entry, an integer with
+in the colour from its `styles:` entry, an integer or decimal with
 `display: {currency: EUR}` shows as an amount, and a date is formatted. Plain
 text values are separated by commas.
 

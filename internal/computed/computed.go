@@ -216,6 +216,13 @@ func materialize(v predicate.Value, def *metamodel.PropertyDef) (any, error) {
 		return x.String(), nil
 	case predicate.Int:
 		return x.Int64(), nil
+	case predicate.Decimal:
+		// Stored as decimal text, like any other decimal value.
+		text, ok := x.Text()
+		if !ok {
+			return nil, fmt.Errorf("decimal result %s has no finite decimal form", x.Rat().RatString())
+		}
+		return text, nil
 	case predicate.Bool:
 		return x.Bool(), nil
 	case predicate.Date:

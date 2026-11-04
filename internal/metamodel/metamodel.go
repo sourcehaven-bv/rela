@@ -131,6 +131,11 @@ func StringShaped(m *Metamodel, pd PropertyDef) bool {
 		// query scopes and derived-index inference all refuse it here
 		// (TKT-SM20FG D7). Its one store predicate is PropKeyEqual.
 		return false
+	case PropertyTypeDecimal:
+		// Stored as text, but "9" < "10" and "12.5" == "12.50" only hold
+		// numerically, so a byte comparison in SQL would be wrong. Decimal
+		// filters and sorts stay on the Go path (TKT-DTUAG3U).
+		return false
 	}
 	if m == nil {
 		return false

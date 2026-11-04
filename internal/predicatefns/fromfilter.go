@@ -83,7 +83,7 @@ func FromFilter(meta *metamodel.Metamodel, def *metamodel.EntityDef, f *filter.F
 // guard ending in " and " ready to prefix the comparison.
 func presentGuard(acc string, prop metamodel.PropertyDef) string {
 	switch prop.Type {
-	case metamodel.PropertyTypeInteger, metamodel.PropertyTypeBoolean,
+	case metamodel.PropertyTypeInteger, metamodel.PropertyTypeDecimal, metamodel.PropertyTypeBoolean,
 		metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime:
 		return acc + " ~= nil and "
 	default:
@@ -176,6 +176,8 @@ func fromFilterGlob(acc, guard string, f *filter.Filter) (string, error) {
 //   - Int    -> bare integer number literal (validated here; a
 //     non-integer value is a transpile error, matching filter which
 //     rejects a non-integer against an integer field).
+//   - Decimal -> a Lua string literal, validated here; predicate
+//     coerces it to an exact Decimal at compile.
 //   - Bool   -> true / false keyword (non-bool value is a transpile error).
 //   - Date   -> a Lua string literal; predicate coerces it to a Date at
 //     compile against the field layout. An unparseable date is caught
@@ -189,6 +191,13 @@ func typedLiteral(prop metamodel.PropertyDef, value string) (string, error) {
 			return "", fmt.Errorf("predicatefns: %q is not an integer for an integer property", value)
 		}
 		return strconv.FormatInt(n, 10), nil
+	case metamodel.PropertyTypeDecimal:
+		// A string literal keeps the value exact; predicate coerces it to
+		// a Decimal at compile.
+		if _, _, err := metamodel.ParseDecimal(value); err != nil {
+			return "", fmt.Errorf("predicatefns: %q is not a decimal for a decimal property", value)
+		}
+		return luaStringLiteral(value), nil
 	case metamodel.PropertyTypeBoolean:
 		switch value {
 		case "true", "false":
