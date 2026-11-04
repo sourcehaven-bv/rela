@@ -8,6 +8,7 @@ import type { PropertyDef, EntityType } from '@/types'
 import { parseExternalRef } from './externalRef'
 import { fileRefNames } from './fileRefs'
 import { intlLocale } from '@/i18n/locale'
+import { decimalText, parseDecimal } from './decimal'
 import { t } from '@/i18n'
 
 export const DATE_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
@@ -97,9 +98,9 @@ export function numericValue(value: unknown): number | undefined {
 /**
  * A property value in the property's display format, or undefined when the
  * property has none or the value is not a number. Today the only format is
- * `display: {currency}` on an integer property (TKT-SVLQQ6), so 3500 reads
- * "€ 3.500" for EUR in nl-NL. Every surface that renders a value for reading
- * goes through this; inputs stay plain numbers.
+ * `display: {currency}` on an integer or decimal property (TKT-SVLQQ6,
+ * TKT-DTUAG3U), so 3500 reads "€ 3.500" for EUR in nl-NL. Every surface that
+ * renders a value for reading goes through this; inputs stay plain numbers.
  */
 export function formatDisplayNumber(
   value: unknown,
@@ -107,9 +108,38 @@ export function formatDisplayNumber(
   locale?: string
 ): string | undefined {
   const currency = propDef?.display?.currency
-  if (!currency || propDef?.type !== 'integer') return undefined
+  if (!currency) return undefined
+  if (propDef?.type === 'decimal') return formatDecimal(value, currency, propDef.scale, locale)
+  if (propDef?.type !== 'integer') return undefined
   const n = numericValue(value)
   return n === undefined ? undefined : formatAmount(n, currency, locale)
+}
+
+/**
+ * A decimal value in the reader's locale, or undefined when it is not a
+ * decimal. The text is formatted as written, never through a JavaScript
+ * number, so "0.10" cannot turn into 0.1000000000000000055.
+ *
+ * It shows `scale` digits after the point when the property declares one.
+ * Otherwise a whole value shows none, and any other value shows at least two
+ * when it is money and the digits it was written with when it is not.
+ */
+export function formatDecimal(
+  value: unknown,
+  currency?: string,
+  scale?: number,
+  locale?: string
+): string | undefined {
+  const d = parseDecimal(value)
+  if (!d) return undefined
+  let digits = scale ?? d.scale
+  if (scale === undefined && currency && d.scale > 0) digits = Math.max(2, d.scale)
+  if (scale === undefined && d.units % 10n ** BigInt(d.scale) === 0n) digits = 0
+  // Intl.NumberFormat formats a decimal string exactly (ES2023); the ES2020
+  // lib this project compiles against types the argument as a number.
+  return amountFormatter(digits, currency, locale ?? intlLocale()).format(
+    decimalText(d) as unknown as number
+  )
 }
 
 const DATETIME_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {

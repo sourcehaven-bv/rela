@@ -16,7 +16,7 @@ func ResolveWidgetFromType(m *Metamodel, propType string) string {
 		return "date"
 	case PropertyTypeDatetime:
 		return "datetime"
-	case PropertyTypeInteger:
+	case PropertyTypeInteger, PropertyTypeDecimal:
 		return "number"
 	case PropertyTypeBoolean:
 		return "checkbox"

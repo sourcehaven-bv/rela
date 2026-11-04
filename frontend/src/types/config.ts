@@ -973,10 +973,16 @@ export interface NextActionSuggestion {
 
 export interface NextActionResponse {
   suggestion: NextActionSuggestion | null
+  /**
+   * The entity type whose changes can change this page's answer. Set only
+   * when a context source can apply here; the client re-resolves on a change
+   * of that type and no other.
+   */
+  context_type?: string
 }
 
 /** How a user answered a suggestion. */
-export type NextActionFeedbackKind = 'snooze' | 'dismiss' | 'mute' | 'unmute' | 'shown'
+export type NextActionFeedbackKind = 'snooze' | 'dismiss' | 'mute' | 'unmute' | 'shown' | 'seen'
 
 export interface AnalyzeIssue {
   entityId: string

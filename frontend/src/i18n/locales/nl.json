@@ -312,6 +312,8 @@
     "noItems": "Geen items",
     "order": "Volgorde",
     "nestedTruncated": "Sommige rijen worden niet getoond, omdat deze sectie de maximale grootte heeft bereikt.",
+    "sectionTotals": "Totalen van {heading}",
+    "totals": "Totalen",
     "showingChildren": "{shown} van {total} getoond",
     "sectionIncomplete": "Hier staat maar een deel van de passende items.",
     "notFound": "{type} \"{id}\" is niet gevonden.",

@@ -193,6 +193,30 @@ type Engine struct {
 	// confidentiality control: it decides whether an already-authorized
 	// suggestion is worth showing here, not whether its content may be seen.
 	displayWorld string
+	// sourceFilter, when set, excludes sources before they are queried. The
+	// wiring site uses it for page placement (visible_on) and to drop
+	// context-aware sources whose type the page is not about. See
+	// [WithSourceFilter].
+	sourceFilter func(id string, src dataentryconfig.NextActionSource) bool
+	// current identifies the suggestion the reader has on screen. See
+	// [WithCurrent].
+	current *userstate.Key
+	// format renders a property value for a message. See [WithValueFormatter].
+	format ValueFormatter
+}
+
+// ValueFormatter renders one property value of an entity for a message, e.g.
+// an enum value as its label. Supplied by the wiring site, which knows the
+// metamodel this package must not import. ok=false falls back to the
+// engine's own rendering ([FormatValue]).
+type ValueFormatter func(entityType, property string, v any) (text string, ok bool)
+
+// isCurrent reports whether s is the suggestion the reader has on screen
+// (see [WithCurrent]). The key's User is not compared: an engine resolves
+// for one reader, and the client does not send it.
+func (e *Engine) isCurrent(s Suggestion) bool {
+	c := e.current
+	return c != nil && c.Source == s.Key.Source && c.EntityID == s.Key.EntityID && c.Variant == s.Key.Variant
 }
 
 // Option configures an [Engine] at construction.
@@ -218,6 +242,40 @@ func WithOptions(fn OptionFunc) Option {
 // `visible_worlds` are unaffected in either case.
 func WithDisplayWorld(world string) Option {
 	return func(e *Engine) { e.displayWorld = world }
+}
+
+// WithSourceFilter excludes every source for which keep returns false, before
+// the source is queried. Like visible_worlds it is applied per source rather
+// than to the winner, so the band short-circuit stays honest: a lower band's
+// suggestion still surfaces when a higher band's sources are all excluded.
+func WithSourceFilter(keep func(id string, src dataentryconfig.NextActionSource) bool) Option {
+	return func(e *Engine) { e.sourceFilter = keep }
+}
+
+// WithCurrent names the suggestion the reader already has on screen, so it
+// stays put while they move between pages.
+//
+// Showing a suggestion starts its cooldown. Without this, every page that
+// asks again would find the shown suggestion in cooldown and offer the next
+// one, so the "one thing" would change on every click and a few clicks would
+// spend a band. With it, the current suggestion is exempt from cooldown and
+// wins the pick within its band, as long as it is still produced here by an
+// eligible source. It cannot make a suggestion appear that the request would
+// not otherwise produce, and a higher band still outranks it.
+//
+// The key's Source, EntityID and Variant identify the suggestion, as the
+// client echoes them back; its User is ignored.
+//
+// Nil: accepted, means no suggestion is on screen.
+func WithCurrent(c *userstate.Key) Option {
+	return func(e *Engine) { e.current = c }
+}
+
+// WithValueFormatter supplies the schema-aware rendering of message values.
+// Without it a message shows enum values as stored and dates in the
+// [FormatValue] layout.
+func WithValueFormatter(fn ValueFormatter) Option {
+	return func(e *Engine) { e.format = fn }
 }
 
 // WithMatchers supplies the per-source condition matchers. Without it a
@@ -450,13 +508,13 @@ func (e *Engine) eligibleFromSource(
 	}
 
 	if len(cands) > e.cap {
-		cands = cands[:e.cap]
+		cands = e.truncateKeepingCurrent(id, cands)
 	}
 
 	sugs := make([]Suggestion, 0, len(cands))
 	keys := make([]userstate.Key, 0, len(cands))
 	for _, c := range cands {
-		sug := buildSuggestion(id, bandID, src, c)
+		sug := buildSuggestion(id, bandID, src, c, e.format)
 		sug.Key.User = user
 		sugs = append(sugs, sug)
 		keys = append(keys, sug.Key)
@@ -477,7 +535,7 @@ func (e *Engine) eligibleFromSource(
 			continue
 		}
 		lastShown, everShown := shown[sug.Key]
-		if everShown && inCooldown(src, lastShown, now) {
+		if everShown && !e.cooldownExempt(src, sug) && inCooldown(src, lastShown, now) {
 			continue
 		}
 		out = append(out, sug)
@@ -485,19 +543,61 @@ func (e *Engine) eligibleFromSource(
 	return out, nil
 }
 
+// truncateKeepingCurrent cuts cands to the cap. The suggestion on screen is
+// kept even when it falls past the cap, in the last slot, so a store order
+// that moves cannot swap it out (see [WithCurrent]).
+func (e *Engine) truncateKeepingCurrent(id string, cands []Candidate) []Candidate {
+	kept := cands[:e.cap]
+	if e.current == nil || e.current.Source != id {
+		return kept
+	}
+	for _, c := range kept {
+		if c.Entity != nil && c.Entity.ID == e.current.EntityID {
+			return kept
+		}
+	}
+	for _, c := range cands[e.cap:] {
+		if c.Entity != nil && c.Entity.ID == e.current.EntityID {
+			out := append([]Candidate(nil), kept[:e.cap-1]...)
+			return append(out, c)
+		}
+	}
+	return kept
+}
+
+// cooldownExempt reports whether the impression cooldown is skipped for sug.
+//
+// Two cases. The suggestion already on screen (see [WithCurrent]), so asking
+// again does not replace it. And every context-aware suggestion: it is about
+// the entity the reader is looking at, so hiding it for a day because they
+// looked at that entity yesterday would make it vanish exactly when it is
+// relevant. The data-entry handler records no impressions for those, and
+// "Seen it" snoozes them for [Cooldown] instead. Snooze, dismiss and mute
+// still suppress both.
+func (e *Engine) cooldownExempt(src dataentryconfig.NextActionSource, sug Suggestion) bool {
+	return src.Context != "" || e.isCurrent(sug)
+}
+
 // inCooldown reports whether a suggestion shown at lastShown is still
 // within its source's cooldown at now.
 func inCooldown(src dataentryconfig.NextActionSource, lastShown, now time.Time) bool {
-	cooldown := DefaultCooldown
+	return now.Before(lastShown.Add(Cooldown(src)))
+}
+
+// Cooldown is the source's `cooldown:`, or [DefaultCooldown] when it sets
+// none. For a query source it is how long an impression hides a suggestion.
+// A context source records no impressions, so for it the cooldown is how
+// long "Seen it" hides the suggestion.
+func Cooldown(src dataentryconfig.NextActionSource) time.Duration {
 	if src.Cooldown != "" {
 		// Already validated at config load; a parse failure here means the
 		// config was constructed in code, so fall back rather than fail the
 		// whole page for one malformed source.
-		if d, perr := dataentryconfig.ParseNextActionDuration(src.Cooldown); perr == nil {
-			cooldown = d
+		if d, err := dataentryconfig.ParseNextActionDuration(src.Cooldown); err == nil {
+			return d
 		}
 	}
-	return now.Before(lastShown.Add(cooldown))
+	return DefaultCooldown
 }
 
 // sourceIDsForBand returns the ids in a band, sorted for determinism. Sort
@@ -522,6 +622,9 @@ func (e *Engine) sourceIDsForBand(bandID string) []string {
 		if !src.VisibleInWorld(e.displayWorld) {
 			continue
 		}
+		if e.sourceFilter != nil && !e.sourceFilter(id, src) {
+			continue
+		}
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
@@ -544,6 +647,13 @@ func (e *Engine) sourceIDsForBand(bandID string) []string {
 func (e *Engine) pick(user string, eligible []Suggestion, now time.Time) Suggestion {
 	if len(eligible) == 1 {
 		return eligible[0]
+	}
+	// The suggestion on screen keeps its place rather than being re-rolled
+	// against candidates the reader has not seen. See WithCurrent.
+	for _, s := range eligible {
+		if e.isCurrent(s) {
+			return s
+		}
 	}
 	// Sort by key so the input order (map iteration inside a source) cannot
 	// shift the choice; the seed alone decides.
@@ -577,7 +687,7 @@ func keyString(k userstate.Key) string {
 
 // buildSuggestion assembles the suggestion for one candidate.
 func buildSuggestion(
-	id, bandID string, src dataentryconfig.NextActionSource, c Candidate,
+	id, bandID string, src dataentryconfig.NextActionSource, c Candidate, format ValueFormatter,
 ) Suggestion {
 	s := Suggestion{
 		Source:  id,
@@ -598,7 +708,7 @@ func buildSuggestion(
 			s.Key.Variant = variantFor(src.KeyProps, c.Entity)
 		}
 	}
-	s.Message = interpolate(src.Suggest, c.Entity)
+	s.Message = interpolate(src.Suggest, c.Entity, format)
 	return s
 }
 
@@ -619,7 +729,7 @@ func variantFor(props []string, e *entity.Entity) string {
 // placeholder is left verbatim: silently emptying it would turn a config typo
 // into a message with a hole in it, which reads as a product bug rather than
 // as the operator error it is.
-func interpolate(tmpl string, e *entity.Entity) string {
+func interpolate(tmpl string, e *entity.Entity, format ValueFormatter) string {
 	if e == nil || !strings.ContainsRune(tmpl, '{') {
 		return tmpl
 	}
@@ -639,7 +749,7 @@ func interpolate(tmpl string, e *entity.Entity) string {
 		closeIdx += open
 		name := rest[open+1 : closeIdx]
 		b.WriteString(rest[:open])
-		if v := propString(e, name); v != "" {
+		if v := messageValue(e, name, format); v != "" {
 			b.WriteString(v)
 		} else {
 			b.WriteString(rest[open : closeIdx+1])
@@ -664,6 +774,58 @@ func propString(e *entity.Entity, name string) string {
 		return s
 	}
 	return fmt.Sprint(v)
+}
+
+// messageValue renders one placeholder for a message: through format when it
+// knows the property, otherwise through [FormatValue]. Keys keep using
+// [propString], so a change in how a value reads never resets a deferral.
+func messageValue(e *entity.Entity, name string, format ValueFormatter) string {
+	if name == "id" {
+		return e.ID
+	}
+	v, ok := e.Properties[name]
+	if !ok || v == nil {
+		return ""
+	}
+	if format != nil {
+		if text, ok := format(e.Type, name, v); ok {
+			return text
+		}
+	}
+	return FormatValue(v)
+}
+
+// FormatValue renders a property value as message text. A date with no time
+// of day reads as 2006-01-02, any other time as 2006-01-02 15:04; Go's
+// default rendering ("2026-11-03 00:00:00 +0000 UTC") is never shown. A list
+// joins its items with ", ".
+func FormatValue(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return t
+	case time.Time:
+		if t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 && t.Nanosecond() == 0 {
+			return t.Format(time.DateOnly)
+		}
+		return t.Format("2006-01-02 15:04")
+	case *time.Time:
+		if t == nil {
+			return ""
+		}
+		return FormatValue(*t)
+	case []any:
+		parts := make([]string, 0, len(t))
+		for _, item := range t {
+			parts = append(parts, FormatValue(item))
+		}
+		return strings.Join(parts, ", ")
+	case []string:
+		return strings.Join(t, ", ")
+	default:
+		return fmt.Sprint(t)
+	}
 }
 
 // MarkShown records that a suggestion was surfaced, starting its cooldown.

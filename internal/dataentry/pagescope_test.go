@@ -25,7 +25,7 @@ import (
 func installEntityPage(app *App) {
 	installPagesConfig(app, map[string]dataentryconfig.List{"tickets": {EntityType: "ticket"}},
 		map[string]dataentryconfig.Page{
-			"feat": {Label: "Feature", EntityType: "feature", Badge: "title", Tabs: []dataentryconfig.PageTab{
+			"feat": {PageHeader: dataentryconfig.PageHeader{Label: "Feature", EntityType: "feature", Badge: "title"}, Tabs: []dataentryconfig.PageTab{
 				{ID: "tickets", Label: "Tickets", List: "tickets", Scope: &dataentryconfig.PageTabScope{
 					Relation: "implements", Direction: dataentryconfig.DirectionIncoming,
 				}},
@@ -247,7 +247,7 @@ func TestPageScope_SidebarWire(t *testing.T) {
 	setTestACL(t, app, d)
 
 	resp, _ := sidebarFor(gateCtxFor(principalCtx("alice"), t, d), t, app, "")
-	require.Equal(t, v1.SidebarPage{Label: "Feature", EntityType: "feature", Badge: "title", Tabs: []v1.SidebarPageTab{{
+	require.Equal(t, v1.SidebarPage{PageHeader: dataentryconfig.PageHeader{Label: "Feature", EntityType: "feature", Badge: "title"}, Tabs: []v1.SidebarPageTab{{
 		ID: "tickets", Label: "Tickets", View: "list", Target: "tickets",
 		Scope: "relation", Relation: "implements", Direction: "incoming",
 		Links: []v1.SidebarPageLink{{Type: "ticket", Relation: "implements", Direction: "incoming"}},

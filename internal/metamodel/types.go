@@ -785,9 +785,9 @@ type PropertySchema interface {
 
 // PropertyDef defines a property on an entity or relation. Each exported
 // field is one key of a property in schema.yaml, so a new option raises the
-// pin by one; `min` (TKT-BRAM1A) is the most recent.
+// pin by one; `scale` (TKT-DTUAG3U) is the most recent.
 //
-//plimsoll:max-fields=21
+//plimsoll:max-fields=22
 type PropertyDef struct {
 	Label       string            `yaml:"label,omitempty"`
 	Type        string            `yaml:"type"`
@@ -828,10 +828,11 @@ type PropertyDef struct {
 	Unique bool `yaml:"unique,omitempty"`
 	// Min and Max mean different things by type. Nil: accepted — unset.
 	//
-	// On an `integer` property they bound the value, inclusive. A value
-	// outside the range is an invalid value: a write warns and `analyze
-	// properties` reports it (TKT-BRAM1A). They are pointers so that a
-	// bound of 0 is expressible.
+	// On an `integer` or `decimal` property they bound the value,
+	// inclusive. A value outside the range is an invalid value: a write
+	// warns and `analyze properties` reports it (TKT-BRAM1A). They are
+	// pointers so that a bound of 0 is expressible. The bounds are whole
+	// numbers, also on a decimal.
 	//
 	// On a `file` property Max caps how many attachments it may hold
 	// (read it through [PropertyDef.FileMax]): unset or 0 means 1, and above 1
@@ -839,6 +840,10 @@ type PropertyDef struct {
 	// to multi-file add-mode. Min does not apply to a file.
 	Min *int `yaml:"min,omitempty" json:"Min,omitempty"`
 	Max *int `yaml:"max,omitempty" json:"Max,omitempty"`
+	// Scale caps the digits after the point of a `decimal` value (TKT-DTUAG3U).
+	// A value with more digits is an invalid value. Nil: accepted — no cap.
+	// Only valid on `type: decimal`, from 0 to [MaxDecimalScale].
+	Scale *int `yaml:"scale,omitempty" json:"Scale,omitempty"`
 
 	// Accept narrows the MIME allowlist for this `file` property to these
 	// sniffed MIME types (e.g. ["application/pdf"]). Empty means inherit the
@@ -881,7 +886,7 @@ type PropertyDef struct {
 // formats can join later (a percentage, a unit such as hours) without new
 // syntax; at most one format applies to a property.
 type PropertyDisplay struct {
-	// Currency renders an integer property as an amount of money in the
+	// Currency renders an integer or decimal property as an amount of money in the
 	// reader's locale, such as "€ 3.500" for EUR in Dutch. An ISO 4217 code.
 	Currency string `yaml:"currency,omitempty" json:"currency,omitempty"`
 }
@@ -1341,7 +1346,7 @@ const DefaultDatetimeFormat = time.RFC3339
 func IsBuiltinType(t string) bool {
 	switch t {
 	case PropertyTypeString, PropertyTypeDate, PropertyTypeDatetime, PropertyTypeInteger,
-		PropertyTypeBoolean, PropertyTypeEnum, PropertyTypeFile, PropertyTypeRrule,
+		PropertyTypeDecimal, PropertyTypeBoolean, PropertyTypeEnum, PropertyTypeFile, PropertyTypeRrule,
 		PropertyTypeExternalRef:
 		return true
 	}

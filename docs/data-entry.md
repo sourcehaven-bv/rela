@@ -2635,6 +2635,7 @@ sections:
 | `hide_empty`    | bool   | Leave the section out when the collection is empty (see below) |
 | `link`          | string | `detail` links entity titles to their detail pages      |
 | `create`        | map    | Offer a "create related entity" button (see below)      |
+| `totals`        | list   | Entry properties shown under the table (`table` mode; see Editable table cells) |
 
 Each entry under `fields:` takes:
 
@@ -2900,6 +2901,69 @@ A field belonging to a state machine renders its transition control instead of
 an ordinary widget when `render: input`; on `render: display` it renders the
 plain value.
 
+### Editable table cells and totals
+
+A `display: table` section can let readers edit some of its columns in place.
+Set `render: input` on each column that should edit:
+
+```yaml
+sections:
+  - heading: Quote lines
+    source: lines
+    display: table
+    columns:
+      - property: description
+        render: input
+      - property: quantity
+        render: input
+      - property: unit_price
+        render: input
+      - property: line_total     # read-only: no render
+    totals:
+      - property: subtotal
+      - property: vat
+        label: VAT
+      - property: total
+        emphasis: true
+```
+
+Each editable cell saves on its own, like a field in a properties section. The
+save indicator shows in the row's last cell, beside the edit button.
+
+Rules worth knowing:
+
+- **Per column only.** A section's `render:` does not apply to table columns.
+  Each column that should edit says `render: input` itself.
+- **The ACL still decides.** As with fields, `render: input` cannot grant a
+  write. A cell the reader may not write shows its value read-only.
+- **A plain property column only.** Config load refuses `render: input` on a
+  relation, face or busy column, and on a column with `link:`, because a click
+  on the cell would open the link instead of editing it.
+- **Not every property type.** Config load also refuses `render: input` on a
+  `file` property (edit files on the form) and on a computed, roll-up or
+  `external_ref` property, which no reader can write.
+- **Table sections only.** `render:` on a list column, a dashboard card column,
+  a `nested` level or a side-panel section is a config-load error.
+- **Up to 100 rows.** A section with more rows shows every cell read-only. Each
+  editable row keeps its own save state, and a section that long is more often
+  read than edited.
+
+`totals:` shows properties of the view's entry under the table, as a short
+list of label and value. Each entry takes:
+
+| Field      | Type   | Description                                                  |
+| ---------- | ------ | ------------------------------------------------------------ |
+| `property` | string | A property of the view's entry type. Required.                |
+| `label`    | string | Optional. Defaults to the property's label.                   |
+| `emphasis` | bool   | Optional. Marks the line that matters most, such as the total. |
+
+The values are not summed on the page. Use a `rollup:` property on the entry
+type when a total is computed from the rows (see the metamodel guide). After a
+cell in a section with totals saves, the page reloads the view, so a roll-up
+shows its new value. A total the reader may not see, or one that is not set,
+is left out rather than shown as zero. `totals:` is valid on `display: table`
+sections only.
+
 ### Widget Overrides
 
 By default the widget is chosen from the property's declared type — `boolean`
@@ -2918,7 +2982,7 @@ fields:
 | -------------- | ----------------------------- |
 | `text`         | string                        |
 | `textarea`     | string                        |
-| `number`       | integer                       |
+| `number`       | integer, decimal              |
 | `checkbox`     | boolean                       |
 | `date`         | date                          |
 | `datetime`     | datetime                      |
@@ -3645,7 +3709,7 @@ card says that some values are hidden.
 **`table`** shows matching entities as a compact table. It supports the same `columns` format as
 list definitions (with `property`, `label`, `sortable`, `link`), plus `sort` and `limit` to control
 ordering and row count. Cells render as they do in a list: an enum value is a badge with its label
-and style, an integer property with `display: {currency: ...}` is an amount, and a date is formatted
+and style, an integer or decimal property with `display: {currency: ...}` is an amount, and a date is formatted
 in the reader's locale. A table card with several columns usually needs `width: wide` or
 `width: full` (see [Card width](#card-width-width)).
 
@@ -3764,15 +3828,16 @@ next_actions:
 | `band` | **Required.** Names a declared band. |
 | `query` | Candidate entities, in the search syntax (`type:`, `prop:`, …). |
 | `condition` | Refines `query`'s candidates with a predicate expression — the only place date arithmetic works. See below. |
-| `context` | Instead of `query`: scopes the source to the entity being viewed. |
+| `context` | Instead of `query`: an entity type. The candidate is the entity the page shows, on pages about an entity of that type. See [Where suggestions appear](#where-suggestions-appear). |
 | `count` | Instead of `query`: fires on `"<entity_type> == 0"` — the first-run case. |
-| `suggest` | **Required.** The message. `{property}` interpolates from the candidate; `{id}` is the entity id. |
+| `suggest` | **Required.** The message. `{property}` inserts a stored property of the candidate, and `{id}` its id. Only stored properties exist, so a computed value such as a day count cannot be inserted. An enum value reads as its label. A date reads in the property's `format:`, otherwise as `2026-11-03`, or `2026-11-03 14:05` when it has a time of day. A placeholder that names no value stays as written. |
 | `actions` | The affordances offered. See below. |
-| `cooldown` | How long after being *shown* to stay quiet. Defaults to 24h. |
+| `cooldown` | How long after being *shown* to stay quiet. Defaults to 24h. On a `context` source: how long "Seen it" hides the suggestion. |
 | `key_props` | Properties that make a re-triggered condition count as **new** — see below. |
 | `source_world` | The world the candidate query runs in. Declared per source, never taken from the request. |
 | `visible_worlds` | Worlds in which the suggestion may be displayed. Unset matches every world. Presentational only. |
 | `defer_scope` | What "not now" covers: `entity` (default) or `source` — see below. |
+| `visible_on` | Pages the suggestion may appear on. Unset matches every page. See [Where suggestions appear](#where-suggestions-appear). |
 
 Exactly one of `query`, `context` or `count` must be set.
 
@@ -3789,7 +3854,7 @@ next_actions:
     band: blocking
     query: "type:proposal prop:status=sent"
     condition: "days_between(entity.sent_on, today()) >= 11"
-    suggest: "{title} has been out {days} days with no reply. Chase it?"
+    suggest: "{title} was sent on {sent_on} and has had no reply. Chase it?"
 ```
 
 That is the shape `query` alone cannot express: "how long has this been
@@ -3928,6 +3993,110 @@ genuinely operator-level check ("has this deployment been set up at all?") —
 it discloses that entities of a type exist to someone permitted to read none
 of them.
 
+### Where suggestions appear
+
+The suggestion slot sits at the top of every page: the dashboard, lists,
+boards, calendars, gantt charts, entity pages, documents, pages, forms and
+search. A `statusbar` suggestion appears in the status bar instead, on the
+same pages. Each page asks for its own suggestion, so what appears depends on
+where the reader is.
+
+Three keys decide where a suggestion may appear, from the widest to the
+narrowest.
+
+`next_action_surfaces` (top level) switches a kind of page on or off:
+
+```yaml
+next_action_surfaces:
+  kanban: false   # no suggestions on any board
+  other: true     # also on settings, analyze, history and similar pages
+```
+
+The kinds are `dashboard`, `list`, `kanban`, `calendar`, `gantt`, `entity`,
+`document`, `page`, `form`, `search` and `other`. Every kind is on by default
+except `other`, which covers the pages about the application rather than the
+data. An unknown kind fails the load.
+
+`suggestions` on one view overrides its kind. It is accepted on a list,
+board, calendar, gantt chart, detail view, document, page, `dashboard:` and
+each entry of `dashboards:`:
+
+```yaml
+lists:
+  inbox:
+    entity_type: task
+    suggestions: false   # this list stays quiet; other lists do not
+```
+
+On an entity page, the setting of the type's detail view under `views:`
+applies.
+
+`visible_on` on a source names the pages that source may appear on. An entry
+is a kind (`list`) or a kind and a view (`list:open-tasks`). For the entity
+page the view is the entity type (`entity:task`):
+
+```yaml
+next_actions:
+  stale-proposal:
+    band: stalled
+    query: "type:proposal prop:status=sent"
+    suggest: "{title} is waiting for a reply."
+    visible_on: [dashboard, "list:proposals"]
+```
+
+An entry that names no kind, view or entity type fails the load. So does an
+empty list; omit the key to show the source everywhere. `dashboard` matches
+the default dashboard and every entry of `dashboards:`. To show a source on
+the default dashboard only, turn `suggestions` off on the other dashboards. The key sits on the
+source, like `visible_worlds`, so placing a source means editing that source
+rather than every view it should appear on.
+
+A source switched off for a page is not queried there. A page with
+suggestions switched off runs no queries at all.
+
+#### Context sources
+
+A `context` source is about the entity the page shows:
+
+```yaml
+next_actions:
+  unblock-this:
+    band: stalled
+    context: task
+    condition: 'entity.status == "blocked"'
+    suggest: "{title} is blocked. Who can unblock it?"
+```
+
+It applies on pages about one entity of that type: the entity page, an
+entity page under `pages:`, an entity document and an edit form. The type
+comes from the configuration of the page, not from the browser. The entity
+is read as the reader may see it, in the source's `source_world`, and
+`condition` refines it like a query candidate. When the reader may not see
+the entity, the answer is the same as for an entity that does not exist.
+
+A context suggestion has no impression cooldown, because it is about the
+page the reader is on: it appears on every visit. "Seen it" hides it for the
+source's `cooldown`. Snooze, "not now", dismiss and mute apply as usual.
+
+When the entity changes, the page asks again, so a suggestion the edit
+settled goes away. Pages that no context source is about do not ask again
+on changes.
+
+A `visible_on` that names no page about the source's type fails the load,
+because the source could never appear.
+
+Put context sources in a band of their own, above the query sources. Within
+one band, the suggestion already on screen keeps its place, so a query
+suggestion carried over from the previous page would hold the slot.
+
+#### Navigating keeps the suggestion
+
+When the reader moves to another page, the suggestion on screen stays if it
+is still allowed there and still owed. Otherwise the slot moves on. A page the
+reader returns to keeps the suggestion it showed before, under the same rule. This keeps
+the slot calm: without it, each click would pick a new suggestion, and the
+cooldown started by the previous page would use up the queue.
+
 ### Actions
 
 The affordances offered alongside a suggestion. Each entry sets exactly one:
@@ -3952,6 +4121,30 @@ dismissed every time is a source to delete.
 **Muting is always available**, whether or not you configure it. The UI offers
 "stop suggesting this" on every suggestion, per source and per user, and it is
 reversible.
+
+### The endpoint
+
+The SPA reads the suggestion from `GET /api/v1/_next_action` and answers it
+with `POST /api/v1/_next_action`. A custom client can do the same.
+
+The GET takes these query parameters, all optional:
+
+| Parameter | Meaning |
+|-----------|---------|
+| `surface` | The kind of page: `dashboard`, `list`, `kanban`, `calendar`, `gantt`, `entity`, `document`, `page`, `form`, `search` or `other`. Without it the request counts as the default dashboard. An unknown kind is a 400. |
+| `view` | The view on that page: the list, board or document name, or the entity type on an entity page. A view that does not exist gives an empty answer. |
+| `entity` | The id of the entity the page shows, for context sources. A face after `@` is ignored. |
+| `current_source`, `current_entity`, `current_variant` | The suggestion the reader has on screen, so it can stay. See [Navigating keeps the suggestion](#navigating-keeps-the-suggestion). |
+
+The answer is `{"suggestion": …}`, with `null` when nothing is owed. When a
+context source can apply to the page, `context_type` names its entity type;
+the SPA asks again when an entity of that type changes.
+
+The POST body names the suggestion (`source`, `entity_id`, `variant`) and a
+`kind`: `snooze` (with `duration`), `dismiss`, `mute`, `unmute`, `shown` or
+`seen`. `shown` starts the cooldown and does nothing for a context source.
+`seen` ("Seen it") snoozes a context source for its cooldown and does nothing
+for other sources.
 
 ### What is stored, and where
 
@@ -4329,14 +4522,19 @@ board: `value` has `display: {currency: EUR}` in `schema.yaml` (see
 | `property` | string | The property to aggregate. Required for every function except `count`, which counts the cards and takes no property. |
 | `label`    | string | Optional. Text before the value. Defaults to "Count", "Total", "Average", "Minimum" or "Maximum". |
 
-`sum` and `avg` need a single-valued `integer` property. `min` and `max`
-also accept a `date` or `datetime` property, and show the earliest or latest
+`sum` and `avg` need a single-valued `integer` or `decimal` property. `min`
+and `max` also accept a `date` or `datetime` property, and show the earliest or latest
 date. Config load checks this, and reports an unknown function, a missing
 property, or a property on `count`.
 
 A value is formatted the way the property is formatted everywhere else: a
 currency property shows as money, a date as a date. Numbers use the format
 of the reader's browser language. A whole number shows no decimals.
+
+A `decimal` property is summed exactly, without the rounding errors of binary
+numbers: 0.10 plus 0.20 is 0.30. A sum shows as many digits as the value with
+the most. An average keeps two more digits than its values, or the property's
+`scale:` when it declares one, and rounds half away from zero.
 
 The summaries cover the cards on the board: the cards the reader may see,
 after the board's filters. A card without a value adds nothing to `sum`,
@@ -4506,7 +4704,7 @@ card:
 | `show_label` | Optional. Default `true`.                                                    |
 
 The value renders as the property renders elsewhere. An enum shows as a badge
-in the colour from its `styles:` entry, an integer with
+in the colour from its `styles:` entry, an integer or decimal with
 `display: {currency: EUR}` shows as an amount, and a date is formatted. Plain
 text values are separated by commas.
 

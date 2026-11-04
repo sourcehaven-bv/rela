@@ -55,6 +55,7 @@ func validateNextActions(cfg *Config, meta *metamodel.Metamodel) []string {
 	for _, id := range sortedNextActionIDs(cfg.NextActions) {
 		errs = append(errs, validateNextActionSource(id, cfg.NextActions[id], cfg, meta, bandIDs)...)
 	}
+	errs = append(errs, validateNextActionPlacement(cfg, meta)...)
 	return errs
 }
 

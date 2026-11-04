@@ -36,7 +36,7 @@
     "src/components/entity/CommandModal.vue": 1,
     "src/components/entity/CommentIndicator.vue": 1,
     "src/components/entity/ConversionModal.vue": 1,
-    "src/components/entity/EntityDetail.vue": 5,
+    "src/components/entity/EntityDetail.vue": 3,
     "src/components/entity/TextCommentPopover.vue": 1,
     "src/components/forms/RelationCards.vue": 3,
     "src/components/forms/RelationPicker.vue": 3,

@@ -1157,7 +1157,7 @@ func (s *convertStep) Validate(_, to metamodel.ShapeProjection) error {
 		s.ToFormat = ps.Format
 	}
 	switch s.ToType {
-	case "string", "integer", "boolean", "date", "datetime":
+	case "string", "integer", "decimal", "boolean", "date", "datetime":
 	default:
 		return fmt.Errorf("no built-in coercion to %q (use a lua step)", s.ToType)
 	}
@@ -1234,6 +1234,8 @@ func coerceScalar(v any, toType, fromFormat, toFormat string) (any, bool) {
 		}
 	case "integer":
 		return coerceInteger(v)
+	case "decimal":
+		return coerceDecimal(v)
 	case "boolean":
 		return coerceBoolean(v)
 	case "date", "datetime":
@@ -1258,6 +1260,19 @@ func coerceInteger(v any) (any, bool) {
 		}
 	}
 	return nil, false
+}
+
+// coerceDecimal converts to decimal text (see metamodel.PropertyTypeDecimal).
+// A string is trimmed and must already be decimal notation.
+func coerceDecimal(v any) (any, bool) {
+	if s, ok := v.(string); ok {
+		v = strings.TrimSpace(s)
+	}
+	text, err := metamodel.DecimalText(v)
+	if err != nil {
+		return nil, false
+	}
+	return text, true
 }
 
 func coerceBoolean(v any) (any, bool) {

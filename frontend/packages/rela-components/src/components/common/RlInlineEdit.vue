@@ -12,7 +12,8 @@
  * What the component owns is the part that is easy to get wrong: swapping the
  * two halves, moving focus into the control and back to the trigger
  * afterwards, and deciding when an edit is kept. Enter and a blur out of the
- * control commit; Escape cancels and restores the value that was there when
+ * control commit, except that a textarea or rich text editor keeps Enter for
+ * new lines; Escape cancels and restores the value that was there when
  * editing started.
  *
  * # When the read view is not plain text
@@ -73,6 +74,11 @@ const props = withDefaults(
      */
     block?: boolean
     /**
+     * A number: tabular figures and right-aligned, in both halves, so the
+     * digits line up down a column and do not jump when the edit opens.
+     */
+    numeric?: boolean
+    /**
      * What starts the edit.
      *
      * `value` wraps the read view in a button: the whole value is the target.
@@ -113,6 +119,7 @@ const props = withDefaults(
     empty: false,
     autoOpenPicker: false,
     block: false,
+    numeric: false,
     trigger: 'value',
     keepOpenWithin: () => [],
   },
@@ -189,11 +196,21 @@ function onKeydown(event: KeyboardEvent) {
     // Stopped so an inline edit inside a modal does not close the modal too.
     event.stopPropagation()
     stop('cancel')
-  } else if (event.key === 'Enter' && !(event.target instanceof HTMLTextAreaElement)) {
-    // A textarea keeps Enter for newlines; everything else treats it as done.
+  } else if (event.key === 'Enter' && !keepsEnter(event.target)) {
+    // A multi-line control keeps Enter for newlines; everything else treats it as done.
     event.preventDefault()
     stop('commit')
   }
+}
+
+/**
+ * Whether Enter belongs to the control rather than ending the edit: a
+ * textarea, or a rich text editor, which is a contenteditable element.
+ */
+function keepsEnter(target: EventTarget | null) {
+  return (
+    target instanceof HTMLTextAreaElement || (target instanceof HTMLElement && target.isContentEditable)
+  )
 }
 
 /**
@@ -254,7 +271,11 @@ defineExpose({ start, cancel: () => stop('cancel') })
 <template>
   <div
     class="rl-inline-edit"
-    :class="{ 'rl-inline-edit--editing': editing, 'rl-inline-edit--block': block }"
+    :class="{
+      'rl-inline-edit--editing': editing,
+      'rl-inline-edit--block': block,
+      'rl-inline-edit--numeric': numeric,
+    }"
   >
     <!--
       A real button, not a clickable div: it is already reachable by Tab,
@@ -531,6 +552,17 @@ defineExpose({ start, cancel: () => stop('cancel') })
   outline: 2px solid var(--rl-color-focus);
   outline-offset: 1px;
 }
+
+/*
+ * The edit control is the caller's, so it is reached with `:deep`. Only text
+ * alignment and figures are set: its size and border stay the control's own.
+ */
+.rl-inline-edit--numeric,
+.rl-inline-edit--numeric :deep(input) {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.rl-inline-edit--numeric .rl-inline-edit__value { justify-content: flex-end; }
 
 @media (prefers-reduced-motion: reduce) {
   .rl-inline-edit__edit-button { transition: none; }

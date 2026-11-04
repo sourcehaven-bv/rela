@@ -1241,7 +1241,7 @@ func validatePropertyDef(
 	if !isKnownPropertyType(propDef.Type, m) {
 		if propDef.Type == "number" || propDef.Type == "float" {
 			errs = append(errs, fmt.Sprintf(
-				"%s: property %q has type %q which is not supported; use \"integer\" instead",
+				"%s: property %q has type %q which is not supported; use \"integer\" or \"decimal\" instead",
 				schemaName, propName, propDef.Type))
 		} else {
 			errs = append(errs, fmt.Sprintf(
@@ -1263,14 +1263,15 @@ func validatePropertyDef(
 	errs = append(errs, validateRollupShape(schemaName, propName, propDef, allowComputed)...)
 	errs = append(errs, validateFilePropertyOptions(schemaName, propName, propDef)...)
 	errs = append(errs, validateRangeOptions(schemaName, propName, propDef)...)
+	errs = append(errs, validateScaleOption(schemaName, propName, propDef)...)
 	errs = append(errs, validateExternalRefOptions(schemaName, propName, propDef, allowComputed)...)
 	errs = append(errs, validatePropertyDisplay(schemaName, propName, propDef)...)
 	return errs
 }
 
 // validatePropertyDisplay checks the `display:` format of a property
-// (TKT-SVLQQ6). Currency needs a single-valued integer property, since rela
-// has no decimal type, and a code shaped like ISO 4217. It checks the shape,
+// (TKT-SVLQQ6). Currency needs a single-valued integer or decimal property,
+// and a code shaped like ISO 4217. It checks the shape,
 // not a list of codes: the browser formats every well-formed code (an
 // unknown one shows as the code itself), so a list would only reject codes
 // it does not know yet.
@@ -1288,8 +1289,8 @@ func validatePropertyDisplay(schemaName, propName string, propDef PropertyDef) [
 		errs = append(errs, fmt.Sprintf(
 			"%s: currency %q is not an ISO 4217 code (three upper-case letters, such as EUR)", at, d.Currency))
 	}
-	if propDef.Type != PropertyTypeInteger {
-		errs = append(errs, fmt.Sprintf("%s: currency needs an integer property, not %q", at, propDef.Type))
+	if !IsNumericType(propDef.Type) {
+		errs = append(errs, fmt.Sprintf("%s: currency needs an integer or decimal property, not %q", at, propDef.Type))
 	} else if propDef.List {
 		errs = append(errs, at+": currency is not supported on a list property")
 	}
@@ -1331,13 +1332,15 @@ func validateComputedProperty(schemaName, propName string, propDef PropertyDef, 
 // isStringValuedType reports whether a property of this type stores its value
 // as a string (so the application uniqueness check, which reads values as
 // strings, can see it). The built-in string-ish types qualify; integer,
-// boolean, and file do not. Any non-built-in type name is a custom type
+// decimal, boolean, and file do not. A decimal is stored as a string, but
+// "12.5" and "12.50" are one number, so a byte-wise uniqueness check would
+// miss the collision. Any non-built-in type name is a custom type
 // (enum/regex, defined in `types:`), whose values are strings, so it qualifies.
 func isStringValuedType(typeName string) bool {
 	switch typeName {
 	case PropertyTypeString, PropertyTypeDate, PropertyTypeDatetime, PropertyTypeEnum, PropertyTypeRrule:
 		return true
-	case PropertyTypeInteger, PropertyTypeBoolean, PropertyTypeFile, PropertyTypeExternalRef:
+	case PropertyTypeInteger, PropertyTypeDecimal, PropertyTypeBoolean, PropertyTypeFile, PropertyTypeExternalRef:
 		return false
 	default:
 		// A custom type (declared in `types:`) — enum or regex-validated string.
@@ -1374,8 +1377,8 @@ func validateFilePropertyOptions(schemaName, propName string, propDef PropertyDe
 }
 
 // validateRangeOptions checks `min` and `max` as value bounds (TKT-BRAM1A).
-// They apply to a single-valued integer property only, and min may not
-// exceed max. `max` on a file is the attachment cap and is checked by
+// They apply to a single-valued integer or decimal property only, and min
+// may not exceed max. `max` on a file is the attachment cap and is checked by
 // validateFilePropertyOptions.
 func validateRangeOptions(schemaName, propName string, propDef PropertyDef) []string {
 	if propDef.Min == nil && propDef.Max == nil {
@@ -1388,9 +1391,10 @@ func validateRangeOptions(schemaName, propName string, propDef PropertyDef) []st
 		}
 		return nil
 	}
-	if propDef.Type != PropertyTypeInteger {
+	if !IsNumericType(propDef.Type) {
 		return []string{fmt.Sprintf("%s: property %q sets min or max but is type %q; "+
-			"min and max apply to type \"integer\" (and max to \"file\")", schemaName, propName, propDef.Type)}
+			"min and max apply to types \"integer\" and \"decimal\" (and max to \"file\")",
+			schemaName, propName, propDef.Type)}
 	}
 	if propDef.List {
 		return []string{fmt.Sprintf("%s: property %q: min and max are not supported on a list property",
@@ -1399,6 +1403,23 @@ func validateRangeOptions(schemaName, propName string, propDef PropertyDef) []st
 	if propDef.Min != nil && propDef.Max != nil && *propDef.Min > *propDef.Max {
 		return []string{fmt.Sprintf("%s: property %q has min %d above max %d",
 			schemaName, propName, *propDef.Min, *propDef.Max)}
+	}
+	return nil
+}
+
+// validateScaleOption checks `scale` (TKT-DTUAG3U): only on a decimal, and
+// from 0 to MaxDecimalScale.
+func validateScaleOption(schemaName, propName string, propDef PropertyDef) []string {
+	if propDef.Scale == nil {
+		return nil
+	}
+	if propDef.Type != PropertyTypeDecimal {
+		return []string{fmt.Sprintf("%s: property %q sets scale but is type %q; scale applies to type \"decimal\" only",
+			schemaName, propName, propDef.Type)}
+	}
+	if *propDef.Scale < 0 || *propDef.Scale > MaxDecimalScale {
+		return []string{fmt.Sprintf("%s: property %q has scale %d; must be from 0 to %d",
+			schemaName, propName, *propDef.Scale, MaxDecimalScale)}
 	}
 	return nil
 }

@@ -13,11 +13,11 @@ func TestValidateNavItemsFrom(t *testing.T) {
 		return &Config{
 			Lists: map[string]List{"tickets": {EntityType: "ticket"}, "cats": {EntityType: "category"}},
 			Pages: map[string]Page{
-				"cat": {Label: "Category", EntityType: "category", Tabs: []PageTab{
+				"cat": {PageHeader: PageHeader{Label: "Category", EntityType: "category"}, Tabs: []PageTab{
 					{ID: "table", Label: "Table", List: "tickets",
 						Scope: &PageTabScope{Relation: "belongs-to", Direction: DirectionIncoming}},
 				}},
-				"plain": {Label: "Plain", Tabs: []PageTab{{ID: "t", Label: "T", List: "tickets"}}},
+				"plain": {PageHeader: PageHeader{Label: "Plain"}, Tabs: []PageTab{{ID: "t", Label: "T", List: "tickets"}}},
 			},
 		}
 	}

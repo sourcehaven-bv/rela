@@ -29,8 +29,8 @@ type Summary struct {
 // SummaryFunction names the aggregate a [Summary] computes.
 type SummaryFunction string
 
-// The summary functions. sum and avg need a single-valued integer property;
-// min and max also accept a date or datetime property.
+// The summary functions. sum and avg need a single-valued integer or decimal
+// property; min and max also accept a date or datetime property.
 const (
 	SummaryCount SummaryFunction = "count"
 	SummarySum   SummaryFunction = "sum"
@@ -42,12 +42,17 @@ const (
 var summaryFunctions = []SummaryFunction{SummaryCount, SummarySum, SummaryAvg, SummaryMin, SummaryMax}
 
 // summaryPropertyTypes lists the property types each function accepts.
-// rela has no decimal type, so integer is the only numeric one.
 var summaryPropertyTypes = map[SummaryFunction][]string{
-	SummarySum: {metamodel.PropertyTypeInteger},
-	SummaryAvg: {metamodel.PropertyTypeInteger},
-	SummaryMin: {metamodel.PropertyTypeInteger, metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime},
-	SummaryMax: {metamodel.PropertyTypeInteger, metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime},
+	SummarySum: {metamodel.PropertyTypeInteger, metamodel.PropertyTypeDecimal},
+	SummaryAvg: {metamodel.PropertyTypeInteger, metamodel.PropertyTypeDecimal},
+	SummaryMin: {
+		metamodel.PropertyTypeInteger, metamodel.PropertyTypeDecimal,
+		metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime,
+	},
+	SummaryMax: {
+		metamodel.PropertyTypeInteger, metamodel.PropertyTypeDecimal,
+		metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime,
+	},
 }
 
 // validateSummaries checks each summary against the entity type it

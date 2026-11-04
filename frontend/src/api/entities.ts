@@ -1,4 +1,5 @@
 import { api } from './client'
+import type { NextActionPlacement } from '@/utils/nextActionPlacement'
 import type {
   Entity,
   CreateEntity,
@@ -9,6 +10,7 @@ import type {
   RelationEntry,
   ModernRelationsField,
   NextActionResponse,
+  NextActionSuggestion,
   NextActionFeedbackKind,
   Preconditions,
   RelationPosition,
@@ -547,10 +549,44 @@ export async function deleteRelation(
  */
 export async function getNextAction(
   world?: string,
+  request: NextActionRequest = {},
   signal?: AbortSignal
 ): Promise<NextActionResponse> {
-  return api.get<NextActionResponse>('/_next_action', world ? { world } : undefined, signal)
+  const params: Record<string, string> = {}
+  if (world) params.world = world
+  const { placement, current } = request
+  if (placement) {
+    params.surface = placement.kind
+    if (placement.view) params.view = placement.view
+    if (placement.entity) params.entity = placement.entity
+  }
+  if (current) {
+    params.current_source = current.source
+    if (current.entity_id) params.current_entity = current.entity_id
+    if (current.variant) params.current_variant = current.variant
+  }
+  return api.get<NextActionResponse>(
+    '/_next_action',
+    Object.keys(params).length ? params : undefined,
+    signal
+  )
 }
+
+/**
+ * The page a suggestion is for, and the suggestion already on screen.
+ *
+ * `placement` lets the server apply the operator's placement and resolve
+ * context sources for the viewed entity. `current` keeps the suggestion on
+ * screen across a navigation: without it, every page would re-pick, and the
+ * impression the previous page reported would hide it.
+ */
+export interface NextActionRequest {
+  placement?: NextActionPlacement
+  current?: NextActionCurrent
+}
+
+/** The fields that identify a suggestion, as `current` echoes them. */
+export type NextActionCurrent = Pick<NextActionSuggestion, 'source' | 'entity_id' | 'variant'>
 
 /**
  * Record how the user answered a suggestion.

@@ -73,9 +73,12 @@ onMounted(() => {
 })
 
 // The chip IS the render for the statusbar tier, so it reports its own
-// impression — the page-level card never sees these suggestions.
+// impression — the page-level card never sees these suggestions. Watches the
+// suggestion, not "a chip is showing": a navigation can swap one statusbar
+// suggestion for another without the chip ever hiding. markShown is
+// idempotent per suggestion key, so a re-fetch of the same one costs nothing.
 watch(
-  naInStatusBar,
+  () => (naInStatusBar.value ? naSuggestion.value : null),
   (shown) => {
     if (shown) void naMarkShown()
   },

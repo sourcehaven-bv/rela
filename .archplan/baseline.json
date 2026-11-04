@@ -2540,6 +2540,12 @@
       "reason": "Design: Lua and MCP each declare the push they need at the call site (consumer-side interfaces). Unchanged by this branch; it crossed the threshold here. TKT-EO2GCM.",
       "at": "2026-11-04T00:45:00Z",
       "title": "PilePush (lua) and PilePush (mcp) share most of their fields."
+    },
+    "boundaries.misplaced_file-4808d4a84e87": {
+      "state": "accepted",
+      "reason": "Design: api/views.ts is the views wire module; entity components consume its types by design.",
+      "at": "2026-11-04T04:59:34Z",
+      "title": "api/views.ts in api has most of its links to web/components/entity (weighted links: 3.2 to web/components/entity, 0.1 to api)."
     }
   },
   "labels": {},

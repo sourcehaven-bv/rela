@@ -93,7 +93,9 @@ describe('buildSectionEditFields', () => {
   })
 
   it('makes a relation field read-only when the relation verdict denies it', () => {
-    const fields: ViewSectionField[] = [{ relation: 'heeft_status', label: 'Status', render: 'input' }]
+    const fields: ViewSectionField[] = [
+      { relation: 'heeft_status', label: 'Status', render: 'input' },
+    ]
     const entry = makeEntity({ _relations: { heeft_status: { removable: false } } })
     const out = buildSectionEditFields(fields, entry, schemaResolver)
     expect(out[0].verdict?.writable).toBe(false)
@@ -254,7 +256,7 @@ describe('buildSectionEditFields — render passthrough (TKT-HOIX1)', () => {
     const out = buildSectionEditFields(
       [{ property: 'title', label: 'Title' }],
       makeEntity(),
-      schemaResolver,
+      schemaResolver
     )
     expect(out[0].render).toBeUndefined()
   })
@@ -263,7 +265,7 @@ describe('buildSectionEditFields — render passthrough (TKT-HOIX1)', () => {
     const out = buildSectionEditFields(
       [{ property: 'unknown_prop', label: 'Unknown', render: 'input' }],
       makeEntity(),
-      schemaResolver,
+      schemaResolver
     )
     expect(out[0].kind).toBe('hint')
     expect(out[0].render).toBe('input')
@@ -275,7 +277,7 @@ describe('buildSectionEditFields — render passthrough (TKT-HOIX1)', () => {
     const out = buildSectionEditFields(
       [{ property: 'title', label: 'Title', render: 'display' }],
       makeEntity(),
-      schemaResolver,
+      schemaResolver
     )
     expect(out[0].verdict).toBeUndefined()
   })
@@ -284,7 +286,9 @@ describe('buildSectionEditFields — render passthrough (TKT-HOIX1)', () => {
 describe('applyPropertyToEntry', () => {
   it('returns null when entry is null/undefined', () => {
     expect(applyPropertyToEntry(null, 'title', 'x', { type: 'ticket', id: 'TKT-001' })).toBeNull()
-    expect(applyPropertyToEntry(undefined, 'title', 'x', { type: 'ticket', id: 'TKT-001' })).toBeNull()
+    expect(
+      applyPropertyToEntry(undefined, 'title', 'x', { type: 'ticket', id: 'TKT-001' })
+    ).toBeNull()
   })
 
   it('returns null when owner identity mismatches (stale-response guard, RR-FB2A)', () => {
@@ -295,7 +299,10 @@ describe('applyPropertyToEntry', () => {
 
   it('returns null when owner type mismatches', () => {
     const entry = makeEntity()
-    const result = applyPropertyToEntry(entry, 'title', 'leaked', { type: 'feature', id: 'TKT-001' })
+    const result = applyPropertyToEntry(entry, 'title', 'leaked', {
+      type: 'feature',
+      id: 'TKT-001',
+    })
     expect(result).toBeNull()
   })
 
@@ -310,7 +317,10 @@ describe('applyPropertyToEntry', () => {
 
   it('deletes the key when value is undefined (RR-FB2D NEW-5)', () => {
     const entry = makeEntity()
-    const result = applyPropertyToEntry(entry, 'title', undefined, { type: 'ticket', id: 'TKT-001' })
+    const result = applyPropertyToEntry(entry, 'title', undefined, {
+      type: 'ticket',
+      id: 'TKT-001',
+    })
     expect(result?.properties).not.toHaveProperty('title')
     expect(result?.properties.status).toBe('open')
   })
@@ -378,7 +388,9 @@ describe('sectionShouldRouteToInlineEdit — parameterized', () => {
 describe('applyPropertyToRow', () => {
   it('returns null for null/undefined input', () => {
     expect(applyPropertyToRow(null, 'title', 'x', { type: 'ticket', id: 'TKT-002' })).toBeNull()
-    expect(applyPropertyToRow(undefined, 'title', 'x', { type: 'ticket', id: 'TKT-002' })).toBeNull()
+    expect(
+      applyPropertyToRow(undefined, 'title', 'x', { type: 'ticket', id: 'TKT-002' })
+    ).toBeNull()
   })
 
   it('rejects stale owner (different id)', () => {
@@ -388,7 +400,9 @@ describe('applyPropertyToRow', () => {
 
   it('rejects stale owner (different type)', () => {
     const row = makeRow()
-    expect(applyPropertyToRow(row, 'title', 'leaked', { type: 'feature', id: 'TKT-002' })).toBeNull()
+    expect(
+      applyPropertyToRow(row, 'title', 'leaked', { type: 'feature', id: 'TKT-002' })
+    ).toBeNull()
   })
 
   it('produces a new row with patched _props when owner matches', () => {
@@ -472,7 +486,7 @@ describe('widget override plumbing (TKT-3R7RF3)', () => {
     const fields = buildSectionEditFields(
       [{ property: 'status', label: 'Status', widget: 'textarea' }],
       { type: 'ticket' },
-      () => ({ type: 'enum', values: ['a'] }) as PropertyDef,
+      () => ({ type: 'enum', values: ['a'] }) as PropertyDef
     )
     expect(fields[0].kind).toBe('schema')
     expect(fields[0].widget).toBe('textarea')
@@ -482,7 +496,7 @@ describe('widget override plumbing (TKT-3R7RF3)', () => {
     const fields = buildSectionEditFields(
       [{ property: 'mystery', label: 'Mystery', widget: 'textarea' }],
       { type: 'ticket' },
-      () => undefined,
+      () => undefined
     )
     expect(fields[0].kind).toBe('hint')
     // Carried, so the drop stays a single decision in widgetRows rather than
@@ -494,7 +508,7 @@ describe('widget override plumbing (TKT-3R7RF3)', () => {
     const fields = buildSectionEditFields(
       [{ property: 'status', label: 'Status' }],
       { type: 'ticket' },
-      () => ({ type: 'enum', values: ['a'] }) as PropertyDef,
+      () => ({ type: 'enum', values: ['a'] }) as PropertyDef
     )
     expect(fields[0].widget).toBeUndefined()
   })
@@ -504,7 +518,7 @@ describe('widget override plumbing (TKT-3R7RF3)', () => {
     const withWidget = sectionShouldRouteToInlineEdit(
       [{ property: 'status', label: 'Status', render: 'display', widget: 'textarea' }],
       { type: 'ticket', _fields: { status: { writable: true } } },
-      () => ({ type: 'enum', values: ['a'] }) as PropertyDef,
+      () => ({ type: 'enum', values: ['a'] }) as PropertyDef
     )
     // render: display still wins — a widget override is presentation, not
     // permission, and cannot promote a display field into an edit host.

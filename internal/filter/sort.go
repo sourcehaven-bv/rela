@@ -41,6 +41,8 @@ func Sort[T any](
 			less = compareDates(valI, valJ, propDef)
 		case metamodel.PropertyTypeInteger:
 			less = compareIntegers(valI, valJ)
+		case metamodel.PropertyTypeDecimal:
+			less = compareDecimals(valI, valJ)
 		case metamodel.PropertyTypeBoolean:
 			less = compareBooleans(valI, valJ)
 		case metamodel.PropertyTypeEnum:
@@ -170,6 +172,16 @@ func compareIntegers(valI, valJ any) bool {
 		return compareStrings(valI, valJ)
 	}
 	return intI < intJ
+}
+
+// compareDecimals compares two values as exact decimals. A value that is
+// not a decimal falls back to string order, as compareIntegers does.
+func compareDecimals(valI, valJ any) bool {
+	cmp, ok := metamodel.CompareDecimals(valI, valJ)
+	if !ok {
+		return compareStrings(valI, valJ)
+	}
+	return cmp < 0
 }
 
 // compareBooleans compares two values as booleans (false < true).
@@ -316,6 +328,11 @@ func comparePropValues(valI, valJ any, piI, piJ *propInfo, meta *metamodel.Metam
 	switch {
 	case piI.def != nil && piJ.def != nil && piI.def.Type == piJ.def.Type:
 		return compareByPropDef(valI, valJ, piI.def, piI.enumIndex)
+	case piI.def != nil && piJ.def != nil && metamodel.IsNumericType(piI.def.Type) &&
+		metamodel.IsNumericType(piJ.def.Type):
+		// A mixed integer/decimal column: an integer value is a decimal
+		// too, so both compare as exact numbers.
+		return compareDecimals(valI, valJ)
 	case piI.def != nil && piJ.def != nil && isTimeLike(piI.def.Type) && isTimeLike(piJ.def.Type):
 		// A mixed date/datetime column: both parse to a full time.Time via
 		// ParseDateValue, so compare as instants rather than lexically
@@ -344,6 +361,8 @@ func compareByPropDef(valI, valJ any, propDef *metamodel.PropertyDef, enumIndex 
 		return compareDates(valI, valJ, propDef)
 	case metamodel.PropertyTypeInteger:
 		return compareIntegers(valI, valJ)
+	case metamodel.PropertyTypeDecimal:
+		return compareDecimals(valI, valJ)
 	case metamodel.PropertyTypeBoolean:
 		return compareBooleans(valI, valJ)
 	case metamodel.PropertyTypeEnum:
@@ -372,7 +391,7 @@ func isTimeLike(propType string) bool {
 
 func typeRank(propDef *metamodel.PropertyDef, meta *metamodel.Metamodel) int {
 	switch propDef.Type {
-	case metamodel.PropertyTypeInteger:
+	case metamodel.PropertyTypeInteger, metamodel.PropertyTypeDecimal:
 		return typeRankInteger
 	case metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime:
 		// datetime shares date's rank so mixed date+datetime columns

@@ -38,6 +38,11 @@ const (
 // a failure.
 type nextActionResponse struct {
 	Suggestion *nextActionWire `json:"suggestion"`
+	// ContextType names the entity type whose changes can change the answer
+	// for this page: set when a context source can apply here. The client
+	// re-resolves on a change of that type and of no other, so a page that no
+	// context source is about never refreshes on graph changes.
+	ContextType string `json:"context_type,omitempty"`
 }
 
 // nextActionWire is one suggestion as the SPA sees it.
@@ -78,7 +83,7 @@ type nextActionFeedbackRequest struct {
 	EntityID string `json:"entity_id,omitempty"`
 	Variant  string `json:"variant,omitempty"`
 
-	// Kind is one of: "snooze", "dismiss", "mute", "unmute", "shown".
+	// Kind is one of: "snooze", "dismiss", "mute", "unmute", "shown", "seen".
 	Kind string `json:"kind"`
 	// Duration applies to snooze, e.g. "1d". Ignored otherwise.
 	Duration string `json:"duration,omitempty"`
@@ -108,7 +113,26 @@ func (a *App) handleV1NextActionGet(w http.ResponseWriter, r *http.Request) {
 	// The request's world is the DISPLAY world: it decides which sources may
 	// surface here (visible_worlds), never which world a source queries. See
 	// nextActionSourceWorld.
-	eng, scope, ok := a.nextActionEngine(nextActionDisplayWorld(r.Context()))
+	st := a.State()
+	if st.Cfg == nil {
+		writeV1JSON(w, http.StatusOK, nextActionResponse{})
+		return
+	}
+	page, known, pageErr := parseNextActionPage(r, st.Cfg, st.Meta)
+	if pageErr != nil {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_surface", "Unknown next-action surface",
+			pageErr.Error())
+		return
+	}
+	if !known || !page.enabled(st.Cfg) {
+		// Suggestions are off for this page, or it names a view that no
+		// longer exists. Answered before any source runs, so a disabled
+		// surface costs no reads.
+		writeV1JSON(w, http.StatusOK, nextActionResponse{})
+		return
+	}
+
+	eng, scope, ok := a.nextActionEngine(st, nextActionDisplayWorld(r.Context()), page, nextActionCurrent(r))
 	if !ok {
 		// No sources configured: a valid, common state (the feature is
 		// opt-in). An empty answer, not a 404 — the SPA renders nothing.
@@ -132,12 +156,13 @@ func (a *App) handleV1NextActionGet(w http.ResponseWriter, r *http.Request) {
 		writeNextActionError(w, r, err)
 		return
 	}
+	contextType := page.refreshType(st.Cfg)
 	if !found {
-		writeV1JSON(w, http.StatusOK, nextActionResponse{})
+		writeV1JSON(w, http.StatusOK, nextActionResponse{ContextType: contextType})
 		return
 	}
 
-	writeV1JSON(w, http.StatusOK, nextActionResponse{Suggestion: &nextActionWire{
+	writeV1JSON(w, http.StatusOK, nextActionResponse{ContextType: contextType, Suggestion: &nextActionWire{
 		Source:      sug.Source,
 		Band:        sug.Band,
 		EntityID:    sug.EntityID,
@@ -234,7 +259,7 @@ func (a *App) handleV1NextActionPost(w http.ResponseWriter, r *http.Request) {
 		key.Variant = ""
 	}
 
-	if err := a.applyNextActionFeedback(ctx, state, key, req); err != nil {
+	if err := applyNextActionFeedback(ctx, state, src, key, req); err != nil {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_feedback", err.Error(), "")
 		return
 	}
@@ -263,8 +288,15 @@ func nextActionUser(ctx context.Context) string {
 }
 
 // applyNextActionFeedback records one user response.
-func (a *App) applyNextActionFeedback(
-	ctx context.Context, state userstate.Store, key userstate.Key, req nextActionFeedbackRequest,
+//
+// A context source records no impressions: the engine ignores them for it
+// (see nextaction.Cooldown), and an entity page would write one on every
+// visit. So "shown" is a no-op for it, and "seen" (the reader clicked "Seen
+// it") snoozes it for the source's cooldown. For a query source "seen" is the
+// no-op, because the impression already hides the suggestion.
+func applyNextActionFeedback(
+	ctx context.Context, state userstate.Store, src dataentryconfig.NextActionSource,
+	key userstate.Key, req nextActionFeedbackRequest,
 ) error {
 	now := time.Now()
 	switch req.Kind {
@@ -289,7 +321,16 @@ func (a *App) applyNextActionFeedback(
 		return state.SetMuted(ctx, key.User, key.Source, false)
 
 	case "shown":
+		if src.Context != "" {
+			return nil
+		}
 		return state.MarkShown(ctx, key, now)
+
+	case "seen":
+		if src.Context == "" {
+			return nil
+		}
+		return state.SetSnooze(ctx, key, now.Add(nextaction.Cooldown(src)))
 
 	default:
 		return fmt.Errorf("unknown kind %q", req.Kind)
@@ -320,18 +361,23 @@ func nextActionDisplayWorld(ctx context.Context) string {
 	return metamodel.DefaultWorldName
 }
 
-func (a *App) nextActionEngine(displayWorld string) (*nextaction.Engine, NextActionRequestScope, bool) {
-	// Snapshot the config once: State() reads an atomic face, and two
-	// reads could observe different snapshots if a reload lands between them.
-	st := a.State()
+func (a *App) nextActionEngine(
+	st *Schema, displayWorld string, page nextActionPage, current *userstate.Key,
+) (*nextaction.Engine, NextActionRequestScope, bool) {
+	// One snapshot for the whole request, taken by the caller: State() reads
+	// an atomic face, and two reads could observe different snapshots if a
+	// reload lands between them.
 	cfg := st.Cfg
 	if cfg == nil || len(cfg.NextActions) == 0 || a.userState == nil {
 		return nil, nil, false
 	}
 
 	opts := []nextaction.Option{
-		nextaction.WithOptions(a.nextActionOptions()),
+		nextaction.WithOptions(a.nextActionOptions(st.Meta)),
 		nextaction.WithDisplayWorld(displayWorld),
+		nextaction.WithSourceFilter(page.keeps),
+		nextaction.WithCurrent(current),
+		nextaction.WithValueFormatter(nextActionValueFormatter(st.Meta)),
 	}
 	var (
 		lookup nextaction.MatcherFunc
@@ -351,7 +397,7 @@ func (a *App) nextActionEngine(displayWorld string) (*nextaction.Engine, NextAct
 	// The SAME lookup feeds both the engine (which runs each condition in
 	// full) and the candidate func (which pushes the condition's
 	// store-evaluable part into the query) — see nextActionCandidates.
-	eng, err := nextaction.New(cfg, a.userState, a.nextActionCandidates(st.Meta, lookup), opts...)
+	eng, err := nextaction.New(cfg, a.userState, a.nextActionCandidates(st.Meta, lookup, page), opts...)
 	if err != nil {
 		return nil, nil, false
 	}

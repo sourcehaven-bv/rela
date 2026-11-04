@@ -314,6 +314,24 @@ func TestInterpolation(t *testing.T) {
 			props:   map[string]any{"count": 3},
 			want:    "3 left",
 		},
+		{
+			name:    "a date reads without a clock or zone",
+			suggest: "due {due}",
+			props:   map[string]any{"due": time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC)},
+			want:    "due 2026-11-03",
+		},
+		{
+			name:    "a time of day reads to the minute",
+			suggest: "at {at}",
+			props:   map[string]any{"at": time.Date(2026, 11, 3, 14, 5, 9, 0, time.UTC)},
+			want:    "at 2026-11-03 14:05",
+		},
+		{
+			name:    "a list joins its items",
+			suggest: "tags: {tags}",
+			props:   map[string]any{"tags": []any{"a", "b"}},
+			want:    "tags: a, b",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -727,4 +745,33 @@ func TestResolve_VisibleWorldsCanSilenceEverything(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok, "every source is hidden in this world")
 	require.Empty(t, *queried, "no source should have been queried")
+}
+
+// The wiring site's formatter renders what it knows; the engine's own
+// rendering covers the rest, and the deferral key never sees either.
+func TestResolve_ValueFormatter(t *testing.T) {
+	t.Parallel()
+	cfg := twoBandConfig()
+	src := cfg.NextActions["urgent"]
+	src.Suggest = "{status}: {title}"
+	src.KeyProps = []string{"status"}
+	cfg.NextActions["urgent"] = src
+	task := ent("T-1", "task", map[string]any{"status": "open", "title": "Fix"})
+	fn, _ := staticCandidates(map[string][]*entity.Entity{src.Suggest: {task}})
+	format := func(entityType, property string, v any) (string, bool) {
+		if entityType == task.Type && property == "status" && v == "open" {
+			return "Open", true
+		}
+		return "", false
+	}
+	st := memuserstate.New()
+	t.Cleanup(func() { _ = st.Close() })
+	eng, err := nextaction.New(cfg, st, fn, nextaction.WithValueFormatter(format))
+	require.NoError(t, err)
+
+	got, ok, err := eng.Resolve(context.Background(), testUser, base)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "Open: Fix", got.Message)
+	require.Equal(t, "status=open", got.Key.Variant)
 }

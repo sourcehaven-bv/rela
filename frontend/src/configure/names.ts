@@ -24,6 +24,7 @@ export function machineName(label: string, separator: '_' | '-' = '_'): string {
 export const BUILTIN_TYPES: { value: string; label: string }[] = [
   { value: 'string', label: 'Text' },
   { value: 'integer', label: 'Number' },
+  { value: 'decimal', label: 'Decimal number' },
   { value: 'boolean', label: 'Yes / no' },
   { value: 'date', label: 'Date' },
   { value: 'datetime', label: 'Date and time' },

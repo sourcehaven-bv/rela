@@ -51,7 +51,17 @@ function view(id: string, title: string, content = ''): ViewResponse {
   return {
     entry,
     sections: content
-      ? [{ heading: '', sectionId: 'content', display: 'content', hasContent: true, content, isEmpty: false, isGrouped: false }]
+      ? [
+          {
+            heading: '',
+            sectionId: 'content',
+            display: 'content',
+            hasContent: true,
+            content,
+            isEmpty: false,
+            isGrouped: false,
+          },
+        ]
       : [],
   } as ViewResponse
 }
@@ -119,7 +129,9 @@ describe('EntityDetail live refresh', () => {
     liveChanged()
     await flushPromises()
     expect(fetchViewMock).not.toHaveBeenCalled()
-    expect(w.find<HTMLInputElement>('input[type="checkbox"][data-cb-idx]').element.checked).toBe(true)
+    expect(w.find<HTMLInputElement>('input[type="checkbox"][data-cb-idx]').element.checked).toBe(
+      true
+    )
 
     // Once the save settles, the deferred refresh runs.
     fetchViewMock.mockResolvedValue(view('TASK-1', 'First', '- [x] a task'))

@@ -319,3 +319,84 @@ export const FloatingToolbar: Story = {
     `,
   }),
 }
+
+/**
+ * A number in a table column. `numeric` sets tabular figures and right
+ * alignment on both halves, so the digits line up down the column and the
+ * value does not jump when the input opens.
+ */
+export const Numeric: Story = {
+  render: () => ({
+    components: { RlInlineEdit },
+    setup() {
+      const value = ref('1450.00')
+      const draft = ref(value.value)
+      return { value, draft }
+    },
+    template: `
+      <div style="width:120px; display:flex; justify-content:flex-end">
+        <RlInlineEdit numeric label="Unit price" @edit="draft = value" @commit="value = draft">
+          <template #read>{{ value }}</template>
+          <template #edit>
+            <input v-model="draft" inputmode="decimal" class="rl-control rl-control--sm" aria-label="Unit price" />
+          </template>
+        </RlInlineEdit>
+      </div>
+    `,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: /Unit price/ }))
+    const input = canvas.getByRole('textbox', { name: 'Unit price' })
+    await expect(getComputedStyle(input).textAlign).toBe('right')
+    await userEvent.clear(input)
+    await userEvent.type(input, '99.95{Enter}')
+    await expect(canvas.getByRole('button', { name: /Unit price/ })).toHaveTextContent('99.95')
+  },
+}
+
+/**
+ * A rich text editor is a contenteditable element, and like a textarea it
+ * keeps Enter for a new paragraph. Blur or a press outside commits.
+ */
+export const RichText: Story = {
+  render: () => ({
+    components: { RlInlineEdit },
+    setup() {
+      const value = ref('First paragraph.')
+      const draft = ref(value.value)
+      const onInput = (event: Event) => {
+        draft.value = (event.target as HTMLElement).innerText
+      }
+      return { value, draft, onInput }
+    },
+    template: `
+      <div style="max-width:420px">
+        <RlInlineEdit block label="Body" @edit="draft = value" @commit="value = draft">
+          <template #read><span style="white-space:pre-wrap">{{ value }}</span></template>
+          <template #edit>
+            <div
+              contenteditable="true"
+              role="textbox"
+              aria-multiline="true"
+              aria-label="Body"
+              tabindex="0"
+              class="rl-control"
+              style="width:100%; min-height:4em; white-space:pre-wrap"
+              @input="onInput"
+            >{{ draft }}</div>
+          </template>
+        </RlInlineEdit>
+      </div>
+    `,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: /Body/ }))
+    const editor = canvas.getByRole('textbox', { name: 'Body' })
+    await userEvent.keyboard('{Enter}')
+    // Still editing: Enter went to the editor.
+    await expect(editor).toBeInTheDocument()
+    await expect(canvas.queryByRole('button', { name: /Body/ })).toBeNull()
+  },
+}

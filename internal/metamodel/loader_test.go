@@ -1115,7 +1115,7 @@ relations: {}
 			if !strings.Contains(err.Error(), tt.typeName) {
 				t.Errorf("expected %q in error, got: %v", tt.typeName, err)
 			}
-			if !strings.Contains(err.Error(), `use "integer" instead`) {
+			if !strings.Contains(err.Error(), `use "integer" or "decimal" instead`) {
 				t.Errorf("expected suggestion to use integer, got: %v", err)
 			}
 		})
