@@ -1699,7 +1699,11 @@ may add to another user's pile, but cannot read it (see the Lua and MCP guides).
 Every route needs an owner identity. A request with no usable identity (the
 `unknown` principal or a `system:*` one) gets 403. `GET /_sidebar` reports this
 as `piles_available`, and carries the operator's `piles:` block from
-`data-entry.yaml` (`actions`, `export`).
+`data-entry.yaml` (`actions`, `export`, `toggles`).
+
+The schema may declare piles every user has (its top-level `piles:`). `GET
+/_piles` creates any the user does not hold yet and lists them first, in schema
+order. A declared pile is `locked`: PATCH and DELETE answer 409 `pile_locked`.
 
 ### Shapes
 
@@ -1711,6 +1715,14 @@ interface PileSummary {
   count: number    // items this principal can read, in the request's world
   created: string  // RFC 3339
   updated: string
+  // Declared piles only:
+  key?: string               // the schema key
+  locked?: boolean
+  read_state?: boolean
+  auto_read?: boolean        // items become read when the owner opens them
+  unread?: number            // readable unread items
+  addresses?: string[]       // readable items, for a toggle's state
+  unread_addresses?: string[]
 }
 
 interface PileItem {
@@ -1719,6 +1731,10 @@ interface PileItem {
   address: string  // "ID" or "ID@face"; use it for links, removal and actions
   type: string
   title: string    // redacted like any other header
+  added?: string   // RFC 3339
+  read?: boolean   // on a pile with read state
+  actor?: string   // who caused it: the person's title, or a login
+  reason?: string  // the declared reason's text
 }
 
 interface Pile extends PileSummary {
@@ -1737,6 +1753,9 @@ interface Pile extends PileSummary {
 | DELETE | `/_piles/{id}` | | 204 |
 | POST | `/_piles/{id}/items` | `{items: string[]}` | 200 `{added: number}` |
 | POST | `/_piles/{id}/items/_remove` | `{items: string[]}` | 204 |
+| POST | `/_piles/{id}/items/_read` | `{items: string[]}` | 204 |
+| POST | `/_piles/{id}/_read_all` | | 204 |
+| POST | `/_piles/_read` | `{items: string[]}` | 204; marks the opened items read on every `auto_read` pile |
 | GET | `/_piles/{id}/_export?transform=<name>` | | a file, like a list export |
 
 `items` holds addresses (`ID` or `ID@face`), at most 500 per request. Reads
@@ -1750,8 +1769,10 @@ only what fits.
 
 - A hidden item is left out of every read: the item list, `count`, `_position`
   and the export. It stays on the pile and comes back if access returns.
-- `_remove` answers 204 whether or not an address was on the pile, hidden or
-  deleted.
+- `_remove` and `_read` answer 204 whether or not an address was on the pile,
+  hidden or deleted.
+- `actor` is left out when the owner cannot read the person who caused the
+  item.
 - A pile id that belongs to another user gets the same 404 as one that never
   existed.
 - `item_not_found` does not say which address failed.
@@ -1763,13 +1784,14 @@ names the error.
 
 | Status | Error | When |
 | --- | --- | --- |
-| 400 | `invalid_request` | bad JSON, a bad name or icon, more than 500 items |
+| 400 | `invalid_request` | bad JSON, a bad name or icon, more than 500 items, marking read on a pile without read state |
 | 403 | `no_owner` | no owner identity |
 | 404 | `pile_not_found` | an unknown, malformed or foreign pile id |
 | 404 | `item_not_found` | an added address does not exist or cannot be read |
 | 404 | `unknown_transform` | the transform is not registered, or not in `piles.export` |
 | 409 | `pile_limit` | the 51st pile |
 | 409 | `pile_name_taken` | the name is in use, ignoring case |
+| 409 | `pile_locked` | renaming, re-iconing or deleting a declared pile |
 | 409 | `ambiguous_address` | a bare id of a faced type; the detail names the faces |
 | 413 | `body_too_large` | the body is too large |
 

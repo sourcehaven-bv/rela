@@ -6,6 +6,9 @@ import {
   deletePile,
   getPile,
   listPiles,
+  markPileAllRead,
+  markPileItemsRead,
+  markPilesOpened,
   pileErrorCode,
   removePileItems,
   updatePile,
@@ -88,6 +91,8 @@ export function pileErrorMessage(err: unknown, fallback: string): string {
       return t('piles.notFound')
     case 'no_owner':
       return t('piles.noOwner')
+    case 'pile_locked':
+      return t('piles.locked')
     default:
       return getErrorMessage(err, fallback)
   }
@@ -134,6 +139,10 @@ export function usePiles() {
     available.value ? (query.data.value?.piles ?? []) : []
   )
   const icons = computed<string[]>(() => query.data.value?.icons ?? [])
+  /** The piles the schema declares, in schema order. */
+  const declared = computed(() => piles.value.filter((p) => p.locked))
+  /** The piles the user made: the ones "Add to pile" offers. */
+  const collected = computed(() => piles.value.filter((p) => !p.locked))
 
   /** Refetches every pile query: the list and any open pile. */
   async function refresh(): Promise<void> {
@@ -163,10 +172,7 @@ export function usePiles() {
       uiStore.showToast(
         'success',
         n > 0
-          ? withNote(
-              t('piles.createdWith', { name: pile.name, n: pile.count }, pile.count),
-              n
-            )
+          ? withNote(t('piles.createdWith', { name: pile.name, n: pile.count }, pile.count), n)
           : t('piles.created', { name: pile.name }),
         5000,
         { label: t('piles.open'), onAction: () => openPile(pile) }
@@ -273,6 +279,51 @@ export function usePiles() {
     }
   }
 
+  /** Marks addresses read, or every item when `addresses` is omitted. */
+  async function markRead(pile: PileRef, addresses?: string[]): Promise<boolean> {
+    try {
+      if (addresses) await markPileItemsRead(pile.id, addresses)
+      else await markPileAllRead(pile.id)
+      return true
+    } catch (err) {
+      uiStore.error(pileErrorMessage(err, t('piles.markReadFailed', { name: pile.name })))
+      return false
+    } finally {
+      await refresh()
+    }
+  }
+
+  /**
+   * The owner opened address. When it is unread on an auto-read pile the
+   * server is told, quietly: a failure only leaves the item unread.
+   */
+  async function markOpened(address: string): Promise<void> {
+    const unread = piles.value.some(
+      (p) => p.auto_read && (p.unread_addresses ?? []).includes(address)
+    )
+    if (!unread) return
+    try {
+      await markPilesOpened([address])
+    } catch {
+      return
+    }
+    await refresh()
+  }
+
+  /** Whether address is on the declared pile `key`. */
+  function holds(key: string, address: string): boolean {
+    const pile = declared.value.find((p) => p.key === key)
+    return !!pile && (pile.addresses ?? []).includes(address)
+  }
+
+  /** Puts address on the declared pile `key`, or takes it off. */
+  async function toggle(key: string, address: string): Promise<void> {
+    const pile = declared.value.find((p) => p.key === key)
+    if (!pile) return
+    if (holds(key, address)) await removeItems(pile, [address])
+    else await addItems(pile, [address])
+  }
+
   function openPile(pile: PileRef) {
     flyout.openPile({ navId: pileNavId(pile.id), title: pile.name, pileId: pile.id })
   }
@@ -280,6 +331,8 @@ export function usePiles() {
   return {
     available,
     piles,
+    declared,
+    collected,
     icons,
     isPending: computed(() => query.isPending.value),
     refresh,
@@ -288,6 +341,10 @@ export function usePiles() {
     remove,
     addItems,
     removeItems,
+    markRead,
+    markOpened,
+    holds,
+    toggle,
     openPile,
   }
 }

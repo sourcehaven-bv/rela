@@ -2511,6 +2511,30 @@
       "title": "src holds 2 groups of files that neither refer to each other.",
       "size": 2
     },
+    "concepts.data_clump-ed50428be469": {
+      "state": "accepted",
+      "reason": "Design: owner, pile and create are the parameters of a pile push; each surface (automation, Lua, MCP, HTTP, service) takes them at its own call site, as the consumer-side interface rule asks. TKT-EY4W0P.",
+      "at": "2026-11-04T00:45:00Z",
+      "title": "The fields create, owner and pile appear together in 7 types across 6 components."
+    },
+    "types.synonyms-05fe711bc75c": {
+      "state": "accepted",
+      "reason": "Design: autocascade declares the push it needs at its call site instead of importing piles (consumer-side interfaces); notify added Key, Reason and SkipSelf to both. TKT-EY4W0P.",
+      "at": "2026-11-04T00:45:00Z",
+      "title": "PileRequest (autocascade) and PushRequest (piles) share most of their fields."
+    },
+    "types.synonyms-e17b4522d205": {
+      "state": "accepted",
+      "reason": "Design: metamodel.PileDecl is the schema.yaml shape (strings as written); piles.Declared is the parsed policy the service runs on. metamodel does not import piles. TKT-EO2GCM.",
+      "at": "2026-11-04T00:45:00Z",
+      "title": "PileDecl (metamodel) and Declared (piles) share most of their fields."
+    },
+    "types.synonyms-f958cc3a26f6": {
+      "state": "accepted",
+      "reason": "Design: Lua and MCP each declare the push they need at the call site (consumer-side interfaces). Unchanged by this branch; it crossed the threshold here. TKT-EO2GCM.",
+      "at": "2026-11-04T00:45:00Z",
+      "title": "PilePush (lua) and PilePush (mcp) share most of their fields."
+    },
     "security.untested_denial-0307204dce29": {
       "state": "accepted",
       "reason": "Design: the inbox is the signed-in caller's own, and realtime.Service.Inbox gates each row before it counts, so a signed-in caller is never refused. The one refusal is 403 no_principal for a request without an identity; the routes suite's identity-less requests stop at the 401 before the handler. Its 400s for a bad limit, kinds or cursor are input errors. TestInboxHandler_Errors covers both; archplan does not link it.",
@@ -2543,18 +2567,18 @@
       "weight.structure": 936,
       "weight.layers": 0,
       "weight.vocabulary": 912,
-      "weight.types": 3977,
-      "weight.concepts": 7186,
-      "weight.boundaries": 1512,
+      "weight.types": 4028,
+      "weight.concepts": 7041,
+      "weight.boundaries": 1478,
       "weight.data": 1297,
       "weight.security": 2300,
       "largest_tangle": 13,
-      "cycle_edges": 68,
+      "cycle_edges": 61,
       "upward_edges": 0,
-      "propagation_cost": 10.0
+      "propagation_cost": 9.8
     },
     "min_weight": 0,
-    "at": "2026-10-28T14:49:20Z",
+    "at": "2026-11-04T12:04:38Z",
     "log": [
       {
         "at": "2026-10-28T13:29:24Z",
@@ -2651,6 +2675,44 @@
           "weight.types": [
             3976,
             3977
+          ]
+        }
+      },
+      {
+        "at": "2026-11-04T00:30:00Z",
+        "change": "loosen",
+        "reason": "Declared piles and notify: metamodel.PileDecl maps the schema to piles.Declared, and autocascade.PileRequest, the consumer-side mirror of piles.PushRequest, grew by Key, Reason and SkipSelf, TKT-EO2GCM, TKT-EY4W0P",
+        "metrics": {
+          "weight.types": [
+            3977,
+            4071
+          ]
+        }
+      },
+      {
+        "at": "2026-11-04T12:04:38Z",
+        "change": "tighten",
+        "reason": "Static metrics only; structure, security and profile need traces and hotspots, which the weekly scan has",
+        "metrics": {
+          "weight.types": [
+            4071,
+            4028
+          ],
+          "weight.concepts": [
+            7186,
+            7041
+          ],
+          "weight.boundaries": [
+            1512,
+            1478
+          ],
+          "cycle_edges": [
+            68,
+            61
+          ],
+          "propagation_cost": [
+            10.0,
+            9.8
           ]
         }
       }

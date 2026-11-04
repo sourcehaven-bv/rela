@@ -26,6 +26,20 @@ export interface PileSummary {
   count: number
   created: string
   updated: string
+  /** The schema key of a declared pile; absent for a pile the user made. */
+  key?: string
+  /** A declared pile: it cannot be renamed, re-iconed or deleted. */
+  locked?: boolean
+  /** Items are read or unread. */
+  read_state?: boolean
+  /** Items become read when the owner opens the entity. */
+  auto_read?: boolean
+  /** Readable unread items. */
+  unread?: number
+  /** Readable items of a declared pile, for a toggle's on/off state. */
+  addresses?: string[]
+  /** Readable unread items of a pile with read state. */
+  unread_addresses?: string[]
 }
 
 /** One entity on a pile, as the owner may read it. */
@@ -38,6 +52,14 @@ export interface PileItem {
   address: string
   type: string
   title: string
+  /** When the item was put on the pile. */
+  added?: string
+  /** The owner has read it; only on a pile with read state. */
+  read?: boolean
+  /** Who put it here: a person's title or a login. */
+  actor?: string
+  /** Why it is here, as the schema labels the reason. */
+  reason?: string
 }
 
 export interface Pile extends PileSummary {
@@ -104,6 +126,21 @@ export async function addPileItems(id: string, items: string[]): Promise<{ added
  */
 export async function removePileItems(id: string, items: string[]): Promise<void> {
   await api.post<void>(`${pilePath(id)}/items/_remove`, { items })
+}
+
+/** Marks addresses read on a pile with read state. Always 204. */
+export async function markPileItemsRead(id: string, items: string[]): Promise<void> {
+  await api.post<void>(`${pilePath(id)}/items/_read`, { items })
+}
+
+/** Marks every item read on a pile with read state. */
+export async function markPileAllRead(id: string): Promise<void> {
+  await api.post<void>(`${pilePath(id)}/_read_all`, {})
+}
+
+/** Reports addresses the owner opened; they become read on every auto-read pile. */
+export async function markPilesOpened(items: string[]): Promise<void> {
+  await api.post<void>('/_piles/_read', { items })
 }
 
 /** The download URL for a pile exported through a registered transform. */

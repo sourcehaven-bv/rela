@@ -19,7 +19,8 @@ body:
       "face": "",
       "address": "TKT-1",
       "type": "ticket",
-      "title": "Alpha"
+      "title": "Alpha",
+      "added": "2025-03-01T09:00:00Z"
     }
   ]
 }

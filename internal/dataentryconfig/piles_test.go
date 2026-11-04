@@ -15,6 +15,7 @@ func pilesMeta() *metamodel.Metamodel {
 	m.Transforms = map[string]metamodel.TransformDef{
 		"docx": {From: "markdown", Command: []string{"pandoc", "{in}", "-o", "{out}"}, Produces: "docx"},
 	}
+	m.Piles = map[string]metamodel.PileDecl{"favorites": {Name: "Favorites", Icon: "star"}}
 	return m
 }
 
@@ -44,6 +45,13 @@ func TestValidateConfig_Piles(t *testing.T) {
 		{"unlabelled action", "piles: {actions: [unlabelled]}", `action "unlabelled" needs a label`},
 		{"unknown transform", "piles: {export: [pdf]}", `piles.export: unknown transform "pdf"`},
 		{"unknown key", "piles: {action: [close]}", `piles: unknown key "action"`},
+		{"toggle", "piles: {toggles: [{pile: favorites, icon: star, entity_types: [ticket]}]}", ""},
+		{"toggle without pile", "piles: {toggles: [{icon: star}]}", "piles.toggles[0]: pile is required"},
+		{"toggle undeclared pile", "piles: {toggles: [{pile: nope}]}", `pile "nope" is not declared`},
+		{"toggle twice", "piles: {toggles: [{pile: favorites}, {pile: favorites}]}", "already has a toggle"},
+		{"toggle unknown icon", "piles: {toggles: [{pile: favorites, icon_active: star-filled}]}", `icon "star-filled" is not one of`},
+		{"toggle unknown type", "piles: {toggles: [{pile: favorites, entity_types: [nope]}]}",
+			`unknown entity type "nope"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

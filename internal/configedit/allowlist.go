@@ -155,9 +155,20 @@ var editable = map[File][]string{
 		"automations.[].do.[].add_to_pile.create",
 		"automations.[].do.[].add_to_pile.owner",
 		"automations.[].do.[].add_to_pile.pile",
+		// notify pushes the triggering entity's ref onto a declared read-state
+		// pile of the people a property names; the recipient reads it gated.
+		"automations.[].do.[].notify.pile",
+		"automations.[].do.[].notify.reason",
+		"automations.[].do.[].notify.to.property",
+		"automations.[].do.[].notify.to.type",
+		"automations.[].do.[].notify.to.via.[]",
 		"automations.[].validate.[].check",
 		"automations.[].validate.[].message",
 		"automations.[].validate.[].severity",
+
+		// Declared piles (TKT-EO2GCM) name, decorate and expire per-user lists
+		// of refs; they run no code and grant no read.
+		"piles.**",
 	},
 	DataEntryFile: {
 		// Detail views, calendars and timelines choose which properties and
@@ -203,6 +214,8 @@ var editable = map[File][]string{
 		"lists.*.columns.[].property",
 		"lists.*.columns.[].relation",
 		"lists.*.columns.[].sortable",
+		// Pile toggles only place a button that adds to the caller's own pile.
+		"piles.toggles.[].**",
 		"lists.*.condition",
 		"lists.*.create_form",
 		"lists.*.description",

@@ -9,6 +9,25 @@ type PileSummary struct {
 	Count   int    `json:"count"`
 	Created string `json:"created"`
 	Updated string `json:"updated"`
+	// Key is the schema key of a declared pile; empty for a pile the user
+	// made.
+	Key string `json:"key,omitempty"`
+	// Locked marks a declared pile: it cannot be renamed, re-iconed or
+	// deleted.
+	Locked bool `json:"locked,omitempty"`
+	// ReadState marks a pile whose items are read or unread.
+	ReadState bool `json:"read_state,omitempty"`
+	// AutoRead marks a pile whose items become read when the owner opens
+	// the entity.
+	AutoRead bool `json:"auto_read,omitempty"`
+	// Unread is the number of readable unread items.
+	Unread int `json:"unread,omitempty"`
+	// Addresses are the readable items of a declared pile, so a toggle can
+	// tell whether an entity is on it without a second request.
+	Addresses []string `json:"addresses,omitempty"`
+	// UnreadAddresses are the readable unread items of a pile with read
+	// state.
+	UnreadAddresses []string `json:"unread_addresses,omitempty"`
 }
 
 // PileItem is one readable item on a pile.
@@ -22,6 +41,17 @@ type PileItem struct {
 	Type    string `json:"type"`
 	// Title is the display title of the redacted row.
 	Title string `json:"title"`
+	// Added is when the item was put on the pile (RFC 3339).
+	Added string `json:"added,omitempty"`
+	// Read reports that the owner has read the item; only on a pile with
+	// read state.
+	Read bool `json:"read,omitempty"`
+	// Actor names the user whose write put the item here: the person's
+	// title, or a login when users are not mapped to people. Empty when
+	// unknown or not readable.
+	Actor string `json:"actor,omitempty"`
+	// Reason is the label of the declared reason; empty for none.
+	Reason string `json:"reason,omitempty"`
 }
 
 // Pile is one pile with its readable items, newest first.

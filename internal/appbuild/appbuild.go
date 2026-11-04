@@ -1344,7 +1344,7 @@ func collaboratorRefHolders(
 	if err != nil {
 		return refs, fmt.Errorf("piles backend: %w", err)
 	}
-	if refs.piles, err = newPilesService(pileStore, c.Declarative, redactor, c.Store, w); err != nil {
+	if refs.piles, err = newPilesService(pileStore, c.Meta, c.Declarative, redactor, c.Store, w); err != nil {
 		return refs, fmt.Errorf("piles: %w", err)
 	}
 	if _, refs.aliases, err = buildStateAndAliases(c.FS, c.Paths, c.StateKV); err != nil {
@@ -1487,7 +1487,9 @@ func buildAutomation(
 	if err != nil {
 		return nil, nil, fmt.Errorf("build automation engine: %w", err)
 	}
-	cascadeRunner, err := autocascade.New(autocascade.Deps{Engine: autoEngine, Background: bg, Piles: pusher})
+	cascadeRunner, err := autocascade.New(autocascade.Deps{
+		Engine: autoEngine, Background: bg, Piles: pusher, Recipients: notifyRecipients{st: st},
+	})
 	// coverage-ignore-start: defensive: autocascade.New only errors on a nil Engine; autoEngine is freshly built by
 	// NewEngineFromMetamodel just
 	// above and is never nil

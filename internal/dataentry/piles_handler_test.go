@@ -28,6 +28,12 @@ import (
 // newPilesService is a piles service over an in-memory KV.
 func newPilesService(t *testing.T) *piles.Service {
 	t.Helper()
+	return newPilesServiceWith(t, piles.Options{})
+}
+
+// newPilesServiceWith is newPilesService with opts.
+func newPilesServiceWith(t *testing.T, opts piles.Options) *piles.Service {
+	t.Helper()
 	mem := storage.NewMemFS()
 	if err := mem.MkdirAll("/root", 0o755); err != nil {
 		t.Fatal(err)
@@ -40,7 +46,7 @@ func newPilesService(t *testing.T) *piles.Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc, err := piles.NewService(st, piles.Options{})
+	svc, err := piles.NewService(st, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +348,7 @@ func TestPiles_SidebarAndConfigBootstrap(t *testing.T) {
 		return out
 	}
 	got := sidebar("alice")
-	if string(got["piles_available"]) != "true" || string(got["piles"]) != `{"actions":[],"export":["copy"]}` {
+	if string(got["piles_available"]) != "true" || string(got["piles"]) != `{"actions":[],"export":["copy"],"toggles":[]}` {
 		t.Fatalf("alice sidebar piles = %s %s", got["piles_available"], got["piles"])
 	}
 	if got := sidebar(principal.Unknown); string(got["piles_available"]) != "false" {
@@ -356,7 +362,7 @@ func TestPiles_SidebarAndConfigBootstrap(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &conf); err != nil {
 		t.Fatal(err)
 	}
-	if string(conf["piles"]) != `{"actions":[],"export":["copy"]}` {
+	if string(conf["piles"]) != `{"actions":[],"export":["copy"],"toggles":[]}` {
 		t.Fatalf("_config piles = %s", conf["piles"])
 	}
 

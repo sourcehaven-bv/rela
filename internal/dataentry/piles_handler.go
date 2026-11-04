@@ -35,6 +35,10 @@ var errPilesBodyTooLarge = errors.New("request body too large")
 //	DELETE /_piles/{id}                     delete
 //	POST   /_piles/{id}/items               add addresses
 //	POST   /_piles/{id}/items/_remove       remove addresses (always 204)
+//	POST   /_piles/{id}/items/_read         mark addresses read (always 204)
+//	POST   /_piles/{id}/_read_all           mark every item read
+//	POST   /_piles/_read                    the owner opened addresses: mark
+//	                                        them read on auto-read piles
 //	GET    /_piles/{id}/_export?transform=  download
 //
 // A pile is private to its owner. Every per-pile route reaches the service
@@ -65,6 +69,11 @@ func (h *pilesHandler) handleV1Piles(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case len(parts) == 0:
 		h.routeCollection(w, r)
+	case len(parts) == 1 && parts[0] == "_read":
+		if !allowMethod(w, r, http.MethodPost) {
+			return
+		}
+		h.markOpened(w, r)
 	case len(parts) == 1:
 		h.routePile(w, r, parts[0])
 	case len(parts) == 2 && parts[1] == "items":
@@ -77,6 +86,16 @@ func (h *pilesHandler) handleV1Piles(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.removeItems(w, r, parts[0])
+	case len(parts) == 3 && parts[1] == "items" && parts[2] == "_read":
+		if !allowMethod(w, r, http.MethodPost) {
+			return
+		}
+		h.markRead(w, r, parts[0], false)
+	case len(parts) == 2 && parts[1] == "_read_all":
+		if !allowMethod(w, r, http.MethodPost) {
+			return
+		}
+		h.markRead(w, r, parts[0], true)
 	case len(parts) == 2 && parts[1] == "_export":
 		if !allowMethod(w, r, http.MethodGet) {
 			return
@@ -157,7 +176,7 @@ func (h *pilesHandler) listPiles(w http.ResponseWriter, r *http.Request) {
 	}
 	out := v1.PileList{Piles: make([]v1.PileSummary, len(ps)), Icons: piles.Icons}
 	for i, p := range ps {
-		out.Piles[i] = pileSummary(p, len(readable[p.ID]))
+		out.Piles[i] = h.pileSummary(p, readable[p.ID])
 	}
 	writeV1JSON(w, http.StatusOK, out)
 }
@@ -211,17 +230,55 @@ func (h *pilesHandler) removeItems(w http.ResponseWriter, r *http.Request, id st
 	if !decodePilesBody(w, r, &req) {
 		return
 	}
-	refs := make([]entityPkg.Ref, 0, len(req.Items))
-	for _, addr := range req.Items {
-		if ref, err := entityPkg.ParseRef(strings.TrimSpace(addr)); err == nil {
-			refs = append(refs, ref)
-		}
-	}
-	if err := h.svc.Remove(r.Context(), id, refs); err != nil {
+	if err := h.svc.Remove(r.Context(), id, parseAddresses(req.Items)); err != nil {
 		writePilesError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// markRead answers POST /_piles/{id}/items/_read and, with all set,
+// POST /_piles/{id}/_read_all. Like removeItems it resolves nothing, so a
+// hidden or unknown address is the same 204 as a read one.
+func (h *pilesHandler) markRead(w http.ResponseWriter, r *http.Request, id string, all bool) {
+	var refs []entityPkg.Ref
+	if !all {
+		var req v1.PileItemsRequest
+		if !decodePilesBody(w, r, &req) {
+			return
+		}
+		refs = parseAddresses(req.Items)
+	}
+	if err := h.svc.MarkRead(r.Context(), id, refs, all); err != nil {
+		writePilesError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// markOpened answers POST /_piles/_read: the SPA reports the entities the
+// owner opened, and they become read on every auto-read pile. Always 204.
+func (h *pilesHandler) markOpened(w http.ResponseWriter, r *http.Request) {
+	var req v1.PileItemsRequest
+	if !decodePilesBody(w, r, &req) {
+		return
+	}
+	if err := h.svc.MarkOpened(r.Context(), parseAddresses(req.Items)); err != nil {
+		writePilesError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// parseAddresses keeps the well-formed addresses, dropping the rest.
+func parseAddresses(addrs []string) []entityPkg.Ref {
+	refs := make([]entityPkg.Ref, 0, len(addrs))
+	for _, addr := range addrs {
+		if ref, err := entityPkg.ParseRef(strings.TrimSpace(addr)); err == nil && !ref.IsZero() {
+			refs = append(refs, ref)
+		}
+	}
+	return refs
 }
 
 // addRefs resolves the addresses of an add to the refs the pile stores, in
@@ -346,13 +403,20 @@ func writeAmbiguousAddress(w http.ResponseWriter, r *http.Request, amb *visibili
 
 // writePile answers one pile with its readable items.
 func (h *pilesHandler) writePile(w http.ResponseWriter, r *http.Request, status int, p piles.Pile) {
-	rows, err := h.readableItems(r.Context(), p)
+	ctx := r.Context()
+	rows, err := h.readableItems(ctx, p)
 	if err != nil {
 		writeGateError(w, r, err)
 		return
 	}
+	actors, err := h.actorTitles(ctx, rows)
+	if err != nil {
+		writeGateError(w, r, err)
+		return
+	}
+	decl, _ := h.svc.Declaration(p)
 	meta := h.meta()
-	out := v1.Pile{PileSummary: pileSummary(p, len(rows)), Items: make([]v1.PileItem, len(rows))}
+	out := v1.Pile{PileSummary: h.pileSummary(p, rows), Items: make([]v1.PileItem, len(rows))}
 	for i, row := range rows {
 		out.Items[i] = v1.PileItem{
 			ID:      row.ref.ID,
@@ -360,21 +424,42 @@ func (h *pilesHandler) writePile(w http.ResponseWriter, r *http.Request, status 
 			Address: row.ref.String(),
 			Type:    row.header.Type,
 			Title:   safeDisplayTitle(meta, headerEntity(row.header)),
+			Read:    decl.ReadState && row.item.Read(),
+			Actor:   actors[row.item.Actor],
+			Reason:  decl.Reasons[row.item.Reason],
+		}
+		if !row.item.Added.IsZero() {
+			out.Items[i].Added = row.item.Added.UTC().Format(time.RFC3339)
 		}
 	}
 	writeV1JSON(w, status, out)
 }
 
-// pileSummary is the wire summary of p with count readable items.
-func pileSummary(p piles.Pile, count int) v1.PileSummary {
-	return v1.PileSummary{
+// pileSummary is the wire summary of p over its readable rows. Counts and
+// addresses are taken after the gate, so a hidden item is in none of them.
+func (h *pilesHandler) pileSummary(p piles.Pile, rows []pileRow) v1.PileSummary {
+	out := v1.PileSummary{
 		ID:      p.ID,
 		Name:    p.Name,
 		Icon:    p.Icon,
-		Count:   count,
+		Count:   len(rows),
 		Created: p.Created.UTC().Format(time.RFC3339),
 		Updated: p.Updated.UTC().Format(time.RFC3339),
 	}
+	d, ok := h.svc.Declaration(p)
+	if !ok {
+		return out
+	}
+	out.Key, out.Locked, out.ReadState, out.AutoRead = d.Key, true, d.ReadState, d.AutoRead
+	out.Addresses = make([]string, len(rows))
+	for i, row := range rows {
+		out.Addresses[i] = row.ref.String()
+		if d.ReadState && !row.item.Read() {
+			out.Unread++
+			out.UnreadAddresses = append(out.UnreadAddresses, row.ref.String())
+		}
+	}
+	return out
 }
 
 // decodePilesBody reads a capped JSON body into dst, answering 413 past the
@@ -412,6 +497,9 @@ func writePilesError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, piles.ErrLimit):
 		writeV1Error(w, r, http.StatusConflict, "pile_limit", "Too many piles",
 			"a user may keep at most 50 piles")
+	case errors.Is(err, piles.ErrLocked):
+		writeV1Error(w, r, http.StatusConflict, "pile_locked", "This pile cannot be changed",
+			"the schema declares it")
 	case errors.Is(err, piles.ErrNameTaken):
 		writeV1Error(w, r, http.StatusConflict, "pile_name_taken", "A pile with this name exists", "")
 	case errors.Is(err, piles.ErrInvalid):

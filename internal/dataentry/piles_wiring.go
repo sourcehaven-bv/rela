@@ -93,8 +93,9 @@ func pilesWire(pc *dataentryconfig.PilesConfig) *dataentryconfig.PilesConfig {
 	if pc == nil {
 		return nil
 	}
-	out := dataentryconfig.PilesConfig{Actions: []string{}, Export: []string{}}
+	out := dataentryconfig.PilesConfig{Actions: []string{}, Export: []string{}, Toggles: []dataentryconfig.PileToggle{}}
 	out.Actions = append(out.Actions, pc.Actions...)
 	out.Export = append(out.Export, pc.Export...)
+	out.Toggles = append(out.Toggles, pc.Toggles...)
 	return &out
 }

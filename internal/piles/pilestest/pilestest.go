@@ -110,6 +110,8 @@ func RunAll(t *testing.T, f Factory) {
 	t.Run("Concurrency", func(t *testing.T) { RunConcurrencyTests(t, f) })
 	t.Run("IDs", func(t *testing.T) { RunIDTests(t, f) })
 	t.Run("KeepExisting", func(t *testing.T) { RunKeepExistingTests(t, f) })
+	t.Run("Declared", func(t *testing.T) { RunDeclaredTests(t, f) })
+	t.Run("ReadState", func(t *testing.T) { RunReadStateTests(t, f) })
 }
 
 // RunPileTests pins create, read, update and delete of piles themselves.
@@ -233,7 +235,7 @@ func RunIsolationTests(t *testing.T, f Factory) {
 	require.NoError(t, err)
 	require.Empty(t, list, "ListPiles")
 	require.ErrorIs(t, s.UpdatePile(ctx, bob, p.ID, "Mine", "star", at(2)), piles.ErrNotFound, "UpdatePile")
-	_, err = s.AddItems(ctx, bob, p.ID, refs("B"), at(2), bigCap, piles.EvictOldest)
+	_, err = s.AddItems(ctx, bob, p.ID, refs("B"), piles.AddOptions{Now: at(2), MaxItems: bigCap, Overflow: piles.EvictOldest})
 	require.ErrorIs(t, err, piles.ErrNotFound, "AddItems")
 	require.ErrorIs(t, s.RemoveItems(ctx, bob, p.ID, refs("A")), piles.ErrNotFound, "RemoveItems")
 	require.ErrorIs(t, s.DeletePile(ctx, bob, p.ID), piles.ErrNotFound, "DeletePile")
@@ -260,7 +262,7 @@ func RunItemTests(t *testing.T, f Factory) {
 			require.True(t, it.Added.Equal(at(1)), "created items carry the pile's creation time")
 		}
 
-		added, err := s.AddItems(ctx, alice, p.ID, refs("C", "D"), at(2), bigCap, piles.EvictOldest)
+		added, err := s.AddItems(ctx, alice, p.ID, refs("C", "D"), piles.AddOptions{Now: at(2), MaxItems: bigCap, Overflow: piles.EvictOldest})
 		require.NoError(t, err)
 		require.Equal(t, 2, added)
 		got, err := s.GetPile(ctx, alice, p.ID)
@@ -273,12 +275,12 @@ func RunItemTests(t *testing.T, f Factory) {
 		s := f(t)
 		p := create(ctx, t, s, alice, "Stack", at(1), refs("A", "B", "C"), bigCap)
 
-		added, err := s.AddItems(ctx, alice, p.ID, refs("C"), at(2), bigCap, piles.EvictOldest)
+		added, err := s.AddItems(ctx, alice, p.ID, refs("C"), piles.AddOptions{Now: at(2), MaxItems: bigCap, Overflow: piles.EvictOldest})
 		require.NoError(t, err)
 		require.Equal(t, 0, added)
 		require.Equal(t, refs("A", "B", "C"), mustGet(ctx, t, s, alice, p.ID))
 
-		added, err = s.AddItems(ctx, alice, p.ID, refs("D", "B", "D"), at(3), bigCap, piles.EvictOldest)
+		added, err = s.AddItems(ctx, alice, p.ID, refs("D", "B", "D"), piles.AddOptions{Now: at(3), MaxItems: bigCap, Overflow: piles.EvictOldest})
 		require.NoError(t, err)
 		require.Equal(t, 1, added, "only D is new, and once")
 		require.Equal(t, refs("D", "A", "B", "C"), mustGet(ctx, t, s, alice, p.ID))
@@ -288,12 +290,12 @@ func RunItemTests(t *testing.T, f Factory) {
 		s := f(t)
 		p := create(ctx, t, s, alice, "Stack", at(1), refs("A", "B", "C"), 3)
 
-		added, err := s.AddItems(ctx, alice, p.ID, refs("D"), at(2), 3, piles.EvictOldest)
+		added, err := s.AddItems(ctx, alice, p.ID, refs("D"), piles.AddOptions{Now: at(2), MaxItems: 3, Overflow: piles.EvictOldest})
 		require.NoError(t, err)
 		require.Equal(t, 1, added)
 		require.Equal(t, refs("D", "A", "B"), mustGet(ctx, t, s, alice, p.ID))
 
-		added, err = s.AddItems(ctx, alice, p.ID, refs("E", "F", "G", "H"), at(3), 3, piles.EvictOldest)
+		added, err = s.AddItems(ctx, alice, p.ID, refs("E", "F", "G", "H"), piles.AddOptions{Now: at(3), MaxItems: 3, Overflow: piles.EvictOldest})
 		require.NoError(t, err)
 		require.Equal(t, 3, added, "refs past the cap in one call are dropped, not added and evicted")
 		require.Equal(t, refs("E", "F", "G"), mustGet(ctx, t, s, alice, p.ID))
@@ -320,7 +322,7 @@ func RunItemTests(t *testing.T, f Factory) {
 
 	t.Run("adding to a missing pile is not found", func(t *testing.T) {
 		s := f(t)
-		_, err := s.AddItems(ctx, alice, "PIL-MISSING1", refs("A"), at(1), bigCap, piles.EvictOldest)
+		_, err := s.AddItems(ctx, alice, "PIL-MISSING1", refs("A"), piles.AddOptions{Now: at(1), MaxItems: bigCap, Overflow: piles.EvictOldest})
 		require.ErrorIs(t, err, piles.ErrNotFound)
 	})
 }
@@ -333,8 +335,7 @@ func RunFaceTests(t *testing.T, f Factory) {
 	t.Run("each face is its own item", func(t *testing.T) {
 		s := f(t)
 		p := create(ctx, t, s, alice, "Faces", at(1), nil, bigCap)
-		added, err := s.AddItems(ctx, alice, p.ID, []entity.Ref{bare("X"), ref("X", draft)}, at(2), bigCap,
-			piles.EvictOldest)
+		added, err := s.AddItems(ctx, alice, p.ID, []entity.Ref{bare("X"), ref("X", draft)}, piles.AddOptions{Now: at(2), MaxItems: bigCap, Overflow: piles.EvictOldest})
 		require.NoError(t, err)
 		require.Equal(t, 2, added)
 		require.Equal(t, []entity.Ref{bare("X"), ref("X", draft)}, mustGet(ctx, t, s, alice, p.ID))
@@ -494,8 +495,8 @@ func RunConcurrencyTests(t *testing.T, f Factory) {
 		errs := make(chan error, workers)
 		for i := range workers {
 			wg.Go(func() {
-				_, err := s.AddItems(ctx, alice, p.ID, refs(fmt.Sprintf("R-%d", i)), at(2), bigCap,
-					piles.EvictOldest)
+				_, err := s.AddItems(ctx, alice, p.ID, refs(fmt.Sprintf("R-%d", i)),
+					piles.AddOptions{Now: at(2), MaxItems: bigCap, Overflow: piles.EvictOldest})
 				errs <- err
 			})
 		}
@@ -549,8 +550,8 @@ func RunConcurrencyTests(t *testing.T, f Factory) {
 		errs := make(chan error, workers)
 		for i := range workers {
 			wg.Go(func() {
-				_, err := s.AddItems(ctx, alice, p.ID, refs(fmt.Sprintf("R-%d", i)), at(2), maxItems,
-					piles.EvictOldest)
+				_, err := s.AddItems(ctx, alice, p.ID, refs(fmt.Sprintf("R-%d", i)),
+					piles.AddOptions{Now: at(2), MaxItems: maxItems, Overflow: piles.EvictOldest})
 				errs <- err
 			})
 		}
@@ -589,7 +590,7 @@ func RunKeepExistingTests(t *testing.T, f Factory) {
 		s := f(t)
 		p := create(ctx, t, s, alice, "Full", at(1), refs("A", "B", "C"), 3)
 
-		added, err := s.AddItems(ctx, alice, p.ID, refs("D", "E"), at(2), 3, piles.KeepExisting)
+		added, err := s.AddItems(ctx, alice, p.ID, refs("D", "E"), piles.AddOptions{Now: at(2), MaxItems: 3, Overflow: piles.KeepExisting})
 		require.NoError(t, err)
 		require.Zero(t, added)
 		require.Equal(t, refs("A", "B", "C"), mustGet(ctx, t, s, alice, p.ID), "no item is evicted")
@@ -599,7 +600,7 @@ func RunKeepExistingTests(t *testing.T, f Factory) {
 		s := f(t)
 		p := create(ctx, t, s, alice, "Room", at(1), refs("A", "B"), room)
 
-		added, err := s.AddItems(ctx, alice, p.ID, refs("B", "C", "D", "E"), at(2), room, piles.KeepExisting)
+		added, err := s.AddItems(ctx, alice, p.ID, refs("B", "C", "D", "E"), piles.AddOptions{Now: at(2), MaxItems: room, Overflow: piles.KeepExisting})
 		require.NoError(t, err)
 		require.Equal(t, 2, added, "B is already there; C and D fill the two free slots; E is dropped")
 		require.Equal(t, refs("C", "D", "A", "B"), mustGet(ctx, t, s, alice, p.ID))
@@ -614,8 +615,8 @@ func RunKeepExistingTests(t *testing.T, f Factory) {
 		errs := make(chan error, workers)
 		for i := range workers {
 			wg.Go(func() {
-				n, err := s.AddItems(ctx, alice, p.ID, refs(fmt.Sprintf("R-%d", i)), at(2), maxItems,
-					piles.KeepExisting)
+				n, err := s.AddItems(ctx, alice, p.ID, refs(fmt.Sprintf("R-%d", i)),
+					piles.AddOptions{Now: at(2), MaxItems: maxItems, Overflow: piles.KeepExisting})
 				added.Add(int64(n))
 				errs <- err
 			})

@@ -1004,7 +1004,8 @@
       "tag": "Label",
       "heart": "Hart",
       "clock": "Klok",
-      "target": "Doel"
+      "target": "Doel",
+      "bell": "Bel"
     },
     "dialog": {
       "rename": "Stapel hernoemen",
@@ -1036,7 +1037,17 @@
       "run": "Uitvoeren",
       "copied": "{n} ID gekopieerd | {n} ID's gekopieerd",
       "copyFailed": "Kopiëren naar het klembord is mislukt",
-      "deleteMessage": "De stapel {name} verwijderen? De items erop blijven bestaan."
+      "deleteMessage": "De stapel {name} verwijderen? De items erop blijven bestaan.",
+      "cause": "{actor} {reason}",
+      "markRead": "Markeer als gelezen",
+      "markAllRead": "Alles gelezen"
+    },
+    "locked": "Deze stapel hoort bij de app en kan niet worden gewijzigd",
+    "markReadFailed": "Kon items op {name} niet als gelezen markeren",
+    "unreadCount": "{n} ongelezen",
+    "toggle": {
+      "add": "Toevoegen aan {name}",
+      "remove": "Verwijderen uit {name}"
     }
   },
   "kanban": {

@@ -2,11 +2,14 @@ package dataentryconfig
 
 import (
 	"fmt"
+	"slices"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/piles"
 )
 
 // PilesConfig is the `piles:` block of data-entry.yaml (TKT-K3RJLH): what a
@@ -23,12 +26,30 @@ type PilesConfig struct {
 	// Export names the registered transforms a pile may be exported with.
 	// Empty offers every registered transform.
 	Export []string `yaml:"export,omitempty" json:"export"`
+	// Toggles put a button on the entity page that adds the entity to a
+	// declared pile, or takes it off again. Favorites are the common case.
+	Toggles []PileToggle `yaml:"toggles,omitempty" json:"toggles"`
+}
+
+// PileToggle is one entry of `piles.toggles`.
+type PileToggle struct {
+	// Pile is the key of a pile the schema declares under `piles:`.
+	Pile string `yaml:"pile" json:"pile"`
+	// Icon is shown while the entity is not on the pile; empty uses the
+	// pile's own icon.
+	Icon string `yaml:"icon,omitempty" json:"icon,omitempty"`
+	// IconActive is shown while the entity is on the pile; empty uses Icon.
+	IconActive string `yaml:"icon_active,omitempty" json:"icon_active,omitempty"`
+	// Label names the button; empty uses the pile's name.
+	Label string `yaml:"label,omitempty" json:"label,omitempty"`
+	// EntityTypes limits the button to these types; empty shows it on all.
+	EntityTypes []string `yaml:"entity_types,omitempty" json:"entity_types,omitempty"`
 }
 
 // pilesKeys are the keys the piles block accepts. The decoder ignores
 // unknown nested keys, so a typo such as `action:` would silently offer
 // nothing; the block checks its own.
-var pilesKeys = []string{"actions", "export"}
+var pilesKeys = []string{"actions", "export", "toggles"}
 
 // validatePiles checks the `piles:` block: known keys only, every action a
 // labeled global action, and every export name a registered transform.
@@ -57,6 +78,41 @@ func validatePiles(data []byte, cfg *Config, meta *metamodel.Metamodel) []string
 		}
 		if _, ok := meta.Transforms[name]; !ok {
 			errs = append(errs, fmt.Sprintf("piles.export: unknown transform %q (not in the schema's transforms:)", name))
+		}
+	}
+	return append(errs, validatePileToggles(p.Toggles, meta)...)
+}
+
+// validatePileToggles checks that every toggle names a declared pile, once,
+// and only entity types the schema has.
+func validatePileToggles(toggles []PileToggle, meta *metamodel.Metamodel) []string {
+	var errs []string
+	seen := map[string]bool{}
+	for i, tg := range toggles {
+		where := fmt.Sprintf("piles.toggles[%d]", i)
+		switch {
+		case tg.Pile == "":
+			errs = append(errs, where+": pile is required")
+			continue
+		case seen[tg.Pile]:
+			errs = append(errs, fmt.Sprintf("%s: pile %q already has a toggle", where, tg.Pile))
+		}
+		seen[tg.Pile] = true
+		for _, icon := range []string{tg.Icon, tg.IconActive} {
+			if icon != "" && !slices.Contains(piles.Icons, icon) {
+				errs = append(errs, fmt.Sprintf("%s: icon %q is not one of %s", where, icon, strings.Join(piles.Icons, ", ")))
+			}
+		}
+		if meta == nil {
+			continue
+		}
+		if _, ok := meta.Piles[tg.Pile]; !ok {
+			errs = append(errs, fmt.Sprintf("%s: pile %q is not declared under the schema's piles:", where, tg.Pile))
+		}
+		for _, typ := range tg.EntityTypes {
+			if _, ok := meta.Entities[typ]; !ok {
+				errs = append(errs, fmt.Sprintf("%s: unknown entity type %q", where, typ))
+			}
 		}
 	}
 	return errs
