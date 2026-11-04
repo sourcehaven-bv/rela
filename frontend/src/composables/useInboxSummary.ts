@@ -15,8 +15,10 @@ export const INBOX_SUMMARY_KEY = ['inbox-summary']
 /**
  * The live key of the summary. It is fixed, so registering it again replaces
  * the entry in place and the badge keeps its slot among the subscriptions
- * the stream accepts (MAX_LIVE_SUBSCRIPTIONS). The worst case, an entity page
- * with its channels open plus the inbox page and this badge, stays under it.
+ * the stream accepts (MAX_LIVE_SUBSCRIPTIONS). The worst case stays under it:
+ * an entity page holds its entity, its presence and at most two keys per
+ * channels block, with two blocks when a channel type is placed above the
+ * relations (TKT-VXBE16H); a sidebar flyout over it adds the same again.
  */
 export const INBOX_SUMMARY_LIVE_KEY = 'inbox-summary'
 

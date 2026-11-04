@@ -555,7 +555,7 @@ func TestReplaceRelations_MovesOwnedEntity(t *testing.T) {
 }
 
 // mismatchOwningMetamodel adds a note type outside the owning relation's
-// allowlist, so a tolerated type mismatch can meet the owning rules.
+// allowlist, so a type mismatch can meet the owning rules.
 const mismatchOwningMetamodel = `version: "1.0"
 entities:
   task:
@@ -580,11 +580,10 @@ relations:
     owning: true
 `
 
-// TestCreateRelation_TolerateTypeMismatchKeepsOwningRules pins that
-// [entity.RelationOptions.TolerateTypeMismatch] skips only the type
-// allowlist: a mismatched owning edge to an entity that already has an owner
-// is still refused, and nothing is audited (GitHub #1806).
-func TestCreateRelation_TolerateTypeMismatchKeepsOwningRules(t *testing.T) {
+// TestCreateRelation_TypeMismatchOnOwningEdgeRefused pins that a mismatched
+// owning edge to an entity that already has an owner is refused for its type
+// (DEC-0D8UZX3), and nothing is audited.
+func TestCreateRelation_TypeMismatchOnOwningEdgeRefused(t *testing.T) {
 	t.Parallel()
 	m, err := metamodel.Parse([]byte(mismatchOwningMetamodel))
 	if err != nil {
@@ -619,9 +618,10 @@ func TestCreateRelation_TolerateTypeMismatchKeepsOwningRules(t *testing.T) {
 	startLen := len(mem.Records())
 
 	_, err = mgr.CreateRelation(ctx, entity.RelationKey{From: note, Type: "subtask", To: child},
-		entity.RelationOptions{TolerateTypeMismatch: true})
-	if !errors.Is(err, entitymanager.ErrOwningRule) {
-		t.Fatalf("want ErrOwningRule, got %v", err)
+		entity.RelationOptions{})
+	ire, ok := errors.AsType[*entitymanager.InvalidRelationError](err)
+	if !ok || ire.TypeNotAllowedCode() != metamodel.CodeSourceTypeNotAllowed {
+		t.Fatalf("want InvalidRelationError %s, got %v", metamodel.CodeSourceTypeNotAllowed, err)
 	}
 	if got := mem.Records()[startLen:]; len(got) != 0 {
 		t.Errorf("refused create must not be audited, got %+v", got)

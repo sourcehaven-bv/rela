@@ -180,27 +180,46 @@ func (v Validator) ValidateRelation(relationType, fromType, toType string) error
 		return &RelationNotFoundError{Name: relationType}
 	}
 
-	fromValid := slices.Contains(rel.From, fromType)
-	if !fromValid {
-		return &InvalidRelationError{
-			Relation: relationType,
-			From:     fromType,
-			To:       toType,
-			Message:  "source entity type not allowed",
+	for _, end := range []struct {
+		typ      string
+		isSource bool
+	}{{fromType, true}, {toType, false}} {
+		if code := RelationEndCode(rel, end.typ, end.isSource); code != "" {
+			return &InvalidRelationError{
+				Relation: relationType,
+				From:     fromType,
+				To:       toType,
+				Message:  relationEndMessages[code],
+				Code:     code,
+			}
 		}
 	}
-
-	toValid := slices.Contains(rel.To, toType)
-	if !toValid {
-		return &InvalidRelationError{
-			Relation: relationType,
-			From:     fromType,
-			To:       toType,
-			Message:  "target entity type not allowed",
-		}
-	}
-
 	return nil
+}
+
+// relationEndMessages is the [InvalidRelationError.Message] of each code.
+var relationEndMessages = map[string]string{
+	CodeSourceTypeNotAllowed: "source entity type not allowed",
+	CodeTargetTypeNotAllowed: "target entity type not allowed",
+}
+
+// RelationEndCode checks one end of an edge of rel: the source when isSource,
+// else the target. It returns [CodeSourceTypeNotAllowed] or
+// [CodeTargetTypeNotAllowed] when rel does not allow typ at that end, and ""
+// when it does. [Validator.ValidateRelation] checks the source end first; a
+// caller that checks the ends separately keeps that order, so both report the
+// same code for an edge that is wrong at both ends.
+func RelationEndCode(rel *RelationDef, typ string, isSource bool) string {
+	if isSource {
+		if !slices.Contains(rel.From, typ) {
+			return CodeSourceTypeNotAllowed
+		}
+		return ""
+	}
+	if !slices.Contains(rel.To, typ) {
+		return CodeTargetTypeNotAllowed
+	}
+	return ""
 }
 
 // ValidateProperties validates a properties map against a PropertySchema.
@@ -372,6 +391,9 @@ func (v Validator) validatePropertyValue(propName string, propDef *PropertyDef, 
 
 	case PropertyTypeInteger:
 		return validateIntegerValue(propName, propDef, val)
+
+	case PropertyTypeDecimal:
+		return validateDecimalValue(propName, propDef, val)
 
 	case PropertyTypeBoolean:
 		switch v := val.(type) {

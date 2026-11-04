@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
+	"slices"
 	"strings"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
@@ -25,12 +26,13 @@ type Warning = entity.Warning
 //
 //   - warnings: soft-condition findings (DEC-HWZHA write-with-warnings).
 //     Edges flagged by warnings will still be written by applyRelationsModern.
-//   - err: a hard 422 (structural impossibility) or 400 (caller bug). On err
-//     the caller MUST NOT proceed to the entity-update or write phases.
+//   - err: a hard 422 (structural impossibility, or an endpoint type the
+//     relation does not allow, DEC-0D8UZX3) or 400 (caller bug). On err the
+//     caller MUST NOT proceed to the entity-update or write phases.
 //
 // This split lets handleV1UpdateEntity validate relations BEFORE the
-// entity is updated, so a structural relation problem doesn't leave
-// the entity half-written.
+// entity is updated, so a refused relation doesn't leave the entity
+// half-written.
 func (h *writeHandler) validateRelationsModern(
 	ctx context.Context, entityID string, pathEntityType string, desired map[string]v1.RelationsUpdate,
 ) ([]Warning, error) {
@@ -38,7 +40,6 @@ func (h *writeHandler) validateRelationsModern(
 		return nil, nil
 	}
 	meta := h.schema().Meta
-	var warnings []Warning
 
 	// Self-loop shape_conflict detection: a body that references the
 	// path entity under BOTH a canonical name AND its inverse for the
@@ -49,91 +50,11 @@ func (h *writeHandler) validateRelationsModern(
 		return nil, err
 	}
 
-	// The structural checks run first, so a request they reject pays no
-	// read. The edges' soft checks wait for one gated batch over every peer.
-	type edgeCheck struct {
-		relType  string
-		relDef   metamodel.RelationDef
-		ref      v1.ResourceIdentifier
-		path     string
-		incoming bool
-		peer     entity.Address // the ref's id, parsed; see peerAddress
-	}
-	var edges []edgeCheck
-
-	for bodyKey, upd := range desired {
-		if !upd.DataPresent && !upd.Delta {
-			return nil, &v1.WireError{
-				Code:   "data_required",
-				Path:   "/relations/" + v1.JSONPointerEscape(bodyKey) + "/data",
-				Detail: "`data` field is required when a relation wrapper appears",
-			}
-		}
-
-		canonical, incoming, ok := resolveDirection(meta, bodyKey)
-		if !ok {
-			return nil, &structuralError{
-				Code:   "unknown_relation_type",
-				Path:   "/relations/" + v1.JSONPointerEscape(bodyKey),
-				Detail: fmt.Sprintf("relation type %q is not defined in the metamodel", bodyKey),
-			}
-		}
-		relDef := meta.Relations[canonical]
-
-		// Path-entity-side type allowlist:
-		//   - outgoing: path entity is source, check relDef.From
-		//   - incoming: path entity is target, check relDef.To
-		allowedPathTypes := relDef.From
-		warningCode := "source_type_not_allowed"
-		if incoming {
-			allowedPathTypes = relDef.To
-			warningCode = "target_type_not_allowed"
-		}
-		if !containsString(allowedPathTypes, pathEntityType) {
-			warnings = append(warnings, Warning{
-				Code:      warningCode,
-				Path:      "/relations/" + v1.JSONPointerEscape(bodyKey),
-				Detail:    fmt.Sprintf("relation %q does not declare %q as an allowed %s type", canonical, pathEntityType, sideLabel(incoming, true)),
-				Direction: directionLabel(incoming),
-			})
-		}
-
-		for i, ref := range upd.Upserts() {
-			edgePath := fmt.Sprintf("/relations/%s%s/%d", v1.JSONPointerEscape(bodyKey), upsertKey(upd), i)
-
-			// Content on a non-content-bearing relation type is a
-			// structural impossibility — the file format can't hold
-			// a body for that type.
-			if ref.Content != nil && !relDef.Content {
-				return nil, &structuralError{
-					Code:   "content_not_supported",
-					Path:   edgePath + "/content",
-					Detail: fmt.Sprintf("relation type %q does not support per-edge content", canonical),
-				}
-			}
-
-			// Wire-format violation for managed order properties: only
-			// finite numeric values are acceptable on _order_out / _order_in
-			// because the engine's sort/midpoint math depends on them.
-			if err := validateManagedOrderMeta(canonical, ref, edgePath, &relDef); err != nil {
-				return nil, err
-			}
-
-			edges = append(edges, edgeCheck{canonical, relDef, ref, edgePath, incoming, peerAddress(ref.ID, incoming)})
-		}
-	}
-
-	// Soft conditions surfaced as warnings. The peer is whichever side the
-	// path entity is NOT on. Every peer is gated in one batch, so the cost
-	// does not grow with the number of edges.
-	ids := make([]string, len(edges))
-	for i, e := range edges {
-		ids[i] = e.peer.ID()
-	}
-	peerTypes, err := h.visible.readableTypes(ctx, ids)
+	edges, peerTypes, err := h.checkRelationEdges(ctx, pathEntityType, desired)
 	if err != nil {
-		return nil, &gateFaultError{err: err}
+		return nil, err
 	}
+	var warnings []Warning
 	for _, e := range edges {
 		ws := h.collectEdgeWarnings(e.relType, &e.relDef, e.ref, peerTypes[e.peer.ID()], e.path, e.incoming)
 		warnings = append(warnings, ws...)
@@ -153,6 +74,136 @@ func (h *writeHandler) validateRelationsModern(
 		}
 	}
 	return warnings, nil
+}
+
+// edgeCheck is one upserted edge of a relation body, resolved for the
+// validation phase.
+type edgeCheck struct {
+	relType string
+	relDef  metamodel.RelationDef
+	ref     v1.ResourceIdentifier
+	path    string // the edge's pointer, named by an error on the peer's end
+	// wrapperPath is the relation wrapper's pointer, named by an error on
+	// the path entity's end.
+	wrapperPath string
+	incoming    bool
+	peer        entity.Address // the ref's id, parsed; see peerAddress
+}
+
+// checkRelationEdges runs the checks of a relation body that refuse it: the
+// structural ones, then the type allowlist on both ends of every upserted
+// edge (DEC-0D8UZX3). pathEntityType is the type of the entity the body is
+// sent to; it needs no id, so a create checks the body before the entity
+// exists. It returns the upserted edges and the readable types of their
+// peers, for the soft checks.
+//
+// The structural checks run first, so a request they reject pays no read.
+// Every peer is then gated in one batch, so the cost does not grow with the
+// number of edges. Each edge is then checked in the manager's order: a peer
+// the caller may not read is refused as missing, then the source end, then
+// the target end. A hidden peer is answered like an absent one and is never
+// type-checked, so the 422 reveals neither its existence nor its type, and an
+// edge wrong at both ends gets the same code as on the other surfaces. Body
+// keys are walked in sorted order, so the error does not depend on map order.
+func (h *writeHandler) checkRelationEdges(
+	ctx context.Context, pathEntityType string, desired map[string]v1.RelationsUpdate,
+) ([]edgeCheck, map[string]string, error) {
+	meta := h.schema().Meta
+	var edges []edgeCheck
+	for _, bodyKey := range slices.Sorted(maps.Keys(desired)) {
+		upd := desired[bodyKey]
+		if !upd.DataPresent && !upd.Delta {
+			return nil, nil, &v1.WireError{
+				Code:   "data_required",
+				Path:   "/relations/" + v1.JSONPointerEscape(bodyKey) + "/data",
+				Detail: "`data` field is required when a relation wrapper appears",
+			}
+		}
+
+		canonical, incoming, ok := resolveDirection(meta, bodyKey)
+		if !ok {
+			return nil, nil, &structuralError{
+				Code:   "unknown_relation_type",
+				Path:   "/relations/" + v1.JSONPointerEscape(bodyKey),
+				Detail: fmt.Sprintf("relation type %q is not defined in the metamodel", bodyKey),
+			}
+		}
+		relDef := meta.Relations[canonical]
+		for i, ref := range upd.Upserts() {
+			edgePath := fmt.Sprintf("/relations/%s%s/%d", v1.JSONPointerEscape(bodyKey), upsertKey(upd), i)
+
+			// Content on a non-content-bearing relation type is a
+			// structural impossibility — the file format can't hold
+			// a body for that type.
+			if ref.Content != nil && !relDef.Content {
+				return nil, nil, &structuralError{
+					Code:   "content_not_supported",
+					Path:   edgePath + "/content",
+					Detail: fmt.Sprintf("relation type %q does not support per-edge content", canonical),
+				}
+			}
+
+			// Wire-format violation for managed order properties: only
+			// finite numeric values are acceptable on _order_out / _order_in
+			// because the engine's sort/midpoint math depends on them.
+			if err := validateManagedOrderMeta(canonical, ref, edgePath, &relDef); err != nil {
+				return nil, nil, err
+			}
+
+			edges = append(edges, edgeCheck{
+				canonical, relDef, ref, edgePath, "/relations/" + v1.JSONPointerEscape(bodyKey),
+				incoming, peerAddress(ref.ID, incoming),
+			})
+		}
+	}
+
+	ids := make([]string, len(edges))
+	for i, e := range edges {
+		ids[i] = e.peer.ID()
+	}
+	peerTypes, err := h.visible.readableTypes(ctx, ids)
+	if err != nil {
+		return nil, nil, &gateFaultError{err: err}
+	}
+	for _, e := range edges {
+		peerType := peerTypes[e.peer.ID()]
+		if peerType == "" {
+			return nil, nil, danglingPeerError(e.relType, e.ref.ID)
+		}
+		// The path entity is the source of an outgoing edge and the target
+		// of an incoming one; the peer is the other end.
+		source, sourcePath, target, targetPath := pathEntityType, e.wrapperPath, peerType, e.path
+		if e.incoming {
+			source, sourcePath, target, targetPath = peerType, e.path, pathEntityType, e.wrapperPath
+		}
+		if err := endpointTypeError(&e.relDef, e.relType, source, true, sourcePath); err != nil {
+			return nil, nil, err
+		}
+		if err := endpointTypeError(&e.relDef, e.relType, target, false, targetPath); err != nil {
+			return nil, nil, err
+		}
+	}
+	return edges, peerTypes, nil
+}
+
+// endpointTypeError is the 422 for an edge end whose entity type the
+// relation does not allow, or nil when it is allowed. isSource names the end
+// of the canonical edge, so the code says which end is wrong whichever name
+// the request used.
+func endpointTypeError(relDef *metamodel.RelationDef, relType, typ string, isSource bool, path string) error {
+	code := metamodel.RelationEndCode(relDef, typ, isSource)
+	if code == "" {
+		return nil
+	}
+	allowed, side := relDef.To, "target"
+	if isSource {
+		allowed, side = relDef.From, "source"
+	}
+	return &structuralError{
+		Code:   code,
+		Path:   path,
+		Detail: fmt.Sprintf("relation %q does not allow %q as its %s type (allowed: %s)", relType, typ, side, strings.Join(allowed, ", ")),
+	}
 }
 
 // upsertKey is the JSON pointer segment of a wrapper's upserted edges.
@@ -186,29 +237,17 @@ func directionLabel(incoming bool) string {
 	return "outgoing"
 }
 
-// sideLabel produces a human-readable side description for warning
-// messages ("source" / "target"). pathSide=true asks for the side the
-// path entity is on; pathSide=false asks for the peer side.
-func sideLabel(incoming, pathSide bool) string {
-	if incoming == pathSide {
-		return "target"
-	}
-	return "source"
-}
-
 // collectEdgeWarnings runs the soft-condition checks for a single
-// resource identifier. None of these block the write.
+// resource identifier. None of these block the write; the type allowlist
+// is checked, and refused, by [writeHandler.checkRelationEdges].
 //
-// `incoming` flips the side of the type-allowlist checks: when true,
-// the `ref` is the SOURCE side of the canonical edge (the path entity
-// is the target). Warning codes stay the same so client de-dup by
-// code keeps working; the `Direction` field disambiguates.
+// `incoming` is true when the `ref` is the SOURCE side of the canonical
+// edge (the path entity is the target). Warning codes stay the same so
+// client de-dup by code keeps working; the `Direction` field disambiguates.
 //
-// peerType is the peer's stored type when the principal may read some face
-// of it, and "" otherwise ([visibleReader.readableTypes]). The peer is named
-// by bare id, so it names an entity, not a face. A peer the caller may not
-// read gets the same warning as an absent one, so neither its existence nor
-// its type leaks through the warning codes.
+// peerType is the peer's stored type, which the principal may read: a peer
+// it may not read, or one that does not exist, was already refused by
+// [writeHandler.checkRelationEdges].
 func (h *writeHandler) collectEdgeWarnings(
 	relType string, relDef *metamodel.RelationDef,
 	ref v1.ResourceIdentifier, peerType, edgePath string, incoming bool,
@@ -217,38 +256,13 @@ func (h *writeHandler) collectEdgeWarnings(
 	meta := h.schema().Meta
 	direction := directionLabel(incoming)
 
-	if peerType == "" {
+	if peerType != ref.Type {
 		warnings = append(warnings, Warning{
-			Code:      "target_not_found",
-			Path:      edgePath + "/id",
-			Detail:    fmt.Sprintf("peer entity %q does not exist; the edge will be created but reference a missing peer", ref.ID),
+			Code:      "target_type_mismatch",
+			Path:      edgePath + "/type",
+			Detail:    fmt.Sprintf("expected peer type %q, but %q is of type %q", ref.Type, ref.ID, peerType),
 			Direction: direction,
 		})
-	} else {
-		if peerType != ref.Type {
-			warnings = append(warnings, Warning{
-				Code:      "target_type_mismatch",
-				Path:      edgePath + "/type",
-				Detail:    fmt.Sprintf("expected peer type %q, but %q is of type %q", ref.Type, ref.ID, peerType),
-				Direction: direction,
-			})
-		}
-		// Peer-side type allowlist: when path entity is source
-		// (outgoing), the peer is target and must be in relDef.To;
-		// when path entity is target (incoming), the peer is source
-		// and must be in relDef.From.
-		peerSideAllowed := relDef.To
-		if incoming {
-			peerSideAllowed = relDef.From
-		}
-		if !containsString(peerSideAllowed, peerType) {
-			warnings = append(warnings, Warning{
-				Code:      "target_type_not_allowed",
-				Path:      edgePath,
-				Detail:    fmt.Sprintf("relation %q does not declare %q as an allowed %s type", relType, peerType, sideLabel(incoming, false)),
-				Direction: direction,
-			})
-		}
 	}
 
 	// Managed order properties are recognized when the relation type is
@@ -323,13 +337,8 @@ func (e *gateFaultError) Unwrap() error { return e.err }
 // surfaces additional warnings that depend on post-merge state (e.g.
 // required-meta-unset) and store-write errors.
 //
-// Edges flagged by the validation phase as "target missing" or
-// "target type mismatch" are written directly through the store
-// rather than the EntityManager — the EntityManager's CreateRelation
-// rejects writes whose target doesn't exist, but DEC-HWZHA's policy is
-// to permit the write with a warning. The store does not check target
-// existence, so the direct write succeeds and `analyze_*` flags it on
-// the next run.
+// Every edge is written through the EntityManager, which runs the ACL,
+// the endpoint checks and the audit.
 //
 // Returns warnings collected during the apply phase plus any error
 // that prevented further writes. On a write-loop error, the relations
@@ -554,12 +563,10 @@ const upsertEdgeAttempts = 8
 //     and audit (that is the --read-only bypass BUG-K6FEVB). The user needs
 //     feedback that the reference did not resolve, so we reject rather than
 //     silently warn.
-//   - Type-allowlist mismatch: still a soft condition, because both
-//     endpoints exist and a hand-editor could produce this state. The
-//     manager writes the edge anyway because of
-//     [entity.RelationOptions.TolerateTypeMismatch], so it is audited and
-//     attributed like any other create (GitHub #1806). The caller reports
-//     the mismatch as a warning.
+//   - Endpoint type the relation does not allow: a 422 with the code the
+//     validation phase gives (DEC-0D8UZX3). That phase refuses it first;
+//     the manager refuses it again when a peer's type changed in between.
+//     Wrappers written before that refusal stay written.
 //
 // `from` and `to` are pre-resolved by the caller via edgeEndpoints —
 // this function does not consult direction. `ref.ID` is the peer ID
@@ -571,9 +578,8 @@ func (h *writeHandler) writeCreateRelation(
 	finalProps map[string]any,
 ) error {
 	opts := entity.RelationOptions{
-		Properties:           finalProps,
-		Content:              ref.Content,
-		TolerateTypeMismatch: true,
+		Properties: finalProps,
+		Content:    ref.Content,
 	}
 	k := entity.RelationKey{From: from, FromFace: tail, Type: relType, To: to}
 	_, err := h.manager.CreateRelation(ctx, k, opts)
@@ -585,6 +591,9 @@ func (h *writeHandler) writeCreateRelation(
 	}
 	if ce := cardinalityError(err, bodyKey); ce != nil {
 		return ce
+	}
+	if te := endpointTypeRefusal(err, bodyKey); te != nil {
+		return te
 	}
 	if errors.Is(err, entitymanager.ErrOwningRule) {
 		return owningRuleError(relType, err)
@@ -895,6 +904,21 @@ func cardinalityError(err error, bodyKey string) *structuralError {
 	}
 }
 
+// endpointTypeRefusal maps a create the manager refused for an endpoint type
+// (DEC-0D8UZX3) to the 422 the validation phase gives; nil for any other
+// error. bodyKey is the relation's name as the request sent it.
+func endpointTypeRefusal(err error, bodyKey string) *structuralError {
+	ire, ok := errors.AsType[*entitymanager.InvalidRelationError](err)
+	if !ok || ire.TypeNotAllowedCode() == "" {
+		return nil
+	}
+	return &structuralError{
+		Code:   ire.TypeNotAllowedCode(),
+		Path:   "/relations/" + v1.JSONPointerEscape(bodyKey),
+		Detail: ire.Error(),
+	}
+}
+
 // boundedPlan is the creates and removes of one wrapper on a bounded
 // relation, for one ReplaceRelations call.
 type boundedPlan struct {
@@ -910,10 +934,6 @@ type boundedPlan struct {
 //
 // Only the plan's removals are passed on: the plan holds the edges the caller
 // may see, so an edge to an unreadable peer stays.
-//
-// Every create tolerates a type-allowlist mismatch, as in writeCreateRelation:
-// validateRelationsModern already reported it as a warning (DEC-HWZHA), and the
-// manager writes and audits the edge in the same replace (GitHub #1806).
 func (w *wrapperWrite) writeBoundedOps(
 	ctx context.Context, ops []edgeOp,
 ) ([]edgeOp, []Warning, error) {
@@ -933,7 +953,7 @@ func (w *wrapperWrite) writeBoundedOps(
 				w.path+upsertKey(w.upd), directionLabel(w.incoming))...)
 			p.creates = append(p.creates, entitymanager.RelationCreate{
 				Key: k, Opts: entity.RelationOptions{
-					Properties: finalProps, Content: op.ref.Content, TolerateTypeMismatch: true,
+					Properties: finalProps, Content: op.ref.Content,
 				},
 			})
 			p.refs[k] = op.ref
@@ -968,6 +988,9 @@ func boundedError(w *wrapperWrite, p boundedPlan, err error) error {
 	}
 	if ce := cardinalityError(err, w.bodyKey); ce != nil {
 		return ce
+	}
+	if te := endpointTypeRefusal(err, w.bodyKey); te != nil {
+		return te
 	}
 	if errors.Is(err, entitymanager.ErrOwningRule) {
 		return owningRuleError(w.relType, err)

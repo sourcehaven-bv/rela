@@ -48,6 +48,8 @@ const props = defineProps<{
   entityType: string
   entityId: string
   error?: string
+  /** Right-aligned tabular figures, for a number in a table column. */
+  numeric?: boolean
 }>()
 
 const { t } = useI18n()
@@ -73,7 +75,8 @@ const treatment = computed<Treatment>(() => {
   return 'swap'
 })
 
-const fieldId = computed(() => `inline-${props.property}`)
+// Per entity, so a table with one cell per row repeats no id.
+const fieldId = computed(() => `inline-${props.entityId}-${props.property}`)
 
 // ─── Pick: an enum drawn as its badge ────────────────────────────────────
 
@@ -155,7 +158,7 @@ function floatingPanels(): Element[] {
 </script>
 
 <template>
-  <div class="inline-property-value">
+  <div class="inline-property-value" :class="{ 'inline-property-value--numeric': numeric }">
     <template v-if="!writable">
       <component
         :is="widget"
@@ -227,6 +230,7 @@ function floatingPanels(): Element[] {
     <RlInlineEdit
       v-else
       :label="label"
+      :numeric="numeric"
       :empty="isEmpty"
       :block="isBlock"
       :auto-open-picker="opensPicker"
@@ -277,6 +281,12 @@ function floatingPanels(): Element[] {
   gap: var(--space-2xs);
   flex: 1;
   min-width: 0;
+}
+
+/* A number lines up on the right of its cell. RlInlineEdit sizes itself to its
+   content, so stretching it would leave the value on the left. */
+.inline-property-value--numeric {
+  align-items: flex-end;
 }
 
 .inline-property-error {

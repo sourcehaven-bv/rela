@@ -126,7 +126,8 @@ export interface WorldMessages {
 // A property's display format. Only currency exists today; more formats may
 // join, and at most one applies.
 export interface PropertyDisplay {
-  // ISO 4217 code: the integer renders as money in the reader's locale.
+  // ISO 4217 code: the integer or decimal renders as money in the reader's
+  // locale.
   currency?: string
 }
 
@@ -137,6 +138,7 @@ export interface PropertyDef {
     | 'date'
     | 'datetime'
     | 'integer'
+    | 'decimal'
     | 'boolean'
     | 'enum'
     | 'file'
@@ -151,12 +153,15 @@ export interface PropertyDef {
   description?: string
   format?: string
   list?: boolean
-  // For `integer` properties: the inclusive value bounds, if declared.
+  // For `integer` and `decimal` properties: the inclusive value bounds, if
+  // declared. They are whole numbers.
   // For `file` properties: `max` is the maximum attachments (default 1).
   // Above 1 the property holds several files and the widget switches to
   // add-mode.
   min?: number
   max?: number
+  // For `decimal` properties: the most digits allowed after the point.
+  scale?: number
   // For `external_ref` properties: the external system the ref points into.
   system?: string
   // How the value renders for reading (TKT-SVLQQ6). Inputs stay plain.
@@ -222,4 +227,10 @@ export interface Template {
 export interface TemplateRelation {
   relation: string
   target: string
+}
+
+// isNumericProperty reports whether a property holds a number: an `integer`
+// or a `decimal` (TKT-DTUAG3U). Number inputs and number formatting key on it.
+export function isNumericProperty(def?: Pick<PropertyDef, 'type'>): boolean {
+  return def?.type === 'integer' || def?.type === 'decimal'
 }

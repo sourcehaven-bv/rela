@@ -44,6 +44,9 @@ const (
 	KindDatetime
 	KindExternalRef
 	KindContent
+	// KindDecimal is a decimal property. Its stored form is decimal text
+	// (see [metamodel.PropertyTypeDecimal]).
+	KindDecimal
 )
 
 // Field is one synced field.
@@ -116,6 +119,8 @@ func fieldFor(m *metamodel.Metamodel, name string, pd *metamodel.PropertyDef) (F
 		f.Kind = KindString
 	case metamodel.PropertyTypeInteger:
 		f.Kind = KindInteger
+	case metamodel.PropertyTypeDecimal:
+		f.Kind = KindDecimal
 	case metamodel.PropertyTypeBoolean:
 		f.Kind = KindBoolean
 	case metamodel.PropertyTypeDate:
@@ -286,6 +291,12 @@ func Canonical(f Field, v any) (any, error) {
 			return nil, fmt.Errorf("%w: field %q: %w", ErrField, f.Name, err)
 		}
 		return int64(n), nil
+	case KindDecimal:
+		text, err := metamodel.DecimalText(v)
+		if err != nil {
+			return nil, fmt.Errorf("%w: field %q: %w", ErrField, f.Name, err)
+		}
+		return text, nil
 	case KindBoolean:
 		switch b := v.(type) {
 		case bool:
@@ -346,7 +357,7 @@ func canonicalList(f Field, v any) (any, error) {
 }
 
 // Equal compares two values of f by meaning: both empty are equal; strings
-// exactly; integers numerically; dates by calendar day; datetimes by
+// exactly; integers and decimals numerically; dates by calendar day; datetimes by
 // instant; lists as multisets; refs by id; the body after CRLF and trailing
 // whitespace normalization. A value that does not fit f compares by its
 // string form.
@@ -391,6 +402,10 @@ func key(f Field, v any) string {
 	case KindExternalRef:
 		if id, ok := metamodel.ExternalRefID(v); ok {
 			return "r:" + id
+		}
+	case KindDecimal:
+		if r, _, err := metamodel.ParseDecimal(v); err == nil {
+			return "n:" + r.RatString()
 		}
 	default:
 		if c, err := Canonical(f, v); err == nil {

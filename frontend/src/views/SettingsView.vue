@@ -814,6 +814,12 @@ onMounted(() => {
                   v-model="propertyDefaults[propName as string]"
                   type="number"
                 />
+                <input
+                  v-else-if="getPropertyDef(propName as string)?.type === 'decimal'"
+                  v-model="propertyDefaults[propName as string]"
+                  type="number"
+                  step="any"
+                />
                 <input v-else v-model="propertyDefaults[propName as string]" type="text" />
               </template>
               <template v-else>
@@ -949,6 +955,12 @@ onMounted(() => {
                         v-else-if="getPropertyDef(propName as string)?.type === 'integer'"
                         v-model="override.defaults[propName as string]"
                         type="number"
+                      />
+                      <input
+                        v-else-if="getPropertyDef(propName as string)?.type === 'decimal'"
+                        v-model="override.defaults[propName as string]"
+                        type="number"
+                        step="any"
                       />
                       <input v-else v-model="override.defaults[propName as string]" type="text" />
                     </template>

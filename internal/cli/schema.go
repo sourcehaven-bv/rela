@@ -344,11 +344,14 @@ func writePropertyDetail(meta *metamodel.Metamodel, propName string, prop metamo
 	if r := propertyRange(prop); r != "" {
 		out.WriteMessage("    Range: %s", r)
 	}
+	if prop.Scale != nil {
+		out.WriteMessage("    Scale: %d", *prop.Scale)
+	}
 }
 
-// propertyRange renders an integer's declared bounds, or "" without any.
+// propertyRange renders a number's declared bounds, or "" without any.
 func propertyRange(prop metamodel.PropertyDef) string {
-	if prop.Type != metamodel.PropertyTypeInteger {
+	if !metamodel.IsNumericType(prop.Type) {
 		return ""
 	}
 	switch {

@@ -214,6 +214,13 @@ export interface ChannelPresentation {
    * every width; absent, it folds only in a narrow panel.
    */
   session?: { display?: string }
+  /**
+   * Where the channel type sits on an entity page. `above_relations` puts it
+   * before the first view section that does not show the entry; absent, it
+   * sits in the channels block at the end of the page.
+   */
+  // A value from a newer server reads as the default.
+  placement?: 'above_relations' | (string & {})
 }
 
 export interface RelationProperty {
@@ -957,10 +964,16 @@ export interface NextActionSuggestion {
 
 export interface NextActionResponse {
   suggestion: NextActionSuggestion | null
+  /**
+   * The entity type whose changes can change this page's answer. Set only
+   * when a context source can apply here; the client re-resolves on a change
+   * of that type and no other.
+   */
+  context_type?: string
 }
 
 /** How a user answered a suggestion. */
-export type NextActionFeedbackKind = 'snooze' | 'dismiss' | 'mute' | 'unmute' | 'shown'
+export type NextActionFeedbackKind = 'snooze' | 'dismiss' | 'mute' | 'unmute' | 'shown' | 'seen'
 
 export interface AnalyzeIssue {
   entityId: string

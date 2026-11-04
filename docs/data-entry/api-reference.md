@@ -395,7 +395,7 @@ Each entry in `data` or `add` is a resource identifier with these fields:
 | Field | Required? | Semantics |
 |---|---|---|
 | `type` | yes | Target entity type. **Soft check**: a mismatch surfaces a `target_type_mismatch` warning and writes the edge anyway (DEC-HWZHA). |
-| `id` | yes | Target entity ID. **Soft check**: a missing target surfaces a `target_not_found` warning and writes the edge anyway. |
+| `id` | yes | Target entity ID. A target that does not exist, or that the caller cannot read, returns 422 `target_not_found` before anything is written. |
 | `meta` | optional | Per-edge properties. **Upsert** — keys merge into existing meta. **Soft check**: unknown keys against the relation's closed schema produce `unknown_meta_key` warnings, but persist. |
 | `meta_unset` | optional | Keys to clear after the merge. Mirrors `properties_unset` at the entity level. Non-string elements → 400 at unmarshal. |
 | `content` | optional | Per-edge markdown body. **Upsert** — present (including empty string) replaces, absent leaves alone. **Hard 422**: present on a relation type without `content: true` (the file format can't hold a body). |
@@ -428,7 +428,9 @@ name data the caller may not read.
 ## Validation policy
 
 Per [DEC-HWZHA](../../tickets/entities/decisions/DEC-HWZHA.md), validation
-findings split into three classes:
+findings split into three classes. [DEC-0D8UZX3](../../tickets/entities/decisions/DEC-0D8UZX3.md)
+moved the relation endpoint-type checks from the warnings class to the 422
+class.
 
 ### Hard 400 — request shape errors
 
@@ -458,6 +460,20 @@ The storage layer literally cannot persist this state.
   storage impossibility. It is a 422 because the delete cascade and the
   owner's page both assume one owner and one level; `rela analyze owning`
   reports data that breaks the rules anyway.
+- An edge whose source type is not in the relation's `from` list
+  (`source_type_not_allowed`) or whose target type is not in its `to` list
+  (`target_type_not_allowed`). A relation's endpoint types are a hard
+  contract on every write surface (DEC-0D8UZX3), so this is not a storage
+  impossibility either. The code names the end of the canonical edge whose
+  type is wrong, whether the request used the canonical or the inverse
+  name: a peer sent under an inverse name is the edge's source. The path
+  entity's own type is checked only for a wrapper that adds or keeps an
+  edge; `data: []` or a `remove` creates nothing and is not refused. An
+  existing edge of a disallowed type that `data` or `add` names again is
+  refused too, so it cannot be kept or have its meta changed. A peer the
+  caller cannot read is reported as missing (`target_not_found`), never by
+  its type. The per-edge `POST /api/v1/{plural}/{id}/relations/{rel}`
+  returns the same codes.
 
 ### 200 + warnings — soft conditions surfaced inline
 
@@ -483,10 +499,7 @@ Warning codes:
 
 | Code | When |
 |---|---|
-| `target_not_found` | Target ID doesn't exist in the graph |
 | `target_type_mismatch` | Target's actual type doesn't match `data[i].type` |
-| `target_type_not_allowed` | Target type not in the relation's `to` allowlist |
-| `source_type_not_allowed` | Source type not in the relation's `from` allowlist |
 | `unknown_meta_key` | Meta key not declared in the relation's closed schema |
 | `required_meta_unset` | Required meta property absent after merge |
 | `meta_type_mismatch` | Meta value's type doesn't match the declared property type |
@@ -508,9 +521,8 @@ The handler runs in three phases:
 
 1. **Validate** — relation validation runs FIRST. On 400/422, no writes occur.
 2. **Update entity** — only if the request actually changed `properties` or `content`.
-3. **Apply relations** — adds/updates/deletes per the diff. Soft-condition edges
-   are written directly through the store, bypassing the workspace's
-   target-existence check.
+3. **Apply relations** — adds/updates/deletes per the diff, through the
+   entity manager.
 
 The validation-first ordering means a relation 422 leaves the entity
 **untouched**. The unavoidable atomicity gap is mid-write-loop store failures
@@ -1433,6 +1445,14 @@ Each source passes the same read gate as a list row, carries the title you may
 see, and appears at the face the world serves. A source whose served face does
 not itself mention `{id}` is left out. A hidden or missing `{id}` gets the same
 404 as the entity GET. A bad `limit` or `cursor` is a 400.
+
+### Section source
+
+Each `_views` section carries `source`, the `source:` from its view config:
+`entry` for a section that shows the entry itself, else the name of the
+collection it shows. The web app places a channel type with `placement:
+above_relations` before the first section whose source is not `entry` (see
+Channel placement in the data-entry guide).
 
 ### Backlinks in a view
 

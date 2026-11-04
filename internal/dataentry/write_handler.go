@@ -355,7 +355,25 @@ func (h *writeHandler) gateCreateRelationAffordances(
 		return true
 	}
 	err := h.affordances.validateRelationsModernAffordances(r.Context(), "", candidate, desired)
-	return h.relationGateOK(w, r, candidate, err)
+	if !h.relationGateOK(w, r, candidate, err) {
+		return false
+	}
+	// The body's refusing checks, the endpoint types among them
+	// (DEC-0D8UZX3), also run before the entity exists, so a refused edge
+	// leaves no unlinked entity behind. They need only the candidate's type.
+	// They run only for a caller the create ACL admits: CreateEntity makes
+	// that decision and answers a denied caller 403, which a 422 about the
+	// body must not pre-empt. The answer is advisory; CreateEntity still
+	// authorizes and audits the create itself.
+	createReq := translateVerb("create", candidate.Type, "", candidate.Face)
+	if !h.acl().AuthorizeWrite(r.Context(), createReq).Allow {
+		return true
+	}
+	if _, _, err := h.checkRelationEdges(r.Context(), candidate.Type, desired); err != nil {
+		h.writeRelationsValidationError(w, r, err)
+		return false
+	}
+	return true
 }
 
 // relationGateOK answers the request itself for a failed
@@ -1492,6 +1510,10 @@ func (h *writeHandler) handleV1CreateRelation(
 	)
 	if err != nil {
 		if writeForbiddenIfACLDenied(w, r, err) || writeCardinalityIfExceeded(w, r, err) {
+			return
+		}
+		if te := endpointTypeRefusal(err, relType); te != nil {
+			writeV1Error(w, r, http.StatusUnprocessableEntity, te.Code, "Relation endpoint type not allowed", te.Detail)
 			return
 		}
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "relation_failed", "Failed to create relation", err.Error())

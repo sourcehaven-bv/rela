@@ -117,7 +117,8 @@ body:
         }
       ],
       "isGrouped": false,
-      "hasContent": false
+      "hasContent": false,
+      "source": "entry"
     },
     {
       "heading": "",
@@ -126,7 +127,8 @@ body:
       "isEmpty": false,
       "isGrouped": false,
       "content": "Follows `TKT-1`.",
-      "hasContent": true
+      "hasContent": true,
+      "source": "entry"
     },
     {
       "heading": "Children",
@@ -146,7 +148,8 @@ body:
         }
       ],
       "isGrouped": false,
-      "hasContent": false
+      "hasContent": false,
+      "source": "children"
     },
     {
       "heading": "Policies",
@@ -154,7 +157,8 @@ body:
       "display": "list",
       "isEmpty": true,
       "isGrouped": false,
-      "hasContent": false
+      "hasContent": false,
+      "source": "policies"
     },
     {
       "heading": "Watchers",
@@ -192,7 +196,8 @@ body:
         }
       ],
       "isGrouped": false,
-      "hasContent": false
+      "hasContent": false,
+      "source": "watchers"
     }
   ],
   "mentions": {

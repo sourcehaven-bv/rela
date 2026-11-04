@@ -68,3 +68,12 @@ export interface RelatedItem {
   /** Attributes for the rendered element, such as `to` or `href`. */
   attrs?: Record<string, unknown>
 }
+
+/** One line of `RlTotals`. */
+export interface TotalRow {
+  label: string
+  /** Already formatted, such as "€ 3.594,50". */
+  value: string
+  /** The line that matters most, usually the amount due. */
+  emphasis?: boolean
+}

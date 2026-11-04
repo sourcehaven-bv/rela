@@ -245,6 +245,7 @@ func buildCandidateEntity(
 			delete(e.Properties, "status")
 		}
 	}
+	storeDecimalsAsText(deps.Meta, e.Type, e.Properties)
 	if err := deps.Computed.Evaluate(ctx, e); err != nil {
 		return nil, nil, err
 	}

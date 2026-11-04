@@ -151,7 +151,7 @@ func budgetConfig() *Config {
 		// the anchor. Every ticket is tracked by E1, so the tab's row count
 		// grows with n.
 		Pages: map[string]dataentryconfig.Page{
-			"epic": {Label: "Epic", EntityType: "epic", Tabs: []dataentryconfig.PageTab{{
+			"epic": {PageHeader: dataentryconfig.PageHeader{Label: "Epic", EntityType: "epic"}, Tabs: []dataentryconfig.PageTab{{
 				ID: "tickets", Label: "Tickets", List: "tickets", Scope: &dataentryconfig.PageTabScope{
 					Relation: "tracked-by", Direction: dataentryconfig.DirectionIncoming,
 				},
@@ -433,6 +433,36 @@ func TestQueryBudget_ViewSectionCreateAddsNoStoreReads(t *testing.T) {
 	assertBudget(t, "view section create", small, large, viewSectionBudget, detail)
 }
 
+// The same view with an editable table column (TKT-4Q2EIVZ). Each row then
+// carries its values and write verdicts, which come from verdicts primed once
+// per section, so the read count must not move from the plain view.
+func TestQueryBudget_ViewEditableTableAddsNoStoreReads(t *testing.T) {
+	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+		t.Helper()
+		view := app.State().Cfg.Views["ticket"]
+		sections := append([]dataentryconfig.ViewSection(nil), view.Sections...)
+		cols := append([]dataentryconfig.ListColumn(nil), sections[0].Columns...)
+		for i := range cols {
+			if cols[i].Property != "" && cols[i].Link == "" {
+				cols[i].Render = dataentryconfig.RenderInput
+				break
+			}
+		}
+		sections[0].Columns = cols
+		view.Sections = sections
+		app.State().Cfg.Views["ticket"] = view
+
+		rec := viewsAs(ctx, t, app, d, "ticket", "TKT-0001")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("view: %d %s", rec.Code, rec.Body)
+		}
+		if !strings.Contains(rec.Body.String(), `"_props"`) {
+			t.Fatalf("no editable row data, so this budget proves nothing: %s", rec.Body)
+		}
+	})
+	assertBudget(t, "view editable table", small, large, viewSectionBudget, detail)
+}
+
 // A structured search (the dashboard card shape). Before batching: 2 +
 // 6×hits reads from the per-hit affordance membership walks.
 func TestQueryBudget_SearchIsSizeIndependent(t *testing.T) {
@@ -624,8 +654,9 @@ func TestQueryBudget_EdgeWarningsAreSizeIndependent(t *testing.T) {
 			}
 			data = append(data, v1.ResourceIdentifier{Type: "ticket", ID: e.ID})
 		}
-		// A peer that does not exist, so the warning path is exercised too.
-		data = append(data, v1.ResourceIdentifier{Type: "ticket", ID: "TKT-9999"})
+		// A peer declared with the wrong type, so the warning path is
+		// exercised too. A missing peer would be refused (DEC-0D8UZX3).
+		data[0].Type = "feature"
 		// A second peer type, so the pin covers one gate round per type.
 		features := []v1.ResourceIdentifier{{Type: "feature", ID: "F1"}, {Type: "feature", ID: "F2"}}
 		desired := map[string]v1.RelationsUpdate{
@@ -636,8 +667,8 @@ func TestQueryBudget_EdgeWarningsAreSizeIndependent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(ws) != 1 || ws[0].Code != "target_not_found" {
-			t.Fatalf("warnings = %+v, want one target_not_found", ws)
+		if len(ws) != 1 || ws[0].Code != "target_type_mismatch" {
+			t.Fatalf("warnings = %+v, want one target_type_mismatch", ws)
 		}
 	})
 	assertBudget(t, "edge warnings", small, large, edgeWarningsBudget, detail)

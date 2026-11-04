@@ -725,12 +725,16 @@ type PropertyDef struct {
 	// Min and Max mirror the schema keys, whose meaning depends on Type.
 	// Nil: accepted — omitted when the schema does not set the key.
 	//
-	// On an `integer` property they are the inclusive value bounds
-	// (TKT-BRAM1A); the SPA puts them on the number input. On a `file`
+	// On an `integer` or `decimal` property they are the inclusive value
+	// bounds (TKT-BRAM1A); the SPA puts them on the number input. On a `file`
 	// property Max is the attachment cap (default 1), which the file widget
 	// reads to switch between replace-mode and multi-file add-mode.
 	Min *int `json:"min,omitempty"`
 	Max *int `json:"max,omitempty"`
+	// Scale is a `decimal` property's cap on digits after the point
+	// (TKT-DTUAG3U); the SPA sets the number input's step from it. Nil:
+	// accepted — omitted when the schema does not set it.
+	Scale *int `json:"scale,omitempty"`
 	// System names the external system of an `external_ref` property
 	// (TKT-SM20FG). The value is read-only on every interactive surface.
 	System string `json:"system,omitempty"`
@@ -1112,11 +1116,8 @@ type SidebarSpace struct {
 // (the anchor) and is addressed as `/p/<page>/<entity>/<tab>`. Badge names
 // the anchor's property the header shows beside its title.
 type SidebarPage struct {
-	Label      string           `json:"label"`
-	Icon       string           `json:"icon,omitempty"`
-	EntityType string           `json:"entity_type,omitempty"`
-	Badge      string           `json:"badge,omitempty"`
-	Tabs       []SidebarPageTab `json:"tabs"`
+	dataentryconfig.PageHeader
+	Tabs []SidebarPageTab `json:"tabs"`
 }
 
 // SidebarPageTab is one tab of a [SidebarPage]. View is the kind of view the
@@ -1541,6 +1542,12 @@ type ViewSection struct {
 	// budget. The scan-budget case is the signal docs/acl-security.md
 	// accepts for the mentioned-by endpoint.
 	Incomplete bool `json:"incomplete,omitempty"`
+	// Source is the section's configured `source:`: `entry` for a section
+	// that shows the entry itself, else the name of the collection it shows.
+	// The SPA places a channel type with `placement: above_relations` before
+	// the first section whose source is not `entry` (TKT-VXBE16H). Omitted
+	// on sections built without a view config, such as the side panel's.
+	Source string `json:"source,omitempty"`
 
 	// RelationOrder is set when the section's rows are the entry's targets
 	// over one orderable relation, shown in relation order; see
@@ -1555,6 +1562,18 @@ type ViewSection struct {
 	// That is what keeps TKT-651W's read-only default intact and lets
 	// TestV1Views_NoAddOrLinkInfoOnSections keep asserting absence.
 	Create *ViewSectionCreate `json:"create,omitempty"`
+
+	// Totals names the entry properties shown under a table section
+	// (TKT-4Q2EIVZ). The values are not repeated here: a client reads them
+	// from the entry, which is already gated for the reader.
+	Totals []SectionTotal `json:"totals,omitempty"`
+}
+
+// SectionTotal is one line of [ViewSection.Totals].
+type SectionTotal struct {
+	Property string `json:"property"`
+	Label    string `json:"label,omitempty"`
+	Emphasis bool   `json:"emphasis,omitempty"`
 }
 
 // ViewSectionCreate describes a section's create-related affordance.
@@ -1665,6 +1684,10 @@ type ViewColumn struct {
 	Label    string `json:"label,omitempty"`
 	Relation string `json:"relation,omitempty"`
 	Link     string `json:"link,omitempty"`
+	// Render is "input" on a table column that may be edited in place
+	// (TKT-4Q2EIVZ), empty otherwise. A cell is an input only when its row's
+	// `_fields` verdict also allows the write.
+	Render string `json:"render,omitempty"`
 }
 
 // ViewRow represents a table row.
@@ -1677,6 +1700,12 @@ type ViewRow struct {
 	// Self addresses the ROW this entry describes, face included — the same
 	// contract as [EntityLinks.Self]. See [ViewEntity.Self].
 	Self string `json:"_self,omitempty"`
+	// Props and FieldAffordances carry the row's typed property values and
+	// per-field write verdicts, with the same contract as on [ViewEntity].
+	// Set only on a row whose columns include an editable one (TKT-4Q2EIVZ),
+	// so a read-only table is byte-identical to what it was before.
+	Props            map[string]any              `json:"_props,omitempty"`
+	FieldAffordances *map[string]FieldAffordance `json:"_fields,omitempty"`
 }
 
 // ViewTreeNode is one row of a `display: nested` section: an entity, its

@@ -3,6 +3,7 @@ import {
   formatValue,
   formatAmount,
   formatDisplayNumber,
+  formatDecimal,
   formatCellValue,
   numericValue,
   formatDate,
@@ -422,5 +423,28 @@ describe('formatDisplayNumber', () => {
     const et = { name: 'deal', properties: { value: eur } } as unknown as EntityType
     expect(formatCellValue(3500, 'value', et)).toBe(formatAmount(3500, 'EUR'))
     expect(formatCellValue(null, 'value', et)).toBe('')
+  })
+
+  it('formats a decimal exactly, with the digits it was written with', () => {
+    const dec = { type: 'decimal' as const, display: { currency: 'EUR' } }
+    expect(plain(formatDisplayNumber('12.5', dec, 'nl-NL'))).toBe('€ 12,50')
+    expect(plain(formatDisplayNumber('0.125', dec, 'nl-NL'))).toBe('€ 0,125')
+    expect(plain(formatDisplayNumber('3500', dec, 'nl-NL'))).toBe('€ 3.500')
+    expect(plain(formatDisplayNumber('1234567890123456789.01', dec, 'en-US'))).toBe('€1,234,567,890,123,456,789.01')
+    expect(formatDisplayNumber('1e3', dec, 'nl-NL')).toBeUndefined()
+  })
+
+  it('pads a decimal to its declared scale', () => {
+    const dec = { type: 'decimal' as const, scale: 3, display: { currency: 'EUR' } }
+    expect(plain(formatDisplayNumber('12.5', dec, 'nl-NL'))).toBe('€ 12,500')
+    expect(plain(formatDisplayNumber('12', dec, 'nl-NL'))).toBe('€ 12,000')
+  })
+})
+
+describe('formatDecimal', () => {
+  it('formats in the locale without a currency', () => {
+    expect(formatDecimal('1234.50', undefined, undefined, 'nl-NL')).toBe('1.234,50')
+    expect(formatDecimal('-0.1', undefined, undefined, 'en-US')).toBe('-0.1')
+    expect(formatDecimal('x', undefined, undefined, 'en-US')).toBeUndefined()
   })
 })

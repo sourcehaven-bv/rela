@@ -97,7 +97,7 @@ vi.mock('vue-router', () => ({
         if (to && typeof to === 'object') {
           const loc = to as { path?: string; query?: Record<string, unknown> }
           const qs = new URLSearchParams(
-            Object.entries(loc.query ?? {}).map(([k, v]) => [k, String(v)]),
+            Object.entries(loc.query ?? {}).map(([k, v]) => [k, String(v)])
           ).toString()
           return qs ? `${loc.path}?${qs}` : (loc.path ?? '')
         }
@@ -143,7 +143,9 @@ function viewResponse(over: Partial<Entity> = {}): ViewResponse {
 
 // A view section with the booleans every section carries defaulted, so a test
 // names only what it is about.
-function section(over: Partial<ViewSection> & Pick<ViewSection, 'sectionId' | 'display'>): ViewSection {
+function section(
+  over: Partial<ViewSection> & Pick<ViewSection, 'sectionId' | 'display'>
+): ViewSection {
   return { heading: '', isEmpty: false, isGrouped: false, hasContent: false, ...over }
 }
 
@@ -185,7 +187,11 @@ describe('EntityDetail world binding', () => {
     } as never)
     fetchViewMock.mockReset()
     updateEntityMock.mockReset().mockResolvedValue({
-      id: entityId, type: entityType, properties: {}, content: '', _actions: {},
+      id: entityId,
+      type: entityType,
+      properties: {},
+      content: '',
+      _actions: {},
     })
     getCommandsMock.mockReset().mockResolvedValue([])
     invokeCopyMock.mockReset()
@@ -257,15 +263,17 @@ describe('EntityDetail world binding', () => {
             summary: 'Risk summary',
           },
         }),
-        sections: [section({
-          heading: 'Properties',
-          sectionId: 'props',
-          display: 'properties',
-          fields: [
-            { property: 'behandeling', label: 'behandeling', values: ['mitigeren'] },
-            { property: 'summary', label: 'Summary', values: ['Risk summary'] },
-          ],
-        })],
+        sections: [
+          section({
+            heading: 'Properties',
+            sectionId: 'props',
+            display: 'properties',
+            fields: [
+              { property: 'behandeling', label: 'behandeling', values: ['mitigeren'] },
+              { property: 'summary', label: 'Summary', values: ['Risk summary'] },
+            ],
+          }),
+        ],
       })
       rendersProof(w)
       expect(w.text()).toContain('Behandelstrategie')
@@ -277,7 +285,12 @@ describe('EntityDetail world binding', () => {
     it('sends no world under the default world', async () => {
       const w = await mountDetail(viewResponse())
       rendersProof(w)
-      expect(fetchViewMock).toHaveBeenCalledWith(entityType, entityId, undefined, expect.any(AbortSignal))
+      expect(fetchViewMock).toHaveBeenCalledWith(
+        entityType,
+        entityId,
+        undefined,
+        expect.any(AbortSignal)
+      )
       expect(w.find('.world-banner').exists()).toBe(false)
     })
 
@@ -285,7 +298,12 @@ describe('EntityDetail world binding', () => {
       mockRoute.query = { world: 'published' }
       const w = await mountDetail(viewResponse())
       rendersProof(w)
-      expect(fetchViewMock).toHaveBeenCalledWith(entityType, entityId, 'published', expect.any(AbortSignal))
+      expect(fetchViewMock).toHaveBeenCalledWith(
+        entityType,
+        entityId,
+        'published',
+        expect.any(AbortSignal)
+      )
       // No banner: this fixture declares no `banner:` for the world, and the
       // served row is the BARE face (no `_self` face) with `update: true`, so
       // there is nothing to announce and nothing to explain. A world no
@@ -302,9 +320,14 @@ describe('EntityDetail world binding', () => {
       mockRoute.query = query
       const w = await mountDetail({
         ...viewResponse(),
-        sections: [section({
-          sectionId: 'content', display: 'content', hasContent: true, content: 'See `POL-2`.',
-        })],
+        sections: [
+          section({
+            sectionId: 'content',
+            display: 'content',
+            hasContent: true,
+            content: 'See `POL-2`.',
+          }),
+        ],
         mentions: { 'POL-2': { type: 'policy', title: 'Second policy' } },
       })
       rendersProof(w)
@@ -335,16 +358,18 @@ describe('EntityDetail world binding', () => {
   describe('writes follow _actions and the address', () => {
     // A row served at a NON-bare face this principal may not write — the ISMS
     // "adopted text" case.
-    const standIn = () => entry({
-      _self: '/api/v1/policys/POL-1@published',
-      _actions: { update: false, delete: false, rename: false },
-    })
+    const standIn = () =>
+      entry({
+        _self: '/api/v1/policys/POL-1@published',
+        _actions: { update: false, delete: false, rename: false },
+      })
     // A NON-bare face this principal MAY write — the translator on `nl`.
-    const writableFace = (over: Partial<Entity> = {}) => entry({
-      _self: '/api/v1/policys/POL-1@nl',
-      _actions: { update: true, delete: true, rename: true },
-      ...over,
-    })
+    const writableFace = (over: Partial<Entity> = {}) =>
+      entry({
+        _self: '/api/v1/policys/POL-1@nl',
+        _actions: { update: true, delete: true, rename: true },
+        ...over,
+      })
 
     async function pressE(w: VueWrapper) {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', bubbles: true }))
@@ -379,7 +404,10 @@ describe('EntityDetail world binding', () => {
         name: entityType,
         label: 'Policy',
         properties: { title: { type: 'string', values: null } },
-        faces: { draft: { label: 'Concept' }, published: { label: 'Vastgesteld', messages: { read_only: text } } },
+        faces: {
+          draft: { label: 'Concept' },
+          published: { label: 'Vastgesteld', messages: { read_only: text } },
+        },
       } as never)
     }
 
@@ -416,7 +444,9 @@ describe('EntityDetail world binding', () => {
 
     it('gives a bare face without update no note — an ordinary denial', async () => {
       mockRoute.query = { world: 'published' }
-      const w = await mountDetail(viewResponse(entry({ _actions: { update: false, delete: false } })))
+      const w = await mountDetail(
+        viewResponse(entry({ _actions: { update: false, delete: false } }))
+      )
       rendersProof(w)
       expect(button(w, 'Edit')).toBeUndefined()
       expect(w.find('.world-banner').exists()).toBe(false)
@@ -443,7 +473,9 @@ describe('EntityDetail world binding', () => {
         draft: { label: 'Concept', messages: { notice: 'Nog niet vastgesteld.' } },
         published: { label: 'Vastgesteld' },
       })
-      const w = await mountDetail(viewResponse(writableFace({ _self: '/api/v1/policys/POL-1@draft' })))
+      const w = await mountDetail(
+        viewResponse(writableFace({ _self: '/api/v1/policys/POL-1@draft' }))
+      )
       rendersProof(w)
       expect(button(w, 'Edit')).toBeDefined()
       expect(w.find('.world-banner').text()).toBe('Nog niet vastgesteld.')
@@ -465,7 +497,9 @@ describe('EntityDetail world binding', () => {
 
     it('renders nothing when the face declares no notice', async () => {
       seedFaceMessages({ draft: { label: 'Concept' }, published: { label: 'Vastgesteld' } })
-      const w = await mountDetail(viewResponse(writableFace({ _self: '/api/v1/policys/POL-1@draft' })))
+      const w = await mountDetail(
+        viewResponse(writableFace({ _self: '/api/v1/policys/POL-1@draft' }))
+      )
       rendersProof(w)
       expect(w.find('.world-banner').exists()).toBe(false)
     })
@@ -475,7 +509,9 @@ describe('EntityDetail world binding', () => {
         draft: { label: 'Concept', messages: { notice: '{face} van {title}' } },
         published: { label: 'Vastgesteld' },
       })
-      const w = await mountDetail(viewResponse(writableFace({ _self: '/api/v1/policys/POL-1@draft' })))
+      const w = await mountDetail(
+        viewResponse(writableFace({ _self: '/api/v1/policys/POL-1@draft' }))
+      )
       rendersProof(w)
       // The face LABEL and the display title, not the coordinate or the id.
       expect(w.find('.world-banner').text()).toBe('Concept van Access Control Policy')
@@ -543,7 +579,7 @@ describe('EntityDetail world binding', () => {
         published: { label: 'Vastgesteld' },
       })
       const control = await mountDetail(
-        viewResponse(writableFace({ _self: '/api/v1/policys/POL-1@draft' })),
+        viewResponse(writableFace({ _self: '/api/v1/policys/POL-1@draft' }))
       )
       expect(control.find('.world-banner').text()).toBe('RENDERS-HERE')
     })
@@ -599,7 +635,10 @@ describe('EntityDetail world binding', () => {
 
     it('writes a checkbox toggle to the served ADDRESS', async () => {
       const contentSection = section({
-        sectionId: 'content', display: 'content', hasContent: true, content: '- [ ] a task',
+        sectionId: 'content',
+        display: 'content',
+        hasContent: true,
+        content: '- [ ] a task',
       })
       mockRoute.query = { world: 'site-nl' }
       const w = await mountDetail({
@@ -623,7 +662,10 @@ describe('EntityDetail world binding', () => {
     // row now on screen.
     it('keeps a pending toggle on its own row when the page switches entity', async () => {
       const contentSection = section({
-        sectionId: 'content', display: 'content', hasContent: true, content: '- [ ] a task',
+        sectionId: 'content',
+        display: 'content',
+        hasContent: true,
+        content: '- [ ] a task',
       })
       mockRoute.query = { world: 'site-nl' }
       const w = await mountDetail({
@@ -645,7 +687,11 @@ describe('EntityDetail world binding', () => {
         sections: [{ ...contentSection, content: '- [ ] other task' }],
       })
       updateEntityMock.mockResolvedValue({
-        id: entityId, type: entityType, properties: {}, content: '- [x] a task', _actions: {},
+        id: entityId,
+        type: entityType,
+        properties: {},
+        content: '- [x] a task',
+        _actions: {},
       })
       await w.setProps({ entityId: 'POL-2' })
       await flushPromises()
@@ -661,10 +707,16 @@ describe('EntityDetail world binding', () => {
     // flushes as it closes), and must not land on the new row.
     it('writes a body edit to the row the editor was opened on after a switch', async () => {
       const contentSection = section({
-        sectionId: 'content', display: 'content', hasContent: true, content: 'body one',
+        sectionId: 'content',
+        display: 'content',
+        hasContent: true,
+        content: 'body one',
       })
       mockRoute.query = { world: 'site-nl' }
-      const w = await mountDetail({ entry: writableFace({ content: 'body one' }), sections: [contentSection] })
+      const w = await mountDetail({
+        entry: writableFace({ content: 'body one' }),
+        sections: [contentSection],
+      })
       rendersProof(w)
       const body = w.findComponent(EntityBody)
       body.vm.$emit('edit')
@@ -678,11 +730,18 @@ describe('EntityDetail world binding', () => {
         content: 'body two',
       })
       let serveOther!: () => void
-      fetchViewMock.mockReturnValue(new Promise((resolve) => {
-        serveOther = () => resolve({ entry: other, sections: [{ ...contentSection, content: 'body two' }] })
-      }))
+      fetchViewMock.mockReturnValue(
+        new Promise((resolve) => {
+          serveOther = () =>
+            resolve({ entry: other, sections: [{ ...contentSection, content: 'body two' }] })
+        })
+      )
       updateEntityMock.mockResolvedValue({
-        id: entityId, type: entityType, properties: {}, content: 'typed on one', _actions: {},
+        id: entityId,
+        type: entityType,
+        properties: {},
+        content: 'typed on one',
+        _actions: {},
       })
       // The route changes while the editor is still open: its next edit, and
       // the debounced save it schedules, come after the switch.
@@ -709,9 +768,16 @@ describe('EntityDetail world binding', () => {
       const w = await mountDetail(viewResponse(writableFace()))
       rendersProof(w)
       const before = w.findComponent(EntityTitle)
-      fetchViewMock.mockResolvedValue(viewResponse(writableFace({
-        id: 'POL-2', _self: '/api/v1/policys/POL-2@nl', _title: 'Other Policy', properties: { title: 'Other Policy' },
-      })))
+      fetchViewMock.mockResolvedValue(
+        viewResponse(
+          writableFace({
+            id: 'POL-2',
+            _self: '/api/v1/policys/POL-2@nl',
+            _title: 'Other Policy',
+            properties: { title: 'Other Policy' },
+          })
+        )
+      )
       await w.setProps({ entityId: 'POL-2' })
       await flushPromises()
 
@@ -722,7 +788,10 @@ describe('EntityDetail world binding', () => {
 
     it('refuses a checkbox toggle when _actions denies update', async () => {
       const contentSection = section({
-        sectionId: 'content', display: 'content', hasContent: true, content: '- [ ] a task',
+        sectionId: 'content',
+        display: 'content',
+        hasContent: true,
+        content: '- [ ] a task',
       })
       mockRoute.query = { world: 'published' }
       const w = await mountDetail({
@@ -742,12 +811,21 @@ describe('EntityDetail world binding', () => {
       mockRoute.query = { world: 'site-nl' }
       const w = await mountDetail({
         entry: writableFace(),
-        sections: [section({
-          heading: 'Properties',
-          sectionId: 'props',
-          display: 'properties',
-          fields: [{ property: 'title', label: 'Title', values: ['Access Control Policy'], render: 'input' }],
-        })],
+        sections: [
+          section({
+            heading: 'Properties',
+            sectionId: 'props',
+            display: 'properties',
+            fields: [
+              {
+                property: 'title',
+                label: 'Title',
+                values: ['Access Control Policy'],
+                render: 'input',
+              },
+            ],
+          }),
+        ],
       })
       rendersProof(w)
       const form = w.findComponent({ name: 'SectionEditForm' })
@@ -762,15 +840,17 @@ describe('EntityDetail world binding', () => {
         heading: 'Implements',
         sectionId: 'implements',
         display: 'cards',
-        entities: [collectionEntity({
-          id: 'CTL-1',
-          title: 'MFA enforcement',
-          editFormId: 'control-edit',
-          fields: [{ property: 'title', label: 'Title', values: ['MFA'], render: 'input' }],
-          _props: { title: 'MFA' },
-          _fields: {},
-          _self: '/api/v1/controls/CTL-1@published',
-        })],
+        entities: [
+          collectionEntity({
+            id: 'CTL-1',
+            title: 'MFA enforcement',
+            editFormId: 'control-edit',
+            fields: [{ property: 'title', label: 'Title', values: ['MFA'], render: 'input' }],
+            _props: { title: 'MFA' },
+            _fields: {},
+            _self: '/api/v1/controls/CTL-1@published',
+          }),
+        ],
       })
       mockRoute.query = { world: 'published' }
       const w = await mountDetail({ entry: entry(), sections: [cardSection] })
@@ -795,7 +875,12 @@ describe('EntityDetail world binding', () => {
       expect(w.find('.world-banner').exists()).toBe(false)
       expect(button(w, 'Delete')).toBeDefined()
       // And the param is OMITTED rather than sent as the reserved name.
-      expect(fetchViewMock).toHaveBeenCalledWith(entityType, entityId, undefined, expect.any(AbortSignal))
+      expect(fetchViewMock).toHaveBeenCalledWith(
+        entityType,
+        entityId,
+        undefined,
+        expect.any(AbortSignal)
+      )
     })
 
     // REACHABILITY, not suppression (BUG-G2BASF, measure
@@ -844,7 +929,9 @@ describe('EntityDetail world binding', () => {
       const w = await mountDetail(viewResponse(standIn()))
       rendersProof(w)
       const urlFor: (t: string) => string = w.findComponent({ name: 'ExportMenu' }).props('urlFor')
-      expect(urlFor('pdf')).toBe('/api/v1/policys/POL-1%40published/_export?transform=pdf&world=published')
+      expect(urlFor('pdf')).toBe(
+        '/api/v1/policys/POL-1%40published/_export?transform=pdf&world=published'
+      )
     })
 
     it('exports the BARE id when no face is served', async () => {
@@ -907,7 +994,7 @@ describe('EntityDetail world binding', () => {
       expect(invokeCopyMock).toHaveBeenCalledWith('promote-policy', entityId)
     })
 
-    it('lands on the face it wrote, and the toast is the copy\'s own label', async () => {
+    it("lands on the face it wrote, and the toast is the copy's own label", async () => {
       // With no `on_success` declared: the written face is where an editor
       // who just adopted a policy expects to be, and the toast says only what
       // the button said — never rela's "Created the X face" (TKT-5SZG2L).
@@ -916,7 +1003,8 @@ describe('EntityDetail world binding', () => {
       const w = await mountDetail(viewResponse({ _copies: [promoteOffer()] }))
       await clickPromote(w)
       expect(routerPush).toHaveBeenCalledWith({
-        path: '/entity/policy/POL-1@published', query: { world: 'published' },
+        path: '/entity/policy/POL-1@published',
+        query: { world: 'published' },
       })
       expect(successMock).toHaveBeenCalledWith('Publish this policy')
     })
@@ -929,18 +1017,26 @@ describe('EntityDetail world binding', () => {
         faces: { draft: {}, published: { label: 'Vastgesteld' } },
       } as never)
       invokeCopyMock.mockResolvedValue(copyResult())
-      const w = await mountDetail(viewResponse({
-        _copies: [promoteOffer({ onSuccess: { message: '{title} is nu {face}.', landing: { mode: 'written' } } })],
-      }))
+      const w = await mountDetail(
+        viewResponse({
+          _copies: [
+            promoteOffer({
+              onSuccess: { message: '{title} is nu {face}.', landing: { mode: 'written' } },
+            }),
+          ],
+        })
+      )
       await clickPromote(w)
       expect(successMock).toHaveBeenCalledWith('Access Control Policy is nu Vastgesteld.')
     })
 
     it('stays in place when landing is `stay`', async () => {
       invokeCopyMock.mockResolvedValue(copyResult())
-      const w = await mountDetail(viewResponse({
-        _copies: [promoteOffer({ onSuccess: { landing: { mode: 'stay' } } })],
-      }))
+      const w = await mountDetail(
+        viewResponse({
+          _copies: [promoteOffer({ onSuccess: { landing: { mode: 'stay' } } })],
+        })
+      )
       const before = fetchViewMock.mock.calls.length
       await clickPromote(w)
       expect(routerPush).not.toHaveBeenCalled()
@@ -950,25 +1046,33 @@ describe('EntityDetail world binding', () => {
     it('lands in a declared world when landing names one', async () => {
       invokeCopyMock.mockResolvedValue(copyResult())
       mockRoute.query = { from: 'posts' }
-      const w = await mountDetail(viewResponse({
-        _copies: [promoteOffer({ onSuccess: { landing: { mode: 'world', world: 'published' } } })],
-      }))
+      const w = await mountDetail(
+        viewResponse({
+          _copies: [
+            promoteOffer({ onSuccess: { landing: { mode: 'world', world: 'published' } } }),
+          ],
+        })
+      )
       await clickPromote(w)
       // The bare id in that world, with the rest of the query kept.
       expect(routerPush).toHaveBeenCalledWith({
-        path: '/entity/policy/POL-1', query: { from: 'posts', world: 'published' },
+        path: '/entity/policy/POL-1',
+        query: { from: 'posts', world: 'published' },
       })
     })
 
     it('lands on a declared face when landing names one', async () => {
       invokeCopyMock.mockResolvedValue(copyResult())
       mockRoute.query = { world: 'editorial' }
-      const w = await mountDetail(viewResponse({
-        _copies: [promoteOffer({ onSuccess: { landing: { mode: 'face', face: 'draft' } } })],
-      }))
+      const w = await mountDetail(
+        viewResponse({
+          _copies: [promoteOffer({ onSuccess: { landing: { mode: 'face', face: 'draft' } } })],
+        })
+      )
       await clickPromote(w)
       expect(routerPush).toHaveBeenCalledWith({
-        path: '/entity/policy/POL-1@draft', query: { world: 'editorial' },
+        path: '/entity/policy/POL-1@draft',
+        query: { world: 'editorial' },
       })
     })
 
@@ -980,9 +1084,13 @@ describe('EntityDetail world binding', () => {
       useSchemaStore().defaultWorld = 'published'
       invokeCopyMock.mockResolvedValue(copyResult())
       mockRoute.query = { world: 'editorial', page: '3' }
-      const w = await mountDetail(viewResponse({
-        _copies: [promoteOffer({ onSuccess: { landing: { mode: 'world', world: 'published' } } })],
-      }))
+      const w = await mountDetail(
+        viewResponse({
+          _copies: [
+            promoteOffer({ onSuccess: { landing: { mode: 'world', world: 'published' } } }),
+          ],
+        })
+      )
       await clickPromote(w)
       expect(routerPush).toHaveBeenCalledWith({ path: '/entity/policy/POL-1', query: {} })
     })
@@ -991,9 +1099,11 @@ describe('EntityDetail world binding', () => {
       useSchemaStore().defaultWorld = 'published'
       invokeCopyMock.mockResolvedValue(copyResult())
       mockRoute.query = {}
-      const w = await mountDetail(viewResponse({
-        _copies: [promoteOffer({ onSuccess: { landing: { mode: 'world', world: 'default' } } })],
-      }))
+      const w = await mountDetail(
+        viewResponse({
+          _copies: [promoteOffer({ onSuccess: { landing: { mode: 'world', world: 'default' } } })],
+        })
+      )
       await clickPromote(w)
       expect(routerPush).toHaveBeenCalledWith({ path: '/entity/policy/POL-1', query: {} })
     })
@@ -1002,9 +1112,11 @@ describe('EntityDetail world binding', () => {
       // The server validates a landing at load; this is the guard for a
       // response the client did not validate.
       invokeCopyMock.mockResolvedValue(copyResult())
-      const w = await mountDetail(viewResponse({
-        _copies: [promoteOffer({ onSuccess: { landing: { mode: 'face' } as never } })],
-      }))
+      const w = await mountDetail(
+        viewResponse({
+          _copies: [promoteOffer({ onSuccess: { landing: { mode: 'face' } as never } })],
+        })
+      )
       const before = fetchViewMock.mock.calls.length
       await clickPromote(w)
       expect(routerPush).not.toHaveBeenCalled()
@@ -1013,9 +1125,11 @@ describe('EntityDetail world binding', () => {
 
     it('reloads in place for a landing mode this build does not know', async () => {
       invokeCopyMock.mockResolvedValue(copyResult())
-      const w = await mountDetail(viewResponse({
-        _copies: [promoteOffer({ onSuccess: { landing: { mode: 'elsewhere' } as never } })],
-      }))
+      const w = await mountDetail(
+        viewResponse({
+          _copies: [promoteOffer({ onSuccess: { landing: { mode: 'elsewhere' } as never } })],
+        })
+      )
       const before = fetchViewMock.mock.calls.length
       await clickPromote(w)
       expect(routerPush).not.toHaveBeenCalled()
@@ -1035,7 +1149,11 @@ describe('EntityDetail world binding', () => {
 
     it('does not reload or misattribute when the entity changes mid-invoke', async () => {
       let resolveInvoke: (v: unknown) => void = () => {}
-      invokeCopyMock.mockReturnValue(new Promise((r) => { resolveInvoke = r }))
+      invokeCopyMock.mockReturnValue(
+        new Promise((r) => {
+          resolveInvoke = r
+        })
+      )
       const w = await mountDetail(viewResponse({ _copies: [promoteOffer()] }))
       await clickPromote(w)
 
@@ -1050,7 +1168,9 @@ describe('EntityDetail world binding', () => {
       expect(invokeCopyMock).toHaveBeenCalledWith('promote-policy', entityId)
       // ...and it neither reloaded nor navigated the unrelated entity now on screen.
       expect(fetchViewMock.mock.calls.length).toBe(afterNav)
-      expect(routerPush).not.toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('POL-1@') }))
+      expect(routerPush).not.toHaveBeenCalledWith(
+        expect.objectContaining({ path: expect.stringContaining('POL-1@') })
+      )
     })
 
     it('surfaces a refusal rather than pretending the copy ran', async () => {
@@ -1075,7 +1195,9 @@ describe('EntityDetail world binding', () => {
     function withCollection(entities: ViewEntity[]): ViewResponse {
       return {
         entry: entry(),
-        sections: [section({ heading: 'Implements', sectionId: 'implements', display: 'list', entities })],
+        sections: [
+          section({ heading: 'Implements', sectionId: 'implements', display: 'list', entities }),
+        ],
       }
     }
 
@@ -1086,8 +1208,14 @@ describe('EntityDetail world binding', () => {
       mockRoute.query = { world: 'site-nl' }
       const w = await mountDetail(
         withCollection([
-          { id: 'CTL-1', type: 'control', title: 'Real Dutch', hasContent: false, _world: world('chain', 'nl') },
-        ]),
+          {
+            id: 'CTL-1',
+            type: 'control',
+            title: 'Real Dutch',
+            hasContent: false,
+            _world: world('chain', 'nl'),
+          },
+        ])
       )
       rendersProof(w)
 
@@ -1100,9 +1228,7 @@ describe('EntityDetail world binding', () => {
 
     it('adds no world param under the default world', async () => {
       const w = await mountDetail(
-        withCollection([
-          { id: 'CTL-1', type: 'control', title: 'Plain', hasContent: false },
-        ]),
+        withCollection([{ id: 'CTL-1', type: 'control', title: 'Plain', hasContent: false }])
       )
       rendersProof(w)
 
@@ -1114,13 +1240,20 @@ describe('EntityDetail world binding', () => {
     })
 
     it('distinguishes a real face from a fallback in the SAME section', async () => {
-      useSchemaStore().worlds.set('site-nl', { readable: true, messages: { stand_in: 'vervangend' } } as never)
+      useSchemaStore().worlds.set('site-nl', {
+        readable: true,
+        messages: { stand_in: 'vervangend' },
+      } as never)
       mockRoute.query = { world: 'site-nl' }
       const w = await mountDetail(
         withCollection([
           collectionEntity({ id: 'CTL-1', title: 'Real Dutch', _world: world('chain', 'nl') }),
-          collectionEntity({ id: 'CTL-2', title: 'Fallback', _world: world('fallback-default', '') }),
-        ]),
+          collectionEntity({
+            id: 'CTL-2',
+            title: 'Fallback',
+            _world: world('fallback-default', ''),
+          }),
+        ])
       )
       rendersProof(w)
 
@@ -1141,9 +1274,7 @@ describe('EntityDetail world binding', () => {
 
     it('renders no badge under the default world', async () => {
       const w = await mountDetail(
-        withCollection([
-          collectionEntity({ id: 'CTL-1', title: 'Plain' }),
-        ]),
+        withCollection([collectionEntity({ id: 'CTL-1', title: 'Plain' })])
       )
       rendersProof(w)
       expect(w.find('.world-badge').exists()).toBe(false)
@@ -1182,7 +1313,8 @@ describe('EntityDetail world binding', () => {
 
     it("renders the world's messages.absent in the operator's words", async () => {
       useSchemaStore().worlds.set('published', {
-        readable: true, messages: { absent: 'Nog niet vastgesteld: {title}.' },
+        readable: true,
+        messages: { absent: 'Nog niet vastgesteld: {title}.' },
       } as never)
       mockRoute.query = { world: 'published' }
       const w = await mountDetail(absentResponse())
@@ -1206,7 +1338,8 @@ describe('EntityDetail world binding', () => {
       // explain an absence. `default` is spelled through setWorld, so the
       // param is dropped here (no configured default world).
       useSchemaStore().worlds.set('published', {
-        readable: true, on_absent: { redirect: 'default' },
+        readable: true,
+        on_absent: { redirect: 'default' },
       } as never)
       mockRoute.query = { world: 'published' }
       const w = await mountDetail(absentResponse())
@@ -1216,7 +1349,8 @@ describe('EntityDetail world binding', () => {
 
     it('redirects to a non-default world by name', async () => {
       useSchemaStore().worlds.set('published', {
-        readable: true, on_absent: { redirect: 'editorial' },
+        readable: true,
+        on_absent: { redirect: 'editorial' },
       } as never)
       mockRoute.query = { world: 'published' }
       const w = await mountDetail(absentResponse())
@@ -1226,7 +1360,8 @@ describe('EntityDetail world binding', () => {
 
     it('does not redirect when the page is not absent', async () => {
       useSchemaStore().worlds.set('published', {
-        readable: true, on_absent: { redirect: 'default' },
+        readable: true,
+        on_absent: { redirect: 'default' },
       } as never)
       mockRoute.query = { world: 'published' }
       const w = await mountDetail(viewResponse())
@@ -1242,7 +1377,8 @@ describe('EntityDetail world binding', () => {
       rendersProof(w)
       expect(routerPush).not.toHaveBeenCalled()
       useSchemaStore().worlds.set('published', {
-        readable: true, on_absent: { redirect: 'editorial' },
+        readable: true,
+        on_absent: { redirect: 'editorial' },
       } as never)
       await flushPromises()
       expect(routerPush).toHaveBeenCalledWith({ query: { world: 'editorial' } })
@@ -1255,7 +1391,8 @@ describe('EntityDetail world binding', () => {
       // back: a target this page has already been sent to is not pushed
       // again, which is what bounds a loop to one hop.
       useSchemaStore().worlds.set('published', {
-        readable: true, on_absent: { redirect: 'editorial' },
+        readable: true,
+        on_absent: { redirect: 'editorial' },
       } as never)
       mockRoute.query = { world: 'published' }
       const w = await mountDetail(absentResponse())
@@ -1263,7 +1400,8 @@ describe('EntityDetail world binding', () => {
       expect(routerPush).toHaveBeenCalledTimes(1)
       expect(routerPush).toHaveBeenCalledWith({ query: { world: 'editorial' } })
       useSchemaStore().worlds.set('published', {
-        readable: true, on_absent: { redirect: 'editorial' },
+        readable: true,
+        on_absent: { redirect: 'editorial' },
       } as never)
       await flushPromises()
       expect(routerPush).toHaveBeenCalledTimes(1)
@@ -1293,10 +1431,10 @@ describe('EntityDetail world binding', () => {
       // unchanged: the world must ride along, or the reader lands on the
       // DEFAULT face's history from a world-bound page (BUG-2).
       expect(historyBtn!.attributes('to') ?? historyBtn!.attributes('href')).toContain(
-        `/history/${entityType}/${entityId}`,
+        `/history/${entityType}/${entityId}`
       )
       expect(historyBtn!.attributes('to') ?? historyBtn!.attributes('href')).toContain(
-        'world=published',
+        'world=published'
       )
     })
 
@@ -1323,7 +1461,10 @@ describe('EntityDetail world binding', () => {
   // desktop copy alone.
   /** The actions the phone overflow menu offers, from the list it draws. */
   function overflowActions(w: VueWrapper): EntityAction[] {
-    return w.find('.mobile-actions').findComponent(EntityActionsMenu).props('actions') as EntityAction[]
+    return w
+      .find('.mobile-actions')
+      .findComponent(EntityActionsMenu)
+      .props('actions') as EntityAction[]
   }
 
   function overflowText(w: VueWrapper): string {
@@ -1347,7 +1488,10 @@ describe('EntityDetail world binding', () => {
 
     it('invokes a copy from the overflow with the same arguments as the desktop menu', async () => {
       invokeCopyMock.mockResolvedValue({
-        definition: 'promote-policy', entityId, face: 'published', created: true,
+        definition: 'promote-policy',
+        entityId,
+        face: 'published',
+        created: true,
       })
       const w = await openOverflow(viewResponse({ _copies: [promoteOffer()] }))
       const action = overflowActions(w).find((a) => a.label === 'Publish this policy')
@@ -1369,7 +1513,7 @@ describe('EntityDetail world binding', () => {
       // was never rendered.
       useSchemaStore().historyEnabled = true
       const w = await openOverflow(
-        viewResponse({ _copies: [promoteOffer({ allowed: false, reason: 'nope' })] }),
+        viewResponse({ _copies: [promoteOffer({ allowed: false, reason: 'nope' })] })
       )
       expect(overflowText(w)).toContain('History')
       expect(overflowText(w)).not.toContain('Publish this policy')
@@ -1378,7 +1522,7 @@ describe('EntityDetail world binding', () => {
     it('offers FACES, which used to be desktop-only', async () => {
       useSchemaStore().worlds.set('published', { readable: true, select: ['published'] } as never)
       const w = await openOverflow(
-        viewResponse({ _faces: [{ face: 'published', label: 'Published' }] }),
+        viewResponse({ _faces: [{ face: 'published', label: 'Published' }] })
       )
       expect(overflowText(w)).toContain('View Published')
     })
@@ -1456,9 +1600,11 @@ describe('EntityDetail world binding', () => {
   describe('switching face navigates to the face address', () => {
     it('keeps the world and the rest of the query', async () => {
       mockRoute.query = { from: 'posts', scope: 'list:posts', world: 'site-nl' }
-      const w = await mountDetail(viewResponse({
-        _faces: [{ face: 'nl', label: 'Nederlands', ref: 'POL-1@nl' }],
-      }))
+      const w = await mountDetail(
+        viewResponse({
+          _faces: [{ face: 'nl', label: 'Nederlands', ref: 'POL-1@nl' }],
+        })
+      )
       rendersProof(w)
       const btn = w.findAll('button').find((b) => b.text().includes('View Nederlands'))
       expect(btn).toBeDefined()
@@ -1474,15 +1620,18 @@ describe('EntityDetail world binding', () => {
       // were browsing.
       useSchemaStore().defaultWorld = 'published'
       mockRoute.query = { world: 'site-nl' }
-      const w = await mountDetail(viewResponse({
-        _faces: [{ face: '', label: 'English', ref: 'POL-1@en' }],
-      }))
+      const w = await mountDetail(
+        viewResponse({
+          _faces: [{ face: '', label: 'English', ref: 'POL-1@en' }],
+        })
+      )
       rendersProof(w)
       const btn = w.findAll('button').find((b) => b.text().includes('View English'))
       expect(btn).toBeDefined()
       await btn!.trigger('click')
       expect(routerPush).toHaveBeenCalledWith({
-        path: '/entity/policy/POL-1@en', query: { world: 'site-nl' },
+        path: '/entity/policy/POL-1@en',
+        query: { world: 'site-nl' },
       })
     })
 
@@ -1491,14 +1640,17 @@ describe('EntityDetail world binding', () => {
       // faces. Every world serves it, so the world stays.
       useSchemaStore().defaultWorld = 'published'
       mockRoute.query = { world: 'site-nl' }
-      const w = await mountDetail(viewResponse({
-        _faces: [{ face: '', label: 'English', ref: 'POL-1' }],
-      }))
+      const w = await mountDetail(
+        viewResponse({
+          _faces: [{ face: '', label: 'English', ref: 'POL-1' }],
+        })
+      )
       rendersProof(w)
       const btn = w.findAll('button').find((b) => b.text().includes('View English'))
       await btn!.trigger('click')
       expect(routerPush).toHaveBeenCalledWith({
-        path: '/entity/policy/POL-1', query: { world: 'site-nl' },
+        path: '/entity/policy/POL-1',
+        query: { world: 'site-nl' },
       })
     })
 
@@ -1509,7 +1661,8 @@ describe('EntityDetail world binding', () => {
       const btn = w.findAll('button').find((b) => b.text().includes('View Nederlands'))
       await btn!.trigger('click')
       expect(routerPush).toHaveBeenCalledWith({
-        path: '/entity/policy/POL-1@nl', query: { world: 'site-nl' },
+        path: '/entity/policy/POL-1@nl',
+        query: { world: 'site-nl' },
       })
     })
   })

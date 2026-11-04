@@ -99,7 +99,7 @@ func (d Direction) IsIncoming() bool {
 // (TKT-MJTD12), `pages` (TKT-ITQ0HL), `piles` (TKT-K3RJLH) and `channels`
 // (TKT-91BK6F) are the most recent.
 //
-//plimsoll:max-fields=28
+//plimsoll:max-fields=29
 type Config struct {
 	Version     string                       `yaml:"version"`
 	App         AppConfig                    `yaml:"app"`
@@ -142,6 +142,9 @@ type Config struct {
 	// half the suggestion key and the unit of muting, so it is stable
 	// operator-facing vocabulary, not an implementation detail.
 	NextActions map[string]NextActionSource `yaml:"next_actions,omitempty" json:"next_actions,omitempty"`
+	// NextActionSurfaces switches suggestions on or off per surface kind.
+	// Nil: accepted, means the defaults of [Config.NextActionsEnabled].
+	NextActionSurfaces map[NextActionSurface]bool `yaml:"next_action_surfaces,omitempty" json:"next_action_surfaces,omitempty"`
 
 	// Account configures the SPA's account menu. Nil: accepted, means no
 	// account links and no avatar. See [AccountConfig].
@@ -853,6 +856,11 @@ type RelationProperty struct {
 // predates this feature but was never rendered; the SPA now adopts it as a
 // fallback for Header (used only when Header is empty) so existing configs that
 // happen to set it get a header region without a rewrite.
+//
+// The plimsoll directive is the format-mirror exception documented on
+// [Config]: each exported field is one key of a list in data-entry.yaml.
+//
+//plimsoll:max-fields=21
 type List struct {
 	EntityType     string          `yaml:"entity_type" json:"entity"`
 	Title          string          `yaml:"title" json:"title"`
@@ -951,6 +959,10 @@ type List struct {
 	// GroupBy splits the list into sections by one property. Nil means the
 	// list is flat and paged. See [ListGroupBy].
 	GroupBy *ListGroupBy `yaml:"group_by,omitempty" json:"group_by,omitempty"`
+	// Suggestions switches next-action suggestions on or off for this view,
+	// overriding next_action_surfaces. Nil: accepted, means inherit. See
+	// [Config.NextActionsEnabled].
+	Suggestions *bool `yaml:"suggestions,omitempty" json:"suggestions,omitempty"`
 }
 
 // ListColumn defines a column in a list view. A column is one of four
@@ -977,6 +989,14 @@ type ListColumn struct {
 	// than Label, is never the first column, and a list has at most one.
 	// Lists only: dashboard card and view section columns refuse it.
 	Busy string `yaml:"busy" json:"busy,omitempty"`
+	// Render makes a property column of a `display: table` view section
+	// editable in place (TKT-4Q2EIVZ) when set to [RenderInput]. Like a
+	// section field's render, it can only downgrade: a cell is an input when
+	// the column opts in AND the reader may write the field. Only view
+	// section `columns:` and `columns_by_type:` take it; the section-level
+	// `render:` stays inert on a table, so no existing config becomes
+	// editable on upgrade.
+	Render string `yaml:"render,omitempty" json:"render,omitempty"`
 }
 
 // SortSpec defines a single sort criterion for a list or dashboard card.
@@ -1178,6 +1198,10 @@ type Kanban struct {
 	// fallback to unfiltered — that is the difference between a typo showing
 	// nothing and a typo showing archived records to everyone.
 	QueryScope string `yaml:"query_scope,omitempty" json:"query_scope,omitempty"`
+	// Suggestions switches next-action suggestions on or off for this view,
+	// overriding next_action_surfaces. Nil: accepted, means inherit. See
+	// [Config.NextActionsEnabled].
+	Suggestions *bool `yaml:"suggestions,omitempty" json:"suggestions,omitempty"`
 }
 
 // Kanban layouts and card styles; "" is the default for both.
@@ -1293,6 +1317,10 @@ type Calendar struct {
 	CreateForm string `yaml:"create_form,omitempty" json:"create_form,omitempty"`
 	// FilterControls are interactive filters, as on lists and kanbans.
 	FilterControls []FilterControl `yaml:"filter_controls,omitempty" json:"filter_controls,omitempty"`
+	// Suggestions switches next-action suggestions on or off for this view,
+	// overriding next_action_surfaces. Nil: accepted, means inherit. See
+	// [Config.NextActionsEnabled].
+	Suggestions *bool `yaml:"suggestions,omitempty" json:"suggestions,omitempty"`
 }
 
 // CalendarEvent configures the content of an event chip — the calendar's
@@ -1438,6 +1466,10 @@ type Gantt struct {
 	Tooltip GanttTooltip `yaml:"tooltip,omitempty" json:"tooltip,omitzero"`
 	// FilterControls are interactive filters, as on lists and kanbans.
 	FilterControls []FilterControl `yaml:"filter_controls,omitempty" json:"filter_controls,omitempty"`
+	// Suggestions switches next-action suggestions on or off for this view,
+	// overriding next_action_surfaces. Nil: accepted, means inherit. See
+	// [Config.NextActionsEnabled].
+	Suggestions *bool `yaml:"suggestions,omitempty" json:"suggestions,omitempty"`
 }
 
 // GanttTooltip configures the hover card's extra content. [KanbanCardField]
@@ -1954,6 +1986,10 @@ type DashboardConfig struct {
 	Title       string          `yaml:"title" json:"title"`
 	Description string          `yaml:"description" json:"description,omitempty"`
 	Cards       []DashboardCard `yaml:"cards" json:"cards"`
+	// Suggestions switches next-action suggestions on or off for this view,
+	// overriding next_action_surfaces. Nil: accepted, means inherit. See
+	// [Config.NextActionsEnabled].
+	Suggestions *bool `yaml:"suggestions,omitempty" json:"suggestions,omitempty"`
 }
 
 // DashboardCard defines a single card on the dashboard. Its rows come from a
@@ -2039,6 +2075,10 @@ type ViewConfig struct {
 	// through the same ACL-gated path as documents:, and its stdout is the
 	// markdown fed to the transform. Empty → built-in renderer.
 	ExportRender string `yaml:"export_render,omitempty" json:"export_render,omitempty"`
+	// Suggestions switches next-action suggestions on or off for this view,
+	// overriding next_action_surfaces. Nil: accepted, means inherit. See
+	// [Config.NextActionsEnabled].
+	Suggestions *bool `yaml:"suggestions,omitempty" json:"suggestions,omitempty"`
 }
 
 // ViewEntry specifies the entry entity type for a view.
@@ -2190,6 +2230,13 @@ type ViewSection struct {
 	// nothing, so no existing deployment grows a button on upgrade.
 	Create *SectionCreate `yaml:"create,omitempty" json:"create,omitempty"`
 
+	// Totals lists properties of the view's entry, shown under a
+	// `display: table` section as a block of label/value lines
+	// (TKT-4Q2EIVZ), typically `rollup:` properties summing the rows. Only
+	// the names travel with the section: the values are the entry's own,
+	// already gated for the reader, so a total never folds a hidden row.
+	Totals []SectionTotal `yaml:"totals,omitempty" json:"totals,omitempty"`
+
 	// Sort orders a FLAT section's rows (`list`, `table`, `cards`).
 	// ParentSort and ChildSort order each level of a `display: nested`
 	// section. The keys are mutually exclusive by display, and using the
@@ -2211,6 +2258,16 @@ type ViewSection struct {
 	Sort       []SortSpec `yaml:"sort,omitempty" json:"sort,omitempty"`
 	ParentSort []SortSpec `yaml:"parent_sort,omitempty" json:"parent_sort,omitempty"`
 	ChildSort  []SortSpec `yaml:"child_sort,omitempty" json:"child_sort,omitempty"`
+}
+
+// SectionTotal is one line of a section's [ViewSection.Totals].
+type SectionTotal struct {
+	// Property names a property of the view's entry type.
+	Property string `yaml:"property" json:"property"`
+	// Label overrides the property's own label.
+	Label string `yaml:"label,omitempty" json:"label,omitempty"`
+	// Emphasis marks the line that matters most, such as a grand total.
+	Emphasis bool `yaml:"emphasis,omitempty" json:"emphasis,omitempty"`
 }
 
 // SectionCreate declares HOW a section's create-related affordance behaves.
@@ -2647,6 +2704,10 @@ type DocumentConfig struct {
 	// omitted" and "field present but empty". Authors who want validation
 	// to flag a stub block must write `edit: {}` explicitly.
 	Edit *DocumentEdit `yaml:"edit,omitempty" json:"edit,omitempty"`
+	// Suggestions switches next-action suggestions on or off for this view,
+	// overriding next_action_surfaces. Nil: accepted, means inherit. See
+	// [Config.NextActionsEnabled].
+	Suggestions *bool `yaml:"suggestions,omitempty" json:"suggestions,omitempty"`
 }
 
 // IsStandalone reports whether the document renders without an entry entity.

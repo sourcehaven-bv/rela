@@ -1167,10 +1167,44 @@ entities:
       end:
         type: date
 
+  # TKT-4Q2EIVZ: an invoice owns its charges. The invoice view shows them in
+  # a table with editable cells, and a totals block reads total_qty, a
+  # roll-up over the charges (table-inline-edit.spec.ts).
+  invoice:
+    label: Invoice
+    id_type: sequential
+    id_prefix: INV
+    properties:
+      title:
+        type: string
+        required: true
+      total_qty:
+        type: integer
+        label: Total quantity
+        rollup: { via: has_charge, sum: qty }
+
+  charge:
+    label: Charge
+    id_type: sequential
+    id_prefix: CHG
+    properties:
+      description:
+        type: string
+        required: true
+      qty:
+        type: integer
+        label: Quantity
+      unit:
+        type: string
+
 relations:
   has_step:
     from: [plan]
     to: [step]
+    owning: true
+  has_charge:
+    from: [invoice]
+    to: [charge]
     owning: true
   blocks:
     from: [feature, bug, task]
@@ -1703,6 +1737,32 @@ views:
           - property: title
             link: detail
           - property: status
+
+  # TKT-4Q2EIVZ (table-inline-edit.spec.ts): a table whose description and
+  # qty columns are inline-editable and whose unit column is not, with a
+  # totals line under it that reads the invoice's roll-up over its charges.
+  invoice:
+    title: "Invoice"
+    entry:
+      type: invoice
+    traverse:
+      - from: entry
+        follow: has_charge
+        collect_as: charges
+    sections:
+      - heading: "Charges"
+        source: charges
+        display: table
+        columns:
+          - property: description
+            render: input
+          - property: qty
+            render: input
+          - property: unit
+        totals:
+          - property: total_qty
+            label: "Total quantity"
+            emphasis: true
 
   # create-prelink.spec.ts: a section create whose peer (the module) has a
   # dashed id_prefix, opening a form with no field for the relation.

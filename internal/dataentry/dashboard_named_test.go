@@ -142,7 +142,7 @@ func TestNamedDashboard_SidebarPageAndSpaceHome(t *testing.T) {
 	installNamedDashboards(app)
 	crm := dataentryconfig.DashboardRef("crm")
 	installPagesConfig(app, map[string]dataentryconfig.List{"all": {EntityType: "ticket"}},
-		map[string]dataentryconfig.Page{"sales": {Label: "Sales", Tabs: []dataentryconfig.PageTab{
+		map[string]dataentryconfig.Page{"sales": {PageHeader: dataentryconfig.PageHeader{Label: "Sales"}, Tabs: []dataentryconfig.PageTab{
 			{ID: "pipeline", Label: "Pipeline", Dashboard: crm},
 			{ID: "home", Label: "Home", Dashboard: dataentryconfig.DefaultDashboard},
 		}}},

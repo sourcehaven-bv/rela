@@ -11,19 +11,32 @@ external tools alongside the API. Philosophy: **tolerate temporarily invalid
 data**; the `analyze_*` tools surface inconsistencies the storage layer
 doesn't reject.
 
-Write-time checks split into three classes (DEC-HWZHA):
+Write-time checks split into three classes (DEC-HWZHA, amended by
+DEC-0D8UZX3):
 
 | Class | When | HTTP |
 |---|---|---|
 | **Hard 400 — malformed wire format** | Request structure broken, detectable without the metamodel | 400 |
 | **Hard 422 — structural impossibility** | Storage layer literally cannot persist this | 422 |
-| **Write-with-warnings** | Soft conditions: target type mismatch, missing target, unknown/required-unset/mistyped meta keys | 200 |
+| **Hard 422 — relation endpoint type** | Source type not in the relation's `from` (`source_type_not_allowed`) or target type not in its `to` (`target_type_not_allowed`) | 422 |
+| **Write-with-warnings** | Soft conditions: declared peer type differs from the stored one, unknown/required-unset/mistyped meta keys | 200 |
 
 The 200 path performs the write and returns warnings `{code, path, detail}`
 in the body — `code` matches the corresponding `analyze_*` finding code so
 UIs de-duplicate against analyze runs.
 
-**Resist drift toward hard rejection on soft conditions.** Before adding a
+**A relation's `from`/`to` types are the one hard rule on a hand-editable
+condition** (DEC-0D8UZX3). The project owner decided the schema's endpoint
+types are a contract on every write surface, with no opt-in and no
+exception for existing edges. The manager refuses every create of such an
+edge (`metamodel.RelationEndCode` is the shared check). `checkRelationEdges`
+repeats it before any write, so a PATCH or POST is refused before the entity
+changes. It also refuses an upsert that names an existing disallowed edge,
+and refuses a peer the caller cannot read as missing (`target_not_found`)
+before checking any type. Do not add an option that lets a caller write a
+type-disallowed edge.
+
+**Resist drift toward hard rejection on other soft conditions.** Before adding a
 422 on a write path, ask: *could a hand-editor produce this state in a
 markdown file?* If yes, it's soft — warn, don't reject. JSON:API-style
 "validate-then-422" assumes wire and storage share a closed schema; rela's
