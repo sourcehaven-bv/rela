@@ -131,7 +131,7 @@ func TestConflictResolve_RelationAsksTheManagersACLQuestion(t *testing.T) {
 			}
 
 			root := t.TempDir()
-			app.write.paths = &project.Context{Root: root}
+			app.write.paths = &project.Context{Root: root, RelationsDir: filepath.Join(root, "relations")}
 			path := filepath.Join(root, "relations", "POL-1--implements--FEAT-2.md")
 			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 				t.Fatal(err)

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -2889,14 +2890,13 @@ func writeV1Error(w http.ResponseWriter, r *http.Request, status int, errType, t
 
 // --- Conflicts API ---
 
-// handleV1Conflicts returns the list of conflicted files as JSON. The list
-// names entity files, so it is served only to a principal who may sync
-// (git:sync); everyone else gets a 403. The paths are not row-gated: a
-// holder of git:sync sees the paths of entities they may not read.
-// Conflicts arise only on file storage, which runs locally, so the coarse
-// gate is accepted (BUG-T6HNKS).
+// handleV1Conflicts returns the list of conflicted files as JSON. It is
+// served only to a principal who may sync (git:sync); everyone else gets a
+// 403 (BUG-T6HNKS). The list is also row-gated: a file that names an entity
+// or relation the principal may not read is left out (BUG-Q3Z15V; see
+// conflictsReadable).
 //
-//archplan:auth=authz reason="requires git:sync via permitsGitSync; paths are not row-gated (BUG-T6HNKS)"
+//archplan:auth=authz reason="requires git:sync via permitsGitSync, then row-gates each file"
 func (a *App) handleV1Conflicts(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -2919,8 +2919,34 @@ func (a *App) handleV1Conflicts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]v1.ConflictItem, 0, len(result.Files))
+	// Parse each file for the identities it names, then gate them all in
+	// one batch. A file that no longer parses as conflicted is left out:
+	// resolved since the scan, or unreadable, which the log records.
+	meta := a.State().Meta
+	files := make([]conflict.ConflictedFile, 0, len(result.Files))
+	ids := make([]conflictIdentity, 0, len(result.Files))
 	for _, cf := range result.Files {
+		parsed, perr := conflict.ParseConflictedFile(cf.Path, meta)
+		if perr != nil {
+			if !errors.Is(perr, fs.ErrNotExist) {
+				slog.Warn("dataentry: skipping a conflicted file that does not parse", "path", cf.Path, "err", perr)
+			}
+			continue
+		}
+		files = append(files, cf)
+		ids = append(ids, identifyConflict(a.paths, meta, parsed))
+	}
+	readable, err := conflictsReadable(r.Context(), a.visibleReader, ids)
+	if err != nil {
+		writeGateError(w, r, err)
+		return
+	}
+
+	items := make([]v1.ConflictItem, 0, len(files))
+	for i, cf := range files {
+		if !readable[i] {
+			continue
+		}
 		relPath, _ := filepath.Rel(ctx.Root, cf.Path)
 		items = append(items, v1.ConflictItem{
 			Path:        relPath,
@@ -2937,11 +2963,13 @@ func (a *App) handleV1Conflicts(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleV1ConflictRoutes handles GET /api/v1/_conflicts/{path} and POST /api/v1/_conflicts/resolve.
-// Both require git:sync, like the list. The detail is gated here, before the
-// path is resolved, because it shows both sides of the file unredacted.
-// Resolve is gated in [writeHandler.handleV1ConflictResolve].
+// Both require git:sync, like the list. The detail checks it here, before the
+// path is resolved. It then row-gates the file, answering a hidden one with
+// the same 404 as a missing one, and leaves out every property `visible:`
+// hides on either side (BUG-Q3Z15V). Resolve is gated in
+// [writeHandler.handleV1ConflictResolve].
 //
-//archplan:auth=authz reason="detail requires git:sync via permitsGitSync; resolve is gated in its handler"
+//archplan:auth=authz reason="detail requires git:sync, then row-gates and redacts; resolve is gated in its handler"
 func (a *App) handleV1ConflictRoutes(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_conflicts/")
 
@@ -2966,16 +2994,24 @@ func (a *App) handleV1ConflictRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cf, err := conflict.ParseConflictedFile(absPath, a.State().Meta)
-	if err != nil {
-		writeInternalError(w, r, "parse_failed", "Failed to parse conflict", err)
+	meta := a.State().Meta
+	cf, ok := parseConflictOr404(w, r, absPath, meta)
+	if !ok {
+		return
+	}
+	id := identifyConflict(a.paths, meta, cf)
+	if !conflictReadableOr404(w, r, a.visibleReader, id) {
 		return
 	}
 
 	info := conflict.AnalyzeConflict(cf)
+	hidden := a.affordances.conflictHiddenProperties(r.Context(), cf, id.face())
 
 	diffs := make([]v1.PropertyDiff, 0, len(info.PropertyDiffs))
 	for _, d := range info.PropertyDiffs {
+		if _, ok := hidden[d.Property]; ok {
+			continue
+		}
 		diffs = append(diffs, v1.PropertyDiff{
 			Property:    d.Property,
 			OursValue:   fmt.Sprintf("%v", d.OursValue),
