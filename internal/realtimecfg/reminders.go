@@ -6,41 +6,27 @@ import (
 	"slices"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
 
 // SessionReminder is one `session.reminders.<name>` entry: while the
 // session is in one of its In states and the channel is open, it posts a
 // message of type PostType every Every, the first one First after the
-// session entered those states. It never moves the session.
+// session entered those states. It never moves the session. The engine
+// part, with Name, Every, First, Max, In and Active, is [flow.Reminder].
 //
 // Its slice and map fields are unexported and their accessors return
 // copies, so a copy of the value shares nothing a caller can change.
 type SessionReminder struct {
-	Name  string
+	flow.Reminder
 	Label string
-	// Every is the time between two reminders.
-	Every time.Duration
-	// First is the time from the start of the span to the first reminder.
-	// It defaults to Every.
-	First time.Duration
 	// EveryText is Every as written in the file, for the wire.
 	EveryText string
-	// Max caps the reminders of one span; 0 means no limit.
-	Max int64
 	// PostType is the message type the reminder posts.
 	PostType string
-	in       []string
-	inSet    map[string]bool
 	props    map[string]string
 }
-
-// In returns the states the reminder runs in, in file order. The slice is
-// a copy.
-func (r SessionReminder) In() []string { return slices.Clone(r.in) }
-
-// Active reports whether the reminder runs in state.
-func (r SessionReminder) Active(state string) bool { return r.inSet[state] }
 
 // Props returns the literal property values of the reminder message. The
 // map is a copy.
@@ -75,24 +61,18 @@ func (s *Session) RemindersIn(state string) []SessionReminder {
 	return out
 }
 
-// Pausing returns a copy of s in which the named reminders are paused. A
-// paused reminder stays declared, active in its states and counted in
-// guards, and its records are kept; only [Session.Paused] reports it, so
-// the timer loop schedules no slot for it. The loop pauses a reminder whose
-// props no longer pass the checks of a post. s is not changed.
+// Pausing returns a copy of s in which the named reminders are paused (see
+// [flow.Definition.Pausing]). The timer loop pauses a reminder whose props
+// no longer pass the checks of a post. s is not changed.
 func (s *Session) Pausing(names []string) *Session {
 	c := *s
-	c.paused = make(map[string]bool, len(s.paused)+len(names))
-	maps.Copy(c.paused, s.paused)
-	for _, n := range names {
-		c.paused[n] = true
-	}
+	c.flow = s.flow.Pausing(names)
 	return &c
 }
 
 // Paused reports whether reminder name is paused in this copy of the
 // session (see [Session.Pausing]).
-func (s *Session) Paused(name string) bool { return s.paused[name] }
+func (s *Session) Paused(name string) bool { return s.flow.Paused(name) }
 
 // HasSchedule reports whether the session declares a timer or a reminder,
 // so the timer loop has work for it.
@@ -137,8 +117,7 @@ func (c reminderCompiler) compile(key string, raw map[string]rawReminder) {
 // it has a problem.
 func (c reminderCompiler) reminder(key, name string, raw rawReminder) (SessionReminder, bool) {
 	v, s := c.v, c.s
-	r := SessionReminder{Name: name, Label: orDefault(raw.Label, name), inSet: map[string]bool{},
-		props: map[string]string{}}
+	r := SessionReminder{Label: orDefault(raw.Label, name), props: map[string]string{}}
 	ok := true
 	bad := func(k, reason string) {
 		v.add(k, reason)
@@ -147,6 +126,8 @@ func (c reminderCompiler) reminder(key, name string, raw rawReminder) (SessionRe
 	if len(raw.In) == 0 {
 		bad(key+".in", "name the states the reminder runs in")
 	}
+	var in []string
+	seen := map[string]bool{}
 	for i, st := range raw.In {
 		ik := fmt.Sprintf("%s.in[%d]", key, i)
 		_, declared := s.index[st]
@@ -155,13 +136,14 @@ func (c reminderCompiler) reminder(key, name string, raw rawReminder) (SessionRe
 			bad(ik, unknownState(st))
 		case c.states[st].Final:
 			bad(ik, "a final state ends the session; a reminder there would post until the channel closes")
-		case r.inSet[st]:
+		case seen[st]:
 			bad(ik, fmt.Sprintf("state %s is listed twice", st))
 		default:
-			r.inSet[st] = true
-			r.in = append(r.in, st)
+			seen[st] = true
+			in = append(in, st)
 		}
 	}
+	r.Reminder = flow.NewReminder(name, in)
 	if raw.Every == "" {
 		bad(key+".every", "name how often the reminder posts, such as 30m")
 	} else if d, reason := reminderDuration(raw.Every, "every"); reason != "" {

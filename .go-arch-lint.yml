@@ -139,6 +139,9 @@ components:
   # the channel service share.
   realtimecfg:      { in: internal/realtimecfg }
   realtimelimits:   { in: internal/realtimelimits }
+  # The session engine (TKT-RRHP2N5): states, timers, reminders and branch
+  # choice, below the channel store, realtime.yaml and the channel service.
+  flow:             { in: internal/flow }
   # Runes that make text show something other than what it holds.
   texthazard:       { in: internal/texthazard }
   # The YAML 1.1 boolean spellings a config key refuses unquoted.
@@ -1468,11 +1471,19 @@ deps:
       - predicate
       - filter
       - metamodel
+  # The session engine knows no channel, message, ACL or store: later
+  # milestones run flows without a channel on it. The limits are its timer
+  # constants.
+  flow:
+    mayDependOn:
+      - realtimelimits
   # realtime.yaml consumes the schema and acl.yaml; neither knows it exists.
   # GUARD: metamodel and acl must never list realtimecfg.
   realtimecfg:
     mayDependOn:
       - acl
+      # The compiled session builds the engine's definition.
+      - flow
       - metamodel
       - predicate
       - predicatefns
@@ -1685,6 +1696,8 @@ deps:
   channels:
     mayDependOn:
       - entity
+      # The stored session is the engine's instance type.
+      - flow
       # A leaf: the reply rule refuses rela's own identities and unknown.
       - principal
   # The channel service (TKT-ZU7P13): authorization, validation, rate limits
@@ -1697,6 +1710,7 @@ deps:
     mayDependOn:
       - channels
       - entity
+      - flow
       # The one code-span parser, shared with the entity mention index.
       - mentions
       - metamodel

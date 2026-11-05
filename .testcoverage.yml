@@ -69,6 +69,10 @@ override:
   # channel, so it is pinned above the default floor (~90% today).
   - path: ^internal/realtime$
     threshold: 85
+  # The session engine (TKT-RRHP2N5) decides every session move and due
+  # time, so it is pinned above the default floor (~93% today).
+  - path: ^internal/flow$
+    threshold: 85
 
   # Data classification overlay (TKT-8UCV32): a parser and a file rewriter
   # whose mistakes silently mislabel data, so pinned above the default floor.
