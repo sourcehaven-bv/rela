@@ -3269,8 +3269,9 @@ func (m *Manager) UpdateRelation(
 		return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationNotFound,
 			entity.FormatStateRef(from, key.FromFace), relType, to)
 	}
-	if err := checkRelationMetaUpdate(ctx, m, key, opts); err != nil {
-		return nil, err
+	opts, gateErr := checkRelationMetaUpdate(ctx, m, key, opts)
+	if gateErr != nil {
+		return nil, gateErr
 	}
 
 	// Reject non-finite numeric values on managed order properties.

@@ -49,18 +49,28 @@ func checkRelationMetaWrite(
 }
 
 // checkRelationMetaUpdate is [checkRelationMetaWrite] for an update of the
-// stored edge at key. A key sent with its stored value, or unset while
-// absent, writes nothing and needs no grant. A missing edge is left to the
-// update's own lookup, which reports it.
+// stored edge at key, and returns the options the update must write. A key
+// sent with its stored value, or unset while absent, writes nothing and needs
+// no grant, so it is dropped from the returned options: the write's own Tx
+// reads the row again, and a dropped key cannot overwrite a change that
+// landed between this check and that write. Only keys that passed the gate
+// are written.
+//
+// A missing edge gates every key, so an edge created before the write's Tx
+// still gets no unchecked key; the update's own lookup then reports a missing
+// edge. Any other store error refuses the update.
 func checkRelationMetaUpdate(
 	ctx context.Context, m *Manager, key entity.RelationKey, opts entity.RelationOptions,
-) error {
+) (entity.RelationOptions, error) {
 	if !fieldGated(m) || (len(opts.Properties) == 0 && len(opts.MetaUnset) == 0) {
-		return nil
+		return opts, nil
 	}
 	stored, err := m.deps.Store.GetRelation(ctx, key)
 	if err != nil {
-		return nil //nolint:nilerr // the update reports a missing edge itself
+		if !errors.Is(err, store.ErrNotFound) {
+			return opts, err
+		}
+		return opts, checkRelationMetaWrite(ctx, m, key, opts.Properties, opts.MetaUnset)
 	}
 	var unset []string
 	for _, k := range opts.MetaUnset {
@@ -68,7 +78,12 @@ func checkRelationMetaUpdate(
 			unset = append(unset, k)
 		}
 	}
-	return checkRelationMetaWrite(ctx, m, key, ChangedRelationMeta(opts.Properties, stored.Properties), unset)
+	changed := ChangedRelationMeta(opts.Properties, stored.Properties)
+	if err := checkRelationMetaWrite(ctx, m, key, changed, unset); err != nil {
+		return opts, err
+	}
+	opts.Properties, opts.MetaUnset = changed, unset
+	return opts, nil
 }
 
 // ChangedRelationMeta returns the keys of meta whose value differs from the

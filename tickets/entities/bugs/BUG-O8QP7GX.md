@@ -38,4 +38,6 @@ Make relation meta `fields:` follow the entity allowlist rule. Once a role
 declares meta `fields:` for a relation type, every meta key that no role grants
 is read-only, including undeclared keys. A role without a meta `fields:` list
 for that relation type, holding update on the source row, still writes every key
-(role union, BUG-Y5UF3K).
+(role union, BUG-Y5UF3K). The manager update gate fails closed: a store error on
+its pre-read refuses the update, and keys sent unchanged are dropped from the
+write, so only keys that passed the gate are written (RR-EQT49R7).

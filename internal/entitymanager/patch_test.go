@@ -52,11 +52,17 @@ relations:
 
 func newPatchManager(t *testing.T, gate entitymanager.FieldWriteGate) (*entitymanager.Manager, store.Store) {
 	t.Helper()
+	st := memstore.New()
+	return newPatchManagerOn(t, gate, st), st
+}
+
+// newPatchManagerOn is newPatchManager over a caller-supplied store.
+func newPatchManagerOn(t *testing.T, gate entitymanager.FieldWriteGate, st store.Store) *entitymanager.Manager {
+	t.Helper()
 	meta, err := metamodel.Parse([]byte(patchMetamodelYAML))
 	if err != nil {
 		t.Fatalf("metamodel.Parse: %v", err)
 	}
-	st := memstore.New()
 	if gate == nil {
 		gate = entitymanager.AllowAllFieldGate{}
 	}
@@ -75,7 +81,7 @@ func newPatchManager(t *testing.T, gate entitymanager.FieldWriteGate) (*entityma
 	}
 	// The field-gated handle, the one MCP and scheduled Lua write through:
 	// these tests are about the gate (TKT-0XL8MF).
-	return entitymanager.FieldGated(mgr), st
+	return entitymanager.FieldGated(mgr)
 }
 
 // seedTask writes a task directly to the store so the fixture is
@@ -409,6 +415,9 @@ type recordingGate struct {
 	// source row it judged.
 	relCalls  int
 	relSource *entity.Entity
+	// onRel, when set, runs inside each CheckRelationMetaWrite call: a
+	// write that lands between the gate check and the update's own write.
+	onRel func()
 }
 
 // CheckCreateFieldWrite records a create check like CheckFieldWrite.
@@ -755,6 +764,9 @@ func (g *recordingGate) CheckRelationMetaWrite(
 ) error {
 	g.relCalls++
 	g.relSource = source
+	if g.onRel != nil {
+		g.onRel()
+	}
 	return g.CheckFieldWrite(ctx, source, set, unset)
 }
 
@@ -821,6 +833,78 @@ func TestRelationMeta_FieldGateJudgesCallerMeta(t *testing.T) {
 		rel, err := st.GetRelation(ctx, key)
 		if err != nil || rel.Properties["note"] != "old" {
 			t.Errorf("note = %v (err %v), want it kept", rel.Properties["note"], err)
+		}
+	})
+}
+
+// failingRelationStore fails every GetRelation outside a Tx with an error
+// other than not-found; reads inside the write's Tx go to the inner store.
+type failingRelationStore struct {
+	store.Store
+}
+
+var errRelationRead = errors.New("relation read failed")
+
+func (failingRelationStore) GetRelation(context.Context, entity.RelationKey) (*entity.Relation, error) {
+	return nil, errRelationRead
+}
+
+// TestRelationMeta_UpdateGateFailsClosed pins the update's meta gate
+// against two ways around it (BUG-O8QP7GX): a store error on the pre-read
+// must refuse the write, and a key that was unchanged when the gate ran must
+// not be written over a change that landed before the update's own write.
+func TestRelationMeta_UpdateGateFailsClosed(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	key := entity.RelationKey{From: "TASK-1", Type: "blocks", To: "TASK-2"}
+	seed := func(t *testing.T, st store.Store) {
+		t.Helper()
+		seedTask(t, st, "TASK-1", map[string]any{"title": "a"}, "")
+		seedTask(t, st, "TASK-2", map[string]any{"title": "b"}, "")
+		if _, err := st.CreateRelation(context.Background(), key, &store.RelationData{Properties: map[string]any{"note": "old"}}); err != nil {
+			t.Fatalf("seed edge: %v", err)
+		}
+	}
+
+	t.Run("a store error on the pre-read refuses the write", func(t *testing.T) {
+		t.Parallel()
+		inner := memstore.New()
+		seed(t, inner)
+		gate := &recordingGate{denied: map[string]bool{"note": true}}
+		mgr := newPatchManagerOn(t, gate, failingRelationStore{inner})
+		_, err := mgr.UpdateRelation(ctx, key, entity.RelationOptions{Properties: map[string]any{"note": "new"}})
+		if !errors.Is(err, errRelationRead) {
+			t.Fatalf("UpdateRelation err = %v, want the store error", err)
+		}
+		rel, gErr := inner.GetRelation(ctx, key)
+		if gErr != nil || rel.Properties["note"] != "old" {
+			t.Errorf("note = %v (err %v), want it kept", rel.Properties["note"], gErr)
+		}
+	})
+
+	t.Run("an unchanged gated key does not revert a concurrent change", func(t *testing.T) {
+		t.Parallel()
+		gate := &recordingGate{denied: map[string]bool{"note": true}}
+		mgr, st := newPatchManager(t, gate)
+		seed(t, st)
+		gate.onRel = func() {
+			if _, err := st.UpdateRelation(ctx, key, store.RelationData{
+				Properties: map[string]any{"note": "concurrent"},
+			}); err != nil {
+				t.Errorf("concurrent write: %v", err)
+			}
+		}
+		if _, err := mgr.UpdateRelation(ctx, key, entity.RelationOptions{
+			Properties: map[string]any{"note": "old", "weight": "2"},
+		}); err != nil {
+			t.Fatalf("UpdateRelation: %v", err)
+		}
+		rel, err := st.GetRelation(ctx, key)
+		if err != nil {
+			t.Fatalf("GetRelation: %v", err)
+		}
+		if rel.Properties["note"] != "concurrent" || rel.Properties["weight"] != "2" {
+			t.Errorf("properties = %v, want note=concurrent weight=2", rel.Properties)
 		}
 	})
 }
