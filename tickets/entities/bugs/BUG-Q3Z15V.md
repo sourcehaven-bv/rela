@@ -36,3 +36,10 @@ visibility reader: omit rows the principal cannot read from the list, answer the
 uniform 404 on the detail, and redact hidden fields on both sides.
 
 Found by the rela-security-reviewer on BUG-Y34ZSZ (GitHub #1774).
+
+## Parser and gate agree on the file kind
+
+The conflict parser read a file as a relation when its whole path split into
+three parts on `--`, while the gate judged by the directory. The parser now
+looks at the file name only, and the gate treats a side of the other kind than
+its directory as unjudgeable (RR-9LYVP2G).
