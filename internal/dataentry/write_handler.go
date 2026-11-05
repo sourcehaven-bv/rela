@@ -1793,9 +1793,15 @@ func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Re
 
 	st := h.schema()
 
-	cf, err := conflict.ParseConflictedFile(absPath, st.Meta)
-	if err != nil {
-		writeInternalError(w, r, "parse_failed", "Failed to parse conflict", err)
+	cf, ok := parseConflictOr404(w, r, absPath, st.Meta)
+	if !ok {
+		return
+	}
+	// The read gate runs before anything else looks at the file, so a file
+	// naming a row the caller may not read is the same 404 as a missing one
+	// and never a 403 or 422 that confirms it exists (BUG-0E6S7Q).
+	id := identifyConflict(h.paths, st.Meta, cf)
+	if !conflictReadableOr404(w, r, h.visible, id) {
 		return
 	}
 
@@ -1826,9 +1832,10 @@ func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Re
 	// (entity vs relation, post-choice identity), then authorize, then
 	// write. The write is file-level marker removal and cannot route
 	// through entitymanager — the store can't parse a file that still
-	// contains conflict markers — so this handler re-authorizes and
-	// audits explicitly. The store's file watcher picks the change up
-	// as an external edit, keeping index/SSE consumers in sync.
+	// contains conflict markers — so an entity is authorized by the
+	// manager's own update check and this handler audits the write. The
+	// store's file watcher picks the change up as an external edit,
+	// keeping index/SSE consumers in sync.
 	resolvedEntity, resolvedRelation, err := conflict.Resolve(cf, resolution)
 	if err != nil {
 		// Resolve fails only when the two sides are not both parseable
@@ -1837,7 +1844,12 @@ func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Re
 			"The conflict cannot be resolved automatically", "Resolve it by editing the file")
 		return
 	}
-	if !h.authorizeConflictResolve(w, r, resolvedEntity, resolvedRelation) {
+	if !resolvedMatchesFile(id, resolvedEntity, resolvedRelation) {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "conflict_identity_mismatch",
+			"The resolved side names another entity or edge than the file", "Resolve it by editing the file")
+		return
+	}
+	if !h.authorizeConflictResolve(w, r, id, resolvedRelation) {
 		return
 	}
 	if err := conflict.ValidateResolved(resolvedEntity, st.Meta); err != nil {
@@ -1856,33 +1868,51 @@ func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Re
 	})
 }
 
-// authorizeConflictResolve re-authorizes the write a conflict
-// resolution performs. Conflict resolution bypasses entitymanager, so
-// the gate the manager would normally apply lives here: entity files
-// gate like an entity update; relation files gate like a relation
-// update (source-entity type, mirroring entitymanager.UpdateRelation —
-// type left empty when the source entity can't be loaded, the same
-// fallback the manager uses). A deny records a `denied-write` audit
-// row and writes the standard 403 body; returns true when the write
-// may proceed.
-//
-//archplan:guard=authz reason="conflict resolution bypasses entitymanager, so it re-authorizes the write here"
-func (h *writeHandler) authorizeConflictResolve(
-	w http.ResponseWriter, r *http.Request, e *entityPkg.Entity, rel *entityPkg.Relation,
-) bool {
-	ctx := r.Context()
-	var aclReq acl.WriteRequest
+// resolvedMatchesFile reports whether the resolution names the row or edge
+// its file's path names. The write check judges the resolved identity and
+// the write replaces the file, so the two must be the same, or the check
+// would judge a different row from the one written. A relation gets the
+// file's tail face here, which its frontmatter does not carry.
+func resolvedMatchesFile(id conflictIdentity, e *entityPkg.Entity, rel *entityPkg.Relation) bool {
 	if rel != nil {
-		// Write authorization needs the real type whether or not the caller
-		// may read the row, and a faced source has no zero-face row. The
-		// conflict parser reads no tail, so an edge from a faced source is
-		// judged on every face its type declares: at least what the manager
-		// asks for the edge at any tail.
-		fromType := storedTypeOf(ctx, h.store, rel.From)
-		aclReq = translateRelationWrite(h.schema().Meta, rel.Type, fromType, rel.From, rel.FromFace)
-	} else {
-		aclReq = translateVerb("update", e.Type, e.ID, e.Face)
+		if len(id.rels) == 0 || rel.From != id.edge.From || rel.Type != id.edge.Type || rel.To != id.edge.To {
+			return false
+		}
+		rel.FromFace = id.edge.FromFace
+		return true
 	}
+	return len(id.rows) > 0 && e.ID == id.file.ID && e.Type == id.file.Type
+}
+
+// authorizeConflictResolve authorizes the write a conflict resolution
+// performs, after the caller's read gate has passed and
+// [resolvedMatchesFile] holds. An entity file is an update of the row at the
+// file's id and face, asked of [entityMutator.AuthorizeUpdate], so the
+// manager runs its own read gate, write check and denied-write audit
+// (BUG-0E6S7Q). That repeats the conflict read gate on purpose: the
+// manager's check is the one every update path shares.
+//
+// A relation file gates like a relation update (source-entity type,
+// mirroring entitymanager.UpdateRelation — type left empty when the source
+// entity can't be loaded, the same fallback the manager uses). A deny
+// records a `denied-write` audit row and writes the standard 403 body.
+// Returns true when the write may proceed.
+//
+//archplan:guard=authz reason="conflict resolution writes the file itself, so it authorizes the write here"
+func (h *writeHandler) authorizeConflictResolve(
+	w http.ResponseWriter, r *http.Request, id conflictIdentity, rel *entityPkg.Relation,
+) bool {
+	if rel == nil {
+		return authorizeConflictEntity(w, r, h.manager, id)
+	}
+	ctx := r.Context()
+	// Write authorization needs the real type whether or not the caller
+	// may read the row, and a faced source has no zero-face row. The
+	// conflict parser reads no tail, so an edge from a faced source is
+	// judged on every face its type declares: at least what the manager
+	// asks for the edge at any tail.
+	fromType := storedTypeOf(ctx, h.store, rel.From)
+	aclReq := translateRelationWrite(h.schema().Meta, rel.Type, fromType, rel.From, rel.FromFace)
 	decision := h.acl().AuthorizeWrite(ctx, aclReq)
 	if decision.Allow {
 		return true
@@ -1890,7 +1920,7 @@ func (h *writeHandler) authorizeConflictResolve(
 	h.audit().Record(audit.Record{
 		Time:        time.Now().UTC(),
 		Op:          audit.OpDeniedWrite,
-		Subject:     conflictAuditSubject(e, rel),
+		Subject:     conflictAuditSubject(nil, rel),
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
 		AssertedBy:  audit.AssertedByFrom(ctx),
@@ -1898,6 +1928,25 @@ func (h *writeHandler) authorizeConflictResolve(
 			decision.Reason, decision.RuleKind, decision.RuleID),
 	})
 	writeForbiddenIfACLDenied(w, r, &acl.ForbiddenError{Decision: decision})
+	return false
+}
+
+// authorizeConflictEntity is the entity half of
+// [writeHandler.authorizeConflictResolve], asked of m.
+func authorizeConflictEntity(
+	w http.ResponseWriter, r *http.Request, m entityMutator, id conflictIdentity,
+) bool {
+	row := id.file
+	_, err := m.AuthorizeUpdate(r.Context(), &row)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, entitymanager.ErrEntityNotFound):
+		writeConflictNotFound(w, r)
+	case writeForbiddenIfACLDenied(w, r, err):
+	default:
+		writeGateError(w, r, err)
+	}
 	return false
 }
 
