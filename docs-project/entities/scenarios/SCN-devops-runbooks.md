@@ -64,7 +64,7 @@ The key relationships:
 
 ```yaml
 version: "1.0"
-namespace: "https://example.org/ontology/sre#"
+iri: "https://example.org/ontology/sre#"
 
 types:
   status:

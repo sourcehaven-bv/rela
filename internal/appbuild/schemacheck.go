@@ -87,8 +87,9 @@ func checkValidationRules(meta *metamodel.Metamodel) []string {
 // ruleTypes lists the entity types a validation rule applies to, sorted so
 // messages come out in a stable order.
 func ruleTypes(meta *metamodel.Metamodel, rule metamodel.ValidationRule) []string {
-	if rule.EntityType != "" {
-		return []string{rule.EntityType}
+	if types := rule.TargetTypes(); types != nil {
+		sort.Strings(types)
+		return types
 	}
 	types := make([]string, 0, len(meta.Entities))
 	for t := range meta.Entities {

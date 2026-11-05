@@ -27,6 +27,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -62,6 +63,8 @@ func toV1EntityType(
 		// permission: it tells the SPA whether to offer a comment affordance
 		// at all, never that the caller may use it.
 		Commentable: metamodel.NewCommentPolicy(meta).Commentable(name),
+		Namespace:   metamodel.NamespaceOf(name),
+		Extends:     def.Extends,
 	}
 	if prefixes := def.GetIDPrefixes(); len(prefixes) > 0 {
 		et.IDPrefix = prefixes[0]
@@ -71,6 +74,29 @@ func toV1EntityType(
 		et.Properties[propName] = toV1PropertyDef(meta, propDef)
 	}
 	return et
+}
+
+// toV1AbstractTypes describes meta's abstract types, or nil when there are
+// none.
+func toV1AbstractTypes(meta *metamodel.Metamodel) map[string]v1.AbstractType {
+	abstracts := metamodel.AbstractTypes(meta)
+	if len(abstracts) == 0 {
+		return nil
+	}
+	out := make(map[string]v1.AbstractType, len(abstracts))
+	for _, a := range abstracts {
+		at := v1.AbstractType{
+			Label:       a.Def.Label,
+			Description: a.Def.Description,
+			Variants:    a.Variants,
+			Properties:  make(map[string]v1.PropertyDef, len(a.Def.Properties)),
+		}
+		for name, pd := range a.Def.Properties {
+			at.Properties[name] = toV1PropertyDef(meta, pd)
+		}
+		out[a.Name] = at
+	}
+	return out
 }
 
 func toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.PropertyDef) v1.PropertyDef {
@@ -1797,6 +1823,8 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 		schema.Types[name] = toV1CustomType(def)
 	}
 
+	schema.Abstract = toV1AbstractTypes(s.Meta)
+
 	writeV1JSON(w, http.StatusOK, schema)
 }
 
@@ -1820,7 +1848,11 @@ func (a *App) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Request) {
 		typeName := strings.TrimPrefix(path, "types/")
 		def, ok := s.Meta.Entities[typeName]
 		if !ok {
-			writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity type not found", "")
+			detail := ""
+			if err := metamodel.CheckConcreteType(s.Meta, typeName); err != nil {
+				detail = err.Error()
+			}
+			writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity type not found", detail)
 			return
 		}
 		writeV1JSON(w, http.StatusOK, toV1EntityType(s.Meta, typeName, def))
@@ -3240,13 +3272,14 @@ func (a *App) handleV1Templates(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if entity type exists
-	if _, ok := a.State().Meta.Entities[entityType]; !ok {
+	meta := a.State().Meta
+	if _, ok := meta.Entities[entityType]; !ok {
 		writeV1Error(w, r, http.StatusNotFound, "entity_type_not_found",
 			fmt.Sprintf("Entity type '%s' not found", entityType), "")
 		return
 	}
 
-	templates, _ := a.templater.EntityTemplates(r.Context(), entityType)
+	templates, _ := templating.EntityTemplatesFor(r.Context(), a.templater, meta, entityType)
 	result := make([]v1.Template, 0, len(templates))
 
 	for _, t := range templates {

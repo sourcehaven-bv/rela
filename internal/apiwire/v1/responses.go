@@ -523,6 +523,24 @@ type Schema struct {
 	// Capabilities lists what this deployment's storage supports. Always
 	// present.
 	Capabilities Capabilities `json:"capabilities"`
+	// Abstract lists the schema's abstract types, keyed by name. An abstract
+	// type is a shared shape that stores no entities; each concrete type
+	// whose `extends` names it is a variant. rela itself expands abstract
+	// names at load, so this is for integrators that want to treat the
+	// variants as one kind. Absent when the schema declares none.
+	Abstract map[string]AbstractType `json:"abstract,omitempty"`
+}
+
+// AbstractType is the JSON representation of an abstract entity type: the
+// shape its variants share, and the variants themselves.
+type AbstractType struct {
+	Label       string `json:"label,omitempty"`
+	Description string `json:"description,omitempty"`
+	// Variants lists the concrete types that extend this one, sorted. Each
+	// appears in [Schema.Entities] with `extends` set to this type's name.
+	Variants []string `json:"variants"`
+	// Properties are the properties every variant inherits.
+	Properties map[string]PropertyDef `json:"properties"`
 }
 
 // Capabilities lists optional API surfaces whose availability depends on
@@ -670,6 +688,13 @@ type EntityType struct {
 	// Omitted when false, so a project with no `comments:` block serves a
 	// schema byte-identical to one built before the feature existed.
 	Commentable bool `json:"commentable,omitempty"`
+
+	// Namespace is the namespace the type was declared in (`isms` for
+	// `isms.task`). Absent for a type declared in the root schema.
+	Namespace string `json:"namespace,omitempty"`
+	// Extends names the abstract type this type is a variant of; see
+	// [Schema.Abstract]. Absent for a type that is not a variant.
+	Extends string `json:"extends,omitempty"`
 }
 
 // WorldMessages is the operator's chrome text for one world. See

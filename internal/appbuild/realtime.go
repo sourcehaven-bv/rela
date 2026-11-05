@@ -174,7 +174,15 @@ func newRealtimeConfig(cfg Config, o *options, loaded *acl.Policy,
 		if d, ok := o.acl.(*acl.Declarative); ok {
 			return d.Policy(), nil
 		}
-		return loadACLPolicy(cfg)
+		// Validate so an abstract type name expands to its variants, as it
+		// does for the policy the rest of the wiring uses. A policy that
+		// parses but does not fit the schema is still returned: the ACL
+		// wiring reports that error, and the channel tools answer with it.
+		p, err := loadACLPolicy(cfg)
+		if err == nil && p != nil && meta != nil {
+			_ = ValidateACLPolicy(p, meta)
+		}
+		return p, err
 	})
 	compiled, err := loadRealtime(context.Background(), reader, meta, resolve)
 	r := &RealtimeConfig{reader: reader, meta: meta, policy: resolve, last: compiled}

@@ -101,10 +101,10 @@ func runSchemaOverview(ctx context.Context, svc *readServices) error {
 	if meta.Version != "" {
 		out.WriteMessage("Version:   %s", meta.Version)
 	}
-	if meta.Namespace != "" {
-		out.WriteMessage("Namespace: %s", meta.Namespace)
+	if meta.IRI != "" {
+		out.WriteMessage("IRI:       %s", meta.IRI)
 	}
-	if meta.Version != "" || meta.Namespace != "" {
+	if meta.Version != "" || meta.IRI != "" {
 		out.WriteMessage("")
 	}
 
@@ -257,6 +257,9 @@ func runSchemaEntity(meta *metamodel.Metamodel, name string) error {
 	resolved := meta.ResolveAlias(name)
 	def, ok := meta.GetEntityDef(resolved)
 	if !ok {
+		if variants, abstract := metamodel.VariantsOf(meta, resolved); abstract {
+			return runSchemaAbstract(resolved, variants)
+		}
 		return fmt.Errorf("unknown entity type: %s", name)
 	}
 	if out.Format == "json" {
@@ -871,4 +874,18 @@ func getSortedTypeNames(m *metamodel.Metamodel) []string {
 
 func sliceContains(slice []string, item string) bool {
 	return slices.Contains(slice, item)
+}
+
+// runSchemaAbstract describes an abstract type: it stores no entities, so
+// the useful answer is its variants.
+func runSchemaAbstract(name string, variants []string) error {
+	if out.Format == "json" {
+		return schemaJSONWriter{out: out.Out}.writeJSON(map[string]any{"name": name, "abstract": true, "variants": variants})
+	}
+	out.WriteSectionHeader("Abstract type: " + name)
+	out.WriteMessage("Stores no entities. Variants:")
+	for _, v := range variants {
+		out.WriteMessage("  - %s", v)
+	}
+	return nil
 }

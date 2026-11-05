@@ -18,6 +18,19 @@ export interface Schema {
   // /api/v1/_batch is served (the store rolls a failed write back). The
   // server always sends it; it is optional for a server too old to.
   capabilities?: { atomic_batch: boolean }
+  // Abstract root types, keyed by name. An abstract type stores no
+  // entities; its concrete variants appear in `entities` with `extends`
+  // set. For integrations; the SPA does not read it.
+  abstract?: Record<string, AbstractType>
+}
+
+// AbstractType mirrors v1.AbstractType: the shared shape its variants
+// inherit, and the variants' names.
+export interface AbstractType {
+  label?: string
+  description?: string
+  variants: string[]
+  properties: Record<string, PropertyDef>
 }
 
 // WorldInfo mirrors v1.World. See internal/dataentry/schemaworlds.go.
@@ -93,6 +106,11 @@ export interface EntityType {
   // UI that shows the box to someone without `comment:add` gets a 403, not a
   // write.
   commentable?: boolean
+  // The namespace of a type declared in an included file (`isms` for
+  // `isms.task`). Absent for a root type.
+  namespace?: string
+  // The abstract root type this variant extends. Absent when it extends none.
+  extends?: string
 }
 
 // FaceInfo mirrors v1.FaceDef — one declared content state of a type.

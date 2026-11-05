@@ -27,7 +27,7 @@ say "Seeding a metamodel that hits every classification bucket"
 #   legend-many:       catch  → {any..} (≥5 targets)
 cat > "${DEMO}/schema.yaml" <<'YAML'
 version: "1.0"
-namespace: "https://example.com/demo#"
+iri: "https://example.com/demo#"
 entities:
   core:
     label: Core

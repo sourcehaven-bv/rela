@@ -123,6 +123,9 @@ func (l listFaces) selection(entityType string, face entity.Face) (store.FaceSel
 	}
 	def, found := l.meta.GetEntityDef(entityType)
 	if !found {
+		if err := metamodel.CheckConcreteType(l.meta, entityType); err != nil {
+			return store.FaceSelection{}, err
+		}
 		return store.FaceSelection{}, fmt.Errorf("unknown entity type %q", entityType)
 	}
 	if _, declared := def.Faces[string(face)]; !declared {

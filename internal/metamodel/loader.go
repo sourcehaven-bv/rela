@@ -17,6 +17,7 @@ import (
 var validTopLevelKeys = map[string]bool{
 	"version":               true,
 	"namespace":             true,
+	"iri":                   true,
 	"description":           true,
 	"types":                 true,
 	"entities":              true,
@@ -94,10 +95,15 @@ func Load(path string, fs storage.FS) (*Metamodel, []string, error) {
 		return nil, nil, err
 	}
 
+	setSourceFile(m, filepath.Base(path))
+
 	if len(m.Includes) > 0 {
 		rootDir := filepath.Dir(path)
 		includePaths, err := loadWithIncludes(m, path, rootDir, fs)
 		if err != nil {
+			return nil, nil, err
+		}
+		if err := expandSchema(m); err != nil {
 			return nil, nil, err
 		}
 		// Validate the fully merged metamodel
@@ -108,7 +114,10 @@ func Load(path string, fs storage.FS) (*Metamodel, []string, error) {
 		return m, sourceFiles, nil
 	}
 
-	// No includes: validate immediately
+	// No includes: expand and validate immediately
+	if err := expandSchema(m); err != nil {
+		return nil, nil, err
+	}
 	if err := validate(m); err != nil {
 		return nil, nil, err
 	}
@@ -145,11 +154,19 @@ func LoadWithoutMigrationCheck(path string, fs storage.FS) (*Metamodel, []string
 			return nil, nil, err
 		}
 		sourceFiles := append([]string{absPath}, includePaths...)
-		// Skip validation since metamodel may be in a migration state
+		// Skip validation since metamodel may be in a migration state.
+		// Expansion still runs: without it the types callers see would
+		// not be the ones a validated load serves.
+		if err := expandSchema(m); err != nil {
+			return nil, nil, err
+		}
 		return m, sourceFiles, nil
 	}
 
 	// Skip validation since metamodel may be in a migration state
+	if err := expandSchema(m); err != nil {
+		return nil, nil, err
+	}
 	return m, []string{absPath}, nil
 }
 
@@ -157,6 +174,9 @@ func LoadWithoutMigrationCheck(path string, fs storage.FS) (*Metamodel, []string
 func Parse(data []byte) (*Metamodel, error) {
 	m, err := parseRaw(data)
 	if err != nil {
+		return nil, err
+	}
+	if err := expandSchema(m); err != nil {
 		return nil, err
 	}
 	if err := validate(m); err != nil {
@@ -197,6 +217,11 @@ func parseRaw(data []byte) (*Metamodel, error) {
 		return nil, err
 	}
 
+	// The dot is reserved for namespace prefixes (namespaces.go).
+	if errs := checkDeclaredNames("", m.Types, m.Entities, m.Relations, m.Validations, m.Automations); len(errs) > 0 {
+		return nil, &SchemaValidationError{Errors: errs}
+	}
+
 	return &m, nil
 }
 
@@ -223,6 +248,7 @@ func extractPropertyOrder(data []byte, m *Metamodel) error {
 	if entitiesNode, ok := mappingValue(doc, "entities"); ok && entitiesNode.Kind == yaml.MappingNode {
 		extractEntityPropertyOrder(entitiesNode, m)
 		recordFaceOrder(entitiesNode, m.Entities)
+		recordEntitySources(entitiesNode, "", m.Entities)
 	}
 	if worldsNode, ok := mappingValue(doc, "worlds"); ok && worldsNode.Kind == yaml.MappingNode {
 		m.worldOrder = mappingKeys(worldsNode)
@@ -1561,8 +1587,8 @@ func checkUnknownValidationRuleKeys(data []byte) error {
 // DefaultMetamodel returns a minimal default metamodel
 func DefaultMetamodel() *Metamodel {
 	return &Metamodel{
-		Version:   "1.0",
-		Namespace: "https://example.org/ontology/architecture#",
+		Version: "1.0",
+		IRI:     "https://example.org/ontology/architecture#",
 		Types: map[string]CustomType{
 			"status": {
 				Values:  []string{"draft", "proposed", "accepted", "deprecated", "rejected", "retired"},
@@ -1652,7 +1678,7 @@ func DefaultMetamodelYAML() string {
 # This file defines the entity types, relations, and validation rules for your project.
 
 version: "1.0"
-namespace: "https://example.org/ontology/architecture#"
+iri: "https://example.org/ontology/architecture#"
 
 # Custom enum types (reusable across entities)
 types:
@@ -2016,29 +2042,9 @@ func validateValidationFaces(m *Metamodel) []string {
 			continue
 		}
 		for _, face := range rule.Faces {
-			if rule.EntityType != "" {
-				def, ok := m.Entities[rule.EntityType]
-				if !ok {
-					continue // the unknown-type error is reported elsewhere
-				}
-				if _, declared := def.Faces[face]; !declared {
-					// A type with NO faces gets its own message. The general
-					// one would end in "(declares: )", which reads like a bug
-					// in the error rather than the actual situation: the key
-					// does not apply to this type at all.
-					if len(def.Faces) == 0 {
-						errs = append(errs, fmt.Sprintf(
-							"validation %q: `faces: [%s]` but entity %q declares no `faces:` — "+
-								"a type with one content state needs no scope; drop the key, "+
-								"or declare the states on the type",
-							rule.Name, face, rule.EntityType))
-						continue
-					}
-					errs = append(errs, fmt.Sprintf(
-						"validation %q: `faces: [%s]` names no declared face of entity %q "+
-							"(declares: %s) — the rule would match nothing and pass forever",
-						rule.Name, face, rule.EntityType,
-						strings.Join(sortedKeys(def.Faces), ", ")))
+			if targets := rule.TargetTypes(); targets != nil {
+				for _, target := range targets {
+					errs = append(errs, validateRuleFaceOnType(m, rule.Name, face, target)...)
 				}
 				continue
 			}
@@ -2050,6 +2056,32 @@ func validateValidationFaces(m *Metamodel) []string {
 		}
 	}
 	return errs
+}
+
+// validateRuleFaceOnType checks one `faces:` entry of a rule against one of
+// the types the rule targets.
+func validateRuleFaceOnType(m *Metamodel, ruleName, face, typ string) []string {
+	def, ok := m.Entities[typ]
+	if !ok {
+		return nil // the unknown-type error is reported elsewhere
+	}
+	if _, declared := def.Faces[face]; declared {
+		return nil
+	}
+	// A type with NO faces gets its own message. The general one would end
+	// in "(declares: )", which reads like a bug in the error rather than the
+	// actual situation: the key does not apply to this type at all.
+	if len(def.Faces) == 0 {
+		return []string{fmt.Sprintf(
+			"validation %q: `faces: [%s]` but entity %q declares no `faces:` — "+
+				"a type with one content state needs no scope; drop the key, "+
+				"or declare the states on the type",
+			ruleName, face, typ)}
+	}
+	return []string{fmt.Sprintf(
+		"validation %q: `faces: [%s]` names no declared face of entity %q "+
+			"(declares: %s) — the rule would match nothing and pass forever",
+		ruleName, face, typ, strings.Join(sortedKeys(def.Faces), ", "))}
 }
 
 // validateAutomationFaces checks that every face named in an automation's

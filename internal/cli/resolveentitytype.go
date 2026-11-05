@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -26,8 +25,12 @@ func resolveEntityType(meta *metamodel.Metamodel, typeName string) (string, erro
 			if _, ok := meta.GetEntityDef(resolved); ok {
 				return resolved, nil
 			}
+			// `rela list tasks` for an abstract task names its variants.
+			if err := metamodel.CheckConcreteType(meta, singular); err != nil {
+				return "", err
+			}
 		}
 	}
 
-	return "", fmt.Errorf("unknown entity type: %s", typeName)
+	return "", metamodel.UnknownEntityTypeError(meta, typeName)
 }

@@ -606,6 +606,11 @@ func reportRealtimeValidation(ctx context.Context, result *projectsetup.Validate
 		fmt.Printf("  ✗ %s: acl.yaml: %v\n", realtimeFile, err)
 		return true
 	}
+	// Expand abstract type names to their variants, as the server does.
+	// The acl.yaml check reports any error; this only shapes the policy.
+	if policy != nil && result.Metamodel != nil {
+		_ = appbuild.ValidateACLPolicy(policy, result.Metamodel)
+	}
 	loader := config.NewFSLoader(storage.NewSafeFS(storage.NewOsFS()), root)
 	rt, err := appbuild.LoadRealtime(ctx, loader, result.Metamodel, policy)
 	if err != nil {

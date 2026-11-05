@@ -25,6 +25,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -1294,7 +1295,7 @@ func (r *Runtime) luaListEntities(ls *lua.LState) int {
 
 		entityDef, found := r.deps.Meta.GetEntityDef(entityType)
 		if !found {
-			ls.RaiseError("unknown entity type: %s", entityType)
+			ls.RaiseError("%s", metamodel.UnknownEntityTypeError(r.deps.Meta, entityType).Error())
 			return 0
 		}
 

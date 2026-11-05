@@ -27,10 +27,11 @@ func (w schemaJSONWriter) writeJSON(data any) error {
 func (w schemaJSONWriter) writeOverview(m *metamodel.Metamodel) error {
 	data := map[string]any{
 		"version":   m.Version,
-		"namespace": m.Namespace,
+		"iri":       m.IRI,
 		"entities":  m.Entities,
 		"relations": m.Relations,
 		"types":     m.Types,
+		"abstract":  metamodel.AbstractTypes(m),
 	}
 	return w.writeJSON(data)
 }

@@ -46,7 +46,7 @@ Replace the default `schema.yaml` with this ISMS-specific configuration:
 
 ```yaml
 version: "1.0"
-namespace: "https://example.org/ontology/isms#"
+iri: "https://example.org/ontology/isms#"
 
 types:
   status:

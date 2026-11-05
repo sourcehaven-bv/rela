@@ -83,7 +83,7 @@ func (r typeResolver) resolveEntityType(typeName string) (string, *metamodel.Ent
 	resolved := r.resolveType(typeName)
 	def, ok := r.meta.GetEntityDef(resolved)
 	if !ok {
-		return "", nil, fmt.Errorf("unknown entity type: %s", typeName)
+		return "", nil, metamodel.UnknownEntityTypeError(r.meta, typeName)
 	}
 	return resolved, def, nil
 }

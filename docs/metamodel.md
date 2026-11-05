@@ -16,7 +16,7 @@ It's stored in `schema.yaml` at your project root.
 
 ```yaml
 version: "1.0"
-namespace: "https://example.org/ontology/architecture#"
+iri: "https://example.org/ontology/architecture#"
 description: |
   Optional end-user prose describing what this deployment is for. Documentation
   only — surfaced by generated docs; ignored by validation and the write path.
@@ -30,6 +30,13 @@ entities:
 relations:
   # Relation definitions
 ```
+
+`iri:` is the ontology IRI of the schema. It is documentation for other
+systems and has no effect on rela. It used to be called `namespace:`. A root
+`namespace:` still loads as the IRI, and `rela migrate` renames it when the
+value contains a ":". A
+`namespace:` key now belongs only in an included file (see
+[Namespaces and variants](#namespaces-and-variants)).
 
 Other root-only keys include `transforms:` (export formats, see
 [transforms.md](transforms.md)) and `checkers:` (prose checkers, see
@@ -45,7 +52,7 @@ For larger projects, you can split your metamodel across multiple files using th
 ```yaml
 # schema.yaml
 version: "1.0"
-namespace: "https://example.org/ontology/architecture#"
+iri: "https://example.org/ontology/architecture#"
 
 includes:
   - compliance/controls.yaml
@@ -72,9 +79,10 @@ project root (where `schema.yaml` lives).
 ### Included File Format
 
 Each included file is a partial metamodel. It can contain any combination of
-`types:`, `entities:`, `relations:`, and `validations:` — but **must not** contain
-`version:`, `namespace:`, or `description:` (these are deployment-wide, allowed
-only in the root `schema.yaml`).
+`types:`, `entities:`, `relations:`, `validations:` and `automations:`, and an
+optional `namespace:`. It **must not** contain `version:`, `iri:` or
+`description:`. Those are deployment-wide, and allowed only in the root
+`schema.yaml`.
 
 ```yaml
 # compliance/controls.yaml
@@ -160,6 +168,157 @@ To resolve conflicts, rename one of the definitions or move it to a shared file.
 | Circular include     | `circular include detected: a.yaml → b.yaml → a.yaml`                                   |
 | File not found       | `include file not found: missing.yaml (included from schema.yaml)`                   |
 | Root-only field      | `included file a.yaml must not contain "version" (only allowed in root schema.yaml)` |
+
+## Namespaces and variants
+
+Two domains often need a type with the same name. An ISMS has tasks, and so
+does project management, but their fields differ. Namespaces and variants let
+each domain keep its own `task` while sharing what the two have in common.
+
+Both are resolved when the schema loads. After loading, rela sees only
+ordinary, fully named types.
+
+### Namespaces
+
+An included file can declare a namespace:
+
+```yaml
+# isms.yaml
+namespace: isms
+
+entities:
+  control:
+    label: Control
+    id_prefix: CTL-
+```
+
+Every name the file declares gets the namespace and a dot as a prefix: the
+type above is `isms.control`. This applies to entity types, custom types,
+relations, inverse relations, validations and automations.
+
+- The dot is reserved as the namespace separator. A name you declare cannot
+  contain one.
+- A namespace has one level: `isms`, not `isms.audit`.
+- A name inside a file is resolved in that file first, then in the root. In
+  `isms.yaml`, `to: [control]` means `isms.control`, and `to: [person]`
+  means the root `person` when the file declares no `person` of its own.
+- A file can name a type from another namespace by its full name, such as
+  `projects.task`.
+
+Folders and URLs use the full name: entities of `isms.control` are stored in
+`entities/isms.controls/`, and the API serves them at
+`/api/v1/isms.controls/CTL-1`.
+
+### Abstract types and variants
+
+An abstract type describes a shape that several types share. It stores no
+entities itself:
+
+```yaml
+# schema.yaml
+entities:
+  task:
+    abstract: true
+    label: Task
+    properties:
+      title: { type: string, required: true }
+      due: { type: date }
+```
+
+A variant is a type in an included file that extends the abstract type:
+
+```yaml
+# isms.yaml
+namespace: isms
+
+entities:
+  task:
+    extends: task
+    label: ISMS task
+    id_prefix: ISMS-
+    properties:
+      evidence: { type: string }
+      title: { description: "What must be done" }
+```
+
+`isms.task` inherits every field of `task`. It can add fields (`evidence`)
+and change the settings of an inherited field (the description of `title`).
+It cannot remove a field. A field that the variant gives another `type:`
+starts over from the variant's settings, because the parent's values and
+labels belong to the old type. Faces, the property order and query scopes are
+inherited the same way. An `id_prefix` on the variant replaces the parent's.
+
+Rules:
+
+- `extends:` can name only an abstract type, and an abstract type cannot
+  extend another type.
+- An abstract type must have at least one variant, and it cannot have
+  aliases. No other type may use an abstract name as an alias or plural.
+- Inside the variant's own file, `extends: task` names the root `task`
+  even though the variant is also called `task`.
+
+### Naming the abstract type
+
+Wherever a setting can name several types, the abstract name stands for all
+of its variants. This holds in every configuration file:
+
+| File              | Settings                                                                                                                                                     |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `schema.yaml`     | relation `from:` and `to:`, validation `entity_type:`, automation `on.entity:`, `comments.on:`, world overrides                                               |
+| `acl.yaml`        | a role's `create:`, `update:`, `delete:`, `convert:`, `rename:`, `read:`, `fields:`, `visible:`, `options:` and `relations:`; ceiling lists, `visible:` and `redact:` |
+| `data-entry.yaml` | `available_on.entity_types` on actions and commands, a space's `create:`, pile toggles, `entity_views:`, and a section's per-type field and column maps   |
+
+When a type-keyed setting names both the abstract type and one of its
+variants, the variant's entry wins. In `acl.yaml`, a role's field grants are
+added together instead, as role grants always are.
+
+A setting that names a single type, such as a form's or a list's
+`entity_type`, a `create_entity` action or a conversion's `from:`, cannot
+name an abstract type. Loading fails, and the error lists the variants.
+
+At runtime only the variants exist. Asking for the abstract type, for
+example `rela list tasks`, returns an error that lists them.
+
+An entity template for a variant falls back to the abstract type's
+template: `isms.task` uses `templates/entities/task.md` until
+`templates/entities/isms.task.md` exists.
+
+### Conversions between variants
+
+An abstract type can ask rela to generate conversions between its variants:
+
+```yaml
+entities:
+  task:
+    abstract:
+      conversions: true
+```
+
+rela then generates a conversion from each variant to each other variant,
+named `<from>-to-<to>`, such as `isms.task-to-projects.task`. A field is
+carried over when both types have it with the same type. A relation the
+target type does not allow is dropped. A conversion you write yourself for
+the same pair replaces the generated one.
+
+### Variants in the API
+
+`GET /api/v1/_schema` lists only concrete types under `entities`. A variant
+carries `namespace` and `extends`. The abstract types are listed under
+`abstract`, each with its shared properties and its variants:
+
+```json
+{
+  "entities": {
+    "isms.task": { "label": "ISMS task", "namespace": "isms", "extends": "task" }
+  },
+  "abstract": {
+    "task": { "label": "Task", "variants": ["isms.task", "projects.task"] }
+  }
+}
+```
+
+rela does not use this itself. It is there for systems that integrate with
+rela and want to treat all tasks alike.
 
 ## Custom Types
 
@@ -2284,7 +2443,7 @@ When you run `rela init`, this default metamodel is created:
 
 ```yaml
 version: "1.0"
-namespace: "https://example.org/ontology/architecture#"
+iri: "https://example.org/ontology/architecture#"
 
 types:
   status:

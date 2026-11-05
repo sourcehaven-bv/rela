@@ -498,7 +498,11 @@ var validRelationWidgets = map[string]bool{
 // It returns a ConfigValidationError containing all validation issues,
 // or nil if the config is valid.
 func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
-	errs := make([]string, 0) //nolint:prealloc // total capacity unknown; aggregated from multiple helpers
+	// Abstract type names expand first, so every check below and every
+	// consumer of cfg sees only concrete types.
+	expandAbstractTypes(cfg, meta)
+
+	errs := make([]string, 0)
 
 	// Phase 1: Structural validation (unknown keys)
 	errs = append(errs, checkUnknownKeys(data)...)
@@ -535,6 +539,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateCrossReferences(cfg)...)
 
 	if len(errs) > 0 {
+		errs = explainAbstractTypes(errs, meta)
 		natsort.Strings(errs)
 		return &ConfigValidationError{Errors: errs}
 	}
