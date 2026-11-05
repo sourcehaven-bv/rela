@@ -3,6 +3,8 @@ package dataentry
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -41,10 +43,16 @@ type collabFixture struct {
 // X-Test-User header names the principal, bound like the middleware would.
 func newCollabFixture(t *testing.T, build string) *collabFixture {
 	t.Helper()
-	app, d := newBatchACLApp(t, collabPolicy(),
+	return newCollabFixtureFor(t, build, collabPolicy(),
 		&entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "a"}},
 		&entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]any{"title": "secret"}},
 	)
+}
+
+// newCollabFixtureFor is newCollabFixture with its own policy and entities.
+func newCollabFixtureFor(t *testing.T, build string, p *acl.Policy, seed ...*entity.Entity) *collabFixture {
+	t.Helper()
+	app, d := newBatchACLApp(t, p, seed...)
 	relay := NewCollabRelay(build)
 	require.NoError(t, app.SetSecurityConfig(SecurityConfig{BindAddress: "127.0.0.1:8080"}))
 	require.NoError(t, EnableCollab(app, relay))
@@ -292,4 +300,78 @@ func TestCollab_RoomSizeIsCapped(t *testing.T) {
 	sendText(t, c, "x")
 	require.Equal(t, collabCloseTooLarge, closeCode(t, c))
 	require.Empty(t, f.roomText())
+}
+
+// stillOpen reports whether c stays open for d: reads end in a timeout,
+// not a close.
+func stillOpen(t *testing.T, c *gws.Conn, d time.Duration) bool {
+	t.Helper()
+	require.NoError(t, c.SetReadDeadline(time.Now().Add(d)))
+	for {
+		if _, _, err := c.ReadMessage(); err != nil {
+			var ne net.Error
+			return errors.As(err, &ne) && ne.Timeout()
+		}
+	}
+}
+
+func TestCollab_RecheckClosesLostUpdate(t *testing.T) {
+	// Alice reads every ticket and may update one only while she is its
+	// editor through an editor-of relation.
+	policy := &acl.Policy{
+		Roles: map[string]acl.RoleDef{
+			"reader": {Read: []string{"ticket"}},
+			"editor": {Read: []string{"ticket"}, Update: []string{"ticket"}},
+		},
+		Assignments:   map[string]string{"alice": "reader"},
+		RoleRelations: map[string]acl.RoleRelationDef{"editor-of": {Confers: "editor"}},
+	}
+	for _, tc := range []struct {
+		name   string
+		revoke bool
+	}{
+		{"an editor stays", false},
+		{"an editor who loses update is closed", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCollabFixtureFor(t, "", policy,
+				&entity.Entity{ID: "alice", Type: "person", Properties: map[string]any{"title": "Alice"}},
+				&entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "a"}},
+			)
+			seedRelation(f.app, entity.NewRelation("alice", "editor-of", "TKT-001"))
+			f.app.collab.recheck = 20 * time.Millisecond
+			c := f.join(t, "alice", CollabPathPrefix+"ticket/TKT-001")
+			// She joined as a writer: her edit reaches the room.
+			sendText(t, c, "x")
+			require.Eventually(t, func() bool { return f.roomText() == "x" },
+				2*time.Second, 10*time.Millisecond)
+			if !tc.revoke {
+				require.True(t, stillOpen(t, c, 300*time.Millisecond))
+				return
+			}
+			require.NoError(t, f.app.store.DeleteRelation(t.Context(),
+				entity.RelationKey{From: "alice", Type: "editor-of", To: "TKT-001"}))
+			require.Equal(t, collabCloseRejoin, closeCode(t, c))
+		})
+	}
+}
+
+func TestCollab_ForeignOriginIsRefused(t *testing.T) {
+	app := newTestAppV1(t)
+	require.NoError(t, app.SetSecurityConfig(SecurityConfig{BindAddress: "127.0.0.1:8080"}))
+	require.NoError(t, EnableCollab(app, NewCollabRelay("")))
+	for _, origin := range []string{"https://evil.example", ""} {
+		r := httptest.NewRequest(http.MethodGet, CollabPathPrefix+"ticket/TKT-001", http.NoBody)
+		r.Host = "127.0.0.1:8080"
+		r.Header.Set("Connection", "Upgrade")
+		r.Header.Set("Upgrade", "websocket")
+		r.Header.Set("Sec-WebSocket-Version", "13")
+		r.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+		if origin != "" {
+			r.Header.Set("Origin", origin)
+		}
+		w := httptest.NewRecorder()
+		app.NewRouter().ServeHTTP(w, r)
+		require.Equal(t, http.StatusForbidden, w.Code, "origin %q: %s", origin, w.Body.String())
+	}
 }
