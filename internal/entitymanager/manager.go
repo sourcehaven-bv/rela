@@ -414,13 +414,20 @@ type Deps struct {
 // mean a user who cannot author `status` could never trigger an automation
 // that sets `status`, breaking ordinary workflow automations (RR-00ERM9).
 //
-// The two methods differ only in the operation they judge. A role without a
-// `fields:` block grants every field it may write, and which verb that takes
-// depends on the operation: update for CheckFieldWrite (a patch of an
-// existing row), create for CheckCreateFieldWrite (BUG-Y5UF3K).
+// The first two methods differ only in the operation they judge. A role
+// without a `fields:` block grants every field it may write, and which verb
+// that takes depends on the operation: update for CheckFieldWrite (a patch of
+// an existing row), create for CheckCreateFieldWrite (BUG-Y5UF3K).
+//
+// CheckRelationMetaWrite judges the meta keys a relation create or update of
+// a [FieldGated] handle names, against the relation `fields:` grants of the
+// edge's source row (BUG-O8QP7GX).
 type FieldWriteGate interface {
 	CheckFieldWrite(ctx context.Context, e *entity.Entity, set map[string]any, unset []string) error
 	CheckCreateFieldWrite(ctx context.Context, e *entity.Entity, set map[string]any) error
+	CheckRelationMetaWrite(
+		ctx context.Context, source *entity.Entity, relType string, set map[string]any, unset []string,
+	) error
 }
 
 // AllowAllFieldGate permits every field write. It is the explicit opt-out
@@ -440,6 +447,13 @@ func (AllowAllFieldGate) CheckFieldWrite(
 
 // CheckCreateFieldWrite implements [FieldWriteGate] by allowing everything.
 func (AllowAllFieldGate) CheckCreateFieldWrite(context.Context, *entity.Entity, map[string]any) error {
+	return nil
+}
+
+// CheckRelationMetaWrite implements [FieldWriteGate] by allowing everything.
+func (AllowAllFieldGate) CheckRelationMetaWrite(
+	context.Context, *entity.Entity, string, map[string]any, []string,
+) error {
 	return nil
 }
 
@@ -3044,6 +3058,9 @@ func (m *Manager) CreateRelation(
 	if err != nil {
 		return nil, err
 	}
+	if err := checkRelationMetaWrite(ctx, m, key, opts.Properties, nil); err != nil {
+		return nil, err
+	}
 	// Keyed on the TAIL too: two edges on the same triple with different
 	// tails are two relations, so a faced create must not be rejected by
 	// the default face's edge (BUG-64MU2Q). Advisory either way — the
@@ -3251,6 +3268,9 @@ func (m *Manager) UpdateRelation(
 		}
 		return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationNotFound,
 			entity.FormatStateRef(from, key.FromFace), relType, to)
+	}
+	if err := checkRelationMetaUpdate(ctx, m, key, opts); err != nil {
+		return nil, err
 	}
 
 	// Reject non-finite numeric values on managed order properties.

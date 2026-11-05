@@ -49,6 +49,7 @@ func unionMeta() *metamodel.Metamodel {
 			"drafts":    {From: []string{"person"}, To: []string{"ticket", "policy"}},
 			"cites": {
 				From: []string{"ticket"}, To: []string{"ticket"},
+				Orderable: metamodel.OrderableOutgoing,
 				Properties: map[string]metamodel.PropertyDef{
 					"note":   {Type: metamodel.PropertyTypeString},
 					"reason": {Type: metamodel.PropertyTypeString},

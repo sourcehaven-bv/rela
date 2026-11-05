@@ -1,47 +1,68 @@
 package fsstore
 
 import (
+	"context"
 	"errors"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// BUG-WN6D regression: the conflict-marker detector matched the
-// substring `<<<<<<<` anywhere in a file, false-positiving on
-// legitimate content like markdown codespans and quoted prose. The
-// real semantic — git writes the marker at the start of a line — is
-// now enforced by [hasLineAnchoredConflict].
-func TestParseDocument_ConflictMarker_LineAnchored(t *testing.T) {
+// TestParseDocument_ConflictMarker pins what parseDocument refuses as an
+// unresolved merge: a complete conflict block at column 0, fenced or not. A
+// substring match (BUG-WN6D) and a lone marker line (BUG-GYM7ZBS) are
+// content.
+func TestParseDocument_ConflictMarker(t *testing.T) {
 	t.Parallel()
 
+	const block = "<<<<<<< HEAD\nfoo\n=======\nbar\n>>>>>>> branch\n"
 	tests := []struct {
 		name      string
 		content   string
 		wantError bool
 	}{
 		{
-			name:      "marker at column 0 is a conflict",
-			content:   "---\nid: x\n---\n\n<<<<<<< HEAD\nfoo\n=======\nbar\n>>>>>>> branch\n",
+			name:      "block in the body is a conflict",
+			content:   "---\nid: x\n---\n\n" + block,
 			wantError: true,
 		},
 		{
-			name:      "marker inside inline code span is NOT a conflict",
+			name:      "block in the frontmatter is a conflict",
+			content:   "---\nid: x\n<<<<<<< HEAD\ns: a\n=======\ns: b\n>>>>>>> branch\n---\n",
+			wantError: true,
+		},
+		{
+			name:      "block starting on the first line is a conflict",
+			content:   "<<<<<<< HEAD\n---\nid: x\n---\n=======\n---\nid: y\n---\n>>>>>>> branch\n",
+			wantError: true,
+		},
+		{
+			name:      "lone start marker line is not a conflict",
+			content:   "---\nid: x\n---\n\n<<<<<<< not a merge\n",
+			wantError: false,
+		},
+		{
+			name:      "block inside a fenced code block is a conflict",
+			content:   "---\nid: x\n---\n\nGit writes:\n\n```text\n" + block + "```\n",
+			wantError: true,
+		},
+		{
+			name:      "marker inside inline code span is not a conflict",
 			content:   "---\nid: x\ntitle: how markers look\n---\n\nThe detector matches `<<<<<<<` at column 0.\n",
 			wantError: false,
 		},
 		{
-			name:      "marker mid-line in prose is NOT a conflict",
+			name:      "marker mid-line in prose is not a conflict",
 			content:   "---\nid: x\n---\n\nA literal <<<<<<< appears inline; not a conflict.\n",
 			wantError: false,
 		},
 		{
-			name:      "indented marker (two spaces) is NOT a conflict",
-			content:   "---\nid: x\n---\n\n  <<<<<<< inside a block-quoted example\n",
+			name:      "indented block is not a conflict",
+			content:   "---\nid: x\n---\n\n  <<<<<<< HEAD\n  =======\n  >>>>>>> branch\n",
 			wantError: false,
-		},
-		{
-			name:      "marker at column 0 of the very first line is a conflict",
-			content:   "<<<<<<< HEAD\n---\nid: x\n---\n",
-			wantError: true,
 		},
 	}
 	for _, tt := range tests {
@@ -57,33 +78,38 @@ func TestParseDocument_ConflictMarker_LineAnchored(t *testing.T) {
 	}
 }
 
-// Pin the helper predicate directly.
-func TestHasLineAnchoredConflict(t *testing.T) {
+// TestWrite_ConflictBlockBodyStaysReadable pins the write side of
+// BUG-GYM7ZBS: a write never produces a file that reads as an unresolved
+// merge. Body formatting breaks the end marker of a block in prose, so such
+// a body is stored readable. It leaves fenced code alone, so a block in a
+// fence is refused and nothing is stored. formatDocumentOrdered refuses any
+// document that would read as conflicted, so a later formatter change cannot
+// bring the unreadable row back.
+func TestWrite_ConflictBlockBodyStaysReadable(t *testing.T) {
 	t.Parallel()
+	const block = "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature\n"
 
-	tests := []struct {
-		name string
-		raw  string
-		want bool
-	}{
-		{"empty", "", false},
-		{"plain text", "no markers here\n", false},
-		{"marker at start of file", "<<<<<<< HEAD\n", true},
-		{"marker after newline", "intro\n<<<<<<< HEAD\n", true},
-		{"marker after CRLF", "intro\r\n<<<<<<< HEAD\n", true},
-		{"marker indented", "  <<<<<<< HEAD\n", false},
-		{"marker after tab", "\t<<<<<<< HEAD\n", false},
-		{"marker in codespan", "use `<<<<<<<` to find conflicts\n", false},
-		{"marker mid-line", "prefix <<<<<<< suffix\n", false},
-		{"multiple markers, first inline, second real", "inline <<<<<<< noise\n<<<<<<< HEAD\n", true},
-		{"multiple markers, both inline", "first <<<<<<< noise\nthen `<<<<<<<` again\n", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			if got := hasLineAnchoredConflict(tt.raw); got != tt.want {
-				t.Errorf("hasLineAnchoredConflict(%q) = %v, want %v", tt.raw, got, tt.want)
-			}
-		})
-	}
+	s, _ := newTestStore(t)
+	ctx := context.Background()
+	e := entity.New("TKT-1", "ticket")
+	e.Content = block
+	require.NoError(t, s.CreateEntity(ctx, e))
+	_, err := s.GetEntity(ctx, entity.Ref{ID: "TKT-1"})
+	require.NoError(t, err, "the row written with a conflict block in its body stays readable")
+
+	require.NoError(t, s.CreateEntity(ctx, entity.New("TKT-2", "ticket")))
+	key := entity.RelationKey{From: "TKT-1", Type: "rel", To: "TKT-2"}
+	_, err = s.CreateRelation(ctx, key, &store.RelationData{Content: block})
+	require.NoError(t, err)
+	_, err = s.GetRelation(ctx, key)
+	require.NoError(t, err, "the relation written with a conflict block in its body stays readable")
+
+	fenced := entity.New("TKT-3", "ticket")
+	fenced.Content = "```\n" + block + "```\n"
+	require.ErrorIs(t, s.CreateEntity(ctx, fenced), errBodyConflictBlock)
+	_, err = s.GetEntity(ctx, entity.Ref{ID: "TKT-3"})
+	require.ErrorIs(t, err, store.ErrNotFound, "a refused create stores nothing")
+
+	_, err = formatDocumentOrdered(map[string]any{"id": "TKT-4"}, block, nil)
+	require.ErrorIs(t, err, errBodyConflictBlock)
 }

@@ -88,6 +88,7 @@ func relationVerdictsWire(v affordances.RelationVerdicts) RelationVerdicts {
 			Creatable:   rv.Creatable,
 			Removable:   rv.Removable,
 			Fields:      rv.Fields,
+			MetaClosed:  rv.MetaClosed,
 			Attribution: rv.Attribution,
 		}
 	}

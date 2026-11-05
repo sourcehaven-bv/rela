@@ -1,7 +1,6 @@
 package markdown
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"slices"
@@ -18,58 +17,10 @@ var ErrConflictedFile = errors.New("file has unresolved git conflicts")
 
 const frontmatterDelimiter = frontmatter.Delimiter
 
-// conflictMarkerStart is the canonical opening-marker pattern Git
-// writes when a merge produces a conflict (`<<<<<<< <ref>`).
-// Detection MUST be line-anchored: the marker is meaningful only at
-// column 0. Matching it as a substring anywhere triggers a
-// false-positive on legitimate content (BUG-WN6D) — e.g. a markdown
-// codespan or quoted prose mentioning the marker — which silently
-// excludes the file from rela's validator and search index.
-var conflictMarkerStart = []byte("<<<<<<<")
-
 // Document represents a parsed markdown document with YAML frontmatter
 type Document struct {
 	Frontmatter map[string]any
 	Content     string
-}
-
-// HasConflictMarkers reports whether content begins a conflict block
-// — i.e. contains the opening marker (`<<<<<<<`) at column 0 of any
-// line. A substring match anywhere else (inline code, prose) is
-// NOT a conflict; see [BUG-WN6D] for the regression that motivated
-// the line-anchoring.
-func HasConflictMarkers(content []byte) bool {
-	return hasLineAnchoredMarker(content, conflictMarkerStart)
-}
-
-// HasConflictMarkersString is the string-typed companion of
-// [HasConflictMarkers]; same semantics.
-func HasConflictMarkersString(content string) bool {
-	return hasLineAnchoredMarker([]byte(content), conflictMarkerStart)
-}
-
-// hasLineAnchoredMarker reports whether content contains marker at
-// the start of any line (i.e. either at offset 0 or immediately
-// after a `\n`). Pure-Go scan; cheaper than compiling a regex for
-// the same predicate.
-func hasLineAnchoredMarker(content, marker []byte) bool {
-	// Fast path: cheap substring check first — most content won't
-	// contain the marker at all. The line-anchor check only runs
-	// when the substring exists.
-	idx := bytes.Index(content, marker)
-	for idx >= 0 {
-		if idx == 0 || content[idx-1] == '\n' {
-			return true
-		}
-		// Search the remainder.
-		offset := idx + len(marker)
-		rest := bytes.Index(content[offset:], marker)
-		if rest < 0 {
-			return false
-		}
-		idx = offset + rest
-	}
-	return false
 }
 
 // ParseDocument parses a markdown document with YAML frontmatter.
@@ -257,10 +208,11 @@ func KeyNode(key string) *yaml.Node {
 
 // startsConflictMarker reports whether a plain scalar with this text, written
 // as a mapping key at column 0, would be indistinguishable from git's opening
-// conflict marker. Only the opening marker matters: it is the one
-// [HasConflictMarkers] scans for.
+// conflict marker. Only the opening marker matters: a conflict block
+// ([ConflictBlocks]) starts with it, so a key that cannot write it at column 0
+// cannot start one.
 func startsConflictMarker(key string) bool {
-	return strings.HasPrefix(key, string(conflictMarkerStart))
+	return strings.HasPrefix(key, ConflictMarkerStart)
 }
 
 // keyReadsAsNonString reports whether a plain scalar with this text would be

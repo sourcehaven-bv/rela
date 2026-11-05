@@ -451,15 +451,26 @@ type RelationVerdicts struct {
 type RelationVerdict struct {
 	Creatable bool
 	Removable bool
-	// Fields maps metaField → writable. Absence = writable. Applies
-	// uniformly to every link of this relation type (per-link
-	// affordances are predicate territory, deferred).
+	// Fields maps metaField → writable. Absence = writable, unless
+	// MetaClosed. Applies uniformly to every link of this relation type
+	// (per-link affordances are predicate territory, deferred).
 	Fields map[string]bool
+	// MetaClosed makes the meta grants an allowlist: a key absent from
+	// Fields is read-only (see [affordances.RelationVerdict.MetaClosed]).
+	MetaClosed bool
 
 	// Attribution maps a denied dimension ("create", "remove",
 	// "fields.<name>") to the role/grant that denied it. Audit-only,
 	// never serialized. Sparse.
 	Attribution map[string]string
+}
+
+// MetaWritable reports whether the verdict lets a caller write meta key.
+func (v RelationVerdict) MetaWritable(key string) bool {
+	if writable, ok := v.Fields[key]; ok {
+		return writable
+	}
+	return !v.MetaClosed
 }
 
 // AffordanceDenialRule is the stable identifier surfaced in 403
@@ -968,7 +979,11 @@ func (svc affordanceService) validateRelationOps(
 				return denial
 			}
 		}
-		if _, denial := svc.relationMetaDenial(ctx, sources, canonical, op.ref.Meta, op.ref.MetaUnset); denial != nil {
+		meta := op.ref.Meta
+		if op.existing != nil {
+			meta = entitymanager.ChangedRelationMeta(meta, op.existing.Properties)
+		}
+		if _, denial := svc.relationMetaDenial(ctx, sources, canonical, meta, op.ref.MetaUnset); denial != nil {
 			return denial
 		}
 	}
@@ -980,11 +995,10 @@ func (svc affordanceService) validateRelationOps(
 // treated as writes (F16). Returns nil when permitted.
 //
 // `meta` is the proposed property map; `metaUnset` lists keys being
-// removed. Unknown meta keys (not in the resolver's Fields map AND
-// not declared in the metamodel for this relation type) are not
-// rejected here — they're a separate concern handled by the existing
-// relation validation. The affordance check focuses on rejecting
-// keys explicitly marked non-writable.
+// removed. When the meta grants are an allowlist (MetaClosed), a key the
+// metamodel does not declare and no grant names is refused like any other
+// key no role grants. Otherwise an unknown key is left to the relation
+// validation, which warns about it.
 func (svc affordanceService) validateRelationMetaWrite(
 	ctx context.Context, src relationSource, relType string, meta map[string]any, metaUnset []string,
 ) *AffordanceDenialError {
@@ -993,11 +1007,11 @@ func (svc affordanceService) validateRelationMetaWrite(
 	}
 	v := svc.verdictsOf(ctx, src)
 	rv, ok := v.Types[relType]
-	if !ok || rv.Fields == nil {
+	if !ok {
 		return nil
 	}
 	deny := func(key string) *AffordanceDenialError {
-		if writable, ok := rv.Fields[key]; ok && !writable {
+		if !rv.MetaWritable(key) {
 			return &AffordanceDenialError{
 				Rule:        RuleRelationMetaReadOnly,
 				Path:        relType + "." + key,
@@ -1246,16 +1260,29 @@ func (svc affordanceService) outgoingRelationVerdicts(ctx context.Context, e *en
 
 // and is v allowing a dimension only where o allows it too.
 func (v RelationVerdict) and(o RelationVerdict) RelationVerdict {
-	v.Creatable = v.Creatable && o.Creatable
-	v.Removable = v.Removable && o.Removable
-	for field, writable := range o.Fields {
-		if v.Fields == nil {
-			v.Fields = map[string]bool{}
-		}
-		prev, ok := v.Fields[field]
-		v.Fields[field] = writable && (!ok || prev)
+	out := RelationVerdict{
+		Creatable:  v.Creatable && o.Creatable,
+		Removable:  v.Removable && o.Removable,
+		MetaClosed: v.MetaClosed || o.MetaClosed,
 	}
-	return v
+	// v's attribution wins where both name a dimension, as before; o's
+	// covers a denial only o produced.
+	if len(v.Attribution)+len(o.Attribution) > 0 {
+		out.Attribution = maps.Clone(o.Attribution)
+		if out.Attribution == nil {
+			out.Attribution = map[string]string{}
+		}
+		maps.Copy(out.Attribution, v.Attribution)
+	}
+	for _, fields := range []map[string]bool{v.Fields, o.Fields} {
+		for field := range fields {
+			if out.Fields == nil {
+				out.Fields = map[string]bool{}
+			}
+			out.Fields[field] = v.MetaWritable(field) && o.MetaWritable(field)
+		}
+	}
+	return out
 }
 
 // copyVisibleProperties returns a fresh map of the entity's properties

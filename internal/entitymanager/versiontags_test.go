@@ -659,3 +659,9 @@ func TestVersionTags_HiddenRowReadsAsMissing(t *testing.T) {
 		t.Errorf("denied-write rows = %d, want 0", n)
 	}
 }
+
+func (denyAllFieldGate) CheckRelationMetaWrite(
+	context.Context, *entity.Entity, string, map[string]any, []string,
+) error {
+	return nil
+}
