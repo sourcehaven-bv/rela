@@ -41,4 +41,6 @@ row-gated.
 field in a PATCH.
 2. No error or warning carries a property value.
 3. The status and sync responses list only the conflict paths `/_conflicts`
-lists.
+lists. They fail closed on other paths: an attachment path is listed only when
+its owner is readable, a config path is always listed, and any other path is
+left out (RR-9ZWFR65).
