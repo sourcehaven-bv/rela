@@ -74,15 +74,7 @@ func DetectInFile(path string) (*ConflictedFile, error) {
 // FindMarkers locates the conflict blocks in content, as
 // [markdown.ConflictBlocks] defines them.
 func FindMarkers(content string) []Marker {
-	blocks := markdown.ConflictBlocks(content)
-	if len(blocks) == 0 {
-		return nil
-	}
-	markers := make([]Marker, len(blocks))
-	for i, b := range blocks {
-		markers[i] = Marker(b)
-	}
-	return markers
+	return markdown.ConflictBlocks(content)
 }
 
 // HasConflicts checks if content has any conflict markers.

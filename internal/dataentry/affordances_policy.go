@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"maps"
 
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
@@ -75,24 +76,13 @@ func (p *policyResolver) SearchFieldScope(ctx context.Context, entityType string
 	return p.inner.SearchFieldScope(ctx, entityType)
 }
 
-// relationVerdictsWire maps affordances relation verdicts onto the wire
-// type. Each relation type's per-dimension attribution ("create" / "remove"
-// / "fields.<name>") is preserved.
+// relationVerdictsWire wraps the resolver's relation verdicts, which
+// dataentry uses as they are; only the map is copied.
 func relationVerdictsWire(v affordances.RelationVerdicts) RelationVerdicts {
 	if len(v.Types) == 0 {
 		return RelationVerdicts{}
 	}
-	out := RelationVerdicts{Types: make(map[string]RelationVerdict, len(v.Types))}
-	for rt, rv := range v.Types {
-		out.Types[rt] = RelationVerdict{
-			Creatable:   rv.Creatable,
-			Removable:   rv.Removable,
-			Fields:      rv.Fields,
-			MetaClosed:  rv.MetaClosed,
-			Attribution: rv.Attribution,
-		}
-	}
-	return out
+	return RelationVerdicts{Types: maps.Clone(v.Types)}
 }
 
 // RelationFieldVerdicts forwards to the wrapped policy resolver, making

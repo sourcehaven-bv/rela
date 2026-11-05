@@ -35,3 +35,6 @@ Found by the security review of BUG-197XPAU and BUG-HTSW37Q.
 Do not let a write emit a column-0 conflict marker in the body. Either escape
 such a line when writing, or refuse the body with a 422. Pin it with an fsstore
 test that writes such a body and reads the row back.
+
+`conflict.Marker` is an alias of `markdown.ConflictBlock`, so one type
+describes a conflict block.

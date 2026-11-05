@@ -2609,7 +2609,7 @@
       "weight.structure": 936,
       "weight.layers": 0,
       "weight.vocabulary": 912,
-      "weight.types": 3981,
+      "weight.types": 3952,
       "weight.concepts": 7052,
       "weight.boundaries": 1478,
       "weight.data": 1297,
@@ -2620,7 +2620,7 @@
       "propagation_cost": 9.8
     },
     "min_weight": 0,
-    "at": "2026-11-04T15:40:00Z",
+    "at": "2026-11-05T20:33:00Z",
     "log": [
       {
         "at": "2026-10-28T13:29:24Z",
@@ -2788,6 +2788,17 @@
           "weight.concepts": [
             7047,
             7052
+          ]
+        }
+      },
+      {
+        "at": "2026-11-05T20:33:00Z",
+        "change": "tighten",
+        "reason": "static model; trace-based metrics left for just archplan-security",
+        "metrics": {
+          "weight.types": [
+            3981,
+            3952
           ]
         }
       }

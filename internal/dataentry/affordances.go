@@ -445,33 +445,11 @@ type RelationVerdicts struct {
 	Types map[string]RelationVerdict
 }
 
-// RelationVerdict carries the affordance decision for a single
-// relation type. Zero-value (Creatable=false, Removable=false, Fields=nil)
-// would deny everything; callers always populate explicitly.
-type RelationVerdict struct {
-	Creatable bool
-	Removable bool
-	// Fields maps metaField → writable. Absence = writable, unless
-	// MetaClosed. Applies uniformly to every link of this relation type
-	// (per-link affordances are predicate territory, deferred).
-	Fields map[string]bool
-	// MetaClosed makes the meta grants an allowlist: a key absent from
-	// Fields is read-only (see [affordances.RelationVerdict.MetaClosed]).
-	MetaClosed bool
-
-	// Attribution maps a denied dimension ("create", "remove",
-	// "fields.<name>") to the role/grant that denied it. Audit-only,
-	// never serialized. Sparse.
-	Attribution map[string]string
-}
-
-// MetaWritable reports whether the verdict lets a caller write meta key.
-func (v RelationVerdict) MetaWritable(key string) bool {
-	if writable, ok := v.Fields[key]; ok {
-		return writable
-	}
-	return !v.MetaClosed
-}
+// RelationVerdict carries the affordance decision for a single relation
+// type. It is the resolver's own type; the zero value (Creatable=false,
+// Removable=false, Fields=nil) would deny everything, so callers always
+// populate it explicitly.
+type RelationVerdict = affordances.RelationVerdict
 
 // AffordanceDenialRule is the stable identifier surfaced in 403
 // responses when an affordance validator rejects a write. The full
@@ -896,7 +874,7 @@ func (svc affordanceService) validateRelationOp(
 // AffordanceDenialError that any of the proposed relation diffs trigger
 // across the unified-PATCH modern body. Diffs against current edges
 // to identify true adds and removes (rather than upserts), and
-// inspects per-edge meta against [RelationVerdict.Fields].
+// inspects per-edge meta against [affordances.RelationVerdict.Fields].
 //
 // Called from the unified PATCH handler before
 // [writeHandler.applyRelationsModern]. Returns nil when every relation
@@ -1252,14 +1230,14 @@ func (svc affordanceService) outgoingRelationVerdicts(ctx context.Context, e *en
 			if !seen {
 				acc = RelationVerdict{Creatable: true, Removable: true}
 			}
-			out.Types[relType] = acc.and(rv)
+			out.Types[relType] = andRelationVerdict(acc, rv)
 		}
 	}
 	return out
 }
 
-// and is v allowing a dimension only where o allows it too.
-func (v RelationVerdict) and(o RelationVerdict) RelationVerdict {
+// andRelationVerdict is v allowing a dimension only where o allows it too.
+func andRelationVerdict(v, o RelationVerdict) RelationVerdict {
 	out := RelationVerdict{
 		Creatable:  v.Creatable && o.Creatable,
 		Removable:  v.Removable && o.Removable,
