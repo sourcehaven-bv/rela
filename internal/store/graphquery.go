@@ -90,6 +90,17 @@ type GraphQuery struct {
 	// that mistake cannot compile.
 	Any []GraphBranch
 
+	// SkipUnreadable leaves out a candidate row whose stored values cannot
+	// be read ([ErrConflictedRow]) instead of failing the query. Like Any it
+	// belongs to the ACL layer alone: the ACL sets it on its read-grant
+	// query, where the answer is an allowlist, so a left-out row is hidden
+	// (BUG-HTSW37Q). Nobody else may set it. Where absence grants something,
+	// such as a negated traversal or a uniqueness scan, a left-out row would
+	// widen the answer, so those queries keep failing closed. It never
+	// applies to a relation endpoint, only to the rows the query returns.
+	// Only the file store has such rows; the other backends ignore it.
+	SkipUnreadable bool
+
 	// Narrowing is a disjunction supplied by a CALLER (a view's
 	// `condition:`, a report's filter) rather than by the ACL. It is ANDed
 	// with everything above, including [GraphQuery.Any].

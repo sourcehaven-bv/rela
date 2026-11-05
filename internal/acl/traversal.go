@@ -299,7 +299,10 @@ func (r *Request) gateHop(ctx context.Context, hop TraversalHop) (*store.Endpoin
 // constraint the traversal would silently drop, leaving it wider than a plain
 // read, so a new GraphQuery field is refused here until gateHop handles it.
 func foldsIntoEndpoint(q store.GraphQuery) bool {
-	q.EntityType, q.Props, q.HasInbound = "", nil, nil
+	// SkipUnreadable does not survive the fold, and that is the safe side:
+	// an endpoint never skips an unreadable row, so a traversal over one
+	// fails instead of reading "not related" (BUG-HTSW37Q).
+	q.EntityType, q.Props, q.HasInbound, q.SkipUnreadable = "", nil, nil, false
 	return reflect.ValueOf(q).IsZero()
 }
 

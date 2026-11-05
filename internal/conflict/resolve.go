@@ -141,6 +141,11 @@ func ValidateResolved(e *entity.Entity, meta *metamodel.Metamodel) error {
 		return nil
 	}
 	if errs := metamodel.NewValidator(meta).ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
+		// The message names no value, so name the property: a property
+		// name is not a secret, and without it the caller cannot act.
+		if errs[0].Property != "" {
+			return fmt.Errorf("validation failed: %s: %w", errs[0].Property, errs[0])
+		}
 		return fmt.Errorf("validation failed: %w", errs[0])
 	}
 	return nil

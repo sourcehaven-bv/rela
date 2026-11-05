@@ -117,6 +117,15 @@ const (
 )
 
 // ValidationError represents a structured validation error with field information.
+//
+// A built-in Message never quotes the property's value. It reaches the
+// writer as a 422 or as a warning on a 200, and the writer may not be
+// allowed to see the value: a hidden field that holds an invalid value is
+// validated on every write of its entity (BUG-197XPAU). Name the rule the
+// value broke (the format, the allowed values, the bounds) instead. The
+// unique check follows the same rule for the same reason. A message the
+// operator writes, such as a pattern's `error:`, is the operator's to keep
+// free of values.
 type ValidationError struct {
 	Type     ValidationErrorType
 	Property string // The property name that failed validation (empty for entity-level errors)
@@ -357,7 +366,7 @@ func (v Validator) validatePropertyValue(propName string, propDef *PropertyDef, 
 			return &ValidationError{
 				Type:     ValidationErrorInvalidValue,
 				Property: propName,
-				Message:  fmt.Sprintf("Invalid date %q (expected format: %s)", s, format),
+				Message:  fmt.Sprintf("Invalid date (expected format: %s)", format),
 			}
 		}
 
@@ -378,7 +387,7 @@ func (v Validator) validatePropertyValue(propName string, propDef *PropertyDef, 
 				return &ValidationError{
 					Type:     ValidationErrorInvalidValue,
 					Property: propName,
-					Message:  fmt.Sprintf("Invalid datetime %q (expected format: %s)", v, format),
+					Message:  fmt.Sprintf("Invalid datetime (expected format: %s)", format),
 				}
 			}
 		default:
@@ -404,7 +413,7 @@ func (v Validator) validatePropertyValue(propName string, propDef *PropertyDef, 
 				return &ValidationError{
 					Type:     ValidationErrorInvalidValue,
 					Property: propName,
-					Message:  fmt.Sprintf("Must be true or false, got %q", v),
+					Message:  "Must be true or false",
 				}
 			}
 		default:
@@ -430,7 +439,7 @@ func (v Validator) validatePropertyValue(propName string, propDef *PropertyDef, 
 				return &ValidationError{
 					Type:     ValidationErrorInvalidValue,
 					Property: propName,
-					Message:  fmt.Sprintf("Invalid value %q (allowed: %v)", s, propDef.Values),
+					Message:  fmt.Sprintf("Invalid value (allowed: %v)", propDef.Values),
 				}
 			}
 		}
@@ -445,10 +454,16 @@ func (v Validator) validatePropertyValue(propName string, propDef *PropertyDef, 
 			}
 		}
 		if err := ValidateRrule(s); err != nil {
+			// The parser's error can quote part of the rule, so only the
+			// drifting-interval case, which quotes nothing, keeps its text.
+			msg := "Invalid RRULE"
+			if errors.Is(err, errRruleIntervalWithoutDtstart) {
+				msg = err.Error()
+			}
 			return &ValidationError{
 				Type:     ValidationErrorInvalidValue,
 				Property: propName,
-				Message:  err.Error(),
+				Message:  msg,
 			}
 		}
 
@@ -528,7 +543,7 @@ func validateFileValue(propName string, propDef *PropertyDef, val any) *Validati
 		return &ValidationError{
 			Type:     ValidationErrorInvalidValue,
 			Property: propName,
-			Message:  fmt.Sprintf("at most %d attachment(s) allowed, got %d", maxCount, len(paths)),
+			Message:  fmt.Sprintf("at most %d attachment(s) allowed", maxCount),
 		}
 	}
 	return nil
@@ -552,14 +567,14 @@ func validateIntegerValue(propName string, propDef *PropertyDef, val any) *Valid
 			return &ValidationError{
 				Type:     ValidationErrorInvalidValue,
 				Property: propName,
-				Message:  fmt.Sprintf("Invalid integer %v", v),
+				Message:  "Invalid integer",
 			}
 		}
 		if v != math.Trunc(v) {
 			return &ValidationError{
 				Type:     ValidationErrorInvalidValue,
 				Property: propName,
-				Message:  fmt.Sprintf("Invalid integer %v (must not have a fractional part)", v),
+				Message:  "Invalid integer (must not have a fractional part)",
 			}
 		}
 		n = saturateInt64(v)
@@ -569,7 +584,7 @@ func validateIntegerValue(propName string, propDef *PropertyDef, val any) *Valid
 			return &ValidationError{
 				Type:     ValidationErrorInvalidValue,
 				Property: propName,
-				Message:  fmt.Sprintf("Invalid integer %q", v),
+				Message:  "Invalid integer",
 			}
 		}
 		n = i
@@ -585,14 +600,20 @@ func validateIntegerValue(propName string, propDef *PropertyDef, val any) *Valid
 	}
 	// Out of range is an invalid value, which is soft: a write warns and
 	// analyze reports it (TKT-BRAM1A).
+	return outOfRange(propName, propDef)
+}
+
+// outOfRange is the error for a number outside propDef's declared bounds.
+// Like every message here, it names the bounds and not the value.
+func outOfRange(propName string, propDef *PropertyDef) *ValidationError {
 	var msg string
 	switch {
 	case propDef.Min != nil && propDef.Max != nil:
-		msg = fmt.Sprintf("%d is out of range (must be from %d to %d)", n, *propDef.Min, *propDef.Max)
+		msg = fmt.Sprintf("Out of range (must be from %d to %d)", *propDef.Min, *propDef.Max)
 	case propDef.Min != nil:
-		msg = fmt.Sprintf("%d is out of range (must be at least %d)", n, *propDef.Min)
+		msg = fmt.Sprintf("Out of range (must be at least %d)", *propDef.Min)
 	default:
-		msg = fmt.Sprintf("%d is out of range (must be at most %d)", n, *propDef.Max)
+		msg = fmt.Sprintf("Out of range (must be at most %d)", *propDef.Max)
 	}
 	return &ValidationError{Type: ValidationErrorInvalidValue, Property: propName, Message: msg}
 }
@@ -639,7 +660,7 @@ func validateCustomTypeValue(propName string, customType CustomType, val any) *V
 		var allErrors []string
 		for i, s := range list {
 			if hasEnumValues && !allowed[s] {
-				allErrors = append(allErrors, fmt.Sprintf("item[%d]: invalid value %q", i, s))
+				allErrors = append(allErrors, fmt.Sprintf("item[%d]: invalid value", i))
 			}
 			// Run regex validations on each item
 			if err := validateRegexPatterns(propName, customType.Validations, s); err != nil {
@@ -668,7 +689,7 @@ func validateCustomTypeValue(propName string, customType CustomType, val any) *V
 				continue
 			}
 			if hasEnumValues && !allowed[s] {
-				allErrors = append(allErrors, fmt.Sprintf("item[%d]: invalid value %q", i, s))
+				allErrors = append(allErrors, fmt.Sprintf("item[%d]: invalid value", i))
 			}
 			// Run regex validations on each item
 			if err := validateRegexPatterns(propName, customType.Validations, s); err != nil {
@@ -703,7 +724,7 @@ func validateCustomTypeValue(propName string, customType CustomType, val any) *V
 			return &ValidationError{
 				Type:     ValidationErrorInvalidValue,
 				Property: propName,
-				Message:  fmt.Sprintf("Invalid value %q (allowed: %v)", s, customType.Values),
+				Message:  fmt.Sprintf("Invalid value (allowed: %v)", customType.Values),
 			}
 		}
 		// For regex-only types, skip validation on empty
@@ -715,7 +736,7 @@ func validateCustomTypeValue(propName string, customType CustomType, val any) *V
 		return &ValidationError{
 			Type:     ValidationErrorInvalidValue,
 			Property: propName,
-			Message:  fmt.Sprintf("Invalid value %q (allowed: %v)", s, customType.Values),
+			Message:  fmt.Sprintf("Invalid value (allowed: %v)", customType.Values),
 		}
 	}
 

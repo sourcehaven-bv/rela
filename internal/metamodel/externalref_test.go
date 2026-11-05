@@ -163,7 +163,7 @@ func TestParseExternalRef(t *testing.T) {
 		{name: "byte order mark", in: map[string]any{"id": "\uFEFFa"}, wantErr: "format"},
 		{name: "non-breaking space", in: map[string]any{"id": "a\u00A0b"}, wantErr: "format"},
 		{name: "unicode letters", in: map[string]any{"id": "taak-é-42"}, want: ExternalRefValue{ID: "taak-é-42"}},
-		{name: "unknown key", in: map[string]any{"id": "a", "rev": "1"}, wantErr: `unknown key "rev"`},
+		{name: "unknown key", in: map[string]any{"id": "a", "rev": "1"}, wantErr: "unknown key (allowed: id, url)"},
 		{name: "javascript url", in: map[string]any{"id": "a", "url": "javascript:alert(1)"}, wantErr: "http or https"},
 		{name: "no host", in: map[string]any{"id": "a", "url": "https:///x"}, wantErr: "host"},
 		{name: "url not string", in: map[string]any{"id": "a", "url": 3}, wantErr: `"url" must be a string`},

@@ -1758,8 +1758,9 @@ func (h *writeHandler) handleV1CloneEntity(
 	writeV1JSON(w, http.StatusCreated, result)
 }
 
-// handleV1ConflictResolve applies a conflict resolution. It needs git:sync
-// and then the write check of [writeHandler.authorizeConflictResolve].
+// handleV1ConflictResolve applies a conflict resolution. It needs git:sync,
+// then the write check of [writeHandler.authorizeConflictResolve], then the
+// field check of [conflictFieldDenial].
 //
 //archplan:auth=authz reason="requires git:sync, then re-authorizes the write"
 func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Request) {
@@ -1852,6 +1853,20 @@ func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Re
 	if !h.authorizeConflictResolve(w, r, id, resolvedRelation) {
 		return
 	}
+	subject, denial, err := conflictFieldDenial(r.Context(), h.affordances, id, cf, resolvedEntity, resolvedRelation)
+	switch {
+	case errors.Is(err, errConflictSourceUnreadable):
+		writeConflictNotFound(w, r)
+		return
+	case err != nil:
+		writeGateError(w, r, err)
+		return
+	case denial != nil:
+		h.denyAfford(r.Context(), w, subject, *denial)
+		return
+	}
+	// The error names the rule and never the value, so it cannot carry a
+	// hidden field's value (BUG-197XPAU).
 	if err := conflict.ValidateResolved(resolvedEntity, st.Meta); err != nil {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
 		return

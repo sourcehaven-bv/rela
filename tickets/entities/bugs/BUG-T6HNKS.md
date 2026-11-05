@@ -36,11 +36,15 @@ check on top.
 The SPA hides the "Resolve conflicts" link when `can_sync` is false, and
 `ConflictsView` shows a message naming `git:sync` on a 403.
 
-## Why not row-gating
+## Why not row-gating (superseded)
 
-Row-gating each file through visibility was considered and not chosen. Merge
-conflicts arise only on file (fs) storage, which runs locally. Network deploys
-run on postgres or sqlite, which have no conflicts. So the coarse `git:sync`
-gate is accepted: a holder of `git:sync` still sees the paths and unredacted
-values of conflicting entities they may not read. The acl-security guide says
-so.
+Row-gating was first left out. Merge conflicts arise only on file (fs)
+storage, which runs locally, so the coarse `git:sync` gate was accepted, even
+though a holder still saw the paths and values of entities they may not read.
+
+That acceptance no longer holds. BUG-Q3Z15V row-gates the conflict list,
+detail and resolve with a uniform 404, and redacts `visible:` fields in the
+detail. BUG-197XPAU row-gates the conflict paths in `GET /_git/status` and
+`POST /_git/sync`, runs the edit field check on the properties a resolve
+writes, and keeps values out of validation messages. `git:sync` stays as the
+outer gate.

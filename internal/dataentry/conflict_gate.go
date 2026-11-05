@@ -156,8 +156,9 @@ func pathUnder(dir, path string) (string, bool) {
 	return rel, true
 }
 
-// resolvedPath is p made absolute with symlinks resolved, or as far as that
-// succeeds.
+// resolvedPath is p made absolute with symlinks resolved. For a path that
+// does not exist, such as a file a branch deleted, it resolves the nearest
+// parent that does, so the path still compares inside its directory.
 func resolvedPath(p string) string {
 	if abs, err := filepath.Abs(p); err == nil {
 		p = abs
@@ -165,7 +166,11 @@ func resolvedPath(p string) string {
 	if resolved, err := filepath.EvalSymlinks(p); err == nil {
 		return resolved
 	}
-	return p
+	parent := filepath.Dir(p)
+	if parent == p {
+		return p
+	}
+	return filepath.Join(resolvedPath(parent), filepath.Base(p))
 }
 
 // entityTypeOfDir maps an entity directory name to its type: a type's own
@@ -235,6 +240,53 @@ func conflictsReadable(ctx context.Context, vr visibleReader, ids []conflictIden
 			next++
 		}
 		out[i] = ok
+	}
+	return out, nil
+}
+
+// readableConflictPaths returns the paths in relPaths the principal may see,
+// in order. The paths are relative to the project root, as git reports them.
+// It is the gate of the conflict list for a surface that names conflict
+// paths without listing conflicts (BUG-197XPAU).
+//
+// Only a path under the entity or relation directory names data, so only
+// those are gated; a conflict in schema.yaml or another config file is
+// always listed, because the configuration is not a secret. A data file that
+// does not parse as conflicted, such as one a branch deleted, is judged by
+// the row its path names. A data path the gate cannot judge is left out.
+func readableConflictPaths(
+	ctx context.Context, vr visibleReader, paths *project.Context, meta *metamodel.Metamodel, relPaths []string,
+) ([]string, error) {
+	gated := make([]int, 0, len(relPaths))
+	ids := make([]conflictIdentity, 0, len(relPaths))
+	for i, rel := range relPaths {
+		abs := filepath.Join(paths.Root, filepath.FromSlash(rel))
+		_, inEntities := pathUnder(paths.EntitiesDir, abs)
+		_, inRelations := pathUnder(paths.RelationsDir, abs)
+		if !inEntities && !inRelations {
+			continue
+		}
+		cf, err := conflict.ParseConflictedFile(abs, meta)
+		if err != nil {
+			cf = &conflict.ConflictedFile{Path: abs}
+		}
+		gated = append(gated, i)
+		ids = append(ids, identifyConflict(paths, meta, cf))
+	}
+	readable, err := conflictsReadable(ctx, vr, ids)
+	if err != nil {
+		return nil, err
+	}
+	hidden := make(map[int]bool, len(gated))
+	for j, i := range gated {
+		hidden[i] = !readable[j]
+	}
+	// Nil, not empty, when nothing is left, so an omitempty field drops it.
+	var out []string
+	for i, rel := range relPaths {
+		if !hidden[i] {
+			out = append(out, rel)
+		}
 	}
 	return out, nil
 }

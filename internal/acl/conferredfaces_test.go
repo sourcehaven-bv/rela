@@ -61,6 +61,11 @@ func TestReadQuery_ConferredRolesKeepTheirOwnFaces(t *testing.T) {
 		if rqr.Query == nil {
 			t.Fatalf("%s: want a composed query, got %+v", user, rqr)
 		}
+		// The read grant is an allowlist, so an unreadable row is hidden
+		// rather than failing the query (BUG-HTSW37Q).
+		if !rqr.Query.SkipUnreadable {
+			t.Fatalf("%s: the read-grant query must set SkipUnreadable", user)
+		}
 		q := *rqr.Query
 		q.Faces = store.InWorld(world)
 		q.FaceIn = rqr.Faces
