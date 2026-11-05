@@ -275,8 +275,19 @@ of its variants. This holds in every configuration file:
 | `data-entry.yaml` | `available_on.entity_types` on actions and commands, a space's `create:`, pile toggles, `entity_views:`, and a section's per-type field and column maps   |
 
 When a type-keyed setting names both the abstract type and one of its
-variants, the variant's entry wins. In `acl.yaml`, a role's field grants are
-added together instead, as role grants always are.
+variants, the variant's entry wins. This also holds for a role's `fields:`,
+`visible:`, `options:` and `relations:` in `acl.yaml`: the abstract entry's
+grants never add to a variant entry, so a variant entry written to keep a
+field from a role does keep it.
+
+A ceiling's `redact:` is the exception. The variant gets the fields that the
+abstract entry redacts as well as its own. When the variant also has its own
+ceiling `visible:` list, the redacted fields are removed from that list. A
+field that the abstract type redacts therefore stays hidden on every
+variant.
+
+A grant on the abstract type covers every variant, including one that a
+later include adds. Review `acl.yaml` when you add a variant.
 
 A setting that names a single type, such as a form's or a list's
 `entity_type`, a `create_entity` action or a conversion's `from:`, cannot

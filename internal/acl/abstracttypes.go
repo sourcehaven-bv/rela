@@ -14,25 +14,30 @@ import (
 // the operator believes they granted access to every task, and granted none.
 //
 // Type lists (`create: [task]`, `read: [task@draft]`) expand in place and
-// keep a face suffix. Type-keyed maps expand by key. A role's field and
-// relation grants are additive, so the abstract entry's grants are added
-// to each variant's. A ceiling's `visible:` is a closed allowlist of one
-// type's fields, so an entry naming the variant itself wins. A ceiling's
-// `redact:` is a denylist, so the variant gets the abstract entry's fields
-// as well as its own: an override there would un-redact a field.
+// keep a face suffix. Type-keyed maps expand by key, and an entry naming
+// the variant itself wins over the abstract entry: that is the narrower
+// reading, so a variant entry written to restrict a role does not gain the
+// abstract entry's fields. A ceiling's `redact:` is the exception. It is a
+// denylist, so the variant gets the abstract entry's fields as well as its
+// own: an override there would un-redact a field. Where a variant also has
+// its own `visible:`, the redacted fields are removed from it (see
+// foldRedactIntoVisible).
 //
 // user_entity_type names one type, so an abstract name there is an error.
+// The rest of the policy is still expanded first, so a caller that keeps
+// a policy despite the error never holds an unexpanded deny or redact.
 //
 // Idempotent, and a policy that names no abstract type is not written to:
 // the `rela acl` commands validate a policy that may already be in use.
 func expandAbstractTypes(p *Policy, meta MetamodelView) error {
+	var err error
 	if _, ok := meta.Variants(strings.TrimSpace(p.UserEntityType)); ok {
-		return fmt.Errorf("acl: user_entity_type %q is an abstract type; name one of its variants",
+		err = fmt.Errorf("acl: user_entity_type %q is an abstract type; name one of its variants",
 			p.UserEntityType)
 	}
 	ex := typeExpander{meta: meta}
 	if !namesAbstractType(p, ex) {
-		return nil
+		return err
 	}
 	for name, role := range p.Roles {
 		role.Create = ex.list(role.Create)
@@ -41,10 +46,10 @@ func expandAbstractTypes(p *Policy, meta MetamodelView) error {
 		role.Convert = ex.list(role.Convert)
 		role.Rename = ex.list(role.Rename)
 		role.Read = ex.list(role.Read)
-		role.Fields = expandUnion(ex, role.Fields)
-		role.Visible = expandUnion(ex, role.Visible)
-		role.Options = expandUnion(ex, role.Options)
-		role.Relations = expandUnion(ex, role.Relations)
+		role.Fields = expandOverride(ex, role.Fields)
+		role.Visible = expandOverride(ex, role.Visible)
+		role.Options = expandOverride(ex, role.Options)
+		role.Relations = expandOverride(ex, role.Relations)
 		p.Roles[name] = role
 	}
 	for name, b := range p.ClientBaselines {
@@ -55,7 +60,7 @@ func expandAbstractTypes(p *Policy, meta MetamodelView) error {
 		g.Restriction = ex.restriction(g.Restriction)
 		p.ScopeGrants[name] = g
 	}
-	return nil
+	return err
 }
 
 // namesAbstractType reports whether any type list or type-keyed map in the
@@ -146,6 +151,26 @@ func (ex typeExpander) restriction(r Restriction) Restriction {
 	r.DenyWrite = ex.list(r.DenyWrite)
 	r.Visible = expandOverride(ex, r.Visible)
 	r.Redact = expandUnionStrings(ex, r.Redact)
+	return foldRedactIntoVisible(r)
+}
+
+// foldRedactIntoVisible handles a type that ends up with both a `visible:`
+// and a `redact:` entry, which expansion can produce: a variant's own
+// `visible:` plus the abstract type's `redact:`. A ceiling reads one
+// spelling per type and the allowlist wins, so the redact would be lost
+// and the field shown. The fields the redact names are removed from the
+// allowlist instead, which keeps them hidden and leaves one spelling.
+func foldRedactIntoVisible(r Restriction) Restriction {
+	for typ, redacted := range r.Redact {
+		visible, both := r.Visible[typ]
+		if !both {
+			continue
+		}
+		r.Visible[typ] = slices.DeleteFunc(slices.Clone(visible), func(f string) bool {
+			return slices.Contains(redacted, f)
+		})
+		delete(r.Redact, typ)
+	}
 	return r
 }
 
@@ -188,11 +213,11 @@ func expandUnionStrings(ex typeExpander, in map[string][]string) map[string][]st
 
 // expandOverride copies an abstract key's entry to each variant that has no
 // entry of its own.
-func expandOverride(ex typeExpander, in map[string][]string) map[string][]string {
+func expandOverride[T any](ex typeExpander, in map[string][]T) map[string][]T {
 	if !hasAbstractKey(ex, in) {
 		return in
 	}
-	out := make(map[string][]string, len(in))
+	out := make(map[string][]T, len(in))
 	for key, fields := range in {
 		if ex.names(key) == nil {
 			out[key] = fields

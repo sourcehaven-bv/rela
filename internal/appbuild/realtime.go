@@ -178,6 +178,8 @@ func newRealtimeConfig(cfg Config, o *options, loaded *acl.Policy,
 		// does for the policy the rest of the wiring uses. A policy that
 		// parses but does not fit the schema is still returned: the ACL
 		// wiring reports that error, and the channel tools answer with it.
+		// Expansion runs before any check that can fail, so the returned
+		// policy never holds an unexpanded deny or redact.
 		p, err := loadACLPolicy(cfg)
 		if err == nil && p != nil && meta != nil {
 			_ = ValidateACLPolicy(p, meta)

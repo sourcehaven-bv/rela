@@ -19,6 +19,6 @@ sugar.
 - `abstract: true` declares a shape that stores no entities. `extends: <abstract>` makes a variant that inherits properties, faces and settings. A variant may add and override properties but not remove them.
 - A bare abstract name expands to its variants in every schema surface that takes a set of types (relation endpoints, validations, automations, comments, world overrides), and in `acl.yaml` and `data-entry.yaml`. A surface that takes exactly one type rejects an abstract name with an error that lists its variants.
 - At runtime only concrete types exist. Naming an abstract type in the CLI, REST, MCP or Lua returns an error listing its variants.
-- `variant_conversions: true` on an abstract type generates a conversion between each pair of its variants.
+- `abstract: {conversions: true}` on an abstract type generates a conversion between each pair of its variants.
 - The root `namespace:` key (an unused IRI) is renamed to `iri:`, with a project-file migration.
 - Included files may now declare `automations:`; before this they were silently dropped.

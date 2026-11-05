@@ -52,8 +52,8 @@ client_baselines:
 	if _, ok := role.Fields["task"]; ok {
 		t.Error("abstract key kept in fields")
 	}
-	if got := len(role.Fields["isms.task"]); got != 2 {
-		t.Errorf("isms.task fields = %v, want own grant plus the abstract one", role.Fields["isms.task"])
+	if got := role.Fields["isms.task"]; len(got) != 1 || got[0].Field != "evidence" {
+		t.Errorf("isms.task fields = %v, want only the variant's own grant", got)
 	}
 	if got := len(role.Fields["projects.task"]); got != 1 {
 		t.Errorf("projects.task fields = %v", role.Fields["projects.task"])
@@ -75,13 +75,26 @@ client_baselines:
 	}
 }
 
+// TestValidateAgainstMetamodel_AbstractUserType pins the error, and that the
+// rest of the policy is expanded anyway: the realtime wiring keeps a policy
+// that fails validation, and an unexpanded redact there would hide nothing.
 func TestValidateAgainstMetamodel_AbstractUserType(t *testing.T) {
-	p, err := acl.LoadPolicyBytes([]byte("user_entity_type: task\n"))
+	p, err := acl.LoadPolicyBytes([]byte(`
+user_entity_type: task
+client_baselines:
+  apps:
+    applies_to: [app]
+    redact:
+      task: [due]
+`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	err = p.ValidateAgainstMetamodel(abstractMeta())
 	if err == nil || !strings.Contains(err.Error(), "abstract") {
 		t.Fatalf("err = %v, want an abstract-type error", err)
+	}
+	if got := p.ClientBaselines["apps"].Redact["isms.task"]; !slices.Equal(got, []string{"due"}) {
+		t.Errorf("redact on the variant = %v, want [due] despite the error", got)
 	}
 }

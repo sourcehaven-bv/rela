@@ -607,7 +607,8 @@ func reportRealtimeValidation(ctx context.Context, result *projectsetup.Validate
 		return true
 	}
 	// Expand abstract type names to their variants, as the server does.
-	// The acl.yaml check reports any error; this only shapes the policy.
+	// The acl.yaml check reports any error. Expansion runs before any check
+	// that can fail, so the policy is expanded even when one does.
 	if policy != nil && result.Metamodel != nil {
 		_ = appbuild.ValidateACLPolicy(policy, result.Metamodel)
 	}

@@ -231,6 +231,20 @@ or `create` and the `fields:` and `options:` blocks. `rela acl audit` reports
 this as `A14-everyone-opens-field-block`, and rela logs it as a warning
 when it loads `acl.yaml`.
 
+## Naming an abstract type
+
+A schema can declare an abstract type with variants, such as `task` with
+`isms.task` and `projects.task` (see
+[Namespaces and variants](metamodel.md#namespaces-and-variants)). In
+`acl.yaml` the abstract name stands for all its variants. rela rewrites it
+when the policy loads, so `read: [task]` becomes
+`read: [isms.task, projects.task]`.
+
+When a per-type map names both `task` and `isms.task`, the variant's entry
+wins. A ceiling's `redact:` is the exception: the variant keeps the abstract
+entry's redacted fields as well. `user_entity_type` names one type, so an
+abstract name there fails the load.
+
 ## Scoping a grant to a content state
 
 If a type declares `faces:` (see the
