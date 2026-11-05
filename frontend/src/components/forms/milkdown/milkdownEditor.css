@@ -437,3 +437,40 @@
     transition: none;
   }
 }
+
+/* ── Co-editing peers ───────────────────────────────────────────────────── */
+
+/* A peer's caret and name tag. `--collab-color` is set per peer from script
+   (see `peerCursor` in `editorCollab.ts`), never through a `style` attribute. The caret takes no
+   width, so a peer's position cannot reflow the line being typed. */
+.milkdown-editor-shell .ProseMirror-yjs-cursor {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  border-left: 1px solid var(--collab-color, var(--rl-color-accent));
+  border-right: 1px solid var(--collab-color, var(--rl-color-accent));
+  word-break: normal;
+  pointer-events: none;
+}
+
+.milkdown-editor-shell .ProseMirror-yjs-cursor > div {
+  position: absolute;
+  top: -1.4em;
+  left: -1px;
+  padding: 0 var(--space-2xs);
+  border-radius: var(--radius-sm);
+  background: var(--collab-color, var(--rl-color-accent));
+  color: var(--rl-color-text-inverse);
+  font-size: var(--font-size-xs);
+  font-style: normal;
+  font-weight: normal;
+  line-height: normal;
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* A peer's selection. One neutral tint for every peer: a decoration can carry
+   a class but no script-set property, and the caret already names the peer. */
+.milkdown-editor-shell .ProseMirror-yjs-selection {
+  background: var(--rl-color-bg-selected);
+}

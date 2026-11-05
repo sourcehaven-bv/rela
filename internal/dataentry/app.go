@@ -540,6 +540,11 @@ type App struct {
 	// component allowed to import the MCP go-sdk (arch-lint).
 	mcpHandler http.Handler
 
+	// collab admits co-editing connections to the process-wide relay
+	// (TKT-CJL604). Nil unless [EnableCollab] ran: the desktop and the CLI
+	// serve no co-editing.
+	collab *collabHandler
+
 	// principalHeader is the name of the HTTP header that carries the
 	// principal identity (the --principal-header flag value), or ""
 	// when no header is configured. Used by noCacheMiddleware to emit

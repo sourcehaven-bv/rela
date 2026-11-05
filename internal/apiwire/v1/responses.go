@@ -908,6 +908,14 @@ type AppConfig struct {
 	// elsewhere (a denied copy is absent, not disabled). Not a permission —
 	// history is still ACL-gated per entity when the capability exists.
 	HistoryEnabled bool `json:"history_enabled"`
+	// CollabEnabled reports whether this server relays real-time co-editing
+	// of entity bodies (TKT-CJL604). Only rela-server enables it; the desktop
+	// app edits alone. Per deployment for the same reason as HistoryEnabled.
+	CollabEnabled bool `json:"collab_enabled"`
+	// CollabEpoch names the relay process's rooms. The SPA joins with it, so
+	// a client served by an earlier process is refused rather than refilling
+	// a room with its old document.
+	CollabEpoch string `json:"collab_epoch,omitempty"`
 }
 
 // Error is an RFC 7807 Problem Details response.

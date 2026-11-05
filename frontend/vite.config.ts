@@ -3,6 +3,7 @@ import vue from '@vitejs/plugin-vue'
 import type { Plugin } from 'vite'
 import { wrapCss } from './relaCssLayer'
 import { fileURLToPath, URL } from 'node:url'
+import { randomBytes } from 'node:crypto'
 
 // Get API base URL from environment variable or default to localhost:8080
 // For e2e tests, VITE_API_BASE is set by global-setup.ts
@@ -29,7 +30,20 @@ function relaCssLayer(): Plugin {
   }
 }
 
-export default defineConfig(({ mode }) => {
+// Writes the build id next to the bundle. rela-server embeds the file and
+// closes a co-editing connection from another build with code 4409, because
+// two builds may serialize the same document differently (TKT-CJL604).
+function relaBuildId(id: string): Plugin {
+  return {
+    name: 'rela-build-id',
+    apply: 'build',
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'build-id.txt', source: id + '\n' })
+    },
+  }
+}
+
+export default defineConfig(({ mode, command }) => {
   // Log at config evaluation time so we can see what port is being used
   console.error(`[vite.config] API proxy target: ${apiBase}`)
 
@@ -49,6 +63,9 @@ export default defineConfig(({ mode }) => {
   // a sourceMappingURL comment; stitch reads them from disk.
   const seqtrace = process.env.RELA_SEQTRACE === '1'
 
+  // The dev server has no build id; the relay skips the check for an empty one.
+  const buildId = command === 'build' ? randomBytes(8).toString('hex') : ''
+
   return {
     plugins: [
       vue({
@@ -64,10 +81,12 @@ export default defineConfig(({ mode }) => {
         },
       }),
       relaCssLayer(),
+      relaBuildId(buildId),
     ],
     base: '/',
     define: {
       __E2E_TEST_HOOKS__: JSON.stringify(e2eTestHooks),
+      __RELA_BUILD_ID__: JSON.stringify(buildId),
       // vue-i18n build flags: composition API only, so the legacy API is
       // tree-shaken; install the global $t and directives; no devtools in production.
       __VUE_I18N_FULL_INSTALL__: 'true',
@@ -91,6 +110,8 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: apiBase,
           changeOrigin: true,
+          // Co-editing runs over a WebSocket at /api/v1/_collab/.
+          ws: true,
         },
       },
     },

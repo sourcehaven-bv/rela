@@ -2069,6 +2069,8 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 			// The same nil check the history handler gates on, so the
 			// affordance and the endpoint cannot disagree.
 			HistoryEnabled: a.versions != nil,
+			CollabEnabled:  a.collab != nil,
+			CollabEpoch:    collabEpoch(a.collab),
 		},
 		AboutDescription: aboutDescription(s),
 		Styles:           s.StyleMap,

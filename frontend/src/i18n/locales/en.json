@@ -320,6 +320,11 @@
     "backToList": "Back to list",
     "titleLabel": "Title",
     "bodyLabel": "Body",
+    "collab": {
+      "expired": "Co-editing ended because the connection was lost for too long. Your changes are saved; open the body again to keep editing.",
+      "staleBuild": "A newer version of the app is available. Saving your changes and reloading.",
+      "unavailable": "Co-editing is not available right now. You are editing on your own; changes others make at the same time are merged when you save."
+    },
     "view": "View",
     "copyTo": "Copy to",
     "export": "Export",

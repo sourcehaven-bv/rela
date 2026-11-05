@@ -134,6 +134,11 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 	// SSE endpoints — excluded from reload-lock (long-lived connection)
 	mux.HandleFunc("/api/events", a.handleSSE)
 	mux.HandleFunc("/api/v1/_events", a.handleSSE)
+	// Co-editing relay (TKT-CJL604) — a WebSocket, so it stays off the
+	// inner mux whose writers cannot hijack, like SSE.
+	mux.HandleFunc("GET "+CollabPathPrefix+"{type}/{id}", func(w http.ResponseWriter, r *http.Request) {
+		handleCollab(a.collab, w, r)
+	})
 
 	// All other routes are wrapped with the reload-lock middleware
 	inner := http.NewServeMux()
