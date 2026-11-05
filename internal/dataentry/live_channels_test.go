@@ -246,7 +246,7 @@ func TestLive_ResyncSkipsTopiclessSubscriptions(t *testing.T) {
 		t.Fatalf("a resync replayed %v, want only the subscription with a topic %v", got, want)
 	}
 
-	pairs := env.app.live.collect(true, newRoundFilter(nil, nil, true))
+	pairs := env.app.live.collectPairs(newRoundFilter(nil, nil, true))
 	for _, p := range pairs {
 		if p.url == hiddenPath || p.url == secretPath {
 			t.Fatalf("a resync round collects %s, which has no topic; an overflow would frame it", p.url)

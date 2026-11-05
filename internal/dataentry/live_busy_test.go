@@ -903,11 +903,11 @@ func TestLiveHub_CollectMarksDueOnly(t *testing.T) {
 	pend()
 	f := newRoundFilter(nil, nil, false)
 	f.addMoved([]channels.Key{{Anchor: channels.Anchor{ID: "TKT-1"}, Type: "run"}})
-	require.Equal(t, map[string]bool{"list": true, "board": false}, dueOnly(h.collect(true, f)),
+	require.Equal(t, map[string]bool{"list": true, "board": false}, dueOnly(h.collectPairs(f)),
 		"the moved key selected the board; the list came only from pending")
 
 	pend()
-	require.Equal(t, map[string]bool{"list": false, "board": false}, dueOnly(h.collect(true, nil)),
+	require.Equal(t, map[string]bool{"list": false, "board": false}, dueOnly(h.collectPairs(nil)),
 		"a full round marks none")
 }
 

@@ -289,7 +289,7 @@ func TestLiveHub_CollectRechecksBusy(t *testing.T) {
 			c := h.register(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
 			s := &liveSub{url: "/api/v1/tickets?busy=run", busy: "run", syncing: true}
 			c.subs["board"] = s
-			h.collect(true, tc.only)
+			h.collectPairs(tc.only)
 			if s.recheck != tc.want {
 				t.Fatalf("recheck = %v, want %v", s.recheck, tc.want)
 			}

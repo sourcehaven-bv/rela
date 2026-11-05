@@ -155,7 +155,8 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 
 	// noCacheMiddleware sets no-cache headers on API responses so that
 	// browsers always fetch fresh data after file changes trigger a reload.
-	mux.Handle("/api/", a.noCacheMiddleware(inner))
+	// recordServed: see live_served.go.
+	mux.Handle("/api/", a.noCacheMiddleware(a.live.recordServed(inner)))
 
 	// Inbound-IdP webhook (POST /webhooks/idp) — mounted only when a receiver is
 	// configured (SetWebhookReceiver). Registered on the OUTER mux, NOT on
