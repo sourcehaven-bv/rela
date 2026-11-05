@@ -188,29 +188,20 @@ func validateDecimalScalar(propName string, propDef *PropertyDef, val any) *Vali
 		return &ValidationError{
 			Type:     ValidationErrorInvalidValue,
 			Property: propName,
-			Message:  fmt.Sprintf("Invalid decimal %v (use digits with an optional point, such as 12.50)", val),
+			Message:  "Invalid decimal (use digits with an optional point, such as 12.50)",
 		}
 	}
 	if propDef.Scale != nil && scale > *propDef.Scale {
 		return &ValidationError{
 			Type:     ValidationErrorInvalidValue,
 			Property: propName,
-			Message:  fmt.Sprintf("%v has %d digits after the point (at most %d allowed)", val, scale, *propDef.Scale),
+			Message:  fmt.Sprintf("Too many digits after the point (at most %d allowed)", *propDef.Scale),
 		}
 	}
 	if propDef.InDecimalRange(r) {
 		return nil
 	}
-	var msg string
-	switch {
-	case propDef.Min != nil && propDef.Max != nil:
-		msg = fmt.Sprintf("%v is out of range (must be from %d to %d)", val, *propDef.Min, *propDef.Max)
-	case propDef.Min != nil:
-		msg = fmt.Sprintf("%v is out of range (must be at least %d)", val, *propDef.Min)
-	default:
-		msg = fmt.Sprintf("%v is out of range (must be at most %d)", val, *propDef.Max)
-	}
-	return &ValidationError{Type: ValidationErrorInvalidValue, Property: propName, Message: msg}
+	return outOfRange(propName, propDef)
 }
 
 func isNumberKind(v any) bool {

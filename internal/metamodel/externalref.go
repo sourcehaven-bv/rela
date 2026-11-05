@@ -67,15 +67,12 @@ func ParseExternalRef(v any) (ExternalRefValue, error) {
 	if !ok {
 		return ExternalRefValue{}, fmt.Errorf("%w: must be an object with an \"id\"", ErrInvalidExternalRef)
 	}
-	keys := make([]string, 0, len(m))
+	// The key is part of the value, so the message does not name it
+	// ([ValidationError]).
 	for k := range m {
 		if k != "id" && k != "url" {
-			keys = append(keys, k)
+			return ExternalRefValue{}, fmt.Errorf("%w: unknown key (allowed: id, url)", ErrInvalidExternalRef)
 		}
-	}
-	if len(keys) > 0 {
-		sort.Strings(keys)
-		return ExternalRefValue{}, fmt.Errorf("%w: unknown key %q (allowed: id, url)", ErrInvalidExternalRef, keys[0])
 	}
 	var out ExternalRefValue
 	switch id := m["id"].(type) {

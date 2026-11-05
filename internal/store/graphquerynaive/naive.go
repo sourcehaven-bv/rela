@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"log/slog"
 	"slices"
 	"sort"
 	"strings"
@@ -353,12 +354,28 @@ func collectByType(ctx context.Context, r Reader, q store.GraphQuery) ([]*entity
 	for e, err := range r.ListEntities(ctx, store.EntityQuery{
 		Type: q.EntityType, Faces: q.Faces, FaceIn: q.FaceIn,
 	}) {
+		if skipUnreadable(q, err) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, e)
 	}
 	return out, nil
+}
+
+// skipUnreadable reports whether a candidate row's err is one q leaves out:
+// the row's values cannot be read ([store.ErrConflictedRow]) and q is an ACL
+// read-grant query ([store.GraphQuery.SkipUnreadable]), so a left-out row is
+// hidden. Every other query fails with err. The skip is logged at debug
+// level, because a list logs it on every request while the conflict is open.
+func skipUnreadable(q store.GraphQuery, err error) bool {
+	if !q.SkipUnreadable || !errors.Is(err, store.ErrConflictedRow) {
+		return false
+	}
+	slog.Debug("graphquery: hiding a row with unresolved merge conflicts", "err", err)
+	return true
 }
 
 // collectBranchPrimes is collectByType for a world-scoped query carrying
@@ -383,22 +400,17 @@ func collectBranchPrimes(
 	for e, err := range r.ListEntities(ctx, store.EntityQuery{
 		Type: q.EntityType, Faces: store.AllFaces(), FaceIn: q.FaceIn,
 	}) {
+		if skipUnreadable(q, err) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
 		holds, seen := branchHolds[e.ID]
 		if !seen {
-			holds = make([]bool, len(q.Any))
-			for i, br := range q.Any {
-				ok := true
-				if br.HasInbound != nil {
-					var mErr error
-					ok, mErr = matchesPredicate(ctx, r, e, *br.HasInbound, store.DirectionIncoming, q.Faces)
-					if mErr != nil {
-						return nil, mErr
-					}
-				}
-				holds[i] = ok
+			var hErr error
+			if holds, hErr = branchRelationHolds(ctx, r, e, q); hErr != nil {
+				return nil, hErr
 			}
 			branchHolds[e.ID] = holds
 		}
@@ -424,6 +436,24 @@ func collectBranchPrimes(
 	}
 	slices.SortFunc(out, func(a, b *entity.Entity) int { return strings.Compare(a.ID, b.ID) })
 	return out, nil
+}
+
+// branchRelationHolds evaluates the relation half of each branch of q.Any
+// for e. A branch without one holds.
+func branchRelationHolds(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery) ([]bool, error) {
+	holds := make([]bool, len(q.Any))
+	for i, br := range q.Any {
+		ok := true
+		if br.HasInbound != nil {
+			var err error
+			ok, err = matchesPredicate(ctx, r, e, *br.HasInbound, store.DirectionIncoming, q.Faces)
+			if err != nil {
+				return nil, err
+			}
+		}
+		holds[i] = ok
+	}
+	return holds, nil
 }
 
 func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery) (bool, error) {

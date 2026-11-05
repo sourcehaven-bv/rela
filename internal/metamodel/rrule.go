@@ -24,11 +24,15 @@ func ValidateRrule(s string) error {
 	}
 
 	if opt.Interval > 1 && opt.Dtstart.IsZero() {
-		return errors.New("INTERVAL > 1 requires DTSTART in the RRULE string")
+		return errRruleIntervalWithoutDtstart
 	}
 
 	return nil
 }
+
+// errRruleIntervalWithoutDtstart is the [ValidateRrule] error for a rule
+// whose cadence would drift.
+var errRruleIntervalWithoutDtstart = errors.New("INTERVAL > 1 requires DTSTART in the RRULE string")
 
 // ErrRruleExhausted marks "this rule has no further occurrence" — a
 // COUNT that has been reached or an UNTIL that has passed. It is

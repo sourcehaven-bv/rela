@@ -1043,7 +1043,7 @@ func TestValidatePropertyValue_Rrule(t *testing.T) {
 		{"valid interval with dtstart", "FREQ=WEEKLY;INTERVAL=2;DTSTART=20250106T000000Z", false, ""},
 		{"valid monthly bymonthday", "FREQ=MONTHLY;BYMONTHDAY=15", false, ""},
 		{"valid monthly last day", "FREQ=MONTHLY;BYMONTHDAY=-1", false, ""},
-		{"invalid string", "INVALID_RRULE", true, "invalid RRULE"},
+		{"invalid string", "INVALID_RRULE", true, "Invalid RRULE"},
 		{"interval without dtstart", "FREQ=WEEKLY;INTERVAL=2", true, "INTERVAL > 1 requires DTSTART"},
 		{"interval 3 without dtstart", "FREQ=MONTHLY;INTERVAL=3", true, "INTERVAL > 1 requires DTSTART"},
 		{"not a string", 42, true, "Must be an RRULE string"},

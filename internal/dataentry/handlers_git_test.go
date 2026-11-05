@@ -154,15 +154,43 @@ func TestHandleGitStatus_CanSync(t *testing.T) {
 	}
 }
 
-// TestGitStatusResponse_ConflictFiles: only a principal who may sync gets the
-// conflicting paths; everyone sees that a conflict exists.
+// TestGitStatusResponse_ConflictFiles: only a principal who may sync gets
+// conflicting paths, and of the data paths only the ones the conflict list
+// shows them (BUG-197XPAU); everyone sees that a conflict exists. A data
+// file without markers (a modify/delete conflict) is judged by the row its
+// path names. An attachment path is judged by its owning entity. A config
+// path is always listed: the configuration is not a secret. Any other path
+// is left out, because it may name a hidden entity.
 func TestGitStatusResponse_ConflictFiles(t *testing.T) {
-	status := &git.Status{Available: true, Conflict: true, ConflictFiles: []string{"entities/ticket/TKT-9.md"}}
+	app, _, d, _ := conflictReadGateApp(t)
+	status := &git.Status{Available: true, Conflict: true, ConflictFiles: []string{
+		"entities/ticket/TKT-001.md",
+		"entities/feature/FEAT-001.md",
+		"relations/TKT-001--implements--FEAT-001.md",
+		"entities/ticket/TKT-404.md",
+		"entities/feature/FEAT-404.md",
+		"entities/ticket/TKT-001/nested.md",
+		"attachments/TKT-001/screenshot/a.png",
+		"attachments/FEAT-001/screenshot/a.png",
+		"attachments/TKT-404/screenshot/a.png",
+		"attachments/TKT-001",
+		"schema.yaml",
+		"scripts/hook.lua",
+		"README.md",
+		"comments/FEAT-001.json",
+	}}
+	ctx := asAlice(t, d, httptest.NewRequest(http.MethodGet, "/api/v1/_git/status", http.NoBody)).Context()
 
-	hidden := gitStatusResponse(status, false)
+	hidden, err := app.gitStatusResponse(ctx, status, false)
+	require.NoError(t, err)
 	require.True(t, hidden.Conflict)
 	require.Empty(t, hidden.ConflictFiles)
 
-	shown := gitStatusResponse(status, true)
-	require.Equal(t, status.ConflictFiles, shown.ConflictFiles)
+	shown, err := app.gitStatusResponse(ctx, status, true)
+	require.NoError(t, err)
+	require.True(t, shown.Conflict)
+	require.Equal(t, []string{
+		"entities/ticket/TKT-001.md", "entities/ticket/TKT-404.md",
+		"attachments/TKT-001/screenshot/a.png", "schema.yaml", "scripts/hook.lua",
+	}, shown.ConflictFiles)
 }

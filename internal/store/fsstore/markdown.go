@@ -1,7 +1,6 @@
 package fsstore
 
 import (
-	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -14,10 +13,13 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/frontmatter"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// errConflictedFile is returned when a file has unresolved git conflict markers.
-var errConflictedFile = errors.New("file has unresolved git conflicts")
+// errConflictedFile is returned when a file has unresolved git conflict
+// markers. It is [store.ErrConflictedRow], so a caller outside the package
+// can tell it from a parse error.
+var errConflictedFile = store.ErrConflictedRow
 
 const frontmatterDelimiter = frontmatter.Delimiter
 
