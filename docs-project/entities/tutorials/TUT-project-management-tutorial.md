@@ -47,7 +47,7 @@ Replace the default `schema.yaml` with this project management configuration:
 
 ```yaml
 version: "1.0"
-namespace: "https://example.org/ontology/project#"
+iri: "https://example.org/ontology/project#"
 
 types:
   status:

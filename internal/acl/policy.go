@@ -1512,6 +1512,9 @@ type MetamodelView interface {
 	// RelationInfo describes relationType. An undeclared type yields
 	// RelationInfo{Exists:false}.
 	RelationInfo(relationType string) RelationInfo
+	// Variants returns the concrete variants of an abstract entity type
+	// and true, or nil and false when entityType is not abstract.
+	Variants(entityType string) ([]string, bool)
 }
 
 // ValidateAgainstMetamodel enforces the schema-dependent invariants that
@@ -1550,6 +1553,11 @@ type MetamodelView interface {
 func (p *Policy) ValidateAgainstMetamodel(meta MetamodelView) error {
 	if meta == nil {
 		return errors.New("acl: ValidateAgainstMetamodel: metamodel view must be non-nil")
+	}
+	// Abstract type names expand first, so every check below and the
+	// compiled evaluator see only concrete types.
+	if err := expandAbstractTypes(p, meta); err != nil {
+		return err
 	}
 	prop := strings.TrimSpace(p.PrincipalProperty)
 	userType := strings.TrimSpace(p.UserEntityType)

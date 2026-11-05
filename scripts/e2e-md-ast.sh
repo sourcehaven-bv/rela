@@ -33,7 +33,7 @@ fi
 say "Seeding minimal project at ${DEMO}"
 cat > "${DEMO}/schema.yaml" <<'YAML'
 version: "1.0"
-namespace: "https://example.com/md-e2e#"
+iri: "https://example.com/md-e2e#"
 entities:
   note:
     label: Note

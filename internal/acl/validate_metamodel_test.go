@@ -21,6 +21,12 @@ type fakeMeta struct {
 	aliases   map[string]string
 	relInfo   map[string]acl.RelationInfo
 	world     string
+	variants  map[string][]string
+}
+
+func (m fakeMeta) Variants(t string) ([]string, bool) {
+	v, ok := m.variants[t]
+	return v, ok
 }
 
 func (m fakeMeta) DefaultWorld() string {

@@ -205,7 +205,7 @@ func buildCandidateEntity(
 ) (*entity.Entity, []entity.Warning, error) {
 	entityDef, ok := deps.Meta.GetEntityDef(entityType)
 	if !ok {
-		return nil, nil, fmt.Errorf("unknown entity type: %s", entityType)
+		return nil, nil, metamodel.UnknownEntityTypeError(deps.Meta, entityType)
 	}
 
 	entityID, err := resolveCandidateID(ctx, deps, entityType, entityDef, opts)
@@ -216,7 +216,7 @@ func buildCandidateEntity(
 	e := entity.New(entityID, entityType)
 	e.Face = opts.Face
 
-	tmpl, err := deps.Templater.EntityTemplate(ctx, entityType, opts.TemplateVariant)
+	tmpl, err := templating.EntityTemplateFor(ctx, deps.Templater, deps.Meta, entityType, opts.TemplateVariant)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load template: %w", err)
 	}
@@ -271,7 +271,7 @@ func buildCandidateEntity(
 func generateID(ctx context.Context, deps Deps, entityType, prefix string, spread int) (string, error) {
 	entityDef, ok := deps.Meta.GetEntityDef(entityType)
 	if !ok {
-		return "", fmt.Errorf("unknown entity type: %s", entityType)
+		return "", metamodel.UnknownEntityTypeError(deps.Meta, entityType)
 	}
 	if entityDef.IsManualID() {
 		return "", fmt.Errorf("entity type %s uses manual IDs", entityType)
@@ -464,7 +464,7 @@ func (d Deps) isIdentityRelation(relType string) bool {
 func (d Deps) requireCreateFaceFor(entityType string, face entity.Face) error {
 	def, ok := d.Meta.GetEntityDef(entityType)
 	if !ok {
-		return fmt.Errorf("unknown entity type: %s", entityType)
+		return metamodel.UnknownEntityTypeError(d.Meta, entityType)
 	}
 	if len(def.Faces) == 0 {
 		if !face.IsImplicit() {

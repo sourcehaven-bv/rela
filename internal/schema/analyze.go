@@ -159,7 +159,7 @@ func findEntityTypeReferences(
 
 	// Check metamodel validations
 	for _, v := range meta.Validations {
-		if v.EntityType == entityType {
+		if v.TargetTypes() != nil && v.AppliesToType(entityType) {
 			refs = append(refs, Reference{
 				File:    "metamodel.yaml",
 				Section: "validations." + v.Name,

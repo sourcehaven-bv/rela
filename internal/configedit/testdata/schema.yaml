@@ -3,7 +3,7 @@
 # Dogfooding: using rela to track architecture, features, tickets, QA, and docs
 
 version: "1.0"
-namespace: "https://rela.dev/ontology/development#"
+iri: "https://rela.dev/ontology/development#"
 types:
   # Lifecycle statuses
   concept_status:

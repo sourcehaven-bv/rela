@@ -506,7 +506,7 @@ func matchesFilter(rule metamodel.ValidationRule, filter ValidationFilter) bool 
 		return rule.Name == filter.RuleName
 	}
 	if filter.EntityType != "" {
-		return rule.EntityType == filter.EntityType
+		return rule.TargetTypes() != nil && rule.AppliesToType(filter.EntityType)
 	}
 	return true
 }

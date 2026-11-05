@@ -21,7 +21,7 @@ say "Building rela → ${BIN}"
 say "Seeding metamodel at ${DEMO}"
 cat > "${DEMO}/schema.yaml" <<'YAML'
 version: "1.0"
-namespace: "https://example.com/demo#"
+iri: "https://example.com/demo#"
 types:
   review_response_status:
     values: [open, addressed]

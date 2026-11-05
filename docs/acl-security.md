@@ -817,6 +817,28 @@ gate: it runs with the operator's own access. The remote endpoint
 expressible; it does not by itself restrict a locally-launched
 `rela mcp`.
 
+## Abstract type names expand at load
+
+An abstract schema type stores no entities, so a grant on its name would
+match nothing. rela rewrites every abstract name in `acl.yaml` into its
+variants when the policy loads, before the evaluator is built. Like the
+ceiling compilation, this happens once at load and adds no runtime check.
+
+The expansion never widens what a policy hides:
+
+- Every type list expands, including each `deny_*` list, so a deny on the
+  abstract name denies every variant.
+- A ceiling's `redact:` on the abstract type applies to every variant, even
+  one with its own `visible:` list. The redacted fields are removed from
+  that list.
+- For every other per-type map, a variant's own entry replaces the
+  abstract one. The abstract entry's fields never add to it, so a variant
+  entry written to keep a field from a role does keep it.
+
+A grant on the abstract name also covers a variant that a later include
+adds. Review `acl.yaml` when you add a variant. `TestAbstractACL_*` in
+`internal/affordances` pins these rules on the read path.
+
 ## Fail-loud on malformed `acl.yaml`
 
 A malformed `acl.yaml` fails boot. This is intentional: silently

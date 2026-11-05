@@ -3467,3 +3467,7 @@ func newValidator(
 	// coverage-ignore: invariant: every argument is non-nil at the one call site
 	panic(err)
 }
+
+func (v metamodelView) Variants(entityType string) ([]string, bool) {
+	return metamodel.VariantsOf(v.m, entityType)
+}
