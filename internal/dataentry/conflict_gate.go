@@ -30,7 +30,8 @@ import (
 //
 // A file the gate cannot judge is unreadable: one outside those two
 // directories, one whose directory maps to no type, one whose name does not
-// parse, or one with a side whose identity is missing. Hidden files are left
+// parse, one with a side whose identity is missing, or one with a side the
+// parser read as the other kind than its directory says. Hidden files are left
 // out of the list and answer the uniform 404 on the detail and the resolve,
 // the same answer as a missing file.
 
@@ -81,6 +82,11 @@ func identifyConflict(paths *project.Context, meta *metamodel.Metamodel, cf *con
 	for _, side := range conflictSides(cf) {
 		e := side.Entity
 		switch {
+		case side.Relation != nil:
+			// The parser read a relation where the directory says entity
+			// (a file named like FROM--type--TO.md). Judging it on either
+			// branch would skip the other's redaction.
+			return conflictIdentity{}
 		case e == nil:
 		case e.ID != "" && e.Type != "":
 			out.rows = append(out.rows, &entityPkg.Entity{ID: e.ID, Type: e.Type, Face: face})
@@ -111,6 +117,10 @@ func identifyRelationConflict(stem string, cf *conflict.ConflictedFile) conflict
 	edge := out.edge
 	out.rels = append(out.rels, &edge)
 	for _, side := range conflictSides(cf) {
+		if side.Entity != nil {
+			// The parser read an entity where the directory says relation.
+			return conflictIdentity{}
+		}
 		if side.Relation == nil {
 			continue
 		}

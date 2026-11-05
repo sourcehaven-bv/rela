@@ -28,7 +28,8 @@ RR-RQ0M3G6, RR-U6VT8K3, RR-2PDNIPS, RR-FICTL99 (significant, addressed),
 RR-2OKF1P7, RR-SUZWM52, RR-NEUFOGD (minor, addressed), RR-XCAZEMK (minor,
 wont-fix), RR-QINIFW9 (minor, deferred), RR-NF1EIMI, RR-GPDMROX, RR-OZC6RNS
 (nit, addressed). RR-U6VT8K3, RR-NF1EIMI and RR-GPDMROX are linked to
-BUG-0E6S7Q, the rest to BUG-Q3Z15V.
+BUG-0E6S7Q, the rest to BUG-Q3Z15V. RR-9LYVP2G (significant, addressed)
+came from the security review of the PR.
 
 The critical finding fails closed with a 500 and discloses nothing. It is a
 store-level behaviour shared with the type's list routes, so it is tracked in

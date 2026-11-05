@@ -650,3 +650,63 @@ func TestV1ConflictResolve_FileIdentity(t *testing.T) {
 		})
 	}
 }
+
+// TestV1Conflicts_KindFollowsDirectory pins that the parser and the gate
+// agree on whether a file is an entity or a relation. An entity file named
+// like a relation answers the missing file's 404, since no entity id holds
+// "--". A "--" in a directory name above the file does not make an entity
+// file a relation.
+func TestV1Conflicts_KindFollowsDirectory(t *testing.T) {
+	t.Run("entity file named like a relation", func(t *testing.T) {
+		app, root := newConflictTestApp(t)
+		setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}})
+		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "a"}})
+		const rel = "entities/ticket/TKT-001--blocks--TKT-002.md"
+		writeProjectFile(t, root, rel, conflictedTicket)
+
+		detail := func(rel string) *httptest.ResponseRecorder {
+			rec := httptest.NewRecorder()
+			app.handleV1ConflictRoutes(rec,
+				httptest.NewRequest(http.MethodGet, "/api/v1/_conflicts/"+rel, http.NoBody))
+			return rec
+		}
+		got, want := detail(rel), detail("entities/ticket/NOPE.md")
+		if got.Code != http.StatusNotFound ||
+			fmt.Sprint(problemWithoutInstance(t, got)) != fmt.Sprint(problemWithoutInstance(t, want)) {
+
+			t.Errorf("detail = %d %s, want the missing file's %d %s", got.Code, got.Body, want.Code, want.Body)
+		}
+		if rec := postConflictResolve(app, `{"path":"`+rel+`","content_choice":"theirs"}`); rec.Code != http.StatusNotFound {
+			t.Errorf("resolve = %d, want 404: %s", rec.Code, rec.Body)
+		}
+	})
+
+	t.Run("separator in a directory name", func(t *testing.T) {
+		app := newTestAppV1(t)
+		root := filepath.Join(t.TempDir(), "TKT-001--blocks--TKT-002")
+		bindRepo(app, root)
+		app.paths.EntitiesDir = filepath.Join(root, "entities")
+		app.paths.RelationsDir = filepath.Join(root, "relations")
+		setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}})
+		writeProjectFile(t, root, "entities/ticket/TKT-001.md", conflictedTicket)
+
+		rec := httptest.NewRecorder()
+		app.handleV1ConflictRoutes(rec,
+			httptest.NewRequest(http.MethodGet, "/api/v1/_conflicts/entities/ticket/TKT-001.md", http.NoBody))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("detail = %d: %s", rec.Code, rec.Body)
+		}
+		var got v1.ConflictDetail
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if got.EntityID != "TKT-001" || got.EntityType != "ticket" {
+			t.Errorf("detail judged as %q/%q, want ticket/TKT-001", got.EntityType, got.EntityID)
+		}
+		for _, diff := range got.PropertyDiffs {
+			if diff.Property == "title" {
+				t.Errorf("hidden property served: %+v", diff)
+			}
+		}
+	})
+}

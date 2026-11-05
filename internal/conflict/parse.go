@@ -3,6 +3,7 @@ package conflict
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -186,10 +187,12 @@ func AnalyzeConflict(cf *ConflictedFile) *Info {
 	return info
 }
 
-// isRelationFile checks if a path is a relation file based on naming convention.
+// isRelationFile reports whether path names a relation file, stored as
+// FROM--type--TO.md. Only the file name counts: a "--" in a directory name
+// must not turn an entity file into a relation. Callers that know the
+// project layout also check the directory (see dataentry identifyConflict).
 func isRelationFile(path string) bool {
-	// Relations are stored as FROM--type--TO.md
-	base := strings.TrimSuffix(path, ".md")
+	base := strings.TrimSuffix(filepath.Base(path), ".md")
 	parts := strings.Split(base, "--")
 	return len(parts) == 3
 }
