@@ -158,8 +158,9 @@ func TestHandleGitStatus_CanSync(t *testing.T) {
 // conflicting paths, and of the data paths only the ones the conflict list
 // shows them (BUG-197XPAU); everyone sees that a conflict exists. A data
 // file without markers (a modify/delete conflict) is judged by the row its
-// path names. A config path is always listed: the configuration is not a
-// secret.
+// path names. An attachment path is judged by its owning entity. A config
+// path is always listed: the configuration is not a secret. Any other path
+// is left out, because it may name a hidden entity.
 func TestGitStatusResponse_ConflictFiles(t *testing.T) {
 	app, _, d, _ := conflictReadGateApp(t)
 	status := &git.Status{Available: true, Conflict: true, ConflictFiles: []string{
@@ -169,7 +170,14 @@ func TestGitStatusResponse_ConflictFiles(t *testing.T) {
 		"entities/ticket/TKT-404.md",
 		"entities/feature/FEAT-404.md",
 		"entities/ticket/TKT-001/nested.md",
+		"attachments/TKT-001/screenshot/a.png",
+		"attachments/FEAT-001/screenshot/a.png",
+		"attachments/TKT-404/screenshot/a.png",
+		"attachments/TKT-001",
+		"schema.yaml",
+		"scripts/hook.lua",
 		"README.md",
+		"comments/FEAT-001.json",
 	}}
 	ctx := asAlice(t, d, httptest.NewRequest(http.MethodGet, "/api/v1/_git/status", http.NoBody)).Context()
 
@@ -181,6 +189,8 @@ func TestGitStatusResponse_ConflictFiles(t *testing.T) {
 	shown, err := app.gitStatusResponse(ctx, status, true)
 	require.NoError(t, err)
 	require.True(t, shown.Conflict)
-	require.Equal(t, []string{"entities/ticket/TKT-001.md", "entities/ticket/TKT-404.md", "README.md"},
-		shown.ConflictFiles)
+	require.Equal(t, []string{
+		"entities/ticket/TKT-001.md", "entities/ticket/TKT-404.md",
+		"attachments/TKT-001/screenshot/a.png", "schema.yaml", "scripts/hook.lua",
+	}, shown.ConflictFiles)
 }

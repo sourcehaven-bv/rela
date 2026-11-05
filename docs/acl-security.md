@@ -2567,10 +2567,20 @@ missing file, when it names an entity the principal may not read, or a
 relation with such an endpoint. The detail leaves out every property that
 `visible:` hides on either side.
 
-The status and the sync gate only paths under `entities/` and `relations/`.
-A conflict in `schema.yaml` or another config file is always listed, because
-the configuration is not a secret. A data file without conflict markers, such
-as one a branch deleted, is judged by the row its path names.
+The status and the sync fail closed. They list a conflicting path only in
+these cases:
+
+- A file under `entities/` or `relations/` that the principal may read. A
+  data file without conflict markers, such as one a branch deleted, is judged
+  by the row its path names.
+- A file under `attachments/<id>/` when the principal may read entity `<id>`.
+- A config file: `schema.yaml`, `data-entry.yaml`, `acl.yaml` and the other
+  project-root config files, or a file under `scripts/`, `lib/`, `actions/`,
+  `validations/`, `migrations/`, `templates/`, `custom/` or `apps/`. The
+  configuration is not a secret.
+
+Every other path is left out, because it may name an entity whose existence
+is secret.
 
 The store cannot read the values of a file that still has conflict markers.
 A read grant through `role_relations` therefore does not match that row: it

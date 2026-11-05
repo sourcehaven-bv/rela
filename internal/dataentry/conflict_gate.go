@@ -244,51 +244,121 @@ func conflictsReadable(ctx context.Context, vr visibleReader, ids []conflictIden
 	return out, nil
 }
 
+// conflictConfigFiles are the project-root config files whose conflict path
+// is listed to every caller of the status and the sync. The configuration is
+// not a secret, so naming one discloses nothing.
+var conflictConfigFiles = map[string]bool{
+	project.SchemaFile: true, project.LegacySchemaFile: true,
+	"data-entry.yaml": true, "desktop.yaml": true, "acl.yaml": true, "schedules.yaml": true,
+	"subscriptions.yaml": true, "mail-templates.yaml": true, "classification.yaml": true,
+	"realtime.yaml": true,
+}
+
+// conflictConfigDirs are the project directories that hold only config, for
+// the same list.
+var conflictConfigDirs = map[string]bool{
+	"scripts": true, "lib": true, "actions": true, "validations": true, "migrations": true,
+	project.TemplatesDir: true, project.CustomDir: true, project.AppsDir: true,
+}
+
 // readableConflictPaths returns the paths in relPaths the principal may see,
 // in order. The paths are relative to the project root, as git reports them.
 // It is the gate of the conflict list for a surface that names conflict
 // paths without listing conflicts (BUG-197XPAU).
 //
-// Only a path under the entity or relation directory names data, so only
-// those are gated; a conflict in schema.yaml or another config file is
-// always listed, because the configuration is not a secret. A data file that
-// does not parse as conflicted, such as one a branch deleted, is judged by
-// the row its path names. A data path the gate cannot judge is left out.
+// It fails closed. A path is kept only when it is one of these:
+//
+//   - A file under the entity or relation directory whose identity the
+//     principal may read. A data file that does not parse as conflicted,
+//     such as one a branch deleted, is judged by the row its path names.
+//   - A file under <attachments>/<id>/ when the principal may read some face
+//     of id. The attachment of a deleted entity is left out.
+//   - A config file in [conflictConfigFiles] or under [conflictConfigDirs].
+//
+// Every other path is left out, because it may name an entity whose
+// existence is secret.
 func readableConflictPaths(
 	ctx context.Context, vr visibleReader, paths *project.Context, meta *metamodel.Metamodel, relPaths []string,
 ) ([]string, error) {
+	keep := make([]bool, len(relPaths))
 	gated := make([]int, 0, len(relPaths))
 	ids := make([]conflictIdentity, 0, len(relPaths))
+	attachOwners := map[int]string{}
+	attachDir := filepath.Join(paths.Root, project.AttachmentsDir)
 	for i, rel := range relPaths {
 		abs := filepath.Join(paths.Root, filepath.FromSlash(rel))
 		_, inEntities := pathUnder(paths.EntitiesDir, abs)
 		_, inRelations := pathUnder(paths.RelationsDir, abs)
-		if !inEntities && !inRelations {
+		if inEntities || inRelations {
+			cf, err := conflict.ParseConflictedFile(abs, meta)
+			if err != nil {
+				cf = &conflict.ConflictedFile{Path: abs}
+			}
+			gated = append(gated, i)
+			ids = append(ids, identifyConflict(paths, meta, cf))
 			continue
 		}
-		cf, err := conflict.ParseConflictedFile(abs, meta)
-		if err != nil {
-			cf = &conflict.ConflictedFile{Path: abs}
+		if under, ok := pathUnder(attachDir, abs); ok {
+			if owner, _, nested := strings.Cut(under, string(filepath.Separator)); nested && owner != "" {
+				attachOwners[i] = owner
+			}
+			continue
 		}
-		gated = append(gated, i)
-		ids = append(ids, identifyConflict(paths, meta, cf))
+		keep[i] = isConflictConfigPath(paths.Root, abs)
 	}
 	readable, err := conflictsReadable(ctx, vr, ids)
 	if err != nil {
 		return nil, err
 	}
-	hidden := make(map[int]bool, len(gated))
 	for j, i := range gated {
-		hidden[i] = !readable[j]
+		keep[i] = readable[j]
+	}
+	if err := keepReadableAttachments(ctx, vr, attachOwners, keep); err != nil {
+		return nil, err
 	}
 	// Nil, not empty, when nothing is left, so an omitempty field drops it.
 	var out []string
 	for i, rel := range relPaths {
-		if !hidden[i] {
+		if keep[i] {
 			out = append(out, rel)
 		}
 	}
 	return out, nil
+}
+
+// keepReadableAttachments sets keep[i] for each attachment path i whose
+// owning entity id the principal may read at some face. It asks one batch
+// for every owner.
+func keepReadableAttachments(ctx context.Context, vr visibleReader, owners map[int]string, keep []bool) error {
+	if len(owners) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(owners))
+	for _, id := range owners {
+		ids = append(ids, id)
+	}
+	types, err := vr.readableTypes(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for i, id := range owners {
+		keep[i] = types[id] != ""
+	}
+	return nil
+}
+
+// isConflictConfigPath reports whether abs, under root, is a config file
+// whose conflict path any caller may see.
+func isConflictConfigPath(root, abs string) bool {
+	rel, ok := pathUnder(root, abs)
+	if !ok {
+		return false
+	}
+	first, _, nested := strings.Cut(rel, string(filepath.Separator))
+	if nested {
+		return conflictConfigDirs[first]
+	}
+	return conflictConfigFiles[first]
 }
 
 // conflictReadableOr404 gates one conflicted file's identity. It writes the
