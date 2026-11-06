@@ -199,9 +199,6 @@ const (
 	MaxSessionReminders = 8
 	// MaxReminderCount is the largest `max` a reminder may declare.
 	MaxReminderCount = 1000
-	// ReminderSlack is added to a reminder's next slot in the stored due
-	// time, so one leader round serves several nearby slots.
-	ReminderSlack = 30 * time.Second
 )
 
 // Session outputs (`session.states.<s>.on.<type>.outputs`) and the runner

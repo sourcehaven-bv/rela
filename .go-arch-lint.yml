@@ -143,6 +143,14 @@ components:
   # the channel service share.
   realtimecfg:      { in: internal/realtimecfg }
   realtimelimits:   { in: internal/realtimelimits }
+  # The session engine (TKT-RRHP2N5): states, timers, reminders and branch
+  # choice, below the channel store, realtime.yaml and the channel service.
+  # It imports no other component and keeps its own limits, so flows run on
+  # it without a channel.
+  flow:             { in: internal/flow }
+  # flows.yaml loader (TKT-XHANLJU): declared processes compiled onto the
+  # engine, checked against the schema and acl.yaml.
+  flowcfg:          { in: internal/flowcfg }
   # Runes that make text show something other than what it holds.
   texthazard:       { in: internal/texthazard }
   # The YAML 1.1 boolean spellings a config key refuses unquoted.
@@ -540,6 +548,7 @@ deps:
       - datamigration
       - entitymanager
       - filter
+      - flowcfg
       - importer
       # `rela lease` (TKT-B610IP) speaks its request, lease and error types;
       # the access checks stay in lease.Service.
@@ -868,6 +877,7 @@ deps:
       - mail
       - mailrender
       - filter
+      - flowcfg
       # The composition root picks the userstate backend, the same way it
       # picks the store backend. Consumers take the userstate.Store seam.
       - userstate
@@ -1496,11 +1506,23 @@ deps:
       - predicate
       - filter
       - metamodel
+  # flows.yaml consumes the schema and acl.yaml; neither knows it exists.
+  flowcfg:
+    mayDependOn:
+      - acl
+      - flow
+      - mermaid
+      - metamodel
+      - predicate
+      - predicatefns
+      - principal
   # realtime.yaml consumes the schema and acl.yaml; neither knows it exists.
   # GUARD: metamodel and acl must never list realtimecfg.
   realtimecfg:
     mayDependOn:
       - acl
+      # The compiled session builds the engine's definition.
+      - flow
       - metamodel
       - predicate
       - predicatefns
@@ -1713,6 +1735,8 @@ deps:
   channels:
     mayDependOn:
       - entity
+      # The stored session is the engine's instance type.
+      - flow
       # A leaf: the reply rule refuses rela's own identities and unknown.
       - principal
   # The channel service (TKT-ZU7P13): authorization, validation, rate limits
@@ -1725,6 +1749,7 @@ deps:
     mayDependOn:
       - channels
       - entity
+      - flow
       # The one code-span parser, shared with the entity mention index.
       - mentions
       - metamodel

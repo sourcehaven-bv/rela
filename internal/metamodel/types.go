@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -14,8 +15,13 @@ import (
 // and the projections are built by [NewRenderProjection] and
 // [NewShapeProjection].
 type Metamodel struct {
-	Version   string `yaml:"version"`
-	Namespace string `yaml:"namespace"`
+	Version string `yaml:"version"`
+	// IRI is the optional ontology IRI of the schema. Display-only.
+	IRI string `yaml:"iri,omitempty"`
+	// Namespace is the legacy spelling of IRI in the root file. The loader
+	// moves an IRI-shaped value to IRI and clears this field; `namespace:`
+	// otherwise belongs to included files (see namespaces.go).
+	Namespace string `yaml:"namespace,omitempty"`
 	// Description is optional end-user prose describing what this deployment /
 	// application is for. Display-only, surfaced by the generated documentation
 	// (the `rela docs` generator — FEAT-G4VO53). Empty by default; the metamodel
@@ -91,9 +97,10 @@ type Metamodel struct {
 	TaskItemConversions map[string]TaskItemConversionDef `yaml:"task_item_conversions,omitempty"`
 
 	// Computed lookups (not from YAML)
-	aliasMap      map[string]string // alias -> canonical name
-	inverseOwners map[string]string // inverse name -> owning canonical relation name
-	worldOrder    []string          // world names in YAML order; see [WorldOrderOf]
+	aliasMap      map[string]string       // alias -> canonical name
+	inverseOwners map[string]string       // inverse name -> owning canonical relation name
+	worldOrder    []string                // world names in YAML order; see [WorldOrderOf]
+	abstracts     map[string]AbstractType // abstract types removed at load; see [AbstractTypes]
 }
 
 // ConversionDef is an operator-declared transformation from one entity type
@@ -216,6 +223,30 @@ type ValidationRule struct {
 	// LuaArgs specifies arguments to pass to Lua validation scripts.
 	// Available as rela.args in the Lua runtime.
 	LuaArgs []string `yaml:"lua_args,omitempty"`
+
+	// variantTypes holds the variants of an abstract EntityType, set by the
+	// loader. EntityType keeps the name as written; [ValidationRule.TargetTypes]
+	// is the one reader of both.
+	variantTypes []string
+}
+
+// TargetTypes returns the entity types the rule applies to, or nil when it
+// applies to every type. An `entity_type:` naming an abstract type returns
+// its variants.
+func (v *ValidationRule) TargetTypes() []string {
+	if len(v.variantTypes) > 0 {
+		return slices.Clone(v.variantTypes)
+	}
+	if v.EntityType == "" {
+		return nil
+	}
+	return []string{v.EntityType}
+}
+
+// AppliesToType reports whether the rule applies to entities of type t.
+func (v *ValidationRule) AppliesToType(t string) bool {
+	types := v.TargetTypes()
+	return types == nil || slices.Contains(types, t)
 }
 
 // GetSeverity returns the severity level, defaulting to "warning"
@@ -392,6 +423,67 @@ type EntityDef struct {
 	// ABSENT (the common case) means no scoping: every surface sees every
 	// row, exactly as before this key existed.
 	QueryScopes map[string]string `yaml:"query_scopes,omitempty"`
+
+	// Abstract marks a shared shape that stores no entities. Concrete types
+	// name it in `extends:` to become its variants. The loader removes
+	// abstract types after expansion, so a loaded metamodel's Entities holds
+	// only concrete types; [AbstractTypes] lists what was removed. See
+	// namespaces.go.
+	Abstract AbstractDef `yaml:"abstract,omitempty"`
+
+	// Extends names the abstract type this type is a variant of. The loader
+	// merges the parent's shape into this definition and keeps the name for
+	// introspection (`rela schema`, the REST schema). Empty for a type that
+	// is not a variant.
+	Extends string `yaml:"extends,omitempty"`
+
+	// source is where the definition was written ("isms.yaml:6"), recorded
+	// at load so expansion errors can point back to it.
+	source sourcePos
+}
+
+// AbstractDef is the `abstract:` key of an entity type. It is written as
+// `abstract: true`, or as a mapping when the type opts into more:
+//
+//	abstract:
+//	  conversions: true   # generate a conversion between each pair of variants
+type AbstractDef struct {
+	// Set is true when the type is abstract.
+	Set bool
+	// Conversions asks the loader to generate a conversion between each
+	// ordered pair of this type's variants (see generateVariantConversions).
+	Conversions bool
+}
+
+// IsZero lets `omitempty` drop an unset abstract key.
+func (a AbstractDef) IsZero() bool { return !a.Set }
+
+// UnmarshalYAML accepts a boolean or a mapping with `conversions:`.
+func (a *AbstractDef) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		var b bool
+		if err := node.Decode(&b); err != nil {
+			return fmt.Errorf("line %d: abstract must be true, false or a mapping", node.Line)
+		}
+		*a = AbstractDef{Set: b}
+		return nil
+	}
+	var m struct {
+		Conversions bool `yaml:"conversions"`
+	}
+	if err := node.Decode(&m); err != nil {
+		return fmt.Errorf("line %d: abstract: %w", node.Line, err)
+	}
+	*a = AbstractDef{Set: true, Conversions: m.Conversions}
+	return nil
+}
+
+// MarshalYAML writes the shortest spelling that round-trips.
+func (a AbstractDef) MarshalYAML() (any, error) {
+	if a.Conversions {
+		return map[string]bool{"conversions": true}, nil
+	}
+	return a.Set, nil
 }
 
 // FaceDef declares one content state of an entity type.

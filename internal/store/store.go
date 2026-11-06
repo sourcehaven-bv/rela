@@ -35,6 +35,21 @@ var (
 	// timeline: a caller comparing against a past version must not mistake
 	// "no history kept" for "never changed".
 	ErrHistoryUnsupported = errors.New("version history is not supported on this storage backend")
+	// ErrConflictedRow is returned, wrapped, for a stored row whose file
+	// holds unresolved git conflict markers. Only the file store returns
+	// it. The row exists, but its values cannot be read until the conflict
+	// is resolved. A graph query fails with it, unless the query sets
+	// [GraphQuery.SkipUnreadable], as the ACL read gate does: then the row is
+	// hidden, not an error for every list of its type (BUG-HTSW37Q).
+	ErrConflictedRow = errors.New("file has unresolved git conflicts")
+	// ErrConflictBlock refuses a write whose content holds a complete git
+	// conflict block, such as one shown inside a fenced code block. Only the
+	// file store returns it: it would read the file back as an unresolved
+	// merge, and the row could no longer be read (BUG-GYM7ZBS). The write
+	// stores nothing. The message names the fix and never the content
+	// (BUG-FJ1ITQT).
+	ErrConflictBlock = errors.New("the content holds a git conflict block, which the file store " +
+		"would read back as an unresolved merge; indent the marker lines of an example inside its code fence")
 )
 
 // MaxAttachmentBytes is the backstop cap every store backend enforces on

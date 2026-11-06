@@ -5,6 +5,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // CreateErrorClass is the kind of refusal an entity create error is. The
@@ -26,8 +27,8 @@ const (
 	// CreateErrInvalid is a payload the schema refuses: validation,
 	// including a unique collision, an illegal state-machine entry or
 	// precondition, a file or external-ref property, a custom id, a
-	// relation the metamodel or its cardinality refuses, or a missing
-	// relation target.
+	// relation the metamodel or its cardinality refuses, a missing relation
+	// target, or content the store cannot hold.
 	CreateErrInvalid
 )
 
@@ -57,7 +58,7 @@ func ClassifyCreateError(err error) CreateErrorClass {
 	case errors.As(err, &invalid), errors.As(err, &invalidRel), errors.As(err, &fileWrite),
 		errors.Is(err, statemachine.ErrIllegalEntry), errors.Is(err, statemachine.ErrPreconditionFailed),
 		errors.Is(err, ErrCustomIDNotAllowed), errors.Is(err, ErrCardinalityExceeded), errors.Is(err, ErrOwningRule),
-		errors.Is(err, ErrEntityNotFound):
+		errors.Is(err, ErrEntityNotFound), errors.Is(err, store.ErrConflictBlock):
 		return CreateErrInvalid
 	}
 	return CreateErrUnknown

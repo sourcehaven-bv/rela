@@ -194,7 +194,7 @@ func planEntity(
 	def, ok := meta.Entities[be.Type]
 	if !ok {
 		writeBatchProblem(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed",
-			fmt.Sprintf("unknown entity type %q", be.Type), entityPointer(i, "type"), op)
+			metamodel.UnknownEntityTypeError(meta, be.Type).Error(), entityPointer(i, "type"), op)
 		return entitymanager.BatchEntity{}, false
 	}
 	opts := entityPkg.CreateOptions{ID: strings.TrimSpace(be.ID), Prefix: strings.TrimSpace(be.Prefix)}

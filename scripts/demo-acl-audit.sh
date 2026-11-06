@@ -26,7 +26,7 @@ seed_metamodel() {
     mkdir -p "${dir}"
     cat > "${dir}/schema.yaml" <<'YAML'
 version: "1"
-namespace: "https://example.com/acl-demo#"
+iri: "https://example.com/acl-demo#"
 entities:
   person:
     label: Person

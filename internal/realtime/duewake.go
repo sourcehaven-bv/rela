@@ -1,58 +1,21 @@
 package realtime
 
 import (
-	"sync"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
+	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
 
-// DueWake carries the due times that writes store to the timer loop, so
-// the leader can run a round earlier than its next planned one. Note keeps
-// the earliest time and pings C; Take returns and clears it. A ping is
-// coalesced: C holds at most one.
-//
-// One DueWake is built at wiring and shared by every service built over
-// the store, the trigger engine and the worker. A process that does not
-// lead notes due times nobody takes, which costs nothing.
-type DueWake struct {
-	mu sync.Mutex
-	at time.Time
-	c  chan struct{}
-}
+// DueWake carries the due times that writes store to the timer loop. The
+// engine owns it: see [flow.DueWake]. One DueWake is built at wiring and
+// shared by every service built over the store, the trigger engine and the
+// worker.
+type DueWake = flow.DueWake
 
 // NewDueWake returns an empty DueWake.
-func NewDueWake() *DueWake { return &DueWake{c: make(chan struct{}, 1)} }
-
-// Note records the due time at and pings C. A zero at is ignored.
-func (w *DueWake) Note(at time.Time) {
-	if at.IsZero() {
-		return
-	}
-	w.mu.Lock()
-	if w.at.IsZero() || at.Before(w.at) {
-		w.at = at
-	}
-	w.mu.Unlock()
-	select {
-	case w.c <- struct{}{}:
-	default:
-	}
-}
-
-// C receives a value after a Note.
-func (w *DueWake) C() <-chan struct{} { return w.c }
-
-// Take returns the earliest due time noted since the last Take, or zero,
-// and clears it.
-func (w *DueWake) Take() time.Time {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	at := w.at
-	w.at = time.Time{}
-	return at
-}
+func NewDueWake() *DueWake { return flow.NewDueWake() }
 
 // noteDue tells w the due time a session step stored, when it has one.
 // Nil step: accepted, a post to a type without a session.

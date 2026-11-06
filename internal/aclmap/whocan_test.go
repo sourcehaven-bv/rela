@@ -166,6 +166,8 @@ func (v metaView) RelationInfo(t string) acl.RelationInfo {
 
 func (v metaView) DefaultWorld() string { return metamodel.EffectiveDefaultWorld(v.m) }
 
+func (v metaView) Variants(t string) ([]string, bool) { return metamodel.VariantsOf(v.m, t) }
+
 func (v metaView) FaceNames(t string) (canonical string, faces []string) {
 	return v.m.ResolveAlias(t), metamodel.FaceOrderOf(v.m, t)
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
+	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 )
 
@@ -184,23 +185,18 @@ type EntryRef struct {
 	Entry       int    `json:"entry"`
 }
 
-// current is a channel's session read against the configuration.
-type current struct {
-	channels.Session
-	stranded bool
-}
+// current is a channel's session read against the configuration (see
+// [flow.Current]).
+type current = flow.Current
 
-// currentSession reads ch's session under s. An unset session reads as the
-// configured initial state, entered when the channel was created. For a
-// channel that is not stored yet, a decider passes a channel whose
-// CreatedAt is the operation's clock time, the time the append will store;
-// [sessionView] passes the zero time, so the view leaves entered_at out.
+// currentSession reads ch's session under s (see [flow.Read]). An unset
+// session reads as the configured initial state, entered when the channel
+// was created. For a channel that is not stored yet, a decider passes a
+// channel whose CreatedAt is the operation's clock time, the time the
+// append will store; [sessionView] passes the zero time, so the view
+// leaves entered_at out.
 func currentSession(s *realtimecfg.Session, ch channels.Channel) current {
-	if ch.Session.IsZero() {
-		return current{Session: channels.Session{State: s.Initial(), EnteredAt: ch.CreatedAt}}
-	}
-	_, declared := s.State(ch.Session.State)
-	return current{Session: ch.Session, stranded: !declared}
+	return flow.Read(s.Flow(), ch.Session, ch.CreatedAt)
 }
 
 // sessionView renders the session of h under ct, or of the channel not
@@ -219,7 +215,7 @@ func sessionView(ct realtimecfg.ChannelType, h *channels.Channel, degraded bool,
 	cur := currentSession(s, ch)
 	v := &SessionView{
 		State: cur.State, Label: cur.State, Generation: cur.Generation, EnteredAt: cur.EnteredAt,
-		Cause: cur.Cause, Previous: cur.Previous, Stranded: cur.stranded, Status: string(realtimecfg.StatusFailed),
+		Cause: cur.Cause, Previous: cur.Previous, Stranded: cur.Stranded, Status: string(realtimecfg.StatusFailed),
 	}
 	st, ok := s.State(cur.State)
 	if !ok {
@@ -241,21 +237,21 @@ func sessionView(ct realtimecfg.ChannelType, h *channels.Channel, degraded bool,
 	}
 	if h != nil && !st.Final {
 		showDue := h.State == channels.StateOpen && !degraded
-		timerViews(v, cur, *h, st.Timers(), showDue)
-		v.Reminders = reminderViews(s, cur, *h, showDue)
+		timerViews(v, cur, st.Timers(), showDue)
+		v.Reminders = reminderViews(s, cur, showDue)
 	}
 	return v
 }
 
-// reminderViews are the views of the reminders active in ch's current
+// reminderViews are the views of the reminders active in the current
 // state cur, with showDue their next slots.
-func reminderViews(s *realtimecfg.Session, cur current, ch channels.Channel, showDue bool) []SessionReminderView {
+func reminderViews(s *realtimecfg.Session, cur current, showDue bool) []SessionReminderView {
 	active := s.RemindersIn(cur.State)
 	out := make([]SessionReminderView, 0, len(active))
 	for _, r := range active {
-		rec, _ := reminderRecord(r, cur, ch)
+		rec, _ := reminderRecord(r, cur)
 		rv := SessionReminderView{Name: r.Name, Label: r.Label, Every: r.EveryText, Count: rec.Count, Max: r.Max}
-		if slot, ok := nextSlot(r, cur, ch); ok && showDue {
+		if slot, ok := flow.NextSlot(r.Reminder, cur); ok && showDue {
 			rv.DueAt = &slot
 		}
 		out = append(out, rv)
@@ -263,15 +259,15 @@ func reminderViews(s *realtimecfg.Session, cur current, ch channels.Channel, sho
 	return out
 }
 
-// timerViews fills v's timers for ch, whose current session is cur, and
-// with showDue their due times and the session's.
-func timerViews(v *SessionView, cur current, ch channels.Channel, timers []realtimecfg.SessionTimer, showDue bool) {
+// timerViews fills v's timers for the current session cur, and with
+// showDue their due times and the session's.
+func timerViews(v *SessionView, cur current, timers []realtimecfg.SessionTimer, showDue bool) {
 	for _, t := range timers {
 		tv := SessionTimerView{
 			Name: t.Name, Label: t.Label, To: t.To, Since: string(t.Since), Outputs: len(t.Outputs()),
 		}
 		if showDue {
-			due := timerDue(t, cur, ch)
+			due := timerDue(t, cur)
 			tv.DueAt = &due
 			if v.DueAt == nil || due.Before(*v.DueAt) {
 				v.DueAt = &due
@@ -426,8 +422,8 @@ func sessionRefusal(
 		return nil
 	}
 	cur := currentSession(s, ch)
-	if cur.stranded || !mt.PostableIn(cur.State) {
-		return &channels.SessionStateError{State: cur.State, Stranded: cur.stranded}
+	if cur.Stranded || !mt.PostableIn(cur.State) {
+		return &channels.SessionStateError{State: cur.State, Stranded: cur.Stranded}
 	}
 	return nil
 }
@@ -594,22 +590,20 @@ func sessionDecider(
 			State: cur.State, Generation: cur.Generation, EnteredAt: cur.EnteredAt,
 			Reminders: reminderCounters(s, cur, ch),
 		}
-		for _, t := range branches {
-			if !p.admits(t) {
-				continue
-			}
-			holds, err := realtimecfg.GuardHolds(ctx, t.When, fields, facts, now)
-			if err != nil {
-				*failed = guardFailure{t: t, state: cur.State, err: err}
-				return channels.SessionMove{}, false
-			}
-			if !holds {
-				continue
-			}
-			if !gate.admits(t, cur.State) {
-				return channels.SessionMove{}, false
-			}
-			return channels.SessionMove{From: cur.State, To: t.To}, true
+		d := flow.Decide(cur.State, branches, flow.Rules[realtimecfg.Transition]{
+			Admits: p.admits,
+			Holds: func(t realtimecfg.Transition) (bool, error) {
+				return realtimecfg.GuardHolds(ctx, t.When, fields, facts, now)
+			},
+			Gate:   func(t realtimecfg.Transition) bool { return gate.admits(t, cur.State) },
+			Target: func(t realtimecfg.Transition) string { return t.To },
+		})
+		switch d.Outcome {
+		case flow.Moved:
+			return d.Move, true
+		case flow.GuardFailed:
+			*failed = guardFailure{t: d.Branch, state: cur.State, err: d.Err}
+		case flow.NoMove, flow.Gated:
 		}
 		return channels.SessionMove{}, false
 	}

@@ -302,6 +302,8 @@ func TestIsRelationFile(t *testing.T) {
 		{"/project/entities/requirement/REQ-001.md", false},
 		{"/project/relations/invalid.md", false},
 		{"/project/relations/one--two.md", false},
+		{"/project/entities/a--b--c/REQ-001.md", false},
+		{"/project/x--y/entities/requirement/REQ-001.md", false},
 	}
 
 	for _, tt := range tests {

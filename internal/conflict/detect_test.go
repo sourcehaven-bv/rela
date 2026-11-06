@@ -45,6 +45,42 @@ Content here.
 	}
 }
 
+// TestRemoveConflictMarkers_KeepsDocumentedExample pins BUG-GYM7ZBS for
+// the resolver: a body that documents conflict markers, with a lone marker
+// line and an indented example, keeps them when the real conflict in the
+// frontmatter is resolved, and a file whose only markers are documented is
+// not reported as conflicted.
+func TestRemoveConflictMarkers_KeepsDocumentedExample(t *testing.T) {
+	const example = "<<<<<<< on its own is text.\n\n" +
+		"```\n  <<<<<<< ours\n  a\n  =======\n  b\n  >>>>>>> theirs\n```\n"
+	const content = "---\nid: GUIDE-1\n<<<<<<< ours\nstatus: draft\n=======\nstatus: approved\n" +
+		">>>>>>> theirs\n---\n\n" + example
+
+	if got := FindMarkers(content); len(got) != 1 || got[0].StartLine != 3 {
+		t.Fatalf("FindMarkers = %+v, want only the frontmatter block", got)
+	}
+
+	path := filepath.Join(t.TempDir(), "GUIDE-1.md")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveConflictMarkers(path, SideTheirs); err != nil {
+		t.Fatalf("RemoveConflictMarkers: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "---\nid: GUIDE-1\nstatus: approved\n---\n\n" + example
+	if string(got) != want {
+		t.Errorf("resolved file:\n%s\nwant:\n%s", got, want)
+	}
+
+	if cf, err := DetectInFile(path); err != nil || cf != nil {
+		t.Errorf("DetectInFile on the resolved file = %+v, %v; want no conflict", cf, err)
+	}
+}
+
 func TestFindMarkers_Multiple(t *testing.T) {
 	content := `---
 <<<<<<< HEAD

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -27,6 +28,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -62,6 +64,8 @@ func toV1EntityType(
 		// permission: it tells the SPA whether to offer a comment affordance
 		// at all, never that the caller may use it.
 		Commentable: metamodel.NewCommentPolicy(meta).Commentable(name),
+		Namespace:   metamodel.NamespaceOf(name),
+		Extends:     def.Extends,
 	}
 	if prefixes := def.GetIDPrefixes(); len(prefixes) > 0 {
 		et.IDPrefix = prefixes[0]
@@ -71,6 +75,29 @@ func toV1EntityType(
 		et.Properties[propName] = toV1PropertyDef(meta, propDef)
 	}
 	return et
+}
+
+// toV1AbstractTypes describes meta's abstract types, or nil when there are
+// none.
+func toV1AbstractTypes(meta *metamodel.Metamodel) map[string]v1.AbstractType {
+	abstracts := metamodel.AbstractTypes(meta)
+	if len(abstracts) == 0 {
+		return nil
+	}
+	out := make(map[string]v1.AbstractType, len(abstracts))
+	for _, a := range abstracts {
+		at := v1.AbstractType{
+			Label:       a.Def.Label,
+			Description: a.Def.Description,
+			Variants:    a.Variants,
+			Properties:  make(map[string]v1.PropertyDef, len(a.Def.Properties)),
+		}
+		for name, pd := range a.Def.Properties {
+			at.Properties[name] = toV1PropertyDef(meta, pd)
+		}
+		out[a.Name] = at
+	}
+	return out
 }
 
 func toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.PropertyDef) v1.PropertyDef {
@@ -1325,6 +1352,24 @@ func writeNoIdentity(w http.ResponseWriter, r *http.Request, err error) bool {
 	return true
 }
 
+// conflictBlockTitle is the title of every conflict_block problem.
+const conflictBlockTitle = "Content holds a git conflict block"
+
+// writeConflictBlock answers a write the file store refused because its
+// content holds a git conflict block ([store.ErrConflictBlock]), and reports
+// whether it did. The store cannot persist that content, which the
+// write-validation policy answers with a 422. The detail is the sentinel's
+// fixed text: it names the fix and never echoes the content (BUG-FJ1ITQT).
+// [writeInternalProblem] calls it, so no write path answers it with a 500.
+func writeConflictBlock(w http.ResponseWriter, r *http.Request, err error) bool {
+	if !errors.Is(err, store.ErrConflictBlock) {
+		return false
+	}
+	writeV1Error(w, r, http.StatusUnprocessableEntity, "conflict_block", conflictBlockTitle,
+		store.ErrConflictBlock.Error())
+	return true
+}
+
 // requestCanceled reports whether the client went away: the request's own
 // context was canceled. Once it is, no one reads the response, so the error
 // is answered with silence and not logged.
@@ -1363,7 +1408,7 @@ func writeInternalErrorDetail(w http.ResponseWriter, r *http.Request, code, titl
 // extension fields. Like the detail, they are built from the request and
 // what it wrote, never from err. It sets the type, status and instance.
 func writeInternalProblem(w http.ResponseWriter, r *http.Request, code string, problem v1.Error, err error) {
-	if writeNoIdentity(w, r, err) {
+	if writeNoIdentity(w, r, err) || writeConflictBlock(w, r, err) {
 		return
 	}
 	if !logInternalError(r, code, err) {
@@ -1797,6 +1842,8 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 		schema.Types[name] = toV1CustomType(def)
 	}
 
+	schema.Abstract = toV1AbstractTypes(s.Meta)
+
 	writeV1JSON(w, http.StatusOK, schema)
 }
 
@@ -1820,7 +1867,11 @@ func (a *App) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Request) {
 		typeName := strings.TrimPrefix(path, "types/")
 		def, ok := s.Meta.Entities[typeName]
 		if !ok {
-			writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity type not found", "")
+			detail := ""
+			if err := metamodel.CheckConcreteType(s.Meta, typeName); err != nil {
+				detail = err.Error()
+			}
+			writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity type not found", detail)
 			return
 		}
 		writeV1JSON(w, http.StatusOK, toV1EntityType(s.Meta, typeName, def))
@@ -2891,14 +2942,13 @@ func writeV1Error(w http.ResponseWriter, r *http.Request, status int, errType, t
 
 // --- Conflicts API ---
 
-// handleV1Conflicts returns the list of conflicted files as JSON. The list
-// names entity files, so it is served only to a principal who may sync
-// (git:sync); everyone else gets a 403. The paths are not row-gated: a
-// holder of git:sync sees the paths of entities they may not read.
-// Conflicts arise only on file storage, which runs locally, so the coarse
-// gate is accepted (BUG-T6HNKS).
+// handleV1Conflicts returns the list of conflicted files as JSON. It is
+// served only to a principal who may sync (git:sync); everyone else gets a
+// 403 (BUG-T6HNKS). The list is also row-gated: a file that names an entity
+// or relation the principal may not read is left out (BUG-Q3Z15V; see
+// conflictsReadable).
 //
-//archplan:auth=authz reason="requires git:sync via permitsGitSync; paths are not row-gated (BUG-T6HNKS)"
+//archplan:auth=authz reason="requires git:sync via permitsGitSync, then row-gates each file"
 func (a *App) handleV1Conflicts(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -2921,8 +2971,34 @@ func (a *App) handleV1Conflicts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]v1.ConflictItem, 0, len(result.Files))
+	// Parse each file for the identities it names, then gate them all in
+	// one batch. A file that no longer parses as conflicted is left out:
+	// resolved since the scan, or unreadable, which the log records.
+	meta := a.State().Meta
+	files := make([]conflict.ConflictedFile, 0, len(result.Files))
+	ids := make([]conflictIdentity, 0, len(result.Files))
 	for _, cf := range result.Files {
+		parsed, perr := conflict.ParseConflictedFile(cf.Path, meta)
+		if perr != nil {
+			if !errors.Is(perr, fs.ErrNotExist) {
+				slog.Warn("dataentry: skipping a conflicted file that does not parse", "path", cf.Path, "err", perr)
+			}
+			continue
+		}
+		files = append(files, cf)
+		ids = append(ids, identifyConflict(a.paths, meta, parsed))
+	}
+	readable, err := conflictsReadable(r.Context(), a.visibleReader, ids)
+	if err != nil {
+		writeGateError(w, r, err)
+		return
+	}
+
+	items := make([]v1.ConflictItem, 0, len(files))
+	for i, cf := range files {
+		if !readable[i] {
+			continue
+		}
 		relPath, _ := filepath.Rel(ctx.Root, cf.Path)
 		items = append(items, v1.ConflictItem{
 			Path:        relPath,
@@ -2939,11 +3015,13 @@ func (a *App) handleV1Conflicts(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleV1ConflictRoutes handles GET /api/v1/_conflicts/{path} and POST /api/v1/_conflicts/resolve.
-// Both require git:sync, like the list. The detail is gated here, before the
-// path is resolved, because it shows both sides of the file unredacted.
-// Resolve is gated in [writeHandler.handleV1ConflictResolve].
+// Both require git:sync, like the list. The detail checks it here, before the
+// path is resolved. It then row-gates the file, answering a hidden one with
+// the same 404 as a missing one, and leaves out every property `visible:`
+// hides on either side (BUG-Q3Z15V). Resolve is gated in
+// [writeHandler.handleV1ConflictResolve].
 //
-//archplan:auth=authz reason="detail requires git:sync via permitsGitSync; resolve is gated in its handler"
+//archplan:auth=authz reason="detail requires git:sync, then row-gates and redacts; resolve is gated in its handler"
 func (a *App) handleV1ConflictRoutes(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_conflicts/")
 
@@ -2968,16 +3046,24 @@ func (a *App) handleV1ConflictRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cf, err := conflict.ParseConflictedFile(absPath, a.State().Meta)
-	if err != nil {
-		writeInternalError(w, r, "parse_failed", "Failed to parse conflict", err)
+	meta := a.State().Meta
+	cf, ok := parseConflictOr404(w, r, absPath, meta)
+	if !ok {
+		return
+	}
+	id := identifyConflict(a.paths, meta, cf)
+	if !conflictReadableOr404(w, r, a.visibleReader, id) {
 		return
 	}
 
 	info := conflict.AnalyzeConflict(cf)
+	hidden := a.affordances.conflictHiddenProperties(r.Context(), cf, id.face())
 
 	diffs := make([]v1.PropertyDiff, 0, len(info.PropertyDiffs))
 	for _, d := range info.PropertyDiffs {
+		if _, ok := hidden[d.Property]; ok {
+			continue
+		}
 		diffs = append(diffs, v1.PropertyDiff{
 			Property:    d.Property,
 			OursValue:   fmt.Sprintf("%v", d.OursValue),
@@ -3242,13 +3328,14 @@ func (a *App) handleV1Templates(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if entity type exists
-	if _, ok := a.State().Meta.Entities[entityType]; !ok {
+	meta := a.State().Meta
+	if _, ok := meta.Entities[entityType]; !ok {
 		writeV1Error(w, r, http.StatusNotFound, "entity_type_not_found",
 			fmt.Sprintf("Entity type '%s' not found", entityType), "")
 		return
 	}
 
-	templates, _ := a.templater.EntityTemplates(r.Context(), entityType)
+	templates, _ := templating.EntityTemplatesFor(r.Context(), a.templater, meta, entityType)
 	result := make([]v1.Template, 0, len(templates))
 
 	for _, t := range templates {

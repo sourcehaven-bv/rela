@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -53,12 +54,12 @@ func writeGitSyncForbidden(w http.ResponseWriter, r *http.Request, action string
 }
 
 // gitStatusResponse builds the status answer. Only a principal who may sync,
-// and so resolve a conflict, gets the conflicting file paths; everyone else
-// sees that a conflict exists. This is not a secrecy guarantee: a holder of
-// git:sync sees the paths of entities they may not read. Conflicts arise only
-// on file storage, which runs locally, so the coarse gate is accepted
-// (BUG-T6HNKS).
-func gitStatusResponse(status *git.Status, canSync bool) GitStatusResponse {
+// and so resolve a conflict, gets conflicting file paths; everyone else sees
+// that a conflict exists. Of those paths, it lists only the ones the
+// conflict list lists: a file naming a row the principal may not read is
+// left out (BUG-197XPAU). A gate failure is returned, never folded into
+// "no conflict files".
+func (a *App) gitStatusResponse(ctx context.Context, status *git.Status, canSync bool) (GitStatusResponse, error) {
 	resp := GitStatusResponse{
 		Available:    status.Available,
 		Branch:       status.Branch,
@@ -68,10 +69,15 @@ func gitStatusResponse(status *git.Status, canSync bool) GitStatusResponse {
 		Conflict:     status.Conflict,
 		CanSync:      canSync,
 	}
-	if canSync {
-		resp.ConflictFiles = status.ConflictFiles
+	if !canSync || len(status.ConflictFiles) == 0 {
+		return resp, nil
 	}
-	return resp
+	files, err := readableConflictPaths(ctx, a.visibleReader, a.paths, a.State().Meta, status.ConflictFiles)
+	if err != nil {
+		return GitStatusResponse{}, err
+	}
+	resp.ConflictFiles = files
+	return resp, nil
 }
 
 //archplan:auth=required
@@ -97,7 +103,11 @@ func (a *App) handleGitStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp = gitStatusResponse(status, permitsGitSync(a.acl, r))
+	resp, err = a.gitStatusResponse(r.Context(), status, permitsGitSync(a.acl, r))
+	if err != nil {
+		writeGateError(w, r, err)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
@@ -144,7 +154,14 @@ func (a *App) handleGitSync(w http.ResponseWriter, r *http.Request) {
 		// Check if it's a conflict
 		status, _ := gitOps.GetStatus()
 		if status != nil && status.Conflict {
-			resp.ConflictFiles = status.ConflictFiles
+			// The same paths the status lists (BUG-197XPAU).
+			files, gerr := readableConflictPaths(r.Context(), a.visibleReader, a.paths, a.State().Meta,
+				status.ConflictFiles)
+			if gerr != nil {
+				writeGateError(w, r, gerr)
+				return
+			}
+			resp.ConflictFiles = files
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)

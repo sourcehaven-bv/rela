@@ -817,6 +817,28 @@ gate: it runs with the operator's own access. The remote endpoint
 expressible; it does not by itself restrict a locally-launched
 `rela mcp`.
 
+## Abstract type names expand at load
+
+An abstract schema type stores no entities, so a grant on its name would
+match nothing. rela rewrites every abstract name in `acl.yaml` into its
+variants when the policy loads, before the evaluator is built. Like the
+ceiling compilation, this happens once at load and adds no runtime check.
+
+The expansion never widens what a policy hides:
+
+- Every type list expands, including each `deny_*` list, so a deny on the
+  abstract name denies every variant.
+- A ceiling's `redact:` on the abstract type applies to every variant, even
+  one with its own `visible:` list. The redacted fields are removed from
+  that list.
+- For every other per-type map, a variant's own entry replaces the
+  abstract one. The abstract entry's fields never add to it, so a variant
+  entry written to keep a field from a role does keep it.
+
+A grant on the abstract name also covers a variant that a later include
+adds. Review `acl.yaml` when you add a variant. `TestAbstractACL_*` in
+`internal/affordances` pins these rules on the read path.
+
 ## Fail-loud on malformed `acl.yaml`
 
 A malformed `acl.yaml` fails boot. This is intentional: silently
@@ -2547,7 +2569,8 @@ the ceiling narrows permissions. Only `config:edit` is never delegated.
 `GET /api/v1/_git/status` stays open to every signed-in principal. Its
 `can_sync` field says whether a sync would be accepted. It lists the paths of
 conflicting files only to a principal who may sync; everyone else sees only
-that a conflict exists.
+that a conflict exists. A failed `POST /api/v1/_git/sync` lists the same
+paths.
 
 Resolving a merge conflict is part of a sync, so the conflict routes need
 `git:sync` too:
@@ -2560,11 +2583,42 @@ Resolving a merge conflict is part of a sync, so the conflict routes need
 Without `git:sync` these routes answer 403, and the response names the
 permission. The app hides its "Resolve conflicts" link from such a principal.
 
-The conflict routes are not row-gated. A holder of `git:sync` sees the paths
-and the unredacted values of conflicting entities they may not read. Merge
-conflicts arise only on file storage, which runs locally; the postgres and
-sqlite backends have none. Grant `git:sync` only to principals who may see
-every entity file.
+The conflict routes, the status and the sync are also row-gated. A file is
+left out of every list, and its detail and resolve answer the same 404 as a
+missing file, when it names an entity the principal may not read, or a
+relation with such an endpoint. The detail leaves out every property that
+`visible:` hides on either side.
+
+The status and the sync fail closed. They list a conflicting path only in
+these cases:
+
+- A file under `entities/` or `relations/` that the principal may read. A
+  data file without conflict markers, such as one a branch deleted, is judged
+  by the row its path names.
+- A file under `attachments/<id>/` when the principal may read entity `<id>`.
+- A config file: `schema.yaml`, `data-entry.yaml`, `acl.yaml` and the other
+  project-root config files, or a file under `scripts/`, `lib/`, `actions/`,
+  `validations/`, `migrations/`, `templates/`, `custom/` or `apps/`. The
+  configuration is not a secret.
+
+Every other path is left out, because it may name an entity whose existence
+is secret.
+
+The store cannot read the values of a file that still has conflict markers.
+A read grant through `role_relations` therefore does not match that row: it
+is hidden from such a principal until the conflict is resolved, instead of
+failing every list of its type. Only the read gate hides such a row. A
+`related(...)` check, a uniqueness check or any other query over it still
+fails, because treating the row as absent there could allow more.
+
+A resolution writes every property on which the two sides disagree, whichever
+side the principal picks. Each of those properties gets the field check of an
+ordinary edit. A property that `writable:` makes read-only, or that `visible:`
+hides, is refused with 403, as in a `PATCH`.
+
+A validation error never quotes the value it rejects. It names the rule the
+value broke, such as the allowed values or the bounds. So a hidden field
+with an invalid value does not show its value in a 422 or in a warning.
 
 **Upgrading.** With an `acl.yaml`, nobody may sync after the upgrade until
 you grant `git:sync` to the roles that used the sync button or resolved merge

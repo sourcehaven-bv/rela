@@ -7,40 +7,27 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // SessionStatus is what a session state means to an agent that waits on
-// the session. The values are those of MCP tasks.
-type SessionStatus string
+// the session. The engine owns it: see [flow.Status]. A state that is not
+// final reads [StatusInputRequired] when it has `waiting_for:`.
+type SessionStatus = flow.Status
 
-// Session statuses. A final state reads [StatusCompleted] by default; a
-// state that is not final reads [StatusInputRequired] when it has
-// `waiting_for:`, else [StatusWorking].
+// Session statuses; see [flow.Status].
 const (
-	// StatusWorking: the session moves on without a person named by the
-	// state, through other roles, triggers or timers.
-	StatusWorking SessionStatus = "working"
-	// StatusInputRequired: the session waits for a holder of one of the
-	// state's waiting roles to answer.
-	StatusInputRequired SessionStatus = "input_required"
-	// StatusCompleted: the session ended as intended.
-	StatusCompleted SessionStatus = "completed"
-	// StatusCancelled: the session ended because someone stopped it.
-	StatusCancelled SessionStatus = "cancelled"
-	// StatusFailed: the session ended in failure. A stranded session reads
-	// as failed too, so an agent stops waiting.
-	StatusFailed SessionStatus = "failed"
+	StatusWorking       = flow.StatusWorking
+	StatusInputRequired = flow.StatusInputRequired
+	StatusCompleted     = flow.StatusCompleted
+	StatusCancelled     = flow.StatusCancelled
+	StatusFailed        = flow.StatusFailed
 )
 
 // sessionStatuses lists every status, in the order a problem names them.
 var sessionStatuses = []SessionStatus{
 	StatusWorking, StatusInputRequired, StatusCompleted, StatusCancelled, StatusFailed,
-}
-
-// Terminal reports whether s is a status no session leaves.
-func (s SessionStatus) Terminal() bool {
-	return s == StatusCompleted || s == StatusCancelled || s == StatusFailed
 }
 
 // WaitingFor returns the state's waiting roles, in file order: the roles

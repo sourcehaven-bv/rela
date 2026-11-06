@@ -25,6 +25,10 @@ type relationAccumulator struct {
 	// metaOptedIn[type] is true when a role declared meta-field grants
 	// for that relation type (closed-world for meta on that type).
 	metaOptedIn map[string]bool
+	// metaAll[type] is true when a role on the row declares no meta-field
+	// grants for that type and may update the row: it writes every meta
+	// key, so the type's meta stays open.
+	metaAll map[string]bool
 
 	denyRole map[string]string // "<type>:<dim>" → role
 }
@@ -37,6 +41,7 @@ func newRelationAccumulator() *relationAccumulator {
 		metaAllowed:    map[string]map[string]bool{},
 		metaCandidates: map[string]map[string]bool{},
 		metaOptedIn:    map[string]bool{},
+		metaAll:        map[string]bool{},
 		denyRole:       map[string]string{},
 	}
 }
@@ -114,9 +119,23 @@ func (a *relationAccumulator) denyMeta(rt, field, role string) {
 	}
 }
 
+// allowAllMeta records a role that writes every meta key of rt.
+func (a *relationAccumulator) allowAllMeta(rt string) {
+	a.metaAll[rt] = true
+}
+
 // verdicts emits the sparse per-relation-type verdict map. A type
 // appears only when it deviates from the permissive default.
-func (a *relationAccumulator) verdicts() map[string]RelationVerdict {
+//
+// Meta grants are an allowlist, like entity `fields:` grants: once a role
+// declares meta fields for a type, every key no role grants is read-only.
+// declared returns the type's declared meta properties, which are listed
+// with every key a grant names so the wire can mark them, and its order
+// properties, which are listed writable unless a grant names them. A key
+// outside all of these is read-only through RelationVerdict.MetaClosed.
+func (a *relationAccumulator) verdicts(
+	declared func(rt string) (props, order []string),
+) map[string]RelationVerdict {
 	var out map[string]RelationVerdict
 	for rt := range a.optedInTypes {
 		creatable := a.creatable[rt]
@@ -124,22 +143,29 @@ func (a *relationAccumulator) verdicts() map[string]RelationVerdict {
 
 		var fields map[string]bool
 		var attribution map[string]string
-		if a.metaOptedIn[rt] {
+		closed := a.metaOptedIn[rt] && !a.metaAll[rt]
+		if closed {
+			fields = map[string]bool{}
+			props, order := declared(rt)
+			for _, field := range props {
+				fields[field] = a.metaAllowed[rt][field]
+			}
+			for _, field := range order {
+				fields[field] = true
+			}
 			for field := range a.metaCandidates[rt] {
-				if a.metaAllowed[rt][field] {
-					continue
+				fields[field] = a.metaAllowed[rt][field]
+			}
+			for field, writable := range fields {
+				if !writable {
+					attribution = recordAttribution(attribution, "fields."+field,
+						"relation-meta-read-only", a.denyRole[rt+":fields."+field])
 				}
-				if fields == nil {
-					fields = map[string]bool{}
-				}
-				fields[field] = false
-				attribution = recordAttribution(attribution, "fields."+field,
-					"relation-meta-read-only", a.denyRole[rt+":fields."+field])
 			}
 		}
 
 		// Skip types that are fully permissive (nothing deviates).
-		if creatable && removable && fields == nil {
+		if creatable && removable && !closed {
 			continue
 		}
 
@@ -159,6 +185,7 @@ func (a *relationAccumulator) verdicts() map[string]RelationVerdict {
 			Creatable:   creatable,
 			Removable:   removable,
 			Fields:      fields,
+			MetaClosed:  closed,
 			Attribution: attribution,
 		}
 	}

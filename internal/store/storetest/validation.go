@@ -158,6 +158,46 @@ func RunValidationTests(t *testing.T, f Factory) {
 		}
 	})
 
+	// A body that documents git's conflict markers must round-trip on every
+	// backend (BUG-GYM7ZBS). fsstore read any body line starting with the
+	// start marker as an unresolved merge, so the entity it had just written
+	// failed every later read. A lone marker line and a complete block in a
+	// fenced code block are content.
+	t.Run("RoundTripsBodyDocumentingConflictMarkers", func(t *testing.T) {
+		s := f(t)
+
+		body := "A paragraph may start with the marker:\n" +
+			"\n" +
+			"<<<<<<< opens a conflict block.\n" +
+			"\n" +
+			"```text\n" +
+			"  <<<<<<< HEAD\n" +
+			"  status: draft\n" +
+			"  =======\n" +
+			"  status: approved\n" +
+			"  >>>>>>> feature\n" +
+			"```\n" +
+			"\n" +
+			"```text\n" +
+			"<<<<<<< HEAD\n" +
+			"=======\n" +
+			"```\n"
+		e := entity.New("E-doc", "t")
+		e.Content = body
+		require.NoError(t, s.CreateEntity(ctx(), e))
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: "E-doc"})
+		require.NoError(t, err, "read back an entity whose body documents conflict markers")
+		assert.Equal(t, strings.TrimSpace(body), strings.TrimSpace(got.Content))
+
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("E-peer", "t")))
+		key := entity.RelationKey{From: "E-doc", Type: "rel", To: "E-peer"}
+		_, err = s.CreateRelation(ctx(), key, &store.RelationData{Content: body})
+		require.NoError(t, err)
+		rel, err := s.GetRelation(ctx(), key)
+		require.NoError(t, err, "read back a relation whose body documents conflict markers")
+		assert.Equal(t, strings.TrimSpace(body), strings.TrimSpace(rel.Content))
+	})
+
 	t.Run("RejectsInvalidUTF8Properties", func(t *testing.T) {
 		const bad = "\n\xc80" // the fuzzer's original payload
 		s := f(t)

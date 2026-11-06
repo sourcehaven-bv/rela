@@ -185,7 +185,7 @@ func (v *GenericValidator) CheckRuleFull(
 	ctx context.Context,
 	rule metamodel.ValidationRule,
 ) (RuleResult, error) {
-	candidates, err := v.loadCandidates(ctx, rule.EntityType)
+	candidates, err := v.loadCandidates(ctx, rule.TargetTypes()...)
 	if err != nil {
 		return RuleResult{}, err
 	}
@@ -214,7 +214,7 @@ func (v *GenericValidator) CheckRuleFull(
 
 // CheckAll runs all rules from the metamodel and returns all violations.
 func (v *GenericValidator) CheckAll(ctx context.Context) ([]Violation, error) {
-	candidates, err := v.loadCandidates(ctx, "")
+	candidates, err := v.loadCandidates(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -255,21 +255,28 @@ func (v *GenericValidator) CheckAll(ctx context.Context) ([]Violation, error) {
 // Every row of a state family conforms to the same schema, so validating each
 // one is the same question asked of each. Choosing ONE state to validate would
 // be world resolution, a read-path concern that has no business here.
-func (v *GenericValidator) loadCandidates(ctx context.Context, entityType string) ([]*entity.Entity, error) {
-	q := store.EntityQuery{Faces: store.AllFaces()}
-	if entityType != "" {
-		q.Type = entityType
+// loadCandidates lists the unlocked entities of the given types, or of every
+// type when none is given.
+func (v *GenericValidator) loadCandidates(ctx context.Context, entityTypes ...string) ([]*entity.Entity, error) {
+	queries := []store.EntityQuery{{Faces: store.AllFaces()}}
+	if len(entityTypes) > 0 {
+		queries = queries[:0]
+		for _, t := range entityTypes {
+			queries = append(queries, store.EntityQuery{Type: t, Faces: store.AllFaces()})
+		}
 	}
 
 	out := make([]*entity.Entity, 0)
-	for e, err := range v.r.ListEntities(ctx, q) {
-		if err != nil {
-			return nil, err
+	for _, q := range queries {
+		for e, err := range v.r.ListEntities(ctx, q) {
+			if err != nil {
+				return nil, err
+			}
+			if e.IsLocked() {
+				continue
+			}
+			out = append(out, e)
 		}
-		if e.IsLocked() {
-			continue
-		}
-		out = append(out, e)
 	}
 	return out, nil
 }

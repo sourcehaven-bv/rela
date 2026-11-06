@@ -59,10 +59,10 @@ func (l *FSLoader) Load(_ context.Context) (*Metamodel, []string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(detections) > 0 {
+	if blocking := migration.Blocking(detections); len(blocking) > 0 {
 		return nil, nil, &migration.Error{
 			FilePath:   l.path,
-			Detections: detections,
+			Detections: blocking,
 		}
 	}
 	return Load(l.path, l.fs)

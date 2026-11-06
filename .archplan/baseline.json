@@ -2588,6 +2588,24 @@
       "reason": "Design: config shapes mirror data-entry.yaml on purpose. Accepted before under other ids; the ids moved when TKT-BO8CYG9 added types, and the types in the clump are unchanged.",
       "at": "2026-11-04T15:30:00Z",
       "title": "The fields columns, condition, create_form, description, detail_view, … and title appear together in 2 types across 2 components."
+    },
+    "concepts.data_clump-a3838e4a3894": {
+      "state": "accepted",
+      "reason": "Design: schema wire types mirror EntityDef on purpose; extends added by TKT-C91W7H4.",
+      "at": "2026-11-05T15:03:17Z",
+      "title": "The fields description, extends, faces, id_prefix, id_prefixes, … and properties appear together in 3 types across 3 components."
+    },
+    "concepts.data_clump-d1e435a76530": {
+      "state": "accepted",
+      "reason": "Design: schema wire types mirror EntityDef on purpose; extends added by TKT-C91W7H4.",
+      "at": "2026-11-05T15:03:17Z",
+      "title": "The fields border_color, color, default_sort, description, extends, … and properties appear together in 2 types across 2 components."
+    },
+    "types.synonyms-2e9a694c3bb2": {
+      "state": "accepted",
+      "reason": "Design: flows.yaml states mirror channel session states on purpose; both compile onto the shared internal/flow engine, TKT-XHANLJU",
+      "at": "2026-11-06T09:00:00Z",
+      "title": "State (flowcfg) and SessionState (realtimecfg) share most of their fields."
     }
   },
   "labels": {},
@@ -2597,8 +2615,8 @@
       "weight.structure": 936,
       "weight.layers": 0,
       "weight.vocabulary": 912,
-      "weight.types": 3981,
-      "weight.concepts": 7047,
+      "weight.types": 4002,
+      "weight.concepts": 7052,
       "weight.boundaries": 1478,
       "weight.data": 1297,
       "weight.security": 2300,
@@ -2608,7 +2626,7 @@
       "propagation_cost": 9.8
     },
     "min_weight": 0,
-    "at": "2026-11-04T15:40:00Z",
+    "at": "2026-11-05T20:33:00Z",
     "log": [
       {
         "at": "2026-10-28T13:29:24Z",
@@ -2765,6 +2783,39 @@
           "weight.types": [
             4028,
             3981
+          ]
+        }
+      },
+      {
+        "at": "2026-11-05T14:50:14Z",
+        "change": "loosen",
+        "reason": "Schema wire EntityType mirrors EntityDef's new extends and namespace fields, like the other apiwire DTOs, TKT-C91W7H4",
+        "metrics": {
+          "weight.concepts": [
+            7047,
+            7052
+          ]
+        }
+      },
+      {
+        "at": "2026-11-05T20:33:00Z",
+        "change": "tighten",
+        "reason": "static model; trace-based metrics left for just archplan-security",
+        "metrics": {
+          "weight.types": [
+            3981,
+            3952
+          ]
+        }
+      },
+      {
+        "at": "2026-11-06T09:00:00Z",
+        "change": "loosen",
+        "reason": "flowcfg.State mirrors realtimecfg.SessionState over the shared flow engine, TKT-XHANLJU",
+        "metrics": {
+          "weight.types": [
+            3952,
+            4002
           ]
         }
       }

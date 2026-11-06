@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
+	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
@@ -76,7 +77,7 @@ func TestTimers_RemindPosts(t *testing.T) {
 	th := newRemindHarness(t, remindRealtime)
 	k := breachKey("TKT-1")
 	th.open(t, "TKT-1")
-	require.Equal(t, t0.Add(10*time.Minute+realtimelimits.ReminderSlack), th.head(t, k).Session.NextDueAt)
+	require.Equal(t, t0.Add(10*time.Minute+flow.ReminderSlack), th.head(t, k).Session.NextDueAt)
 	sub := th.local.Subscribe()
 	defer sub.Close()
 
@@ -117,7 +118,7 @@ func TestTimers_RemindAcrossStates(t *testing.T) {
 	th.postTo(t, user("alice"), breachAddr, "contained", props("note", "x"))
 	head := th.head(t, k)
 	require.Equal(t, "contained", head.Session.State)
-	require.Equal(t, t0.Add(40*time.Minute+realtimelimits.ReminderSlack), head.Session.NextDueAt)
+	require.Equal(t, t0.Add(40*time.Minute+flow.ReminderSlack), head.Session.NextDueAt)
 	th.at(40*time.Minute - time.Second)
 	require.Zero(t, th.round(t).Reminded)
 	th.at(40 * time.Minute)
@@ -188,7 +189,7 @@ func TestTimers_RemindSkipsMissed(t *testing.T) {
 	require.False(t, rep.More)
 	require.Zero(t, th.round(t).Reminded)
 	require.Len(t, th.reminders(t, k), 2)
-	require.Equal(t, t0.Add(2*time.Hour+40*time.Minute+realtimelimits.ReminderSlack), th.head(t, k).Session.NextDueAt,
+	require.Equal(t, t0.Add(2*time.Hour+40*time.Minute+flow.ReminderSlack), th.head(t, k).Session.NextDueAt,
 		"the next slot stays on the grid")
 }
 
@@ -232,7 +233,7 @@ func TestTimers_RemindClosedFreezes(t *testing.T) {
 		require.Zero(t, th.round(t).Reminded, "a closed channel gets no reminder")
 		th.at(2 * time.Hour)
 		th.lifecycle(t, realtimecfg.LifecycleReopen)
-		require.Equal(t, t0.Add(2*time.Hour+10*time.Minute+realtimelimits.ReminderSlack), th.head(t, k).Session.NextDueAt)
+		require.Equal(t, t0.Add(2*time.Hour+10*time.Minute+flow.ReminderSlack), th.head(t, k).Session.NextDueAt)
 		th.at(2*time.Hour + 10*time.Minute - time.Second)
 		require.Zero(t, th.round(t).Reminded)
 		th.at(2*time.Hour + 10*time.Minute)
@@ -339,7 +340,7 @@ func TestTimers_RemindMessageRace(t *testing.T) {
 func TestTimers_RemindReload(t *testing.T) {
 	t.Parallel()
 	k := breachKey("TKT-1")
-	slack := realtimelimits.ReminderSlack
+	slack := flow.ReminderSlack
 	t.Run("a shorter every reschedules", func(t *testing.T) {
 		t.Parallel()
 		th := newRemindHarness(t, remindRealtime)
@@ -549,10 +550,10 @@ func TestTimers_ReminderSlack(t *testing.T) {
 	keys := th.createTasks(t, 1, 0)
 	th.postTo(t, user("alice"), deadlineAddr, "text", props("body", "hi"))
 	dk := channels.Key{Anchor: channels.Anchor{ID: "TKT-1"}, Type: "deadline"}
-	require.Equal(t, t0.Add(time.Minute+realtimelimits.ReminderSlack), th.head(t, keys[0]).Session.NextDueAt)
+	require.Equal(t, t0.Add(time.Minute+flow.ReminderSlack), th.head(t, keys[0]).Session.NextDueAt)
 	require.Equal(t, t0.Add(2*time.Minute), th.head(t, dk).Session.NextDueAt, "a timer's hint is exact")
 	th.at(40 * time.Second)
-	require.Equal(t, t0.Add(time.Minute+realtimelimits.ReminderSlack), th.round(t).Next)
+	require.Equal(t, t0.Add(time.Minute+flow.ReminderSlack), th.round(t).Next)
 	th.at(time.Minute + 10*time.Second)
 	require.Equal(t, 1, th.round(t).Reminded, "a round before the hint posts a passed slot")
 }
@@ -585,7 +586,7 @@ func TestTimers_ReminderBudget(t *testing.T) {
 		msgs := th.reminders(t, k)
 		// Every slot whose hint (slot plus slack) passed before the end
 		// has its reminder.
-		served := int((end.Sub(created) - realtimelimits.ReminderSlack - realtimelimits.TimerFloor) / time.Minute)
+		served := int((end.Sub(created) - flow.ReminderSlack - realtimelimits.TimerFloor) / time.Minute)
 		require.GreaterOrEqual(t, len(msgs), served, "channel %d", i)
 		for j, m := range msgs {
 			slot := created.Add(time.Duration(j+1) * time.Minute)
@@ -689,7 +690,7 @@ func TestSessionPost_NotesReminderWake(t *testing.T) {
 	t.Parallel()
 	th := newRemindHarness(t, remindRealtime)
 	th.open(t, "TKT-1")
-	require.Equal(t, t0.Add(10*time.Minute+realtimelimits.ReminderSlack), th.wake.Take())
+	require.Equal(t, t0.Add(10*time.Minute+flow.ReminderSlack), th.wake.Take())
 }
 
 func TestSessionCreate_SetsReminderDue(t *testing.T) {
@@ -698,7 +699,7 @@ func TestSessionCreate_SetsReminderDue(t *testing.T) {
 	v, err := th.svc.Create(as(user("alice")), "ticket", "TKT-1", "tasks", CreateInput{})
 	require.NoError(t, err)
 	k := channels.Key{Anchor: channels.Anchor{ID: "TKT-1"}, Type: "tasks", Name: v.Name}
-	want := t0.Add(time.Minute + realtimelimits.ReminderSlack)
+	want := t0.Add(time.Minute + flow.ReminderSlack)
 	require.Equal(t, want, th.head(t, k).Session.NextDueAt)
 	require.Equal(t, want, th.wake.Take())
 }

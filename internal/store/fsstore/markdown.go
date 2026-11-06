@@ -1,7 +1,6 @@
 package fsstore
 
 import (
-	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -14,44 +13,15 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/frontmatter"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// errConflictedFile is returned when a file has unresolved git conflict markers.
-var errConflictedFile = errors.New("file has unresolved git conflicts")
+// errConflictedFile is returned when a file has unresolved git conflict
+// markers. It is [store.ErrConflictedRow], so a caller outside the package
+// can tell it from a parse error.
+var errConflictedFile = store.ErrConflictedRow
 
 const frontmatterDelimiter = frontmatter.Delimiter
-
-// conflictMarkerStart is git's opening conflict marker. Detection
-// MUST be line-anchored — see [hasLineAnchoredConflict] and BUG-WN6D
-// for why a substring match false-positives on legitimate content
-// (markdown codespans or quoted prose mentioning the marker).
-var conflictMarkerStart = []byte("<<<<<<<")
-
-// hasLineAnchoredConflict reports whether `raw` contains the
-// conflict marker at column 0 of any line. Returns false for
-// substring matches inside inline text — those are not real
-// conflicts.
-//
-// NOTE: a near-duplicate of [markdown.HasConflictMarkers] exists in
-// the markdown package. Both live behind the same line-anchored
-// semantics; deduplicating into one shared helper is tracked
-// separately (the dependency widening of fsstore→markdown is the
-// reason for keeping it local for now).
-func hasLineAnchoredConflict(raw string) bool {
-	idx := strings.Index(raw, string(conflictMarkerStart))
-	for idx >= 0 {
-		if idx == 0 || raw[idx-1] == '\n' {
-			return true
-		}
-		offset := idx + len(conflictMarkerStart)
-		rest := strings.Index(raw[offset:], string(conflictMarkerStart))
-		if rest < 0 {
-			return false
-		}
-		idx = offset + rest
-	}
-	return false
-}
 
 // --- document parsing ---
 
@@ -75,7 +45,7 @@ func (d *document) getString(key string) string {
 
 // parseDocument parses a markdown file with YAML frontmatter.
 func parseDocument(raw string) (*document, error) {
-	if hasLineAnchoredConflict(raw) {
+	if markdown.HasConflictMarkersString(raw) {
 		return nil, errConflictedFile
 	}
 
@@ -121,7 +91,18 @@ func formatDocumentOrdered(fm map[string]any, content string, keyOrder []string)
 		}
 	}
 
-	return sb.String(), nil
+	// BUG-GYM7ZBS: never write a file this store reads back as an unresolved
+	// merge, because every later read of the row would fail. formatMarkdown
+	// rewrites the end marker of a block in prose (">>>>>>>" becomes a nested
+	// blockquote) and markdown.KeyNode quotes a key that begins with the
+	// start marker, but formatMarkdown leaves fenced code verbatim, so a
+	// block shown inside a code fence reaches this check and is refused with
+	// [store.ErrConflictBlock].
+	out := sb.String()
+	if markdown.HasConflictMarkersString(out) {
+		return "", store.ErrConflictBlock
+	}
+	return out, nil
 }
 
 func marshalOrdered(data map[string]any, keyOrder []string) ([]byte, error) {

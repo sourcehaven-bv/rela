@@ -4,6 +4,7 @@ package conflict
 
 import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/markdown"
 )
 
 // Side represents which side of a conflict to use.
@@ -14,14 +15,9 @@ const (
 	SideTheirs Side = "theirs" // Incoming branch
 )
 
-// Marker represents a single conflict region in a file.
-type Marker struct {
-	StartLine int    // Line number of <<<<<<<
-	MidLine   int    // Line number of =======
-	EndLine   int    // Line number of >>>>>>>
-	OursRef   string // Reference after <<<<<<< (e.g., "HEAD")
-	TheirsRef string // Reference after >>>>>>> (e.g., "feature-branch")
-}
+// Marker is a single conflict region in a file. markdown owns the type
+// because it owns the rule for what a conflict block is.
+type Marker = markdown.ConflictBlock
 
 // ConflictedFile represents a file with one or more git conflicts.
 type ConflictedFile struct {

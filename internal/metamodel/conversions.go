@@ -8,7 +8,10 @@ import (
 	"strings"
 )
 
-var conversionNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
+// conversionNamePattern allows dots so generated variant conversions can
+// carry qualified type names (isms.task-to-projects.task); a hand-written
+// name cannot contain one (checkDeclaredNames).
+var conversionNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*(\.[a-z0-9_-]+)*$`)
 var conversionSourceRefPattern = regexp.MustCompile(`\{\{\s*(?:source|new)\.([A-Za-z0-9_-]+)\s*\}\}`)
 
 // ConversionDrop is the `relations:` value of a conversion that drops the

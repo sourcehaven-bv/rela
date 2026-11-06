@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
+	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
-	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
 
 // remindOpts are the knobs of [remindRealtimeWith].
@@ -248,7 +248,7 @@ func TestNextSlot(t *testing.T) {
 
 func TestNextDue_Both(t *testing.T) {
 	t.Parallel()
-	slack := realtimelimits.ReminderSlack
+	slack := flow.ReminderSlack
 	tests := []struct {
 		name  string
 		after string
@@ -306,7 +306,7 @@ func TestStepScheduleReminders(t *testing.T) {
 		from := channels.Channel{CreatedAt: t0}
 		got := stepSchedule(s, from, moved(from, "contained", 25*time.Minute))
 		require.Equal(t, rec(-1, 0), got.Reminders)
-		require.Equal(t, t0.Add(10*time.Minute+realtimelimits.ReminderSlack), got.NextDueAt)
+		require.Equal(t, t0.Add(10*time.Minute+flow.ReminderSlack), got.NextDueAt)
 	})
 	t.Run("a move out of in drops the record", func(t *testing.T) {
 		t.Parallel()
@@ -375,7 +375,7 @@ func TestResumeScheduleReminders(t *testing.T) {
 		require.Equal(t, map[string]channels.ReminderRecord{
 			"status-update": {Since: t0.Add(5 * time.Hour), Count: 2},
 		}, got.Reminders)
-		require.Equal(t, t0.Add(5*time.Hour+10*time.Minute+realtimelimits.ReminderSlack), got.NextDueAt)
+		require.Equal(t, t0.Add(5*time.Hour+10*time.Minute+flow.ReminderSlack), got.NextDueAt)
 	})
 	t.Run("a reminder not yet due keeps its record", func(t *testing.T) {
 		t.Parallel()
@@ -397,7 +397,7 @@ func TestResumeScheduleReminders(t *testing.T) {
 		got := resumeSession(s, ch, t0.Add(100*time.Hour))
 		require.Equal(t, map[string]time.Time{"notify-deadline": t0.Add(100 * time.Hour)}, got.Restarts)
 		require.Equal(t, t0.Add(100*time.Hour), got.Reminders["status-update"].Since)
-		require.Equal(t, t0.Add(100*time.Hour+10*time.Minute+realtimelimits.ReminderSlack), got.NextDueAt)
+		require.Equal(t, t0.Add(100*time.Hour+10*time.Minute+flow.ReminderSlack), got.NextDueAt)
 	})
 }
 

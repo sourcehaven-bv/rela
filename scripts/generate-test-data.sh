@@ -246,7 +246,7 @@ cat > "$OUTPUT_DIR/schema.yaml" << 'METAMODEL'
 # This file defines the entity types, relations, and validation rules.
 
 version: "1.0"
-namespace: "https://example.org/ontology/architecture#"
+iri: "https://example.org/ontology/architecture#"
 
 types:
   status:

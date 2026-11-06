@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -53,10 +54,11 @@ func (h schemaResourceHandler) handleReadMetamodel(
 	meta := h.meta
 	result := map[string]any{
 		"version":   meta.Version,
-		"namespace": meta.Namespace,
+		"iri":       meta.IRI,
 		"entities":  meta.Entities,
 		"relations": meta.Relations,
 		"types":     meta.Types,
+		"abstract":  metamodel.AbstractTypes(meta),
 	}
 	if len(meta.Validations) > 0 {
 		result["validations"] = meta.Validations

@@ -107,7 +107,7 @@ func applyListFilters(
 
 	entityDef, ok := meta.GetEntityDef(entityTypeName)
 	if !ok {
-		return nil, fmt.Errorf("unknown entity type: %s", entityTypeName)
+		return nil, metamodel.UnknownEntityTypeError(meta, entityTypeName)
 	}
 
 	ev := predicatefns.NewEvaluator(meta)
@@ -236,7 +236,7 @@ func applyListSort(
 	}
 	entityDef, ok := meta.GetEntityDef(entityTypeName)
 	if !ok {
-		return fmt.Errorf("unknown entity type: %s", entityTypeName)
+		return metamodel.UnknownEntityTypeError(meta, entityTypeName)
 	}
 	if sortKey == "id" {
 		filter.SortByID(entities, storeEntityRecord, desc)

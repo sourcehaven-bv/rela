@@ -60,7 +60,7 @@ The critical relationships:
 
 ```yaml
 version: "1.0"
-namespace: "https://example.org/ontology/project#"
+iri: "https://example.org/ontology/project#"
 
 types:
   status:

@@ -154,7 +154,10 @@ func (r *Request) readQuery(entityType string) ReadQueryResult {
 	if !ok {
 		return ReadQueryResult{DenyAll: true}
 	}
-	q := &store.GraphQuery{EntityType: entityType, HasInbound: inbound}
+	// SkipUnreadable: the answer is an allowlist, so a row whose file has
+	// merge conflicts is hidden rather than failing every list of the type
+	// (BUG-HTSW37Q).
+	q := &store.GraphQuery{EntityType: entityType, HasInbound: inbound, SkipUnreadable: true}
 	if allFaces && sameFacesEverywhere(conferring, facesByRel, allByRel) {
 		// Every conferring role reads every face: the union IS each role's
 		// grant, so the single predicate is exact and no branches are needed.

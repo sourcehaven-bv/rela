@@ -219,7 +219,7 @@ func (h schemaResourceHandler) entityDetail(
 
 	// A rule with no entity type applies to every type.
 	for _, rule := range h.meta.Validations {
-		if rule.EntityType != name && rule.EntityType != "" {
+		if !rule.AppliesToType(name) {
 			continue
 		}
 		text := rule.Description

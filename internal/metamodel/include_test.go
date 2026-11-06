@@ -433,7 +433,7 @@ entities:
 	assertEqual(t, rootFieldErr.Field, "version")
 }
 
-func TestLoadWithIncludes_IncludeHasNamespace(t *testing.T) {
+func TestLoadWithIncludes_IncludeHasIRI(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	createFile(t, filepath.Join(tmpDir, "metamodel.yaml"), `
@@ -443,7 +443,7 @@ includes:
 `)
 
 	createFile(t, filepath.Join(tmpDir, "bad.yaml"), `
-namespace: "https://example.org"
+iri: "https://example.org"
 entities:
   control:
     label: Control
@@ -461,7 +461,7 @@ entities:
 	if !errors.As(err, &rootFieldErr) {
 		t.Fatalf("expected IncludeHasRootFieldError, got %T: %v", err, err)
 	}
-	assertEqual(t, rootFieldErr.Field, "namespace")
+	assertEqual(t, rootFieldErr.Field, "iri")
 }
 
 // description is a deployment-wide, root-only field (TKT-0YBFT8) — like version

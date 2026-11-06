@@ -258,7 +258,7 @@ func (h promptHandler) handleSummarizeProjectPrompt(
 
 ## Metamodel
 - Version: %s
-- Namespace: %s
+- IRI: %s
 - Entity types: %d
 - Relation types: %d
 
@@ -270,7 +270,7 @@ Please provide:
 4. Recommendations for improving the project's traceability`,
 		totalEntities, totalRelations, orphanCount,
 		entityCounts.String(), relCounts.String(),
-		meta.Version, meta.Namespace,
+		meta.Version, meta.IRI,
 		len(entityTypes), len(relTypes))
 
 	return &mcpgo.GetPromptResult{

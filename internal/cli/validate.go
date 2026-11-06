@@ -88,6 +88,7 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 	}
 	hasErrors = reportDataEntryValidation(result, hasErrors)
 	hasErrors = reportRealtimeValidation(ctx, result, hasErrors)
+	hasErrors = reportFlowsValidation(ctx, result, hasErrors)
 	for _, item := range []struct {
 		name string
 		err  error
@@ -605,6 +606,12 @@ func reportRealtimeValidation(ctx context.Context, result *projectsetup.Validate
 	if err != nil && !stderrors.Is(err, fs.ErrNotExist) {
 		fmt.Printf("  ✗ %s: acl.yaml: %v\n", realtimeFile, err)
 		return true
+	}
+	// Expand abstract type names to their variants, as the server does.
+	// The acl.yaml check reports any error. Expansion runs before any check
+	// that can fail, so the policy is expanded even when one does.
+	if policy != nil && result.Metamodel != nil {
+		_ = appbuild.ValidateACLPolicy(policy, result.Metamodel)
 	}
 	loader := config.NewFSLoader(storage.NewSafeFS(storage.NewOsFS()), root)
 	rt, err := appbuild.LoadRealtime(ctx, loader, result.Metamodel, policy)

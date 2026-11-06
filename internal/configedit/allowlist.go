@@ -319,7 +319,10 @@ var editable = map[File][]string{
 // on this list: anything not editable is locked.
 var locked = map[File][]string{
 	SchemaFile: {
-		"version", "namespace", "includes.**",
+		"version", "namespace", "iri", "includes.**",
+		// Abstract types and variants reshape the type set at load, and
+		// Configure parses one file without its includes.
+		"entities.*.abstract.**", "entities.*.extends",
 		// External commands and upload policy.
 		"attachments.**", "transforms.**", "checkers.**",
 		"entities.*.properties.*.accept.**",

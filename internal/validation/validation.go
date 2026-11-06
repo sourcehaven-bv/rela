@@ -433,7 +433,7 @@ func (s *Service) CheckRule(
 	}
 
 	// Filter candidates
-	candidates := s.filterCandidates(entities, scope, rule.EntityType)
+	candidates := s.filterCandidates(entities, scope, rule)
 
 	// If the rule uses Lua, build a single runtime and reuse it across
 	// every entity. luaCtx is nil when the rule has no Lua at all.
@@ -522,7 +522,7 @@ func (s *Service) CheckRule(
 func (s *Service) filterCandidates(
 	entities []*entity.Entity,
 	scope map[string]bool,
-	entityType string,
+	rule metamodel.ValidationRule,
 ) []*entity.Entity {
 	var candidates []*entity.Entity
 	for _, e := range entities {
@@ -531,7 +531,7 @@ func (s *Service) filterCandidates(
 				continue
 			}
 		}
-		if entityType == "" || e.Type == entityType {
+		if rule.AppliesToType(e.Type) {
 			candidates = append(candidates, e)
 		}
 	}

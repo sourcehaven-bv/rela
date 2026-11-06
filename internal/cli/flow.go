@@ -19,16 +19,25 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
-// FlowCmd runs an interactive Lua flow. Self-discovers project from
-// the script's directory so shebang scripts work from any cwd.
+// FlowCmd groups the flow commands. A bare `rela flow <script.lua>` runs
+// an interactive Lua flow, as it did before flows.yaml existed; the other
+// subcommands work on the processes flows.yaml declares.
 type FlowCmd struct {
+	Run      FlowScriptCmd   `cmd:"" default:"withargs" help:"Run an interactive Lua flow script."`
+	Validate FlowValidateCmd `cmd:"" help:"Check flows.yaml against the schema and acl.yaml."`
+	Show     FlowShowCmd     `cmd:"" help:"Show a flow from flows.yaml as a Mermaid state diagram."`
+}
+
+// FlowScriptCmd runs an interactive Lua flow. Self-discovers project from
+// the script's directory so shebang scripts work from any cwd.
+type FlowScriptCmd struct {
 	OutputDir string   `name:"output-dir" help:"Directory for write_file output (default: {project}/output)."`
 	Script    string   `arg:"" help:"Path to Lua script."`
 	Args      []string `arg:"" optional:"" help:"Arguments passed to the script."`
 }
 
 // Run dispatches `rela flow <script.lua> [args...]`.
-func (c *FlowCmd) Run(ctx context.Context) error {
+func (c *FlowScriptCmd) Run(ctx context.Context) error {
 	// coverage-ignore-start: os-fs-event: self-discovers a project from the script dir and drives an interactive huh
 	// TTY flow; no in-process test
 	// harness

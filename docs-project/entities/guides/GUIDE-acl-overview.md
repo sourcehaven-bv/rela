@@ -200,6 +200,34 @@ So gaining a role never removes a field. In the example above, a member of
 editor's `update: [ticket]` covers them all, and the triager's block cannot
 take that away. A member who is only a triager may write `status` alone.
 
+A relation grant's `fields:` list follows the same rule for the relation's
+meta fields. Once a role lists meta fields for a relation type, a meta field
+that no role grants is read-only. This includes a meta key the schema does not
+declare. Every meta field stays writable for a role that holds `update` on
+the source entity's type and either has no `relations:` block for it or has a
+grant for that relation type without a `fields:` list. A grant whose `when:`
+fails does not count. The order properties (`_order_out`, `_order_in`) are
+positions, not content: they stay writable unless a `fields:` list names them.
+Once a list names one, a position move needs that grant for the source of
+every edge it rewrites. On the incoming side that includes other sources'
+edges. When a later renumber would rewrite an edge whose source lacks the
+grant, the renumber is skipped.
+The rule applies to the data-entry API and to MCP on rela-server.
+
+```yaml
+roles:
+  triager:
+    update: [ticket]
+    relations:
+      ticket:
+        - relation: blocks
+          fields:
+            - field: reason   # `reason` only; every other meta field is read-only
+```
+
+> **Changed:** earlier versions left every meta field that no role named
+> writable. Add the meta fields a role may write to its `fields:` list.
+
 Face-qualified grants count only on their face: a role with
 `read: ["policy@published"]` and no `visible:` block shows every field of a
 published policy and nothing of a draft. A client ceiling is applied after
@@ -236,6 +264,20 @@ face of a type and has no `visible:` block for that type, every other role's
 or `create` and the `fields:` and `options:` blocks. `rela acl audit` reports
 this as `A14-everyone-opens-field-block`, and rela logs it as a warning
 when it loads `acl.yaml`.
+
+## Naming an abstract type
+
+A schema can declare an abstract type with variants, such as `task` with
+`isms.task` and `projects.task` (see
+[Namespaces and variants](metamodel.md#namespaces-and-variants)). In
+`acl.yaml` the abstract name stands for all its variants. rela rewrites it
+when the policy loads, so `read: [task]` becomes
+`read: [isms.task, projects.task]`.
+
+When a per-type map names both `task` and `isms.task`, the variant's entry
+wins. A ceiling's `redact:` is the exception: the variant keeps the abstract
+entry's redacted fields as well. `user_entity_type` names one type, so an
+abstract name there fails the load.
 
 ## Scoping a grant to a content state
 

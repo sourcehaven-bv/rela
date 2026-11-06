@@ -100,3 +100,24 @@ func ForFileType(ft FileType) []Migration {
 	}
 	return result
 }
+
+// Advisory is implemented by a migration whose old syntax still loads. Such
+// a migration is applied by `rela migrate` but does not stop a project from
+// loading, so a cosmetic rename cannot lock every existing project out.
+type Advisory interface {
+	Migration
+	Advisory() bool
+}
+
+// Blocking returns the detections a loader must refuse: every one whose
+// migration is not [Advisory].
+func Blocking(detections []DetectionResult) []DetectionResult {
+	var out []DetectionResult
+	for _, d := range detections {
+		if a, ok := d.Migration.(Advisory); ok && a.Advisory() {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
+}
