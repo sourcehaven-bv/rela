@@ -48,7 +48,7 @@ func CheckSchemaCompiles(meta *metamodel.Metamodel, st store.Store) []string {
 			automation.WithTraversals(ungatedBinder(meta, st)))
 		add("automations", err)
 	}
-	_, err = writerule.Compile(meta)
+	_, err = writerule.NewSet(meta)
 	add("validations enforced on write", err)
 	return append(problems, checkValidationRules(meta)...)
 }

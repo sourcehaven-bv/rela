@@ -194,7 +194,7 @@ validations:
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			set, err := writerule.Compile(parse(t, tc.validations))
+			set, err := writerule.NewSet(parse(t, tc.validations))
 			if err != nil {
 				t.Fatalf("Compile: %v", err)
 			}
@@ -220,7 +220,7 @@ validations:
 // TestCheck_MessageNamesNoValue pins that the refusal quotes the rule, not
 // the value that broke it: the writer may not be allowed to read it.
 func TestCheck_MessageNamesNoValue(t *testing.T) {
-	set, err := writerule.Compile(parse(t, `
+	set, err := writerule.NewSet(parse(t, `
 validations:
   - name: geen-geheim
     description: De rechtsgrond is niet geheim.
@@ -242,7 +242,7 @@ validations:
 	}
 }
 
-func TestCompile_Refuses(t *testing.T) {
+func TestNewSet_Refuses(t *testing.T) {
 	tests := []struct {
 		name        string
 		validations string
@@ -273,7 +273,7 @@ validations:
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := writerule.Compile(parse(t, tc.validations))
+			_, err := writerule.NewSet(parse(t, tc.validations))
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Compile error = %v, want it to contain %q", err, tc.want)
 			}
@@ -281,7 +281,7 @@ validations:
 	}
 }
 
-func TestCompile_RefusesRollup(t *testing.T) {
+func TestNewSet_RefusesRollup(t *testing.T) {
 	meta, err := metamodel.Parse([]byte(`version: "1.0"
 entities:
   maatregel:
@@ -312,13 +312,13 @@ validations:
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if _, err := writerule.Compile(meta); err == nil || !strings.Contains(err.Error(), "bewijs_aantal") {
+	if _, err := writerule.NewSet(meta); err == nil || !strings.Contains(err.Error(), "bewijs_aantal") {
 		t.Fatalf("Compile error = %v, want a roll-up refusal", err)
 	}
 }
 
 func TestReads(t *testing.T) {
-	set, err := writerule.Compile(parse(t, termijnGrens))
+	set, err := writerule.NewSet(parse(t, termijnGrens))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +339,7 @@ func TestNilSet(t *testing.T) {
 	if got := s.Check(context.Background(), &entity.Entity{Type: "x"}); got != nil {
 		t.Fatalf("nil set Check = %v, want nil", got)
 	}
-	if _, err := writerule.Compile(nil); err == nil {
-		t.Fatal("Compile(nil) succeeded, want an error")
+	if _, err := writerule.NewSet(nil); err == nil {
+		t.Fatal("NewSet(nil) succeeded, want an error")
 	}
 }

@@ -51,7 +51,7 @@ func WriteRuleVisibilityConflicts(meta *metamodel.Metamodel, policy *acl.Policy)
 	if len(restricted) == 0 {
 		return nil
 	}
-	set, err := writerule.Compile(meta)
+	set, err := writerule.NewSet(meta)
 	if err != nil {
 		return nil
 	}

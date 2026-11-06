@@ -610,7 +610,7 @@ func New(d Deps) (*Manager, error) {
 		}
 		d.Computed = compiled
 	}
-	rules, err := writerule.Compile(d.Meta)
+	rules, err := writerule.NewSet(d.Meta)
 	if err != nil {
 		return nil, fmt.Errorf("entitymanager: New: %w", err)
 	}

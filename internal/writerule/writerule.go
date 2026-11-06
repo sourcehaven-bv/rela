@@ -6,7 +6,7 @@
 // for the rule, so the write path and analyze agree on what the rule means.
 // Lua never runs here, and nothing reads the graph: the metamodel loader
 // refuses `lua:`, `lua_file:`, `relations:` and `content:` on an enforced
-// rule, and [Compile] refuses `related(...)`. A check is therefore a pure
+// rule, and [NewSet] refuses `related(...)`. A check is therefore a pure
 // function of the entity, so the write path may run it on the exact state it
 // is about to persist.
 package writerule
@@ -19,7 +19,6 @@ import (
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
@@ -49,7 +48,7 @@ type Read struct {
 	Properties []string // sorted
 }
 
-// Compile compiles every rule of meta declared `enforce: write`, for each
+// NewSet compiles every rule of meta declared `enforce: write`, for each
 // entity type it applies to.
 //
 // It fails on the first condition that does not compile, or that uses
@@ -58,9 +57,9 @@ type Read struct {
 // would succeed.
 //
 // Nil: meta rejected — an error, because the caller is a wiring site.
-func Compile(meta *metamodel.Metamodel) (*Set, error) {
+func NewSet(meta *metamodel.Metamodel) (*Set, error) {
 	if meta == nil {
-		return nil, errors.New("writerule.Compile: nil metamodel")
+		return nil, errors.New("writerule.NewSet: nil metamodel")
 	}
 	s := &Set{ev: predicatefns.NewEvaluator(meta), byType: map[string][]compiledRule{}}
 	for _, rule := range meta.Validations {
@@ -106,11 +105,7 @@ func (s *Set) compileRule(rule metamodel.ValidationRule, typ string) (compiledRu
 func (s *Set) compileSide(typ string, clauses []string, expr string) ([]*predicate.Program, error) {
 	var progs []*predicate.Program
 	if len(clauses) > 0 {
-		filters, err := filter.ParseAll(clauses)
-		if err != nil {
-			return nil, err
-		}
-		prog, err := s.ev.CompileFilter(typ, filters)
+		prog, err := s.ev.CompileClauses(typ, clauses)
 		if err != nil {
 			return nil, err
 		}
@@ -125,7 +120,7 @@ func (s *Set) compileSide(typ string, clauses []string, expr string) ([]*predica
 	}
 	// A roll-up property needs no check here: the predicate environment does
 	// not declare it, so a rule that reads one does not compile
-	// (TestCompile_RefusesRollup).
+	// (TestNewSet_RefusesRollup).
 	for _, prog := range progs {
 		if len(prog.Traversals()) > 0 {
 			return nil, fmt.Errorf("%s(...) is not available on a write-enforced rule: "+

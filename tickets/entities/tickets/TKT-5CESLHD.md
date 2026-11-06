@@ -37,3 +37,4 @@ violation with 422 (`validation_failed`, error type `rule`).
 ## Notes
 
 - `validation:` values are matched exactly; the environment variable is trimmed by its reader.
+- `writerule.NewSet` builds the rule set; filter clauses compile through `predicatefns.Evaluator.CompileClauses`.
