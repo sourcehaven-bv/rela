@@ -41,7 +41,11 @@ status: done
   rela role; shared, missing or moved principal values grant nothing.
 - Lua: `rela.principals_with_role` returns sorted readable user ids, drops
   hidden, missing and other-type ids, and raises for an undeclared role or
-  without the capability.
+  without the capability. TestScriptReads_PrincipalsWithRoleGated runs it
+  through the real declarative read gate.
+- Audit: each store or clear writes one `idp-roles-set` record naming the
+  bound entity and the role count, never the IdP subject
+  (TestIDPRoleWriter_BindsTheResolvedEntity).
 
 ## Quality
 
