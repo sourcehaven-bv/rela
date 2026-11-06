@@ -6188,7 +6188,7 @@ actions:
 | `permission`  | string | Global named permission the caller must hold to run the action from a list, a list button, the sidebar, a next-action offer or a detail page |
 | `request`     | map    | Opt into request-scoped execution — see [Request-scoped actions](#request-scoped-actions). Requires `script` |
 | `capabilities`| map    | Ambient capability grant (`http`, `ai`, `write_file`, named `secrets`). Omitting it grants none |
-| `allow_acl_bypass` | string | `write` gives the script `admin.update_entity` inside `rela.bypass_acl` — see [Elevated updates](#elevated-updates). Requires `script`, `permission` and `elevated_updates` |
+| `allow_acl_bypass` | string | `write` gives the script `admin.update_entity` inside `rela.bypass_acl`. See [Elevated updates](#elevated-updates). Requires `script`, `permission` and `elevated_updates` |
 | `elevated_updates` | map | Type to list of properties that `admin.update_entity` may set. Requires `allow_acl_bypass: write` |
 
 Each action must have either `set` or `script`, not both.
@@ -6628,7 +6628,8 @@ The following keys are reserved for built-in list navigation and cannot be used 
 - `script` paths must end in `.lua` and be local paths (no `..` or absolute paths)
 - Keys must be unique within a list (no two actions on the same list can share a key)
 - `allow_acl_bypass` must be `write`, and needs `script`, `permission` and a non-empty `elevated_updates`
-- `elevated_updates` types and properties must exist in the metamodel; see [Elevated updates](#elevated-updates) for the property kinds it refuses
+- `elevated_updates` types and properties must exist in the metamodel; see
+  [Elevated updates](#elevated-updates) for the property kinds it refuses
 
 ## Piles
 
