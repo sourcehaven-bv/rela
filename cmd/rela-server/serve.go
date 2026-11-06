@@ -264,7 +264,11 @@ func (s *server) buildApp(svc *appbuild.Services) (*dataentry.App, error) {
 		return nil, err
 	}
 	if s.webhook != nil {
-		app.SetWebhookReceiver(webhookVerifierAdapter{s.webhook}, s.f.webhookAction)
+		roles := appbuild.IDPRoles(svc)
+		if roles == nil {
+			return nil, errors.New("IdP webhook: the services have no role store")
+		}
+		app.SetWebhookReceiver(webhookVerifierAdapter{s.webhook}, s.f.webhookAction, roles)
 	}
 	if err := wireRemoteMCP(app, svc, s.f); err != nil {
 		return nil, fmt.Errorf("enable remote MCP: %w", err)

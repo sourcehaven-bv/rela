@@ -202,6 +202,8 @@ components:
   lease:            { in: internal/lease }
   kvlease:          { in: internal/lease/kvlease }
   pglease:          { in: internal/lease/pglease }
+  # IdP-asserted roles per subject, for background jobs (TKT-IZL6NX8).
+  idproles:         { in: internal/idproles }
   # Realtime channels (TKT-DD8B6I): message logs anchored to an entity.
   channels:         { in: internal/channels }
   realtime:         { in: internal/realtime }
@@ -827,6 +829,8 @@ deps:
     mayDependOn:
       # aclstore: the store adapters handed to acl.NewDeclarative.
       - aclstore
+      # The stored IdP roles, over the state KV and the Services-wide lock.
+      - idproles
       - rollup
       - rootfs
       # Loads realtime.yaml at boot and holds the compiled config.

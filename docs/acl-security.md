@@ -653,9 +653,12 @@ Three properties are load-bearing.
 A role reaching it from an unverified source would therefore be a
 complete authorization bypass, not a degradation. The assertion claims
 live in *unexported* fields on `principal.Principal`, populated only by
-`principal.Verified`, which only the JWT resolver calls after signature
-verification. No composite literal anywhere in the tree can forge a
-role; the compiler enforces this rather than a reviewer remembering to.
+`principal.Verified`/`VerifiedFrom`. Request paths call them only in the
+JWT resolver, after signature verification; the other callers mint
+identities rela builds itself, such as a scheduler `for_each` child that
+carries roles a verified webhook stored (see "Stored asserted roles"
+below). No composite literal anywhere in the tree can forge a role; the
+compiler enforces this rather than a reviewer remembering to.
 
 Consequence for operators: **never introduce a header that is trusted as
 a role source.** Trusting `X-Asserted-Roles` the way `X-Forwarded-User`
@@ -680,6 +683,57 @@ lifetime, you must restart or otherwise intervene at the proxy; do not
 assume revoking in the IdP takes effect immediately downstream. Event
 streams follow the same bound: the server ends a stream when the assertion
 that opened it expires.
+
+### Stored asserted roles (background jobs)
+
+A scheduler `for_each` child runs as a user but carries no assertion. The
+IdP webhook receiver (`POST /webhooks/idp`) can therefore store the IdP role
+names of a user, and the child then holds the rela roles they map to
+(TKT-IZL6NX8).
+
+- **Who writes.** Only the webhook receiver, after it verified the webhook
+  signature. Its action returns `asserted_roles = { ... }`, and the
+  receiver stores that list for the subject (`user_id`) of the verified
+  webhook. The script cannot name another subject. An empty list clears the
+  subject. Any other action that returns `asserted_roles` fails with a 500,
+  so the key is never silently dropped.
+- **What is stored.** IdP role names, not rela roles. They pass through
+  `asserted_role_assignments` at the point of use, so the second control
+  above still holds.
+- **Where.** Runtime state outside the graph: one document in the state
+  store, rewritten under a lock. On postgres that is the tenant's state table
+  with an advisory lock, shared by every process. On the file tiers it is
+  `idp-roles.json` in the cache directory with lock files. No entity write
+  reaches it. Without a cache directory the roles are kept in process memory
+  and a warning is logged.
+- **Bound to one entity.** When it stores roles, the receiver resolves the
+  subject to the one user entity whose `principal_property` equals it (or
+  the user entity with that id when no `principal_property` is set), and the
+  record names that entity. A subject that resolves to no entity, or to
+  several, has its record cleared. A reader applies the roles only to the
+  entity the record names, and only while that entity alone holds the
+  subject. So a user who edits a person entity's `principal_property` value
+  to someone else's subject gains nothing until a new verified webhook
+  binds the roles again. Keep `principal_property` writable by
+  administrators only all the same: the next webhook for that subject would
+  bind to whoever holds it.
+- **Ordered per subject.** The receiver holds a per-subject lock from before
+  its action fetches the roles until it stored them. Two deliveries for one
+  user therefore store in fetch order, and a slow older fetch cannot undo a
+  revocation.
+- **Who reads.** A `for_each` child, keyed by the user entity's
+  `principal_property` value (or its id when none is set), reads the roles
+  when it starts. `rela.principals_with_role(role)` lists the holders for a
+  script. JWT requests, the CLI, stdio MCP and `--principal-header`
+  requests do not use stored roles.
+
+**Revocation depends on webhook delivery.** A stored role lasts until the
+next webhook for that user replaces or clears it. If the IdP does not send a
+webhook when a role is removed, or delivery fails for good, the role stays.
+Stored roles do not expire on their own. The store is keyed by subject, not
+by org, so with several orgs the last webhook wins, and the receiver does not
+check the webhook's org. Give each deployment its own `-webhook-audience`
+value, so a webhook signed for one deployment cannot be replayed to another.
 
 ### `org_id` is recorded, not enforced
 

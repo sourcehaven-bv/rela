@@ -36,7 +36,7 @@ func newWebhookTestApp(t *testing.T, script string, v webhookVerifier) *App {
 	app.Cfg().Actions = map[string]dataentryconfig.Action{
 		"idp-sync": {Script: "idp-sync.lua"},
 	}
-	app.SetWebhookReceiver(v, "idp-sync")
+	app.SetWebhookReceiver(v, "idp-sync", nil)
 	return app
 }
 
@@ -47,7 +47,7 @@ func postWebhook(app *App, body string) *httptest.ResponseRecorder {
 	// in registerWebhookRoutes.
 	r := app.webhook
 	r.handle(rec, req, func(ctx context.Context, claims WebhookClaims) error {
-		return dispatchWebhookAction(ctx, app.write, r.actionID, claims)
+		return dispatchWebhookAction(ctx, app.write, r, claims)
 	})
 	return rec
 }

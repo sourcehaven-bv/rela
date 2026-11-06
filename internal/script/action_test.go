@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -60,7 +61,7 @@ func TestParseActionResponse_Valid(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if *got != tt.want {
+			if !reflect.DeepEqual(*got, tt.want) {
 				t.Errorf("got %+v, want %+v", got, tt.want)
 			}
 		})

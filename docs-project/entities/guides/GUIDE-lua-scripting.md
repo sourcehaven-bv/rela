@@ -364,6 +364,15 @@ Transport errors (e.g., terminal not interactive) also raise Lua errors.
 | `rela.trace_from(id, depth?)` | Trace outgoing dependencies | table (tree) |
 | `rela.trace_to(id, depth?)` | Trace incoming dependencies | table (tree) |
 | `rela.find_path(from, to)` | Find shortest path | table (array) or nil |
+| `rela.principals_with_role(role)` | User entities holding `role` through IdP roles stored by the webhook | table (array of ids) |
+
+`rela.principals_with_role(role)` answers from the roles the IdP webhook
+stored (see "Stored asserted roles" in GUIDE-acl-security). It returns the
+ids of the user entities whose stored IdP roles map to `role` through
+`asserted_role_assignments`, sorted. Roles granted by `assignments:`, groups
+or role relations are not included. Only ids the script can read are
+returned. A role that `acl.yaml` does not declare raises an error, and so
+does a runtime without the role store, such as a validation rule.
 
 #### Reads are bounded
 

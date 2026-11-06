@@ -31,6 +31,10 @@ override:
   # place the pointer grammar is enforced (TKT-WAV8XP).
   - path: ^internal/worlds$
     threshold: 85
+  # Stores the IdP roles background jobs hold; a lost write can be a lost
+  # revocation (TKT-IZL6NX8). ~95% today.
+  - path: ^internal/idproles$
+    threshold: 90
   # The resume token hides write counts from SSE clients, and the change feed
   # decides what a reconnecting client is told it missed (TKT-3A1200).
   - path: ^internal/changefeed$

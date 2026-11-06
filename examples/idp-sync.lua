@@ -85,8 +85,12 @@ if err ~= nil then
 end
 if resp.status_code == 404 then
   -- The membership no longer exists (e.g. removed before we processed the event).
-  -- Not an error the IdP should retry: acknowledge without provisioning.
-  return { message = "idp-sync: user " .. uid .. " not a member of " .. org .. "; skipped" }
+  -- Not an error the IdP should retry: acknowledge without provisioning, and
+  -- clear any roles stored for the subject.
+  return {
+    message = "idp-sync: user " .. uid .. " not a member of " .. org .. "; skipped",
+    asserted_roles = {},
+  }
 end
 if resp.status_code ~= 200 then
   return { message_type = "error", message = "idp-sync: fetch returned " .. tostring(resp.status_code) }
@@ -105,11 +109,22 @@ local props = {
   email = user.email or "",
 }
 
+-- asserted_roles stores the IdP role names for the verified subject, so a
+-- scheduled for_each task running as this person holds the rela roles
+-- asserted_role_assignments maps them to. The receiver keys them by the
+-- webhook's subject; the script cannot name another one. An empty list clears.
+local roles = {}
+for _, r in ipairs(user.roles or {}) do
+  if type(r) == "string" then
+    table.insert(roles, r)
+  end
+end
+
 local found = rela.list_entities("person", "sub=" .. uid)
 if found ~= nil and #found > 0 then
   rela.update_entity(found[1].id, props)
-  return { message = "idp-sync: updated person " .. uid }
+  return { message = "idp-sync: updated person " .. uid, asserted_roles = roles }
 end
 
 rela.create_entity("person", props)
-return { message = "idp-sync: created person " .. uid }
+return { message = "idp-sync: created person " .. uid, asserted_roles = roles }

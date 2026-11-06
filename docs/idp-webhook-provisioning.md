@@ -144,6 +144,16 @@ duplicate. Those `person` entities are then ready for ACLs and relations —
 e.g. an incoming ACL feature can match the request principal's `sub` against the
 `person.sub` property so policy targets the readable entity, not a raw id.
 
+## Storing roles for background jobs
+
+The action may also return `asserted_roles`, a list of the IdP role names of the
+user. rela stores them for the webhook's verified subject, so a scheduled
+`for_each` task that runs as the person holds the rela roles
+`asserted_role_assignments` maps them to. The reference action returns
+`user.roles`, and an empty list on a 404 to clear them. See "Stored asserted
+roles" in [acl-security.md](acl-security.md) for the trust model and the
+revocation caveat.
+
 ## Behavior reference
 
 | Situation | Result |
@@ -154,3 +164,5 @@ e.g. an incoming ACL feature can match the request principal's `sub` against the
 | Missing `user_id` claim | 400, action not run |
 | Redelivered webhook (same `jti`) | deduped, action not re-run; 200 |
 | Action fails (IdP fetch error, etc.) | 502, `jti` forgotten so a retry runs again |
+| Action returns `asserted_roles` | roles stored for the verified subject; 200 |
+| Storing the roles fails, or the action returned an error with them | 502, nothing stored |

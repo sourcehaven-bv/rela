@@ -28,7 +28,7 @@ func TestScheduledForEachPrincipal_FacedUser(t *testing.T) {
 	for id, want := range map[string]string{"U-1": "U-1", "U-F": "U-F", "T-1": "", "NOPE": ""} {
 		got, err := svc.ScheduledForEachPrincipal(t.Context(), id)
 		require.NoError(t, err)
-		require.Equal(t, want, got, "principal for %s", id)
+		require.Equal(t, want, got.User, "principal for %s", id)
 	}
 }
 

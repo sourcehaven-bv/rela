@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/schedulerstate"
 )
 
@@ -36,8 +37,8 @@ func (w *forEachWorkspace) ScheduledForEachEntities(
 	return append([]string(nil), w.ids...), w.dropped, nil
 }
 
-func (w *forEachWorkspace) ScheduledForEachPrincipal(_ context.Context, id string) (string, error) {
-	return w.principal[id], nil
+func (w *forEachWorkspace) ScheduledForEachPrincipal(_ context.Context, id string) (principal.Principal, error) {
+	return principal.Principal{User: w.principal[id]}, nil
 }
 
 func newForEachWorkspace(t *testing.T, ids ...string) *forEachWorkspace {
