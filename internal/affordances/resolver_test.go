@@ -608,7 +608,7 @@ assignments:
 		if w, ok := planning.Fields["note"]; !ok || w {
 			t.Errorf("status=%s: note writable = %v (present %v), want denied", status, w, ok)
 		}
-		if _, denied := planning.Fields["owner"]; denied {
+		if w, ok := planning.Fields["owner"]; ok && !w {
 			t.Errorf("status=%s: owner denied, want writable", status)
 		}
 	}

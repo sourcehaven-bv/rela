@@ -1036,3 +1036,9 @@ func TestConvert_RewritesMentionsAndAuditsThem(t *testing.T) {
 		t.Errorf("mention rewrite audit = %+v", rewrites)
 	}
 }
+
+func (denyFieldGate) CheckRelationMetaWrite(
+	context.Context, *entity.Entity, string, map[string]any, []string,
+) error {
+	return nil
+}
