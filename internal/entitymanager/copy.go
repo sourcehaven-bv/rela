@@ -740,8 +740,8 @@ func (ce *copyEngine) buildCopyTarget(
 	if len(hard) > 0 {
 		return newValidationError(hard)
 	}
-	// The target is final here, and a write-enforced rule reads only the
-	// target, so this check holds for the write applyCopy makes.
+	// A write-enforced rule reads only the target. When an automation
+	// changes the target, applyCopyAutomations checks again.
 	if err := checkWriteRules(ctx, ce.m.deps, target); err != nil {
 		return err
 	}
