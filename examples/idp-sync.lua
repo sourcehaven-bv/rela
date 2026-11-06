@@ -17,6 +17,11 @@
 --   rela.params.org_id   -- the tenant the event concerns
 --   rela.params.event    -- e.g. "membership.created"
 --
+-- Results: a `message_type = "error"` result makes the receiver answer 502,
+-- so the IdP retries the webhook; the stored roles stay as they were.
+-- Acknowledge (no error) an event that needs no action, such as the 404
+-- below.
+--
 -- Secrets (.rela/secrets.yaml):
 --   idp_operator_url  -- base URL of the operator API, e.g. https://id.example.com
 --   idp_operator_key  -- the shared HMAC secret the operator API verifies

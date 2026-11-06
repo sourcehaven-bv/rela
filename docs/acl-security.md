@@ -695,8 +695,11 @@ names of a user, and the child then holds the rela roles they map to
   signature. Its action returns `asserted_roles = { ... }`, and the
   receiver stores that list for the subject (`user_id`) of the verified
   webhook. The script cannot name another subject. An empty list clears the
-  subject. Any other action that returns `asserted_roles` fails with a 500,
-  so the key is never silently dropped.
+  subject. An action that reports an error (`message_type = "error"`, with or
+  without `asserted_roles`) leaves the stored roles unchanged and makes the
+  receiver answer 502, so the IdP retries and a revocation is not lost. Any
+  other action that returns `asserted_roles` fails with a 500, so the key is
+  never silently dropped.
 - **What is stored.** IdP role names, not rela roles. They pass through
   `asserted_role_assignments` at the point of use, so the second control
   above still holds.

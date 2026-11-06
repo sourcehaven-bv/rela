@@ -84,11 +84,11 @@ type webhookRoleStore interface {
 // leave a revoked role in force.
 var errWebhookRolesUnavailable = errors.New("dataentry: webhook action returned asserted_roles but no role store is wired")
 
-// errWebhookRolesWithError is returned when the action reported an error and
-// also returned asserted_roles. The roles are not stored; the 502 makes the
-// IdP retry.
-var errWebhookRolesWithError = errors.New(
-	"dataentry: webhook action returned asserted_roles with message_type error; roles not stored")
+// errWebhookActionError is returned when the action reported an error
+// (message_type "error"), with or without asserted_roles. Nothing is stored,
+// and the 502 makes the IdP retry: acknowledging it would lose the event, and
+// a lost event can be a lost revocation.
+var errWebhookActionError = errors.New("dataentry: webhook action reported an error; nothing stored")
 
 // SetWebhookReceiver enables the POST /webhooks/idp endpoint: a verified IdP
 // callback that dispatches to the named action (which fetches authoritative user
@@ -255,21 +255,22 @@ func dispatchWebhookAction(ctx context.Context, h *writeHandler, rec *webhookRec
 	if err != nil {
 		return err
 	}
+	if resp != nil && resp.MessageType == "error" {
+		return errWebhookActionError
+	}
 	return storeAssertedRoles(ctx, rec.roles, claims, resp)
 }
 
 // storeAssertedRoles stores the `asserted_roles` the action returned, for the
 // subject and org of the VERIFIED webhook claims (TKT-IZL6NX8). The script
 // chooses the role names, which it fetched from the IdP; it cannot choose
-// whose roles they are. A response without the key changes nothing.
+// whose roles they are. A response without the key changes nothing. The
+// caller has already turned an error response into a 502.
 func storeAssertedRoles(
 	ctx context.Context, roles webhookRoleStore, claims WebhookClaims, resp *script.ActionResponse,
 ) error {
 	if resp == nil || resp.AssertedRoles == nil {
 		return nil
-	}
-	if resp.MessageType == "error" {
-		return errWebhookRolesWithError
 	}
 	if roles == nil {
 		return errWebhookRolesUnavailable

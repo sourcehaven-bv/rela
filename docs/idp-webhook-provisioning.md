@@ -163,6 +163,6 @@ revocation caveat.
 | Bad / unsigned / wrong-audience body | 401, action not run |
 | Missing `user_id` claim | 400, action not run |
 | Redelivered webhook (same `jti`) | deduped, action not re-run; 200 |
-| Action fails (IdP fetch error, etc.) | 502, `jti` forgotten so a retry runs again |
+| Action fails, or returns `message_type = "error"` (IdP fetch error, etc.) | 502, stored roles unchanged, `jti` forgotten so a retry runs again |
 | Action returns `asserted_roles` | roles stored for the verified subject; 200 |
-| Storing the roles fails, or the action returned an error with them | 502, nothing stored |
+| Storing the roles fails | 502, `jti` forgotten so a retry runs again |

@@ -101,8 +101,13 @@ func TestWebhook_StoresAssertedRoles(t *testing.T) {
 			wantCode: http.StatusOK,
 		},
 		{
-			name:     "an error response stores nothing and asks for a retry",
+			name:     "an error response with roles stores nothing and asks for a retry",
 			script:   `return { message_type = "error", message = "fetch failed", asserted_roles = { "cpo" } }`,
+			wantCode: http.StatusBadGateway,
+		},
+		{
+			name:     "an error response without roles asks for a retry",
+			script:   `return { message_type = "error", message = "fetch failed" }`,
 			wantCode: http.StatusBadGateway,
 		},
 		{
@@ -160,6 +165,14 @@ func TestWebhook_StoresAssertedRoles(t *testing.T) {
 				got := store.calls[i]
 				if got.subject != want.subject || got.org != want.org || !slices.Equal(got.roles, want.roles) {
 					t.Fatalf("Set call %d = %+v, want %+v", i, got, want)
+				}
+			}
+
+			// A 502 forgets the jti: the IdP's retry of the same delivery runs
+			// the action again rather than being deduped into a 200.
+			if tc.wantCode == http.StatusBadGateway {
+				if retry := postWebhook(app, "jwt"); retry.Code != http.StatusBadGateway {
+					t.Fatalf("retry status = %d, want the action to run again (502)", retry.Code)
 				}
 			}
 		})
