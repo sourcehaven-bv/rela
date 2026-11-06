@@ -59,3 +59,10 @@ Acceptance for this ticket: the sample flow loads; every invalid construct is a
 load problem with its key; a comment edit keeps the version; a schema name
 starting with `_` does not load; `rela flow show` and `rela validate` report
 flows.
+
+## Archplan
+
+`flowcfg.State` mirrors `realtimecfg.SessionState` on purpose: both compile
+onto the shared `internal/flow` engine. The finding is accepted in
+`.archplan/baseline.json`. Template variables carry the subject as an
+`entity.Ref` and the run as a typed `flowcfg.RunID`, not raw id strings.
