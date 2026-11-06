@@ -132,7 +132,8 @@ func validateCopy(m *Metamodel, name string, def CopyDef) []string {
 			"see; name the fields to copy explicitly")
 	}
 	if def.AllFields && len(def.Fields) > 0 {
-		bad("declares both `fields: all` and a field mapping — pick one")
+		bad("declares both `fields: all` and a field mapping — pick one, " +
+			"or list the values to override under `set:`")
 	}
 	if !def.AllFields && len(def.Fields) == 0 {
 		bad("copies no fields — set `fields: all` (same-entity only) or map at least one")
@@ -176,6 +177,7 @@ func validateCopy(m *Metamodel, name string, def CopyDef) []string {
 
 	errs = append(errs, validateCopyFields(m, name, def, to)...)
 	errs = append(errs, validateCopyKeep(m, name, def, to)...)
+	errs = append(errs, validateCopySet(m, name, def, to)...)
 	errs = append(errs, validateCopyRelations(m, name, def, to)...)
 	errs = append(errs, validateCopyLanding(m, name, def, to)...)
 	return errs
@@ -292,6 +294,49 @@ func validateCopyKeep(m *Metamodel, name string, def CopyDef, to CopyTarget) []s
 		if _, declared := targetDef.Properties[f]; !declared {
 			errs = append(errs, fmt.Sprintf(
 				"copy %q: keep: entity type %q declares no property %q", name, to.Type, f))
+		}
+	}
+	return errs
+}
+
+// validateCopySet checks `set:`: it needs `fields: all`, since a field
+// mapping already writes the values it names, and each name must be a
+// property the target type declares that a template may write. A kept
+// property is never written, a file value may only carry the source face's
+// own files, an external ref is written only by a sync connector, and a
+// computed or rollup value is rela's own, so setting any of them could only
+// fail or be dropped at copy time.
+func validateCopySet(m *Metamodel, name string, def CopyDef, to CopyTarget) []string {
+	if len(def.Set) == 0 {
+		return nil
+	}
+	if !def.AllFields {
+		return []string{fmt.Sprintf("copy %q: `set` needs `fields: all`; "+
+			"with a field mapping, put the value in the mapping", name)}
+	}
+	targetDef, ok := m.GetEntityDef(to.Type)
+	if !ok {
+		return nil // already reported by validateCopyEndpoint
+	}
+	var errs []string
+	for _, f := range sortedKeys(def.Set) {
+		prop, declared := targetDef.Properties[f]
+		switch {
+		case !declared:
+			errs = append(errs, fmt.Sprintf(
+				"copy %q: set: entity type %q declares no property %q", name, to.Type, f))
+		case slices.Contains(def.Keep, f):
+			errs = append(errs, fmt.Sprintf(
+				"copy %q: set: %q is also under `keep:`, which never writes it — pick one", name, f))
+		case prop.Type == PropertyTypeFile:
+			errs = append(errs, fmt.Sprintf(
+				"copy %q: set: %q is a file property; a copy carries only the source face's own files", name, f))
+		case prop.Type == PropertyTypeExternalRef:
+			errs = append(errs, fmt.Sprintf(
+				"copy %q: set: %q is an external ref, which only a sync connector writes", name, f))
+		case prop.Computed != "" || prop.Rollup != nil:
+			errs = append(errs, fmt.Sprintf(
+				"copy %q: set: %q is computed by rela and cannot be written", name, f))
 		}
 	}
 	return errs

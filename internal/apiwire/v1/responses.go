@@ -2057,6 +2057,10 @@ type CopyResult struct {
 	// rather than overwriting one — the difference between "published for the
 	// first time" and "re-published".
 	Created bool `json:"created"`
+	// Warnings reports a step after the copy that failed, such as an
+	// automation's side effect (`follow_up_failed`). The copy itself was
+	// written.
+	Warnings []Warning `json:"warnings,omitempty"`
 }
 
 // GanttResponse is the payload of GET /api/v1/_gantts/{id}: the gated,
