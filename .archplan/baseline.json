@@ -2611,22 +2611,22 @@
   "labels": {},
   "ratchet": {
     "metrics": {
-      "weight.profile": 52,
-      "weight.structure": 936,
+      "weight.profile": 49,
+      "weight.structure": 90,
       "weight.layers": 0,
       "weight.vocabulary": 912,
-      "weight.types": 4002,
+      "weight.types": 3955,
       "weight.concepts": 7052,
-      "weight.boundaries": 1478,
+      "weight.boundaries": 1438,
       "weight.data": 1297,
-      "weight.security": 2300,
+      "weight.security": 140,
       "largest_tangle": 13,
       "cycle_edges": 61,
       "upward_edges": 0,
       "propagation_cost": 9.8
     },
     "min_weight": 0,
-    "at": "2026-11-05T20:33:00Z",
+    "at": "2026-11-06T18:45:56Z",
     "log": [
       {
         "at": "2026-10-28T13:29:24Z",
@@ -2816,6 +2816,33 @@
           "weight.types": [
             3952,
             4002
+          ]
+        }
+      },
+      {
+        "at": "2026-11-06T18:45:56Z",
+        "change": "tighten",
+        "reason": null,
+        "metrics": {
+          "weight.profile": [
+            52,
+            49
+          ],
+          "weight.structure": [
+            936,
+            90
+          ],
+          "weight.types": [
+            4002,
+            3955
+          ],
+          "weight.boundaries": [
+            1478,
+            1438
+          ],
+          "weight.security": [
+            2300,
+            140
           ]
         }
       }
