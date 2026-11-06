@@ -25,3 +25,7 @@ tests can pin the time. Automation templates already have `{{now}}`.
 - `rela.now` is set in every runtime, in UTC, and parses with `rela.date_add`.
 - `rela.today`, `rela.now` and `rela.now_unix` come from one clock reading.
 - Documented in the Lua guide "Context" table.
+
+## Notes
+
+The clock field took `lua.Runtime` past the archplan field-count ratchet, so the three document-mode fields are now one `documentMode` struct.
