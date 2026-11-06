@@ -2404,6 +2404,28 @@ types. `--check properties` and `--check validations` scan all types.
 `rela validate` also lints `classification.yaml` when the file exists. See
 [Data Classification](classification.md).
 
+It also checks `flows.yaml` when the file exists, as `rela flow validate`
+does. See [Flows](flows.md).
+
+---
+
+### rela flow
+
+Work with the flows in `flows.yaml`, or run a Lua flow script.
+
+```bash
+rela flow validate        # check flows.yaml against the schema and acl.yaml
+rela flow show            # list the flows with their version
+rela flow show onboarding # print one flow as a Mermaid state diagram
+rela flow scripts/create-ticket.lua   # run a Lua flow script
+```
+
+`rela flow validate` exits `1` and prints one line per problem, each with
+the key it is about, when `flows.yaml` does not load. `rela flow show`
+accepts `-o json`. A bare `rela flow <script.lua>` runs the script, as
+before. A script file named `validate` or `show` needs a path, such as
+`rela flow ./show`. See [Flows](flows.md).
+
 ---
 
 ### rela classification

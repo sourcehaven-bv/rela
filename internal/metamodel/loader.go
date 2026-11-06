@@ -302,6 +302,7 @@ func validate(m *Metamodel) error {
 		validationErrors = append(validationErrors, "metamodel has no entity types defined")
 	}
 
+	validationErrors = append(validationErrors, validateReservedNames(m)...)
 	validationErrors = append(validationErrors, validateCustomTypes(m)...)
 	validationErrors = append(validationErrors, validateEntitySemantics(m)...)
 	validationErrors = append(validationErrors, validateRelationReferences(m)...)

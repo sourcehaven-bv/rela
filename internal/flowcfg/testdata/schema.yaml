@@ -1,0 +1,50 @@
+version: "1.0"
+entities:
+  person:
+    label: Person
+    id_prefix: "PER-"
+    id_type: sequential
+    properties:
+      name:
+        type: string
+      status:
+        type: enum
+        values: [new, hired, active, left]
+      documents:
+        type: boolean
+      stage:
+        type: string
+      started:
+        type: date
+      salary:
+        type: integer
+      task_count:
+        type: integer
+        rollup: { via: mentions, count: true }
+  task:
+    label: Task
+    id_prefix: "TSK-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+        required: true
+      due:
+        type: date
+      opened:
+        type: datetime
+  code:
+    label: Code
+    id_type: manual
+    properties:
+      title:
+        type: string
+relations:
+  about:
+    label: about
+    from: [task]
+    to: [person]
+  mentions:
+    label: mentions
+    from: [person]
+    to: [task]

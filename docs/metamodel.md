@@ -560,6 +560,17 @@ Attempting to define a custom type with a reserved name will produce an error:
 cannot define custom type "string": name is reserved for built-in type
 ```
 
+### Names starting with `_`
+
+Names that start with `_` are reserved for types, relations and properties
+that rela defines itself, such as the records it keeps for flows. A schema
+that declares an entity type, alias, property, relation type, inverse or
+relation property whose name starts with `_` does not load:
+
+```text
+entity type "_run": names starting with "_" are reserved for rela
+```
+
 ## Entity Types
 
 Each entity type defines:

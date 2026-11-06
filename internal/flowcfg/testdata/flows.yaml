@@ -1,0 +1,57 @@
+# The onboarding sample flow (TKT-XHANLJU).
+flows:
+  onboarding:
+    label: Onboarding
+    subject: person
+    run_as: system:onboarding-bot
+    per_subject: one
+    deadline: 30d
+    retention: { after: 90d, action: delete }
+    start:
+      - on: create
+        when: "entity.status == 'hired'"
+      - on: predicate
+        when: "entity.status == 'hired'"
+      - on: manual
+        permission: onboarding.start
+      - on: schedule
+        every: 1d
+        when: "entity.status == 'new'"
+    initial: collect
+    states:
+      collect:
+        label: Collect documents
+        waiting_for: [hr]
+        outputs:
+          - set: { properties: { stage: collecting } }
+          - create:
+              type: task
+              properties:
+                title: "Collect documents for {{subject.name}}"
+                due: "{{today}}"
+                opened: "{{now}}"
+              relate: { type: about }
+        on:
+          change:
+            - to: review
+              roles: [hr]
+              when: "entity.documents == true"
+        after:
+          stalled: { period: 7d, to: escalated, label: No documents in a week }
+      review:
+        on:
+          done: { to: finished }
+      escalated:
+        status: input_required
+        waiting_for: [manager, hr]
+        on:
+          change:
+            to: review
+            when: "entity.documents == true"
+        after:
+          deadline: { period: 30d, since: run, to: failed }
+      finished:
+        final: true
+      failed:
+        final: true
+        status: failed
