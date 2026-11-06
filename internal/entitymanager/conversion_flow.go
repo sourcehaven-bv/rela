@@ -173,7 +173,7 @@ func conversionTargetID(
 
 // buildTargets returns the target row of every source row, checked as a
 // create would be: the field gate on the caller's values, then computed
-// fields, validation and `unique:`.
+// fields, validation, write-enforced rules and `unique:`.
 func (r *conversionRun) buildTargets(ctx context.Context, view store.Store, newID string) ([]*entity.Entity, error) {
 	m, p, req := r.c.m, r.plan, r.req
 	d := p.def
@@ -211,8 +211,11 @@ func (r *conversionRun) buildTargets(ctx context.Context, view store.Store, newI
 			return nil, err
 		}
 		validation := metamodel.NewValidator(m.deps.Meta).ValidateEntity(target.ID, target.Type, target.Properties)
-		if hard, _ := partitionValidationErrors(validation); len(hard) > 0 {
+		if hard, _ := partitionValidationErrors(m.deps.ValidationMode, validation); len(hard) > 0 {
 			return nil, newValidationError(hard)
+		}
+		if err := checkWriteRules(ctx, m.deps, target); err != nil {
+			return nil, err
 		}
 		if err := checkUniqueProperties(ctx, m.deps.Meta, view, target, r.req.SourceID); err != nil {
 			return nil, err

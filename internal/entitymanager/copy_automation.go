@@ -56,10 +56,16 @@ func (ce *copyEngine) applyCopyAutomations(ctx context.Context, plan *copyPlan) 
 	if err := m.deps.Computed.Evaluate(ctx, plan.entity); err != nil {
 		return nil, err
 	}
-	hard, _ := partitionValidationErrors(
+	// The copy writes plan.entity as it stands now, so the validation mode
+	// and the rules enforced on write apply to this state, as
+	// buildCopyTarget applied them to the state before the automations.
+	hard, _ := partitionValidationErrors(m.deps.ValidationMode,
 		metamodel.NewValidator(m.deps.Meta).ValidateEntity(plan.entity.ID, plan.entity.Type, plan.entity.Properties))
 	if len(hard) > 0 {
 		return nil, newValidationError(hard)
+	}
+	if err := checkWriteRules(ctx, m.deps, plan.entity); err != nil {
+		return nil, err
 	}
 	if err := m.deps.Transitions.EnforceUpdate(
 		ctx, copied, plan.entity, m.deps.TransitionGuard, m.deps.TransitionGraph,

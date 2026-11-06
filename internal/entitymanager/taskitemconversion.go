@@ -596,12 +596,14 @@ func taskItemSourceFields(d metamodel.TaskItemConversionDef) []string {
 
 // requiredFields returns the required, non-computed target fields that are
 // still empty once the recipe's values and the entity template's defaults
-// apply, sorted. It builds a dry-run candidate, so it mints no id.
+// apply, sorted. It builds a dry-run candidate, so it mints no id. The
+// candidate is judged advisory on every deployment: under strict, the missing
+// fields this lists would otherwise refuse the candidate (DEC-OYV2AK).
 func (c *TaskItemConverter) requiredFields(
 	ctx context.Context, d metamodel.TaskItemConversionDef, props map[string]any,
 ) ([]string, error) {
 	m := c.m
-	candidate, _, err := buildCandidateEntity(ctx, m.deps, d.To, createCoreOpts{
+	candidate, _, err := buildCandidateEntity(ctx, m.deps.advisory(), d.To, createCoreOpts{
 		Properties:       maps.Clone(props),
 		Face:             entity.Face(d.Face),
 		SkipIDGeneration: true,

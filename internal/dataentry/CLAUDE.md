@@ -42,6 +42,18 @@ markdown file?* If yes, it's soft — warn, don't reject. JSON:API-style
 "validate-then-422" assumes wire and storage share a closed schema; rela's
 storage is intentionally more permissive.
 
+Two opt-ins by the operator are the exceptions. Both return 422 with one
+`errors[]` entry per failure:
+
+- `validation: strict` in `.rela/config.yaml` (DEC-OYV2AK) refuses a
+  required-unset, mistyped or invalid-enum property instead of warning.
+  The default stays advisory.
+- A `validations:` rule with `enforce: write` refuses a write whose new state
+  breaks it, in both modes (code `rule`, empty pointer). It is a pure
+  predicate on the entity being written (`internal/writerule`).
+
+Do not add a third class without a decision.
+
 ## Action affordances (`_actions`)
 
 Every entity and list response carries `_actions: map[string]bool`. The SPA

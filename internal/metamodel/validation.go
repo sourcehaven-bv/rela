@@ -114,6 +114,12 @@ const (
 	// (TKT-SM20FG). It is HARD: a ref is written by a sync script, never
 	// by hand, and a malformed one would break uniqueness and lookup.
 	ValidationErrorExternalRef ValidationErrorType = "invalid_external_ref"
+	// ValidationErrorRule reports a write that violates a validation rule
+	// declared `enforce: write` (TKT-5CESLHD). It is HARD: the operator
+	// declared the rule blocking. Like the unique check it is raised by the
+	// entitymanager write path, not by [Validator.ValidateEntity]. Property
+	// is empty, because a rule is about the entity, not one property.
+	ValidationErrorRule ValidationErrorType = "rule"
 )
 
 // ValidationError represents a structured validation error with field information.

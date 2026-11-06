@@ -151,6 +151,7 @@ type taskItemOptions struct {
 	visibility func(store.Store) entitymanager.CopyReader
 	edges      entitymanager.TaskItemEdgeGate
 	autos      []automation.Automation
+	mode       entitymanager.ValidationMode
 }
 
 // recordingEdges is a [entitymanager.TaskItemEdgeGate] that admits every
@@ -223,7 +224,7 @@ func newTaskItemFixture(t *testing.T, opts taskItemOptions) taskItemFixture {
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.NewMemory(), ACL: gate,
 		Transitions: transitions, FieldGate: fields,
 		CopyReadGate: entitymanager.AllowAllCopyReadGate{}, CopyVisibility: visibility,
-		AnchorGuard: entitymanager.NopAnchorGuard{},
+		AnchorGuard: entitymanager.NopAnchorGuard{}, ValidationMode: opts.mode,
 	}
 	auditor := deps.Audit.(*audit.Memory)
 	if len(opts.autos) > 0 {
@@ -434,28 +435,36 @@ func TestTaskItemConvert_RefusesInvalidRequests(t *testing.T) {
 	}
 }
 
+// The preview lists the missing required fields in either mode: under
+// strict (DEC-OYV2AK) the missing fields must not refuse the dry run that
+// exists to list them.
 func TestTaskItemConvert_RequiredFieldsComeFromTheCaller(t *testing.T) {
 	t.Parallel()
-	f := newTaskItemFixture(t, taskItemOptions{})
-	req := entitymanager.TaskItemRequest{Definition: "ask-owner", SourceID: "TKT-1", Text: "x"}
-	preview, err := f.conv.Preview(context.Background(), req)
-	require.NoError(t, err)
-	if !reflect.DeepEqual(preview.Required, []string{"owner"}) {
-		t.Fatalf("required = %v, want [owner]", preview.Required)
-	}
-	if _, err = f.conv.Convert(context.Background(), req); err == nil {
-		t.Fatal("Convert without the required field succeeded")
-	}
-	req.Properties = map[string]any{"owner": "bob"}
-	preview, err = f.conv.Preview(context.Background(), req)
-	require.NoError(t, err)
-	if len(preview.Required) != 0 {
-		t.Fatalf("required after supplying = %v", preview.Required)
-	}
-	res, err := f.conv.Convert(context.Background(), req)
-	require.NoError(t, err)
-	if res.Entity.GetString("owner") != "bob" {
-		t.Fatalf("owner = %q", res.Entity.GetString("owner"))
+	for _, mode := range []entitymanager.ValidationMode{entitymanager.ValidationAdvisory, entitymanager.ValidationStrict} {
+		t.Run(mode.String(), func(t *testing.T) {
+			t.Parallel()
+			f := newTaskItemFixture(t, taskItemOptions{mode: mode})
+			req := entitymanager.TaskItemRequest{Definition: "ask-owner", SourceID: "TKT-1", Text: "x"}
+			preview, err := f.conv.Preview(context.Background(), req)
+			require.NoError(t, err)
+			if !reflect.DeepEqual(preview.Required, []string{"owner"}) {
+				t.Fatalf("required = %v, want [owner]", preview.Required)
+			}
+			if _, err = f.conv.Convert(context.Background(), req); err == nil {
+				t.Fatal("Convert without the required field succeeded")
+			}
+			req.Properties = map[string]any{"owner": "bob"}
+			preview, err = f.conv.Preview(context.Background(), req)
+			require.NoError(t, err)
+			if len(preview.Required) != 0 {
+				t.Fatalf("required after supplying = %v", preview.Required)
+			}
+			res, err := f.conv.Convert(context.Background(), req)
+			require.NoError(t, err)
+			if res.Entity.GetString("owner") != "bob" {
+				t.Fatalf("owner = %q", res.Entity.GetString("owner"))
+			}
+		})
 	}
 }
 

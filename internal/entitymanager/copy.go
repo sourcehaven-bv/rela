@@ -688,7 +688,8 @@ func (ce *copyEngine) authorizeCopy(ctx context.Context, plan *copyPlan) error {
 //
 // The merged target then passes the same structural checks a hand-written
 // create or update would: metamodel validation (hard errors only — the
-// DEC-HWZHA split) and `unique:` natural keys. The kernel writes straight to
+// DEC-HWZHA split, moved by the deployment's mode), write-enforced
+// validation rules and `unique:` natural keys. The kernel writes straight to
 // the store view, so without this a copy was the one entry point that could
 // persist a duplicate slug or an out-of-range enum.
 func (ce *copyEngine) buildCopyTarget(
@@ -734,10 +735,15 @@ func (ce *copyEngine) buildCopyTarget(
 	}
 	keepTargetExternalRefs(ce.m.deps.Meta, plan, target)
 
-	hard, _ := partitionValidationErrors(
+	hard, _ := partitionValidationErrors(ce.m.deps.ValidationMode,
 		metamodel.NewValidator(ce.m.deps.Meta).ValidateEntity(target.ID, target.Type, target.Properties))
 	if len(hard) > 0 {
 		return newValidationError(hard)
+	}
+	// A write-enforced rule reads only the target. When an automation
+	// changes the target, applyCopyAutomations checks again.
+	if err := checkWriteRules(ctx, ce.m.deps, target); err != nil {
+		return err
 	}
 	// Checked again inside the copy's transaction (applyCopy); this early
 	// pass fails the copy before any edge planning when it cannot succeed.
