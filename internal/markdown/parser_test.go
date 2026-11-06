@@ -478,11 +478,12 @@ func TestHasConflictMarkers_LineAnchored(t *testing.T) {
 		{"empty", "", false},
 		{"plain prose", "hello world\n", false},
 		{"marker at column 0", "<<<<<<< HEAD\nfoo\n=======\nbar\n>>>>>>> branch\n", true},
-		{"marker at column 0 of second line", "first line\n<<<<<<< HEAD\nbody\n", true},
+		{"block at column 0 of second line", "first line\n<<<<<<< HEAD\nbody\n=======\nx\n>>>>>>> b\n", true},
+		{"lone start marker (BUG-GYM7ZBS)", "first line\n<<<<<<< HEAD\nbody\n", false},
 		{"marker preceded by spaces (indented)", "  <<<<<<< HEAD\n", false},
 		{"marker inside codespan", "use `<<<<<<<` to spot conflicts\n", false},
 		{"marker mid-line", "the prefix <<<<<<< appears here\n", false},
-		{"marker after CRLF (Windows line ending)", "line\r\n<<<<<<< HEAD\n", true},
+		{"block after CRLF (Windows line ending)", "line\r\n<<<<<<< HEAD\r\n=======\r\n>>>>>>> b\r\n", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

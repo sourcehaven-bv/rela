@@ -1,20 +1,12 @@
 package conflict
 
 import (
-	"bufio"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/project"
-)
-
-// Conflict marker prefixes
-const (
-	markerStart = "<<<<<<<"
-	markerMid   = "======="
-	markerEnd   = ">>>>>>>"
 )
 
 // DetectAll scans all entity and relation files for git conflicts.
@@ -68,10 +60,6 @@ func DetectInFile(path string) (*ConflictedFile, error) {
 		return nil, err
 	}
 
-	if !markdown.HasConflictMarkers(content) {
-		return nil, nil //nolint:nilnil // no conflicts is not an error
-	}
-
 	markers := FindMarkers(string(content))
 	if len(markers) == 0 {
 		return nil, nil //nolint:nilnil // no conflicts is not an error
@@ -83,40 +71,10 @@ func DetectInFile(path string) (*ConflictedFile, error) {
 	}, nil
 }
 
-// FindMarkers locates all conflict marker regions in content.
+// FindMarkers locates the conflict blocks in content, as
+// [markdown.ConflictBlocks] defines them.
 func FindMarkers(content string) []Marker {
-	var markers []Marker
-
-	scanner := bufio.NewScanner(strings.NewReader(content))
-	lineNum := 0
-	var current *Marker
-
-	for scanner.Scan() {
-		lineNum++
-		line := scanner.Text()
-
-		switch {
-		case strings.HasPrefix(line, markerStart):
-			// Start of new conflict
-			current = &Marker{
-				StartLine: lineNum,
-				OursRef:   strings.TrimSpace(strings.TrimPrefix(line, markerStart)),
-			}
-
-		case strings.HasPrefix(line, markerMid) && current != nil:
-			// Middle marker
-			current.MidLine = lineNum
-
-		case strings.HasPrefix(line, markerEnd) && current != nil:
-			// End of conflict
-			current.EndLine = lineNum
-			current.TheirsRef = strings.TrimSpace(strings.TrimPrefix(line, markerEnd))
-			markers = append(markers, *current)
-			current = nil
-		}
-	}
-
-	return markers
+	return markdown.ConflictBlocks(content)
 }
 
 // HasConflicts checks if content has any conflict markers.

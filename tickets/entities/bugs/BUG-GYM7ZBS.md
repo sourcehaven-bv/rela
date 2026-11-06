@@ -5,7 +5,15 @@ title: A body line starting with a conflict marker makes the file unreadable
 description: On fsstore a body line that starts with <<<<<<< makes the written file read as conflicted, so the row fails every read and is hidden from role_relations readers.
 priority: medium
 effort: s
-status: backlog
+why1: fsstore's parseDocument refused any file with a line starting with the start marker, so a body line such as one documenting the marker made the row unreadable.
+why2: The detector checked only for the start marker at column 0, not for a complete block of start, separator and end markers in order.
+why3: BUG-WN6D narrowed a substring match to a line-anchored one but kept the one-marker test; two copies of the detector (markdown and fsstore) drifted apart from conflict.FindMarkers, which already required the full block.
+why4: No store conformance test wrote a body that documents conflict markers and read it back.
+why5: Format rules such as conflict detection were copied per package instead of owned by one function with one test table.
+prevention: One scanner (markdown.ConflictBlocks) serves fsstore, the conflict list and the resolver. It requires a complete block, fenced or not, because a merge moves shared fence lines out of a conflict. storetest RoundTripsBodyDocumentingConflictMarkers pins every backend; formatDocumentOrdered refuses a document that would read as conflicted.
+started: "2026-11-05"
+completed: "2026-11-05"
+status: done
 ---
 
 ## Description
@@ -27,3 +35,6 @@ Found by the security review of BUG-197XPAU and BUG-HTSW37Q.
 Do not let a write emit a column-0 conflict marker in the body. Either escape
 such a line when writing, or refuse the body with a 422. Pin it with an fsstore
 test that writes such a body and reads the row back.
+
+`conflict.Marker` is an alias of `markdown.ConflictBlock`, so one type
+describes a conflict block.

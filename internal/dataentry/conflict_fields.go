@@ -98,6 +98,7 @@ func conflictFieldDenial(
 				return nil, nil, errConflictSourceUnreadable
 			}
 		}
+		set, unset = governedRelationMeta(ctx, svc, sources, rel.Type, set, unset)
 		subject, denial := svc.relationMetaDenial(ctx, sources, rel.Type, set, unset)
 		return subject, denial, nil
 	}
@@ -140,4 +141,32 @@ func conflictEntityFieldDenial(
 	}
 	keptUnset := slices.DeleteFunc(slices.Clone(unset), func(k string) bool { return !governed(k) })
 	return checkFieldWrite(svc.meta(), e, v, keptSet, keptUnset)
+}
+
+// governedRelationMeta is [conflictEntityFieldDenial]'s rule for relation
+// meta: it keeps only the meta keys some source's verdict lists. Under a
+// meta allowlist the verdict lists every declared key and every key a grant
+// names, so this leaves out exactly the undeclared keys no grant names. A
+// PATCH refuses such a key, but here the key comes from the file, and
+// refusing it would make the conflict unresolvable for every principal the
+// allowlist applies to. Without an allowlist every key is writable, so
+// leaving keys out changes nothing.
+func governedRelationMeta(
+	ctx context.Context, svc affordanceService, sources []relationSource, relType string,
+	set map[string]any, unset []string,
+) (keptSet map[string]any, keptUnset []string) {
+	governed := map[string]bool{}
+	for _, src := range sources {
+		for name := range svc.verdictsOf(ctx, src).Types[relType].Fields {
+			governed[name] = true
+		}
+	}
+	keptSet = make(map[string]any, len(set))
+	for k, val := range set {
+		if governed[k] {
+			keptSet[k] = val
+		}
+	}
+	keptUnset = slices.DeleteFunc(slices.Clone(unset), func(k string) bool { return !governed[k] })
+	return keptSet, keptUnset
 }

@@ -19,6 +19,9 @@ const (
 	RuleFieldHidden       FieldWriteRule = "field-affordance:hidden"
 	RuleFieldReadOnly     FieldWriteRule = "field-affordance:read-only"
 	RuleFieldEnumFiltered FieldWriteRule = "field-affordance:enum-filtered"
+	// RuleRelationMetaReadOnly refuses a relation meta write; its path is
+	// "<relation type>.<meta key>".
+	RuleRelationMetaReadOnly FieldWriteRule = "relation-affordance:meta-read-only"
 )
 
 // FieldWriteError is a refused property write. Path is the property name,
@@ -201,6 +204,37 @@ func (g *WriteGate) CheckFieldWrite(ctx context.Context, e *entity.Entity, set m
 // against [PolicyResolver.CreateFieldVerdicts].
 func (g *WriteGate) CheckCreateFieldWrite(ctx context.Context, e *entity.Entity, set map[string]any) error {
 	return g.check(ctx, e, set, nil, g.resolver.CreateFieldVerdicts)
+}
+
+// CheckRelationMetaWrite returns a *[FieldWriteError] for the first meta key
+// of a relType edge from source that the caller may not write, or nil. It
+// reads the verdict [PolicyResolver.RelationVerdicts] gives source.
+func (g *WriteGate) CheckRelationMetaWrite(
+	ctx context.Context, source *entity.Entity, relType string, set map[string]any, unset []string,
+) error {
+	if source == nil {
+		return errors.New("affordances: relation meta write check without a source")
+	}
+	if len(set) == 0 && len(unset) == 0 {
+		return nil
+	}
+	rv, restricted := g.resolver.RelationVerdicts(ctx, source).Types[relType]
+	if !restricted {
+		return nil
+	}
+	keys := slices.Concat(slices.Sorted(maps.Keys(set)), unset)
+	for _, key := range keys {
+		if rv.MetaWritable(key) {
+			continue
+		}
+		return &FieldWriteError{
+			Rule:        RuleRelationMetaReadOnly,
+			Path:        relType + "." + key,
+			Reason:      fmt.Sprintf("relation meta %q of %q is read-only for this principal", key, relType),
+			Attribution: rv.Attribution["fields."+key],
+		}
+	}
+	return nil
 }
 
 // check runs the shared field-write check against the verdicts verdictsFor

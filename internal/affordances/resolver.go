@@ -41,10 +41,26 @@ type RelationVerdicts struct {
 type RelationVerdict struct {
 	Creatable bool
 	Removable bool
-	Fields    map[string]bool
+	// Fields maps a meta key to whether it is writable. When MetaClosed is
+	// false it is sparse: only read-only keys appear and an absent key is
+	// writable. When MetaClosed is true it lists every declared meta key and
+	// every key a grant names, and an absent key is read-only.
+	Fields map[string]bool
+	// MetaClosed is true when some role declares meta `fields:` for the
+	// relation type and no role on the row lifts the restriction. The grants
+	// are then an allowlist, as entity `fields:` grants are (BUG-O8QP7GX).
+	MetaClosed bool
 	// Attribution maps a denied dimension ("create", "remove",
 	// "fields.<name>") to the role/grant that denied it.
 	Attribution map[string]string
+}
+
+// MetaWritable reports whether v lets the caller write meta key.
+func (v RelationVerdict) MetaWritable(key string) bool {
+	if writable, ok := v.Fields[key]; ok {
+		return writable
+	}
+	return !v.MetaClosed
 }
 
 // PolicyResolver answers field/option/relation affordance queries from
@@ -700,9 +716,15 @@ func (r *PolicyResolver) relationVerdicts(ctx context.Context, e *entity.Entity,
 	}
 
 	acc := newRelationAccumulator()
+	// metaOpen[rt] lists the roles that may write every meta key of rt:
+	// a role whose passing grant for rt names no meta fields:. A role with
+	// no relations: block for the source type is in unrestricted.
+	metaOpen := map[string][]string{}
+	var unrestricted []string
 	for _, role := range roles {
 		g := r.grants.typeGrants(role, e.Type)
 		if g == nil || !g.declaredRelations {
+			unrestricted = append(unrestricted, role)
 			continue
 		}
 		for _, rg := range g.relations {
@@ -715,11 +737,47 @@ func (r *PolicyResolver) relationVerdicts(ctx context.Context, e *entity.Entity,
 				grantPassed = rg.program == nil
 				metaPassed = unconditionalMetaResults(rg, grantPassed)
 			}
+			if grantPassed && len(rg.fields) == 0 {
+				metaOpen[rg.relation] = append(metaOpen[rg.relation], role)
+			}
 			acc.observe(role, rg, grantPassed, metaPassed)
 		}
 	}
-	out.Types = acc.verdicts()
+	// Role union (BUG-Y5UF3K), as in fieldVerdicts: a role that may write
+	// every meta key of a relation type lifts what another role restricts,
+	// when it holds update on the source row. A grant whose when: fails,
+	// or a relations: block that does not list the type, lifts nothing.
+	holdsUpdate := bc.verbMemo(acl.VerbUpdate)
+	for rt := range acc.metaOptedIn {
+		if slices.ContainsFunc(metaOpen[rt], holdsUpdate) || slices.ContainsFunc(unrestricted, holdsUpdate) {
+			acc.allowAllMeta(rt)
+		}
+	}
+	out.Types = acc.verdicts(func(rt string) ([]string, []string) { return relationMetaFields(r.meta, rt) })
 	return out
+}
+
+// relationMetaFields returns the meta properties relType declares and the
+// order properties the engine manages for it. The properties are the
+// closed-world universe a meta `fields:` block denies from, as the declared
+// properties are for an entity type. The order properties are positions, not
+// content: they stay writable unless a grant names them. A plain function:
+// PolicyResolver is at its method cap.
+func relationMetaFields(meta *metamodel.Metamodel, relType string) (props, order []string) {
+	def, ok := meta.Relations[relType]
+	if !ok {
+		return nil, nil
+	}
+	props = make([]string, 0, len(def.Properties))
+	for name := range def.Properties {
+		props = append(props, name)
+	}
+	for _, name := range []string{def.OutgoingOrderProperty(), def.IncomingOrderProperty()} {
+		if name != "" {
+			order = append(order, name)
+		}
+	}
+	return props, order
 }
 
 // RelationFieldVerdicts computes the sparse per-meta-field READ-visibility
@@ -1182,6 +1240,7 @@ func (r *PolicyResolver) denyAllRelations() RelationVerdicts {
 	out := RelationVerdicts{Types: make(map[string]RelationVerdict, len(r.meta.Relations))}
 	for relType := range r.meta.Relations {
 		out.Types[relType] = RelationVerdict{
+			MetaClosed:  true,
 			Attribution: map[string]string{"create": kindNoIdentity, "remove": kindNoIdentity},
 		}
 	}

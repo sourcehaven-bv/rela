@@ -200,6 +200,30 @@ So gaining a role never removes a field. In the example above, a member of
 editor's `update: [ticket]` covers them all, and the triager's block cannot
 take that away. A member who is only a triager may write `status` alone.
 
+A relation grant's `fields:` list follows the same rule for the relation's
+meta fields. Once a role lists meta fields for a relation type, a meta field
+that no role grants is read-only. This includes a meta key the schema does not
+declare. Every meta field stays writable for a role that holds `update` on
+the source entity's type and either has no `relations:` block for it or has a
+grant for that relation type without a `fields:` list. A grant whose `when:`
+fails does not count. The order properties (`_order_out`, `_order_in`) are
+positions, not content: they stay writable unless a `fields:` list names them.
+The rule applies to the data-entry API and to MCP on rela-server.
+
+```yaml
+roles:
+  triager:
+    update: [ticket]
+    relations:
+      ticket:
+        - relation: blocks
+          fields:
+            - field: reason   # `reason` only; every other meta field is read-only
+```
+
+> **Changed:** earlier versions left every meta field that no role named
+> writable. Add the meta fields a role may write to its `fields:` list.
+
 Face-qualified grants count only on their face: a role with
 `read: ["policy@published"]` and no `visible:` block shows every field of a
 published policy and nothing of a draft. A client ceiling is applied after
