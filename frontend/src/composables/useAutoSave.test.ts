@@ -656,7 +656,7 @@ describe('useAutoSave', () => {
     // Property apply must not have fired.
     expect(apply).not.toHaveBeenCalled()
     // Content apply must have fired (channel enabled).
-    expect(applyContent).toHaveBeenCalledWith('server-content')
+    expect(applyContent).toHaveBeenCalledWith('server-content', 'stored')
   })
 
   it('IHC7A AC3: commitImmediately is a no-op on disabled channels', async () => {

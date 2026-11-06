@@ -10,7 +10,8 @@ body:
   "app": {
     "name": "Golden parity",
     "description": "",
-    "history_enabled": false
+    "history_enabled": false,
+    "collab_enabled": false
   },
   "navigation": [
     {

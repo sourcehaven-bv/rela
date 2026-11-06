@@ -326,6 +326,7 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateValidationRelations(m)...)
 	validationErrors = append(validationErrors, validateValidationEnforce(m)...)
 	validationErrors = append(validationErrors, validateAutomationFaces(m)...)
+	validationErrors = append(validationErrors, validateAutomationCopies(m)...)
 	validationErrors = append(validationErrors, validateBackgroundActions(m)...)
 	validationErrors = append(validationErrors, validateAddToPile(m)...)
 	validationErrors = append(validationErrors, validateNotify(m)...)

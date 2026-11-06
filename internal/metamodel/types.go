@@ -1097,7 +1097,8 @@ type CopyDef struct {
 
 	// Fields maps target property -> source expression. The literal string
 	// "all" in AllFields copies every declared property; the two are
-	// mutually exclusive.
+	// mutually exclusive. [CopyDef.Set] overrides single values under
+	// `fields: all`.
 	//
 	// Deliberately dumb (§9.1): field selection, rename, and the existing
 	// {{...}} interpolation grammar. No expressions, no conditionals — the
@@ -1117,6 +1118,14 @@ type CopyDef struct {
 	// bytes stay referenced. Refused at load without `fields: all`, because a
 	// field mapping already leaves every unmapped property alone.
 	Keep []string `yaml:"keep,omitempty"`
+
+	// Set maps target properties to values a `fields: all` copy writes in
+	// place of the source's (TKT-50DZEHI), such as `adopted_on: "{{today}}"`.
+	// A value uses the [CopyDef.Fields] grammar. Refused at load without
+	// `fields: all`, where the field mapping says the same thing, and on a
+	// property under `keep:`, a file property or an external ref, which a
+	// copy never writes from a template.
+	Set map[string]string `yaml:"set,omitempty"`
 
 	// Relations maps a relation type to `merge` (add missing) or `replace`
 	// (swap the target face's edges of that type). An omitted type is not
@@ -1265,6 +1274,7 @@ func (c *CopyDef) UnmarshalYAML(unmarshal func(any) error) error {
 		Label     string            `yaml:"label,omitempty"`
 		Fields    any               `yaml:"fields,omitempty"`
 		Keep      []string          `yaml:"keep,omitempty"`
+		Set       map[string]string `yaml:"set,omitempty"`
 		Relations map[string]string `yaml:"relations,omitempty"`
 		Guard     CopyGuard         `yaml:"guard,omitempty"`
 		OnSuccess CopyOnSuccess     `yaml:"on_success,omitempty"`
@@ -1274,7 +1284,7 @@ func (c *CopyDef) UnmarshalYAML(unmarshal func(any) error) error {
 		return err
 	}
 	c.From, c.To, c.Label, c.Relations, c.Guard = r.From, r.To, r.Label, r.Relations, r.Guard
-	c.OnSuccess, c.Keep = r.OnSuccess, r.Keep
+	c.OnSuccess, c.Keep, c.Set = r.OnSuccess, r.Keep, r.Set
 	switch f := r.Fields.(type) {
 	case nil:
 	case string:
@@ -1668,6 +1678,12 @@ type AutomationTrigger struct {
 	// date arithmetic (today/days_between/date_add/rrule_next) that a
 	// property filter cannot express.
 	Condition string `yaml:"condition,omitempty"`
+
+	// Copy limits the trigger to writes made by the named `copies:`
+	// definitions. On its own it fires on every run of a named copy; beside
+	// `created`, `updated` or `property` it narrows that key to the copy's
+	// write. See automation.Trigger.Copy.
+	Copy StringOrSlice `yaml:"copy,omitempty"`
 }
 
 // AutomationAction specifies an operation to perform.

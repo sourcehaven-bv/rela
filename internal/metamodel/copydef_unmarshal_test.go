@@ -47,6 +47,7 @@ entities:
       published: {}
     properties:
       title: {type: string}
+      status: {type: string}
 relations:
   # CONTENT-scoped: only content-scoped relations may be copied — an identity
   # edge is shared by every face, so copying it would duplicate an edge that
@@ -69,13 +70,15 @@ copies:
     on_success:
       message: "Published {title}"
       landing: { world: everything }
-  # keep needs fields: all, which the definition above cannot use beside its
-  # mapping, so it is exercised on a second definition.
+  # keep and set need fields: all, which the definition above cannot use
+  # beside its mapping, so they are exercised on a second definition.
   keeper:
     from: page@draft
     to: page@published
     fields: all
     keep: [title]
+    set:
+      status: "{{today}}"
     guard:
       permission: promote-page
 worlds:
@@ -108,6 +111,7 @@ worlds:
 		"OnSuccess": def.OnSuccess.Message == "Published {title}" &&
 			def.OnSuccess.Landing.World == "everything",
 		"Keep": len(m.Copies["keeper"].Keep) == 1 && m.Copies["keeper"].Keep[0] == "title",
+		"Set":  m.Copies["keeper"].Set["status"] == "{{today}}",
 	}
 	for name, ok := range checks {
 		if !ok {

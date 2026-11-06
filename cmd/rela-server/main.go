@@ -629,8 +629,16 @@ func main() {
 	}
 
 	slog.Info("starting server", "name", srv.cur.Load().app.Cfg().App.Name, "addr", "http://"+srv.addr)
-	if err := serveUntilSignal(httpSrv); err != nil {
-		slog.Error("server stopped", "error", err)
+	serveErr := serveUntilSignal(httpSrv)
+	// http.Server.Shutdown leaves hijacked connections open; the co-editing
+	// relay holds those.
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+	if cerr := srv.collab.Shutdown(ctx); cerr != nil {
+		slog.Warn("closing co-editing connections", "error", cerr)
+	}
+	cancel()
+	if serveErr != nil {
+		slog.Error("server stopped", "error", serveErr)
 		os.Exit(1)
 	}
 }

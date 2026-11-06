@@ -1,12 +1,14 @@
 package dataentry
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
 	"maps"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -493,11 +495,11 @@ func truncateUTF8(s string, n int) (string, bool) {
 	return s[:n], true
 }
 
-// isSSEPath names the two event-stream routes registered on the outer mux
-// (see NewRouter). Kept here rather than derived from the mux so the
+// isSSEPath names the long-lived routes registered on the outer mux (see
+// NewRouter): the two event streams and the co-editing WebSocket. Kept here rather than derived from the mux so the
 // middleware needs no handle on the router.
 func isSSEPath(p string) bool {
-	return p == "/api/events" || p == "/api/v1/_events"
+	return p == "/api/events" || p == "/api/v1/_events" || strings.HasPrefix(p, CollabPathPrefix)
 }
 
 // statsResponseWriter records the status code and, on the first
@@ -508,12 +510,11 @@ func isSSEPath(p string) bool {
 //
 // Flush is forwarded so the SSE and command-stream handlers, which assert
 // http.Flusher on the writer they receive, keep working when wrapped.
-// Unwrap serves http.ResponseController for any other optional interface;
-// a direct `w.(http.Hijacker)` assertion would NOT see through this wrapper,
-// which is fine only because no handler hijacks — add a forwarder here
-// before one does, or Debug mode would change its behavior. A handler that
-// writes through the unwrapped writer also bypasses status recording, so
-// the record would say 200.
+// Hijack is forwarded for the co-editing WebSocket, whose library asserts
+// http.Hijacker directly and would not see through Unwrap. Unwrap serves
+// http.ResponseController for any other optional interface. A handler that
+// writes through the unwrapped writer bypasses status recording, so the
+// record would say 200.
 type statsResponseWriter struct {
 	http.ResponseWriter
 	stats   *store.QueryStats
@@ -575,4 +576,15 @@ func serverTimingValue(s *store.QueryStats) string {
 // resolution — the unit both Server-Timing and the request log use.
 func millis(d time.Duration) float64 {
 	return float64(d.Microseconds()) / float64(time.Millisecond/time.Microsecond)
+}
+
+// Hijack hands the connection to a WebSocket upgrade and records the 101
+// the upgrade writes on the raw connection.
+func (w *statsResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	conn, rw, err := http.NewResponseController(w.ResponseWriter).Hijack()
+	if err == nil {
+		w.status = http.StatusSwitchingProtocols
+		w.written = true
+	}
+	return conn, rw, err
 }

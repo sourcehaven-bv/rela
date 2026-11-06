@@ -575,6 +575,33 @@ the target face's own files, so republishing does not remove them. `keep:`
 needs `fields: all`, because a field map already leaves every property it does
 not name alone, and each name must be a property the target type declares.
 
+To write a value of your own while copying everything else, name it under
+`set:`. A typical case is the date a document was adopted:
+
+```yaml
+copies:
+  adopt:
+    from: policy@draft
+    to: policy@adopted
+    fields: all
+    set:
+      adopted_on: "{{today}}"
+    guard:
+      permission: adopt-policy
+```
+
+A `set:` value uses the same grammar as a field map, so `{{today}}` and
+`{{new.<property>}}` work. It replaces the source's value for that property.
+`set:` needs `fields: all`, because with a field map you put the value in the
+map. A set property must be declared on the target type, and may not be under
+`keep:`, a file property, an external ref, or a computed or rollup property.
+
+A copy also runs the automations of the face it writes: the `created`
+automations when it creates the face, and the `updated` automations when it
+overwrites one. An automation with `on.copy: adopt` runs only when that copy
+writes the face. See
+[Automations on a copy](metamodel.md#automations-on-a-copy).
+
 The following table lists the keys a copy accepts:
 
 | Key | Meaning |
@@ -585,6 +612,7 @@ The following table lists the keys a copy accepts:
 | `on_success` | Optional. `message:` is the confirmation the web app shows (default: the copy's label; `{face}` names the face written); `landing:` is where it goes afterwards: `written` (default), `stay`, `{world: name}` or `{face: name}`. |
 | `fields` | `all` to copy every property, or a map of target property to source expression. A copy between different types requires an explicit map. |
 | `keep` | With `fields: all`, a list of target properties the copy leaves as the target face holds them. |
+| `set` | With `fields: all`, a map of target property to a value the copy writes instead of the source's, such as `"{{today}}"`. |
 | `relations` | A map of relation type to `merge` (add missing edges) or `replace` (swap the target face's edges). Only `scope: content` relation types can be listed. An omitted type is not copied. |
 | `guard.permission` | The permission required on the source entity. **Required** whenever `to` names a face. On a copy between two faces of one entity it replaces the ordinary `update`/`create` check. |
 

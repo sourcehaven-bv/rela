@@ -54,6 +54,10 @@ components:
 
   # Web / UI layer
   dataentry:        { in: internal/dataentry }
+  # rela's fork of ygo's WebSocket relay (TKT-6NPNITP). Third-party code
+  # under its own MIT licence; see third_party/ygows/README.md.
+  ygows:            { in: third_party/ygows }
+  ygowsinternal:    { in: third_party/ygows/internal/** }
   dataentryconfig:  { in: internal/dataentryconfig }
   # The canonical icon table. A LEAF on purpose: cmd/gen-icons imports it and
   # generates code back into dataentryconfig, so keeping the data in a package
@@ -325,6 +329,17 @@ vendors:
       - github.com/emersion/go-webdav
       - github.com/emersion/go-webdav/**
   goical:      { in: github.com/emersion/go-ical }
+  # Yjs relay for shared body editing (TKT-CJL604). Granted ONLY to
+  # dataentry, which contains it in collab.go: the relay forwards opaque Yjs
+  # updates and no ygo type crosses into another package.
+  ygo:
+    in:
+      - github.com/reearth/ygo
+      - github.com/reearth/ygo/**
+  # The forked relay's own dependencies, granted only to ygows.
+  gorillaws:   { in: github.com/gorilla/websocket }
+  xtimerate:   { in: golang.org/x/time/rate }
+  xsemaphore:  { in: golang.org/x/sync/semaphore }
   # Outbound mail (TKT-332QZY). net/smtp is frozen and covers only the wire
   # protocol; go-mail owns RFC 5322 assembly — header folding, encoded-words,
   # quoted-printable, multipart — which is the part that is easy to get subtly
@@ -608,6 +623,7 @@ deps:
       - dataentryconfig
   dataentry:
     mayDependOn:
+      - ygows
       - mentions
       - rollup
       - rootfs
@@ -710,6 +726,18 @@ deps:
       - singleflight
       - webdav
       - goical
+      - ygo
+  ygows:
+    mayDependOn:
+      - ygowsinternal
+    canUse:
+      - ygo
+      - gorillaws
+      - xtimerate
+      - xsemaphore
+  ygowsinternal:
+    canUse:
+      - ygo
   dataentryconfig:
     mayDependOn:
       - filter

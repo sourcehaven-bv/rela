@@ -6,6 +6,10 @@
 // test-only hooks so they never ship in production bundles (issue #890).
 declare const __E2E_TEST_HOOKS__: boolean
 
+// The SPA build id (see relaBuildId in vite.config.ts); '' on the dev server
+// and in unit tests. Sent when joining a co-editing room.
+declare const __RELA_BUILD_ID__: string
+
 declare module '*.vue' {
   import type { DefineComponent } from 'vue'
   const component: DefineComponent<object, object, unknown>
