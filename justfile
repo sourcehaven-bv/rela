@@ -430,6 +430,10 @@ govulncheck:
 govulncheck-fixable-test:
     scripts/govulncheck-fixable-test.sh
 
+# Test the filter behind the scheduled ygows fork advisory check
+ygows-advisories-test:
+    scripts/ygows-advisories-test.sh
+
 # Check architecture boundaries
 arch-lint:
     @echo "Checking architecture boundaries..."
