@@ -129,9 +129,15 @@ type ValidationError struct {
 }
 
 func (e *ValidationError) Error() string {
+	// Each message is prefixed with the property it is about: many say only
+	// "This field is required", which tells a CLI or MCP caller nothing on
+	// its own. Property names are schema, not data.
 	msgs := make([]string, len(e.Errors))
 	for i, err := range e.Errors {
 		msgs[i] = err.Error()
+		if err.Property != "" {
+			msgs[i] = err.Property + ": " + msgs[i]
+		}
 	}
 	return "validation errors:\n  " + strings.Join(msgs, "\n  ")
 }

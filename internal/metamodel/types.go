@@ -205,9 +205,19 @@ type ValidationRule struct {
 	// See [RelationConstraint] for what each one asserts.
 	Relations map[string]RelationConstraint `yaml:"relations,omitempty"`
 
-	// Severity is the severity level of violations: "error" or "warning"
-	// Defaults to "warning" if not specified
+	// Severity is the severity level of violations: "error" or "warning".
+	// Defaults to "warning", or to "error" on a rule with `enforce: write`.
 	Severity string `yaml:"severity,omitempty"`
+
+	// Enforce names where the rule blocks. Empty means nowhere: the rule
+	// reports in `rela validate` and analyze only. [EnforceWrite] makes the
+	// write path refuse a write whose new state violates the rule, with the
+	// same 422 a structural error gets (TKT-5CESLHD).
+	//
+	// An enforced rule may only read the entity being written, so the load
+	// refuses one that uses Lua, `relations:`, `content:` or `related(...)`.
+	// See [ValidationRule.IsWriteEnforced].
+	Enforce string `yaml:"enforce,omitempty"`
 
 	// Lua specifies inline Lua code for custom validation logic.
 	// The code should return true if the entity is valid, or false/nil for a violation.
@@ -249,12 +259,27 @@ func (v *ValidationRule) AppliesToType(t string) bool {
 	return types == nil || slices.Contains(types, t)
 }
 
-// GetSeverity returns the severity level, defaulting to "warning"
+// EnforceWrite is the [ValidationRule.Enforce] value that makes the write
+// path refuse a violating write.
+const EnforceWrite = "write"
+
+// GetSeverity returns the severity level. It defaults to "warning", and to
+// "error" on a write-enforced rule, because a rule that refuses a write
+// reports an error.
 func (v *ValidationRule) GetSeverity() string {
 	if v.Severity == "" {
+		if v.IsWriteEnforced() {
+			return "error"
+		}
 		return "warning"
 	}
 	return v.Severity
+}
+
+// IsWriteEnforced reports whether the write path refuses a write that
+// violates the rule.
+func (v *ValidationRule) IsWriteEnforced() bool {
+	return v.Enforce == EnforceWrite
 }
 
 // IsError returns true if this validation has error severity

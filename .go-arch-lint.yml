@@ -157,6 +157,7 @@ components:
   relresolve:       { in: internal/relresolve }
   rollup:           { in: internal/rollup }
   statemachine:     { in: internal/statemachine }
+  writerule:        { in: internal/writerule }
   tracer:           { in: internal/tracer }
   validation:       { in: internal/validation }
   validationgraph:  { in: internal/validationgraph }
@@ -825,6 +826,8 @@ deps:
   # any tag, so both backends' deps must be allow-listed here.
   appbuild:
     mayDependOn:
+      # writerule: CheckSchemaCompiles compiles the rules enforced on write.
+      - writerule
       # aclstore: the store adapters handed to acl.NewDeclarative.
       - aclstore
       - rollup
@@ -1449,6 +1452,7 @@ deps:
       - statemachine
       - store
       - templating
+      - writerule
   importer:
     mayDependOn:
       - metamodel
@@ -1531,6 +1535,13 @@ deps:
   statemachine:
     mayDependOn:
       - entity
+      - metamodel
+      - predicate
+      - predicatefns
+  # Write-enforced validation rules (TKT-5CESLHD): predicate only, never lua.
+  writerule:
+    mayDependOn:
+      - filter
       - metamodel
       - predicate
       - predicatefns

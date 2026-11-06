@@ -14,13 +14,15 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/worlds"
+	"github.com/Sourcehaven-BV/rela/internal/writerule"
 )
 
 // CheckSchemaCompiles compiles every expression in meta and returns one
 // message per failure. It runs the compilers a server build runs (worlds,
-// computed properties, query scopes, transitions, automations) and also the validation
-// rules' conditions and filters, which otherwise compile only when
-// validation runs and would then fail per rule rather than on save.
+// computed properties, query scopes, transitions, automations, rules enforced
+// on write) and also the validation rules' conditions and filters, which
+// otherwise compile only when validation runs and would then fail per rule
+// rather than on save.
 //
 // st answers nothing here: the transition and automation compilers accept
 // related(...) only when a binder is wired, and a binder needs a store.
@@ -46,6 +48,8 @@ func CheckSchemaCompiles(meta *metamodel.Metamodel, st store.Store) []string {
 			automation.WithTraversals(ungatedBinder(meta, st)))
 		add("automations", err)
 	}
+	_, err = writerule.Compile(meta)
+	add("validations enforced on write", err)
 	return append(problems, checkValidationRules(meta)...)
 }
 

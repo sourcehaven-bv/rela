@@ -13,6 +13,13 @@ const ConfigFile = "config.yaml"
 type Config struct {
 	// Formatting configures how markdown content is formatted.
 	Formatting FormattingConfig `yaml:"formatting,omitempty"`
+
+	// Validation is the deployment's validation mode: "advisory" (the
+	// default) or "strict", which refuses a write with a missing required
+	// property, a type mismatch or an invalid value (DEC-OYV2AK). The
+	// RELA_VALIDATION environment variable overrides it. Parsed by
+	// internal/entitymanager, which owns the meaning.
+	Validation string `yaml:"validation,omitempty"`
 }
 
 // FormattingConfig holds settings for markdown formatting.

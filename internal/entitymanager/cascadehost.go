@@ -121,8 +121,10 @@ func (h *cascadeHost) WriteEntity(ctx context.Context, e *entity.Entity, set map
 			// DEC-HWZHA: only HARD errors abort. Soft conditions (a required
 			// property left unset, an out-of-enum value) are tolerated on every
 			// other write path and must stay tolerated here, or a cascade would
-			// be stricter than a direct edit.
-			if hard, _ := partitionValidationErrors(errs); len(hard) > 0 {
+			// be stricter than a direct edit. Advisory also on a strict
+			// deployment: the row is already stored, as on the top-level
+			// create's own post-automation write.
+			if hard := structuralErrors(errs); len(hard) > 0 {
 				return newValidationError(hard)
 			}
 		}

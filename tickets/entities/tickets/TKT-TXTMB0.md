@@ -5,7 +5,9 @@ title: 'Backend: validation: advisory|strict config that blocks on error-severit
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-11-06"
+completed: "2026-11-06"
+status: done
 ---
 
 Backend half of FEAT-13863O / DEC-OYV2AK. Opt-in per-deployment `validation:

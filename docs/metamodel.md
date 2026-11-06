@@ -2797,6 +2797,7 @@ validations:
     when_condition: "..." # Optional: expression, ANDed with `when`
     then_condition: "..." # Optional: expression, ANDed with `then`
     severity: error # Optional: "error" or "warning" (default)
+    enforce: write # Optional: refuse a write that breaks the rule
 ```
 
 ### How Validation Rules Work
@@ -3353,6 +3354,79 @@ Found 2 errors, 1 warnings across 2 rules
 
 - **error**: Critical violations that should be fixed. Displayed with ✗
 - **warning**: Recommendations that may need attention. Displayed with ⚠
+
+### Enforcing a rule on write (`enforce: write`)
+
+A validation rule only reports by default: `rela analyze validations` and the
+analyze page list its violations, and a write that breaks it still succeeds.
+Add `enforce: write` to make every write check the rule. A write whose new
+state breaks the rule is refused with `422 validation_failed`:
+
+```yaml
+validations:
+  - name: rechtsgrond-bij-beoordeling
+    description: Een verwerking ter beoordeling heeft een rechtsgrond.
+    entity_type: verwerking
+    enforce: write
+    when: ["versiestatus=ter_beoordeling"]
+    then: ["rechtsgrond!="]
+```
+
+With this rule, setting `versiestatus` to `ter_beoordeling` on a record without
+a `rechtsgrond` is refused. Setting both in one write is accepted.
+
+The rule is checked against the state the write stores:
+
+- An update or patch is checked after its on-update automations ran.
+- A create is checked as the caller sent it, with template defaults applied,
+  and again when its on-create automations write. The create is stored before
+  those automations run, so if an automation breaks the rule, the create
+  reports that the entity was created but the rest of the create failed. The
+  entity stays stored without the automation's values; do not retry the
+  create.
+- Copies, conversions and restores are checked on the row they write.
+
+The refusal lists the rule in `errors[]` with code `rule` and an empty JSON
+pointer, because a rule is about the whole entity. Its message names the rule
+and quotes the `description`, never a property value. The rule keeps running in
+`rela analyze validations`, which finds the rows stored before the rule was
+enforced.
+
+An enforced rule reads only the entity being written, so it may use
+`entity_type`, `faces`, `when`, `then`, `when_condition` and `then_condition`.
+The schema fails to load when an enforced rule also has:
+
+- `lua`, `lua_file` or `lua_args`: Lua never runs on the write path.
+- `relations` or a `related(...)` condition: these read other entities.
+- `content`: an enforced rule checks properties only.
+- a roll-up property: a roll-up is computed when it is read, so a write does
+  not carry it.
+- `severity: warning`: a rule that refuses a write reports an error. Without
+  `severity`, an enforced rule is an error.
+- no `then` or `then_condition`: the rule would check nothing.
+
+A `when` condition that cannot be evaluated refuses the write, so a value of
+the wrong type cannot switch the rule off. A `when` condition whose properties
+are all unset does not apply: `entity.amount > 10000` does not refuse a record
+without an amount.
+
+A condition that does not compile stops the server or command at startup.
+The Configure screen cannot add or remove `enforce`, remove an enforced rule,
+or change what it checks (`entity_type`, `faces`, `when`, `when_condition`,
+`then`, `then_condition`). Change those in `schema.yaml`.
+
+Whether a write is refused depends on the values the rule reads. If the rule
+reads a property that a role cannot see because of `visible:`, a writer with
+that role learns something about the value from the refusal. The server logs a
+warning at startup for each such rule. Write the rule on properties every
+writer of the type may read.
+
+Writes that bypass the write path do not check the rule: `rela import` and data
+migrations write to the store directly.
+
+The deployment's validation mode is a separate setting: it decides whether a
+missing required property or an invalid value refuses a write (see "Validation
+mode" in the CLI reference).
 
 ### Tips
 
