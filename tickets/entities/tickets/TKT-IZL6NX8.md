@@ -41,3 +41,5 @@ stored IdP roles map to `role`, filtered by the script's gated reader.
 
 - Stored roles on other non-JWT paths (CLI, MCP stdio, header principal).
 - Org enforcement (R1).
+- Expiry of stored roles: TKT-TZSC2R0.
+- Checking the asserted org before storing: TKT-YWX30D6.
