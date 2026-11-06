@@ -8,6 +8,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/idproles"
 	"github.com/Sourcehaven-BV/rela/internal/lock"
@@ -41,7 +42,7 @@ func idpRolesFixture(t *testing.T, principalProperty string) *Services {
 	} {
 		require.NoError(t, roles.Set(ctx, rec.subject, "org_1", rec.entity, []string{rec.claim}))
 	}
-	return &Services{store: st, idpRoles: roles, aclPolicy: &acl.Policy{
+	return &Services{store: st, idpRoles: roles, audit: audit.NewMemory(), aclPolicy: &acl.Policy{
 		UserEntityType:    "person",
 		PrincipalProperty: principalProperty,
 		Roles:             map[string]acl.RoleDef{"cpo": {Read: []string{"*"}}, "other": {}},
@@ -192,6 +193,20 @@ func TestIDPRoleWriter_BindsTheResolvedEntity(t *testing.T) {
 				}
 			}
 			require.Equal(t, tc.wantEntity, got)
+
+			// One audit record per write, naming the bound entity and the
+			// role count but never the IdP subject.
+			recs := svc.audit.(*audit.Memory).Records()
+			require.Len(t, recs, 1)
+			require.Equal(t, audit.OpIDPRolesSet, recs[0].Op)
+			require.NotContains(t, recs[0].Summary, tc.subject)
+			if tc.wantEntity == "" {
+				require.Nil(t, recs[0].Subject)
+				require.Equal(t, "roles=0", recs[0].Summary)
+				return
+			}
+			require.Equal(t, &audit.Subject{Kind: "entity", Type: "person", ID: tc.wantEntity}, recs[0].Subject)
+			require.Equal(t, "roles=1", recs[0].Summary)
 		})
 	}
 }

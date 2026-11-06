@@ -9,9 +9,11 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/idproles"
@@ -39,6 +41,7 @@ type IDPRoleWriter struct {
 	roles  *idproles.Store
 	policy *acl.Policy
 	st     store.Store
+	audit  audit.Audit
 }
 
 // IDPRoles returns the role writer of s. It is a package function rather than
@@ -50,7 +53,7 @@ func IDPRoles(s *Services) *IDPRoleWriter {
 	if s.idpRoles == nil {
 		return nil
 	}
-	return &IDPRoleWriter{roles: s.idpRoles, policy: s.aclPolicy, st: s.store}
+	return &IDPRoleWriter{roles: s.idpRoles, policy: s.aclPolicy, st: s.store, audit: s.audit}
 }
 
 // Hold takes the lock of one subject; see [idproles.Store.Hold].
@@ -70,9 +73,34 @@ func (w *IDPRoleWriter) Set(ctx context.Context, subject, orgID string, roles []
 		if len(roles) > 0 {
 			slog.Warn("idp roles: subject resolves to no single user entity; roles cleared, not stored")
 		}
-		return w.roles.Set(ctx, subject, orgID, "", nil)
+		roles = nil
 	}
-	return w.roles.Set(ctx, subject, orgID, entityID, roles)
+	if err := w.roles.Set(ctx, subject, orgID, entityID, roles); err != nil {
+		return err
+	}
+	w.record(ctx, entityID, len(roles))
+	return nil
+}
+
+// record audits one stored or cleared role list. It names the bound entity
+// and the role count only: the IdP subject and the role names stay out of
+// the audit log.
+func (w *IDPRoleWriter) record(ctx context.Context, entityID string, count int) {
+	if w.audit == nil {
+		return
+	}
+	rec := audit.Record{
+		Time:        time.Now().UTC(),
+		Op:          audit.OpIDPRolesSet,
+		Principal:   principal.From(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
+		TriggeredBy: audit.TriggeredByFrom(ctx),
+		Summary:     fmt.Sprintf("roles=%d", count),
+	}
+	if entityID != "" {
+		rec.Subject = &audit.Subject{Kind: "entity", Type: w.policy.UserEntityType, ID: entityID}
+	}
+	w.audit.Record(rec)
 }
 
 // resolve returns the user entity subject names: the one entity whose
@@ -107,7 +135,9 @@ func (w *IDPRoleWriter) resolve(ctx context.Context, subject string) (string, er
 // The lock follows the KV. On postgres the KV is the tenant's state table and
 // the store's advisory lock serializes every process. On the cache-directory
 // KV a lock file does, because the webhook receiver, `rela scheduler` and CLI
-// scripts are separate processes over one directory. Without a cache
+// scripts are separate processes over one directory. Sqlite keeps the KV in
+// its database and admits one process, so the lock file there is a formality
+// that costs nothing. Without a cache
 // directory the document lives in process memory and is lost on restart; a
 // warning says so.
 func buildIDPRoles(base *SharedBase, st store.Store, stateKV state.KV) (*idproles.Store, error) {

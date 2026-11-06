@@ -702,10 +702,13 @@ names of a user, and the child then holds the rela roles they map to
   above still holds.
 - **Where.** Runtime state outside the graph: one document in the state
   store, rewritten under a lock. On postgres that is the tenant's state table
-  with an advisory lock, shared by every process. On the file tiers it is
-  `idp-roles.json` in the cache directory with lock files. No entity write
-  reaches it. Without a cache directory the roles are kept in process memory
-  and a warning is logged.
+  with an advisory lock, shared by every process. On sqlite it is the state
+  table in `.rela/rela.db`. On the file store it is `idp-roles.json` in the
+  cache directory with lock files. No entity write reaches it. Without a
+  cache directory the roles are kept in process memory and a warning is
+  logged. Each store or clear writes an `idp-roles-set` audit record that
+  names the bound entity and the role count, never the IdP subject or the
+  role names.
 - **Bound to one entity.** When it stores roles, the receiver resolves the
   subject to the one user entity whose `principal_property` equals it (or
   the user entity with that id when no `principal_property` is set), and the

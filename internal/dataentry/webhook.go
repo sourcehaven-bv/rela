@@ -277,8 +277,9 @@ func storeAssertedRoles(
 	if err := roles.Set(ctx, claims.UserID, claims.OrgID, resp.AssertedRoles); err != nil {
 		return fmt.Errorf("idp webhook: store asserted roles: %w", err)
 	}
-	slog.Info("idp webhook stored asserted roles",
-		"subject", claims.UserID, "org_id", claims.OrgID, "event", claims.Event, "roles", len(resp.AssertedRoles))
+	// The IdP subject is personal data; the audit record names the bound
+	// entity instead.
+	slog.Info("idp webhook stored asserted roles", "event", claims.Event, "roles", len(resp.AssertedRoles))
 	return nil
 }
 

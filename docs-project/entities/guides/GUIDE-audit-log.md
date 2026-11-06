@@ -74,6 +74,7 @@ Every record is one line of JSON:
 | `acl-query` | An effective-access query (`rela acl who-can`) — who asked, when, and about which entity. **The answer is deliberately not recorded**: it is a list of principals and their access routes, so logging it would duplicate the disclosure rather than record it |
 | `purge-version` | An operator hard-delete of version history for compliance redaction. Never contains the purged content |
 | `data-migration`, `data-gc` | Schema-driven data migration and garbage collection |
+| `idp-roles-set` | The IdP webhook stored or cleared the asserted roles of one principal, for background jobs (see [ACL security](acl-security.md) "Stored asserted roles"). Subject is the bound user entity, absent when the subject resolved to none; the summary is `roles=<count>`. The IdP subject and the role names are not recorded |
 
 ### Conversion records
 
