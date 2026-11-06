@@ -474,6 +474,12 @@ The storage layer literally cannot persist this state.
   caller cannot read is reported as missing (`target_not_found`), never by
   its type. The per-edge `POST /api/v1/{plural}/{id}/relations/{rel}`
   returns the same codes.
+- Content or relation content that holds a complete git conflict block at
+  the start of a line, also inside a code fence (`conflict_block`). The file
+  store would read it back as an unresolved merge, so it refuses the write.
+  Indent the marker lines of an example. The detail never repeats the
+  content. In the relation-apply phase of a PATCH the title adds that the
+  entity may already have been saved.
 
 ### 200 + warnings — soft conditions surfaced inline
 
@@ -527,7 +533,8 @@ The handler runs in three phases:
 The validation-first ordering means a relation 422 leaves the entity
 **untouched**. The unavoidable atomicity gap is mid-write-loop store failures
 (disk full, permission denied, etc.) — these are rare, irrecoverable, and
-return a 500 with `relation_write_failed`. The legacy reconciler had the same
+return a 500 with `relation_write_failed` (a conflict-block refusal answers
+422 `conflict_block` instead). The legacy reconciler had the same
 property; this PR doesn't make it worse. Concurrent requests that add or drop
 the same edge are not failures: the reconciler switches between update and
 create when it finds the edge in the other state, and answers 409 `conflict`

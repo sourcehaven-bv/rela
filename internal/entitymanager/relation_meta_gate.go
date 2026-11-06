@@ -70,11 +70,17 @@ func relationMetaDenial(
 // values of other sources' edges (BUG-FQZ5Q1L). The update itself already
 // passed the gate for key. A refusal is not audited: the caller asked for no
 // write to those edges, and the renumber is skipped rather than refused.
+//
+// When allowed, judged holds every edge q listed. The renumber's transaction
+// rewrites only when its own listing is a subset of judged, so an edge
+// created between this check and the transaction is never rewritten
+// unjudged. Nil: returned for a handle that is not field-gated, meaning no
+// restriction.
 func renumberAllowed(
 	ctx context.Context, m *Manager, key entity.RelationKey, q store.RelationQuery, prop string,
-) (bool, error) {
+) (judged map[entity.RelationKey]bool, allowed bool, err error) {
 	if !fieldGated(m) {
-		return true, nil
+		return nil, true, nil
 	}
 	type tail struct {
 		id   string
@@ -82,10 +88,12 @@ func renumberAllowed(
 	}
 	order := map[string]any{prop: 0.0}
 	seen := map[tail]bool{{id: key.From, face: key.FromFace}: true}
-	for r, err := range m.deps.Store.ListRelations(ctx, q) {
-		if err != nil {
-			return false, err
+	judged = map[entity.RelationKey]bool{}
+	for r, lErr := range m.deps.Store.ListRelations(ctx, q) {
+		if lErr != nil {
+			return nil, false, lErr
 		}
+		judged[r.Identity()] = true
 		t := tail{id: r.From, face: r.FromFace}
 		if seen[t] {
 			continue
@@ -93,10 +101,10 @@ func renumberAllowed(
 		seen[t] = true
 		_, denial, dErr := relationMetaDenial(ctx, m, r.Identity(), order, nil)
 		if dErr != nil || denial != nil {
-			return false, dErr
+			return nil, false, dErr
 		}
 	}
-	return true, nil
+	return judged, true, nil
 }
 
 // checkRelationMoveMeta is [checkRelationMetaWrite] for a move of the edge at

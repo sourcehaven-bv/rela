@@ -202,6 +202,10 @@ the source entity's type and either has no `relations:` block for it or has a
 grant for that relation type without a `fields:` list. A grant whose `when:`
 fails does not count. The order properties (`_order_out`, `_order_in`) are
 positions, not content: they stay writable unless a `fields:` list names them.
+Once a list names one, a position move needs that grant for the source of
+every edge it rewrites. On the incoming side that includes other sources'
+edges. When a later renumber would rewrite an edge whose source lacks the
+grant, the renumber is skipped.
 The rule applies to the data-entry API and to MCP on rela-server.
 
 ```yaml
