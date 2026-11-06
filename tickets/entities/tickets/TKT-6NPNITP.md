@@ -34,3 +34,4 @@ implementation is a follow-up, so Redis stays optional.
 - A client that sends another user's id in awareness is shown under its own id.
 - A client cannot overwrite another connection's cursor state.
 - The forked code keeps the upstream licence notice and its tests.
+- A read-only connection cannot send a stateless broadcast to other peers.
