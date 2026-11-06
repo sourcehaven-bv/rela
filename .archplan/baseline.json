@@ -2623,10 +2623,10 @@
       "largest_tangle": 13,
       "cycle_edges": 61,
       "upward_edges": 0,
-      "propagation_cost": 9.8
+      "propagation_cost": 9.6
     },
     "min_weight": 0,
-    "at": "2026-11-06T18:45:56Z",
+    "at": "2026-11-06T20:30:30Z",
     "log": [
       {
         "at": "2026-10-28T13:29:24Z",
@@ -2843,6 +2843,17 @@
           "weight.security": [
             2300,
             140
+          ]
+        }
+      },
+      {
+        "at": "2026-11-06T20:30:30Z",
+        "change": "tighten",
+        "reason": null,
+        "metrics": {
+          "propagation_cost": [
+            9.8,
+            9.6
           ]
         }
       }
