@@ -16,6 +16,9 @@ func copyFixture(copies map[string]CopyDef) *Metamodel {
 				Properties: map[string]PropertyDef{
 					"title":  {Type: "string"},
 					"status": {Type: "string"},
+					"scan":   {Type: PropertyTypeFile},
+					"remote": {Type: PropertyTypeExternalRef},
+					"slug":   {Type: "string", Computed: "entity.title"},
 				},
 			},
 			"ticket": {
@@ -126,6 +129,61 @@ func TestValidateCopies(t *testing.T) {
 				Fields: map[string]string{"nosuchfield": "x"},
 			},
 			wantErr: "declares no property \"nosuchfield\"",
+		},
+		{
+			name: "set beside fields: all",
+			def: CopyDef{
+				From: "page@draft", To: "page@published", Guard: guarded,
+				AllFields: true, Set: map[string]string{"status": "{{today}}"},
+			},
+		},
+		{
+			name: "set needs fields: all",
+			def: CopyDef{
+				From: "page@draft", To: "page@published", Guard: guarded,
+				Fields: map[string]string{"title": "{{new.title}}"}, Set: map[string]string{"status": "x"},
+			},
+			wantErr: "`set` needs `fields: all`",
+		},
+		{
+			name: "set names an undeclared property",
+			def: CopyDef{
+				From: "page@draft", To: "page@published", Guard: guarded,
+				AllFields: true, Set: map[string]string{"nosuchfield": "x"},
+			},
+			wantErr: "set: entity type \"page\" declares no property \"nosuchfield\"",
+		},
+		{
+			name: "set and keep name the same property",
+			def: CopyDef{
+				From: "page@draft", To: "page@published", Guard: guarded,
+				AllFields: true, Keep: []string{"status"}, Set: map[string]string{"status": "x"},
+			},
+			wantErr: "set: \"status\" is also under `keep:`",
+		},
+		{
+			name: "set names a file property",
+			def: CopyDef{
+				From: "page@draft", To: "page@published", Guard: guarded,
+				AllFields: true, Set: map[string]string{"scan": "x"},
+			},
+			wantErr: "set: \"scan\" is a file property",
+		},
+		{
+			name: "set names an external ref",
+			def: CopyDef{
+				From: "page@draft", To: "page@published", Guard: guarded,
+				AllFields: true, Set: map[string]string{"remote": "x"},
+			},
+			wantErr: "set: \"remote\" is an external ref",
+		},
+		{
+			name: "set names a computed property",
+			def: CopyDef{
+				From: "page@draft", To: "page@published", Guard: guarded,
+				AllFields: true, Set: map[string]string{"slug": "x"},
+			},
+			wantErr: "set: \"slug\" is computed by rela",
 		},
 		{
 			name: "keep beside fields: all",

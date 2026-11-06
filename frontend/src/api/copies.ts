@@ -24,6 +24,9 @@ export interface CopyInvokeResult {
   // overwriting one — the difference between "published for the first time"
   // and "re-published".
   created: boolean
+  // A step after the copy that failed (`follow_up_failed`); the copy itself
+  // was written.
+  warnings?: { code: string; path?: string; detail?: string }[]
 }
 
 /**

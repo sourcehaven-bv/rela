@@ -351,7 +351,7 @@ var locked = map[File][]string{
 		"entities.*.properties.*.computed", "relations.*.properties.*.computed",
 		"entities.*.properties.*.rollup.**", "relations.*.properties.*.rollup.**",
 		"relations.*.scope", "relations.*.owning",
-		"validations.[].faces.**", "automations.[].on.faces.**",
+		"validations.[].faces.**", "automations.[].on.faces.**", "automations.[].on.copy.**",
 	},
 	DataEntryFile: {
 		"version",

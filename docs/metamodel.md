@@ -2212,6 +2212,7 @@ copies:
 | `on_success.landing` | Where the web app goes afterwards: `written` (the face written, the default), `stay` (reload in place), `{world: <name>}` or `{face: <name>}`. |
 | `fields` | `all` to copy every declared property, or a map from target property to source expression using the `{{...}}` interpolation grammar. A copy between different types requires an explicit map. |
 | `keep` | With `fields: all`, a list of target properties the copy never writes: each keeps the target face's value, or stays unset on a new face. |
+| `set` | With `fields: all`, a map from target property to a value the copy writes in place of the source's, using the same grammar as a `fields` map: literal text, `{{today}}`, `{{now}}`, `{{entity.id}}` and `{{new.<property>}}` of the source face. For example, `adopted_on: "{{today}}"` stamps the date of the copy. |
 | `relations` | A map from relation type to `merge` (add the edges the target lacks) or `replace` (swap the target face's edges of that type). Only `scope: content` relation types can be listed. An omitted type is not copied. |
 | `guard.permission` | The ACL permission a caller must hold on the source entity. **Required** whenever `to` names a face. |
 
@@ -2228,6 +2229,9 @@ The loader refuses a copy definition that:
 - copies no fields, or declares both `fields: all` and a field map;
 - declares `keep:` without `fields: all`, or keeps a property the target
   type does not declare;
+- declares `set:` without `fields: all`, or sets a property the target type
+  does not declare, a property under `keep:`, a file property, an external
+  ref, or a computed or rollup property;
 - uses `fields: all` on a copy into a different entity. That copy reads
   through the caller's visibility, so copying every field would write a
   redacted entity;
@@ -3452,6 +3456,7 @@ Automations fire based on entity changes:
 | `relation_created` | Fires when this relation type is created  | `implements`           |
 | `relation_removed` | Fires when this relation type is removed  | `implements`           |
 | `faces`            | Content states to watch (default: all)    | `[published]`          |
+| `copy`             | Copy definitions to watch (string or list). Alone, fires on every run of a named copy; beside `created`, `updated` or `property`, limits that key to the copy's write. See [Automations on a copy](#automations-on-a-copy) | `adopt` |
 | `when`             | Property conditions that must match (AND) | `["kind=enhancement"]` |
 | `condition`        | Predicate expression that must hold (AND) | `"days_between(entity.due, today()) <= 7"` |
 
@@ -3486,6 +3491,56 @@ narrow.
 
 An action writes back to the state that triggered it, so an automation firing on
 a translation updates that translation and not its sibling.
+
+### Automations on a copy
+
+A [copy](#declaring-copies) runs the automations of the face it writes. When
+the copy creates the target face, the `created` automations run. When it
+overwrites an existing face, the `updated` automations run, with the face as it
+was before the copy as the old state.
+
+The properties the automations `set` are part of the copy's own write, as on
+an ordinary update: the copy stays one write with one audit record. A value an
+automation sets must make a legal state-machine move from the value the copy
+wrote, or the copy is refused and nothing is written. The other actions, such
+as `create_entity`, scripts and background actions, run after the copy is
+written. If one of them fails, the copy stays written and the response carries
+a `follow_up_failed` warning.
+
+This applies to every `created` and `updated` automation on the target type,
+not only to the ones that name a copy. Use `faces:` to keep an automation off
+the face a copy writes.
+
+Use `copy:` to run an automation only when a particular copy writes the face.
+On its own, `copy:` fires on every run of the copy, also when the copy changes
+no value:
+
+```yaml
+automations:
+  - name: stamp-adoption
+    on:
+      entity: policy
+      copy: adopt
+    do:
+      - set: review_on
+        value: "{{today}}"
+      - lua_file: publish-site.lua
+        background: true
+```
+
+Beside `created`, `updated` or `property`, `copy:` narrows that key to writes
+by the named copies. Without `copy:`, an automation fires on a copy's write
+like on any other write.
+
+The loader refuses a `copy:` that names no declared copy, that writes a type
+or face the trigger's `entity:` or `faces:` excludes, or that is combined with
+`relation_created` or `relation_removed`. Each of these would never fire.
+
+A rename re-runs a copy trigger's background actions only on a face that one
+of its copies writes.
+
+To stamp a value on every run of one copy, the copy's own `set:` key is
+simpler than an automation.
 
 ### Conditional Triggers
 
