@@ -11,7 +11,8 @@ body:
     "name": "Golden parity",
     "description": "",
     "default_world": "published",
-    "history_enabled": true
+    "history_enabled": true,
+    "collab_enabled": false
   },
   "about_description": "Fixture for the golden wire-parity corpus (golden_parity_test.go). Small on purpose: every type, relation and grant here exists so that some case can show a principal-dependent difference on the wire.\n",
   "styles": {

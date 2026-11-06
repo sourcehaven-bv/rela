@@ -1,0 +1,130 @@
+diff --git a/node_modules/y-prosemirror/src/plugins/sync-plugin.js b/node_modules/y-prosemirror/src/plugins/sync-plugin.js
+index dccfb76..c3f6660 100644
+--- a/node_modules/y-prosemirror/src/plugins/sync-plugin.js
++++ b/node_modules/y-prosemirror/src/plugins/sync-plugin.js
+@@ -798,7 +798,16 @@ export const createNodeFromYElement = (
+           : { type: 'added' }
+       }
+     }
+-    const node = schema.node(el.nodeName, attrs, children)
++    // rela: see pNodeYAttrs. A local attribute a peer stored anyway is
++    // dropped, so it cannot reach this view.
++    const markJSON = attrs[PM_MARKS]
++    delete attrs[PM_MARKS]
++    const local = schema.nodes[el.nodeName]?.spec.localAttrs
++    if (Array.isArray(local)) for (const key of local) delete attrs[key]
++    const marks = Array.isArray(markJSON)
++      ? markJSON.map((m) => schema.markFromJSON(m))
++      : undefined
++    const node = schema.node(el.nodeName, attrs, children, marks)
+     meta.mapping.set(el, node)
+     return node
+   } catch (e) {
+@@ -873,11 +882,13 @@ const createTypeFromTextNodes = (nodes, meta) => {
+  */
+ const createTypeFromElementNode = (node, meta) => {
+   const type = new Y.XmlElement(node.type.name)
+-  for (const key in node.attrs) {
+-    const val = node.attrs[key]
+-    if (val !== null && key !== 'ychange') {
+-      type.setAttribute(key, val)
+-    }
++  // rela: every attribute is stored, null included, and the node's own marks
++  // ride in a reserved attribute. Dropping a null rebuilt it as the schema
++  // default (a GFM table cell's null alignment came back as 'left'), and
++  // dropping marks lost the bold or link around an inline atom.
++  const yattrs = pNodeYAttrs(node)
++  for (const key in yattrs) {
++    type.setAttribute(key, yattrs[key])
+   }
+   type.insert(
+     0,
+@@ -905,6 +916,53 @@ const createTypeFromTextOrElementNode = (node, meta) =>
+  */
+ const isObject = (val) => typeof val === 'object' && val !== null
+ 
++/**
++ * rela: the reserved attribute holding a node's own marks.
++ */
++const PM_MARKS = '__pmMarks'
++
++/**
++ * rela: the attributes a node is stored with: all of its attributes, null
++ * included, plus its marks under PM_MARKS when it has any. Attributes the
++ * node spec lists in `localAttrs` are never stored: they belong to one view
++ * (rela's per-principal entity titles) and must not reach other peers.
++ * @param {any} pnode
++ * @return {Object<string,any>}
++ */
++const pNodeYAttrs = (pnode) => {
++  /** @type {Object<string,any>} */
++  const out = {}
++  const local = pnode.type.spec.localAttrs
++  for (const key in pnode.attrs) {
++    if (key === 'ychange' || (Array.isArray(local) && local.includes(key))) continue
++    out[key] = pnode.attrs[key]
++  }
++  if (pnode.marks && pnode.marks.length) {
++    out[PM_MARKS] = pnode.marks.map((/** @type {any} */ m) => m.toJSON())
++  }
++  return out
++}
++
++/**
++ * @param {any} a
++ * @param {any} b
++ */
++const equalJSON = (a, b) =>
++  a === b || (isObject(a) && isObject(b) && JSON.stringify(a) === JSON.stringify(b))
++
++/**
++ * rela: whether a stored element matches a node's attributes and marks.
++ * @param {Object<string,any>} yattrs
++ * @param {any} pnode
++ */
++const equalNodeAttrs = (yattrs, pnode) => {
++  const pattrs = pNodeYAttrs(pnode)
++  const ykeys = Object.keys(yattrs).filter((key) => key !== 'ychange')
++  const pkeys = Object.keys(pattrs)
++  return ykeys.length === pkeys.length &&
++    pkeys.every((key) => key in yattrs && equalJSON(yattrs[key], pattrs[key]))
++}
++
+ /**
+  * @param {any} pattrs
+  * @param {any} yattrs
+@@ -980,7 +1038,7 @@ const equalYTypePNode = (ytype, pnode) => {
+   ) {
+     const normalizedContent = normalizePNodeContent(pnode)
+     return ytype._length === normalizedContent.length &&
+-      equalAttrs(ytype.getAttributes(), pnode.attrs) &&
++      equalNodeAttrs(ytype.getAttributes(), pnode) &&
+       ytype.toArray().every((ychild, i) =>
+         equalYTypePNode(ychild, normalizedContent[i])
+       )
+@@ -1152,20 +1210,17 @@ export const updateYFragment = (y, yDomFragment, pNode, meta) => {
+   meta.mapping.set(yDomFragment, pNode)
+   // update attributes
+   if (yDomFragment instanceof Y.XmlElement) {
++    // rela: see pNodeYAttrs.
+     const yDomAttrs = yDomFragment.getAttributes()
+-    const pAttrs = pNode.attrs
++    const pAttrs = pNodeYAttrs(pNode)
+     for (const key in pAttrs) {
+-      if (pAttrs[key] !== null) {
+-        if (yDomAttrs[key] !== pAttrs[key] && key !== 'ychange') {
+-          yDomFragment.setAttribute(key, pAttrs[key])
+-        }
+-      } else {
+-        yDomFragment.removeAttribute(key)
++      if (!(key in yDomAttrs) || !equalJSON(yDomAttrs[key], pAttrs[key])) {
++        yDomFragment.setAttribute(key, pAttrs[key])
+       }
+     }
+     // remove all keys that are no longer in pAttrs
+     for (const key in yDomAttrs) {
+-      if (pAttrs[key] === undefined) {
++      if (!(key in pAttrs)) {
+         yDomFragment.removeAttribute(key)
+       }
+     }

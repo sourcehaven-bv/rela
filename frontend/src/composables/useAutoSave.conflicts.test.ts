@@ -802,3 +802,117 @@ describe('useAutoSave across saves of one tab', () => {
     expect(h.contentRef.value).toBe('A\n-\nB')
   })
 })
+
+describe('useAutoSave co-editing hooks (TKT-CJL604)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    vi.mocked(entitiesApi.getEntity).mockReset()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  const bodyAt = (content: string, token: string) =>
+    ({
+      id: 'TKT-001',
+      type: 'ticket',
+      properties: {},
+      content,
+      _versions: versions({ content: token }),
+    }) as Entity
+
+  it("resends the room's document on a 412 whose current body is the room's latest save", async () => {
+    const resendContent = vi.fn((theirs: string) => (theirs === 'a\nb\n' ? 'A\nb\nc\n' : null))
+    const h = harness({ content: 'a\n', _versions: versions({ content: 'c0' }) }, { resendContent })
+    h.updateMock.mockRejectedValueOnce(conflict412({ content: { expected: 'c0', actual: 'c1' } }))
+    vi.mocked(entitiesApi.getEntity).mockResolvedValue(bodyAt('a\nb\n', 'c1'))
+    // A merge against base 'a' would read our rewrite of line one as a
+    // conflict with nothing; the room's document already holds 'b'.
+    h.autoSave.scheduleContentSave('A\nb\nc\n')
+    await vi.runAllTimersAsync()
+    expect(resendContent).toHaveBeenCalledWith('a\nb\n')
+    expect(bodyOf(h.updateMock, 1)).toEqual({
+      content: 'A\nb\nc\n',
+      preconditions: { content: 'c1' },
+    })
+  })
+
+  it('merges a 412 whose current body the room did not write', async () => {
+    const h = harness(
+      { content: 'a\nb\nc\n', _versions: versions({ content: 'c0' }) },
+      { resendContent: () => null }
+    )
+    h.updateMock.mockRejectedValueOnce(conflict412({ content: { expected: 'c0', actual: 'c9' } }))
+    vi.mocked(entitiesApi.getEntity).mockResolvedValue(bodyAt('a\nb\nC\n', 'c9'))
+    h.autoSave.scheduleContentSave('A\nb\nc\n')
+    await vi.runAllTimersAsync()
+    expect(bodyOf(h.updateMock, 1)).toEqual({
+      content: 'A\nb\nC\n',
+      preconditions: { content: 'c9' },
+    })
+  })
+
+  it('reports each body it saved', async () => {
+    const onContentSaved = vi.fn()
+    const h = harness({ content: 'a', _versions: versions({ content: 'c0' }) }, { onContentSaved })
+    h.updateMock.mockResolvedValueOnce(bodyAt('b\n', 'c1'))
+    h.autoSave.scheduleContentSave('b')
+    await vi.runAllTimersAsync()
+    expect(onContentSaved).toHaveBeenCalledWith('b\n', 'c1', 'b')
+  })
+
+  it('does not report a body save that ended in a conflict', async () => {
+    const onContentSaved = vi.fn()
+    const h = harness(
+      { content: 'a\n', _versions: versions({ content: 'c0' }) },
+      { onContentSaved }
+    )
+    h.updateMock.mockRejectedValueOnce(conflict412({ content: { expected: 'c0', actual: 'c1' } }))
+    vi.mocked(entitiesApi.getEntity).mockResolvedValue(bodyAt('theirs\n', 'c1'))
+    h.autoSave.scheduleContentSave('mine\n')
+    await vi.runAllTimersAsync()
+    expect(onContentSaved).not.toHaveBeenCalled()
+  })
+
+  it('checks the next save against a base set from the room', async () => {
+    const h = harness({ content: 'a', _versions: versions({ content: 'c0' }) })
+    h.autoSave.setContentBase('room body', 'c5')
+    h.autoSave.scheduleContentSave('room body, edited')
+    await vi.runAllTimersAsync()
+    expect(bodyOf(h.updateMock, 0).preconditions).toEqual({ content: 'c5' })
+  })
+
+  it('keeps the base of a held body when the room base moves', async () => {
+    const h = harness({ content: 'a', _versions: versions({ content: 'c0' }) })
+    h.autoSave.scheduleContentSave('typing')
+    h.autoSave.setContentBase('room body', 'c5')
+    await vi.runAllTimersAsync()
+    expect(bodyOf(h.updateMock, 0).preconditions).toEqual({ content: 'c0' })
+  })
+
+  it('drops a save of the body a room base set, unless asked to resend it', async () => {
+    const h = harness({ content: 'a', _versions: versions({ content: 'c0' }) })
+    h.autoSave.setContentBase('room body', 'c5')
+    h.autoSave.scheduleContentSave('room body')
+    await vi.runAllTimersAsync()
+    expect(h.updateMock).not.toHaveBeenCalled()
+    const r = harness({ content: 'a', _versions: versions({ content: 'c0' }) })
+    r.autoSave.setContentBase('room body', 'c5', true)
+    r.autoSave.scheduleContentSave('room body')
+    await vi.runAllTimersAsync()
+    expect(bodyOf(r.updateMock, 0)).toEqual({
+      content: 'room body',
+      preconditions: { content: 'c5' },
+    })
+  })
+
+  it('reports a stored body that differs from the one sent as a merge from the sent text', async () => {
+    const h = harness({ content: 'a\n', _versions: versions({ content: 'c0' }) })
+    h.updateMock.mockResolvedValueOnce(bodyAt('b\nserver\n', 'c1'))
+    h.autoSave.scheduleContentSave('b\n')
+    await vi.runAllTimersAsync()
+    expect(h.applyServerContent).toHaveBeenCalledWith('b\nserver\n', 'merged', 'b\n')
+  })
+})

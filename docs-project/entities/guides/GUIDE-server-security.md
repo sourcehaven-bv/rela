@@ -829,13 +829,31 @@ What the feature does not expose:
 
 Without the flag, every `/api/v1/_configure` endpoint returns 404.
 
-### Future WebSocket endpoints need explicit Origin checks
+### Co-editing WebSocket (`/api/v1/_collab/`)
 
-WebSockets are not currently used by `rela-server`. If a future feature
-adds them, note that the browser does **not** enforce same-origin policy
-on WebSocket upgrades — the upgrade handler must explicitly check
-`Origin` itself, the same way the existing `requireSameOrigin` middleware
-does for HTTP requests.
+Co-editing of entity bodies uses one WebSocket endpoint,
+`/api/v1/_collab/{type}/{id}`. The browser does not apply the same-origin
+policy to WebSocket upgrades, so the handler checks `Origin` itself with
+the same allow-list as `requireSameOrigin`. A missing or foreign `Origin`
+gets 403.
+
+- **Access:** joining needs read access to the entity, and sending changes
+  needs update access. Both are checked again every 30 seconds, and a
+  connection ends after 2 minutes and reconnects. It uses the existing
+  data-entry login; there is no separate one.
+- **Identity:** the server sets the name on each editor's cursor from the
+  signed-in user. Read-only viewers see the cursors but send none.
+- **Reverse proxy:** the proxy must forward the `Upgrade` and `Connection`
+  headers and allow a connection to stay open for at least 2 minutes. With
+  the postgres backend on several nodes, route all requests for one entity
+  to the same node (sticky routing), because each node keeps its own rooms.
+- **State and backup:** rooms live in memory only. Text reaches the store
+  through the normal save, so there is nothing extra to back up.
+- **Logging:** request stats skip `/api/v1/_collab/`, because a connection
+  is long-lived. Saves are audited like any other update. The relay logs
+  messages it drops or refuses at debug level, without their content.
+- **Monitoring:** no new checks or thresholds are needed. A failing relay
+  shows as editors falling back to editing alone, and saves keep working.
 
 ## Reporting vulnerabilities
 

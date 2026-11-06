@@ -12,6 +12,9 @@ This guide covers what is specific to the desktop app: opening a project,
 notifications. For the app itself (lists, forms, spaces), see the data-entry
 guide.
 
+The desktop app has one user, so it has no shared body editing: the body
+editor always works on its own.
+
 ## Opening a project
 
 Rela Desktop opens two kinds of project:

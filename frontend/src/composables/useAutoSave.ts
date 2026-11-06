@@ -198,7 +198,14 @@ export interface AutoSaveOptions {
   // these stay required at the type level so disabling is opt-in and
   // explicit rather than load-bearing on undefined-checks.
   applyServerProperty: (property: string, value: unknown) => void
-  applyServerContent: (content: string) => void
+  // `cause` says why: the body the server stored after a save, a body that
+  // differs from the text the save was made from (a merge, or their body
+  // that already held our edit), or a revert after a refused save. For
+  // 'merged', `from` is the editor text the save was made from, so a host
+  // can apply the difference to newer text. Co-editing applies only a merge
+  // to the shared document (TKT-CJL604): a stored body or a revert is older
+  // than what peers have typed since, and would erase it.
+  applyServerContent: (content: string, cause: ServerContentCause, from?: string) => void
   // User-facing error surface (e.g., toast). Called once per save
   // failure that isn't superseded by a newer edit. The structured
   // `info` carries the HTTP status, the failing property (when
@@ -211,7 +218,19 @@ export interface AutoSaveOptions {
   // against it (useEntitySession.write). Saves are already serialized here;
   // without the hook a save simply runs.
   runWrite?: <T>(send: () => Promise<T>) => Promise<T>
+  // Co-editing (TKT-CJL604). Called with `theirs`, the body a content 412
+  // found. When it is the room's latest save, the room's document already
+  // holds it, and this returns the document to send instead, on their token,
+  // without a merge. Otherwise it returns null and the save merges. This is
+  // the one exception to "a 412 is never read as the client's own write"
+  // (BUG-04V034W), limited to the room's latest save; see collabRoom.ts.
+  resendContent?: (theirs: string) => string | null
+  // Called once a body save went through: the body stored, its token and
+  // the body sent.
+  onContentSaved?: (stored: string, token: string | undefined, sent: string) => void
 }
+
+export type ServerContentCause = 'stored' | 'merged' | 'reverted'
 
 export interface AutoSaveErrorInfo {
   status?: number
@@ -427,6 +446,29 @@ export function useAutoSave(opts: AutoSaveOptions) {
     if (!isRelationsDirty()) {
       relationsBase = { value: { ...(entity.relations ?? {}) }, token: versions?.relations }
     }
+  }
+
+  // setContentBase moves the body's merge base to a body and token known to
+  // be what the editor text derives from, unless the body holds unsaved
+  // state. Co-editing calls it when the room's base moves: the room's
+  // document derives from that body, whichever peer saved it. With
+  // `resend`, a save of that body is still sent unless it equals the body
+  // this instance last saw: a client joining a room whose base is not the
+  // body it loaded sends the room's document on the room's token, so a body
+  // stored outside the room since then comes back as a 412 and is merged.
+  function setContentBase(content: string, token: string | undefined, resend = false) {
+    if (holdsContent()) return
+    contentBase = { value: content, token }
+    if (!resend) lastSeenContent = content
+    contentRebase = null
+  }
+
+  // contentBaseIfClean is the body and token the editor text derives from,
+  // or null while the body holds unsaved state. A co-editing room is seeded
+  // from it, so it must be a body the server stored.
+  function contentBaseIfClean(): { content: string; token: string | undefined } | null {
+    if (holdsContent()) return null
+    return { content: contentBase.value, token: contentBase.token }
   }
 
   if (opts.initialServerSnapshot) {
@@ -939,7 +981,18 @@ export function useAutoSave(opts: AutoSaveOptions) {
     if (next.properties && !Object.keys(next.properties).length) delete next.properties
     if (next.properties_unset && !next.properties_unset.length) delete next.properties_unset
 
-    if (failed.content && next.content !== undefined) {
+    const resend =
+      failed.content && next.content !== undefined && tokens
+        ? (opts.resendContent?.(fresh.content ?? '') ?? null)
+        : null
+    if (resend !== null && tokens) {
+      // The room wrote their body, so the room's document already holds it:
+      // send the document as it is now.
+      next.content = resend
+      nextPre.content = tokens.content
+      nextBodyBase = { value: fresh.content ?? '', token: tokens.content }
+      mergedContent = resend !== patch.content
+    } else if (failed.content && next.content !== undefined) {
       const theirs = fresh.content ?? ''
       const m = mergeText(bodyBase.value, next.content, theirs)
       delete next.content
@@ -1162,7 +1215,23 @@ export function useAutoSave(opts: AutoSaveOptions) {
       }
     }
     // A body save that went through settles whatever an earlier one held.
-    if (sent?.written.content && !sent.conflicts.content) contentUnsaved = false
+    if (sent?.written.content && !sent.conflicts.content) {
+      contentUnsaved = false
+      // A save still waiting to send the body just stored would repeat it.
+      // Co-editing schedules one when the room's base moves during a save.
+      // Not while another body save is queued: that one may send a
+      // different body, and the waiting save restores this one after it.
+      if (
+        pendingContent !== null &&
+        queuedContent === 0 &&
+        (pendingContent.value === sent.sentContent || pendingContent.value === entity.content)
+      ) {
+        if (contentTimer) clearTimeout(contentTimer)
+        contentTimer = null
+        pendingContent = null
+        pendingCount.value = Math.max(0, pendingCount.value - 1)
+      }
+    }
     if (entity.content !== undefined) {
       if (!holdsContent()) {
         // Baseline always updates; apply callback skipped when the
@@ -1175,11 +1244,22 @@ export function useAutoSave(opts: AutoSaveOptions) {
           // conflict, and the base is their body: the next save overwrites
           // only the regions that conflicted.
           if (contentChannelEnabled)
-            opts.applyServerContent(sent?.conflicts.contentShown ?? entity.content)
+            opts.applyServerContent(
+              sent?.conflicts.contentShown ?? entity.content,
+              'merged',
+              sent?.localContent
+            )
           contentBase = conflict
           contentUnsaved = true
         } else {
-          if (contentChannelEnabled) opts.applyServerContent(entity.content)
+          // A body other than the text the save was made from was merged
+          // with, or absorbed by, someone else's change.
+          const from = sent?.localContent
+          if (contentChannelEnabled) {
+            if (from !== undefined && from !== entity.content)
+              opts.applyServerContent(entity.content, 'merged', from)
+            else opts.applyServerContent(entity.content, 'stored')
+          }
           if (versions) contentBase = { value: entity.content, token: versions.content }
         }
       } else if (sent?.written.content && versions) {
@@ -1204,6 +1284,14 @@ export function useAutoSave(opts: AutoSaveOptions) {
           token: sent.absorbedContent.token,
         }
       }
+    }
+    if (
+      sent?.written.content &&
+      !sent.conflicts.content &&
+      entity.content !== undefined &&
+      sent.sentContent !== undefined
+    ) {
+      opts.onContentSaved?.(entity.content, versions?.content, sent.sentContent)
     }
     // The form never takes relations from a response, so the base moves
     // only when this response answers an unmerged relations save: then the
@@ -1279,7 +1367,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
       pendingContent = null
       pendingCount.value = Math.max(0, pendingCount.value - 1)
     }
-    opts.applyServerContent(lastSeenContent)
+    opts.applyServerContent(lastSeenContent, 'reverted')
     contentError.value = null
   }
 
@@ -1364,6 +1452,8 @@ export function useAutoSave(opts: AutoSaveOptions) {
     cancelPendingField,
     revertContent,
     recordServerSnapshot,
+    setContentBase,
+    contentBaseIfClean,
     mergeServerResponse,
     unsavedFields,
   }
