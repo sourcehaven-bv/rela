@@ -48,3 +48,7 @@ actions:
 - Audit rows carry the real principal, the bypass marker and `action:<id>`.
 - Config validation refuses every invalid combination listed above.
 - Docs in the data-entry guide and the Lua guide.
+
+## Notes
+
+A follow-up commit wraps a guide line that exceeded the markdown line limit.
