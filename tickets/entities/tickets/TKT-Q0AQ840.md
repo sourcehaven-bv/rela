@@ -31,3 +31,7 @@ row (a local role) cannot be judged on a deleted row and fails closed.
 `related(...)` in a condition are refused.
 
 Source: OpenVWR platform gap R13.
+
+## CI follow-up
+
+`GateDeleted` is a package function in `visibility`, so the script readers keep 20 exported methods (plimsoll). The neoq payload size hint no longer adds to a caller-sized length (CodeQL `go/allocation-size-overflow`).
