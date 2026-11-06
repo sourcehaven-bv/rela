@@ -3339,7 +3339,7 @@ func (m *Manager) UpdateRelation(
 	// Engine-initiated renumber when an order PATCH collapsed sibling
 	// spacing. Errors are operator-visible (slog.Error) but do not fail
 	// the user-visible Update — the caller's write already succeeded.
-	m.runRenumberAfterUpdate(ctx, from, to, relType, touchedOut, touchedIn)
+	m.runRenumberAfterUpdate(ctx, key, touchedOut, touchedIn)
 
 	return rel, nil
 }

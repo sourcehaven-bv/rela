@@ -1352,6 +1352,24 @@ func writeNoIdentity(w http.ResponseWriter, r *http.Request, err error) bool {
 	return true
 }
 
+// conflictBlockTitle is the title of every conflict_block problem.
+const conflictBlockTitle = "Content holds a git conflict block"
+
+// writeConflictBlock answers a write the file store refused because its
+// content holds a git conflict block ([store.ErrConflictBlock]), and reports
+// whether it did. The store cannot persist that content, which the
+// write-validation policy answers with a 422. The detail is the sentinel's
+// fixed text: it names the fix and never echoes the content (BUG-FJ1ITQT).
+// [writeInternalProblem] calls it, so no write path answers it with a 500.
+func writeConflictBlock(w http.ResponseWriter, r *http.Request, err error) bool {
+	if !errors.Is(err, store.ErrConflictBlock) {
+		return false
+	}
+	writeV1Error(w, r, http.StatusUnprocessableEntity, "conflict_block", conflictBlockTitle,
+		store.ErrConflictBlock.Error())
+	return true
+}
+
 // requestCanceled reports whether the client went away: the request's own
 // context was canceled. Once it is, no one reads the response, so the error
 // is answered with silence and not logged.
@@ -1390,7 +1408,7 @@ func writeInternalErrorDetail(w http.ResponseWriter, r *http.Request, code, titl
 // extension fields. Like the detail, they are built from the request and
 // what it wrote, never from err. It sets the type, status and instance.
 func writeInternalProblem(w http.ResponseWriter, r *http.Request, code string, problem v1.Error, err error) {
-	if writeNoIdentity(w, r, err) {
+	if writeNoIdentity(w, r, err) || writeConflictBlock(w, r, err) {
 		return
 	}
 	if !logInternalError(r, code, err) {

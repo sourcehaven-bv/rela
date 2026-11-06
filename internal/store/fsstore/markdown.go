@@ -1,7 +1,6 @@
 package fsstore
 
 import (
-	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -92,24 +91,19 @@ func formatDocumentOrdered(fm map[string]any, content string, keyOrder []string)
 		}
 	}
 
-	// Backstop for BUG-GYM7ZBS: never write a file this store reads back as
-	// an unresolved merge, because every later read of the row would fail.
-	// Today nothing reaches it: formatMarkdown rewrites a body's end marker
-	// (">>>>>>>" becomes a nested blockquote), and markdown.KeyNode quotes a
-	// key that begins with the start marker. The check keeps a formatter
-	// change from bringing the unreadable row back.
+	// BUG-GYM7ZBS: never write a file this store reads back as an unresolved
+	// merge, because every later read of the row would fail. formatMarkdown
+	// rewrites the end marker of a block in prose (">>>>>>>" becomes a nested
+	// blockquote) and markdown.KeyNode quotes a key that begins with the
+	// start marker, but formatMarkdown leaves fenced code verbatim, so a
+	// block shown inside a code fence reaches this check and is refused with
+	// [store.ErrConflictBlock].
 	out := sb.String()
 	if markdown.HasConflictMarkersString(out) {
-		return "", errBodyConflictBlock
+		return "", store.ErrConflictBlock
 	}
 	return out, nil
 }
-
-// errBodyConflictBlock refuses a document the file store would read back as
-// an unresolved merge.
-var errBodyConflictBlock = errors.New(
-	"fsstore: the document holds a git conflict block, which the file store would read back as an " +
-		"unresolved merge; indent the marker lines of an example inside its code fence")
 
 func marshalOrdered(data map[string]any, keyOrder []string) ([]byte, error) {
 	node := &yaml.Node{Kind: yaml.MappingNode}

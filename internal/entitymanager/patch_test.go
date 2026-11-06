@@ -48,6 +48,11 @@ relations:
         type: string
       weight:
         type: string
+  precedes:
+    label: Precedes
+    from: [task]
+    to: [task]
+    orderable: both
 `
 
 func newPatchManager(t *testing.T, gate entitymanager.FieldWriteGate) (*entitymanager.Manager, store.Store) {

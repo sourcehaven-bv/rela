@@ -558,7 +558,7 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 		}
 		// Every other class, including a field-grant or guard refusal and
 		// an unknown error, answers 422 as this route always has.
-		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
+		writeWriteRefused(w, r, err)
 		return
 	}
 	created := createResult.Entity
@@ -785,6 +785,16 @@ func writePatchError(w http.ResponseWriter, r *http.Request, err error) {
 		}
 		writeV1Error(w, r, http.StatusPreconditionFailed, "precondition_failed",
 			"Entity has been modified", "concurrent write detected")
+		return
+	}
+	writeWriteRefused(w, r, err)
+}
+
+// writeWriteRefused answers a refused entity create or update with a 422:
+// conflict_block for content the store cannot hold ([writeConflictBlock]),
+// validation_failed with the error text for anything else.
+func writeWriteRefused(w http.ResponseWriter, r *http.Request, err error) {
+	if writeConflictBlock(w, r, err) {
 		return
 	}
 	writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
@@ -1411,6 +1421,13 @@ func (h *writeHandler) writeRelationsApplyError(w http.ResponseWriter, r *http.R
 	}
 	if detail != "" {
 		detail += "; "
+	}
+	if errors.Is(err, store.ErrConflictBlock) {
+		// The store refused the edge's content and stored nothing for it,
+		// but an earlier phase may have saved the entity (BUG-FJ1ITQT).
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "conflict_block",
+			conflictBlockTitle+"; the entity may have been saved", detail+store.ErrConflictBlock.Error())
+		return
 	}
 	writeInternalErrorDetail(w, r, "relation_write_failed",
 		"Failed to apply relation changes after entity update; the entity may have been updated",

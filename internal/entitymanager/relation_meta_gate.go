@@ -2,9 +2,12 @@ package entitymanager
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -21,12 +24,25 @@ import (
 func checkRelationMetaWrite(
 	ctx context.Context, m *Manager, key entity.RelationKey, set map[string]any, unset []string,
 ) error {
+	row, denial, err := relationMetaDenial(ctx, m, key, set, unset)
+	if err != nil || denial == nil {
+		return err
+	}
+	return recordFieldDenial(ctx, m, row, denial)
+}
+
+// relationMetaDenial is [checkRelationMetaWrite] without the audit record:
+// it returns the source row the gate refused and the refusal, or a store
+// error. Both are nil when the write may proceed.
+func relationMetaDenial(
+	ctx context.Context, m *Manager, key entity.RelationKey, set map[string]any, unset []string,
+) (row *entity.Entity, denial, err error) {
 	if !fieldGated(m) || (len(set) == 0 && len(unset) == 0) {
-		return nil
+		return nil, nil, nil
 	}
 	family, err := lookupFamily(ctx, m.deps.Store, key.From)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	faces := family.faces
 	if !key.FromFace.IsImplicit() {
@@ -38,14 +54,96 @@ func checkRelationMetaWrite(
 			if errors.Is(gErr, store.ErrNotFound) {
 				continue // the write's own lookup reports a missing source
 			}
-			return gErr
+			return nil, nil, gErr
 		}
-		denial := m.deps.FieldGate.CheckRelationMetaWrite(ctx, row, key.Type, set, unset)
-		if denial != nil {
-			return recordFieldDenial(ctx, m, row, denial)
+		if d := m.deps.FieldGate.CheckRelationMetaWrite(ctx, row, key.Type, set, unset); d != nil {
+			return row, d, nil
+		}
+	}
+	return nil, nil, nil
+}
+
+// renumberAllowed reports whether the renumber after an update of the edge
+// at key may rewrite the order key prop of every edge q lists. Each edge's
+// source must pass the relation meta gate for prop, the rule
+// [checkRelationMoveMeta] applies to a move's densify: both rewrite the order
+// values of other sources' edges (BUG-FQZ5Q1L). The update itself already
+// passed the gate for key. A refusal is not audited: the caller asked for no
+// write to those edges, and the renumber is skipped rather than refused.
+func renumberAllowed(
+	ctx context.Context, m *Manager, key entity.RelationKey, q store.RelationQuery, prop string,
+) (bool, error) {
+	if !fieldGated(m) {
+		return true, nil
+	}
+	type tail struct {
+		id   string
+		face entity.Face
+	}
+	order := map[string]any{prop: 0.0}
+	seen := map[tail]bool{{id: key.From, face: key.FromFace}: true}
+	for r, err := range m.deps.Store.ListRelations(ctx, q) {
+		if err != nil {
+			return false, err
+		}
+		t := tail{id: r.From, face: r.FromFace}
+		if seen[t] {
+			continue
+		}
+		seen[t] = true
+		_, denial, dErr := relationMetaDenial(ctx, m, r.Identity(), order, nil)
+		if dErr != nil || denial != nil {
+			return false, dErr
+		}
+	}
+	return true, nil
+}
+
+// checkRelationMoveMeta is [checkRelationMetaWrite] for a move of the edge at
+// key: the move writes the order meta key prop of every edge in readable,
+// and the gate judges that key once per source tail among them. On the
+// outgoing side every edge shares key's source tail; on the incoming side a
+// densify rewrites edges of other sources (BUG-FQZ5Q1L), as the data-entry
+// position handler judges them. The moved edge's source is judged first. The
+// value is a placeholder, since the gate judges keys, not values.
+//
+// It runs before the move's transaction, like the ACL checks of
+// [readableOrderSiblings], so a source row that changes in between is judged
+// as it was read. The transaction writes only edges in readable, so no edge
+// is written that the gate did not judge.
+func checkRelationMoveMeta(
+	ctx context.Context, m *Manager, key entity.RelationKey, readable map[entity.RelationKey]bool, prop string,
+) error {
+	if !fieldGated(m) {
+		return nil
+	}
+	type tail struct {
+		id   string
+		face entity.Face
+	}
+	order := map[string]any{prop: 0.0}
+	seen := map[tail]bool{}
+	edges := append([]entity.RelationKey{key}, slices.SortedFunc(maps.Keys(readable), compareRelationKeys)...)
+	for _, edge := range edges {
+		t := tail{id: edge.From, face: edge.FromFace}
+		if seen[t] {
+			continue
+		}
+		seen[t] = true
+		if err := checkRelationMetaWrite(ctx, m, edge, order, nil); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// compareRelationKeys orders keys by source, tail, type and target, so a
+// refusal names the same edge on every run.
+func compareRelationKeys(a, b entity.RelationKey) int {
+	return cmp.Or(
+		cmp.Compare(a.From, b.From), cmp.Compare(a.FromFace, b.FromFace),
+		cmp.Compare(a.Type, b.Type), cmp.Compare(a.To, b.To),
+	)
 }
 
 // checkRelationMetaUpdate is [checkRelationMetaWrite] for an update of the
