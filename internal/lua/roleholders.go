@@ -23,11 +23,16 @@ type RoleHolders interface {
 	PrincipalsWithRole(ctx context.Context, role string) (entityType string, refs []entity.Ref, err error)
 }
 
-// luaPrincipalsWithRole implements rela.principals_with_role(role) -> a
-// sorted list of user entity ids. Only ids the script can read are returned:
-// one batched header read through the script's gate settles all of them,
+// roleHolderBindings holds rela.principals_with_role. It is not a [Runtime]
+// method because Runtime sits at its plimsoll method cap.
+type roleHolderBindings struct{ r *Runtime }
+
+// principalsWithRole implements rela.principals_with_role(role) -> a sorted
+// list of user entity ids. Only ids the script can read are returned: one
+// batched header read through the script's gate settles all of them,
 // whatever their number.
-func (r *Runtime) luaPrincipalsWithRole(ls *lua.LState) int {
+func (b roleHolderBindings) principalsWithRole(ls *lua.LState) int {
+	r := b.r
 	role := ls.CheckString(1)
 	if r.deps.RoleHolders == nil {
 		ls.RaiseError("rela.principals_with_role: %s", errRoleHoldersUnavailable)
