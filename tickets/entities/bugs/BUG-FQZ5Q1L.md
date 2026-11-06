@@ -10,7 +10,7 @@ why2: moveRelation computes the order values itself inside its Tx and writes the
 why3: BUG-O8QP7GX added the manager gate to the property paths of CreateRelation and UpdateRelation and judged the move covered because the data-entry handler checks the order key.
 why4: The handler check and the manager check are two layers; tests for the move stubbed the handler's verdicts and never drove a field-gated manager with a Position.
 why5: Write paths that derive the values they store (moves and renumbers) are not listed next to the gate they must pass so a new gate is wired only into the paths that take caller values.
-prevention: 'TestMoveRelation_FieldGateJudgesOrderKey drives a field-gated manager with outgoing and incoming moves; TestRenumberAfterUpdate_FieldGateJudgesSiblingSources pins the renumber after an explicit order write; TestRelationPosition_FieldsGrantRealPolicy pins the handler against a compiled fields: policy. BUG-T0MFVJG tracks one rule for every order-preserving rewrite of other sources'' edges.'
+prevention: 'TestMoveRelation_FieldGateJudgesOrderKey drives a field-gated manager with outgoing and incoming moves; TestRenumberAfterUpdate_FieldGateJudgesSiblingSources pins the renumber after an explicit order write; TestMaybeRenumberSide_SkipsUnjudgedSibling pins that the renumber rewrites no edge created after the check; TestFieldGate_IncomingMoveJudgesEverySource drives the field-gated handle with a compiled acl.yaml; TestRelationPosition_FieldsGrantRealPolicy pins the handler against a compiled fields: policy. BUG-T0MFVJG tracks one rule for every order-preserving rewrite of other sources'' edges.'
 started: "2026-11-06"
 completed: "2026-11-06"
 status: done
