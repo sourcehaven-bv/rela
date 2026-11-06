@@ -89,6 +89,10 @@ type automationJobs struct {
 	// followUpDelay spaces the enqueue retries after a collapsed enqueue.
 	followUpDelay time.Duration
 
+	// gateDeleted shows an `on.deleted` job the deleted state as the job's
+	// reader may: [visibility.GateDeleted], replaced only in tests.
+	gateDeleted func(ctx context.Context, reader any, last *entity.Entity) (*entity.Entity, bool)
+
 	// runner and engine are set by bind once the services exist: the
 	// handler needs the scheduled Lua deps, which are built after the entity
 	// manager that triggers it.
@@ -130,6 +134,7 @@ func newAutomationJobs(
 	return &automationJobs{
 		meta: meta, kv: kv, raw: raw, queue: queue,
 		locks: map[string]*keyLock{}, followUpDelay: defaultFollowUpDelay,
+		gateDeleted: visibility.GateDeleted,
 	}, nil
 }
 
@@ -532,19 +537,6 @@ func (a *automationJobs) runOnce(
 	return nil
 }
 
-// deletedGate shows a deleted face's last state as the job's identity may
-// read it. Every reader scriptReads returns implements it; the assertions
-// below pin that.
-type deletedGate interface {
-	GateDeleted(ctx context.Context, last *entity.Entity) (*entity.Entity, bool)
-}
-
-var (
-	_ deletedGate = (*visibility.ScriptReader)(nil)
-	_ deletedGate = (*visibility.UnrestrictedReader)(nil)
-	_ deletedGate = visibility.DenyReader{}
-)
-
 // errDeletedHidden reports a deleted face the job's identity may not read.
 var errDeletedHidden = errors.New("the deleted entity is not readable by this identity")
 
@@ -589,10 +581,6 @@ func (a *automationJobs) subject(
 	if p.Last == nil {
 		return reader.GetAddress(ctx, entity.FormatStateRef(p.ID, p.Face))
 	}
-	g, ok := reader.(deletedGate)
-	if !ok {
-		return nil, errDeletedHidden
-	}
 	// A live row at the ref means the delete was undone or the id reused.
 	// The job then has nothing to report, and the gate would decide on the
 	// new row's grants instead of the deleted one's. The check runs on both
@@ -600,7 +588,7 @@ func (a *automationJobs) subject(
 	if err := a.noLiveRow(ctx, p); err != nil {
 		return nil, err
 	}
-	e, ok := g.GateDeleted(ctx, p.Last)
+	e, ok := a.gateDeleted(ctx, reader, p.Last)
 	if !ok {
 		return nil, errDeletedHidden
 	}

@@ -7,8 +7,13 @@ import (
 )
 
 // GateDeleted returns last, the raw final state of a face that a delete
-// removed, as the ctx principal would have read it: row-gated, then
-// redacted. ok is false when the principal may not read it.
+// removed, as reader would have shown it to the ctx principal: row-gated,
+// then redacted. ok is false when the principal may not read it.
+//
+// reader is one of the script readers: a [*ScriptReader] gates, an
+// [*UnrestrictedReader] passes last through, and a [DenyReader] or any
+// other value refuses. It is a function, not a reader method, so the
+// readers' public API stays the read surface scripts use.
 //
 // The row gate runs against the store, where the row no longer is. A grant
 // that applies to every row of the type still answers, since it needs no
@@ -19,25 +24,23 @@ import (
 //
 // It serves the `on.deleted` automation job (TKT-Q0AQ840), which runs after
 // the delete and so cannot read the face through [ScriptReader.GetAddress].
-func (s *ScriptReader) GateDeleted(ctx context.Context, last *entity.Entity) (*entity.Entity, bool) {
-	if last == nil || worldIn(ctx, s.world).denied {
+func GateDeleted(ctx context.Context, reader any, last *entity.Entity) (*entity.Entity, bool) {
+	if last == nil {
 		return nil, false
 	}
-	out := s.reader.Filter(s.bind(ctx), []*entity.Entity{last})
-	if len(out) != 1 {
+	switch r := reader.(type) {
+	case *ScriptReader:
+		if r == nil || worldIn(ctx, r.world).denied {
+			return nil, false
+		}
+		out := r.reader.Filter(r.bind(ctx), []*entity.Entity{last})
+		if len(out) != 1 {
+			return nil, false
+		}
+		return out[0], true
+	case *UnrestrictedReader:
+		return last, r != nil
+	default:
 		return nil, false
 	}
-	return out[0], true
-}
-
-// GateDeleted returns last unchanged: this reader is ungated. See
-// [ScriptReader.GateDeleted].
-func (*UnrestrictedReader) GateDeleted(_ context.Context, last *entity.Entity) (*entity.Entity, bool) {
-	return last, last != nil
-}
-
-// GateDeleted refuses, like every read on this reader. See
-// [ScriptReader.GateDeleted].
-func (DenyReader) GateDeleted(context.Context, *entity.Entity) (*entity.Entity, bool) {
-	return nil, false
 }

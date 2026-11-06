@@ -139,8 +139,6 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 	// already returns, filtered by their bodies.
 	// TaggedEntities (TKT-7LRUPB) lists the version rows a tag names, a read
 	// of the same history VersionByTag serves.
-	// GateDeleted (TKT-Q0AQ840) reads nothing: it returns the deleted state
-	// the caller already holds.
 	want := map[string]bool{
 		"GetAddress": true, "ListEntities": true, "ListRelations": true,
 		"ListEntityHeaders": true, "Family": true, "WithWorld": true,
@@ -149,7 +147,7 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 		"CountEntities": true, "CountRelations": true,
 		"VersionByTag":      true,
 		"FindByExternalRef": true, "SyncReady": true,
-		"MentionedBy": true, "TaggedEntities": true, "GateDeleted": true,
+		"MentionedBy": true, "TaggedEntities": true,
 	}
 
 	typ := reflect.TypeOf(visibility.Unrestricted(seedStore(t)).WithWorld(visibility.WorldOf(store.TrivialScope())))

@@ -64,9 +64,9 @@ func (fakeReader) GetAddress(_ context.Context, addr string) (*entity.Entity, er
 	return &entity.Entity{ID: addr, Type: "note"}, nil
 }
 
-// GateDeleted reads a deleted note with its `secret` property hidden, and
-// refuses every other type.
-func (fakeReader) GateDeleted(_ context.Context, last *entity.Entity) (*entity.Entity, bool) {
+// fakeGateDeleted reads a deleted note with its `secret` property hidden,
+// and refuses every other type.
+func fakeGateDeleted(_ context.Context, _ any, last *entity.Entity) (*entity.Entity, bool) {
 	if last.Type != "note" {
 		return nil, false
 	}
@@ -459,6 +459,7 @@ func newDeletedJobs(t *testing.T, q jobs.Client, r *fakeJobRunner, raw rawEntity
 	}
 	a, err := newAutomationJobs(meta, &mapKV{m: map[string][]byte{}}, raw, q)
 	require.NoError(t, err)
+	a.gateDeleted = fakeGateDeleted
 	require.NoError(t, a.bind(r, engine))
 	return a
 }

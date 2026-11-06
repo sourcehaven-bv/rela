@@ -22,15 +22,12 @@ func TestGateDeleted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	type gater interface {
-		GateDeleted(context.Context, *entity.Entity) (*entity.Entity, bool)
-	}
 	last := func(typ string) *entity.Entity {
 		return &entity.Entity{ID: "X-1", Type: typ, Properties: map[string]any{"title": "t", "secret": "s"}}
 	}
 	tests := []struct {
 		name       string
-		reader     gater
+		reader     any
 		in         *entity.Entity
 		wantOK     bool
 		wantSecret bool
@@ -41,10 +38,12 @@ func TestGateDeleted(t *testing.T) {
 		{"unrestricted passes through", visibility.Unrestricted(st), last("secret"), true, true},
 		{"unrestricted refuses nil", visibility.Unrestricted(st), nil, false, false},
 		{"deny reader refuses", visibility.DenyReader{}, last("ticket"), false, false},
+		{"an unknown reader refuses", struct{}{}, last("ticket"), false, false},
+		{"a nil script reader refuses", (*visibility.ScriptReader)(nil), last("ticket"), false, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := tc.reader.GateDeleted(context.Background(), tc.in)
+			got, ok := visibility.GateDeleted(context.Background(), tc.reader, tc.in)
 			if ok != tc.wantOK {
 				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
 			}

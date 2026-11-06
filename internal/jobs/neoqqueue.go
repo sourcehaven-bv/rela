@@ -223,7 +223,10 @@ func (q *neoqQueue) Enqueue(ctx context.Context, job Job) error {
 		return ErrNotStarted
 	}
 
-	payload := make(map[string]any, len(job.Payload)+3)
+	// The size hint is the payload's own length: adding the three reserved
+	// keys to it is arithmetic on a caller-sized value, and the map grows
+	// for them anyway.
+	payload := make(map[string]any, len(job.Payload))
 	maps.Copy(payload, job.Payload)
 	payload[payloadKindKey] = string(job.Kind)
 	payload[payloadRetryKey] = int(job.Retry)
