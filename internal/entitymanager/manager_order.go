@@ -132,13 +132,22 @@ func validateOrderUpdate(opts entity.RelationOptions, relDef metamodel.RelationD
 // Renumber preserves missing-ness: siblings whose value at prop is
 // missing (or non-finite) stay missing. Only siblings that previously
 // had a finite value are redistributed.
+//
+// judged limits the rewrite to edges the relation meta gate judged before
+// the transaction ([renumberAllowed]): when st lists an edge outside it,
+// nothing is rewritten. Nil: accepted, meaning no restriction.
 func maybeRenumberSide(
-	ctx context.Context, st store.Store, q store.RelationQuery, prop string,
+	ctx context.Context, st store.Store, q store.RelationQuery, prop string, judged map[entity.RelationKey]bool,
 ) ([]*entity.Relation, error) {
 	var sibs []*entity.Relation
 	for r, err := range st.ListRelations(ctx, q) {
 		if err != nil {
 			return nil, err
+		}
+		if judged != nil && !judged[r.Identity()] {
+			slog.InfoContext(ctx, "renumber skipped: a sibling appeared after the order-key check",
+				"relType", r.Type, "prop", prop)
+			return nil, nil
 		}
 		c := *r
 		if r.Properties != nil {
@@ -221,17 +230,46 @@ func maybeRenumberSide(
 // write, the same approach cascadeHost uses for cascade deletes. The
 // triggered-by marker distinguishes them from the user-initiated
 // UpdateRelation that spawned them (issue #886).
-func (m *Manager) runRenumberAfterUpdate(ctx context.Context, from, to, relType string, touchedOut, touchedIn bool) {
+//
+// On a [FieldGated] handle a renumber that would rewrite another source's
+// edge runs only when every such source passes the relation meta gate for
+// the order key ([renumberAllowed]); otherwise it is skipped and the values
+// keep their narrow gap until a later write renumbers them. The check runs
+// before the side's Tx; the Tx rewrites nothing when it lists an edge the
+// check did not judge, so an edge created in between is never rewritten.
+func (m *Manager) runRenumberAfterUpdate(ctx context.Context, key entity.RelationKey, touchedOut, touchedIn bool) {
+	from, relType, to := key.From, key.Type, key.To
 	relDef, ok := m.deps.Meta.Relations[relType]
 	if !ok {
 		return
 	}
 	renumber := func(q store.RelationQuery, prop string) error {
+		var judged map[entity.RelationKey]bool
+		if fieldGated(m) {
+			vals, err := collectSiblingOrders(ctx, m.deps.Store, q, prop)
+			if err != nil {
+				return err
+			}
+			sort.Float64s(vals)
+			if !NeedsRenumber(vals) {
+				return nil
+			}
+			var allowed bool
+			judged, allowed, err = renumberAllowed(ctx, m, key, q, prop)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				slog.InfoContext(ctx, "renumber skipped: a sibling's source refuses the order key",
+					"relType", relType, "prop", prop)
+				return nil
+			}
+		}
 		var updated []*entity.Relation
 		err := m.deps.Store.Tx(ctx, func(view store.Store) error {
 			txCtx := store.ContextInTx(ctx)
 			var rErr error
-			updated, rErr = maybeRenumberSide(txCtx, view, q, prop)
+			updated, rErr = maybeRenumberSide(txCtx, view, q, prop, judged)
 			return rErr
 		})
 		if err != nil {
@@ -286,6 +324,9 @@ func moveRelation(
 	readable, rErr := readableOrderSiblings(ctx, m, key, *opts.Position)
 	if rErr != nil {
 		return nil, rErr
+	}
+	if gErr := checkRelationMoveMeta(ctx, m, key, readable, prop); gErr != nil {
+		return nil, gErr
 	}
 	keep := func(r *entity.Relation) bool { return readable[r.Identity()] }
 	var moved *entity.Relation

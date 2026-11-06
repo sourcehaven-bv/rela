@@ -106,10 +106,10 @@ func TestWrite_ConflictBlockBodyStaysReadable(t *testing.T) {
 
 	fenced := entity.New("TKT-3", "ticket")
 	fenced.Content = "```\n" + block + "```\n"
-	require.ErrorIs(t, s.CreateEntity(ctx, fenced), errBodyConflictBlock)
+	require.ErrorIs(t, s.CreateEntity(ctx, fenced), store.ErrConflictBlock)
 	_, err = s.GetEntity(ctx, entity.Ref{ID: "TKT-3"})
 	require.ErrorIs(t, err, store.ErrNotFound, "a refused create stores nothing")
 
 	_, err = formatDocumentOrdered(map[string]any{"id": "TKT-4"}, block, nil)
-	require.ErrorIs(t, err, errBodyConflictBlock)
+	require.ErrorIs(t, err, store.ErrConflictBlock)
 }

@@ -39,7 +39,7 @@ func TestMaybeRenumberSide_TwoTailsOfOneTriple(t *testing.T) {
 		}
 	}
 
-	updated, err := maybeRenumberSide(ctx, st, store.RelationQuery{To: "CTL-1", Type: "cites"}, prop)
+	updated, err := maybeRenumberSide(ctx, st, store.RelationQuery{To: "CTL-1", Type: "cites"}, prop, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,5 +57,60 @@ func TestMaybeRenumberSide_TwoTailsOfOneTriple(t *testing.T) {
 	}
 	if got[1] != keys[0] || got[2] != keys[1] {
 		t.Errorf("order values = %v, want draft=1, published=2", got)
+	}
+}
+
+// TestMaybeRenumberSide_SkipsUnjudgedSibling pins that the renumber's
+// transaction rewrites nothing when it lists an edge the relation meta gate
+// did not judge before it (BUG-FQZ5Q1L): an edge created between the check
+// and the transaction must not be rewritten unjudged.
+func TestMaybeRenumberSide_SkipsUnjudgedSibling(t *testing.T) {
+	ctx := context.Background()
+	prop := metamodel.OrderPropertyIn
+	q := store.RelationQuery{To: "T-1", Type: "precedes"}
+	keys := []entity.RelationKey{
+		{From: "A-1", Type: "precedes", To: "T-1"},
+		{From: "B-1", Type: "precedes", To: "T-1"},
+	}
+	tests := []struct {
+		name        string
+		judged      map[entity.RelationKey]bool
+		wantUpdated int
+	}{
+		{name: "no restriction", judged: nil, wantUpdated: 1},
+		{name: "all judged", judged: map[entity.RelationKey]bool{keys[0]: true, keys[1]: true}, wantUpdated: 1},
+		{name: "one unjudged", judged: map[entity.RelationKey]bool{keys[0]: true}, wantUpdated: 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			st := memstore.New()
+			for _, id := range []string{"A-1", "B-1", "T-1"} {
+				if err := st.CreateEntity(ctx, &entity.Entity{ID: id, Type: "task"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for i, k := range keys {
+				data := &store.RelationData{Properties: map[string]any{prop: 1.0 + float64(i)*1e-12}}
+				if _, err := st.CreateRelation(ctx, k, data); err != nil {
+					t.Fatal(err)
+				}
+			}
+			updated, err := maybeRenumberSide(ctx, st, q, prop, tc.judged)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(updated) != tc.wantUpdated {
+				t.Fatalf("updated %d edges, want %d", len(updated), tc.wantUpdated)
+			}
+			if tc.wantUpdated == 0 {
+				r, err := st.GetRelation(ctx, keys[1])
+				if err != nil {
+					t.Fatal(err)
+				}
+				if v, _ := FiniteOrder(r.Properties[prop]); v == 2 {
+					t.Errorf("unjudged sibling was rewritten to %v", v)
+				}
+			}
+		})
 	}
 }
