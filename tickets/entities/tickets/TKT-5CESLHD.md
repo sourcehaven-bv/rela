@@ -33,3 +33,7 @@ violation with 422 (`validation_failed`, error type `rule`).
 
 - Table-driven tests in the new package and in entitymanager.
 - Docs in docs-project (metamodel guide).
+
+## Notes
+
+- `validation:` values are matched exactly; the environment variable is trimmed by its reader.
