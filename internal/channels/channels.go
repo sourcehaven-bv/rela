@@ -51,6 +51,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flow"
 )
 
 // Sentinel errors. Backends wrap them, so callers test with errors.Is.
@@ -751,12 +752,7 @@ func KeyAudit(k Key, op AuditOp, at time.Time) AuditRecord {
 // NormTime returns t in UTC at microsecond precision, the precision every
 // backend stores. Normalizing at the boundary is what makes a time read back
 // equal to the time written, on every backend.
-func NormTime(t time.Time) time.Time {
-	if t.IsZero() {
-		return t
-	}
-	return t.UTC().Truncate(time.Microsecond)
-}
+func NormTime(t time.Time) time.Time { return flow.NormTime(t) }
 
 // PrepareMessage validates m against the store-boundary rules and returns
 // it with its time normalized and its properties encoded. The returned

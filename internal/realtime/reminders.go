@@ -6,172 +6,55 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
+	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
-	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
 
-// Session reminders (`session.reminders`, TKT-36Z6X3).
-//
-// A reminder posts a message every Every while the session stays inside
-// its `in:` states (its span) and the channel is open. Only a record per
-// reminder is stored (see [channels.ReminderRecord]): the time its slots
-// count from, the time of its last post and its count. The slots
-// themselves, since + first + k*every, are derived from the configuration
-// at every read, so a reload that changes every or first takes effect at
-// the next slot after the last post.
+// Session reminders (`session.reminders`, TKT-36Z6X3). The slot rules are
+// the engine's (see [flow.NextSlot]); this file adapts them to channels and
+// posts the reminder messages.
 
-// reminderRecord is r's record for ch, whose current session is cur: the
-// stored one, or for a reminder active in the current state without one, a
-// span that started when the session entered its state. Every move inside
-// the span stores the record explicitly (see [carriedReminders]), so an
-// absent record means the span began at the state's entry. ok is false
+// reminderRecord is r's record for cur (see [flow.RecordOf]). ok is false
 // when r is not active in the current state.
-func reminderRecord(r realtimecfg.SessionReminder, cur current, ch channels.Channel) (channels.ReminderRecord, bool) {
-	if !r.Active(cur.State) {
-		return channels.ReminderRecord{}, false
-	}
-	if rec, ok := ch.Session.Reminders[r.Name]; ok {
-		return rec, true
-	}
-	return channels.ReminderRecord{Since: cur.EnteredAt}, true
+func reminderRecord(r realtimecfg.SessionReminder, cur current) (channels.ReminderRecord, bool) {
+	return flow.RecordOf(r.Reminder, cur)
 }
 
-// nextSlot is r's next slot for ch, whose current session is cur: since +
-// first when the reminder has not posted in this span, else the first slot
-// since + first + k*every strictly after its last post, with k negative
-// when a reload moved first past the last post. So the next slot is at
-// most one every after the last post, slots missed while no leader ran are
-// skipped, not replayed, and the phase stays on the grid. ok is false when r is not active in the state, its max is reached,
-// or the state is final or stranded.
-func nextSlot(r realtimecfg.SessionReminder, cur current, ch channels.Channel) (time.Time, bool) {
-	if cur.stranded {
-		return time.Time{}, false
-	}
-	rec, ok := reminderRecord(r, cur, ch)
-	if !ok || (r.Max > 0 && rec.Count >= r.Max) || r.Every <= 0 {
-		return time.Time{}, false
-	}
-	first := rec.Since.Add(r.First)
-	if rec.Last.IsZero() {
-		return channels.NormTime(first), true
-	}
-	diff := rec.Last.Sub(first)
-	k := int64(diff / r.Every)
-	if diff%r.Every < 0 {
-		k-- // floor, not truncation, for a last post before first
-	}
-	return channels.NormTime(first.Add(time.Duration(k+1) * r.Every)), true
+// nextSlot is r's next slot for cur (see [flow.NextSlot]). The channel the
+// session was read from adds nothing: cur carries the stored records.
+func nextSlot(r realtimecfg.SessionReminder, cur current, _ channels.Channel) (time.Time, bool) {
+	return flow.NextSlot(r.Reminder, cur)
 }
 
 // nextReminder is the reminder of ch's current state whose next slot comes
-// first, and that slot. A tie goes to the first name. A paused reminder
-// (see [realtimecfg.Session.Pausing]) has no slot. ok is false when no
+// first, and that slot (see [flow.NextReminder]). ok is false when no
 // reminder has a next slot.
 func nextReminder(
 	s *realtimecfg.Session, ch channels.Channel,
 ) (r realtimecfg.SessionReminder, slot time.Time, ok bool) {
-	cur := currentSession(s, ch)
-	st, declared := s.State(cur.State)
-	if !declared || st.Final {
+	fr, slot, ok := flow.NextReminder(s.Flow(), currentSession(s, ch))
+	if !ok {
 		return r, slot, false
 	}
-	for _, rm := range s.RemindersIn(cur.State) {
-		if s.Paused(rm.Name) {
-			continue
-		}
-		at, has := nextSlot(rm, cur, ch)
-		if has && (!ok || at.Before(slot)) {
-			r, slot, ok = rm, at, true
-		}
-	}
-	return r, slot, ok
+	// The definition is built from s's reminders, so the name is declared.
+	r, _ = s.Reminder(fr.Name)
+	return r, slot, true
 }
 
-// nextDue is the value of Session.NextDueAt for ch: the earlier of the due
-// time of [nextTimer] and the slot of [nextReminder] plus
-// [realtimelimits.ReminderSlack], normalized, or zero for neither. The
-// slack lets one leader round serve several nearby slots; the round fires
-// a reminder by its slot, never by this hint.
+// nextDue is the value of Session.NextDueAt for ch (see [flow.NextDue]).
 func nextDue(s *realtimecfg.Session, ch channels.Channel) time.Time {
-	_, due, ok := nextTimer(s, ch)
-	if _, slot, has := nextReminder(s, ch); has {
-		if hint := slot.Add(realtimelimits.ReminderSlack); !ok || hint.Before(due) {
-			due, ok = hint, true
-		}
-	}
-	if !ok {
-		return time.Time{}
-	}
-	return channels.NormTime(due)
+	return flow.NextDue(s.Flow(), currentSession(s, ch))
 }
 
-// carriedReminders are the records a move from channel from to state to
-// keeps: for every reminder active both in the state the session left and
-// in to, its record, an implicit one made explicit. A reminder active only
-// in to starts a new span with no record. Never nil, so the schedule
-// replaces the records [channels.ApplySession] cleared.
-func carriedReminders(s *realtimecfg.Session, from channels.Channel, to string) map[string]channels.ReminderRecord {
-	out := map[string]channels.ReminderRecord{}
-	left := currentSession(s, from)
-	for _, r := range s.Reminders() {
-		if !r.Active(to) {
-			continue
-		}
-		if rec, ok := reminderRecord(r, left, from); ok {
-			out[r.Name] = rec
-		}
-	}
-	return out
-}
-
-// pruneReminders returns the records of rs whose reminder s declares. A
-// record of a declared reminder not active in the current state is kept
-// until the next move. Never nil, so a schedule that returns it replaces
-// the stored records, and a reload that renames every reminder never pushes
-// the map over [channels.MaxSessionReminders].
-func pruneReminders(s *realtimecfg.Session, rs map[string]channels.ReminderRecord) map[string]channels.ReminderRecord {
-	out := map[string]channels.ReminderRecord{}
-	for name, rec := range rs {
-		if _, ok := s.Reminder(name); ok {
-			out[name] = rec
-		}
-	}
-	return out
-}
-
-// resumeReminders returns the records of ch after it resumes at at: every
-// reminder of the current state whose next slot came at or before at
-// restarts from at, with no last post and its count kept, so the next
-// reminder comes First after the resume. A reminder whose slot was not yet
-// due keeps its record. The map is pruned (see [pruneReminders]).
-func resumeReminders(
-	s *realtimecfg.Session, cur current, ch channels.Channel, at time.Time,
-) map[string]channels.ReminderRecord {
-	out := pruneReminders(s, ch.Session.Reminders)
-	for _, r := range s.RemindersIn(cur.State) {
-		slot, ok := nextSlot(r, cur, ch)
-		if !ok || slot.After(at) {
-			continue
-		}
-		rec, _ := reminderRecord(r, cur, ch)
-		out[r.Name] = channels.ReminderRecord{Since: at, Count: rec.Count}
-	}
-	return out
-}
-
-// reminderCounters binds `session.reminders` for a guard over ch: for each
-// declared reminder, its count in the current span when it is active in
-// the current state, else 0. It reads the stored records, because
-// [currentSession] replaces an unset session.
-func reminderCounters(s *realtimecfg.Session, cur current, ch channels.Channel) predicate.Value {
-	fields := map[string]predicate.Value{}
-	for _, r := range s.Reminders() {
-		var n int64
-		if r.Active(cur.State) {
-			n = ch.Session.Reminders[r.Name].Count
-		}
-		fields[r.Name] = predicate.NewInt(n)
+// reminderCounters binds `session.reminders` for a guard over cur (see
+// [flow.ReminderCounts]). The channel adds nothing: cur carries the stored
+// records.
+func reminderCounters(s *realtimecfg.Session, cur current, _ channels.Channel) predicate.Value {
+	counts := flow.ReminderCounts(s.Flow(), cur)
+	fields := make(map[string]predicate.Value, len(counts))
+	for name, n := range counts {
+		fields[name] = predicate.NewInt(n)
 	}
 	return predicate.NewRecord(fields)
 }
@@ -215,7 +98,7 @@ func reminderProps(
 // has the listed Since and Last, its max is not reached, and its next slot
 // is at or before now: a compare-and-set, so a slot posts at most once.
 // Otherwise the step only rewrites the due time. Its Due keeps the
-// committed records, pruned (see [pruneReminders]).
+// committed records, pruned (see [flow.PruneReminders]).
 func reminderStep(
 	ct realtimecfg.ChannelType, s *realtimecfg.Session, r realtimecfg.SessionReminder,
 	listed channels.ReminderRecord, props map[string]any, now time.Time,
@@ -236,7 +119,7 @@ func reminderStep(
 			return channels.ReminderPost{}, false
 		}
 		cur := currentSession(s, c)
-		rec, ok := reminderRecord(r, cur, c)
+		rec, ok := reminderRecord(r, cur)
 		if !ok {
 			return channels.ReminderPost{}, false
 		}
@@ -244,7 +127,7 @@ func reminderStep(
 		if !rec.Since.Equal(listed.Since) || !rec.Last.Equal(listed.Last) {
 			return channels.ReminderPost{}, false
 		}
-		slot, ok := nextSlot(r, cur, c)
+		slot, ok := flow.NextSlot(r.Reminder, cur)
 		if !ok || slot.After(now) {
 			return channels.ReminderPost{}, false
 		}
@@ -254,7 +137,7 @@ func reminderStep(
 		}, true
 	}
 	step.Due = func(next channels.Channel) channels.SessionSchedule {
-		next.Session.Reminders = pruneReminders(s, next.Session.Reminders)
+		next.Session.Reminders = flow.PruneReminders(s.Flow(), next.Session.Reminders)
 		return channels.SessionSchedule{NextDueAt: nextDue(s, next), Reminders: next.Session.Reminders}
 	}
 	return step

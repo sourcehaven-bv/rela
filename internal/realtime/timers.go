@@ -12,52 +12,38 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
+	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
 
-// Session timers (`after:` on a session state, TKT-INM3AZ).
-//
-// The due time of a session is derived from the configuration and the
-// channel row: the current state's timers, each counting from its anchor
-// (see [timerDue]), and its reminders' next slots (see [nextSlot]). The
-// row's Session.NextDueAt (see [nextDue]) is only an index hint for
-// [channels.Store.ListSessionsDue]: every write that changes the session
-// stores it, the leader's recompute repairs a stale one, and the wire and
-// the timer round always derive the due time again.
+// Session timers (`after:` on a session state, TKT-INM3AZ). The due-time
+// rules are the engine's (see [flow.TimerDue] and [flow.NextDue]); this file
+// adapts them to channels and runs the leader's timer rounds over the
+// channel store.
 
-// timerDue is when t comes due for ch, whose current session is cur. A
-// timer counts from when the session entered its state (since: state; the
-// channel's creation for a session that never moved) or from the channel's
-// creation (since: session). A restart anchor later than that, stored when
-// the timer came due while the channel was closed or tombstoned, wins.
-func timerDue(t realtimecfg.SessionTimer, cur current, ch channels.Channel) time.Time {
-	anchor := cur.EnteredAt
-	if t.Since == realtimecfg.TimerSinceSession {
-		anchor = ch.CreatedAt
-	}
-	if r, ok := ch.Session.Restarts[t.Name]; ok && r.After(anchor) {
-		anchor = r
-	}
-	return channels.NormTime(t.Period.AddTo(anchor))
+// timerDue is when t comes due for cur (see [flow.TimerDue]).
+func timerDue(t realtimecfg.SessionTimer, cur current) time.Time {
+	return flow.TimerDue(t.Timer, cur)
 }
 
 // nextTimer is the timer of ch's current state that comes due first, and
-// when. A tie goes to the first name. ok is false for a final or stranded
-// state, or a state without timers.
+// when (see [flow.NextTimer]). ok is false for a final or stranded state,
+// or a state without timers.
 func nextTimer(s *realtimecfg.Session, ch channels.Channel) (t realtimecfg.SessionTimer, due time.Time, ok bool) {
 	cur := currentSession(s, ch)
-	st, declared := s.State(cur.State)
-	if !declared || st.Final {
+	ft, due, ok := flow.NextTimer(s.Flow(), cur)
+	if !ok {
 		return t, due, false
 	}
+	// The definition is built from s's states, so the timer is declared.
+	st, _ := s.State(cur.State)
 	for _, tm := range st.Timers() {
-		d := timerDue(tm, cur, ch)
-		if !ok || d.Before(due) {
-			t, due, ok = tm, d, true
+		if tm.Name == ft.Name {
+			return tm, due, true
 		}
 	}
-	return t, due, ok
+	return t, due, false // coverage-ignore: invariant: the definition mirrors s
 }
 
 // sessionDue is the schedule of a create of a type with session s: the
@@ -86,52 +72,15 @@ func withSessionDue(step *channels.SessionStep, s *realtimecfg.Session) {
 }
 
 // stepSchedule is the schedule of a session step from channel from to
-// next. Without a move it is [sessionDue]. A move clears the restart
-// anchors and reminder records (see [channels.ApplySession]); the anchor of
-// a since: session timer is put back when the target state has a since:
-// session timer of the same name, because that timer keeps counting across
-// the move. A since: state timer starts again from the move. The records of
-// reminders active in both states are put back (see [carriedReminders]).
-// Without a move, stored records are kept, pruned (see [pruneReminders]).
+// next (see [flow.StepSchedule]).
 func stepSchedule(s *realtimecfg.Session, from, next channels.Channel) channels.SessionSchedule {
-	if next.Session.Generation == from.Session.Generation {
-		sch := channels.SessionSchedule{NextDueAt: nextDue(s, next)}
-		if next.Session.Reminders != nil {
-			sch.Reminders = pruneReminders(s, next.Session.Reminders)
-		}
-		return sch
-	}
-	carried := carriedRestarts(s, from, next.Session.State)
-	reminders := carriedReminders(s, from, next.Session.State)
-	next.Session.Restarts, next.Session.Reminders = carried, reminders
-	return channels.SessionSchedule{NextDueAt: nextDue(s, next), Restarts: carried, Reminders: reminders}
+	return flow.StepSchedule(s.Flow(), currentSession(s, from), currentSession(s, next))
 }
 
-// carriedRestarts are the restart anchors of from that a move to state to
-// keeps: those of since: session timers declared, with since: session,
-// in both the state the session left and to. Nil when there are none.
+// carriedRestarts are the restart anchors of channel from that a move to
+// state to keeps (see [flow.CarriedRestarts]).
 func carriedRestarts(s *realtimecfg.Session, from channels.Channel, to string) map[string]time.Time {
-	left, ok := s.State(currentSession(s, from).State)
-	target, ok2 := s.State(to)
-	if !ok || !ok2 || len(from.Session.Restarts) == 0 {
-		return nil
-	}
-	sessionScoped := make(map[string]bool)
-	for _, t := range left.Timers() {
-		sessionScoped[t.Name] = t.Since == realtimecfg.TimerSinceSession
-	}
-	var out map[string]time.Time
-	for _, t := range target.Timers() {
-		r, anchored := from.Session.Restarts[t.Name]
-		if !anchored || t.Since != realtimecfg.TimerSinceSession || !sessionScoped[t.Name] {
-			continue
-		}
-		if out == nil {
-			out = make(map[string]time.Time)
-		}
-		out[t.Name] = r
-	}
-	return out
+	return flow.CarriedRestarts(s.Flow(), currentSession(s, from), to)
 }
 
 // ResumeSchedule is the schedule of a channel that resumes at at: a
@@ -140,7 +89,7 @@ func carriedRestarts(s *realtimecfg.Session, from channels.Channel, to string) m
 // restart anchor becomes at); a timer not yet due keeps its deadline. The
 // anchors are kept per timer, so repeated close and reopen cycles never
 // stretch a deadline that had not come due. Reminders resume the same way
-// (see [resumeReminders]).
+// (see [flow.ResumeReminders]).
 //
 // A channel of a type cfg does not declare, or without a session, keeps
 // its schedule. Nil cfg: accepted, and every channel keeps its schedule.
@@ -200,28 +149,9 @@ func (r *Resumption) Note(w *DueWake) {
 }
 
 // resumeSession is [ResumeSchedule] for one channel of a type with
-// session s.
+// session s (see [flow.Resume]).
 func resumeSession(s *realtimecfg.Session, ch channels.Channel, at time.Time) channels.SessionSchedule {
-	at = channels.NormTime(at)
-	cur := currentSession(s, ch)
-	st, declared := s.State(cur.State)
-	if !declared || st.Final {
-		return channels.SessionSchedule{}
-	}
-	timers := st.Timers()
-	restarts := make(map[string]time.Time, len(timers))
-	for _, t := range timers {
-		if r, ok := ch.Session.Restarts[t.Name]; ok {
-			restarts[t.Name] = r
-		}
-		if due := timerDue(t, cur, ch); !due.After(at) {
-			restarts[t.Name] = at
-		}
-	}
-	reminders := resumeReminders(s, cur, ch, at)
-	resumed := ch
-	resumed.Session.Restarts, resumed.Session.Reminders = restarts, reminders
-	return channels.SessionSchedule{NextDueAt: nextDue(s, resumed), Restarts: restarts, Reminders: reminders}
+	return flow.Resume(s.Flow(), currentSession(s, ch), at)
 }
 
 // transitionSchedule is the schedule a lifecycle move of a channel of
@@ -473,7 +403,7 @@ func (t *Timers) recompute(ctx context.Context, r *timerRound) {
 		}
 		stranded := map[string]int{}
 		for _, c := range list {
-			if cur := currentSession(s, c); cur.stranded {
+			if cur := currentSession(s, c); cur.Stranded {
 				stranded[cur.State]++
 				r.strand(c.Key)
 			}
@@ -574,7 +504,7 @@ func (t *Timers) fireDue(ctx context.Context, r *timerRound) {
 			return
 		}
 		cur := currentSession(s, c)
-		if cur.stranded {
+		if cur.Stranded {
 			r.strand(c.Key)
 		}
 		if remind {
@@ -682,7 +612,7 @@ func (t *Timers) remind(
 	rm realtimecfg.SessionReminder, cur current,
 ) {
 	props := maps.Clone(t.checked[[2]string{ct.Name, rm.Name}].props)
-	listed, _ := reminderRecord(rm, cur, c)
+	listed, _ := reminderRecord(rm, cur)
 	t.write(ctx, r, c.Key, s, reminderStep(ct, s, rm, listed, props, r.now))
 }
 

@@ -158,7 +158,7 @@ func (m messageInCheck) one(
 		if r.PostType != mn {
 			continue
 		}
-		for i, st := range r.in {
+		for i, st := range r.In() {
 			if !slices.Contains(raw, st) {
 				v.add(fmt.Sprintf("channel_types.%s.session.reminders.%s.in[%d]", ct.Name, r.Name, i),
 					fmt.Sprintf("the reminder posts %s, which may be posted only in %s", mn, list))

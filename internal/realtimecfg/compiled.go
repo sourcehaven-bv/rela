@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
@@ -215,7 +216,7 @@ type ChannelType struct {
 // that does not set `detached_retention:`, and of a type the config no
 // longer declares.
 func DefaultDetachedRetention() Period {
-	return Period{fixed: realtimelimits.DetachedRetention, text: "30d"}
+	return flow.FixedPeriod(realtimelimits.DetachedRetention, "30d")
 }
 
 // Role is a named set of principals, defined by exactly one source.

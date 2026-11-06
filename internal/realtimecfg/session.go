@@ -9,6 +9,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
@@ -33,12 +34,37 @@ type Session struct {
 	// guardReminders names every reminder whose name matches the grammar,
 	// valid or not; the guards declare a counter for each.
 	guardReminders []string
-	// paused names the reminders paused in this copy (see [Session.Pausing]).
-	paused map[string]bool
+	// flow is the engine's view of the machine, built once at the end of
+	// the load (see [Session.Flow]). [Session.Pausing] replaces it in a copy.
+	flow *flow.Definition
 	// onFinal is `on_final`: [OnFinalClose] or empty.
 	onFinal string
 	// runAs is `run_as`: a job identity, or empty.
 	runAs string
+}
+
+// Flow returns the engine's definition of the session: its states, their
+// timers and the reminders, with this copy's paused reminders. Never nil
+// for a session the load compiled.
+func (s *Session) Flow() *flow.Definition { return s.flow }
+
+// withFlow builds the engine's definition from the compiled states and
+// reminders and returns s. It runs once, when the load has compiled both.
+func (s *Session) withFlow() *Session {
+	states := make([]flow.State, 0, len(s.states))
+	for _, st := range s.states {
+		timers := make([]flow.Timer, 0, len(st.timers))
+		for _, t := range st.timers {
+			timers = append(timers, t.Timer)
+		}
+		states = append(states, flow.NewState(st.Name, st.Final, timers))
+	}
+	reminders := make([]flow.Reminder, 0, len(s.reminders))
+	for _, r := range s.reminders {
+		reminders = append(reminders, r.Reminder)
+	}
+	s.flow = flow.NewDefinition(s.initial, states, reminders)
+	return s
 }
 
 // Label is the session's display name.
@@ -163,26 +189,24 @@ type SessionState struct {
 // Timers returns the state's timers, sorted by name. The slice is a copy.
 func (st SessionState) Timers() []SessionTimer { return slices.Clone(st.timers) }
 
-// TimerSince names what a timer counts from.
-type TimerSince string
+// TimerSince names what a timer counts from (see [flow.Since]).
+type TimerSince = flow.Since
 
 const (
 	// TimerSinceState counts from when the session entered the state. It
 	// is the default.
-	TimerSinceState TimerSince = "state"
+	TimerSinceState = flow.SinceState
 	// TimerSinceSession counts from when the channel was created.
-	TimerSinceSession TimerSince = "session"
+	TimerSinceSession = flow.SinceSession
 )
 
 // SessionTimer is one `after.<name>` entry of a session state: once
 // Period has passed since its anchor (see [TimerSince]) while the session
 // is still in the state and the channel is open, the session moves to To.
+// The engine part, with Name, To, Period and Since, is [flow.Timer].
 type SessionTimer struct {
-	Name   string
-	Label  string
-	To     string
-	Period Period
-	Since  TimerSince
+	flow.Timer
+	Label string
 	// outputs are the compiled `outputs:`, in file order.
 	outputs []Output
 }
@@ -366,7 +390,7 @@ func (v *validator) session(
 	waitChecker{v}.check(statesKey, raw.States, s, ct)
 	s.runAs = writeChecker{v}.runAs(key+".run_as", raw.RunAs, s)
 	messageInCheck{v: v, raw: rawCT, ct: ct}.withSession(s, raw.States, raw.DefaultIn)
-	return s
+	return s.withFlow()
 }
 
 // problemSink records a problem at a key; the validator's add is one. The
@@ -392,7 +416,9 @@ func compileTimers(add problemSink, key string, raw map[string]rawSessionTimer, 
 // compileTimer compiles one `after.<name>` entry. ok is false when it has
 // a problem.
 func compileTimer(add problemSink, key, name string, raw rawSessionTimer, s *Session) (SessionTimer, bool) {
-	t := SessionTimer{Name: name, Label: orDefault(raw.Label, name), To: raw.To, Since: TimerSince(raw.Since)}
+	t := SessionTimer{
+		Timer: flow.Timer{Name: name, To: raw.To, Since: TimerSince(raw.Since)}, Label: orDefault(raw.Label, name),
+	}
 	ok := true
 	bad := func(k, reason string) {
 		add(k, reason)

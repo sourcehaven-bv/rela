@@ -2,71 +2,35 @@ package channels
 
 import (
 	"fmt"
-	"maps"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/flow"
 )
 
 // Session is a channel's session snapshot: the state it is in, how often it
-// moved, and when it entered the state. The zero value is unset: the
-// session never moved, and the caller reads it as its configured initial
-// state. Only an append with a [SessionStep] writes it.
+// moved, and when it entered the state. The engine owns the type: see
+// [flow.Instance]. The zero value is unset: the session never moved, and
+// the caller reads it as its configured initial state. Only an append with
+// a [SessionStep] writes it.
 //
 // NextDueAt, Restarts and Reminders are the session's timer schedule (see
-// [ScheduleFunc]). The store keeps them, but never derives them.
-type Session struct {
-	State      string    `json:"state,omitempty"`
-	Generation int64     `json:"generation,omitempty"`
-	EnteredAt  time.Time `json:"entered_at,omitzero"`
-	// Cause is the seq of the message whose post moved the session into
-	// its current state: the waiting message. Zero: the initial state, a
-	// timer move, or a move stored before the field existed.
-	Cause int64 `json:"cause,omitempty"`
-	// Previous is the state the session was in before it entered its
-	// current one (TKT-56TPOTE). A re-entry keeps it. Empty: the session
-	// never left its initial state, or last moved before the field existed.
-	Previous string `json:"previous,omitempty"`
-	// NextDueAt is the index hint for [Store.ListSessionsDue]: the earliest
-	// due time of the current state's timers. Zero: no due time.
-	NextDueAt time.Time `json:"next_due_at,omitzero"`
-	// Restarts holds, per timer name, the restart anchor of a timer that
-	// came due while the channel was closed or tombstoned. A move clears
-	// it.
-	Restarts map[string]time.Time `json:"restarts,omitempty"`
-	// Reminders holds, per reminder name, the reminder's record in the
-	// current span. A move clears it; the step's Due decides which records
-	// carry over.
-	Reminders map[string]ReminderRecord `json:"reminders,omitempty"`
-}
+// [ScheduleFunc]). The store keeps them, but never derives them;
+// [Store.ListSessionsDue] lists by NextDueAt.
+type Session = flow.Instance
 
-// ReminderRecord is one reminder's state in a session span: the time its
-// slots count from, the time of its last post and how many it posted. The
-// slot grid itself is configuration, so only these three are stored.
-type ReminderRecord struct {
-	// Since is the start of the span, or the resume time after a restart.
-	Since time.Time `json:"since"`
-	// Last is the time of the last post in this span; zero for none.
-	Last time.Time `json:"last,omitzero"`
-	// Count is the number of reminders posted in this span.
-	Count int64 `json:"count"`
-}
+// ReminderRecord is one reminder's state in a session span (see
+// [flow.ReminderRecord]).
+type ReminderRecord = flow.ReminderRecord
 
 // NormReminder returns r with its times normalized ([NormTime]), as every
-// backend stores them, so a compare-and-set on a record read back compares
-// equal values on every backend.
-func NormReminder(r ReminderRecord) ReminderRecord {
-	return ReminderRecord{Since: NormTime(r.Since), Last: NormTime(r.Last), Count: r.Count}
-}
+// backend stores them (see [flow.NormReminder]).
+func NormReminder(r ReminderRecord) ReminderRecord { return flow.NormReminder(r) }
 
 // CloneReminders returns a copy of rs, or nil for none.
 func CloneReminders(rs map[string]ReminderRecord) map[string]ReminderRecord {
-	if len(rs) == 0 {
-		return nil
-	}
-	out := make(map[string]ReminderRecord, len(rs))
-	maps.Copy(out, rs)
-	return out
+	return flow.CloneReminders(rs)
 }
 
 // MaxSessionReminders caps the reminder records one session stores: one per
@@ -100,18 +64,10 @@ func CheckReminders(rs map[string]ReminderRecord) error {
 	return nil
 }
 
-// IsZero reports an unset session.
-func (s Session) IsZero() bool { return s.Generation == 0 && s.State == "" }
-
 // SessionSchedule is what a [ScheduleFunc] returns: the next due time and,
-// when non-nil, the restart anchors and reminder records to store. A nil
-// Restarts keeps the stored anchors; a nil Reminders keeps the stored
-// records, and an empty one stores none.
-type SessionSchedule struct {
-	NextDueAt time.Time
-	Restarts  map[string]time.Time
-	Reminders map[string]ReminderRecord
-}
+// when non-nil, the restart anchors and reminder records to store (see
+// [flow.Schedule]).
+type SessionSchedule = flow.Schedule
 
 // ScheduleFunc computes a channel's session schedule. The store calls it
 // under its lock or inside its transaction, with the channel as it will be
@@ -260,8 +216,8 @@ func ReminderMessage(
 }
 
 // SessionMove is one session transition: the state the session leaves and
-// the state it enters. From equals To for a re-entry.
-type SessionMove struct{ From, To string }
+// the state it enters (see [flow.Move]).
+type SessionMove = flow.Move
 
 // SessionMarker starts the TriggeredBy of every session notice. Only the
 // store writes it: [PrepareMessage] refuses it on any other append, so a
@@ -420,14 +376,7 @@ func DecideSession(step *SessionStep, cur Channel) (move SessionMove, moved bool
 // post made the move, or 0 for a timer move. The previous state becomes
 // move.From, except on a re-entry, which keeps it.
 func ApplySession(c *Channel, move SessionMove, at time.Time, cause int64) {
-	previous := move.From
-	if move.From == move.To {
-		previous = c.Session.Previous
-	}
-	c.Session = Session{
-		State: move.To, Generation: c.Session.Generation + 1, EnteredAt: NormTime(at), Cause: cause,
-		Previous: previous,
-	}
+	c.Session = c.Session.Enter(move, at, cause)
 }
 
 // PrepareAppendStep is [PrepareSessionStep] for [Store.Append], which also
