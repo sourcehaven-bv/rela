@@ -374,7 +374,8 @@ func TestParseValidationMode(t *testing.T) {
 	}{
 		{"", entitymanager.ValidationAdvisory, false},
 		{"advisory", entitymanager.ValidationAdvisory, false},
-		{" strict ", entitymanager.ValidationStrict, false},
+		{"strict", entitymanager.ValidationStrict, false},
+		{" strict ", entitymanager.ValidationAdvisory, true},
 		{"blocking", entitymanager.ValidationAdvisory, true},
 	}
 	for _, tc := range tests {

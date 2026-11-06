@@ -33,7 +33,7 @@ const (
 // ParseValidationMode reads the configured spelling of a mode. Empty is
 // [ValidationAdvisory].
 func ParseValidationMode(s string) (ValidationMode, error) {
-	switch strings.TrimSpace(s) {
+	switch s {
 	case "", "advisory":
 		return ValidationAdvisory, nil
 	case "strict":

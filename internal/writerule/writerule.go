@@ -69,7 +69,8 @@ func Compile(meta *metamodel.Metamodel) (*Set, error) {
 		}
 		types := rule.TargetTypes()
 		if types == nil {
-			types = sortedEntityTypes(meta)
+			types = meta.EntityTypes()
+			sort.Strings(types)
 		}
 		for _, typ := range types {
 			if _, ok := meta.GetEntityDef(typ); !ok {
@@ -263,13 +264,4 @@ func violationMessage(r compiledRule) string {
 		return fmt.Sprintf("validation rule %q is not satisfied", r.name)
 	}
 	return fmt.Sprintf("validation rule %q is not satisfied: %s", r.name, r.description)
-}
-
-func sortedEntityTypes(meta *metamodel.Metamodel) []string {
-	types := make([]string, 0, len(meta.Entities))
-	for name := range meta.Entities {
-		types = append(types, name)
-	}
-	sort.Strings(types)
-	return types
 }
