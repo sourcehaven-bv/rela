@@ -129,9 +129,7 @@ type Runtime struct {
 	caps          Capabilities      // ambient capability grants; zero value denies all (TKT-YH52OM)
 	isAction      bool              // true when running as an action (changes rela.output behavior)
 	refWrites     bool              // may set external_ref properties; see WithExternalRefWrites
-	isDocument    bool              // document mode: rela.document populated, rela.output becomes a warning
-	documentID    string            // data-entry.yaml documents: key, exposed as rela.document.id
-	documentEntry string            // ID of the entity being rendered, exposed as rela.document.entry_id
+	document      documentMode      // set by the document options; zero outside a render
 
 	// listRender is set (non-nil Rows) only for a LIST document render — the
 	// lists: export_render override. It rides on document mode rather than
@@ -289,6 +287,13 @@ func WithExternalRefWrites() Option {
 	}
 }
 
+// documentMode is what the document options set on a [Runtime].
+type documentMode struct {
+	on    bool   // rela.document populated, rela.output becomes a warning
+	id    string // data-entry.yaml documents: key, exposed as rela.document.id
+	entry string // ID of the entity being rendered, exposed as rela.document.entry_id
+}
+
 // WithDocumentMode marks the runtime as running a data-entry document
 // renderer. Populates the rela.document.{id, entry_id} table and sets
 // rela.mode = "document" so scripts can branch on context; also changes
@@ -298,9 +303,9 @@ func WithExternalRefWrites() Option {
 // the ID of the entity being rendered.
 func WithDocumentMode(documentID, entryID string) Option {
 	return func(r *Runtime) {
-		r.isDocument = true
-		r.documentID = documentID
-		r.documentEntry = entryID
+		r.document.on = true
+		r.document.id = documentID
+		r.document.entry = entryID
 	}
 }
 
@@ -321,8 +326,8 @@ func WithDocumentMode(documentID, entryID string) Option {
 // document has no driving list either. rela.document carries `id` alone.
 func WithStandaloneDocumentMode(documentID string) Option {
 	return func(r *Runtime) {
-		r.isDocument = true
-		r.documentID = documentID
+		r.document.on = true
+		r.document.id = documentID
 	}
 }
 
@@ -342,8 +347,8 @@ func WithStandaloneDocumentMode(documentID string) Option {
 // empty-string. See registerContextBindings for why.
 func WithListDocumentMode(documentID string, lrc ListRenderContext) Option {
 	return func(r *Runtime) {
-		r.isDocument = true
-		r.documentID = documentID
+		r.document.on = true
+		r.document.id = documentID
 		r.listRender = lrc
 	}
 }
@@ -510,7 +515,7 @@ func newRuntime(deps WriteDeps, stdout io.Writer, allowWrites bool, opts ...Opti
 		outputDir:   r.outputDir,
 		projectRoot: deps.ProjectRoot,
 		isAction:    r.isAction,
-		isDocument:  r.isDocument,
+		isDocument:  r.document.on,
 	}
 
 	// In captured-stdout contexts (document mode, action mode), redirect
@@ -519,7 +524,7 @@ func newRuntime(deps WriteDeps, stdout io.Writer, allowWrites bool, opts ...Opti
 	// is a buffer. We override only for these modes so CLI / scheduler /
 	// MCP / validation / automation scripts keep the default behavior —
 	// users rely on print() reaching their terminal there.
-	if r.isDocument || r.isAction {
+	if r.document.on || r.isAction {
 		L.SetGlobal("print", L.NewFunction(r.out.luaPrint))
 	}
 
@@ -1097,10 +1102,10 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 	// WithListDocumentMode was applied. In every other context rela.mode and
 	// rela.document are absent (Lua nil), so a script that branches on them
 	// sees nil outside document renders.
-	if r.isDocument {
+	if r.document.on {
 		r.L.SetField(rela, "mode", lua.LString("document"))
 		docTable := r.L.NewTable()
-		r.L.SetField(docTable, "id", lua.LString(r.documentID))
+		r.L.SetField(docTable, "id", lua.LString(r.document.id))
 
 		// entry_id is set ONLY when there is a real entry entity. An entity
 		// render always has one (the caller path-validates it before we get
@@ -1111,8 +1116,8 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 		// idiomatic `if rela.document.entry_id then rela.get_entity(...)`
 		// guard would pass and then raise ("entity ID cannot be empty"),
 		// and `entry_id or default` would yield "" instead of the default.
-		if r.documentEntry != "" {
-			r.L.SetField(docTable, "entry_id", lua.LString(r.documentEntry))
+		if r.document.entry != "" {
+			r.L.SetField(docTable, "entry_id", lua.LString(r.document.entry))
 		}
 
 		// List-render bindings. Kept as closures over the provider rather
