@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/flow"
-	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
 
 var t0 = time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC)
@@ -157,7 +156,7 @@ func TestNextSlot(t *testing.T) {
 	require.False(t, ok, "a paused reminder has no slot")
 	require.False(t, d.Paused("nudge"), "Pausing leaves d alone")
 
-	require.Equal(t, t0.Add(30*time.Minute+realtimelimits.ReminderSlack), flow.NextDue(d, cur),
+	require.Equal(t, t0.Add(30*time.Minute+flow.ReminderSlack), flow.NextDue(d, cur),
 		"the reminder slot plus slack comes before the timers")
 	require.Equal(t, map[string]int64{"nudge": 0}, flow.ReminderCounts(d, cur))
 	require.Equal(t, map[string]int64{"nudge": 2},
@@ -206,7 +205,7 @@ func TestResume(t *testing.T) {
 	sch := flow.Resume(d, cur, at)
 	require.Equal(t, map[string]time.Time{"escalate": at}, sch.Restarts, "only the timer that came due restarts")
 	require.Equal(t, map[string]flow.ReminderRecord{"nudge": {Since: at}}, sch.Reminders)
-	require.Equal(t, at.Add(30*time.Minute+realtimelimits.ReminderSlack), sch.NextDueAt)
+	require.Equal(t, at.Add(30*time.Minute+flow.ReminderSlack), sch.NextDueAt)
 }
 
 func TestInstanceEnter(t *testing.T) {

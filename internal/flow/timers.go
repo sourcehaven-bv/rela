@@ -1,10 +1,6 @@
 package flow
 
-import (
-	"time"
-
-	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
-)
+import "time"
 
 // Timers and reminders (TKT-INM3AZ, TKT-36Z6X3).
 //
@@ -50,13 +46,13 @@ func NextTimer(d *Definition, cur Current) (t Timer, due time.Time, ok bool) {
 
 // NextDue is the value of [Instance.NextDueAt] for cur: the earlier of the
 // due time of [NextTimer] and the slot of [NextReminder] plus
-// [realtimelimits.ReminderSlack], normalized, or zero for neither. The
+// [ReminderSlack], normalized, or zero for neither. The
 // slack lets one leader round serve several nearby slots; the round fires
 // a reminder by its slot, never by this hint.
 func NextDue(d *Definition, cur Current) time.Time {
 	_, due, ok := NextTimer(d, cur)
 	if _, slot, has := NextReminder(d, cur); has {
-		if hint := slot.Add(realtimelimits.ReminderSlack); !ok || hint.Before(due) {
+		if hint := slot.Add(ReminderSlack); !ok || hint.Before(due) {
 			due, ok = hint, true
 		}
 	}

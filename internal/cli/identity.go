@@ -217,7 +217,8 @@ func actsAsIdentity(cmd string) bool {
 // purpose. The two db commands are listed because they take no project
 // from [requiresProject] yet credit their audited import to the principal.
 var identityWrites = map[string]bool{
-	"mcp": true, "flow": true, "dev seed": true, "create": true, "update": true, "delete": true,
+	"mcp": true, "dev seed": true, "create": true, "update": true, "delete": true,
+	"flow run": true, "flow validate": false, "flow show": false,
 	"link": true, "unlink": true, "import": true, "fmt": true, "normalize": true,
 	"rename entity": true, "rename id": true, "restore": true, "relation-restore": true,
 	"token set": true, "token delete": true, "history-tag": true, "history-purge": true,

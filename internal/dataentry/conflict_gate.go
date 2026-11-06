@@ -251,7 +251,7 @@ var conflictConfigFiles = map[string]bool{
 	project.SchemaFile: true, project.LegacySchemaFile: true,
 	"data-entry.yaml": true, "desktop.yaml": true, "acl.yaml": true, "schedules.yaml": true,
 	"subscriptions.yaml": true, "mail-templates.yaml": true, "classification.yaml": true,
-	"realtime.yaml": true,
+	"realtime.yaml": true, "flows.yaml": true,
 }
 
 // conflictConfigDirs are the project directories that hold only config, for

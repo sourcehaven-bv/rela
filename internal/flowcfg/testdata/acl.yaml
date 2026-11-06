@@ -1,0 +1,22 @@
+roles:
+  hr:
+    read: [person, task]
+    update: [person]
+    permissions: [onboarding.start]
+  manager:
+    read: [person, task]
+  auditor:
+    read: ["*"]
+  onboarding-bot:
+    read: [person, task]
+    update: [person]
+    create: [task]
+    relations:
+      task: [{relation: about}]
+assignments:
+  system:onboarding-bot: onboarding-bot
+client_baselines:
+  apps:
+    applies_to: [app]
+    redact:
+      person: [salary]

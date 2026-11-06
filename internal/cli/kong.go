@@ -124,7 +124,7 @@ type CLI struct {
 	Mcp        McpCmd        `cmd:"" name:"mcp" help:"Start the MCP server."`
 	Db         DBCmd         `cmd:"" name:"db" help:"Manage the project database (postgres and sqlite builds)."`
 	Dev        DevCmd        `cmd:"" help:"Developer tooling (seed generated data)."`
-	Flow       FlowCmd       `cmd:"" help:"Run an interactive Lua flow."`
+	Flow       FlowCmd       `cmd:"" help:"Run an interactive Lua flow, or check the flows in flows.yaml."`
 	Validate   ValidateCmd   `cmd:"" help:"Validate project configuration files."`
 
 	Classification ClassificationCmd `cmd:"" help:"Maintain classification.yaml, the data classification overlay."`
@@ -325,6 +325,14 @@ func requiresProject(cmd string) bool {
 		// the full command path.
 		switch firstTwoKongTokens(cmd) {
 		case "migrate status", "migrate gen", "migrate data", "migrate gc", "migrate adopt-face", "migrate baseline":
+			return true
+		}
+		return false
+	case "flow":
+		// `rela flow <script>` discovers the project from the script's
+		// directory; the flows.yaml commands read the current project.
+		switch firstTwoKongTokens(cmd) {
+		case "flow validate", "flow show":
 			return true
 		}
 		return false

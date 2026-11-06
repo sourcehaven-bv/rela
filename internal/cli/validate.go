@@ -88,6 +88,7 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 	}
 	hasErrors = reportDataEntryValidation(result, hasErrors)
 	hasErrors = reportRealtimeValidation(ctx, result, hasErrors)
+	hasErrors = reportFlowsValidation(ctx, result, hasErrors)
 	for _, item := range []struct {
 		name string
 		err  error
