@@ -375,3 +375,64 @@ func TestCollab_ForeignOriginIsRefused(t *testing.T) {
 		require.Equal(t, http.StatusForbidden, w.Code, "origin %q: %s", origin, w.Body.String())
 	}
 }
+
+// sendPresence sends a y-websocket awareness update for clientID with state.
+func sendPresence(t *testing.T, c *gws.Conn, clientID uint64, state string) {
+	t.Helper()
+	update := binary.AppendUvarint(nil, 1)
+	update = binary.AppendUvarint(update, clientID)
+	update = binary.AppendUvarint(update, 1) // clock
+	update = binary.AppendUvarint(update, uint64(len(state)))
+	update = append(update, state...)
+	msg := binary.AppendUvarint([]byte{1}, uint64(len(update)))
+	msg = append(msg, update...)
+	require.NoError(t, c.WriteMessage(gws.BinaryMessage, msg))
+}
+
+// A cursor is labeled with the principal that sent it, whatever name the
+// client put in its presence; an unsafe color is dropped.
+func TestCollab_PresenceCarriesThePrincipal(t *testing.T) {
+	tests := []struct {
+		name  string
+		state string
+		want  map[string]any
+	}{
+		{
+			name:  "claimed name is replaced",
+			state: `{"user":{"name":"bob","color":"#a1b2c3"},"cursor":{"anchor":1}}`,
+			want:  map[string]any{"name": "alice", "color": "#a1b2c3"},
+		},
+		{
+			name:  "unsafe color is dropped",
+			state: `{"user":{"name":"alice","color":"red;background:url(x)"}}`,
+			want:  map[string]any{"name": "alice"},
+		},
+		{
+			name:  "missing user is added",
+			state: `{"cursor":null}`,
+			want:  map[string]any{"name": "alice"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCollabFixture(t, "")
+			alice := f.join(t, "alice", CollabPathPrefix+"ticket/TKT-001")
+			sendPresence(t, alice, 7, tc.state)
+
+			var got any
+			require.Eventually(t, func() bool {
+				aw, ok := f.relay.srv.GetAwareness("ticket/TKT-001")
+				if !ok {
+					return false
+				}
+				st, ok := aw.GetStates()[7]
+				if !ok || st.State == nil {
+					return false
+				}
+				got = st.State["user"]
+				return true
+			}, 2*time.Second, 10*time.Millisecond)
+			require.Equal(t, tc.want, got)
+		})
+	}
+}

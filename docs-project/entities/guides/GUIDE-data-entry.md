@@ -181,6 +181,8 @@ Some rules apply:
   and reconnects, so the check on joining runs again.
 - **Your user id is your name in the session.** The labelled cursor shows your
   user id, for example `bob@example.com`, not the title of a person record.
+  The server sets this label from your sign-in, so an editor cannot show a
+  cursor under someone else's name or move someone else's cursor.
 - **A save is attributed to the editor that saved it.** The history shows
   the user whose editor saved the shared text, which may hold text others
   typed.

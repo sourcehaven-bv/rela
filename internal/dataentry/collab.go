@@ -10,11 +10,12 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
-	ygows "github.com/reearth/ygo/provider/websocket"
+	ygows "github.com/Sourcehaven-BV/rela/third_party/ygows"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -118,6 +119,34 @@ type CollabRelay struct {
 // relay's Authorize hook on the request context.
 type collabAdmitKey struct{}
 
+// collabAdmission is the verdict the handler passes to Authorize.
+type collabAdmission struct {
+	readOnly bool
+	user     string
+}
+
+// collabPeerColor is the cursor color a client may choose: a plain
+// #rrggbb value, so it cannot carry markup or a CSS expression.
+var collabPeerColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+// collabStampUser returns the awareness stamp for a connection of user.
+// Other editors label a cursor with its authenticated principal, never a
+// name the client chose. The color is the client's when it is a plain
+// #rrggbb value and is dropped otherwise. The rest of the state, such as
+// the cursor position, passes through.
+func collabStampUser(user string) func(map[string]any) map[string]any {
+	return func(state map[string]any) map[string]any {
+		stamped := map[string]any{"name": user}
+		if u, ok := state["user"].(map[string]any); ok {
+			if c, ok := u["color"].(string); ok && collabPeerColor.MatchString(c) {
+				stamped["color"] = c
+			}
+		}
+		state["user"] = stamped
+		return state
+	}
+}
+
 // NewCollabRelay builds the relay. build is the SPA build id the server
 // embeds (see [EmbeddedBuildID]); a client on another build is refused.
 // An empty build skips the check, as in development.
@@ -151,12 +180,16 @@ func NewCollabRelay(build string) *CollabRelay {
 	// that list and refuse the dev origins it admits.
 	srv.AllowedOrigins = []string{"*"}
 	srv.Authorize = func(r *http.Request) (ygows.ConnectionConfig, bool) {
-		readOnly, ok := r.Context().Value(collabAdmitKey{}).(bool)
+		adm, ok := r.Context().Value(collabAdmitKey{}).(collabAdmission)
 		if !ok {
 			// Not admitted by the handler: fail closed.
 			return ygows.ConnectionConfig{}, false
 		}
-		return ygows.ConnectionConfig{ReadOnly: readOnly}, true
+		return ygows.ConnectionConfig{
+			ReadOnly:       adm.readOnly,
+			StampAwareness: collabStampUser(adm.user),
+			Owner:          adm.user,
+		}, true
 	}
 	c.srv = srv
 	return c
@@ -330,7 +363,7 @@ func handleCollab(h *collabHandler, w http.ResponseWriter, r *http.Request) {
 		w = &hijackHook{ResponseWriter: w, after: func() { cancel(*refuse) }}
 	}
 
-	ctx = context.WithValue(ctx, collabAdmitKey{}, !writable)
+	ctx = context.WithValue(ctx, collabAdmitKey{}, collabAdmission{readOnly: !writable, user: user})
 	r = r.WithContext(ctx)
 	r.SetPathValue("room", collabRoom(e.Type, e.ID, string(e.Face)))
 	h.relay.srv.ServeHTTP(w, r)
