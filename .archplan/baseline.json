@@ -2600,6 +2600,12 @@
       "reason": "Design: schema wire types mirror EntityDef on purpose; extends added by TKT-C91W7H4.",
       "at": "2026-11-05T15:03:17Z",
       "title": "The fields border_color, color, default_sort, description, extends, … and properties appear together in 2 types across 2 components."
+    },
+    "types.synonyms-2e9a694c3bb2": {
+      "state": "accepted",
+      "reason": "Design: flows.yaml states mirror channel session states on purpose; both compile onto the shared internal/flow engine, TKT-XHANLJU",
+      "at": "2026-11-06T09:00:00Z",
+      "title": "State (flowcfg) and SessionState (realtimecfg) share most of their fields."
     }
   },
   "labels": {},
@@ -2609,7 +2615,7 @@
       "weight.structure": 936,
       "weight.layers": 0,
       "weight.vocabulary": 912,
-      "weight.types": 3981,
+      "weight.types": 4031,
       "weight.concepts": 7052,
       "weight.boundaries": 1478,
       "weight.data": 1297,
@@ -2788,6 +2794,17 @@
           "weight.concepts": [
             7047,
             7052
+          ]
+        }
+      },
+      {
+        "at": "2026-11-06T09:00:00Z",
+        "change": "loosen",
+        "reason": "flowcfg.State mirrors realtimecfg.SessionState over the shared flow engine, TKT-XHANLJU",
+        "metrics": {
+          "weight.types": [
+            3981,
+            4031
           ]
         }
       }

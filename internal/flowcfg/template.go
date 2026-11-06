@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -38,13 +39,17 @@ type templatePart struct {
 	ref  string
 }
 
+// RunID names one run of a flow.
+type RunID string
+
 // Vars are what a template reads when its output runs.
 type Vars struct {
-	SubjectID string
-	RunID     string
-	Now       time.Time
-	// Subject holds the subject's properties as the engine read them.
-	Subject map[string]any
+	// Subject is the entity the run is about.
+	Subject entity.Ref
+	Run     RunID
+	Now     time.Time
+	// Props holds the subject's properties as the engine read them.
+	Props map[string]any
 }
 
 // Literal reports whether the template has no placeholder.
@@ -89,15 +94,15 @@ func (t Template) Eval(vars Vars) (value any, ok bool) {
 func refValue(ref string, vars Vars) (any, bool) {
 	switch ref {
 	case RefSubjectID:
-		return vars.SubjectID, true
+		return vars.Subject.ID, true
 	case RefRunID:
-		return vars.RunID, true
+		return string(vars.Run), true
 	case RefNow:
 		return vars.Now.UTC().Format(time.RFC3339), true
 	case RefToday:
 		return vars.Now.UTC().Format(time.DateOnly), true
 	}
-	v, ok := vars.Subject[strings.TrimPrefix(ref, refSubjectProp)]
+	v, ok := vars.Props[strings.TrimPrefix(ref, refSubjectProp)]
 	if !ok || v == nil {
 		return nil, false
 	}

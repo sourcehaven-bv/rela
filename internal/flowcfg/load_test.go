@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -311,7 +312,7 @@ func TestTemplate_Eval(t *testing.T) {
 	create := st.Outputs()[1]
 	props := create.Properties()
 	now := time.Date(2026, 11, 6, 9, 30, 0, 0, time.UTC)
-	vars := Vars{SubjectID: "PER-1", RunID: "FR-1", Now: now, Subject: map[string]any{"name": "Ada"}}
+	vars := Vars{Subject: entity.Ref{ID: "PER-1"}, Run: "FR-1", Now: now, Props: map[string]any{"name": "Ada"}}
 	if v, ok := props["title"].Eval(vars); !ok || v != "Collect documents for Ada" {
 		t.Errorf("title = %v, %v", v, ok)
 	}
