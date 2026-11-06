@@ -296,6 +296,7 @@ func recordOwnedDeletes(ctx context.Context, m *Manager, owner string, owned []o
 		}
 		m.recordFamilyDeleteAudit(ownedCtx, o.res.DeletedEntities, len(o.res.DeletedRelations))
 		m.notifyAliasesOfDelete(ctx, o.id)
+		notifyDeletedStates(ctx, m.deps.AliasRewriter, o.res.DeletedEntities)
 	}
 }
 

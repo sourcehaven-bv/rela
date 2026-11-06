@@ -50,6 +50,14 @@ func updAutomation(cond string) metamodel.AutomationDef {
 	return def
 }
 
+// delAutomation is condAutomation on a delete.
+func delAutomation(cond string) metamodel.AutomationDef {
+	def := condAutomation(cond)
+	def.On.Created = false
+	def.On.Deleted = true
+	return def
+}
+
 // updated fires updAutomation: due changes on id.
 func updated(id string) Event {
 	old := buildEntity(testutil.Entity("taak").ID(id).With("due", "2026-01-01"))
@@ -114,6 +122,8 @@ func TestNewEngine_RelatedRefusedAtLoad(t *testing.T) {
 		{"unknown relation", updAutomation("related(entity, 'nope')"), []Option{WithTraversals(&stubBinder{})}, "nope"},
 		{"created trigger", condAutomation("related(entity, 'owned-by')"), []Option{WithTraversals(&stubBinder{})},
 			"created"},
+		{"deleted trigger", delAutomation("related(entity, 'owned-by')"), []Option{WithTraversals(&stubBinder{})},
+			"`deleted` trigger"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := NewEngineFromMetamodel(traversalMeta(), []metamodel.AutomationDef{tc.def}, tc.opts...)

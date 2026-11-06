@@ -30,6 +30,9 @@ type Trigger struct {
 	Updated         bool
 	RelationCreated string
 	RelationRemoved string
+	// Deleted fires on [EventEntityDeleted]. Load validation allows only
+	// background actions under it.
+	Deleted bool
 	// Faces limits the trigger to specific content states, named as declared
 	// in `faces:`. Empty means EVERY state, including the bare one.
 	//
@@ -177,6 +180,11 @@ const (
 	// it: a pending job names the old id, so every created, updated or
 	// property trigger re-runs for the new one.
 	EventEntityRenamed
+
+	// EventEntityDeleted fires once per face a delete removed, after the
+	// delete commits. Entity is the face's last stored state. Only the
+	// background job service raises it, and only `deleted` triggers match.
+	EventEntityDeleted
 )
 
 // EntityToCreate specifies an entity to be created by automation.

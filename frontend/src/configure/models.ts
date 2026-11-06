@@ -389,6 +389,7 @@ export function automations(schema: TreeValue | undefined): AutomationModel[] {
     const actions = mapItems(get(auto, 'do')).map(actionModel)
     let trigger = 'A record changes'
     if (created) trigger = 'A record is created'
+    else if (bool(get(on, 'deleted'))) trigger = 'A record is deleted'
     else if (property && becomes) trigger = `${property} becomes ${becomes}`
     else if (property) trigger = `${property} changes`
     else if (get(on, 'relation_created') !== undefined) trigger = 'A link is added'

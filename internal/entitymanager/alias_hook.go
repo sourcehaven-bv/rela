@@ -172,3 +172,40 @@ func notifyAliasesOfCreate(ctx context.Context, rw AliasRewriter, id string, fac
 			"id", id, "face", face, "error", err)
 	}
 }
+
+// DeleteNotifier is the optional half of an [AliasRewriter] that needs what a
+// delete removed rather than only its id: the automation job service runs
+// `on.deleted` triggers on it (TKT-Q0AQ840).
+//
+// Optional, and type-asserted on Deps.AliasRewriter, for the reason
+// [CreateNotifier] is.
+type DeleteNotifier interface {
+	// EntityStateDeleted notifies that one face of an entity was deleted,
+	// soft or hard, after the delete committed. last is the face's raw
+	// stored state just before the delete; the subscriber must not mutate
+	// it. A purge of a soft-deleted entity does not notify again.
+	EntityStateDeleted(ctx context.Context, last *entity.Entity) error
+}
+
+// notifyDeletedStates notifies rw of every deleted face in rows when it
+// implements [DeleteNotifier]. Failures are logged: the delete happened.
+//
+// A function rather than a Manager method for the reason
+// notifyAliasesOfFaceDelete is one.
+func notifyDeletedStates(ctx context.Context, rw AliasRewriter, rows []*entity.Entity) {
+	n, ok := rw.(DeleteNotifier)
+	if !ok || len(rows) == 0 {
+		return
+	}
+	ctx, cancel := aliasHookContext(ctx)
+	defer cancel()
+	for _, e := range rows {
+		if e == nil {
+			continue
+		}
+		if err := n.EntityStateDeleted(ctx, e); err != nil {
+			slog.Error("entitymanager: delete notification failed",
+				"id", e.ID, "face", e.Face, "error", err)
+		}
+	}
+}
