@@ -215,6 +215,35 @@ func TestCopyAutomationTransitionChecked(t *testing.T) {
 	}
 }
 
+// TestCopyAutomationsNeedTheGuard: a caller the copy's guard refuses gets no
+// automation either. The guard is checked before the automations are
+// evaluated, so a refused copy writes nothing, records no copy and schedules
+// no background action.
+func TestCopyAutomationsNeedTheGuard(t *testing.T) {
+	t.Parallel()
+	mgr, st, bg, sink := newCopyAutomationManagerWith(t, allowGuard{allow: false})
+	ctx := context.Background()
+	if err := st.CreateEntity(ctx, &entity.Entity{
+		ID: "DOC-1", Type: "doc", Face: "draft", Properties: map[string]any{"title": "new"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := mgr.CopyState(ctx, entitymanager.CopyRequest{Definition: "adopt", SourceID: "DOC-1"}); err == nil {
+		t.Fatal("copy succeeded; want the guard to refuse it")
+	}
+	if _, gerr := st.GetEntity(ctx, entity.Ref{ID: "DOC-1", Face: "adopted"}); gerr == nil {
+		t.Error("the adopted face was written; a refused copy must write nothing")
+	}
+	if len(bg.got) != 0 {
+		t.Errorf("background jobs = %v, want none for a refused copy", bg.got)
+	}
+	for _, r := range sink.Records() {
+		if r.Op == audit.OpCopyState {
+			t.Errorf("audit has a copy record %+v for a refused copy", r)
+		}
+	}
+}
+
 // TestCopyWithoutAutomationsIsUnchanged: a manager with no automation engine
 // copies as before and reports no automation output.
 func TestCopyWithoutAutomationsIsUnchanged(t *testing.T) {
@@ -249,6 +278,15 @@ func TestCopyWithoutAutomationsIsUnchanged(t *testing.T) {
 
 func newCopyAutomationManager(t *testing.T) (*entitymanager.Manager, store.Store, *copyBackground, *audit.Memory) {
 	t.Helper()
+	return newCopyAutomationManagerWith(t, allowGuard{allow: true})
+}
+
+// newCopyAutomationManagerWith is newCopyAutomationManager with guard as the
+// copy guard.
+func newCopyAutomationManagerWith(
+	t *testing.T, guard entitymanager.CopyGuard,
+) (*entitymanager.Manager, store.Store, *copyBackground, *audit.Memory) {
+	t.Helper()
 	meta, err := metamodel.Parse([]byte(copyAutomationMetaYAML))
 	if err != nil {
 		t.Fatalf("parse metamodel: %v", err)
@@ -276,7 +314,7 @@ func newCopyAutomationManager(t *testing.T) (*entitymanager.Manager, store.Store
 		ACL:         acl.NopACL{},
 		Transitions: machines,
 		FieldGate:   entitymanager.AllowAllFieldGate{},
-		CopyGuard:   allowGuard{allow: true},
+		CopyGuard:   guard,
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 		Automations: engine,
 		Cascade:     runner,

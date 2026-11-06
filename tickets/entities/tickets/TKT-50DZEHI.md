@@ -45,3 +45,5 @@ overwrites it runs `updated` automations, including background actions.
 is a load error.
 - `fields: all` with `set:` stamps the set values and copies everything else.
 - Docs in `docs-project/` describe both.
+- A caller the copy guard refuses runs no automation, and an automation value
+that makes an illegal state change refuses the copy.

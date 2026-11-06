@@ -9057,6 +9057,18 @@ a `403` naming it. A source the caller may not read produces the same `404` as
 a source that does not exist. Any other refusal, such as an unknown definition
 or a cross-entity copy without a `target_id`, is a `422`.
 
+A copy also runs the automations of the face it writes (see
+[Automations on a copy](metamodel.md#automations-on-a-copy)). A value an
+automation sets must make a legal state change, or the copy is refused as an
+ordinary update with that change would be, and nothing is written. When an
+automation step after the write fails, the copy stays written and the response
+carries a warning:
+
+```json
+{ "definition": "publish", "entityId": "POL-1", "face": "published", "created": true,
+  "warnings": [{ "code": "follow_up_failed", "detail": "the copy was written; an automation step after it failed" }] }
+```
+
 ### Converting an entity
 
 The entity response carries `_conversions` offers, including the target type
