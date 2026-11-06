@@ -33,6 +33,11 @@ func (a denyAndHideACL) PermitsReadFace(_ context.Context, _, id string, _ entit
 
 func newScopedManager(t *testing.T, aud audit.Audit) (*entitymanager.Manager, store.Store) {
 	t.Helper()
+	return newScopedManagerWithACL(t, aud, denyAndHideACL{hidden: "TASK-HIDDEN"})
+}
+
+func newScopedManagerWithACL(t *testing.T, aud audit.Audit, a acl.ACL) (*entitymanager.Manager, store.Store) {
+	t.Helper()
 	meta, err := metamodel.Parse([]byte(patchMetamodelYAML))
 	if err != nil {
 		t.Fatalf("metamodel.Parse: %v", err)
@@ -40,7 +45,7 @@ func newScopedManager(t *testing.T, aud audit.Audit) (*entitymanager.Manager, st
 	st := memstore.New()
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: aud,
-		ACL:         denyAndHideACL{hidden: "TASK-HIDDEN"},
+		ACL:         a,
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
@@ -277,6 +282,57 @@ func TestScopedUpdates_Transitions(t *testing.T) {
 				if strings.Contains(err.Error(), value) {
 					t.Errorf("error %q names value %q", err, value)
 				}
+			}
+		})
+	}
+}
+
+// TestScopedUpdates_ReadOnly pins that a read-only instance refuses a scoped
+// elevated update as it refuses any update: a 403-class error, a
+// denied-write audit row, and the row unchanged. Elevation skips
+// AuthorizeWrite, so without this check --read-only would not hold.
+func TestScopedUpdates_ReadOnly(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		acl        acl.ACL
+		wantDenied bool
+	}{
+		{name: "read-only value", acl: acl.ReadOnlyACL{}, wantDenied: true},
+		{name: "read-only pointer", acl: &acl.ReadOnlyACL{}, wantDenied: true},
+		{name: "write-denying policy still elevates", acl: denyAndHideACL{}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mem := audit.NewMemory()
+			mgr, st := newScopedManagerWithACL(t, mem, tc.acl)
+			su, err := entitymanager.NewScopedUpdates(mgr, entitymanager.UpdateScope{"task": {"status"}}, "action:submit")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = su.PatchEntity(asUser("bob"), "TASK-1",
+				entity.Patch{Properties: map[string]any{"status": "submitted"}})
+			if got := errors.Is(err, acl.ErrForbidden); got != tc.wantDenied {
+				t.Fatalf("forbidden = %v (err %v), want %v", got, err, tc.wantDenied)
+			}
+			want := "submitted"
+			if tc.wantDenied {
+				want = "draft"
+			}
+			stored, gerr := st.GetEntity(context.Background(), entity.Ref{ID: "TASK-1"})
+			if gerr != nil {
+				t.Fatal(gerr)
+			}
+			if got := stored.GetString("status"); got != want {
+				t.Errorf("status = %q, want %q", got, want)
+			}
+			ops := map[string]bool{}
+			for _, rec := range mem.Records() {
+				ops[rec.Op] = true
+			}
+			if tc.wantDenied && (!ops[audit.OpDeniedWrite] || ops[audit.OpACLBypass] || ops[audit.OpUpdateEntity]) {
+				t.Errorf("audit ops = %v, want only %s", ops, audit.OpDeniedWrite)
 			}
 		})
 	}

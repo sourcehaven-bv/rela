@@ -34,6 +34,14 @@ type elevatedActionApp struct {
 
 func newElevatedActionApp(t *testing.T) *elevatedActionApp {
 	t.Helper()
+	return newElevatedActionAppWithACL(t, nil)
+}
+
+// newElevatedActionAppWithACL is newElevatedActionApp with writeACL in place
+// of the declarative policy on the write path and the app; nil keeps the
+// policy. The request still carries bob's policy read gate.
+func newElevatedActionAppWithACL(t *testing.T, writeACL acl.ACL) *elevatedActionApp {
+	t.Helper()
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "actions"), 0o755); err != nil {
 		t.Fatal(err)
@@ -71,11 +79,16 @@ func newElevatedActionApp(t *testing.T) *elevatedActionApp {
 		Assignments: map[string]string{"bob": "submitter"},
 	}, st)
 	mem := audit.NewMemory()
+	aclOpt := appbuildtest.WithDeclarative(decl)
+	var appACL acl.ACL = decl
+	if writeACL != nil {
+		aclOpt, appACL = appbuildtest.WithACL(writeACL), writeACL
+	}
 	svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, paths), appbuildtest.WithStore(st),
-		appbuildtest.WithDeclarative(decl), appbuildtest.WithAudit(mem))
+		aclOpt, appbuildtest.WithAudit(mem))
 	app := newAppFromParts(&Config{}, nil, newFixture())
 	rebindApp(app, fs, paths, svc)
-	setTestACL(t, app, decl)
+	setTestACL(t, app, appACL)
 	app.schema.Publish(&Schema{Cfg: &Config{}, Meta: meta})
 	if err := app.SetSecurityConfig(SecurityConfig{BindAddress: "127.0.0.1:8080"}); err != nil {
 		t.Fatal(err)
@@ -272,6 +285,47 @@ func TestGrantElevatedUpdates(t *testing.T) {
 			}
 			if got := deps.ElevatedUpdater != nil; got != tc.wantWriter {
 				t.Errorf("writer set = %v, want %v", got, tc.wantWriter)
+			}
+		})
+	}
+}
+
+// TestAction_ElevatedUpdatesReadOnly pins that --read-only holds for an
+// elevated action: the elevated update fails like an ordinary update on the
+// shared run path that the HTTP route and the MCP tools use, and nothing
+// changes.
+func TestAction_ElevatedUpdatesReadOnly(t *testing.T) {
+	t.Parallel()
+	elevated := `rela.bypass_acl(function(admin)
+		admin.update_entity("TKT-1", {status = "submitted"})
+	end)`
+	tests := []struct {
+		name   string
+		acl    acl.ACL
+		script string
+	}{
+		{name: "elevated update", acl: acl.ReadOnlyACL{}, script: elevated},
+		{name: "elevated update, pointer form", acl: &acl.ReadOnlyACL{}, script: elevated},
+		{
+			name: "ordinary update for comparison", acl: acl.ReadOnlyACL{},
+			script: `rela.update_entity("TKT-1", {status = "submitted"})`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			a := newElevatedActionAppWithACL(t, tc.acl)
+			code, body := a.run(t, elevatedSubmit, tc.script)
+			if code != http.StatusUnprocessableEntity {
+				t.Fatalf("code = %d, want 422; body=%s", code, body)
+			}
+			if got := a.prop(t, "TKT-1", "status"); got != "draft" {
+				t.Errorf("status = %v, want draft", got)
+			}
+			for _, rec := range a.audit.Records() {
+				if rec.Op == audit.OpACLBypass || rec.Op == audit.OpUpdateEntity {
+					t.Errorf("unexpected %s audit row", rec.Op)
+				}
 			}
 		})
 	}

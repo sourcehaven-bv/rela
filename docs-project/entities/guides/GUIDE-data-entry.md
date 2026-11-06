@@ -6639,6 +6639,8 @@ an action. It has these limits:
   written.
 - The caller must be able to read the target. A row the caller cannot read is
   reported as `entity not found`, like a row that does not exist.
+- A read-only instance (`--read-only`) refuses the update, as it refuses
+  every other write.
 - Transition rules, validation and automations apply as on any update. An
   automation that the update triggers runs with the caller's normal access.
 - A transition guard still checks the caller's permission. To keep a field

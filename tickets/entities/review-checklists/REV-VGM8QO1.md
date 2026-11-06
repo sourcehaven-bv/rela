@@ -41,7 +41,7 @@ unexplained suppression is a finding nobody can re-evaluate later.
 
 **Review Responses:** RR-KFW02L1, RR-0HCBSFB, RR-TD45CX4, RR-B4XUWX3,
 RR-7MCRN07, RR-IQZGRZP, RR-ZMOD2AV, RR-YRXB8A3, RR-LDLLTYV, RR-S9NA7S0,
-RR-AB38TEQ, RR-Y5WQRHQ (wont-fix), RR-A3XZWQF, RR-5PNH469. Both
+RR-AB38TEQ, RR-Y5WQRHQ (wont-fix), RR-A3XZWQF, RR-5PNH469, RR-BN23OMF (CISO). Both
 cranky-code-reviewer and rela-security-reviewer ran.
 
 ## Acceptance Verification

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"slices"
 
+	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -31,6 +32,9 @@ type UpdateScope map[string][]string
 //     fields the caller may write on rows they see and never reaches others.
 //   - The stored type and every named property must be in the scope.
 //   - Content and external refs are refused.
+//
+// A read-only instance refuses the write as it refuses any update: with the
+// ACL's 403 and a denied-write audit row.
 //
 // Transition rules, validation and automations run as on any update. A
 // transition guard still asks whether the caller holds its permission, so a
@@ -98,7 +102,17 @@ func (s *ScopedUpdates) PatchEntity(ctx context.Context, id string, p entity.Pat
 			}
 			return err
 		}
-		return s.inScope(stored.Type, p)
+		if err := s.inScope(stored.Type, p); err != nil {
+			return err
+		}
+		// Read-only is a process-wide refusal that no grant lifts, and
+		// elevation skips AuthorizeWrite, so the scoped write asks the
+		// non-elevated handle. Under read-only that denies and audits the
+		// write exactly as a normal update.
+		if access.ModeOf(s.m.deps.ACL).RefusesWrites() {
+			return s.m.authorizeAndAudit(ctx, entityUpdateRequest(stored.Type, stored.Ref()))
+		}
+		return nil
 	}
 	res, err := patchEntity(ctx, s.m.elevated(), id, p, patchPre{check: check})
 	return res, valueFreeTransitionError(err)

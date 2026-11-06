@@ -1468,6 +1468,9 @@ deps:
       - predicatefns
   entitymanager:
     mayDependOn:
+      # A scoped elevated update asks access.ModeOf whether the instance is
+      # read-only (TKT-JA5SABG). access is a leaf (acl, principal).
+      - access
       - acl
       - audit
       - autocascade
