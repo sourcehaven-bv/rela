@@ -338,8 +338,9 @@ export function openCollabRoom(opts: CollabRoomOptions): CollabRoom {
 }
 
 function defaultServerUrl(): string {
+  // http: becomes ws: and https: becomes wss:.
   const { protocol, host } = window.location
-  return `${protocol === 'https:' ? 'wss:' : 'ws:'}//${host}`
+  return `${protocol.replace(/^http/, 'ws')}//${host}`
 }
 
 /**
