@@ -190,3 +190,28 @@ func TestReadOnly_AuthorizeTakesPrecedenceOverAuthFunc(t *testing.T) {
 	assert.Empty(t, srv.GetDoc("room").GetText("t").ToString(),
 		"Authorize must take precedence over AuthFunc")
 }
+
+// rela fork — a read-only peer's BroadcastStateless must not reach other peers.
+func TestReadOnly_BroadcastStatelessDropped(t *testing.T) {
+	srv := ygws.NewServer()
+	srv.Authorize = readOnlyByHeader
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	viewer := dialReadOnly(t, ts, "room", true)
+	writer := dialReadOnly(t, ts, "room", false)
+	listener := dialReadOnly(t, ts, "room", false)
+	drainHandshake(t, viewer, crdt.New())
+	drainHandshake(t, writer, crdt.New())
+	drainHandshake(t, listener, crdt.New())
+
+	sendBroadcastStateless(t, viewer, "from viewer")
+	time.Sleep(100 * time.Millisecond)
+	sendBroadcastStateless(t, writer, "from writer")
+
+	outerType, payload := readOne(t, listener, 2*time.Second)
+	require.Equal(t, uint64(5), outerType)
+	got, err := encoding.NewDecoder(payload).ReadVarString()
+	require.NoError(t, err)
+	assert.Equal(t, "from writer", got, "the read-only peer's broadcast must be dropped")
+}

@@ -25,6 +25,8 @@ needs to decide what each connection may put in its awareness state
   first made it live, for the room's lifetime. Only connections with that
   owner may change or remove it, so a reconnecting tab keeps its cursor.
   A peer without an owner keeps the rule above.
+- A read-only connection may not send a BroadcastStateless frame to other
+  peers. Upstream dropped only its document and awareness writes.
 - An in-band auth frame (`OnTokenAuth`) may replace a connection's stamp but
   never remove it.
 - Import paths point at this directory. Upstream's Redis cluster test is

@@ -199,6 +199,9 @@ func (p *peer) handleMessage(data []byte) {
 				"room", p.roomName, "err", err)
 			return
 		}
+		if p.readOnly {
+			return // rela fork: a read-only peer may not send to other peers.
+		}
 		p.broadcast(encoding.EncodeBytes(func(enc *encoding.Encoder) {
 			enc.WriteVarUint(msgStateless)
 			enc.WriteVarString(payload)

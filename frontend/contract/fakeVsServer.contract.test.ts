@@ -74,11 +74,22 @@ beforeAll(() => {
   registerEntityPlurals(new Map([[TYPE, 'notes']]))
 })
 
+// The fake has no co-editing relay, so it serves collab off. The server's
+// collab flag and its per-process epoch describe the process, not the
+// fixture, and are left out of the snapshot.
+function withoutCollab(config: { app?: Record<string, unknown> }) {
+  if (config.app) {
+    const { collab_enabled: _enabled, collab_epoch: _epoch, ...app } = config.app
+    return { ...config, app }
+  }
+  return config
+}
+
 describe('fake API snapshot', () => {
   it('serves the schema and config the server serves', async () => {
     const live = {
       schema: (await direct.get('/_schema')).data,
-      config: (await direct.get('/_config')).data,
+      config: withoutCollab((await direct.get('/_config')).data),
     }
     // The fake imports the snapshot, so this run still compares against the
     // old one; the next run uses what was written.
