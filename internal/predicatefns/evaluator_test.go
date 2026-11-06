@@ -97,6 +97,41 @@ func TestEvaluator_CompileFilter(t *testing.T) {
 	}
 }
 
+func TestEvaluator_CompileClauses(t *testing.T) {
+	ev := predicatefns.NewEvaluatorWithClock(evalMeta(), fixedClock())
+	tests := []struct {
+		name    string
+		clauses []string
+		props   map[string]any
+		want    bool
+		wantErr bool
+	}{
+		{name: "match", clauses: []string{"title=hello", "count>3"},
+			props: map[string]any{"title": "hello", "count": 5}, want: true},
+		{name: "no match", clauses: []string{"title=hello", "count>3"},
+			props: map[string]any{"title": "hello", "count": 2}},
+		{name: "parse error", clauses: []string{"=x"}, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := ev.CompileClauses("item", tc.clauses)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("want an error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			got, err := ev.Matches(context.Background(), prog, "item", "I-1", tc.props)
+			if err != nil || got != tc.want {
+				t.Errorf("Matches = %v, %v; want %v", got, err, tc.want)
+			}
+		})
+	}
+}
+
 // TestEvaluator_UnknownType errors on an unknown entity type.
 func TestEvaluator_UnknownType(t *testing.T) {
 	ev := predicatefns.NewEvaluatorWithClock(evalMeta(), fixedClock())

@@ -61,6 +61,10 @@ export const entityRefNode = $node('entityRef', () => ({
   // and so the slash-menu insertion can replace a selected reference.
   selectable: true,
   draggable: false,
+  // Read by rela's y-prosemirror patch (patches/y-prosemirror+*.patch):
+  // these attributes stay in this view and never enter a co-editing room,
+  // because a title is per-principal ACL output (TKT-CJL604).
+  localAttrs: ['title', 'entityType', 'entityId', 'inaccessible', 'resolvedFromServer'],
   attrs: {
     /** The entity ID. This is the only thing that is stored. */
     id: {},

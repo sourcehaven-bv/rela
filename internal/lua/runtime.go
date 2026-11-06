@@ -129,9 +129,7 @@ type Runtime struct {
 	caps          Capabilities      // ambient capability grants; zero value denies all (TKT-YH52OM)
 	isAction      bool              // true when running as an action (changes rela.output behavior)
 	refWrites     bool              // may set external_ref properties; see WithExternalRefWrites
-	isDocument    bool              // document mode: rela.document populated, rela.output becomes a warning
-	documentID    string            // data-entry.yaml documents: key, exposed as rela.document.id
-	documentEntry string            // ID of the entity being rendered, exposed as rela.document.entry_id
+	document      documentMode      // set by the document options; zero outside a render
 
 	// listRender is set (non-nil Rows) only for a LIST document render — the
 	// lists: export_render override. It rides on document mode rather than
@@ -165,6 +163,10 @@ type Runtime struct {
 	// the caller avoids a context-flow the linter (contextcheck) would flag
 	// and keeps the lua package free of ctx-identity plumbing.
 	principal principal.Principal
+
+	// clock is read once at construction for rela.today, rela.now and
+	// rela.now_unix. Nil: accepted — production never sets it; time.Now is used.
+	clock func() time.Time
 
 	// errorFrames holds typed stack frames captured by the PCall message
 	// handler on the most recent failed run. Read via ErrorFrames() after
@@ -228,6 +230,15 @@ func WithPrincipal(p principal.Principal) Option {
 	}
 }
 
+// WithClock sets the clock behind rela.today, rela.now, rela.now_unix,
+// rela.days_since and the default date of rela.rrule_next. Tests use it to pin
+// the time; production omits it and reads time.Now.
+func WithClock(now func() time.Time) Option {
+	return func(r *Runtime) {
+		r.clock = now
+	}
+}
+
 // callerCtx returns the parent context (or context.Background() if
 // none was set). Used by write bindings to derive the ctx passed to
 // the Mutator — so the caller's Principal and triggered_by flow
@@ -276,6 +287,13 @@ func WithExternalRefWrites() Option {
 	}
 }
 
+// documentMode is what the document options set on a [Runtime].
+type documentMode struct {
+	on    bool   // rela.document populated, rela.output becomes a warning
+	id    string // data-entry.yaml documents: key, exposed as rela.document.id
+	entry string // ID of the entity being rendered, exposed as rela.document.entry_id
+}
+
 // WithDocumentMode marks the runtime as running a data-entry document
 // renderer. Populates the rela.document.{id, entry_id} table and sets
 // rela.mode = "document" so scripts can branch on context; also changes
@@ -285,9 +303,9 @@ func WithExternalRefWrites() Option {
 // the ID of the entity being rendered.
 func WithDocumentMode(documentID, entryID string) Option {
 	return func(r *Runtime) {
-		r.isDocument = true
-		r.documentID = documentID
-		r.documentEntry = entryID
+		r.document.on = true
+		r.document.id = documentID
+		r.document.entry = entryID
 	}
 }
 
@@ -308,8 +326,8 @@ func WithDocumentMode(documentID, entryID string) Option {
 // document has no driving list either. rela.document carries `id` alone.
 func WithStandaloneDocumentMode(documentID string) Option {
 	return func(r *Runtime) {
-		r.isDocument = true
-		r.documentID = documentID
+		r.document.on = true
+		r.document.id = documentID
 	}
 }
 
@@ -329,8 +347,8 @@ func WithStandaloneDocumentMode(documentID string) Option {
 // empty-string. See registerContextBindings for why.
 func WithListDocumentMode(documentID string, lrc ListRenderContext) Option {
 	return func(r *Runtime) {
-		r.isDocument = true
-		r.documentID = documentID
+		r.document.on = true
+		r.document.id = documentID
 		r.listRender = lrc
 	}
 }
@@ -497,7 +515,7 @@ func newRuntime(deps WriteDeps, stdout io.Writer, allowWrites bool, opts ...Opti
 		outputDir:   r.outputDir,
 		projectRoot: deps.ProjectRoot,
 		isAction:    r.isAction,
-		isDocument:  r.isDocument,
+		isDocument:  r.document.on,
 	}
 
 	// In captured-stdout contexts (document mode, action mode), redirect
@@ -506,7 +524,7 @@ func newRuntime(deps WriteDeps, stdout io.Writer, allowWrites bool, opts ...Opti
 	// is a buffer. We override only for these modes so CLI / scheduler /
 	// MCP / validation / automation scripts keep the default behavior —
 	// users rely on print() reaching their terminal there.
-	if r.isDocument || r.isAction {
+	if r.document.on || r.isAction {
 		L.SetGlobal("print", L.NewFunction(r.out.luaPrint))
 	}
 
@@ -941,18 +959,26 @@ func (r *Runtime) registerReadBindings(rela *lua.LTable) {
 
 	// Utility functions
 	r.L.SetField(rela, "sort_entities", r.L.NewFunction(luaSortEntities))
-	r.L.SetField(rela, "days_since", r.L.NewFunction(luaDaysSince))
-	r.L.SetField(rela, "today", lua.LString(time.Now().Format("2006-01-02")))
-	// rela.now_unix: the current time as unix seconds, stamped once at runtime
-	// construction (like rela.today above). The Lua sandbox excludes the `os`
-	// library, so a script has no os.time(); this is the sanctioned way to read
-	// the current time — needed, e.g., to date an HMAC-signed outbound request
-	// (see examples/idp-sync.lua). An action runtime is built per invocation, so
-	// the value is fresh each run.
-	r.L.SetField(rela, "now_unix", lua.LNumber(time.Now().Unix()))
+	// rela.today, rela.now, rela.now_unix and the "today" behind
+	// rela.days_since and rela.rrule_next come from ONE clock reading taken at
+	// runtime construction, so a script never sees a date that disagrees with
+	// its timestamp across midnight. The Lua sandbox excludes the `os`
+	// library, so a script has no os.time(); these are the sanctioned way to
+	// read the current time — needed, e.g., to date an HMAC-signed outbound
+	// request (see examples/idp-sync.lua). An action runtime is built per
+	// invocation, so the values are fresh each run.
+	clock := r.clock
+	if clock == nil {
+		clock = time.Now
+	}
+	now := clock()
+	r.L.SetField(rela, "today", lua.LString(now.Format(time.DateOnly)))
+	r.L.SetField(rela, "now", lua.LString(now.UTC().Format(time.RFC3339)))
+	r.L.SetField(rela, "now_unix", lua.LNumber(now.Unix()))
+	r.L.SetField(rela, "days_since", r.L.NewFunction(luaDaysSince(now)))
 
 	// Date and RRULE utility functions
-	registerDateHelpers(r.L, rela)
+	registerDateHelpers(r.L, rela, now)
 
 	// Markdown AST and generation helpers module (rela.md.*)
 	r.registerMarkdownModule(rela)
@@ -1080,10 +1106,10 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 	// WithListDocumentMode was applied. In every other context rela.mode and
 	// rela.document are absent (Lua nil), so a script that branches on them
 	// sees nil outside document renders.
-	if r.isDocument {
+	if r.document.on {
 		r.L.SetField(rela, "mode", lua.LString("document"))
 		docTable := r.L.NewTable()
-		r.L.SetField(docTable, "id", lua.LString(r.documentID))
+		r.L.SetField(docTable, "id", lua.LString(r.document.id))
 
 		// entry_id is set ONLY when there is a real entry entity. An entity
 		// render always has one (the caller path-validates it before we get
@@ -1094,8 +1120,8 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 		// idiomatic `if rela.document.entry_id then rela.get_entity(...)`
 		// guard would pass and then raise ("entity ID cannot be empty"),
 		// and `entry_id or default` would yield "" instead of the default.
-		if r.documentEntry != "" {
-			r.L.SetField(docTable, "entry_id", lua.LString(r.documentEntry))
+		if r.document.entry != "" {
+			r.L.SetField(docTable, "entry_id", lua.LString(r.document.entry))
 		}
 
 		// List-render bindings. Kept as closures over the provider rather
@@ -2327,24 +2353,25 @@ func luaTableToGoMap(t *lua.LTable) map[string]any {
 const hoursPerDay = 24
 
 // luaDaysSince implements rela.days_since(date_string) -> number
-// Calculates the number of days between the given date and today.
-// Accepts RFC3339 (2006-01-02T15:04:05Z07:00) or date-only (2006-01-02) formats.
-// Returns -1 if the date cannot be parsed.
-func luaDaysSince(ls *lua.LState) int {
-	dateStr := ls.CheckString(1)
-	if dateStr == "" {
-		ls.Push(lua.LNumber(-1))
+// Calculates the number of days between the given date and now, the runtime's
+// clock reading. Accepts RFC3339 (2006-01-02T15:04:05Z07:00) or date-only
+// (2006-01-02) formats. Returns -1 if the date cannot be parsed.
+func luaDaysSince(now time.Time) lua.LGFunction {
+	return func(ls *lua.LState) int {
+		dateStr := ls.CheckString(1)
+		if dateStr == "" {
+			ls.Push(lua.LNumber(-1))
+			return 1
+		}
+
+		t, err := parseDate(dateStr)
+		if err != nil {
+			ls.Push(lua.LNumber(-1))
+			return 1
+		}
+
+		days := int(now.Sub(t).Hours() / hoursPerDay)
+		ls.Push(lua.LNumber(days))
 		return 1
 	}
-
-	t, err := parseDate(dateStr)
-	if err != nil {
-		ls.Push(lua.LNumber(-1))
-		return 1
-	}
-
-	now := time.Now()
-	days := int(now.Sub(t).Hours() / hoursPerDay)
-	ls.Push(lua.LNumber(days))
-	return 1
 }

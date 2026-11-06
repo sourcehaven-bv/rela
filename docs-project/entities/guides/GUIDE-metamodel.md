@@ -2218,6 +2218,7 @@ copies:
 | `on_success.landing` | Where the web app goes afterwards: `written` (the face written, the default), `stay` (reload in place), `{world: <name>}` or `{face: <name>}`. |
 | `fields` | `all` to copy every declared property, or a map from target property to source expression using the `{{...}}` interpolation grammar. A copy between different types requires an explicit map. |
 | `keep` | With `fields: all`, a list of target properties the copy never writes: each keeps the target face's value, or stays unset on a new face. |
+| `set` | With `fields: all`, a map from target property to a value the copy writes in place of the source's, using the same grammar as a `fields` map: literal text, `{{today}}`, `{{now}}`, `{{entity.id}}` and `{{new.<property>}}` of the source face. For example, `adopted_on: "{{today}}"` stamps the date of the copy. |
 | `relations` | A map from relation type to `merge` (add the edges the target lacks) or `replace` (swap the target face's edges of that type). Only `scope: content` relation types can be listed. An omitted type is not copied. |
 | `guard.permission` | The ACL permission a caller must hold on the source entity. **Required** whenever `to` names a face. |
 
@@ -2234,6 +2235,9 @@ The loader refuses a copy definition that:
 - copies no fields, or declares both `fields: all` and a field map;
 - declares `keep:` without `fields: all`, or keeps a property the target
   type does not declare;
+- declares `set:` without `fields: all`, or sets a property the target type
+  does not declare, a property under `keep:`, a file property, an external
+  ref, or a computed or rollup property;
 - uses `fields: all` on a copy into a different entity. That copy reads
   through the caller's visibility, so copying every field would write a
   redacted entity;
@@ -2803,6 +2807,7 @@ validations:
     when_condition: "..." # Optional: expression, ANDed with `when`
     then_condition: "..." # Optional: expression, ANDed with `then`
     severity: error # Optional: "error" or "warning" (default)
+    enforce: write # Optional: refuse a write that breaks the rule
 ```
 
 ### How Validation Rules Work
@@ -3360,6 +3365,79 @@ Found 2 errors, 1 warnings across 2 rules
 - **error**: Critical violations that should be fixed. Displayed with ✗
 - **warning**: Recommendations that may need attention. Displayed with ⚠
 
+### Enforcing a rule on write (`enforce: write`)
+
+A validation rule only reports by default: `rela analyze validations` and the
+analyze page list its violations, and a write that breaks it still succeeds.
+Add `enforce: write` to make every write check the rule. A write whose new
+state breaks the rule is refused with `422 validation_failed`:
+
+```yaml
+validations:
+  - name: rechtsgrond-bij-beoordeling
+    description: Een verwerking ter beoordeling heeft een rechtsgrond.
+    entity_type: verwerking
+    enforce: write
+    when: ["versiestatus=ter_beoordeling"]
+    then: ["rechtsgrond!="]
+```
+
+With this rule, setting `versiestatus` to `ter_beoordeling` on a record without
+a `rechtsgrond` is refused. Setting both in one write is accepted.
+
+The rule is checked against the state the write stores:
+
+- An update or patch is checked after its on-update automations ran.
+- A create is checked as the caller sent it, with template defaults applied,
+  and again when its on-create automations write. The create is stored before
+  those automations run, so if an automation breaks the rule, the create
+  reports that the entity was created but the rest of the create failed. The
+  entity stays stored without the automation's values; do not retry the
+  create.
+- Copies, conversions and restores are checked on the row they write.
+
+The refusal lists the rule in `errors[]` with code `rule` and an empty JSON
+pointer, because a rule is about the whole entity. Its message names the rule
+and quotes the `description`, never a property value. The rule keeps running in
+`rela analyze validations`, which finds the rows stored before the rule was
+enforced.
+
+An enforced rule reads only the entity being written, so it may use
+`entity_type`, `faces`, `when`, `then`, `when_condition` and `then_condition`.
+The schema fails to load when an enforced rule also has:
+
+- `lua`, `lua_file` or `lua_args`: Lua never runs on the write path.
+- `relations` or a `related(...)` condition: these read other entities.
+- `content`: an enforced rule checks properties only.
+- a roll-up property: a roll-up is computed when it is read, so a write does
+  not carry it.
+- `severity: warning`: a rule that refuses a write reports an error. Without
+  `severity`, an enforced rule is an error.
+- no `then` or `then_condition`: the rule would check nothing.
+
+A `when` condition that cannot be evaluated refuses the write, so a value of
+the wrong type cannot switch the rule off. A `when` condition whose properties
+are all unset does not apply: `entity.amount > 10000` does not refuse a record
+without an amount.
+
+A condition that does not compile stops the server or command at startup.
+The Configure screen cannot add or remove `enforce`, remove an enforced rule,
+or change what it checks (`entity_type`, `faces`, `when`, `when_condition`,
+`then`, `then_condition`). Change those in `schema.yaml`.
+
+Whether a write is refused depends on the values the rule reads. If the rule
+reads a property that a role cannot see because of `visible:`, a writer with
+that role learns something about the value from the refusal. The server logs a
+warning at startup for each such rule. Write the rule on properties every
+writer of the type may read.
+
+Writes that bypass the write path do not check the rule: `rela import` and data
+migrations write to the store directly.
+
+The deployment's validation mode is a separate setting: it decides whether a
+missing required property or an invalid value refuses a write (see "Validation
+mode" in the CLI reference).
+
 ### Tips
 
 1. **Start with warnings**: Begin with `severity: warning` and promote to `error` once your data is cleaned up
@@ -3458,6 +3536,7 @@ Automations fire based on entity changes:
 | `relation_created` | Fires when this relation type is created  | `implements`           |
 | `relation_removed` | Fires when this relation type is removed  | `implements`           |
 | `faces`            | Content states to watch (default: all)    | `[published]`          |
+| `copy`             | Copy definitions to watch (string or list). Alone, fires on every run of a named copy; beside `created`, `updated` or `property`, limits that key to the copy's write. See [Automations on a copy](#automations-on-a-copy) | `adopt` |
 | `when`             | Property conditions that must match (AND) | `["kind=enhancement"]` |
 | `condition`        | Predicate expression that must hold (AND) | `"days_between(entity.due, today()) <= 7"` |
 
@@ -3492,6 +3571,56 @@ narrow.
 
 An action writes back to the state that triggered it, so an automation firing on
 a translation updates that translation and not its sibling.
+
+### Automations on a copy
+
+A [copy](#declaring-copies) runs the automations of the face it writes. When
+the copy creates the target face, the `created` automations run. When it
+overwrites an existing face, the `updated` automations run, with the face as it
+was before the copy as the old state.
+
+The properties the automations `set` are part of the copy's own write, as on
+an ordinary update: the copy stays one write with one audit record. A value an
+automation sets must make a legal state-machine move from the value the copy
+wrote, or the copy is refused and nothing is written. The other actions, such
+as `create_entity`, scripts and background actions, run after the copy is
+written. If one of them fails, the copy stays written and the response carries
+a `follow_up_failed` warning.
+
+This applies to every `created` and `updated` automation on the target type,
+not only to the ones that name a copy. Use `faces:` to keep an automation off
+the face a copy writes.
+
+Use `copy:` to run an automation only when a particular copy writes the face.
+On its own, `copy:` fires on every run of the copy, also when the copy changes
+no value:
+
+```yaml
+automations:
+  - name: stamp-adoption
+    on:
+      entity: policy
+      copy: adopt
+    do:
+      - set: review_on
+        value: "{{today}}"
+      - lua_file: publish-site.lua
+        background: true
+```
+
+Beside `created`, `updated` or `property`, `copy:` narrows that key to writes
+by the named copies. Without `copy:`, an automation fires on a copy's write
+like on any other write.
+
+The loader refuses a `copy:` that names no declared copy, that writes a type
+or face the trigger's `entity:` or `faces:` excludes, or that is combined with
+`relation_created` or `relation_removed`. Each of these would never fire.
+
+A rename re-runs a copy trigger's background actions only on a face that one
+of its copies writes.
+
+To stamp a value on every run of one copy, the copy's own `set:` key is
+simpler than an automation.
 
 ### Conditional Triggers
 

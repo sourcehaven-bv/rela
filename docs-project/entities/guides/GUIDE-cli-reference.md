@@ -84,11 +84,54 @@ when it doesn't exist.
 ```yaml
 formatting:
   line_width: 80 # Maximum line width for paragraph wrapping (default: 80)
+validation: advisory # advisory (default) or strict
 ```
 
-| Setting                 | Description                               | Default |
-| ----------------------- | ----------------------------------------- | ------- |
-| `formatting.line_width` | Maximum line width for paragraph wrapping | 80      |
+| Setting                 | Description                                                   | Default    |
+| ----------------------- | ------------------------------------------------------------- | ---------- |
+| `formatting.line_width` | Maximum line width for paragraph wrapping                     | 80         |
+| `validation`            | Validation mode of this deployment: `advisory` or `strict`    | `advisory` |
+
+### Validation mode
+
+The validation mode decides what a write does with a missing required property,
+a value of the wrong type, or a value that is not allowed, such as a value
+outside an enum.
+
+- `advisory`: the write succeeds and reports the problem as a warning. This is
+  the default. It suits a project whose files are also edited by hand or by
+  git, because such files may already hold these states.
+- `strict`: the write is refused with `422 validation_failed`. The response
+  lists each failure in `errors[]`, with a JSON pointer to the property. Use it
+  on a deployment where the web app, the API or MCP is the only way data gets
+  in.
+
+The `RELA_VALIDATION` environment variable overrides the file. An unknown value
+stops the server or command at startup. The mode is a deployment setting, so it
+is not in `schema.yaml`: two deployments of the same schema may use different
+modes.
+
+In both modes, an error in the structure of the entity (an unknown type, or an
+ID with the wrong prefix) refuses the write, and a rule declared
+`enforce: write` refuses a write that breaks it (see the metamodel reference,
+"Enforcing a rule on write").
+
+Strict mode checks the state that is stored:
+
+- An update is checked after its on-update automations ran, so an automation
+  that fills a required property lets the update pass.
+- A create is checked before its on-create automations run, because the
+  create is stored first. A property that only an on-create automation sets
+  cannot be required in strict mode. Give it a template default instead.
+- The create dry run (`?dry_run=true`, used by the create form) and the
+  task-item conversion preview always report warnings, because they exist to
+  list the fields that are still empty.
+- The whole stored state is checked, not only the properties the write
+  changes. A row stored before strict was turned on, with a missing required
+  property, refuses every update until that property is filled. Run
+  `rela analyze properties` and fix those rows before you switch to strict.
+- `rela import` and data migrations write to the store directly
+  and are not checked.
 
 ## Entity addresses
 

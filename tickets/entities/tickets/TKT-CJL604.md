@@ -5,7 +5,9 @@ title: Real-time co-editing of entity bodies (single node)
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+started: "2026-11-05"
+completed: "2026-11-05"
+status: done
 ---
 
 ## Description

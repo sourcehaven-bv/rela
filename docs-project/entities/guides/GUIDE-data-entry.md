@@ -154,6 +154,68 @@ The badge appears and disappears without a reload. On a kanban board this
 holds for the first 100 cards; cards further down update on the next change
 to the entity or when you reload the page.
 
+### Editing a body together
+
+Several people can edit the same entity body at once. When you open the body
+editor while someone else has it open, you join a shared editing session:
+
+- Each person's typing appears in the other editors as they type. A labelled
+  cursor shows where each of the others is.
+- One editor in the session saves the shared text, about a second after the
+  last change. The others do not save, so the session sends one save rather
+  than one per person.
+- Undo and redo undo only your own changes, not those of the others.
+- Closing the editor leaves the session. Every editor saves what it holds
+  when it leaves, and another editor in the session takes over saving.
+- An editor saves only while it is connected. An editor that lost its
+  connection cannot see the others' changes, so it waits until it is back.
+
+Some rules apply:
+
+- **You need permission to update the entity to join.** Without it, the
+  editor does not join: you see the body as it was last saved, not the
+  others' typing.
+- **Losing access ends your part in the session.** The server checks your
+  access about every 30 seconds and closes your connection when you may no
+  longer read or update the entity. A connection also ends after two minutes
+  and reconnects, so the check on joining runs again.
+- **Your user id is your name in the session.** The labelled cursor shows your
+  user id, for example `bob@example.com`, not the title of a person record.
+  The server sets this label from your sign-in, so an editor cannot show a
+  cursor under someone else's name or move someone else's cursor.
+- **A save is attributed to the editor that saved it.** The history shows
+  the user whose editor saved the shared text, which may hold text others
+  typed.
+- **References show the title you may see.** A reference to another entity
+  shows each person the title their own permissions allow. One person's titles
+  are never sent to the others.
+- **Unsaved changes keep you out of a session.** If your editor holds a change
+  that has not been saved yet, it saves on its own, as before.
+- **A session that cannot start falls back.** If the session does not connect
+  within about five seconds, the editor works on its own and saves as before,
+  and a notice says so.
+- **A dropped connection ends the session.** After about three minutes without
+  contact, the editor saves what you typed, closes, and says so. Open it again
+  to rejoin.
+- **A new version of the app reloads the page once.** When the server runs a
+  newer build than your page, the page saves your changes and reloads to join.
+  If the reload does not help, the editor works on its own.
+
+A session lives in the memory of the server process. It holds no data the
+save does not also write, and a session nobody uses for five minutes is
+discarded. A session whose shared text grows past 32 MiB is closed. A
+restart ends every session: an editor opened before the restart saves what
+it holds, closes, and says so. Open it again to start a new session.
+
+If someone changes the same body without joining the session, for example
+through the API or another tool, the save that follows merges the two
+versions as described under autosave. The session's latest save is not a
+conflict: an editor in the session may resend over it. An older version
+restored from history is merged like any other change.
+
+The desktop app has no shared editing. With the postgres backend and several
+server processes, see "Multiple writers" in the postgres guide.
+
 ## Quick Start
 
 ### 1. Create data-entry.yaml
@@ -9138,6 +9200,18 @@ remove by hand, and leaves the others. A caller who lacks the guard permission r
 a `403` naming it. A source the caller may not read produces the same `404` as
 a source that does not exist. Any other refusal, such as an unknown definition
 or a cross-entity copy without a `target_id`, is a `422`.
+
+A copy also runs the automations of the face it writes (see
+[Automations on a copy](metamodel.md#automations-on-a-copy)). A value an
+automation sets must make a legal state change, or the copy is refused as an
+ordinary update with that change would be, and nothing is written. When an
+automation step after the write fails, the copy stays written and the response
+carries a warning:
+
+```json
+{ "definition": "publish", "entityId": "POL-1", "face": "published", "created": true,
+  "warnings": [{ "code": "follow_up_failed", "detail": "the copy was written; an automation step after it failed" }] }
+```
 
 ### Converting an entity
 

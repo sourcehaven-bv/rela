@@ -40,6 +40,7 @@ export default tseslint.config(
         // Compile-time flag injected by vite `define` (see vite.config.ts /
         // vite-env.d.ts). Declared here so no-undef recognises it (#890).
         __E2E_TEST_HOOKS__: 'readonly',
+        __RELA_BUILD_ID__: 'readonly',
       },
     },
   },

@@ -23,6 +23,9 @@ import { useI18n } from 'vue-i18n'
 import { Editor, rootCtx, defaultValueCtx, editorViewOptionsCtx } from '@milkdown/kit/core'
 import { gfm } from '@milkdown/kit/preset/gfm'
 import { history } from '@milkdown/kit/plugin/history'
+import { collab as collabPlugin } from '@milkdown/plugin-collab'
+import { mergeText } from '@/composables/autoSaveMerge'
+import { bindToRoom, isRoomChange, onRoomHistoryChange, roomHistoryDepths, runRoomHistory } from './editorCollab'
 import { block, BlockProvider } from '@milkdown/kit/plugin/block'
 import { cursor } from '@milkdown/kit/plugin/cursor'
 import { trailing } from '@milkdown/kit/plugin/trailing'
@@ -82,6 +85,7 @@ import EditorToolbar from './EditorToolbar.vue'
 import EntityPickerModal from '../EntityPickerModal.vue'
 import type { EntityRefResolver } from '@/utils/markdown'
 import { useUIStore } from '@/stores/ui'
+import type { EditorCollab } from '@/composables/collab/collabRoom'
 
 const props = defineProps<{
   modelValue: string
@@ -105,6 +109,14 @@ const props = defineProps<{
    * `taskItemConvert`.
    */
   taskItemConvertLabel?: string
+  /**
+   * Edit the body in a co-editing room instead of alone. Read once at mount:
+   * the host keys the editor on the mode, so switching builds a new editor.
+   *
+   * The editor stays read-only until the room has synced. Undo and redo then
+   * act on this client's own changes only, through the room's undo manager.
+   */
+  collab?: EditorCollab
 }>()
 
 const { t } = useI18n()
@@ -259,6 +271,14 @@ let dirty = false
  */
 let armed = false
 
+/**
+ * Whether the co-editing room has synced and is bound to the view.
+ *
+ * Until then a collab editor is read-only: typing into a document the room
+ * is about to replace would be lost.
+ */
+let collabReady = false
+
 // Held in a mutable box so the ProseMirror plugin, created once at mount,
 // always reads the current resolver rather than the one captured at build.
 const resolverHandle: ResolverHandle = { resolver: props.refResolver }
@@ -297,7 +317,12 @@ function refreshDerivedState(state: EditorState): void {
     e.ctx,
     state,
     ALL_COMMANDS.filter(
-      (c) => !DIRECT_TABLE_COMMANDS.has(c.id) && !GUARDED_TABLE_COMMANDS.has(c.id)
+      (c) =>
+        !DIRECT_TABLE_COMMANDS.has(c.id) &&
+        !GUARDED_TABLE_COMMANDS.has(c.id) &&
+        // The history plugin is not loaded in a room, so its commands are not
+        // registered and a dry run would throw. The depths below answer.
+        !(props.collab && HISTORY_COMMANDS.includes(c))
     ),
     active,
     lift(state)
@@ -315,8 +340,11 @@ function refreshDerivedState(state: EditorState): void {
   // Undo and redo report themselves applicable whether or not there is
   // anything on the stack, so the depth is the only honest answer. Same
   // shape of override as the table guards above.
-  if (undoDepth(state) === 0) unavailable.add('undo')
-  if (redoDepth(state) === 0) unavailable.add('redo')
+  const depths = props.collab
+    ? roomHistoryDepths(state)
+    : { undo: undoDepth(state), redo: redoDepth(state) }
+  if (depths.undo === 0) unavailable.add('undo')
+  if (depths.redo === 0) unavailable.add('redo')
 
   unavailableIds.value = unavailable
 
@@ -410,6 +438,16 @@ function runCommand(cmd: EditorCommand): void {
   const e = editor.value
   if (!e) return
   if (unavailableIds.value.has(cmd.id)) return
+  if (props.collab && !collabReady) return
+
+  if (props.collab && (cmd.id === 'undo' || cmd.id === 'redo')) {
+    const view = currentView()
+    if (view) {
+      runRoomHistory(cmd.id, view)
+      view.focus()
+    }
+    return
+  }
 
   // A link needs a target before anything can be applied, so the button opens
   // the dialog instead of dispatching. It must NOT fall through to
@@ -487,6 +525,7 @@ onMounted(async () => {
         appendTransaction: (transactions, _oldState, newState) => {
           for (const tr of transactions) {
             if (armed && tr.docChanged && !isResolutionTransaction(tr)) dirty = true
+            if (collabReady && isRoomChange(tr)) scheduleRoomEmit()
           }
           // Recomputed here rather than in a watcher so the toolbar updates
           // on selection moves too, which change state without changing the
@@ -510,6 +549,7 @@ onMounted(async () => {
       ctx.update(editorViewOptionsCtx, (prev) => ({
         ...prev,
         attributes: { ...(prev.attributes ?? {}), class: 'milkdown-prose md-body' },
+        editable: () => !props.collab || collabReady,
       }))
       // Shared with the sandboxed app editor, so the two cannot serialize a
       // body differently.
@@ -551,7 +591,9 @@ onMounted(async () => {
     })
     .use(RELA_COMMONMARK)
     .use(gfm)
-    .use(history)
+    // A room brings its own undo manager, which undoes only this client's
+    // changes. The plugin itself does nothing until `startCollab` connects it.
+    .use(props.collab ? collabPlugin : history)
     .use(listener)
     .use(entityRefNode)
     .use(RELA_OUTPUT_NODES)
@@ -599,11 +641,16 @@ onMounted(async () => {
   // nothing active until the first edit — a document opened straight onto a
   // heading or a quote had the wrong buttons lit.
   if (mountedView) refreshDerivedState(mountedView.state)
-  // Loading is done; from here a document change is the user's doing.
-  // Only the echo-suppression value settles here. `originalValue` keeps the
-  // bytes the parent gave us, which is what the guard has to compare against.
-  settledValue = serialize()
-  armed = true
+  if (props.collab) {
+    // Stays disarmed and read-only until the room has synced.
+    void startCollab(props.collab)
+  } else {
+    // Loading is done; from here a document change is the user's doing.
+    // Only the echo-suppression value settles here. `originalValue` keeps the
+    // bytes the parent gave us, which is what the guard has to compare against.
+    settledValue = serialize()
+    armed = true
+  }
 
   // E2E hook: expose the serialized markdown on the editor root.
   //
@@ -617,6 +664,53 @@ onMounted(async () => {
       () => serialize()
   }
 })
+
+/**
+ * Binds the editor to its room once the room has synced.
+ *
+ * The room's base, not this client's GET, becomes the guard's baseline: the
+ * room's document derives from it. A document that already differs from it
+ * holds a peer's unsaved edits, so it starts dirty and the next flush emits it.
+ */
+async function startCollab(c: EditorCollab): Promise<void> {
+  const synced = await c.room.whenSynced()
+  const e = editor.value
+  // The editor unmounted, or the room ended, while we waited.
+  if (!synced || !e) return
+
+  e.action((ctx) => bindToRoom(ctx, c))
+
+  // Titles are view-only attributes that never enter the room, so the
+  // document the room rendered has none yet.
+  applyResolver()
+  const view = currentView()
+  if (!view) return
+  refreshDerivedState(view.state)
+  stopRoomHistory = onRoomHistoryChange(view.state, () => {
+    const v = currentView()
+    if (v) refreshDerivedState(v.state)
+  })
+  rebase((c.room.base.value ?? c.base).content)
+  collabReady = true
+  armed = true
+  // Re-reads `editable`, which ProseMirror only evaluates on a props update.
+  view.setProps({})
+}
+
+/**
+ * Makes `content` the guard's baseline in a room.
+ *
+ * `settledValue` falls back to the baseline when the document means something
+ * else, so the guard does not mistake a peer's unsaved edit for the echo of a
+ * load and swallow it.
+ */
+function rebase(content: string): void {
+  originalValue = content
+  lastEmitted = null
+  const current = serialize()
+  dirty = !sameMeaning(current, content)
+  settledValue = dirty ? content : current
+}
 
 /** Re-runs resolution over the whole document against the current resolver. */
 function applyResolver(): void {
@@ -639,6 +733,10 @@ watch(
   (next) => {
     const e = editor.value
     if (!e) return
+    // In a room the document belongs to the room. A save's echo would only
+    // move the baseline, and a body from outside the room arrives through
+    // `applyChange` and `setBaseline`, which the host calls deliberately.
+    if (props.collab) return
     // Only reload when the parent's value genuinely diverges from what the
     // editor holds. Without the guard, echoing back our own emitted value
     // would rebuild the document and drop the cursor on every keystroke.
@@ -688,6 +786,21 @@ function serialize(): string {
   }
 }
 
+/** The listener's debounce, which a room change waits for too. */
+const ROOM_EMIT_DELAY_MS = 200
+let roomEmitTimer: ReturnType<typeof setTimeout> | null = null
+/** Ends the toolbar's subscription to the room's undo stack. */
+let stopRoomHistory: (() => void) | null = null
+
+/** Emits after a room change, which the markdown listener never sees. */
+function scheduleRoomEmit(): void {
+  if (roomEmitTimer) clearTimeout(roomEmitTimer)
+  roomEmitTimer = setTimeout(() => {
+    roomEmitTimer = null
+    flushNow()
+  }, ROOM_EMIT_DELAY_MS)
+}
+
 /** See `flush` below. */
 function flushNow(): void {
   const markdown = serialize()
@@ -724,6 +837,31 @@ defineExpose({
    * a verdict-level assertion is what pins the churn/drift distinction.
    */
   guardedValue: () => guardWriteBack(originalValue, serialize(), dirty),
+  /**
+   * Makes `content` the baseline the guard compares against. In a room, the
+   * host calls this when the room's base moves: after a save by any client.
+   */
+  setBaseline: (content: string) => {
+    if (props.collab) rebase(content)
+    else originalValue = content
+  },
+  /**
+   * Applies the change from `from` to `to` to the document as it is now, as
+   * an edit, so text typed since `from` stays. In a room the change reaches
+   * every peer. Used for a body merged with someone else's change, which
+   * must be saved like any other change. Where the change and the newer
+   * text touch the same lines, the newer text wins.
+   */
+  applyChange: (from: string, to: string) => {
+    const e = editor.value
+    if (!e || (props.collab && !collabReady)) return
+    const current = serialize()
+    const m = mergeText(from, current, to)
+    const next = m.ok ? m.merged : m.oursInConflicts
+    if (sameMeaning(current, next)) return
+    e.action(replaceAll(next))
+    applyResolver()
+  },
   // Task-item conversions; see useTaskItemConvert.
   ...taskItems.exposed,
   /**
@@ -748,6 +886,8 @@ defineExpose({
 })
 
 onBeforeUnmount(() => {
+  if (roomEmitTimer) clearTimeout(roomEmitTimer)
+  stopRoomHistory?.()
   // Close the picker before tearing the editor down so a late `select` cannot
   // fire against a destroyed view.
   pickerOpen.value = false

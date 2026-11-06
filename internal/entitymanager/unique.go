@@ -205,6 +205,8 @@ func uniqueValues(meta *metamodel.Metamodel, e *entity.Entity) []uniqueProp {
 
 // writeWithUniqueCheck runs write with e's `unique:` constraint enforced
 // atomically against it (see [checkUniqueProperties] for the semantics).
+// It first refuses e when e violates a write-enforced validation rule, so
+// every entity write that persists through it is held to those rules.
 //
 // When e sets no unique value, write runs directly against deps.Store and no
 // transaction is opened. Otherwise the scan and write run inside one
@@ -218,6 +220,12 @@ func uniqueValues(meta *metamodel.Metamodel, e *entity.Entity) []uniqueProp {
 func writeWithUniqueCheck(
 	ctx context.Context, deps Deps, e *entity.Entity, excludeSelfID string, write func(st store.Store) error,
 ) error {
+	// The write-enforced rules go first: they read only e, the exact value
+	// written below, so no transaction is needed to make them atomic with
+	// the write, and a refusal costs no store round trip.
+	if err := checkWriteRules(ctx, deps, e); err != nil {
+		return err
+	}
 	capture := writeCaptureFor(ctx, e)
 	if capture == nil && len(uniqueValues(deps.Meta, e)) == 0 {
 		return write(deps.Store)

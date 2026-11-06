@@ -254,13 +254,27 @@ func (h *copiesHandler) invoke(w http.ResponseWriter, r *http.Request, name stri
 			"Copy returned no result", "")
 		return
 	}
-	writeV1JSON(w, http.StatusOK, v1.CopyResult{
+	out := v1.CopyResult{
 		Definition: res.Definition,
 		EntityID:   res.Entity.ID,
 		Face:       res.Entity.Face.String(),
 		Created:    res.Created,
-	})
+	}
+	if res.FollowUpErr != nil {
+		// The copy is written, so the answer is a success: an error would
+		// make the client retry a copy that already happened.
+		logInternalError(r, "copy_follow_up_failed", res.FollowUpErr)
+		out.Warnings = append(out.Warnings, v1.Warning{
+			Code:   warnCopyFollowUpFailed,
+			Detail: "the copy was written; an automation step after it failed",
+		})
+	}
+	writeV1JSON(w, http.StatusOK, out)
 }
+
+// warnCopyFollowUpFailed is the warning for a copy that was written but whose
+// automation side effects failed after.
+const warnCopyFollowUpFailed = "follow_up_failed"
 
 // writeCopyError renders a kernel error. See [copiesHandler.invoke] for why
 // the mapping is asymmetric.

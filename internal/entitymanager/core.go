@@ -252,10 +252,11 @@ func buildCandidateEntity(
 
 	// DEC-HWZHA: hard structural errors abort; soft conditions
 	// (required-missing, type mismatch, invalid enum, malformed value)
-	// ride along on the result as warnings.
+	// ride along on the result as warnings, unless the deployment is
+	// strict (DEC-OYV2AK).
 	var warnings []entity.Warning
 	if errs := metamodel.NewValidator(deps.Meta).ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
-		hard, soft := partitionValidationErrors(errs)
+		hard, soft := partitionValidationErrors(deps.ValidationMode, errs)
 		if len(hard) > 0 {
 			return nil, nil, newValidationError(hard)
 		}
