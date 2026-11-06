@@ -162,6 +162,10 @@ type writeHandler struct {
 	// a document render must not render and attach another. Nil, or
 	// returning nil: the binding is absent.
 	attachRender func() lua.AttachRenderer
+	// elevatedUpdates backs admin.update_entity for an action that declares
+	// allow_acl_bypass: write (TKT-JA5SABG), kept out of luaDeps for the same
+	// reason as versionTags. Nil: such an action fails with 500.
+	elevatedUpdates elevatedUpdaterFactory
 
 	// visible is the read path's resolver. Every addressed write resolves its
 	// row through it first, so a row the caller may not read, at any face, is

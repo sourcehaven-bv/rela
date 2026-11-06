@@ -376,6 +376,16 @@ type WriteDeps struct {
 	// than an unrecorded read.
 	ElevationRecorder ElevationRecorder
 
+	// ElevatedUpdater backs admin.update_entity (TKT-JA5SABG). It is set
+	// only for a data-entry action that declares `allow_acl_bypass: write`
+	// and `elevated_updates:`, and the handle it gets is limited to those
+	// types and properties.
+	//
+	// Nil: accepted, and admin.update_entity is then absent. With this set
+	// and no ElevatedManager or ElevatedReader, update_entity is the only
+	// method on `admin`.
+	ElevatedUpdater ElevatedUpdater
+
 	// VersionTags backs rela.tag_version and rela.untag_version
 	// (TKT-VO6VG9). It is the gated write path: it authorizes the tag
 	// for the ctx principal and audits it.
@@ -403,6 +413,13 @@ type WriteDeps struct {
 	// renders and export_render leave it nil, because a render there would
 	// run inside another write or render.
 	AttachRender AttachRenderer
+}
+
+// ElevatedUpdater is the scoped elevated update handle behind
+// admin.update_entity. The implementation refuses any patch outside the
+// scope the action declared, and any target the caller cannot read.
+type ElevatedUpdater interface {
+	PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error)
 }
 
 // ElevationRecorder receives a notification when a rela.bypass_acl closure

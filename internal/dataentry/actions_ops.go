@@ -102,6 +102,15 @@ func (o actionOps) run(
 	if h.attachRender != nil {
 		deps.AttachRender = h.attachRender()
 	}
+	// The elevation scope must be the one the current config declares, as
+	// for the available_on gate below.
+	if action.AllowACLBypass.Enabled() && h.schema() != s {
+		return nil, failV1(http.StatusConflict, "config_reloaded",
+			"The configuration was reloaded; retry the action")
+	}
+	if fail := grantElevatedUpdates(h.elevatedUpdates, &deps, id, action); fail != nil {
+		return nil, fail
+	}
 	var ent *entity.Entity
 	if payload.EntityID != "" && action.AvailableOn == nil {
 		if e, getErr := deps.VisibleReader.GetAddress(ctx, payload.EntityID); getErr == nil {

@@ -1577,6 +1577,7 @@ func NewApp(
 		versionTags:      func() lua.VersionTagWriter { return app.versionTags.writer },
 		oauth:            func() lua.OAuthTokens { return app.oauth },
 		attachRender:     func() lua.AttachRenderer { return actionAttachRenderer(app) },
+		elevatedUpdates:  elevatedUpdatesFor(em),
 		fullScriptDetail: app.allowFullScriptDetail,
 		paths:            paths,
 		provision:        newProvisionSeam(app),
