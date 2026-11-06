@@ -10,6 +10,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -159,6 +160,16 @@ type CopyResult struct {
 	// Created is true when the copy brought the target face into existence
 	// rather than overwriting one.
 	Created bool
+	// AutomationWarnings and AutomationErrors report the automations the
+	// copy ran on the target face, as on an ordinary create or update.
+	AutomationWarnings []string
+	AutomationErrors   []string
+	// FollowUpErr is the failure of the automations' side effects, which run
+	// after the copy is written. It is not returned as an error, because the
+	// copy is durable and a caller that saw an error would run it again.
+	//
+	// Nil: accepted — the side effects ran, or there were none.
+	FollowUpErr error
 }
 
 // CopyState executes a declared copy definition: write a mapped subset of one
@@ -195,6 +206,15 @@ type CopyResult struct {
 // value is that it does not lie. This matches the existing "audit the
 // durable write" rule, extended past a transaction boundary.
 //
+// # Automations
+//
+// The target face's `created` automations run when the copy creates the
+// face, and its `updated` automations otherwise. Their properties are folded
+// into the copy's own write ([copyEngine.applyCopyAutomations]); their side
+// effects run once the copy has committed and the attachment lock is released
+// ([copyEngine.runCopyCascade]). A failure there leaves the copy written and
+// is reported as [CopyResult.FollowUpErr], as a batch reports its follow-ups.
+//
 // # What this does NOT do
 //
 // It does not validate the DESTINATION WORLD. §9.2 says a copy into a state
@@ -203,10 +223,26 @@ type CopyResult struct {
 // would fork it. That is a boundary, not an omission.
 func (ce *copyEngine) copyState(ctx context.Context, req CopyRequest) (*CopyResult, error) {
 	ctx = withStoreAttribution(ctx)
+	plan, autoResult, result, err := ce.writeCopy(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	// After writeCopy released the attachment lock: an automation's script
+	// may write the same entity, and that write takes the lock again.
+	result.FollowUpErr = ce.runCopyCascade(ctx, plan, autoResult, result)
+	return result, nil
+}
 
+// writeCopy is the write half of [copyEngine.copyState]: it plans the copy,
+// folds the automations' properties into it, and writes, audits and sweeps
+// it under the target's attachment lock. It returns the automation result
+// for the cascade.
+func (ce *copyEngine) writeCopy(
+	ctx context.Context, req CopyRequest,
+) (*copyPlan, *automation.Result, *CopyResult, error) {
 	def, ok := ce.m.deps.Meta.Copies[req.Definition]
 	if !ok {
-		return nil, fmt.Errorf("%w: %q", ErrUnknownCopy, req.Definition)
+		return nil, nil, nil, fmt.Errorf("%w: %q", ErrUnknownCopy, req.Definition)
 	}
 
 	// A copy writes the target face's file values, so it holds the target
@@ -217,16 +253,20 @@ func (ce *copyEngine) copyState(ctx context.Context, req CopyRequest) (*CopyResu
 	// which an upload landing before the write would otherwise revert.
 	release, err := ce.lockCopyTarget(ctx, req, def)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	defer release()
 
 	plan, err := ce.planCopy(ctx, req, def)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
-	if err := ce.planCopyEdges(ctx, plan); err != nil {
-		return nil, err
+	if edgeErr := ce.planCopyEdges(ctx, plan); edgeErr != nil {
+		return nil, nil, nil, edgeErr
+	}
+	autoResult, err := ce.applyCopyAutomations(ctx, plan)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 
 	// Provenance is attached AFTER planning, so it scopes exactly the writes
@@ -253,7 +293,7 @@ func (ce *copyEngine) copyState(ctx context.Context, req CopyRequest) (*CopyResu
 		result = *res
 		return nil
 	}); err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 
 	// AFTER the commit — see the godoc.
@@ -272,7 +312,7 @@ func (ce *copyEngine) copyState(ctx context.Context, req CopyRequest) (*CopyResu
 				"entity", plan.targetID, "err", derr)
 		}
 	}
-	return &result, nil
+	return plan, autoResult, &result, nil
 }
 
 // lockCopyTarget takes the attachment lock of the entity a copy writes, when
@@ -648,7 +688,8 @@ func (ce *copyEngine) authorizeCopy(ctx context.Context, plan *copyPlan) error {
 //
 // The merged target then passes the same structural checks a hand-written
 // create or update would: metamodel validation (hard errors only — the
-// DEC-HWZHA split) and `unique:` natural keys. The kernel writes straight to
+// DEC-HWZHA split, moved by the deployment's mode), write-enforced
+// validation rules and `unique:` natural keys. The kernel writes straight to
 // the store view, so without this a copy was the one entry point that could
 // persist a duplicate slug or an out-of-range enum.
 func (ce *copyEngine) buildCopyTarget(
@@ -673,14 +714,19 @@ func (ce *copyEngine) buildCopyTarget(
 		}
 		target.Content = src.Content
 	}
-	for field, tmpl := range plan.def.Fields {
-		if v, ok := copyFieldValue(tmpl, src); ok {
-			target.Properties[field] = v
-		} else {
-			// The source has no such property: unset rather than write the
-			// empty string a string interpolation would produce, which for
-			// an integer or list property is a type violation.
-			delete(target.Properties, field)
+	// `set:` is only legal beside `fields: all` and `fields:` only without
+	// it, so at most one of the two maps is non-empty. Both write the same
+	// way, over the values copied above.
+	for _, mapping := range []map[string]string{plan.def.Fields, plan.def.Set} {
+		for field, tmpl := range mapping {
+			if v, ok := copyFieldValue(tmpl, src); ok {
+				target.Properties[field] = v
+			} else {
+				// The source has no such property: unset rather than write the
+				// empty string a string interpolation would produce, which for
+				// an integer or list property is a type violation.
+				delete(target.Properties, field)
+			}
 		}
 	}
 	keepTargetValues(plan, target, plan.def.Keep)
@@ -689,10 +735,15 @@ func (ce *copyEngine) buildCopyTarget(
 	}
 	keepTargetExternalRefs(ce.m.deps.Meta, plan, target)
 
-	hard, _ := partitionValidationErrors(
+	hard, _ := partitionValidationErrors(ce.m.deps.ValidationMode,
 		metamodel.NewValidator(ce.m.deps.Meta).ValidateEntity(target.ID, target.Type, target.Properties))
 	if len(hard) > 0 {
 		return newValidationError(hard)
+	}
+	// A write-enforced rule reads only the target. When an automation
+	// changes the target, applyCopyAutomations checks again.
+	if err := checkWriteRules(ctx, ce.m.deps, target); err != nil {
+		return err
 	}
 	// Checked again inside the copy's transaction (applyCopy); this early
 	// pass fails the copy before any edge planning when it cannot succeed.

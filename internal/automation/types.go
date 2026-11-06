@@ -62,6 +62,13 @@ type Trigger struct {
 	// Compiled once when the engine is built (the metamodel is needed for
 	// the typed env); a compile failure is a load error, never a skip.
 	Condition string
+
+	// Copy limits the trigger to writes made by the named copy definitions
+	// (`on.copy:`). With no other event key it fires on every run of a named
+	// copy, whether the copy created the target face or overwrote it. Beside
+	// `created`, `updated` or `property`, it narrows that key to the copy's
+	// write. Empty means the trigger ignores where a write came from.
+	Copy []string
 }
 
 // Action specifies an operation to perform.
@@ -143,6 +150,10 @@ type Event struct {
 
 	// Relation is the affected relation (for RelationCreated/RelationRemoved events).
 	Relation *entity.Relation
+
+	// Copy names the copy definition whose write raised the event, or is
+	// empty for any other write. Only Created and Updated events carry it.
+	Copy string
 }
 
 // EventType identifies the kind of change.

@@ -26,11 +26,13 @@ var weekdayNames = map[string]time.Weekday{
 }
 
 // registerDateHelpers adds date and RRULE utility functions to the rela table.
-func registerDateHelpers(ls *lua.LState, rela *lua.LTable) {
+// now is the runtime's clock reading; rrule_next uses it as the default
+// "after" date.
+func registerDateHelpers(ls *lua.LState, rela *lua.LTable, now time.Time) {
 	ls.SetField(rela, "date_add", ls.NewFunction(luaDateAdd))
 	ls.SetField(rela, "date_weekday", ls.NewFunction(luaDateWeekday))
 	ls.SetField(rela, "date_next_weekday", ls.NewFunction(luaDateNextWeekday))
-	ls.SetField(rela, "rrule_next", ls.NewFunction(luaRruleNext))
+	ls.SetField(rela, "rrule_next", ls.NewFunction(luaRruleNext(now)))
 }
 
 // parseDate parses a date string in RFC3339 or date-only format.
@@ -128,39 +130,40 @@ func luaDateNextWeekday(ls *lua.LState) int {
 // Rules with INTERVAL > 1 require an explicit DTSTART in the RRULE string
 // to anchor the interval counting. Without it, the interval cadence would
 // drift on every invocation.
-func luaRruleNext(ls *lua.LState) int {
-	rruleStr := ls.CheckString(1)
-	afterStr := ls.OptString(2, "")
+func luaRruleNext(now time.Time) lua.LGFunction {
+	return func(ls *lua.LState) int {
+		rruleStr := ls.CheckString(1)
+		afterStr := ls.OptString(2, "")
 
-	var after time.Time
-	if afterStr == "" {
-		// Use today at midnight UTC for consistency with RRULE dates.
-		now := time.Now()
-		after = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	} else {
-		var err error
-		after, err = parseDateUTC(afterStr)
+		var after time.Time
+		if afterStr == "" {
+			// Use today at midnight UTC for consistency with RRULE dates.
+			after = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		} else {
+			var err error
+			after, err = parseDateUTC(afterStr)
+			if err != nil {
+				ls.RaiseError("rrule_next: invalid after date %q", afterStr)
+				return 0
+			}
+		}
+
+		// metamodel.NextRrule anchors a rule without DTSTART at the after date.
+		// Without that anchor rrule-go uses time.Now() as DTSTART, and a rule
+		// asked about on its own occurrence date returns that same date.
+		next, err := metamodel.NextRrule(rruleStr, after)
+		if errors.Is(err, metamodel.ErrRruleExhausted) {
+			ls.Push(lua.LNil)
+			return 1
+		}
 		if err != nil {
-			ls.RaiseError("rrule_next: invalid after date %q", afterStr)
+			ls.RaiseError("rrule_next: %s", err)
 			return 0
 		}
-	}
 
-	// metamodel.NextRrule anchors a rule without DTSTART at the after date.
-	// Without that anchor rrule-go uses time.Now() as DTSTART, and a rule
-	// asked about on its own occurrence date returns that same date.
-	next, err := metamodel.NextRrule(rruleStr, after)
-	if errors.Is(err, metamodel.ErrRruleExhausted) {
-		ls.Push(lua.LNil)
+		ls.Push(lua.LString(next.Format("2006-01-02")))
 		return 1
 	}
-	if err != nil {
-		ls.RaiseError("rrule_next: %s", err)
-		return 0
-	}
-
-	ls.Push(lua.LString(next.Format("2006-01-02")))
-	return 1
 }
 
 // parseOffset parses an offset string like "7d", "2w", "1m", "1y", "-3d"

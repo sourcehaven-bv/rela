@@ -38,12 +38,16 @@ func PauseConfigReload(a *App) (resume func()) {
 
 // Retire takes an app out of service after a new one replaced it: it stops
 // watching files and the store, tells every live-update stream the
-// configuration changed and closes it. Requests already running finish
-// normally.
+// configuration changed and closes it, and closes its co-editing
+// connections, which reconnect to the new app. Requests already running
+// finish normally.
 func Retire(a *App) {
 	a.StopWatching()
 	a.broker.broadcast(sseConfigChanged)
 	a.broker.close()
+	if a.collab != nil {
+		a.collab.close()
+	}
 }
 
 // mayConfigure reports whether the request's principal may use the Configure

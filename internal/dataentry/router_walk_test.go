@@ -100,6 +100,8 @@ var routerWalkProbes = []routerWalkProbe{
 	{http.MethodPost, "/api/git/sync", "/api/git/sync", 0, ""},
 	{http.MethodGet, "/api/events", "/api/events", 0, skipSSE},
 	{http.MethodGet, "/api/v1/_events", "/api/v1/_events", 0, skipSSE},
+	// Without an upgrade the relay answers 400; the fixture enables no relay, so 404 JSON.
+	{http.MethodGet, "/api/v1/_collab/{type}/{id}", "/api/v1/_collab/ticket/TKT-001", http.StatusNotFound, ""},
 
 	// registerAPIV1Routes (api_v1.go) — system endpoints
 	{http.MethodGet, "/api/v1/_schema", "/api/v1/_schema", http.StatusOK, ""},

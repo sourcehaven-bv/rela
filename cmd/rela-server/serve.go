@@ -78,6 +78,9 @@ type server struct {
 	// accessLog is the --access-log destination, nil when off. Every
 	// generation's router logs to it.
 	accessLog *slog.Logger
+	// collab is the co-editing relay (TKT-CJL604). One for the process, so
+	// a room keeps its document while its peers move to a new generation.
+	collab *dataentry.CollabRelay
 
 	cur atomic.Pointer[generation]
 	// retiring closes when the latest retirement has finished. Each
@@ -97,7 +100,10 @@ func newServer(f *serverFlags, svc *appbuild.Services, accessLog *slog.Logger) (
 	if err != nil {
 		return nil, fmt.Errorf("invalid identity configuration: %w", err)
 	}
-	s := &server{f: f, addr: net.JoinHostPort(f.bind, f.port), mode: mode, accessLog: accessLog}
+	s := &server{
+		f: f, addr: net.JoinHostPort(f.bind, f.port), mode: mode, accessLog: accessLog,
+		collab: dataentry.NewCollabRelay(dataentry.EmbeddedBuildID()),
+	}
 	// Startup only: the one rebuild path, a Configure save, requires acl.yaml
 	// and an identity source already (validateConfigEditing).
 	if warnUnidentifiedACL(mode, f, os.Getenv(dataentry.EnvDataEntryUserVar), svc.ACLDeclarative() != nil) {
@@ -275,6 +281,9 @@ func (s *server) buildApp(svc *appbuild.Services) (*dataentry.App, error) {
 	}
 	if s.configure != nil {
 		dataentry.SetConfigure(app, s.configure)
+	}
+	if err := dataentry.EnableCollab(app, s.collab); err != nil {
+		return nil, err
 	}
 	return app, nil
 }

@@ -22,6 +22,9 @@ import type { ViewEntity, ViewResponse, ViewSection, ViewSectionField, ViewTreeN
 import type { Entity } from '@/types'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { useAutoSave, type AutoSaveTarget } from '@/composables/useAutoSave'
+import { useBodyCollab, type BodyCollabNotice } from '@/composables/collab/useBodyCollab'
+import { useMe } from '@/queries/me'
+import { UNKNOWN_USER } from '@/utils/userToken'
 import { useEntitySession } from '@/composables/useEntitySession'
 import { toggleCheckboxInSource } from '@/utils/checkboxToggle'
 import type { ActionConfig, Command } from '@/types'
@@ -616,6 +619,7 @@ function showing(target: AutoSaveTarget): boolean {
 }
 
 function makeContentAutoSave(target: AutoSaveTarget): ContentAutoSave {
+  const { resendContent, onContentSaved, inRoom, mergedContent } = bodyCollab.autoSaveHooks(target)
   // The composable only reads these. Another row's state is not this
   // instance's form, so it reads as empty once its row has left the screen.
   // From then on its server responses still move its bases but no longer
@@ -638,7 +642,15 @@ function makeContentAutoSave(target: AutoSaveTarget): ContentAutoSave {
       else properties[prop] = value
       viewData.value = { ...view, entry: { ...view.entry, properties } }
     },
-    applyServerContent: (next) => {
+    applyServerContent: (next, cause, from) => {
+      // In a room the editor's document is newer than a stored body or a
+      // revert, and the read view follows the document through onBodyInput.
+      // A merge goes into the document as the change from the text the save
+      // was made from, so what peers typed since stays.
+      if (inRoom()) {
+        if (cause === 'merged' && from !== undefined) mergedContent(from, next)
+        return
+      }
       const view = viewData.value
       if (!view?.entry || !showing(target)) return
       const nextSections = view.sections.map((s) =>
@@ -656,6 +668,8 @@ function makeContentAutoSave(target: AutoSaveTarget): ContentAutoSave {
     // Counted against its own row, so the edits of a row being left void
     // that row's late reads and not those of the row arriving.
     runWrite: (send) => session.write(send, rowKey(target)),
+    resendContent,
+    onContentSaved,
   })
 }
 
@@ -792,6 +806,39 @@ const canEditBody = computed(() => canUpdate.value && !isInaccessible.value)
 // A pause in typing, not a keystroke, is worth a save.
 const BODY_SAVE_DEBOUNCE_MS = 800
 
+// Co-editing (TKT-CJL604): the body is edited in a room when the server
+// offers it and this principal may update the body. The name peers see is
+// the user id; a person title is read through the ACL and may be hidden from
+// them.
+const me = useMe()
+// Set by a function ref: the body renders inside the sections loop, where a
+// string ref would collect an array.
+const bodyRef = shallowRef<InstanceType<typeof EntityBody> | null>(null)
+const COLLAB_NOTICES: Record<BodyCollabNotice, () => void> = {
+  expired: () => uiStore.warning(t('entity.collab.expired')),
+  'stale-build': () => uiStore.info(t('entity.collab.staleBuild')),
+  unavailable: () => uiStore.warning(t('entity.collab.unavailable')),
+}
+const bodyCollab = useBodyCollab({
+  enabled: () => schemaStore.collabEnabled && canEditBody.value,
+  user: () => {
+    const user = me.data.value?.user
+    return user && user !== UNKNOWN_USER ? user : null
+  },
+  closeEditor: () => bodyRef.value?.close(),
+  notify: (notice) => COLLAB_NOTICES[notice](),
+  build: __RELA_BUILD_ID__,
+  epoch: () => schemaStore.collabEpoch,
+})
+bodyCollab.bindEditor({
+  flush: () => bodyRef.value?.editor()?.flush(),
+  setBaseline: (content) => bodyRef.value?.editor()?.setBaseline(content),
+  applyChange: (from, to) => bodyRef.value?.editor()?.applyChange(from, to),
+})
+// The room belongs to the row it was opened on; another row ends it.
+watch(servedRef, () => void bodyCollab.stop())
+onBeforeUnmount(() => void bodyCollab.stop())
+
 // An open editor writes to the row it was opened on, taken when the edit
 // starts. Choosing the instance when the editor emits would send an edit that
 // outlives a route change to the row that replaced it (BUG-NSGD6OE).
@@ -799,7 +846,12 @@ let bodySave: ContentAutoSave | null = null
 let titleEdit: { save: ContentAutoSave; prop: string } | null = null
 
 function onBodyEdit() {
-  bodySave = editAutoSave()
+  const save = editAutoSave()
+  bodySave = save
+  // A body still saving from an earlier edit is not one the server stored,
+  // so it cannot seed a room; that edit stays single-writer.
+  const base = save.contentBaseIfClean()
+  if (base) bodyCollab.start(save.target, base, save)
 }
 
 function onBodyInput(next: string) {
@@ -812,10 +864,12 @@ function onBodyInput(next: string) {
     )
     viewData.value = { ...view, entry: { ...view.entry, content: next }, sections }
   }
+  if (bodyCollab.input(next)) return
   save.scheduleContentSave(next, BODY_SAVE_DEBOUNCE_MS)
 }
 
 function onBodyDone() {
+  void bodyCollab.stop()
   void (bodySave ?? contentAutoSave.value)?.commitImmediately()
   bodySave = null
 }
@@ -2832,7 +2886,13 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           -->
             <EntityBody
               v-else-if="section === entryContentSection"
+              :ref="
+                (el) => {
+                  bodyRef = el as InstanceType<typeof EntityBody> | null
+                }
+              "
               :key="servedRef ?? ''"
+              :collab="bodyCollab.editorCollab.value"
               :content="entryContentSection.content || ''"
               :editable="canEditBody"
               :ref-resolver="refResolver"

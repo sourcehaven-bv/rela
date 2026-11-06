@@ -933,6 +933,14 @@ type AppConfig struct {
 	// elsewhere (a denied copy is absent, not disabled). Not a permission —
 	// history is still ACL-gated per entity when the capability exists.
 	HistoryEnabled bool `json:"history_enabled"`
+	// CollabEnabled reports whether this server relays real-time co-editing
+	// of entity bodies (TKT-CJL604). Only rela-server enables it; the desktop
+	// app edits alone. Per deployment for the same reason as HistoryEnabled.
+	CollabEnabled bool `json:"collab_enabled"`
+	// CollabEpoch names the relay process's rooms. The SPA joins with it, so
+	// a client served by an earlier process is refused rather than refilling
+	// a room with its old document.
+	CollabEpoch string `json:"collab_epoch,omitempty"`
 }
 
 // Error is an RFC 7807 Problem Details response.
@@ -2057,6 +2065,10 @@ type CopyResult struct {
 	// rather than overwriting one — the difference between "published for the
 	// first time" and "re-published".
 	Created bool `json:"created"`
+	// Warnings reports a step after the copy that failed, such as an
+	// automation's side effect (`follow_up_failed`). The copy itself was
+	// written.
+	Warnings []Warning `json:"warnings,omitempty"`
 }
 
 // GanttResponse is the payload of GET /api/v1/_gantts/{id}: the gated,

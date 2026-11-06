@@ -2132,6 +2132,9 @@ type SharedBase struct {
 	// because a re-assembly runs against the same store. Nil for a first
 	// assembly, and for a store that needs none.
 	storeSchema storeSchemaRefresher
+	// validationMode is the deployment's validation policy, resolved once
+	// per base by [validationModeFor] so a bad value fails the boot.
+	validationMode entitymanager.ValidationMode
 }
 
 // attachmentLocker is the predecessor's attachment lock on a re-assembly,
@@ -2304,6 +2307,7 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 		return nil, fmt.Errorf("compile query scopes: %w", err)
 	}
 	warnQueryScopes(&compiledScopes, meta, aclPolicy)
+	warnWriteRules(meta, aclPolicy)
 	warnEveryoneOpensFieldBlocks(meta, aclPolicy)
 	if problems := QueryScopeTraversalFieldErrors(&compiledScopes, meta, aclPolicy); len(problems) > 0 {
 		return nil, fmt.Errorf("compile query scopes: %s", strings.Join(problems, "; "))
@@ -2322,9 +2326,22 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 		return nil, err
 	}
 
+	mode, err := validationModeFor(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("validation mode: %w", err)
+	}
+	// Advisory is the default, so it is logged at debug: every CLI command
+	// prints info-level logs.
+	if mode == entitymanager.ValidationStrict {
+		slog.Info("validation mode is strict: required, type and value errors refuse a write")
+	} else {
+		slog.Debug("validation mode is advisory", "mode", mode.String())
+	}
+
 	return &SharedBase{
 		cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy,
 		meta: meta, worlds: compiledWorlds, conns: conns, realtime: rt,
+		validationMode: mode,
 	}, nil
 }
 
@@ -2463,6 +2480,7 @@ func buildEntityManager(
 		// engine, face deletes and uploads exclude each other.
 		AttachmentLocker: attachLocker,
 		AnchorGuard:      anchorGuard,
+		ValidationMode:   base.validationMode,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build entitymanager: %w", err)
