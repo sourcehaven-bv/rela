@@ -1618,6 +1618,10 @@ type AutomationTrigger struct {
 	Updated         bool   `yaml:"updated,omitempty"`
 	RelationCreated string `yaml:"relation_created,omitempty"`
 	RelationRemoved string `yaml:"relation_removed,omitempty"`
+	// Deleted fires once per face a delete removes, after the delete
+	// commits (TKT-Q0AQ840). It runs background actions only, and stands
+	// alone: no other trigger key may accompany it.
+	Deleted bool `yaml:"deleted,omitempty"`
 
 	// Faces limits the trigger to specific content states, named as declared
 	// in `faces:`. Empty means every state — see automation.Trigger.Faces for

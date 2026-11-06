@@ -3457,6 +3457,7 @@ Automations fire based on entity changes:
 | `updated`          | Fires on an update that changes a property or the body, not on a create. Not with `property`, `becomes` or `from`; a script under it must be `background: true` | `true` |
 | `relation_created` | Fires when this relation type is created  | `implements`           |
 | `relation_removed` | Fires when this relation type is removed  | `implements`           |
+| `deleted`          | Fires once per face a delete removes. Stands alone, and every action must be `background: true` (see [Running a script when an entity is deleted](#running-a-script-when-an-entity-is-deleted)) | `true` |
 | `faces`            | Content states to watch (default: all)    | `[published]`          |
 | `when`             | Property conditions that must match (AND) | `["kind=enhancement"]` |
 | `condition`        | Predicate expression that must hold (AND) | `"days_between(entity.due, today()) <= 7"` |
@@ -3636,6 +3637,46 @@ A background action differs from an inline one in these ways:
 A background action holds only `lua_file:`, cannot use `allow_acl_bypass`,
 and must belong to an automation with a unique, non-empty `name:`. The
 schema refuses to load otherwise.
+
+#### Running a script when an entity is deleted
+
+`deleted: true` starts background actions when an entity is deleted. Use it
+to tell an outside system, such as a published site, that a record is gone.
+
+```yaml
+automations:
+  - name: unpublish-page
+    on: {entity: pagina, deleted: true, faces: [published]}
+    do:
+      - lua_file: site/unpublish.lua
+        background: true
+        capabilities: {http: true}
+```
+
+- **When it fires.** Once for each face the delete removed, after the delete
+  is saved. A delete from the web app, the CLI, MCP, a script or an
+  automation fires it. So does a soft delete, the kind the web app can undo.
+  An owned entity deleted with its owner fires its own automations. Purging a
+  soft-deleted entity later does not fire again, and neither does an undo or
+  a restore. If the face is restored, or created again under the same id,
+  before the job runs, the job does nothing.
+- **What the script sees.** `entity` is the face as it was just before the
+  delete. `when:` and `condition:` decide on that state too. A
+  `condition:` may not use `related(...)`, because the relations are deleted
+  with the entity.
+- **Identity.** The job runs as `run_as` or `system:automation`, as other
+  background actions do, and sees the deleted face only as far as that
+  identity may read it. Fields its `visible:` grants hide are removed. A read
+  grant that depends on the stored entity, such as a role conferred through a
+  relation, cannot be checked once the entity is gone, so the job does not
+  run. Give the job's identity a plain read grant on the type.
+- **No coalescing.** Each delete is its own job. Deleting, recreating and
+  deleting an entity again runs the script twice.
+- **Allowed keys.** `deleted` cannot be combined with `created`, `updated`,
+  `property`, `becomes`, `from`, `relation_created` or `relation_removed`.
+  Every action must be `background: true`, and `validate:` is refused: the
+  delete has already happened when the automation runs, so there is no save
+  to change or warn about.
 
 **Add to Pile**:
 

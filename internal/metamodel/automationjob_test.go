@@ -52,6 +52,22 @@ func TestValidateBackgroundActions(t *testing.T) {
 			"`capabilities.tokens` applies only with `background: true`"},
 		{"tokens on a background action", []AutomationDef{{Name: "a", Do: []AutomationAction{
 			{LuaFile: "p.lua", Background: true, Capabilities: Capabilities{Tokens: []string{"basecamp"}}}}}}, ""},
+		{"deleted with background script", []AutomationDef{{Name: "a", On: AutomationTrigger{Deleted: true},
+			Do: []AutomationAction{bg}}}, ""},
+		{"deleted with foreground script", []AutomationDef{{Name: "a", On: AutomationTrigger{Deleted: true},
+			Do: []AutomationAction{{LuaFile: "p.lua"}}}}, "must be `background: true`"},
+		{"deleted with set", []AutomationDef{{Name: "a", On: AutomationTrigger{Deleted: true},
+			Do: []AutomationAction{{Set: "x", Value: "y"}}}}, "must be `background: true`"},
+		{"deleted without actions", []AutomationDef{{Name: "a", On: AutomationTrigger{Deleted: true}}},
+			"needs a `background: true` action"},
+		{"deleted with created", []AutomationDef{{Name: "a", On: AutomationTrigger{Deleted: true, Created: true},
+			Do: []AutomationAction{bg}}}, "cannot be combined"},
+		{"deleted with property", []AutomationDef{{Name: "a", On: AutomationTrigger{Deleted: true, Property: "x"},
+			Do: []AutomationAction{bg}}}, "cannot be combined"},
+		{"deleted with relation_removed", []AutomationDef{{Name: "a",
+			On: AutomationTrigger{Deleted: true, RelationRemoved: "r"}, Do: []AutomationAction{bg}}}, "cannot be combined"},
+		{"deleted with validate", []AutomationDef{{Name: "a", On: AutomationTrigger{Deleted: true},
+			Do: []AutomationAction{bg}, Validate: []AutomationCheck{{Check: "x=y"}}}}, "`validate:`"},
 		{"same file, other spelling", []AutomationDef{{Name: "a", Do: []AutomationAction{
 			bg, {LuaFile: "./" + bg.LuaFile, Background: true}}}}, "twice"},
 	}

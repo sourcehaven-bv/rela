@@ -2075,6 +2075,7 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	// the CalDAV alias service RETAINS its reference, as the tombstone that
 	// stops a stale client write resurrecting this entity.
 	m.notifyAliasesOfDelete(ctx, id)
+	notifyDeletedStates(ctx, m.deps.AliasRewriter, res.DeletedEntities)
 
 	// Capture a final version for every relation this cascade destroyed. This
 	// is the ONLY place cascade-deleted relations get versioned: the store's
@@ -2615,6 +2616,7 @@ func (m *Manager) DeleteEntityFace(
 	// as DeleteEntity orders them and for the same reasons.
 	m.recordDeleteVersion(ctx, current)
 	notifyAliasesOfFaceDelete(ctx, m.deps.AliasRewriter, id, face)
+	notifyDeletedStates(ctx, m.deps.AliasRewriter, []*entity.Entity{current})
 	if lastFace {
 		// The entity is gone, not just a face of it.
 		m.notifyAliasesOfDelete(ctx, id)

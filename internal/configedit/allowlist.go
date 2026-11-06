@@ -340,6 +340,8 @@ var locked = map[File][]string{
 		"automations.[].do.[].create_entity.template",
 		// A background Lua job, and the principal it runs as.
 		"automations.[].do.[].background", "automations.[].do.[].run_as", "automations.[].do.[].retry",
+		// on.deleted only starts background Lua jobs (TKT-Q0AQ840).
+		"automations.[].on.deleted",
 		// Access control: a transition guard names an ACL permission.
 		"types.*.transitions.[].guard",
 		// External sync. A sync connector's Lua finds its records by system,

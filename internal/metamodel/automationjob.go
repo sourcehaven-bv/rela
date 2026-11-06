@@ -43,7 +43,8 @@ func (r *JobRetry) UnmarshalYAML(unmarshal func(any) error) error {
 // so both must identify one action. An empty or repeated name would let a
 // job run another automation's script, identity or capabilities.
 //
-// It also checks `on.updated`, which only background actions brought in.
+// It also checks `on.updated` and `on.deleted`, which only background
+// actions brought in.
 func validateBackgroundActions(m *Metamodel) []string {
 	var errs []string
 	names := make(map[string]int, len(m.Automations))
@@ -52,6 +53,7 @@ func validateBackgroundActions(m *Metamodel) []string {
 	}
 	for _, auto := range m.Automations {
 		errs = append(errs, updatedTriggerErrors(auto)...)
+		errs = append(errs, deletedTriggerErrors(auto)...)
 		seen := map[string]bool{}
 		for i, a := range auto.Do {
 			where := fmt.Sprintf("automation %q action %d", auto.Name, i+1)
@@ -101,6 +103,40 @@ func updatedTriggerErrors(auto AutomationDef) []string {
 			errs = append(errs, fmt.Sprintf(
 				"automation %q action %d: a script under `on.updated` must be `background: true`; "+
 					"its own write would trigger it again", auto.Name, i+1))
+		}
+	}
+	return errs
+}
+
+// deletedTriggerErrors refuses an `on.deleted` automation that could not run
+// as written. The delete has committed when it fires, so a foreground
+// action, which runs inside the triggering write, has no write to run in,
+// and a `validate:` check has no save to warn about. Another trigger key
+// beside it would make one automation answer two different events.
+func deletedTriggerErrors(auto AutomationDef) []string {
+	on := auto.On
+	if !on.Deleted {
+		return nil
+	}
+	var errs []string
+	if on.Created || on.Updated || on.Property != "" || on.Becomes != "" || on.From != "" ||
+		on.RelationCreated != "" || on.RelationRemoved != "" {
+
+		errs = append(errs, fmt.Sprintf(
+			"automation %q: `on.deleted` cannot be combined with another trigger key", auto.Name))
+	}
+	if len(auto.Validate) > 0 {
+		errs = append(errs, fmt.Sprintf(
+			"automation %q: `validate:` does not apply to `on.deleted`; there is no save to warn about", auto.Name))
+	}
+	if len(auto.Do) == 0 {
+		errs = append(errs, fmt.Sprintf("automation %q: `on.deleted` needs a `background: true` action", auto.Name))
+	}
+	for i, a := range auto.Do {
+		if !a.Background {
+			errs = append(errs, fmt.Sprintf(
+				"automation %q action %d: an `on.deleted` action must be `background: true`; "+
+					"the delete has committed when it fires", auto.Name, i+1))
 		}
 	}
 	return errs

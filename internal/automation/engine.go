@@ -197,6 +197,11 @@ func (e *Engine) compileConditions() error {
 				return fmt.Errorf("automation %q: condition %q on %q: %w",
 					auto.Name, src, t, err)
 			}
+			if auto.On.Deleted && len(prog.Traversals()) > 0 {
+				// The delete removed the entity's relations with it.
+				return fmt.Errorf("automation %q: condition %q: %s(...) cannot be used on a `deleted` trigger; "+
+					"the entity's relations are deleted with it", auto.Name, src, predicate.FuncRelated)
+			}
 			if auto.On.Created && len(prog.Traversals()) > 0 {
 				// The entity is persisted before any of its relations, so on
 				// create `related(...)` is always false and `not related` is
@@ -271,6 +276,7 @@ func convertFromMetamodel(def metamodel.AutomationDef) (Automation, error) {
 			Updated:         def.On.Updated,
 			RelationCreated: def.On.RelationCreated,
 			RelationRemoved: def.On.RelationRemoved,
+			Deleted:         def.On.Deleted,
 			Faces:           []string(def.On.Faces),
 			When:            whenFilters,
 			Condition:       def.On.Condition,
@@ -414,6 +420,9 @@ func (e *Engine) matches(ctx context.Context, trigger Trigger, event Event, res 
 		// A pending job names the old id and finds nothing, so a rename
 		// re-runs every entity trigger that could have scheduled one.
 		return trigger.Created || trigger.Updated || trigger.Property != ""
+
+	case EventEntityDeleted:
+		return trigger.Deleted
 
 	case EventRelationCreated:
 		if trigger.RelationCreated == "" {
