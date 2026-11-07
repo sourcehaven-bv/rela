@@ -52,6 +52,12 @@ func TestConformance(t *testing.T) {
 				stubProvider{hash: "schema-1", json: []byte(`{"v":1}`)},
 				store.SweepConfig{Idle: time.Nanosecond, MaxStaleness: time.Hour, Batch: 100}))
 		},
+		StoredElements: func(t *testing.T, s store.Store) []storetest.StoredElement {
+			t.Helper()
+			els, err := pgstore.StoredElementsForTest(t.Context(), s.(*pgstore.Store))
+			require.NoError(t, err)
+			return els
+		},
 	})
 }
 

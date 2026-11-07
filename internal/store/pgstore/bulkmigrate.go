@@ -78,6 +78,11 @@ func (s *Store) SwapRelationEndpoints(ctx context.Context, relType string) (int,
 		}
 		return 0, err
 	}
+	// The endpoints are part of each swapped edge's hash and address; the
+	// trigger cleared their elements.
+	if _, _, err := fillRelationElements(ctx, tx, relationTypeScope(relType), 0); err != nil {
+		return 0, err
+	}
 
 	for _, r := range oldTriples {
 		if err := s.writeRelationTombstone(ctx, tx, r.From, r.FromFace, r.Type, r.To); err != nil {

@@ -55,7 +55,7 @@ RR-JV2BGOO
 2. PASS: ConcurrentUpdate, ConcurrentSingleton, ConcurrentRekey and PruneRacesCreate with `Harness.Second` on disk KV, sqlite and pg.
 3. PASS: `TestReopen` in kvflowrun and sqliteflowrun.
 4. PASS: `TestDamagedDocument` in kvflowrun.
-5. PASS: pgstore migration 42 (status and ladder tests updated) and `TestMigrate_v33ToV34FlowRuns`.
+5. PASS: pgstore migration 43 (status and ladder tests updated) and `TestMigrate_v34ToV35FlowRuns`.
 
 ## Documentation (enhancements only)
 

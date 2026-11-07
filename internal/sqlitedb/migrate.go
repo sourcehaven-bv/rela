@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 34
+const schemaVersion = 35
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -337,11 +337,34 @@ var migrations = []migration{
 		},
 	},
 	{
-		// v33 → v34: the flow run store (TKT-PV9R0GK). New tables; nothing
+		// v33 → v34: the reconciliation element of each live row
+		// (TKT-1G2XR1R). No backfill here: the rows read NULL, and the
+		// version sweep fills them in batches (see elementDDL), so a large
+		// database does not stall at open.
+		to: 34,
+		apply: func(ctx context.Context, conn *sql.Conn) error {
+			if err := addTableColumns(ctx, conn, "entities", elementColumns); err != nil {
+				return err
+			}
+			return addTableColumns(ctx, conn, "relations", elementColumns)
+		},
+	},
+	{
+		// v34 → v35: the flow run store (TKT-PV9R0GK). New tables; nothing
 		// to backfill.
-		to:    34,
+		to:    35,
 		apply: sqlSteps(flowRunsDDL),
 	},
+}
+
+// elementColumns are the reconciliation element columns of entities and
+// relations.
+var elementColumns = []struct{ name, def string }{
+	{"element_hash", "TEXT"},
+	{"element_fp0", "INTEGER"},
+	{"element_fp1", "INTEGER"},
+	{"element_fp2", "INTEGER"},
+	{"element_fp3", "INTEGER"},
 }
 
 // channelPreviousColumns are the session previous-state column of channels.

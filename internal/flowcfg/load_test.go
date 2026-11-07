@@ -3,6 +3,7 @@ package flowcfg
 import (
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -165,6 +166,9 @@ func TestParse_Problems(t *testing.T) {
 	}{
 		{"unknown key", [2]string{"per_subject: one", "per_subjects: one"}, "flows.onboarding", "per_subjects"},
 		{"unknown subject", [2]string{"subject: person", "subject: human"}, "flows.onboarding.subject", "does not declare"},
+		{"subject is an alias", [2]string{"subject: person", "subject: pers"}, "flows.onboarding.subject", `alias of "person"`},
+		{"create type is an alias", [2]string{"type: task", "type: todo"},
+			"flows.onboarding.states.collect.outputs[1].create.type", `alias of "task"`},
 		{"bad per_subject", [2]string{"per_subject: one", "per_subject: two"}, "flows.onboarding.per_subject", "one or many"},
 		{"short deadline", [2]string{"deadline: 30d", "deadline: 10s"}, "flows.onboarding.deadline", "shorter than"},
 		{"bad retention action", [2]string{"action: delete", "action: shred"}, "flows.onboarding.retention.action", "archive or delete"},
@@ -263,6 +267,28 @@ func TestParse_Problems(t *testing.T) {
 			}
 			t.Errorf("problems %v; want %s: ...%s...", e.Problems, tt.key, tt.want)
 		})
+	}
+}
+
+// TestParse_AliasSubjectReadsNoHiddenProperty pins issue 2106: a subject
+// named by an alias must not let a template or guard read a property that
+// a visible: grant restricts.
+func TestParse_AliasSubjectReadsNoHiddenProperty(t *testing.T) {
+	for _, read := range [][2]string{
+		{"{{subject.name}}", "{{subject.salary}}"},
+		{"when: \"entity.documents == true\"", "when: \"entity.salary > 3\""},
+	} {
+		_, err := parseSample(t, [2]string{"subject: person", "subject: pers"}, read)
+		var e *Error
+		if !errors.As(err, &e) {
+			t.Fatalf("Parse with subject: pers and %s = %v; want a load error", read[1], err)
+		}
+		refused := func(p Problem) bool {
+			return p.Key == "flows.onboarding.subject" || strings.Contains(p.Message, "salary")
+		}
+		if !slices.ContainsFunc(e.Problems, refused) {
+			t.Errorf("problems %v; want the alias or the salary read refused", e.Problems)
+		}
 	}
 }
 

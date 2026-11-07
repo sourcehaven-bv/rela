@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/reconcile"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
@@ -158,12 +159,18 @@ func (s *Store) CreateRelation(
 	editorUser, editorTool := store.AttributionColumns(ctx)
 	const q = `
 		INSERT INTO relations (from_id, from_face, rel_type, to_id, properties, content, updated_at,
-		                       last_edited_by_user, last_edited_by_tool)
-		VALUES ($1, $2, $3, $4, $5, $6, now(), $7, $8)
+		                       last_edited_by_user, last_edited_by_tool,
+		                       element_hash, element_fp0, element_fp1, element_fp2, element_fp3)
+		VALUES ($1, $2, $3, $4, $5, $6, now(), $7, $8, $9, $10, $11, $12, $13)
 		ON CONFLICT (from_id, from_face, rel_type, to_id) DO NOTHING
 		RETURNING from_id, from_face, rel_type, to_id, properties, content, updated_at`
-	r, err := scanRelation(tx.QueryRow(ctx, q, k.From, string(k.FromFace), k.Type, k.To, rawProps, content,
-		editorUser, editorTool))
+	readProps, err := unmarshalProps(rawProps)
+	if err != nil {
+		return nil, fmt.Errorf("pgstore: element of %s: %w", k, err)
+	}
+	el := reconcile.RelationRowColumns(k, readProps, content)
+	r, err := scanRelation(tx.QueryRow(ctx, q, append([]any{k.From, string(k.FromFace), k.Type, k.To, rawProps, content,
+		editorUser, editorTool}, el.Args()...)...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrConflict
 	}
@@ -203,16 +210,29 @@ func (s *Store) UpdateRelation(
 	const q = `
 		UPDATE relations
 		SET properties = $4, content = $5, updated_at = now(), seq = nextval('rela_seq'),
-		    last_edited_by_user = $6, last_edited_by_tool = $7
+		    last_edited_by_user = $6, last_edited_by_tool = $7,
+		    element_hash = $9, element_fp0 = $10, element_fp1 = $11, element_fp2 = $12, element_fp3 = $13
 		WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_face = $8
-		RETURNING from_id, from_face, rel_type, to_id, properties, content, updated_at`
-	r, err := scanRelation(tx.QueryRow(ctx, q, k.From, k.Type, k.To, rawProps, data.Content,
-		editorUser, editorTool, string(k.FromFace)))
+		RETURNING from_id, from_face, rel_type, to_id, properties, content, updated_at, element_hash IS NULL`
+	readProps, err := unmarshalProps(rawProps)
+	if err != nil {
+		return nil, fmt.Errorf("pgstore: element of %s: %w", k, err)
+	}
+	el := reconcile.RelationRowColumns(k, readProps, data.Content)
+	var cleared bool
+	r, err := scanRelation(rowPlus{tx.QueryRow(ctx, q, append([]any{k.From, k.Type, k.To, rawProps, data.Content,
+		editorUser, editorTool, string(k.FromFace)}, el.Args()...)...), []any{&cleared}})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
+	}
+	if cleared {
+		// Same canonical hash as before; see updateEntityIf.
+		if _, _, err := fillRelationElements(ctx, tx, relationRowScope(k), 0); err != nil {
+			return nil, err
+		}
 	}
 
 	ev := store.Event{

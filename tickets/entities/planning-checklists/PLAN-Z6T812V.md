@@ -64,9 +64,9 @@ other's writes. Tests: `flowruntest` concurrency cases with `Harness.Second`.
 sqlite file). Tests: `TestReopen` per backend.
 4. A damaged KV document is an error naming the key, never a silent reset.
 Test: `TestDamagedDocument` in kvflowrun.
-5. Migrations: pgstore migration 42 and sqlitedb v34 create the tables on
+5. Migrations: pgstore migration 43 and sqlitedb v35 create the tables on
 a fresh and on an existing database. Tests: the existing ladder tests plus
-`TestMigrate_v33ToV34FlowRuns` in sqlitedb.
+`TestMigrate_v34ToV35FlowRuns` in sqlitedb.
 
 ## Research
 
@@ -173,7 +173,7 @@ Alternatives rejected: storing execution state on the `_flow-run` entity
 `internal/flowcfg/template.go` (RunID alias), `internal/flowrun/**` (new),
 `internal/sqlexec/**` (new),
 `internal/channels/{sqlchannels,pgchannels,sqlitechannels}`,
-`internal/store/pgstore/migrations/0042_flow_runs.sql`,
+`internal/store/pgstore/migrations/0043_flow_runs.sql`,
 `internal/sqlitedb/{sqlitedb.go,migrate.go}`, `.go-arch-lint.yml`,
 `.testcoverage.yml`, `.github/workflows/ci.yml`.
 

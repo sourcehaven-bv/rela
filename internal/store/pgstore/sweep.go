@@ -231,6 +231,14 @@ func (s *sweep) tick(ctx context.Context) error {
 	// (pgxpool does not reset session state on Release).
 	defer advisoryUnlock(context.WithoutCancel(ctx), conn, sweepAdvisoryLockKey)
 
+	// Fill reconciliation elements left NULL (migration 0042) before the
+	// version capture. A failure is logged and never stops the capture.
+	if more, healErr := healElements(ctx, conn, s.cfg.Batch); healErr != nil {
+		slog.WarnContext(ctx, "pgstore: element heal failed", "error", healErr)
+	} else if more {
+		s.more = true
+	}
+
 	hash, projJSON := s.provider.Projection()
 	if hash == "" {
 		// No projection available (metamodel not wired) — nothing safe to stamp.

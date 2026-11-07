@@ -10,10 +10,10 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 )
 
-// TestMigrate_v33ToV34FlowRuns pins the v33 to v34 rung (TKT-PV9R0GK): a
-// version-33 file gains flow_runs, flow_definitions and their indexes with
+// TestMigrate_v34ToV35FlowRuns pins the v34 to v35 rung (TKT-PV9R0GK): a
+// version-34 file gains flow_runs, flow_definitions and their indexes with
 // the shape of a fresh database, and opening a second time changes nothing.
-func TestMigrate_v33ToV34FlowRuns(t *testing.T) {
+func TestMigrate_v34ToV35FlowRuns(t *testing.T) {
 	fresh := openChannelDB(t, filepath.Join(t.TempDir(), "fresh.db"))
 	tables := []string{"flow_definitions", "flow_runs"}
 	indexes := []string{
@@ -30,12 +30,12 @@ func TestMigrate_v33ToV34FlowRuns(t *testing.T) {
 		require.NotEmpty(t, want[name], name)
 	}
 
-	path := filepath.Join(t.TempDir(), "v33.db")
+	path := filepath.Join(t.TempDir(), "v34.db")
 	raw := openChannelDB(t, path)
 	for _, stmt := range []string{
 		`DROP TABLE flow_runs`,
 		`DROP TABLE flow_definitions`,
-		`PRAGMA user_version = 33`,
+		`PRAGMA user_version = 34`,
 	} {
 		_, err := raw.Exec(stmt)
 		require.NoError(t, err, stmt)

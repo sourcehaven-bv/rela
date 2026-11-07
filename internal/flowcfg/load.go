@@ -278,6 +278,12 @@ func (l *loader) subject(key, typ string) bool {
 		l.add(key, fmt.Sprintf("names %q, which schema.yaml does not declare", typ))
 		return false
 	}
+	// FieldRestricted and the relation checks match type names exactly, so
+	// an alias here would bypass them.
+	if canon := l.meta.ResolveAlias(typ); canon != typ {
+		l.add(key, fmt.Sprintf("%q is an alias of %q; name the type itself", typ, canon))
+		return false
+	}
 	if len(metamodel.FaceOrderOf(l.meta, typ)) > 0 {
 		l.add(key, fmt.Sprintf("names %q, which declares faces; a flow cannot carry a faced type yet", typ))
 		return false

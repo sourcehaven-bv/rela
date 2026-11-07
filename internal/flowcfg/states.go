@@ -265,12 +265,16 @@ func (l *loader) outputs(key string, raw []rawOutput, subject string) []Output {
 
 func (l *loader) createOutput(key string, raw *rawCreate, subject string) (Output, bool) {
 	def, ok := l.meta.GetEntityDef(raw.Type)
+	canon := l.meta.ResolveAlias(raw.Type)
 	switch {
 	case raw.Type == "":
 		l.add(key+".type", "is required: the entity type to create")
 		return Output{}, false
 	case !ok:
 		l.add(key+".type", fmt.Sprintf("names %q, which schema.yaml does not declare", raw.Type))
+		return Output{}, false
+	case canon != raw.Type:
+		l.add(key+".type", fmt.Sprintf("%q is an alias of %q; name the type itself", raw.Type, canon))
 		return Output{}, false
 	case def.IDType == metamodel.IDTypeManual:
 		l.add(key+".type", fmt.Sprintf("names %q, which has id_type: manual; an output needs generated ids", raw.Type))

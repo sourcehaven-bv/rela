@@ -91,6 +91,11 @@ func (s *Store) ReplaceEntityFamily(ctx context.Context, id string, replacements
 			Op: store.EventEntityUpdated, EntityID: id, EntityType: e.Type, Face: e.Face,
 		})
 	}
+	// Every replaced row changed face, type or content; the trigger cleared
+	// their elements.
+	if _, _, err := fillEntityElements(ctx, s, entityFamilyScope(id), 0); err != nil {
+		return err
+	}
 	for _, face := range emptied {
 		events = append(events, store.Event{
 			Op: store.EventEntityDeleted, EntityID: id, EntityType: oldType, Face: face,

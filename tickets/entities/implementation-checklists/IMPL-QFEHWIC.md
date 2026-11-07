@@ -41,7 +41,7 @@ sqliteflowrun, and pgflowrun against local PostgreSQL with
 `RELA_TEST_DATABASE_REQUIRED=1` (no skips). pgchannels suite also passes on the
 shared `pgexec` adapter.
 - `RELA_TEST_DATABASE_URL=... go test -race ./internal/store/pgstore/`:
-pass with migration 42; sqlitedb ladder plus `TestMigrate_v33ToV34FlowRuns`:
+pass with migration 43; sqlitedb ladder plus `TestMigrate_v34ToV35FlowRuns`:
 pass.
 - AC1 to AC5 map to `TestConformance*`, the concurrency cases with
 `Harness.Second`, `TestReopen` (kv, sqlite), `TestDamagedDocument`, and the

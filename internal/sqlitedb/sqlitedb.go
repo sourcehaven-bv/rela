@@ -153,6 +153,11 @@ func (c *DB) init(ctx context.Context) error {
 	if _, err := c.db.ExecContext(ctx, contentHashDDL); err != nil {
 		return fmt.Errorf("sqlitedb: create content_hash triggers and indexes: %w", err)
 	}
+	// After the ladder for the same reason as mentionsDDL below: elementDDL
+	// covers the element columns, which a pre-v34 table gains in the v34 rung.
+	if _, err := c.db.ExecContext(ctx, elementDDL); err != nil {
+		return fmt.Errorf("sqlitedb: create element triggers and indexes: %w", err)
+	}
 	// After the ladder rather than in schemaSQL: mentionsDDL indexes and
 	// triggers on entities.mention_targets, which a pre-v17 table gains only
 	// in the v17 rung. Every statement is IF NOT EXISTS, so this is a no-op on
@@ -339,6 +344,14 @@ CREATE TABLE IF NOT EXISTS entities (
 	-- (search.IndexText), written by the store with the row. NULL means not
 	-- indexed yet; see searchDDL. Added to older databases by the v22 rung.
 	search_text        TEXT,
+	-- element_* are the row's reconciliation element (TKT-1G2XR1R). NULL
+	-- means not computed yet; see elementDDL. Added to older databases by the
+	-- v34 rung.
+	element_hash       TEXT,
+	element_fp0        INTEGER,
+	element_fp1        INTEGER,
+	element_fp2        INTEGER,
+	element_fp3        INTEGER,
 	PRIMARY KEY (id, face)
 ) STRICT;
 ` + entitiesTypeIDFaceIndexDDL + `
@@ -387,6 +400,12 @@ CREATE TABLE IF NOT EXISTS relations (
 	last_edited_by_user TEXT,
 	last_edited_by_tool TEXT,
 	content_hash        TEXT,
+	-- Same meaning as on entities.
+	element_hash        TEXT,
+	element_fp0         INTEGER,
+	element_fp1         INTEGER,
+	element_fp2         INTEGER,
+	element_fp3         INTEGER,
 	PRIMARY KEY (from_id, from_face, rel_type, to_id)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS relations_from_idx ON relations(from_id);
@@ -521,6 +540,67 @@ CREATE TABLE IF NOT EXISTS marked_relations (
 	PRIMARY KEY (from_id, from_face, rel_type, to_id)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS marked_relations_owner_idx ON marked_relations(owner_id);`
+
+// elementDDL keeps a live row's reconciliation element honest and makes ranges
+// of elements cheap to sum (TKT-1G2XR1R, step 2 of FEAT-CMVZQFI).
+//
+// element_hash is the canonical content hash of the row as the store reads it
+// back (canonical.SumEntity or SumRelation, hex). element_fp0..3 are the four
+// 32-bit limbs of the row's fingerprint (reconcile.Fingerprint.Limbs, most
+// significant first), so a range sums them in SQL. It is not content_hash,
+// whose NULL means "the version sweep has not captured this row yet".
+//
+// The store writes the columns with the content (create, update) or fills them
+// in the same transaction (rename, convert, endpoint swap, restore). The
+// triggers are the safety net: a statement that changes a hashed column and
+// leaves element_hash as it was clears the element, so a missed path leaves
+// NULL rather than a stale value. A write whose canonical hash did not change
+// is cleared too, and the store refills it at once. The version sweep fills
+// NULL rows in batches, which also drains every row after the v34 rung.
+//
+// The address is not stored. It is a function of the key columns, so the
+// range indexes are expression indexes over it; sqlitestore's
+// entityAddressSQL and relationAddressSQL must spell the expressions exactly as
+// here for a query to use them. The default BINARY collation compares UTF-8
+// bytes, which is Go's string order. SQLite has no INCLUDE, so the limbs and
+// the hash follow the address in the index key, which makes the index covering.
+//
+// SQLite's SUM over INTEGER is exact int64 and fails with "integer overflow"
+// past it. A limb is below 2^32, so a range of up to 2^31 rows sums safely.
+//
+// Changing the canonical hash or the fingerprint encoding invalidates every
+// stored value: such a change needs a rung that sets these columns to NULL.
+const elementDDL = `
+CREATE TRIGGER IF NOT EXISTS entities_clear_element
+AFTER UPDATE OF id, face, type, properties, content ON entities
+WHEN NEW.element_hash IS NOT NULL AND NEW.element_hash IS OLD.element_hash
+ AND (NEW.id IS NOT OLD.id OR NEW.face IS NOT OLD.face OR NEW.type IS NOT OLD.type
+      OR NEW.properties IS NOT OLD.properties OR NEW.content IS NOT OLD.content)
+BEGIN
+	UPDATE entities SET element_hash = NULL, element_fp0 = NULL, element_fp1 = NULL,
+	       element_fp2 = NULL, element_fp3 = NULL
+	 WHERE rowid = NEW.rowid;
+END;
+CREATE TRIGGER IF NOT EXISTS relations_clear_element
+AFTER UPDATE OF from_id, from_face, rel_type, to_id, properties, content ON relations
+WHEN NEW.element_hash IS NOT NULL AND NEW.element_hash IS OLD.element_hash
+ AND (NEW.from_id IS NOT OLD.from_id OR NEW.from_face IS NOT OLD.from_face
+      OR NEW.rel_type IS NOT OLD.rel_type OR NEW.to_id IS NOT OLD.to_id
+      OR NEW.properties IS NOT OLD.properties OR NEW.content IS NOT OLD.content)
+BEGIN
+	UPDATE relations SET element_hash = NULL, element_fp0 = NULL, element_fp1 = NULL,
+	       element_fp2 = NULL, element_fp3 = NULL
+	 WHERE rowid = NEW.rowid;
+END;
+CREATE INDEX IF NOT EXISTS entities_element_idx ON entities(
+	(type || '/' || id || CASE WHEN face = '' THEN '' ELSE '@' || face END),
+	element_fp0, element_fp1, element_fp2, element_fp3, element_hash);
+CREATE INDEX IF NOT EXISTS relations_element_idx ON relations(
+	(from_id || CASE WHEN from_face = '' THEN '' ELSE '@' || from_face END || '--' || rel_type || '--' || to_id),
+	element_fp0, element_fp1, element_fp2, element_fp3, element_hash);
+CREATE INDEX IF NOT EXISTS entities_elementless_idx ON entities(id, face) WHERE element_hash IS NULL;
+CREATE INDEX IF NOT EXISTS relations_elementless_idx ON relations(from_id, from_face, rel_type, to_id)
+	WHERE element_hash IS NULL;`
 
 // contentHashDDL keeps a live row's content_hash honest (BUG-1DWMYO,
 // TASK-Y73Y9 in Atlas; pgstore migrations 0020 and 0021).
