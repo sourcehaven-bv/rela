@@ -98,8 +98,8 @@ function fieldsOf(e: { properties?: Record<string, unknown>; content?: string })
 const owner = (value: string): Tab | undefined =>
   value[0] === 'A' || value[0] === 'B' ? (value[0] as Tab) : undefined
 
-// `exhaust` answers the next MAX_CONFLICT_ATTEMPTS saves with an empty 412,
-// which is every attempt one save gets.
+// `exhaust` answers every attempt of one save with an empty 412 (see the
+// fault handler for which save).
 type Fault = 'fail' | 'empty412' | 'exhaust' | 'lost'
 type Cmd =
   | { k: 'set'; tab: Tab; prop: (typeof PROPS)[number] }
@@ -174,9 +174,11 @@ async function run(s: fc.Scheduler, cmds: Cmd[], effect: Effect): Promise<string
     },
   })
 
-  // Which tab sent a request: set by each tab's runWrite, carried by every
-  // await into the adapter. A request outside a save (the seed) has none.
-  const sender = new AsyncLocalStorage<Tab>()
+  // Which tab and which save sent a request: set by each tab's runWrite,
+  // carried by every await into the adapter. A request outside a save (the
+  // seed) has none.
+  const sender = new AsyncLocalStorage<{ tab: Tab; save: number }>()
+  let saves = 0
   // Every value each field has held on the server, and the values a tab
   // wrote whose answer it never got.
   const everWritten = new Set<string>()
@@ -224,32 +226,28 @@ async function run(s: fc.Scheduler, cmds: Cmd[], effect: Effect): Promise<string
 
   const { adapter } = fakeAdapter(server, s, {
     fault(req) {
-      const by = sender.getStore()
-      if (!by || req.path !== NOTE) return undefined
+      const from = sender.getStore()
+      if (!from || req.path !== NOTE) return undefined
+      const by = from.tab
       const f = pendingFault
       if (req.method === 'PATCH') {
-        if (f === 'exhaust') {
+        // An exhaust answers every attempt of one save: it binds to the save
+        // whose request it hits first. Other saves in between, of the other
+        // tab or of this tab's other channel, neither spend those 412s nor
+        // are refused by them.
+        if (f === 'exhaust' && !exhausting) {
           pendingFault = null
-          empty412Left = MAX_CONFLICT_ATTEMPTS
+          exhausting = { save: from.save, left: MAX_CONFLICT_ATTEMPTS }
         }
-        if (f === 'fail' || f === 'empty412' || empty412Left > 0) {
-          if (empty412Left > 0) empty412Left--
-          else pendingFault = null
+        if (exhausting?.save === from.save) {
+          if (--exhausting.left === 0) exhausting = null
           effect.faults++
-          if (f === 'fail') return unavailable()
-          // A write landed between the server's check and its write: a 412
-          // that names no field.
-          const versions = current()._versions
-          return {
-            status: 412,
-            data: {
-              type: PRECONDITION_FAILED,
-              title: 'Entity has been modified',
-              status: 412,
-              conflicts: {},
-              versions,
-            },
-          }
+          return emptyPrecondition()
+        }
+        if (f === 'fail' || f === 'empty412') {
+          pendingFault = null
+          effect.faults++
+          return f === 'fail' ? unavailable() : emptyPrecondition()
         }
         const before = fieldsOf(current())
         const res = server.handle(req)
@@ -293,7 +291,21 @@ async function run(s: fc.Scheduler, cmds: Cmd[], effect: Effect): Promise<string
     },
   })
   let pendingFault: Fault | null = null
-  let empty412Left = 0
+  let exhausting: { save: number; left: number } | null = null
+  // A write landed between the server's check and its write: a 412 that
+  // names no field.
+  function emptyPrecondition(): FakeResponse {
+    return {
+      status: 412,
+      data: {
+        type: PRECONDITION_FAILED,
+        title: 'Entity has been modified',
+        status: 412,
+        conflicts: {},
+        versions: current()._versions,
+      },
+    }
+  }
   // Every value a field has held, by its version token, so the base a
   // precondition names can be read back.
   const byToken = new Map<string, string>()
@@ -420,7 +432,12 @@ async function run(s: fc.Scheduler, cmds: Cmd[], effect: Effect): Promise<string
       runWrite: (send) => {
         state.refused = null
         state.refetched = null
-        return sender.run(name, send)
+        const save = ++saves
+        // A save that ends before its last attempt releases its exhaust, so
+        // a later one can bind.
+        return sender.run({ tab: name, save }, send).finally(() => {
+          if (exhausting?.save === save) exhausting = null
+        })
       },
     })
     tabs[name] = state
@@ -522,7 +539,7 @@ function unavailable(): FakeResponse {
 }
 
 // Runs the property; `found` collects the violations of the failing runs.
-async function property(numRuns: number, found: string[] = []) {
+async function property(numRuns: number, found: string[] = [], seed?: number) {
   const effect: Effect = {
     accepted: 0,
     conflicts412: 0,
@@ -548,7 +565,7 @@ async function property(numRuns: number, found: string[] = []) {
         }
       }
     ),
-    { numRuns }
+    { numRuns, seed }
   )
   return effect
 }
@@ -558,15 +575,22 @@ describe('two tabs autosaving one note', () => {
 
   it('merges what can be merged and reports the rest', async () => {
     const numRuns = Number(process.env.PROP_RUNS ?? 300)
-    const effect = await property(numRuns)
-    expect(effect.accepted, 'writes accepted').toBeGreaterThanOrEqual(numRuns * 2)
-    expect(effect.conflicts412, '412s answered').toBeGreaterThanOrEqual(numRuns)
-    expect(effect.reported, 'conflicts reported').toBeGreaterThanOrEqual(numRuns / 2)
-    expect(effect.merged, "writes that carried the other tab's value").toBeGreaterThanOrEqual(
+    // The floors below bound totals over a random sample, so a run below one
+    // names its seed and run count: replay it with PROP_SEED and PROP_RUNS.
+    const given = process.env.PROP_SEED
+    if (given !== undefined && !/^\d+$/.test(given))
+      throw new Error(`PROP_SEED=${given} is not an integer`)
+    const seed = given !== undefined ? Number(given) : Math.floor(Math.random() * 2 ** 31)
+    const effect = await property(numRuns, [], seed)
+    const at = (what: string) => `${what} (PROP_SEED=${seed} PROP_RUNS=${numRuns})`
+    expect(effect.accepted, at('writes accepted')).toBeGreaterThanOrEqual(numRuns * 2)
+    expect(effect.conflicts412, at('412s answered')).toBeGreaterThanOrEqual(numRuns)
+    expect(effect.reported, at('conflicts reported')).toBeGreaterThanOrEqual(numRuns / 2)
+    expect(effect.merged, at("writes that carried the other tab's value")).toBeGreaterThanOrEqual(
       numRuns / 8
     )
-    expect(effect.faults, 'faults that hit a save').toBeGreaterThanOrEqual(numRuns)
-    expect(effect.exhausted, 'saves out of attempts').toBeGreaterThanOrEqual(numRuns / 10)
+    expect(effect.faults, at('faults that hit a save')).toBeGreaterThanOrEqual(numRuns)
+    expect(effect.exhausted, at('saves out of attempts')).toBeGreaterThanOrEqual(numRuns / 10)
   }, 120_000)
 
   // The faults the property is for: a merge that writes ours whatever the
