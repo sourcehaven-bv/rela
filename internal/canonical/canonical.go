@@ -71,6 +71,24 @@ type Digest [sha256.Size]byte
 // [HashRelation] return and what pgstore stores as content_hash.
 func (d Digest) String() string { return hex.EncodeToString(d[:]) }
 
+// ParseDigest returns the digest whose [Digest.String] form is s. Only that
+// form is accepted: 64 lower-case hex digits.
+func ParseDigest(s string) (Digest, error) {
+	var d Digest
+	if len(s) != 2*len(d) {
+		return Digest{}, fmt.Errorf("canonical: digest has %d characters, want %d", len(s), 2*len(d))
+	}
+	for i := range len(s) {
+		if c := s[i]; (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return Digest{}, fmt.Errorf("canonical: digest has a character outside 0-9a-f at %d", i)
+		}
+	}
+	if _, err := hex.Decode(d[:], []byte(s)); err != nil { // coverage-ignore: the loop above admits only hex
+		return Digest{}, fmt.Errorf("canonical: %w", err)
+	}
+	return d, nil
+}
+
 // HashEntity returns [SumEntity] in hex.
 func HashEntity(e entity.Entity) string { return SumEntity(e).String() }
 

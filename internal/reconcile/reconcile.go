@@ -24,11 +24,16 @@
 //
 // The store's element range readers apply all three (store.ElementScope,
 // TKT-IQU106C). A row they cannot fold from its stored hash is counted as
-// pending and left for the redacted path. Nothing else should sum elements.
+// pending and left for the redacted path, visibility.Elements (TKT-N1KNNZU),
+// which is the one caller that serves elements to a reader. Nothing else
+// should sum elements.
 //
 // The view covers stored properties and the body. Computed roll-up
 // properties are not part of it: they are derived on read from other rows,
-// which reconcile as elements of their own.
+// which reconcile as elements of their own. A value stored under a roll-up
+// name is left out of the view too, so no reader is served it. The ETag
+// still hashes such a value, so for a row that holds one the view hash and
+// the ETag differ; a row written through the entity manager never does.
 //
 // # Order
 //
@@ -53,8 +58,10 @@
 // of authorization.
 //
 // For a reader with hidden fields the view hash is computed from the
-// redacted row, which needs the row's body. That cost is the redacted path's
-// (step 4 of FEAT-CMVZQFI), not this package's.
+// redacted row, which needs the row's body. visibility.Elements loads those
+// rows a page at a time, with the body, and bounds the page by a row cap.
+// The view hash keeps the canonical encoding, so it equals the ETag and the
+// stored content hash of an unredacted row (RR-3HN68CI).
 package reconcile
 
 import (

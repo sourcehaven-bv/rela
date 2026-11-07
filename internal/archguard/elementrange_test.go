@@ -16,9 +16,13 @@ import (
 // elementRangeAllowlist, so a new caller is a reviewed decision.
 
 // elementRangeAllowlist pins the uses of the element range reader outside
-// internal/store. It is empty until the reconcile endpoint (step 5 of
-// FEAT-CMVZQFI) adds its wiring and its handler, each with a reason.
-var elementRangeAllowlist = map[string]allowed{}
+// internal/store. The reconcile endpoint (step 5 of FEAT-CMVZQFI) adds its
+// wiring, each with a reason.
+var elementRangeAllowlist = map[string]allowed{
+	"internal/visibility/elements.go": {3, "visibility.Elements, the one gated caller: it compiles " +
+		"the scope from the bound request on every call and completes pending rows from redacted views " +
+		"(TKT-N1KNNZU)"},
+}
 
 var elementRangeGuard = guard{
 	what: "element range read",
