@@ -30,7 +30,13 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 	if err != nil {
 		return nil, err
 	}
-	st, searcher, overrides, closer, err := openBackend(context.Background(), base)
+	return openAndAssemble(context.Background(), base)
+}
+
+// openAndAssemble opens the pool and store for base's DSN and assembles base
+// over them. [New] and [SharedBase.OpenAndAssemble] both end here.
+func openAndAssemble(ctx context.Context, base *SharedBase) (*Services, error) {
+	st, searcher, overrides, closer, err := openBackend(ctx, base)
 	if err != nil {
 		return nil, err
 	}
@@ -40,9 +46,25 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 	// the generic wrapper: a fallback would hide a wiring regression.
 	visible, ok := st.(search.VisibleSearcher)
 	if !ok {
+		closeBackend(st, closer)
 		return nil, errors.New("appbuild: postgres store does not implement search.VisibleSearcher")
 	}
-	return assemble(base, st, searcher, visible, closer, overrides)
+	//nolint:contextcheck // assemble takes no ctx: it starts per-store services that outlive this call.
+	svc, err := assemble(base, st, searcher, visible, closer, overrides)
+	if err != nil {
+		// A multi-tenant host retries a tenant that failed to open, so a pool
+		// left open here would leak connections on every retry.
+		closeBackend(st, closer)
+		return nil, err
+	}
+	return svc, nil
+}
+
+// closeBackend releases what [openBackend] opened when assembly fails: the
+// store's watcher, then the pool under it.
+func closeBackend(st store.Store, pool io.Closer) {
+	_ = st.Close()
+	_ = pool.Close()
 }
 
 // openBackend builds the pool this build's services share, then wires each
@@ -92,18 +114,18 @@ func openBackend(
 	}
 	migState, err := pgmigstate.New(pool)
 	if err != nil {
-		_ = poolCloser.Close()
+		closeBackend(st, poolCloser)
 		return nil, nil, backendOverrides{}, nil, err
 	}
 
 	commentStore, err := pgcomments.New(pool)
 	if err != nil {
-		_ = poolCloser.Close()
+		closeBackend(st, poolCloser)
 		return nil, nil, backendOverrides{}, nil, err
 	}
 	schedState, err := pgschedstate.New(pool)
 	if err != nil {
-		_ = poolCloser.Close()
+		closeBackend(st, poolCloser)
 		return nil, nil, backendOverrides{}, nil, err
 	}
 	return st, searcher, backendOverrides{
