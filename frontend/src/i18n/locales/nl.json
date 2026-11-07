@@ -664,6 +664,11 @@
       "prefix": "Voorvoegsel"
     },
     "steps": "Stappen van het formulier",
+    "stepDetails": "Meer informatie",
+    "hint": {
+      "toggle": "Meer informatie tonen",
+      "toggleFor": "Meer informatie over {label}"
+    },
     "noFields": "Geen velden om te tonen.",
     "content": "Inhoud",
     "errorSummary": {

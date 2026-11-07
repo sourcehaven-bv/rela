@@ -73,7 +73,11 @@ function seedRelations(
   )
 }
 
-async function mountCards(opts: { verdict?: RelationAffordance; links?: string[] }) {
+async function mountCards(opts: {
+  verdict?: RelationAffordance
+  links?: string[]
+  extra?: Partial<FormFieldOrRelation>
+}) {
   seedSchema()
   seedRelations(opts.links ?? ['FEAT-001'])
   const field: FormFieldOrRelation = {
@@ -83,6 +87,7 @@ async function mountCards(opts: { verdict?: RelationAffordance; links?: string[]
     // Declare meta properties on the field so the inline-edit input
     // renders inside each card. Matches data-entry.yaml usage.
     properties: [{ property: 'note', label: 'Note' }],
+    ...opts.extra,
   } as never
   const wrapper = mount(RelationCards, {
     props: {
@@ -96,6 +101,32 @@ async function mountCards(opts: { verdict?: RelationAffordance; links?: string[]
   await flushPromises()
   return wrapper
 }
+
+describe('RelationCards help texts', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('renders the authored help as markdown and the hint behind a button', async () => {
+    const wrapper = await mountCards({
+      extra: { help: 'Pick the **features**.', hint: 'Long guidance.' },
+    })
+    expect(wrapper.find('.field-help strong').text()).toBe('features')
+    const toggle = wrapper.find('[data-testid="field-hint-toggle"]')
+    expect(toggle.attributes('aria-label')).toBe('More information about Implements')
+    await toggle.trigger('click')
+    expect(wrapper.find('.field-hint').text()).toBe('Long guidance.')
+    wrapper.unmount()
+  })
+
+  it('renders neither without help or hint', async () => {
+    const wrapper = await mountCards({})
+    expect(wrapper.find('.field-help').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="field-hint-toggle"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})
 
 describe('RelationCards affordance plumbing', () => {
   beforeEach(() => {

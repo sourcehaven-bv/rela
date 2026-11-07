@@ -685,7 +685,7 @@ forms:
 | ---------------- | ------ | --------------------------------------------------------- |
 | `entity_type`    | string | Entity type this form operates on (must exist in metamodel) |
 | `title`          | string | Form heading                                              |
-| `description`    | string | Help text shown below the heading                         |
+| `description`    | string | Help text shown below the heading (Markdown)              |
 | `mode`           | string | `"edit"` for edit forms (omit for create forms)           |
 | `body`           | bool   | Show a markdown body editor                               |
 | `fields`         | list   | Property fields                                           |
@@ -700,7 +700,8 @@ Each entry in `fields:` configures one property input:
 | `property`    | string            | Property name from the metamodel                               |
 | `label`       | string            | Display label (defaults to property name)                      |
 | `placeholder` | string            | Placeholder text for empty inputs                              |
-| `help`        | string            | Help text shown below the field                                |
+| `help`        | string            | Help text shown below the field (Markdown)                     |
+| `hint`        | string            | Longer help behind an info button next to the label (Markdown) |
 | `required`    | bool              | Field must be filled before submission                         |
 | `default`     | string            | Default value for new entities; `$user` is the signed-in user  |
 | `hidden`      | bool              | Include in form data but hide from UI                          |
@@ -717,6 +718,47 @@ precedence, and the form never overwrites a value the user has typed.
 fields:
   - property: owner
     default: $user
+```
+
+### Help texts
+
+A form has four places for help. Each takes Markdown, so a help text can hold
+a link (`[guide](/entity/guide/G-1)`), a list or emphasis. The output is
+sanitized, as for list headers.
+
+| Key | Where | Shown |
+| --- | --- | --- |
+| form `description` | Below the form heading | Always |
+| step `description` | Below the step heading | Always |
+| step `details` | Below the step description, behind a "More information" toggle | Collapsed until opened |
+| field or relation `help` | Below the input | Always |
+| field or relation `hint` | Behind an info button next to the label | Hidden until the button is pressed |
+
+Use `help` for one short sentence the user needs every time. Use `hint` for
+longer guidance that would crowd the form, such as an explanation of a legal
+term. A field with no `help` shows the property's `description` from the
+schema instead; a relation shows the relation type's `description`.
+
+```yaml
+forms:
+  new_processing_record:
+    entity_type: processing-record
+    description: "Register a processing activity under Article 30 GDPR."
+    steps:
+      - title: "Purpose"
+        description: "Why are the personal data processed?"
+        details: |
+          A purpose must be **specific** and **explicit**. Name one purpose
+          per record; see the [purpose guide](/entity/guide/G-PURPOSE).
+        fields:
+          - property: purpose
+            help: "One sentence, in plain language."
+            hint: |
+              Avoid vague purposes such as "improving our services".
+        relations:
+          - relation: has-legal-basis
+            target_type: legal-basis
+            help: "Pick the basis from Article 6."
 ```
 
 > **Labels are authored, never derived.** When `label` is omitted the raw
@@ -1030,6 +1072,8 @@ Each entry in `relations:` configures a relation picker:
 | `direction`    | string | `"outgoing"` or `"incoming"` — inferred when omitted; required for self-referencing relations (see below) |
 | `target_type`  | string | Entity type of the related entity                              |
 | `label`        | string | Display label                                                  |
+| `help`         | string | Help text shown below the picker (Markdown; see [Help texts](#help-texts)) |
+| `hint`         | string | Longer help behind an info button next to the label (Markdown) |
 | `required`     | bool   | At least one relation must be selected                         |
 | `widget`       | string | `"select"`, `"multi-select"`, `"cards"`, or `"search"` (auto-detected) |
 | `properties`   | list   | Editable properties on the relation (only with `cards` widget) |
@@ -1253,9 +1297,10 @@ forms:
           - property: published
 ```
 
-Each step takes a `title`, an optional `description`, an optional `visible_when`
-condition, and its own `fields:` / `relations:` (identical in shape to a
-single-page form).
+Each step takes a `title`, an optional `description`, an optional `details`
+(longer help, collapsed; see [Help texts](#help-texts)), an optional
+`visible_when` condition, and its own `fields:` / `relations:` (identical in
+shape to a single-page form).
 
 **Navigation and the URL.** The active step is encoded in the URL query as
 `?step=N` (zero-based), so a refresh or a shared deep link returns to the same

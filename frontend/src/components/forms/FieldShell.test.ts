@@ -102,7 +102,9 @@ describe('FieldShell', () => {
     })
 
     it('marks the control invalid only while in error', () => {
-      expect(described({ label: 'X', error: 'bad' }).find('.widget').attributes('aria-invalid')).toBe('true')
+      expect(
+        described({ label: 'X', error: 'bad' }).find('.widget').attributes('aria-invalid')
+      ).toBe('true')
       expect(described({ label: 'X' }).find('.widget').attributes('aria-invalid')).toBeUndefined()
     })
 
@@ -114,5 +116,49 @@ describe('FieldShell', () => {
       const w = described({ label: 'X', error: 'bad' })
       expect(w.find('.field-error').attributes('role')).toBe('alert')
     })
+  })
+})
+
+describe('FieldShell help and hint', () => {
+  it('renders help as markdown, so a help text can carry a link', () => {
+    const w = shell({ label: 'X', help: 'See [the guide](/entity/guide/G-1).' })
+    const link = w.find('.field-help a')
+    expect(link.attributes('href')).toBe('/entity/guide/G-1')
+  })
+
+  it('shows no hint button without a hint', () => {
+    expect(shell({ label: 'X' }).find('[data-testid="field-hint-toggle"]').exists()).toBe(false)
+  })
+
+  it('opens and closes the hint panel from the info button', async () => {
+    const w = shell({ label: 'Name', hint: 'Long **guidance**.' })
+    const button = w.find('[data-testid="field-hint-toggle"]')
+    const panel = w.find('.field-hint')
+    expect(button.attributes('aria-expanded')).toBe('false')
+    expect(button.attributes('aria-label')).toBe('More information about Name')
+    expect(button.attributes('aria-controls')).toBe(panel.attributes('id'))
+    const shown = () => (panel.element as HTMLElement).style.display !== 'none'
+    expect(shown()).toBe(false)
+
+    await button.trigger('click')
+    expect(button.attributes('aria-expanded')).toBe('true')
+    expect(shown()).toBe(true)
+    expect(panel.find('strong').text()).toBe('guidance')
+
+    await button.trigger('click')
+    expect(shown()).toBe(false)
+  })
+
+  it('keeps the hint button out of the label element', () => {
+    // A button inside a <label> is invalid nesting, and a click on it would
+    // also move focus to the input the label points at.
+    const w = shell({ fieldId: 'f', label: 'Name', hint: 'h' })
+    expect(w.find('label [data-testid="field-hint-toggle"]').exists()).toBe(false)
+    expect(w.find('.field-label-row [data-testid="field-hint-toggle"]').exists()).toBe(true)
+  })
+
+  it('shows the hint after a checkbox label too', () => {
+    const w = shell({ label: 'Done', hint: 'h', labelPosition: 'after' })
+    expect(w.find('.checkbox-wrapper [data-testid="field-hint-toggle"]').exists()).toBe(true)
   })
 })

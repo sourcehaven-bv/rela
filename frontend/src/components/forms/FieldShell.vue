@@ -17,12 +17,15 @@
 // What IS taken from RlFieldShell is its accessibility wiring, below.
 import { computed, useId } from 'vue'
 import { fieldSpanStyle } from '@/utils/fieldSpan'
+import FieldHint from './FieldHint.vue'
+import MarkdownHelp from './MarkdownHelp.vue'
 
 const props = defineProps<{
   fieldId?: string
   label?: string
   required?: boolean
   help?: string
+  hint?: string
   error?: string
   labelPosition?: 'before' | 'after'
   // Authored width on the 12-column form grid (TKT-5V8704); undefined = full
@@ -63,24 +66,28 @@ const control = computed(() => ({
 <template>
   <div class="form-field" :class="{ 'has-error': error }" :style="spanStyle">
     <template v-if="labelPosition === 'after'">
-      <div class="checkbox-wrapper">
+      <div class="checkbox-wrapper field-label-row">
         <slot v-bind="control" />
         <label v-if="label" :for="fieldId">
           {{ label }}
           <span v-if="required" class="required">*</span>
         </label>
+        <FieldHint v-if="hint" :hint="hint" :label="label" />
       </div>
     </template>
 
     <template v-else>
-      <label v-if="label" :for="fieldId">
-        {{ label }}
-        <span v-if="required" class="required">*</span>
-      </label>
+      <div v-if="label || hint" class="field-label-row">
+        <label v-if="label" :for="fieldId">
+          {{ label }}
+          <span v-if="required" class="required">*</span>
+        </label>
+        <FieldHint v-if="hint" :hint="hint" :label="label" />
+      </div>
       <slot v-bind="control" />
     </template>
 
-    <p v-if="help" :id="helpId" class="field-help">{{ help }}</p>
+    <MarkdownHelp v-if="help" :id="helpId" class="field-help" :text="help" />
     <!--
       role="alert" so a message that appears after the user leaves the field is
       announced without them having to go back and look for it.
@@ -104,6 +111,13 @@ const control = computed(() => ({
 
 .required {
   color: var(--rl-color-danger, #ef4444);
+}
+
+.field-label-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }
 
 .checkbox-wrapper {

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import FieldHint from './FieldHint.vue'
+import MarkdownHelp from './MarkdownHelp.vue'
 import { ref, computed, onMounted, watch } from 'vue'
 import { I18nT, useI18n } from 'vue-i18n'
 import { RouterLink, useRouter } from 'vue-router'
@@ -125,6 +127,10 @@ const relationLabel = computed(
     props.field.relation ||
     ''
 )
+
+// Mirrors RelationPicker: authored help wins, then the relation type's own
+// description from the schema.
+const help = computed(() => props.field.help || relationType.value?.description || '')
 
 const relationProperties = computed<Record<string, PropertyDef>>(() => {
   return relationType.value?.properties ?? {}
@@ -587,10 +593,14 @@ function onDragEnd() {
 
 <template>
   <div class="relation-cards">
-    <label class="section-label">
-      {{ relationLabel }}
-      <span v-if="hasPendingChanges" class="pending-badge">{{ t('form.relation.unsaved') }}</span>
-    </label>
+    <div class="field-label-row">
+      <label class="section-label">
+        {{ relationLabel }}
+        <span v-if="hasPendingChanges" class="pending-badge">{{ t('form.relation.unsaved') }}</span>
+      </label>
+      <FieldHint v-if="field.hint" :hint="field.hint" :label="relationLabel" />
+    </div>
+    <MarkdownHelp v-if="help" class="field-help" :text="help" />
 
     <div v-if="error" class="error-message">{{ error }}</div>
 
@@ -866,6 +876,19 @@ function onDragEnd() {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.field-label-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.field-help {
+  font-size: 13px;
+  color: var(--rl-color-text-muted);
+  margin: 0;
 }
 
 .section-label {
