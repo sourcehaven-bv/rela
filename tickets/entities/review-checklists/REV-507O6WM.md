@@ -3,17 +3,17 @@ id: REV-507O6WM
 type: review-checklist
 title: 'Review: Reconcile endpoint POST /api/v1/_reconcile'
 started: "2026-11-07"
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (`just test`)
+- [x] Lint clean (`just lint`)
+- [x] Comment lint gate clean (`just comment-lint`)
+- [x] Coverage maintained (`just coverage-check`, part of `just ci`)
 
 **Comment findings.** `just comment-report` lists the advisory rules
 (duplication, nil-contract, param-contract, restatement). They are not a merge
@@ -34,41 +34,47 @@ unexplained suppression is a finding nobody can re-evaluate later.
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` command (invokes cranky-code-reviewer agent)
+- [x] All critical review-responses addressed
+- [x] All significant review-responses addressed
+- [x] Self-reviewed the diff for unrelated changes
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** design RR-VMZ3NM0, RR-IHCHB3J, RR-L0WVWGV, RR-P5HOOIS, RR-3FNL4AN, RR-BDBOB01, RR-YE7U6YW, RR-O8M3WR3, RR-T09PZLV, RR-06ZS7QG, RR-6QK6391, RR-KSR2XAK; code RR-JMX0MV2, RR-W3PJDEA, RR-JJ6NP8R (significant, addressed), RR-BJ19JE9, RR-OMM0JNN, RR-2WG27RY, RR-F12XM5E, RR-3DED5XQ, RR-0UPVRQR, RR-XGMMKR5, RR-2B3HGY8, RR-29V0J94 (addressed), RR-KT1PVVG (minor, deferred to step 7: shared gate key in header mode), RR-IE1H1W8 (minor, wont-fix: identity mismatch stays 500 by convention). Also resolved the deferred RR-MDMA4S5, RR-3RVT441, RR-ER381BQ. `just ci` passed.
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (reference planning checklist)
+- [x] Test evidence documented in implementation checklist
 
 **Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+1. PASS: TestReconcile_PrincipalsSeeTheirOwnRows (alice 5, bob 3, different fingerprints, no feature in bob's list); golden reconcile.* per role.
+2. PASS: TestReconcile_HiddenFieldDoesNotReachTheHash.
+3. PASS: fold check in TestReconcile_PrincipalsSeeTheirOwnRows.
+4. PASS: TestReconcile_Paging, TestReconcile_PagingPastAPrefix.
+5. PASS: TestReconcile_RefusesBadRequests.
+6. PASS: TestReconcileGate; manual 503/429 with Retry-After against the tickets project.
+7. PASS: TestReconcile_NoIdentityFailsClosed (401).
+8. PASS: router walk probe, TestReconcile_CrossOriginRefused, TestReconcilePath, golden coverage.
 
 ## Documentation (enhancements only)
 
 Skip this section for bugs and internal refactors.
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
+- [x] Docs-checklist created and linked via `has-docs`
+- [x] User-facing documentation updated
+- [x] Docs-checklist marked as done
 
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+**Docs Checklist:** DOCS-LGUAD6G
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why, not just what
+- [x] No TODOs or FIXMEs left unaddressed
+- [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] Run `/pr` command to create PR and monitor CI (next step after done; CI status is tracked on GitHub)
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.
