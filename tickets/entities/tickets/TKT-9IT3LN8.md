@@ -49,3 +49,9 @@ first user.
   gate, never the store.
 - Expose runs to people only through the header's row gate: the store
   authorizes nothing.
+- `rela db import-fs` does not copy runs yet. On fs they live in the
+  `flow-runs.json` and `flow-definitions.json` state keys, which the
+  import copies into `state_kv`, where the sqlite store does not read
+  them. Decide whether the import moves them into `flow_runs` and
+  `flow_definitions` or drops them, and update
+  `TestDBImportFS_SQLiteTablesAreAccounted`.
