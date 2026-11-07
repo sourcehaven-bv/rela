@@ -66,13 +66,33 @@ export class FacesPage extends BasePage {
     return this.page.getByTestId('world-switcher');
   }
 
+  /** The link for a world, when the switcher renders as links (two or
+   *  three visible worlds). */
+  worldLink(name: string): Locator {
+    return this.worldSwitcher().locator(`.rl-segmented__option[data-value="${name}"]`);
+  }
+
+  /** Select a world by name. Two or three visible worlds render as links;
+   *  more render as a select. */
   async selectWorld(name: string) {
-    await this.worldSwitcher().selectOption(name);
+    const switcher = this.worldSwitcher();
+    await expect(switcher).toBeVisible();
+    if ((await switcher.evaluate((el) => el.tagName)) === 'SELECT') {
+      await switcher.selectOption(name);
+    } else {
+      await this.worldLink(name).click();
+    }
     await this.waitForSpinnerToDisappear();
   }
 
   async expectSelectedWorld(name: string) {
-    await expect(this.worldSwitcher()).toHaveValue(name);
+    const switcher = this.worldSwitcher();
+    await expect(switcher).toBeVisible();
+    if ((await switcher.evaluate((el) => el.tagName)) === 'SELECT') {
+      await expect(switcher).toHaveValue(name);
+    } else {
+      await expect(this.worldLink(name)).toHaveAttribute('aria-current', 'true');
+    }
   }
 
   /** The `?world=` the URL carries, or null when it carries none. */
@@ -99,14 +119,24 @@ export class FacesPage extends BasePage {
 
   // ── Face switcher ──────────────────────────────────────────────────
 
-  /** Switch to another face. One other face renders a single button
-   *  ("View <Face>"); several render a menu. */
+  /** The record face toggle (FaceToggle.vue), shown for two or three faces
+   *  in total. */
+  faceToggle(): Locator {
+    return this.page.getByTestId('face-toggle');
+  }
+
+  /** Switch to another face. Two or three faces in total render as a
+   *  toggle of links; otherwise one other face is a single button
+   *  ("View <Face>") and several are a menu. */
   async switchToFace(faceLabel: string) {
+    const toggle = this.faceToggle();
     const single = this.page.locator('button.face-single');
     const menu = this.page.locator('.face-menu > button');
-    // Wait for either form before branching; isVisible() does not wait.
-    await expect(single.or(menu)).toBeVisible();
-    if (await single.isVisible()) {
+    // Wait for any form before branching; isVisible() does not wait.
+    await expect(toggle.or(single).or(menu).first()).toBeVisible();
+    if (await toggle.isVisible()) {
+      await toggle.locator('a').filter({ hasText: faceLabel }).click();
+    } else if (await single.isVisible()) {
       await expect(single).toContainText(faceLabel);
       await single.click();
     } else {
@@ -115,9 +145,19 @@ export class FacesPage extends BasePage {
     }
   }
 
+  /** The toggle marks the face on screen as current. */
+  async expectCurrentFace(faceLabel: string) {
+    await expect(
+      this.faceToggle().locator('a[aria-current="true"]'),
+    ).toHaveText(faceLabel);
+  }
+
   async expectFaceSwitcher(faceLabel: string) {
     await expect(
-      this.page.locator('button.face-single, .face-menu').filter({ hasText: faceLabel }),
+      this.page
+        .locator('[data-testid="face-toggle"] a, button.face-single, .face-menu')
+        .filter({ hasText: faceLabel })
+        .first(),
     ).toBeVisible();
   }
 

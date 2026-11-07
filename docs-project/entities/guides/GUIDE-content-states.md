@@ -223,6 +223,8 @@ The following table summarizes the keys a world accepts:
 | `on_absent` | Optional. `redirect: <world>` sends a reader who opens an entity with no face here to that world instead of showing the page. |
 | `primary_for` | Optional. Breaks a tie when two worlds lead with the same face for a type. See the Metamodel Reference. |
 | `create` | The face a create issued from this world lands in. A faced type has no default row, so a create from a world without this key is refused. Not derived from `select`: a world heading the ADOPTED face would otherwise publish by the act of creating. |
+| `label` | Optional. The world's name in the web app: the world switcher and `{world}` in `messages`. The key stays the address. |
+| `hidden` | Optional. `true` leaves the world out of the world switcher; `?world=` and the API still select it. Not allowed on the default world. |
 | `edits` | Accepted and validated as a declared face name, but not used yet. |
 
 `otherwise:` has no default and a world without it does not load. The two
@@ -729,10 +731,20 @@ never chose.
   sentence whether or not the reader may write it — it describes the document,
   not the permission — and both appear together, `notice` first, when a face
   declares both.
-- A **View Published** button, or a menu when there are several faces, lets
-  the reader switch to the entity's other faces by address, staying in the
-  world they are browsing. It renders on every screen that has faces,
+- When an entity has two or three faces, its page shows a **face toggle**
+  in the header, with the face on screen marked. Each choice opens that face
+  by address. When a declared world leads with that face and the reader may
+  read it, the choice also switches to that world, so the related sections and the world switcher
+  match the face on screen. With more faces, a menu offers the others
+  instead. A preview of the entity on another page shows no toggle. The toggle or menu renders on every screen that has faces,
   including the default world.
+- The sidebar shows a **world switcher** when the reader can choose between
+  two or more worlds. Two or three visible worlds show as a row of choices;
+  more show as a list. It uses each world's `label`, leaves out worlds with
+  `hidden: true` unless the reader is in one, and has no caption of its own.
+  `app.world_switcher: none` in `data-entry.yaml` removes it, for a project
+  whose worlds are wiring rather than a choice a reader makes. The face
+  toggle stays either way.
 - A row or card served a **stand-in** (an entity resolved through
   `otherwise: default`, or through a later entry in the chain than the first)
   carries a badge with the world's `messages.stand_in` text, typically

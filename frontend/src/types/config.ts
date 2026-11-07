@@ -129,6 +129,10 @@ export interface AppConfig {
   // per request, so this changes which face a bare URL resolves to, not who
   // may see it.
   default_world?: string
+  // Where the world switcher renders (`app.world_switcher`): `header` in the
+  // sidebar header, `none` nowhere. The server resolves an unset key to
+  // `header`; absent only on an older server, which always rendered it.
+  world_switcher?: 'header' | 'none'
   // Whether THIS DEPLOYMENT can serve version history. Content versioning is
   // a postgres-only optional store capability; on fs/mem the `/_history`
   // endpoint answers a named 501.

@@ -5,7 +5,9 @@ title: 'World switcher: labels and opt-in placement; hidden worlds; per-record t
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-11-07"
+completed: "2026-11-07"
+status: done
 ---
 
 ## Description

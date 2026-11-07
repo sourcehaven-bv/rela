@@ -294,6 +294,7 @@
     "convertedTo": "Omgezet naar {type}",
     "copyFailed": "Kopiëren mislukt",
     "viewFace": "{face} bekijken",
+    "faceToggle": "Versies",
     "defaultFace": "standaard",
     "history": "Geschiedenis",
     "exportAs": "Exporteren als {format}",
@@ -890,7 +891,7 @@
   },
   "switcher": {
     "projects": "Projecten",
-    "world": "Wereld",
+    "worldAria": "Weergave",
     "configure": "Configureren"
   },
   "help": {
