@@ -294,6 +294,7 @@
     "convertedTo": "Converted to {type}",
     "copyFailed": "Copy failed",
     "viewFace": "View {face}",
+    "faceToggle": "Versions",
     "defaultFace": "default",
     "history": "History",
     "exportAs": "Export as {format}",
@@ -890,7 +891,7 @@
   },
   "switcher": {
     "projects": "Projects",
-    "world": "World",
+    "worldAria": "View",
     "configure": "Configure"
   },
   "help": {

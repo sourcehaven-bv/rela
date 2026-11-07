@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -63,9 +62,6 @@ func (e *Error) Error() string {
 	}
 	return "flows.yaml: " + strings.Join(lines, "; ")
 }
-
-// validName is the grammar of a flow, state, timer and event name.
-var validName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 
 // guardFunctions are the host functions a guard may call: pure functions
 // of their arguments and the date. A guard runs as the engine and its
@@ -201,7 +197,7 @@ func (l *loader) flows(n *yaml.Node) {
 	}
 	for i, name := range names {
 		key := "flows." + name
-		if !validName.MatchString(name) {
+		if !flow.ValidName(name) {
 			l.add(key, "a flow name is 1 to 64 lower-case letters, digits, '-' or '_', starting with a letter")
 			continue
 		}

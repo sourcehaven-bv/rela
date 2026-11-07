@@ -21,6 +21,7 @@ exclude:
   - internal/piles/pilestest
   - internal/lease/leasetest
   - internal/channels/channelstest
+  - internal/flowrun/flowruntest
   - internal/schedulerstate/schedulerstatetest
   - frontend
   - e2e
@@ -151,6 +152,18 @@ components:
   # flows.yaml loader (TKT-XHANLJU): declared processes compiled onto the
   # engine, checked against the schema and acl.yaml.
   flowcfg:          { in: internal/flowcfg }
+  # The flow run store (TKT-PV9R0GK): execution state of each run, keyed
+  # by run id, on the KV (fs, memory, desktop), pg and sqlite.
+  flowrun:          { in: internal/flowrun }
+  kvflowrun:        { in: internal/flowrun/kvflowrun }
+  sqlflowrun:       { in: internal/flowrun/sqlflowrun }
+  pgflowrun:        { in: internal/flowrun/pgflowrun }
+  sqliteflowrun:    { in: internal/flowrun/sqliteflowrun }
+  # The statement interface the shared SQL backends are written against,
+  # and its pgx and database/sql adapters.
+  sqlexec:          { in: internal/sqlexec }
+  pgexec:           { in: internal/sqlexec/pgexec }
+  sqliteexec:       { in: internal/sqlexec/sqliteexec }
   # Runes that make text show something other than what it holds.
   texthazard:       { in: internal/texthazard }
   # The YAML 1.1 boolean spellings a config key refuses unquoted.
@@ -1803,16 +1816,55 @@ deps:
     mayDependOn:
       - channels
       - entity
+      - sqlexec
   # The adapters supply the handle and the dialect. sqlitechannels imports no
   # driver either: the sqlite recipe hands it the open *sql.DB.
   sqlitechannels:
     mayDependOn:
       - sqlchannels
+      - sqliteexec
   pgchannels:
     mayDependOn:
       - sqlchannels
+      - pgexec
+  # The run store's domain package: value types, limits, checks and the
+  # Store contract. It knows no backend and no graph store. It authorizes
+  # nothing, so only the flow runtime and the composition root may depend
+  # on it; dataentry, mcp, cli and openapi read runs through the
+  # _flow-run entity's row gate (TKT-BC5G8RP), never from the store.
+  flowrun:
+    mayDependOn:
+      - flow
+  # The KV backend for fs, memory and desktop, behind a cross-process lock.
+  kvflowrun:
+    mayDependOn:
+      - flow
+      - flowrun
+      - state
+  # The SQL implementation shared by pg and sqlite, like sqlchannels.
+  sqlflowrun:
+    mayDependOn:
+      - flow
+      - flowrun
+      - sqlexec
+  sqliteflowrun:
+    mayDependOn:
+      - sqlflowrun
+      - sqliteexec
+  pgflowrun:
+    mayDependOn:
+      - sqlflowrun
+      - pgexec
+  # Takes an injected pgx handle; the composition root owns the pool.
+  pgexec:
+    mayDependOn:
+      - sqlexec
     canUse:
       - pgx
+  # Imports no driver: the sqlite recipe hands it the open *sql.DB.
+  sqliteexec:
+    mayDependOn:
+      - sqlexec
   memcomments:
     mayDependOn:
       - comments

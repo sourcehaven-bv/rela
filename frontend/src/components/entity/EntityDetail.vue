@@ -94,6 +94,8 @@ import ConversionModal from '@/components/entity/ConversionModal.vue'
 import ConversionMenu from '@/components/entity/ConversionMenu.vue'
 import { useActionsFit } from '@/composables/useActionsFit'
 import FaceMenu from '@/components/entity/FaceMenu.vue'
+import FaceToggle from '@/components/entity/FaceToggle.vue'
+import { faceToggleOptions } from '@/components/entity/faceToggleOptions'
 import EntityActionsMenu from '@/components/entity/EntityActionsMenu.vue'
 import type { EntityAction } from '@/components/entity/entityActions'
 import DuplicateModal from '@/components/entity/DuplicateModal.vue'
@@ -1451,6 +1453,18 @@ function conversionDone(id: string, face: string) {
 // dead control for a face no world heads.
 const faceOptions = computed<Face[] | undefined>(() => entry.value?._faces)
 
+// Two or three faces in total render as a toggle in the header info, which
+// stays in view in a narrow header. The face entries then leave the actions
+// and the face menu, so the same choice is not offered twice. An embedded
+// surface (`hideActions`) gets no toggle: a preview must not navigate away
+// from its host, and the detail panel takes the faces as actions.
+const faceToggle = computed(() =>
+  faceOptions.value && !props.hideActions
+    ? faceToggleOptions(bareEntityId.value, servedFace.value, faceOptions.value, typeDef.value?.faces)
+    : null,
+)
+const menuFaces = computed<Face[] | undefined>(() => (faceToggle.value ? undefined : faceOptions.value))
+
 // The face's address, for an older server that sends no `ref`: the stored
 // coordinate appended to the bare id is that face's spelling for every
 // non-bare face; the bare face has only the bare id.
@@ -1595,7 +1609,7 @@ function faceLabel(stored: string): string {
 
 const textVars = computed<WorldTextVars>(() => ({
   face: faceLabelOf(servedFace.value),
-  world: world.value,
+  world: schemaStore.worldLabel(world.value),
   title: entryTitle.value,
 }))
 
@@ -1750,7 +1764,7 @@ const actions = computed<EntityAction[]>(() => {
       run: () => void router.push(to),
     })
   }
-  for (const f of faceOptions.value ?? []) {
+  for (const f of menuFaces.value ?? []) {
     out.push({
       id: `face:${f.face}`,
       label: t('entity.viewFace', { face: f.label || f.face || t('entity.defaultFace') }),
@@ -2562,6 +2576,12 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             @edit="onTitleEdit"
             @commit="saveTitle"
           />
+          <FaceToggle
+            v-if="faceToggle"
+            :entity-type="entityType"
+            :current="servedFace"
+            :options="faceToggle"
+          />
           <PileToggles v-if="servedRef" :address="servedRef" :entity-type="entityType" />
           <div
             v-if="entry?._lease || presence.viewers.value.length || presence.more.value"
@@ -2596,7 +2616,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             >
               {{ a.label }}
             </RlButton>
-            <FaceMenu :faces="faceOptions" @select="goToFace" />
+            <FaceMenu :faces="menuFaces" @select="goToFace" />
             <!--
             Copy affordances (RULING 9). Renders nothing when no offer is
             allowed — a denied copy is ABSENT, not disabled — and nothing under

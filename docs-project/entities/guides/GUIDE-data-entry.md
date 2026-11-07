@@ -8885,6 +8885,29 @@ only on read requests and only on the routes listed under
 [Routes that serve a world](#routes-that-serve-a-world). Passing
 `?world=default` explicitly still selects the unresolved default world.
 
+### World switcher (`app.world_switcher`)
+
+The sidebar header shows a world switcher when the schema declares two or
+more worlds the reader can select. `app.world_switcher` decides whether it
+renders:
+
+```yaml
+app:
+  world_switcher: none
+```
+
+| Value | Effect |
+| --- | --- |
+| `header` | Default. The switcher renders in the sidebar header. |
+| `none` | No switcher. Readers still reach other worlds through links that carry `?world=`, and an entity page still offers its other faces. |
+
+Any other value fails the load. Unknown keys in `app:` are ignored, so check
+the spelling. The switcher shows each world's `label:` from `schema.yaml` and
+leaves out worlds with `hidden: true` (see
+[Metamodel](metamodel.md#declaring-worlds)). Two or three visible worlds render as a row
+of links, more as a select. The setting is presentation only: it changes no
+read grant.
+
 ### Creating into another world (`create_world`)
 
 When a list is shown in a world that does not select the face a new entity is

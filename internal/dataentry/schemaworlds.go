@@ -83,6 +83,8 @@ func schemaWorlds(ctx context.Context, meta *metamodel.Metamodel) map[string]v1.
 			// shared by every assembled Services.
 			PrimaryFor: append([]string(nil), def.PrimaryFor...),
 			Banner:     def.Banner,
+			Label:      def.Label,
+			Hidden:     def.Hidden,
 			Messages:   worldMessagesWire(def.Messages),
 			OnAbsent:   worldOnAbsentWire(def.OnAbsent),
 			Create:     def.Create,

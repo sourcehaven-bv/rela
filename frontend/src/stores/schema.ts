@@ -208,6 +208,13 @@ export const useSchemaStore = defineStore('schema', () => {
     if (!face) return ''
     return faces[face]?.label || face
   })
+  // worldLabel is the display text for a world: its `label:`, else its
+  // name. '' (the default world) resolves through defaultWorld first, so
+  // "{world}" never renders empty on a bare URL.
+  const worldLabel = computed(() => (name: string) => {
+    const resolved = name || defaultWorld.value
+    return worlds.value.get(resolved)?.label || resolved
+  })
   const getRelationType = computed(() => (name: string) => relationTypes.value.get(name))
   // Look up a relation type's inverse name (e.g., "blocks" → "blockedBy").
   // Returns undefined when the relation has no declared inverse. Used by
@@ -584,6 +591,7 @@ export const useSchemaStore = defineStore('schema', () => {
     worldReadable,
     defaultWorld,
     worldForFace,
+    worldLabel,
     faceLabel,
     historyEnabled,
     collabEnabled,

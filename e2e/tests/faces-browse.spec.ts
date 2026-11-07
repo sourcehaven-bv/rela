@@ -57,8 +57,10 @@ test.describe('Faces: browse in a world', () => {
     const faces = new FacesPage(appPage);
     await faces.openEntity('policy', `${POL1.id}@draft`);
 
+    await faces.expectCurrentFace('Draft');
     await faces.switchToFace('Published');
     await faces.expectHeading(POL1.publishedTitle);
+    await faces.expectCurrentFace('Published');
     await faces.expectBodyContains(POL1.publishedBody);
     await faces.expectBodyNotContains(POL1.draftBody);
   });
