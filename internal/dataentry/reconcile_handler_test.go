@@ -90,7 +90,7 @@ func newReconcileFixture(t *testing.T, gate reconcileGateConfig) *reconcileFixtu
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := newReconcileHandler(app.State, el, newReconcileGate(gate))
+	h, err := newReconcileHandler(app.State, visibleElements{el}, newReconcileGate(gate))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,19 +390,19 @@ type stubElements struct {
 	delay time.Duration
 }
 
-func (s stubElements) Fingerprint(ctx context.Context, _ visibility.ElementTypes, _ store.ElementRange) (reconcile.Range, error) {
+func (s stubElements) Sum(ctx context.Context, _ visibility.ElementTypes, _ store.ElementRange) (rangeSum, error) {
 	if s.delay > 0 {
 		select {
 		case <-time.After(s.delay):
 		case <-ctx.Done():
-			return reconcile.Range{}, ctx.Err()
+			return rangeSum{}, ctx.Err()
 		}
 	}
-	return reconcile.Range{}, s.err
+	return rangeSum{}, s.err
 }
 
 func (s stubElements) List(ctx context.Context, types visibility.ElementTypes, r store.ElementRange, _ int) (visibility.ElementPage, error) {
-	_, err := s.Fingerprint(ctx, types, r)
+	_, err := s.Sum(ctx, types, r)
 	return visibility.ElementPage{}, err
 }
 

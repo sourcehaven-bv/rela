@@ -13,7 +13,6 @@ import (
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
-	"github.com/Sourcehaven-BV/rela/internal/reconcile"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -93,12 +92,34 @@ type reconcileHandler struct {
 }
 
 // elementReader is the gated element range read the endpoint serves.
-// [*visibility.Elements] implements it.
+// [visibleElements] implements it over [*visibility.Elements].
 type elementReader interface {
-	Fingerprint(ctx context.Context, types visibility.ElementTypes, r store.ElementRange) (reconcile.Range, error)
+	Sum(ctx context.Context, types visibility.ElementTypes, r store.ElementRange) (rangeSum, error)
 	List(
 		ctx context.Context, types visibility.ElementTypes, r store.ElementRange, limit int,
 	) (visibility.ElementPage, error)
+}
+
+// rangeSum is a fingerprint answer as the endpoint reports it: the element
+// count and the fingerprint in its wire form. The handler needs no range
+// arithmetic, so it does not depend on package reconcile.
+type rangeSum struct {
+	count       uint64
+	fingerprint string
+}
+
+// visibleElements adapts [*visibility.Elements] to [elementReader].
+type visibleElements struct{ *visibility.Elements }
+
+// Sum returns the count and the wire form of the fingerprint of the range.
+func (v visibleElements) Sum(
+	ctx context.Context, types visibility.ElementTypes, r store.ElementRange,
+) (rangeSum, error) {
+	rg, err := v.Fingerprint(ctx, types, r)
+	if err != nil {
+		return rangeSum{}, err
+	}
+	return rangeSum{count: rg.Count, fingerprint: rg.Sum.String()}, nil
 }
 
 // SetReconcile installs the element range read and so enables
@@ -112,7 +133,7 @@ func SetReconcile(a *App, el *visibility.Elements) error {
 	if el == nil {
 		return errors.New("dataentry: SetReconcile requires an element range read")
 	}
-	h, err := newReconcileHandler(a.State, el, newReconcileGate(reconcileGateConfig{}))
+	h, err := newReconcileHandler(a.State, visibleElements{el}, newReconcileGate(reconcileGateConfig{}))
 	if err != nil {
 		return err
 	}
@@ -230,12 +251,12 @@ func (h *reconcileHandler) run(parent context.Context, ops []reconcileOp) (v1.Re
 // answer runs one range.
 func (h *reconcileHandler) answer(ctx context.Context, op reconcileOp) (v1.ReconcileResult, error) {
 	if !op.list {
-		rg, err := h.elements.Fingerprint(ctx, op.types, op.r)
+		rs, err := h.elements.Sum(ctx, op.types, op.r)
 		if err != nil {
 			return v1.ReconcileResult{}, err
 		}
-		count := rg.Count
-		return v1.ReconcileResult{Status: v1.ReconcileOK, Count: &count, Fingerprint: rg.Sum.String()}, nil
+		count := rs.count
+		return v1.ReconcileResult{Status: v1.ReconcileOK, Count: &count, Fingerprint: rs.fingerprint}, nil
 	}
 	page, err := h.elements.List(ctx, op.types, op.r, op.limit)
 	if err != nil {

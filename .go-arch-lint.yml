@@ -701,9 +701,6 @@ deps:
       - openapi
       - project
       - queryplan
-      # POST /api/v1/_reconcile (TKT-VP02WHG) answers with reconcile's
-      # Range and Fingerprint and their text codec.
-      - reconcile
       # Answers `related(...)` in validation rules and state-machine `when:`
       # (TKT-205V2N). Its API is funcs over acl and store types, so this edge
       # does not hand dataentry the predicate engine; dataentry only picks the
