@@ -22,6 +22,14 @@
 //   - A relation is an element only when both of its endpoints are readable
 //     and in scope.
 //
+// The store's element range readers apply all three (store.ElementScope,
+// TKT-IQU106C). A row they cannot fold from its stored hash is counted as
+// pending and left for the redacted path. Nothing else should sum elements.
+//
+// The view covers stored properties and the body. Computed roll-up
+// properties are not part of it: they are derived on read from other rows,
+// which reconcile as elements of their own.
+//
 // # Order
 //
 // Elements are ordered by (Kind, Address), with addresses compared bytewise

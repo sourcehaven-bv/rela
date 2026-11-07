@@ -6,6 +6,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/elementnaive"
 )
 
 // Test-only accessors. They live here so the sweep can be driven a tick at a
@@ -37,6 +38,31 @@ func (s *Store) ExplainGraphQuery(ctx context.Context, q store.GraphQuery) (stri
 func (s *Store) ExplainMatchingFaces(ctx context.Context, q store.GraphQuery, ids []string) (string, error) {
 	sqlText, args, _ := buildMatchingFacesSQL(q, ids)
 	return s.explain(ctx, sqlText, args)
+}
+
+// ExplainRangeList is ExplainGraphQuery for the statement
+// [ElementRanges.ListRange] runs.
+func (s *Store) ExplainRangeList(
+	ctx context.Context, scope store.ElementScope, r store.ElementRange, l store.RangeList,
+) (string, error) {
+	plan, err := elementnaive.Plan(scope, r)
+	if err != nil {
+		return "", err
+	}
+	sqlText, args, _ := buildRangeListSQL(plan, l)
+	return s.explain(ctx, sqlText, args)
+}
+
+// RendersRangeNatively reports whether [ElementRanges] answers a request in
+// SQL rather than through its elementnaive fallback. An invalid request
+// counts as native: both refuse it the same way, before any read.
+func RendersRangeNatively(scope store.ElementScope, r store.ElementRange) bool {
+	plan, err := elementnaive.Plan(scope, r)
+	if err != nil || plan.Empty() {
+		return true
+	}
+	_, _, ok := buildRangeSumSQL(plan)
+	return ok
 }
 
 // ExplainEntityPage is ExplainGraphQuery for the page ListEntitiesPage reads
