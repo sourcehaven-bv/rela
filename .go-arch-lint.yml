@@ -231,6 +231,7 @@ components:
   fsstore:          { in: internal/store/fsstore }
   memstore:         { in: internal/store/memstore }
   graphquerynaive:  { in: internal/store/graphquerynaive }
+  elementnaive:     { in: internal/store/elementnaive }
   pgstore:          { in: internal/store/pgstore }
   sqlitestore:      { in: internal/store/sqlitestore }
   # Owns the SQLite database FILE — opening, PRAGMAs, the single-writer lock,
@@ -2015,6 +2016,14 @@ deps:
       - entity
       - propmatch
       - store
+  # The reference element range reader (TKT-IQU106C): memstore's and
+  # fsstore's, and what the SQL backends are compared with.
+  elementnaive:
+    mayDependOn:
+      - entity
+      - graphquerynaive
+      - reconcile
+      - store
   pgstore:
     mayDependOn:
       - mentions
@@ -2028,6 +2037,9 @@ deps:
       # match.
       - reconcile
       - graphquerynaive
+      # The element range read (TKT-IQU106C) plans through elementnaive.Plan,
+      # so every backend refuses the same requests.
+      - elementnaive
       - search
       - store
       - storeutil
@@ -2042,6 +2054,10 @@ deps:
       # have to justify widening this list.
       - entity
       - graphquerynaive
+      # The element range read (TKT-IQU106C) falls back to the reference for
+      # a name the SQL builder cannot render, as graph queries fall back to
+      # graphquerynaive.
+      - elementnaive
       # The FTS5 search backend (DEC-10Z731) implements search.Backend, as
       # pgstore's in-database search does.
       - search

@@ -39,6 +39,7 @@ var entityTypes = []string{
 	"test",
 	"ticket",
 	"user",
+	"vault",
 }
 
 // EntityTypes returns every entity type the harness writes, sorted. The
