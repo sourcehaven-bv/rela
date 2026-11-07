@@ -52,6 +52,14 @@ type ActionResponse struct {
 	// ContentType is validated against a small allowlist at parse time and is
 	// never sniffed — see validActionContentTypes.
 	ContentType string `json:"-"`
+
+	// AssertedRoles is the `asserted_roles` list of IdP role names an IdP
+	// webhook action returned for the subject the verified webhook names
+	// (TKT-IZL6NX8). Nil when the script did not return the key; an empty
+	// non-nil slice clears the subject's stored roles. Only the webhook
+	// receiver honors it; the HTTP action endpoint refuses a response that
+	// carries it, so a script cannot believe it stored roles when it did not.
+	AssertedRoles []string `json:"-"`
 }
 
 // IsRich reports whether the script chose the {status, body, content_type}
@@ -288,7 +296,38 @@ func parseActionResponse(ret any) (*ActionResponse, error) {
 		return nil, err
 	}
 
+	if v, ok := m["asserted_roles"]; ok {
+		roles, err := assertedRolesFrom(v)
+		if err != nil {
+			return nil, err
+		}
+		resp.AssertedRoles = roles
+	}
+
 	return resp, nil
+}
+
+// assertedRolesFrom reads the `asserted_roles` value: a Lua list of strings.
+// An empty table converts to an empty map, which is an empty list here. The
+// names are validated where they are stored.
+func assertedRolesFrom(v any) ([]string, error) {
+	switch list := v.(type) {
+	case map[string]any:
+		if len(list) == 0 {
+			return []string{}, nil
+		}
+	case []any:
+		out := make([]string, 0, len(list))
+		for _, item := range list {
+			s, ok := item.(string)
+			if !ok {
+				return nil, fmt.Errorf("asserted_roles must be a list of strings, found %T", item)
+			}
+			out = append(out, s)
+		}
+		return out, nil
+	}
+	return nil, fmt.Errorf("asserted_roles must be a list of strings, got %T", v)
 }
 
 // validActionContentTypes is the allowlist a script may choose from for a rich

@@ -140,6 +140,13 @@ type ReadDeps struct {
 	// Nil: accepted. The rela.piles functions then raise "piles are not
 	// available in this context", which is what a pure CLI run gets.
 	Piles PileReader
+
+	// RoleHolders backs rela.principals_with_role. Wiring supplies the IdP
+	// role store; the binding filters its answer through VisibleReader.
+	//
+	// Nil: accepted. The binding then raises "role holders are not available
+	// in this context".
+	RoleHolders RoleHolders
 }
 
 // ProjectFiles reads operator-authored project files by slash path relative

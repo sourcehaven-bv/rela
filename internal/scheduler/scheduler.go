@@ -369,6 +369,22 @@ func (s *Scheduler) taskContext(ctx context.Context, taskName, runAs string) (co
 	return out, nil
 }
 
+// taskContextAs is taskContext for a principal the wiring built, such as a
+// for_each child carrying stored IdP roles. Tool is forced to the scheduler's
+// so audit attribution does not depend on the provider.
+func (s *Scheduler) taskContextAs(
+	ctx context.Context, taskName string, p principal.Principal,
+) (context.Context, error) {
+	p = p.Clone()
+	p.Tool = principal.ToolScheduler
+	stamped := audit.WithTriggeredBy(principal.With(ctx, p), "schedule:"+taskName)
+	out, err := s.bind(stamped)
+	if err != nil {
+		return ctx, fmt.Errorf("scheduler: resolve identity for task %q: %w", taskName, err)
+	}
+	return out, nil
+}
+
 // New creates a Scheduler.
 //
 // Nil: rejected — cfg, engine, ws, bind, logger and ws.SchedulerState() are

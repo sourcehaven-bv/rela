@@ -229,6 +229,12 @@ const (
 	// A refresh rela makes itself is not audited; it changes no grant.
 	OpTokenSet    = "token-set"
 	OpTokenDelete = "token-delete"
+
+	// OpIDPRolesSet records the IdP webhook storing or clearing the asserted
+	// roles of one principal (TKT-IZL6NX8). The subject is the bound user
+	// entity, when there is one; the summary gives the role count, never the
+	// IdP subject or the role names.
+	OpIDPRolesSet = "idp-roles-set"
 )
 
 // Subject identifies what an op acted on. Exactly one of {Type, ID}
