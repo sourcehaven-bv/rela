@@ -15,6 +15,38 @@ func mustReflow(s string) string {
 	return markdown.FormatMarkdown(s)
 }
 
+// The hash is stored (pgstore content_hash, version dedup) and is the view
+// hash that sync fingerprints, so its value must not drift. A change here
+// changes every stored hash.
+func TestHash_Golden(t *testing.T) {
+	e := entity.Entity{
+		ID: "TKT-1", Type: "ticket",
+		Properties: map[string]any{"title": "Hello", "priority": 3},
+		Content:    "Body text.",
+	}
+	if got, want := canonical.HashEntity(e),
+		"ed9c2dbb80ae1b438008d5865fcbb8e76edaae23fe718d6d9f827ab288e5879c"; got != want {
+		t.Errorf("HashEntity = %s, want %s", got, want)
+	}
+	if got := canonical.SumEntity(e).String(); got != canonical.HashEntity(e) {
+		t.Errorf("SumEntity hex %s != HashEntity %s", got, canonical.HashEntity(e))
+	}
+	e.Face = "draft"
+	if got, want := canonical.HashEntity(e), "d41058f7fd740ce44ba6e6df93e463ddffcc91478bcf0c9bae3714e0e9e6bd91"; got != want {
+		t.Errorf("HashEntity faced = %s, want %s", got, want)
+	}
+	r := entity.Relation{
+		From: "TKT-1", FromFace: "draft", Type: "affects", To: "CON-1",
+		Properties: map[string]any{"weight": 2},
+	}
+	if got, want := canonical.HashRelation(r), "6e92ee6ca2f9eb4927c1234db80a92e317f8620eadbd79b3a5755ca812b8a215"; got != want {
+		t.Errorf("HashRelation = %s, want %s", got, want)
+	}
+	if got := canonical.SumRelation(r).String(); got != canonical.HashRelation(r) {
+		t.Errorf("SumRelation hex %s != HashRelation %s", got, canonical.HashRelation(r))
+	}
+}
+
 func TestHashEntity_Deterministic(t *testing.T) {
 	// Two separately constructed but equal entities must hash identically.
 	mk := func() entity.Entity {

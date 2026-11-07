@@ -71,11 +71,11 @@ func handleV1GetRelationTarget(
 	}
 
 	// Redact BEFORE hashing, and so before the 304 check: the validator is
-	// over the caller's view only.
+	// over the caller's view only (see [canonical.Digest]).
 	meta := a.affordances.visibleRelationMeta(ctx, src, relType, rel.Properties)
 	view := *rel
 	view.Properties = meta
-	etag := canonical.HashRelation(view)
+	etag := viewETag(canonical.SumRelation(view), view.Content, nil)
 	w.Header().Set("ETag", etag)
 	if r.Header.Get("If-None-Match") == etag {
 		w.WriteHeader(http.StatusNotModified)

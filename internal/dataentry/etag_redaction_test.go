@@ -10,7 +10,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
+	"github.com/Sourcehaven-BV/rela/internal/canonical"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -159,5 +161,65 @@ func TestRelationETag_ExcludesHiddenMeta(t *testing.T) {
 	}
 	if c := relationETag(t, "unblocked", "s3cr3t"); a == c {
 		t.Errorf("relation ETag ignores the visible meta: both %s", a)
+	}
+}
+
+// The relation ETag is built from the view hash of the edge as alice sees it:
+// the canonical digest that reconciliation fingerprints (FEAT-CMVZQFI).
+func TestRelationETag_IsViewHash(t *testing.T) {
+	view := entity.Relation{
+		From: "TKT-001", Type: "depends_on", To: "TKT-002",
+		Properties: map[string]any{"reason": "blocked"},
+	}
+	if got, want := relationETag(t, "blocked", "s3cr3t"), viewETag(canonical.SumRelation(view), "", nil); got != want {
+		t.Errorf("relation ETag = %s, want %s from the view hash", got, want)
+	}
+}
+
+// A name the redacting reader recorded in Redacted stays out of the ETag even
+// when the caller's hidden set misses it.
+func TestEntityETag_DropsRedactedNames(t *testing.T) {
+	absent := &entity.Entity{ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "t"}}
+	stale := &entity.Entity{
+		ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "t", "salary": "100"},
+		Redacted: []string{"salary"},
+	}
+	if got, want := entityETagWithEdges(stale, nil, nil), entityETagWithEdges(absent, nil, nil); got != want {
+		t.Errorf("ETag with a Redacted-only name = %s, want %s", got, want)
+	}
+}
+
+// The entity ETag hashes the caller's view: a hidden value counts as if it
+// were never set, whatever it is.
+func TestEntityETag_HiddenEqualsAbsent(t *testing.T) {
+	withSalary := func(s string) *entity.Entity {
+		return &entity.Entity{ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "t", "salary": s}}
+	}
+	absent := &entity.Entity{ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "t"}}
+	hidden := map[string]struct{}{"salary": {}}
+
+	want := entityETagWithEdges(absent, nil, nil)
+	for _, s := range []string{"100", "200"} {
+		if got := entityETagWithEdges(withSalary(s), hidden, nil); got != want {
+			t.Errorf("salary %s hidden: ETag %s, want %s", s, got, want)
+		}
+	}
+	if got := entityETagWithEdges(withSalary("100"), nil, nil); got == want {
+		t.Error("a visible salary did not change the ETag")
+	}
+}
+
+// The view hash formats the body, so two raw bodies can share it. The ETag
+// must still move: a backend that stores the raw body would otherwise answer
+// 304 with stale bytes after a formatting-only edit.
+func TestEntityETag_FormattingOnlyBodyEditMovesIt(t *testing.T) {
+	raw := "a long line of prose that the formatter wraps somewhere near the eighty column mark when it normalizes"
+	a := &entity.Entity{ID: "TKT-1", Type: "ticket", Content: raw}
+	b := &entity.Entity{ID: "TKT-1", Type: "ticket", Content: markdown.FormatMarkdown(raw)}
+	if a.Content == b.Content || canonical.SumEntity(*a) != canonical.SumEntity(*b) {
+		t.Fatal("fixture: two different bodies must share a view hash")
+	}
+	if entityETagWithEdges(a, nil, nil) == entityETagWithEdges(b, nil, nil) {
+		t.Error("a formatting-only body edit kept the entity ETag")
 	}
 }
