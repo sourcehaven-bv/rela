@@ -2427,6 +2427,33 @@ func (b *SharedBase) Assemble(
 	return assemble(b, st, searcher, visible, searchCloser, backendOverrides{})
 }
 
+// OpenAndAssemble opens this build's backend for dsn and assembles the base
+// over it. A multi-tenant host calls it once per tenant, so the config this
+// base parsed is parsed once for all of them.
+//
+// The tenant's DSN replaces the base's own on a copy of the base. Every
+// per-store reader of the DSN (the store's pool and the job queue) sees the
+// tenant's, and the shared base keeps its own.
+//
+// Only the postgres build supports it, because only its store and runtime
+// state are addressed by the DSN. The other builds keep data or runtime state
+// (piles, comments, settings) in the project directory, so they return an
+// error rather than hand every tenant the same data.
+//
+// A base marked by [SharedBase.ForReassembly] is refused: it assembles over a
+// store that is already open, and this opens a new one.
+func (b *SharedBase) OpenAndAssemble(ctx context.Context, dsn string) (*Services, error) {
+	if b.reassembly {
+		return nil, errors.New("appbuild: OpenAndAssemble needs a base that opens its own store, not a reassembly base")
+	}
+	if dsn == "" {
+		return nil, errors.New("appbuild: OpenAndAssemble needs the tenant's DSN; it was empty")
+	}
+	tenantBase := *b
+	tenantBase.cfg.DatabaseURL = dsn
+	return openAndAssemble(ctx, &tenantBase)
+}
+
 // buildEntityManager assembles the write-path manager from the collaborators
 // assemble has already derived. Extracted purely to keep assemble within the
 // funlen budget; it makes no decisions of its own.
@@ -2555,6 +2582,16 @@ func startBackgroundServices(
 		mail:           mailRuntime,
 		host:           host,
 	}
+}
+
+// stop ends the workers [startBackgroundServices] launched. assemble calls it
+// when a later step fails, so a failed tenant open leaves no worker running
+// against a store and pool its caller is about to close. A successful assembly
+// hands these stop functions to [Services] instead.
+func (b backgroundServices) stop() {
+	b.mailStop()
+	b.gcStop()
+	b.softDeleteStop()
 }
 
 // resolveACLAndFieldPolicy resolves the ACL and derives the field policy that
@@ -2860,6 +2897,11 @@ func assemble(
 	// per-assembled, like the search closer.
 	background := startBackgroundServices(
 		base, st, stateKV, migState, cfgLoader, versions, refs.comments, mgr, jobQueue, readDeps.Host)
+	defer func() {
+		if retErr != nil {
+			background.stop()
+		}
+	}()
 	assembled := newServices(
 		base, st, background, searcher, visible, searchCloser, mgr, tr, val,
 		templater, cfgLoader, stateKV, migState, jobQueue, aliases, refs.comments, versions,

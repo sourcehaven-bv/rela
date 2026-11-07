@@ -253,3 +253,203 @@ func TestWebhook_RefusesElevatedAction(t *testing.T) {
 		t.Fatalf("elevated action ran from the webhook (%d entities)", n)
 	}
 }
+
+// recordingOrgHandler records the organization events it receives and
+// returns err from each call.
+type recordingOrgHandler struct {
+	got []WebhookClaims
+	err error
+}
+
+func (h *recordingOrgHandler) HandleOrgEvent(_ context.Context, claims WebhookClaims) error {
+	h.got = append(h.got, claims)
+	return h.err
+}
+
+// newOrgWebhookTestApp wires a receiver whose action creates a ticket on each
+// run, and whose organization handler is h.
+func newOrgWebhookTestApp(t *testing.T, claims WebhookClaims, h webhookOrgHandler) *App {
+	t.Helper()
+	script := `rela.create_entity("ticket", { title = "run" })
+	           return { message = "ok" }`
+	app := newWebhookTestApp(t, script, stubWebhookVerifier{claims: claims})
+	app.webhook.org = h
+	return app
+}
+
+// TestWebhook_OrganizationEventReachesOrgHandler pins acceptance criterion 1
+// of TKT-2R2RW5H: a verified organization event with org_id and no user_id is
+// acknowledged and reaches the organization handler, not the action.
+func TestWebhook_OrganizationEventReachesOrgHandler(t *testing.T) {
+	for _, event := range []string{"organization.created", "organization.updated", "organization.deleted"} {
+		t.Run(event, func(t *testing.T) {
+			claims := WebhookClaims{Event: event, OrgID: "org_1", ID: "evt_" + event}
+			h := &recordingOrgHandler{}
+			app := newOrgWebhookTestApp(t, claims, h)
+
+			rec := postWebhook(app, "b")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+			}
+			if len(h.got) != 1 || h.got[0] != claims {
+				t.Fatalf("org handler got %+v, want one call with %+v", h.got, claims)
+			}
+			if n := countTickets(t, app); n != 0 {
+				t.Fatalf("action ran for an organization event (%d entities)", n)
+			}
+		})
+	}
+}
+
+// TestWebhook_OrganizationEventWithUserIDStillRoutesToOrgHandler: the family
+// decides the route, not which claims happen to be present.
+func TestWebhook_OrganizationEventWithUserIDStillRoutesToOrgHandler(t *testing.T) {
+	claims := WebhookClaims{Event: "organization.updated", UserID: "usr_1", OrgID: "org_1", ID: "evt_o"}
+	h := &recordingOrgHandler{}
+	app := newOrgWebhookTestApp(t, claims, h)
+
+	if rec := postWebhook(app, "b"); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if len(h.got) != 1 {
+		t.Fatalf("org handler calls = %d, want 1", len(h.got))
+	}
+	if n := countTickets(t, app); n != 0 {
+		t.Fatalf("action ran for an organization event (%d entities)", n)
+	}
+}
+
+// TestWebhook_DefaultOrgHandlerAcknowledges: until provisioning (TKT-TNPRV8)
+// and erasure (TKT-TNERAS) fill the seam, the receiver as wired by
+// SetWebhookReceiver acknowledges organization events.
+func TestWebhook_DefaultOrgHandlerAcknowledges(t *testing.T) {
+	script := `rela.create_entity("ticket", { title = "run" }); return {}`
+	v := stubWebhookVerifier{claims: WebhookClaims{Event: "organization.created", OrgID: "org_1", ID: "evt_d"}}
+	app := newWebhookTestApp(t, script, v)
+	if _, ok := app.webhook.org.(logOrgEvents); !ok {
+		t.Fatalf("default org handler = %T, want logOrgEvents", app.webhook.org)
+	}
+
+	if rec := postWebhook(app, "b"); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if n := countTickets(t, app); n != 0 {
+		t.Fatalf("action ran for an organization event (%d entities)", n)
+	}
+}
+
+// TestClassifyWebhookEvent records the matching rules: an exact,
+// case-sensitive prefix up to and including the dot.
+func TestClassifyWebhookEvent(t *testing.T) {
+	cases := []struct {
+		event string
+		want  webhookFamily
+	}{
+		{"organization.created", familyOrganization},
+		{"organization.suspended", familyOrganization},
+		{"organization.", familyOrganization},
+		{"membership.deleted", familyMembership},
+		{"Organization.created", familyOther},
+		{"organization", familyOther},
+		{"organizations.created", familyOther},
+		{"session.revoked", familyOther},
+		{"", familyOther},
+	}
+	for _, tc := range cases {
+		if got := classifyWebhookEvent(tc.event); got != tc.want {
+			t.Errorf("classifyWebhookEvent(%q) = %v, want %v", tc.event, got, tc.want)
+		}
+	}
+}
+
+// TestWebhook_RequiredClaimsPerFamily pins acceptance criteria 2 and 3 of
+// TKT-2R2RW5H, and the rule for events outside both families.
+func TestWebhook_RequiredClaimsPerFamily(t *testing.T) {
+	cases := []struct {
+		name        string
+		claims      WebhookClaims
+		wantMissing string
+	}{
+		{"membership without user_id", WebhookClaims{Event: "membership.created", OrgID: "org_1"}, "user_id"},
+		{"membership without org_id", WebhookClaims{Event: "membership.deleted", UserID: "usr_1"}, "org_id"},
+		{"membership without either", WebhookClaims{Event: "membership.updated"}, "user_id"},
+		{"organization without org_id", WebhookClaims{Event: "organization.created"}, "org_id"},
+		{"organization with only user_id", WebhookClaims{Event: "organization.deleted", UserID: "usr_1"}, "org_id"},
+		{"other event without user_id", WebhookClaims{Event: "user.updated", OrgID: "org_1"}, "user_id"},
+		{"empty event without user_id", WebhookClaims{OrgID: "org_1"}, "user_id"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.claims.ID = "evt_bad"
+			h := &recordingOrgHandler{}
+			app := newOrgWebhookTestApp(t, tc.claims, h)
+
+			rec := postWebhook(app, "b")
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 (%s)", rec.Code, rec.Body.String())
+			}
+			if want := "missing " + tc.wantMissing; !strings.Contains(rec.Body.String(), want) {
+				t.Fatalf("body = %q, want it to contain %q", rec.Body.String(), want)
+			}
+			if len(h.got) != 0 {
+				t.Fatalf("org handler ran on a rejected event")
+			}
+			if n := countTickets(t, app); n != 0 {
+				t.Fatalf("action ran on a rejected event (%d entities)", n)
+			}
+		})
+	}
+}
+
+// TestWebhook_OtherEventsReachAction: an event outside the membership and
+// organization families still runs the action when it names a user. The
+// action is the provider-specific layer and may ignore the event, so the
+// receiver does not keep a list of event names.
+func TestWebhook_OtherEventsReachAction(t *testing.T) {
+	claims := WebhookClaims{Event: "session.revoked", UserID: "usr_1", ID: "evt_s"}
+	h := &recordingOrgHandler{}
+	app := newOrgWebhookTestApp(t, claims, h)
+
+	if rec := postWebhook(app, "b"); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if n := countTickets(t, app); n != 1 {
+		t.Fatalf("action ran %d times, want 1", n)
+	}
+	if len(h.got) != 0 {
+		t.Fatalf("org handler ran for a non-organization event")
+	}
+}
+
+// TestWebhook_OrganizationEventDedupAndRetry: organization events share the
+// jti dedup, and a handler failure answers 502 and forgets the id so the
+// retry runs again.
+func TestWebhook_OrganizationEventDedupAndRetry(t *testing.T) {
+	claims := WebhookClaims{Event: "organization.created", OrgID: "org_1", ID: "evt_od"}
+
+	t.Run("dedup", func(t *testing.T) {
+		h := &recordingOrgHandler{}
+		app := newOrgWebhookTestApp(t, claims, h)
+		for i := range 2 {
+			if rec := postWebhook(app, "b"); rec.Code != http.StatusOK {
+				t.Fatalf("delivery %d status = %d (%s)", i, rec.Code, rec.Body.String())
+			}
+		}
+		if len(h.got) != 1 {
+			t.Fatalf("org handler calls = %d, want 1 (redelivery must be deduped)", len(h.got))
+		}
+	})
+
+	t.Run("failure is retryable", func(t *testing.T) {
+		h := &recordingOrgHandler{err: errors.New("boom")}
+		app := newOrgWebhookTestApp(t, claims, h)
+		for i := range 2 {
+			if rec := postWebhook(app, "b"); rec.Code != http.StatusBadGateway {
+				t.Fatalf("delivery %d status = %d, want 502", i, rec.Code)
+			}
+		}
+		if len(h.got) != 2 {
+			t.Fatalf("org handler calls = %d, want 2 (failed id must be forgotten)", len(h.got))
+		}
+	})
+}

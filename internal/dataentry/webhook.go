@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -74,6 +75,107 @@ type webhookReceiver struct {
 	actionID string
 	seen     *seenSet
 	roles    webhookRoleStore
+	org      webhookOrgHandler
+}
+
+// webhookOrgHandler handles a verified `organization.*` event (TKT-2R2RW5H).
+// These events name a tenant and no user, so they do not go to the per-user
+// action. Tenant provisioning (TKT-TNPRV8) and erasure (TKT-TNERAS) implement
+// it. An error answers 502 so the IdP retries, as an action failure does.
+//
+// ctx is the request context: it carries no principal, no ACL request and no
+// deadline beyond the request's own. An implementation that writes stamps its
+// principal and binds identity itself, as dispatchWebhookAction does, and
+// bounds its own work. OrgID is signed by the IdP, but an implementation
+// still checks that it names a tenant this deployment serves before acting.
+type webhookOrgHandler interface {
+	HandleOrgEvent(ctx context.Context, claims WebhookClaims) error
+}
+
+// logOrgEvents is the organization handler until TKT-TNPRV8 and TKT-TNERAS
+// replace it. It logs the event and acknowledges it, so the IdP does not
+// retry an event rela has nothing to do with yet. The org id names a tenant,
+// not a person, so it is logged.
+type logOrgEvents struct{}
+
+// A deletion is logged at Warn: the IdP does not redeliver an acknowledged
+// event, so until erasure exists the log is the only trace an operator has.
+func (logOrgEvents) HandleOrgEvent(_ context.Context, claims WebhookClaims) error {
+	if claims.Event == "organization.deleted" {
+		slog.Warn("idp webhook organization deletion acknowledged but not acted on; erase the tenant manually",
+			"event", claims.Event, "org_id", claims.OrgID)
+		return nil
+	}
+	slog.Info("idp webhook organization event acknowledged; no handler acts on it yet",
+		"event", claims.Event, "org_id", claims.OrgID)
+	return nil
+}
+
+// webhookFamily is the group of events a webhook belongs to. The family
+// decides which claims are required and where the event goes.
+type webhookFamily int
+
+const (
+	// familyOther is every event outside the two named families, including
+	// unknown ones. It goes to the action when it names a user, as every
+	// event did before TKT-2R2RW5H. The action is the provider-specific
+	// layer and may ignore an event, so the receiver keeps no list of event
+	// names.
+	familyOther webhookFamily = iota
+	// familyMembership is `membership.*`: a user in a tenant.
+	familyMembership
+	// familyOrganization is `organization.*`: a tenant, with no user.
+	familyOrganization
+)
+
+// classifyWebhookEvent returns the family of an event name.
+func classifyWebhookEvent(event string) webhookFamily {
+	switch {
+	case strings.HasPrefix(event, "organization."):
+		return familyOrganization
+	case strings.HasPrefix(event, "membership."):
+		return familyMembership
+	default:
+		return familyOther
+	}
+}
+
+// String names the family in logs.
+func (f webhookFamily) String() string {
+	switch f {
+	case familyMembership:
+		return "membership"
+	case familyOrganization:
+		return "organization"
+	default:
+		return "other"
+	}
+}
+
+// missingClaim returns the name of the first claim the family requires that
+// claims lacks, or "" when none is missing.
+func (f webhookFamily) missingClaim(claims WebhookClaims) string {
+	var needUser, needOrg bool
+	switch f {
+	case familyMembership:
+		needUser, needOrg = true, true
+	case familyOrganization:
+		needOrg = true
+	case familyOther:
+		needUser = true
+	default:
+		// A family added without a case here requires every claim, so it
+		// fails closed until someone decides.
+		needUser, needOrg = true, true
+	}
+	switch {
+	case needUser && claims.UserID == "":
+		return "user_id"
+	case needOrg && claims.OrgID == "":
+		return "org_id"
+	default:
+		return ""
+	}
 }
 
 // webhookRoleStore stores the IdP role names a webhook action returned for
@@ -111,7 +213,9 @@ func (a *App) SetWebhookReceiver(v webhookVerifier, actionID string, roles webho
 	if v == nil || actionID == "" {
 		return
 	}
-	a.webhook = &webhookReceiver{verify: v, actionID: actionID, seen: newSeenSet(webhookDedupTTL), roles: roles}
+	a.webhook = &webhookReceiver{
+		verify: v, actionID: actionID, seen: newSeenSet(webhookDedupTTL), roles: roles, org: logOrgEvents{},
+	}
 }
 
 // registerWebhookRoutes mounts the webhook endpoint when a receiver is
@@ -136,10 +240,13 @@ func (a *App) registerWebhookRoutes(mux *http.ServeMux) {
 	})
 }
 
-// handle verifies an inbound IdP webhook and dispatches it via dispatch. The
-// request body is the signed JWT (the IdP sends Content-Type: application/jwt).
-// On any verification failure it answers 401 and dispatch is never called. A
-// redelivered webhook (same id) is acknowledged with 200 without re-dispatching.
+// handle verifies an inbound IdP webhook and dispatches it. The request body
+// is the signed JWT (the IdP sends Content-Type: application/jwt). On any
+// verification failure it answers 401 and nothing runs. A webhook that lacks a
+// claim its family requires answers 400. An `organization.*` event goes to
+// the organization handler; every other event goes to dispatch, which runs
+// the action. A redelivered webhook (same id) is acknowledged with 200
+// without re-dispatching.
 //
 //archplan:auth=none reason="the body is a JWT signed by the IdP; verified before dispatch"
 func (rec *webhookReceiver) handle(
@@ -159,10 +266,17 @@ func (rec *webhookReceiver) handle(
 		return
 	}
 
-	// A membership event with no subject is unusable — the action has nothing to
-	// fetch. Treat it as a bad request rather than dispatching a no-op.
-	if claims.UserID == "" {
-		http.Error(w, "missing user_id", http.StatusBadRequest)
+	// An event without the claims its family needs is unusable: the action
+	// has no user to fetch, or the organization handler no tenant. Treat it
+	// as a bad request rather than dispatching a no-op.
+	family := classifyWebhookEvent(claims.Event)
+	if missing := family.missingClaim(claims); missing != "" {
+		// Logged because the IdP is unlikely to retry a 400, so a dropped
+		// revocation would otherwise leave no trace. The user id is
+		// personal data and stays out of the log.
+		slog.Warn("idp webhook missing required claim",
+			"event", claims.Event, "id", claims.ID, "family", family, "missing", missing)
+		http.Error(w, "missing "+missing, http.StatusBadRequest)
 		return
 	}
 
@@ -175,14 +289,23 @@ func (rec *webhookReceiver) handle(
 		return
 	}
 
-	if err := dispatch(r.Context(), claims); err != nil {
-		// The action failed (IdP fetch error, script error, ...). Return 502 so the
+	if family == familyOrganization {
+		err = rec.org.HandleOrgEvent(r.Context(), claims)
+	} else {
+		err = dispatch(r.Context(), claims)
+	}
+	if err != nil {
+		// The handler failed (IdP fetch error, script error, ...). Return 502 so the
 		// IdP retries; drop the id from the seen-set so the retry isn't deduped.
 		if claims.ID != "" {
 			rec.seen.forget(claims.ID)
 		}
-		slog.Warn("idp webhook action failed", "action", rec.actionID, "event", claims.Event, "error", err)
-		http.Error(w, "action failed", http.StatusBadGateway)
+		if family == familyOrganization {
+			slog.Warn("idp webhook organization handler failed", "event", claims.Event, "error", err)
+		} else {
+			slog.Warn("idp webhook action failed", "action", rec.actionID, "event", claims.Event, "error", err)
+		}
+		http.Error(w, "handler failed", http.StatusBadGateway)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
