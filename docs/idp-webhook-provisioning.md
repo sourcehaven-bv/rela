@@ -127,14 +127,35 @@ rejected with 401 before any action runs.
 
 ## 5. Point the proxy's webhook at rela
 
-Configure Pratique to send membership webhooks to `https://your-rela/webhooks/idp`
+Configure Pratique to send membership and organization webhooks to `https://your-rela/webhooks/idp`
 with a JWT body whose:
 
 - `iss` matches `-jwt-issuer`,
 - `aud` matches `-webhook-audience`,
-- claims include `event`, `user_id`, and `org_id`,
+- claims include `event`, plus the `user_id` and `org_id` the table below
+  requires for that event,
 - and a `jti` (used for redelivery dedup — a retried webhook with the same `jti`
   is acknowledged without re-running the action).
+
+The `event` claim decides which other claims are required and where the event
+goes:
+
+| Event | Required claims | Goes to |
+|---|---|---|
+| `membership.*` | `user_id`, `org_id` | the action |
+| `organization.*` | `org_id` | the organization handler |
+| any other event | `user_id` | the action |
+
+The action receives every event outside `organization.*`, including event types
+rela does not know. The action decides which ones to act on.
+
+Organization events are acknowledged and logged; tenant provisioning and erasure
+will act on them later. The IdP does not redeliver an acknowledged event, so an
+event received before then is not replayed. An `organization.deleted` is logged
+at warning level; erase that tenant by hand.
+
+A `membership.*` event without `org_id` used to reach the action. It is now
+rejected with 400. The reference action already failed without `org_id`.
 
 ## What you get
 
@@ -161,7 +182,8 @@ revocation caveat.
 | Valid webhook, user is a member | `person` upserted; 200 |
 | Valid webhook, user not a member (operator API 404) | acknowledged, no `person`; 200 |
 | Bad / unsigned / wrong-audience body | 401, action not run |
-| Missing `user_id` claim | 400, action not run |
+| Missing a claim the event requires (see the table in section 5) | 400, nothing runs |
+| Valid `organization.*` event | acknowledged and logged, action not run; 200 |
 | Redelivered webhook (same `jti`) | deduped, action not re-run; 200 |
 | Action fails, or returns `message_type = "error"` (IdP fetch error, etc.) | 502, stored roles unchanged, `jti` forgotten so a retry runs again |
 | Action returns `asserted_roles` | roles stored for the verified subject; 200 |
