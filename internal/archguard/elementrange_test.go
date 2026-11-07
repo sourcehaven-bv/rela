@@ -16,12 +16,20 @@ import (
 // elementRangeAllowlist, so a new caller is a reviewed decision.
 
 // elementRangeAllowlist pins the uses of the element range reader outside
-// internal/store. The reconcile endpoint (step 5 of FEAT-CMVZQFI) adds its
-// wiring, each with a reason.
+// internal/store, and the construction of visibility.Elements: it is gated
+// only as well as the read policy it is built with, so its wiring is pinned
+// too. Each entry has a reason.
 var elementRangeAllowlist = map[string]allowed{
 	"internal/visibility/elements.go": {3, "visibility.Elements, the one gated caller: it compiles " +
 		"the scope from the bound request on every call and completes pending rows from redacted views " +
 		"(TKT-N1KNNZU)"},
+	"internal/appbuild/elements.go": {2, "appbuild.Elements, the wiring of the reconcile endpoint " +
+		"(TKT-VP02WHG): NewElements over the policy's DeclarativeGate and field policy, and the reference " +
+		"range reader for stores without element columns"},
+	"internal/appbuild/elements_postgres.go": {1, "the pgstore range reader handed to appbuild.Elements, " +
+		"never called here"},
+	"internal/appbuild/elements_sqlite.go": {1, "the sqlitestore range reader handed to appbuild.Elements, " +
+		"never called here"},
 }
 
 var elementRangeGuard = guard{
@@ -33,7 +41,8 @@ var elementRangeGuard = guard{
 
 // elementRangeUses returns the position of every call or reference to the
 // range methods (RangeFingerprint, ListRange) and the reader constructors
-// (pgstore.NewElementRanges, sqlitestore.NewElementRanges, elementnaive.New).
+// (pgstore.NewElementRanges, sqlitestore.NewElementRanges, elementnaive.New),
+// and visibility.NewElements.
 // The match is syntactic, by selector name.
 func elementRangeUses(fset *token.FileSet, file *ast.File) []token.Position {
 	var uses []token.Position
@@ -43,7 +52,7 @@ func elementRangeUses(fset *token.FileSet, file *ast.File) []token.Position {
 			return true
 		}
 		switch sel.Sel.Name {
-		case "RangeFingerprint", "ListRange", "NewElementRanges":
+		case "RangeFingerprint", "ListRange", "NewElementRanges", "NewElements":
 			uses = append(uses, fset.Position(sel.Sel.Pos()))
 		case "New":
 			if id, ok := sel.X.(*ast.Ident); ok && id.Name == "elementnaive" {
@@ -83,6 +92,7 @@ func TestElementRangeUses(t *testing.T) {
 		{"method value", `f := g.ListRange; _ = f`, 1},
 		{"pg reader", `pgstore.NewElementRanges(s)`, 1},
 		{"naive reader", `elementnaive.New(s)`, 1},
+		{"gated read", `visibility.NewElements(d)`, 1},
 		{"other New", `memstore.New()`, 0},
 		{"other method", `st.ListRelations(ctx, q)`, 0},
 	}

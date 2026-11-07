@@ -1840,6 +1840,53 @@ that rolls back (SQLite, PostgreSQL); other stores answer 501.
 - **Scripts and agents may call it without a browser origin,** like the data
   routes. A request with a cookie keeps the same-origin check.
 
+## Reconcile
+
+`POST /api/v1/_reconcile` answers a sync peer with the count and fingerprint
+of a range of elements, or with the elements themselves (TKT-VP02WHG,
+FEAT-CMVZQFI). An element is a row's address and the hash of the caller's
+view of it. The peer is an authenticated principal; everything in its
+request body is untrusted.
+
+- **The scope comes from the bound request, never from the body.** Each call
+  compiles the row gate and the `visible:` scope from the `acl.Request` the
+  request edge bound. The body only narrows the read to types and address
+  bounds. A peer learns exactly what it could list through the read API.
+- **Hidden rows are absent; hidden fields never reach a hash.** A hidden row
+  is in no count, fingerprint or list, so a hidden row and a deleted row look
+  the same. A row with a field the caller may not see is hashed from its
+  redacted view, so a fingerprint is not an offline oracle for the hidden
+  value (BUG-J01V0Q). A relation counts only when the caller may read both
+  ends and both are of the named types.
+- **A relation type whose meta the policy can hide is refused** with 422
+  `relation_meta_gated`, for every principal. Its element would need the meta
+  redaction of the source row, which ranges do not support yet.
+- **Nothing is cached.** The answer is one principal's and is built fresh.
+- **The work is bounded.** Peer-chosen ranges are the cost attack surface. A
+  row gate with a relation predicate costs the whole type per call. A token
+  bucket per principal, a slot cap per server and per principal, a 15-second
+  deadline, and caps on ranges, type names, listed rows and body size bound
+  how often and how much a peer can make the server pay. When the caller has
+  a hidden field on a type, any range on it, a fingerprint too, may load and
+  redact up to 2000 rows, so one request loads at most 32 times that; the
+  slots bound how many requests do so at once. A slot is held while the
+  ranges are read, not while the answer is written, so a peer that stops
+  reading holds none. A refusal spends no token.
+- **A fingerprint is not a commitment.** A writer in scope can craft rows
+  whose fingerprints cancel a change. A match is never evidence of integrity
+  or authorization.
+- **Refusals name the type or the limit.** They are configuration, which is
+  not secret. Whether a range answers `too_large` depends on the scope and
+  the row count, which the caller may know, and on a database backend that
+  is still filling its stored hashes, on whether some are pending. So the
+  same range may answer `too_large` and later `ok`; that is no leak.
+- **Peers may call it without a browser origin,** like the data routes. A
+  request with a cookie keeps the same-origin check. Peer credentials are a
+  later step (FEAT-CMVZQFI); today the peer authenticates as any client of
+  the deployment does, and the gate is keyed on its user name. In header
+  mode every caller without the identity header is the one user `unknown`,
+  and so shares one bucket.
+
 ## Presence
 
 Presence shows who has an entity open (TKT-MHXH87). A client joins by

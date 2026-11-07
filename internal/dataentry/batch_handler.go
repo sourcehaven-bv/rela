@@ -111,14 +111,21 @@ func (h *batchHandler) handleV1Batch(w http.ResponseWriter, r *http.Request) {
 // decodeBatchBody reads at most [batchBodyLimit] bytes into dst, strictly:
 // an unknown field or data after the JSON value is a 400.
 func decodeBatchBody(w http.ResponseWriter, r *http.Request, dst *v1.BatchRequest) bool {
-	data, err := io.ReadAll(io.LimitReader(r.Body, batchBodyLimit+1))
+	return decodeStrictBody(w, r, batchBodyLimit, "1 MiB", dst)
+}
+
+// decodeStrictBody reads at most limit bytes into dst, strictly: an unknown
+// field or data after the JSON value is a 400, a longer body a 413 that
+// names the limit as size.
+func decodeStrictBody[T any](w http.ResponseWriter, r *http.Request, limit int64, size string, dst *T) bool {
+	data, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
 	switch {
 	case err != nil:
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_json", "Could not read the request body", "")
 		return false
-	case len(data) > batchBodyLimit:
+	case int64(len(data)) > limit:
 		writeV1Error(w, r, http.StatusRequestEntityTooLarge, "body_too_large", "Request body too large",
-			"a batch body is at most 1 MiB")
+			"a body is at most "+size)
 		return false
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))

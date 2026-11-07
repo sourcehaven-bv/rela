@@ -460,6 +460,11 @@ var goldenWrites = []goldenEndpoint{
 	// The corpus store does not roll back, so every caller gets the 501.
 	{slug: "batch", method: http.MethodPost, path: "/api/v1/_batch",
 		body: `{"entities":[{"type":"ticket","properties":{"title":"x"}}]}`},
+	// Each caller gets the count, fingerprint and elements of the tickets it
+	// may read, hashed from its own redacted view.
+	{slug: "reconcile", method: http.MethodPost, path: "/api/v1/_reconcile",
+		body: `{"ranges":[{"kind":"entity","entities":["ticket"],"op":"fingerprint"},` +
+			`{"kind":"entity","entities":["ticket"],"op":"list","limit":10}]}`},
 	// No event stream is open, so every caller gets the unknown-stream answer.
 	{slug: "live-subscriptions", method: http.MethodPut, path: "/api/v1/_events/nope/subscriptions",
 		body: `{"subscriptions":[{"key":"k","path":"/api/v1/tickets/TKT-1"}]}`},

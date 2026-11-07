@@ -210,6 +210,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	})
 	mux.HandleFunc(leasesPath, a.leases.handleV1Leases)
 	mux.HandleFunc(batchPath, a.batch.handleV1Batch)
+	mux.HandleFunc(reconcilePath, a.reconcile.handleV1Reconcile)
 	mux.HandleFunc(leasesPath+"/", a.leases.handleV1Leases)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
 	mux.HandleFunc("/api/v1/_views/", a.views.handleV1Views)
