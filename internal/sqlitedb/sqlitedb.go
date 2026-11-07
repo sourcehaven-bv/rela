@@ -412,7 +412,42 @@ CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);
 ` + versionTagsDDL + `
 ` + softDeleteDDL + `
 ` + retiredIDsDDL + `
+` + flowRunsDDL + `
 ` + searchKeyDDL
+
+// flowRunsDDL holds the flow run store (sqlflowrun, TKT-PV9R0GK): the
+// execution state of each running flow, deleted when the run completes,
+// and the definition each version of a flow ran under. Times are integer
+// microseconds since the epoch, 0 for none. Shared between schemaSQL and
+// the v33 to v34 rung.
+const flowRunsDDL = `
+CREATE TABLE IF NOT EXISTS flow_definitions (
+	flow     TEXT NOT NULL,
+	version  TEXT NOT NULL,
+	def      BLOB NOT NULL,
+	digest   TEXT NOT NULL,
+	saved_at INTEGER NOT NULL,
+	PRIMARY KEY (flow, version)
+) STRICT;
+CREATE TABLE IF NOT EXISTS flow_runs (
+	id           TEXT NOT NULL PRIMARY KEY,
+	flow         TEXT NOT NULL,
+	version      TEXT NOT NULL,
+	subject_id   TEXT NOT NULL,
+	subject_face TEXT NOT NULL DEFAULT '',
+	singleton    INTEGER NOT NULL,
+	next_due_at  INTEGER NOT NULL DEFAULT 0,
+	created_at   INTEGER NOT NULL,
+	updated_at   INTEGER NOT NULL,
+	rev          INTEGER NOT NULL,
+	doc          TEXT NOT NULL,
+	FOREIGN KEY (flow, version) REFERENCES flow_definitions (flow, version)
+) STRICT;
+CREATE INDEX IF NOT EXISTS flow_runs_due_idx ON flow_runs(next_due_at, id) WHERE next_due_at > 0;
+CREATE INDEX IF NOT EXISTS flow_runs_subject_idx ON flow_runs(subject_id, id);
+CREATE INDEX IF NOT EXISTS flow_runs_flow_idx ON flow_runs(flow, id);
+CREATE INDEX IF NOT EXISTS flow_runs_definition_idx ON flow_runs(flow, version);
+CREATE UNIQUE INDEX IF NOT EXISTS flow_runs_singleton_key ON flow_runs(flow, subject_id) WHERE singleton = 1;`
 
 // retiredIDsDDL records the ids a rename retired (store.RetiredIDs,
 // TKT-J6GISC3). A retired id stays reserved, so no new entity takes it, and

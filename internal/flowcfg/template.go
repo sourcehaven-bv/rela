@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -39,8 +40,8 @@ type templatePart struct {
 	ref  string
 }
 
-// RunID names one run of a flow.
-type RunID string
+// RunID names one run of a flow ([flow.RunID]).
+type RunID = flow.RunID
 
 // Vars are what a template reads when its output runs.
 type Vars struct {
