@@ -74,7 +74,9 @@ func (p CommentPolicy) Commentable(entityType string) bool {
 	}
 	on := p.meta.Comments.On
 	if slices.Contains(on, CommentWildcard) {
-		return true
+		// The wildcard means the operator's types; a rela-managed type
+		// cannot be named in `on`, so it is never commentable.
+		return !IsReservedName(entityType)
 	}
 	// Resolve through the alias map so a config naming a type by its alias
 	// agrees with a request naming it canonically.

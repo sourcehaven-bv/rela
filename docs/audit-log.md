@@ -36,7 +36,8 @@ Every record is one line of JSON:
     "tool": "cli"
   },
   "triggered_by": "",
-  "summary": "created"
+  "summary": "created",
+  "source": "cli"
 }
 ```
 
@@ -55,6 +56,8 @@ Every record is one line of JSON:
 | `principal.roles` | Optional. The `roles` claim from a verified identity assertion |
 | `triggered_by` | Optional. Engine-initiated writes carry `automation:<name>`, `schedule:<task-name>`, `session:<channel>/<from>-><to>#<generation>/<index>`, or `cascade:delete-entity:<id>` |
 | `summary`     | One-line human-readable summary; for updates names *which* properties changed but never their values (secret-leak defense) |
+| `flow` / `run` / `step` | Optional. The flow, the run's id and the step, for a write a flow step made. See "`source` and flow steps" below |
+| `source`      | The kind of actor that produced the record: `flow`, `automation`, `schedule`, `cascade`, `restore`, `renumber`, `rename`, `convert` or `channel`, else the principal's tool |
 
 ### Operations
 
@@ -131,6 +134,7 @@ startup and stamps it on every audit record. If `$USER` is unset,
 | `scheduler`   | The background scheduler running a Lua task              |
 | `desktop`     | The rela-desktop Wails app                               |
 | `realtime`    | A session output: a graph write a channel session makes as the person whose message moved it |
+| `flow`        | The flow engine, acting as `system:flow`. Only it writes flow runs |
 
 ### `data-entry` user attribution
 
@@ -227,6 +231,29 @@ stack. The enclosing label is kept, so every row a scheduled task
 produced (including the ones an automation cascaded underneath it)
 answers `triggered_by == "schedule:<task>"`. Querying "what did last
 night's run do?" therefore returns the complete set.
+
+## `source` and flow steps
+
+Every record carries `source`, so a query can tell a person's edit from
+an engine's write without parsing `triggered_by`. rela derives it in this
+order:
+
+1. `flow` when the write was made in a flow step.
+2. The kind of `triggered_by`: the part before the first `:`. The
+   mapping is closed: `automation` and `automation-job` give
+   `automation`, `schedule` gives `schedule`, `cascade` gives `cascade`,
+   `restore-entity` gives `restore`, `renumber` gives `renumber`,
+   `rename` and `rename-entity` give `rename`, `convert-entity` gives
+   `convert`, and the channel labels (`session`, `channel`, `reminder`,
+   `timer`, `trigger`, `auto`) give `channel`.
+3. Otherwise the principal's tool, such as `cli`, `mcp` or `data-entry`.
+
+A write a flow step makes also carries `flow` (the flow's name in
+flows.yaml), `run` (the run's id) and `step`. An automation that the
+step's write triggers runs in the same step, so its records carry the
+same three fields and `source: flow`. A background job the step queues
+does not: the queue does not carry them. The principal stays the genuine
+identity, `system:flow` for the engine's own writes.
 
 ## Undoable deletes
 

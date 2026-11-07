@@ -244,6 +244,12 @@ type Policy struct {
 	// [Policy.ValidateAgainstMetamodel]. See [Policy.DefaultWorld].
 	defaultWorld string
 
+	// flowEngine is set once injectFlowEngine added
+	// [FlowEngineRole]; flowRunTargets are the subject types a run's
+	// `_carries` edge may point at, sorted. See flowRunReadQuery.
+	flowEngine     bool
+	flowRunTargets []string
+
 	// UnmatchedPrincipal decides what happens when a verified principal's
 	// identifier resolves to no [Policy.UserEntityType] entity (the
 	// principal_property lookup found no match). It governs the data-entry
@@ -502,7 +508,7 @@ type RoleDef struct {
 	Permissions []string `yaml:"permissions"`
 
 	// Worlds holds the world names this role may read, SPLIT OUT of Read
-	// at policy load by [Policy.normalizeWorldGrants]. It carries no yaml
+	// at policy load by normalizeWorldGrants. It carries no yaml
 	// tag: the wire spelling is `read: [world:published]` (design doc
 	// §8.1), and the split happens so that every existing consumer of Read
 	// — roleGrantsRead, grantForRole, filterTypes, aclaudit's verbLists —
@@ -586,7 +592,7 @@ func grantsVerb(role RoleDef, op Op, target string) bool {
 		if isStateGrant(t) {
 			continue // see the doc comment: fail closed until the write path is face-aware
 		}
-		if t == "*" || t == target {
+		if coversType(t, target) {
 			return true
 		}
 	}
@@ -1335,6 +1341,9 @@ func (p *Policy) Validate() error {
 	}
 	p.normalizeRelationWriteGrants()
 
+	if err := validateManagedNames(p); err != nil {
+		return err
+	}
 	if err := p.validateUnmatchedPrincipal(); err != nil {
 		return err
 	}
@@ -1559,6 +1568,7 @@ func (p *Policy) ValidateAgainstMetamodel(meta MetamodelView) error {
 	if err := expandAbstractTypes(p, meta); err != nil {
 		return err
 	}
+	injectFlowEngine(p, meta)
 	prop := strings.TrimSpace(p.PrincipalProperty)
 	userType := strings.TrimSpace(p.UserEntityType)
 
@@ -1593,6 +1603,7 @@ func (p *Policy) ValidateAgainstMetamodel(meta MetamodelView) error {
 	}
 	errs, refused := p.validateIdentityStructure(meta)
 	errs = append(errs, p.validateFacedWriteGrants(meta, refused)...)
+	errs = append(errs, validateVisibleAliasKeys(p, meta)...)
 	if len(errs) > 0 {
 		return errors.Join(errs...)
 	}

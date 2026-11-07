@@ -304,6 +304,7 @@ func validate(m *Metamodel) error {
 	}
 
 	validationErrors = append(validationErrors, validateReservedNames(m)...)
+	validationErrors = append(validationErrors, validateManagedReferences(m)...)
 	validationErrors = append(validationErrors, validateCustomTypes(m)...)
 	validationErrors = append(validationErrors, validateEntitySemantics(m)...)
 	validationErrors = append(validationErrors, validateRelationReferences(m)...)

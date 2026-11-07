@@ -24,7 +24,7 @@ func NewMemory() *Memory {
 func (m *Memory) Record(rec Record) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.records = append(m.records, rec)
+	m.records = append(m.records, withSource(rec))
 }
 
 // Records returns a snapshot of the records recorded so far. The

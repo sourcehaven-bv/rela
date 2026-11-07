@@ -194,7 +194,7 @@ func recordFieldDenial(ctx context.Context, m *Manager, e *entity.Entity, err er
 	if errors.As(err, &d) {
 		summary = d.AuditSummary()
 	}
-	m.deps.Audit.Record(audit.Record{
+	m.deps.Audit.Record(audit.Stamp(ctx, audit.Record{
 		Time:        time.Now().UTC(),
 		Op:          audit.OpDeniedWrite,
 		Subject:     &audit.Subject{Kind: "entity", Type: e.Type, ID: e.ID},
@@ -202,7 +202,7 @@ func recordFieldDenial(ctx context.Context, m *Manager, e *entity.Entity, err er
 		TriggeredBy: audit.TriggeredByFrom(ctx),
 		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     summary,
-	})
+	}))
 	return err
 }
 
@@ -722,6 +722,11 @@ func requireCopyGates(d Deps) error {
 // which writes were elevated and on whose behalf. We do NOT record a denied-write row
 // on the bypass path — there is no denial to record.
 func (m *Manager) authorizeAndAudit(ctx context.Context, req acl.WriteRequest) error {
+	// Before every skip below: the managed-type rule holds on elevated and
+	// cascade handles too.
+	if err := refuseManagedWrite(ctx, m, req); err != nil {
+		return err
+	}
 	if m.cascadeWrite {
 		return nil
 	}
@@ -823,7 +828,7 @@ func (m *Manager) recordACLBypass(ctx context.Context, req acl.WriteRequest) {
 	case acl.EntitySubject:
 		subject = &audit.Subject{Kind: "entity", Type: s.Type(), ID: s.ID()}
 	}
-	m.deps.Audit.Record(audit.Record{
+	m.deps.Audit.Record(audit.Stamp(ctx, audit.Record{
 		Time:        time.Now().UTC(),
 		Op:          audit.OpACLBypass,
 		Subject:     subject,
@@ -831,7 +836,7 @@ func (m *Manager) recordACLBypass(ctx context.Context, req acl.WriteRequest) {
 		TriggeredBy: audit.TriggeredByFrom(ctx),
 		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     fmt.Sprintf("acl_bypass=true op=%s", req.Op),
-	})
+	}))
 }
 
 // deniedWriteRecord is the `denied-write` audit row for a refused write.
@@ -859,7 +864,7 @@ func deniedWriteRecord(ctx context.Context, d acl.Decision, req acl.WriteRequest
 			ID:   s.ID(),
 		}
 	}
-	return audit.Record{
+	return audit.Stamp(ctx, audit.Record{
 		Time:        time.Now().UTC(),
 		Op:          audit.OpDeniedWrite,
 		Subject:     subject,
@@ -867,7 +872,7 @@ func deniedWriteRecord(ctx context.Context, d acl.Decision, req acl.WriteRequest
 		TriggeredBy: audit.TriggeredByFrom(ctx),
 		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     formatDeniedSummary(d, req.Op),
-	}
+	})
 }
 
 // formatDeniedSummary builds the audit Summary for a denied-write row.
@@ -1862,6 +1867,13 @@ func (m *Manager) authorizeCascadeRelations(
 	// makes the error actionable: the other endpoint, whose type is what
 	// actually blocked the delete.
 	for _, rel := range incoming {
+		// A managed edge into the deleted entity (a flow run's `_carries`)
+		// goes with it: the run records the subject, it does not own the
+		// right to keep it alive (RR-BLECTJJ). Only the engine creates such
+		// an edge, so skipping its check grants nobody a new write.
+		if entity.IsManagedName(rel.Type) {
+			continue
+		}
 		err := check(rel)
 		if jErr := judge(rel, err, func() error {
 			return fmt.Errorf("cannot delete %s: its incoming %s relation from %s: %w",
@@ -2805,7 +2817,7 @@ func (m *Manager) RenameEntity(
 	// A rename re-keys the whole FAMILY (store.RenameEntity takes no face),
 	// hidden faces included, so it is authorized at family level: by a
 	// `rename:` grant on a faced type, never by the faces this entity stores
-	// (see [Manager.authorizeRename]). An entity none of whose faces the
+	// (see authorizeRename). An entity none of whose faces the
 	// caller may read is reported missing, exactly like an absent one.
 	//
 	// Fails closed on a non-not-found error: proceeding would run the rename

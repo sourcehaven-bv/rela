@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -238,6 +239,13 @@ func (r Restriction) validateTypeOnlyEntries(label string) error {
 		{"deny_write", r.DenyWrite},
 	} {
 		for i, v := range c.vals {
+			// A ceiling allowlist rewrites a role's "*" into its own list
+			// (filterTypes), so a managed type named here would reach every
+			// role that holds "*" (TKT-BC5G8RP).
+			if entity.IsManagedName(strings.TrimSpace(v)) {
+				return fmt.Errorf("%s.%s[%d]: %q: an entity type starting with %q is reserved for rela",
+					label, c.field, i, v, entity.ManagedPrefix)
+			}
 			if strings.Contains(v, "@") {
 				return fmt.Errorf("%s.%s[%d]: %q names a face, but a client ceiling clamps by "+
 					"entity TYPE only — write the bare type (face-scoped clamps are not supported)",

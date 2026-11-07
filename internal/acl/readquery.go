@@ -1,6 +1,7 @@
 package acl
 
 import (
+	"context"
 	"slices"
 	"sort"
 
@@ -40,7 +41,12 @@ type ReadQueryResult struct {
 // GraphQuery whose HasInbound predicate matches entities reachable
 // via the role-relations whose confers-role grants read on the type.
 // DenyAll when no role grants any kind of read.
-func (r *Request) readQuery(entityType string) ReadQueryResult {
+func (r *Request) readQuery(ctx context.Context, entityType string) ReadQueryResult {
+	// A flow run is read through its subject. Only the engine names the
+	// type in a global read grant; everyone else gets the subject gate.
+	if entityType == entity.FlowRunType && !holdsGlobalRead(r, entityType) {
+		return flowRunReadQuery(ctx, r)
+	}
 	// A client ceiling that denies reads of this type short-circuits every
 	// grant path below. Checked first because the ceiling can only ever remove:
 	// if it says no, no role — global, conferred or inherited — can say yes.
@@ -198,7 +204,7 @@ func sameFacesEverywhere(conferring []string, _ map[string][]entity.Face, allByR
 // match or wildcard `"*"`.
 func roleGrantsRead(role RoleDef, target string) bool {
 	for _, t := range role.Read {
-		if t == "*" || t == target {
+		if coversType(t, target) {
 			return true
 		}
 		// A face-scoped grant grants its TYPE for the purpose of this
@@ -248,7 +254,7 @@ func roleGrantsRead(role RoleDef, target string) bool {
 // down, so the pre-faces fast path is byte-identical.
 func roleReadFaces(role RoleDef, target string) (faces []entity.Face, all bool) {
 	for _, t := range role.Read {
-		if t == "*" {
+		if wildcardCovers(t, target) {
 			return nil, true
 		}
 		if t == target {

@@ -59,8 +59,10 @@ func CheckEndpointShape(q store.GraphQuery) error {
 		}
 	}
 	for _, br := range q.Any {
-		if err := checkEndpointShape(br.HasInbound, 0); err != nil {
-			return err
+		for _, p := range []*store.RelationPredicate{br.HasInbound, br.HasOutbound} {
+			if err := checkEndpointShape(p, 0); err != nil {
+				return err
+			}
 		}
 	}
 	for i := range q.Related {
@@ -443,17 +445,33 @@ func collectBranchPrimes(
 func branchRelationHolds(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery) ([]bool, error) {
 	holds := make([]bool, len(q.Any))
 	for i, br := range q.Any {
-		ok := true
-		if br.HasInbound != nil {
-			var err error
-			ok, err = matchesPredicate(ctx, r, e, *br.HasInbound, store.DirectionIncoming, q.Faces)
-			if err != nil {
-				return nil, err
-			}
+		ok, err := branchEdgesHold(ctx, r, e, br, q.Faces)
+		if err != nil {
+			return nil, err
 		}
 		holds[i] = ok
 	}
 	return holds, nil
+}
+
+// branchEdgesHold reports whether both relation halves of br hold for e. A
+// half that is nil holds.
+func branchEdgesHold(
+	ctx context.Context, r Reader, e *entity.Entity, br store.GraphBranch, sel store.FaceSelection,
+) (bool, error) {
+	if br.HasInbound != nil {
+		ok, err := matchesPredicate(ctx, r, e, *br.HasInbound, store.DirectionIncoming, sel)
+		if err != nil || !ok {
+			return false, err
+		}
+	}
+	if br.HasOutbound != nil {
+		ok, err := matchesPredicate(ctx, r, e, *br.HasOutbound, store.DirectionOutgoing, sel)
+		if err != nil || !ok {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery) (bool, error) {
@@ -526,16 +544,13 @@ func matchesAny(
 		if len(br.FaceIn) > 0 && !slices.Contains(br.FaceIn, e.Face) {
 			continue
 		}
-		if br.HasInbound != nil {
-			ok, err := matchesPredicate(ctx, r, e, *br.HasInbound, store.DirectionIncoming, sel)
-			if err != nil {
-				return false, err
-			}
-			if !ok {
-				continue
-			}
+		ok, err := branchEdgesHold(ctx, r, e, br, sel)
+		if err != nil {
+			return false, err
 		}
-		return true, nil
+		if ok {
+			return true, nil
+		}
 	}
 	return false, nil
 }
