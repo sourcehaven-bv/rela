@@ -19,23 +19,35 @@
 --
 -- Results: a `message_type = "error"` result makes the receiver answer 502,
 -- so the IdP retries the webhook; the stored roles stay as they were.
--- Acknowledge (no error) an event that needs no action, such as the 404
--- below.
+-- An event for a member who is gone or not active is acknowledged (no error)
+-- with `asserted_roles = {}`, which clears the stored roles.
 --
 -- Secrets (.rela/secrets.yaml):
 --   idp_operator_url  -- base URL of the operator API, e.g. https://id.example.com
 --   idp_operator_key  -- the shared HMAC secret the operator API verifies
+--   idp_org_id        -- the IdP org this deployment serves
 
 local base = rela.secrets["idp_operator_url"]
 local key = rela.secrets["idp_operator_key"]
+local want_org = rela.secrets["idp_org_id"]
 local uid = rela.params["user_id"]
 local org = rela.params["org_id"]
+local event = rela.params["event"]
 
-if base == "" or key == "" then
-  return { message_type = "error", message = "idp-sync: operator url/key not configured in secrets" }
+if base == "" or key == "" or want_org == "" then
+  return { message_type = "error", message = "idp-sync: operator url/key/org not configured in secrets" }
 end
 if uid == "" or org == "" then
   return { message_type = "error", message = "idp-sync: missing user_id/org_id param" }
+end
+
+-- The IdP sends every org's membership events to every webhook endpoint, and
+-- rela stores roles per subject, not per org. Without this check, a user
+-- deactivated here but active in another org would get that org's roles back
+-- from its next event. An event for another org says nothing about this one,
+-- so it neither grants nor clears.
+if org ~= want_org then
+  return { message = "idp-sync: event for another org; ignored" }
 end
 
 -- Validate the identifiers before interpolating them into a request path and an
@@ -69,7 +81,11 @@ end
 -- docs/04-architecture.md §operator API):
 --   canonical = METHOD \n PATH \n DATE \n hex(sha256(body))
 --   signature = base64( HMAC-SHA256(secret, canonical) )
-local path = "/api/v1/orgs/" .. org .. "/members/" .. uid
+--
+-- Pratique's operator API has no GET for a single member, only the org's
+-- member list (GET /api/v1/orgs/{id}/members) and DELETE on one member. So
+-- fetch the list and pick the subject out of it.
+local path = "/api/v1/orgs/" .. org .. "/members"
 -- rela.now_unix is the current time as unix seconds (the sandbox has no
 -- os.time()). string.format("%d", ...) renders it as an integer with no decimal
 -- point / exponent, matching the server's integer date parse.
@@ -77,6 +93,26 @@ local date = string.format("%d", rela.now_unix)
 local body = "" -- GET, no body
 local canonical = "GET" .. "\n" .. path .. "\n" .. date .. "\n" .. crypto.sha256_hex(body)
 local sig = crypto.hmac_sha256_base64(key, canonical)
+
+-- clear acknowledges the event and clears any roles stored for the subject.
+-- It does not create or change a person: an existing one stays as it was.
+local function clear(reason)
+  return {
+    message = "idp-sync: user " .. reason .. "; roles cleared",
+    asserted_roles = {},
+  }
+end
+
+-- fail answers an error, so the receiver answers 502, the IdP retries, and the
+-- stored roles stay. A membership.deleted event already proves the membership
+-- is gone, so for that event a failed fetch clears instead: revocation must
+-- not depend on the operator API being reachable.
+local function fail(msg)
+  if event == "membership.deleted" then
+    return clear("membership deleted (" .. msg .. ")")
+  end
+  return { message_type = "error", message = "idp-sync: " .. msg }
+end
 
 local resp, err = http.get(base .. path, {
   headers = {
@@ -86,31 +122,54 @@ local resp, err = http.get(base .. path, {
   },
 })
 if err ~= nil then
-  return { message_type = "error", message = "idp-sync: fetch failed: " .. (err.message or "unknown") }
+  return fail("fetch failed: " .. (err.message or "unknown"))
 end
-if resp.status_code == 404 then
-  -- The membership no longer exists (e.g. removed before we processed the event).
-  -- Not an error the IdP should retry: acknowledge without provisioning, and
-  -- clear any roles stored for the subject.
-  return {
-    message = "idp-sync: user " .. uid .. " not a member of " .. org .. "; skipped",
-    asserted_roles = {},
-  }
-end
+-- Pratique answers 200 with an empty list for an unknown org, so any other
+-- status, 404 included, means the request did not reach the member list (a
+-- wrong base URL, a proxy, a changed route). That is an error, not "not a
+-- member".
 if resp.status_code ~= 200 then
-  return { message_type = "error", message = "idp-sync: fetch returned " .. tostring(resp.status_code) }
+  return fail("fetch returned " .. tostring(resp.status_code))
 end
 
-local user, derr = rela.json.decode(resp.body)
-if derr ~= nil or user == nil then
-  return { message_type = "error", message = "idp-sync: bad JSON from operator API" }
+local list, derr = rela.json.decode(resp.body)
+if derr ~= nil or type(list) ~= "table" or type(list.members) ~= "table" then
+  return fail("bad JSON from operator API")
+end
+
+-- Each member is { user_id, email, roles, status }. A `members` value that is
+-- an object rather than a list decodes to a table too; ipairs then finds no
+-- member and the roles are cleared, which is the safe direction.
+local user = nil
+for _, m in ipairs(list.members) do
+  if type(m) == "table" and m.user_id == uid then
+    user = m
+    break
+  end
+end
+if user == nil then
+  -- The membership was removed (membership.deleted), possibly before an
+  -- earlier event for it was processed.
+  return clear("is not a member")
+end
+
+-- Pratique offboards softly: a deactivated member stays in the list with
+-- status "inactive" and keeps its roles. Keep roles only for an active member.
+-- Any other status, including a missing one, clears them, so an unknown state
+-- fails closed.
+if user.status ~= "active" then
+  local shown = "unknown"
+  if user.status == "inactive" or user.status == "pending" then
+    shown = user.status
+  end
+  return clear("status is " .. shown)
 end
 
 -- Upsert the person, keyed on the stable subject. Idempotent: a redelivered
 -- webhook (or a later membership change) updates the same entity rather than
--- duplicating it. The operator API returns { user_id, email, roles, status }.
+-- duplicating it.
 local props = {
-  sub = user.user_id,
+  sub = uid,
   email = user.email or "",
 }
 
