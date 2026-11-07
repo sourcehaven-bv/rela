@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io/fs"
 	"log/slog"
 	"maps"
@@ -20,6 +22,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/canonical"
 	"github.com/Sourcehaven-BV/rela/internal/conflict"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
@@ -2796,6 +2799,10 @@ func etagUnresolved(ctx context.Context, aff affordanceService, e *entityPkg.Ent
 // it: a caller could hash candidate values and compare. It would also change
 // the ETag when only a hidden value changed, so the caller's next If-Match
 // would fail for a change it cannot see.
+//
+// It runs the markdown formatter over the body (through the canonical view
+// hash), which is fine for one entity per request. Do not use it on a list
+// path.
 func servedETag(
 	ctx context.Context, aff affordanceService, e *entityPkg.Entity, edges []*entityPkg.Relation,
 ) string {
@@ -2816,35 +2823,31 @@ func servedETag(
 func entityETagWithEdges(
 	e *entityPkg.Entity, hidden map[string]struct{}, edges []*entityPkg.Relation,
 ) string {
-	h := sha256.New()
-	_, _ = h.Write([]byte(e.ID))
-	_, _ = h.Write([]byte(e.Type))
-	_, _ = h.Write([]byte(e.Content))
-
-	// Sort properties so the hash is stable across map iteration order.
-	propKeys := make([]string, 0, len(e.Properties))
-	for k := range e.Properties {
-		if _, h := hidden[k]; !h {
-			propKeys = append(propKeys, k)
-		}
-	}
-	sort.Strings(propKeys)
-	for _, k := range propKeys {
-		_, _ = h.Write([]byte(k))
-		_, _ = fmt.Fprintf(h, "=%v;", e.Properties[k])
-	}
-
-	// Fold the served FACE into the hash — not the world NAME. Two worlds that
-	// resolve the same id to different faces get different validators, so a
-	// published-world GET cannot answer 304 against a draft-derived one (the
-	// cross-world cache poisoning this fold exists for). Two worlds serving
-	// the SAME face share one, which is correct: the bytes are the same. And
-	// a write, which addresses the stored face directly and refuses `?world=`,
-	// computes the same fold — so an If-Match taken from a GET that showed
-	// the bare face matches the PATCH of it, while one taken from a GET that
-	// showed `published` refuses a write aimed at the draft. Folding the
+	// The view hash covers the served FACE, not the world NAME. Two worlds
+	// that resolve the same id to different faces get different validators,
+	// so a published-world GET cannot answer 304 against a draft-derived one
+	// (the cross-world cache poisoning this fold exists for). Two worlds
+	// serving the SAME face share one, which is correct: the bytes are the
+	// same. And a write, which addresses the stored face directly and refuses
+	// `?world=`, computes the same fold — so an If-Match taken from a GET that
+	// showed the bare face matches the PATCH of it, while one taken from a GET
+	// that showed `published` refuses a write aimed at the draft. Folding the
 	// world name instead made every world-bound If-Match a permanent 412.
-	_, _ = h.Write([]byte("f:" + e.Face.String() + ";"))
+	return viewETag(canonical.SumEntity(entityView(e, hidden)), e.Content, edges)
+}
+
+// viewETag is the validator for a row whose view hash is view (see
+// [canonical.Digest]), served with the raw body rawBody and the edges edges.
+// The entity and the single-relation reads both use it.
+//
+// The raw body is folded because the view hash formats the body: a backend
+// that stores the raw body would otherwise keep the validator across a
+// formatting-only edit, answering 304 with stale bytes or passing an If-Match
+// against a different base text.
+func viewETag(view canonical.Digest, rawBody string, edges []*entityPkg.Relation) string {
+	h := sha256.New()
+	_, _ = h.Write(view[:])
+	etagField(h, rawBody)
 
 	// Fold outgoing relations into the hash so PATCHes that only change
 	// edges also change the ETag — otherwise If-Match / If-None-Match
@@ -2858,18 +2861,53 @@ func entityETagWithEdges(
 	// changed. Folding DEFAULT-world edges instead is the mirror bug: a draft
 	// edit would invalidate a published validator, and publishing a face would
 	// not.
-	edgeKeys := make([]string, 0, len(edges))
+	edgeKeys := make([][2]string, 0, len(edges))
 	for _, edge := range edges {
-		edgeKeys = append(edgeKeys, edge.Type+"|"+edge.To)
+		edgeKeys = append(edgeKeys, [2]string{edge.Type, edge.To})
 	}
-	sort.Strings(edgeKeys)
+	slices.SortFunc(edgeKeys, func(a, b [2]string) int {
+		if c := strings.Compare(a[0], b[0]); c != 0 {
+			return c
+		}
+		return strings.Compare(a[1], b[1])
+	})
 	for _, k := range edgeKeys {
-		_, _ = h.Write([]byte("r:"))
-		_, _ = h.Write([]byte(k))
+		etagField(h, k[0])
+		etagField(h, k[1])
 	}
 
 	sum := h.Sum(nil)
 	return fmt.Sprintf("\"%s\"", base64.StdEncoding.EncodeToString(sum[:8]))
+}
+
+// etagField writes s length-prefixed, so no value can forge another field
+// boundary.
+func etagField(h hash.Hash, s string) {
+	var n [8]byte
+	binary.BigEndian.PutUint64(n[:], uint64(len(s)))
+	_, _ = h.Write(n[:])
+	_, _ = h.Write([]byte(s))
+}
+
+// entityView returns e as a caller sees it: e without the properties named in
+// hidden or in e.Redacted. It never mutates e.
+//
+// e.Redacted is the redacting reader's own record of what it withheld. It
+// should agree with hidden; removing both keeps a hidden value out of the
+// hash if the two ever diverge.
+func entityView(e *entityPkg.Entity, hidden map[string]struct{}) entityPkg.Entity {
+	view := *e
+	if len(hidden) == 0 && len(e.Redacted) == 0 {
+		return view
+	}
+	view.Properties = make(map[string]any, len(e.Properties))
+	for k, v := range e.Properties {
+		if _, h := hidden[k]; h || e.IsRedacted(k) {
+			continue
+		}
+		view.Properties[k] = v
+	}
+	return view
 }
 
 // validateCreateIDOpts enforces that `id` is only accepted for manual-ID types

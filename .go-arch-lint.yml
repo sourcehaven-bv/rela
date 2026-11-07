@@ -187,6 +187,7 @@ components:
   migration:        { in: internal/migration }
   markdown:         { in: internal/markdown }
   canonical:        { in: internal/canonical }
+  reconcile:        { in: internal/reconcile }
   frontmatter:      { in: internal/frontmatter }
   filter:           { in: internal/filter }
   queryplan:        { in: internal/queryplan }
@@ -1662,6 +1663,12 @@ deps:
     mayDependOn:
       - entity
       - markdown
+  # The reconciliation element and its additive fingerprints (FEAT-CMVZQFI).
+  # A leaf: no store, no HTTP, so every backend and the sync client can use it.
+  reconcile:
+    mayDependOn:
+      - entity
+      - canonical
   # userstate is the per-user next-action state seam (snooze/mute/cooldown).
   # Deliberately NOT dependent on store: this state is not graph content, and
   # letting it reach the store would invite exactly the "just put it in the

@@ -56,11 +56,30 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 )
 
-// HashEntity returns the canonical content hash of an entity as a hex-encoded
-// SHA-256 digest. The hash covers the id, type, properties, and (normalized)
-// body. It deliberately ignores UpdatedAt (a storage timestamp, not content)
-// and the Inaccessible set (a per-reader redaction artifact, not content).
-func HashEntity(e entity.Entity) string {
+// Digest is a canonical SHA-256 content hash in raw form.
+//
+// It is also the view hash of FEAT-CMVZQFI. Applied to the row as a reader
+// sees it, with `visible:`-hidden values removed, it is what the entity and
+// relation ETags and the reconciliation element are built from. One function
+// for all of them means a validator and a sync fingerprint never disagree
+// about what a reader saw, and a hidden value never reaches either
+// (BUG-J01V0Q). Build the view from a visibility-redacted row; do not write a
+// second redaction for it.
+type Digest [sha256.Size]byte
+
+// String returns the lower-case hex form. It is what [HashEntity] and
+// [HashRelation] return and what pgstore stores as content_hash.
+func (d Digest) String() string { return hex.EncodeToString(d[:]) }
+
+// HashEntity returns [SumEntity] in hex.
+func HashEntity(e entity.Entity) string { return SumEntity(e).String() }
+
+// SumEntity returns the canonical content hash of an entity. The hash covers
+// the id, face, type, properties, and (normalized) body. It deliberately
+// ignores UpdatedAt (a storage timestamp, not content) and the Inaccessible
+// and Redacted sets (per-reader artifacts, not content). Ignoring Redacted
+// keeps a reader's view hash silent on whether a hidden property is set.
+func SumEntity(e entity.Entity) Digest {
 	w := newWriter()
 	w.tag('E')
 	w.field("id", e.ID)
@@ -79,10 +98,13 @@ func HashEntity(e entity.Entity) string {
 	return w.sum()
 }
 
-// HashRelation returns the canonical content hash of a relation as a
-// hex-encoded SHA-256 digest. The hash covers the from/type/to triple,
-// properties, and (normalized) body, ignoring UpdatedAt and Inaccessible.
-func HashRelation(r entity.Relation) string {
+// HashRelation returns [SumRelation] in hex.
+func HashRelation(r entity.Relation) string { return SumRelation(r).String() }
+
+// SumRelation returns the canonical content hash of a relation. The hash
+// covers the from/type/to triple with the tail face, properties, and
+// (normalized) body, ignoring UpdatedAt and Inaccessible.
+func SumRelation(r entity.Relation) Digest {
 	w := newWriter()
 	w.tag('R')
 	w.field("from", r.From)
@@ -230,8 +252,10 @@ func (w *writer) writeValue(v any) {
 	}
 }
 
-func (w *writer) sum() string {
-	return hex.EncodeToString(w.h.Sum(nil))
+func (w *writer) sum() Digest {
+	var d Digest
+	w.h.Sum(d[:0])
+	return d
 }
 
 // normalize folds a property value, whatever concrete Go type a backend's
