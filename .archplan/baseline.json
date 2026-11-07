@@ -2616,7 +2616,7 @@
       "weight.layers": 0,
       "weight.vocabulary": 912,
       "weight.types": 3955,
-      "weight.concepts": 7052,
+      "weight.concepts": 7053,
       "weight.boundaries": 1387,
       "weight.data": 1297,
       "weight.security": 140,
@@ -2626,7 +2626,7 @@
       "propagation_cost": 9.5
     },
     "min_weight": 0,
-    "at": "2026-11-07T06:37:19Z",
+    "at": "2026-11-07T12:37:24Z",
     "log": [
       {
         "at": "2026-10-28T13:29:24Z",
@@ -2869,6 +2869,17 @@
           "propagation_cost": [
             9.6,
             9.5
+          ]
+        }
+      },
+      {
+        "at": "2026-11-07T12:37:24Z",
+        "change": "loosen",
+        "reason": "TKT-J4HMZ2B: untagged appbuild.NewInMemory imports memstore, raising the existing memstore data-clump weight by 1",
+        "metrics": {
+          "weight.concepts": [
+            7052,
+            7053
           ]
         }
       }

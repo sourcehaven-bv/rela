@@ -6,7 +6,7 @@ kind: enhancement
 priority: medium
 effort: xl
 started: "2026-11-07"
-status: ready
+status: backlog
 ---
 
 ## Description

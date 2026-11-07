@@ -5,7 +5,7 @@ title: 'rela test v1 (4/4): tickets/ sample suite, CI step and guide'
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+status: backlog
 ---
 
 ## Description
