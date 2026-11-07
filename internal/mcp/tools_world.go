@@ -71,7 +71,11 @@ func toolListWorlds() *mcpgo.Tool {
 // operator config and are served to every caller; only `readable` depends on
 // the caller.
 type worldJSON struct {
-	Name      string              `json:"name"`
+	Name string `json:"name"`
+	// Label is the operator's display name; hidden worlds are still listed,
+	// since `hidden` only keeps a world out of the SPA's switcher.
+	Label     string              `json:"label,omitempty"`
+	Hidden    bool                `json:"hidden,omitempty"`
 	Readable  bool                `json:"readable"`
 	Select    []string            `json:"select,omitempty"`
 	Overrides map[string][]string `json:"overrides,omitempty"`
@@ -122,6 +126,8 @@ func handleListWorlds(ctx context.Context, deps Deps) *mcpgo.CallToolResult {
 		}
 		out.Worlds = append(out.Worlds, worldJSON{
 			Name:      name,
+			Label:     def.Label,
+			Hidden:    def.Hidden,
 			Readable:  readable,
 			Select:    append([]string(nil), def.Select...),
 			Overrides: copyOverrides(def.Overrides),

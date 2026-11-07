@@ -134,7 +134,7 @@ const boardTypeHasFaces = computed(() => {
 const projectionNote = computed<string>(() => {
   if (!boardTypeHasFaces.value) return ''
   const info = world.value ? schemaStore.worlds.get(world.value) : undefined
-  return worldText(info?.messages?.projection, { world: world.value })
+  return worldText(info?.messages?.projection, { world: schemaStore.worldLabel(world.value) })
 })
 
 // Computed
