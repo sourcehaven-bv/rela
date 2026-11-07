@@ -701,6 +701,9 @@ deps:
       - openapi
       - project
       - queryplan
+      # POST /api/v1/_reconcile (TKT-VP02WHG) answers with reconcile's
+      # Range and Fingerprint and their text codec.
+      - reconcile
       # Answers `related(...)` in validation rules and state-machine `when:`
       # (TKT-205V2N). Its API is funcs over acl and store types, so this edge
       # does not hand dataentry the predicate engine; dataentry only picks the
@@ -744,6 +747,9 @@ deps:
       - webdav
       - goical
       - ygo
+      # The per-principal token bucket that admits reconcile requests
+      # (TKT-VP02WHG).
+      - xtimerate
   ygows:
     mayDependOn:
       - ygowsinternal
@@ -871,6 +877,9 @@ deps:
   # any tag, so both backends' deps must be allow-listed here.
   appbuild:
     mayDependOn:
+      # The reference element range reader, for stores without element
+      # columns, handed to visibility.NewElements (TKT-VP02WHG).
+      - elementnaive
       # writerule: CheckSchemaCompiles compiles the rules enforced on write.
       - writerule
       # aclstore: the store adapters handed to acl.NewDeclarative.

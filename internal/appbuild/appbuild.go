@@ -1387,11 +1387,13 @@ func collaboratorRefHolders(
 // fieldReadPolicy is the field-level read policy as appbuild hands it out:
 // per-entity redaction for the readers, and its search form for the gated
 // searcher. Both answer from the same `visible:` grants, so one value serves
-// both and they cannot drift. [visibility.PolicyRedactor] and
+// both and they cannot drift. It is also the field half of the element
+// range read ([visibility.ElementPolicy]). [visibility.PolicyRedactor] and
 // [visibility.NopRedactor] implement it.
 type fieldReadPolicy interface {
 	visibility.FieldRedactor
 	visibility.FieldScoper
+	RelationMetaGated(relType string) bool
 }
 
 // buildFieldPolicy constructs the field-level `visible:` policy shared by

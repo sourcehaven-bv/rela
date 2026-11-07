@@ -2035,3 +2035,107 @@ Like the data routes, the endpoint accepts a request without a browser origin
 and without a cookie, so a script or agent can call it. A request with a
 cookie needs a same-origin `Origin`. The route is in the OpenAPI spec. There is
 no MCP tool for it.
+
+## Reconcile (`/_reconcile`)
+
+`POST /api/v1/_reconcile` is the server side of rela-to-rela sync
+(TKT-VP02WHG, FEAT-CMVZQFI). A peer compares its copy with this server by
+range: it asks for the count and fingerprint of a range of elements, and
+lists the range only where the fingerprints differ. The endpoint only reads.
+
+An **element** is one row as you see it: an address and a view hash. An
+entity's address is `type/id`, or `type/id@face` for a non-default face. A
+relation's address is its key, `from--type--to`. The view hash is the
+SHA-256 digest of the row with the fields you may not see removed, as 64 hex
+digits. A **fingerprint** is the sum of the
+element fingerprints of a range modulo 2^128, so it is 32 hex digits.
+Elements are ordered by address, compared bytewise.
+
+### Request
+
+```json
+{
+  "ranges": [
+    { "kind": "entity", "entities": ["ticket", "feature"], "op": "fingerprint" },
+    { "kind": "entity", "entities": ["ticket"], "lo": "ticket/", "hi": "ticket/TKT-5",
+      "op": "list", "limit": 500 },
+    { "kind": "relation", "entities": ["ticket", "feature"], "relations": ["implements"],
+      "op": "fingerprint" }
+  ]
+}
+```
+
+- `kind` is `entity` or `relation`. A range never mixes the two.
+- `entities` names the entity types in scope. A relation range also needs
+  it: a relation is in the range only when both of its ends are of these
+  types and you may read both. Each relation type must have a type of each
+  end in `entities`; otherwise the range could never hold a row, and is
+  refused.
+- `relations` names the relation types of a relation range. An entity range
+  has none.
+- `lo` is the inclusive lower bound and `hi` the exclusive upper bound. A
+  missing `lo` starts at the beginning; a missing `hi` runs to the end.
+- `after` is an exclusive lower bound, used instead of `lo` to resume a
+  list: pass the `last` of the previous answer. It counts as one byte longer
+  than it is against the bound limit, and an `after` at or past `hi` is
+  refused like a `lo` above `hi`.
+- `op` is `fingerprint` or `list`. A list takes a `limit` of 1 to 2000; a
+  fingerprint takes none.
+- A type name must be declared and appear once per range. A bound is at
+  most 4096 bytes of UTF-8 with no NUL, and `lo` may not be above `hi`.
+- At most 32 ranges, 256 type names over all ranges, 2000 listed rows over
+  all ranges, and a body of 512 KiB. Unknown fields are refused.
+
+### Response
+
+200 has one result per range, in request order:
+
+```json
+{
+  "ranges": [
+    { "status": "ok", "count": 412, "fingerprint": "9f0c...e1" },
+    { "status": "ok", "elements": [{ "address": "ticket/TKT-001", "hash": "4b1d...07" }],
+      "last": "ticket/TKT-001", "more": false },
+    { "status": "too_large" }
+  ]
+}
+```
+
+- `ok` answers the range. A fingerprint carries `count` and `fingerprint`.
+  A list carries `elements`, `last` and `more`.
+- A list can hold fewer elements than `limit`, even none, while `more` is
+  true: a row that changed or became hidden between the two reads is left
+  out. Resume with `after` set to `last`, never to the last element.
+- `too_large` means the range holds more than 2000 rows the server must hash
+  one by one. Split it: by type first, then by address. On a database
+  server that is still filling its stored hashes after an upgrade, a range
+  can answer `too_large` and later `ok`.
+- `not_run` means the request reached its 15-second deadline before this
+  range. Ask for it again.
+
+The answer is yours: another principal sees other rows and other hashes.
+The response is never cached.
+
+### Errors
+
+Errors are `application/problem+json`. A failed range fails the whole
+request; nothing is answered.
+
+| Status | Error | When |
+| --- | --- | --- |
+| 400 | `invalid_json` | bad JSON, an unknown field, or data after the JSON object |
+| 400 | `invalid_reconcile_request` | a bad range, an undeclared or repeated type, or a limit exceeded; `detail` names the range and the reason |
+| 401 | `unauthenticated` | no identity |
+| 413 | `body_too_large` | the body is over 512 KiB |
+| 422 | `relation_meta_gated` | the policy can hide a meta field of the relation type, which ranges do not support yet |
+| 429 | `too_many_requests` | your rate limit; wait `Retry-After` seconds |
+| 501 | `reconcile_unavailable` | this server does not serve element ranges |
+| 503 | `reconcile_busy` | too many reconcile requests are running; wait `Retry-After` seconds |
+
+Each principal may start 2 requests a second, with a burst of 20, and run 2
+at a time. The server runs 4 at a time. These limits are fixed.
+
+The request is answered in the default world. Like the data routes, the
+endpoint accepts a request without a browser origin and without a cookie,
+so a peer can call it; a request with a cookie needs a same-origin `Origin`.
+The route is in the OpenAPI spec.

@@ -89,6 +89,21 @@ func ParseDigest(s string) (Digest, error) {
 	return d, nil
 }
 
+// MarshalText returns the [Digest.String] form, so a digest encodes as a JSON
+// string.
+func (d Digest) MarshalText() ([]byte, error) { return []byte(d.String()), nil }
+
+// UnmarshalText parses the [Digest.String] form with [ParseDigest]. A value
+// from a peer is decoded through it, so nothing else accepts a laxer form.
+func (d *Digest) UnmarshalText(b []byte) error {
+	v, err := ParseDigest(string(b))
+	if err != nil {
+		return err
+	}
+	*d = v
+	return nil
+}
+
 // HashEntity returns [SumEntity] in hex.
 func HashEntity(e entity.Entity) string { return SumEntity(e).String() }
 

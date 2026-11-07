@@ -298,6 +298,12 @@ var nonBrowserExemptPrefixes = []string{
 	// request keeps the same-origin check. The match is a prefix, as for
 	// every entry here; no route other than this one starts with it.
 	batchPath,
+	// The reconcile read (TKT-VP02WHG). A peer is a script, not a browser.
+	// It is a POST only because a request lists many ranges; it writes
+	// nothing, and its answer is the caller's own read, which a cross-site
+	// page cannot read back. The same no-cookie, no-Origin, no-Sec-Fetch
+	// shape is required, so a browser request keeps the same-origin check.
+	reconcilePath,
 	// NOTE: the /api/v1 data + schema routes are also non-browser exempt, but
 	// they can't be a static prefix ({plural} varies per type), so they're
 	// matched by isNonBrowserExemptV1Path (folded into isCSRFExempt) rather

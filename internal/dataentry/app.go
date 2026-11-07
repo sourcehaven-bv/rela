@@ -409,6 +409,9 @@ type App struct {
 	write *writeHandler
 	// batch owns POST /api/v1/_batch, the atomic multi-create (TKT-BO8CYG9).
 	batch *batchHandler
+	// reconcile owns POST /api/v1/_reconcile (TKT-VP02WHG); nil until
+	// SetReconcile, and the endpoint then answers 501.
+	reconcile *reconcileHandler
 	// views owns the read-only view-assembly surface: view traversal,
 	// section building, and the /_views, /_sidepanel, /_sidebar endpoints
 	// (TKT-R68TV8). This surface never mutates.

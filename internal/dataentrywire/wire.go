@@ -21,6 +21,7 @@ import (
 )
 
 // Services wires app to the services in svc: CalDAV aliases, comments, piles, leases,
+// the element range read behind /api/v1/_reconcile,
 // the realtime.yaml holder,
 // the worlds' relation scopes, version tags, next-action user state, and the
 // predicate compilers behind next-action sources, list and kanban
@@ -89,6 +90,16 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 	}
 	if err := appbuild.SetAttachRenderer(svc, renderer); err != nil {
 		return fmt.Errorf("wire attach_render: %w", err)
+	}
+
+	// The reconcile endpoint (TKT-VP02WHG). A build failure is returned, not
+	// degraded: an ungated element read would sum rows the caller may not read.
+	elements, elErr := appbuild.Elements(svc)
+	if elErr != nil {
+		return fmt.Errorf("wire reconcile: %w", elErr)
+	}
+	if err := dataentry.SetReconcile(app, elements); err != nil {
+		return fmt.Errorf("wire reconcile: %w", err)
 	}
 
 	if err := app.SetUserState(svc.UserState()); err != nil {
