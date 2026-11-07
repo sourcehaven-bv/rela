@@ -2612,6 +2612,12 @@
       "reason": "Design: flows.yaml states mirror channel session states on purpose; both compile onto the shared internal/flow engine, TKT-XHANLJU",
       "at": "2026-11-06T09:00:00Z",
       "title": "State (flowcfg) and SessionState (realtimecfg) share most of their fields."
+    },
+    "concepts.raw_ids-50f5e6d3f5f9": {
+      "state": "accepted",
+      "reason": "Design: a subject id is an entity id, a plain string everywhere in rela (entity.Ref.ID); a run-store-only type would not match its callers, TKT-PV9R0GK",
+      "at": "2026-11-07T08:20:00Z",
+      "title": "flowrun holds raw ids whose concept is unclear: SubjectID."
     }
   },
   "labels": {},
@@ -2622,7 +2628,7 @@
       "weight.layers": 0,
       "weight.vocabulary": 912,
       "weight.types": 3955,
-      "weight.concepts": 7061,
+      "weight.concepts": 7091,
       "weight.boundaries": 1387,
       "weight.data": 1297,
       "weight.security": 140,
@@ -2894,13 +2900,24 @@
         }
       },
       {
+        "at": "2026-11-07T13:40:00Z",
+        "change": "loosen",
+        "reason": "flowrun.Query.SubjectID is an entity id, a plain string as everywhere in rela (accepted raw_ids finding, weight 30), TKT-PV9R0GK",
+        "metrics": {
+          "weight.concepts": [
+            7060,
+            7090
+          ]
+        }
+      },
+      {
         "at": "2026-11-07T12:37:24Z",
         "change": "loosen",
         "reason": "TKT-J4HMZ2B: untagged appbuild.NewInMemory imports memstore, raising the existing memstore data-clump weight by 1",
         "metrics": {
           "weight.concepts": [
-            7060,
-            7061
+            7090,
+            7091
           ]
         }
       }

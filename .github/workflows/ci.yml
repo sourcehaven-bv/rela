@@ -1097,6 +1097,19 @@ jobs:
           fi
           echo "OK: scheduler run-state backends ran against PostgreSQL with no skips."
 
+      # Flow run store conformance (TKT-PV9R0GK), DB-gated and untagged like
+      # pgcomments. pgchannels shares its pgx adapter (internal/sqlexec).
+      - name: Run flow run store conformance (race) against PostgreSQL
+        run: |
+          set -euo pipefail
+          go test -race -v ./internal/flowrun/... ./internal/channels/pgchannels/ 2>&1 | tee flowrun-test.log
+          if grep -q -- '--- SKIP' flowrun-test.log; then
+            echo "::error::flow run store tests SKIPPED in the Postgres Backend job."
+            grep -- '--- SKIP' flowrun-test.log
+            exit 1
+          fi
+          echo "OK: flow run stores ran against PostgreSQL with no skips."
+
       # Lua migration graph reads (TKT-ZO6GRZ): the pre-step read rule,
       # checked against a real pgstore. Untagged, like pgcomments; only the
       # DSN decides whether the pgstore case runs, so a skip fails the step.

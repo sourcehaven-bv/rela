@@ -61,40 +61,25 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/sqlexec"
+)
+
+// The statement interface is sqlexec's, shared with sqlflowrun; these
+// names keep the adapters' and tests' spelling.
+type (
+	// Querier runs statements; see [sqlexec.Querier].
+	Querier = sqlexec.Querier
+	// Rows is a result set.
+	Rows = sqlexec.Rows
+	// Row is a single-row result.
+	Row = sqlexec.Row
+	// DB is a database handle that runs transactions.
+	DB = sqlexec.DB
 )
 
 // ErrNoRows is what a [Row] returns from Scan when the query matched
-// nothing. Adapters translate their driver's own sentinel to it.
-var ErrNoRows = errors.New("sqlchannels: no rows")
-
-// Querier runs statements. Queries use `?` placeholders; an adapter whose
-// driver numbers them rewrites the query.
-type Querier interface {
-	Exec(ctx context.Context, query string, args ...any) (rowsAffected int64, err error)
-	Query(ctx context.Context, query string, args ...any) (Rows, error)
-	QueryRow(ctx context.Context, query string, args ...any) Row
-}
-
-// Rows is a result set.
-type Rows interface {
-	Next() bool
-	Scan(dest ...any) error
-	Err() error
-	Close()
-}
-
-// Row is a single-row result.
-type Row interface {
-	Scan(dest ...any) error
-}
-
-// DB is a database handle that runs transactions.
-type DB interface {
-	Querier
-	// Transact runs fn in one transaction, committing when fn returns nil and
-	// rolling back otherwise.
-	Transact(ctx context.Context, fn func(q Querier) error) error
-}
+// nothing.
+var ErrNoRows = sqlexec.ErrNoRows
 
 // Dialect holds what differs between the databases.
 type Dialect struct {
