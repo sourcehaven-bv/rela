@@ -4033,3 +4033,22 @@ func TestValidateConfig_BusyColumnOnlyOnLists(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateApp_WorldSwitcher pins app.world_switcher's allowlist
+// (TKT-H0TFDWU): a typo must fail at load rather than leave the switcher
+// where it was.
+func TestValidateApp_WorldSwitcher(t *testing.T) {
+	for _, v := range []string{"", "header", "none"} {
+		if errs := validateWorldSwitcher(v); len(errs) != 0 {
+			t.Errorf("validateWorldSwitcher(%q) = %v, want no errors", v, errs)
+		}
+	}
+	for _, v := range []string{"sidebar", "Header", "detail", " none"} {
+		errs := validateWorldSwitcher(v)
+		if len(errs) != 1 || !strings.Contains(errs[0], "app.world_switcher") ||
+			!strings.Contains(errs[0], `"header" or "none"`) {
+
+			t.Errorf("validateWorldSwitcher(%q) = %v, want one error naming the key and the values", v, errs)
+		}
+	}
+}

@@ -870,3 +870,32 @@ func TestZeroInChain_Provenance(t *testing.T) {
 		})
 	}
 }
+
+// TestSchemaWorlds_ServesLabelAndHidden pins the presentation keys on the
+// wire (TKT-H0TFDWU). A client needs both to build a switcher in the
+// operator's words: without `label` it shows the declared name, without
+// `hidden` it offers a feed world as if it were a view.
+func TestSchemaWorlds_ServesLabelAndHidden(t *testing.T) {
+	meta := worldsMeta()
+	meta.DefaultWorld = "published"
+	pub := meta.Worlds["published"]
+	pub.Label = "Gepubliceerd"
+	meta.Worlds["published"] = pub
+	nl := meta.Worlds["site-nl"]
+	nl.Hidden = true
+	meta.Worlds["site-nl"] = nl
+
+	got := schemaWorlds(context.Background(), meta)
+	if got["published"].Label != "Gepubliceerd" {
+		t.Errorf("published.label = %q, want %q", got["published"].Label, "Gepubliceerd")
+	}
+	if got["published"].Hidden {
+		t.Error("published.hidden = true, want false")
+	}
+	if !got["site-nl"].Hidden {
+		t.Error("site-nl.hidden = false, want true")
+	}
+	if got["site-nl"].Label != "" {
+		t.Errorf("site-nl.label = %q, want empty", got["site-nl"].Label)
+	}
+}

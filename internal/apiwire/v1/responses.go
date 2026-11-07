@@ -604,6 +604,15 @@ type World struct {
 	// Config, not data: like Select and Banner, this is operator-authored and
 	// public, served identically to every principal.
 	PrimaryFor []string `json:"primary_for,omitempty"`
+	// Label is the operator's display name for this world, shown in the
+	// world switcher and substituted for `{world}` in Messages. Empty means
+	// the client shows the declared name. Mirrors metamodel.WorldDef.Label.
+	Label string `json:"label,omitempty"`
+	// Hidden asks a client to leave this world out of its world switcher.
+	// Presentation only: the world is still selectable with `?world=`, and
+	// Readable still says whether this caller may select it. Never true on
+	// the default world (refused at load).
+	Hidden bool `json:"hidden,omitempty"`
 	// Banner is operator-authored text announcing this world to a reader
 	// ("DRAFT — not in force"). Empty means announce nothing — a language
 	// world needs no banner, an editorial one does.
@@ -917,6 +926,10 @@ type AppConfig struct {
 	// The default world needs no world grant; the per-entity and per-face
 	// gates still decide what it shows.
 	DefaultWorld string `json:"default_world,omitempty"`
+	// WorldSwitcher is `app.world_switcher`: `header` shows the world
+	// switcher in the sidebar header, `none` shows none. Empty means
+	// `header`. Presentation only; worlds stay selectable with `?world=`.
+	WorldSwitcher string `json:"world_switcher,omitempty"`
 	// HistoryEnabled reports whether THIS DEPLOYMENT can serve version
 	// history. Content versioning is a postgres-only, OPTIONAL store
 	// capability (TKT-9INY0Y): fsstore and memstore do not implement

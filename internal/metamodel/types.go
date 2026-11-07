@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -696,6 +697,30 @@ type WorldDef struct {
 	// codebase refuses everywhere else.
 	PrimaryFor []string `yaml:"primary_for,omitempty"`
 
+	// Label is the operator's name for this world as a reader sees it —
+	// "Gepubliceerd" for a world declared as `published`. The world switcher
+	// shows it, and `{world}` in [WorldMessages] renders it. Empty means the
+	// declared name is shown, as before.
+	//
+	// Display-only, like [FaceDef.Label]: no placeholders are substituted in
+	// it. The declared name stays the world's identity in `?world=`,
+	// `acl.yaml` and every API.
+	Label string `yaml:"label,omitempty"`
+
+	// Hidden keeps this world out of the web app's world switcher. It is for
+	// worlds that are wiring rather than a view a reader picks, such as a
+	// feed world a publisher reads.
+	//
+	// Presentation only, NOT a boundary: the world stays selectable through
+	// `?world=` and every API, and its read grant is checked per request as
+	// for any other world. World names are config and public; hiding one
+	// from a menu conceals nothing and must not be built on as if it did.
+	//
+	// The default world cannot be hidden (validateWorlds): a bare URL lands
+	// in it, so a switcher that left it out would not list the world on
+	// screen.
+	Hidden bool `yaml:"hidden,omitempty"`
+
 	// Banner is operator-authored text announcing this world to a reader —
 	// "DRAFT — not in force" on an editorial world, nothing on a language
 	// world. Empty (the zero value) means announce nothing.
@@ -813,6 +838,8 @@ func (w *WorldDef) UnmarshalYAML(node *yaml.Node) error {
 		Edits     string               `yaml:"edits,omitempty"`
 		Create    string               `yaml:"create,omitempty"`
 		Banner    string               `yaml:"banner,omitempty"`
+		Label     string               `yaml:"label,omitempty"`
+		Hidden    bool                 `yaml:"hidden,omitempty"`
 		// oneOrMany like Select: the common case is a single face, and
 		// `primary_for: nl` should not have to be written as a list.
 		PrimaryFor oneOrMany     `yaml:"primary_for,omitempty"`
@@ -828,6 +855,9 @@ func (w *WorldDef) UnmarshalYAML(node *yaml.Node) error {
 	w.Edits = raw.Edits
 	w.Create = raw.Create
 	w.Banner = raw.Banner
+	// A blank label is no label: the name is shown instead.
+	w.Label = strings.TrimSpace(raw.Label)
+	w.Hidden = raw.Hidden
 	w.PrimaryFor = raw.PrimaryFor
 	w.Messages = raw.Messages
 	w.OnAbsent = raw.OnAbsent

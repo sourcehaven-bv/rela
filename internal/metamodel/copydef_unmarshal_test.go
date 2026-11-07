@@ -202,6 +202,7 @@ worlds:
     edits: draft
     create: draft
     banner: "DRAFT — not in force"
+    label: Alles
     primary_for: published
     messages:
       absent: "Not here yet"
@@ -212,6 +213,7 @@ worlds:
   drafts:
     select: draft
     otherwise: default
+    hidden: true
 default_world: everything
 `
 	m, err := Parse([]byte(doc))
@@ -238,6 +240,9 @@ default_world: everything
 			def.Messages.Projection == "Only what is in force" &&
 			def.Messages.StandIn == "{face}",
 		"OnAbsent": def.OnAbsent.Redirect == "drafts",
+		"Label":    def.Label == "Alles",
+		// On the other world: the default world may not be hidden.
+		"Hidden": m.Worlds["drafts"].Hidden && !def.Hidden,
 	}
 	for name, ok := range checks {
 		if !ok {
