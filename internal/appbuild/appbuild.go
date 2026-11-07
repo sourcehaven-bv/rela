@@ -49,6 +49,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/hostconfig"
+	"github.com/Sourcehaven-BV/rela/internal/idproles"
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
 	"github.com/Sourcehaven-BV/rela/internal/lease"
 	"github.com/Sourcehaven-BV/rela/internal/lock"
@@ -199,6 +200,9 @@ type Services struct {
 	// leaseShared is the backend and hub under leases, which a re-assembly
 	// shares. The backend is closed by Close, not by CloseAssembly.
 	leaseShared leaseShared
+	// idpRoles stores the roles the IdP webhook asserted per subject (see
+	// [IDPRoles]). A re-assembly shares it.
+	idpRoles *idproles.Store
 	// storeSchema applies a reloaded metamodel to store (see
 	// [RefreshStoreSchema]). A re-assembly reuses it.
 	//
@@ -532,6 +536,7 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 		World:         s.worlds.DefaultWorld(),
 	}
 	deps.Piles = pileReaderFor(s.piles)
+	deps.RoleHolders = roleHoldersFor(s)
 	if s.base != nil && s.base.cfg.projectConfig != nil {
 		deps.Files = s.base.cfg.projectConfig
 	}
@@ -2110,6 +2115,9 @@ type SharedBase struct {
 	// leaseShared is the predecessor's lease backend and hub, reused for the
 	// same reason. Empty for a first assembly.
 	leaseShared leaseShared
+	// idpRoles is the predecessor's IdP role store, reused so the in-memory
+	// fallback survives a schema reload. Nil for a first assembly.
+	idpRoles *idproles.Store
 	// realtimeLocal is the predecessor's process-local channel state (rate
 	// buckets, ephemeral signals, live subscribers), reused so a schema
 	// reload resets none of them. Nil for a first assembly.
@@ -2171,6 +2179,7 @@ func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
 	next.attachLocker = prev.attachLocker
 	next.pileStore = prev.pileStore
 	next.leaseShared = prev.leaseShared
+	next.idpRoles = prev.idpRoles
 	next.realtimeLocal = prev.realtimeLocal
 	next.channelHints = prev.channelHints
 	next.dueWake = prev.dueWake
@@ -2914,6 +2923,11 @@ func finishAssembly(
 	s.piles, s.pileStore = refs.piles, refs.pileStore
 	s.leases, s.leaseShared = refs.leases, refs.leaseShared
 	s.channels = refs.channels
+	idpRoles, err := buildIDPRoles(s.base, s.store, s.stateKV)
+	if err != nil {
+		return nil, err
+	}
+	s.idpRoles = idpRoles
 	// The channel service promotes through the entity manager, so it is
 	// built once the manager exists.
 	svc, err := buildRealtimeService(s.base, s.store, refs, s.entityManager, s.aclDeclarative, s.fieldReads, s.acl)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -56,24 +57,30 @@ func (s *Services) ScheduledForEachEntities(
 // ScheduledForEachPrincipal maps a selected user entity to the principal used
 // by ACL. The entity ID is the effective principal after the normal
 // principal_property resolution; no raw identity or role is trusted from the
-// durable payload.
-func (s *Services) ScheduledForEachPrincipal(ctx context.Context, entityID string) (string, error) {
+// durable payload. The roles the IdP webhook stored for the user ride on the
+// principal as asserted roles (TKT-IZL6NX8), read now rather than when the
+// run was queued, so a revocation applies to the next child.
+func (s *Services) ScheduledForEachPrincipal(ctx context.Context, entityID string) (principal.Principal, error) {
 	if s == nil || s.store == nil {
-		return "", errors.New("appbuild: scheduled for_each has no store")
+		return principal.Principal{}, errors.New("appbuild: scheduled for_each has no store")
 	}
 	// A principal is an entity, not one of its faces, so the type check
 	// reads the family's headers: a faced user type has no zero-face row
 	// (DEC-NPZICR).
 	headers, err := store.FamilyHeaders(ctx, s.store, entityID)
 	if err != nil {
-		return "", err
+		return principal.Principal{}, err
 	}
 	var typ string
 	if len(headers) > 0 {
 		typ = headers[0].Type
 	}
 	if typ == "" || s.aclPolicy == nil || s.aclPolicy.UserEntityType == "" || typ != s.aclPolicy.UserEntityType {
-		return "", nil
+		return principal.Principal{}, nil
 	}
-	return entityID, nil
+	roles, err := storedAssertedRoles(ctx, s, entityID, headers)
+	if err != nil {
+		return principal.Principal{}, fmt.Errorf("stored asserted roles: %w", err)
+	}
+	return forEachPrincipal(entityID, roles), nil
 }

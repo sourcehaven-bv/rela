@@ -12,6 +12,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
 // errWebhookActionMissing is returned when the configured provisioning action id
@@ -72,7 +73,28 @@ type webhookReceiver struct {
 	verify   webhookVerifier
 	actionID string
 	seen     *seenSet
+	roles    webhookRoleStore
 }
+
+// webhookRoleStore stores the IdP role names a webhook action returned for
+// the verified subject (TKT-IZL6NX8). *appbuild.IDPRoleWriter satisfies it.
+// An empty roles list removes the subject's record. Hold locks one subject
+// across the action and Set, so an older fetch never overwrites a newer one.
+type webhookRoleStore interface {
+	Hold(ctx context.Context, subject string) (release func(), err error)
+	Set(ctx context.Context, subject, orgID string, roles []string) error
+}
+
+// errWebhookRolesUnavailable is returned when the action returned
+// asserted_roles but no role store is wired: storing nothing silently would
+// leave a revoked role in force.
+var errWebhookRolesUnavailable = errors.New("dataentry: webhook action returned asserted_roles but no role store is wired")
+
+// errWebhookActionError is returned when the action reported an error
+// (message_type "error"), with or without asserted_roles. Nothing is stored,
+// and the 502 makes the IdP retry: acknowledging it would lose the event, and
+// a lost event can be a lost revocation.
+var errWebhookActionError = errors.New("dataentry: webhook action reported an error; nothing stored")
 
 // SetWebhookReceiver enables the POST /webhooks/idp endpoint: a verified IdP
 // callback that dispatches to the named action (which fetches authoritative user
@@ -80,11 +102,16 @@ type webhookReceiver struct {
 // verifier or empty actionID leaves the receiver disabled and the route
 // unmounted — matching the inert-when-unconfigured shape of the other optional
 // wiring (SetPrincipalResolver, SetSecurityConfig).
-func (a *App) SetWebhookReceiver(v webhookVerifier, actionID string) {
+//
+// roles stores the `asserted_roles` the action returns (TKT-IZL6NX8).
+//
+// Nil: roles is accepted; an action that then returns asserted_roles fails
+// with a 502 rather than having its roles dropped.
+func (a *App) SetWebhookReceiver(v webhookVerifier, actionID string, roles webhookRoleStore) {
 	if v == nil || actionID == "" {
 		return
 	}
-	a.webhook = &webhookReceiver{verify: v, actionID: actionID, seen: newSeenSet(webhookDedupTTL)}
+	a.webhook = &webhookReceiver{verify: v, actionID: actionID, seen: newSeenSet(webhookDedupTTL), roles: roles}
 }
 
 // registerWebhookRoutes mounts the webhook endpoint when a receiver is
@@ -104,7 +131,7 @@ func (a *App) registerWebhookRoutes(mux *http.ServeMux) {
 	rec := a.webhook
 	mux.HandleFunc("POST /webhooks/idp", func(w http.ResponseWriter, r *http.Request) {
 		rec.handle(w, r, func(ctx context.Context, claims WebhookClaims) error {
-			return dispatchWebhookAction(ctx, a.write, rec.actionID, claims)
+			return dispatchWebhookAction(ctx, a.write, rec, claims)
 		})
 	})
 }
@@ -167,7 +194,8 @@ func (rec *webhookReceiver) handle(
 // single because the manager checks uniqueness and writes inside one store.Tx.
 // A free function taking the writeHandler explicitly (it is dispatch wiring,
 // not a route handler).
-func dispatchWebhookAction(ctx context.Context, h *writeHandler, actionID string, claims WebhookClaims) error {
+func dispatchWebhookAction(ctx context.Context, h *writeHandler, rec *webhookReceiver, claims WebhookClaims) error {
+	actionID := rec.actionID
 	s := h.schema()
 	action, ok := s.Cfg.Actions[actionID]
 	if !ok {
@@ -219,11 +247,51 @@ func dispatchWebhookAction(ctx context.Context, h *writeHandler, actionID string
 	// calls out over http with a named secret (see examples/idp-sync.lua), and
 	// it now must say so in config rather than receiving the whole secrets file
 	// by default.
+	// Hold the subject from before the action fetches the roles until they
+	// are stored. Two deliveries for one user then store in fetch order, so
+	// a slow older fetch cannot undo a revocation a newer one stored.
+	if rec.roles != nil {
+		release, holdErr := rec.roles.Hold(ctx, claims.UserID)
+		if holdErr != nil {
+			return fmt.Errorf("idp webhook: hold subject: %w", holdErr)
+		}
+		defer release()
+	}
+
 	deps := h.luaDeps()
 	deps.Capabilities = luaCapabilities(action.Capabilities)
-	_, err = h.engine().ExecuteAction(ctx, action.Script, deps,
+	resp, err := h.engine().ExecuteAction(ctx, action.Script, deps,
 		nil, params, webhookActionTimeout, newCorrelationID())
-	return err
+	if err != nil {
+		return err
+	}
+	if resp != nil && resp.MessageType == "error" {
+		return errWebhookActionError
+	}
+	return storeAssertedRoles(ctx, rec.roles, claims, resp)
+}
+
+// storeAssertedRoles stores the `asserted_roles` the action returned, for the
+// subject and org of the VERIFIED webhook claims (TKT-IZL6NX8). The script
+// chooses the role names, which it fetched from the IdP; it cannot choose
+// whose roles they are. A response without the key changes nothing. The
+// caller has already turned an error response into a 502.
+func storeAssertedRoles(
+	ctx context.Context, roles webhookRoleStore, claims WebhookClaims, resp *script.ActionResponse,
+) error {
+	if resp == nil || resp.AssertedRoles == nil {
+		return nil
+	}
+	if roles == nil {
+		return errWebhookRolesUnavailable
+	}
+	if err := roles.Set(ctx, claims.UserID, claims.OrgID, resp.AssertedRoles); err != nil {
+		return fmt.Errorf("idp webhook: store asserted roles: %w", err)
+	}
+	// The IdP subject is personal data; the audit record names the bound
+	// entity instead.
+	slog.Info("idp webhook stored asserted roles", "event", claims.Event, "roles", len(resp.AssertedRoles))
+	return nil
 }
 
 // --- dedup seen-set -------------------------------------------------------

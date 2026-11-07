@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -27,6 +28,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // automationJobKind runs one `background: true` automation action
@@ -87,6 +89,14 @@ type automationJobs struct {
 	// followUpDelay spaces the enqueue retries after a collapsed enqueue.
 	followUpDelay time.Duration
 
+	// deleted holds the keys of the sealed last states that queued
+	// `on.deleted` jobs carry.
+	deleted *deletedStates
+
+	// gateDeleted shows an `on.deleted` job the deleted state as the job's
+	// reader may: [visibility.GateDeleted], replaced only in tests.
+	gateDeleted func(ctx context.Context, reader any, last *entity.Entity) (*entity.Entity, bool)
+
 	// runner and engine are set by bind once the services exist: the
 	// handler needs the scheduled Lua deps, which are built after the entity
 	// manager that triggers it.
@@ -128,6 +138,7 @@ func newAutomationJobs(
 	return &automationJobs{
 		meta: meta, kv: kv, raw: raw, queue: queue,
 		locks: map[string]*keyLock{}, followUpDelay: defaultFollowUpDelay,
+		deleted: &deletedStates{kv: kv}, gateDeleted: visibility.GateDeleted,
 	}, nil
 }
 
@@ -156,17 +167,44 @@ type automationJobPayload struct {
 	Hops       int
 	// By is the user whose save triggered the job, for the audit label.
 	By string
+	// Last is the raw final state of the face an `on.deleted` trigger fired
+	// for (TKT-Q0AQ840); nil for every other trigger. The face is gone, so
+	// the job cannot read it from the store. Like the other fields it grants
+	// nothing: the job shows it to the script only as far as the job's own
+	// identity may read it (see runOnce).
+	//
+	// It never enters the job table as it is. A queued job carries it as
+	// Sealed, readable only with the key Handle names (see deletedStates).
+	Last *entity.Entity
+	// Handle names the key of Sealed in deletedStates; empty unless the job
+	// is a queued `on.deleted` job.
+	Handle string
+	// Sealed is Last, encrypted under the key Handle names.
+	Sealed string
 }
+
+// deleted reports whether p is an `on.deleted` job.
+func (p automationJobPayload) deleted() bool { return p.Last != nil || p.Handle != "" }
 
 func (p automationJobPayload) key() string {
-	return fmt.Sprintf("automation:%s:%s:%s", p.Automation, p.LuaFile, entity.FormatStateRef(p.ID, p.Face))
+	k := fmt.Sprintf("automation:%s:%s:%s", p.Automation, p.LuaFile, entity.FormatStateRef(p.ID, p.Face))
+	if p.deleted() {
+		k += ":deleted"
+	}
+	return k
 }
 
+// toMap is the payload the queue stores. Last is left out: enqueue seals it
+// into Handle and Sealed first.
 func (p automationJobPayload) toMap() map[string]any {
-	return map[string]any{
+	m := map[string]any{
 		"automation": p.Automation, "lua_file": p.LuaFile,
 		"id": p.ID, "face": string(p.Face), "hops": p.Hops, "by": p.By,
 	}
+	if p.Handle != "" {
+		m["handle"], m["sealed"] = p.Handle, p.Sealed
+	}
+	return m
 }
 
 func payloadFromMap(m map[string]any) (automationJobPayload, error) {
@@ -174,6 +212,7 @@ func payloadFromMap(m map[string]any) (automationJobPayload, error) {
 	p := automationJobPayload{
 		Automation: str("automation"), LuaFile: str("lua_file"),
 		ID: str("id"), Face: entity.Face(str("face")), By: str("by"),
+		Handle: str("handle"), Sealed: str("sealed"),
 	}
 	// A JSON round-trip turns the int into a float64.
 	switch h := m["hops"].(type) {
@@ -184,6 +223,9 @@ func payloadFromMap(m map[string]any) (automationJobPayload, error) {
 	}
 	if p.Automation == "" || p.LuaFile == "" || p.ID == "" {
 		return p, errors.New("automation job: incomplete payload")
+	}
+	if (p.Handle == "") != (p.Sealed == "") {
+		return p, errors.New("automation job: incomplete deleted state")
 	}
 	return p, nil
 }
@@ -216,10 +258,15 @@ func jobContext(base, from context.Context) context.Context {
 
 // EnqueueScript implements autocascade.BackgroundScripts.
 func (a *automationJobs) EnqueueScript(ctx context.Context, s autocascade.BackgroundScript) error {
-	p := automationJobPayload{
+	return a.schedule(ctx, automationJobPayload{
 		Automation: s.Automation, LuaFile: s.LuaFile, ID: s.Ref.ID, Face: s.Ref.Face,
 		By: principal.From(ctx).User,
-	}
+	})
+}
+
+// schedule enqueues the job p names, or runs it in the foreground when there
+// is no queue.
+func (a *automationJobs) schedule(ctx context.Context, p automationJobPayload) error {
 	if slices.Contains(runningJobs(ctx), p.key()) {
 		return nil // a write by this job, or by a job it triggered
 	}
@@ -227,7 +274,7 @@ func (a *automationJobs) EnqueueScript(ctx context.Context, s autocascade.Backgr
 	p.Hops = hops + 1
 	if p.Hops > maxAutomationJobHops {
 		return fmt.Errorf("automation %q: background jobs triggered each other %d times; not scheduling %s again",
-			s.Automation, maxAutomationJobHops, s.LuaFile)
+			p.Automation, maxAutomationJobHops, p.LuaFile)
 	}
 	act, ok := findBackgroundAction(a.meta, p.Automation, p.LuaFile)
 	if !ok {
@@ -237,6 +284,11 @@ func (a *automationJobs) EnqueueScript(ctx context.Context, s autocascade.Backgr
 		"lua_file", p.LuaFile, "entity", p.ID, "by", p.By)
 	if a.queue == nil {
 		return a.runForeground(ctx, p)
+	}
+	if p.Last != nil {
+		// Each delete is its own event with its own last state, so it is
+		// never collapsed into another job and needs no trigger token.
+		return a.enqueue(ctx, p, act)
 	}
 	token, err := a.recordTrigger(ctx, p.key(), p.Hops)
 	if err != nil {
@@ -253,12 +305,28 @@ func (a *automationJobs) EnqueueScript(ctx context.Context, s autocascade.Backgr
 }
 
 func (a *automationJobs) enqueue(ctx context.Context, p automationJobPayload, act metamodel.AutomationAction) error {
-	return a.queue.Enqueue(ctx, jobs.Job{
+	key := p.key()
+	if p.Last != nil {
+		key = "" // see schedule
+		handle, sealed, err := a.deleted.seal(ctx, p.Last)
+		if err != nil {
+			return err
+		}
+		p.Handle, p.Sealed = handle, sealed
+	}
+	err := a.queue.Enqueue(ctx, jobs.Job{
 		Kind:           automationJobKind,
 		Payload:        p.toMap(),
 		Retry:          jobRetry(act.Retry),
-		IdempotencyKey: p.key(),
+		IdempotencyKey: key,
 	})
+	if err != nil && p.Handle != "" {
+		// No job holds the sealed state, so its key goes too.
+		if eErr := a.deleted.erase(ctx, p.ID, p.Handle); eErr != nil {
+			slog.Warn("automation job: deleted-state key not erased", "entity", p.ID, "error", eErr)
+		}
+	}
+	return err
 }
 
 // runForeground runs the job now, on a fresh context. The saver learns only
@@ -333,12 +401,44 @@ func (a *automationJobs) EntityRenamed(ctx context.Context, _, newID string) err
 	return nil
 }
 
+// EntityStateDeleted implements entitymanager.DeleteNotifier: it schedules
+// the background actions whose `on.deleted` trigger matches the deleted face,
+// carrying its last state (TKT-Q0AQ840). The engine decides on the raw state,
+// as a save's cascade does, so the trigger fires the same whoever deleted it.
+func (a *automationJobs) EntityStateDeleted(ctx context.Context, last *entity.Entity) error {
+	if a.engine == nil || last == nil || !hasDeletedTriggers(a.meta) {
+		return nil
+	}
+	res := a.engine.Process(ctx, automation.Event{Type: automation.EventEntityDeleted, Entity: last})
+	var errs []error
+	for _, l := range res.LuaToExecute {
+		if !l.Background {
+			continue // unreachable: load validation refuses them under `on.deleted`
+		}
+		err := a.schedule(ctx, automationJobPayload{
+			Automation: l.AutomationName, LuaFile: l.FilePath, ID: last.ID, Face: last.Face,
+			By: principal.From(ctx).User, Last: last.Clone(),
+		})
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // EntityDeleted implements entitymanager.AliasRewriter; a job for a deleted
 // entity finds nothing and ends.
 func (a *automationJobs) EntityDeleted(context.Context, string) error { return nil }
 
 // EntityFaceDeleted implements entitymanager.AliasRewriter.
 func (a *automationJobs) EntityFaceDeleted(context.Context, string, entity.Face) error { return nil }
+
+// EntityPurged implements entitymanager.PurgeNotifier: it erases the sealed
+// last states that pending `on.deleted` jobs hold for id, so those jobs end
+// without reading them.
+func (a *automationJobs) EntityPurged(ctx context.Context, id string) error {
+	return a.deleted.purge(ctx, id, hasDeletedTriggers(a.meta))
+}
 
 // handle is the queue handler. The queue's ctx carries no request.
 func (a *automationJobs) handle(ctx context.Context, j jobs.Job) error {
@@ -347,7 +447,57 @@ func (a *automationJobs) handle(ctx context.Context, j jobs.Job) error {
 		slog.Warn("automation job dropped", "error", err)
 		return nil
 	}
-	return a.run(ctx, p)
+	if p.Handle == "" {
+		return a.run(ctx, p)
+	}
+	return a.handleDeleted(ctx, j, p)
+}
+
+// handleDeleted opens the sealed state of an `on.deleted` job, runs the job
+// on it, and erases its key once no delivery will follow: after a success,
+// a drop, or a failure on the final attempt. A failure the queue retries
+// keeps the key for the retry.
+func (a *automationJobs) handleDeleted(ctx context.Context, j jobs.Job, p automationJobPayload) error {
+	last, err := a.deleted.open(ctx, p.ID, p.Face, p.Handle, p.Sealed)
+	switch {
+	case errors.Is(err, errDeletedStateErased), errors.Is(err, errDeletedStateCorrupt):
+		// The key may outlive a purge that only changed the generation.
+		a.eraseDeleted(ctx, p)
+		slog.Info("automation job dropped", "automation", p.Automation, "entity", p.ID, "reason", err)
+		return nil
+	case err != nil && !j.FinalAttempt():
+		return err
+	case err != nil:
+		a.eraseDeleted(ctx, p)
+		return err
+	}
+	// The AAD already binds id and face; this check is defense in depth.
+	if last.ID != p.ID || last.Face != p.Face {
+		a.eraseDeleted(ctx, p)
+		slog.Warn("automation job dropped: deleted state names another face",
+			"automation", p.Automation, "entity", p.ID)
+		return nil
+	}
+	p.Last = last
+	runErr := a.run(ctx, p)
+	if runErr == nil || j.FinalAttempt() {
+		a.eraseDeleted(ctx, p)
+	}
+	return runErr
+}
+
+// eraseDeleted erases p's key. A failure is logged: the job's outcome
+// stands, and the queue's retention sweep still removes the sealed state.
+//
+// It runs on a context of its own: the job's may have ended with its
+// timeout, which is one way a final attempt fails.
+func (a *automationJobs) eraseDeleted(ctx context.Context, p automationJobPayload) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+	defer cancel()
+	if err := a.deleted.erase(ctx, p.ID, p.Handle); err != nil {
+		slog.Warn("automation job: deleted-state key not erased",
+			"automation", p.Automation, "entity", p.ID, "error", err)
+	}
 }
 
 // run executes the action. In queue mode it repeats while saves arrive
@@ -390,7 +540,7 @@ func (a *automationJobs) run(ctx context.Context, p automationJobPayload) error 
 		return fmt.Errorf("automation %q: identity %q: %w", p.Automation, user, err)
 	}
 
-	if a.queue == nil {
+	if a.queue == nil || p.deleted() {
 		return a.runOnce(ctx, p, act, user)
 	}
 	for range maxAutomationJobRuns {
@@ -440,14 +590,90 @@ func (a *automationJobs) runOnce(
 	deps.Capabilities = lua.Capabilities{
 		HTTP: http, AI: ai, Mail: mail, WriteFile: writeFile, Secrets: secrets, Tokens: tokens,
 	}
-	e, err := deps.VisibleReader.GetAddress(ctx, entity.FormatStateRef(p.ID, p.Face))
+	e, err := a.subject(ctx, deps.VisibleReader, p)
 	if err != nil {
-		slog.Warn("automation job dropped: entity not found, or this identity cannot read it",
+		slog.Warn("automation job dropped: entity not readable by this identity, missing, or restored",
 			"automation", p.Automation, "entity", p.ID, "principal", user, "error", err)
 		return nil
 	}
 	if err := a.runner.ExecuteFile(ctx, p.LuaFile, deps, e); err != nil {
 		return fmt.Errorf("automation %q: %s: %w", p.Automation, p.LuaFile, err)
+	}
+	return nil
+}
+
+// errDeletedHidden reports a deleted face the job's identity may not read.
+var errDeletedHidden = errors.New("the deleted entity is not readable by this identity")
+
+// errDeletedLive reports a deleted face that is stored again: restored
+// after a soft delete, or recreated under the same id.
+var errDeletedLive = errors.New("the deleted entity exists again")
+
+// jsonNumbers turns each json.Number in v into an int when it is whole and
+// a float64 otherwise, so a deleted state reaches the script with the
+// number types a live read gives it.
+func jsonNumbers(v any) any {
+	switch t := v.(type) {
+	case json.Number:
+		if i, err := t.Int64(); err == nil {
+			return int(i)
+		}
+		if f, err := t.Float64(); err == nil {
+			return f
+		}
+		return t.String()
+	case map[string]any:
+		for k, e := range t {
+			t[k] = jsonNumbers(e)
+		}
+		return t
+	case []any:
+		for i := range t {
+			t[i] = jsonNumbers(t[i])
+		}
+		return t
+	default:
+		return v
+	}
+}
+
+// subject is the entity the script receives: the stored face read as the
+// job's identity, or for an `on.deleted` job the face's last state, gated
+// the same way.
+func (a *automationJobs) subject(
+	ctx context.Context, reader lua.EntityReader, p automationJobPayload,
+) (*entity.Entity, error) {
+	if p.Last == nil {
+		return reader.GetAddress(ctx, entity.FormatStateRef(p.ID, p.Face))
+	}
+	// A live row at the ref means the delete was undone or the id reused.
+	// The job then has nothing to report, and the gate would decide on the
+	// new row's grants instead of the deleted one's. The check runs on both
+	// sides of the gate, so a row that appears while the gate runs is seen.
+	if err := a.noLiveRow(ctx, p); err != nil {
+		return nil, err
+	}
+	e, ok := a.gateDeleted(ctx, reader, p.Last)
+	if !ok {
+		return nil, errDeletedHidden
+	}
+	if err := a.noLiveRow(ctx, p); err != nil {
+		return nil, err
+	}
+	return e, nil
+}
+
+// noLiveRow returns errDeletedLive when the payload's face is stored and not
+// soft-deleted, or the read error.
+func (a *automationJobs) noLiveRow(ctx context.Context, p automationJobPayload) error {
+	q := store.EntityQuery{IDs: []string{p.ID}, Faces: store.AllFaces()}
+	for e, err := range a.raw.ListEntities(ctx, q) {
+		if err != nil {
+			return err
+		}
+		if e.Face == p.Face {
+			return errDeletedLive
+		}
 	}
 	return nil
 }
@@ -581,6 +807,15 @@ func findBackgroundAction(meta *metamodel.Metamodel, name, file string) (metamod
 		}
 	}
 	return metamodel.AutomationAction{}, false
+}
+
+func hasDeletedTriggers(meta *metamodel.Metamodel) bool {
+	for _, auto := range meta.Automations {
+		if auto.On.Deleted {
+			return true
+		}
+	}
+	return false
 }
 
 func hasBackgroundActions(meta *metamodel.Metamodel) bool {

@@ -3535,6 +3535,7 @@ Automations fire based on entity changes:
 | `updated`          | Fires on an update that changes a property or the body, not on a create. Not with `property`, `becomes` or `from`; a script under it must be `background: true` | `true` |
 | `relation_created` | Fires when this relation type is created  | `implements`           |
 | `relation_removed` | Fires when this relation type is removed  | `implements`           |
+| `deleted`          | Fires once per face a delete removes. Stands alone, and every action must be `background: true` (see [Running a script when an entity is deleted](#running-a-script-when-an-entity-is-deleted)) | `true` |
 | `faces`            | Content states to watch (default: all)    | `[published]`          |
 | `copy`             | Copy definitions to watch (string or list). Alone, fires on every run of a named copy; beside `created`, `updated` or `property`, limits that key to the copy's write. See [Automations on a copy](#automations-on-a-copy) | `adopt` |
 | `when`             | Property conditions that must match (AND) | `["kind=enhancement"]` |
@@ -3765,6 +3766,62 @@ A background action differs from an inline one in these ways:
 A background action holds only `lua_file:`, cannot use `allow_acl_bypass`,
 and must belong to an automation with a unique, non-empty `name:`. The
 schema refuses to load otherwise.
+
+#### Running a script when an entity is deleted
+
+`deleted: true` starts background actions when an entity is deleted. Use it
+to tell an outside system, such as a published site, that a record is gone.
+
+```yaml
+automations:
+  - name: unpublish-page
+    on: {entity: pagina, deleted: true, faces: [published]}
+    do:
+      - lua_file: site/unpublish.lua
+        background: true
+        capabilities: {http: true}
+```
+
+- **When it fires.** Once for each face the delete removed, after the delete
+  is saved. A delete from the web app, the CLI, MCP, a script or an
+  automation fires it. So does a soft delete, the kind the web app can undo.
+  An owned entity deleted with its owner fires its own automations. Purging a
+  soft-deleted entity later does not fire again, and neither does an undo or
+  a restore. If the face is restored, or created again under the same id,
+  before the job runs, the job does nothing.
+- **What the script sees.** `entity` is the face as it was just before the
+  delete. `when:` and `condition:` decide on that state too. A
+  `condition:` may not use `related(...)`, because the relations are deleted
+  with the entity.
+- **Identity.** The job runs as `run_as` or `system:automation`, as other
+  background actions do, and sees the deleted face only as far as that
+  identity may read it. Fields its `visible:` grants hide are removed. A read
+  grant that depends on the stored entity, such as a role conferred through a
+  relation, cannot be checked once the entity is gone, so the job does not
+  run. Give the job's identity a plain read grant on the type.
+- **No coalescing.** Each delete is its own job. Deleting, recreating and
+  deleting an entity again runs the script twice.
+- **Retention of the deleted state.** In queue mode the job stores the
+  deleted face encrypted, with hidden fields included. The key that decrypts
+  it is a separate record in the state store, never in the job table. The
+  job erases the key when it ends: after it succeeds, after it decides not
+  to run, and after its last allowed attempt fails. A failure that will be
+  retried keeps the key for the retry. Purging the entity makes the state of
+  all its waiting jobs unreadable, and those jobs end without running: the
+  purge of a soft-deleted entity does this, and so does
+  `rela history-purge --commit`. A job the queue itself gives up on, for
+  example one past the time limit of `retry: persistent`, keeps its key, but
+  on PostgreSQL the queue deletes finished and failed job rows after 24
+  hours, and the encrypted copy goes with them. On the file and SQLite
+  backends the queue is in memory, so the encrypted copy is gone when the
+  process stops. In foreground mode the state is not stored at all. This
+  erases the state from the live database; backups taken while a job waited
+  keep both the key and the encrypted copy.
+- **Allowed keys.** `deleted` cannot be combined with `created`, `updated`,
+  `property`, `becomes`, `from`, `relation_created` or `relation_removed`.
+  Every action must be `background: true`, and `validate:` is refused: the
+  delete has already happened when the automation runs, so there is no save
+  to change or warn about.
 
 **Add to Pile**:
 

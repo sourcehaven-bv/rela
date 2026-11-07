@@ -93,6 +93,13 @@ tasks:
 runs as its selected entity's current ACL principal. Expansion posts independent
 bounded-retry child jobs and does not wait for their delivery.
 
+A child has no JWT, so it would hold no `asserted_role_assignments` role. When
+the IdP webhook stored roles for the user (see "Stored asserted roles" in
+GUIDE-acl-security), the child carries them and they map through
+`asserted_role_assignments` exactly as a JWT `roles` claim does. The child
+reads them when it starts, so a revocation the webhook delivered applies to
+the next child.
+
 ### Identity and what a task can read (`run_as`)
 
 A scheduled task runs under an **identity**, and that identity decides what

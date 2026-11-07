@@ -1,0 +1,6 @@
+# OSV advisories on github.com/reearth/ygo that the fork has already dealt
+# with, read by scripts/ygows-advisories.sh. One per line:
+#
+#   <OSV id> <why the fork is not affected, or how it was patched>
+#
+# Remove an entry when UpstreamVersion moves past the affected range.

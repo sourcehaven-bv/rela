@@ -187,6 +187,7 @@ components:
   migration:        { in: internal/migration }
   markdown:         { in: internal/markdown }
   canonical:        { in: internal/canonical }
+  reconcile:        { in: internal/reconcile }
   frontmatter:      { in: internal/frontmatter }
   filter:           { in: internal/filter }
   queryplan:        { in: internal/queryplan }
@@ -207,6 +208,8 @@ components:
   lease:            { in: internal/lease }
   kvlease:          { in: internal/lease/kvlease }
   pglease:          { in: internal/lease/pglease }
+  # IdP-asserted roles per subject, for background jobs (TKT-IZL6NX8).
+  idproles:         { in: internal/idproles }
   # Realtime channels (TKT-DD8B6I): message logs anchored to an entity.
   channels:         { in: internal/channels }
   realtime:         { in: internal/realtime }
@@ -858,6 +861,8 @@ deps:
       - writerule
       # aclstore: the store adapters handed to acl.NewDeclarative.
       - aclstore
+      # The stored IdP roles, over the state KV and the Services-wide lock.
+      - idproles
       - rollup
       - rootfs
       # Loads realtime.yaml at boot and holds the compiled config.
@@ -1665,6 +1670,12 @@ deps:
     mayDependOn:
       - entity
       - markdown
+  # The reconciliation element and its additive fingerprints (FEAT-CMVZQFI).
+  # A leaf: no store, no HTTP, so every backend and the sync client can use it.
+  reconcile:
+    mayDependOn:
+      - entity
+      - canonical
   # userstate is the per-user next-action state seam (snooze/mute/cooldown).
   # Deliberately NOT dependent on store: this state is not graph content, and
   # letting it reach the store would invite exactly the "just put it in the
@@ -1912,6 +1923,9 @@ deps:
     canUse:
       - neoq
       - uuid
+      # pgx: the postgres-tagged retention sweep's own one-connection pool,
+      # because neoq does not expose its pool (TKT-RJS3KKJ).
+      - pgx
   scheduler:
     mayDependOn:
       - audit

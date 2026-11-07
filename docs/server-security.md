@@ -848,6 +848,15 @@ gets 403.
   messages it drops or refuses at debug level, without their content.
 - **Monitoring:** no new checks or thresholds are needed. A failing relay
   shows as editors falling back to editing alone, and saves keep working.
+- **Forked relay:** the relay is a fork of `provider/websocket` from
+  `github.com/reearth/ygo`, kept in `third_party/ygows`. The vulnerability
+  scans see only the ygo version in `go.mod`, not the fork, so two checks
+  keep the fork visible. A test fails when `go.mod` names a ygo version
+  other than the one the fork was taken from, so an upstream release cannot
+  be merged until the fork is re-synced. A daily job in
+  `.github/workflows/security.yml` asks OSV for advisories on the fork's
+  base version and opens a `security` issue when one may touch the relay.
+  `third_party/ygows/README.md` describes how to re-sync and triage.
 
 ## Reporting vulnerabilities
 

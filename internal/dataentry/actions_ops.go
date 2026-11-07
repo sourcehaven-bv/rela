@@ -173,6 +173,13 @@ func (o actionOps) run(
 		slog.Warn("action failed", "action", id, "correlation", correlationID, "error", err)
 		return nil, o.failRun(err, correlationID)
 	}
+	if resp != nil && resp.AssertedRoles != nil {
+		// Only the IdP webhook receiver stores asserted roles, for the subject
+		// its verified webhook names (TKT-IZL6NX8). Here the key would be
+		// dropped, so the run fails rather than pretending it stored them.
+		slog.Warn("action returned asserted_roles outside the IdP webhook", "action", id, "correlation", correlationID)
+		return nil, o.failRun(errors.New("asserted_roles is honored only by the IdP webhook action"), correlationID)
+	}
 	return resp, nil
 }
 

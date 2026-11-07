@@ -137,9 +137,11 @@ type Claims struct {
 
 // VerifiedFrom constructs a Principal carrying claims from a verified identity
 // assertion. Callers MUST have validated the assertion's signature before
-// calling this — see the type doc for why that is load-bearing. The one
+// calling this — see the type doc for why that is load-bearing. The
 // exception is an identity rela mints itself from no request input, such as
-// [Webhook].
+// [Webhook], or from claims it persisted after verifying them: a scheduler
+// for_each child carries the roles a verified IdP webhook stored
+// (internal/idproles).
 //
 // Slice claims are defensively copied so a later mutation of the caller's slice
 // cannot retroactively change an authorization decision.

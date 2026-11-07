@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/schedulerstate"
 )
 
@@ -16,7 +17,10 @@ type ForEachProvider interface {
 	ScheduledForEachEntities(
 		ctx context.Context, entityType string, where []string, limit int,
 	) (ids []string, dropped int, err error)
-	ScheduledForEachPrincipal(ctx context.Context, entityID string) (string, error)
+	// ScheduledForEachPrincipal returns the principal a child runs as. Its
+	// User is "" when the entity is not a user. Wiring may attach the IdP
+	// roles stored for the user (TKT-IZL6NX8); the scheduler forces Tool.
+	ScheduledForEachPrincipal(ctx context.Context, entityID string) (principal.Principal, error)
 }
 
 // TemplateRunner executes a declarative action under the recipient context
@@ -206,10 +210,11 @@ func (s *Scheduler) runChild(ctx context.Context, name, subject string) error {
 	if !ok {
 		return errors.New("scheduler: workspace provides no for_each graph capabilities")
 	}
-	user, err := provider.ScheduledForEachPrincipal(ctx, subject)
+	p, err := provider.ScheduledForEachPrincipal(ctx, subject)
 	if err != nil {
 		return fmt.Errorf("scheduler: resolve subject %q: %w", subject, err)
 	}
+	user := p.User
 	if user == "" {
 		// Nothing to deliver to, which is not a failure of the task.
 		s.logger.Warn("for_each subject has no principal; skipping",
@@ -217,7 +222,7 @@ func (s *Scheduler) runChild(ctx context.Context, name, subject string) error {
 		return nil
 	}
 	task.RunAs = user
-	childCtx, err := s.taskContext(ctx, name, user)
+	childCtx, err := s.taskContextAs(ctx, name, p)
 	if err != nil {
 		return err
 	}

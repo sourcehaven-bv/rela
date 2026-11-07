@@ -2,10 +2,12 @@ package appbuild
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"io/fs"
 	"iter"
 	"log/slog"
+	"maps"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
+	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -63,6 +66,17 @@ func (fakeReader) GetAddress(_ context.Context, addr string) (*entity.Entity, er
 	return &entity.Entity{ID: addr, Type: "note"}, nil
 }
 
+// fakeGateDeleted reads a deleted note with its `secret` property hidden,
+// and refuses every other type.
+func fakeGateDeleted(_ context.Context, _ any, last *entity.Entity) (*entity.Entity, bool) {
+	if last.Type != "note" {
+		return nil, false
+	}
+	out := last.Clone()
+	delete(out.Properties, "secret")
+	return out, true
+}
+
 // fakeJobRunner records runs. The first run blocks on gate when one is
 // set; during, when set, runs inside every run.
 type fakeJobRunner struct {
@@ -71,9 +85,12 @@ type fakeJobRunner struct {
 	labels  []string
 	files   []string
 	hops    []int
+	seen    []*entity.Entity
 	started chan struct{}
 	gate    chan struct{}
 	during  func(ctx context.Context, path string)
+	// err, when set, is what every run returns.
+	err error
 }
 
 func (f *fakeJobRunner) ScheduledLuaWriteDeps() lua.WriteDeps {
@@ -84,8 +101,9 @@ func (f *fakeJobRunner) ScheduledLuaWriteDeps() lua.WriteDeps {
 
 func (f *fakeJobRunner) BindIdentity(ctx context.Context) (context.Context, error) { return ctx, nil }
 
-func (f *fakeJobRunner) ExecuteFile(ctx context.Context, path string, _ lua.WriteDeps, _ *entity.Entity) error {
+func (f *fakeJobRunner) ExecuteFile(ctx context.Context, path string, _ lua.WriteDeps, e *entity.Entity) error {
 	f.mu.Lock()
+	f.seen = append(f.seen, e)
 	f.runs = append(f.runs, principal.From(ctx))
 	f.labels = append(f.labels, audit.TriggeredByFrom(ctx))
 	f.files = append(f.files, path)
@@ -102,7 +120,7 @@ func (f *fakeJobRunner) ExecuteFile(ctx context.Context, path string, _ lua.Writ
 	if f.during != nil {
 		f.during(ctx, path)
 	}
-	return nil
+	return f.err
 }
 
 func (f *fakeJobRunner) count() int {
@@ -420,4 +438,172 @@ func TestAutomationJobs_UnboundRefuses(t *testing.T) {
 	require.Error(t, a.EnqueueScript(context.Background(), note1))
 	_, err = newAutomationJobs(nil, nil, nil, nil)
 	require.Error(t, err)
+}
+
+// deletedMeta declares one `on.deleted` automation on notes.
+func deletedMeta() *metamodel.Metamodel {
+	return &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{"note": {}, "secret": {}},
+		Automations: []metamodel.AutomationDef{{
+			Name: "gone",
+			On:   metamodel.AutomationTrigger{Deleted: true},
+			Do:   []metamodel.AutomationAction{{LuaFile: "gone.lua", Background: true}},
+		}},
+	}
+}
+
+func newDeletedJobs(t *testing.T, q jobs.Client, r *fakeJobRunner, raw rawEntityLister) *automationJobs {
+	t.Helper()
+	meta := deletedMeta()
+	engine, err := automation.NewEngineFromMetamodel(meta, meta.Automations)
+	require.NoError(t, err)
+	if raw == nil {
+		raw = noEntities{}
+	}
+	a, err := newAutomationJobs(meta, &mapKV{m: map[string][]byte{}}, raw, q)
+	require.NoError(t, err)
+	a.gateDeleted = fakeGateDeleted
+	require.NoError(t, a.bind(r, engine))
+	return a
+}
+
+// liveEntities is a raw store holding these rows.
+type liveEntities []*entity.Entity
+
+func (l liveEntities) ListEntities(context.Context, store.EntityQuery) iter.Seq2[*entity.Entity, error] {
+	return func(yield func(*entity.Entity, error) bool) {
+		for _, e := range l {
+			if !yield(e, nil) {
+				return
+			}
+		}
+	}
+}
+
+func deletedNote(typ string) *entity.Entity {
+	return &entity.Entity{ID: "NOTE-9", Type: typ, Face: "draft",
+		Properties: map[string]any{"title": "gone", "secret": "s"}}
+}
+
+// TestAutomationJobs_DeletedForeground: a delete runs the `on.deleted`
+// action with the face's last state as the job's identity reads it, and
+// nothing runs when that identity may not read the face or the face is
+// stored again.
+func TestAutomationJobs_DeletedForeground(t *testing.T) {
+	published := deletedNote("note")
+	published.Face = "published"
+	tests := []struct {
+		name    string
+		last    *entity.Entity
+		live    liveEntities
+		wantRun bool
+	}{
+		{"readable", deletedNote("note"), nil, true},
+		{"another face still live", deletedNote("note"), liveEntities{published}, true},
+		{"hidden from the job", deletedNote("secret"), nil, false},
+		{"restored or recreated", deletedNote("note"), liveEntities{deletedNote("note")}, false},
+		{"nil", nil, nil, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &fakeJobRunner{}
+			var raw rawEntityLister
+			if tc.live != nil {
+				raw = tc.live
+			}
+			a := newDeletedJobs(t, nil, r, raw)
+			ctx := principal.With(context.Background(), principal.Principal{User: "alice"})
+			require.NoError(t, a.EntityStateDeleted(ctx, tc.last))
+			if !tc.wantRun {
+				require.Zero(t, r.count())
+				return
+			}
+			require.Equal(t, []string{"gone.lua"}, r.files)
+			require.Equal(t, []string{"automation-job:gone;by=alice"}, r.labels)
+			got := r.seen[0]
+			require.Equal(t, entity.Ref{ID: "NOTE-9", Face: "draft"}, got.Ref())
+			require.Equal(t, "gone", got.GetString("title"))
+			require.NotContains(t, got.Properties, "secret", "a hidden property reached the script")
+			require.Equal(t, "s", tc.last.Properties["secret"], "the caller's entity was mutated")
+		})
+	}
+}
+
+// TestAutomationJobs_DeletedNotOnOtherEvents: an `on.deleted` automation is
+// not scheduled by a save, and a project without one schedules nothing on a
+// delete.
+func TestAutomationJobs_DeletedNotOnOtherEvents(t *testing.T) {
+	r := &fakeJobRunner{}
+	a := newTestJobs(t, jobsMeta(""), nil, r)
+	require.NoError(t, a.EntityStateDeleted(context.Background(), deletedNote("note")))
+	require.Zero(t, r.count())
+}
+
+// TestAutomationJobs_DeletedQueued: every delete is its own job, so two
+// deletes of one face both run, each through a JSON-shaped payload.
+func TestAutomationJobs_DeletedQueued(t *testing.T) {
+	q := &dupQueue{}
+	r := &fakeJobRunner{}
+	a := newDeletedJobs(t, q, r, nil)
+	require.NoError(t, a.EntityStateDeleted(context.Background(), deletedNote("note")))
+	require.NoError(t, a.EntityStateDeleted(context.Background(), deletedNote("note")))
+	require.Equal(t, 2, q.enqueued())
+	for _, j := range q.jobs {
+		require.Empty(t, j.IdempotencyKey)
+		require.NoError(t, a.handle(context.Background(), j))
+	}
+	require.Equal(t, 2, r.count())
+	require.Equal(t, "gone", r.seen[1].GetString("title"))
+}
+
+// TestAutomationJobs_DeletedPayload: the last state survives the sealed
+// round trip with its number types, and a payload whose sealed state names
+// another face, or that is malformed, is dropped without running.
+func TestAutomationJobs_DeletedPayload(t *testing.T) {
+	last := deletedNote("note")
+	last.Properties["count"] = 3
+	last.Properties["share"] = 0.5
+	last.Properties["tags"] = []any{"a", 2}
+	q := &dupQueue{}
+	r := &fakeJobRunner{}
+	a := newDeletedJobs(t, q, r, nil)
+	require.NoError(t, a.EntityStateDeleted(context.Background(), last))
+	require.Len(t, q.jobs, 1)
+	m := q.jobs[0].Payload
+	got, err := payloadFromMap(m)
+	require.NoError(t, err)
+	require.True(t, got.deleted())
+	require.NotEqual(t, note1Key(), got.key())
+	opened, err := a.deleted.open(context.Background(), got.ID, got.Face, got.Handle, got.Sealed)
+	require.NoError(t, err)
+	require.Equal(t, last.Properties, opened.Properties)
+
+	tests := []struct {
+		name   string
+		change func(map[string]any)
+	}{
+		{"another face", func(m map[string]any) { m["face"] = "published" }},
+		{"tampered", func(m map[string]any) { m["sealed"] = flipLastByte(m["sealed"].(string)) }},
+		{"handle without sealed state", func(m map[string]any) { delete(m, "sealed") }},
+		{"malformed handle", func(m map[string]any) { m["handle"] = "../index" }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			q := &dupQueue{}
+			r := &fakeJobRunner{}
+			a := newDeletedJobs(t, q, r, nil)
+			require.NoError(t, a.EntityStateDeleted(context.Background(), deletedNote("note")))
+			c := maps.Clone(q.jobs[0].Payload)
+			tc.change(c)
+			_ = a.handle(context.Background(), jobs.Job{Payload: c, Retry: jobs.RetryNever, Attempt: 1})
+			require.Zero(t, r.count())
+		})
+	}
+}
+
+// flipLastByte changes the last byte of a base64 text, inside the GCM tag.
+func flipLastByte(s string) string {
+	b, _ := base64.StdEncoding.DecodeString(s)
+	b[len(b)-1] ^= 0xff
+	return base64.StdEncoding.EncodeToString(b)
 }

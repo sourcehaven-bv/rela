@@ -201,6 +201,11 @@ func recordSoftDelete(
 		}
 		m.recordEntityAudit(ctx, audit.OpDeleteEntity, current, "deleted (undoable)")
 		out.DeletedEntities = append(out.DeletedEntities, current)
+		marks := res.DeletedEntities
+		if len(marks) == 0 {
+			marks = []*entity.Entity{current}
+		}
+		notifyDeletedStates(ctx, m.deps.AliasRewriter, marks)
 		out.DeletedRelations = append(out.DeletedRelations, res.DeletedRelations...)
 	}
 	ownedCtx := audit.WithTriggeredBy(ctx, ownerDeleteTrigger(id))
@@ -212,6 +217,7 @@ func recordSoftDelete(
 			m.recordEntityAudit(ownedCtx, audit.OpDeleteEntity, r.DeletedEntities[0], "deleted (undoable)")
 			out.DeletedEntities = append(out.DeletedEntities, r.DeletedEntities[0])
 		}
+		notifyDeletedStates(ctx, m.deps.AliasRewriter, r.DeletedEntities)
 		out.DeletedRelations = append(out.DeletedRelations, r.DeletedRelations...)
 	}
 	return out
@@ -544,6 +550,7 @@ func recordPurge(ctx context.Context, m *Manager, id string, res *store.DeleteRe
 		m.recordDeleteVersion(ctx, e)
 	}
 	m.notifyAliasesOfDelete(ctx, id)
+	notifyPurged(ctx, m.deps.AliasRewriter, id)
 	cascadeTB := "cascade:delete-entity:" + id
 	for _, rel := range res.DeletedRelations {
 		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, 0, "", "", cascadeTB)

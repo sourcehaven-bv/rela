@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -94,6 +95,14 @@ func (c *HistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) error {
 	}
 	auditPurge(ctx, svc.Audit, p, audit.Subject{Kind: "entity", ID: ref.ID}, ref.Face, final, c.Reason)
 	out.WriteSuccess("Purged %d version row(s) for %s. This is irreversible.", final.Purged, target)
+	// Pending `on.deleted` jobs hold the entity's last state too; erasing
+	// their keys makes it unreadable (TKT-RJS3KKJ). The version purge stands
+	// if this fails, so it is reported, not returned.
+	if svc.State != nil && final.Purged > 0 {
+		if err := appbuild.PurgeDeletedJobStates(ctx, svc.State, svc.Meta, ref.ID); err != nil {
+			out.WriteWarning("Could not erase the deleted state of pending automation jobs for %s: %v", ref.ID, err)
+		}
+	}
 	if final.TombstoneWritten {
 		out.WriteInfo("Wrote a purge tombstone (a live row still held the content); the sweep will not re-capture it.")
 	}
