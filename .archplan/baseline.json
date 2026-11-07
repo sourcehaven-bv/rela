@@ -2612,6 +2612,12 @@
       "reason": "Design: flows.yaml states mirror channel session states on purpose; both compile onto the shared internal/flow engine, TKT-XHANLJU",
       "at": "2026-11-06T09:00:00Z",
       "title": "State (flowcfg) and SessionState (realtimecfg) share most of their fields."
+    },
+    "concepts.raw_ids-50f5e6d3f5f9": {
+      "state": "accepted",
+      "reason": "Design: a subject id is an entity id, a plain string everywhere in rela (entity.Ref.ID); a run-store-only type would not match its callers, TKT-PV9R0GK",
+      "at": "2026-11-07T08:20:00Z",
+      "title": "flowrun holds raw ids whose concept is unclear: SubjectID."
     }
   },
   "labels": {},
@@ -2622,7 +2628,7 @@
       "weight.layers": 0,
       "weight.vocabulary": 912,
       "weight.types": 3960,
-      "weight.concepts": 7060,
+      "weight.concepts": 7090,
       "weight.boundaries": 1387,
       "weight.data": 1297,
       "weight.security": 140,
@@ -2632,7 +2638,7 @@
       "propagation_cost": 9.4
     },
     "min_weight": 0,
-    "at": "2026-11-07T12:50:16Z",
+    "at": "2026-11-07T13:40:00Z",
     "log": [
       {
         "at": "2026-10-28T13:29:24Z",
@@ -2901,6 +2907,17 @@
           "weight.types": [
             3955,
             3960
+          ]
+        }
+      },
+      {
+        "at": "2026-11-07T13:40:00Z",
+        "change": "loosen",
+        "reason": "flowrun.Query.SubjectID is an entity id, a plain string as everywhere in rela (accepted raw_ids finding, weight 30), TKT-PV9R0GK",
+        "metrics": {
+          "weight.concepts": [
+            7060,
+            7090
           ]
         }
       }

@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 34
+const schemaVersion = 35
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -348,6 +348,12 @@ var migrations = []migration{
 			}
 			return addTableColumns(ctx, conn, "relations", elementColumns)
 		},
+	},
+	{
+		// v34 → v35: the flow run store (TKT-PV9R0GK). New tables; nothing
+		// to backfill.
+		to:    35,
+		apply: sqlSteps(flowRunsDDL),
 	},
 }
 
