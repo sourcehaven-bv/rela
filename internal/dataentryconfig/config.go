@@ -474,6 +474,18 @@ type AppConfig struct {
 	// a typo would otherwise silently serve the default world to everyone and
 	// look like the feature was never configured.
 	DefaultWorld string `yaml:"default_world,omitempty" json:"default_world,omitempty"`
+	// WorldSwitcher places the web app's world switcher: `header` (the
+	// default, also when empty) shows it in the sidebar header whenever two
+	// or more worlds are listed, `none` never shows it.
+	//
+	// `none` is for a project whose worlds are wiring rather than views a
+	// reader picks: the faces of a record, or a feed world for a publisher.
+	// Readers then move between a record's faces with the face toggle on
+	// its detail page, and a world stays reachable through `?world=`.
+	//
+	// Presentation, not policy, which is why it lives here and not in
+	// schema.yaml: it changes no world, grant or default. Validated at load.
+	WorldSwitcher string `yaml:"world_switcher,omitempty" json:"world_switcher,omitempty"`
 	// MaxAttachmentBytes optionally overrides the product-wide default
 	// per-attachment upload cap (see dataentry.DefaultMaxAttachmentBytes).
 	// Zero or unset means use the default. Set this lower for

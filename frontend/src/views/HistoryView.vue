@@ -348,7 +348,7 @@ onMounted(load)
     </RlStatusRegion>
     <RlStatusRegion v-else-if="error" tone="error">{{ error }}</RlStatusRegion>
     <RlStatusRegion v-else-if="worldFaceAbsent" tone="info">
-      {{ t('history.noFace', { world }) }}
+      {{ t('history.noFace', { world: schemaStore.worldLabel(world) }) }}
     </RlStatusRegion>
     <!-- The read succeeded and the answer is that nothing has been recorded. -->
     <RlEmptyState v-else-if="versions.length === 0" :title="t('history.empty')" icon="history" />
