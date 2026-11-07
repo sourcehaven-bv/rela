@@ -128,6 +128,17 @@ Rules when touching storage backends:
   `PropEqual` (jsonb containment) and deliberately derives no index, since the
   btree over `->>` does not serve it — a GIN shape would need its own EXPLAIN
   test first.
+- **Every live row carries its reconciliation element** (TKT-1G2XR1R):
+  `element_hash` and the limbs `element_fp0..3` on `entities` and `relations`
+  (pg migration 0042, sqlite v34 and `elementDDL`). A new write path must set
+  them in the write statement from the row as it reads back, or fill them in the
+  same transaction (`fillEntityElements` / `fillRelationElements`). A trigger
+  clears the element when a hashed column changes and the element does not, so
+  a missed path leaves NULL, never a stale value; the version sweep heals NULL
+  rows. The address is an expression index, not a column: a range query must
+  spell `entityAddressSQL` / `relationAddressSQL` exactly. fsstore and memstore
+  store nothing and compute elements on read. `storetest.RunElementTests`
+  (`Capabilities.StoredElements`) pins the columns after every write kind.
 - **Migrations** are embedded SQL (`pgstore/migrations/*.sql`), applied by
   `pgstore.Migrate` in one transaction under a `pg_advisory_xact_lock`
   (concurrent-start safe; forward-only). Auto-applied on first store open; also

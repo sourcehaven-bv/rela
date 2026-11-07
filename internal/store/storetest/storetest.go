@@ -91,6 +91,11 @@ type Capabilities struct {
 	// stays reserved. Without it the backend rewrites mention text on a
 	// rename instead. [RunRetiredIDTests] checks the declaration either way.
 	RetiredIDs bool
+
+	// StoredElements reads the reconciliation elements the backend stores on
+	// its rows (TKT-1G2XR1R). Setting it runs [RunElementTests]. Backends
+	// that compute elements on read leave it nil.
+	StoredElements StoredElementsFunc
 }
 
 func ctx() context.Context { return context.Background() }
@@ -292,5 +297,8 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 	}
 	if caps.FamilyReplace {
 		t.Run("FamilyReplace", func(t *testing.T) { RunFamilyReplaceTests(t, f, caps) })
+	}
+	if caps.StoredElements != nil {
+		t.Run("Elements", func(t *testing.T) { RunElementTests(t, f, caps.StoredElements, caps) })
 	}
 }

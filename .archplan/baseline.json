@@ -2617,16 +2617,16 @@
       "weight.vocabulary": 912,
       "weight.types": 3955,
       "weight.concepts": 7052,
-      "weight.boundaries": 1438,
+      "weight.boundaries": 1387,
       "weight.data": 1297,
       "weight.security": 140,
       "largest_tangle": 13,
       "cycle_edges": 61,
       "upward_edges": 0,
-      "propagation_cost": 9.6
+      "propagation_cost": 9.5
     },
     "min_weight": 0,
-    "at": "2026-11-06T20:30:30Z",
+    "at": "2026-11-07T06:37:19Z",
     "log": [
       {
         "at": "2026-10-28T13:29:24Z",
@@ -2854,6 +2854,21 @@
           "propagation_cost": [
             9.8,
             9.6
+          ]
+        }
+      },
+      {
+        "at": "2026-11-07T06:37:19Z",
+        "change": "tighten",
+        "reason": null,
+        "metrics": {
+          "weight.boundaries": [
+            1438,
+            1387
+          ],
+          "propagation_cost": [
+            9.6,
+            9.5
           ]
         }
       }
