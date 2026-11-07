@@ -68,7 +68,7 @@ flows:
 | Key | Meaning |
 | --- | ------- |
 | `label` | The name people see. Defaults to the flow's name. |
-| `subject` | The entity type a run follows. Required. A type with faces is not supported yet. |
+| `subject` | The entity type a run follows. Required. Name the type itself, not an alias. A type with faces is not supported yet. |
 | `run_as` | The job identity the flow's outputs write as. Required when a state has outputs. acl.yaml must grant it every write the outputs make. |
 | `per_subject` | `one` (the default) allows one open run per subject; `many` allows several. |
 | `deadline` | How long a run may take, such as `30d`. At least one minute. |
@@ -148,8 +148,8 @@ An output writes when a run enters the state, as the `run_as` identity.
 - `set` sets properties on the subject. A state has at most one `set`.
 - `create` creates an entity of `type` with `properties`, and links it to
   the subject with the relation in `relate.type`. The relation must lead
-  from the new type to the subject type. The type must generate its ids
-  (not `id_type: manual`).
+  from the new type to the subject type. Name the type itself, not an
+  alias. The type must generate its ids (not `id_type: manual`).
 
 A property value is a literal, or a template with placeholders in
 `{{...}}`:
