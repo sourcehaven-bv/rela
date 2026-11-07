@@ -410,11 +410,17 @@
       "at": "2026-10-28T13:29:06Z",
       "title": "apiwire and types change together but do not depend on each other."
     },
-    "concepts.data_clump-dbc4bea63927": {
+    "concepts.data_clump-7bd1238eb34e": {
       "state": "accepted",
       "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
-      "at": "2026-10-28T13:29:06Z",
-      "title": "The fields clear_when_hidden, default, help, hidden, keep_on_add_another, … and widget appear together in 3 types across 2 components."
+      "at": "2026-11-07T22:30:00Z",
+      "title": "The fields clear_when_hidden, default, help, hidden, hint, … and widget appear together in 3 types across 2 components."
+    },
+    "concepts.data_clump-20c13558b80a": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-11-07T22:30:00Z",
+      "title": "The fields direction, help, hint, keep_on_add_another, properties, … and widget appear together in 2 types across 2 components."
     },
     "concepts.data_clump-6312e7d9a91e": {
       "state": "accepted",

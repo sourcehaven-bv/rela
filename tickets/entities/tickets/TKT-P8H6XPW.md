@@ -5,7 +5,8 @@ title: Help texts for every form placement
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+started: "2026-11-07"
+status: in-progress
 ---
 
 ## Description
