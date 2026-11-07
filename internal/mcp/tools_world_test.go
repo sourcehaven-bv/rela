@@ -48,6 +48,8 @@ func worldMeta(meta *metamodel.Metamodel) *metamodel.Metamodel {
 	meta.Worlds = map[string]metamodel.WorldDef{
 		"current": {Select: []string{"adopted", "concept"}, Otherwise: metamodel.OtherwiseExclude},
 		"review": {
+			Label:     "Review",
+			Hidden:    true,
 			Select:    []string{"concept"},
 			Overrides: map[string][]string{"requirement": {"adopted"}},
 			Otherwise: metamodel.OtherwiseDefault,
@@ -167,6 +169,10 @@ func TestListWorlds(t *testing.T) {
 		for _, w := range out.Worlds {
 			if w.Name == "review" && (w.Otherwise != "default" || len(w.Overrides["requirement"]) != 1) {
 				t.Errorf("review = %+v, want its otherwise and overrides", w)
+			}
+			// A hidden world is still listed, with its label.
+			if w.Name == "review" && (w.Label != "Review" || !w.Hidden) {
+				t.Errorf("review = %+v, want label Review and hidden", w)
 			}
 		}
 	})

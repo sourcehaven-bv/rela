@@ -160,6 +160,10 @@ func (AllowAllReadQueries) ReadQueryFor(context.Context, string) (acl.ReadQueryR
 	return acl.ReadQueryResult{AllowAll: true}, nil
 }
 
+// Bind implements [ElementReads]: without a policy there is no request to
+// check, so ctx is returned as it is.
+func (AllowAllReadQueries) Bind(ctx context.Context) (context.Context, error) { return ctx, nil }
+
 // ReadQueryFunc adapts a function to [ReadQueryProvider].
 type ReadQueryFunc func(ctx context.Context, entityType string) (acl.ReadQueryResult, error)
 

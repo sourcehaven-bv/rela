@@ -1298,8 +1298,12 @@ deps:
     mayDependOn:
       - acl
       - affordances
+      # visibility.Elements hashes the reader's view of a row (the ETag's
+      # canonical digest) into a reconciliation element (FEAT-CMVZQFI).
+      - canonical
       - entity
       - principal
+      - reconcile
       # visibility.Rollups computes roll-up columns under the reader's gate.
       - rollup
       # visibility.Searcher gates search hits for identity-bearing consumers

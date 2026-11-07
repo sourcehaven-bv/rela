@@ -918,6 +918,16 @@ func validateWorlds(m *Metamodel) []string {
 		errs = append(errs, validateWorldCreate(m, worldName, world)...)
 		errs = append(errs, validateWorldPrimaryFor(m, worldName, world)...)
 		errs = append(errs, validateWorldOnAbsent(m, worldName, world)...)
+		if world.Hidden && worldName == EffectiveDefaultWorld(m) {
+			// A bare URL lands in the default world, so a switcher that left
+			// it out would not list the world on screen, and a reader who
+			// switched away would have no entry to switch back to.
+			errs = append(errs, fmt.Sprintf(
+				"world %q: `hidden: true` is not allowed on the default world — a request without "+
+					"`?world=` lands in it, so the switcher must be able to show it. Hide another "+
+					"world, or set `default_world:` to a world that is not hidden",
+				worldName))
+		}
 	}
 	errs = append(errs, validateFacePrimacy(m)...)
 	return errs

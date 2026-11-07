@@ -362,3 +362,69 @@ default_world: published
 		})
 	}
 }
+
+// TestWorlds_LabelAndHidden pins the presentation keys of a world
+// (TKT-H0TFDWU): both parse, and neither changes resolution.
+func TestWorlds_LabelAndHidden(t *testing.T) {
+	m, err := Parse([]byte(worldsSchema(`worlds:
+  editorial:
+    select: [draft, published]
+    otherwise: default
+    label: Werkversie
+  published:
+    select: published
+    otherwise: exclude
+    hidden: true
+    label: "  "
+default_world: editorial
+`)))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got := m.Worlds["editorial"].Label; got != "Werkversie" {
+		t.Errorf("editorial.Label = %q, want %q", got, "Werkversie")
+	}
+	if m.Worlds["editorial"].Hidden {
+		t.Error("editorial.Hidden = true, want false")
+	}
+	if !m.Worlds["published"].Hidden {
+		t.Error("published.Hidden = false, want true")
+	}
+	if got := m.Worlds["published"].Label; got != "" {
+		t.Errorf("published.Label = %q, want empty (a blank label is no label)", got)
+	}
+}
+
+// TestWorlds_DefaultWorldCannotBeHidden: a bare URL lands in the default
+// world, so a switcher that leaves it out could not show where the reader is.
+func TestWorlds_DefaultWorldCannotBeHidden(t *testing.T) {
+	cases := map[string]string{
+		"explicit default_world": `worlds:
+  editorial:
+    select: [draft, published]
+    otherwise: default
+    hidden: true
+  published:
+    select: published
+    otherwise: exclude
+default_world: editorial
+`,
+		"only declared world": `worlds:
+  published:
+    select: published
+    otherwise: exclude
+    hidden: true
+`,
+	}
+	for name, block := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse([]byte(worldsSchema(block)))
+			if err == nil {
+				t.Fatal("Parse succeeded, want an error for a hidden default world")
+			}
+			if !strings.Contains(err.Error(), "`hidden: true` is not allowed on the default world") {
+				t.Errorf("error = %v, want the hidden-default-world message", err)
+			}
+		})
+	}
+}

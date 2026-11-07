@@ -82,6 +82,11 @@ func TestV1ConfigEndpoint(t *testing.T) {
 	if config.App.Name != "Test App" {
 		t.Errorf("expected app name 'Test App', got %q", config.App.Name)
 	}
+	// An unset app.world_switcher is served as its default, so the SPA has
+	// no default of its own.
+	if config.App.WorldSwitcher != "header" {
+		t.Errorf("app.world_switcher = %q, want header", config.App.WorldSwitcher)
+	}
 }
 
 func TestV1ConfigEndpoint_IncludesActions(t *testing.T) {

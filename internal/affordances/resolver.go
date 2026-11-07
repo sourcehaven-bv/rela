@@ -844,6 +844,27 @@ func (r *PolicyResolver) RelationFieldVerdicts(
 	return denied
 }
 
+// RelationMetaGated reports whether any role of r's policy, on any source
+// type, declares meta `visible:` grants for relType, so that
+// [PolicyResolver.RelationFieldVerdicts] can hide a meta key of some relation
+// of that type from some reader. False means no reader is ever denied a meta
+// key of relType (apart from a request with no identity, which callers refuse
+// before they get here).
+//
+// It is a fact about the policy, not about a principal: the answer is the
+// same for every request. It is a function, not a method, because
+// PolicyResolver is at its method cap.
+func RelationMetaGated(r *PolicyResolver, relType string) bool {
+	for _, g := range r.grants {
+		for _, rg := range g.relations {
+			if rg.relation == relType && len(rg.visible) > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // applyRelationVisible folds role's meta `visible:` grants for relType into
 // visible and reports whether the role declares any. A meta key is allowed
 // when both the relation grant's `when:` and the key's own `when:` pass.

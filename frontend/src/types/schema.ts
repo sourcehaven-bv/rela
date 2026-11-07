@@ -35,6 +35,12 @@ export interface AbstractType {
 
 // WorldInfo mirrors v1.World. See internal/dataentry/schemaworlds.go.
 export interface WorldInfo {
+  // The operator's display name for the world (`label:`). Absent means the
+  // name is shown. The name stays the address (`?world=`).
+  label?: string
+  // Left out of the world switcher (`hidden: true`). Presentation only: the
+  // world is still selectable through `?world=` and the API.
+  hidden?: boolean
   select?: string[]
   overrides?: Record<string, string[]>
   otherwise?: string
