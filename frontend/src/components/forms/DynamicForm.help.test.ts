@@ -31,7 +31,7 @@ const ENTITY_TYPE = {
   name: 'ticket',
   label: 'Ticket',
   id_type: 'short',
-  properties: { title: { type: 'string' }, notes: { type: 'string' } },
+  properties: { title: { type: 'string' }, notes: { type: 'string' }, extra: { type: 'string' } },
 }
 
 const FORM = {
@@ -47,7 +47,12 @@ const FORM = {
     },
     {
       title: 'Notes',
+      details: 'Notes guidance.',
       fields: [{ property: 'notes', label: 'Notes' }],
+    },
+    {
+      title: 'Extra',
+      fields: [{ property: 'extra', label: 'Extra' }],
     },
   ],
 }
@@ -71,7 +76,7 @@ async function mountForm(): Promise<VueWrapper> {
   const entity: Entity = {
     id: 'TKT-001',
     type: 'ticket',
-    properties: { title: 'x', notes: 'y' },
+    properties: { title: 'x', notes: 'y', extra: 'z' },
     _actions: { update: true },
     _fields: {},
     _redacted: [],
@@ -125,8 +130,19 @@ describe('DynamicForm help texts', () => {
     expect(details.findAll('li').map((li) => li.text())).toEqual(['first point', 'second point'])
   })
 
+  it('closes the details again when the user moves to another step', async () => {
+    const w = await mountForm()
+    const first = w.find('[data-testid="step-details"]').element as HTMLDetailsElement
+    first.open = true
+    await w.findAll('.wizard-step-pill')[1].trigger('click')
+    await flushPromises()
+    const details = w.find('[data-testid="step-details"]')
+    expect(details.text()).toContain('Notes guidance.')
+    expect((details.element as HTMLDetailsElement).open).toBe(false)
+  })
+
   it('omits the details block on a step without details', async () => {
-    mockRoute.query = { step: '1' }
+    mockRoute.query = { step: '2' }
     const w = await mountForm()
     expect(w.find('[data-testid="step-details"]').exists()).toBe(false)
     expect(w.find('[data-testid="step-description"]').exists()).toBe(false)

@@ -77,8 +77,17 @@ async function mountCards(opts: {
   verdict?: RelationAffordance
   links?: string[]
   extra?: Partial<FormFieldOrRelation>
+  relationDescription?: string
 }) {
   seedSchema()
+  if (opts.relationDescription) {
+    const schemaStore = useSchemaStore()
+    const rel = schemaStore.relationTypes.get('implements')
+    schemaStore.relationTypes.set('implements', {
+      ...rel,
+      description: opts.relationDescription,
+    } as never)
+  }
   seedRelations(opts.links ?? ['FEAT-001'])
   const field: FormFieldOrRelation = {
     relation: 'implements',
@@ -117,6 +126,21 @@ describe('RelationCards help texts', () => {
     expect(toggle.attributes('aria-label')).toBe('More information about Implements')
     await toggle.trigger('click')
     expect(wrapper.find('.field-hint').text()).toBe('Long guidance.')
+    wrapper.unmount()
+  })
+
+  it('falls back to the relation type description without authored help', async () => {
+    const wrapper = await mountCards({ relationDescription: 'Features this *ticket* delivers.' })
+    expect(wrapper.find('.field-help em').text()).toBe('ticket')
+    wrapper.unmount()
+  })
+
+  it('prefers the authored help over the relation type description', async () => {
+    const wrapper = await mountCards({
+      relationDescription: 'Type description.',
+      extra: { help: 'Form help.' },
+    })
+    expect(wrapper.find('.field-help').text()).toBe('Form help.')
     wrapper.unmount()
   })
 

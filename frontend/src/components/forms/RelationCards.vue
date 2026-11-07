@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import FieldHint from './FieldHint.vue'
+import FieldLabelRow from './FieldLabelRow.vue'
 import MarkdownHelp from './MarkdownHelp.vue'
 import { ref, computed, onMounted, watch } from 'vue'
 import { I18nT, useI18n } from 'vue-i18n'
@@ -593,13 +593,12 @@ function onDragEnd() {
 
 <template>
   <div class="relation-cards">
-    <div class="field-label-row">
+    <FieldLabelRow :hint="field.hint" :label="relationLabel">
       <label class="section-label">
         {{ relationLabel }}
         <span v-if="hasPendingChanges" class="pending-badge">{{ t('form.relation.unsaved') }}</span>
       </label>
-      <FieldHint v-if="field.hint" :hint="field.hint" :label="relationLabel" />
-    </div>
+    </FieldLabelRow>
     <MarkdownHelp v-if="help" class="field-help" :text="help" />
 
     <div v-if="error" class="error-message">{{ error }}</div>
@@ -876,13 +875,6 @@ function onDragEnd() {
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-
-.field-label-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
 }
 
 .field-help {

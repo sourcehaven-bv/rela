@@ -820,11 +820,14 @@ func validateSpan(span Span, context string) []string {
 // condition expression (see FormField) that hides the relation widget when
 // false.
 type FormRelation struct {
-	Relation     string             `yaml:"relation" json:"relation"`
-	Direction    Direction          `yaml:"direction" json:"direction,omitempty"`
-	TargetType   string             `yaml:"target_type" json:"target_type,omitempty"`
-	Label        string             `yaml:"label" json:"label,omitempty"`
-	Help         string             `yaml:"help,omitempty" json:"help,omitempty"`
+	Relation   string    `yaml:"relation" json:"relation"`
+	Direction  Direction `yaml:"direction" json:"direction,omitempty"`
+	TargetType string    `yaml:"target_type" json:"target_type,omitempty"`
+	Label      string    `yaml:"label" json:"label,omitempty"`
+	// Help and Hint are markdown help, as on FormField: Help below the
+	// widget, Hint behind an info button next to the label. Without Help the
+	// SPA shows the relation type's description.
+	Help         string             `yaml:"help" json:"help,omitempty"`
 	Hint         string             `yaml:"hint,omitempty" json:"hint,omitempty"`
 	Required     bool               `yaml:"required" json:"required,omitempty"`
 	VisibleWhen  string             `yaml:"visible_when,omitempty" json:"visible_when,omitempty"`

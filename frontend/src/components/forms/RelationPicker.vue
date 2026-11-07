@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import FieldHint from './FieldHint.vue'
+import FieldLabelRow from './FieldLabelRow.vue'
 import MarkdownHelp from './MarkdownHelp.vue'
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -625,12 +625,11 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="form-field relation-picker">
-    <div class="field-label-row">
+    <FieldLabelRow :hint="field.hint" :label="label">
       <label>
         {{ label }}
       </label>
-      <FieldHint v-if="field.hint" :hint="field.hint" :label="label" />
-    </div>
+    </FieldLabelRow>
 
     <!-- Incoming: grouped per source face; a row the principal may not
          remove is locked. -->
@@ -944,12 +943,5 @@ onBeforeUnmount(() => {
   font-size: 13px;
   color: var(--rl-color-text-muted);
   margin: 0;
-}
-
-.field-label-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
 }
 </style>

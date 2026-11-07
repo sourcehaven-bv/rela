@@ -17,7 +17,7 @@
 // What IS taken from RlFieldShell is its accessibility wiring, below.
 import { computed, useId } from 'vue'
 import { fieldSpanStyle } from '@/utils/fieldSpan'
-import FieldHint from './FieldHint.vue'
+import FieldLabelRow from './FieldLabelRow.vue'
 import MarkdownHelp from './MarkdownHelp.vue'
 
 const props = defineProps<{
@@ -66,24 +66,22 @@ const control = computed(() => ({
 <template>
   <div class="form-field" :class="{ 'has-error': error }" :style="spanStyle">
     <template v-if="labelPosition === 'after'">
-      <div class="checkbox-wrapper field-label-row">
+      <FieldLabelRow row-class="checkbox-wrapper" :hint="hint" :label="label">
         <slot v-bind="control" />
         <label v-if="label" :for="fieldId">
           {{ label }}
           <span v-if="required" class="required">*</span>
         </label>
-        <FieldHint v-if="hint" :hint="hint" :label="label" />
-      </div>
+      </FieldLabelRow>
     </template>
 
     <template v-else>
-      <div v-if="label || hint" class="field-label-row">
+      <FieldLabelRow v-if="label || hint" :hint="hint" :label="label">
         <label v-if="label" :for="fieldId">
           {{ label }}
           <span v-if="required" class="required">*</span>
         </label>
-        <FieldHint v-if="hint" :hint="hint" :label="label" />
-      </div>
+      </FieldLabelRow>
       <slot v-bind="control" />
     </template>
 
@@ -113,22 +111,15 @@ const control = computed(() => ({
   color: var(--rl-color-danger, #ef4444);
 }
 
-.field-label-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-
-.checkbox-wrapper {
-  display: flex;
-  align-items: center;
+/* The checkbox row is rendered by FieldLabelRow, so it does not carry this
+   component's scope attribute: reach it through the scoped .form-field. */
+.form-field :deep(.checkbox-wrapper) {
   gap: 8px;
 }
 
 /* Scoped to the direct checkbox input only — a future widget rendered
    with labelPosition='after' should NOT have its inputs miniaturised. */
-.checkbox-wrapper :deep(input[type='checkbox']) {
+.form-field :deep(.checkbox-wrapper input[type='checkbox']) {
   width: 18px;
   height: 18px;
   cursor: pointer;

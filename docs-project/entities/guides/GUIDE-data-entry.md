@@ -728,9 +728,15 @@ fields:
 
 ### Help texts
 
-A form has four places for help. Each takes Markdown, so a help text can hold
-a link (`[guide](/entity/guide/G-1)`), a list or emphasis. The output is
-sanitized, as for list headers.
+A form has five places for help. Each takes Markdown, so a help text can hold
+a link, a list or emphasis. The output is sanitized, as for list headers.
+Keep to links, lists and emphasis: help text has no styling for headings,
+code blocks or tables.
+
+Write links as full URLs (`[guide](https://example.org/guide)`). A link
+leaves the form with a full page load, and a path such as `/entity/...` does
+not resolve when rela serves the project under a path prefix, as the desktop
+app does.
 
 | Key | Where | Shown |
 | --- | --- | --- |
@@ -743,7 +749,12 @@ sanitized, as for list headers.
 Use `help` for one short sentence the user needs every time. Use `hint` for
 longer guidance that would crowd the form, such as an explanation of a legal
 term. A field with no `help` shows the property's `description` from the
-schema instead; a relation shows the relation type's `description`.
+schema instead; a relation shows the relation type's `description`. That
+description renders as Markdown too.
+
+A step uses `details` rather than `hint` because its longer guidance has room
+as a block below the step description, where a field's label row has room
+only for a button.
 
 ```yaml
 forms:
@@ -755,7 +766,7 @@ forms:
         description: "Why are the personal data processed?"
         details: |
           A purpose must be **specific** and **explicit**. Name one purpose
-          per record; see the [purpose guide](/entity/guide/G-PURPOSE).
+          per record; see the [purpose guide](https://example.org/purpose).
         fields:
           - property: purpose
             help: "One sentence, in plain language."

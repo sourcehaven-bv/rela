@@ -149,6 +149,12 @@ describe('FieldShell help and hint', () => {
     expect(shown()).toBe(false)
   })
 
+  it('names the hint button generically when the field has no label', () => {
+    const w = shell({ hint: 'h' })
+    const button = w.find('[data-testid="field-hint-toggle"]')
+    expect(button.attributes('aria-label')).toBe('Show more information')
+  })
+
   it('keeps the hint button out of the label element', () => {
     // A button inside a <label> is invalid nesting, and a click on it would
     // also move focus to the input the label points at.
