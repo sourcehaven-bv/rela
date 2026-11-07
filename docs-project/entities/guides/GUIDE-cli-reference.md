@@ -774,6 +774,10 @@ rela history-purge <address> (--vseq N | --content-hash H | --all) --reason "...
 - `--force-tags` — purge rows that a version tag points at, deleting those
   tags too. The dry run lists the tags a purge would hit.
 
+A committed purge also erases the deleted state that waiting `on.deleted`
+automation jobs hold for the entity, so those jobs end without running (see
+the metamodel guide, "Running a script when an entity is deleted").
+
 Purge **refuses** while the live row still holds the content (unless
 `--force-live`), **refuses** a row a version tag points at (unless
 `--force-tags`), and **refuses** a rename row. It is one necessary step, not

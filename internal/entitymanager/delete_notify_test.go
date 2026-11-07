@@ -84,3 +84,53 @@ func TestDeleteNotifier(t *testing.T) {
 		})
 	}
 }
+
+// purgeRecorder is an alias subscriber that wants to hear of purges.
+type purgeRecorder struct {
+	recordingRewriter
+	purged []string
+}
+
+func (r *purgeRecorder) EntityPurged(_ context.Context, id string) error {
+	r.purged = append(r.purged, id)
+	return nil
+}
+
+// TestPurgeNotifier: only the purge of a soft-deleted entity reports a purge,
+// once per entity (TKT-RJS3KKJ).
+func TestPurgeNotifier(t *testing.T) {
+	tests := []struct {
+		name string
+		do   func(ctx context.Context, mgr *entitymanager.Manager) error
+		want []string
+	}{
+		{"delete", func(ctx context.Context, mgr *entitymanager.Manager) error {
+			_, err := mgr.DeleteEntity(ctx, "TSK-1", false)
+			return err
+		}, nil},
+		{"soft delete", func(ctx context.Context, mgr *entitymanager.Manager) error {
+			_, err := entitymanager.SoftDeleteEntity(ctx, mgr, "TSK-1")
+			return err
+		}, nil},
+		{"soft delete, purge", func(ctx context.Context, mgr *entitymanager.Manager) error {
+			if _, err := entitymanager.SoftDeleteEntity(ctx, mgr, "TSK-1"); err != nil {
+				return err
+			}
+			_, err := entitymanager.PurgeSoftDeleted(ctx, mgr, time.Now().Add(time.Hour))
+			return err
+		}, []string{"TSK-1"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rw := &purgeRecorder{}
+			mgr, st := aliasHookManager(t, rw)
+			seedTask(t, st, "TSK-1", map[string]any{"title": "base"}, "")
+			if err := tc.do(t.Context(), mgr); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(rw.purged, tc.want) {
+				t.Errorf("purged %v, want %v", rw.purged, tc.want)
+			}
+		})
+	}
+}

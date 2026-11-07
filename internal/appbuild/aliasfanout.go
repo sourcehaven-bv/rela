@@ -32,6 +32,7 @@ var (
 	_ entitymanager.CreateNotifier = (*aliasFanout)(nil)
 	_ entitymanager.FaceMover      = (*aliasFanout)(nil)
 	_ entitymanager.DeleteNotifier = (*aliasFanout)(nil)
+	_ entitymanager.PurgeNotifier  = (*aliasFanout)(nil)
 )
 
 // newAliasFanout returns a rewriter over the non-nil subscribers.
@@ -159,6 +160,20 @@ func (f *aliasFanout) EntityStateDeleted(ctx context.Context, last *entity.Entit
 	for _, s := range f.subscribers {
 		if n, ok := s.(entitymanager.DeleteNotifier); ok {
 			if err := n.EntityStateDeleted(ctx, last); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// EntityPurged forwards to every subscriber that implements
+// [entitymanager.PurgeNotifier].
+func (f *aliasFanout) EntityPurged(ctx context.Context, entityID string) error {
+	var errs []error
+	for _, s := range f.subscribers {
+		if n, ok := s.(entitymanager.PurgeNotifier); ok {
+			if err := n.EntityPurged(ctx, entityID); err != nil {
 				errs = append(errs, err)
 			}
 		}

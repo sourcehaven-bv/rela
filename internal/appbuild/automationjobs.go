@@ -89,6 +89,10 @@ type automationJobs struct {
 	// followUpDelay spaces the enqueue retries after a collapsed enqueue.
 	followUpDelay time.Duration
 
+	// deleted holds the keys of the sealed last states that queued
+	// `on.deleted` jobs carry.
+	deleted *deletedStates
+
 	// gateDeleted shows an `on.deleted` job the deleted state as the job's
 	// reader may: [visibility.GateDeleted], replaced only in tests.
 	gateDeleted func(ctx context.Context, reader any, last *entity.Entity) (*entity.Entity, bool)
@@ -134,7 +138,7 @@ func newAutomationJobs(
 	return &automationJobs{
 		meta: meta, kv: kv, raw: raw, queue: queue,
 		locks: map[string]*keyLock{}, followUpDelay: defaultFollowUpDelay,
-		gateDeleted: visibility.GateDeleted,
+		deleted: &deletedStates{kv: kv}, gateDeleted: visibility.GateDeleted,
 	}, nil
 }
 
@@ -168,32 +172,39 @@ type automationJobPayload struct {
 	// the job cannot read it from the store. Like the other fields it grants
 	// nothing: the job shows it to the script only as far as the job's own
 	// identity may read it (see runOnce).
+	//
+	// It never enters the job table as it is. A queued job carries it as
+	// Sealed, readable only with the key Handle names (see deletedStates).
 	Last *entity.Entity
+	// Handle names the key of Sealed in deletedStates; empty unless the job
+	// is a queued `on.deleted` job.
+	Handle string
+	// Sealed is Last, encrypted under the key Handle names.
+	Sealed string
 }
+
+// deleted reports whether p is an `on.deleted` job.
+func (p automationJobPayload) deleted() bool { return p.Last != nil || p.Handle != "" }
 
 func (p automationJobPayload) key() string {
 	k := fmt.Sprintf("automation:%s:%s:%s", p.Automation, p.LuaFile, entity.FormatStateRef(p.ID, p.Face))
-	if p.Last != nil {
+	if p.deleted() {
 		k += ":deleted"
 	}
 	return k
 }
 
-func (p automationJobPayload) toMap() (map[string]any, error) {
+// toMap is the payload the queue stores. Last is left out: enqueue seals it
+// into Handle and Sealed first.
+func (p automationJobPayload) toMap() map[string]any {
 	m := map[string]any{
 		"automation": p.Automation, "lua_file": p.LuaFile,
 		"id": p.ID, "face": string(p.Face), "hops": p.Hops, "by": p.By,
 	}
-	if p.Last != nil {
-		// A string, not a nested map: a durable queue round-trips the payload
-		// through JSON, and decoding the entity as one value keeps its shape.
-		b, err := json.Marshal(p.Last)
-		if err != nil {
-			return nil, fmt.Errorf("automation job: encode deleted state: %w", err)
-		}
-		m["last"] = string(b)
+	if p.Handle != "" {
+		m["handle"], m["sealed"] = p.Handle, p.Sealed
 	}
-	return m, nil
+	return m
 }
 
 func payloadFromMap(m map[string]any) (automationJobPayload, error) {
@@ -201,6 +212,7 @@ func payloadFromMap(m map[string]any) (automationJobPayload, error) {
 	p := automationJobPayload{
 		Automation: str("automation"), LuaFile: str("lua_file"),
 		ID: str("id"), Face: entity.Face(str("face")), By: str("by"),
+		Handle: str("handle"), Sealed: str("sealed"),
 	}
 	// A JSON round-trip turns the int into a float64.
 	switch h := m["hops"].(type) {
@@ -212,20 +224,8 @@ func payloadFromMap(m map[string]any) (automationJobPayload, error) {
 	if p.Automation == "" || p.LuaFile == "" || p.ID == "" {
 		return p, errors.New("automation job: incomplete payload")
 	}
-	if raw := str("last"); raw != "" {
-		var last entity.Entity
-		dec := json.NewDecoder(strings.NewReader(raw))
-		dec.UseNumber()
-		if err := dec.Decode(&last); err != nil {
-			return p, fmt.Errorf("automation job: decode deleted state: %w", err)
-		}
-		for k, v := range last.Properties {
-			last.Properties[k] = jsonNumbers(v)
-		}
-		if last.ID != p.ID || last.Face != p.Face {
-			return p, errors.New("automation job: deleted state names another face")
-		}
-		p.Last = &last
+	if (p.Handle == "") != (p.Sealed == "") {
+		return p, errors.New("automation job: incomplete deleted state")
 	}
 	return p, nil
 }
@@ -305,20 +305,28 @@ func (a *automationJobs) schedule(ctx context.Context, p automationJobPayload) e
 }
 
 func (a *automationJobs) enqueue(ctx context.Context, p automationJobPayload, act metamodel.AutomationAction) error {
-	payload, err := p.toMap()
-	if err != nil {
-		return err
-	}
 	key := p.key()
 	if p.Last != nil {
 		key = "" // see schedule
+		handle, sealed, err := a.deleted.seal(ctx, p.Last)
+		if err != nil {
+			return err
+		}
+		p.Handle, p.Sealed = handle, sealed
 	}
-	return a.queue.Enqueue(ctx, jobs.Job{
+	err := a.queue.Enqueue(ctx, jobs.Job{
 		Kind:           automationJobKind,
-		Payload:        payload,
+		Payload:        p.toMap(),
 		Retry:          jobRetry(act.Retry),
 		IdempotencyKey: key,
 	})
+	if err != nil && p.Handle != "" {
+		// No job holds the sealed state, so its key goes too.
+		if eErr := a.deleted.erase(ctx, p.ID, p.Handle); eErr != nil {
+			slog.Warn("automation job: deleted-state key not erased", "entity", p.ID, "error", eErr)
+		}
+	}
+	return err
 }
 
 // runForeground runs the job now, on a fresh context. The saver learns only
@@ -425,6 +433,13 @@ func (a *automationJobs) EntityDeleted(context.Context, string) error { return n
 // EntityFaceDeleted implements entitymanager.AliasRewriter.
 func (a *automationJobs) EntityFaceDeleted(context.Context, string, entity.Face) error { return nil }
 
+// EntityPurged implements entitymanager.PurgeNotifier: it erases the sealed
+// last states that pending `on.deleted` jobs hold for id, so those jobs end
+// without reading them.
+func (a *automationJobs) EntityPurged(ctx context.Context, id string) error {
+	return a.deleted.purge(ctx, id, hasDeletedTriggers(a.meta))
+}
+
 // handle is the queue handler. The queue's ctx carries no request.
 func (a *automationJobs) handle(ctx context.Context, j jobs.Job) error {
 	p, err := payloadFromMap(j.Payload)
@@ -432,7 +447,57 @@ func (a *automationJobs) handle(ctx context.Context, j jobs.Job) error {
 		slog.Warn("automation job dropped", "error", err)
 		return nil
 	}
-	return a.run(ctx, p)
+	if p.Handle == "" {
+		return a.run(ctx, p)
+	}
+	return a.handleDeleted(ctx, j, p)
+}
+
+// handleDeleted opens the sealed state of an `on.deleted` job, runs the job
+// on it, and erases its key once no delivery will follow: after a success,
+// a drop, or a failure on the final attempt. A failure the queue retries
+// keeps the key for the retry.
+func (a *automationJobs) handleDeleted(ctx context.Context, j jobs.Job, p automationJobPayload) error {
+	last, err := a.deleted.open(ctx, p.ID, p.Face, p.Handle, p.Sealed)
+	switch {
+	case errors.Is(err, errDeletedStateErased), errors.Is(err, errDeletedStateCorrupt):
+		// The key may outlive a purge that only changed the generation.
+		a.eraseDeleted(ctx, p)
+		slog.Info("automation job dropped", "automation", p.Automation, "entity", p.ID, "reason", err)
+		return nil
+	case err != nil && !j.FinalAttempt():
+		return err
+	case err != nil:
+		a.eraseDeleted(ctx, p)
+		return err
+	}
+	// The AAD already binds id and face; this check is defense in depth.
+	if last.ID != p.ID || last.Face != p.Face {
+		a.eraseDeleted(ctx, p)
+		slog.Warn("automation job dropped: deleted state names another face",
+			"automation", p.Automation, "entity", p.ID)
+		return nil
+	}
+	p.Last = last
+	runErr := a.run(ctx, p)
+	if runErr == nil || j.FinalAttempt() {
+		a.eraseDeleted(ctx, p)
+	}
+	return runErr
+}
+
+// eraseDeleted erases p's key. A failure is logged: the job's outcome
+// stands, and the queue's retention sweep still removes the sealed state.
+//
+// It runs on a context of its own: the job's may have ended with its
+// timeout, which is one way a final attempt fails.
+func (a *automationJobs) eraseDeleted(ctx context.Context, p automationJobPayload) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+	defer cancel()
+	if err := a.deleted.erase(ctx, p.ID, p.Handle); err != nil {
+		slog.Warn("automation job: deleted-state key not erased",
+			"automation", p.Automation, "entity", p.ID, "error", err)
+	}
 }
 
 // run executes the action. In queue mode it repeats while saves arrive
@@ -475,7 +540,7 @@ func (a *automationJobs) run(ctx context.Context, p automationJobPayload) error 
 		return fmt.Errorf("automation %q: identity %q: %w", p.Automation, user, err)
 	}
 
-	if a.queue == nil || p.Last != nil {
+	if a.queue == nil || p.deleted() {
 		return a.runOnce(ctx, p, act, user)
 	}
 	for range maxAutomationJobRuns {

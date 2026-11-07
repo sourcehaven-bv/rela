@@ -550,6 +550,7 @@ func recordPurge(ctx context.Context, m *Manager, id string, res *store.DeleteRe
 		m.recordDeleteVersion(ctx, e)
 	}
 	m.notifyAliasesOfDelete(ctx, id)
+	notifyPurged(ctx, m.deps.AliasRewriter, id)
 	cascadeTB := "cascade:delete-entity:" + id
 	for _, rel := range res.DeletedRelations {
 		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, 0, "", "", cascadeTB)

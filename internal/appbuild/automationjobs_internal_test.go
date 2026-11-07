@@ -2,10 +2,12 @@ package appbuild
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"io/fs"
 	"iter"
 	"log/slog"
+	"maps"
 	"sync"
 	"testing"
 	"time"
@@ -87,6 +89,8 @@ type fakeJobRunner struct {
 	started chan struct{}
 	gate    chan struct{}
 	during  func(ctx context.Context, path string)
+	// err, when set, is what every run returns.
+	err error
 }
 
 func (f *fakeJobRunner) ScheduledLuaWriteDeps() lua.WriteDeps {
@@ -116,7 +120,7 @@ func (f *fakeJobRunner) ExecuteFile(ctx context.Context, path string, _ lua.Writ
 	if f.during != nil {
 		f.during(ctx, path)
 	}
-	return nil
+	return f.err
 }
 
 func (f *fakeJobRunner) count() int {
@@ -414,8 +418,7 @@ func TestAutomationJobs_PayloadSelectsOnly(t *testing.T) {
 // which turns the hop count into a float64.
 func TestAutomationJobs_PayloadRoundTrip(t *testing.T) {
 	p := automationJobPayload{Automation: "push", LuaFile: "push.lua", ID: "NOTE-1", Face: "draft", Hops: 3, By: "alice"}
-	m, err := p.toMap()
-	require.NoError(t, err)
+	m := p.toMap()
 	m["hops"] = float64(3)
 	got, err := payloadFromMap(m)
 	require.NoError(t, err)
@@ -553,26 +556,54 @@ func TestAutomationJobs_DeletedQueued(t *testing.T) {
 	require.Equal(t, "gone", r.seen[1].GetString("title"))
 }
 
-// TestAutomationJobs_DeletedPayload: the last state survives the payload
-// round trip, and a payload whose state names another face is dropped.
+// TestAutomationJobs_DeletedPayload: the last state survives the sealed
+// round trip with its number types, and a payload whose sealed state names
+// another face, or that is malformed, is dropped without running.
 func TestAutomationJobs_DeletedPayload(t *testing.T) {
-	p := automationJobPayload{Automation: "gone", LuaFile: "gone.lua", ID: "NOTE-9", Face: "draft",
-		Hops: 1, Last: deletedNote("note")}
-	p.Last.Properties["count"] = 3
-	p.Last.Properties["share"] = 0.5
-	p.Last.Properties["tags"] = []any{"a", 2}
-	m, err := p.toMap()
-	require.NoError(t, err)
+	last := deletedNote("note")
+	last.Properties["count"] = 3
+	last.Properties["share"] = 0.5
+	last.Properties["tags"] = []any{"a", 2}
+	q := &dupQueue{}
+	r := &fakeJobRunner{}
+	a := newDeletedJobs(t, q, r, nil)
+	require.NoError(t, a.EntityStateDeleted(context.Background(), last))
+	require.Len(t, q.jobs, 1)
+	m := q.jobs[0].Payload
 	got, err := payloadFromMap(m)
 	require.NoError(t, err)
-	require.Equal(t, p.Last.Properties, got.Last.Properties)
-	require.Equal(t, p.key(), got.key())
+	require.True(t, got.deleted())
 	require.NotEqual(t, note1Key(), got.key())
+	opened, err := a.deleted.open(context.Background(), got.ID, got.Face, got.Handle, got.Sealed)
+	require.NoError(t, err)
+	require.Equal(t, last.Properties, opened.Properties)
 
-	m["face"] = "published"
-	_, err = payloadFromMap(m)
-	require.Error(t, err)
-	m["face"], m["last"] = "draft", "{not json"
-	_, err = payloadFromMap(m)
-	require.Error(t, err)
+	tests := []struct {
+		name   string
+		change func(map[string]any)
+	}{
+		{"another face", func(m map[string]any) { m["face"] = "published" }},
+		{"tampered", func(m map[string]any) { m["sealed"] = flipLastByte(m["sealed"].(string)) }},
+		{"handle without sealed state", func(m map[string]any) { delete(m, "sealed") }},
+		{"malformed handle", func(m map[string]any) { m["handle"] = "../index" }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			q := &dupQueue{}
+			r := &fakeJobRunner{}
+			a := newDeletedJobs(t, q, r, nil)
+			require.NoError(t, a.EntityStateDeleted(context.Background(), deletedNote("note")))
+			c := maps.Clone(q.jobs[0].Payload)
+			tc.change(c)
+			_ = a.handle(context.Background(), jobs.Job{Payload: c, Retry: jobs.RetryNever, Attempt: 1})
+			require.Zero(t, r.count())
+		})
+	}
+}
+
+// flipLastByte changes the last byte of a base64 text, inside the GCM tag.
+func flipLastByte(s string) string {
+	b, _ := base64.StdEncoding.DecodeString(s)
+	b[len(b)-1] ^= 0xff
+	return base64.StdEncoding.EncodeToString(b)
 }

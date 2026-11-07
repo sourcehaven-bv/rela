@@ -598,6 +598,16 @@ idempotency key, so several servers against one schema run one purge at a
 time. `RELA_SOFT_DELETE_DELAY` and `RELA_SOFT_DELETE_GC_INTERVAL` set the
 window and the check interval.
 
+## Job table retention
+
+The durable job queue keeps its jobs in `neoq_jobs` and, when neoq gives up
+on one, in `neoq_dead_jobs`, both in the tenant's schema. neoq never deletes
+either. Every rela process that runs the queue therefore sweeps them every 10
+minutes, starting 10 minutes after it starts. A sweep deletes rows of jobs that finished more than 24 hours ago from
+`neoq_jobs`, and rows older than 24 hours from `neoq_dead_jobs`. Waiting jobs,
+including failed ones that will be retried, stay. The sweep uses one extra
+database connection.
+
 ## Other scope notes
 
 - The desktop app (`rela-desktop`) is filesystem-only; there is no PostgreSQL

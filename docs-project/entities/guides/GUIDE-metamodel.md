@@ -3801,6 +3801,22 @@ automations:
   run. Give the job's identity a plain read grant on the type.
 - **No coalescing.** Each delete is its own job. Deleting, recreating and
   deleting an entity again runs the script twice.
+- **Retention of the deleted state.** In queue mode the job stores the
+  deleted face encrypted, with hidden fields included. The key that decrypts
+  it is a separate record in the state store, never in the job table. The
+  job erases the key when it ends: after it succeeds, after it decides not
+  to run, and after its last allowed attempt fails. A failure that will be
+  retried keeps the key for the retry. Purging the entity makes the state of
+  all its waiting jobs unreadable, and those jobs end without running: the
+  purge of a soft-deleted entity does this, and so does
+  `rela history-purge --commit`. A job the queue itself gives up on, for
+  example one past the time limit of `retry: persistent`, keeps its key, but
+  on PostgreSQL the queue deletes finished and failed job rows after 24
+  hours, and the encrypted copy goes with them. On the file and SQLite
+  backends the queue is in memory, so the encrypted copy is gone when the
+  process stops. In foreground mode the state is not stored at all. This
+  erases the state from the live database; backups taken while a job waited
+  keep both the key and the encrypted copy.
 - **Allowed keys.** `deleted` cannot be combined with `created`, `updated`,
   `property`, `becomes`, `from`, `relation_created` or `relation_removed`.
   Every action must be `background: true`, and `validate:` is refused: the

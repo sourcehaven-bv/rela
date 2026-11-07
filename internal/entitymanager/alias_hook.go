@@ -209,3 +209,30 @@ func notifyDeletedStates(ctx context.Context, rw AliasRewriter, rows []*entity.E
 		}
 	}
 }
+
+// PurgeNotifier is the optional half of an [AliasRewriter] that keeps data
+// about an entity outside its rows and must erase it when the entity is
+// purged for good: the automation job service erases the sealed last states
+// that pending `on.deleted` jobs hold (TKT-RJS3KKJ).
+//
+// Optional, and type-asserted on Deps.AliasRewriter, for the reason
+// [CreateNotifier] is.
+type PurgeNotifier interface {
+	// EntityPurged notifies that the soft-deleted entity id was purged,
+	// after the purge committed.
+	EntityPurged(ctx context.Context, id string) error
+}
+
+// notifyPurged notifies rw of a purge when it implements [PurgeNotifier].
+// A failure is logged: the purge happened.
+func notifyPurged(ctx context.Context, rw AliasRewriter, id string) {
+	n, ok := rw.(PurgeNotifier)
+	if !ok {
+		return
+	}
+	ctx, cancel := aliasHookContext(ctx)
+	defer cancel()
+	if err := n.EntityPurged(ctx, id); err != nil {
+		slog.Error("entitymanager: purge notification failed", "id", id, "error", err)
+	}
+}
