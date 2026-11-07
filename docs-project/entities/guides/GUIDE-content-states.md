@@ -736,8 +736,9 @@ never chose.
   by address. When a declared world leads with that face and the reader may
   read it, the choice also switches to that world, so the related sections and the world switcher
   match the face on screen. With more faces, a menu offers the others
-  instead. A preview of the entity on another page shows no toggle. The toggle or menu renders on every screen that has faces,
-  including the default world.
+  instead. A preview of the entity on another page shows no toggle. The
+  toggle or menu renders on every screen that has faces, including the
+  default world.
 - The sidebar shows a **world switcher** when the reader can choose between
   two or more worlds. Two or three visible worlds show as a row of choices;
   more show as a list. It uses each world's `label`, leaves out worlds with
