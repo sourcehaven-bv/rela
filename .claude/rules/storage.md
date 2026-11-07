@@ -152,6 +152,10 @@ Rules when touching storage backends:
   outside `internal/store`. Never cache a sum across principals.
   `storetest.RunElementRangeTests` pins every backend and
   `RunElementRangeDifferential` compares the SQL backends with elementnaive.
+  `visibility.Elements` (TKT-N1KNNZU) is the one gated caller: it folds stored
+  hashes only for a type on which the reader hides nothing, and recomputes
+  every row of any other type from its redacted row, so neither its cost nor
+  its refusals depend on which rows hold a hidden value.
 - **Migrations** are embedded SQL (`pgstore/migrations/*.sql`), applied by
   `pgstore.Migrate` in one transaction under a `pg_advisory_xact_lock`
   (concurrent-start safe; forward-only). Auto-applied on first store open; also

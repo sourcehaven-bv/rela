@@ -2635,10 +2635,10 @@
       "largest_tangle": 13,
       "cycle_edges": 61,
       "upward_edges": 0,
-      "propagation_cost": 9.4
+      "propagation_cost": 9.5
     },
     "min_weight": 0,
-    "at": "2026-11-07T13:40:00Z",
+    "at": "2026-11-07T15:10:00Z",
     "log": [
       {
         "at": "2026-10-28T13:29:24Z",
@@ -2918,6 +2918,17 @@
           "weight.concepts": [
             7060,
             7090
+          ]
+        }
+      },
+      {
+        "at": "2026-11-07T15:10:00Z",
+        "change": "loosen",
+        "reason": "TKT-N1KNNZU: visibility.Elements makes visibility depend on reconcile and canonical; the gated element range read belongs next to the other read-side ACL wrappers",
+        "metrics": {
+          "propagation_cost": [
+            9.4,
+            9.5
           ]
         }
       }
