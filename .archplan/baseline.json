@@ -722,6 +722,12 @@
       "at": "2026-10-28T13:29:06Z",
       "title": "internal/dataentry.App has 74 fields."
     },
+    "types.fields-93c72f356ae4": {
+      "state": "accepted",
+      "reason": "Design: the unexported flowRuns flag is the only proof that WithFlowRuns added the managed declarations, so an operator schema cannot claim their reserved-name exemption (TKT-BC5G8RP). Exported fields stay under the plimsoll cap.",
+      "at": "2026-11-07T20:10:00Z",
+      "title": "internal/metamodel.Metamodel has 25 fields."
+    },
     "concepts.string_enum-1ced6edc6664": {
       "state": "accepted",
       "reason": "Debt: repeated string values; type them when the code is touched.",
@@ -2627,58 +2633,19 @@
       "weight.structure": 90,
       "weight.layers": 0,
       "weight.vocabulary": 912,
-      "weight.types": 3960,
-      "weight.concepts": 7090,
+      "weight.types": 4008,
+      "weight.concepts": 7081,
       "weight.boundaries": 1387,
       "weight.data": 1297,
       "weight.security": 140,
       "largest_tangle": 13,
       "cycle_edges": 61,
       "upward_edges": 0,
-      "propagation_cost": 9.5
+      "propagation_cost": 8.9
     },
     "min_weight": 0,
-    "at": "2026-11-07T15:10:00Z",
+    "at": "2026-11-07T20:02:09Z",
     "log": [
-      {
-        "at": "2026-10-28T13:29:24Z",
-        "change": "start",
-        "reason": null,
-        "metrics": {}
-      },
-      {
-        "at": "2026-10-28T14:49:20Z",
-        "change": "loosen",
-        "reason": "InboxSummary wire mirror accepted like the other apiwire DTOs, TKT-9YRRM5",
-        "metrics": {
-          "weight.types": [
-            3780,
-            3810
-          ]
-        }
-      },
-      {
-        "at": "2026-10-29T09:00:00Z",
-        "change": "loosen",
-        "reason": "PostMessageRequest wire mirror accepted like the other apiwire DTOs, TKT-T9G1AE",
-        "metrics": {
-          "weight.types": [
-            3810,
-            3849
-          ]
-        }
-      },
-      {
-        "at": "2026-10-29T15:00:00Z",
-        "change": "loosen",
-        "reason": "ChannelChoicesSchema wire mirror accepted like the other apiwire DTOs, TKT-03FQPD",
-        "metrics": {
-          "weight.types": [
-            3849,
-            3886
-          ]
-        }
-      },
       {
         "at": "2026-10-29T18:00:00Z",
         "change": "loosen",
@@ -2929,6 +2896,25 @@
           "propagation_cost": [
             9.4,
             9.5
+          ]
+        }
+      },
+      {
+        "at": "2026-11-07T20:02:09Z",
+        "change": "loosen",
+        "reason": "TKT-BC5G8RP: Metamodel gains the unexported flowRuns flag that proves WithFlowRuns added the managed declarations",
+        "metrics": {
+          "weight.types": [
+            3960,
+            4008
+          ],
+          "weight.concepts": [
+            7090,
+            7081
+          ],
+          "propagation_cost": [
+            9.5,
+            8.9
           ]
         }
       }
