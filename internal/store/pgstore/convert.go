@@ -89,6 +89,11 @@ func (s *Store) ReplaceEntityFamily(ctx context.Context, id string, replacements
 			Op: store.EventEntityUpdated, EntityType: e.Type, EntityID: e.ID, Face: e.Face,
 		})
 	}
+	// Every replaced row changed face, type or content; the trigger cleared
+	// their elements.
+	if _, _, err := fillEntityElements(ctx, s.db, entityFamilyScope(id), 0); err != nil {
+		return err
+	}
 	// A source face no target occupies is gone: tombstone it like any
 	// face delete so other processes' catch-up drops the old coordinate.
 	for _, face := range emptied {

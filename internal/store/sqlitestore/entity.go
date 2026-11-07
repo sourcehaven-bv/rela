@@ -134,6 +134,11 @@ func (s *Store) createEntityLocked(ctx context.Context, e *entity.Entity) error 
 	// and store.Freshness from ever seeing the edit.
 	updated := time.Now()
 
+	el, err := entityElementCols(e.ID, e.Face, e.Type, props, e.Content)
+	if err != nil {
+		return err
+	}
+
 	editorUser, editorTool := store.AttributionColumns(ctx)
 	o := originColumns(store.OriginFrom(ctx))
 	// The NOT EXISTS clauses keep a soft-deleted id held until it is purged,
@@ -142,14 +147,15 @@ func (s *Store) createEntityLocked(ctx context.Context, e *entity.Entity) error 
 	res, err := s.write(ctx, `INSERT INTO entities (id, face, type, properties, content, updated_at,
 		                      last_edited_by_user, last_edited_by_tool,
 		                      origin_kind, origin_source, origin_source_face,
-		                      origin_source_type, origin_definition, mention_targets, search_text)
-		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		                      origin_source_type, origin_definition, mention_targets, search_text,
+		                      element_hash, element_fp0, element_fp1, element_fp2, element_fp3)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		WHERE NOT EXISTS (SELECT 1 FROM marked_entities WHERE lower(id) = lower(?))
 		  AND NOT EXISTS (SELECT 1 FROM retired_ids
 		                  WHERE lower(id) = lower(?) OR lower(successor) = lower(?))`,
 		e.ID, string(e.Face), e.Type, props, e.Content, sqlitedb.FormatTime(updated), editorUser, editorTool,
 		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, mentionTargetsJSON(e.Content),
-		search.IndexText(e), e.ID, e.ID, e.ID)
+		search.IndexText(e), el.hash, el.limbs[0], el.limbs[1], el.limbs[2], el.limbs[3], e.ID, e.ID, e.ID)
 	var inserted int64
 	if err == nil {
 		inserted, err = res.RowsAffected()
@@ -200,6 +206,10 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 		return err
 	}
 	updated := time.Now() // store-stamped; see CreateEntity
+	el, err := entityElementCols(e.ID, e.Face, e.Type, props, e.Content)
+	if err != nil {
+		return err
+	}
 
 	// Every update restamps the origin, so an unmarked write clears a copy
 	// marker: the columns describe the most recent write (see store.Origin).
@@ -208,10 +218,12 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 	res, err := s.write(ctx, `UPDATE entities SET type = ?, properties = ?, content = ?, updated_at = ?,
 		    last_edited_by_user = ?, last_edited_by_tool = ?,
 		    origin_kind = ?, origin_source = ?, origin_source_face = ?,
-		    origin_source_type = ?, origin_definition = ?, mention_targets = ?, search_text = ?
+		    origin_source_type = ?, origin_definition = ?, mention_targets = ?, search_text = ?,
+		    element_hash = ?, element_fp0 = ?, element_fp1 = ?, element_fp2 = ?, element_fp3 = ?
 		WHERE id = ? AND face = ?`,
 		e.Type, props, e.Content, sqlitedb.FormatTime(updated), editorUser, editorTool,
 		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, mentionTargetsJSON(e.Content), search.IndexText(e),
+		el.hash, el.limbs[0], el.limbs[1], el.limbs[2], el.limbs[3],
 		e.ID, string(e.Face))
 	if err != nil {
 		return fmt.Errorf("sqlitestore: update %s: %w", e.ID, err)
@@ -224,6 +236,10 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 		return fmt.Errorf("sqlitestore: update %s: %w",
 			entity.FormatStateRef(e.ID, e.Face), store.ErrNotFound)
 	}
+	// A write that leaves the canonical hash unchanged sets element_hash to
+	// its old value, and the trigger reads that as a write that ignored the
+	// element and clears it.
+	warnElementLeftNull(ctx, refillEntityElement(ctx, s.q(), e.Ref(), e.Type, props, e.Content, el))
 
 	s.notifyPut(e)
 	s.emit(store.Event{

@@ -5,7 +5,9 @@ title: Store content hash at write time and add a fingerprint column
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-11-07"
+completed: "2026-11-07"
+status: done
 ---
 
 ## Description

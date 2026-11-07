@@ -361,15 +361,21 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 		                      last_edited_by_user, last_edited_by_tool,
 		                      origin_kind, origin_source, origin_source_face,
 		                      origin_source_type, origin_definition,
-		                      mention_targets, mentions_hash)
-		VALUES ($1, $2, $3, $4, $5, $6, now(), $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		                      mention_targets, mentions_hash,
+		                      element_hash, element_fp0, element_fp1, element_fp2, element_fp3)
+		VALUES ($1, $2, $3, $4, $5, $6, now(), $7, $8, $9, $10, $11, $12, $13, $14, $15,
+		        $16, $17, $18, $19, $20)
 		ON CONFLICT (id, face) DO NOTHING
 		RETURNING updated_at`
+	el, err := entityElementCols(e.ID, e.Face, e.Type, props, e.Content)
+	if err != nil {
+		return err
+	}
 	targets, hash := mentionColumns(e.Content)
 	var updatedAt time.Time
-	err = tx.QueryRow(ctx, q, e.ID, e.Face, e.Type, props, e.Content, entitySearchText(e),
+	err = tx.QueryRow(ctx, q, append([]any{e.ID, e.Face, e.Type, props, e.Content, entitySearchText(e),
 		editorUser, editorTool,
-		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, targets, hash).Scan(&updatedAt)
+		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, targets, hash}, el.args()...)...).Scan(&updatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return store.ErrConflict
 	}
@@ -484,14 +490,23 @@ func (s *Store) updateEntityIf(
 		    last_edited_by_user = $7, last_edited_by_tool = $8,
 		    origin_kind = $9, origin_source = $10, origin_source_face = $11,
 		    origin_source_type = $12, origin_definition = $13,
-		    mention_targets = $14, mentions_hash = $15
+		    mention_targets = $14, mentions_hash = $15,
+		    element_hash = $16, element_fp0 = $17, element_fp1 = $18, element_fp2 = $19, element_fp3 = $20
 		WHERE id = $1 AND face = $2
-		RETURNING updated_at`
+		RETURNING updated_at, element_hash IS NULL`
+	el, err := entityElementCols(e.ID, e.Face, e.Type, props, e.Content)
+	if err != nil {
+		return "", err
+	}
 	targets, hash := mentionColumns(e.Content)
-	var updatedAt time.Time
-	err = tx.QueryRow(ctx, q, e.ID, e.Face, e.Type, props, e.Content, entitySearchText(e),
+	var (
+		updatedAt time.Time
+		cleared   bool
+	)
+	err = tx.QueryRow(ctx, q, append([]any{e.ID, e.Face, e.Type, props, e.Content, entitySearchText(e),
 		editorUser, editorTool,
-		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, targets, hash).Scan(&updatedAt)
+		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, targets, hash}, el.args()...)...).
+		Scan(&updatedAt, &cleared)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", store.ErrNotFound
 	}
@@ -501,6 +516,14 @@ func (s *Store) updateEntityIf(
 		// (TKT-3Q0GP1). mapConflict names the property for a rela_derived_uniq__*
 		// clash and passes other errors through unchanged.
 		return "", s.mapConflict(err)
+	}
+	if cleared {
+		// The content changed but its canonical hash did not, so the
+		// trigger could not tell this write from one that ignored the
+		// element (migration 0042). Store it again.
+		if _, _, err := fillEntityElements(ctx, tx, entityRowScope(e.Ref()), 0); err != nil {
+			return "", err
+		}
 	}
 
 	ev := store.Event{Op: store.EventEntityUpdated, EntityType: e.Type, EntityID: e.ID, Face: e.Face}
@@ -928,6 +951,14 @@ func (s *Store) RenameFamily(ctx context.Context, oldID, newID string) (*store.R
 	if _, err := tx.Exec(ctx,
 		`UPDATE attachments SET entity_id = $2, seq = nextval('rela_seq') WHERE entity_id = $1`,
 		oldID, newID); err != nil {
+		return nil, err
+	}
+	// The id is part of every re-keyed row's hash and address; the trigger
+	// cleared their elements.
+	if _, _, err := fillEntityElements(ctx, tx, entityFamilyScope(newID), 0); err != nil {
+		return nil, err
+	}
+	if _, _, err := fillRelationElements(ctx, tx, relationsOfScope(newID), 0); err != nil {
 		return nil, err
 	}
 

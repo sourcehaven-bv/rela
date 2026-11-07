@@ -105,6 +105,12 @@ func TestConformance(t *testing.T) {
 			t.Helper()
 			require.NoError(t, s.(*sqlitestore.Store).SweepNow(t.Context(), fixedProjection{}, immediateSweep(100)))
 		},
+		StoredElements: func(t *testing.T, s store.Store) []storetest.StoredElement {
+			t.Helper()
+			els, err := sqlitestore.StoredElementsForTest(t.Context(), s.(*sqlitestore.Store))
+			require.NoError(t, err)
+			return els
+		},
 	})
 }
 
