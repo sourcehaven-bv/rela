@@ -69,7 +69,8 @@
     "app": {
       "name": "Fake API contract fixture",
       "description": "",
-      "history_enabled": false
+      "history_enabled": false,
+      "world_switcher": "header"
     },
     "styles": {
       "note_status": {
