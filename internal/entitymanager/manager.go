@@ -20,6 +20,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
+	"github.com/Sourcehaven-BV/rela/internal/writerule"
 )
 
 // TemplateLoader is the narrow consumer-side surface entitymanager
@@ -229,7 +230,11 @@ var _ autocascade.Mutator = (*Manager)(nil)
 // would bring it back under the line; that touches every wiring site and is
 // a ratchet target under TKT-N0IKN9.
 //
-//plimsoll:max-fields=21
+// 21 -> 22 (TKT-TXTMB0): [Deps.ValidationMode], the per-deployment policy
+// DEC-OYV2AK asks for. It is a value, not a collaborator, so it has no
+// sub-struct to join.
+//
+//plimsoll:max-fields=22
 type Deps struct {
 	// Store is the authoritative persistence layer. Required.
 	Store store.Store
@@ -388,6 +393,14 @@ type Deps struct {
 	// [NopAnchorGuard] to opt out explicitly, as a build or test without
 	// channels does.
 	AnchorGuard AnchorGuard
+
+	// ValidationMode is the deployment's validation policy (DEC-OYV2AK).
+	// The zero value is [ValidationAdvisory].
+	ValidationMode ValidationMode
+
+	// writeRules is the compiled `enforce: write` validation rules of Meta.
+	// [New] compiles it, so no wiring site can forget it.
+	writeRules *writerule.Set
 }
 
 // FieldWriteGate answers whether the ctx principal may write the named
@@ -597,6 +610,11 @@ func New(d Deps) (*Manager, error) {
 		}
 		d.Computed = compiled
 	}
+	rules, err := writerule.NewSet(d.Meta)
+	if err != nil {
+		return nil, fmt.Errorf("entitymanager: New: %w", err)
+	}
+	d.writeRules = rules
 	if d.FieldGate == nil {
 		return nil, errors.New(
 			"entitymanager: New: FieldGate is required (use entitymanager.AllowAllFieldGate{} to opt out)")
@@ -1030,18 +1048,27 @@ func createFollowUps(
 		// property cannot write a duplicate natural key (the create path must
 		// not be the weaker one). It is an update, never an upsert: createCore
 		// already persisted the row (BUG-ZWTDH9).
+		//
+		// A refusal here (a unique collision, or a rule declared
+		// `enforce: write` that the automation's values break) leaves the
+		// row createCore stored, without the automation's values. The error
+		// says so, so a caller does not retry and create a second row.
 		written, err := writeAutomationProperties(ctx, m.deps, created, autoResult.PropertiesSet, nil)
 		if err != nil {
-			return result, err
+			return result, &KeptEntityError{Entity: created, Err: err}
 		}
 		created = written
 		result.Entity = created
 		// Recompute warnings against the post-automation state
 		// (DEC-HWZHA). The pre-write warnings from createCore reflect
 		// the entity before automation set any properties.
+		//
+		// Advisory on every deployment: the row is already stored, so a
+		// strict refusal here could not undo it. A soft condition an
+		// on-create automation introduces is reported, not refused.
 		v := metamodel.NewValidator(m.deps.Meta)
 		if errs := v.ValidateEntity(created.ID, created.Type, created.Properties); len(errs) > 0 {
-			_, result.Warnings = partitionValidationErrors(errs)
+			_, result.Warnings = partitionValidationErrors(ValidationAdvisory, errs)
 		}
 	}
 	result.AutomationWarnings = autoResult.Warnings
@@ -1080,7 +1107,8 @@ func createFollowUps(
 //     create handler's affordance gate).
 //   - Hard structural errors (unknown type, bad manual ID, ID-prefix
 //     mismatch) return as an error; soft conditions (required-unset,
-//     type / value mismatch) return as warnings on a nil error.
+//     type / value mismatch) return as warnings on a nil error, under
+//     every [ValidationMode]. Write-enforced rules are not checked.
 //   - opts.ID may be empty: an ID is generated only to satisfy
 //     validation that doesn't depend on it; it is not reserved.
 func (m *Manager) ValidateCreate(
@@ -1101,7 +1129,11 @@ func (m *Manager) ValidateCreate(
 	if err := rejectExternalRefCreate(m.deps.Meta, e.Type, e.Properties, opts.WriteExternalRefs); err != nil {
 		return nil, nil, err
 	}
-	return buildCandidateEntity(ctx, m.deps, e.Type, createCoreOpts{
+	// Always advisory, also on a strict deployment: the create form renders
+	// from this candidate before the user has typed anything, so every
+	// required property starts unset. A strict 422 here would leave the
+	// form with nothing to render. The real create applies the mode.
+	return buildCandidateEntity(ctx, m.deps.advisory(), e.Type, createCoreOpts{
 		ID:              opts.ID,
 		IDPrefix:        opts.Prefix,
 		TemplateVariant: opts.Variant,
@@ -1138,8 +1170,11 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	// share this half (it has no candidate entity until after the read), so
 	// the pre-check lives here rather than in updateCore, which re-runs the
 	// same partition on the merged result.
+	//
+	// Structural errors only: the deployment's mode applies to the state
+	// after on-update automation, which updateCore checks.
 	preErrs := metamodel.NewValidator(m.deps.Meta).ValidateEntity(e.ID, e.Type, e.Properties)
-	if hard, _ := partitionValidationErrors(preErrs); len(hard) > 0 {
+	if hard := structuralErrors(preErrs); len(hard) > 0 {
 		return nil, newValidationError(hard)
 	}
 
@@ -1571,18 +1606,19 @@ func (m *Manager) updateCore(
 	if err := m.deps.Computed.Evaluate(ctx, e); err != nil {
 		return nil, err
 	}
-	// DEC-HWZHA: partition validation errors once. Hard errors abort;
-	// soft conditions populate Result.Warnings. If automation runs and
-	// mutates properties, we recompute warnings against the post-
-	// automation state.
+	// DEC-HWZHA: hard errors abort; soft conditions populate
+	// Result.Warnings, computed against the post-automation state.
+	// Structural errors refuse the write before automation runs. The
+	// deployment's mode (DEC-OYV2AK) is applied once, to the final
+	// post-automation state, because that is the state the write persists:
+	// an automation may fill a required property or break one.
 	metaValidator := metamodel.NewValidator(m.deps.Meta)
-	preErrs := metaValidator.ValidateEntity(e.ID, e.Type, e.Properties)
-	hard, soft := partitionValidationErrors(preErrs)
-	if len(hard) > 0 {
+	finalErrs := metaValidator.ValidateEntity(e.ID, e.Type, e.Properties)
+	if hard := structuralErrors(finalErrs); len(hard) > 0 {
 		return nil, newValidationError(hard)
 	}
 
-	result := &entity.UpdateResult{Entity: e, Warnings: soft}
+	result := &entity.UpdateResult{Entity: e}
 
 	autoResult, ranAutomation, err := m.processUpdateAutomation(ctx, e, oldEntity)
 	if err != nil {
@@ -1590,17 +1626,17 @@ func (m *Manager) updateCore(
 	}
 	if ranAutomation {
 		if len(autoResult.PropertiesSet) > 0 {
-			// Properties changed — recompute warnings against the
-			// post-automation state (DEC-HWZHA).
-			if errs := metaValidator.ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
-				_, result.Warnings = partitionValidationErrors(errs)
-			} else {
-				result.Warnings = nil
-			}
+			// Properties changed — validate the post-automation state.
+			finalErrs = metaValidator.ValidateEntity(e.ID, e.Type, e.Properties)
 		}
 		result.AutomationWarnings = autoResult.Warnings
 		result.AutomationErrors = autoResult.Errors
 	}
+	hard, soft := partitionValidationErrors(m.deps.ValidationMode, finalErrs)
+	if len(hard) > 0 {
+		return nil, newValidationError(hard)
+	}
+	result.Warnings = soft
 
 	// Enforce enum state machines on the final (post-automation) state, using
 	// the prior state to determine the transition (TKT-E4LW2). This is the

@@ -394,6 +394,9 @@ export function automations(schema: TreeValue | undefined): AutomationModel[] {
     else if (property) trigger = `${property} changes`
     else if (get(on, 'relation_created') !== undefined) trigger = 'A link is added'
     else if (get(on, 'relation_removed') !== undefined) trigger = 'A link is removed'
+    if (get(on, 'copy') !== undefined) {
+      trigger = trigger === 'A record changes' ? 'A copy runs' : `${trigger}, by a copy`
+    }
     return [
       {
         index,

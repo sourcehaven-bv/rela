@@ -315,6 +315,15 @@ What you need to know to run it:
   A run whose node dies is marked `abandoned` when its lease expires and then
   retried. See [scheduled-tasks.md](scheduled-tasks.md#run-state).
 
+- **Shared body editing needs sticky routing.** A shared editing session
+  lives in the memory of one server process. Two people whose editors reach
+  different processes are in different sessions: each session saves, and the
+  second save merges with the first like any concurrent edit. To keep people
+  in one session, route every request for an entity to the same process, for
+  example by hashing the path on the load balancer, or route by user and
+  accept the merge. The session's address is
+  `/api/v1/_collab/{type}/{id}`, a WebSocket.
+
 ### Write transactions
 
 The store exposes a write-transaction contract (`store.Store.Tx`,

@@ -255,9 +255,12 @@ func finishKept(
 	return true
 }
 
-// KeptEntityError is a [CreateLinked] failure after which the entity stays
-// written: the transaction failed after the entity write, on a store that
-// cannot roll back. The entity's audit record and automations ran.
+// KeptEntityError is a create failure after which the entity stays written.
+// [CreateLinked] returns it when the transaction failed after the
+// entity write, on a store that cannot roll back; the entity's audit record
+// and automations ran. [Manager.CreateEntity] returns it when the write of
+// the on-create automation's values was refused; the entity stays as the
+// caller sent it.
 type KeptEntityError struct {
 	// Entity is the entity that stayed. Nil: never.
 	Entity *entity.Entity

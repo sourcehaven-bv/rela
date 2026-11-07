@@ -793,11 +793,55 @@ func writePatchError(w http.ResponseWriter, r *http.Request, err error) {
 // writeWriteRefused answers a refused entity create or update with a 422:
 // conflict_block for content the store cannot hold ([writeConflictBlock]),
 // validation_failed with the error text for anything else.
+//
+// A refusal by validation also lists each failure in `errors[]`, so a
+// client can show it at the field it names (DEC-OYV2AK): the property's
+// JSON pointer, or the empty pointer for a failure about the whole entity,
+// such as a write-enforced rule.
 func writeWriteRefused(w http.ResponseWriter, r *http.Request, err error) {
 	if writeConflictBlock(w, r, err) {
 		return
 	}
-	writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
+	invalid, ok := errors.AsType[*entitymanager.ValidationError](err)
+	if !ok {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
+		return
+	}
+	problem := v1.Error{
+		Type:     "https://rela.dev/errors/validation_failed",
+		Title:    "Validation failed",
+		Status:   http.StatusUnprocessableEntity,
+		Detail:   err.Error(),
+		Instance: r.URL.Path,
+		Errors:   validationFieldErrors(invalid),
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(http.StatusUnprocessableEntity)
+	_ = json.NewEncoder(w).Encode(problem)
+}
+
+// validationFieldErrors maps each failure of a refused write to a
+// [v1.FieldError]. The detail is the failure's own message, which never
+// quotes a property value (see [metamodel.ValidationError]).
+func validationFieldErrors(invalid *entitymanager.ValidationError) []v1.FieldError {
+	out := make([]v1.FieldError, 0, len(invalid.Errors))
+	for _, e := range invalid.Errors {
+		pointer := ""
+		if e.Property != "" {
+			pointer = "/properties/" + jsonPointerEscape(e.Property)
+		}
+		out = append(out, v1.FieldError{
+			Source: v1.ErrorSource{Pointer: pointer},
+			Code:   string(e.Type),
+			Detail: e.Message,
+		})
+	}
+	return out
+}
+
+// jsonPointerEscape escapes one RFC 6901 reference token.
+func jsonPointerEscape(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "~", "~0"), "/", "~1")
 }
 
 // writeEarlyUpdateError answers an error from the PATCH's early

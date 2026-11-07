@@ -143,6 +143,10 @@ export interface AppConfig {
   // missing feature someone reports, while showing a broken one on every fs
   // deployment is the affordance-that-lies shape this flag exists to remove.
   history_enabled?: boolean
+  // Real-time co-editing of entity bodies (TKT-CJL604). Absent means off.
+  collab_enabled?: boolean
+  /** Names the relay process's rooms; the SPA joins with it (TKT-CJL604). */
+  collab_epoch?: string
 }
 
 export interface FormConfig {

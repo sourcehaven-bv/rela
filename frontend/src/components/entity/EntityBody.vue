@@ -15,8 +15,13 @@
  *
  * With `taskItemConversions` offered, each task item gets a convert button
  * while the body is open (TKT-3IBLIP).
+ *
+ * With `collab` set, the editor edits the body in a co-editing room
+ * (TKT-CJL604). The caller sets it after `edit` and clears it when the room
+ * ends; the editor is rebuilt on each change of mode, opening on the body
+ * as the caller holds it then.
  */
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import RlInlineEdit from 'rela-components/components/common/RlInlineEdit.vue'
 import MarkdownEditor from '@/components/forms/milkdown/MilkdownEditor.vue'
@@ -25,6 +30,7 @@ import TaskItemConversions, {
 } from '@/components/forms/TaskItemConversions.vue'
 import type { EntityRefResolver } from '@/utils/markdown'
 import type { TaskItemConversionOffer } from '@/types'
+import type { EditorCollab } from '@/composables/collab/collabRoom'
 
 const props = defineProps<{
   content: string
@@ -33,6 +39,7 @@ const props = defineProps<{
   /** The entity whose body this is; required for task-item conversions. */
   source?: { id: string; face?: string }
   taskItemConversions?: TaskItemConversionOffer[]
+  collab?: EditorCollab | null
 }>()
 
 const emit = defineEmits<{
@@ -42,6 +49,7 @@ const emit = defineEmits<{
 }>()
 
 const editorRef = ref<InstanceType<typeof MarkdownEditor> | null>(null)
+const inlineRef = ref<InstanceType<typeof RlInlineEdit> | null>(null)
 const conversionsRef = ref<InstanceType<typeof TaskItemConversions> | null>(null)
 
 const convertLabel = computed(() =>
@@ -62,6 +70,22 @@ function onEdit() {
   draft.value = props.content
   emit('edit')
 }
+
+// A room that ends while open leaves the caller holding the latest body,
+// which the single-writer editor that replaces the room's opens on.
+watch(
+  () => props.collab,
+  (next, prev) => {
+    if (prev && !next) draft.value = props.content
+  }
+)
+
+defineExpose({
+  /** The open editor, or null. */
+  editor: () => editorRef.value,
+  /** Ends the edit as Escape would: flushes, then emits `done`. */
+  close: () => inlineRef.value?.cancel(),
+})
 
 // Unmounted while open (the caller keys it per row): the editor's last
 // keystrokes still go out, to the row the edit started on.
@@ -86,6 +110,7 @@ function onEditorKeydown(event: KeyboardEvent) {
 <template>
   <RlInlineEdit
     v-if="editable"
+    ref="inlineRef"
     block
     trigger="explicit"
     :label="t('entity.bodyLabel')"
@@ -100,8 +125,10 @@ function onEditorKeydown(event: KeyboardEvent) {
     <template #edit>
       <div class="entity-body-editor" @keydown="onEditorKeydown">
         <MarkdownEditor
+          :key="collab ? 'collab' : 'single'"
           ref="editorRef"
           :model-value="draft"
+          :collab="collab ?? undefined"
           :ref-resolver="refResolver"
           :task-item-convert-label="convertLabel"
           @update:model-value="(v: string) => emit('input', v)"

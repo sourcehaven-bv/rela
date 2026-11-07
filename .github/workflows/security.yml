@@ -248,3 +248,126 @@ jobs:
               --label security,automated \
               --body "$BODY"
           fi
+
+  # third_party/ygows is a fork of ygo's provider/websocket relay. govulncheck
+  # and osv-scanner see only the ygo version in go.mod, not the fork, so an
+  # advisory on the relay would pass them by once Dependabot bumps ygo. This
+  # job asks OSV about the version the fork was taken from (TKT-IBT44K5).
+  # An upstream release is caught elsewhere: TestUpstreamVersion fails the
+  # Dependabot bump PR until the fork is re-synced.
+  ygows-advisories:
+    name: ygows fork advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Query OSV
+        id: osv
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^[[:space:]]*UpstreamVersion[[:space:]]*=[[:space:]]*"\(v[^"]*\)".*/\1/p' third_party/ygows/upstream.go)
+          if [[ -z "$version" ]]; then
+            echo "UpstreamVersion not found in third_party/ygows/upstream.go" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          # Follow next_page_token; the script merges the pages.
+          : > /tmp/osv.json
+          token=""
+          for _ in $(seq 20); do
+            query=$(jq -nc --arg v "$version" --arg t "$token" \
+              '{package: {ecosystem: "Go", name: "github.com/reearth/ygo"}, version: $v}
+               + (if $t == "" then {} else {page_token: $t} end)')
+            page=$(curl -fsS --retry 3 -X POST https://api.osv.dev/v1/query -d "$query")
+            printf '%s\n' "$page" >> /tmp/osv.json
+            token=$(jq -r '.next_page_token // empty' <<<"$page")
+            [[ -z "$token" ]] && break
+          done
+          if [[ -n "$token" ]]; then
+            echo "OSV still paging after 20 pages" >&2
+            exit 1
+          fi
+
+          status=0
+          ./scripts/ygows-advisories.sh third_party/ygows/osv-ignore.txt \
+            < /tmp/osv.json > /tmp/advisories.txt || status=$?
+          cat /tmp/advisories.txt
+          if [[ "$status" -gt 1 ]]; then
+            echo "ygows-advisories.sh failed (rc=$status)" >&2
+            exit 1
+          fi
+          echo "found=$status" >> "$GITHUB_OUTPUT"
+
+      - name: Open, update or close the tracking issue
+        env:
+          # GITHUB_TOKEN keeps the labels on the issue (BUG-NVNPD8).
+          GH_TOKEN: ${{ github.token }}
+          FOUND: ${{ steps.osv.outputs.found }}
+          VERSION: ${{ steps.osv.outputs.version }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          TITLE='ygows fork: OSV advisory on the forked ygo relay'
+
+          # Only issues this workflow filed; see the dedup note in vulncheck.
+          mapfile -t OPEN < <(gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state open \
+            --search "\"$TITLE\" in:title" \
+            --json number,title,author \
+            | jq -r --arg title "$TITLE" '
+                .[]
+                | select(.title == $title)
+                | select(.author.login == "app/github-actions")
+                | .number')
+          EXISTING=${OPEN[0]:-}
+
+          if [[ "$FOUND" != "1" ]]; then
+            for n in "${OPEN[@]}"; do
+              gh issue close "$n" --repo "$GITHUB_REPOSITORY" \
+                --comment "No open advisories for the fork's base \`github.com/reearth/ygo\` $VERSION. Run: $RUN_URL"
+            done
+            exit 0
+          fi
+
+          # Advisory ids and summaries are public, so they may go in the issue.
+          LIST=$(awk -F'\t' '{ printf "- [%s](https://osv.dev/vulnerability/%s): %s\n", $1, $1, $2 }' /tmp/advisories.txt)
+          BODY=$(cat <<'BODY_EOF'
+          The daily scan found OSV advisories on `github.com/reearth/ygo` __VERSION__ that may affect the forked relay in `third_party/ygows`.
+
+          __LIST__
+
+          Scan run: __RUN_URL__
+
+          To triage, follow "Keeping the fork current" in `third_party/ygows/README.md`:
+          - If upstream has a fix, re-sync the fork with the fixed release and bump `UpstreamVersion` and `go.mod` together.
+          - If the fork is not affected, or a fix was ported into it, add the id to `third_party/ygows/osv-ignore.txt` with the reason.
+
+          This issue is updated by later runs and closed by the first clean run.
+          BODY_EOF
+          )
+          # Quoted replacements: bash 5.2 expands an unquoted & to the match.
+          BODY=${BODY//__VERSION__/"$VERSION"}
+          BODY=${BODY//__LIST__/"$LIST"}
+          BODY=${BODY//__RUN_URL__/"$RUN_URL"}
+
+          gh label create security  --repo "$GITHUB_REPOSITORY" --color B60205 --description "Security-related issue"  --force >/dev/null
+          gh label create automated --repo "$GITHUB_REPOSITORY" --color EDEDED --description "Filed by an automated job" --force >/dev/null
+
+          if [[ -n "$EXISTING" ]]; then
+            # Editing the body sends no notification, so comment when the
+            # list of advisories changed.
+            OLD=$(gh issue view "$EXISTING" --repo "$GITHUB_REPOSITORY" --json body --jq .body)
+            if [[ "$OLD" != *"$LIST"* ]]; then
+              gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" \
+                --body "The list of advisories changed:"$'\n\n'"$LIST"
+            fi
+            gh issue edit "$EXISTING" --repo "$GITHUB_REPOSITORY" --body "$BODY"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" \
+              --label security,automated --body "$BODY"
+          fi

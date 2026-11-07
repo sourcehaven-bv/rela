@@ -87,7 +87,8 @@ archplan *args="up --open":
 archplan-export out=".archplan/model.archmodel.json":
     #!/usr/bin/env bash
     set -euo pipefail
-    args=(-o {{quote(out)}})
+    # third_party holds forked upstream code that rela does not design.
+    args=(-o {{quote(out)}} -exclude third_party)
     for f in .ignored/seqtrace-demo/head/diagrams/steps.json .ignored/seqtrace-demo/diagrams/steps.json; do
         if [ -f "$f" ]; then args+=(-steps "$f"); break; fi
     done
@@ -428,6 +429,10 @@ govulncheck:
 # Test the script that picks the security scan's `go get` targets
 govulncheck-fixable-test:
     scripts/govulncheck-fixable-test.sh
+
+# Test the filter behind the scheduled ygows fork advisory check
+ygows-advisories-test:
+    scripts/ygows-advisories-test.sh
 
 # Check architecture boundaries
 arch-lint:

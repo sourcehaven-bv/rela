@@ -229,13 +229,16 @@ const (
 		"and the answer carries no entity data"
 	exemptSSE = "the event stream stays open until the client leaves, so it has no single answer " +
 		"to record; its events carry ids only and are gated per subscriber"
+	exemptCollab = "a WebSocket relay: a held connection, not an answer to record; the corpus " +
+		"server enables no relay, and collab_test.go covers admission"
 )
 
 // goldenUnsweptRoutes are the patterns the sweep does not send to, with the
 // reason. They have no corpus case either.
 var goldenUnsweptRoutes = map[string]string{
-	"/api/events":     exemptSSE,
-	"/api/v1/_events": exemptSSE,
+	"/api/events":                 exemptSSE,
+	"/api/v1/_events":             exemptSSE,
+	"/api/v1/_collab/{type}/{id}": exemptCollab,
 }
 
 // goldenMethodExemptions are the "METHOD pattern" pairs the corpus does not

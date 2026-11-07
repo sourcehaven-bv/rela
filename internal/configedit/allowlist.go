@@ -335,6 +335,10 @@ var locked = map[File][]string{
 		"relations.*.properties.*.transform.**",
 		// Lua, and what a script may reach.
 		"validations.[].lua", "validations.[].lua_args.**", "validations.[].lua_file",
+		// A rule that refuses writes (TKT-5CESLHD). Not a secret or a
+		// privilege: it is a restriction, so it is changed in the repo, where
+		// review sees it. It is protective, and it pins what the rule checks.
+		"validations.[].enforce",
 		"automations.[].do.[].lua", "automations.[].do.[].lua_file",
 		"automations.[].do.[].allow_acl_bypass", "automations.[].do.[].capabilities.**",
 		"automations.[].do.[].create_entity.template",
@@ -353,7 +357,7 @@ var locked = map[File][]string{
 		"entities.*.properties.*.computed", "relations.*.properties.*.computed",
 		"entities.*.properties.*.rollup.**", "relations.*.properties.*.rollup.**",
 		"relations.*.scope", "relations.*.owning",
-		"validations.[].faces.**", "automations.[].on.faces.**",
+		"validations.[].faces.**", "automations.[].on.faces.**", "automations.[].on.copy.**",
 	},
 	DataEntryFile: {
 		"version",
@@ -411,6 +415,7 @@ var protective = map[File][]string{
 		"relations.*.properties.*.scan",
 		"relations.*.properties.*.scan_cmd.**",
 		"types.*.transitions.[].guard",
+		"validations.[].enforce",
 	},
 	DataEntryFile: {
 		"app.disable_custom_injection", "app.max_attachment_bytes",
@@ -432,7 +437,8 @@ type pin struct {
 // ordinary edit. (A second edge with the same from and to is refused by the
 // state machine itself.) Pointing reviewed Lua, or an action that may reach
 // past the ACL, at other records is a new use of that code, so the trigger
-// and scope of an item holding it stay as they are.
+// and scope of an item holding it stay as they are. A rule enforced on write
+// is a restriction: what it applies to and what it requires stay as reviewed.
 //
 // The navigation, space and dashboard permission: keys need no pin: they
 // only decide what the menu shows, and the data behind an entry stays
@@ -444,6 +450,11 @@ var pinned = map[File][]pin{
 			item: "validations.[]",
 			keys: []string{"entity_type", "when", "when_condition"},
 			by:   []string{"validations.[].lua", "validations.[].lua_file", "validations.[].lua_args.**"},
+		},
+		{
+			item: "validations.[]",
+			keys: []string{"entity_type", "faces", "when", "when_condition", "then", "then_condition"},
+			by:   []string{"validations.[].enforce"},
 		},
 		{
 			item: "automations.[]",

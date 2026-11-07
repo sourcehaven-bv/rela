@@ -280,6 +280,7 @@ func convertFromMetamodel(def metamodel.AutomationDef) (Automation, error) {
 			Faces:           []string(def.On.Faces),
 			When:            whenFilters,
 			Condition:       def.On.Condition,
+			Copy:            []string(def.On.Copy),
 		},
 		Do:       make([]Action, len(def.Do)),
 		Validate: make([]Validation, len(def.Validate)),
@@ -397,10 +398,20 @@ func (e *Engine) matches(ctx context.Context, trigger Trigger, event Event, res 
 	if !e.matchesFace(trigger, event.Entity) {
 		return false
 	}
+	// The copy scope too, so a copy trigger evaluates no condition on a write
+	// it can never match.
+	if !e.copyScopeAdmits(trigger, event) {
+		return false
+	}
 
 	// Check when conditions (property filters on the entity)
 	if !e.matchesWhenConditions(ctx, trigger, event.Entity, res) {
 		return false
+	}
+
+	if len(trigger.Copy) > 0 && event.Type != EventEntityRenamed && copyOnly(trigger) {
+		// Alone, `on.copy:` fires on every run of the copy, changed or not.
+		return event.Type == EventEntityCreated || event.Type == EventEntityUpdated
 	}
 
 	switch event.Type {
@@ -419,7 +430,7 @@ func (e *Engine) matches(ctx context.Context, trigger Trigger, event Event, res 
 	case EventEntityRenamed:
 		// A pending job names the old id and finds nothing, so a rename
 		// re-runs every entity trigger that could have scheduled one.
-		return trigger.Created || trigger.Updated || trigger.Property != ""
+		return trigger.Created || trigger.Updated || trigger.Property != "" || len(trigger.Copy) > 0
 
 	case EventEntityDeleted:
 		return trigger.Deleted
@@ -438,6 +449,36 @@ func (e *Engine) matches(ctx context.Context, trigger Trigger, event Event, res 
 	}
 
 	return false
+}
+
+// copyScopeAdmits applies the trigger's `on.copy:` scope: an entity event
+// must come from one of the named copies. A rename carries no copy, and
+// re-runs a copy trigger only on a face one of its copies writes, so the
+// re-run cannot reach a face the copy's guard never admitted. Without a
+// metamodel the targets are unknown, so a rename re-runs no copy trigger.
+func (e *Engine) copyScopeAdmits(trigger Trigger, event Event) bool {
+	if len(trigger.Copy) == 0 {
+		return true
+	}
+	if event.Type != EventEntityRenamed {
+		return slices.Contains(trigger.Copy, event.Copy)
+	}
+	if e.meta == nil || event.Entity == nil {
+		return false
+	}
+	for _, name := range trigger.Copy {
+		to, err := metamodel.ParseCopyTarget(e.meta.Copies[name].To)
+		if err == nil && to.Type == event.Entity.Type && to.Face == string(event.Entity.Face) {
+			return true
+		}
+	}
+	return false
+}
+
+// copyOnly reports whether `on.copy:` is the trigger's only event key.
+func copyOnly(trigger Trigger) bool {
+	return !trigger.Created && !trigger.Updated && trigger.Property == "" &&
+		trigger.RelationCreated == "" && trigger.RelationRemoved == ""
 }
 
 // matchesPropertyChange checks if a property change event matches the trigger.

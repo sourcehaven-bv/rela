@@ -67,6 +67,7 @@ var validValidationRuleKeys = map[string]bool{
 	"lua":            true,
 	"lua_file":       true,
 	"lua_args":       true,
+	"enforce":        true,
 }
 
 // Load reads and parses a metamodel from a YAML file using the given filesystem.
@@ -323,7 +324,9 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateQueryScopes(m)...)
 	validationErrors = append(validationErrors, validateValidationFaces(m)...)
 	validationErrors = append(validationErrors, validateValidationRelations(m)...)
+	validationErrors = append(validationErrors, validateValidationEnforce(m)...)
 	validationErrors = append(validationErrors, validateAutomationFaces(m)...)
+	validationErrors = append(validationErrors, validateAutomationCopies(m)...)
 	validationErrors = append(validationErrors, validateBackgroundActions(m)...)
 	validationErrors = append(validationErrors, validateAddToPile(m)...)
 	validationErrors = append(validationErrors, validateNotify(m)...)
@@ -2054,6 +2057,64 @@ func validateValidationFaces(m *Metamodel) []string {
 					"validation %q: `faces: [%s]` names a face no entity type declares — "+
 						"the rule would match nothing and pass forever", rule.Name, face))
 			}
+		}
+	}
+	return errs
+}
+
+// validateValidationEnforce checks the `enforce:` key of every validation rule
+// (TKT-5CESLHD).
+//
+// A write-enforced rule runs on every write of its types, inside the write.
+// It may therefore read only the entity being written, through the predicate
+// engine. The load refuses the parts of a rule that would need more: Lua,
+// which must never run on the write path, and `relations:` or `content:`,
+// which the write-path evaluator does not answer. Refusing them is the safe
+// direction: dropping them silently would leave a rule that looks enforced
+// but checks less than it says. `related(...)` in a condition is refused
+// where the conditions compile, in internal/writerule.
+func validateValidationEnforce(m *Metamodel) []string {
+	var errs []string
+	for _, rule := range m.Validations {
+		switch rule.Enforce {
+		case "":
+			continue
+		case EnforceWrite:
+		default:
+			errs = append(errs, fmt.Sprintf(
+				"validation %q: `enforce: %s` is not supported (valid: %s)",
+				rule.Name, rule.Enforce, EnforceWrite))
+			continue
+		}
+		refuse := func(key, why string) {
+			errs = append(errs, fmt.Sprintf(
+				"validation %q: `enforce: write` cannot be combined with `%s:` (%s)",
+				rule.Name, key, why))
+		}
+		if rule.Lua != "" {
+			refuse("lua", "Lua never runs on the write path")
+		}
+		if rule.LuaFile != "" {
+			refuse("lua_file", "Lua never runs on the write path")
+		}
+		if len(rule.LuaArgs) > 0 {
+			refuse("lua_args", "Lua never runs on the write path")
+		}
+		if len(rule.Relations) > 0 {
+			refuse("relations", "a write-enforced rule reads only the entity being written")
+		}
+		if rule.Content != nil {
+			refuse("content", "a write-enforced rule checks properties only")
+		}
+		if rule.Severity != "" && rule.Severity != "error" {
+			errs = append(errs, fmt.Sprintf(
+				"validation %q: `enforce: write` needs `severity: error` or no severity, not %q",
+				rule.Name, rule.Severity))
+		}
+		if len(rule.Then) == 0 && rule.ThenCondition == "" {
+			errs = append(errs, fmt.Sprintf(
+				"validation %q: `enforce: write` needs `then:` or `then_condition:` — "+
+					"the rule would check nothing", rule.Name))
 		}
 	}
 	return errs

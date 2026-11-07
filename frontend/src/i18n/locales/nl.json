@@ -320,6 +320,11 @@
     "backToList": "Terug naar de lijst",
     "titleLabel": "Titel",
     "bodyLabel": "Tekst",
+    "collab": {
+      "expired": "Samen bewerken is gestopt omdat de verbinding te lang weg was. Je wijzigingen zijn opgeslagen; open de tekst opnieuw om verder te bewerken.",
+      "staleBuild": "Er is een nieuwere versie van de app. Je wijzigingen worden opgeslagen en de pagina wordt herladen.",
+      "unavailable": "Samen bewerken is nu niet beschikbaar. Je bewerkt alleen; wijzigingen die anderen tegelijk maken worden samengevoegd bij het opslaan."
+    },
     "view": "Bekijken",
     "copyTo": "Kopiëren naar",
     "export": "Exporteren",

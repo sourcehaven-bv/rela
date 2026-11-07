@@ -182,6 +182,16 @@ func (e *Evaluator) CompileFilter(entityType string, filters []*filter.Filter) (
 	return e.Compile(entityType, src)
 }
 
+// CompileClauses parses filter clauses as written in the schema, such as
+// `status=done`, and compiles them like [Evaluator.CompileFilter].
+func (e *Evaluator) CompileClauses(entityType string, clauses []string) (*predicate.Program, error) {
+	filters, err := filter.ParseAll(clauses)
+	if err != nil {
+		return nil, err
+	}
+	return e.CompileFilter(entityType, filters)
+}
+
 // Matches binds the entity's properties and evaluates prog. An Eval error
 // (e.g. an off-type binding the type checker couldn't catch) is returned;
 // callers on a filtering path typically treat a non-nil error as "does

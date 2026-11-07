@@ -49,6 +49,11 @@ export const useSchemaStore = defineStore('schema', () => {
   // renders, so it defaults to FALSE — an unset flag hides a button rather
   // than shipping one that can only 501.
   const historyEnabled = ref<boolean>(false)
+  // Whether this server runs the co-editing relay (TKT-CJL604; see
+  // AppConfig.collab_enabled). False keeps the single-writer editor.
+  const collabEnabled = ref<boolean>(false)
+  // The relay process the page was served by (AppConfig.collab_epoch).
+  const collabEpoch = ref<string>('')
   const forms = ref<Map<string, FormConfig>>(new Map())
   /** data-entry.yaml `channels:`, keyed by channel type (TKT-91BK6F). */
   const channelPresentations = ref<Map<string, ChannelPresentation>>(new Map())
@@ -443,6 +448,8 @@ export const useSchemaStore = defineStore('schema', () => {
       app.value = configData.app || { name: 'rela' }
       defaultWorld.value = configData.app?.default_world || ''
       historyEnabled.value = configData.app?.history_enabled === true
+      collabEnabled.value = configData.app?.collab_enabled === true
+      collabEpoch.value = configData.app?.collab_epoch ?? ''
       aboutDescription.value = configData.about_description || ''
       styles.value = configData.styles || {}
       forms.value = new Map(Object.entries(configData.forms || {}))
@@ -579,6 +586,8 @@ export const useSchemaStore = defineStore('schema', () => {
     worldForFace,
     faceLabel,
     historyEnabled,
+    collabEnabled,
+    collabEpoch,
     getInverseName,
     getForm,
     getList,

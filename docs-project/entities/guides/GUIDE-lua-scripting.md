@@ -1911,7 +1911,9 @@ is `nil` and only `published_raw` is set.
 |----------|-------------|
 | `rela.project_root` | Absolute path to project root |
 | `rela.args` | Script arguments (table) |
-| `rela.today` | Current date as "YYYY-MM-DD" |
+| `rela.today` | Current date as "YYYY-MM-DD", in the server's local time zone |
+| `rela.now` | Current time as an RFC 3339 timestamp in UTC with second precision, such as `"2026-11-06T14:30:15Z"` |
+| `rela.now_unix` | Current time as Unix seconds |
 | `rela.params` | Action script parameters (table, static string-valued map from data-entry config) |
 | `rela.secrets` | Per-script secrets (table, from `.rela/secrets.yaml`) |
 | `rela.request` | Present **only** for a request-scoped action (an action with a `request:` block). Read-only `{method, path, content_type, raw, body, query, headers}` — see [Request-scoped actions](data-entry.md#request-scoped-actions). `headers` holds only the names the action allowlisted; credentials and proxy-asserted identity headers are refused at config load. `nil` everywhere else, so `if rela.request then` is the test. |
@@ -1919,6 +1921,12 @@ is `nil` and only `published_raw` is set.
 | `rela.cache` | Process-wide memoization cache namespaced per script (see [Cache](#cache)) |
 | `rela.mode` | Set to `"document"` when rendering a data-entry document; `nil` otherwise (see [Document Mode](#document-mode)) |
 | `rela.document` | Present only in document mode; holds `{id, entry_id}` (see [Document Mode](#document-mode)) |
+
+The three time values come from one clock reading, taken when the runtime
+starts. They do not advance while the script runs. `rela.now` is in UTC, so
+just after local midnight its date part can be one day behind `rela.today`.
+The date helpers accept it: `rela.date_add(rela.now, "1d")` adds a day to its
+UTC date and returns a date without a time.
 
 ### Document Mode
 

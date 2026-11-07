@@ -364,6 +364,17 @@ every field it writes, and merges on a 412 (TKT-2VDVHF; API contract in
   overwrite their change. A 412 always takes the merge or conflict path. A
   late read that would move a base backwards is kept out by the read order
   of `useEntitySession`, not by autosave.
+- **Co-editing deviates from that for the room's latest save**
+  (TKT-CJL604). In a room, another client's save of the shared document is
+  not someone else's change. `resendContent(theirs)` returns the room's
+  document only when `theirs` is the room's latest save
+  (`collabRoom.isCurrentBase`: its stored or its sent body), and autosave
+  then resends over it instead of merging. Any other 412 still merges,
+  including an older room body restored from history. In a room
+  `applyServerContent` applies only a merge (`cause === 'merged'`), as the
+  change from the text the save was made from (`applyChange(from, to)`), so
+  what peers typed since stays. A stored body or a revert would overwrite
+  peers' newer typing, and the room document already holds it.
 
 ## Reads and writes of the entity on screen (`useEntitySession`)
 

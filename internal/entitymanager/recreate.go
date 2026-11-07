@@ -115,7 +115,7 @@ func recreateEntity(ctx context.Context, m *Manager, e *entity.Entity, allowRefs
 	// DEC-HWZHA: hard structural errors abort (the API layer maps these to
 	// 422); soft conditions surface as warnings on the result.
 	v := metamodel.NewValidator(m.deps.Meta)
-	hard, soft := partitionValidationErrors(v.ValidateEntity(e.ID, e.Type, e.Properties))
+	hard, soft := partitionValidationErrors(m.deps.ValidationMode, v.ValidateEntity(e.ID, e.Type, e.Properties))
 	if len(hard) > 0 {
 		return nil, newValidationError(hard)
 	}
