@@ -785,6 +785,9 @@ func isAffordanceProbe(ctx context.Context) bool {
 	return v
 }
 
+// transitionGuardRuleKind is the RuleKind of a transition-guard denial.
+const transitionGuardRuleKind = "transition-guard"
+
 // mapTransitionError translates a state-machine enforcement error into the
 // entitymanager's wire-facing error shape (TKT-E4LW2). A guard denial becomes
 // an [*acl.ForbiddenError] (RuleKind "transition-guard") so it flows through
@@ -799,7 +802,7 @@ func (m *Manager) mapTransitionError(ctx context.Context, subject acl.Subject, e
 	if errors.As(err, &ge) {
 		decision := acl.Decision{
 			Allow:    false,
-			RuleKind: "transition-guard",
+			RuleKind: transitionGuardRuleKind,
 			RuleID:   ge.Permission, // the specific right, queryable in audit (RR-F30CZ/N1)
 			Reason:   err.Error(),
 		}
@@ -1315,13 +1318,14 @@ func updateKeepingFileValues(
 func (m *Manager) PatchEntity(
 	ctx context.Context, id string, p entity.Patch,
 ) (*entity.UpdateResult, error) {
-	return patchEntity(ctx, m, id, p, nil)
+	return patchEntity(ctx, m, id, p, patchPre{})
 }
 
-// patchEntity is [Manager.PatchEntity]. A grant that covers the stored row
-// stands in for the attempt's authorization; see [UpdateGrant].
+// patchEntity is [Manager.PatchEntity] with the extra checks in pre. A grant
+// that covers the stored row stands in for the attempt's authorization; see
+// [UpdateGrant]. pre.check runs on every attempt; see [ScopedUpdates].
 func patchEntity(
-	ctx context.Context, m *Manager, id string, p entity.Patch, grant *UpdateGrant,
+	ctx context.Context, m *Manager, id string, p entity.Patch, pre patchPre,
 ) (*entity.UpdateResult, error) {
 	ctx = withStoreAttribution(ctx)
 	if id == "" {
@@ -1330,15 +1334,21 @@ func patchEntity(
 	if expect, view, ok := claimExpectation(ctx); ok {
 		// A caller-view expectation (VersionTags.WriteAsSeen): one pinned
 		// attempt, never retried.
+		own := pre.check
 		return m.patchEntityOnce(ctx, id, p, true, "", patchPre{
-			grant: grant,
+			grant: pre.grant,
 			check: func(stored *entity.Entity) error {
+				if own != nil {
+					if err := own(stored); err != nil {
+						return err
+					}
+				}
 				return checkCallerToken(ctx, stored.Ref(), expect, view)
 			},
 		})
 	}
 	return patchWithRetry(ctx, p.ExpectedVersion == "", func(pinToRead bool) (*entity.UpdateResult, error) {
-		return m.patchEntityOnce(ctx, id, p, pinToRead, "", patchPre{grant: grant})
+		return m.patchEntityOnce(ctx, id, p, pinToRead, "", pre)
 	})
 }
 
@@ -1416,7 +1426,7 @@ func (g UpdateGrant) PatchEntity(ctx context.Context, id string, p entity.Patch)
 	if g.m == nil {
 		return nil, errors.New("entitymanager: UpdateGrant.PatchEntity: grant not made by AuthorizeUpdate")
 	}
-	return patchEntity(ctx, g.m, id, p, &g)
+	return patchEntity(ctx, g.m, id, p, patchPre{grant: &g})
 }
 
 // covers reports whether g authorizes m's update of stored under ctx.
@@ -1507,6 +1517,14 @@ func (m *Manager) patchEntityOnce(
 		}
 		return nil, rErr
 	}
+	// The caller's own check runs before the locked check too: a check
+	// that refuses a row like an absent one must not be preceded by an
+	// error that confirms the row exists.
+	if pre.check != nil {
+		if err := pre.check(stored); err != nil {
+			return nil, err
+		}
+	}
 
 	// A locked (git-crypt) entity reads as a shell whose real property
 	// values are unavailable, so merging onto it and saving would persist
@@ -1515,11 +1533,6 @@ func (m *Manager) patchEntityOnce(
 	// (RR-0QWLRC). Matches RecreateEntity's guard.
 	if stored.IsLocked() {
 		return nil, fmt.Errorf("entitymanager: PatchEntity: entity %s has inaccessible fields", id)
-	}
-	if pre.check != nil {
-		if err := pre.check(stored); err != nil {
-			return nil, err
-		}
 	}
 
 	// Face from the STORED entity, not from `id`: `id` may be the fused
