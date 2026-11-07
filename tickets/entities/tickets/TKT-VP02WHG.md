@@ -38,3 +38,9 @@ appear in a fingerprint or item list).
 - Two principals with different read access get different fingerprints for
 the same range.
 - The endpoint passes the security and router tests.
+
+## Notes
+
+- The handler reads fingerprints through a narrow adapter over
+`visibility.Elements`, so `dataentry` does not import `reconcile`. That
+keeps `reconcile` out of archplan's zone of pain (Ca stays 4).
