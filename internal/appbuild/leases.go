@@ -147,7 +147,7 @@ func leaseBackend(fs storage.FS, paths *project.Context, st store.Store) (lease.
 		return memoryLeases(), nil
 	}
 	var locker kvlease.Locker = filelock.ProcessPrivate{}
-	if _, mem := fs.(*storage.MemFS); !mem {
+	if !inMemoryFS(fs) {
 		if locker, err = filelock.New(filepath.Join(paths.CacheDir, leasesLockFile)); err != nil {
 			return nil, err
 		}
