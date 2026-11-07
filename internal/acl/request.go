@@ -153,8 +153,8 @@ func (r *Request) AuthorizeWrite(ctx context.Context, req WriteRequest) Decision
 // store.GraphQuery.
 //
 //archplan:guard=authz reason="compiles the row gate for a list read into a store predicate"
-func (r *Request) ReadQuery(_ context.Context, entityType string) ReadQueryResult {
-	return r.readQuery(entityType)
+func (r *Request) ReadQuery(ctx context.Context, entityType string) ReadQueryResult {
+	return r.readQuery(ctx, entityType)
 }
 
 // errReadQueryZero reports a ReadQueryResult with none of its three states

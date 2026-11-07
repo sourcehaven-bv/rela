@@ -443,6 +443,9 @@ const (
 	// worker: automatic close and archive, and the retention purge. Paired
 	// with [UserRealtime].
 	ToolRealtime = "realtime"
+	// ToolFlow attributes the writes the flow engine makes as [UserFlow]:
+	// the run header and its managed edges (FEAT-J0O10QI).
+	ToolFlow = "flow"
 )
 
 // TypeWebhook is the [Principal.PrincipalType] of a declarative webhook
@@ -515,6 +518,13 @@ const UserAutomation = "system:automation"
 // graph, so it needs no role in acl.yaml. Paired with [ToolRealtime].
 const UserRealtime = "system:realtime"
 
+// UserFlow is the fixed [Principal.User] of the flow engine. It is the only
+// identity that may write a `_flow-run` entity or a `_carries` or
+// `_produced` edge. The ACL grants it that role when it loads, and no
+// operator may assign it or name it as `run_as`, so an operator script
+// cannot borrow it (TKT-BC5G8RP). Paired with [ToolFlow].
+const UserFlow = "system:flow"
+
 // UserMail is the [Principal.User] of the mail send script: the identity a
 // delivery's audit names when rela, not a person, sent the message.
 const UserMail = "system:mail"
@@ -540,7 +550,7 @@ const SubscriptionUserPrefix = ReservedPrefix + "subscription:"
 // self-asserted callers from the start.
 var relaUsers = map[string]bool{
 	UserScheduler: true, UserProvisioner: true, UserAutomation: true, UserRealtime: true,
-	UserMail: true, UserFSImport: true, UserGCSweep: true, UserPerfSeed: true,
+	UserMail: true, UserFSImport: true, UserGCSweep: true, UserPerfSeed: true, UserFlow: true,
 }
 
 // relaUserPrefixes are the families of rela's own identities.
@@ -704,6 +714,9 @@ func RefuseRunAsEnv(lookup func(string) (string, bool)) error {
 // accepted only when allowSystem accepts it: each caller decides which of
 // rela's own identities its surface may use.
 //
+// [UserFlow] is refused whatever allowSystem says: its role is the only
+// one that writes flow runs, and only the engine may hold it.
+//
 // Nil: allowSystem is accepted and refuses every `system:` name.
 func ValidateRunAs(runAs string, allowSystem func(string) bool) error {
 	if strings.TrimSpace(runAs) != runAs || runAs == "" {
@@ -718,6 +731,9 @@ func ValidateRunAs(runAs string, allowSystem func(string) bool) error {
 				"digits, '_' or '-', starting with a letter or digit", runAs)
 		}
 		return nil
+	}
+	if runAs == UserFlow {
+		return fmt.Errorf("invalid run_as %q: only the flow engine acts as this identity", runAs)
 	}
 	if strings.HasPrefix(runAs, ReservedPrefix) && (allowSystem == nil || !allowSystem(runAs)) {
 		return fmt.Errorf("invalid run_as %q: the %q identities are rela's own", runAs, ReservedPrefix)

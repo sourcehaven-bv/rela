@@ -43,7 +43,7 @@ func TestReadQuery_FailsClosedOnEmptyMemberSet(t *testing.T) {
 
 	req := &Request{d: d, principal: principal.Principal{}} // unstamped → no members
 
-	got := req.readQuery("document")
+	got := req.readQuery(t.Context(), "document")
 
 	if !got.DenyAll {
 		t.Errorf("readQuery with an empty member set: DenyAll = false, want true\n"+

@@ -92,7 +92,7 @@ func NewFilesystem(dir string, opts ...Option) (*Filesystem, error) {
 // retries — a transient failure doesn't kill audit for the process
 // lifetime.
 func (f *Filesystem) Record(rec Record) {
-	rec = sanitize(rec)
+	rec = sanitize(withSource(rec))
 	now := f.clock().UTC()
 
 	f.mu.Lock()
@@ -217,6 +217,10 @@ func sanitize(rec Record) Record {
 	rec.TriggeredBy = clean(rec.TriggeredBy)
 	rec.AssertedBy = clean(rec.AssertedBy)
 	rec.Summary = clean(rec.Summary)
+	rec.Flow = clean(rec.Flow)
+	rec.Run = clean(rec.Run)
+	rec.Step = clean(rec.Step)
+	rec.Source = clean(rec.Source)
 	return rec
 }
 

@@ -257,12 +257,18 @@ func GraphQueryHeaders(ctx context.Context, gq GraphQueryer, q GraphQuery) iter.
 	}
 }
 
-// GraphBranch is one arm of [GraphQuery.Any]: a relation predicate and the
-// faces it grants. A nil FaceIn grants every face; a nil HasInbound holds for
-// every entity of the type (the branch is then only a face set).
+// GraphBranch is one arm of [GraphQuery.Any]: relation predicates and the
+// faces they grant. A nil FaceIn grants every face; a nil HasInbound or
+// HasOutbound holds for every entity of the type. A branch with neither is
+// only a face set. Both set means both must hold.
+//
+// HasOutbound reads the entity's outgoing edges. The ACL uses it to gate a
+// flow run by the subject it carries (TKT-BC5G8RP): one branch per subject
+// type, each with that type's row gate in its endpoint.
 type GraphBranch struct {
-	HasInbound *RelationPredicate
-	FaceIn     []entity.Face
+	HasInbound  *RelationPredicate
+	HasOutbound *RelationPredicate
+	FaceIn      []entity.Face
 }
 
 // NarrowBranch is one arm of [GraphQuery.Narrowing]: a conjunction of

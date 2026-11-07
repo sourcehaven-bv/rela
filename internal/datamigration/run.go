@@ -279,6 +279,11 @@ func (x *Exec) forEachEntity(
 		if err != nil {
 			return err
 		}
+		// A wildcard step leaves rela-managed records (flow runs) alone;
+		// a step naming one is refused at parse time (refuseManagedTargets).
+		if entity.IsManagedName(e.Type) {
+			continue
+		}
 		did, err := fn(e)
 		if err != nil {
 			return fmt.Errorf("%s: %w", e.ID, err)

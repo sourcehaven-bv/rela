@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -64,6 +65,11 @@ func (h *cascadeHost) CreateEntity(
 	if err := h.deps.requireCreateFaceFor(entityType, ""); err != nil {
 		return nil, err
 	}
+	if err := cascadeManagedDenial(ctx, acl.WriteRequest{
+		Op: acl.OpCreate, Subject: acl.NewEntitySubject(entityType, "", ""),
+	}); err != nil {
+		return nil, err
+	}
 	// A cascade's properties are interpolated strings from the schema; no
 	// caller granted ref writes.
 	if err := rejectExternalRefPresent(h.deps.Meta, entityType, opts.Properties); err != nil {
@@ -111,6 +117,11 @@ func (h *cascadeHost) WriteEntity(ctx context.Context, e *entity.Entity, set map
 	if e == nil { // coverage-ignore: defensive: Runner only calls WriteEntity with an entity it created earlier in the
 		// same cascade; never nil
 		return nil
+	}
+	if err := cascadeManagedDenial(ctx, acl.WriteRequest{
+		Op: acl.OpUpdate, Subject: acl.NewEntitySubject(e.Type, e.ID, e.Face),
+	}); err != nil {
+		return err
 	}
 	// writeAutomationProperties rejects a computed property in set, so the
 	// check needs no computed comparison: next's computed values were just
@@ -164,6 +175,11 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 	if r == nil { // coverage-ignore: defensive: Runner only calls WriteRelation with freshly built
 		// RelationsToCreate/trigger relations; never nil
 		return nil
+	}
+	if err := cascadeManagedDenial(ctx, acl.WriteRequest{
+		Op: acl.OpCreate, Subject: acl.RelationSubject{Type: r.Type, FromID: r.From},
+	}); err != nil {
+		return err
 	}
 	// The Runner hands over the trigger row's face. A content-scoped edge
 	// belongs to that face; an identity-scoped one to the entity, whose only
@@ -293,7 +309,7 @@ func (h *cascadeHost) recordCascade(
 	if audit.TriggeredByFrom(ctx) == "" {
 		ctx = audit.WithTriggeredBy(ctx, "automation")
 	}
-	h.deps.Audit.Record(audit.Record{
+	h.deps.Audit.Record(audit.Stamp(ctx, audit.Record{
 		Time:        time.Now().UTC(),
 		Op:          op,
 		Subject:     subject,
@@ -301,5 +317,17 @@ func (h *cascadeHost) recordCascade(
 		TriggeredBy: audit.TriggeredByFrom(ctx),
 		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     summary,
-	})
+	}))
+}
+
+// cascadeManagedDenial applies the managed-type rule to a cascade write,
+// which reaches the store without authorizeAndAudit. The schema already
+// refuses an automation that names a managed type or relation
+// (metamodel.validateManagedReferences); this keeps the rule at the write
+// for a future action whose target is not a schema literal.
+func cascadeManagedDenial(ctx context.Context, req acl.WriteRequest) error {
+	if reason := managedWriteDenial(ctx, req); reason != "" {
+		return &acl.ForbiddenError{Decision: acl.Decision{Reason: reason, RuleKind: ruleKindManaged, RuleID: "-"}}
+	}
+	return nil
 }

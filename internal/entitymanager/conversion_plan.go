@@ -231,6 +231,10 @@ func (p *conversionPlan) planRelations(
 	hasImplicitRow := familyHasFace(p.family, "")
 	for _, rel := range rels {
 		visible := vis.visible(rel)
+		if entity.IsManagedName(rel.Type) {
+			p.planManagedRelation(meta, rel, visible)
+			continue
+		}
 		mapped, ok := d.Relations[rel.Type]
 		if !ok {
 			p.invalid = append(p.invalid, relationProblem{rel.Type + " (no mapping)", visible})
@@ -267,6 +271,20 @@ func (p *conversionPlan) planRelations(
 		key := entity.RelationKey{From: rel.From, FromFace: face, Type: mapped, To: rel.To}
 		p.moves = append(p.moves, relationMove{rel: rel, key: key, visible: visible})
 	}
+}
+
+// planManagedRelation plans a rela-managed edge into the converted entity
+// (a flow run's `_carries` or `_produced`). A schema cannot map a managed
+// relation, so the conversion decides: the edge stays when the target type
+// may still be its endpoint, and is dropped otherwise, as a delete drops it
+// (RR-BLECTJJ). Only a run has outgoing managed edges, and a run cannot be
+// converted.
+func (p *conversionPlan) planManagedRelation(meta *metamodel.Metamodel, rel *entity.Relation, visible bool) {
+	if rd, ok := meta.GetRelationDef(rel.Type); ok && conversionAllowsType(rd.To, p.def.To) {
+		p.kept = append(p.kept, rel)
+		return
+	}
+	p.moves = append(p.moves, relationMove{rel: rel, drop: true, visible: visible})
 }
 
 // capacityProblems checks every replacement edge against its relation's

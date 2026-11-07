@@ -205,7 +205,7 @@ func grantForRole(role RoleDef, verb Verb, entityType string) EveryoneGrant {
 		}
 	}
 	for _, t := range list {
-		if t == "*" {
+		if wildcardCovers(t, entityType) {
 			return EveryoneGrant{Granted: true, Wildcard: true}
 		}
 		// A state-shaped write grant is skipped for the same reason
@@ -276,6 +276,9 @@ func (r *Request) AccessRoutes(
 		}
 		if !permitted {
 			return nil, nil
+		}
+		if entityType == entity.FlowRunType && !holdsGlobalRead(r, entityType) {
+			return flowRunReadRoutes(ctx, r, entityID)
 		}
 		return r.grantingAttributions(ctx, VerbRead, entityType, entityID), nil
 	}

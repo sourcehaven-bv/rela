@@ -344,6 +344,12 @@ func buildAnySQL(
 			with = append(with, w...)
 			conj = append(conj, existsCond(ex, br.HasInbound.Negate))
 		}
+		if br.HasOutbound != nil {
+			w, ex := buildPredicateSQL(b, fmt.Sprintf("%s%d_out", prefix, i), *br.HasOutbound,
+				typeArg, store.DirectionOutgoing, sel)
+			with = append(with, w...)
+			conj = append(conj, existsCond(ex, br.HasOutbound.Negate))
+		}
 		if len(br.FaceIn) > 0 {
 			vals := make([]string, len(br.FaceIn))
 			for j, f := range br.FaceIn {

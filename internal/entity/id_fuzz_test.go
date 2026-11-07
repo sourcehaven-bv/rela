@@ -1,10 +1,11 @@
-package entity
+package entity_test
 
 import (
 	"strings"
 	"testing"
 	"unicode/utf8"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -70,7 +71,7 @@ func FuzzParseEntityID(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, input string) {
 		// ParseEntityID should never panic
-		id, err := ParseEntityID(input)
+		id, err := entity.ParseEntityID(input)
 
 		if err != nil {
 			// Errors are acceptable
@@ -111,7 +112,7 @@ func FuzzValidateID(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, input string) {
 		// ValidateID should never panic
-		err := ValidateID(input)
+		err := entity.ValidateID(input)
 
 		if err == nil {
 			// If validation passed, verify the invariants we expect
@@ -164,7 +165,7 @@ func FuzzParseEntityIDRoundTrip(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, input string) {
 		// Parse the input
-		id1, err := ParseEntityID(input)
+		id1, err := entity.ParseEntityID(input)
 		if err != nil {
 			return
 		}
@@ -173,7 +174,7 @@ func FuzzParseEntityIDRoundTrip(f *testing.F) {
 		str := id1.String()
 
 		// Parse again
-		id2, err := ParseEntityID(str)
+		id2, err := entity.ParseEntityID(str)
 		if err != nil {
 			t.Errorf("failed to parse String() output %q (from input %q): %v",
 				str, input, err)
@@ -200,7 +201,7 @@ func FuzzExtractHighestNumber(f *testing.F) {
 		ids := strings.Split(idsJoined, ",")
 
 		// Should never panic
-		result := ExtractHighestNumber(ids, prefix)
+		result := entity.ExtractHighestNumber(ids, prefix)
 
 		// Result should be non-negative
 		if result < 0 {
@@ -230,7 +231,7 @@ func FuzzGenerateNextID(f *testing.F) {
 		ids := strings.Split(idsJoined, ",")
 
 		// Should never panic
-		result := GenerateNextID(ids, prefix)
+		result := entity.GenerateNextID(ids, prefix)
 
 		// Result should be non-empty
 		if result == "" {
@@ -258,7 +259,7 @@ func FuzzFormatWithPadding(f *testing.F) {
 			return
 		}
 
-		id, err := ParseEntityID(input)
+		id, err := entity.ParseEntityID(input)
 		if err != nil {
 			return
 		}
@@ -319,7 +320,7 @@ func FuzzGenerateShortID(f *testing.F) {
 		}
 
 		// Should never panic
-		result := GenerateShortID(existing, prefix, entityCount, caps)
+		result := entity.GenerateShortID(existing, prefix, entityCount, caps)
 
 		// Result should be non-empty
 		if result == "" {
@@ -342,7 +343,7 @@ func FuzzGenerateShortID(f *testing.F) {
 		}
 
 		// Result should be valid according to ValidateID
-		if err := ValidateID(result); err != nil {
+		if err := entity.ValidateID(result); err != nil {
 			t.Errorf("GenerateShortID returned invalid ID %q: %v", result, err)
 		}
 
@@ -393,7 +394,7 @@ func FuzzGenerateShortIDCollision(f *testing.F) {
 				existing = append(existing, id)
 			}
 
-			id := GenerateShortID(existing, prefix, len(seen), caps)
+			id := entity.GenerateShortID(existing, prefix, len(seen), caps)
 			if _, exists := seen[id]; exists {
 				t.Errorf("GenerateShortID produced collision: %q (iteration %d)", id, i)
 				return

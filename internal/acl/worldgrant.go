@@ -292,7 +292,7 @@ func GrantsVerbOnState(role RoleDef, op Op, target string, p entity.Face) bool {
 	case OpConvert:
 		if p.IsImplicit() {
 			for _, entry := range role.Convert {
-				if entry == "*" || entry == target {
+				if coversType(entry, target) {
 					return true
 				}
 			}
@@ -314,7 +314,7 @@ func GrantsVerbOnState(role RoleDef, op Op, target string, p entity.Face) bool {
 	}
 	for _, entry := range list {
 		if entry == "*" {
-			if p.IsImplicit() {
+			if p.IsImplicit() && wildcardCovers(entry, target) {
 				return true
 			}
 			continue

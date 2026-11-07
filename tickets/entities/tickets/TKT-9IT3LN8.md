@@ -55,3 +55,12 @@ first user.
   them. Decide whether the import moves them into `flow_runs` and
   `flow_definitions` or drops them, and update
   `TestDBImportFS_SQLiteTablesAreAccounted`.
+
+## Carried over from TKT-BC5G8RP
+
+- Call `metamodel.WithFlowRuns` from the wiring when flows.yaml declares
+  flows. Until then nothing in production declares `_flow-run`.
+- Write run headers only as `system:flow` (`principal.UserFlow`, tool
+  `flow`), with config-derived values only (RR-K4KY2I8). Write outputs
+  as `run_as`, and wrap step writes in `audit.WithFlowStep`.
+- Queued jobs started inside a step do not carry the step (RR-LU55NIL).

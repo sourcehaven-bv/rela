@@ -102,6 +102,7 @@ type Metamodel struct {
 	inverseOwners map[string]string       // inverse name -> owning canonical relation name
 	worldOrder    []string                // world names in YAML order; see [WorldOrderOf]
 	abstracts     map[string]AbstractType // abstract types removed at load; see [AbstractTypes]
+	flowRuns      bool                    // set only by [WithFlowRuns]; see [Metamodel.HasFlowRuns]
 }
 
 // ConversionDef is an operator-declared transformation from one entity type
@@ -254,10 +255,15 @@ func (v *ValidationRule) TargetTypes() []string {
 	return []string{v.EntityType}
 }
 
-// AppliesToType reports whether the rule applies to entities of type t.
+// AppliesToType reports whether the rule applies to entities of type t. A
+// rule with no type applies to every operator type, never to a rela-managed
+// one such as a flow run ([IsReservedName]), which the schema cannot name.
 func (v *ValidationRule) AppliesToType(t string) bool {
 	types := v.TargetTypes()
-	return types == nil || slices.Contains(types, t)
+	if types == nil {
+		return !IsReservedName(t)
+	}
+	return slices.Contains(types, t)
 }
 
 // EnforceWrite is the [ValidationRule.Enforce] value that makes the write
