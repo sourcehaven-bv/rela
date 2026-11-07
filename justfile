@@ -284,6 +284,7 @@ test-postgres:
     go test -race -tags postgres ./internal/store/pgstore/... ./internal/jobs/...
     go test -race -tags postgres -run 'TestConcurrency_|TestFamilyDelete_|TestFamilyRename_' ./internal/entitymanager/
     go test -race -tags postgres -run 'TestWebhookConflict' ./internal/dataentry/
+    go test -race -tags postgres ./internal/tenant/
 
 # Run the attachment scan tests against a REAL clamd (needs clamav-daemon
 # running locally). Every other scan test substitutes a stub `sh -c` command,

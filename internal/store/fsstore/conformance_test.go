@@ -50,6 +50,7 @@ func visibleSearchFactory(t *testing.T) (store.Store, search.Searcher, search.Vi
 
 func TestConformance(t *testing.T) {
 	storetest.RunAll(t, factory, searchFactory, visibleSearchFactory, storetest.Capabilities{
+		ElementRanges: storetest.NaiveElementRanges,
 		Attachments:   true,
 		SoftDelete:    true,
 		FamilyReplace: true,

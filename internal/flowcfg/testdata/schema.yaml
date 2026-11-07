@@ -2,6 +2,7 @@ version: "1.0"
 entities:
   person:
     label: Person
+    aliases: [pers]
     id_prefix: "PER-"
     id_type: sequential
     properties:
@@ -23,6 +24,7 @@ entities:
         rollup: { via: mentions, count: true }
   task:
     label: Task
+    aliases: [todo]
     id_prefix: "TSK-"
     id_type: sequential
     properties:

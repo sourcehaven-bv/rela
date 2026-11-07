@@ -111,7 +111,20 @@ func TestConformance(t *testing.T) {
 			require.NoError(t, err)
 			return els
 		},
+		ElementRanges: elementRanges,
 	})
+}
+
+// elementRanges is the native element range reader over s.
+func elementRanges(t *testing.T, s store.Store) storetest.ElementRanger {
+	t.Helper()
+	g, err := sqlitestore.NewElementRanges(s.(*sqlitestore.Store))
+	require.NoError(t, err)
+	return g
+}
+
+func TestElementRangeDifferential(t *testing.T) {
+	storetest.RunElementRangeDifferential(t, factory, elementRanges, sqlitestore.RendersRangeNatively)
 }
 
 // TestTxAbnormalExit covers what RunTxRollbackTests cannot see: a panic in fn
