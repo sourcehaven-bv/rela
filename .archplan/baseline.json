@@ -1,6 +1,12 @@
 {
   "version": 1,
   "findings": {
+    "concepts.missing_operation-d60f02f07da6": {
+      "state": "accepted",
+      "reason": "By design: one reader per backend for the same store contract (Go walk, PostgreSQL SQL, SQLite SQL). The shared plan and aggregation already live in store (PlanElementRange, RangeSumFromAggregates); a single store operation cannot run backend SQL.",
+      "at": "2026-11-07T12:30:00Z",
+      "title": "3 components (elementnaive, pgstore, sqlitestore) each write their own fingerprint for ElementRange and ElementScope, a type of store."
+    },
     "structure.tangle-b1bf2e78506f": {
       "state": "accepted",
       "reason": "Debt: SPA folders form one cycle around composables.",
@@ -2616,14 +2622,14 @@
       "weight.layers": 0,
       "weight.vocabulary": 912,
       "weight.types": 3955,
-      "weight.concepts": 7053,
+      "weight.concepts": 7061,
       "weight.boundaries": 1387,
       "weight.data": 1297,
       "weight.security": 140,
       "largest_tangle": 13,
       "cycle_edges": 61,
       "upward_edges": 0,
-      "propagation_cost": 9.5
+      "propagation_cost": 9.4
     },
     "min_weight": 0,
     "at": "2026-11-07T12:37:24Z",
@@ -2873,13 +2879,28 @@
         }
       },
       {
+        "at": "2026-11-07T12:21:44Z",
+        "change": "loosen",
+        "reason": "TKT-IQU106C: element range readers are one per backend (accepted concepts.missing_operation-d60f02f07da6)",
+        "metrics": {
+          "weight.concepts": [
+            7052,
+            7060
+          ],
+          "propagation_cost": [
+            9.5,
+            9.4
+          ]
+        }
+      },
+      {
         "at": "2026-11-07T12:37:24Z",
         "change": "loosen",
         "reason": "TKT-J4HMZ2B: untagged appbuild.NewInMemory imports memstore, raising the existing memstore data-clump weight by 1",
         "metrics": {
           "weight.concepts": [
-            7052,
-            7053
+            7060,
+            7061
           ]
         }
       }

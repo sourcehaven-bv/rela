@@ -27,6 +27,11 @@ type SearchFactory func(t *testing.T) (store.Store, search.Searcher)
 // implementations that omit a feature (e.g. attachments) can still run
 // the rest of the suite.
 type Capabilities struct {
+	// ElementRanges builds the backend's element range reader
+	// (TKT-IQU106C). Every backend has one, so RunAll FAILS when it is nil
+	// rather than skipping [RunElementRangeTests].
+	ElementRanges ElementRangesFunc
+
 	// Attachments indicates whether the store implements
 	// AttachmentManager. When false, attachment-related conformance
 	// tests are skipped.
@@ -224,6 +229,10 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 	t.Run("EndpointMatch", func(t *testing.T) { RunEndpointMatchTests(t, f) })
 	t.Run("Related", func(t *testing.T) { RunRelatedTests(t, f) })
 	t.Run("Rollup", func(t *testing.T) { RunRollupTests(t, f) })
+	t.Run("ElementRange", func(t *testing.T) {
+		require.NotNil(t, caps.ElementRanges, "every backend has an element range reader; set Capabilities.ElementRanges")
+		RunElementRangeTests(t, f, caps.ElementRanges)
+	})
 	t.Run("GraphHeaders", func(t *testing.T) { RunGraphHeaderTests(t, f) })
 	t.Run("GraphPaging", func(t *testing.T) { RunGraphPagingTests(t, f) })
 	t.Run("GraphPosition", func(t *testing.T) { RunGraphPositionTests(t, f) })

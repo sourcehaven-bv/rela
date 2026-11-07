@@ -5,7 +5,9 @@ title: 'IdP webhook: accept org-scoped events that carry no user_id'
 kind: enhancement
 priority: medium
 effort: s
-status: backlog
+started: "2026-11-07"
+completed: "2026-11-07"
+status: done
 ---
 
 ## Description

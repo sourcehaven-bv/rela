@@ -11,6 +11,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/elementnaive"
 )
 
 // SetCatchUpIntervalForTest shortens the listener's safety-net catch-up poll so
@@ -117,6 +118,18 @@ const GetEntitySQLForTest = getEntitySQL
 // prefix. Test-only.
 func BuildHighestIDSQLForTest(prefix string) (sqlText string, args []any) {
 	return buildHighestIDSQL(prefix)
+}
+
+// BuildRangeListSQLForTest exposes the SQL [ElementRanges.ListRange] issues,
+// for the range EXPLAIN tests.
+func BuildRangeListSQLForTest(
+	scope store.ElementScope, r store.ElementRange, l store.RangeList,
+) (sqlText string, args []any, err error) {
+	plan, err := elementnaive.Plan(scope, r)
+	if err != nil {
+		return "", nil, err
+	}
+	return buildRangeListSQL(plan, l)
 }
 
 // BuildMatchingFacesSQLForTest exposes the SQL [Store.MatchingFaces] issues,
