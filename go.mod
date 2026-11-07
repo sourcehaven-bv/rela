@@ -183,4 +183,8 @@ require (
 //     the LISTEN connection. Not yet proposed upstream.
 //   - acquire leaked a goroutine after every error, and could leak a connection.
 //     Not yet proposed upstream.
-replace github.com/acaloiaro/neoq => github.com/sourcehaven-bv/neoq v0.72.2-0.20261003061725-05694be452ec
+//   - Shutdown did not stop every goroutine the backend started: the memory
+//     backend's cron scheduler, and the redis backend's signal waiters and
+//     periodic task manager. Each closed queue leaked them (TKT-736J0CZ).
+//     https://github.com/sourcehaven-bv/neoq/pull/3. Not yet proposed upstream.
+replace github.com/acaloiaro/neoq => github.com/sourcehaven-bv/neoq v0.72.2-0.20261107140619-7cfa9884c385
