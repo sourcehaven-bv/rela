@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,19 +28,32 @@ func tableColumns(t *testing.T, db *sql.DB, table string) []string {
 	return cols
 }
 
+// withoutElementColumns drops the reconciliation element columns, which the
+// side tables do not carry.
+func withoutElementColumns(cols []string) []string {
+	out := cols[:0:0]
+	for _, c := range cols {
+		if !strings.HasPrefix(c, "element_") {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // TestSoftDeleteTablesMatchLiveTables pins that the side tables hold every
 // live column, in order. sqlitestore moves rows between the two with explicit
 // column lists; a column added to a live table but not here would be dropped
-// on restore.
+// on restore. The element columns are the exception: they are derived from
+// the row, and a restore computes them again.
 func TestSoftDeleteTablesMatchLiveTables(t *testing.T) {
 	db, err := sqlitedb.Open(context.Background(), sqlitedb.Options{Path: filepath.Join(t.TempDir(), "r.db")})
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
-	entities := tableColumns(t, db.DB(), "entities")
+	entities := withoutElementColumns(tableColumns(t, db.DB(), "entities"))
 	assert.Equal(t, append(entities, "deleted_at", "deleted_by"), tableColumns(t, db.DB(), "marked_entities"))
 
-	relations := tableColumns(t, db.DB(), "relations")
+	relations := withoutElementColumns(tableColumns(t, db.DB(), "relations"))
 	assert.Equal(t, append([]string{"owner_id"}, relations...), tableColumns(t, db.DB(), "marked_relations"))
 }
 

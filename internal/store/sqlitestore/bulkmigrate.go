@@ -60,6 +60,9 @@ func (s *Store) SwapRelationEndpoints(ctx context.Context, relType string) (int,
 	if err != nil {
 		return 0, fmt.Errorf("sqlitestore: swap relation endpoints: %w", err)
 	}
+	// Every swapped row changed address; the trigger cleared its element.
+	_, _, err = fillRelationElements(ctx, s, relationTypeScope(relType), 0)
+	warnElementLeftNull(ctx, err)
 
 	// Deleted-then-created, matching pgstore and the generic fallback: the old
 	// triple ceased to exist and the new one did not exist before, so a single

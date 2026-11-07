@@ -138,14 +138,16 @@ func (d softDeleter) Unmark(ctx context.Context, id string) (*store.DeleteResult
 		return nil, err
 	}
 
+	// The element keys are dropped from the saved rows, so a restored row is
+	// hashed again below rather than trusting a value saved at mark time.
 	for _, q := range []string{
 		`INSERT INTO entities SELECT e.* FROM marked_entities m,
-		   jsonb_populate_record(NULL::entities, m.row) e WHERE m.id = $1`,
+		   jsonb_populate_record(NULL::entities, m.row - ` + elementKeysSQL + `) e WHERE m.id = $1`,
 		`UPDATE entities SET seq = nextval('rela_seq') WHERE id = $1`,
 		`DELETE FROM marked_entities WHERE id = $1`,
 		// A live edge created on the same key meanwhile wins.
 		`INSERT INTO relations SELECT r.* FROM marked_relations m,
-		   jsonb_populate_record(NULL::relations, m.row) r WHERE m.owner_id = $1
+		   jsonb_populate_record(NULL::relations, m.row - ` + elementKeysSQL + `) r WHERE m.owner_id = $1
 		 ON CONFLICT DO NOTHING`,
 		`UPDATE relations SET seq = nextval('rela_seq') WHERE from_id = $1 OR to_id = $1`,
 		`DELETE FROM marked_relations WHERE owner_id = $1`,
@@ -155,6 +157,12 @@ func (d softDeleter) Unmark(ctx context.Context, id string) (*store.DeleteResult
 			// row if another entity took its value meanwhile.
 			return nil, s.mapConflict(err)
 		}
+	}
+	if _, _, err := fillEntityElements(ctx, tx, entityFamilyScope(id), 0); err != nil {
+		return nil, err
+	}
+	if _, _, err := fillRelationElements(ctx, tx, relationsOfScope(id), 0); err != nil {
+		return nil, err
 	}
 
 	evs := familyEvents(store.EventEntityCreated, store.EventRelationCreated, family, back)

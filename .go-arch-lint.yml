@@ -2026,6 +2026,10 @@ deps:
       # this package already owns rather than opening a second one.
       - userstate
       - canonical
+      # The stored reconciliation element (TKT-1G2XR1R) must be the same
+      # function the in-memory backends compute, or two peers' ranges never
+      # match.
+      - reconcile
       - graphquerynaive
       - search
       - store
@@ -2059,6 +2063,9 @@ deps:
       # differently would version the same edit differently. Re-deriving it
       # here is exactly the drift the shared package exists to prevent.
       - canonical
+      # The stored reconciliation element (TKT-1G2XR1R), for the same reason
+      # as pgstore's entry.
+      - reconcile
     canUse:
       # Only for *sqlite.Error, to tell a constraint violation from any other
       # failure. Opening the database — and registering the driver — is

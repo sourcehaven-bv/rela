@@ -179,6 +179,15 @@ func logTickError(err error) {
 // The whole tick holds versionMu, so a purge cannot land mid-pass and have its
 // erasure undone by a capture that was already in flight.
 func (s *sweep) tick(ctx context.Context) error {
+	// The element heal is not version capture and needs no projection. It
+	// runs before versionMu, in its own transaction, so it never holds the
+	// write lock and versionMu together. Its errors never stop the capture.
+	if more, err := healElements(ctx, s.store, s.cfg.Batch); err != nil {
+		slog.WarnContext(ctx, "sqlitestore: element heal failed", "error", err)
+	} else if more {
+		s.more = true
+	}
+
 	s.store.versionMu.Lock()
 	defer s.store.versionMu.Unlock()
 

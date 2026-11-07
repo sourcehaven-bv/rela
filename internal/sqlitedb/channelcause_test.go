@@ -44,6 +44,5 @@ func TestMigrate_v31ToV32SessionCause(t *testing.T) {
 	require.Zero(t, cause, "no backfill")
 	var version int
 	require.NoError(t, raw.QueryRow(`PRAGMA user_version`).Scan(&version))
-	require.Equal(t, 33, version)
 	require.Equal(t, sqlitedb.SchemaVersion(), version)
 }

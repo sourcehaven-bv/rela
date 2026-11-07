@@ -147,6 +147,14 @@ func (d softDeleter) Unmark(ctx context.Context, id string) (*store.DeleteResult
 				return fmt.Errorf("sqlitestore: restore %s: %w", id, err)
 			}
 		}
+		// The side tables do not carry the element columns, so the restored
+		// rows come back without them.
+		if _, _, err := fillEntityElements(ctx, v, entityFamilyScope(id), 0); err != nil {
+			return fmt.Errorf("sqlitestore: restore %s: %w", id, err)
+		}
+		if _, _, err := fillRelationElements(ctx, v, relationsOfScope(id), 0); err != nil {
+			return fmt.Errorf("sqlitestore: restore %s: %w", id, err)
+		}
 		for _, e := range family {
 			v.notifyPut(e)
 		}

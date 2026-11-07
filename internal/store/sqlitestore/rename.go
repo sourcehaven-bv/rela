@@ -192,6 +192,14 @@ func (s *Store) renameLocked(
 		`UPDATE attachments SET entity_id = ? WHERE entity_id = ?`, newID, oldID); err != nil {
 		return fmt.Errorf("sqlitestore: rename %s attachments: %w", oldID, err)
 	}
+	// The address of every renamed row changed; the trigger cleared their
+	// elements.
+	if _, _, err := fillEntityElements(ctx, s, entityFamilyScope(newID), 0); err != nil {
+		return fmt.Errorf("sqlitestore: rename %s elements: %w", oldID, err)
+	}
+	if _, _, err := fillRelationElements(ctx, s, relationsOfScope(newID), 0); err != nil {
+		return fmt.Errorf("sqlitestore: rename %s relation elements: %w", oldID, err)
+	}
 
 	fromN, _ := fromRes.RowsAffected()
 	toN, _ := toRes.RowsAffected()
