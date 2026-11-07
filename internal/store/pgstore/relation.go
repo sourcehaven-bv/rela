@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/reconcile"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
@@ -163,12 +164,13 @@ func (s *Store) CreateRelation(
 		VALUES ($1, $2, $3, $4, $5, $6, now(), $7, $8, $9, $10, $11, $12, $13)
 		ON CONFLICT (from_id, from_face, rel_type, to_id) DO NOTHING
 		RETURNING from_id, from_face, rel_type, to_id, properties, content, updated_at`
-	el, err := relationElementCols(k, rawProps, content)
+	readProps, err := unmarshalProps(rawProps)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("pgstore: element of %s: %w", k, err)
 	}
+	el := reconcile.RelationRowColumns(k, readProps, content)
 	r, err := scanRelation(tx.QueryRow(ctx, q, append([]any{k.From, string(k.FromFace), k.Type, k.To, rawProps, content,
-		editorUser, editorTool}, el.args()...)...))
+		editorUser, editorTool}, el.Args()...)...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrConflict
 	}
@@ -212,13 +214,14 @@ func (s *Store) UpdateRelation(
 		    element_hash = $9, element_fp0 = $10, element_fp1 = $11, element_fp2 = $12, element_fp3 = $13
 		WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_face = $8
 		RETURNING from_id, from_face, rel_type, to_id, properties, content, updated_at, element_hash IS NULL`
-	el, err := relationElementCols(k, rawProps, data.Content)
+	readProps, err := unmarshalProps(rawProps)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("pgstore: element of %s: %w", k, err)
 	}
+	el := reconcile.RelationRowColumns(k, readProps, data.Content)
 	var cleared bool
 	r, err := scanRelation(rowPlus{tx.QueryRow(ctx, q, append([]any{k.From, k.Type, k.To, rawProps, data.Content,
-		editorUser, editorTool, string(k.FromFace)}, el.args()...)...), []any{&cleared}})
+		editorUser, editorTool, string(k.FromFace)}, el.Args()...)...), []any{&cleared}})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}

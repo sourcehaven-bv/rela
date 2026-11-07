@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/reconcile"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
@@ -367,15 +368,16 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 		        $16, $17, $18, $19, $20)
 		ON CONFLICT (id, face) DO NOTHING
 		RETURNING updated_at`
-	el, err := entityElementCols(e.ID, e.Face, e.Type, props, e.Content)
+	readProps, err := unmarshalProps(props)
 	if err != nil {
-		return err
+		return fmt.Errorf("pgstore: element of %s: %w", e.ID, err)
 	}
+	el := reconcile.EntityRowColumns(e.Ref(), e.Type, readProps, e.Content)
 	targets, hash := mentionColumns(e.Content)
 	var updatedAt time.Time
 	err = tx.QueryRow(ctx, q, append([]any{e.ID, e.Face, e.Type, props, e.Content, entitySearchText(e),
 		editorUser, editorTool,
-		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, targets, hash}, el.args()...)...).Scan(&updatedAt)
+		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, targets, hash}, el.Args()...)...).Scan(&updatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return store.ErrConflict
 	}
@@ -494,10 +496,11 @@ func (s *Store) updateEntityIf(
 		    element_hash = $16, element_fp0 = $17, element_fp1 = $18, element_fp2 = $19, element_fp3 = $20
 		WHERE id = $1 AND face = $2
 		RETURNING updated_at, element_hash IS NULL`
-	el, err := entityElementCols(e.ID, e.Face, e.Type, props, e.Content)
+	readProps, err := unmarshalProps(props)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("pgstore: element of %s: %w", e.ID, err)
 	}
+	el := reconcile.EntityRowColumns(e.Ref(), e.Type, readProps, e.Content)
 	targets, hash := mentionColumns(e.Content)
 	var (
 		updatedAt time.Time
@@ -505,7 +508,7 @@ func (s *Store) updateEntityIf(
 	)
 	err = tx.QueryRow(ctx, q, append([]any{e.ID, e.Face, e.Type, props, e.Content, entitySearchText(e),
 		editorUser, editorTool,
-		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, targets, hash}, el.args()...)...).
+		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, targets, hash}, el.Args()...)...).
 		Scan(&updatedAt, &cleared)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", store.ErrNotFound

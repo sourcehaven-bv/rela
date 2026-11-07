@@ -25,3 +25,10 @@ sweep (migration 0020), and it is NULL after every write.
 
 - No live row has a NULL hash after a write on any backend.
 - Store conformance tests cover the hash and fingerprint after create, update, rename and delete.
+
+## Outcome
+
+The stored form of an element lives in `reconcile.Columns`, built by
+`reconcile.EntityRowColumns` and `reconcile.RelationRowColumns`. Both database
+stores call these, so the address-free column encoding is defined once (archplan
+duplication finding on PR #2122).

@@ -15,7 +15,7 @@ import (
 // explains the columns, the address expression and the clearing trigger.
 //
 // Single-row writes set the columns in the write statement, hashed from the
-// row as it will read back ([entityElementCols]). Bulk writes let the trigger
+// row as it will read back ([reconcile.EntityRowColumns]). Bulk writes let the trigger
 // clear the rows they change and then fill them in the same transaction
 // ([fillEntityElements], [fillRelationElements]). The version sweep heals rows
 // left NULL by anything else.
@@ -59,55 +59,6 @@ func healElements(ctx context.Context, db DBTX, batch int) (more bool, err error
 			"kind", kind.name, "batch", read)
 	}
 	return more, nil
-}
-
-// elementCols are the stored element columns of one row, in column order:
-// element_hash, element_fp0, element_fp1, element_fp2, element_fp3.
-type elementCols struct {
-	hash  string
-	limbs [4]int64
-}
-
-// args returns the columns as statement arguments.
-func (c elementCols) args() []any {
-	return []any{c.hash, c.limbs[0], c.limbs[1], c.limbs[2], c.limbs[3]}
-}
-
-func colsOf(el reconcile.Element) elementCols {
-	c := elementCols{hash: el.Hash.String()}
-	for i, l := range el.Fingerprint().Limbs() {
-		c.limbs[i] = int64(l)
-	}
-	return c
-}
-
-// entityElementCols returns the element columns for an entity row written
-// with these values. props is the marshaled properties the statement stores;
-// they are decoded as a read decodes them, so the hash equals the hash of the
-// row a later read returns.
-func entityElementCols(id string, face entity.Face, typ string, props []byte, content string) (elementCols, error) {
-	p, err := unmarshalProps(props)
-	if err != nil {
-		return elementCols{}, fmt.Errorf("pgstore: element of %s: %w", id, err)
-	}
-	e := entity.New(id, typ)
-	e.Face = face
-	e.Properties = p
-	e.Content = content
-	return colsOf(reconcile.EntityElement(*e)), nil
-}
-
-// relationElementCols is [entityElementCols] for a relation row.
-func relationElementCols(k entity.RelationKey, props []byte, content string) (elementCols, error) {
-	p, err := unmarshalProps(props)
-	if err != nil {
-		return elementCols{}, fmt.Errorf("pgstore: element of %s: %w", k, err)
-	}
-	r := entity.NewRelation(k.From, k.Type, k.To)
-	r.FromFace = k.FromFace
-	r.Properties = p
-	r.Content = content
-	return colsOf(reconcile.RelationElement(*r)), nil
 }
 
 // elementScope selects the rows a fill looks at. Build one with the
@@ -244,7 +195,7 @@ func readElementBatch(
 				"table", t.name, "error", scanErr)
 			continue
 		}
-		batch.add(key, xmin, colsOf(el))
+		batch.add(key, xmin, el.Columns())
 	}
 	return batch, read, rows.Err()
 }
@@ -270,7 +221,7 @@ type elementBatch struct {
 
 func (b *elementBatch) len() int { return len(b.xmins) }
 
-func (b *elementBatch) add(key []string, xmin string, c elementCols) {
+func (b *elementBatch) add(key []string, xmin string, c reconcile.Columns) {
 	if b.keys == nil {
 		b.keys = make([][]string, len(key))
 	}
@@ -278,9 +229,9 @@ func (b *elementBatch) add(key []string, xmin string, c elementCols) {
 		b.keys[i] = append(b.keys[i], v)
 	}
 	b.xmins = append(b.xmins, xmin)
-	b.hash = append(b.hash, c.hash)
+	b.hash = append(b.hash, c.Hash)
 	for i := range b.limbs {
-		b.limbs[i] = append(b.limbs[i], c.limbs[i])
+		b.limbs[i] = append(b.limbs[i], c.Limbs[i])
 	}
 }
 

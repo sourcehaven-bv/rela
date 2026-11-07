@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/reconcile"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -134,10 +135,11 @@ func (s *Store) createEntityLocked(ctx context.Context, e *entity.Entity) error 
 	// and store.Freshness from ever seeing the edit.
 	updated := time.Now()
 
-	el, err := entityElementCols(e.ID, e.Face, e.Type, props, e.Content)
+	readProps, err := unmarshalProps(props)
 	if err != nil {
-		return err
+		return fmt.Errorf("sqlitestore: element of %s: %w", e.ID, err)
 	}
+	el := reconcile.EntityRowColumns(e.Ref(), e.Type, readProps, e.Content)
 
 	editorUser, editorTool := store.AttributionColumns(ctx)
 	o := originColumns(store.OriginFrom(ctx))
@@ -155,7 +157,7 @@ func (s *Store) createEntityLocked(ctx context.Context, e *entity.Entity) error 
 		                  WHERE lower(id) = lower(?) OR lower(successor) = lower(?))`,
 		e.ID, string(e.Face), e.Type, props, e.Content, sqlitedb.FormatTime(updated), editorUser, editorTool,
 		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, mentionTargetsJSON(e.Content),
-		search.IndexText(e), el.hash, el.limbs[0], el.limbs[1], el.limbs[2], el.limbs[3], e.ID, e.ID, e.ID)
+		search.IndexText(e), el.Hash, el.Limbs[0], el.Limbs[1], el.Limbs[2], el.Limbs[3], e.ID, e.ID, e.ID)
 	var inserted int64
 	if err == nil {
 		inserted, err = res.RowsAffected()
@@ -206,10 +208,11 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 		return err
 	}
 	updated := time.Now() // store-stamped; see CreateEntity
-	el, err := entityElementCols(e.ID, e.Face, e.Type, props, e.Content)
+	readProps, err := unmarshalProps(props)
 	if err != nil {
-		return err
+		return fmt.Errorf("sqlitestore: element of %s: %w", e.ID, err)
 	}
+	el := reconcile.EntityRowColumns(e.Ref(), e.Type, readProps, e.Content)
 
 	// Every update restamps the origin, so an unmarked write clears a copy
 	// marker: the columns describe the most recent write (see store.Origin).
@@ -223,7 +226,7 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 		WHERE id = ? AND face = ?`,
 		e.Type, props, e.Content, sqlitedb.FormatTime(updated), editorUser, editorTool,
 		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, mentionTargetsJSON(e.Content), search.IndexText(e),
-		el.hash, el.limbs[0], el.limbs[1], el.limbs[2], el.limbs[3],
+		el.Hash, el.Limbs[0], el.Limbs[1], el.Limbs[2], el.Limbs[3],
 		e.ID, string(e.Face))
 	if err != nil {
 		return fmt.Errorf("sqlitestore: update %s: %w", e.ID, err)

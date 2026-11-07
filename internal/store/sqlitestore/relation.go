@@ -12,6 +12,7 @@ import (
 	"modernc.org/sqlite"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/reconcile"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
@@ -218,10 +219,11 @@ func (s *Store) CreateRelation(
 		content = data.Content
 	}
 	now := time.Now().UTC()
-	el, err := relationElementCols(k, props, content)
+	readProps, err := unmarshalProps(props)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("sqlitestore: element of %s: %w", k, err)
 	}
+	el := reconcile.RelationRowColumns(k, readProps, content)
 
 	// Mint the surrogate lineage id at CREATE, once. It is what separates two
 	// relations' histories: a delete followed by a re-create of the same triple
@@ -243,7 +245,7 @@ func (s *Store) CreateRelation(
 		 element_hash, element_fp0, element_fp1, element_fp2, element_fp3)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT next FROM rel_record_seq WHERE id = 1), ?, ?, ?, ?, ?)`,
 		k.From, string(k.FromFace), k.Type, k.To, props, content, sqlitedb.FormatTime(now),
-		editorUser, editorTool, el.hash, el.limbs[0], el.limbs[1], el.limbs[2], el.limbs[3]); err != nil {
+		editorUser, editorTool, el.Hash, el.Limbs[0], el.Limbs[1], el.Limbs[2], el.Limbs[3]); err != nil {
 		if isUniqueViolation(err) {
 			return nil, fmt.Errorf("sqlitestore: create relation: %w", store.ErrConflict)
 		}
@@ -276,17 +278,18 @@ func (s *Store) UpdateRelation(
 	if err != nil {
 		return nil, err
 	}
-	el, err := relationElementCols(k, props, data.Content)
+	readProps, err := unmarshalProps(props)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("sqlitestore: element of %s: %w", k, err)
 	}
+	el := reconcile.RelationRowColumns(k, readProps, data.Content)
 	editorUser, editorTool := store.AttributionColumns(ctx)
 	res, err := s.write(ctx, `UPDATE relations SET properties = ?, content = ?, updated_at = ?,
 		    last_edited_by_user = ?, last_edited_by_tool = ?,
 		    element_hash = ?, element_fp0 = ?, element_fp1 = ?, element_fp2 = ?, element_fp3 = ?
 		WHERE from_id = ? AND rel_type = ? AND to_id = ? AND from_face = ?`,
 		props, data.Content, sqlitedb.FormatTime(time.Now()), editorUser, editorTool,
-		el.hash, el.limbs[0], el.limbs[1], el.limbs[2], el.limbs[3],
+		el.Hash, el.Limbs[0], el.Limbs[1], el.Limbs[2], el.Limbs[3],
 		k.From, k.Type, k.To, string(k.FromFace))
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: update relation: %w", err)

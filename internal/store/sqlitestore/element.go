@@ -15,7 +15,7 @@ import (
 // the columns, the address expression and the clearing trigger.
 //
 // Single-row writes set the columns in the write statement, hashed from the
-// row as it will read back ([entityElementCols]), and then refill a row the
+// row as it will read back ([reconcile.EntityRowColumns]), and then refill a row the
 // trigger cleared because its canonical hash did not change
 // ([refillEntityElement]). Bulk writes let the trigger clear the rows they
 // change and fill them afterwards ([fillEntityElements]). The version sweep
@@ -34,55 +34,6 @@ const relationAddressSQL = `(from_id || CASE WHEN from_face = '' THEN '' ELSE '@
 // elementSetSQL assigns the five element columns from five arguments.
 const elementSetSQL = `element_hash = ?, element_fp0 = ?, element_fp1 = ?, element_fp2 = ?, element_fp3 = ?`
 
-// elementCols are the stored element columns of one row, in column order:
-// element_hash, element_fp0, element_fp1, element_fp2, element_fp3.
-type elementCols struct {
-	hash  string
-	limbs [4]int64
-}
-
-// args returns the columns as statement arguments.
-func (c elementCols) args() []any {
-	return []any{c.hash, c.limbs[0], c.limbs[1], c.limbs[2], c.limbs[3]}
-}
-
-func colsOf(el reconcile.Element) elementCols {
-	c := elementCols{hash: el.Hash.String()}
-	for i, l := range el.Fingerprint().Limbs() {
-		c.limbs[i] = int64(l)
-	}
-	return c
-}
-
-// entityElementCols returns the element columns for an entity row written
-// with these values. props is the marshaled properties the statement stores;
-// they are decoded as a read decodes them, so the hash equals the hash of the
-// row a later read returns.
-func entityElementCols(id string, face entity.Face, typ, props, content string) (elementCols, error) {
-	p, err := unmarshalProps(props)
-	if err != nil {
-		return elementCols{}, fmt.Errorf("sqlitestore: element of %s: %w", id, err)
-	}
-	e := entity.New(id, typ)
-	e.Face = face
-	e.Properties = p
-	e.Content = content
-	return colsOf(reconcile.EntityElement(*e)), nil
-}
-
-// relationElementCols is [entityElementCols] for a relation row.
-func relationElementCols(k entity.RelationKey, props, content string) (elementCols, error) {
-	p, err := unmarshalProps(props)
-	if err != nil {
-		return elementCols{}, fmt.Errorf("sqlitestore: element of %s: %w", k, err)
-	}
-	r := entity.NewRelation(k.From, k.Type, k.To)
-	r.FromFace = k.FromFace
-	r.Properties = p
-	r.Content = content
-	return colsOf(reconcile.RelationElement(*r)), nil
-}
-
 // refillEntityElement stores c on the entity row ref after an update that
 // set it, when the trigger cleared it because the canonical hash did not
 // change. The row must still hold exactly the type, properties and content
@@ -90,9 +41,9 @@ func relationElementCols(k entity.RelationKey, props, content string) (elementCo
 // stores nothing. On a row whose element is set it is a primary-key probe that
 // writes nothing.
 func refillEntityElement(
-	ctx context.Context, q querier, ref entity.Ref, typ, props, content string, c elementCols,
+	ctx context.Context, q querier, ref entity.Ref, typ, props, content string, c reconcile.Columns,
 ) error {
-	args := append(c.args(), ref.ID, string(ref.Face), typ, props, content)
+	args := append(c.Args(), ref.ID, string(ref.Face), typ, props, content)
 	if _, err := q.ExecContext(ctx, `UPDATE entities SET `+elementSetSQL+`
 		WHERE id = ? AND face = ? AND element_hash IS NULL
 		  AND type = ? AND properties = ? AND content = ?`, args...); err != nil {
@@ -103,9 +54,9 @@ func refillEntityElement(
 
 // refillRelationElement is [refillEntityElement] for a relation row.
 func refillRelationElement(
-	ctx context.Context, q querier, k entity.RelationKey, props, content string, c elementCols,
+	ctx context.Context, q querier, k entity.RelationKey, props, content string, c reconcile.Columns,
 ) error {
-	args := append(c.args(), k.From, string(k.FromFace), k.Type, k.To, props, content)
+	args := append(c.Args(), k.From, string(k.FromFace), k.Type, k.To, props, content)
 	if _, err := q.ExecContext(ctx, `UPDATE relations SET `+elementSetSQL+`
 		WHERE from_id = ? AND from_face = ? AND rel_type = ? AND to_id = ? AND element_hash IS NULL
 		  AND properties = ? AND content = ?`, args...); err != nil {
@@ -230,7 +181,7 @@ func fillElements(
 					"table", t.name, "error", scanErr)
 				return rowElement{}, nil
 			}
-			return rowElement{rowid: rowid, cols: colsOf(el), ok: true}, nil
+			return rowElement{rowid: rowid, cols: el.Columns(), ok: true}, nil
 		})
 		if rerr != nil {
 			return rerr
@@ -246,7 +197,7 @@ func fillElements(
 // false for a row whose element could not be computed.
 type rowElement struct {
 	rowid int64
-	cols  elementCols
+	cols  reconcile.Columns
 	ok    bool
 }
 
@@ -259,7 +210,7 @@ func writeRowElements(ctx context.Context, q querier, table string, pending []ro
 			continue
 		}
 		res, err := q.ExecContext(ctx, `UPDATE `+table+` SET `+elementSetSQL+`
-			WHERE rowid = ? AND element_hash IS NULL`, append(p.cols.args(), p.rowid)...)
+			WHERE rowid = ? AND element_hash IS NULL`, append(p.cols.Args(), p.rowid)...)
 		if err != nil {
 			return stored, err
 		}
