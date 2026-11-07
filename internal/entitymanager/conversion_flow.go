@@ -355,7 +355,7 @@ func recordConversionAudit(ctx context.Context, m *Manager, name, oldID, oldType
 	if !after.Face.IsImplicit() {
 		summary += " face " + after.Face.String()
 	}
-	m.deps.Audit.Record(audit.Record{
+	m.deps.Audit.Record(audit.Stamp(ctx, audit.Record{
 		Time:        time.Now().UTC(),
 		Op:          audit.OpConvertEntity,
 		Before:      &audit.Subject{Kind: "entity", Type: oldType, ID: oldID},
@@ -364,5 +364,5 @@ func recordConversionAudit(ctx context.Context, m *Manager, name, oldID, oldType
 		TriggeredBy: audit.TriggeredByFrom(ctx),
 		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     summary,
-	})
+	}))
 }

@@ -79,6 +79,7 @@ func TestValidateRunAs(t *testing.T) {
 		{"leading space", " bot", nil, "space"},
 		{"empty", "", nil, "empty"},
 		{"control char", "b\x01ot", nil, "control"},
+		{"flow engine refused even when allowed", principal.UserFlow, func(string) bool { return true }, "flow engine"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -129,7 +130,7 @@ func TestIsRelaIdentity(t *testing.T) {
 		want bool
 	}{
 		{principal.UserRealtime, true}, {principal.UserScheduler, true}, {principal.UserAutomation, true}, {principal.UserProvisioner, true},
-		{principal.UserMail, true}, {principal.UserFSImport, true}, {principal.UserGCSweep, true}, {principal.UserPerfSeed, true},
+		{principal.UserMail, true}, {principal.UserFSImport, true}, {principal.UserGCSweep, true}, {principal.UserPerfSeed, true}, {principal.UserFlow, true},
 		{"system:webhook:github", true}, {"system:subscription:news", true},
 		{"system:ci", false}, {"system:job:nightly", false}, {"integration:bot", false}, {"alice", false},
 	} {

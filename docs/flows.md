@@ -188,13 +188,49 @@ reader cannot see, a flow condition is held to a smaller set:
 - It does not follow relations (`related`).
 - It calls only `contains`, `date_add`, `days_between`, `len` and `today`.
 - It does not read a property that a `visible:` grant in acl.yaml
-  restricts.
+  restricts. acl.yaml must key `visible:` by the type's own name; a key
+  that names an alias fails to load, because it would restrict nothing.
 
 ## Versions
 
 Each flow has a version: a hash of its definition. A change to a flow
 changes its version; a change to a comment does not. `rela flow show`
 prints it. Runs will keep the version they started with.
+
+## Runs
+
+A run is recorded as an entity of the type `_flow-run`, with id prefix
+`RUN-`. rela adds the type when a project declares flows; `schema.yaml`
+cannot declare it. A run holds the flow's name, its version, its status
+(`working`, `input_required`, `completed`, `cancelled` or `failed`), its
+active state and its start, completion and deadline times. Two relations
+link it to the graph: `_carries` points at the subject, and `_produced`
+points at each entity a step created.
+
+**Who can read a run.** A run is readable exactly when its subject is.
+rela follows the run's `_carries` edge and applies the subject's read
+rules, including role relations and client ceilings. A run whose subject
+you cannot read answers like a missing entity. A run with no subject,
+or whose subject was deleted, is hidden from everyone but the engine. A
+subject you read only through `inherit_roles_through` or a face-split
+role relation does not show its runs yet. `rela acl who-can read` on a
+run lists the routes by which each reader reads the subject.
+
+**Who can write a run.** Only the flow engine, as `system:flow`. acl.yaml
+may not name `_flow-run`, `_carries`, `_produced`, a role starting with
+`_`, or `system:flow`, and `"*"` in a grant does not cover them. The rule
+also holds for `rela.bypass_acl(...)`, for a project without acl.yaml,
+and for `--run-as`, which refuses `system:flow`. Nobody renames or
+converts a run. Automations and validation rules do not fire on runs;
+one that names a run type or relation fails to load. `rela import` and
+data migrations refuse them too. `comments: on: ["*"]` does not make
+runs commentable. Deleting a subject removes its runs' `_carries`
+edges; the runs stay. Converting a subject keeps the edge when the
+target type can be a subject, and drops it otherwise. A hand edit of the markdown files on
+the filesystem backend is outside these rules.
+
+**Audit.** Every write a flow step makes carries `flow`, `run`, `step`
+and `source: flow` in the audit log. See [Audit log](audit-log.md).
 
 ## Checking the file
 

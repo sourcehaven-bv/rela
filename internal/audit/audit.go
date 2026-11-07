@@ -276,6 +276,14 @@ type Record struct {
 	// self-asserted.
 	AssertedBy string `json:"asserted_by,omitempty"`
 	Summary    string `json:"summary,omitempty"`
+	// Flow, Run and Step name the flow step the write ran in (see
+	// [WithFlowStep] and [Stamp]); empty outside a flow.
+	Flow string `json:"flow,omitempty"`
+	Run  string `json:"run,omitempty"`
+	Step string `json:"step,omitempty"`
+	// Source is the kind of actor that produced the record ([SourceOf]).
+	// The sinks fill it in when it is empty.
+	Source string `json:"source,omitempty"`
 }
 
 // Audit is the package's published sink shape — not a consumer-side

@@ -123,6 +123,8 @@ type conversionOptions struct {
 	fieldGate entitymanager.FieldWriteGate
 	// guard replaces the inactive channel guard.
 	guard entitymanager.AnchorGuard
+	// flowRuns adds the flow run type to the schema.
+	flowRuns bool
 }
 
 func newConversionFixture(t *testing.T, opts conversionOptions) conversionFixture {
@@ -133,6 +135,11 @@ func newConversionFixture(t *testing.T, opts conversionOptions) conversionFixtur
 	meta, err := metamodel.Parse([]byte(opts.schema))
 	if err != nil {
 		t.Fatalf("parse schema: %v", err)
+	}
+	if opts.flowRuns {
+		if meta, err = metamodel.WithFlowRuns(meta); err != nil {
+			t.Fatalf("WithFlowRuns: %v", err)
+		}
 	}
 	transitions, err := statemachine.Compile(meta)
 	if err != nil {
@@ -1041,4 +1048,32 @@ func (denyFieldGate) CheckRelationMetaWrite(
 	context.Context, *entity.Entity, string, map[string]any, []string,
 ) error {
 	return nil
+}
+
+// A run's `_carries` edge follows its subject through a conversion: the
+// schema cannot map a managed relation, and the target type may still be
+// carried (critical review finding on TKT-BC5G8RP).
+func TestConvert_KeepsAFlowRunsEdge(t *testing.T) {
+	t.Parallel()
+	f := newConversionFixture(t, conversionOptions{flowRuns: true})
+	ctx := context.Background()
+	f.seed(t, "NOTE-1", "note", map[string]any{"title": "Quick note"})
+	f.seed(t, "RUN-1", entity.FlowRunType, nil)
+	f.link(t, "RUN-1", entity.CarriesRelation, "NOTE-1")
+
+	req := entitymanager.ConversionRequest{Definition: "note-to-task", SourceID: "NOTE-1"}
+	preview, err := f.conv.Preview(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.InvalidRelations) != 0 || len(preview.RelationsToDrop) != 0 {
+		t.Fatalf("preview = %+v, want no invalid or dropped relations", preview)
+	}
+	result, err := f.conv.Convert(ctx, req)
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	if !f.hasRelation("RUN-1", entity.CarriesRelation, result.Entity.ID) {
+		t.Errorf("the run no longer carries %s", result.Entity.ID)
+	}
 }

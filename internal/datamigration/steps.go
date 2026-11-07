@@ -91,7 +91,31 @@ func parseStep(node *yaml.Node) (Step, error) {
 	if err := decodeStrict(body, step); err != nil {
 		return nil, fmt.Errorf("%s: %w", kind, err)
 	}
+	if err := refuseManagedTargets(body); err != nil {
+		return nil, fmt.Errorf("%s: %w", kind, err)
+	}
 	return step, nil
+}
+
+// stepTargetKeys are the step fields that name an entity type, relation
+// type or property.
+var stepTargetKeys = map[string]bool{"entity": true, "from": true, "to": true, "type": true, "to_type": true}
+
+// refuseManagedTargets refuses a step that names a rela-managed type or
+// relation ([entity.IsManagedName]). A migration writes the store
+// directly, and only the flow engine may write those (TKT-BC5G8RP). A
+// wildcard step skips them instead; see forEachEntity.
+func refuseManagedTargets(body *yaml.Node) error {
+	if body.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(body.Content); i += 2 {
+		key, val := body.Content[i].Value, body.Content[i+1]
+		if stepTargetKeys[key] && val.Kind == yaml.ScalarNode && entity.IsManagedName(val.Value) {
+			return fmt.Errorf("%s: %q is managed by rela and cannot be migrated", key, val.Value)
+		}
+	}
+	return nil
 }
 
 // decodeStrict decodes a YAML node into dst rejecting unknown fields.

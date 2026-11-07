@@ -990,7 +990,7 @@ func (ce *copyEngine) edgeTypeAllowed(ctx context.Context, plan *copyPlan, relTy
 // must not have weaker authorization or attribution than a property edit.
 func (ce *copyEngine) recordCopyAudit(ctx context.Context, plan *copyPlan, res CopyResult) {
 	p := principal.From(ctx)
-	ce.m.deps.Audit.Record(audit.Record{
+	ce.m.deps.Audit.Record(audit.Stamp(ctx, audit.Record{
 		Op: audit.OpCopyState,
 		Subject: &audit.Subject{
 			Kind: "entity", Type: plan.to.Type, ID: plan.targetID,
@@ -1002,7 +1002,7 @@ func (ce *copyEngine) recordCopyAudit(ctx context.Context, plan *copyPlan, res C
 			"copy %q: %s -> %s (created=%t)",
 			plan.name, copyFaceLabel(plan.sourceID, plan.from),
 			copyFaceLabel(plan.targetID, plan.to), res.Created),
-	})
+	}))
 }
 
 func copyFaceLabel(id string, t metamodel.CopyTarget) string {

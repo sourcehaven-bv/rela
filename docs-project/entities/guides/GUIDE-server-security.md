@@ -287,6 +287,11 @@ writes a property, such as the Basecamp example's `sync_conflict`.
 > `integration:`, those users can no longer authenticate either. The log
 > line is the same.
 
+**`system:flow` is assigned by rela.** The flow engine writes flow runs
+as `system:flow`, and it is the only identity that may. acl.yaml may not
+assign it, `run_as:` and `--run-as` refuse it, and a request naming it is
+refused like any `system:` name. See [GUIDE-flows] "Runs".
+
 ### Verified JWT identity (`--jwt-*`)
 
 A third, **stronger** attribution source: a signed identity assertion
@@ -600,6 +605,15 @@ defense** in the server threat model.
 - ✅ Group expansion (`member-of`, transitive) and inherited local
   roles (containment, via `inherit_roles_through`). Direct local
   roles are honored as well.
+- ✅ **Reserved names.** Names starting with `_` belong to rela: the
+  `_flow-run` type and its `_carries` and `_produced` relations. acl.yaml
+  may not name them or declare a role starting with `_`, and `"*"` does
+  not cover them. Only `system:flow` writes them, also without acl.yaml
+  and under `rela.bypass_acl(...)`. A run is readable exactly when its
+  subject is.
+- ✅ **`visible:` keys use the canonical type name.** A `visible:` or
+  `redact:` key that names a type through an alias fails to load; it
+  would otherwise restrict nothing.
 - ❌ **MCP read surfaces are not yet ACL-filtered.** `show_entity`,
   `list_entities`, `search_entities`, and the trace tools return
   full entity bodies with no entity-level gate and no `visible:`

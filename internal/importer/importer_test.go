@@ -400,12 +400,33 @@ func TestImportValidationErrors(t *testing.T) {
 			},
 			wantErr: "This field is required",
 		},
+		{
+			name: "managed entity type",
+			data: &ImportData{
+				Entities: []EntityData{{ID: "RUN-1", Type: entity.FlowRunType, Properties: map[string]any{}}},
+			},
+			wantErr: "managed by rela",
+		},
+		{
+			name: "managed relation type",
+			data: &ImportData{
+				Entities: []EntityData{{ID: "REQ-001", Type: "requirement", Properties: map[string]any{"title": "T"}}},
+				Relations: []RelationData{{
+					From: "REQ-001", Relation: entity.CarriesRelation, To: "REQ-001",
+				}},
+			},
+			wantErr: "managed by rela",
+		},
 	}
 
+	withRuns, err := metamodel.WithFlowRuns(meta)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			st := newTestStore()
-			imp := New(st, meta, Options{}, newTestSource())
+			imp := New(st, withRuns, Options{}, newTestSource())
 			_, err := imp.Import(tt.data)
 			if err == nil {
 				t.Error("Expected error, got nil")
