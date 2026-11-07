@@ -152,7 +152,10 @@ const MaxRangeBound = 4096
 //
 // Pending is server-internal. Whether a row is pending says whether a
 // hidden property is set on it, so it must never reach the wire; the json
-// tag keeps it out of an encoded value.
+// tag keeps it out of an encoded value. For the same reason the work a
+// caller does must not depend on it: a caller that completes pending rows
+// lists the whole range and recomputes every row of a type that is not
+// [FoldStored], pending or not.
 type RangeSum struct {
 	Count    uint64
 	Pending  uint64 `json:"-"`
