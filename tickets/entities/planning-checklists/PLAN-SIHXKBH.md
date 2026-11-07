@@ -64,8 +64,10 @@ Third of the four M1 PRs (see TKT-XHANLJU, Split). In scope:
 Out of scope (TKT-9IT3LN8): calling `WithFlowRuns` from the wiring when
 flows.yaml declares flows, the runtime that writes runs, subject delete,
 `_inbox`, CLI start, runs and cancel. Issue #2106 was already fixed by
-#2124 (BUG-GSCDO88); this PR only adds a regression check that a
-`visible:` grant still restricts a guard read through the canonical type.
+#2124 (BUG-GSCDO88) on the flows side. This PR closes the same alias gap
+in acl.yaml: a `visible:` or `redact:` key that names a type through an
+alias now fails to load, for every role and baseline, instead of
+restricting nothing.
 
 **Acceptance Criteria:**
 
@@ -258,7 +260,9 @@ Changes to the approach from the review:
 - `principal.ValidateRunAs` refuses `system:flow` for every caller.
 - An edge of a managed relation removed because its far endpoint is
   deleted is not authorized as a relation write of the deleting
-  principal. Converting an entity with a managed edge is refused.
+  principal. Converting an entity with a managed edge is not refused:
+  the edge is kept when the target type is still a valid endpoint of the
+  relation, and dropped otherwise (`planManagedRelation`).
 - Type-less automation triggers and validation rules skip rela-managed
   types and relations.
 - The run header holds config-derived values only.
