@@ -1,7 +1,7 @@
 ---
 id: TKT-H0TFDWU
 type: ticket
-title: 'World switcher: labels and opt-in placement; hidden worlds; per-record toggle'
+title: 'World switcher: labels; hidden worlds; header or none; per-record toggle'
 kind: enhancement
 priority: medium
 effort: m
