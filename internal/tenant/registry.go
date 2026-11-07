@@ -29,35 +29,35 @@ const DefaultMaxResident = 4
 
 // Opener opens the backing store for one tenant.
 //
-// Injected rather than calling `appbuild.New` directly, because the store a
-// build opens is build-tag-dependent (PostgreSQL, filesystem, memory) while
-// this package is not. It is also the seam the tests use to count opens and
-// closes without a database.
+// Injected rather than built here, because the store a build opens is
+// build-tag-dependent (PostgreSQL, filesystem, memory) while this package is
+// not. [SharedBaseOpener] is the production opener. The seam is also what the
+// tests use to count opens and closes without a database.
 //
 // Implementations must return a usable [appbuild.Services] or an error, never
 // both — the fail-closed rule from the package doc, applied one level down.
 type Opener func(ctx context.Context, t Tenant) (*appbuild.Services, error)
 
-// AppBuildOpener opens a tenant's store through appbuild, using base for
-// everything that is tenant-independent.
+// SharedBaseOpener opens each tenant over one shared base. The base holds the
+// parsed metamodel, `acl.yaml` and the rest of the operator config, so they are
+// parsed once for every tenant. Each open adds only the tenant's own backend:
+// a pool, store and search for the tenant's DSN.
 //
-// Note that it sets Config.DatabaseURL rather than passing
-// appbuild.WithDatabaseURL: the option is consumed by appbuild.Discover, while
-// appbuild.New — which is what a caller assembling a Config by hand reaches —
-// reads the field. Passing the option here would compile, do nothing, and open
-// every tenant against whichever DSN the config already held. That is precisely
-// the cross-tenant failure this package exists to prevent, and it would be
-// invisible until two tenants were resident at once.
-func AppBuildOpener(base appbuild.Config) Opener {
-	return func(_ context.Context, t Tenant) (*appbuild.Services, error) {
-		cfg := base
-		cfg.DatabaseURL = t.DSN
-		//nolint:contextcheck // appbuild.New takes no ctx; it opens its own on the
-		// build recipe's behalf. Opening a tenant's store must also outlive the
-		// request that triggered it — a cancelled request must not leave a
-		// half-migrated schema behind.
-		return appbuild.New(cfg)
+// The build-tag split stays in appbuild: [appbuild.SharedBase.OpenAndAssemble]
+// is where the build chooses its backend, and it refuses on a build whose store
+// is not addressed by a DSN.
+//
+// Nil: rejected — an opener with no base would fail on the first request.
+func SharedBaseOpener(base *appbuild.SharedBase) (Opener, error) {
+	if base == nil {
+		return nil, errors.New("tenant.SharedBaseOpener: base is required")
 	}
+	return func(ctx context.Context, t Tenant) (*appbuild.Services, error) {
+		// Opening a tenant's store must outlive the request that triggered
+		// it: a cancelled request must not leave a half-migrated schema
+		// behind.
+		return base.OpenAndAssemble(context.WithoutCancel(ctx), t.DSN)
+	}, nil
 }
 
 // Lease is a borrowed reference to one tenant's services.
@@ -111,11 +111,12 @@ type resident struct {
 
 // Registry hands out per-tenant services over one shared configuration.
 //
-// It is the multi-store host `appbuild.SharedBase` was built for: one parsed
-// metamodel and one parsed ACL policy, assembled against N stores. Which is
-// also the reason it is cheap to serve many tenants — under this design the
-// tenants differ only in content, so the expensive half of construction happens
-// once for all of them.
+// It is the multi-store host `appbuild.SharedBase` was built for. With
+// [SharedBaseOpener], every tenant is assembled over one base: one parsed
+// metamodel and one parsed ACL policy for N stores. The tenants differ only in
+// content, so the expensive half of construction happens once for all of them.
+// The shared config is a property of the opener, not of the registry: an
+// [Opener] that builds its own config per tenant parses it per tenant.
 //
 // # What it guarantees
 //

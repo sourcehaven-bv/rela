@@ -5,7 +5,9 @@ title: 'tenant: assemble every tenant over one SharedBase so config is parsed on
 kind: enhancement
 priority: high
 effort: s
-status: backlog
+started: "2026-11-07"
+completed: "2026-11-07"
+status: done
 ---
 
 ## Description

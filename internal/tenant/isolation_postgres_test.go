@@ -42,6 +42,15 @@ entities:
 relations: {}
 `
 
+// isolationACL gives the project a policy, so the test can check that every
+// tenant shares the one parsed copy.
+const isolationACL = `roles:
+  editor:
+    read: [ticket]
+assignments:
+  alice: editor
+`
+
 // TestTenantIsolation_OneTenantCannotReadAnother is acceptance criterion 7 of
 // TKT-TNT9RS.
 //
@@ -79,7 +88,7 @@ func TestTenantIsolation_OneTenantCannotReadAnother(t *testing.T) {
 		t.Fatalf("NewMapResolver: %v", err)
 	}
 
-	reg, err := tenant.NewRegistry(resolver, tenant.AppBuildOpener(isolationConfig(t, root)), 4)
+	reg, err := tenant.NewRegistry(resolver, isolationOpener(t, root), 4)
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
@@ -99,6 +108,15 @@ func TestTenantIsolation_OneTenantCannotReadAnother(t *testing.T) {
 
 	if leaseA.Services() == leaseB.Services() {
 		t.Fatal("both tenants were handed the same Services")
+	}
+	// TKT-5L5O0MZ: the config is parsed once for every tenant. A separate
+	// parse per tenant would yield equal values at different addresses.
+	svcA, svcB := leaseA.Services(), leaseB.Services()
+	if svcA.Meta() != svcB.Meta() {
+		t.Error("tenants hold different metamodels; the config was parsed per tenant")
+	}
+	if svcA.ACLPolicy() == nil || svcA.ACLPolicy() != svcB.ACLPolicy() {
+		t.Error("tenants must share one parsed ACL policy")
 	}
 
 	// Write one entity into each tenant, through that tenant's store only.
@@ -150,7 +168,7 @@ func TestTenantIsolation_UnknownOrgReachesNoDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMapResolver: %v", err)
 	}
-	reg, err := tenant.NewRegistry(resolver, tenant.AppBuildOpener(isolationConfig(t, root)), 4)
+	reg, err := tenant.NewRegistry(resolver, isolationOpener(t, root), 4)
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
@@ -191,7 +209,7 @@ func TestTenantIsolation_EvictionDoesNotDisturbSiblings(t *testing.T) {
 		t.Fatalf("NewMapResolver: %v", err)
 	}
 	// A bound of one, so acquiring the second tenant evicts and closes the first.
-	reg, err := tenant.NewRegistry(resolver, tenant.AppBuildOpener(isolationConfig(t, root)), 1)
+	reg, err := tenant.NewRegistry(resolver, isolationOpener(t, root), 1)
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
@@ -275,22 +293,34 @@ func assertOnlyOwnEntities(t *testing.T, svc *appbuild.Services, wantID string) 
 	}
 }
 
-// isolationConfig is the shared, tenant-independent half of construction: one
-// project root, one metamodel, one script engine, for every tenant. Only
-// DatabaseURL differs per tenant, and AppBuildOpener sets it.
-func isolationConfig(t *testing.T, root string) appbuild.Config {
+// isolationOpener builds the shared, tenant-independent half of construction
+// once: one project root, one metamodel, one ACL policy, one script engine, for
+// every tenant. Only the DSN differs per tenant, and the opener passes it.
+func isolationOpener(t *testing.T, root string) tenant.Opener {
 	t.Helper()
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	paths, err := project.Discover(root, fs)
 	if err != nil {
 		t.Fatalf("project.Discover: %v", err)
 	}
-	return appbuild.Config{
+	// The base names a schema of its own that no tenant uses. A tenant opened
+	// on the base's DSN instead of its own would land there, beside every
+	// other tenant, and the leak assertions would fail.
+	base, err := appbuild.NewSharedBase(appbuild.Config{
 		FS:           fs,
 		Paths:        paths,
 		ScriptEngine: script.NewEngine(),
 		Audit:        audit.Nop{},
+		DatabaseURL:  backendtest.DSN(t),
+	})
+	if err != nil {
+		t.Fatalf("NewSharedBase: %v", err)
 	}
+	open, err := tenant.SharedBaseOpener(base)
+	if err != nil {
+		t.Fatalf("SharedBaseOpener: %v", err)
+	}
+	return open
 }
 
 func writeIsolationProject(t *testing.T) string {
@@ -303,6 +333,10 @@ func writeIsolationProject(t *testing.T) string {
 	}
 	if err := os.WriteFile(
 		filepath.Join(root, "metamodel.yaml"), []byte(isolationMetamodel), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(root, "acl.yaml"), []byte(isolationACL), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return root

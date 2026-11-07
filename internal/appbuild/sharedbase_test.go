@@ -411,3 +411,33 @@ func TestReassembly_SkipsStoreOpenOnlySteps(t *testing.T) {
 		t.Error("a re-assembly base must carry the same metamodel")
 	}
 }
+
+// TestOpenAndAssemble_RefusesReassemblyBase pins that a base marked to reuse
+// an open store cannot be used to open a new one.
+func TestOpenAndAssemble_RefusesReassemblyBase(t *testing.T) {
+	base := newSharedBase(t)
+	prev := assembleOver(t, base)
+	t.Cleanup(func() { _ = prev.Close() })
+	svc, err := base.ForReassembly(prev).OpenAndAssemble(context.Background(), "host=tenant-a")
+	if err == nil {
+		_ = svc.Close()
+		t.Fatal("OpenAndAssemble must refuse a reassembly base")
+	}
+	if !strings.Contains(err.Error(), "reassembly") {
+		t.Errorf("error %q should say why", err)
+	}
+}
+
+// TestOpenAndAssemble_RefusesEmptyDSN pins that a tenant with no DSN is
+// refused with an error about the tenant, not about RELA_DATABASE_URL.
+func TestOpenAndAssemble_RefusesEmptyDSN(t *testing.T) {
+	base := newSharedBase(t)
+	svc, err := base.OpenAndAssemble(context.Background(), "")
+	if err == nil {
+		_ = svc.Close()
+		t.Fatal("OpenAndAssemble must refuse an empty DSN")
+	}
+	if !strings.Contains(err.Error(), "tenant's DSN") {
+		t.Errorf("error %q should name the tenant's DSN", err)
+	}
+}

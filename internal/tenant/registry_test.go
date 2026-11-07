@@ -435,3 +435,11 @@ func TestRegistry_DefaultBoundApplied(t *testing.T) {
 		t.Errorf("Resident() = %d, want DefaultMaxResident (%d)", got, tenant.DefaultMaxResident)
 	}
 }
+
+// TestSharedBaseOpener_RejectsNilBase pins the constructor rule: a nil base
+// fails at wiring, not on the first request.
+func TestSharedBaseOpener_RejectsNilBase(t *testing.T) {
+	if _, err := tenant.SharedBaseOpener(nil); err == nil {
+		t.Fatal("SharedBaseOpener(nil) must return an error")
+	}
+}
