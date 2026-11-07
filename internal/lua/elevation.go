@@ -50,9 +50,10 @@ func (b *elevationBindings) luaBypassACL(ls *lua.LState) int {
 	if b.em == nil && b.er == nil && b.eu == nil {
 		// Defensive: the binding is only registered when at least one elevated
 		// handle is set, but fail loud rather than silently no-op if that ever
-		// drifts. Note this raises only when BOTH are absent — a reader-only
-		// elevation is legitimate (TKT-Y3JVFK), and a manager-only one keeps
-		// its existing behavior of raising per-method inside readGuard.
+		// drifts. It raises only when all three handles are absent: a
+		// reader-only elevation is legitimate (TKT-Y3JVFK), as is an
+		// updater-only one (TKT-JA5SABG), and a manager-only one raises
+		// per-method inside readGuard.
 		ls.RaiseError("rela.bypass_acl: no elevated handle is available")
 		return 0
 	}
@@ -97,10 +98,9 @@ func (b *elevationBindings) luaBypassACL(ls *lua.LState) int {
 //
 // Write surface: create_relation, delete_relation, delete_entity — the
 // link/unlink + remove operations the system-invariant use cases (e.g.
-// authorship stamping via created-by) need. create_entity / update_entity are a
-// deliberate follow-up: they marshal a full entity table and aren't required by
-// the motivating case; gating elevated *entity* creation is a larger surface
-// best added with its own tests.
+// authorship stamping via created-by) need. There is no unscoped
+// create_entity or update_entity; the only elevated update is the scoped
+// update_entity below.
 //
 // Read surface (TKT-ACSBSA): get_entity, list_entities, get_relations —
 // mirroring the gated rela.* bindings one-for-one so a script can lift a read
@@ -173,8 +173,6 @@ func newElevatedHandle(ls *lua.LState, b *elevationBindings, live *bool, reads *
 	if em != nil {
 		registerElevatedWrites(ls, t, em, er, guard, ctxFn)
 	}
-	// The scoped update registers after the unscoped writes, so when both
-	// are wired the narrower update_entity is the one the script gets.
 	if b.eu != nil {
 		ls.SetField(t, "update_entity", ls.NewFunction(elevatedUpdateEntity(b.eu, b.vr, guard, ctxFn)))
 		if em == nil && er == nil {
@@ -267,10 +265,6 @@ func recordElevatedReads(ctx context.Context, rec ElevationRecorder, u *readUsag
 // (TKT-D8T148). Split out for the same reason as registerElevatedReads — the
 // function-length limit — and called only when an elevated Mutator was wired,
 // so a read-only elevation has no write methods at all (TKT-Y3JVFK).
-//
-// create_entity / update_entity remain absent by design: they marshal a full
-// entity table and were deferred with their own tests as the follow-up noted
-// in newElevatedHandle's doc.
 func registerElevatedWrites(
 	ls *lua.LState, t *lua.LTable, em Mutator, er EntityReader, guard func(string) bool,
 	ctxFn func() context.Context,

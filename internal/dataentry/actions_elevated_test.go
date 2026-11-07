@@ -100,13 +100,21 @@ func newElevatedActionAppWithACL(t *testing.T, writeACL acl.ACL) *elevatedAction
 // bob.
 func (a *elevatedActionApp) run(t *testing.T, action dataentryconfig.Action, body string) (code int, respBody string) {
 	t.Helper()
+	return a.runPayload(t, action, body, "")
+}
+
+// runPayload is run with payload as the request body.
+func (a *elevatedActionApp) runPayload(
+	t *testing.T, action dataentryconfig.Action, body, payload string,
+) (code int, respBody string) {
+	t.Helper()
 	writeFile(t, filepath.Join(a.root, "actions", "submit.lua"), body)
 	action.Script = "submit.lua"
 	s := a.app.State()
 	cfg := *s.Cfg
 	cfg.Actions = map[string]dataentryconfig.Action{"submit": action}
 	a.app.schema.Publish(&Schema{Cfg: &cfg, Meta: s.Meta})
-	rec := postAction(principalCtx("bob"), t, a.app, a.decl, "submit", "")
+	rec := postAction(principalCtx("bob"), t, a.app, a.decl, "submit", payload)
 	if rec.Code != http.StatusOK {
 		return rec.Code, rec.Body.String()
 	}
@@ -179,6 +187,18 @@ func TestAction_ElevatedUpdates(t *testing.T) {
 			wantCode: http.StatusOK, wantBody: "entity not found: SEC-1", wantStatus: "draft", wantTitle: "T1",
 		},
 		{
+			name: "unreadable row of an in-scope type is not found",
+			action: dataentryconfig.Action{
+				Permission: "submit", AllowACLBypass: metamodel.ACLBypassWrite,
+				ElevatedUpdates: map[string][]string{"ticket": {"status"}, "secret": {"status"}},
+			},
+			script: `local ok, err = pcall(function()
+				rela.bypass_acl(function(admin) admin.update_entity("SEC-1", {status = "submitted"}) end)
+			end)
+			return {message = tostring(err)}`,
+			wantCode: http.StatusOK, wantBody: "entity not found: SEC-1", wantStatus: "draft", wantTitle: "T1",
+		},
+		{
 			name:     "no elevation without the opt-in",
 			action:   dataentryconfig.Action{Permission: "submit"},
 			script:   `return {message = tostring(rela.bypass_acl)}`,
@@ -206,6 +226,27 @@ func TestAction_ElevatedUpdates(t *testing.T) {
 				t.Errorf("SEC-1 status = %v, want draft", got)
 			}
 		})
+	}
+}
+
+// TestAction_ElevatedUpdatesBound pins the wiring of the bound-row pin: an
+// entity-bound action may update its own entity twice, because each elevated
+// write moves the pin (the refusal on a concurrent change is pinned in
+// entitymanager's TestScopedUpdates_Pin).
+func TestAction_ElevatedUpdatesBound(t *testing.T) {
+	t.Parallel()
+	a := newElevatedActionApp(t)
+	action := elevatedSubmit
+	action.AvailableOn = &dataentryconfig.ActionScope{EntityTypes: []string{"ticket"}}
+	code, body := a.runPayload(t, action, `rela.bypass_acl(function(admin)
+		admin.update_entity(entity.id, {status = "submitted"})
+		admin.update_entity(entity.id, {status = "approved"})
+	end)`, `{"entity_id":"TKT-1"}`)
+	if code != http.StatusNoContent {
+		t.Fatalf("code = %d; body=%s", code, body)
+	}
+	if got := a.prop(t, "TKT-1", "status"); got != "approved" {
+		t.Errorf("status = %v, want approved", got)
 	}
 }
 
@@ -251,8 +292,12 @@ func (fakeElevatedUpdater) PatchEntity(context.Context, string, entity.Patch) (*
 // built.
 func TestGrantElevatedUpdates(t *testing.T) {
 	t.Parallel()
-	ok := func(map[string][]string, string) (lua.ElevatedUpdater, error) { return fakeElevatedUpdater{}, nil }
-	broken := func(map[string][]string, string) (lua.ElevatedUpdater, error) { return nil, errors.New("boom") }
+	ok := func(map[string][]string, string, *entity.Entity) (lua.ElevatedUpdater, error) {
+		return fakeElevatedUpdater{}, nil
+	}
+	broken := func(map[string][]string, string, *entity.Entity) (lua.ElevatedUpdater, error) {
+		return nil, errors.New("boom")
+	}
 	plain := dataentryconfig.Action{Script: "submit.lua", Permission: "submit"}
 
 	tests := []struct {
@@ -275,7 +320,7 @@ func TestGrantElevatedUpdates(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var deps lua.WriteDeps
-			fail := grantElevatedUpdates(tc.factory, &deps, "submit", tc.action)
+			fail := grantElevatedUpdates(tc.factory, &deps, "submit", tc.action, nil)
 			gotStatus := 0
 			if fail != nil {
 				gotStatus = fail.status

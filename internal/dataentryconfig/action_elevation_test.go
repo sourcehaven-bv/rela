@@ -17,6 +17,10 @@ func actionElevationMeta() *metamodel.Metamodel {
 			"label": {Type: "string", Computed: "status"},
 			"scan":  {Type: metamodel.PropertyTypeFile},
 		}},
+		"page": {
+			Properties: map[string]metamodel.PropertyDef{"status": {Type: "string"}},
+			Faces:      map[string]metamodel.FaceDef{"draft": {}, "published": {}},
+		},
 	}}
 	m.InitAliases()
 	return m
@@ -106,6 +110,29 @@ func TestValidateActions_Elevation(t *testing.T) {
 			action: Action{Script: "s.lua", Permission: "submit", AllowACLBypass: metamodel.ACLBypassWrite,
 				ElevatedUpdates: map[string][]string{"processing": {}}},
 			wantErr: `lists no properties for entity type "processing"`,
+		},
+		{
+			name: "faced type with a face",
+			action: Action{Script: "s.lua", Permission: "submit", AllowACLBypass: metamodel.ACLBypassWrite,
+				ElevatedUpdates: map[string][]string{"page@draft": {"status"}}},
+		},
+		{
+			name: "faced type without a face",
+			action: Action{Script: "s.lua", Permission: "submit", AllowACLBypass: metamodel.ACLBypassWrite,
+				ElevatedUpdates: map[string][]string{"page": {"status"}}},
+			wantErr: `entity type "page" has faces; name one as "page@<face>"`,
+		},
+		{
+			name: "undeclared face",
+			action: Action{Script: "s.lua", Permission: "submit", AllowACLBypass: metamodel.ACLBypassWrite,
+				ElevatedUpdates: map[string][]string{"page@archived": {"status"}}},
+			wantErr: `entity type "page" declares no face "archived"`,
+		},
+		{
+			name: "face on a type without faces",
+			action: Action{Script: "s.lua", Permission: "submit", AllowACLBypass: metamodel.ACLBypassWrite,
+				ElevatedUpdates: map[string][]string{"processing@draft": {"status"}}},
+			wantErr: `entity type "processing" has no faces`,
 		},
 		{
 			name:    "elevated_updates without allow_acl_bypass",

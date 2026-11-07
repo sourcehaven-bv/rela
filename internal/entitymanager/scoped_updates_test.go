@@ -7,10 +7,12 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -153,6 +155,12 @@ func TestScopedUpdates_PatchEntity(t *testing.T) {
 			notFound: true,
 		},
 		{
+			name:     "unreadable row, property outside the scope",
+			id:       "TASK-HIDDEN",
+			patch:    entity.Patch{Properties: map[string]any{"title": "x"}},
+			notFound: true,
+		},
+		{
 			name:     "missing row",
 			id:       "TASK-404",
 			patch:    entity.Patch{Properties: map[string]any{"status": "submitted"}},
@@ -242,6 +250,14 @@ func TestScopedUpdates_Audit(t *testing.T) {
 	}
 }
 
+// userGuard grants a guard permission to one user only, so a test can tell
+// that the guard asked about the caller.
+type userGuard struct{ user string }
+
+func (g userGuard) HoldsPermission(ctx context.Context, _, _ string) bool {
+	return principal.From(ctx).User == g.user
+}
+
 // TestScopedUpdates_Transitions pins that an elevated update keeps the
 // transition rules, including the caller's guard permission, and that a
 // refused transition names neither the stored nor the requested value.
@@ -249,25 +265,25 @@ func TestScopedUpdates_Transitions(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name     string
-		guard    statemachine.Guard
+		user     string
 		to       string
 		sentinel error // nil: the update lands
 	}{
-		{name: "legal move", guard: allowAllGuard{}, to: "approved"},
-		{name: "undeclared move", guard: allowAllGuard{}, to: "established", sentinel: statemachine.ErrIllegalTransition},
-		{name: "guard checks caller", guard: denyAllGuard{}, to: "approved", sentinel: acl.ErrForbidden},
+		{name: "guard admits the caller", user: "bob", to: "approved"},
+		{name: "undeclared move", user: "bob", to: "established", sentinel: statemachine.ErrIllegalTransition},
+		{name: "guard refuses another caller", user: "alice", to: "approved", sentinel: acl.ErrForbidden},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			mgr := newTransitionManager(t, tc.guard)
+			mgr := newTransitionManager(t, userGuard{user: "bob"})
 			snap := seedSnapshot(t, mgr, "")
 			su, err := entitymanager.NewScopedUpdates(mgr,
 				entitymanager.UpdateScope{"snapshot": {"status"}}, "action:approve")
 			if err != nil {
 				t.Fatalf("NewScopedUpdates: %v", err)
 			}
-			_, err = su.PatchEntity(context.Background(), snap.ID,
+			_, err = su.PatchEntity(asUser(tc.user), snap.ID,
 				entity.Patch{Properties: map[string]any{"status": tc.to}})
 			if tc.sentinel == nil {
 				if err != nil {
@@ -333,6 +349,212 @@ func TestScopedUpdates_ReadOnly(t *testing.T) {
 			}
 			if tc.wantDenied && (!ops[audit.OpDeniedWrite] || ops[audit.OpACLBypass] || ops[audit.OpUpdateEntity]) {
 				t.Errorf("audit ops = %v, want only %s", ops, audit.OpDeniedWrite)
+			}
+		})
+	}
+}
+
+// scopedCeilingManager builds a Manager under ceilingPolicy with a memory
+// audit log. bob holds only the reader role, so an update by bob lands only
+// through elevation.
+func scopedCeilingManager(t *testing.T, aud audit.Audit) (*entitymanager.Manager, store.Store) {
+	t.Helper()
+	policy, err := acl.LoadPolicyBytes([]byte(ceilingPolicy))
+	if err != nil {
+		t.Fatalf("LoadPolicyBytes: %v", err)
+	}
+	st := memstore.New()
+	decl, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(st), st)
+	if err != nil {
+		t.Fatalf("NewDeclarative: %v", err)
+	}
+	seeded := entity.New("REQ-001", "requirement")
+	seeded.SetString("title", "seeded")
+	if cErr := st.CreateEntity(context.Background(), seeded); cErr != nil {
+		t.Fatalf("seed: %v", cErr)
+	}
+	mgr, err := entitymanager.New(entitymanager.Deps{
+		Store: st, Meta: parseMeta(t), Templater: nopTemplater{}, Audit: aud, ACL: decl,
+		Transitions:    statemachine.EmptySet(),
+		FieldGate:      entitymanager.AllowAllFieldGate{},
+		CopyReadGate:   entitymanager.AllowAllCopyReadGate{},
+		CopyVisibility: allowAllCopyVisibility(t, st),
+		AnchorGuard:    entitymanager.NopAnchorGuard{},
+	})
+	if err != nil {
+		t.Fatalf("entitymanager.New: %v", err)
+	}
+	return mgr, st
+}
+
+// TestScopedUpdates_ClientCeiling pins that elevation lifts the role grants
+// but not the client ceiling: a client under `deny_write: ["*"]` cannot make
+// an elevated update, and the refusal is audited as a denied write. A
+// ceiling that permits update on the type still elevates, although bob holds
+// no update grant.
+func TestScopedUpdates_ClientCeiling(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name          string
+		principalType string
+		scopes        []string
+		wantDenied    bool
+	}{
+		{name: "deny_write baseline refuses", principalType: "app", wantDenied: true},
+		{name: "scope grant re-opens update", principalType: "app", scopes: []string{"rela.req.write"}},
+		{name: "interactive caller elevates"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mem := audit.NewMemory()
+			mgr, st := scopedCeilingManager(t, mem)
+			su, err := entitymanager.NewScopedUpdates(mgr,
+				entitymanager.UpdateScope{"requirement": {"title"}}, "action:retitle")
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := principal.With(context.Background(), principal.VerifiedFrom(
+				"bob", principal.ToolDataEntry, principal.Claims{
+					PrincipalType: tc.principalType, Scopes: tc.scopes,
+				}))
+			_, err = su.PatchEntity(entitymanager.BindAs(ctx, t, mgr), "REQ-001",
+				entity.Patch{Properties: map[string]any{"title": "elevated"}})
+			want := "elevated"
+			if tc.wantDenied {
+				want = "seeded"
+				var fe *acl.ForbiddenError
+				if !errors.As(err, &fe) || fe.Decision.RuleKind != "client-ceiling" {
+					t.Fatalf("err = %v, want a client-ceiling 403", err)
+				}
+			} else if err != nil {
+				t.Fatalf("PatchEntity: %v", err)
+			}
+			if got := mustGet(t, st, "REQ-001").GetString("title"); got != want {
+				t.Errorf("title = %q, want %q", got, want)
+			}
+			ops := map[string]bool{}
+			for _, rec := range mem.Records() {
+				ops[rec.Op] = true
+			}
+			if tc.wantDenied && (!ops[audit.OpDeniedWrite] || ops[audit.OpACLBypass] || ops[audit.OpUpdateEntity]) {
+				t.Errorf("audit ops = %v, want only %s", ops, audit.OpDeniedWrite)
+			}
+			if !tc.wantDenied && !ops[audit.OpACLBypass] {
+				t.Errorf("audit ops = %v, want %s", ops, audit.OpACLBypass)
+			}
+		})
+	}
+}
+
+// TestScopedUpdates_Pin pins that an elevated write to the row the action
+// started on fails when that row changed since, and that the handle's own
+// writes move the pin.
+func TestScopedUpdates_Pin(t *testing.T) {
+	t.Parallel()
+	status := func(v string) entity.Patch { return entity.Patch{Properties: map[string]any{"status": v}} }
+
+	t.Run("concurrent change refuses", func(t *testing.T) {
+		t.Parallel()
+		mgr, st := newScopedManager(t, audit.Nop{})
+		su, err := entitymanager.NewScopedUpdates(mgr, entitymanager.UpdateScope{"task": {"status"}}, "action:a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		su.Pin(mustGet(t, st, "TASK-1"))
+		changed := mustGet(t, st, "TASK-1")
+		changed.SetString("title", "changed elsewhere")
+		if uerr := st.UpdateEntity(context.Background(), changed); uerr != nil {
+			t.Fatal(uerr)
+		}
+		_, err = su.PatchEntity(asUser("bob"), "TASK-1", status("submitted"))
+		if !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("err = %v, want store.ErrConflict", err)
+		}
+		if got := mustGet(t, st, "TASK-1").GetString("status"); got != "draft" {
+			t.Errorf("status = %q, want draft", got)
+		}
+	})
+
+	t.Run("own writes move the pin", func(t *testing.T) {
+		t.Parallel()
+		mgr, st := newScopedManager(t, audit.Nop{})
+		su, err := entitymanager.NewScopedUpdates(mgr, entitymanager.UpdateScope{"task": {"status"}}, "action:a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		su.Pin(mustGet(t, st, "TASK-1"))
+		for _, v := range []string{"submitted", "approved"} {
+			if _, err := su.PatchEntity(asUser("bob"), "TASK-1", status(v)); err != nil {
+				t.Fatalf("PatchEntity(%s): %v", v, err)
+			}
+		}
+		if got := mustGet(t, st, "TASK-1").GetString("status"); got != "approved" {
+			t.Errorf("status = %q, want approved", got)
+		}
+	})
+}
+
+// TestScopedUpdates_Faces pins the face dimension of the scope: a faced type
+// is in the scope one face at a time, as `type@face`, and a bare type key
+// covers no face of it.
+func TestScopedUpdates_Faces(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		scope   entitymanager.UpdateScope
+		target  string
+		wantErr bool
+	}{
+		{name: "named face", scope: entitymanager.UpdateScope{"beleid@concept": {"title"}}, target: "POL-1@concept"},
+		{
+			name: "other face", scope: entitymanager.UpdateScope{"beleid@concept": {"title"}},
+			target: "POL-1@vastgesteld", wantErr: true,
+		},
+		{
+			name: "bare type key", scope: entitymanager.UpdateScope{"beleid": {"title"}},
+			target: "POL-1@concept", wantErr: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mgr, st := facedWriteManager(t, denyAndHideACL{})
+			for _, face := range []entity.Face{"concept", "vastgesteld"} {
+				e := entity.New("POL-1", "beleid")
+				e.Face = face
+				e.SetString("title", "old")
+				if err := st.CreateEntity(context.Background(), e); err != nil {
+					t.Fatalf("seed %s: %v", face, err)
+				}
+			}
+			su, err := entitymanager.NewScopedUpdates(mgr, tc.scope, "action:a")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = su.PatchEntity(asUser("bob"), tc.target,
+				entity.Patch{Properties: map[string]any{"title": "new"}})
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "outside the scope") {
+					t.Fatalf("err = %v, want a scope error", err)
+				}
+			} else if err != nil {
+				t.Fatalf("PatchEntity: %v", err)
+			}
+			ref, perr := entity.ParseRef(tc.target)
+			if perr != nil {
+				t.Fatal(perr)
+			}
+			got, gerr := st.GetEntity(context.Background(), ref)
+			if gerr != nil {
+				t.Fatal(gerr)
+			}
+			want := "new"
+			if tc.wantErr {
+				want = "old"
+			}
+			if title := got.GetString("title"); title != want {
+				t.Errorf("title = %q, want %q", title, want)
 			}
 		})
 	}

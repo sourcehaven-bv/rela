@@ -312,7 +312,8 @@ type Action struct {
 
 	// ElevatedUpdates maps an entity type to the properties
 	// admin.update_entity may write on it, past the caller's write access.
-	// Requires AllowACLBypass.
+	// A faced type is keyed `type@face`, one key per face. Requires
+	// AllowACLBypass.
 	ElevatedUpdates map[string][]string `yaml:"elevated_updates,omitempty" json:"-"`
 }
 

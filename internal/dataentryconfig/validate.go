@@ -2961,11 +2961,14 @@ func validateActionElevation(id string, action Action, hasScript bool, meta *met
 
 // elevatedTypeErrors checks one elevated_updates entry. The key must be the
 // canonical type name, because the scope is matched against the stored type.
+// A faced type has no row at the implicit face, so its key must name one
+// declared face as `type@face`, and a type without faces takes no face.
 // A property must be one a patch can write: computed, rollup, file and
 // external_ref properties are always refused at write time. A unique
 // property is refused because a scoped update would let the caller probe
 // for a value held by an entity they cannot see.
-func elevatedTypeErrors(id, typ string, props []string, meta *metamodel.Metamodel) []string {
+func elevatedTypeErrors(id, key string, props []string, meta *metamodel.Metamodel) []string {
+	typ, face, faced := strings.Cut(key, entity.StateRefSeparator)
 	def, ok := meta.GetEntityDef(typ)
 	if !ok {
 		return []string{fmt.Sprintf("actions: %q elevated_updates references unknown entity type %q", id, typ)}
@@ -2973,6 +2976,21 @@ func elevatedTypeErrors(id, typ string, props []string, meta *metamodel.Metamode
 	if canonical := meta.ResolveAlias(typ); canonical != typ {
 		return []string{fmt.Sprintf(
 			"actions: %q elevated_updates uses alias %q; name the entity type %q", id, typ, canonical)}
+	}
+	switch {
+	case !faced && len(def.Faces) > 0:
+		return []string{fmt.Sprintf(
+			"actions: %q elevated_updates: entity type %q has faces; name one as %q",
+			id, typ, typ+entity.StateRefSeparator+"<face>")}
+	case faced && len(def.Faces) == 0:
+		return []string{fmt.Sprintf(
+			"actions: %q elevated_updates: entity type %q has no faces; drop %q", id, typ,
+			entity.StateRefSeparator+face)}
+	case faced:
+		if _, declared := def.Faces[face]; !declared {
+			return []string{fmt.Sprintf(
+				"actions: %q elevated_updates: entity type %q declares no face %q", id, typ, face)}
+		}
 	}
 	if len(props) == 0 {
 		return []string{fmt.Sprintf("actions: %q elevated_updates lists no properties for entity type %q", id, typ)}
