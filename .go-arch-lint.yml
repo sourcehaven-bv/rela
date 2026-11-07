@@ -1870,6 +1870,9 @@ deps:
     canUse:
       - neoq
       - uuid
+      # pgx: the postgres-tagged retention sweep's own one-connection pool,
+      # because neoq does not expose its pool (TKT-RJS3KKJ).
+      - pgx
   scheduler:
     mayDependOn:
       - audit

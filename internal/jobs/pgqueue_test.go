@@ -4,6 +4,7 @@ package jobs_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -196,4 +197,115 @@ func schemaPinnedDSN(t *testing.T, admin, schema string) string {
 	q.Set("search_path", schema+",public")
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+// TestPostgresQueue_RetentionSweep: the sweep deletes processed and dead job
+// rows that ended before the cutoff, with their payloads, and keeps pending
+// rows and rows that ended after it (TKT-RJS3KKJ).
+func TestPostgresQueue_RetentionSweep(t *testing.T) {
+	admin := os.Getenv("RELA_TEST_DATABASE_URL")
+	if admin == "" {
+		t.Skip("RELA_TEST_DATABASE_URL not set; skipping postgres retention sweep")
+	}
+	ctx := context.Background()
+	dsn := schemaPinnedDSN(t, admin, "rela_jobs_retention_test")
+
+	q, err := jobs.NewPostgresQueue(ctx, discardLogger(), dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = q.Close(context.Background()) })
+	kind := jobs.NewKind("jobstest", "retention")
+	var ran atomic.Int32
+	require.NoError(t, q.Register(kind, func(_ context.Context, job jobs.Job) error {
+		ran.Add(1)
+		if job.Payload["fail"] == true {
+			return errors.New("stays pending")
+		}
+		return nil
+	}))
+	require.NoError(t, q.Start(ctx))
+
+	pool, err := pgxpool.New(ctx, dsn)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	count := func(query string) int {
+		t.Helper()
+		var n int
+		require.NoError(t, pool.QueryRow(ctx, query).Scan(&n))
+		return n
+	}
+
+	require.NoError(t, q.Enqueue(ctx, jobs.Job{Kind: kind, Payload: map[string]any{"secret": "s"}}))
+	require.NoError(t, q.Enqueue(ctx, jobs.Job{Kind: kind, Retry: jobs.RetryBounded,
+		Payload: map[string]any{"fail": true}}))
+	require.Eventually(t, func() bool {
+		return count(`SELECT count(*) FROM neoq_jobs WHERE status = 'processed'`) == 1 && ran.Load() >= 2
+	}, 30*time.Second, 100*time.Millisecond)
+	_, err = pool.Exec(ctx, `INSERT INTO neoq_dead_jobs (id, fingerprint, queue, payload)
+		VALUES (1, 'dead', 'rela', '{"secret": "s"}')`)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name                    string
+		cutoff                  time.Time
+		wantSwept               int64
+		wantProcessed, wantDead int
+		wantPending             int
+	}{
+		{"rows that ended after the cutoff stay", time.Now().Add(-time.Hour), 0, 1, 1, 1},
+		{"finished and dead rows go, pending stay", time.Now().Add(time.Hour), 2, 0, 0, 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			n, err := jobs.SweepFinished(ctx, q, tc.cutoff)
+			require.NoError(t, err)
+			require.Equal(t, tc.wantSwept, n)
+			require.Equal(t, tc.wantProcessed, count(`SELECT count(*) FROM neoq_jobs WHERE status = 'processed'`))
+			require.Equal(t, tc.wantDead, count(`SELECT count(*) FROM neoq_dead_jobs`))
+			require.Equal(t, tc.wantPending, count(`SELECT count(*) FROM neoq_jobs WHERE status <> 'processed'`))
+		})
+	}
+}
+
+// TestPostgresQueue_RetentionSweepBacklog: a backlog larger than one batch is
+// removed in full by one sweep.
+func TestPostgresQueue_RetentionSweepBacklog(t *testing.T) {
+	admin := os.Getenv("RELA_TEST_DATABASE_URL")
+	if admin == "" {
+		t.Skip("RELA_TEST_DATABASE_URL not set; skipping postgres retention backlog")
+	}
+	ctx := context.Background()
+	dsn := schemaPinnedDSN(t, admin, "rela_jobs_retention_backlog_test")
+	q, err := jobs.NewPostgresQueue(ctx, discardLogger(), dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = q.Close(context.Background()) })
+
+	pool, err := pgxpool.New(ctx, dsn)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	const finished, dead = 2500, 1500
+	_, err = pool.Exec(ctx, `INSERT INTO neoq_jobs (fingerprint, queue, status, payload, ran_at)
+		SELECT 'f' || g, 'rela', 'processed', '{}', now() - interval '2 days' FROM generate_series(1, $1) g`, finished)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `INSERT INTO neoq_dead_jobs (id, fingerprint, queue, payload, created_at)
+		SELECT g, 'd' || g, 'rela', '{}', now() - interval '2 days' FROM generate_series(1, $1) g`, dead)
+	require.NoError(t, err)
+
+	n, err := jobs.SweepFinished(ctx, q, time.Now().Add(-24*time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, int64(finished+dead), n)
+}
+
+// TestPostgresQueue_CloseLifecycle: Close works before Start and twice, and
+// a Start after Close fails.
+func TestPostgresQueue_CloseLifecycle(t *testing.T) {
+	admin := os.Getenv("RELA_TEST_DATABASE_URL")
+	if admin == "" {
+		t.Skip("RELA_TEST_DATABASE_URL not set; skipping postgres queue lifecycle")
+	}
+	ctx := context.Background()
+	q, err := jobs.NewPostgresQueue(ctx, discardLogger(), schemaPinnedDSN(t, admin, "rela_jobs_lifecycle_test"))
+	require.NoError(t, err)
+	require.NoError(t, q.Close(ctx))
+	require.NoError(t, q.Close(ctx))
+	require.Error(t, q.Start(ctx))
 }

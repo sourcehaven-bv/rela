@@ -10,10 +10,12 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/acaloiaro/neoq"
 	"github.com/acaloiaro/neoq/backends/postgres"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // pgConcurrency is the worker count for a postgres queue.
@@ -59,7 +61,138 @@ func NewPostgresQueue(ctx context.Context, logger *slog.Logger, databaseURL stri
 		// string — neoq's own errors are safe, ours must stay that way.
 		return nil, fmt.Errorf("jobs: init postgres backend: %w", err)
 	}
-	return newNeoqQueue(nq, logger, pgConcurrency)
+	inner, err := newNeoqQueue(nq, logger, pgConcurrency)
+	if err != nil {
+		return nil, err
+	}
+	poolCfg, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		nq.Shutdown(ctx)
+		return nil, errors.New("jobs: parse database URL for the retention sweep")
+	}
+	poolCfg.MaxConns = 1
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
+	if err != nil {
+		nq.Shutdown(ctx)
+		return nil, fmt.Errorf("jobs: open retention sweep pool: %w", err)
+	}
+	return &pgQueue{neoqQueue: inner, pool: pool, quit: make(chan struct{}), done: make(chan struct{})}, nil
+}
+
+// finishedJobRetention is how long the durable queue keeps the row of a
+// finished job: a row in neoq_jobs that neoq marked processed, and a row in
+// neoq_dead_jobs. neoq itself never deletes either, so without the sweep a
+// payload would stay in the database for good (TKT-RJS3KKJ). A day leaves an
+// operator time to inspect a failure; nothing in rela reads the rows.
+//
+// Pending rows, including failed ones awaiting a retry, are never swept.
+const finishedJobRetention = 24 * time.Hour
+
+// retentionSweepInterval is how often the sweep runs. The first sweep
+// waits one interval too, so a short-lived process such as a CLI command
+// exits before it would start one.
+const retentionSweepInterval = 10 * time.Minute
+
+// sweepBatch bounds the rows one DELETE removes, so a large backlog, such
+// as the rows of a deployment that ran before the sweep existed, is removed
+// in short statements rather than one long one.
+const sweepBatch = 1000
+
+// pgQueue is the neoq queue plus the retention sweep of its tables. The
+// sweep has a pool of one connection of its own, because neoq does not
+// expose its pool.
+type pgQueue struct {
+	*neoqQueue
+	pool *pgxpool.Pool
+
+	stopOnce  sync.Once
+	quit      chan struct{} // closed by Close
+	done      chan struct{} // closed when the sweep has ended
+	sweepOnce sync.Once
+}
+
+// Start starts the queue and then the retention sweep.
+func (q *pgQueue) Start(ctx context.Context) error {
+	if err := q.neoqQueue.Start(ctx); err != nil {
+		return err
+	}
+	// The sweep outlives Start's ctx; Close stops it.
+	q.sweepOnce.Do(func() { go q.sweepLoop() }) //nolint:contextcheck // see above
+	return nil
+}
+
+// Close cancels the sweep and closes the queue. It waits for a running
+// sweep only until ctx ends.
+func (q *pgQueue) Close(ctx context.Context) error {
+	q.stopOnce.Do(func() {
+		close(q.quit)
+		// Uses up sweepOnce when the sweep never started, so it cannot
+		// start now, and there is nothing to wait for.
+		q.sweepOnce.Do(func() { close(q.done) })
+	})
+	select {
+	case <-q.done:
+		q.pool.Close()
+	case <-ctx.Done():
+		// The cancelled sweep returns soon; its pool goes with the process.
+	}
+	return q.neoqQueue.Close(ctx)
+}
+
+func (q *pgQueue) sweepLoop() {
+	defer close(q.done)
+	stopCtx, stop := context.WithCancel(context.Background())
+	defer stop()
+	go func() {
+		select {
+		case <-q.quit:
+			stop()
+		case <-stopCtx.Done():
+		}
+	}()
+	t := time.NewTicker(retentionSweepInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-stopCtx.Done():
+			return
+		case <-t.C:
+		}
+		ctx, cancel := context.WithTimeout(stopCtx, time.Minute)
+		if n, err := q.sweepFinished(ctx, time.Now().Add(-finishedJobRetention)); err != nil {
+			if stopCtx.Err() == nil {
+				q.logger.Warn("jobs: retention sweep failed", "error", err)
+			}
+		} else if n > 0 {
+			q.logger.Debug("jobs: retention sweep removed finished jobs", "rows", n)
+		}
+		cancel()
+	}
+}
+
+// sweepFinished deletes this queue's finished and dead job rows that ended
+// before cutoff, in batches of sweepBatch, and returns how many it deleted.
+// A batch that commits stays deleted if a later one fails.
+func (q *pgQueue) sweepFinished(ctx context.Context, cutoff time.Time) (int64, error) {
+	var total int64
+	for _, stmt := range []string{
+		`DELETE FROM neoq_jobs WHERE id IN (SELECT id FROM neoq_jobs
+			WHERE queue = $1 AND status = 'processed' AND ran_at < $2 LIMIT $3)`,
+		`DELETE FROM neoq_dead_jobs WHERE ctid IN (SELECT ctid FROM neoq_dead_jobs
+			WHERE queue = $1 AND created_at < $2 LIMIT $3)`,
+	} {
+		for {
+			tag, err := q.pool.Exec(ctx, stmt, queueName, cutoff, sweepBatch)
+			if err != nil {
+				return total, fmt.Errorf("retention sweep: %w", err)
+			}
+			total += tag.RowsAffected()
+			if tag.RowsAffected() < sweepBatch {
+				break
+			}
+		}
+	}
+	return total, nil
 }
 
 // pgIdleTxTimeout is the idle_in_transaction_session_timeout neoq sets on
