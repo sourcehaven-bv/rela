@@ -56,3 +56,7 @@ A follow-up commit wraps a guide line that exceeded the markdown line limit.
 A second review on the PR added the client-ceiling check, `type@face` scope
 keys, the bound-row pin, value-free logs, an ACL security guide section and
 corrected docs. See the review responses linked to this ticket.
+
+A third review found that elevation skipped `unmatched_principal: reject`.
+The checks of `AuthorizeWrite` that do not come from role grants now run
+through one shared acl function for both paths (RR-CBE2K0E).
