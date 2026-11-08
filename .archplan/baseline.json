@@ -2633,45 +2633,19 @@
       "weight.structure": 90,
       "weight.layers": 0,
       "weight.vocabulary": 912,
-      "weight.types": 4008,
-      "weight.concepts": 7082,
+      "weight.types": 3955,
+      "weight.concepts": 7053,
       "weight.boundaries": 1387,
       "weight.data": 1297,
       "weight.security": 140,
       "largest_tangle": 13,
       "cycle_edges": 61,
       "upward_edges": 0,
-      "propagation_cost": 8.9
+      "propagation_cost": 9.5
     },
     "min_weight": 0,
-    "at": "2026-11-07T20:02:09Z",
+    "at": "2026-11-08T03:33:22Z",
     "log": [
-      {
-        "at": "2026-10-29T18:00:00Z",
-        "change": "loosen",
-        "reason": "BusyChannel wire mirror accepted like the other apiwire DTOs; accepted gated-reader mentions in the busy reader, TKT-21G6JS",
-        "metrics": {
-          "weight.types": [
-            3886,
-            3960
-          ],
-          "weight.vocabulary": [
-            908,
-            912
-          ]
-        }
-      },
-      {
-        "at": "2026-10-29T22:00:00Z",
-        "change": "loosen",
-        "reason": "ChannelSession wire mirror grew by the button and entry fields like SessionView, TKT-S9TLJJ",
-        "metrics": {
-          "weight.types": [
-            3960,
-            3968
-          ]
-        }
-      },
       {
         "at": "2026-10-30T02:00:00Z",
         "change": "loosen",
@@ -2926,6 +2900,25 @@
           "weight.concepts": [
             7081,
             7082
+          ]
+        }
+      },
+      {
+        "at": "2026-11-08T03:33:22Z",
+        "change": "loosen",
+        "reason": "TKT-NRNDGZR: appbuild imports ai for the refusing default AI provider of NewInMemory",
+        "metrics": {
+          "weight.types": [
+            4008,
+            3955
+          ],
+          "weight.concepts": [
+            7082,
+            7053
+          ],
+          "propagation_cost": [
+            8.9,
+            9.5
           ]
         }
       }

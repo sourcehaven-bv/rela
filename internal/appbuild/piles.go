@@ -79,7 +79,8 @@ func buildRefHolders(
 		return refHolders{}, err
 	}
 	if h.leases, h.leaseShared, err = buildLeases(
-		base.cfg.FS, base.cfg.Paths, base.worlds, st, base.leaseShared, d, redactor, writes); err != nil {
+		base.cfg.FS, base.cfg.Paths, base.worlds, st, base.leaseShared, d, redactor, writes,
+		leaseClock(base.clock())); err != nil {
 		return refHolders{}, err
 	}
 	if h.channels, err = buildChannels(base.cfg.FS, base.cfg.Paths, st, overrides.channelStore); err != nil {

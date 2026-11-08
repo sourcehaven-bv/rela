@@ -719,7 +719,7 @@ func (ce *copyEngine) buildCopyTarget(
 	// way, over the values copied above.
 	for _, mapping := range []map[string]string{plan.def.Fields, plan.def.Set} {
 		for field, tmpl := range mapping {
-			if v, ok := copyFieldValue(tmpl, src); ok {
+			if v, ok := copyFieldValue(tmpl, src, ce.m.deps.Clock); ok {
 				target.Properties[field] = v
 			} else {
 				// The source has no such property: unset rather than write the

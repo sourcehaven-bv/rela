@@ -5,7 +5,9 @@ title: 'rela test v1 (2/4): injectable clock and determinism seams (mail transpo
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+started: "2026-11-08"
+completed: "2026-11-08"
+status: done
 ---
 
 ## Description

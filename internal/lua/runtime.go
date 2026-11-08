@@ -15,6 +15,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -140,6 +141,7 @@ type Runtime struct {
 	// bindings there.
 	listRender ListRenderContext
 	aiProvider ai.Provider   // nil means AI is not configured
+	httpClient *http.Client  // nil means the shared process-wide client
 	cache      cacheStore    // nil means rela.cache.* is not registered
 	scriptPath string        // set by RunFile; empty for RunString/inline
 	modules    *moduleLoader // require; Nil: never — set by newRuntime
@@ -165,7 +167,7 @@ type Runtime struct {
 	principal principal.Principal
 
 	// clock is read once at construction for rela.today, rela.now and
-	// rela.now_unix. Nil: accepted — production never sets it; time.Now is used.
+	// rela.now_unix. Nil: accepted — the wall clock.
 	clock func() time.Time
 
 	// errorFrames holds typed stack frames captured by the PCall message
@@ -400,6 +402,15 @@ func WithAIProvider(p ai.Provider) Option {
 	}
 }
 
+// WithHTTPClient sets the client the http.* bindings send through, for this
+// runtime only. Omitting it (or passing nil) uses the shared process-wide
+// client, which pools connections across short-lived runtimes.
+func WithHTTPClient(c *http.Client) Option {
+	return func(r *Runtime) {
+		r.httpClient = c
+	}
+}
+
 // WithMailSender wires a mail transport into the runtime so mail.send
 // delivers. When omitted (or passed nil) the `mail` global is STILL present
 // and mail.send returns a typed not_configured error — see mail.go for why
@@ -508,6 +519,8 @@ func newRuntime(deps WriteDeps, stdout io.Writer, allowWrites bool, opts ...Opti
 	for _, opt := range opts {
 		opt(r)
 	}
+	// The deps' seams come last, so they win over a per-call option.
+	applySeams(r, deps.Seams, allowWrites)
 
 	// Snapshot the output-binding inputs now that options have fixed them.
 	r.out = &outputBindings{

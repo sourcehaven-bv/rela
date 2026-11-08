@@ -96,9 +96,15 @@ func buildTokens(
 	default:
 		return notConfigured(errors.New("tokens need the sqlite or postgres backend, or the desktop app"))
 	}
-	b, err := tokenstore.NewBroker(tokenstore.BrokerDeps{
+	deps := tokenstore.BrokerDeps{
 		Store: tokStore, Locker: locker, Secrets: host, Connections: conns, Scope: scope,
-	})
+	}
+	// Token refreshes go through the WithHTTPClient seam too. Set only when
+	// present: a nil *http.Client in the interface would not read as nil.
+	if c := base.opts.seams.http; c != nil {
+		deps.HTTP = c
+	}
+	b, err := tokenstore.NewBroker(deps)
 	if err != nil {
 		return notConfigured(err)
 	}

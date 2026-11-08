@@ -24,8 +24,10 @@ const (
 )
 
 // startSoftDeleteGC registers the soft-delete GC job on q and starts a ticker
-// that enqueues it every interval. Entities soft-deleted more than delay ago
-// are purged by [entitymanager.PurgeSoftDeleted].
+// that enqueues it every interval. Entities soft-deleted more than delay
+// before now() are purged by [entitymanager.PurgeSoftDeleted]. now is the
+// world's clock, the one the store stamped the deletes with; the ticker runs
+// on real time.
 //
 // Each tick enqueues with one fixed IdempotencyKey, so a run that is still
 // pending absorbs the next tick instead of stacking behind it. On the durable
@@ -36,12 +38,14 @@ const (
 // cannot be registered, it starts nothing. The returned stop function is
 // always safe to call; it stops the ticker, and the queue's own Close drains a
 // run in flight.
-func startSoftDeleteGC(mgr *entitymanager.Manager, q jobs.Client, delay, interval time.Duration) (stop func()) {
+func startSoftDeleteGC(
+	mgr *entitymanager.Manager, q jobs.Client, now func() time.Time, delay, interval time.Duration,
+) (stop func()) {
 	if mgr == nil || q == nil || !entitymanager.SupportsSoftDelete(mgr) {
 		return func() {}
 	}
 	err := q.Register(softDeleteGCKind, func(ctx context.Context, _ jobs.Job) error {
-		n, err := entitymanager.PurgeSoftDeleted(ctx, mgr, time.Now().Add(-delay))
+		n, err := entitymanager.PurgeSoftDeleted(ctx, mgr, now().Add(-delay))
 		if n > 0 {
 			slog.Info("soft delete: purged entities past the undo window", "entities", n)
 		}

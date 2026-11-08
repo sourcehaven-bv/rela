@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -48,6 +49,21 @@ type Read struct {
 	Properties []string // sorted
 }
 
+// Option configures [NewSet].
+type Option func(*setOptions)
+
+type setOptions struct {
+	now func() time.Time
+}
+
+// WithClock sets the clock behind today() in the rules' conditions. Without
+// it the rules read the wall clock.
+//
+// Nil: ignored — the wall clock.
+func WithClock(now func() time.Time) Option {
+	return func(o *setOptions) { o.now = now }
+}
+
 // NewSet compiles every rule of meta declared `enforce: write`, for each
 // entity type it applies to.
 //
@@ -57,11 +73,19 @@ type Read struct {
 // would succeed.
 //
 // Nil: meta rejected — an error, because the caller is a wiring site.
-func NewSet(meta *metamodel.Metamodel) (*Set, error) {
+func NewSet(meta *metamodel.Metamodel, opts ...Option) (*Set, error) {
 	if meta == nil {
 		return nil, errors.New("writerule.NewSet: nil metamodel")
 	}
-	s := &Set{ev: predicatefns.NewEvaluator(meta), byType: map[string][]compiledRule{}}
+	var o setOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+	ev := predicatefns.NewEvaluator(meta)
+	if o.now != nil {
+		ev = predicatefns.NewEvaluatorWithClock(meta, o.now)
+	}
+	s := &Set{ev: ev, byType: map[string][]compiledRule{}}
 	for _, rule := range meta.Validations {
 		if !rule.IsWriteEnforced() {
 			continue

@@ -113,14 +113,31 @@ var httpClient = newHTTPClient()
 // registerBindings on Runtime registers this module only when caps.HTTP
 // was granted.
 //
-// Nil: the zero value is ready to use; it holds no state to initialize.
-type httpBindings struct{}
+// Nil: the zero value is ready to use and sends through the shared client.
+type httpBindings struct {
+	// client is the runtime's [WithHTTPClient] client.
+	//
+	// Nil: accepted — the shared process-wide client is used.
+	client *http.Client
+}
+
+// do sends req through the runtime's client, or the shared one.
+//
+// The script chooses the destination: that is what the binding is for. The
+// boundary is the `http` capability, which an operator grants per script, so
+// neither call is a request-input SSRF.
+func (h httpBindings) do(req *http.Request) (*http.Response, error) {
+	if h.client != nil {
+		return h.client.Do(req) //nolint:gosec // G704: script-chosen URL behind the operator-granted http capability.
+	}
+	return httpClient.Do(req) //nolint:gosec // G704: script-chosen URL behind the operator-granted http capability.
+}
 
 // registerHTTPModule installs the top-level `http` global with `request`
 // plus the per-method convenience functions (get, post, put, patch, delete).
 // JSON helpers live separately under rela.json (see json.go).
 func (r *Runtime) registerHTTPModule() {
-	h := httpBindings{}
+	h := httpBindings{client: r.httpClient}
 	tbl := r.L.NewTable()
 	r.L.SetField(tbl, "request", r.L.NewFunction(h.luaHTTPRequest))
 	r.L.SetField(tbl, "get", r.L.NewFunction(h.luaHTTPGet))
@@ -316,7 +333,7 @@ func (h httpBindings) doHTTPRequest(ls *lua.LState, fnName string, o httpRequest
 		httpReq.SetBasicAuth(o.basicAuth.user, o.basicAuth.pass)
 	}
 
-	resp, doErr := httpClient.Do(httpReq)
+	resp, doErr := h.do(httpReq)
 	if doErr != nil {
 		return pushHTTPError(ls, classifyHTTPError(doErr))
 	}
