@@ -6,6 +6,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 )
 
 // TestOpenAndAssemble_RefusedWithoutDSNStore pins the fail-closed choice on
@@ -13,7 +15,7 @@ import (
 // per-tenant open would hand every tenant the same data.
 func TestOpenAndAssemble_RefusedWithoutDSNStore(t *testing.T) {
 	base := newSharedBase(t)
-	svc, err := base.OpenAndAssemble(context.Background(), "host=tenant-a")
+	svc, err := base.OpenAndAssemble(context.Background(), "host=tenant-a", audit.Nop{})
 	if err == nil {
 		_ = svc.Close()
 		t.Fatal("OpenAndAssemble must refuse on a build that keeps data in the project directory")

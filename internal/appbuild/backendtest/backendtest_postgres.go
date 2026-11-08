@@ -74,6 +74,84 @@ func DSN(tb TB) string {
 	return scopedDSN(tb)
 }
 
+// SchemaDSN is [DSN] that also returns the name of the schema the DSN is
+// pinned to, for a test that must state which schema a connection lands in.
+func SchemaDSN(tb TB) (dsn, schema string) {
+	tb.Helper()
+	dsn = scopedDSN(tb)
+	if dsn == "" {
+		return "", ""
+	}
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		tb.Fatalf("parse scoped DSN: %v", err)
+		return "", ""
+	}
+	schema, _, _ = strings.Cut(cfg.RuntimeParams["search_path"], ",")
+	return dsn, schema
+}
+
+// Database creates a private database for a test that must control what the
+// whole database holds, such as whether `public` has tables, and drops it
+// when the test ends. It returns a DSN for the database on the default
+// search_path. Use [SchemaIn] for schemas in it.
+func Database(tb TB) string {
+	tb.Helper()
+	base := Getenv(testDBEnv)
+	if base == "" {
+		missingDSN(tb, Getenv)
+		return ""
+	}
+	admin := adminConn(tb, base)
+	if admin == nil {
+		return ""
+	}
+	ctx := context.Background()
+	name := fmt.Sprintf("relawiring_db_%d_%d", os.Getpid(), schemaCounter.Add(1))
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+quoteIdent(name)); err != nil {
+		tb.Fatalf("create database %s: %v", name, err)
+		return ""
+	}
+	tb.Cleanup(func() {
+		_, _ = admin.Exec(context.Background(), "DROP DATABASE "+quoteIdent(name)+" WITH (FORCE)")
+	})
+	dsn, err := dsnFor(base, name, "")
+	if err != nil {
+		tb.Fatalf("build database DSN: %v", err)
+		return ""
+	}
+	return dsn
+}
+
+// SchemaIn creates a schema in the database db names and returns a DSN
+// pinned to it, with the schema's name. The schema goes when the database
+// does.
+func SchemaIn(tb TB, db string) (dsn, schema string) {
+	tb.Helper()
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, db)
+	if err != nil {
+		tb.Fatalf("connect: %v", err)
+		return "", ""
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	schema = fmt.Sprintf("relawiring_%d_%d", os.Getpid(), schemaCounter.Add(1))
+	if _, err = conn.Exec(ctx, "CREATE SCHEMA "+quoteIdent(schema)); err != nil {
+		tb.Fatalf("create schema %s: %v", schema, err)
+		return "", ""
+	}
+	cfg, err := pgx.ParseConfig(db)
+	if err != nil {
+		tb.Fatalf("parse DSN: %v", err)
+		return "", ""
+	}
+	if dsn, err = dsnFor(db, cfg.Database, schema); err != nil {
+		tb.Fatalf("build schema DSN: %v", err)
+		return "", ""
+	}
+	return dsn, schema
+}
+
 // scopedDSN creates the per-test schema and returns a DSN pinned to it.
 func scopedDSN(tb TB) string {
 	tb.Helper()
@@ -135,12 +213,24 @@ func dsnWithSearchPath(base, schema string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("parse %s: %w", testDBEnv, err)
 	}
+	return dsnFor(base, cfg.Database, schema)
+}
+
+// dsnFor rebuilds base for database, with search_path pinned to schema and
+// public when schema is not empty.
+func dsnFor(base, database, schema string) (string, error) {
+	cfg, err := pgx.ParseConfig(base)
+	if err != nil {
+		return "", fmt.Errorf("parse %s: %w", testDBEnv, err)
+	}
 	kv := []string{
 		"host=" + cfg.Host,
 		fmt.Sprintf("port=%d", cfg.Port),
 		"user=" + cfg.User,
-		"dbname=" + cfg.Database,
-		"search_path=" + schema + ",public",
+		"dbname=" + database,
+	}
+	if schema != "" {
+		kv = append(kv, "search_path="+schema+",public")
 	}
 	if cfg.Password != "" {
 		kv = append(kv, "password="+cfg.Password)

@@ -35,16 +35,18 @@
 //
 // # What lives here and what does not
 //
-// Resolution and per-tenant store acquisition live here. Provisioning
-// (creating and migrating a new tenant's schema, TKT-TNPRV8) and erasure
-// (dropping it, TKT-TNERAS) deliberately do not: this package resolves tenants
-// that already exist and denies ones that do not. Nothing in it issues DDL.
+// Resolution, per-tenant store acquisition and erasure ([Erase], TKT-TNERAS)
+// live here. Provisioning (creating and migrating a new tenant's schema,
+// TKT-TNPRV8) does not: this package resolves tenants that already exist and
+// denies ones that do not. The one DDL statement in it is the erasure's DROP
+// SCHEMA.
 package tenant
 
 import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // ErrUnknownTenant reports that an org is not a tenant of this deployment.
@@ -71,6 +73,24 @@ var ErrUnknownTenant = errors.New("tenant: unknown organization")
 // characters, comfortably inside PostgreSQL's 63-byte NAMEDATALEN so a name can
 // never be silently truncated into a collision with another tenant's.
 var schemaNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,30}$`)
+
+// checkSchemaName refuses a schema name that does not match
+// [schemaNamePattern] or that names a schema PostgreSQL or the deployment
+// shares between tenants.
+//
+// The pattern alone admits `public` and `information_schema`, and
+// PostgreSQL reserves the `pg_` prefix. A tenant in `public` would be served
+// from the schema every tenant's `search_path` falls back to, and erasing
+// it would drop the `pg_trgm` extension search needs for every tenant.
+func checkSchemaName(schema string) error {
+	if !schemaNamePattern.MatchString(schema) {
+		return fmt.Errorf("schema %q must match %s", schema, schemaNamePattern)
+	}
+	if schema == "public" || schema == "information_schema" || strings.HasPrefix(schema, "pg_") {
+		return fmt.Errorf("schema %q is shared by PostgreSQL or by every tenant, so no tenant may use it", schema)
+	}
+	return nil
+}
 
 // Tenant is one organization's storage location.
 //
@@ -110,8 +130,8 @@ func (t Tenant) validate() error {
 	if t.OrgID == "" {
 		return errors.New("org_id is required")
 	}
-	if !schemaNamePattern.MatchString(t.Schema) {
-		return fmt.Errorf("schema %q must match %s", t.Schema, schemaNamePattern)
+	if err := checkSchemaName(t.Schema); err != nil {
+		return err
 	}
 	if t.DSN == "" {
 		return errors.New("dsn is required")

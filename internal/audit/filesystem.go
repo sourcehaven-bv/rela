@@ -41,6 +41,7 @@ type Filesystem struct {
 	currentDate string
 	file        *os.File
 	nextRetry   time.Time // zero = not in cooldown; later = skip until then
+	closed      bool
 }
 
 // retryAfter is the cool-down between failed rotate attempts. The
@@ -98,6 +99,13 @@ func (f *Filesystem) Record(rec Record) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	if f.closed {
+		// A record after Close would reopen the file and leak the handle the
+		// owner just released. It is a wiring fault (a writer outlived the
+		// sink's owner), so it is logged rather than written.
+		slog.Error("audit.write_failed", "stage", "closed", "op", rec.Op)
+		return
+	}
 	if !f.nextRetry.IsZero() && now.Before(f.nextRetry) {
 		return
 	}
@@ -136,6 +144,25 @@ func (f *Filesystem) Record(rec Record) {
 		slog.Error("audit.write_failed", "stage", "write", "error", err)
 	}
 	// coverage-ignore-end
+}
+
+// Close releases the open day file. Records after Close are dropped and
+// logged. Safe to call more than once.
+//
+// A process with one sink never needs it: the file closes with the process. A
+// multi-tenant host opens one sink per resident tenant and closes it when the
+// tenant is evicted, and without Close each eviction would leak a file
+// handle.
+func (f *Filesystem) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closed = true
+	if f.file == nil {
+		return nil
+	}
+	err := f.file.Close()
+	f.file = nil
+	return err
 }
 
 // rotateLocked closes the current file (if any), creates the audit
