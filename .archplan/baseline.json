@@ -2641,7 +2641,7 @@
       "largest_tangle": 13,
       "cycle_edges": 61,
       "upward_edges": 0,
-      "propagation_cost": 8.9
+      "propagation_cost": 9.0
     },
     "min_weight": 0,
     "at": "2026-11-07T20:02:09Z",
@@ -2932,11 +2932,15 @@
       {
         "at": "2026-11-08T09:00:00Z",
         "change": "loosen",
-        "reason": "TKT-NRNDGZR: appbuild imports ai for WithAIProvider, so the existing 'message' unit-naming finding (realtimecfg vs ai) weighs 1 more",
+        "reason": "TKT-NRNDGZR: appbuild imports ai for WithAIProvider, so the existing 'message' unit-naming finding (realtimecfg vs ai) weighs 1 more and appbuild reaches the ai package",
         "metrics": {
           "weight.concepts": [
             7082,
             7083
+          ],
+          "propagation_cost": [
+            8.9,
+            9.0
           ]
         }
       }

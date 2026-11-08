@@ -34,4 +34,4 @@ Add appbuild options `WithClock`, `WithMailTransport`, `WithHTTPClient`,
 
 ## Follow-up fix
 
-The first push carried a stale archplan baseline. RR-Y5IGXY7 restored develop's metrics, grouped the lua.Runtime AI and HTTP backends into one field, and recorded only the measured concepts +1.
+The first push carried a stale archplan baseline. RR-Y5IGXY7 restored develop's metrics, grouped the lua.Runtime AI and HTTP backends into one field, and recorded only the measured concepts +1 and propagation cost 8.9 to 9.0 (appbuild imports ai).
