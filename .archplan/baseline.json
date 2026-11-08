@@ -2630,6 +2630,12 @@
       "reason": "Design: a subject id is an entity id, a plain string everywhere in rela (entity.Ref.ID); a run-store-only type would not match its callers, TKT-PV9R0GK",
       "at": "2026-11-07T08:20:00Z",
       "title": "flowrun holds raw ids whose concept is unclear: SubjectID."
+    },
+    "boundaries.misplaced_file-748c239a0aab": {
+      "state": "accepted",
+      "reason": "By design: tenanterase.go is the operator command edge for tenant erasure (TKT-TNERAS). It parses flags, confirms and records; the erasure itself lives in tenant, so most links point there.",
+      "at": "2026-11-08T10:00:00Z",
+      "title": "rela-server/tenanterase.go in cmdServer has most of its links to tenant (weighted links: 3.7 to tenant, 1.1 to cmdServer)."
     }
   },
   "labels": {},
@@ -2640,55 +2646,18 @@
       "weight.layers": 0,
       "weight.vocabulary": 912,
       "weight.types": 4008,
-      "weight.concepts": 7083,
-      "weight.boundaries": 1387,
+      "weight.concepts": 7081,
+      "weight.boundaries": 1417,
       "weight.data": 1297,
       "weight.security": 140,
       "largest_tangle": 13,
       "cycle_edges": 61,
       "upward_edges": 0,
-      "propagation_cost": 9.0
+      "propagation_cost": 9.1
     },
     "min_weight": 0,
-    "at": "2026-11-07T20:02:09Z",
+    "at": "2026-11-08T09:45:36Z",
     "log": [
-      {
-        "at": "2026-10-29T18:00:00Z",
-        "change": "loosen",
-        "reason": "BusyChannel wire mirror accepted like the other apiwire DTOs; accepted gated-reader mentions in the busy reader, TKT-21G6JS",
-        "metrics": {
-          "weight.types": [
-            3886,
-            3960
-          ],
-          "weight.vocabulary": [
-            908,
-            912
-          ]
-        }
-      },
-      {
-        "at": "2026-10-29T22:00:00Z",
-        "change": "loosen",
-        "reason": "ChannelSession wire mirror grew by the button and entry fields like SessionView, TKT-S9TLJJ",
-        "metrics": {
-          "weight.types": [
-            3960,
-            3968
-          ]
-        }
-      },
-      {
-        "at": "2026-10-30T02:00:00Z",
-        "change": "loosen",
-        "reason": "ChannelSession wire mirror grew by the button options like SessionView, TKT-TXZZZ2",
-        "metrics": {
-          "weight.types": [
-            3968,
-            3969
-          ]
-        }
-      },
       {
         "at": "2026-11-03T15:10:00Z",
         "change": "loosen",
@@ -2947,6 +2916,25 @@
           "propagation_cost": [
             8.9,
             9.0
+          ]
+        }
+      },
+      {
+        "at": "2026-11-08T09:45:36Z",
+        "change": "loosen",
+        "reason": "Multi-tenant host and tenant erasure (TKT-D6MF3SW, TKT-TNERAS): cmdServer now wires tenant and tenanthost, and the erase command edge links mostly to tenant",
+        "metrics": {
+          "weight.concepts": [
+            7083,
+            7081
+          ],
+          "weight.boundaries": [
+            1387,
+            1417
+          ],
+          "propagation_cost": [
+            9.0,
+            9.1
           ]
         }
       }
