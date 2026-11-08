@@ -681,13 +681,17 @@ schema lock while the tenant is open (see "Erasing a tenant").
 log for it. Run it with the postgres build (`rela-server-postgres`) on a
 host that has the project directory:
 
-1. Mark the tenant in `tenants.yaml` with `erase: true`. A marked tenant is
+1. Check that no open incident or nonconformity references the tenant's
+   data or audit records. Erasure deletes the tenant's audit log at once,
+   ahead of the normal audit retention period, because it is that
+   customer's data; an open case needs it kept first.
+2. Mark the tenant in `tenants.yaml` with `erase: true`. A marked tenant is
    not served: its org gets 403 `unknown_tenant`, as an org the file does
    not name does. It stays in the file so that no other tenant can take
    its schema name before the erasure.
-2. Restart every server that runs on this `tenants.yaml`, so that none of
+3. Restart every server that runs on this `tenants.yaml`, so that none of
    them serves the org any more.
-3. Run the erasure. It shows the database it will act on and asks you to
+4. Run the erasure. It shows the database it will act on and asks you to
    type the org id; `-force` skips the question.
 
 ```bash
@@ -695,7 +699,9 @@ export RELA_DATABASE_URL='postgres://...'   # when tenants.yaml has no base_dsn
 rela-server-postgres tenant erase -project /srv/rela org_acme
 ```
 
-4. Remove the entry from `tenants.yaml`, or keep it marked to keep the
+5. On each other server host, run the same command to remove that host's
+   audit directory. The schema is already gone there, which is not an error.
+6. Remove the entry from `tenants.yaml`, or keep it marked to keep the
    schema name reserved.
 
 What it removes:
@@ -711,11 +717,13 @@ What it removes:
 
 What it does not remove:
 
-- Audit directories on other server hosts, and copies of any audit log.
+- Audit directories on other server hosts (step 5), and copies of any
+  audit log.
 - Server and access logs, which name the org id and the paths requested.
 - Backups (see below).
 
-Each erasure, refused or done, is appended to
+Each erasure that passes the checks below and the confirmation, whether
+the database then refuses it or it completes, is appended to
 `.rela/audit/tenant-erasures.jsonl`: the time, the operator (`$USER`), the
 org id, the schema and the result. It holds no tenant data and is not
 removed with the tenant.
