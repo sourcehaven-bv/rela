@@ -9,11 +9,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/reconwire"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
-	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
@@ -123,7 +124,7 @@ entities:
 	rec := httptest.NewRecorder()
 	app.NewRouter().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/_reconcile", strings.NewReader(body)))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	var resp v1.ReconcileResponse
+	var resp reconwire.Response
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
 	require.Len(t, resp.Ranges, 2)
 	require.NotNil(t, resp.Ranges[0].Count)

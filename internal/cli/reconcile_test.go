@@ -11,12 +11,14 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/reconwire"
 
 	"github.com/alecthomas/kong"
 	"github.com/stretchr/testify/require"
 
-	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -63,14 +65,14 @@ func reconcileMeta(t *testing.T) *metamodel.Metamodel {
 // emptyLocal is a local side with no elements.
 type emptyLocal struct{}
 
-func (emptyLocal) Fingerprint(context.Context, visibility.ElementTypes, store.ElementRange) (reconcile.Range, error) {
-	return reconcile.Range{}, nil
+func (emptyLocal) Sum(context.Context, visibility.ElementTypes, store.ElementRange) (reconclient.Sum, error) {
+	return reconclient.Sum{Fingerprint: strings.Repeat("0", 32)}, nil
 }
 
 func (emptyLocal) List(
 	context.Context, visibility.ElementTypes, store.ElementRange, int,
-) (visibility.ElementPage, error) {
-	return visibility.ElementPage{}, nil
+) (reconclient.Page, error) {
+	return reconclient.Page{}, nil
 }
 
 // oneTicketRemote serves a remote that holds the one ticket TKT-1 and
@@ -86,12 +88,12 @@ func oneTicketRemote(t *testing.T, wantAuth string) *httptest.Server {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		var req v1.ReconcileRequest
+		var req reconwire.Request
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		var resp v1.ReconcileResponse
+		var resp reconwire.Response
 		for _, rr := range req.Ranges {
 			has := rr.Kind == "entity" && slices.Contains(rr.Entities, "ticket") && rr.Lo <= el.Address &&
 				(rr.Hi == nil || el.Address < *rr.Hi) && (rr.After == nil || *rr.After < el.Address)
@@ -101,14 +103,14 @@ func oneTicketRemote(t *testing.T, wantAuth string) *httptest.Server {
 					sum = sum.Add(el)
 				}
 				n := sum.Count
-				resp.Ranges = append(resp.Ranges, v1.ReconcileResult{
-					Status: v1.ReconcileOK, Count: &n, Fingerprint: sum.Sum.String(),
+				resp.Ranges = append(resp.Ranges, reconwire.Result{
+					Status: reconwire.StatusOK, Count: &n, Fingerprint: sum.Sum.String(),
 				})
 				continue
 			}
-			res := v1.ReconcileResult{Status: v1.ReconcileOK}
+			res := reconwire.Result{Status: reconwire.StatusOK}
 			if has {
-				res.Elements = []v1.ReconcileElement{{Address: el.Address, Hash: el.Hash.String()}}
+				res.Elements = []reconwire.Element{{Address: el.Address, Hash: el.Hash.String()}}
 				res.Last = el.Address
 			}
 			resp.Ranges = append(resp.Ranges, res)
@@ -296,9 +298,9 @@ func TestReconcileDiff_LocalUnavailable(t *testing.T) {
 func TestReconcileText_QuotesUnsafeAddresses(t *testing.T) {
 	var b bytes.Buffer
 	res := reconclient.Result{
-		OnlyLocal: []reconcile.Element{{Kind: reconcile.KindEntity, Address: "ticket/\x1b[2JX"}},
+		OnlyLocal: []reconclient.Element{{Kind: reconclient.KindEntity, Address: "ticket/\x1b[2JX"}},
 		Skipped: []reconclient.Skipped{{
-			Kind: reconcile.KindRelation, Type: "implements", Side: "remote", Reason: "gated\x1b",
+			Kind: reconclient.KindRelation, Type: "implements", Remote: true, Reason: "gated\x1b",
 		}},
 	}
 	require.NoError(t, writeReconcileText(&b, "https://rela.example", "", res))

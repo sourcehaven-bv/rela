@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	"github.com/Sourcehaven-BV/rela/internal/reconwire"
 )
 
 func TestDiff_DeadlineIsBudget(t *testing.T) {
@@ -49,7 +49,7 @@ func TestDiff_LocalTooLargeMultiTypeListsOnce(t *testing.T) {
 // is caught, so it cannot keep the client splitting on local addresses.
 func TestDiff_CountsMustAddUp(t *testing.T) {
 	local := &fakeLocal{s: newSet(tickets(1000, "l")...)}
-	lie := func(req v1.ReconcileRequest, resp *v1.ReconcileResponse) {
+	lie := func(req reconwire.Request, resp *reconwire.Response) {
 		for i, rr := range req.Ranges {
 			if rr.Op == "fingerprint" {
 				n := uint64(5000)
@@ -89,7 +89,7 @@ func TestDiff_SmallLocalSpanIsNotSplit(t *testing.T) {
 // unnamedRange drops the range index from a remote's refusal.
 type unnamedRange struct{ *fakeRemote }
 
-func (u unnamedRange) Reconcile(ctx context.Context, req v1.ReconcileRequest) (v1.ReconcileResponse, error) {
+func (u unnamedRange) Reconcile(ctx context.Context, req reconwire.Request) (reconwire.Response, error) {
 	resp, err := u.fakeRemote.Reconcile(ctx, req)
 	var re *RangeError
 	if errors.As(err, &re) {
@@ -112,8 +112,8 @@ func TestDiff_RefusalWithoutRangeIndex(t *testing.T) {
 }
 
 func TestSoleRelation(t *testing.T) {
-	e := &task{sp: &span{kind: 'E'}}
-	r := &task{sp: &span{kind: 'R'}}
+	e := &task{sp: &span{kind: KindEntity}}
+	r := &task{sp: &span{kind: KindRelation}}
 	for _, tc := range []struct {
 		batch []*task
 		want  int
@@ -139,10 +139,10 @@ func TestDiff_RemoteBytesBudget(t *testing.T) {
 
 func TestDiff_LongCursorIsRefused(t *testing.T) {
 	long := "ticket/" + strings.Repeat("a", 4089)
-	mutate := func(req v1.ReconcileRequest, resp *v1.ReconcileResponse) {
+	mutate := func(req reconwire.Request, resp *reconwire.Response) {
 		for i, rr := range req.Ranges {
 			if rr.Op == "list" {
-				resp.Ranges[i] = v1.ReconcileResult{Status: v1.ReconcileOK, Last: long, More: true}
+				resp.Ranges[i] = reconwire.Result{Status: reconwire.StatusOK, Last: long, More: true}
 			}
 		}
 	}
@@ -150,5 +150,52 @@ func TestDiff_LongCursorIsRefused(t *testing.T) {
 		Scope{Entities: []string{"ticket"}}, Options{})
 	if !errors.Is(err, ErrProtocol) {
 		t.Errorf("err = %v, want ErrProtocol", err)
+	}
+}
+
+// TestDiff_TooLargeAlwaysLeaksFewBounds: a remote that answers too_large to
+// every fingerprint gets one split of the large span, at bucketRows local
+// elements per bound, and listings after that. It never sees finer bounds.
+func TestDiff_TooLargeAlwaysLeaksFewBounds(t *testing.T) {
+	const n = 4000
+	local := &fakeLocal{s: newSet(tickets(n, "l")...)}
+	remote := &fakeRemote{s: newSet(tickets(n, "r")...), tooLarge: -1}
+	res, err := diff(t, local, remote, Scope{Entities: []string{"ticket"}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Differing) != n {
+		t.Errorf("%d differing, want %d", len(res.Differing), n)
+	}
+	bounds := map[string]bool{}
+	for _, req := range remote.requests {
+		for _, rr := range req.Ranges {
+			if rr.Lo != "" {
+				bounds[rr.Lo] = true
+			}
+			if rr.Hi != nil {
+				bounds[*rr.Hi] = true
+			}
+		}
+	}
+	if want := (n + bucketRows - 1) / bucketRows; len(bounds) > want-1 {
+		t.Errorf("the remote saw %d local bounds, want at most %d", len(bounds), want-1)
+	}
+}
+
+// TestDiff_TooLargeSmallSpanIsListed: too_large for a span with few local
+// elements lists it rather than splitting on local addresses.
+func TestDiff_TooLargeSmallSpanIsListed(t *testing.T) {
+	local := &fakeLocal{s: newSet(tickets(bucketRows, "l")...)}
+	remote := &fakeRemote{s: newSet(tickets(bucketRows, "r")...), tooLarge: -1}
+	if _, err := diff(t, local, remote, Scope{Entities: []string{"ticket"}}, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, req := range remote.requests {
+		for _, rr := range req.Ranges {
+			if rr.Lo != "" || rr.Hi != nil {
+				t.Fatalf("a range with local bounds was sent: %+v", rr)
+			}
+		}
 	}
 }

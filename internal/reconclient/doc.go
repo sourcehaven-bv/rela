@@ -28,7 +28,7 @@
 // # Trust
 //
 // Every remote answer is untrusted input. It is validated before use:
-// fingerprints with [reconcile.ParseFingerprint], hashes with
+// fingerprints as 32 lower-case hex digits, hashes with
 // [canonical.ParseDigest], addresses for length, printable characters,
 // type, order and range, and pages for a cursor that advances. A violation
 // fails the run. The client's own work is bounded by [Options]: round trips,
@@ -40,7 +40,8 @@
 // not hold. Two rules limit this. A span with at most 256 local elements is
 // listed, never split. The remote counts of the parts of a split must add up
 // to its count for the whole, so a remote cannot fake differences to keep the
-// client splitting.
+// client splitting. A too_large answer, which has no count, splits a span at
+// most once, into parts of 1500 local elements, and lists those parts.
 //
 // A matching fingerprint is not evidence of integrity (see package
 // reconcile): a writer in scope can make two different sets match.

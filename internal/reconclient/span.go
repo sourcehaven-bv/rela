@@ -5,8 +5,8 @@ import (
 	"slices"
 	"strings"
 
-	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
-	"github.com/Sourcehaven-BV/rela/internal/reconcile"
+	"github.com/Sourcehaven-BV/rela/internal/reconwire"
+
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -17,13 +17,13 @@ import (
 // endpoint scope, which is the same for every relation span of a run, so a
 // split never moves a row out of every child.
 type span struct {
-	kind      reconcile.Kind
+	kind      Kind
 	entities  []string
 	relations []string
 	lo, hi    string
 	bounded   bool
 	// local holds the local elements of the span in order once localKnown.
-	local      []reconcile.Element
+	local      []Element
 	localKnown bool
 	// notRun counts the deadline refusals of this span.
 	notRun int
@@ -37,7 +37,7 @@ func (s *span) types() visibility.ElementTypes {
 // storeRange returns [lo, hi) of the span as the local reader takes it.
 func (s *span) storeRange(lo string) store.ElementRange {
 	return store.ElementRange{
-		Relations: s.kind == reconcile.KindRelation, Lo: lo, Hi: s.hi, Unbounded: !s.bounded,
+		Relations: s.kind == KindRelation, Lo: lo, Hi: s.hi, Unbounded: !s.bounded,
 	}
 }
 
@@ -46,17 +46,17 @@ func (s *span) names() int { return len(s.entities) + len(s.relations) }
 
 // multiType reports whether the span can be split by type.
 func (s *span) multiType() bool {
-	if s.kind == reconcile.KindRelation {
+	if s.kind == KindRelation {
 		return len(s.relations) > 1
 	}
 	return len(s.entities) > 1
 }
 
 // wire returns the span as one range of a request.
-func (s *span) wire(op string, limit int, after *string) v1.ReconcileRange {
-	rr := v1.ReconcileRange{Kind: "entity", Entities: s.entities, Op: op, Limit: limit}
-	if s.kind == reconcile.KindRelation {
-		rr.Kind, rr.Relations = "relation", s.relations
+func (s *span) wire(op string, limit int, after *string) reconwire.Range {
+	rr := reconwire.Range{Kind: s.kind.String(), Entities: s.entities, Op: op, Limit: limit}
+	if s.kind == KindRelation {
+		rr.Relations = s.relations
 	}
 	if after != nil {
 		a := *after
@@ -82,7 +82,7 @@ func (s *span) child(entities, relations []string) *span {
 // byType splits a multi-type span into one span per type.
 func (s *span) byType() []*span {
 	var out []*span
-	if s.kind == reconcile.KindRelation {
+	if s.kind == KindRelation {
 		for _, r := range s.relations {
 			out = append(out, s.child(s.entities, []string{r}))
 		}
@@ -134,15 +134,6 @@ func (s *span) byAddress(n int) []*span {
 	return out
 }
 
-// localSum folds the known local elements.
-func (s *span) localSum() reconcile.Range {
-	var r reconcile.Range
-	for _, e := range s.local {
-		r = r.Add(e)
-	}
-	return r
-}
-
 // checkAddress checks an address the remote listed for this span: its
 // length, its characters, its type, and that it lies above floor (strictly
 // when strict) and below hi.
@@ -170,7 +161,7 @@ func (s *span) checkAddress(a, floor string, strict bool) error {
 // Neither ids nor faces hold "--" (the relation key format depends on it),
 // so a relation address has exactly three parts.
 func (s *span) ownsAddress(a string) bool {
-	if s.kind == reconcile.KindRelation {
+	if s.kind == KindRelation {
 		parts := strings.Split(a, "--")
 		return len(parts) == 3 && parts[0] != "" && parts[2] != "" && slices.Contains(s.relations, parts[1])
 	}

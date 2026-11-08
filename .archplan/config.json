@@ -108,6 +108,7 @@
         "realtimelimits",
         "reconclient",
         "reconclientHTTP",
+        "reconwire",
         "relresolve",
         "renametype",
         "safexml",

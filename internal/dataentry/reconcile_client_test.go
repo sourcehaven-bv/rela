@@ -9,11 +9,12 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/reconwire"
+
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
-	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient/httpremote"
@@ -77,13 +78,17 @@ func localElements(t *testing.T, app *App, d *acl.Declarative) *visibility.Eleme
 	return el
 }
 
-func newDiffer(t *testing.T, srv *httptest.Server, local reconclient.Local, token string) *reconclient.Differ {
+func newDiffer(t *testing.T, srv *httptest.Server, el *visibility.Elements, token string) *reconclient.Differ {
 	t.Helper()
 	auth, err := httpremote.Bearer(token)
 	if err != nil {
 		t.Fatal(err)
 	}
 	remote, err := httpremote.New(httpremote.Config{BaseURL: srv.URL, Auth: auth})
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := reconclient.Visible(el)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,9 +262,9 @@ func TestReconcileClient_Paging(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ask := func(rr v1.ReconcileRange) v1.ReconcileResult {
+	ask := func(rr reconwire.Range) reconwire.Result {
 		t.Helper()
-		resp, err := remote.Reconcile(t.Context(), v1.ReconcileRequest{Ranges: []v1.ReconcileRange{rr}})
+		resp, err := remote.Reconcile(t.Context(), reconwire.Request{Ranges: []reconwire.Range{rr}})
 		if err != nil {
 			t.Fatal(err)
 		}

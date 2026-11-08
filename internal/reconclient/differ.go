@@ -6,29 +6,82 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
-	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	"github.com/Sourcehaven-BV/rela/internal/reconwire"
+
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
-	"github.com/Sourcehaven-BV/rela/internal/reconcile"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // Local is the local side: the gated element range read for the principal
-// bound on ctx. [*visibility.Elements] implements it.
+// bound on ctx. [Visible] adapts [visibility.Elements] to it.
+//
+// Sum returns [visibility.ErrRangeTooLarge] when the range is too large to
+// fingerprint, and [visibility.ErrRelationMetaGated] when the policy can
+// hide meta of a relation type, as [visibility.Elements.Fingerprint] does.
 type Local interface {
-	Fingerprint(ctx context.Context, types visibility.ElementTypes, r store.ElementRange) (reconcile.Range, error)
-	List(
-		ctx context.Context, types visibility.ElementTypes, r store.ElementRange, limit int,
-	) (visibility.ElementPage, error)
+	Sum(ctx context.Context, types visibility.ElementTypes, r store.ElementRange) (Sum, error)
+	List(ctx context.Context, types visibility.ElementTypes, r store.ElementRange, limit int) (Page, error)
+}
+
+// Kind says whether an element is an entity or a relation. The zero Kind is
+// invalid.
+type Kind byte
+
+// The two kinds, entities first.
+const (
+	KindEntity Kind = iota + 1
+	KindRelation
+)
+
+// String returns "entity" or "relation", the kind's name on the wire.
+func (k Kind) String() string {
+	if k == KindRelation {
+		return "relation"
+	}
+	return "entity"
+}
+
+// Element is one row as one side sees it.
+type Element struct {
+	Kind Kind
+	// Address is "type/id[@face]" for an entity and "from[@face]--type--to"
+	// for a relation.
+	Address string
+	// Hash is the view hash: the canonical digest of the reader's view.
+	Hash canonical.Digest
+}
+
+// Sum is the fingerprint of a range: how many elements it holds, and the
+// sum of their fingerprints as 32 lower-case hex digits, the wire form.
+// Two sums are compared with ==.
+type Sum struct {
+	Count       uint64
+	Fingerprint string
+}
+
+// Row is one element of a [Page]; its kind is the kind of the range listed.
+type Row struct {
+	Address string
+	Hash    canonical.Digest
+}
+
+// Page is one page of a local listing, with the meaning of
+// [visibility.ElementPage]: the caller resumes after Last.
+type Page struct {
+	Rows []Row
+	Last string
+	More bool
 }
 
 // Remote sends one request to POST /api/v1/_reconcile. It returns
 // [*RefusedError] for an admission refusal and [*RangeError] for a refused
 // range; the answer itself is validated by the Differ.
 type Remote interface {
-	Reconcile(ctx context.Context, req v1.ReconcileRequest) (v1.ReconcileResponse, error)
+	Reconcile(ctx context.Context, req reconwire.Request) (reconwire.Response, error)
 }
 
 // The server's request limits (reconcile_handler.go). A request over them is
@@ -143,7 +196,7 @@ type Scope struct {
 
 // Change is an address on both sides with different view hashes.
 type Change struct {
-	Kind    reconcile.Kind
+	Kind    Kind
 	Address string
 	Local   canonical.Digest
 	Remote  canonical.Digest
@@ -151,10 +204,11 @@ type Change struct {
 
 // Skipped is a relation type left out of the comparison.
 type Skipped struct {
-	Kind reconcile.Kind
+	Kind Kind
 	Type string
-	// Side is "local" or "remote": whose policy refused the type.
-	Side   string
+	// Remote reports that the remote's policy refused the type; otherwise
+	// the local policy did.
+	Remote bool
 	Reason string
 }
 
@@ -168,8 +222,8 @@ type Stats struct {
 // Result is the outcome of [Differ.Diff]. Every list is ordered by kind,
 // then bytewise by address.
 type Result struct {
-	OnlyLocal  []reconcile.Element
-	OnlyRemote []reconcile.Element
+	OnlyLocal  []Element
+	OnlyRemote []Element
 	Differing  []Change
 	Skipped    []Skipped
 	Stats      Stats
@@ -252,14 +306,14 @@ func initialSpans(scope Scope) ([]*span, error) {
 	ents := slices.Sorted(slices.Values(scope.Entities))
 	var out []*span
 	for _, c := range chunk(ents, serverMaxTypeNames) {
-		out = append(out, &span{kind: reconcile.KindEntity, entities: c})
+		out = append(out, &span{kind: KindEntity, entities: c})
 	}
 	if len(scope.Relations) == 0 {
 		return out, nil
 	}
 	rels := slices.Sorted(slices.Values(scope.Relations))
 	for _, c := range chunk(rels, serverMaxTypeNames-len(ents)) {
-		out = append(out, &span{kind: reconcile.KindRelation, entities: ents, relations: c})
+		out = append(out, &span{kind: KindRelation, entities: ents, relations: c})
 	}
 	return out, nil
 }
@@ -274,10 +328,10 @@ type task struct {
 	// cursor is the last address of the previous page; nil on the first.
 	cursor *string
 	// remote holds the remote elements listed so far.
-	remote []reconcile.Element
+	remote []Element
 	// local is the local fingerprint of the span, for a fingerprint task;
 	// prepared reports that it is computed.
-	local    reconcile.Range
+	local    Sum
 	prepared bool
 	// fam is the split t came from, when the remote count of the parent
 	// is known.
@@ -339,7 +393,7 @@ type run struct {
 	// remoteBytes counts the address bytes kept from the remote.
 	remoteBytes int
 
-	onlyLocal, onlyRemote []reconcile.Element
+	onlyLocal, onlyRemote []Element
 	differing             []Change
 	skipped               []Skipped
 }
@@ -381,7 +435,7 @@ func (r *run) round(work []*task) ([]*task, error) {
 		}
 		notRun := false
 		for i, t := range batch {
-			if answers[i].Status == v1.ReconcileNotRun {
+			if answers[i].Status == reconwire.StatusNotRun {
 				// The server stops at its deadline and answers every range
 				// after it not_run. Only the first may have used the time;
 				// the rest are asked again as they are.
@@ -409,34 +463,26 @@ func (r *run) prepare(t *task) (more []*task, ready bool, err error) {
 	if t.prepared {
 		return nil, true, nil
 	}
-	if sp.localKnown {
-		t.local, t.prepared = sp.localSum(), true
-		return nil, true, nil
-	}
-	rg, fpErr := r.d.local.Fingerprint(r.ctx, sp.types(), sp.storeRange(sp.lo))
+	sum, fpErr := r.d.local.Sum(r.ctx, sp.types(), sp.storeRange(sp.lo))
 	switch {
 	case fpErr == nil:
-		t.local, t.prepared = rg, true
+		t.local, t.prepared = sum, true
 		return nil, true, nil
 	case errors.Is(fpErr, visibility.ErrRangeTooLarge):
-		if sp.multiType() {
-			// Split first: listing the whole span would list each type
-			// again once its own fingerprint is too large.
-			t.fam.abandon()
-			return tasksFor(sp.byType()), false, nil
-		}
-		if err := r.enumerate(sp); err != nil {
-			return nil, false, err
-		}
-		t.local, t.prepared = sp.localSum(), true
-		return nil, true, nil
-	case errors.Is(fpErr, visibility.ErrRelationMetaGated) && sp.kind == reconcile.KindRelation:
+		// The local reader loads each row to fingerprint it, and the span
+		// holds more rows than it loads at once. Split it as for a remote
+		// too_large: by type, else into buckets that fit, else list it.
+		// The split follows the local size alone.
+		t.fam.abandon()
+		more, err := r.tooLarge(sp)
+		return more, false, err
+	case errors.Is(fpErr, visibility.ErrRelationMetaGated) && sp.kind == KindRelation:
 		t.fam.abandon()
 		if sp.multiType() {
 			return tasksFor(sp.byType()), false, nil
 		}
 		r.skipped = append(r.skipped, Skipped{
-			Kind: reconcile.KindRelation, Type: sp.relations[0], Side: "local",
+			Kind: KindRelation, Type: sp.relations[0],
 			Reason: "the local policy can hide meta of this relation type",
 		})
 		return nil, false, nil
@@ -458,7 +504,7 @@ func (r *run) remoteGated(batch []*task, re *RangeError) ([]*task, error) {
 			return nil, fmt.Errorf("%w: the remote refused a range without naming it: %w", ErrProtocol, re)
 		}
 	}
-	if idx >= len(batch) || batch[idx].sp.kind != reconcile.KindRelation {
+	if idx >= len(batch) || batch[idx].sp.kind != KindRelation {
 		return nil, fmt.Errorf("%w: a refused range the request does not hold: %w", ErrProtocol, re)
 	}
 	out := slices.Concat(batch[:idx], batch[idx+1:])
@@ -468,7 +514,7 @@ func (r *run) remoteGated(batch []*task, re *RangeError) ([]*task, error) {
 		return append(out, tasksFor(sp.byType())...), nil
 	}
 	r.skipped = append(r.skipped, Skipped{
-		Kind: reconcile.KindRelation, Type: sp.relations[0], Side: "remote", Reason: re.Detail,
+		Kind: KindRelation, Type: sp.relations[0], Remote: true, Reason: re.Detail,
 	})
 	return out, nil
 }
@@ -477,7 +523,7 @@ func (r *run) remoteGated(batch []*task, re *RangeError) ([]*task, error) {
 func soleRelation(batch []*task) int {
 	idx := -1
 	for i, t := range batch {
-		if t.sp.kind == reconcile.KindRelation {
+		if t.sp.kind == KindRelation {
 			if idx >= 0 {
 				return -1
 			}
@@ -488,20 +534,20 @@ func soleRelation(batch []*task) int {
 }
 
 // handle applies the answer to t and returns the tasks that follow from it.
-func (r *run) handle(t *task, res v1.ReconcileResult) ([]*task, error) {
+func (r *run) handle(t *task, res reconwire.Result) ([]*task, error) {
 	switch res.Status {
-	case v1.ReconcileOK:
+	case reconwire.StatusOK:
 		if t.list {
 			return r.page(t, res)
 		}
 		return r.compare(t, res)
-	case v1.ReconcileTooLarge:
+	case reconwire.StatusTooLarge:
 		if t.list {
 			return nil, fmt.Errorf("%w: too_large for a list", ErrProtocol)
 		}
 		t.fam.abandon()
 		return r.tooLarge(t.sp)
-	case v1.ReconcileNotRun:
+	case reconwire.StatusNotRun:
 		t.sp.notRun++
 		if t.sp.notRun > r.d.opt.MaxNotRun {
 			return nil, fmt.Errorf("%w: the remote did not run a range %d times", ErrBudget, t.sp.notRun)
@@ -521,25 +567,44 @@ func (r *run) handle(t *task, res v1.ReconcileResult) ([]*task, error) {
 }
 
 // compare checks a fingerprint answer against the local side.
-func (r *run) compare(t *task, res v1.ReconcileResult) ([]*task, error) {
+func (r *run) compare(t *task, res reconwire.Result) ([]*task, error) {
 	if res.Count == nil {
 		return nil, fmt.Errorf("%w: fingerprint without a count", ErrProtocol)
 	}
-	fp, err := reconcile.ParseFingerprint(res.Fingerprint)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrProtocol, err)
+	if !validFingerprint(res.Fingerprint) {
+		return nil, fmt.Errorf("%w: a fingerprint that is not %d lower-case hex digits", ErrProtocol, fingerprintLen)
 	}
-	if *res.Count == 0 && fp != (reconcile.Fingerprint{}) {
+	if *res.Count == 0 && res.Fingerprint != emptyFingerprint {
 		return nil, fmt.Errorf("%w: an empty range with a fingerprint", ErrProtocol)
 	}
 	if err := t.fam.counted(*res.Count); err != nil {
 		return nil, err
 	}
-	remote := reconcile.Range{Count: *res.Count, Sum: fp}
+	remote := Sum{Count: *res.Count, Fingerprint: res.Fingerprint}
 	if remote == t.local {
 		return nil, nil
 	}
 	return r.mismatch(t.sp, remote.Count, t.local.Count)
+}
+
+// fingerprintLen is the length of a fingerprint on the wire: 128 bits in hex.
+const fingerprintLen = 32
+
+// emptyFingerprint is the fingerprint of the empty set.
+var emptyFingerprint = strings.Repeat("0", fingerprintLen)
+
+// validFingerprint reports whether s is a fingerprint in its one wire form,
+// so that two equal sums are equal strings.
+func validFingerprint(s string) bool {
+	if len(s) != fingerprintLen {
+		return false
+	}
+	for i := range len(s) {
+		if c := s[i]; (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // mismatch decides what to do with a span whose fingerprints differ.
@@ -565,8 +630,15 @@ func (r *run) mismatch(sp *span, remoteCount, localCount uint64) ([]*task, error
 	return r.bucket(sp, fanout, remoteCount)
 }
 
-// tooLarge splits a span the remote would not fingerprint: by type, else
-// into buckets small enough to fit the remote's row cap.
+// tooLarge handles a span the remote would not fingerprint. A multi-type
+// span is split by type. A single-type span with more than bucketRows local
+// elements is split once, into buckets of at most bucketRows. Any other span
+// is listed, however many rows the remote holds.
+//
+// The remote gives no count with too_large, so the count check of a split
+// does not apply here. Splitting only above bucketRows, into parts that are
+// listed if they are too_large again, bounds what a remote learns this way:
+// one local address per bucketRows local elements, at one level.
 func (r *run) tooLarge(sp *span) ([]*task, error) {
 	if sp.multiType() {
 		return tasksFor(sp.byType()), nil
@@ -574,11 +646,12 @@ func (r *run) tooLarge(sp *span) ([]*task, error) {
 	if err := r.enumerate(sp); err != nil {
 		return nil, err
 	}
-	parts := sp.byAddress(max(fanout, (len(sp.local)+bucketRows-1)/bucketRows))
-	if parts == nil {
-		return []*task{listTask(sp, 0)}, nil
+	if len(sp.local) > bucketRows {
+		if parts := sp.byAddress((len(sp.local) + bucketRows - 1) / bucketRows); parts != nil {
+			return tasksFor(parts), nil
+		}
 	}
-	return tasksFor(parts), nil
+	return []*task{listTask(sp, 0)}, nil
 }
 
 // bucket splits sp, which the remote counted want elements in, at its local
@@ -596,7 +669,7 @@ func (r *run) bucket(sp *span, n int, want uint64) ([]*task, error) {
 
 // page applies one page of a remote listing, and diffs the span when the
 // listing is complete.
-func (r *run) page(t *task, res v1.ReconcileResult) ([]*task, error) {
+func (r *run) page(t *task, res reconwire.Result) ([]*task, error) {
 	sp := t.sp
 	if len(res.Elements) > t.limit {
 		return nil, fmt.Errorf("%w: %d elements for a limit of %d", ErrProtocol, len(res.Elements), t.limit)
@@ -619,7 +692,7 @@ func (r *run) page(t *task, res v1.ReconcileResult) ([]*task, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s: %w", ErrProtocol, e.Address, err)
 		}
-		t.remote = append(t.remote, reconcile.Element{Kind: sp.kind, Address: e.Address, Hash: h})
+		t.remote = append(t.remote, Element{Kind: sp.kind, Address: e.Address, Hash: h})
 		floor, strict = e.Address, true
 	}
 	if res.Last != "" {
@@ -664,15 +737,17 @@ func (r *run) enumerate(sp *span) error {
 	if sp.localKnown {
 		return nil
 	}
-	var els []reconcile.Element
+	var els []Element
 	lo, prev := sp.lo, ""
 	for {
 		page, err := r.d.local.List(r.ctx, sp.types(), sp.storeRange(lo), localPage)
 		if err != nil {
 			return fmt.Errorf("reconclient: local list: %w", err)
 		}
-		els = append(els, page.Elements...)
-		if r.stats.LocalElements += len(page.Elements); r.stats.LocalElements > r.d.opt.MaxLocalElements {
+		for _, row := range page.Rows {
+			els = append(els, Element{Kind: sp.kind, Address: row.Address, Hash: row.Hash})
+		}
+		if r.stats.LocalElements += len(page.Rows); r.stats.LocalElements > r.d.opt.MaxLocalElements {
 			return fmt.Errorf("%w: more than %d local elements", ErrBudget, r.d.opt.MaxLocalElements)
 		}
 		if !page.More {
@@ -693,7 +768,7 @@ func (r *run) enumerate(sp *span) error {
 }
 
 // merge diffs the local and remote elements of one span, both in order.
-func (r *run) merge(local, remote []reconcile.Element) {
+func (r *run) merge(local, remote []Element) {
 	i, j := 0, 0
 	for i < len(local) && j < len(remote) {
 		l, m := local[i], remote[j]
@@ -718,8 +793,8 @@ func (r *run) merge(local, remote []reconcile.Element) {
 }
 
 // send sends one batch, waiting and sending again on an admission refusal.
-func (r *run) send(batch []*task) ([]v1.ReconcileResult, error) {
-	req := v1.ReconcileRequest{Ranges: make([]v1.ReconcileRange, len(batch))}
+func (r *run) send(batch []*task) ([]reconwire.Result, error) {
+	req := reconwire.Request{Ranges: make([]reconwire.Range, len(batch))}
 	for i, t := range batch {
 		if t.list {
 			req.Ranges[i] = t.sp.wire("list", t.limit, t.cursor)
@@ -791,7 +866,7 @@ func tasksFor(spans []*span) []*task {
 
 // result returns the sets in (Kind, Address) order.
 func (r *run) result() Result {
-	byElement := func(a, b reconcile.Element) int {
+	byElement := func(a, b Element) int {
 		return cmp.Or(cmp.Compare(a.Kind, b.Kind), cmp.Compare(a.Address, b.Address))
 	}
 	slices.SortFunc(r.onlyLocal, byElement)
@@ -800,10 +875,17 @@ func (r *run) result() Result {
 		return cmp.Or(cmp.Compare(a.Kind, b.Kind), cmp.Compare(a.Address, b.Address))
 	})
 	slices.SortFunc(r.skipped, func(a, b Skipped) int {
-		return cmp.Or(cmp.Compare(a.Type, b.Type), cmp.Compare(a.Side, b.Side))
+		return cmp.Or(cmp.Compare(a.Type, b.Type), cmp.Compare(boolRank(a.Remote), boolRank(b.Remote)))
 	})
 	return Result{
 		OnlyLocal: r.onlyLocal, OnlyRemote: r.onlyRemote, Differing: r.differing, Skipped: r.skipped,
 		Stats: r.stats,
 	}
+}
+
+func boolRank(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

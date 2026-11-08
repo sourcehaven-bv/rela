@@ -22,7 +22,8 @@ import (
 	"strings"
 	"time"
 
-	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	"github.com/Sourcehaven-BV/rela/internal/reconwire"
+
 	"github.com/Sourcehaven-BV/rela/internal/reconclient"
 )
 
@@ -144,14 +145,14 @@ func loopback(host string) bool {
 
 // Reconcile sends req and returns the decoded answer. The answer's content
 // is not checked here; the Differ validates it.
-func (r *Remote) Reconcile(ctx context.Context, req v1.ReconcileRequest) (v1.ReconcileResponse, error) {
+func (r *Remote) Reconcile(ctx context.Context, req reconwire.Request) (reconwire.Response, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
-		return v1.ReconcileResponse{}, fmt.Errorf("httpremote: encode request: %w", err)
+		return reconwire.Response{}, fmt.Errorf("httpremote: encode request: %w", err)
 	}
 	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, r.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return v1.ReconcileResponse{}, fmt.Errorf("httpremote: %s: %w", r.origin, err)
+		return reconwire.Response{}, fmt.Errorf("httpremote: %s: %w", r.origin, err)
 	}
 	hreq.Header.Set("Content-Type", "application/json")
 	hreq.Header.Set("Accept", "application/json")
@@ -161,27 +162,27 @@ func (r *Remote) Reconcile(ctx context.Context, req v1.ReconcileRequest) (v1.Rec
 	}
 	resp, err := r.client.Do(hreq)
 	if err != nil {
-		return v1.ReconcileResponse{}, fmt.Errorf("httpremote: %s: %w", r.origin, unwrapURLError(err))
+		return reconwire.Response{}, fmt.Errorf("httpremote: %s: %w", r.origin, unwrapURLError(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusOK {
 		return r.decodeAnswer(resp.Body)
 	}
-	return v1.ReconcileResponse{}, r.refusal(resp)
+	return reconwire.Response{}, r.refusal(resp)
 }
 
-func (r *Remote) decodeAnswer(body io.Reader) (v1.ReconcileResponse, error) {
+func (r *Remote) decodeAnswer(body io.Reader) (reconwire.Response, error) {
 	raw, err := io.ReadAll(io.LimitReader(body, maxAnswer+1))
 	if err != nil {
-		return v1.ReconcileResponse{}, fmt.Errorf("httpremote: %s: read: %w", r.origin, unwrapURLError(err))
+		return reconwire.Response{}, fmt.Errorf("httpremote: %s: read: %w", r.origin, unwrapURLError(err))
 	}
 	if len(raw) > maxAnswer {
-		return v1.ReconcileResponse{}, fmt.Errorf("%w: %s: the answer exceeds %d bytes",
+		return reconwire.Response{}, fmt.Errorf("%w: %s: the answer exceeds %d bytes",
 			reconclient.ErrProtocol, r.origin, maxAnswer)
 	}
-	var out v1.ReconcileResponse
+	var out reconwire.Response
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return v1.ReconcileResponse{}, fmt.Errorf("%w: %s: the answer is not valid JSON", reconclient.ErrProtocol, r.origin)
+		return reconwire.Response{}, fmt.Errorf("%w: %s: the answer is not valid JSON", reconclient.ErrProtocol, r.origin)
 	}
 	return out, nil
 }
@@ -205,39 +206,80 @@ func (r *Remote) refusal(resp *http.Response) error {
 		return fmt.Errorf("httpremote: %s: authentication required (401); supply a token", r.origin)
 	case resp.StatusCode == http.StatusNotImplemented:
 		return fmt.Errorf("httpremote: %s: the remote does not serve reconciliation (501)", r.origin)
-	case p.Range != nil:
+	case p.index >= 0:
 		return &reconclient.RangeError{
-			Index:     *p.Range,
-			MetaGated: resp.StatusCode == http.StatusUnprocessableEntity && strings.HasSuffix(p.Type, "/relation_meta_gated"),
+			Index:     p.index,
+			MetaGated: resp.StatusCode == http.StatusUnprocessableEntity && strings.HasSuffix(p.kind, "/relation_meta_gated"),
 			Status:    resp.StatusCode,
-			Detail:    reconclient.Sanitize(p.Detail),
+			Detail:    reconclient.Sanitize(p.detail),
 		}
-	case resp.StatusCode == http.StatusUnprocessableEntity && strings.HasSuffix(p.Type, "/relation_meta_gated"):
+	case resp.StatusCode == http.StatusUnprocessableEntity && strings.HasSuffix(p.kind, "/relation_meta_gated"):
 		return &reconclient.RangeError{Index: -1, MetaGated: true, Status: resp.StatusCode,
-			Detail: reconclient.Sanitize(p.Detail)}
+			Detail: reconclient.Sanitize(p.detail)}
 	}
 	msg := strconv.Itoa(resp.StatusCode)
-	if t := reconclient.Sanitize(p.Title); t != "" {
+	if t := reconclient.Sanitize(p.title); t != "" {
 		msg += " " + t
 	}
-	if d := reconclient.Sanitize(p.Detail); d != "" {
+	if d := reconclient.Sanitize(p.detail); d != "" {
 		msg += ": " + d
 	}
 	return fmt.Errorf("httpremote: %s: answered %s", r.origin, msg)
 }
 
-// readProblem reads an RFC 9457 problem body, or returns the zero value
-// when the body is not one.
-func readProblem(body io.Reader) v1.Error {
+// refusal is what the client uses of an RFC 9457 problem body.
+type refusal struct {
+	// kind is the problem's type URI.
+	kind, title, detail string
+	// index is the range the problem names, or -1.
+	index int
+}
+
+// rangeIndex returns the index of the range a JSON pointer names,
+// /ranges/<index>, or -1 when it names none.
+func rangeIndex(pointer string) int {
+	digits, ok := strings.CutPrefix(pointer, "/ranges/")
+	if !ok || digits == "" || len(digits) > maxIndexDigits || (len(digits) > 1 && digits[0] == '0') {
+		return -1
+	}
+	i, err := strconv.Atoi(digits)
+	if err != nil || i < 0 {
+		return -1
+	}
+	return i
+}
+
+// maxIndexDigits bounds the index of a range pointer. A request holds far
+// fewer ranges; the bound keeps Atoi off long input.
+const maxIndexDigits = 4
+
+// readProblem reads an RFC 9457 problem body. A body that is not one names
+// no range and carries no text. A refusal of one range names it with the
+// JSON pointer of its first error.
+func readProblem(body io.Reader) refusal {
+	none := refusal{index: -1}
 	raw, err := io.ReadAll(io.LimitReader(body, maxProblem))
 	if err != nil {
-		return v1.Error{}
+		return none
 	}
-	var p v1.Error
+	var p struct {
+		Type   string `json:"type"`
+		Title  string `json:"title"`
+		Detail string `json:"detail"`
+		Errors []struct {
+			Source struct {
+				Pointer string `json:"pointer"`
+			} `json:"source"`
+		} `json:"errors"`
+	}
 	if json.Unmarshal(raw, &p) != nil {
-		return v1.Error{}
+		return none
 	}
-	return p
+	out := refusal{kind: p.Type, title: p.Title, detail: p.Detail, index: -1}
+	if len(p.Errors) > 0 {
+		out.index = rangeIndex(p.Errors[0].Source.Pointer)
+	}
+	return out
 }
 
 // retryAfter parses a Retry-After value, seconds or an HTTP date, relative

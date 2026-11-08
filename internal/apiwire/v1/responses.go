@@ -993,12 +993,6 @@ type Error struct {
 	// gate that refused (acl, affordance, ...) and the rule's id.
 	RuleKind string `json:"rule_kind,omitempty"`
 	RuleID   string `json:"rule_id,omitempty"`
-	// Range is set on an error of POST /api/v1/_reconcile about one range:
-	// its index in the request. A client splits or skips that range and
-	// asks again for the others.
-	//
-	// Nil: accepted. The error is about the request as a whole.
-	Range *int `json:"range,omitempty"`
 }
 
 // FieldError represents a validation error on a specific field.

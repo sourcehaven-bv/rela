@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/reconwire"
+
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient"
 )
@@ -35,7 +37,7 @@ func serve(t *testing.T, h http.HandlerFunc) (*Remote, *httptest.Server) {
 }
 
 func TestReconcile_SendsRequest(t *testing.T) {
-	var got v1.ReconcileRequest
+	var got reconwire.Request
 	r, _ := serve(t, func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodPost || req.URL.Path != "/sub/api/v1/_reconcile" {
 			t.Errorf("%s %s", req.Method, req.URL.Path)
@@ -48,11 +50,11 @@ func TestReconcile_SendsRequest(t *testing.T) {
 		}
 		_ = json.NewDecoder(req.Body).Decode(&got)
 		n := uint64(1)
-		_ = json.NewEncoder(w).Encode(v1.ReconcileResponse{Ranges: []v1.ReconcileResult{
+		_ = json.NewEncoder(w).Encode(reconwire.Response{Ranges: []reconwire.Result{
 			{Status: "ok", Count: &n, Fingerprint: strings.Repeat("0", 32)},
 		}})
 	})
-	out, err := r.Reconcile(t.Context(), v1.ReconcileRequest{Ranges: []v1.ReconcileRange{
+	out, err := r.Reconcile(t.Context(), reconwire.Request{Ranges: []reconwire.Range{
 		{Kind: "entity", Entities: []string{"ticket"}, Op: "fingerprint"},
 	}})
 	if err != nil {
@@ -91,9 +93,9 @@ func TestReconcile_Refusals(t *testing.T) {
 		}},
 		{"422 with range", func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusUnprocessableEntity)
-			i := 2
 			_ = json.NewEncoder(w).Encode(v1.Error{
-				Type: "https://rela.dev/errors/relation_meta_gated", Detail: "range 2: \x1b[2Jno", Range: &i,
+				Type: "https://rela.dev/errors/relation_meta_gated", Detail: "range 2: \x1b[2Jno",
+				Errors: []v1.FieldError{{Source: v1.ErrorSource{Pointer: "/ranges/2"}}},
 			})
 		}, func(t *testing.T, err error) {
 			t.Helper()
@@ -104,7 +106,8 @@ func TestReconcile_Refusals(t *testing.T) {
 		}},
 		{"422 without range", func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusUnprocessableEntity)
-			_ = json.NewEncoder(w).Encode(v1.Error{Type: "https://rela.dev/errors/relation_meta_gated"})
+			_ = json.NewEncoder(w).Encode(v1.Error{Type: "https://rela.dev/errors/relation_meta_gated",
+				Errors: []v1.FieldError{{Source: v1.ErrorSource{Pointer: "/ranges/02"}}}})
 		}, func(t *testing.T, err error) {
 			t.Helper()
 			var re *reconclient.RangeError
@@ -155,7 +158,7 @@ func TestReconcile_Refusals(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r, srv := serve(t, tc.h)
-			_, err := r.Reconcile(t.Context(), v1.ReconcileRequest{})
+			_, err := r.Reconcile(t.Context(), reconwire.Request{})
 			tc.check(t, err)
 			if err != nil && strings.Contains(err.Error(), "s3cret") {
 				t.Error("the credential reached an error")

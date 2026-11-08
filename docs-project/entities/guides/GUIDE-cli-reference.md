@@ -2455,7 +2455,8 @@ as `from--type--to`. When a policy hides a meta key of a relation type, the
 side with that policy cannot serve that type. The type is then listed under
 `Not compared` with the side and the reason, and is not counted as a
 difference. `-o json` prints one object with `remote`, `principal`, `same`,
-`only_local`, `only_remote`, `differing`, `skipped` and `round_trips`.
+`only_local`, `only_remote`, `differing`, `skipped` and `round_trips`. Each
+entry of `skipped` has `refused_by`: `local` or `remote`.
 
 When the remote answers 429 or 503, the command waits for the time it names
 in `Retry-After`, at most one minute, and tries again. It does not follow

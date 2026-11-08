@@ -9,8 +9,7 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
-	"github.com/Sourcehaven-BV/rela/internal/reconcile"
+	"github.com/Sourcehaven-BV/rela/internal/reconwire"
 )
 
 var testScope = Scope{Entities: []string{"feature", "ticket"}, Relations: []string{"blocks", "implements"}}
@@ -38,7 +37,7 @@ func mustDiff(t *testing.T, local *fakeLocal, remote *fakeRemote) Result {
 	return res
 }
 
-func addrs(els []reconcile.Element) []string {
+func addrs(els []Element) []string {
 	out := make([]string, len(els))
 	for i, e := range els {
 		out[i] = e.Address
@@ -55,8 +54,8 @@ func changed(cs []Change) []string {
 }
 
 // tickets returns n ticket elements, ticket/TKT-00000 up, with content c.
-func tickets(n int, c string) []reconcile.Element {
-	out := make([]reconcile.Element, n)
+func tickets(n int, c string) []Element {
+	out := make([]Element, n)
 	for i := range n {
 		out[i] = ent(fmt.Sprintf("ticket/TKT-%05d", i), c)
 	}
@@ -70,16 +69,19 @@ func TestNew_RejectsNil(t *testing.T) {
 	if _, err := New(&fakeLocal{}, nil, Options{}); err == nil {
 		t.Error("nil remote accepted")
 	}
+	if _, err := Visible(nil); err == nil {
+		t.Error("nil element reader accepted")
+	}
 }
 
 func TestDiff_Sets(t *testing.T) {
-	base := []reconcile.Element{
+	base := []Element{
 		ent("feature/FEAT-1", "f1"), ent("ticket/TKT-1", "t1"), ent("ticket/TKT-2", "t2"),
 		rel("TKT-1--implements--FEAT-1", "r1"),
 	}
 	cases := []struct {
 		name              string
-		local, remote     []reconcile.Element
+		local, remote     []Element
 		onlyL, onlyR, chg []string
 	}{
 		{name: "identical", local: base, remote: base},
@@ -95,7 +97,7 @@ func TestDiff_Sets(t *testing.T) {
 		{
 			name:  "overlapping",
 			local: base,
-			remote: []reconcile.Element{
+			remote: []Element{
 				ent("feature/FEAT-1", "f1"), ent("ticket/TKT-2", "t2"), ent("ticket/TKT-3", "t3"),
 				rel("TKT-1--implements--FEAT-1", "r1"), rel("TKT-2--blocks--TKT-3", "b"),
 			},
@@ -105,7 +107,7 @@ func TestDiff_Sets(t *testing.T) {
 		{
 			name:  "differing hash",
 			local: base,
-			remote: []reconcile.Element{
+			remote: []Element{
 				ent("feature/FEAT-1", "f1"), ent("ticket/TKT-1", "changed"), ent("ticket/TKT-2", "t2"),
 				rel("TKT-1--implements--FEAT-1", "r1 changed"),
 			},
@@ -165,7 +167,9 @@ func TestDiff_Budget(t *testing.T) {
 		{"one difference", 1, 0, 4, 100, 1},
 		{"five differences", 5, 0, 6, 300, 5},
 		{"one difference, too_large over 2000", 1, 2000, 4, 100, 1},
-		{"five differences, too_large over 2000", 5, 2000, 6, 300, 5},
+		// After too_large the first split is into buckets of bucketRows, not
+		// fanout, so fewer local bounds go out and more rows are listed.
+		{"five differences, too_large over 2000", 5, 2000, 6, 500, 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -313,8 +317,8 @@ func TestDiff_MetaGated(t *testing.T) {
 			if !res.Same() {
 				t.Errorf("differences: %+v", res)
 			}
-			want := []Skipped{{Kind: reconcile.KindRelation, Type: "blocks", Side: side}}
-			if len(res.Skipped) != 1 || res.Skipped[0].Type != want[0].Type || res.Skipped[0].Side != side {
+			want := []Skipped{{Kind: KindRelation, Type: "blocks", Remote: side == "remote"}}
+			if len(res.Skipped) != 1 || res.Skipped[0].Type != want[0].Type || res.Skipped[0].Remote != want[0].Remote {
 				t.Errorf("skipped %+v, want %+v", res.Skipped, want)
 			}
 		})
@@ -385,9 +389,9 @@ func TestDiff_Deadline(t *testing.T) {
 func TestDiff_MalformedAnswers(t *testing.T) {
 	local := newSet(tickets(3, "l")...)
 	remote := newSet(append(tickets(3, "r"), ent("ticket/TKT-00009", "r"))...)
-	first := func(resp *v1.ReconcileResponse) *v1.ReconcileResult { return &resp.Ranges[0] }
-	listed := func(f func(*v1.ReconcileResult)) func(v1.ReconcileRequest, *v1.ReconcileResponse) {
-		return func(req v1.ReconcileRequest, resp *v1.ReconcileResponse) {
+	first := func(resp *reconwire.Response) *reconwire.Result { return &resp.Ranges[0] }
+	listed := func(f func(*reconwire.Result)) func(reconwire.Request, *reconwire.Response) {
+		return func(req reconwire.Request, resp *reconwire.Response) {
 			for i, rr := range req.Ranges {
 				if rr.Op == "list" {
 					f(&resp.Ranges[i])
@@ -395,36 +399,36 @@ func TestDiff_MalformedAnswers(t *testing.T) {
 			}
 		}
 	}
-	cases := map[string]func(v1.ReconcileRequest, *v1.ReconcileResponse){
-		"too few answers": func(_ v1.ReconcileRequest, resp *v1.ReconcileResponse) { resp.Ranges = nil },
-		"unknown status":  func(_ v1.ReconcileRequest, resp *v1.ReconcileResponse) { first(resp).Status = "maybe" },
-		"short fingerprint": func(_ v1.ReconcileRequest, resp *v1.ReconcileResponse) {
+	cases := map[string]func(reconwire.Request, *reconwire.Response){
+		"too few answers": func(_ reconwire.Request, resp *reconwire.Response) { resp.Ranges = nil },
+		"unknown status":  func(_ reconwire.Request, resp *reconwire.Response) { first(resp).Status = "maybe" },
+		"short fingerprint": func(_ reconwire.Request, resp *reconwire.Response) {
 			first(resp).Fingerprint = "abc"
 		},
-		"upper-case fingerprint": func(_ v1.ReconcileRequest, resp *v1.ReconcileResponse) {
+		"upper-case fingerprint": func(_ reconwire.Request, resp *reconwire.Response) {
 			first(resp).Fingerprint = strings.ToUpper(first(resp).Fingerprint)
 		},
-		"no count": func(_ v1.ReconcileRequest, resp *v1.ReconcileResponse) { first(resp).Count = nil },
-		"empty with a sum": func(_ v1.ReconcileRequest, resp *v1.ReconcileResponse) {
+		"no count": func(_ reconwire.Request, resp *reconwire.Response) { first(resp).Count = nil },
+		"empty with a sum": func(_ reconwire.Request, resp *reconwire.Response) {
 			zero := uint64(0)
 			first(resp).Count = &zero
 		},
-		"bad hash":   listed(func(r *v1.ReconcileResult) { r.Elements[0].Hash = "zz" }),
-		"short hash": listed(func(r *v1.ReconcileResult) { r.Elements[0].Hash = r.Elements[0].Hash[:62] }),
-		"unordered": listed(func(r *v1.ReconcileResult) {
+		"bad hash":   listed(func(r *reconwire.Result) { r.Elements[0].Hash = "zz" }),
+		"short hash": listed(func(r *reconwire.Result) { r.Elements[0].Hash = r.Elements[0].Hash[:62] }),
+		"unordered": listed(func(r *reconwire.Result) {
 			r.Elements[0], r.Elements[1] = r.Elements[1], r.Elements[0]
 		}),
-		"duplicate":   listed(func(r *v1.ReconcileResult) { r.Elements[1] = r.Elements[0] }),
-		"other type":  listed(func(r *v1.ReconcileResult) { r.Elements[0].Address = "feature/FEAT-1" }),
-		"no id":       listed(func(r *v1.ReconcileResult) { r.Elements[0].Address = "ticket/" }),
-		"control":     listed(func(r *v1.ReconcileResult) { r.Elements[0].Address = "ticket/\x1b[31mX" }),
-		"bidi":        listed(func(r *v1.ReconcileResult) { r.Elements[0].Address = "ticket/\u202eX" }),
-		"too long":    listed(func(r *v1.ReconcileResult) { r.Elements[0].Address = "ticket/" + strings.Repeat("a", 5000) }),
-		"over limit":  listed(func(r *v1.ReconcileResult) { r.Elements = slices.Repeat(r.Elements, 600) }),
-		"stuck page":  listed(func(r *v1.ReconcileResult) { r.More, r.Last, r.Elements = true, "", nil }),
-		"last behind": listed(func(r *v1.ReconcileResult) { r.Last = "ticket/A" }),
-		"too_large list": listed(func(r *v1.ReconcileResult) {
-			*r = v1.ReconcileResult{Status: v1.ReconcileTooLarge}
+		"duplicate":   listed(func(r *reconwire.Result) { r.Elements[1] = r.Elements[0] }),
+		"other type":  listed(func(r *reconwire.Result) { r.Elements[0].Address = "feature/FEAT-1" }),
+		"no id":       listed(func(r *reconwire.Result) { r.Elements[0].Address = "ticket/" }),
+		"control":     listed(func(r *reconwire.Result) { r.Elements[0].Address = "ticket/\x1b[31mX" }),
+		"bidi":        listed(func(r *reconwire.Result) { r.Elements[0].Address = "ticket/\u202eX" }),
+		"too long":    listed(func(r *reconwire.Result) { r.Elements[0].Address = "ticket/" + strings.Repeat("a", 5000) }),
+		"over limit":  listed(func(r *reconwire.Result) { r.Elements = slices.Repeat(r.Elements, 600) }),
+		"stuck page":  listed(func(r *reconwire.Result) { r.More, r.Last, r.Elements = true, "", nil }),
+		"last behind": listed(func(r *reconwire.Result) { r.Last = "ticket/A" }),
+		"too_large list": listed(func(r *reconwire.Result) {
+			*r = reconwire.Result{Status: reconwire.StatusTooLarge}
 		}),
 	}
 	for name, mutate := range cases {
@@ -443,11 +447,11 @@ func TestDiff_MalformedAnswers(t *testing.T) {
 func TestDiff_PageWithoutElements(t *testing.T) {
 	remote := newSet(tickets(3, "r")...)
 	calls := 0
-	advancing := func(req v1.ReconcileRequest, resp *v1.ReconcileResponse) {
+	advancing := func(req reconwire.Request, resp *reconwire.Response) {
 		for i, rr := range req.Ranges {
 			if rr.Op == "list" && rr.After == nil {
 				calls++
-				resp.Ranges[i] = v1.ReconcileResult{Status: v1.ReconcileOK, Last: "ticket/TKT-00000", More: true}
+				resp.Ranges[i] = reconwire.Result{Status: reconwire.StatusOK, Last: "ticket/TKT-00000", More: true}
 			}
 		}
 	}
@@ -456,10 +460,10 @@ func TestDiff_PageWithoutElements(t *testing.T) {
 	if err != nil || calls != 1 || len(res.OnlyRemote) != 2 {
 		t.Fatalf("err=%v calls=%d only remote=%v", err, calls, addrs(res.OnlyRemote))
 	}
-	stuck := func(req v1.ReconcileRequest, resp *v1.ReconcileResponse) {
+	stuck := func(req reconwire.Request, resp *reconwire.Response) {
 		for i, rr := range req.Ranges {
 			if rr.Op == "list" && rr.After != nil {
-				resp.Ranges[i] = v1.ReconcileResult{Status: v1.ReconcileOK, Last: *rr.After, More: true}
+				resp.Ranges[i] = reconwire.Result{Status: reconwire.StatusOK, Last: *rr.After, More: true}
 			}
 		}
 	}
@@ -483,8 +487,8 @@ func TestDiff_RangeErrorPassesThrough(t *testing.T) {
 
 type errRemote struct{ err error }
 
-func (e errRemote) Reconcile(context.Context, v1.ReconcileRequest) (v1.ReconcileResponse, error) {
-	return v1.ReconcileResponse{}, e.err
+func (e errRemote) Reconcile(context.Context, reconwire.Request) (reconwire.Response, error) {
+	return reconwire.Response{}, e.err
 }
 
 func TestSanitize(t *testing.T) {

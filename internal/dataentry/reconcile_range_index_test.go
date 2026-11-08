@@ -3,24 +3,27 @@ package dataentry
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/reconwire"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 )
 
 // TestReconcile_PlanErrorNamesRange: a planning error about one range
-// carries that range's index; one about the request as a whole carries
-// none (TKT-0Y566OJ).
+// names that range with the JSON pointer /ranges/<index>; one about the
+// request as a whole names none (TKT-0Y566OJ).
 func TestReconcile_PlanErrorNamesRange(t *testing.T) {
 	f := newReconcileFixture(t, reconcileGateConfig{})
 	cases := []struct {
 		name string
-		body v1.ReconcileRequest
+		body reconwire.Request
 		want *int
 	}{
 		{"second range names an unknown type",
-			v1.ReconcileRequest{Ranges: []v1.ReconcileRange{fpRange("ticket"), fpRange("nope")}}, new(int)},
-		{"no ranges", v1.ReconcileRequest{}, nil},
+			reconwire.Request{Ranges: []reconwire.Range{fpRange("ticket"), fpRange("nope")}}, new(int)},
+		{"no ranges", reconwire.Request{}, nil},
 	}
 	*cases[0].want = 1
 	for _, tc := range cases {
@@ -34,10 +37,10 @@ func TestReconcile_PlanErrorNamesRange(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch {
-			case tc.want == nil && p.Range != nil:
-				t.Errorf("range = %d, want none", *p.Range)
-			case tc.want != nil && (p.Range == nil || *p.Range != *tc.want):
-				t.Errorf("range = %v, want %d", p.Range, *tc.want)
+			case tc.want == nil && len(p.Errors) != 0:
+				t.Errorf("errors = %+v, want none", p.Errors)
+			case tc.want != nil && (len(p.Errors) != 1 || p.Errors[0].Source.Pointer != "/ranges/"+strconv.Itoa(*tc.want)):
+				t.Errorf("errors = %+v, want one at /ranges/%d", p.Errors, *tc.want)
 			}
 		})
 	}

@@ -18,7 +18,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
-	"github.com/Sourcehaven-BV/rela/internal/reconcile"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient/httpremote"
 )
@@ -257,23 +256,25 @@ type reconcileChangeJSON struct {
 }
 
 type reconcileSkipJSON struct {
-	Kind   string `json:"kind"`
-	Type   string `json:"type"`
-	Side   string `json:"side"`
-	Reason string `json:"reason"`
+	Kind string `json:"kind"`
+	Type string `json:"type"`
+	// RefusedBy is "local" or "remote": whose policy left the type out.
+	RefusedBy string `json:"refused_by"`
+	Reason    string `json:"reason"`
 }
 
-func kindName(k reconcile.Kind) string {
-	if k == reconcile.KindRelation {
-		return "relation"
+// refusedBy names whose policy left s out.
+func refusedBy(s reconclient.Skipped) string {
+	if s.Remote {
+		return "remote"
 	}
-	return "entity"
+	return "local"
 }
 
-func reconcileElements(els []reconcile.Element) []reconcileElementJSON {
+func reconcileElements(els []reconclient.Element) []reconcileElementJSON {
 	rows := make([]reconcileElementJSON, 0, len(els))
 	for _, e := range els {
-		rows = append(rows, reconcileElementJSON{Kind: kindName(e.Kind), Address: e.Address, Hash: e.Hash.String()})
+		rows = append(rows, reconcileElementJSON{Kind: e.Kind.String(), Address: e.Address, Hash: e.Hash.String()})
 	}
 	return rows
 }
@@ -288,12 +289,12 @@ func writeReconcileJSON(w io.Writer, origin, who string, res reconclient.Result)
 	}
 	for _, c := range res.Differing {
 		doc.Differing = append(doc.Differing, reconcileChangeJSON{
-			Kind: kindName(c.Kind), Address: c.Address, LocalHash: c.Local.String(), RemoteHash: c.Remote.String(),
+			Kind: c.Kind.String(), Address: c.Address, LocalHash: c.Local.String(), RemoteHash: c.Remote.String(),
 		})
 	}
 	for _, s := range res.Skipped {
 		doc.Skipped = append(doc.Skipped, reconcileSkipJSON{
-			Kind: kindName(s.Kind), Type: s.Type, Side: s.Side, Reason: s.Reason,
+			Kind: s.Kind.String(), Type: s.Type, RefusedBy: refusedBy(s), Reason: s.Reason,
 		})
 	}
 	enc := json.NewEncoder(w)
@@ -334,7 +335,7 @@ func writeReconcileText(w io.Writer, origin, who string, res reconclient.Result)
 	if len(res.Skipped) > 0 {
 		section("Not compared", len(res.Skipped))
 		for _, s := range res.Skipped {
-			fmt.Fprintf(&b, "  %s %s (%s policy): %s\n", kindName(s.Kind), shown(s.Type), s.Side,
+			fmt.Fprintf(&b, "  %s %s (%s policy): %s\n", s.Kind.String(), shown(s.Type), refusedBy(s),
 				reconclient.Sanitize(s.Reason))
 		}
 	}

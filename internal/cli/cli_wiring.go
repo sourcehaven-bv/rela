@@ -238,7 +238,11 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 	}
 	// Built on first use: only `rela reconcile` reads element ranges.
 	recon := &reconcileServices{Meta: svc.Meta(), Local: func() (reconclient.Local, error) {
-		return appbuild.Elements(svc)
+		el, err := appbuild.Elements(svc)
+		if err != nil {
+			return nil, err
+		}
+		return reconclient.Visible(el)
 	}}
 	return &cliBundles{
 		reconcile:  recon,
