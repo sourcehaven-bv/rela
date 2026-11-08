@@ -169,9 +169,8 @@ func validateMailRecipients(ctx context.Context, root string) (failed bool, err 
 	//nolint:contextcheck // openProject does not take ctx; matches the entity-check path
 	mailSvc, mailCloser, err := openProject(root, tenantOrg)
 	if stderrors.Is(err, tenant.ErrTenantRequired) || stderrors.Is(err, tenant.ErrUnsupportedBuild) {
-		if !quiet {
-			fmt.Printf("  - scheduled mail recipients: skipped (%v)\n", err)
-		}
+		// Printed even with -q: a skipped check must not read as a passed one.
+		fmt.Printf("  - scheduled mail recipients: skipped (%v)\n", err)
 		return false, nil
 	}
 	if err != nil {
