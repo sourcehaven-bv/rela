@@ -57,6 +57,10 @@ To import an RSS, Atom or JSON Feed, declare it in `subscriptions.yaml` instead.
 The scheduler polls each subscription as the task `subscription:<name>`; see
 [Feed subscriptions](feed-subscriptions.md).
 
+To pull from another rela, declare it in `peers.yaml`. The scheduler pulls each
+peer that has an `every` as the task `peer:<name>`; see
+[Pulling from a sync peer](peer-sync.md).
+
 ```yaml
 tasks:
   - name: daily-report
@@ -255,17 +259,19 @@ tasks:
 
 ### Config changes
 
-The scheduler reads `schedules.yaml` and `subscriptions.yaml` again every minute.
+The scheduler reads `schedules.yaml`, `subscriptions.yaml` and `peers.yaml` again
+every minute.
 An edit takes effect without a restart: a new task runs when it is due, and a
 removed task gets no new runs. A script run that is already queued still
-finishes, because it carries its script. A queued subscription poll or `for_each`
-run of a removed or renamed task fails as not configured, and counts as one
+finishes, because it carries its script. A queued subscription poll, peer pull or
+`for_each` run of a removed or renamed task fails as not configured, and counts as one
 failure. A `for_each` run that is in progress uses the new settings for the
 subjects that have not run yet.
 
 If a file no longer loads, the scheduler keeps the tasks that file declared and
 logs the error once. It logs again when the file loads. A broken
-`subscriptions.yaml` does not hold back an edit to `schedules.yaml`. Run-state is
+`subscriptions.yaml` or `peers.yaml` does not hold back an edit to
+`schedules.yaml`. Run-state is
 not pruned while a file fails to load.
 
 With several nodes, each reads its own files, so for up to a minute nodes can

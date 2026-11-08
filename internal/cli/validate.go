@@ -95,6 +95,7 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 	}{
 		{"mail templates", result.MailTemplatesError}, {"schedules", result.SchedulesError},
 		{"connections", result.ConnectionsError}, {"subscriptions", result.SubscriptionsError},
+		{"peers", result.PeersError},
 	} {
 		if item.err != nil {
 			fmt.Printf("  ✗ %s: %v\n", item.name, item.err)

@@ -116,6 +116,10 @@ components:
   # Feed subscriptions (TKT-RUO1GY): polls a feed and imports its items
   # through ingest. The scheduler runs it.
   subscription:     { in: internal/subscription }
+  # Pull from a sync peer (TKT-I8L1EQU): diffs a peer's view, fetches the
+  # changed rows and writes them through entitymanager. The scheduler and
+  # `rela peer pull` run it.
+  peersync:         { in: internal/peersync }
   # Which entity ids a markdown body mentions (TKT-Q6AKUN). A leaf: every store
   # backend indexes with it and the data-entry renderer links with it, so the
   # backlink index and the rendered links agree on what counts as a mention.
@@ -591,6 +595,8 @@ deps:
       - output
       # peerkey: `rela peer key create` and `reconcile diff --token-secret`.
       - peerkey
+      # `rela peer pull` prints a peersync report.
+      - peersync
       - perfseed
       - fsimport
       - pgstore
@@ -1124,6 +1130,8 @@ deps:
       - scheduler
       - storage
       - subscription
+      # `rela validate` names peers.yaml.
+      - peersync
       # The scheduler's loader reads through a config.Loader.
       - config
       # `rela validate` checks connections.yaml (TKT-01KZSO).
@@ -1215,6 +1223,22 @@ deps:
       - safexml
       - secrets
       - state
+  peersync:
+    mayDependOn:
+      - canonical
+      - entity
+      - entitymanager
+      - metamodel
+      - principal
+      - reconcile
+      - reconclient
+      - reconclientHTTP
+      - secrets
+      - state
+      - store
+      - syncmerge
+      # The ledger is the local side of the diff, over ElementTypes.
+      - visibility
   # Mapping.Validate checks types and properties against the schema.
   ingestspec:
     mayDependOn:
@@ -2037,6 +2061,9 @@ deps:
       - ingest
       - store
       - subscription
+      # Peer pull tasks, and their credential from the global secrets.
+      - peersync
+      - secrets
       - lua
       - metamodel
       - filter

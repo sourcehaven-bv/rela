@@ -41,7 +41,8 @@ RELA_RUN_AS=integration:triage-bot rela channel post TKT-12 room text -P body="T
   name is refused, and so are rela's own identities: `system:realtime`,
   `system:scheduler`, `system:automation`, `system:provisioner`,
   `system:mail`, `system:fs-import`, `system:gc-sweep`, `system:perf-seed`,
-  and the `system:webhook:` and `system:subscription:` names.
+  and the `system:webhook:`, `system:subscription:` and `system:peer:`
+  names.
 - The identity has no principal type and no roles of its own. `acl.yaml`
   decides what it may do through its `assignments`, so give it one.
 - This is attribution, not authentication. A local user can name any job
@@ -2005,6 +2006,31 @@ the key belongs on the peer and the digest on the source. Then grant
 `peer_credential.<source>` in its own `.rela/secrets.yaml` and passes it with
 `rela reconcile diff --token-secret peer_credential.<source>`. See the server security guide, "Peer
 keys", for revocation and proxies.
+
+---
+
+### rela peer pull
+
+Pull the rows a peer in `peers.yaml` maps into this project (TKT-I8L1EQU).
+
+```bash
+rela peer pull NAME [--dry-run] [--allow-gone N] [-o json]
+```
+
+The pull compares this project with the source, fetches the new and changed
+rows, and writes them as `system:peer:NAME`. It reads the credential from
+the secret `peers.yaml` names. It takes the same lock as the scheduled pull
+of the peer, so it fails while that one runs.
+
+- `--dry-run` reports what the pull would do and writes nothing.
+- `--allow-gone N` confirms that up to `N` rows the source no longer lists
+  may be detached or deleted, above the peer's `max_gone`.
+
+The report counts created, adopted, updated, unchanged, conflicting,
+rejected, dropped, deferred, detached, deleted and failed rows, and lists
+each row that was not applied with the reason. The command fails when the
+gone guard refuses the pull or a row fails. See
+[Pulling from a sync peer](peer-sync.md).
 
 ---
 

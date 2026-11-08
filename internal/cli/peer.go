@@ -13,7 +13,8 @@ import (
 
 // PeerCmd groups the commands for sync peers (FEAT-CMVZQFI).
 type PeerCmd struct {
-	Key PeerKeyCmd `cmd:"" help:"Manage the keys sync peers authenticate with."`
+	Key  PeerKeyCmd  `cmd:"" help:"Manage the keys sync peers authenticate with."`
+	Pull PeerPullCmd `cmd:"" help:"Pull the rows a peer in peers.yaml maps into this project."`
 }
 
 // PeerKeyCmd groups the peer key commands.

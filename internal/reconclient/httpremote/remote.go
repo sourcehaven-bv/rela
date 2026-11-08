@@ -30,6 +30,9 @@ import (
 // reconcilePath is the endpoint under the base URL.
 const reconcilePath = "/api/v1/_reconcile"
 
+// apiPrefix starts every read route [Remote.Get] takes.
+const apiPrefix = "/api/v1/"
+
 // Limits of what one exchange reads.
 const (
 	// maxAnswer caps a 200 body: 2000 listed elements with addresses of up
@@ -72,9 +75,11 @@ type Config struct {
 // Remote posts reconcile requests to one rela server.
 type Remote struct {
 	endpoint string
-	origin   string
-	auth     Authenticator
-	client   *http.Client
+	// api is the base of the read routes, ending in "/api/v1/".
+	api    string
+	origin string
+	auth   Authenticator
+	client *http.Client
 }
 
 // New returns a Remote for c, or an error naming what is wrong with it.
@@ -116,8 +121,10 @@ func New(c Config) (*Remote, error) {
 		timeout = defaultTimeout
 	}
 	origin := u.Scheme + "://" + u.Host
+	base := origin + strings.TrimRight(u.EscapedPath(), "/")
 	return &Remote{
-		endpoint: origin + strings.TrimRight(u.EscapedPath(), "/") + reconcilePath,
+		endpoint: base + reconcilePath,
+		api:      base + apiPrefix,
 		origin:   origin,
 		auth:     c.Auth,
 		client: &http.Client{
@@ -187,6 +194,72 @@ func (r *Remote) decodeAnswer(body io.Reader) (reconwire.Response, error) {
 	return out, nil
 }
 
+// ErrNotFound reports that [Remote.Get] was answered 404.
+var ErrNotFound = errors.New("httpremote: not found")
+
+// ErrDenied reports that a request was answered 401 or 403: the credential
+// is missing, wrong, or no longer grants the read.
+var ErrDenied = errors.New("httpremote: access denied")
+
+// Get reads one route of the remote's API, path relative to /api/v1/ with
+// its segments already escaped, and returns the body of a 200 answer. A
+// body over limit bytes is an error, as is any other status: 404 wraps
+// [ErrNotFound], 401 and 403 wrap [ErrDenied].
+func (r *Remote) Get(ctx context.Context, path string, limit int64) ([]byte, error) {
+	if !validPath(path) {
+		return nil, errors.New("httpremote: invalid path")
+	}
+	hreq, err := http.NewRequestWithContext(ctx, http.MethodGet, r.api+path, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("httpremote: %s: %w", r.origin, err)
+	}
+	hreq.Header.Set("Accept", "application/json")
+	hreq.Header.Set("User-Agent", userAgent)
+	if r.auth != nil {
+		r.auth.Authenticate(hreq.Header)
+	}
+	resp, err := r.client.Do(hreq)
+	if err != nil {
+		return nil, fmt.Errorf("httpremote: %s: %w", r.origin, unwrapURLError(err))
+	}
+	defer func() { _ = resp.Body.Close() }()
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxProblem))
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, r.origin)
+	case http.StatusUnauthorized, http.StatusForbidden:
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxProblem))
+		return nil, fmt.Errorf("%w: %s answered %d", ErrDenied, r.origin, resp.StatusCode)
+	default:
+		return nil, r.refusal(resp)
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("httpremote: %s: read: %w", r.origin, unwrapURLError(err))
+	}
+	if int64(len(raw)) > limit {
+		return nil, fmt.Errorf("%w: %s: the answer exceeds %d bytes", reconclient.ErrProtocol, r.origin, limit)
+	}
+	return raw, nil
+}
+
+// validPath reports whether path is a relative route of escaped segments:
+// no empty, "." or ".." segment (also when escaped), no escaped slash, and
+// no query or fragment.
+func validPath(path string) bool {
+	if path == "" || strings.ContainsAny(path, "?#\\") {
+		return false
+	}
+	for seg := range strings.SplitSeq(path, "/") {
+		plain, err := url.PathUnescape(seg)
+		if err != nil || plain == "" || plain == "." || plain == ".." || strings.ContainsAny(plain, "/\\") {
+			return false
+		}
+	}
+	return true
+}
+
 // refusal maps a status other than 200 to an error.
 func (r *Remote) refusal(resp *http.Response) error {
 	switch resp.StatusCode {
@@ -203,7 +276,9 @@ func (r *Remote) refusal(resp *http.Response) error {
 		return fmt.Errorf("httpremote: %s: answered %d (a redirect); point --remote at the final address",
 			r.origin, resp.StatusCode)
 	case resp.StatusCode == http.StatusUnauthorized:
-		return fmt.Errorf("httpremote: %s: authentication required (401); supply a token", r.origin)
+		return fmt.Errorf("%w: %s: authentication required (401); supply a token", ErrDenied, r.origin)
+	case resp.StatusCode == http.StatusForbidden && p.index < 0:
+		return fmt.Errorf("%w: %s: answered 403", ErrDenied, r.origin)
 	case resp.StatusCode == http.StatusNotImplemented:
 		return fmt.Errorf("httpremote: %s: the remote does not serve reconciliation (501)", r.origin)
 	case p.index >= 0:

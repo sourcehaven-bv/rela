@@ -17,6 +17,8 @@
 package syncmerge
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -96,6 +98,41 @@ func FieldsFor(m *metamodel.Metamodel, entityType string, names []string) ([]Fie
 		}
 		if !declared {
 			return nil, fmt.Errorf("%w: field %q is not declared on type %q", ErrField, name, entityType)
+		}
+		f, err := fieldFor(m, name, &pd)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, nil
+}
+
+// FieldsForRelation types names against the meta of relation type relType,
+// as [FieldsFor] does for an entity type. "content" is the relation body
+// and is allowed only when the type declares `content: true`.
+func FieldsForRelation(m *metamodel.Metamodel, relType string, names []string) ([]Field, error) {
+	def, ok := m.GetRelationDef(relType)
+	if !ok {
+		return nil, fmt.Errorf("%w: unknown relation type %q", ErrField, relType)
+	}
+	out := make([]Field, 0, len(names))
+	seen := map[string]bool{}
+	for _, name := range names {
+		if seen[name] {
+			return nil, fmt.Errorf("%w: field %q named twice", ErrField, name)
+		}
+		seen[name] = true
+		if name == ContentField {
+			if !def.Content {
+				return nil, fmt.Errorf("%w: relation type %q has no body", ErrField, relType)
+			}
+			out = append(out, Field{Name: name, Kind: KindContent})
+			continue
+		}
+		pd, declared := def.Properties[name]
+		if !declared {
+			return nil, fmt.Errorf("%w: field %q is not declared on relation type %q", ErrField, name, relType)
 		}
 		f, err := fieldFor(m, name, &pd)
 		if err != nil {
@@ -384,6 +421,38 @@ func Equal(f Field, a, b any) bool {
 		return slices.Equal(ka, kb)
 	}
 	return key(f, a) == key(f, b)
+}
+
+// Digest returns a digest of v's comparison form under f: two values have
+// the same digest exactly when [Equal] holds for them, except that a value
+// that is not a list never equals a list. An empty value has the empty
+// digest. A caller stores it as a merge base without storing the value.
+func Digest(f Field, v any) string {
+	if isEmpty(v) {
+		return ""
+	}
+	var text string
+	if l, ok := asList(v); ok && f.List {
+		el := f
+		el.List = false
+		keys := make([]string, len(l))
+		for i, item := range l {
+			keys[i] = key(el, item)
+		}
+		sort.Strings(keys)
+		var b strings.Builder
+		b.WriteString("l:")
+		for _, k := range keys {
+			b.WriteString(strconv.Itoa(len(k)))
+			b.WriteByte(':')
+			b.WriteString(k)
+		}
+		text = b.String()
+	} else {
+		text = "1:" + key(f, v)
+	}
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:16])
 }
 
 // key is v's comparison form under f.

@@ -449,6 +449,9 @@ const (
 	// ToolFlow attributes the writes the flow engine makes as [UserFlow]:
 	// the run header and its managed edges (FEAT-J0O10QI).
 	ToolFlow = "flow"
+	// ToolPeerPull attributes the writes of a peer pull (`rela peer pull`
+	// or a scheduled `peers.yaml` run); paired with [PeerPullUserPrefix].
+	ToolPeerPull = "peer-pull"
 )
 
 // TypeWebhook is the [Principal.PrincipalType] of a declarative webhook
@@ -548,6 +551,11 @@ const UserPerfSeed = "system:perf-seed"
 // subscription run, `system:subscription:<name>`.
 const SubscriptionUserPrefix = ReservedPrefix + "subscription:"
 
+// PeerPullUserPrefix is the [Principal.User] prefix of a pull from a sync
+// peer, `system:peer:<name>`. It is the local writer, not the peer itself:
+// the source authenticates this instance as `peer:<name>` ([PeerPrefix]).
+const PeerPullUserPrefix = ReservedPrefix + "peer:"
+
 // relaUsers are rela's own identities, by exact name. A new one is declared
 // as a constant above and listed here, so [IsRelaIdentity] refuses it to
 // self-asserted callers from the start.
@@ -557,7 +565,7 @@ var relaUsers = map[string]bool{
 }
 
 // relaUserPrefixes are the families of rela's own identities.
-var relaUserPrefixes = []string{webhookUserPrefix, SubscriptionUserPrefix}
+var relaUserPrefixes = []string{webhookUserPrefix, SubscriptionUserPrefix, PeerPullUserPrefix}
 
 // IsRelaIdentity reports whether user is one of rela's own identities: a
 // name an in-process entry point acts as. Nothing a person or job asserts,

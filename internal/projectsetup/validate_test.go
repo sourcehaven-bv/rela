@@ -207,6 +207,35 @@ func TestValidateWithFS_Subscriptions(t *testing.T) {
 	}
 }
 
+// TestValidateWithFS_PeersStandAlone pins that peers.yaml is checked on its
+// own: a broken subscriptions.yaml neither hides nor repeats on its line.
+func TestValidateWithFS_PeersStandAlone(t *testing.T) {
+	t.Parallel()
+	fs := storage.NewMemFS()
+	root := "/proj"
+	if _, err := projectsetup.InitializeWithFS(root, fs); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"subscriptions.yaml": "subscriptions:\n  news: {url: https://example.com/f, every: 1h, find: {type: nosub}}\n",
+		"peers.yaml": "peers:\n  cat:\n    url: https://example.com\n    credential: peer_credential.cat\n" +
+			"    entities:\n      x: {type: nopeer, ref: r}\n",
+	}
+	for name, body := range files {
+		if err := fs.WriteFile(filepath.Join(root, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := projectsetup.ValidateWithFS(context.Background(), root, fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := result.PeersError
+	if got == nil || !strings.Contains(got.Error(), "nopeer") || strings.Contains(got.Error(), "nosub") {
+		t.Fatalf("PeersError = %v", got)
+	}
+}
+
 func TestValidateResult_HasErrors(t *testing.T) {
 	cases := []struct {
 		name string

@@ -1933,7 +1933,7 @@ mode: header, environment and JWT.
   answers 401 and does not fall through to the identity header or the JWT.
   A peer key sent as the principal header instead of `Authorization` also
   answers 401, so it never becomes a user name in the logs. Refusals are
-  logged at most once a minute per server, without the key. If a reload of
+  logged at most once every 10 seconds per server, without the key. If a reload of
   the key list hangs for 30 seconds, every key is refused until it
   completes.
 - **The source stores a digest, never the key.** `rela peer key create
@@ -1956,6 +1956,64 @@ mode: header, environment and JWT.
   overwrite or remove the principal header. rela then verifies the key
   itself; it checks peer keys on `/api/` paths only. See
   [Server security](server-security.md#peer-keys).
+
+## Peer pulls (`peers.yaml`)
+
+A pull copies rows from a source rela into this one (TKT-I8L1EQU). The
+source authenticates the pull with a peer key, as above; this section is
+about the pulling side. See [Pulling from a sync peer](peer-sync.md) for the
+configuration.
+
+- **The source is untrusted.** A pull treats every answer as input from
+  outside: a fetched row must carry the id and type it was asked for, its
+  values are checked against the local schema by the entity manager, and a
+  row that does not fit is rejected and reported. Answers are capped in size
+  (8 MiB for the schema, 4 MiB per entity, 1 MiB per relation), and a pull
+  compares at most `max_rows` rows and fetches at most `max_fetch` rows and
+  `max_bytes` bytes. Relation fields are checked against the local relation
+  type before the write, because the manager's relation writes check only
+  the endpoints.
+- **The source cannot choose a local id or type.** A pulled entity gets a
+  new id from the local type's prefix; the source id lives only in the
+  mapped `external_ref` property, whose system belongs to one peer. The
+  mapping, written by the operator, decides the local type and the fields.
+  A mapped type cannot be faced or take its id from a property, and a
+  source row with a face is not pulled.
+- **Every write goes through the entity manager.** A pull writes as
+  `system:peer:<name>` with tool `peer-pull`, so `acl.yaml` decides what it
+  may create, update and delete, and the audit log records each write.
+  Partial updates name only the mapped fields, so a field the pull does not
+  own is never overwritten. The pull reads the local rows it compares
+  without the read gate, as a write-prep read; the manager still authorizes
+  every write. `system:peer:` is one of rela's own identities, so no person,
+  JWT or `--run-as` can claim it.
+- **A mass delete needs a person.** A pull refuses to detach or delete any
+  row when more than `max_gone` linked rows (default 10) are gone, or when a
+  type it linked rows of is empty at the source. A source whose `acl.yaml`
+  stops granting the peer a type looks exactly like a source that deleted
+  every row of it, so the guard treats both alike. With `on_gone: delete`
+  the guard also counts the deletes of the last 24 hours, so a source that
+  drops a few rows per run cannot delete in bulk over a day. The operator
+  confirms with `rela peer pull <name> --allow-gone N`. `on_gone: detach` is
+  the default; `on_gone: delete` never deletes an entity with local
+  relations, with a mapped field edited locally, or that existed before the
+  pull adopted it, and logs every delete with the run id. The edit check
+  and the delete are two calls, so an edit saved between them is lost with
+  the entity; the window is one write long.
+- **The credential stays a secret.** `peers.yaml` names a
+  `peer_credential.` secret; the value comes only from the project's
+  secrets (`.rela/secrets.yaml`, the systemd credential, or the desktop
+  keychain), never from a flag or the file itself. No
+  script can read it, it is sent only as a bearer token to the configured
+  URL, and errors and logs name the secret, never its value. Plain http is
+  refused to a host that is not loopback unless `allow_insecure_http` is
+  set, and redirects are never followed.
+- **No HTTP inside a store transaction.** A pull fetches a row first and
+  writes it after, each write a separate call to the entity manager. A slow
+  source holds no lock on the store. One pull of a peer runs at a time: the
+  scheduled pull and `rela peer pull` share a run lock in the scheduler
+  state.
+- **A local delete wins.** A pulled row deleted locally is not recreated.
 
 ## Presence
 

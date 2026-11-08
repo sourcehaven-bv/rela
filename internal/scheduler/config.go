@@ -13,6 +13,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/peersync"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/subscription"
 
@@ -73,6 +74,9 @@ type TaskConfig struct {
 	// instead of running a script. Never read from schedules.yaml: only
 	// [AddSubscriptions] sets it.
 	Subscription *subscription.Subscription `yaml:"-"`
+	// Peer marks a task that pulls from a sync peer in peers.yaml. Never
+	// read from schedules.yaml: only [AddPeers] sets it.
+	Peer *peersync.Mapping `yaml:"-"`
 }
 
 // ForEachConfig selects the entities a scheduled task runs as.

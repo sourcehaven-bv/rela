@@ -5,7 +5,9 @@ title: 'Declarative peer pull: peers.yaml apply side'
 kind: enhancement
 priority: medium
 effort: xl
-status: backlog
+started: "2026-11-08"
+completed: "2026-11-08"
+status: done
 ---
 
 ## Description
