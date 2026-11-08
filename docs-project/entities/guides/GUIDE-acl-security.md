@@ -1860,7 +1860,9 @@ request body is untrusted.
   ends and both are of the named types.
 - **A relation type whose meta the policy can hide is refused** with 422
   `relation_meta_gated`, for every principal. Its element would need the meta
-  redaction of the source row, which ranges do not support yet.
+  redaction of the source row, which ranges do not support yet. The problem's
+  `range` member gives the index of the refused range, so a client can leave
+  that type out and send the rest again (`rela reconcile diff`, TKT-0Y566OJ).
 - **Nothing is cached.** The answer is one principal's and is built fresh.
 - **The work is bounded.** Peer-chosen ranges are the cost attack surface. A
   row gate with a relation predicate costs the whole type per call. A token

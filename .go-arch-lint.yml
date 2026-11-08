@@ -201,6 +201,12 @@ components:
   markdown:         { in: internal/markdown }
   canonical:        { in: internal/canonical }
   reconcile:        { in: internal/reconcile }
+  reconclient:      { in: internal/reconclient }
+  reconclientHTTP:  { in: internal/reconclient/httpremote }
+  # The wire format of POST /api/v1/_reconcile, shared by the handler in
+  # dataentry and the client. A leaf with no deps entry, so a client needs
+  # only the reconcile protocol and not the data-entry API contract.
+  reconwire:        { in: internal/reconwire }
   frontmatter:      { in: internal/frontmatter }
   filter:           { in: internal/filter }
   queryplan:        { in: internal/queryplan }
@@ -592,6 +598,9 @@ deps:
       # `rela channel` (TKT-76G6M7) speaks the channel service's views and
       # errors; the access checks stay in realtime.Service.
       - realtime
+      # `rela reconcile diff` (TKT-0Y566OJ).
+      - reconclient
+      - reconclientHTTP
       - rollup
       - renametype
       - scheduler
@@ -653,6 +662,7 @@ deps:
       - acl
       - affordances
       - apiwire
+      - reconwire
       - attachment
       - audit
       - calfeed
@@ -1701,6 +1711,19 @@ deps:
     mayDependOn:
       - entity
       - canonical
+  # The reconcile client (TKT-0Y566OJ): compares the local gated element
+  # read with a remote's answers. Transport-free; the HTTP remote is its own
+  # component so the algorithm can run over any Remote.
+  reconclient:
+    mayDependOn:
+      - canonical
+      - reconwire
+      - store
+      - visibility
+  reconclientHTTP:
+    mayDependOn:
+      - reconclient
+      - reconwire
   # userstate is the per-user next-action state seam (snooze/mute/cooldown).
   # Deliberately NOT dependent on store: this state is not graph content, and
   # letting it reach the store would invite exactly the "just put it in the

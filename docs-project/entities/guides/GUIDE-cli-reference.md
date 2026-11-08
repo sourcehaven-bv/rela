@@ -2397,6 +2397,73 @@ answer as `rela show`. A refusal names its type, such as
 
 ---
 
+### rela reconcile diff
+
+Compare the entities and relations of this project with another rela. The
+command uses `POST /api/v1/_reconcile` on the remote. It asks the remote for
+fingerprints of ranges of addresses and lists only the ranges that differ, so
+two projects that are almost the same cost a few requests.
+
+```bash
+rela reconcile diff --remote URL [--types T1,T2,...] [--token-file FILE | --token-env VAR]
+                    [--auth-header NAME] [--exit-code] [--timeout 10m] [--max-round-trips N]
+```
+
+The command compares two views, not two stores. Each side shows only what its
+reader may see. The local side reads as your rela identity. The remote side
+reads as the identity the credential has there. When the two identities see
+different rows or fields, those show up as differences. To compare full
+stores, use identities that read everything on both sides.
+
+| Option                  | Description                                                                                          |
+| ----------------------- | ---------------------------------------------------------------------------------------------------- |
+| `--remote`              | Base URL of the remote rela, such as `https://rela.example.com`. No user, query or fragment          |
+| `--types`               | Entity and relation types to compare, comma separated. Default: every type in the local schema      |
+| `--token-file`          | File that holds the credential. Overrides `--token-env`. A warning is logged when others can read it |
+| `--token-env`           | Environment variable that holds the credential, such as `RELA_RECONCILE_TOKEN`                       |
+| `--auth-header`         | Header that carries the credential. Default `Authorization`, which sends it as a bearer token       |
+| `--allow-insecure-http` | Allow plain `http` to a host that is not loopback                                                    |
+| `--exit-code`           | Exit 1 when the two sides differ and 2 on an error. Without it, differences exit 0                   |
+| `--timeout`             | Time limit for the whole comparison. Default 10 minutes                                              |
+| `--max-round-trips`     | Maximum number of requests to the remote, retries included. Default 1000                             |
+
+There is no flag that takes the credential itself, so it does not show up in
+the process list or your shell history. The command reads a credential only
+from the file or variable you name, never from a default variable, so a
+mistyped `--remote` does not receive one. A named file or variable that is
+empty or unset is an error. Without either option the command sends no
+authentication header.
+
+The remote learns some of your local addresses. To split a range, the command
+sends local addresses as range bounds. A range with at most 256 local
+elements is listed instead of split. The counts the remote gives for the parts
+of a split must add up to its count for the whole, or the command stops with
+an error. Plain `http` to a host that is not loopback is refused, with or
+without a credential, because the requests carry these addresses and the
+answers could be changed on the way.
+
+A relation type needs an entity type at each of its ends in `--types`. A
+relation is compared only when both of its ends are rows of the listed entity
+types that the reader may see. The types must exist in the schema on both
+sides. When the remote does not know a type, it refuses the request; narrow
+`--types` to the types both sides share.
+
+The output has three lists: what is only here (`+`), what is only on the
+remote (`-`), and what is on both sides with a different content hash (`~`).
+An entity shows as `type/id`, or `type/id@face` for a face. A relation shows
+as `from--type--to`. When a policy hides a meta key of a relation type, the
+side with that policy cannot serve that type. The type is then listed under
+`Not compared` with the side and the reason, and is not counted as a
+difference. `-o json` prints one object with `remote`, `principal`, `same`,
+`only_local`, `only_remote`, `differing`, `skipped` and `round_trips`. Each
+entry of `skipped` has `refused_by`: `local` or `remote`.
+
+When the remote answers 429 or 503, the command waits for the time it names
+in `Retry-After`, at most one minute, and tries again. It does not follow
+redirects. It stops with an error on an answer that breaks the protocol.
+
+---
+
 ### rela validate
 
 Validate project configuration files.

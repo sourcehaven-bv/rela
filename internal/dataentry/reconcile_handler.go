@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,6 +10,8 @@ import (
 	"slices"
 	"strconv"
 	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/reconwire"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -178,12 +181,18 @@ func (h *reconcileHandler) handleV1Reconcile(w http.ResponseWriter, r *http.Requ
 	}
 	// The body is read and checked before admission, as on _batch: both are
 	// bounded and cheap, and a request refused here costs no slot.
-	var req v1.ReconcileRequest
+	var req reconwire.Request
 	if !decodeStrictBody(w, r, reconcileBodyLimit, "512 KiB", &req) {
 		return
 	}
 	ops, err := planReconcile(h.schema().Meta, req)
 	if err != nil {
+		var re *reconcileRangeError
+		if errors.As(err, &re) {
+			writeReconcileRangeError(w, r, http.StatusBadRequest, "invalid_reconcile_request",
+				"Invalid reconcile request", re.index, re.err)
+			return
+		}
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_reconcile_request", "Invalid reconcile request", err.Error())
 		return
 	}
@@ -218,16 +227,16 @@ var errReconcileClientGone = errors.New("dataentry: reconcile: client went away"
 // run answers ops in order under the deadline. On an error that fails the
 // request it returns the index of the range and the error. Every result is
 // in memory before the caller writes, so no partial body leaves.
-func (h *reconcileHandler) run(parent context.Context, ops []reconcileOp) (v1.ReconcileResponse, int, error) {
+func (h *reconcileHandler) run(parent context.Context, ops []reconcileOp) (reconwire.Response, int, error) {
 	ctx, cancel := context.WithTimeout(parent, h.deadline)
 	defer cancel()
-	out := v1.ReconcileResponse{Ranges: make([]v1.ReconcileResult, 0, len(ops))}
+	out := reconwire.Response{Ranges: make([]reconwire.Result, 0, len(ops))}
 	for i, op := range ops {
 		if parent.Err() != nil {
 			return out, i, errReconcileClientGone
 		}
 		if ctx.Err() != nil {
-			out.Ranges = append(out.Ranges, v1.ReconcileResult{Status: v1.ReconcileNotRun})
+			out.Ranges = append(out.Ranges, reconwire.Result{Status: reconwire.StatusNotRun})
 			continue
 		}
 		res, err := h.answer(ctx, op)
@@ -235,12 +244,12 @@ func (h *reconcileHandler) run(parent context.Context, ops []reconcileOp) (v1.Re
 		case err == nil:
 			out.Ranges = append(out.Ranges, res)
 		case errors.Is(err, visibility.ErrRangeTooLarge):
-			out.Ranges = append(out.Ranges, v1.ReconcileResult{Status: v1.ReconcileTooLarge})
+			out.Ranges = append(out.Ranges, reconwire.Result{Status: reconwire.StatusTooLarge})
 		case parent.Err() != nil:
 			return out, i, errReconcileClientGone
 		case ctx.Err() != nil:
 			// The deadline, not the client, ended the call.
-			out.Ranges = append(out.Ranges, v1.ReconcileResult{Status: v1.ReconcileNotRun})
+			out.Ranges = append(out.Ranges, reconwire.Result{Status: reconwire.StatusNotRun})
 		default:
 			return out, i, err
 		}
@@ -249,47 +258,77 @@ func (h *reconcileHandler) run(parent context.Context, ops []reconcileOp) (v1.Re
 }
 
 // answer runs one range.
-func (h *reconcileHandler) answer(ctx context.Context, op reconcileOp) (v1.ReconcileResult, error) {
+func (h *reconcileHandler) answer(ctx context.Context, op reconcileOp) (reconwire.Result, error) {
 	if !op.list {
 		rs, err := h.elements.Sum(ctx, op.types, op.r)
 		if err != nil {
-			return v1.ReconcileResult{}, err
+			return reconwire.Result{}, err
 		}
 		count := rs.count
-		return v1.ReconcileResult{Status: v1.ReconcileOK, Count: &count, Fingerprint: rs.fingerprint}, nil
+		return reconwire.Result{Status: reconwire.StatusOK, Count: &count, Fingerprint: rs.fingerprint}, nil
 	}
 	page, err := h.elements.List(ctx, op.types, op.r, op.limit)
 	if err != nil {
-		return v1.ReconcileResult{}, err
+		return reconwire.Result{}, err
 	}
-	els := make([]v1.ReconcileElement, len(page.Elements))
+	els := make([]reconwire.Element, len(page.Elements))
 	for i, e := range page.Elements {
-		els[i] = v1.ReconcileElement{Address: e.Address, Hash: e.Hash.String()}
+		els[i] = reconwire.Element{Address: e.Address, Hash: e.Hash.String()}
 	}
-	return v1.ReconcileResult{Status: v1.ReconcileOK, Elements: els, Last: page.Last, More: page.More}, nil
+	return reconwire.Result{Status: reconwire.StatusOK, Elements: els, Last: page.Last, More: page.More}, nil
 }
 
 // writeReconcileError answers a range that failed for a reason other than
-// its size or the deadline. Nothing of the request is answered.
+// its size or the deadline. Nothing of the request is answered. A refusal
+// of one range names it in the problem's errors, with the JSON pointer
+// /ranges/<index>, so a client can split or skip that range without parsing
+// the detail.
 func writeReconcileError(w http.ResponseWriter, r *http.Request, index int, err error) {
 	switch {
 	case errors.Is(err, visibility.ErrRelationMetaGated):
 		// The same for every principal: the policy can hide a meta key of
 		// this relation type, so its elements cannot be served yet
 		// (TKT-0RBFN0). The error text names the type; config is not secret.
-		writeV1Error(w, r, http.StatusUnprocessableEntity, "relation_meta_gated",
-			"Relation type not supported", fmt.Sprintf("range %d: %v", index, err))
+		writeReconcileRangeError(w, r, http.StatusUnprocessableEntity, "relation_meta_gated",
+			"Relation type not supported", index, err)
 	case errors.Is(err, store.ErrInvalidQuery):
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_reconcile_request", "Invalid reconcile request",
-			fmt.Sprintf("range %d: %v", index, err))
+		writeReconcileRangeError(w, r, http.StatusBadRequest, "invalid_reconcile_request",
+			"Invalid reconcile request", index, err)
 	default:
 		writeInternalError(w, r, "reconcile_failed", "Reconciliation failed", err)
 	}
 }
 
+// reconcileRangeError is a planning error about one range of a request.
+type reconcileRangeError struct {
+	index int
+	err   error
+}
+
+func (e *reconcileRangeError) Error() string { return fmt.Sprintf("range %d: %v", e.index, e.err) }
+func (e *reconcileRangeError) Unwrap() error { return e.err }
+
+// writeReconcileRangeError writes a problem about range index of the request.
+func writeReconcileRangeError(
+	w http.ResponseWriter, r *http.Request, status int, errType, title string, index int, err error,
+) {
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v1.Error{
+		Type:     "https://rela.dev/errors/" + errType,
+		Title:    title,
+		Status:   status,
+		Detail:   fmt.Sprintf("range %d: %v", index, err),
+		Instance: r.URL.Path,
+		Errors: []v1.FieldError{{
+			Source: v1.ErrorSource{Pointer: "/ranges/" + strconv.Itoa(index)}, Code: errType, Detail: err.Error(),
+		}},
+	})
+}
+
 // planReconcile checks req against the metamodel and the limits before
 // anything is read, and returns the ranges to run.
-func planReconcile(meta *metamodel.Metamodel, req v1.ReconcileRequest) ([]reconcileOp, error) {
+func planReconcile(meta *metamodel.Metamodel, req reconwire.Request) ([]reconcileOp, error) {
 	switch {
 	case len(req.Ranges) == 0:
 		return nil, errors.New("ranges must not be empty")
@@ -301,7 +340,7 @@ func planReconcile(meta *metamodel.Metamodel, req v1.ReconcileRequest) ([]reconc
 	for i, rr := range req.Ranges {
 		op, err := planReconcileRange(meta, rr)
 		if err != nil {
-			return nil, fmt.Errorf("range %d: %w", i, err)
+			return nil, &reconcileRangeError{index: i, err: err}
 		}
 		names += len(rr.Entities) + len(rr.Relations)
 		if names > reconcileMaxTypeNames {
@@ -316,7 +355,7 @@ func planReconcile(meta *metamodel.Metamodel, req v1.ReconcileRequest) ([]reconc
 	return ops, nil
 }
 
-func planReconcileRange(meta *metamodel.Metamodel, rr v1.ReconcileRange) (reconcileOp, error) {
+func planReconcileRange(meta *metamodel.Metamodel, rr reconwire.Range) (reconcileOp, error) {
 	var op reconcileOp
 	switch rr.Kind {
 	case "entity":

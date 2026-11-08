@@ -90,7 +90,10 @@ var (
 // every command that acts as one, and a per-command flag would have to be
 // repeated on each of them.
 //
-//plimsoll:max-fields=54
+// Raised 54 → 55 for `reconcile` (TKT-0Y566OJ), a verb family that compares
+// this project with a remote rela.
+//
+//plimsoll:max-fields=55
 type CLI struct {
 	// Global flags.
 	Project string `help:"Project directory (default: auto-detect from cwd)." env:"RELA_PROJECT"`
@@ -168,6 +171,7 @@ type CLI struct {
 	Secrets              SecretsCmd              `cmd:"" help:"Inspect how project secrets are supplied."`
 	Lease                LeaseCmd                `cmd:"" help:"Claim, renew, release and list advisory leases on entities."`
 	Channel              ChannelCmd              `cmd:"" help:"List, read, post to and watch the realtime channels on an entity."`
+	Reconcile            ReconcileCmd            `cmd:"" help:"Compare this project with a remote rela."`
 }
 
 // VersionCmd needs no services.
@@ -270,7 +274,7 @@ func runKong() int {
 	ktx.Bind(out, identity)
 	if bundles != nil {
 		ktx.Bind(bundles.read, bundles.write, bundles.attachment, bundles.renametype, bundles.analysis, bundles.leases,
-			bundles.channels)
+			bundles.channels, bundles.reconcile)
 		// The scheduler command's workspace and request-edge step are
 		// supplied here at the wiring site (consumer-side interface):
 		// appbuild.Services satisfies scheduler.WorkspaceProvider directly.
@@ -316,7 +320,7 @@ func requiresProject(cmd string) bool {
 		"rename", "analyze", "acl", "attach", "attachments", "gc", "renumber",
 		"sync", "history", "restore", "secrets",
 		"relation-history", "relation-restore", "history-tag", "history-purge", "relation-history-purge",
-		"dev", "token", "lease", "channel":
+		"dev", "token", "lease", "channel", "reconcile":
 		return true
 	case "migrate":
 		// Bare `rela migrate` (config-file migration) deliberately gets NO

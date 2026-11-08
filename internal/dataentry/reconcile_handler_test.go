@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/reconwire"
+
 	"golang.org/x/time/rate"
 	"gopkg.in/yaml.v3"
 
@@ -123,16 +125,16 @@ func (f *reconcileFixture) post(user string, body any) *httptest.ResponseRecorde
 	return rec
 }
 
-func (f *reconcileFixture) answer(user string, ranges ...v1.ReconcileRange) []v1.ReconcileResult {
+func (f *reconcileFixture) answer(user string, ranges ...reconwire.Range) []reconwire.Result {
 	f.t.Helper()
-	rec := f.post(user, v1.ReconcileRequest{Ranges: ranges})
+	rec := f.post(user, reconwire.Request{Ranges: ranges})
 	if rec.Code != http.StatusOK {
 		f.t.Fatalf("POST %s as %s: %d %s", reconcilePath, user, rec.Code, rec.Body)
 	}
 	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "no-store") {
 		f.t.Errorf("Cache-Control = %q, want no-store", cc)
 	}
-	var out v1.ReconcileResponse
+	var out reconwire.Response
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		f.t.Fatal(err)
 	}
@@ -142,12 +144,12 @@ func (f *reconcileFixture) answer(user string, ranges ...v1.ReconcileRange) []v1
 	return out.Ranges
 }
 
-func fpRange(types ...string) v1.ReconcileRange {
-	return v1.ReconcileRange{Kind: "entity", Entities: types, Op: "fingerprint"}
+func fpRange(types ...string) reconwire.Range {
+	return reconwire.Range{Kind: "entity", Entities: types, Op: "fingerprint"}
 }
 
-func listRange(limit int, types ...string) v1.ReconcileRange {
-	return v1.ReconcileRange{Kind: "entity", Entities: types, Op: "list", Limit: limit}
+func listRange(limit int, types ...string) reconwire.Range {
+	return reconwire.Range{Kind: "entity", Entities: types, Op: "list", Limit: limit}
 }
 
 func TestReconcile_PrincipalsSeeTheirOwnRows(t *testing.T) {
@@ -169,7 +171,7 @@ func TestReconcile_PrincipalsSeeTheirOwnRows(t *testing.T) {
 	}
 
 	// The fingerprint is the fold of the listed elements.
-	for _, res := range [][]v1.ReconcileResult{a, b} {
+	for _, res := range [][]reconwire.Result{a, b} {
 		var acc reconcile.Range
 		for _, e := range res[1].Elements {
 			var h canonical.Digest
@@ -233,7 +235,7 @@ func TestReconcile_Paging(t *testing.T) {
 
 	// Bounds: [feature/, ticket/) holds the features only.
 	hi := "ticket/"
-	bounded := v1.ReconcileRange{Kind: "entity", Entities: []string{"ticket", "feature"},
+	bounded := reconwire.Range{Kind: "entity", Entities: []string{"ticket", "feature"},
 		Lo: "feature/", Hi: &hi, Op: "fingerprint"}
 	if c := *f.answer("alice", bounded)[0].Count; c != 2 {
 		t.Errorf("count in [feature/, ticket/) = %d, want 2", c)
@@ -248,7 +250,7 @@ func TestReconcile_PagingPastAPrefix(t *testing.T) {
 		seedEntity(f.app, &entity.Entity{ID: id, Type: "ticket", Properties: map[string]any{"title": id}})
 	}
 	want := f.answer("root", listRange(100, "ticket"))[0].Elements
-	var got []v1.ReconcileElement
+	var got []reconwire.Element
 	rr := listRange(1, "ticket")
 	for range 20 {
 		res := f.answer("root", rr)[0]
@@ -273,7 +275,7 @@ func TestReconcile_RefusesBadRequests(t *testing.T) {
 	f := newReconcileFixture(t, reconcileGateConfig{})
 	hi := "A"
 	after := "x"
-	many := make([]v1.ReconcileRange, reconcileMaxRanges+1)
+	many := make([]reconwire.Range, reconcileMaxRanges+1)
 	for i := range many {
 		many[i] = fpRange("ticket")
 	}
@@ -285,41 +287,41 @@ func TestReconcile_RefusesBadRequests(t *testing.T) {
 	}{
 		{"not json", "{", http.StatusBadRequest, ""},
 		{"unknown field", `{"ranges":[],"x":1}`, http.StatusBadRequest, ""},
-		{"no ranges", v1.ReconcileRequest{}, http.StatusBadRequest, "must not be empty"},
-		{"too many ranges", v1.ReconcileRequest{Ranges: many}, http.StatusBadRequest, "at most 32 ranges"},
-		{"undeclared type", v1.ReconcileRequest{Ranges: []v1.ReconcileRange{fpRange("nope")}},
+		{"no ranges", reconwire.Request{}, http.StatusBadRequest, "must not be empty"},
+		{"too many ranges", reconwire.Request{Ranges: many}, http.StatusBadRequest, "at most 32 ranges"},
+		{"undeclared type", reconwire.Request{Ranges: []reconwire.Range{fpRange("nope")}},
 			http.StatusBadRequest, `entity type \"nope\" is not declared`},
-		{"duplicate type", v1.ReconcileRequest{Ranges: []v1.ReconcileRange{fpRange("ticket", "ticket")}},
+		{"duplicate type", reconwire.Request{Ranges: []reconwire.Range{fpRange("ticket", "ticket")}},
 			http.StatusBadRequest, `entity type \"ticket\" is named twice`},
-		{"undeclared relation", v1.ReconcileRequest{Ranges: []v1.ReconcileRange{{Kind: "relation",
+		{"undeclared relation", reconwire.Request{Ranges: []reconwire.Range{{Kind: "relation",
 			Entities: []string{"ticket"}, Relations: []string{"nope"}, Op: "fingerprint"}}},
 			http.StatusBadRequest, `relation type \"nope\" is not declared`},
-		{"relation range without relations", v1.ReconcileRequest{Ranges: []v1.ReconcileRange{{Kind: "relation",
+		{"relation range without relations", reconwire.Request{Ranges: []reconwire.Range{{Kind: "relation",
 			Entities: []string{"ticket"}, Op: "fingerprint"}}}, http.StatusBadRequest, "at least one relation"},
-		{"relation ends out of scope", v1.ReconcileRequest{Ranges: []v1.ReconcileRange{{Kind: "relation",
+		{"relation ends out of scope", reconwire.Request{Ranges: []reconwire.Range{{Kind: "relation",
 			Entities: []string{"feature"}, Relations: []string{"implements"}, Op: "fingerprint"}}},
 			http.StatusBadRequest, `relation type \"implements\" links [ticket] to [feature]`},
-		{"entity range with relations", v1.ReconcileRequest{Ranges: []v1.ReconcileRange{{Kind: "entity",
+		{"entity range with relations", reconwire.Request{Ranges: []reconwire.Range{{Kind: "entity",
 			Entities: []string{"ticket"}, Relations: []string{"blocks"}, Op: "fingerprint"}}},
 			http.StatusBadRequest, "names no relation"},
-		{"no entities", v1.ReconcileRequest{Ranges: []v1.ReconcileRange{fpRange()}},
+		{"no entities", reconwire.Request{Ranges: []reconwire.Range{fpRange()}},
 			http.StatusBadRequest, "at least one entity"},
-		{"bad kind", v1.ReconcileRequest{Ranges: []v1.ReconcileRange{{Kind: "x", Entities: []string{"ticket"},
+		{"bad kind", reconwire.Request{Ranges: []reconwire.Range{{Kind: "x", Entities: []string{"ticket"},
 			Op: "fingerprint"}}}, http.StatusBadRequest, "kind"},
-		{"bad op", v1.ReconcileRequest{Ranges: []v1.ReconcileRange{{Kind: "entity", Entities: []string{"ticket"},
+		{"bad op", reconwire.Request{Ranges: []reconwire.Range{{Kind: "entity", Entities: []string{"ticket"},
 			Op: "x"}}}, http.StatusBadRequest, "op"},
-		{"fingerprint with limit", v1.ReconcileRequest{Ranges: []v1.ReconcileRange{{Kind: "entity",
+		{"fingerprint with limit", reconwire.Request{Ranges: []reconwire.Range{{Kind: "entity",
 			Entities: []string{"ticket"}, Op: "fingerprint", Limit: 3}}}, http.StatusBadRequest, "no limit"},
-		{"list without limit", v1.ReconcileRequest{Ranges: []v1.ReconcileRange{listRange(0, "ticket")}},
+		{"list without limit", reconwire.Request{Ranges: []reconwire.Range{listRange(0, "ticket")}},
 			http.StatusBadRequest, "outside"},
-		{"list budget", v1.ReconcileRequest{Ranges: []v1.ReconcileRange{
+		{"list budget", reconwire.Request{Ranges: []reconwire.Range{
 			listRange(1500, "ticket"), listRange(1500, "feature")}}, http.StatusBadRequest, "add up"},
-		{"lo above hi", v1.ReconcileRequest{Ranges: []v1.ReconcileRange{{Kind: "entity",
+		{"lo above hi", reconwire.Request{Ranges: []reconwire.Range{{Kind: "entity",
 			Entities: []string{"ticket"}, Lo: "B", Hi: &hi, Op: "fingerprint"}}}, http.StatusBadRequest, ""},
-		{"lo and after", v1.ReconcileRequest{Ranges: []v1.ReconcileRange{{Kind: "entity",
+		{"lo and after", reconwire.Request{Ranges: []reconwire.Range{{Kind: "entity",
 			Entities: []string{"ticket"}, Lo: "a", After: &after, Op: "fingerprint"}}},
 			http.StatusBadRequest, "exclusive"},
-		{"bound with NUL", v1.ReconcileRequest{Ranges: []v1.ReconcileRange{{Kind: "entity",
+		{"bound with NUL", reconwire.Request{Ranges: []reconwire.Range{{Kind: "entity",
 			Entities: []string{"ticket"}, Lo: "a\x00", Op: "fingerprint"}}}, http.StatusBadRequest, ""},
 		{"body too large", `{"ranges":[{"kind":"entity","entities":["` + strings.Repeat("a", reconcileBodyLimit) +
 			`"]}]}`, http.StatusRequestEntityTooLarge, ""},
@@ -372,7 +374,7 @@ func TestReconcile_MethodAndWiring(t *testing.T) {
 // read refuses, and nothing of the range is answered.
 func TestReconcile_NoIdentityFailsClosed(t *testing.T) {
 	f := newReconcileFixture(t, reconcileGateConfig{})
-	body, err := json.Marshal(v1.ReconcileRequest{Ranges: []v1.ReconcileRange{fpRange("ticket")}})
+	body, err := json.Marshal(reconwire.Request{Ranges: []reconwire.Range{fpRange("ticket")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -413,7 +415,7 @@ func TestReconcile_RangeErrors(t *testing.T) {
 		code   int
 		status string
 	}{
-		{"too large answers per range", visibility.ErrRangeTooLarge, http.StatusOK, v1.ReconcileTooLarge},
+		{"too large answers per range", visibility.ErrRangeTooLarge, http.StatusOK, reconwire.StatusTooLarge},
 		{"meta gated refuses", visibility.ErrRelationMetaGated, http.StatusUnprocessableEntity, ""},
 		{"invalid query refuses", store.ErrInvalidQuery, http.StatusBadRequest, ""},
 		{"other error is 500", errors.New("disk on fire"), http.StatusInternalServerError, ""},
@@ -423,15 +425,24 @@ func TestReconcile_RangeErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newReconcileFixture(t, reconcileGateConfig{})
 			f.h.elements = stubElements{err: tc.err}
-			rec := f.post("alice", v1.ReconcileRequest{Ranges: []v1.ReconcileRange{fpRange("ticket")}})
+			rec := f.post("alice", reconwire.Request{Ranges: []reconwire.Range{fpRange("ticket")}})
 			if rec.Code != tc.code {
 				t.Fatalf("status %d, want %d: %s", rec.Code, tc.code, rec.Body)
 			}
 			if strings.Contains(rec.Body.String(), "disk on fire") {
 				t.Error("an internal error reached the body")
 			}
+			if tc.code == http.StatusUnprocessableEntity || tc.code == http.StatusBadRequest {
+				var p v1.Error
+				if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+					t.Fatal(err)
+				}
+				if len(p.Errors) != 1 || p.Errors[0].Source.Pointer != "/ranges/0" {
+					t.Errorf("problem errors = %+v, want one at /ranges/0", p.Errors)
+				}
+			}
 			if tc.status != "" {
-				var out v1.ReconcileResponse
+				var out reconwire.Response
 				if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 					t.Fatal(err)
 				}
@@ -449,7 +460,7 @@ func TestReconcileGate(t *testing.T) {
 
 	t.Run("rate limit answers 429 with Retry-After", func(t *testing.T) {
 		f := newReconcileFixture(t, reconcileGateConfig{Rate: rate.Every(10 * time.Second), Burst: 1, Now: clock})
-		req := v1.ReconcileRequest{Ranges: []v1.ReconcileRange{fpRange("ticket")}}
+		req := reconwire.Request{Ranges: []reconwire.Range{fpRange("ticket")}}
 		if rec := f.post("alice", req); rec.Code != http.StatusOK {
 			t.Fatalf("first: %d", rec.Code)
 		}
@@ -577,7 +588,7 @@ func (w *blockingWriter) Write(b []byte) (int, error) {
 // written, so a peer that stops reading cannot pin it.
 func TestReconcile_SlowReaderHoldsNoSlot(t *testing.T) {
 	f := newReconcileFixture(t, reconcileGateConfig{Slots: 1})
-	body, err := json.Marshal(v1.ReconcileRequest{Ranges: []v1.ReconcileRange{fpRange("ticket")}})
+	body, err := json.Marshal(reconwire.Request{Ranges: []reconwire.Range{fpRange("ticket")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -607,7 +618,7 @@ func TestReconcile_DeadlineAnswersNotRun(t *testing.T) {
 	f.h.deadline = 20 * time.Millisecond
 	res := f.answer("alice", fpRange("ticket"), fpRange("feature"))
 	for i, r := range res {
-		if r.Status != v1.ReconcileNotRun || r.Count != nil || r.Fingerprint != "" {
+		if r.Status != reconwire.StatusNotRun || r.Count != nil || r.Fingerprint != "" {
 			t.Errorf("range %d: %+v, want not_run and nothing else", i, r)
 		}
 	}
@@ -620,7 +631,7 @@ func TestReconcile_ClientCancelIsNotNotRun(t *testing.T) {
 	f.h.elements = stubElements{delay: time.Hour}
 	ctx, cancel := context.WithTimeout(gateCtxFor(principalCtx("alice"), t, f.d), 20*time.Millisecond)
 	defer cancel()
-	body, err := json.Marshal(v1.ReconcileRequest{Ranges: []v1.ReconcileRange{fpRange("ticket")}})
+	body, err := json.Marshal(reconwire.Request{Ranges: []reconwire.Range{fpRange("ticket")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -636,7 +647,7 @@ func TestReconcile_RelationRange(t *testing.T) {
 	f := newReconcileFixture(t, reconcileGateConfig{})
 	seedRelation(f.app, &entity.Relation{From: "TKT-001", Type: "implements", To: "FEAT-001"})
 	seedRelation(f.app, &entity.Relation{From: "TKT-001", Type: "blocks", To: "TKT-002"})
-	rr := v1.ReconcileRange{Kind: "relation", Entities: []string{"ticket", "feature"},
+	rr := reconwire.Range{Kind: "relation", Entities: []string{"ticket", "feature"},
 		Relations: []string{"implements", "blocks"}, Op: "list", Limit: 10}
 	for user, want := range map[string]int{"alice": 2, "bob": 1} {
 		res := f.answer(user, rr)[0]

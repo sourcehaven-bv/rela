@@ -15,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/reconclient"
 	"github.com/Sourcehaven-BV/rela/internal/renametype"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -138,6 +139,7 @@ type cliBundles struct {
 	analysis   *analysis.Service
 	leases     *leaseServices
 	channels   *channelServices
+	reconcile  *reconcileServices
 }
 
 // newCLIBundles wires the focused services around an already-constructed
@@ -234,7 +236,16 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		channels.Svc = c
 		channels.Follow = func(ctx context.Context) <-chan struct{} { return appbuild.FollowChannels(ctx, svc) }
 	}
+	// Built on first use: only `rela reconcile` reads element ranges.
+	recon := &reconcileServices{Meta: svc.Meta(), Local: func() (reconclient.Local, error) {
+		el, err := appbuild.Elements(svc)
+		if err != nil {
+			return nil, err
+		}
+		return reconclient.Visible(el)
+	}}
 	return &cliBundles{
+		reconcile:  recon,
 		leases:     leases,
 		channels:   channels,
 		read:       &read,
