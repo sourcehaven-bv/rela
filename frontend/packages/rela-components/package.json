@@ -67,7 +67,7 @@
     "typescript": "~6.0.2",
     "vite": "^8.3.5",
     "vitest": "^5.0.5",
-    "vue-tsc": "^3.3.12"
+    "vue-tsc": "^3.3.14"
   },
   "peerDependencies": {
     "@milkdown/kit": "^7.22.2"
