@@ -222,3 +222,49 @@ func writeConfig(t *testing.T, body string) string {
 	}
 	return path
 }
+
+func TestLoadConfig_MaxResident(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := tenant.LoadConfig(writeConfig(t, "max_resident: 9\ntenants: []\n"))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.MaxResident != 9 {
+		t.Errorf("MaxResident = %d, want 9", cfg.MaxResident)
+	}
+}
+
+// TestLoadConfig_RefusesPasswords pins that a database password cannot be
+// written into the tenant map, which lives with the committed project
+// config.
+func TestLoadConfig_RefusesPasswords(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name, body string
+		refused    bool
+	}{
+		{"url base password", "base_dsn: \"postgres://rela:pw@db/rela\"\n", true},
+		{"url base password param", "base_dsn: \"postgres://rela@db/rela?password=pw\"\n", true},
+		{"keyword base password", "base_dsn: \"host=db user=rela password=pw\"\n", true},
+		{"tenant dsn password", "tenants:\n  - org_id: a\n    schema: tenant_a\n    dsn: \"host=db password = pw\"\n", true},
+		{"url without password", "base_dsn: \"postgres://rela@db/rela?sslmode=verify-full\"\n", false},
+		{"keyword without password", "base_dsn: \"host=db user=rela passfile=/run/pgpass\"\n", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := tenant.LoadConfig(writeConfig(t, tc.body))
+			if tc.refused && err == nil {
+				t.Fatal("a password in the tenant map was accepted")
+			}
+			if !tc.refused && err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if err != nil && strings.Contains(err.Error(), "pw") {
+				t.Errorf("the error repeats the password: %v", err)
+			}
+		})
+	}
+}

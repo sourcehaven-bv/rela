@@ -85,6 +85,7 @@ components:
   appbuildtest:     { in: internal/appbuild/appbuildtest }
   backendtest:      { in: internal/appbuild/backendtest }
   tenant:           { in: internal/tenant }
+  tenanthost:       { in: internal/tenanthost }
 
   # Domain services
   analysis:         { in: internal/analysis }
@@ -497,6 +498,9 @@ deps:
       - script
       - storage
       - store
+      # tenant, tenanthost: the multi-tenant host (TKT-D6MF3SW) is wired here.
+      - tenant
+      - tenanthost
     canUse:
       - http2
   cmdDesktop:
@@ -1079,9 +1083,21 @@ deps:
   tenant:
     mayDependOn:
       - appbuild
+      # audit: each tenant gets its own filesystem audit sink (TKT-SNVR8UV).
+      - audit
     canUse:
       - pgx
       - yaml
+  # tenanthost is the front handler of a multi-tenant rela-server
+  # (TKT-D6MF3SW): it verifies the assertion, routes by org through the
+  # tenant registry and serves that tenant's data-entry router. It names
+  # dataentry for the verified-identity types and the static shell, and
+  # tenant for its sentinel error. The registry itself is reached through a
+  # consumer-side func, wired in cmd/rela-server.
+  tenanthost:
+    mayDependOn:
+      - dataentry
+      - tenant
   appbuildtest:
     mayDependOn:
       - acl

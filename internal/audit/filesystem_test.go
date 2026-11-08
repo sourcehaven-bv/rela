@@ -372,3 +372,30 @@ func mustGlobOne(t *testing.T, pattern string) string {
 func runtimeIsWindows() bool {
 	return os.PathSeparator == '\\'
 }
+
+// TestFilesystem_CloseDropsLaterRecords pins Close for the multi-tenant host,
+// which closes a tenant's sink on eviction: a record after Close must not
+// reopen the file, and a second Close is harmless.
+func TestFilesystem_CloseDropsLaterRecords(t *testing.T) {
+	auditDir := filepath.Join(t.TempDir(), "audit")
+	clock := fixedClock(time.Date(2026, 5, 17, 8, 0, 0, 0, time.UTC))
+	a, err := audit.NewFilesystem(auditDir, audit.WithClock(clock.now))
+	if err != nil {
+		t.Fatalf("NewFilesystem: %v", err)
+	}
+	rec := audit.Record{
+		Op:      audit.OpCreateEntity,
+		Subject: &audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-1"},
+	}
+	a.Record(rec)
+	if err := a.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	a.Record(rec)
+	if err := a.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+	if lines := readLines(t, filepath.Join(auditDir, "2026-05-17.jsonl")); len(lines) != 1 {
+		t.Errorf("want 1 line (the record before Close), got %d", len(lines))
+	}
+}

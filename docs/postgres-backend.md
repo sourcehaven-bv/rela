@@ -608,6 +608,180 @@ minutes, starting 10 minutes after it starts. A sweep deletes rows of jobs that 
 including failed ones that will be retried, stay. The sweep uses one extra
 database connection.
 
+## Tenant mode
+
+One `rela-server-postgres` process can serve several organizations, each in
+its own PostgreSQL schema. Put `tenants.yaml` in the project directory to
+turn it on:
+
+```yaml
+# base_dsn may be left out; $RELA_DATABASE_URL is used instead. A DSN in
+# this file may not carry a password.
+max_resident: 4          # idle tenants kept open; each holds its own pool
+max_open: 8              # hard ceiling on open tenants (default 2x max_resident)
+tenants:
+  - org_id: org_7f3a     # the verified org_id claim
+    schema: tenant_acme  # the schema holding this org's data
+  - org_id: org_91bc
+    schema: tenant_globex
+    dsn: "..."           # optional: this tenant on another database
+```
+
+`tenants.yaml` sits with the project configuration, which you may commit,
+so the server refuses a password in `base_dsn` or `dsn`. Give the base DSN
+in `$RELA_DATABASE_URL`, or keep the password in `PGPASSWORD` or a pgpass
+file. A tenant's DSN keeps every setting of the base DSN, including its TLS
+settings, and only sets `search_path`.
+
+`max_resident` bounds the idle tenants kept open. A tenant that a live
+update stream still uses stays open past that bound until the stream ends.
+`max_open` is the hard ceiling: above it a new tenant gets 503 with
+`Retry-After` until a slot frees. Size it against the cluster's
+`max_connections`.
+
+Every tenant shares the project configuration (`schema.yaml`,
+`data-entry.yaml`, `acl.yaml`, scripts). Each tenant has its own store,
+search, live updates, co-editing rooms, Lua cache and audit log
+(`.rela/audit/tenants/<schema>/`).
+
+How a request is routed:
+
+- The server verifies the identity assertion and reads its `org_id`.
+- A request without an assertion, or with one that does not verify, gets
+  401.
+- A verified assertion without `org_id`, or with an org that
+  `tenants.yaml` does not name, gets 403 `unknown_tenant`.
+- If the tenant cannot be opened, or the server is at `max_open`, the
+  request gets 503 with `Retry-After`.
+- The SPA shell and its static assets load without a tenant, so the browser
+  can sign in.
+
+No refusal falls back to a default store. Tenant mode needs JWT identity
+(`-jwt-issuer`, `-jwt-audience`, `-jwt-jwks-url`). It refuses
+`-principal-header`, `$RELA_DATAENTRY_USER` and `--config-editing`, and it
+refuses to start on a build other than postgres.
+
+The IdP webhook (`POST /webhooks/idp`) is routed by the `org_id` in its
+signed body. An event for an org this server does not host is acknowledged
+and ignored. Declarative webhooks (`/hooks/<id>`) carry no assertion, so the
+server cannot tell their tenant and refuses them.
+
+Tenant mode does not accept peer keys. Every tenant shares the project's
+`.rela/secrets.yaml`, so a peer key would be valid in every tenant. A
+peer key in `Authorization` is ignored, and the request is judged by its
+assertion alone.
+
+Not yet in tenant mode: the scheduler and provisioning a new tenant. Each
+schema must exist and is migrated on first use. A tenant whose connection
+does not land in its own schema is refused: PostgreSQL skips a
+`search_path` schema that does not exist, and the tenant would otherwise
+land in `public`.
+
+Each open tenant holds one extra connection, which holds the tenant's
+schema lock while the tenant is open (see "Erasing a tenant").
+
+### Erasing a tenant
+
+`rela-server tenant erase` removes one org's schema and this host's audit
+log for it. Run it with the postgres build (`rela-server-postgres`) on a
+host that has the project directory:
+
+1. Check that no open or recently closed incident, NCR or dispute refers
+   to the tenant while its evaluation period is still running
+   (PROCEDURE-u020). Erasure deletes the tenant's audit log at once, ahead
+   of the normal audit retention period, because it is that customer's
+   data; such a case needs it kept first.
+2. Mark the tenant in `tenants.yaml` with `erase: true`. A marked tenant is
+   not served: its org gets 403 `unknown_tenant`, as an org the file does
+   not name does. It stays in the file so that no other tenant can take
+   its schema name before the erasure.
+3. Restart every server that runs on this `tenants.yaml`, so that none of
+   them serves the org any more.
+4. Run the erasure. It shows the database it will act on and asks you to
+   type the org id; `-force` skips the question.
+
+   ```bash
+   export RELA_DATABASE_URL='postgres://...'   # when tenants.yaml has no base_dsn
+   rela-server-postgres tenant erase -project /srv/rela org_acme
+   ```
+
+5. On each other server host, run the same command to remove that host's
+   audit directory. The schema is already gone there, which is not an error.
+6. Remove the entry from `tenants.yaml`, or keep it marked to keep the
+   schema name reserved.
+
+What it removes:
+
+- The tenant's schema, with `DROP SCHEMA ... CASCADE`. The schema holds
+  everything the store keeps for the tenant: entities, relations,
+  attachment bytes, search, version history, comments, jobs, leases, piles
+  and runtime state.
+- The tenant's audit log on this host, `.rela/audit/tenants/<schema>/`.
+  Each tenant has its own audit directory so that it can be deleted with
+  the tenant. If that directory is a symlink, the command refuses, so that
+  it never reports records removed that are still on disk.
+
+What it does not remove:
+
+- Audit directories on other server hosts (step 5), and copies of any
+  audit log.
+- Server and access logs, which name the org id and the paths requested.
+- Backups (see below).
+
+Each erasure that passes the checks below and the confirmation, whether
+the database then refuses it or it completes, is appended to
+`.rela/audit/tenant-erasures.jsonl`: the time, the operator (`$USER`), the
+org id, the schema and the result. It holds no tenant data and is not
+removed with the tenant.
+
+The command refuses:
+
+- an org that `tenants.yaml` does not name, or that is not marked;
+- a map the server would refuse to load, for example an invalid schema
+  name, or `public`, `information_schema` or a `pg_` name, which no tenant
+  may use;
+- a mismatched confirmation;
+- a tenant whose lock is held (see below);
+- a database whose `public` schema holds any table (see below).
+
+The command reads the DSN from `tenants.yaml` or `$RELA_DATABASE_URL`,
+never from its arguments, and does not print it. Running it again after a
+partial failure is safe.
+
+**The schema lock.** Every server holds a lock on each tenant it has open,
+on a connection of its own, and the erasure takes that lock exclusively.
+While a server has the tenant open, the erasure is refused with "open in a
+running server or being erased". While the erasure runs, no server can open
+the tenant. After it, a server that still routes the org refuses to open
+it, because its connection no longer lands in the tenant's schema.
+
+The lock only lasts as long as the connection that holds it. A database
+restart, `pg_terminate_backend` or an `idle_session_timeout` ends it while
+the server keeps the tenant open. That is why step 2 is required. If an
+erasure runs anyway, the open tenant's queries fail: every tenant
+connection has `public` on its `search_path`, and the erasure refuses while
+`public` holds any table, so there is no other data to fall back to. The
+lock is a PostgreSQL session lock, so it needs a direct connection or a
+pooler in session mode, not PgBouncer in transaction mode. A process that
+reaches the schema without tenant mode, such as `psql` or a single-tenant
+server pointed at it, holds no lock.
+
+**What erasure guarantees.** When the command returns, the tenant's schema
+is gone from the live database and its audit directory from this host.
+PITR backups (for example pgBackRest) still hold the data until they
+expire, so erasure is complete when the backup retention period has
+passed. State that period in days to your customers, as the time within
+which their data is erased. Restoring a backup taken before the erasure
+restores the tenant, so erase it again after such a restore.
+
+**When the IdP deletes an org.** A verified `organization.deleted` webhook
+does not erase anything. The server logs a warning that names the org and
+says that erasure is needed, and acknowledges the event. Erasure stays an
+operator action at the host: it cannot be undone, it must not run while a
+server still has the tenant open, and a signed event is a weaker
+authorization than an operator who can read `tenants.yaml` and reach the
+database.
+
 ## Other scope notes
 
 - The desktop app (`rela-desktop`) is filesystem-only; there is no PostgreSQL

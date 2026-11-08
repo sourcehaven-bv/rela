@@ -304,6 +304,11 @@ type Services struct {
 	// Nil: accepted — nothing to remove.
 	onClose func()
 
+	// ownedAudit is the audit sink [SharedBase.OpenAndAssemble] handed this
+	// Services, closed last by [Services.Close]. Nil on every other path, where
+	// the caller that built the sink owns it.
+	ownedAudit io.Closer
+
 	closeOnce sync.Once
 	closeErr  error
 	// assemblyCloseOnce guards the per-assembly teardown so that a
@@ -2017,6 +2022,41 @@ func At(dir string, scriptEngine *script.Engine, opts ...Option) (*Services, err
 	return buildAt(fs, paths, scriptEngine, opts...)
 }
 
+// DiscoverSharedBase is [Discover] for a multi-tenant host: it finds the
+// project from startDir and builds the tenant-independent [SharedBase] over
+// it, opening no store. Each tenant is then opened with
+// [SharedBase.OpenAndAssemble], which takes the tenant's DSN and audit sink.
+//
+// The base itself has no DSN and a [audit.Nop] sink. Neither is ever used to
+// serve data: OpenAndAssemble replaces both on its copy of the base, so a
+// tenant cannot fall back to a shared database or a shared audit file.
+func DiscoverSharedBase(startDir string, scriptEngine *script.Engine, opts ...Option) (*SharedBase, error) {
+	fs := storage.NewSafeFS(storage.NewOsFS())
+	paths, err := project.Discover(startDir, fs)
+	if err != nil {
+		return nil, fmt.Errorf("discover project: %w", err)
+	}
+	project.WarnIfLegacySchema(paths)
+	return NewSharedBase(Config{
+		FS:           fs,
+		Paths:        paths,
+		ScriptEngine: scriptEngine,
+		Audit:        audit.Nop{},
+	}, opts...)
+}
+
+// DiscoverCacheDir finds the project from startDir, as [Discover] does, and
+// returns its cache directory (.rela). It opens no store and builds no
+// services. `rela-server tenant erase` uses it to find the per-tenant audit
+// directories under the cache directory.
+func DiscoverCacheDir(startDir string) (string, error) {
+	paths, err := project.Discover(startDir, storage.NewSafeFS(storage.NewOsFS()))
+	if err != nil {
+		return "", fmt.Errorf("discover project: %w", err)
+	}
+	return paths.CacheDir, nil
+}
+
 // buildAt is the shared tail of [Discover] and [At]: everything after the
 // project root is resolved. Split so the two entry points cannot drift in what
 // they wire — only in HOW they answer "which directory is the root".
@@ -2454,6 +2494,20 @@ func (b *SharedBase) Assemble(
 // per-store reader of the DSN (the store's pool and the job queue) sees the
 // tenant's, and the shared base keeps its own.
 //
+// Two more inputs are replaced on that copy, because they hold data rather
+// than config:
+//
+//   - sink is the tenant's audit sink, required. The entity manager, the
+//     cascade runner and data migration all read the base's Config.Audit, so
+//     one shared sink would interleave every tenant's audit records
+//     (TKT-SNVR8UV). The returned Services owns it: when sink is an
+//     io.Closer, [Services.Close] closes it after everything that writes to
+//     it has stopped.
+//   - the script engine is a new one, because an engine owns the process-wide
+//     Lua cache behind `rela.cache`, keyed by script path. A shared engine
+//     would hand a value one tenant's script stored to the same script
+//     running for another tenant.
+//
 // Only the postgres build supports it, because only its store and runtime
 // state are addressed by the DSN. The other builds keep data or runtime state
 // (piles, comments, settings) in the project directory, so they return an
@@ -2461,16 +2515,43 @@ func (b *SharedBase) Assemble(
 //
 // A base marked by [SharedBase.ForReassembly] is refused: it assembles over a
 // store that is already open, and this opens a new one.
-func (b *SharedBase) OpenAndAssemble(ctx context.Context, dsn string) (*Services, error) {
+//
+// Nil: sink is rejected — a nil sink would fail on the first write.
+func (b *SharedBase) OpenAndAssemble(ctx context.Context, dsn string, sink audit.Audit) (*Services, error) {
 	if b.reassembly {
 		return nil, errors.New("appbuild: OpenAndAssemble needs a base that opens its own store, not a reassembly base")
 	}
 	if dsn == "" {
 		return nil, errors.New("appbuild: OpenAndAssemble needs the tenant's DSN; it was empty")
 	}
+	if sink == nil {
+		return nil, errors.New("appbuild: OpenAndAssemble needs the tenant's audit sink; it was nil")
+	}
 	tenantBase := *b
 	tenantBase.cfg.DatabaseURL = dsn
-	return openAndAssemble(ctx, &tenantBase)
+	tenantBase.cfg.Audit = sink
+	tenantBase.cfg.ScriptEngine = script.NewEngine()
+	svc, err := openAndAssemble(ctx, &tenantBase)
+	if err != nil {
+		closeAuditSink(sink)
+		return nil, err
+	}
+	if c, ok := sink.(io.Closer); ok {
+		svc.ownedAudit = c
+	}
+	return svc, nil
+}
+
+// closeAuditSink closes sink when it holds a resource, logging a failure: it
+// runs on a path that is already returning an error or shutting down.
+func closeAuditSink(sink audit.Audit) {
+	c, ok := sink.(io.Closer)
+	if !ok {
+		return
+	}
+	if err := c.Close(); err != nil {
+		slog.Warn("appbuild: closing the audit sink failed", "error", err)
+	}
 }
 
 // buildEntityManager assembles the write-path manager from the collaborators
@@ -3383,6 +3464,13 @@ func (s *Services) Close() error {
 		}
 		if s.realtimeLocal != nil {
 			s.realtimeLocal.Stop()
+		}
+		// Last: every writer of audit records has stopped above.
+		if s.ownedAudit != nil {
+			if err := s.ownedAudit.Close(); err != nil {
+				slog.Warn("appbuild: closing the audit sink failed", "error", err)
+			}
+			s.ownedAudit = nil
 		}
 		if s.onClose != nil {
 			s.onClose()
