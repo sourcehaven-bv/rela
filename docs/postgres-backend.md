@@ -681,10 +681,11 @@ schema lock while the tenant is open (see "Erasing a tenant").
 log for it. Run it with the postgres build (`rela-server-postgres`) on a
 host that has the project directory:
 
-1. Check that no open incident or nonconformity references the tenant's
-   data or audit records. Erasure deletes the tenant's audit log at once,
-   ahead of the normal audit retention period, because it is that
-   customer's data; an open case needs it kept first.
+1. Check that no open or recently closed incident, NCR or dispute refers
+   to the tenant while its evaluation period is still running
+   (PROCEDURE-u020). Erasure deletes the tenant's audit log at once, ahead
+   of the normal audit retention period, because it is that customer's
+   data; such a case needs it kept first.
 2. Mark the tenant in `tenants.yaml` with `erase: true`. A marked tenant is
    not served: its org gets 403 `unknown_tenant`, as an org the file does
    not name does. It stays in the file so that no other tenant can take

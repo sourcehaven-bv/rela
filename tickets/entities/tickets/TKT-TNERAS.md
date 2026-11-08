@@ -112,7 +112,8 @@ record.
 period has passed; the operator states that period in days.
 - **Audit retention:** erasing the tenant's audit log overrides the 3-year
 audit retention, because it is that customer's data. The operator first checks
-that no open incident or nonconformity references the tenant.
+that no open or recently closed incident, NCR or dispute refers to the tenant
+while its evaluation period is still running (PROCEDURE-u020).
 - **Architecture:** `cmd/rela-server/tenanterase.go` links mostly to `tenant`,
 because it is the operator command edge and the erasure lives in `tenant`.
 The archplan finding is accepted and the ratchet loosened with that reason.

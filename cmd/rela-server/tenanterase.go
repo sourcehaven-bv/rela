@@ -31,6 +31,10 @@ removes its audit directory. The tenant must be marked "erase: true" in
 tenants.yaml, and every server must have been restarted on that file first.
 Without -force the command asks you to type the org id to confirm.
 
+Before erasing, check that no open or recently closed incident, NCR or
+dispute refers to the tenant while its evaluation period is still running
+(PROCEDURE-u020). The erasure deletes the tenant's audit log at once.
+
 The base DSN comes from base_dsn in tenants.yaml or from $RELA_DATABASE_URL.
 `
 
@@ -220,6 +224,8 @@ func erasureTarget(projectDir, orgID string, getenv func(string) string) (tenant
 func confirmErasure(eio eraseIO, t tenant.Tenant, target string) bool {
 	_, _ = fmt.Fprintf(eio.out,
 		"This permanently erases org_id %q: schema %q in %s, and its audit directory.\n"+
+			"Check first that no open or recently closed incident, NCR or dispute refers to\n"+
+			"this tenant while its evaluation period is still running (PROCEDURE-u020).\n"+
 			"Type the org id to confirm: ",
 		t.OrgID, t.Schema, target)
 	line, err := bufio.NewReader(eio.in).ReadString('\n')
