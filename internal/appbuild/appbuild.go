@@ -2045,6 +2045,18 @@ func DiscoverSharedBase(startDir string, scriptEngine *script.Engine, opts ...Op
 	}, opts...)
 }
 
+// DiscoverCacheDir finds the project from startDir, as [Discover] does, and
+// returns its cache directory (.rela). It opens no store and builds no
+// services. `rela-server tenant erase` uses it to find the per-tenant audit
+// directories under the cache directory.
+func DiscoverCacheDir(startDir string) (string, error) {
+	paths, err := project.Discover(startDir, storage.NewSafeFS(storage.NewOsFS()))
+	if err != nil {
+		return "", fmt.Errorf("discover project: %w", err)
+	}
+	return paths.CacheDir, nil
+}
+
 // buildAt is the shared tail of [Discover] and [At]: everything after the
 // project root is resolved. Split so the two entry points cannot drift in what
 // they wire — only in HOW they answer "which directory is the root".

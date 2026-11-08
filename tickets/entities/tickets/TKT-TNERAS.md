@@ -116,6 +116,10 @@ that no open incident or nonconformity references the tenant.
 - **Architecture:** `cmd/rela-server/tenanterase.go` links mostly to `tenant`,
 because it is the operator command edge and the erasure lives in `tenant`.
 The archplan finding is accepted and the ratchet loosened with that reason.
+The command finds the cache directory through `appbuild.DiscoverCacheDir`
+rather than importing `project` and `storage` itself: the extra users of those
+files shifted archplan's damped link weights enough to report an unrelated
+file (`internal/cli/classification.go`) as misplaced.
 
 ## Resolution
 

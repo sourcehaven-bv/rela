@@ -2647,7 +2647,7 @@
       "weight.vocabulary": 912,
       "weight.types": 4008,
       "weight.concepts": 7081,
-      "weight.boundaries": 1417,
+      "weight.boundaries": 1383,
       "weight.data": 1297,
       "weight.security": 140,
       "largest_tangle": 13,
@@ -2656,19 +2656,8 @@
       "propagation_cost": 9.1
     },
     "min_weight": 0,
-    "at": "2026-11-08T09:45:36Z",
+    "at": "2026-11-08T11:46:31Z",
     "log": [
-      {
-        "at": "2026-11-03T15:10:00Z",
-        "change": "loosen",
-        "reason": "Inbox wire mirrors grew by the decision fields (actions, last_seq, message, session cause and transitions), TKT-V05706X",
-        "metrics": {
-          "weight.types": [
-            3969,
-            3976
-          ]
-        }
-      },
       {
         "at": "2026-11-03T17:57:02Z",
         "change": "loosen",
@@ -2935,6 +2924,17 @@
           "propagation_cost": [
             9.0,
             9.1
+          ]
+        }
+      },
+      {
+        "at": "2026-11-08T11:46:31Z",
+        "change": "tighten",
+        "reason": null,
+        "metrics": {
+          "weight.boundaries": [
+            1417,
+            1383
           ]
         }
       }

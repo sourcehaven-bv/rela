@@ -16,8 +16,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
 )
 
@@ -209,11 +208,11 @@ func erasureTarget(projectDir, orgID string, getenv func(string) string) (tenant
 	if err != nil {
 		return tenant.Tenant{}, "", fmt.Errorf("invalid project dir: %w", err)
 	}
-	paths, err := project.Discover(abs, storage.NewSafeFS(storage.NewOsFS()))
+	cacheDir, err := appbuild.DiscoverCacheDir(abs)
 	if err != nil {
 		return tenant.Tenant{}, "", fmt.Errorf("find the project: %w", err)
 	}
-	return t, paths.CacheDir, nil
+	return t, cacheDir, nil
 }
 
 // confirmErasure asks the operator to type the org id and reports whether
