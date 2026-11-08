@@ -110,6 +110,12 @@ Never the IdP webhook: `organization.deleted` only logs an erasure-needed
 record.
 - **Retention:** erasure is complete when the deployment's PITR retention
 period has passed; the operator states that period in days.
+- **Audit retention:** erasing the tenant's audit log overrides the 3-year
+audit retention, because it is that customer's data. The operator first checks
+that no open incident or nonconformity references the tenant.
+- **Architecture:** `cmd/rela-server/tenanterase.go` links mostly to `tenant`,
+because it is the operator command edge and the erasure lives in `tenant`.
+The archplan finding is accepted and the ratchet loosened with that reason.
 
 ## Resolution
 
