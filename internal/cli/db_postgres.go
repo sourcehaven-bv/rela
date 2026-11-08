@@ -10,32 +10,68 @@ import (
 	"path/filepath"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/queryplan"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
+	"github.com/Sourcehaven-BV/rela/internal/tenant"
 )
 
-// resolveDSN returns the database URL from RELA_DATABASE_URL, erroring if it is
-// not set. The DSN is env-only (no flag) so the credential never appears in
-// process listings or shell history.
-func resolveDSN() (string, error) {
-	dsn := os.Getenv("RELA_DATABASE_URL")
-	if dsn == "" {
-		return "", errors.New("no database URL: set RELA_DATABASE_URL")
+// dbTarget is the database a db command acts on.
+type dbTarget struct {
+	dsn string
+	// paths is the project the command runs in; nil outside a project.
+	paths *project.Context
+	// release ends the command's hold on the target; callers defer it.
+	release func()
+}
+
+// resolveDSN returns the database the db commands act on, for the project
+// startDir belongs to and the tenant org names. The DSN is env-only (no
+// flag) so the credential never appears in process listings or shell
+// history.
+//
+// In a single-store project it is $RELA_DATABASE_URL, as before, unless that
+// database already serves tenants ([tenant.CheckBareTarget]). In tenant mode
+// it is the DSN of the tenant org names (TKT-M3SHYE0), and the tenant's
+// schema is pinned first: checked to exist and locked shared until release.
+// Without the check a schema that does not exist yet would be skipped by
+// `search_path`, and a migration would create its tables in `public`.
+func resolveDSN(startDir, org string) (dbTarget, error) {
+	choice, err := selectTenant(startDir, org, os.Getenv)
+	if err != nil {
+		return dbTarget{}, err
 	}
-	return dsn, nil
+	if !choice.tenantMode {
+		dsn := os.Getenv("RELA_DATABASE_URL")
+		if dsn == "" {
+			return dbTarget{}, errors.New("no database URL: set RELA_DATABASE_URL")
+		}
+		if guardErr := tenant.CheckBareTarget(context.Background(), dsn); guardErr != nil {
+			return dbTarget{}, guardErr
+		}
+		return dbTarget{dsn: dsn, paths: choice.paths, release: func() {}}, nil
+	}
+	t := choice.tenant
+	pin, err := tenant.Pin(context.Background(), t)
+	if err != nil {
+		return dbTarget{}, fmt.Errorf("tenant %q: %w", t.OrgID, err)
+	}
+	return dbTarget{dsn: t.DSN, paths: choice.paths, release: func() { _ = pin.Close() }}, nil
 }
 
 // runDBMigrate applies pending migrations (postgres build). Pool construction
 // lives in pgstore (MigrateDSN/StatusDSN) so the CLI doesn't depend on pgx.
 func runDBMigrate() error {
-	resolved, err := resolveDSN()
+	db, err := resolveDSN(projectPath, tenantOrg)
 	if err != nil {
 		return err
 	}
+	defer db.release()
+	resolved := db.dsn
 	ctx := context.Background()
 	before, target, err := pgstore.StatusDSN(ctx, resolved)
 	if err != nil {
@@ -55,10 +91,12 @@ func runDBMigrate() error {
 // runDBStatus reports current vs target schema version. Exits non-zero when the
 // database is behind, so CI can gate on it.
 func runDBStatus() error {
-	resolved, err := resolveDSN()
+	db, err := resolveDSN(projectPath, tenantOrg)
 	if err != nil {
 		return err
 	}
+	defer db.release()
+	resolved := db.dsn
 	current, target, err := pgstore.StatusDSN(context.Background(), resolved)
 	if err != nil {
 		return err
@@ -66,7 +104,7 @@ func runDBStatus() error {
 	if current < target {
 		fmt.Printf("Database is BEHIND: schema version %d, binary expects %d.\n", current, target)
 		fmt.Println("Run 'rela db migrate' to apply pending migrations.")
-		os.Exit(1)
+		return relaerrors.NewExitError(1)
 	}
 	fmt.Printf("Database is up to date (schema version %d).\n", current)
 
@@ -74,7 +112,7 @@ func runDBStatus() error {
 	// is INFORMATIONAL: it never changes the exit code (a config edit against
 	// dirty data must not brick a health check). The strict gate lives on
 	// `rela db reconcile --dry-run`.
-	if specs, _, ok := loadDerivedSpecs(); ok {
+	if specs, _, ok := loadDerivedSpecs(db.paths); ok {
 		outcomes, err := pgstore.ReconcileDSN(
 			context.Background(), resolved, specs, store.ReconcileOptions{DryRun: true})
 		switch {
@@ -95,11 +133,13 @@ func runDBStatus() error {
 // properties. On --dry-run it exits non-zero if the live schema differs from
 // the metamodel, so it can gate a deploy/CI step.
 func runDBReconcile(dryRun, showValues bool) error {
-	resolved, err := resolveDSN()
+	db, err := resolveDSN(projectPath, tenantOrg)
 	if err != nil {
 		return err
 	}
-	specs, schemaPath, ok := loadDerivedSpecs()
+	defer db.release()
+	resolved := db.dsn
+	specs, schemaPath, ok := loadDerivedSpecs(db.paths)
 	if !ok {
 		return errors.New("could not load project configuration to derive database indexes; " +
 			"run this from a project directory")
@@ -119,25 +159,20 @@ func runDBReconcile(dryRun, showValues bool) error {
 	}
 	drift := printDerivedDrift(outcomes, dryRun)
 	if dryRun && drift {
-		os.Exit(1)
+		return relaerrors.NewExitError(1)
 	}
 	return nil
 }
 
-// loadDerivedSpecs discovers the project and returns unique constraints plus
+// loadDerivedSpecs returns, for the project at paths, unique constraints plus
 // indexes derived from valid static data-entry queries. ok is false when the
 // complete desired set cannot be loaded; callers must not reconcile a partial
 // set because that could drop still-desired owned indexes.
-func loadDerivedSpecs() (specs []store.DerivedObjectSpec, schemaPath string, ok bool) {
+func loadDerivedSpecs(paths *project.Context) (specs []store.DerivedObjectSpec, schemaPath string, ok bool) {
+	if paths == nil {
+		return nil, "", false
+	}
 	fs := storage.NewSafeFS(storage.NewOsFS())
-	startDir, err := os.Getwd()
-	if err != nil {
-		return nil, "", false
-	}
-	paths, err := project.Discover(startDir, fs)
-	if err != nil {
-		return nil, "", false
-	}
 	meta, _, err := metamodel.NewFSLoader(fs, paths.SchemaPath).Load(context.Background())
 	if err != nil {
 		return nil, "", false

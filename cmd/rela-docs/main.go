@@ -27,7 +27,10 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/docscli"
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/tenant"
 )
 
 // Version is set at build time.
@@ -64,6 +67,11 @@ func run() int {
 		Tool: principal.ToolCLI,
 	})
 
+	if err := refuseTenantMode(c.Project); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+
 	// docs build reads the metamodel + acl.yaml; Discover wires the project.
 	// The postgres build reads its DSN from $RELA_DATABASE_URL inside Discover
 	// (env-only); the filesystem build ignores it.
@@ -96,4 +104,34 @@ func run() int {
 		return 1
 	}
 	return 0
+}
+
+// errTenantProject is rela-docs' refusal of a project that serves several
+// tenants (TKT-M3SHYE0). rela-docs opens one store from $RELA_DATABASE_URL,
+// which in tenant mode is the base DSN and names no tenant, so building
+// against it would read, and on first open migrate, a schema no tenant owns.
+var errTenantProject = stderrors.New("this project serves several tenants: " +
+	"rela-docs builds against one store and cannot act in a tenant")
+
+// refuseTenantMode returns [errTenantProject] for a tenant project, judged by
+// [tenant.ForProject]. A directory in no project passes: the open that
+// follows reports it as before.
+func refuseTenantMode(startDir string) error {
+	paths, err := project.Discover(startDir, storage.NewSafeFS(storage.NewOsFS()))
+	if stderrors.Is(err, relaerrors.ErrNoProject) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	r, err := tenant.ForProject(paths.Root, os.Getenv)
+	if err != nil {
+		// A tenant project this build cannot serve, or one whose tenants
+		// cannot be read: refuse either way.
+		return fmt.Errorf("%w: %w", errTenantProject, err)
+	}
+	if r != nil {
+		return errTenantProject
+	}
+	return nil
 }

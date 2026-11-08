@@ -14,6 +14,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -27,7 +28,6 @@ import (
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
-	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
 // Version is set at build time.
@@ -93,7 +93,11 @@ var (
 // Raised 54 → 55 for `reconcile` (TKT-0Y566OJ), a verb family that compares
 // this project with a remote rela.
 //
-//plimsoll:max-fields=55
+// Raised 55 → 56 for `--tenant` (TKT-M3SHYE0). It is global for the reason
+// `--run-as` is: it names the tenant every data command acts in, and a
+// per-command flag would have to be repeated on each of them.
+//
+//plimsoll:max-fields=56
 type CLI struct {
 	// Global flags.
 	Project string `help:"Project directory (default: auto-detect from cwd)." env:"RELA_PROJECT"`
@@ -101,6 +105,7 @@ type CLI struct {
 	Verbose bool   `help:"Verbose output." short:"v"`
 	Quiet   bool   `help:"Quiet output."   short:"q"`
 	RunAs   string `name:"run-as" env:"RELA_RUN_AS" help:"Act as this job identity, a system: or integration: name (attribution, not authentication; the audit records your OS user as asserting it)."`
+	Tenant  string `name:"tenant" env:"RELA_TENANT" help:"Org id of the tenant to act in, when the project has a tenants.yaml (required there for every data command)."`
 
 	// NO --world flag, deliberately (TKT-DN37J2 PR-C).
 	//
@@ -209,8 +214,16 @@ func runKong() int {
 	quiet = cli.Quiet
 	outputFormat = cli.Output
 	projectPath = cli.Project
+	tenantOrg = cli.Tenant
 
 	configureKongLogging(verbose, quiet)
+
+	// The tenant gate runs before anything opens a store, so a data command
+	// in tenant mode without a served tenant opens nothing (TKT-M3SHYE0).
+	if err := checkTenantMode(ktx.Command(), projectPath, tenantOrg, os.Getenv); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
 
 	// Host-level command settings, from the same env vars the server honors:
 	// the confinement opt-out and the sandbox read paths. `rela render` shells
@@ -239,15 +252,17 @@ func runKong() int {
 	var bind func(context.Context) (context.Context, error)
 	if requiresProject(ktx.Command()) {
 		// The postgres build resolves its DSN inside Discover, from
-		// $RELA_DATABASE_URL unless a caller supplies appbuild.WithDatabaseURL.
-		// Neither is a flag, so the credential never lands on a command line.
-		// The filesystem build ignores it.
-		svc, err = appbuild.Discover(projectPath, script.NewEngine())
+		// $RELA_DATABASE_URL unless a caller supplies appbuild.WithDatabaseURL,
+		// or from the tenant map in tenant mode. Neither is a flag, so the
+		// credential never lands on a command line. The filesystem build
+		// ignores it.
+		var closer io.Closer
+		svc, closer, err = openProject(projectPath, tenantOrg)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, relaerrors.WrapDiscoverError(tokenLockHint(ktx.Command(), err)))
 			return 1
 		}
-		defer svc.Close()
+		defer closer.Close()
 		bundles, err = newCLIBundles(svc)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)

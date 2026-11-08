@@ -20,8 +20,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/projectsetup"
 	"github.com/Sourcehaven-BV/rela/internal/schema"
-	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/tenant"
 )
 
 // metamodelAccessor is the narrow consumer-side interface validate
@@ -106,23 +106,11 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 	}
 	hasErrors = reportClassificationValidation(result, hasErrors)
 	if result.MailTemplatesPresent && !hasErrors {
-		//nolint:contextcheck // appbuild.Discover does not take ctx; matches the entity-check path below
-		mailSvc, discoverErr := appbuild.Discover(result.ProjectRoot, script.NewEngine())
-		if discoverErr != nil {
-			return fmt.Errorf("validate scheduled mail recipients: %w", discoverErr)
+		failed, mailErr := validateMailRecipients(ctx, result.ProjectRoot)
+		if mailErr != nil {
+			return mailErr
 		}
-		defer mailSvc.Close()
-		bind, bindErr := appbuild.IdentityBinder(mailSvc)
-		if bindErr != nil {
-			return bindErr
-		}
-		mailCtx := appbuild.BindOrWarn(ctx, bind)
-		if validateErr := mailSvc.ValidateScheduledMailRecipients(mailCtx); validateErr != nil {
-			fmt.Printf("  ✗ scheduled mail recipients: %v\n", validateErr)
-			hasErrors = true
-		} else if !quiet {
-			fmt.Println("  ✓ scheduled mail recipients are valid")
-		}
+		hasErrors = failed
 	}
 
 	if len(c.Check) == 0 {
@@ -141,11 +129,12 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 		return errors.NewExitError(1)
 	}
 
-	//nolint:contextcheck // appbuild.Discover does not take ctx; matches rela-server bootstrap
-	checkSvc, err := appbuild.Discover(startDir, script.NewEngine())
+	//nolint:contextcheck // openProject does not take ctx; matches rela-server bootstrap
+	checkSvc, checkCloser, err := openProject(startDir, tenantOrg)
 	if err != nil {
 		return fmt.Errorf("failed to initialize project services: %w", err)
 	}
+	defer checkCloser.Close()
 	bind, err := appbuild.IdentityBinder(checkSvc)
 	if err != nil {
 		return err
@@ -160,7 +149,7 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 		FS:          checkSvc.FS(),
 		Paths:       checkSvc.Paths(),
 	})
-	if err != nil { // coverage-ignore: defensive: analysis.New only fails on nil deps; appbuild.Discover on a valid
+	if err != nil { // coverage-ignore: defensive: analysis.New only fails on nil deps; openProject on a valid
 		// project always supplies them
 		return fmt.Errorf("initialize analysis service: %w", err)
 	}
@@ -170,6 +159,37 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 		return err
 	}
 	return finishValidate(outcome, hasErrors || outcome.hasErrors)
+}
+
+// validateMailRecipients checks the scheduled mail recipients against the
+// project's data. In tenant mode without --tenant the data is not reachable,
+// so the step is reported as skipped rather than run against any store; an
+// unknown tenant is still an error.
+func validateMailRecipients(ctx context.Context, root string) (failed bool, err error) {
+	//nolint:contextcheck // openProject does not take ctx; matches the entity-check path
+	mailSvc, mailCloser, err := openProject(root, tenantOrg)
+	if stderrors.Is(err, tenant.ErrTenantRequired) || stderrors.Is(err, tenant.ErrUnsupportedBuild) {
+		if !quiet {
+			fmt.Printf("  - scheduled mail recipients: skipped (%v)\n", err)
+		}
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("validate scheduled mail recipients: %w", err)
+	}
+	defer mailCloser.Close()
+	bind, err := appbuild.IdentityBinder(mailSvc)
+	if err != nil {
+		return false, err
+	}
+	if validateErr := mailSvc.ValidateScheduledMailRecipients(appbuild.BindOrWarn(ctx, bind)); validateErr != nil {
+		fmt.Printf("  ✗ scheduled mail recipients: %v\n", validateErr)
+		return true, nil
+	}
+	if !quiet {
+		fmt.Println("  ✓ scheduled mail recipients are valid")
+	}
+	return false, nil
 }
 
 // finishValidate maps the run's outcome onto the documented exit codes
