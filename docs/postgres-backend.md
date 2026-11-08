@@ -666,6 +666,11 @@ signed body. An event for an org this server does not host is acknowledged
 and ignored. Declarative webhooks (`/hooks/<id>`) carry no assertion, so the
 server cannot tell their tenant and refuses them.
 
+Tenant mode does not accept peer keys. Every tenant shares the project's
+`.rela/secrets.yaml`, so a peer key would be valid in every tenant. A
+peer key in `Authorization` is ignored, and the request is judged by its
+assertion alone.
+
 Not yet in tenant mode: the scheduler and provisioning a new tenant. Each
 schema must exist and is migrated on first use. A tenant whose connection
 does not land in its own schema is refused: PostgreSQL skips a

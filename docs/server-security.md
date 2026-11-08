@@ -447,6 +447,9 @@ the key itself, in every identity mode, so a peer needs no account at your
 identity provider. The rules a peer then reads under are in
 [ACL security](acl-security.md#peer-keys).
 
+Tenant mode does not accept peer keys; see
+[Tenant mode](postgres-backend.md#tenant-mode).
+
 **Create a key** on any machine with the rela CLI:
 
 ```bash

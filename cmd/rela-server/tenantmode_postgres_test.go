@@ -182,7 +182,7 @@ func TestTenantMode_IgnoresPeerKeys(t *testing.T) {
 	key, _, err := peerkey.Generate(rand.Reader)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks", http.NoBody)
 	req.Host = th.addr
 	req.Header.Set("Origin", "http://"+th.addr)
 	req.Header.Set("X-Auth-Assertion", "tok-org-a")
