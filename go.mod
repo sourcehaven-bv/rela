@@ -6,7 +6,7 @@ toolchain go1.26.10
 
 require (
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.2
-	github.com/MicahParks/jwkset v0.11.3
+	github.com/MicahParks/jwkset v0.11.4
 	github.com/MicahParks/keyfunc/v3 v3.8.2
 	github.com/acaloiaro/neoq v0.72.1
 	github.com/alecthomas/kong v1.16.1
