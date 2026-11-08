@@ -172,6 +172,7 @@ type CLI struct {
 	Lease                LeaseCmd                `cmd:"" help:"Claim, renew, release and list advisory leases on entities."`
 	Channel              ChannelCmd              `cmd:"" help:"List, read, post to and watch the realtime channels on an entity."`
 	Reconcile            ReconcileCmd            `cmd:"" help:"Compare this project with a remote rela."`
+	Peer                 PeerCmd                 `cmd:"" help:"Manage the keys sync peers authenticate with."`
 }
 
 // VersionCmd needs no services.

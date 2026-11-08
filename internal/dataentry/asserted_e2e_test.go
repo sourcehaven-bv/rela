@@ -297,8 +297,8 @@ func stampedPrincipal(t *testing.T, app *App, req *http.Request) principal.Princ
 		http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 			got = principal.From(r.Context())
 		}),
-		app.principalResolver,
-	)
+		app.principalResolver, nil)
+
 	h.ServeHTTP(httptest.NewRecorder(), req)
 	return got
 }

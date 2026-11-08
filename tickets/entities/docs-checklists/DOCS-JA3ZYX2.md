@@ -21,9 +21,9 @@ status: done
 ## User-facing Documentation
 
 - [x] `GUIDE-cli-reference.md`: new `rela reconcile diff` section (view semantics, options, credentials, addresses sent as bounds, plain http refusal, output, skipped types, retries); regenerated with `just docs`
-- [x] `GUIDE-acl-security.md`: the problem's `range` member on a refused range; regenerated with `just docs`
+- [x] `GUIDE-acl-security.md`: a refused range is named by `errors[].source.pointer` (`/ranges/<index>`); regenerated with `just docs` (corrected for issue #2140)
 
 ## External Documentation
 
 - [x] ~~Changelog entry added~~ (N/A: the release changelog is generated from commits)
-- [x] API docs updated (if applicable): `v1.Error.Range` godoc describes the new `range` member
+- [x] API docs updated (if applicable): the reconcile handler godoc describes `source.pointer` `/ranges/<index>` on a per-range refusal (corrected for issue #2140)

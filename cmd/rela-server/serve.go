@@ -18,6 +18,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/dataentrywire"
 	"github.com/Sourcehaven-BV/rela/internal/jwtauth"
+	"github.com/Sourcehaven-BV/rela/internal/peerkey"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 )
 
@@ -269,6 +270,15 @@ func (s *server) buildApp(svc *appbuild.Services) (*dataentry.App, error) {
 	if err := wirePrincipalResolvers(app, s.f, s.idv, s.mode); err != nil {
 		return nil, err
 	}
+	// Sync peers authenticate with a peer key whose digest is in the
+	// project's secrets (DEC-81161C3). Always wired: a project without keys
+	// refuses every peer key with 401.
+	peers, peersErr := peerkey.NewSource(peerkey.SecretsLoader(svc.Paths().CacheDir), peerkey.ReloadInterval,
+		time.Now, slog.Default())
+	if peersErr != nil {
+		return nil, fmt.Errorf("peer keys: %w", peersErr)
+	}
+	dataentry.SetPeerKeys(app, peers)
 	if s.webhook != nil {
 		roles := appbuild.IDPRoles(svc)
 		if roles == nil {

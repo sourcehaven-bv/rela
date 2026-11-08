@@ -23,7 +23,7 @@ func TestStampAuditPrincipal_DefaultResolver(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	handler := stampAuditPrincipal(captureHandler, defaultPrincipalResolver)
+	handler := stampAuditPrincipal(captureHandler, defaultPrincipalResolver, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/anything", http.NoBody)
 	rec := httptest.NewRecorder()
@@ -55,7 +55,7 @@ func TestStampAuditPrincipal_CustomResolver(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	handler := stampAuditPrincipal(captureHandler, resolver)
+	handler := stampAuditPrincipal(captureHandler, resolver, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/anything", http.NoBody)
 	req.Header.Set("X-Test-User", "alice")
@@ -81,7 +81,7 @@ func runResolver(t *testing.T, resolver PrincipalResolver, headers map[string]st
 		captured = principal.From(r.Context())
 		w.WriteHeader(http.StatusOK)
 	})
-	handler := stampAuditPrincipal(captureHandler, resolver)
+	handler := stampAuditPrincipal(captureHandler, resolver, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/anything", http.NoBody)
 	for k, v := range headers {

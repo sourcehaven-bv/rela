@@ -127,7 +127,9 @@ func (c Capabilities) Any() bool {
 }
 
 // AllowsSecret reports whether name is exposed to the runtime. The token
-// store key is never exposed, not even under [Capabilities.AllSecrets].
+// store key, peer key digests and peer credentials are never exposed, not
+// even under
+// [Capabilities.AllSecrets].
 func (c Capabilities) AllowsSecret(name string) bool {
 	if !secrets.ScriptReadable(name) {
 		return false

@@ -41,6 +41,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -57,10 +58,46 @@ const ConfigFile = "secrets.yaml"
 // `capabilities.secrets` list that names it is refused at load.
 const TokenKey = "token_key"
 
+// PeerKeyPrefix starts the global keys that hold the digest of a sync peer's
+// key (DEC-81161C3): `peer_key.acme: sha256:<hex>` lets the peer `peer:acme`
+// authenticate. Only the digest is stored; the key itself is never in this
+// file on the source.
+const PeerKeyPrefix = "peer_key."
+
+// PeerCredentialPrefix starts the global keys a sync peer keeps the peer
+// keys it presents under, such as `peer_credential.source: relapeer_...`.
+// `rela reconcile diff --token-secret` reads them; no script can.
+const PeerCredentialPrefix = "peer_credential." //nolint:gosec // G101: a secret name prefix, not a credential
+
 // ScriptReadable reports whether a script may be granted the secret name. A
 // script that could read [TokenKey] could decrypt every stored refresh token,
-// which defeats keeping refresh tokens out of Lua.
-func ScriptReadable(name string) bool { return name != TokenKey }
+// which defeats keeping refresh tokens out of Lua. A peer key digest is no
+// credential, but it is the server's to read, not a script's. A peer
+// credential is a live key for another rela; a script with an HTTP
+// capability could send it anywhere.
+func ScriptReadable(name string) bool {
+	return name != TokenKey && !strings.HasPrefix(name, PeerKeyPrefix) &&
+		!strings.HasPrefix(name, PeerCredentialPrefix)
+}
+
+// PeerKeyDigests returns the peer key entries of the global section, keyed by
+// the peer name after [PeerKeyPrefix]. The values are returned as written;
+// the caller validates them. A per-script override never adds one.
+//
+// Returns ErrNotFound (wrapped) when no source exists.
+func PeerKeyDigests(relaDir string) (map[string]string, error) {
+	raw, err := readFile(relaDir)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string)
+	for k, v := range raw.Global {
+		if name, ok := strings.CutPrefix(k, PeerKeyPrefix); ok {
+			out[name] = v
+		}
+	}
+	return out, nil
+}
 
 // cacheDirName is the project cache directory holding the secrets file.
 //
@@ -117,6 +154,19 @@ func Load(relaDir, scriptPath string) (map[string]string, error) {
 		return nil, err
 	}
 	return resolve(raw, scriptPath), nil
+}
+
+// Global returns the value of name in the global section, without any
+// per-script override. ok is false when the section has no such key.
+//
+// Returns ErrNotFound (wrapped) when no source exists.
+func Global(relaDir, name string) (value string, ok bool, err error) {
+	raw, err := readFile(relaDir)
+	if err != nil {
+		return "", false, err
+	}
+	value, ok = raw.Global[name]
+	return value, ok, nil
 }
 
 // CredentialName returns the systemd credential name that supplies secrets for
