@@ -54,7 +54,7 @@ server log found nothing.
 ## Quality
 
 - [x] Code follows project patterns (check similar code): consumer-side `PeerKeys` interface, package-function setter (plimsoll), `atomic.Pointer` publish plus mutex reload, injected clock
-- [x] Checked for DRY opportunities: `principal.ReservedPrefixes` replaces the per-message prefix lists; `stampIdentity` is the one identity stage
+- [x] Checked for DRY opportunities: `principal.ReservedPrefixes` replaces the per-message prefix lists; `stampAuditPrincipal` is the one identity stage
 - [x] No security issues introduced: `system:` guard unchanged; digest-only storage; constant-time not needed for a SHA-256 map lookup of a 256-bit key; route allowlist
 - [x] No silent failures (errors logged AND returned)
 - [x] No debug code left behind

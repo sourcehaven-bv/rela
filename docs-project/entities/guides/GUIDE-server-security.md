@@ -456,10 +456,10 @@ identity provider. The rules a peer then reads under are in
 **Create a key** on any machine with the rela CLI:
 
 ```bash
-rela peer key create acme > acme.key
+(umask 077 && rela peer key create acme > acme.key)
 ```
 
-The key goes to stdout only. stderr shows the line to add on the source:
+The key goes to stdout only. The `umask` keeps `acme.key` readable by you alone. stderr shows the line to add on the source:
 
 ```yaml
 # .rela/secrets.yaml on the source (mode 0600)

@@ -30,11 +30,13 @@ value or JWT subject can assert it.
 `peer_key.<name>: sha256:<hex>` in `.rela/secrets.yaml`. It re-reads the file at
 most every 10 seconds.
 - The principal goes through the existing identity edge (`access.Opener`): the
-`principal_property` lookup, the member-of walk, one `acl.Request`. Roles come
+member-of walk and one `acl.Request`. The `principal_property` lookup never
+applies to a `peer:` name. Roles come
 from `acl.yaml` as for any principal. The principal type is `peer`, so a
 baseline can cap all peers.
-- A peer key is read-only: `GET`/`HEAD` on `/api/` and `POST
-/api/v1/_reconcile`. Other methods answer 403.
+- A peer key is read-only, through a route allowlist: `GET`/`HEAD` on
+`/api/v1/` paths with no `_` segment, `_schema`, `_openapi.json`, and `POST
+/api/v1/_reconcile`. Anything else answers 403.
 - A bad key answers 401 and never falls through to another identity source.
 - `rela peer key create <name>` generates a key. The client reads its key from
 an environment variable, a file, or a named secret in `.rela/secrets.yaml`

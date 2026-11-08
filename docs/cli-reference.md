@@ -1985,7 +1985,7 @@ Generate a peer key: the credential a sync peer uses to read this rela
 (DEC-81161C3).
 
 ```bash
-rela peer key create NAME > NAME.key
+(umask 077 && rela peer key create NAME > NAME.key)
 ```
 
 `NAME` is 1 to 63 lowercase letters, digits, `_` or `-`, starting with a
@@ -2462,7 +2462,7 @@ sends no authentication header. `--token-secret` refuses `token_key` and
 remote.
 
 To authenticate as a sync peer, use a peer key that the remote's operator
-created with `rela peer key create` (see below).
+created with `rela peer key create`.
 
 The remote learns some of your local addresses. To split a range, the command
 sends local addresses as range bounds. A range with at most 256 local

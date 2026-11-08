@@ -130,7 +130,7 @@ func requireVerifiedJWT(next http.Handler, cfg JWTGateConfig) http.Handler {
 	g := &jwtGate{cfg: cfg}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// A request the peer key check stamped is already verified, by its
-		// key (see [stampIdentity]). Only that check can mark it.
+		// key (see [stampAuditPrincipal]). Only that check can mark it.
 		if !isAPIPath(r.URL.Path) || peerAuthenticated(r.Context()) {
 			next.ServeHTTP(w, r)
 			return
