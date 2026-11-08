@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
@@ -398,10 +399,11 @@ func conversionPropertyValues(
 	source *entity.Entity,
 	supplied map[string]any,
 	sourceFace string,
+	now func() time.Time,
 ) map[string]any {
 	props := map[string]any{}
 	for target, tmpl := range d.Fields {
-		if value, ok := copyFieldValue(normalizeConversionSourceRefs(tmpl), source); ok {
+		if value, ok := copyFieldValue(normalizeConversionSourceRefs(tmpl), source, now); ok {
 			props[target] = value
 		}
 	}
@@ -411,12 +413,12 @@ func conversionPropertyValues(
 	return props
 }
 
-func conversionContentValue(template string, source *entity.Entity) string {
+func conversionContentValue(template string, source *entity.Entity, now func() time.Time) string {
 	template = normalizeConversionSourceRefs(template)
 	if match := singleFieldRef.FindStringSubmatch(template); len(match) > 1 && match[1] == "content" {
 		return source.Content
 	}
-	return automation.Interpolate(template, automation.TemplateVars{}, source, nil)
+	return automation.Interpolate(template, automation.TemplateVars{Now: now}, source, nil)
 }
 
 var conversionSourceRef = regexp.MustCompile(`\{\{\s*source\.([A-Za-z0-9_-]+)\s*\}\}`)

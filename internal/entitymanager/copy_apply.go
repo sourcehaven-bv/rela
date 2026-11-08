@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -190,10 +191,12 @@ var singleFieldRef = regexp.MustCompile(`^\{\{\s*new\.([A-Za-z0-9_-]+)\s*\}\}$`)
 //
 // The second return is false when a single reference names a property the
 // source does not carry; the caller unsets the field rather than writing "".
-func copyFieldValue(tmpl string, src *entity.Entity) (any, bool) {
+//
+// now is the manager's clock ([Deps.Clock]), behind `{{now}}` and `{{today}}`.
+func copyFieldValue(tmpl string, src *entity.Entity, now func() time.Time) (any, bool) {
 	if m := singleFieldRef.FindStringSubmatch(tmpl); m != nil {
 		v, ok := src.Properties[m[1]]
 		return v, ok
 	}
-	return automation.Interpolate(tmpl, automation.TemplateVars{}, src, nil), true
+	return automation.Interpolate(tmpl, automation.TemplateVars{Now: now}, src, nil), true
 }

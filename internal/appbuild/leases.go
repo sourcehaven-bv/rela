@@ -51,7 +51,7 @@ type leaseShared struct {
 // [NewFromCollaborators] both build it here.
 func buildLeases(
 	fs storage.FS, paths *project.Context, w worlds.Compiled, st store.Store, shared leaseShared,
-	d *acl.Declarative, redactor visibility.FieldRedactor, writes acl.ACL,
+	d *acl.Declarative, redactor visibility.FieldRedactor, writes acl.ACL, clock lease.Clock,
 ) (*lease.Service, leaseShared, error) {
 	if shared.store == nil {
 		backend, err := leaseBackend(fs, paths, st)
@@ -65,7 +65,7 @@ func buildLeases(
 		Store:      shared.store,
 		Gate:       leaseGate{rows: rows},
 		Authorizer: writes,
-		Clock:      lease.SystemClock{},
+		Clock:      clock,
 		Hub:        shared.hub,
 	})
 	if err != nil {

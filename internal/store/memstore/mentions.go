@@ -4,7 +4,6 @@ import (
 	"context"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/mentions"
@@ -61,7 +60,7 @@ func rewriteMentions(m *MemStore, oldID, newID string) []entity.MentionRewrite {
 		}
 		stored := e.Clone()
 		stored.Content = content
-		stored.UpdatedAt = time.Now()
+		stored.UpdatedAt = m.clock()
 		m.entities[key] = stored
 		rewritten = append(rewritten, entity.MentionRewrite{ID: stored.ID, Type: stored.Type, Face: stored.Face})
 		m.notifyPut(stored)

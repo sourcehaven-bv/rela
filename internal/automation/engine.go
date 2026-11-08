@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -34,6 +35,20 @@ func WithTraversals(b TraversalBinder) Option {
 	return func(e *Engine) { e.traversals = b }
 }
 
+// WithClock sets the clock behind `{{now}}` and `{{today}}` in templates and
+// `today()` in conditions. Without it the engine reads the wall clock.
+//
+// Nil: ignored — the wall clock.
+func WithClock(now func() time.Time) Option {
+	return func(e *Engine) {
+		if now == nil {
+			return
+		}
+		e.vars.Now = now
+		e.now = now
+	}
+}
+
 // Engine evaluates automations against entity events.
 type Engine struct {
 	automations []Automation
@@ -54,6 +69,11 @@ type Engine struct {
 
 	// traversals answers `related(...)` in conditions; nil refuses them.
 	traversals TraversalBinder
+
+	// now is the clock behind today() in conditions; see [WithClock].
+	//
+	// Nil: accepted — the wall clock.
+	now func() time.Time
 }
 
 // evaluator returns the predicate Evaluator bound to the current
@@ -66,7 +86,11 @@ func (e *Engine) evaluator() *predicatefns.Evaluator {
 	e.evMu.Lock()
 	defer e.evMu.Unlock()
 	if e.ev == nil {
-		e.ev = predicatefns.NewEvaluator(e.meta)
+		if e.now != nil {
+			e.ev = predicatefns.NewEvaluatorWithClock(e.meta, e.now)
+		} else {
+			e.ev = predicatefns.NewEvaluator(e.meta)
+		}
 	}
 	return e.ev
 }

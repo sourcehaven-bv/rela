@@ -298,6 +298,12 @@ type Services struct {
 	// [Services.Base]). Nil for a NewFromCollaborators-built Services.
 	base *SharedBase
 
+	// onClose removes what [NewInMemory] created outside the store, such as
+	// its temporary output directory. Close runs it last.
+	//
+	// Nil: accepted — nothing to remove.
+	onClose func()
+
 	closeOnce sync.Once
 	closeErr  error
 	// assemblyCloseOnce guards the per-assembly teardown so that a
@@ -539,8 +545,11 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 	}
 	deps.Piles = pileReaderFor(s.piles)
 	deps.RoleHolders = roleHoldersFor(s)
-	if s.base != nil && s.base.cfg.projectConfig != nil {
-		deps.Files = s.base.cfg.projectConfig
+	if s.base != nil {
+		deps.Seams = s.base.luaSeams()
+		if s.base.cfg.projectConfig != nil {
+			deps.Files = s.base.cfg.projectConfig
+		}
 	}
 	return deps
 }
@@ -873,8 +882,8 @@ func gatedRollups(s *Services) *visibility.Rollups {
 // compileDerived compiles the computed properties of meta and checks its
 // roll-ups. Read surfaces compile their own roll-up set from the same
 // metamodel; this is the load-time check, so a bad roll-up fails the boot.
-func compileDerived(meta *metamodel.Metamodel) (*computed.Set, error) {
-	set, err := computed.Compile(meta)
+func compileDerived(meta *metamodel.Metamodel, now func() time.Time) (*computed.Set, error) {
+	set, err := computed.CompileWithClock(meta, now)
 	if err != nil {
 		return nil, fmt.Errorf("compile computed properties: %w", err)
 	}
@@ -1358,7 +1367,7 @@ func collaboratorRefHolders(
 		return refs, fmt.Errorf("caldav aliases: %w", err)
 	}
 	refs.leases, refs.leaseShared, err = buildLeases(
-		c.FS, c.Paths, w, c.Store, leaseShared{}, c.Declarative, redactor, c.ACL)
+		c.FS, c.Paths, w, c.Store, leaseShared{}, c.Declarative, redactor, c.ACL, lease.SystemClock{})
 	if err != nil {
 		return refs, fmt.Errorf("leases: %w", err)
 	}
@@ -1484,6 +1493,7 @@ func buildFieldPolicy(meta *metamodel.Metamodel, st store.Store, d *acl.Declarat
 // system policy, so what it sees must not depend on who made the write.
 func buildAutomation(
 	meta *metamodel.Metamodel, st store.Store, bg autocascade.BackgroundScripts, pusher autocascade.PilePusher,
+	now func() time.Time,
 ) (*automation.Engine, *autocascade.Runner, error) {
 	if len(meta.Automations) == 0 {
 		return nil, nil, nil
@@ -1492,7 +1502,8 @@ func buildAutomation(
 	if err != nil {
 		return nil, nil, fmt.Errorf("build automation engine: %w", err)
 	}
-	autoEngine, err := automation.NewEngineFromMetamodel(meta, meta.Automations, automation.WithTraversals(traversals))
+	autoEngine, err := automation.NewEngineFromMetamodel(meta, meta.Automations,
+		automation.WithTraversals(traversals), automation.WithClock(now))
 	if err != nil {
 		return nil, nil, fmt.Errorf("build automation engine: %w", err)
 	}
@@ -1546,6 +1557,10 @@ type options struct {
 	// reload keeps when realtime.yaml no longer loads; see
 	// [WithRealtimeFallback].
 	realtimeFallback *Services
+
+	// seams replace the clock, mail transport, HTTP client, AI provider and
+	// write_file directory; see [WithClock] and its siblings.
+	seams seams
 }
 
 // WithBackgroundAutomationJobs runs `background: true` automation actions
@@ -2512,6 +2527,7 @@ func buildEntityManager(
 		AttachmentLocker: attachLocker,
 		AnchorGuard:      anchorGuard,
 		ValidationMode:   base.validationMode,
+		Clock:            base.clock(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build entitymanager: %w", err)
@@ -2563,7 +2579,7 @@ func startBackgroundServices(
 ) backgroundServices {
 	cfg := base.cfg
 
-	softDeleteStop := startSoftDeleteGC(mgr, q,
+	softDeleteStop := startSoftDeleteGC(mgr, q, base.clock(),
 		envDuration("RELA_SOFT_DELETE_DELAY", defaultSoftDeleteDelay),
 		envDuration("RELA_SOFT_DELETE_GC_INTERVAL", defaultSoftDeleteGCInterval))
 
@@ -2576,7 +2592,7 @@ func startBackgroundServices(
 	// here: nothing can enqueue until the declarative layer (TKT-U2R7GU)
 	// lands, and storing a handle no code reads would look wired when it is
 	// not. Only the stop function is retained, because Close genuinely uses it.
-	mailRuntime, mailStop := startMailRuntime(host)
+	mailRuntime, mailStop := startMailRuntime(host, base.opts.seams.mail)
 
 	return backgroundServices{
 		gcStop:         gcStop,
@@ -2693,6 +2709,7 @@ func (b *SharedBase) cascadeReadDeps(
 		Host:          host,
 		World:         w.DefaultWorld(),
 		Piles:         pileReaderFor(pileSvc),
+		Seams:         b.luaSeams(),
 	}, nil
 }
 
@@ -2804,7 +2821,7 @@ func assemble(
 	if err != nil {
 		return nil, fmt.Errorf("compile transitions: %w", err)
 	}
-	computedSet, err := compileDerived(base.meta)
+	computedSet, err := compileDerived(base.meta, base.clock())
 	if err != nil {
 		return nil, err
 	}
@@ -3035,7 +3052,7 @@ func buildAutomationWithJobs(
 		return nil, nil, nil, err
 	}
 	// Errors only on a nil Engine, which buildAutomation never produces.
-	autoEngine, cascadeRunner, err := buildAutomation(base.meta, st, autoJobs, cascadePiles(pileSvc))
+	autoEngine, cascadeRunner, err := buildAutomation(base.meta, st, autoJobs, cascadePiles(pileSvc), base.clock())
 	if err != nil { // coverage-ignore: defensive: see above
 		return nil, nil, nil, err
 	}
@@ -3366,6 +3383,9 @@ func (s *Services) Close() error {
 		}
 		if s.realtimeLocal != nil {
 			s.realtimeLocal.Stop()
+		}
+		if s.onClose != nil {
+			s.onClose()
 		}
 	})
 	return s.closeErr

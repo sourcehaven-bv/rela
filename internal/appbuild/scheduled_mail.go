@@ -63,7 +63,7 @@ func (s *Services) RunScheduledTemplate(ctx context.Context, name, recipientID s
 
 	deps := s.ScheduledLuaWriteDeps()
 	world := s.worlds.DefaultWorld()
-	model, contributed, err := mailtemplate.Build(ctx, s.meta, deps.VisibleReader, world, tmpl, time.Now())
+	model, contributed, err := mailtemplate.Build(ctx, s.meta, deps.VisibleReader, world, tmpl, servicesNow(s))
 	if err != nil {
 		return err
 	}
@@ -82,6 +82,16 @@ func (s *Services) RunScheduledTemplate(ctx context.Context, name, recipientID s
 		To:      []mail.Address{{Email: parsed.Address, Name: parsed.Name}},
 		Subject: model.Subject, HTML: html, Text: text, RenderedFor: recipientID,
 	})
+}
+
+// servicesNow reads the clock of the base s was assembled from ([WithClock]),
+// or the wall clock for a bundle built without one. A function rather than a
+// method: Services is at its plimsoll method line.
+func servicesNow(s *Services) time.Time {
+	if s.base == nil {
+		return time.Now()
+	}
+	return s.base.clock()()
 }
 
 // skipEmptyContent records a send suppressed by

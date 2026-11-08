@@ -234,7 +234,11 @@ var _ autocascade.Mutator = (*Manager)(nil)
 // DEC-OYV2AK asks for. It is a value, not a collaborator, so it has no
 // sub-struct to join.
 //
-//plimsoll:max-fields=22
+// 22 -> 23 (TKT-NRNDGZR): [Deps.Clock], the injectable clock for copy and
+// convert interpolation. It is a seam value like ValidationMode, so it has
+// no sub-struct to join either.
+//
+//plimsoll:max-fields=23
 type Deps struct {
 	// Store is the authoritative persistence layer. Required.
 	Store store.Store
@@ -397,6 +401,14 @@ type Deps struct {
 	// ValidationMode is the deployment's validation policy (DEC-OYV2AK).
 	// The zero value is [ValidationAdvisory].
 	ValidationMode ValidationMode
+
+	// Clock is the clock behind `{{now}}` and `{{today}}` in copy and
+	// conversion templates, computed properties compiled here when Computed
+	// is nil, and today() in `enforce: write` rules. Audit and version
+	// stamps do not read it: they record when a write really happened.
+	//
+	// Nil: accepted — the wall clock.
+	Clock func() time.Time
 
 	// writeRules is the compiled `enforce: write` validation rules of Meta.
 	// [New] compiles it, so no wiring site can forget it.
@@ -603,14 +615,17 @@ func New(d Deps) (*Manager, error) {
 		return nil, errors.New(
 			"entitymanager: New: Transitions is required (use statemachine.Compile; an empty set is a no-op)")
 	}
+	if d.Clock == nil {
+		d.Clock = time.Now
+	}
 	if d.Computed == nil {
-		compiled, err := computed.Compile(d.Meta)
+		compiled, err := computed.CompileWithClock(d.Meta, d.Clock)
 		if err != nil {
 			return nil, fmt.Errorf("entitymanager: New: %w", err)
 		}
 		d.Computed = compiled
 	}
-	rules, err := writerule.NewSet(d.Meta)
+	rules, err := writerule.NewSet(d.Meta, writerule.WithClock(d.Clock))
 	if err != nil {
 		return nil, fmt.Errorf("entitymanager: New: %w", err)
 	}

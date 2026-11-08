@@ -5,7 +5,9 @@ title: 'rela test v1 (2/4): injectable clock and determinism seams (mail transpo
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+started: "2026-11-08"
+completed: "2026-11-08"
+status: done
 ---
 
 ## Description
@@ -29,3 +31,7 @@ Add appbuild options `WithClock`, `WithMailTransport`, `WithHTTPClient`,
 - A refusing HTTP client and AI provider are used by automation Lua that declares those capabilities.
 - write_file with the option writes outside the project root.
 - The guard test fails on a newly added time.Now in those packages.
+
+## Follow-up fix
+
+The first push carried a stale archplan baseline. RR-Y5IGXY7 restored develop's metrics, grouped the lua.Runtime AI and HTTP backends into one field, and recorded only the measured concepts +1 and propagation cost 8.9 to 9.0 (appbuild imports ai).

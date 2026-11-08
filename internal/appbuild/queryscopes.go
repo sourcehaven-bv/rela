@@ -35,18 +35,32 @@ import (
 // same signature serves NextActionMatchers, which does read the config, and a
 // resolver that later needs it (a per-view override, say) must not change
 // every wiring site to get it.
+//
+// today() in a scope reads the wall clock; [SharedBase.QueryScopes] is the
+// same resolver on a world's clock.
 func QueryScopes(
 	_ *dataentryconfig.Config, meta *metamodel.Metamodel,
+) (resolver *QueryScopeResolver, problems []string) {
+	return queryScopes(meta, predicatefns.NewEvaluator(meta))
+}
+
+// QueryScopes is the package-level [QueryScopes] with today() on the base's
+// clock ([WithClock]). It has the same signature, so a host passes
+// base.QueryScopes wherever it would pass the function.
+func (b *SharedBase) QueryScopes(
+	_ *dataentryconfig.Config, meta *metamodel.Metamodel,
+) (resolver *QueryScopeResolver, problems []string) {
+	return queryScopes(meta, predicatefns.NewEvaluatorWithClock(meta, b.clock()))
+}
+
+func queryScopes(
+	meta *metamodel.Metamodel, eval *predicatefns.Evaluator,
 ) (resolver *QueryScopeResolver, problems []string) {
 	compiled, err := scopes.Compile(meta)
 	if err != nil {
 		return nil, []string{err.Error()}
 	}
-	return &QueryScopeResolver{
-		compiled: compiled,
-		meta:     meta,
-		eval:     predicatefns.NewEvaluator(meta),
-	}, nil
+	return &QueryScopeResolver{compiled: compiled, meta: meta, eval: eval}, nil
 }
 
 // QueryScopeResolver adapts scopes.Compiled to dataentry's seam.

@@ -183,13 +183,13 @@ func (r *conversionRun) buildTargets(ctx context.Context, view store.Store, newI
 		if !exists {
 			return nil, fmt.Errorf("%w: no destination face for %q", ErrConversionInvalid, source.Face)
 		}
-		props := conversionPropertyValues(d, source, req.Properties, req.SourceFace)
+		props := conversionPropertyValues(d, source, req.Properties, req.SourceFace, m.deps.Clock)
 		if err := rejectComputedPresent(m.deps, d.To, props); err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrConversionInvalid, err)
 		}
 		content := source.Content
 		if d.Content != "" {
-			content = conversionContentValue(d.Content, source)
+			content = conversionContentValue(d.Content, source, m.deps.Clock)
 		}
 		supplied := source.Face.String() == req.SourceFace
 		if req.Content != nil && supplied {
