@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -184,6 +185,12 @@ func (h *reconcileHandler) handleV1Reconcile(w http.ResponseWriter, r *http.Requ
 	}
 	ops, err := planReconcile(h.schema().Meta, req)
 	if err != nil {
+		var re *reconcileRangeError
+		if errors.As(err, &re) {
+			writeReconcileRangeError(w, r, http.StatusBadRequest, "invalid_reconcile_request",
+				"Invalid reconcile request", re.index, re.err)
+			return
+		}
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_reconcile_request", "Invalid reconcile request", err.Error())
 		return
 	}
@@ -270,21 +277,48 @@ func (h *reconcileHandler) answer(ctx context.Context, op reconcileOp) (v1.Recon
 }
 
 // writeReconcileError answers a range that failed for a reason other than
-// its size or the deadline. Nothing of the request is answered.
+// its size or the deadline. Nothing of the request is answered. A refusal
+// of one range carries its index in the problem's range field, so a client
+// can split or skip that range without parsing the detail.
 func writeReconcileError(w http.ResponseWriter, r *http.Request, index int, err error) {
 	switch {
 	case errors.Is(err, visibility.ErrRelationMetaGated):
 		// The same for every principal: the policy can hide a meta key of
 		// this relation type, so its elements cannot be served yet
 		// (TKT-0RBFN0). The error text names the type; config is not secret.
-		writeV1Error(w, r, http.StatusUnprocessableEntity, "relation_meta_gated",
-			"Relation type not supported", fmt.Sprintf("range %d: %v", index, err))
+		writeReconcileRangeError(w, r, http.StatusUnprocessableEntity, "relation_meta_gated",
+			"Relation type not supported", index, err)
 	case errors.Is(err, store.ErrInvalidQuery):
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_reconcile_request", "Invalid reconcile request",
-			fmt.Sprintf("range %d: %v", index, err))
+		writeReconcileRangeError(w, r, http.StatusBadRequest, "invalid_reconcile_request",
+			"Invalid reconcile request", index, err)
 	default:
 		writeInternalError(w, r, "reconcile_failed", "Reconciliation failed", err)
 	}
+}
+
+// reconcileRangeError is a planning error about one range of a request.
+type reconcileRangeError struct {
+	index int
+	err   error
+}
+
+func (e *reconcileRangeError) Error() string { return fmt.Sprintf("range %d: %v", e.index, e.err) }
+func (e *reconcileRangeError) Unwrap() error { return e.err }
+
+// writeReconcileRangeError writes a problem about range index of the request.
+func writeReconcileRangeError(
+	w http.ResponseWriter, r *http.Request, status int, errType, title string, index int, err error,
+) {
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v1.Error{
+		Type:     "https://rela.dev/errors/" + errType,
+		Title:    title,
+		Status:   status,
+		Detail:   fmt.Sprintf("range %d: %v", index, err),
+		Instance: r.URL.Path,
+		Range:    &index,
+	})
 }
 
 // planReconcile checks req against the metamodel and the limits before
@@ -301,7 +335,7 @@ func planReconcile(meta *metamodel.Metamodel, req v1.ReconcileRequest) ([]reconc
 	for i, rr := range req.Ranges {
 		op, err := planReconcileRange(meta, rr)
 		if err != nil {
-			return nil, fmt.Errorf("range %d: %w", i, err)
+			return nil, &reconcileRangeError{index: i, err: err}
 		}
 		names += len(rr.Entities) + len(rr.Relations)
 		if names > reconcileMaxTypeNames {

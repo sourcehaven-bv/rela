@@ -430,6 +430,15 @@ func TestReconcile_RangeErrors(t *testing.T) {
 			if strings.Contains(rec.Body.String(), "disk on fire") {
 				t.Error("an internal error reached the body")
 			}
+			if tc.code == http.StatusUnprocessableEntity || tc.code == http.StatusBadRequest {
+				var p v1.Error
+				if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+					t.Fatal(err)
+				}
+				if p.Range == nil || *p.Range != 0 {
+					t.Errorf("problem range = %v, want 0", p.Range)
+				}
+			}
 			if tc.status != "" {
 				var out v1.ReconcileResponse
 				if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {

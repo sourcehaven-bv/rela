@@ -106,6 +106,8 @@
         "realtime",
         "realtimecfg",
         "realtimelimits",
+        "reconclient",
+        "reconclientHTTP",
         "relresolve",
         "renametype",
         "safexml",

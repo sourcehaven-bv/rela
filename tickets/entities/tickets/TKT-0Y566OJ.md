@@ -5,7 +5,9 @@ title: Reconcile client and rela reconcile diff command
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-11-07"
+completed: "2026-11-08"
+status: done
 ---
 
 ## Description
