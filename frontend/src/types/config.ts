@@ -171,7 +171,10 @@ export interface FormConfig {
 
 export interface FormStep {
   title: string
+  /** Markdown shown below the step heading. */
   description?: string
+  /** Longer markdown help, collapsed behind a "More information" toggle. */
+  details?: string
   /** Condition expression; the step is hidden/skipped when it evaluates false. */
   visible_when?: string
   fields?: FormFieldOrRelation[]
@@ -197,7 +200,10 @@ export interface FormField {
   widget?: string
   label?: string
   placeholder?: string
+  /** Markdown shown below the field. */
   help?: string
+  /** Markdown behind an info button next to the label. */
+  hint?: string
   default?: unknown
   readonly?: boolean
   hidden?: boolean
@@ -258,6 +264,10 @@ export interface FormRelation {
   direction?: 'outgoing' | 'incoming'
   target_type?: string
   label?: string
+  /** Markdown shown below the picker. */
+  help?: string
+  /** Markdown behind an info button next to the label. */
+  hint?: string
   required?: boolean
   widget?: string
   properties?: RelationProperty[]
@@ -276,6 +286,7 @@ export interface FormFieldOrRelation {
   property?: string
   placeholder?: string
   help?: string
+  hint?: string
   default?: unknown
   readonly?: boolean
   hidden?: boolean

@@ -81,6 +81,7 @@ import RlSelect from 'rela-components/components/form/RlSelect.vue'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 import RlKbd from 'rela-components/components/data/RlKbd.vue'
 import { parseDecimal } from '@/utils/decimal'
+import MarkdownHelp from './MarkdownHelp.vue'
 
 const props = defineProps<{
   formId: string
@@ -2837,6 +2838,13 @@ defineExpose({
         </button>
       </header>
 
+      <MarkdownHelp
+        v-if="formConfig.description"
+        class="form-description"
+        data-testid="form-description"
+        :text="formConfig.description"
+      />
+
       <!-- Template selector (create mode only) -->
       <div v-if="!isEdit && templates.length > 1" class="template-selector">
         <RlSelect
@@ -2937,9 +2945,22 @@ defineExpose({
           <h2 v-if="wizard.currentStepDef.value.title">
             {{ wizard.currentStepDef.value.title }}
           </h2>
-          <p v-if="wizard.currentStepDef.value.description" class="section-description">
-            {{ wizard.currentStepDef.value.description }}
-          </p>
+          <MarkdownHelp
+            v-if="wizard.currentStepDef.value.description"
+            class="section-description"
+            data-testid="step-description"
+            :text="wizard.currentStepDef.value.description"
+          />
+          <!-- Keyed by step so moving to another step closes it again. -->
+          <details
+            v-if="wizard.currentStepDef.value.details"
+            :key="wizard.currentStep.value"
+            class="step-details"
+            data-testid="step-details"
+          >
+            <summary>{{ t('form.stepDetails') }}</summary>
+            <MarkdownHelp :text="wizard.currentStepDef.value.details" />
+          </details>
           <div class="form-fields">
             <FormFieldList
               :key="fieldsRenderKey"
@@ -3180,6 +3201,33 @@ defineExpose({
 .section-description {
   color: var(--rl-color-text-muted);
   margin-bottom: 24px;
+}
+
+.form-description {
+  color: var(--rl-color-text-muted);
+  margin-bottom: 20px;
+}
+
+/* The details sit between the description and the fields, so the
+   description's bottom margin is shared rather than doubled. */
+.section-description:has(+ .step-details) {
+  margin-bottom: 12px;
+}
+
+.step-details {
+  margin-bottom: 24px;
+  border-left: 3px solid var(--rl-color-border);
+  padding: 4px 12px;
+}
+
+.step-details summary {
+  cursor: pointer;
+  color: var(--rl-color-accent);
+  font-size: 14px;
+}
+
+.step-details[open] summary {
+  margin-bottom: 8px;
 }
 
 /* Wizard stepper */

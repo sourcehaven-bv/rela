@@ -73,8 +73,21 @@ function seedRelations(
   )
 }
 
-async function mountCards(opts: { verdict?: RelationAffordance; links?: string[] }) {
+async function mountCards(opts: {
+  verdict?: RelationAffordance
+  links?: string[]
+  extra?: Partial<FormFieldOrRelation>
+  relationDescription?: string
+}) {
   seedSchema()
+  if (opts.relationDescription) {
+    const schemaStore = useSchemaStore()
+    const rel = schemaStore.relationTypes.get('implements')
+    schemaStore.relationTypes.set('implements', {
+      ...rel,
+      description: opts.relationDescription,
+    } as never)
+  }
   seedRelations(opts.links ?? ['FEAT-001'])
   const field: FormFieldOrRelation = {
     relation: 'implements',
@@ -83,6 +96,7 @@ async function mountCards(opts: { verdict?: RelationAffordance; links?: string[]
     // Declare meta properties on the field so the inline-edit input
     // renders inside each card. Matches data-entry.yaml usage.
     properties: [{ property: 'note', label: 'Note' }],
+    ...opts.extra,
   } as never
   const wrapper = mount(RelationCards, {
     props: {
@@ -96,6 +110,47 @@ async function mountCards(opts: { verdict?: RelationAffordance; links?: string[]
   await flushPromises()
   return wrapper
 }
+
+describe('RelationCards help texts', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('renders the authored help as markdown and the hint behind a button', async () => {
+    const wrapper = await mountCards({
+      extra: { help: 'Pick the **features**.', hint: 'Long guidance.' },
+    })
+    expect(wrapper.find('.field-help strong').text()).toBe('features')
+    const toggle = wrapper.find('[data-testid="field-hint-toggle"]')
+    expect(toggle.attributes('aria-label')).toBe('More information about Implements')
+    await toggle.trigger('click')
+    expect(wrapper.find('.field-hint').text()).toBe('Long guidance.')
+    wrapper.unmount()
+  })
+
+  it('falls back to the relation type description without authored help', async () => {
+    const wrapper = await mountCards({ relationDescription: 'Features this *ticket* delivers.' })
+    expect(wrapper.find('.field-help em').text()).toBe('ticket')
+    wrapper.unmount()
+  })
+
+  it('prefers the authored help over the relation type description', async () => {
+    const wrapper = await mountCards({
+      relationDescription: 'Type description.',
+      extra: { help: 'Form help.' },
+    })
+    expect(wrapper.find('.field-help').text()).toBe('Form help.')
+    wrapper.unmount()
+  })
+
+  it('renders neither without help or hint', async () => {
+    const wrapper = await mountCards({})
+    expect(wrapper.find('.field-help').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="field-hint-toggle"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})
 
 describe('RelationCards affordance plumbing', () => {
   beforeEach(() => {

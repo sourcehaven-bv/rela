@@ -76,6 +76,35 @@ async function mountPicker(value: string[], candidates: Entity[]) {
   return wrapper
 }
 
+describe('RelationPicker help texts', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  it('renders the authored help as markdown and the hint behind a button', async () => {
+    seedSchema()
+    seedCandidates([])
+    const field: FormFieldOrRelation = {
+      relation: 'affects',
+      label: 'Affects',
+      help: 'See [the guide](/entity/guide/G-1).',
+      hint: 'Long guidance.',
+    }
+    const wrapper = mount(RelationPicker, {
+      props: { field, entityType: 'ticket', value: [] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    expect(wrapper.find('.field-help a').attributes('href')).toBe('/entity/guide/G-1')
+    const toggle = wrapper.find('[data-testid="field-hint-toggle"]')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    expect(wrapper.find('.field-hint').text()).toBe('Long guidance.')
+    wrapper.unmount()
+  })
+})
+
 describe('RelationPicker — entity label rendering', () => {
   beforeEach(() => {
     setActivePinia(createPinia())

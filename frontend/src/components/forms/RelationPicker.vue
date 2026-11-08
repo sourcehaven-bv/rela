@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import FieldLabelRow from './FieldLabelRow.vue'
+import MarkdownHelp from './MarkdownHelp.vue'
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSchemaStore, useEntitiesStore } from '@/stores'
@@ -623,9 +625,11 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="form-field relation-picker">
-    <label>
-      {{ label }}
-    </label>
+    <FieldLabelRow :hint="field.hint" :label="label">
+      <label>
+        {{ label }}
+      </label>
+    </FieldLabelRow>
 
     <!-- Incoming: grouped per source face; a row the principal may not
          remove is locked. -->
@@ -735,7 +739,7 @@ onBeforeUnmount(() => {
       <div v-if="loading" class="loading-indicator">{{ t('form.loadingDots') }}</div>
     </div>
 
-    <p v-if="help" class="field-help">{{ help }}</p>
+    <MarkdownHelp v-if="help" class="field-help" :text="help" />
 
     <!-- Inline Create Modal -->
     <InlineCreateFormModal

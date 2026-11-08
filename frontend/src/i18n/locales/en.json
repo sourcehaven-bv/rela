@@ -665,6 +665,11 @@
       "prefix": "Prefix"
     },
     "steps": "Form steps",
+    "stepDetails": "More information",
+    "hint": {
+      "toggle": "Show more information",
+      "toggleFor": "More information about {label}"
+    },
     "noFields": "No fields to display.",
     "content": "Content",
     "errorSummary": {
