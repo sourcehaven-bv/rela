@@ -61,10 +61,10 @@ func applySeams(r *Runtime, s Seams, writer bool) {
 		r.clock = s.Clock
 	}
 	if s.HTTPClient != nil {
-		r.httpClient = s.HTTPClient
+		r.egress.http = s.HTTPClient
 	}
 	if s.AI != nil && writer {
-		r.aiProvider = s.AI
+		r.egress.ai = s.AI
 	}
 	if s.OutputDir != "" {
 		r.outputDir = s.OutputDir

@@ -106,5 +106,5 @@ func TestSeams_AIOnlyOnWriters(t *testing.T) {
 	rt := NewReader(ReadDeps{World: store.TrivialScope(), Seams: Seams{AI: seamAI{answer: "seam"}}}, &buf,
 		WithCapabilities(Capabilities{AI: true}))
 	t.Cleanup(rt.Close)
-	require.Nil(t, rt.aiProvider)
+	require.Nil(t, rt.egress.ai)
 }

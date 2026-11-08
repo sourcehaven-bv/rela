@@ -140,8 +140,7 @@ type Runtime struct {
 	// Entity renders leave this zero, so rela.document carries no row
 	// bindings there.
 	listRender ListRenderContext
-	aiProvider ai.Provider   // nil means AI is not configured
-	httpClient *http.Client  // nil means the shared process-wide client
+	egress     egress        // the ai.* and http.* backends
 	cache      cacheStore    // nil means rela.cache.* is not registered
 	scriptPath string        // set by RunFile; empty for RunString/inline
 	modules    *moduleLoader // require; Nil: never — set by newRuntime
@@ -174,6 +173,16 @@ type Runtime struct {
 	// handler on the most recent failed run. Read via ErrorFrames() after
 	// PCall returns an error. Reset before every PCall.
 	errorFrames []StackFrame
+}
+
+// egress holds the backends of the bindings that reach outside the process.
+type egress struct {
+	// ai is the provider the ai.* bindings use. Nil: accepted — AI is not
+	// configured.
+	ai ai.Provider
+	// http is the client the http.* bindings send through. Nil: accepted —
+	// the shared process-wide client.
+	http *http.Client
 }
 
 // cacheStore is the minimal contract the Lua cache bindings need from
@@ -398,7 +407,7 @@ func WithSecrets(secrets map[string]string) Option {
 // a typed not_configured error.
 func WithAIProvider(p ai.Provider) Option {
 	return func(r *Runtime) {
-		r.aiProvider = p
+		r.egress.ai = p
 	}
 }
 
@@ -407,7 +416,7 @@ func WithAIProvider(p ai.Provider) Option {
 // client, which pools connections across short-lived runtimes.
 func WithHTTPClient(c *http.Client) Option {
 	return func(r *Runtime) {
-		r.httpClient = c
+		r.egress.http = c
 	}
 }
 

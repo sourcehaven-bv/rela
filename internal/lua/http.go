@@ -137,7 +137,7 @@ func (h httpBindings) do(req *http.Request) (*http.Response, error) {
 // plus the per-method convenience functions (get, post, put, patch, delete).
 // JSON helpers live separately under rela.json (see json.go).
 func (r *Runtime) registerHTTPModule() {
-	h := httpBindings{client: r.httpClient}
+	h := httpBindings{client: r.egress.http}
 	tbl := r.L.NewTable()
 	r.L.SetField(tbl, "request", r.L.NewFunction(h.luaHTTPRequest))
 	r.L.SetField(tbl, "get", r.L.NewFunction(h.luaHTTPGet))

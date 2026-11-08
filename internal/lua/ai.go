@@ -56,7 +56,7 @@ type aiBindings struct {
 // registerAIModule installs the top-level `ai` global with `chat`,
 // `complete`, and `embed` functions.
 func (r *Runtime) registerAIModule() {
-	b := aiBindings{provider: r.aiProvider}
+	b := aiBindings{provider: r.egress.ai}
 	tbl := r.L.NewTable()
 	r.L.SetField(tbl, "chat", r.L.NewFunction(b.luaAIChat))
 	r.L.SetField(tbl, "complete", r.L.NewFunction(b.luaAIComplete))
