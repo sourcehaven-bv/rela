@@ -74,7 +74,7 @@ func validateTenantMode(f *serverFlags, envUser string, supported bool) (identit
 // on eviction or shutdown.
 type tenantResident struct {
 	t       tenant.Tenant
-	svc     *appbuild.Services
+	opened  *tenant.Opened
 	app     *dataentry.App
 	handler http.Handler
 	relay   *dataentry.CollabRelay
@@ -84,13 +84,13 @@ type tenantResident struct {
 
 // Close tears the tenant down in dependency order: end the app's streams
 // and watchers, stop the workers that read the services, close the
-// services (which closes the tenant's audit sink last), then close the
-// co-editing connections.
+// services (which closes the tenant's audit sink last) and release the
+// tenant's schema lock, then close the co-editing connections.
 func (r *tenantResident) Close() error {
 	dataentry.Retire(r.app)
 	r.stop()
 	<-r.done
-	err := r.svc.Close()
+	err := r.opened.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancel()
 	if cerr := r.relay.Shutdown(ctx); cerr != nil {
@@ -99,9 +99,10 @@ func (r *tenantResident) Close() error {
 	return err
 }
 
-// openTenant builds the resident for one tenant's services. It takes
-// ownership of svc: on an error svc is closed.
-func (s *server) openTenant(t tenant.Tenant, svc *appbuild.Services) (*tenantResident, error) {
+// openTenant builds the resident for one opened tenant. It takes ownership
+// of opened: on an error opened is closed.
+func (s *server) openTenant(t tenant.Tenant, opened *tenant.Opened) (*tenantResident, error) {
+	svc := opened.Services
 	relay := dataentry.NewCollabRelay(dataentry.EmbeddedBuildID())
 	// The tenant's own verifiers accept only its own org. The host already
 	// routes by the verified org; this keeps a tenant app from acting for
@@ -112,7 +113,9 @@ func (s *server) openTenant(t tenant.Tenant, svc *appbuild.Services) (*tenantRes
 	}
 	app, err := s.buildApp(svc, relay, ident)
 	if err != nil {
-		closeServices(svc)
+		if cerr := opened.Close(); cerr != nil {
+			slog.Warn("tenant: closing services after a failed open", "org_id", t.OrgID, "error", cerr)
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 		defer cancel()
 		_ = relay.Shutdown(ctx)
@@ -145,7 +148,7 @@ func (s *server) openTenant(t tenant.Tenant, svc *appbuild.Services) (*tenantRes
 	}()
 	slog.Info("tenant opened", "org_id", t.OrgID, "schema", t.Schema)
 	return &tenantResident{
-		t: t, svc: svc, app: app, handler: handler, relay: relay, stop: cancel, done: done,
+		t: t, opened: opened, app: app, handler: handler, relay: relay, stop: cancel, done: done,
 	}, nil
 }
 
@@ -215,17 +218,17 @@ func newTenantHost(f *serverFlags, tenantsYAML string, accessLog *slog.Logger) (
 func (s *server) tenantHost(
 	base *appbuild.SharedBase, resolver tenant.Resolver, limits tenantLimits, verifier tenanthost.AssertionVerifier,
 ) (*tenantHost, error) {
-	openSvc, err := tenant.SharedBaseOpener(base, filepath.Join(base.Paths().CacheDir, "audit", "tenants"))
+	openSvc, err := tenant.SharedBaseOpener(base, tenant.AuditRoot(base.Paths().CacheDir))
 	if err != nil {
 		return nil, err
 	}
 	registry, err := tenant.NewRegistry(resolver, func(ctx context.Context, t tenant.Tenant) (*tenantResident, error) {
-		svc, oerr := openSvc(ctx, t)
+		opened, oerr := openSvc(ctx, t)
 		if oerr != nil {
 			return nil, oerr
 		}
 		//nolint:contextcheck // the tenant outlives the request that opened it; dataentry.NewApp takes no context
-		return s.openTenant(t, svc)
+		return s.openTenant(t, opened)
 	}, limits.resident, tenant.WithMaxOpen(limits.open))
 	if err != nil {
 		return nil, err

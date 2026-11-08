@@ -203,6 +203,10 @@ func parseFlags() *serverFlags {
 	// cannot land in process listings or shell history.
 	// See appbuild.Config.DatabaseURL.
 	flag.Parse()
+	if err := refuseExtraArgs(flag.Args()); err != nil {
+		fmt.Fprintln(os.Stderr, "rela-server:", err)
+		os.Exit(2)
+	}
 	if os.Getenv("RELA_READ_ONLY") == "1" {
 		f.readOnly = true
 	}
@@ -539,6 +543,10 @@ func (a webhookVerifierAdapter) VerifyWebhook(ctx context.Context, raw string) (
 // and calls ListenAndServe;
 // every branch is startup wiring or os.Exit
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == tenantCommand {
+		configureLogging(false, false)
+		os.Exit(runTenantCommand(os.Args[2:]))
+	}
 	f := parseFlags()
 
 	configureLogging(f.verbose, f.quiet)

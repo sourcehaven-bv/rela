@@ -5,6 +5,7 @@ package tenant
 import (
 	"context"
 	"errors"
+	"io"
 )
 
 // dsnForSchema refuses to derive a per-tenant DSN on a build with no PostgreSQL.
@@ -30,8 +31,17 @@ func dsnForSchema(_, _ string) (string, error) {
 			"schema-per-tenant has no meaning for the filesystem or memory stores")
 }
 
-// verifySchema refuses on a build with no PostgreSQL, for the reason
+// pinSchema refuses on a build with no PostgreSQL, for the reason
 // dsnForSchema does: there is no tenant schema to land in.
-func verifySchema(context.Context, string, string) error {
-	return errors.New("tenant: checking a tenant schema requires the postgres build")
+func pinSchema(context.Context, string, string) (io.Closer, error) {
+	return nil, errors.New("tenant: checking a tenant schema requires the postgres build")
 }
+
+// dropSchema refuses on a build with no PostgreSQL: there is no tenant
+// schema to drop.
+func dropSchema(context.Context, string, string) (bool, error) {
+	return false, errors.New("tenant: erasing a tenant requires the postgres build")
+}
+
+// DescribeTarget has no DSN to parse on a build with no PostgreSQL.
+func DescribeTarget(string) string { return "a database this build cannot reach" }

@@ -489,6 +489,10 @@ deps:
       # peerkey: the peer key source the data-entry edge verifies against.
       - peerkey
       - principal
+      # project: `rela-server tenant erase` finds the cache dir that holds
+      # the per-tenant audit directories without assembling services
+      # (TKT-TNERAS).
+      - project
       - projectsetup
       - scheduler
       - script

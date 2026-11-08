@@ -113,7 +113,7 @@ func TestTenantIsolation_OneTenantCannotReadAnother(t *testing.T) {
 	}
 	// TKT-5L5O0MZ: the config is parsed once for every tenant. A separate
 	// parse per tenant would yield equal values at different addresses.
-	svcA, svcB := leaseA.Value(), leaseB.Value()
+	svcA, svcB := leaseA.Value().Services, leaseB.Value().Services
 	if svcA.Meta() != svcB.Meta() {
 		t.Error("tenants hold different metamodels; the config was parsed per tenant")
 	}
@@ -132,24 +132,24 @@ func TestTenantIsolation_OneTenantCannotReadAnother(t *testing.T) {
 		Type:       "ticket",
 		Properties: map[string]any{"title": "tenant B confidential"},
 	}
-	if err := leaseA.Value().Store().CreateEntity(ctx, secretOfA); err != nil {
+	if err := leaseA.Value().Services.Store().CreateEntity(ctx, secretOfA); err != nil {
 		t.Fatalf("create in tenant A: %v", err)
 	}
-	if err := leaseB.Value().Store().CreateEntity(ctx, secretOfB); err != nil {
+	if err := leaseB.Value().Services.Store().CreateEntity(ctx, secretOfB); err != nil {
 		t.Fatalf("create in tenant B: %v", err)
 	}
 
 	// The property: each tenant sees its own row and only its own row.
-	assertVisible(t, leaseA.Value(), "TKT-A1", "tenant A confidential")
-	assertVisible(t, leaseB.Value(), "TKT-B1", "tenant B confidential")
-	assertInvisible(t, leaseA.Value(), "TKT-B1", "A")
-	assertInvisible(t, leaseB.Value(), "TKT-A1", "B")
+	assertVisible(t, leaseA.Value().Services, "TKT-A1", "tenant A confidential")
+	assertVisible(t, leaseB.Value().Services, "TKT-B1", "tenant B confidential")
+	assertInvisible(t, leaseA.Value().Services, "TKT-B1", "A")
+	assertInvisible(t, leaseB.Value().Services, "TKT-A1", "B")
 
 	// A listing must not leak either. A direct GetEntity could conceivably be
 	// gated while a list query still returned foreign rows, so check the bulk
 	// read path too — it is the one that would carry a whole tenant's data.
-	assertOnlyOwnEntities(t, leaseA.Value(), "TKT-A1")
-	assertOnlyOwnEntities(t, leaseB.Value(), "TKT-B1")
+	assertOnlyOwnEntities(t, leaseA.Value().Services, "TKT-A1")
+	assertOnlyOwnEntities(t, leaseB.Value().Services, "TKT-B1")
 }
 
 // TestTenantIsolation_UnknownOrgReachesNoDatabase pins the fail-closed rule on
@@ -224,7 +224,7 @@ func TestTenantIsolation_EvictionDoesNotDisturbSiblings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Acquire(org-a): %v", err)
 	}
-	if err = leaseA.Value().Store().CreateEntity(ctx, &entity.Entity{
+	if err = leaseA.Value().Services.Store().CreateEntity(ctx, &entity.Entity{
 		ID: "TKT-A1", Type: "ticket", Properties: map[string]any{"title": "a"},
 	}); err != nil {
 		t.Fatalf("create in tenant A: %v", err)
@@ -237,12 +237,12 @@ func TestTenantIsolation_EvictionDoesNotDisturbSiblings(t *testing.T) {
 	}
 	defer leaseB.Release()
 
-	if err = leaseB.Value().Store().CreateEntity(ctx, &entity.Entity{
+	if err = leaseB.Value().Services.Store().CreateEntity(ctx, &entity.Entity{
 		ID: "TKT-B1", Type: "ticket", Properties: map[string]any{"title": "b"},
 	}); err != nil {
 		t.Fatalf("tenant B unusable after tenant A was evicted and closed: %v", err)
 	}
-	assertInvisible(t, leaseB.Value(), "TKT-A1", "B")
+	assertInvisible(t, leaseB.Value().Services, "TKT-A1", "B")
 
 	// Re-acquiring the evicted tenant must reopen it and find its data intact —
 	// eviction closes a connection, it does not destroy anything.
@@ -251,8 +251,8 @@ func TestTenantIsolation_EvictionDoesNotDisturbSiblings(t *testing.T) {
 		t.Fatalf("re-Acquire(org-a): %v", err)
 	}
 	defer leaseA2.Release()
-	assertVisible(t, leaseA2.Value(), "TKT-A1", "a")
-	assertInvisible(t, leaseA2.Value(), "TKT-B1", "A")
+	assertVisible(t, leaseA2.Value().Services, "TKT-A1", "a")
+	assertInvisible(t, leaseA2.Value().Services, "TKT-B1", "A")
 }
 
 // TestTenantIsolation_OwnAuditAndScriptEngine pins the two pieces of process
@@ -287,14 +287,14 @@ func TestTenantIsolation_OwnAuditAndScriptEngine(t *testing.T) {
 	}
 	defer leaseB.Release()
 
-	if leaseA.Value().ScriptEngine() == leaseB.Value().ScriptEngine() {
+	if leaseA.Value().Services.ScriptEngine() == leaseB.Value().Services.ScriptEngine() {
 		t.Error("tenants share one script engine, and with it one Lua cache")
 	}
 
-	leaseA.Value().Audit().Record(audit.Record{
+	leaseA.Value().Services.Audit().Record(audit.Record{
 		Op: audit.OpCreateEntity, Subject: &audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-A1"},
 	})
-	leaseB.Value().Audit().Record(audit.Record{
+	leaseB.Value().Services.Audit().Record(audit.Record{
 		Op: audit.OpCreateEntity, Subject: &audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-B1"},
 	})
 
@@ -363,7 +363,7 @@ func assertOnlyOwnEntities(t *testing.T, svc *appbuild.Services, wantID string) 
 // isolationOpener builds the shared, tenant-independent half of construction
 // once: one project root, one metamodel, one ACL policy, one script engine, for
 // every tenant. Only the DSN differs per tenant, and the opener passes it.
-func isolationOpener(t *testing.T, root string) tenant.Opener[*appbuild.Services] {
+func isolationOpener(t *testing.T, root string) tenant.Opener[*tenant.Opened] {
 	t.Helper()
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	paths, err := project.Discover(root, fs)
@@ -383,7 +383,7 @@ func isolationOpener(t *testing.T, root string) tenant.Opener[*appbuild.Services
 	if err != nil {
 		t.Fatalf("NewSharedBase: %v", err)
 	}
-	open, err := tenant.SharedBaseOpener(base, filepath.Join(paths.CacheDir, "audit", "tenants"))
+	open, err := tenant.SharedBaseOpener(base, tenant.AuditRoot(paths.CacheDir))
 	if err != nil {
 		t.Fatalf("SharedBaseOpener: %v", err)
 	}

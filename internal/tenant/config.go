@@ -79,6 +79,12 @@ type ConfigTenant struct {
 	// then this one line, with no code path that only the promoted tenant
 	// takes.
 	DSN string `yaml:"dsn"`
+
+	// Erase marks the tenant for erasure. A marked tenant is not served: its
+	// org fails closed as an unknown org does. It stays in the map so its
+	// schema name stays reserved and `rela-server tenant erase` can find
+	// it. See [Erase].
+	Erase bool `yaml:"erase"`
 }
 
 // LoadConfig reads and parses a tenant map from path.
@@ -152,11 +158,58 @@ func dsnHasPassword(dsn string) bool {
 // Resolver turns the parsed config into a live lookup, deriving each tenant's
 // DSN and validating the whole table.
 //
-// An empty tenant list is refused. A multi-tenant host with no tenants can
-// serve no request, so booting it would only defer the same failure to every
-// request — and would do so as a per-request denial, which reads like a
-// permissions problem rather than a deployment one.
+// Tenants marked `erase: true` are validated with the rest, so a marked
+// tenant still reserves its schema, but the resolver does not serve them.
+//
+// An empty tenant list is refused, and so is a list in which every tenant is
+// marked for erasure. A multi-tenant host with no tenants can serve no
+// request, so booting it would only defer the same failure to every request,
+// and would do so as a per-request denial, which reads like a permissions
+// problem rather than a deployment one.
 func (c *Config) Resolver() (*MapResolver, error) {
+	all, err := c.tenants()
+	if err != nil {
+		return nil, err
+	}
+	served := make([]Tenant, 0, len(all))
+	for i, t := range all {
+		if !c.Tenants[i].Erase {
+			served = append(served, t)
+		}
+	}
+	if len(served) == 0 {
+		return nil, errors.New("tenant: no tenants configured that are not marked for erasure")
+	}
+	return NewMapResolver(served)
+}
+
+// ErasureTarget returns the tenant for orgID that [Erase] may erase.
+//
+// The org must be in the map and marked `erase: true`. The mark is what
+// stops a server that loads this file from serving the org, so an unmarked
+// org is refused rather than erased under a server that still routes to it.
+// The whole table is validated first, as [Config.Resolver] does, so a target
+// is never taken from a map the server would refuse to load.
+func (c *Config) ErasureTarget(orgID string) (Tenant, error) {
+	all, err := c.tenants()
+	if err != nil {
+		return Tenant{}, err
+	}
+	for i, t := range all {
+		if t.OrgID != orgID {
+			continue
+		}
+		if !c.Tenants[i].Erase {
+			return Tenant{}, fmt.Errorf("%w: org_id %q", ErrNotMarkedForErasure, orgID)
+		}
+		return t, nil
+	}
+	return Tenant{}, fmt.Errorf("%w: %q", ErrUnknownTenant, orgID)
+}
+
+// tenants derives every tenant's DSN, in file order, and validates the whole
+// table with [NewMapResolver].
+func (c *Config) tenants() ([]Tenant, error) {
 	if len(c.Tenants) == 0 {
 		return nil, errors.New("tenant: no tenants configured")
 	}
@@ -174,10 +227,8 @@ func (c *Config) Resolver() (*MapResolver, error) {
 			// unchecked name would be building a credential out of unvalidated
 			// input. NewMapResolver checks it again — this is the earlier of
 			// the two, not a substitute for it.
-			if !schemaNamePattern.MatchString(ct.Schema) {
-				return nil, fmt.Errorf(
-					"tenant %d (org_id %q): schema %q must match %s",
-					i, ct.OrgID, ct.Schema, schemaNamePattern)
+			if err := checkSchemaName(ct.Schema); err != nil {
+				return nil, fmt.Errorf("tenant %d (org_id %q): %w", i, ct.OrgID, err)
 			}
 			var err error
 			if dsn, err = dsnForSchema(c.BaseDSN, ct.Schema); err != nil {
@@ -186,5 +237,8 @@ func (c *Config) Resolver() (*MapResolver, error) {
 		}
 		tenants = append(tenants, Tenant{OrgID: ct.OrgID, Schema: ct.Schema, DSN: dsn})
 	}
-	return NewMapResolver(tenants)
+	if _, err := NewMapResolver(tenants); err != nil {
+		return nil, err
+	}
+	return tenants, nil
 }

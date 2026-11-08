@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"path/filepath"
 	"reflect"
@@ -53,21 +54,52 @@ type Resident interface {
 // doc, applied one level down.
 type Opener[R Resident] func(ctx context.Context, t Tenant) (R, error)
 
+// Opened is one tenant opened by [SharedBaseOpener]: its services, and the
+// connection that holds the tenant's schema lock shared while they are open.
+// The lock is what makes [Erase] refuse a tenant a server has open.
+type Opened struct {
+	// Services are the tenant's services. Close the Opened, not these, so
+	// the lock is released after them.
+	Services *appbuild.Services
+
+	pin       io.Closer
+	closeOnce sync.Once
+	closeErr  error
+}
+
+// Close closes the services, then releases the schema lock, so the schema
+// cannot be dropped before the store over it has closed. Safe to call more
+// than once; later calls return the first result.
+func (o *Opened) Close() error {
+	o.closeOnce.Do(func() {
+		if o.Services != nil {
+			o.closeErr = o.Services.Close()
+		}
+		if o.pin != nil {
+			if perr := o.pin.Close(); perr != nil {
+				slog.Warn("tenant: releasing the schema lock", "error", perr)
+			}
+		}
+	})
+	return o.closeErr
+}
+
 // SharedBaseOpener opens each tenant over one shared base. The base holds the
 // parsed metamodel, `acl.yaml` and the rest of the operator config, so they are
 // parsed once for every tenant. Each open adds only the tenant's own backend:
 // a pool, store and search for the tenant's DSN.
 //
-// Before anything is opened, the tenant's connection must land in the
-// tenant's own schema (see verifySchema).
+// Before anything is opened, the opener takes the tenant's schema lock
+// shared and checks that the connection lands in the tenant's own schema
+// (see pinSchema). It holds the lock until the tenant closes.
 //
 // Each tenant also gets its own audit sink, a directory named after its
-// schema under auditRoot (TKT-SNVR8UV). The schema is the name to use because
-// it is validated against a strict pattern at load and unique across the
-// tenant map, while an org id is an arbitrary string from the identity
-// provider. One sink for every tenant would interleave all their audit
-// records, and erasing one tenant (TKT-TNERAS) could then not remove its
-// records without touching the others'.
+// schema under auditRoot (TKT-SNVR8UV, see [AuditRoot]). The schema is the
+// name to use because it is validated against a strict pattern at load and
+// unique across the tenant map, while an org id is an arbitrary string from
+// the identity provider. One sink for every tenant would interleave all their
+// audit records, and [Erase] could then not remove one tenant's records
+// without touching the others'.
 //
 // The build-tag split stays in appbuild: [appbuild.SharedBase.OpenAndAssemble]
 // is where the build chooses its backend, and it refuses on a build whose store
@@ -75,25 +107,33 @@ type Opener[R Resident] func(ctx context.Context, t Tenant) (R, error)
 //
 // Nil: rejected — an opener with no base would fail on the first request. An
 // empty auditRoot is rejected for the same reason.
-func SharedBaseOpener(base *appbuild.SharedBase, auditRoot string) (Opener[*appbuild.Services], error) {
+func SharedBaseOpener(base *appbuild.SharedBase, auditRoot string) (Opener[*Opened], error) {
 	if base == nil {
 		return nil, errors.New("tenant.SharedBaseOpener: base is required")
 	}
 	if auditRoot == "" {
 		return nil, errors.New("tenant.SharedBaseOpener: audit root is required")
 	}
-	return func(ctx context.Context, t Tenant) (*appbuild.Services, error) {
-		if err := verifySchema(context.WithoutCancel(ctx), t.DSN, t.Schema); err != nil {
+	return func(ctx context.Context, t Tenant) (*Opened, error) {
+		// Opening a tenant's store must outlive the request that triggered
+		// it: a cancelled request must not leave a half-migrated schema
+		// behind.
+		ctx = context.WithoutCancel(ctx)
+		pin, err := pinSchema(ctx, t.DSN, t.Schema)
+		if err != nil {
 			return nil, err
 		}
 		sink, err := audit.NewFilesystem(filepath.Join(auditRoot, t.Schema))
 		if err != nil {
+			_ = pin.Close()
 			return nil, fmt.Errorf("audit sink: %w", err)
 		}
-		// Opening a tenant's store must outlive the request that triggered
-		// it: a cancelled request must not leave a half-migrated schema
-		// behind.
-		return base.OpenAndAssemble(context.WithoutCancel(ctx), t.DSN, sink)
+		svc, err := base.OpenAndAssemble(ctx, t.DSN, sink)
+		if err != nil {
+			_ = pin.Close()
+			return nil, err
+		}
+		return &Opened{Services: svc, pin: pin}, nil
 	}, nil
 }
 
@@ -481,7 +521,7 @@ func (r *Registry[R]) evictIdleLocked() []*resident[R] {
 }
 
 // scheduleCloseLocked marks res closed and counts it as closing until
-// [Registry.closeInBackground] has closed it. Requires r.mu.
+// closeInBackground has closed it. Requires r.mu.
 func (r *Registry[R]) scheduleCloseLocked(closing []*resident[R], res *resident[R]) []*resident[R] {
 	res.closed = true
 	r.closing++
@@ -490,7 +530,7 @@ func (r *Registry[R]) scheduleCloseLocked(closing []*resident[R], res *resident[
 }
 
 // closeInBackground closes residents scheduled by
-// [Registry.scheduleCloseLocked] on a goroutine of its own.
+// scheduleCloseLocked on a goroutine of its own.
 //
 // Not inline, because the caller is a request for a different tenant (the
 // one whose open pushed these out) or the deferred release of a finished

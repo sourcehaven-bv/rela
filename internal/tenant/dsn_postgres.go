@@ -3,7 +3,6 @@
 package tenant
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -23,7 +22,7 @@ import (
 // tenant A cannot name tenant B's tables even in principle: the attempt is a
 // "relation does not exist" error from PostgreSQL, not a row-filtering decision
 // rela could get wrong. It is also why `pgstore` needs no changes for
-// multi-tenancy — it never learns it is multi-tenant. [verifySchema] checks at
+// multi-tenancy — it never learns it is multi-tenant. [pinSchema] checks at
 // open that the schema exists, since PostgreSQL silently skips a missing one.
 //
 // The base string is kept and only `search_path` is set in it, in the
@@ -70,39 +69,17 @@ func dsnForSchema(base, schema string) (string, error) {
 	return out, nil
 }
 
-// schemaCheckTimeout bounds [verifySchema], which runs on a tenant's cold
+// schemaCheckTimeout bounds [pinSchema], which runs on a tenant's cold
 // open.
 const schemaCheckTimeout = 30 * time.Second
 
-// verifySchema connects with dsn and checks that the connection's
-// current_schema() is schema.
-//
-// PostgreSQL skips a `search_path` entry that names no existing schema. A
-// tenant listed before its schema was created would then land in `public`,
-// next to every other such tenant, and pgstore's migrations would create its
-// tables there. An explicit `dsn:` that sets no `search_path`, or another
-// one, lands in the wrong schema the same way. Both look like a working
-// deployment. So the opener refuses any tenant whose connection does not
-// land in its own schema, before migrations run.
-func verifySchema(ctx context.Context, dsn, schema string) error {
-	ctx, cancel := context.WithTimeout(ctx, schemaCheckTimeout)
-	defer cancel()
-	conn, err := pgx.Connect(ctx, dsn)
+// DescribeTarget names the database dsn connects to, as host, port,
+// database and user, for an operator confirming an erasure. It never
+// includes the password. An unparseable DSN is described as such.
+func DescribeTarget(dsn string) string {
+	cfg, err := pgx.ParseConfig(dsn)
 	if err != nil {
-		return fmt.Errorf("check schema: %w", err)
+		return "an unparseable DSN"
 	}
-	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
-	var got *string
-	if err := conn.QueryRow(ctx, "SELECT current_schema()").Scan(&got); err != nil {
-		return fmt.Errorf("check schema: %w", err)
-	}
-	if got == nil || *got != schema {
-		landed := "no schema"
-		if got != nil {
-			landed = fmt.Sprintf("schema %q", *got)
-		}
-		return fmt.Errorf("the connection lands in %s, not %q: create the schema first, "+
-			"and an explicit dsn must set search_path to it", landed, schema)
-	}
-	return nil
+	return fmt.Sprintf("database %q on %s:%d as user %q", cfg.Database, cfg.Host, cfg.Port, cfg.User)
 }
