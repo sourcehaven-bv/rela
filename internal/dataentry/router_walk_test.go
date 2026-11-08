@@ -156,6 +156,8 @@ var routerWalkProbes = []routerWalkProbe{
 	{http.MethodPost, "/api/v1/_leases/release", "/api/v1/_leases/release", http.StatusNotFound, ""},
 	// Batch: the fixture's markdown store does not roll back, so 501.
 	{http.MethodPost, "/api/v1/_batch", "/api/v1/_batch", http.StatusNotImplemented, ""},
+	// Reconcile: the fixture wires no element range read, so 501.
+	{http.MethodPost, "/api/v1/_reconcile", "/api/v1/_reconcile", http.StatusNotImplemented, ""},
 	// Live-view subscriptions: an unknown stream id is the handler's own
 	// JSON 404.
 	{http.MethodPut, "/api/v1/_events/{stream}/subscriptions", "/api/v1/_events/nope/subscriptions",

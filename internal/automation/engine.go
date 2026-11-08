@@ -383,6 +383,15 @@ func (e *Engine) Process(ctx context.Context, event Event) *Result {
 
 // matches checks if a trigger matches an event.
 func (e *Engine) matches(ctx context.Context, trigger Trigger, event Event, res *Result) bool {
+	// A rela-managed record (a flow run, its `_carries` edge) is written by
+	// the flow engine only; no operator automation fires on it, not even a
+	// type-less one (TKT-BC5G8RP). The schema refuses an automation that
+	// names one, so only the type-less case reaches here.
+	if (event.Entity != nil && entity.IsManagedName(event.Entity.Type)) ||
+		(event.Relation != nil && entity.IsManagedName(event.Relation.Type)) {
+
+		return false
+	}
 	// Check entity type constraint
 	if len(trigger.Entity) > 0 && event.Entity != nil {
 		matched := slices.Contains(trigger.Entity, event.Entity.Type)

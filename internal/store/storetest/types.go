@@ -7,6 +7,7 @@ import "slices"
 // factory. A harness test that writes a new type adds it here, or that
 // backend's conformance run fails with an unknown-type error.
 var entityTypes = []string{
+	"_flow-run",
 	"atype",
 	"btype",
 	"client",
@@ -39,6 +40,7 @@ var entityTypes = []string{
 	"test",
 	"ticket",
 	"user",
+	"vault",
 }
 
 // EntityTypes returns every entity type the harness writes, sorted. The

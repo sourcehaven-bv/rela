@@ -1,6 +1,12 @@
 {
   "version": 1,
   "findings": {
+    "concepts.missing_operation-d60f02f07da6": {
+      "state": "accepted",
+      "reason": "By design: one reader per backend for the same store contract (Go walk, PostgreSQL SQL, SQLite SQL). The shared plan and aggregation already live in store (PlanElementRange, RangeSumFromAggregates); a single store operation cannot run backend SQL.",
+      "at": "2026-11-07T12:30:00Z",
+      "title": "3 components (elementnaive, pgstore, sqlitestore) each write their own fingerprint for ElementRange and ElementScope, a type of store."
+    },
     "structure.tangle-b1bf2e78506f": {
       "state": "accepted",
       "reason": "Debt: SPA folders form one cycle around composables.",
@@ -715,6 +721,12 @@
       "reason": "Debt: wide types capped by plimsoll; decomposition tracked in TKT-N0IKN9.",
       "at": "2026-10-28T13:29:06Z",
       "title": "internal/dataentry.App has 74 fields."
+    },
+    "types.fields-93c72f356ae4": {
+      "state": "accepted",
+      "reason": "Design: the unexported flowRuns flag is the only proof that WithFlowRuns added the managed declarations, so an operator schema cannot claim their reserved-name exemption (TKT-BC5G8RP). Exported fields stay under the plimsoll cap.",
+      "at": "2026-11-07T20:10:00Z",
+      "title": "internal/metamodel.Metamodel has 25 fields."
     },
     "concepts.string_enum-1ced6edc6664": {
       "state": "accepted",
@@ -2606,6 +2618,12 @@
       "reason": "Design: flows.yaml states mirror channel session states on purpose; both compile onto the shared internal/flow engine, TKT-XHANLJU",
       "at": "2026-11-06T09:00:00Z",
       "title": "State (flowcfg) and SessionState (realtimecfg) share most of their fields."
+    },
+    "concepts.raw_ids-50f5e6d3f5f9": {
+      "state": "accepted",
+      "reason": "Design: a subject id is an entity id, a plain string everywhere in rela (entity.Ref.ID); a run-store-only type would not match its callers, TKT-PV9R0GK",
+      "at": "2026-11-07T08:20:00Z",
+      "title": "flowrun holds raw ids whose concept is unclear: SubjectID."
     }
   },
   "labels": {},
@@ -2615,58 +2633,19 @@
       "weight.structure": 90,
       "weight.layers": 0,
       "weight.vocabulary": 912,
-      "weight.types": 3955,
-      "weight.concepts": 7052,
+      "weight.types": 4008,
+      "weight.concepts": 7082,
       "weight.boundaries": 1387,
       "weight.data": 1297,
       "weight.security": 140,
       "largest_tangle": 13,
       "cycle_edges": 61,
       "upward_edges": 0,
-      "propagation_cost": 9.5
+      "propagation_cost": 8.9
     },
     "min_weight": 0,
-    "at": "2026-11-07T06:37:19Z",
+    "at": "2026-11-07T20:02:09Z",
     "log": [
-      {
-        "at": "2026-10-28T13:29:24Z",
-        "change": "start",
-        "reason": null,
-        "metrics": {}
-      },
-      {
-        "at": "2026-10-28T14:49:20Z",
-        "change": "loosen",
-        "reason": "InboxSummary wire mirror accepted like the other apiwire DTOs, TKT-9YRRM5",
-        "metrics": {
-          "weight.types": [
-            3780,
-            3810
-          ]
-        }
-      },
-      {
-        "at": "2026-10-29T09:00:00Z",
-        "change": "loosen",
-        "reason": "PostMessageRequest wire mirror accepted like the other apiwire DTOs, TKT-T9G1AE",
-        "metrics": {
-          "weight.types": [
-            3810,
-            3849
-          ]
-        }
-      },
-      {
-        "at": "2026-10-29T15:00:00Z",
-        "change": "loosen",
-        "reason": "ChannelChoicesSchema wire mirror accepted like the other apiwire DTOs, TKT-03FQPD",
-        "metrics": {
-          "weight.types": [
-            3849,
-            3886
-          ]
-        }
-      },
       {
         "at": "2026-10-29T18:00:00Z",
         "change": "loosen",
@@ -2869,6 +2848,84 @@
           "propagation_cost": [
             9.6,
             9.5
+          ]
+        }
+      },
+      {
+        "at": "2026-11-07T12:21:44Z",
+        "change": "loosen",
+        "reason": "TKT-IQU106C: element range readers are one per backend (accepted concepts.missing_operation-d60f02f07da6)",
+        "metrics": {
+          "weight.concepts": [
+            7052,
+            7060
+          ],
+          "propagation_cost": [
+            9.5,
+            9.4
+          ]
+        }
+      },
+      {
+        "at": "2026-11-07T12:50:16Z",
+        "change": "loosen",
+        "reason": "Schema wire World mirrors WorldDef's new label and hidden fields, like the other apiwire DTOs, TKT-H0TFDWU",
+        "metrics": {
+          "weight.types": [
+            3955,
+            3960
+          ]
+        }
+      },
+      {
+        "at": "2026-11-07T13:40:00Z",
+        "change": "loosen",
+        "reason": "flowrun.Query.SubjectID is an entity id, a plain string as everywhere in rela (accepted raw_ids finding, weight 30), TKT-PV9R0GK",
+        "metrics": {
+          "weight.concepts": [
+            7060,
+            7090
+          ]
+        }
+      },
+      {
+        "at": "2026-11-07T15:10:00Z",
+        "change": "loosen",
+        "reason": "TKT-N1KNNZU: visibility.Elements makes visibility depend on reconcile and canonical; the gated element range read belongs next to the other read-side ACL wrappers",
+        "metrics": {
+          "propagation_cost": [
+            9.4,
+            9.5
+          ]
+        }
+      },
+      {
+        "at": "2026-11-07T20:02:09Z",
+        "change": "loosen",
+        "reason": "TKT-BC5G8RP: Metamodel gains the unexported flowRuns flag that proves WithFlowRuns added the managed declarations",
+        "metrics": {
+          "weight.types": [
+            3960,
+            4008
+          ],
+          "weight.concepts": [
+            7090,
+            7081
+          ],
+          "propagation_cost": [
+            9.5,
+            8.9
+          ]
+        }
+      },
+      {
+        "at": "2026-11-07T12:37:24Z",
+        "change": "loosen",
+        "reason": "TKT-J4HMZ2B: untagged appbuild.NewInMemory imports memstore, raising the existing memstore data-clump weight by 1",
+        "metrics": {
+          "weight.concepts": [
+            7081,
+            7082
           ]
         }
       }

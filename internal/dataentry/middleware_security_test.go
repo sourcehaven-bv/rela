@@ -171,6 +171,7 @@ func TestRequireSameOrigin_RejectsCrossOriginOnSensitivePath(t *testing.T) {
 		{"GET SSE", http.MethodGet, "/api/events", "https://evil.example"},
 		{"DELETE relation", http.MethodDelete, "/api/v1/tickets/T-1/relations/affects/T-2", "https://evil.example"},
 		{"Origin: null", http.MethodPost, "/api/v1/tickets/", "null"},
+		{"POST reconcile", http.MethodPost, reconcilePath, "https://evil.example"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

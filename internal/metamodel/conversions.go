@@ -165,6 +165,11 @@ func validateConversionRelations(m *Metamodel, d ConversionDef, fromOK, toOK boo
 	}
 	if fromOK {
 		for relationName, relationDef := range m.Relations {
+			// A schema cannot name a managed relation, so it cannot map
+			// one; the conversion keeps or drops a managed edge itself.
+			if m.isManagedDecl(relationName) {
+				continue
+			}
 			applies := containsTypeOrAny(relationDef.From, d.From) || containsTypeOrAny(relationDef.To, d.From)
 			if applies {
 				if _, mapped := d.Relations[relationName]; !mapped {

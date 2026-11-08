@@ -10,8 +10,18 @@
  * single Tab stop, as the radio group pattern requires. When no option is
  * checked, the first enabled one is the Tab stop, so the group stays
  * reachable.
+ *
+ * ## Options that are links
+ *
+ * Where each choice is a place with its own URL (a world, a face of a
+ * record), give the options `as` and `attrs` and they render as links, as in
+ * `RlViewTabs`. The group is then a set of links, not a radio group: each
+ * link is its own Tab stop, the current one carries `aria-current`, and the
+ * arrow keys do nothing. Arrow-key selection would navigate on every key
+ * press, and only an anchor gives the middle click and the modifier click.
+ * Pass all options as links or none.
  */
-import { computed, ref } from 'vue'
+import { computed, ref, type Component } from 'vue'
 import RlIcon from '../common/RlIcon.vue'
 import type { IconName } from '../common/icons'
 
@@ -25,6 +35,10 @@ export interface SegmentOption {
    * iconOnly it is part of the button's aria-label.
    */
   srHint?: string
+  /** What the option renders as; a link for a choice with its own URL. */
+  as?: 'button' | 'a' | Component
+  /** Extra attributes for the rendered element, such as `to` or `href`. */
+  attrs?: Record<string, unknown>
 }
 
 const props = withDefaults(
@@ -42,6 +56,8 @@ const props = withDefaults(
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 
 const root = ref<HTMLElement | null>(null)
+
+const linked = computed(() => props.options.some((o) => o.as && o.as !== 'button'))
 
 /** The option that takes Tab: the checked one, else the first enabled one. */
 const tabStop = computed(() => {
@@ -64,6 +80,46 @@ function move(direction: 1 | -1) {
 
 <template>
   <div
+    v-if="linked"
+    class="rl-segmented"
+    :class="`rl-segmented--${size}`"
+    role="group"
+    :aria-label="label"
+  >
+    <template v-for="option in options" :key="option.value">
+      <span
+        v-if="option.disabled"
+        class="rl-segmented__option rl-segmented__option--link rl-segmented__option--disabled"
+        :class="{ 'rl-segmented__option--active': option.value === modelValue }"
+        :data-value="option.value"
+        role="link"
+        aria-disabled="true"
+        :title="option.label"
+        :aria-current="option.value === modelValue ? 'true' : undefined"
+      >
+        <RlIcon v-if="option.icon" :name="option.icon" :size="size === 'sm' ? 14 : 15" aria-hidden="true" />
+        <span class="rl-segmented__text">{{ option.label }}</span>
+        <span v-if="option.srHint" class="rl-visually-hidden">{{ option.srHint }}</span>
+      </span>
+      <component
+        :is="option.as && option.as !== 'button' ? option.as : 'a'"
+        v-else
+        v-bind="option.attrs"
+        class="rl-segmented__option rl-segmented__option--link"
+        :class="{ 'rl-segmented__option--active': option.value === modelValue }"
+        :data-value="option.value"
+        :title="option.label"
+        :aria-current="option.value === modelValue ? 'true' : undefined"
+        @click="emit('update:modelValue', option.value)"
+      >
+        <RlIcon v-if="option.icon" :name="option.icon" :size="size === 'sm' ? 14 : 15" aria-hidden="true" />
+        <span class="rl-segmented__text">{{ option.label }}</span>
+        <span v-if="option.srHint" class="rl-visually-hidden">{{ option.srHint }}</span>
+      </component>
+    </template>
+  </div>
+  <div
+    v-else
     ref="root"
     class="rl-segmented"
     :class="`rl-segmented--${size}`"
@@ -115,6 +171,7 @@ function move(direction: 1 | -1) {
   font-family: inherit;
   font-weight: var(--rl-font-weight-medium);
   cursor: pointer;
+  text-decoration: none;
   transition: background-color var(--rl-duration-fast) var(--rl-ease), color var(--rl-duration-fast) var(--rl-ease);
 }
 
@@ -129,7 +186,7 @@ function move(direction: 1 | -1) {
   font-size: var(--rl-font-size-sm);
 }
 
-.rl-segmented__option:hover:not(:disabled):not(.rl-segmented__option--active) {
+.rl-segmented__option:hover:not(:disabled):not(.rl-segmented__option--disabled):not(.rl-segmented__option--active) {
   color: var(--rl-color-text);
 }
 
@@ -146,7 +203,20 @@ function move(direction: 1 | -1) {
   box-shadow: var(--rl-shadow-sm);
 }
 
-.rl-segmented__option:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Link mode: labels are operator text of any length, so they stay on one
+   line and truncate. */
+.rl-segmented__option--link {
+  min-width: 0;
+}
+.rl-segmented__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rl-segmented__option:disabled,
+.rl-segmented__option--disabled { opacity: 0.5; cursor: not-allowed; }
 
 .rl-segmented__option:focus-visible {
   outline: var(--rl-focus-ring-width) solid var(--rl-color-focus);

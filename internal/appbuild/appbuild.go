@@ -306,7 +306,9 @@ type Services struct {
 	assemblyCloseOnce sync.Once
 }
 
-// FS returns the project filesystem.
+// FS returns the filesystem that runtime state is written through. It is
+// the project filesystem on most builds; [NewInMemory] sets it to a MemFS
+// while operator config is still read from disk.
 func (s *Services) FS() storage.FS { return s.fs }
 
 // Paths returns the project context (root, metamodel path, etc.).
@@ -1387,11 +1389,13 @@ func collaboratorRefHolders(
 // fieldReadPolicy is the field-level read policy as appbuild hands it out:
 // per-entity redaction for the readers, and its search form for the gated
 // searcher. Both answer from the same `visible:` grants, so one value serves
-// both and they cannot drift. [visibility.PolicyRedactor] and
+// both and they cannot drift. It is also the field half of the element
+// range read ([visibility.ElementPolicy]). [visibility.PolicyRedactor] and
 // [visibility.NopRedactor] implement it.
 type fieldReadPolicy interface {
 	visibility.FieldRedactor
 	visibility.FieldScoper
+	RelationMetaGated(relType string) bool
 }
 
 // buildFieldPolicy constructs the field-level `visible:` policy shared by
@@ -2564,7 +2568,7 @@ func startBackgroundServices(
 		envDuration("RELA_SOFT_DELETE_GC_INTERVAL", defaultSoftDeleteGCInterval))
 
 	gcStop, reevaluateGate := startDataMigration(
-		stateKV, migState, base.meta, st, cfg.Audit, versions, commentSvc, cfg.Paths.CacheDir,
+		stateKV, migState, base.meta, st, cfg.Audit, versions, commentSvc, migrationLockDir(cfg),
 		hasMigrationsVia(cfgLoader),
 	)
 
@@ -2592,6 +2596,17 @@ func (b backgroundServices) stop() {
 	b.mailStop()
 	b.gcStop()
 	b.softDeleteStop()
+}
+
+// migrationLockDir is the directory the data-migration lock file goes in, or
+// "" for a process-local lock. The lock file is written with os calls, not
+// through cfg.FS, so an in-memory FS must not get one: [NewInMemory] promises
+// no disk writes, and no other process can open its store anyway.
+func migrationLockDir(cfg Config) string {
+	if inMemoryFS(cfg.FS) {
+		return ""
+	}
+	return cfg.Paths.CacheDir
 }
 
 // resolveACLAndFieldPolicy resolves the ACL and derives the field policy that

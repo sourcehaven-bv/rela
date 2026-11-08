@@ -3,6 +3,7 @@ package storetest
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -54,6 +55,110 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-1", "TKT-3"}, got)
+	})
+
+	// GraphBranch.HasOutbound gates a flow run by the subject it carries
+	// (TKT-BC5G8RP): each branch is one subject type with its row gate in
+	// the endpoint, OR-ed. A branch with both halves needs both.
+	t.Run("Any_HasOutbound_branches", func(t *testing.T) {
+		s := f(t)
+		seedEntityWithProps(t, s, "ticket", "TKT-1", map[string]any{"status": "open"})
+		seedEntityWithProps(t, s, "ticket", "TKT-2", map[string]any{"status": "closed"})
+		seedGraphQueryEntities(t, s, "feature", "FEAT-1")
+		seedGraphQueryEntities(t, s, "person", "alice")
+		seedGraphQueryEntities(t, s, entity.FlowRunType, "RUN-1", "RUN-2", "RUN-3", "RUN-4")
+		mustRel(t, s, "RUN-1", entity.CarriesRelation, "TKT-1")
+		mustRel(t, s, "RUN-2", entity.CarriesRelation, "FEAT-1")
+		mustRel(t, s, "RUN-3", entity.CarriesRelation, "TKT-2")
+		mustRel(t, s, "alice", "owns", "RUN-3")
+
+		carries := func(typ string, props ...store.PropPredicate) *store.RelationPredicate {
+			return &store.RelationPredicate{
+				OfTypes:       []string{entity.CarriesRelation},
+				EndpointMatch: &store.EndpointPredicate{EntityType: typ, Props: props},
+			}
+		}
+		open := store.PropPredicate{Property: "status", Op: store.PropEqual, Value: "open"}
+
+		either := store.GraphQuery{
+			EntityType: entity.FlowRunType,
+			Any: []store.GraphBranch{
+				{HasOutbound: carries("ticket", open)},
+				{HasOutbound: carries("feature")},
+			},
+			Faces: store.InWorld(store.TrivialScope()),
+		}
+		got := runGraphQuery(t, s, either)
+		require.Equal(t, []string{"RUN-1", "RUN-2"}, got)
+
+		// The row gate's per-id check and the count read the same branches.
+		perID := either
+		perID.Faces = store.AllFaces()
+		faces, err := s.MatchingFaces(context.Background(), perID, []string{"RUN-1", "RUN-3", "RUN-4"})
+		require.NoError(t, err)
+		require.Equal(t, []string{"RUN-1"}, slices.Sorted(maps.Keys(faces)))
+		matched, _, err := s.GraphCount(context.Background(), either)
+		require.NoError(t, err)
+		require.Equal(t, 2, matched)
+
+		got = runGraphQuery(t, s, store.GraphQuery{
+			EntityType: entity.FlowRunType,
+			Any: []store.GraphBranch{{
+				HasInbound:  &store.RelationPredicate{Endpoints: []string{"alice"}, OfTypes: []string{"owns"}},
+				HasOutbound: carries("ticket"),
+			}},
+			Faces: store.InWorld(store.TrivialScope()),
+		})
+		require.Equal(t, []string{"RUN-3"}, got)
+	})
+
+	// The shape a role relation produces: the subject's row gate is an
+	// inbound edge from the reader, nested in the `_carries` endpoint
+	// (alice reads TKT-1 because she owns it, so she reads RUN-1).
+	t.Run("HasOutbound_endpoint_with_nested_HasInbound", func(t *testing.T) {
+		s := f(t)
+		seedGraphQueryEntities(t, s, "ticket", "TKT-1", "TKT-2")
+		seedGraphQueryEntities(t, s, "feature", "FEAT-1")
+		seedGraphQueryEntities(t, s, "person", "alice")
+		seedGraphQueryEntities(t, s, entity.FlowRunType, "RUN-1", "RUN-2", "RUN-3")
+		mustRel(t, s, "alice", "owns", "TKT-1")
+		mustRel(t, s, "RUN-1", entity.CarriesRelation, "TKT-1")
+		mustRel(t, s, "RUN-2", entity.CarriesRelation, "TKT-2")
+		mustRel(t, s, "RUN-3", entity.CarriesRelation, "FEAT-1")
+
+		owned := &store.RelationPredicate{
+			OfTypes: []string{entity.CarriesRelation},
+			EndpointMatch: &store.EndpointPredicate{
+				EntityType: "ticket",
+				HasInbound: &store.RelationPredicate{Endpoints: []string{"alice"}, OfTypes: []string{"owns"}},
+			},
+		}
+		single := store.GraphQuery{
+			EntityType: entity.FlowRunType, HasOutbound: owned, Faces: store.InWorld(store.TrivialScope()),
+		}
+		require.Equal(t, []string{"RUN-1"}, runGraphQuery(t, s, single))
+
+		either := store.GraphQuery{
+			EntityType: entity.FlowRunType,
+			Any: []store.GraphBranch{
+				{HasOutbound: owned},
+				{HasOutbound: &store.RelationPredicate{
+					OfTypes:       []string{entity.CarriesRelation},
+					EndpointMatch: &store.EndpointPredicate{EntityType: "feature"},
+				}},
+			},
+			Faces: store.InWorld(store.TrivialScope()),
+		}
+		require.Equal(t, []string{"RUN-1", "RUN-3"}, runGraphQuery(t, s, either))
+
+		perID := either
+		perID.Faces = store.AllFaces()
+		faces, err := s.MatchingFaces(context.Background(), perID, []string{"RUN-1", "RUN-2", "RUN-3"})
+		require.NoError(t, err)
+		require.Equal(t, []string{"RUN-1", "RUN-3"}, slices.Sorted(maps.Keys(faces)))
+		matched, _, err := s.GraphCount(context.Background(), either)
+		require.NoError(t, err)
+		require.Equal(t, 2, matched)
 	})
 
 	t.Run("Props_equality", func(t *testing.T) {

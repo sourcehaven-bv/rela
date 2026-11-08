@@ -1,0 +1,35 @@
+request: POST /api/v1/_reconcile
+identity: header viewer@example.test
+status: 200
+reads: GraphQueryHeaders=1 ListEntities=4 ListRelations=3 MatchingFaces=6
+breadth: ListEntities=6/4 ListRelations=6/3 MatchingFaces=24/6
+bodies: GraphQuery=0/1 ListEntities=12/4
+versions: 
+body:
+{
+  "ranges": [
+    {
+      "status": "ok",
+      "count": 3,
+      "fingerprint": "52115a84c934327c27fa93c4efc67b4e"
+    },
+    {
+      "status": "ok",
+      "elements": [
+        {
+          "address": "ticket/TKT-1",
+          "hash": "0d6ff49fc9e306b7a4614a6d0e7b345e2bbf72baa786d8020892c389fa2fd923"
+        },
+        {
+          "address": "ticket/TKT-2",
+          "hash": "a379c722324ee9660c496c9c2d62e4a46577f34fbdb8fdf4a112282b52bf5a6a"
+        },
+        {
+          "address": "ticket/TKT-3",
+          "hash": "d819d120601cfcd6436369ebd52f020566414cd49049561cc5f2dd8dd841922c"
+        }
+      ],
+      "last": "ticket/TKT-3"
+    }
+  ]
+}

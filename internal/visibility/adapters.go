@@ -121,6 +121,12 @@ func (p PolicyRedactor) SearchFieldScope(ctx context.Context, entityType string)
 	return p.r.SearchFieldScope(ctx, entityType)
 }
 
+// RelationMetaGated implements [ElementPolicy]: whether the policy declares
+// meta `visible:` grants for relType anywhere.
+func (p PolicyRedactor) RelationMetaGated(relType string) bool {
+	return affordances.RelationMetaGated(p.r, relType)
+}
+
 // NopGate is the permit-all [RowGate] for wirings without an ACL policy —
 // the byte-parity path (behavior identical to pre-ACL reads).
 type NopGate struct{}
@@ -146,6 +152,9 @@ func (NopRedactor) HiddenProperties(context.Context, *entity.Entity) map[string]
 func (NopRedactor) SearchFieldScope(context.Context, string) (*search.FieldScope, error) {
 	return nil, nil //nolint:nilnil // nil scope is the documented "nothing hidden"
 }
+
+// RelationMetaGated implements [ElementPolicy]: no meta is ever hidden.
+func (NopRedactor) RelationMetaGated(string) bool { return false }
 
 // PermissionHolder is the optional part of a [RowGate] that answers global
 // named permissions for the ctx principal. [DeclarativeGate] and [NopGate]

@@ -210,6 +210,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	})
 	mux.HandleFunc(leasesPath, a.leases.handleV1Leases)
 	mux.HandleFunc(batchPath, a.batch.handleV1Batch)
+	mux.HandleFunc(reconcilePath, a.reconcile.handleV1Reconcile)
 	mux.HandleFunc(leasesPath+"/", a.leases.handleV1Leases)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
 	mux.HandleFunc("/api/v1/_views/", a.views.handleV1Views)
@@ -2120,6 +2121,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 			Language:          s.Cfg.App.Language,
 			PlantUMLServerURL: s.Cfg.App.PlantUMLServerURL,
 			DefaultWorld:      declaredDefaultWorld(s.Meta),
+			WorldSwitcher:     worldSwitcherWire(s.Cfg.App.WorldSwitcher),
 			// The same nil check the history handler gates on, so the
 			// affordance and the endpoint cannot disagree.
 			HistoryEnabled: a.versions != nil,
@@ -3458,4 +3460,13 @@ func entityTypeForPlural(meta *metamodel.Metamodel, plural string) string {
 		}
 	}
 	return ""
+}
+
+// worldSwitcherWire resolves an unset app.world_switcher to its default, so
+// the SPA carries no default of its own.
+func worldSwitcherWire(v string) string {
+	if v == "" {
+		return dataentryconfig.WorldSwitcherHeader
+	}
+	return v
 }

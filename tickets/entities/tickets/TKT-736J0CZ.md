@@ -5,7 +5,9 @@ title: 'neoq: stop the cron goroutine on queue shutdown before tenant eviction'
 kind: chore
 priority: medium
 effort: s
-status: backlog
+started: "2026-11-07"
+completed: "2026-11-07"
+status: done
 ---
 
 ## Description

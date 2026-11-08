@@ -22,6 +22,19 @@
 //   - A relation is an element only when both of its endpoints are readable
 //     and in scope.
 //
+// The store's element range readers apply all three (store.ElementScope,
+// TKT-IQU106C). A row they cannot fold from its stored hash is counted as
+// pending and left for the redacted path, visibility.Elements (TKT-N1KNNZU),
+// which is the one caller that serves elements to a reader. Nothing else
+// should sum elements.
+//
+// The view covers stored properties and the body. Computed roll-up
+// properties are not part of it: they are derived on read from other rows,
+// which reconcile as elements of their own. A value stored under a roll-up
+// name is left out of the view too, so no reader is served it. The ETag
+// still hashes such a value, so for a row that holds one the view hash and
+// the ETag differ; a row written through the entity manager never does.
+//
 // # Order
 //
 // Elements are ordered by (Kind, Address), with addresses compared bytewise
@@ -45,13 +58,16 @@
 // of authorization.
 //
 // For a reader with hidden fields the view hash is computed from the
-// redacted row, which needs the row's body. That cost is the redacted path's
-// (step 4 of FEAT-CMVZQFI), not this package's.
+// redacted row, which needs the row's body. visibility.Elements loads those
+// rows a page at a time, with the body, and bounds the page by a row cap.
+// The view hash keeps the canonical encoding, so it equals the ETag and the
+// stored content hash of an unredacted row (RR-3HN68CI).
 package reconcile
 
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"math/bits"
 
@@ -153,6 +169,50 @@ func (e Element) Fingerprint() Fingerprint {
 // the high 64 bits. The zero value is the fingerprint of the empty set.
 type Fingerprint struct {
 	Hi, Lo uint64
+}
+
+// fingerprintHexLen is the length of [Fingerprint.String]: 128 bits in hex.
+const fingerprintHexLen = 32
+
+// String returns f as 32 lower-case hex digits, the high bits first. It is
+// the form a fingerprint takes on the wire (RR-MDMA4S5).
+func (f Fingerprint) String() string {
+	var b [16]byte
+	binary.BigEndian.PutUint64(b[0:8], f.Hi)
+	binary.BigEndian.PutUint64(b[8:16], f.Lo)
+	return hex.EncodeToString(b[:])
+}
+
+// ParseFingerprint returns the fingerprint whose [Fingerprint.String] form
+// is s. Only that form is accepted: 32 lower-case hex digits.
+func ParseFingerprint(s string) (Fingerprint, error) {
+	if len(s) != fingerprintHexLen {
+		return Fingerprint{}, fmt.Errorf("reconcile: fingerprint has %d characters, want %d", len(s), fingerprintHexLen)
+	}
+	for i := range len(s) {
+		if c := s[i]; (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return Fingerprint{}, fmt.Errorf("reconcile: fingerprint has a character outside 0-9a-f at %d", i)
+		}
+	}
+	var b [16]byte
+	if _, err := hex.Decode(b[:], []byte(s)); err != nil { // coverage-ignore: the loop above admits only hex
+		return Fingerprint{}, fmt.Errorf("reconcile: %w", err)
+	}
+	return Fingerprint{Hi: binary.BigEndian.Uint64(b[0:8]), Lo: binary.BigEndian.Uint64(b[8:16])}, nil
+}
+
+// MarshalText returns the [Fingerprint.String] form, so a fingerprint
+// encodes as a JSON string.
+func (f Fingerprint) MarshalText() ([]byte, error) { return []byte(f.String()), nil }
+
+// UnmarshalText parses the [Fingerprint.String] form with [ParseFingerprint].
+func (f *Fingerprint) UnmarshalText(b []byte) error {
+	v, err := ParseFingerprint(string(b))
+	if err != nil {
+		return err
+	}
+	*f = v
+	return nil
 }
 
 // Add returns f + g modulo 2^128.

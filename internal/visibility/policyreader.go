@@ -200,7 +200,10 @@ func (r *PolicyReader) permittedFaces(ctx context.Context, byType map[string][]s
 // is the spot that must learn about it, or the seam silently leaks
 // bodies (RR-J6022V). [Resolver.MentionedBy] must learn about it too: the
 // mention index is derived from bodies, so a source whose body is hidden
-// would still be listed as mentioning its target.
+// would still be listed as mentioning its target. The element range read
+// (store.ElementScope) must learn about it as well: it folds a row's stored
+// hash, which covers the body, whenever no hidden property holds a value.
+// So must [Elements], which hashes the body of every row it completes.
 func (r *PolicyReader) redacted(ctx context.Context, e *entity.Entity) *entity.Entity {
 	return Redact(ctx, r.redact, e)
 }

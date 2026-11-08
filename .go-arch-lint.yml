@@ -21,6 +21,7 @@ exclude:
   - internal/piles/pilestest
   - internal/lease/leasetest
   - internal/channels/channelstest
+  - internal/flowrun/flowruntest
   - internal/schedulerstate/schedulerstatetest
   - frontend
   - e2e
@@ -151,6 +152,18 @@ components:
   # flows.yaml loader (TKT-XHANLJU): declared processes compiled onto the
   # engine, checked against the schema and acl.yaml.
   flowcfg:          { in: internal/flowcfg }
+  # The flow run store (TKT-PV9R0GK): execution state of each run, keyed
+  # by run id, on the KV (fs, memory, desktop), pg and sqlite.
+  flowrun:          { in: internal/flowrun }
+  kvflowrun:        { in: internal/flowrun/kvflowrun }
+  sqlflowrun:       { in: internal/flowrun/sqlflowrun }
+  pgflowrun:        { in: internal/flowrun/pgflowrun }
+  sqliteflowrun:    { in: internal/flowrun/sqliteflowrun }
+  # The statement interface the shared SQL backends are written against,
+  # and its pgx and database/sql adapters.
+  sqlexec:          { in: internal/sqlexec }
+  pgexec:           { in: internal/sqlexec/pgexec }
+  sqliteexec:       { in: internal/sqlexec/sqliteexec }
   # Runes that make text show something other than what it holds.
   texthazard:       { in: internal/texthazard }
   # The YAML 1.1 boolean spellings a config key refuses unquoted.
@@ -231,6 +244,7 @@ components:
   fsstore:          { in: internal/store/fsstore }
   memstore:         { in: internal/store/memstore }
   graphquerynaive:  { in: internal/store/graphquerynaive }
+  elementnaive:     { in: internal/store/elementnaive }
   pgstore:          { in: internal/store/pgstore }
   sqlitestore:      { in: internal/store/sqlitestore }
   # Owns the SQLite database FILE — opening, PRAGMAs, the single-writer lock,
@@ -730,6 +744,9 @@ deps:
       - webdav
       - goical
       - ygo
+      # The per-principal token bucket that admits reconcile requests
+      # (TKT-VP02WHG).
+      - xtimerate
   ygows:
     mayDependOn:
       - ygowsinternal
@@ -857,6 +874,9 @@ deps:
   # any tag, so both backends' deps must be allow-listed here.
   appbuild:
     mayDependOn:
+      # The reference element range reader, for stores without element
+      # columns, handed to visibility.NewElements (TKT-VP02WHG).
+      - elementnaive
       # writerule: CheckSchemaCompiles compiles the rules enforced on write.
       - writerule
       # aclstore: the store adapters handed to acl.NewDeclarative.
@@ -1284,8 +1304,12 @@ deps:
     mayDependOn:
       - acl
       - affordances
+      # visibility.Elements hashes the reader's view of a row (the ETag's
+      # canonical digest) into a reconciliation element (FEAT-CMVZQFI).
+      - canonical
       - entity
       - principal
+      - reconcile
       # visibility.Rollups computes roll-up columns under the reader's gate.
       - rollup
       # visibility.Searcher gates search hits for identity-bearing consumers
@@ -1801,16 +1825,55 @@ deps:
     mayDependOn:
       - channels
       - entity
+      - sqlexec
   # The adapters supply the handle and the dialect. sqlitechannels imports no
   # driver either: the sqlite recipe hands it the open *sql.DB.
   sqlitechannels:
     mayDependOn:
       - sqlchannels
+      - sqliteexec
   pgchannels:
     mayDependOn:
       - sqlchannels
+      - pgexec
+  # The run store's domain package: value types, limits, checks and the
+  # Store contract. It knows no backend and no graph store. It authorizes
+  # nothing, so only the flow runtime and the composition root may depend
+  # on it; dataentry, mcp, cli and openapi read runs through the
+  # _flow-run entity's row gate (TKT-BC5G8RP), never from the store.
+  flowrun:
+    mayDependOn:
+      - flow
+  # The KV backend for fs, memory and desktop, behind a cross-process lock.
+  kvflowrun:
+    mayDependOn:
+      - flow
+      - flowrun
+      - state
+  # The SQL implementation shared by pg and sqlite, like sqlchannels.
+  sqlflowrun:
+    mayDependOn:
+      - flow
+      - flowrun
+      - sqlexec
+  sqliteflowrun:
+    mayDependOn:
+      - sqlflowrun
+      - sqliteexec
+  pgflowrun:
+    mayDependOn:
+      - sqlflowrun
+      - pgexec
+  # Takes an injected pgx handle; the composition root owns the pool.
+  pgexec:
+    mayDependOn:
+      - sqlexec
     canUse:
       - pgx
+  # Imports no driver: the sqlite recipe hands it the open *sql.DB.
+  sqliteexec:
+    mayDependOn:
+      - sqlexec
   memcomments:
     mayDependOn:
       - comments
@@ -2018,6 +2081,14 @@ deps:
       - entity
       - propmatch
       - store
+  # The reference element range reader (TKT-IQU106C): memstore's and
+  # fsstore's, and what the SQL backends are compared with.
+  elementnaive:
+    mayDependOn:
+      - entity
+      - graphquerynaive
+      - reconcile
+      - store
   pgstore:
     mayDependOn:
       - mentions
@@ -2031,6 +2102,9 @@ deps:
       # match.
       - reconcile
       - graphquerynaive
+      # The element range read (TKT-IQU106C) plans through elementnaive.Plan,
+      # so every backend refuses the same requests.
+      - elementnaive
       - search
       - store
       - storeutil
@@ -2045,6 +2119,10 @@ deps:
       # have to justify widening this list.
       - entity
       - graphquerynaive
+      # The element range read (TKT-IQU106C) falls back to the reference for
+      # a name the SQL builder cannot render, as graph queries fall back to
+      # graphquerynaive.
+      - elementnaive
       # The FTS5 search backend (DEC-10Z731) implements search.Backend, as
       # pgstore's in-database search does.
       - search

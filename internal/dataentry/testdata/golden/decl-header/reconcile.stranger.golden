@@ -1,0 +1,20 @@
+request: POST /api/v1/_reconcile
+identity: header stranger@example.test
+status: 200
+reads: GraphQueryHeaders=1 ListEntities=2 ListRelations=1 MatchingFaces=2
+breadth: ListEntities=0/2 ListRelations=0/1 MatchingFaces=12/2
+bodies: GraphQuery=0/1 ListEntities=8/2
+versions: 
+body:
+{
+  "ranges": [
+    {
+      "status": "ok",
+      "count": 0,
+      "fingerprint": "00000000000000000000000000000000"
+    },
+    {
+      "status": "ok"
+    }
+  ]
+}

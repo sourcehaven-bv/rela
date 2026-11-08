@@ -334,6 +334,12 @@ func (imp *Importer) validateEntityData(ed *EntityData) error {
 	// Resolve type alias
 	ed.Type = imp.meta.ResolveAlias(ed.Type)
 
+	// Only the flow engine writes a rela-managed type (TKT-BC5G8RP); the
+	// importer writes the store directly and would bypass that rule.
+	if entity.IsManagedName(ed.Type) {
+		return fmt.Errorf("entity type %s is managed by rela and cannot be imported", ed.Type)
+	}
+
 	// Check type exists
 	entityDef, ok := imp.meta.GetEntityDef(ed.Type)
 	if !ok {
@@ -386,6 +392,9 @@ func (imp *Importer) validateRelationData(rd *RelationData, known knownEntities)
 	}
 	if rd.To == "" {
 		return errors.New("missing required field: to")
+	}
+	if entity.IsManagedName(rd.Relation) {
+		return fmt.Errorf("relation type %s is managed by rela and cannot be imported", rd.Relation)
 	}
 
 	// `from` may name the tail of a content-scoped edge: `ID@face`.

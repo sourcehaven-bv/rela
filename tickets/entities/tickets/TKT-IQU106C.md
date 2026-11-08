@@ -5,7 +5,9 @@ title: Store capability for range fingerprints
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+started: "2026-11-07"
+completed: "2026-11-07"
+status: done
 ---
 
 ## Description

@@ -2034,6 +2034,8 @@ worlds:
 | `messages` | Optional. The web app's wording for what this world changes on a screen: `absent` (a detail page for an entity with no face here; placeholders `{face}`, `{world}`, `{title}`), `projection` (a list or board note on a faced type; `{world}` only, since a list has no single entity), `stand_in` (the badge on a row served a stand-in; `{face}`, `{world}`). A placeholder a surface cannot fill is left as written. The app has no default sentence; an undeclared entry shows nothing. |
 | `on_absent` | Optional. `redirect: <world>` sends a reader who opens an entity with no face in this world to that declared world instead of showing the page. |
 | `primary_for` | Optional. The faces this world is the canonical home of. Needed only when two worlds lead with the same face for a type. See below. |
+| `label` | Optional. The world's name as the web app shows it: in the world switcher and for `{world}` in `messages`. The key stays the address (`?world=`). Absent or blank shows the key. |
+| `hidden` | Optional, `true` or `false`. A hidden world is left out of the web app's world switcher, but `?world=` and the API still select it. Use it for a world that feeds another system rather than one a reader picks. It is presentation only, not a read boundary. The default world cannot be hidden: the load fails, because a URL without `?world=` lands there. |
 | `edits` | Accepted and validated as a declared face name. Not used yet. |
 
 A world resolves each entity to **at most one** face, using three rules in
@@ -2084,6 +2086,7 @@ a world:
 - names a face in `edits:` or `primary_for:` that it does not qualify for;
 - sets `on_absent.redirect` to a world that is not declared, or to a chain
   of redirects that returns to a world it has visited (itself included);
+- sets `hidden: true` while it is the default world;
 - is called `default` in any capitalization, or has a name outside the face
   grammar.
 

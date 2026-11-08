@@ -9,6 +9,8 @@ var unselectedQueryAllowlist = map[string]allowed{}
 // unselectedGraphQueryAllowlist pins the GraphQuery literals that set no
 // Faces (see unselectedGraphQueries). It may only shrink.
 var unselectedGraphQueryAllowlist = map[string]allowed{
+	"internal/acl/managed.go": {1, "the flow run read query is an ACL read query template, like " +
+		"readquery.go's; each executor stamps a selection onto a copy"},
 	"internal/acl/readquery.go": {1, "the ACL read query is a template; each executor stamps a " +
 		"selection onto a copy"},
 	"internal/appbuild/queryscopes.go": {5, "a lowered scope is a fragment (four are \"no query\" " +

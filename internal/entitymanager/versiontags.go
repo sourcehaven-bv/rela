@@ -272,7 +272,7 @@ func (v *VersionTags) record(ctx context.Context, op string, e *entity.Entity, s
 	if !e.Face.IsImplicit() {
 		summary += fmt.Sprintf(" face=%q", e.Face)
 	}
-	v.m.deps.Audit.Record(audit.Record{
+	v.m.deps.Audit.Record(audit.Stamp(ctx, audit.Record{
 		Time:        time.Now().UTC(),
 		Op:          op,
 		Subject:     &audit.Subject{Kind: "entity", Type: e.Type, ID: e.ID},
@@ -280,5 +280,5 @@ func (v *VersionTags) record(ctx context.Context, op string, e *entity.Entity, s
 		TriggeredBy: audit.TriggeredByFrom(ctx),
 		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     summary,
-	})
+	}))
 }

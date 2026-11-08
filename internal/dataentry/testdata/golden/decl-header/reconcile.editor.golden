@@ -1,0 +1,47 @@
+request: POST /api/v1/_reconcile
+identity: header editor@example.test
+status: 200
+reads: GraphQueryHeaders=1 ListEntities=2 ListRelations=1
+breadth: ListEntities=0/2 ListRelations=0/1
+bodies: GraphQuery=0/1 ListEntities=8/2
+versions: 
+body:
+{
+  "ranges": [
+    {
+      "status": "ok",
+      "count": 6,
+      "fingerprint": "6e45f5027e2d417afd14f8c2cbc5241c"
+    },
+    {
+      "status": "ok",
+      "elements": [
+        {
+          "address": "ticket/TKT-1",
+          "hash": "53a4f79876526a7b1b2df28973be375c7866320fb3e1d0baf6e06150a9ef0397"
+        },
+        {
+          "address": "ticket/TKT-2",
+          "hash": "3933dfbcfc69167abd49d12526bfed6afc3150d4252381da4588f6682dd98050"
+        },
+        {
+          "address": "ticket/TKT-3",
+          "hash": "940f7ea21e333571bd8926a10b53ecadd947a8e9a97bd9918bb6416c81fe4d53"
+        },
+        {
+          "address": "ticket/TKT-4",
+          "hash": "1f11bfdbce705790f175d7429d63305eeb133c116d1cd6e85342b6759fcae517"
+        },
+        {
+          "address": "ticket/TKT-5",
+          "hash": "ee10a99da3f991a1619b7e177da8c9023c16ac1f1eae7177bf7bb713be3a5baf"
+        },
+        {
+          "address": "ticket/TKT-6",
+          "hash": "4a7acab54f02de870292eb1cf8d426df7eabfc94f5d8d16e3e29d69f1f172bec"
+        }
+      ],
+      "last": "ticket/TKT-6"
+    }
+  ]
+}

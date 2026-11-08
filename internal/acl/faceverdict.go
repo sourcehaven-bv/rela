@@ -111,7 +111,7 @@ func (vs FaceVerdicts) For(id string) FaceVerdict {
 //
 //archplan:guard=authz reason="row gate for a batch of ids, per face"
 func (r *Request) ReadableFacesMany(ctx context.Context, entityType string, ids []string) (FaceVerdicts, error) {
-	return r.readableFacesMany(ctx, r.readQuery(entityType), ids)
+	return r.readableFacesMany(ctx, r.readQuery(ctx, entityType), ids)
 }
 
 // readableFacesMany is [Request.ReadableFacesMany] for a composed scope.

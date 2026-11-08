@@ -23,7 +23,7 @@ func (m *Manager) recordEntityAudit(ctx context.Context, op string, e *entity.En
 		// entity; unreachable via any write op
 		return
 	}
-	m.deps.Audit.Record(audit.Record{
+	m.deps.Audit.Record(audit.Stamp(ctx, audit.Record{
 		Time: time.Now().UTC(),
 		Op:   op,
 		Subject: &audit.Subject{
@@ -35,7 +35,7 @@ func (m *Manager) recordEntityAudit(ctx context.Context, op string, e *entity.En
 		TriggeredBy: audit.TriggeredByFrom(ctx),
 		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     summary,
-	})
+	}))
 }
 
 // recordRelationAudit emits one audit record for a relation create /
@@ -45,7 +45,7 @@ func (m *Manager) recordRelationAudit(ctx context.Context, op string, rel *entit
 		// any write op
 		return
 	}
-	m.deps.Audit.Record(audit.Record{
+	m.deps.Audit.Record(audit.Stamp(ctx, audit.Record{
 		Time: time.Now().UTC(),
 		Op:   op,
 		Subject: &audit.Subject{
@@ -58,7 +58,7 @@ func (m *Manager) recordRelationAudit(ctx context.Context, op string, rel *entit
 		TriggeredBy: audit.TriggeredByFrom(ctx),
 		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     summary,
-	})
+	}))
 }
 
 // recordRenameAudit emits the rename record with Before / After
@@ -83,7 +83,7 @@ func (m *Manager) recordRenameAudit(ctx context.Context, oldID string, after *en
 	if !after.Face.IsImplicit() {
 		summary = "renamed face " + string(after.Face)
 	}
-	m.deps.Audit.Record(audit.Record{
+	m.deps.Audit.Record(audit.Stamp(ctx, audit.Record{
 		Time: time.Now().UTC(),
 		Op:   audit.OpRenameEntity,
 		Before: &audit.Subject{
@@ -100,7 +100,7 @@ func (m *Manager) recordRenameAudit(ctx context.Context, oldID string, after *en
 		TriggeredBy: audit.TriggeredByFrom(ctx),
 		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     summary,
-	})
+	}))
 }
 
 // recordMentionRewriteAudit records that a rename rewrote another entity's
@@ -113,7 +113,7 @@ func recordMentionRewriteAudit(ctx context.Context, m *Manager, oldID, newID str
 	if !rw.Face.IsImplicit() {
 		summary += " in face " + string(rw.Face)
 	}
-	m.deps.Audit.Record(audit.Record{
+	m.deps.Audit.Record(audit.Stamp(ctx, audit.Record{
 		Time:        time.Now().UTC(),
 		Op:          audit.OpUpdateEntity,
 		Subject:     &audit.Subject{Kind: "entity", Type: rw.Type, ID: rw.ID},
@@ -121,7 +121,7 @@ func recordMentionRewriteAudit(ctx context.Context, m *Manager, oldID, newID str
 		TriggeredBy: "rename:" + oldID + "->" + newID,
 		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     summary,
-	})
+	}))
 }
 
 // updateEntitySummary builds an update-entity record's Summary

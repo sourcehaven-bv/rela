@@ -414,6 +414,11 @@ linters:
       - linters:
           - mnd
         path: internal/channels/channelstest/
+      # The flow run conformance kit offsets times and counts runs; the
+      # literals are the expected values the test reads as.
+      - linters:
+          - mnd
+        path: internal/flowrun/flowruntest/
       - linters:
           - lll
         source: ^//|`.*`|".*"

@@ -21,7 +21,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/state"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -151,7 +150,7 @@ func buildIDPRoles(base *SharedBase, st store.Store, stateKV state.KV) (*idprole
 	if _, pg := st.(lock.KeyedLockBackend); pg {
 		return idproles.New(stateKV, lock.For(st))
 	}
-	if _, mem := base.cfg.FS.(*storage.MemFS); mem || base.cfg.Paths == nil {
+	if inMemoryFS(base.cfg.FS) || base.cfg.Paths == nil {
 		return idproles.New(stateKV, lock.NewMemoryLocker())
 	}
 	return idproles.New(stateKV, fileKeyLocker{dir: base.cfg.Paths.CacheDir})

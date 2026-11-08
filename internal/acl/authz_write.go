@@ -99,7 +99,7 @@ func (r *Request) decideFamily(attrs []RoleAttribution, op Op, target string) De
 
 func grantsFamilyConvert(role RoleDef, target string) bool {
 	for _, entry := range role.Convert {
-		if entry == "*" || entry == target {
+		if coversType(entry, target) {
 			return true
 		}
 	}
@@ -111,7 +111,7 @@ func grantsFamilyConvert(role RoleDef, target string) bool {
 // every type. A face-named entry is refused at load and never matches here.
 func grantsFamilyRename(role RoleDef, target string) bool {
 	for _, entry := range role.Rename {
-		if entry == "*" || entry == target {
+		if coversType(entry, target) {
 			return true
 		}
 	}

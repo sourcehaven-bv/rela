@@ -54,7 +54,7 @@ const text = computed(() => {
   const face = w.face ? faces?.[w.face]?.label || w.face : ''
   return worldText(info?.messages?.stand_in, {
     face,
-    world: w.name,
+    world: schemaStore.worldLabel(w.name),
   })
 })
 </script>

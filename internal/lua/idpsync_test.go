@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,57 +19,79 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// TestIdpSyncAction runs the SHIPPED examples/idp-sync.lua end to end against a
-// stubbed operator API, proving the provider-specific glue works with the generic
-// crypto.* + http.* primitives: it signs a Pratique-shaped operator request, and
-// upserts a person keyed on sub (idempotently).
-func TestIdpSyncAction(t *testing.T) {
-	const (
-		orgID  = "org_acme"
-		userID = "usr_founder"
-		email  = "founder@acme.test"
-		hmacK  = "shared-hmac-key"
-	)
+const (
+	idpOrgID = "org_acme"
+	idpHMAC  = "shared-hmac-key"
+)
 
-	// A stub operator API that VERIFIES the incoming Pratique signature the way the
-	// real server does, then returns the member. Verifying here (not just checking
-	// presence) proves the Lua-assembled signature is byte-correct.
-	var sawPath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sawPath = r.URL.Path
+// idpMembersPath is the operator-API route the action reads. Pratique serves
+// GET /api/v1/orgs/{id}/members (the member list) and DELETE on a single
+// member, but no GET on a single member (rela#2117).
+const idpMembersPath = "/api/v1/orgs/" + idpOrgID + "/members"
+
+// pratiqueStub is an operator API that VERIFIES the Pratique HMAC signature the
+// way the real server does and serves only the routes the real server has:
+// GET on the member list answers membersJSON, everything else 405 or 404.
+// Verifying the signature (not only its presence) proves the Lua-assembled
+// signature is byte-correct.
+func pratiqueStub(t *testing.T, status int, membersJSON string) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET "+idpMembersPath, func(w http.ResponseWriter, r *http.Request) {
 		date := r.Header.Get("X-Pratique-Date")
 		sig := r.Header.Get("X-Pratique-Signature")
-		if date == "" || sig == "" {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		// Recompute canonical = METHOD\nPATH\nDATE\nhex(sha256(body)); body is empty.
 		bodySum := sha256.Sum256(nil)
 		canonical := r.Method + "\n" + r.URL.Path + "\n" + date + "\n" + hex.EncodeToString(bodySum[:])
-		mac := hmac.New(sha256.New, []byte(hmacK))
+		mac := hmac.New(sha256.New, []byte(idpHMAC))
 		_, _ = mac.Write([]byte(canonical))
 		want := base64.StdEncoding.EncodeToString(mac.Sum(nil))
-		if sig != want {
+		if date == "" || sig != want {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"user_id":"` + userID + `","email":"` + email + `","roles":["founder"],"status":"active"}`))
-	}))
-	defer srv.Close()
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(membersJSON))
+	})
+	// Pratique's only single-member route. Registering it makes the mux answer
+	// 405, as Pratique does, for a GET on a single member.
+	mux.HandleFunc("DELETE "+idpMembersPath+"/{mid}", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func idpSecrets(url string) map[string]string {
+	return map[string]string{"idp_operator_url": url, "idp_operator_key": idpHMAC, "idp_org_id": idpOrgID}
+}
+
+// TestIdpSyncAction runs the SHIPPED examples/idp-sync.lua end to end against a
+// stubbed operator API, proving the provider-specific glue works with the generic
+// crypto.* + http.* primitives: it signs a Pratique-shaped operator request,
+// picks the subject out of the member list, and upserts a person keyed on sub
+// (idempotently) with the member's roles.
+func TestIdpSyncAction(t *testing.T) {
+	const (
+		userID = "usr_founder"
+		email  = "founder@acme.test"
+	)
+	srv := pratiqueStub(t, http.StatusOK, `{"members":[`+
+		`{"user_id":"usr_other","email":"other@acme.test","roles":["admin"],"status":"active"},`+
+		`{"user_id":"`+userID+`","email":"`+email+`","roles":["founder"],"status":"active"}]}`)
 
 	ws := newMockWorkspaceWith(personMeta())
-	script := readExampleScript(t, "idp-sync.lua")
-	secrets := map[string]string{
-		"idp_operator_url": srv.URL,
-		"idp_operator_key": hmacK,
-	}
-	params := map[string]string{"user_id": userID, "org_id": orgID, "event": "membership.created"}
+	params := map[string]string{"user_id": userID, "org_id": idpOrgID, "event": "membership.created"}
 
 	// --- first run: creates the person ---
-	runIdpSync(t, ws, script, secrets, params)
+	res := runIdpSync(t, ws, idpSecrets(srv.URL), params)
+	roles, ok := assertedRoles(t, res)
+	if !ok || !slices.Equal(roles, []string{"founder"}) {
+		t.Fatalf("asserted_roles = %v (present %v), want [founder]; result %v", roles, ok, res)
+	}
 
-	people := ws.entitiesOfType("person")
+	people := ws.people()
 	if len(people) != 1 {
 		t.Fatalf("after first run: %d person entities, want 1", len(people))
 	}
@@ -78,39 +101,207 @@ func TestIdpSyncAction(t *testing.T) {
 	if got := people[0].Properties["email"]; got != email {
 		t.Errorf("person email = %v, want %s", got, email)
 	}
-	if sawPath != "/api/v1/orgs/"+orgID+"/members/"+userID {
-		t.Errorf("operator path = %q, want the org/member path", sawPath)
-	}
 
 	// --- second run: updates, no duplicate ---
-	runIdpSync(t, ws, script, secrets, params)
-	if n := len(ws.entitiesOfType("person")); n != 1 {
+	runIdpSync(t, ws, idpSecrets(srv.URL), params)
+	if n := len(ws.people()); n != 1 {
 		t.Fatalf("after second run: %d person entities, want 1 (idempotent upsert)", n)
 	}
 }
 
-// TestIdpSyncAction_SkipsOn404: a 404 from the operator API (membership gone) is
-// acknowledged without creating a person.
-func TestIdpSyncAction_SkipsOn404(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer srv.Close()
+// TestIdpSyncAction_ClearsRolesUnlessActive pins rela#2117: Pratique offboards
+// softly, setting the membership status to "inactive" and leaving its roles in
+// place. Only an active member keeps roles; any other status, a missing
+// status, or a subject absent from the list clears them, and no person is
+// provisioned.
+func TestIdpSyncAction_ClearsRolesUnlessActive(t *testing.T) {
+	const userID = "usr_leaver"
+	tests := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"inactive", http.StatusOK,
+			`{"members":[{"user_id":"` + userID + `","roles":["founder"],"status":"inactive"}]}`},
+		{"pending", http.StatusOK,
+			`{"members":[{"user_id":"` + userID + `","roles":["founder"],"status":"pending"}]}`},
+		{"status missing", http.StatusOK,
+			`{"members":[{"user_id":"` + userID + `","roles":["founder"]}]}`},
+		{"not in member list", http.StatusOK,
+			`{"members":[{"user_id":"usr_other","roles":["founder"],"status":"active"}]}`},
+		{"empty member list (also an unknown org)", http.StatusOK, `{"members":[]}`},
+		{"members is an object", http.StatusOK, `{"members":{"user_id":"` + userID + `","status":"active"}}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := pratiqueStub(t, tc.status, tc.body)
+			ws := newMockWorkspaceWith(personMeta())
+			params := map[string]string{"user_id": userID, "org_id": idpOrgID, "event": "membership.updated"}
 
-	ws := newMockWorkspaceWith(personMeta())
-	script := readExampleScript(t, "idp-sync.lua")
-	secrets := map[string]string{"idp_operator_url": srv.URL, "idp_operator_key": "k"}
-	params := map[string]string{"user_id": "usr_gone", "org_id": "org_1"}
-
-	runIdpSync(t, ws, script, secrets, params)
-	if n := len(ws.entitiesOfType("person")); n != 0 {
-		t.Fatalf("a 404 must not provision a person, got %d", n)
+			res := runIdpSync(t, ws, idpSecrets(srv.URL), params)
+			if mt, _ := resultMap(t, res)["message_type"].(string); mt == "error" {
+				t.Fatalf("result is an error, want an acknowledged clear: %v", res)
+			}
+			roles, ok := assertedRoles(t, res)
+			if !ok || len(roles) != 0 {
+				t.Fatalf("asserted_roles = %v (present %v), want an empty list that clears; result %v", roles, ok, res)
+			}
+			if n := len(ws.people()); n != 0 {
+				t.Fatalf("a non-active subject must not be provisioned, got %d person entities", n)
+			}
+		})
 	}
 }
 
-// runIdpSync executes the action script with the given secrets + params against
-// the workspace's store.
-func runIdpSync(t *testing.T, ws *mockWorkspace, script string, secrets, params map[string]string) {
+// TestIdpSyncAction_DeactivatesProvisionedMember is the rela#2117 sequence: an
+// active member is provisioned with roles, then deactivated. The second run
+// clears the roles and leaves the person as it was.
+func TestIdpSyncAction_DeactivatesProvisionedMember(t *testing.T) {
+	const (
+		userID = "usr_leaver"
+		email  = "leaver@acme.test"
+	)
+	member := func(status string) string {
+		return `{"members":[{"user_id":"` + userID + `","email":"` + email +
+			`","roles":["founder"],"status":"` + status + `"}]}`
+	}
+	ws := newMockWorkspaceWith(personMeta())
+	params := map[string]string{"user_id": userID, "org_id": idpOrgID, "event": "membership.updated"}
+
+	active := pratiqueStub(t, http.StatusOK, member("active"))
+	if roles, _ := assertedRoles(t, runIdpSync(t, ws, idpSecrets(active.URL), params)); len(roles) != 1 {
+		t.Fatalf("active run asserted %v, want [founder]", roles)
+	}
+	before := ws.people()
+
+	inactive := pratiqueStub(t, http.StatusOK, member("inactive"))
+	res := runIdpSync(t, ws, idpSecrets(inactive.URL), params)
+	if roles, ok := assertedRoles(t, res); !ok || len(roles) != 0 {
+		t.Fatalf("inactive run asserted %v (present %v), want an empty list; result %v", roles, ok, res)
+	}
+	after := ws.people()
+	if len(before) != 1 || len(after) != 1 {
+		t.Fatalf("person count before/after = %d/%d, want 1/1", len(before), len(after))
+	}
+	if after[0].Properties["email"] != before[0].Properties["email"] {
+		t.Errorf("person email changed from %v to %v", before[0].Properties["email"], after[0].Properties["email"])
+	}
+}
+
+// TestIdpSyncAction_IgnoresOtherOrg: the IdP sends every org's events, and rela
+// stores roles per subject. An event for an org other than idp_org_id must
+// neither grant that org's roles nor clear this org's.
+func TestIdpSyncAction_IgnoresOtherOrg(t *testing.T) {
+	srv := pratiqueStub(t, http.StatusOK,
+		`{"members":[{"user_id":"usr_1","roles":["owner"],"status":"active"}]}`)
+	ws := newMockWorkspaceWith(personMeta())
+	params := map[string]string{"user_id": "usr_1", "org_id": "org_elsewhere", "event": "membership.updated"}
+
+	res := runIdpSync(t, ws, idpSecrets(srv.URL), params)
+	m := resultMap(t, res)
+	if m["message_type"] == "error" {
+		t.Fatalf("result is an error, want an acknowledgement: %v", res)
+	}
+	if _, ok := m["asserted_roles"]; ok {
+		t.Fatalf("an event for another org must not carry asserted_roles: %v", res)
+	}
+	if n := len(ws.people()); n != 0 {
+		t.Fatalf("an event for another org must not provision, got %d person entities", n)
+	}
+}
+
+// TestIdpSyncAction_DeletedClearsWithoutAPI: membership.deleted proves the
+// membership is gone, so a failed fetch still clears the roles instead of
+// leaving them until the IdP gives up retrying.
+func TestIdpSyncAction_DeletedClearsWithoutAPI(t *testing.T) {
+	srv := pratiqueStub(t, http.StatusBadGateway, `{"error":"members lookup failed"}`)
+	ws := newMockWorkspaceWith(personMeta())
+	params := map[string]string{"user_id": "usr_gone", "org_id": idpOrgID, "event": "membership.deleted"}
+
+	res := runIdpSync(t, ws, idpSecrets(srv.URL), params)
+	if mt, _ := resultMap(t, res)["message_type"].(string); mt == "error" {
+		t.Fatalf("result is an error, want a clear: %v", res)
+	}
+	if roles, ok := assertedRoles(t, res); !ok || len(roles) != 0 {
+		t.Fatalf("asserted_roles = %v (present %v), want an empty list; result %v", roles, ok, res)
+	}
+}
+
+// TestIdpSyncAction_ErrorKeepsRoles: a failed operator call answers an error
+// result without asserted_roles, so the receiver answers 502, Pratique
+// retries, and the stored roles stay as they were. A 404 is an error too:
+// Pratique answers 200 with an empty list for an unknown org, so a 404 means
+// the request missed the route.
+func TestIdpSyncAction_ErrorKeepsRoles(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"server error", http.StatusInternalServerError, `{"error":"boom"}`},
+		{"route not found", http.StatusNotFound, "404 page not found"},
+		{"bad json", http.StatusOK, `not json`},
+		{"no members array", http.StatusOK, `{"error":"unexpected"}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := pratiqueStub(t, tc.status, tc.body)
+			ws := newMockWorkspaceWith(personMeta())
+			params := map[string]string{"user_id": "usr_x", "org_id": idpOrgID, "event": "membership.updated"}
+
+			res := runIdpSync(t, ws, idpSecrets(srv.URL), params)
+			m := resultMap(t, res)
+			if m["message_type"] != "error" {
+				t.Fatalf("message_type = %v, want error; result %v", m["message_type"], res)
+			}
+			if _, ok := m["asserted_roles"]; ok {
+				t.Fatalf("an error result must not carry asserted_roles: %v", res)
+			}
+		})
+	}
+}
+
+func resultMap(t *testing.T, res any) map[string]any {
+	t.Helper()
+	m, ok := res.(map[string]any)
+	if !ok {
+		t.Fatalf("action result is %T, want a table", res)
+	}
+	return m
+}
+
+// assertedRoles mirrors script.assertedRolesFrom, which this package cannot
+// import (script imports lua): an empty Lua table converts to an empty map, a list to []any. The bool
+// reports whether the key is present at all.
+func assertedRoles(t *testing.T, res any) ([]string, bool) {
+	t.Helper()
+	v, ok := resultMap(t, res)["asserted_roles"]
+	if !ok {
+		return nil, false
+	}
+	switch list := v.(type) {
+	case map[string]any:
+		if len(list) == 0 {
+			return []string{}, true
+		}
+	case []any:
+		out := make([]string, 0, len(list))
+		for _, item := range list {
+			s, isStr := item.(string)
+			if !isStr {
+				t.Fatalf("asserted_roles entry %T, want string", item)
+			}
+			out = append(out, s)
+		}
+		return out, true
+	}
+	t.Fatalf("asserted_roles is %T, want a list", v)
+	return nil, false
+}
+
+// runIdpSync executes the shipped examples/idp-sync.lua with the given secrets +
+// params against the workspace's store.
+func runIdpSync(t *testing.T, ws *mockWorkspace, secrets, params map[string]string) any {
 	t.Helper()
 	var buf strings.Builder
 	// Grant exactly the secrets this fixture supplies, plus HTTP — the shape a
@@ -126,9 +317,11 @@ func runIdpSync(t *testing.T, ws *mockWorkspace, script string, secrets, params 
 		WithCapabilities(Capabilities{HTTP: true, Secrets: names}),
 	)
 	defer rt.Close()
-	if _, err := rt.RunActionString(script, "idp-sync.lua"); err != nil {
+	res, err := rt.RunActionString(readExampleScript(t, "idp-sync.lua"), "idp-sync.lua")
+	if err != nil {
 		t.Fatalf("idp-sync run failed: %v (output: %s)", err, buf.String())
 	}
+	return res
 }
 
 // readExampleScript loads a script from the repo's examples/ directory. The test
@@ -159,10 +352,10 @@ func personMeta() *metamodel.Metamodel {
 	}
 }
 
-// entitiesOfType returns the mock workspace's entities of a given type.
-func (m *mockWorkspace) entitiesOfType(typ string) []*entity.Entity {
+// people returns the mock workspace's person entities.
+func (m *mockWorkspace) people() []*entity.Entity {
 	out := make([]*entity.Entity, 0)
-	for e, err := range m.store.ListEntities(context.Background(), store.EntityQuery{Type: typ, Faces: store.InWorld(store.TrivialScope())}) {
+	for e, err := range m.store.ListEntities(context.Background(), store.EntityQuery{Type: "person", Faces: store.InWorld(store.TrivialScope())}) {
 		if err != nil {
 			continue
 		}

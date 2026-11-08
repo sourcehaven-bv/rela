@@ -30,7 +30,7 @@ func (l *loader) states(key string, raw *rawFlow, f *Flow) {
 	raws := make([]rawState, len(names))
 	for i, name := range names {
 		k := sk + "." + name
-		if !validName.MatchString(name) {
+		if !flow.ValidName(name) {
 			l.add(k, "a state name is 1 to 64 lower-case letters, digits, '-' or '_', starting with a letter")
 			continue
 		}
@@ -202,7 +202,7 @@ func (l *loader) timers(key string, n *yaml.Node, f *Flow) []Timer {
 	out := make([]Timer, 0, len(names))
 	for i, name := range names {
 		tk := key + "." + name
-		if !validName.MatchString(name) {
+		if !flow.ValidName(name) {
 			l.add(tk, "a timer name is 1 to 64 lower-case letters, digits, '-' or '_', starting with a letter")
 			continue
 		}

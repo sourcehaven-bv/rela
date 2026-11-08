@@ -3094,7 +3094,25 @@ func validateCommandScope(cmdID string, scope CommandScope, cfg *Config, meta *m
 func validateApp(cfg *Config, meta *metamodel.Metamodel) []string {
 	errs := validateDefaultWorldAlias(cfg.App.DefaultWorld, meta)
 	errs = append(errs, validateAppLanguage(cfg.App.Language)...)
+	errs = append(errs, validateWorldSwitcher(cfg.App.WorldSwitcher)...)
 	return append(errs, validatePlantUMLURL(cfg.App.PlantUMLServerURL)...)
+}
+
+// The values of app.world_switcher. Empty means WorldSwitcherHeader.
+const (
+	WorldSwitcherHeader = "header"
+	WorldSwitcherNone   = "none"
+)
+
+// validateWorldSwitcher checks app.world_switcher. A typo would otherwise
+// leave the switcher in the header and look like the setting does nothing.
+func validateWorldSwitcher(v string) []string {
+	switch v {
+	case "", WorldSwitcherHeader, WorldSwitcherNone:
+		return nil
+	}
+	return []string{fmt.Sprintf("app.world_switcher: must be %q or %q, got %q",
+		WorldSwitcherHeader, WorldSwitcherNone, v)}
 }
 
 // SupportedUILanguages lists the base languages the web app has a message

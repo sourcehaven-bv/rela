@@ -139,6 +139,23 @@ Rules when touching storage backends:
   spell `entityAddressSQL` / `relationAddressSQL` exactly. fsstore and memstore
   store nothing and compute elements on read. `storetest.RunElementTests`
   (`Capabilities.StoredElements`) pins the columns after every write kind.
+- **Element ranges are read through a gated reader, never summed by hand**
+  (TKT-IQU106C). `pgstore.NewElementRanges`, `sqlitestore.NewElementRanges` and
+  `elementnaive.New` (fsstore, memstore) answer `RangeFingerprint` and
+  `ListRange` for a `store.ElementScope`, in one statement on the SQL backends.
+  The row gate applies before the sum; a relation counts only when both
+  endpoints pass the gate; a row folds its stored hash only when no hidden
+  field of the reader holds a value on it, decided per row (in SQL on the
+  database backends, in Go in elementnaive and in sqlite's fallback for names
+  its builder cannot render), and is otherwise counted as pending. The scope must come from the reader's bound
+  ACL request: `internal/archguard/elementrange_test.go` pins every caller
+  outside `internal/store`. Never cache a sum across principals.
+  `storetest.RunElementRangeTests` pins every backend and
+  `RunElementRangeDifferential` compares the SQL backends with elementnaive.
+  `visibility.Elements` (TKT-N1KNNZU) is the one gated caller: it folds stored
+  hashes only for a type on which the reader hides nothing, and recomputes
+  every row of any other type from its redacted row, so neither its cost nor
+  its refusals depend on which rows hold a hidden value.
 - **Migrations** are embedded SQL (`pgstore/migrations/*.sql`), applied by
   `pgstore.Migrate` in one transaction under a `pg_advisory_xact_lock`
   (concurrent-start safe; forward-only). Auto-applied on first store open; also
