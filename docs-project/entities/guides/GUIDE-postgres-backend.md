@@ -700,10 +700,10 @@ host that has the project directory:
 4. Run the erasure. It shows the database it will act on and asks you to
    type the org id; `-force` skips the question.
 
-```bash
-export RELA_DATABASE_URL='postgres://...'   # when tenants.yaml has no base_dsn
-rela-server-postgres tenant erase -project /srv/rela org_acme
-```
+   ```bash
+   export RELA_DATABASE_URL='postgres://...'   # when tenants.yaml has no base_dsn
+   rela-server-postgres tenant erase -project /srv/rela org_acme
+   ```
 
 5. On each other server host, run the same command to remove that host's
    audit directory. The schema is already gone there, which is not an error.
