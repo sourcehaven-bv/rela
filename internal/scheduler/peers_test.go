@@ -1,10 +1,13 @@
 package scheduler
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io/fs"
+	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -314,4 +317,33 @@ func TestStartManualRun_RetriesAStaleVersion(t *testing.T) {
 	_, err = startManualRun(ctx, &staleStore{Store: ws.SchedulerState(), stale: 2}, "peer:dog", "r2")
 	require.ErrorIs(t, err, schedulerstate.ErrStale)
 	require.NotErrorIs(t, err, ErrPeerBusy)
+}
+
+func TestWarnPull(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	issues := make([]peersync.Issue, maxWarnedIssues+3)
+	for i := range issues {
+		issues[i] = peersync.Issue{Kind: peersync.IssueConflict, Address: "E:req:R1", Reason: "both changed"}
+	}
+	warnPull(logger, "cat", "run-1", peersync.Report{Refused: "too many gone", Skipped: []string{"depends"}, Issues: issues})
+	out := buf.String()
+	for _, want := range []string{"peer pull refused", "peer pull skipped relation types", "more=3"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("log lacks %q:\n%s", want, out)
+		}
+	}
+	if n := strings.Count(out, "peer pull row not applied"); n != maxWarnedIssues {
+		t.Fatalf("logged %d issues, want %d", n, maxWarnedIssues)
+	}
+	buf.Reset()
+	warnPull(logger, "cat", "run-2", peersync.Report{})
+	if buf.Len() != 0 {
+		t.Fatalf("a clean pull logged: %s", buf.String())
+	}
+}
+
+func TestManualTrigger(t *testing.T) {
+	ctx := principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolCLI})
+	require.Equal(t, "peer:cat by alice", manualTrigger(ctx, "cat"))
 }

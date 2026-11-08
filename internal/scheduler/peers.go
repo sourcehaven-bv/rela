@@ -169,6 +169,7 @@ func PullPeer(
 		return peersync.Report{}, fmt.Errorf("no peer %q in %s", name, peersync.FileName)
 	}
 	runID := uuid.NewString()
+	ctx = audit.WithTriggeredBy(ctx, manualTrigger(ctx, name))
 	if o.DryRun {
 		return pull(ctx, ws, bind, m, runID, o, nil, logger)
 	}
@@ -191,6 +192,13 @@ func PullPeer(
 		logger.Error("could not record the pull's outcome", "task", run.Task, "run_id", run.ID, "error", fErr)
 	}
 	return report, err
+}
+
+// manualTrigger is the triggered-by label of a pull started by hand. It
+// names the caller, because the writes are attributed to the peer's
+// principal and would otherwise not say who started them.
+func manualTrigger(ctx context.Context, name string) string {
+	return PeerTaskPrefix + name + " by " + principal.From(ctx).User
 }
 
 // startManualRun records and starts a run of task outside the tick, as the
@@ -234,7 +242,9 @@ func pull(
 	ctx = principal.With(ctx, principal.Principal{
 		User: principal.PeerPullUserPrefix + m.Name, Tool: principal.ToolPeerPull,
 	})
-	ctx = audit.WithTriggeredBy(ctx, PeerTaskPrefix+m.Name)
+	if audit.TriggeredByFrom(ctx) == "" {
+		ctx = audit.WithTriggeredBy(ctx, PeerTaskPrefix+m.Name)
+	}
 	ctx, err := bind(ctx)
 	if err != nil {
 		return peersync.Report{}, fmt.Errorf("scheduler: resolve identity for peer %q: %w", m.Name, err)
@@ -252,7 +262,30 @@ func pull(
 	logger.Info("peer pulled",
 		"peer", m.Name, "run_id", runID, "dry_run", o.DryRun, "refused", report.Refused, "gone", report.Gone,
 		"entities", report.Entities, "relations", report.Relations, "issues", len(report.Issues))
+	warnPull(logger, m.Name, runID, report)
 	return report, err
+}
+
+// maxWarnedIssues caps the issues one pull logs; the report holds them all.
+const maxWarnedIssues = 20
+
+// warnPull logs at Warn what an operator must look at after a pull: refused
+// guards, skipped relation types, and rows that were not applied.
+func warnPull(logger *slog.Logger, name, runID string, rep peersync.Report) {
+	if rep.Refused != "" {
+		logger.Warn("peer pull refused", "peer", name, "run_id", runID, "reason", rep.Refused, "gone", rep.Gone)
+	}
+	if len(rep.Skipped) > 0 {
+		logger.Warn("peer pull skipped relation types", "peer", name, "run_id", runID, "types", rep.Skipped)
+	}
+	for i, is := range rep.Issues {
+		if i == maxWarnedIssues {
+			logger.Warn("peer pull has more issues", "peer", name, "run_id", runID, "more", len(rep.Issues)-i)
+			break
+		}
+		logger.Warn("peer pull row not applied",
+			"peer", name, "run_id", runID, "kind", is.Kind, "address", is.Address, "local", is.Local, "reason", is.Reason, "fields", is.Fields)
+	}
 }
 
 // peerDeps assembles the collaborators of one pull: the manager every write

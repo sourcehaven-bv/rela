@@ -121,6 +121,11 @@ property. A source row with a face is not pulled.
   log as any other write. Give that identity a role in this project's
   `acl.yaml` that lets it create and update the mapped types, and delete
   them if `on_gone: delete`.
+- **Pulled rows take this project's read rules.** The source's `acl.yaml`
+  does not travel with the rows. Once pulled, a row is read under the
+  local type's rules in this project's `acl.yaml`. Give each mapped type
+  read rules at least as strict as the source's rules for the rows the peer
+  can read, or people here can read what they could not read at the source.
 
 ## Rows the source drops
 
@@ -157,7 +162,9 @@ rela peer pull catalog -o json
 
 `--dry-run` reports what the pull would do and writes nothing. It may
 report a delete that a real pull turns into a detach, because the entity has
-local relations. A pull by
+local relations. The audit log
+names the person who started a pull by hand in its triggered-by label, as
+`peer:<name> by <user>`. A pull by
 hand takes the same lock as the scheduled pull, so the two never run at
 once. A pull by hand fails with "a pull of this peer is already running"
 while the scheduled pull runs, and the scheduler skips a pull while one by
@@ -167,8 +174,11 @@ hand runs. A dry run takes no lock.
 
 The pull keeps a ledger per peer in rela's state store: per source row, the
 version it last applied, the local row, and the agreed value of each mapped
-field as a digest. The ledger is not part of the graph. A change to the
-mapping makes the next pull compare every row again.
+field as a digest. The ledger is not part of the graph and is never
+exported. It is removed with the rest of the project's state. A row you
+delete keeps only its source address and local id in the ledger, so the
+pull does not recreate it. A change to the mapping makes the next pull
+compare every row again.
 
 ## Security
 
@@ -185,6 +195,10 @@ The source is untrusted input. The pull:
   never logs it;
 - refuses plain http to a host that is not loopback, and never follows a
   redirect.
+
+The pull does not carry the source's read rules. Pulled rows are read under
+this project's `acl.yaml`, so set read rules on the mapped types that are at
+least as strict as the source's.
 
 See [ACL security](acl-security.md#peer-pulls-peersyaml) for the threat
 model.

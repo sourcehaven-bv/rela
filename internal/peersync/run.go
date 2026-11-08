@@ -640,9 +640,10 @@ func (r *runner) applyEntity(
 		return false
 	}
 	if ours == nil && row != nil && row.State == stateLinked {
-		// Someone deleted the local row; the pull does not recreate it.
+		// Someone deleted the local row; the pull does not recreate it, so
+		// the ledger keeps no base for it.
 		c.Dropped++
-		r.record(row, "E", em.Source, addr, hash, row.Local, stateDropped, row.Base)
+		r.record(row, "E", em.Source, addr, hash, row.Local, stateDropped, nil)
 		return false
 	}
 	if ours == nil {

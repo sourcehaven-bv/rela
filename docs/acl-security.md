@@ -1975,7 +1975,8 @@ configuration.
   source row with a face is not pulled.
 - **Every write goes through the entity manager.** A pull writes as
   `system:peer:<name>` with tool `peer-pull`, so `acl.yaml` decides what it
-  may create, update and delete, and the audit log records each write.
+  may create, update and delete, and the audit log records each write and
+each refused write.
   Partial updates name only the mapped fields, so a field the pull does not
   own is never overwritten. The pull reads the local rows it compares
   without the read gate, as a write-prep read; the manager still authorizes
@@ -2008,6 +2009,12 @@ configuration.
   scheduled pull and `rela peer pull` share a run lock in the scheduler
   state.
 - **A local delete wins.** A pulled row deleted locally is not recreated.
+- **Read rules do not travel.** The source's `acl.yaml` decides what the
+  peer may read, not who may read the rows here. A pulled row is read under
+  the local type's rules, so an operator who maps a type gives it read rules
+  at least as strict as the source's rules for those rows. A pull by hand
+  records the person who started it in the audit log's triggered-by label;
+  a scheduled pull records `peer:<name>`.
 
 ## Presence
 
