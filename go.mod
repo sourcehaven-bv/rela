@@ -36,7 +36,7 @@ require (
 	github.com/teambition/rrule-go v1.8.2
 	github.com/teekennedy/goldmark-markdown v0.5.1
 	github.com/vloothuis/textanchor v0.3.1
-	github.com/wailsapp/wails/v3 v3.1.0-nightly.20261028
+	github.com/wailsapp/wails/v3 v3.2.0-nightly.20261103
 	github.com/wneessen/go-mail v0.8.1
 	github.com/yuin/goldmark v1.8.6
 	github.com/yuin/gopher-lua v1.1.2
@@ -60,7 +60,6 @@ require (
 	github.com/ProtonMail/go-crypto v1.3.0 // indirect
 	github.com/PuerkitoBio/goquery v1.12.0 // indirect
 	github.com/RoaringBitmap/roaring/v2 v2.14.5 // indirect
-	github.com/adrg/xdg v0.5.3 // indirect
 	github.com/agnivade/levenshtein v1.2.1 // indirect
 	github.com/alecthomas/chroma/v2 v2.23.1 // indirect
 	github.com/andybalholm/cascadia v1.3.4 // indirect
@@ -104,6 +103,7 @@ require (
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
+	github.com/ebitengine/purego v0.11.1 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
