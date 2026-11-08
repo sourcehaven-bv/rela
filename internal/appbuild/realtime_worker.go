@@ -220,7 +220,7 @@ func realtimeLeaderLock(fs storage.FS, cacheDir string, st store.Store) (leaderL
 	if l := storeLeaderLockFor(st); l != nil {
 		return l, nil
 	}
-	if _, mem := fs.(*storage.MemFS); mem || fs == nil || cacheDir == "" {
+	if inMemoryFS(fs) || fs == nil || cacheDir == "" {
 		return func(context.Context) (heldLock, bool, error) { return heldLock{release: func() {}}, true, nil }, nil
 	}
 	l, err := filelock.New(filepath.Join(cacheDir, realtimeWorkerLockFile))

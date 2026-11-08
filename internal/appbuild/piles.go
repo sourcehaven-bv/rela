@@ -210,7 +210,7 @@ const pilesLockFile = "piles.lock"
 // in that direction loses writes between the desktop app, `rela mcp`, CLI
 // scripts and the scheduler.
 func pilesLocker(fs storage.FS, cacheDir string) (kvpiles.Locker, error) {
-	if _, mem := fs.(*storage.MemFS); mem {
+	if inMemoryFS(fs) {
 		return filelock.ProcessPrivate{}, nil
 	}
 	return filelock.New(filepath.Join(cacheDir, pilesLockFile))
