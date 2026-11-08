@@ -557,7 +557,10 @@ unmatched_principal: reject   # anonymous (default) | reject | provision
   the graph can still act on their asserted roles.
 - **`reject`**: a graph-is-authority posture. The entity graph is the
   authority on who may mutate, so an unknown verified identity's **writes**
-  are denied (403). Its **reads** are unaffected — it still sees what its
+  are denied (403). This includes an elevated data-entry action update
+  (see [Elevated data-entry actions](#elevated-data-entry-actions)): the
+  identity cannot use an action's `permission:` to write either. Its
+  **reads** are unaffected — it still sees what its
   asserted roles allow. Blocking reads too is a larger, separate choice and
   is not what this does.
 - **`provision`**: lazy creation of a stub user entity. On the unmatched
@@ -577,9 +580,10 @@ Load-bearing details:
   resolved to no entity. A `--principal-header` deployment, and the
   CLI/MCP/scheduler entry points, are never subject to it — their
   principals legitimately don't resolve to a `persoon` either, and a
-  blanket rule would wrongly deny them. It gates writes (CRUD and
-  Lua-action writes all funnel through the one write-authorization point);
-  reads and non-`/api/` paths are untouched.
+  blanket rule would wrongly deny them. It gates writes: CRUD and
+  Lua-action writes go through the write-authorization point, and an
+  elevated action update, which skips the role grants, goes through the
+  same pre-role checks. Reads and non-`/api/` paths are untouched.
 - **`reject` and `provision` require the lookup.** Both need
   `user_entity_type` + `principal_property` set — otherwise "unmatched"
   has no meaning (with the lookup disabled the resolver returns no-match
@@ -1625,15 +1629,20 @@ which row is written:
   triggers, such as `create_entity` or `run_script`, runs with the
   caller's normal access.
 
-Elevation does not lift these limits:
+Elevation lifts only the role grants. Every other write check still
+applies, through the same code as a normal write, and a refusal is a 403
+with a `denied-write` audit row:
 
 - The caller must be able to read the target row. A row the caller cannot
   read is reported as `entity not found`.
 - **Client ceilings still apply.** A client restricted by
   `client_baselines` or `scope_grants` that may not update the type, for
-  example a read-only app token under `deny_write: ["*"]`, gets a 403 and
-  a `denied-write` audit row. Elevation lifts the caller's role grants,
-  never the limits of the client the caller acts through.
+  example a read-only app token under `deny_write: ["*"]`, is refused.
+  Elevation never lifts the limits of the client the caller acts through.
+- **`unmatched_principal: reject` still applies.** A verified identity
+  with no user entity is refused, even when its asserted roles grant the
+  action's `permission:`.
+- A request without a usable identity is refused.
 - A read-only instance refuses the update.
 - When the action runs on one entity (`available_on:`), an elevated
   update of that entity fails if the entity changed after the action

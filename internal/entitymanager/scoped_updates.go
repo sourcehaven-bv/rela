@@ -8,7 +8,6 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -31,7 +30,7 @@ type UpdateScope map[string][]string
 // The elevation is one thing: the write skips the row-level write check
 // (the `update:` grants in acl.yaml). acl.yaml field write rules do not
 // apply to data-entry action scripts at all, elevated or not, because an
-// action writes through the manager handle that skips the field gate. Four
+// action writes through the manager handle that skips the field gate. These
 // limits keep the elevated write narrow:
 //
 //   - The caller must be able to read the target row. A row the caller
@@ -41,13 +40,12 @@ type UpdateScope map[string][]string
 //   - The stored type (and face) and every named property must be in the
 //     scope.
 //   - Content and external refs are refused.
-//   - The client's ceiling (client_baselines and scope_grants) must permit
-//     update on the stored type. Elevation lifts the role grants, never the
-//     limits of the client the caller acts through.
-//
-// A read-only instance refuses the write as it refuses any update: with the
-// ACL's 403 and a denied-write audit row. A ceiling refusal is a 403 with a
-// denied-write audit row too.
+//   - Every check of the ACL's AuthorizeWrite that does not come from a role
+//     grant still applies, through [acl.AuthorizePreRoleWrite]: read-only
+//     mode, a usable identity, `unmatched_principal: reject`, and the client
+//     ceiling (client_baselines and scope_grants) on update of the stored
+//     type. Elevation lifts the role grants, never these. A refusal is the
+//     ACL's 403 with a denied-write audit row.
 //
 // Transition rules and validation run as on any update. A transition guard
 // still asks whether the caller holds its permission. A refused transition
@@ -153,14 +151,7 @@ func (s *ScopedUpdates) PatchEntity(ctx context.Context, id string, p entity.Pat
 		if err := s.inScope(stored, p); err != nil {
 			return err
 		}
-		// Read-only is a process-wide refusal that no grant lifts, and
-		// elevation skips AuthorizeWrite, so the scoped write asks the
-		// non-elevated handle. Under read-only that denies and audits the
-		// write exactly as a normal update.
-		if access.ModeOf(s.m.deps.ACL).RefusesWrites() {
-			return s.m.authorizeAndAudit(ctx, entityUpdateRequest(stored.Type, stored.Ref()))
-		}
-		if err := s.ceilingRefusal(ctx, stored); err != nil {
+		if err := s.preRoleRefusal(ctx, stored); err != nil {
 			return err
 		}
 		return s.pinRefusal(stored)
@@ -172,35 +163,22 @@ func (s *ScopedUpdates) PatchEntity(ctx context.Context, id string, p entity.Pat
 	return res, valueFreeTransitionError(err)
 }
 
-// ceilingRefusal refuses the write when the client ceiling of the bound
-// request withholds update on the stored type. Elevation skips
-// AuthorizeWrite, which is where a write otherwise meets the ceiling, so the
-// scoped write asks the ceiling here. It asks the ceiling only, never a role
-// grant: the grants are what elevation lifts. Without a declarative policy
-// there is no ceiling. A policy without a bound request fails closed.
-func (s *ScopedUpdates) ceilingRefusal(ctx context.Context, stored *entity.Entity) error {
-	d, ok := s.m.deps.ACL.(*acl.Declarative)
-	if !ok || d == nil {
+// preRoleRefusal refuses the write when it fails a check of the ACL's
+// AuthorizeWrite that does not come from a role grant: read-only mode, a
+// missing or mismatched identity, `unmatched_principal: reject`, or the
+// client ceiling. Elevation skips AuthorizeWrite, so the scoped write asks
+// [acl.AuthorizePreRoleWrite], which applies the same checks through the
+// same functions. It never asks a role grant: the grants are what elevation
+// lifts. A refusal is the ACL's 403 with a denied-write audit row, as on a
+// normal update.
+func (s *ScopedUpdates) preRoleRefusal(ctx context.Context, stored *entity.Entity) error {
+	req := entityUpdateRequest(stored.Type, stored.Ref())
+	decision := acl.AuthorizePreRoleWrite(ctx, s.m.deps.ACL, req)
+	if decision.Allow {
 		return nil
-	}
-	req, err := d.RequestFrom(ctx)
-	if err != nil {
-		return fmt.Errorf("elevated update: %w", err)
-	}
-	if acl.CeilingPermitsVerb(req, acl.OpUpdate, stored.Type) {
-		return nil
-	}
-	baseline := acl.CeilingBaseline(req)
-	decision := acl.Decision{
-		Allow:    false,
-		RuleKind: "client-ceiling",
-		RuleID:   baseline,
-		Reason: fmt.Sprintf("client baseline %q does not permit %s on %q",
-			baseline, acl.OpUpdate, stored.Type),
 	}
 	if !isAffordanceProbe(ctx) {
-		s.m.deps.Audit.Record(deniedWriteRecord(ctx, decision,
-			entityUpdateRequest(stored.Type, stored.Ref())))
+		s.m.deps.Audit.Record(deniedWriteRecord(ctx, decision, req))
 	}
 	return &acl.ForbiddenError{Decision: decision}
 }

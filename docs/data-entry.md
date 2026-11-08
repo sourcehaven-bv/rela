@@ -6651,6 +6651,9 @@ an action. It has these limits:
 - A client ceiling still applies. A client that `client_baselines` or
   `scope_grants` forbids to update the type, such as a read-only app token,
   gets a 403 and a `denied-write` audit row.
+- `unmatched_principal: reject` still applies. A verified identity with no
+  user entity gets a 403 and a `denied-write` audit row, even when its
+  asserted roles grant the action's `permission:`.
 - A read-only instance (`--read-only`) refuses the update, as it refuses
   every other write.
 - When the action runs on one entity (`available_on:`), an update of that

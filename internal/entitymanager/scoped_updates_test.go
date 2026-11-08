@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -27,6 +28,12 @@ type denyAndHideACL struct {
 
 func (denyAndHideACL) AuthorizeWrite(context.Context, acl.WriteRequest) acl.Decision {
 	return acl.Decision{Allow: false, RuleKind: "read-only", RuleID: "test-deny-all"}
+}
+
+// AuthorizePreRoleWrite allows: the fake's refusal stands for the role
+// grants, which elevation lifts, and it has no other check.
+func (denyAndHideACL) AuthorizePreRoleWrite(context.Context, acl.WriteRequest) acl.Decision {
+	return acl.Decision{Allow: true, RuleKind: "pre-role", RuleID: "-"}
 }
 
 func (a denyAndHideACL) PermitsReadFace(_ context.Context, _, id string, _ entity.Face) (bool, error) {
@@ -359,12 +366,22 @@ func TestScopedUpdates_ReadOnly(t *testing.T) {
 // through elevation.
 func scopedCeilingManager(t *testing.T, aud audit.Audit) (*entitymanager.Manager, store.Store) {
 	t.Helper()
-	policy, err := acl.LoadPolicyBytes([]byte(ceilingPolicy))
+	return scopedPolicyManager(t, aud, ceilingPolicy)
+}
+
+// scopedPolicyManager is scopedCeilingManager under policyYAML. The principal
+// lookup is wired, so a policy that names user_entity_type and
+// principal_property marks a verified principal without a user entity as
+// unmatched.
+func scopedPolicyManager(t *testing.T, aud audit.Audit, policyYAML string) (*entitymanager.Manager, store.Store) {
+	t.Helper()
+	policy, err := acl.LoadPolicyBytes([]byte(policyYAML))
 	if err != nil {
 		t.Fatalf("LoadPolicyBytes: %v", err)
 	}
 	st := memstore.New()
-	decl, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(st), st)
+	decl, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(st), st,
+		acl.WithPrincipalLookup(aclstore.MustNewPrincipalLookup(st)))
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -426,6 +443,64 @@ func TestScopedUpdates_ClientCeiling(t *testing.T) {
 				var fe *acl.ForbiddenError
 				if !errors.As(err, &fe) || fe.Decision.RuleKind != "client-ceiling" {
 					t.Fatalf("err = %v, want a client-ceiling 403", err)
+				}
+			} else if err != nil {
+				t.Fatalf("PatchEntity: %v", err)
+			}
+			if got := mustGet(t, st, "REQ-001").GetString("title"); got != want {
+				t.Errorf("title = %q, want %q", got, want)
+			}
+			ops := map[string]bool{}
+			for _, rec := range mem.Records() {
+				ops[rec.Op] = true
+			}
+			if tc.wantDenied && (!ops[audit.OpDeniedWrite] || ops[audit.OpACLBypass] || ops[audit.OpUpdateEntity]) {
+				t.Errorf("audit ops = %v, want only %s", ops, audit.OpDeniedWrite)
+			}
+			if !tc.wantDenied && !ops[audit.OpACLBypass] {
+				t.Errorf("audit ops = %v, want %s", ops, audit.OpACLBypass)
+			}
+		})
+	}
+}
+
+// TestScopedUpdates_UnmatchedPrincipal pins that elevation does not lift
+// `unmatched_principal: reject`: a verified principal with no user entity is
+// refused its elevated write with the ACL's 403 and a denied-write audit row,
+// and the row is unchanged. Under `anonymous` the same principal elevates.
+func TestScopedUpdates_UnmatchedPrincipal(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		mode       string
+		wantDenied bool
+	}{
+		{mode: acl.UnmatchedReject, wantDenied: true},
+		{mode: acl.UnmatchedAnonymous},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			t.Parallel()
+			mem := audit.NewMemory()
+			policy := ceilingPolicy + "user_entity_type: person\nprincipal_property: sub\n" +
+				"asserted_role_assignments:\n  member: reader\n" +
+				"unmatched_principal: " + tc.mode + "\n"
+			mgr, st := scopedPolicyManager(t, mem, policy)
+			su, err := entitymanager.NewScopedUpdates(mgr,
+				entitymanager.UpdateScope{"requirement": {"title"}}, "action:retitle")
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The asserted role makes the row readable; no role grants update.
+			ctx := principal.With(context.Background(),
+				principal.Verified("usr_nobody", principal.ToolDataEntry, "", "", []string{"member"}))
+			ctx = acltest.BindVerified(ctx, t, entitymanager.DeclarativeOf(t, mgr))
+			_, err = su.PatchEntity(ctx, "REQ-001", entity.Patch{Properties: map[string]any{"title": "elevated"}})
+
+			want := "elevated"
+			if tc.wantDenied {
+				want = "seeded"
+				var fe *acl.ForbiddenError
+				if !errors.As(err, &fe) || fe.Decision.RuleKind != "unmatched-principal" {
+					t.Fatalf("err = %v, want an unmatched-principal 403", err)
 				}
 			} else if err != nil {
 				t.Fatalf("PatchEntity: %v", err)
