@@ -43,7 +43,7 @@ func buildChannels(
 		return memoryChannels(), nil
 	}
 	var locker filechannels.Locker = filelock.ProcessPrivate{}
-	if _, mem := fs.(*storage.MemFS); !mem {
+	if !inMemoryFS(fs) {
 		l, err := filelock.New(filepath.Join(paths.CacheDir, channelsLockFile))
 		if err != nil {
 			return nil, fmt.Errorf("channels: %w", err)

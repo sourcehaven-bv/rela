@@ -63,12 +63,12 @@ actions:
     script: idp-sync.lua
     capabilities:
       http: true
-      secrets: [idp_operator_url, idp_operator_key]
+      secrets: [idp_operator_url, idp_operator_key, idp_org_id]
 ```
 
 The `capabilities:` block is **required**. Scripts reach no ambient capability
 unless they declare it: without `http: true` the script fails with `attempt to
-index a nil value (global 'http')`, and without the two `secrets:` names
+index a nil value (global 'http')`, and without the `secrets:` names
 `rela.secrets.idp_operator_url` is `nil`.
 
 Note that `secrets:` names individual keys rather than being a boolean. This
@@ -84,14 +84,25 @@ in this script.
 
 ## 3. Configure the operator credential
 
-The action fetches the user over Pratique's HMAC-signed operator API, so it needs
-the base URL and the shared HMAC key:
+The action fetches the org's member list (`GET /api/v1/orgs/{id}/members`) over
+Pratique's HMAC-signed operator API and picks the user out of it. Pratique has
+no GET for a single member. Each webhook therefore downloads the whole list;
+for a very large org a single-member route on the IdP would be cheaper. The
+action needs the base URL, the shared HMAC key and the IdP org this deployment
+serves:
 
 ```yaml
 # .rela/secrets.yaml   (gitignored)
 idp_operator_url: https://id.example.com
 idp_operator_key: <the operator HMAC secret>
+idp_org_id: <the Pratique org id of this deployment>
 ```
+
+Pratique sends every org's membership events to every webhook endpoint, and
+rela stores roles per subject, not per org. The action therefore acknowledges
+and ignores an event for any org other than `idp_org_id`. Without that check, a
+user deactivated in your org but active in another would get the other org's
+roles back from its next event.
 
 The key never touches Lua as crypto material — the script passes it to
 `crypto.hmac_sha256_base64`, which signs in Go. Treat it like any other secret.
@@ -170,17 +181,31 @@ e.g. an incoming ACL feature can match the request principal's `sub` against the
 The action may also return `asserted_roles`, a list of the IdP role names of the
 user. rela stores them for the webhook's verified subject, so a scheduled
 `for_each` task that runs as the person holds the rela roles
-`asserted_role_assignments` maps them to. The reference action returns
-`user.roles`, and an empty list on a 404 to clear them. See "Stored asserted
-roles" in [acl-security.md](acl-security.md) for the trust model and the
-revocation caveat.
+`asserted_role_assignments` maps them to. The reference action returns the
+member's roles only when its `status` is `active`. Pratique deactivates a member
+by setting the status to `inactive` and keeps its roles. So for any other
+status, a missing status, or a user who is not in the member list, the action
+returns an empty list, which clears the stored roles. It does not change an
+existing `person`, so a grant that reaches the user through that entity's
+relations is not revoked by clearing the roles.
+
+A failed operator call keeps the stored roles and lets Pratique retry. For a
+`membership.deleted` event the action clears the roles even when the call
+fails, because the event itself proves the membership is gone. A deactivation
+(`membership.updated`) still needs the call to succeed; if Pratique gives up
+retrying, its dead-letter log is the signal that a revocation did not land.
+See "Stored asserted roles" in [acl-security.md](acl-security.md) for the trust
+model and the revocation caveat.
 
 ## Behavior reference
 
 | Situation | Result |
 |---|---|
-| Valid webhook, user is a member | `person` upserted; 200 |
-| Valid webhook, user not a member (operator API 404) | acknowledged, no `person`; 200 |
+| Valid webhook, user is an active member | `person` upserted, roles stored; 200 |
+| Valid webhook, user not active (`inactive`, `pending`, no status) | acknowledged, no `person` created or changed, roles cleared; 200 |
+| Valid webhook, user not in the member list (also an unknown org) | acknowledged, no `person` created or changed, roles cleared; 200 |
+| Valid webhook for an org other than `idp_org_id` | acknowledged, nothing changed; 200 |
+| Operator API answers non-200 (404 included) or bad JSON | 502 so Pratique retries, stored roles unchanged; for `membership.deleted`, roles cleared; 200 |
 | Bad / unsigned / wrong-audience body | 401, action not run |
 | Missing a claim the event requires (see the table in section 5) | 400, nothing runs |
 | Valid `organization.*` event | acknowledged and logged, action not run; 200 |
