@@ -59,8 +59,7 @@ func TestStampAuditPrincipal_RejectsReservedHeaderUser(t *testing.T) {
 		t.Run(user, func(t *testing.T) {
 			var reached bool
 			var got principal.Principal
-			h := stampAuditPrincipal(capturePrincipal(&reached, &got),
-				ChainResolvers(HeaderPrincipalResolver(header)))
+			h := stampAuditPrincipal(capturePrincipal(&reached, &got), ChainResolvers(HeaderPrincipalResolver(header)), nil)
 
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/entities", http.NoBody)
 			req.Header.Set(header, user)
@@ -86,8 +85,7 @@ func TestStampAuditPrincipal_RejectsReservedEnvUser(t *testing.T) {
 
 	var reached bool
 	var got principal.Principal
-	h := stampAuditPrincipal(capturePrincipal(&reached, &got),
-		ChainResolvers(EnvPrincipalResolver(), HeaderPrincipalResolver("X-Remote-User")))
+	h := stampAuditPrincipal(capturePrincipal(&reached, &got), ChainResolvers(EnvPrincipalResolver(), HeaderPrincipalResolver("X-Remote-User")), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities", http.NoBody)
 	rec := httptest.NewRecorder()
@@ -110,8 +108,7 @@ func TestStampAuditPrincipal_ReservedRejectionIsNotADowngrade(t *testing.T) {
 	const header = "X-Remote-User"
 	var reached bool
 	var got principal.Principal
-	h := stampAuditPrincipal(capturePrincipal(&reached, &got),
-		ChainResolvers(HeaderPrincipalResolver(header)))
+	h := stampAuditPrincipal(capturePrincipal(&reached, &got), ChainResolvers(HeaderPrincipalResolver(header)), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities", http.NoBody)
 	req.Header.Set(header, principal.UserScheduler)
@@ -149,8 +146,7 @@ func TestStampAuditPrincipal_ReservedOutsideAPIDegradesNotErrors(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			var reached bool
 			var got principal.Principal
-			h := stampAuditPrincipal(capturePrincipal(&reached, &got),
-				ChainResolvers(HeaderPrincipalResolver(header)))
+			h := stampAuditPrincipal(capturePrincipal(&reached, &got), ChainResolvers(HeaderPrincipalResolver(header)), nil)
 
 			req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
 			req.Header.Set(header, principal.UserScheduler)
@@ -189,8 +185,7 @@ func TestStampAuditPrincipal_OrdinaryUsersUnaffected(t *testing.T) {
 		t.Run(user, func(t *testing.T) {
 			var reached bool
 			var got principal.Principal
-			h := stampAuditPrincipal(capturePrincipal(&reached, &got),
-				ChainResolvers(HeaderPrincipalResolver(header)))
+			h := stampAuditPrincipal(capturePrincipal(&reached, &got), ChainResolvers(HeaderPrincipalResolver(header)), nil)
 
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/entities", http.NoBody)
 			req.Header.Set(header, user)
@@ -324,8 +319,7 @@ func TestStampAuditPrincipal_RejectsControlCharPrefixedReserved(t *testing.T) {
 	const header = "X-Remote-User"
 	var reached bool
 	var got principal.Principal
-	h := stampAuditPrincipal(capturePrincipal(&reached, &got),
-		ChainResolvers(HeaderPrincipalResolver(header)))
+	h := stampAuditPrincipal(capturePrincipal(&reached, &got), ChainResolvers(HeaderPrincipalResolver(header)), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities", http.NoBody)
 	// Set directly: http.Header.Set would reject a control character outright,
@@ -449,7 +443,7 @@ func TestReservedPrincipalRejection_IsLogged(t *testing.T) {
 	const header = "X-Remote-User"
 	h := stampAuditPrincipal(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	}), ChainResolvers(HeaderPrincipalResolver(header)))
+	}), ChainResolvers(HeaderPrincipalResolver(header)), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities", http.NoBody)
 	req.Header.Set(header, principal.UserScheduler)

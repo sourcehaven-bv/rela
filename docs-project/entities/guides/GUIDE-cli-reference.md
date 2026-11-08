@@ -1985,6 +1985,35 @@ rela rename id auth-module identity-module --dry-run
 
 ---
 
+### rela peer key create
+
+Generate a peer key: the credential a sync peer uses to read this rela
+(DEC-81161C3).
+
+```bash
+rela peer key create NAME > NAME.key
+```
+
+`NAME` is 1 to 63 lowercase letters, digits, `_` or `-`, starting with a
+letter or digit. The peer authenticates as `peer:NAME`.
+
+The key goes to stdout and nowhere else. stderr shows the line to add to
+`.rela/secrets.yaml` on the rela the peer reads from:
+
+```yaml
+peer_key.NAME: sha256:<hex>
+```
+
+That line holds a digest, not the key. If the source reads its secrets from a
+systemd credential, add the line there instead. The command writes no file:
+the key belongs on the peer and the digest on the source. Then grant
+`peer:NAME` a role in the source's `acl.yaml`. The peer stores the key as
+`peer_credential.<source>` in its own `.rela/secrets.yaml` and passes it with
+`rela reconcile diff --token-secret peer_credential.<source>`. See the server security guide, "Peer
+keys", for revocation and proxies.
+
+---
+
 ### rela schema
 
 View the metamodel schema.
@@ -2405,7 +2434,8 @@ fingerprints of ranges of addresses and lists only the ranges that differ, so
 two projects that are almost the same cost a few requests.
 
 ```bash
-rela reconcile diff --remote URL [--types T1,T2,...] [--token-file FILE | --token-env VAR]
+rela reconcile diff --remote URL [--types T1,T2,...]
+                    [--token-secret NAME | --token-file FILE | --token-env VAR]
                     [--auth-header NAME] [--exit-code] [--timeout 10m] [--max-round-trips N]
 ```
 
@@ -2419,7 +2449,8 @@ stores, use identities that read everything on both sides.
 | ----------------------- | ---------------------------------------------------------------------------------------------------- |
 | `--remote`              | Base URL of the remote rela, such as `https://rela.example.com`. No user, query or fragment          |
 | `--types`               | Entity and relation types to compare, comma separated. Default: every type in the local schema      |
-| `--token-file`          | File that holds the credential. Overrides `--token-env`. A warning is logged when others can read it |
+| `--token-secret`        | Name of a global secret in `.rela/secrets.yaml` that holds the credential, such as `peer_credential.<name>` for a peer key |
+| `--token-file`          | File that holds the credential. A warning is logged when others can read it                          |
 | `--token-env`           | Environment variable that holds the credential, such as `RELA_RECONCILE_TOKEN`                       |
 | `--auth-header`         | Header that carries the credential. Default `Authorization`, which sends it as a bearer token       |
 | `--allow-insecure-http` | Allow plain `http` to a host that is not loopback                                                    |
@@ -2429,10 +2460,15 @@ stores, use identities that read everything on both sides.
 
 There is no flag that takes the credential itself, so it does not show up in
 the process list or your shell history. The command reads a credential only
-from the file or variable you name, never from a default variable, so a
-mistyped `--remote` does not receive one. A named file or variable that is
-empty or unset is an error. Without either option the command sends no
-authentication header.
+from the secret, file or variable you name, never from a default, so a
+mistyped `--remote` does not receive one. Name at most one of the three. A
+named secret, file or variable that is empty or unset is an error. Without any of these options the command
+sends no authentication header. `--token-secret` refuses `token_key` and
+`peer_key.` names: those are the server's own secrets, not credentials for a
+remote.
+
+To authenticate as a sync peer, use a peer key that the remote's operator
+created with `rela peer key create` (see below).
 
 The remote learns some of your local addresses. To split a range, the command
 sends local addresses as range bounds. A range with at most 256 local

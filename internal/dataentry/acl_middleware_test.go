@@ -68,7 +68,7 @@ func TestACLMiddleware_AnonymousIsUnauthenticated(t *testing.T) {
 			called := false
 			next := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { called = true })
 			handler := stampAuditPrincipal(attachACLRequest(next, d, false), ChainResolvers(
-				HeaderPrincipalResolver("X-Remote-User")))
+				HeaderPrincipalResolver("X-Remote-User")), nil)
 
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
 			if tc.header != "" {

@@ -329,7 +329,7 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 		// credential. The generator outlives schema reloads, so this sticks.
 		a.State().OpenAPIGen.SetAuthHeader(a.jwtGate.HeaderName)
 	}
-	handler = stampAuditPrincipal(handler, resolver)
+	handler = stampAuditPrincipal(handler, resolver, peerKeysFor(a))
 	// Outermost of all: per-request query accounting must wrap the whole
 	// chain so the principal resolution and ACL compilation above (which
 	// read the store) are counted with the handler, not missed.
@@ -916,9 +916,46 @@ func isControlRune(r rune) bool {
 // The JWT gate re-stamps on API paths after this middleware, so it repeats the
 // check on its own verified subject — see [verifiedPrincipal]. A guard here
 // alone would be bypassed whenever the gate is installed.
-func stampAuditPrincipal(next http.Handler, resolve PrincipalResolver) http.Handler {
+//
+// **Peer keys (DEC-81161C3).** With peers set, an `/api/` request that
+// presents a peer key is identified by the key alone; see
+// [peerKeyEdge.serve]. Every other request takes the resolver. This is the
+// one identity stage rather than a second entry point into the chain, so a
+// peer request passes every later middleware like any other request.
+//
+// Nil: peers is accepted and turns the peer key check off.
+func stampAuditPrincipal(next http.Handler, resolve PrincipalResolver, peers PeerKeys) http.Handler {
+	var edge *peerKeyEdge
+	if peers != nil {
+		edge = &peerKeyEdge{keys: peers}
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if edge != nil && isAPIPath(r.URL.Path) {
+			// The answer depends on the Authorization header, for peers and
+			// for every other caller alike.
+			w.Header().Add("Vary", "Authorization")
+			if credential, present, ambiguous := edge.peerCredential(r); present {
+				edge.serve(w, r, credential, ambiguous, next)
+				return
+			}
+		}
 		p := resolve(r)
+		if edge != nil && edge.keys.IsPeerKey(p.User) {
+			// A peer key sent in the identity header instead of
+			// Authorization, for example by a client whose --auth-header
+			// names the proxy's header. Used as a user name it would land in
+			// the access and audit logs, so it is refused and never logged.
+			// Off the API the request is served as the anonymous default,
+			// like a reserved name below.
+			edge.logRefusal(r, errPeerKeyMisplaced)
+			if isAPIPath(r.URL.Path) {
+				w.Header().Set("WWW-Authenticate", "Bearer")
+				writeV1Error(w, r, http.StatusUnauthorized, "unauthenticated", "Authentication required",
+					"A peer key goes in the Authorization header.")
+				return
+			}
+			p = defaultPrincipalResolver(r)
+		}
 		if principal.IsReserved(p.User) {
 			slog.WarnContext(r.Context(), "rejected reserved principal asserted by request",
 				"user", p.User,
@@ -935,8 +972,8 @@ func stampAuditPrincipal(next http.Handler, resolve PrincipalResolver) http.Hand
 				// carries the value, which is where it belongs (RR-I5S4NK).
 				writeV1Error(w, r, http.StatusForbidden, "reserved_principal",
 					"Reserved principal",
-					"A '"+principal.ReservedPrefix+"' or '"+principal.IntegrationPrefix+
-						"' prefixed identity is internal to rela and cannot be asserted by a request.")
+					"An identity prefixed '"+strings.Join(principal.ReservedPrefixes(), "', '")+
+						"' is internal to rela or authenticated by a peer key, and cannot be asserted by a request.")
 				return
 			}
 			p = defaultPrincipalResolver(r)

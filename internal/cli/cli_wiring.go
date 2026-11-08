@@ -243,6 +243,8 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 			return nil, err
 		}
 		return reconclient.Visible(el)
+	}, Secret: func(name string) (string, error) {
+		return globalSecret(svc.Paths().CacheDir, name)
 	}}
 	return &cliBundles{
 		reconcile:  recon,

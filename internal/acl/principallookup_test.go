@@ -292,3 +292,26 @@ roles:
 		t.Fatalf("expected assignee local role from substituted PERS-JV, got %v", roles)
 	}
 }
+
+// TestResolve_PeerIsNeverLookedUp: a peer name comes from the key list, so an
+// entity whose principal_property holds it does not take over the peer's
+// identity or its roles (TKT-H91N91L).
+func TestResolve_PeerIsNeverLookedUp(t *testing.T) {
+	ctx := context.Background()
+	persons := []personRow{{id: "PERS-X", email: "peer:acme"}}
+	rels := [][3]string{{"PERS-X", "heeft_rol", "ROLE-MD"}}
+	d := buildPrincipalLookupWorld(ctx, t, principalLookupPolicyYAML, persons, rels)
+	p := principal.Peer("acme", principal.ToolDataEntry)
+	ident, err := d.IdentityResolver().Resolve(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ident.Principal(); got.User != "peer:acme" || got.RawUser != "" || ident.Unmatched() {
+		t.Fatalf("resolved to %q (raw %q, unmatched %v), want peer:acme unchanged", got.User, got.RawUser, ident.Unmatched())
+	}
+	// A non-peer principal with the same lookup still resolves, so the
+	// lookup itself is on in this world.
+	if id, err := d.IdentityResolver().ResolvePrincipal(ctx, "peer:acme"); err != nil || id != "PERS-X" {
+		t.Fatalf("lookup world broken: %q %v", id, err)
+	}
+}

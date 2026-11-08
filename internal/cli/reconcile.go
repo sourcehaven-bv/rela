@@ -20,6 +20,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient/httpremote"
+	"github.com/Sourcehaven-BV/rela/internal/secrets"
 )
 
 // ReconcileCmd groups the commands that compare this project with another
@@ -38,19 +39,25 @@ type reconcileServices struct {
 	// build the read.
 	Local func() (reconclient.Local, error)
 	Meta  *metamodel.Metamodel
+	// Secret reads a value from the global section of the project's secrets
+	// (`.rela/secrets.yaml` or the systemd credential), for --token-secret.
+	//
+	// Nil: accepted. --token-secret then fails.
+	Secret func(name string) (string, error)
 }
 
 // ReconcileDiffCmd compares this project's view with a remote's view.
 //
-// The credential comes from an environment variable or a file, never from a
-// flag value, so it does not show up in ps or in shell history. Both are
-// named explicitly: a credential is never picked up from a default variable
-// and sent to whatever --remote names.
+// The credential comes from an environment variable, a file or a project
+// secret, never from a flag value, so it does not show up in ps or in shell
+// history. Each is named explicitly: a credential is never picked up from a
+// default and sent to whatever --remote names.
 type ReconcileDiffCmd struct {
 	Remote            string        `required:"" help:"Base URL of the remote rela, such as https://rela.example.com."`
 	Types             []string      `sep:"," help:"Entity and relation types to compare (default: every type in the schema). A relation type needs the entity types at both of its ends."`
-	TokenEnv          string        `name:"token-env" help:"Environment variable that holds the credential for the remote, such as RELA_RECONCILE_TOKEN."`
-	TokenFile         string        `name:"token-file" type:"path" help:"File that holds the credential for the remote; overrides --token-env."`
+	TokenEnv          string        `name:"token-env" xor:"credential" help:"Environment variable that holds the credential for the remote, such as RELA_RECONCILE_TOKEN."`
+	TokenFile         string        `name:"token-file" type:"path" xor:"credential" help:"File that holds the credential for the remote."`
+	TokenSecret       string        `name:"token-secret" xor:"credential" help:"Name of the global project secret (.rela/secrets.yaml) that holds the credential for the remote, such as peer_credential.<name> for a peer key."`
 	AuthHeader        string        `name:"auth-header" default:"Authorization" help:"Request header that carries the credential. Authorization sends it as a bearer token."`
 	AllowInsecureHTTP bool          `name:"allow-insecure-http" help:"Allow plain http to a host that is not loopback."`
 	Timeout           time.Duration `default:"10m" help:"Time limit for the whole comparison."`
@@ -89,7 +96,7 @@ func (c *ReconcileDiffCmd) run(ctx context.Context, s *reconcileServices, getenv
 		return err
 	}
 	cfg := httpremote.Config{BaseURL: c.Remote, AllowInsecureHTTP: c.AllowInsecureHTTP}
-	value, source, err := c.credential(getenv)
+	value, source, err := c.credential(getenv, s.Secret)
 	if err != nil {
 		return err
 	}
@@ -135,11 +142,28 @@ func (c *ReconcileDiffCmd) run(ctx context.Context, s *reconcileServices, getenv
 	return nil
 }
 
-// credential reads the credential from --token-file or the variable
-// --token-env names, and names its source for errors. Neither flag means no
-// credential; a named source that is empty is an error.
-func (c *ReconcileDiffCmd) credential(getenv func(string) string) (value, source string, err error) {
+// credential reads the credential from --token-secret, --token-file or the
+// variable --token-env names, and names its source for errors. No flag means
+// no credential; a named source that is empty is an error.
+func (c *ReconcileDiffCmd) credential(getenv func(string) string,
+	secret func(string) (string, error),
+) (value, source string, err error) {
 	switch {
+	case c.TokenSecret != "":
+		source = "--token-secret " + c.TokenSecret
+		if c.TokenSecret == secrets.TokenKey || strings.HasPrefix(c.TokenSecret, secrets.PeerKeyPrefix) {
+			// The token store key and the peer key digests are the server's
+			// own; neither is a credential for a remote.
+			return "", "", fmt.Errorf("%s: this secret is not a credential for a remote", source)
+		}
+		if secret == nil {
+			return "", "", fmt.Errorf("%s: this project has no secrets", source)
+		}
+		v, sErr := secret(c.TokenSecret)
+		if sErr != nil {
+			return "", "", fmt.Errorf("%s: %w", source, sErr)
+		}
+		value = strings.TrimSpace(v)
 	case c.TokenFile != "":
 		if value, err = readTokenFile(c.TokenFile); err != nil {
 			return "", "", err

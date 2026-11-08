@@ -1860,9 +1860,10 @@ request body is untrusted.
   ends and both are of the named types.
 - **A relation type whose meta the policy can hide is refused** with 422
   `relation_meta_gated`, for every principal. Its element would need the meta
-  redaction of the source row, which ranges do not support yet. The problem's
-  `range` member gives the index of the refused range, so a client can leave
-  that type out and send the rest again (`rela reconcile diff`, TKT-0Y566OJ).
+  redaction of the source row, which ranges do not support yet. The error's
+  `source.pointer` is `/ranges/<index>`, the index of the refused range, so a
+  client can leave that type out and send the rest again (`rela reconcile
+  diff`, TKT-0Y566OJ).
 - **Nothing is cached.** The answer is one principal's and is built fresh.
 - **The work is bounded.** Peer-chosen ranges are the cost attack surface. A
   row gate with a relation predicate costs the whole type per call. A token
@@ -1883,11 +1884,78 @@ request body is untrusted.
   is still filling its stored hashes, on whether some are pending. So the
   same range may answer `too_large` and later `ok`; that is no leak.
 - **Peers may call it without a browser origin,** like the data routes. A
-  request with a cookie keeps the same-origin check. Peer credentials are a
-  later step (FEAT-CMVZQFI); today the peer authenticates as any client of
-  the deployment does, and the gate is keyed on its user name. In header
-  mode every caller without the identity header is the one user `unknown`,
-  and so shares one bucket.
+  request with a cookie keeps the same-origin check.
+- **A peer authenticates with a peer key or as any other client.** With a
+  peer key (see [Peer keys](#peer-keys)) the principal is `peer:<name>`. The
+  gate is keyed on the principal, so each peer has its own bucket and slots.
+  A peer that authenticates through the deployment's identity source instead
+  is keyed on that user name. In header mode every caller without the
+  identity header is the one user `unknown`, and so shares one bucket; give
+  each peer a key to keep them apart.
+
+## Peer keys
+
+A sync peer reads another rela with a peer key (TKT-H91N91L, DEC-81161C3).
+The key is a bearer credential that rela itself verifies, in every identity
+mode: header, environment and JWT.
+
+- **A peer is an ordinary principal.** A valid key stamps `peer:<name>`, with
+  principal type `peer`. The request then runs the same chain as any other:
+  the identity edge resolves it once, and acl.yaml decides what it reads. A
+  peer reads only what its roles allow, and `visible:` redacts its fields as
+  for anyone else. A peer is never `system:`; that namespace stays refused on
+  every request path.
+- **The `principal_property` lookup never applies to a peer.** The peer's
+  name comes from the operator's key list, not from an external natural key.
+  A user entity whose `principal_property` holds `peer:acme` therefore cannot
+  take over the peer's identity or give it that entity's roles.
+- **Without an acl.yaml every peer key is refused.** With no policy nothing
+  would limit what a peer reads, so a valid key answers 401 instead of
+  reading everything.
+- **`peer:` is reserved.** A principal header, `$RELA_DATAENTRY_USER` or a
+  JWT subject that names `peer:<name>` is refused like `system:` and
+  `integration:`. Only a verified key yields a peer principal, and `run_as:`
+  cannot name one.
+- **A peer key only reads entities and relations.** It may `GET` or `HEAD`
+  `/api/v1/<plural>`, `/api/v1/<plural>/<id>` and the entity's `relations`
+  paths, `/api/v1/_schema` and the OpenAPI spec, and `POST
+  /api/v1/_reconcile`. Any path with a segment that starts with `_` at any
+  depth, and any other method, answers 403 `peer_route_refused`, whatever
+  role acl.yaml grants. This keeps peers off writes, off the long-lived
+  streams (`_events`, `_views`, `_collab`), so a revoked key stops working
+  within 10 seconds, and off sub-resources sync does not need: `_export`
+  runs external commands, `_presence` records the caller as a viewer and
+  lists who else is, and `_channels` holds chat. The rule limits what a
+  leaked key can do; it conceals nothing.
+- **A bad key is 401, never a fallback.** A request whose `Authorization`
+  header carries a `relapeer_` key is decided by the key alone. An unknown,
+  malformed or revoked key, or a key next to a second `Authorization` value,
+  answers 401 and does not fall through to the identity header or the JWT.
+  A peer key sent as the principal header instead of `Authorization` also
+  answers 401, so it never becomes a user name in the logs. Refusals are
+  logged at most once a minute per server, without the key. If a reload of
+  the key list hangs for 30 seconds, every key is refused until it
+  completes.
+- **The source stores a digest, never the key.** `rela peer key create
+  <name>` prints the key once and the line for the source:
+  `peer_key.<name>: sha256:<hex>` in `.rela/secrets.yaml` (or the systemd
+  credential). The server rereads the list at most every 10 seconds, so
+  adding or removing a line needs no restart. A list that fails to load
+  admits no peer key. No script can read a `peer_key.` entry.
+- **The peer keeps its key as a secret.** Store it as
+  `peer_credential.<name>` in the peer's own `.rela/secrets.yaml`; `rela
+  reconcile diff --token-secret peer_credential.<name>` reads it, and no
+  script can. `--token-file` and `--token-env` work too. The key is never a
+  flag value.
+  The client refuses plain http to a host that is not loopback and never
+  follows a redirect, so the key is not sent elsewhere.
+- **A proxy in front must pass the key and strip the identity header.** If a
+  reverse proxy authenticates users and sets the principal header, let a
+  request to `/api/v1/` through without its login only when the
+  `Authorization` header starts with `Bearer relapeer_`, and always
+  overwrite or remove the principal header. rela then verifies the key
+  itself; it checks peer keys on `/api/` paths only. See
+  [Server security](server-security.md#peer-keys).
 
 ## Presence
 
