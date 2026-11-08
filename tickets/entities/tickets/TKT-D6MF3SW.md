@@ -5,7 +5,9 @@ title: 'rela-server: multi-tenant host that routes a verified org_id to its tena
 kind: enhancement
 priority: high
 effort: l
-status: backlog
+started: "2026-11-08"
+completed: "2026-11-08"
+status: done
 ---
 
 ## Description

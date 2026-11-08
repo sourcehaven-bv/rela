@@ -2,7 +2,10 @@
 
 package tenant
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
 // dsnForSchema refuses to derive a per-tenant DSN on a build with no PostgreSQL.
 //
@@ -25,4 +28,10 @@ func dsnForSchema(_, _ string) (string, error) {
 	return "", errors.New(
 		"tenant: deriving a per-tenant DSN requires the postgres build; " +
 			"schema-per-tenant has no meaning for the filesystem or memory stores")
+}
+
+// verifySchema refuses on a build with no PostgreSQL, for the reason
+// dsnForSchema does: there is no tenant schema to land in.
+func verifySchema(context.Context, string, string) error {
+	return errors.New("tenant: checking a tenant schema requires the postgres build")
 }

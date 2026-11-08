@@ -3,7 +3,10 @@ package tenant
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
+	"regexp"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -36,7 +39,8 @@ const ConfigFileName = "tenants.yaml"
 // one behind the same single-method seam.
 type Config struct {
 	// BaseDSN connects to the cluster holding the shared-tier tenants. Each
-	// tenant's own DSN is derived from it by pinning `search_path`.
+	// tenant's own DSN is derived from it by pinning `search_path`. It may not
+	// carry a password (see LoadConfig).
 	//
 	// Left empty when every tenant carries an explicit DSN, which is the
 	// fully-sharded arrangement.
@@ -44,6 +48,17 @@ type Config struct {
 
 	// Tenants is the map itself.
 	Tenants []ConfigTenant `yaml:"tenants"`
+
+	// MaxResident bounds how many tenants are open at once. Zero or less
+	// takes [DefaultMaxResident]. Each open tenant holds its own connection
+	// pool, so this is the number to size against the cluster's
+	// max_connections.
+	MaxResident int `yaml:"max_resident"`
+
+	// MaxOpen is the hard ceiling on open tenants, counting those a
+	// long-lived request keeps open past MaxResident. Zero or less takes
+	// twice MaxResident. See [WithMaxOpen].
+	MaxOpen int `yaml:"max_open"`
 }
 
 // ConfigTenant is one entry in the tenant map.
@@ -81,7 +96,57 @@ func LoadConfig(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("tenant: parse %s: %w", path, err)
 	}
+	if err := cfg.refuseFilePasswords(); err != nil {
+		return nil, fmt.Errorf("tenant: %s: %w", path, err)
+	}
 	return &cfg, nil
+}
+
+// refuseFilePasswords refuses a password written into the tenant map.
+//
+// The map lives in the project directory with the rest of the operator
+// config, which is not a secret and is routinely committed. A database
+// password does not belong there, the same rule that keeps a literal
+// password out of `mail.yaml` and the DSN in $RELA_DATABASE_URL. Give the
+// base DSN in that variable, or keep the password in PGPASSWORD or a pgpass
+// file, which pgx reads for any DSN without one.
+func (c *Config) refuseFilePasswords() error {
+	if dsnHasPassword(c.BaseDSN) {
+		return errors.New("base_dsn carries a password; " + dsnHint)
+	}
+	for i, ct := range c.Tenants {
+		if dsnHasPassword(ct.DSN) {
+			return fmt.Errorf("tenant %d (org_id %q): dsn carries a password; %s", i, ct.OrgID, dsnHint)
+		}
+	}
+	return nil
+}
+
+const dsnHint = "leave base_dsn out and set $RELA_DATABASE_URL, or use PGPASSWORD or a pgpass file"
+
+// keywordPassword matches a password keyword in a key/value DSN.
+var keywordPassword = regexp.MustCompile(`(?:^|\s)password\s*=`)
+
+// dsnHasPassword reports whether dsn spells out a password, in either DSN
+// dialect. It reads the string only: a password pgx would find in
+// PGPASSWORD or a pgpass file is not in the file, so it is not refused.
+func dsnHasPassword(dsn string) bool {
+	if dsn == "" {
+		return false
+	}
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		u, err := url.Parse(dsn)
+		if err != nil {
+			// Unparseable: refuse rather than guess, since the string may
+			// hold a password the parse could not find.
+			return true
+		}
+		if _, ok := u.User.Password(); ok {
+			return true
+		}
+		return u.Query().Has("password")
+	}
+	return keywordPassword.MatchString(dsn)
 }
 
 // Resolver turns the parsed config into a live lookup, deriving each tenant's

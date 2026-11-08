@@ -74,6 +74,23 @@ func DSN(tb TB) string {
 	return scopedDSN(tb)
 }
 
+// SchemaDSN is [DSN] that also returns the name of the schema the DSN is
+// pinned to, for a test that must state which schema a connection lands in.
+func SchemaDSN(tb TB) (dsn, schema string) {
+	tb.Helper()
+	dsn = scopedDSN(tb)
+	if dsn == "" {
+		return "", ""
+	}
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		tb.Fatalf("parse scoped DSN: %v", err)
+		return "", ""
+	}
+	schema, _, _ = strings.Cut(cfg.RuntimeParams["search_path"], ",")
+	return dsn, schema
+}
+
 // scopedDSN creates the per-test schema and returns a DSN pinned to it.
 func scopedDSN(tb TB) string {
 	tb.Helper()

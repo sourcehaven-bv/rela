@@ -15,6 +15,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
@@ -72,7 +73,8 @@ func TestTenantIsolation_OneTenantCannotReadAnother(t *testing.T) {
 	// DSN per call with search_path pinned, which is the same construction the
 	// tenant config derives — so this exercises the real mechanism rather than
 	// a test-only shortcut.
-	dsnA, dsnB := backendtest.DSN(t), backendtest.DSN(t)
+	dsnA, schemaA := backendtest.SchemaDSN(t)
+	dsnB, schemaB := backendtest.SchemaDSN(t)
 	if dsnA == "" || dsnB == "" {
 		t.Fatal("backendtest returned no DSN")
 	}
@@ -81,8 +83,8 @@ func TestTenantIsolation_OneTenantCannotReadAnother(t *testing.T) {
 	}
 
 	resolver, err := tenant.NewMapResolver([]tenant.Tenant{
-		{OrgID: "org-a", Schema: "tenant_a", DSN: dsnA},
-		{OrgID: "org-b", Schema: "tenant_b", DSN: dsnB},
+		{OrgID: "org-a", Schema: schemaA, DSN: dsnA},
+		{OrgID: "org-b", Schema: schemaB, DSN: dsnB},
 	})
 	if err != nil {
 		t.Fatalf("NewMapResolver: %v", err)
@@ -106,12 +108,12 @@ func TestTenantIsolation_OneTenantCannotReadAnother(t *testing.T) {
 	}
 	defer leaseB.Release()
 
-	if leaseA.Services() == leaseB.Services() {
+	if leaseA.Value() == leaseB.Value() {
 		t.Fatal("both tenants were handed the same Services")
 	}
 	// TKT-5L5O0MZ: the config is parsed once for every tenant. A separate
 	// parse per tenant would yield equal values at different addresses.
-	svcA, svcB := leaseA.Services(), leaseB.Services()
+	svcA, svcB := leaseA.Value(), leaseB.Value()
 	if svcA.Meta() != svcB.Meta() {
 		t.Error("tenants hold different metamodels; the config was parsed per tenant")
 	}
@@ -130,24 +132,24 @@ func TestTenantIsolation_OneTenantCannotReadAnother(t *testing.T) {
 		Type:       "ticket",
 		Properties: map[string]any{"title": "tenant B confidential"},
 	}
-	if err := leaseA.Services().Store().CreateEntity(ctx, secretOfA); err != nil {
+	if err := leaseA.Value().Store().CreateEntity(ctx, secretOfA); err != nil {
 		t.Fatalf("create in tenant A: %v", err)
 	}
-	if err := leaseB.Services().Store().CreateEntity(ctx, secretOfB); err != nil {
+	if err := leaseB.Value().Store().CreateEntity(ctx, secretOfB); err != nil {
 		t.Fatalf("create in tenant B: %v", err)
 	}
 
 	// The property: each tenant sees its own row and only its own row.
-	assertVisible(t, leaseA.Services(), "TKT-A1", "tenant A confidential")
-	assertVisible(t, leaseB.Services(), "TKT-B1", "tenant B confidential")
-	assertInvisible(t, leaseA.Services(), "TKT-B1", "A")
-	assertInvisible(t, leaseB.Services(), "TKT-A1", "B")
+	assertVisible(t, leaseA.Value(), "TKT-A1", "tenant A confidential")
+	assertVisible(t, leaseB.Value(), "TKT-B1", "tenant B confidential")
+	assertInvisible(t, leaseA.Value(), "TKT-B1", "A")
+	assertInvisible(t, leaseB.Value(), "TKT-A1", "B")
 
 	// A listing must not leak either. A direct GetEntity could conceivably be
 	// gated while a list query still returned foreign rows, so check the bulk
 	// read path too — it is the one that would carry a whole tenant's data.
-	assertOnlyOwnEntities(t, leaseA.Services(), "TKT-A1")
-	assertOnlyOwnEntities(t, leaseB.Services(), "TKT-B1")
+	assertOnlyOwnEntities(t, leaseA.Value(), "TKT-A1")
+	assertOnlyOwnEntities(t, leaseB.Value(), "TKT-B1")
 }
 
 // TestTenantIsolation_UnknownOrgReachesNoDatabase pins the fail-closed rule on
@@ -160,10 +162,10 @@ func TestTenantIsolation_OneTenantCannotReadAnother(t *testing.T) {
 // open".
 func TestTenantIsolation_UnknownOrgReachesNoDatabase(t *testing.T) {
 	root := writeIsolationProject(t)
-	dsn := backendtest.DSN(t)
+	dsn, schema := backendtest.SchemaDSN(t)
 
 	resolver, err := tenant.NewMapResolver([]tenant.Tenant{
-		{OrgID: "org-a", Schema: "tenant_a", DSN: dsn},
+		{OrgID: "org-a", Schema: schema, DSN: dsn},
 	})
 	if err != nil {
 		t.Fatalf("NewMapResolver: %v", err)
@@ -201,9 +203,11 @@ func TestTenantIsolation_UnknownOrgReachesNoDatabase(t *testing.T) {
 func TestTenantIsolation_EvictionDoesNotDisturbSiblings(t *testing.T) {
 	root := writeIsolationProject(t)
 
+	dsnA, schemaA := backendtest.SchemaDSN(t)
+	dsnB, schemaB := backendtest.SchemaDSN(t)
 	resolver, err := tenant.NewMapResolver([]tenant.Tenant{
-		{OrgID: "org-a", Schema: "tenant_a", DSN: backendtest.DSN(t)},
-		{OrgID: "org-b", Schema: "tenant_b", DSN: backendtest.DSN(t)},
+		{OrgID: "org-a", Schema: schemaA, DSN: dsnA},
+		{OrgID: "org-b", Schema: schemaB, DSN: dsnB},
 	})
 	if err != nil {
 		t.Fatalf("NewMapResolver: %v", err)
@@ -220,7 +224,7 @@ func TestTenantIsolation_EvictionDoesNotDisturbSiblings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Acquire(org-a): %v", err)
 	}
-	if err = leaseA.Services().Store().CreateEntity(ctx, &entity.Entity{
+	if err = leaseA.Value().Store().CreateEntity(ctx, &entity.Entity{
 		ID: "TKT-A1", Type: "ticket", Properties: map[string]any{"title": "a"},
 	}); err != nil {
 		t.Fatalf("create in tenant A: %v", err)
@@ -233,12 +237,12 @@ func TestTenantIsolation_EvictionDoesNotDisturbSiblings(t *testing.T) {
 	}
 	defer leaseB.Release()
 
-	if err = leaseB.Services().Store().CreateEntity(ctx, &entity.Entity{
+	if err = leaseB.Value().Store().CreateEntity(ctx, &entity.Entity{
 		ID: "TKT-B1", Type: "ticket", Properties: map[string]any{"title": "b"},
 	}); err != nil {
 		t.Fatalf("tenant B unusable after tenant A was evicted and closed: %v", err)
 	}
-	assertInvisible(t, leaseB.Services(), "TKT-A1", "B")
+	assertInvisible(t, leaseB.Value(), "TKT-A1", "B")
 
 	// Re-acquiring the evicted tenant must reopen it and find its data intact —
 	// eviction closes a connection, it does not destroy anything.
@@ -247,8 +251,71 @@ func TestTenantIsolation_EvictionDoesNotDisturbSiblings(t *testing.T) {
 		t.Fatalf("re-Acquire(org-a): %v", err)
 	}
 	defer leaseA2.Release()
-	assertVisible(t, leaseA2.Services(), "TKT-A1", "a")
-	assertInvisible(t, leaseA2.Services(), "TKT-B1", "A")
+	assertVisible(t, leaseA2.Value(), "TKT-A1", "a")
+	assertInvisible(t, leaseA2.Value(), "TKT-B1", "A")
+}
+
+// TestTenantIsolation_OwnAuditAndScriptEngine pins the two pieces of process
+// state each tenant must not share (TKT-SNVR8UV, RR-ZIKLZ02): the audit sink,
+// so one tenant's records cannot be read or erased with another's, and the
+// script engine, whose Lua cache is keyed by script path only.
+func TestTenantIsolation_OwnAuditAndScriptEngine(t *testing.T) {
+	root := writeIsolationProject(t)
+	dsnA, schemaA := backendtest.SchemaDSN(t)
+	dsnB, schemaB := backendtest.SchemaDSN(t)
+	resolver, err := tenant.NewMapResolver([]tenant.Tenant{
+		{OrgID: "org-a", Schema: schemaA, DSN: dsnA},
+		{OrgID: "org-b", Schema: schemaB, DSN: dsnB},
+	})
+	if err != nil {
+		t.Fatalf("NewMapResolver: %v", err)
+	}
+	reg, err := tenant.NewRegistry(resolver, isolationOpener(t, root), 4)
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	t.Cleanup(func() { _ = reg.Close() })
+
+	leaseA, err := reg.Acquire(t.Context(), "org-a")
+	if err != nil {
+		t.Fatalf("Acquire(org-a): %v", err)
+	}
+	defer leaseA.Release()
+	leaseB, err := reg.Acquire(t.Context(), "org-b")
+	if err != nil {
+		t.Fatalf("Acquire(org-b): %v", err)
+	}
+	defer leaseB.Release()
+
+	if leaseA.Value().ScriptEngine() == leaseB.Value().ScriptEngine() {
+		t.Error("tenants share one script engine, and with it one Lua cache")
+	}
+
+	leaseA.Value().Audit().Record(audit.Record{
+		Op: audit.OpCreateEntity, Subject: &audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-A1"},
+	})
+	leaseB.Value().Audit().Record(audit.Record{
+		Op: audit.OpCreateEntity, Subject: &audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-B1"},
+	})
+
+	tenantsDir := filepath.Join(root, ".rela", "audit", "tenants")
+	for schema, want := range map[string]string{schemaA: "TKT-A1", schemaB: "TKT-B1"} {
+		files, err := filepath.Glob(filepath.Join(tenantsDir, schema, "*.jsonl"))
+		if err != nil || len(files) != 1 {
+			t.Fatalf("%s: audit files %v (%v), want exactly one", schema, files, err)
+		}
+		data, err := os.ReadFile(files[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := string(data)
+		if !strings.Contains(got, want) {
+			t.Errorf("%s audit lacks its own record %s: %s", schema, want, got)
+		}
+		if strings.Count(got, "\n") != 1 {
+			t.Errorf("CROSS-TENANT AUDIT: %s holds %d records, want 1: %s", schema, strings.Count(got, "\n"), got)
+		}
+	}
 }
 
 // --- helpers ---
@@ -296,7 +363,7 @@ func assertOnlyOwnEntities(t *testing.T, svc *appbuild.Services, wantID string) 
 // isolationOpener builds the shared, tenant-independent half of construction
 // once: one project root, one metamodel, one ACL policy, one script engine, for
 // every tenant. Only the DSN differs per tenant, and the opener passes it.
-func isolationOpener(t *testing.T, root string) tenant.Opener {
+func isolationOpener(t *testing.T, root string) tenant.Opener[*appbuild.Services] {
 	t.Helper()
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	paths, err := project.Discover(root, fs)
@@ -316,7 +383,7 @@ func isolationOpener(t *testing.T, root string) tenant.Opener {
 	if err != nil {
 		t.Fatalf("NewSharedBase: %v", err)
 	}
-	open, err := tenant.SharedBaseOpener(base)
+	open, err := tenant.SharedBaseOpener(base, filepath.Join(paths.CacheDir, "audit", "tenants"))
 	if err != nil {
 		t.Fatalf("SharedBaseOpener: %v", err)
 	}
@@ -340,4 +407,38 @@ func writeIsolationProject(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return root
+}
+
+// TestTenantIsolation_MissingSchemaRefused pins that a tenant whose
+// connection does not land in its own schema is refused before anything is
+// opened. PostgreSQL skips a search_path entry naming no schema, so a tenant
+// listed before its schema exists would otherwise land in public, beside
+// every other such tenant.
+func TestTenantIsolation_MissingSchemaRefused(t *testing.T) {
+	root := writeIsolationProject(t)
+	dsn, _ := backendtest.SchemaDSN(t)
+	resolver, err := tenant.NewMapResolver([]tenant.Tenant{
+		// The DSN lands in the test's own schema, not in the one named.
+		{OrgID: "org-a", Schema: "tenant_never_created", DSN: dsn},
+	})
+	if err != nil {
+		t.Fatalf("NewMapResolver: %v", err)
+	}
+	reg, err := tenant.NewRegistry(resolver, isolationOpener(t, root), 4)
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	t.Cleanup(func() { _ = reg.Close() })
+
+	lease, err := reg.Acquire(t.Context(), "org-a")
+	if err == nil {
+		lease.Release()
+		t.Fatal("a tenant whose connection lands in another schema was opened")
+	}
+	if !strings.Contains(err.Error(), "tenant_never_created") {
+		t.Errorf("error = %v, want it to name the expected schema", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".rela", "audit", "tenants", "tenant_never_created")); statErr == nil {
+		t.Error("a refused tenant got an audit directory")
+	}
 }

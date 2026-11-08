@@ -614,6 +614,70 @@ minutes, starting 10 minutes after it starts. A sweep deletes rows of jobs that 
 including failed ones that will be retried, stay. The sweep uses one extra
 database connection.
 
+## Tenant mode
+
+One `rela-server-postgres` process can serve several organizations, each in
+its own PostgreSQL schema. Put `tenants.yaml` in the project directory to
+turn it on:
+
+```yaml
+# base_dsn may be left out; $RELA_DATABASE_URL is used instead. A DSN in
+# this file may not carry a password.
+max_resident: 4          # idle tenants kept open; each holds its own pool
+max_open: 8              # hard ceiling on open tenants (default 2x max_resident)
+tenants:
+  - org_id: org_7f3a     # the verified org_id claim
+    schema: tenant_acme  # the schema holding this org's data
+  - org_id: org_91bc
+    schema: tenant_globex
+    dsn: "..."           # optional: this tenant on another database
+```
+
+`tenants.yaml` sits with the project configuration, which you may commit,
+so the server refuses a password in `base_dsn` or `dsn`. Give the base DSN
+in `$RELA_DATABASE_URL`, or keep the password in `PGPASSWORD` or a pgpass
+file. A tenant's DSN keeps every setting of the base DSN, including its TLS
+settings, and only sets `search_path`.
+
+`max_resident` bounds the idle tenants kept open. A tenant that a live
+update stream still uses stays open past that bound until the stream ends.
+`max_open` is the hard ceiling: above it a new tenant gets 503 with
+`Retry-After` until a slot frees. Size it against the cluster's
+`max_connections`.
+
+Every tenant shares the project configuration (`schema.yaml`,
+`data-entry.yaml`, `acl.yaml`, scripts). Each tenant has its own store,
+search, live updates, co-editing rooms, Lua cache and audit log
+(`.rela/audit/tenants/<schema>/`).
+
+How a request is routed:
+
+- The server verifies the identity assertion and reads its `org_id`.
+- A request without an assertion, or with one that does not verify, gets
+  401.
+- A verified assertion without `org_id`, or with an org that
+  `tenants.yaml` does not name, gets 403 `unknown_tenant`.
+- If the tenant cannot be opened, or the server is at `max_open`, the
+  request gets 503 with `Retry-After`.
+- The SPA shell and its static assets load without a tenant, so the browser
+  can sign in.
+
+No refusal falls back to a default store. Tenant mode needs JWT identity
+(`-jwt-issuer`, `-jwt-audience`, `-jwt-jwks-url`). It refuses
+`-principal-header`, `$RELA_DATAENTRY_USER` and `--config-editing`, and it
+refuses to start on a build other than postgres.
+
+The IdP webhook (`POST /webhooks/idp`) is routed by the `org_id` in its
+signed body. An event for an org this server does not host is acknowledged
+and ignored. Declarative webhooks (`/hooks/<id>`) carry no assertion, so the
+server cannot tell their tenant and refuses them.
+
+Not yet in tenant mode: the scheduler, provisioning a new tenant and
+erasing one. Each schema must exist and is migrated on first use. A tenant
+whose connection does not land in its own schema is refused: PostgreSQL
+skips a `search_path` schema that does not exist, and the tenant would
+otherwise land in `public`.
+
 ## Other scope notes
 
 - The desktop app (`rela-desktop`) is filesystem-only; there is no PostgreSQL

@@ -29,6 +29,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/jwtauth"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/script"
+	"github.com/Sourcehaven-BV/rela/internal/tenanthost"
 )
 
 // stringSliceFlag collects repeated -allowed-origin values.
@@ -375,9 +376,11 @@ func warnUnidentifiedACL(mode identityMode, f *serverFlags, envUser string, hasA
 // coverage-ignore-func: startup wiring — the decision it acts on is validateIdentityFlags.
 // coverage-ignore-start: main-or-wiring: wiring that installs the identity source on the app; the
 // pure decision it acts on (validateIdentityFlags) is tested separately
-func wirePrincipalResolvers(app *dataentry.App, f *serverFlags, idv *jwtauth.Verifier, mode identityMode) error {
+func wirePrincipalResolvers(
+	app *dataentry.App, f *serverFlags, verifier tenanthost.AssertionVerifier, mode identityMode,
+) error {
 	if mode == identityJWT {
-		if idv == nil {
+		if verifier == nil {
 			// Unreachable: identityJWT implies all three JWT flags are set, so
 			// buildIdentityVerifier either returned a verifier or exited. Checked
 			// anyway because the alternative — storing a nil verifier behind a
@@ -385,7 +388,7 @@ func wirePrincipalResolvers(app *dataentry.App, f *serverFlags, idv *jwtauth.Ver
 			return errors.New("jwt identity selected but no verifier was built")
 		}
 		if err := app.SetJWTGate(dataentry.JWTGateConfig{
-			Verifier:   assertionVerifierAdapter{idv},
+			Verifier:   verifier,
 			HeaderName: f.jwtHeader,
 			// Injected as a predicate so dataentry needn't import jwtauth.
 			KeysUnavailable: func(err error) bool {
@@ -555,6 +558,17 @@ func main() {
 	// may build one. Applying it after discovery would confine (or fail closed on)
 	// a host the operator explicitly opted out of. Keep this above discoverProject.
 	applyCommandConfinement(f.unconfinedCommand, f.sandboxReadPaths)
+
+	// tenants.yaml in the project directory turns tenant mode on; without it
+	// the server runs exactly as before.
+	tenantsYAML, err := tenantsPath(f.projectDir)
+	if err != nil {
+		slog.Error("failed to initialize", "error", err)
+		os.Exit(1)
+	}
+	if tenantsYAML != "" {
+		os.Exit(runTenantMode(f, tenantsYAML, accessLog))
+	}
 
 	// No svc.Close(): rela-server is a daemon — it runs until the process exits,
 	// at which point the OS reclaims file descriptors and goroutines. Per-project

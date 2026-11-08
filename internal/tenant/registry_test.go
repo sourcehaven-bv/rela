@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
@@ -63,10 +64,10 @@ func TestRegistry_RequiresCollaborators(t *testing.T) {
 	t.Parallel()
 
 	opener := (&countingOpener{}).open
-	if _, err := tenant.NewRegistry(nil, opener, 2); err == nil {
+	if _, err := tenant.NewRegistry[*appbuild.Services](nil, opener, 2); err == nil {
 		t.Error("NewRegistry accepted a nil resolver")
 	}
-	if _, err := tenant.NewRegistry(testResolver(t, "a"), nil, 2); err == nil {
+	if _, err := tenant.NewRegistry[*appbuild.Services](testResolver(t, "a"), nil, 2); err == nil {
 		t.Error("NewRegistry accepted a nil opener")
 	}
 }
@@ -173,7 +174,7 @@ func TestRegistry_ReusesResidentStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Acquire (second): %v", err)
 	}
-	if first.Services() != second.Services() {
+	if first.Value() != second.Value() {
 		t.Error("two acquisitions of one tenant returned different stores")
 	}
 	if opener.count() != 1 {
@@ -224,7 +225,7 @@ func TestRegistry_BoundsResidentSet(t *testing.T) {
 func TestRegistry_EvictionLeavesSiblingsUsable(t *testing.T) {
 	t.Parallel()
 
-	opener := &countingOpener{}
+	opener := &counterOpener{}
 	reg, err := tenant.NewRegistry(testResolver(t, "a", "b"), opener.open, 1)
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
@@ -235,7 +236,7 @@ func TestRegistry_EvictionLeavesSiblingsUsable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Acquire(a): %v", err)
 	}
-	svcA := leaseA.Services()
+	svcA := leaseA.Value()
 	leaseA.Release()
 
 	// Acquiring b evicts a, since the bound is one.
@@ -245,15 +246,18 @@ func TestRegistry_EvictionLeavesSiblingsUsable(t *testing.T) {
 	}
 	defer leaseB.Release()
 
-	if leaseB.Services() == svcA {
+	if leaseB.Value() == svcA {
 		t.Fatal("tenant b was handed tenant a's store")
 	}
 	if leaseB.Tenant.OrgID != "b" {
 		t.Errorf("lease tenant = %q, want b", leaseB.Tenant.OrgID)
 	}
-	// b's store must still be usable after a was evicted and closed.
-	if err := leaseB.Services().Close(); err != nil {
-		t.Errorf("closing b after a was evicted: %v", err)
+	reg.WaitClosing()
+	if c := svcA.count(); c != 1 {
+		t.Errorf("evicted a closed %d times, want 1", c)
+	}
+	if c := leaseB.Value().count(); c != 0 {
+		t.Errorf("evicting a closed b %d times", c)
 	}
 }
 
@@ -264,7 +268,7 @@ func TestRegistry_EvictionLeavesSiblingsUsable(t *testing.T) {
 func TestRegistry_EvictionWaitsForInFlightUse(t *testing.T) {
 	t.Parallel()
 
-	opener := &countingOpener{}
+	opener := &counterOpener{}
 	reg, err := tenant.NewRegistry(testResolver(t, "a", "b"), opener.open, 1)
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
@@ -290,14 +294,20 @@ func TestRegistry_EvictionWaitsForInFlightUse(t *testing.T) {
 	if reg.Resident() != 2 {
 		t.Errorf("Resident() = %d while a is in flight, want 2 (a pending eviction)", reg.Resident())
 	}
-	if err := leaseA.Services().Close(); err != nil {
-		t.Errorf("a's store was closed out from under an in-flight lease: %v", err)
+	reg.WaitClosing()
+	a := leaseA.Value()
+	if c := a.count(); c != 0 {
+		t.Errorf("a's store was closed %d times under an in-flight lease", c)
 	}
 
 	// Releasing a completes its deferred eviction.
 	leaseA.Release()
 	if reg.Resident() != 1 {
 		t.Errorf("Resident() = %d after releasing the evicted tenant, want 1", reg.Resident())
+	}
+	reg.WaitClosing()
+	if c := a.count(); c != 1 {
+		t.Errorf("a closed %d times after its last release, want 1", c)
 	}
 }
 
@@ -307,8 +317,8 @@ func TestRegistry_EvictionWaitsForInFlightUse(t *testing.T) {
 func TestRegistry_DoubleReleaseIsSafe(t *testing.T) {
 	t.Parallel()
 
-	opener := &countingOpener{}
-	reg, err := tenant.NewRegistry(testResolver(t, "a"), opener.open, 1)
+	opener := &counterOpener{}
+	reg, err := tenant.NewRegistry(testResolver(t, "a", "b"), opener.open, 1)
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
@@ -323,25 +333,29 @@ func TestRegistry_DoubleReleaseIsSafe(t *testing.T) {
 		t.Fatalf("Acquire (second): %v", err)
 	}
 
+	// Push a out of the bound so a release that dropped its count to zero
+	// would close it.
+	other, err := reg.Acquire(t.Context(), "b")
+	if err != nil {
+		t.Fatalf("Acquire(b): %v", err)
+	}
+	other.Release()
+
 	first.Release()
 	first.Release() // the accidental double release
 	first.Release()
 
 	// The second holder's reference must have survived, so the store is
-	// still resident and still usable.
-	if reg.Resident() != 1 {
-		t.Fatalf("Resident() = %d after a double release, want 1", reg.Resident())
-	}
-	if err := second.Services().Close(); err != nil {
-		t.Errorf("store closed by a double release: %v", err)
+	// still open.
+	reg.WaitClosing()
+	if c := second.Value().count(); c != 0 {
+		t.Errorf("store closed %d times by a double release", c)
 	}
 	second.Release()
 }
 
-// TestRegistry_ConcurrentAcquireIsSafe runs under -race. Concurrent first
-// requests for one tenant may open more than one store — wasteful, not
-// incorrect — but exactly one must end up resident and every caller must get a
-// usable lease.
+// TestRegistry_ConcurrentAcquireIsSafe runs under -race: every caller must
+// get a usable lease and the bound must hold afterwards.
 func TestRegistry_ConcurrentAcquireIsSafe(t *testing.T) {
 	t.Parallel()
 
@@ -365,7 +379,7 @@ func TestRegistry_ConcurrentAcquireIsSafe(t *testing.T) {
 				errs <- err
 				return
 			}
-			if lease.Services() == nil {
+			if lease.Value() == nil {
 				errs <- errors.New("lease carried nil services")
 			}
 			lease.Release()
@@ -439,7 +453,262 @@ func TestRegistry_DefaultBoundApplied(t *testing.T) {
 // TestSharedBaseOpener_RejectsNilBase pins the constructor rule: a nil base
 // fails at wiring, not on the first request.
 func TestSharedBaseOpener_RejectsNilBase(t *testing.T) {
-	if _, err := tenant.SharedBaseOpener(nil); err == nil {
+	if _, err := tenant.SharedBaseOpener(nil, t.TempDir()); err == nil {
 		t.Fatal("SharedBaseOpener(nil) must return an error")
+	}
+}
+
+// TestSharedBaseOpener_RejectsEmptyAuditRoot pins that every tenant gets its
+// own audit directory: an opener with no root to put them under fails at
+// wiring.
+func TestSharedBaseOpener_RejectsEmptyAuditRoot(t *testing.T) {
+	t.Parallel()
+
+	// A zero base is enough: the opener checks its arguments before it ever
+	// uses the base.
+	if _, err := tenant.SharedBaseOpener(&appbuild.SharedBase{}, ""); err == nil {
+		t.Fatal("SharedBaseOpener accepted an empty audit root")
+	}
+}
+
+// closeCounter is a resident whose closes can be observed, which a zero
+// Services cannot offer.
+type closeCounter struct {
+	mu     sync.Mutex
+	closes int
+}
+
+func (c *closeCounter) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closes++
+	return nil
+}
+
+func (c *closeCounter) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closes
+}
+
+type counterOpener struct {
+	mu     sync.Mutex
+	opened []*closeCounter
+}
+
+func (o *counterOpener) open(context.Context, tenant.Tenant) (*closeCounter, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	c := &closeCounter{}
+	o.opened = append(o.opened, c)
+	return c, nil
+}
+
+func (o *counterOpener) count() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return len(o.opened)
+}
+
+// TestRegistry_ReviveEvictingResident pins "one resident per org". A tenant
+// marked evicting while a request holds it must be revived by the next
+// Acquire, not shadowed by a second store on the same schema.
+func TestRegistry_ReviveEvictingResident(t *testing.T) {
+	t.Parallel()
+
+	opener := &counterOpener{}
+	reg, err := tenant.NewRegistry(testResolver(t, "a", "b"), opener.open, 1)
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	t.Cleanup(func() { _ = reg.Close() })
+
+	oldA, err := reg.Acquire(t.Context(), "a")
+	if err != nil {
+		t.Fatalf("Acquire(a): %v", err)
+	}
+	leaseB, err := reg.Acquire(t.Context(), "b") // marks a evicting
+	if err != nil {
+		t.Fatalf("Acquire(b): %v", err)
+	}
+	leaseB.Release()
+
+	newA, err := reg.Acquire(t.Context(), "a") // revives a, evicts b
+	if err != nil {
+		t.Fatalf("Acquire(a) again: %v", err)
+	}
+	if newA.Value() != oldA.Value() {
+		t.Fatal("a second resident was opened for an evicting tenant")
+	}
+	if opener.count() != 2 {
+		t.Errorf("opened %d residents, want 2 (a once, b once)", opener.count())
+	}
+
+	// The old lease's release must not close the revived resident: newA
+	// still holds it.
+	oldA.Release()
+	if c := newA.Value().count(); c != 0 {
+		t.Fatalf("revived resident closed %d times under a live lease", c)
+	}
+	if reg.Resident() != 1 {
+		t.Errorf("Resident() = %d, want 1", reg.Resident())
+	}
+	newA.Release()
+	if c := newA.Value().count(); c != 0 {
+		t.Errorf("revived resident within the bound was closed %d times", c)
+	}
+}
+
+// TestRegistry_ClosesEachResidentOnce pins that eviction, release and Close
+// never close a resident twice: a second close of a pgx pool is a panic.
+func TestRegistry_ClosesEachResidentOnce(t *testing.T) {
+	t.Parallel()
+
+	opener := &counterOpener{}
+	reg, err := tenant.NewRegistry(testResolver(t, "a", "b", "c"), opener.open, 1)
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+
+	held, err := reg.Acquire(t.Context(), "a")
+	if err != nil {
+		t.Fatalf("Acquire(a): %v", err)
+	}
+	for _, org := range []string{"b", "c"} {
+		lease, err := reg.Acquire(t.Context(), org)
+		if err != nil {
+			t.Fatalf("Acquire(%s): %v", org, err)
+		}
+		lease.Release()
+	}
+	if err := reg.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	held.Release() // after Close: must not close again
+
+	for i, c := range opener.opened {
+		if c.count() != 1 {
+			t.Errorf("resident %d closed %d times, want 1", i, c.count())
+		}
+	}
+}
+
+// blockingOpener counts opens and holds each one until gate is closed.
+type blockingOpener struct {
+	gate   chan struct{}
+	mu     sync.Mutex
+	opened int
+}
+
+func (o *blockingOpener) open(context.Context, tenant.Tenant) (*closeCounter, error) {
+	<-o.gate
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.opened++
+	return &closeCounter{}, nil
+}
+
+// TestRegistry_ConcurrentFirstRequestsOpenOnce pins the single flight: an
+// open builds a whole pool and runs migrations, so parallel first requests
+// for one tenant must share one open.
+func TestRegistry_ConcurrentFirstRequestsOpenOnce(t *testing.T) {
+	t.Parallel()
+
+	opener := &blockingOpener{gate: make(chan struct{})}
+	reg, err := tenant.NewRegistry(testResolver(t, "a"), opener.open, 1)
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	t.Cleanup(func() { _ = reg.Close() })
+
+	const goroutines = 8
+	var wg sync.WaitGroup
+	values := make(chan *closeCounter, goroutines)
+	for range goroutines {
+		wg.Go(func() {
+			lease, err := reg.Acquire(context.Background(), "a")
+			if err != nil {
+				t.Errorf("Acquire: %v", err)
+				return
+			}
+			values <- lease.Value()
+			lease.Release()
+		})
+	}
+	time.Sleep(50 * time.Millisecond) // let the requests queue on the open
+	close(opener.gate)
+	wg.Wait()
+	close(values)
+
+	var first *closeCounter
+	for v := range values {
+		if first == nil {
+			first = v
+		} else if v != first {
+			t.Error("two requests for one tenant got different residents")
+		}
+	}
+	if opener.opened != 1 {
+		t.Errorf("opened %d residents, want 1", opener.opened)
+	}
+}
+
+// TestRegistry_RefusesAboveCeiling pins the hard ceiling: tenants pinned
+// past the bound count against it, and a new tenant above it is refused
+// without opening anything.
+func TestRegistry_RefusesAboveCeiling(t *testing.T) {
+	t.Parallel()
+
+	opener := &counterOpener{}
+	reg, err := tenant.NewRegistry(testResolver(t, "a", "b", "c"), opener.open, 1, tenant.WithMaxOpen(2))
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	t.Cleanup(func() { _ = reg.Close() })
+
+	leaseA, err := reg.Acquire(t.Context(), "a")
+	if err != nil {
+		t.Fatalf("Acquire(a): %v", err)
+	}
+	leaseB, err := reg.Acquire(t.Context(), "b") // a is pinned past the bound
+	if err != nil {
+		t.Fatalf("Acquire(b): %v", err)
+	}
+	defer leaseB.Release()
+
+	if _, cerr := reg.Acquire(t.Context(), "c"); !errors.Is(cerr, tenant.ErrAtCapacity) {
+		t.Fatalf("Acquire(c) above the ceiling: error = %v, want ErrAtCapacity", cerr)
+	}
+	if opener.count() != 2 {
+		t.Errorf("opened %d residents, want 2 (c refused before opening)", opener.count())
+	}
+
+	leaseA.Release() // closes a, freeing a slot
+	reg.WaitClosing()
+	leaseC, err := reg.Acquire(t.Context(), "c")
+	if err != nil {
+		t.Fatalf("Acquire(c) after a slot freed: %v", err)
+	}
+	leaseC.Release()
+}
+
+// TestRegistry_ClosedRefusesAcquire pins that nothing opens after Close, so a
+// late request during shutdown cannot leave a resident nothing will close.
+func TestRegistry_ClosedRefusesAcquire(t *testing.T) {
+	t.Parallel()
+
+	opener := &counterOpener{}
+	reg, err := tenant.NewRegistry(testResolver(t, "a"), opener.open, 1)
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	if err := reg.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, err := reg.Acquire(t.Context(), "a"); !errors.Is(err, tenant.ErrClosed) {
+		t.Fatalf("Acquire after Close: error = %v, want ErrClosed", err)
+	}
+	if opener.count() != 0 {
+		t.Errorf("opened %d residents after Close", opener.count())
 	}
 }
