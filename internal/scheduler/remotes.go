@@ -344,6 +344,9 @@ func remoteDeps(
 	if lua.Meta == nil {
 		return remotesync.Deps{}, errors.New("scheduler: the workspace provides no schema for remote pulls")
 	}
+	if lua.VisibleReader == nil || isNilPointer(lua.VisibleReader) {
+		return remotesync.Deps{}, errors.New("scheduler: the workspace provides no gated reader for remote pulls")
+	}
 	credential, err := m.Remote.ReadCredential(getenv, globalSecrets(lua.Host))
 	if err != nil {
 		return remotesync.Deps{}, fmt.Errorf("remote %q: %w", m.Name, err)
@@ -353,7 +356,7 @@ func remoteDeps(
 		return remotesync.Deps{}, err
 	}
 	return remotesync.Deps{
-		Source: src, Meta: lua.Meta, Writer: writer, Store: raw.Store(), State: ws.State(),
+		Source: src, Meta: lua.Meta, Writer: writer, Store: raw.Store(), Gate: lua.VisibleReader, State: ws.State(),
 		Fingerprint: visibility.SumHeld,
 		Logger:      logger, RunID: runID,
 	}, nil

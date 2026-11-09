@@ -149,3 +149,92 @@ func TestGlobalSecrets(t *testing.T) {
 		})
 	}
 }
+
+func TestCredential_ReadDeclaredSymlink(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, value string) string {
+		t.Helper()
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(value), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	link := func(name, target string) string {
+		t.Helper()
+		p := filepath.Join(dir, name)
+		if err := os.Symlink(target, p); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	other := write("db_password", "other-secret")
+	cred := write("remote_credential.real", "the-token")
+	if err := os.Mkdir(filepath.Join(dir, "..data"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mounted := filepath.Join(dir, "..data", "remote_credential.k8s")
+	if err := os.WriteFile(mounted, []byte("mounted-token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name    string
+		file    string
+		want    string
+		wantErr string
+	}{
+		{"regular file", cred, "the-token", ""},
+		{"link to another secret", link("remote_credential.evil", other), "", "the file name must start with"},
+		{"link chain to another secret", link("remote_credential.chain", link("hop", other)), "", "the file name must start with"},
+		{"link to a credential file", link("remote_credential.alias", cred), "the-token", ""},
+		{"secret mount", link("remote_credential.k8s", mounted), "mounted-token", ""},
+		{"directory", filepath.Join(dir, "..data"), "", "must start with"},
+		{"named directory", mkdir(t, filepath.Join(dir, "remote_credential.dir")), "", "not a regular file"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := (Credential{File: tc.file}).ReadDeclared(nil, nil)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tc.wantErr)
+				}
+				if got != "" || strings.Contains(err.Error(), "other-secret") {
+					t.Fatalf("a refused read leaked the value: %q, %v", got, err)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("ReadDeclared = %q, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
+	// Read is for a path the operator names directly, so it follows a link
+	// to any name.
+	if got, err := (Credential{File: filepath.Join(dir, "remote_credential.evil")}).Read(nil, nil); err != nil || got != "other-secret" {
+		t.Fatalf("Read = %q, %v", got, err)
+	}
+}
+
+func mkdir(t *testing.T, p string) string {
+	t.Helper()
+	if err := os.Mkdir(p, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestCredential_ReadDeclaredHardLink(t *testing.T) {
+	dir := t.TempDir()
+	other := filepath.Join(dir, "db_password")
+	if err := os.WriteFile(other, []byte("other-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hard := filepath.Join(dir, "remote_credential.hard")
+	if lErr := os.Link(other, hard); lErr != nil {
+		t.Skipf("hard links: %v", lErr)
+	}
+	got, err := (Credential{File: hard}).ReadDeclared(nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "hard links") || got != "" {
+		t.Fatalf("ReadDeclared = %q, %v; want a hard link refusal", got, err)
+	}
+}

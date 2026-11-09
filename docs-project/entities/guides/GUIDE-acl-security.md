@@ -1959,7 +1959,9 @@ redacts its fields. This section is about the pulling side. See
 - **The credential stays out of config and scripts.** `remotes.yaml` names
   where the token comes from: an environment variable whose name starts with
   `REMOTE_CREDENTIAL_`, an absolute path to a file whose name starts with
-  `remote_credential.`, or a global secret whose name starts with
+  `remote_credential.` (a symlink must lead to a file with such a name, and
+  a file with more than one hard link is refused), or a global secret whose
+  name starts with
   `remote_credential.` (`.rela/secrets.yaml`, the systemd credential, or the
   desktop keychain). The marked name is what lets the value leave the
   machine: whoever edits `remotes.yaml` chooses the URL, so a source it could
