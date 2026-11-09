@@ -45,3 +45,8 @@ func dropSchema(context.Context, string, string) (bool, error) {
 
 // DescribeTarget has no DSN to parse on a build with no PostgreSQL.
 func DescribeTarget(string) string { return "a database this build cannot reach" }
+
+// Supported reports whether this build can serve tenant mode. The
+// filesystem, memory and sqlite stores keep their data in the project
+// directory, so every tenant would read the same data.
+const Supported = false

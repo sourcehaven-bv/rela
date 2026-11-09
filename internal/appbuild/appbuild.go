@@ -2063,6 +2063,18 @@ func DiscoverCacheDir(startDir string) (string, error) {
 	return paths.CacheDir, nil
 }
 
+// DiscoverRoot finds the project from startDir and returns its root, as
+// [project.FindRoot] does: "" when startDir is in no project. It opens no
+// store and builds no services. Entry points use it to judge tenant mode
+// before they open anything.
+func DiscoverRoot(startDir string) (string, error) {
+	root, err := project.FindRoot(startDir, storage.NewSafeFS(storage.NewOsFS()))
+	if err != nil {
+		return "", fmt.Errorf("discover project: %w", err)
+	}
+	return root, nil
+}
+
 // buildAt is the shared tail of [Discover] and [At]: everything after the
 // project root is resolved. Split so the two entry points cannot drift in what
 // they wire — only in HOW they answer "which directory is the root".
@@ -2282,6 +2294,10 @@ func (b *SharedBase) Config() Config { return b.cfg }
 
 // Paths returns the project context this base was built from.
 func (b *SharedBase) Paths() *project.Context { return b.cfg.Paths }
+
+// CacheDir returns the cache directory of the project this base was built
+// from, where a tenant host keeps each tenant's audit log.
+func (b *SharedBase) CacheDir() string { return b.cfg.Paths.CacheDir }
 
 // NewSharedBase builds the tenant-independent half of construction once:
 // validate config, apply options, parse `acl.yaml`, load and validate the

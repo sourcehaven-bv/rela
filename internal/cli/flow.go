@@ -54,11 +54,14 @@ func (c *FlowScriptCmd) Run(ctx context.Context) error {
 	}
 
 	scriptDir := filepath.Dir(scriptPath)
-	//nolint:contextcheck // appbuild.Discover does not take ctx; matches rela-server bootstrap
-	flowSvc, err := appbuild.Discover(scriptDir, script.NewEngine())
+	// The script's project may differ from the cwd one the tenant gate
+	// judged, so openProject judges it again.
+	//nolint:contextcheck // openProject does not take ctx; matches rela-server bootstrap
+	flowSvc, closer, err := openProject(scriptDir, tenantOrg)
 	if err != nil {
-		return fmt.Errorf("no project found for script %s", scriptPath)
+		return fmt.Errorf("open the project of script %s: %w", scriptPath, err)
 	}
+	defer closer.Close()
 	bind, err := appbuild.IdentityBinder(flowSvc)
 	if err != nil {
 		return err

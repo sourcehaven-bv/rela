@@ -463,6 +463,9 @@ deps:
       - docscli
       - principal
       - script
+      # tenant: rela-docs refuses a project with a tenants.yaml before it
+      # opens anything (TKT-M3SHYE0).
+      - tenant
     canUse:
       - kong
   # cmdServer is a composition root, so it may name both the transport
@@ -634,6 +637,9 @@ deps:
       - storage
       - store
       - templating
+      # tenant: `--tenant` selects and opens one tenant of a tenants.yaml
+      # project (TKT-M3SHYE0). Cycle-free: tenant sits above appbuild only.
+      - tenant
       # `rela token set|status|delete` (TKT-01KZSO) parses the operator's
       # token input and reports the store's typed read errors.
       - tokenstore

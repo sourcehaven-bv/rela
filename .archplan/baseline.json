@@ -2671,7 +2671,7 @@
       "weight.vocabulary": 868,
       "weight.types": 4009,
       "weight.concepts": 7123,
-      "weight.boundaries": 1440,
+      "weight.boundaries": 1442,
       "weight.data": 1297,
       "weight.security": 140,
       "largest_tangle": 13,
@@ -2680,19 +2680,8 @@
       "propagation_cost": 9.1
     },
     "min_weight": 0,
-    "at": "2026-11-09T22:27:03Z",
+    "at": "2026-11-09T22:58:11Z",
     "log": [
-      {
-        "at": "2026-11-04T00:30:00Z",
-        "change": "loosen",
-        "reason": "Declared piles and notify: metamodel.PileDecl maps the schema to piles.Declared, and autocascade.PileRequest, the consumer-side mirror of piles.PushRequest, grew by Key, Reason and SkipSelf, TKT-EO2GCM, TKT-EY4W0P",
-        "metrics": {
-          "weight.types": [
-            3977,
-            4071
-          ]
-        }
-      },
       {
         "at": "2026-11-04T12:04:38Z",
         "change": "tighten",
@@ -2952,7 +2941,18 @@
         }
       },
       {
-        "at": "2026-11-09T22:27:03Z",
+        "at": "2026-11-09T16:08:08Z",
+        "change": "loosen",
+        "reason": "TKT-M3SHYE0: the accepted tenanterase.go finding weighs 38, not 36, because erase loads its deployment through tenant.LoadDeployment",
+        "metrics": {
+          "weight.boundaries": [
+            1383,
+            1385
+          ]
+        }
+      },
+      {
+        "at": "2026-11-09T22:58:11Z",
         "change": "loosen",
         "reason": "Flows M1d, TKT-9IT3LN8: flowengine and the flow control in appbuild add the cancel, template and stability findings accepted above; types grew by one from flow wiring",
         "metrics": {
@@ -2969,8 +2969,8 @@
             7123
           ],
           "weight.boundaries": [
-            1383,
-            1440
+            1385,
+            1442
           ]
         }
       }

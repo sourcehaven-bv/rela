@@ -1,6 +1,7 @@
 package project
 
 import (
+	stderrors "errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -178,6 +179,21 @@ func At(dir string, fs storage.FS) (*Context, error) {
 		return newContext(abs), nil
 	}
 	return nil, errors.ErrNoProject
+}
+
+// FindRoot finds the project from startDir, as [Discover] does, and returns
+// its root directory. The root is "" with a nil error when startDir is in no
+// project; any other discovery error is returned, so a failure to look is
+// never read as "no project".
+func FindRoot(startDir string, fs storage.FS) (string, error) {
+	ctx, err := Discover(startDir, fs)
+	if stderrors.Is(err, errors.ErrNoProject) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return ctx.Root, nil
 }
 
 // newContext creates a Context for the given project root

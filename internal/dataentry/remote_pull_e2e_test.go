@@ -148,6 +148,7 @@ remotes:
 	}
 	deps := remotesync.Deps{
 		Source: src, Meta: meta, Writer: mgr, Store: st, State: &pullKV{}, Fingerprint: visibility.SumHeld,
+		Gate:   visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())),
 		Logger: slog.New(slog.DiscardHandler), RunID: "e2e",
 	}
 

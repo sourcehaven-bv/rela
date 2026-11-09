@@ -245,8 +245,11 @@ func TestErase_LostLockFailsClosed(t *testing.T) {
 	}
 	defer func() { _ = conn.Close(context.Background()) }()
 	var killed int
+	// pg_locks spans the cluster; only this test's database is ours, since
+	// other packages' tests hold tenant locks in theirs at the same time.
 	if err := conn.QueryRow(t.Context(), `SELECT count(pg_terminate_backend(pid)) FROM pg_locks
-		WHERE locktype = 'advisory' AND classid = $1::bigint::oid AND objsubid = 2`,
+		WHERE locktype = 'advisory' AND classid = $1::bigint::oid AND objsubid = 2
+		  AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`,
 		int64(0x72656c61)).Scan(&killed); err != nil || killed != 1 {
 		t.Fatalf("terminate the lock holder: %v (terminated %d)", err, killed)
 	}

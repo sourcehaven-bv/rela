@@ -136,6 +136,30 @@ func (c Credential) Read(getenv func(string) string, secret func(string) (string
 	if err := c.Validate(); err != nil {
 		return "", err
 	}
+	return c.read(getenv, secret, false)
+}
+
+// ReadDeclared is [Credential.Read] for a credential a config file names. It
+// checks c with [Credential.ValidateDeclared], and a file must still have a
+// remote credential name once its symlinks are resolved. Without that
+// check, a symlink with a remote credential name could point at any file
+// the process can read, and that file would be sent to the remote. A
+// symlink to a file with such a name, as a Kubernetes secret mount makes,
+// is accepted. A file with more than one hard link is refused for the same
+// reason.
+//
+// Nil: getenv and secret are accepted; the source that needs a nil one
+// fails.
+func (c Credential) ReadDeclared(getenv func(string) string, secret func(string) (string, error)) (string, error) {
+	if err := c.ValidateDeclared(); err != nil {
+		return "", err
+	}
+	return c.read(getenv, secret, true)
+}
+
+func (c Credential) read(
+	getenv func(string) string, secret func(string) (string, error), declared bool,
+) (string, error) {
 	var value string
 	switch c.Kind() {
 	case CredentialSecret:
@@ -148,7 +172,7 @@ func (c Credential) Read(getenv func(string) string, secret func(string) (string
 		}
 		value = v
 	case CredentialFile:
-		v, err := readCredentialFile(c.File)
+		v, err := readCredentialFile(c.File, declared)
 		if err != nil {
 			return "", err
 		}
@@ -173,14 +197,24 @@ func (c Credential) Read(getenv func(string) string, secret func(string) (string
 var warnedFiles sync.Map
 
 // readCredentialFile reads a credential file of at most
-// [MaxCredentialFile] bytes and warns when other users can read it.
-func readCredentialFile(path string) (string, error) {
-	f, err := os.Open(path)
+// [MaxCredentialFile] bytes and warns when other users can read it. A
+// declared file goes through [secrets.OpenRemoteCredentialFile]; any other path is opened
+// as it is, so an operator can name a pipe such as /dev/stdin.
+func readCredentialFile(path string, declared bool) (string, error) {
+	open := os.Open
+	if declared {
+		open = secrets.OpenRemoteCredentialFile
+	}
+	f, err := open(path)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
-	if st, sErr := f.Stat(); sErr == nil && st.Mode().Perm()&0o077 != 0 {
+	st, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	if st.Mode().Perm()&0o077 != 0 {
 		// Once per file and mode: a scheduled pull reads the file on every
 		// run.
 		if _, seen := warnedFiles.LoadOrStore(path+"\x00"+st.Mode().Perm().String(), true); !seen {

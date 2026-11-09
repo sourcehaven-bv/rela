@@ -4,6 +4,7 @@ package tenant
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -143,4 +144,39 @@ func dropSchema(ctx context.Context, dsn, schema string) (bool, error) {
 		return false, fmt.Errorf("drop schema: %w", err)
 	}
 	return true, nil
+}
+
+// ErrLooksLikeTenantDatabase reports a database command run without a
+// tenant map against a database that already serves tenants.
+var ErrLooksLikeTenantDatabase = errors.New("tenant: this database already holds rela data in other " +
+	"schemas, as a tenant deployment does, but none in the schema this connection lands in; run the " +
+	"command from the project directory and name the tenant with --tenant")
+
+// CheckBareTarget guards a database command that found no tenant map, such
+// as `rela db migrate` run outside the project directory. In a tenant
+// deployment $RELA_DATABASE_URL is the base DSN, which sets no tenant
+// `search_path`, so such a command would create rela's tables in `public`.
+//
+// It returns [ErrLooksLikeTenantDatabase] when the connection's schema holds
+// no rela tables but another schema of the database does. A single-store
+// database, already migrated or still empty, passes.
+func CheckBareTarget(ctx context.Context, dsn string) error {
+	ctx, cancel := context.WithTimeout(ctx, schemaCheckTimeout)
+	defer cancel()
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("check database: %w", err)
+	}
+	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
+	var here, elsewhere bool
+	if err := conn.QueryRow(ctx, `SELECT
+		    coalesce(bool_or(schemaname = current_schema()), false),
+		    coalesce(bool_or(schemaname IS DISTINCT FROM current_schema()), false)
+		  FROM pg_tables WHERE tablename = 'schema_version'`).Scan(&here, &elsewhere); err != nil {
+		return fmt.Errorf("check database: %w", err)
+	}
+	if !here && elsewhere {
+		return ErrLooksLikeTenantDatabase
+	}
+	return nil
 }
