@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 
 	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
@@ -22,10 +23,14 @@ var errNoRunTarget = errors.New("this import cannot copy flow runs")
 // and their edges are read and copied like any other row.
 func withSourceFlows(ro storage.FS, root string, meta *metamodel.Metamodel) (*metamodel.Metamodel, bool, error) {
 	data, err := ro.ReadFile(filepath.Join(root, flowcfg.FileName))
-	if err != nil || !flowcfg.DeclaresFlows(data) {
-		// A missing or unreadable flows.yaml declares no flows; the boot
-		// of the target reports a broken one.
-		return meta, false, nil //nolint:nilerr // see above
+	if errors.Is(err, fs.ErrNotExist) {
+		return meta, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("source %s: %w", flowcfg.FileName, err)
+	}
+	if !flowcfg.DeclaresFlows(data) {
+		return meta, false, nil
 	}
 	m, err := metamodel.WithFlowRuns(meta)
 	if err != nil {
@@ -65,6 +70,14 @@ func (c *copier) copyFlowRuns(ctx context.Context) error {
 		q.After = page[len(page)-1].ID
 	}
 	if len(runs) == 0 {
+		return nil
+	}
+	if !c.src.flows {
+		// Without flows the headers are not read either, so the runs
+		// cannot be copied; say why rather than drop them.
+		c.rep.Errors = append(c.rep.Errors, fmt.Sprintf(
+			"the source has %d unfinished flow run(s) but its %s declares no flows; restore it first",
+			len(runs), flowcfg.FileName))
 		return nil
 	}
 	if c.dst.FlowRuns == nil {

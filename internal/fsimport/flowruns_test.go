@@ -82,3 +82,20 @@ func TestRun_RefusesFlowRunsWithoutRunStore(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, strings.Join(rep.Errors, "\n"), "1 unfinished flow run(s)")
 }
+
+// TestRun_ReportsFlowRunsWithoutFlows: unfinished runs whose source no
+// longer declares flows fail the import with the reason, rather than being
+// skipped as copied.
+func TestRun_ReportsFlowRunsWithoutFlows(t *testing.T) {
+	source := flowSource(t)
+	writeTree(t, source, map[string]string{"flows.yaml": "flows: {}\n"})
+	b := newMemBackend(t)
+	runs, err := kvflowrun.New(b.target.State, filelock.ProcessPrivate{})
+	require.NoError(t, err)
+	b.target.FlowRuns = runs
+
+	rep, err := run(t, source, filepath.Join(filepath.Dir(source), "target"), b)
+	require.Error(t, err)
+	assert.Contains(t, strings.Join(rep.Errors, "\n"), "1 unfinished flow run(s) but its flows.yaml declares no flows")
+	assert.Zero(t, rep.FlowRuns)
+}

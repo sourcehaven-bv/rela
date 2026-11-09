@@ -31,9 +31,12 @@ type source struct {
 	comments *filecomments.Store
 	state    state.KV
 	migState datamigration.StateStore
-	// runs is the source's flow run store, nil when its flows.yaml
-	// declares no flows.
+	// runs is the source's flow run store. It is opened even when
+	// flows.yaml declares no flows, so unfinished runs are reported
+	// rather than dropped.
 	runs flowrun.Store
+	// flows is whether the source's flows.yaml declares flows.
+	flows bool
 }
 
 // openSource opens every reader the import needs over a read-only view of
@@ -83,11 +86,10 @@ func openSource(ctx context.Context, root string, meta *metamodel.Metamodel) (*s
 		return nil, err
 	}
 	src.state = state.NewFSKV(rooted)
-	if hasFlows {
-		if src.runs, err = sourceRuns(src); err != nil { // coverage-ignore: unreachable: both arguments are non-nil
-			src.close()
-			return nil, err
-		}
+	src.flows = hasFlows
+	if src.runs, err = sourceRuns(src); err != nil { // coverage-ignore: unreachable: both arguments are non-nil
+		src.close()
+		return nil, err
 	}
 	files, err := filemigstate.New(ro, root)
 	if err != nil {
