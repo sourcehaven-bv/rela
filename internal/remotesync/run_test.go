@@ -321,6 +321,45 @@ func TestRun_LocalDeleteIsNotRecreated(t *testing.T) {
 	}
 }
 
+// TestRun_SweepClearsDigestsOfDeletedRows deletes a pulled entity while the
+// source row stays the same. The next run turns its ledger rows, and those of
+// its relations, into dropped rows without field digests, and does not
+// recreate it.
+func TestRun_SweepClearsDigestsOfDeletedRows(t *testing.T) {
+	ctx := context.Background()
+	tg := newTarget(t)
+	m := testMapping(t, tg.meta, nil)
+	src := seedSource()
+	pull(t, tg, m, src, Options{})
+	c2 := tg.byRef(t, "C2")
+	if _, err := tg.mgr.DeleteEntity(ctx, c2.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	pull(t, tg, m, src, Options{})
+	l, err := loadLedger(ctx, tg.kv, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dropped int
+	for _, row := range l.rows {
+		if row.Local != c2.ID && !strings.HasPrefix(row.Local, c2.ID+"--") {
+			continue
+		}
+		if row.State != stateDropped || row.Base != nil {
+			t.Fatalf("row of the deleted entity kept: %+v", row)
+		}
+		dropped++
+	}
+	if dropped != 2 || tg.byRef(t, "C2") != nil {
+		t.Fatalf("dropped rows = %d; recreated = %v", dropped, tg.byRef(t, "C2") != nil)
+	}
+	for _, row := range l.rows {
+		if row.State == stateLinked && row.Base == nil && row.Kind == "E" {
+			t.Fatalf("a live row lost its digests: %+v", row)
+		}
+	}
+}
+
 func TestRun_DeferredRows(t *testing.T) {
 	tg := newTarget(t)
 	m := testMapping(t, tg.meta, func(p *Remote) { p.MaxFetch = 2 })

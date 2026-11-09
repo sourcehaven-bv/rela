@@ -331,9 +331,16 @@ func TestPullRemote(t *testing.T) {
 	_, err = PullRemote(ctx, ws, bind, "other", remotesync.Options{}, discardLogger())
 	require.ErrorContains(t, err, `no remote "other"`)
 
+	// A ledger of a remote remotes.yaml no longer names.
+	require.NoError(t, ws.State().Put(ctx, "remotesync/gone/ledger.json", []byte(`{"version":1}`)))
+	require.NoError(t, ws.State().Put(ctx, "remotesync/index.json", []byte(`["cat","gone"]`)))
+
 	// Nothing listens on the source's port, so the pull fails; it records
 	// a failed run and frees the lock.
 	_, err = PullRemote(ctx, ws, bind, "cat", remotesync.Options{}, discardLogger())
+	require.Error(t, err)
+	// The pull deleted the ledger of the removed remote first.
+	_, err = ws.State().Get(ctx, "remotesync/gone/ledger.json")
 	require.Error(t, err)
 	// A pull by hand runs as the person who starts it.
 	require.Equal(t, "alice", gotUser)

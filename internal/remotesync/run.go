@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -42,8 +43,10 @@ type Writer interface {
 // it.
 type RawReader interface {
 	store.GraphQueryer
+	store.EntityLister
 	GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error)
 	GetRelation(ctx context.Context, k entity.RelationKey) (*entity.Relation, error)
+	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 }
 
 // Deps are the collaborators of one run.
@@ -163,11 +166,18 @@ func Run(ctx context.Context, m *Mapping, d Deps, o Options) (Report, error) {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
+	if m.Remote.AllowInsecureHTTP && strings.HasPrefix(strings.ToLower(m.Remote.URL), "http:") {
+		d.Logger.Warn("remote pull sends its credential over plain http (allow_insecure_http)",
+			"remote", m.Name, "run_id", d.RunID)
+	}
 	l, err := loadLedger(ctx, d.State, m)
 	if err != nil {
 		return rep, err
 	}
 	r := &runner{m: m, d: d, o: o, l: l, rep: &rep}
+	if sweepErr := r.sweep(ctx); sweepErr != nil {
+		return rep, sweepErr
+	}
 	if prepErr := r.prepare(ctx); prepErr != nil {
 		return rep, prepErr
 	}
@@ -216,6 +226,61 @@ type runner struct {
 type heldRow struct {
 	key  string
 	hash canonical.Digest
+}
+
+// sweep turns the ledger row of every linked or detached local row that is
+// gone into a dropped row, and clears its field digests. So no digest of a
+// deleted row's values outlives it, and the pull still does not recreate
+// it. It reads the ledger's own ids: one header scan per mapped entity type
+// and one relation scan per mapped relation type. A row of a type the
+// mapping no longer names is left alone.
+func (r *runner) sweep(ctx context.Context) error {
+	ids := map[string][]string{}
+	from := map[string][]string{}
+	var rows []*ledgerRow
+	for _, row := range r.l.rows {
+		if row.Local == "" || (row.State != stateLinked && row.State != stateDetached) {
+			continue
+		}
+		if em, ok := r.m.Entities[row.Type]; ok && row.Kind == "E" {
+			ids[em.Local] = append(ids[em.Local], row.Local)
+		} else if rm, ok := r.m.Relations[row.Type]; ok && row.Kind == "R" {
+			fromKey, _, _, ok := splitRelationAddress(row.Local)
+			ref, err := entity.ParseRef(fromKey)
+			if !ok || err != nil {
+				continue
+			}
+			from[rm.Local] = append(from[rm.Local], ref.ID)
+		} else {
+			continue
+		}
+		rows = append(rows, row)
+	}
+	present := map[string]bool{}
+	for _, typ := range sortedKeys(ids) {
+		q := store.EntityQuery{Type: typ, IDs: ids[typ], Faces: store.AllFaces()}
+		for h, err := range store.ListEntityHeaders(ctx, r.d.Store, q) {
+			if err != nil {
+				return fmt.Errorf("remotesync: list local %s rows: %w", typ, err)
+			}
+			present["E"+h.ID] = true
+		}
+	}
+	for _, typ := range sortedKeys(from) {
+		q := store.RelationQuery{Type: typ, EntityIDs: from[typ], Direction: store.DirectionOutgoing}
+		for rel, err := range r.d.Store.ListRelations(ctx, q) {
+			if err != nil {
+				return fmt.Errorf("remotesync: list local %s relations: %w", typ, err)
+			}
+			present["R"+rel.Key()] = true
+		}
+	}
+	for _, row := range rows {
+		if !present[row.Kind+row.Local] {
+			row.State, row.Base = stateDropped, nil
+		}
+	}
+	return nil
 }
 
 // hold marks the current row as stopped without being applied.

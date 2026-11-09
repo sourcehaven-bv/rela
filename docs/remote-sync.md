@@ -73,7 +73,7 @@ catalog`, or let the scheduler pull it every hour.
 
 | Key | Meaning |
 | --- | --- |
-| `url` | The source's base address. Plain `http` works only for a loopback host unless `allow_insecure_http: true`. |
+| `url` | The source's base address. Plain `http` works only for a loopback host unless `allow_insecure_http: true`. That setting sends the credential in clear text, so use it only on a private network or with TLS ending at a local proxy; each pull then logs a warning. |
 | `credential` | Where the token comes from: exactly one of `env` (an environment variable whose name starts with `REMOTE_CREDENTIAL_`), `file` (an absolute path to a file of at most 16 KiB whose name starts with `remote_credential.`), or `secret` (a global secret whose name starts with `remote_credential.`). The token is never written in `remotes.yaml`. |
 | `auth_header` | The request header that carries the token. Default `Authorization`, which sends it as a bearer token. |
 | `run_as` | The identity a scheduled pull runs and writes as. Default `system:scheduler`, as for a scheduled task. A pull by hand runs as you. |
@@ -181,10 +181,16 @@ hand runs. A dry run takes no lock.
 The pull keeps a ledger per remote in rela's state store: per source row, the
 version it last applied, the local row, and the agreed value of each mapped
 field as a digest. The ledger is not part of the graph and is never
-exported. It is removed with the rest of the project's state. A row you
-delete keeps only its source address and local id in the ledger, so the
-pull does not recreate it. A change to the mapping makes the next pull
-compare every row again.
+exported. It is removed with the rest of the project's state. A change to
+the mapping makes the next pull compare every row again.
+
+The ledger keeps no copy of a row that is gone here:
+
+- When you delete a pulled row, the next pull keeps only its source address
+  and local id, so it does not recreate the row. The field digests go.
+- The ledger holds no history, so purging history leaves nothing behind in it.
+- When you remove a remote from `remotes.yaml`, its ledger is deleted by the
+  next pull of any remote and when the scheduler starts.
 
 ## Security
 

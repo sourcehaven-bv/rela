@@ -146,3 +146,39 @@ func TestSplitRelationAddress(t *testing.T) {
 		}
 	}
 }
+
+// TestPrune_DeletesLedgersOfRemovedRemotes saves the ledgers of two remotes,
+// then prunes with one of them configured: only the other's ledger goes.
+func TestPrune_DeletesLedgersOfRemovedRemotes(t *testing.T) {
+	ctx := context.Background()
+	meta := testMeta(t)
+	kv := &mapKV{}
+	for _, name := range []string{"cat", "dog"} {
+		m := testMapping(t, meta, nil)
+		m.Name = name
+		l, err := loadLedger(ctx, kv, m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.put(&ledgerRow{Kind: "E", Type: "req", Address: "req/R-1", Local: "REQ-1", State: stateLinked})
+		if err := l.save(ctx, kv, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pruned, err := Prune(ctx, kv, []string{"cat"})
+	if err != nil || !slices.Equal(pruned, []string{"dog"}) {
+		t.Fatalf("Prune = %v, %v; want [dog]", pruned, err)
+	}
+	if _, err := kv.Get(ctx, ledgerKey("dog")); err == nil {
+		t.Fatal("the ledger of the removed remote is still there")
+	}
+	if _, err := kv.Get(ctx, ledgerKey("cat")); err != nil {
+		t.Fatalf("the ledger of the configured remote is gone: %v", err)
+	}
+	if pruned, err := Prune(ctx, kv, []string{"cat"}); err != nil || len(pruned) != 0 {
+		t.Fatalf("second Prune = %v, %v; want nothing", pruned, err)
+	}
+	if pruned, err := Prune(ctx, kv, nil); err != nil || !slices.Equal(pruned, []string{"cat"}) {
+		t.Fatalf("Prune with no remotes = %v, %v; want [cat]", pruned, err)
+	}
+}

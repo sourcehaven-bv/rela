@@ -20,6 +20,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/remotesync"
 	"github.com/Sourcehaven-BV/rela/internal/schedulerstate"
 	"github.com/Sourcehaven-BV/rela/internal/secrets"
+	"github.com/Sourcehaven-BV/rela/internal/state"
 )
 
 // RemoteKind is the job kind for one scheduled pull from a sync remote.
@@ -179,6 +180,9 @@ func PullRemote(
 	}
 	runID := uuid.NewString()
 	ctx = audit.WithTriggeredBy(ctx, RemoteTaskPrefix+name)
+	if !o.DryRun {
+		pruneLedgers(ctx, ws.State(), remotes, logger)
+	}
 	if o.DryRun {
 		return pull(ctx, ws, bind, m, runID, o, nil, logger)
 	}
@@ -201,6 +205,37 @@ func PullRemote(
 		logger.Error("could not record the pull's outcome", "task", run.Task, "run_id", run.ID, "error", fErr)
 	}
 	return report, err
+}
+
+// pruneLedgers deletes the ledgers of remotes that remotes.yaml no longer
+// names. remotes must be a file that loaded; a pull prunes before it runs,
+// and the scheduler at start. A failure is logged: a stale ledger does not
+// stop a pull.
+func pruneLedgers(ctx context.Context, kv state.KV, remotes *remotesync.Config, logger *slog.Logger) {
+	if kv == nil || remotes == nil {
+		return
+	}
+	pruned, err := remotesync.Prune(ctx, kv, remotes.Names())
+	if err != nil {
+		logger.Warn("could not delete the ledgers of removed remotes", "error", err)
+	}
+	if len(pruned) > 0 {
+		logger.Info("deleted the ledgers of removed remotes", "remotes", pruned)
+	}
+}
+
+// pruneRemoteLedgers prunes at start, when remotes.yaml loads, so a ledger
+// of a removed remote goes even when no remote is pulled any more.
+func (s *Scheduler) pruneRemoteLedgers(ctx context.Context) {
+	var meta *metamodel.Metamodel
+	if mp, ok := s.ws.(metaProvider); ok {
+		meta = mp.Meta()
+	}
+	remotes, err := LoadRemotes(ctx, s.ws.Config(), meta)
+	if err != nil {
+		return
+	}
+	pruneLedgers(ctx, s.ws.State(), remotes, s.logger)
 }
 
 // startManualRun records and starts a run of task outside the tick, as the

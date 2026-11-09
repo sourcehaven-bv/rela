@@ -1972,6 +1972,10 @@ redacts its fields. This section is about the pulling side. See
   state.
 - **A local delete wins.** A pulled row deleted locally is not recreated,
   also after the source stops listing it for a while.
+- **The ledger outlives no row.** The per-remote ledger in the state store
+  keeps, for a row deleted here, only its source address and local id; the
+  next pull clears its field digests. The ledger of a remote removed from
+  `remotes.yaml` is deleted at the next pull and when the scheduler starts.
 - **Read rules do not travel.** The source's `acl.yaml` decides what this
   instance may read, not who may read the rows here. A pulled row is read
   under the local type's rules, so an operator who maps a type gives it read

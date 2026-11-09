@@ -450,6 +450,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	}
 
 	s.importLegacyState(ctx)
+	s.pruneRemoteLedgers(ctx)
 
 	for _, t := range cfg.Tasks {
 		if t.Subscription != nil {

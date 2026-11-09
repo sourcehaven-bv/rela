@@ -195,7 +195,75 @@ func (l *ledger) save(ctx context.Context, kv state.KV, m *Mapping) error {
 	if err := kv.Put(ctx, l.key, data); err != nil {
 		return fmt.Errorf("remotesync: write ledger: %w", err)
 	}
+	return addToIndex(ctx, kv, m.Name)
+}
+
+// indexKey lists the remotes that have a ledger, so [Prune] can find the
+// ledger of a remote that is no longer configured.
+const indexKey = "remotesync/index.json"
+
+func readIndex(ctx context.Context, kv state.KV) ([]string, error) {
+	data, err := kv.Get(ctx, indexKey)
+	switch {
+	case errors.Is(err, fs.ErrNotExist) || os.IsNotExist(err):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("remotesync: read ledger index: %w", err)
+	}
+	var names []string
+	if err := json.Unmarshal(data, &names); err != nil {
+		return nil, fmt.Errorf("remotesync: decode ledger index: %w", err)
+	}
+	return names, nil
+}
+
+func writeIndex(ctx context.Context, kv state.KV, names []string) error {
+	slices.Sort(names)
+	data, err := json.Marshal(slices.Compact(names))
+	if err != nil {
+		return fmt.Errorf("remotesync: encode ledger index: %w", err)
+	}
+	if err := kv.Put(ctx, indexKey, data); err != nil {
+		return fmt.Errorf("remotesync: write ledger index: %w", err)
+	}
 	return nil
+}
+
+func addToIndex(ctx context.Context, kv state.KV, name string) error {
+	names, err := readIndex(ctx, kv)
+	if err != nil || slices.Contains(names, name) {
+		return err
+	}
+	return writeIndex(ctx, kv, append(names, name))
+}
+
+// Prune deletes the ledger of every remote that has one and is not in keep,
+// the remotes remotes.yaml names. A ledger lives as long as its remote is
+// configured: it holds source addresses, local ids and field digests, which
+// mean nothing once the remote is gone. It returns the remotes it pruned.
+//
+// keep must come from a remotes.yaml that loaded: a caller that could not
+// read the file does not call Prune, or it would delete every ledger.
+func Prune(ctx context.Context, kv state.KV, keep []string) ([]string, error) {
+	names, err := readIndex(ctx, kv)
+	if err != nil {
+		return nil, err
+	}
+	var pruned, left []string
+	for _, n := range names {
+		if slices.Contains(keep, n) {
+			left = append(left, n)
+			continue
+		}
+		if err := kv.Delete(ctx, ledgerKey(n)); err != nil && !errors.Is(err, fs.ErrNotExist) && !os.IsNotExist(err) {
+			return pruned, fmt.Errorf("remotesync: delete the ledger of %q: %w", n, err)
+		}
+		pruned = append(pruned, n)
+	}
+	if len(pruned) == 0 {
+		return nil, nil
+	}
+	return pruned, writeIndex(ctx, kv, left)
 }
 
 func (l *ledger) get(kind reconcile.Kind, address string) *ledgerRow {
