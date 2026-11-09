@@ -56,6 +56,12 @@ overrides:
 			t.Errorf("Global(%q) = %q, %v, %v; want %q, %v", name, v, ok, err, want.v, want.ok)
 		}
 	}
+	// Load with no script reads the same global section: the pull reads its
+	// credential through it, and reconcile diff through Global.
+	all, err := Load(dir, "")
+	if err != nil || all["remote_credential.upstream"] != "tok-x" || all["other"] != "" {
+		t.Errorf("Load(\"\") = %v, %v; want only the global section", all, err)
+	}
 	if _, _, err := Global(t.TempDir(), "x"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}

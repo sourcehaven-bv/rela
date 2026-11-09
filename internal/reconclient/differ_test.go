@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/reconwire"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 var testScope = Scope{Entities: []string{"feature", "ticket"}, Relations: []string{"blocks", "implements"}}
@@ -69,8 +70,12 @@ func TestNew_RejectsNil(t *testing.T) {
 	if _, err := New(&fakeLocal{}, nil, Options{}); err == nil {
 		t.Error("nil remote accepted")
 	}
-	if _, err := Visible(nil); err == nil {
-		t.Error("nil element reader accepted")
+}
+
+func TestServerMaxListRows_MatchesVisibility(t *testing.T) {
+	if serverMaxListRows != visibility.DefaultElementMaxRows {
+		t.Errorf("serverMaxListRows %d != visibility.DefaultElementMaxRows %d",
+			serverMaxListRows, visibility.DefaultElementMaxRows)
 	}
 }
 

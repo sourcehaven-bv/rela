@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -409,4 +411,39 @@ func TestIdentityWrites_ClassifiesEveryCommand(t *testing.T) {
 	for cmd := range identityWrites {
 		assert.True(t, actsAsIdentity(cmd), "identityWrites lists %q, which acts as no one", cmd)
 	}
+}
+
+// TestRequiresProject_CoversEveryServiceTaker walks the kong tree and fails
+// on a command whose Run takes a value runKong binds only for a project,
+// such as scheduler.WorkspaceProvider, while requiresProject leaves the
+// command without one. kong would then refuse the command at run time with
+// a missing binding.
+func TestRequiresProject_CoversEveryServiceTaker(t *testing.T) {
+	var cli CLI
+	parser, err := kong.New(&cli, kong.Name("rela"), kong.Vars{"version": "test"})
+	require.NoError(t, err)
+	always := map[reflect.Type]bool{
+		reflect.TypeFor[context.Context](): true,
+		reflect.TypeFor[*output.Writer]():  true,
+		reflect.TypeFor[localIdentity]():   true,
+	}
+	var walk func(n *kong.Node, path []string)
+	walk = func(n *kong.Node, path []string) {
+		for _, ch := range n.Children {
+			if ch.Type == kong.CommandNode {
+				walk(ch, append(slices.Clone(path), ch.Name))
+			}
+		}
+		run := n.Target.Addr().MethodByName("Run")
+		if len(path) == 0 || !run.IsValid() {
+			return
+		}
+		cmd := strings.Join(path, " ")
+		for in := range run.Type().Ins() {
+			if !always[in] {
+				assert.True(t, requiresProject(cmd), "rela %s takes %s, which runKong binds only when requiresProject", cmd, in)
+			}
+		}
+	}
+	walk(parser.Model.Node, nil)
 }

@@ -1,6 +1,9 @@
 package entity
 
-import "maps"
+import (
+	"errors"
+	"maps"
+)
 
 // This file holds the shared write-API vocabulary used by every
 // caller that mutates the graph: options, result envelopes, and the
@@ -10,6 +13,22 @@ import "maps"
 // dataentry handlers, mcp tools, lua bindings, cli helpers — and
 // keeping them here keeps the write-API vocabulary in a layer every
 // component can already see.
+
+// Write refusals. The entity manager returns them; they live here so that
+// a caller holding only a consumer-side writer interface can tell them
+// apart without importing the manager.
+var (
+	// ErrHasRelations refuses a delete without cascade of an entity that
+	// has incident relations.
+	ErrHasRelations = errors.New("entity has relations; set cascade=true to delete")
+	// ErrRelationAlreadyExists refuses a relation create whose (from,
+	// type, to) tuple already exists.
+	ErrRelationAlreadyExists = errors.New("relation already exists")
+	// ErrCardinalityExceeded refuses a relation create that would give an
+	// entity more edges of a relation than its `max_outgoing` or
+	// `max_incoming` allows (TKT-65LVAK).
+	ErrCardinalityExceeded = errors.New("relation cardinality exceeded")
+)
 
 // CreateOptions configure entity creation.
 type CreateOptions struct {

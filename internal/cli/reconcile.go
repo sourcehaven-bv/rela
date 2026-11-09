@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"slices"
 	"strconv"
@@ -20,7 +19,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient/httpremote"
-	"github.com/Sourcehaven-BV/rela/internal/secrets"
 )
 
 // ReconcileCmd groups the commands that compare this project with another
@@ -64,9 +62,6 @@ type ReconcileDiffCmd struct {
 	MaxRoundTrips     int           `name:"max-round-trips" default:"1000" help:"Maximum number of requests to the remote."`
 	ExitCode          bool          `name:"exit-code" help:"Exit with 1 when the two sides differ and 2 on an error."`
 }
-
-// maxTokenFile caps the credential file read by --token-file.
-const maxTokenFile = 16 << 10
 
 // Run compares the two sides and prints the differences.
 func (c *ReconcileDiffCmd) Run(ctx context.Context, s *reconcileServices) error {
@@ -128,10 +123,10 @@ func (c *ReconcileDiffCmd) run(ctx context.Context, s *reconcileServices, getenv
 		return err
 	}
 	who := principal.From(ctx).User
-	if out.Format == output.FormatJSON {
-		err = writeReconcileJSON(out.Out, remote.Origin(), who, res)
+	if w, asJSON := remoteOutput(); asJSON {
+		err = writeReconcileJSON(w, remote.Origin(), who, res)
 	} else {
-		err = writeReconcileText(out.Out, remote.Origin(), who, res)
+		err = writeReconcileText(w, remote.Origin(), who, res)
 	}
 	if err != nil {
 		return err
@@ -148,59 +143,21 @@ func (c *ReconcileDiffCmd) run(ctx context.Context, s *reconcileServices, getenv
 func (c *ReconcileDiffCmd) credential(getenv func(string) string,
 	secret func(string) (string, error),
 ) (value, source string, err error) {
-	switch {
-	case c.TokenSecret != "":
+	cred := httpremote.Credential{Env: c.TokenEnv, File: c.TokenFile, Secret: c.TokenSecret}
+	switch cred.Kind() {
+	case httpremote.CredentialSecret:
 		source = "--token-secret " + c.TokenSecret
-		if !secrets.IsRemoteCredential(c.TokenSecret) {
-			// Only a name no script can be granted; see
-			// [secrets.RemoteCredentialPrefix].
-			return "", "", fmt.Errorf("%s: the name must start with %q followed by a name, "+
-				"so that no script can read the secret", source, secrets.RemoteCredentialPrefix)
-		}
-		if secret == nil {
-			return "", "", fmt.Errorf("%s: this project has no secrets", source)
-		}
-		v, sErr := secret(c.TokenSecret)
-		if sErr != nil {
-			return "", "", fmt.Errorf("%s: %w", source, sErr)
-		}
-		value = strings.TrimSpace(v)
-	case c.TokenFile != "":
-		if value, err = readTokenFile(c.TokenFile); err != nil {
-			return "", "", err
-		}
+	case httpremote.CredentialFile:
 		source = "--token-file"
-	case c.TokenEnv != "":
-		value, source = strings.TrimSpace(getenv(c.TokenEnv)), "$"+c.TokenEnv
+	case httpremote.CredentialEnv:
+		source = "$" + c.TokenEnv
 	default:
 		return "", "", nil
 	}
-	if value == "" {
-		return "", "", fmt.Errorf("%s: no credential (empty or unset)", source)
+	if value, err = cred.Read(getenv, secret); err != nil {
+		return "", "", fmt.Errorf("%s: %w", source, err)
 	}
 	return value, source, nil
-}
-
-// readTokenFile reads a credential file of at most maxTokenFile bytes and
-// warns when other users can read it.
-func readTokenFile(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", fmt.Errorf("--token-file: %w", err)
-	}
-	defer f.Close()
-	if st, sErr := f.Stat(); sErr == nil && st.Mode().Perm()&0o077 != 0 {
-		slog.Warn("reconcile: the credential file can be read by other users", "file", path,
-			"mode", st.Mode().Perm().String())
-	}
-	b, err := io.ReadAll(io.LimitReader(f, maxTokenFile+1))
-	if err != nil {
-		return "", fmt.Errorf("--token-file: %w", err)
-	}
-	if len(b) > maxTokenFile {
-		return "", fmt.Errorf("--token-file: the file is larger than %d bytes", maxTokenFile)
-	}
-	return strings.TrimSpace(string(b)), nil
 }
 
 // reconcileScope turns --types into a scope checked against the local
@@ -325,6 +282,12 @@ func writeReconcileJSON(w io.Writer, origin, who string, res reconclient.Result)
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(doc)
+}
+
+// remoteOutput is where `rela reconcile` and `rela remote` write their
+// report, and whether --output asks for JSON.
+func remoteOutput() (w io.Writer, asJSON bool) {
+	return out.Out, out.Format == output.FormatJSON
 }
 
 // shown returns s as is when it is safe to print, and quoted otherwise, so

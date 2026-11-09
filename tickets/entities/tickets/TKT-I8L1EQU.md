@@ -1,11 +1,13 @@
 ---
 id: TKT-I8L1EQU
 type: ticket
-title: 'Declarative peer pull: peers.yaml apply side'
+title: 'Declarative remote pull: remotes.yaml apply side'
 kind: enhancement
 priority: medium
 effort: xl
-status: backlog
+started: "2026-11-08"
+completed: "2026-11-09"
+status: done
 ---
 
 ## Description
@@ -68,3 +70,12 @@ run id.
 - End-to-end test: two instances, a catalogue of entities and relations, local additions survive an upstream update.
 - `rela analyze` style validation of `remotes.yaml` at load.
 - A run that would delete more than the threshold applies nothing and reports why.
+
+## Package dependencies
+
+`remotesync` imports neither `entitymanager`, `visibility` nor `secrets`, so
+the archplan ratchet stays flat. The write refusals it matches live in
+`entity`, the ledger fingerprint is passed in through `Deps.Fingerprint`, and
+the credential rules live in `httpremote`. `reconclient` does not import
+`visibility`; the CLI wiring adapts the element reader to it. The credential
+rules are tested in `httpremote`, next to the code.

@@ -349,6 +349,11 @@ func resolve(raw *rawConfig, scriptPath string) map[string]string {
 	result := make(map[string]string, len(raw.Global))
 	maps.Copy(result, raw.Global)
 
+	// "" asks for the global section: an overrides entry keyed "" names no
+	// script and must not shadow it.
+	if scriptPath == "" {
+		return result
+	}
 	if overrides, ok := raw.Overrides[scriptPath]; ok {
 		maps.Copy(result, overrides)
 	}

@@ -226,7 +226,7 @@ var identityWrites = map[string]bool{
 	"scheduler": true, "renumber": true, "lease claim": true, "lease renew": true, "lease release": true,
 	"channel post": true, "channel edit": true, "channel remove": true, "channel create": true, "channel mark-read": true,
 	"channel action": true, "migrate data": true, "migrate gc": true, "migrate adopt-face": true, "migrate baseline": true,
-	"db load": true, "db import-fs": true,
+	"db load": true, "db import-fs": true, "remote pull": true,
 
 	"migrate status": false, "migrate gen": false, "show": false, "list": false,
 	"trace from": false, "trace to": false, "trace path": false, "graph": false, "export": false,

@@ -2,6 +2,8 @@ package dataentry
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -10,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/reconwire"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 
 	"gopkg.in/yaml.v3"
 
@@ -88,11 +91,7 @@ func newDiffer(t *testing.T, srv *httptest.Server, el *visibility.Elements, toke
 	if err != nil {
 		t.Fatal(err)
 	}
-	local, err := reconclient.Visible(el)
-	if err != nil {
-		t.Fatal(err)
-	}
-	d, err := reconclient.New(local, remote, reconclient.Options{})
+	d, err := reconclient.New(visibleLocal{x: el}, remote, reconclient.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,4 +308,41 @@ func TestReconcileClient_WrongToken(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "authentication required") {
 		t.Errorf("err = %v", err)
 	}
+}
+
+// visibleLocal is the cli wiring's adapter of the element reader to the
+// local side of a run, repeated here because the cli package is not
+// importable from this one.
+type visibleLocal struct{ x *visibility.Elements }
+
+func (v visibleLocal) Sum(ctx context.Context, types reconclient.Types, r store.ElementRange) (reconclient.Sum, error) {
+	rg, err := v.x.Fingerprint(ctx, visibility.ElementTypes(types), r)
+	if err != nil {
+		return reconclient.Sum{}, localRefusal(err)
+	}
+	return reconclient.Sum{Count: rg.Count, Fingerprint: rg.Sum.String()}, nil
+}
+
+func (v visibleLocal) List(
+	ctx context.Context, types reconclient.Types, r store.ElementRange, limit int,
+) (reconclient.Page, error) {
+	page, err := v.x.List(ctx, visibility.ElementTypes(types), r, limit)
+	if err != nil {
+		return reconclient.Page{}, localRefusal(err)
+	}
+	rows := make([]reconclient.Row, len(page.Elements))
+	for i, e := range page.Elements {
+		rows[i] = reconclient.Row{Address: e.Address, Hash: e.Hash}
+	}
+	return reconclient.Page{Rows: rows, Last: page.Last, More: page.More}, nil
+}
+
+func localRefusal(err error) error {
+	switch {
+	case errors.Is(err, visibility.ErrRangeTooLarge):
+		return fmt.Errorf("%w: %w", reconclient.ErrRangeTooLarge, err)
+	case errors.Is(err, visibility.ErrRelationMetaGated):
+		return fmt.Errorf("%w: %w", reconclient.ErrRelationMetaGated, err)
+	}
+	return err
 }

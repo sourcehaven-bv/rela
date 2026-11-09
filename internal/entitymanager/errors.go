@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // ErrHasRelations is returned by [Manager.DeleteEntity] when cascade
 // is false but the entity has incident relations.
-var ErrHasRelations = errors.New("entity has relations; set cascade=true to delete")
+var ErrHasRelations = entity.ErrHasRelations
 
 // ErrConcurrentChange reports a write the manager refused because what it
 // acts on changed between a check made before the transaction and the
@@ -118,7 +119,7 @@ var ErrFaceNotDeclared = errors.New("entity type does not declare this content s
 
 // ErrRelationAlreadyExists is returned by [Manager.CreateRelation]
 // when the (from, type, to) tuple already exists.
-var ErrRelationAlreadyExists = errors.New("relation already exists")
+var ErrRelationAlreadyExists = entity.ErrRelationAlreadyExists
 
 // ValidationError wraps multiple metamodel validation errors into a
 // single error value. Returned by [Manager.CreateEntity] and
@@ -140,6 +141,18 @@ func (e *ValidationError) Error() string {
 		}
 	}
 	return "validation errors:\n  " + strings.Join(msgs, "\n  ")
+}
+
+// Unwrap returns the metamodel errors, so a caller can match a
+// [*metamodel.ValidationError] without importing this package.
+func (e *ValidationError) Unwrap() []error {
+	errs := make([]error, 0, len(e.Errors))
+	for _, v := range e.Errors {
+		if v != nil {
+			errs = append(errs, v)
+		}
+	}
+	return errs
 }
 
 // IsUniqueViolation reports whether err is a `unique:` collision. It arrives

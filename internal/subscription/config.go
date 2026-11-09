@@ -233,6 +233,11 @@ func (a *Auth) validate() []string {
 		errs = append(errs, "auth.secret names no secret")
 	case secrets.TokenKey:
 		errs = append(errs, fmt.Sprintf("auth.secret may not be %q, which signs rela's own tokens", secrets.TokenKey))
+	default:
+		if strings.HasPrefix(a.Secret, secrets.RemoteCredentialPrefix) {
+			errs = append(errs, fmt.Sprintf("auth.secret may not be %q: a remote credential is only for "+
+				"remotes.yaml and rela reconcile", a.Secret))
+		}
 	}
 	if (a.Type == AuthBasic) != (a.Username != "") {
 		errs = append(errs, "auth.username is required for basic auth and only allowed there")

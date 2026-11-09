@@ -13,7 +13,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
 	"github.com/Sourcehaven-BV/rela/internal/reconcile"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // set is an in-memory element set in (Kind, Address) order. It answers the
@@ -61,7 +60,7 @@ func typeOf(e Element) string {
 }
 
 // in returns the elements of types in r.
-func (s set) in(types visibility.ElementTypes, r store.ElementRange) []Element {
+func (s set) in(types Types, r store.ElementRange) []Element {
 	kind, names := KindEntity, types.Entities
 	if r.Relations {
 		kind, names = KindRelation, types.Relations
@@ -86,30 +85,30 @@ type fakeLocal struct {
 	fpCalls   int
 }
 
-func (f *fakeLocal) refuse(types visibility.ElementTypes) error {
+func (f *fakeLocal) refuse(types Types) error {
 	for _, g := range f.gated {
 		if slices.Contains(types.Relations, g) {
-			return fmt.Errorf("%w: %q", visibility.ErrRelationMetaGated, g)
+			return fmt.Errorf("%w: %q", ErrRelationMetaGated, g)
 		}
 	}
 	return nil
 }
 
-func (f *fakeLocal) Sum(_ context.Context, types visibility.ElementTypes, r store.ElementRange) (Sum, error) {
+func (f *fakeLocal) Sum(_ context.Context, types Types, r store.ElementRange) (Sum, error) {
 	f.fpCalls++
 	if err := f.refuse(types); err != nil {
 		return Sum{}, err
 	}
 	els := f.s.in(types, r)
 	if f.tooLarge > 0 && len(els) > f.tooLarge {
-		return Sum{}, visibility.ErrRangeTooLarge
+		return Sum{}, ErrRangeTooLarge
 	}
 	rg := fold(els)
 	return Sum{Count: rg.Count, Fingerprint: rg.Sum.String()}, nil
 }
 
 func (f *fakeLocal) List(
-	_ context.Context, types visibility.ElementTypes, r store.ElementRange, limit int,
+	_ context.Context, types Types, r store.ElementRange, limit int,
 ) (Page, error) {
 	f.listCalls++
 	if err := f.refuse(types); err != nil {
@@ -194,7 +193,7 @@ func (f *fakeRemote) answer(rr reconwire.Range) reconwire.Result {
 	if rr.Hi != nil {
 		r.Hi = *rr.Hi
 	}
-	els := f.s.in(visibility.ElementTypes{Entities: rr.Entities, Relations: rr.Relations}, r)
+	els := f.s.in(Types{Entities: rr.Entities, Relations: rr.Relations}, r)
 	if rr.Op == "fingerprint" {
 		if f.tooLarge < 0 || f.tooLarge > 0 && len(els) > f.tooLarge {
 			return reconwire.Result{Status: reconwire.StatusTooLarge}

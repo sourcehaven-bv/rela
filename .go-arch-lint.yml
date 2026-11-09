@@ -117,6 +117,10 @@ components:
   # Feed subscriptions (TKT-RUO1GY): polls a feed and imports its items
   # through ingest. The scheduler runs it.
   subscription:     { in: internal/subscription }
+  # Pull from a remote rela (TKT-I8L1EQU): diffs the remote's view, fetches the
+  # changed rows and writes them through entitymanager. The scheduler and
+  # `rela remote pull` run it.
+  remotesync:       { in: internal/remotesync }
   # Which entity ids a markdown body mentions (TKT-Q6AKUN). A leaf: every store
   # backend indexes with it and the data-entry renderer links with it, so the
   # backlink index and the rendered links agree on what counts as a mention.
@@ -588,6 +592,8 @@ deps:
       - memstore
       - metamodel
       - output
+      # `rela remote pull` prints a remotesync report.
+      - remotesync
       - perfseed
       - fsimport
       - pgstore
@@ -1133,6 +1139,8 @@ deps:
       - scheduler
       - storage
       - subscription
+      # `rela validate` checks remotes.yaml.
+      - remotesync
       # The scheduler's loader reads through a config.Loader.
       - config
       # `rela validate` checks connections.yaml (TKT-01KZSO).
@@ -1206,6 +1214,17 @@ deps:
   feed:
     mayDependOn:
       - safexml
+  remotesync:
+    mayDependOn:
+      - canonical
+      - entity
+      - metamodel
+      - principal
+      - reconclient
+      - reconclientHTTP
+      - state
+      - store
+      - syncmerge
   subscription:
     mayDependOn:
       - entitymanager
@@ -1735,11 +1754,12 @@ deps:
       - canonical
       - reconwire
       - store
-      - visibility
   reconclientHTTP:
     mayDependOn:
       - reconclient
       - reconwire
+      # Credential checks that a secret name is a remote credential.
+      - secrets
   # userstate is the per-user next-action state seam (snooze/mute/cooldown).
   # Deliberately NOT dependent on store: this state is not graph content, and
   # letting it reach the store would invite exactly the "just put it in the
@@ -2039,6 +2059,7 @@ deps:
       - ingest
       - store
       - subscription
+      - remotesync
       - lua
       - metamodel
       - filter
@@ -2047,6 +2068,9 @@ deps:
       - schedulerstate
       - script
       - state
+      # A remote pull's ledger fingerprints its rows as the element
+      # reader does.
+      - visibility
     canUse:
       - uuid
   script:
