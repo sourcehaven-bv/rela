@@ -28,6 +28,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 const testSchema = `
@@ -327,7 +328,7 @@ func newTarget(t *testing.T) *target {
 func (tg *target) deps(src Source) Deps {
 	return Deps{
 		Source: src, Meta: tg.meta, Writer: tg.mgr, Store: tg.st,
-		State: tg.kv, Logger: slog.New(slog.DiscardHandler), RunID: "run-1",
+		State: tg.kv, Fingerprint: visibility.SumHeld, Logger: slog.New(slog.DiscardHandler), RunID: "run-1",
 	}
 }
 

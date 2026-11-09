@@ -45,8 +45,11 @@ func TestRejectedWriteAndUniqueOn(t *testing.T) {
 		rejected bool
 		onRef    bool
 	}{
-		{"validation", &entitymanager.ValidationError{}, true, false},
-		{"invalid relation", fmt.Errorf("w: %w", &entitymanager.InvalidRelationError{}), true, false},
+		{"validation", &entitymanager.ValidationError{Errors: []*metamodel.ValidationError{
+			{Type: metamodel.ValidationErrorRequired, Property: "title"},
+		}}, true, false},
+		{"invalid relation", fmt.Errorf("invalid relation: %w", &metamodel.InvalidRelationError{}), true, false},
+		{"unknown relation", fmt.Errorf("invalid relation: %w", &metamodel.RelationNotFoundError{}), true, false},
 		{"cardinality", fmt.Errorf("w: %w", entitymanager.ErrCardinalityExceeded), true, false},
 		{"unique on the ref", unique("cat"), true, true},
 		{"unique on a field", unique("title"), true, false},
@@ -63,6 +66,39 @@ func TestRejectedWriteAndUniqueOn(t *testing.T) {
 				t.Errorf("uniqueOn = %v", got)
 			}
 		})
+	}
+}
+
+// TestRejectedWrite_ManagerErrors pins that the manager's own refusals,
+// matched without importing it, count as rejected.
+func TestRejectedWrite_ManagerErrors(t *testing.T) {
+	ctx := context.Background()
+	tg := newTarget(t)
+	var ids []string
+	for _, typ := range []string{"component", "component"} {
+		res, err := tg.mgr.CreateEntity(ctx, &entity.Entity{Type: typ, Properties: map[string]any{"name": "n"}},
+			entity.CreateOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, res.Entity.ID)
+	}
+	key := entity.RelationKey{From: ids[0], Type: "satisfies", To: ids[1]}
+	_, err := tg.mgr.CreateRelation(ctx, key, entity.RelationOptions{})
+	if err == nil || !rejectedWrite(err) {
+		t.Errorf("relation between types satisfies does not allow: rejectedWrite(%v) = false", err)
+	}
+	key.Type = "depends"
+	if _, err = tg.mgr.CreateRelation(ctx, key, entity.RelationOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = tg.mgr.CreateRelation(ctx, key, entity.RelationOptions{})
+	if !errors.Is(err, entity.ErrRelationAlreadyExists) {
+		t.Errorf("second create: %v, want entity.ErrRelationAlreadyExists", err)
+	}
+	_, err = tg.mgr.DeleteEntity(ctx, ids[0], false)
+	if !errors.Is(err, entity.ErrHasRelations) {
+		t.Errorf("delete: %v, want entity.ErrHasRelations", err)
 	}
 }
 

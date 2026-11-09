@@ -14,11 +14,9 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/reconcile"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // The ledger is one state.KV document per remote. It records, per source row
@@ -87,11 +85,11 @@ func (r *ledgerRow) adopt(face entity.Face, adopted bool) {
 	}
 }
 
-func (r *ledgerRow) kind() reconcile.Kind {
+func (r *ledgerRow) kind() reconclient.Kind {
 	if r.Kind == "R" {
-		return reconcile.KindRelation
+		return reconclient.KindRelation
 	}
-	return reconcile.KindEntity
+	return reconclient.KindEntity
 }
 
 // ledgerDoc is the stored form.
@@ -119,12 +117,14 @@ type ledger struct {
 	key  string
 	rows map[string]*ledgerRow // by rowKey
 	// index holds the rows the diff sees, per kind, sorted by address.
-	index   map[reconcile.Kind][]*ledgerRow
+	index   map[reconclient.Kind][]*ledgerRow
 	held    map[string]canonical.Digest
 	deletes []int64
 }
 
-func rowKey(kind reconcile.Kind, address string) string { return string(kind) + address }
+// rowKey keys a row by kind letter and address. The held map stores it, so
+// the letters stay "E" and "R".
+func rowKey(kind reconclient.Kind, address string) string { return kindLetter(kind) + address }
 
 func ledgerKey(remote string) string { return "remotesync/" + remote + "/ledger.json" }
 
@@ -266,7 +266,7 @@ func Prune(ctx context.Context, kv state.KV, keep []string) ([]string, error) {
 	return pruned, writeIndex(ctx, kv, left)
 }
 
-func (l *ledger) get(kind reconcile.Kind, address string) *ledgerRow {
+func (l *ledger) get(kind reconclient.Kind, address string) *ledgerRow {
 	return l.rows[rowKey(kind, address)]
 }
 
@@ -276,7 +276,7 @@ func (l *ledger) remove(r *ledgerRow) { delete(l.rows, rowKey(r.kind(), r.Addres
 
 // buildIndex fixes the rows the diff sees: every row but the detached ones.
 func (l *ledger) buildIndex() {
-	l.index = map[reconcile.Kind][]*ledgerRow{}
+	l.index = map[reconclient.Kind][]*ledgerRow{}
 	for _, r := range l.rows {
 		if r.State != stateDetached {
 			l.index[r.kind()] = append(l.index[r.kind()], r)
@@ -288,10 +288,10 @@ func (l *ledger) buildIndex() {
 }
 
 // inRange returns the indexed rows of types within r, in address order.
-func (l *ledger) inRange(types visibility.ElementTypes, r store.ElementRange) []*ledgerRow {
-	kind, names := reconcile.KindEntity, types.Entities
+func (l *ledger) inRange(types reconclient.Types, r store.ElementRange) []*ledgerRow {
+	kind, names := reconclient.KindEntity, types.Entities
 	if r.Relations {
-		kind, names = reconcile.KindRelation, types.Relations
+		kind, names = reconclient.KindRelation, types.Relations
 	}
 	rows := l.index[kind]
 	start := sort.Search(len(rows), func(i int) bool { return rows[i].Address >= r.Lo })
@@ -308,18 +308,25 @@ func (l *ledger) inRange(types visibility.ElementTypes, r store.ElementRange) []
 }
 
 // local is the ledger as the local side of a diff.
-type local struct{ l *ledger }
+type local struct {
+	l   *ledger
+	sum Fingerprinter
+}
 
-func (s local) Sum(_ context.Context, types visibility.ElementTypes, r store.ElementRange) (reconclient.Sum, error) {
-	var rg reconcile.Range
-	for _, row := range s.l.inRange(types, r) {
-		rg = rg.Add(reconcile.Element{Kind: row.kind(), Address: row.Address, Hash: row.Hash})
-	}
-	return reconclient.Sum{Count: rg.Count, Fingerprint: rg.Sum.String()}, nil
+func (s local) Sum(_ context.Context, types reconclient.Types, r store.ElementRange) (reconclient.Sum, error) {
+	rows := s.l.inRange(types, r)
+	count, fp := s.sum(r.Relations, func(yield func(string, canonical.Digest) bool) {
+		for _, row := range rows {
+			if !yield(row.Address, row.Hash) {
+				return
+			}
+		}
+	})
+	return reconclient.Sum{Count: count, Fingerprint: fp}, nil
 }
 
 func (s local) List(
-	_ context.Context, types visibility.ElementTypes, r store.ElementRange, limit int,
+	_ context.Context, types reconclient.Types, r store.ElementRange, limit int,
 ) (reconclient.Page, error) {
 	rows := s.l.inRange(types, r)
 	var page reconclient.Page

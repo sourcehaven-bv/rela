@@ -8,7 +8,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/reconwire"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // span is a set of types and an address range [lo, hi), unbounded above
@@ -30,8 +29,8 @@ type span struct {
 }
 
 // types returns the span's types as the local reader takes them.
-func (s *span) types() visibility.ElementTypes {
-	return visibility.ElementTypes{Entities: s.entities, Relations: s.relations}
+func (s *span) types() Types {
+	return Types{Entities: s.entities, Relations: s.relations}
 }
 
 // storeRange returns [lo, hi) of the span as the local reader takes it.

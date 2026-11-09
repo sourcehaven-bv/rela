@@ -42,7 +42,6 @@ import (
 	"io"
 	"net"
 	"net/url"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -52,7 +51,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient/httpremote"
-	"github.com/Sourcehaven-BV/rela/internal/secrets"
 	"github.com/Sourcehaven-BV/rela/internal/syncmerge"
 )
 
@@ -256,37 +254,6 @@ type compiler struct {
 	errs []error
 }
 
-// CredentialEnvPrefix starts the name of every environment variable a
-// remote may read its credential from.
-const CredentialEnvPrefix = "REMOTE_CREDENTIAL_" //nolint:gosec // G101: a variable name prefix, not a credential
-
-// checkCredentialName refuses a credential source whose name does not mark
-// it as a remote credential. remotes.yaml sends the value to the URL it
-// names, so a source it may name freely would let whoever edits the file
-// send any host secret off the machine: RELA_DATABASE_URL, the token key,
-// or a file under $CREDENTIALS_DIRECTORY. An env name starts with
-// [CredentialEnvPrefix]; a file is an absolute path whose base name is a
-// remote_credential. name, as a secret is. A relative path is refused
-// because it would resolve against whatever directory the process runs in.
-func checkCredentialName(cr httpremote.Credential) error {
-	switch {
-	case cr.Env != "":
-		if !strings.HasPrefix(cr.Env, CredentialEnvPrefix) || len(cr.Env) == len(CredentialEnvPrefix) {
-			return fmt.Errorf("env %q: the variable name must start with %q followed by a name",
-				cr.Env, CredentialEnvPrefix)
-		}
-	case cr.File != "":
-		if !filepath.IsAbs(cr.File) {
-			return fmt.Errorf("file %q: the path must be absolute", cr.File)
-		}
-		if !secrets.IsRemoteCredential(filepath.Base(cr.File)) {
-			return fmt.Errorf("file %q: the file name must start with %q followed by a name",
-				cr.File, secrets.RemoteCredentialPrefix)
-		}
-	}
-	return nil
-}
-
 func (c *compiler) fail(format string, args ...any) {
 	c.errs = append(c.errs, fmt.Errorf("remotes: %q: "+format, append([]any{c.name}, args...)...))
 }
@@ -297,9 +264,7 @@ func (c *compiler) remote(p Remote) {
 	}
 	if p.Credential.IsZero() {
 		c.fail("credential: name one source: env, file or secret")
-	} else if err := p.Credential.Validate(); err != nil {
-		c.fail("credential: %v", err)
-	} else if err := checkCredentialName(p.Credential); err != nil {
+	} else if err := p.Credential.ValidateDeclared(); err != nil {
 		c.fail("credential: %v", err)
 	}
 	if p.AuthHeader != "" {

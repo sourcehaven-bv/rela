@@ -19,7 +19,7 @@
 // # Views
 //
 // Each side answers for its own principal. The local side reads through
-// [visibility.Elements] under the request bound on ctx, never the raw store,
+// the visibility element reader under the request bound on ctx, never the raw store,
 // so the diff never shows a row or a value the local principal cannot read.
 // The remote answers for the principal its credential names. When the two
 // principals see different rows or fields, those rows show up as only local,

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/reconwire"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 
 	"github.com/alecthomas/kong"
 	"github.com/stretchr/testify/require"
@@ -28,7 +30,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/reconclient/httpremote"
 	"github.com/Sourcehaven-BV/rela/internal/secrets"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 const reconcileSchema = `
@@ -67,12 +68,12 @@ func reconcileMeta(t *testing.T) *metamodel.Metamodel {
 // emptyLocal is a local side with no elements.
 type emptyLocal struct{}
 
-func (emptyLocal) Sum(context.Context, visibility.ElementTypes, store.ElementRange) (reconclient.Sum, error) {
+func (emptyLocal) Sum(context.Context, reconclient.Types, store.ElementRange) (reconclient.Sum, error) {
 	return reconclient.Sum{Fingerprint: strings.Repeat("0", 32)}, nil
 }
 
 func (emptyLocal) List(
-	context.Context, visibility.ElementTypes, store.ElementRange, int,
+	context.Context, reconclient.Types, store.ElementRange, int,
 ) (reconclient.Page, error) {
 	return reconclient.Page{}, nil
 }
@@ -366,4 +367,19 @@ func TestReconcileText_QuotesUnsafeAddresses(t *testing.T) {
 	require.Contains(t, b.String(), `"ticket/\x1b[2JX"`)
 	require.Contains(t, b.String(), "(no identity)")
 	require.Contains(t, b.String(), "Not compared (1)")
+}
+
+func TestLocalRefusal_MarksElementReaderRefusals(t *testing.T) {
+	tooLarge := localRefusal(fmt.Errorf("x: %w", visibility.ErrRangeTooLarge))
+	if !errors.Is(tooLarge, reconclient.ErrRangeTooLarge) || !errors.Is(tooLarge, visibility.ErrRangeTooLarge) {
+		t.Errorf("too large: %v", tooLarge)
+	}
+	gated := localRefusal(visibility.ErrRelationMetaGated)
+	if !errors.Is(gated, reconclient.ErrRelationMetaGated) {
+		t.Errorf("meta gated: %v", gated)
+	}
+	other := errors.New("disk")
+	if got := localRefusal(other); !errors.Is(got, other) {
+		t.Errorf("other: %v", got)
+	}
 }

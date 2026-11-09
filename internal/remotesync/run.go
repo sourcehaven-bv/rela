@@ -14,9 +14,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/reconcile"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient/httpremote"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -24,7 +22,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/syncmerge"
 )
 
-// Writer is the write path a run uses. *entitymanager.Manager implements
+// Writer is the write path a run uses. The entity manager implements
 // it; the manager authorizes, validates and audits every write as the
 // principal on ctx.
 type Writer interface {
@@ -49,6 +47,11 @@ type RawReader interface {
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 }
 
+// Fingerprinter returns how many rows a range holds and the fingerprint of
+// their addresses and view hashes in its wire form. relations says whether
+// the rows are relations or entities.
+type Fingerprinter func(relations bool, rows iter.Seq2[string, canonical.Digest]) (count uint64, fingerprint string)
+
 // Deps are the collaborators of one run.
 type Deps struct {
 	// Source is the remote.
@@ -57,8 +60,12 @@ type Deps struct {
 	Writer Writer
 	Store  RawReader
 	// State holds the ledger.
-	State  state.KV
-	Logger *slog.Logger
+	State state.KV
+	// Fingerprint sums ledger rows exactly as the source sums its own
+	// range, so a diff compares like with like. The wiring site supplies
+	// the visibility package's.
+	Fingerprint Fingerprinter
+	Logger      *slog.Logger
 	// RunID names the run in the log lines of its deletes.
 	RunID string
 	// DiffDeadline bounds the diff; zero means the reconcile default.
@@ -80,6 +87,8 @@ func (d Deps) validate() error {
 		return errors.New("remotesync: a store is required")
 	case d.State == nil:
 		return errors.New("remotesync: a state store is required")
+	case d.Fingerprint == nil:
+		return errors.New("remotesync: a fingerprint function is required")
 	case d.Logger == nil:
 		return errors.New("remotesync: a logger is required")
 	}
@@ -121,16 +130,16 @@ func Dial(p Remote, credential string, transport http.RoundTripper) (Source, err
 }
 
 // ReadCredential reads the credential p names. getenv reads an environment
-// variable; secret reads the global section of the project's secrets.
+// variable; secrets loads the global section of the project's secrets.
 // Errors name the source, never the value.
 //
-// Nil: getenv and secret are accepted; the source that needs a nil one
+// Nil: getenv and secrets are accepted; the source that needs a nil one
 // fails.
-func (p Remote) ReadCredential(getenv func(string) string, secret func(string) (string, error)) (string, error) {
+func (p Remote) ReadCredential(getenv func(string) string, secrets func() (map[string]string, error)) (string, error) {
 	if p.Credential.IsZero() {
 		return "", errors.New("remotesync: credential: no source")
 	}
-	v, err := p.Credential.Read(getenv, secret)
+	v, err := p.Credential.Read(getenv, httpremote.GlobalSecrets(secrets))
 	if err != nil {
 		return "", fmt.Errorf("remotesync: %s: %w", p.credentialSource(), err)
 	}
@@ -328,7 +337,7 @@ func (r *runner) prepare(ctx context.Context) error {
 func (r *runner) diff(ctx context.Context) (reconclient.Result, error) {
 	r.l.buildIndex()
 	rows := r.m.Remote.maxRows()
-	differ, err := reconclient.New(local{r.l}, r.d.Source, reconclient.Options{
+	differ, err := reconclient.New(local{l: r.l, sum: r.d.Fingerprint}, r.d.Source, reconclient.Options{
 		MaxRemoteElements: rows, MaxLocalElements: rows, Deadline: r.d.DiffDeadline,
 	})
 	if err != nil {
@@ -359,7 +368,7 @@ func (r *runner) guard(diff reconclient.Result) ([]*ledgerRow, error) {
 	var gone, forget []*ledgerRow
 	goneOf := map[string]int{}
 	for _, el := range diff.OnlyLocal {
-		row := r.l.get(reconcileKind(el.Kind), el.Address)
+		row := r.l.get(el.Kind, el.Address)
 		if row == nil || (row.Kind == "R" && skipped[row.Type]) {
 			continue
 		}
@@ -407,9 +416,9 @@ func (r *runner) guard(diff reconclient.Result) ([]*ledgerRow, error) {
 // mass delete the guard exists for.
 func (r *runner) emptied(diff reconclient.Result, goneOf map[string]int, skipped map[string]bool) (string, bool) {
 	listed, linked := map[string]int{}, map[string]int{}
-	for kind, rows := range r.l.index {
+	for _, rows := range r.l.index {
 		for _, row := range rows {
-			k := string(kind) + row.Type
+			k := row.Kind + row.Type
 			listed[k]++
 			if row.State == stateLinked {
 				linked[k]++
@@ -417,7 +426,7 @@ func (r *runner) emptied(diff reconclient.Result, goneOf map[string]int, skipped
 		}
 	}
 	for _, el := range diff.OnlyRemote {
-		listed[string(reconcileKind(el.Kind))+elementType(el)]++
+		listed[kindLetter(el.Kind)+elementType(el)]++
 	}
 	for _, k := range sortedKeys(linked) {
 		if linked[k] > 0 && listed[k]-goneOf[k] <= 0 && (k[0] != 'R' || !skipped[k[1:]]) {
@@ -436,7 +445,7 @@ func (r *runner) emptied(diff reconclient.Result, goneOf map[string]int, skipped
 // entity's pulled relations are gone before it is.
 func (r *runner) apply(ctx context.Context, diff reconclient.Result, gone []*ledgerRow) error {
 	ents, rels := r.work(diff)
-	pull := func(kind reconcile.Kind, it workItem, f func(context.Context, string, canonical.Digest) error) error {
+	pull := func(kind reconclient.Kind, it workItem, f func(context.Context, string, canonical.Digest) error) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -445,12 +454,12 @@ func (r *runner) apply(ctx context.Context, diff reconclient.Result, gone []*led
 		return f(ctx, it.addr, it.hash)
 	}
 	for _, it := range ents {
-		if err := pull(reconcile.KindEntity, it, r.pullEntity); err != nil {
+		if err := pull(reconclient.KindEntity, it, r.pullEntity); err != nil {
 			return err
 		}
 	}
 	for _, it := range rels {
-		if err := pull(reconcile.KindRelation, it, r.pullRelation); err != nil {
+		if err := pull(reconclient.KindRelation, it, r.pullRelation); err != nil {
 			return err
 		}
 	}
@@ -496,7 +505,7 @@ func (r *runner) work(diff reconclient.Result) (ents, rels []workItem) {
 		add(ch.Kind, workItem{ch.Address, ch.Remote})
 	}
 	listed := map[string]bool{}
-	order := func(kind reconcile.Kind, items []workItem) {
+	order := func(kind reconclient.Kind, items []workItem) {
 		held := func(it workItem) int {
 			k := rowKey(kind, it.addr)
 			listed[k] = true
@@ -512,8 +521,8 @@ func (r *runner) work(diff reconclient.Result) (ents, rels []workItem) {
 			return strings.Compare(a.addr, b.addr)
 		})
 	}
-	order(reconcile.KindEntity, ents)
-	order(reconcile.KindRelation, rels)
+	order(reconclient.KindEntity, ents)
+	order(reconclient.KindRelation, rels)
 	for k := range r.l.held {
 		if !listed[k] {
 			delete(r.l.held, k)
@@ -522,11 +531,12 @@ func (r *runner) work(diff reconclient.Result) (ents, rels []workItem) {
 	return ents, rels
 }
 
-func reconcileKind(k reconclient.Kind) reconcile.Kind {
+// kindLetter is the ledger's letter for k: "E" or "R".
+func kindLetter(k reconclient.Kind) string {
 	if k == reconclient.KindRelation {
-		return reconcile.KindRelation
+		return "R"
 	}
-	return reconcile.KindEntity
+	return "E"
 }
 
 // elementType returns the type an address names.
@@ -686,7 +696,7 @@ func (r *runner) pullEntity(ctx context.Context, addr string, hash canonical.Dig
 	c := &r.rep.Entities
 	typ, id, _ := strings.Cut(addr, "/")
 	em := r.m.Entities[typ]
-	row := r.l.get(reconcile.KindEntity, addr)
+	row := r.l.get(reconclient.KindEntity, addr)
 	if em == nil { // coverage-ignore: invariant: the diff lists only the types in its scope
 		return fmt.Errorf("remotesync: the diff listed %s outside the mapping", addr)
 	}
@@ -723,7 +733,7 @@ func (r *runner) pullEntity(ctx context.Context, addr string, hash canonical.Dig
 		if !r.applyEntity(ctx, em, row, addr, id, hash, th) {
 			return nil
 		}
-		row = r.l.get(reconcile.KindEntity, addr)
+		row = r.l.get(reconclient.KindEntity, addr)
 	}
 	c.Failed++
 	r.issue(IssueFailed, addr, localOf(row), "the local row kept changing during the run")
@@ -907,11 +917,9 @@ func uniqueOn(err error, prop string) bool {
 	if u, ok := errors.AsType[store.UniquePropertyError](err); ok {
 		return u.Property == "" || u.Property == prop
 	}
-	if v, ok := errors.AsType[*entitymanager.ValidationError](err); ok {
-		for _, e := range v.Errors {
-			if e.Type == metamodel.ValidationErrorUnique && (e.Property == "" || e.Property == prop) {
-				return true
-			}
+	for _, e := range schemaErrors(err) {
+		if e.Type == metamodel.ValidationErrorUnique && (e.Property == "" || e.Property == prop) {
+			return true
 		}
 	}
 	return false
@@ -920,12 +928,36 @@ func uniqueOn(err error, prop string) bool {
 // rejectedWrite reports a write the local schema refused: a validation
 // error, a unique value, a relation the schema does not allow between the
 // endpoints, or a relation over its cardinality. It is not tried again
-// until the source row changes.
+// until the source row changes. The writer's errors wrap the metamodel's
+// own errors and the [entity] sentinels, so they are matched without
+// knowing the writer.
 func rejectedWrite(err error) bool {
-	_, invalid := errors.AsType[*entitymanager.ValidationError](err)
-	_, badRelation := errors.AsType[*entitymanager.InvalidRelationError](err)
-	return invalid || badRelation || entitymanager.IsUniqueViolation(err) ||
-		errors.Is(err, entitymanager.ErrCardinalityExceeded)
+	_, badType := errors.AsType[*metamodel.InvalidRelationError](err)
+	_, noType := errors.AsType[*metamodel.RelationNotFoundError](err)
+	_, unique := errors.AsType[store.UniquePropertyError](err)
+	return len(schemaErrors(err)) > 0 || badType || noType || unique ||
+		errors.Is(err, entity.ErrCardinalityExceeded)
+}
+
+// schemaErrors returns every metamodel validation error err wraps.
+func schemaErrors(err error) []*metamodel.ValidationError {
+	var out []*metamodel.ValidationError
+	var walk func(error)
+	walk = func(e error) {
+		switch x := e.(type) { //nolint:errorlint // the walk visits every wrapped error itself, to collect them all
+		case nil:
+		case *metamodel.ValidationError:
+			out = append(out, x)
+		case interface{ Unwrap() []error }:
+			for _, c := range x.Unwrap() {
+				walk(c)
+			}
+		case interface{ Unwrap() error }:
+			walk(x.Unwrap())
+		}
+	}
+	walk(err)
+	return out
 }
 
 func (r *runner) writeFailed(c *Counts, addr, local string, err error) {
@@ -983,7 +1015,7 @@ func (r *runner) pullRelation(ctx context.Context, addr string, hash canonical.D
 	c := &r.rep.Relations
 	from, typ, to, _ := splitRelationAddress(addr)
 	rm := r.m.Relations[typ]
-	row := r.l.get(reconcile.KindRelation, addr)
+	row := r.l.get(reconclient.KindRelation, addr)
 	if rm == nil { // coverage-ignore: invariant: the diff lists only the types in its scope
 		return fmt.Errorf("remotesync: the diff listed %s outside the mapping", addr)
 	}
@@ -1082,7 +1114,7 @@ func (r *runner) writeRelation(
 		return
 	case existing == nil:
 		_, err = r.d.Writer.CreateRelation(ctx, key, opts)
-		if errors.Is(err, entitymanager.ErrRelationAlreadyExists) {
+		if errors.Is(err, entity.ErrRelationAlreadyExists) {
 			c.Deferred++
 			r.hold()
 			return
@@ -1240,7 +1272,7 @@ func (r *runner) goneEntity(ctx context.Context, row *ledgerRow) {
 	}
 	_, err = r.d.Writer.DeleteEntity(ctx, row.Local, false)
 	switch {
-	case errors.Is(err, entitymanager.ErrHasRelations):
+	case errors.Is(err, entity.ErrHasRelations):
 		c.Detached++
 		r.issue(IssueKept, row.Address, row.Local, "kept and detached: it has local relations")
 		r.detach(row)

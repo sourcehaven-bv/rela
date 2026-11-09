@@ -10,7 +10,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient"
 	"github.com/Sourcehaven-BV/rela/internal/remotesync"
@@ -33,12 +32,13 @@ type RemotePullCmd struct {
 // Run pulls and prints the report.
 func (c *RemotePullCmd) Run(ctx context.Context, ws scheduler.WorkspaceProvider, bind scheduler.IdentityBinder) error {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	return c.run(ctx, ws, bind, logger, out)
+	w, asJSON := remoteOutput()
+	return c.run(ctx, ws, bind, logger, w, asJSON)
 }
 
 func (c *RemotePullCmd) run(
 	ctx context.Context, ws scheduler.WorkspaceProvider, bind scheduler.IdentityBinder, logger *slog.Logger,
-	w *output.Writer,
+	w io.Writer, asJSON bool,
 ) error {
 	if !principal.ValidIntegrationName(c.Name) {
 		return fmt.Errorf("invalid remote name %q", c.Name)
@@ -50,10 +50,10 @@ func (c *RemotePullCmd) run(
 	report, err := scheduler.PullRemote(ctx, ws, bind, c.Name, opts, logger)
 	if report.Remote != "" {
 		var wErr error
-		if w.Format == output.FormatJSON {
-			wErr = json.NewEncoder(w.Out).Encode(report)
+		if asJSON {
+			wErr = json.NewEncoder(w).Encode(report)
 		} else {
-			wErr = writeRemoteReport(w.Out, report)
+			wErr = writeRemoteReport(w, report)
 		}
 		if err == nil {
 			err = wErr

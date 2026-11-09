@@ -10,6 +10,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
 	"github.com/Sourcehaven-BV/rela/internal/reconcile"
+	"github.com/Sourcehaven-BV/rela/internal/reconclient"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -33,7 +34,7 @@ func TestLedger_RoundTripAndMappingChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := again.get(reconcile.KindEntity, "req/R-1")
+	got := again.get(reconclient.KindEntity, "req/R-1")
 	if got == nil || got.Hash != row.Hash || got.Base["title<title"] != "x" {
 		t.Fatalf("round trip: %+v", got)
 	}
@@ -42,7 +43,7 @@ func TestLedger_RoundTripAndMappingChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got = changed.get(reconcile.KindEntity, "req/R-1")
+	got = changed.get(reconclient.KindEntity, "req/R-1")
 	if got.Hash != (canonical.Digest{}) || got.Base["title<title"] != "x" {
 		t.Fatalf("a mapping change must clear the hash and keep the base: %+v", got)
 	}
@@ -87,8 +88,8 @@ func TestLedger_LocalAgreesWithReference(t *testing.T) {
 			State: states[rnd.IntN(len(states))]})
 	}
 	l.buildIndex()
-	lc := local{l: l}
-	scope := visibility.ElementTypes{Entities: []string{"a", "c"}, Relations: []string{"b", "c"}}
+	lc := local{l: l, sum: visibility.SumHeld}
+	scope := reconclient.Types{Entities: []string{"a", "c"}, Relations: []string{"b", "c"}}
 	for range 300 {
 		lo, hi := fmt.Sprintf("X-%03d", rnd.IntN(60)), fmt.Sprintf("X-%03d", rnd.IntN(60))
 		if rnd.IntN(2) == 0 {
@@ -111,7 +112,11 @@ func TestLedger_LocalAgreesWithReference(t *testing.T) {
 				continue
 			}
 			want = append(want, row)
-			wantRange = wantRange.Add(reconcile.Element{Kind: row.kind(), Address: row.Address, Hash: row.Hash})
+			kind := reconcile.KindEntity
+			if row.Kind == "R" {
+				kind = reconcile.KindRelation
+			}
+			wantRange = wantRange.Add(reconcile.Element{Kind: kind, Address: row.Address, Hash: row.Hash})
 		}
 		sum, err := lc.Sum(ctx, scope, r)
 		if err != nil {

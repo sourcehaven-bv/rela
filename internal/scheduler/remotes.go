@@ -19,8 +19,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/remotesync"
 	"github.com/Sourcehaven-BV/rela/internal/schedulerstate"
-	"github.com/Sourcehaven-BV/rela/internal/secrets"
 	"github.com/Sourcehaven-BV/rela/internal/state"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // RemoteKind is the job kind for one scheduled pull from a sync remote.
@@ -344,7 +344,7 @@ func remoteDeps(
 	if lua.Meta == nil {
 		return remotesync.Deps{}, errors.New("scheduler: the workspace provides no schema for remote pulls")
 	}
-	credential, err := m.Remote.ReadCredential(getenv, globalSecret(lua.Host))
+	credential, err := m.Remote.ReadCredential(getenv, globalSecrets(lua.Host))
 	if err != nil {
 		return remotesync.Deps{}, fmt.Errorf("remote %q: %w", m.Name, err)
 	}
@@ -354,26 +354,20 @@ func remoteDeps(
 	}
 	return remotesync.Deps{
 		Source: src, Meta: lua.Meta, Writer: writer, Store: raw.Store(), State: ws.State(),
-		Logger: logger, RunID: runID,
+		Fingerprint: visibility.SumHeld,
+		Logger:      logger, RunID: runID,
 	}, nil
 }
 
-// globalSecret reads one secret from the global section of host's secrets,
-// for a remote_credential. name. A missing secret reads as empty, which
-// [remotesync.Remote.ReadCredential] reports as no credential.
+// globalSecrets returns the loader of host's global secrets, or nil when
+// there is no host.
 //
-// Nil: host is accepted; the returned reader then fails.
-func globalSecret(host hostSecrets) func(string) (string, error) {
-	return func(name string) (string, error) {
-		if host == nil {
-			return "", errors.New("the workspace provides no secrets")
-		}
-		all, err := host.Secrets("")
-		if err != nil && !errors.Is(err, secrets.ErrNotFound) {
-			return "", err
-		}
-		return all[name], nil
+// Nil: host is accepted; the result is then nil.
+func globalSecrets(host hostSecrets) func() (map[string]string, error) {
+	if host == nil {
+		return nil
 	}
+	return func() (map[string]string, error) { return host.Secrets("") }
 }
 
 // hostSecrets reads the secrets visible to a script; "" is the global

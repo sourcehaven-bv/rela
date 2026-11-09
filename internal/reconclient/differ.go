@@ -13,19 +13,35 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // Local is the local side: the gated element range read for the principal
-// bound on ctx. [Visible] adapts [visibility.Elements] to it.
+// bound on ctx. The wiring site adapts the visibility element reader to it.
 //
-// Sum returns [visibility.ErrRangeTooLarge] when the range is too large to
-// fingerprint, and [visibility.ErrRelationMetaGated] when the policy can
-// hide meta of a relation type, as [visibility.Elements.Fingerprint] does.
+// Sum returns an error wrapping [ErrRangeTooLarge] when the range is too
+// large to fingerprint, and one wrapping [ErrRelationMetaGated] when the
+// policy can hide meta of a relation type.
 type Local interface {
-	Sum(ctx context.Context, types visibility.ElementTypes, r store.ElementRange) (Sum, error)
-	List(ctx context.Context, types visibility.ElementTypes, r store.ElementRange, limit int) (Page, error)
+	Sum(ctx context.Context, types Types, r store.ElementRange) (Sum, error)
+	List(ctx context.Context, types Types, r store.ElementRange, limit int) (Page, error)
 }
+
+// Types names the types a [Local] call covers. A type not named has no rows
+// in range.
+type Types struct {
+	Entities  []string
+	Relations []string
+}
+
+// Refusals of a [Local] read.
+var (
+	// ErrRangeTooLarge refuses a range with more rows than one read covers.
+	// The run splits the range.
+	ErrRangeTooLarge = errors.New("reconclient: the local range has more rows than one read covers")
+	// ErrRelationMetaGated refuses a relation type whose meta the local
+	// policy can hide. The run skips the type.
+	ErrRelationMetaGated = errors.New("reconclient: the local policy can hide relation meta")
+)
 
 // Kind says whether an element is an entity or a relation. The zero Kind is
 // invalid.
@@ -69,8 +85,7 @@ type Row struct {
 	Hash    canonical.Digest
 }
 
-// Page is one page of a local listing, with the meaning of
-// [visibility.ElementPage]: the caller resumes after Last.
+// Page is one page of a local listing: the caller resumes after Last.
 type Page struct {
 	Rows []Row
 	Last string
@@ -89,7 +104,9 @@ type Remote interface {
 const (
 	serverMaxRanges    = 32
 	serverMaxTypeNames = 256
-	serverMaxListRows  = visibility.DefaultElementMaxRows
+	// serverMaxListRows is the server's default element cap; a test pins it
+	// to the visibility package's.
+	serverMaxListRows = 2000
 )
 
 // Tuning of the recursion.
@@ -468,7 +485,7 @@ func (r *run) prepare(t *task) (more []*task, ready bool, err error) {
 	case fpErr == nil:
 		t.local, t.prepared = sum, true
 		return nil, true, nil
-	case errors.Is(fpErr, visibility.ErrRangeTooLarge):
+	case errors.Is(fpErr, ErrRangeTooLarge):
 		// The local reader loads each row to fingerprint it, and the span
 		// holds more rows than it loads at once. Split it as for a remote
 		// too_large: by type, else into buckets that fit, else list it.
@@ -476,7 +493,7 @@ func (r *run) prepare(t *task) (more []*task, ready bool, err error) {
 		t.fam.abandon()
 		more, err := r.tooLarge(sp)
 		return more, false, err
-	case errors.Is(fpErr, visibility.ErrRelationMetaGated) && sp.kind == KindRelation:
+	case errors.Is(fpErr, ErrRelationMetaGated) && sp.kind == KindRelation:
 		t.fam.abandon()
 		if sp.multiType() {
 			return tasksFor(sp.byType()), false, nil

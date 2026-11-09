@@ -21,6 +21,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 const pullTargetSchema = `
@@ -126,8 +127,8 @@ remotes:
 		t.Fatal(err)
 	}
 	m := cfg.Mappings["acme"]
-	credential, err := m.Remote.ReadCredential(nil, func(name string) (string, error) {
-		return map[string]string{"remote_credential.acme": pullToken}[name], nil
+	credential, err := m.Remote.ReadCredential(nil, func() (map[string]string, error) {
+		return map[string]string{"remote_credential.acme": pullToken}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -146,7 +147,7 @@ remotes:
 		t.Fatal(err)
 	}
 	deps := remotesync.Deps{
-		Source: src, Meta: meta, Writer: mgr, Store: st, State: &pullKV{},
+		Source: src, Meta: meta, Writer: mgr, Store: st, State: &pullKV{}, Fingerprint: visibility.SumHeld,
 		Logger: slog.New(slog.DiscardHandler), RunID: "e2e",
 	}
 

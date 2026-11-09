@@ -1218,19 +1218,13 @@ deps:
     mayDependOn:
       - canonical
       - entity
-      - entitymanager
       - metamodel
       - principal
-      - reconcile
       - reconclient
       - reconclientHTTP
-      # Credential names: remote_credential. marks every source.
-      - secrets
       - state
       - store
       - syncmerge
-      # The ledger is the local side of the diff, over ElementTypes.
-      - visibility
   subscription:
     mayDependOn:
       - entitymanager
@@ -1760,7 +1754,6 @@ deps:
       - canonical
       - reconwire
       - store
-      - visibility
   reconclientHTTP:
     mayDependOn:
       - reconclient
@@ -2074,9 +2067,10 @@ deps:
       - project
       - schedulerstate
       - script
-      # A remote pull reads its remote_credential.* secret.
-      - secrets
       - state
+      # A remote pull's ledger fingerprints its rows as the element
+      # reader does.
+      - visibility
     canUse:
       - uuid
   script:
@@ -2278,8 +2272,6 @@ deps:
   tokenstore:
     mayDependOn:
       - state
-      # A connection may not name a remote_credential. secret.
-      - secrets
   fsimport:
     mayDependOn:
       - app

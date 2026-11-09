@@ -123,10 +123,10 @@ func (c *ReconcileDiffCmd) run(ctx context.Context, s *reconcileServices, getenv
 		return err
 	}
 	who := principal.From(ctx).User
-	if out.Format == output.FormatJSON {
-		err = writeReconcileJSON(out.Out, remote.Origin(), who, res)
+	if w, asJSON := remoteOutput(); asJSON {
+		err = writeReconcileJSON(w, remote.Origin(), who, res)
 	} else {
-		err = writeReconcileText(out.Out, remote.Origin(), who, res)
+		err = writeReconcileText(w, remote.Origin(), who, res)
 	}
 	if err != nil {
 		return err
@@ -282,6 +282,12 @@ func writeReconcileJSON(w io.Writer, origin, who string, res reconclient.Result)
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(doc)
+}
+
+// remoteOutput is where `rela reconcile` and `rela remote` write their
+// report, and whether --output asks for JSON.
+func remoteOutput() (w io.Writer, asJSON bool) {
+	return out.Out, out.Format == output.FormatJSON
 }
 
 // shown returns s as is when it is safe to print, and quoted otherwise, so

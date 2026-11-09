@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -68,6 +69,59 @@ func (c Credential) Validate() error {
 			secrets.RemoteCredentialPrefix)
 	}
 	return nil
+}
+
+// CredentialEnvPrefix starts the name of every environment variable a
+// declared credential may be read from.
+const CredentialEnvPrefix = "REMOTE_CREDENTIAL_" //nolint:gosec // G101: a variable name prefix, not a credential
+
+// ValidateDeclared is [Credential.Validate] for a credential a config file
+// names, such as remotes.yaml. The value is sent to the URL the file names,
+// so a source the file may name freely would let whoever edits it send any
+// host secret off the machine: RELA_DATABASE_URL, the token key, or a file
+// under $CREDENTIALS_DIRECTORY. So an env name starts with
+// [CredentialEnvPrefix], and a file is an absolute path whose base name is
+// a remote credential name, as a secret is. A relative path is refused
+// because it would resolve against whatever directory the process runs in.
+func (c Credential) ValidateDeclared() error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	switch {
+	case c.Env != "":
+		if !strings.HasPrefix(c.Env, CredentialEnvPrefix) || len(c.Env) == len(CredentialEnvPrefix) {
+			return fmt.Errorf("env %q: the variable name must start with %q followed by a name",
+				c.Env, CredentialEnvPrefix)
+		}
+	case c.File != "":
+		if !filepath.IsAbs(c.File) {
+			return fmt.Errorf("file %q: the path must be absolute", c.File)
+		}
+		if !secrets.IsRemoteCredential(filepath.Base(c.File)) {
+			return fmt.Errorf("file %q: the file name must start with %q followed by a name",
+				c.File, secrets.RemoteCredentialPrefix)
+		}
+	}
+	return nil
+}
+
+// GlobalSecrets returns a secret reader for [Credential.Read] over load,
+// which returns the global section of the project's secrets. A project
+// without secrets reads every name as empty, which Read reports as no
+// credential.
+//
+// Nil: load is accepted; the reader then fails.
+func GlobalSecrets(load func() (map[string]string, error)) func(string) (string, error) {
+	return func(name string) (string, error) {
+		if load == nil {
+			return "", errors.New("this project has no secrets")
+		}
+		all, err := load()
+		if err != nil && !errors.Is(err, secrets.ErrNotFound) {
+			return "", err
+		}
+		return all[name], nil
+	}
 }
 
 // Read returns the credential. getenv reads an environment variable;

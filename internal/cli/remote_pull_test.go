@@ -13,12 +13,12 @@ import (
 
 func TestRemotePull_RejectsBadArguments(t *testing.T) {
 	logger := slog.New(slog.DiscardHandler)
-	err := (&RemotePullCmd{Name: "Bad Name"}).run(context.Background(), nil, nil, logger, nil)
+	err := (&RemotePullCmd{Name: "Bad Name"}).run(context.Background(), nil, nil, logger, nil, false)
 	require.ErrorContains(t, err, "invalid remote name")
-	err = (&RemotePullCmd{Name: "cat", AllowGone: -1}).run(context.Background(), nil, nil, logger, nil)
+	err = (&RemotePullCmd{Name: "cat", AllowGone: -1}).run(context.Background(), nil, nil, logger, nil, false)
 	require.ErrorContains(t, err, "--allow-gone")
 	// No workspace: the pull refuses before reaching the source.
-	err = (&RemotePullCmd{Name: "cat"}).run(context.Background(), nil, nil, logger, nil)
+	err = (&RemotePullCmd{Name: "cat"}).run(context.Background(), nil, nil, logger, nil, false)
 	require.ErrorContains(t, err, "workspace")
 }
 
