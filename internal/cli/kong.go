@@ -48,6 +48,22 @@ var (
 	projectPath  string
 )
 
+// GlobalFlags are the flags every command accepts. kong embeds them in [CLI],
+// so they parse as top-level flags and read as cli.Project, cli.RunAs and so
+// on. Keeping them in one struct keeps [CLI] at one field per subcommand.
+//
+// `--run-as` and `--tenant` are global because they name the identity and the
+// tenant of every command that acts, and a per-command flag would have to be
+// repeated on each of them.
+type GlobalFlags struct {
+	Project string `help:"Project directory (default: auto-detect from cwd)." env:"RELA_PROJECT"`
+	Output  string `help:"Output format (table, json)." short:"o" default:"table"`
+	Verbose bool   `help:"Verbose output." short:"v"`
+	Quiet   bool   `help:"Quiet output."   short:"q"`
+	RunAs   string `name:"run-as" env:"RELA_RUN_AS" help:"Act as this job identity, a system: or integration: name (attribution, not authentication; the audit records your OS user as asserting it)."`
+	Tenant  string `name:"tenant" env:"RELA_TENANT" help:"Org id of the tenant to act in, when the project has a tenants.yaml (required there for every data command)."`
+}
+
 // CLI is the kong-parsed root.
 //
 // 49 exported fields (4 global flags + 45 subcommands) — a documented
@@ -93,20 +109,12 @@ var (
 // Raised 54 → 55 for `reconcile` (TKT-0Y566OJ), a verb family that compares
 // this project with a remote rela.
 //
-// `--tenant` (TKT-M3SHYE0) took the field that `peer` freed (TKT-TB2B8N5).
-// It is global for the reason `--run-as` is: it names the tenant every data
-// command acts in, and a per-command flag would have to be repeated on each
-// of them.
+// Lowered to 51 when the global flags moved into the embedded [GlobalFlags]
+// (TKT-M3SHYE0), which made room for `--tenant` without raising the line.
 //
-//plimsoll:max-fields=55
+//plimsoll:max-fields=51
 type CLI struct {
-	// Global flags.
-	Project string `help:"Project directory (default: auto-detect from cwd)." env:"RELA_PROJECT"`
-	Output  string `help:"Output format (table, json)." short:"o" default:"table"`
-	Verbose bool   `help:"Verbose output." short:"v"`
-	Quiet   bool   `help:"Quiet output."   short:"q"`
-	RunAs   string `name:"run-as" env:"RELA_RUN_AS" help:"Act as this job identity, a system: or integration: name (attribution, not authentication; the audit records your OS user as asserting it)."`
-	Tenant  string `name:"tenant" env:"RELA_TENANT" help:"Org id of the tenant to act in, when the project has a tenants.yaml (required there for every data command)."`
+	GlobalFlags `embed:""`
 
 	// NO --world flag, deliberately (TKT-DN37J2 PR-C).
 	//
