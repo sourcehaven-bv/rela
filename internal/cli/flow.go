@@ -26,6 +26,9 @@ type FlowCmd struct {
 	Run      FlowScriptCmd   `cmd:"" default:"withargs" help:"Run an interactive Lua flow script."`
 	Validate FlowValidateCmd `cmd:"" help:"Check flows.yaml against the schema and acl.yaml."`
 	Show     FlowShowCmd     `cmd:"" help:"Show a flow from flows.yaml as a Mermaid state diagram."`
+	Start    FlowStartCmd    `cmd:"" help:"Start a run of a flow on a subject (needs the flow's manual permission)."`
+	Runs     FlowRunsCmd     `cmd:"" help:"List the flow runs you can read, newest first."`
+	Cancel   FlowCancelCmd   `cmd:"" help:"Cancel an unfinished run (needs the flow's manual permission)."`
 }
 
 // FlowScriptCmd runs an interactive Lua flow. Self-discovers project from

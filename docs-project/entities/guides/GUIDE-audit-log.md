@@ -63,6 +63,7 @@ Every record is one line of JSON:
 | `triggered_by` | Optional. Engine-initiated writes carry `automation:<name>`, `schedule:<task-name>`, `session:<channel>/<from>-><to>#<generation>/<index>`, or `cascade:delete-entity:<id>` |
 | `summary`     | One-line human-readable summary; for updates names *which* properties changed but never their values (secret-leak defense) |
 | `flow` / `run` / `step` | Optional. The flow, the run's id and the step, for a write a flow step made. See "`source` and flow steps" below |
+| `by`          | Optional. The user who started or cancelled the run by hand, for a write a flow step made on that request |
 | `source`      | The kind of actor that produced the record: `flow`, `automation`, `schedule`, `cascade`, `restore`, `renumber`, `rename`, `convert` or `channel`, else the principal's tool |
 
 ### Operations
@@ -259,7 +260,9 @@ flows.yaml), `run` (the run's id) and `step`. An automation that the
 step's write triggers runs in the same step, so its records carry the
 same three fields and `source: flow`. A background job the step queues
 does not: the queue does not carry them. The principal stays the genuine
-identity, `system:flow` for the engine's own writes.
+identity, `system:flow` for the engine's own writes. A write made on a
+`rela flow start` or `rela flow cancel` also carries `by`, the user who
+asked, because the principal of those writes is the flow's identity.
 
 ## Undoable deletes
 

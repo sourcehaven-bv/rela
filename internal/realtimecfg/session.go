@@ -13,7 +13,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
-	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
 
 // SessionNoticeType is the message type of the notice a session transition
@@ -313,8 +312,8 @@ func (v *validator) session(
 	switch {
 	case len(raw.States) == 0:
 		v.add(statesKey, "a session needs at least one state")
-	case len(raw.States) > realtimelimits.MaxSessionStates:
-		v.add(statesKey, fmt.Sprintf("at most %d states", realtimelimits.MaxSessionStates))
+	case len(raw.States) > flow.MaxStates:
+		v.add(statesKey, fmt.Sprintf("at most %d states", flow.MaxStates))
 	}
 	if len(order) != len(raw.States) {
 		order = sortedKeys(raw.States)
@@ -401,8 +400,8 @@ type problemSink func(key, reason string)
 // compileTimers compiles a state's `after:`, sorted by timer name. A timer
 // with a problem is left out.
 func compileTimers(add problemSink, key string, raw map[string]rawSessionTimer, s *Session) []SessionTimer {
-	if len(raw) > realtimelimits.MaxSessionTimers {
-		add(key, fmt.Sprintf("at most %d timers per state", realtimelimits.MaxSessionTimers))
+	if len(raw) > flow.MaxTimers {
+		add(key, fmt.Sprintf("at most %d timers per state", flow.MaxTimers))
 	}
 	var out []SessionTimer
 	for _, name := range sortedKeys(raw) {
@@ -433,7 +432,7 @@ func compileTimer(add problemSink, key, name string, raw rawSessionTimer, s *Ses
 	case err != nil:
 		bad(key+".period", err.Error())
 	default:
-		if d, fixed := p.Fixed(); fixed && d < realtimelimits.MinSessionTimer {
+		if d, fixed := p.Fixed(); fixed && d < flow.MinTimer {
 			bad(key+".period", "a timer waits at least 1m")
 		}
 		t.Period = p

@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
@@ -108,6 +109,75 @@ func Parse(data []byte, meta *metamodel.Metamodel, policy *acl.Policy) (*Compile
 	sortProblems(l.warnings)
 	l.c.warnings = l.warnings
 	return l.c, nil
+}
+
+// ParseFlow compiles one flow from the declaration a run stored at start
+// ([Flow.Source]) against the current schema and acl.yaml, so a run can
+// finish on the version it started on (RR-7E3BWVM). The result has
+// version want; a source that hashes to another version is an error. A
+// source that no longer compiles, because the schema changed say, is an
+// [*Error]: the caller strands that run and reports it, and other runs
+// go on.
+//
+// Nil: meta is rejected.
+func ParseFlow(name string, source []byte, want string, meta *metamodel.Metamodel,
+	policy *acl.Policy) (*Flow, error) {
+	if meta == nil {
+		return nil, errors.New("flowcfg: ParseFlow requires a metamodel")
+	}
+	key := "flows." + name
+	fail := func(msg string) (*Flow, error) {
+		return nil, &Error{Problems: []Problem{{Key: key, Message: msg}}}
+	}
+	if !flow.ValidName(name) {
+		return fail("is not a valid flow name")
+	}
+	if len(source) > MaxFileBytes {
+		return fail(fmt.Sprintf("over %d bytes", MaxFileBytes))
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(source, &doc); err != nil {
+		return fail(err.Error())
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 {
+		return fail("is not one flow declaration")
+	}
+	n := doc.Content[0]
+	if hasAlias(n) {
+		return fail("uses an anchor or alias; flows.yaml does not support them")
+	}
+	l := &loader{meta: meta, policy: policy, c: &Compiled{flows: map[string]*Flow{}}}
+	f := l.flow(key, name, n)
+	if len(l.problems) > 0 || f == nil {
+		sortProblems(l.problems)
+		return nil, &Error{Problems: l.problems}
+	}
+	if f.version != want {
+		return fail(fmt.Sprintf("hashes to version %s, not %s", f.version, want))
+	}
+	return f, nil
+}
+
+// DeclaresFlows reports whether data, the bytes of flows.yaml, declares at
+// least one flow. A file that does not decode counts as declaring flows,
+// so the caller's [Parse] reports the problem rather than skipping it.
+func DeclaresFlows(data []byte) bool {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return false
+	}
+	var raw rawFile
+	if err := strictDecode(data, &raw); err != nil {
+		return true
+	}
+	n := &raw.Flows
+	switch {
+	case n.Kind == 0, n.Kind == yaml.ScalarNode && n.Tag == "!!null":
+		return false
+	case n.Kind == yaml.MappingNode:
+		return len(n.Content) > 0
+	default:
+		return true
+	}
 }
 
 // hasAlias reports whether n or a node below it is an alias or an anchor.
@@ -272,6 +342,10 @@ func clearComments(n *yaml.Node) *yaml.Node {
 func (l *loader) subject(key, typ string) bool {
 	if typ == "" {
 		l.add(key, "is required: the entity type a run carries")
+		return false
+	}
+	if entity.IsManagedName(typ) {
+		l.add(key, fmt.Sprintf("names %q, which rela manages itself; a flow cannot carry it", typ))
 		return false
 	}
 	if _, ok := l.meta.GetEntityDef(typ); !ok {

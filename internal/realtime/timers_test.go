@@ -12,6 +12,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
@@ -239,7 +240,7 @@ func TestCarriedRestarts(t *testing.T) {
 
 func TestMaxSessionRestarts(t *testing.T) {
 	t.Parallel()
-	require.Equal(t, realtimelimits.MaxSessionTimers, channels.MaxSessionRestarts,
+	require.Equal(t, flow.MaxTimers, channels.MaxSessionRestarts,
 		"a state may restart each of its timers")
 }
 

@@ -97,8 +97,8 @@ type reminderCompiler struct {
 // so a guard naming it reports no second error.
 func (c reminderCompiler) compile(key string, raw map[string]rawReminder) {
 	v, s := c.v, c.s
-	if len(raw) > realtimelimits.MaxSessionReminders {
-		v.add(key, fmt.Sprintf("at most %d reminders per session", realtimelimits.MaxSessionReminders))
+	if len(raw) > flow.MaxReminders {
+		v.add(key, fmt.Sprintf("at most %d reminders per session", flow.MaxReminders))
 	}
 	for _, name := range sortedKeys(raw) {
 		rk := key + "." + name
@@ -173,7 +173,7 @@ func (c reminderCompiler) reminder(key, name string, raw rawReminder) (SessionRe
 }
 
 // reminderDuration parses a reminder's every or first: a fixed period of
-// at least [realtimelimits.MinSessionTimer]. reason is empty when it is
+// at least [flow.MinTimer]. reason is empty when it is
 // valid.
 func reminderDuration(s, field string) (d time.Duration, reason string) {
 	p, err := ParsePeriod(s)
@@ -185,7 +185,7 @@ func reminderDuration(s, field string) (d time.Duration, reason string) {
 	case !fixed:
 		return 0, field + " must be a fixed duration such as 30m or 24h; months and years are not supported " +
 			"for reminders"
-	case d < realtimelimits.MinSessionTimer:
+	case d < flow.MinTimer:
 		return 0, "a reminder waits at least 1m"
 	}
 	return d, ""

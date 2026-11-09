@@ -8,6 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -270,6 +271,9 @@ func (l *loader) createOutput(key string, raw *rawCreate, subject string) (Outpu
 	case raw.Type == "":
 		l.add(key+".type", "is required: the entity type to create")
 		return Output{}, false
+	case entity.IsManagedName(raw.Type):
+		l.add(key+".type", fmt.Sprintf("names %q, which rela manages itself; an output cannot create it", raw.Type))
+		return Output{}, false
 	case !ok:
 		l.add(key+".type", fmt.Sprintf("names %q, which schema.yaml does not declare", raw.Type))
 		return Output{}, false
@@ -307,6 +311,8 @@ func (l *loader) relate(key, rel, typ, subject string) {
 	switch {
 	case rel == "":
 		l.add(key, "is required: the relation type from the new entity to the subject")
+	case entity.IsManagedName(rel):
+		l.add(key, fmt.Sprintf("names %q, which rela manages itself", rel))
 	case !ok:
 		l.add(key, fmt.Sprintf("names %q, which schema.yaml does not declare", rel))
 	case !slices.Contains(rd.From, typ) || !slices.Contains(rd.To, subject):

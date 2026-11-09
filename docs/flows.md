@@ -10,10 +10,12 @@ to "finished", and creates a task on the way.
 The file is optional. Without it, a project has no flows and nothing else
 changes. `schema.yaml` never refers to it.
 
-> **Status.** This release loads and checks `flows.yaml` and shows its
-> flows. rela does not run flows yet; starting runs, the run records and
-> the inbox entries follow in later releases. You can write and check the
-> file now.
+> **Status.** This release runs flows that a person starts by hand with
+> `rela flow start`. A run writes its outputs, follows `done` branches and
+> ends in a final state. The `create`, `predicate` and `schedule` triggers,
+> `change` events, timers, retention and the inbox are checked but not
+> acted on yet; they follow in a later release. See
+> [Running flows](#running-flows).
 
 ## Example
 
@@ -195,7 +197,9 @@ reader cannot see, a flow condition is held to a smaller set:
 
 Each flow has a version: a hash of its definition. A change to a flow
 changes its version; a change to a comment does not. `rela flow show`
-prints it. Runs will keep the version they started with.
+prints it. A run keeps the version it started with: rela stores each
+version's definition, so a run started before a change finishes on the
+old definition.
 
 ## Runs
 
@@ -230,7 +234,58 @@ target type can be a subject, and drops it otherwise. A hand edit of the markdow
 the filesystem backend is outside these rules.
 
 **Audit.** Every write a flow step makes carries `flow`, `run`, `step`
-and `source: flow` in the audit log. See [Audit log](audit-log.md).
+and `source: flow` in the audit log. A write made by `rela flow start` or
+`rela flow cancel` also carries `by`: the user who asked. See
+[Audit log](audit-log.md).
+
+## Running flows
+
+```bash
+rela flow start onboarding PER-12   # start a run on PER-12
+rela flow runs                      # list the runs you can read
+rela flow runs --flow onboarding
+rela flow cancel RUN-4OSX           # cancel an unfinished run
+```
+
+`rela flow start` needs an `on: manual` trigger on the flow, and the
+caller must hold its `permission` for the subject. A role held through a
+role relation to the subject counts. A subject the caller cannot read
+answers like a missing entity. `rela flow cancel` needs the same
+permission. In a project without acl.yaml, everyone may start and cancel.
+
+When a run starts, rela records the `_flow-run` entity and its `_carries`
+edge as `system:flow`, and then enters the initial state:
+
+1. It writes the state's outputs as the `run_as` identity. A template
+   reads the subject as `run_as` reads it: if `run_as` cannot read the
+   subject, every `{{subject.*}}` placeholder is empty.
+2. It takes the first `done` branch that applies, and enters that state.
+3. In a final state the run ends: the `_flow-run` entity records the
+   status and completion time, and the run's working state is dropped.
+
+A failed step leaves the run in its state with the rest of the step
+pending: outputs not yet written, a `done` branch not yet taken, or the
+end of the run not yet recorded. rela tries again later and never writes
+an output twice. It waits 30 seconds after the first failure and doubles
+the wait after each further failure, up to one hour. `rela flow start`
+names the run when its first step failed, because the run exists.
+
+If rela stops between recording a run and storing its working state, the
+run is listed but cannot advance. `rela flow cancel` closes such a run
+once it is a minute old.
+
+With `per_subject: one`, a second start on the same subject fails while
+the first run is unfinished. Deleting a subject does not cancel its run
+yet.
+
+**Where runs are kept.** The working state of an unfinished run is kept
+in `.rela/` on the filesystem backend, in `rela.db` on SQLite and in the
+database on PostgreSQL. `rela db import-fs` copies the unfinished runs
+into the new database.
+
+**Upgrading.** A `flows.yaml` that does not load now stops rela from
+starting, as an invalid `realtime.yaml` does. Run `rela flow validate`
+before you upgrade.
 
 ## Checking the file
 

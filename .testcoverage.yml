@@ -85,6 +85,10 @@ override:
   # time, so it is pinned above the default floor (~93% today).
   - path: ^internal/flow$
     threshold: 85
+  # The flow runtime (TKT-9IT3LN8) settles runs and decides retries, so it
+  # is pinned above the default floor (~79% today).
+  - path: ^internal/flowengine$
+    threshold: 74
 
   # Data classification overlay (TKT-8UCV32): a parser and a file rewriter
   # whose mistakes silently mislabel data, so pinned above the default floor.

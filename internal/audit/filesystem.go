@@ -220,6 +220,7 @@ func sanitize(rec Record) Record {
 	rec.Flow = clean(rec.Flow)
 	rec.Run = clean(rec.Run)
 	rec.Step = clean(rec.Step)
+	rec.By = clean(rec.By)
 	rec.Source = clean(rec.Source)
 	return rec
 }

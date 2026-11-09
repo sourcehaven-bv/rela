@@ -18,6 +18,9 @@ var identityEdgeAllowlist = map[string]allowed{
 		"identityBinderFor so a long-lived reader re-resolves through the same edge step"},
 	"internal/appbuild/automationjobs.go": {1, "servicesJobRunner.BindIdentity: a background job is its " +
 		"own edge; it binds through identityBinderFor"},
+	"internal/appbuild/flowruntime.go": {1, "buildFlowEngine: a flow step is its own edge; it writes " +
+		"headers as system:flow and outputs as run_as, principals it chose itself, and binds them through " +
+		"identityBinderFor"},
 	"internal/appbuild/realtime_service.go": {1, "PolicyChannelService: the binder for stdio's channel " +
 		"service, which evaluates acl.yaml while the rest of stdio MCP stays open; the channel tools run it per call"},
 	"internal/appbuild/realtime_outputs.go": {3, "managerOutputs: a session output writes as the poster " +

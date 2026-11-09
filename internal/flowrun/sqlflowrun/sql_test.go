@@ -97,7 +97,7 @@ func TestDatabaseErrors(t *testing.T) {
 	require.Error(t, err)
 	_, err = s.Get(ctx, "FR-1")
 	require.Error(t, err)
-	_, err = s.Update(ctx, "FR-1", 1, newRun("FR-1").Instance, t0)
+	_, err = s.Update(ctx, "FR-1", 1, flowrun.State{Instance: newRun("FR-1").Instance}, t0)
 	require.Error(t, err)
 	require.Error(t, s.Delete(ctx, "FR-1", 1))
 	_, err = s.ListDue(ctx, t0, flowrun.DueCursor{}, 10)

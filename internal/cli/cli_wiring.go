@@ -138,6 +138,7 @@ type cliBundles struct {
 	analysis   *analysis.Service
 	leases     *leaseServices
 	channels   *channelServices
+	flows      *flowServices
 }
 
 // newCLIBundles wires the focused services around an already-constructed
@@ -234,7 +235,13 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		channels.Svc = c
 		channels.Follow = func(ctx context.Context) <-chan struct{} { return appbuild.FollowChannels(ctx, svc) }
 	}
+	flows := &flowServices{}
+	// Assigned only when present, for the same reason as Comments above.
+	if c := appbuild.FlowControlFor(svc); c != nil {
+		flows.Ctl = c
+	}
 	return &cliBundles{
+		flows:      flows,
 		leases:     leases,
 		channels:   channels,
 		read:       &read,
