@@ -77,4 +77,5 @@ run id.
 the archplan ratchet stays flat. The write refusals it matches live in
 `entity`, the ledger fingerprint is passed in through `Deps.Fingerprint`, and
 the credential rules live in `httpremote`. `reconclient` does not import
-`visibility`; the CLI wiring adapts the element reader to it.
+`visibility`; the CLI wiring adapts the element reader to it. The credential
+rules are tested in `httpremote`, next to the code.
