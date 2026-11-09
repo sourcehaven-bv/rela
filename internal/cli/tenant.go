@@ -8,10 +8,7 @@ import (
 	"os"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
-	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
-	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
 )
 
@@ -77,29 +74,26 @@ func openProject(startDir, org string, opts ...appbuild.Option) (*appbuild.Servi
 // projectTenants discovers the project startDir belongs to and, when it
 // serves several tenants, the resolver that names them. It is the CLI's one
 // tenant-mode detection: everything else sees only the [tenant.Resolver].
-// paths and r are nil when startDir is in no project, and r is nil for a
+// root is "" and r nil when startDir is in no project, and r is nil for a
 // single-store project. Any other discovery error is returned, so a failure
 // to look is never read as single-store.
-func projectTenants(startDir string, getenv func(string) string) (*project.Context, tenant.Resolver, error) {
-	paths, err := project.Discover(startDir, storage.NewSafeFS(storage.NewOsFS()))
-	if errors.Is(err, relaerrors.ErrNoProject) {
-		return nil, nil, nil
+func projectTenants(startDir string, getenv func(string) string) (root string, r tenant.Resolver, err error) {
+	root, err = appbuild.DiscoverRoot(startDir)
+	if err != nil || root == "" {
+		return "", nil, err
 	}
+	r, err = tenant.ForProject(root, getenv)
 	if err != nil {
-		return nil, nil, err
+		return "", nil, err
 	}
-	r, err := tenant.ForProject(paths.Root, getenv)
-	if err != nil {
-		return nil, nil, err
-	}
-	return paths, r, nil
+	return root, r, nil
 }
 
 // tenantChoice is the store an entry point acts on: the project and, in a
 // tenant project, the one tenant it named.
 type tenantChoice struct {
-	// paths is the project; nil when the directory is in no project.
-	paths *project.Context
+	// root is the project root; "" when the directory is in no project.
+	root string
 	// tenantMode is true in a tenant project; tenant is then the one named.
 	tenantMode bool
 	tenant     tenant.Tenant
@@ -110,7 +104,7 @@ type tenantChoice struct {
 // in a tenant project a missing or unknown org is an error, and no tenant is
 // returned with it.
 func selectTenant(startDir, org string, getenv func(string) string) (tenantChoice, error) {
-	paths, r, err := projectTenants(startDir, getenv)
+	root, r, err := projectTenants(startDir, getenv)
 	if err != nil {
 		return tenantChoice{}, err
 	}
@@ -118,52 +112,19 @@ func selectTenant(startDir, org string, getenv func(string) string) (tenantChoic
 		if org != "" {
 			return tenantChoice{}, tenant.ErrNoTenantMap
 		}
-		return tenantChoice{paths: paths}, nil
+		return tenantChoice{root: root}, nil
 	}
 	t, err := tenant.Select(r, org)
 	if err != nil {
 		return tenantChoice{}, err
 	}
-	return tenantChoice{paths: paths, tenantMode: true, tenant: t}, nil
+	return tenantChoice{root: root, tenantMode: true, tenant: t}, nil
 }
 
-// tenantFreeCommands need no tenant in tenant mode, because they read or
-// write no tenant's data: the config they touch is shared by every tenant.
-// Every other command is refused in tenant mode without a tenant, so a new
-// command is gated until someone decides it belongs here.
-//
-// validate checks the shared config without a tenant; its steps that read
-// data (scheduled mail recipients, --check) open the tenant themselves
-// through [openProject] and so are gated there.
-var tenantFreeCommands = map[string]bool{
-	"version":    true,
-	"init":       true,
-	"completion": true,
-	"apps":       true,
-	"validate":   true,
-}
-
-// commandIsTenantFree reports whether cmd reads or writes no tenant's data.
-// Bare `rela migrate` rewrites config files only; its data subcommands need
-// the store, as [requiresProject] says.
-func commandIsTenantFree(cmd string) bool {
-	if firstKongToken(cmd) == "migrate" {
-		return !requiresProject(cmd)
-	}
-	return tenantFreeCommands[firstKongToken(cmd)]
-}
-
-// checkTenantMode is the CLI's tenant gate, run once before a command is
-// dispatched. In tenant mode it refuses a data command that names no
-// tenant, or one the resolver does not serve, before anything is opened. In
-// a single-store project it refuses only a named tenant.
-//
-// It judges the project startDir belongs to. A command that opens another
-// project (`rela flow <script>`) is judged again by [openProject].
-func checkTenantMode(cmd, startDir, org string, getenv func(string) string) error {
-	if commandIsTenantFree(cmd) {
-		return nil
-	}
-	_, err := selectTenant(startDir, org, getenv)
-	return err
+// noTenantToOpen reports whether err from [openProject] means a tenant
+// project was reached without a tenant to open: none was named, or this
+// build cannot serve tenants. A tenant-free command can skip a data step on
+// it; an unknown tenant is a different error and is not matched.
+func noTenantToOpen(err error) bool {
+	return errors.Is(err, tenant.ErrTenantRequired) || errors.Is(err, tenant.ErrUnsupportedBuild)
 }

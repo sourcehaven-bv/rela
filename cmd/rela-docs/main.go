@@ -27,9 +27,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/docscli"
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
-	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
 )
 
@@ -117,14 +115,11 @@ var errTenantProject = stderrors.New("this project serves several tenants: " +
 // [tenant.ForProject]. A directory in no project passes: the open that
 // follows reports it as before.
 func refuseTenantMode(startDir string) error {
-	paths, err := project.Discover(startDir, storage.NewSafeFS(storage.NewOsFS()))
-	if stderrors.Is(err, relaerrors.ErrNoProject) {
-		return nil
-	}
-	if err != nil {
+	root, err := appbuild.DiscoverRoot(startDir)
+	if err != nil || root == "" {
 		return err
 	}
-	r, err := tenant.ForProject(paths.Root, os.Getenv)
+	r, err := tenant.ForProject(root, os.Getenv)
 	if err != nil {
 		// A tenant project this build cannot serve, or one whose tenants
 		// cannot be read: refuse either way.

@@ -21,7 +21,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/projectsetup"
 	"github.com/Sourcehaven-BV/rela/internal/schema"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
-	"github.com/Sourcehaven-BV/rela/internal/tenant"
 )
 
 // metamodelAccessor is the narrow consumer-side interface validate
@@ -168,7 +167,7 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 func validateMailRecipients(ctx context.Context, root string) (failed bool, err error) {
 	//nolint:contextcheck // openProject does not take ctx; matches the entity-check path
 	mailSvc, mailCloser, err := openProject(root, tenantOrg)
-	if stderrors.Is(err, tenant.ErrTenantRequired) || stderrors.Is(err, tenant.ErrUnsupportedBuild) {
+	if noTenantToOpen(err) {
 		// Printed even with -q: a skipped check must not read as a passed one.
 		fmt.Printf("  - scheduled mail recipients: skipped (%v)\n", err)
 		return false, nil

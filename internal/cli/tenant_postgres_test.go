@@ -245,10 +245,10 @@ func TestTenantDB_TargetsTheNamedProject(t *testing.T) {
 	db, err := resolveDSN(root, "org-a")
 	require.NoError(t, err)
 	defer db.release()
-	require.NotNil(t, db.paths)
+	require.NotEmpty(t, db.root)
 	want, err := filepath.EvalSymlinks(root)
 	require.NoError(t, err)
-	got, err := filepath.EvalSymlinks(db.paths.Root)
+	got, err := filepath.EvalSymlinks(db.root)
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
 }

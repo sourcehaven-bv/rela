@@ -2636,6 +2636,12 @@
       "reason": "By design: tenanterase.go is the operator command edge for tenant erasure (TKT-TNERAS). It parses flags, confirms and records; the erasure itself lives in tenant, so most links point there.",
       "at": "2026-11-08T10:00:00Z",
       "title": "rela-server/tenanterase.go in cmdServer has most of its links to tenant (weighted links: 3.7 to tenant, 1.1 to cmdServer)."
+    },
+    "boundaries.misplaced_file-ab7ae0d7bf6b": {
+      "state": "accepted",
+      "reason": "By design: classification.go is the CLI edge of the classification commands, so most links point there. The file is unchanged (TKT-M3SHYE0); its classification share sat at 0.59998 against the 0.6 threshold and crossed it when its neighbour validate.go gained one link, to tenant.go.",
+      "at": "2026-11-09T06:14:30Z",
+      "title": "cli/classification.go in cli has most of its links to classification (weighted links: 5.4 to classification, 1.3 to cli)."
     }
   },
   "labels": {},
@@ -2647,28 +2653,17 @@
       "weight.vocabulary": 912,
       "weight.types": 4008,
       "weight.concepts": 7081,
-      "weight.boundaries": 1383,
+      "weight.boundaries": 1419,
       "weight.data": 1297,
       "weight.security": 140,
       "largest_tangle": 13,
       "cycle_edges": 61,
       "upward_edges": 0,
-      "propagation_cost": 9.1
+      "propagation_cost": 9.0
     },
     "min_weight": 0,
-    "at": "2026-11-08T11:46:31Z",
+    "at": "2026-11-09T06:14:30Z",
     "log": [
-      {
-        "at": "2026-11-03T17:57:02Z",
-        "change": "loosen",
-        "reason": "Session wire mirror grew by previous (ChannelSession and SessionView), TKT-56TPOTE",
-        "metrics": {
-          "weight.types": [
-            3976,
-            3977
-          ]
-        }
-      },
       {
         "at": "2026-11-04T00:30:00Z",
         "change": "loosen",
@@ -2935,6 +2930,21 @@
           "weight.boundaries": [
             1417,
             1383
+          ]
+        }
+      },
+      {
+        "at": "2026-11-09T06:14:30Z",
+        "change": "loosen",
+        "reason": "TKT-M3SHYE0: boundaries weight includes the accepted cli/classification.go finding, an unchanged file that crossed the misplaced_file share threshold by 0.0001",
+        "metrics": {
+          "weight.boundaries": [
+            1383,
+            1419
+          ],
+          "propagation_cost": [
+            9.1,
+            9.0
           ]
         }
       }

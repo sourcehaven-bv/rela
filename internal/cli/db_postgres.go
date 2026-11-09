@@ -23,8 +23,8 @@ import (
 // dbTarget is the database a db command acts on.
 type dbTarget struct {
 	dsn string
-	// paths is the project the command runs in; nil outside a project.
-	paths *project.Context
+	// root is the project the command runs in; "" outside a project.
+	root string
 	// release ends the command's hold on the target; callers defer it.
 	release func()
 }
@@ -53,14 +53,14 @@ func resolveDSN(startDir, org string) (dbTarget, error) {
 		if guardErr := tenant.CheckBareTarget(context.Background(), dsn); guardErr != nil {
 			return dbTarget{}, guardErr
 		}
-		return dbTarget{dsn: dsn, paths: choice.paths, release: func() {}}, nil
+		return dbTarget{dsn: dsn, root: choice.root, release: func() {}}, nil
 	}
 	t := choice.tenant
 	pin, err := tenant.Pin(context.Background(), t)
 	if err != nil {
 		return dbTarget{}, fmt.Errorf("tenant %q: %w", t.OrgID, err)
 	}
-	return dbTarget{dsn: t.DSN, paths: choice.paths, release: func() { _ = pin.Close() }}, nil
+	return dbTarget{dsn: t.DSN, root: choice.root, release: func() { _ = pin.Close() }}, nil
 }
 
 // runDBMigrate applies pending migrations (postgres build). Pool construction
@@ -112,7 +112,7 @@ func runDBStatus() error {
 	// is INFORMATIONAL: it never changes the exit code (a config edit against
 	// dirty data must not brick a health check). The strict gate lives on
 	// `rela db reconcile --dry-run`.
-	if specs, _, ok := loadDerivedSpecs(db.paths); ok {
+	if specs, _, ok := loadDerivedSpecs(db.root); ok {
 		outcomes, err := pgstore.ReconcileDSN(
 			context.Background(), resolved, specs, store.ReconcileOptions{DryRun: true})
 		switch {
@@ -139,7 +139,7 @@ func runDBReconcile(dryRun, showValues bool) error {
 	}
 	defer db.release()
 	resolved := db.dsn
-	specs, schemaPath, ok := loadDerivedSpecs(db.paths)
+	specs, schemaPath, ok := loadDerivedSpecs(db.root)
 	if !ok {
 		return errors.New("could not load project configuration to derive database indexes; " +
 			"run this from a project directory")
@@ -164,15 +164,19 @@ func runDBReconcile(dryRun, showValues bool) error {
 	return nil
 }
 
-// loadDerivedSpecs returns, for the project at paths, unique constraints plus
+// loadDerivedSpecs returns, for the project at root, unique constraints plus
 // indexes derived from valid static data-entry queries. ok is false when the
 // complete desired set cannot be loaded; callers must not reconcile a partial
 // set because that could drop still-desired owned indexes.
-func loadDerivedSpecs(paths *project.Context) (specs []store.DerivedObjectSpec, schemaPath string, ok bool) {
-	if paths == nil {
+func loadDerivedSpecs(root string) (specs []store.DerivedObjectSpec, schemaPath string, ok bool) {
+	if root == "" {
 		return nil, "", false
 	}
 	fs := storage.NewSafeFS(storage.NewOsFS())
+	paths, err := project.Discover(root, fs)
+	if err != nil {
+		return nil, "", false
+	}
 	meta, _, err := metamodel.NewFSLoader(fs, paths.SchemaPath).Load(context.Background())
 	if err != nil {
 		return nil, "", false

@@ -459,11 +459,9 @@ deps:
       - appbuild
       - docscli
       - principal
-      # project, storage, tenant: rela-docs refuses a project with a
-      # tenants.yaml before it opens anything (TKT-M3SHYE0).
-      - project
       - script
-      - storage
+      # tenant: rela-docs refuses a project with a tenants.yaml before it
+      # opens anything (TKT-M3SHYE0).
       - tenant
     canUse:
       - kong

@@ -124,7 +124,7 @@ func OpenOne(ctx context.Context, base *appbuild.SharedBase, t Tenant) (*Opened,
 	if base == nil {
 		return nil, errors.New("tenant.OpenOne: base is required")
 	}
-	open, err := SharedBaseOpener(base, AuditRoot(base.Paths().CacheDir))
+	open, err := SharedBaseOpener(base, AuditRoot(base.CacheDir()))
 	if err != nil {
 		return nil, err
 	}

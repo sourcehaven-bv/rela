@@ -360,6 +360,47 @@ func requiresProject(cmd string) bool {
 	return false
 }
 
+// tenantFreeCommands need no tenant in tenant mode, because they read or
+// write no tenant's data: the config they touch is shared by every tenant.
+// Every other command is refused in tenant mode without a tenant, so a new
+// command is gated until someone decides it belongs here.
+//
+// validate checks the shared config without a tenant; its steps that read
+// data (scheduled mail recipients, --check) open the tenant themselves
+// through [openProject] and so are gated there.
+var tenantFreeCommands = map[string]bool{
+	"version":    true,
+	"init":       true,
+	"completion": true,
+	"apps":       true,
+	"validate":   true,
+}
+
+// commandIsTenantFree reports whether cmd reads or writes no tenant's data.
+// Bare `rela migrate` rewrites config files only; its data subcommands need
+// the store, as [requiresProject] says.
+func commandIsTenantFree(cmd string) bool {
+	if firstKongToken(cmd) == "migrate" {
+		return !requiresProject(cmd)
+	}
+	return tenantFreeCommands[firstKongToken(cmd)]
+}
+
+// checkTenantMode is the CLI's tenant gate, run once before a command is
+// dispatched. In tenant mode it refuses a data command that names no
+// tenant, or one the resolver does not serve, before anything is opened. In
+// a single-store project it refuses only a named tenant.
+//
+// It judges the project startDir belongs to. A command that opens another
+// project (`rela flow <script>`) is judged again by [openProject].
+func checkTenantMode(cmd, startDir, org string, getenv func(string) string) error {
+	if commandIsTenantFree(cmd) {
+		return nil
+	}
+	_, err := selectTenant(startDir, org, getenv)
+	return err
+}
+
 // flagGiven reports whether the command line set flag name. A value kong
 // took from the flag's environment variable leaves no trace in the parse
 // path, so this tells `--run-as X` from `RELA_RUN_AS=X` even when both
