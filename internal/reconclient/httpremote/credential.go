@@ -136,6 +136,30 @@ func (c Credential) Read(getenv func(string) string, secret func(string) (string
 	if err := c.Validate(); err != nil {
 		return "", err
 	}
+	return c.read(getenv, secret, false)
+}
+
+// ReadDeclared is [Credential.Read] for a credential a config file names. It
+// checks c with [Credential.ValidateDeclared], and a file must still have a
+// remote credential name once its symlinks are resolved. Without that
+// check, a symlink with a remote credential name could point at any file
+// the process can read, and that file would be sent to the remote. A
+// symlink to a file with such a name, as a Kubernetes secret mount makes,
+// is accepted. A file with more than one hard link is refused for the same
+// reason.
+//
+// Nil: getenv and secret are accepted; the source that needs a nil one
+// fails.
+func (c Credential) ReadDeclared(getenv func(string) string, secret func(string) (string, error)) (string, error) {
+	if err := c.ValidateDeclared(); err != nil {
+		return "", err
+	}
+	return c.read(getenv, secret, true)
+}
+
+func (c Credential) read(
+	getenv func(string) string, secret func(string) (string, error), declared bool,
+) (string, error) {
 	var value string
 	switch c.Kind() {
 	case CredentialSecret:
@@ -148,7 +172,7 @@ func (c Credential) Read(getenv func(string) string, secret func(string) (string
 		}
 		value = v
 	case CredentialFile:
-		v, err := readCredentialFile(c.File)
+		v, err := readCredentialFile(c.File, declared)
 		if err != nil {
 			return "", err
 		}
@@ -167,20 +191,72 @@ func (c Credential) Read(getenv func(string) string, secret func(string) (string
 	return value, nil
 }
 
+// openDeclaredFile opens a credential file a config file names. It resolves
+// the symlinks in path, and the file they lead to must have a remote
+// credential name (see [Credential.ReadDeclared]). It must be a regular
+// file with one link, because a hard link with a remote credential name can
+// lead to any file on the same file system. The file is inspected before it
+// is opened and compared with the opened file after, so a file swapped in
+// between is refused.
+func openDeclaredFile(path string) (*os.File, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, err
+	}
+	if base := filepath.Base(resolved); !secrets.IsRemoteCredential(base) {
+		return nil, fmt.Errorf("file %q leads to %q: the file name must start with %q followed by a name",
+			path, base, secrets.RemoteCredentialPrefix)
+	}
+	before, err := os.Lstat(resolved)
+	if err != nil {
+		return nil, err
+	}
+	if !before.Mode().IsRegular() {
+		return nil, fmt.Errorf("file %q: not a regular file", path)
+	}
+	if n, ok := linkCount(before); ok && n > 1 {
+		return nil, fmt.Errorf("file %q: the file has %d hard links; it must have one", path, n)
+	}
+	f, err := os.Open(resolved)
+	if err != nil {
+		return nil, err
+	}
+	st, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	if !os.SameFile(before, st) {
+		f.Close()
+		return nil, fmt.Errorf("file %q: the file changed while it was opened", path)
+	}
+	return f, nil
+}
+
 // warnedFiles holds the credential files, with their mode, already reported
 // as readable by other users. It grows by one entry per such file and mode,
 // which the operator's configuration bounds.
 var warnedFiles sync.Map
 
 // readCredentialFile reads a credential file of at most
-// [MaxCredentialFile] bytes and warns when other users can read it.
-func readCredentialFile(path string) (string, error) {
-	f, err := os.Open(path)
+// [MaxCredentialFile] bytes and warns when other users can read it. A
+// declared file goes through [openDeclaredFile]; any other path is opened
+// as it is, so an operator can name a pipe such as /dev/stdin.
+func readCredentialFile(path string, declared bool) (string, error) {
+	open := os.Open
+	if declared {
+		open = openDeclaredFile
+	}
+	f, err := open(path)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
-	if st, sErr := f.Stat(); sErr == nil && st.Mode().Perm()&0o077 != 0 {
+	st, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	if st.Mode().Perm()&0o077 != 0 {
 		// Once per file and mode: a scheduled pull reads the file on every
 		// run.
 		if _, seen := warnedFiles.LoadOrStore(path+"\x00"+st.Mode().Perm().String(), true); !seen {

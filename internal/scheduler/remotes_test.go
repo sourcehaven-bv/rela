@@ -23,6 +23,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/secrets"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 const remoteSchema = `
@@ -156,11 +157,16 @@ func newRemoteWorkspace(t *testing.T, credential string) remoteWorkspace {
 		host["remote_credential.cat"] = credential + "\n"
 	}
 	meta := remoteMeta(t)
+	st := memstore.New()
+	gate := visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope()))
 	ws.files["project:"+remotesync.FileName] = remotesYAML("1h")
 	ws.luaDepsProvider = func() lua.WriteDeps {
-		return lua.WriteDeps{ReadDeps: lua.ReadDeps{Meta: meta, Host: host}, EntityManager: remoteWriter{}}
+		return lua.WriteDeps{
+			ReadDeps:      lua.ReadDeps{Meta: meta, Host: host, VisibleReader: gate},
+			EntityManager: remoteWriter{},
+		}
 	}
-	return remoteWorkspace{mockWorkspace: ws, meta: meta, st: memstore.New()}
+	return remoteWorkspace{mockWorkspace: ws, meta: meta, st: st}
 }
 
 // remoteHost is the host config holding the global secrets.
@@ -276,6 +282,13 @@ func TestRemoteDeps_RefusesMissingCapabilities(t *testing.T) {
 
 	ws.luaDepsProvider = func() lua.WriteDeps {
 		return lua.WriteDeps{ReadDeps: lua.ReadDeps{Meta: ws.meta}, EntityManager: remoteWriter{}}
+	}
+	_, err = remoteDeps(ws, m, "r", nil, discardLogger(), noEnv)
+	require.ErrorContains(t, err, "no gated reader")
+
+	gate := visibility.Unrestricted(ws.st).WithWorld(visibility.WorldOf(store.TrivialScope()))
+	ws.luaDepsProvider = func() lua.WriteDeps {
+		return lua.WriteDeps{ReadDeps: lua.ReadDeps{Meta: ws.meta, VisibleReader: gate}, EntityManager: remoteWriter{}}
 	}
 	_, err = remoteDeps(ws, m, "r", nil, discardLogger(), noEnv)
 	require.ErrorContains(t, err, "no secrets")
