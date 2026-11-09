@@ -1894,84 +1894,26 @@ request body is untrusted.
   same range may answer `too_large` and later `ok`; that is no leak.
 - **Peers may call it without a browser origin,** like the data routes. A
   request with a cookie keeps the same-origin check.
-- **A peer authenticates with a peer key or as any other client.** With a
-  peer key (see [Peer keys](#peer-keys)) the principal is `peer:<name>`. The
-  gate is keyed on the principal, so each peer has its own bucket and slots.
-  A peer that authenticates through the deployment's identity source instead
-  is keyed on that user name. In header mode every caller without the
-  identity header is the one user `unknown`, and so shares one bucket; give
-  each peer a key to keep them apart.
+- **A sync client is an ordinary principal** (DEC-QKLMMD4). rela issues no
+  credentials of its own. A machine client authenticates at the identity
+  edge like any user: to Pratique or another OIDC proxy, which forwards a
+  verified JWT, or to the proxy that sets the principal header. What it
+  reads comes from its roles in `acl.yaml`.
+- **The gate is keyed on the resolved principal,** as for any caller, so
+  each client with its own identity has its own bucket and slots. In header
+  mode every caller without the identity header is the one user `unknown`,
+  and so shares one bucket and one set of slots. That is intended: give
+  each sync client its own identity at the edge to keep them apart.
 
-## Peer keys
+## Remote pulls (`remotes.yaml`)
 
-A sync peer reads another rela with a peer key (TKT-H91N91L, DEC-81161C3).
-The key is a bearer credential that rela itself verifies, in every identity
-mode: header, environment and JWT.
-
-- **A peer is an ordinary principal.** A valid key stamps `peer:<name>`, with
-  principal type `peer`. The request then runs the same chain as any other:
-  the identity edge resolves it once, and acl.yaml decides what it reads. A
-  peer reads only what its roles allow, and `visible:` redacts its fields as
-  for anyone else. A peer is never `system:`; that namespace stays refused on
-  every request path.
-- **The `principal_property` lookup never applies to a peer.** The peer's
-  name comes from the operator's key list, not from an external natural key.
-  A user entity whose `principal_property` holds `peer:acme` therefore cannot
-  take over the peer's identity or give it that entity's roles.
-- **Without an acl.yaml every peer key is refused.** With no policy nothing
-  would limit what a peer reads, so a valid key answers 401 instead of
-  reading everything.
-- **`peer:` is reserved.** A principal header, `$RELA_DATAENTRY_USER` or a
-  JWT subject that names `peer:<name>` is refused like `system:` and
-  `integration:`. Only a verified key yields a peer principal, and `run_as:`
-  cannot name one.
-- **A peer key only reads entities and relations.** It may `GET` or `HEAD`
-  `/api/v1/<plural>`, `/api/v1/<plural>/<id>` and the entity's `relations`
-  paths, `/api/v1/_schema` and the OpenAPI spec, and `POST
-  /api/v1/_reconcile`. Any path with a segment that starts with `_` at any
-  depth, and any other method, answers 403 `peer_route_refused`, whatever
-  role acl.yaml grants. This keeps peers off writes, off the long-lived
-  streams (`_events`, `_views`, `_collab`), so a revoked key stops working
-  within 10 seconds, and off sub-resources sync does not need: `_export`
-  runs external commands, `_presence` records the caller as a viewer and
-  lists who else is, and `_channels` holds chat. The rule limits what a
-  leaked key can do; it conceals nothing.
-- **A bad key is 401, never a fallback.** A request whose `Authorization`
-  header carries a `relapeer_` key is decided by the key alone. An unknown,
-  malformed or revoked key, or a key next to a second `Authorization` value,
-  answers 401 and does not fall through to the identity header or the JWT.
-  A peer key sent as the principal header instead of `Authorization` also
-  answers 401, so it never becomes a user name in the logs. Refusals are
-  logged at most once every 10 seconds per server, without the key. If a reload of
-  the key list hangs for 30 seconds, every key is refused until it
-  completes.
-- **The source stores a digest, never the key.** `rela peer key create
-  <name>` prints the key once and the line for the source:
-  `peer_key.<name>: sha256:<hex>` in `.rela/secrets.yaml` (or the systemd
-  credential). The server rereads the list at most every 10 seconds, so
-  adding or removing a line needs no restart. A list that fails to load
-  admits no peer key. No script can read a `peer_key.` entry.
-- **The peer keeps its key as a secret.** Store it as
-  `peer_credential.<name>` in the peer's own `.rela/secrets.yaml`; `rela
-  reconcile diff --token-secret peer_credential.<name>` reads it, and no
-  script can. `--token-file` and `--token-env` work too. The key is never a
-  flag value.
-  The client refuses plain http to a host that is not loopback and never
-  follows a redirect, so the key is not sent elsewhere.
-- **A proxy in front must pass the key and strip the identity header.** If a
-  reverse proxy authenticates users and sets the principal header, let a
-  request to `/api/v1/` through without its login only when the
-  `Authorization` header starts with `Bearer relapeer_`, and always
-  overwrite or remove the principal header. rela then verifies the key
-  itself; it checks peer keys on `/api/` paths only. See
-  [Server security](server-security.md#peer-keys).
-
-## Peer pulls (`peers.yaml`)
-
-A pull copies rows from a source rela into this one (TKT-I8L1EQU). The
-source authenticates the pull with a peer key, as above; this section is
-about the pulling side. See [Pulling from a sync peer](peer-sync.md) for the
-configuration.
+A pull copies rows from a source rela into this one (TKT-I8L1EQU). rela
+issues no credentials of its own (DEC-QKLMMD4). To the source, the pulling
+instance is an ordinary principal: it authenticates at the source's identity
+edge with whatever that edge accepts, such as a machine-client token from an
+OIDC proxy. The source's `acl.yaml` decides what it reads, and `visible:`
+redacts its fields. This section is about the pulling side. See
+[Pulling from a remote](remote-sync.md) for the configuration.
 
 - **The source is untrusted.** A pull treats every answer as input from
   outside: a fetched row must carry the id and type it was asked for, its
@@ -1984,52 +1926,62 @@ configuration.
   the endpoints.
 - **The source cannot choose a local id or type.** A pulled entity gets a
   new id from the local type's prefix; the source id lives only in the
-  mapped `external_ref` property, whose system belongs to one peer. The
+  mapped `external_ref` property, whose system belongs to one remote. The
   mapping, written by the operator, decides the local type and the fields.
   A mapped type cannot be faced or take its id from a property, and a
   source row with a face is not pulled.
-- **Every write goes through the entity manager.** A pull writes as
-  `system:peer:<name>` with tool `peer-pull`, so `acl.yaml` decides what it
-  may create, update and delete, and the audit log records each write and
-each refused write.
-  Partial updates name only the mapped fields, so a field the pull does not
-  own is never overwritten. The pull reads the local rows it compares
-  without the read gate, as a write-prep read; the manager still authorizes
-  every write. `system:peer:` is one of rela's own identities, so no person,
-  JWT or `--run-as` can claim it.
-- **A mass delete needs a person.** A pull refuses to detach or delete any
-  row when more than `max_gone` linked rows (default 10) are gone, or when a
-  type it linked rows of is empty at the source. A source whose `acl.yaml`
-  stops granting the peer a type looks exactly like a source that deleted
-  every row of it, so the guard treats both alike. With `on_gone: delete`
-  the guard also counts the deletes of the last 24 hours, so a source that
-  drops a few rows per run cannot delete in bulk over a day. The operator
-  confirms with `rela peer pull <name> --allow-gone N`. `on_gone: detach` is
-  the default; `on_gone: delete` never deletes an entity with local
-  relations, with a mapped field edited locally, or that existed before the
-  pull adopted it, and logs every delete with the run id. The edit check
-  and the delete are two calls, so an edit saved between them is lost with
-  the entity; the window is one write long.
-- **The credential stays a secret.** `peers.yaml` names a
-  `peer_credential.` secret; the value comes only from the project's
-  secrets (`.rela/secrets.yaml`, the systemd credential, or the desktop
-  keychain), never from a flag or the file itself. No
-  script can read it, it is sent only as a bearer token to the configured
-  URL, and errors and logs name the secret, never its value. Plain http is
+- **A pull writes as the principal that runs it.** A pull by hand runs as
+  the CLI user (or `--run-as`). A scheduled pull runs as the remote's
+  `run_as`, or as `system:scheduler`, as a scheduled task does. There is no
+  identity per remote. Every write goes through the entity manager under
+  that principal, so `acl.yaml` decides what it may create, update and
+  delete, and the audit log records each write and each refused write with
+  the triggered-by label `remote:<name>`. The `external_ref` property
+  records which source row a local row came from. Partial updates name only
+  the mapped fields, so a field the pull does not own is never overwritten.
+  The pull reads the local rows it compares without the read gate, as a
+  write-prep read; the manager still authorizes every write.
+- **A mass delete needs a person.** "Gone" means the source no longer lists
+  the row to this instance's principal. A deleted row and a hidden row look
+  the same, as the ACL requires, so a revoked role, a narrowed `acl.yaml`, or
+  a token that expired or was revoked makes every row in scope look gone at
+  once. A 401 or 403 from the source fails the pull. A pull also refuses to
+  detach or delete any row when more than `max_gone` linked rows (default
+  10) are gone, or when a type it linked rows of is empty at the source. With
+  `on_gone: delete` the guard also counts the deletes of the last 24 hours,
+  so a source that drops a few rows per run cannot delete in bulk over a
+  day. The operator confirms with `rela remote pull <name> --allow-gone N`.
+  `on_gone: detach` is the default; `on_gone: delete` never deletes an
+  entity with local relations, with a mapped field edited locally, or that
+  existed before the pull adopted it, and logs every delete with the run
+  id. The edit check and the delete are two calls, so an edit saved between
+  them is lost with the entity; the window is one write long.
+- **The credential stays out of config and scripts.** `remotes.yaml` names
+  where the token comes from: an environment variable whose name starts with
+  `REMOTE_CREDENTIAL_`, an absolute path to a file whose name starts with
+  `remote_credential.`, or a global secret whose name starts with
+  `remote_credential.` (`.rela/secrets.yaml`, the systemd credential, or the
+  desktop keychain). The marked name is what lets the value leave the
+  machine: whoever edits `remotes.yaml` chooses the URL, so a source it could
+  name freely would send `RELA_DATABASE_URL` or the token key there. The
+  token never appears in `remotes.yaml` or on a command line. No Lua script can be granted a
+  `remote_credential.` secret, and `subscriptions.yaml` and
+  `connections.yaml` refuse to name one, so only `remotes.yaml` and `rela
+  reconcile diff --token-secret` send it. It goes only to the configured
+  URL, and errors and logs name its source, never its value. Plain http is
   refused to a host that is not loopback unless `allow_insecure_http` is
   set, and redirects are never followed.
 - **No HTTP inside a store transaction.** A pull fetches a row first and
   writes it after, each write a separate call to the entity manager. A slow
-  source holds no lock on the store. One pull of a peer runs at a time: the
-  scheduled pull and `rela peer pull` share a run lock in the scheduler
+  source holds no lock on the store. One pull of a remote runs at a time: the
+  scheduled pull and `rela remote pull` share a run lock in the scheduler
   state.
-- **A local delete wins.** A pulled row deleted locally is not recreated.
-- **Read rules do not travel.** The source's `acl.yaml` decides what the
-  peer may read, not who may read the rows here. A pulled row is read under
-  the local type's rules, so an operator who maps a type gives it read rules
-  at least as strict as the source's rules for those rows. A pull by hand
-  records the person who started it in the audit log's triggered-by label;
-  a scheduled pull records `peer:<name>`.
+- **A local delete wins.** A pulled row deleted locally is not recreated,
+  also after the source stops listing it for a while.
+- **Read rules do not travel.** The source's `acl.yaml` decides what this
+  instance may read, not who may read the rows here. A pulled row is read
+  under the local type's rules, so an operator who maps a type gives it read
+  rules at least as strict as the source's rules for those rows.
 
 ## Presence
 

@@ -82,6 +82,7 @@ func TestParse_Errors(t *testing.T) {
 		{"auth type", "every: 1h", "every: 1h\n    auth: {type: oauth, secret: s}", `auth.type "oauth"`},
 		{"auth no secret", "every: 1h", "every: 1h\n    auth: {type: bearer}", "names no secret"},
 		{"auth token key", "every: 1h", "every: 1h\n    auth: {type: bearer, secret: token_key}", "signs rela's own"},
+		{"auth remote credential", "every: 1h", "every: 1h\n    auth: {type: bearer, secret: remote_credential.up}", "only for"},
 		{"basic without user", "every: 1h", "every: 1h\n    auth: {type: basic, secret: s}", "auth.username"},
 		{"user on bearer", "every: 1h", "every: 1h\n    auth: {type: bearer, secret: s, username: u}", "auth.username"},
 		{"bad header", "every: 1h", "every: 1h\n    auth: {type: header, secret: s, header: 'a b'}", "not a valid HTTP"},

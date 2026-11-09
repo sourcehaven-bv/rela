@@ -486,6 +486,22 @@ func TestScriptConfig_Validation(t *testing.T) {
 	}
 }
 
+// TestScriptConfig_RefusesUnreadableSecrets pins that mail.yaml cannot grant
+// its script a secret no script may read (TKT-TB2B8N5).
+func TestScriptConfig_RefusesUnreadableSecrets(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"token_key", "remote_credential.up"} {
+		cfg := &mail.Config{
+			Transport:    mail.TransportScript,
+			Script:       "mail/send.lua",
+			From:         "a@example.com",
+			Capabilities: mail.ScriptCapabilities{Secrets: []string{"api_key", name}},
+		}
+		require.ErrorContains(t, cfg.Validate(), "no script may read it", name)
+	}
+}
+
 // TestScriptSender_RejectsWrongTransport pins the constructor guard.
 func TestScriptSender_RejectsWrongTransport(t *testing.T) {
 	t.Parallel()

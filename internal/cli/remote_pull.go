@@ -1,0 +1,104 @@
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"strings"
+
+	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/reconclient"
+	"github.com/Sourcehaven-BV/rela/internal/remotesync"
+	"github.com/Sourcehaven-BV/rela/internal/scheduler"
+)
+
+// RemotePullCmd pulls once from a remote in remotes.yaml (TKT-I8L1EQU).
+//
+// It runs and writes as the person who runs it (or `--run-as`), so the
+// local acl.yaml decides what it may write and the audit log names that
+// person. It takes the scheduled pull's run lock, so the two never run at
+// once. The credential comes from the source remotes.yaml names; there is
+// no flag for it.
+type RemotePullCmd struct {
+	Name      string `arg:"" help:"Remote name, as in remotes.yaml."`
+	DryRun    bool   `name:"dry-run" help:"Report what the pull would do, and write nothing."`
+	AllowGone int    `name:"allow-gone" help:"Confirm that up to this many rows the source no longer lists may be detached or deleted, above the remote's max_gone."`
+}
+
+// Run pulls and prints the report.
+func (c *RemotePullCmd) Run(ctx context.Context, ws scheduler.WorkspaceProvider, bind scheduler.IdentityBinder) error {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	return c.run(ctx, ws, bind, logger, out)
+}
+
+func (c *RemotePullCmd) run(
+	ctx context.Context, ws scheduler.WorkspaceProvider, bind scheduler.IdentityBinder, logger *slog.Logger,
+	w *output.Writer,
+) error {
+	if !principal.ValidIntegrationName(c.Name) {
+		return fmt.Errorf("invalid remote name %q", c.Name)
+	}
+	if c.AllowGone < 0 {
+		return errors.New("--allow-gone must not be negative")
+	}
+	opts := remotesync.Options{DryRun: c.DryRun, AllowGone: c.AllowGone}
+	report, err := scheduler.PullRemote(ctx, ws, bind, c.Name, opts, logger)
+	if report.Remote != "" {
+		var wErr error
+		if w.Format == output.FormatJSON {
+			wErr = json.NewEncoder(w.Out).Encode(report)
+		} else {
+			wErr = writeRemoteReport(w.Out, report)
+		}
+		if err == nil {
+			err = wErr
+		}
+	}
+	return err
+}
+
+func writeRemoteReport(w io.Writer, r remotesync.Report) error {
+	var b strings.Builder
+	verb := "Pulled"
+	if r.DryRun {
+		verb = "Dry run of a pull"
+	}
+	fmt.Fprintf(&b, "%s from remote %s.\n", verb, r.Remote)
+	if r.Refused != "" {
+		fmt.Fprintf(&b, "Refused: %s\n", reconclient.Sanitize(r.Refused))
+	}
+	counts := func(kind string, c remotesync.Counts) {
+		fmt.Fprintf(&b, "%s: %d created, %d adopted, %d updated, %d unchanged, %d conflicts, %d rejected, "+
+			"%d dropped, %d deferred, %d detached, %d deleted, %d failed\n", kind, c.Created, c.Adopted, c.Updated,
+			c.Unchanged, c.Conflicts, c.Rejected, c.Dropped, c.Deferred, c.Detached, c.Deleted, c.Failed)
+	}
+	counts("Entities", r.Entities)
+	counts("Relations", r.Relations)
+	if r.Gone > 0 {
+		fmt.Fprintf(&b, "Gone from the source: %d\n", r.Gone)
+	}
+	if r.Waiting > 0 {
+		fmt.Fprintf(&b, "Waiting for a later run (max_fetch or max_bytes reached): %d\n", r.Waiting)
+	}
+	for _, t := range r.Skipped {
+		fmt.Fprintf(&b, "Not compared: %s\n", shown(t))
+	}
+	for _, i := range r.Issues {
+		fmt.Fprintf(&b, "  %s %s", i.Kind, shown(i.Address))
+		if i.Local != "" {
+			fmt.Fprintf(&b, " (local %s)", shown(i.Local))
+		}
+		fmt.Fprintf(&b, ": %s", reconclient.Sanitize(i.Reason))
+		if len(i.Fields) > 0 {
+			fmt.Fprintf(&b, " [%s]", reconclient.Sanitize(strings.Join(i.Fields, ", ")))
+		}
+		b.WriteByte('\n')
+	}
+	_, err := io.WriteString(w, b.String())
+	return err
+}

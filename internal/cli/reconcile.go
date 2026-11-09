@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"slices"
 	"strconv"
@@ -20,7 +19,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient/httpremote"
-	"github.com/Sourcehaven-BV/rela/internal/secrets"
 )
 
 // ReconcileCmd groups the commands that compare this project with another
@@ -57,16 +55,13 @@ type ReconcileDiffCmd struct {
 	Types             []string      `sep:"," help:"Entity and relation types to compare (default: every type in the schema). A relation type needs the entity types at both of its ends."`
 	TokenEnv          string        `name:"token-env" xor:"credential" help:"Environment variable that holds the credential for the remote, such as RELA_RECONCILE_TOKEN."`
 	TokenFile         string        `name:"token-file" type:"path" xor:"credential" help:"File that holds the credential for the remote."`
-	TokenSecret       string        `name:"token-secret" xor:"credential" help:"Name of the global project secret (.rela/secrets.yaml) that holds the credential for the remote, such as peer_credential.<name> for a peer key."`
+	TokenSecret       string        `name:"token-secret" xor:"credential" help:"Name of the global project secret (.rela/secrets.yaml or its systemd credential) that holds the credential for the remote. The name starts with 'remote_credential.', for example 'remote_credential.upstream'."`
 	AuthHeader        string        `name:"auth-header" default:"Authorization" help:"Request header that carries the credential. Authorization sends it as a bearer token."`
 	AllowInsecureHTTP bool          `name:"allow-insecure-http" help:"Allow plain http to a host that is not loopback."`
 	Timeout           time.Duration `default:"10m" help:"Time limit for the whole comparison."`
 	MaxRoundTrips     int           `name:"max-round-trips" default:"1000" help:"Maximum number of requests to the remote."`
 	ExitCode          bool          `name:"exit-code" help:"Exit with 1 when the two sides differ and 2 on an error."`
 }
-
-// maxTokenFile caps the credential file read by --token-file.
-const maxTokenFile = 16 << 10
 
 // Run compares the two sides and prints the differences.
 func (c *ReconcileDiffCmd) Run(ctx context.Context, s *reconcileServices) error {
@@ -148,58 +143,21 @@ func (c *ReconcileDiffCmd) run(ctx context.Context, s *reconcileServices, getenv
 func (c *ReconcileDiffCmd) credential(getenv func(string) string,
 	secret func(string) (string, error),
 ) (value, source string, err error) {
-	switch {
-	case c.TokenSecret != "":
+	cred := httpremote.Credential{Env: c.TokenEnv, File: c.TokenFile, Secret: c.TokenSecret}
+	switch cred.Kind() {
+	case httpremote.CredentialSecret:
 		source = "--token-secret " + c.TokenSecret
-		if c.TokenSecret == secrets.TokenKey || strings.HasPrefix(c.TokenSecret, secrets.PeerKeyPrefix) {
-			// The token store key and the peer key digests are the server's
-			// own; neither is a credential for a remote.
-			return "", "", fmt.Errorf("%s: this secret is not a credential for a remote", source)
-		}
-		if secret == nil {
-			return "", "", fmt.Errorf("%s: this project has no secrets", source)
-		}
-		v, sErr := secret(c.TokenSecret)
-		if sErr != nil {
-			return "", "", fmt.Errorf("%s: %w", source, sErr)
-		}
-		value = strings.TrimSpace(v)
-	case c.TokenFile != "":
-		if value, err = readTokenFile(c.TokenFile); err != nil {
-			return "", "", err
-		}
+	case httpremote.CredentialFile:
 		source = "--token-file"
-	case c.TokenEnv != "":
-		value, source = strings.TrimSpace(getenv(c.TokenEnv)), "$"+c.TokenEnv
+	case httpremote.CredentialEnv:
+		source = "$" + c.TokenEnv
 	default:
 		return "", "", nil
 	}
-	if value == "" {
-		return "", "", fmt.Errorf("%s: no credential (empty or unset)", source)
+	if value, err = cred.Read(getenv, secret); err != nil {
+		return "", "", fmt.Errorf("%s: %w", source, err)
 	}
 	return value, source, nil
-}
-
-// readTokenFile reads a credential file of at most maxTokenFile bytes and
-// warns when other users can read it.
-func readTokenFile(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", fmt.Errorf("--token-file: %w", err)
-	}
-	defer f.Close()
-	if st, sErr := f.Stat(); sErr == nil && st.Mode().Perm()&0o077 != 0 {
-		slog.Warn("reconcile: the credential file can be read by other users", "file", path,
-			"mode", st.Mode().Perm().String())
-	}
-	b, err := io.ReadAll(io.LimitReader(f, maxTokenFile+1))
-	if err != nil {
-		return "", fmt.Errorf("--token-file: %w", err)
-	}
-	if len(b) > maxTokenFile {
-		return "", fmt.Errorf("--token-file: the file is larger than %d bytes", maxTokenFile)
-	}
-	return strings.TrimSpace(string(b)), nil
 }
 
 // reconcileScope turns --types into a scope checked against the local

@@ -558,10 +558,6 @@ type App struct {
 	// NewRouter.
 	principalHeader string
 
-	// peerKeys verifies sync peer keys at the identity stage (DEC-81161C3).
-	// Set via SetPeerKeys before NewRouter. Nil turns peer keys off.
-	peerKeys PeerKeys
-
 	// fieldResolver decides per-entity field, option, and
 	// relation-meta affordances surfaced as `_fields` / `_relations`
 	// on the wire and enforced on writes. Required (never nil) —

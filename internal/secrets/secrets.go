@@ -58,45 +58,27 @@ const ConfigFile = "secrets.yaml"
 // `capabilities.secrets` list that names it is refused at load.
 const TokenKey = "token_key"
 
-// PeerKeyPrefix starts the global keys that hold the digest of a sync peer's
-// key (DEC-81161C3): `peer_key.acme: sha256:<hex>` lets the peer `peer:acme`
-// authenticate. Only the digest is stored; the key itself is never in this
-// file on the source.
-const PeerKeyPrefix = "peer_key."
+// RemoteCredentialPrefix starts the global keys that hold a credential this
+// project presents to another rela, such as
+// `remote_credential.upstream: <token>`. No Lua script can be granted one: a
+// script with an HTTP capability could send the credential anywhere. See
+// [IsRemoteCredential].
+const RemoteCredentialPrefix = "remote_credential." //nolint:gosec // G101: a secret name prefix, not a credential
 
-// PeerCredentialPrefix starts the global keys a sync peer keeps the peer
-// keys it presents under, such as `peer_credential.source: relapeer_...`.
-// `rela reconcile diff --token-secret` reads them; no script can.
-const PeerCredentialPrefix = "peer_credential." //nolint:gosec // G101: a secret name prefix, not a credential
+// IsRemoteCredential reports whether name is a remote credential:
+// [RemoteCredentialPrefix] followed by a non-empty name.
+func IsRemoteCredential(name string) bool {
+	rest, ok := strings.CutPrefix(name, RemoteCredentialPrefix)
+	return ok && rest != ""
+}
 
 // ScriptReadable reports whether a script may be granted the secret name. A
 // script that could read [TokenKey] could decrypt every stored refresh token,
-// which defeats keeping refresh tokens out of Lua. A peer key digest is no
-// credential, but it is the server's to read, not a script's. A peer
-// credential is a live key for another rela; a script with an HTTP
-// capability could send it anywhere.
+// which defeats keeping refresh tokens out of Lua. A remote credential (see
+// [RemoteCredentialPrefix]) is a live credential for another server, and so
+// is any name under its prefix.
 func ScriptReadable(name string) bool {
-	return name != TokenKey && !strings.HasPrefix(name, PeerKeyPrefix) &&
-		!strings.HasPrefix(name, PeerCredentialPrefix)
-}
-
-// PeerKeyDigests returns the peer key entries of the global section, keyed by
-// the peer name after [PeerKeyPrefix]. The values are returned as written;
-// the caller validates them. A per-script override never adds one.
-//
-// Returns ErrNotFound (wrapped) when no source exists.
-func PeerKeyDigests(relaDir string) (map[string]string, error) {
-	raw, err := readFile(relaDir)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]string)
-	for k, v := range raw.Global {
-		if name, ok := strings.CutPrefix(k, PeerKeyPrefix); ok {
-			out[name] = v
-		}
-	}
-	return out, nil
+	return name != TokenKey && !strings.HasPrefix(name, RemoteCredentialPrefix)
 }
 
 // cacheDirName is the project cache directory holding the secrets file.
@@ -367,6 +349,11 @@ func resolve(raw *rawConfig, scriptPath string) map[string]string {
 	result := make(map[string]string, len(raw.Global))
 	maps.Copy(result, raw.Global)
 
+	// "" asks for the global section: an overrides entry keyed "" names no
+	// script and must not shadow it.
+	if scriptPath == "" {
+		return result
+	}
 	if overrides, ok := raw.Overrides[scriptPath]; ok {
 		maps.Copy(result, overrides)
 	}

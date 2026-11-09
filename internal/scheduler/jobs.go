@@ -89,8 +89,8 @@ func (s *Scheduler) UseQueue(q jobs.Client) error {
 	if err := q.Register(SubscriptionKind, s.runSubscriptionJob); err != nil {
 		return fmt.Errorf("scheduler: register subscription handler: %w", err)
 	}
-	if err := q.Register(PeerKind, s.runPeerJob); err != nil {
-		return fmt.Errorf("scheduler: register peer handler: %w", err)
+	if err := q.Register(RemoteKind, s.runRemoteJob); err != nil {
+		return fmt.Errorf("scheduler: register remote handler: %w", err)
 	}
 	s.queue = q
 	return nil
@@ -115,8 +115,8 @@ func (s *Scheduler) jobFor(task TaskConfig, runID string, now time.Time) (jobs.J
 	if task.Subscription != nil {
 		return subscriptionJob(task, runID), "", nil
 	}
-	if task.Peer != nil {
-		return peerJob(task, runID), "", nil
+	if task.Remote != nil {
+		return remoteJob(task, runID), "", nil
 	}
 	if task.ForEach != nil {
 		occurrence, ok := task.Every.Occurrence(now)

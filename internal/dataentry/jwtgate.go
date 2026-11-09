@@ -113,10 +113,6 @@ func (s *logSampler) drain() int {
 // fall through TO, so the resolver's zero-Principal signaling has no job to do
 // and [PrincipalResolver] keeps its single-return signature.
 //
-// **The one exception is a verified peer key.** A request the peer key edge
-// authenticated passes this gate without a JWT. That edge fails closed too: a
-// bad key is 401 and never falls back to the JWT or a header.
-//
 // **Scope.** Only [isAPIPath] requests are gated, extending the RR-T15E invariant
 // that [attachACLRequest] already relies on: the SPA shell and static assets must
 // stay reachable so a client can load and render a signed-out state, and so a
@@ -133,9 +129,7 @@ func (s *logSampler) drain() int {
 func requireVerifiedJWT(next http.Handler, cfg JWTGateConfig) http.Handler {
 	g := &jwtGate{cfg: cfg}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// A request the peer key check stamped is already verified, by its
-		// key (see [stampAuditPrincipal]). Only that check can mark it.
-		if !isAPIPath(r.URL.Path) || peerAuthenticated(r.Context()) {
+		if !isAPIPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}

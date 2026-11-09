@@ -40,7 +40,7 @@ func (c *SchedulerCmd) Run(ctx context.Context, ws scheduler.WorkspaceProvider, 
 		return err
 	}
 	if len(cfg.Tasks) == 0 {
-		return fmt.Errorf("no tasks: none of %s, subscriptions.yaml or peers.yaml declares one", scheduler.ConfigFile)
+		return fmt.Errorf("no tasks: none of %s, subscriptions.yaml or remotes.yaml declares one", scheduler.ConfigFile)
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,

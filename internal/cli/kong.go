@@ -172,7 +172,7 @@ type CLI struct {
 	Lease                LeaseCmd                `cmd:"" help:"Claim, renew, release and list advisory leases on entities."`
 	Channel              ChannelCmd              `cmd:"" help:"List, read, post to and watch the realtime channels on an entity."`
 	Reconcile            ReconcileCmd            `cmd:"" help:"Compare this project with a remote rela."`
-	Peer                 PeerCmd                 `cmd:"" help:"Manage sync peers: their keys, and pulls from them."`
+	Remote               RemoteCmd               `cmd:"" help:"Pull from the remotes in remotes.yaml."`
 }
 
 // VersionCmd needs no services.
@@ -321,7 +321,7 @@ func requiresProject(cmd string) bool {
 		"rename", "analyze", "acl", "attach", "attachments", "gc", "renumber",
 		"sync", "history", "restore", "secrets",
 		"relation-history", "relation-restore", "history-tag", "history-purge", "relation-history-purge",
-		"dev", "token", "lease", "channel", "reconcile":
+		"dev", "token", "lease", "channel", "reconcile", "remote":
 		return true
 	case "migrate":
 		// Bare `rela migrate` (config-file migration) deliberately gets NO

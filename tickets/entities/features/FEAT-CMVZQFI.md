@@ -2,8 +2,8 @@
 id: FEAT-CMVZQFI
 type: feature
 title: Rela-to-rela sync by set reconciliation
-summary: 'Sync parts of the graph between two rela instances: stateless range-based set reconciliation over the rows a peer may read, applied by a declarative peer spec.'
-description: Sync parts of the graph between two rela instances. The client finds what was added, changed or is gone by range-based set reconciliation over the rows it may read; the server keeps no state per client. A declarative peers.yaml maps and applies the result through entitymanager as system:<peer>, with sync/<peer> version tags as the merge base. Builds on FEAT-XYQMUB.
+summary: 'Sync parts of the graph between two rela instances: stateless range-based set reconciliation over the rows a remote may read, applied by a declarative remote spec.'
+description: Sync parts of the graph between two rela instances. The client finds what was added, changed or is gone by range-based set reconciliation over the rows it may read; the server keeps no state per client. A declarative remotes.yaml maps and applies the result through entitymanager as the local principal that runs the pull, with a ledger per remote as the merge base. Builds on FEAT-XYQMUB.
 priority: medium
 status: proposed
 ---
@@ -13,7 +13,7 @@ status: proposed
 Sync parts of the graph between two rela instances. The client finds out what
 changed by **set reconciliation** over the rows it may read: it compares
 fingerprints of id ranges with the server until it knows which rows were added,
-changed or are gone. The server keeps no state per client. A declarative peer
+changed or are gone. The server keeps no state per client. A declarative remote
 spec maps and applies the result through `entitymanager`.
 
 ## Use cases
@@ -42,14 +42,19 @@ is an additive sum of element fingerprints, computed in SQL with the ACL row
 predicate. A range that matches stops; a range that differs is split or listed.
 No change costs one round trip.
 - **Gone**: an id the client holds that the server no longer lists. Deleted and
-hidden look the same, as the ACL requires. The peer spec decides between
+hidden look the same, as the ACL requires. The remote spec decides between
 `detach` and `delete`.
 - **No change feed is needed for sync.** `_events` only tells a client to
 reconcile early.
-- **Apply**: a declarative `peers.yaml` with source, credential, scope,
-`ingestspec` mapping, `external_ref` system, field ownership and `on_gone`.
-Writes go through `entitymanager` as `system:<peer>`; the `sync/<peer>` version
-tag is the base for `syncmerge`.
+- **Apply**: a declarative `remotes.yaml` with source, credential source,
+scope, `ingestspec` mapping, `external_ref` system, field ownership and
+`on_gone`. Writes go through `entitymanager` as the local principal that runs
+the pull (the CLI user, or the scheduler's identity); the ledger in `state.KV`
+is the base for `syncmerge`.
+- **Identity** (DEC-QKLMMD4): rela issues no credentials of its own. On the
+source, the puller is an ordinary principal authenticated at the identity edge;
+the credential comes from a `REMOTE_CREDENTIAL_` variable, a
+`remote_credential.` file or a `remote_credential.` secret.
 - **Two-way** is two one-way pulls, each side pulling the fields the other owns.
 
 This builds on FEAT-XYQMUB (external refs, field ownership, `syncmerge`, system
@@ -64,10 +69,10 @@ See the linked research for the options that were compared.
 4. View hash for types with redacted fields.
 5. `POST /api/v1/_reconcile`.
 6. Go client and `rela reconcile` diff command.
-7. Peer identity and credentials.
-8. Declarative apply side (`peers.yaml`).
+7. Remote identity: an ordinary principal at the source's identity edge.
+8. Declarative apply side (`remotes.yaml`).
 9. Two-way through mutual pulls.
-10. Status per peer, conflict list and guides.
+10. Status per remote, conflict list and guides.
 
 Steps 1 to 6 already give a useful diff between two instances.
 

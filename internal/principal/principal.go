@@ -241,9 +241,6 @@ func (p Principal) PrincipalType() string {
 	if IsWebhookUser(p.User) {
 		return TypeWebhook
 	}
-	if IsPeerUser(p.User) {
-		return TypePeer
-	}
 	return p.principalType
 }
 
@@ -449,9 +446,6 @@ const (
 	// ToolFlow attributes the writes the flow engine makes as [UserFlow]:
 	// the run header and its managed edges (FEAT-J0O10QI).
 	ToolFlow = "flow"
-	// ToolPeerPull attributes the writes of a peer pull (`rela peer pull`
-	// or a scheduled `peers.yaml` run); paired with [PeerPullUserPrefix].
-	ToolPeerPull = "peer-pull"
 )
 
 // TypeWebhook is the [Principal.PrincipalType] of a declarative webhook
@@ -551,11 +545,6 @@ const UserPerfSeed = "system:perf-seed"
 // subscription run, `system:subscription:<name>`.
 const SubscriptionUserPrefix = ReservedPrefix + "subscription:"
 
-// PeerPullUserPrefix is the [Principal.User] prefix of a pull from a sync
-// peer, `system:peer:<name>`. It is the local writer, not the peer itself:
-// the source authenticates this instance as `peer:<name>` ([PeerPrefix]).
-const PeerPullUserPrefix = ReservedPrefix + "peer:"
-
 // relaUsers are rela's own identities, by exact name. A new one is declared
 // as a constant above and listed here, so [IsRelaIdentity] refuses it to
 // self-asserted callers from the start.
@@ -565,7 +554,7 @@ var relaUsers = map[string]bool{
 }
 
 // relaUserPrefixes are the families of rela's own identities.
-var relaUserPrefixes = []string{webhookUserPrefix, SubscriptionUserPrefix, PeerPullUserPrefix}
+var relaUserPrefixes = []string{webhookUserPrefix, SubscriptionUserPrefix}
 
 // IsRelaIdentity reports whether user is one of rela's own identities: a
 // name an in-process entry point acts as. Nothing a person or job asserts,
@@ -622,52 +611,8 @@ const ReservedPrefix = "system:"
 // `integration:basecamp` would borrow them.
 const IntegrationPrefix = "integration:"
 
-// PeerPrefix namespaces the identities sync peers authenticate as
-// (DEC-81161C3): `peer:acme` is the peer whose key is stored as
-// `peer_key.acme`. The rest of the name follows [ValidPeerName].
-//
-// It is reserved like [ReservedPrefix], for the reason RR-ZVUHXO gave for
-// webhooks: acl.yaml grants a peer its read role by this name, so a request
-// that could assert it would borrow that role. Only the peer-key check at the
-// request edge stamps it, after verifying the key. A peer is not one of
-// rela's own identities: no job runs as it, and `run_as` refuses it.
-const PeerPrefix = "peer:"
-
-// TypePeer is the [Principal.PrincipalType] of every peer, so an acl.yaml
-// baseline with `applies_to: [peer]` caps all of them below their roles.
-const TypePeer = "peer"
-
-// Peer returns the principal a request authenticated by the peer key of
-// name runs as: `peer:<name>`, principal type [TypePeer]. tool is the entry
-// point the request reached, as for any other request principal.
-//
-// [VerifiedFrom] is used because the caller verified the key; the name comes
-// from the operator's key list, never from the request.
-func Peer(name, tool string) Principal {
-	return VerifiedFrom(PeerPrefix+name, tool, Claims{PrincipalType: TypePeer})
-}
-
-// IsPeerUser reports whether user names a peer, `peer:<name>` with a
-// non-empty name.
-func IsPeerUser(user string) bool {
-	name, ok := strings.CutPrefix(user, PeerPrefix)
-	return ok && name != ""
-}
-
-// ValidPeerName reports whether name may follow [PeerPrefix]: the
-// [ValidIntegrationName] grammar, so the name is plain lowercase ASCII and
-// can also be a secrets key.
-func ValidPeerName(name string) bool { return ValidIntegrationName(name) }
-
-// ReservedPrefixes lists every reserved namespace, for messages that name
-// them. [IsReserved] tests the same list.
-func ReservedPrefixes() []string { return slices.Clone(reservedPrefixes) }
-
-// reservedPrefixes backs [ReservedPrefixes] and [IsReserved].
-var reservedPrefixes = []string{ReservedPrefix, IntegrationPrefix, PeerPrefix}
-
 // IsReserved reports whether user names an internal identity under
-// [ReservedPrefix], [IntegrationPrefix] or [PeerPrefix].
+// [ReservedPrefix] or [IntegrationPrefix].
 //
 // The comments service refuses a `system:` author. It accepts an
 // `integration:` one ([comments.ValidAuthor]), which only stdio `rela mcp
@@ -700,12 +645,7 @@ var reservedPrefixes = []string{ReservedPrefix, IntegrationPrefix, PeerPrefix}
 // point that passes a raw value (provisioning already does).
 func IsReserved(user string) bool {
 	u := trimReservedNoise(user)
-	for _, prefix := range reservedPrefixes {
-		if strings.HasPrefix(u, prefix) {
-			return true
-		}
-	}
-	return false
+	return strings.HasPrefix(u, ReservedPrefix) || strings.HasPrefix(u, IntegrationPrefix)
 }
 
 // maxIntegrationName is the longest connection name: one leading character
@@ -794,10 +734,6 @@ func ValidateRunAs(runAs string, allowSystem func(string) bool) error {
 	}
 	if runAs == UserFlow {
 		return fmt.Errorf("invalid run_as %q: only the flow engine acts as this identity", runAs)
-	}
-	if strings.HasPrefix(runAs, PeerPrefix) {
-		return fmt.Errorf("invalid run_as %q: a %q identity is authenticated by a peer key, never assigned",
-			runAs, PeerPrefix)
 	}
 	if strings.HasPrefix(runAs, ReservedPrefix) && (allowSystem == nil || !allowSystem(runAs)) {
 		return fmt.Errorf("invalid run_as %q: the %q identities are rela's own", runAs, ReservedPrefix)

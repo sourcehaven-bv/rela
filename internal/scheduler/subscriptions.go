@@ -12,8 +12,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/ingest"
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/peersync"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/remotesync"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/subscription"
 )
@@ -38,19 +38,19 @@ const subscriptionMaxAttempts = 3
 // for a caller that still runs the schedules.yaml tasks it returned.
 var ErrSubscriptions = errors.New("subscriptions.yaml is invalid")
 
-// LoadConfig reads schedules.yaml, subscriptions.yaml and peers.yaml and
+// LoadConfig reads schedules.yaml, subscriptions.yaml and remotes.yaml and
 // returns their tasks as one config. A missing file contributes no tasks.
 //
 // An invalid schedules.yaml is an error with a nil config. An invalid
-// subscriptions.yaml or peers.yaml returns the other files' tasks AND an
-// error wrapping [ErrSubscriptions] or [ErrPeers], so one broken definition
+// subscriptions.yaml or remotes.yaml returns the other files' tasks AND an
+// error wrapping [ErrSubscriptions] or [ErrRemotes], so one broken definition
 // does not stop unrelated scheduled work.
 //
 // Every entry point that runs the scheduler, and the validation that checks
 // a project, goes through here; two loaders drifting apart is how a task
 // that validates fails to start, or the reverse.
 //
-// Nil: accepted for meta only without a subscriptions.yaml or peers.yaml; a
+// Nil: accepted for meta only without a subscriptions.yaml or remotes.yaml; a
 // mapping cannot be checked without the schema.
 func LoadConfig(ctx context.Context, loader config.Loader, meta *metamodel.Metamodel) (*Config, error) {
 	cfg := &Config{}
@@ -64,8 +64,8 @@ func LoadConfig(ctx context.Context, loader config.Loader, meta *metamodel.Metam
 		}
 	}
 	subErr := wrapSubscriptions(loadSubscriptions(ctx, loader, meta, cfg))
-	peerErr := wrapPeers(loadPeerTasks(ctx, loader, meta, cfg))
-	return cfg, errors.Join(subErr, peerErr)
+	remoteErr := wrapRemotes(loadRemoteTasks(ctx, loader, meta, cfg))
+	return cfg, errors.Join(subErr, remoteErr)
 }
 
 // loadSubscriptions adds the tasks of subscriptions.yaml to cfg.
@@ -84,17 +84,17 @@ func loadSubscriptions(ctx context.Context, loader config.Loader, meta *metamode
 	return AddSubscriptions(cfg, subs)
 }
 
-// loadPeerTasks adds the scheduled pulls of peers.yaml to cfg.
-func loadPeerTasks(ctx context.Context, loader config.Loader, meta *metamodel.Metamodel, cfg *Config) error {
-	data, err := loadOptional(ctx, loader, peersync.FileName)
+// loadRemoteTasks adds the scheduled pulls of remotes.yaml to cfg.
+func loadRemoteTasks(ctx context.Context, loader config.Loader, meta *metamodel.Metamodel, cfg *Config) error {
+	data, err := loadOptional(ctx, loader, remotesync.FileName)
 	if err != nil || data == nil {
 		return err
 	}
-	peers, err := peersync.Parse(data, meta)
+	remotes, err := remotesync.Parse(data, meta)
 	if err != nil {
 		return err
 	}
-	return AddPeers(cfg, peers)
+	return AddRemotes(cfg, remotes)
 }
 
 func wrapSubscriptions(err error) error {

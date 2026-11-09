@@ -12,6 +12,8 @@ import (
 	"unicode"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Sourcehaven-BV/rela/internal/secrets"
 )
 
 // ConnectionsFile is the project-root file declaring connections. It is
@@ -107,6 +109,10 @@ func (c Connection) validate() error {
 		}
 		if name == KeySecret {
 			return fmt.Errorf("%s may not name %q, the token store key", field, KeySecret)
+		}
+		if strings.HasPrefix(name, secrets.RemoteCredentialPrefix) {
+			return fmt.Errorf("%s may not name %q: a remote credential is only for remotes.yaml and "+
+				"rela reconcile", field, name)
 		}
 	}
 	switch c.Style {

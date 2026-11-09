@@ -8,7 +8,7 @@ import (
 )
 
 // WatchConfig makes the scheduler read schedules.yaml, subscriptions.yaml and
-// peers.yaml again on every tick, so an edit takes effect without a restart. A config
+// remotes.yaml again on every tick, so an edit takes effect without a restart. A config
 // that fails to load is not applied: the scheduler keeps the tasks it has, so
 // a typo in one file does not stop the feeds and tasks that work.
 //
@@ -30,16 +30,16 @@ func (s *Scheduler) reloadConfig(ctx context.Context) {
 	old := s.config.Load()
 	cfg, err := s.reload(ctx)
 	switch {
-	case err != nil && cfg != nil && (errors.Is(err, ErrSubscriptions) || errors.Is(err, ErrPeers)):
-		// schedules.yaml loaded; the feeds or the peers did not. Apply
+	case err != nil && cfg != nil && (errors.Is(err, ErrSubscriptions) || errors.Is(err, ErrRemotes)):
+		// schedules.yaml loaded; the feeds or the remotes did not. Apply
 		// what loaded and keep the running tasks of the file that did
 		// not, as at start.
 		tasks := cfg.Tasks
 		if errors.Is(err, ErrSubscriptions) {
 			tasks = withTasksOf(tasks, old.Tasks, func(t TaskConfig) bool { return t.Subscription != nil })
 		}
-		if errors.Is(err, ErrPeers) {
-			tasks = withTasksOf(tasks, old.Tasks, func(t TaskConfig) bool { return t.Peer != nil })
+		if errors.Is(err, ErrRemotes) {
+			tasks = withTasksOf(tasks, old.Tasks, func(t TaskConfig) bool { return t.Remote != nil })
 		}
 		cfg = &Config{Tasks: tasks}
 		s.noteReloadErr(err)
