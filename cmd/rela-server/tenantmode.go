@@ -24,23 +24,11 @@ const tenantsFile = tenant.ConfigFileName
 // tenantsPath returns the tenant map's path when the project directory has
 // one, and "" when it does not.
 func tenantsPath(projectDir string) (string, error) {
-	abs, err := filepath.Abs(projectDir)
-	if err != nil {
-		return "", fmt.Errorf("invalid project dir: %w", err)
-	}
-	p := filepath.Join(abs, tenantsFile)
-	switch _, err := os.Stat(p); {
-	case err == nil:
-		return p, nil
-	case errors.Is(err, os.ErrNotExist):
-		return "", nil
-	default:
-		return "", fmt.Errorf("check %s: %w", p, err)
-	}
+	return tenant.ConfigPath(projectDir)
 }
 
 // validateTenantMode refuses a tenant-mode configuration the host cannot
-// serve safely. supported is [tenantModeBackend], passed in so the check is
+// serve safely. supported is [tenant.Supported], passed in so the check is
 // testable on every build.
 //
 // Tenant mode routes by the verified `org_id`, so it needs JWT identity: a
@@ -172,16 +160,13 @@ type tenantHost struct {
 // instead. The file may not carry a password (tenant.LoadConfig refuses
 // one), because it sits with the committed project config.
 func newTenantHost(f *serverFlags, tenantsYAML string, accessLog *slog.Logger) (*tenantHost, error) {
-	mode, err := validateTenantMode(f, os.Getenv(dataentry.EnvDataEntryUserVar), tenantModeBackend)
+	mode, err := validateTenantMode(f, os.Getenv(dataentry.EnvDataEntryUserVar), tenant.Supported)
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := tenant.LoadConfig(tenantsYAML)
+	cfg, err := tenant.LoadDeployment(tenantsYAML, os.Getenv)
 	if err != nil {
 		return nil, err
-	}
-	if cfg.BaseDSN == "" {
-		cfg.BaseDSN = os.Getenv("RELA_DATABASE_URL")
 	}
 	resolver, err := cfg.Resolver()
 	if err != nil {
@@ -218,7 +203,7 @@ func newTenantHost(f *serverFlags, tenantsYAML string, accessLog *slog.Logger) (
 func (s *server) tenantHost(
 	base *appbuild.SharedBase, resolver tenant.Resolver, limits tenantLimits, verifier tenanthost.AssertionVerifier,
 ) (*tenantHost, error) {
-	openSvc, err := tenant.SharedBaseOpener(base, tenant.AuditRoot(base.Paths().CacheDir))
+	openSvc, err := tenant.SharedBaseOpener(base, tenant.AuditRoot(base.CacheDir()))
 	if err != nil {
 		return nil, err
 	}

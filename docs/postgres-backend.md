@@ -666,14 +666,60 @@ signed body. An event for an org this server does not host is acknowledged
 and ignored. Declarative webhooks (`/hooks/<id>`) carry no assertion, so the
 server cannot tell their tenant and refuses them.
 
-Not yet in tenant mode: the scheduler and provisioning a new tenant. Each
-schema must exist and is migrated on first use. A tenant whose connection
+Not yet in tenant mode: provisioning a new tenant. Each schema must exist
+and is migrated on first use. A tenant whose connection
 does not land in its own schema is refused: PostgreSQL skips a
 `search_path` schema that does not exist, and the tenant would otherwise
 land in `public`.
 
 Each open tenant holds one extra connection, which holds the tenant's
 schema lock while the tenant is open (see "Erasing a tenant").
+
+### Operator commands in tenant mode
+
+The CLI, the scheduler and stdio MCP have no identity assertion, so you
+name the tenant yourself. Use `--tenant <org_id>` or `$RELA_TENANT`, with
+the postgres build (`rela-postgres`):
+
+```bash
+rela-postgres --tenant org_7f3a list ticket
+RELA_TENANT=org_7f3a rela-postgres mcp
+```
+
+The rules:
+
+- With `tenants.yaml` in the project, every command that reads or writes
+  data needs a tenant. Without `--tenant`, it fails.
+- An org that `tenants.yaml` does not name, or one marked `erase: true`,
+  is an error. No command falls back to a default store.
+- Commands that touch no data run without a tenant: `version`, `init`,
+  `completion`, `apps`, `migrate` (config files only) and `validate`.
+  Without a tenant, `validate` skips the scheduled mail recipient check,
+  and `validate --check` fails, because both read data.
+- Without `tenants.yaml` nothing changes, and `--tenant` is refused, so
+  you cannot act on the wrong store by mistake.
+- A build other than postgres refuses a project with `tenants.yaml`.
+- The tenant opens as the server opens it: its schema is checked and
+  locked, and writes go to its own audit log.
+- `rela-postgres --tenant <org_id> db migrate` (and `db status` and `db
+  reconcile`) checks that the connection lands in the tenant's schema
+  first, so a missing schema is refused rather than migrated in `public`.
+  Run `db` commands from the project directory or with `--project`.
+  Outside a project rela cannot see `tenants.yaml`, so it uses
+  `$RELA_DATABASE_URL` and refuses when that database already holds
+  tenant schemas.
+- `rela-docs` refuses a project with `tenants.yaml`.
+
+Run one scheduler process per tenant:
+`rela-postgres --tenant <org_id> scheduler`. Each process runs that
+tenant's schedules against its own store, job queue, run state and audit
+log. One process that loops over every tenant is not available yet: it
+needs tenants that stay open with their queue workers, which the tenant
+host does not yet provide.
+
+The command's principal is bound as before and resolved in the tenant's
+own graph. It carries no `org_id` claim: the tenant is fixed by the store
+the command opens.
 
 ### Erasing a tenant
 

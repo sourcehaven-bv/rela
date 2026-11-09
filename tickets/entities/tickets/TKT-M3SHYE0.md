@@ -5,7 +5,9 @@ title: 'tenant: scheduler, CLI and stdio MCP in a multi-tenant deployment'
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-11-08"
+completed: "2026-11-08"
+status: done
 ---
 
 ## Description
@@ -18,15 +20,36 @@ deployment.
 
 ## Approach
 
-- **Scheduler**: one loop over all tenants, not one loop per tenant. Each run
-acquires that tenant's lease and runs as a verified principal carrying the
-tenant's `org_id`. Run state stays in the tenant's schema.
-- **CLI**: an operator command selects a tenant by `org_id` through the same
-resolver (for example `--tenant <org_id>`). It never takes a DSN on the command
-line. Without a tenant in tenant mode, a command that touches data fails.
+- **CLI**: an operator command selects a tenant by `org_id` with `--tenant
+<org_id>` or `$RELA_TENANT`, through the same resolver as the server. It never
+takes a DSN on the command line. In tenant mode a command that touches data
+fails without a tenant, and an unknown or erased tenant fails closed. The tenant
+opens through `tenant.OpenOne`, as the server opens it.
 - **stdio MCP**: same rule as the CLI.
+- **db commands**: pin the tenant's schema (`tenant.Pin`) before they act.
+- **rela-docs**: refuses a project with `tenants.yaml`.
+- **Resolver boundary**: the entry points see only `tenant.Resolver`, through
+`tenant.Select` and `tenant.OpenOne`. Whether a project serves tenants is
+decided in one function, `tenant.ForProject`, the only new code that reads
+`tenants.yaml`. TKT-HF5KE12 replaces it with a resolver derived from `org_id`.
 - **Remote MCP over HTTP**: goes through the multi-tenant host, so the org comes
 from the assertion.
+
+## Deviations from the first plan
+
+- **Scheduler**: one process per tenant (`rela-postgres --tenant <org_id>
+scheduler`), not one loop over all tenants. A single loop needs tenants that
+stay open with their queue workers past eviction, which belongs to TKT-N3X235N.
+Run state, queue and audit sink are the tenant's own.
+- **No `org_id` claim on CLI, scheduler or MCP principals.** The principal is
+bound at the edge with `appbuild.IdentityBinder` over the tenant's services, so
+it resolves in that tenant's graph. The store handle is the isolation boundary.
+- **Archplan**: the CLI and rela-docs find the project root through
+`appbuild.DiscoverRoot` instead of importing `project` and `storage`. After the
+rebase onto TKT-TB2B8N5 the only boundary change is the accepted
+`tenanterase.go` finding, which weighs 38 instead of 36 because erase now loads
+its deployment through `tenant.LoadDeployment`; `weight.boundaries` is loosened
+from 1383 to 1385 with that reason.
 
 ## Acceptance criteria
 

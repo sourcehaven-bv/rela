@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/tenant"
 )
 
 // TestValidateTenantMode pins the boot refusals of tenant mode. Each would
@@ -53,10 +55,10 @@ func TestValidateTenantMode(t *testing.T) {
 // TestTenantModeBackend pins that only the postgres build supports tenant
 // mode. The default build runs this test, so it asserts the refusal.
 func TestTenantModeBackend(t *testing.T) {
-	if tenantModeBackend {
+	if tenant.Supported {
 		t.Skip("postgres build")
 	}
-	if _, err := validateTenantMode(jwtFlags(), "", tenantModeBackend); err == nil {
+	if _, err := validateTenantMode(jwtFlags(), "", tenant.Supported); err == nil {
 		t.Fatal("a build without a DSN store accepted tenant mode")
 	}
 }

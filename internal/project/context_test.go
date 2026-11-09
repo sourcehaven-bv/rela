@@ -372,3 +372,24 @@ func TestContextRelationTemplatePath(t *testing.T) {
 		t.Errorf("expected %s, got %s", want, got)
 	}
 }
+
+// TestFindRoot pins that a directory in no project is "" with no error, so
+// a caller can tell "no project" from a failure to look.
+func TestFindRoot(t *testing.T) {
+	t.Run("project", func(t *testing.T) {
+		tmpDir := testutil.TempDirWithCleanup(t)
+		testutil.CreateFile(t, filepath.Join(tmpDir, SchemaFile), "version: 1.0\n")
+		subDir := filepath.Join(tmpDir, "sub")
+		testutil.CreateDir(t, subDir)
+
+		root, err := FindRoot(subDir, testProjectFS)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, root, tmpDir)
+	})
+
+	t.Run("no project", func(t *testing.T) {
+		root, err := FindRoot(testutil.TempDirWithCleanup(t), testProjectFS)
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, root, "")
+	})
+}

@@ -194,12 +194,9 @@ func erasureTarget(projectDir, orgID string, getenv func(string) string) (tenant
 	if path == "" {
 		return tenant.Tenant{}, "", fmt.Errorf("no %s in %s", tenantsFile, projectDir)
 	}
-	cfg, err := tenant.LoadConfig(path)
+	cfg, err := tenant.LoadDeployment(path, getenv)
 	if err != nil {
 		return tenant.Tenant{}, "", err
-	}
-	if cfg.BaseDSN == "" {
-		cfg.BaseDSN = getenv("RELA_DATABASE_URL")
 	}
 	t, err := cfg.ErasureTarget(orgID)
 	if err != nil {

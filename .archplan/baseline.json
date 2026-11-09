@@ -2647,7 +2647,7 @@
       "weight.vocabulary": 912,
       "weight.types": 4008,
       "weight.concepts": 7081,
-      "weight.boundaries": 1383,
+      "weight.boundaries": 1385,
       "weight.data": 1297,
       "weight.security": 140,
       "largest_tangle": 13,
@@ -2656,19 +2656,8 @@
       "propagation_cost": 9.1
     },
     "min_weight": 0,
-    "at": "2026-11-08T11:46:31Z",
+    "at": "2026-11-09T16:08:08Z",
     "log": [
-      {
-        "at": "2026-11-03T17:57:02Z",
-        "change": "loosen",
-        "reason": "Session wire mirror grew by previous (ChannelSession and SessionView), TKT-56TPOTE",
-        "metrics": {
-          "weight.types": [
-            3976,
-            3977
-          ]
-        }
-      },
       {
         "at": "2026-11-04T00:30:00Z",
         "change": "loosen",
@@ -2935,6 +2924,17 @@
           "weight.boundaries": [
             1417,
             1383
+          ]
+        }
+      },
+      {
+        "at": "2026-11-09T16:08:08Z",
+        "change": "loosen",
+        "reason": "TKT-M3SHYE0: the accepted tenanterase.go finding weighs 38, not 36, because erase loads its deployment through tenant.LoadDeployment",
+        "metrics": {
+          "weight.boundaries": [
+            1383,
+            1385
           ]
         }
       }
