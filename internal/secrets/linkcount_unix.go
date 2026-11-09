@@ -1,6 +1,6 @@
 //go:build unix
 
-package httpremote
+package secrets
 
 import (
 	"errors"

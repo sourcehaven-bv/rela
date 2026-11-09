@@ -72,7 +72,7 @@ type Deps struct {
 	Meta   *metamodel.Metamodel
 	Writer Writer
 	Store  RawReader
-	// Gate is the visibility-gated reader for the principal on ctx.
+	// Gate reads local rows as the principal on ctx may see them.
 	Gate ReadGate
 	// State holds the ledger.
 	State state.KV

@@ -1,6 +1,6 @@
 //go:build windows
 
-package httpremote
+package secrets
 
 import (
 	"os"

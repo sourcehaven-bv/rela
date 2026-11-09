@@ -1,6 +1,6 @@
 //go:build !unix && !windows
 
-package httpremote
+package secrets
 
 import (
 	"errors"
