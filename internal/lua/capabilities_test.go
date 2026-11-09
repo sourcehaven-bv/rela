@@ -189,14 +189,21 @@ func TestCapabilities_FilterSecrets(t *testing.T) {
 	}
 }
 
-// TKT-01KZSO: the token store key is filtered out of rela.secrets even for
-// the operator shell's all-secrets grant.
-func TestFilterSecrets_DropsTokenKey(t *testing.T) {
-	all := map[string]string{"token_key": "k", "api": "v"}
-	for _, c := range []Capabilities{{AllSecrets: true}, {Secrets: []string{"token_key", "api"}}} {
+// TKT-01KZSO, TKT-TB2B8N5: the token store key and remote credentials are
+// filtered out of rela.secrets even for the operator shell's all-secrets
+// grant.
+func TestFilterSecrets_DropsUnreadableSecrets(t *testing.T) {
+	all := map[string]string{"token_key": "k", "remote_credential.up": "c", "api": "v"}
+	for _, c := range []Capabilities{
+		{AllSecrets: true},
+		{Secrets: []string{"token_key", "remote_credential.up", "api"}},
+	} {
 		got := c.filterSecrets(all)
-		if _, ok := got["token_key"]; ok || got["api"] != "v" {
+		if len(got) != 1 || got["api"] != "v" {
 			t.Errorf("%+v: filterSecrets = %v", c, got)
+		}
+		if c.AllowsSecret("remote_credential.up") || c.AllowsSecret("token_key") {
+			t.Errorf("%+v: AllowsSecret grants an unreadable secret", c)
 		}
 	}
 }

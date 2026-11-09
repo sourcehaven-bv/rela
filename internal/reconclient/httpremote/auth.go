@@ -8,8 +8,9 @@ import (
 	"strings"
 )
 
-// Authenticator adds the credential to a request's headers. It is the seam
-// peer identity (step 7 of FEAT-CMVZQFI) plugs into.
+// Authenticator adds the credential to a request's headers. The credential
+// comes from the remote's identity edge, such as a machine token from its
+// OIDC provider; rela issues none of its own (DEC-QKLMMD4).
 type Authenticator interface {
 	Authenticate(h http.Header)
 }
@@ -22,7 +23,7 @@ type token struct {
 }
 
 // Bearer returns an Authenticator that sends "Authorization: Bearer
-// <value>", the header rela-server's JWT gate reads by default.
+// <value>".
 //
 // A value that already starts with "Bearer " is sent once, not twice.
 func Bearer(value string) (Authenticator, error) {

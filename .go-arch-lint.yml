@@ -290,9 +290,6 @@ components:
   jwtauth:          { in: internal/jwtauth }
   principal:        { in: internal/principal }
   secrets:          { in: internal/secrets }
-  # Peer keys (DEC-81161C3): issue and verify the credential a sync peer
-  # presents. Reads its key list through secrets.
-  peerkey:          { in: internal/peerkey }
   hostconfig:       { in: internal/hostconfig }
   cache:            { in: internal/cache }
   config:           { in: internal/config }
@@ -486,8 +483,6 @@ deps:
       - mcp
       - mcpwire
       - metamodel
-      # peerkey: the peer key source the data-entry edge verifies against.
-      - peerkey
       - principal
       - projectsetup
       - scheduler
@@ -593,8 +588,6 @@ deps:
       - memstore
       - metamodel
       - output
-      # peerkey: `rela peer key create` and `reconcile diff --token-secret`.
-      - peerkey
       - perfseed
       - fsimport
       - pgstore
@@ -1210,13 +1203,6 @@ deps:
       - goldmark
       - bluemonday
       - douceur
-  # Peer key format, keyring and reloading source (DEC-81161C3). It reads the
-  # digests from secrets and validates names with principal; dataentry takes
-  # it through a consumer-side interface, so only the wiring imports it.
-  peerkey:
-    mayDependOn:
-      - principal
-      - secrets
   feed:
     mayDependOn:
       - safexml

@@ -58,7 +58,7 @@ func newGateHandler(t *testing.T, cfg JWTGateConfig) http.Handler {
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, principal.From(r.Context()).User)
 	})
-	return stampAuditPrincipal(requireVerifiedJWT(echo, cfg), defaultPrincipalResolver, nil)
+	return stampAuditPrincipal(requireVerifiedJWT(echo, cfg), defaultPrincipalResolver)
 }
 
 // TestRequireVerifiedJWT covers the gate's whole decision table: which paths are
@@ -345,7 +345,7 @@ func TestRequireVerifiedJWT_OrderingRelativeToStamper(t *testing.T) {
 	inner := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		seen = principal.From(r.Context())
 	})
-	h := stampAuditPrincipal(requireVerifiedJWT(inner, cfg), defaultPrincipalResolver, nil)
+	h := stampAuditPrincipal(requireVerifiedJWT(inner, cfg), defaultPrincipalResolver)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities", http.NoBody)
 	req.Header.Set(header, "good.jwt.token")
@@ -360,7 +360,7 @@ func TestRequireVerifiedJWT_OrderingRelativeToStamper(t *testing.T) {
 	// about, so assert it genuinely loses the verified subject. If this ever
 	// stops being true the ordering comment is stale and should be revisited.
 	seen = principal.Principal{}
-	inverted := requireVerifiedJWT(stampAuditPrincipal(inner, defaultPrincipalResolver, nil), cfg)
+	inverted := requireVerifiedJWT(stampAuditPrincipal(inner, defaultPrincipalResolver), cfg)
 	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/entities", http.NoBody)
 	req2.Header.Set(header, "good.jwt.token")
 	inverted.ServeHTTP(httptest.NewRecorder(), req2)
@@ -389,7 +389,7 @@ func TestRequireVerifiedJWT_StampsAssertedClaims(t *testing.T) {
 	inner := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		seen = principal.From(r.Context())
 	})
-	h := stampAuditPrincipal(requireVerifiedJWT(inner, cfg), defaultPrincipalResolver, nil)
+	h := stampAuditPrincipal(requireVerifiedJWT(inner, cfg), defaultPrincipalResolver)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities", http.NoBody)
 	req.Header.Set(header, "good.jwt.token")
@@ -435,7 +435,7 @@ func TestRequireVerifiedJWT_SanitizesRolesThroughGate(t *testing.T) {
 	inner := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		seen = principal.From(r.Context())
 	})
-	h := stampAuditPrincipal(requireVerifiedJWT(inner, cfg), defaultPrincipalResolver, nil)
+	h := stampAuditPrincipal(requireVerifiedJWT(inner, cfg), defaultPrincipalResolver)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities", http.NoBody)
 	req.Header.Set(header, "good.jwt.token")
@@ -465,7 +465,7 @@ func TestRequireVerifiedJWT_DenialShortCircuits(t *testing.T) {
 	h := stampAuditPrincipal(requireVerifiedJWT(inner, JWTGateConfig{
 		Verifier:   gateVerifier{validToken: "good.jwt.token", subject: "usr_abc123"},
 		HeaderName: "X-Auth-Assertion",
-	}), defaultPrincipalResolver, nil)
+	}), defaultPrincipalResolver)
 
 	for _, token := range []string{"", "forged.jwt.token"} {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/entities", http.NoBody)

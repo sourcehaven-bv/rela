@@ -112,8 +112,7 @@ func newIdentityResolver(p *Policy, m MembershipReader, l PrincipalLookup) *Iden
 // Resolve resolves p for a transport whose identifier may be an external
 // natural key (the data-entry proxy header or JWT subject). When the policy
 // sets `user_entity_type` and `principal_property`, the raw p.User is looked
-// up, except a `peer:` name, which no lookup may redirect. One match
-// replaces User with the entity id, keeps the raw value in
+// up. One match replaces User with the entity id, keeps the raw value in
 // RawUser, and keeps every verified claim. No match leaves p unchanged and
 // sets [Identity.Unmatched]. Then the membership closure is walked.
 //
@@ -127,11 +126,7 @@ func (r *IdentityResolver) Resolve(ctx context.Context, p principal.Principal) (
 		return Identity{}, fmt.Errorf("%w: User=%q Tool=%q", ErrUnstampedPrincipal, p.User, p.Tool)
 	}
 	unmatched := false
-	// A peer's name comes from the operator's key list (DEC-81161C3), not
-	// from an external natural key, so it is never looked up: an entity
-	// whose principal_property holds `peer:acme` must not take over the
-	// peer's identity and roles.
-	if r.policy.principalPropertyLookupEnabled() && !principal.IsPeerUser(p.User) {
+	if r.policy.principalPropertyLookupEnabled() {
 		id, err := r.ResolvePrincipal(ctx, p.User)
 		if err != nil {
 			return Identity{}, fmt.Errorf("%w: %w", ErrPrincipalLookup, err)

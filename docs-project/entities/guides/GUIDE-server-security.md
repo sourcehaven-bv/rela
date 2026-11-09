@@ -287,15 +287,6 @@ writes a property, such as the Basecamp example's `sync_conflict`.
 > `integration:`, those users can no longer authenticate either. The log
 > line is the same.
 
-**`peer:` is reserved the same way.** A sync peer that presents a valid
-peer key is `peer:<name>` (see [Peer keys](#peer-keys)). A request that
-names `peer:acme` in the principal header, `$RELA_DATAENTRY_USER` or a JWT
-subject is refused like one naming `system:scheduler`, and `run_as:`
-cannot name a peer. Only a verified key reaches it.
-
-> **Upgrade note.** If your IdP issues subjects that begin with `peer:`,
-> those users can no longer authenticate. The log line is the same.
-
 **`system:flow` is assigned by rela.** The flow engine writes flow runs
 as `system:flow`, and it is the only identity that may. acl.yaml may not
 assign it, `run_as:` and `--run-as` refuse it, and a request naming it is
@@ -445,97 +436,26 @@ so same-origin API writes are permitted. The JWT signature is the
 authentication; the Host/Origin allowlists remain the browser-CSRF
 defense.
 
-### Peer keys
+### Sync clients and other machine clients
 
-A sync peer, another rela that compares or copies this project's data
-(FEAT-CMVZQFI), authenticates with a peer key (DEC-81161C3). rela verifies
-the key itself, in every identity mode, so a peer needs no account at your
-identity provider. The rules a peer then reads under are in
-[ACL security](acl-security.md#peer-keys).
+rela issues no credentials of its own (DEC-QKLMMD4). A machine client, such
+as another rela that compares or copies this project's data
+(FEAT-CMVZQFI), authenticates at the identity edge like any user:
 
-Tenant mode does not accept peer keys; see
-[Tenant mode](postgres-backend.md#tenant-mode).
+- **JWT mode:** the client authenticates to the OIDC proxy in front of
+  rela with a machine-client credential. Pratique offers these. The proxy
+  forwards a signed assertion, and rela verifies it like any other, from
+  the header `--jwt-header` names.
+- **Header mode:** the proxy that authenticates users also authenticates
+  the client and sets the principal header.
 
-**Create a key** on any machine with the rela CLI:
-
-```bash
-(umask 077 && rela peer key create acme > acme.key)
-```
-
-The key goes to stdout only. The `umask` keeps `acme.key` readable by you alone. stderr shows the line to add on the source:
-
-```yaml
-# .rela/secrets.yaml on the source (mode 0600)
-peer_key.acme: sha256:<hex>
-```
-
-If the source reads its secrets from a systemd credential, add the line
-there instead: the credential takes precedence over the file.
-
-The source keeps only the digest. Give `acme.key` to the peer over a
-secure channel, and delete your copy. On the peer, store the key under a
-`peer_credential.` name, which no script can read, and pass it by name:
-
-```yaml
-# .rela/secrets.yaml on the peer
-peer_credential.source: relapeer_...
-```
-
-```bash
-rela reconcile diff --remote https://source.example --token-secret peer_credential.source
-```
-
-**Grant the peer a role** in the source's `acl.yaml`, as for any user:
-
-```yaml
-assignments:
-  "peer:acme": catalogue-reader
-```
-
-A peer key only reads entities and relations, whatever the role grants.
-Writes, the live event stream, the co-editing socket and every `_`
-sub-resource (export, presence, channels, attachments, history) answer
-403 `peer_route_refused`. Without an `acl.yaml` every peer key is refused,
-because nothing would limit what the peer reads.
-
-**Revoke a key** by removing its line. The server rereads the file at most
-every 10 seconds, so no restart is needed. With a systemd credential
-(`LoadCredentialEncrypted=`) the server reads the copy systemd made at
-start, so a change there needs a restart.
-
-**A bad key is refused, never ignored.** A request whose `Authorization`
-header carries a `relapeer_` value answers 401 when the key is unknown,
-malformed or revoked. It never falls back to the principal header or the
-JWT. A peer key sent as the principal header answers 401 too. If
-`secrets.yaml` cannot be read or holds a malformed `peer_key.` line, the
-server logs an error and admits no peer key until it is fixed. If a reread
-hangs, for example on a stuck mount, every key is refused after 30
-seconds.
-
-**Behind an authenticating proxy**, the proxy must let a peer through
-without a login, and must not let it choose its identity:
-
-- Bypass the login only for `/api/v1/` paths whose `Authorization` starts
-  with `Bearer relapeer_`. Any other request takes the normal login. rela
-  checks peer keys on `/api/` paths only, so a bypass on other paths would
-  let any client skip the login there.
-- Always overwrite or remove the principal header, also on the bypass.
-  rela ignores the header when it verifies a peer key, but a bypass that
-  forwarded a client-set header would let any client choose its user on a
-  request without a key.
-
-For example, with nginx in front of `--principal-header X-Remote-User`,
-set the header from the login result on every request, and pass an empty
-value on the bypass:
-
-```nginx
-# $login_user comes from your login module; it is empty on the bypass.
-proxy_set_header X-Remote-User $login_user;   # never $http_x_remote_user
-```
-
-**Logs and audit.** A peer's reads are attributed to `peer:<name>` in the
-access log and audit log; the `principal_property` lookup never replaces a
-peer's name. The key is never logged.
+The client is then an ordinary principal. Grant it a role in `acl.yaml`, as
+for any user; it reads only what that role allows. `rela reconcile diff`
+sends the credential the proxy expects, in the header `--auth-header`
+names (default `Authorization`, as a bearer token). It reads the
+credential from `--token-env`, `--token-file` or `--token-secret
+remote_credential.<name>`. No Lua script can read a `remote_credential.`
+secret. See the CLI reference.
 
 ## Access log (`--access-log`)
 

@@ -122,18 +122,17 @@ func (c *Capabilities) UnmarshalYAML(unmarshal func(any) error) error {
 	return c.validate()
 }
 
-// validate refuses a grant that names a secret no script may read (the token
-// store key, a peer key digest or a peer credential), or a token connection
-// outside the connection name grammar.
+// validate refuses a grant that names a secret no script may read (see
+// [secrets.ScriptReadable]), or a token connection outside the connection
+// name grammar.
 func (c Capabilities) validate() error {
 	for _, name := range c.Secrets {
 		if !secrets.ScriptReadable(name) {
-			if name != secrets.TokenKey {
-				return fmt.Errorf("capabilities.secrets may not name %q: peer keys and their "+
-					"digests are for rela itself, and no script may read them", name)
+			if name == secrets.TokenKey {
+				return fmt.Errorf("capabilities.secrets may not name %q: it is the token store "+
+					"key, and no script may read it. Grant `tokens: [<connection>]` instead", name)
 			}
-			return fmt.Errorf("capabilities.secrets may not name %q: it is the token store "+
-				"key, and no script may read it. Grant `tokens: [<connection>]` instead", name)
+			return fmt.Errorf("capabilities.secrets may not name %q: no script may read it", name)
 		}
 	}
 	for i, name := range c.Tokens {

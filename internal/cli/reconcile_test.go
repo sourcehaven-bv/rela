@@ -25,6 +25,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/reconcile"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient"
+	"github.com/Sourcehaven-BV/rela/internal/secrets"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -235,6 +236,62 @@ func TestReconcileDiff_Credentials(t *testing.T) {
 	require.ErrorContains(t, err, "--max-round-trips")
 	_, err = runReconcile(t, localServices(t), "reconcile", "diff", "--remote", srv.URL, "--timeout", "-1s")
 	require.ErrorContains(t, err, "--timeout")
+}
+
+// TestReconcileDiff_TokenSecret pins --token-secret: it reads only a
+// remote_credential. name, through the global secrets of a real project
+// directory, and never puts a value in an error (TKT-TB2B8N5).
+func TestReconcileDiff_TokenSecret(t *testing.T) {
+	srv := oneTicketRemote(t, "Bearer from-secret")
+	relaDir := filepath.Join(t.TempDir(), ".rela")
+	require.NoError(t, os.MkdirAll(relaDir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(relaDir, "secrets.yaml"), []byte(
+		"remote_credential.up: \"from-secret\\n\"\n"+
+			"remote_credential.empty: \"\"\n"+
+			"api_key: from-secret\n"+
+			"token_key: from-secret\n"+
+			"overrides:\n  x.lua:\n    remote_credential.other: leaked\n"), 0o600))
+	withSecrets := func() *reconcileServices {
+		s := localServices(t)
+		s.Secret = func(name string) (string, error) { return globalSecret(relaDir, name) }
+		return s
+	}
+	diff := func(s *reconcileServices, extra ...string) error {
+		_, err := runReconcile(t, s, append([]string{"reconcile", "diff", "--remote", srv.URL}, extra...)...)
+		return err
+	}
+
+	require.NoError(t, diff(withSecrets(), "--token-secret", "remote_credential.up"))
+
+	for name, want := range map[string]string{
+		"token_key":                 "must start with",
+		"api_key":                   "must start with",
+		"remote_credential.":        "must start with",
+		"remote_credential.missing": `no secret "remote_credential.missing"`,
+		"remote_credential.other":   `no secret "remote_credential.other"`,
+		"remote_credential.empty":   "no credential",
+	} {
+		err := diff(withSecrets(), "--token-secret", name)
+		require.ErrorContains(t, err, want, name)
+		require.NotContains(t, err.Error(), "from-secret", name)
+		require.NotContains(t, err.Error(), "leaked", name)
+	}
+
+	// A project with no secrets source names the flag in the error.
+	noSource := localServices(t)
+	noSource.Secret = func(name string) (string, error) { return globalSecret(t.TempDir(), name) }
+	err := diff(noSource, "--token-secret", "remote_credential.up")
+	require.ErrorContains(t, err, "--token-secret remote_credential.up: ")
+	require.ErrorIs(t, err, secrets.ErrNotFound)
+
+	// A project without secrets refuses the flag.
+	require.ErrorContains(t, diff(localServices(t), "--token-secret", "remote_credential.up"),
+		"this project has no secrets")
+
+	// The credential sources exclude each other.
+	t.Setenv("RELA_RECONCILE_TOKEN", "from-secret")
+	require.ErrorContains(t, diff(withSecrets(), "--token-secret", "remote_credential.up",
+		"--token-env", "RELA_RECONCILE_TOKEN"), "can't be used together")
 }
 
 func TestReconcileDiff_TokenFilePermissionsWarn(t *testing.T) {
