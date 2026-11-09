@@ -86,17 +86,21 @@ type webhookOrgHandler interface {
 	HandleOrgEvent(ctx context.Context, claims WebhookClaims) error
 }
 
-// logOrgEvents is the organization handler until TKT-TNPRV8 and TKT-TNERAS
-// replace it. It logs the event and acknowledges it, so the IdP does not
-// retry an event rela has nothing to do with yet. The org id names a tenant,
-// not a person, so it is logged.
+// logOrgEvents is the organization handler until TKT-TNPRV8 replaces it.
+// It logs the event and acknowledges it, so the IdP does not retry an event
+// rela does not act on. The org id names a tenant, not a person, so it is
+// logged.
 type logOrgEvents struct{}
 
-// A deletion is logged at Warn: the IdP does not redeliver an acknowledged
-// event, so until erasure exists the log is the only trace an operator has.
+// A deletion is logged at Warn as an erasure-needed record: the IdP does not
+// redeliver an acknowledged event, so the log is the operator's trigger.
+// Erasure is never run from the webhook (TKT-TNERAS). It is irreversible, it
+// must not drop a schema a server still has open, and a signed event is a
+// weaker authorization than an operator at the host.
 func (logOrgEvents) HandleOrgEvent(_ context.Context, claims WebhookClaims) error {
 	if claims.Event == "organization.deleted" {
-		slog.Warn("idp webhook organization deletion acknowledged but not acted on; erase the tenant manually",
+		slog.Warn("idp webhook organization deletion: tenant erasure needed; mark the org erase: true "+
+			"in tenants.yaml, restart the servers, then run rela-server tenant erase",
 			"event", claims.Event, "org_id", claims.OrgID)
 		return nil
 	}

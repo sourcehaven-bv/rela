@@ -416,11 +416,17 @@
       "at": "2026-10-28T13:29:06Z",
       "title": "apiwire and types change together but do not depend on each other."
     },
-    "concepts.data_clump-dbc4bea63927": {
+    "concepts.data_clump-7bd1238eb34e": {
       "state": "accepted",
       "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
-      "at": "2026-10-28T13:29:06Z",
-      "title": "The fields clear_when_hidden, default, help, hidden, keep_on_add_another, … and widget appear together in 3 types across 2 components."
+      "at": "2026-11-07T22:30:00Z",
+      "title": "The fields clear_when_hidden, default, help, hidden, hint, … and widget appear together in 3 types across 2 components."
+    },
+    "concepts.data_clump-20c13558b80a": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-11-07T22:30:00Z",
+      "title": "The fields direction, help, hint, keep_on_add_another, properties, … and widget appear together in 2 types across 2 components."
     },
     "concepts.data_clump-6312e7d9a91e": {
       "state": "accepted",
@@ -2624,6 +2630,12 @@
       "reason": "Design: a subject id is an entity id, a plain string everywhere in rela (entity.Ref.ID); a run-store-only type would not match its callers, TKT-PV9R0GK",
       "at": "2026-11-07T08:20:00Z",
       "title": "flowrun holds raw ids whose concept is unclear: SubjectID."
+    },
+    "boundaries.misplaced_file-748c239a0aab": {
+      "state": "accepted",
+      "reason": "By design: tenanterase.go is the operator command edge for tenant erasure (TKT-TNERAS). It parses flags, confirms and records; the erasure itself lives in tenant, so most links point there.",
+      "at": "2026-11-08T10:00:00Z",
+      "title": "rela-server/tenanterase.go in cmdServer has most of its links to tenant (weighted links: 3.7 to tenant, 1.1 to cmdServer)."
     }
   },
   "labels": {},
@@ -2635,65 +2647,17 @@
       "weight.vocabulary": 912,
       "weight.types": 4008,
       "weight.concepts": 7081,
-      "weight.boundaries": 1387,
+      "weight.boundaries": 1383,
       "weight.data": 1297,
       "weight.security": 140,
       "largest_tangle": 13,
       "cycle_edges": 61,
       "upward_edges": 0,
-      "propagation_cost": 8.9
+      "propagation_cost": 9.1
     },
     "min_weight": 0,
-    "at": "2026-11-07T20:02:09Z",
+    "at": "2026-11-08T11:46:31Z",
     "log": [
-      {
-        "at": "2026-10-29T18:00:00Z",
-        "change": "loosen",
-        "reason": "BusyChannel wire mirror accepted like the other apiwire DTOs; accepted gated-reader mentions in the busy reader, TKT-21G6JS",
-        "metrics": {
-          "weight.types": [
-            3886,
-            3960
-          ],
-          "weight.vocabulary": [
-            908,
-            912
-          ]
-        }
-      },
-      {
-        "at": "2026-10-29T22:00:00Z",
-        "change": "loosen",
-        "reason": "ChannelSession wire mirror grew by the button and entry fields like SessionView, TKT-S9TLJJ",
-        "metrics": {
-          "weight.types": [
-            3960,
-            3968
-          ]
-        }
-      },
-      {
-        "at": "2026-10-30T02:00:00Z",
-        "change": "loosen",
-        "reason": "ChannelSession wire mirror grew by the button options like SessionView, TKT-TXZZZ2",
-        "metrics": {
-          "weight.types": [
-            3968,
-            3969
-          ]
-        }
-      },
-      {
-        "at": "2026-11-03T15:10:00Z",
-        "change": "loosen",
-        "reason": "Inbox wire mirrors grew by the decision fields (actions, last_seq, message, session cause and transitions), TKT-V05706X",
-        "metrics": {
-          "weight.types": [
-            3969,
-            3976
-          ]
-        }
-      },
       {
         "at": "2026-11-03T17:57:02Z",
         "change": "loosen",
@@ -2915,6 +2879,62 @@
           "propagation_cost": [
             9.5,
             8.9
+          ]
+        }
+      },
+      {
+        "at": "2026-11-07T12:37:24Z",
+        "change": "loosen",
+        "reason": "TKT-J4HMZ2B: untagged appbuild.NewInMemory imports memstore, raising the existing memstore data-clump weight by 1",
+        "metrics": {
+          "weight.concepts": [
+            7081,
+            7082
+          ]
+        }
+      },
+      {
+        "at": "2026-11-08T09:00:00Z",
+        "change": "loosen",
+        "reason": "TKT-NRNDGZR: appbuild imports ai for WithAIProvider, so the existing 'message' unit-naming finding (realtimecfg vs ai) weighs 1 more and appbuild reaches the ai package",
+        "metrics": {
+          "weight.concepts": [
+            7082,
+            7083
+          ],
+          "propagation_cost": [
+            8.9,
+            9.0
+          ]
+        }
+      },
+      {
+        "at": "2026-11-08T09:45:36Z",
+        "change": "loosen",
+        "reason": "Multi-tenant host and tenant erasure (TKT-D6MF3SW, TKT-TNERAS): cmdServer now wires tenant and tenanthost, and the erase command edge links mostly to tenant",
+        "metrics": {
+          "weight.concepts": [
+            7083,
+            7081
+          ],
+          "weight.boundaries": [
+            1387,
+            1417
+          ],
+          "propagation_cost": [
+            9.0,
+            9.1
+          ]
+        }
+      },
+      {
+        "at": "2026-11-08T11:46:31Z",
+        "change": "tighten",
+        "reason": null,
+        "metrics": {
+          "weight.boundaries": [
+            1417,
+            1383
           ]
         }
       }

@@ -304,6 +304,17 @@ type Services struct {
 	// [Services.Base]). Nil for a NewFromCollaborators-built Services.
 	base *SharedBase
 
+	// onClose removes what [NewInMemory] created outside the store, such as
+	// its temporary output directory. Close runs it last.
+	//
+	// Nil: accepted — nothing to remove.
+	onClose func()
+
+	// ownedAudit is the audit sink [SharedBase.OpenAndAssemble] handed this
+	// Services, closed last by [Services.Close]. Nil on every other path, where
+	// the caller that built the sink owns it.
+	ownedAudit io.Closer
+
 	closeOnce sync.Once
 	closeErr  error
 	// assemblyCloseOnce guards the per-assembly teardown so that a
@@ -312,7 +323,9 @@ type Services struct {
 	assemblyCloseOnce sync.Once
 }
 
-// FS returns the project filesystem.
+// FS returns the filesystem that runtime state is written through. It is
+// the project filesystem on most builds; [NewInMemory] sets it to a MemFS
+// while operator config is still read from disk.
 func (s *Services) FS() storage.FS { return s.fs }
 
 // Paths returns the project context (root, metamodel path, etc.).
@@ -543,8 +556,11 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 	}
 	deps.Piles = pileReaderFor(s.piles)
 	deps.RoleHolders = roleHoldersFor(s)
-	if s.base != nil && s.base.cfg.projectConfig != nil {
-		deps.Files = s.base.cfg.projectConfig
+	if s.base != nil {
+		deps.Seams = s.base.luaSeams()
+		if s.base.cfg.projectConfig != nil {
+			deps.Files = s.base.cfg.projectConfig
+		}
 	}
 	return deps
 }
@@ -877,8 +893,8 @@ func gatedRollups(s *Services) *visibility.Rollups {
 // compileDerived compiles the computed properties of meta and checks its
 // roll-ups. Read surfaces compile their own roll-up set from the same
 // metamodel; this is the load-time check, so a bad roll-up fails the boot.
-func compileDerived(meta *metamodel.Metamodel) (*computed.Set, error) {
-	set, err := computed.Compile(meta)
+func compileDerived(meta *metamodel.Metamodel, now func() time.Time) (*computed.Set, error) {
+	set, err := computed.CompileWithClock(meta, now)
 	if err != nil {
 		return nil, fmt.Errorf("compile computed properties: %w", err)
 	}
@@ -1362,7 +1378,7 @@ func collaboratorRefHolders(
 		return refs, fmt.Errorf("caldav aliases: %w", err)
 	}
 	refs.leases, refs.leaseShared, err = buildLeases(
-		c.FS, c.Paths, w, c.Store, leaseShared{}, c.Declarative, redactor, c.ACL)
+		c.FS, c.Paths, w, c.Store, leaseShared{}, c.Declarative, redactor, c.ACL, lease.SystemClock{})
 	if err != nil {
 		return refs, fmt.Errorf("leases: %w", err)
 	}
@@ -1393,11 +1409,13 @@ func collaboratorRefHolders(
 // fieldReadPolicy is the field-level read policy as appbuild hands it out:
 // per-entity redaction for the readers, and its search form for the gated
 // searcher. Both answer from the same `visible:` grants, so one value serves
-// both and they cannot drift. [visibility.PolicyRedactor] and
+// both and they cannot drift. It is also the field half of the element
+// range read ([visibility.ElementPolicy]). [visibility.PolicyRedactor] and
 // [visibility.NopRedactor] implement it.
 type fieldReadPolicy interface {
 	visibility.FieldRedactor
 	visibility.FieldScoper
+	RelationMetaGated(relType string) bool
 }
 
 // buildFieldPolicy constructs the field-level `visible:` policy shared by
@@ -1486,6 +1504,7 @@ func buildFieldPolicy(meta *metamodel.Metamodel, st store.Store, d *acl.Declarat
 // system policy, so what it sees must not depend on who made the write.
 func buildAutomation(
 	meta *metamodel.Metamodel, st store.Store, bg autocascade.BackgroundScripts, pusher autocascade.PilePusher,
+	now func() time.Time,
 ) (*automation.Engine, *autocascade.Runner, error) {
 	if len(meta.Automations) == 0 {
 		return nil, nil, nil
@@ -1494,7 +1513,8 @@ func buildAutomation(
 	if err != nil {
 		return nil, nil, fmt.Errorf("build automation engine: %w", err)
 	}
-	autoEngine, err := automation.NewEngineFromMetamodel(meta, meta.Automations, automation.WithTraversals(traversals))
+	autoEngine, err := automation.NewEngineFromMetamodel(meta, meta.Automations,
+		automation.WithTraversals(traversals), automation.WithClock(now))
 	if err != nil {
 		return nil, nil, fmt.Errorf("build automation engine: %w", err)
 	}
@@ -1548,6 +1568,10 @@ type options struct {
 	// reload keeps when realtime.yaml no longer loads; see
 	// [WithRealtimeFallback].
 	realtimeFallback *Services
+
+	// seams replace the clock, mail transport, HTTP client, AI provider and
+	// write_file directory; see [WithClock] and its siblings.
+	seams seams
 }
 
 // WithBackgroundAutomationJobs runs `background: true` automation actions
@@ -2002,6 +2026,41 @@ func At(dir string, scriptEngine *script.Engine, opts ...Option) (*Services, err
 		return nil, fmt.Errorf("open project at %s: %w", dir, err)
 	}
 	return buildAt(fs, paths, scriptEngine, opts...)
+}
+
+// DiscoverSharedBase is [Discover] for a multi-tenant host: it finds the
+// project from startDir and builds the tenant-independent [SharedBase] over
+// it, opening no store. Each tenant is then opened with
+// [SharedBase.OpenAndAssemble], which takes the tenant's DSN and audit sink.
+//
+// The base itself has no DSN and a [audit.Nop] sink. Neither is ever used to
+// serve data: OpenAndAssemble replaces both on its copy of the base, so a
+// tenant cannot fall back to a shared database or a shared audit file.
+func DiscoverSharedBase(startDir string, scriptEngine *script.Engine, opts ...Option) (*SharedBase, error) {
+	fs := storage.NewSafeFS(storage.NewOsFS())
+	paths, err := project.Discover(startDir, fs)
+	if err != nil {
+		return nil, fmt.Errorf("discover project: %w", err)
+	}
+	project.WarnIfLegacySchema(paths)
+	return NewSharedBase(Config{
+		FS:           fs,
+		Paths:        paths,
+		ScriptEngine: scriptEngine,
+		Audit:        audit.Nop{},
+	}, opts...)
+}
+
+// DiscoverCacheDir finds the project from startDir, as [Discover] does, and
+// returns its cache directory (.rela). It opens no store and builds no
+// services. `rela-server tenant erase` uses it to find the per-tenant audit
+// directories under the cache directory.
+func DiscoverCacheDir(startDir string) (string, error) {
+	paths, err := project.Discover(startDir, storage.NewSafeFS(storage.NewOsFS()))
+	if err != nil {
+		return "", fmt.Errorf("discover project: %w", err)
+	}
+	return paths.CacheDir, nil
 }
 
 // buildAt is the shared tail of [Discover] and [At]: everything after the
@@ -2464,6 +2523,20 @@ func (b *SharedBase) Assemble(
 // per-store reader of the DSN (the store's pool and the job queue) sees the
 // tenant's, and the shared base keeps its own.
 //
+// Two more inputs are replaced on that copy, because they hold data rather
+// than config:
+//
+//   - sink is the tenant's audit sink, required. The entity manager, the
+//     cascade runner and data migration all read the base's Config.Audit, so
+//     one shared sink would interleave every tenant's audit records
+//     (TKT-SNVR8UV). The returned Services owns it: when sink is an
+//     io.Closer, [Services.Close] closes it after everything that writes to
+//     it has stopped.
+//   - the script engine is a new one, because an engine owns the process-wide
+//     Lua cache behind `rela.cache`, keyed by script path. A shared engine
+//     would hand a value one tenant's script stored to the same script
+//     running for another tenant.
+//
 // Only the postgres build supports it, because only its store and runtime
 // state are addressed by the DSN. The other builds keep data or runtime state
 // (piles, comments, settings) in the project directory, so they return an
@@ -2471,16 +2544,43 @@ func (b *SharedBase) Assemble(
 //
 // A base marked by [SharedBase.ForReassembly] is refused: it assembles over a
 // store that is already open, and this opens a new one.
-func (b *SharedBase) OpenAndAssemble(ctx context.Context, dsn string) (*Services, error) {
+//
+// Nil: sink is rejected — a nil sink would fail on the first write.
+func (b *SharedBase) OpenAndAssemble(ctx context.Context, dsn string, sink audit.Audit) (*Services, error) {
 	if b.reassembly {
 		return nil, errors.New("appbuild: OpenAndAssemble needs a base that opens its own store, not a reassembly base")
 	}
 	if dsn == "" {
 		return nil, errors.New("appbuild: OpenAndAssemble needs the tenant's DSN; it was empty")
 	}
+	if sink == nil {
+		return nil, errors.New("appbuild: OpenAndAssemble needs the tenant's audit sink; it was nil")
+	}
 	tenantBase := *b
 	tenantBase.cfg.DatabaseURL = dsn
-	return openAndAssemble(ctx, &tenantBase)
+	tenantBase.cfg.Audit = sink
+	tenantBase.cfg.ScriptEngine = script.NewEngine()
+	svc, err := openAndAssemble(ctx, &tenantBase)
+	if err != nil {
+		closeAuditSink(sink)
+		return nil, err
+	}
+	if c, ok := sink.(io.Closer); ok {
+		svc.ownedAudit = c
+	}
+	return svc, nil
+}
+
+// closeAuditSink closes sink when it holds a resource, logging a failure: it
+// runs on a path that is already returning an error or shutting down.
+func closeAuditSink(sink audit.Audit) {
+	c, ok := sink.(io.Closer)
+	if !ok {
+		return
+	}
+	if err := c.Close(); err != nil {
+		slog.Warn("appbuild: closing the audit sink failed", "error", err)
+	}
 }
 
 // buildEntityManager assembles the write-path manager from the collaborators
@@ -2537,6 +2637,7 @@ func buildEntityManager(
 		AttachmentLocker: attachLocker,
 		AnchorGuard:      anchorGuard,
 		ValidationMode:   base.validationMode,
+		Clock:            base.clock(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build entitymanager: %w", err)
@@ -2588,12 +2689,12 @@ func startBackgroundServices(
 ) backgroundServices {
 	cfg := base.cfg
 
-	softDeleteStop := startSoftDeleteGC(mgr, q,
+	softDeleteStop := startSoftDeleteGC(mgr, q, base.clock(),
 		envDuration("RELA_SOFT_DELETE_DELAY", defaultSoftDeleteDelay),
 		envDuration("RELA_SOFT_DELETE_GC_INTERVAL", defaultSoftDeleteGCInterval))
 
 	gcStop, reevaluateGate := startDataMigration(
-		stateKV, migState, base.meta, st, cfg.Audit, versions, commentSvc, cfg.Paths.CacheDir,
+		stateKV, migState, base.meta, st, cfg.Audit, versions, commentSvc, migrationLockDir(cfg),
 		hasMigrationsVia(cfgLoader),
 	)
 
@@ -2601,7 +2702,7 @@ func startBackgroundServices(
 	// here: nothing can enqueue until the declarative layer (TKT-U2R7GU)
 	// lands, and storing a handle no code reads would look wired when it is
 	// not. Only the stop function is retained, because Close genuinely uses it.
-	mailRuntime, mailStop := startMailRuntime(host)
+	mailRuntime, mailStop := startMailRuntime(host, base.opts.seams.mail)
 
 	return backgroundServices{
 		gcStop:         gcStop,
@@ -2621,6 +2722,17 @@ func (b backgroundServices) stop() {
 	b.mailStop()
 	b.gcStop()
 	b.softDeleteStop()
+}
+
+// migrationLockDir is the directory the data-migration lock file goes in, or
+// "" for a process-local lock. The lock file is written with os calls, not
+// through cfg.FS, so an in-memory FS must not get one: [NewInMemory] promises
+// no disk writes, and no other process can open its store anyway.
+func migrationLockDir(cfg Config) string {
+	if inMemoryFS(cfg.FS) {
+		return ""
+	}
+	return cfg.Paths.CacheDir
 }
 
 // resolveACLAndFieldPolicy resolves the ACL and derives the field policy that
@@ -2707,6 +2819,7 @@ func (b *SharedBase) cascadeReadDeps(
 		Host:          host,
 		World:         w.DefaultWorld(),
 		Piles:         pileReaderFor(pileSvc),
+		Seams:         b.luaSeams(),
 	}, nil
 }
 
@@ -2822,7 +2935,7 @@ func assemble(
 	if err != nil {
 		return nil, fmt.Errorf("compile transitions: %w", err)
 	}
-	computedSet, err := compileDerived(base.meta)
+	computedSet, err := compileDerived(base.meta, base.clock())
 	if err != nil {
 		return nil, err
 	}
@@ -3058,7 +3171,7 @@ func buildAutomationWithJobs(
 		return nil, nil, nil, err
 	}
 	// Errors only on a nil Engine, which buildAutomation never produces.
-	autoEngine, cascadeRunner, err := buildAutomation(base.meta, st, autoJobs, cascadePiles(pileSvc))
+	autoEngine, cascadeRunner, err := buildAutomation(base.meta, st, autoJobs, cascadePiles(pileSvc), base.clock())
 	if err != nil { // coverage-ignore: defensive: see above
 		return nil, nil, nil, err
 	}
@@ -3389,6 +3502,16 @@ func (s *Services) Close() error {
 		}
 		if s.realtimeLocal != nil {
 			s.realtimeLocal.Stop()
+		}
+		// Last: every writer of audit records has stopped above.
+		if s.ownedAudit != nil {
+			if err := s.ownedAudit.Close(); err != nil {
+				slog.Warn("appbuild: closing the audit sink failed", "error", err)
+			}
+			s.ownedAudit = nil
+		}
+		if s.onClose != nil {
+			s.onClose()
 		}
 	})
 	return s.closeErr

@@ -323,7 +323,7 @@ var fixedRouteWords = map[string]bool{
 	"_export": true, "_feeds": true, "_gantts": true, "_git": true, "_history": true,
 	"_lifetimes": true, "_mcp": true, "_me": true, "_nav_items": true, "_nav_status": true,
 	"_next_action": true, "_openapi.json": true, "_palette": true, "_piles": true, "_position": true,
-	"_relation_history": true, "_schema": true, "_search": true, "_settings": true,
+	"_reconcile": true, "_relation_history": true, "_schema": true, "_search": true, "_settings": true,
 	"_sidebar": true, "_sidepanel": true, "_task_item_conversions": true, "_templates": true, "_theme": true,
 	"_transforms": true, "_views": true,
 }

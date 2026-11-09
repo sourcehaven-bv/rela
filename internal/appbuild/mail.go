@@ -39,14 +39,17 @@ func startMail(paths *project.Context) (ob *mail.Outbox, stop func()) {
 	if paths != nil {
 		src = hostconfig.Dir(paths.CacheDir)
 	}
-	runtime, stop := startMailRuntime(src)
+	runtime, stop := startMailRuntime(src, nil)
 	if runtime == nil {
 		return nil, stop
 	}
 	return runtime.outbox, stop
 }
 
-func startMailRuntime(src mail.Source) (runtime *mailRuntime, stop func()) {
+// transport, when non-nil, replaces the transport mail.yaml names
+// ([WithMailTransport]); the file is still parsed, and without it mail stays
+// off.
+func startMailRuntime(src mail.Source, transport mail.Sender) (runtime *mailRuntime, stop func()) {
 	noop := func() {}
 
 	if src == nil {
@@ -67,10 +70,12 @@ func startMailRuntime(src mail.Source) (runtime *mailRuntime, stop func()) {
 		return nil, noop
 	}
 
-	sender, err := mail.SenderFor(cfg)
-	if err != nil {
-		slog.Warn("mail: disabled — cannot build sender", "error", err)
-		return nil, noop
+	sender := transport
+	if sender == nil {
+		if sender, err = mail.SenderFor(cfg); err != nil {
+			slog.Warn("mail: disabled — cannot build sender", "error", err)
+			return nil, noop
+		}
 	}
 
 	outbox, err := mail.NewOutbox(sender, mail.OutboxConfig{})

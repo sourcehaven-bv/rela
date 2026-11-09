@@ -12,15 +12,20 @@ import (
 // It writes to a temporary file, fsyncs it, then renames over the target path.
 // This prevents partial writes from corrupting files if the process crashes.
 //
-// Note: The atomic write uses os directly for fsync support. SafeFS is
-// intended for production use wrapping OsFS — it does not make sense to
-// wrap MemFS with SafeFS.
+// Note: The atomic write uses os directly for fsync support, so it runs only
+// when the wrapped FS is an [*OsFS]. Over any other FS, WriteFile writes
+// through that FS: a file backend that wraps whatever FS it is handed in
+// SafeFS (filecomments, filemigstate) must not write to disk when that FS is
+// in memory (TKT-J4HMZ2B). An allowlist rather than a [MemFS] check, so a
+// wrapper around a MemFS cannot slip through to os either. Production wraps
+// OsFS, or a SafeFS over OsFS, so its writes stay atomic.
 //
 // # Post-write observation
 //
 // SafeFS exposes an observer hook via OnPostWrite. Each installed
 // observer fires exactly once per successful durable write, with the
-// bytes that sit on disk after the atomic rename. Failed writes (the
+// bytes the wrapped FS holds after the write (on disk, after the atomic
+// rename). Failed writes (the
 // temp file was created but the rename failed) do NOT fire the hook.
 // The fsstore watcher uses this hook to hash self-writes so it can
 // skip its own fsnotify echoes.
@@ -50,6 +55,9 @@ func (s *SafeFS) OnPostWrite(obs WriteObserver) (remove func()) {
 //  4. Fsyncs the parent directory
 //  5. Fires the post-write observers with (path, data)
 //
+// Over an FS that is not an [*OsFS], steps 1-4 are a single WriteFile on
+// that FS.
+//
 // Steps 1-4 are performed even when no observer is installed. Step 5
 // is skipped if the rename fails — a failed write leaves no durable
 // bytes to observe.
@@ -65,6 +73,14 @@ func (s *SafeFS) WriteFile(path string, data []byte, perm os.FileMode) error {
 	// Ensure directory exists
 	if err := s.MkdirAll(dir, 0755); err != nil {
 		return err
+	}
+
+	if _, disk := s.FS.(*OsFS); !disk {
+		if err := s.FS.WriteFile(path, data, perm); err != nil {
+			return err
+		}
+		s.hook.fire(path, data)
+		return nil
 	}
 
 	// Create and write temp file using os directly for fsync support

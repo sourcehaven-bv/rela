@@ -17,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/remotesync"
 	"github.com/Sourcehaven-BV/rela/internal/rollup"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -43,12 +44,16 @@ type ValidateResult struct {
 	// SubscriptionsError is why subscriptions.yaml does not parse or
 	// validate. Nil when the file is valid or absent.
 	SubscriptionsError error
+	// RemotesError is why remotes.yaml does not parse or validate. Nil when
+	// the file is valid or absent.
+	RemotesError error
 }
 
 // HasErrors returns true if any validation failed.
 func (r *ValidateResult) HasErrors() bool {
 	return r.MetamodelError != nil || r.DataEntryError != nil || r.MailTemplatesError != nil ||
-		r.SchedulesError != nil || r.ConnectionsError != nil || r.SubscriptionsError != nil
+		r.SchedulesError != nil || r.ConnectionsError != nil || r.SubscriptionsError != nil ||
+		r.RemotesError != nil
 }
 
 // Validate validates project configuration files (metamodel.yaml, data-entry.yaml)
@@ -113,6 +118,7 @@ func ValidateWithFS(ctx context.Context, startDir string, fs storage.FS) (*Valid
 	result.MailTemplatesPresent, _ = fileExists(filepath.Join(proj.Root, mailtemplate.ConfigFile), fs)
 	result.ConnectionsError = validateConnections(proj.Root, fs)
 	result.SubscriptionsError = validateSubscriptions(ctx, proj.Root, mm, fs)
+	result.RemotesError = validateRemotes(ctx, proj.Root, mm, fs)
 
 	return result, nil
 }
@@ -147,6 +153,20 @@ func validateSubscriptions(ctx context.Context, root string, mm *metamodel.Metam
 		return err
 	}
 	return nil
+}
+
+// validateRemotes checks remotes.yaml with the scheduler's own remote loader. It
+// reads remotes.yaml alone, so an error in schedules.yaml or
+// subscriptions.yaml neither hides nor repeats on this line.
+func validateRemotes(ctx context.Context, root string, mm *metamodel.Metamodel, fs storage.FS) error {
+	if exists, _ := fileExists(filepath.Join(root, remotesync.FileName), fs); !exists || mm == nil {
+		return nil
+	}
+	remotes, err := scheduler.LoadRemotes(ctx, config.NewFSLoader(fs, root), mm)
+	if err != nil {
+		return err
+	}
+	return scheduler.AddRemotes(&scheduler.Config{}, remotes)
 }
 
 func validateScheduledMail(root string, mm *metamodel.Metamodel, fs storage.FS) (mailErr, schedulesErr error) {

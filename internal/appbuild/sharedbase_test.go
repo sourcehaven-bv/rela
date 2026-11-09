@@ -418,7 +418,7 @@ func TestOpenAndAssemble_RefusesReassemblyBase(t *testing.T) {
 	base := newSharedBase(t)
 	prev := assembleOver(t, base)
 	t.Cleanup(func() { _ = prev.Close() })
-	svc, err := base.ForReassembly(prev).OpenAndAssemble(context.Background(), "host=tenant-a")
+	svc, err := base.ForReassembly(prev).OpenAndAssemble(context.Background(), "host=tenant-a", audit.Nop{})
 	if err == nil {
 		_ = svc.Close()
 		t.Fatal("OpenAndAssemble must refuse a reassembly base")
@@ -432,7 +432,7 @@ func TestOpenAndAssemble_RefusesReassemblyBase(t *testing.T) {
 // refused with an error about the tenant, not about RELA_DATABASE_URL.
 func TestOpenAndAssemble_RefusesEmptyDSN(t *testing.T) {
 	base := newSharedBase(t)
-	svc, err := base.OpenAndAssemble(context.Background(), "")
+	svc, err := base.OpenAndAssemble(context.Background(), "", audit.Nop{})
 	if err == nil {
 		_ = svc.Close()
 		t.Fatal("OpenAndAssemble must refuse an empty DSN")

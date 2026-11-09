@@ -5,7 +5,9 @@ title: Reconcile client and rela reconcile diff command
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-11-07"
+completed: "2026-11-08"
+status: done
 ---
 
 ## Description
@@ -25,3 +27,12 @@ result.
 
 - An end-to-end test against a test server shows correct added, changed and gone sets.
 - Docs for the command in `docs-project/`.
+
+## Notes
+
+- The wire types of `_reconcile` live in `internal/reconwire`, shared by the
+  handler and the client, so the client does not depend on `apiwire`.
+- A per-range problem names its range with the JSON pointer `/ranges/<index>`.
+- The client reads the local side through `reconclient.Visible` and does not
+  import `reconcile`.
+- Content fetch for changed rows is left to the declarative pull (step 8).

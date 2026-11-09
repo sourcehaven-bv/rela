@@ -1,7 +1,6 @@
 package lua
 
 import (
-	"maps"
 	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/secrets"
@@ -126,8 +125,9 @@ func (c Capabilities) Any() bool {
 		c.AllTokens || len(c.Tokens) > 0
 }
 
-// AllowsSecret reports whether name is exposed to the runtime. The token
-// store key is never exposed, not even under [Capabilities.AllSecrets].
+// AllowsSecret reports whether name is exposed to the runtime. A secret that
+// [secrets.ScriptReadable] refuses is never exposed, not even under
+// [Capabilities.AllSecrets].
 func (c Capabilities) AllowsSecret(name string) bool {
 	if !secrets.ScriptReadable(name) {
 		return false
@@ -153,8 +153,11 @@ func (c Capabilities) anyTokens() bool {
 func (c Capabilities) filterSecrets(all map[string]string) map[string]string {
 	if c.AllSecrets {
 		out := make(map[string]string, len(all))
-		maps.Copy(out, all)
-		delete(out, secrets.TokenKey)
+		for name, v := range all {
+			if secrets.ScriptReadable(name) {
+				out[name] = v
+			}
+		}
 		return out
 	}
 	out := make(map[string]string, len(c.Secrets))

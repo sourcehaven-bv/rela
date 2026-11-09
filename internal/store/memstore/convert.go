@@ -2,7 +2,6 @@ package memstore
 
 import (
 	"context"
-	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -37,7 +36,7 @@ func replaceEntityFamily(_ context.Context, m *MemStore, id string, replacements
 	// Bare-id observers index the family under one id; drop it before the
 	// rows come back under the new type.
 	m.notifyLastFaceDelete(id)
-	now := time.Now()
+	now := m.clock()
 	for _, r := range replacements {
 		row := r.Entity.Clone()
 		row.UpdatedAt = now

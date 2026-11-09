@@ -116,7 +116,7 @@ jobs:
         run: go test -v -race -shuffle=on -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Check coverage thresholds
-        uses: vladopajic/go-test-coverage@v2.20.1
+        uses: vladopajic/go-test-coverage@v2.21.0
         with:
           config: .testcoverage.yml
           github-action-output: true
@@ -943,38 +943,54 @@ jobs:
       - name: Assert dependency isolation
         run: |
           set -euo pipefail
+          # forbid PATTERN ARGS... fails the step when `go list -deps ARGS`
+          # names a package matching PATTERN. Not `! go list | grep -q`: bash's
+          # set -e ignores a pipeline negated with `!`, so such a line never
+          # failed the step, and a SIGPIPE from `grep -q` could mask a match.
+          forbid() {
+            local pattern=$1 deps
+            shift
+            deps=$(go list -deps "$@")
+            if grep -q "$pattern" <<<"$deps"; then
+              echo "FAIL: go list -deps $* links $pattern"
+              exit 1
+            fi
+          }
           echo "default build must not link pgx:"
-          ! go list -deps ./cmd/rela-server | grep -q 'jackc/pgx'
-          ! go list -deps ./cmd/rela        | grep -q 'jackc/pgx'
+          forbid 'jackc/pgx' ./cmd/rela-server
+          forbid 'jackc/pgx' ./cmd/rela
           echo "postgres build must not link bleve:"
-          ! go list -deps -tags postgres ./cmd/rela-server | grep -q 'blevesearch/bleve'
-          ! go list -deps -tags postgres ./cmd/rela        | grep -q 'blevesearch/bleve'
+          forbid 'blevesearch/bleve' -tags postgres ./cmd/rela-server
+          forbid 'blevesearch/bleve' -tags postgres ./cmd/rela
+          echo "the untagged in-memory recipe (appbuild.NewInMemory) is in every build,"
+          echo "so it must stay on memstore + LinearSearch, never bleve (TKT-J4HMZ2B):"
+          forbid 'blevesearch/bleve' -tags postgres ./internal/appbuild
+          go list -deps -tags postgres ./internal/appbuild   | grep 'internal/store/memstore$' >/dev/null
           echo "only rela-docs links chromedp (screenshot{} browser capture):"
-          ! go list -deps ./cmd/rela        | grep -q 'chromedp/chromedp'
-          ! go list -deps ./cmd/rela-server | grep -q 'chromedp/chromedp'
-          ! go list -deps -tags postgres ./cmd/rela        | grep -q 'chromedp/chromedp'
-          ! go list -deps -tags postgres ./cmd/rela-server | grep -q 'chromedp/chromedp'
+          forbid 'chromedp/chromedp' ./cmd/rela
+          forbid 'chromedp/chromedp' ./cmd/rela-server
+          forbid 'chromedp/chromedp' -tags postgres ./cmd/rela
+          forbid 'chromedp/chromedp' -tags postgres ./cmd/rela-server
           echo "both rela-docs builds link it: screenshot{} is supported on either backend,"
           echo "and history figures REQUIRE postgres (versioning is a pg-only capability)."
           # POSITIVE assertions use grep WITHOUT -q: `grep -q` exits on the first
           # match, which SIGPIPEs a `go list` that is still writing, and pipefail
           # turns that into exit 141. It only bites when `go list` is slow enough
-          # to still be producing output — i.e. when it is downloading modules —
-          # so the negated assertions above are unaffected (no match means grep
-          # reads to EOF) and this one fails only on a cold module cache.
+          # to still be producing output — i.e. when it is downloading modules.
+          # forbid avoids it by capturing the list first.
           go list -deps ./cmd/rela-docs                    | grep 'chromedp/chromedp' >/dev/null
           go list -deps -tags postgres ./cmd/rela-docs     | grep 'chromedp/chromedp' >/dev/null
           echo "no release build links the seqtrace runtime (overlay builds only):"
-          ! go list -deps ./cmd/rela ./cmd/rela-server                | grep -q 'tools/seqtrace'
-          ! go list -deps -tags postgres ./cmd/rela ./cmd/rela-server | grep -q 'tools/seqtrace'
+          forbid 'tools/seqtrace' ./cmd/rela ./cmd/rela-server
+          forbid 'tools/seqtrace' -tags postgres ./cmd/rela ./cmd/rela-server
           echo "no build but the sqlite one links the sqlite driver:"
-          ! go list -deps ./cmd/rela-server                | grep -q 'modernc.org/sqlite'
-          ! go list -deps ./cmd/rela                       | grep -q 'modernc.org/sqlite'
-          ! go list -deps -tags postgres ./cmd/rela-server | grep -q 'modernc.org/sqlite'
-          ! go list -deps -tags postgres ./cmd/rela        | grep -q 'modernc.org/sqlite'
+          forbid 'modernc.org/sqlite' ./cmd/rela-server
+          forbid 'modernc.org/sqlite' ./cmd/rela
+          forbid 'modernc.org/sqlite' -tags postgres ./cmd/rela-server
+          forbid 'modernc.org/sqlite' -tags postgres ./cmd/rela
           echo "the sqlite build must NOT link pgx:"
-          ! go list -deps -tags sqlite ./cmd/rela-server | grep -q 'jackc/pgx'
-          ! go list -deps -tags sqlite ./cmd/rela        | grep -q 'jackc/pgx'
+          forbid 'jackc/pgx' -tags sqlite ./cmd/rela-server
+          forbid 'jackc/pgx' -tags sqlite ./cmd/rela
           echo "the sqlite build DOES link bleve and the sqlite driver (it uses both):"
           go list -deps -tags sqlite ./cmd/rela-server | grep 'blevesearch/bleve' >/dev/null
           go list -deps -tags sqlite ./cmd/rela-server | grep 'modernc.org/sqlite' >/dev/null
@@ -982,8 +998,8 @@ jobs:
           echo "root, so a seed can no longer escape into a real database (TKT-SK2QQW)."
           go list -deps -tags sqlite ./cmd/rela-docs | grep 'chromedp/chromedp' >/dev/null
           echo "rela-desktop links the default backend only:"
-          ! go list -deps ./cmd/rela-desktop | grep -q 'jackc/pgx'
-          ! go list -deps ./cmd/rela-desktop | grep -q 'modernc.org/sqlite'
+          forbid 'jackc/pgx' ./cmd/rela-desktop
+          forbid 'modernc.org/sqlite' ./cmd/rela-desktop
           echo "OK: backends and the browser dependency are isolated."
 
       # Backend tags are mutually exclusive by construction: each recipe
@@ -994,9 +1010,9 @@ jobs:
       - name: Assert conflicting backend tags fail loudly
         run: |
           set -euo pipefail
-          ! go build -tags sqlite,postgres      ./internal/appbuild/ 2>/dev/null
-          ! go build -tags sqlite,memorybackend ./internal/appbuild/ 2>/dev/null
-          ! go build -tags postgres,memorybackend ./internal/appbuild/ 2>/dev/null
+          if go build -tags sqlite,postgres ./internal/appbuild/ 2>/dev/null; then echo "FAIL: -tags sqlite,postgres built"; exit 1; fi
+          if go build -tags sqlite,memorybackend ./internal/appbuild/ 2>/dev/null; then echo "FAIL: -tags sqlite,memorybackend built"; exit 1; fi
+          if go build -tags postgres,memorybackend ./internal/appbuild/ 2>/dev/null; then echo "FAIL: -tags postgres,memorybackend built"; exit 1; fi
           echo "OK: conflicting backend tags are rejected at compile time."
 
       # cmd/rela-desktop links Wails v3, whose Linux build needs GTK4 +

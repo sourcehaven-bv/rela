@@ -135,6 +135,12 @@ func (s *Service) WithTraversals(b TraversalBinder) *Service {
 // metamodel, built once.
 func (s *Service) evaluator() *predicatefns.Evaluator {
 	s.evOnce.Do(func() {
+		// The deps' clock, so today() in a rule agrees with rela.today in
+		// its Lua and with the rest of the world (lua.Seams).
+		if now := s.deps.Seams.Clock; now != nil {
+			s.ev = predicatefns.NewEvaluatorWithClock(s.deps.Meta, now)
+			return
+		}
 		s.ev = predicatefns.NewEvaluator(s.deps.Meta)
 	})
 	return s.ev

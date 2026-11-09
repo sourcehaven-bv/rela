@@ -19,6 +19,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentrywire"
 	"github.com/Sourcehaven-BV/rela/internal/jwtauth"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
+	"github.com/Sourcehaven-BV/rela/internal/tenanthost"
 )
 
 // drainLimit bounds how long a retired generation waits for its requests
@@ -80,7 +81,14 @@ type server struct {
 	accessLog *slog.Logger
 	// collab is the co-editing relay (TKT-CJL604). One for the process, so
 	// a room keeps its document while its peers move to a new generation.
+	// Nil in tenant mode, where each tenant has its own: rooms are keyed by
+	// entity type and id, so one relay would join two tenants' peers in one
+	// room.
 	collab *dataentry.CollabRelay
+	// assertion is the verifier the JWT gate of every app uses, nil outside
+	// JWT identity. In tenant mode it reuses the host's verification
+	// (tenanthost.ReuseAssertion).
+	assertion tenanthost.AssertionVerifier
 
 	cur atomic.Pointer[generation]
 	// retiring closes when the latest retirement has finished. Each
@@ -116,6 +124,9 @@ func newServer(f *serverFlags, svc *appbuild.Services, accessLog *slog.Logger) (
 	// One verifier for the identity gate and the webhook receiver, so the
 	// JWKS is fetched a single time (nil when JWT identity is disabled).
 	s.idv = buildIdentityVerifier(context.Background(), f)
+	if s.idv != nil {
+		s.assertion = assertionVerifierAdapter{s.idv}
+	}
 	if s.webhook, err = buildWebhookVerifier(f, s.idv); err != nil {
 		return nil, err
 	}
@@ -219,7 +230,7 @@ func (s *server) pause(ctx context.Context, g *generation) (resume func(), err e
 // scheduler. Every failure is returned: at startup the caller exits, and
 // during a Configure save the old generation keeps serving.
 func (s *server) build(svc *appbuild.Services) (*generation, error) {
-	app, err := s.buildApp(svc)
+	app, err := s.buildApp(svc, s.collab, s.identity())
 	if err != nil {
 		return nil, err
 	}
@@ -230,9 +241,30 @@ func (s *server) build(svc *appbuild.Services) (*generation, error) {
 		dataentry.WithAccessLog(s.accessLog), dataentry.WithQueryCeiling(s.f.queryCeiling))}, nil
 }
 
-// buildApp builds the data-entry app over svc with the process's identity,
-// security and Configure settings.
-func (s *server) buildApp(svc *appbuild.Services) (*dataentry.App, error) {
+// appIdentity is the verifiers one app's JWT gate and IdP webhook receiver
+// use. Either may be nil: no assertion verifier outside JWT mode, no webhook
+// verifier without -webhook-secret.
+type appIdentity struct {
+	assertion tenanthost.AssertionVerifier
+	webhook   tenanthost.WebhookVerifier
+}
+
+// identity returns the process-wide verifiers single-tenant mode builds
+// every generation with.
+func (s *server) identity() appIdentity {
+	id := appIdentity{assertion: s.assertion}
+	if s.webhook != nil {
+		id.webhook = webhookVerifierAdapter{s.webhook}
+	}
+	return id
+}
+
+// buildApp builds the data-entry app over svc with the given identity
+// verifiers and the process's security and Configure settings, joined to the
+// co-editing relay.
+func (s *server) buildApp(
+	svc *appbuild.Services, relay *dataentry.CollabRelay, ident appIdentity,
+) (*dataentry.App, error) {
 	fieldResolver, err := dataentry.ResolverFromServices(svc)
 	if err != nil {
 		return nil, fmt.Errorf("build affordance resolver: %w", err)
@@ -266,15 +298,15 @@ func (s *server) buildApp(svc *appbuild.Services) (*dataentry.App, error) {
 
 	// The order is load-bearing: wireRemoteMCP refuses to enable MCP unless
 	// the JWT gate is installed.
-	if err := wirePrincipalResolvers(app, s.f, s.idv, s.mode); err != nil {
+	if err := wirePrincipalResolvers(app, s.f, ident.assertion, s.mode); err != nil {
 		return nil, err
 	}
-	if s.webhook != nil {
+	if ident.webhook != nil {
 		roles := appbuild.IDPRoles(svc)
 		if roles == nil {
 			return nil, errors.New("IdP webhook: the services have no role store")
 		}
-		app.SetWebhookReceiver(webhookVerifierAdapter{s.webhook}, s.f.webhookAction, roles)
+		app.SetWebhookReceiver(ident.webhook, s.f.webhookAction, roles)
 	}
 	if err := wireRemoteMCP(app, svc, s.f); err != nil {
 		return nil, fmt.Errorf("enable remote MCP: %w", err)
@@ -282,7 +314,7 @@ func (s *server) buildApp(svc *appbuild.Services) (*dataentry.App, error) {
 	if s.configure != nil {
 		dataentry.SetConfigure(app, s.configure)
 	}
-	if err := dataentry.EnableCollab(app, s.collab); err != nil {
+	if err := dataentry.EnableCollab(app, relay); err != nil {
 		return nil, err
 	}
 	return app, nil

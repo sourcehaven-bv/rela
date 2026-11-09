@@ -147,6 +147,11 @@ type ReadDeps struct {
 	// Nil: accepted. The binding then raises "role holders are not available
 	// in this context".
 	RoleHolders RoleHolders
+
+	// Seams replaces the clock, outbound HTTP, the AI provider, the mail
+	// transport and the write_file directory for every runtime built from
+	// these deps. The zero value replaces nothing; see [Seams].
+	Seams Seams
 }
 
 // ProjectFiles reads operator-authored project files by slash path relative

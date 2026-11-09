@@ -40,6 +40,7 @@ func TestParseConnections(t *testing.T) {
 		{"missing style", "    style: launchpad\n", "", "style"},
 		{"bad secret name", "basecamp_client_id", "has space", "client_id_secret"},
 		{"token key as client secret", "basecamp_client_secret", "token_key", "token store key"},
+		{"remote credential as client secret", "basecamp_client_secret", "remote_credential.up", "only for remotes.yaml"},
 		{"bad connection name", "  basecamp:", "  Basecamp:", "invalid connection name"},
 		{"unknown field", "style: launchpad", "style: launchpad\n    scope: x", "scope"},
 		{"control char in user agent", `"rela-basecamp (ops@example.com)"`, `"a\tb"`, "user_agent"},

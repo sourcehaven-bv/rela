@@ -482,16 +482,11 @@ func (q *neoqQueue) dispatch(ctx context.Context) error {
 
 // Close implements [Queue].
 //
-// KNOWN LEAK (upstream): neoq starts a robfig/cron goroutine per backend and
-// never stops it — its Shutdown cancels contexts but does not call cron.Stop.
-// Verified: 20 create/close cycles leak exactly 20 goroutines. There is no
-// handle exposed for us to stop it.
-//
-// Bounded and harmless for a single long-lived process, which is every current
-// caller. It is NOT harmless if rela ever assembles one Services per tenant
-// and evicts them (appbuild.SharedBase documents that shape): each eviction
-// would leak a goroutine permanently. Fix upstream before relying on tenant
-// churn.
+// Once the handlers have returned, no goroutine the queue started remains, so
+// a process may open and close queues freely, as tenant eviction does. neoq's
+// memory backend used to leak its cron goroutine on every close; the neoq fork
+// pinned in go.mod fixes that (TKT-736J0CZ), and the CloseReleasesGoroutines
+// tests pin it.
 //
 // When ctx ends before the handlers return, the goroutine that waits for them
 // lives on until they do.

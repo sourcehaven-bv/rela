@@ -309,3 +309,21 @@ func TestPostgresQueue_CloseLifecycle(t *testing.T) {
 	require.NoError(t, q.Close(ctx))
 	require.Error(t, q.Start(ctx))
 }
+
+// TestPostgresQueue_CloseReleasesGoroutines: closing a postgres queue leaves
+// no goroutine behind, so tenant eviction does not accumulate them. neoq's
+// postgres backend already stopped its cron; this guards the listener, the
+// pool and the dispatch goroutines (TKT-736J0CZ).
+func TestPostgresQueue_CloseReleasesGoroutines(t *testing.T) {
+	admin := os.Getenv("RELA_TEST_DATABASE_URL")
+	if admin == "" {
+		t.Skip("RELA_TEST_DATABASE_URL not set; skipping postgres queue goroutine check")
+	}
+	dsn := schemaPinnedDSN(t, admin, "rela_jobs_goroutines_test")
+	requireCloseReleasesGoroutines(t, func(t *testing.T) jobs.Queue {
+		t.Helper()
+		q, err := jobs.NewPostgresQueue(context.Background(), discardLogger(), dsn)
+		require.NoError(t, err)
+		return q
+	})
+}

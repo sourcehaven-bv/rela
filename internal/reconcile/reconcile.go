@@ -67,6 +67,7 @@ package reconcile
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"math/bits"
 
@@ -168,6 +169,50 @@ func (e Element) Fingerprint() Fingerprint {
 // the high 64 bits. The zero value is the fingerprint of the empty set.
 type Fingerprint struct {
 	Hi, Lo uint64
+}
+
+// fingerprintHexLen is the length of [Fingerprint.String]: 128 bits in hex.
+const fingerprintHexLen = 32
+
+// String returns f as 32 lower-case hex digits, the high bits first. It is
+// the form a fingerprint takes on the wire (RR-MDMA4S5).
+func (f Fingerprint) String() string {
+	var b [16]byte
+	binary.BigEndian.PutUint64(b[0:8], f.Hi)
+	binary.BigEndian.PutUint64(b[8:16], f.Lo)
+	return hex.EncodeToString(b[:])
+}
+
+// ParseFingerprint returns the fingerprint whose [Fingerprint.String] form
+// is s. Only that form is accepted: 32 lower-case hex digits.
+func ParseFingerprint(s string) (Fingerprint, error) {
+	if len(s) != fingerprintHexLen {
+		return Fingerprint{}, fmt.Errorf("reconcile: fingerprint has %d characters, want %d", len(s), fingerprintHexLen)
+	}
+	for i := range len(s) {
+		if c := s[i]; (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return Fingerprint{}, fmt.Errorf("reconcile: fingerprint has a character outside 0-9a-f at %d", i)
+		}
+	}
+	var b [16]byte
+	if _, err := hex.Decode(b[:], []byte(s)); err != nil { // coverage-ignore: the loop above admits only hex
+		return Fingerprint{}, fmt.Errorf("reconcile: %w", err)
+	}
+	return Fingerprint{Hi: binary.BigEndian.Uint64(b[0:8]), Lo: binary.BigEndian.Uint64(b[8:16])}, nil
+}
+
+// MarshalText returns the [Fingerprint.String] form, so a fingerprint
+// encodes as a JSON string.
+func (f Fingerprint) MarshalText() ([]byte, error) { return []byte(f.String()), nil }
+
+// UnmarshalText parses the [Fingerprint.String] form with [ParseFingerprint].
+func (f *Fingerprint) UnmarshalText(b []byte) error {
+	v, err := ParseFingerprint(string(b))
+	if err != nil {
+		return err
+	}
+	*f = v
+	return nil
 }
 
 // Add returns f + g modulo 2^128.

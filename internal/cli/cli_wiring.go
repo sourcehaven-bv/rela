@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/analysis"
@@ -15,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/reconclient"
 	"github.com/Sourcehaven-BV/rela/internal/renametype"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -24,6 +26,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/tokenstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // readServices is the read-only capability bundle CLI commands bind to.
@@ -139,6 +142,7 @@ type cliBundles struct {
 	leases     *leaseServices
 	channels   *channelServices
 	flows      *flowServices
+	reconcile  *reconcileServices
 }
 
 // newCLIBundles wires the focused services around an already-constructed
@@ -240,8 +244,19 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 	if c := appbuild.FlowControlFor(svc); c != nil {
 		flows.Ctl = c
 	}
+	// Built on first use: only `rela reconcile` reads element ranges.
+	recon := &reconcileServices{Meta: svc.Meta(), Local: func() (reconclient.Local, error) {
+		el, err := appbuild.Elements(svc)
+		if err != nil {
+			return nil, err
+		}
+		return visibleLocal{x: el}, nil
+	}, Secret: func(name string) (string, error) {
+		return globalSecret(svc.Paths().CacheDir, name)
+	}}
 	return &cliBundles{
 		flows:      flows,
+		reconcile:  recon,
 		leases:     leases,
 		channels:   channels,
 		read:       &read,
@@ -250,4 +265,42 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		renametype: rt,
 		analysis:   an,
 	}, nil
+}
+
+// visibleLocal adapts the gated element reader to the local side of a
+// reconcile run.
+type visibleLocal struct{ x *visibility.Elements }
+
+func (v visibleLocal) Sum(ctx context.Context, types reconclient.Types, r store.ElementRange) (reconclient.Sum, error) {
+	rg, err := v.x.Fingerprint(ctx, visibility.ElementTypes(types), r)
+	if err != nil {
+		return reconclient.Sum{}, localRefusal(err)
+	}
+	return reconclient.Sum{Count: rg.Count, Fingerprint: rg.Sum.String()}, nil
+}
+
+func (v visibleLocal) List(
+	ctx context.Context, types reconclient.Types, r store.ElementRange, limit int,
+) (reconclient.Page, error) {
+	page, err := v.x.List(ctx, visibility.ElementTypes(types), r, limit)
+	if err != nil {
+		return reconclient.Page{}, localRefusal(err)
+	}
+	rows := make([]reconclient.Row, len(page.Elements))
+	for i, e := range page.Elements {
+		rows[i] = reconclient.Row{Address: e.Address, Hash: e.Hash}
+	}
+	return reconclient.Page{Rows: rows, Last: page.Last, More: page.More}, nil
+}
+
+// localRefusal marks the element reader's refusals with the reconcile
+// client's own, so the run splits or skips the range.
+func localRefusal(err error) error {
+	switch {
+	case errors.Is(err, visibility.ErrRangeTooLarge):
+		return fmt.Errorf("%w: %w", reconclient.ErrRangeTooLarge, err)
+	case errors.Is(err, visibility.ErrRelationMetaGated):
+		return fmt.Errorf("%w: %w", reconclient.ErrRelationMetaGated, err)
+	}
+	return err
 }

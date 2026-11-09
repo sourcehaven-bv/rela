@@ -34,6 +34,7 @@ func (g *Generator) addSystemPaths(spec *Spec) {
 
 	g.addLeaseRoutes(spec)
 	g.addBatchRoute(spec)
+	g.addReconcileRoute(spec)
 	addChannelSchemaPath(spec)
 
 	// The SSE stream and the git routes are left out: they are browser

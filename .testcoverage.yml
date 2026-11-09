@@ -146,6 +146,10 @@ override:
     threshold: 90 # the webhook and feed write path, including the per-value flattening guard
   - path: ^internal/subscription$
     threshold: 85 # feed polling: untrusted content, redirects and dedupe state
+  - path: ^internal/reconclient$
+    threshold: 85 # validates every answer of an untrusted remote
+  - path: ^internal/reconclient/httpremote$
+    threshold: 85 # credentials and untrusted HTTP answers
   - path: ^internal/lua$
     threshold: 80
   - path: ^internal/imgproc$

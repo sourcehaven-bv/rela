@@ -5,7 +5,9 @@ title: 'rela-server: multi-tenant host that routes a verified org_id to its tena
 kind: enhancement
 priority: high
 effort: l
-status: backlog
+started: "2026-11-08"
+completed: "2026-11-08"
+status: done
 ---
 
 ## Description
@@ -33,6 +35,9 @@ response and never reaches a store. Log unknown-org and lookup failure
 differently (`tenant.ErrUnknownTenant`).
 - Routes that need no tenant (health checks, static assets, the IdP
 webhook) are decided explicitly and listed.
+- Tenant apps get no peer keys (TKT-H91N91L). Every tenant shares the
+project's secrets, so a peer key would be one credential valid in every
+tenant. `TestTenantMode_IgnoresPeerKeys` pins it.
 
 ## Out of scope
 

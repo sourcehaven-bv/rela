@@ -263,3 +263,65 @@ func TestSafeFS_OnPostWrite_FanOutAndRemove(t *testing.T) {
 		t.Errorf("nil install disturbed the registry: bCalls = %d", bCalls)
 	}
 }
+
+// Over anything but an OsFS, SafeFS must write through the wrapped FS and
+// leave the disk alone: the atomic path uses os calls, which would put the
+// file on disk at the same path (TKT-J4HMZ2B).
+func TestSafeFS_WriteFileOverNonDiskFSStaysInMemory(t *testing.T) {
+	tests := []struct {
+		name string
+		wrap func(*MemFS) FS
+	}{
+		{"memfs", func(m *MemFS) FS { return m }},
+		{"safefs over memfs", func(m *MemFS) FS { return NewSafeFS(m) }},
+		{"error fs over memfs", func(m *MemFS) FS { return NewErrorFS(m) }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			mem := NewMemFS()
+			sfs := NewSafeFS(tc.wrap(mem))
+			var observed []string
+			sfs.OnPostWrite(func(p string, _ []byte) { observed = append(observed, p) })
+
+			path := filepath.Join(dir, "sub", "state.json")
+			data := []byte("in memory")
+			if err := sfs.WriteFile(path, data, 0o644); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+
+			got, err := mem.ReadFile(path)
+			if err != nil || !bytes.Equal(got, data) {
+				t.Fatalf("MemFS ReadFile() = %q, %v; want %q", got, err, data)
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 0 {
+				t.Errorf("disk directory has %d entries, want none", len(entries))
+			}
+			if len(observed) != 1 || observed[0] != path {
+				t.Errorf("observers saw %v, want [%s]", observed, path)
+			}
+		})
+	}
+}
+
+// A SafeFS over a SafeFS over the disk still writes atomically: the outer one
+// delegates and the inner one does the temp-file rename.
+func TestSafeFS_NestedOverDiskLeavesNoTemp(t *testing.T) {
+	dir := t.TempDir()
+	sfs := NewSafeFS(NewSafeFS(NewOsFS()))
+	path := filepath.Join(dir, "nested.txt")
+	if err := sfs.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "nested.txt" {
+		t.Errorf("directory holds %v, want only nested.txt", entries)
+	}
+}

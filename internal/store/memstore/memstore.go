@@ -111,6 +111,11 @@ type MemStore struct {
 	// marked holds the families taken out of the live maps by a soft
 	// delete, keyed by bare id (see softdelete.go).
 	marked map[string]*markedFamily
+
+	// clock stamps UpdatedAt and soft deletes; see [WithClock].
+	//
+	// Nil: never — New defaults it to the wall clock.
+	clock func() time.Time
 }
 
 type attachment struct {
@@ -139,12 +144,24 @@ func WithObserver(o store.EntityObserver) Option {
 	}
 }
 
+// WithClock sets the clock that stamps UpdatedAt on every write and the time
+// of a soft delete. Without it the store reads the wall clock. A nil now is
+// ignored.
+func WithClock(now func() time.Time) Option {
+	return func(m *MemStore) {
+		if now != nil {
+			m.clock = now
+		}
+	}
+}
+
 func New(opts ...Option) *MemStore {
 	m := &MemStore{
 		entities:    make(map[string]*entity.Entity),
 		relations:   make(map[string]*entity.Relation),
 		attachments: make(map[string]*attachment),
 		subscribers: make(map[int]chan store.Event),
+		clock:       time.Now,
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -572,7 +589,7 @@ func (m *MemStore) createEntity(_ context.Context, e *entity.Entity) error {
 
 	stored := e.Clone()
 	stored.Redacted = nil // per-reader ACL artifact, never content (RR-KBWJPV)
-	stored.UpdatedAt = time.Now()
+	stored.UpdatedAt = m.clock()
 	m.entities[key] = stored
 	m.entityOrder = entityInsert(m.entityOrder, key)
 	m.notifyPut(stored)
@@ -629,7 +646,7 @@ func (m *MemStore) updateEntityIf(
 
 	stored := e.Clone()
 	stored.Redacted = nil // per-reader ACL artifact, never content (RR-KBWJPV)
-	stored.UpdatedAt = time.Now()
+	stored.UpdatedAt = m.clock()
 	m.entities[key] = stored
 	m.notifyPut(stored)
 
@@ -829,7 +846,7 @@ func (m *MemStore) rekeyFamily(family []famEntry, newID string) []*entity.Entity
 	for _, fe := range family {
 		r := fe.e.Clone()
 		r.ID = newID
-		r.UpdatedAt = time.Now()
+		r.UpdatedAt = m.clock()
 		newKey := entity.FormatStateRef(newID, r.Face)
 		m.entities[newKey] = r
 		delete(m.entities, fe.key)
@@ -1052,7 +1069,7 @@ func (m *MemStore) createRelation(
 
 	r := entity.NewRelation(k.From, k.Type, k.To)
 	r.FromFace = k.FromFace // tail face is identity (TKT-DOFYR1)
-	r.UpdatedAt = time.Now()
+	r.UpdatedAt = m.clock()
 	if data != nil {
 		r.Content = data.Content
 		if data.Properties != nil {
@@ -1109,7 +1126,7 @@ func (m *MemStore) updateRelation(
 	} else {
 		updated.Properties = nil
 	}
-	updated.UpdatedAt = time.Now()
+	updated.UpdatedAt = m.clock()
 	m.relations[key] = updated
 
 	m.emit(store.Event{

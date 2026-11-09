@@ -597,6 +597,243 @@ body:
         }
       }
     },
+    "/api/v1/_reconcile": {
+      "post": {
+        "operationId": "reconcileRanges",
+        "summary": "Fingerprint or list element ranges for rela-to-rela sync",
+        "description": "Answers each range with the count and fingerprint of the elements you may read, or with a page of them. At most 32 ranges, 256 type names, 2000 listed rows and 512 KiB per request. A range that holds too many rows answers too_large: split it by type, then by address. Ranges cut off by the deadline answer not_run. The answer is yours alone and is never cached.",
+        "tags": [
+          "Reconcile"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ranges": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "after": {
+                          "type": "string",
+                          "description": "Exclusive lower bound: the last of a previous list answer"
+                        },
+                        "entities": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Entity types in scope; also the endpoint scope of a relation range"
+                        },
+                        "hi": {
+                          "type": "string",
+                          "description": "Exclusive upper bound; absent means unbounded"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "entity",
+                            "relation"
+                          ]
+                        },
+                        "limit": {
+                          "type": "integer",
+                          "description": "Page size of a list, 1 to 2000"
+                        },
+                        "lo": {
+                          "type": "string",
+                          "description": "Inclusive lower address bound"
+                        },
+                        "op": {
+                          "type": "string",
+                          "enum": [
+                            "fingerprint",
+                            "list"
+                          ]
+                        },
+                        "relations": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Relation types, for a relation range"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "entities",
+                        "op"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "ranges"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "One result per range, in request order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ranges": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "count": {
+                            "type": "integer"
+                          },
+                          "elements": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "address": {
+                                  "type": "string"
+                                },
+                                "hash": {
+                                  "type": "string",
+                                  "description": "View hash, 64 hex digits"
+                                }
+                              },
+                              "required": [
+                                "address",
+                                "hash"
+                              ]
+                            }
+                          },
+                          "fingerprint": {
+                            "type": "string",
+                            "description": "Sum of the element fingerprints modulo 2^128, 32 hex digits"
+                          },
+                          "last": {
+                            "type": "string",
+                            "description": "Address of the last row the page covered"
+                          },
+                          "more": {
+                            "type": "boolean"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "ok",
+                              "too_large",
+                              "not_run"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "status"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "ranges"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON, an unknown or repeated type, a bad range, or a limit exceeded",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request body too large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A relation type whose meta the policy can hide",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; see Retry-After",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "This server does not serve element ranges",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Too many reconcile requests are running; see Retry-After",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/_schema/channels": {
       "get": {
         "operationId": "getChannelSchema",

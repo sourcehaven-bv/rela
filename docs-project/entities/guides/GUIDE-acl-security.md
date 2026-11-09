@@ -774,7 +774,16 @@ read path deliberately does not have. A test
 so it cannot be mistaken for an omission, and fails the day a partial
 org check is added.
 
-If you need per-tenant separation today, model it in the graph:
+**Tenant mode is the exception, and it works below the ACL.** When the
+project directory of a postgres `rela-server` holds `tenants.yaml`, the
+server routes each request by its verified `org_id` to that org's own
+store, a schema of its own (TKT-D6MF3SW). The ACL still does not evaluate
+`org_id`: a request reaches one tenant's store and no other, so the roles it
+holds apply inside that tenant only. A request without a verified org, or
+with an org `tenants.yaml` does not name, is refused and opens no store. See
+GUIDE-postgres-backend, section "Tenant mode".
+
+Without tenant mode, if you need per-tenant separation, model it in the graph:
 containment edges plus `inherit_roles_through` scope roles to a subtree
 positively, and read-filtering follows for free. That works only if no
 role grants a broad wildcard read — a global `read: ["*"]` defeats any
@@ -1839,6 +1848,144 @@ that rolls back (SQLite, PostgreSQL); other stores answer 501.
   `denied-write`, as on a single create.
 - **Scripts and agents may call it without a browser origin,** like the data
   routes. A request with a cookie keeps the same-origin check.
+
+## Reconcile
+
+`POST /api/v1/_reconcile` answers a sync peer with the count and fingerprint
+of a range of elements, or with the elements themselves (TKT-VP02WHG,
+FEAT-CMVZQFI). An element is a row's address and the hash of the caller's
+view of it. The peer is an authenticated principal; everything in its
+request body is untrusted.
+
+- **The scope comes from the bound request, never from the body.** Each call
+  compiles the row gate and the `visible:` scope from the `acl.Request` the
+  request edge bound. The body only narrows the read to types and address
+  bounds. A peer learns exactly what it could list through the read API.
+- **Hidden rows are absent; hidden fields never reach a hash.** A hidden row
+  is in no count, fingerprint or list, so a hidden row and a deleted row look
+  the same. A row with a field the caller may not see is hashed from its
+  redacted view, so a fingerprint is not an offline oracle for the hidden
+  value (BUG-J01V0Q). A relation counts only when the caller may read both
+  ends and both are of the named types.
+- **A relation type whose meta the policy can hide is refused** with 422
+  `relation_meta_gated`, for every principal. Its element would need the meta
+  redaction of the source row, which ranges do not support yet. The error's
+  `source.pointer` is `/ranges/<index>`, the index of the refused range, so a
+  client can leave that type out and send the rest again (`rela reconcile
+  diff`, TKT-0Y566OJ).
+- **Nothing is cached.** The answer is one principal's and is built fresh.
+- **The work is bounded.** Peer-chosen ranges are the cost attack surface. A
+  row gate with a relation predicate costs the whole type per call. A token
+  bucket per principal, a slot cap per server and per principal, a 15-second
+  deadline, and caps on ranges, type names, listed rows and body size bound
+  how often and how much a peer can make the server pay. When the caller has
+  a hidden field on a type, any range on it, a fingerprint too, may load and
+  redact up to 2000 rows, so one request loads at most 32 times that; the
+  slots bound how many requests do so at once. A slot is held while the
+  ranges are read, not while the answer is written, so a peer that stops
+  reading holds none. A refusal spends no token.
+- **A fingerprint is not a commitment.** A writer in scope can craft rows
+  whose fingerprints cancel a change. A match is never evidence of integrity
+  or authorization.
+- **Refusals name the type or the limit.** They are configuration, which is
+  not secret. Whether a range answers `too_large` depends on the scope and
+  the row count, which the caller may know, and on a database backend that
+  is still filling its stored hashes, on whether some are pending. So the
+  same range may answer `too_large` and later `ok`; that is no leak.
+- **Peers may call it without a browser origin,** like the data routes. A
+  request with a cookie keeps the same-origin check.
+- **A sync client is an ordinary principal** (DEC-QKLMMD4). rela issues no
+  credentials of its own. A machine client authenticates at the identity
+  edge like any user: to Pratique or another OIDC proxy, which forwards a
+  verified JWT, or to the proxy that sets the principal header. What it
+  reads comes from its roles in `acl.yaml`.
+- **The gate is keyed on the resolved principal,** as for any caller, so
+  each client with its own identity has its own bucket and slots. In header
+  mode every caller without the identity header is the one user `unknown`,
+  and so shares one bucket and one set of slots. That is intended: give
+  each sync client its own identity at the edge to keep them apart.
+
+## Remote pulls (`remotes.yaml`)
+
+A pull copies rows from a source rela into this one (TKT-I8L1EQU). rela
+issues no credentials of its own (DEC-QKLMMD4). To the source, the pulling
+instance is an ordinary principal: it authenticates at the source's identity
+edge with whatever that edge accepts, such as a machine-client token from an
+OIDC proxy. The source's `acl.yaml` decides what it reads, and `visible:`
+redacts its fields. This section is about the pulling side. See
+[Pulling from a remote](remote-sync.md) for the configuration.
+
+- **The source is untrusted.** A pull treats every answer as input from
+  outside: a fetched row must carry the id and type it was asked for, its
+  values are checked against the local schema by the entity manager, and a
+  row that does not fit is rejected and reported. Answers are capped in size
+  (8 MiB for the schema, 4 MiB per entity, 1 MiB per relation), and a pull
+  compares at most `max_rows` rows and fetches at most `max_fetch` rows and
+  `max_bytes` bytes. Relation fields are checked against the local relation
+  type before the write, because the manager's relation writes check only
+  the endpoints.
+- **The source cannot choose a local id or type.** A pulled entity gets a
+  new id from the local type's prefix; the source id lives only in the
+  mapped `external_ref` property, whose system belongs to one remote. The
+  mapping, written by the operator, decides the local type and the fields.
+  A mapped type cannot be faced or take its id from a property, and a
+  source row with a face is not pulled.
+- **A pull writes as the principal that runs it.** A pull by hand runs as
+  the CLI user (or `--run-as`). A scheduled pull runs as the remote's
+  `run_as`, or as `system:scheduler`, as a scheduled task does. There is no
+  identity per remote. Every write goes through the entity manager under
+  that principal, so `acl.yaml` decides what it may create, update and
+  delete, and the audit log records each write and each refused write with
+  the triggered-by label `remote:<name>`. The `external_ref` property
+  records which source row a local row came from. Partial updates name only
+  the mapped fields, so a field the pull does not own is never overwritten.
+  The pull reads the local rows it compares without the read gate, as a
+  write-prep read; the manager still authorizes every write.
+- **A mass delete needs a person.** "Gone" means the source no longer lists
+  the row to this instance's principal. A deleted row and a hidden row look
+  the same, as the ACL requires, so a revoked role, a narrowed `acl.yaml`, or
+  a token that expired or was revoked makes every row in scope look gone at
+  once. A 401 or 403 from the source fails the pull. A pull also refuses to
+  detach or delete any row when more than `max_gone` linked rows (default
+  10) are gone, or when a type it linked rows of is empty at the source. With
+  `on_gone: delete` the guard also counts the deletes of the last 24 hours,
+  so a source that drops a few rows per run cannot delete in bulk over a
+  day. The operator confirms with `rela remote pull <name> --allow-gone N`.
+  `on_gone: detach` is the default; `on_gone: delete` never deletes an
+  entity with local relations, with a mapped field edited locally, or that
+  existed before the pull adopted it, and logs every delete with the run
+  id. The edit check and the delete are two calls, so an edit saved between
+  them is lost with the entity; the window is one write long.
+- **The credential stays out of config and scripts.** `remotes.yaml` names
+  where the token comes from: an environment variable whose name starts with
+  `REMOTE_CREDENTIAL_`, an absolute path to a file whose name starts with
+  `remote_credential.`, or a global secret whose name starts with
+  `remote_credential.` (`.rela/secrets.yaml`, the systemd credential, or the
+  desktop keychain). The marked name is what lets the value leave the
+  machine: whoever edits `remotes.yaml` chooses the URL, so a source it could
+  name freely would send `RELA_DATABASE_URL` or the token key there. The
+  token never appears in `remotes.yaml` or on a command line. No Lua script can be granted a
+  `remote_credential.` secret, and `subscriptions.yaml` and
+  `connections.yaml` refuse to name one, so only `remotes.yaml` and `rela
+  reconcile diff --token-secret` send it. It goes only to the configured
+  URL, and errors and logs name its source, never its value. Plain http is
+  refused to a host that is not loopback unless `allow_insecure_http` is
+  set, and redirects are never followed.
+- **No HTTP inside a store transaction.** A pull fetches a row first and
+  writes it after, each write a separate call to the entity manager. A slow
+  source holds no lock on the store. One pull of a remote runs at a time: the
+  scheduled pull and `rela remote pull` share a run lock in the scheduler
+  state.
+- **A local delete wins.** A pulled row deleted locally is not recreated,
+  also after the source stops listing it for a while.
+- **The ledger outlives no row.** The per-remote ledger in the state store
+  keeps, for a row deleted here, only its source address and local id; the
+  next pull clears its field digests. The ledger of a remote removed from
+  `remotes.yaml` is deleted at the next pull and when the scheduler starts.
+- **Read rules do not travel.** The source's `acl.yaml` decides what this
+  instance may read, not who may read the rows here. A pulled row is read
+  under the local type's rules, so an operator who maps a type gives it read
+  rules at least as strict as the source's rules for those rows.
 
 ## Presence
 

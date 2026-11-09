@@ -525,7 +525,7 @@ func (c *Config) Validate() error {
 		}
 		for _, name := range c.Capabilities.Secrets {
 			if !secrets.ScriptReadable(name) {
-				return fmt.Errorf("capabilities.secrets may not name %q: it is the token store key", name)
+				return fmt.Errorf("capabilities.secrets may not name %q: no script may read it", name)
 			}
 		}
 		return c.validateCommon()

@@ -85,7 +85,7 @@ const commentsLockFile = "comments.lock"
 // Only an in-memory fs gets the process-private locker, as for piles
 // ([pilesLocker]).
 func commentsLocker(fs storage.FS, cacheDir string) (filecomments.Locker, error) {
-	if _, mem := fs.(*storage.MemFS); mem {
+	if inMemoryFS(fs) {
 		return filelock.ProcessPrivate{}, nil
 	}
 	return filelock.New(filepath.Join(cacheDir, commentsLockFile))
