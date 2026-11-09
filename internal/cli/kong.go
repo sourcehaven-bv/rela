@@ -93,11 +93,12 @@ var (
 // Raised 54 → 55 for `reconcile` (TKT-0Y566OJ), a verb family that compares
 // this project with a remote rela.
 //
-// Raised 55 → 56 for `--tenant` (TKT-M3SHYE0). It is global for the reason
-// `--run-as` is: it names the tenant every data command acts in, and a
-// per-command flag would have to be repeated on each of them.
+// `--tenant` (TKT-M3SHYE0) took the field that `peer` freed (TKT-TB2B8N5).
+// It is global for the reason `--run-as` is: it names the tenant every data
+// command acts in, and a per-command flag would have to be repeated on each
+// of them.
 //
-//plimsoll:max-fields=56
+//plimsoll:max-fields=55
 type CLI struct {
 	// Global flags.
 	Project string `help:"Project directory (default: auto-detect from cwd)." env:"RELA_PROJECT"`

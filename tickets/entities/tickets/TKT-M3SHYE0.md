@@ -45,11 +45,11 @@ Run state, queue and audit sink are the tenant's own.
 bound at the edge with `appbuild.IdentityBinder` over the tenant's services, so
 it resolves in that tenant's graph. The store handle is the isolation boundary.
 - **Archplan**: the CLI and rela-docs find the project root through
-`appbuild.DiscoverRoot` instead of importing `project` and `storage`. The
-unchanged `cli/classification.go` still crossed the misplaced-file share
-threshold (0.59998 to 0.6001) because `validate.go` gained one link to
-`tenant.go`. The finding is accepted in `.archplan/baseline.json` with that
-reason, and `weight.boundaries` is loosened from 1383 to 1419.
+`appbuild.DiscoverRoot` instead of importing `project` and `storage`. After the
+rebase onto TKT-TB2B8N5 the only boundary change is the accepted
+`tenanterase.go` finding, which weighs 38 instead of 36 because erase now loads
+its deployment through `tenant.LoadDeployment`; `weight.boundaries` is loosened
+from 1383 to 1385 with that reason.
 
 ## Acceptance criteria
 
