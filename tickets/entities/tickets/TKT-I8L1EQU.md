@@ -70,3 +70,11 @@ run id.
 - End-to-end test: two instances, a catalogue of entities and relations, local additions survive an upstream update.
 - `rela analyze` style validation of `remotes.yaml` at load.
 - A run that would delete more than the threshold applies nothing and reports why.
+
+## Package dependencies
+
+`remotesync` imports neither `entitymanager`, `visibility` nor `secrets`, so
+the archplan ratchet stays flat. The write refusals it matches live in
+`entity`, the ledger fingerprint is passed in through `Deps.Fingerprint`, and
+the credential rules live in `httpremote`. `reconclient` does not import
+`visibility`; the CLI wiring adapts the element reader to it.
