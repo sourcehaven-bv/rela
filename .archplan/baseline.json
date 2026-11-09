@@ -2636,6 +2636,30 @@
       "reason": "By design: tenanterase.go is the operator command edge for tenant erasure (TKT-TNERAS). It parses flags, confirms and records; the erasure itself lives in tenant, so most links point there.",
       "at": "2026-11-08T10:00:00Z",
       "title": "rela-server/tenanterase.go in cmdServer has most of its links to tenant (weighted links: 3.7 to tenant, 1.1 to cmdServer)."
+    },
+    "concepts.missing_operation-b2083028aaba": {
+      "state": "accepted",
+      "reason": "Not a duplicate: appbuild.FlowControl.Cancel authorizes the caller and closes orphan headers, then calls flowengine.Engine.Cancel, which does the state change; the engine takes no ACL (TKT-9IT3LN8).",
+      "at": "2026-11-09T22:30:00Z",
+      "title": "2 components (appbuild, flowengine) each write their own cancel for RunID, a type of flow."
+    },
+    "concepts.untyped_bag-5d8aa066709b": {
+      "state": "accepted",
+      "reason": "Design: a template literal is any YAML value checked against the property's own validation, and Vars.Props holds subject properties, which are map[string]any everywhere in rela (entity.Entity.Properties) (TKT-9IT3LN8).",
+      "at": "2026-11-09T22:30:00Z",
+      "title": "2 types of flowcfg that other components use carry untyped data: Template.literal (any), Vars.Props (map[string]any)."
+    },
+    "boundaries.misplaced_file-ab7ae0d7bf6b": {
+      "state": "accepted",
+      "reason": "By design: cli/classification.go is the CLI edge for the classification commands; it parses flags and prints, and the work lives in classification, so most links point there.",
+      "at": "2026-11-09T22:30:00Z",
+      "title": "cli/classification.go in cli has most of its links to classification (weighted links: 5.4 to classification, 1.3 to cli)."
+    },
+    "boundaries.stability-7b732e45849a": {
+      "state": "accepted",
+      "reason": "Transitional: appbuild is the only dependent of flowengine until triggers, events and the background worker land in TKT-FWQZGAM.",
+      "at": "2026-11-09T22:30:00Z",
+      "title": "flowengine is in the zone of uselessness: mostly abstractions, and few components depend on it (1)."
     }
   },
   "labels": {},
@@ -2644,10 +2668,10 @@
       "weight.profile": 49,
       "weight.structure": 90,
       "weight.layers": 0,
-      "weight.vocabulary": 912,
-      "weight.types": 4008,
-      "weight.concepts": 7081,
-      "weight.boundaries": 1383,
+      "weight.vocabulary": 868,
+      "weight.types": 4009,
+      "weight.concepts": 7123,
+      "weight.boundaries": 1440,
       "weight.data": 1297,
       "weight.security": 140,
       "largest_tangle": 13,
@@ -2656,19 +2680,8 @@
       "propagation_cost": 9.1
     },
     "min_weight": 0,
-    "at": "2026-11-08T11:46:31Z",
+    "at": "2026-11-09T22:27:03Z",
     "log": [
-      {
-        "at": "2026-11-03T17:57:02Z",
-        "change": "loosen",
-        "reason": "Session wire mirror grew by previous (ChannelSession and SessionView), TKT-56TPOTE",
-        "metrics": {
-          "weight.types": [
-            3976,
-            3977
-          ]
-        }
-      },
       {
         "at": "2026-11-04T00:30:00Z",
         "change": "loosen",
@@ -2935,6 +2948,29 @@
           "weight.boundaries": [
             1417,
             1383
+          ]
+        }
+      },
+      {
+        "at": "2026-11-09T22:27:03Z",
+        "change": "loosen",
+        "reason": "Flows M1d, TKT-9IT3LN8: flowengine and the flow control in appbuild add the cancel, template and stability findings accepted above; types grew by one from flow wiring",
+        "metrics": {
+          "weight.vocabulary": [
+            912,
+            868
+          ],
+          "weight.types": [
+            4008,
+            4009
+          ],
+          "weight.concepts": [
+            7081,
+            7123
+          ],
+          "weight.boundaries": [
+            1383,
+            1440
           ]
         }
       }
