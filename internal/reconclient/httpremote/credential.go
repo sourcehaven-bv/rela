@@ -214,9 +214,6 @@ func openDeclaredFile(path string) (*os.File, error) {
 	if !before.Mode().IsRegular() {
 		return nil, fmt.Errorf("file %q: not a regular file", path)
 	}
-	if n, ok := linkCount(before); ok && n > 1 {
-		return nil, fmt.Errorf("file %q: the file has %d hard links; it must have one", path, n)
-	}
 	f, err := os.Open(resolved)
 	if err != nil {
 		return nil, err
@@ -229,6 +226,15 @@ func openDeclaredFile(path string) (*os.File, error) {
 	if !os.SameFile(before, st) {
 		f.Close()
 		return nil, fmt.Errorf("file %q: the file changed while it was opened", path)
+	}
+	n, err := linkCount(f)
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("file %q: count hard links: %w", path, err)
+	}
+	if n != 1 {
+		f.Close()
+		return nil, fmt.Errorf("file %q: the file has %d hard links; it must have one", path, n)
 	}
 	return f, nil
 }

@@ -229,13 +229,6 @@ func TestCredential_ReadDeclaredHardLink(t *testing.T) {
 	if err := os.WriteFile(other, []byte("other-secret"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	st, err := os.Stat(other)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := linkCount(st); !ok {
-		t.Skip("this platform reports no link count")
-	}
 	hard := filepath.Join(dir, "remote_credential.hard")
 	if lErr := os.Link(other, hard); lErr != nil {
 		t.Skipf("hard links: %v", lErr)

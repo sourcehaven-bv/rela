@@ -1,8 +1,14 @@
-//go:build !unix
+//go:build !unix && !windows
 
 package httpremote
 
-import "io/fs"
+import (
+	"errors"
+	"os"
+)
 
-// linkCount reports no count: the file info does not carry one here.
-func linkCount(fs.FileInfo) (uint64, bool) { return 0, false }
+// linkCount fails: this platform has no way to count hard links, so a
+// declared credential file is refused rather than read unchecked.
+func linkCount(*os.File) (uint64, error) {
+	return 0, errors.New("this platform cannot count hard links")
+}
