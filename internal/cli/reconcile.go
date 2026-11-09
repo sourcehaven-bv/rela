@@ -57,7 +57,7 @@ type ReconcileDiffCmd struct {
 	Types             []string      `sep:"," help:"Entity and relation types to compare (default: every type in the schema). A relation type needs the entity types at both of its ends."`
 	TokenEnv          string        `name:"token-env" xor:"credential" help:"Environment variable that holds the credential for the remote, such as RELA_RECONCILE_TOKEN."`
 	TokenFile         string        `name:"token-file" type:"path" xor:"credential" help:"File that holds the credential for the remote."`
-	TokenSecret       string        `name:"token-secret" xor:"credential" help:"Name of the global project secret (.rela/secrets.yaml) that holds the credential for the remote, such as peer_credential.<name> for a peer key."`
+	TokenSecret       string        `name:"token-secret" xor:"credential" help:"Name of the global project secret (.rela/secrets.yaml or its systemd credential) that holds the credential for the remote. The name starts with 'remote_credential.', for example 'remote_credential.upstream'."`
 	AuthHeader        string        `name:"auth-header" default:"Authorization" help:"Request header that carries the credential. Authorization sends it as a bearer token."`
 	AllowInsecureHTTP bool          `name:"allow-insecure-http" help:"Allow plain http to a host that is not loopback."`
 	Timeout           time.Duration `default:"10m" help:"Time limit for the whole comparison."`
@@ -151,10 +151,11 @@ func (c *ReconcileDiffCmd) credential(getenv func(string) string,
 	switch {
 	case c.TokenSecret != "":
 		source = "--token-secret " + c.TokenSecret
-		if c.TokenSecret == secrets.TokenKey || strings.HasPrefix(c.TokenSecret, secrets.PeerKeyPrefix) {
-			// The token store key and the peer key digests are the server's
-			// own; neither is a credential for a remote.
-			return "", "", fmt.Errorf("%s: this secret is not a credential for a remote", source)
+		if !secrets.IsRemoteCredential(c.TokenSecret) {
+			// Only a name no script can be granted; see
+			// [secrets.RemoteCredentialPrefix].
+			return "", "", fmt.Errorf("%s: the name must start with %q followed by a name, "+
+				"so that no script can read the secret", source, secrets.RemoteCredentialPrefix)
 		}
 		if secret == nil {
 			return "", "", fmt.Errorf("%s: this project has no secrets", source)

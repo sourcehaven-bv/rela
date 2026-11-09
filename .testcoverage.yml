@@ -26,11 +26,6 @@ override:
   - path: ^internal/visibility$
     threshold: 85
 
-  # Security-critical for the same reason: it decides whether a peer key
-  # authenticates (DEC-81161C3).
-  - path: ^internal/peerkey$
-    threshold: 90
-
   # Security-adjacent for the same reason: the sole compiler for the world
   # resolution that decides which face of an entity is published, and the only
   # place the pointer grammar is enforced (TKT-WAV8XP).

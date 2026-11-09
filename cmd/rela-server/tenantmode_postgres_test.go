@@ -5,7 +5,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -20,7 +19,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/backendtest"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
-	"github.com/Sourcehaven-BV/rela/internal/peerkey"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
 	"github.com/Sourcehaven-BV/rela/internal/tenanthost"
@@ -170,24 +168,4 @@ func TestTenantMode_FailsClosedOverRealTenants(t *testing.T) {
 	// The shell loads without a tenant.
 	require.Equal(t, http.StatusOK, tenantCall(t, th, "", http.MethodGet, "/", nil).Code)
 	require.Equal(t, 0, th.registry.Resident())
-}
-
-// TestTenantMode_IgnoresPeerKeys pins that tenant apps have no peer keys.
-// Every tenant shares the project's secrets, so a wired peer key would be
-// one credential valid in every tenant. A peer-shaped Authorization value
-// next to a valid assertion is ignored, where a wired edge would refuse an
-// unknown key with 401.
-func TestTenantMode_IgnoresPeerKeys(t *testing.T) {
-	th := newTestTenantHost(t)
-	key, _, err := peerkey.Generate(rand.Reader)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks", http.NoBody)
-	req.Host = th.addr
-	req.Header.Set("Origin", "http://"+th.addr)
-	req.Header.Set("X-Auth-Assertion", "tok-org-a")
-	req.Header.Set("Authorization", "Bearer "+key)
-	rec := httptest.NewRecorder()
-	th.handler.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }

@@ -10,6 +10,12 @@ completed: "2026-11-08"
 status: done
 ---
 
+> **Superseded (TKT-TB2B8N5).** The credential part of this ticket (peer keys,
+> the reserved `peer:` namespace, the route allowlist and `rela peer key
+> create`) was removed. DEC-QKLMMD4 replaces DEC-81161C3: rela issues no
+> credentials of its own, and a sync client is an ordinary principal that
+> authenticates at the identity edge.
+
 ## Description
 
 A peer instance needs an identity on the source instance.
@@ -31,9 +37,8 @@ value or JWT subject can assert it.
 most every 10 seconds.
 - The principal goes through the existing identity edge (`access.Opener`): the
 member-of walk and one `acl.Request`. The `principal_property` lookup never
-applies to a `peer:` name. Roles come
-from `acl.yaml` as for any principal. The principal type is `peer`, so a
-baseline can cap all peers.
+applies to a `peer:` name. Roles come from `acl.yaml` as for any principal. The
+principal type is `peer`, so a baseline can cap all peers.
 - A peer key is read-only, through a route allowlist: `GET`/`HEAD` on
 `/api/v1/` paths with no `_` segment, `_schema`, `_openapi.json`, and `POST
 /api/v1/_reconcile`. Anything else answers 403.

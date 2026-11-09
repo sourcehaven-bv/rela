@@ -18,7 +18,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/dataentrywire"
 	"github.com/Sourcehaven-BV/rela/internal/jwtauth"
-	"github.com/Sourcehaven-BV/rela/internal/peerkey"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/tenanthost"
 )
@@ -245,20 +244,15 @@ func (s *server) build(svc *appbuild.Services) (*generation, error) {
 // appIdentity is the verifiers one app's JWT gate and IdP webhook receiver
 // use. Either may be nil: no assertion verifier outside JWT mode, no webhook
 // verifier without -webhook-secret.
-//
-// peerKeys wires sync-peer keys from the project's secrets. Tenant apps leave
-// it false: every tenant shares the project's secrets, so a peer key there
-// would be one credential valid in every tenant.
 type appIdentity struct {
 	assertion tenanthost.AssertionVerifier
 	webhook   tenanthost.WebhookVerifier
-	peerKeys  bool
 }
 
 // identity returns the process-wide verifiers single-tenant mode builds
 // every generation with.
 func (s *server) identity() appIdentity {
-	id := appIdentity{assertion: s.assertion, peerKeys: true}
+	id := appIdentity{assertion: s.assertion}
 	if s.webhook != nil {
 		id.webhook = webhookVerifierAdapter{s.webhook}
 	}
@@ -306,17 +300,6 @@ func (s *server) buildApp(
 	// the JWT gate is installed.
 	if err := wirePrincipalResolvers(app, s.f, ident.assertion, s.mode); err != nil {
 		return nil, err
-	}
-	// Sync peers authenticate with a peer key whose digest is in the
-	// project's secrets (DEC-81161C3). Wired whenever ident allows it: a
-	// project without keys refuses every peer key with 401.
-	if ident.peerKeys {
-		peers, peersErr := peerkey.NewSource(peerkey.SecretsLoader(svc.Paths().CacheDir), peerkey.ReloadInterval,
-			time.Now, slog.Default())
-		if peersErr != nil {
-			return nil, fmt.Errorf("peer keys: %w", peersErr)
-		}
-		dataentry.SetPeerKeys(app, peers)
 	}
 	if ident.webhook != nil {
 		roles := appbuild.IDPRoles(svc)
