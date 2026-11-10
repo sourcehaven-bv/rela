@@ -11,52 +11,26 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 )
 
-// ErrTenantRequired reports that a project is in tenant mode and the entry
-// point named no tenant. It is kept apart from [ErrUnknownTenant] so a
-// forgotten `--tenant` is not reported as a typo in the org id.
-var ErrTenantRequired = errors.New("tenant: this project serves several tenants; " +
-	"name one with --tenant <org_id> or $RELA_TENANT")
+// EnvTenantMode switches tenant mode on when set to "1", for the server
+// (which also takes -tenant-mode) and for every operator entry point. Tenant
+// mode is an explicit switch: nothing turns it on by being present.
+const EnvTenantMode = "RELA_TENANT_MODE"
 
-// ErrNoTenantMap reports that a tenant was named for a project without a
-// tenant map. Refused rather than ignored: an operator who names a tenant
-// expects to act in it, and silently acting on the single default store
-// instead would be the wrong data.
-var ErrNoTenantMap = errors.New("tenant: a tenant was named, but the project has no " + ConfigFileName)
+// ModeEnabled reports whether getenv switches tenant mode on.
+func ModeEnabled(getenv func(string) string) bool { return getenv(EnvTenantMode) == "1" }
 
-// ConfigPath returns the path of the tenant map in the project root, or ""
-// when the root has none. The presence of the file is what turns tenant mode
-// on, for the server and for every operator entry point.
-func ConfigPath(root string) (string, error) {
-	abs, err := filepath.Abs(root)
-	if err != nil {
-		return "", fmt.Errorf("tenant: invalid project dir: %w", err)
-	}
-	p := filepath.Join(abs, ConfigFileName)
-	switch _, err := os.Stat(p); {
-	case err == nil:
-		return p, nil
-	case errors.Is(err, os.ErrNotExist):
-		return "", nil
-	default:
-		return "", fmt.Errorf("tenant: check %s: %w", p, err)
-	}
-}
+// ErrTenantRequired reports that tenant mode is on and the entry point named
+// no tenant. It is kept apart from [ErrUnknownTenant] so a forgotten
+// `--tenant` is not reported as a typo in the org id.
+var ErrTenantRequired = errors.New("tenant: tenant mode is on; " +
+	"name a tenant with --tenant <org_id> or $RELA_TENANT")
 
-// LoadDeployment is [LoadConfig] plus the base DSN rule every entry point
-// shares: a map that gives no `base_dsn` takes it from $RELA_DATABASE_URL.
-// The file may not carry a password (LoadConfig refuses one), so the
-// environment is where the credential lives. getenv is injected so tests do
-// not mutate the process environment.
-func LoadDeployment(path string, getenv func(string) string) (*Config, error) {
-	cfg, err := LoadConfig(path)
-	if err != nil {
-		return nil, err
-	}
-	if cfg.BaseDSN == "" {
-		cfg.BaseDSN = getenv("RELA_DATABASE_URL")
-	}
-	return cfg, nil
-}
+// ErrNotTenantMode reports that a tenant was named while tenant mode is off.
+// Refused rather than ignored: an operator who names a tenant expects to act
+// in it, and silently acting on the single default store instead would be
+// the wrong data.
+var ErrNotTenantMode = errors.New("tenant: a tenant was named, but tenant mode is off; set " +
+	EnvTenantMode + "=1")
 
 // Select returns the tenant orgID names, for an operator-run entry point
 // that acts in exactly one tenant. It resolves through r, the lookup the
@@ -65,52 +39,68 @@ func LoadDeployment(path string, getenv func(string) string) (*Config, error) {
 // [ErrUnknownTenant]. Neither returns a usable tenant.
 //
 // Nil: rejected — r is required.
-func Select(r Resolver, orgID string) (Tenant, error) {
+func Select(ctx context.Context, r Resolver, orgID string) (Tenant, error) {
 	if r == nil {
 		return Tenant{}, errors.New("tenant.Select: resolver is required")
 	}
 	if orgID == "" {
 		return Tenant{}, ErrTenantRequired
 	}
-	return r.Resolve(orgID)
+	return r.Resolve(ctx, orgID)
 }
 
-// ErrUnsupportedBuild reports a tenant project on a build that cannot serve
-// tenant mode. Such a build keeps data in the project directory, so every
-// tenant would read the same data.
-var ErrUnsupportedBuild = errors.New("tenant: " + ConfigFileName + " is present, but tenant mode needs " +
-	"the postgres build (rela-postgres): this build keeps data in the project directory, so every " +
-	"tenant would read the same data")
+// ErrUnsupportedBuild reports tenant mode on a build that cannot serve it.
+// Such a build keeps data in the project directory, so every tenant would
+// read the same data.
+var ErrUnsupportedBuild = errors.New("tenant: tenant mode needs the postgres build (rela-postgres, " +
+	"rela-server-postgres): this build keeps data in the project directory, so every tenant would " +
+	"read the same data")
 
-// ForProject is how an operator entry point learns whether the project at
-// root serves several tenants, and through which [Resolver]. It returns a
-// nil Resolver for a single-store project. It is the one place those entry
-// points look at how tenants are configured; they see only the Resolver it
-// returns, so a different source of tenants changes this function alone.
+// ForDeployment is how an operator entry point learns whether this
+// deployment serves several tenants, and through which resolver. It returns
+// nil without an error when tenant mode is off. It is the one place those
+// entry points look at how tenants are configured. The caller closes the
+// resolver.
 //
-// Today the source is the project's tenant map, read with [LoadDeployment].
-// On a build without tenant mode a tenant project is [ErrUnsupportedBuild],
-// returned before the map is read: callers must treat that as tenant mode
-// they cannot serve, never as a single-store project.
-func ForProject(root string, getenv func(string) string) (Resolver, error) {
-	path, err := ConfigPath(root)
-	if err != nil || path == "" {
-		return nil, err
+// On a build without tenant mode, tenant mode is [ErrUnsupportedBuild]:
+// callers must treat that as tenant mode they cannot serve, never as a
+// single-store deployment.
+func ForDeployment(ctx context.Context, getenv func(string) string) (*ClusterResolver, error) {
+	if !ModeEnabled(getenv) {
+		return nil, nil //nolint:nilnil // tenant mode off: no resolver, and not an error
 	}
 	if !Supported {
 		return nil, ErrUnsupportedBuild
 	}
-	cfg, err := LoadDeployment(path, getenv)
-	if err != nil {
-		return nil, err
+	return NewClusterResolver(ctx, getenv("RELA_DATABASE_URL"))
+}
+
+// legacyMapFile is the tenant map file of rela v26.11.2, which no longer
+// configures anything (TKT-HF5KE12).
+const legacyMapFile = "tenants.yaml"
+
+// ErrLegacyTenantMap reports a project that still holds the old tenant map
+// file. Its contents are never read. Starting anyway would ignore a file
+// the operator meant to switch tenant mode on with, and a server without
+// tenant mode would serve every org from one store.
+var ErrLegacyTenantMap = errors.New("tenant: the project holds " + legacyMapFile + ", which rela no " +
+	"longer reads: tenants are derived from org_id. Set " + EnvTenantMode + "=1, register each tenant " +
+	"with `rela-server tenant create`, then remove the file (see the PostgreSQL backend guide)")
+
+// RefuseLegacyMap returns [ErrLegacyTenantMap] when the project at root
+// holds the old tenant map file. It checks only that the file exists.
+func RefuseLegacyMap(root string) error {
+	if root == "" {
+		return nil
 	}
-	r, err := cfg.Resolver()
-	if err != nil {
-		// Not `return cfg.Resolver()`: a nil *MapResolver in a Resolver is
-		// not a nil interface, and would read as tenant mode.
-		return nil, err
+	switch _, err := os.Lstat(filepath.Join(root, legacyMapFile)); {
+	case err == nil:
+		return ErrLegacyTenantMap
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	default:
+		return fmt.Errorf("tenant: check %s: %w", legacyMapFile, err)
 	}
-	return r, nil
 }
 
 // OpenOne opens exactly one tenant over base, as the server's registry
@@ -139,4 +129,30 @@ func OpenOne(ctx context.Context, base *appbuild.SharedBase, t Tenant) (*Opened,
 // would act on `public`. Close the result when the command is done.
 func Pin(ctx context.Context, t Tenant) (io.Closer, error) {
 	return pinSchema(ctx, t.DSN, t.Schema)
+}
+
+// Choose is the tenant selection of an operator entry point for the project
+// at root: it refuses the old tenant map file, and in tenant mode returns
+// the tenant orgID names, as [Select] does. Without tenant mode it returns
+// ok false, and naming a tenant is [ErrNotTenantMode].
+func Choose(ctx context.Context, root, orgID string, getenv func(string) string) (t Tenant, ok bool, err error) {
+	if legacyErr := RefuseLegacyMap(root); legacyErr != nil {
+		return Tenant{}, false, legacyErr
+	}
+	r, err := ForDeployment(ctx, getenv)
+	if err != nil {
+		return Tenant{}, false, err
+	}
+	if r == nil {
+		if orgID != "" {
+			return Tenant{}, false, ErrNotTenantMode
+		}
+		return Tenant{}, false, nil
+	}
+	defer func() { _ = r.Close() }()
+	t, err = Select(ctx, r, orgID)
+	if err != nil {
+		return Tenant{}, false, err
+	}
+	return t, true, nil
 }

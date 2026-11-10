@@ -104,29 +104,32 @@ func run() int {
 	return 0
 }
 
-// errTenantProject is rela-docs' refusal of a project that serves several
-// tenants (TKT-M3SHYE0). rela-docs opens one store from $RELA_DATABASE_URL,
-// which in tenant mode is the base DSN and names no tenant, so building
-// against it would read, and on first open migrate, a schema no tenant owns.
-var errTenantProject = stderrors.New("this project serves several tenants: " +
+// errTenantProject is rela-docs' refusal of a tenant deployment
+// (TKT-M3SHYE0). rela-docs opens one store from $RELA_DATABASE_URL, which in
+// tenant mode is the base DSN and names no tenant, so building against it
+// would read, and on first open migrate, a schema no tenant owns.
+var errTenantProject = stderrors.New("this deployment serves several tenants: " +
 	"rela-docs builds against one store and cannot act in a tenant")
 
-// refuseTenantMode returns [errTenantProject] for a tenant project, judged by
-// [tenant.ForProject]. A directory in no project passes: the open that
-// follows reports it as before.
+// refuseTenantMode returns [errTenantProject] in tenant mode, for a project
+// that still holds the old tenant map file, and for a database that serves
+// tenants. A directory in no project passes: the open that follows reports
+// it as before.
 func refuseTenantMode(startDir string) error {
+	if tenant.ModeEnabled(os.Getenv) {
+		return errTenantProject
+	}
 	root, err := appbuild.DiscoverRoot(startDir)
 	if err != nil || root == "" {
 		return err
 	}
-	r, err := tenant.ForProject(root, os.Getenv)
-	if err != nil {
-		// A tenant project this build cannot serve, or one whose tenants
-		// cannot be read: refuse either way.
+	if err := tenant.RefuseLegacyMap(root); err != nil {
 		return fmt.Errorf("%w: %w", errTenantProject, err)
 	}
-	if r != nil {
-		return errTenantProject
+	if dsn := os.Getenv("RELA_DATABASE_URL"); dsn != "" {
+		if err := tenant.RefuseTenantDatabase(context.Background(), dsn); err != nil {
+			return fmt.Errorf("%w: %w", errTenantProject, err)
+		}
 	}
 	return nil
 }

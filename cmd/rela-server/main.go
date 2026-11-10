@@ -83,6 +83,8 @@ type serverFlags struct {
 	// holding config:edit may change schema.yaml and data-entry.yaml from
 	// the browser. Off by default; see [validateConfigEditing].
 	configEditing bool
+	// tenant holds the tenant-mode switch and limits (TKT-HF5KE12).
+	tenant tenantFlags
 }
 
 // coverage-ignore-func: flag wiring — exercised at startup, not in tests
@@ -191,6 +193,7 @@ func parseFlags() *serverFlags {
 			"need this. See docs/server-security.md. Also enabled by "+
 			"RELA_ALLOW_UNAUTHENTICATED_COMMANDS=1.")
 	registerIdentityFlags(f)
+	registerTenantFlags(&f.tenant)
 	flag.BoolVar(&f.configEditing, "config-editing", os.Getenv("RELA_CONFIG_EDITING") == "1",
 		"Let principals holding the config:edit permission change the data model and "+
 			"screens (schema.yaml, data-entry.yaml) from the browser. A save rewrites the "+
@@ -567,15 +570,14 @@ func main() {
 	// a host the operator explicitly opted out of. Keep this above discoverProject.
 	applyCommandConfinement(f.unconfinedCommand, f.sandboxReadPaths)
 
-	// tenants.yaml in the project directory turns tenant mode on; without it
-	// the server runs exactly as before.
-	tenantsYAML, err := tenantsPath(f.projectDir)
-	if err != nil {
-		slog.Error("failed to initialize", "error", err)
-		os.Exit(1)
+	// -tenant-mode (or RELA_TENANT_MODE=1) turns tenant mode on; without it
+	// the server runs one store, and refuses a tenant deployment.
+	if f.tenant.enabled {
+		os.Exit(runTenantMode(f, accessLog))
 	}
-	if tenantsYAML != "" {
-		os.Exit(runTenantMode(f, tenantsYAML, accessLog))
+	if err := refuseTenantDeployment(context.Background(), f.projectDir, os.Getenv); err != nil {
+		slog.Error("refusing to start", "error", err)
+		os.Exit(1)
 	}
 
 	// No svc.Close(): rela-server is a daemon — it runs until the process exits,

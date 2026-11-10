@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -18,44 +17,54 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
 )
 
-// tenantProjectMap is a tenant map whose tenants carry explicit DSNs that
-// point nowhere, so loading it never needs a database. A test that reaches
-// an open with it has failed open.
-const tenantProjectMap = `tenants:
-  - org_id: org-a
-    schema: tenant_a
-    dsn: "host=tenant-db.invalid dbname=rela search_path=tenant_a,public"
-  - org_id: org-b
-    schema: tenant_b
-    dsn: "host=tenant-db.invalid dbname=rela search_path=tenant_b,public"
-  - org_id: org-gone
-    schema: tenant_gone
-    dsn: "host=tenant-db.invalid dbname=rela search_path=tenant_gone,public"
-    erase: true
-`
+// tenantDSN points at a host that does not exist. A test that reaches a
+// tenant lookup with it fails with a connection error, never a selection.
+const tenantDSN = "postgres://rela@tenant-db.invalid/rela?connect_timeout=1"
 
-// seedTenantProject is seedProject with a tenant map.
-func seedTenantProject(t *testing.T) string {
+// tenantEnv switches tenant mode on over tenantDSN.
+func tenantEnv(k string) string {
+	switch k {
+	case tenant.EnvTenantMode:
+		return "1"
+	case "RELA_DATABASE_URL":
+		return tenantDSN
+	}
+	return ""
+}
+
+// setTenantEnv puts tenantEnv into the process environment, for a path that
+// reads it with os.Getenv.
+func setTenantEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv(tenant.EnvTenantMode, "1")
+	t.Setenv("RELA_DATABASE_URL", tenantDSN)
+}
+
+// seedLegacyProject is seedProject with the old tenant map file.
+func seedLegacyProject(t *testing.T) string {
 	t.Helper()
 	root := seedProject(t)
-	require.NoError(t, os.WriteFile(filepath.Join(root, tenant.ConfigFileName), []byte(tenantProjectMap), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "tenants.yaml"), []byte("tenants: []\n"), 0o600))
 	return root
 }
 
 func noEnv(string) string { return "" }
 
-// TestCheckTenantMode pins the CLI's tenant gate: without a tenant map only a
-// named tenant is refused; with one, every data command must name a tenant
-// the map serves, and the tenant-free commands pass either way.
+// TestCheckTenantMode pins the CLI's tenant gate: without tenant mode only a
+// named tenant is refused; in tenant mode every data command must name a
+// tenant, and the tenant-free commands pass either way. A project with the
+// old tenant map is refused in both. Which tenants are served is pinned
+// against a real control table in tenant_postgres_test.go.
 func TestCheckTenantMode(t *testing.T) {
 	t.Parallel()
 
 	single := seedProject(t)
-	multi := seedTenantProject(t)
-	nested := filepath.Join(multi, "entities")
+	legacy := seedLegacyProject(t)
+	nested := filepath.Join(single, "entities")
 
 	cases := []struct {
 		name, cmd, dir, org string
+		env                 func(string) string
 		// want is the error on a build that serves tenant mode; nil means the
 		// gate passes.
 		want error
@@ -63,28 +72,31 @@ func TestCheckTenantMode(t *testing.T) {
 		// on any other build the gate refuses it as unsupported.
 		tenantMode bool
 	}{
-		{name: "single tenant, no flag", cmd: "list", dir: single},
-		{name: "single tenant, flag", cmd: "list", dir: single, org: "org-a", want: tenant.ErrNoTenantMap},
-		{name: "single tenant, tenant-free with flag", cmd: "version", dir: single, org: "org-a"},
-		{name: "no project", cmd: "list", dir: t.TempDir()},
-		{name: "tenant mode, no flag", cmd: "list", dir: multi, want: tenant.ErrTenantRequired, tenantMode: true},
-		{name: "tenant mode, unknown", cmd: "list", dir: multi, org: "org-c", want: tenant.ErrUnknownTenant, tenantMode: true},
-		{name: "tenant mode, erased", cmd: "show <id>", dir: multi, org: "org-gone", want: tenant.ErrUnknownTenant, tenantMode: true},
-		{name: "tenant mode, served", cmd: "scheduler", dir: multi, org: "org-a", tenantMode: true},
-		{name: "tenant mode, from a subdirectory", cmd: "mcp", dir: nested, want: tenant.ErrTenantRequired, tenantMode: true},
-		{name: "tenant mode, db", cmd: "db migrate", dir: multi, want: tenant.ErrTenantRequired, tenantMode: true},
-		{name: "tenant mode, tenant-free", cmd: "init", dir: multi},
-		{name: "tenant mode, validate", cmd: "validate", dir: multi},
-		{name: "tenant mode, config migrate", cmd: "migrate", dir: multi},
-		{name: "tenant mode, data migrate", cmd: "migrate data", dir: multi, want: tenant.ErrTenantRequired, tenantMode: true},
+		{name: "single store, no flag", cmd: "list", dir: single, env: noEnv},
+		{name: "single store, flag", cmd: "list", dir: single, org: "org-a", env: noEnv, want: tenant.ErrNotTenantMode},
+		{name: "single store, tenant-free with flag", cmd: "version", dir: single, org: "org-a", env: noEnv},
+		{name: "no project", cmd: "list", dir: t.TempDir(), env: noEnv},
+		{name: "legacy map", cmd: "list", dir: legacy, env: noEnv, want: tenant.ErrLegacyTenantMap},
+		{name: "legacy map in tenant mode", cmd: "list", dir: legacy, org: "org-a", env: tenantEnv,
+			want: tenant.ErrLegacyTenantMap},
+		{name: "tenant mode, no flag", cmd: "list", dir: single, env: tenantEnv, want: tenant.ErrTenantRequired,
+			tenantMode: true},
+		{name: "tenant mode, from a subdirectory", cmd: "mcp", dir: nested, env: tenantEnv,
+			want: tenant.ErrTenantRequired, tenantMode: true},
+		{name: "tenant mode, db", cmd: "db migrate", dir: single, env: tenantEnv, want: tenant.ErrTenantRequired,
+			tenantMode: true},
+		{name: "tenant mode, tenant-free", cmd: "init", dir: single, env: tenantEnv},
+		{name: "tenant mode, validate", cmd: "validate", dir: single, env: tenantEnv},
+		{name: "tenant mode, config migrate", cmd: "migrate", dir: single, env: tenantEnv},
+		{name: "tenant mode, data migrate", cmd: "migrate data", dir: single, env: tenantEnv,
+			want: tenant.ErrTenantRequired, tenantMode: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			err := checkTenantMode(tc.cmd, tc.dir, tc.org, noEnv)
+			err := checkTenantMode(tc.cmd, tc.dir, tc.org, tc.env)
 			if tc.tenantMode && !tenant.Supported {
-				require.Error(t, err, "a build without tenant mode must refuse a tenant project")
-				assert.Contains(t, err.Error(), "postgres build")
+				require.ErrorIs(t, err, tenant.ErrUnsupportedBuild, "a build without tenant mode must refuse it")
 				return
 			}
 			if tc.want == nil {
@@ -105,7 +117,7 @@ func TestCheckTenantMode_EveryCommandIsGated(t *testing.T) {
 
 	parser, err := kong.New(&CLI{}, kong.Vars{"version": "test"})
 	require.NoError(t, err)
-	multi := seedTenantProject(t)
+	root := seedProject(t)
 
 	free := map[string]bool{}
 	var walk func(n *kong.Node)
@@ -118,7 +130,7 @@ func TestCheckTenantMode_EveryCommandIsGated(t *testing.T) {
 			if len(child.Children) > 0 {
 				walk(child)
 			}
-			if err := checkTenantMode(path, multi, "", noEnv); err == nil {
+			if err := checkTenantMode(path, root, "", tenantEnv); err == nil {
 				free[firstKongToken(path)] = true
 			}
 		}
@@ -134,11 +146,12 @@ func TestCheckTenantMode_EveryCommandIsGated(t *testing.T) {
 	}
 }
 
-// TestOpenProject_SingleTenantUnchanged pins that a project without a tenant
-// map opens exactly as appbuild.Discover opens it, and that naming a tenant
+// TestOpenProject_SingleTenantUnchanged pins that a project without tenant
+// mode opens exactly as appbuild.Discover opens it, and that naming a tenant
 // there is refused rather than ignored.
 func TestOpenProject_SingleTenantUnchanged(t *testing.T) {
 	root := seedProject(t)
+	t.Setenv(tenant.EnvTenantMode, "")
 	for k, v := range backendtest.Env(t) {
 		t.Setenv(k, v)
 	}
@@ -154,49 +167,52 @@ func TestOpenProject_SingleTenantUnchanged(t *testing.T) {
 	assert.Equal(t, abs, got)
 
 	_, _, err = openProject(root, "org-a")
-	require.ErrorIs(t, err, tenant.ErrNoTenantMap)
+	require.ErrorIs(t, err, tenant.ErrNotTenantMode)
 }
 
-// TestOpenProject_TenantModeFailsClosed pins that a tenant project opens
-// nothing for a missing, unknown or erased tenant. The map's DSNs point at a
-// host that does not exist, so an open that was attempted would fail with a
-// connection error rather than with the selection error asserted here.
+// TestOpenProject_TenantModeFailsClosed pins that tenant mode opens nothing
+// for a missing tenant, or one whose lookup fails. The base DSN points at a
+// host that does not exist, so no lookup can succeed.
 func TestOpenProject_TenantModeFailsClosed(t *testing.T) {
-	t.Parallel()
-	root := seedTenantProject(t)
+	root := seedProject(t)
+	setTenantEnv(t)
 
-	for _, org := range []string{"", "org-c", "org-gone"} {
-		t.Run("org="+org, func(t *testing.T) {
-			t.Parallel()
-			svc, closer, err := openProject(root, org)
-			require.Error(t, err)
-			assert.Nil(t, svc)
-			assert.Nil(t, closer)
-			if !tenant.Supported {
-				assert.Contains(t, err.Error(), "postgres build")
-				return
-			}
-			assert.True(t, errors.Is(err, tenant.ErrTenantRequired) || errors.Is(err, tenant.ErrUnknownTenant),
-				"want a selection error, got %v", err)
-			assert.NotContains(t, err.Error(), "tenant-db.invalid", "an error must not name a tenant's DSN")
-		})
+	for _, org := range []string{"", "org-c"} {
+		svc, closer, err := openProject(root, org)
+		require.Error(t, err, "org %q", org)
+		assert.Nil(t, svc)
+		assert.Nil(t, closer)
+		if !tenant.Supported {
+			require.ErrorIs(t, err, tenant.ErrUnsupportedBuild)
+			continue
+		}
+		if org == "" {
+			require.ErrorIs(t, err, tenant.ErrTenantRequired)
+		} else {
+			assert.NotErrorIs(t, err, tenant.ErrUnknownTenant, "a failed lookup is not an unknown tenant")
+		}
 	}
 }
 
 // TestNewMCPServices_TenantModeFailsClosed pins that stdio MCP goes through
 // the same selection as every other command.
 func TestNewMCPServices_TenantModeFailsClosed(t *testing.T) {
-	t.Parallel()
-	root := seedTenantProject(t)
+	root := seedProject(t)
+	setTenantEnv(t)
 
 	for _, org := range []string{"", "org-c"} {
 		_, err := newMCPServices(root, org, "")
 		require.Error(t, err, "org %q", org)
-		if tenant.Supported {
-			assert.True(t, errors.Is(err, tenant.ErrTenantRequired) || errors.Is(err, tenant.ErrUnknownTenant),
-				"org %q: want a selection error, got %v", org, err)
-		}
 	}
+}
+
+// TestOpenProject_RefusesLegacyMap pins that a project with the old tenant
+// map opens nothing, with or without tenant mode.
+func TestOpenProject_RefusesLegacyMap(t *testing.T) {
+	root := seedLegacyProject(t)
+	t.Setenv(tenant.EnvTenantMode, "")
+	_, _, err := openProject(root, "")
+	require.ErrorIs(t, err, tenant.ErrLegacyTenantMap)
 }
 
 // TestCLIOpensProjectsOnlyThroughOpenProject scans this package for a way
@@ -243,11 +259,12 @@ func TestCLIOpensProjectsOnlyThroughOpenProject(t *testing.T) {
 	}
 }
 
-// TestValidate_TenantModeWithoutTenant pins that `rela validate` checks a
-// tenant project's shared config without a tenant, and that its entity
+// TestValidate_TenantModeWithoutTenant pins that `rela validate` checks the
+// shared config in tenant mode without a tenant, and that its entity
 // checks, which read data, still need one.
 func TestValidate_TenantModeWithoutTenant(t *testing.T) {
-	root := seedTenantProject(t)
+	root := seedProject(t)
+	setTenantEnv(t)
 	oldPath, oldOrg := projectPath, tenantOrg
 	projectPath, tenantOrg = root, ""
 	t.Cleanup(func() { projectPath, tenantOrg = oldPath, oldOrg })

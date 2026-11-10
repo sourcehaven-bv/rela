@@ -5,7 +5,9 @@ title: 'tenant: derive tenant location from org_id; remove tenants.yaml'
 kind: enhancement
 priority: high
 effort: m
-status: backlog
+started: "2026-11-09"
+completed: "2026-11-10"
+status: done
 ---
 
 ## Description

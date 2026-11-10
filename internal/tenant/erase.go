@@ -8,11 +8,6 @@ import (
 	"path/filepath"
 )
 
-// ErrNotMarkedForErasure reports that an org is a served tenant, not one
-// marked `erase: true` in the tenant map. Erasing a served tenant would drop
-// a schema that a server loading the same map still routes requests to.
-var ErrNotMarkedForErasure = errors.New("tenant: not marked for erasure")
-
 // ErrTenantInUse reports that the tenant's lock is held: a server has the
 // tenant open, or another erasure of it is running. [Erase] refuses rather
 // than drop a schema under a live store.
@@ -60,7 +55,8 @@ type Erasure struct {
 // Rerunning after a partial erasure is safe: a missing schema or directory
 // is not an error.
 //
-// t must come from [Config.ErasureTarget], which checks the erase mark.
+// Call it through [Provisioner.Erase], which first sets the tenant's status
+// to erasing so that no server serves it any more.
 func Erase(ctx context.Context, t Tenant, auditRoot string) (Erasure, error) {
 	if err := t.validate(); err != nil {
 		return Erasure{}, fmt.Errorf("tenant: erase: %w", err)

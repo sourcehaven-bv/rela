@@ -6,13 +6,14 @@
 // # Fail closed
 //
 // No request is ever served from a default store. A request without a
-// verified org, with an org the tenant map does not name, or whose tenant
+// verified org, with an org the resolver does not serve, or whose tenant
 // cannot be opened is refused, and the refusal opens no store:
 //
 //   - no assertion, or one that does not verify: 401;
-//   - a verified assertion with no `org_id`, or an org not in `tenants.yaml`:
-//     403 `unknown_tenant`;
-//   - the tenant lookup or the store open failed: 503.
+//   - a verified assertion with no `org_id`, or an org that is not an active
+//     tenant (unknown, suspended or being erased): 403 `unknown_tenant`;
+//   - the tenant lookup or the store open failed, or the org's derived
+//     schema is recorded for another org: 503.
 //
 // The one exception is the embedded SPA shell and its static assets, which a
 // browser needs before it can authenticate. They are served by
@@ -209,8 +210,16 @@ func (h *Host) serveWebhook(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, tenant.ErrUnknownTenant):
 		// Acknowledged so the IdP does not retry an event for an org this
 		// server does not host. Provisioning a tenant is TKT-TNPRV8.
-		slog.Info("tenant host: idp webhook for an org this server does not host",
-			"org_id", claims.OrgID, "event", claims.Event, "id", claims.ID)
+		if claims.Event == "organization.deleted" {
+			// A suspended tenant is not served but still holds data, so
+			// its deletion must reach the operator like an active one's.
+			slog.Warn("tenant host: idp webhook organization deletion for an org this server does not "+
+				"serve; if it is a suspended tenant, erasure is needed: check PROCEDURE-u020, then run "+
+				"rela-server tenant erase", "org_id", claims.OrgID, "id", claims.ID)
+		} else {
+			slog.Info("tenant host: idp webhook for an org this server does not host",
+				"org_id", claims.OrgID, "event", claims.Event, "id", claims.ID)
+		}
 		w.WriteHeader(http.StatusOK)
 		return
 	case err != nil:

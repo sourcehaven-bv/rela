@@ -2,6 +2,7 @@ package tenant_test
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,53 +11,23 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
 )
 
-// entryMap has two served tenants and one marked for erasure. Each carries an
-// explicit DSN, so the map loads on every build.
-const entryMap = `tenants:
-  - org_id: org-a
-    schema: tenant_a
-    dsn: "host=db.internal dbname=rela search_path=tenant_a"
-  - org_id: org-b
-    schema: tenant_b
-    dsn: "host=db.internal dbname=rela search_path=tenant_b"
-  - org_id: org-gone
-    schema: tenant_gone
-    dsn: "host=db.internal dbname=rela search_path=tenant_gone"
-    erase: true
-`
-
-func writeTenantMap(t *testing.T, body string) string {
+// entryResolver serves org-a and org-b. org-gone is not served, as a
+// suspended or erasing org is not.
+func entryResolver(t *testing.T) tenant.Resolver {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, tenant.ConfigFileName)
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
-func TestConfigPath(t *testing.T) {
-	t.Parallel()
-
-	without := t.TempDir()
-	got, err := tenant.ConfigPath(without)
-	if err != nil || got != "" {
-		t.Fatalf("ConfigPath(no map) = %q, %v; want \"\", nil", got, err)
-	}
-
-	path := writeTenantMap(t, entryMap)
-	got, err = tenant.ConfigPath(filepath.Dir(path))
+	r, err := tenant.NewMapResolver([]tenant.Tenant{
+		{OrgID: "org-a", Schema: "tenant_a", DSN: "host=db.internal dbname=rela search_path=tenant_a"},
+		{OrgID: "org-b", Schema: "tenant_b", DSN: "host=db.internal dbname=rela search_path=tenant_b"},
+	})
 	if err != nil {
-		t.Fatalf("ConfigPath: %v", err)
+		t.Fatalf("NewMapResolver: %v", err)
 	}
-	if got != path {
-		t.Errorf("ConfigPath = %q, want %q", got, path)
-	}
+	return r
 }
 
-// TestSelect_FailsClosed pins the operator-entry lookup: a missing org, an
-// unknown org and an org marked for erasure all fail, and none of them
-// returns a usable tenant.
+// TestSelect_FailsClosed pins the operator-entry lookup: a missing org and
+// an org the resolver does not serve both fail, and neither returns a
+// usable tenant.
 func TestSelect_FailsClosed(t *testing.T) {
 	t.Parallel()
 
@@ -69,11 +40,11 @@ func TestSelect_FailsClosed(t *testing.T) {
 		{"missing", "", tenant.ErrTenantRequired},
 		{"unknown", "org-c", tenant.ErrUnknownTenant},
 		{"case differs", "ORG-A", tenant.ErrUnknownTenant},
-		{"marked for erasure", "org-gone", tenant.ErrUnknownTenant},
+		{"not served", "org-gone", tenant.ErrUnknownTenant},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, selErr := tenant.Select(r, tc.org)
+			got, selErr := tenant.Select(t.Context(), r, tc.org)
 			if !errors.Is(selErr, tc.want) {
 				t.Fatalf("Select(%q) error = %v, want %v", tc.org, selErr, tc.want)
 			}
@@ -83,42 +54,12 @@ func TestSelect_FailsClosed(t *testing.T) {
 		})
 	}
 
-	got, err := tenant.Select(r, "org-b")
+	got, err := tenant.Select(t.Context(), r, "org-b")
 	if err != nil {
 		t.Fatalf("Select(org-b): %v", err)
 	}
 	if got.Schema != "tenant_b" {
 		t.Errorf("Select(org-b).Schema = %q, want tenant_b", got.Schema)
-	}
-}
-
-// TestLoadDeployment_BaseDSNFromEnv pins the rule the server and the CLI
-// share: the base DSN comes from $RELA_DATABASE_URL when the map gives none,
-// and a map that gives one keeps it.
-func TestLoadDeployment_BaseDSNFromEnv(t *testing.T) {
-	t.Parallel()
-
-	env := func(k string) string {
-		if k == "RELA_DATABASE_URL" {
-			return "host=from-env dbname=rela"
-		}
-		return ""
-	}
-	cfg, err := tenant.LoadDeployment(writeTenantMap(t, "tenants:\n  - {org_id: a, schema: tenant_a}\n"), env)
-	if err != nil {
-		t.Fatalf("LoadDeployment: %v", err)
-	}
-	if cfg.BaseDSN != "host=from-env dbname=rela" {
-		t.Errorf("BaseDSN = %q, want the environment's", cfg.BaseDSN)
-	}
-
-	cfg, err = tenant.LoadDeployment(writeTenantMap(t,
-		"base_dsn: host=from-file\ntenants:\n  - {org_id: a, schema: tenant_a}\n"), env)
-	if err != nil {
-		t.Fatalf("LoadDeployment: %v", err)
-	}
-	if cfg.BaseDSN != "host=from-file" {
-		t.Errorf("BaseDSN = %q, want the file's", cfg.BaseDSN)
 	}
 }
 
@@ -129,13 +70,21 @@ func TestSelect_ErrorsNameNoDSN(t *testing.T) {
 
 	r := entryResolver(t)
 	for _, org := range []string{"", "org-c", "org-gone"} {
-		_, err := tenant.Select(r, org)
+		_, err := tenant.Select(t.Context(), r, org)
 		if err == nil {
 			t.Fatalf("Select(%q) succeeded", org)
 		}
 		if strings.Contains(err.Error(), "db.internal") || strings.Contains(err.Error(), "search_path") {
 			t.Errorf("Select(%q) error %q names a DSN", org, err)
 		}
+	}
+}
+
+func TestSelect_RejectsNilResolver(t *testing.T) {
+	t.Parallel()
+
+	if _, err := tenant.Select(t.Context(), nil, "org-a"); err == nil {
+		t.Fatal("Select(nil resolver) succeeded")
 	}
 }
 
@@ -147,60 +96,103 @@ func TestOpenOne_RejectsNilBase(t *testing.T) {
 	}
 }
 
-// entryResolver is the resolver of entryMap.
-func entryResolver(t *testing.T) tenant.Resolver {
-	t.Helper()
-	cfg, err := tenant.LoadDeployment(writeTenantMap(t, entryMap), func(string) string { return "" })
-	if err != nil {
-		t.Fatalf("LoadDeployment: %v", err)
-	}
-	r, err := cfg.Resolver()
-	if err != nil {
-		t.Fatalf("Resolver: %v", err)
-	}
-	return r
-}
-
-func TestSelect_RejectsNilResolver(t *testing.T) {
+// TestForDeployment pins tenant-mode detection for the operator entry
+// points: off without the switch, whatever files the project holds;
+// ErrUnsupportedBuild on a build without tenant mode; and a resolver, or an
+// error without a base DSN, on the postgres build.
+func TestForDeployment(t *testing.T) {
 	t.Parallel()
 
-	if _, err := tenant.Select(nil, "org-a"); err == nil {
-		t.Fatal("Select(nil resolver) succeeded")
-	}
-}
-
-// TestForProject pins tenant-mode detection for the operator entry points: a
-// project without tenants is single-store (nil resolver), a build without
-// tenant mode refuses a tenant project before reading its tenants, and a
-// tenant-mode build returns the resolver they route by.
-func TestForProject(t *testing.T) {
-	t.Parallel()
-	noEnv := func(string) string { return "" }
-
-	r, err := tenant.ForProject(t.TempDir(), noEnv)
+	r, err := tenant.ForDeployment(t.Context(), func(string) string { return "" })
 	if err != nil || r != nil {
-		t.Fatalf("ForProject(single-store) = %v, %v; want nil, nil", r, err)
+		t.Fatalf("ForDeployment(off) = %v, %v; want nil, nil", r, err)
 	}
-
-	root := filepath.Dir(writeTenantMap(t, entryMap))
-	r, err = tenant.ForProject(root, noEnv)
+	on := func(k string) string {
+		if k == tenant.EnvTenantMode {
+			return "1"
+		}
+		return ""
+	}
+	r, err = tenant.ForDeployment(t.Context(), on)
 	if !tenant.Supported {
 		if !errors.Is(err, tenant.ErrUnsupportedBuild) || r != nil {
-			t.Fatalf("ForProject on a build without tenant mode = %v, %v; want nil, ErrUnsupportedBuild", r, err)
+			t.Fatalf("ForDeployment on a build without tenant mode = %v, %v; want nil, ErrUnsupportedBuild", r, err)
 		}
 		return
 	}
-	if err != nil || r == nil {
-		t.Fatalf("ForProject(tenant project) = %v, %v; want a resolver", r, err)
+	if err == nil || r != nil {
+		t.Fatalf("ForDeployment(on, no DSN) = %v, %v; want nil and an error", r, err)
 	}
-	got, err := tenant.Select(r, "org-a")
-	if err != nil || got.Schema != "tenant_a" {
-		t.Errorf("Select(org-a) = %+v, %v; want tenant_a", got, err)
-	}
+}
 
-	// A map that fails to load is an error, never a nil (single-store) resolver.
-	bad := filepath.Dir(writeTenantMap(t, "tenants: [\n"))
-	if r, err := tenant.ForProject(bad, noEnv); err == nil || r != nil {
-		t.Errorf("ForProject(broken map) = %v, %v; want nil and an error", r, err)
+// TestModeEnabled pins that only "1" switches tenant mode on.
+func TestModeEnabled(t *testing.T) {
+	t.Parallel()
+	for v, want := range map[string]bool{"1": true, "": false, "0": false, "true": false, "yes": false} {
+		if got := tenant.ModeEnabled(func(string) string { return v }); got != want {
+			t.Errorf("ModeEnabled(%q) = %v, want %v", v, got, want)
+		}
+	}
+}
+
+// TestRefuseLegacyMap pins that a project holding the old tenant map is
+// refused, whatever the file holds, and a symlink counts as present.
+func TestRefuseLegacyMap(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := tenant.RefuseLegacyMap(dir); err != nil {
+		t.Fatalf("RefuseLegacyMap(no file) = %v", err)
+	}
+	if err := tenant.RefuseLegacyMap(""); err != nil {
+		t.Fatalf("RefuseLegacyMap(\"\") = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "tenants.yaml"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := tenant.RefuseLegacyMap(dir); !errors.Is(err, tenant.ErrLegacyTenantMap) {
+		t.Fatalf("RefuseLegacyMap(empty file) = %v, want ErrLegacyTenantMap", err)
+	}
+	link := t.TempDir()
+	if err := os.Symlink(filepath.Join(link, "nowhere"), filepath.Join(link, "tenants.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if err := tenant.RefuseLegacyMap(link); !errors.Is(err, tenant.ErrLegacyTenantMap) {
+		t.Fatalf("RefuseLegacyMap(dangling symlink) = %v, want ErrLegacyTenantMap", err)
+	}
+}
+
+// TestNothingReadsTheTenantMap pins TKT-HF5KE12: no production code reads
+// tenants.yaml. Only entry.go names it, to refuse a project that holds it.
+func TestNothingReadsTheTenantMap(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..")
+	var offenders []string
+	for _, top := range []string{"cmd", "internal"} {
+		err := filepath.WalkDir(filepath.Join(root, top), func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			body, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if strings.Contains(string(body), "tenants.yaml") &&
+				filepath.ToSlash(path) != "../../internal/tenant/entry.go" {
+
+				offenders = append(offenders, path)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(offenders) > 0 {
+		t.Errorf("these files still name tenants.yaml: %v", offenders)
 	}
 }

@@ -99,8 +99,8 @@ type logOrgEvents struct{}
 // weaker authorization than an operator at the host.
 func (logOrgEvents) HandleOrgEvent(_ context.Context, claims WebhookClaims) error {
 	if claims.Event == "organization.deleted" {
-		slog.Warn("idp webhook organization deletion: tenant erasure needed; mark the org erase: true "+
-			"in tenants.yaml, restart the servers, then run rela-server tenant erase",
+		slog.Warn("idp webhook organization deletion: tenant erasure needed; check PROCEDURE-u020, "+
+			"then run rela-server tenant erase",
 			"event", claims.Event, "org_id", claims.OrgID)
 		return nil
 	}

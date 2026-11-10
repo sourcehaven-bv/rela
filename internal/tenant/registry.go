@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sync"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -40,6 +41,15 @@ const DefaultMaxResident = 4
 // a second map beside the registry whose lifecycle could drift from it.
 type Resident interface {
 	Close() error
+}
+
+// Revoker is an optional [Resident] method the registry calls when a
+// tenant stops being served while a request still holds it. It must end the
+// resident's long-lived streams, so that their leases are released and the
+// resident closes, which releases the tenant's schema lock. It must not
+// close what a running request still reads.
+type Revoker interface {
+	Revoke()
 }
 
 // Opener opens the resident value for one tenant.
@@ -95,8 +105,8 @@ func (o *Opened) Close() error {
 //
 // Each tenant also gets its own audit sink, a directory named after its
 // schema under auditRoot (TKT-SNVR8UV, see [AuditRoot]). The schema is the
-// name to use because it is validated against a strict pattern at load and
-// unique across the tenant map, while an org id is an arbitrary string from
+// name to use because it is derived by [SchemaFor], checked against a strict
+// pattern and unique per tenant, while an org id is an arbitrary string from
 // the identity provider. One sink for every tenant would interleave all their
 // audit records, and [Erase] could then not remove one tenant's records
 // without touching the others'.
@@ -192,6 +202,13 @@ var ErrAtCapacity = errors.New("tenant: too many tenants open")
 // that nothing will ever close.
 var ErrClosed = errors.New("tenant: registry closed")
 
+// ErrRevoking reports a request for an org whose previous resident was
+// revoked and is still held by a request. The org is served again, but its
+// old resident's streams were ended, so it is not reused; a second resident
+// beside it would put two stores on one schema. It is a temporary refusal,
+// like [ErrAtCapacity].
+var ErrRevoking = errors.New("tenant: still closing the previous instance of this tenant")
+
 // Option tunes a [Registry].
 type Option func(*options)
 
@@ -220,6 +237,11 @@ type resident[R Resident] struct {
 	element  *list.Element // position in the registry's recency list; nil while evicting
 	evicting bool
 	closed   bool
+	// revoked is set when the resolver refused the org while a request
+	// held the resident. It stays in the map until its last release, so
+	// it counts against the ceiling and Close closes it, but no Acquire
+	// takes it again.
+	revoked bool
 }
 
 // pendingOpen is one tenant being opened. Later requests for the same org
@@ -326,8 +348,13 @@ func NewRegistry[R Resident](resolver Resolver, open Opener[R], maxResident int,
 //
 // The caller must Release the returned lease.
 func (r *Registry[R]) Acquire(ctx context.Context, orgID string) (*Lease[R], error) {
-	t, err := r.resolver.Resolve(orgID)
+	t, err := r.resolver.Resolve(ctx, orgID)
 	if err != nil {
+		if refused(err) {
+			// The org is no longer served: suspended, being erased or
+			// gone. Close what is still open for it.
+			r.revoke(orgID)
+		}
 		return nil, err
 	}
 
@@ -336,6 +363,10 @@ func (r *Registry[R]) Acquire(ctx context.Context, orgID string) (*Lease[R], err
 		if r.closed {
 			r.mu.Unlock()
 			return nil, ErrClosed
+		}
+		if res, ok := r.residents[t.OrgID]; ok && res.revoked {
+			r.mu.Unlock()
+			return nil, fmt.Errorf("tenant %q: %w", t.OrgID, ErrRevoking)
 		}
 		if lease, ok := r.takeLocked(t.OrgID); ok {
 			evicted := r.evictLocked()
@@ -399,6 +430,9 @@ func (r *Registry[R]) openPending(ctx context.Context, t Tenant, p *pendingOpen)
 	}
 	if err != nil {
 		err = fmt.Errorf("tenant %q: open store: %w", t.OrgID, err)
+	} else if rerr := r.recheck(ctx, t.OrgID); rerr != nil {
+		closeValue(t, value)
+		err = rerr
 	}
 
 	r.mu.Lock()
@@ -423,6 +457,21 @@ func (r *Registry[R]) openPending(ctx context.Context, t Tenant, p *pendingOpen)
 	r.closeInBackground(evicted)
 	return &Lease[R]{Tenant: t, res: res, registry: r}, nil
 }
+
+// recheck resolves orgID again once its open holds the schema lock. The
+// status was read before the lock was taken, and a suspension or erasure
+// that landed in between must not leave the tenant open. It runs without the
+// request's cancellation: other requests may be waiting on this open, and a
+// cancelled first request must not throw the opened tenant away.
+func (r *Registry[R]) recheck(ctx context.Context, orgID string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recheckTimeout)
+	defer cancel()
+	_, err := r.resolver.Resolve(ctx, orgID)
+	return err
+}
+
+// recheckTimeout bounds the re-check after a tenant opens.
+const recheckTimeout = 10 * time.Second
 
 // takeLocked leases the resident for orgID when there is one, reviving it if
 // it was marked evicting. Requires r.mu.
@@ -586,6 +635,71 @@ func (r *Registry[R]) Close() error {
 	}
 	r.closers.Wait()
 	return nil
+}
+
+// refused reports whether err is a resolver's refusal of an org, as opposed
+// to a lookup that failed. Only a refusal revokes a resident: a database
+// that stopped answering must not close every tenant.
+func refused(err error) bool {
+	return errors.Is(err, ErrUnknownTenant) || errors.Is(err, ErrSchemaCollision)
+}
+
+// revoke takes orgID's resident out of service. An idle resident is closed
+// now. One a request still holds is marked revoked, closed by its last
+// release, and told to end its streams through [Revoker] so that release
+// comes soon. A revoked resident is never taken again: its streams were
+// ended.
+func (r *Registry[R]) revoke(orgID string) {
+	r.mu.Lock()
+	res, ok := r.residents[orgID]
+	if !ok || res.closed || res.revoked {
+		r.mu.Unlock()
+		return
+	}
+	if res.element != nil {
+		r.recency.Remove(res.element)
+		res.element = nil
+	}
+	var closing []*resident[R]
+	inUse := res.refs > 0
+	if inUse {
+		res.evicting = true
+		res.revoked = true
+	} else {
+		delete(r.residents, orgID)
+		closing = r.scheduleCloseLocked(nil, res)
+	}
+	r.mu.Unlock()
+
+	slog.Info("tenant: closing a tenant that is no longer served", "org_id", orgID, "schema", res.tenant.Schema)
+	if inUse {
+		if rv, ok := any(res.value).(Revoker); ok {
+			rv.Revoke()
+		}
+	}
+	r.closeInBackground(closing)
+}
+
+// Revalidate resolves every resident tenant again and revokes those the
+// resolver now refuses. A host runs it on a timer, so that a suspended or
+// erasing tenant that gets no more requests still closes and releases its
+// schema lock, which lets an erasure proceed. A failed lookup revokes
+// nothing.
+func (r *Registry[R]) Revalidate(ctx context.Context) {
+	r.mu.Lock()
+	orgs := make([]string, 0, len(r.residents))
+	for org := range r.residents {
+		orgs = append(orgs, org)
+	}
+	r.mu.Unlock()
+	for _, org := range orgs {
+		if ctx.Err() != nil {
+			return
+		}
+		if _, err := r.resolver.Resolve(ctx, org); err != nil && refused(err) {
+			r.revoke(org)
+		}
+	}
 }
 
 // Resident reports how many tenants are resident, counting those pinned past

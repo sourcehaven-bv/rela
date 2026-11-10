@@ -61,7 +61,7 @@ type GlobalFlags struct {
 	Verbose bool   `help:"Verbose output." short:"v"`
 	Quiet   bool   `help:"Quiet output."   short:"q"`
 	RunAs   string `name:"run-as" env:"RELA_RUN_AS" help:"Act as this job identity, a system: or integration: name (attribution, not authentication; the audit records your OS user as asserting it)."`
-	Tenant  string `name:"tenant" env:"RELA_TENANT" help:"Org id of the tenant to act in, when the project has a tenants.yaml (required there for every data command)."`
+	Tenant  string `name:"tenant" env:"RELA_TENANT" help:"Org id of the tenant to act in, in tenant mode (RELA_TENANT_MODE=1; required there for every data command)."`
 }
 
 // CLI is the kong-parsed root.
@@ -246,6 +246,11 @@ func runKong() int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// A tenant that stops being served ends the command the way a signal
+	// does, so its deferred cleanup runs ([tenantRefused]).
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	cancelCommand = cancel
 	identity, err := commandIdentity(ktx.Command(), cli.RunAs, flagGiven(ktx, "run-as"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -397,8 +402,8 @@ func commandIsTenantFree(cmd string) bool {
 
 // checkTenantMode is the CLI's tenant gate, run once before a command is
 // dispatched. In tenant mode it refuses a data command that names no
-// tenant, or one the resolver does not serve, before anything is opened. In
-// a single-store project it refuses only a named tenant.
+// tenant, or one the control table does not serve, before anything is
+// opened. Without tenant mode it refuses only a named tenant.
 //
 // It judges the project startDir belongs to. A command that opens another
 // project (`rela flow <script>`) is judged again by [openProject].

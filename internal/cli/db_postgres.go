@@ -34,10 +34,11 @@ type dbTarget struct {
 // flag) so the credential never appears in process listings or shell
 // history.
 //
-// In a single-store project it is $RELA_DATABASE_URL, as before, unless that
-// database already serves tenants ([tenant.CheckBareTarget]). In tenant mode
+// Without tenant mode it is $RELA_DATABASE_URL, as before, unless that
+// database serves tenants ([tenant.CheckBareTarget]). In tenant mode
 // it is the DSN of the tenant org names (TKT-M3SHYE0), and the tenant's
-// schema is pinned first: checked to exist and locked shared until release.
+// schema is pinned first: checked to exist and locked shared until release,
+// and watched like any tenant command ([watchTenant]).
 // Without the check a schema that does not exist yet would be skipped by
 // `search_path`, and a migration would create its tables in `public`.
 func resolveDSN(startDir, org string) (dbTarget, error) {
@@ -60,7 +61,12 @@ func resolveDSN(startDir, org string) (dbTarget, error) {
 	if err != nil {
 		return dbTarget{}, fmt.Errorf("tenant %q: %w", t.OrgID, err)
 	}
-	return dbTarget{dsn: t.DSN, root: choice.root, release: func() { _ = pin.Close() }}, nil
+	stop, err := watchTenant(t.OrgID)
+	if err != nil {
+		_ = pin.Close()
+		return dbTarget{}, fmt.Errorf("tenant %q: %w", t.OrgID, err)
+	}
+	return dbTarget{dsn: t.DSN, root: choice.root, release: func() { stop(); _ = pin.Close() }}, nil
 }
 
 // runDBMigrate applies pending migrations (postgres build). Pool construction

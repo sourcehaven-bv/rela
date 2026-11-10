@@ -102,7 +102,7 @@ func (s *mcpServices) current() *appbuild.Services {
 // has one ([mcpServices.channelDeps]), so an agent identity stays inside
 // the channel roles the project gave it.
 //
-// org names the tenant when the project has a tenants.yaml; see
+// org names the tenant in tenant mode; see
 // [openProject]. In tenant mode the operator who can launch `rela mcp`
 // already holds the base DSN, so the trust boundary is unchanged, but the
 // session opens only the named tenant's store.
