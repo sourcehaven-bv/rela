@@ -39,9 +39,9 @@ func requireCloseReleasesGoroutines(t *testing.T, open func(t *testing.T) jobs.Q
 	goleak.VerifyNone(t, ignore)
 }
 
-// TestMemoryQueue_CloseReleasesGoroutines pins TKT-736J0CZ: neoq's memory
-// backend started a cron goroutine that Shutdown never stopped, so each
-// closed queue leaked one. It fails if go.mod's neoq replace is dropped.
+// TestMemoryQueue_CloseReleasesGoroutines pins that closing a memory queue
+// stops its workers. The neoq memory backend it replaced leaked a cron
+// goroutine per closed queue (TKT-736J0CZ).
 func TestMemoryQueue_CloseReleasesGoroutines(t *testing.T) {
 	requireCloseReleasesGoroutines(t, func(t *testing.T) jobs.Queue {
 		t.Helper()

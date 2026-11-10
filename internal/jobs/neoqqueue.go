@@ -1,9 +1,9 @@
+//go:build postgres
+
 package jobs
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -18,14 +18,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// neoqQueue adapts neoq to [Queue]. Both the memory and postgres backends are
-// this type with a different neoq backend injected, so the seam's semantics —
-// validation, commit deferral, retry mapping, principal propagation — are
-// implemented exactly once and cannot drift between tiers.
-//
-// Backend construction lives in memqueue.go / pgqueue.go, which are build-
-// tagged; this file must stay backend-agnostic so the default build never
-// links pgx.
+// neoqQueue adapts neoq to [Queue] for the postgres tier. The memory tier is
+// rela's own [memQueue]; TKT-TMXHBZW replaces this adapter with River.
 type neoqQueue struct {
 	nq     neoq.Neoq
 	logger *slog.Logger
@@ -66,15 +60,6 @@ type neoqQueue struct {
 	// and the pinned version moves past it.
 	enqueueMu sync.Mutex
 }
-
-// handlerTimeout bounds a single handler execution.
-//
-// Set explicitly because neoq's default is 30s, which is far too short for the
-// work this package exists to carry (LLM calls, slow SMTP). Generous, since a
-// job that genuinely hangs is caught by its deadline and its retry budget
-// rather than by this. It is a backstop against a wedged handler holding a
-// worker forever, not a latency target.
-const handlerTimeout = 15 * time.Minute
 
 // handlerCancelGrace is how much earlier than [handlerTimeout] dispatch
 // cancels the handler's own context. A handler that honors cancellation then
@@ -577,17 +562,10 @@ func intFromPayload(payload map[string]any, key string) (int, bool) {
 // That is the safe default — deduplication has to be asked for, never inferred
 // from two payloads happening to match.
 //
-// Hashed rather than concatenated. The obvious `kind + separator + key` needs a
-// separator that cannot appear in either half, and the obvious choice — a NUL
-// byte — is rejected outright by PostgreSQL, which stores this in a text
-// column: "invalid byte sequence for encoding UTF8: 0x00". Every scheduled job
-// on the durable tier failed to enqueue, and only an end-to-end run against a
-// real database surfaced it. A hash is unambiguous about where one half ends,
-// and its output is safe in any text column.
+// The keyed form is [idempotencyID].
 func fingerprintFor(job Job) string {
 	if job.IdempotencyKey == "" {
 		return uuid.NewString()
 	}
-	sum := sha256.Sum256([]byte(string(job.Kind) + "\x00" + job.IdempotencyKey))
-	return hex.EncodeToString(sum[:])
+	return idempotencyID(job)
 }

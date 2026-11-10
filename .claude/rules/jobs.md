@@ -67,8 +67,8 @@ paths:
   Drop the `replace` only when all of them are upstream.
   `TestPostgresQueue_SchemaPinnedDSN` and
   `TestPostgresQueue_SurvivesAnotherProcessClosing` catch losing the schema
-  and shutdown fixes, and `TestMemoryQueue_CloseReleasesGoroutines` catches
-  losing the goroutine fix; the fork's own tests cover the rest.
+  and shutdown fixes; the fork's own tests cover the rest. The fs/desktop
+  tier no longer uses neoq: it is rela's own `memQueue`.
   **Test any new postgres-touching dependency through a schema-pinned DSN**,
   not just the bare `RELA_TEST_DATABASE_URL` — the bare DSN resolves to
   `public`, which is precisely the one case that worked.

@@ -1,6 +1,9 @@
 package jobs
 
-import "time"
+import (
+	"math/rand/v2"
+	"time"
+)
 
 // This file is the ONE place retry mechanism is defined. Everything here is
 // deliberately changeable: [Retry] is a statement of intent, and translating
@@ -103,4 +106,35 @@ func (r Retry) effectiveDeadline(job Job, enqueuedAt time.Time) time.Time {
 		return window
 	}
 	return job.Deadline
+}
+
+// Backoff between attempts. The delay after failed attempt n (1-based) is
+//
+//	min(n⁴ seconds, retryDelayCap) + retryDelayBase + jitter
+//
+// where jitter is drawn from [0, n × retryJitterStep). The shape follows the
+// curve rela ran under neoq: the first retry is no sooner than retryDelayBase,
+// so a blip has time to clear, and later retries spread out fast enough that a
+// RetryPersistent job does not pound an endpoint that is down for hours.
+//
+// The cap keeps a RetryPersistent job trying through its whole
+// persistentWindow. Without it the twentieth attempt would wait two days,
+// which is the window itself.
+const (
+	retryDelayBase  = 15 * time.Second
+	retryJitterStep = 5 * time.Second
+	retryDelayCap   = time.Hour
+	// retryDelayMaxAttempt bounds n in retryDelay. Past it the growth term
+	// is long capped (60⁴ seconds is 150 days), so clamping changes nothing
+	// but keeps the arithmetic from overflowing.
+	retryDelayMaxAttempt = 60
+)
+
+// retryDelay returns how long to wait before the attempt that follows failed
+// attempt n. n below 1 is treated as 1.
+func retryDelay(n int) time.Duration {
+	n = min(max(n, 1), retryDelayMaxAttempt)
+	grow := min(time.Duration(n*n*n*n)*time.Second, retryDelayCap)
+	jitter := rand.N(time.Duration(n) * retryJitterStep) //nolint:gosec // jitter, not a secret
+	return grow + retryDelayBase + jitter
 }

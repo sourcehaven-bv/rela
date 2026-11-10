@@ -118,3 +118,14 @@ func TestRetry_String(t *testing.T) {
 	require.Equal(t, "persistent", RetryPersistent.String())
 	require.Equal(t, "Retry(99)", Retry(99).String())
 }
+
+func TestRetryDelay_Bounds(t *testing.T) {
+	for _, n := range []int{-1, 0, 1, 2, 5, 20, 59, 60, 200, 1 << 20} {
+		d := retryDelay(n)
+		attempt := min(max(n, 1), 60)
+		require.GreaterOrEqual(t, d, retryDelayBase, "n=%d", n)
+		require.Less(t, d, retryDelayCap+retryDelayBase+time.Duration(attempt)*retryJitterStep, "n=%d", n)
+	}
+	// The first retry comes soon enough for RetryBounded to ride out a blip.
+	require.Less(t, retryDelay(1), time.Minute)
+}

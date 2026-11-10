@@ -80,10 +80,22 @@ package jobs
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
 )
+
+// handlerTimeout bounds a single handler execution.
+//
+// Generous, because the work this package exists to carry (LLM calls, slow
+// SMTP) can take minutes, and a job that genuinely hangs is caught by its
+// deadline and its retry budget rather than by this. It is a backstop against
+// a wedged handler holding a worker forever, not a latency target. The cap
+// reaches the handler as a context deadline; a handler that ignores its
+// context keeps its worker until it returns.
+const handlerTimeout = 15 * time.Minute
 
 // Errors returned by [Queue] implementations. They are sentinel values so
 // callers (and the jobstest conformance suite) can assert on the failure mode
@@ -282,8 +294,10 @@ func (j Job) FinalAttempt() bool {
 // Handler runs a job. Returning a non-nil error marks the attempt failed and
 // subjects it to the job's [Retry] policy.
 //
-// The context carries the enqueueing principal and audit attribution, and is
-// cancelled when the job's timeout expires or the queue shuts down. A handler
+// The context does NOT carry the enqueueing principal: a durable backend
+// serializes the job, and a context cannot travel with it. A handler that acts
+// for someone binds that identity itself from what its payload names. The
+// context is cancelled when the job's timeout expires or the queue shuts down. A handler
 // that ignores cancellation keeps running after the queue has given up on it,
 // so long operations should select on ctx.Done.
 type Handler func(ctx context.Context, job Job) error
@@ -392,4 +406,19 @@ func (j Job) validate() error {
 // epoch, which would expire every job that omitted the field.
 func (j Job) expired(now time.Time) bool {
 	return !j.Deadline.IsZero() && !now.Before(j.Deadline)
+}
+
+// idempotencyID is the identity a backend deduplicates a keyed job on: the
+// job's [Job.IdempotencyKey], namespaced by kind, so two subsystems choosing
+// the same key do not collide.
+//
+// Hashed rather than concatenated. The obvious `kind + separator + key` needs a
+// separator that cannot appear in either half, and the obvious choice, a NUL
+// byte, is rejected by PostgreSQL in a text column ("invalid byte sequence for
+// encoding UTF8: 0x00"). Every scheduled job on the durable tier once failed to
+// enqueue for that reason. A hash is unambiguous about where one half ends, and
+// its output is safe in any text column.
+func idempotencyID(job Job) string {
+	sum := sha256.Sum256([]byte(string(job.Kind) + "\x00" + job.IdempotencyKey))
+	return hex.EncodeToString(sum[:])
 }
