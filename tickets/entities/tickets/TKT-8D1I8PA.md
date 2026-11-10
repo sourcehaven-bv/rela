@@ -5,7 +5,9 @@ title: 'tenant: choose the tenant for anonymous requests (or decide there is non
 kind: enhancement
 priority: low
 effort: s
-status: backlog
+started: "2026-11-10"
+completed: "2026-11-10"
+status: done
 ---
 
 ## Description
@@ -37,3 +39,10 @@ within the chosen tenant.
 1. A decision record states which option, and why.
 2. If an option other than "none" is chosen, a test shows an anonymous request
 on tenant A's host cannot read tenant B's public content.
+
+## Resolution
+
+Decided "no anonymous tenant access" (DEC-9EZ3E8H). The current fail-closed
+behaviour stays; no code change. The tenant mode section of the PostgreSQL
+backend guide now says anonymous requests reach no tenant, and why. Acceptance
+criterion 2 does not apply because the chosen option is "none".
