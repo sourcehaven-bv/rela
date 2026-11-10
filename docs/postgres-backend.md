@@ -705,8 +705,11 @@ database that serves tenants: one with `rela_control.tenants`, reached on
 instead of serving every org from `public`.
 
 The IdP webhook (`POST /webhooks/idp`) is routed by the `org_id` in its
-signed body. An event for an org this server does not host is acknowledged
-and ignored. Declarative webhooks (`/hooks/<id>`) carry no assertion, so the
+signed body. An event for an org this server does not host, or for one
+being erased, is acknowledged and ignored. An event for a suspended or
+provisioning tenant gets 503 with `Retry-After`, so the IdP delivers it
+again: a role removal sent during a suspension still applies after the
+resume. Declarative webhooks (`/hooks/<id>`) carry no assertion, so the
 server cannot tell their tenant and refuses them.
 
 Each open tenant holds one extra connection, which holds the tenant's
@@ -746,13 +749,21 @@ rela-server-postgres tenant erase   -project /srv/rela org_7f3a
 - `show` prints the org's derived schema and its status, or "no tenant".
 - `suspend` stops serving the org and keeps its data. Requests get 403 at
   once. Each server closes the tenant within 30 seconds, and ends its live
-  update streams.
+  update streams. IdP webhooks for the org are refused with 503 so that the
+  IdP retries them. If the suspension outlasts the IdP's retries, resync
+  the org's roles from the IdP after the resume.
 - `resume` serves a suspended org again. It cannot resume an org that is
   being erased.
 - `erase` is described below.
 
 Every status change is checked against the current status in the same
 statement, so two operators cannot undo each other's change.
+
+Each `create`, `suspend` and `resume` attempt, whether it fails or
+succeeds, is appended to `.rela/audit/tenant-lifecycle.jsonl` on the host
+that ran it: the time, the operator (`$USER`), the command, the org id,
+the schema when known and the result. Erasures have their own record,
+described below. Neither record holds tenant data.
 
 A `rela-postgres --tenant <org_id>` process, such as the scheduler or stdio
 MCP, checks the same status every 30 seconds. When the tenant is no longer

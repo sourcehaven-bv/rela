@@ -221,3 +221,24 @@ func TestClusterResolver_Lookup(t *testing.T) {
 		t.Errorf("Lookup(unknown) = %v, want ErrUnknownTenant", err)
 	}
 }
+
+// TestClusterResolver_Inactive pins which refusals are a tenant that is not
+// served now, whose inbound events must be retried rather than dropped.
+func TestClusterResolver_Inactive(t *testing.T) {
+	t.Parallel()
+
+	r := newClusterResolver(clusterBase, controlWith(t,
+		Record{OrgID: "org-s", Status: StatusSuspended, SchemaExists: true},
+		Record{OrgID: "org-p", Status: StatusProvisioning},
+		Record{OrgID: "org-e", Status: StatusErasing, SchemaExists: true},
+	), nil)
+	for org, inactive := range map[string]bool{"org-s": true, "org-p": true, "org-e": false, "org-z": false} {
+		_, err := r.Resolve(t.Context(), org)
+		if !errors.Is(err, ErrUnknownTenant) {
+			t.Errorf("Resolve(%s) = %v, want ErrUnknownTenant", org, err)
+		}
+		if errors.Is(err, ErrTenantInactive) != inactive {
+			t.Errorf("Resolve(%s) inactive = %v, want %v", org, !inactive, inactive)
+		}
+	}
+}

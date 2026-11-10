@@ -135,13 +135,18 @@ func runTenant(ctx context.Context, args []string, tio tenantIO) int {
 	switch a.cmd {
 	case "create":
 		t, err := p.Create(ctx, a.orgID, a.adopt)
+		recordLifecycle(tio, a, t.Schema, err)
 		return report(tio, a, err, fmt.Sprintf("created org_id %q in schema %q; it is active", a.orgID, t.Schema))
 	case "suspend":
-		return report(tio, a, p.Suspend(ctx, a.orgID),
+		err := p.Suspend(ctx, a.orgID)
+		recordLifecycle(tio, a, "", err)
+		return report(tio, a, err,
 			fmt.Sprintf("suspended org_id %q; requests are refused now, and open sessions close within %s",
 				a.orgID, tenant.RevalidateInterval))
 	case "resume":
-		return report(tio, a, p.Resume(ctx, a.orgID), fmt.Sprintf("resumed org_id %q", a.orgID))
+		err := p.Resume(ctx, a.orgID)
+		recordLifecycle(tio, a, "", err)
+		return report(tio, a, err, fmt.Sprintf("resumed org_id %q", a.orgID))
 	default:
 		return eraseTenant(ctx, a, base, p, tio)
 	}
@@ -313,6 +318,49 @@ func recordErasure(tio tenantIO, cacheDir string, t tenant.Tenant, res tenant.Er
 	}
 	if err != nil {
 		_, _ = fmt.Fprintf(tio.err, "warning: the erasure was not recorded in %s: %v\n", erasureLog, err)
+	}
+}
+
+// lifecycleLog is the host-level record of create, suspend and resume. Like
+// the erasure log it sits beside the per-tenant audit directories and holds
+// no tenant data.
+const lifecycleLog = "tenant-lifecycle.jsonl"
+
+// recordLifecycle appends one line to the lifecycle log for a create,
+// suspend or resume attempt. schema is empty when the command does not
+// report one. A failure to write the record is a warning only, as for
+// recordErasure.
+func recordLifecycle(tio tenantIO, a tenantArgs, schema string, cmdErr error) {
+	operator := ""
+	if tio.user != nil {
+		operator = tio.user()
+	}
+	rec := map[string]any{
+		"time":     time.Now().UTC().Format(time.RFC3339),
+		"operator": operator,
+		"tool":     "rela-server tenant " + a.cmd,
+		"action":   a.cmd,
+		"org_id":   a.orgID,
+		"ok":       cmdErr == nil,
+	}
+	if schema != "" {
+		rec["schema"] = schema
+	}
+	if a.cmd == "create" {
+		rec["adopt"] = a.adopt
+	}
+	if cmdErr != nil {
+		rec["error"] = cmdErr.Error()
+		slog.Warn("tenant "+a.cmd+" failed", "org_id", a.orgID, "error", cmdErr)
+	} else {
+		slog.Info("tenant "+a.cmd, "org_id", a.orgID, "schema", schema)
+	}
+	line, err := json.Marshal(rec)
+	if err == nil {
+		err = appendLine(filepath.Join(a.cacheDir, "audit", lifecycleLog), line)
+	}
+	if err != nil {
+		_, _ = fmt.Fprintf(tio.err, "warning: the %s was not recorded in %s: %v\n", a.cmd, lifecycleLog, err)
 	}
 }
 

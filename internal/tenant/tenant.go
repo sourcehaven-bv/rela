@@ -70,6 +70,14 @@ import (
 // able to tell a quiet afternoon from a failing control table.
 var ErrUnknownTenant = errors.New("tenant: unknown organization")
 
+// ErrTenantInactive marks an [ErrUnknownTenant] for an org that is a tenant
+// but is not served now: suspended, or not yet provisioned. Requests are
+// refused alike, but an inbound event for such an org must not be dropped:
+// it applies once the tenant is served again, so the sender has to retry.
+// An erasing tenant is not inactive: its data is being destroyed, so its
+// events have nothing to apply to.
+var ErrTenantInactive = errors.New("tenant: organization is not served now")
+
 // ErrSchemaCollision reports that an org's derived schema is recorded for a
 // different org. Two org ids whose hashes share a prefix would otherwise share
 // one schema, which is a cross-tenant leak, so the second org is refused and

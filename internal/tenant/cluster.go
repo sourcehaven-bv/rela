@@ -143,6 +143,9 @@ func (r *ClusterResolver) Resolve(ctx context.Context, orgID string) (Tenant, er
 	if err != nil {
 		return Tenant{}, err
 	}
+	if rec.Status == StatusSuspended || rec.Status == StatusProvisioning {
+		return Tenant{}, fmt.Errorf("%w: %w: org_id %q is %s", ErrUnknownTenant, ErrTenantInactive, orgID, rec.Status)
+	}
 	if rec.Status != StatusActive {
 		return Tenant{}, fmt.Errorf("%w: org_id %q is %s", ErrUnknownTenant, orgID, rec.Status)
 	}

@@ -207,15 +207,25 @@ func (h *Host) serveWebhook(w http.ResponseWriter, r *http.Request) {
 
 	next, release, err := h.cfg.Acquire(r.Context(), claims.OrgID)
 	switch {
+	case errors.Is(err, tenant.ErrTenantInactive):
+		// A suspended tenant keeps its data, and a role removal or user
+		// deletion sent now must still apply when it is resumed. Refused
+		// with a retryable status so the IdP delivers it again, never
+		// acknowledged and dropped.
+		slog.Warn("tenant host: idp webhook for a tenant that is not served now; asking the IdP to retry",
+			"org_id", claims.OrgID, "event", claims.Event, "id", claims.ID)
+		w.Header().Set("Retry-After", "300")
+		http.Error(w, "tenant not served now", http.StatusServiceUnavailable)
+		return
 	case errors.Is(err, tenant.ErrUnknownTenant):
 		// Acknowledged so the IdP does not retry an event for an org this
 		// server does not host. Provisioning a tenant is TKT-TNPRV8.
 		if claims.Event == "organization.deleted" {
-			// A suspended tenant is not served but still holds data, so
-			// its deletion must reach the operator like an active one's.
+			// An org being erased, or one this server never had: worth an
+			// operator's look, since an erasure may be in progress.
 			slog.Warn("tenant host: idp webhook organization deletion for an org this server does not "+
-				"serve; if it is a suspended tenant, erasure is needed: check PROCEDURE-u020, then run "+
-				"rela-server tenant erase", "org_id", claims.OrgID, "id", claims.ID)
+				"serve; check that its erasure completed (PROCEDURE-u020, rela-server tenant erase)",
+				"org_id", claims.OrgID, "id", claims.ID)
 		} else {
 			slog.Info("tenant host: idp webhook for an org this server does not host",
 				"org_id", claims.OrgID, "event", claims.Event, "id", claims.ID)

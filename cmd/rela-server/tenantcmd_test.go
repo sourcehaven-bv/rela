@@ -186,6 +186,40 @@ func TestTenantCommand_EraseRecord(t *testing.T) {
 	}
 }
 
+// TestTenantCommand_LifecycleRecord pins that create, suspend and resume
+// are recorded on the host, failed attempts included, and that erase is not
+// written to the lifecycle log.
+func TestTenantCommand_LifecycleRecord(t *testing.T) {
+	dir := projectDir(t)
+	runTenantFake(t, &fakeLifecycle{}, fakeReader{}, "", "create", "-project", dir, "org-a")
+	runTenantFake(t, &fakeLifecycle{}, fakeReader{}, "", "suspend", "-project", dir, "org-a")
+	runTenantFake(t, &fakeLifecycle{err: tenant.ErrWrongStatus}, fakeReader{}, "", "resume", "-project", dir,
+		"org-a")
+	runTenantFake(t, &fakeLifecycle{}, fakeReader{}, "", "erase", "-project", dir, "-force", "org-a")
+	rec, err := os.ReadFile(filepath.Join(dir, ".rela", "audit", lifecycleLog))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(rec)), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("lifecycle record has %d lines, want 3: %q", len(lines), rec)
+	}
+	for i, want := range [][]string{
+		{`"action":"create"`, `"schema":"org_x"`, `"adopt":false`, `"ok":true`},
+		{`"action":"suspend"`, `"ok":true`},
+		{`"action":"resume"`, `"ok":false`, `"error":`},
+	} {
+		for _, w := range append(want, `"operator":"tester"`, `"org_id":"org-a"`) {
+			if !strings.Contains(lines[i], w) {
+				t.Errorf("line %d %q lacks %s", i, lines[i], w)
+			}
+		}
+	}
+	if strings.Contains(string(rec), "hunter2") {
+		t.Error("the lifecycle record carries the DSN password")
+	}
+}
+
 // TestTenantCommand_Show pins the show output for a tenant and for an org
 // without one.
 func TestTenantCommand_Show(t *testing.T) {
