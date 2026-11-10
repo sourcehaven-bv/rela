@@ -23,8 +23,7 @@ import (
 // safe way to be wrong here.
 //
 // A deployment on these builds is single-store by construction (fsstore or
-// memstore), so a tenant map is meaningless rather than merely unsupported. A
-// tenant carrying an explicit DSN never reaches this function.
+// memstore), so tenant mode is meaningless rather than merely unsupported.
 func dsnForSchema(_, _ string) (string, error) {
 	return "", errors.New(
 		"tenant: deriving a per-tenant DSN requires the postgres build; " +
@@ -50,3 +49,35 @@ func DescribeTarget(string) string { return "a database this build cannot reach"
 // filesystem, memory and sqlite stores keep their data in the project
 // directory, so every tenant would read the same data.
 const Supported = false
+
+// NewClusterResolver refuses on a build with no PostgreSQL: there is no
+// control table to read.
+func NewClusterResolver(context.Context, string) (*ClusterResolver, error) {
+	return nil, ErrUnsupportedBuild
+}
+
+// The lifecycle methods exist on every build so the commands compile;
+// [NewProvisioner] refuses to build a Provisioner here, so none is reached.
+
+// Create refuses on a build with no PostgreSQL.
+func (*Provisioner) Create(context.Context, string, bool) (Tenant, error) {
+	return Tenant{}, ErrUnsupportedBuild
+}
+
+// Suspend refuses on a build with no PostgreSQL.
+func (*Provisioner) Suspend(context.Context, string) error { return ErrUnsupportedBuild }
+
+// Resume refuses on a build with no PostgreSQL.
+func (*Provisioner) Resume(context.Context, string) error { return ErrUnsupportedBuild }
+
+// Erase refuses on a build with no PostgreSQL.
+func (*Provisioner) Erase(context.Context, string) (Tenant, Erasure, error) {
+	return Tenant{}, Erasure{}, ErrUnsupportedBuild
+}
+
+// CheckBareTarget has no database to check on a build with no PostgreSQL.
+func CheckBareTarget(context.Context, string) error { return nil }
+
+// RefuseTenantDatabase has no database to check on a build with no
+// PostgreSQL.
+func RefuseTenantDatabase(context.Context, string) error { return nil }

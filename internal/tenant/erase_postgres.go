@@ -38,10 +38,8 @@ const eraseLockTimeout = "30s"
 // PostgreSQL skips a `search_path` entry that names no existing schema. A
 // tenant listed before its schema was created, or after it was erased, would
 // then land in `public`, and pgstore's migrations would create its tables
-// there. An explicit `dsn:` that sets no `search_path`, or another one, lands
-// in the wrong schema the same way. Both look like a working deployment, so
-// a tenant whose connection does not land in its own schema is refused
-// before migrations run.
+// there. That looks like a working deployment, so a tenant whose connection
+// does not land in its own schema is refused before migrations run.
 func pinSchema(ctx context.Context, dsn, schema string) (io.Closer, error) {
 	ctx, cancel := context.WithTimeout(ctx, schemaCheckTimeout)
 	defer cancel()
@@ -61,7 +59,7 @@ func pinSchema(ctx context.Context, dsn, schema string) (io.Closer, error) {
 		return nil, fmt.Errorf("check schema: %w", err)
 	}
 	if !locked {
-		return nil, fmt.Errorf("schema %q is being erased", schema)
+		return nil, fmt.Errorf("schema %q is locked: it is being created or erased", schema)
 	}
 	var got *string
 	if err := conn.QueryRow(ctx, "SELECT current_schema()").Scan(&got); err != nil {
@@ -72,20 +70,28 @@ func pinSchema(ctx context.Context, dsn, schema string) (io.Closer, error) {
 		if got != nil {
 			landed = fmt.Sprintf("schema %q", *got)
 		}
-		return nil, fmt.Errorf("the connection lands in %s, not %q: create the schema first, "+
-			"and an explicit dsn must set search_path to it", landed, schema)
+		return nil, fmt.Errorf("the connection lands in %s, not %q: the schema does not exist", landed, schema)
 	}
 	keep = true
-	return pinnedConn{conn}, nil
+	return pinnedConn{conn: conn, schema: schema}, nil
 }
 
 // pinnedConn is the connection that holds a tenant's lock shared.
-type pinnedConn struct{ conn *pgx.Conn }
+type pinnedConn struct {
+	conn   *pgx.Conn
+	schema string
+}
 
+// Close releases the lock and then the connection. The explicit unlock
+// matters: closing a connection only asks the server to end the session,
+// and the server releases the session's locks some time after Close
+// returns. An erase or create that runs right after a close would then still
+// find the tenant locked.
 func (p pinnedConn) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), schemaCheckTimeout)
 	defer cancel()
-	return p.conn.Close(ctx)
+	_, uerr := p.conn.Exec(ctx, "SELECT pg_advisory_unlock_shared($1, hashtext($2))", tenantLockClass, p.schema)
+	return errors.Join(uerr, p.conn.Close(ctx))
 }
 
 // dropSchema drops schema and everything in it, holding the tenant's lock
@@ -110,7 +116,7 @@ func dropSchema(ctx context.Context, dsn, schema string) (bool, error) {
 		// pgx redacts the password in connect errors.
 		return false, fmt.Errorf("connect: %w", err)
 	}
-	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
+	defer closeReleasing(ctx, conn)
 
 	var locked bool
 	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1, hashtext($2))",
@@ -146,20 +152,72 @@ func dropSchema(ctx context.Context, dsn, schema string) (bool, error) {
 	return true, nil
 }
 
-// ErrLooksLikeTenantDatabase reports a database command run without a
-// tenant map against a database that already serves tenants.
+// ErrLooksLikeTenantDatabase reports a database command run outside tenant
+// mode against a database that already serves tenants.
 var ErrLooksLikeTenantDatabase = errors.New("tenant: this database already holds rela data in other " +
-	"schemas, as a tenant deployment does, but none in the schema this connection lands in; run the " +
-	"command from the project directory and name the tenant with --tenant")
+	"schemas, as a tenant deployment does, but none in the schema this connection lands in; set " +
+	EnvTenantMode + "=1 and name the tenant with --tenant")
 
-// CheckBareTarget guards a database command that found no tenant map, such
-// as `rela db migrate` run outside the project directory. In a tenant
-// deployment $RELA_DATABASE_URL is the base DSN, which sets no tenant
-// `search_path`, so such a command would create rela's tables in `public`.
+// ErrTenantDatabase reports a single-store open of a tenant database: one
+// with a tenant control table, reached on `public` or on a tenant's schema.
+// In tenant mode $RELA_DATABASE_URL is the base DSN and lands in `public`,
+// so opening it as one store would create rela's tables there and serve
+// every org from them.
+var ErrTenantDatabase = errors.New("tenant: this database serves tenants (it has " + controlTable +
+	"); set " + EnvTenantMode + "=1, and name the tenant with --tenant for a command")
+
+// RefuseTenantDatabase returns [ErrTenantDatabase] when dsn reaches a tenant
+// database on `public` or on a schema the control table records. Every
+// single-store entry point on the postgres build calls it before it opens a
+// store, so a deployment that forgot to switch tenant mode on fails closed.
+// A database without a control table passes.
+func RefuseTenantDatabase(ctx context.Context, dsn string) error {
+	ctx, cancel := context.WithTimeout(ctx, schemaCheckTimeout)
+	defer cancel()
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("check database: %w", err)
+	}
+	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
+	return refuseTenantDatabase(ctx, conn)
+}
+
+// refuseTenantDatabase is [RefuseTenantDatabase] on an open connection.
+func refuseTenantDatabase(ctx context.Context, conn *pgx.Conn) error {
+	var hasControl bool
+	if err := conn.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", controlTable).Scan(&hasControl); err != nil {
+		return fmt.Errorf("check database: %w", err)
+	}
+	if !hasControl {
+		return nil
+	}
+	var here *string
+	if err := conn.QueryRow(ctx, "SELECT current_schema()").Scan(&here); err != nil {
+		return fmt.Errorf("check database: %w", err)
+	}
+	if here == nil || *here == "public" {
+		return ErrTenantDatabase
+	}
+	var registered bool
+	if err := conn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM "+controlTable+" WHERE schema_name = $1)",
+		*here).Scan(&registered); err != nil {
+		return fmt.Errorf("check database: %w", err)
+	}
+	if registered {
+		return ErrTenantDatabase
+	}
+	return nil
+}
+
+// CheckBareTarget guards a database command run outside tenant mode, such as
+// `rela db migrate`. In a tenant deployment $RELA_DATABASE_URL is the base
+// DSN, which sets no tenant `search_path`, so such a command would create
+// rela's tables in `public`.
 //
-// It returns [ErrLooksLikeTenantDatabase] when the connection's schema holds
-// no rela tables but another schema of the database does. A single-store
-// database, already migrated or still empty, passes.
+// It returns [ErrTenantDatabase] as [RefuseTenantDatabase] does, and
+// [ErrLooksLikeTenantDatabase] when the connection's schema holds no rela
+// tables but another schema of the database does. A single-store database,
+// already migrated or still empty, passes.
 func CheckBareTarget(ctx context.Context, dsn string) error {
 	ctx, cancel := context.WithTimeout(ctx, schemaCheckTimeout)
 	defer cancel()
@@ -168,6 +226,9 @@ func CheckBareTarget(ctx context.Context, dsn string) error {
 		return fmt.Errorf("check database: %w", err)
 	}
 	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
+	if err := refuseTenantDatabase(ctx, conn); err != nil {
+		return err
+	}
 	var here, elsewhere bool
 	if err := conn.QueryRow(ctx, `SELECT
 		    coalesce(bool_or(schemaname = current_schema()), false),

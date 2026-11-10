@@ -4,7 +4,6 @@ package cli
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -37,16 +36,14 @@ relations: {}
 `
 
 // writeTwoTenantProject writes a project with a scheduled task that creates
-// one note, and a tenant map with two tenants on private schemas of the test
-// database. The map names schemas only; the base DSN comes from
-// $RELA_DATABASE_URL as in production, so no credential is in the file.
+// one note, and creates two tenants in a private database with the
+// provisioner, as `rela-server tenant create` does. Tenant mode and the base
+// DSN come from the environment, as in production.
 func writeTwoTenantProject(t *testing.T) (root, schemaA, schemaB string) {
 	t.Helper()
-	_, schemaA = backendtest.SchemaDSN(t)
-	_, schemaB = backendtest.SchemaDSN(t)
-	base := os.Getenv("RELA_TEST_DATABASE_URL")
-	require.NotEmpty(t, base)
+	base := backendtest.Database(t)
 	t.Setenv("RELA_DATABASE_URL", base)
+	t.Setenv(tenant.EnvTenantMode, "1")
 
 	root = t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "scripts"), 0o750))
@@ -54,12 +51,16 @@ func writeTwoTenantProject(t *testing.T) (root, schemaA, schemaB string) {
 		"schema.yaml":      tenantEntrySchema,
 		"schedules.yaml":   "tasks:\n  - name: tick\n    script: tick.lua\n    every: 1h\n",
 		"scripts/tick.lua": `rela.create_entity("note", { title = "scheduled" })`,
-		tenant.ConfigFileName: fmt.Sprintf("tenants:\n  - {org_id: org-a, schema: %s}\n  - {org_id: org-b, schema: %s}\n",
-			schemaA, schemaB),
 	} {
 		require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(body), 0o600))
 	}
-	return root, schemaA, schemaB
+	p, err := tenant.NewProvisioner(base, tenant.AuditRoot(filepath.Join(root, ".rela")))
+	require.NoError(t, err)
+	a, err := p.Create(t.Context(), "org-a", false)
+	require.NoError(t, err)
+	b, err := p.Create(t.Context(), "org-b", false)
+	require.NoError(t, err)
+	return root, a.Schema, b.Schema
 }
 
 func openTenantForTest(t *testing.T, root, org string) *appbuild.Services {
@@ -196,8 +197,10 @@ func TestTenantMCP_CloseReleasesTheSchemaLock(t *testing.T) {
 	// The pin is a socket, which Go closes on garbage collection, so a leaked
 	// pin would release the lock eventually anyway. Check the closer is the
 	// tenant's, and allow the backend only a moment to exit.
-	_, isTenant := mcpA.closeOrigin.(*tenant.Opened)
-	require.True(t, isTenant, "a tenant session must close through the tenant.Opened")
+	w, isTenant := mcpA.closeOrigin.(watchedTenant)
+	require.True(t, isTenant, "a tenant session must close through its watcher")
+	_, isOpened := w.opened.(*tenant.Opened)
+	require.True(t, isOpened, "a tenant session must close through the tenant.Opened")
 	require.NoError(t, mcpA.Close())
 	require.Eventually(t, func() bool { return !held() }, 500*time.Millisecond, 10*time.Millisecond,
 		"closing the session must release the schema lock")
@@ -208,24 +211,22 @@ func TestTenantMCP_CloseReleasesTheSchemaLock(t *testing.T) {
 // exist is skipped by search_path, so an unchecked migration would create
 // rela's tables in public.
 func TestTenantDB_RefusesAMissingSchema(t *testing.T) {
-	db := backendtest.Database(t)
-	t.Setenv("RELA_DATABASE_URL", db)
-	root := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "schema.yaml"), []byte(tenantEntrySchema), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(root, tenant.ConfigFileName),
-		[]byte("tenants:\n  - {org_id: org-a, schema: never_created}\n"), 0o600))
+	root, schemaA, _ := writeTwoTenantProject(t)
+	db := os.Getenv("RELA_DATABASE_URL")
+	conn, err := pgx.Connect(context.Background(), db)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close(context.Background()) }()
+	_, err = conn.Exec(context.Background(), "DROP SCHEMA "+pgx.Identifier{schemaA}.Sanitize()+" CASCADE")
+	require.NoError(t, err)
 
 	oldPath, oldOrg := projectPath, tenantOrg
 	projectPath, tenantOrg = root, "org-a"
 	t.Cleanup(func() { projectPath, tenantOrg = oldPath, oldOrg })
 
-	err := runDBMigrate()
+	err = runDBMigrate()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "never_created")
+	assert.Contains(t, err.Error(), "does not exist")
 
-	conn, err := pgx.Connect(context.Background(), db)
-	require.NoError(t, err)
-	defer func() { _ = conn.Close(context.Background()) }()
 	var n int
 	require.NoError(t, conn.QueryRow(context.Background(),
 		"SELECT count(*) FROM pg_tables WHERE schemaname = 'public'").Scan(&n))
@@ -233,6 +234,34 @@ func TestTenantDB_RefusesAMissingSchema(t *testing.T) {
 
 	tenantOrg = ""
 	require.ErrorIs(t, runDBMigrate(), tenant.ErrTenantRequired)
+}
+
+// TestTenantSelect_RefusesUnservedTenants pins the CLI's selection against
+// a real control table: an unknown, suspended or erasing org opens nothing.
+func TestTenantSelect_RefusesUnservedTenants(t *testing.T) {
+	root, _, _ := writeTwoTenantProject(t)
+	p, err := tenant.NewProvisioner(os.Getenv("RELA_DATABASE_URL"), tenant.AuditRoot(filepath.Join(root, ".rela")))
+	require.NoError(t, err)
+	require.NoError(t, p.Suspend(t.Context(), "org-b"))
+
+	for _, org := range []string{"org-c", "org-b"} {
+		svc, closer, err := openProject(root, org)
+		require.ErrorIs(t, err, tenant.ErrUnknownTenant, "org %q", org)
+		assert.Nil(t, svc)
+		assert.Nil(t, closer)
+		require.ErrorIs(t, checkTenantMode("list", root, org, os.Getenv), tenant.ErrUnknownTenant)
+	}
+	require.NoError(t, checkTenantMode("list", root, "org-a", os.Getenv))
+}
+
+// TestSingleStore_RefusesATenantDatabase pins that without tenant mode the
+// CLI refuses to open a database that serves tenants, rather than serve
+// `public` to whoever forgot the switch.
+func TestSingleStore_RefusesATenantDatabase(t *testing.T) {
+	root, _, _ := writeTwoTenantProject(t)
+	t.Setenv(tenant.EnvTenantMode, "")
+	_, _, err := openProject(root, "")
+	require.ErrorIs(t, err, tenant.ErrTenantDatabase)
 }
 
 // TestTenantDB_TargetsTheNamedProject pins that a db command takes the
@@ -254,8 +283,8 @@ func TestTenantDB_TargetsTheNamedProject(t *testing.T) {
 }
 
 // TestDB_RefusesATenantDatabaseOutsideAProject pins that `rela db migrate`
-// run outside the project directory, where it cannot see tenants.yaml,
-// refuses a database that already serves tenants. Its $RELA_DATABASE_URL is
+// run outside the project directory, without tenant mode, refuses a
+// database that already serves tenants. Its $RELA_DATABASE_URL is
 // then the base DSN, and migrating it would put rela's tables in public.
 func TestDB_RefusesATenantDatabaseOutsideAProject(t *testing.T) {
 	db := backendtest.Database(t)
@@ -288,19 +317,49 @@ func TestDB_RefusesATenantDatabaseOutsideAProject(t *testing.T) {
 	assert.NotZero(t, publicTables(), "a single-store database is migrated in its own schema")
 }
 
-// TestTenantOpen_ErrorNamesNoPassword pins that a failed tenant open does
-// not echo the base DSN's password: the connect error is wrapped with the
-// org id only, and pgx redacts the password from its own message.
+// TestTenantOpen_ErrorNamesNoPassword pins that a failed tenant lookup does
+// not echo the base DSN's password: pgx redacts it from its own message.
 func TestTenantOpen_ErrorNamesNoPassword(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "schema.yaml"), []byte(tenantEntrySchema), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(root, tenant.ConfigFileName),
-		[]byte("tenants:\n  - {org_id: org-a, schema: tenant_a}\n"), 0o600))
 	const secret = "s3cret-pw"
+	t.Setenv(tenant.EnvTenantMode, "1")
 	t.Setenv("RELA_DATABASE_URL", "postgres://u:"+secret+"@tenant-db.invalid/rela?connect_timeout=1")
 
 	_, _, err := openProject(root, "org-a")
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), secret)
 	assert.Contains(t, err.Error(), "org-a")
+}
+
+// TestTenantCLI_StopsWhenSuspended pins that a long-running tenant process,
+// such as the scheduler or stdio MCP, stops when its tenant is suspended,
+// so it neither keeps serving it nor blocks its erasure (RR-7EKSK1I).
+func TestTenantCLI_StopsWhenSuspended(t *testing.T) {
+	root, _, _ := writeTwoTenantProject(t)
+	refused := make(chan string, 1)
+	oldRefused, oldInterval := tenantRefused, tenantWatchInterval
+	tenantRefused = func(org string, _ error) { refused <- org }
+	tenantWatchInterval = 10 * time.Millisecond
+	t.Cleanup(func() { tenantRefused, tenantWatchInterval = oldRefused, oldInterval })
+
+	_, closer, err := openProject(root, "org-a")
+	require.NoError(t, err)
+	defer func() { _ = closer.Close() }()
+
+	select {
+	case org := <-refused:
+		t.Fatalf("an active tenant %q was reported as refused", org)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	p, err := tenant.NewProvisioner(os.Getenv("RELA_DATABASE_URL"), tenant.AuditRoot(filepath.Join(root, ".rela")))
+	require.NoError(t, err)
+	require.NoError(t, p.Suspend(t.Context(), "org-a"))
+	select {
+	case org := <-refused:
+		assert.Equal(t, "org-a", org)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the process never learned that its tenant was suspended")
+	}
 }

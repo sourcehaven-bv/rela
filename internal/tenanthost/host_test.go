@@ -366,6 +366,11 @@ func TestHost_Webhook(t *testing.T) {
 		{name: "no org", body: "hook-", status: http.StatusBadRequest},
 		{name: "unknown org is acknowledged", body: "hook-org-z", status: http.StatusOK, want: ""},
 		{name: "open failure", body: "hook-org-a", fail: errors.New("boom"), status: http.StatusBadGateway},
+		// A suspended tenant's events must be delivered again, not dropped
+		// (G-032): a role removal sent now applies when it is resumed.
+		{name: "suspended tenant asks for a retry", body: "hook-org-a",
+			fail:   fmt.Errorf("%w: %w", tenant.ErrUnknownTenant, tenant.ErrTenantInactive),
+			status: http.StatusServiceUnavailable},
 		{name: "oversized body", body: "hook-org-a" + strings.Repeat("x", 64<<10), status: http.StatusRequestEntityTooLarge},
 	}
 	for _, tc := range tests {

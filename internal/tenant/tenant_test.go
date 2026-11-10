@@ -2,8 +2,6 @@ package tenant_test
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -21,15 +19,12 @@ func TestMapResolver_ResolvesKnownOrg(t *testing.T) {
 		t.Fatalf("NewMapResolver: %v", err)
 	}
 
-	got, err := r.Resolve("org-b")
+	got, err := r.Resolve(t.Context(), "org-b")
 	if err != nil {
 		t.Fatalf("Resolve(org-b): %v", err)
 	}
 	if got.Schema != "tenant_b" {
 		t.Errorf("schema = %q, want tenant_b", got.Schema)
-	}
-	if r.Len() != 2 {
-		t.Errorf("Len() = %d, want 2", r.Len())
 	}
 }
 
@@ -49,7 +44,7 @@ func TestMapResolver_FailsClosed(t *testing.T) {
 	for _, orgID := range []string{"", "org-unknown", "ORG-A", " org-a", "org-a "} {
 		t.Run("org="+orgID, func(t *testing.T) {
 			t.Parallel()
-			got, err := r.Resolve(orgID)
+			got, err := r.Resolve(t.Context(), orgID)
 			if !errors.Is(err, tenant.ErrUnknownTenant) {
 				t.Fatalf("Resolve(%q) error = %v, want ErrUnknownTenant", orgID, err)
 			}
@@ -119,152 +114,5 @@ func TestMapResolver_AcceptsMaximumLengthSchema(t *testing.T) {
 		{OrgID: "o", Schema: name, DSN: "d"},
 	}); err != nil {
 		t.Fatalf("31-character schema rejected: %v", err)
-	}
-}
-
-func TestLoadConfig_ExplicitDSNs(t *testing.T) {
-	t.Parallel()
-
-	path := writeConfig(t, `
-tenants:
-  - org_id: org-a
-    schema: tenant_a
-    dsn: "host=alpha dbname=rela search_path=tenant_a,public"
-  - org_id: org-b
-    schema: tenant_b
-    dsn: "host=beta dbname=rela search_path=tenant_b,public"
-`)
-	cfg, err := tenant.LoadConfig(path)
-	if err != nil {
-		t.Fatalf("LoadConfig: %v", err)
-	}
-	r, err := cfg.Resolver()
-	if err != nil {
-		t.Fatalf("Resolver: %v", err)
-	}
-	got, err := r.Resolve("org-b")
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	// An explicit per-tenant DSN is the sharding tier: it must survive
-	// untouched, including the host, or promoting a tenant to its own cluster
-	// would silently return it to the shared one.
-	if !strings.Contains(got.DSN, "host=beta") {
-		t.Errorf("DSN = %q, want the explicit host=beta preserved", got.DSN)
-	}
-}
-
-func TestLoadConfig_RejectsEmptyAndMalformed(t *testing.T) {
-	t.Parallel()
-
-	t.Run("no tenants", func(t *testing.T) {
-		t.Parallel()
-		cfg, err := tenant.LoadConfig(writeConfig(t, "tenants: []\n"))
-		if err != nil {
-			t.Fatalf("LoadConfig: %v", err)
-		}
-		if _, err := cfg.Resolver(); err == nil {
-			t.Fatal("a tenant map with no tenants was accepted")
-		}
-	})
-
-	t.Run("no dsn and no base_dsn", func(t *testing.T) {
-		t.Parallel()
-		cfg, err := tenant.LoadConfig(writeConfig(t, "tenants:\n  - org_id: a\n    schema: tenant_a\n"))
-		if err != nil {
-			t.Fatalf("LoadConfig: %v", err)
-		}
-		if _, err := cfg.Resolver(); err == nil {
-			t.Fatal("a tenant with no derivable DSN was accepted")
-		}
-	})
-
-	t.Run("malformed yaml", func(t *testing.T) {
-		t.Parallel()
-		if _, err := tenant.LoadConfig(writeConfig(t, "tenants: [unclosed\n")); err == nil {
-			t.Fatal("malformed YAML was accepted; it must not degrade to an empty map")
-		}
-	})
-
-	t.Run("missing file", func(t *testing.T) {
-		t.Parallel()
-		if _, err := tenant.LoadConfig(filepath.Join(t.TempDir(), "absent.yaml")); err == nil {
-			t.Fatal("a missing tenant map was accepted")
-		}
-	})
-}
-
-// TestLoadConfig_RejectsInvalidSchemaBeforeDerivation pins that a bad schema
-// name is refused before it is interpolated into a connection string, rather
-// than after.
-func TestLoadConfig_RejectsInvalidSchemaBeforeDerivation(t *testing.T) {
-	t.Parallel()
-
-	cfg, err := tenant.LoadConfig(writeConfig(t, `
-base_dsn: "host=localhost dbname=rela user=rela"
-tenants:
-  - org_id: org-a
-    schema: "public,tenant_b"
-`))
-	if err != nil {
-		t.Fatalf("LoadConfig: %v", err)
-	}
-	if _, err := cfg.Resolver(); err == nil {
-		t.Fatal("a schema name containing a search_path separator was accepted")
-	}
-}
-
-func writeConfig(t *testing.T, body string) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), tenant.ConfigFileName)
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	return path
-}
-
-func TestLoadConfig_MaxResident(t *testing.T) {
-	t.Parallel()
-
-	cfg, err := tenant.LoadConfig(writeConfig(t, "max_resident: 9\ntenants: []\n"))
-	if err != nil {
-		t.Fatalf("LoadConfig: %v", err)
-	}
-	if cfg.MaxResident != 9 {
-		t.Errorf("MaxResident = %d, want 9", cfg.MaxResident)
-	}
-}
-
-// TestLoadConfig_RefusesPasswords pins that a database password cannot be
-// written into the tenant map, which lives with the committed project
-// config.
-func TestLoadConfig_RefusesPasswords(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name, body string
-		refused    bool
-	}{
-		{"url base password", "base_dsn: \"postgres://rela:pw@db/rela\"\n", true},
-		{"url base password param", "base_dsn: \"postgres://rela@db/rela?password=pw\"\n", true},
-		{"keyword base password", "base_dsn: \"host=db user=rela password=pw\"\n", true},
-		{"tenant dsn password", "tenants:\n  - org_id: a\n    schema: tenant_a\n    dsn: \"host=db password = pw\"\n", true},
-		{"url without password", "base_dsn: \"postgres://rela@db/rela?sslmode=verify-full\"\n", false},
-		{"keyword without password", "base_dsn: \"host=db user=rela passfile=/run/pgpass\"\n", false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			_, err := tenant.LoadConfig(writeConfig(t, tc.body))
-			if tc.refused && err == nil {
-				t.Fatal("a password in the tenant map was accepted")
-			}
-			if !tc.refused && err != nil {
-				t.Fatalf("LoadConfig: %v", err)
-			}
-			if err != nil && strings.Contains(err.Error(), "pw") {
-				t.Errorf("the error repeats the password: %v", err)
-			}
-		})
 	}
 }

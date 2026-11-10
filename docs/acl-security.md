@@ -768,13 +768,14 @@ read path deliberately does not have. A test
 so it cannot be mistaken for an omission, and fails the day a partial
 org check is added.
 
-**Tenant mode is the exception, and it works below the ACL.** When the
-project directory of a postgres `rela-server` holds `tenants.yaml`, the
-server routes each request by its verified `org_id` to that org's own
-store, a schema of its own (TKT-D6MF3SW). The ACL still does not evaluate
-`org_id`: a request reaches one tenant's store and no other, so the roles it
-holds apply inside that tenant only. A request without a verified org, or
-with an org `tenants.yaml` does not name, is refused and opens no store. See
+**Tenant mode is the exception, and it works below the ACL.** When a
+postgres `rela-server` runs with tenant mode on (`-tenant-mode` or
+`RELA_TENANT_MODE=1`), the server routes each request by its verified
+`org_id` to that org's own store, a schema of its own (TKT-D6MF3SW). The
+ACL still does not evaluate `org_id`: a request reaches one tenant's store
+and no other, so the roles it holds apply inside that tenant only. A request without a verified org, or
+with an org that is not an active tenant in the control table
+`rela_control.tenants`, is refused and opens no store. See
 GUIDE-postgres-backend, section "Tenant mode".
 
 Without tenant mode, if you need per-tenant separation, model it in the graph:

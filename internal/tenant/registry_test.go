@@ -712,3 +712,223 @@ func TestRegistry_ClosedRefusesAcquire(t *testing.T) {
 		t.Errorf("opened %d residents after Close", opener.count())
 	}
 }
+
+// revokeCounter is a resident that records closes and revokes.
+type revokeCounter struct {
+	closeCounter
+	revokes int
+}
+
+func (c *revokeCounter) Revoke() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.revokes++
+}
+
+func (c *revokeCounter) revoked() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.revokes
+}
+
+func mapResolver(t *testing.T, orgs ...string) *tenant.MapResolver {
+	t.Helper()
+	tenants := make([]tenant.Tenant, 0, len(orgs))
+	for i, o := range orgs {
+		tenants = append(tenants, tenant.Tenant{
+			OrgID: o, Schema: fmt.Sprintf("tenant_%d", i), DSN: fmt.Sprintf("host=x search_path=tenant_%d", i),
+		})
+	}
+	r, err := tenant.NewMapResolver(tenants)
+	if err != nil {
+		t.Fatalf("NewMapResolver: %v", err)
+	}
+	return r
+}
+
+// TestRegistry_RefusedOrgIsClosed pins TKT-HF5KE12's revocation: once the
+// resolver refuses an org (suspended, erasing), its idle resident is closed
+// on the next request for it, and on Revalidate without one.
+func TestRegistry_RefusedOrgIsClosed(t *testing.T) {
+	t.Parallel()
+
+	res := mapResolver(t, "a", "b")
+	var mu sync.Mutex
+	opened := map[string]*revokeCounter{}
+	open := func(_ context.Context, tn tenant.Tenant) (*revokeCounter, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		c := &revokeCounter{}
+		opened[tn.OrgID] = c
+		return c, nil
+	}
+	reg, err := tenant.NewRegistry(res, open, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reg.Close() })
+	for _, org := range []string{"a", "b"} {
+		l, err := reg.Acquire(t.Context(), org)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.Release()
+	}
+
+	res.Remove("a")
+	if _, err := reg.Acquire(t.Context(), "a"); !errors.Is(err, tenant.ErrUnknownTenant) {
+		t.Fatalf("Acquire(refused) = %v", err)
+	}
+	reg.WaitClosing()
+	if opened["a"].count() != 1 || reg.Resident() != 1 {
+		t.Fatalf("refused org: closes %d, resident %d; want 1 and 1", opened["a"].count(), reg.Resident())
+	}
+
+	res.Remove("b")
+	reg.Revalidate(t.Context())
+	reg.WaitClosing()
+	if opened["b"].count() != 1 || reg.Resident() != 0 {
+		t.Fatalf("revalidate: closes %d, resident %d; want 1 and 0", opened["b"].count(), reg.Resident())
+	}
+	if opened["a"].revoked()+opened["b"].revoked() != 0 {
+		t.Error("an idle resident was told to end streams it does not have")
+	}
+}
+
+// TestRegistry_RevokedInUseResident pins the in-use case: the resident is
+// told to end its streams, closes on its last release, is never handed out
+// again, and still counts toward the ceiling until it closes.
+func TestRegistry_RevokedInUseResident(t *testing.T) {
+	t.Parallel()
+
+	res := mapResolver(t, "a")
+	served, err := res.Resolve(t.Context(), "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var first *revokeCounter
+	opens := 0
+	open := func(context.Context, tenant.Tenant) (*revokeCounter, error) {
+		opens++
+		c := &revokeCounter{}
+		if first == nil {
+			first = c
+		}
+		return c, nil
+	}
+	reg, err := tenant.NewRegistry(res, open, 1, tenant.WithMaxOpen(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reg.Close() })
+
+	held, err := reg.Acquire(t.Context(), "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Remove("a")
+	reg.Revalidate(t.Context())
+	if first.revoked() != 1 || first.count() != 0 {
+		t.Fatalf("in-use revoke: revokes %d, closes %d; want 1 and 0", first.revoked(), first.count())
+	}
+
+	// Served again while the old resident lingers: refused, not shared.
+	res.Put(served)
+	if _, err = reg.Acquire(t.Context(), "a"); !errors.Is(err, tenant.ErrRevoking) {
+		t.Fatalf("Acquire while revoking = %v, want ErrRevoking", err)
+	}
+
+	held.Release()
+	reg.WaitClosing()
+	if first.count() != 1 {
+		t.Fatalf("revoked resident closed %d times after its last release, want 1", first.count())
+	}
+	l, err := reg.Acquire(t.Context(), "a")
+	if err != nil {
+		t.Fatalf("Acquire after the old resident closed: %v", err)
+	}
+	defer l.Release()
+	if l.Value() == first || opens != 2 {
+		t.Errorf("the revoked resident was handed out again (opens %d)", opens)
+	}
+}
+
+// TestRegistry_LookupFailureRevokesNothing pins that a resolver that fails
+// (rather than refuses) closes no tenant: an outage of the control table
+// must not close every open tenant.
+func TestRegistry_LookupFailureRevokesNothing(t *testing.T) {
+	t.Parallel()
+
+	fail := &failingResolver{inner: mapResolver(t, "a")}
+	opener := &counterOpener{}
+	reg, err := tenant.NewRegistry(fail, opener.open, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reg.Close() })
+	l, err := reg.Acquire(t.Context(), "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Release()
+	fail.set(errors.New("connection refused"))
+	reg.Revalidate(t.Context())
+	if _, err := reg.Acquire(t.Context(), "a"); err == nil {
+		t.Fatal("Acquire succeeded over a failing resolver")
+	}
+	reg.WaitClosing()
+	if reg.Resident() != 1 || opener.opened[0].count() != 0 {
+		t.Errorf("a lookup failure closed a tenant: resident %d, closes %d", reg.Resident(), opener.opened[0].count())
+	}
+}
+
+type failingResolver struct {
+	mu    sync.Mutex
+	inner tenant.Resolver
+	err   error
+}
+
+func (f *failingResolver) set(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.err = err
+}
+
+func (f *failingResolver) Resolve(ctx context.Context, org string) (tenant.Tenant, error) {
+	f.mu.Lock()
+	err := f.err
+	f.mu.Unlock()
+	if err != nil {
+		return tenant.Tenant{}, err
+	}
+	return f.inner.Resolve(ctx, org)
+}
+
+// TestRegistry_StatusChangeDuringOpen pins that a tenant suspended between
+// the status read and the schema lock is not left open: the registry reads
+// the status again once the open holds the lock (RR-J1CFYRR).
+func TestRegistry_StatusChangeDuringOpen(t *testing.T) {
+	t.Parallel()
+
+	fail := &failingResolver{inner: mapResolver(t, "a")}
+	var opened *closeCounter
+	open := func(context.Context, tenant.Tenant) (*closeCounter, error) {
+		fail.set(fmt.Errorf("suspended: %w", tenant.ErrUnknownTenant))
+		opened = &closeCounter{}
+		return opened, nil
+	}
+	reg, err := tenant.NewRegistry(fail, open, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reg.Close() })
+	if _, err := reg.Acquire(t.Context(), "a"); !errors.Is(err, tenant.ErrUnknownTenant) {
+		t.Fatalf("Acquire = %v, want ErrUnknownTenant", err)
+	}
+	if opened == nil || opened.count() != 1 {
+		t.Fatal("the store opened for a tenant suspended during the open was not closed")
+	}
+	if n := reg.Resident(); n != 0 {
+		t.Fatalf("Resident() = %d, want 0", n)
+	}
+}

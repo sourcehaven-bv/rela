@@ -463,8 +463,8 @@ deps:
       - docscli
       - principal
       - script
-      # tenant: rela-docs refuses a project with a tenants.yaml before it
-      # opens anything (TKT-M3SHYE0).
+      # tenant: rela-docs refuses tenant mode and a tenant database before
+      # it opens anything (TKT-M3SHYE0, TKT-HF5KE12).
       - tenant
     canUse:
       - kong
@@ -637,8 +637,8 @@ deps:
       - storage
       - store
       - templating
-      # tenant: `--tenant` selects and opens one tenant of a tenants.yaml
-      # project (TKT-M3SHYE0). Cycle-free: tenant sits above appbuild only.
+      # tenant: `--tenant` selects and opens one tenant in tenant mode
+      # (TKT-M3SHYE0). Cycle-free: tenant sits above appbuild only.
       - tenant
       # `rela token set|status|delete` (TKT-01KZSO) parses the operator's
       # token input and reports the store's typed read errors.
@@ -1085,22 +1085,24 @@ deps:
       - pgx
   # tenant resolves a verified org to the store it may reach (RES-D54281). It
   # sits ABOVE appbuild — it assembles per-tenant Services over one shared
-  # configuration — so appbuild must never depend on it: a tenant map is a
+  # configuration — so appbuild must never depend on it: tenancy is a
   # deployment concern, and appbuild is the wiring facade the single-store
   # binaries and the desktop app also use.
   #
-  # pgx is confined to the postgres-tagged dsn file, which the default build
-  # does not compile — the same arrangement pgstore and backendtest use, and
-  # the reason CI's "default build must not link pgx" assertion keeps holding
-  # once a host wires this package.
+  # pgx and pgstore are confined to the postgres-tagged files, which the
+  # default build does not compile — the same arrangement pgstore and
+  # backendtest use, and the reason CI's "default build must not link pgx"
+  # assertion keeps holding once a host wires this package.
   tenant:
     mayDependOn:
       - appbuild
       # audit: each tenant gets its own filesystem audit sink (TKT-SNVR8UV).
       - audit
+      # pgstore: `tenant create` migrates a new tenant's schema before it
+      # marks the tenant active (TKT-HF5KE12).
+      - pgstore
     canUse:
       - pgx
-      - yaml
   # tenanthost is the front handler of a multi-tenant rela-server
   # (TKT-D6MF3SW): it verifies the assertion, routes by org through the
   # tenant registry and serves that tenant's data-entry router. It names

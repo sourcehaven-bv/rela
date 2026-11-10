@@ -1,8 +1,6 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -61,34 +59,4 @@ func TestTenantModeBackend(t *testing.T) {
 	if _, err := validateTenantMode(jwtFlags(), "", tenant.Supported); err == nil {
 		t.Fatal("a build without a DSN store accepted tenant mode")
 	}
-}
-
-// TestTenantsPath pins that tenant mode is on exactly when the project
-// directory holds tenants.yaml, so a single-tenant project is unchanged.
-func TestTenantsPath(t *testing.T) {
-	dir := t.TempDir()
-	got, err := tenantsPath(dir)
-	if err != nil || got != "" {
-		t.Fatalf("tenantsPath without the file = %q, %v; want \"\", nil", got, err)
-	}
-	want := filepath.Join(dir, tenantsFile)
-	if werr := os.WriteFile(want, []byte("tenants: []\n"), 0o600); werr != nil {
-		t.Fatal(werr)
-	}
-	got, err = tenantsPath(dir)
-	if err != nil {
-		t.Fatalf("tenantsPath: %v", err)
-	}
-	if abs, _ := filepath.EvalSymlinks(got); abs != mustEval(t, want) {
-		t.Errorf("tenantsPath = %q, want %q", got, want)
-	}
-}
-
-func mustEval(t *testing.T, p string) string {
-	t.Helper()
-	r, err := filepath.EvalSymlinks(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return r
 }

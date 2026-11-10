@@ -6,13 +6,14 @@
 // # Fail closed
 //
 // No request is ever served from a default store. A request without a
-// verified org, with an org the tenant map does not name, or whose tenant
+// verified org, with an org the resolver does not serve, or whose tenant
 // cannot be opened is refused, and the refusal opens no store:
 //
 //   - no assertion, or one that does not verify: 401;
-//   - a verified assertion with no `org_id`, or an org not in `tenants.yaml`:
-//     403 `unknown_tenant`;
-//   - the tenant lookup or the store open failed: 503.
+//   - a verified assertion with no `org_id`, or an org that is not an active
+//     tenant (unknown, suspended or being erased): 403 `unknown_tenant`;
+//   - the tenant lookup or the store open failed, or the org's derived
+//     schema is recorded for another org: 503.
 //
 // The one exception is the embedded SPA shell and its static assets, which a
 // browser needs before it can authenticate. They are served by
@@ -206,11 +207,29 @@ func (h *Host) serveWebhook(w http.ResponseWriter, r *http.Request) {
 
 	next, release, err := h.cfg.Acquire(r.Context(), claims.OrgID)
 	switch {
+	case errors.Is(err, tenant.ErrTenantInactive):
+		// A suspended tenant keeps its data, and a role removal or user
+		// deletion sent now must still apply when it is resumed. Refused
+		// with a retryable status so the IdP delivers it again, never
+		// acknowledged and dropped.
+		slog.Warn("tenant host: idp webhook for a tenant that is not served now; asking the IdP to retry",
+			"org_id", claims.OrgID, "event", claims.Event, "id", claims.ID)
+		w.Header().Set("Retry-After", "300")
+		http.Error(w, "tenant not served now", http.StatusServiceUnavailable)
+		return
 	case errors.Is(err, tenant.ErrUnknownTenant):
 		// Acknowledged so the IdP does not retry an event for an org this
 		// server does not host. Provisioning a tenant is TKT-TNPRV8.
-		slog.Info("tenant host: idp webhook for an org this server does not host",
-			"org_id", claims.OrgID, "event", claims.Event, "id", claims.ID)
+		if claims.Event == "organization.deleted" {
+			// An org being erased, or one this server never had: worth an
+			// operator's look, since an erasure may be in progress.
+			slog.Warn("tenant host: idp webhook organization deletion for an org this server does not "+
+				"serve; check that its erasure completed (PROCEDURE-u020, rela-server tenant erase)",
+				"org_id", claims.OrgID, "id", claims.ID)
+		} else {
+			slog.Info("tenant host: idp webhook for an org this server does not host",
+				"org_id", claims.OrgID, "event", claims.Event, "id", claims.ID)
+		}
 		w.WriteHeader(http.StatusOK)
 		return
 	case err != nil:

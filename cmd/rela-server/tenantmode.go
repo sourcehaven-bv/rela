@@ -3,12 +3,17 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
@@ -17,14 +22,58 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/tenanthost"
 )
 
-// tenantsFile is the tenant map. Its presence in the project directory turns
-// tenant mode on (TKT-D6MF3SW).
-const tenantsFile = tenant.ConfigFileName
+// tenantFlags switch tenant mode on and bound it (TKT-HF5KE12). Tenant mode
+// is an explicit switch, never inferred from a file being present.
+type tenantFlags struct {
+	enabled bool
+	// maxResident and maxOpen are the registry bounds; zero takes the
+	// registry's defaults.
+	maxResident, maxOpen int
+}
 
-// tenantsPath returns the tenant map's path when the project directory has
-// one, and "" when it does not.
-func tenantsPath(projectDir string) (string, error) {
-	return tenant.ConfigPath(projectDir)
+// coverage-ignore-start: main-or-wiring: registers flags on the global flag.CommandLine
+func registerTenantFlags(t *tenantFlags) {
+	flag.BoolVar(&t.enabled, "tenant-mode", tenant.ModeEnabled(os.Getenv),
+		"Serve several organizations, each from its own PostgreSQL schema derived from the verified "+
+			"org_id (postgres build only). Also enabled by "+tenant.EnvTenantMode+"=1.")
+	flag.IntVar(&t.maxResident, "tenant-max-resident", envInt("RELA_TENANT_MAX_RESIDENT"),
+		"Tenant mode: idle tenants kept open; each holds its own connection pool (default 4). "+
+			"Also RELA_TENANT_MAX_RESIDENT.")
+	flag.IntVar(&t.maxOpen, "tenant-max-open", envInt("RELA_TENANT_MAX_OPEN"),
+		"Tenant mode: hard ceiling on open tenants (default twice -tenant-max-resident). "+
+			"Also RELA_TENANT_MAX_OPEN.")
+}
+
+// coverage-ignore-end
+
+// envInt returns $key as an int, or 0 when unset or not a number. An
+// unparsable value takes the default rather than failing: the flag can
+// still override it, and the bounds have safe defaults.
+func envInt(key string) int {
+	n, err := strconv.Atoi(os.Getenv(key))
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// refuseTenantDeployment is the check a server without tenant mode runs
+// before it opens its one store. It refuses a project that still holds the
+// old tenant map file, and a database that serves tenants, so a deployment
+// that forgot to switch tenant mode on fails closed instead of serving
+// every org from `public`.
+func refuseTenantDeployment(ctx context.Context, projectDir string, getenv func(string) string) error {
+	root, err := appbuild.DiscoverRoot(projectDir)
+	if err != nil {
+		return err
+	}
+	if err := tenant.RefuseLegacyMap(root); err != nil {
+		return err
+	}
+	if dsn := getenv("RELA_DATABASE_URL"); dsn != "" {
+		return tenant.RefuseTenantDatabase(ctx, dsn)
+	}
+	return nil
 }
 
 // validateTenantMode refuses a tenant-mode configuration the host cannot
@@ -38,9 +87,7 @@ func tenantsPath(projectDir string) (string, error) {
 // mode has many.
 func validateTenantMode(f *serverFlags, envUser string, supported bool) (identityMode, error) {
 	if !supported {
-		return identityHeader, errors.New(tenantsFile + " is present, but tenant mode needs the postgres build " +
-			"(rela-server-postgres): this build keeps data in the project directory, so every tenant " +
-			"would read the same data")
+		return identityHeader, tenant.ErrUnsupportedBuild
 	}
 	mode, err := validateIdentityFlags(f, envUser)
 	if err != nil {
@@ -68,14 +115,22 @@ type tenantResident struct {
 	relay   *dataentry.CollabRelay
 	stop    context.CancelFunc
 	done    <-chan struct{}
+
+	// retire ends the app's streams once: [tenant.Registry] may call Revoke while
+	// the last release runs Close, and both end them.
+	retire sync.Once
 }
+
+// Revoke ends the app's live-update and co-editing streams when the tenant
+// stops being served, so the requests holding it finish and it can close.
+func (r *tenantResident) Revoke() { r.retire.Do(func() { dataentry.Retire(r.app) }) }
 
 // Close tears the tenant down in dependency order: end the app's streams
 // and watchers, stop the workers that read the services, close the
 // services (which closes the tenant's audit sink last) and release the
 // tenant's schema lock, then close the co-editing connections.
 func (r *tenantResident) Close() error {
-	dataentry.Retire(r.app)
+	r.Revoke()
 	r.stop()
 	<-r.done
 	err := r.opened.Close()
@@ -140,8 +195,7 @@ func (s *server) openTenant(t tenant.Tenant, opened *tenant.Opened) (*tenantResi
 	}, nil
 }
 
-// tenantLimits are the registry bounds from the tenant map; zero takes the
-// registry's defaults.
+// tenantLimits are the registry bounds; zero takes the registry's defaults.
 type tenantLimits struct {
 	resident, open int
 }
@@ -152,48 +206,89 @@ type tenantHost struct {
 	addr     string
 	handler  http.Handler
 	registry *tenant.Registry[*tenantResident]
+	// resolver is closed after the registry.
+	resolver io.Closer
 }
 
-// newTenantHost builds tenant mode from the tenant map at tenantsYAML.
-//
-// The base DSN may be left out of the file and given in $RELA_DATABASE_URL
-// instead. The file may not carry a password (tenant.LoadConfig refuses
-// one), because it sits with the committed project config.
-func newTenantHost(f *serverFlags, tenantsYAML string, accessLog *slog.Logger) (*tenantHost, error) {
+// close closes the registry, then the resolver it reads.
+func (th *tenantHost) close() {
+	if err := th.registry.Close(); err != nil {
+		slog.Warn("closing tenants", "error", err)
+	}
+	if th.resolver != nil {
+		_ = th.resolver.Close()
+	}
+}
+
+// revalidate re-resolves the open tenants every interval until ctx ends.
+func (th *tenantHost) revalidate(ctx context.Context, interval time.Duration) {
+	tick := time.NewTicker(interval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			th.registry.Revalidate(ctx)
+		}
+	}
+}
+
+// newTenantHost builds tenant mode. Tenants are found through the control
+// table in the database $RELA_DATABASE_URL names; the DSN is read from the
+// environment only.
+func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) {
 	mode, err := validateTenantMode(f, os.Getenv(dataentry.EnvDataEntryUserVar), tenant.Supported)
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := tenant.LoadDeployment(tenantsYAML, os.Getenv)
-	if err != nil {
-		return nil, err
-	}
-	resolver, err := cfg.Resolver()
-	if err != nil {
-		return nil, err
-	}
-
 	absDir, err := filepath.Abs(f.projectDir)
 	if err != nil {
 		return nil, fmt.Errorf("invalid project dir: %w", err)
 	}
+	root, err := appbuild.DiscoverRoot(absDir)
+	if err != nil {
+		return nil, err
+	}
+	if legacyErr := tenant.RefuseLegacyMap(root); legacyErr != nil {
+		return nil, legacyErr
+	}
+	ctx := context.Background()
+	resolver, err := tenant.NewClusterResolver(ctx, os.Getenv("RELA_DATABASE_URL"))
+	if err != nil {
+		return nil, err
+	}
+	if err = resolver.Check(ctx); err != nil {
+		_ = resolver.Close()
+		return nil, err
+	}
 	base, err := appbuild.DiscoverSharedBase(absDir, script.NewEngine(), discoverOptions(f)...)
 	if err != nil {
+		_ = resolver.Close()
 		return nil, fmt.Errorf("load the shared configuration: %w", err)
 	}
 
 	s := &server{f: f, addr: net.JoinHostPort(f.bind, f.port), mode: mode, accessLog: accessLog}
-	s.idv = buildIdentityVerifier(context.Background(), f)
+	s.idv = buildIdentityVerifier(ctx, f)
 	if s.idv == nil {
+		_ = resolver.Close()
 		return nil, errors.New("tenant mode: no identity verifier was built")
 	}
 	adapter := assertionVerifierAdapter{s.idv}
 	s.assertion = tenanthost.ReuseAssertion(adapter)
 	if s.webhook, err = buildWebhookVerifier(f, s.idv); err != nil {
+		_ = resolver.Close()
 		return nil, err
 	}
 
-	return s.tenantHost(base, resolver, tenantLimits{resident: cfg.MaxResident, open: cfg.MaxOpen}, adapter)
+	th, err := s.tenantHost(base, resolver, tenantLimits{resident: f.tenant.maxResident, open: f.tenant.maxOpen},
+		adapter)
+	if err != nil {
+		_ = resolver.Close()
+		return nil, err
+	}
+	th.resolver = resolver
+	return th, nil
 }
 
 // tenantHost wires the registry and the front handler over one shared base.
@@ -248,8 +343,8 @@ func (s *server) tenantHost(
 // coverage-ignore-func: process entry point for tenant mode; the decisions
 // it acts on are validateTenantMode and the tenanthost tests.
 // coverage-ignore-start: main-or-wiring: binds a listener and blocks until a signal
-func runTenantMode(f *serverFlags, tenantsYAML string, accessLog *slog.Logger) int {
-	th, err := newTenantHost(f, tenantsYAML, accessLog)
+func runTenantMode(f *serverFlags, accessLog *slog.Logger) int {
+	th, err := newTenantHost(f, accessLog)
 	if err != nil {
 		slog.Error("failed to initialize tenant mode", "error", err)
 		return 1
@@ -259,10 +354,21 @@ func runTenantMode(f *serverFlags, tenantsYAML string, accessLog *slog.Logger) i
 		return 1
 	}
 	slog.Info("starting server", "mode", "tenant", "addr", "http://"+th.addr)
+	ctx, stop := context.WithCancel(context.Background())
+	// Resolve open tenants again on a timer, so that a suspended or erasing
+	// tenant closes and releases its schema lock even when no request for
+	// it arrives.
+	revalidated := make(chan struct{})
+	go func() {
+		defer close(revalidated)
+		th.revalidate(ctx, tenant.RevalidateInterval)
+	}()
 	serveErr := serveUntilSignal(newHTTPServer(th.addr, th.handler))
-	if err := th.registry.Close(); err != nil {
-		slog.Warn("closing tenants", "error", err)
-	}
+	stop()
+	// Wait for a revalidation pass in progress before the registry and
+	// the resolver it uses close.
+	<-revalidated
+	th.close()
 	if serveErr != nil {
 		slog.Error("server stopped", "error", serveErr)
 		return 1
