@@ -197,8 +197,8 @@ func TestDBImportFS_SQLiteTablesAreAccounted(t *testing.T) {
 		"channel_types":      "not copied yet: recorded again when the server first starts on the database",
 		"channel_type_refs":  "not copied yet: recorded again when the server first starts on the database",
 		"retired_ids":        "nothing to copy: an fs rename rewrites mentions and retires no id",
-		"flow_runs":          "not copied yet: nothing starts a run before TKT-9IT3LN8, which decides the import",
-		"flow_definitions":   "not copied yet: nothing starts a run before TKT-9IT3LN8, which decides the import",
+		"flow_runs":          "copied: unfinished runs, with their headers",
+		"flow_definitions":   "copied: the definition of each copied run's version",
 	}
 	// The full-text index, FTS5's shadow tables and the backlink fan-out are
 	// filled by triggers on entities, so the entity copy fills them.

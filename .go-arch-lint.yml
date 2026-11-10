@@ -164,6 +164,9 @@ components:
   sqlflowrun:       { in: internal/flowrun/sqlflowrun }
   pgflowrun:        { in: internal/flowrun/pgflowrun }
   sqliteflowrun:    { in: internal/flowrun/sqliteflowrun }
+  # The flow runtime (TKT-9IT3LN8): starts runs, writes outputs, fires
+  # timers. It writes the graph only through the adapters appbuild supplies.
+  flowengine:       { in: internal/flowengine }
   # The statement interface the shared SQL backends are written against,
   # and its pgx and database/sql adapters.
   sqlexec:          { in: internal/sqlexec }
@@ -584,6 +587,10 @@ deps:
       - entitymanager
       - filter
       - flowcfg
+      # `rela flow start|runs|cancel` speaks the run id and the engine's
+      # errors; the access checks stay in appbuild.FlowControl.
+      - flow
+      - flowengine
       - importer
       # `rela lease` (TKT-B610IP) speaks its request, lease and error types;
       # the access checks stay in lease.Service.
@@ -900,6 +907,13 @@ deps:
   # any tag, so both backends' deps must be allow-listed here.
   appbuild:
     mayDependOn:
+      # The flow runtime and its run store backends (TKT-9IT3LN8).
+      - flow
+      - flowengine
+      - flowrun
+      - kvflowrun
+      - pgflowrun
+      - sqliteflowrun
       # The reference element range reader, for stores without element
       # columns, handed to visibility.NewElements (TKT-VP02WHG).
       - elementnaive
@@ -1910,6 +1924,17 @@ deps:
   flowrun:
     mayDependOn:
       - flow
+  # The engine drives the run store and the compiled flows; the graph writes
+  # and reads are consumer-side interfaces the composition root fills.
+  flowengine:
+    mayDependOn:
+      - audit
+      - flow
+      - flowcfg
+      - flowrun
+      - metamodel
+      - predicate
+      - predicatefns
   # The KV backend for fs, memory and desktop, behind a cross-process lock.
   kvflowrun:
     mayDependOn:
@@ -2288,6 +2313,9 @@ deps:
       - datamigration
       - filemigstate
       - entity
+      - flowcfg
+      - flowrun
+      - kvflowrun
       - frontmatter
       - metamodel
       - principal

@@ -16,6 +16,7 @@ type Report struct {
 	Attachments int
 	Comments    int
 	StateKeys   int
+	FlowRuns    int
 	Files       int
 
 	// Normalized counts property values converted to the database form
@@ -79,9 +80,9 @@ func (r *Report) sortSkipped() {
 // summary is the one-line description used for the audit record.
 func (r *Report) summary() string {
 	return fmt.Sprintf("imported %s: %d entities, %d relations, %d attachments, %d comments, "+
-		"%d state keys, %d files; %d values normalized, %d files not copied",
+		"%d state keys, %d flow runs, %d files; %d values normalized, %d files not copied",
 		r.Source, r.Entities, r.Relations, r.Attachments, r.Comments,
-		r.StateKeys, r.Files, r.Normalized, len(r.Skipped))
+		r.StateKeys, r.FlowRuns, r.Files, r.Normalized, len(r.Skipped))
 }
 
 func sortedKeys[V any](m map[string]V) []string {

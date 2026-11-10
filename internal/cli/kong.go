@@ -299,7 +299,7 @@ func runKong() int {
 	ktx.Bind(out, identity)
 	if bundles != nil {
 		ktx.Bind(bundles.read, bundles.write, bundles.attachment, bundles.renametype, bundles.analysis, bundles.leases,
-			bundles.channels, bundles.reconcile)
+			bundles.channels, bundles.flows, bundles.reconcile)
 		// The scheduler command's workspace and request-edge step are
 		// supplied here at the wiring site (consumer-side interface):
 		// appbuild.Services satisfies scheduler.WorkspaceProvider directly.
@@ -361,7 +361,7 @@ func requiresProject(cmd string) bool {
 		// `rela flow <script>` discovers the project from the script's
 		// directory; the flows.yaml commands read the current project.
 		switch firstTwoKongTokens(cmd) {
-		case "flow validate", "flow show":
+		case "flow validate", "flow show", "flow start", "flow runs", "flow cancel":
 			return true
 		}
 		return false

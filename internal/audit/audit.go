@@ -281,6 +281,9 @@ type Record struct {
 	Flow string `json:"flow,omitempty"`
 	Run  string `json:"run,omitempty"`
 	Step string `json:"step,omitempty"`
+	// By is the principal who started or cancelled the run by hand, for a
+	// write the flow engine makes on that request (see [FlowStep]).
+	By string `json:"by,omitempty"`
 	// Source is the kind of actor that produced the record ([SourceOf]).
 	// The sinks fill it in when it is empty.
 	Source string `json:"source,omitempty"`

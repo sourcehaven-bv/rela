@@ -12,6 +12,9 @@ type FlowStep struct {
 	Flow string
 	Run  string
 	Step string
+	// By is the principal who started or cancelled the run by hand; empty
+	// for a step the runtime takes on its own.
+	By string
 }
 
 // flowStepKey is the context key of the current [FlowStep].
@@ -36,7 +39,7 @@ func FlowStepFrom(ctx context.Context) (FlowStep, bool) {
 // entity manager stamps every entity and relation write record with it.
 func Stamp(ctx context.Context, rec Record) Record {
 	if s, ok := FlowStepFrom(ctx); ok {
-		rec.Flow, rec.Run, rec.Step = s.Flow, s.Run, s.Step
+		rec.Flow, rec.Run, rec.Step, rec.By = s.Flow, s.Run, s.Step, s.By
 	}
 	return rec
 }

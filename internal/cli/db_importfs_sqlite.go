@@ -54,6 +54,7 @@ func sqliteImportBackend() fsimport.Backend {
 					State:      data.State,
 					Comments:   data.Comments,
 					Migrations: data.Migrations,
+					FlowRuns:   data.FlowRuns,
 				},
 				Close: func(ctx context.Context) error {
 					return errors.Join(data.Checkpoint(ctx), data.Close())
