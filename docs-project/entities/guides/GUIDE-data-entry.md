@@ -6306,6 +6306,8 @@ actions:
 | `permission`  | string | Global named permission the caller must hold to run the action from a list, a list button, the sidebar, a next-action offer or a detail page |
 | `request`     | map    | Opt into request-scoped execution — see [Request-scoped actions](#request-scoped-actions). Requires `script` |
 | `capabilities`| map    | Ambient capability grant (`http`, `ai`, `write_file`, named `secrets`). Omitting it grants none |
+| `allow_acl_bypass` | string | `write` gives the script `admin.update_entity` inside `rela.bypass_acl`. See [Elevated updates](#elevated-updates). Requires `script`, `permission` and `elevated_updates` |
+| `elevated_updates` | map | Type to list of properties that `admin.update_entity` may set. Requires `allow_acl_bypass: write` |
 
 Each action must have either `set` or `script`, not both.
 
@@ -6652,6 +6654,115 @@ deliberately, as above.
   notification appended to an incident body twice — match on a stable field from
   the payload before appending.
 
+### Elevated updates
+
+An action can set a field that its callers may not set directly. For
+example, users may submit a processing record through the `submit` action,
+but they may not change its `status` in the form or through the API. Declare
+which fields the action may update past the caller's access rules:
+
+```yaml
+actions:
+  submit:
+    label: Submit
+    script: submit.lua
+    permission: submit
+    available_on:
+      entity_types: [processing]
+    allow_acl_bypass: write
+    elevated_updates:
+      processing: [status, submitted_on]
+```
+
+The script makes the update inside `rela.bypass_acl`:
+
+The script checks that the caller may act on this entity, then makes the
+update inside `rela.bypass_acl`:
+
+```lua
+-- actions/submit.lua
+local p = entity.properties
+if p.owner ~= rela.principal.user then
+    return { message = "Only the owner can submit this record", message_type = "error" }
+end
+if p.status ~= "draft" then
+    return { message = "Only a draft can be submitted", message_type = "error" }
+end
+if p.title == nil then
+    return { message = "Add a title first", message_type = "error" }
+end
+rela.bypass_acl(function(admin)
+    admin.update_entity(entity.id, { status = "submitted", submitted_on = rela.today })
+end)
+return { message = "Submitted", message_type = "success" }
+```
+
+The ownership and status checks are required, not optional. The caller
+picks the entity, and the elevated update works on any row of a listed type
+that the caller can read. See "Elevated data-entry actions" in the ACL
+security guide.
+
+`admin.update_entity(id, properties)` is the only method on `admin` in such
+an action. It has these limits:
+
+- It writes only the types and properties in `elevated_updates:`. Any other
+  property, the entity body and external refs are refused, and nothing is
+  written.
+- The caller must be able to read the target. A row the caller cannot read is
+  reported as `entity not found`, like a row that does not exist.
+- A client ceiling still applies. A client that `client_baselines` or
+  `scope_grants` forbids to update the type, such as a read-only app token,
+  gets a 403 and a `denied-write` audit row.
+- `unmatched_principal: reject` still applies. A verified identity with no
+  user entity gets a 403 and a `denied-write` audit row, even when its
+  asserted roles grant the action's `permission:`.
+- A read-only instance (`--read-only`) refuses the update, as it refuses
+  every other write.
+- When the action runs on one entity (`available_on:`), an update of that
+  entity fails if the entity changed after the action read it. Each
+  elevated update moves that check to the row it wrote, so the script may
+  update the entity twice. A normal `rela.update_entity` of the same entity
+  before the elevated update makes the elevated update fail, so make the
+  elevated update first.
+- Transition rules and validation apply as on any update.
+- An on-update automation of the same entity is part of the elevated
+  update: a `set` it makes is stored with the update and is not checked
+  against `elevated_updates:`. A cascade the update triggers, such as
+  `create_entity` or `run_script`, runs with the caller's normal access.
+- A transition guard still checks the caller's permission. To keep a field
+  that only the action may change out of the form and the API, restrict it
+  with `acl.yaml` field rules, not with a transition guard.
+- A refused transition does not name the stored or the requested value,
+  because the caller may not be able to see the stored one.
+- The audit log records an `acl-bypass` row and the update. Both name the
+  caller and carry `triggered_by: action:<id>`.
+
+Elevation skips one check: the row-level `update:` grant in `acl.yaml`.
+`acl.yaml` field write rules (`fields:` for `update`) do not apply to a
+data-entry action script at all, elevated or not. The ordinary
+`rela.update_entity` in the same script still needs the caller's `update:`
+grant, so only the update inside the closure is elevated.
+
+The elevated update runs only for the `_action` endpoint and the MCP action
+tools. The identity provider webhook refuses an action that declares
+`allow_acl_bypass`.
+
+These rules are checked when the configuration loads:
+
+- `allow_acl_bypass` on an action must be `write`.
+- It needs `script:`, `permission:` and a non-empty `elevated_updates:`.
+- Every type in `elevated_updates:` must be declared by its own name, not an
+  alias, and every property must be declared on that type.
+- A property must be one an update can write: not computed, a rollup, a file
+  or an external ref. A `unique:` property is refused, because the update
+  would let the caller test whether a hidden entity holds a value.
+- A type with faces is listed one face at a time, as `type@face`, for
+  example `policy@draft: [status]`. A bare type key is refused for a type
+  with faces, and a face is refused for a type without them.
+- `elevated_updates:` without `allow_acl_bypass: write` is refused.
+
+The script is trusted code: review it like the `acl.yaml` rules it bypasses.
+
 ### Reserved Keyboard Shortcuts
 
 The following keys are reserved for built-in list navigation and cannot be used as action keys:
@@ -6672,6 +6783,9 @@ The following keys are reserved for built-in list navigation and cannot be used 
 - `set` properties must exist in the entity type's metamodel
 - `script` paths must end in `.lua` and be local paths (no `..` or absolute paths)
 - Keys must be unique within a list (no two actions on the same list can share a key)
+- `allow_acl_bypass` must be `write`, and needs `script`, `permission` and a non-empty `elevated_updates`
+- `elevated_updates` types and properties must exist in the metamodel; see
+  [Elevated updates](#elevated-updates) for the property kinds it refuses
 
 ## Piles
 

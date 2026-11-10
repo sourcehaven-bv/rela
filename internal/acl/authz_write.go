@@ -42,8 +42,13 @@ func (r *Request) authorizeEntityWrite(ctx context.Context, op Op, s EntitySubje
 	} else {
 		attrs = r.Globals().Attributions
 	}
+	// The ceiling runs before any grant; see ceilingDenial. It is shared with
+	// AuthorizePreRoleWrite, so an elevated write meets the same limit.
+	if deny := entityPreRoleDenial(r, attrs, op, s); deny != nil {
+		return *deny
+	}
 	if s.family {
-		return r.decideFamily(attrs, op, s.typ, s.convertTo)
+		return r.decideFamily(attrs, op, s.typ)
 	}
 	return r.decideFromAttrs(attrs, op, s.typ, s.face, "no role grants %s on type %q")
 }
@@ -59,15 +64,10 @@ func (r *Request) authorizeEntityWrite(ctx context.Context, op Op, s EntitySubje
 //
 // The reason names the type and never a face: the decision does not depend
 // on which faces exist, and a denial must not suggest that it did.
-func (r *Request) decideFamily(attrs []RoleAttribution, op Op, target, convertTo string) Decision {
-	if deny := r.ceilingDenial(attrs, op, target); deny != nil {
-		return *deny
-	}
-	if op == OpConvert {
-		if deny := r.conversionCeilingDenial(attrs, target, convertTo); deny != nil {
-			return *deny
-		}
-	}
+//
+// The caller has already applied the ceiling, including a conversion's
+// destination check (entityPreRoleDenial).
+func (r *Request) decideFamily(attrs []RoleAttribution, op Op, target string) Decision {
 	if op == OpRename || op == OpConvert {
 		for _, a := range attrs {
 			role, ok := r.roleFor(a.Role)

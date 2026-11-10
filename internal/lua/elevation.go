@@ -23,6 +23,8 @@ import (
 type elevationBindings struct {
 	em       Mutator                // nil: elevated writes withheld — admin write methods absent
 	er       EntityReader           // nil: admin read methods present but raising
+	eu       ElevatedUpdater        // nil: admin.update_entity absent
+	vr       EntityReader           // the caller's gated reader; resolves update_entity targets
 	recorder ElevationRecorder      // nil: no post-closure read audit record
 	ctxFn    func() context.Context // the runtime's callerCtx
 	faces    listFaces              // admin.list_entities' face selection
@@ -45,12 +47,13 @@ type elevationBindings struct {
 // raise inside fn propagates too (a failed elevated write must surface).
 func (b *elevationBindings) luaBypassACL(ls *lua.LState) int {
 	fn := ls.CheckFunction(1)
-	if b.em == nil && b.er == nil {
+	if b.em == nil && b.er == nil && b.eu == nil {
 		// Defensive: the binding is only registered when at least one elevated
 		// handle is set, but fail loud rather than silently no-op if that ever
-		// drifts. Note this raises only when BOTH are absent — a reader-only
-		// elevation is legitimate (TKT-Y3JVFK), and a manager-only one keeps
-		// its existing behavior of raising per-method inside readGuard.
+		// drifts. It raises only when all three handles are absent: a
+		// reader-only elevation is legitimate (TKT-Y3JVFK), as is an
+		// updater-only one (TKT-JA5SABG), and a manager-only one raises
+		// per-method inside readGuard.
 		ls.RaiseError("rela.bypass_acl: no elevated handle is available")
 		return 0
 	}
@@ -61,7 +64,7 @@ func (b *elevationBindings) luaBypassACL(ls *lua.LState) int {
 	// reads accumulates the distinct elevated read bindings this closure
 	// used, for the single post-closure audit record (TKT-ACSBSA).
 	reads := &readUsage{}
-	admin := newElevatedHandle(ls, b.em, b.er, &live, reads, b.ctxFn, b.faces)
+	admin := newElevatedHandle(ls, b, &live, reads)
 
 	// Invalidate on every exit path (normal return or Lua error). pcall keeps
 	// the runtime alive so we can flip `live` before re-raising.
@@ -95,10 +98,9 @@ func (b *elevationBindings) luaBypassACL(ls *lua.LState) int {
 //
 // Write surface: create_relation, delete_relation, delete_entity — the
 // link/unlink + remove operations the system-invariant use cases (e.g.
-// authorship stamping via created-by) need. create_entity / update_entity are a
-// deliberate follow-up: they marshal a full entity table and aren't required by
-// the motivating case; gating elevated *entity* creation is a larger surface
-// best added with its own tests.
+// authorship stamping via created-by) need. There is no unscoped
+// create_entity or update_entity; the only elevated update is the scoped
+// update_entity below.
 //
 // Read surface (TKT-ACSBSA): get_entity, list_entities, get_relations —
 // mirroring the gated rela.* bindings one-for-one so a script can lift a read
@@ -119,10 +121,14 @@ func (b *elevationBindings) luaBypassACL(ls *lua.LState) int {
 // (see documentService.elevatedDeps). All three states fail closed; they just
 // fail in different shapes, so don't read this comment as "nil reader always
 // means misconfiguration".
-func newElevatedHandle(
-	ls *lua.LState, em Mutator, er EntityReader, live *bool, reads *readUsage,
-	ctxFn func() context.Context, faces listFaces,
-) *lua.LTable {
+//
+// A scoped updater (`eu`, TKT-JA5SABG) adds admin.update_entity. When it is
+// the only capability wired, as for a data-entry action with
+// `elevated_updates:`, the handle carries update_entity and nothing else:
+// no raising read methods either, because that action was granted no read
+// elevation at all.
+func newElevatedHandle(ls *lua.LState, b *elevationBindings, live *bool, reads *readUsage) *lua.LTable {
+	em, er, ctxFn := b.em, b.er, b.ctxFn
 	t := ls.NewTable()
 	guard := func(name string) bool {
 		if !*live {
@@ -167,8 +173,63 @@ func newElevatedHandle(
 	if em != nil {
 		registerElevatedWrites(ls, t, em, er, guard, ctxFn)
 	}
-	registerElevatedReads(ls, t, er, readGuard, ctxFn, reads, faces)
+	if b.eu != nil {
+		ls.SetField(t, "update_entity", ls.NewFunction(elevatedUpdateEntity(b.eu, b.vr, guard, ctxFn)))
+		if em == nil && er == nil {
+			return t
+		}
+	}
+	registerElevatedReads(ls, t, er, readGuard, ctxFn, reads, b.faces)
 	return t
+}
+
+// elevatedUpdateEntity builds admin.update_entity(id, properties) ->
+// (entity, warnings), the scoped elevated update of a data-entry action
+// (TKT-JA5SABG).
+//
+// It takes no content and no options: the scope covers properties only, and
+// a write token would tie the elevated write to the caller's view. The target
+// is resolved through the caller's gated reader vr, so a row the caller
+// cannot read is "entity not found" before the updater is called; the
+// updater checks the same again on the stored row. The returned entity is
+// the caller's view of the written row.
+func elevatedUpdateEntity(
+	eu ElevatedUpdater, vr EntityReader, guard func(string) bool, ctxFn func() context.Context,
+) lua.LGFunction {
+	return func(s *lua.LState) int {
+		if !guard("update_entity") {
+			return 0
+		}
+		id := s.CheckString(1)
+		tbl := s.CheckTable(2)
+		if s.GetTop() > 2 {
+			s.RaiseError("bypass_acl update_entity: takes (id, properties); content and options are not supported")
+			return 0
+		}
+		if id == "" {
+			s.RaiseError("bypass_acl update_entity: entity ID cannot be empty")
+			return 0
+		}
+		ctx := ctxFn()
+		props := luaTableToGoMap(tbl)
+		patch := entity.Patch{Properties: props, MetaUnset: splitEmpty(tbl, props)}
+		ref, ok := resolveWriteTarget(ctx, s, vr, id)
+		if !ok {
+			return 0
+		}
+		result, err := eu.PatchEntity(ctx, ref.String(), patch)
+		if err != nil {
+			if isEntityNotFound(err) {
+				s.RaiseError("entity not found: %s", id)
+				return 0
+			}
+			s.RaiseError("bypass_acl update_entity error: %s", err.Error())
+			return 0
+		}
+		s.Push(writtenEntityTable(ctx, s, vr, result.Entity))
+		s.Push(WarningsToTable(s, result.Warnings))
+		return 2
+	}
 }
 
 // readUsage accumulates which elevated read bindings a bypass_acl closure
@@ -204,10 +265,6 @@ func recordElevatedReads(ctx context.Context, rec ElevationRecorder, u *readUsag
 // (TKT-D8T148). Split out for the same reason as registerElevatedReads — the
 // function-length limit — and called only when an elevated Mutator was wired,
 // so a read-only elevation has no write methods at all (TKT-Y3JVFK).
-//
-// create_entity / update_entity remain absent by design: they marshal a full
-// entity table and were deferred with their own tests as the follow-up noted
-// in newElevatedHandle's doc.
 func registerElevatedWrites(
 	ls *lua.LState, t *lua.LTable, em Mutator, er EntityReader, guard func(string) bool,
 	ctxFn func() context.Context,

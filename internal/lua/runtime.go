@@ -893,10 +893,14 @@ func (r *Runtime) registerBindings(allowWrites bool) {
 		// omits the write methods when em is nil, so `admin.delete_entity` is
 		// "attempt to call a nil value" rather than a guarded call. Reads-only is
 		// structural, not a promise.
-		if r.deps.ElevatedManager != nil || r.deps.ElevatedReader != nil {
+		// A scoped updater (TKT-JA5SABG) registers it too, with update_entity
+		// as the handle's only method.
+		if r.deps.ElevatedManager != nil || r.deps.ElevatedReader != nil || r.deps.ElevatedUpdater != nil {
 			eb := &elevationBindings{
 				em:       r.deps.ElevatedManager,
 				er:       r.deps.ElevatedReader,
+				eu:       r.deps.ElevatedUpdater,
+				vr:       r.deps.VisibleReader,
 				recorder: r.deps.ElevationRecorder,
 				ctxFn:    r.callerCtx,
 				faces:    listFaces{world: r.deps.World, meta: r.deps.Meta},

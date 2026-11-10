@@ -102,7 +102,13 @@ func (o actionOps) run(
 	if h.attachRender != nil {
 		deps.AttachRender = h.attachRender()
 	}
-	var ent *entity.Entity
+	// The elevation scope must be the one the current config declares, as
+	// for the available_on gate below.
+	if action.AllowACLBypass.Enabled() && h.schema() != s {
+		return nil, failV1(http.StatusConflict, "config_reloaded",
+			"The configuration was reloaded; retry the action")
+	}
+	var ent, boundRaw *entity.Entity
 	if payload.EntityID != "" && action.AvailableOn == nil {
 		if e, getErr := deps.VisibleReader.GetAddress(ctx, payload.EntityID); getErr == nil {
 			ent = e
@@ -124,11 +130,16 @@ func (o actionOps) run(
 			return nil, failV1(http.StatusConflict, "config_reloaded",
 				"The configuration was reloaded; retry the action")
 		}
-		bound, fail := o.boundEntity(ctx, s, id, action, payload.EntityID)
+		raw, bound, fail := o.boundEntity(ctx, s, id, action, payload.EntityID)
 		if fail != nil {
 			return nil, fail
 		}
-		ent = bound
+		ent, boundRaw = bound, raw
+	}
+	// After the bound row is read, so an elevated write to it is pinned to
+	// the row the action's when: judged.
+	if fail := grantElevatedUpdates(h.elevatedUpdates, &deps, id, action, boundRaw); fail != nil {
+		return nil, fail
 	}
 
 	if beforeScript != nil {
@@ -233,20 +244,21 @@ func scriptErrorDetail(se *lua.ScriptError) string {
 // config, and the caller can already see everything the verdict read.
 //
 // The script receives the redacted entity, the same one `when` judged, with
-// Redacted set so entity:is_redacted() tells hidden from unset.
+// Redacted set so entity:is_redacted() tells hidden from unset. The raw row
+// is returned too, for the elevated-update pin, and never reaches the script.
 func (o actionOps) boundEntity(
 	ctx context.Context, s *Schema, id string, action dataentryconfig.Action, address string,
-) (*entity.Entity, *opFailure) {
+) (raw, redacted *entity.Entity, fail *opFailure) {
 	e, fail := o.readableEntity(ctx, address)
 	if fail != nil {
-		return nil, fail
+		return nil, nil, fail
 	}
 	check := o.h.affordances.newDetailActionCheck(ctx, s, e)
 	if !check.Allows(ctx, id, action) {
-		return nil, failV1(http.StatusForbidden, "action_not_available",
+		return nil, nil, failV1(http.StatusForbidden, "action_not_available",
 			fmt.Sprintf("action %q is not available on this entity", id))
 	}
-	return check.Redacted(), nil
+	return e, check.Redacted(), nil
 }
 
 // readableEntity resolves address for the ctx principal. A missing or

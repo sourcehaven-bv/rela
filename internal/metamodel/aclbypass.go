@@ -40,7 +40,9 @@ const (
 	// see.
 	ACLBypassRead ACLBypass = "read"
 	// ACLBypassWrite unlocks the elevated WRITE methods only
-	// (admin.create_relation / delete_relation / delete_entity).
+	// (admin.create_relation / delete_relation / delete_entity). On a
+	// data-entry action it unlocks only admin.update_entity, limited to the
+	// action's elevated_updates (TKT-JA5SABG).
 	ACLBypassWrite ACLBypass = "write"
 	// ACLBypassReadWrite unlocks both. This is what `allow_acl_bypass: true`
 	// meant before the enum existed, and what the migration rewrites it to.

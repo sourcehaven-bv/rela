@@ -10,6 +10,17 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
+// DeclarativeOf returns m's ACL as a Declarative, failing the test when it is
+// not one. Test-only: it lets an external test bind a verified identity.
+func DeclarativeOf(tb testing.TB, m *Manager) *acl.Declarative {
+	tb.Helper()
+	d, ok := m.deps.ACL.(*acl.Declarative)
+	if !ok {
+		tb.Fatalf("ACL is %T, not *acl.Declarative", m.deps.ACL)
+	}
+	return d
+}
+
 // WithStore returns a handle on m's deps that writes to st. Test-only: it
 // lets an external test put a failing store under a built Manager.
 func WithStore(m *Manager, st store.Store) *Manager {

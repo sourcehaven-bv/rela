@@ -182,50 +182,13 @@ func (d *Declarative) Policy() *Policy {
 //
 //archplan:guard=authz reason="checks the write against the ACL policy"
 func (d *Declarative) AuthorizeWrite(ctx context.Context, req WriteRequest) Decision {
-	r, err := d.RequestFrom(ctx)
-	if err != nil {
-		// The error text is fixed (sentinels only), so it is safe to return
-		// to a caller; RequestFrom logs any principal ids.
-		return Decision{
-			Allow:    false,
-			RuleKind: "role-grant",
-			RuleID:   "-",
-			Reason:   fmt.Sprintf("acl: no request scope: %v", err),
-			Cause:    err,
-		}
-	}
-	// unmatched_principal gate: a verified principal that resolved to no user
-	// entity (the edge marks it on the Request) is denied its writes when the
-	// policy is `reject`. This runs before role evaluation because it is a
-	// deployment posture ("unknown identities don't mutate"), not a role
-	// decision — and because it is the single write-authz point every entity
-	// write reaches, so it covers CRUD, sync, action, and attachment writes
-	// uniformly (TKT-0C3II2).
-	if r.UnmatchedVerified() {
-		switch d.policy.effectiveUnmatchedPrincipal() {
-		case UnmatchedReject:
-			return Decision{
-				Allow:    false,
-				RuleKind: "unmatched-principal",
-				RuleID:   UnmatchedReject,
-				Reason:   "verified principal resolves to no user entity; writes are rejected",
-			}
-		case UnmatchedProvision:
-			// Provision is implemented at the data-entry write seam (maybeProvision,
-			// TKT-ANUJDS): a successful provision binds a new Request on the
-			// provisioned identity, which is not unmatched, so the write never
-			// reaches here still-flagged. Arriving here under provision means
-			// provisioning did NOT fire or failed — a non-data-entry transport (this
-			// gate is transport-agnostic), or a create/re-resolve error the seam
-			// logged. Fall through to normal role evaluation (the principal's
-			// asserted roles still apply, TKT-RP3X3Q); warn once so a stuck
-			// provision deployment is visible without a per-request flood.
-			d.provisionWarn.Do(func() {
-				slog.Warn("acl: unmatched_principal: provision reached the write-authz gate " +
-					"still unmatched; provisioning did not fire (non-data-entry transport) or " +
-					"failed (see earlier provision warnings); evaluating the roles it holds without a user entity")
-			})
-		}
+	// The checks that hold whatever the roles (a usable Request,
+	// unmatched_principal) come first; see openWrite. An elevated write skips
+	// the role grants but not these: it reaches the same function through
+	// AuthorizePreRoleWrite.
+	r, deny := openWrite(ctx, d)
+	if deny != nil {
+		return *deny
 	}
 	return r.AuthorizeWrite(ctx, req)
 }

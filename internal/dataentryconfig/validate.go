@@ -2768,6 +2768,7 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 
 		errs = append(errs, validateActionRequest(id, action, hasScript)...)
 		errs = append(errs, validateActionScope(id, action, hasScript, meta)...)
+		errs = append(errs, validateActionElevation(id, action, hasScript, meta)...)
 
 		// Key validation (optional — only required when referenced by a list)
 		if action.Key != "" {
@@ -2903,6 +2904,112 @@ func validateActionScope(id string, action Action, hasScript bool, meta *metamod
 					"actions: %q available_on face %q is not declared on entity type %q",
 					id, face, et))
 			}
+		}
+	}
+	return errs
+}
+
+// validateActionElevation checks `allow_acl_bypass:` and `elevated_updates:`
+// on one action (TKT-JA5SABG). An action is invoked by whoever may POST it,
+// so the elevation it grants must be narrow and written down in full:
+//
+//  1. Only `write` is accepted. The handle has update_entity and nothing
+//     else; read elevation on an action would publish rows past the
+//     caller's ACL.
+//  2. It needs a script and a permission:, so only callers the operator
+//     chose can reach the elevated write.
+//  3. It needs a non-empty elevated_updates: whose types and properties are
+//     declared, so the scope names real fields.
+//  4. elevated_updates: without allow_acl_bypass: write is refused, because
+//     it would grant nothing and look as if it did.
+func validateActionElevation(id string, action Action, hasScript bool, meta *metamodel.Metamodel) []string {
+	if !action.AllowACLBypass.Enabled() {
+		if len(action.ElevatedUpdates) > 0 {
+			return []string{fmt.Sprintf(
+				"actions: %q has elevated_updates but no allow_acl_bypass: %s", id, metamodel.ACLBypassWrite)}
+		}
+		return nil
+	}
+	var errs []string
+	if action.AllowACLBypass != metamodel.ACLBypassWrite {
+		errs = append(errs, fmt.Sprintf(
+			"actions: %q: allow_acl_bypass must be %q on an action (got %q); an action may only make "+
+				"the elevated updates its elevated_updates: names", id, metamodel.ACLBypassWrite, action.AllowACLBypass))
+	}
+	if !hasScript {
+		errs = append(errs, fmt.Sprintf(
+			"actions: %q: allow_acl_bypass applies only to a script action", id))
+	}
+	if action.Permission == "" {
+		errs = append(errs, fmt.Sprintf(
+			"actions: %q: permission is required when allow_acl_bypass is set; without it every "+
+				"caller who may run actions gets the elevated updates", id))
+	}
+	if len(action.ElevatedUpdates) == 0 {
+		errs = append(errs, fmt.Sprintf(
+			"actions: %q: allow_acl_bypass needs elevated_updates naming the types and properties "+
+				"the action may update", id))
+	}
+	if meta == nil {
+		return errs
+	}
+	for _, typ := range slices.Sorted(maps.Keys(action.ElevatedUpdates)) {
+		errs = append(errs, elevatedTypeErrors(id, typ, action.ElevatedUpdates[typ], meta)...)
+	}
+	return errs
+}
+
+// elevatedTypeErrors checks one elevated_updates entry. The key must be the
+// canonical type name, because the scope is matched against the stored type.
+// A faced type has no row at the implicit face, so its key must name one
+// declared face as `type@face`, and a type without faces takes no face.
+// A property must be one a patch can write: computed, rollup, file and
+// external_ref properties are always refused at write time. A unique
+// property is refused because a scoped update would let the caller probe
+// for a value held by an entity they cannot see.
+func elevatedTypeErrors(id, key string, props []string, meta *metamodel.Metamodel) []string {
+	typ, face, faced := strings.Cut(key, entity.StateRefSeparator)
+	def, ok := meta.GetEntityDef(typ)
+	if !ok {
+		return []string{fmt.Sprintf("actions: %q elevated_updates references unknown entity type %q", id, typ)}
+	}
+	if canonical := meta.ResolveAlias(typ); canonical != typ {
+		return []string{fmt.Sprintf(
+			"actions: %q elevated_updates uses alias %q; name the entity type %q", id, typ, canonical)}
+	}
+	switch {
+	case !faced && len(def.Faces) > 0:
+		return []string{fmt.Sprintf(
+			"actions: %q elevated_updates: entity type %q has faces; name one as %q",
+			id, typ, typ+entity.StateRefSeparator+"<face>")}
+	case faced && len(def.Faces) == 0:
+		return []string{fmt.Sprintf(
+			"actions: %q elevated_updates: entity type %q has no faces; drop %q", id, typ,
+			entity.StateRefSeparator+face)}
+	case faced:
+		if _, declared := def.Faces[face]; !declared {
+			return []string{fmt.Sprintf(
+				"actions: %q elevated_updates: entity type %q declares no face %q", id, typ, face)}
+		}
+	}
+	if len(props) == 0 {
+		return []string{fmt.Sprintf("actions: %q elevated_updates lists no properties for entity type %q", id, typ)}
+	}
+	var errs []string
+	for _, p := range props {
+		pd, declared := def.Properties[p]
+		switch {
+		case !declared:
+			errs = append(errs, fmt.Sprintf(
+				"actions: %q elevated_updates property %q is not declared on entity type %q", id, p, typ))
+		case pd.Computed != "" || pd.Rollup != nil ||
+			pd.Type == metamodel.PropertyTypeFile || pd.Type == metamodel.PropertyTypeExternalRef:
+			errs = append(errs, fmt.Sprintf(
+				"actions: %q elevated_updates property %q of %q cannot be written by an update", id, p, typ))
+		case pd.Unique:
+			errs = append(errs, fmt.Sprintf(
+				"actions: %q elevated_updates property %q of %q is unique; an elevated update may not set it",
+				id, p, typ))
 		}
 	}
 	return errs

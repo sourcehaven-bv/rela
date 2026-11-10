@@ -179,7 +179,12 @@ func (c *detailActionCheck) matcher(id string) ViewConditionMatcher {
 //
 // An intent gate, answered by the request read gate like a document's
 // permission: under NopACL and ReadOnlyACL that gate holds every permission.
-// The script's writes stay bounded by the caller's own ACL either way.
+// The script's ordinary writes stay bounded by the caller's own ACL either
+// way. An action with allow_acl_bypass: write also makes elevated updates,
+// which skip that ACL: there this permission is what limits who may make
+// them, and entitymanager.ScopedUpdates still bounds them to the declared
+// properties, to rows the caller can read, and refuses them on a read-only
+// instance.
 //
 //archplan:guard=authz reason="checks the action's config-declared permission"
 func holdsActionPermission(ctx context.Context, action dataentryconfig.Action) bool {

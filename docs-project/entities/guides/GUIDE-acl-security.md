@@ -557,7 +557,10 @@ unmatched_principal: reject   # anonymous (default) | reject | provision
   the graph can still act on their asserted roles.
 - **`reject`**: a graph-is-authority posture. The entity graph is the
   authority on who may mutate, so an unknown verified identity's **writes**
-  are denied (403). Its **reads** are unaffected — it still sees what its
+  are denied (403). This includes an elevated data-entry action update
+  (see [Elevated data-entry actions](#elevated-data-entry-actions)): the
+  identity cannot use an action's `permission:` to write either. Its
+  **reads** are unaffected — it still sees what its
   asserted roles allow. Blocking reads too is a larger, separate choice and
   is not what this does.
 - **`provision`**: lazy creation of a stub user entity. On the unmatched
@@ -577,9 +580,10 @@ Load-bearing details:
   resolved to no entity. A `--principal-header` deployment, and the
   CLI/MCP/scheduler entry points, are never subject to it — their
   principals legitimately don't resolve to a `persoon` either, and a
-  blanket rule would wrongly deny them. It gates writes (CRUD and
-  Lua-action writes all funnel through the one write-authorization point);
-  reads and non-`/api/` paths are untouched.
+  blanket rule would wrongly deny them. It gates writes: CRUD and
+  Lua-action writes go through the write-authorization point, and an
+  elevated action update, which skips the role grants, goes through the
+  same pre-role checks. Reads and non-`/api/` paths are untouched.
 - **`reject` and `provision` require the lookup.** Both need
   `user_entity_type` + `principal_property` set — otherwise "unmatched"
   has no meaning (with the lookup disabled the resolver returns no-match
@@ -1549,15 +1553,25 @@ A project with **no** `acl.yaml` is unaffected: that is a deliberate
 the full graph exactly as they always have.
 
 **When an automation legitimately needs more than its caller can see**,
-the sanctioned route is `rela.bypass_acl` — not widening the policy. Its
-`admin` handle carries `get_entity`, `list_entities` and `get_relations`
-alongside the write methods, all reading raw. That keeps the privilege
-scoped to a closure and visible at the call site, and it leaves an
-`acl-bypass-read` audit row, where relaxing a role in `acl.yaml` would
-widen access for every read on every path with nothing in the log to
-show for it. It requires operator opt-in (`allow_acl_bypass:` on the
-action, valued `read`, `write` or `read+write`) — see the Lua scripting
-guide.
+the sanctioned route is `rela.bypass_acl`, not widening the policy. In an
+automation, its `admin` handle carries `get_entity`, `list_entities` and
+`get_relations` beside the write methods, and all of them read raw. That
+keeps the privilege scoped to a closure and visible at the call site, and
+it leaves an `acl-bypass-read` audit row. Relaxing a role in `acl.yaml`
+would widen access for every read on every path, with nothing in the log
+to show for it.
+
+The operator opts in with `allow_acl_bypass:` on the script's config
+entry, and the value depends on where the script runs:
+
+- An automation action in `schema.yaml` takes `read`, `write` or
+  `read+write`.
+- A `documents:` entry takes `read`.
+- A data-entry action takes only `write`. That gives `admin.update_entity`
+  and no other method, limited to the action's `elevated_updates:`. See
+  [Elevated data-entry actions](#elevated-data-entry-actions).
+
+The Lua scripting guide describes each handle.
 
 ### An elevated document is trusted code
 
@@ -1593,6 +1607,59 @@ An elevated document additionally requires a configured `acl.yaml`: under
 no policy the permission names a capability nothing can withhold, so the
 render is refused rather than served to everyone. Writes are refused
 outright — a render is a `GET`.
+
+### Elevated data-entry actions
+
+A data-entry action may declare `allow_acl_bypass: write` with an
+`elevated_updates:` block. Its script can then set the listed properties
+on rows the caller may read but may not update. A typical use is a
+`status` that only a `submit` action may change.
+
+The `permission:` of such an action grants **"may update the listed
+properties on any row I can read, as far as this script allows"**. It
+does not grant "may submit my own record". The ACL no longer decides
+which row is written:
+
+- **The caller picks the row.** The action receives the entity id from
+  the request. Any row of a listed type that the caller can read is a
+  possible target, including rows the caller did not create.
+- **The script must check ownership and state.** Before the elevated
+  update, the script must confirm that the caller may act on this row,
+  for example that the row's owner is `rela.principal.user`, and that the
+  row is in the state the action expects, for example `draft`. An
+  `available_on.when:` condition is a useful first check, but the script
+  is the control.
+- **Field write rules do not apply.** `acl.yaml` `fields:` rules for
+  `update` do not restrict a data-entry action script, elevated or not.
+  Elevation adds one thing: the write skips the row-level `update:`
+  grant.
+- **Same-entity automations are part of the write.** An on-update
+  automation `set` on the same entity is stored with the elevated update
+  and is not checked against `elevated_updates:`. A cascade the write
+  triggers, such as `create_entity` or `run_script`, runs with the
+  caller's normal access.
+
+Elevation lifts only the role grants. Every other write check still
+applies, through the same code as a normal write, and a refusal is a 403
+with a `denied-write` audit row:
+
+- The caller must be able to read the target row. A row the caller cannot
+  read is reported as `entity not found`.
+- **Client ceilings still apply.** A client restricted by
+  `client_baselines` or `scope_grants` that may not update the type, for
+  example a read-only app token under `deny_write: ["*"]`, is refused.
+  Elevation never lifts the limits of the client the caller acts through.
+- **`unmatched_principal: reject` still applies.** A verified identity
+  with no user entity is refused, even when its asserted roles grant the
+  action's `permission:`.
+- A request without a usable identity is refused.
+- A read-only instance refuses the update.
+- When the action runs on one entity (`available_on:`), an elevated
+  update of that entity fails if the entity changed after the action
+  read it.
+
+Review the script like the `acl.yaml` rules it bypasses, and give the
+permission only to principals who may hold that update grant.
 
 ## Property-level redaction (`visible:`)
 
