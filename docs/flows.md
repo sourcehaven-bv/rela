@@ -427,8 +427,8 @@ a write:
   property shows as read-only, `_transitions` lists its transitions as
   not allowed with reason `read-only`, and a write is refused with 403 and
   `field-affordance:read-only:<property>`;
-- MCP on `rela-server`, scheduled Lua scripts, and channel promotes and
-  outputs;
+- MCP on `rela-server`, scheduled Lua scripts (only when the scheduler
+  reads the same run store; see below), and channel promotes and outputs;
 - the steps and outputs of other flows.
 
 They do not apply to the CLI, MCP over stdio, `_actions` declared by the

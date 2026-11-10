@@ -1111,7 +1111,7 @@ Verdicts come from one of three sources, selected at server startup by the
 
 | Value | Behavior |
 |---|---|
-| unset / empty | **Policy-backed** when `acl.yaml` declares any affordance block (`fields:` / `visible:` / `options:` / `relations:`); otherwise permissive (both wire maps emit as `{}`). |
+| unset / empty | **Policy-backed** when `acl.yaml` declares any affordance block (`fields:` / `visible:` / `options:` / `relations:`) or a flow in `flows.yaml` declares `outside_edits:`; otherwise permissive (both wire maps emit as `{}`). |
 | `none` | Permissive — both wire maps emit as `{}`. Refused at startup when `acl.yaml` declares field rules (see below). |
 | `demo` | Hardcoded fixture against the `ticket` entity type — exercises every affordance code path for manual UI testing. Refused at startup when `acl.yaml` declares field rules (see below). |
 | any other | Unknown — logs a warning and falls back to policy / permissive. Never panics. |
@@ -1120,7 +1120,8 @@ Verdicts come from one of three sources, selected at server startup by the
 apply the policy. So `rela-server` refuses to start when either profile is
 set and `acl.yaml` declares field rules: a role `fields:`, `visible:`,
 `options:` or `relations:` block, or a `client_baselines` field ceiling
-(`visible:` / `redact:`). The error names `RELA_AFFORDANCE_PROFILE`, the
+(`visible:` / `redact:`). It also refuses them when a flow declares
+`outside_edits:`. The error names `RELA_AFFORDANCE_PROFILE`, the
 profile value, and says that acl.yaml declares field rules. Unset the
 variable to apply the policy (BUG-UO72G2). A Configure save is refused
 for the same reason, and the running server keeps serving the old
@@ -1322,8 +1323,8 @@ Each entry is one declared out-edge from the field's current value:
 | `to` | Target value the move lands on. |
 | `label` | Optional display text for the **move** (the action, e.g. "Start progress"). Absent → the SPA falls back to the target value's display label, then the raw value. Authored via `label:` on the transition in the metamodel. |
 | `guard` | ACL permission the move requires; absent when unguarded. |
-| `allowed` | `true` iff the principal holds the guard AND the `when:` precondition holds. |
-| `reason` | Why `allowed` is false: `guard` or `precondition`. Absent when allowed. Advisory (the control shows only allowed moves, so this feeds a tooltip/CLI, not the render gate). |
+| `allowed` | `true` iff the principal holds the guard, the `when:` precondition holds, and the principal may write the field. |
+| `reason` | Why `allowed` is false: `guard`, `precondition`, or `read-only` (a `fields:` grant or a flow's `outside_edits:` makes the field read-only for this principal). Absent when allowed. Advisory (the control shows only allowed moves, so this feeds a tooltip/CLI, not the render gate). |
 
 `_transitions` is **keyed by every machine-typed property** — a plain enum field
 has no entry, and the SPA falls back to the ordinary enum control. A machine
