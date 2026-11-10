@@ -3,8 +3,10 @@ package script
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"path/filepath"
 
+	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/hostconfig"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/mail"
@@ -21,6 +23,9 @@ import (
 // Option precedence: caller opts are applied first, then context opts (AI
 // provider + secrets). Context wins on conflict, so a caller cannot
 // accidentally clobber wired AI/secrets by passing a nil-valued override.
+// The deps' [lua.Seams] win over both: Seams.Mail replaces the mail.yaml
+// transport loader, and Seams.AI replaces the ai.yaml provider, which is
+// then not read.
 func NewWriterRuntime(deps lua.WriteDeps, scriptPath string,
 	stdout io.Writer, opts ...lua.Option) (*lua.Runtime, error) {
 	// mail.LoadLuaSender is supplied HERE rather than imported by internal/lua,
@@ -33,13 +38,34 @@ func NewWriterRuntime(deps lua.WriteDeps, scriptPath string,
 	if host == nil {
 		host = hostconfig.Dir(cacheDirFor(deps.ProjectRoot))
 	}
-	ctxOpts, err := lua.LoadContextOptions(host, scriptPath, loadMailSender)
+	mailLoader := lua.MailSenderLoader(loadMailSender)
+	if deps.Seams.Mail != nil {
+		mailLoader = deps.Seams.Mail
+	}
+	if deps.Seams.AI != nil {
+		// The injected provider wins, so ai.yaml is not read: a broken or
+		// real one must not matter to a world that replaced it.
+		host = withoutAIConfig{host}
+	}
+	ctxOpts, err := lua.LoadContextOptions(host, scriptPath, mailLoader)
 	if err != nil {
 		return nil, fmt.Errorf("lua context: %w", err)
 	}
 	all := append([]lua.Option{}, opts...)
 	all = append(all, ctxOpts...)
 	return lua.NewWriter(deps, stdout, all...), nil
+}
+
+// withoutAIConfig is a host config that reports ai.yaml as absent.
+type withoutAIConfig struct{ lua.HostConfig }
+
+// File reports ai.yaml as absent and serves every other file from the
+// wrapped host config.
+func (h withoutAIConfig) File(name string) ([]byte, error) {
+	if name == ai.ConfigFile {
+		return nil, fs.ErrNotExist
+	}
+	return h.HostConfig.File(name)
 }
 
 // loadMailSender adapts mail.LoadLuaSender to lua.MailSenderLoader.

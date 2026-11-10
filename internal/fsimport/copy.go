@@ -70,6 +70,7 @@ func (c *copier) copyAll(ctx context.Context) error {
 		c.copyComments,
 		c.copyMigrations,
 		c.copyState,
+		c.copyFlowRuns,
 	}
 	for _, step := range steps {
 		if err := step(ctx); err != nil {

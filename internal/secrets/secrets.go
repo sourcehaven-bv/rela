@@ -41,6 +41,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -57,10 +58,28 @@ const ConfigFile = "secrets.yaml"
 // `capabilities.secrets` list that names it is refused at load.
 const TokenKey = "token_key"
 
+// RemoteCredentialPrefix starts the global keys that hold a credential this
+// project presents to another rela, such as
+// `remote_credential.upstream: <token>`. No Lua script can be granted one: a
+// script with an HTTP capability could send the credential anywhere. See
+// [IsRemoteCredential].
+const RemoteCredentialPrefix = "remote_credential." //nolint:gosec // G101: a secret name prefix, not a credential
+
+// IsRemoteCredential reports whether name is a remote credential:
+// [RemoteCredentialPrefix] followed by a non-empty name.
+func IsRemoteCredential(name string) bool {
+	rest, ok := strings.CutPrefix(name, RemoteCredentialPrefix)
+	return ok && rest != ""
+}
+
 // ScriptReadable reports whether a script may be granted the secret name. A
 // script that could read [TokenKey] could decrypt every stored refresh token,
-// which defeats keeping refresh tokens out of Lua.
-func ScriptReadable(name string) bool { return name != TokenKey }
+// which defeats keeping refresh tokens out of Lua. A remote credential (see
+// [RemoteCredentialPrefix]) is a live credential for another server, and so
+// is any name under its prefix.
+func ScriptReadable(name string) bool {
+	return name != TokenKey && !strings.HasPrefix(name, RemoteCredentialPrefix)
+}
 
 // cacheDirName is the project cache directory holding the secrets file.
 //
@@ -117,6 +136,19 @@ func Load(relaDir, scriptPath string) (map[string]string, error) {
 		return nil, err
 	}
 	return resolve(raw, scriptPath), nil
+}
+
+// Global returns the value of name in the global section, without any
+// per-script override. ok is false when the section has no such key.
+//
+// Returns ErrNotFound (wrapped) when no source exists.
+func Global(relaDir, name string) (value string, ok bool, err error) {
+	raw, err := readFile(relaDir)
+	if err != nil {
+		return "", false, err
+	}
+	value, ok = raw.Global[name]
+	return value, ok, nil
 }
 
 // CredentialName returns the systemd credential name that supplies secrets for
@@ -317,6 +349,11 @@ func resolve(raw *rawConfig, scriptPath string) map[string]string {
 	result := make(map[string]string, len(raw.Global))
 	maps.Copy(result, raw.Global)
 
+	// "" asks for the global section: an overrides entry keyed "" names no
+	// script and must not shadow it.
+	if scriptPath == "" {
+		return result
+	}
 	if overrides, ok := raw.Overrides[scriptPath]; ok {
 		maps.Copy(result, overrides)
 	}

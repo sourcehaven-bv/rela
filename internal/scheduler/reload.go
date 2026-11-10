@@ -7,8 +7,8 @@ import (
 	"slices"
 )
 
-// WatchConfig makes the scheduler read schedules.yaml and subscriptions.yaml
-// again on every tick, so an edit takes effect without a restart. A config
+// WatchConfig makes the scheduler read schedules.yaml, subscriptions.yaml and
+// remotes.yaml again on every tick, so an edit takes effect without a restart. A config
 // that fails to load is not applied: the scheduler keeps the tasks it has, so
 // a typo in one file does not stop the feeds and tasks that work.
 //
@@ -30,10 +30,18 @@ func (s *Scheduler) reloadConfig(ctx context.Context) {
 	old := s.config.Load()
 	cfg, err := s.reload(ctx)
 	switch {
-	case err != nil && errors.Is(err, ErrSubscriptions) && cfg != nil:
-		// schedules.yaml loaded; only the feeds did not. Apply the
-		// schedules and keep the running subscriptions, as at start.
-		cfg = &Config{Tasks: withSubscriptionsOf(cfg.Tasks, old.Tasks)}
+	case err != nil && cfg != nil && (errors.Is(err, ErrSubscriptions) || errors.Is(err, ErrRemotes)):
+		// schedules.yaml loaded; the feeds or the remotes did not. Apply
+		// what loaded and keep the running tasks of the file that did
+		// not, as at start.
+		tasks := cfg.Tasks
+		if errors.Is(err, ErrSubscriptions) {
+			tasks = withTasksOf(tasks, old.Tasks, func(t TaskConfig) bool { return t.Subscription != nil })
+		}
+		if errors.Is(err, ErrRemotes) {
+			tasks = withTasksOf(tasks, old.Tasks, func(t TaskConfig) bool { return t.Remote != nil })
+		}
+		cfg = &Config{Tasks: tasks}
 		s.noteReloadErr(err)
 	case err != nil:
 		s.noteReloadErr(err)
@@ -60,12 +68,12 @@ func (s *Scheduler) noteReloadErr(err error) {
 	}
 }
 
-// withSubscriptionsOf returns tasks plus the subscription tasks of prev whose
-// names tasks does not use.
-func withSubscriptionsOf(tasks, prev []TaskConfig) []TaskConfig {
+// withTasksOf returns tasks plus the tasks of prev that keep selects and
+// whose names tasks does not use.
+func withTasksOf(tasks, prev []TaskConfig, keep func(TaskConfig) bool) []TaskConfig {
 	out := slices.Clone(tasks)
 	for _, t := range prev {
-		if t.Subscription != nil && !slices.ContainsFunc(out, func(o TaskConfig) bool { return o.Name == t.Name }) {
+		if keep(t) && !slices.ContainsFunc(out, func(o TaskConfig) bool { return o.Name == t.Name }) {
 			out = append(out, t)
 		}
 	}

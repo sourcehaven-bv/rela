@@ -28,3 +28,17 @@ func (c *SecretsCredentialNameCmd) Run(svc *readServices) error {
 	fmt.Println(name)
 	return nil
 }
+
+// globalSecret reads name from the global section of the project's secrets.
+// A per-script override is for that script and never applies here. The error
+// names the secret, never a value.
+func globalSecret(relaDir, name string) (string, error) {
+	v, ok, err := secrets.Global(relaDir, name)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("no secret %q in the global section", name)
+	}
+	return v, nil
+}

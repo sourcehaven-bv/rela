@@ -601,3 +601,22 @@ func compactSorted(s []string) []string {
 	slices.Sort(s)
 	return slices.Compact(s)
 }
+
+// SumHeld folds elements a caller already holds into the count and
+// fingerprint that [Elements.Fingerprint] returns for the same rows, the
+// fingerprint in its 32-hex-digit wire form. rows yields each element's
+// address and view hash; relations says whether they are relations or
+// entities. It is for a local side of a diff that is not the store, such as
+// the remote pull's ledger, which must fingerprint exactly as this package
+// does.
+func SumHeld(relations bool, rows iter.Seq2[string, canonical.Digest]) (count uint64, fingerprint string) {
+	kind := reconcile.KindEntity
+	if relations {
+		kind = reconcile.KindRelation
+	}
+	var rg reconcile.Range
+	for addr, hash := range rows {
+		rg = rg.Add(reconcile.Element{Kind: kind, Address: addr, Hash: hash})
+	}
+	return rg.Count, rg.Sum.String()
+}

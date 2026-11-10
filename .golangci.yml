@@ -165,8 +165,9 @@ linters:
         # annotations naming their trust boundary. Do not re-add it here — a
         # new G703 finding is a real path-containment question.
         #
-        # G704 (SSRF) is ENABLED: its two findings were reviewed and are
-        # operator-configured destinations (.rela/ai.yaml base_url),
+        # G704 (SSRF) is ENABLED: its findings were reviewed and are
+        # operator-configured destinations (.rela/ai.yaml base_url) or the
+        # Lua http binding behind the operator-granted http capability,
         # annotated with narrow nolint directives naming the trust boundary
         # at each call site.
         #

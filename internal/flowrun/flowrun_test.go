@@ -93,12 +93,22 @@ func TestCheckArguments(t *testing.T) {
 		err  error
 		ok   bool
 	}{
-		{"update", flowrun.CheckUpdate("FR-1", 1, inst, t0), true},
-		{"update bad id", flowrun.CheckUpdate("", 1, inst, t0), false},
-		{"update rev 0", flowrun.CheckUpdate("FR-1", 0, inst, t0), false},
-		{"update zero time", flowrun.CheckUpdate("FR-1", 1, inst, time.Time{}), false},
-		{"update epoch time", flowrun.CheckUpdate("FR-1", 1, inst, time.Unix(0, 0)), false},
-		{"update bad instance", flowrun.CheckUpdate("FR-1", 1, flow.Instance{State: "X"}, t0), false},
+		{"update", flowrun.CheckUpdate("FR-1", 1, flowrun.State{Instance: inst}, t0), true},
+		{"update bad id", flowrun.CheckUpdate("", 1, flowrun.State{Instance: inst}, t0), false},
+		{"update rev 0", flowrun.CheckUpdate("FR-1", 0, flowrun.State{Instance: inst}, t0), false},
+		{"update zero time", flowrun.CheckUpdate("FR-1", 1, flowrun.State{Instance: inst}, time.Time{}), false},
+		{"update epoch time", flowrun.CheckUpdate("FR-1", 1, flowrun.State{Instance: inst}, time.Unix(0, 0)), false},
+		{"update pending", flowrun.CheckUpdate("FR-1", 1, flowrun.State{Instance: inst,
+			Pending: &flowrun.Pending{State: "open", Generation: 1, Done: 2}}, t0), true},
+		{"update pending bad state", flowrun.CheckUpdate("FR-1", 1, flowrun.State{Instance: inst,
+			Pending: &flowrun.Pending{State: "a b"}}, t0), false},
+		{"update pending negative", flowrun.CheckUpdate("FR-1", 1, flowrun.State{Instance: inst,
+			Pending: &flowrun.Pending{State: "open", Done: -1}}, t0), false},
+		{"update pending over cap", flowrun.CheckUpdate("FR-1", 1, flowrun.State{Instance: inst,
+			Pending: &flowrun.Pending{State: "open", Done: flowrun.MaxPendingDone + 1}}, t0), false},
+		{"update pending negative generation", flowrun.CheckUpdate("FR-1", 1, flowrun.State{Instance: inst,
+			Pending: &flowrun.Pending{State: "open", Generation: -1}}, t0), false},
+		{"update bad instance", flowrun.CheckUpdate("FR-1", 1, flowrun.State{Instance: flow.Instance{State: "X"}}, t0), false},
 		{"delete", flowrun.CheckDelete("FR-1", 1), true},
 		{"delete bad id", flowrun.CheckDelete("", 1), false},
 		{"delete rev 0", flowrun.CheckDelete("FR-1", 0), false},
@@ -141,13 +151,23 @@ func TestStateRoundTrip(t *testing.T) {
 		Restarts:  map[string]time.Time{"nudge": t0},
 		Reminders: map[string]flow.ReminderRecord{"ping": {Since: t0, Last: t0, Count: 1}},
 	}
-	data, err := flowrun.EncodeState(inst)
+	data, err := flowrun.EncodeState(flowrun.State{Instance: inst})
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"instance"`)
 	got, err := flowrun.DecodeState(data)
 	require.NoError(t, err)
-	require.Equal(t, flowrun.NormInstance(inst), got)
-	require.Equal(t, flow.NormTime(t0), got.EnteredAt)
+	require.Equal(t, flowrun.NormInstance(inst), got.Instance)
+	require.Nil(t, got.Pending)
+	require.NotContains(t, string(data), `"pending"`)
+	require.Equal(t, flow.NormTime(t0), got.Instance.EnteredAt)
+
+	mark := &flowrun.Pending{State: "open", Generation: 2, Done: 1}
+	data, err = flowrun.EncodeState(flowrun.State{Instance: inst, Pending: mark})
+	require.NoError(t, err)
+	got, err = flowrun.DecodeState(data)
+	require.NoError(t, err)
+	require.Equal(t, *mark, *got.Pending)
+	require.NotSame(t, mark, got.Pending)
 
 	empty := flowrun.NormInstance(flow.Instance{Restarts: map[string]time.Time{},
 		Reminders: map[string]flow.ReminderRecord{}})

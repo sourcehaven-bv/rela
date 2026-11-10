@@ -73,6 +73,43 @@ type Run struct {
 	// Delete compare it.
 	Rev      int64
 	Instance flow.Instance
+	// Pending is the run's pending-outputs mark, or nil (see [Pending]).
+	Pending *Pending
+}
+
+// MaxPendingDone caps [Pending.Done]: more than any state declares
+// outputs.
+const MaxPendingDone = 64
+
+// MaxPendingFailures caps [Pending.Failures].
+const MaxPendingFailures = 64
+
+// Pending marks a state the run has entered but not settled in
+// (RR-U30RNUZ): its outputs, its `done` branches or, in a final state, the
+// end of the run are still to do. The runtime stores it with the move into
+// the state, in the same write, and clears it once the run waits. A run
+// stored with a mark after a crash is settled by whoever advances it next,
+// so a move never loses its side effects. Outputs before Done are not
+// repeated.
+type Pending struct {
+	// State is the state the run has not settled in.
+	State string `json:"state"`
+	// Generation is the instance generation that entered State. A mark
+	// whose generation is not the instance's is stale and ignored.
+	Generation int64 `json:"generation"`
+	// Done counts the outputs already written, in file order.
+	Done int `json:"done"`
+	// Failures counts the settle attempts that failed in a row. The
+	// runtime backs off by it.
+	Failures int `json:"failures,omitempty"`
+}
+
+// State is a run's stored execution state: the engine's instance and the
+// pending-outputs mark.
+type State struct {
+	Instance flow.Instance
+	// Pending is nil when the run waits in its state.
+	Pending *Pending
 }
 
 // NewRun is a run to create.
@@ -92,6 +129,8 @@ type NewRun struct {
 	// Instance is the starting state; the zero value is unset (see
 	// [flow.Instance]).
 	Instance flow.Instance
+	// Pending is the starting pending-outputs mark, or nil.
+	Pending *Pending
 }
 
 // Query selects runs for [Store.List]. Every set field narrows the result.
@@ -136,11 +175,11 @@ type Store interface {
 	// Get returns one run.
 	Get(ctx context.Context, id RunID) (Run, error)
 
-	// Update replaces the run's instance and sets UpdatedAt to at, as one
-	// compare-and-set on expectRev, and returns the run with its new rev.
-	// A run stored at another rev is [ErrConflict]; a missing run is
-	// [ErrNotFound].
-	Update(ctx context.Context, id RunID, expectRev int64, inst flow.Instance, at time.Time) (Run, error)
+	// Update replaces the run's state (instance and pending mark) and sets
+	// UpdatedAt to at, as one compare-and-set on expectRev, and returns
+	// the run with its new rev. A run stored at another rev is
+	// [ErrConflict]; a missing run is [ErrNotFound].
+	Update(ctx context.Context, id RunID, expectRev int64, st State, at time.Time) (Run, error)
 
 	// Delete drops the run's state, as one compare-and-set on expectRev:
 	// the retention point when a run completes or is cancelled. A run
@@ -275,6 +314,28 @@ func CheckInstance(inst flow.Instance) error {
 	return nil
 }
 
+// CheckState checks a stored state: its instance ([CheckInstance]) and a
+// pending mark with a valid state name, a generation not below zero and
+// Done from 0 to [MaxPendingDone].
+func CheckState(st State) error {
+	if err := CheckInstance(st.Instance); err != nil {
+		return err
+	}
+	p := st.Pending
+	if p == nil {
+		return nil
+	}
+	if !flow.ValidName(p.State) {
+		return invalid("pending state name %q", p.State)
+	}
+	if p.Generation < 0 || p.Done < 0 || p.Done > MaxPendingDone || p.Failures < 0 ||
+		p.Failures > MaxPendingFailures {
+
+		return invalid("pending mark out of range")
+	}
+	return nil
+}
+
 // CheckNewRun checks every field of nr.
 func CheckNewRun(nr NewRun) error {
 	if err := CheckID(nr.ID); err != nil {
@@ -295,11 +356,11 @@ func CheckNewRun(nr NewRun) error {
 	if !afterEpoch(nr.At) {
 		return invalid("create time is not after the epoch")
 	}
-	return CheckInstance(nr.Instance)
+	return CheckState(State{Instance: nr.Instance, Pending: nr.Pending})
 }
 
 // CheckUpdate checks the arguments of [Store.Update].
-func CheckUpdate(id RunID, expectRev int64, inst flow.Instance, at time.Time) error {
+func CheckUpdate(id RunID, expectRev int64, st State, at time.Time) error {
 	if err := CheckID(id); err != nil {
 		return err
 	}
@@ -309,7 +370,7 @@ func CheckUpdate(id RunID, expectRev int64, inst flow.Instance, at time.Time) er
 	if !afterEpoch(at) {
 		return invalid("update time is not after the epoch")
 	}
-	return CheckInstance(inst)
+	return CheckState(st)
 }
 
 // CheckDelete checks the arguments of [Store.Delete].
@@ -410,34 +471,48 @@ func NormInstance(inst flow.Instance) flow.Instance {
 	return out
 }
 
-// state is the stored envelope of a run's execution state. It is an
-// object rather than the bare instance so later fields (a pending-outputs
-// mark, say) need no change to the tables.
-type state struct {
+// envelope is the stored form of a run's execution state. It is an
+// object rather than the bare instance so later fields need no change to
+// the tables; the pending mark is the first (RR-U30RNUZ).
+type envelope struct {
 	Instance flow.Instance `json:"instance"`
+	Pending  *Pending      `json:"pending,omitempty"`
 }
 
-// EncodeState returns the stored form of inst, normalized.
-func EncodeState(inst flow.Instance) ([]byte, error) {
-	return json.Marshal(state{Instance: NormInstance(inst)})
+// NormState returns st with its instance normalized ([NormInstance]) and
+// its pending mark copied.
+func NormState(st State) State {
+	out := State{Instance: NormInstance(st.Instance)}
+	if st.Pending != nil {
+		p := *st.Pending
+		out.Pending = &p
+	}
+	return out
+}
+
+// EncodeState returns the stored form of st, normalized.
+func EncodeState(st State) ([]byte, error) {
+	n := NormState(st)
+	return json.Marshal(envelope(n))
 }
 
 // DecodeState reads what [EncodeState] wrote.
-func DecodeState(data []byte) (flow.Instance, error) {
-	var s state
-	if err := json.Unmarshal(data, &s); err != nil {
-		return flow.Instance{}, fmt.Errorf("flowrun: decode state: %w", err)
+func DecodeState(data []byte) (State, error) {
+	var e envelope
+	if err := json.Unmarshal(data, &e); err != nil {
+		return State{}, fmt.Errorf("flowrun: decode state: %w", err)
 	}
-	return NormInstance(s.Instance), nil
+	return NormState(State(e)), nil
 }
 
 // FromNew returns the run nr creates, with Rev 1 and every time
 // normalized.
 func FromNew(nr NewRun) Run {
 	at := flow.NormTime(nr.At)
+	st := NormState(State{Instance: nr.Instance, Pending: nr.Pending})
 	return Run{
 		ID: nr.ID, Flow: nr.Flow, Version: nr.Version, Subject: nr.Subject, Singleton: nr.Singleton,
-		CreatedAt: at, UpdatedAt: at, Rev: 1, Instance: NormInstance(nr.Instance),
+		CreatedAt: at, UpdatedAt: at, Rev: 1, Instance: st.Instance, Pending: st.Pending,
 	}
 }
 

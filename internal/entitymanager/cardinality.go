@@ -14,7 +14,7 @@ import (
 // ErrCardinalityExceeded is returned when a relation create would give an
 // entity more edges of a relation than its `max_outgoing` or `max_incoming`
 // allows (TKT-65LVAK). Errors carrying it are a [*CardinalityError].
-var ErrCardinalityExceeded = errors.New("relation cardinality exceeded")
+var ErrCardinalityExceeded = entity.ErrCardinalityExceeded
 
 // CardinalityError names the relation, the bound and the entity whose edges
 // are full, and the refused edge.

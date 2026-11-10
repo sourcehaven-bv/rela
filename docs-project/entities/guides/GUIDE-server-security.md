@@ -436,6 +436,27 @@ so same-origin API writes are permitted. The JWT signature is the
 authentication; the Host/Origin allowlists remain the browser-CSRF
 defense.
 
+### Sync clients and other machine clients
+
+rela issues no credentials of its own (DEC-QKLMMD4). A machine client, such
+as another rela that compares or copies this project's data
+(FEAT-CMVZQFI), authenticates at the identity edge like any user:
+
+- **JWT mode:** the client authenticates to the OIDC proxy in front of
+  rela with a machine-client credential. Pratique offers these. The proxy
+  forwards a signed assertion, and rela verifies it like any other, from
+  the header `--jwt-header` names.
+- **Header mode:** the proxy that authenticates users also authenticates
+  the client and sets the principal header.
+
+The client is then an ordinary principal. Grant it a role in `acl.yaml`, as
+for any user; it reads only what that role allows. `rela reconcile diff`
+sends the credential the proxy expects, in the header `--auth-header`
+names (default `Authorization`, as a bearer token). It reads the
+credential from `--token-env`, `--token-file` or `--token-secret
+remote_credential.<name>`. No Lua script can read a `remote_credential.`
+secret. See the CLI reference.
+
 ## Access log (`--access-log`)
 
 `--access-log` writes one line per request for operators who want request

@@ -19,8 +19,6 @@ const (
 	MaxMessageBytes = 16 << 10
 	// MaxMessageProperties caps the properties one message type declares.
 	MaxMessageProperties = 32
-	// MaxSessionStates caps the states one channel type's session declares.
-	MaxSessionStates = 64
 	// MaxChannelsPerAnchor caps the channels of one type on one entity.
 	MaxChannelsPerAnchor = 200
 	// MaxPageLimit caps the messages one page returns.
@@ -164,14 +162,12 @@ const (
 	MaxSeenShards = 256
 )
 
-// Session timers (`after:` on a session state). The server owns these
-// numbers: `limits:` in realtime.yaml does not name them.
+// Session timer rounds (`after:` on a session state). The server owns
+// these numbers: `limits:` in realtime.yaml does not name them. The caps
+// on the states, timers and reminders a session declares are the engine's
+// own (flow.MaxStates, flow.MaxTimers, flow.MinTimer, flow.MaxReminders),
+// so a session and a flow share them (RR-XC2WBH9).
 const (
-	// MaxSessionTimers caps the timers of one session state.
-	MaxSessionTimers = 8
-	// MinSessionTimer is the shortest fixed period a timer may wait. A
-	// calendar period (months, years) is always longer.
-	MinSessionTimer = time.Minute
 	// TimerFloor is the least time between two timer rounds.
 	TimerFloor = time.Second
 	// TimerCeiling is the most time between two timer rounds. A move made
@@ -192,11 +188,9 @@ const (
 	MaxTimerBackoffKeys = 128
 )
 
-// Session reminders (`session.reminders`). Their every and first reuse
-// [MinSessionTimer], and their posts share [MaxTimerWritesPerRound].
+// Session reminders (`session.reminders`). Their posts share
+// [MaxTimerWritesPerRound].
 const (
-	// MaxSessionReminders caps the reminders of one session.
-	MaxSessionReminders = 8
 	// MaxReminderCount is the largest `max` a reminder may declare.
 	MaxReminderCount = 1000
 )

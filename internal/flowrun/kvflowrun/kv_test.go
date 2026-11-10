@@ -138,7 +138,7 @@ func TestFull(t *testing.T) {
 	ctx := context.Background()
 	kv := newMemKV(t)
 	d := runsDoc{Runs: map[flowrun.RunID]storedRun{}}
-	stateDoc, err := flowrun.EncodeState(flow.Instance{})
+	stateDoc, err := flowrun.EncodeState(flowrun.State{})
 	require.NoError(t, err)
 	for i := range MaxRuns {
 		d.Runs[flowrun.RunID(fmt.Sprintf("FR-%d", i))] = storedRun{

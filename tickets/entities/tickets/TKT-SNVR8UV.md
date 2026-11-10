@@ -5,7 +5,8 @@ title: 'tenant: give each tenant its own audit sink'
 kind: enhancement
 priority: medium
 effort: s
-status: backlog
+completed: "2026-11-08"
+status: done
 ---
 
 ## Description
@@ -28,3 +29,11 @@ schema is the natural fit.
 2. A test opens two tenants and reads each audit log.
 
 Found in the code review of TKT-5L5O0MZ.
+
+## Resolution
+
+Fixed in TKT-D6MF3SW (multi-tenant host PR). `tenant.SharedBaseOpener` gives
+each tenant its own `audit.Filesystem` sink under
+`.rela/audit/tenants/<schema>/`, passed to `SharedBase.OpenAndAssemble` and
+closed last by `Services.Close`. Pinned by
+`TestTenantIsolation_OwnAuditAndScriptEngine`.

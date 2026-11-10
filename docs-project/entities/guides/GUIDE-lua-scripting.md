@@ -2063,9 +2063,10 @@ written as one line in the middle of that script, does not.
 
 Two surfaces differ, both deliberately:
 
-- **`rela script` / `rela flow` / the docs build** grant everything. These run
-  from your shell, where you already have the project directory and can read
-  `.rela/secrets.yaml` yourself, so withholding anything protects nothing.
+- **`rela script` / `rela flow` / the docs build** grant everything except
+  the secrets no script may read (`token_key` and `remote_credential.*`;
+  see [Secrets](#secrets)). These run from your shell, where you already
+  have the project directory and can read `.rela/secrets.yaml` yourself.
 - **MCP `lua_eval` / `lua_run`** grant nothing, and there is no way to change
   that from config. The code (or the choice of file) comes from an MCP client,
   which is the least appropriate place to pair arbitrary code with your secrets.
@@ -2079,6 +2080,12 @@ directory.
 A script only sees the keys its `capabilities.secrets` list names (see
 [Capabilities](#capabilities--http-ai-mail-secrets-tokens-write_file) above); everything
 below describes how the *values* are resolved once a key has been granted.
+
+Two kinds of secret are never given to a script, not even one granted every
+secret: `token_key` (see [OAuth Tokens](#oauth-tokens)) and any name that starts with
+`remote_credential.`, which holds a credential for another server (see
+`rela reconcile diff --token-secret` in the CLI reference). A
+`capabilities.secrets` list that names one fails to load.
 
 #### Configuration
 

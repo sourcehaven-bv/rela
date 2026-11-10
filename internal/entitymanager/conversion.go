@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -182,7 +183,8 @@ func (c *Converter) Preview(ctx context.Context, req ConversionRequest) (*Conver
 		TargetFaces:   p.targetFaceOptions(req.SourceFace),
 		Moves:         p.faceMoves(),
 	}
-	preview.Required, err = conversionRequiredFields(d, p.family, req.Properties, req.SourceFace, *toDef)
+	preview.Required, err = conversionRequiredFields(
+		d, p.family, req.Properties, req.SourceFace, *toDef, c.m.deps.Clock)
 	if err != nil {
 		return nil, err
 	}
@@ -291,6 +293,7 @@ func conversionRequiredFields(
 	supplied map[string]any,
 	sourceFace string,
 	target metamodel.EntityDef,
+	now func() time.Time,
 ) ([]string, error) {
 	if err := rejectUnknownTargetProperties(supplied, target); err != nil {
 		return nil, err
@@ -301,7 +304,7 @@ func conversionRequiredFields(
 			continue
 		}
 		for _, source := range family {
-			values := conversionPropertyValues(d, source, supplied, sourceFace)
+			values := conversionPropertyValues(d, source, supplied, sourceFace, now)
 			value, exists := values[key]
 			if !exists || metamodel.IsEmptyValue(value) {
 				required = append(required, key)

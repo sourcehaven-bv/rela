@@ -99,6 +99,7 @@ func TestCapabilities_TokensAndTokenKey(t *testing.T) {
 	}{
 		{"tokens granted", "tokens: [basecamp]", ""},
 		{"token key as secret", "secrets: [api_key, token_key]", "token store key"},
+		{"remote credential as secret", "secrets: [remote_credential.up]", "no script may read it"},
 		{"bad connection name", "tokens: [Base-Camp]", "invalid connection name"},
 		{"duplicate connection", "tokens: [crm, crm]", "listed twice"},
 	}

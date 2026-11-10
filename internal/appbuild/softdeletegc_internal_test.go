@@ -67,7 +67,7 @@ entities:
 	require.NoError(t, err)
 
 	const delay = time.Second
-	stop := startSoftDeleteGC(mgr, q, delay, 20*time.Millisecond)
+	stop := startSoftDeleteGC(mgr, q, time.Now, delay, 20*time.Millisecond)
 	t.Cleanup(stop)
 
 	time.Sleep(delay / 5)
@@ -93,5 +93,5 @@ entities:
 }
 
 func TestSoftDeleteGC_NothingToStartWithoutSupport(_ *testing.T) {
-	startSoftDeleteGC(nil, nil, time.Second, time.Second)()
+	startSoftDeleteGC(nil, nil, time.Now, time.Second, time.Second)()
 }

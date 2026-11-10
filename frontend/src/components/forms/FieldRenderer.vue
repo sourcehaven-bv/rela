@@ -74,6 +74,7 @@ const currentValue = computed(() => (props.value == null ? '' : String(props.val
     :label="label"
     :required="propertyDef?.required"
     :help="help"
+    :hint="field.hint"
     :error="error"
     :label-position="isCheckbox ? 'after' : 'before'"
     :span="field.span"

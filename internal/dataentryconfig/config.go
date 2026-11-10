@@ -553,8 +553,11 @@ type Form struct {
 // against earlier field values; when it evaluates false the step is skipped in
 // navigation and its values are excluded from the submitted entity.
 type FormStep struct {
-	Title       string         `yaml:"title" json:"title"`
-	Description string         `yaml:"description,omitempty" json:"description,omitempty"`
+	Title       string `yaml:"title" json:"title"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	// Details is longer markdown help for the step, shown collapsed below
+	// Description behind a "More information" toggle.
+	Details     string         `yaml:"details,omitempty" json:"details,omitempty"`
 	VisibleWhen string         `yaml:"visible_when,omitempty" json:"visible_when,omitempty"`
 	Fields      []FormField    `yaml:"fields,omitempty" json:"fields,omitempty"`
 	Relations   []FormRelation `yaml:"relations,omitempty" json:"relations,omitempty"`
@@ -605,10 +608,13 @@ var ValidClearWhenHidden = map[string]bool{
 // RequiredWhen makes the field required only when true. See ClearWhenHidden
 // for what happens to a hidden field's stored value.
 type FormField struct {
-	Property     string `yaml:"property" json:"property"`
-	Label        string `yaml:"label" json:"label,omitempty"`
-	Placeholder  string `yaml:"placeholder" json:"placeholder,omitempty"`
-	Help         string `yaml:"help" json:"help,omitempty"`
+	Property    string `yaml:"property" json:"property"`
+	Label       string `yaml:"label" json:"label,omitempty"`
+	Placeholder string `yaml:"placeholder" json:"placeholder,omitempty"`
+	Help        string `yaml:"help" json:"help,omitempty"`
+	// Hint is markdown help behind an info button next to the label, for
+	// guidance too long to show below the field at all times.
+	Hint         string `yaml:"hint,omitempty" json:"hint,omitempty"`
 	Widget       string `yaml:"widget" json:"widget,omitempty"`
 	Required     *bool  `yaml:"required,omitempty" json:"required,omitempty"`
 	RequiredWhen string `yaml:"required_when,omitempty" json:"required_when,omitempty"`
@@ -838,10 +844,15 @@ func validateSpan(span Span, context string) []string {
 // condition expression (see FormField) that hides the relation widget when
 // false.
 type FormRelation struct {
-	Relation     string             `yaml:"relation" json:"relation"`
-	Direction    Direction          `yaml:"direction" json:"direction,omitempty"`
-	TargetType   string             `yaml:"target_type" json:"target_type,omitempty"`
-	Label        string             `yaml:"label" json:"label,omitempty"`
+	Relation   string    `yaml:"relation" json:"relation"`
+	Direction  Direction `yaml:"direction" json:"direction,omitempty"`
+	TargetType string    `yaml:"target_type" json:"target_type,omitempty"`
+	Label      string    `yaml:"label" json:"label,omitempty"`
+	// Help and Hint are markdown help, as on FormField: Help below the
+	// widget, Hint behind an info button next to the label. Without Help the
+	// SPA shows the relation type's description.
+	Help         string             `yaml:"help" json:"help,omitempty"`
+	Hint         string             `yaml:"hint,omitempty" json:"hint,omitempty"`
 	Required     bool               `yaml:"required" json:"required,omitempty"`
 	VisibleWhen  string             `yaml:"visible_when,omitempty" json:"visible_when,omitempty"`
 	Widget       string             `yaml:"widget" json:"widget,omitempty"`

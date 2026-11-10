@@ -416,11 +416,17 @@
       "at": "2026-10-28T13:29:06Z",
       "title": "apiwire and types change together but do not depend on each other."
     },
-    "concepts.data_clump-dbc4bea63927": {
+    "concepts.data_clump-7bd1238eb34e": {
       "state": "accepted",
       "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
-      "at": "2026-10-28T13:29:06Z",
-      "title": "The fields clear_when_hidden, default, help, hidden, keep_on_add_another, … and widget appear together in 3 types across 2 components."
+      "at": "2026-11-07T22:30:00Z",
+      "title": "The fields clear_when_hidden, default, help, hidden, hint, … and widget appear together in 3 types across 2 components."
+    },
+    "concepts.data_clump-20c13558b80a": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-11-07T22:30:00Z",
+      "title": "The fields direction, help, hint, keep_on_add_another, properties, … and widget appear together in 2 types across 2 components."
     },
     "concepts.data_clump-6312e7d9a91e": {
       "state": "accepted",
@@ -2624,6 +2630,36 @@
       "reason": "Design: a subject id is an entity id, a plain string everywhere in rela (entity.Ref.ID); a run-store-only type would not match its callers, TKT-PV9R0GK",
       "at": "2026-11-07T08:20:00Z",
       "title": "flowrun holds raw ids whose concept is unclear: SubjectID."
+    },
+    "boundaries.misplaced_file-748c239a0aab": {
+      "state": "accepted",
+      "reason": "By design: tenanterase.go is the operator command edge for tenant erasure (TKT-TNERAS). It parses flags, confirms and records; the erasure itself lives in tenant, so most links point there.",
+      "at": "2026-11-08T10:00:00Z",
+      "title": "rela-server/tenanterase.go in cmdServer has most of its links to tenant (weighted links: 3.7 to tenant, 1.1 to cmdServer)."
+    },
+    "concepts.missing_operation-b2083028aaba": {
+      "state": "accepted",
+      "reason": "Not a duplicate: appbuild.FlowControl.Cancel authorizes the caller and closes orphan headers, then calls flowengine.Engine.Cancel, which does the state change; the engine takes no ACL (TKT-9IT3LN8).",
+      "at": "2026-11-09T22:30:00Z",
+      "title": "2 components (appbuild, flowengine) each write their own cancel for RunID, a type of flow."
+    },
+    "concepts.untyped_bag-5d8aa066709b": {
+      "state": "accepted",
+      "reason": "Design: a template literal is any YAML value checked against the property's own validation, and Vars.Props holds subject properties, which are map[string]any everywhere in rela (entity.Entity.Properties) (TKT-9IT3LN8).",
+      "at": "2026-11-09T22:30:00Z",
+      "title": "2 types of flowcfg that other components use carry untyped data: Template.literal (any), Vars.Props (map[string]any)."
+    },
+    "boundaries.misplaced_file-ab7ae0d7bf6b": {
+      "state": "accepted",
+      "reason": "By design: cli/classification.go is the CLI edge for the classification commands; it parses flags and prints, and the work lives in classification, so most links point there.",
+      "at": "2026-11-09T22:30:00Z",
+      "title": "cli/classification.go in cli has most of its links to classification (weighted links: 5.4 to classification, 1.3 to cli)."
+    },
+    "boundaries.stability-7b732e45849a": {
+      "state": "accepted",
+      "reason": "Transitional: appbuild is the only dependent of flowengine until triggers, events and the background worker land in TKT-FWQZGAM.",
+      "at": "2026-11-09T22:30:00Z",
+      "title": "flowengine is in the zone of uselessness: mostly abstractions, and few components depend on it (1)."
     }
   },
   "labels": {},
@@ -2632,90 +2668,20 @@
       "weight.profile": 49,
       "weight.structure": 90,
       "weight.layers": 0,
-      "weight.vocabulary": 912,
-      "weight.types": 4008,
-      "weight.concepts": 7082,
-      "weight.boundaries": 1387,
+      "weight.vocabulary": 868,
+      "weight.types": 4009,
+      "weight.concepts": 7123,
+      "weight.boundaries": 1442,
       "weight.data": 1297,
       "weight.security": 140,
       "largest_tangle": 13,
       "cycle_edges": 61,
       "upward_edges": 0,
-      "propagation_cost": 8.9
+      "propagation_cost": 9.1
     },
     "min_weight": 0,
-    "at": "2026-11-07T20:02:09Z",
+    "at": "2026-11-09T22:58:11Z",
     "log": [
-      {
-        "at": "2026-10-29T18:00:00Z",
-        "change": "loosen",
-        "reason": "BusyChannel wire mirror accepted like the other apiwire DTOs; accepted gated-reader mentions in the busy reader, TKT-21G6JS",
-        "metrics": {
-          "weight.types": [
-            3886,
-            3960
-          ],
-          "weight.vocabulary": [
-            908,
-            912
-          ]
-        }
-      },
-      {
-        "at": "2026-10-29T22:00:00Z",
-        "change": "loosen",
-        "reason": "ChannelSession wire mirror grew by the button and entry fields like SessionView, TKT-S9TLJJ",
-        "metrics": {
-          "weight.types": [
-            3960,
-            3968
-          ]
-        }
-      },
-      {
-        "at": "2026-10-30T02:00:00Z",
-        "change": "loosen",
-        "reason": "ChannelSession wire mirror grew by the button options like SessionView, TKT-TXZZZ2",
-        "metrics": {
-          "weight.types": [
-            3968,
-            3969
-          ]
-        }
-      },
-      {
-        "at": "2026-11-03T15:10:00Z",
-        "change": "loosen",
-        "reason": "Inbox wire mirrors grew by the decision fields (actions, last_seq, message, session cause and transitions), TKT-V05706X",
-        "metrics": {
-          "weight.types": [
-            3969,
-            3976
-          ]
-        }
-      },
-      {
-        "at": "2026-11-03T17:57:02Z",
-        "change": "loosen",
-        "reason": "Session wire mirror grew by previous (ChannelSession and SessionView), TKT-56TPOTE",
-        "metrics": {
-          "weight.types": [
-            3976,
-            3977
-          ]
-        }
-      },
-      {
-        "at": "2026-11-04T00:30:00Z",
-        "change": "loosen",
-        "reason": "Declared piles and notify: metamodel.PileDecl maps the schema to piles.Declared, and autocascade.PileRequest, the consumer-side mirror of piles.PushRequest, grew by Key, Reason and SkipSelf, TKT-EO2GCM, TKT-EY4W0P",
-        "metrics": {
-          "weight.types": [
-            3977,
-            4071
-          ]
-        }
-      },
       {
         "at": "2026-11-04T12:04:38Z",
         "change": "tighten",
@@ -2926,6 +2892,85 @@
           "weight.concepts": [
             7081,
             7082
+          ]
+        }
+      },
+      {
+        "at": "2026-11-08T09:00:00Z",
+        "change": "loosen",
+        "reason": "TKT-NRNDGZR: appbuild imports ai for WithAIProvider, so the existing 'message' unit-naming finding (realtimecfg vs ai) weighs 1 more and appbuild reaches the ai package",
+        "metrics": {
+          "weight.concepts": [
+            7082,
+            7083
+          ],
+          "propagation_cost": [
+            8.9,
+            9.0
+          ]
+        }
+      },
+      {
+        "at": "2026-11-08T09:45:36Z",
+        "change": "loosen",
+        "reason": "Multi-tenant host and tenant erasure (TKT-D6MF3SW, TKT-TNERAS): cmdServer now wires tenant and tenanthost, and the erase command edge links mostly to tenant",
+        "metrics": {
+          "weight.concepts": [
+            7083,
+            7081
+          ],
+          "weight.boundaries": [
+            1387,
+            1417
+          ],
+          "propagation_cost": [
+            9.0,
+            9.1
+          ]
+        }
+      },
+      {
+        "at": "2026-11-08T11:46:31Z",
+        "change": "tighten",
+        "reason": null,
+        "metrics": {
+          "weight.boundaries": [
+            1417,
+            1383
+          ]
+        }
+      },
+      {
+        "at": "2026-11-09T16:08:08Z",
+        "change": "loosen",
+        "reason": "TKT-M3SHYE0: the accepted tenanterase.go finding weighs 38, not 36, because erase loads its deployment through tenant.LoadDeployment",
+        "metrics": {
+          "weight.boundaries": [
+            1383,
+            1385
+          ]
+        }
+      },
+      {
+        "at": "2026-11-09T22:58:11Z",
+        "change": "loosen",
+        "reason": "Flows M1d, TKT-9IT3LN8: flowengine and the flow control in appbuild add the cancel, template and stability findings accepted above; types grew by one from flow wiring",
+        "metrics": {
+          "weight.vocabulary": [
+            912,
+            868
+          ],
+          "weight.types": [
+            4008,
+            4009
+          ],
+          "weight.concepts": [
+            7081,
+            7123
+          ],
+          "weight.boundaries": [
+            1385,
+            1442
           ]
         }
       }

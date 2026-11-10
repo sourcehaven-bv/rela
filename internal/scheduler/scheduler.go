@@ -176,7 +176,7 @@ func StartBackground(
 		logger.Error("invalid scheduler config; no tasks until it loads", "error", loadErr)
 		cfg = &Config{}
 	case loadErr != nil:
-		logger.Error("subscriptions not started", "error", loadErr)
+		logger.Error("subscriptions or remote pulls not started", "error", loadErr)
 	}
 
 	s, err := NewWithQueue(cfg, script.NewEngine(), ws, bind, logger)
@@ -345,6 +345,10 @@ type Scheduler struct {
 	// http.DefaultTransport; tests point it at an httptest server.
 	subscriptionTransport http.RoundTripper
 
+	// remoteTransport carries scheduled remote pulls. Nil means
+	// http.DefaultTransport; tests point it at a fake source.
+	remoteTransport http.RoundTripper
+
 	// queue is where script execution happens. REQUIRED: there is no inline
 	// path, so a scheduler without one cannot run anything. Set by UseQueue at
 	// wiring time — see jobs.go.
@@ -446,10 +450,15 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	}
 
 	s.importLegacyState(ctx)
+	s.pruneRemoteLedgers(ctx)
 
 	for _, t := range cfg.Tasks {
 		if t.Subscription != nil {
 			s.logger.Info("scheduled subscription", "task", t.Name, "every", t.Every)
+			continue
+		}
+		if t.Remote != nil {
+			s.logger.Info("scheduled remote pull", "task", t.Name, "every", t.Every)
 			continue
 		}
 		s.logger.Info("scheduled task", "task", t.Name, "every", t.Every, "script", t.Script)

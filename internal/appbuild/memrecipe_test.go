@@ -35,8 +35,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
-// memWorldSchema has one required property (validation), an automation, and
-// commenting switched on, so a write through the world touches each of them.
+// memWorldSchema has one required property (validation), two automations
+// (one writes a file through rela.write_file), and commenting switched on, so
+// a write through the world touches each of them.
 const memWorldSchema = `version: "1.0"
 entities:
   ticket:
@@ -61,6 +62,15 @@ automations:
     do:
       - set: note
         value: closed by automation
+  - name: close-report
+    on:
+      entity: [ticket]
+      property: status
+      becomes: closed
+    do:
+      - lua: |
+          rela.write_file("report.txt", "closed")
+        capabilities: {write_file: true}
 `
 
 // memWorldPolicy lets alice write tickets and bob only read them.
@@ -202,8 +212,13 @@ func TestNewInMemory_LeavesProjectTreeUntouched(t *testing.T) {
 		entity.CreateOptions{})
 	require.NoError(t, err)
 	id := created.Entity.ID
-	_, err = svc.EntityManager().PatchEntity(alice, id, entity.Patch{Properties: map[string]any{"status": "closed"}})
+	res, err := svc.EntityManager().PatchEntity(alice, id, entity.Patch{Properties: map[string]any{"status": "closed"}})
 	require.NoError(t, err)
+	require.Empty(t, res.AutomationErrors)
+	// rela.write_file lands in the world's temporary output directory.
+	report := filepath.Join(svc.base.opts.seams.outputDir, "report.txt")
+	_, err = os.Stat(report)
+	require.NoError(t, err, "write_file must write to the default output directory")
 
 	_, err = svc.Comments().Add(alice, comments.Target{Type: "ticket", ID: id},
 		comments.AddRequest{Anchor: titleAnchor, Body: "hi"})

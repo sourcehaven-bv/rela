@@ -592,3 +592,52 @@ func TestConfigHasPropertyFilterControl(t *testing.T) {
 		t.Error("HasPropertyFilterControl for wrong type = true, want false")
 	}
 }
+
+// The form help keys decode from YAML and reach the SPA as JSON. Without the
+// struct fields the decoder drops nested keys in silence, which is how a
+// relation's `help:` used to vanish while the SPA already read it.
+func TestFormHelpKeys_YAMLAndJSON(t *testing.T) {
+	const src = `
+entity_type: risico
+steps:
+  - title: Naam
+    description: Short intro.
+    details: |
+      Longer **markdown** help.
+    fields:
+      - property: name
+        help: Below the field.
+        hint: Behind the info button.
+    relations:
+      - relation: owned-by
+        help: Who owns it.
+        hint: The owner answers questions.
+`
+	var form Form
+	if err := yaml.Unmarshal([]byte(src), &form); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	step := form.Steps[0]
+	checks := []struct{ name, got, want string }{
+		{"step details", step.Details, "Longer **markdown** help.\n"},
+		{"field help", step.Fields[0].Help, "Below the field."},
+		{"field hint", step.Fields[0].Hint, "Behind the info button."},
+		{"relation help", step.Relations[0].Help, "Who owns it."},
+		{"relation hint", step.Relations[0].Hint, "The owner answers questions."},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, c.got, c.want)
+		}
+	}
+
+	data, err := json.Marshal(form)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, key := range []string{`"details":`, `"hint":"Behind`, `"help":"Who owns it."`, `"hint":"The owner`} {
+		if !strings.Contains(string(data), key) {
+			t.Errorf("json missing %s: %s", key, data)
+		}
+	}
+}

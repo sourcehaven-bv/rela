@@ -12,6 +12,11 @@ import (
 // depend only on state, and a test asserts the two agree.
 const KeySecret = "token_key"
 
+// remoteCredentialPrefix starts the name of a secret that only remotes.yaml
+// and rela reconcile may read. It equals secrets.RemoteCredentialPrefix,
+// repeated for the same reason as [KeySecret].
+const remoteCredentialPrefix = "remote_credential." //nolint:gosec // G101: a secret name prefix, not a credential
+
 // KeyEnv is the environment variable read when secrets.yaml has no
 // [KeySecret]. It suits container and systemd deployments.
 const KeyEnv = "RELA_TOKEN_KEY"

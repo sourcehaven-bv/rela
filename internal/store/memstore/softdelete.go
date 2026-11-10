@@ -75,7 +75,7 @@ func (d softDeleter) MarkDeleted(_ context.Context, id, by string) (*store.Delet
 	defer m.mu.Unlock()
 
 	fam := &markedFamily{
-		at:        time.Now(),
+		at:        m.clock(),
 		by:        by,
 		entities:  map[string]*entity.Entity{},
 		relations: map[string]*entity.Relation{},

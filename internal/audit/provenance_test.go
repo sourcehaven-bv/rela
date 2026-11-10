@@ -53,10 +53,10 @@ func TestStamp(t *testing.T) {
 	if got := Stamp(ctx, Record{Op: OpCreateEntity}); got.Flow != "" || got.Run != "" || got.Step != "" {
 		t.Errorf("Stamp without a flow step = %+v, want no flow fields", got)
 	}
-	ctx = WithFlowStep(ctx, FlowStep{Flow: "review", Run: "RUN-1", Step: "approve"})
+	ctx = WithFlowStep(ctx, FlowStep{Flow: "review", Run: "RUN-1", Step: "approve", By: "alice"})
 	got := Stamp(ctx, Record{Op: OpCreateEntity})
-	if got.Flow != "review" || got.Run != "RUN-1" || got.Step != "approve" {
-		t.Errorf("Stamp = %+v, want review/RUN-1/approve", got)
+	if got.Flow != "review" || got.Run != "RUN-1" || got.Step != "approve" || got.By != "alice" {
+		t.Errorf("Stamp = %+v, want review/RUN-1/approve by alice", got)
 	}
 
 	m := NewMemory()

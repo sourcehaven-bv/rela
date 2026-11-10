@@ -85,6 +85,7 @@ components:
   appbuildtest:     { in: internal/appbuild/appbuildtest }
   backendtest:      { in: internal/appbuild/backendtest }
   tenant:           { in: internal/tenant }
+  tenanthost:       { in: internal/tenanthost }
 
   # Domain services
   analysis:         { in: internal/analysis }
@@ -116,6 +117,10 @@ components:
   # Feed subscriptions (TKT-RUO1GY): polls a feed and imports its items
   # through ingest. The scheduler runs it.
   subscription:     { in: internal/subscription }
+  # Pull from a remote rela (TKT-I8L1EQU): diffs the remote's view, fetches the
+  # changed rows and writes them through entitymanager. The scheduler and
+  # `rela remote pull` run it.
+  remotesync:       { in: internal/remotesync }
   # Which entity ids a markdown body mentions (TKT-Q6AKUN). A leaf: every store
   # backend indexes with it and the data-entry renderer links with it, so the
   # backlink index and the rendered links agree on what counts as a mention.
@@ -159,6 +164,9 @@ components:
   sqlflowrun:       { in: internal/flowrun/sqlflowrun }
   pgflowrun:        { in: internal/flowrun/pgflowrun }
   sqliteflowrun:    { in: internal/flowrun/sqliteflowrun }
+  # The flow runtime (TKT-9IT3LN8): starts runs, writes outputs, fires
+  # timers. It writes the graph only through the adapters appbuild supplies.
+  flowengine:       { in: internal/flowengine }
   # The statement interface the shared SQL backends are written against,
   # and its pgx and database/sql adapters.
   sqlexec:          { in: internal/sqlexec }
@@ -201,6 +209,12 @@ components:
   markdown:         { in: internal/markdown }
   canonical:        { in: internal/canonical }
   reconcile:        { in: internal/reconcile }
+  reconclient:      { in: internal/reconclient }
+  reconclientHTTP:  { in: internal/reconclient/httpremote }
+  # The wire format of POST /api/v1/_reconcile, shared by the handler in
+  # dataentry and the client. A leaf with no deps entry, so a client needs
+  # only the reconcile protocol and not the data-entry API contract.
+  reconwire:        { in: internal/reconwire }
   frontmatter:      { in: internal/frontmatter }
   filter:           { in: internal/filter }
   queryplan:        { in: internal/queryplan }
@@ -449,6 +463,9 @@ deps:
       - docscli
       - principal
       - script
+      # tenant: rela-docs refuses a project with a tenants.yaml before it
+      # opens anything (TKT-M3SHYE0).
+      - tenant
     canUse:
       - kong
   # cmdServer is a composition root, so it may name both the transport
@@ -482,6 +499,9 @@ deps:
       - script
       - storage
       - store
+      # tenant, tenanthost: the multi-tenant host (TKT-D6MF3SW) is wired here.
+      - tenant
+      - tenanthost
     canUse:
       - http2
   cmdDesktop:
@@ -567,6 +587,10 @@ deps:
       - entitymanager
       - filter
       - flowcfg
+      # `rela flow start|runs|cancel` speaks the run id and the engine's
+      # errors; the access checks stay in appbuild.FlowControl.
+      - flow
+      - flowengine
       - importer
       # `rela lease` (TKT-B610IP) speaks its request, lease and error types;
       # the access checks stay in lease.Service.
@@ -578,6 +602,8 @@ deps:
       - memstore
       - metamodel
       - output
+      # `rela remote pull` prints a remotesync report.
+      - remotesync
       - perfseed
       - fsimport
       - pgstore
@@ -592,6 +618,9 @@ deps:
       # `rela channel` (TKT-76G6M7) speaks the channel service's views and
       # errors; the access checks stay in realtime.Service.
       - realtime
+      # `rela reconcile diff` (TKT-0Y566OJ).
+      - reconclient
+      - reconclientHTTP
       - rollup
       - renametype
       - scheduler
@@ -608,6 +637,9 @@ deps:
       - storage
       - store
       - templating
+      # tenant: `--tenant` selects and opens one tenant of a tenants.yaml
+      # project (TKT-M3SHYE0). Cycle-free: tenant sits above appbuild only.
+      - tenant
       # `rela token set|status|delete` (TKT-01KZSO) parses the operator's
       # token input and reports the store's typed read errors.
       - tokenstore
@@ -653,6 +685,7 @@ deps:
       - acl
       - affordances
       - apiwire
+      - reconwire
       - attachment
       - audit
       - calfeed
@@ -874,6 +907,13 @@ deps:
   # any tag, so both backends' deps must be allow-listed here.
   appbuild:
     mayDependOn:
+      # The flow runtime and its run store backends (TKT-9IT3LN8).
+      - flow
+      - flowengine
+      - flowrun
+      - kvflowrun
+      - pgflowrun
+      - sqliteflowrun
       # The reference element range reader, for stores without element
       # columns, handed to visibility.NewElements (TKT-VP02WHG).
       - elementnaive
@@ -891,6 +931,10 @@ deps:
       - realtime
       # hostconfig.Dir: the default source of secrets and AI/mail settings.
       - hostconfig
+      # ai.Provider: the WithAIProvider seam and the in-memory world's
+      # refusing provider (TKT-NRNDGZR). The type only; loading ai.yaml stays
+      # in script.NewWriterRuntime.
+      - ai
       # The sqlite recipe OPENS the database and hands the same handle to both
       # the store and the config loader, so it names all three. Owning the file
       # here is what keeps a store from owning config, or config from owning a
@@ -1052,9 +1096,21 @@ deps:
   tenant:
     mayDependOn:
       - appbuild
+      # audit: each tenant gets its own filesystem audit sink (TKT-SNVR8UV).
+      - audit
     canUse:
       - pgx
       - yaml
+  # tenanthost is the front handler of a multi-tenant rela-server
+  # (TKT-D6MF3SW): it verifies the assertion, routes by org through the
+  # tenant registry and serves that tenant's data-entry router. It names
+  # dataentry for the verified-identity types and the static shell, and
+  # tenant for its sentinel error. The registry itself is reached through a
+  # consumer-side func, wired in cmd/rela-server.
+  tenanthost:
+    mayDependOn:
+      - dataentry
+      - tenant
   appbuildtest:
     mayDependOn:
       - acl
@@ -1103,6 +1159,8 @@ deps:
       - scheduler
       - storage
       - subscription
+      # `rela validate` checks remotes.yaml.
+      - remotesync
       # The scheduler's loader reads through a config.Loader.
       - config
       # `rela validate` checks connections.yaml (TKT-01KZSO).
@@ -1176,6 +1234,17 @@ deps:
   feed:
     mayDependOn:
       - safexml
+  remotesync:
+    mayDependOn:
+      - canonical
+      - entity
+      - metamodel
+      - principal
+      - reconclient
+      - reconclientHTTP
+      - state
+      - store
+      - syncmerge
   subscription:
     mayDependOn:
       - entitymanager
@@ -1697,6 +1766,20 @@ deps:
     mayDependOn:
       - entity
       - canonical
+  # The reconcile client (TKT-0Y566OJ): compares the local gated element
+  # read with a remote's answers. Transport-free; the HTTP remote is its own
+  # component so the algorithm can run over any Remote.
+  reconclient:
+    mayDependOn:
+      - canonical
+      - reconwire
+      - store
+  reconclientHTTP:
+    mayDependOn:
+      - reconclient
+      - reconwire
+      # Credential checks that a secret name is a remote credential.
+      - secrets
   # userstate is the per-user next-action state seam (snooze/mute/cooldown).
   # Deliberately NOT dependent on store: this state is not graph content, and
   # letting it reach the store would invite exactly the "just put it in the
@@ -1841,6 +1924,17 @@ deps:
   flowrun:
     mayDependOn:
       - flow
+  # The engine drives the run store and the compiled flows; the graph writes
+  # and reads are consumer-side interfaces the composition root fills.
+  flowengine:
+    mayDependOn:
+      - audit
+      - flow
+      - flowcfg
+      - flowrun
+      - metamodel
+      - predicate
+      - predicatefns
   # The KV backend for fs, memory and desktop, behind a cross-process lock.
   kvflowrun:
     mayDependOn:
@@ -1996,6 +2090,7 @@ deps:
       - ingest
       - store
       - subscription
+      - remotesync
       - lua
       - metamodel
       - filter
@@ -2004,6 +2099,9 @@ deps:
       - schedulerstate
       - script
       - state
+      # A remote pull's ledger fingerprints its rows as the element
+      # reader does.
+      - visibility
     canUse:
       - uuid
   script:
@@ -2153,7 +2251,7 @@ deps:
   # Infrastructure
   # ai: pure leaf — only stdlib (net/http, log/slog, encoding/json) plus
   # yaml (already in commonVendors). The Provider interface is consumed
-  # by lua, script, cli, and mcp. No mayDependOn/canUse entry needed
+  # by lua, script, cli, mcp and appbuild. No mayDependOn/canUse entry needed
   # because the component is component-only with no internal deps.
   # cache: pure in-memory utility, no internal deps
   config:
@@ -2215,6 +2313,9 @@ deps:
       - datamigration
       - filemigstate
       - entity
+      - flowcfg
+      - flowrun
+      - kvflowrun
       - frontmatter
       - metamodel
       - principal

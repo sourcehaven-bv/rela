@@ -17,12 +17,15 @@
 // What IS taken from RlFieldShell is its accessibility wiring, below.
 import { computed, useId } from 'vue'
 import { fieldSpanStyle } from '@/utils/fieldSpan'
+import FieldLabelRow from './FieldLabelRow.vue'
+import MarkdownHelp from './MarkdownHelp.vue'
 
 const props = defineProps<{
   fieldId?: string
   label?: string
   required?: boolean
   help?: string
+  hint?: string
   error?: string
   labelPosition?: 'before' | 'after'
   // Authored width on the 12-column form grid (TKT-5V8704); undefined = full
@@ -63,24 +66,26 @@ const control = computed(() => ({
 <template>
   <div class="form-field" :class="{ 'has-error': error }" :style="spanStyle">
     <template v-if="labelPosition === 'after'">
-      <div class="checkbox-wrapper">
+      <FieldLabelRow row-class="checkbox-wrapper" :hint="hint" :label="label">
         <slot v-bind="control" />
         <label v-if="label" :for="fieldId">
           {{ label }}
           <span v-if="required" class="required">*</span>
         </label>
-      </div>
+      </FieldLabelRow>
     </template>
 
     <template v-else>
-      <label v-if="label" :for="fieldId">
-        {{ label }}
-        <span v-if="required" class="required">*</span>
-      </label>
+      <FieldLabelRow v-if="label || hint" :hint="hint" :label="label">
+        <label v-if="label" :for="fieldId">
+          {{ label }}
+          <span v-if="required" class="required">*</span>
+        </label>
+      </FieldLabelRow>
       <slot v-bind="control" />
     </template>
 
-    <p v-if="help" :id="helpId" class="field-help">{{ help }}</p>
+    <MarkdownHelp v-if="help" :id="helpId" class="field-help" :text="help" />
     <!--
       role="alert" so a message that appears after the user leaves the field is
       announced without them having to go back and look for it.
@@ -106,15 +111,15 @@ const control = computed(() => ({
   color: var(--rl-color-danger, #ef4444);
 }
 
-.checkbox-wrapper {
-  display: flex;
-  align-items: center;
+/* The checkbox row is rendered by FieldLabelRow, so it does not carry this
+   component's scope attribute: reach it through the scoped .form-field. */
+.form-field :deep(.checkbox-wrapper) {
   gap: 8px;
 }
 
 /* Scoped to the direct checkbox input only — a future widget rendered
    with labelPosition='after' should NOT have its inputs miniaturised. */
-.checkbox-wrapper :deep(input[type='checkbox']) {
+.form-field :deep(.checkbox-wrapper input[type='checkbox']) {
   width: 18px;
   height: 18px;
   cursor: pointer;

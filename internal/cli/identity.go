@@ -219,6 +219,7 @@ func actsAsIdentity(cmd string) bool {
 var identityWrites = map[string]bool{
 	"mcp": true, "dev seed": true, "create": true, "update": true, "delete": true,
 	"flow run": true, "flow validate": false, "flow show": false,
+	"flow start": true, "flow cancel": true, "flow runs": false,
 	"link": true, "unlink": true, "import": true, "fmt": true, "normalize": true,
 	"rename entity": true, "rename id": true, "restore": true, "relation-restore": true,
 	"token set": true, "token delete": true, "history-tag": true, "history-purge": true,
@@ -226,7 +227,7 @@ var identityWrites = map[string]bool{
 	"scheduler": true, "renumber": true, "lease claim": true, "lease renew": true, "lease release": true,
 	"channel post": true, "channel edit": true, "channel remove": true, "channel create": true, "channel mark-read": true,
 	"channel action": true, "migrate data": true, "migrate gc": true, "migrate adopt-face": true, "migrate baseline": true,
-	"db load": true, "db import-fs": true,
+	"db load": true, "db import-fs": true, "remote pull": true,
 
 	"migrate status": false, "migrate gen": false, "show": false, "list": false,
 	"trace from": false, "trace to": false, "trace path": false, "graph": false, "export": false,
@@ -239,7 +240,7 @@ var identityWrites = map[string]bool{
 	"acl who-can": false, "acl can": false, "acl can-relation": false, "acl map": false,
 	"history": false, "relation-history": false, "token status": false, "attachments": false,
 	"secrets credential-name": false, "lease list": false, "channel list": false, "channel read": false,
-	"channel watch": false, "channel inbox": false, "channel session": false,
+	"channel watch": false, "channel inbox": false, "channel session": false, "reconcile diff": false,
 }
 
 // writesAsIdentity reports whether cmd may write as its principal.
