@@ -200,7 +200,7 @@ func newRollupWireApp(t *testing.T, n int, base store.Store) (*App, *acl.Declara
 	app := newAppFromParts(rollupWireConfig(), meta, newFixture(), appbuildtest.WithStore(base))
 	d := mustNewACL(t, rollupWirePolicy(), app.store)
 	setTestACL(t, app, d)
-	res, err := ResolverFromProfile("", meta, app.store, d)
+	res, err := ResolverFromProfile("", meta, app.store, d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +366,7 @@ func TestRollups_WriteRefusedAndResponseCarriesValue(t *testing.T) {
 		Assignments: map[string]string{"PERS-A": "editor"},
 	}, app.store)
 	setTestACL(t, app, d)
-	res, err := ResolverFromProfile("", app.State().Meta, app.store, d)
+	res, err := ResolverFromProfile("", app.State().Meta, app.store, d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

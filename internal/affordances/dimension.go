@@ -181,6 +181,32 @@ func (d *dimension) redact(fields, universe []string, rule string) {
 	}
 }
 
+// withhold is [dimension.redact] for the writable dimension, with a rule per
+// field: it makes exactly the named fields read-only and leaves every other
+// field as the roles left it. A field a role already denied keeps that
+// role's attribution. The flow edit ceiling uses it (see applyFlowEdits).
+func (d *dimension) withhold(rules map[string]string, universe []string) {
+	if len(rules) == 0 {
+		return
+	}
+	if !d.optedIn {
+		for _, f := range universe {
+			if _, drop := rules[f]; !drop {
+				d.allowed[f] = true
+			}
+			d.candidates[f] = true
+		}
+		d.optIn(kindReadOnly)
+	}
+	for f, rule := range rules {
+		d.candidates[f] = true
+		delete(d.allowed, f)
+		if _, seen := d.denyRole[f]; !seen {
+			d.denyRole[f] = rule
+		}
+	}
+}
+
 // observeDeny records that role denied field (predicate failed). Only
 // sticks if no role has allowed it. Keeps the FIRST denying role
 // (roles iterate in sorted order) so attribution is deterministic.

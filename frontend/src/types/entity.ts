@@ -185,8 +185,9 @@ export interface RelationAffordance {
 // target value's display label. `guard` names the permission the move
 // requires (empty when unguarded). `allowed` reports whether the requesting
 // principal may perform it now. `reason` names the blocking gate when not
-// allowed (`guard` | `precondition`); empty when allowed. The status control
-// shows only allowed moves, so `reason` is advisory (tooltip), not a gate.
+// allowed (`guard` | `precondition` | `read-only`); empty when allowed. The
+// status control shows only allowed moves, so `reason` is advisory (tooltip),
+// not a gate.
 export interface TransitionOption {
   to: string
   label?: string

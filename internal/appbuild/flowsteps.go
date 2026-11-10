@@ -10,11 +10,13 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
+	"github.com/Sourcehaven-BV/rela/internal/flowedits"
 	"github.com/Sourcehaven-BV/rela/internal/flowengine"
 	"github.com/Sourcehaven-BV/rela/internal/flowrun"
 	"github.com/Sourcehaven-BV/rela/internal/flowview"
@@ -63,12 +65,19 @@ func classify(err error) error {
 		errors.Is(err, flowengine.ErrStranded), errors.Is(err, flowengine.ErrSubjectBusy),
 		errors.Is(err, flowengine.ErrGuard), errors.Is(err, errFlowBusy):
 		return fmt.Errorf("%w: %w", flowview.ErrConflict, err)
-	case errors.Is(err, ErrFlowPermission):
+	case errors.Is(err, ErrFlowPermission), isFieldWriteError(err):
 		return fmt.Errorf("%w: %w", flowview.ErrForbidden, err)
 	case errors.Is(err, errFlowInput), errors.Is(err, errFlowRequest):
 		return fmt.Errorf("%w: %w", flowview.ErrInvalid, err)
 	}
 	return err
+}
+
+// isFieldWriteError reports whether err is a field write refusal, such as
+// another run's `outside_edits:` refusing a step's property (TKT-XI7IDBS).
+func isFieldWriteError(err error) bool {
+	var fw *affordances.FieldWriteError
+	return errors.As(err, &fw)
 }
 
 // Flows lists the flows of the current flows.yaml. flows.yaml is
@@ -568,7 +577,10 @@ func (c *FlowControl) complete(ctx context.Context, id flow.RunID, gen int64,
 	}
 	wctx := audit.WithFlowStep(ctx, audit.FlowStep{Flow: run.Flow, Run: string(id), Step: x.State, By: cl.user})
 	if len(props) > 0 {
-		if _, err = grant.PatchEntity(wctx, run.Subject.String(), entity.Patch{Properties: props}); err != nil {
+		// The step's own write: this run's outside_edits do not narrow it,
+		// another run's on the subject still do (TKT-XI7IDBS).
+		pctx := flowedits.WithinRun(wctx, id)
+		if _, err = grant.PatchEntity(pctx, run.Subject.String(), entity.Patch{Properties: props}); err != nil {
 			c.eng.ReleaseClaim(ctx, id, gen, cl.user)
 			return flowview.Completed{}, err
 		}

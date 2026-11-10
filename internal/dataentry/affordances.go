@@ -319,6 +319,24 @@ func primeVerdicts(ctx context.Context, res FieldVerdictResolver, rows []*entity
 	return ctx
 }
 
+// flowRunPrimer is the OPTIONAL capability of a [FieldVerdictResolver] that
+// narrows fields while a flow run holds a row (TKT-XI7IDBS): it looks up the
+// runs of a whole page at once. Only the policy-backed resolver has it.
+type flowRunPrimer interface {
+	PrimeFlowRuns(ctx context.Context, rows []*entityPkg.Entity) context.Context
+}
+
+// primeFlowRuns primes res for the `_fields` of a page of rows, so the page
+// costs one run lookup rather than one per row. It is separate from
+// [primeVerdicts] because only a page that builds `_fields` needs it; a
+// read that only redacts looks up no runs (see hiddenProperties).
+func primeFlowRuns(ctx context.Context, res FieldVerdictResolver, rows []*entityPkg.Entity) context.Context {
+	if p, ok := res.(flowRunPrimer); ok && len(rows) > 0 {
+		return p.PrimeFlowRuns(ctx, rows)
+	}
+	return ctx
+}
+
 // TransitionResolver is the OPTIONAL sibling of [FieldVerdictResolver] that
 // answers state-machine transition verdicts for an entity (TKT-3G93B8). It is
 // kept separate — and type-asserted, not embedded — because only the
@@ -1110,9 +1128,11 @@ func (v FieldVerdicts) isHidden(name string) bool { return !v.IsVisible(name) }
 
 // hiddenProperties returns the set of property names that should be
 // stripped from v1.Entity.Properties before serialization. Caller uses
-// this to enforce the omit-on-hidden invariant.
+// this to enforce the omit-on-hidden invariant. It reads only Visible, so
+// it asks under [affordances.ForVisibility] and a list row looks up no flow
+// runs.
 func (svc affordanceService) hiddenProperties(ctx context.Context, e *entityPkg.Entity) map[string]struct{} {
-	v := svc.resolver().FieldVerdicts(ctx, e)
+	v := svc.resolver().FieldVerdicts(affordances.ForVisibility(ctx), e)
 	if len(v.Visible) == 0 {
 		return nil
 	}
@@ -1410,6 +1430,10 @@ func (svc affordanceService) redactRelationMetaStrip(
 	s.rel["meta"] = svc.visibleRelationMeta(ctx, pathEntity, relType, meta)
 }
 
+// transitionReadOnly is the `_transitions` reason of a move on a property the
+// field verdicts make read-only.
+const transitionReadOnly = "read-only"
+
 // computeTransitions returns the per-entity `_transitions` wire map: for each
 // state-machine-typed property, the resolved outgoing transitions for the ctx
 // principal on e. Returns nil (→ `_transitions` omitted from the wire) when the
@@ -1426,6 +1450,11 @@ func (svc affordanceService) redactRelationMetaStrip(
 // emitting `_transitions` for a hidden field would leak that value back through
 // the wire past the strip that `stripHiddenProperties` performs on `properties`
 // / `_title` — mirror the same boundary attachments already keep.
+//
+// A property fieldVerdicts makes read-only (a `fields:` grant, or a flow's
+// `outside_edits:`, TKT-XI7IDBS) keeps its transitions, each reported not
+// allowed with reason [transitionReadOnly]: the PATCH that would perform one
+// is refused.
 func (svc affordanceService) computeTransitions(
 	ctx context.Context, e *entityPkg.Entity, fieldVerdicts FieldVerdicts,
 ) map[string][]v1.Transition {
@@ -1439,15 +1468,20 @@ func (svc affordanceService) computeTransitions(
 		if !fieldVerdicts.IsVisible(prop) {
 			continue // hidden field: don't leak its state via out-edges
 		}
+		writable := fieldVerdicts.IsWritable(prop)
 		wire := make([]v1.Transition, 0, len(vs))
 		for _, v := range vs {
-			wire = append(wire, v1.Transition{
+			t := v1.Transition{
 				To:      v.To,
 				Label:   v.Label,
 				Guard:   v.Guard,
 				Allowed: v.Allowed,
 				Reason:  string(v.Reason),
-			})
+			}
+			if !writable && t.Allowed {
+				t.Allowed, t.Reason = false, transitionReadOnly
+			}
+			wire = append(wire, t)
 		}
 		out[prop] = wire
 	}

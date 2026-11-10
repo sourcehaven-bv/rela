@@ -59,6 +59,7 @@ func buildPolicyApp(t *testing.T, aclYAML string, sink audit.Audit) *App {
 	return app
 }
 
+//nolint:unparam // user is explicit per test, as for getAs: it documents the principal each case exercises
 func patchAs(t *testing.T, app *App, user, id, body string) (status int, respBody string) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/"+id, strings.NewReader(body))

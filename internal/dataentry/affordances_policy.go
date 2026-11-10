@@ -28,6 +28,11 @@ func (p *policyResolver) PrimeTraversals(ctx context.Context, rows []*entityPkg.
 	return p.inner.PrimeTraversals(ctx, rows)
 }
 
+// PrimeFlowRuns implements [flowRunPrimer].
+func (p *policyResolver) PrimeFlowRuns(ctx context.Context, rows []*entityPkg.Entity) context.Context {
+	return affordances.PrimeFlowRuns(ctx, p.inner, rows)
+}
+
 // FieldVerdicts maps affordances field verdicts onto the wire-shape
 // type, carrying the deny attribution through unchanged.
 func (p *policyResolver) FieldVerdicts(ctx context.Context, e *entityPkg.Entity) FieldVerdicts {

@@ -265,7 +265,7 @@ func (s *server) identity() appIdentity {
 func (s *server) buildApp(
 	svc *appbuild.Services, relay *dataentry.CollabRelay, ident appIdentity,
 ) (*dataentry.App, error) {
-	fieldResolver, err := dataentry.ResolverFromServices(svc)
+	fieldResolver, err := dataentry.ResolverFromServices(svc, appbuild.FlowEdits(svc))
 	if err != nil {
 		return nil, fmt.Errorf("build affordance resolver: %w", err)
 	}

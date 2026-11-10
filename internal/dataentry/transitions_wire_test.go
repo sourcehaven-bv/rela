@@ -22,6 +22,7 @@ type fakeTransitionResolver struct {
 	verdicts map[string][]statemachine.TransitionVerdict
 	entries  map[string]string
 	hidden   map[string]bool // field name → hidden (Visible=false)
+	readOnly map[string]bool // field name → read-only (Writable=false)
 }
 
 func (fakeTransitionResolver) SearchFieldScope(context.Context, string) (*search.FieldScope, error) {
@@ -29,14 +30,20 @@ func (fakeTransitionResolver) SearchFieldScope(context.Context, string) (*search
 }
 
 func (f fakeTransitionResolver) FieldVerdicts(context.Context, *entity.Entity) FieldVerdicts {
-	if len(f.hidden) == 0 {
-		return FieldVerdicts{}
-	}
-	vis := map[string]bool{}
+	var out FieldVerdicts
 	for name := range f.hidden {
-		vis[name] = false
+		if out.Visible == nil {
+			out.Visible = map[string]bool{}
+		}
+		out.Visible[name] = false
 	}
-	return FieldVerdicts{Visible: vis}
+	for name := range f.readOnly {
+		if out.Writable == nil {
+			out.Writable = map[string]bool{}
+		}
+		out.Writable[name] = false
+	}
+	return out
 }
 
 func (f fakeTransitionResolver) RelationVerdicts(context.Context, *entity.Entity) RelationVerdicts {
@@ -274,5 +281,42 @@ func TestTransitionsWire_CreateLocksMachineField(t *testing.T) {
 		if _, present := (*e.Transitions)["status"]; present {
 			t.Errorf("locked machine field must not carry _transitions on create, got %+v", *e.Transitions)
 		}
+	}
+}
+
+// A machine field the caller may not write (a `fields:` grant, or a flow's
+// `outside_edits:`) keeps its transitions, each not allowed with reason
+// read-only; a move the machine already refuses keeps its own reason
+// (TKT-XI7IDBS).
+func TestTransitionsWire_ReadOnlyFieldNotAllowed(t *testing.T) {
+	app := newTestAppV1(t)
+	setTestResolver(t, app, fakeTransitionResolver{
+		verdicts: map[string][]statemachine.TransitionVerdict{
+			"status": {
+				{To: "doing", Label: "Start progress", Allowed: true, Reason: statemachine.VerdictAllowed},
+				{To: "done", Label: "Complete", Guard: "close", Allowed: false, Reason: statemachine.VerdictGuard},
+			},
+		},
+		readOnly: map[string]bool{"status": true},
+	})
+	seedEntity(app, &entity.Entity{
+		ID:         "TKT-005",
+		Type:       "ticket",
+		Properties: map[string]any{"title": "x", "status": "todo"},
+	})
+
+	e := getEntityV1(t, app, "TKT-005")
+	if e.Transitions == nil {
+		t.Fatal("expected _transitions present for a read-only machine field")
+	}
+	got := (*e.Transitions)["status"]
+	if len(got) != 2 {
+		t.Fatalf("expected 2 transitions, got %+v", got)
+	}
+	if got[0].Allowed || got[0].Reason != "read-only" {
+		t.Errorf("allowed move on a read-only field = %+v, want not allowed, read-only", got[0])
+	}
+	if got[1].Allowed || got[1].Reason != "guard" {
+		t.Errorf("guarded move = %+v, want its guard reason kept", got[1])
 	}
 }

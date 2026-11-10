@@ -198,6 +198,9 @@ type Query struct {
 	Flow string
 	// SubjectID selects the runs on one subject id, on every face.
 	SubjectID string
+	// SubjectIDs selects the runs on any of these subject ids, on every
+	// face: at most [MaxPage] ids. Empty: no narrowing.
+	SubjectIDs []string
 	// After resumes a listing: only runs with a greater id.
 	After RunID
 	// Limit is 1 to [MaxPage].
@@ -501,8 +504,9 @@ func CheckDue(until time.Time, after DueCursor, limit int) error {
 	return checkLimit(limit)
 }
 
-// CheckQuery checks q: a set Flow, SubjectID or After must be valid, and
-// Limit must be 1 to [MaxPage].
+// CheckQuery checks q: a set Flow, SubjectID, SubjectIDs or After must be
+// valid, SubjectIDs holds at most [MaxPage] ids, and Limit must be 1 to
+// [MaxPage].
 func CheckQuery(q Query) error {
 	if q.Flow != "" {
 		if err := CheckFlow(q.Flow); err != nil {
@@ -511,6 +515,14 @@ func CheckQuery(q Query) error {
 	}
 	if q.SubjectID != "" {
 		if err := CheckSubjectID(q.SubjectID); err != nil {
+			return err
+		}
+	}
+	if len(q.SubjectIDs) > MaxPage {
+		return invalid("%d subject ids; at most %d", len(q.SubjectIDs), MaxPage)
+	}
+	for _, id := range q.SubjectIDs {
+		if err := CheckSubjectID(id); err != nil {
 			return err
 		}
 	}

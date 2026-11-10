@@ -20,6 +20,8 @@ type rawFlow struct {
 	Start      []rawStart    `yaml:"start"`
 	Initial    string        `yaml:"initial"`
 	States     yaml.Node     `yaml:"states"`
+	// OutsideEdits is `outside_edits:`, compiled by [loader.outsideEdits].
+	OutsideEdits yaml.Node `yaml:"outside_edits"`
 }
 
 // rawRetention is `retention:`.

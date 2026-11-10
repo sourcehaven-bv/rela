@@ -113,7 +113,7 @@ func (f *fakes) LinkProduced(_ context.Context, id flow.RunID, created entity.Re
 	return nil
 }
 
-func (f *fakes) Set(_ context.Context, runAs string, subject entity.Ref, props map[string]any) error {
+func (f *fakes) Set(_ context.Context, runAs string, _ flow.RunID, subject entity.Ref, props map[string]any) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.failSet != nil {

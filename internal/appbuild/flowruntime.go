@@ -10,11 +10,13 @@ import (
 	"path/filepath"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
+	"github.com/Sourcehaven-BV/rela/internal/flowedits"
 	"github.com/Sourcehaven-BV/rela/internal/flowengine"
 	"github.com/Sourcehaven-BV/rela/internal/flowrun"
 	"github.com/Sourcehaven-BV/rela/internal/flowrun/kvflowrun"
@@ -131,6 +133,73 @@ func buildFlowEngine(s *Services, runs flowrun.Store) (*flowengine.Engine, error
 	})
 }
 
+// openFlowEdits opens the run store into overrides.flowRuns and builds the
+// flow edit ceiling over it, or returns nil when no flow declares
+// outside_edits. The result is a nil interface, not a typed nil, so a
+// caller's nil check holds.
+func openFlowEdits(base *SharedBase, st store.Store, overrides *backendOverrides) (affordances.FlowEditCeiling, error) {
+	if base.flows == nil {
+		return nil, nil //nolint:nilnil // no flows: no ceiling, and not an error
+	}
+	runs, err := flowRunBackend(base.cfg.FS, base.cfg.Paths, st, overrides.flowRuns)
+	if err != nil {
+		return nil, fmt.Errorf("flows: %w", err)
+	}
+	overrides.flowRuns = runs
+	c, err := flowedits.New(base.flows, base.meta, runs)
+	if err != nil {
+		return nil, fmt.Errorf("flows: %w", err)
+	}
+	if c == nil {
+		return nil, nil //nolint:nilnil // no flow declares outside_edits: no ceiling
+	}
+	return c, nil
+}
+
+// flowRunAliases moves a subject's runs to its new id when it is renamed.
+// The run store keys runs by subject id, and the flow edit ceiling finds a
+// subject's runs by its id: without the move a rename would end the
+// subject's `outside_edits:` (TKT-XI7IDBS). Deletes are left to the
+// runtime.
+type flowRunAliases struct {
+	runs flowrun.Store
+}
+
+// newFlowRunAliases returns the subscriber for runs.
+//
+// Nil: runs is accepted (no flows) and gives a nil subscriber, which the
+// alias fanout drops.
+func newFlowRunAliases(runs flowrun.Store) *flowRunAliases {
+	if runs == nil {
+		return nil
+	}
+	return &flowRunAliases{runs: runs}
+}
+
+// EntityRenamed moves the runs on oldID to newID. The rename has
+// happened, so the move does not depend on the requester staying
+// connected.
+func (a *flowRunAliases) EntityRenamed(ctx context.Context, oldID, newID string) error {
+	if _, err := a.runs.RekeySubject(context.WithoutCancel(ctx), oldID, newID); err != nil {
+		return fmt.Errorf("flows: move runs from %s to %s: %w", oldID, newID, err)
+	}
+	return nil
+}
+
+// EntityDeleted keeps the runs; ending them is the runtime's job.
+func (*flowRunAliases) EntityDeleted(context.Context, string) error { return nil }
+
+// EntityFaceDeleted keeps the runs: they follow the subject, which still
+// exists.
+func (*flowRunAliases) EntityFaceDeleted(context.Context, string, entity.Face) error { return nil }
+
+// FlowEdits returns the flow edit ceiling of s, for the data-entry
+// resolver (see dataentry.ResolverFromServices). It is a package function
+// rather than a method because [Services] is at its plimsoll cap.
+//
+// Nil: returned when no flow declares outside_edits.
+func FlowEdits(s *Services) affordances.FlowEditCeiling { return s.flowEdits }
+
 // FlowEngine returns the flow engine of s. It is a package function rather
 // than a method because [Services] is at its plimsoll cap.
 //
@@ -241,7 +310,11 @@ func (o flowOutputs) writer(ctx context.Context, runAs string) (context.Context,
 	return o.as(ctx, runAs)
 }
 
-func (o flowOutputs) Set(ctx context.Context, runAs string, subject entity.Ref, props map[string]any) error {
+// Set writes the output as run's own write: run's outside_edits do not
+// narrow it, every other run's still do (TKT-XI7IDBS).
+func (o flowOutputs) Set(
+	ctx context.Context, runAs string, run flow.RunID, subject entity.Ref, props map[string]any,
+) error {
 	ctx, err := o.writer(ctx, runAs)
 	if err != nil {
 		return err
@@ -249,7 +322,7 @@ func (o flowOutputs) Set(ctx context.Context, runAs string, subject entity.Ref, 
 	if len(props) == 0 {
 		return nil
 	}
-	_, err = o.mgr.PatchEntity(ctx, subject.String(), entity.Patch{Properties: props})
+	_, err = o.mgr.PatchEntity(flowedits.WithinRun(ctx, run), subject.String(), entity.Patch{Properties: props})
 	return err
 }
 
