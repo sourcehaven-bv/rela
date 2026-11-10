@@ -80,7 +80,10 @@ func toolCompleteFlowStep() *mcpgo.Tool {
 			"as you, then move the run along the first change branch whose guard holds. You need a role "+
 			"the state waits for, and every property must be one the state writes. Pass the generation "+
 			"show_flow_run returned: a run that moved on since is refused. "+
-			"Result: {written,moved,state,finished}"),
+			"Result: {written,moved,state,finished,problem}. problem is set when the properties were "+
+			"written but the run did not follow cleanly: guard (a branch guard could not be evaluated, "+
+			"so the run stays), moved (the run had already moved on) or settling (an output step "+
+			"failed after the move and is retried)"),
 		withString("run", required(), description("Run id")),
 		withNumber("generation", required(), description("The run's generation from show_flow_run")),
 		withObject("properties", description("Property values to write; only names the state writes")),
