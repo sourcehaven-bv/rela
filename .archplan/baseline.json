@@ -2669,13 +2669,13 @@
       "weight.structure": 90,
       "weight.layers": 0,
       "weight.vocabulary": 868,
-      "weight.types": 4009,
-      "weight.concepts": 7123,
+      "weight.types": 4132,
+      "weight.concepts": 7127,
       "weight.boundaries": 1442,
       "weight.data": 1297,
       "weight.security": 140,
-      "largest_tangle": 13,
-      "cycle_edges": 61,
+      "largest_tangle": 14,
+      "cycle_edges": 67,
       "upward_edges": 0,
       "propagation_cost": 9.1
     },
@@ -2971,6 +2971,29 @@
           "weight.boundaries": [
             1385,
             1442
+          ]
+        }
+      },
+      {
+        "at": "2026-11-10T10:30:00Z",
+        "change": "loosen",
+        "reason": "TKT-ZAXRXND: the flow components use the shared composables, stores and form widgets, so they join the existing frontend tangle; the flowview DTOs mirror the flowengine and flowrun types on purpose, as the stdlib-only wire leaf the HTTP and MCP transports share",
+        "metrics": {
+          "weight.types": [
+            4009,
+            4132
+          ],
+          "weight.concepts": [
+            7123,
+            7127
+          ],
+          "largest_tangle": [
+            13,
+            14
+          ],
+          "cycle_edges": [
+            61,
+            67
           ]
         }
       }

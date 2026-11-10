@@ -272,9 +272,8 @@ func (c *FlowControl) RunList(ctx context.Context, flowName, status string, page
 		}
 		return a.ID < b.ID
 	})
-	page, perPage = pageBounds(page, perPage)
-	lo := min((page-1)*perPage, len(order))
-	order = order[lo:min(lo+perPage, len(order))]
+	lo, hi := pageRange(len(order), page, perPage)
+	order = order[lo:hi]
 	pageHdrs := make([]store.EntityHeader, len(order))
 	for i, k := range order {
 		pageHdrs[i] = hdrs[k]
@@ -292,15 +291,25 @@ func (c *FlowControl) RunList(ctx context.Context, flowName, status string, page
 	return out, nil
 }
 
-// pageBounds applies the default page size of 50 and the first page.
-func pageBounds(page, perPage int) (p, n int) {
+// defaultFlowPage is the page size when the caller names none.
+const defaultFlowPage = 50
+
+// pageRange is the slice [lo, hi) of n items that page (from 1) of
+// perPage items covers, with the default page size of 50 and the first
+// page for values below 1. Page and perPage come from the caller, so it
+// never multiplies them: a page past the end is empty, however large.
+func pageRange(n, page, perPage int) (lo, hi int) {
 	if perPage <= 0 {
-		perPage = 50
+		perPage = defaultFlowPage
 	}
 	if page < 1 {
 		page = 1
 	}
-	return page, perPage
+	if page-1 > n/perPage {
+		return n, n
+	}
+	lo = min((page-1)*perPage, n)
+	return lo, lo + min(perPage, n-lo)
 }
 
 // views builds the run views of hdrs, which passed the row gate, with the
@@ -690,9 +699,8 @@ func (c *FlowControl) Tasks(ctx context.Context, flowName string, page, perPage 
 		return out.Tasks[i].Run < out.Tasks[j].Run
 	})
 	out.Total = len(out.Tasks)
-	page, perPage = pageBounds(page, perPage)
-	lo := min((page-1)*perPage, len(out.Tasks))
-	out.Tasks = out.Tasks[lo:min(lo+perPage, len(out.Tasks))]
+	lo, hi := pageRange(len(out.Tasks), page, perPage)
+	out.Tasks = out.Tasks[lo:hi]
 	return out, nil
 }
 

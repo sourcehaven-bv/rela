@@ -98,8 +98,16 @@ const showStep = computed(
   () => !!waiting.value && shown.value._actions.complete && !!props.subjectType
 )
 
+// The notice for each Completed.problem, keyed literally so the i18n guard
+// sees every message in use.
+const problemKeys: Record<NonNullable<FlowCompleted['problem']>, string> = {
+  guard: 'flows.step.problem.guard',
+  moved: 'flows.step.problem.moved',
+  settling: 'flows.step.problem.settling',
+}
+
 async function onCompleted(result: FlowCompleted) {
-  if (result.problem) ui.info(t(`flows.step.problem.${result.problem}`))
+  if (result.problem) ui.info(t(problemKeys[result.problem]))
   else ui.success(result.finished ? t('flows.step.finished') : t('flows.step.done'))
   await reload()
   emit('changed')

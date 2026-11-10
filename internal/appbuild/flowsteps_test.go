@@ -2,6 +2,7 @@ package appbuild_test
 
 import (
 	"context"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -236,6 +237,8 @@ func TestFlowControl_RunList(t *testing.T) {
 		{name: "by flow", user: "alice", flow: "other", want: 0, wantRows: 0},
 		{name: "second page", user: "alice", page: 2, perPage: 1, want: 2, wantRows: 1},
 		{name: "past the end", user: "alice", page: 3, perPage: 1, want: 2, wantRows: 0},
+		{name: "huge page", user: "alice", page: math.MaxInt, perPage: 50, want: 2, wantRows: 0},
+		{name: "huge page size", user: "alice", page: 1, perPage: math.MaxInt, want: 2, wantRows: 2},
 		{name: "hidden runs", user: "eve", want: 0, wantRows: 0},
 	}
 	for _, tc := range tests {

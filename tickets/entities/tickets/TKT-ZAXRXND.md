@@ -46,3 +46,5 @@ TKT-FWQZGAM skips writes that carry a flow step.
 candidates with `truncated: true`.
 - The `flowview` values are the JSON wire shape for the API and MCP.
 - Retry needs the manual-start permissions, like cancel.
+- List paging never multiplies the caller's page and page size: a page
+past the end is empty, however large (RR-5N62IL5).
