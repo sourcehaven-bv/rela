@@ -55,20 +55,14 @@ paths:
 
   _The durable queue's tables live in the TENANT's schema, like every other
   postgres-backed table._ A schema-pinned `search_path` is how rela scopes a
-  tenant, and the queue is not exempt: rela submits every kind to one queue name
-  and neoq's insert trigger does `pg_notify(NEW.queue, ...)`, so tables shared
-  across tenants would mean tenants consuming each other's jobs. neoq v0.72.1
-  could not do this — one migration named `public.neoq_jobs_id_seq` while its
-  tables follow `search_path` — which is why `go.mod` carries a `replace` onto
-  the `sourcehaven` branch of the sourcehaven-bv/neoq fork (BUG-YJEIFH, upstream
-  acaloiaro/neoq#149). That branch also carries the cross-process shutdown fix
-  (BUG-YAMD6J), the JobTimeout fix, the acquire fix and the fix that stops
-  every backend goroutine on Shutdown (TKT-736J0CZ); `go.mod` lists them.
-  Drop the `replace` only when all of them are upstream.
+  tenant, and the queue is not exempt: rela submits every kind to one queue
+  name, so tables shared across tenants would mean tenants consuming each
+  other's jobs. The postgres tier is River with `Config.Schema` set to the
+  connection's `current_schema()`, which also scopes River's notify topics;
+  the fs/desktop tier is rela's own `memQueue` (TKT-TMXHBZW, replacing neoq,
+  whose fork rela had to carry for BUG-YJEIFH and BUG-YAMD6J).
   `TestPostgresQueue_SchemaPinnedDSN` and
-  `TestPostgresQueue_SurvivesAnotherProcessClosing` catch losing the schema
-  and shutdown fixes; the fork's own tests cover the rest. The fs/desktop
-  tier no longer uses neoq: it is rela's own `memQueue`.
+  `TestPostgresQueue_SurvivesAnotherProcessClosing` pin both.
   **Test any new postgres-touching dependency through a schema-pinned DSN**,
   not just the bare `RELA_TEST_DATABASE_URL` — the bare DSN resolves to
   `public`, which is precisely the one case that worked.

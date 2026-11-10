@@ -53,10 +53,10 @@
 // # Semantics worth knowing before you write a handler
 //
 // A job is delivered AT LEAST once and, in the ordinary case, exactly once.
-// On the durable backend a handler that finished can run AGAIN: neoq records
-// the outcome in the transaction that holds the job's row lock, so if that
-// commit fails (a lost connection, a killed session) the row is still pending
-// and is redelivered. Two further properties are worth stating because the
+// On the durable backend a handler that finished can run AGAIN: River records
+// the outcome after the handler returns, so if the process dies first (a
+// crash, a killed pod) the job stays running until River rescues it, and then
+// it is redelivered. Two further properties are worth stating because the
 // opposite is a common default elsewhere:
 //
 //   - Submitting the same payload twice produces two jobs and two executions.

@@ -44,9 +44,8 @@ const (
 
 // maxAttempts returns the TOTAL number of executions a policy permits,
 // including the first.
-//
-// This package enforces the budget itself, in the dispatcher — it is never
-// handed to the backend. See backendRetryBudget for why.
+// The memory queue counts it itself; the postgres queue hands it to River as
+// the job's MaxAttempts.
 func (r Retry) maxAttempts() int {
 	switch r {
 	case RetryNever:
@@ -63,30 +62,6 @@ func (r Retry) maxAttempts() int {
 		return neverAttempts
 	}
 }
-
-// backendRetryBudget is the MaxRetries value handed to neoq.
-//
-// It is deliberately a large constant rather than the policy's real budget,
-// and it is the same for every policy. The reason is a hard upstream
-// constraint, not laziness:
-//
-// neoq's worker loop treats both ErrJobExceededMaxRetries and
-// ErrJobExceededDeadline as FATAL — it returns from the goroutine
-// (memory_backend.go:245-250). So a job that legitimately exhausts its retry
-// budget does not merely stop: it takes a worker with it. Four such jobs and a
-// four-worker pool is permanently silent, with no error surfaced to rela and
-// nothing in the logs. Verified empirically: after four RetryNever jobs
-// exhausted, 0 of 8 subsequent healthy jobs ran.
-//
-// The fix is to never let neoq evaluate its own terminal conditions. rela
-// hands it a budget it will not reach, omits Deadline entirely, and enforces
-// BOTH the attempt count and the deadline in [neoqQueue.dispatch], which
-// returns nil (consuming the attempt) once a job is spent. Since dispatch is
-// the single chokepoint every job passes through, that converts an open-ended
-// upstream hazard into one invariant this package owns and tests.
-//
-// Pinned by the jobstest "pool survives exhausted jobs" conformance case.
-const backendRetryBudget = 1 << 30
 
 // effectiveDeadline returns when the job should stop being retried, given the
 // time it was enqueued.
@@ -134,7 +109,14 @@ const (
 // attempt n. n below 1 is treated as 1.
 func retryDelay(n int) time.Duration {
 	n = min(max(n, 1), retryDelayMaxAttempt)
-	grow := min(time.Duration(n*n*n*n)*time.Second, retryDelayCap)
 	jitter := rand.N(time.Duration(n) * retryJitterStep) //nolint:gosec // jitter, not a secret
-	return grow + retryDelayBase + jitter
+	return retryDelayFloor(n) + jitter
+}
+
+// retryDelayFloor is retryDelay without its jitter: the soonest the attempt
+// after failed attempt n can run. A job whose deadline passes before it will
+// not run again.
+func retryDelayFloor(n int) time.Duration {
+	n = min(max(n, 1), retryDelayMaxAttempt)
+	return min(time.Duration(n*n*n*n)*time.Second, retryDelayCap) + retryDelayBase
 }
