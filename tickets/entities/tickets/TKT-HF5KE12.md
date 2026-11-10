@@ -34,3 +34,9 @@ data lives. `tenants.yaml` duplicates that and must be kept in sync by hand.
 3. A hash collision or an invalid derived name is refused, never shared.
 4. Host, erase and the scheduler/CLI/MCP entry points all resolve through `ClusterResolver`.
 5. Docs (GUIDE-postgres-backend) describe the derived model.
+
+## Notes
+
+- A suspended or provisioning tenant's IdP webhook gets 503 with `Retry-After`, so its events are retried after a resume.
+- `create`, `suspend` and `resume` are recorded in `.rela/audit/tenant-lifecycle.jsonl`; `erase` stays in `tenant-erasures.jsonl`.
+- Tenant locks are released explicitly before their connections close (RR-RCK6HLQ).
