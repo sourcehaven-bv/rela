@@ -9,10 +9,10 @@
     },
     "structure.tangle-b1bf2e78506f": {
       "state": "accepted",
-      "reason": "Debt: SPA folders form one cycle around composables.",
-      "at": "2026-10-28T13:29:06Z",
-      "title": "composables and 12 other components form one dependency tangle.",
-      "size": 13
+      "reason": "Debt: SPA folders form one cycle around composables. TKT-ZAXRXND: the flow components use the shared composables, stores and form widgets, so they join it.",
+      "at": "2026-11-10T10:45:00Z",
+      "title": "composables and 13 other components form one dependency tangle.",
+      "size": 14
     },
     "types.synonyms-0134fda09361": {
       "state": "accepted",
@@ -2660,6 +2660,24 @@
       "reason": "Transitional: appbuild is the only dependent of flowengine until triggers, events and the background worker land in TKT-FWQZGAM.",
       "at": "2026-11-09T22:30:00Z",
       "title": "flowengine is in the zone of uselessness: mostly abstractions, and few components depend on it (1)."
+    },
+    "types.synonyms-d547b62d1977": {
+      "state": "accepted",
+      "reason": "Design: flowview is the stdlib-only wire leaf the HTTP and MCP transports share; its DTOs mirror the flowengine and flowrun types on purpose, as the rule against leaking engine types asks.",
+      "at": "2026-11-10T10:45:00Z",
+      "title": "Step (flowrun) and Event (flowview) share most of their fields."
+    },
+    "types.synonyms-bedb81bef159": {
+      "state": "accepted",
+      "reason": "Design: flowview is the stdlib-only wire leaf the HTTP and MCP transports share; its DTOs mirror the flowengine and flowrun types on purpose, as the rule against leaking engine types asks.",
+      "at": "2026-11-10T10:45:00Z",
+      "title": "BranchCheck (flowengine) and Branch (flowview) share most of their fields."
+    },
+    "types.synonyms-0de4a0f86f42": {
+      "state": "accepted",
+      "reason": "Design: flowview is the stdlib-only wire leaf the HTTP and MCP transports share; its DTOs mirror the flowengine and flowrun types on purpose, as the rule against leaking engine types asks.",
+      "at": "2026-11-10T10:45:00Z",
+      "title": "TimerDue (flowengine) and Timer (flowview) share most of their fields."
     }
   },
   "labels": {},
