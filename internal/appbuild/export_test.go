@@ -2,9 +2,23 @@ package appbuild
 
 import (
 	"context"
+	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
+
+// FlowControlOver is [FlowControlFor] with its reads going to st, which
+// wraps s's store. Test-only: it lets a budget test count the store reads
+// a flow call makes.
+func FlowControlOver(s *Services, st store.Store) *FlowControl {
+	reader, _, holders := scriptReads(st, s.aclDeclarative, s.fieldReads, s.worlds)
+	return &FlowControl{
+		eng: s.flowEngine, d: s.aclDeclarative, rows: reader, holders: holders, raw: st,
+		writer: entitymanager.FieldGated(s.entityManager), now: time.Now,
+	}
+}
 
 // HasVersionSweep reports whether s assembled a version-reconciliation sweep.
 // Test-only: it lets the external tests check the wiring through New without

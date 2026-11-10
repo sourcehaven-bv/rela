@@ -14,7 +14,109 @@
     "inbox": "Inbox",
     "inboxWaiting": "{n} wachtend | {n} wachtend",
     "inboxMentions": "{n} vermelding | {n} vermeldingen",
-    "inboxUnread": "{n} ongelezen kanaal | {n} ongelezen kanalen"
+    "inboxUnread": "{n} ongelezen kanaal | {n} ongelezen kanalen",
+    "flowTasks": "Mijn flowtaken",
+    "flowRuns": "Flowruns"
+  },
+  "flows": {
+    "status": {
+      "working": "Bezig",
+      "input_required": "Wacht op invoer",
+      "completed": "Afgerond",
+      "cancelled": "Gestopt",
+      "failed": "Mislukt"
+    },
+    "log": {
+      "start": "gestart in {state}",
+      "done": "naar {state} toen de stap klaar was",
+      "change": "naar {state} na een wijziging",
+      "timer": "naar {state} toen timer {timer} afliep",
+      "moved": "naar {state}"
+    },
+    "waiting": {
+      "title": "Waarom het wacht",
+      "stranded": "Deze run kan niet verder: de stap of de flow bestaat niet meer.",
+      "roles": "Wacht op: {roles}.",
+      "youHold": "U heeft een van deze rollen.",
+      "youDoNotHold": "U heeft geen van deze rollen.",
+      "noRoles": "Wacht op niemand. Een wijziging, een timer of het systeem zet de run verder.",
+      "claimedBy": "{who} rondt deze stap nu af.",
+      "pending": "De uitkomsten van deze stap zijn nog niet weggeschreven. Mislukte pogingen: {n}.",
+      "nextAttempt": "Volgende poging: {at}.",
+      "branches": "Gaat verder als",
+      "branchTo": "naar {state}",
+      "guardHolds": "voorwaarde is vervuld",
+      "guardNotYet": "voorwaarde is nog niet vervuld",
+      "guardFailed": "voorwaarde kon niet worden gecontroleerd",
+      "branchRoles": "door: {roles}",
+      "timers": "Timers",
+      "timerDue": "naar {state} op {at}",
+      "timerTo": "naar {state}"
+    },
+    "step": {
+      "title": "Stap",
+      "loadFailed": "De waarden van deze stap konden niet worden geladen.",
+      "moved": "De run ging verder voordat uw stap was opgeslagen. Hij is opnieuw geladen.",
+      "failed": "De stap kon niet worden afgerond.",
+      "complete": "Stap afronden",
+      "completing": "Bezig met afronden…",
+      "done": "Stap afgerond.",
+      "finished": "Stap afgerond. De run is klaar.",
+      "problem": {
+        "guard": "Uw waarden zijn opgeslagen, maar een voorwaarde van de volgende stap kon niet worden gecontroleerd. De run blijft staan.",
+        "moved": "Uw waarden zijn opgeslagen, maar de run was al verder gegaan.",
+        "settling": "Uw waarden zijn opgeslagen en de run is verder gegaan, maar een latere stap mislukte. Die wordt opnieuw geprobeerd."
+      }
+    },
+    "run": {
+      "title": "Flowrun",
+      "loadFailed": "De run kon niet worden geladen.",
+      "notFound": "Deze run bestaat niet, of u kunt hem niet zien.",
+      "started": "Gestart {at}",
+      "completedAt": "Beëindigd {at}",
+      "openSubject": "{subject} openen",
+      "diagram": "Diagram",
+      "timeline": "Tijdlijn",
+      "cancel": "Run stoppen",
+      "cancelling": "Bezig met stoppen…",
+      "cancelTitle": "Deze run stoppen?",
+      "cancelMessage": "De run van {flow} stopt en kan niet worden hervat.",
+      "cancelled": "De run is gestopt.",
+      "retry": "Opnieuw proberen",
+      "retrying": "Bezig…",
+      "retried": "De run probeert het opnieuw.",
+      "actionFailed": "Dat is niet gelukt."
+    },
+    "panel": {
+      "title": "Flows",
+      "empty": "Nog geen runs op dit item.",
+      "loadFailed": "De flowruns konden niet worden geladen.",
+      "start": "{flow} starten",
+      "starting": "Bezig met starten…",
+      "started": "{flow} is gestart.",
+      "startFailed": "De flow kon niet worden gestart."
+    },
+    "list": {
+      "title": "Flowruns",
+      "loadFailed": "De runs konden niet worden geladen.",
+      "empty": "Geen runs gevonden.",
+      "flow": "Flow",
+      "state": "Stap",
+      "status": "Status",
+      "subject": "Item",
+      "started": "Gestart",
+      "allFlows": "Alle flows",
+      "allStatuses": "Alle statussen",
+      "hiddenSubject": "Niet zichtbaar voor u",
+      "truncated": "Niet alle runs konden worden gelezen. Kies een flow of een status om de rest te zien.",
+      "summary": "{n} in totaal"
+    },
+    "tasks": {
+      "title": "Mijn flowtaken",
+      "loadFailed": "Uw taken konden niet worden geladen.",
+      "empty": "Er wacht niets op u.",
+      "truncated": "Niet alle taken konden worden gelezen. Kies een flow om de rest te zien."
+    }
   },
   "inbox": {
     "title": "Inbox",

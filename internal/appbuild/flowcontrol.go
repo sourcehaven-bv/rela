@@ -18,6 +18,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // ErrFlowPermission answers a start or cancel by a principal that holds
@@ -44,7 +45,14 @@ type FlowControl struct {
 		ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 		ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 	}
-	now func() time.Time
+	// holders reads run headers through the row gate with store predicates.
+	holders *visibility.HolderLookup
+	// raw answers which subjects confer a role on the caller, the store
+	// form of the ACL's own role resolution.
+	raw store.Store
+	// writer writes a step's values as the caller, through the field gate.
+	writer *entitymanager.Manager
+	now    func() time.Time
 }
 
 // orphanGrace is how long a header may wait for its run before a cancel
@@ -70,26 +78,35 @@ func FlowControlFor(s *Services) *FlowControl {
 	if s.flowEngine == nil {
 		return nil
 	}
-	reader, _, _ := scriptReads(s.store, s.aclDeclarative, s.fieldReads, s.worlds)
-	return &FlowControl{eng: s.flowEngine, d: s.aclDeclarative, rows: reader, now: time.Now}
+	reader, _, holders := scriptReads(s.store, s.aclDeclarative, s.fieldReads, s.worlds)
+	return &FlowControl{
+		eng: s.flowEngine, d: s.aclDeclarative, rows: reader, holders: holders, raw: s.store,
+		writer: entitymanager.FieldGated(s.entityManager), now: time.Now,
+	}
 }
 
-// Start starts a run of the named flow on the subject at addr.
+// Start starts a run of the named flow on the subject at addr. Its errors
+// carry a [flowview] kind.
 func (c *FlowControl) Start(ctx context.Context, name, addr string) (flow.RunID, error) {
+	id, err := c.start(ctx, name, addr)
+	return id, classify(err)
+}
+
+func (c *FlowControl) start(ctx context.Context, name, addr string) (flow.RunID, error) {
 	f, ok := c.eng.Flow(name)
 	if !ok {
 		return "", fmt.Errorf("%w: %q", flowengine.ErrUnknownFlow, name)
 	}
 	perms := manualPermissions(f)
 	if len(perms) == 0 {
-		return "", fmt.Errorf("flow %q has no `on: manual` start", name)
+		return "", fmt.Errorf("%w: flow %q has no `on: manual` start", errFlowRequest, name)
 	}
 	subject, err := c.read(ctx, addr)
 	if err != nil {
 		return "", err
 	}
 	if subject.Type != f.Subject() {
-		return "", fmt.Errorf("flow %q runs on %s, and %s is a %s", name, f.Subject(), subject.ID, subject.Type)
+		return "", fmt.Errorf("%w: flow %q runs on %s, and %s is a %s", errFlowRequest, name, f.Subject(), subject.ID, subject.Type)
 	}
 	if err := c.authorize(ctx, subject.ID, perms); err != nil {
 		return "", err
@@ -108,12 +125,14 @@ func byCaller(ctx context.Context) context.Context {
 //
 // A header left without a run (a crash between the two writes) is closed
 // as cancelled once it is older than orphanGrace, on the same permissions.
+// Its errors carry a [flowview] kind.
 func (c *FlowControl) Cancel(ctx context.Context, id flow.RunID) error {
-	hdr, err := c.rows.GetAddress(ctx, string(id))
+	return classify(c.cancel(ctx, id))
+}
+
+func (c *FlowControl) cancel(ctx context.Context, id flow.RunID) error {
+	hdr, err := c.header(ctx, id)
 	if err != nil {
-		if isNotFound(err) {
-			return flowengine.ErrRunNotFound
-		}
 		return err
 	}
 	run, err := c.eng.Run(ctx, id)
@@ -143,7 +162,7 @@ func (c *FlowControl) closeOrphan(ctx context.Context, hdr *entity.Entity) error
 	// A backend may hand the datetime back as RFC 3339 text.
 	started, err := time.Parse(time.RFC3339, propString(hdr, metamodel.FlowRunPropStarted))
 	if err == nil && c.now().Sub(started) < orphanGrace {
-		return fmt.Errorf("run %s is still starting; try again in a minute", hdr.ID)
+		return fmt.Errorf("%w: run %s is still starting; try again in a minute", errFlowBusy, hdr.ID)
 	}
 	var subject string
 	for r, err := range c.rows.ListRelationsStrict(ctx, store.RelationQuery{

@@ -1424,6 +1424,14 @@ Notes:
   request, so the entity is never briefly left in a state the user did not
   approve.
 
+## Flows
+
+When the project has `flows.yaml`, the entity page of a subject shows a
+Flows panel: its runs, why each waits, a form for the step and a diagram
+with the current state. The sidebar gets **Flow tasks** and **Flow
+runs**. Nothing in `data-entry.yaml` configures them. See
+[Flows](flows.md#doing-a-step).
+
 ## Channels
 
 The `channels:` block says how the web app presents the messages of the

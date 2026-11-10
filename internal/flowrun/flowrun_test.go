@@ -209,3 +209,36 @@ func TestDueOrder(t *testing.T) {
 	require.True(t, c.Before(at.Add(time.Microsecond), "A"))
 	require.False(t, c.Before(at.Add(-time.Microsecond), "Z"))
 }
+
+func TestAppendLog(t *testing.T) {
+	var log []flowrun.Step
+	for i := range flowrun.MaxLog + 5 {
+		log = flowrun.AppendLog(log, flowrun.Step{State: "s", Via: flowrun.ViaTimer, Timer: strings.Repeat("t", i%3+1)})
+	}
+	require.Len(t, log, flowrun.MaxLog)
+	require.Equal(t, "t", log[0].Timer, "the first entry stays")
+	require.NoError(t, flowrun.CheckState(flowrun.State{Log: log}))
+}
+
+func TestCheckState_LogAndClaim(t *testing.T) {
+	tests := []struct {
+		name string
+		st   flowrun.State
+		ok   bool
+	}{
+		{"empty", flowrun.State{}, true},
+		{"log", flowrun.State{Log: []flowrun.Step{{State: "a", Via: flowrun.ViaStart}}}, true},
+		{"bad cause", flowrun.State{Log: []flowrun.Step{{State: "a", Via: "poke"}}}, false},
+		{"bad state", flowrun.State{Log: []flowrun.Step{{State: "", Via: flowrun.ViaStart}}}, false},
+		{"too long", flowrun.State{Log: make([]flowrun.Step, flowrun.MaxLog+1)}, false},
+		{"claim", flowrun.State{Claim: &flowrun.Claim{Generation: 2, By: "alice"}}, true},
+		{"claim without by", flowrun.State{Claim: &flowrun.Claim{Generation: 2}}, false},
+		{"claim negative", flowrun.State{Claim: &flowrun.Claim{Generation: -1, By: "a"}}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := flowrun.CheckState(tc.st)
+			require.Equal(t, tc.ok, err == nil, "err = %v", err)
+		})
+	}
+}

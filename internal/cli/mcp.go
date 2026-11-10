@@ -54,7 +54,10 @@ func (c *McpCmd) Run(identity localIdentity) error {
 		// Bound to the startup piles service. A schema reload shares its
 		// backend (ForReassembly) and rebuilds only the owner check, which
 		// under the MCP server's NopACL never has person mapping to change.
-		mcpwire.Piles(svc.current()))
+		mcpwire.Piles(svc.current()),
+		// The flow tools resolve the current assembly per call, so a step
+		// after a schema reload writes through the reloaded manager.
+		mcpwire.CurrentFlows(svc.current))
 	if srvErr != nil {
 		return fmt.Errorf("mcp startup: %w", srvErr)
 	}

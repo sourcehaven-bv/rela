@@ -38,3 +38,30 @@ connection. Copy them there too.
 
 - The sample flow starts on create, moves on a change by hr, escalates on
 its timer and finishes, on fs, postgres and sqlite.
+
+## Notes from M2 (TKT-ZAXRXND)
+
+- `Engine.Change(ctx, id, gen, by, holds)` takes the generation the caller
+saw and refuses a stale one with `ErrStale`. The change hook passes the
+generation it read with the run, so a move that landed in between is not
+applied twice.
+- A step completed in the run panel writes with an `audit.FlowStep` on ctx
+(By = the person) and then calls `Change` itself. The write-path hook must
+skip writes that carry a flow step, or the step moves the run twice.
+- `appbuild.FlowControl.Tasks` already lists the runs waiting for a role
+the caller holds, through the header's visibility gate. `_inbox` can reuse
+it, which satisfies RR-R5I7UE0.
+- Deferred from the M2 code review, for this ticket to pick up:
+  - `FlowControl.SubjectRuns` reads every run of a subject with no cap and
+    builds the detailed view for each. Cap it, report `truncated`, and drop
+    the detail from the list.
+  - `localHolders` caps the local-role query at `maxRoleHolders` without
+    setting `Truncated`. Narrow it to the candidate subjects instead.
+  - The `complete` affordance (`mayUpdate`) builds its own write request.
+    Ask the manager for a dry-run decision so the button and the POST
+    cannot drift.
+  - A timer can move a claimed run before the step's write lands.
+    `advance` could defer to a live claim at the current generation.
+  - `useFlowList` reads a transient error as "no flows".
+  - `RunList` and `Tasks` take the subject from the `_carries` edge (bare
+    id); `Run` uses `run.Subject` with its face. Use one source.

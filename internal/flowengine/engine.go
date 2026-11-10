@@ -203,6 +203,7 @@ func (e *Engine) Start(ctx context.Context, name string, subject entity.Ref) (fl
 		ID: id, Flow: f.Name(), Version: f.Version(), Definition: f.Source(),
 		Subject: subj.Ref(), Singleton: singleton, At: now,
 		Pending: &flowrun.Pending{State: initial.Name},
+		Log:     []flowrun.Step{{At: now, State: initial.Name, Via: flowrun.ViaStart, By: clip(by)}},
 	}
 	nr.Instance.NextDueAt = now
 	run, err := e.d.Runs.Create(ctx, nr)
@@ -305,6 +306,12 @@ func (e *Engine) Run(ctx context.Context, id flow.RunID) (flowrun.Run, error) {
 	return run, err
 }
 
+// SubjectRuns returns the unfinished runs on the subject with id subjectID,
+// on every face, at most [flowrun.MaxPage] of them.
+func (e *Engine) SubjectRuns(ctx context.Context, subjectID string) ([]flowrun.Run, error) {
+	return e.d.Runs.List(ctx, flowrun.Query{SubjectID: subjectID, Limit: flowrun.MaxPage})
+}
+
 // FlowOf returns the flow run follows, at the run's own version.
 func (e *Engine) FlowOf(ctx context.Context, run flowrun.Run) (*flowcfg.Flow, error) {
 	return e.flowOf(ctx, run)
@@ -367,8 +374,7 @@ func (e *Engine) backoff(ctx context.Context, run flowrun.Run) {
 	}
 	inst := run.Instance
 	inst.NextDueAt = e.now().Add(delay)
-	if _, err := e.d.Runs.Update(ctx, run.ID, run.Rev, flowrun.State{Instance: inst, Pending: p},
-		e.now()); err != nil && !isLost(err) {
+	if _, err := e.save(ctx, run, inst, p, nil, e.now()); err != nil && !isLost(err) {
 		slog.WarnContext(ctx, "flowengine: a failed run was not backed off", "run", run.ID, "error", err)
 	}
 }
@@ -396,13 +402,13 @@ func (e *Engine) advance(ctx context.Context, run flowrun.Run, now time.Time) (f
 		if !inst.NextDueAt.After(now) {
 			inst.NextDueAt = time.Time{} // never a busy loop on a due time nothing fires
 		}
-		_, uerr := e.d.Runs.Update(ctx, run.ID, run.Rev, flowrun.State{Instance: inst}, now)
+		_, uerr := e.save(ctx, run, inst, nil, nil, now)
 		if uerr != nil && !isLost(uerr) {
 			return run, uerr
 		}
 		return flowrun.Run{}, nil
 	}
-	moved, err := e.move(ctx, f, run, cur, t.To, now)
+	moved, err := e.move(ctx, f, run, cur, flowrun.Step{State: t.To, Via: flowrun.ViaTimer, Timer: t.Name}, now)
 	if err != nil {
 		if isLost(err) {
 			return flowrun.Run{}, nil
@@ -429,3 +435,6 @@ func (e *Engine) flowOf(ctx context.Context, run flowrun.Run) (*flowcfg.Flow, er
 	}
 	return f, nil
 }
+
+// Flows returns the flows of the current flows.yaml, in file order.
+func (e *Engine) Flows() []*flowcfg.Flow { return e.d.Flows.Flows() }

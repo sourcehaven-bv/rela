@@ -95,7 +95,7 @@ func (c *copier) copyFlowRuns(ctx context.Context) error {
 		_, err = c.dst.FlowRuns.Create(ctx, flowrun.NewRun{
 			ID: r.ID, Flow: r.Flow, Version: r.Version, Definition: def,
 			Subject: r.Subject, Singleton: r.Singleton, At: r.CreatedAt,
-			Instance: r.Instance, Pending: r.Pending,
+			Instance: r.Instance, Pending: r.Pending, Log: r.Log,
 		})
 		if err != nil {
 			c.rep.Errors = append(c.rep.Errors, fmt.Sprintf("flow run %s: %v", r.ID, err))

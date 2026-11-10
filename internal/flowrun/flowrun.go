@@ -75,6 +75,59 @@ type Run struct {
 	Instance flow.Instance
 	// Pending is the run's pending-outputs mark, or nil (see [Pending]).
 	Pending *Pending
+	// Log is the run's timeline, oldest first (see [Step]).
+	Log []Step
+	// Claim is the step a person is completing, or nil (see [Claim]).
+	Claim *Claim
+}
+
+// State returns the run's execution state.
+func (r Run) State() State {
+	return State{Instance: r.Instance, Pending: r.Pending, Log: r.Log, Claim: r.Claim}
+}
+
+// MaxLog caps [State.Log]. A longer log keeps its first entry, the start,
+// and the newest ones.
+const MaxLog = 32
+
+// Via names what moved a run into a state, for [Step.Via].
+type Via string
+
+// The causes of a move.
+const (
+	ViaStart  Via = "start"
+	ViaDone   Via = "done"
+	ViaChange Via = "change"
+	ViaTimer  Via = "timer"
+)
+
+// Step is one entry of a run's timeline: the run entered State at At.
+// The log lives in the run's stored state, so a finished run, whose state
+// is dropped, keeps only what its header records.
+type Step struct {
+	At    time.Time `json:"at"`
+	State string    `json:"state"`
+	// From is the state the run left; empty for the start.
+	From string `json:"from,omitempty"`
+	Via  Via    `json:"via"`
+	// Timer is the timer that fired, for a move via timer.
+	Timer string `json:"timer,omitempty"`
+	// By is the principal who caused the move, when a person did.
+	By string `json:"by,omitempty"`
+}
+
+// MaxClaimBy caps the length of [Claim.By] and [Step.By].
+const MaxClaimBy = 256
+
+// Claim records that a person is completing the step of the run's state
+// at Generation (RR-LGRBAP4). It is stored before the person's values are
+// written, so a second completion of the same step is refused before it
+// writes. The move out of the state clears it; a claim older than the
+// runtime's claim lifetime is void.
+type Claim struct {
+	Generation int64     `json:"generation"`
+	By         string    `json:"by"`
+	At         time.Time `json:"at"`
 }
 
 // MaxPendingDone caps [Pending.Done]: more than any state declares
@@ -104,12 +157,16 @@ type Pending struct {
 	Failures int `json:"failures,omitempty"`
 }
 
-// State is a run's stored execution state: the engine's instance and the
-// pending-outputs mark.
+// State is a run's stored execution state: the engine's instance, the
+// pending-outputs mark, the timeline and the step claim.
 type State struct {
 	Instance flow.Instance
 	// Pending is nil when the run waits in its state.
 	Pending *Pending
+	// Log is the timeline, at most [MaxLog] entries.
+	Log []Step
+	// Claim is nil when nobody is completing the step.
+	Claim *Claim
 }
 
 // NewRun is a run to create.
@@ -131,6 +188,8 @@ type NewRun struct {
 	Instance flow.Instance
 	// Pending is the starting pending-outputs mark, or nil.
 	Pending *Pending
+	// Log is the starting timeline, or nil.
+	Log []Step
 }
 
 // Query selects runs for [Store.List]. Every set field narrows the result.
@@ -321,6 +380,12 @@ func CheckState(st State) error {
 	if err := CheckInstance(st.Instance); err != nil {
 		return err
 	}
+	if err := checkLog(st.Log); err != nil {
+		return err
+	}
+	if c := st.Claim; c != nil && (c.Generation < 0 || c.By == "" || len(c.By) > MaxClaimBy) {
+		return invalid("claim out of range")
+	}
 	p := st.Pending
 	if p == nil {
 		return nil
@@ -334,6 +399,38 @@ func CheckState(st State) error {
 		return invalid("pending mark out of range")
 	}
 	return nil
+}
+
+// checkLog checks a timeline: at most [MaxLog] entries, each with a valid
+// state name and a known cause.
+func checkLog(log []Step) error {
+	if len(log) > MaxLog {
+		return invalid("more than %d log entries", MaxLog)
+	}
+	for _, s := range log {
+		if !flow.ValidName(s.State) || s.From != "" && !flow.ValidName(s.From) {
+			return invalid("log state name %q", s.State)
+		}
+		if s.Timer != "" && !flow.ValidName(s.Timer) || len(s.By) > MaxClaimBy {
+			return invalid("log entry out of range")
+		}
+		switch s.Via {
+		case ViaStart, ViaDone, ViaChange, ViaTimer:
+		default:
+			return invalid("log cause %q", s.Via)
+		}
+	}
+	return nil
+}
+
+// AppendLog returns log with s added, trimmed to [MaxLog] entries: the
+// first entry stays, and the oldest after it go.
+func AppendLog(log []Step, s Step) []Step {
+	out := append(slices.Clone(log), s)
+	if len(out) > MaxLog {
+		out = append(out[:1], out[len(out)-MaxLog+1:]...)
+	}
+	return out
 }
 
 // CheckNewRun checks every field of nr.
@@ -356,7 +453,7 @@ func CheckNewRun(nr NewRun) error {
 	if !afterEpoch(nr.At) {
 		return invalid("create time is not after the epoch")
 	}
-	return CheckState(State{Instance: nr.Instance, Pending: nr.Pending})
+	return CheckState(State{Instance: nr.Instance, Pending: nr.Pending, Log: nr.Log})
 }
 
 // CheckUpdate checks the arguments of [Store.Update].
@@ -477,6 +574,8 @@ func NormInstance(inst flow.Instance) flow.Instance {
 type envelope struct {
 	Instance flow.Instance `json:"instance"`
 	Pending  *Pending      `json:"pending,omitempty"`
+	Log      []Step        `json:"log,omitempty"`
+	Claim    *Claim        `json:"claim,omitempty"`
 }
 
 // NormState returns st with its instance normalized ([NormInstance]) and
@@ -486,6 +585,18 @@ func NormState(st State) State {
 	if st.Pending != nil {
 		p := *st.Pending
 		out.Pending = &p
+	}
+	if len(st.Log) > 0 {
+		out.Log = make([]Step, len(st.Log))
+		for i, s := range st.Log {
+			s.At = flow.NormTime(s.At)
+			out.Log[i] = s
+		}
+	}
+	if st.Claim != nil {
+		c := *st.Claim
+		c.At = flow.NormTime(c.At)
+		out.Claim = &c
 	}
 	return out
 }
@@ -509,10 +620,10 @@ func DecodeState(data []byte) (State, error) {
 // normalized.
 func FromNew(nr NewRun) Run {
 	at := flow.NormTime(nr.At)
-	st := NormState(State{Instance: nr.Instance, Pending: nr.Pending})
+	st := NormState(State{Instance: nr.Instance, Pending: nr.Pending, Log: nr.Log})
 	return Run{
 		ID: nr.ID, Flow: nr.Flow, Version: nr.Version, Subject: nr.Subject, Singleton: nr.Singleton,
-		CreatedAt: at, UpdatedAt: at, Rev: 1, Instance: st.Instance, Pending: st.Pending,
+		CreatedAt: at, UpdatedAt: at, Rev: 1, Instance: st.Instance, Pending: st.Pending, Log: st.Log,
 	}
 }
 

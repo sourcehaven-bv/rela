@@ -226,7 +226,7 @@ func (r storedRun) run(id flowrun.RunID) (flowrun.Run, error) {
 		ID: id, Flow: r.Flow, Version: r.Version,
 		Subject:   entity.Ref{ID: r.SubjectID, Face: r.SubjectFace},
 		Singleton: r.Singleton, CreatedAt: r.CreatedAt.UTC(), UpdatedAt: r.UpdatedAt.UTC(),
-		Rev: r.Rev, Instance: st.Instance, Pending: st.Pending,
+		Rev: r.Rev, Instance: st.Instance, Pending: st.Pending, Log: st.Log, Claim: st.Claim,
 	}, nil
 }
 
@@ -260,7 +260,7 @@ func (s *Store) Create(ctx context.Context, nr flowrun.NewRun) (flowrun.Run, err
 		return flowrun.Run{}, err
 	}
 	run := flowrun.FromNew(nr)
-	stateDoc, err := flowrun.EncodeState(flowrun.State{Instance: run.Instance, Pending: run.Pending})
+	stateDoc, err := flowrun.EncodeState(run.State())
 	if err != nil {
 		return flowrun.Run{}, fmt.Errorf("kvflowrun: encode state: %w", err)
 	}

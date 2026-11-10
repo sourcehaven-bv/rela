@@ -49,6 +49,13 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 		}
 	}
 
+	// Without flows in flows.yaml the flow routes answer 404.
+	if ctl := appbuild.FlowControlFor(svc); ctl != nil {
+		if err := dataentry.SetFlows(app, ctl); err != nil {
+			return fmt.Errorf("wire flows: %w", err)
+		}
+	}
+
 	// The realtime holder is absent only for a Services built from
 	// collaborators; realtime.yaml is then not watched.
 	if r := appbuild.Realtime(svc); r != nil {
