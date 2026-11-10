@@ -3400,6 +3400,17 @@ mentions of its old id working. How depends on the storage backend:
   those mentions. Renaming the entity back onto its old id is allowed and
   ends the retirement.
 
+  A link to the old id's page also keeps working. Opening it takes the
+  reader to the entity's page under its new id. For API clients, a read of
+  the old id (`GET /api/v1/_views/{type}/{id}` or
+  `GET /api/v1/{plural}/{id}`) answers `307 Temporary Redirect`, with a
+  `Location` relative to the request that keeps its query, and
+  `Cache-Control: no-store`. The redirect is temporary because it depends on
+  who asks and can change after another rename. This happens only when the
+  reader may read the entity. Anyone else gets the same answer as
+  for an id that never existed. A write to the old id is not redirected and
+  answers not found.
+
 ### Duplicating an entity
 
 The entity detail page offers a **Duplicate** action for every type you may

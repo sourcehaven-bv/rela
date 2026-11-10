@@ -309,10 +309,22 @@ func rowOf(res visibility.Resolved, ok bool, err error) (*entitypkg.Entity, bool
 // miss, or the gate error. Every addressed route owes this read before it
 // acts on a row, reads and writes alike. A face the principal may not read
 // is then the same 404 as an absent one, never a 403 that confirms it exists.
-//
-//archplan:guard=authz reason="row gate for an addressed route: a row the caller may not read is the uniform 404"
 func readAddressedOr404(
 	w http.ResponseWriter, r *http.Request, vr visibleReader, entityType, addr string,
+) (*entitypkg.Entity, bool) {
+	return readAddressedOr(w, r, vr, entityType, addr, func() {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+	})
+}
+
+// readAddressedOr is [readAddressedOr404] with the miss answer supplied by
+// the caller. miss runs for every miss, so it must answer each one the same
+// way except where the caller has a reason the principal may know; the
+// entity GET uses it to redirect a retired id ([redirectRetired]).
+//
+//archplan:guard=authz reason="row gate for an addressed route: a row the caller may not read is the uniform miss"
+func readAddressedOr(
+	w http.ResponseWriter, r *http.Request, vr visibleReader, entityType, addr string, miss func(),
 ) (*entitypkg.Entity, bool) {
 	e, ok, err := vr.address(r.Context(), entityType, addr)
 	if err != nil {
@@ -320,7 +332,7 @@ func readAddressedOr404(
 		return nil, false
 	}
 	if !ok {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		miss()
 		return nil, false
 	}
 	return e, true

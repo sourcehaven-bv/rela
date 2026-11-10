@@ -1808,7 +1808,6 @@ func newViewsHandler(app *App, st store.Store, logo *logoStore) *viewsHandler {
 		visible:        app.visibleReader,
 		services:       app.Services,
 		logo:           logo,
-		gateRead:       app.gateReadOrNotFound,
 		aclImpl:        func() acl.ACL { return app.acl },
 		viewConditions: func() ViewConditionFunc { return app.viewConditions },
 		faceEdges:      app.faceEdges,

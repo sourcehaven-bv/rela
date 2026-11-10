@@ -1056,33 +1056,32 @@ func (a *App) handleV1SingleEntity(w http.ResponseWriter, r *http.Request, typeN
 	}
 }
 
-// gateReadOrNotFound runs the per-entity ACL read gate (PermitsRead)
-// and writes the right response on deny: 404 with the same body shape
-// as not-found (indistinguishable-from-not-found invariant) when the
-// principal cannot read, or the relevant 5xx via writeGateError on
-// store/timeout failure. Returns true if the handler should continue
-// (gate allowed), false if a response was already written.
-//
-// Centralizing this means every read chokepoint (GET, PATCH, DELETE,
-// clone, relations CRUD) handles the deny branch the same way — a
-// future divergence in error code, body shape, or ETag suppression
-// would otherwise be a per-handler oracle leak (RR-NGMI).
 // entityNotFoundTitle is the title for EVERY read-path 404 — the ACL
-// deny path (gateReadOrNotFound), a genuinely missing entity, and a
+// deny path ([gateReadOr]), a genuinely missing entity, and a
 // missing attachment all share it so a denied read is byte-identical to
 // a nonexistent one (the RR-NGMI indistinguishability invariant). Any
 // handler that 404s on the read path MUST use this const, not a fresh
 // literal, or the bodies drift and existence leaks.
 const entityNotFoundTitle = "Entity not found"
 
-func (a *App) gateReadOrNotFound(w http.ResponseWriter, r *http.Request, typeName, entityID string) bool {
+// gateReadOr runs the per-entity ACL read gate (PermitsRead). On deny it
+// calls deny, which writes the miss answer; on a store or timeout failure it
+// writes the 5xx via writeGateError. It returns true when the handler should
+// continue, false when a response was already written.
+//
+// deny must answer every denied read the same way as a nonexistent entity
+// (RR-NGMI). The `_views` route passes the uniform 404, or a redirect for a
+// retired id whose successor the caller may read ([redirectRetired]).
+//
+//archplan:guard=authz reason="per-entity read gate: a denied read is the uniform miss"
+func gateReadOr(w http.ResponseWriter, r *http.Request, typeName, entityID string, deny func()) bool {
 	ok, err := readGateFromContext(r.Context()).PermitsRead(r.Context(), typeName, entityID)
 	if err != nil {
 		writeGateError(w, r, err)
 		return false
 	}
 	if !ok {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		deny()
 		return false
 	}
 	return true
@@ -1099,7 +1098,18 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// id-enumeration side channel that defeats the indistinguishable-404-body
 	// invariant (RR-NGMI). Every miss, including a malformed address, a
 	// denied face and a stored type other than the route's, is the same 404.
-	entity, found := readAddressedOr404(w, r, a.visibleReader, typeName, entityID)
+	//
+	// A miss on an id a rename or conversion retired redirects a reader of
+	// the successor there ([redirectRetired]); every other miss stays the
+	// uniform 404. Only this GET redirects: a write to an old id must not
+	// land on an entity the caller did not name.
+	meta := a.Meta()
+	entity, found := readAddressedOr(w, r, a.visibleReader, typeName, entityID, func() {
+		if id := retiredRedirectID(entityID); id != "" && redirectRetired(w, r, a.viewReader, id, pluralOf(meta)) {
+			return
+		}
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+	})
 	if !found {
 		return
 	}
@@ -3449,6 +3459,18 @@ func sectionEntityToV1(e SectionEntityData) v1.ViewEntity {
 	v1Ent.World = e.World
 	v1Ent.Self = e.Self
 	return v1Ent
+}
+
+// pluralOf maps an entity type to its route segment in meta, or to "" for a
+// type meta does not declare.
+func pluralOf(meta *metamodel.Metamodel) func(entityType string) string {
+	return func(entityType string) string {
+		def, ok := meta.GetEntityDef(entityType)
+		if !ok {
+			return ""
+		}
+		return def.GetPlural(entityType)
+	}
 }
 
 // entityTypeForPlural returns the entity type whose plural is plural, or ""
