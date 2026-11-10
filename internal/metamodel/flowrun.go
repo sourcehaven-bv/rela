@@ -62,6 +62,10 @@ func WithFlowRuns(m *Metamodel) (*Metamodel, error) {
 	}
 
 	c := cloneForValidate(m)
+	if c.Relations == nil {
+		// A schema without `relations:` parses to a nil map.
+		c.Relations = map[string]RelationDef{}
+	}
 	c.Entities[entity.FlowRunType] = flowRunEntityDef()
 	c.Relations[entity.CarriesRelation] = RelationDef{
 		Label:       "Carries",

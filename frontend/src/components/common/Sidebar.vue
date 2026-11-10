@@ -38,6 +38,7 @@ import { usePiles } from '@/composables/usePiles'
 import NewPileDialog from '@/components/piles/NewPileDialog.vue'
 import { useNavStatus } from '@/composables/useNavStatus'
 import { useInboxSummary } from '@/composables/useInboxSummary'
+import { useFlowList } from '@/composables/useFlowList'
 import { useChannelSchema } from '@/stores/channelSchema'
 import { inboxStatus } from './inboxStatus'
 import { useNavItems } from '@/composables/useNavItems'
@@ -234,6 +235,13 @@ const inboxStatusFor = (key: string | undefined) =>
     ? inboxStatus(inbox.summary.value, (k, n) => t(k, { n }, n))
     : undefined
 
+/*
+ * The flow entries (TKT-ZAXRXND) show once `/_flows` lists a flow. The list
+ * is configuration, the same for every principal, so this gates nothing: a
+ * project without flows answers 404 and keeps the sidebar it had.
+ */
+const { hasFlows } = useFlowList()
+
 const pinnedGroups = computed(() =>
   toNavGroups(
     inSpace([
@@ -242,6 +250,12 @@ const pinnedGroups = computed(() =>
           { label: t('nav.search'), href: '/search', icon: 'search' },
           ...(hasChannels.value && !inbox.hidden.value
             ? [{ label: t('nav.inbox'), href: '/inbox', icon: 'inbox', status_key: 'inbox' }]
+            : []),
+          ...(hasFlows.value
+            ? [
+                { label: t('nav.flowTasks'), href: '/flows/tasks', icon: 'checklist' },
+                { label: t('nav.flowRuns'), href: '/flows/runs', icon: 'workflow' },
+              ]
             : []),
           { label: t('nav.analysis'), href: '/analyze', icon: 'warning' },
         ],

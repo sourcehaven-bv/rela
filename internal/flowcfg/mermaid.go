@@ -10,7 +10,11 @@ import (
 // initial state and one edge per branch and timer, labeled with what moves
 // the run. The labels are flattened by package mermaid, so a guard cannot
 // break the diagram.
-func (f *Flow) Mermaid() string {
+func (f *Flow) Mermaid() string { return f.MermaidAt("") }
+
+// MermaidAt renders the diagram [Flow.Mermaid] renders with the state
+// current marked; an empty or unknown current marks nothing.
+func (f *Flow) MermaidAt(current string) string {
 	var ts []mermaid.Transition
 	for _, st := range f.states {
 		for _, ev := range Events {
@@ -22,7 +26,7 @@ func (f *Flow) Mermaid() string {
 			ts = append(ts, mermaid.Transition{From: st.Name, To: t.To, Label: "after " + t.Period.String()})
 		}
 	}
-	return mermaid.StateDiagram(f.initial, ts)
+	return mermaid.StateDiagramAt(f.initial, ts, current)
 }
 
 func branchLabel(ev Event, b Branch) string {

@@ -14,7 +14,109 @@
     "inbox": "Inbox",
     "inboxWaiting": "{n} waiting | {n} waiting",
     "inboxMentions": "{n} mention | {n} mentions",
-    "inboxUnread": "{n} unread channel | {n} unread channels"
+    "inboxUnread": "{n} unread channel | {n} unread channels",
+    "flowTasks": "Flow tasks",
+    "flowRuns": "Flow runs"
+  },
+  "flows": {
+    "status": {
+      "working": "Working",
+      "input_required": "Waiting for input",
+      "completed": "Completed",
+      "cancelled": "Cancelled",
+      "failed": "Failed"
+    },
+    "log": {
+      "start": "started in {state}",
+      "done": "moved to {state} when the step was done",
+      "change": "moved to {state} after a change",
+      "timer": "moved to {state} when timer {timer} ran out",
+      "moved": "moved to {state}"
+    },
+    "waiting": {
+      "title": "Why it waits",
+      "stranded": "This run cannot go on: its state or its flow no longer exists.",
+      "roles": "Waits for: {roles}.",
+      "youHold": "You have one of these roles.",
+      "youDoNotHold": "You do not have one of these roles.",
+      "noRoles": "Waits for no one. A change, a timer or the system moves it on.",
+      "claimedBy": "{who} is completing this step now.",
+      "pending": "The outputs of this state are not written yet. Failed attempts: {n}.",
+      "nextAttempt": "Next attempt: {at}.",
+      "branches": "Moves on when",
+      "branchTo": "to {state}",
+      "guardHolds": "condition is met",
+      "guardNotYet": "condition is not met yet",
+      "guardFailed": "condition could not be checked",
+      "branchRoles": "by: {roles}",
+      "timers": "Timers",
+      "timerDue": "to {state} at {at}",
+      "timerTo": "to {state}"
+    },
+    "step": {
+      "title": "Step",
+      "loadFailed": "The values of this step could not be loaded.",
+      "moved": "The run moved on before your step was saved. It has been reloaded.",
+      "failed": "The step could not be completed.",
+      "complete": "Complete step",
+      "completing": "Completing…",
+      "done": "Step completed.",
+      "finished": "Step completed. The run has finished.",
+      "problem": {
+        "guard": "Your values were saved, but a condition of the next step could not be checked. The run stays where it is.",
+        "moved": "Your values were saved, but the run had already moved on.",
+        "settling": "Your values were saved and the run moved on, but a later step failed. It will be retried."
+      }
+    },
+    "run": {
+      "title": "Flow run",
+      "loadFailed": "The run could not be loaded.",
+      "notFound": "This run does not exist, or you cannot see it.",
+      "started": "Started {at}",
+      "completedAt": "Ended {at}",
+      "openSubject": "Open {subject}",
+      "diagram": "Diagram",
+      "timeline": "Timeline",
+      "cancel": "Cancel run",
+      "cancelling": "Cancelling…",
+      "cancelTitle": "Cancel this run?",
+      "cancelMessage": "The {flow} run stops and cannot be resumed.",
+      "cancelled": "The run was cancelled.",
+      "retry": "Retry",
+      "retrying": "Retrying…",
+      "retried": "The run will try again.",
+      "actionFailed": "That did not work."
+    },
+    "panel": {
+      "title": "Flows",
+      "empty": "No runs on this item yet.",
+      "loadFailed": "The flow runs could not be loaded.",
+      "start": "Start {flow}",
+      "starting": "Starting…",
+      "started": "{flow} started.",
+      "startFailed": "The flow could not be started."
+    },
+    "list": {
+      "title": "Flow runs",
+      "loadFailed": "The runs could not be loaded.",
+      "empty": "No runs found.",
+      "flow": "Flow",
+      "state": "State",
+      "status": "Status",
+      "subject": "Item",
+      "started": "Started",
+      "allFlows": "All flows",
+      "allStatuses": "All statuses",
+      "hiddenSubject": "Not visible to you",
+      "truncated": "Not every run could be read. Pick a flow or a status to see the rest.",
+      "summary": "{n} in total"
+    },
+    "tasks": {
+      "title": "Flow tasks",
+      "loadFailed": "Your tasks could not be loaded.",
+      "empty": "Nothing waits for you.",
+      "truncated": "Not every task could be read. Pick a flow to see the rest."
+    }
   },
   "inbox": {
     "title": "Inbox",

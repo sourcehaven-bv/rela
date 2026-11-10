@@ -69,6 +69,7 @@ import type { Component } from 'vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommentsPanel from '@/components/entity/CommentsPanel.vue'
 import ChannelsPanel from '@/components/entity/ChannelsPanel.vue'
+import FlowRunsPanel from '@/components/flows/FlowRunsPanel.vue'
 import { withAboveRelationsBlock } from '@/components/entity/channels/channelPlacement'
 import MentionedByPanel from '@/components/entity/MentionedByPanel.vue'
 import CommentIndicator from '@/components/entity/CommentIndicator.vue'
@@ -3425,6 +3426,10 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
              container's flex `gap` for free instead of duplicating that
              spacing via its own margin. -->
         <DocumentsPanel :entity-type="entityType" :entity-id="entityRef(entry)" />
+
+        <!-- Flow runs on this entity (TKT-ZAXRXND). Self-gating: renders
+             nothing unless flows.yaml declares a flow on this type. -->
+        <FlowRunsPanel :entity-type="entityType" :entity-id="entityRef(entry)" />
 
         <!-- Backlinks: entities whose body mentions this one. Self-gating:
              renders nothing while nothing the reader can see mentions it.

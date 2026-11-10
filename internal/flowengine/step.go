@@ -55,7 +55,7 @@ func (e *Engine) settle(ctx context.Context, f *flowcfg.Flow, run flowrun.Run) (
 		if !ok {
 			return e.rest(ctx, f, run, cur)
 		}
-		moved, err := e.move(ctx, f, run, cur, to, e.now())
+		moved, err := e.move(ctx, f, run, cur, flowrun.Step{State: to, Via: flowrun.ViaDone}, e.now())
 		if err != nil {
 			if isLost(err) {
 				return flowrun.Run{}, nil
@@ -148,7 +148,7 @@ func (e *Engine) writeOutput(ctx context.Context, f *flowcfg.Flow, run flowrun.R
 // returns a zero run.
 func (e *Engine) mark(ctx context.Context, run flowrun.Run, cur flow.Current, done int) (flowrun.Run, error) {
 	p := &flowrun.Pending{State: cur.State, Generation: cur.Generation, Done: done}
-	next, err := e.d.Runs.Update(ctx, run.ID, run.Rev, flowrun.State{Instance: run.Instance, Pending: p}, e.now())
+	next, err := e.save(ctx, run, run.Instance, p, nil, e.now())
 	if isLost(err) {
 		return flowrun.Run{}, nil
 	}
@@ -160,7 +160,7 @@ func (e *Engine) mark(ctx context.Context, run flowrun.Run, cur flow.Current, do
 func (e *Engine) rest(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, cur flow.Current) (flowrun.Run, error) {
 	inst := run.Instance
 	inst.NextDueAt = flow.NextDue(f.Definition(), cur)
-	next, err := e.d.Runs.Update(ctx, run.ID, run.Rev, flowrun.State{Instance: inst}, e.now())
+	next, err := e.save(ctx, run, inst, nil, nil, e.now())
 	if isLost(err) {
 		return flowrun.Run{}, nil
 	}
@@ -170,12 +170,31 @@ func (e *Engine) rest(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, cur
 	return next, nil
 }
 
-// move stores the run's move into state to, made at now, with a pending
-// mark that makes the run due at once, and records the new state on the
-// header.
-func (e *Engine) move(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, cur flow.Current, to string,
-	now time.Time) (flowrun.Run, error) {
+// save stores the run's next state: inst with the pending mark p. It is the
+// one way the engine updates a run (RR-SHLMJUL): it carries the timeline,
+// adding step when set, and the step claim while the claim's generation is
+// the instance's, so a move clears it.
+func (e *Engine) save(ctx context.Context, run flowrun.Run, inst flow.Instance, p *flowrun.Pending,
+	step *flowrun.Step, at time.Time) (flowrun.Run, error) {
+	st := flowrun.State{Instance: inst, Pending: p, Log: run.Log}
+	if step != nil {
+		st.Log = flowrun.AppendLog(run.Log, *step)
+	}
+	if c := run.Claim; c != nil && c.Generation == inst.Generation {
+		st.Claim = c
+	}
+	return e.d.Runs.Update(ctx, run.ID, run.Rev, st, at)
+}
+
+// move stores the run's move into the state step names, made at now, with
+// a pending mark that makes the run due at once, and records the new state
+// on the header. step is the timeline entry; move fills in its time and the
+// state left.
+func (e *Engine) move(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, cur flow.Current,
+	step flowrun.Step, now time.Time) (flowrun.Run, error) {
 	def := f.Definition()
+	to := step.State
+	step.At, step.From = now, cur.State
 	inst := cur.Enter(flow.Move{From: cur.State, To: to}, now, 0)
 	next := flow.Read(def, inst, run.CreatedAt)
 	sched := flow.StepSchedule(def, cur, next)
@@ -184,7 +203,7 @@ func (e *Engine) move(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, cur
 		inst.Reminders = sched.Reminders
 	}
 	p := &flowrun.Pending{State: to, Generation: inst.Generation}
-	moved, err := e.d.Runs.Update(ctx, run.ID, run.Rev, flowrun.State{Instance: inst, Pending: p}, now)
+	moved, err := e.save(ctx, run, inst, p, &step, now)
 	if err != nil {
 		return flowrun.Run{}, err
 	}

@@ -42,6 +42,7 @@ type rawState struct {
 	Final      bool                 `yaml:"final"`
 	Status     string               `yaml:"status"`
 	WaitingFor []string             `yaml:"waiting_for"`
+	Writes     []string             `yaml:"writes"`
 	Outputs    []rawOutput          `yaml:"outputs"`
 	On         map[string]yaml.Node `yaml:"on"`
 	After      yaml.Node            `yaml:"after"`

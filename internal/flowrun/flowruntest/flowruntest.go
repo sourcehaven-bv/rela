@@ -51,6 +51,7 @@ func RunAll(t *testing.T, open Factory) {
 		{"Singleton", testSingleton},
 		{"SubjectCap", testSubjectCap},
 		{"Update", testUpdate},
+		{"UpdateLogAndClaim", testUpdateLogAndClaim},
 		{"Delete", testDelete},
 		{"ListDue", testListDue},
 		{"ListDueCursor", testListDueCursor},
@@ -284,14 +285,40 @@ func testUpdate(t *testing.T, h Harness) {
 	read, err = h.Store.Get(ctx, "FR-1")
 	require.NoError(t, err)
 	require.Nil(t, read.Pending)
+}
 
+// testUpdateLogAndClaim pins that the timeline and the step claim are
+// stored with the instance, and that an update without them clears them.
+func testUpdateLogAndClaim(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	cleared := flow.Instance{State: "done", Generation: 4, EnteredAt: at(12)}
 	nr := newRun("FR-P", ref("EMP-9"))
 	nr.Pending = &flowrun.Pending{State: "open", Generation: 1}
-	created = create(t, h.Store, nr)
+	nr.Log = []flowrun.Step{{At: flow.NormTime(at(0)), State: "open", Via: flowrun.ViaStart, By: "alice"}}
+	created := create(t, h.Store, nr)
 	require.Equal(t, nr.Pending, created.Pending)
-	read, err = h.Store.Get(ctx, "FR-P")
+	require.Equal(t, nr.Log, created.Log)
+	read, err := h.Store.Get(ctx, "FR-P")
 	require.NoError(t, err)
 	require.Equal(t, nr.Pending, read.Pending)
+	require.Equal(t, nr.Log, read.Log)
+
+	log := flowrun.AppendLog(nr.Log, flowrun.Step{At: flow.NormTime(at(1)), State: "done", From: "open",
+		Via: flowrun.ViaChange})
+	claim := &flowrun.Claim{Generation: 1, By: "bob", At: flow.NormTime(at(1))}
+	got, err := h.Store.Update(ctx, "FR-P", 1, flowrun.State{Instance: cleared, Log: log, Claim: claim}, at(2))
+	require.NoError(t, err)
+	require.Equal(t, log, got.Log)
+	require.Equal(t, claim, got.Claim)
+	read, err = h.Store.Get(ctx, "FR-P")
+	require.NoError(t, err)
+	require.Equal(t, log, read.Log)
+	require.Equal(t, claim, read.Claim)
+	got, err = h.Store.Update(ctx, "FR-P", 2, flowrun.State{Instance: cleared}, at(3))
+	require.NoError(t, err)
+	require.Nil(t, got.Log)
+	require.Nil(t, got.Claim)
 }
 
 func testDelete(t *testing.T, h Harness) {

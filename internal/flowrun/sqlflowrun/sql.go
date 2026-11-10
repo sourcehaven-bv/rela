@@ -136,7 +136,7 @@ func (s *Store) scanRun(row sqlexec.Row) (flowrun.Run, error) {
 	}
 	r.ID, r.Subject.Face, r.Singleton = flowrun.RunID(id), entity.Face(face), singleton != 0
 	r.CreatedAt, r.UpdatedAt, r.Rev = fromMicros(created), fromMicros(updated), revv
-	r.Instance, r.Pending = st.Instance, st.Pending
+	r.Instance, r.Pending, r.Log, r.Claim = st.Instance, st.Pending, st.Log, st.Claim
 	return r, nil
 }
 
@@ -191,7 +191,7 @@ func (s *Store) Create(ctx context.Context, nr flowrun.NewRun) (flowrun.Run, err
 		return flowrun.Run{}, err
 	}
 	run := flowrun.FromNew(nr)
-	doc, encErr := flowrun.EncodeState(flowrun.State{Instance: run.Instance, Pending: run.Pending})
+	doc, encErr := flowrun.EncodeState(run.State())
 	if encErr != nil {
 		return flowrun.Run{}, s.errf("encode state: %w", encErr)
 	}

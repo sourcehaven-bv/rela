@@ -446,6 +446,8 @@ type Server struct {
 	pileReader PileReader
 	pileWriter PileWriter
 	pilesSet   bool
+	// flows backs the flow tools, registered only when set ([WithFlows]).
+	flows FlowSteps
 	// watch serves the watch tool; built in registerTools.
 	watch *watchHandler
 
