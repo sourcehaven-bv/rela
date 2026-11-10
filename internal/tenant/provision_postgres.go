@@ -105,6 +105,8 @@ func (p *Provisioner) record(ctx context.Context, conn *pgx.Conn, orgID string) 
 // operator renamed to the derived name on purpose, such as a tenant from a
 // deployment that still used a tenant map file.
 func (p *Provisioner) Create(ctx context.Context, orgID string, adopt bool) (Tenant, error) {
+	// derive runs the same check, but reports an unknown organization;
+	// checking first makes create say what is wrong with the org id.
 	if err := checkOrgID(orgID); err != nil {
 		return Tenant{}, err
 	}

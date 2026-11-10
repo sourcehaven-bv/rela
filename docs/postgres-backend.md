@@ -624,7 +624,7 @@ There is no tenant list in the project directory. Where a tenant lives is
 derived from its verified `org_id` claim:
 
 - The schema is `org_` followed by the first 16 hexadecimal characters of
-  the SHA-256 hash of the org id, for example `org_5d41402abc4b2a76`. The
+  the SHA-256 hash of the org id, for example `org_822b33ad87c148a0`. The
   name never depends on what the org id contains, so an org id cannot
   inject SQL or reach another schema.
 - The connection is `$RELA_DATABASE_URL` with only `search_path` changed to
@@ -778,13 +778,21 @@ While the project holds it, `rela-server`, `rela-docs` and every `rela`
 command that opens data refuse to start. The `rela-server tenant` commands
 still run, so you can do the upgrade. For each tenant in the old file:
 
-1. Run `rela-server-postgres tenant show ORG_ID` to see the derived schema
-   name.
+1. Work out the derived schema name. `tenant show` cannot tell you yet:
+   it reads the control table, which the first `tenant create` makes. In
+   `psql`, run
+   `SELECT 'org_' || left(encode(sha256(convert_to('ORG_ID', 'UTF8')), 'hex'), 16);`
+   or in a shell, run `printf '%s' 'ORG_ID' | sha256sum | cut -c1-16` and
+   put `org_` in front (on macOS, use `shasum -a 256`). For org id `acme`,
+   both give `org_822b33ad87c148a0`. In SQL, write a single quote in the org
+   id twice.
 2. Stop the servers. Rename the schema:
-   `ALTER SCHEMA tenant_acme RENAME TO org_5d41402abc4b2a76;`
+   `ALTER SCHEMA tenant_acme RENAME TO org_822b33ad87c148a0;`
 3. Rename its audit directory the same way:
-   `.rela/audit/tenants/tenant_acme` to `.rela/audit/tenants/org_5d41402abc4b2a76`.
-4. Run `rela-server-postgres tenant create -adopt ORG_ID`.
+   `.rela/audit/tenants/tenant_acme` to `.rela/audit/tenants/org_822b33ad87c148a0`.
+4. Run `rela-server-postgres tenant create -adopt ORG_ID`. Then
+   `rela-server-postgres tenant show ORG_ID` prints the schema, so you can
+   check it against step 1.
 
 Then delete `tenants.yaml` and start the servers with tenant mode on.
 
