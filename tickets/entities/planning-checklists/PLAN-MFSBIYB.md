@@ -126,11 +126,13 @@ generation, `writes` and the waiting role. The engine claims the step with a
 compare-and-set (generation, caller, time) before the write, so a second
 completion at the same generation is a conflict before it writes; `Change`
 clears the claim, and a claim older than two minutes is void. The write goes to
-`run.Subject` (id and face). The answer is `{written, moved, state, waiting}`.
+`run.Subject` (id and face). The answer is `{written, moved, state, finished,
+problem}`; `problem` is set when the properties were written but the run did not
+follow cleanly (`guard`, `moved` or `settling`).
 - Every engine update goes through one helper that carries the run's
 timeline and claim; a test fails on a direct `Runs.Update` elsewhere.
 - Without acl.yaml every role counts as held (operator shell).
-- Tasks: a new `visibility.HeaderLookup` composes the row gate with caller
+- Tasks: a new `visibility.HolderLookup.Headers` query composes the row gate with caller
 `Props` (status `input_required`) and `Narrowing` (the flows where one of the
 caller's roles, held globally or conferrable through a role relation, is waited
 for) and reads headers in the store, capped. Then `_carries` edges in one query,
@@ -146,9 +148,11 @@ fixed text for a guard that fails to evaluate.
 - The header may lag the run store after a failed header patch; complete
 revalidates against the run store.
 - Data-entry: `SetFlows(app, svc)` with a consumer-side interface; the run
-list calls `listPage` on `_flow-run` with `filter[flow]`/`filter[status]` and
-resolves the page's subjects with one edge query and one header batch.
-`_actions` on run detail come from the same checks the POSTs call.
+list (`FlowControl.RunList`) reads the `_flow-run` headers with one gated
+`visibility.HolderLookup.Headers` query, narrowed by `flow` and `status`, capped
+at 1,000 with `truncated: true` past the cap. It sorts and pages them in memory
+and resolves the page's subjects with one `_carries` edge query. `_actions` on
+run detail come from the same checks the POSTs call.
 - MCP: `mcp.WithFlows` option with a consumer-side interface,
 `mcpwire.Flows(svc)` adapter, wired in the stdio and remote servers.
 - SPA: `api/flows.ts`, `FlowRunsPanel`/`FlowRunCard` on the entity page,
@@ -215,7 +219,7 @@ a run on a hidden subject, answers like a missing one.
 | Tampering | A step form writes properties outside the step, or past the caller's grants; a stale form moves a run that moved on | Only `writes` properties are accepted; the write goes through `AuthorizeUpdate` and the field gate. The form carries the generation it saw; another generation is a conflict. A settling run refuses a change. |
 | Repudiation | A step completion cannot be traced to a person | The write is audited with the caller as principal and the flow step (`flow`, `run`, `step`, `by`); the move is recorded in the run's timeline with `by`. |
 | Information disclosure | The run list, task list, run panel or MCP tools reveal a run on a hidden subject, its existence through counts or cursors, or a hidden value through a guard verdict | Headers are read through the row gate pushed into the store; counts are taken after the gate; a hidden run is the uniform 404. Guards read only properties no `visible:` grant restricts (flowcfg load check), so a verdict reveals nothing a reader of the subject cannot read. The timeline names who moved a run, as version history names who wrote an entity. Config (flow, state, role names) is not secret. |
-| Denial of service | A task list or run list scans every run, or many runs flood a page | Lists are paged in the store or capped (task candidates) with an error past the cap; the budget tests pin a size-independent read count; the timeline is capped at 32 entries. |
+| Denial of service | A task list or run list scans every run, or many runs flood a page | The task list and the run list read headers in one gated store query, capped at 500 task candidates and 1,000 runs; past the cap the list is served with `truncated: true`, not an error. The budget tests pin a size-independent read count; the timeline is capped at 32 entries. The runs on one subject (`SubjectRuns`) have no cap yet (RR-6KWVWY8, deferred to TKT-FWQZGAM). |
 | Elevation of privilege | A caller without a waiting role completes a step, or without the permission cancels, retries or starts a run | Complete needs a waiting role on the subject (global or through a role relation); cancel, retry and start need the manual permission on the subject. `_actions` and the POST gates call the same checks (contract test). |
 
 ## Test Plan
