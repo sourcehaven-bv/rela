@@ -60,10 +60,15 @@ const maxOrgIDBytes = 256
 // SchemaFor returns the schema that holds orgID's data: `org_` plus the first
 // 16 hex characters of the SHA-256 of the org id. The name is checked
 // against [schemaNamePattern] before it is returned, so an invalid derived
-// name is refused rather than used. An empty org is [ErrUnknownTenant].
+// name is refused rather than used.
+//
+// An org id that checkOrgID refuses is [ErrUnknownTenant]: no tenant can
+// have it, because [Provisioner.Create] refuses it too. Every path derives
+// the schema here, so the request path, the operator commands and the
+// provisioner all apply the same check.
 func SchemaFor(orgID string) (string, error) {
-	if orgID == "" {
-		return "", fmt.Errorf("%w: empty org_id", ErrUnknownTenant)
+	if err := checkOrgID(orgID); err != nil {
+		return "", fmt.Errorf("%w: %w", ErrUnknownTenant, err)
 	}
 	sum := sha256.Sum256([]byte(orgID))
 	schema := schemaPrefix + hex.EncodeToString(sum[:])[:schemaHashChars]
@@ -75,7 +80,7 @@ func SchemaFor(orgID string) (string, error) {
 
 // checkOrgID refuses an org id that should not be stored: empty, too long,
 // not UTF-8, or holding control characters. Pratique's org ids are short
-// opaque strings, so anything else is a mistake worth stopping at create.
+// opaque strings, so anything else is a mistake.
 func checkOrgID(orgID string) error {
 	switch {
 	case orgID == "":

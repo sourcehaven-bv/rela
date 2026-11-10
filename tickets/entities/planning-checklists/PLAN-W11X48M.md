@@ -18,10 +18,11 @@ status: done
 **Scope:** In: derived schema and DSN from org_id (ClusterResolver), control
 table `rela_control.tenants` with status, Provisioner and `rela-server tenant
 create|show|suspend|resume|erase`, tenant mode switch (flag/env), max_open and
-max_resident as flags/env, revocation of open tenants, removal of tenants.yaml
-and its readers, docs. Out: webhook provisioning (TKT-TNPRV8), per-org DSN
-override (documented as a future decorator with the DSN in the secret store),
-revalidation in long-running CLI processes (follow-up).
+max_resident as flags/env, revocation of open tenants, revalidation in
+long-running CLI processes (tenant.Watch/WatchDeployment, RR-7EKSK1I), removal
+of tenants.yaml and its readers, docs. Out: webhook provisioning (TKT-TNPRV8),
+per-org DSN override (documented as a future decorator with the DSN in the
+secret store).
 
 **Acceptance Criteria:**
 1. Two orgs resolve to different schemas: TestSchemaFor, TestTenantMode_CreateServeSuspendErase.
@@ -74,9 +75,12 @@ internal/dataentry/webhook.go, internal/tenanthost/host.go, docs-project guides.
 - [x] Error handling doesn't leak sensitive information
 
 **Input Sources & Validation:** org_id from a verified JWT or the operator CLI:
-checked by CheckOrgID (printable, bounded length), never used in SQL text; the
-schema name is a hash checked against schemaNamePattern. RELA_DATABASE_URL from
-env only.
+checked by checkOrgID (non-empty, at most 256 bytes, valid UTF-8, no control
+characters) inside SchemaFor, so the request path (ClusterResolver.Resolve and
+Lookup), the operator commands and Provisioner.Create all refuse an invalid
+org id as an unknown tenant before any lookup (TKT-UWYW1UD, #2174). Never
+used in SQL text; the schema name is a hash checked against
+schemaNamePattern. RELA_DATABASE_URL from env only.
 
 **Security-Sensitive Operations:** DROP SCHEMA under the exclusive advisory
 lock, with refusal of public and reserved schemas, the symlink check on the

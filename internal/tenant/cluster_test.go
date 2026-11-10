@@ -67,22 +67,31 @@ func TestSchemaFor(t *testing.T) {
 		}
 	}
 	// Org ids that are hostile as identifiers still derive a plain name.
-	for _, org := range []string{`x"; DROP SCHEMA public; --`, "ORG-A", "ünïcode", strings.Repeat("z", 300)} {
+	hostile := []string{`x"; DROP SCHEMA public; --`, "ORG-A", "ünïcode", strings.Repeat("z", maxOrgIDBytes)}
+	for _, org := range hostile {
 		s, err := SchemaFor(org)
 		if err != nil || checkSchemaName(s) != nil {
 			t.Errorf("SchemaFor(%q) = %q, %v", org, s, err)
 		}
 	}
-	if _, err := SchemaFor(""); !errors.Is(err, ErrUnknownTenant) {
-		t.Errorf("SchemaFor(\"\") = %v, want ErrUnknownTenant", err)
+	// An org id no tenant can have is an unknown tenant.
+	for _, org := range invalidOrgIDs {
+		if s, err := SchemaFor(org); !errors.Is(err, ErrUnknownTenant) || s != "" {
+			t.Errorf("SchemaFor(%q) = %q, %v; want ErrUnknownTenant", org, s, err)
+		}
 	}
+}
+
+// invalidOrgIDs are org ids that checkOrgID refuses.
+var invalidOrgIDs = []string{
+	"", strings.Repeat("z", maxOrgIDBytes+1), string([]byte{0xff, 0xfe}), "a\x00b", "a\nb", "a\x7fb",
 }
 
 func TestCheckOrgID(t *testing.T) {
 	t.Parallel()
 	for org, ok := range map[string]bool{
-		"org-a": true, "": false, strings.Repeat("a", 257): false, "a\nb": false, "a\x00b": false,
-		string([]byte{0xff, 0xfe}): false,
+		"org-a": true, "": false, strings.Repeat("a", 256): true, strings.Repeat("a", 257): false,
+		"a\nb": false, "a\x00b": false, string([]byte{0xff, 0xfe}): false,
 	} {
 		if err := checkOrgID(org); (err == nil) != ok {
 			t.Errorf("checkOrgID(%q) = %v, want ok=%v", org, err, ok)
@@ -152,6 +161,37 @@ func TestClusterResolver_Resolve(t *testing.T) {
 		}
 	}
 }
+
+// TestClusterResolver_RefusesInvalidOrgID pins that the request path applies
+// the same org id check as [Provisioner.Create]: an org id that check refuses
+// is an unknown tenant, and the control table is not read for it.
+func TestClusterResolver_RefusesInvalidOrgID(t *testing.T) {
+	t.Parallel()
+
+	ctrl := &countingControl{}
+	r := newClusterResolver(clusterBase, ctrl, nil)
+	for _, org := range invalidOrgIDs {
+		if got, err := r.Resolve(t.Context(), org); !errors.Is(err, ErrUnknownTenant) || got != (Tenant{}) {
+			t.Errorf("Resolve(%q) = %+v, %v; want ErrUnknownTenant", org, got, err)
+		}
+		if _, err := r.Lookup(t.Context(), org); !errors.Is(err, ErrUnknownTenant) {
+			t.Errorf("Lookup(%q) = %v; want ErrUnknownTenant", org, err)
+		}
+	}
+	if ctrl.lookups != 0 {
+		t.Errorf("the control table was read %d times for invalid org ids", ctrl.lookups)
+	}
+}
+
+// countingControl is an empty control table that counts its lookups.
+type countingControl struct{ lookups int }
+
+func (c *countingControl) lookup(context.Context, string) (Record, bool, error) {
+	c.lookups++
+	return Record{}, false, nil
+}
+
+func (c *countingControl) ready(context.Context) error { return nil }
 
 // TestClusterResolver_Collision pins that an org whose derived schema is
 // recorded for another org is refused, never served the other org's data.
