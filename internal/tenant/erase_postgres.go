@@ -73,16 +73,25 @@ func pinSchema(ctx context.Context, dsn, schema string) (io.Closer, error) {
 		return nil, fmt.Errorf("the connection lands in %s, not %q: the schema does not exist", landed, schema)
 	}
 	keep = true
-	return pinnedConn{conn}, nil
+	return pinnedConn{conn: conn, schema: schema}, nil
 }
 
 // pinnedConn is the connection that holds a tenant's lock shared.
-type pinnedConn struct{ conn *pgx.Conn }
+type pinnedConn struct {
+	conn   *pgx.Conn
+	schema string
+}
 
+// Close releases the lock and then the connection. The explicit unlock
+// matters: closing a connection only asks the server to end the session,
+// and the server releases the session's locks some time after Close
+// returns. An erase or create that runs right after a close would then still
+// find the tenant locked.
 func (p pinnedConn) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), schemaCheckTimeout)
 	defer cancel()
-	return p.conn.Close(ctx)
+	_, uerr := p.conn.Exec(ctx, "SELECT pg_advisory_unlock_shared($1, hashtext($2))", tenantLockClass, p.schema)
+	return errors.Join(uerr, p.conn.Close(ctx))
 }
 
 // dropSchema drops schema and everything in it, holding the tenant's lock
@@ -107,7 +116,7 @@ func dropSchema(ctx context.Context, dsn, schema string) (bool, error) {
 		// pgx redacts the password in connect errors.
 		return false, fmt.Errorf("connect: %w", err)
 	}
-	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
+	defer closeReleasing(ctx, conn)
 
 	var locked bool
 	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1, hashtext($2))",

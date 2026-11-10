@@ -123,7 +123,7 @@ func (p *Provisioner) Create(ctx context.Context, orgID string, adopt bool) (Ten
 	if err != nil {
 		return Tenant{}, fmt.Errorf("tenant: create org_id %q: %w", orgID, err)
 	}
-	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
+	defer closeReleasing(ctx, conn)
 	if err = ensureControl(ctx, conn); err != nil {
 		return Tenant{}, fmt.Errorf("tenant: create org_id %q: %w", orgID, err)
 	}
@@ -247,7 +247,7 @@ func (p *Provisioner) Erase(ctx context.Context, orgID string) (Tenant, Erasure,
 	if err != nil {
 		return Tenant{}, Erasure{}, fmt.Errorf("tenant: erase org_id %q: %w", orgID, err)
 	}
-	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
+	defer closeReleasing(ctx, conn)
 	rec, err := p.record(ctx, conn, orgID)
 	if err != nil {
 		return Tenant{}, Erasure{}, err
@@ -271,6 +271,17 @@ func (p *Provisioner) Erase(ctx context.Context, orgID string) (Tenant, Erasure,
 			"deleted: %w; run the command again", orgID, err)
 	}
 	return t, res, nil
+}
+
+// closeReleasing releases every advisory lock conn holds and closes it. A
+// plain close only asks the server to end the session, which releases the
+// session's locks some time after Close returns, so a command run right
+// after this one could still find the tenant locked.
+func closeReleasing(ctx context.Context, conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), schemaCheckTimeout)
+	defer cancel()
+	_, _ = conn.Exec(ctx, "SELECT pg_advisory_unlock_all()")
+	_ = conn.Close(ctx)
 }
 
 // lockExclusive takes the tenant's lock exclusively on conn, until conn
