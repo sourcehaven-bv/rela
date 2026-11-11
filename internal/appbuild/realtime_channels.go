@@ -42,9 +42,10 @@ func (s realtimeChannelSchema) ChannelTypeNames() []string {
 	return out
 }
 
-// MessageType answers the message type's properties, sorted by name, and
-// whether its messages count toward unread: a stored type without
-// `unread: false`. A signal type never counts, since it is never stored.
+// MessageType answers the message type's properties, sorted by name,
+// whether its messages count toward unread (a stored type without
+// `unread: false`; a signal type never counts, since it is never stored),
+// and whether a session transition of the type declares a `button:`.
 func (s realtimeChannelSchema) MessageType(channelType, messageType string) (dataentryconfig.MessageFacts, bool) {
 	ct, ok := s.c.ChannelType(channelType)
 	if !ok {
@@ -60,7 +61,28 @@ func (s realtimeChannelSchema) MessageType(channelType, messageType string) (dat
 	}
 	sort.Slice(props, func(i, j int) bool { return props[i].Name < props[j].Name })
 	counts := mt.Persist == realtimecfg.PersistLog && !mt.NoUnread
-	return dataentryconfig.MessageFacts{Properties: props, CountsUnread: counts}, true
+	return dataentryconfig.MessageFacts{
+		Properties:       props,
+		CountsUnread:     counts,
+		HasPresetButtons: hasPresetButtons(ct.Session(), messageType),
+	}, true
+}
+
+// hasPresetButtons reports whether an entry of `on.<messageType>` in any
+// state of sess declares a `button:`. Nil: sess is accepted and means no
+// session, so no buttons.
+func hasPresetButtons(sess *realtimecfg.Session, messageType string) bool {
+	if sess == nil {
+		return false
+	}
+	for _, st := range sess.States() {
+		for _, tr := range sess.Branches(st.Name, messageType) {
+			if _, ok := tr.Button(); ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s realtimeChannelSchema) BusyFacts(channelType string) (dataentryconfig.BusyFacts, bool) {

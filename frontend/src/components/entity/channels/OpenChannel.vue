@@ -447,6 +447,7 @@ const decisionsApi = useSessionDecisions({
     focusHeader: () => sessionHeader.value?.focus(),
   },
   quiet: (type) => !!presentation.value?.messages?.[type]?.display,
+  unoffered: (type) => presentation.value?.messages?.[type]?.offer === false,
 })
 const { decisions, decisionSeq, deciding, onDecide, resetDecisions } = decisionsApi
 const placed = decisionsApi.placed

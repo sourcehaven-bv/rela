@@ -106,6 +106,11 @@ export interface DecisionDeps {
    * state, so they do not move when the reader toggles the view.
    */
   quiet?: (type: string) => boolean
+  /**
+   * Whether people do not post the type in the web app (a presentation
+   * `offer: false`): it gets no type button. Absent: every type is offered.
+   */
+  unoffered?: (type: string) => boolean
 }
 
 /**
@@ -188,6 +193,7 @@ export function useSessionDecisions(d: DecisionDeps) {
       const ct = d.channelType()
       const h = d.ch.head.value
       const cs = h?.channel.session
+      const unoffered = ct.message_types.filter((mt) => d.unoffered?.(mt.name)).map((mt) => mt.name)
       const key = JSON.stringify([
         cs?.generation,
         cs?.state,
@@ -199,9 +205,10 @@ export function useSessionDecisions(d: DecisionDeps) {
         h?._actions.transitions,
         h?._actions.entries,
         d.ch.actionsGeneration.value,
+        unoffered,
       ])
       if (prev && prev.ct === ct && prev.key === key) return prev
-      const value = h ? decisionViews(ct, h, d.ch.actionsGeneration.value) : []
+      const value = h ? decisionViews(ct, h, d.ch.actionsGeneration.value, new Set(unoffered)) : []
       return { ct, key, value }
     }
   )

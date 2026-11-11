@@ -461,6 +461,19 @@ describe('presentationView', () => {
     })
   })
 
+  it('passes offer: false and drops offer: true', () => {
+    expect(
+      presentationView({
+        messages: { 'pr-event': { offer: false }, card: { offer: true } },
+      })
+    ).toEqual({
+      messages: {
+        'pr-event': { fields: undefined, offer: false },
+        card: { fields: undefined },
+      },
+    })
+  })
+
   it('drops an unknown display, so the messages show in full', () => {
     const p = { messages: { claim: { display: 'folded' } } } as unknown as Parameters<
       typeof presentationView
@@ -1064,6 +1077,10 @@ describe('session decisions', () => {
       })
     }
 
+    it('gives a type people are not offered (offer: false) no button', () => {
+      expect(decisionViews(run, head(), 4, new Set(['revise']))).toEqual([approve])
+    })
+
     it('is empty for a channel type without a session', () => {
       expect(decisionViews(room, head(), 4)).toEqual([])
     })
@@ -1125,6 +1142,23 @@ describe('session decisions', () => {
         },
       }
     }
+    it('keeps the presets of a type people are not offered, and drops its type button', () => {
+      const h = ph(
+        [
+          { message_type: 'stop', to: 'abandoned', entry: 0, button: { label: 'Stop now' } },
+          { message_type: 'stop', to: 'accepted', entry: 1 },
+        ],
+        [
+          ['stop', 0],
+          ['stop', 1],
+        ],
+        ['stop']
+      )
+      expect(decisionViews(plan, h, 4, new Set(['stop'])).map((v) => v.key)).toEqual([
+        'preset:stop:0',
+      ])
+    })
+
     const cases: { name: string; head: ReturnType<typeof ph>; gen?: number; want: unknown[] }[] = [
       {
         name: 'two presets and no type button',

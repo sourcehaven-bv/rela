@@ -1496,7 +1496,8 @@ The server refuses the file when the block:
   it;
 - lists a property twice, or gives a widget that does not suit the
   property type;
-- gives a message type a `display` other than `collapsed` or `hidden`.
+- gives a message type a `display` other than `collapsed` or `hidden`, or
+  an `offer` other than `true` or `false`.
 
 Without `realtime.yaml`, realtime is off and the block has no effect. The
 server then logs a warning instead of refusing the file, so you can add the
@@ -1640,6 +1641,59 @@ When a type is `hidden` here but still counts as unread in
 A mention or reply in a quiet message still shows in the inbox. Clicking
 it opens the channel at that message and shows it in full, also when its
 type is `hidden` or `collapsed`.
+
+### Types that people do not post
+
+Some message types are posted only by an agent or an integration, such as a
+`pr-event` that a pull request watcher posts, or a `sized` move that a
+sizing agent posts. When people and agents share a role, the web app offers
+these types to people too: in the composer's type list, and, for a type
+that moves the session, as a decision button. `offer: false` on a message
+type says that people do not post it in the web app:
+
+```yaml
+channels:
+  task:
+    messages:
+      pr-event:
+        offer: false
+      sized:
+        offer: false
+```
+
+For such a type, the web app:
+
+- leaves it out of the composer's type list;
+- shows no decision button for it, the button rela adds for each type that
+  moves the session out of the current state;
+- shows Reply only when a type that the composer offers can reply. When the
+  composer would offer no type at all, it is not shown.
+
+The rest stays as it was:
+
+- the messages of the type show in the channel as usual. Add
+  `display: collapsed` or `display: hidden` to tone them down as well;
+- the type can still be posted through the HTTP API, over MCP with
+  `post_message`, and with `rela channel post`;
+- a preset button, declared with `button:` on a transition in
+  `realtime.yaml`, still shows. rela warns at load when a type with
+  `offer: false` has one, because the two settings disagree about whether
+  people post the type. Remove the preset or the `offer: false`, whichever
+  is wrong;
+- a button with `compose: true`, or an **Other** answer to a question,
+  still opens the composer with the type it names. When the message is
+  posted or the reply is cancelled, the composer goes back to its usual
+  types;
+- you can still edit a message of the type that you posted.
+
+A session state that waits for a person should leave that person a way
+forward. If every transition out of it has `offer: false`, the person sees
+no decision for it.
+
+`offer: false` is a display option, not access control. A person who may
+post the type can still post it through the API. To stop a role from
+posting a type, leave the role out of the type's `post` rule in
+`realtime.yaml`.
 
 ### Compact session header
 
