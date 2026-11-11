@@ -15,6 +15,10 @@
 #                         its referenced entry assets exist and are non-empty.
 #                         Catches a build that silently produced nothing.
 #
+#   absent <bin> <dir>    the inverse, for headless builds: the binary contains
+#                         none of those asset names and no editor bundle. A
+#                         scan error fails it rather than reading as "absent".
+#
 #   binary <bin> <dir>    a built binary contains the exact hashed asset names
 #                         referenced by <dir>/index.html. This is the
 #                         load-bearing check: it validates what really ships,
@@ -34,6 +38,7 @@ set -euo pipefail
 usage() {
   echo "usage: $0 tree <dist-dir>" >&2
   echo "       $0 binary <binary-path> <dist-dir>" >&2
+  echo "       $0 absent <binary-path> <dist-dir>" >&2
   exit 2
 }
 
@@ -145,6 +150,47 @@ check_binary() {
   echo "OK: $bin embeds the SPA ($found of $(echo "$assets" | wc -l | tr -d ' ') entry assets matched)"
 }
 
+# editorMarker is a class name the <rela-editor> bundle styles; no Go source in
+# a shipped binary contains it (only a test fixture does).
+editorMarker='.rela-editor-shell'
+
+check_absent() {
+  local bin="$1" dir="$2"
+
+  if [ ! -f "$bin" ]; then
+    echo "FAIL: binary does not exist: $bin" >&2
+    return 1
+  fi
+  if [ ! -s "$dir/index.html" ]; then
+    echo "FAIL: cannot derive asset names to look for: missing $dir/index.html" >&2
+    return 1
+  fi
+
+  local assets
+  assets=$(entry_assets "$dir/index.html")
+  if [ -z "$assets" ]; then
+    echo "FAIL: $dir/index.html references no assets to look for" >&2
+    return 1
+  fi
+
+  local a n
+  while IFS= read -r a; do
+    n=$(grep_count "$a" "$bin") || return 1
+    if [ "$n" -gt 0 ]; then
+      echo "FAIL: $bin embeds SPA asset $a" >&2
+      return 1
+    fi
+  done <<<"$assets"
+
+  n=$(grep_count "$editorMarker" "$bin") || return 1
+  if [ "$n" -gt 0 ]; then
+    echo "FAIL: $bin embeds the <rela-editor> bundle ($editorMarker)" >&2
+    return 1
+  fi
+
+  echo "OK: $bin embeds no SPA ($(echo "$assets" | wc -l | tr -d ' ') entry assets absent) and no editor bundle"
+}
+
 case "${1:-}" in
   tree)
     [ $# -eq 2 ] || usage
@@ -153,6 +199,10 @@ case "${1:-}" in
   binary)
     [ $# -eq 3 ] || usage
     check_binary "$2" "$3"
+    ;;
+  absent)
+    [ $# -eq 3 ] || usage
+    check_absent "$2" "$3"
     ;;
   *) usage ;;
 esac

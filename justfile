@@ -192,6 +192,23 @@ build-server-sqlite: build-frontend
     @mkdir -p {{build_dir}}
     CGO_ENABLED=0 go build -tags sqlite -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-server-sqlite ./cmd/rela-server
 
+# Build the headless SQLite server (API + MCP, no web UI). Needs no frontend build.
+build-server-headless-sqlite:
+    @echo "Building rela-server-headless-sqlite..."
+    @mkdir -p {{build_dir}}
+    CGO_ENABLED=0 go build -tags sqlite,headless -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-server-headless-sqlite ./cmd/rela-server
+
+# Vet and test the headless tag, as the CI "Headless Server" job does.
+test-headless:
+    go vet -tags headless $(go list ./... | grep -v -E '/cmd/rela-(desktop|docs)$')
+    go test -tags headless -run 'Headless' ./internal/dataentry/
+
+# Build the headless PostgreSQL server (API + MCP, no web UI). Needs no frontend build.
+build-server-headless-postgres:
+    @echo "Building rela-server-headless-postgres..."
+    @mkdir -p {{build_dir}}
+    CGO_ENABLED=0 go build -tags postgres,headless -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-server-headless-postgres ./cmd/rela-server
+
 # Build the docs CLI (rela-docs). Embeds the Vue frontend: screenshot{}
 # islands drive the data-entry SPA in a headless browser. This is the only
 # binary that links chromedp — kept out of rela / rela-server on purpose.
@@ -421,6 +438,7 @@ lint:
     {{golangci_lint}} --build-tags sqlite
     {{golangci_lint}} --build-tags postgres
     {{golangci_lint}} --build-tags memorybackend
+    {{golangci_lint}} --build-tags headless ./internal/dataentry/...
 
 # Check for known vulnerabilities (govulncheck with OSV filter)
 govulncheck:

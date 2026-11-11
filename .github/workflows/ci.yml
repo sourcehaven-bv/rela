@@ -403,6 +403,13 @@ jobs:
         if: ${{ !cancelled() }}
         run: golangci-lint run --build-tags memorybackend ./...
 
+      # The headless tag only swaps the UI embeds in internal/dataentry and adds
+      # compile guards to cmd/rela-desktop and cmd/rela-docs, which must not
+      # build under it, so the run is scoped to the one package it changes.
+      - name: Run golangci-lint (headless)
+        if: ${{ !cancelled() }}
+        run: golangci-lint run --build-tags headless ./internal/dataentry/...
+
   arch-lint:
     name: Architecture
     runs-on: ubuntu-latest
@@ -1270,6 +1277,63 @@ jobs:
           # The manager's write-concurrency tests race goroutines on purpose
           # (TKT-WE0S2K), so they run with -race here too.
           go test -race -tags sqlite -run 'TestConcurrency_' ./internal/entitymanager/
+
+  headless:
+    name: Headless Server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        id: setup-go
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cache Go build cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/go-build
+          key: go-headless-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-headless-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}-
+
+      # No frontend build on purpose: the headless servers must build from a
+      # clean checkout, because the release builds them without relying on it.
+      # Every OS the release ships, so a platform-specific break fails here
+      # and not as an empty release. Not a cross-compile matrix entry: that
+      # job also builds rela-docs, which refuses the tag.
+      - name: Build headless servers
+        env:
+          CGO_ENABLED: "0"
+          GOARCH: amd64
+        run: |
+          set -euo pipefail
+          for os in linux darwin windows; do
+            GOOS=$os go build -tags sqlite,headless -o /dev/null ./cmd/rela-server
+            GOOS=$os go build -tags postgres,headless -o /dev/null ./cmd/rela-server
+          done
+
+      # go vet compiles every test file under the tag, so a test that only
+      # breaks headless fails here. Only the headless tests RUN: the rest of
+      # the suite pins UI routes a headless build leaves out by design.
+      # rela-desktop and rela-docs fail to compile under the tag on purpose.
+      - name: Vet and test the headless tag
+        run: |
+          set -euo pipefail
+          mapfile -t pkgs < <(go list ./... | grep -v -E '/cmd/rela-(desktop|docs)$')
+          go vet -tags headless "${pkgs[@]}"
+          go test -race -tags headless -run 'Headless' ./internal/dataentry/
+
+      - name: Assert desktop and docs refuse the headless tag
+        run: |
+          for pkg in ./cmd/rela-desktop ./cmd/rela-docs; do
+            if go build -tags headless -o /dev/null "$pkg" 2>/dev/null; then
+              echo "FAIL: $pkg built with -tags headless" >&2
+              exit 1
+            fi
+          done
 
   cross-compile:
     name: Cross-Compile (${{ matrix.goos }}/${{ matrix.tags || 'default' }})

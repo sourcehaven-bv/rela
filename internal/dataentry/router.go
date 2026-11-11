@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -43,6 +44,9 @@ const principalUserMaxLen = 256
 // message instead of silently serving a directory listing (the BUG-W144
 // regression class). Tests that construct routers via NewRouter do not need
 // to call this.
+//
+// It fails in a headless build too, which embeds no SPA by design: a caller
+// that serves the UI must not run headless. rela-server skips the check there.
 func CheckEmbeddedSPA() error {
 	spaFS, err := fs.Sub(staticFiles, "static/v2")
 	// coverage-ignore-start: defensive: fs.Sub on the compile-time embed.FS with the literal "static/v2" path cannot
@@ -115,7 +119,13 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 		panic("failed to mount embedded static filesystem (static): " + err.Error())
 	}
 	// coverage-ignore-end
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+	// A headless build embeds no web UI, so it mounts neither /static/ nor
+	// the SPA (see the root handler below). A test-injected spaFS keeps the
+	// UI routes so router tests behave alike in both builds.
+	serveUI := !Headless || cfg.spaFS != nil
+	if serveUI {
+		mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+	}
 
 	// Vue SPA served at root. The build output dir is kept as `static/v2` to
 	// avoid churn in frontend/vite.config.ts; see TKT-MNOO. Presence of
@@ -204,7 +214,9 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 	custom := newCustomAssets(a.assets, shell, func() bool {
 		return shellErr == nil && !a.State().Cfg.App.DisableCustomInjection
 	})
-	mux.HandleFunc(customURLPrefix, custom.serveAsset)
+	if serveUI {
+		mux.HandleFunc(customURLPrefix, custom.serveAsset)
+	}
 
 	// Serve Vue SPA at root (catch-all for client-side routing).
 	//
@@ -227,7 +239,11 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 	// not a discovery probe to the SPA — which must be the customisation-aware
 	// handler, or operator custom.css would be dropped on every CalDAV-enabled
 	// deployment.
-	spa := withSpecLink(spaHandlerWithCustom(spaFS, custom))
+	root := headlessRoot()
+	if serveUI {
+		root = spaHandlerWithCustom(spaFS, custom)
+	}
+	spa := withSpecLink(root)
 	if a.caldavAliases != nil {
 		if routes := newCalDAVRoutes(a); routes != nil {
 			routes.registerWellKnown(mux, spa)
@@ -960,6 +976,30 @@ func withSpecLink(next http.Handler) http.Handler {
 			w.Header().Add("Link", link)
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+// headlessRootBody is what a headless build answers at `/`. It names only the
+// API paths, which every build serves, so it discloses nothing.
+const headlessRootBody = "rela-server (headless): REST API at /api/v1, OpenAPI at " + openAPISpecPath + "\n"
+
+// headlessRoot is the root catch-all of a headless build: GET or HEAD `/`
+// answers a short text pointer to the API, and every other path answers 404.
+// [withSpecLink] adds the OpenAPI Link header, so a client that discovers the
+// API from `/` keeps working.
+func headlessRoot() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
+			http.NotFound(w, r)
+			return
+		}
+		h := w.Header()
+		h.Set("Content-Type", "text/plain; charset=utf-8")
+		h.Set("Content-Length", strconv.Itoa(len(headlessRootBody)))
+		if r.Method == http.MethodHead {
+			return
+		}
+		_, _ = io.WriteString(w, headlessRootBody)
 	})
 }
 

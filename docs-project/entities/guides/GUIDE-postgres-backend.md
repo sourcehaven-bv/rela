@@ -20,6 +20,25 @@ SQL-queryable) rather than a directory of markdown files — including
 deployments with **multiple server processes** sharing one database (see
 [Multiple writers](#multiple-writers)).
 
+## Headless server
+
+`rela-server-headless-postgres` is the same server with the web UI left out.
+It serves the REST API under `/api/v1`, server-sent events and the remote
+MCP endpoint, and nothing else:
+
+- `/` answers a short text that points to `/api/v1` and to the OpenAPI
+  document.
+- `/static/` and every other web UI path answer 404.
+- Custom apps no longer get the built-in editor, so `_rela-editor.js` and
+  `_rela-editor.css` answer 404.
+- Co-editing is off, and operator assets under `/_custom/` are not served.
+
+Use it when clients reach rela only through the API or MCP, or when you host
+a UI elsewhere. It ships in its own archive,
+`rela-headless-postgres_<version>_<os>_<arch>`, and takes the same flags as
+`rela-server-postgres`. To build it from source, run
+`just build-server-headless-postgres`. That build does not need the frontend.
+
 ## What still lives on disk
 
 PostgreSQL backs **data only**. The project's schema and configuration

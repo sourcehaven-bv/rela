@@ -314,6 +314,11 @@ func (s *server) buildApp(
 	if s.configure != nil {
 		dataentry.SetConfigure(app, s.configure)
 	}
+	// A headless build has no co-editing client and no SPA build id to admit
+	// one by, so the relay route stays off and answers 404.
+	if dataentry.Headless {
+		return app, nil
+	}
 	if err := dataentry.EnableCollab(app, relay); err != nil {
 		return nil, err
 	}
