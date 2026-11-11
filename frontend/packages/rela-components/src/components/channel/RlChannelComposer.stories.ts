@@ -1450,7 +1450,7 @@ export const OfferFalseSelectPosted: Story = {
     setup() {
       const composer = ref<ComposerHandle | null>(null)
       const pick = () => composer.value!.select('dismiss')
-      const posted = () => composer.value!.reset({ type: 'dismiss', values: { reason: 'Noise' } } as ChannelPostEvent)
+      const posted = () => composer.value!.reset({ type: 'dismiss', values: { reason: 'Noise' }, rendered: ['reason'] })
       return { args, composer, pick, posted }
     },
     template: `

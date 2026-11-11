@@ -416,7 +416,7 @@ export function decisionViews(
   ct: ChannelTypeSchema,
   head: DecisionHead,
   actionsGeneration: number | undefined,
-  unoffered: (type: string) => boolean = () => false
+  unoffered: ReadonlySet<string> = new Set()
 ): AppDecisionView[] {
   const s = ct.session
   const cs = head.channel.session
@@ -449,7 +449,7 @@ export function decisionViews(
       listed && (listed.get(name) ?? new Set()),
       stateOf
     )
-    if (!rest.length || unoffered(name)) return views
+    if (!rest.length || unoffered.has(name)) return views
     const targets = [...new Set(rest.map((tr) => tr.to))]
     const view: AppDecisionView = { key: name, messageType: name, label: mt.label || name }
     const [only, ...more] = targets

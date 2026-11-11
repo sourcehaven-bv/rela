@@ -1078,7 +1078,7 @@ describe('session decisions', () => {
     }
 
     it('gives a type people are not offered (offer: false) no button', () => {
-      expect(decisionViews(run, head(), 4, (t) => t === 'revise')).toEqual([approve])
+      expect(decisionViews(run, head(), 4, new Set(['revise']))).toEqual([approve])
     })
 
     it('is empty for a channel type without a session', () => {
@@ -1154,7 +1154,7 @@ describe('session decisions', () => {
         ],
         ['stop']
       )
-      expect(decisionViews(plan, h, 4, (t) => t === 'stop').map((v) => v.key)).toEqual([
+      expect(decisionViews(plan, h, 4, new Set(['stop'])).map((v) => v.key)).toEqual([
         'preset:stop:0',
       ])
     })
