@@ -360,6 +360,19 @@ are otherwise database-global, so without this two rela schemas sharing
 one database would migrate, sweep, and write behind each other's locks
 despite being entirely independent deployments.
 
+A long-running host (rela-server or the desktop app) whose project
+declares flows also runs the flow worker. The flow worker and the
+realtime worker each hold a session advisory lock while they lead, and
+each lock pins a pool connection. These pins share the pool with keyed
+entity locks:
+
+- `pool_max_conns` must be at least 4. rela-server refuses to start with
+  a smaller pool when the project declares flows.
+- At most `max(1, (pool_max_conns - 2) / 2)` keyed locks are held at
+  once. A further lock request waits for a free slot.
+- In tenant mode, each open tenant with flows pins one more connection.
+  Count it when you size `max_connections`.
+
 ## Version history (time machine)
 
 The PostgreSQL build automatically keeps a **content version history** of every

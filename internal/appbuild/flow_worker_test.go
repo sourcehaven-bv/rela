@@ -40,6 +40,19 @@ const workerFlows = `
         on:
           done: { to: marked }
       marked: { final: true }
+  refused:
+    subject: person
+    run_as: system:onboarding-bot
+    per_subject: many
+    start: [{ on: manual, permission: onboarding.start }]
+    initial: mark
+    states:
+      mark:
+        outputs:
+          - set: { properties: { salary: 1 } }
+        on:
+          done: { to: marked }
+      marked: { final: true }
   review:
     subject: person
     run_as: system:onboarding-bot
@@ -98,6 +111,20 @@ func workerProject(t *testing.T, clock *testClock) *appbuild.Services {
 	unique := strings.Replace(string(schema), "        required: true\n", "        required: true\n        unique: true\n", 1)
 	require.NotEqual(t, string(schema), unique)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "metamodel.yaml"), []byte(unique), 0o600))
+	// The bot may write a salary only on a hired person: a grant the load
+	// check counts as granted and the write path judges on the row.
+	policy, err := os.ReadFile(filepath.Join(root, "acl.yaml"))
+	require.NoError(t, err)
+	bot := "  onboarding-bot:\n    read: [person, task]\n    update: [person]\n"
+	gated := strings.Replace(string(policy), bot, bot+`    fields:
+      person:
+        - field: stage
+          when: "true"
+        - field: salary
+          when: "entity.status == 'hired'"
+`, 1)
+	require.NotEqual(t, string(policy), gated)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "acl.yaml"), []byte(gated), 0o600))
 	svc, err := appbuildOnDiskWithOpts(t, root, appbuild.WithBackgroundAutomationJobs(), appbuild.WithClock(clock.Now))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })
@@ -182,6 +209,42 @@ func TestFlowWorker_RecoversPendingOutput(t *testing.T) {
 		titles = append(titles, task.Properties["title"])
 	}
 	require.Equal(t, []any{"Ada's papers"}, titles, "the output was written once, as run_as")
+}
+
+// TestFlowWorker_OutputRefusedForRunAs pins that the worker writes an
+// output as the flow's run_as under the real policy and fails closed: the
+// bot may set a salary only on a hired person (see workerProject), so on
+// Ada, who is not hired, the output is refused on every tick, nothing is
+// written, and the run stays pending. Neither system:flow nor the worker
+// grants it more.
+func TestFlowWorker_OutputRefusedForRunAs(t *testing.T) {
+	clock := &testClock{now: time.Now().UTC()}
+	svc := workerProject(t, clock)
+	addFlowPerson(t, svc, "PER-1", map[string]any{"name": "Ada", "status": "new"})
+	ctx := context.Background()
+	id, err := appbuild.FlowEngine(svc).Start(ctx, "refused", entity.Ref{ID: "PER-1"})
+	require.Error(t, err, "run_as may not set the salary of a person who is not hired")
+	require.NotEmpty(t, id)
+
+	for range 3 {
+		clock.Add(2 * time.Hour)
+		advanced, failed, ok := appbuild.FlowWorkerTick(ctx, svc)
+		require.True(t, ok)
+		require.Zero(t, advanced)
+		require.Equal(t, 1, failed, "the worker is refused as run_as was")
+	}
+	h := header(t, svc, id)
+	require.NotEqual(t, "completed", h[metamodel.FlowRunPropStatus])
+	require.Equal(t, "mark", h[metamodel.FlowRunPropState])
+	p, err := svc.Store().GetEntity(ctx, entity.Ref{ID: "PER-1"})
+	require.NoError(t, err)
+	require.Nil(t, p.Properties["salary"], "nothing was written")
+
+	// Once the row admits the grant, the same output goes through.
+	setPerson(t, svc, "PER-1", map[string]any{"status": "hired"})
+	clock.Add(2 * time.Hour)
+	require.Equal(t, 1, tick(t, svc))
+	require.Equal(t, "completed", header(t, svc, id)[metamodel.FlowRunPropStatus])
 }
 
 // TestFlowWorker_JoinWhenBecomesTrue pins that a join whose `when:` was
