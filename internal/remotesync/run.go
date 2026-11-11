@@ -229,7 +229,7 @@ func Run(ctx context.Context, m *Mapping, d Deps, o Options) (Report, error) {
 	runErr := r.apply(ctx, diff, gone)
 	if runErr == nil && m.Remote.Push {
 		rep.Pushed = &PushCounts{}
-		runErr = r.push(ctx)
+		runErr = pusher{r}.push(ctx)
 	}
 	r.forgetConflicts()
 	rep.Held = len(held.entries)

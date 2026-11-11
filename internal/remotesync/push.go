@@ -40,8 +40,12 @@ import (
 // maxPushAnswer caps the body of a push's answer.
 const maxPushAnswer = maxEntityBytes
 
+// pusher runs the push phase of a run. It shares the run's state: the
+// ledger, the conflict list and the report.
+type pusher struct{ *runner }
+
 // push sends the local changes of every mapped type.
-func (r *runner) push(ctx context.Context) error {
+func (r pusher) push(ctx context.Context) error {
 	byLocal := map[string]*ledgerRow{}
 	for _, row := range r.l.rows {
 		if row.Kind == "E" && row.Local != "" {
@@ -80,7 +84,7 @@ func (r *runner) push(ctx context.Context) error {
 // A row the push skips without judging it, because the principal cannot
 // read it or the condition cannot be evaluated, is marked in seen, so its
 // conflict list entries stay.
-func (r *runner) localRows(ctx context.Context, em *EntityMapping, seen map[string]bool) ([]*entity.Entity, error) {
+func (r pusher) localRows(ctx context.Context, em *EntityMapping, seen map[string]bool) ([]*entity.Entity, error) {
 	var refs []entity.Ref
 	for e, err := range r.d.Store.ListEntities(ctx, store.EntityQuery{Type: em.Local, Faces: store.AllFaces()}) {
 		if err != nil {
@@ -131,7 +135,7 @@ func (r *runner) localRows(ctx context.Context, em *EntityMapping, seen map[stri
 }
 
 // pushEntity pushes one shared local row.
-func (r *runner) pushEntity(ctx context.Context, em *EntityMapping, e *entity.Entity, row *ledgerRow) error {
+func (r pusher) pushEntity(ctx context.Context, em *EntityMapping, e *entity.Entity, row *ledgerRow) error {
 	if row == nil {
 		if id, _ := metamodel.ExternalRefID(e.Properties[em.Ref]); id != "" {
 			// The row has a remote counterpart the ledger does not know;
@@ -156,7 +160,7 @@ func (r *runner) pushEntity(ctx context.Context, em *EntityMapping, e *entity.En
 // rowHeld reports whether the whole local row waits on the conflict list.
 // A refused push stops waiting once a local value it tried to send changed:
 // the next push sends the new values, and the remote judges them again.
-func (r *runner) rowHeld(em *EntityMapping, e *entity.Entity) bool {
+func (r pusher) rowHeld(em *EntityMapping, e *entity.Entity) bool {
 	held, ok := r.c.entries[conflictKey(e.ID, "")]
 	if !ok {
 		return false
@@ -177,7 +181,7 @@ func (r *runner) rowHeld(em *EntityMapping, e *entity.Entity) bool {
 // changed returns the mapped fields of e whose value moved off row's merge
 // base and are not held. A field without a base is left alone: the pull has
 // not agreed a value for it yet.
-func (r *runner) changed(em *EntityMapping, e *entity.Entity, row *ledgerRow) []FieldMapping {
+func (r pusher) changed(em *EntityMapping, e *entity.Entity, row *ledgerRow) []FieldMapping {
 	var out []FieldMapping
 	for _, f := range pushFields(em, e) {
 		b, ok := row.Base[f.baseKey()]
@@ -241,7 +245,7 @@ func pushBody(
 }
 
 // pushUpdate sends row's changed fields by PATCH with If-Match.
-func (r *runner) pushUpdate(ctx context.Context, em *EntityMapping, e *entity.Entity, row *ledgerRow) error {
+func (r pusher) pushUpdate(ctx context.Context, em *EntityMapping, e *entity.Entity, row *ledgerRow) error {
 	pc := r.rep.Pushed
 	id, _ := addressID(row.Address)
 	fields := r.changed(em, e, row)
@@ -296,7 +300,7 @@ func (r *runner) pushUpdate(ctx context.Context, em *EntityMapping, e *entity.En
 // refresh fetches row's remote entity with its ETag and merges it into the
 // local row, as a pull does. It returns the local row as the merge left it,
 // and false when the row cannot be pushed in this run.
-func (r *runner) refresh(
+func (r pusher) refresh(
 	ctx context.Context, em *EntityMapping, row *ledgerRow, id string,
 ) (*entity.Entity, bool, error) {
 	pc := r.rep.Pushed
@@ -353,7 +357,7 @@ func pushFields(em *EntityMapping, e *entity.Entity) []FieldMapping {
 }
 
 // pushCreate creates a new shared local row on the remote.
-func (r *runner) pushCreate(ctx context.Context, em *EntityMapping, e *entity.Entity) error {
+func (r pusher) pushCreate(ctx context.Context, em *EntityMapping, e *entity.Entity) error {
 	pc := r.rep.Pushed
 	if r.rowHeld(em, e) {
 		return nil
@@ -419,7 +423,7 @@ func (r *runner) pushCreate(ctx context.Context, em *EntityMapping, e *entity.En
 // setRef sets e's ref to the remote row id, as on a pulled row. It is what
 // links the two again if the ledger is lost. A failed write fails the row;
 // the next push tries again.
-func (r *runner) setRef(ctx context.Context, em *EntityMapping, e *entity.Entity, addr, id string) {
+func (r pusher) setRef(ctx context.Context, em *EntityMapping, e *entity.Entity, addr, id string) {
 	if _, err := r.d.Writer.PatchEntity(ctx, e.ID, entity.Patch{
 		Properties:        map[string]any{em.Ref: metamodel.ExternalRefValue{ID: id}.Map()},
 		WriteExternalRefs: true,
@@ -436,7 +440,7 @@ func notSent(err error) bool {
 }
 
 // uncertainCreate fails a create whose outcome is unknown and holds it.
-func (r *runner) uncertainCreate(em *EntityMapping, e *entity.Entity, digests map[string]string, detail string) error {
+func (r pusher) uncertainCreate(em *EntityMapping, e *entity.Entity, digests map[string]string, detail string) error {
 	r.unknownCreate(em, e, digests, detail)
 	return r.rowFailed("", e.ID, "push: the create may have reached the remote: "+detail)
 }
@@ -445,7 +449,7 @@ func (r *runner) uncertainCreate(em *EntityMapping, e *entity.Entity, digests ma
 // whether the remote made the row: a broken connection or a server error.
 // Sending it again could make a second copy, so a person checks the remote
 // first and resolves the entry to the local side to send it again.
-func (r *runner) unknownCreate(em *EntityMapping, e *entity.Entity, digests map[string]string, detail string) {
+func (r pusher) unknownCreate(em *EntityMapping, e *entity.Entity, digests map[string]string, detail string) {
 	if len(detail) > maxDetail {
 		detail = detail[:maxDetail]
 	}
@@ -458,7 +462,7 @@ func (r *runner) unknownCreate(em *EntityMapping, e *entity.Entity, digests map[
 
 // pushBudget reports whether the run may send one more push request,
 // counted against max_fetch and max_bytes like a fetch.
-func (r *runner) pushBudget() bool {
+func (r pusher) pushBudget() bool {
 	if r.fetched >= r.m.Remote.maxFetch() || r.read >= r.m.Remote.maxBytes() {
 		r.rep.Pushed.Deferred++
 		r.rep.Waiting++
@@ -471,7 +475,7 @@ func (r *runner) pushBudget() bool {
 // pushFailed classifies an error of a push request: a credential the remote
 // does not accept, a cancelled run and a rate limit end the run; anything
 // else fails the row.
-func (r *runner) pushFailed(addr, local string, err error) error {
+func (r pusher) pushFailed(addr, local string, err error) error {
 	var refused *reconclient.RefusedError
 	switch {
 	case errors.Is(err, httpremote.ErrDenied):
@@ -486,7 +490,7 @@ func (r *runner) pushFailed(addr, local string, err error) error {
 
 // rowFailed counts a row whose push failed and reports it as an issue. It
 // returns nil because one row's failure does not end the run.
-func (r *runner) rowFailed(addr, local, msg string) error {
+func (r pusher) rowFailed(addr, local, msg string) error {
 	r.rep.Pushed.Failed++
 	r.issue(IssueFailed, addr, local, msg)
 	return nil
@@ -496,7 +500,7 @@ func (r *runner) rowFailed(addr, local, msg string) error {
 // a 412. A 404 waits: the diff of the next run finds the row gone. A 400,
 // 403, 409 or 422 is the remote's refusal and holds the row; anything else
 // fails the row.
-func (r *runner) pushRefusedOrFailed(
+func (r pusher) pushRefusedOrFailed(
 	ans httpremote.Answer, em *EntityMapping, e *entity.Entity, addr string, digests map[string]string,
 ) {
 	pc := r.rep.Pushed
