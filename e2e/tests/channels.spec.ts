@@ -23,6 +23,7 @@ import {
   writeRoomRealtime,
 } from "./realtime-project";
 import { ChannelsPage } from "../pages/channels.page";
+import { NotificationsPage } from "../pages/notifications.page";
 
 // Channels on the entity page (TKT-91BK6F AC 21), seen by several people at
 // once. As in presence.spec.ts, each user is a browser context the proxy
@@ -164,6 +165,42 @@ test.describe("channels", () => {
 
     // Opening the channel marks it read, and the badge clears.
     await alice.expectNoInboxBadge();
+  });
+
+  test("a mention notifies one background tab of the target, and the notification opens it", async ({
+    as,
+  }) => {
+    // Two tabs of alice's, both in the background: exactly one notifies
+    // (TKT-48S88RB).
+    // A hidden tab reads at most every 10 seconds, and this waits for two.
+    test.slow();
+    const alice = await as(CHANNEL_USERS.lead);
+    const first = await NotificationsPage.install(alice.page);
+    await first.enable();
+    const otherTab = new ChannelsPage(await alice.page.context().newPage());
+    const second = await NotificationsPage.install(otherTab.page);
+    await otherTab.openHome();
+    await alice.openHome();
+    await first.background();
+    await second.background();
+
+    const bob = await as(CHANNEL_USERS.member);
+    await bob.openEntity("feature", FEATURE);
+    await bob.expectChannel(ROOM.label);
+    await bob.post(`\`@${CHANNEL_USERS.lead}\` please review`);
+    await bob.expectMessage("please review");
+
+    await expect
+      .poll(async () => [...(await first.titles()), ...(await second.titles())], { timeout: 30_000 })
+      .toEqual([expect.stringContaining(CHANNEL_USERS.member)]);
+    const [holder, idle] = (await first.titles()).length > 0 ? [first, second] : [second, first];
+
+    // A second mention is the sync point: once the holder has shown it, the
+    // other tab has had the same time to notify, and must not have.
+    await bob.post(`\`@${CHANNEL_USERS.lead}\` one more`);
+    await holder.expectCount(2);
+    await idle.expectNone();
+    await holder.click(0, new RegExp(`/entity/feature/${FEATURE}\\?channel=`));
   });
 });
 

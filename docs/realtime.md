@@ -3260,6 +3260,8 @@ those roles. It answers "what is waiting on me" without knowing the
 channels in advance. It also lists the channels with messages you have not
 read, and the unread messages that mention you or reply to you. The web app serves it as `GET /api/v1/_inbox`, MCP as `list_inbox`
 and the CLI as `rela channel inbox`. All three give the same entries.
+The web app can also show a browser notification for each new waiting
+session, mention or reply; the data-entry guide describes the setting.
 
 **Kinds.** `kinds` chooses what the inbox lists: `waiting` (the sessions
 that wait on you), `unread` (the channels with unread messages), `mention`

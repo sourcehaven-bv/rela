@@ -37,6 +37,7 @@ import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 import RlSelect from 'rela-components/components/form/RlSelect.vue'
 import LanguageSetting from '@/components/settings/LanguageSetting.vue'
+import NotificationSetting from '@/components/settings/NotificationSetting.vue'
 import type { SelectOption } from 'rela-components/components/form/types'
 
 // Per-role color text inputs accept hex with optional `#` and 3 or 6
@@ -449,7 +450,10 @@ function propertyChoices(props: { name: string; type: string }[]): SelectOption[
 }
 
 function relationChoices(rels: { name: string; targetType?: string }[]): SelectOption[] {
-  return rels.map((r) => ({ value: r.name, label: r.targetType ? `${r.name} -> ${r.targetType}` : r.name }))
+  return rels.map((r) => ({
+    value: r.name,
+    label: r.targetType ? `${r.name} -> ${r.targetType}` : r.name,
+  }))
 }
 
 // Computed
@@ -1350,6 +1354,8 @@ onMounted(() => {
 
       <LanguageSetting />
 
+      <NotificationSetting />
+
       <!-- Display timezone -->
       <div class="settings-card">
         <h3>Display timezone</h3>
@@ -1630,7 +1636,6 @@ h1 {
 .add-row {
   margin-top: 12px;
 }
-
 
 .override-groups {
   display: flex;

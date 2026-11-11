@@ -30,7 +30,8 @@ import { useChannelSchema } from '@/stores/channelSchema'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useSpaceStore } from '@/stores/space'
 import { browserTimeZone, formatDatetime } from '@/utils/format'
-import { authorView, channelKey } from '@/components/entity/channels/channelView'
+import { authorView } from '@/components/entity/channels/channelView'
+import { inboxRoute, inboxRowKey } from '@/utils/inboxRoutes'
 import { classifyChannelError } from '@/components/entity/channels/channelErrors'
 import PageLayout from '@/components/common/PageLayout.vue'
 import PageTitle from '@/components/common/PageTitle.vue'
@@ -74,16 +75,10 @@ function channelLabel(c: InboxChannel): string {
   return c.title || c.name || channelSchema.channelType(c.type)?.label || c.type
 }
 
-function rowKey(c: InboxChannel): string {
-  return `${c.entity_type}/${c.anchor}/${channelKey(c.type, c.name)}`
-}
+const rowKey = inboxRowKey
 
 function link(c: InboxChannel, seq?: number): InboxRowLink {
-  const path =
-    `/entity/${c.entity_type}/${encodeURIComponent(c.anchor)}` +
-    `?channel=${encodeURIComponent(channelKey(c.type, c.name))}` +
-    (seq !== undefined ? `&seq=${seq}` : '')
-  return { as: RouterLink, attrs: { to: space.href(path) } }
+  return { as: RouterLink, attrs: { to: space.href(inboxRoute(c, seq)) } }
 }
 
 function stateLabel(c: InboxChannel, state: string, label?: string): string {

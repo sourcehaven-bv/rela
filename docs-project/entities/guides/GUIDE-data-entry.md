@@ -1826,6 +1826,36 @@ that message, so earlier messages in that channel are marked read too. If
 you never opened that channel, this starts tracking it, so later messages
 show it under **Unread channels**.
 
+#### Tab title and browser notifications
+
+While you have mentions, replies or sessions that wait on you, the tab
+title starts with their number, for example "(3) Support Tickets". Unread
+channels are not counted.
+
+You can also get a browser notification for each new entry. Turn on
+**Browser notifications** on the Settings page. The browser then asks for
+permission. The choice is kept in that browser, per project and per
+person, and is off until you turn it on. Two boxes choose what notifies:
+**Mentions and replies**, and **Sessions waiting on me**.
+
+A notification:
+
+- shows only what the inbox page shows you: who mentioned you, or the
+  session's state, and the entity's type and title. It never shows the
+  message text.
+- comes from one tab, however many tabs of the project you have open.
+- does not show while a tab of the project has focus. The entry is then
+  counted as seen.
+- shows once per entry. A session that waits on you again after it moved
+  on notifies again. Entries already in the inbox when you turn
+  notifications on do not notify.
+- opens the entry, as a click on its inbox row does.
+
+When more than five entries arrive at once, five notify and one more
+notification counts the rest. When the browser blocks notifications, or
+cannot show them, the Settings page says so. The desktop app does not
+offer this setting yet.
+
 ## Lists
 
 Lists display entities in a sortable, filterable table with optional create/edit actions.
@@ -7735,6 +7765,9 @@ entity, the relation will be pre-filled with this target.
 
 **Overrides** — Scope defaults to specific entity types. For example, set `priority: critical`
 only when creating tickets, while leaving the global default as `medium`.
+
+The page also lets you choose the interface language and turn on browser
+notifications for the inbox (see [Inbox](#inbox)).
 
 ### Resolution Order
 
