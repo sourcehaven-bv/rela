@@ -88,7 +88,8 @@ catalog`, or let the scheduler pull it every hour.
 | `entities` | Source entity types, each mapped to a local type. |
 | `relations` | Source relation types, each mapped to a local type that connects two mapped local types. |
 | `push` | `true` makes the remote two-way. See [Two-way sync](#two-way-sync). Default `false`. |
-| `conflict` | The rule for a field both sides changed since the last sync. Only `hold`, the default, is supported yet. |
+| `conflict` | The rule for a field both sides changed since the last sync: `hold` (the default), `latest`, `local` or `remote`. See [Conflicts](#conflicts). |
+| `max_clock_skew` | How far in the future a last-updated time may lie before `latest` stops trusting it. Default `5m`. |
 
 Under `entities`, `type` is the local type (default: the source type's name),
 `ref` is the local `external_ref` property that holds the source id, and
@@ -97,7 +98,8 @@ the body. Under `entities`, a remote with `push` also takes `share`, a
 condition on the local row (see [Two-way sync](#two-way-sync)), and a
 type's `conflict` and per-field `field_conflicts` override the remote's
 rule. Under `relations`, `type` and `fields` work the same way; a
-relation has no `ref`.
+relation has no `ref`, and on a remote with `push` a relation type also
+takes `conflict` and `field_conflicts`.
 
 A mapped local type must not have faces and must not take its id from a
 property. A source row with a face is not pulled.
@@ -198,7 +200,15 @@ state. Each run first pulls, as above, and then pushes:
   on the other. A row this project created on the remote is never deleted
   here by `on_gone: delete`; when the remote stops listing it, it is
   detached.
-- **Relations are not pushed yet.** They still flow from the remote only.
+- **Relations are pushed too.** A local relation of a mapped type is
+  created on the remote when both of its ends are linked rows and you may
+  read them. Its mapped meta flows both ways under the conflict rules, and
+  every update carries `If-Match`, as for an entity. Its body comes from
+  the remote only. When both sides made the same relation, the two are
+  linked and their meta is merged. A relation type whose meta has a
+  `visible:` grant in this project's `acl.yaml` is not pushed; the run
+  reports it once. A refused relation push is held on the conflict list.
+  Deleting a relation is not sent.
 
 `share` selects the local rows a push sends. It is a condition in the
 predicate language on the local row as the pusher reads it, and reads the
@@ -227,14 +237,60 @@ only rows that have it.
 
 ## Conflicts
 
-The conflict list holds what waits for a person: a field both sides changed
-since the last sync, and a push the remote refused.
+A field conflicts when both sides changed it since the last sync. The
+remote's `conflict` rule decides what happens, and a type's `conflict` or a
+field's entry in `field_conflicts` overrides it:
+
+| Rule | What happens |
+| --- | --- |
+| `hold` | The field is written on neither side and goes on the conflict list. The default. |
+| `latest` | The side that changed the row last wins. The other side's value is kept on the conflict list. |
+| `local` | This project's value wins and is sent to the remote. |
+| `remote` | The remote's value wins and is written here. |
+
+```yaml
+remotes:
+  portal:
+    push: true
+    conflict: latest
+    entities:
+      ticket:
+        ref: portal_ref
+        fields: {title: title, status: status}
+        field_conflicts: {status: remote}
+```
+
+`latest` compares the times the two rows last changed. There is one time
+per row, not per field, so an edit to another field of the row counts too.
+The remote serves its time as `_updated` only when nothing on the row is
+hidden from this project's principal, and this project uses its own time
+under the same condition. `latest` holds the field instead, and says why
+in the entry's `fallback`, when:
+
+- a side served no time (`time_withheld`);
+- a time lies more than `max_clock_skew` in the future, lies before the
+  row's last sync, or does not parse (`time_untrusted`);
+- both times are equal (`same_time`).
+
+The remote's time comes from the remote's clock. A remote that sets its
+clock wrong, or lies about it, wins every conflict it can within those
+bounds. For a remote you do not trust, use `hold` or `local`. On the
+file-system backend, the time of a row nobody wrote since the server
+started is the file's modification time, so a checkout or a copy moves it.
+
+When `latest` decides a field, the entry stays on the conflict list as
+`superseded` and keeps the value that lost (up to 16 KiB), so you can put
+it back by hand. It blocks nothing. Remove it with `--dismiss`.
+
+The conflict list holds what waits for a person: a held field, a push the
+remote refused, and the entries `latest` left.
 
 ```bash
 rela remote conflicts portal
 rela remote conflicts portal -o json
 rela remote resolve portal TKT-ABC123 title --take local
 rela remote resolve portal TKT-ABC123 --take remote
+rela remote resolve portal TKT-ABC123 --dismiss
 ```
 
 `rela remote resolve` takes the field's value from one side for the next
@@ -245,9 +301,11 @@ normal write path on each side, as you. A refused push resolved to `local`
 is sent again; resolved to `remote`, the values it tried to send stop
 counting as changes, and the remote's values are pulled. A refused or
 uncertain create has no remote value, so it resolves to `local` only.
+For a relation, name the row by the local relation key that `rela remote
+conflicts` shows.
 
-The rules `latest`, `local` and `remote` are planned. Until then a
-`remotes.yaml` that names one fails to load.
+`--dismiss` removes the `superseded` entries of the row, or of one field,
+and changes no data. It refuses a held entry: resolve that with `--take`.
 
 ## Rows the source drops
 
@@ -307,16 +365,20 @@ project writes the mapping.
 
 The conflict list is a second document beside the ledger. Each entry names
 the local row and field, and keeps the remote's value of the field (up to
-16 KiB) or the remote's reason for a refusal. It is operator state: it is
-read with `rela remote conflicts`, not through `acl.yaml`. An entry goes
+16 KiB) or the remote's reason for a refusal. A `superseded` entry also
+keeps the local value that lost, up to 16 KiB. It is operator state: it is
+read with `rela remote conflicts`, not through `acl.yaml`. A held entry goes
 when both sides agree again, when it is resolved, or when its row is no
-longer linked.
+longer linked. A `superseded` entry goes when it is dismissed or its row is
+no longer linked.
 
 The ledger keeps no copy of a row that is gone here:
 
 - When you delete a pulled row, the next pull keeps only its source address
   and local id, so it does not recreate the row. The field digests go.
-- The ledger holds no history, so purging history leaves nothing behind in it.
+- The ledger holds no history, so purging history leaves nothing behind in
+  it. The conflict list is not history either: purging history does not
+  remove a value a `superseded` entry keeps. Dismiss the entry to remove it.
 - When you remove a remote from `remotes.yaml`, its ledger and conflict list
   are deleted by the next pull of any remote and when the scheduler starts.
 
@@ -350,6 +412,11 @@ A push:
   `acl.yaml` bounds it as it bounds any client;
 - never overwrites a remote change: each update carries `If-Match`, and a
   412 is merged first;
+- trusts the remote's clock only within `max_clock_skew` and not before
+  the last sync, and holds a field when it cannot tell which side changed
+  it last;
+- pushes no relation of a type whose meta this project hides with
+  `visible:`;
 - never sends an id: the remote picks it;
 - treats the remote's answer as untrusted: it checks that a create answers
   with a new row of the type it asked for, removes control characters from

@@ -29,6 +29,7 @@ body:
   },
   "_fields": {},
   "_relations": {},
+  "_updated": "<now>",
   "_redacted": [],
   "_attachments": {
     "screenshot": [

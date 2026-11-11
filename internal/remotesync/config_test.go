@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/reconclient/httpremote"
 )
@@ -91,13 +92,14 @@ remotes:
 			"component: {ref: cat}\n      other: {ref: ref}", "system"},
 		{"same local type", "p", "https://x", "{secret: remote_credential.x}", "",
 			"component: {ref: cat}\n      c2: {type: component, ref: cat}", "both map"},
-		{"rule not yet", "p", "https://x", "{secret: remote_credential.x}", "push: true\n    conflict: latest", okEnt,
-			`rule "latest" is not supported yet; use hold`},
 		{"unknown rule", "p", "https://x", "{secret: remote_credential.x}", "conflict: newest", okEnt, "unknown rule"},
-		{"type rule", "p", "https://x", "{secret: remote_credential.x}", "push: true", `component: {ref: cat, conflict: remote}`,
-			"not supported yet"},
-		{"field rule", "p", "https://x", "{secret: remote_credential.x}", "push: true",
-			`component: {ref: cat, fields: {name: name}, field_conflicts: {name: local}}`, "not supported yet"},
+		{"unknown type rule", "p", "https://x", "{secret: remote_credential.x}", "",
+			`component: {ref: cat, conflict: newest}`, "unknown rule"},
+		{"unknown field rule", "p", "https://x", "{secret: remote_credential.x}", "",
+			`component: {ref: cat, fields: {name: name}, field_conflicts: {name: newest}}`, "unknown rule"},
+		{"bad skew", "p", "https://x", "{secret: remote_credential.x}", "max_clock_skew: soon", okEnt, "max_clock_skew"},
+		{"zero skew", "p", "https://x", "{secret: remote_credential.x}", "max_clock_skew: 0s", okEnt, "max_clock_skew"},
+		{"large skew", "p", "https://x", "{secret: remote_credential.x}", "max_clock_skew: 2h", okEnt, "max_clock_skew"},
 		{"field rule unmapped", "p", "https://x", "{secret: remote_credential.x}", "push: true",
 			`component: {ref: cat, field_conflicts: {name: hold}}`, "not a mapped field"},
 		{"share without push", "p", "https://x", "{secret: remote_credential.x}", "",
@@ -129,6 +131,42 @@ func TestParse_PushAndHold(t *testing.T) {
 	})
 	if m.Entities["req"].Share == nil || m.Entities["component"].Share != nil {
 		t.Fatalf("share: %+v", m.Entities)
+	}
+}
+
+// The most specific rule applies: field, then type, then remote, then hold.
+func TestParse_RulePrecedence(t *testing.T) {
+	meta := testMeta(t)
+	m := testMapping(t, meta, func(p *Remote) {
+		p.Push, p.Conflict, p.MaxClockSkew = true, ConflictRemote, "90s"
+		em := p.Entities["req"]
+		em.Conflict = ConflictLatest
+		em.FieldConflicts = map[string]string{"title": ConflictLocal}
+		p.Entities["req"] = em
+		rm := p.Relations["satisfies"]
+		rm.FieldConflicts = map[string]string{"weight": ConflictHold}
+		p.Relations["satisfies"] = rm
+	})
+	want := map[string]string{"title": ConflictLocal, "status": ConflictLatest}
+	for _, f := range m.Entities["req"].Fields {
+		if w, ok := want[f.Local.Name]; ok && f.Rule != w {
+			t.Errorf("req.%s rule = %q, want %q", f.Local.Name, f.Rule, w)
+		}
+	}
+	if f := m.Relations["satisfies"].Fields[0]; f.Rule != ConflictHold {
+		t.Errorf("satisfies.%s rule = %q, want hold", f.Local.Name, f.Rule)
+	}
+	if got := m.Remote.maxClockSkew(); got != 90*time.Second {
+		t.Errorf("max_clock_skew = %s", got)
+	}
+	plain := testMapping(t, meta, nil)
+	for _, f := range plain.Entities["req"].Fields {
+		if f.Rule != ConflictHold {
+			t.Errorf("default rule of %s = %q, want hold", f.Local.Name, f.Rule)
+		}
+	}
+	if got := plain.Remote.maxClockSkew(); got != DefaultMaxClockSkew {
+		t.Errorf("default max_clock_skew = %s", got)
 	}
 }
 

@@ -3382,7 +3382,9 @@ func missingEndpoint(side, id string, err error) error {
 // UpdateRelation merges new properties into the relation key names,
 // applies MetaUnset, optionally replaces content, and persists. The tail in
 // key addresses the edge exactly, as in [Manager.CreateRelation].
-// **No automation, no metamodel re-validation.**
+// **No automation, no metamodel re-validation.** A set
+// [entity.RelationOptions.ExpectedVersion] is compared inside the store
+// transaction, so the read-merge-write and the check see the same row.
 func (m *Manager) UpdateRelation(
 	ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
@@ -3451,6 +3453,15 @@ func (m *Manager) UpdateRelation(
 		if gErr != nil {
 			return fmt.Errorf("%w: %s --%s--> %s", ErrRelationNotFound,
 				entity.FormatStateRef(from, key.FromFace), relType, to)
+		}
+		if opts.ExpectedVersion != "" {
+			if got := store.RelationVersionOf(rel); got != store.EntityVersion(opts.ExpectedVersion) {
+				return &store.VersionConflictError{
+					ID:       fmt.Sprintf("%s --%s--> %s", entity.FormatStateRef(from, key.FromFace), relType, to),
+					Expected: store.EntityVersion(opts.ExpectedVersion),
+					Actual:   got,
+				}
+			}
 		}
 
 		// Snapshot pre-update meta keys so the audit summary names exactly

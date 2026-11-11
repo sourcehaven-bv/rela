@@ -365,6 +365,8 @@ func remoteDeps(
 		// The push writes through the remote's own API with the same
 		// credential: the remote authorizes it as the pull's principal there.
 		deps.Pusher = src
+		reader := lua.VisibleReader
+		deps.RelationMetaGated = func(relType string) bool { return visibility.RelationMetaGatedBy(reader, relType) }
 	}
 	return deps, nil
 }

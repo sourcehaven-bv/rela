@@ -1797,6 +1797,16 @@ its meta unchanged (permissive default). Roles combine by union here too:
 a role with no meta `visible:` list for the relation shows every meta key
 when it reads the source row's type and face.
 
+**The last-updated time goes only with a whole row.** A per-entity GET, a
+view entry and a relation GET carry `_updated`, the time the row last
+changed (TKT-8ZGAEC5). It is served only when nothing on the row is hidden
+from the caller: nothing in `_redacted` and no field withheld. A
+change to a hidden field moves the time too, so on a partly hidden row it
+would tell the caller when a field they cannot see changed. List rows and
+search results never carry it. The relation PATCH takes `If-Match` with the
+relation's ETag and answers 412 on a mismatch; its response, like the GET,
+is redacted for the caller.
+
 ## Field write grants on MCP and scheduled scripts
 
 A role's `fields:` and `options:` grants limit which properties it may
@@ -2116,6 +2126,27 @@ pull (TKT-UH2Q9MN, DEC-2NFLAHB).
   to the local row and field. Resolving takes the run lock and only moves the
   merge base; the sync that follows writes through the normal write path as
   the person who resolved.
+- **Conflict rules trust a clock only within bounds.** Under `latest`, the
+  side that changed a row last wins a field both sides changed. The times
+  come from the remote's `_updated` and the local row, so a remote that
+  lies about its clock can win every such field. A time is used only when
+  it lies no more than `max_clock_skew` (default 5m) in the future and not
+  before the row's last sync; equal times, a withheld time and a time that
+  does not parse hold the field instead. A remote whose principal sees a
+  hidden field gets no `_updated`, so `latest` holds rather than learning
+  when the hidden field changed. Use `hold` or `local` for a remote you do
+  not trust. `local` and `remote` decide without a clock.
+- **The losing value is kept, bounded.** When `latest` overwrites a value,
+  the conflict list keeps the value that lost (up to 16 KiB), so a person
+  can restore it. It is removed by `rela remote
+  resolve --dismiss`, when the row is no longer linked, or with the remote.
+- **Relations are pushed only when nothing on them is hidden.** A local
+  relation is sent when both of its ends are linked rows the run's
+  principal may read, and its type has no relation-meta `visible:` grant.
+  A gated type is not pushed at all, and the run reports it once, because a
+  merge cannot tell a hidden meta key from an absent one. Meta is merged
+  three-way under the same rules, and every update carries `If-Match`. The
+  relation body is never pushed.
 - **Deletes are not pushed.**
 
 ## Presence

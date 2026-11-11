@@ -1087,6 +1087,11 @@ body:
                       "type": "object",
                       "description": "Outgoing state-machine transitions per property, for this reader"
                     },
+                    "_updated": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "When the row last changed (per-entity responses); absent when any property is withheld"
+                    },
                     "_versions": {
                       "type": "object",
                       "properties": {
@@ -1341,6 +1346,11 @@ body:
                     "_transitions": {
                       "type": "object",
                       "description": "Outgoing state-machine transitions per property, for this reader"
+                    },
+                    "_updated": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "When the row last changed (per-entity responses); absent when any property is withheld"
                     },
                     "_versions": {
                       "type": "object",
@@ -1647,6 +1657,11 @@ body:
                     "_transitions": {
                       "type": "object",
                       "description": "Outgoing state-machine transitions per property, for this reader"
+                    },
+                    "_updated": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "When the row last changed (per-entity responses); absent when any property is withheld"
                     },
                     "_versions": {
                       "type": "object",
@@ -1955,6 +1970,11 @@ body:
                     "_transitions": {
                       "type": "object",
                       "description": "Outgoing state-machine transitions per property, for this reader"
+                    },
+                    "_updated": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "When the row last changed (per-entity responses); absent when any property is withheld"
                     },
                     "_versions": {
                       "type": "object",
@@ -2607,6 +2627,177 @@ body:
       ]
     },
     "/api/v1/persons/{id}/relations/watches/{targetId}": {
+      "get": {
+        "operationId": "getPersonWatchesRelation",
+        "summary": "Get one  relation",
+        "tags": [
+          "Relations"
+        ],
+        "responses": {
+          "200": {
+            "description": "The relation as this reader sees it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "_redacted": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Meta keys withheld from this reader"
+                    },
+                    "_updated": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "When the relation last changed; absent when any meta key is withheld"
+                    },
+                    "content": {
+                      "type": "string"
+                    },
+                    "from": {
+                      "type": "string"
+                    },
+                    "meta": {
+                      "type": "object"
+                    },
+                    "to": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Relation version tag",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not modified (If-None-Match)"
+          },
+          "404": {
+            "description": "Relation not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updatePersonWatchesRelation",
+        "summary": "Update one  relation",
+        "tags": [
+          "Relations"
+        ],
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Relation ETag for optimistic locking",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "direction": {
+                    "type": "string"
+                  },
+                  "meta": {
+                    "type": "object"
+                  },
+                  "position": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Relation updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "from": {
+                      "type": "string"
+                    },
+                    "meta": {
+                      "type": "object"
+                    },
+                    "to": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "New relation version tag",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Relation not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition failed (ETag mismatch)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "operationId": "deletePersonWatchesRelation",
         "summary": "Delete  relation",
@@ -2935,6 +3126,11 @@ body:
                       "type": "object",
                       "description": "Outgoing state-machine transitions per property, for this reader"
                     },
+                    "_updated": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "When the row last changed (per-entity responses); absent when any property is withheld"
+                    },
                     "_versions": {
                       "type": "object",
                       "properties": {
@@ -3192,6 +3388,11 @@ body:
                     "_transitions": {
                       "type": "object",
                       "description": "Outgoing state-machine transitions per property, for this reader"
+                    },
+                    "_updated": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "When the row last changed (per-entity responses); absent when any property is withheld"
                     },
                     "_versions": {
                       "type": "object",
@@ -3505,6 +3706,11 @@ body:
                       "type": "object",
                       "description": "Outgoing state-machine transitions per property, for this reader"
                     },
+                    "_updated": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "When the row last changed (per-entity responses); absent when any property is withheld"
+                    },
                     "_versions": {
                       "type": "object",
                       "properties": {
@@ -3815,6 +4021,11 @@ body:
                     "_transitions": {
                       "type": "object",
                       "description": "Outgoing state-machine transitions per property, for this reader"
+                    },
+                    "_updated": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "When the row last changed (per-entity responses); absent when any property is withheld"
                     },
                     "_versions": {
                       "type": "object",
@@ -4678,6 +4889,11 @@ body:
                       "type": "object",
                       "description": "Outgoing state-machine transitions per property, for this reader"
                     },
+                    "_updated": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "When the row last changed (per-entity responses); absent when any property is withheld"
+                    },
                     "_versions": {
                       "type": "object",
                       "properties": {
@@ -4961,6 +5177,11 @@ body:
                     "_transitions": {
                       "type": "object",
                       "description": "Outgoing state-machine transitions per property, for this reader"
+                    },
+                    "_updated": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "When the row last changed (per-entity responses); absent when any property is withheld"
                     },
                     "_versions": {
                       "type": "object",
@@ -5326,6 +5547,11 @@ body:
                       "type": "object",
                       "description": "Outgoing state-machine transitions per property, for this reader"
                     },
+                    "_updated": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "When the row last changed (per-entity responses); absent when any property is withheld"
+                    },
                     "_versions": {
                       "type": "object",
                       "properties": {
@@ -5663,6 +5889,11 @@ body:
                       "type": "object",
                       "description": "Outgoing state-machine transitions per property, for this reader"
                     },
+                    "_updated": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "When the row last changed (per-entity responses); absent when any property is withheld"
+                    },
                     "_versions": {
                       "type": "object",
                       "properties": {
@@ -5982,6 +6213,11 @@ body:
                     "_transitions": {
                       "type": "object",
                       "description": "Outgoing state-machine transitions per property, for this reader"
+                    },
+                    "_updated": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "When the row last changed (per-entity responses); absent when any property is withheld"
                     },
                     "_versions": {
                       "type": "object",
@@ -6833,6 +7069,177 @@ body:
       ]
     },
     "/api/v1/tickets/{id}/relations/contains/{targetId}": {
+      "get": {
+        "operationId": "getTicketContainsRelation",
+        "summary": "Get one  relation",
+        "tags": [
+          "Relations"
+        ],
+        "responses": {
+          "200": {
+            "description": "The relation as this reader sees it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "_redacted": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Meta keys withheld from this reader"
+                    },
+                    "_updated": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "When the relation last changed; absent when any meta key is withheld"
+                    },
+                    "content": {
+                      "type": "string"
+                    },
+                    "from": {
+                      "type": "string"
+                    },
+                    "meta": {
+                      "type": "object"
+                    },
+                    "to": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Relation version tag",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not modified (If-None-Match)"
+          },
+          "404": {
+            "description": "Relation not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateTicketContainsRelation",
+        "summary": "Update one  relation",
+        "tags": [
+          "Relations"
+        ],
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Relation ETag for optimistic locking",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "direction": {
+                    "type": "string"
+                  },
+                  "meta": {
+                    "type": "object"
+                  },
+                  "position": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Relation updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "from": {
+                      "type": "string"
+                    },
+                    "meta": {
+                      "type": "object"
+                    },
+                    "to": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "New relation version tag",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Relation not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition failed (ETag mismatch)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "operationId": "deleteTicketContainsRelation",
         "summary": "Delete  relation",
@@ -6979,6 +7386,177 @@ body:
       ]
     },
     "/api/v1/tickets/{id}/relations/implements/{targetId}": {
+      "get": {
+        "operationId": "getTicketImplementsRelation",
+        "summary": "Get one  relation",
+        "tags": [
+          "Relations"
+        ],
+        "responses": {
+          "200": {
+            "description": "The relation as this reader sees it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "_redacted": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Meta keys withheld from this reader"
+                    },
+                    "_updated": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "When the relation last changed; absent when any meta key is withheld"
+                    },
+                    "content": {
+                      "type": "string"
+                    },
+                    "from": {
+                      "type": "string"
+                    },
+                    "meta": {
+                      "type": "object"
+                    },
+                    "to": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Relation version tag",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not modified (If-None-Match)"
+          },
+          "404": {
+            "description": "Relation not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateTicketImplementsRelation",
+        "summary": "Update one  relation",
+        "tags": [
+          "Relations"
+        ],
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Relation ETag for optimistic locking",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "direction": {
+                    "type": "string"
+                  },
+                  "meta": {
+                    "type": "object"
+                  },
+                  "position": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Relation updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "from": {
+                      "type": "string"
+                    },
+                    "meta": {
+                      "type": "object"
+                    },
+                    "to": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "New relation version tag",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Relation not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition failed (ETag mismatch)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "operationId": "deleteTicketImplementsRelation",
         "summary": "Delete  relation",

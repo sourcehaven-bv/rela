@@ -82,5 +82,44 @@ func TestRemoteDeps_PushRemoteGetsAPusher(t *testing.T) {
 		deps, err := remoteDeps(ws, remotes.Mappings["cat"], "r", nil, discardLogger(), func(string) string { return "" })
 		require.NoError(t, err)
 		require.Equal(t, push, deps.Pusher != nil)
+		require.Equal(t, push, deps.RelationMetaGated != nil)
 	}
+}
+
+const supersededConflicts = `{"version":1,"conflicts":[{"local":"REQ-1","type":"requirement",` +
+	`"address":"requirement/R1","field":"title","remote_field":"title","reason":"superseded","rule":"latest",` +
+	`"since":"2026-11-11T00:00:00Z","seen":"2026-11-11T00:00:00Z","remote_value":"Theirs","local_digest":"a",` +
+	`"remote_digest":"b","superseded":{"winner":"remote","local_value":"Ours",` +
+	`"local_updated":"2026-11-11T00:00:00Z","remote_updated":"2026-11-11T00:01:00Z"}}]}`
+
+func TestDismissRemote(t *testing.T) {
+	t.Parallel()
+	ctx := principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolCLI})
+	ws := newRemoteWorkspace(t, "secretvalue")
+
+	_, err := DismissRemote(ctx, nil, "cat", "REQ-1", "", discardLogger())
+	require.Error(t, err)
+	_, err = DismissRemote(ctx, ws, "cat", "REQ-1", "", nil)
+	require.Error(t, err)
+	_, err = DismissRemote(ctx, ws, "other", "REQ-1", "", discardLogger())
+	require.ErrorContains(t, err, `no remote "other"`)
+
+	// A held entry is not dismissed, and the refusal takes no run.
+	require.NoError(t, ws.State().Put(ctx, "remotesync/cat/conflicts.json", []byte(heldConflicts)))
+	_, err = DismissRemote(ctx, ws, "cat", "REQ-1", "title", discardLogger())
+	require.Error(t, err)
+	_, ok := taskState(t, ws, "remote:cat")
+	require.False(t, ok)
+
+	require.NoError(t, ws.State().Put(ctx, "remotesync/cat/conflicts.json", []byte(supersededConflicts)))
+	n, err := DismissRemote(ctx, ws, "cat", "REQ-1", "", discardLogger())
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	list, err := RemoteConflicts(ctx, ws, "cat")
+	require.NoError(t, err)
+	require.Empty(t, list)
+	ts, ok := taskState(t, ws, "remote:cat")
+	require.True(t, ok)
+	require.Nil(t, ts.Active)
+	require.Zero(t, ts.Failures)
 }

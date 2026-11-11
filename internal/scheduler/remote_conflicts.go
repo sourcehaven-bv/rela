@@ -106,3 +106,55 @@ func ResolveRemote(
 	}
 	return n, report, err
 }
+
+// DismissRemote removes the superseded entries of one local row of remote
+// name, all of them or the one of field. It changes neither side and runs
+// no sync, but it takes the remote's run lock, so a sync does not rewrite
+// the conflict list over it.
+//
+// Nil: rejected for ws and logger.
+func DismissRemote(
+	ctx context.Context, ws WorkspaceProvider, name, local, field string, logger *slog.Logger,
+) (int, error) {
+	switch {
+	case ws == nil:
+		return 0, errors.New("scheduler: a workspace is required")
+	case logger == nil:
+		return 0, errors.New("scheduler: a logger is required")
+	}
+	m, err := remoteMapping(ctx, ws, name)
+	if err != nil {
+		return 0, err
+	}
+	list, err := remotesync.LoadConflicts(ctx, ws.State(), name)
+	if err != nil {
+		return 0, err
+	}
+	if _, err = remotesync.CheckDismiss(list, local, field); err != nil {
+		return 0, err
+	}
+	runs := ws.SchedulerState()
+	if runs == nil {
+		return 0, errors.New("scheduler: the workspace has no scheduler state")
+	}
+	runID := uuid.NewString()
+	run, err := startManualRun(ctx, runs, RemoteTaskPrefix+name, runID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := remotesync.Dismiss(ctx, ws.State(), m, local, field)
+	if err == nil {
+		logger.Info("remote conflict dismissed", "remote", name, "run_id", runID, "local", local,
+			"field", field, "entries", n)
+	}
+	out := schedulerstate.Outcome{At: time.Now()}
+	if err != nil {
+		out.Error = err.Error()
+	}
+	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
+	defer cancel()
+	if _, fErr := runs.FinishRun(fctx, run.ID, out, retryDelay); fErr != nil {
+		logger.Error("could not record the dismiss's outcome", "task", run.Task, "run_id", run.ID, "error", fErr)
+	}
+	return n, err
+}

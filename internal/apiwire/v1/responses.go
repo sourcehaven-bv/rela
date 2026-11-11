@@ -201,6 +201,12 @@ type Activity struct {
 	// status working, which the caller may read. Nil is absent ("not
 	// served"); an empty slice is `[]` ("none busy that you may see").
 	Busy []BusyChannel `json:"_busy,omitzero"`
+	// Updated is when the row last changed, in RFC 3339, set on the
+	// per-entity responses only. It is absent when any property of the row
+	// is hidden from or inaccessible to the caller, because the time says
+	// when any field changed, a hidden one included; and absent when the
+	// backend keeps no time.
+	Updated string `json:"_updated,omitempty"`
 }
 
 // BusyChannel is one busy channel of a list row. Since is when the session

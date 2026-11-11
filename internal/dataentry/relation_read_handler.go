@@ -1,9 +1,11 @@
 package dataentry
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"sort"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -70,26 +72,50 @@ func handleV1GetRelationTarget(
 		return
 	}
 
-	// Redact BEFORE hashing, and so before the 304 check: the validator is
-	// over the caller's view only (see [canonical.Digest]).
-	meta := a.affordances.visibleRelationMeta(ctx, src, relType, rel.Properties)
-	view := *rel
-	view.Properties = meta
-	etag := viewETag(canonical.SumRelation(view), view.Content, nil)
+	view, etag := relationView(ctx, a.affordances, src, rel)
 	w.Header().Set("ETag", etag)
 	if r.Header.Get("If-None-Match") == etag {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
 
+	redacted := redactedRelationKeys(rel.Properties, view.Properties)
 	writeV1JSON(w, http.StatusOK, relationReadResponse{
 		From:     src.ID,
 		Type:     relType,
 		To:       targetID,
-		Meta:     meta,
+		Meta:     view.Properties,
 		Content:  rel.Content,
-		Redacted: redactedRelationKeys(rel.Properties, meta),
+		Redacted: redacted,
+		Updated:  updatedWhenWhole(rel.UpdatedAt, len(*redacted) == 0),
 	})
+}
+
+// relationView is rel as the caller sees it, meta keys the caller may not
+// read removed, and the ETag over that view. src is the edge's source row,
+// whose grants decide the meta redaction.
+//
+// Redaction comes BEFORE hashing, and so before any 304 or If-Match compare:
+// the validator is over the caller's view only (see [canonical.Digest]). A
+// digest over a hidden value would let the caller guess it offline.
+func relationView(
+	ctx context.Context, aff affordanceService, src *entity.Entity, rel *entity.Relation,
+) (view entity.Relation, etag string) {
+	view = *rel
+	view.Properties = aff.visibleRelationMeta(ctx, src, rel.Type, rel.Properties)
+	return view, viewETag(canonical.SumRelation(view), view.Content, nil)
+}
+
+// updatedWhenWhole returns the last-updated time for the `_updated` wire
+// field in RFC 3339, or "" when the caller does not see the whole row. The
+// time says when ANY field last changed, so serving it next to a hidden field
+// would tell the caller when that field may have changed. A zero time (a
+// backend that keeps none) is "" too.
+func updatedWhenWhole(t time.Time, whole bool) string {
+	if !whole || t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339Nano)
 }
 
 // relationTailOr404 reads the source row of a single-relation read (design
@@ -135,6 +161,9 @@ type relationReadResponse struct {
 	Meta     map[string]any `json:"meta,omitempty"`
 	Content  string         `json:"content,omitempty"`
 	Redacted *[]string      `json:"_redacted,omitempty"`
+	// Updated is when the relation last changed, served only when no meta
+	// key is hidden from the caller (see updatedWhenWhole).
+	Updated string `json:"_updated,omitempty"`
 }
 
 // redactedRelationKeys returns the sorted names of meta keys present in the raw
