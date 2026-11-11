@@ -559,7 +559,9 @@ func main() {
 	}
 	accessLog := openAccessLog(f.accessLog)
 
-	if err := dataentry.CheckEmbeddedSPA(); err != nil {
+	if dataentry.Headless {
+		slog.Info("headless build: serving the API and MCP without the web UI")
+	} else if err := dataentry.CheckEmbeddedSPA(); err != nil {
 		slog.Error("embedded SPA check failed", "error", err)
 		os.Exit(1)
 	}

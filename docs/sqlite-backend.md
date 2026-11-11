@@ -18,6 +18,25 @@ Use it for a desktop install or a single-server deployment. If you need two
 processes against one dataset, use PostgreSQL; this backend will refuse to
 start rather than let that happen.
 
+## Headless server
+
+`rela-server-headless-sqlite` is the same server with the web UI left out.
+It serves the REST API under `/api/v1`, server-sent events and the remote
+MCP endpoint, and nothing else:
+
+- `/` answers a short text that points to `/api/v1` and to the OpenAPI
+  document.
+- `/static/` and every other web UI path answer 404.
+- Custom apps no longer get the built-in editor, so `_rela-editor.js` and
+  `_rela-editor.css` answer 404.
+- Co-editing is off, and operator assets under `/_custom/` are not served.
+
+Use it when clients reach rela only through the API or MCP, or when you host
+a UI elsewhere. It ships in its own archive,
+`rela-headless-sqlite_<version>_<os>_<arch>`, and takes the same flags as
+`rela-server-sqlite`. To build it from source, run
+`just build-server-headless-sqlite`. That build does not need the frontend.
+
 ## What still lives on disk
 
 SQLite stores the data. By default the project's schema and configuration are
