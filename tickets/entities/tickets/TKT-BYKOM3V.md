@@ -38,3 +38,10 @@ same way as message reads, with the hardened download headers.
 - Can `promote_to.map` copy a message file into an entity `file` property?
 - Caps: files per message, bytes per file, bytes per channel.
 - Web composer upload and inline preview; MCP and CLI post with a file.
+
+## CI follow-up
+
+- The pgstore status test pins the highest embedded migration; it now
+expects 44 for `0044_channel_files.sql`.
+- Archplan: the `MessageFile`/`File` synonym finding is accepted as a wire DTO,
+and the concepts ratchet is loosened by 11 for the channel file types.
