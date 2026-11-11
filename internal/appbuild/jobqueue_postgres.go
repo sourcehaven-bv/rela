@@ -15,10 +15,9 @@ import (
 // processes against one database.
 //
 // It opens its own connection pool from the DSN rather than sharing the pgx
-// pool appbuild already owns, because the durable job queue's postgres backend
-// currently accepts only a connection string (the queue library's
-// WithConnectionString). That is a deliberate, recorded departure from the
-// pool-injection rule (TKT-YOED3R) and the reason to revisit it is
+// pool appbuild already owns, because the store's pool is a pgstore.DBTX and
+// River needs a *pgxpool.Pool. That is a deliberate, recorded departure from
+// the pool-injection rule (TKT-YOED3R) and the reason to revisit it is
 // connection-count pressure, not tidiness.
 //
 // With a DSN this is DURABLE and a failure to build it is fatal: a postgres

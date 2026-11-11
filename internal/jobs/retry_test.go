@@ -9,10 +9,7 @@ import (
 
 // TestRetry_MaxAttempts pins the attempt budget each policy permits.
 //
-// These are TOTAL executions including the first, and this package enforces
-// them itself in the dispatcher — the number is never handed to neoq, whose
-// worker goroutine dies when it evaluates its own exhaustion. See
-// backendRetryBudget.
+// These are TOTAL executions including the first.
 func TestRetry_MaxAttempts(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -29,18 +26,6 @@ func TestRetry_MaxAttempts(t *testing.T) {
 			require.Equal(t, tc.want, tc.retry.maxAttempts())
 		})
 	}
-}
-
-// TestBackendRetryBudget_IsUnreachable guards the containment for the upstream
-// worker-suicide bug.
-//
-// neoq returns from its worker goroutine when a job exceeds MaxRetries, so the
-// budget handed to it must be one no job can reach. If someone "tidies" this
-// back to the real per-policy budget, the pool starts dying under exactly the
-// failure load the retry policy exists to absorb — silently.
-func TestBackendRetryBudget_IsUnreachable(t *testing.T) {
-	require.Greater(t, backendRetryBudget, persistentAttempts*1000,
-		"the backend budget must be far beyond any policy's real budget")
 }
 
 // TestRetry_EffectiveDeadline covers the interaction between a caller's
@@ -117,4 +102,15 @@ func TestRetry_String(t *testing.T) {
 	require.Equal(t, "bounded", RetryBounded.String())
 	require.Equal(t, "persistent", RetryPersistent.String())
 	require.Equal(t, "Retry(99)", Retry(99).String())
+}
+
+func TestRetryDelay_Bounds(t *testing.T) {
+	for _, n := range []int{-1, 0, 1, 2, 5, 20, 59, 60, 200, 1 << 20} {
+		d := retryDelay(n)
+		attempt := min(max(n, 1), 60)
+		require.GreaterOrEqual(t, d, retryDelayBase, "n=%d", n)
+		require.Less(t, d, retryDelayCap+retryDelayBase+time.Duration(attempt)*retryJitterStep, "n=%d", n)
+	}
+	// The first retry comes soon enough for RetryBounded to ride out a blip.
+	require.Less(t, retryDelay(1), time.Minute)
 }

@@ -4,42 +4,74 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
-	"strconv"
-	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/acaloiaro/neoq"
-	"github.com/acaloiaro/neoq/backends/postgres"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivertype"
 )
 
 // pgConcurrency is the worker count for a postgres queue.
 //
 // Higher than the memory tier: this is the networked deployment, where jobs
 // are I/O-bound against external systems and the process is not sharing a
-// machine with a user's desktop session. Each worker holds a connection while
-// running, so this also bounds the queue's share of the pool.
+// machine with a user's desktop session.
 const pgConcurrency = 10
 
-// NewPostgresQueue returns a DURABLE queue backed by PostgreSQL: jobs survive
-// process restarts and are safe to process from several rela-server processes
-// against one database.
+// pgPoolSize is the size of the queue's own connection pool.
 //
-// It takes a DSN rather than rela's injected pgx pool, so it opens a SECOND
-// pool. That departs from the pool-injection rule the store follows, and it is
-// deliberate (TKT-YOED3R): neoq's postgres backend currently exposes only
-// WithConnectionString. Upstream already has the field and the `if p.pool ==
-// nil` guard needed for injection, so a WithPgxPool option is a small change to
-// land later; revisit this when it does, or sooner if the extra pool causes
-// connection-count pressure.
+// River does not hold a connection while a handler runs, so the pool does not
+// grow with pgConcurrency. It holds River's LISTEN connection for the life of
+// the queue, plus the fetches, completions, maintenance and inserts that share
+// the rest. Fewer than four starves Enqueue behind River's own work.
+const pgPoolSize = 6
+
+// riverQueueName is the River queue every rela job is inserted into. rela
+// routes by [Kind] inside one queue rather than giving each kind a River queue
+// of its own: one worker pool with a dispatch table keeps concurrency
+// governable in one place.
+const riverQueueName = "rela"
+
+// finishedJobRetention is how long River keeps the row of a finished job:
+// completed, cancelled or discarded. A day leaves an operator time to inspect
+// a failure; nothing in rela reads the rows. River's job cleaner deletes them
+// (TKT-RJS3KKJ).
+const finishedJobRetention = 24 * time.Hour
+
+// Unknown-kind handling. A worker can fetch a kind it has not registered: with
+// two binary versions on one database during a deploy, or before a subsystem
+// has registered after Start. The job is snoozed, which does not use an
+// attempt, and dropped once it has waited unknownKindMaxSnoozes times.
+const (
+	unknownKindSnooze     = time.Minute
+	unknownKindMaxSnoozes = 60
+)
+
+// NewPostgresQueue returns a DURABLE queue backed by PostgreSQL through River
+// (github.com/riverqueue/river): jobs survive process restarts and are safe
+// to process from several rela-server processes against one database.
+//
+// The queue's tables live in the schema the DSN's search_path resolves to,
+// like every other table rela keeps in postgres; River's notification topics
+// are prefixed with the same schema, so tenants never wake each other's
+// workers. The constructor migrates River's tables and moves any jobs a neoq
+// build left behind (see neoqcutover.go).
+//
+// It takes a DSN and opens a pool of its own rather than sharing the store's.
+// appbuild hands the store pool around as pgstore.DBTX, which keeps pgx types
+// out of the composition root, and River needs a concrete *pgxpool.Pool.
 //
 // The DSN comes from RELA_DATABASE_URL via appbuild.Config — never a flag, so
-// the credential stays out of ps output and shell history.
+// the credential stays out of ps output and shell history. It must never reach
+// an error string.
 //
 // Nil: rejected — a nil logger is a wiring bug.
 func NewPostgresQueue(ctx context.Context, logger *slog.Logger, databaseURL string) (Queue, error) {
@@ -49,240 +81,391 @@ func NewPostgresQueue(ctx context.Context, logger *slog.Logger, databaseURL stri
 	if databaseURL == "" {
 		return nil, errors.New("jobs: database URL must not be empty")
 	}
-	dsn := ensurePoolFloor(databaseURL, pgConcurrency+poolHeadroom)
-
-	nq, err := neoq.New(ctx,
-		neoq.WithBackend(postgres.Backend),
-		postgres.WithConnectionString(dsn),
-		postgres.WithTransactionTimeout(int(pgIdleTxTimeout.Milliseconds())),
-	)
+	cfg, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
-		// The DSN carries credentials, so it must never reach the error
-		// string — neoq's own errors are safe, ours must stay that way.
-		return nil, fmt.Errorf("jobs: init postgres backend: %w", err)
+		// pgx redacts the password in parse errors, but the rest of the DSN
+		// is not ours to echo either.
+		return nil, errors.New("jobs: parse database URL")
 	}
-	inner, err := newNeoqQueue(nq, logger, pgConcurrency)
+	cfg.MaxConns = pgPoolSize
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
+		return nil, fmt.Errorf("jobs: open queue pool: %w", err)
+	}
+	q, err := newPgQueue(ctx, logger, pool)
+	if err != nil {
+		pool.Close()
 		return nil, err
 	}
-	poolCfg, err := pgxpool.ParseConfig(databaseURL)
-	if err != nil {
-		nq.Shutdown(ctx)
-		return nil, errors.New("jobs: parse database URL for the retention sweep")
-	}
-	poolCfg.MaxConns = 1
-	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
-	if err != nil {
-		nq.Shutdown(ctx)
-		return nil, fmt.Errorf("jobs: open retention sweep pool: %w", err)
-	}
-	return &pgQueue{neoqQueue: inner, pool: pool, quit: make(chan struct{}), done: make(chan struct{})}, nil
+	return q, nil
 }
 
-// finishedJobRetention is how long the durable queue keeps the row of a
-// finished job: a row in neoq_jobs that neoq marked processed, and a row in
-// neoq_dead_jobs. neoq itself never deletes either, so without the sweep a
-// payload would stay in the database for good (TKT-RJS3KKJ). A day leaves an
-// operator time to inspect a failure; nothing in rela reads the rows.
-//
-// Pending rows, including failed ones awaiting a retry, are never swept.
-const finishedJobRetention = 24 * time.Hour
+func newPgQueue(ctx context.Context, logger *slog.Logger, pool *pgxpool.Pool) (*pgQueue, error) {
+	var schema *string
+	if err := pool.QueryRow(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
+		return nil, fmt.Errorf("jobs: resolve queue schema: %w", err)
+	}
+	// NULL means no schema on the search_path exists. River would then fail
+	// on its first table; saying so here names the actual cause.
+	if schema == nil {
+		return nil, errors.New("jobs: no schema on the search_path exists")
+	}
 
-// retentionSweepInterval is how often the sweep runs. The first sweep
-// waits one interval too, so a short-lived process such as a CLI command
-// exits before it would start one.
-const retentionSweepInterval = 10 * time.Minute
+	q := &pgQueue{
+		logger:   logger,
+		pool:     pool,
+		schema:   *schema,
+		handlers: make(map[Kind]Handler),
+	}
+	workers := river.NewWorkers()
+	if err := river.AddWorkerSafely(workers, &riverWorker{q: q}); err != nil {
+		return nil, fmt.Errorf("jobs: register river worker: %w", err)
+	}
+	client, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
+		Schema:                      q.schema,
+		Logger:                      logger.With("component", "river"),
+		Queues:                      map[string]river.QueueConfig{riverQueueName: {MaxWorkers: pgConcurrency}},
+		Workers:                     workers,
+		JobTimeout:                  handlerTimeout,
+		CompletedJobRetentionPeriod: finishedJobRetention,
+		CancelledJobRetentionPeriod: finishedJobRetention,
+		DiscardedJobRetentionPeriod: finishedJobRetention,
+		ErrorHandler:                &riverErrorHandler{logger: logger},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("jobs: create river client: %w", err)
+	}
+	q.client = client
 
-// sweepBatch bounds the rows one DELETE removes, so a large backlog, such
-// as the rows of a deployment that ran before the sweep existed, is removed
-// in short statements rather than one long one.
-const sweepBatch = 1000
+	if err := migrateRiver(ctx, pool, q.schema, logger); err != nil {
+		return nil, err
+	}
+	cutoverFromNeoq(ctx, q)
+	return q, nil
+}
 
-// pgQueue is the neoq queue plus the retention sweep of its tables. The
-// sweep has a pool of one connection of its own, because neoq does not
-// expose its pool.
+// pgQueue is the River-backed [Queue].
 type pgQueue struct {
-	*neoqQueue
-	pool *pgxpool.Pool
+	logger *slog.Logger
+	pool   *pgxpool.Pool
+	client *river.Client[pgx.Tx]
+	schema string
 
-	stopOnce  sync.Once
-	quit      chan struct{} // closed by Close
-	done      chan struct{} // closed when the sweep has ended
-	sweepOnce sync.Once
+	// mu guards the fields below it. Enqueue holds it as a reader across
+	// the insert, so Close, which takes it as a writer to set closed, never
+	// closes the pool under an insert.
+	mu       sync.RWMutex
+	handlers map[Kind]Handler
+	started  bool
+	closed   bool
+	// drained is closed once the client has stopped and the pool is
+	// closed. Set by the first Close; later calls wait on it too.
+	drained chan struct{}
+
+	// closing is set before Close cancels the running handlers, so a worker
+	// can tell a cancellation caused by shutdown from a failure.
+	closing atomic.Bool
 }
 
-// Start starts the queue and then the retention sweep.
-func (q *pgQueue) Start(ctx context.Context) error {
-	if err := q.neoqQueue.Start(ctx); err != nil {
-		return err
+// riverArgs is the one River job kind rela inserts. It carries rela's own
+// job description; River sees a single kind and rela dispatches inside it.
+type riverArgs struct {
+	// RelaKind routes the job to a registered [Handler].
+	RelaKind Kind `json:"kind"`
+	// Payload is the caller's payload, untouched.
+	Payload map[string]any `json:"payload,omitempty"`
+	// Retry is the caller's retry intent. River's MaxAttempts is set from
+	// it at insert; it is carried so the handler sees it.
+	Retry Retry `json:"retry"`
+	// Deadline is the effective deadline in Unix nanoseconds, zero for none.
+	Deadline int64 `json:"deadline,omitempty"`
+	// Key is [idempotencyID] of a keyed job, empty otherwise. It is River's
+	// uniqueness field, and is set only together with uniqueOpts.
+	Key string `json:"key,omitempty" river:"unique"`
+	// AttemptOffset is how many attempts the job used before it reached
+	// River. Only a job moved from neoq has one.
+	AttemptOffset int `json:"attempt_offset,omitempty"`
+}
+
+// Kind implements river.JobArgs.
+func (riverArgs) Kind() string { return "rela" }
+
+// uniqueOpts makes a keyed job unique among PENDING jobs only. A completed,
+// cancelled or discarded job frees its key, which is what makes the key a
+// concurrency guard rather than a record of what has run. River requires the
+// first four states; retryable is the job between attempts, still pending.
+var uniqueOpts = river.UniqueOpts{ //nolint:gochecknoglobals // a constant River cannot express as one
+	ByArgs: true,
+	ByState: []rivertype.JobState{
+		rivertype.JobStateAvailable,
+		rivertype.JobStatePending,
+		rivertype.JobStateRunning,
+		rivertype.JobStateScheduled,
+		rivertype.JobStateRetryable,
+	},
+}
+
+// Register implements [Queue].
+func (q *pgQueue) Register(kind Kind, h Handler) error {
+	if kind == "" {
+		return ErrNoKind
 	}
-	// The sweep outlives Start's ctx; Close stops it.
-	q.sweepOnce.Do(func() { go q.sweepLoop() }) //nolint:contextcheck // see above
+	if h == nil {
+		return fmt.Errorf("jobs: nil handler for kind %q", kind)
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.closed {
+		return ErrClosed
+	}
+	if _, exists := q.handlers[kind]; exists {
+		return fmt.Errorf("%w: %q", ErrDuplicateKind, kind)
+	}
+	q.handlers[kind] = h
 	return nil
 }
 
-// Close cancels the sweep and closes the queue. It waits for a running
-// sweep only until ctx ends.
-func (q *pgQueue) Close(ctx context.Context) error {
-	q.stopOnce.Do(func() {
-		close(q.quit)
-		// Uses up sweepOnce when the sweep never started, so it cannot
-		// start now, and there is nothing to wait for.
-		q.sweepOnce.Do(func() { close(q.done) })
-	})
-	select {
-	case <-q.done:
-		q.pool.Close()
-	case <-ctx.Done():
-		// The cancelled sweep returns soon; its pool goes with the process.
+// Enqueue implements [Queue].
+func (q *pgQueue) Enqueue(ctx context.Context, job Job) error {
+	if err := job.validate(); err != nil {
+		return err
 	}
-	return q.neoqQueue.Close(ctx)
-}
-
-func (q *pgQueue) sweepLoop() {
-	defer close(q.done)
-	stopCtx, stop := context.WithCancel(context.Background())
-	defer stop()
-	go func() {
-		select {
-		case <-q.quit:
-			stop()
-		case <-stopCtx.Done():
-		}
-	}()
-	t := time.NewTicker(retentionSweepInterval)
-	defer t.Stop()
-	for {
-		select {
-		case <-stopCtx.Done():
-			return
-		case <-t.C:
-		}
-		ctx, cancel := context.WithTimeout(stopCtx, time.Minute)
-		if n, err := q.sweepFinished(ctx, time.Now().Add(-finishedJobRetention)); err != nil {
-			if stopCtx.Err() == nil {
-				q.logger.Warn("jobs: retention sweep failed", "error", err)
-			}
-		} else if n > 0 {
-			q.logger.Debug("jobs: retention sweep removed finished jobs", "rows", n)
-		}
-		cancel()
+	q.mu.RLock()
+	closed := q.closed
+	_, known := q.handlers[job.Kind]
+	q.mu.RUnlock()
+	if closed {
+		return ErrClosed
 	}
-}
-
-// sweepFinished deletes this queue's finished and dead job rows that ended
-// before cutoff, in batches of sweepBatch, and returns how many it deleted.
-// A batch that commits stays deleted if a later one fails.
-func (q *pgQueue) sweepFinished(ctx context.Context, cutoff time.Time) (int64, error) {
-	var total int64
-	for _, stmt := range []string{
-		`DELETE FROM neoq_jobs WHERE id IN (SELECT id FROM neoq_jobs
-			WHERE queue = $1 AND status = 'processed' AND ran_at < $2 LIMIT $3)`,
-		`DELETE FROM neoq_dead_jobs WHERE ctid IN (SELECT ctid FROM neoq_dead_jobs
-			WHERE queue = $1 AND created_at < $2 LIMIT $3)`,
-	} {
-		for {
-			tag, err := q.pool.Exec(ctx, stmt, queueName, cutoff, sweepBatch)
-			if err != nil {
-				return total, fmt.Errorf("retention sweep: %w", err)
-			}
-			total += tag.RowsAffected()
-			if tag.RowsAffected() < sweepBatch {
-				break
-			}
-		}
+	if !known {
+		return fmt.Errorf("%w: %q", ErrUnknownKind, job.Kind)
 	}
-	return total, nil
-}
 
-// pgIdleTxTimeout is the idle_in_transaction_session_timeout neoq sets on
-// every worker connection.
-//
-// neoq runs a handler INSIDE the transaction that holds the job's row lock and
-// records the outcome in that same transaction. While the handler runs, the
-// transaction is idle as far as PostgreSQL is concerned. neoq's default for
-// this timeout is 30 s, so any handler longer than that had its session killed
-// underneath it: the outcome update failed, the row stayed pending, neoq
-// redelivered it every minute forever, and its idempotency key rejected every
-// later enqueue (BUG-TKL08E).
-//
-// Derived from handlerTimeout so a handler that stays within its own timeout
-// can always commit. The margin covers the status update itself.
-const pgIdleTxTimeout = handlerTimeout + time.Minute
+	now := time.Now()
+	if job.expired(now) {
+		q.logger.Debug("job dropped, deadline already passed",
+			"kind", job.Kind, "deadline", job.Deadline)
+		return nil
+	}
+	if deferEnqueue(ctx, job) {
+		return nil
+	}
 
-// poolHeadroom is the spare connections above the worker count.
-//
-// Workers hold a connection for as long as their handler runs, so a pool sized
-// exactly to pgConcurrency leaves nothing for an Enqueue arriving while every
-// worker is busy — it blocks for the full acquire timeout and then fails a
-// caller that did nothing wrong. The headroom covers enqueues and neoq's own
-// periodic queries.
-const poolHeadroom = 4
+	args, opts := insertParams(job, now)
 
-// ensurePoolFloor returns dsn with pool_max_conns raised to at least floor.
-//
-// pgx derives its default pool size from GOMAXPROCS (min 4), which has nothing
-// to do with how many workers this queue runs. On a 2-core machine that is 4
-// connections against pgConcurrency=10 workers, so a handful of slow handlers
-// starve every subsequent Enqueue — surfacing as "exceeded timeout acquiring a
-// connection from the pool" under load, which reads like a database problem
-// rather than a sizing one. Sizing the floor to the worker count makes the
-// queue's connection demand a property of the queue, not of the host it lands
-// on.
-//
-// An operator's explicit pool_max_conns is respected when it is already large
-// enough, and only raised when it would deadlock the workers.
-//
-// Only the pool_max_conns parameter is rewritten; every other parameter keeps
-// the operator's own bytes. Setting it through url.Values and re-encoding the
-// whole query would rewrite the others into Go's encoding, and Go encodes a
-// space as "+" where a URI query means a literal plus. libpq reads it that way,
-// and so does pgx from v5.11.0 on, so a DSN carrying
-// `options=-c%20search_path%3Dtenant` came back out as `-c+search_path=tenant`
-// and the server rejected the parameter name "+search_path" — a working DSN
-// turned into a connection failure by a helper that only meant to size a pool.
-//
-//nolint:unparam // floor is a parameter so the tests can vary it; the single production caller passing one value is the point, not an accident.
-func ensurePoolFloor(dsn string, floor int) string {
-	u, err := url.Parse(dsn)
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+	switch {
+	case q.closed:
+		return ErrClosed
+	case !q.started:
+		// River would insert without a started client. The contract says
+		// a queue must run before it accepts work, so both tiers agree.
+		return ErrNotStarted
+	}
+	res, err := q.client.Insert(ctx, args, opts)
 	if err != nil {
-		// Not a URL — a key/value DSN ("host=... dbname=..."), which pgx also
-		// accepts. Leave it untouched rather than corrupting it; an operator
-		// using that form can set pool_max_conns themselves.
-		return dsn
+		return fmt.Errorf("jobs: enqueue %q: %w", job.Kind, err)
 	}
-	if u.Scheme != "postgres" && u.Scheme != "postgresql" {
-		return dsn
+	if res.UniqueSkippedAsDuplicate {
+		q.logger.Debug("job already pending, not queued again",
+			"kind", job.Kind, "idempotency_key", job.IdempotencyKey)
+		return ErrDuplicateJob
 	}
-
-	want := "pool_max_conns=" + strconv.Itoa(floor)
-	if cur := u.Query().Get("pool_max_conns"); cur != "" {
-		n, convErr := strconv.Atoi(cur)
-		if convErr == nil && n >= floor {
-			return dsn
-		}
-		// Too small, or unparseable — either way the workers need the floor.
-		u.RawQuery = replaceRawParam(u.RawQuery, "pool_max_conns", want)
-		return u.String()
-	}
-
-	if u.RawQuery == "" {
-		u.RawQuery = want
-	} else {
-		u.RawQuery += "&" + want
-	}
-	return u.String()
+	return nil
 }
 
-// replaceRawParam substitutes the key=value pair for key in a raw query string,
-// leaving the surrounding pairs byte-for-byte as they were. See ensurePoolFloor
-// for why re-encoding the whole query is not an option.
-func replaceRawParam(raw, key, pair string) string {
-	parts := strings.Split(raw, "&")
-	for i, p := range parts {
-		if p == key || strings.HasPrefix(p, key+"=") {
-			parts[i] = pair
-		}
+// insertParams builds the River args and options for job, enqueued at now.
+func insertParams(job Job, now time.Time) (riverArgs, *river.InsertOpts) {
+	args := riverArgs{RelaKind: job.Kind, Payload: job.Payload, Retry: job.Retry}
+	if dl := job.Retry.effectiveDeadline(job, now); !dl.IsZero() {
+		args.Deadline = dl.UnixNano()
 	}
-	return strings.Join(parts, "&")
+	opts := &river.InsertOpts{Queue: riverQueueName, MaxAttempts: job.Retry.maxAttempts()}
+	if job.IdempotencyKey != "" {
+		args.Key = idempotencyID(job)
+		opts.UniqueOpts = uniqueOpts
+	}
+	return args, opts
+}
+
+// Start implements [Queue].
+func (q *pgQueue) Start(ctx context.Context) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.closed {
+		return ErrClosed
+	}
+	if q.started {
+		return errors.New("jobs: queue already started")
+	}
+	// River's client lives as long as the context it was started with. The
+	// queue lives until Close, not until the call that happened to start it.
+	if err := q.client.Start(context.WithoutCancel(ctx)); err != nil {
+		return fmt.Errorf("jobs: start queue: %w", err)
+	}
+	q.started = true
+	return nil
+}
+
+// Close implements [Queue].
+//
+// Running handlers' contexts are cancelled. A handler that returns because of
+// that does not use an attempt: its job goes back to the queue for another
+// process. Jobs not yet fetched stay in the database.
+//
+// When ctx ends before the handlers return, the goroutine that waits for them
+// lives on until they do, and closes the pool after them.
+func (q *pgQueue) Close(ctx context.Context) error {
+	q.mu.Lock()
+	if !q.closed {
+		q.closed = true
+		q.closing.Store(true)
+		started := q.started
+		drained := make(chan struct{})
+		go func() {
+			defer close(drained)
+			if started {
+				// Without ctx's cancellation on purpose: the caller's ctx
+				// bounds how long Close waits, not how long the handlers
+				// may take.
+				if err := q.client.StopAndCancel(context.WithoutCancel(ctx)); err != nil {
+					q.logger.Warn("jobs: stop river client", "error", err)
+				}
+			}
+			q.pool.Close()
+		}()
+		q.drained = drained
+	}
+	drained := q.drained
+	q.mu.Unlock()
+
+	select {
+	case <-drained:
+		return nil
+	case <-ctx.Done():
+	}
+	select {
+	case <-drained:
+		return nil
+	default:
+		return fmt.Errorf("jobs: handlers still running at close: %w", ctx.Err())
+	}
+}
+
+// riverWorker is River's worker for [riverArgs]; it hands each job to q.
+type riverWorker struct {
+	river.WorkerDefaults[riverArgs]
+	q *pgQueue
+}
+
+// NextRetry implements river.Worker with rela's own backoff.
+func (w *riverWorker) NextRetry(job *river.Job[riverArgs]) time.Time {
+	return time.Now().Add(retryDelay(job.Attempt + job.Args.AttemptOffset))
+}
+
+// Work implements river.Worker.
+func (w *riverWorker) Work(ctx context.Context, rj *river.Job[riverArgs]) error {
+	return w.q.work(ctx, rj)
+}
+
+// work runs one attempt. Its return value tells River what follows: nil
+// completes the job, river.JobCancel stops it for good, river.JobSnooze puts
+// it back without using an attempt, and any other error is a failed attempt
+// that River retries until MaxAttempts.
+func (q *pgQueue) work(ctx context.Context, rj *river.Job[riverArgs]) error {
+	args := rj.Args
+	job := Job{
+		Kind:    args.RelaKind,
+		Payload: args.Payload,
+		Retry:   args.Retry,
+		Attempt: rj.Attempt + args.AttemptOffset,
+	}
+	if args.Deadline != 0 {
+		job.Deadline = time.Unix(0, args.Deadline)
+	}
+	if job.Payload == nil {
+		job.Payload = map[string]any{}
+	}
+
+	q.mu.RLock()
+	h, ok := q.handlers[job.Kind]
+	q.mu.RUnlock()
+	if !ok {
+		return q.unknownKind(rj, job)
+	}
+
+	if !job.Deadline.IsZero() && !time.Now().Before(job.Deadline) {
+		q.logger.Warn("dropping job past its deadline",
+			"kind", job.Kind, "job_id", rj.ID, "attempt", job.Attempt, "deadline", job.Deadline)
+		return river.JobCancel(errors.New("jobs: deadline passed"))
+	}
+
+	err := h(ctx, job)
+	if err == nil {
+		return nil
+	}
+	if q.closing.Load() && ctx.Err() != nil {
+		// Close cancelled the handler, so the failure is not the job's
+		// fault: put it back for another process without using an attempt.
+		// Not for a job with no attempt left. Its side effect may already
+		// have happened, and running it again would break its retry intent,
+		// as dropping it on the memory tier does not.
+		if job.Retry != RetryNever && rj.Attempt < rj.MaxAttempts {
+			return river.JobSnooze(0)
+		}
+		q.logger.Warn("dropping job interrupted by close, it has no attempt left",
+			"kind", job.Kind, "job_id", rj.ID, "attempt", job.Attempt)
+		// %v, not %w: River puts back any job whose error wraps the stop's
+		// context.Canceled, even a cancelled one.
+		return river.JobCancel(fmt.Errorf("jobs: interrupted by close: %v", err)) //nolint:errorlint // see above
+	}
+	// The payload is NOT logged: it may carry entity content.
+	q.logger.Warn("job attempt failed",
+		"kind", job.Kind, "job_id", rj.ID, "attempt", job.Attempt, "error", err)
+	if rj.Attempt >= rj.MaxAttempts {
+		q.logger.Error("dropping job, retry budget exhausted",
+			"kind", job.Kind, "job_id", rj.ID, "attempts", job.Attempt, "retry", job.Retry.String())
+		return err
+	}
+	if !job.Deadline.IsZero() && !time.Now().Add(retryDelayFloor(job.Attempt)).Before(job.Deadline) {
+		q.logger.Warn("dropping job, its deadline passes before the next attempt",
+			"kind", job.Kind, "job_id", rj.ID, "attempt", job.Attempt, "deadline", job.Deadline)
+		return river.JobCancel(err)
+	}
+	return err
+}
+
+// unknownKind snoozes a job whose kind this process has not registered, and
+// drops it once it has waited long enough that no registration is coming.
+func (q *pgQueue) unknownKind(rj *river.Job[riverArgs], job Job) error {
+	var meta struct {
+		Snoozes int `json:"snoozes"`
+	}
+	_ = json.Unmarshal(rj.Metadata, &meta) // absent or malformed counts as zero
+	expired := !job.Deadline.IsZero() && !time.Now().Add(unknownKindSnooze).Before(job.Deadline)
+	if meta.Snoozes >= unknownKindMaxSnoozes || expired {
+		q.logger.Error("no handler registered for kind, dropping", "kind", job.Kind, "job_id", rj.ID)
+		return river.JobCancel(fmt.Errorf("jobs: no handler registered for kind %q", job.Kind))
+	}
+	q.logger.Warn("no handler registered for kind, retrying later", "kind", job.Kind, "job_id", rj.ID)
+	return river.JobSnooze(unknownKindSnooze)
+}
+
+// riverErrorHandler logs handler panics. River recovers them and counts the
+// attempt as failed; ordinary errors are logged by [pgQueue.work].
+type riverErrorHandler struct{ logger *slog.Logger }
+
+// HandleError implements river.ErrorHandler.
+func (*riverErrorHandler) HandleError(context.Context, *rivertype.JobRow, error) *river.ErrorHandlerResult {
+	return nil
+}
+
+// HandlePanic implements river.ErrorHandler.
+func (h *riverErrorHandler) HandlePanic(
+	_ context.Context, job *rivertype.JobRow, panicVal any, trace string,
+) *river.ErrorHandlerResult {
+	h.logger.Error("job handler panicked",
+		"job_id", job.ID, "attempt", job.Attempt, "panic", panicSummary(panicVal), "stack", trace)
+	return nil
 }

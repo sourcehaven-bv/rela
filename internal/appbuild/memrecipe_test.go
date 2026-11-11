@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -307,22 +306,12 @@ func TestNewInMemory_WritesRunTheWritePath(t *testing.T) {
 	})
 }
 
-// cronRunner is the top frame of the goroutine neoq's memory backend starts
-// and never stops (the KNOWN LEAK on jobs.neoqQueue.Close).
-const cronRunner = "github.com/robfig/cron.(*Cron).run"
-
 // TestNewInMemory_CloseStopsEveryGoroutine builds and closes 100 worlds and
 // checks that none leaves a goroutine behind.
-//
-// The cron runner is exempt, at most one per world: neoq's Shutdown never
-// stops it. It idles in a select. TKT-L98KKVX tracks the fix in the neoq
-// fork. The count check keeps the exemption from hiding a second leak of the
-// same function.
 func TestNewInMemory_CloseStopsEveryGoroutine(t *testing.T) {
 	const worlds = 100
 	root := writeMemWorldProject(t)
-	ignore := []goleak.Option{goleak.IgnoreCurrent(), goleak.IgnoreTopFunction(cronRunner)}
-	cronBefore := countGoroutines(cronRunner)
+	ignore := goleak.IgnoreCurrent()
 	for range worlds {
 		svc, err := NewInMemory(root)
 		require.NoError(t, err)
@@ -331,21 +320,7 @@ func TestNewInMemory_CloseStopsEveryGoroutine(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, svc.Close())
 	}
-	goleak.VerifyNone(t, ignore...)
-	require.LessOrEqual(t, countGoroutines(cronRunner)-cronBefore, worlds,
-		"more cron runners than worlds: something else leaks one")
-}
-
-// countGoroutines counts the goroutines whose stack names fn.
-func countGoroutines(fn string) int {
-	buf := make([]byte, 1<<20)
-	for {
-		n := runtime.Stack(buf, true)
-		if n < len(buf) {
-			return strings.Count(string(buf[:n]), fn+"(")
-		}
-		buf = make([]byte, 2*len(buf))
-	}
+	goleak.VerifyNone(t, ignore)
 }
 
 func TestNewInMemory_RejectsBadRoot(t *testing.T) {

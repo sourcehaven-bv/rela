@@ -38,8 +38,8 @@ const settleTimeout = 10 * time.Second
 // attempt.
 //
 // It is much larger than settleTimeout because the backend, not rela, owns
-// retry timing: neoq's backoff is roughly retries^4 + 15s + jitter, so even the
-// FIRST retry cannot arrive sooner than ~16s. A test that waited settleTimeout
+// retry timing: the backoff is roughly retries^4 + 15s + jitter (see retryDelay),
+// so even the FIRST retry cannot arrive sooner than ~16s. A test that waited settleTimeout
 // for a retry would fail against a perfectly correct implementation — which is
 // exactly what it did before this constant existed.
 //
@@ -107,19 +107,7 @@ func RunAll(t *testing.T, newQueue NewQueue) {
 	t.Run("HandlerSeesItsRetryPolicy", func(t *testing.T) { testHandlerSeesRetryPolicy(t, newQueue) })
 	t.Run("HandlerContextHasDeadline", func(t *testing.T) { testHandlerContextHasDeadline(t, newQueue) })
 
-	// NOTE: there is deliberately no "panicking handler" case here.
-	//
-	// neoq's panic-recovery path (handler.Exec, handler.go:154/181) races on
-	// the shared error variable between the recovering deferred func and the
-	// goroutine reading the result — confirmed with the race detector against
-	// v0.72.1. rela runs -race across CI and does not allow //go:build !race
-	// opt-outs, so a conformance case that exercises that path would make the
-	// suite permanently red for an upstream reason.
-	//
-	// The gap is narrow and acceptable: a panicking handler is a programming
-	// bug in the handler, not a runtime condition the queue must survive
-	// gracefully. Job handlers should return errors. Add this case once the
-	// upstream fix lands.
+	t.Run("PoolSurvivesPanickingHandler", func(t *testing.T) { testPoolSurvivesPanic(t, newQueue) })
 }
 
 // recorder collects handler invocations across worker goroutines.
@@ -431,8 +419,8 @@ func testCloseWaitsForRunningHandlers(t *testing.T, newQueue NewQueue) {
 		close(started)
 		<-ctx.Done()
 		// Still busy after the cancel, as a handler finishing a write is.
-		// Longer than neoq's 1s cancel grace, after which the postgres
-		// backend's Shutdown stops waiting.
+		// Long enough that a Close which stopped waiting at the cancel would
+		// return first.
 		time.Sleep(closeOutlivesCancel)
 		returned.Store(true)
 		return ctx.Err()
@@ -513,11 +501,9 @@ func testPayloadRoundTrips(t *testing.T, newQueue NewQueue) {
 // testPoolSurvivesExhaustion is the most valuable case in this suite.
 //
 // The failure it guards against is not "a job behaved wrongly" but "the queue
-// stopped working at all". neoq's worker goroutine RETURNS when a job exceeds
-// its retry budget, so a backend handed the real budget loses one worker per
-// exhausted job until nothing runs — silently, with no error to the caller and
-// nothing in the logs. Verified against unwrapped neoq: after four exhausted
-// jobs, 0 of 8 healthy jobs ran.
+// stopped working at all". neoq, the backend this package used before River,
+// returned from its worker goroutine when a job exceeded its retry budget, so
+// the pool lost one worker per exhausted job until nothing ran, silently.
 //
 // Every happy-path assertion in this file passes against a queue in that
 // state. Only this one notices.
@@ -564,8 +550,8 @@ func testPoolSurvivesExhaustion(t *testing.T, newQueue NewQueue) {
 
 // testPoolSurvivesExpiredDeadlines is the deadline twin of the case above.
 //
-// neoq treats an expired deadline as fatal to the worker in the same way it
-// treats exhausted retries. This matters especially because attaching a short
+// neoq treated an expired deadline as fatal to the worker in the same way it
+// treated exhausted retries. This matters especially because attaching a short
 // deadline is the DESIGNED path for scheduled work (see Schedule.NextRun): a
 // one-minute cadence attaches a one-minute deadline, and any job that queues
 // behind a slow one blows it. The headline feature would otherwise be the
@@ -621,12 +607,9 @@ func testPoolSurvivesExpiredDeadlines(t *testing.T, newQueue NewQueue) {
 
 // testIdenticalPayloads pins that two jobs with equal payloads are two jobs.
 //
-// neoq derives a fingerprint from md5(queue + payload) and drops a job that
-// matches an unprocessed one — returning a nil error having queued nothing. As
-// every rela job shares a single queue, "notify alice" submitted twice would
-// otherwise collapse into one delivery, and the two tiers would disagree about
-// it: the memory backend drops silently, postgres has a unique index and
-// errors.
+// A backend that deduplicates by payload (neoq did, by md5(queue + payload))
+// would collapse "notify alice" submitted twice into one delivery. Only
+// IdempotencyKey deduplicates.
 func testIdenticalPayloads(t *testing.T, newQueue NewQueue) {
 	t.Helper()
 
@@ -807,4 +790,28 @@ func (c *atomicCounter) get() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.n
+}
+
+// testPoolSurvivesPanic pins that a panicking handler costs its job, not a
+// worker: jobs after it still run.
+func testPoolSurvivesPanic(t *testing.T, newQueue NewQueue) {
+	t.Helper()
+	q := newQueue(t)
+	require.NoError(t, q.Register("boom", func(context.Context, jobs.Job) error { panic("boom") }))
+	var healthy atomicCounter
+	require.NoError(t, q.Register("ok", func(context.Context, jobs.Job) error {
+		healthy.inc()
+		return nil
+	}))
+	require.NoError(t, q.Start(context.Background()))
+
+	const n = 8
+	for range n {
+		require.NoError(t, q.Enqueue(context.Background(), jobs.Job{Kind: "boom", Retry: jobs.RetryNever}))
+	}
+	for range n {
+		require.NoError(t, q.Enqueue(context.Background(), jobs.Job{Kind: "ok", Retry: jobs.RetryNever}))
+	}
+	require.Eventually(t, func() bool { return healthy.get() == n },
+		settleTimeout, pollInterval, "the queue stopped processing after handlers panicked")
 }

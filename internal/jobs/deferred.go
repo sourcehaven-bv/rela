@@ -127,7 +127,8 @@ func (c *Collector) Flush(ctx context.Context, q Queue) error {
 
 	var errs []error
 	for _, job := range pending {
-		if err := q.Enqueue(base, job); err != nil {
+		// A duplicate is success: the work is already pending.
+		if err := q.Enqueue(base, job); err != nil && !errors.Is(err, ErrDuplicateJob) {
 			// Name the kind. The transaction has already committed, so this
 			// job is lost — an operator reading the log needs to know WHICH
 			// follow-up work vanished, and a bare joined error does not say.
