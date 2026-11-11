@@ -61,12 +61,18 @@ func outsideEditsProject(t *testing.T) (*appbuild.Services, *appbuild.FlowContro
 }
 
 // outsideEditsProjectIn adds the rules of [outsideEditsProject] to the flow
-// project at root.
-func outsideEditsProjectIn(t *testing.T, root string) (*appbuild.Services, *appbuild.FlowControl) {
+// project at root. Each of denied is one more property onboarding's collect
+// state denies.
+func outsideEditsProjectIn(t *testing.T, root string, denied ...string) (*appbuild.Services, *appbuild.FlowControl) {
 	t.Helper()
 	flows, err := os.ReadFile(filepath.Join(root, "flows.yaml"))
 	require.NoError(t, err)
-	f := strings.Replace(string(flows), "    initial: collect\n", "    initial: collect\n"+outsideEditsBlock, 1)
+	var block strings.Builder
+	block.WriteString(outsideEditsBlock)
+	for _, p := range denied {
+		block.WriteString("            " + p + ": deny\n")
+	}
+	f := strings.Replace(string(flows), "    initial: collect\n", "    initial: collect\n"+block.String(), 1)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "flows.yaml"), []byte(f+holdFlow), 0o600))
 	policy, err := os.ReadFile(filepath.Join(root, "acl.yaml"))
 	require.NoError(t, err)
