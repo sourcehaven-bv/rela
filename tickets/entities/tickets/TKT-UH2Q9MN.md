@@ -45,3 +45,9 @@ same fields of the same entities.
 audit log are unchanged on both sides.
 - A conflict is held on both sides and listed; resolving it makes the next
 sync apply the chosen side. A refused push is a conflict.
+
+## CI fixes
+
+The push phase runs on its own `pusher` type, so `runner` stays under the
+plimsoll method line. A held remote value is kept as `json.RawMessage`, not
+`any`, which clears the Archplan untyped-data finding.
