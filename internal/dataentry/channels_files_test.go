@@ -17,12 +17,14 @@ import (
 )
 
 // filesRealtime is channelTestRealtime with a shots channel whose photo
-// message holds up to two PNG images, and whose note holds any file.
+// message holds up to two PNG images, and whose note holds any file. Only
+// a moderator, whom nobody here is, posts a sealed message.
 const filesRealtime = channelTestRealtime + `  shots:
     attach_to: [ticket]
     read: { from: attached }
     roles:
       member: { from: attached }
+      mod:    { permission: chat.moderate }
     message_types:
       photo:
         properties:
@@ -34,6 +36,10 @@ const filesRealtime = channelTestRealtime + `  shots:
           body: { type: string }
           doc:  { type: file }
         post: [member]
+      sealed:
+        properties:
+          doc: { type: file }
+        post: [mod]
     message_ops:
       delete_own: { roles: [member] }
 `
@@ -256,6 +262,38 @@ func TestChannelFiles_PostRefused(t *testing.T) {
 			resp, b := env.doRaw(t, "alice", http.MethodPost, shotsPath+"/messages", ct, body)
 			if resp.StatusCode != tc.code || problemType(t, b) != tc.ptype {
 				t.Fatalf("post = %d %s, want %d %s", resp.StatusCode, b, tc.code, tc.ptype)
+			}
+		})
+	}
+	resp, b := env.doRaw(t, "alice", http.MethodGet, shotsPath+"/messages", "", nil)
+	if resp.StatusCode == http.StatusOK && len(decodeAs[v1.MessagePage](t, b).Messages) != 0 {
+		t.Fatalf("a refused post stored a message: %s", b)
+	}
+}
+
+// A multipart post by a principal who may not post is refused
+// through the real ACL, like a JSON post, and stores nothing.
+func TestChannelFiles_PostDenied(t *testing.T) {
+	env := newFilesEnv(t)
+	for _, tc := range []struct {
+		name, user, path string
+		code             int
+	}{
+		{"no post role", "alice", shotsPath, http.StatusForbidden},
+		{"cannot read the anchor", "nobody", shotsPath, http.StatusNotFound},
+		{"hidden anchor", "alice", "/api/v1/features/FEAT-1/_channels/shots", http.StatusNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body, ct := channelMultipart(t,
+				mpPart{name: "message", data: []byte(`{"type":"sealed"}`)},
+				mpPart{name: "file:doc", file: "a.png", data: pngBytes("denied")},
+			)
+			got, data := env.doRaw(t, tc.user, http.MethodPost, tc.path+"/messages", ct, body)
+			if got.StatusCode != tc.code {
+				t.Fatalf("post = %d %s, want %d", got.StatusCode, data, tc.code)
+			}
+			if tc.code == http.StatusForbidden && problemType(t, data) != realtime.TypePostDenied {
+				t.Fatalf("post = %s, want %s", data, realtime.TypePostDenied)
 			}
 		})
 	}
