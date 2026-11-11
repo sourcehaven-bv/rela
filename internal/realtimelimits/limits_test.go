@@ -63,3 +63,31 @@ func TestTypingLimits(t *testing.T) {
 		t.Errorf("TypingRate %v exceeds DefaultEphemeralRate %v", TypingRate, DefaultEphemeralRate)
 	}
 }
+
+func TestParseSize(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want int64
+	}{
+		{"1000", 1000},
+		{"512KiB", 512 << 10},
+		{" 5 MiB ", 5 << 20},
+		{"0", 0},
+		{"-1", 0},
+		{"5MB", 0},
+		{"1.5MiB", 0},
+		{"", 0},
+		{"2000000MiB", 0},
+	} {
+		got, err := ParseSize(tc.in)
+		if tc.want == 0 {
+			if err == nil {
+				t.Errorf("ParseSize(%q) = %d, want an error", tc.in, got)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Errorf("ParseSize(%q) = %d, %v; want %d", tc.in, got, err, tc.want)
+		}
+	}
+}

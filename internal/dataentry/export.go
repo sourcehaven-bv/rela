@@ -20,7 +20,7 @@ import (
 // export) and their markdown-rendering helpers. Extracted from App (keeps App
 // under its plimsoll method cap); constructed once in NewApp with closures over
 // the App collaborators it needs. The ACL-coupled reads flow through the same
-// seams the rest of dataentry uses (reader / visibleReader / gateReadOrNotFound /
+// seams the rest of dataentry uses (reader / visibleReader / gateReadOr /
 // scopedSortedEntities), so export can never widen past an authorized view.
 type exportHandler struct {
 	meta            func() *metamodel.Metamodel

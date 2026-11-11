@@ -561,7 +561,8 @@ func (d Deps) handlers() handlerSet {
 		leases:    leaseHandler{svc: d.Leases},
 		channels: channelHandler{
 			reader: d.Channels.Reader, sessions: d.Channels.Sessions, writer: d.Channels.Writer,
-			creator: d.Channels.Creator, inbox: d.Channels.Inbox, marker: d.Channels.Marker,
+			creator: d.Channels.Creator, inbox: d.Channels.Inbox, marker: d.Channels.Marker, files: d.Channels.Files,
+			uploads:       d.Attachments.Uploads,
 			refuseSignals: d.Channels.RefuseSignals, localIdentity: d.Channels.LocalIdentity,
 			bindIdentity: d.Channels.BindIdentity,
 		},

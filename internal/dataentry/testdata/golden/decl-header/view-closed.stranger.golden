@@ -1,9 +1,9 @@
 request: GET /api/v1/_views/ticket/TKT-2
 identity: header stranger@example.test
 status: 404
-reads: GraphQueryHeaders=1 ListRelations=1 MatchingFaces=1
+reads: GraphQueryHeaders=1 ListRelations=1 MatchingFaces=1 Successors=1
 breadth: ListRelations=0/1 MatchingFaces=1/1
-bodies: GraphQuery=0/1
+bodies: GraphQuery=0/1 Successors=0/1
 versions: 
 body:
 {

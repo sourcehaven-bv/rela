@@ -237,3 +237,33 @@ func (r *Resolver) ResolveMentions(
 	}
 	return served, nil
 }
+
+// Successor returns the entity that took the place of id after a rename or
+// conversion retired it (store.RetiredIDs), when the principal may read it
+// in w. It reports false for an id nothing retired, for a successor the
+// principal cannot read, and on a loader without store.RetiredIDs.
+//
+// It asks for the successor before any gated read, so an id that never
+// existed costs one Successors lookup and nothing else, whatever the
+// principal may read. Only a retired id goes on to the gated read of its
+// successor, through the same gates as [Resolver.ResolveIDsErr].
+func (r *Resolver) Successor(ctx context.Context, w World, id string) (store.EntityHeader, bool, error) {
+	retired, ok := r.load.(store.RetiredIDs)
+	if !ok {
+		return store.EntityHeader{}, false, nil
+	}
+	successors, err := retired.Successors(ctx, []string{id})
+	if err != nil {
+		return store.EntityHeader{}, false, err
+	}
+	to, ok := successors[id]
+	if !ok || to == id {
+		return store.EntityHeader{}, false, nil
+	}
+	served, err := r.ResolveIDsErr(ctx, w, []string{to})
+	if err != nil {
+		return store.EntityHeader{}, false, err
+	}
+	h, ok := served[to]
+	return h, ok, nil
+}

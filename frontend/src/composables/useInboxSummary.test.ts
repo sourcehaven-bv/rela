@@ -8,25 +8,33 @@ import type { Inbox, InboxSummary } from '@/types/channels'
 import {
   INBOX_SUMMARY_KEY,
   INBOX_SUMMARY_LIVE_KEY,
+  readInboxIntoSummary,
   storeInboxSummary,
   useInboxSummary,
   type InboxSummaryState,
 } from './useInboxSummary'
 
 const getInboxSummary = vi.hoisted(() => vi.fn<() => Promise<InboxSummary>>())
+const getInbox = vi.hoisted(() => vi.fn<() => Promise<Inbox>>())
 vi.mock('@/api/channels', async (orig) => ({
   ...(await orig<typeof import('@/api/channels')>()),
   getInboxSummary,
+  getInbox,
 }))
 
 // registerLive, captured: the key, its path and its onChange.
 const live = vi.hoisted(() => ({
-  entries: new Map<string, { path: string; onChange: () => void }>(),
+  entries: new Map<string, { path: string; onChange: () => void; deliverHidden: boolean }>(),
   registrations: 0,
 }))
 vi.mock('@/composables/useLiveSubscription', () => ({
-  registerLive: (key: string, path: string, onChange: () => void) => {
-    const entry = { path, onChange }
+  registerLive: (
+    key: string,
+    path: string,
+    onChange: () => void,
+    opts: { deliverHidden?: boolean } = {}
+  ) => {
+    const entry = { path, onChange, deliverHidden: opts.deliverHidden ?? false }
     live.entries.set(key, entry)
     live.registrations++
     return () => {
@@ -206,5 +214,59 @@ describe('useInboxSummary', () => {
     })
     const state = cache().getQueryData(INBOX_SUMMARY_KEY) as InboxSummaryState
     expect(state.hidden).toBe(false)
+  })
+
+  it('hands the hint to a background handler, delivered while hidden, and takes it back', async () => {
+    const { api } = mountWith(ref(true))
+    await flushPromises()
+    const handler = vi.fn()
+    api().setBackground(handler)
+    const entry = live.entries.get(INBOX_SUMMARY_LIVE_KEY)!
+    expect(entry.deliverHidden).toBe(true)
+    const before = getInboxSummary.mock.calls.length
+    entry.onChange()
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(getInboxSummary.mock.calls.length).toBe(before)
+
+    api().setBackground(null)
+    const back = live.entries.get(INBOX_SUMMARY_LIVE_KEY)!
+    expect(back.deliverHidden).toBe(false)
+    back.onChange()
+    await flushPromises()
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(getInboxSummary.mock.calls.length).toBe(before + 1)
+  })
+
+  it('reads the inbox page into the summary', async () => {
+    const { api, cache } = mountWith(ref(true))
+    await flushPromises()
+    getInbox.mockResolvedValue({ notice: '', count: 3, degraded: false, mention_count: 1 })
+    const inbox = await readInboxIntoSummary(cache())
+    await flushPromises()
+    expect(inbox?.count).toBe(3)
+    expect(api().summary.value?.waiting).toBe(3)
+    expect(api().summary.value?.mentions).toBe(1)
+  })
+
+  it.each([
+    { name: 'a 404 hides the inbox', err: problem(404), hidden: true },
+    { name: 'a no_principal 403 hides the inbox', err: problem(403, 'no_principal'), hidden: true },
+    { name: 'a forbidden 403 drops the summary', err: problem(403, 'forbidden'), hidden: false },
+  ])('on a page refusal: $name', async ({ err, hidden }) => {
+    const { api, cache } = mountWith(ref(true))
+    await flushPromises()
+    getInbox.mockRejectedValue(err)
+    expect(await readInboxIntoSummary(cache())).toBeUndefined()
+    await flushPromises()
+    expect(api().hidden.value).toBe(hidden)
+    expect(api().summary.value).toBeUndefined()
+  })
+
+  it('throws on a transient page failure and keeps the badge', async () => {
+    const { api, cache } = mountWith(ref(true))
+    await flushPromises()
+    getInbox.mockRejectedValue(new ApiError('down', { kind: 'network', original: {} }))
+    await expect(readInboxIntoSummary(cache())).rejects.toThrow()
+    expect(api().summary.value).toEqual(counts())
   })
 })

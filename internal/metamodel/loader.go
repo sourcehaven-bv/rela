@@ -1389,6 +1389,14 @@ func isStringValuedType(typeName string) bool {
 	}
 }
 
+// ValidateFileOptions checks the attachment options of a `file` property
+// declared outside schema.yaml, such as a channel message property: `max`,
+// `accept`, `scan`, `scan_cmd` and `transform`, by the rules of an entity
+// file property. where names the property's place for the messages.
+func ValidateFileOptions(where, propName string, propDef PropertyDef) []string {
+	return validateFilePropertyOptions(where, propName, propDef)
+}
+
 // validateFilePropertyOptions checks the attachment-only property options
 // (`max` as a count, `accept`, `scan`, `scan_cmd`, `transform`). A negative
 // `max` is refused; 0 and unset both mean one file ([PropertyDef.FileMax]).

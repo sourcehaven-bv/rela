@@ -44,6 +44,8 @@ import { inboxStatus } from './inboxStatus'
 import { useNavItems } from '@/composables/useNavItems'
 import { useNavEntities } from '@/composables/useNavEntities'
 import { useFlyout } from '@/composables/useFlyout'
+import { useInboxNotifications } from '@/composables/useInboxNotifications'
+import { useTabTitleBadge } from '@/composables/useTabTitleBadge'
 import { shouldDeferToBrowser } from '@/utils/openIntent'
 import { useI18n } from 'vue-i18n'
 import { apiUrl } from '@/api/base'
@@ -225,11 +227,14 @@ function onCreated(entity: Entity) {
  * channel type, so the row is there with the other pinned rows and only its
  * badge arrives with the summary. A 404 or `no_principal` from the summary
  * hides it. The sidebar lives as long as the app, so it owns the summary's
- * live registration.
+ * live registration, the tab-title count and the browser notifications
+ * (TKT-48S88RB).
  */
 const channelSchema = useChannelSchema()
 const hasChannels = computed(() => channelSchema.channelTypes.length > 0)
 const inbox = useInboxSummary(hasChannels)
+useTabTitleBadge(inbox.summary)
+useInboxNotifications(hasChannels, inbox)
 const inboxStatusFor = (key: string | undefined) =>
   key === 'inbox' && inbox.summary.value
     ? inboxStatus(inbox.summary.value, (k, n) => t(k, { n }, n))

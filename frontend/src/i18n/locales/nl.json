@@ -161,6 +161,17 @@
       "description": "De taal van menu's, knoppen en meldingen, alleen in deze browser. Namen en labels uit de projectconfiguratie worden niet vertaald.",
       "label": "Taal van de interface",
       "automatic": "Automatisch ({language})"
+    },
+    "notifications": {
+      "title": "Browsermeldingen",
+      "description": "Meld nieuwe items in je inbox in deze browser terwijl rela op de achtergrond staat. Een melding toont wie schreef en bij welk item, nooit het bericht zelf.",
+      "enable": "Meldingen tonen",
+      "mentions": "Vermeldingen en antwoorden",
+      "waiting": "Sessies die op mij wachten",
+      "unsupported": "Deze browser kan hier geen meldingen tonen.",
+      "denied": "Meldingen zijn voor deze site geblokkeerd. Sta ze toe in de site-instellingen van je browser en zet dit daarna opnieuw aan.",
+      "signedOut": "Log in om meldingen te kiezen.",
+      "noStorage": "Deze browser laat rela geen gegevens voor deze site bewaren, dus nieuwe items in je inbox zijn niet van oude te onderscheiden. Sta sitegegevens toe en probeer het opnieuw."
     }
   },
   "errors": {
@@ -294,6 +305,12 @@
       "listed": "moet een van de getoonde waarden zijn",
       "maxChars": "mag hoogstens {max} tekens lang zijn",
       "unknownType": "heeft een onbekend type"
+    },
+    "files": {
+      "tooMany": "mag één bestand bevatten | mag hoogstens {n} bestanden bevatten",
+      "tooLarge": "{name} is groter dan {max}",
+      "postTooMany": "Een bericht mag hoogstens {max} bestanden meenemen.",
+      "postTooLarge": "De bestanden van een bericht mogen samen hoogstens {max} zijn."
     }
   },
   "history": {
@@ -1324,5 +1341,12 @@
       "warnings": "{name} is verplaatst, met waarschuwingen: {warnings}",
       "failed": "{name} kon niet worden verplaatst: {error}"
     }
+  },
+  "notifications": {
+    "mention": "Vermeld door {author}",
+    "reply": "Antwoord van {author}",
+    "waiting": "Wacht op jou: {state}",
+    "body": "{type}: {title}",
+    "more": "Nog {n} in je inbox | Nog {n} in je inbox"
   }
 }

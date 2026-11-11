@@ -63,19 +63,8 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 			return fmt.Errorf("wire realtime config: %w", err)
 		}
 	}
-	// Without a channel service the channel routes answer the entity 404
-	// and the OpenAPI document has no channel paths.
-	if c := appbuild.ChannelService(svc); c != nil {
-		if err := dataentry.SetChannels(app, c); err != nil {
-			return fmt.Errorf("wire channels: %w", err)
-		}
-		grid := dataentry.LiveInboxGrid
-		if appbuild.ChannelsScan(svc) {
-			grid = dataentry.LiveInboxGridScan
-		}
-		if err := dataentry.SetInboxGrid(app, grid); err != nil {
-			return fmt.Errorf("wire inbox grid: %w", err)
-		}
+	if err := wireChannels(app, svc); err != nil {
+		return err
 	}
 
 	// The worlds themselves are a NewApp argument; this resolves their links.
@@ -120,6 +109,35 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 	}
 	if err := app.SetQueryScopeResolver(dataentry.AdaptQueryScopes(appbuild.QueryScopes)); err != nil {
 		return fmt.Errorf("wire query scopes: %w", err)
+	}
+	return nil
+}
+
+// wireChannels sets the channel service, the channel file runner and the
+// inbox grid on app. It does nothing when the project has no channel service.
+func wireChannels(app *dataentry.App, svc *appbuild.Services) error {
+	// Without a channel service the channel routes answer the entity 404
+	// and the OpenAPI document has no channel paths.
+	c := appbuild.ChannelService(svc)
+	if c == nil {
+		return nil
+	}
+	if err := dataentry.SetChannels(app, c); err != nil {
+		return fmt.Errorf("wire channels: %w", err)
+	}
+	// Channel file scans use the runner the app checked; without one a
+	// configured scan refuses the file.
+	if r := dataentry.AttachmentRunner(app); r != nil {
+		if err := appbuild.SetChannelFileRunner(svc, r); err != nil {
+			return fmt.Errorf("wire channel files: %w", err)
+		}
+	}
+	grid := dataentry.LiveInboxGrid
+	if appbuild.ChannelsScan(svc) {
+		grid = dataentry.LiveInboxGridScan
+	}
+	if err := dataentry.SetInboxGrid(app, grid); err != nil {
+		return fmt.Errorf("wire inbox grid: %w", err)
 	}
 	return nil
 }

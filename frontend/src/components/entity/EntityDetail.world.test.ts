@@ -1286,9 +1286,9 @@ describe('EntityDetail world binding', () => {
   // duplicate policies: the natural response to "not found" is to create it
   // again. The server now answers 200 + `_world_absent` with the DEFAULT face.
   describe('no face in this world (BUG-1)', () => {
-    function absentResponse(): ViewResponse {
+    function absentResponse(id = entityId): ViewResponse {
       return {
-        entry: entry(),
+        entry: entry({ id }),
         sections: [],
         _world_absent: true,
       }
@@ -1406,7 +1406,7 @@ describe('EntityDetail world binding', () => {
       await flushPromises()
       expect(routerPush).toHaveBeenCalledTimes(1)
       // A different entity starts over.
-      fetchViewMock.mockResolvedValue(absentResponse())
+      fetchViewMock.mockResolvedValue(absentResponse('POL-2'))
       await w.setProps({ entityId: 'POL-2' })
       await flushPromises()
       expect(routerPush).toHaveBeenCalledTimes(2)

@@ -200,3 +200,61 @@ channel_types:
 		})
 	}
 }
+
+// TestRealtimeChannelSchema_PresetButtons pins HasPresetButtons
+// (TKT-WC63SNN): true for a type with a `button:` entry in any state,
+// false for a transition without one and for a channel type without a
+// session.
+func TestRealtimeChannelSchema_PresetButtons(t *testing.T) {
+	meta, err := metamodel.Parse([]byte(`version: "1.0"
+entities:
+  doc:
+    label: Doc
+    id_prefix: "DOC-"
+    properties:
+      title: {type: string}
+`))
+	require.NoError(t, err)
+	c, err := realtimecfg.Parse([]byte(`version: 1
+channel_types:
+  run:
+    attach_to: [doc]
+    read: { from: attached }
+    roles:
+      member: { from: attached }
+    message_types:
+      plan: { post: [member] }
+      decide: { properties: { decision: { type: string } }, post: [member] }
+    session:
+      initial: drafting
+      states:
+        drafting:
+          on:
+            plan: { to: review }
+        review:
+          on:
+            decide: { to: done, button: { label: Approve, props: { decision: approve } } }
+        done: { final: true }
+  room:
+    attach_to: [doc]
+    read: { from: attached }
+    roles:
+      member: { from: attached }
+    message_types:
+      text: { post: [member] }
+`), meta, nil)
+	require.NoError(t, err)
+	s := appbuild.RealtimeChannelSchema(c)
+	for _, tc := range []struct {
+		ct, mt string
+		want   bool
+	}{
+		{"run", "decide", true},
+		{"run", "plan", false},
+		{"room", "text", false},
+	} {
+		f, ok := s.MessageType(tc.ct, tc.mt)
+		require.True(t, ok, "%s.%s", tc.ct, tc.mt)
+		require.Equal(t, tc.want, f.HasPresetButtons, "%s.%s", tc.ct, tc.mt)
+	}
+}

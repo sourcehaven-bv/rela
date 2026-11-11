@@ -161,6 +161,17 @@
       "description": "The language of menus, buttons and messages, for this browser only. Names and labels from the project configuration are not translated.",
       "label": "Interface language",
       "automatic": "Automatic ({language})"
+    },
+    "notifications": {
+      "title": "Browser notifications",
+      "description": "Notify this browser about new inbox entries while rela is in the background. Notifications show who wrote and on which item, never the message itself.",
+      "enable": "Notify me",
+      "mentions": "Mentions and replies",
+      "waiting": "Sessions waiting on me",
+      "unsupported": "This browser cannot show notifications here.",
+      "denied": "Notifications are blocked for this site. Allow them in your browser's site settings, then turn this on again.",
+      "signedOut": "Sign in to choose notifications.",
+      "noStorage": "This browser does not let rela store data for this site, so it cannot tell new inbox entries from old ones. Allow site data and try again."
     }
   },
   "errors": {
@@ -294,6 +305,12 @@
       "listed": "must be one of the listed values",
       "maxChars": "must be at most {max} characters",
       "unknownType": "has an unknown type"
+    },
+    "files": {
+      "tooMany": "may hold one file | may hold at most {n} files",
+      "tooLarge": "{name} is larger than {max}",
+      "postTooMany": "A message may carry at most {max} files.",
+      "postTooLarge": "The files of a message may be at most {max} together."
     }
   },
   "history": {
@@ -1324,5 +1341,12 @@
       "warnings": "{name} was rescheduled with warnings: {warnings}",
       "failed": "Could not reschedule {name}: {error}"
     }
+  },
+  "notifications": {
+    "mention": "Mentioned by {author}",
+    "reply": "Reply from {author}",
+    "waiting": "Waiting on you: {state}",
+    "body": "{type}: {title}",
+    "more": "{n} more in your inbox | {n} more in your inbox"
   }
 }

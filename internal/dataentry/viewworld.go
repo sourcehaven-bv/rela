@@ -191,8 +191,12 @@ var errNoFaceInWorld = errors.New("entry entity has no face in this world")
 // preserved verbatim from before item 4b: it reaches the wire as a 422
 // `view_execution_failed` detail, and callers' tests match on it.
 func errViewEntryNotFound(entryID string) error {
-	return fmt.Errorf("entry entity not found: %s", entryID)
+	return fmt.Errorf("%w: %s", errEntryMissing, entryID)
 }
+
+// errEntryMissing is the sentinel [errViewEntryNotFound] wraps, so a handler
+// can tell a missing entry from other view failures by identity.
+var errEntryMissing = errors.New("entry entity not found")
 
 // loadViewEntities resolves neighbor ids to their faces in world w, preserving
 // the caller's id order and dropping ids that resolve to nothing.
@@ -452,9 +456,14 @@ func (h *viewsHandler) writeWorldAbsentView(
 	// `_faces` list — which would disclose exactly the content states the
 	// grant withholds (TKT-O7R2A1). readableFaceOf applies it while choosing,
 	// so an unreadable face is indistinguishable from an absent one here.
+	//
+	// A world that ranks faces reaches this page for an id it found no face
+	// of, so an id a rename or conversion retired lands here too.
 	if err != nil || e == nil || e.Type != entityType {
-		writeV1Error(w, r, http.StatusUnprocessableEntity, "view_execution_failed",
-			"View execution failed", errViewEntryNotFound(entityID).Error())
+		viewMiss(w, r, h.viewReader, entityID, func() {
+			writeV1Error(w, r, http.StatusUnprocessableEntity, "view_execution_failed",
+				"View execution failed", errViewEntryNotFound(entityID).Error())
+		})
 		return
 	}
 

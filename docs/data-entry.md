@@ -1490,7 +1490,8 @@ The server refuses the file when the block:
   it;
 - lists a property twice, or gives a widget that does not suit the
   property type;
-- gives a message type a `display` other than `collapsed` or `hidden`.
+- gives a message type a `display` other than `collapsed` or `hidden`, or
+  an `offer` other than `true` or `false`.
 
 Without `realtime.yaml`, realtime is off and the block has no effect. The
 server then logs a warning instead of refusing the file, so you can add the
@@ -1634,6 +1635,59 @@ When a type is `hidden` here but still counts as unread in
 A mention or reply in a quiet message still shows in the inbox. Clicking
 it opens the channel at that message and shows it in full, also when its
 type is `hidden` or `collapsed`.
+
+### Types that people do not post
+
+Some message types are posted only by an agent or an integration, such as a
+`pr-event` that a pull request watcher posts, or a `sized` move that a
+sizing agent posts. When people and agents share a role, the web app offers
+these types to people too: in the composer's type list, and, for a type
+that moves the session, as a decision button. `offer: false` on a message
+type says that people do not post it in the web app:
+
+```yaml
+channels:
+  task:
+    messages:
+      pr-event:
+        offer: false
+      sized:
+        offer: false
+```
+
+For such a type, the web app:
+
+- leaves it out of the composer's type list;
+- shows no decision button for it, the button rela adds for each type that
+  moves the session out of the current state;
+- shows Reply only when a type that the composer offers can reply. When the
+  composer would offer no type at all, it is not shown.
+
+The rest stays as it was:
+
+- the messages of the type show in the channel as usual. Add
+  `display: collapsed` or `display: hidden` to tone them down as well;
+- the type can still be posted through the HTTP API, over MCP with
+  `post_message`, and with `rela channel post`;
+- a preset button, declared with `button:` on a transition in
+  `realtime.yaml`, still shows. rela warns at load when a type with
+  `offer: false` has one, because the two settings disagree about whether
+  people post the type. Remove the preset or the `offer: false`, whichever
+  is wrong;
+- a button with `compose: true`, or an **Other** answer to a question,
+  still opens the composer with the type it names. When the message is
+  posted or the reply is cancelled, the composer goes back to its usual
+  types;
+- you can still edit a message of the type that you posted.
+
+A session state that waits for a person should leave that person a way
+forward. If every transition out of it has `offer: false`, the person sees
+no decision for it.
+
+`offer: false` is a display option, not access control. A person who may
+post the type can still post it through the API. To stop a role from
+posting a type, leave the role out of the type's `post` rule in
+`realtime.yaml`.
 
 ### Compact session header
 
@@ -1819,6 +1873,36 @@ newest message. On a mention or reply it marks the channel read up to
 that message, so earlier messages in that channel are marked read too. If
 you never opened that channel, this starts tracking it, so later messages
 show it under **Unread channels**.
+
+#### Tab title and browser notifications
+
+While you have mentions, replies or sessions that wait on you, the tab
+title starts with their number, for example "(3) Support Tickets". Unread
+channels are not counted.
+
+You can also get a browser notification for each new entry. Turn on
+**Browser notifications** on the Settings page. The browser then asks for
+permission. The choice is kept in that browser, per project and per
+person, and is off until you turn it on. Two boxes choose what notifies:
+**Mentions and replies**, and **Sessions waiting on me**.
+
+A notification:
+
+- shows only what the inbox page shows you: who mentioned you, or the
+  session's state, and the entity's type and title. It never shows the
+  message text.
+- comes from one tab, however many tabs of the project you have open.
+- does not show while a tab of the project has focus. The entry is then
+  counted as seen.
+- shows once per entry. A session that waits on you again after it moved
+  on notifies again. Entries already in the inbox when you turn
+  notifications on do not notify.
+- opens the entry, as a click on its inbox row does.
+
+When more than five entries arrive at once, five notify and one more
+notification counts the rest. When the browser blocks notifications, or
+cannot show them, the Settings page says so. The desktop app does not
+offer this setting yet.
 
 ## Lists
 
@@ -3407,6 +3491,17 @@ mentions of its old id working. How depends on the storage backend:
   even after its entity is deleted, so an unrelated entity cannot inherit
   those mentions. Renaming the entity back onto its old id is allowed and
   ends the retirement.
+
+  A link to the old id's page also keeps working. Opening it takes the
+  reader to the entity's page under its new id. For API clients, a read of
+  the old id (`GET /api/v1/_views/{type}/{id}` or
+  `GET /api/v1/{plural}/{id}`) answers `307 Temporary Redirect`, with a
+  `Location` relative to the request that keeps its query, and
+  `Cache-Control: no-store`. The redirect is temporary because it depends on
+  who asks and can change after another rename. This happens only when the
+  reader may read the entity. Anyone else gets the same answer as
+  for an id that never existed. A write to the old id is not redirected and
+  answers not found.
 
 ### Duplicating an entity
 
@@ -7729,6 +7824,9 @@ entity, the relation will be pre-filled with this target.
 
 **Overrides** — Scope defaults to specific entity types. For example, set `priority: critical`
 only when creating tickets, while leaving the global default as `medium`.
+
+The page also lets you choose the interface language and turn on browser
+notifications for the inbox (see [Inbox](#inbox)).
 
 ### Resolution Order
 

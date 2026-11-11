@@ -67,6 +67,10 @@ var channelErrorStatus = map[string]int{
 	realtime.TypeTooManyProps:        http.StatusBadRequest,
 	realtime.TypeReasonRequired:      http.StatusBadRequest,
 	realtime.TypeTooLarge:            http.StatusRequestEntityTooLarge,
+	// A file the property's policy refuses; a file the caller cannot
+	// download answers as one that is not there.
+	realtime.TypeFileRefused:  http.StatusUnprocessableEntity,
+	realtime.TypeFileNotFound: http.StatusNotFound,
 	// One body for a ref to a hidden entity and to a missing one, so a post
 	// cannot probe which ids exist.
 	realtime.TypeInvalidRef:  http.StatusUnprocessableEntity,

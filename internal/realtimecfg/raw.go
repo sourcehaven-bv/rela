@@ -11,6 +11,8 @@ import (
 	"errors"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 type rawFile struct {
@@ -290,6 +292,13 @@ type rawProperty struct {
 	Notify   *bool    `yaml:"notify"`
 	List     bool     `yaml:"list"`
 	MaxItems *int     `yaml:"max_items"`
+	// The keys of a file property. accept, scan, scan_cmd and transform
+	// have the meaning they have on an entity file property.
+	MaxSize   string                    `yaml:"max_size"`
+	Accept    []string                  `yaml:"accept"`
+	Scan      metamodel.ScanPolicy      `yaml:"scan"`
+	ScanCmd   []string                  `yaml:"scan_cmd"`
+	Transform []metamodel.TransformStep `yaml:"transform"`
 }
 
 type rawPromote struct {

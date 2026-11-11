@@ -454,3 +454,45 @@ func TestResolver_MentionedByGatesTheTarget(t *testing.T) {
 		})
 	}
 }
+
+func TestResolver_Successor(t *testing.T) {
+	st := memstore.New()
+	for _, e := range []*entity.Entity{{ID: "REQ-2", Type: "requirement"}, {ID: "SEC-1", Type: "secret"}} {
+		if err := st.CreateEntity(context.Background(), e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	load := retiringStore{MemStore: st, retired: map[string]string{
+		"REQ-1": "REQ-2", "OLD-1": "SEC-1", "GONE-1": "GONE-2", "SELF-1": "SELF-1",
+	}}
+	r := mustResolver(t, resolverGate{deny: map[string]bool{"SEC-1": true}}, visibility.NopRedactor{}, load)
+	w := visibility.WorldOf(store.TrivialScope())
+
+	tests := []struct {
+		id   string
+		want string
+	}{
+		{"REQ-1", "REQ-2"},
+		{"OLD-1", ""},  // successor hidden
+		{"GONE-1", ""}, // successor deleted
+		{"SELF-1", ""}, // maps to itself
+		{"NOPE-1", ""}, // never retired
+		{"REQ-2", ""},  // live, not retired
+	}
+	for _, tc := range tests {
+		t.Run(tc.id, func(t *testing.T) {
+			h, ok, err := r.Successor(context.Background(), w, tc.id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := map[bool]string{true: h.ID}[ok]; got != tc.want {
+				t.Errorf("Successor(%s) = %q, %v; want %q", tc.id, h.ID, ok, tc.want)
+			}
+		})
+	}
+
+	plain := mustResolver(t, resolverGate{}, visibility.NopRedactor{}, st)
+	if _, ok, err := plain.Successor(context.Background(), w, "REQ-1"); ok || err != nil {
+		t.Errorf("a store without RetiredIDs: ok=%v err=%v", ok, err)
+	}
+}

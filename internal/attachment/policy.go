@@ -18,14 +18,14 @@ import (
 // wired in Phase 2 via the [CommandRunner] seam. A PolicyProcessor with a nil
 // runner does MIME validation only, which is the correct out-of-box behavior.
 type PolicyProcessor struct {
-	meta   *metamodel.Metamodel
-	runner CommandRunner // optional; nil → no scan/transform (Phase 2 wires it)
+	meta    *metamodel.Metamodel
+	checker *Checker
 }
 
 // NewPolicyProcessor builds the policy processor. meta is required; runner is
 // optional (nil disables scan/transform, leaving native MIME validation only).
 func NewPolicyProcessor(meta *metamodel.Metamodel, runner CommandRunner) *PolicyProcessor {
-	return &PolicyProcessor{meta: meta, runner: runner}
+	return &PolicyProcessor{meta: meta, checker: NewChecker(runner)}
 }
 
 // NeedsFullFile always returns true: MIME sniffing, scanning and transforms all
@@ -45,12 +45,10 @@ func (p *PolicyProcessor) Process(
 	out := r
 	info := ProcessInfo{}
 
+	pol := PolicyFor(p.meta, prop)
+
 	// 1. Native MIME allowlist (always on; default-safe preset when unset).
-	allow := prop.Accept
-	if len(allow) == 0 && p.meta != nil && p.meta.Attachments != nil {
-		allow = p.meta.Attachments.Allow
-	}
-	mimeOut, mimeInfo, err := newMIMEProcessor(allow).Process(ctx, pc, out)
+	mimeOut, mimeInfo, err := newMIMEProcessor(pol.Accept).Process(ctx, pc, out)
 	if err != nil {
 		return nil, ProcessInfo{}, err
 	}
@@ -62,7 +60,7 @@ func (p *PolicyProcessor) Process(
 	// 2 & 3. Scan + transforms. Native (image:) transform steps run in-process
 	// and need no runner; scan and external (cmd:) steps require the runner.
 	// applyTransforms handles the mix and gates the runner-dependent steps.
-	out, info, err = p.applyTransforms(ctx, pc, prop, out, info)
+	out, info, err = p.checker.applyTransforms(ctx, pc, pol, out, info)
 	if err != nil {
 		return nil, ProcessInfo{}, err
 	}

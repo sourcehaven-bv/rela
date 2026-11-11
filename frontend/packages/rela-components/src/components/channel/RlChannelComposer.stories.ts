@@ -1338,3 +1338,224 @@ export const ButtonTypesSelect: Story = {
     await expect(canvas.getByRole('radio', { name: 'Text' })).toHaveAttribute('aria-checked', 'true')
   },
 }
+
+/* Types kept out of the composer (TKT-WC63SNN) --------------------------- */
+
+const hideDismiss = { messages: { dismiss: { offer: false } } }
+
+/**
+ * `offer: false` keeps a type out of the picker, for a type only agents
+ * post. The other types are offered as usual.
+ */
+export const OfferFalse: Story = {
+  args: {
+    presentation: {
+      messages: { ...channelPresentation.messages, finding: { offer: false }, status: { offer: false } },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const options = typeOptions(canvasElement)
+    await expect(options.map((o) => o.querySelector('span')!.textContent)).toEqual(['Message', 'Decision'])
+  },
+}
+
+/** With every postable type kept out, the composer renders nothing. */
+export const OfferFalseNothingLeft: Story = {
+  args: { postable: ['finding'], presentation: { messages: { finding: { offer: false } } } },
+  play: async ({ canvasElement }) => {
+    await expect(canvasElement.querySelector('form')).toBeNull()
+  },
+}
+
+/**
+ * The button fallback never brings a kept-out type back: with Text kept
+ * out and Contained a button type, the picker falls back to Contained only.
+ */
+export const OfferFalseWithButtons: Story = {
+  args: {
+    ...breachArgs,
+    postable: ['text', 'contained'],
+    buttonTypes: ['contained'],
+    presentation: { messages: { text: { offer: false } } },
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.queryByRole('radiogroup', { name: 'Message type' })).toBeNull()
+    await expect(canvas.getByRole('textbox', { name: /Note/ })).toBeVisible()
+  },
+}
+
+/** A compose decision that names a kept-out type opens it. */
+export const OfferFalseCompose: Story = {
+  args: { ...breachArgs, presentation: hideDismiss, compose: { ...dismissDecision } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvasElement.querySelector('.rl-channel-composer__compose')).toHaveTextContent('Dismiss')
+    await expect(canvas.getByRole('textbox', { name: /Reason/ })).toBeVisible()
+  },
+}
+
+/** An edit of a message of a kept-out type opens in that type. */
+export const OfferFalseEdit: Story = {
+  args: {
+    ...breachArgs,
+    presentation: hideDismiss,
+    editing: { seq: 4, type: 'dismiss', values: { reason: 'Noise' } },
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByRole('textbox', { name: /Reason/ })).toHaveValue('Noise')
+  },
+}
+
+/**
+ * `select(type)` of a kept-out type succeeds, for an Other answer in a
+ * channel without a session: the picker shows the type while it is
+ * selected, and leaves it out again once another type is picked.
+ */
+export const OfferFalseSelect: Story = {
+  args: { ...breachArgs, presentation: hideDismiss },
+  render: (args) => ({
+    components: { RlChannelComposer },
+    setup() {
+      const composer = ref<ComposerHandle | null>(null)
+      const answers = ref<boolean[]>([])
+      const pick = (t: string) => answers.value.push(composer.value!.select(t))
+      return { args, composer, answers, pick }
+    },
+    template: `
+      <div style="max-width:640px">
+        <RlChannelComposer ref="composer" v-bind="args" />
+        <button type="button" @click="pick('dismiss')">select dismiss</button>
+        <output data-testid="answers">{{ answers.join(',') }}</output>
+      </div>`,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.queryByRole('radio', { name: /Dismiss/ })).toBeNull()
+    await userEvent.click(canvas.getByRole('button', { name: 'select dismiss' }))
+    await expect(canvas.getByTestId('answers')).toHaveTextContent('true')
+    await expect(canvas.getByRole('radio', { name: /Dismiss/ })).toHaveAttribute('aria-checked', 'true')
+    await expect(canvas.getByRole('textbox', { name: /Reason/ })).toBeVisible()
+    await userEvent.click(canvas.getByRole('radio', { name: 'Text' }))
+    await expect(canvas.queryByRole('radio', { name: /Dismiss/ })).toBeNull()
+  },
+}
+
+/** A posted message of the kept-out type `select()` asked for ends the request. */
+export const OfferFalseSelectPosted: Story = {
+  args: { ...breachArgs, presentation: hideDismiss },
+  render: (args) => ({
+    components: { RlChannelComposer },
+    setup() {
+      const composer = ref<ComposerHandle | null>(null)
+      const pick = () => composer.value!.select('dismiss')
+      const posted = () => composer.value!.reset({ type: 'dismiss', values: { reason: 'Noise' }, rendered: ['reason'] })
+      return { args, composer, pick, posted }
+    },
+    template: `
+      <div style="max-width:640px">
+        <RlChannelComposer ref="composer" v-bind="args" />
+        <button type="button" @click="pick">select dismiss</button>
+        <button type="button" @click="posted">posted</button>
+      </div>`,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: 'select dismiss' }))
+    await expect(canvas.getByRole('radio', { name: /Dismiss/ })).toHaveAttribute('aria-checked', 'true')
+    await userEvent.click(canvas.getByRole('button', { name: 'posted' }))
+    await expect(canvas.queryByRole('radio', { name: /Dismiss/ })).toBeNull()
+    await expect(canvas.getByRole('radio', { name: 'Text' })).toHaveAttribute('aria-checked', 'true')
+  },
+}
+
+/** A `select()` that fails leaves no request behind. */
+export const OfferFalseSelectRefused: Story = {
+  args: { ...breachArgs, presentation: hideDismiss },
+  render: (args) => ({
+    components: { RlChannelComposer },
+    setup() {
+      const composer = ref<ComposerHandle | null>(null)
+      const buttons = ref(['dismiss'])
+      const answers = ref<boolean[]>([])
+      const pick = () => answers.value.push(composer.value!.select('dismiss'))
+      const answered = () => (buttons.value = [])
+      return { args, composer, buttons, answers, pick, answered }
+    },
+    template: `
+      <div style="max-width:640px">
+        <RlChannelComposer ref="composer" v-bind="args" :button-types="buttons" />
+        <button type="button" @click="pick">select dismiss</button>
+        <button type="button" @click="answered">answered</button>
+        <output data-testid="answers">{{ answers.join(',') }}</output>
+      </div>`,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: 'select dismiss' }))
+    await expect(canvas.getByTestId('answers')).toHaveTextContent('false')
+    await userEvent.click(canvas.getByRole('button', { name: 'answered' }))
+    await expect(canvas.queryByRole('radio', { name: /Dismiss/ })).toBeNull()
+  },
+}
+
+/** An edit puts the request aside and restores it when the edit ends. */
+export const OfferFalseSelectEdit: Story = {
+  args: { ...breachArgs, presentation: hideDismiss },
+  render: (args) => ({
+    components: { RlChannelComposer },
+    setup() {
+      const composer = ref<ComposerHandle | null>(null)
+      const editing = ref<{ seq: number; type: string; values: Record<string, string> } | undefined>()
+      const pick = () => composer.value!.select('dismiss')
+      const edit = () => (editing.value = { seq: 3, type: 'text', values: { body: 'Hi' } })
+      const done = () => (editing.value = undefined)
+      return { args, composer, editing, pick, edit, done }
+    },
+    template: `
+      <div style="max-width:640px">
+        <RlChannelComposer ref="composer" v-bind="args" :editing="editing" />
+        <button type="button" @click="pick">select dismiss</button>
+        <button type="button" @click="edit">edit</button>
+        <button type="button" @click="done">done</button>
+      </div>`,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: 'select dismiss' }))
+    await userEvent.type(canvas.getByRole('textbox', { name: /Reason/ }), 'Noise')
+    await userEvent.click(canvas.getByRole('button', { name: 'edit' }))
+    await userEvent.click(canvas.getByRole('button', { name: 'done' }))
+    await expect(canvas.getByRole('radio', { name: /Dismiss/ })).toHaveAttribute('aria-checked', 'true')
+    await expect(canvas.getByRole('textbox', { name: /Reason/ })).toHaveValue('Noise')
+  },
+}
+
+/** The end of the reply an Other answer opened ends its request. */
+export const OfferFalseSelectReplyEnds: Story = {
+  args: { ...breachArgs, presentation: { messages: { contained: { offer: false } } } },
+  render: (args) => ({
+    components: { RlChannelComposer },
+    setup() {
+      const composer = ref<ComposerHandle | null>(null)
+      const replyTo = ref<{ seq: number; author: string } | undefined>({ seq: 2, author: 'Triage agent' })
+      const pick = () => composer.value!.select('contained')
+      const cancel = () => (replyTo.value = undefined)
+      return { args, composer, replyTo, pick, cancel }
+    },
+    template: `
+      <div style="max-width:640px">
+        <RlChannelComposer ref="composer" v-bind="args" :reply-to="replyTo" />
+        <button type="button" @click="pick">select contained</button>
+        <button type="button" @click="cancel">cancel reply</button>
+      </div>`,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: 'select contained' }))
+    await expect(canvas.getByRole('radio', { name: /Contained/ })).toHaveAttribute('aria-checked', 'true')
+    await userEvent.click(canvas.getByRole('button', { name: 'cancel reply' }))
+    await expect(canvas.queryByRole('radio', { name: /Contained/ })).toBeNull()
+  },
+}

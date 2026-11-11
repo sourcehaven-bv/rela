@@ -130,7 +130,7 @@ func (g commentPermissionGate) HoldsPermission(ctx context.Context, subjectID, p
 //
 // Errors collapse to "denied": this gate feeds an authorization decision, and a
 // gate that cannot answer must not be read as a yes. The HTTP layer separately
-// runs gateReadOrNotFound, which surfaces the error properly, so a genuine
+// runs gateReadOr, which surfaces the error properly, so a genuine
 // backend fault is still reported rather than silently becoming a 403.
 type commentReadGate struct{}
 

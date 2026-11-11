@@ -538,6 +538,23 @@ export interface Message {
   release_after?: string
   /** The people and agents the message mentions; absent on a removed message. */
   mentions?: MessageMention[]
+  /**
+   * The files posted with the message, of the properties its type still
+   * declares `file`. Download one at `…/messages/{seq}/files/{id}`.
+   */
+  files?: MessageFile[]
+}
+
+/**
+ * One file of a message: the `file` property that holds it, its display
+ * name, the MIME type the server sniffed and its size in bytes.
+ */
+export interface MessageFile {
+  id: string
+  property: string
+  name: string
+  mime: string
+  size: number
 }
 
 export interface MessageActionResponse {
@@ -681,7 +698,7 @@ export interface ChannelChoicesSchema {
 }
 
 export type ChannelPropertyType =
-  'string' | 'markdown' | 'integer' | 'boolean' | 'date' | 'datetime' | 'ref' | 'enum'
+  'string' | 'markdown' | 'integer' | 'boolean' | 'date' | 'datetime' | 'ref' | 'enum' | 'file'
 
 export interface ChannelPropertySchema {
   name: string
@@ -690,7 +707,8 @@ export interface ChannelPropertySchema {
   required?: boolean
   /**
    * The most code points a string or markdown value may hold; for a list,
-   * the most each item may hold.
+   * the most each item may hold. On a `file` property, the most files a
+   * message holds in it.
    */
   max?: number
   /** Set for a list of strings (type string): the value is an array. */
@@ -702,6 +720,10 @@ export interface ChannelPropertySchema {
   values?: string[]
   /** The entity types a ref may point to. */
   to?: string[]
+  /** On a `file` property: the most bytes of one file. */
+  max_size?: number
+  /** On a `file` property: the MIME types it accepts; absent accepts the server's default. */
+  accept?: string[]
 }
 
 export interface ChannelActionSchema {
@@ -855,6 +877,7 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'edit_until',
     'release_after',
     'mentions',
+    'files',
   ]),
   MessageMention: wireKeys<MessageMention>()(['text', 'kind', 'ref']),
   MessageActionResponse: wireKeys<MessageActionResponse>()(['message', 'warnings']),
@@ -1000,6 +1023,8 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'enum',
     'values',
     'to',
+    'max_size',
+    'accept',
   ]),
   ChannelActionSchema: wireKeys<ChannelActionSchema>()(['name', 'label', 'promote_to']),
 }

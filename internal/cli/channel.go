@@ -35,6 +35,7 @@ type ChannelCmd struct {
 	MarkRead ChannelMarkReadCmd `cmd:"" name:"mark-read" help:"Mark a channel read up to a seq, or up to its last message."`
 	Action   ChannelActionCmd   `cmd:"" help:"Run a message action, such as a promote, or release a stuck one."`
 	Session  ChannelSessionCmd  `cmd:"" help:"Show a channel's session: its state, who it waits for, and what you may post to move it."`
+	File     ChannelFileCmd     `cmd:"" help:"Download a file of a message."`
 }
 
 // channelReader reads channels. The wiring site passes the project's
@@ -95,6 +96,8 @@ type channelServices struct {
 	// processes make, until ctx ends, and returns a channel closed once it
 	// stopped. Nil: accepted; a watch then sees those changes at its poll.
 	Follow func(ctx context.Context) <-chan struct{}
+	// Files serves message files. Nil: accepted when Svc is nil.
+	Files channelFileOpener
 }
 
 const (
@@ -412,8 +415,9 @@ type ChannelPostCmd struct {
 	channelAddr
 	MessageType string `arg:"" name:"message-type" help:"Message type, from rela channel read."`
 	channelProps
-	ReplyTo          int64  `name:"reply-to" help:"Seq of the top-level message to reply to."`
-	ExpectGeneration *int64 `name:"expect-generation" help:"Post only while the session is at this generation."`
+	ReplyTo          int64    `name:"reply-to" help:"Seq of the top-level message to reply to."`
+	ExpectGeneration *int64   `name:"expect-generation" help:"Post only while the session is at this generation."`
+	Files            []string `name:"file" sep:"none" placeholder:"PROP=PATH" help:"Attach a file to a file property; repeatable."`
 }
 
 // Run posts the message.
@@ -434,8 +438,13 @@ func (c *ChannelPostCmd) Run(ctx context.Context, cs *channelServices) error {
 	if err != nil {
 		return err
 	}
+	files, err := readPostFiles(c.Files)
+	if err != nil {
+		return err
+	}
 	got, err := svc.Post(ctx, addr, realtime.PostInput{
-		Type: c.MessageType, Props: props, ReplyTo: c.ReplyTo, LogOnly: true, ExpectGeneration: c.ExpectGeneration,
+		Type: c.MessageType, Props: props, Files: files, ReplyTo: c.ReplyTo, LogOnly: true,
+		ExpectGeneration: c.ExpectGeneration,
 	})
 	if err != nil {
 		return channelFailed(ctx, "post", addr.Anchor, err)

@@ -101,6 +101,11 @@ func (mt *MessageType) normalize(in map[string]any, maxBytes int, requireAll boo
 		}
 	}
 	for _, name := range sortedKeys(mt.Properties) {
+		// A required file property is checked against the files of the
+		// post, which the props do not hold.
+		if p := mt.Properties[name]; p.Type == PropertyFile {
+			continue
+		}
 		if _, ok := out[name]; !ok && requireAll && mt.Properties[name].Required {
 			return NormalizedProps{}, fmt.Errorf("property %q is required", name)
 		}
@@ -125,6 +130,8 @@ func (p Property) Normalize(raw any) (any, error) {
 		return normalizeList(p, raw)
 	}
 	switch p.Type {
+	case PropertyFile:
+		return nil, errors.New("is a file property; send the files beside the properties, not as a value")
 	case PropertyInteger:
 		return normalizeInt(raw)
 	case PropertyBoolean:
@@ -165,7 +172,7 @@ func (p Property) Normalize(raw any) (any, error) {
 			return nil, fmt.Errorf("must be one of %v", p.Values)
 		}
 		return s, nil
-	case PropertyString, PropertyMarkdown, PropertyInteger, PropertyBoolean:
+	case PropertyString, PropertyMarkdown, PropertyInteger, PropertyBoolean, PropertyFile:
 	}
 	if p.Max > 0 && utf8.RuneCountInString(s) > p.Max {
 		return nil, fmt.Errorf("must be at most %d characters", p.Max)
@@ -264,6 +271,11 @@ func normalizeInt(raw any) (any, error) {
 // record declares for it (see [messageRecordType]). An absent value is
 // nil.
 func (p Property) PredicateValue(v any) predicate.Value {
+	if p.Type == PropertyFile {
+		// The props never hold files; [MessageType.SetFileCounts] binds
+		// the count. Until then the property holds none.
+		return predicate.NewInt(0)
+	}
 	if v == nil {
 		return predicate.NewNil()
 	}
@@ -315,4 +327,14 @@ func (mt *MessageType) PredicateFields(props map[string]any) map[string]predicat
 		fields[name] = p.PredicateValue(props[name])
 	}
 	return fields
+}
+
+// SetFileCounts binds each file property of mt in fields to the number of
+// files counts gives for it; a property counts does not name holds none.
+func (mt *MessageType) SetFileCounts(fields map[string]predicate.Value, counts map[string]int) {
+	for name, p := range mt.Properties {
+		if p.Type == PropertyFile {
+			fields[name] = predicate.NewInt(int64(counts[name]))
+		}
+	}
 }

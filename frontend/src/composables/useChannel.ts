@@ -9,6 +9,7 @@ import {
   runLifecycle,
   runMessageAction,
   type ChannelTarget,
+  type MessageFileUpload,
   type PostResult,
 } from '@/api/channels'
 import { liveChannelPath } from '@/api/live'
@@ -506,11 +507,14 @@ export function useChannel(
     type: string,
     props: Record<string, MessagePropInput>,
     replyTo?: number,
-    expectGeneration?: number
+    expectGeneration?: number,
+    files?: readonly MessageFileUpload[]
   ): Promise<PostResult> {
     const s = requireSession()
     const unstored = head.value?.channel.last_seq === 0
-    const res = await postMessage(s.target, type, props, replyTo, expectGeneration)
+    const res = files?.length
+      ? await postMessage(s.target, type, props, replyTo, expectGeneration, files)
+      : await postMessage(s.target, type, props, replyTo, expectGeneration)
     // A new message lands at the live end; when the list is not there,
     // go back to it so the user sees what they posted.
     if (res.kind === 'message' && hasNewer.value) await loadNewest()

@@ -598,15 +598,24 @@ idempotency key, so several servers against one schema run one purge at a
 time. `RELA_SOFT_DELETE_DELAY` and `RELA_SOFT_DELETE_GC_INTERVAL` set the
 window and the check interval.
 
-## Job table retention
+## Job queue tables
 
-The durable job queue keeps its jobs in `neoq_jobs` and, when neoq gives up
-on one, in `neoq_dead_jobs`, both in the tenant's schema. neoq never deletes
-either. Every rela process that runs the queue therefore sweeps them every 10
-minutes, starting 10 minutes after it starts. A sweep deletes rows of jobs that finished more than 24 hours ago from
-`neoq_jobs`, and rows older than 24 hours from `neoq_dead_jobs`. Waiting jobs,
-including failed ones that will be retried, stay. The sweep uses one extra
-database connection.
+The durable job queue uses [River](https://riverqueue.com). Its tables
+(`river_job`, `river_queue`, `river_leader` and a few more) live in the
+tenant's schema. Every rela process brings them up to date when it starts.
+River deletes finished, cancelled and discarded jobs after 24 hours.
+Waiting jobs, including failed ones that will be retried, stay. The queue
+uses its own pool of up to six database connections.
+
+### Upgrading from a neoq build
+
+Earlier builds used neoq, with tables named `neoq_*`. The first start of a
+River build moves the jobs that were still waiting into River and drops the
+neoq tables. Stop every older rela process first. While an older process
+is running a job, or is adding one, the move waits for the next start. Once
+the tables are gone, an older process that is still running can no longer
+add jobs. The waiting jobs run once the move succeeds. The step is one way;
+an older build cannot read River's tables.
 
 ## Tenant mode
 

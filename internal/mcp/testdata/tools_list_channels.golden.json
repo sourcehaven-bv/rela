@@ -149,6 +149,10 @@
           "description": "The session generation this post was decided against, 0 or more; a post at another generation is refused with session_moved",
           "type": "number"
         },
+        "files": {
+          "description": "Files to post with the message, for a message type with file properties (message_types[].files on read_channel lists them; props_schema does not). Each item is {\"property\": \"\u003cfile property\u003e\", \"file_name\": \"\u003cname with extension\u003e\", \"content\": \"\u003cbase64\u003e\"}. At most 4 files and 16777216 bytes together; each property's max, max_size and accept apply, and a configured scan runs.",
+          "type": "array"
+        },
         "id": {
           "description": "Entity ID, or ID@face for a channel type that anchors to a face",
           "type": "string"

@@ -118,7 +118,10 @@ func describeChoices(c *realtimecfg.Choices) *ChoicesDescription {
 // code points a string or markdown value may hold, 0 for no limit. Enum
 // names the schema.yaml enum type and Values its values; To lists the
 // entity types a ref may name. List is set for a list of strings; Max then
-// limits each item and MaxItems the number of items.
+// limits each item and MaxItems the number of items. For a file property
+// (type file) Max is the most files a message holds in it, MaxSize the
+// most bytes of one file, and Accept the MIME types it accepts, empty for
+// any.
 type PropertyDescription struct {
 	Name     string
 	Label    string
@@ -130,6 +133,8 @@ type PropertyDescription struct {
 	To       []string
 	List     bool
 	MaxItems int
+	MaxSize  int64
+	Accept   []string
 }
 
 // ActionDescription describes one message action.
@@ -203,11 +208,15 @@ func describeMessageType(mt *realtimecfg.MessageType) MessageTypeDescription {
 		InDerived:      mt.InDerived(),
 	}
 	for _, p := range mt.Properties {
-		d.Properties = append(d.Properties, PropertyDescription{
+		pd := PropertyDescription{
 			Name: p.Name, Label: p.Label, Type: string(p.Type), Required: p.Required, Max: p.Max,
 			Enum: p.Enum, Values: slices.Clone(p.Values), To: slices.Clone(p.To),
 			List: p.List, MaxItems: p.MaxItems,
-		})
+		}
+		if p.File != nil {
+			pd.Max, pd.MaxSize, pd.Accept = p.File.MaxFiles, p.File.MaxSize, slices.Clone(p.File.Policy.Accept)
+		}
+		d.Properties = append(d.Properties, pd)
 	}
 	slices.SortFunc(d.Properties, func(a, b PropertyDescription) int {
 		switch {

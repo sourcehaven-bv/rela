@@ -13,8 +13,14 @@
  * A list property has no field: agents post lists, and an edit sends a
  * stored list back unchanged (the app carries what is not rendered).
  *
- * It checks only what it can know for certain: a required field is filled,
- * and a text is within `max` code points (as the server counts). Everything
+ * A `file` property is a file picker (RlChannelFileField). Its files are
+ * kept per message type beside the values and go out in the `post` event's
+ * `files`, never in `values` or `rendered`. An edit shows no file field,
+ * since a message's files do not change after the post.
+ *
+ * It checks only what it can know for certain: a required field is filled
+ * (a required file field holds a file), and a text is within `max` code
+ * points (as the server counts). Everything
  * else (dates, integers, the server's own rules) is the app's, which passes
  * field messages back in `errors` and a general one in `error`.
  *
@@ -66,6 +72,14 @@
  * the default type. If leaving them out would leave nothing to pick, the
  * picker offers every type as before, so the composer never disappears.
  *
+ * A type whose presentation sets `offer: false` is left out of the
+ * picker too, also when that leaves nothing to pick: such a type is for
+ * agents, not people. It still shows when an edit, a compose decision or
+ * `select()` names it. `select()` keeps it in the picker until another
+ * type is selected, a message of it is posted (`reset`) or the reply ends;
+ * an edit puts the request aside and restores it. With nothing to pick and
+ * nothing named, the composer renders nothing.
+ *
  * `compose` puts the composer in compose mode, for a decision that opens it
  * with some properties fixed (a preset button with `compose: true`). The app
  * owns it, as it owns `replyTo`. A new `compose.key` selects `compose.type`
@@ -94,6 +108,7 @@ import RlBanner from '../feedback/RlBanner.vue'
 import RlKbd from '../data/RlKbd.vue'
 import RlSegmentedControl from '../data/RlSegmentedControl.vue'
 import RlChannelField from './RlChannelField.vue'
+import RlChannelFileField from './RlChannelFileField.vue'
 import { codePointLength, resolveChannelFields, type ResolvedChannelField } from './channelFields'
 import type {
   ChannelComposeView,
@@ -195,15 +210,25 @@ const offered = computed(() => {
   return [...first, ...list.filter((m) => !transitionByType.value.has(m.name))]
 })
 
+/** Whether the presentation keeps type out of the picker (`offer: false`). */
+const unoffered = (type: string) => props.presentation?.messages?.[type]?.offer === false
+
+/** A type kept out of the picker that `select()` selected; see `unoffered`. */
+const requested = ref('')
+
 /**
- * The types the picker offers: the offered ones without the button types,
- * or all of them when that would leave none. An edit offers its own type.
+ * The types the picker offers: the offered ones without the types the
+ * presentation keeps out (bar the one `select()` asked for), then without
+ * the button types, or all of the former when that would leave none. An
+ * edit offers its own type.
  */
 const pickable = computed(() => {
-  if (props.editing || !props.buttonTypes.length) return offered.value
+  if (props.editing) return offered.value
+  const shown = offered.value.filter((m) => !unoffered(m.name) || m.name === requested.value)
+  if (!props.buttonTypes.length) return shown
   const buttons = new Set(props.buttonTypes)
-  const list = offered.value.filter((m) => !buttons.has(m.name))
-  return list.length ? list : offered.value
+  const list = shown.filter((m) => !buttons.has(m.name))
+  return list.length ? list : shown
 })
 
 /** Whether type may be the selection now: pickable, or the live compose decision's type. */
@@ -228,6 +253,18 @@ const typeOptions = computed(() =>
 const typeGone = computed(() => !!props.editing && offered.value.length === 0)
 
 const selected = ref('')
+// Selecting another type, by the user or by the app, lets go of the type
+// `select()` asked for, so the picker leaves it out again.
+watch(selected, (type) => {
+  if (type !== requested.value) requested.value = ''
+})
+// The reply an Other answer opened is over, so is its request.
+watch(
+  () => props.replyTo?.seq,
+  (seq, prev) => {
+    if (prev !== undefined && seq === undefined && !props.editing) requested.value = ''
+  },
+)
 const current = computed(() => {
   const name = selected.value
   const own = name && selectable(name) ? offered.value.find((m) => m.name === name) : undefined
@@ -372,11 +409,19 @@ const shown = computed<ResolvedChannelField[]>(() =>
 /** An own key of o; `in` would also find `constructor` and the like. */
 const hasOwn = (o: object, key: string) => Object.prototype.hasOwnProperty.call(o, key)
 
-/** The rendered fields: no list, and in compose mode no fixed property. */
+/**
+ * The rendered fields: no list, in compose mode no fixed property, and in
+ * an edit no file.
+ */
 const fields = computed<ResolvedChannelField[]>(() => {
   const given = composing.value?.given ?? {}
-  return shown.value.filter((f) => !f.property.list && !hasOwn(given, f.property.name))
+  return shown.value.filter(
+    (f) =>
+      !f.property.list && !hasOwn(given, f.property.name) && !(props.editing && f.property.type === 'file'),
+  )
 })
+
+const isFile = (f: ResolvedChannelField) => f.property.type === 'file'
 
 /** The fixed values of compose mode as "Label: value", in field order. */
 const givenRows = computed(() => {
@@ -407,11 +452,14 @@ const describedBy = computed(
 
 type Values = Record<string, ChannelFieldValue>
 type Refs = Record<string, ChannelReadableRef | undefined>
+type Files = Record<string, File[]>
 
 /** Values per message type, so a type switch keeps what was typed. */
 const drafts = reactive<Record<string, Values>>({})
 /** Chosen refs per message type, next to the ids in `drafts`. */
 const refs = reactive<Record<string, Refs>>({})
+/** Picked files per message type and property. An edit never touches them. */
+const files = reactive<Record<string, Files>>({})
 /** In an edit: the ref properties still holding a ref the user may not read. */
 const restricted = reactive(new Set<string>())
 const localErrors = ref<Record<string, string>>({})
@@ -427,6 +475,7 @@ function reseed(type: string) {
   const def = props.messageTypes.find((m) => m.name === type)
   drafts[type] = def ? seeded(def) : {}
   refs[type] = {}
+  files[type] = {}
 }
 
 watch(
@@ -439,12 +488,13 @@ watch(
 
 const values = computed<Values>(() => (current.value ? (drafts[current.value.name] ?? {}) : {}))
 const chosen = computed<Refs>(() => (current.value ? (refs[current.value.name] ?? {}) : {}))
+const picked = computed<Files>(() => (current.value ? (files[current.value.name] ?? {}) : {}))
 
 /**
  * What an edit displaced: the selected type, and the draft and refs of the
  * edited type, put back when the edit ends.
  */
-let stashed: { selected: string; type: string; values?: Values; refs?: Refs } | null = null
+let stashed: { selected: string; requested: string; type: string; values?: Values; refs?: Refs } | null = null
 
 watch(
   () => (props.editing ? `${props.editing.seq}:${props.editing.type}` : ''),
@@ -461,11 +511,21 @@ watch(
       // wins over the selection the edit put aside.
       const c = liveCompose()
       if (c) selected.value = c.type
-      else if (selectable(s.selected)) selected.value = s.selected
+      else {
+        requested.value = s.requested
+        if (selectable(s.selected)) selected.value = s.selected
+        else requested.value = ''
+      }
     }
     const e = props.editing
     if (!e) return
-    stashed = { selected: selected.value, type: e.type, values: drafts[e.type], refs: refs[e.type] }
+    stashed = {
+      selected: selected.value,
+      requested: requested.value,
+      type: e.type,
+      values: drafts[e.type],
+      refs: refs[e.type],
+    }
     selected.value = e.type
     drafts[e.type] = { ...e.values }
     refs[e.type] = { ...e.refs }
@@ -479,6 +539,18 @@ function setValue(name: string, v: ChannelFieldValue) {
   if (!type) return
   ;(drafts[type.name] ??= seeded(type))[name] = v
   if (!props.editing && type.persist === 'log' && !isEmpty(v)) emit('typing')
+  clearLocalError(name)
+}
+
+function setFiles(name: string, list: File[]) {
+  const type = current.value
+  if (!type) return
+  ;(files[type.name] ??= {})[name] = list
+  if (type.persist === 'log' && list.length) emit('typing')
+  clearLocalError(name)
+}
+
+function clearLocalError(name: string) {
   if (localErrors.value[name]) {
     const { [name]: _, ...rest } = localErrors.value
     localErrors.value = rest
@@ -501,6 +573,10 @@ function check(): Record<string, string> {
   for (const f of fields.value) {
     const name = f.property.name
     if (restricted.has(name)) continue
+    if (isFile(f)) {
+      if (f.property.required && !picked.value[name]?.length) out[name] = t('required')
+      continue
+    }
     const v = values.value[name]
     if (f.property.required && isEmpty(v)) out[name] = t('required')
     else if (f.property.max && typeof v === 'string' && codePointLength(v) > f.property.max) {
@@ -525,18 +601,27 @@ async function submit() {
   }
   // An untouched restricted ref is left out, so the app carries it as
   // unrendered and the server keeps it.
-  const rendered = fields.value.map((f) => f.property.name).filter((n) => !restricted.has(n))
+  const rendered = fields.value
+    .filter((f) => !isFile(f))
+    .map((f) => f.property.name)
+    .filter((n) => !restricted.has(n))
   const out: Values = {}
   for (const name of rendered) out[name] = values.value[name]
   if (props.editing) {
     emit('save', { seq: props.editing.seq, type: type.name, values: out, rendered })
   } else {
+    const sent: Files = {}
+    for (const f of fields.value) {
+      const list = isFile(f) ? picked.value[f.property.name] : undefined
+      if (list?.length) sent[f.property.name] = [...list]
+    }
     emit('post', {
       type: type.name,
       values: out,
       rendered,
       replyTo: props.replyTo?.seq,
       compose: composing.value?.key,
+      ...(Object.keys(sent).length ? { files: sent } : {}),
     })
   }
 }
@@ -578,6 +663,8 @@ function reset(posted?: ChannelPostEvent | ChannelEditEvent) {
   if (posted && 'seq' in posted) return
   const type = posted?.type ?? (props.editing ? undefined : current.value?.name)
   if (!type) return
+  // A posted message of the type `select()` asked for ends the request.
+  if (posted && posted.type === requested.value) requested.value = ''
   if (props.editing && stashed?.type === type) {
     // The posted draft is the one the edit put aside.
     stashed.values = undefined
@@ -594,7 +681,9 @@ function reset(posted?: ChannelPostEvent | ChannelEditEvent) {
 function focusField() {
   const list = fields.value
   const missing = (f: ResolvedChannelField) =>
-    f.property.required && !restricted.has(f.property.name) && isEmpty(values.value[f.property.name])
+    f.property.required &&
+    !restricted.has(f.property.name) &&
+    (isFile(f) ? !picked.value[f.property.name]?.length : isEmpty(values.value[f.property.name]))
   const target = (composing.value && list.find(missing)) || list[0]
   if (!target) return
   const wrapper = form.value?.querySelector(`[data-field="${CSS.escape(target.property.name)}"]`)
@@ -610,7 +699,13 @@ function focusField() {
  * during an edit or when `type` is not offered now.
  */
 function select(type: string): boolean {
-  if (props.editing || !selectable(type)) return false
+  if (props.editing) return false
+  const prev = requested.value
+  if (unoffered(type) && offered.value.some((m) => m.name === type)) requested.value = type
+  if (!selectable(type)) {
+    requested.value = prev
+    return false
+  }
   selected.value = type
   void nextTick(focusField)
   return true
@@ -669,7 +764,15 @@ defineExpose({
         :data-field="f.property.name"
         :style="{ '--rl-channel-span': f.span ?? 12 }"
       >
+        <RlChannelFileField
+          v-if="isFile(f)"
+          :field="f"
+          :files="picked[f.property.name] ?? []"
+          :error="errorFor(f.property.name)"
+          @update:files="(list) => setFiles(f.property.name, list)"
+        />
         <RlChannelField
+          v-else
           :field="f"
           :model-value="values[f.property.name]"
           :error="errorFor(f.property.name)"

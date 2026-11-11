@@ -411,13 +411,7 @@ func (v *validator) messageType(key, name string, raw *rawMessageType, ct *Chann
 		mt.NoUnread = noUnread
 	}
 
-	if len(raw.Properties) > realtimelimits.MaxMessageProperties {
-		v.add(key+".properties", fmt.Sprintf("at most %d properties", realtimelimits.MaxMessageProperties))
-	}
-	for _, pn := range sortedKeys(raw.Properties) {
-		rp := raw.Properties[pn]
-		mt.Properties[pn] = v.property(key+".properties."+pn, pn, &rp, limits)
-	}
+	messageProperties(v, key+".properties", raw.Properties, mt, limits)
 	if raw.When != "" {
 		if env, err := messageEnv(mt.Properties); err != nil {
 			v.add(key+".when", err.Error())
@@ -454,6 +448,22 @@ func (v *validator) messageType(key, name string, raw *rawMessageType, ct *Chann
 		}
 	}
 	return mt
+}
+
+// messageProperties compiles the properties of mt from raw, under key. It
+// is a function and not a validator method because the validator is at
+// its method budget.
+func messageProperties(v *validator, key string, raw map[string]rawProperty, mt *MessageType, limits Limits) {
+	if len(raw) > realtimelimits.MaxMessageProperties {
+		v.add(key, fmt.Sprintf("at most %d properties", realtimelimits.MaxMessageProperties))
+	}
+	for _, pn := range sortedKeys(raw) {
+		rp := raw[pn]
+		mt.Properties[pn] = v.property(key+"."+pn, pn, &rp, limits)
+	}
+	if problem := fileTotals(mt); problem != "" {
+		v.add(key, problem)
+	}
 }
 
 // unreadOf reads a set `unread:` on a type with the given persist. It
@@ -515,7 +525,7 @@ func (v *validator) property(key, name string, raw *rawProperty, limits Limits) 
 	p := Property{Name: name, Label: orDefault(raw.Label, name), Required: raw.Required, To: slices.Clone(raw.To)}
 	switch PropertyType(raw.Type) {
 	case PropertyString, PropertyMarkdown, PropertyInteger, PropertyBoolean,
-		PropertyDate, PropertyDatetime, PropertyRef:
+		PropertyDate, PropertyDatetime, PropertyRef, PropertyFile:
 		p.Type = PropertyType(raw.Type)
 	case "":
 		v.add(key+".type", "name a type")
@@ -523,7 +533,7 @@ func (v *validator) property(key, name string, raw *rawProperty, limits Limits) 
 		ct, ok := v.meta.Types[raw.Type]
 		if !ok || len(ct.Values) == 0 {
 			v.add(key+".type", fmt.Sprintf("unknown type %q; use string, markdown, integer, boolean, date, "+
-				"datetime, ref or an enum type declared in schema.yaml", raw.Type))
+				"datetime, ref, file or an enum type declared in schema.yaml", raw.Type))
 		} else {
 			p.Type, p.Enum, p.Values = PropertyEnum, raw.Type, slices.Clone(ct.Values)
 		}
@@ -540,7 +550,12 @@ func (v *validator) property(key, name string, raw *rawProperty, limits Limits) 
 		maxRunes = realtimelimits.MaxListItemRunes
 		p.Max = realtimelimits.DefaultListItemRunes
 	}
-	if raw.Max != nil {
+	if p.Type == PropertyFile {
+		p.File = fileSpec(key, name, raw, v.add)
+	} else if problem := fileKeys(raw); problem != "" {
+		v.add(key, problem)
+	}
+	if raw.Max != nil && p.Type != PropertyFile {
 		switch {
 		case p.Type != PropertyString && p.Type != PropertyMarkdown:
 			v.add(key+".max", "only a string or markdown property has a max")
@@ -739,6 +754,9 @@ func promotable(mp Property, pd metamodel.PropertyDef) bool {
 		return pd.Type == metamodel.PropertyTypeDate
 	case PropertyDatetime:
 		return pd.Type == metamodel.PropertyTypeDatetime
+	case PropertyFile:
+		// The files stay with the channel; promotion copies no bytes.
+		return false
 	}
 	return false
 }
@@ -964,6 +982,15 @@ func (v *validator) literalPost(key string, mt *MessageType, lit map[string]stri
 			"trigger's or reminder's message meets it would depend on the date")
 		return
 	}
+	// A trigger or reminder posts no files, so a required file property
+	// would refuse every post it makes.
+	for _, pn := range sortedKeys(mt.Properties) {
+		if p := mt.Properties[pn]; p.Type == PropertyFile && p.Required {
+			v.add(key, "message type "+mt.Name+" requires a file in property "+pn+
+				", and a trigger or reminder posts no files")
+			return
+		}
+	}
 	for pn := range lit {
 		if p, ok := mt.Properties[pn]; ok && p.Type == "" {
 			// A property's type is unknown, which refused the file at its
@@ -1079,4 +1106,74 @@ func facesRestricted(p *acl.Policy, entityType string) bool {
 		}
 	}
 	return false
+}
+
+// fileSpec compiles the settings of a file property. It is a function and
+// not a validator method because the validator is at its method budget.
+func fileSpec(key, name string, raw *rawProperty, add func(key, problem string)) *FileSpec {
+	spec := &FileSpec{MaxFiles: 1, MaxSize: realtimelimits.MaxFileBytes, Policy: metamodel.PropertyDef{
+		Type:      metamodel.PropertyTypeFile,
+		Accept:    slices.Clone(raw.Accept),
+		Scan:      raw.Scan,
+		ScanCmd:   slices.Clone(raw.ScanCmd),
+		Transform: slices.Clone(raw.Transform),
+	}}
+	if raw.Max != nil {
+		if *raw.Max < 1 || *raw.Max > realtimelimits.MaxFilesPerMessage {
+			add(key+".max", fmt.Sprintf("must be between 1 and %d files", realtimelimits.MaxFilesPerMessage))
+		} else {
+			spec.MaxFiles = *raw.Max
+		}
+	}
+	if raw.MaxSize != "" {
+		n, err := realtimelimits.ParseSize(raw.MaxSize)
+		switch {
+		case err != nil:
+			add(key+".max_size", err.Error())
+		case n > realtimelimits.MaxFileBytes:
+			add(key+".max_size", fmt.Sprintf("must be at most %dMiB", realtimelimits.MaxFileBytes/mebibyte))
+		default:
+			spec.MaxSize = n
+		}
+	}
+	for _, problem := range metamodel.ValidateFileOptions(key, name, spec.Policy) {
+		add(key, problem)
+	}
+	return spec
+}
+
+// mebibyte is the unit a max_size problem names.
+const mebibyte = 1 << 20
+
+// fileKeys names the file-only keys a property of another type sets, as a
+// problem, or returns "".
+func fileKeys(raw *rawProperty) string {
+	if raw.MaxSize != "" || len(raw.Accept) > 0 || raw.Scan != metamodel.ScanDefault ||
+		len(raw.ScanCmd) > 0 || len(raw.Transform) > 0 {
+
+		return "max_size, accept, scan, scan_cmd and transform apply to a file property only"
+	}
+	return ""
+}
+
+// fileTotals checks the file properties of mt together: a signal holds no
+// files, and the `max` of all file properties together stays within
+// [realtimelimits.MaxFilesPerMessage]. It returns a problem or "".
+func fileTotals(mt *MessageType) string {
+	total := 0
+	for _, p := range mt.Properties {
+		if p.File != nil {
+			total += p.File.MaxFiles
+		}
+	}
+	switch {
+	case total == 0:
+		return ""
+	case mt.Persist == PersistEphemeral:
+		return "a signal is never stored, so it cannot hold files; remove the file properties or use persist: log"
+	case total > realtimelimits.MaxFilesPerMessage:
+		return fmt.Sprintf("the file properties together allow %d files; a message holds at most %d",
+			total, realtimelimits.MaxFilesPerMessage)
+	}
+	return ""
 }

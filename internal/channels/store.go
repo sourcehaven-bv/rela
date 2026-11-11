@@ -2,6 +2,7 @@ package channels
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -105,6 +106,13 @@ type Store interface {
 	// [ErrActionPending].
 	Edit(ctx context.Context, key Key, seq int64, props map[string]any, mentions []Mention,
 		at time.Time) (Message, error)
+
+	// OpenFile returns the entry and the bytes of the file id that message
+	// seq holds (see [File]). A missing channel or message, a removed
+	// message, or an id the message does not list is [ErrNotFound]; the
+	// store serves only ids the message lists, so bytes left behind by a
+	// crash are never served. The caller closes the reader.
+	OpenFile(ctx context.Context, key Key, seq int64, id string) (File, io.ReadCloser, error)
 
 	// Remove erases a message's content and records the removal. Only the
 	// seq, the thread link and the removal survive, in storage as well as on

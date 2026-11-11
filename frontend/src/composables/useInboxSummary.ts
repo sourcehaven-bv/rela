@@ -1,6 +1,6 @@
 import { computed, onBeforeUnmount, watch, type Ref } from 'vue'
 import { useQuery, type QueryCache } from '@pinia/colada'
-import { getInboxSummary } from '@/api/channels'
+import { getInbox, getInboxSummary } from '@/api/channels'
 import { liveInboxSummaryPath } from '@/api/live'
 import { ApiError, shouldDropHeldContent } from '@/api/errors'
 import { problemType } from '@/components/entity/channels/channelErrors'
@@ -66,6 +66,34 @@ export function summaryOfInbox(inbox: Inbox): InboxSummary {
 }
 
 /**
+ * Reads the default inbox page and writes its counts into the summary, so
+ * one request updates the page data, the badge and the tab title. The
+ * browser notifier uses it in place of the summary read (TKT-48S88RB); the
+ * server computes the whole inbox for the summary anyway.
+ *
+ * Answers like readSummary: a refusal that hides the inbox stores the
+ * hidden state, one that drops held content clears the summary, and both
+ * return undefined. Any other error throws and keeps the last badge.
+ */
+export async function readInboxIntoSummary(cache: QueryCache): Promise<Inbox | undefined> {
+  try {
+    const inbox = await getInbox()
+    storeInboxSummary(cache, inbox)
+    return inbox
+  } catch (err) {
+    if (hidesInbox(err)) {
+      cache.setQueryData(INBOX_SUMMARY_KEY, { hidden: true } satisfies InboxSummaryState)
+      return undefined
+    }
+    if (shouldDropHeldContent(err)) {
+      cache.setQueryData(INBOX_SUMMARY_KEY, { hidden: false } satisfies InboxSummaryState)
+      return undefined
+    }
+    throw err
+  }
+}
+
+/**
  * Writes the counts of a default inbox page into the summary query, so the
  * badge matches the page without a second request.
  */
@@ -83,6 +111,12 @@ export function storeInboxSummary(cache: QueryCache, inbox: Inbox) {
  * the inbox turns out hidden or the caller unmounts. Call it from a
  * component that lives as long as the app (the sidebar). A `live:changed`
  * frame, the app's `refresh` event and a return to the tab refetch it.
+ *
+ * `setBackground(fn)` hands the live hint to fn instead, delivered even
+ * while the tab is hidden. Only the tab elected to notify sets it
+ * (useInboxNotifications); fn then keeps the summary current itself, with
+ * readInboxIntoSummary. `setBackground(null)` restores the visible-only
+ * refetch.
  */
 export function useInboxSummary(enabled: Ref<boolean>) {
   const { on } = useEvents()
@@ -100,13 +134,31 @@ export function useInboxSummary(enabled: Ref<boolean>) {
     })
   }
 
+  let background: (() => void) | null = null
+  function onLive() {
+    if (background) background()
+    else refetch()
+  }
+
   let unregister: (() => void) | null = null
   function setLive(live: boolean) {
     if (live && !unregister) {
-      unregister = registerLive(INBOX_SUMMARY_LIVE_KEY, liveInboxSummaryPath(), refetch)
+      unregister = registerLive(INBOX_SUMMARY_LIVE_KEY, liveInboxSummaryPath(), onLive, {
+        deliverHidden: background !== null,
+      })
     } else if (!live && unregister) {
       unregister()
       unregister = null
+    }
+  }
+
+  function setBackground(fn: (() => void) | null) {
+    background = fn
+    // Registering the key again with the same path sends no new baseline.
+    if (unregister) {
+      unregister()
+      unregister = null
+      setLive(true)
     }
   }
 
@@ -126,5 +178,5 @@ export function useInboxSummary(enabled: Ref<boolean>) {
   const hidden = computed(() => query.data.value?.hidden ?? false)
   const summary = computed(() => (enabled.value ? query.data.value?.summary : undefined))
 
-  return { summary, hidden, refetch }
+  return { summary, hidden, refetch, setBackground }
 }

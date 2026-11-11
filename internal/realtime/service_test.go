@@ -18,7 +18,7 @@ func TestNew_RejectsNil(t *testing.T) {
 	h := newHarness(t)
 	full := Deps{
 		Store: h.store, Config: h.cfg, Access: fakeAccessSource{}, Anchors: h.anchors, Refs: h.refs, Local: h.local,
-		Promoter: NoPromoter{}, DueWake: NewDueWake(), Outputs: NoOutputs{},
+		Promoter: NoPromoter{}, DueWake: NewDueWake(), Outputs: NoOutputs{}, Holders: h.holders, Files: h.files,
 	}
 	tests := []struct {
 		name string
@@ -33,6 +33,8 @@ func TestNew_RejectsNil(t *testing.T) {
 		{"Promoter", func(d *Deps) { d.Promoter = nil }},
 		{"DueWake", func(d *Deps) { d.DueWake = nil }},
 		{"Outputs", func(d *Deps) { d.Outputs = nil }},
+		{"Holders", func(d *Deps) { d.Holders = nil }},
+		{"Files", func(d *Deps) { d.Files = nil }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

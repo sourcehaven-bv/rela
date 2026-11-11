@@ -85,8 +85,11 @@ type MessageView struct {
 	// Mentions lists the principals the message addresses that the reader
 	// may see (see [MentionView]). Nil when there are none.
 	Mentions []MentionView `json:"mentions,omitempty"`
-	Removed  *RemovedView  `json:"removed,omitempty"`
-	Action   *ActionView   `json:"action,omitempty"`
+	// Files lists the message's files whose property the type still
+	// declares `file`. Nil when there are none.
+	Files   []channels.File `json:"files,omitempty"`
+	Removed *RemovedView    `json:"removed,omitempty"`
+	Action  *ActionView     `json:"action,omitempty"`
 	// Outputs is a session notice's outputs mark, in place of Action.
 	Outputs *OutputsView `json:"outputs,omitempty"`
 	// TriggeredBy names the trigger that posted the message, as
@@ -290,6 +293,7 @@ func (r *renderer) message(m channels.Message) MessageView {
 	v.Type, v.Author, v.At, v.EditedAt, v.TriggeredBy = m.Type, &a, m.At, m.EditedAt, m.TriggeredBy
 	v.Props = r.props(m.Type, m.Props)
 	v.Mentions = r.mentions(m.Mentions)
+	v.Files = fileViews(r.ct.MessageTypes[m.Type], m.Files)
 	if isNotice(m.Type, m.TriggeredBy) {
 		// A notice's type is not declared, but its props are the record of
 		// the transition: from, to, generation and cause.

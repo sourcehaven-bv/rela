@@ -50,10 +50,12 @@
 package sqlchannels
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"slices"
 	"strings"
@@ -97,14 +99,14 @@ type Dialect struct {
 // ConfirmTombstone, Tombstones, Purge and DropTypeRecord. 27 -> 29
 // (TKT-INM3AZ): SetSession and ListSessionsDue. 29 -> 30 (TKT-ZZ4PNX):
 // ListWaiting. 30 -> 33 (TKT-2B2AIA): SetRead, Reads and ListReads. 33 ->
-// 34 (TKT-6RXAC0): ListAddressed. 34 -> 35 (TKT-V05706X): GetMessages. The
-// exported methods are the mandated [channels.Store] interface, so this is
-// a required-interface exception rather than a ratchet target. Helpers
-// stay free functions. The total crossed 40 with the three read marker
-// methods; it is the same exception.
+// 34 (TKT-6RXAC0): ListAddressed. 34 -> 35 (TKT-V05706X): GetMessages. 35
+// -> 36 (TKT-BYKOM3V): OpenFile. The exported methods are the mandated
+// [channels.Store] interface, so this is a required-interface exception
+// rather than a ratchet target. Helpers stay free functions. The total
+// crossed 40 with the three read marker methods; it is the same exception.
 //
-//plimsoll:max-exported-methods=35
-//plimsoll:max-methods=45
+//plimsoll:max-exported-methods=36
+//plimsoll:max-methods=46
 type Store struct {
 	db DB
 	d  Dialect
@@ -155,6 +157,9 @@ type doc struct {
 	TriggeredBy  string             `json:"triggered_by,omitempty"`
 	MovedSession bool               `json:"moved_session,omitempty"`
 	Mentions     []channels.Mention `json:"mentions,omitempty"`
+	// Files lists the message's files; the bytes are rows of
+	// channel_files.
+	Files []channels.File `json:"files,omitempty"`
 	// NoUnread round-trips [channels.Message.NoUnread]. Every message
 	// UPDATE recomputes the counts column from the round-tripped doc, so a
 	// dropped field would make the row count again.
@@ -165,7 +170,7 @@ func docOf(m channels.Message) string {
 	return mustJSON(doc{
 		Type: m.Type, Author: m.Author, At: m.At, Props: m.Props, EditedAt: m.EditedAt,
 		Removed: m.Removed, Action: m.Action, SchemaHash: m.SchemaHash, TriggeredBy: m.TriggeredBy,
-		MovedSession: m.MovedSession, Mentions: m.Mentions, NoUnread: m.NoUnread,
+		MovedSession: m.MovedSession, Mentions: m.Mentions, Files: m.Files, NoUnread: m.NoUnread,
 	})
 }
 
@@ -196,7 +201,7 @@ func decodeMessage(m channels.Message, raw string) (channels.Message, error) {
 		return m, fmt.Errorf("message %d has a damaged doc: %w", m.Seq, err)
 	}
 	m.Type, m.Author, m.Props, m.SchemaHash, m.TriggeredBy = d.Type, d.Author, d.Props, d.SchemaHash, d.TriggeredBy
-	m.MovedSession, m.Mentions, m.NoUnread = d.MovedSession, d.Mentions, d.NoUnread
+	m.MovedSession, m.Mentions, m.Files, m.NoUnread = d.MovedSession, d.Mentions, d.Files, d.NoUnread
 	m.At, m.EditedAt = utc(d.At), utc(d.EditedAt)
 	m.Removed, m.Action = d.Removed, d.Action
 	if m.Removed != nil {
@@ -439,11 +444,15 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 	if err := k.Validate(); err != nil {
 		return channels.Message{}, err
 	}
+	if err := channels.PrepareAppendStep(nm.Session); err != nil {
+		return channels.Message{}, err
+	}
 	nm, _, err := channels.PrepareMessage(nm)
 	if err != nil {
 		return channels.Message{}, err
 	}
-	if err := channels.PrepareAppendStep(nm.Session); err != nil {
+	files, err := channels.PrepareFiles(nm.Files)
+	if err != nil {
 		return channels.Message{}, err
 	}
 	var out channels.Message
@@ -464,11 +473,14 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 		out = channels.Message{
 			Seq: r.c.LastSeq + 1, Rev: rev, Type: nm.Type, Author: nm.Author, At: nm.At, Props: nm.Props,
 			ReplyTo: nm.ReplyTo, SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy, MovedSession: moved,
-			Mentions: nm.Mentions, NoUnread: nm.NoUnread, CreatedChannel: created,
+			Mentions: nm.Mentions, Files: files, NoUnread: nm.NoUnread, CreatedChannel: created,
 		}
 		rev, err = insertMessage(ctx, q, r.id, out)
 		if err != nil {
 			return err
+		}
+		if ferr := insertFiles(ctx, q, r.id, out.Seq, files, nm.Files); ferr != nil {
+			return ferr
 		}
 		if out.ReplyTarget, err = appendAddressed(ctx, q, r, out, parent); err != nil {
 			return err
@@ -549,6 +561,20 @@ func insertMessage(ctx context.Context, q Querier, chanID int64, out channels.Me
 	_, err := q.Exec(ctx, `UPDATE channel_messages SET reply_count = reply_count + 1, rev = ?
 		WHERE channel_id = ? AND seq = ?`, rev, chanID, out.ReplyTo)
 	return rev, err
+}
+
+// insertFiles stores the bytes of the files of message seq: news[i] under
+// the id of files[i].
+func insertFiles(
+	ctx context.Context, q Querier, chanID, seq int64, files []channels.File, news []channels.NewFile,
+) error {
+	for i, f := range files {
+		if _, err := q.Exec(ctx, `INSERT INTO channel_files (channel_id, seq, file_id, data) VALUES (?, ?, ?, ?)`,
+			chanID, seq, f.ID, news[i].Data); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // insertNotice inserts the notice of a session move caused by cause, at
@@ -782,6 +808,9 @@ func (s *Store) Remove(ctx context.Context, k channels.Key, seq int64, rm channe
 		}
 		*m = channels.Message{Seq: m.Seq, Rev: m.Rev, ReplyTo: m.ReplyTo, ReplyCount: m.ReplyCount, Removed: &rm}
 		if err := removeAddressed(ctx, q, r.id, seq); err != nil {
+			return err
+		}
+		if _, err := q.Exec(ctx, `DELETE FROM channel_files WHERE channel_id = ? AND seq = ?`, r.id, seq); err != nil {
 			return err
 		}
 		rec := channels.KeyAudit(k, channels.AuditRemove, rm.At)
@@ -1272,6 +1301,33 @@ func (s *Store) Get(ctx context.Context, k channels.Key, seq int64) (channels.Me
 	return m, s.wrap(err, "read message %d in %s", seq, k)
 }
 
+// OpenFile implements [channels.Store]. The bytes are read whole: a file
+// is capped at [channels.MaxFileBytes].
+func (s *Store) OpenFile(
+	ctx context.Context, k channels.Key, seq int64, id string,
+) (channels.File, io.ReadCloser, error) {
+	m, err := s.Get(ctx, k, seq)
+	if err != nil {
+		return channels.File{}, nil, err
+	}
+	f, ok := channels.FileOf(m, id)
+	if !ok {
+		return channels.File{}, nil, fmt.Errorf("%w: file %s of message %d in %s", channels.ErrNotFound, id, seq, k)
+	}
+	var data []byte
+	err = s.db.QueryRow(ctx, `SELECT data FROM channel_files
+		WHERE channel_id = (SELECT id FROM channels WHERE `+keyWhere+`) AND seq = ? AND file_id = ?`,
+		append(keyArgs(k), seq, id)...).Scan(&data)
+	if errors.Is(err, ErrNoRows) {
+		// Removed between the two reads.
+		return channels.File{}, nil, fmt.Errorf("%w: file %s of message %d in %s", channels.ErrNotFound, id, seq, k)
+	}
+	if err != nil {
+		return channels.File{}, nil, s.wrap(err, "read file %s of message %d in %s", id, seq, k)
+	}
+	return f, io.NopCloser(bytes.NewReader(data)), nil
+}
+
 // Messages implements [channels.Store].
 func (s *Store) Messages(ctx context.Context, k channels.Key, p channels.Page) ([]channels.Message, error) {
 	if err := k.Validate(); err != nil {
@@ -1632,6 +1688,21 @@ func Raw(ctx context.Context, s *Store) ([]byte, error) {
 			b.WriteString(l)
 			b.WriteByte('\n')
 		}
+	}
+	// The file bytes as they are, so an erasure check finds file content
+	// too.
+	files, err := collect(ctx, s.db, `SELECT data FROM channel_files`, nil,
+		func(r interface{ Scan(...any) error }) ([]byte, error) {
+			var v []byte
+			err := r.Scan(&v)
+			return v, err
+		})
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range files {
+		b.Write(f)
+		b.WriteByte('\n')
 	}
 	return []byte(b.String()), nil
 }

@@ -949,3 +949,32 @@ export const QuietTypesNoticesRefold: Story = {
     await expect(isAtBottom(log)).toBe(false)
   },
 }
+
+/**
+ * A type kept out of the composer (`offer: false`, TKT-WC63SNN): its
+ * messages show as usual, and Reply shows only when a type the composer
+ * offers can reply. Message and Finding are the reply types; with both
+ * kept out, Reply goes.
+ */
+export const OfferFalse: Story = {
+  args: {
+    presentation: {
+      messages: { ...channelPresentation.messages, text: { offer: false }, finding: { offer: false } },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getAllByText(/Checking the access logs now/)[0]).toBeVisible()
+    await expect(canvas.queryByRole('button', { name: 'Reply' })).toBeNull()
+    // Decision is the only type left, so there is no picker.
+    await expect(canvas.queryByRole('radiogroup', { name: 'Message type' })).toBeNull()
+    await expect(canvas.getByRole('form', { name: 'New message' })).toBeVisible()
+  },
+}
+
+/** Without the key, the same channel offers Reply. */
+export const OfferFalseControl: Story = {
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getAllByRole('button', { name: 'Reply' }).length).toBeGreaterThan(0)
+  },
+}

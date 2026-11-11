@@ -307,7 +307,7 @@ func TestAttachment_SvgIsSandboxed(t *testing.T) {
 // byte-identical (modulo instance URL) to the gate's own deny body —
 // guards the shared entityNotFoundTitle invariant against either side
 // drifting (RR-601TJD). We compare a hidden-entity attachment 404 against
-// a hidden-entity GET 404 produced by gateReadOrNotFound.
+// a hidden-entity GET 404 produced by gateReadOr.
 func TestAttachment_DenyBodyMatchesGate(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]any{"title": "F1"}})

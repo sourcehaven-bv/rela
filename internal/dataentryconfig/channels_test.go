@@ -12,10 +12,11 @@ import (
 
 // fakeChannelSchema declares channel type room with message types text
 // and note, and channel type run with the message types of the
-// agent-runner example in the data-entry guide.
+// agent-runner example in the data-entry guide, and channel type task with
+// the agent-posted types of the `offer: false` example in that guide.
 type fakeChannelSchema struct{}
 
-func (fakeChannelSchema) ChannelTypeNames() []string { return []string{"room", "run"} }
+func (fakeChannelSchema) ChannelTypeNames() []string { return []string{"room", "run", "task"} }
 
 // MessageType: as in the agent-runner example of the guides, claim,
 // resume and progress in run have `unread: false`; every other type counts.
@@ -35,7 +36,7 @@ func (fakeChannelSchema) MessageType(ct, mt string) (MessageFacts, bool) {
 		return MessageFacts{Properties: text}, true
 	case "run.claim", "run.resume":
 		return MessageFacts{}, true
-	case "run.ask", "run.plan":
+	case "run.ask", "run.plan", "task.pr-event", "task.sized":
 		return MessageFacts{CountsUnread: true}, true
 	}
 	return MessageFacts{}, false
@@ -160,6 +161,22 @@ func TestChannelsPresentation_Validate(t *testing.T) {
 			`fields[0]: unknown key "display"`},
 		{"docs example", docsExampleChannelsDisplay(t), ""},
 
+		{"offer false", "channels: {room: {messages: {note: {offer: false}}}}", ""},
+		{"offer true", "channels: {room: {messages: {note: {offer: true}}}}", ""},
+		{"offer with display", "channels: {run: {messages: {claim: {offer: false, display: hidden}}}}", ""},
+		{"offer misspelled", "channels: {room: {messages: {note: {compose: false}}}}",
+			`channels.room.messages.note: unknown key "compose" (valid keys: fields, display, offer)`},
+		{"offer on unknown message type", "channels: {room: {messages: {poll: {offer: false}}}}",
+			`declares no message type "poll"`},
+		{"offer quoted no", `channels: {room: {messages: {note: {offer: "no"}}}}`,
+			`channels.room.messages.note.offer: no is not a boolean (use true or false)`},
+		{"offer off", "channels: {room: {messages: {note: {offer: off}}}}",
+			`channels.room.messages.note.offer: off is not a boolean`},
+		{"offer null", "channels: {room: {messages: {note: {offer: null}}}}", ""},
+		{"offer on a field", "channels: {room: {messages: {text: {fields: [{property: body, offer: false}]}}}}",
+			`fields[0]: unknown key "offer"`},
+		{"offer docs example", docsYAMLAfter(t, "### Types that people do not post"), ""},
+
 		{"session compact", "channels: {run: {session: {display: compact}}}", ""},
 		{"session display empty", `channels: {run: {session: {display: ""}}}`, ""},
 		{"session display null", "channels: {run: {session: {display: null}}}", ""},
@@ -259,11 +276,11 @@ func TestChannelsUnknownKeys_Sorted(t *testing.T) {
 		"  mid: {messages: {q: {y: 1}, c: {y: 1}}}\n")
 	want := []string{
 		`channels.alpha: unknown key "x" (valid keys: messages, session, placement)`,
-		`channels.mid.messages.c: unknown key "y" (valid keys: fields, display)`,
-		`channels.mid.messages.q: unknown key "y" (valid keys: fields, display)`,
+		`channels.mid.messages.c: unknown key "y" (valid keys: fields, display, offer)`,
+		`channels.mid.messages.q: unknown key "y" (valid keys: fields, display, offer)`,
 		`channels.zed: unknown key "x" (valid keys: messages, session, placement)`,
-		`channels.zed.messages.a: unknown key "y" (valid keys: fields, display)`,
-		`channels.zed.messages.b: unknown key "y" (valid keys: fields, display)`,
+		`channels.zed.messages.a: unknown key "y" (valid keys: fields, display, offer)`,
+		`channels.zed.messages.b: unknown key "y" (valid keys: fields, display, offer)`,
 	}
 	for range 20 {
 		if got := channelsUnknownKeys(data); !slices.Equal(got, want) {
@@ -501,6 +518,57 @@ func TestValidateChannels_HiddenCountsUnread(t *testing.T) {
 			errs, warnings := ValidateChannels(&cfg, tc.schema)
 			if len(errs) != 0 {
 				t.Fatalf("errs = %v; a hidden counting type is never an error", errs)
+			}
+			if tc.warning == "" {
+				if len(warnings) != 0 {
+					t.Fatalf("warnings = %v; want none", warnings)
+				}
+				return
+			}
+			if !slices.Equal(warnings, []string{tc.warning}) {
+				t.Fatalf("warnings = %v; want [%s]", warnings, tc.warning)
+			}
+		})
+	}
+}
+
+// presetPlan is fakeChannelSchema with a `button:` preset on run.plan.
+type presetPlan struct{ fakeChannelSchema }
+
+func (s presetPlan) MessageType(ct, mt string) (MessageFacts, bool) {
+	f, ok := s.fakeChannelSchema.MessageType(ct, mt)
+	if ct == "run" && mt == "plan" {
+		f.HasPresetButtons = true
+	}
+	return f, ok
+}
+
+// TestValidateChannels_OfferFalseWithPreset pins the TKT-WC63SNN warning:
+// `offer: false` on a type with a `button:` preset warns, because the
+// preset still shows to people; without a preset, or with offer true, it
+// does not; it is never an error.
+func TestValidateChannels_OfferFalseWithPreset(t *testing.T) {
+	const want = "channels.run.messages.plan.offer: false, but realtime.yaml declares a button: preset " +
+		"for plan, which the web app still shows to people"
+	for _, tc := range []struct {
+		name    string
+		yaml    string
+		schema  ChannelSchema
+		warning string
+	}{
+		{"offer false with preset", "channels: {run: {messages: {plan: {offer: false}}}}", presetPlan{}, want},
+		{"offer true with preset", "channels: {run: {messages: {plan: {offer: true}}}}", presetPlan{}, ""},
+		{"offer absent with preset", "channels: {run: {messages: {plan: {}}}}", presetPlan{}, ""},
+		{"offer false without preset", "channels: {run: {messages: {plan: {offer: false}}}}", fakeChannelSchema{}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var cfg Config
+			if err := yaml.Unmarshal([]byte(tc.yaml), &cfg); err != nil {
+				t.Fatal(err)
+			}
+			errs, warnings := ValidateChannels(&cfg, tc.schema)
+			if len(errs) != 0 {
+				t.Fatalf("errs = %v; want none", errs)
 			}
 			if tc.warning == "" {
 				if len(warnings) != 0 {

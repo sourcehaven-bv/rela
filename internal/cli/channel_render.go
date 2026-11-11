@@ -233,6 +233,17 @@ func writeMessageType(b *strings.Builder, mt realtime.MessageTypeView) {
 		}
 		fmt.Fprintf(b, "  %s: %s%s\n", printable(name), printable(typ), req)
 	}
+	for _, f := range mt.Files {
+		req := ""
+		if f.Required {
+			req = ", required"
+		}
+		fmt.Fprintf(b, "  %s: file, at most %d of %d bytes", printable(f.Name), f.Max, f.MaxSize)
+		if len(f.Accept) > 0 {
+			fmt.Fprintf(b, ", accept %s", printable(strings.Join(f.Accept, ", ")))
+		}
+		fmt.Fprintf(b, "%s\n", req)
+	}
 	if c := mt.Choices; c != nil {
 		other := ""
 		if c.Other {
@@ -287,6 +298,10 @@ func writeMessageLines(b *strings.Builder, m realtime.MessageView, anchor string
 	slices.Sort(names)
 	for _, name := range names {
 		writeProp(b, name, m.Props[name])
+	}
+	for _, f := range m.Files {
+		fmt.Fprintf(b, "  file %s: %s (%s, %d bytes) id %s\n",
+			printable(f.Property), printable(f.Name), printable(f.MIME), f.Size, printable(f.ID))
 	}
 	if m.Action != nil {
 		fmt.Fprintf(b, "  %s\n", actionText(m.Action))

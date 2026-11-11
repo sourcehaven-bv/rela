@@ -1,6 +1,9 @@
 package jobs
 
-import "time"
+import (
+	"math/rand/v2"
+	"time"
+)
 
 // This file is the ONE place retry mechanism is defined. Everything here is
 // deliberately changeable: [Retry] is a statement of intent, and translating
@@ -41,9 +44,8 @@ const (
 
 // maxAttempts returns the TOTAL number of executions a policy permits,
 // including the first.
-//
-// This package enforces the budget itself, in the dispatcher — it is never
-// handed to the backend. See backendRetryBudget for why.
+// The memory queue counts it itself; the postgres queue hands it to River as
+// the job's MaxAttempts.
 func (r Retry) maxAttempts() int {
 	switch r {
 	case RetryNever:
@@ -60,30 +62,6 @@ func (r Retry) maxAttempts() int {
 		return neverAttempts
 	}
 }
-
-// backendRetryBudget is the MaxRetries value handed to neoq.
-//
-// It is deliberately a large constant rather than the policy's real budget,
-// and it is the same for every policy. The reason is a hard upstream
-// constraint, not laziness:
-//
-// neoq's worker loop treats both ErrJobExceededMaxRetries and
-// ErrJobExceededDeadline as FATAL — it returns from the goroutine
-// (memory_backend.go:245-250). So a job that legitimately exhausts its retry
-// budget does not merely stop: it takes a worker with it. Four such jobs and a
-// four-worker pool is permanently silent, with no error surfaced to rela and
-// nothing in the logs. Verified empirically: after four RetryNever jobs
-// exhausted, 0 of 8 subsequent healthy jobs ran.
-//
-// The fix is to never let neoq evaluate its own terminal conditions. rela
-// hands it a budget it will not reach, omits Deadline entirely, and enforces
-// BOTH the attempt count and the deadline in [neoqQueue.dispatch], which
-// returns nil (consuming the attempt) once a job is spent. Since dispatch is
-// the single chokepoint every job passes through, that converts an open-ended
-// upstream hazard into one invariant this package owns and tests.
-//
-// Pinned by the jobstest "pool survives exhausted jobs" conformance case.
-const backendRetryBudget = 1 << 30
 
 // effectiveDeadline returns when the job should stop being retried, given the
 // time it was enqueued.
@@ -103,4 +81,42 @@ func (r Retry) effectiveDeadline(job Job, enqueuedAt time.Time) time.Time {
 		return window
 	}
 	return job.Deadline
+}
+
+// Backoff between attempts. The delay after failed attempt n (1-based) is
+//
+//	min(n⁴ seconds, retryDelayCap) + retryDelayBase + jitter
+//
+// where jitter is drawn from [0, n × retryJitterStep). The shape follows the
+// curve rela ran under neoq: the first retry is no sooner than retryDelayBase,
+// so a blip has time to clear, and later retries spread out fast enough that a
+// RetryPersistent job does not pound an endpoint that is down for hours.
+//
+// The cap keeps a RetryPersistent job trying through its whole
+// persistentWindow. Without it the twentieth attempt would wait two days,
+// which is the window itself.
+const (
+	retryDelayBase  = 15 * time.Second
+	retryJitterStep = 5 * time.Second
+	retryDelayCap   = time.Hour
+	// retryDelayMaxAttempt bounds n in retryDelay. Past it the growth term
+	// is long capped (60⁴ seconds is 150 days), so clamping changes nothing
+	// but keeps the arithmetic from overflowing.
+	retryDelayMaxAttempt = 60
+)
+
+// retryDelay returns how long to wait before the attempt that follows failed
+// attempt n. n below 1 is treated as 1.
+func retryDelay(n int) time.Duration {
+	n = min(max(n, 1), retryDelayMaxAttempt)
+	jitter := rand.N(time.Duration(n) * retryJitterStep) //nolint:gosec // jitter, not a secret
+	return retryDelayFloor(n) + jitter
+}
+
+// retryDelayFloor is retryDelay without its jitter: the soonest the attempt
+// after failed attempt n can run. A job whose deadline passes before it will
+// not run again.
+func retryDelayFloor(n int) time.Duration {
+	n = min(max(n, 1), retryDelayMaxAttempt)
+	return min(time.Duration(n*n*n*n)*time.Second, retryDelayCap) + retryDelayBase
 }

@@ -69,3 +69,23 @@ func AttachRendered(
 			property, fileName, sha256, size, source),
 	}
 }
+
+// ChannelFileRejected returns the record for a file posted with a channel
+// message that the attachment policy of its property refused. It is the
+// same op and summary shape as [AttachmentRejected], so a filter on
+// refused uploads sees channel files too. The subject is the channel's
+// anchor; channel names the channel.
+func ChannelFileRejected(
+	ctx context.Context, anchorID, channel, property, fileName, reason string,
+) Record {
+	return Record{
+		Time:        time.Now().UTC(),
+		Op:          OpDeniedWrite,
+		Subject:     &Subject{Kind: "entity", ID: anchorID},
+		Principal:   principal.From(ctx),
+		TriggeredBy: TriggeredByFrom(ctx),
+		AssertedBy:  AssertedByFrom(ctx),
+		Summary: fmt.Sprintf("rejected upload %q to channel %s property %q: %s (op=channel-file-write)",
+			fileName, channel, property, reason),
+	}
+}

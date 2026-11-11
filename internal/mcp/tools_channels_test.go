@@ -103,12 +103,13 @@ func TestChannelTools_HiddenAnchorTextEqualsShowEntity(t *testing.T) {
 		}
 		addr := map[string]any{"id": id, "channel_type": "room"}
 		calls := map[string]map[string]any{
-			"list_channels":  {"id": id},
-			toolReadChannel:  addr,
-			"post_message":   with(addr, map[string]any{"message_type": "text", "props": map[string]any{"body": "x"}}),
-			"edit_message":   with(addr, map[string]any{"seq": 1, "props": map[string]any{"body": "x"}}),
-			"remove_message": with(addr, map[string]any{"seq": 1}),
-			"create_channel": {"id": id, "channel_type": "threads"},
+			"list_channels":     {"id": id},
+			toolReadChannel:     addr,
+			"post_message":      with(addr, map[string]any{"message_type": "text", "props": map[string]any{"body": "x"}}),
+			"edit_message":      with(addr, map[string]any{"seq": 1, "props": map[string]any{"body": "x"}}),
+			"remove_message":    with(addr, map[string]any{"seq": 1}),
+			"create_channel":    {"id": id, "channel_type": "threads"},
+			toolReadMessageFile: with(addr, map[string]any{"seq": 1, "file_id": "abcdefghijklmnopqrstuvwxyz"}),
 		}
 		for tool, args := range calls {
 			got, isErr := call(t, cs, tool, args)

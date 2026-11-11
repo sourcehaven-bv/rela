@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 )
 
@@ -42,13 +43,28 @@ func validateProps(mt *realtimecfg.MessageType, in map[string]any, maxBytes int)
 	return validProps{props: np.Props, size: np.Size, refs: np.Refs}, nil
 }
 
-// whenHolds evaluates mt's `when:` over props in their stored form. A
-// program that fails to evaluate does not hold.
-func whenHolds(ctx context.Context, mt *realtimecfg.MessageType, props map[string]any, now time.Time) bool {
+// whenHolds evaluates mt's `when:` over props in their stored form and
+// counts, the files per property. A program that fails to evaluate does
+// not hold.
+//
+// Nil: counts accepted, a message without files.
+func whenHolds(
+	ctx context.Context, mt *realtimecfg.MessageType, props map[string]any, counts map[string]int, now time.Time,
+) bool {
 	if mt.When == nil {
 		return true
 	}
-	return mt.Holds(ctx, mt.PredicateFields(props), now)
+	return mt.Holds(ctx, messageFields(mt, props, counts), now)
+}
+
+// messageFields binds props and the file counts as the fields of mt's
+// `message` record.
+func messageFields(
+	mt *realtimecfg.MessageType, props map[string]any, counts map[string]int,
+) map[string]predicate.Value {
+	fields := mt.PredicateFields(props)
+	mt.SetFileCounts(fields, counts)
+	return fields
 }
 
 func sortedKeys[V any](m map[string]V) []string {

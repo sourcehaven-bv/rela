@@ -220,7 +220,7 @@ client_baselines:
 | --- | --- |
 | `label` | The name the web app shows for the type. Without it, the type's name. |
 | `persist` | `log` (default) stores messages. `ephemeral` keeps signals, such as a status line, in memory for `ttl`, at most 60s. For a typing indicator, use `typing: true` on the channel type. |
-| `properties` | At most 32. Types: `string`, `markdown`, `integer`, `boolean`, `date`, `datetime`, `ref` (with `to:`), or an enum type from `schema.yaml`. `max` limits a string or markdown property in characters (Unicode code points). A property may have a `label`; without one, the label is its name. A `ref` property may set `notify: false`, so a value that names a person does not mention them (see [Mentions and replies](#mentions-and-replies)). `notify` on any other type is a config error. A `string` property may set `list: true`: see [List properties](#list-properties). |
+| `properties` | At most 32. Types: `string`, `markdown`, `integer`, `boolean`, `date`, `datetime`, `ref` (with `to:`), `file` (see [File properties](#file-properties)), or an enum type from `schema.yaml`. `max` limits a string or markdown property in characters (Unicode code points). A property may have a `label`; without one, the label is its name. A `ref` property may set `notify: false`, so a value that names a person does not mention them (see [Mentions and replies](#mentions-and-replies)). `notify` on any other type is a config error. A `string` property may set `list: true`: see [List properties](#list-properties). |
 | `when` | A condition on the `message` record that a post must meet. |
 | `post` | The roles that may post. Receiving needs only `read`. |
 | `in` | The session states in which the type may be posted. Without it, every state. Only on a channel type with a `session`. See [Sessions](#sessions). |
@@ -323,6 +323,43 @@ If you change a `string` property to `list: true`, older messages still
 hold a single string there. A `when:` reads such a value as absent. When
 you edit such a message in the web app, the string is sent back as a list
 of one item. A post or edit through the API must send a list.
+
+### File properties
+
+A `file` property holds files that a post sends beside its properties, such
+as a screenshot or a log.
+
+```yaml
+message_types:
+  report:
+    properties:
+      note:  { type: string }
+      shot:  { type: file, max: 2, max_size: 2MiB, accept: [image/png, image/jpeg] }
+    post: [member]
+```
+
+- `max` is the number of files the property holds in one message: 1 to 4,
+  default 1. `required: true` needs at least one file.
+- `max_size` limits one file, after its transforms: a byte count or a size
+  such as `512KiB`. The default and the ceiling are 10 MiB.
+- `accept`, `scan`, `scan_cmd` and `transform` work as on a `file` property
+  of an entity in `schema.yaml`. The server checks the content of each file,
+  not its name, against `accept`, and runs the scan and the transforms before
+  it stores anything. A refused file refuses the whole post, and the refusal
+  is in the audit log.
+- A message holds at most 4 files, and at most 16 MiB of files together.
+- A file property is refused on an `ephemeral` message type, and with
+  `list`, `to` or `notify`.
+- A trigger or reminder posts no files, so it may not post a message type
+  with a required file property.
+
+The files are stored with the channel, not as attachments of an entity. An
+edit keeps them. A removal erases them. A file of a property that
+`realtime.yaml` no longer declares as `file` is not listed and cannot be
+downloaded. Anyone who may read the channel may download its files.
+
+A download is always served as an attachment, never shown inline. The web
+app shows a preview for PNG, JPEG, GIF and WebP images only.
 
 ## Choices
 
@@ -2480,6 +2517,8 @@ The data-entry API serves channels under the entity they are attached to.
 | `GET .../{channel}/messages` | A page of messages. See below. |
 | `POST .../{channel}/messages` | Posts a message: `{"type": ..., "props": {...}, "reply_to": n, "expect_generation": n}`. `expect_generation` is optional: see [Sessions](#sessions). A `log` message gets a 201 with the message; an `ephemeral` one gets a 202. |
 | `PATCH .../{channel}/messages/{seq}` | Edits a message: `{"props": {...}}`. The props replace the message's props, with one exception: a stored `ref` property the caller cannot read, and that the request does not name, is kept as stored. A caller cannot send back an id they cannot see, so leaving it out does not erase it. A property the request does not name is otherwise removed. |
+| `POST .../{channel}/messages` with files | Posts a message with files, as `multipart/form-data`. The first part, `message`, holds the JSON body of a plain post. Then one part per file, named `file:{property}` and with a file name. See [File properties](#file-properties). |
+| `GET .../{channel}/messages/{seq}/files/{id}` | Downloads a file of a message, by the `id` in the message's `files`. |
 | `DELETE .../{channel}/messages/{seq}` | Removes a message. The body may hold a `reason`. |
 | `POST .../{channel}/messages/{seq}/_action/{name}` | Runs an action. The body is empty or `{}`. The answer is `{"message": ..., "warnings": [...]}`. |
 | `DELETE .../{channel}/messages/{seq}/_action` | Releases a pending action. The body is empty or `{}`. The answer is the message. |
@@ -2763,7 +2802,10 @@ Every error is a problem body (`application/problem+json`) with a `type`.
 | 422 `too_many_mentions` | A post or edit addresses more than 10 people and agents. Nothing is stored. See [Mentions and replies](#mentions-and-replies). |
 | 403 `no_principal` | The request carries no identity. A mark read and the inbox need one, because they act for a person. |
 | 405 | A method other than `PUT` on `.../_read`. `Allow` names `PUT`. |
-| 413 `too_large` | The message is over `message_bytes`. |
+| 413 `too_large` | The message is over `message_bytes`, a file is over its `max_size`, or the files are over 16 MiB together. |
+| 422 `file_refused` | A file's content is not in its property's `accept`, the scan finds a problem or cannot run, or a transform fails. Nothing is stored. |
+| 404 `file_not_found` | The message does not hold the file, the message was removed, or its property is no longer a `file` property. |
+| 503 `attachment_busy` | Too many uploads run at once. `Retry-After` gives the seconds to wait. |
 | 422 | A `ref` names an entity that does not exist or that the caller cannot read. Both get the same body. |
 | 422 `promote_invalid` | The promoted entity or its relation fails validation, for example a `unique` property that another entity already has, or a mapped `ref` names an entity the caller cannot read. The body names properties, never entity ids. |
 | 409 | The channel is not open, the channel is not in a state the lifecycle operation starts from (`lifecycle_wrong_state`), `retention` keeps the channel (`retention_active`), a concurrent change won (`conflict`), the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. An edit or removal targets a session notice (`session_notice`), or an author's edit or delete targets a message that moved the session (`session_message`). A post of a type whose `in:` does not hold the session's state (`session_wrong_state`; `title` names the allowed states, `detail` the rule: the type's `in:`, or `session.default_in` when the `in:` comes from `default_in: keyed`). A post whose `expect_generation` is not the session's generation (`session_moved`; `title` names the generation and state the session is at). For actions: the message already carries an action (`action_taken`), its action is pending (`action_pending`, also for an edit, a removal, a release within the release window, or an action that lost a race to a promote that started first), a release finds no pending action (`action_not_pending`), or the promoted entity already exists (`promote_conflict`). A removal of the message that moved the session, or a release of a notice's outputs mark, while the outputs still run (`outputs_pending`). |
@@ -3260,6 +3302,8 @@ those roles. It answers "what is waiting on me" without knowing the
 channels in advance. It also lists the channels with messages you have not
 read, and the unread messages that mention you or reply to you. The web app serves it as `GET /api/v1/_inbox`, MCP as `list_inbox`
 and the CLI as `rela channel inbox`. All three give the same entries.
+The web app can also show a browser notification for each new waiting
+session, mention or reply; the data-entry guide describes the setting.
 
 **Kinds.** `kinds` chooses what the inbox lists: `waiting` (the sessions
 that wait on you), `unread` (the channels with unread messages), `mention`

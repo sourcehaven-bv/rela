@@ -84,7 +84,7 @@ func reminderProps(
 	if err != nil {
 		return nil, fmt.Errorf("realtime: reminder %s: %w", r.Name, err)
 	}
-	if !whenHolds(ctx, mt, vp.props, now) {
+	if !whenHolds(ctx, mt, vp.props, nil, now) {
 		return nil, fmt.Errorf("realtime: reminder %s: the message does not meet the when: condition of %s",
 			r.Name, mt.Name)
 	}

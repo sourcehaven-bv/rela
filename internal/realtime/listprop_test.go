@@ -175,11 +175,11 @@ func TestWhenHolds_List(t *testing.T) {
 	ct, _ := c.ChannelType("room")
 	mt := ct.MessageTypes["ask"]
 	now := time.Now()
-	require.True(t, whenHolds(context.Background(), mt, map[string]any{"options": []any{"a", "b"}}, now))
-	require.False(t, whenHolds(context.Background(), mt, map[string]any{"options": []any{"a", "b", "c", "d"}}, now))
+	require.True(t, whenHolds(context.Background(), mt, map[string]any{"options": []any{"a", "b"}}, nil, now))
+	require.False(t, whenHolds(context.Background(), mt, map[string]any{"options": []any{"a", "b", "c", "d"}}, nil, now))
 	// len of an absent list does not evaluate, so the when: fails closed,
 	// as any comparison with an absent value does.
-	require.False(t, whenHolds(context.Background(), mt, map[string]any{}, now))
+	require.False(t, whenHolds(context.Background(), mt, map[string]any{}, nil, now))
 	_, isNil := listProp().PredicateValue("not a list").(predicate.Nil)
 	require.True(t, isNil, "a stored value that is not a list binds as nil")
 }

@@ -879,7 +879,7 @@ CREATE TABLE IF NOT EXISTS channel_types (
 	type        TEXT PRIMARY KEY,
 	anchor_mode TEXT NOT NULL,
 	cardinality TEXT NOT NULL DEFAULT ''
-) STRICT;` + channelTypeRefsDDL + channelRetentionDDL + channelReadsDDL + channelMentionsDDL
+) STRICT;` + channelTypeRefsDDL + channelRetentionDDL + channelReadsDDL + channelMentionsDDL + channelFilesDDL
 
 // channelTypeRefsDDL holds the ref properties recorded for each channel
 // type (see channels.TypeRecord). Shared between channelsDDL and the v19 to
@@ -965,6 +965,20 @@ CREATE INDEX IF NOT EXISTS channel_mentions_target_idx
 CREATE INDEX IF NOT EXISTS channel_mentions_kind_idx
 	ON channel_mentions(target, kind, at DESC, channel_id DESC, seq DESC);
 CREATE INDEX IF NOT EXISTS channel_mentions_cap_idx ON channel_mentions(channel_id, target, seq);`
+
+// channelFilesDDL holds the bytes of the files channel messages hold
+// (TKT-BYKOM3V): one row per (channel, seq, file id). The entries live in
+// the message's doc; this table holds only the bytes, so a page of
+// messages reads none of it. pgstore migration 0044 has the same shape.
+// Shared between channelsDDL and the v35 to v36 rung.
+const channelFilesDDL = `
+CREATE TABLE IF NOT EXISTS channel_files (
+	channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+	seq        INTEGER NOT NULL,
+	file_id    TEXT    NOT NULL,
+	data       BLOB    NOT NULL,
+	PRIMARY KEY (channel_id, seq, file_id)
+) STRICT;`
 
 // searchKeyDDL is the key table of the search index; see searchDDL. It is in
 // schemaSQL because it depends on no column a rung adds.

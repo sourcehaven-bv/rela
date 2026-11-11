@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient"
 	"github.com/Sourcehaven-BV/rela/internal/renametype"
 	"github.com/Sourcehaven-BV/rela/internal/search"
@@ -233,11 +234,9 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 	if l := appbuild.Leases(svc); l != nil {
 		leases.Svc = l
 	}
-	channels := &channelServices{}
-	// Assigned only when present, for the same reason as Comments above.
-	if c := appbuild.ChannelService(svc); c != nil {
-		channels.Svc = c
-		channels.Follow = func(ctx context.Context) <-chan struct{} { return appbuild.FollowChannels(ctx, svc) }
+	channels, chErr := newChannelServices(svc)
+	if chErr != nil { // coverage-ignore: newChannelServices only fails on a nil channel service
+		return nil, chErr
 	}
 	flows := &flowServices{}
 	// Assigned only when present, for the same reason as Comments above.
@@ -265,6 +264,24 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		renametype: rt,
 		analysis:   an,
 	}, nil
+}
+
+// newChannelServices wires the channel commands to the project's channel
+// service. It leaves every field empty when the project has no channels.
+func newChannelServices(svc *appbuild.Services) (*channelServices, error) {
+	channels := &channelServices{}
+	// Assigned only when present: a nil service stored in the interface
+	// would pass a nil check and panic on first use.
+	if c := appbuild.ChannelService(svc); c != nil {
+		channels.Svc = c
+		files, err := realtime.NewFileOpener(c)
+		if err != nil { // coverage-ignore: c is not nil
+			return nil, err
+		}
+		channels.Files = files
+		channels.Follow = func(ctx context.Context) <-chan struct{} { return appbuild.FollowChannels(ctx, svc) }
+	}
+	return channels, nil
 }
 
 // visibleLocal adapts the gated element reader to the local side of a

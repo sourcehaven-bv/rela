@@ -10,13 +10,14 @@
  * panel's tests and this module's tests pin the same mapping.
  */
 import { t } from '@/i18n'
-import { formatDate, formatDatetime } from '@/utils/format'
+import { formatBytes, formatDate, formatDatetime } from '@/utils/format'
 import {
   renderMessageMarkdown,
   type MessageMentionLink,
   type MessageRefLink,
 } from '@/utils/markdown'
 import { fromPropValue } from '@/utils/channelValues'
+import { channelKey } from '@/utils/channelKey'
 import { tagColor } from '@/configure/names'
 import type { ChannelPresentation as AppChannelPresentation, CustomType } from '@/types'
 import type {
@@ -45,6 +46,7 @@ import type {
   ChannelEditing,
   ChannelEnumOption,
   ChannelEphemeralView,
+  ChannelFileView,
   ChannelGroupView,
   ChannelLifecycleDef,
   ChannelMessageDisplay,
@@ -59,6 +61,7 @@ import type {
 } from 'rela-components/components/channel/types'
 import { resolveChannelFields } from 'rela-components/components/channel/channelFields'
 import { applyOptions, endTone, presetViews, type AppDecisionView } from './presetViews'
+import { isPreviewable } from './useChannelFiles'
 
 /** The longest reply excerpt, in code points. */
 export const EXCERPT_MAX = 80
@@ -93,6 +96,7 @@ export function presentationView(
     messages[type] = {
       fields: mp.fields?.flatMap((f) => (f.property ? [{ ...f, property: f.property }] : [])),
       ...(isDisplay(mp.display) ? { display: mp.display } : {}),
+      ...(mp.offer === false ? { offer: false } : {}),
     }
   }
   if (p.session?.display === 'compact') return { messages, session: { display: 'compact' } }
@@ -107,6 +111,11 @@ export interface ChannelViewContext {
   world?: string
   /** The channel type's session, for the state labels in session notices. */
   session?: ChannelSessionSchema
+  /**
+   * The object URL of a file's loaded preview, if any (useChannelFiles). It
+   * returns one only for an image type that may render inline.
+   */
+  filePreview?: (seq: number, fileId: string) => string | undefined
 }
 
 /**
@@ -248,6 +257,7 @@ export function messageView(
   if (m.action) {
     view.action = { name: m.action.name, status: m.action.status, promoted: m.action.promoted }
   }
+  if (m.files?.length) view.files = fileViews(m, ctx)
   if (!mt || !m.props) return view
   const html: Record<string, string> = {}
   const text: Record<string, string> = {}
@@ -262,6 +272,17 @@ export function messageView(
   if (Object.keys(html).length) view.html = html
   if (Object.keys(text).length) view.text = text
   return view
+}
+
+/** The chips of a message's files: name, size, and a loaded preview. */
+function fileViews(m: Message, ctx: ChannelViewContext): ChannelFileView[] {
+  return (m.files ?? []).map((f) => {
+    const view: ChannelFileView = { id: f.id, name: f.name, size: formatBytes(f.size) }
+    // Checked here too, so no other type is drawn inline whatever the lookup holds.
+    const url = isPreviewable(f.mime) ? ctx.filePreview?.(m.seq, f.id) : undefined
+    if (url) view.previewUrl = url
+    return view
+  })
 }
 
 /** The label of a session state, or its name when the descriptor has no such state. */
@@ -406,11 +427,16 @@ export type DecisionHead = Pick<ChannelHead, 'channel'> & {
  * its state is final, and is `danger` when that state ends as cancelled or
  * failed (endTone). The type's `decision_button` and a preset's own
  * options override that look (applyOptions).
+ *
+ * A type `unoffered` names (presentation `offer: false`, TKT-WC63SNN) gets
+ * no type button: people do not post it in the web app. Its preset
+ * buttons still show, because the operator declared them for people.
  */
 export function decisionViews(
   ct: ChannelTypeSchema,
   head: DecisionHead,
-  actionsGeneration: number | undefined
+  actionsGeneration: number | undefined,
+  unoffered: ReadonlySet<string> = new Set()
 ): AppDecisionView[] {
   const s = ct.session
   const cs = head.channel.session
@@ -443,7 +469,7 @@ export function decisionViews(
       listed && (listed.get(name) ?? new Set()),
       stateOf
     )
-    if (!rest.length) return views
+    if (!rest.length || unoffered.has(name)) return views
     const targets = [...new Set(rest.map((tr) => tr.to))]
     const view: AppDecisionView = { key: name, messageType: name, label: mt.label || name }
     const [only, ...more] = targets
@@ -818,10 +844,7 @@ export function enumOptionsFor(
   return out
 }
 
-/** The list key of a channel; a `one` type has no name. */
-export function channelKey(type: string, name?: string): string {
-  return `${type}/${name ?? ''}`
-}
+export { channelKey }
 
 function channelTitle(c: Channel, label: string): string {
   return c.title || c.name || label

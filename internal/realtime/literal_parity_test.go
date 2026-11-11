@@ -154,5 +154,5 @@ func requireTriggerFires(t *testing.T, cfg *realtimecfg.Compiled) {
 	}
 	vp, err := validateProps(mt, in, cfg.Limits().MessageBytes)
 	require.NoError(t, err, "a trigger that loads fails validateProps")
-	require.True(t, whenHolds(context.Background(), mt, vp.props, literalParityNow), "a trigger that loads fails when:")
+	require.True(t, whenHolds(context.Background(), mt, vp.props, nil, literalParityNow), "a trigger that loads fails when:")
 }

@@ -21,6 +21,8 @@ const (
 	opTyping    = "typing"
 	opPostPfx   = "post:"
 	opRead      = "read"
+	opFiles     = "files"
+	opFileRead  = "file-read"
 )
 
 // sweepEvery is how many takes pass between two sweeps of full buckets.
