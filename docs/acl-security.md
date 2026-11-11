@@ -2136,7 +2136,11 @@ pull (TKT-UH2Q9MN, DEC-2NFLAHB).
 - **The losing value is kept, bounded.** When `latest` overwrites a value,
   the conflict list keeps the value that lost (up to 16 KiB), so a person
   can restore it. It is removed by `rela remote
-  resolve --dismiss`, when the row is no longer linked, or with the remote.
+  resolve --dismiss`, when the row is no longer linked, with the remote, by
+  `rela history-purge` of the entity, and at the first sync after
+  `superseded_retention` (per remote, default 30 days). With
+  `superseded_retention: 0` the losing local value is not stored; the entry
+  keeps only its digest.
 - **Relations are pushed only when nothing on them is hidden.** A local
   relation is sent when both of its ends are linked rows the run's
   principal may read, and its type has no relation-meta `visible:` grant.

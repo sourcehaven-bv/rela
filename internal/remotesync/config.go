@@ -45,6 +45,7 @@ import (
 	"net/url"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -94,6 +95,10 @@ const (
 	DefaultMaxClockSkew = 5 * time.Minute
 	MaxMaxClockSkew     = time.Hour
 )
+
+// DefaultSupersededRetention is how long a superseded entry stays on the
+// conflict list when superseded_retention is not set.
+const DefaultSupersededRetention = 30 * 24 * time.Hour
 
 // Defaults and bounds of the per-remote limits.
 const (
@@ -160,6 +165,12 @@ type Remote struct {
 	// before the latest rule holds instead of trusting it, as a Go duration
 	// such as "5m". Empty means [DefaultMaxClockSkew].
 	MaxClockSkew string `yaml:"max_clock_skew,omitempty"`
+	// SupersededRetention is how long a superseded entry stays on the
+	// conflict list, as a Go duration or a whole number of days such as
+	// "30d". Empty means [DefaultSupersededRetention]. Zero keeps no losing
+	// local value at all; the entry then holds only digests and is not
+	// dropped by age.
+	SupersededRetention string `yaml:"superseded_retention,omitempty"`
 	// Entities maps source entity types, by name, to local ones.
 	Entities map[string]EntityMap `yaml:"entities"`
 	// Relations maps source relation types, by name, to local ones.
@@ -369,6 +380,9 @@ func (c *compiler) remote(p Remote) {
 	}
 	c.rule("conflict", p.Conflict)
 	c.clockSkew(p.MaxClockSkew)
+	if _, err := parseRetention(p.SupersededRetention); err != nil {
+		c.fail("%v", err)
+	}
 	if len(p.Entities) == 0 {
 		c.fail("entities: map at least one source type")
 	}
@@ -740,6 +754,39 @@ func (p Remote) maxClockSkew() time.Duration {
 		return DefaultMaxClockSkew
 	}
 	return d
+}
+
+// supersededRetention is the parsed superseded_retention. [Compile] has
+// checked it.
+func (p Remote) supersededRetention() time.Duration {
+	d, err := parseRetention(p.SupersededRetention)
+	if err != nil {
+		return DefaultSupersededRetention
+	}
+	return d
+}
+
+// maxRetentionDays bounds a retention in days, so it cannot overflow.
+const maxRetentionDays = 36500
+
+// parseRetention parses a superseded_retention value: empty for the
+// default, a whole number of days ("30d"), or a Go duration ("12h", "0").
+func parseRetention(raw string) (time.Duration, error) {
+	if raw == "" {
+		return DefaultSupersededRetention, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if days, ok := strings.CutSuffix(raw, "d"); ok {
+		n, aerr := strconv.Atoi(days)
+		if aerr == nil && n > maxRetentionDays {
+			aerr = errors.New("too long")
+		}
+		d, err = time.Duration(n)*24*time.Hour, aerr
+	}
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("superseded_retention %q must be a duration of 0 or more, such as 30d or 12h", raw)
+	}
+	return d, nil
 }
 
 func (p Remote) maxBytes() int64 {

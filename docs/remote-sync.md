@@ -90,6 +90,7 @@ catalog`, or let the scheduler pull it every hour.
 | `push` | `true` makes the remote two-way. See [Two-way sync](#two-way-sync). Default `false`. |
 | `conflict` | The rule for a field both sides changed since the last sync: `hold` (the default), `latest`, `local` or `remote`. See [Conflicts](#conflicts). |
 | `max_clock_skew` | How far in the future a last-updated time may lie before `latest` stops trusting it. Default `5m`. |
+| `superseded_retention` | How long a `superseded` entry keeps the local value that lost, such as `30d` or `12h`. Default `30d`. `0` keeps no losing local value. See [State](#state). |
 
 Under `entities`, `type` is the local type (default: the source type's name),
 `ref` is the local `external_ref` property that holds the source id, and
@@ -281,7 +282,8 @@ started is the file's modification time, so a checkout or a copy moves it.
 
 When `latest` decides a field, the entry stays on the conflict list as
 `superseded` and keeps the value that lost (up to 16 KiB), so you can put
-it back by hand. It blocks nothing. Remove it with `--dismiss`.
+it back by hand. It blocks nothing. Remove it with `--dismiss`. It is
+dropped by itself after `superseded_retention` (default 30 days).
 
 The conflict list holds what waits for a person: a held field, a push the
 remote refused, and the entries `latest` left.
@@ -370,16 +372,26 @@ the local row and field, and keeps the remote's value of the field (up to
 keeps the local value that lost, up to 16 KiB. It is operator state: it is
 read with `rela remote conflicts`, not through `acl.yaml`. A held entry goes
 when both sides agree again, when it is resolved, or when its row is no
-longer linked. A `superseded` entry goes when it is dismissed or its row is
-no longer linked.
+longer linked. A `superseded` entry goes when it is dismissed, when its row
+is no longer linked, when `rela history-purge` purges its entity, or at the
+first sync after it is older than `superseded_retention`.
+
+`superseded_retention` is set per remote. The default is 30 days. A value
+of `0` keeps no losing local value at all: the entry keeps only the digests
+of the two values, and stays until it is dismissed or its row is no longer
+linked. A losing remote value is kept either way, because the remote still
+has it. The setting must be a duration of 0 or more, such as `30d` or
+`12h`; any other value stops the remote from loading.
 
 The ledger keeps no copy of a row that is gone here:
 
 - When you delete a pulled row, the next pull keeps only its source address
   and local id, so it does not recreate the row. The field digests go.
 - The ledger holds no history, so purging history leaves nothing behind in
-  it. The conflict list is not history either: purging history does not
-  remove a value a `superseded` entry keeps. Dismiss the entry to remove it.
+  it. A committed `rela history-purge` of an entity also drops its
+  `superseded` entries, and those of relations it is an end of, from the
+  conflict list of every remote. It does so on a backend without history
+  too. If that step fails, the purge says so; run it again.
 - When you remove a remote from `remotes.yaml`, its ledger and conflict list
   are deleted by the next pull of any remote and when the scheduler starts.
 
@@ -418,6 +430,8 @@ A push:
   it last;
 - pushes no relation of a type whose meta this project hides with
   `visible:`;
+- keeps a losing local value for at most `superseded_retention` (default
+  30 days, `0` for none), and drops it when the entity's history is purged;
 - never sends an id: the remote picks it;
 - treats the remote's answer as untrusted: it checks that a create answers
   with a new row of the type it asked for, removes control characters from

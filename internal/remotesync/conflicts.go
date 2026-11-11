@@ -10,9 +10,11 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 )
 
@@ -225,6 +227,65 @@ func (c *conflicts) hold(e *Conflict, now time.Time) {
 func (c *conflicts) supersede(e *Conflict, now time.Time) {
 	e.Reason, e.Rule, e.Since, e.Seen = ReasonSuperseded, ConflictLatest, now, now
 	c.entries[e.key()] = e
+}
+
+// expire drops the superseded entries first kept more than retention ago.
+// A retention of 0 keeps no local value, so its entries hold only digests
+// and are not dropped by age.
+func (c *conflicts) expire(now time.Time, retention time.Duration) {
+	if retention <= 0 {
+		return
+	}
+	for k, e := range c.entries {
+		if e.Reason == ReasonSuperseded && now.Sub(e.Since) > retention {
+			delete(c.entries, k)
+		}
+	}
+}
+
+// purge drops every superseded entry of the local entity id, including the
+// entries of relations it is an endpoint of, and reports how many.
+func (c *conflicts) purge(id string) int {
+	n := 0
+	for k, e := range c.entries {
+		if e.Reason == ReasonSuperseded && entryNames(e, id) {
+			delete(c.entries, k)
+			n++
+		}
+	}
+	return n
+}
+
+// entryNames reports whether entry e is about the local entity id: its row,
+// or a relation with id at either end.
+func entryNames(e *Conflict, id string) bool {
+	if e.Kind != KindRelation {
+		return e.Local == id
+	}
+	// A relation entry's Local is [entity.RelationKey.String]: FROM--type--TO.
+	parts := strings.SplitN(e.Local, "--", 3)
+	if len(parts) != 3 {
+		return false
+	}
+	from, _, err := entity.ParseStateRef(parts[0])
+	return err == nil && (from == id || parts[2] == id)
+}
+
+// PurgeSuperseded drops the superseded entries of the local entity id from
+// the conflict list of remote name, with the losing values they keep. A
+// history purge calls it for every remote, so a purged value leaves no copy
+// here. It returns how many entries it dropped. The caller holds the
+// remote's run lock.
+func PurgeSuperseded(ctx context.Context, kv state.KV, name, id string) (int, error) {
+	c, err := loadConflicts(ctx, kv, name)
+	if err != nil {
+		return 0, err
+	}
+	n := c.purge(id)
+	if n == 0 {
+		return 0, nil
+	}
+	return n, c.save(ctx, kv)
 }
 
 // drop removes the held entry of a local row's field. A superseded entry

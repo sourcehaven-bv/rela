@@ -123,3 +123,34 @@ func TestDismissRemote(t *testing.T) {
 	require.Nil(t, ts.Active)
 	require.Zero(t, ts.Failures)
 }
+
+func TestPurgeRemoteSuperseded(t *testing.T) {
+	t.Parallel()
+	ctx := principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolCLI})
+	ws := newRemoteWorkspace(t, "secretvalue")
+
+	_, err := PurgeRemoteSuperseded(ctx, nil, "REQ-1", discardLogger())
+	require.Error(t, err)
+	_, err = PurgeRemoteSuperseded(ctx, ws, "REQ-1", nil)
+	require.Error(t, err)
+
+	// No entry of the entity: nothing dropped, but the run is recorded.
+	n, err := PurgeRemoteSuperseded(ctx, ws, "REQ-1", discardLogger())
+	require.NoError(t, err)
+	require.Zero(t, n)
+
+	require.NoError(t, ws.State().Put(ctx, "remotesync/cat/conflicts.json", []byte(supersededConflicts)))
+	n, err = PurgeRemoteSuperseded(ctx, ws, "REQ-2", discardLogger())
+	require.NoError(t, err)
+	require.Zero(t, n)
+	n, err = PurgeRemoteSuperseded(ctx, ws, "REQ-1", discardLogger())
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	list, err := RemoteConflicts(ctx, ws, "cat")
+	require.NoError(t, err)
+	require.Empty(t, list)
+	ts, ok := taskState(t, ws, "remote:cat")
+	require.True(t, ok)
+	require.Nil(t, ts.Active)
+	require.Zero(t, ts.Failures)
+}

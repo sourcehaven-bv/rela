@@ -576,10 +576,12 @@ func (r *runner) noteConflicts(t conflictTarget, mg merged) {
 				Winner: fc.winner, LocalUpdated: mg.verdict.local, RemoteUpdated: mg.verdict.remote,
 			},
 		}
-		if fc.winner == TakeRemote {
-			e.Superseded.LocalValue, e.Superseded.LocalValueOmitted = heldValue(fc.oursV)
-		} else {
+		switch {
+		case fc.winner != TakeRemote:
 			e.RemoteValue, e.RemoteValueOmitted = heldValue(fc.theirs)
+		case r.m.Remote.supersededRetention() > 0:
+			// A retention of 0 keeps no local value, only the digests.
+			e.Superseded.LocalValue, e.Superseded.LocalValueOmitted = heldValue(fc.oursV)
 		}
 		r.c.supersede(e, now)
 	}
@@ -587,8 +589,10 @@ func (r *runner) noteConflicts(t conflictTarget, mg merged) {
 
 // forgetConflicts drops the entries whose row is gone: an entry of a remote
 // row the ledger no longer links, and a refused create of a local row or
-// relation the push no longer shares.
+// relation the push no longer shares. It also drops the superseded entries
+// older than the remote's retention.
 func (r *runner) forgetConflicts() {
+	r.c.expire(r.d.Now(), r.m.Remote.supersededRetention())
 	linked := map[string]bool{}
 	for _, row := range r.l.rows {
 		if row.State == stateLinked {
