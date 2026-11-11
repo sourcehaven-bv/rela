@@ -174,6 +174,11 @@ func (c *Converter) Preview(ctx context.Context, req ConversionRequest) (*Conver
 	if checkErr := c.requireReadableInputs(ctx, p); checkErr != nil {
 		return nil, checkErr
 	}
+	// The preview refuses what the conversion would, as a rename's dry
+	// run does.
+	if gErr := checkRenameGuard(ctx, m.deps, req.SourceID); gErr != nil {
+		return nil, gErr
+	}
 	d := p.def
 	toDef, _ := m.deps.Meta.GetEntityDef(d.To)
 	preview := &ConversionPreview{
@@ -245,10 +250,13 @@ func (c *Converter) Convert(ctx context.Context, req ConversionRequest) (*Conver
 		}
 	}
 	run := &conversionRun{c: c, req: req, checked: pre}
+	// The view rides on ctx so the rename guard reads on the Tx's own
+	// handle, not a second pool connection while the lock is held.
 	txErr := m.deps.Store.Tx(ctx, func(view store.Store) error {
-		return run.apply(store.ContextInTx(ctx), view)
+		return run.apply(store.ContextWithTxView(ctx, view), view)
 	})
 	if txErr != nil {
+		recordRenameRefusal(ctx, m, req.SourceID, txErr)
 		undoFailedRename(ctx, m, renameUndo)
 		// A transactional backend rolled everything back. fs and memstore
 		// cannot, so a conversion that got as far as the rename is recorded.

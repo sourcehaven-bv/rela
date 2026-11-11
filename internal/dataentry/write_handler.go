@@ -777,7 +777,7 @@ func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Reque
 // breaks that chain — a retry loop silently becomes unreachable and every
 // loser gets a 500.
 func writePatchError(w http.ResponseWriter, r *http.Request, err error) {
-	if writeForbiddenIfACLDenied(w, r, err) {
+	if writeForbiddenIfACLDenied(w, r, err) || writeFieldWriteRefused(w, err) {
 		return
 	}
 	var conflict *store.VersionConflictError

@@ -399,9 +399,14 @@ func (s *Store) List(ctx context.Context, q flowrun.Query) ([]flowrun.Run, error
 	if err := flowrun.CheckQuery(q); err != nil {
 		return nil, err
 	}
+	subjects := make(map[string]bool, len(q.SubjectIDs))
+	for _, id := range q.SubjectIDs {
+		subjects[id] = true
+	}
 	return s.collect(ctx, func(r flowrun.Run) bool {
 		return (q.Flow == "" || r.Flow == q.Flow) &&
 			(q.SubjectID == "" || r.Subject.ID == q.SubjectID) &&
+			(len(subjects) == 0 || subjects[r.Subject.ID]) &&
 			r.ID > q.After
 	}, sortByID, q.Limit)
 }

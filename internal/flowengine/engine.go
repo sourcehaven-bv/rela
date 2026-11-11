@@ -73,8 +73,8 @@ type Headers interface {
 
 // Outputs writes a state's outputs as runAs.
 type Outputs interface {
-	// Set patches props on the subject.
-	Set(ctx context.Context, runAs string, subject entity.Ref, props map[string]any) error
+	// Set patches props on the subject. run is the run whose output it is.
+	Set(ctx context.Context, runAs string, run flow.RunID, subject entity.Ref, props map[string]any) error
 	// Create creates an entity of typ with props and, when relate is set,
 	// an edge of that type from it to subject. It returns the new entity.
 	Create(ctx context.Context, runAs, typ string, props map[string]any, relate string,

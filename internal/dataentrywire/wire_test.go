@@ -85,7 +85,7 @@ func newWiredApp(t *testing.T, root string) *dataentry.App {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })
 
-	resolver, err := dataentry.ResolverFromServices(svc)
+	resolver, err := dataentry.ResolverFromServices(svc, appbuild.FlowEdits(svc))
 	require.NoError(t, err)
 	app, err := dataentry.NewApp(
 		fsys, paths, svc.ProjectFiles(), svc.Templater(), svc.Meta(), svc.Store(), svc.Versions(),

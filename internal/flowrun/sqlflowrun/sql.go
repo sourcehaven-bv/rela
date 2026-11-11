@@ -359,6 +359,14 @@ func (s *Store) List(ctx context.Context, q flowrun.Query) ([]flowrun.Run, error
 		where = append(where, "subject_id = ?")
 		args = append(args, q.SubjectID)
 	}
+	if len(q.SubjectIDs) > 0 {
+		// CheckQuery caps the ids at MaxPage, so the placeholders stay
+		// within every driver's bind limit.
+		where = append(where, "subject_id IN (?"+strings.Repeat(", ?", len(q.SubjectIDs)-1)+")")
+		for _, id := range q.SubjectIDs {
+			args = append(args, id)
+		}
+	}
 	args = append(args, q.Limit)
 	return s.queryRuns(ctx, s.db, `SELECT `+runColumns+` FROM flow_runs WHERE `+
 		strings.Join(where, " AND ")+` ORDER BY id LIMIT ?`, args...)

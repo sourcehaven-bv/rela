@@ -206,6 +206,9 @@ type Services struct {
 	// flowEngine runs flows.yaml (see [FlowEngine]). Nil when it declares
 	// no flows.
 	flowEngine *flowengine.Engine
+	// flowEdits is the flow edit ceiling (see [FlowEdits]). Nil when no flow
+	// declares outside_edits.
+	flowEdits affordances.FlowEditCeiling
 	// idpRoles stores the roles the IdP webhook asserted per subject (see
 	// [IDPRoles]). A re-assembly shares it.
 	idpRoles *idproles.Store
@@ -1300,7 +1303,7 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 	if err != nil {
 		return nil, fmt.Errorf("appbuild.NewFromCollaborators: compile worlds: %w", err)
 	}
-	fields, err := buildFieldPolicy(c.Meta, c.Store, c.Declarative)
+	fields, err := buildFieldPolicy(c.Meta, c.Store, c.Declarative, nil)
 	if err != nil {
 		return nil, fmt.Errorf("appbuild.NewFromCollaborators: %w", err)
 	}
@@ -1441,7 +1444,7 @@ type fieldReadPolicy interface {
 func buildFieldRedactor(
 	meta *metamodel.Metamodel, st store.Store, d *acl.Declarative,
 ) (fieldReadPolicy, error) {
-	fp, err := buildFieldPolicy(meta, st, d)
+	fp, err := buildFieldPolicy(meta, st, d, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1449,10 +1452,12 @@ func buildFieldRedactor(
 }
 
 // fieldPolicy is the field-level half of acl.yaml: the read-side redactor
-// and the write-side gate, both answered by one resolver.
+// and the write-side gate, both answered by one resolver, and the flow edit
+// ceiling that resolver applies (nil for none).
 type fieldPolicy struct {
-	redactor fieldReadPolicy
-	gate     entitymanager.FieldWriteGate
+	redactor  fieldReadPolicy
+	gate      entitymanager.FieldWriteGate
+	flowEdits affordances.FlowEditCeiling
 }
 
 // buildFieldPolicy builds the field redactor and the field write gate
@@ -1462,20 +1467,34 @@ type fieldPolicy struct {
 // those of [buildFieldRedactor]: no field grants gives NopRedactor and
 // AllowAllFieldGate, and a policy that fails to compile is an error, never a
 // permissive fallback.
-func buildFieldPolicy(meta *metamodel.Metamodel, st store.Store, d *acl.Declarative) (fieldPolicy, error) {
+//
+// ceiling is the flow edit ceiling (TKT-XI7IDBS), nil for none. It narrows
+// the write gate only, so a policy with a ceiling and no field grants gets
+// the gate and NopRedactor. A ceiling needs the acl.yaml policy; flowcfg
+// refuses outside_edits without one, and a nil d with a ceiling is an error.
+func buildFieldPolicy(
+	meta *metamodel.Metamodel, st store.Store, d *acl.Declarative, ceiling affordances.FlowEditCeiling,
+) (fieldPolicy, error) {
 	permissive := fieldPolicy{redactor: visibility.NopRedactor{}, gate: entitymanager.AllowAllFieldGate{}}
 	if d == nil {
+		if ceiling != nil {
+			return fieldPolicy{}, errors.New("appbuild: flows.yaml outside_edits needs the acl.yaml policy")
+		}
 		return permissive, nil
 	}
 	// Read the policy through Declarative, never a second channel — the two
 	// must not drift (RR-WTLD).
 	policy := d.Policy()
-	if policy == nil || !policy.HasAffordanceGrants() {
+	grants := policy != nil && policy.HasAffordanceGrants()
+	if !grants && ceiling == nil {
 		return permissive, nil
 	}
 
-	resolver, err := affordances.New(meta, storeRelationLookup{st: st}, d,
-		affordances.WithTraversals(ungatedBinder(meta, st)))
+	opts := []affordances.Option{affordances.WithTraversals(ungatedBinder(meta, st))}
+	if ceiling != nil {
+		opts = append(opts, affordances.WithFlowEdits(ceiling))
+	}
+	resolver, err := affordances.New(meta, storeRelationLookup{st: st}, d, opts...)
 	if err != nil {
 		return fieldPolicy{}, fmt.Errorf("appbuild: compiling acl.yaml affordance predicates: %w", err)
 	}
@@ -1485,15 +1504,17 @@ func buildFieldPolicy(meta *metamodel.Metamodel, st store.Store, d *acl.Declarat
 	}
 	resolver.WithMachines(machines)
 
-	redactor, err := visibility.NewPolicyRedactor(resolver)
-	if err != nil {
-		return fieldPolicy{}, fmt.Errorf("appbuild: build field redactor: %w", err)
+	var redactor fieldReadPolicy = visibility.NopRedactor{}
+	if grants {
+		if redactor, err = visibility.NewPolicyRedactor(resolver); err != nil {
+			return fieldPolicy{}, fmt.Errorf("appbuild: build field redactor: %w", err)
+		}
 	}
 	gate, err := affordances.NewWriteGate(resolver)
 	if err != nil {
 		return fieldPolicy{}, fmt.Errorf("appbuild: build field write gate: %w", err)
 	}
-	return fieldPolicy{redactor: redactor, gate: gate}, nil
+	return fieldPolicy{redactor: redactor, gate: gate, flowEdits: ceiling}, nil
 }
 
 // buildAutomation wires the automation engine + cascade runner from
@@ -2652,6 +2673,7 @@ func buildEntityManager(
 		// engine, face deletes and uploads exclude each other.
 		AttachmentLocker: attachLocker,
 		AnchorGuard:      anchorGuard,
+		RenameGuard:      flowRenameGuardFor(st, guard.flowRuns),
 		ValidationMode:   base.validationMode,
 		Clock:            base.clock(),
 	})
@@ -2756,18 +2778,26 @@ func migrationLockDir(cfg Config) string {
 // of the resolved Declarative: splitting them invites a caller that has one
 // without the other, which is precisely the state that left three read paths
 // ungated (TKT-BUYEW1).
+//
+// The field policy carries the flow edit ceiling, which reads the run store,
+// so this opens the run store first and records it in overrides for
+// buildRefHolders.
 func resolveACLAndFieldPolicy(
-	base *SharedBase, st store.Store,
+	base *SharedBase, st store.Store, overrides *backendOverrides,
 ) (acl.ACL, *acl.Declarative, fieldPolicy, error) {
+	ceiling, err := openFlowEdits(base, st, overrides)
+	if err != nil {
+		return nil, nil, fieldPolicy{}, err
+	}
 	if base.acl == nil {
-		c, err := compileDeclarative(base.aclPolicy, base.meta, st)
-		return c.acl, c.declarative, c.fields, err
+		c, cerr := compileDeclarative(base.aclPolicy, base.meta, st, ceiling)
+		return c.acl, c.declarative, c.fields, cerr
 	}
 	resolvedACL, aclDeclarative, err := resolveACL(base, st)
 	if err != nil {
 		return nil, nil, fieldPolicy{}, err
 	}
-	fp, err := buildFieldPolicy(base.meta, st, aclDeclarative)
+	fp, err := buildFieldPolicy(base.meta, st, aclDeclarative, ceiling)
 	if err != nil {
 		return nil, nil, fieldPolicy{}, err
 	}
@@ -2788,7 +2818,11 @@ type compiledPolicy struct {
 // A nil policy compiles to NopACL with permissive field rules. A policy
 // that does not validate or compile is an error, never a permissive
 // fallback.
-func compileDeclarative(policy *acl.Policy, meta *metamodel.Metamodel, st store.Store) (compiledPolicy, error) {
+//
+// ceiling is the flow edit ceiling for the write gate, nil for none.
+func compileDeclarative(
+	policy *acl.Policy, meta *metamodel.Metamodel, st store.Store, ceiling affordances.FlowEditCeiling,
+) (compiledPolicy, error) {
 	if err := validateResolvedPolicy(nil, policy, meta); err != nil {
 		return compiledPolicy{}, err
 	}
@@ -2796,7 +2830,7 @@ func compileDeclarative(policy *acl.Policy, meta *metamodel.Metamodel, st store.
 	if err != nil {
 		return compiledPolicy{}, err
 	}
-	fp, err := buildFieldPolicy(meta, st, d)
+	fp, err := buildFieldPolicy(meta, st, d, ceiling)
 	if err != nil {
 		return compiledPolicy{}, err
 	}
@@ -2937,7 +2971,7 @@ func assemble(
 	}
 
 	warnUndeclaredFaces(st, base.meta, base.cfg.Paths.Root)
-	resolvedACL, aclDeclarative, fieldPol, err := resolveACLAndFieldPolicy(base, st)
+	resolvedACL, aclDeclarative, fieldPol, err := resolveACLAndFieldPolicy(base, st, &overrides)
 	if err != nil {
 		return nil, err
 	}
@@ -3015,7 +3049,7 @@ func assemble(
 	// comment fanout wrapping the alias rewriter.
 	attachLocker := base.attachmentLocker(st)
 	fanout := newAliasFanout(aliases, refs.comments, refs.piles, refs.leases, autoJobs,
-		refs.channelAliases, refs.realtimeLocal)
+		refs.channelAliases, refs.realtimeLocal, newFlowRunAliases(refs.flowRuns))
 	mgr, err := buildEntityManager(base, st, fanout, templater,
 		resolvedACL, autoEngine, cascadeRunner, readDeps, pileWriterFor(refs.piles), versions, tw, computedSet,
 		attachLocker, fieldPol.gate, refs.guardInputs())
@@ -3067,7 +3101,7 @@ func assemble(
 	assembled := newServices(
 		base, st, background, searcher, visible, searchCloser, mgr, tr, val,
 		templater, cfgLoader, stateKV, migState, jobQueue, aliases, refs.comments, versions,
-		resolvedACL, aclDeclarative, fieldPol.redactor, schedState, overrides.storeSchemaFor(base),
+		resolvedACL, aclDeclarative, fieldPol, schedState, overrides.storeSchemaFor(base),
 	)
 	assembled.tokens = buildTokens(context.Background(), base, st, backendKV, readDeps.Host, attachLocker)
 	return finishAssembly(assembled, attachLocker, autoJobs, autoEngine, refs, sweep)
@@ -3214,7 +3248,7 @@ func newServices(
 	templater templating.Templater, cfgLoader config.Loader, stateKV state.KV,
 	migState datamigration.StateStore, jobQueue jobs.Queue, aliases *caldavalias.Service, commentSvc *comments.Service,
 	versions store.VersionService, resolvedACL acl.ACL, aclDeclarative *acl.Declarative,
-	fieldReads fieldReadPolicy, schedState schedulerstate.Store, storeSchema storeSchemaRefresher,
+	fields fieldPolicy, schedState schedulerstate.Store, storeSchema storeSchemaRefresher,
 ) *Services {
 	cfg := base.cfg
 	return &Services{
@@ -3252,7 +3286,8 @@ func newServices(
 		aclPolicy:          base.aclPolicy,
 		realtime:           base.realtime,
 		audit:              cfg.Audit,
-		fieldReads:         fieldReads,
+		fieldReads:         fields.redactor,
+		flowEdits:          fields.flowEdits,
 		storeSchema:        storeSchema,
 	}
 }

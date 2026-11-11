@@ -520,6 +520,11 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 			sd.IsEmpty = len(entities) == 0
 			sd.Incomplete = result.Incomplete[sec.Source]
 			ctx = primeVerdicts(ctx, h.affordances.resolver(), entities)
+			// The rows below carry `_fields` (cards, lists, editable tables).
+			// A nested section primes its own rows, children included.
+			if sec.Display != dataentryconfig.DisplayNested {
+				ctx = primeFlowRuns(ctx, h.affordances.resolver(), entities)
+			}
 
 			switch sec.Display {
 			case "properties", "list", dataentryconfig.DisplayRelated:

@@ -58,6 +58,12 @@ func (denyAllFieldGate) CheckFieldWrite(context.Context, *entity.Entity, map[str
 	return errors.New("field write denied")
 }
 
+func (denyAllFieldGate) WriteRecheck(
+	context.Context, *entity.Entity, map[string]any, []string,
+) func(context.Context) error {
+	return nil
+}
+
 func (denyAllFieldGate) CheckCreateFieldWrite(context.Context, *entity.Entity, map[string]any) error {
 	return errors.New("field write denied")
 }

@@ -130,7 +130,7 @@ func writeReadsAppWith(
 	if err = SetWorldNeighbors(app, st, appbuild.RelationScopes(svc)); err != nil {
 		t.Fatal(err)
 	}
-	res, err := ResolverFromProfile("", meta, st, d)
+	res, err := ResolverFromProfile("", meta, st, d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

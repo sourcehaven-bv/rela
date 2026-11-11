@@ -102,6 +102,10 @@ type PolicyResolver struct {
 	// traversalProgs lists, per entity type, every compiled `when:` of any
 	// role that uses related(), so one bind answers all of a row's grants.
 	traversalProgs map[string][]*predicate.Program
+
+	// flowEdits narrows the writable fields of a row a flow run holds; nil
+	// unless [WithFlowEdits] is passed to [New].
+	flowEdits FlowEditCeiling
 }
 
 // grantKey names the compiled grants of one block key of one role. face is
@@ -565,6 +569,13 @@ func (r *PolicyResolver) fieldVerdicts(ctx context.Context, e *entity.Entity, wr
 	// treatment a role-declared block does, which is what makes a property
 	// added to the metamodel later hidden from a restricted client by default.
 	r.applyClientCeiling(req, e.Type, visible)
+
+	// Flow edit ceiling, writable axis (TKT-XI7IDBS). Also after the role
+	// union and only removing. Update of a live row only: a create has no
+	// run, and a snapshot is never written.
+	if writeVerb == acl.VerbUpdate && !IsHistoricalSubject(ctx) {
+		applyFlowEdits(ctx, r.flowEdits, req, e, fieldUniverse, writable)
+	}
 
 	out.Writable, out.Attribution = writable.deny(fieldUniverse, out.Attribution)
 	out.Visible, out.Attribution = visible.deny(fieldUniverse, out.Attribution)

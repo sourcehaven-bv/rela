@@ -344,8 +344,9 @@ func (h *attachmentHandler) auditRejectedUpload(
 
 // writeAttachmentWriteError maps a Service.WriteAttachment failure to the
 // right HTTP status: 413 (size), 409 (at capacity), 503 (another write to
-// the property held it too long), 403 (ACL deny from the entity update), or
-// 422 (validation / other).
+// the property held it too long), 403 (ACL deny from the entity update, or a
+// field write refused inside the write transaction), or 422 (validation /
+// other).
 func writeAttachmentWriteError(w http.ResponseWriter, r *http.Request, limit int64, err error) {
 	// A raw body without a Content-Length reaches the service unchecked, so
 	// the ingress MaxBytesReader can trip while the service spools it.
@@ -368,7 +369,7 @@ func writeAttachmentWriteError(w http.ResponseWriter, r *http.Request, limit int
 			"Attachment rejected", attachment.RejectionReason(err))
 		return
 	}
-	if writeForbiddenIfACLDenied(w, r, err) {
+	if writeForbiddenIfACLDenied(w, r, err) || writeFieldWriteRefused(w, err) {
 		return
 	}
 	slog.Warn("dataentry: attachment write failed", "err", err, "path", shapedPath(r))
@@ -633,7 +634,7 @@ func (h *attachmentHandler) handleV1DeleteAttachment(
 	}
 	propDef := filePropertyDef(s, typeName, property)
 	if err := svc.DeleteAttachment(ctx, entity, propDef, property, fileName); err != nil {
-		if writeAttachmentBusy(w, r, err) || writeForbiddenIfACLDenied(w, r, err) {
+		if writeAttachmentBusy(w, r, err) || writeForbiddenIfACLDenied(w, r, err) || writeFieldWriteRefused(w, err) {
 			return
 		}
 		slog.Warn("dataentry: delete attachment failed", "err", err, "path", shapedPath(r))

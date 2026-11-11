@@ -2,9 +2,12 @@ package appbuild
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowrun"
+	"github.com/Sourcehaven-BV/rela/internal/flowrun/sqlflowrun"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -52,4 +55,26 @@ func DetachChannelHintsForTest(s *Services) {
 	if s.channelHints != nil {
 		s.channelHints.detach(s.hintAttach)
 	}
+}
+
+// LockedFlowRuns returns the run store wrapper the flow engine writes
+// through, over s's store, for its Create and Update only: the wrapped
+// store is a placeholder those two never reach. Nil when s's store has no
+// transaction a run write can join (fs, memory). Test-only.
+func LockedFlowRuns(s *Services) flowrun.Store {
+	r, ok := lockFlowRuns(s.store, &sqlflowrun.Store{}).(txFlowRuns)
+	if !ok {
+		return nil
+	}
+	return r
+}
+
+// JoinedFlowRuns returns a run store whose writes join the open transaction
+// view of s's store, as the engine's run writes do. Test-only.
+func JoinedFlowRuns(s *Services, view store.Store) (flowrun.Store, error) {
+	join := joinFlowRunsFor(s.store, &sqlflowrun.Store{})
+	if join == nil {
+		return nil, errors.New("appbuild: this store has no transaction a run write can join")
+	}
+	return join(view)
 }

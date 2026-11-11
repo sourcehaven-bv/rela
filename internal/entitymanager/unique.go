@@ -220,6 +220,22 @@ func uniqueValues(meta *metamodel.Metamodel, e *entity.Entity) []uniqueProp {
 func writeWithUniqueCheck(
 	ctx context.Context, deps Deps, e *entity.Entity, excludeSelfID string, write func(st store.Store) error,
 ) error {
+	return writeChecked(ctx, deps, e, excludeSelfID, nil, write)
+}
+
+// writeChecked is [writeWithUniqueCheck] with txCheck, a check that must
+// hold at the moment of the write. When txCheck is set, the write always
+// runs in a [store.Transactor.Tx] and txCheck runs first inside it, on a ctx
+// marked by [store.ContextInTx]. A writer that changes what txCheck reads
+// under the same Tx (the flow run store, TKT-XI7IDBS) then lands either
+// before the check or after the write, never in between.
+//
+// Nil: txCheck accepted (no check, and a Tx only when unique values or a
+// write capture need one).
+func writeChecked(
+	ctx context.Context, deps Deps, e *entity.Entity, excludeSelfID string,
+	txCheck func(context.Context) error, write func(st store.Store) error,
+) error {
 	// The write-enforced rules go first: they read only e, the exact value
 	// written below, so no transaction is needed to make them atomic with
 	// the write, and a refusal costs no store round trip.
@@ -227,11 +243,16 @@ func writeWithUniqueCheck(
 		return err
 	}
 	capture := writeCaptureFor(ctx, e)
-	if capture == nil && len(uniqueValues(deps.Meta, e)) == 0 {
+	if txCheck == nil && capture == nil && len(uniqueValues(deps.Meta, e)) == 0 {
 		return write(deps.Store)
 	}
 	return deps.Store.Tx(ctx, func(view store.Store) error {
-		txCtx := store.ContextInTx(ctx)
+		txCtx := store.ContextWithTxView(ctx, view)
+		if txCheck != nil {
+			if err := txCheck(txCtx); err != nil {
+				return err
+			}
+		}
 		if err := checkUniqueProperties(txCtx, deps.Meta, view, e, excludeSelfID); err != nil {
 			return err
 		}

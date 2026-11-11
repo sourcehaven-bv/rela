@@ -1824,9 +1824,30 @@ func ContextInTx(ctx context.Context) context.Context {
 	return context.WithValue(ctx, inTxKey{}, true)
 }
 
-// InTx reports whether ctx was marked by [ContextInTx].
+// InTx reports whether ctx was marked by [ContextInTx] or
+// [ContextWithTxView].
 func InTx(ctx context.Context) bool {
 	v, _ := ctx.Value(inTxKey{}).(bool)
+	return v
+}
+
+// txViewKey carries the view of the open store transaction.
+type txViewKey struct{}
+
+// ContextWithTxView is [ContextInTx] that also carries view, the store the
+// Tx callback received. A check that runs inside the transaction and reads
+// state kept next to the store, on the same database, can then read on the
+// transaction's own handle instead of taking a second pool connection
+// while the store's write lock is held.
+func ContextWithTxView(ctx context.Context, view Store) context.Context {
+	return context.WithValue(ContextInTx(ctx), txViewKey{}, view)
+}
+
+// TxView returns the view [ContextWithTxView] put on ctx.
+//
+// Nil: returned when ctx carries no view.
+func TxView(ctx context.Context) Store {
+	v, _ := ctx.Value(txViewKey{}).(Store)
 	return v
 }
 

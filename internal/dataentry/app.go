@@ -1218,6 +1218,9 @@ func NewApp(
 	if ownerErr != nil && metamodel.HasFileProperties(meta) {
 		return nil, fmt.Errorf("dataentry.NewApp: %w", ownerErr)
 	}
+	// The handler checks the file property's write before the upload, so
+	// the stamp asks the flow edit part of that check again at the write.
+	attachmentOwner = attachmentOwner.WithWriteRecheck()
 	// Operator-authored files — data-entry.yaml, scripts, custom/, apps/ —
 	// come from the caller's loader rather than a filesystem loader built
 	// here: on a backend that keeps the project in a database they may live

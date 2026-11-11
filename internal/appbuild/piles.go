@@ -118,9 +118,10 @@ func buildRefHolders(
 	return h, nil
 }
 
-// guardInputs are the channel guard's collaborators among h.
+// guardInputs are the write guards' collaborators among h.
 func (h refHolders) guardInputs() guardInputs {
-	return guardInputs{store: h.channels, tombs: h.channelTombs, dueWake: h.dueWake, marker: h.realtimeLocal}
+	return guardInputs{store: h.channels, tombs: h.channelTombs, dueWake: h.dueWake, marker: h.realtimeLocal,
+		flowRuns: h.flowRuns}
 }
 
 // sharedLocal returns the predecessor's process-local channel state and

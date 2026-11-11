@@ -29,7 +29,7 @@ func TestQueryBudget_ListPageACLRelatedWhenIsSizeIndependent(t *testing.T) {
 			Assignments: map[string]string{"T1": "editor"},
 		}, app.store)
 		setTestACL(t, app, d)
-		res, err := ResolverFromProfile("", app.Meta(), app.store, d)
+		res, err := ResolverFromProfile("", app.Meta(), app.store, d, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -68,7 +68,7 @@ func TestQueryBudget_GetEntityACLRelatedWhenBindsOnce(t *testing.T) {
 			Assignments: map[string]string{"T1": "editor"},
 		}, app.store)
 		setTestACL(t, app, d)
-		res, err := ResolverFromProfile("", app.Meta(), app.store, d)
+		res, err := ResolverFromProfile("", app.Meta(), app.store, d, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -123,7 +123,7 @@ func TestQueryBudget_ListFreeTextUnderFieldHiding(t *testing.T) {
 			Assignments: map[string]string{"T1": "editor"},
 		}, app.store)
 		setTestACL(t, app, d)
-		res, err := ResolverFromProfile("", app.Meta(), app.store, d)
+		res, err := ResolverFromProfile("", app.Meta(), app.store, d, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

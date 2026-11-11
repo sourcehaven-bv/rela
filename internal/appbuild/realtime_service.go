@@ -73,7 +73,7 @@ func policyChannelService(s *Services) (*realtime.Service, *acl.Declarative, err
 	if policy == nil {
 		return s.channelService, s.ACLDeclarative(), nil
 	}
-	c, err := compileDeclarative(policy, s.base.meta, s.Store())
+	c, err := compileDeclarative(policy, s.base.meta, s.Store(), nil)
 	if err != nil {
 		return nil, nil, err
 	}

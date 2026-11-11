@@ -150,7 +150,7 @@ func newGoldenApp(t *testing.T, v goldenVariant) *goldenApp {
 	// As cmd/rela-server's buildApp: the resolver from the services and the
 	// command authorizer chosen from the ACL. The corpus binds to loopback
 	// and does not pass --allow-unauthenticated-commands.
-	resolver, err := dataentry.ResolverFromServices(svc)
+	resolver, err := dataentry.ResolverFromServices(svc, appbuild.FlowEdits(svc))
 	if err != nil {
 		t.Fatalf("resolver: %v", err)
 	}

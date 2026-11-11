@@ -54,6 +54,11 @@ func (r *conversionRun) apply(ctx context.Context, view store.Store) error {
 	if checkErr := rejectUnknownTargetProperties(r.req.Properties, *toDef); checkErr != nil {
 		return checkErr
 	}
+	// A conversion gives the family a new id and type, so it asks the
+	// rename guard, inside the Tx like a rename (TKT-XI7IDBS).
+	if gErr := checkRenameGuard(ctx, m.deps, r.req.SourceID); gErr != nil {
+		return gErr
+	}
 	newID, err := conversionTargetID(ctx, m, view, p.def.To, *toDef, r.req)
 	if err != nil {
 		return err

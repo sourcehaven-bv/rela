@@ -116,7 +116,7 @@ func (e *Engine) writeOutput(ctx context.Context, f *flowcfg.Flow, run flowrun.R
 	if o.Kind != flowcfg.OutputCreate {
 		// A set is idempotent: written first, marked after, so a crash
 		// between the two writes it again.
-		if err := e.d.Outputs.Set(ctx, f.RunAs(), run.Subject, props); err != nil {
+		if err := e.d.Outputs.Set(ctx, f.RunAs(), run.ID, run.Subject, props); err != nil {
 			return run, wrap(err)
 		}
 		return e.mark(ctx, run, cur, i+1)

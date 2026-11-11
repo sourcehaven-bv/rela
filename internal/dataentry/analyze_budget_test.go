@@ -126,7 +126,7 @@ func newFieldRulesBudgetApp(t *testing.T, n int) (*App, *storetest.Counting, *ac
 	policy.Roles["assignee"] = assignee
 	d := mustNewACL(t, policy, app.store)
 	setTestACL(t, app, d)
-	resolver, err := ResolverFromProfile("", app.Meta(), app.store, d)
+	resolver, err := ResolverFromProfile("", app.Meta(), app.store, d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

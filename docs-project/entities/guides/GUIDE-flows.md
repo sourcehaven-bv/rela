@@ -86,6 +86,7 @@ flows:
 | `start` | The triggers that start a run. See below. |
 | `initial` | The state a run starts in. Required. It may not be final. |
 | `states` | The states, by name. Required. |
+| `outside_edits` | Which subject properties people may change outside the flow while a run is open. See [Edits outside a flow](#edits-outside-a-flow). |
 
 A flow, state or timer name is 1 to 64 lower-case letters, digits, `-` or
 `_`, and starts with a letter. Periods use the same format as
@@ -370,6 +371,122 @@ property outside `writes:` 422. Without flows, every route answers 404.
 **Over MCP.** `list_flow_tasks`, `show_flow_run` and
 `complete_flow_step` do the same for an agent. See
 [MCP server](mcp-server.md#flow-tools).
+
+## Edits outside a flow
+
+By default a run does not stop anyone from editing its subject. Someone
+with update rights can change `documents` in the entity form while the
+onboarding run waits for HR to do that step. `outside_edits:` keeps such
+properties for the flow:
+
+```yaml
+flows:
+  onboarding:
+    # ...
+    outside_edits:
+      default: allow
+      properties:
+        salary: { permission: onboarding.start }
+      states:
+        collect:
+          properties:
+            documents: deny
+            stage: deny
+```
+
+Each rule is one of:
+
+| Rule | Meaning |
+| ---- | ------- |
+| `allow` | Anyone with update rights may change the property. |
+| `deny` | Nobody may change the property outside the flow. |
+| `{permission: P}` | Only people who hold permission `P` may change it, globally or through a role relation on the subject. |
+
+`properties:` gives a rule per property, and `default:` the rule for
+every other property. Under `states:`, a state gives its own `default:`
+and `properties:`. rela picks the first rule it finds, in this order: the
+state's rule for the property, the state's `default`, the flow's rule for
+the property, the flow's `default`, and otherwise `allow`. So in the
+example, `documents` and `stage` are locked only while a run is in
+`collect`, and `salary` is kept to holders of `onboarding.start` in every
+state.
+
+The rules apply to a subject while it has a run that has not ended. A
+finished, failed or cancelled run locks nothing. When a subject has runs
+of several flows, every run's rules apply: a property is writable only if
+each run allows it. A subject keeps its id while it has a run that has
+not ended: rela refuses to rename it, or to convert it to another type,
+until the run ends or is cancelled.
+
+The rules in force are always those of the current `flows.yaml`, also for
+a run that started under an older version of the flow. An
+`outside_edits:` block with no rules is a warning and locks nothing.
+
+A run's own writes are not edits outside the flow. The values a person
+writes when doing a step, and the run's `set` outputs, are not limited
+by that run's rules. They are still limited by every other run on the
+subject.
+
+**Where the rules hold.** They apply wherever rela checks field rules on
+a write:
+
+- the web app and the data-entry API (`PATCH`, attachment uploads and
+  restoring a past version): a locked
+  property shows as read-only, `_transitions` lists its transitions as
+  not allowed with reason `read-only`, and a write is refused with 403 and
+  `field-affordance:read-only:<property>`;
+- MCP on `rela-server`, scheduled Lua scripts, and channel promotes and
+  outputs;
+- the steps and outputs of other flows.
+
+They do not apply to the CLI, MCP over stdio, `_actions` declared by the
+operator, automations, `rela.bypass_acl`, declarative webhooks, or
+CalDAV clients. These act for the operator or the system and do not
+check field rules. The rules also do not cover the entity body,
+relations or deletes, and do not limit creating a new entity. The
+refusal to rename or convert a subject with an open run is not a field
+rule: it holds on every surface, the CLI included, and rela records each
+refused rename or conversion in the audit log. On the file backend without a
+cache directory, runs are kept in the process that started them, so
+another process does not see them and does not refuse the rename.
+
+If rela cannot read the runs of a subject, every property of that subject
+is read-only until it can.
+
+On PostgreSQL and SQLite, rela checks the rules again inside the
+transaction that writes the change. This holds for every surface above,
+including a `PATCH`, an attachment upload and a restore in the web app. A
+run that starts or moves to another state takes the same lock, so it
+either lands before the check, which then sees it, or waits until the
+write is done. The same lock orders a rename against a run start.
+
+On the file backend there is no such lock, by decision: a run that starts
+between the check and the write does not stop that one write. Resolving a
+merge conflict, which exists only on the file backend, writes the file
+directly and has the same gap. This is an accepted risk, tracked in
+TKT-LU8PSKJ. Use PostgreSQL or SQLite where it matters.
+
+**Stuck runs.** A run that cannot advance keeps its subject locked: a run
+that failed to store its working state, a run whose output keeps failing,
+or a run whose step needs a property that another run on the subject
+denies. Each of these is listed by `rela flow runs`. `rela flow cancel`
+ends the run and lifts its rules.
+
+**Rules for the file.**
+
+- `outside_edits:` needs `acl.yaml`. Without it no surface checks field
+  rules, so rela refuses to load the flow.
+- A state under `states:` must exist and may not be final. A state may
+  not have its own `states:`.
+- A property must be declared on the subject type, and may not be
+  derived. Each level names at most 64 properties.
+- A `permission:` that no role in `acl.yaml` grants is a warning.
+- `RELA_AFFORDANCE_PROFILE=none` or `demo` is refused when a flow has
+  `outside_edits:`, as it is for `fields:` rules.
+
+A merge conflict on a locked property cannot be resolved through the API
+while the run holds it. Resolve it after the run moves on, or cancel the
+run.
 
 ## Checking the file
 

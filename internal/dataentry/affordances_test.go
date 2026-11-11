@@ -281,7 +281,7 @@ client_baselines:
 				}
 				d = mustNewACL(t, policy, app.store)
 			}
-			r, err := ResolverFromProfile(tc.profile, app.Meta(), app.store, d)
+			r, err := ResolverFromProfile(tc.profile, app.Meta(), app.store, d, nil)
 			if tc.want != wantRefused && err != nil {
 				t.Fatalf("ResolverFromProfile: %v", err)
 			}

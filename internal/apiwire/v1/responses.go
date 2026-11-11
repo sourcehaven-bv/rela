@@ -313,10 +313,10 @@ type RelationAffordance struct {
 // action, e.g. "Start progress"); when empty the SPA falls back to the target
 // value's display label. Guard is the ACL permission the move requires (empty
 // when unguarded). Allowed reports whether the requesting principal may perform
-// it now (guard held AND precondition met). Reason names the blocking gate when
-// Allowed is false ("guard" or "precondition"); empty when Allowed is true. The
-// SPA shows only Allowed transitions, so Reason is advisory (tooltip/CLI), not a
-// rendering gate.
+// it now (guard held, precondition met and the field writable). Reason names
+// the blocking gate when Allowed is false ("guard", "precondition" or
+// "read-only"); empty when Allowed is true. The SPA shows only Allowed
+// transitions, so Reason is advisory (tooltip/CLI), not a rendering gate.
 type Transition struct {
 	To      string `json:"to"`
 	Label   string `json:"label,omitempty"`

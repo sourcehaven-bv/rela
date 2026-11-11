@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowrun"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 )
@@ -68,13 +69,15 @@ type channelGuard struct {
 
 var _ entitymanager.AnchorGuard = (*channelGuard)(nil)
 
-// guardInputs are the collaborators of the channel guard besides the
-// realtime config.
+// guardInputs are the collaborators of the manager's delete and rename
+// guards: the channel guard's besides the realtime config, and the flow run
+// store of the rename guard (nil without flows).
 type guardInputs struct {
-	store   channels.Store
-	tombs   *tombstoneConfirmer
-	dueWake *realtime.DueWake
-	marker  channelMarker
+	store    channels.Store
+	tombs    *tombstoneConfirmer
+	dueWake  *realtime.DueWake
+	marker   channelMarker
+	flowRuns flowrun.Store
 }
 
 // newChannelGuard returns the guard over in.store, reading the realtime

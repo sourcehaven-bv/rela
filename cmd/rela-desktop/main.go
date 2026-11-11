@@ -1420,7 +1420,7 @@ func desktopPrincipalResolver() dataentry.PrincipalResolver {
 
 // newDesktopApp builds the data-entry app for svc, wired for the desktop.
 func newDesktopApp(fsys storage.FS, projCtx *project.Context, svc *appbuild.Services) (*dataentry.App, error) {
-	fieldResolver, err := dataentry.ResolverFromServices(svc)
+	fieldResolver, err := dataentry.ResolverFromServices(svc, appbuild.FlowEdits(svc))
 	if err != nil {
 		return nil, err
 	}

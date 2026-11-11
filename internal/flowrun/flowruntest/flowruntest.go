@@ -439,6 +439,27 @@ func testList(t *testing.T, h Harness) {
 	require.Equal(t, []string{"FR-1", "FR-2"}, list(flowrun.Query{Limit: 2}))
 	require.Empty(t, list(flowrun.Query{After: "FR-4"}))
 	require.Empty(t, list(flowrun.Query{SubjectID: "EMP-9"}))
+
+	// SubjectIDs selects any of the ids, on every face, and combines with
+	// the other fields.
+	require.Equal(t, []string{"FR-1", "FR-2", "FR-3", "FR-4"},
+		list(flowrun.Query{SubjectIDs: []string{"EMP-2", "EMP-1"}}))
+	require.Equal(t, []string{"FR-2"}, list(flowrun.Query{SubjectIDs: []string{"EMP-2", "EMP-9"}}))
+	require.Empty(t, list(flowrun.Query{SubjectIDs: []string{"EMP-9"}}))
+	require.Equal(t, []string{"FR-1", "FR-2", "FR-3"},
+		list(flowrun.Query{Flow: "onboard", SubjectIDs: []string{"EMP-1", "EMP-2"}}))
+	require.Equal(t, []string{"FR-3", "FR-4"},
+		list(flowrun.Query{SubjectIDs: []string{"EMP-1", "EMP-2"}, After: "FR-2"}))
+	require.Equal(t, []string{"FR-1", "FR-2"},
+		list(flowrun.Query{SubjectIDs: []string{"EMP-1", "EMP-2"}, Limit: 2}))
+	require.Equal(t, []string{"FR-2"}, list(flowrun.Query{SubjectID: "EMP-2", SubjectIDs: []string{"EMP-1", "EMP-2"}}))
+
+	// A full batch of ids is one query.
+	many := make([]string, flowrun.MaxPage)
+	for i := range many {
+		many[i] = fmt.Sprintf("EMP-%d", i+1)
+	}
+	require.Equal(t, []string{"FR-1", "FR-2", "FR-3", "FR-4"}, list(flowrun.Query{SubjectIDs: many}))
 }
 
 func testRekeySubject(t *testing.T, h Harness) {
