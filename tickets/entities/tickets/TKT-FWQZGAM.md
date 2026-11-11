@@ -65,3 +65,13 @@ it, which satisfies RR-R5I7UE0.
   - `useFlowList` reads a transient error as "no flows".
   - `RunList` and `Tasks` take the subject from the `_carries` edge (bare
     id); `Run` uses `run.Subject` with its face. Use one source.
+
+## Note from TKT-U9MKKGD (#2170)
+
+Until this worker lands, the guide, the `rela flow start` error, the
+`complete_flow_step` description and the web app say that a failed step
+waits for a manual Retry or a cancel. When the worker calls `Engine.Due`,
+restore the text about automatic retries and backoff (GUIDE-flows "Running
+flows", GUIDE-mcp-server, `internal/cli/flow_runs.go`,
+`internal/mcp/tools_flows.go`, `flowview.Completed.Problem`, and the
+`flows.waiting.pending` and `flows.step.problem.settling` strings).

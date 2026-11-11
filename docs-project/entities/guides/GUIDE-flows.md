@@ -22,7 +22,9 @@ changes. `schema.yaml` never refers to it.
 > their steps in the web app or over MCP, and a completed step takes the
 > `change` branches. The `create`, `predicate` and `schedule` triggers,
 > `change` events from ordinary edits, timers, retention and the inbox are
-> checked but not acted on yet; they follow in a later release. See
+> checked but not acted on yet; they follow in a later release. So does
+> the worker that retries a failed step: in this release a failed step
+> waits until someone retries it by hand or cancels the run. See
 > [Running flows](#running-flows) and [Doing a step](#doing-a-step).
 
 ## Example
@@ -276,10 +278,15 @@ edge as `system:flow`, and then enters the initial state:
 
 A failed step leaves the run in its state with the rest of the step
 pending: outputs not yet written, a `done` branch not yet taken, or the
-end of the run not yet recorded. rela tries again later and never writes
-an output twice. It waits 30 seconds after the first failure and doubles
-the wait after each further failure, up to one hour. `rela flow start`
-names the run when its first step failed, because the run exists.
+end of the run not yet recorded. In this release rela does not try the
+step again by itself. A worker that does this comes in a later release.
+Until then the run stays pending. Someone who holds the start's
+permission retries it with the Retry button in the web app or
+`POST /api/v1/_flows/runs/{id}/_retry`, or ends it with
+`rela flow cancel`. A retry never writes an output twice. With
+`per_subject: one`, a pending run, like any unfinished run, keeps others
+from starting on its subject. `rela flow start` names the run when its
+first step failed, because the run exists.
 
 If rela stops between recording a run and storing its working state, the
 run is listed but cannot advance. `rela flow cancel` closes such a run
@@ -311,8 +318,7 @@ step form:
 - which roles the state waits for, and whether you hold one;
 - the timers of the state and when each fires;
 - each `change` branch, its roles and whether its `when` holds now;
-- a step whose outputs failed, with the number of failures and the next
-  attempt;
+- a step whose outputs failed, with the number of failures;
 - the flow as a diagram with the current state marked, and the timeline:
   the start and the latest moves, with who made each.
 
@@ -326,13 +332,14 @@ run stays where it is.
 Once the values are saved, the step is not refused any more. If the run
 then does not follow cleanly, the answer says why in `problem`: `guard`
 (a `when` could not be evaluated, so the run stays), `moved` (the run had
-already moved on, for example by a timer) or `settling` (the run moved,
-but a later output step failed and is retried).
+already moved on, for example by another person's step) or `settling`
+(the run moved, but a later output step failed; retry it or cancel the
+run).
 
 The panel also offers a Start button for each flow with an `on: manual`
 start, and Cancel and Retry buttons when you hold that start's
-permission. Retry tries the failed outputs of a step again now, instead of
-waiting for the next attempt.
+permission. Retry tries the failed outputs of a step again. In this
+release rela does not retry them by itself.
 
 The sidebar has two pages when the project has flows. **Flow tasks**
 lists the runs that wait for a role you hold, oldest first. **Flow runs**
