@@ -134,3 +134,114 @@ func (g createGate) RelationCreatable(context.Context, *entity.Entity, string) (
 func (createGate) RelationRemovable(context.Context, *entity.Entity, string) (bool, error) {
 	return true, nil
 }
+
+// replaceACLMeta stages an UNGUARDED cross-entity copy, so every edge it
+// removes is put to the ACL as the DeleteRelation question.
+const replaceACLMeta = `
+version: "1"
+entities:
+  src:
+    label: Source
+    id_prefix: SRC
+    properties:
+      title: {type: string}
+  dst:
+    label: Target
+    id_prefix: DST
+    properties:
+      title: {type: string}
+  peer:
+    label: Peer
+    id_prefix: PEER
+    properties:
+      title: {type: string}
+relations:
+  refs:
+    label: Refs
+    scope: content
+    from: [src, dst]
+    to: [peer]
+copies:
+  sync:
+    from: src
+    to: dst
+    fields:
+      title: "{{new.title}}"
+    relations:
+      refs: replace
+`
+
+// noRelationDeleteACL allows every write except removing a relation.
+type noRelationDeleteACL struct{ acl.NopACL }
+
+func (noRelationDeleteACL) AuthorizeWrite(_ context.Context, req acl.WriteRequest) acl.Decision {
+	if _, rel := req.Subject.(acl.RelationSubject); rel && req.Op == acl.OpDelete {
+		return acl.Decision{Allow: false, RuleKind: "test", Reason: "no relation delete"}
+	}
+	return acl.Decision{Allow: true, RuleKind: "test"}
+}
+
+// TestCopyReplace_EmptySourceRemovalAsksTheACL pins that the removals an
+// empty source now causes (BUG-FCQBONH) go through the same ACL question as
+// a hand-made DeleteRelation: refused, the target keeps its edge; allowed,
+// the edge goes.
+func TestCopyReplace_EmptySourceRemovalAsksTheACL(t *testing.T) {
+	tests := []struct {
+		name       string
+		acl        acl.ACL
+		wantTarget []string
+	}{
+		{name: "ACL refuses relation delete", acl: noRelationDeleteACL{}, wantTarget: []string{"PEER-1"}},
+		{name: "ACL allows relation delete", acl: acl.NopACL{}, wantTarget: nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			st := memstore.New()
+			meta, err := metamodel.Parse([]byte(replaceACLMeta))
+			if err != nil {
+				t.Fatalf("metamodel.Parse: %v", err)
+			}
+			mgr, err := entitymanager.New(entitymanager.Deps{
+				Store: st, Meta: meta, Templater: nopTemplater{},
+				Audit: audit.Nop{}, ACL: tc.acl,
+				Transitions:  statemachine.EmptySet(),
+				FieldGate:    entitymanager.AllowAllFieldGate{},
+				CopyGuard:    allowGuard{allow: true},
+				CopyReadGate: entitymanager.AllowAllCopyReadGate{},
+				AnchorGuard:  entitymanager.NopAnchorGuard{},
+			})
+			if err != nil {
+				t.Fatalf("entitymanager.New: %v", err)
+			}
+			ctx := context.Background()
+			for _, e := range []*entity.Entity{
+				{ID: "SRC-1", Type: "src", Properties: map[string]any{"title": "s"}},
+				{ID: "DST-1", Type: "dst", Properties: map[string]any{"title": "d"}},
+				{ID: "PEER-1", Type: "peer", Properties: map[string]any{"title": "p"}},
+			} {
+				seedRaw(ctx, t, st, e)
+			}
+			key := entity.RelationKey{From: "DST-1", Type: "refs", To: "PEER-1"}
+			if _, cerr := st.CreateRelation(ctx, key, &store.RelationData{}); cerr != nil {
+				t.Fatalf("seed edge: %v", cerr)
+			}
+
+			if _, cerr := mgr.CopyState(ctx, entitymanager.CopyRequest{
+				Definition: "sync", SourceID: "SRC-1", TargetID: "DST-1",
+			}); cerr != nil {
+				t.Fatalf("copy: %v", cerr)
+			}
+
+			var got []string
+			for r, lerr := range st.ListRelations(ctx, store.RelationQuery{From: "DST-1", Type: "refs"}) {
+				if lerr != nil {
+					t.Fatalf("list: %v", lerr)
+				}
+				got = append(got, r.To)
+			}
+			if !slices.Equal(got, tc.wantTarget) {
+				t.Errorf("target edges = %v, want %v", got, tc.wantTarget)
+			}
+		})
+	}
+}
