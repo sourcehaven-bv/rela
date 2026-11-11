@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"testing"
 	"time"
@@ -32,7 +33,7 @@ func TestWriteConflicts(t *testing.T) {
 	b.Reset()
 	require.NoError(t, writeConflicts(&b, "cat", []remotesync.Conflict{
 		{Local: "REQ-1", Type: "requirement", Address: "req/R1", Field: "title", Reason: remotesync.ReasonBothChanged,
-			RemoteValue: "Theirs\x1b[31m", Since: since},
+			RemoteValue: json.RawMessage("\"Theirs\x1b[31m\""), Since: since},
 		{Local: "REQ-2", Type: "requirement", Address: "req/R2", Field: "body", Reason: remotesync.ReasonBothChanged,
 			RemoteValueOmitted: true, Since: since},
 		{Local: "REQ-3", Type: "requirement", Reason: remotesync.ReasonRefused, Detail: "422 title is required",

@@ -32,7 +32,7 @@ func TestRemoteConflictsAndResolve(t *testing.T) {
 	list, err = RemoteConflicts(ctx, ws, "cat")
 	require.NoError(t, err)
 	require.Len(t, list, 1)
-	require.Equal(t, "Theirs", list[0].RemoteValue)
+	require.JSONEq(t, `"Theirs"`, string(list[0].RemoteValue))
 
 	for _, tc := range []struct {
 		ws   WorkspaceProvider

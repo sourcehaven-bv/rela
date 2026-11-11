@@ -272,7 +272,7 @@ remotes:
 		t.Fatalf("local title = %v", got.Properties["title"])
 	}
 	list, err := remotesync.LoadConflicts(ctx, kv, "acme")
-	if err != nil || len(list) != 1 || list[0].Field != "title" || list[0].RemoteValue != "one, theirs" {
+	if err != nil || len(list) != 1 || list[0].Field != "title" || string(list[0].RemoteValue) != `"one, theirs"` {
 		t.Fatalf("conflict list: %+v, %v", list, err)
 	}
 

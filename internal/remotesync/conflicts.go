@@ -73,11 +73,12 @@ type Conflict struct {
 	// found it still in conflict.
 	Since time.Time `json:"since"`
 	Seen  time.Time `json:"seen"`
-	// RemoteValue is the remote's value of Field when it was last fetched,
-	// unless it was larger than the list keeps (RemoteValueOmitted). The
-	// local value is the row's own; the list does not copy it.
-	RemoteValue        any  `json:"remote_value,omitempty"`
-	RemoteValueOmitted bool `json:"remote_value_omitted,omitempty"`
+	// RemoteValue is the JSON encoding of the remote's value of Field when
+	// it was last fetched, unless it was larger than the list keeps
+	// (RemoteValueOmitted). The local value is the row's own; the list does
+	// not copy it.
+	RemoteValue        json.RawMessage `json:"remote_value,omitempty"`
+	RemoteValueOmitted bool            `json:"remote_value_omitted,omitempty"`
 	// LocalDigest and RemoteDigest are the digests of the two values when
 	// the entry was last seen. Resolving sets the field's merge base to the
 	// losing side's digest, so the next sync sends the winner. A refused
@@ -187,14 +188,14 @@ func (c *conflicts) blocked(local, field string) bool {
 	return row || f
 }
 
-// heldValue returns v as an entry keeps it, and whether it was left out for
-// its size.
-func heldValue(v any) (any, bool) {
+// heldValue returns the JSON encoding of v as an entry keeps it, and whether
+// it was left out for its size.
+func heldValue(v any) (json.RawMessage, bool) {
 	b, err := json.Marshal(v)
 	if err != nil || len(b) > maxHeldValue {
 		return nil, true
 	}
-	return v, false
+	return b, false
 }
 
 // LoadConflicts returns the conflict list of remote name, sorted by local id

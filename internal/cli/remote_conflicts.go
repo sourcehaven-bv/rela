@@ -63,8 +63,8 @@ func writeConflicts(w io.Writer, name string, list []remotesync.Conflict) error 
 			b.WriteString(": both sides changed it")
 			if e.RemoteValueOmitted {
 				b.WriteString("; the remote value is too large to show")
-			} else if v, err := json.Marshal(e.RemoteValue); err == nil {
-				fmt.Fprintf(&b, "; remote value %s", reconclient.Sanitize(string(v)))
+			} else if len(e.RemoteValue) > 0 {
+				fmt.Fprintf(&b, "; remote value %s", reconclient.Sanitize(string(e.RemoteValue)))
 			}
 		case remotesync.ReasonUncertain:
 			fmt.Fprintf(&b, ": %s", reconclient.Sanitize(e.Detail))

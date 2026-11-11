@@ -122,7 +122,7 @@ func TestRun_ConflictLeavesRowAndAppliesOthers(t *testing.T) {
 		t.Fatalf("second run: %+v, fetches %v", rep, src.gets)
 	}
 	list, err := LoadConflicts(ctx, tg.kv, "cat")
-	if err != nil || len(list) != 1 || list[0].Field != "title" || list[0].RemoteValue != "Theirs" ||
+	if err != nil || len(list) != 1 || list[0].Field != "title" || string(list[0].RemoteValue) != `"Theirs"` ||
 		list[0].Reason != ReasonBothChanged || list[0].Local != r1.ID {
 
 		t.Fatalf("conflict list: %+v, %v", list, err)
