@@ -2,10 +2,12 @@ package remotesync
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient/httpremote"
 )
 
@@ -214,5 +216,44 @@ remotes:
 	}
 	if _, err := Parse([]byte("remotes: {}"), nil); err == nil {
 		t.Fatal("want an error without a schema")
+	}
+}
+
+// Relation conflict rules apply only to pushed meta.
+func TestCompile_RelationRulesNeedPushedMeta(t *testing.T) {
+	meta, err := metamodel.Parse([]byte(strings.Replace(testSchema,
+		"    to: [component]\n    properties:", "    to: [component]\n    content: true\n    properties:", 1)))
+	if err != nil {
+		t.Fatalf("parse schema: %v", err)
+	}
+	cfg, err := Parse([]byte(testRemotes), meta)
+	if err != nil {
+		t.Fatalf("parse remotes: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		push bool
+		edit func(rm *RelationMap)
+		want string
+	}{
+		{"type rule without push", false, func(rm *RelationMap) { rm.Conflict = ConflictLocal }, "need push"},
+		{"field rule without push", false,
+			func(rm *RelationMap) { rm.FieldConflicts = map[string]string{"weight": ConflictLocal} }, "need push"},
+		{"content rule", true, func(rm *RelationMap) {
+			rm.Fields = map[string]string{"weight": "weight", "content": "content"}
+			rm.FieldConflicts = map[string]string{"content": ConflictLocal}
+		}, "only pulled"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := cfg.Remotes["cat"]
+			p.Push = tc.push
+			p.Relations = maps.Clone(p.Relations)
+			rm := p.Relations["satisfies"]
+			tc.edit(&rm)
+			p.Relations["satisfies"] = rm
+			if _, err := Compile("cat", p, meta); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }

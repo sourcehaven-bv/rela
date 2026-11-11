@@ -117,6 +117,38 @@ func TestUpdated_RelationOnlyWhenNothingHidden(t *testing.T) {
 	}
 }
 
+// An edge that no longer carries the key alice cannot read still gets no
+// `_updated` for her: the time would say when that key was cleared.
+func TestUpdated_RelationWithheldAfterHiddenKeyCleared(t *testing.T) {
+	app := updatedApp(t)
+	if _, err := app.store.CreateRelation(context.Background(),
+		entity.RelationKey{From: "TKT-002", Type: "depends_on", To: "TKT-001"},
+		&store.RelationData{Properties: map[string]any{"reason": "r"}}); err != nil {
+		t.Fatalf("CreateRelation: %v", err)
+	}
+	for _, tc := range []struct {
+		user string
+		want bool
+	}{{"bob", true}, {"alice", false}} {
+		t.Run(tc.user, func(t *testing.T) {
+			req := boundAs(t, app, httptest.NewRequest(http.MethodGet,
+				"/api/v1/tickets/TKT-002/relations/depends_on/TKT-001", http.NoBody), tc.user)
+			rec := httptest.NewRecorder()
+			handleV1GetRelationTarget(app, rec, req, "ticket", "TKT-002", "depends_on", "TKT-001")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET = %d %s", rec.Code, rec.Body)
+			}
+			body := decodeBody(t, rec)
+			if r, _ := body["_redacted"].([]any); len(r) != 0 {
+				t.Fatalf("fixture: _redacted = %v, want none", r)
+			}
+			if _, ok := body["_updated"]; ok != tc.want {
+				t.Fatalf("_updated present = %v, want %v (%s)", ok, tc.want, rec.Body)
+			}
+		})
+	}
+}
+
 // patchRelation PATCHes TKT-001's depends_on edge as user.
 func patchRelation(t *testing.T, app *App, user, body, ifMatch string) *httptest.ResponseRecorder {
 	t.Helper()

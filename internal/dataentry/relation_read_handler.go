@@ -87,8 +87,33 @@ func handleV1GetRelationTarget(
 		Meta:     view.Properties,
 		Content:  rel.Content,
 		Redacted: redacted,
-		Updated:  updatedWhenWhole(rel.UpdatedAt, len(*redacted) == 0),
+		Updated:  updatedWhenWhole(rel.UpdatedAt, relationWhole(ctx, a.affordances, src, rel, *redacted)),
 	})
+}
+
+// relationMetaRestrictor answers whether the caller can be denied any meta key
+// of an edge, not just the keys the edge carries now.
+type relationMetaRestrictor interface {
+	RelationMetaRestricted(ctx context.Context, from *entity.Entity, relType string) bool
+}
+
+// relationWhole reports whether the caller sees all of rel, so that its
+// last-updated time may be served. redacted names the present meta keys the
+// caller cannot read. A key the policy would hide but the edge no longer
+// carries counts too: the time would say when it was cleared. A resolver that
+// redacts relation meta but cannot answer that question fails closed.
+func relationWhole(
+	ctx context.Context, aff affordanceService, src *entity.Entity, rel *entity.Relation, redacted []string,
+) bool {
+	if len(redacted) > 0 || len(rel.Inaccessible) > 0 {
+		return false
+	}
+	res := aff.resolver()
+	if _, redacts := res.(RelationVisibilityResolver); !redacts {
+		return true
+	}
+	mr, ok := res.(relationMetaRestrictor)
+	return ok && !mr.RelationMetaRestricted(ctx, src, rel.Type)
 }
 
 // relationView is rel as the caller sees it, meta keys the caller may not

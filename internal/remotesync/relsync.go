@@ -29,7 +29,7 @@ import (
 //     next pull links the two and merges their meta.
 //   - a linked relation whose owned meta moved off the merge base is fetched
 //     with its ETag, merged as a pull does, and sent by PATCH with If-Match.
-//     A cleared value is sent as null, which the remote stores as no value.
+//     A cleared value is sent as null; the remote keeps the key with a null value.
 //     A 412 tries once more.
 //
 // A 400, 403, 409 on an update, or 422 holds the relation on the conflict
@@ -78,11 +78,14 @@ func asEntity(rel *entity.Relation) *entity.Entity {
 }
 
 // mergeRelation merges a fetched source relation into the existing local
-// one: the owned meta three ways, the body source-wins.
+// one: the owned meta three ways, the body source-wins. It reports whether
+// the merge was recorded: false when the local write was rejected, failed,
+// or lost a race, or on a dry run. The push must not send the relation
+// then, because the local side does not hold what the merge decided.
 func (r relSync) mergeRelation(
 	ctx context.Context, rm *RelationMapping, row *ledgerRow, addr string, hash canonical.Digest,
 	key entity.RelationKey, existing *entity.Relation, src sourceRow,
-) {
+) bool {
 	c := &r.rep.Relations
 	var meta, body []theirsValue
 	for _, t := range src.th {
@@ -116,7 +119,7 @@ func (r relSync) mergeRelation(
 			c.Rejected++
 			r.issue(IssueRejected, addr, local, err.Error())
 			r.record(row, "R", rm.Source, addr, hash, local, stateRejected, nil)
-			return
+			return false
 		}
 	}
 	switch {
@@ -127,7 +130,7 @@ func (r relSync) mergeRelation(
 		c.Adopted++
 	case r.o.DryRun:
 		c.Updated++
-		return
+		return false
 	default:
 		opts.ExpectedVersion = string(store.RelationVersionOf(existing))
 		_, err := r.d.Writer.UpdateRelation(ctx, key, opts)
@@ -136,14 +139,14 @@ func (r relSync) mergeRelation(
 			// compares it again.
 			c.Deferred++
 			r.hold()
-			return
+			return false
 		}
 		if err != nil {
 			r.writeFailed(c, addr, local, err)
 			if rejectedWrite(err) {
 				r.record(row, "R", rm.Source, addr, hash, local, stateRejected, nil)
 			}
-			return
+			return false
 		}
 		if linked {
 			c.Updated++
@@ -154,6 +157,7 @@ func (r relSync) mergeRelation(
 	rec := r.record(row, "R", rm.Source, addr, hash, local, stateLinked, mg.base)
 	rec.adopt("", adopted)
 	r.markSynced(rec, local)
+	return true
 }
 
 // fetchSource fetches the source relation at addr when the mapping maps
@@ -211,18 +215,16 @@ func (r relSync) relStamp(key entity.RelationKey, rel *entity.Relation) stamp {
 
 // push sends the local relations of every mapped type.
 func (r relSync) push(ctx context.Context) error {
-	ends := map[string]*ledgerRow{}
+	run := relPushRun{ends: map[string]*ledgerRow{}, seen: map[string]bool{}, readable: map[string]bool{}}
 	for _, row := range r.l.rows {
 		if row.Kind == "E" && row.State == stateLinked && row.Local != "" {
-			ends[row.Local] = row
+			run.ends[row.Local] = row
 		}
 	}
-	seen := map[string]bool{}
 	for _, src := range sortedKeys(r.m.Relations) {
 		rm := r.m.Relations[src]
 		if !r.merges(rm) {
-			r.issue(IssueKept, "", "", fmt.Sprintf("relations of type %s are not pushed: its meta has visible: grants, "+
-				"so the run cannot tell which of it the pusher may read", rm.Local))
+			r.issue(IssueKept, "", "", notPushedReason(r.d.RelationMetaGated == nil, rm.Local))
 			continue
 		}
 		var rels []*entity.Relation
@@ -236,13 +238,32 @@ func (r relSync) push(ctx context.Context) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if err := r.pushRelation(ctx, rm, rel, ends, seen); err != nil {
+			if err := r.pushRelation(ctx, rm, rel, run); err != nil {
 				return err
 			}
 		}
 	}
-	r.relSeen = seen
+	r.relSeen = run.seen
 	return nil
+}
+
+// relPushRun is the state one relation push shares across relations: the
+// linked entity rows by local id, the relation keys already handled, and
+// whether each endpoint is readable, so an endpoint is checked once per run.
+type relPushRun struct {
+	ends     map[string]*ledgerRow
+	seen     map[string]bool
+	readable map[string]bool
+}
+
+// notPushedReason says why the relations of a type are not pushed.
+func notPushedReason(noCheck bool, relType string) string {
+	if noCheck {
+		return fmt.Sprintf("relations of type %s are not pushed: this run cannot check its meta for visible: grants",
+			relType)
+	}
+	return fmt.Sprintf("relations of type %s are not pushed: its meta has visible: grants, "+
+		"so the run cannot tell which of it the pusher may read", relType)
 }
 
 // relTarget is a local relation the push may send, with its remote address
@@ -259,26 +280,29 @@ type relTarget struct {
 // pushRelation pushes one local relation when both endpoints are linked
 // and readable. Any other relation is left out without naming it.
 func (r relSync) pushRelation(
-	ctx context.Context, rm *RelationMapping, rel *entity.Relation, ends map[string]*ledgerRow, seen map[string]bool,
+	ctx context.Context, rm *RelationMapping, rel *entity.Relation, run relPushRun,
 ) error {
 	key := rel.Identity()
-	from, to := ends[key.From], ends[key.To]
+	from, to := run.ends[key.From], run.ends[key.To]
 	if key.FromFace != "" || from == nil || to == nil || from.Face != "" {
 		return nil
 	}
+	run.seen[key.String()] = true
 	for _, end := range []*ledgerRow{from, to} {
-		readable, err := r.readable(ctx, end.localRef().String())
-		if err != nil {
-			r.gateFailed(&r.rep.Relations, "", err)
-			seen[key.String()] = true
-			return nil
+		ref := end.localRef().String()
+		readable, known := run.readable[ref]
+		if !known {
+			var err error
+			if readable, err = r.readable(ctx, ref); err != nil {
+				r.gateFailed(&r.rep.Relations, "", err)
+				return nil
+			}
+			run.readable[ref] = readable
 		}
 		if !readable {
-			seen[key.String()] = true
 			return nil
 		}
 	}
-	seen[key.String()] = true
 	fromID, _ := addressID(from.Address)
 	toID, _ := addressID(to.Address)
 	t := relTarget{
@@ -466,8 +490,10 @@ func (r relSync) refreshRelation(
 	}
 	// The merge records the row with no source hash, so the next run
 	// compares it again.
-	r.mergeRelation(ctx, t.rm, row, t.addr, canonical.Digest{}, t.key, existing,
-		sourceRow{th: th, updated: parseStamp(re.Updated)})
+	src := sourceRow{th: th, updated: parseStamp(re.Updated)}
+	if !r.mergeRelation(ctx, t.rm, row, t.addr, canonical.Digest{}, t.key, existing, src) {
+		return nil, "", false, nil
+	}
 	if cur := r.l.get(reconclient.KindRelation, t.addr); cur != row || row.State != stateLinked {
 		return nil, "", false, nil
 	}

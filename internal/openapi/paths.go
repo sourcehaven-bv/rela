@@ -479,7 +479,7 @@ func relationReadSchema() *Schema {
 			},
 			"_updated": {
 				Type: "string", Format: "date-time",
-				Description: "When the relation last changed; absent when any meta key is withheld",
+				Description: "When the relation last changed; absent when the reader could be denied any meta key",
 			},
 		},
 	}
@@ -540,6 +540,7 @@ func relationPatchOperation(typeName, relName, label string) *Operation {
 					"ETag": {Description: "New relation version tag", Schema: StringSchema()},
 				},
 			},
+			"400": {Description: "Malformed body or invalid position (order_value_invalid)", Content: problemContent()},
 			"403": {Description: "Not allowed", Content: problemContent()},
 			"404": {Description: "Relation not found", Content: problemContent()},
 			"412": {Description: "Precondition failed (ETag mismatch)", Content: problemContent()},

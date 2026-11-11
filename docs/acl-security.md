@@ -1796,7 +1796,10 @@ view entry and a relation GET carry `_updated`, the time the row last
 changed (TKT-8ZGAEC5). It is served only when nothing on the row is hidden
 from the caller: nothing in `_redacted` and no field withheld. A
 change to a hidden field moves the time too, so on a partly hidden row it
-would tell the caller when a field they cannot see changed. List rows and
+would tell the caller when a field they cannot see changed. On a relation
+the test is wider: a caller whose `visible:` list for the relation type
+could hide any meta key gets no `_updated`, even when the edge carries none
+of those keys now, because the time would say when one was cleared. List rows and
 search results never carry it. The relation PATCH takes `If-Match` with the
 relation's ETag and answers 412 on a mismatch; its response, like the GET,
 is redacted for the caller.
@@ -2124,8 +2127,8 @@ pull (TKT-UH2Q9MN, DEC-2NFLAHB).
   side that changed a row last wins a field both sides changed. The times
   come from the remote's `_updated` and the local row, so a remote that
   lies about its clock can win every such field. A time is used only when
-  it lies no more than `max_clock_skew` (default 5m) in the future and not
-  before the row's last sync; equal times, a withheld time and a time that
+  it lies no more than `max_clock_skew` (default 5m) in the future and no
+  more than `max_clock_skew` before the row's last sync; equal times, a withheld time and a time that
   does not parse hold the field instead. A remote whose principal sees a
   hidden field gets no `_updated`, so `latest` holds rather than learning
   when the hidden field changed. Use `hold` or `local` for a remote you do

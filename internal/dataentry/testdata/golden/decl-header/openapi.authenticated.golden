@@ -2651,7 +2651,7 @@ body:
                     "_updated": {
                       "type": "string",
                       "format": "date-time",
-                      "description": "When the relation last changed; absent when any meta key is withheld"
+                      "description": "When the relation last changed; absent when the reader could be denied any meta key"
                     },
                     "content": {
                       "type": "string"
@@ -2762,6 +2762,16 @@ body:
                 "description": "New relation version tag",
                 "schema": {
                   "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body or invalid position (order_value_invalid)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -7093,7 +7103,7 @@ body:
                     "_updated": {
                       "type": "string",
                       "format": "date-time",
-                      "description": "When the relation last changed; absent when any meta key is withheld"
+                      "description": "When the relation last changed; absent when the reader could be denied any meta key"
                     },
                     "content": {
                       "type": "string"
@@ -7204,6 +7214,16 @@ body:
                 "description": "New relation version tag",
                 "schema": {
                   "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body or invalid position (order_value_invalid)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -7410,7 +7430,7 @@ body:
                     "_updated": {
                       "type": "string",
                       "format": "date-time",
-                      "description": "When the relation last changed; absent when any meta key is withheld"
+                      "description": "When the relation last changed; absent when the reader could be denied any meta key"
                     },
                     "content": {
                       "type": "string"
@@ -7521,6 +7541,16 @@ body:
                 "description": "New relation version tag",
                 "schema": {
                   "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body or invalid position (order_value_invalid)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }

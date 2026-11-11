@@ -556,8 +556,31 @@ func (c *compiler) relation(src string, rm RelationMap) {
 			}
 		}
 	}
+	if !c.relationRules(src, &rm, fields) {
+		return
+	}
 	c.rules(fmt.Sprintf("relations: %q", src), rm.Conflict, rm.FieldConflicts, fields)
 	c.m.Relations[src] = &RelationMapping{Source: src, Local: local, Fields: fields}
+}
+
+// relationRules refuses relation conflict rules that would never apply: a
+// remote without push keeps the source's meta, and relation content is only
+// pulled.
+func (c *compiler) relationRules(src string, rm *RelationMap, fields []FieldMapping) bool {
+	if rm.Conflict == "" && len(rm.FieldConflicts) == 0 {
+		return true
+	}
+	if !c.m.Remote.Push {
+		c.fail("relations: %q: conflict rules need push: true; a remote without push keeps the source's meta", src)
+		return false
+	}
+	for _, f := range fields {
+		if f.Local.Kind == syncmerge.KindContent && rm.FieldConflicts[f.Local.Name] != "" {
+			c.fail("relations: %q: field_conflicts: %q is relation content, which is only pulled", src, f.Local.Name)
+			return false
+		}
+	}
+	return true
 }
 
 // typedFields types a local-to-source field map and checks the source

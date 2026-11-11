@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 func TestLatest(t *testing.T) {
@@ -451,5 +452,47 @@ func TestRelationPush_UnreadableEndpointIsNotSent(t *testing.T) {
 	runSync(t, tg, m, src, Options{})
 	if _, ok := src.rels["R2--satisfies--C2"]; ok {
 		t.Fatal("a relation to an unreadable endpoint was pushed")
+	}
+}
+
+// raceWriter fails every relation update as if a local write had landed
+// first.
+type raceWriter struct{ Writer }
+
+func (raceWriter) UpdateRelation(context.Context, entity.RelationKey, entity.RelationOptions) (*entity.Relation, error) {
+	return nil, &store.VersionConflictError{}
+}
+
+// A merge that decided for the remote but could not write it locally must
+// not let the push send the local value over the remote one.
+func TestRelationPush_FailedMergeIsNotSent(t *testing.T) {
+	ctx := context.Background()
+	tg := newTarget(t)
+	m := pushMapping(t, tg, func(p *Remote) {
+		rm := p.Relations["satisfies"]
+		rm.Conflict = ConflictRemote
+		p.Relations["satisfies"] = rm
+	})
+	src := newPushSource(seedSource())
+	runSync(t, tg, m, src, Options{})
+	key := relKey(t, tg, "R1", "C1")
+	if _, err := tg.mgr.UpdateRelation(ctx, key, entity.RelationOptions{
+		Properties: map[string]any{"weight": 7},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	src.rels["R1--satisfies--C1"].Meta = map[string]any{"weight": 9}
+
+	d := tg.pushDeps(src)
+	d.Writer = raceWriter{tg.mgr}
+	rep, err := Run(ctx, m, d, Options{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rep.PushedRelations.Updated != 0 {
+		t.Fatalf("pushed after a failed merge: %+v", rep.PushedRelations)
+	}
+	if w, _ := json.Marshal(src.rels["R1--satisfies--C1"].Meta["weight"]); string(w) != "9" {
+		t.Fatalf("remote weight = %s, want 9", w)
 	}
 }

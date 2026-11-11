@@ -245,7 +245,7 @@ field's entry in `field_conflicts` overrides it:
 | --- | --- |
 | `hold` | The field is written on neither side and goes on the conflict list. The default. |
 | `latest` | The side that changed the row last wins. The other side's value is kept on the conflict list. |
-| `local` | This project's value wins and is sent to the remote. |
+| `local` | This project's value wins. On a remote with `push: true` it is sent to the remote. |
 | `remote` | The remote's value wins and is written here. |
 
 ```yaml
@@ -268,8 +268,9 @@ under the same condition. `latest` holds the field instead, and says why
 in the entry's `fallback`, when:
 
 - a side served no time (`time_withheld`);
-- a time lies more than `max_clock_skew` in the future, lies before the
-  row's last sync, or does not parse (`time_untrusted`);
+- a time lies more than `max_clock_skew` in the future, lies more than
+  `max_clock_skew` before the row's last sync, or does not parse
+  (`time_untrusted`);
 - both times are equal (`same_time`).
 
 The remote's time comes from the remote's clock. A remote that sets its
@@ -412,7 +413,7 @@ A push:
   `acl.yaml` bounds it as it bounds any client;
 - never overwrites a remote change: each update carries `If-Match`, and a
   412 is merged first;
-- trusts the remote's clock only within `max_clock_skew` and not before
+- trusts the remote's clock only within `max_clock_skew` of now and of
   the last sync, and holds a field when it cannot tell which side changed
   it last;
 - pushes no relation of a type whose meta this project hides with

@@ -822,7 +822,9 @@ A per-entity GET, the entity in a write response, a view entry and a single
 relation GET carry `_updated`: the time the row last changed, in RFC 3339
 UTC. It is served only when nothing on the row is hidden from the caller.
 When a field is in `_redacted` or otherwise withheld, `_updated` is left
-out, because a change to the hidden field moves it too. List rows and
+out, because a change to the hidden field moves it too. A relation GET
+also leaves it out when the caller's `visible:` list for the relation type
+could hide a meta key the edge does not carry now. List rows and
 search results never carry it. Two-way sync uses it for the `latest`
 conflict rule (see [Syncing with a remote](../remote-sync.md#conflicts)).
 
