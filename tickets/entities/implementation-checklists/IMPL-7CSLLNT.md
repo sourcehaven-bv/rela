@@ -41,7 +41,7 @@ guard expects.
 `Link: </api/v1/_openapi.json>; rel="service-desc"` and the text body;
 `/api/v1/_schema` 200; `/assets/x.js`, `/static/favicon.svg`, `/requirements`
 404. Pinned by `TestHeadless_Router`, `TestHeadlessRoot`,
-`TestHeadless_NoEmbeddedUI`, `TestHeadless_EditorAssetsNotFound`.
+`TestHeadless_NoEmbeddedUI`, `TestAppEditorAssets_NotEmbedded404`.
 - AC3: untagged `go test ./internal/dataentry/ ./cmd/rela-server/
 ./internal/tenanthost/` pass.
 - AC4: `goreleaser check` validates the config; snapshot release run for the
