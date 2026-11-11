@@ -1119,6 +1119,24 @@ principal who can read the type but not write to that specific
 record. That 403 still carries `rule_kind` / `rule_id` for
 operator debugging.
 
+### Retired ids redirect only to a readable successor (TKT-2F1AUZ)
+
+A rename or a conversion retires the old id. A `GET` of
+`/api/v1/<type>/<id>` or `/api/v1/_views/<view>/<id>` that misses on a
+retired id answers `307` to the successor, with `Cache-Control: no-store`.
+It does so only when the caller may read the successor in the request's
+world: the successor passes the row gate, the face gate and the world,
+through `visibility.Resolver.Successor`. Every other caller gets the
+unchanged 404 or 422, so a hidden successor answers exactly like an id
+that never existed. A failed lookup is answered as that same miss.
+
+Writes never redirect: a write sent to an old id must not land on an
+entity the caller did not name.
+
+The redirect discloses nothing new. The mapping from a readable
+successor back to the old id is already served by mention resolution,
+which gates it the same way.
+
 ### Writes need read access to the row
 
 The entity manager applies the same rule, so it also holds for writes
