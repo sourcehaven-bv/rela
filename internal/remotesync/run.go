@@ -56,6 +56,9 @@ type Fingerprinter func(relations bool, rows iter.Seq2[string, canonical.Digest]
 type Deps struct {
 	// Source is the remote.
 	Source Source
+	// Pusher sends the reads and writes of a remote with push; required
+	// for one. The wiring site passes the same remote as Source.
+	Pusher Pusher
 	Meta   *metamodel.Metamodel
 	Writer Writer
 	Store  RawReader
@@ -108,9 +111,10 @@ type Options struct {
 // ErrGoneGuard reports a run the gone guard refused. Nothing was applied.
 var ErrGoneGuard = errors.New("remotesync: refused by the gone guard")
 
-// Dial returns the source of remote p, authenticated with credential, the
-// value [Remote.ReadCredential] returned. transport may be nil.
-func Dial(p Remote, credential string, transport http.RoundTripper) (Source, error) {
+// Dial returns the client of remote p, authenticated with credential, the
+// value [Remote.ReadCredential] returned. transport may be nil. The client
+// is the run's [Source], and its [Pusher] on a remote with push.
+func Dial(p Remote, credential string, transport http.RoundTripper) (*httpremote.Remote, error) {
 	header := p.AuthHeader
 	if header == "" {
 		header = "Authorization"
@@ -179,11 +183,18 @@ func Run(ctx context.Context, m *Mapping, d Deps, o Options) (Report, error) {
 		d.Logger.Warn("remote pull sends its credential over plain http (allow_insecure_http)",
 			"remote", m.Name, "run_id", d.RunID)
 	}
+	if m.Remote.Push && d.Pusher == nil {
+		return rep, errors.New("remotesync: a remote with push needs a pusher")
+	}
 	l, err := loadLedger(ctx, d.State, m)
 	if err != nil {
 		return rep, err
 	}
-	r := &runner{m: m, d: d, o: o, l: l, rep: &rep}
+	held, err := loadConflicts(ctx, d.State, m.Name)
+	if err != nil {
+		return rep, err
+	}
+	r := &runner{m: m, d: d, o: o, l: l, c: held, rep: &rep}
 	if sweepErr := r.sweep(ctx); sweepErr != nil {
 		return rep, sweepErr
 	}
@@ -199,13 +210,27 @@ func Run(ctx context.Context, m *Mapping, d Deps, o Options) (Report, error) {
 		return rep, err
 	}
 	runErr := r.apply(ctx, diff, gone)
+	if runErr == nil && m.Remote.Push {
+		rep.Pushed = &PushCounts{}
+		runErr = r.push(ctx)
+	}
+	r.forgetConflicts()
+	rep.Held = len(held.entries)
 	if !o.DryRun {
-		if err := l.save(context.WithoutCancel(ctx), d.State, m); err != nil {
+		wctx := context.WithoutCancel(ctx)
+		if err := l.save(wctx, d.State, m); err != nil {
+			return rep, errors.Join(runErr, err)
+		}
+		if err := held.save(wctx, d.State); err != nil {
 			return rep, errors.Join(runErr, err)
 		}
 	}
-	if runErr == nil && (rep.Entities.Failed > 0 || rep.Relations.Failed > 0) {
-		runErr = fmt.Errorf("remotesync: %d rows failed", rep.Entities.Failed+rep.Relations.Failed)
+	failed := rep.Entities.Failed + rep.Relations.Failed
+	if rep.Pushed != nil {
+		failed += rep.Pushed.Failed
+	}
+	if runErr == nil && failed > 0 {
+		runErr = fmt.Errorf("remotesync: %d rows failed", failed)
 	}
 	return rep, runErr
 }
@@ -216,6 +241,7 @@ type runner struct {
 	d   Deps
 	o   Options
 	l   *ledger
+	c   *conflicts
 	rep *Report
 
 	plurals map[string]string
@@ -229,6 +255,8 @@ type runner struct {
 	// cur is the source row being pulled. An issue raised while it is set
 	// holds the row, so later runs take it last (see [ledgerDoc.Held]).
 	cur *heldRow
+	// pushSeen holds the local ids the push read, or nil when no push ran.
+	pushSeen map[string]bool
 }
 
 // heldRow names a source row at one source hash.
@@ -598,7 +626,7 @@ func theirs(fields []FieldMapping, props map[string]any, content *string, redact
 		}
 		var raw any
 		present := false
-		if f.Remote == syncmerge.ContentField && f.Local.Kind == syncmerge.KindContent {
+		if f.toContent() {
 			if content != nil {
 				raw, present = *content, true
 			}
@@ -639,7 +667,26 @@ type merged struct {
 	unset     []string
 	content   *string
 	base      map[string]string
-	conflicts []string
+	conflicts []fieldConflict
+	// agreed are the reported fields that are not in conflict.
+	agreed []FieldMapping
+}
+
+// fieldConflict is one field both sides changed: the source value and the
+// digests of both values.
+type fieldConflict struct {
+	f             FieldMapping
+	theirs        any
+	ours, theirsD string
+}
+
+// conflictNames returns the local names of the fields in conflict.
+func (m merged) conflictNames() []string {
+	out := make([]string, len(m.conflicts))
+	for i, c := range m.conflicts {
+		out[i] = c.f.Local.Name
+	}
+	return out
 }
 
 func (m merged) empty() bool { return len(m.props) == 0 && len(m.unset) == 0 && m.content == nil }
@@ -647,7 +694,8 @@ func (m merged) empty() bool { return len(m.props) == 0 && len(m.unset) == 0 && 
 // merge compares each reported owned field on digests: the same value on
 // both sides is unchanged; a local value still at the base takes theirs; a
 // source value still at the base keeps the local value; anything else, and
-// any difference without a base, is a conflict.
+// any difference without a base, is a conflict. A field in conflict keeps
+// its base and its local value; the other fields still merge.
 func merge(fields []FieldMapping, base map[string]string, ours *entity.Entity, th []theirsValue) merged {
 	out := merged{props: map[string]any{}, base: map[string]string{}}
 	for _, f := range fields {
@@ -659,19 +707,23 @@ func merge(fields []FieldMapping, base map[string]string, ours *entity.Entity, t
 		f, k := t.f.Local, t.f.baseKey()
 		dt, do := syncmerge.Digest(f, t.v), syncmerge.Digest(f, oursValue(f, ours))
 		b, hasBase := base[k]
+		conflict := fieldConflict{f: t.f, theirs: t.v, ours: do, theirsD: dt}
 		switch {
 		case do == dt:
 			out.base[k] = dt
 		case !hasBase:
-			out.conflicts = append(out.conflicts, f.Name)
+			out.conflicts = append(out.conflicts, conflict)
+			continue
 		case b == do:
 			out.set(f, t.v)
 			out.base[k] = dt
 		case b == dt:
 			// The local edit stands; the base stays at the source value.
 		default:
-			out.conflicts = append(out.conflicts, f.Name)
+			out.conflicts = append(out.conflicts, conflict)
+			continue
 		}
+		out.agreed = append(out.agreed, t.f)
 	}
 	return out
 }
@@ -714,7 +766,7 @@ func (r *runner) pullEntity(ctx context.Context, addr string, hash canonical.Dig
 	if !r.budget(c) {
 		return nil
 	}
-	e, err := fetchEntity(ctx, r, r.plurals[typ], typ, id)
+	e, etag, err := r.fetch(ctx, typ, id)
 	if err != nil {
 		rejected, runErr := r.fetchFailed(c, "entity", addr, err)
 		if rejected {
@@ -729,15 +781,46 @@ func (r *runner) pullEntity(ctx context.Context, addr string, hash canonical.Dig
 		r.record(row, "E", typ, addr, hash, localOf(row), stateRejected, baseOf(row))
 		return nil
 	}
+	r.mergeFetched(ctx, em, row, addr, id, hash, etag, th)
+	return nil
+}
+
+// fetch reads one source entity, with its ETag on a remote with push.
+func (r *runner) fetch(ctx context.Context, typ, id string) (remoteEntity, string, error) {
+	if r.d.Pusher == nil {
+		e, err := fetchEntity(ctx, r, r.plurals[typ], typ, id)
+		return e, "", err
+	}
+	return fetchTagged(ctx, r, r.plurals[typ], typ, id)
+}
+
+// Send sends through the pusher and counts the bytes against max_bytes.
+func (r *runner) Send(
+	ctx context.Context, method, path string, body []byte, ifMatch string, limit int64,
+) (httpremote.Answer, error) {
+	ans, err := r.d.Pusher.Send(ctx, method, path, body, ifMatch, limit)
+	r.read += int64(len(ans.Body))
+	return ans, err
+}
+
+// mergeFetched merges one fetched source row into its local row, trying
+// again when the local row changes under the write, and keeps the row's
+// ETag for the next push.
+func (r *runner) mergeFetched(
+	ctx context.Context, em *EntityMapping, row *ledgerRow, addr, id string, hash canonical.Digest, etag string,
+	th []theirsValue,
+) {
 	for range maxAttempts {
 		if !r.applyEntity(ctx, em, row, addr, id, hash, th) {
-			return nil
+			if cur := r.l.get(reconclient.KindEntity, addr); cur != nil && cur.State == stateLinked && !r.o.DryRun {
+				cur.ETag = etag
+			}
+			return
 		}
 		row = r.l.get(reconclient.KindEntity, addr)
 	}
-	c.Failed++
+	r.rep.Entities.Failed++
 	r.issue(IssueFailed, addr, localOf(row), "the local row kept changing during the run")
-	return nil
 }
 
 // applyEntity merges one fetched source row into its local row. It returns
@@ -773,12 +856,14 @@ func (r *runner) applyEntity(
 	// The ledger never knew this local row: it was there before the pull.
 	adopted := row == nil || row.Local != ours.ID || row.Adopted
 	mg := merge(em.Fields, baseOf(row), ours, th)
+	r.noteConflicts(em, ours.ID, addr, mg)
 	if len(mg.conflicts) > 0 {
 		c.Conflicts++
-		r.issue(IssueConflict, addr, ours.ID, "both sides changed owned fields", mg.conflicts...)
-		return false
+		r.issue(IssueConflict, addr, ours.ID, "both sides changed these fields; held on the conflict list",
+			mg.conflictNames()...)
 	}
 	switch {
+	case mg.empty() && len(mg.conflicts) > 0:
 	case mg.empty() && linked:
 		c.Unchanged++
 	case mg.empty():

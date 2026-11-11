@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 
 	"github.com/Sourcehaven-BV/rela/internal/reconclient"
+	"github.com/Sourcehaven-BV/rela/internal/reconclient/httpremote"
 )
 
 // Caps on what one fetch reads from the source.
@@ -31,6 +33,14 @@ type Getter interface {
 type Source interface {
 	reconclient.Remote
 	Getter
+}
+
+// Pusher sends requests to the remote's API that need the ETag: the reads
+// and writes of a remote with push. It returns the answer for every status
+// a row can explain, and fails for a 401 (wrapping [httpremote.ErrDenied])
+// and a transport error. *httpremote.Remote implements it.
+type Pusher interface {
+	Send(ctx context.Context, method, path string, body []byte, ifMatch string, limit int64) (httpremote.Answer, error)
 }
 
 // errProtocol marks a source answer that is not what was asked for.
@@ -88,10 +98,38 @@ func plurals(ctx context.Context, g Getter, m *Mapping) (map[string]string, erro
 
 // fetchEntity reads one source entity and checks it is the one asked for.
 func fetchEntity(ctx context.Context, g Getter, plural, typ, id string) (remoteEntity, error) {
-	raw, err := g.Get(ctx, plural+"/"+url.PathEscape(id), maxEntityBytes)
+	raw, err := g.Get(ctx, entityPath(plural, id), maxEntityBytes)
 	if err != nil {
 		return remoteEntity{}, err
 	}
+	return checkEntity(raw, typ, id)
+}
+
+// entityPath is the read and update route of one entity; plural is escaped.
+func entityPath(plural, id string) string { return plural + "/" + url.PathEscape(id) }
+
+// fetchTagged reads one source entity with its ETag, through p. A 404 wraps
+// [httpremote.ErrNotFound] and a 403 [httpremote.ErrDenied], as a plain
+// fetch does.
+func fetchTagged(ctx context.Context, p Pusher, plural, typ, id string) (remoteEntity, string, error) {
+	ans, err := p.Send(ctx, http.MethodGet, entityPath(plural, id), nil, "", maxEntityBytes)
+	switch {
+	case err != nil:
+		return remoteEntity{}, "", err
+	case ans.Status == http.StatusNotFound:
+		return remoteEntity{}, "", fmt.Errorf("%w: answered 404", httpremote.ErrNotFound)
+	case ans.Status == http.StatusForbidden:
+		return remoteEntity{}, "", fmt.Errorf("%w: answered 403", httpremote.ErrDenied)
+	case ans.Status != http.StatusOK:
+		return remoteEntity{}, "", fmt.Errorf("remotesync: the source answered %d: %s", ans.Status,
+			reconclient.Sanitize(string(ans.Body)))
+	}
+	e, err := checkEntity(ans.Body, typ, id)
+	return e, ans.ETag, err
+}
+
+// checkEntity decodes a fetched entity and checks it is the one asked for.
+func checkEntity(raw []byte, typ, id string) (remoteEntity, error) {
 	var e remoteEntity
 	if err := decode(raw, &e); err != nil {
 		return remoteEntity{}, err

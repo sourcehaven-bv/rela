@@ -1907,7 +1907,7 @@ instance is an ordinary principal: it authenticates at the source's identity
 edge with whatever that edge accepts, such as a machine-client token from an
 OIDC proxy. The source's `acl.yaml` decides what it reads, and `visible:`
 redacts its fields. This section is about the pulling side. See
-[Pulling from a remote](remote-sync.md) for the configuration.
+[Syncing with a remote](remote-sync.md) for the configuration.
 
 - **The source is untrusted.** A pull treats every answer as input from
   outside: a fetched row must carry the id and type it was asked for, its
@@ -1980,6 +1980,46 @@ redacts its fields. This section is about the pulling side. See
   instance may read, not who may read the rows here. A pulled row is read
   under the local type's rules, so an operator who maps a type gives it read
   rules at least as strict as the source's rules for those rows.
+
+### Pushes (`push: true`)
+
+A remote with `push: true` also sends local changes to the remote after each
+pull (TKT-UH2Q9MN, DEC-2NFLAHB).
+
+- **No new credential and no new trust.** The push uses the pull's
+  credential and writes through the remote's normal write API, as the same
+  principal. The remote's `acl.yaml` decides what it may create and update,
+  its entity manager validates and audits each write, and its uniform 404
+  hides rows the principal cannot read. A push cannot do anything that
+  principal could not do with a REST client.
+- **The push reads past this project's read gate.** It reads every local row
+  of the mapped types to find changes, as a write-prep read, and sends what
+  the mapping selects: the mapped `fields` of the rows that meet `share`.
+  The operator who writes `remotes.yaml` therefore decides what leaves the
+  project; no reader's role narrows it. `share` reads the row only, so a
+  related row's state cannot change what is shared.
+- **A remote change is never overwritten.** Every update carries `If-Match`
+  with the version the run last saw. A 412 makes the run fetch and merge the
+  row, then send once more; a second 412 waits for the next run. A field both
+  sides changed is held, and written on neither side.
+- **The remote picks every id.** A create sends no id. The run checks that
+  the answer names a new row of the type it asked for, then records the
+  mapping in its own ledger and the remote id in the local `external_ref`.
+  Only the driving side writes the mapping.
+- **A refusal is never retried as is.** A 403, 409 or 422 holds the row on the
+  conflict list with the remote's reason, stripped of control characters and
+  capped at 512 bytes. A 401 fails the run; a 429 or 503 stops it.
+- **No echo, no write amplification.** A pushed value becomes the merge base,
+  so the pull that fetches it back writes nothing. A run with no new edits
+  writes no row and no audit record on either side.
+- **The conflict list is operator state.** It keeps remote values (up to
+  16 KiB per entry) and local ids outside the graph, in the state store, and
+  is read with `rela remote conflicts`, not through `acl.yaml`. A surface
+  that shows it to other people must gate each entry by that reader's access
+  to the local row and field. Resolving takes the run lock and only moves the
+  merge base; the sync that follows writes through the normal write path as
+  the person who resolved.
+- **Deletes are not pushed.**
 
 ## Presence
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,7 +103,7 @@ func TestRejectedWrite_ManagerErrors(t *testing.T) {
 	}
 }
 
-// TestRun_HeldRowsGoLast pins that a row which stopped on a conflict does
+// TestRun_HeldRowsGoLast pins that a row which stopped on a failure does
 // not take the fetch budget ahead of the other changed rows.
 func TestRun_HeldRowsGoLast(t *testing.T) {
 	ctx := context.Background()
@@ -112,17 +113,21 @@ func TestRun_HeldRowsGoLast(t *testing.T) {
 	// The budget is not part of the mapping, so a run without it shares the
 	// ledger.
 	pull(t, tg, testMapping(t, tg.meta, nil), src, Options{})
-	c1 := tg.byRef(t, "C1")
-	if _, err := tg.mgr.PatchEntity(ctx, c1.ID, entity.Patch{Properties: map[string]any{"name": "Ours"}}); err != nil {
-		t.Fatal(err)
-	}
 	src.ents["C1"].Props = map[string]any{"name": "Theirs"}
 	src.ents["R1"].Props = map[string]any{"title": "Login 2", "state": "open"}
-
-	rep := pull(t, tg, m, src, Options{})
-	if rep.Entities.Conflicts != 1 || rep.Waiting != 1 {
-		t.Fatalf("first run: %+v", rep)
+	broken := true
+	src.fail = func(path string) error {
+		if broken && strings.HasPrefix(path, "components/") {
+			return errors.New("connection reset")
+		}
+		return nil
 	}
+
+	rep, err := Run(ctx, m, tg.deps(src), Options{})
+	if err == nil || rep.Entities.Failed != 1 || rep.Waiting != 1 {
+		t.Fatalf("first run: %+v, %v", rep, err)
+	}
+	broken = false
 	rep = pull(t, tg, m, src, Options{})
 	if rep.Entities.Updated != 1 || rep.Waiting != 1 {
 		t.Fatalf("second run: %+v", rep)

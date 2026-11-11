@@ -322,7 +322,8 @@ func warnPull(logger *slog.Logger, name, runID string, rep remotesync.Report) {
 
 // remoteDeps assembles the collaborators of one pull: the manager every write
 // goes through, the raw store for the write-prep reads, the state store for
-// the ledger, and the source dialed with the remote's credential.
+// the ledger, and the source dialed with the remote's credential, which is
+// also the pusher of a remote with push.
 //
 // The writer is the field-gated manager of the scheduled Lua deps, which
 // also updates relations. It is asserted rather than declared on the
@@ -352,11 +353,17 @@ func remoteDeps(
 	if err != nil {
 		return remotesync.Deps{}, err
 	}
-	return remotesync.Deps{
+	deps := remotesync.Deps{
 		Source: src, Meta: lua.Meta, Writer: writer, Store: raw.Store(), State: ws.State(),
 		Fingerprint: visibility.SumHeld,
 		Logger:      logger, RunID: runID,
-	}, nil
+	}
+	if m.Remote.Push {
+		// The push writes through the remote's own API with the same
+		// credential: the remote authorizes it as the pull's principal there.
+		deps.Pusher = src
+	}
+	return deps, nil
 }
 
 // globalSecrets returns the loader of host's global secrets, or nil when

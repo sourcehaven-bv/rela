@@ -49,6 +49,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
+	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient/httpremote"
 	"github.com/Sourcehaven-BV/rela/internal/syncmerge"
@@ -64,6 +66,17 @@ const (
 	OnGoneDetach = "detach"
 	// OnGoneDelete deletes such a row when nothing local depends on it.
 	OnGoneDelete = "delete"
+)
+
+// The conflict rules. Step 9a accepts only [ConflictHold]; the others are
+// named so a config that uses one gets a clear refusal (TKT-8ZGAEC5).
+const (
+	// ConflictHold changes neither side and puts the field on the
+	// conflict list until someone resolves it. It is the default.
+	ConflictHold   = "hold"
+	conflictLatest = "latest"
+	conflictLocal  = "local"
+	conflictRemote = "remote"
 )
 
 // Defaults and bounds of the per-remote limits.
@@ -120,6 +133,13 @@ type Remote struct {
 	// MaxBytes caps the bytes one run reads in fetched rows; the rest wait
 	// for the next run. Zero means [DefaultMaxBytes].
 	MaxBytes int64 `yaml:"max_bytes,omitempty"`
+	// Push makes the remote two-way: after each pull, the run pushes the
+	// local changes to mapped fields, and the shared local rows the remote
+	// does not have yet, through the remote's write API (DEC-2NFLAHB).
+	Push bool `yaml:"push,omitempty"`
+	// Conflict is the rule for a field both sides changed since the last
+	// sync. Empty means [ConflictHold].
+	Conflict string `yaml:"conflict,omitempty"`
 	// Entities maps source entity types, by name, to local ones.
 	Entities map[string]EntityMap `yaml:"entities"`
 	// Relations maps source relation types, by name, to local ones.
@@ -134,8 +154,17 @@ type EntityMap struct {
 	// system belongs to this remote alone.
 	Ref string `yaml:"ref"`
 	// Fields maps a local field to the source field it is pulled from. The
-	// source owns these fields; every other local field is local.
+	// source owns these fields; every other local field is local. On a
+	// remote with push, they flow both ways.
 	Fields map[string]string `yaml:"fields,omitempty"`
+	// Share is a condition on the local row, in the predicate language,
+	// that a row must meet to be pushed. Empty shares every row of the
+	// type. Only a remote with push takes it.
+	Share string `yaml:"share,omitempty"`
+	// Conflict overrides the remote's conflict rule for this type.
+	Conflict string `yaml:"conflict,omitempty"`
+	// FieldConflicts overrides the conflict rule per local field.
+	FieldConflicts map[string]string `yaml:"field_conflicts,omitempty"`
 }
 
 // RelationMap maps one source relation type.
@@ -199,12 +228,17 @@ type Mapping struct {
 	// Hash identifies the mapping. A ledger written under another hash is
 	// compared again in full.
 	Hash string
+
+	// eval matches the share conditions.
+	eval *predicatefns.Evaluator
 }
 
 // EntityMapping maps one source entity type.
 type EntityMapping struct {
 	Source, Local, Ref string
 	Fields             []FieldMapping
+	// Share selects the local rows a push sends; nil shares every row.
+	Share *predicate.Program
 }
 
 // RelationMapping maps one source relation type.
@@ -222,7 +256,16 @@ type FieldMapping struct {
 
 // baseKey names the field in a ledger row's base. It holds both names, so a
 // field mapped to another source field starts without a base.
-func (f FieldMapping) baseKey() string { return f.Local.Name + "<" + f.Remote }
+func (f FieldMapping) baseKey() string { return baseKeyOf(f.Local.Name, f.Remote) }
+
+// toContent reports whether the field maps the local body to the remote
+// body. Pull and push both route by it, so a value travels the same way in
+// each direction; any other mapping is a property on the remote side.
+func (f FieldMapping) toContent() bool {
+	return f.Remote == syncmerge.ContentField && f.Local.Kind == syncmerge.KindContent
+}
+
+func baseKeyOf(local, remote string) string { return local + "<" + remote }
 
 // Compile checks remote name's config against meta and returns its mapping.
 //
@@ -235,6 +278,7 @@ func Compile(name string, p Remote, meta *metamodel.Metamodel) (*Mapping, error)
 		Name: name, Remote: p,
 		Entities:  map[string]*EntityMapping{},
 		Relations: map[string]*RelationMapping{},
+		eval:      predicatefns.NewEvaluator(meta),
 	}}
 	if !principal.ValidIntegrationName(name) {
 		c.fail("invalid name: use 1-63 lowercase letters, digits, '_' or '-', starting with a letter or digit")
@@ -295,6 +339,7 @@ func (c *compiler) remote(p Remote) {
 	if p.MaxBytes < 0 || p.MaxBytes > MaxMaxBytes {
 		c.fail("max_bytes %d must be between 0 (the default, %d) and %d", p.MaxBytes, DefaultMaxBytes, MaxMaxBytes)
 	}
+	c.rule("conflict", p.Conflict)
 	if len(p.Entities) == 0 {
 		c.fail("entities: map at least one source type")
 	}
@@ -365,7 +410,54 @@ func (c *compiler) entity(src string, em EntityMap) {
 			return
 		}
 	}
-	c.m.Entities[src] = &EntityMapping{Source: src, Local: local, Ref: em.Ref, Fields: fields}
+	c.rule(fmt.Sprintf("entities: %q: conflict", src), em.Conflict)
+	for _, field := range sortedKeys(em.FieldConflicts) {
+		if !slices.ContainsFunc(fields, func(f FieldMapping) bool { return f.Local.Name == field }) {
+			c.fail("entities: %q: field_conflicts: %q is not a mapped field", src, field)
+			continue
+		}
+		c.rule(fmt.Sprintf("entities: %q: field_conflicts: %q", src, field), em.FieldConflicts[field])
+	}
+	share, ok := c.share(src, local, em.Share)
+	if !ok {
+		return
+	}
+	c.m.Entities[src] = &EntityMapping{Source: src, Local: local, Ref: em.Ref, Fields: fields, Share: share}
+}
+
+// rule checks a conflict rule. Only hold is implemented; the other rules
+// of DEC-2NFLAHB are refused by name until they are.
+func (c *compiler) rule(where, rule string) {
+	switch rule {
+	case "", ConflictHold:
+	case conflictLatest, conflictLocal, conflictRemote:
+		c.fail("%s: rule %q is not supported yet; use %s", where, rule, ConflictHold)
+	default:
+		c.fail("%s: unknown rule %q; use %s", where, rule, ConflictHold)
+	}
+}
+
+// share compiles a type's share condition. It reads the local row only: a
+// condition that follows relations is refused, because the push evaluates
+// it per row from the row alone.
+func (c *compiler) share(src, local, cond string) (*predicate.Program, bool) {
+	if strings.TrimSpace(cond) == "" {
+		return nil, true
+	}
+	if !c.m.Remote.Push {
+		c.fail("entities: %q: share needs push: true", src)
+		return nil, false
+	}
+	prog, err := c.m.eval.Compile(local, cond)
+	if err != nil {
+		c.fail("entities: %q: share: %v", src, err)
+		return nil, false
+	}
+	if len(prog.Traversals()) > 0 {
+		c.fail("entities: %q: share: related(...) is not supported; the condition reads the row only", src)
+		return nil, false
+	}
+	return prog, true
 }
 
 func (c *compiler) relation(src string, rm RelationMap) {

@@ -226,7 +226,7 @@ var identityWrites = map[string]bool{
 	"scheduler": true, "renumber": true, "lease claim": true, "lease renew": true, "lease release": true,
 	"channel post": true, "channel edit": true, "channel remove": true, "channel create": true, "channel mark-read": true,
 	"channel action": true, "migrate data": true, "migrate gc": true, "migrate adopt-face": true, "migrate baseline": true,
-	"db load": true, "db import-fs": true, "remote pull": true,
+	"db load": true, "db import-fs": true, "remote pull": true, "remote resolve": true,
 
 	"migrate status": false, "migrate gen": false, "show": false, "list": false,
 	"trace from": false, "trace to": false, "trace path": false, "graph": false, "export": false,
@@ -240,6 +240,7 @@ var identityWrites = map[string]bool{
 	"history": false, "relation-history": false, "token status": false, "attachments": false,
 	"secrets credential-name": false, "lease list": false, "channel list": false, "channel read": false,
 	"channel watch": false, "channel inbox": false, "channel session": false, "reconcile diff": false,
+	"remote conflicts": false,
 }
 
 // writesAsIdentity reports whether cmd may write as its principal.

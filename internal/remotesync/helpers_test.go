@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
+	"net/http"
 	"net/url"
 	"os"
 	"slices"
@@ -137,7 +139,9 @@ type fakeSource struct {
 	deny bool
 	// answer rewrites a read route's body.
 	answer func(path string, body []byte) []byte
-	gets   []string
+	// fail, when set, fails the reads of the paths it returns an error for.
+	fail func(path string) error
+	gets []string
 }
 
 func newFakeSource() *fakeSource {
@@ -231,6 +235,11 @@ func (f *fakeSource) Get(_ context.Context, path string, _ int64) ([]byte, error
 	f.gets = append(f.gets, path)
 	if f.deny {
 		return nil, fmt.Errorf("%w: answered 403", httpremote.ErrDenied)
+	}
+	if f.fail != nil {
+		if err := f.fail(path); err != nil {
+			return nil, err
+		}
 	}
 	body, err := f.route(path)
 	if err != nil {
@@ -392,4 +401,115 @@ func (k *mapKV) Delete(_ context.Context, key string) error {
 	defer k.mu.Unlock()
 	delete(k.m, key)
 	return nil
+}
+
+// pushSource is a fake source that also takes writes, as the remote's
+// data-entry API does: GET with an ETag, POST without an id, and PATCH with
+// If-Match.
+type pushSource struct {
+	*fakeSource
+	sends []string
+	// before runs before a write is applied; a status other than 0 answers
+	// the write with it.
+	before func(method, path string) (int, string)
+	// postErr, when set, fails every POST of plural with the error.
+	postErr map[string]error
+	next    int
+}
+
+func newPushSource(src *fakeSource) *pushSource { return &pushSource{fakeSource: src} }
+
+func etagOf(e *fakeEnt) string {
+	return `"` + digestOf([]any{e.Props, e.Content}).String() + `"`
+}
+
+func (p *pushSource) Send(
+	_ context.Context, method, path string, body []byte, ifMatch string, _ int64,
+) (httpremote.Answer, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sends = append(p.sends, method+" "+path)
+	if err := p.postErr[path]; method == http.MethodPost && err != nil {
+		return httpremote.Answer{}, err
+	}
+	if method != http.MethodGet && p.before != nil {
+		p.mu.Unlock()
+		status, detail := p.before(method, path)
+		p.mu.Lock()
+		if status != 0 {
+			return httpremote.Answer{Status: status, Body: []byte(detail)}, nil
+		}
+	}
+	plural, id, _ := strings.Cut(path, "/")
+	typ := map[string]string{"reqs": "req", "components": "component"}[plural]
+	var in struct {
+		Properties map[string]any `json:"properties"`
+		Unset      []string       `json:"properties_unset"`
+		Content    *string        `json:"content"`
+	}
+	if body != nil {
+		if err := json.Unmarshal(body, &in); err != nil {
+			return httpremote.Answer{Status: http.StatusBadRequest, Body: []byte(err.Error())}, nil
+		}
+	}
+	switch method {
+	case http.MethodGet:
+		e, ok := p.ents[id]
+		if !ok || e.Type != typ {
+			return httpremote.Answer{Status: http.StatusNotFound}, nil
+		}
+		raw, err := p.route(path)
+		if err != nil {
+			return httpremote.Answer{}, err
+		}
+		return httpremote.Answer{Status: http.StatusOK, Body: raw, ETag: etagOf(e)}, nil
+	case http.MethodPost:
+		p.next++
+		e := &fakeEnt{Type: typ, ID: fmt.Sprintf("N%d", p.next), Props: in.Properties}
+		if e.Props == nil {
+			e.Props = map[string]any{}
+		}
+		if in.Content != nil {
+			e.Content = *in.Content
+		}
+		p.ents[e.ID] = e
+		raw, _ := json.Marshal(map[string]any{"id": e.ID, "type": e.Type, "properties": e.Props})
+		return httpremote.Answer{Status: http.StatusCreated, Body: raw}, nil
+	case http.MethodPatch:
+		e, ok := p.ents[id]
+		if !ok || e.Type != typ {
+			return httpremote.Answer{Status: http.StatusNotFound}, nil
+		}
+		if ifMatch != etagOf(e) {
+			return httpremote.Answer{Status: http.StatusPreconditionFailed, Body: []byte("stale")}, nil
+		}
+		props := maps.Clone(e.Props)
+		maps.Copy(props, in.Properties)
+		for _, k := range in.Unset {
+			delete(props, k)
+		}
+		e.Props = props
+		if in.Content != nil {
+			e.Content = *in.Content
+		}
+		return httpremote.Answer{Status: http.StatusOK, ETag: etagOf(e)}, nil
+	}
+	return httpremote.Answer{Status: http.StatusMethodNotAllowed}, nil
+}
+
+// writes counts the POST and PATCH requests.
+func (p *pushSource) writes() int {
+	n := 0
+	for _, s := range p.sends {
+		if !strings.HasPrefix(s, http.MethodGet) {
+			n++
+		}
+	}
+	return n
+}
+
+func (tg *target) pushDeps(src *pushSource) Deps {
+	d := tg.deps(src)
+	d.Pusher = src
+	return d
 }

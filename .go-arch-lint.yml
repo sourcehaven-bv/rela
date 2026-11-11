@@ -1219,6 +1219,9 @@ deps:
       - canonical
       - entity
       - metamodel
+      # share: conditions on the local rows a push sends.
+      - predicate
+      - predicatefns
       - principal
       - reconclient
       - reconclientHTTP
