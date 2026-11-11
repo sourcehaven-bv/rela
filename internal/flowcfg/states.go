@@ -8,6 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -77,6 +78,7 @@ func (l *loader) state(key, name string, raw *rawState, f *Flow) State {
 			l.add(key, "a final state has no on:, after: or waiting_for: a run ends there")
 		}
 	}
+	st.writes = l.writes(key+".writes", raw, f.subject)
 	st.outputs = l.outputs(key+".outputs", raw.Outputs, f.subject)
 	for _, ev := range slices.Sorted(maps.Keys(raw.On)) {
 		n := raw.On[ev]
@@ -89,6 +91,47 @@ func (l *loader) state(key, name string, raw *rawState, f *Flow) State {
 		l.add(key, "has no way out: give it an on: or an after:, or make it final")
 	}
 	return st
+}
+
+// MaxWrites caps the properties one state's `writes:` names.
+const MaxWrites = 32
+
+// writes checks a state's `writes:`: subject properties a person may fill
+// in, on a state that waits for someone. A derived property cannot be
+// written, and a reserved one belongs to the system.
+func (l *loader) writes(key string, raw *rawState, subject string) []string {
+	if len(raw.Writes) == 0 {
+		return nil
+	}
+	if raw.Final || len(raw.WaitingFor) == 0 {
+		l.add(key, "only a state that is not final and has waiting_for: has a step form")
+		return nil
+	}
+	if len(raw.Writes) > MaxWrites {
+		l.add(key, fmt.Sprintf("names %d properties; at most %d", len(raw.Writes), MaxWrites))
+		return nil
+	}
+	def, _ := l.meta.GetEntityDef(subject)
+	seen := map[string]bool{}
+	out := make([]string, 0, len(raw.Writes))
+	for i, name := range raw.Writes {
+		pk := fmt.Sprintf("%s[%d]", key, i)
+		pd, ok := def.Properties[name]
+		switch {
+		case seen[name]:
+			l.add(pk, fmt.Sprintf("names %q twice", name))
+		case !ok:
+			l.add(pk, fmt.Sprintf("%s has no property %q", subject, name))
+		case pd.Computed != "" || pd.Rollup != nil:
+			l.add(pk, fmt.Sprintf("%s.%s is derived; a step cannot write it", subject, name))
+		case metamodel.IsReservedName(name):
+			l.add(pk, fmt.Sprintf("%q is reserved; a step cannot write it", name))
+		default:
+			out = append(out, name)
+		}
+		seen[name] = true
+	}
+	return out
 }
 
 // status returns the state's status: the one written, or the default.
@@ -270,6 +313,9 @@ func (l *loader) createOutput(key string, raw *rawCreate, subject string) (Outpu
 	case raw.Type == "":
 		l.add(key+".type", "is required: the entity type to create")
 		return Output{}, false
+	case entity.IsManagedName(raw.Type):
+		l.add(key+".type", fmt.Sprintf("names %q, which rela manages itself; an output cannot create it", raw.Type))
+		return Output{}, false
 	case !ok:
 		l.add(key+".type", fmt.Sprintf("names %q, which schema.yaml does not declare", raw.Type))
 		return Output{}, false
@@ -307,6 +353,8 @@ func (l *loader) relate(key, rel, typ, subject string) {
 	switch {
 	case rel == "":
 		l.add(key, "is required: the relation type from the new entity to the subject")
+	case entity.IsManagedName(rel):
+		l.add(key, fmt.Sprintf("names %q, which rela manages itself", rel))
 	case !ok:
 		l.add(key, fmt.Sprintf("names %q, which schema.yaml does not declare", rel))
 	case !slices.Contains(rd.From, typ) || !slices.Contains(rd.To, subject):

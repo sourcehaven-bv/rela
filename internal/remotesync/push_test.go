@@ -701,3 +701,65 @@ func TestPushBody_RoutesContentLikeThePull(t *testing.T) {
 		}
 	}
 }
+
+// redactGate withholds field from every row it reads, as a visible: rule
+// does.
+type redactGate struct {
+	inner ReadGate
+	field string
+}
+
+func (g redactGate) GetAddress(ctx context.Context, addr string) (*entity.Entity, error) {
+	e, err := g.inner.GetAddress(ctx, addr)
+	if err != nil {
+		return nil, err
+	}
+	e = e.Clone()
+	delete(e.Properties, g.field)
+	e.Redacted = []string{g.field}
+	return e, nil
+}
+
+// TestPush_SendsOnlyWhatThePusherReads pins that the push sends no row and
+// no field the principal cannot read, and names no hidden row, as the pull
+// merges into none (TKT-A6U657Q).
+func TestPush_SendsOnlyWhatThePusherReads(t *testing.T) {
+	t.Run("hidden rows", func(t *testing.T) {
+		tg := newTarget(t)
+		m := pushMapping(t, tg, nil)
+		src := newPushSource(seedSource())
+		runSync(t, tg, m, src, Options{})
+		r1 := tg.byRef(t, "R1")
+		patch(t, tg, r1.ID, map[string]any{"title": "Secret edit"})
+		hidden := newRow(t, tg, "requirement", map[string]any{"title": "Secret row"})
+		tg.gate = hideGate{inner: tg.gate, hidden: map[string]bool{r1.ID: true, hidden: true}}
+		src.sends = nil
+		rep := runSync(t, tg, m, src, Options{})
+		if src.writes() != 0 || src.ents["R1"].Props["title"] == "Secret edit" {
+			t.Fatalf("a hidden row was pushed: %v", src.sends)
+		}
+		noIssueNames(t, rep, r1.ID, hidden)
+	})
+	t.Run("redacted field", func(t *testing.T) {
+		tg := newTarget(t)
+		m := pushMapping(t, tg, nil)
+		src := newPushSource(seedSource())
+		runSync(t, tg, m, src, Options{})
+		r1 := tg.byRef(t, "R1")
+		patch(t, tg, r1.ID, map[string]any{"title": "Secret title", "status": "done"})
+		newRow(t, tg, "requirement", map[string]any{"title": "Secret new", "status": "open"})
+		tg.gate = redactGate{inner: tg.gate, field: "title"}
+		rep := runSync(t, tg, m, src, Options{})
+		if rep.Pushed.Updated != 1 || rep.Pushed.Created != 1 {
+			t.Fatalf("push: %+v", rep.Pushed)
+		}
+		for id, e := range src.ents {
+			if title, _ := e.Props["title"].(string); strings.HasPrefix(title, "Secret") {
+				t.Fatalf("remote %s got the withheld title %q", id, title)
+			}
+		}
+		if src.ents["R1"].Props["state"] != "done" {
+			t.Fatalf("the readable field was not pushed: %+v", src.ents["R1"].Props)
+		}
+	})
+}

@@ -45,6 +45,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/datamigration"
+	"github.com/Sourcehaven-BV/rela/internal/flowrun"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -60,6 +61,11 @@ type Target struct {
 	State      state.KV
 	Comments   comments.Store
 	Migrations datamigration.StateStore
+	// FlowRuns takes the source's unfinished flow runs.
+	//
+	// Nil: accepted; a source with unfinished runs is then refused, so no
+	// run header is copied without the state that moves it.
+	FlowRuns flowrun.Store
 }
 
 // Opened is a target database opened by a [Backend].

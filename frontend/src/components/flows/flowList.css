@@ -1,0 +1,35 @@
+/* The run list and the task list (TKT-ZAXRXND), loaded scoped by both views. */
+.flow-list__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+
+.flow-list__error {
+  margin-bottom: var(--space-lg);
+}
+
+.flow-list__table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: var(--space-md);
+}
+
+.flow-list__table th,
+.flow-list__table td {
+  text-align: left;
+  padding: var(--space-xs) var(--space-sm);
+  border-bottom: 1px solid var(--rl-color-border);
+}
+
+.flow-list__table th {
+  font-size: var(--font-size-sm);
+  color: var(--rl-color-text-muted);
+  font-weight: 600;
+}
+
+.flow-list__empty,
+.flow-list__muted {
+  color: var(--rl-color-text-muted);
+}

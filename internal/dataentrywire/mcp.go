@@ -79,7 +79,7 @@ func RemoteMCPServer(svc *appbuild.Services, host dataentry.MCPHost, version str
 			User: principal.SystemUser(),
 			Tool: principal.ToolMCP,
 		}),
-		mcpwire.Piles(svc))
+		mcpwire.Piles(svc), mcpwire.Flows(svc))
 }
 
 // RemoteMCPDeps builds the MCP dependencies for the remote endpoint. Every

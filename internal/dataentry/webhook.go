@@ -26,6 +26,12 @@ var errWebhookActionMissing = errors.New("dataentry: configured webhook action n
 var errWebhookActionEntityBound = errors.New(
 	"dataentry: configured webhook action has available_on and can only run from a detail page")
 
+// errWebhookActionElevated is returned when the configured provisioning
+// action declares allow_acl_bypass. The webhook never elevates, so such a
+// script would fail at rela.bypass_acl; refusing names the cause.
+var errWebhookActionElevated = errors.New(
+	"dataentry: configured webhook action has allow_acl_bypass, which the webhook does not grant")
+
 // WebhookClaims is the verified subset of an inbound webhook the receiver acts
 // on. It mirrors jwtauth.WebhookClaims but is declared HERE so the dataentry
 // package needn't import jwtauth (the inward-pointing layering rule — the same
@@ -99,8 +105,8 @@ type logOrgEvents struct{}
 // weaker authorization than an operator at the host.
 func (logOrgEvents) HandleOrgEvent(_ context.Context, claims WebhookClaims) error {
 	if claims.Event == "organization.deleted" {
-		slog.Warn("idp webhook organization deletion: tenant erasure needed; mark the org erase: true "+
-			"in tenants.yaml, restart the servers, then run rela-server tenant erase",
+		slog.Warn("idp webhook organization deletion: tenant erasure needed; check PROCEDURE-u020, "+
+			"then run rela-server tenant erase",
 			"event", claims.Event, "org_id", claims.OrgID)
 		return nil
 	}
@@ -331,6 +337,10 @@ func dispatchWebhookAction(ctx context.Context, h *writeHandler, rec *webhookRec
 	if action.AvailableOn != nil {
 		slog.Error("idp webhook: configured action has available_on", "action", actionID)
 		return errWebhookActionEntityBound
+	}
+	if action.AllowACLBypass.Enabled() {
+		slog.Error("idp webhook: configured action has allow_acl_bypass", "action", actionID)
+		return errWebhookActionElevated
 	}
 
 	// Stamp the webhook-receiver principal so the provisioned entity is attributed

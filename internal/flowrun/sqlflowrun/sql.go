@@ -130,12 +130,13 @@ func (s *Store) scanRun(row sqlexec.Row) (flowrun.Run, error) {
 		&revv, &doc); err != nil {
 		return flowrun.Run{}, err
 	}
-	inst, err := flowrun.DecodeState([]byte(doc))
+	st, err := flowrun.DecodeState([]byte(doc))
 	if err != nil {
 		return flowrun.Run{}, s.errf("run %s: %w", id, err)
 	}
 	r.ID, r.Subject.Face, r.Singleton = flowrun.RunID(id), entity.Face(face), singleton != 0
-	r.CreatedAt, r.UpdatedAt, r.Rev, r.Instance = fromMicros(created), fromMicros(updated), revv, inst
+	r.CreatedAt, r.UpdatedAt, r.Rev = fromMicros(created), fromMicros(updated), revv
+	r.Instance, r.Pending, r.Log, r.Claim = st.Instance, st.Pending, st.Log, st.Claim
 	return r, nil
 }
 
@@ -190,7 +191,7 @@ func (s *Store) Create(ctx context.Context, nr flowrun.NewRun) (flowrun.Run, err
 		return flowrun.Run{}, err
 	}
 	run := flowrun.FromNew(nr)
-	doc, encErr := flowrun.EncodeState(run.Instance)
+	doc, encErr := flowrun.EncodeState(run.State())
 	if encErr != nil {
 		return flowrun.Run{}, s.errf("encode state: %w", encErr)
 	}
@@ -286,13 +287,14 @@ func (s *Store) missOrConflict(ctx context.Context, q sqlexec.Querier, id flowru
 }
 
 // Update implements [flowrun.Store.Update].
-func (s *Store) Update(ctx context.Context, id flowrun.RunID, expectRev int64, inst flow.Instance,
+func (s *Store) Update(ctx context.Context, id flowrun.RunID, expectRev int64, st flowrun.State,
 	at time.Time) (flowrun.Run, error) {
-	if err := flowrun.CheckUpdate(id, expectRev, inst, at); err != nil {
+	if err := flowrun.CheckUpdate(id, expectRev, st, at); err != nil {
 		return flowrun.Run{}, err
 	}
-	inst = flowrun.NormInstance(inst)
-	doc, encErr := flowrun.EncodeState(inst)
+	st = flowrun.NormState(st)
+	inst := st.Instance
+	doc, encErr := flowrun.EncodeState(st)
 	if encErr != nil {
 		return flowrun.Run{}, s.errf("encode state: %w", encErr)
 	}

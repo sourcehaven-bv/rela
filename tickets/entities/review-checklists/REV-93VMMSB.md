@@ -43,7 +43,8 @@ unexplained suppression is a finding nobody can re-evaluate later.
 **Review Responses:** design review RR-DI92SQY, RR-ZUVW8WM, RR-IS39JPA
 (addressed), RR-XGCZSM5 (deferred). Code review: critical RR-3ZLQAGJ,
 RR-2W3H3LH; significant RR-XH1T6CQ, RR-TLTTMLZ, RR-4IVD7TK, RR-1N0OTN2; minor
-RR-28F1X4Y, RR-XSBPIVF; nit RR-XJHDAHA (all addressed); minor RR-68KJOJ2
+RR-28F1X4Y, RR-XSBPIVF; nit RR-XJHDAHA; after the develop merge, significant
+RR-XLXQ0XR (all addressed); minor RR-68KJOJ2
 (deferred).
 
 ## Acceptance Verification

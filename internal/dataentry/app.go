@@ -409,6 +409,9 @@ type App struct {
 	write *writeHandler
 	// batch owns POST /api/v1/_batch, the atomic multi-create (TKT-BO8CYG9).
 	batch *batchHandler
+	// flows owns /api/v1/_flows (TKT-ZAXRXND); nil until SetFlows, and the
+	// routes then answer 404.
+	flows *flowsHandler
 	// reconcile owns POST /api/v1/_reconcile (TKT-VP02WHG); nil until
 	// SetReconcile, and the endpoint then answers 501.
 	reconcile *reconcileHandler
@@ -1585,6 +1588,7 @@ func NewApp(
 		versionTags:      func() lua.VersionTagWriter { return app.versionTags.writer },
 		oauth:            func() lua.OAuthTokens { return app.oauth },
 		attachRender:     func() lua.AttachRenderer { return actionAttachRenderer(app) },
+		elevatedUpdates:  elevatedUpdatesFor(em),
 		fullScriptDetail: app.allowFullScriptDetail,
 		paths:            paths,
 		provision:        newProvisionSeam(app),

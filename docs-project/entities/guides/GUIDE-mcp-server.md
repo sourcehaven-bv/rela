@@ -517,6 +517,36 @@ claimed, changes status, is released or lapses, although no entity was
 written. A plain renewal changes nothing `show_entity` shows, so it does not
 end a wait.
 
+### Flow Tools
+
+These tools let an agent do the steps of flows. They are listed only when
+the project has `flows.yaml`. Both servers offer them. See
+[Flows](flows.md#doing-a-step).
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `list_flow_tasks` | The runs that wait for a role you hold on their subject, oldest first | `flow?`, `page?`, `per_page?` (at most 200) |
+| `show_flow_run` | One run: its state, why it waits, what a step writes, timers, branches and timeline | `run` |
+| `complete_flow_step` | Write the step's properties on the subject as you, then move the run on | `run`, `generation`, `properties?` |
+
+`show_flow_run` answers the same reason the web app shows: the roles the
+state waits for and whether you hold one, the properties a step writes,
+the timers and when each fires, each `change` branch and whether its guard
+holds now, and a failing output step. Its `_actions.complete` says whether
+`complete_flow_step` would be accepted.
+
+Pass `complete_flow_step` the `generation` that `show_flow_run` returned.
+A run that moved on since is refused; call `show_flow_run` again and
+decide anew. Every property must be one the state writes.
+
+`complete_flow_step` answers `{written, moved, state, finished, problem}`:
+the properties it wrote, whether the run moved, the run's state after the
+step, and whether the run ended. `problem` is set when the properties were
+written but the run did not follow cleanly: `guard` (a branch guard could
+not be evaluated, so the run stays), `moved` (the run had already moved
+on, for example by a timer) or `settling` (an output step failed after the
+move and is retried).
+
 ### Channel Tools
 
 These tools read and post in the realtime channels declared in

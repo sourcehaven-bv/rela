@@ -1191,6 +1191,24 @@ a shared module changes what an elevated script does.
 > mapping a legacy value to the broadest setting is the wrong default for a
 > privilege field.
 
+### Elevated updates in a data-entry action
+
+A data-entry action that declares `allow_acl_bypass: write` and
+`elevated_updates:` gets an `admin` handle with one method:
+
+| Method | Purpose |
+|--------|---------|
+| `admin.update_entity(id, properties)` | Update the named properties, skipping the caller's row-level `update:` grant. Returns the entity and the validation warnings, like `rela.update_entity` |
+
+The handle has no other methods. The update is limited to the types and
+properties the action lists; anything else is refused and nothing is written.
+The caller must be able to read the target, the client ceiling still
+applies, and `rela.sync.EMPTY` clears a property. There is no content
+argument and no options table. The script must check that the caller may
+act on the entity, for example that the caller owns it and that it is in
+the expected state. See "Elevated updates" in the data-entry guide for the
+configuration.
+
 ### Elevated reads in a document render
 
 A `documents:` entry may declare `allow_acl_bypass: read`, which lets its

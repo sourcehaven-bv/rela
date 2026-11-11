@@ -72,16 +72,36 @@ func (r *runner) push(ctx context.Context) error {
 	return nil
 }
 
-// localRows reads the local rows of em's type that the share condition
-// selects. They are read in full before any write, so no write runs inside
-// the store's iteration. A row the condition cannot be evaluated for is
-// marked in seen, so its conflict list entries stay.
+// localRows reads the local rows of em's type that the principal on ctx
+// may read and the share condition selects, as that principal sees them:
+// the push sends no row and no field the principal cannot read, as the
+// pull merges into none (TKT-A6U657Q). The refs are listed in full before
+// any read through the gate, so nothing runs inside the store's iteration.
+// A row the push skips without judging it, because the principal cannot
+// read it or the condition cannot be evaluated, is marked in seen, so its
+// conflict list entries stay.
 func (r *runner) localRows(ctx context.Context, em *EntityMapping, seen map[string]bool) ([]*entity.Entity, error) {
-	var out []*entity.Entity
-	unjudged := 0
+	var refs []entity.Ref
 	for e, err := range r.d.Store.ListEntities(ctx, store.EntityQuery{Type: em.Local, Faces: store.AllFaces()}) {
 		if err != nil {
 			return nil, fmt.Errorf("remotesync: list local %s rows: %w", em.Local, err)
+		}
+		refs = append(refs, e.Ref())
+	}
+	var out []*entity.Entity
+	unjudged, unchecked := 0, 0
+	for _, ref := range refs {
+		e, err := r.d.Gate.GetAddress(ctx, ref.String())
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			// Not readable: not pushed, and not named in the report.
+			seen[ref.ID] = true
+			continue
+		case err != nil:
+			r.d.Logger.Error("remote push: check the local row", "run_id", r.d.RunID, "local", ref.String(), "err", err)
+			unchecked++
+			seen[ref.ID] = true
+			continue
 		}
 		if em.Share != nil {
 			ok, err := r.m.eval.Matches(ctx, em.Share, em.Local, e.ID, e.Properties)
@@ -97,6 +117,11 @@ func (r *runner) localRows(ctx context.Context, em *EntityMapping, seen map[stri
 			}
 		}
 		out = append(out, e)
+	}
+	if unchecked > 0 {
+		r.rep.Pushed.Failed += unchecked
+		r.issue(IssueFailed, "", "", fmt.Sprintf("could not check whether the pusher can read %d %s rows; "+
+			"they were not pushed", unchecked, em.Local))
 	}
 	if unjudged > 0 {
 		r.issue(IssueFailed, "", "", fmt.Sprintf("share of %s could not be evaluated for %d rows; they were not pushed",
@@ -139,7 +164,7 @@ func (r *runner) rowHeld(em *EntityMapping, e *entity.Entity) bool {
 	if held.Reason != ReasonRefused {
 		return true
 	}
-	for _, f := range em.Fields {
+	for _, f := range pushFields(em, e) {
 		d, tried := held.RefusedFields[f.baseKey()]
 		if tried && syncmerge.Digest(f.Local, oursValue(f.Local, e)) != d {
 			r.c.drop(e.ID, "")
@@ -154,7 +179,7 @@ func (r *runner) rowHeld(em *EntityMapping, e *entity.Entity) bool {
 // not agreed a value for it yet.
 func (r *runner) changed(em *EntityMapping, e *entity.Entity, row *ledgerRow) []FieldMapping {
 	var out []FieldMapping
-	for _, f := range em.Fields {
+	for _, f := range pushFields(em, e) {
 		b, ok := row.Base[f.baseKey()]
 		if !ok {
 			continue
@@ -301,13 +326,30 @@ func (r *runner) refresh(
 	if row.ETag == "" {
 		return nil, false, r.rowFailed(row.Address, row.Local, "push: the remote sent no ETag for the row, so it cannot be updated safely")
 	}
-	e, err := r.d.Store.GetEntity(ctx, row.localRef())
-	if err != nil {
-		pc.Failed++
-		r.issue(IssueFailed, row.Address, row.Local, err.Error())
+	e, err := r.d.Gate.GetAddress(ctx, row.localRef().String())
+	switch {
+	case errors.Is(err, store.ErrNotFound):
 		return nil, false, nil
+	case err != nil:
+		r.d.Logger.Error("remote push: read the local row", "run_id", r.d.RunID, "address", row.Address, "err", err)
+		return nil, false, r.rowFailed(row.Address, "", "push: could not read the local row")
 	}
 	return e, true, nil
+}
+
+// pushFields returns the mapped fields of e the push may send: those not
+// withheld from the principal on ctx when e was read through the gate.
+func pushFields(em *EntityMapping, e *entity.Entity) []FieldMapping {
+	if len(e.Redacted) == 0 {
+		return em.Fields
+	}
+	out := make([]FieldMapping, 0, len(em.Fields))
+	for _, f := range em.Fields {
+		if f.Local.Kind == syncmerge.KindContent || !e.IsRedacted(f.Local.Name) {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // pushCreate creates a new shared local row on the remote.
@@ -323,7 +365,7 @@ func (r *runner) pushCreate(ctx context.Context, em *EntityMapping, e *entity.En
 	if !r.pushBudget() {
 		return nil
 	}
-	body, digests, err := pushBody(em.Fields, e, true)
+	body, digests, err := pushBody(pushFields(em, e), e, true)
 	if err != nil {
 		return r.rowFailed("", e.ID, "push: "+err.Error())
 	}

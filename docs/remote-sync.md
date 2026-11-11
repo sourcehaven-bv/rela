@@ -76,7 +76,7 @@ catalog`, or let the scheduler pull it every hour.
 | Key | Meaning |
 | --- | --- |
 | `url` | The source's base address. Plain `http` works only for a loopback host unless `allow_insecure_http: true`. That setting sends the credential in clear text, so use it only on a private network or with TLS ending at a local proxy; each pull then logs a warning. |
-| `credential` | Where the token comes from: exactly one of `env` (an environment variable whose name starts with `REMOTE_CREDENTIAL_`), `file` (an absolute path to a file of at most 16 KiB whose name starts with `remote_credential.`), or `secret` (a global secret whose name starts with `remote_credential.`). The token is never written in `remotes.yaml`. |
+| `credential` | Where the token comes from: exactly one of `env` (an environment variable whose name starts with `REMOTE_CREDENTIAL_`), `file` (an absolute path to a regular file of at most 16 KiB whose name starts with `remote_credential.`; a symlink must lead to a file with such a name, and a file with more than one hard link is refused), or `secret` (a global secret whose name starts with `remote_credential.`). The token is never written in `remotes.yaml`. |
 | `auth_header` | The request header that carries the token. Default `Authorization`, which sends it as a bearer token. |
 | `run_as` | The identity a scheduled pull runs and writes as. Default `system:scheduler`, as for a scheduled task. A pull by hand runs as you. |
 | `every` | The schedule, as in `schedules.yaml`. At least `5m`. Without it the remote is pulled only by `rela remote pull`. |
@@ -123,6 +123,10 @@ property. A source row with a face is not pulled.
 - **A row that stops waits its turn.** A row with an error is
   fetched after the other changed rows on the next pull, so a few stuck rows
   cannot use up `max_fetch`. The report counts the rows still waiting.
+- **A row the puller cannot read is not named.** If the pull finds a
+  local row that the person it runs as cannot read, it does not write or
+  delete it. The report shows a conflict, or a kept row, without the local
+  id or type.
 - **A row you delete stays deleted.** If you delete a pulled entity or
   relation, later pulls do not recreate it.
 - **A row the local schema refuses is reported.** A value that does not fit
@@ -197,8 +201,8 @@ state. Each run first pulls, as above, and then pushes:
 - **Relations are not pushed yet.** They still flow from the remote only.
 
 `share` selects the local rows a push sends. It is a condition in the
-predicate language on the local row, and reads the row only; `related(...)`
-is refused. A linked row that stops meeting it is no longer pushed. Without
+predicate language on the local row as the pusher reads it, and reads the
+row only; `related(...)` is refused. A linked row that stops meeting it is no longer pushed. Without
 `share`, every row of the type is pushed. Mind that the first run with
 `push: true` creates on the remote every local row of the mapped types that
 meets `share` and has no `ref`.
@@ -352,9 +356,13 @@ A push:
   a refusal's reason and caps its size;
 - fails the run when the remote answers 401, and stops it on 429 or 503.
 
-What a push sends leaves this project's `acl.yaml`. The push reads every
-row of the mapped types, so `share` and `fields` decide what the remote
-receives, not the read rules of the person who set up the remote.
+What a push sends leaves this project's `acl.yaml`. The push reads the rows
+of the mapped types as the person or job it runs as, like the pull: it
+sends no row and no field that principal cannot read, and does not name a
+hidden row in its report. Within that, `share` and `fields` decide what the
+remote receives. A scheduled push with no `run_as` runs as
+`system:scheduler`, so give that principal, or the remote's `run_as`, read
+access to what the remote should get.
 
 The pull does not carry the source's read rules. Pulled rows are read under
 this project's `acl.yaml`, so set read rules on the mapped types that are at

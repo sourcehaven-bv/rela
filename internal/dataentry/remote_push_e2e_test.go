@@ -152,6 +152,7 @@ remotes:
 	kv := &pullKV{}
 	deps := remotesync.Deps{
 		Source: src, Pusher: src, Meta: meta, Writer: mgr, Store: st, State: kv,
+		Gate:        visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())),
 		Fingerprint: visibility.SumHeld, Logger: slog.New(slog.DiscardHandler), RunID: "e2e",
 	}
 	run := func(what string) remotesync.Report {

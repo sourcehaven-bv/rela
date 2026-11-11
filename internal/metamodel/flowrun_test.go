@@ -30,6 +30,29 @@ relations:
     to: [task]
 `
 
+// TestWithFlowRuns_NoRelations pins that a schema without `relations:`
+// gets the run relations instead of a panic.
+func TestWithFlowRuns_NoRelations(t *testing.T) {
+	base, err := Parse([]byte(`
+version: "1.0"
+entities:
+  task:
+    label: Task
+    id_prefix: "TASK-"
+    properties: {title: {type: string}}
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	got, err := WithFlowRuns(base)
+	if err != nil {
+		t.Fatalf("WithFlowRuns: %v", err)
+	}
+	if _, ok := got.Relations[entity.CarriesRelation]; !ok {
+		t.Fatalf("%s not declared", entity.CarriesRelation)
+	}
+}
+
 func TestWithFlowRuns(t *testing.T) {
 	base, err := Parse([]byte(flowRunTestSchema))
 	if err != nil {

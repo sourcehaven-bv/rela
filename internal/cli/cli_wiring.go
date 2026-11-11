@@ -141,6 +141,7 @@ type cliBundles struct {
 	analysis   *analysis.Service
 	leases     *leaseServices
 	channels   *channelServices
+	flows      *flowServices
 	reconcile  *reconcileServices
 }
 
@@ -238,6 +239,11 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		channels.Svc = c
 		channels.Follow = func(ctx context.Context) <-chan struct{} { return appbuild.FollowChannels(ctx, svc) }
 	}
+	flows := &flowServices{}
+	// Assigned only when present, for the same reason as Comments above.
+	if c := appbuild.FlowControlFor(svc); c != nil {
+		flows.Ctl = c
+	}
 	// Built on first use: only `rela reconcile` reads element ranges.
 	recon := &reconcileServices{Meta: svc.Meta(), Local: func() (reconclient.Local, error) {
 		el, err := appbuild.Elements(svc)
@@ -249,6 +255,7 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		return globalSecret(svc.Paths().CacheDir, name)
 	}}
 	return &cliBundles{
+		flows:      flows,
 		reconcile:  recon,
 		leases:     leases,
 		channels:   channels,

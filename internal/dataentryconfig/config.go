@@ -303,6 +303,18 @@ type Action struct {
 	// Not serialized to JSON, for the same reason as Capabilities: it is the
 	// action's execution contract, not an affordance the SPA renders.
 	Request *ActionRequest `yaml:"request,omitempty" json:"-"`
+
+	// AllowACLBypass, set to `write`, gives the script rela.bypass_acl with
+	// one method, admin.update_entity, limited to ElevatedUpdates
+	// (TKT-JA5SABG). Any other value is a load error; see
+	// validateActionElevation for the rules.
+	AllowACLBypass metamodel.ACLBypass `yaml:"allow_acl_bypass,omitempty" json:"-"`
+
+	// ElevatedUpdates maps an entity type to the properties
+	// admin.update_entity may write on it, past the caller's write access.
+	// A faced type is keyed `type@face`, one key per face. Requires
+	// AllowACLBypass.
+	ElevatedUpdates map[string][]string `yaml:"elevated_updates,omitempty" json:"-"`
 }
 
 // ActionScope names where an action is offered on entity detail pages.

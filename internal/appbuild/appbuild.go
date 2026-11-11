@@ -48,6 +48,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/datamigration/memmigstate"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
+	"github.com/Sourcehaven-BV/rela/internal/flowengine"
+	"github.com/Sourcehaven-BV/rela/internal/flowrun"
 	"github.com/Sourcehaven-BV/rela/internal/hostconfig"
 	"github.com/Sourcehaven-BV/rela/internal/idproles"
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
@@ -200,6 +203,9 @@ type Services struct {
 	// leaseShared is the backend and hub under leases, which a re-assembly
 	// shares. The backend is closed by Close, not by CloseAssembly.
 	leaseShared leaseShared
+	// flowEngine runs flows.yaml (see [FlowEngine]). Nil when it declares
+	// no flows.
+	flowEngine *flowengine.Engine
 	// idpRoles stores the roles the IdP webhook asserted per subject (see
 	// [IDPRoles]). A re-assembly shares it.
 	idpRoles *idproles.Store
@@ -2057,6 +2063,18 @@ func DiscoverCacheDir(startDir string) (string, error) {
 	return paths.CacheDir, nil
 }
 
+// DiscoverRoot finds the project from startDir and returns its root, as
+// [project.FindRoot] does: "" when startDir is in no project. It opens no
+// store and builds no services. Entry points use it to judge tenant mode
+// before they open anything.
+func DiscoverRoot(startDir string) (string, error) {
+	root, err := project.FindRoot(startDir, storage.NewSafeFS(storage.NewOsFS()))
+	if err != nil {
+		return "", fmt.Errorf("discover project: %w", err)
+	}
+	return root, nil
+}
+
 // buildAt is the shared tail of [Discover] and [At]: everything after the
 // project root is resolved. Split so the two entry points cannot drift in what
 // they wire — only in HOW they answer "which directory is the root".
@@ -2161,6 +2179,9 @@ type SharedBase struct {
 	// invalid file fails the boot. It is shared by every Services assembled
 	// from this base, like meta: it derives from config files only.
 	realtime *RealtimeConfig
+	// flows is the compiled flows.yaml, nil when it declares no flows.
+	// Compiled here so an invalid file fails the boot, like realtime.yaml.
+	flows *flowcfg.Compiled
 	// reassembly marks a base built to re-assemble against an ALREADY-OPEN
 	// store, so [assemble] skips the store-open-only steps. Set by
 	// [SharedBase.ForReassembly]; false for a base that will open its own store.
@@ -2274,6 +2295,10 @@ func (b *SharedBase) Config() Config { return b.cfg }
 // Paths returns the project context this base was built from.
 func (b *SharedBase) Paths() *project.Context { return b.cfg.Paths }
 
+// CacheDir returns the cache directory of the project this base was built
+// from, where a tenant host keeps each tenant's audit log.
+func (b *SharedBase) CacheDir() string { return b.cfg.Paths.CacheDir }
+
 // NewSharedBase builds the tenant-independent half of construction once:
 // validate config, apply options, parse `acl.yaml`, load and validate the
 // metamodel. It opens no store and touches no database.
@@ -2337,10 +2362,24 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 		return nil, fmt.Errorf("load metamodel: %w", err)
 	}
 
+	// A flows.yaml that declares flows adds the `_flow-run` type before the
+	// policy is validated, so the ACL injects the engine role (TKT-9IT3LN8).
+	flowsData, err := readFlowsFile(context.Background(), cfg.configLoader())
+	if err != nil {
+		return nil, err
+	}
+	if meta, err = withFlowRuns(flowsData, meta); err != nil {
+		return nil, err
+	}
+
 	// The policy is checked against the schema once per base, before any
 	// store opens, so every recipe fails the boot the same way.
 	if vErr := validateResolvedPolicy(resolvedACL, aclPolicy, meta); vErr != nil {
 		return nil, vErr
+	}
+	flows, err := compileFlows(flowsData, meta, resolvedPolicy(resolvedACL, aclPolicy))
+	if err != nil {
+		return nil, err
 	}
 
 	// Compile the declared worlds here, at assembly, so a bad face name is
@@ -2399,7 +2438,7 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 
 	return &SharedBase{
 		cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy,
-		meta: meta, worlds: compiledWorlds, conns: conns, realtime: rt,
+		meta: meta, worlds: compiledWorlds, conns: conns, realtime: rt, flows: flows,
 		validationMode: mode,
 	}, nil
 }
@@ -2412,10 +2451,7 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 // An injected ACL that is not a *acl.Declarative (NopACL, ReadOnlyACL, a test
 // double) carries no policy and is exempt.
 func validateResolvedPolicy(injected acl.ACL, loaded *acl.Policy, meta *metamodel.Metamodel) error {
-	policy := loaded
-	if d, ok := injected.(*acl.Declarative); ok {
-		policy = d.Policy()
-	}
+	policy := resolvedPolicy(injected, loaded)
 	if policy == nil {
 		return nil
 	}
@@ -2430,6 +2466,15 @@ func validateResolvedPolicy(injected acl.ACL, loaded *acl.Policy, meta *metamode
 			"docs", "docs/acl-security.md")
 	}
 	return nil
+}
+
+// resolvedPolicy is the policy prepare settled on: the injected
+// *acl.Declarative's, else the loaded acl.yaml. Nil: no policy.
+func resolvedPolicy(injected acl.ACL, loaded *acl.Policy) *acl.Policy {
+	if d, ok := injected.(*acl.Declarative); ok {
+		return d.Policy()
+	}
+	return loaded
 }
 
 // assemble runs the build-agnostic back half: it takes the opened store
@@ -2830,6 +2875,10 @@ type backendOverrides struct {
 	// the store, which also serves a multi-tenant assembly.
 	channelStore channels.Store
 
+	// flowRuns replaces the KV run store. Supplied by the sqlite recipe so
+	// runs travel with rela.db; postgres finds its pool through the store.
+	flowRuns flowrun.Store
+
 	// schedulerState replaces the state.KV-backed scheduler run-state
 	// (BUG-TKL08E). Supplied by the postgres recipe, whose job queue is
 	// durable and shared: a run queued by one process may execute on
@@ -3078,6 +3127,11 @@ func finishAssembly(
 	s.piles, s.pileStore = refs.piles, refs.pileStore
 	s.leases, s.leaseShared = refs.leases, refs.leaseShared
 	s.channels = refs.channels
+	flowEngine, err := buildFlowEngine(s, refs.flowRuns)
+	if err != nil {
+		return nil, fmt.Errorf("flows: %w", err)
+	}
+	s.flowEngine = flowEngine
 	idpRoles, err := buildIDPRoles(s.base, s.store, s.stateKV)
 	if err != nil {
 		return nil, err

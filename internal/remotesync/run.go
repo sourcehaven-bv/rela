@@ -47,6 +47,19 @@ type RawReader interface {
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 }
 
+// ReadGate reads a local row as the principal on ctx may see it. A row
+// the principal cannot read is [store.ErrNotFound], as an absent one is.
+// The run asks it before it names a local row it found through the
+// [RawReader], so a report never identifies a row its reader cannot see.
+// A report still says that a ref or an endpoint is held by a row the
+// puller cannot read. That one bit is accepted: a create on the ref would
+// be refused by the unique check anyway. An implementation may answer a
+// gate failure as ErrNotFound, as the visibility reader does; any other
+// error fails the row.
+type ReadGate interface {
+	GetAddress(ctx context.Context, addr string) (*entity.Entity, error)
+}
+
 // Fingerprinter returns how many rows a range holds and the fingerprint of
 // their addresses and view hashes in its wire form. relations says whether
 // the rows are relations or entities.
@@ -62,6 +75,8 @@ type Deps struct {
 	Meta   *metamodel.Metamodel
 	Writer Writer
 	Store  RawReader
+	// Gate reads local rows as the principal on ctx may see them.
+	Gate ReadGate
 	// State holds the ledger.
 	State state.KV
 	// Fingerprint sums ledger rows exactly as the source sums its own
@@ -88,6 +103,8 @@ func (d Deps) validate() error {
 		return errors.New("remotesync: a writer is required")
 	case d.Store == nil:
 		return errors.New("remotesync: a store is required")
+	case d.Gate == nil:
+		return errors.New("remotesync: a read gate is required")
 	case d.State == nil:
 		return errors.New("remotesync: a state store is required")
 	case d.Fingerprint == nil:
@@ -143,7 +160,7 @@ func (p Remote) ReadCredential(getenv func(string) string, secrets func() (map[s
 	if p.Credential.IsZero() {
 		return "", errors.New("remotesync: credential: no source")
 	}
-	v, err := p.Credential.Read(getenv, httpremote.GlobalSecrets(secrets))
+	v, err := p.Credential.ReadDeclared(getenv, httpremote.GlobalSecrets(secrets))
 	if err != nil {
 		return "", fmt.Errorf("remotesync: %s: %w", p.credentialSource(), err)
 	}
@@ -847,6 +864,19 @@ func (r *runner) applyEntity(
 		r.create(ctx, em, row, addr, id, hash, th)
 		return false
 	}
+	readable, err := r.readable(ctx, ours.Ref().String())
+	if err != nil {
+		r.gateFailed(c, addr, err)
+		return false
+	}
+	if !readable {
+		// The ref is taken, so the row cannot be created either. The issue
+		// does not name the row: a hidden row is reported as no row would
+		// be, except that the ref is held.
+		c.Conflicts++
+		r.issue(IssueConflict, addr, "", "the ref is held by a local row the puller cannot read")
+		return false
+	}
 	if ours.Type != em.Local {
 		c.Conflicts++
 		r.issue(IssueConflict, addr, ours.ID, fmt.Sprintf("the ref is held by a %s, not a %s", ours.Type, em.Local))
@@ -893,6 +923,29 @@ func (r *runner) applyEntity(
 	return false
 }
 
+// readable reports whether the principal on ctx may read the local row addr
+// names, a row the raw reader returned or the ledger holds. A bare id
+// resolves in the gate's world.
+func (r *runner) readable(ctx context.Context, addr string) (bool, error) {
+	_, err := r.d.Gate.GetAddress(ctx, addr)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, store.ErrNotFound):
+		return false, nil
+	}
+	return false, fmt.Errorf("read the local row: %w", err)
+}
+
+// gateFailed reports a row whose local row could not be checked with the
+// gate. The error may name the row, so it goes to the operator's log and
+// not to the report.
+func (r *runner) gateFailed(c *Counts, addr string, err error) {
+	r.d.Logger.Error("remote pull: check the local row", "run_id", r.d.RunID, "address", addr, "err", err)
+	c.Failed++
+	r.issue(IssueFailed, addr, "", "could not check whether the puller can read the local row")
+}
+
 // locate returns the local row a source row maps to: the ledger's local id,
 // else the entity holding the source id in its ref (a renamed row, or one
 // created by a run whose ledger was not saved). Nil means there is none.
@@ -916,7 +969,11 @@ func (r *runner) locate(ctx context.Context, row *ledgerRow, id string) (*entity
 	case 1:
 		return found[0], nil
 	}
-	return nil, fmt.Errorf("%d local entities hold ref %q of system %q", len(found), id, r.m.System)
+	// The count includes rows the puller may not read, so it goes to the
+	// log only.
+	r.d.Logger.Warn("remote pull: more than one local entity holds a ref",
+		"run_id", r.d.RunID, "system", r.m.System, "ref", id, "count", len(found))
+	return nil, fmt.Errorf("more than one local entity holds ref %q of system %q", id, r.m.System)
 }
 
 // findByRef returns the entities whose external ref of the remote's system,
@@ -1134,6 +1191,9 @@ func (r *runner) pullRelation(ctx context.Context, addr string, hash canonical.D
 		c.Created++
 		return nil
 	}
+	if !r.endpointsReadable(ctx, c, addr, fromRow, toRow) {
+		return nil
+	}
 	key := entity.RelationKey{From: fromRow.Local, FromFace: fromRow.Face, Type: rm.Local, To: toRow.Local}
 	var th []theirsValue
 	if len(rm.Fields) > 0 {
@@ -1171,6 +1231,28 @@ func (r *runner) pullRelation(ctx context.Context, addr string, hash canonical.D
 	}
 	r.writeRelation(ctx, row, addr, typ, hash, key, existing, th)
 	return nil
+}
+
+// endpointsReadable reports whether the puller may read both local
+// endpoints of a relation. When it may not, the relation is reported as a
+// conflict that names neither endpoint.
+func (r *runner) endpointsReadable(ctx context.Context, c *Counts, addr string, ends ...*ledgerRow) bool {
+	for _, end := range ends {
+		if end.Local == "" { // a dry run creates it
+			continue
+		}
+		readable, err := r.readable(ctx, end.localRef().String())
+		if err != nil {
+			r.gateFailed(c, addr, err)
+			return false
+		}
+		if !readable {
+			c.Conflicts++
+			r.issue(IssueConflict, addr, "", "an endpoint is a local row the puller cannot read")
+			return false
+		}
+	}
+	return true
 }
 
 // writeRelation creates the local relation, or brings its owned meta to the
@@ -1290,15 +1372,31 @@ func (r *runner) goneRelation(ctx context.Context, row *ledgerRow) {
 		r.detach(row)
 		return
 	}
+	fromKey, typ, to, ok := splitRelationAddress(row.Local)
+	from, err := entity.ParseRef(fromKey)
+	valid := ok && err == nil
+	if valid {
+		for _, end := range []string{from.String(), to} {
+			readable, err := r.readable(ctx, end)
+			if err != nil {
+				r.gateFailed(c, row.Address, err)
+				return
+			}
+			if !readable {
+				c.Detached++
+				r.issue(IssueKept, row.Address, "", "kept and detached: an endpoint is a local row the puller cannot read")
+				r.detach(row)
+				return
+			}
+		}
+	}
 	if row.Adopted {
 		c.Detached++
 		r.issue(IssueKept, row.Address, row.Local, "kept and detached: it was there before the pull")
 		r.detach(row)
 		return
 	}
-	fromKey, typ, to, ok := splitRelationAddress(row.Local)
-	from, err := entity.ParseRef(fromKey)
-	if !ok || err != nil {
+	if !valid {
 		c.Failed++
 		r.issue(IssueFailed, row.Address, row.Local, "the ledger holds an invalid local relation key")
 		return
@@ -1337,6 +1435,19 @@ func (r *runner) goneEntity(ctx context.Context, row *ledgerRow) {
 	case err != nil:
 		c.Failed++
 		r.issue(IssueFailed, row.Address, row.Local, err.Error())
+		return
+	}
+	readable, err := r.readable(ctx, ours.Ref().String())
+	if err != nil {
+		r.gateFailed(c, row.Address, err)
+		return
+	}
+	if !readable {
+		// Neither the row nor whether it was edited or has relations is
+		// reported, and the run does not delete it.
+		c.Detached++
+		r.issue(IssueKept, row.Address, "", "kept and detached: the puller cannot read the local row")
+		r.detach(row)
 		return
 	}
 	if row.Adopted {

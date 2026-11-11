@@ -64,6 +64,9 @@ func (s *Server) registerTools() {
 	// Lease tools: only when the wiring supplies a lease service.
 	registerLeaseTools(s)
 
+	// Flow tools: only when the project declares flows (see WithFlows).
+	registerFlowTools(s)
+
 	// Lua scripting tools: stdio only (see WithLuaTools).
 	if !s.luaTools {
 		return

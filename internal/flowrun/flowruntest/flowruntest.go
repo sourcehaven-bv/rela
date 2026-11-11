@@ -51,6 +51,7 @@ func RunAll(t *testing.T, open Factory) {
 		{"Singleton", testSingleton},
 		{"SubjectCap", testSubjectCap},
 		{"Update", testUpdate},
+		{"UpdateLogAndClaim", testUpdateLogAndClaim},
 		{"Delete", testDelete},
 		{"ListDue", testListDue},
 		{"ListDueCursor", testListDueCursor},
@@ -242,7 +243,7 @@ func testUpdate(t *testing.T, h Harness) {
 	ctx := context.Background()
 	created := create(t, h.Store, newRun("FR-1", entity.Ref{ID: "EMP-1", Face: "draft"}))
 
-	got, err := h.Store.Update(ctx, "FR-1", 1, fullInstance(), at(10))
+	got, err := h.Store.Update(ctx, "FR-1", 1, flowrun.State{Instance: fullInstance()}, at(10))
 	require.NoError(t, err)
 	want := created
 	want.Rev = 2
@@ -253,7 +254,7 @@ func testUpdate(t *testing.T, h Harness) {
 	require.NoError(t, err)
 	require.Equal(t, want, read)
 
-	_, err = h.Store.Update(ctx, "FR-1", 1, flow.Instance{State: "done", Generation: 4}, at(11))
+	_, err = h.Store.Update(ctx, "FR-1", 1, flowrun.State{Instance: flow.Instance{State: "done", Generation: 4}}, at(11))
 	require.ErrorIs(t, err, flowrun.ErrConflict)
 	read, err = h.Store.Get(ctx, "FR-1")
 	require.NoError(t, err)
@@ -261,20 +262,70 @@ func testUpdate(t *testing.T, h Harness) {
 
 	// An update may clear the schedule.
 	cleared := flow.Instance{State: "done", Generation: 4, EnteredAt: at(12)}
-	got, err = h.Store.Update(ctx, "FR-1", 2, cleared, at(12))
+	got, err = h.Store.Update(ctx, "FR-1", 2, flowrun.State{Instance: cleared}, at(12))
 	require.NoError(t, err)
 	require.Equal(t, int64(3), got.Rev)
 	require.Equal(t, flowrun.NormInstance(cleared), got.Instance)
 
-	_, err = h.Store.Update(ctx, "FR-2", 1, cleared, at(12))
+	_, err = h.Store.Update(ctx, "FR-2", 1, flowrun.State{Instance: cleared}, at(12))
 	require.ErrorIs(t, err, flowrun.ErrNotFound)
+
+	// The pending-outputs mark is stored with the instance and cleared by
+	// an update without one (RR-U30RNUZ).
+	mark := &flowrun.Pending{State: "done", Generation: 4, Done: 1}
+	got, err = h.Store.Update(ctx, "FR-1", 3, flowrun.State{Instance: cleared, Pending: mark}, at(13))
+	require.NoError(t, err)
+	require.Equal(t, mark, got.Pending)
+	read, err = h.Store.Get(ctx, "FR-1")
+	require.NoError(t, err)
+	require.Equal(t, mark, read.Pending)
+	got, err = h.Store.Update(ctx, "FR-1", 4, flowrun.State{Instance: cleared}, at(14))
+	require.NoError(t, err)
+	require.Nil(t, got.Pending)
+	read, err = h.Store.Get(ctx, "FR-1")
+	require.NoError(t, err)
+	require.Nil(t, read.Pending)
+}
+
+// testUpdateLogAndClaim pins that the timeline and the step claim are
+// stored with the instance, and that an update without them clears them.
+func testUpdateLogAndClaim(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	cleared := flow.Instance{State: "done", Generation: 4, EnteredAt: at(12)}
+	nr := newRun("FR-P", ref("EMP-9"))
+	nr.Pending = &flowrun.Pending{State: "open", Generation: 1}
+	nr.Log = []flowrun.Step{{At: flow.NormTime(at(0)), State: "open", Via: flowrun.ViaStart, By: "alice"}}
+	created := create(t, h.Store, nr)
+	require.Equal(t, nr.Pending, created.Pending)
+	require.Equal(t, nr.Log, created.Log)
+	read, err := h.Store.Get(ctx, "FR-P")
+	require.NoError(t, err)
+	require.Equal(t, nr.Pending, read.Pending)
+	require.Equal(t, nr.Log, read.Log)
+
+	log := flowrun.AppendLog(nr.Log, flowrun.Step{At: flow.NormTime(at(1)), State: "done", From: "open",
+		Via: flowrun.ViaChange})
+	claim := &flowrun.Claim{Generation: 1, By: "bob", At: flow.NormTime(at(1))}
+	got, err := h.Store.Update(ctx, "FR-P", 1, flowrun.State{Instance: cleared, Log: log, Claim: claim}, at(2))
+	require.NoError(t, err)
+	require.Equal(t, log, got.Log)
+	require.Equal(t, claim, got.Claim)
+	read, err = h.Store.Get(ctx, "FR-P")
+	require.NoError(t, err)
+	require.Equal(t, log, read.Log)
+	require.Equal(t, claim, read.Claim)
+	got, err = h.Store.Update(ctx, "FR-P", 2, flowrun.State{Instance: cleared}, at(3))
+	require.NoError(t, err)
+	require.Nil(t, got.Log)
+	require.Nil(t, got.Claim)
 }
 
 func testDelete(t *testing.T, h Harness) {
 	t.Helper()
 	ctx := context.Background()
 	create(t, h.Store, newRun("FR-1", ref("EMP-1")))
-	_, err := h.Store.Update(ctx, "FR-1", 1, fullInstance(), at(1))
+	_, err := h.Store.Update(ctx, "FR-1", 1, flowrun.State{Instance: fullInstance()}, at(1))
 	require.NoError(t, err)
 
 	require.ErrorIs(t, h.Store.Delete(ctx, "FR-1", 1), flowrun.ErrConflict)
@@ -325,7 +376,7 @@ func testListDue(t *testing.T, h Harness) {
 	require.Empty(t, due)
 
 	// An update that clears the due time takes the run off the list.
-	_, err = h.Store.Update(ctx, "C", 1, flow.Instance{State: "open", Generation: 1, EnteredAt: at(0)}, at(6))
+	_, err = h.Store.Update(ctx, "C", 1, flowrun.State{Instance: flow.Instance{State: "open", Generation: 1, EnteredAt: at(0)}}, at(6))
 	require.NoError(t, err)
 	due, err = h.Store.ListDue(ctx, at(100), flowrun.DueCursor{}, flowrun.MaxPage)
 	require.NoError(t, err)
@@ -398,7 +449,7 @@ func testRekeySubject(t *testing.T, h Harness) {
 	create(t, h.Store, nr)
 	create(t, h.Store, newRun("FR-2", ref("EMP-1")))
 	create(t, h.Store, newRun("FR-3", ref("EMP-2")))
-	_, err := h.Store.Update(ctx, "FR-2", 1, fullInstance(), at(1))
+	_, err := h.Store.Update(ctx, "FR-2", 1, flowrun.State{Instance: fullInstance()}, at(1))
 	require.NoError(t, err)
 
 	n, err := h.Store.RekeySubject(ctx, "EMP-1", "EMP-10")
@@ -539,10 +590,10 @@ func testInvalidArguments(t *testing.T, h Harness) {
 
 	errs := map[string]error{
 		"get id":            second(h.Store.Get(ctx, "")),
-		"update rev":        second(h.Store.Update(ctx, "FR-1", 0, flow.Instance{}, at(1))),
-		"update time":       second(h.Store.Update(ctx, "FR-1", 1, flow.Instance{}, time.Time{})),
-		"update instance":   second(h.Store.Update(ctx, "FR-1", 1, flow.Instance{State: "X"}, at(1))),
-		"update id":         second(h.Store.Update(ctx, "a/b", 1, flow.Instance{}, at(1))),
+		"update rev":        second(h.Store.Update(ctx, "FR-1", 0, flowrun.State{Instance: flow.Instance{}}, at(1))),
+		"update time":       second(h.Store.Update(ctx, "FR-1", 1, flowrun.State{Instance: flow.Instance{}}, time.Time{})),
+		"update instance":   second(h.Store.Update(ctx, "FR-1", 1, flowrun.State{Instance: flow.Instance{State: "X"}}, at(1))),
+		"update id":         second(h.Store.Update(ctx, "a/b", 1, flowrun.State{Instance: flow.Instance{}}, at(1))),
 		"delete rev":        h.Store.Delete(ctx, "FR-1", 0),
 		"delete id":         h.Store.Delete(ctx, "", 1),
 		"due until":         second(h.Store.ListDue(ctx, time.Time{}, flowrun.DueCursor{}, 1)),
@@ -601,7 +652,7 @@ func testConcurrentUpdate(t *testing.T, h Harness) {
 	for i := range racers {
 		wg.Go(func() {
 			inst := flow.Instance{State: "open", Generation: int64(i + 1)}
-			_, err := ss[i%len(ss)].Update(ctx, "FR-1", 1, inst, at(i))
+			_, err := ss[i%len(ss)].Update(ctx, "FR-1", 1, flowrun.State{Instance: inst}, at(i))
 			mu.Lock()
 			defer mu.Unlock()
 			switch {

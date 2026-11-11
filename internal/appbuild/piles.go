@@ -2,6 +2,7 @@ package appbuild
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/filelock"
+	"github.com/Sourcehaven-BV/rela/internal/flowrun"
 	"github.com/Sourcehaven-BV/rela/internal/lease"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/piles"
@@ -33,6 +35,9 @@ type refHolders struct {
 	leases      *lease.Service
 	leaseShared leaseShared
 	channels    channels.Store
+	// flowRuns is the flow run store, nil when flows.yaml declares no
+	// flows.
+	flowRuns flowrun.Store
 	// realtimeLocal is the process-local state of the channel service,
 	// which finishAssembly builds once the entity manager exists; see
 	// buildRealtimeService.
@@ -85,6 +90,11 @@ func buildRefHolders(
 	}
 	if h.channels, err = buildChannels(base.cfg.FS, base.cfg.Paths, st, overrides.channelStore); err != nil {
 		return refHolders{}, err
+	}
+	if base.flows != nil {
+		if h.flowRuns, err = flowRunBackend(base.cfg.FS, base.cfg.Paths, st, overrides.flowRuns); err != nil {
+			return refHolders{}, fmt.Errorf("flows: %w", err)
+		}
 	}
 	if h.channelTombs, err = newTombstoneConfirmer(h.channels); err != nil {
 		return refHolders{}, err

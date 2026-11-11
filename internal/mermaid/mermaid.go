@@ -38,6 +38,16 @@ type Transition struct {
 // edge with no label (matching the convention that a move named after its
 // target adds no information).
 func StateDiagram(initial string, transitions []Transition) string {
+	return StateDiagramAt(initial, transitions, "")
+}
+
+// currentStyle is the style [StateDiagramAt] gives the marked state.
+const currentStyle = "fill:#fde68a,stroke:#b45309,stroke-width:2px"
+
+// StateDiagramAt renders the diagram [StateDiagram] renders and styles the
+// state named current with the class `current`. A current state the
+// diagram does not draw, or an empty one, marks nothing.
+func StateDiagramAt(initial string, transitions []Transition, current string) string {
 	ids := map[string]string{}
 	idFor := func(value string) string {
 		if id, ok := ids[value]; ok {
@@ -83,6 +93,9 @@ func StateDiagram(initial string, transitions []Transition) string {
 		} else {
 			fmt.Fprintf(&b, "    %s --> %s\n", ids[tr.From], ids[tr.To])
 		}
+	}
+	if id, ok := ids[current]; ok && current != "" {
+		fmt.Fprintf(&b, "    classDef current %s\n    class %s current\n", currentStyle, id)
 	}
 	return b.String()
 }

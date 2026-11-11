@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"path/filepath"
 	"sync"
@@ -15,7 +16,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
-	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -48,8 +48,12 @@ type mcpServices struct {
 	// and the search index and therefore owns closing them. Reloads assemble
 	// successors against those same handles, so only this one may be Closed;
 	// superseded successors get CloseAssembly instead. Never reassigned.
-	origin  *appbuild.Services
-	watcher relamcp.Watcher
+	origin *appbuild.Services
+	// closeOrigin closes origin and whatever opened it with it: origin
+	// itself on a single-store project, the [tenant.Opened] on a tenant,
+	// which also releases the tenant's schema lock. Never reassigned.
+	closeOrigin io.Closer
+	watcher     relamcp.Watcher
 	// stopSchemaWatch releases the schema.yaml subscription. Nil until
 	// [mcpServices.watchSchema] runs.
 	stopSchemaWatch func()
@@ -97,14 +101,20 @@ func (s *mcpServices) current() *appbuild.Services {
 // The channel tools are the exception: they apply acl.yaml when the project
 // has one ([mcpServices.channelDeps]), so an agent identity stays inside
 // the channel roles the project gave it.
-func newMCPServices(startDir, runAs string) (*mcpServices, error) {
-	svc, err := appbuild.Discover(startDir, script.NewEngine(), appbuild.WithACL(acl.NopACL{}))
+//
+// org names the tenant in tenant mode; see
+// [openProject]. In tenant mode the operator who can launch `rela mcp`
+// already holds the base DSN, so the trust boundary is unchanged, but the
+// session opens only the named tenant's store.
+func newMCPServices(startDir, org, runAs string) (*mcpServices, error) {
+	svc, closer, err := openProject(startDir, org, appbuild.WithACL(acl.NopACL{}))
 	if err != nil {
 		return nil, err
 	}
 	return &mcpServices{
 		svc:           svc,
 		origin:        svc,
+		closeOrigin:   closer,
 		watcher:       &mcpWatcher{store: svc.Store()},
 		attachUploads: attachment.NewLimiter(attachment.DefaultMaxUploads),
 		runAs:         runAs,
@@ -495,7 +505,7 @@ func (s *mcpServices) Close() error {
 	s.closed = true
 	stops := []func(){s.stopSchemaWatch, s.stopRealtimeWatch, s.stopACLWatch}
 	s.stopSchemaWatch, s.stopRealtimeWatch, s.stopACLWatch = nil, nil, nil
-	watcher, current, origin := s.watcher, s.svc, s.origin
+	watcher, current, origin, closeOrigin := s.watcher, s.svc, s.origin, s.closeOrigin
 	s.mu.Unlock()
 
 	for _, stop := range stops {
@@ -521,7 +531,7 @@ func (s *mcpServices) Close() error {
 	if current != origin {
 		current.CloseAssembly()
 	}
-	return origin.Close()
+	return closeOrigin.Close()
 }
 
 // --- Watcher adapter ---

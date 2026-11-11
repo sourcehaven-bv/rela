@@ -317,6 +317,9 @@ type target struct {
 	mgr  *entitymanager.Manager
 	kv   *mapKV
 	meta *metamodel.Metamodel
+	// gate is the read gate the run checks local rows with; newTarget
+	// reads every row.
+	gate ReadGate
 }
 
 func newTarget(t *testing.T) *target {
@@ -331,12 +334,13 @@ func newTarget(t *testing.T) *target {
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
 	}
-	return &target{st: st, mgr: mgr, kv: &mapKV{}, meta: meta}
+	gate := visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope()))
+	return &target{st: st, mgr: mgr, kv: &mapKV{}, meta: meta, gate: gate}
 }
 
 func (tg *target) deps(src Source) Deps {
 	return Deps{
-		Source: src, Meta: tg.meta, Writer: tg.mgr, Store: tg.st,
+		Source: src, Meta: tg.meta, Writer: tg.mgr, Store: tg.st, Gate: tg.gate,
 		State: tg.kv, Fingerprint: visibility.SumHeld, Logger: slog.New(slog.DiscardHandler), RunID: "run-1",
 	}
 }

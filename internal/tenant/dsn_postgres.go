@@ -66,6 +66,16 @@ func dsnForSchema(base, schema string) (string, error) {
 	if got := cfg.RuntimeParams["search_path"]; got != searchPath {
 		return "", fmt.Errorf("pin search_path: the DSN resolves to search_path %q, want %q", got, searchPath)
 	}
+	// PostgreSQL reads setting names without regard to case, and pgx sends
+	// runtime parameters in no fixed order, so a second spelling of
+	// search_path, or one inside options, could win on some connections.
+	for k, v := range cfg.RuntimeParams {
+		if (k != "search_path" && strings.EqualFold(k, "search_path")) ||
+			(strings.EqualFold(k, "options") && strings.Contains(strings.ToLower(v), "search_path")) {
+
+			return "", fmt.Errorf("pin search_path: the base DSN sets search_path through %q; remove it", k)
+		}
+	}
 	return out, nil
 }
 
@@ -83,3 +93,8 @@ func DescribeTarget(dsn string) string {
 	}
 	return fmt.Sprintf("database %q on %s:%d as user %q", cfg.Database, cfg.Host, cfg.Port, cfg.User)
 }
+
+// Supported reports whether this build can serve tenant mode. Only the
+// postgres store is addressed by a DSN, so only it can open one store per
+// tenant.
+const Supported = true

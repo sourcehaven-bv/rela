@@ -218,7 +218,7 @@ func (s *Store) withRuns(ctx context.Context, fn func(d *runsDoc) (changed bool,
 }
 
 func (r storedRun) run(id flowrun.RunID) (flowrun.Run, error) {
-	inst, err := flowrun.DecodeState(r.State)
+	st, err := flowrun.DecodeState(r.State)
 	if err != nil {
 		return flowrun.Run{}, fmt.Errorf("kvflowrun: run %s: %w", id, err)
 	}
@@ -226,7 +226,7 @@ func (r storedRun) run(id flowrun.RunID) (flowrun.Run, error) {
 		ID: id, Flow: r.Flow, Version: r.Version,
 		Subject:   entity.Ref{ID: r.SubjectID, Face: r.SubjectFace},
 		Singleton: r.Singleton, CreatedAt: r.CreatedAt.UTC(), UpdatedAt: r.UpdatedAt.UTC(),
-		Rev: r.Rev, Instance: inst,
+		Rev: r.Rev, Instance: st.Instance, Pending: st.Pending, Log: st.Log, Claim: st.Claim,
 	}, nil
 }
 
@@ -260,7 +260,7 @@ func (s *Store) Create(ctx context.Context, nr flowrun.NewRun) (flowrun.Run, err
 		return flowrun.Run{}, err
 	}
 	run := flowrun.FromNew(nr)
-	stateDoc, err := flowrun.EncodeState(run.Instance)
+	stateDoc, err := flowrun.EncodeState(run.State())
 	if err != nil {
 		return flowrun.Run{}, fmt.Errorf("kvflowrun: encode state: %w", err)
 	}
@@ -334,12 +334,12 @@ func (s *Store) Get(ctx context.Context, id flowrun.RunID) (flowrun.Run, error) 
 }
 
 // Update implements [flowrun.Store.Update].
-func (s *Store) Update(ctx context.Context, id flowrun.RunID, expectRev int64, inst flow.Instance,
+func (s *Store) Update(ctx context.Context, id flowrun.RunID, expectRev int64, st flowrun.State,
 	at time.Time) (flowrun.Run, error) {
-	if err := flowrun.CheckUpdate(id, expectRev, inst, at); err != nil {
+	if err := flowrun.CheckUpdate(id, expectRev, st, at); err != nil {
 		return flowrun.Run{}, err
 	}
-	stateDoc, err := flowrun.EncodeState(inst)
+	stateDoc, err := flowrun.EncodeState(st)
 	if err != nil {
 		return flowrun.Run{}, fmt.Errorf("kvflowrun: encode state: %w", err)
 	}

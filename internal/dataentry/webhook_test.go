@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // errStubReject stands in for a verification failure in the shim test — the
@@ -225,6 +226,31 @@ func TestWebhook_RefusesEntityBoundAction(t *testing.T) {
 	}
 	if n := countTickets(t, app); n != 0 {
 		t.Fatalf("entity-bound action ran from the webhook (%d entities)", n)
+	}
+}
+
+// TestWebhook_RefusesElevatedAction: the IdP webhook never elevates, so an
+// action that declares allow_acl_bypass is refused there before its script
+// runs (TKT-JA5SABG).
+func TestWebhook_RefusesElevatedAction(t *testing.T) {
+	script := `rela.create_entity("ticket", { title = "should-not-run" })
+	           return { message = "ok" }`
+	v := stubWebhookVerifier{claims: WebhookClaims{
+		Event: "membership.created", UserID: "usr_1", OrgID: "org_1", ID: "evt_elevated",
+	}}
+	app := newWebhookTestApp(t, script, v)
+	app.Cfg().Actions["idp-sync"] = dataentryconfig.Action{
+		Script:          "idp-sync.lua",
+		Permission:      "sync",
+		AllowACLBypass:  metamodel.ACLBypassWrite,
+		ElevatedUpdates: map[string][]string{"ticket": {"status"}},
+	}
+
+	if rec := postWebhook(app, "e1"); rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 (%s)", rec.Code, rec.Body.String())
+	}
+	if n := countTickets(t, app); n != 0 {
+		t.Fatalf("elevated action ran from the webhook (%d entities)", n)
 	}
 }
 

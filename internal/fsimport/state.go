@@ -53,6 +53,9 @@ var relaSkipped = map[string]string{
 	"rela.db-wal":             "SQLite database",
 	"rela.db-shm":             "SQLite database",
 	"rela.db.lock":            "SQLite database lock",
+	"flow-runs.json":          "flow runs are copied into the database",
+	"flow-definitions.json":   "flow runs are copied into the database",
+	"flow-runs.lock":          "lock file",
 }
 
 // classifyRela returns what the import does with the .rela-relative path p,

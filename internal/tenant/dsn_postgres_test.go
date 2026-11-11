@@ -49,3 +49,20 @@ func TestDSNForSchema_KeepsBaseSettings(t *testing.T) {
 		})
 	}
 }
+
+// TestDSNForSchema_RefusesOtherSearchPathSpellings pins that a base DSN
+// cannot set search_path a second way that could win over the pinned one on
+// some connections.
+func TestDSNForSchema_RefusesOtherSearchPathSpellings(t *testing.T) {
+	t.Parallel()
+
+	for _, base := range []string{
+		"postgres://rela@db.example/rela?SEARCH_PATH=public",
+		"host=db.example user=rela dbname=rela Search_Path=public",
+		"postgres://rela@db.example/rela?options=-c%20search_path%3Dpublic",
+	} {
+		if _, err := dsnForSchema(base, "tenant_a"); err == nil {
+			t.Errorf("dsnForSchema(%q) accepted a second search_path", base)
+		}
+	}
+}

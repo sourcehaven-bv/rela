@@ -95,6 +95,23 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/InboxView.vue'),
   },
   {
+    // Flow runs and tasks (TKT-ZAXRXND).
+    path: '/flows/tasks',
+    name: 'flow-tasks',
+    component: () => import('@/views/FlowTasksView.vue'),
+  },
+  {
+    path: '/flows/runs',
+    name: 'flow-runs',
+    component: () => import('@/views/FlowRunsView.vue'),
+  },
+  {
+    path: '/flows/runs/:id',
+    name: 'flow-run',
+    component: () => import('@/views/FlowRunView.vue'),
+    props: true,
+  },
+  {
     path: '/analyze',
     name: 'analyze',
     component: () => import('@/views/AnalyzeView.vue'),

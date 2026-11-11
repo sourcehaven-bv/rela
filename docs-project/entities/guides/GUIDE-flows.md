@@ -16,10 +16,14 @@ to "finished", and creates a task on the way.
 The file is optional. Without it, a project has no flows and nothing else
 changes. `schema.yaml` never refers to it.
 
-> **Status.** This release loads and checks `flows.yaml` and shows its
-> flows. rela does not run flows yet; starting runs, the run records and
-> the inbox entries follow in later releases. You can write and check the
-> file now.
+> **Status.** This release runs flows that a person starts by hand, from
+> the web app, over MCP or with `rela flow start`. A run writes its
+> outputs, follows `done` branches and ends in a final state. People do
+> their steps in the web app or over MCP, and a completed step takes the
+> `change` branches. The `create`, `predicate` and `schedule` triggers,
+> `change` events from ordinary edits, timers, retention and the inbox are
+> checked but not acted on yet; they follow in a later release. See
+> [Running flows](#running-flows) and [Doing a step](#doing-a-step).
 
 ## Example
 
@@ -112,6 +116,7 @@ every matching subject.
 | `final` | `true` ends the run in this state. A final state has no `on:`, `after:` or `waiting_for:`. |
 | `status` | `working` or `input_required` for a state that is not final; `completed`, `cancelled` or `failed` for a final one. The defaults are `working`, `input_required` when `waiting_for:` is set, and `completed`. |
 | `waiting_for` | The acl.yaml roles the run waits on in this state. Each role must be able to move the run on through an `on: change` branch. |
+| `writes` | The subject properties the step form of this state edits, at most 32. Only a state with `waiting_for:` takes it. Each must be a property the subject type declares, and not a computed or rollup property. |
 | `outputs` | What rela writes when a run enters the state. See below. |
 | `on` | The events that move the run on. See below. |
 | `after` | Timers, by name, that move the run on. See below. |
@@ -201,7 +206,9 @@ reader cannot see, a flow condition is held to a smaller set:
 
 Each flow has a version: a hash of its definition. A change to a flow
 changes its version; a change to a comment does not. `rela flow show`
-prints it. Runs will keep the version they started with.
+prints it. A run keeps the version it started with: rela stores each
+version's definition, so a run started before a change finishes on the
+old definition.
 
 ## Runs
 
@@ -236,7 +243,133 @@ target type can be a subject, and drops it otherwise. A hand edit of the markdow
 the filesystem backend is outside these rules.
 
 **Audit.** Every write a flow step makes carries `flow`, `run`, `step`
-and `source: flow` in the audit log. See [Audit log](audit-log.md).
+and `source: flow` in the audit log. A write made by a start, a cancel, a
+retry or a completed step also carries `by`: the user who asked. The
+values a completed step writes are recorded as that user's own write. See
+[Audit log](audit-log.md).
+
+## Running flows
+
+```bash
+rela flow start onboarding PER-12   # start a run on PER-12
+rela flow runs                      # list the runs you can read
+rela flow runs --flow onboarding
+rela flow cancel RUN-4OSX           # cancel an unfinished run
+```
+
+`rela flow start` needs an `on: manual` trigger on the flow, and the
+caller must hold its `permission` for the subject. A role held through a
+role relation to the subject counts. A subject the caller cannot read
+answers like a missing entity. `rela flow cancel` needs the same
+permission. In a project without acl.yaml, everyone may start and cancel.
+
+When a run starts, rela records the `_flow-run` entity and its `_carries`
+edge as `system:flow`, and then enters the initial state:
+
+1. It writes the state's outputs as the `run_as` identity. A template
+   reads the subject as `run_as` reads it: if `run_as` cannot read the
+   subject, every `{{subject.*}}` placeholder is empty.
+2. It takes the first `done` branch that applies, and enters that state.
+3. In a final state the run ends: the `_flow-run` entity records the
+   status and completion time, and the run's working state is dropped.
+
+A failed step leaves the run in its state with the rest of the step
+pending: outputs not yet written, a `done` branch not yet taken, or the
+end of the run not yet recorded. rela tries again later and never writes
+an output twice. It waits 30 seconds after the first failure and doubles
+the wait after each further failure, up to one hour. `rela flow start`
+names the run when its first step failed, because the run exists.
+
+If rela stops between recording a run and storing its working state, the
+run is listed but cannot advance. `rela flow cancel` closes such a run
+once it is a minute old.
+
+With `per_subject: one`, a second start on the same subject fails while
+the first run is unfinished. Deleting a subject does not cancel its run
+yet.
+
+**Where runs are kept.** The working state of an unfinished run is kept
+in `.rela/` on the filesystem backend, in `rela.db` on SQLite and in the
+database on PostgreSQL. `rela db import-fs` copies the unfinished runs
+into the new database.
+
+**Upgrading.** A `flows.yaml` that does not load now stops rela from
+starting, as an invalid `realtime.yaml` does. Run `rela flow validate`
+before you upgrade.
+
+## Doing a step
+
+A run in a state with `waiting_for:` waits for a person. The step is
+done by someone who holds one of those roles on the subject, globally or
+through a role relation.
+
+**In the web app.** The entity page of a subject shows a Flows panel with
+its runs. For each run it shows the state, why the run waits, and the
+step form:
+
+- which roles the state waits for, and whether you hold one;
+- the timers of the state and when each fires;
+- each `change` branch, its roles and whether its `when` holds now;
+- a step whose outputs failed, with the number of failures and the next
+  attempt;
+- the flow as a diagram with the current state marked, and the timeline:
+  the start and the latest moves, with who made each.
+
+The step form edits only the properties in the state's `writes:`, and
+sends only the ones you changed. When you complete the step, rela writes
+those values on the subject as you, with your own update rights and field
+rules, and then takes the first `change` branch whose `roles` you hold and
+whose `when` holds. When no branch applies, the values are saved and the
+run stays where it is.
+
+Once the values are saved, the step is not refused any more. If the run
+then does not follow cleanly, the answer says why in `problem`: `guard`
+(a `when` could not be evaluated, so the run stays), `moved` (the run had
+already moved on, for example by a timer) or `settling` (the run moved,
+but a later output step failed and is retried).
+
+The panel also offers a Start button for each flow with an `on: manual`
+start, and Cancel and Retry buttons when you hold that start's
+permission. Retry tries the failed outputs of a step again now, instead of
+waiting for the next attempt.
+
+The sidebar has two pages when the project has flows. **Flow tasks**
+lists the runs that wait for a role you hold, oldest first. **Flow runs**
+lists every run you can read, newest first, filtered by flow and status.
+Both lists read at most 500 (tasks) or 1,000 (runs) runs, the oldest
+tasks and the newest runs; past that they say the list is cut short, and a
+filter narrows it. The task list matches
+each run against the current `flows.yaml`.
+
+**One step at a time.** A run counts its moves in a generation. The step
+form sends the generation it was shown, and a step on a run that moved on
+since is refused, so a stale form never moves a run twice. While one
+person completes a step, the run is claimed for up to two minutes, and a
+second completion is refused.
+
+**Over HTTP.** The web app uses these routes; other clients may too.
+
+| Route | What it does |
+| ----- | ------------ |
+| `GET /api/v1/_flows` | The flows of `flows.yaml`, with their diagrams |
+| `GET /api/v1/_flows/tasks?flow=&page=&per_page=` | Your tasks |
+| `GET /api/v1/_flows/runs?flow=&status=&page=&per_page=` | The runs you can read |
+| `GET /api/v1/_flows/runs?subject=PER-12` | The runs on one entity, with why each waits |
+| `POST /api/v1/_flows/runs` | Start a run: `{"flow":"onboarding","subject":"PER-12"}` |
+| `GET /api/v1/_flows/runs/{id}` | One run, with why it waits and `_actions` |
+| `POST /api/v1/_flows/runs/{id}/_complete` | Do the step: `{"generation":3,"properties":{"documents":true}}` |
+| `POST /api/v1/_flows/runs/{id}/_cancel` | Cancel the run |
+| `POST /api/v1/_flows/runs/{id}/_retry` | Retry the failed outputs now |
+
+`_actions` on a run says whether `complete`, `cancel` and `retry` would
+be accepted for you, by the same checks the POST routes make. A run you
+cannot read answers 404, like a missing entity. A missing role or
+permission answers 403, a run that moved on or is claimed 409, and a
+property outside `writes:` 422. Without flows, every route answers 404.
+
+**Over MCP.** `list_flow_tasks`, `show_flow_run` and
+`complete_flow_step` do the same for an agent. See
+[MCP server](mcp-server.md#flow-tools).
 
 ## Checking the file
 

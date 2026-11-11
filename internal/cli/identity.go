@@ -219,6 +219,7 @@ func actsAsIdentity(cmd string) bool {
 var identityWrites = map[string]bool{
 	"mcp": true, "dev seed": true, "create": true, "update": true, "delete": true,
 	"flow run": true, "flow validate": false, "flow show": false,
+	"flow start": true, "flow cancel": true, "flow runs": false,
 	"link": true, "unlink": true, "import": true, "fmt": true, "normalize": true,
 	"rename entity": true, "rename id": true, "restore": true, "relation-restore": true,
 	"token set": true, "token delete": true, "history-tag": true, "history-purge": true,
