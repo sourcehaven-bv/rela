@@ -60,9 +60,15 @@ var ErrProfileOverridesFieldRules = errors.New("acl.yaml declares field rules")
 // policy-backed resolver whose predicates fail to compile returns an
 // error. In both error cases the caller fails startup loudly (DR-M4),
 // matching the acl.yaml hard-fail posture for genuinely broken config.
+//
+// ceiling is the flow edit ceiling ([affordances.FlowEditCeiling], a flow's
+// `outside_edits:`), or nil when no flow declares one. It counts as a field
+// rule in every step above: it selects the policy-backed resolver, and the
+// profile may not replace it (TKT-XI7IDBS). It needs the acl.yaml policy;
+// a ceiling without a declarative is an error.
 func ResolverFromProfile(
 	profile string, meta *metamodel.Metamodel, st store.Store,
-	declarative *acl.Declarative,
+	declarative *acl.Declarative, ceiling affordances.FlowEditCeiling,
 ) (FieldVerdictResolver, error) {
 	// No declarative wired → NopACL or constant-decider ACL → no
 	// affordance grants to compute. Declarative is the single source
@@ -73,6 +79,13 @@ func ResolverFromProfile(
 		if policy := declarative.Policy(); policy != nil {
 			hasGrants = policy.HasAffordanceGrants()
 		}
+	}
+	if ceiling != nil {
+		if declarative == nil {
+			return nil, errors.New("dataentry: flows.yaml outside_edits needs the acl.yaml policy, " +
+				"and none is wired")
+		}
+		hasGrants = true
 	}
 
 	switch AffordanceProfile(profile) {
@@ -105,8 +118,11 @@ func ResolverFromProfile(
 	if err != nil {
 		return nil, fmt.Errorf("dataentry: acl traversals: %w", err)
 	}
-	resolver, err := affordances.New(meta, storeRelationLookup{st: st}, declarative,
-		affordances.WithTraversals(traversals))
+	opts := []affordances.Option{affordances.WithTraversals(traversals)}
+	if ceiling != nil {
+		opts = append(opts, affordances.WithFlowEdits(ceiling))
+	}
+	resolver, err := affordances.New(meta, storeRelationLookup{st: st}, declarative, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("dataentry: compiling acl.yaml affordance predicates: %w", err)
 	}
@@ -146,11 +162,12 @@ type ResolverServices interface {
 // metamodel / store / declarative from svc. Both cmd entry points call
 // this; they differ only in how they handle the returned error
 // (rela-server exits, rela-desktop surfaces it to the UI), so error
-// handling stays at the call site.
-func ResolverFromServices(svc ResolverServices) (FieldVerdictResolver, error) {
+// handling stays at the call site. ceiling is appbuild.FlowEdits(svc), passed
+// beside svc because Services is at its plimsoll cap.
+func ResolverFromServices(svc ResolverServices, ceiling affordances.FlowEditCeiling) (FieldVerdictResolver, error) {
 	return ResolverFromProfile(
 		os.Getenv("RELA_AFFORDANCE_PROFILE"),
-		svc.Meta(), svc.Store(), svc.ACLDeclarative())
+		svc.Meta(), svc.Store(), svc.ACLDeclarative(), ceiling)
 }
 
 // NopFieldVerdictResolver returns empty verdicts for every entity.

@@ -186,7 +186,7 @@ client_baselines:
 	}
 	d := mustNewACL(t, policy, app.store)
 	setTestACL(t, app, d)
-	res, err := ResolverFromProfile("", app.Meta(), app.store, d)
+	res, err := ResolverFromProfile("", app.Meta(), app.store, d, nil)
 	if err != nil {
 		t.Fatalf("ResolverFromProfile: %v", err)
 	}

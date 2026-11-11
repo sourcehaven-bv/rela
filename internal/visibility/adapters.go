@@ -100,9 +100,11 @@ func (p PolicyRedactor) PrimeTraversals(ctx context.Context, rows []*entity.Enti
 	return p.r.PrimeTraversals(ctx, rows)
 }
 
-// HiddenProperties implements [FieldRedactor].
+// HiddenProperties implements [FieldRedactor]. It reads only the Visible
+// dimension, so it asks under [affordances.ForVisibility]: redacting a page
+// looks up no flow runs.
 func (p PolicyRedactor) HiddenProperties(ctx context.Context, e *entity.Entity) map[string]struct{} {
-	v := p.r.FieldVerdicts(ctx, e)
+	v := p.r.FieldVerdicts(affordances.ForVisibility(ctx), e)
 	if len(v.Visible) == 0 {
 		return nil
 	}

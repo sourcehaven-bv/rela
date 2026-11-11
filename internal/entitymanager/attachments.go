@@ -166,6 +166,17 @@ func pinStoredFileValues(meta *metamodel.Metamodel, stored, updated *entity.Enti
 // permission is held only by the code handed this value.
 type Attachments struct {
 	m *Manager
+	// recheck: see [Attachments.WithWriteRecheck].
+	recheck bool
+}
+
+// WithWriteRecheck returns a, whose stamps also ask the field gate's
+// [FieldWriteGate.WriteRecheck] inside the write transaction. For a caller
+// that checks the file property's write itself before the upload, as the
+// data-entry attachment handler does (TKT-XI7IDBS).
+func (a Attachments) WithWriteRecheck() Attachments {
+	a.recheck = true
+	return a
 }
 
 // AttachmentsOf returns the attachment surface of m. The zero Attachments
@@ -218,7 +229,7 @@ func (a Attachments) StampAttachments(
 	}
 	p := entity.Patch{Properties: map[string]any{prop: value}}
 	return patchWithRetry(ctx, true, func(pin bool) (*entity.UpdateResult, error) {
-		return a.m.patchEntityOnce(withStoreAttribution(ctx), ref.String(), p, pin, prop, patchPre{})
+		return a.m.patchEntityOnce(withStoreAttribution(ctx), ref.String(), p, pin, prop, patchPre{recheck: a.recheck})
 	})
 }
 

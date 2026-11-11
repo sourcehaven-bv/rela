@@ -10,11 +10,13 @@ import (
 	"path/filepath"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
+	"github.com/Sourcehaven-BV/rela/internal/flowedits"
 	"github.com/Sourcehaven-BV/rela/internal/flowengine"
 	"github.com/Sourcehaven-BV/rela/internal/flowrun"
 	"github.com/Sourcehaven-BV/rela/internal/flowrun/kvflowrun"
@@ -121,7 +123,7 @@ func buildFlowEngine(s *Services, runs flowrun.Store) (*flowengine.Engine, error
 	}
 	meta := s.meta
 	return flowengine.New(flowengine.Deps{
-		Flows: flows, Meta: meta, Runs: runs,
+		Flows: flows, Meta: meta, Runs: lockFlowRuns(s.store, runs),
 		Headers:  flowHeaders{mgr: s.entityManager, as: as},
 		Outputs:  flowOutputs{mgr: entitymanager.FieldGated(s.entityManager), as: as},
 		Subjects: flowSubjects{st: s.store, rows: reader, as: as},
@@ -130,6 +132,115 @@ func buildFlowEngine(s *Services, runs flowrun.Store) (*flowengine.Engine, error
 		},
 	})
 }
+
+// openFlowEdits opens the run store into overrides.flowRuns and builds the
+// flow edit ceiling over it, or returns nil when no flow declares
+// outside_edits. The result is a nil interface, not a typed nil, so a
+// caller's nil check holds.
+func openFlowEdits(base *SharedBase, st store.Store, overrides *backendOverrides) (affordances.FlowEditCeiling, error) {
+	if base.flows == nil {
+		return nil, nil //nolint:nilnil // no flows: no ceiling, and not an error
+	}
+	runs, err := flowRunBackend(base.cfg.FS, base.cfg.Paths, st, overrides.flowRuns)
+	if err != nil {
+		return nil, fmt.Errorf("flows: %w", err)
+	}
+	overrides.flowRuns = runs
+	c, err := flowedits.New(base.flows, base.meta, lockFlowRuns(st, runs))
+	if err != nil {
+		return nil, fmt.Errorf("flows: %w", err)
+	}
+	if c == nil {
+		return nil, nil //nolint:nilnil // no flow declares outside_edits: no ceiling
+	}
+	return c, nil
+}
+
+// flowRunAliases moves a subject's runs to its new id when it is renamed.
+// The run store keys runs by subject id. [flowRenameGuard] refuses to rename
+// a subject that a run holds, inside the rename's transaction, so on
+// postgres and sqlite no run is left to move. On the fs and memory tiers the
+// guard and a run start are not ordered, and this move is the backstop for a
+// run that started while the rename ran. Deletes are left to the runtime.
+type flowRunAliases struct {
+	runs flowrun.Store
+}
+
+// newFlowRunAliases returns the subscriber for runs.
+//
+// Nil: runs is accepted (no flows) and gives a nil subscriber, which the
+// alias fanout drops.
+func newFlowRunAliases(runs flowrun.Store) *flowRunAliases {
+	if runs == nil {
+		return nil
+	}
+	return &flowRunAliases{runs: runs}
+}
+
+// EntityRenamed moves the runs on oldID to newID. The rename has
+// happened, so the move does not depend on the requester staying
+// connected.
+func (a *flowRunAliases) EntityRenamed(ctx context.Context, oldID, newID string) error {
+	if _, err := a.runs.RekeySubject(context.WithoutCancel(ctx), oldID, newID); err != nil {
+		return fmt.Errorf("flows: move runs from %s to %s: %w", oldID, newID, err)
+	}
+	return nil
+}
+
+// EntityDeleted keeps the runs; ending them is the runtime's job.
+func (*flowRunAliases) EntityDeleted(context.Context, string) error { return nil }
+
+// EntityFaceDeleted keeps the runs: they follow the subject, which still
+// exists.
+func (*flowRunAliases) EntityFaceDeleted(context.Context, string, entity.Face) error { return nil }
+
+// flowRenameGuard refuses to rename a subject that an unfinished flow run
+// holds (TKT-XI7IDBS). The run keeps the subject's old id, so a rename would
+// separate the subject from its run and lift the run's `outside_edits:`. A
+// run is deleted when it ends, so every stored run counts.
+//
+// The manager asks inside the rename's store transaction. On postgres and
+// sqlite a run start writes under the same lock (see [txFlowRuns]), so the
+// check sees every run that started before the rename.
+type flowRenameGuard struct {
+	runs flowrun.Store
+}
+
+// flowRenameGuardFor returns the guard over runs, which reads on the
+// rename's transaction where st has one to join (see [txFlowRuns]). The
+// result is a nil interface, not a typed nil, so the manager's nil check
+// holds.
+//
+// Nil: runs is accepted (no flows) and gives no guard.
+func flowRenameGuardFor(st store.Store, runs flowrun.Store) entitymanager.RenameGuard {
+	if runs == nil {
+		return nil
+	}
+	return flowRenameGuard{runs: lockFlowRuns(st, runs)}
+}
+
+// CheckRename implements [entitymanager.RenameGuard]. It fails closed: a run
+// store it cannot read refuses the rename. The cause goes to the log, not
+// to the caller, because it can carry database detail.
+func (g flowRenameGuard) CheckRename(ctx context.Context, id string) error {
+	held, err := g.runs.List(ctx, flowrun.Query{SubjectID: id, Limit: 1})
+	if err != nil {
+		slog.ErrorContext(ctx, "flows: rename refused: the flow runs could not be read", "id", id, "err", err)
+		return fmt.Errorf("%w: the flow runs on %s could not be read", entitymanager.ErrRenameBlocked, id)
+	}
+	if len(held) > 0 {
+		return fmt.Errorf("%w: an unfinished flow run holds %s; finish or cancel the run first",
+			entitymanager.ErrRenameBlocked, id)
+	}
+	return nil
+}
+
+// FlowEdits returns the flow edit ceiling of s, for the data-entry
+// resolver (see dataentry.ResolverFromServices). It is a package function
+// rather than a method because [Services] is at its plimsoll cap.
+//
+// Nil: returned when no flow declares outside_edits.
+func FlowEdits(s *Services) affordances.FlowEditCeiling { return s.flowEdits }
 
 // FlowEngine returns the flow engine of s. It is a package function rather
 // than a method because [Services] is at its plimsoll cap.
@@ -241,7 +352,11 @@ func (o flowOutputs) writer(ctx context.Context, runAs string) (context.Context,
 	return o.as(ctx, runAs)
 }
 
-func (o flowOutputs) Set(ctx context.Context, runAs string, subject entity.Ref, props map[string]any) error {
+// Set writes the output as run's own write: run's outside_edits do not
+// narrow it, every other run's still do (TKT-XI7IDBS).
+func (o flowOutputs) Set(
+	ctx context.Context, runAs string, run flow.RunID, subject entity.Ref, props map[string]any,
+) error {
 	ctx, err := o.writer(ctx, runAs)
 	if err != nil {
 		return err
@@ -249,7 +364,7 @@ func (o flowOutputs) Set(ctx context.Context, runAs string, subject entity.Ref, 
 	if len(props) == 0 {
 		return nil
 	}
-	_, err = o.mgr.PatchEntity(ctx, subject.String(), entity.Patch{Properties: props})
+	_, err = o.mgr.PatchEntity(flowedits.WithinRun(ctx, run), subject.String(), entity.Patch{Properties: props})
 	return err
 }
 

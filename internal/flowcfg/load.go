@@ -102,6 +102,7 @@ func Parse(data []byte, meta *metamodel.Metamodel, policy *acl.Policy) (*Compile
 	}
 	l := &loader{meta: meta, policy: policy, c: &Compiled{flows: map[string]*Flow{}}}
 	l.flows(&raw.Flows)
+	l.outsideEditsNeedPolicy()
 	if len(l.problems) > 0 {
 		sortProblems(l.problems)
 		return nil, &Error{Problems: l.problems}
@@ -146,7 +147,7 @@ func ParseFlow(name string, source []byte, want string, meta *metamodel.Metamode
 	if hasAlias(n) {
 		return fail("uses an anchor or alias; flows.yaml does not support them")
 	}
-	l := &loader{meta: meta, policy: policy, c: &Compiled{flows: map[string]*Flow{}}}
+	l := &loader{meta: meta, policy: policy, c: &Compiled{flows: map[string]*Flow{}}, stored: true}
 	f := l.flow(key, name, n)
 	if len(l.problems) > 0 || f == nil {
 		sortProblems(l.problems)
@@ -219,6 +220,11 @@ type loader struct {
 	c        *Compiled
 	problems []Problem
 	warnings []Problem
+	// stored marks a load of a run's stored declaration ([ParseFlow]). It
+	// skips `outside_edits:`: the rules always come from the current
+	// flows.yaml, so checking an old version's rules against today's
+	// schema could only strand the run.
+	stored bool
 }
 
 func (l *loader) add(key, msg string) {
@@ -298,6 +304,9 @@ func (l *loader) flow(key, name string, n *yaml.Node) *Flow {
 	f.deadline = l.period(key+".deadline", raw.Deadline, false)
 	f.retention = l.retention(key+".retention", raw.Retention)
 	l.states(key, &raw, f)
+	if !l.stored {
+		f.outsideEdits = l.outsideEdits(key+".outside_edits", &raw.OutsideEdits, f)
+	}
 	f.starts = l.starts(key+".start", raw.Start, f.subject, f.perSubject)
 	f.runAs = l.runAs(key+".run_as", raw.RunAs, f)
 	if len(l.problems) > before {
@@ -495,13 +504,8 @@ func (l *loader) permission(key, name string) string {
 		l.add(key, "is required for on: manual: the permission a person needs to start a run")
 		return ""
 	}
-	if l.policy == nil {
+	if l.policy == nil || l.policyGrants(name) {
 		return name
-	}
-	for _, role := range l.policy.Roles {
-		if slices.Contains(role.Permissions, name) {
-			return name
-		}
 	}
 	l.warn(key, fmt.Sprintf("no role in acl.yaml grants permission %q, so nobody can start the flow by hand", name))
 	return name

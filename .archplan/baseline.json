@@ -2679,6 +2679,18 @@
       "at": "2026-11-10T10:45:00Z",
       "title": "TimerDue (flowengine) and Timer (flowview) share most of their fields."
     },
+    "types.fields-465885161015": {
+      "state": "accepted",
+      "reason": "TKT-XI7IDBS: RenameGuard joins Deps as a required write-path collaborator, like AnchorGuard; Deps is the manager's capability bundle and its plimsoll line is pinned.",
+      "at": "2026-11-11T08:00:00Z",
+      "title": "internal/entitymanager.Deps has 25 fields."
+    },
+    "boundaries.misplaced_file-f03fc91c99b4": {
+      "state": "accepted",
+      "reason": "Design: policyResolver is the dataentry adapter onto affordances, so its links point there; TKT-XI7IDBS adds one delegating method (PrimeFlowRuns).",
+      "at": "2026-11-11T08:00:00Z",
+      "title": "dataentry/affordances_policy.go in dataentry has most of its links to affordances (weighted links: 3.2 to affordances, 0.2 to dataentry)."
+    },
     "types.synonyms-c3c95fe17ef4": {
       "state": "accepted",
       "reason": "Design: wire DTOs mirror domain types on purpose, as the rule against leaking storage types asks. apiwire.MessageFile is the HTTP shape of channels.File.",
@@ -2693,9 +2705,9 @@
       "weight.structure": 90,
       "weight.layers": 0,
       "weight.vocabulary": 868,
-      "weight.types": 4127,
-      "weight.concepts": 7138,
-      "weight.boundaries": 1434,
+      "weight.types": 4174,
+      "weight.concepts": 7139,
+      "weight.boundaries": 1471,
       "weight.data": 1297,
       "weight.security": 140,
       "largest_tangle": 14,
@@ -2704,19 +2716,8 @@
       "propagation_cost": 9.1
     },
     "min_weight": 0,
-    "at": "2026-11-11T06:37:58Z",
+    "at": "2026-11-11T10:50:01Z",
     "log": [
-      {
-        "at": "2026-11-04T15:40:00Z",
-        "change": "tighten",
-        "reason": "Static metrics only; structure, security and profile need traces and hotspots, which the weekly scan has",
-        "metrics": {
-          "weight.types": [
-            4028,
-            3981
-          ]
-        }
-      },
       {
         "at": "2026-11-05T14:50:14Z",
         "change": "loosen",
@@ -2984,21 +2985,40 @@
         }
       },
       {
-        "at": "2026-11-11T06:37:58Z",
+        "at": "2026-11-11T08:00:00Z",
         "change": "loosen",
-        "reason": "TKT-BYKOM3V: channel message files add File, MessageFile and the file fields to channels, apiwire, realtime and the stores, raising accepted concepts findings by 11; the per-finding diff is not comparable across the model rename",
+        "reason": "TKT-XI7IDBS: the two accepted findings above (Deps gains RenameGuard; the dataentry policy adapter gains PrimeFlowRuns), and accepted flowrun findings gain one point each as the run store gains its transaction view (raw_ids SubjectID, Step/Event synonyms)",
         "metrics": {
           "weight.types": [
             4132,
-            4127
+            4179
           ],
           "weight.concepts": [
             7127,
-            7138
+            7128
           ],
           "weight.boundaries": [
             1442,
-            1434
+            1469
+          ]
+        }
+      },
+      {
+        "at": "2026-11-11T10:50:01Z",
+        "change": "loosen",
+        "reason": "TKT-BYKOM3V: channel message files add File, MessageFile and the file fields to channels, apiwire, realtime and the stores, raising accepted concepts findings by 11 and boundaries findings by 2 after the develop merge",
+        "metrics": {
+          "weight.types": [
+            4179,
+            4174
+          ],
+          "weight.concepts": [
+            7128,
+            7139
+          ],
+          "weight.boundaries": [
+            1469,
+            1471
           ]
         }
       }

@@ -99,6 +99,8 @@ func (h *viewsHandler) buildNestedTree(
 	// columns it actually renders — see nestedColumnsFor.
 	allColumns, columnIndex := nestedColumnUnion(sec)
 	relValues := h.resolveRelationColumns(ctx, s, allColumns, rowEntities)
+	// Every emitted row carries `_fields`: one run lookup for all of them.
+	ctx = primeFlowRuns(ctx, h.affordances.resolver(), rowEntities)
 
 	nodes := make([]SectionTreeNode, 0, len(plan))
 	for _, row := range plan {

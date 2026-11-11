@@ -125,6 +125,8 @@ type conversionOptions struct {
 	guard entitymanager.AnchorGuard
 	// flowRuns adds the flow run type to the schema.
 	flowRuns bool
+	// renameGuard, when set, is the manager's rename guard.
+	renameGuard entitymanager.RenameGuard
 }
 
 func newConversionFixture(t *testing.T, opts conversionOptions) conversionFixture {
@@ -181,7 +183,7 @@ func newConversionFixture(t *testing.T, opts conversionOptions) conversionFixtur
 		Transitions: transitions, FieldGate: fields,
 		CopyReadGate: entitymanager.AllowAllCopyReadGate{}, CopyVisibility: visibility,
 		AliasRewriter: hooks, VersionRecorder: hooks, RelationVersionRecorder: hooks,
-		AnchorGuard: guard,
+		AnchorGuard: guard, RenameGuard: opts.renameGuard,
 	})
 	if err != nil {
 		t.Fatalf("manager: %v", err)
@@ -424,6 +426,12 @@ type denyFieldGate struct{ field string }
 var errFieldDenied = errors.New("field write denied")
 
 func (g denyFieldGate) CheckFieldWrite(context.Context, *entity.Entity, map[string]any, []string) error {
+	return nil
+}
+
+func (denyFieldGate) WriteRecheck(
+	context.Context, *entity.Entity, map[string]any, []string,
+) func(context.Context) error {
 	return nil
 }
 

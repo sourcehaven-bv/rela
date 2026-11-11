@@ -61,7 +61,7 @@ func useFieldPolicy(t *testing.T, app *App, counting *storetest.Counting) *acl.D
 	require.NoError(t, err)
 	d := mustNewACL(t, fieldPolicy(), app.store)
 	setTestACL(t, app, d)
-	res, err := ResolverFromProfile("", app.Meta(), app.store, d)
+	res, err := ResolverFromProfile("", app.Meta(), app.store, d, nil)
 	require.NoError(t, err)
 	setTestResolver(t, app, res)
 	require.NoError(t, app.SetQueryScopeResolver(AdaptQueryScopes(appbuild.QueryScopes)))

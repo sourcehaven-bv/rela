@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"slices"
 
@@ -198,6 +199,55 @@ func NewWriteGate(r *PolicyResolver) (*WriteGate, error) {
 // to the existing row e, or nil.
 func (g *WriteGate) CheckFieldWrite(ctx context.Context, e *entity.Entity, set map[string]any, unset []string) error {
 	return g.check(ctx, e, set, unset, g.resolver.FieldVerdicts)
+}
+
+// WriteRecheck returns the flow edit ceiling's part of the
+// [WriteGate.CheckFieldWrite] verdict on the row e, to be asked again
+// inside the write's store transaction (TKT-XI7IDBS). It is the only part
+// another writer can change under the caller: a run starting or stepping
+// on the row. The permissions the ceiling's rules ask for are answered
+// here, before the transaction, so the check inside it reads only the runs.
+//
+// Nil: returned when no flow edit ceiling governs e's type, or the write
+// names no property.
+func (g *WriteGate) WriteRecheck(
+	ctx context.Context, e *entity.Entity, set map[string]any, unset []string,
+) func(context.Context) error {
+	c := g.resolver.flowEdits
+	if e == nil || e.ID == "" || c == nil || !c.Governs(e.Type) || (len(set) == 0 && len(unset) == 0) {
+		return nil
+	}
+	held := map[string]bool{}
+	if req, err := g.resolver.requestFor(ctx); err == nil {
+		for _, p := range c.Permissions(e.Type) {
+			held[p] = req.HoldsPermissionForEntity(ctx, e.ID, p)
+		}
+	}
+	keys := slices.Concat(slices.Sorted(maps.Keys(set)), slices.Sorted(slices.Values(unset)))
+	return func(txCtx context.Context) error {
+		withheld, err := c.Withheld(txCtx, e, func(p string) bool { return held[p] })
+		if err != nil {
+			slog.WarnContext(txCtx, "affordances: flow runs unreadable at write; refusing",
+				"type", e.Type, "id", e.ID, "err", err)
+			return flowEditRefusal(keys[0], ruleFlowEditsUnavailable)
+		}
+		for _, k := range keys {
+			if rule, ok := withheld[k]; ok {
+				return flowEditRefusal(k, rule)
+			}
+		}
+		return nil
+	}
+}
+
+// flowEditRefusal is the refusal of a write to key that the flow edit
+// ceiling withholds by rule, attributed as [PolicyResolver.FieldVerdicts]
+// attributes it.
+func flowEditRefusal(key, rule string) *FieldWriteError {
+	return &FieldWriteError{
+		Rule: RuleFieldReadOnly, Path: key, Reason: fmt.Sprintf("field %q is not writable", key),
+		Attribution: recordAttribution(nil, key, kindReadOnly, rule)[key],
+	}
 }
 
 // CheckCreateFieldWrite is [WriteGate.CheckFieldWrite] for creating e, judged

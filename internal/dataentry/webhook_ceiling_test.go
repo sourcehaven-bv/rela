@@ -112,7 +112,7 @@ func hookACLApp(t *testing.T, baselines map[string]acl.ClientBaseline) (*App, st
 	app := newAppFromParts(cfg, nil, newFixture())
 	rebindApp(app, fs, paths, svc)
 	setTestACL(t, app, d)
-	resolver, err := ResolverFromProfile("", meta, st, d)
+	resolver, err := ResolverFromProfile("", meta, st, d, nil)
 	if err != nil {
 		t.Fatalf("ResolverFromProfile: %v", err)
 	}

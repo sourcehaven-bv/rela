@@ -139,6 +139,8 @@ type Flow struct {
 	version    string
 	source     []byte
 	def        *flow.Definition
+	// outsideEdits is nil when the flow declares no `outside_edits:`.
+	outsideEdits *OutsideEdits
 }
 
 // Name is the flow's key in flows.yaml.
@@ -199,6 +201,10 @@ func (f *Flow) Source() []byte { return slices.Clone(f.source) }
 // Definition is the engine's view of the flow: its states and their
 // timers. Flows declare no reminders.
 func (f *Flow) Definition() *flow.Definition { return f.def }
+
+// OutsideEdits is the flow's `outside_edits:`, or nil when it declares
+// none.
+func (f *Flow) OutsideEdits() *OutsideEdits { return f.outsideEdits }
 
 // Branches returns the entries of `on.<event>` out of state, in the order
 // the engine tries them. Nil when the state is not declared or the event
