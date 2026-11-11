@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"time"
@@ -71,20 +72,20 @@ func applyCopyEdges(ctx context.Context, meta *metamodel.Metamodel, view store.S
 	// Deliberately scoped to the TAIL: the sibling faces' edges are theirs.
 	// Only the edges planning found removable go (plan.removable): an edge
 	// the principal could not remove by hand stays, and so does one created
-	// after planning.
+	// after planning. The types come from plan.removable, not plan.edges, so a
+	// type with no source edge still replaces (BUG-FCQBONH).
 	replaced := map[string]bool{}
-	for _, e := range plan.edges {
-		if !e.replace || replaced[e.relType] {
-			continue
-		}
-		replaced[e.relType] = true
+	for k := range plan.removable {
+		replaced[k.relType] = true
+	}
+	for _, relType := range slices.Sorted(maps.Keys(replaced)) {
 		// COLLECT FIRST, then delete. Mutating the store while ranging its
 		// own iterator is backend-dependent: a pooled database backend holds a
 		// result cursor on one connection while the delete takes a second, which
 		// under pool pressure is a deadlock candidate.
 		var doomed []*entity.Relation
 		for rel, err := range view.ListRelations(ctx, store.RelationQuery{
-			From: plan.targetID, Type: e.relType, FromFace: &tail,
+			From: plan.targetID, Type: relType, FromFace: &tail,
 		}) {
 			if err != nil {
 				return fmt.Errorf("entitymanager: copy %q: list target edges: %w",
