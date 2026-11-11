@@ -29,6 +29,13 @@
  * actions on a notice, and the message that caused it is the row above,
  * written in the same append.
  *
+ * `message.files` show after the body as chips: the name and size on a
+ * button that emits `download`. The button shows as pending while
+ * `pending` holds `messagePendingKey(seq, 'file:' + id)`. A file with a `previewUrl` shows a
+ * thumbnail too; the app sets one only for an image type it lets render
+ * inline, and owns the URL. A `file` property is not a field: it holds no
+ * prop, and a markdown body with files still reads as prose.
+ *
  * Text is text. Titles, names, reasons and string properties render through
  * interpolation. The one exception is `message.html`: markdown the app has
  * already rendered and sanitized. It is inserted as it is; this component
@@ -93,6 +100,8 @@ const emit = defineEmits<{
   jump: [seq: number]
   decide: [key: string]
   choose: [key: string]
+  /** The user asked to save a file of the message. */
+  download: [seq: number, fileId: string]
 }>()
 
 const headId = useId()
@@ -104,7 +113,9 @@ const t = (key: ChannelTextKey) => messages.channelText({ key })
 const allowed = computed(() => new Set(props.message.actions ?? []))
 
 const fields = computed<ResolvedChannelField[]>(() => {
-  if (props.messageType) return resolveChannelFields(props.messageType, props.presentation)
+  if (props.messageType) {
+    return resolveChannelFields(props.messageType, props.presentation).filter((f) => f.property.type !== 'file')
+  }
   // An unknown type (the descriptor is reloading): show what arrived, by name.
   return Object.keys(props.message.props ?? {})
     .sort()
@@ -298,6 +309,25 @@ function hrefFor(v: ChannelRef): string | undefined {
         </div>
       </div>
 
+      <ul v-if="message.files?.length" class="rl-channel-message__files" :aria-label="t('files')">
+        <li v-for="f in message.files" :key="f.id" class="rl-channel-message__file">
+          <img v-if="f.previewUrl" :src="f.previewUrl" alt="" class="rl-channel-message__thumb" />
+          <RlButton
+            variant="secondary"
+            size="sm"
+            icon="download"
+            class="rl-channel-message__file-button"
+            :loading="isPending(`file:${f.id}`)"
+            :pending-label="t('downloading')"
+            :aria-label="messages.channelDownloadFile({ name: f.name, size: f.size })"
+            @click="emit('download', message.seq, f.id)"
+          >
+            <span class="rl-channel-message__file-name">{{ f.name }}</span>
+            <span class="rl-channel-message__file-size">{{ f.size }}</span>
+          </RlButton>
+        </li>
+      </ul>
+
       <RlChannelDecisions
         v-if="choiceList.length"
         kind="choice"
@@ -375,6 +405,42 @@ function hrefFor(v: ChannelRef): string | undefined {
 </template>
 
 <style scoped>
+.rl-channel-message__files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--rl-space-2);
+  margin: var(--rl-space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rl-channel-message__file {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--rl-space-1);
+  max-width: 100%;
+}
+
+.rl-channel-message__thumb {
+  display: block;
+  max-width: 240px;
+  max-height: 160px;
+  border: 1px solid var(--rl-color-border);
+  border-radius: var(--rl-radius-md);
+  object-fit: contain;
+}
+
+.rl-channel-message__file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rl-channel-message__file-size {
+  color: var(--rl-color-text-subtle);
+}
+
 .rl-channel-message {
   padding: var(--rl-space-3) var(--rl-space-5);
   font-size: var(--rl-font-size-sm);

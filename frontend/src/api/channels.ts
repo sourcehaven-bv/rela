@@ -1,4 +1,6 @@
+import type { AxiosError } from 'axios'
 import { api } from './client'
+import { ApiError, normalizeApiError } from './errors'
 import { getPlural } from './entities'
 import { addressSegment } from '@/utils/entityAddress'
 import type {
@@ -101,25 +103,102 @@ export async function getMessages(
 export type PostResult =
   { kind: 'message'; message: Message } | { kind: 'ephemeral'; accepted: EphemeralAccepted }
 
+/** One file of a post, for the `file` property it goes in. */
+export interface MessageFileUpload {
+  property: string
+  file: File
+}
+
+/** The most files one post may carry, as the server counts them. */
+export const MAX_POST_FILES = 4
+/** The most bytes the files of one post may hold together (16 MiB). */
+export const MAX_POST_FILE_BYTES = 16 * 1024 * 1024
+
+/**
+ * The multipart body of a post with files. The server reads the parts in
+ * order: first `message`, the JSON body a plain post sends, then one part
+ * `file:<property>` per file, with its name. The message part is a string,
+ * not a Blob: FormData names every Blob part (`blob`), and the server
+ * refuses a message part that carries a file name.
+ */
+export function postMessageForm(
+  body: Record<string, unknown>,
+  files: readonly MessageFileUpload[]
+): FormData {
+  const form = new FormData()
+  form.append('message', JSON.stringify(body))
+  for (const f of files) form.append(`file:${f.property}`, f.file, f.file.name)
+  return form
+}
+
 /**
  * POST a message. `expectGeneration` is the session generation the post was
- * decided against; it is sent when set, 0 included.
+ * decided against; it is sent when set, 0 included. With files it is a
+ * multipart post (see postMessageForm); without, the plain JSON post.
  */
 export async function postMessage(
   t: ChannelTarget,
   type: string,
   props: Record<string, MessagePropInput>,
   replyTo?: number,
-  expectGeneration?: number
+  expectGeneration?: number,
+  files?: readonly MessageFileUpload[]
 ): Promise<PostResult> {
   const body: Record<string, unknown> = { type, props }
   if (replyTo) body.reply_to = replyTo
   if (expectGeneration !== undefined) body.expect_generation = expectGeneration
-  const res = await api
-    .getAxios()
-    .post<Message | EphemeralAccepted>(`${channelPath(t)}/messages`, body)
+  const url = `${channelPath(t)}/messages`
+  // The client's default Content-Type is JSON, under which axios would
+  // turn a FormData into JSON. Naming multipart keeps it a FormData; the
+  // browser then sets the type with its boundary.
+  const res = files?.length
+    ? await api.getAxios().post<Message | EphemeralAccepted>(url, postMessageForm(body, files), {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+    : await api.getAxios().post<Message | EphemeralAccepted>(url, body)
   if (res.status === 202) return { kind: 'ephemeral', accepted: res.data as EphemeralAccepted }
   return { kind: 'message', message: res.data as Message }
+}
+
+/**
+ * GET one file of a message as a Blob, through the API client so the
+ * request carries the same credentials as every other. The server serves
+ * it as a download; the caller decides what to do with the bytes.
+ *
+ * A refusal arrives as a Blob too, since the response type is fixed before
+ * the status is known; it is read back as JSON so the error carries the
+ * problem type (`file_not_found`) like any other.
+ */
+export async function fetchMessageFile(
+  t: ChannelTarget,
+  seq: number,
+  fileId: string,
+  signal?: AbortSignal
+): Promise<Blob> {
+  const url = `${channelPath(t)}/messages/${seq}/files/${encodeURIComponent(fileId)}`
+  try {
+    const res = await api.getAxios().get<Blob>(url, { responseType: 'blob', signal })
+    return res.data
+  } catch (err) {
+    throw await withProblemBody(err)
+  }
+}
+
+/** err with its Blob problem body parsed, when it has one. */
+async function withProblemBody(err: unknown): Promise<unknown> {
+  if (!(err instanceof ApiError) || err.problem) return err
+  const original = err.original as { response?: { data?: unknown } } | undefined
+  const data = original?.response?.data
+  if (!(data instanceof Blob) || !data.type.includes('json')) return err
+  try {
+    const parsed: unknown = JSON.parse(await data.text())
+    const axiosErr = err.original as AxiosError
+    if (!axiosErr.response) return err
+    axiosErr.response.data = parsed
+    return normalizeApiError(axiosErr)
+  } catch {
+    return err
+  }
 }
 
 /** PATCH a message. The props replace every property of the message. */

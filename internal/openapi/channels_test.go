@@ -752,3 +752,48 @@ func TestChannelPaths_ListProperty(t *testing.T) {
 		t.Errorf("options schema = %s, want %v", got, want)
 	}
 }
+
+// A channel type with a file property offers the multipart post and the
+// file download; one without has neither.
+func TestChannelFilePaths(t *testing.T) {
+	yaml := strings.Replace(channelTestRealtime, `          about: { type: ref, to: [task, note] }
+`, `          about: { type: ref, to: [task, note] }
+          shot: { type: file, max: 2 }
+`, 1)
+	rt, err := realtimecfg.Parse([]byte(yaml), attachmentTestMeta(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := New(attachmentTestMeta(), Config{Title: "T", Version: "1"})
+	g.SetRealtime(func() *realtimecfg.Compiled { return rt })
+	spec := g.Generate()
+
+	room := "/api/v1/tasks/{id}/_channels/room/messages"
+	post := spec.Paths[room].Post
+	if post == nil {
+		t.Fatal("no post")
+	}
+	mp, ok := post.RequestBody.Content["multipart/form-data"]
+	if !ok || mp.Schema.Properties["message"] == nil || mp.Encoding["message"].ContentType != "application/json" {
+		t.Fatalf("room post has no multipart body: %+v", post.RequestBody.Content)
+	}
+	get := spec.Paths[room+"/{seq}/files/{id}"].Get
+	if get == nil {
+		t.Fatal("room has no file download")
+	}
+	for _, code := range []string{"200", "404"} {
+		if _, ok := get.Responses[code]; !ok {
+			t.Errorf("file download lacks %s", code)
+		}
+	}
+	threads := "/api/v1/tasks/{id}/_channels/threads/{name}/messages"
+	if _, ok := spec.Paths[threads].Post.RequestBody.Content["multipart/form-data"]; ok {
+		t.Error("threads has no file property but offers multipart")
+	}
+	if _, ok := spec.Paths[threads+"/{seq}/files/{id}"]; ok {
+		t.Error("threads has no file property but offers a download")
+	}
+	if _, ok := spec.Components.Schemas[messageSchema].Properties["files"]; !ok {
+		t.Error("Message lacks files")
+	}
+}

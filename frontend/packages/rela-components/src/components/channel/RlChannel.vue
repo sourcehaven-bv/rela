@@ -172,6 +172,8 @@ const emit = defineEmits<{
   jump: [seq: number]
   decide: [key: string, from: 'row']
   choose: [key: string]
+  /** A message's file chip asked to save the file. */
+  download: [seq: number, fileId: string]
 }>()
 
 const strings = useMessages()
@@ -294,6 +296,7 @@ const messageOn = {
   action: (s: number, n: string) => emit('action', s, n),
   openRef: (r: ChannelReadableRef, e: MouseEvent) => emit('openRef', r, e),
   jump: (s: number) => jumpTo(s),
+  download: (s: number, id: string) => emit('download', s, id),
 }
 
 /* Scroll handling ------------------------------------------------------- */

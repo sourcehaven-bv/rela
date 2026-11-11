@@ -345,6 +345,9 @@ func eraseRows(ctx context.Context, q Querier, rs []row) error {
 		if _, err := q.Exec(ctx, `DELETE FROM channel_mentions WHERE channel_id = ?`, r.id); err != nil {
 			return err
 		}
+		if _, err := q.Exec(ctx, `DELETE FROM channel_files WHERE channel_id = ?`, r.id); err != nil {
+			return err
+		}
 		if _, err := q.Exec(ctx, `DELETE FROM channel_messages WHERE channel_id = ?`, r.id); err != nil {
 			return err
 		}

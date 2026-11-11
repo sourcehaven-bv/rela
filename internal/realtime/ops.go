@@ -82,7 +82,9 @@ func (s *Service) Edit(ctx context.Context, addr RawAddress, seq int64, props ma
 		return MessageView{}, err
 	}
 	var mplan mentionPlan
-	vp, refs, err := s.checkMessageKeeping(c, mt, props, c.snap.Config.Limits().MessageBytes, kept, &mplan)
+	// An edit keeps the files, so `when:` sees the stored ones.
+	vp, refs, err := s.checkMessageKeeping(c, mt, props, storedCounts(m.Files),
+		c.snap.Config.Limits().MessageBytes, kept, &mplan)
 	if err != nil {
 		return MessageView{}, err
 	}

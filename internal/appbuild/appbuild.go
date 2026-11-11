@@ -1398,6 +1398,7 @@ func collaboratorRefHolders(
 			declarative: c.Declarative, redactor: redactor, writes: c.ACL,
 			// Collaborators carry no entity manager, so nothing promotes.
 			promoter: realtime.NoPromoter{}, outputs: outputs,
+			files: newChannelFileChecker(c.Meta, nil, c.Audit),
 		})
 		if err != nil {
 			return refs, fmt.Errorf("channels: %w", err)
@@ -2166,12 +2167,15 @@ func loadMetamodel(ctx context.Context, cfg Config) (*metamodel.Metamodel, error
 // consumers derive new values: `statemachine.Compile`, `NewEngineFromMetamodel`),
 // and TestSharedBase_AssemblyDoesNotMutateSharedValues pins it.
 type SharedBase struct {
-	cfg       Config
-	opts      options
-	acl       acl.ACL
-	aclPolicy *acl.Policy
-	meta      *metamodel.Metamodel
-	worlds    worlds.Compiled
+	// channelFiles holds the runner of channel file scans; the data-entry
+	// host installs it ([SetChannelFileRunner]), and a reassembly keeps it.
+	channelFiles *channelFileRunners
+	cfg          Config
+	opts         options
+	acl          acl.ACL
+	aclPolicy    *acl.Policy
+	meta         *metamodel.Metamodel
+	worlds       worlds.Compiled
 	// conns is the parsed connections.yaml (TKT-01KZSO), empty when the
 	// file is absent. Parsed here so an invalid file fails the boot.
 	conns tokenstore.Connections
@@ -2263,6 +2267,9 @@ func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
 	next.realtimeLocal = prev.realtimeLocal
 	next.channelHints = prev.channelHints
 	next.dueWake = prev.dueWake
+	if prev.base != nil {
+		next.channelFiles = prev.base.channelFiles
+	}
 	next.storeSchema = prev.storeSchema
 	return &next
 }
@@ -2439,7 +2446,7 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 	return &SharedBase{
 		cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy,
 		meta: meta, worlds: compiledWorlds, conns: conns, realtime: rt, flows: flows,
-		validationMode: mode,
+		validationMode: mode, channelFiles: &channelFileRunners{},
 	}, nil
 }
 
@@ -3139,7 +3146,8 @@ func finishAssembly(
 	s.idpRoles = idpRoles
 	// The channel service promotes through the entity manager, so it is
 	// built once the manager exists.
-	svc, err := buildRealtimeService(s.base, s.store, refs, s.entityManager, s.aclDeclarative, s.fieldReads, s.acl)
+	svc, err := buildRealtimeService(
+		s.base, s.store, refs, s.entityManager, s.aclDeclarative, s.fieldReads, s.acl, s.audit)
 	if err != nil {
 		return nil, err
 	}

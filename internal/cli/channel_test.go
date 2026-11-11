@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -538,4 +539,76 @@ func TestChannelCLI_ListProp(t *testing.T) {
 		"--props-json", `{"body":"x","options":["A","A"]}`)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `property "options": item 2 repeats an earlier item`)
+}
+
+// channelCLIFileRealtime adds a channel type with a file property.
+const channelCLIFileRealtime = `version: 1
+channel_types:
+  shots:
+    attach_to: [item]
+    roles:
+      member: { from: attached }
+    message_types:
+      photo:
+        properties:
+          caption: { type: string }
+          image:   { type: file, max: 2 }
+        post: [member]
+`
+
+func TestChannelCLI_Files(t *testing.T) {
+	p := newChannelProjectWith(t, channelCLIFileRealtime)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "note.txt")
+	require.NoError(t, os.WriteFile(src, []byte("hello file"), 0o600))
+
+	_, err := runChannel(t, p.svc, "alice", "", "channel", "post", p.item, "shots", "photo",
+		"-P", "caption=hi", "--file", "image="+src)
+	require.NoError(t, err)
+	text, err := runChannel(t, p.svc, "alice", "", "channel", "read", p.item, "shots")
+	require.NoError(t, err)
+	assert.Contains(t, text, "  file image: note.txt (text/plain")
+	schemas, err := runChannel(t, p.svc, "alice", "", "channel", "read", p.item, "shots", "--schemas")
+	require.NoError(t, err)
+	assert.Contains(t, schemas, "  image: file, at most 2 of 10485760 bytes\n")
+
+	read, err := runChannel(t, p.svc, "alice", "", "-o", "json", "channel", "read", p.item, "shots")
+	require.NoError(t, err)
+	var view struct {
+		Messages []struct {
+			Seq   int64 `json:"seq"`
+			Files []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"files"`
+		} `json:"messages"`
+	}
+	channelJSONOf(t, read, &view)
+	require.Len(t, view.Messages, 1)
+	require.Len(t, view.Messages[0].Files, 1)
+	f := view.Messages[0].Files[0]
+
+	dst := filepath.Join(dir, "out.txt")
+	_, err = runChannel(t, p.svc, "alice", "", "channel", "file", p.item, "shots",
+		strconv.FormatInt(view.Messages[0].Seq, 10), f.ID, "--to", dst)
+	require.NoError(t, err)
+	data, err := os.ReadFile(dst)
+	require.NoError(t, err)
+	assert.Equal(t, "hello file", string(data))
+
+	_, err = runChannel(t, p.svc, "alice", "", "channel", "file", p.item, "shots",
+		strconv.FormatInt(view.Messages[0].Seq, 10), "nope", "--to", dst)
+	require.Error(t, err)
+
+	for _, tc := range []struct{ name, flag, want string }{
+		{"no equals", "image", "want PROP=PATH"},
+		{"missing file", "image=" + filepath.Join(dir, "absent"), "--file image"},
+		{"undeclared property", "caption=" + src, "no file property"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := runChannel(t, p.svc, "alice", "", "channel", "post", p.item, "shots", "photo", "--file", tc.flag)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
 }

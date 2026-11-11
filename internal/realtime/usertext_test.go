@@ -75,6 +75,7 @@ func denialConstructors() map[string]*DenialError {
 		"invalidCursor":      invalidCursor(),
 		"inboxTooLarge":      inboxTooLarge(),
 		"tooManyMentions":    tooManyMentions(),
+		"fileNotFound":       fileNotFound(),
 		"notPromoting":       notPromoting(),
 		"outputsPending":     outputsPending("the mark is pending"),
 		"readDenied":         readDenied(ct),

@@ -152,6 +152,11 @@ export type ChannelTextKey =
   | 'decisions'
   // Reply buttons of a question's options
   | 'choices'
+  // File fields and file chips
+  | 'chooseFile'
+  | 'chooseFiles'
+  | 'files'
+  | 'downloading'
 
 /**
  * The fixed captions of every component outside the channel set: control
@@ -472,6 +477,10 @@ const CHANNEL_TEXT: Record<ChannelTextKey, string> = {
   sessionContext: 'Session steps',
   decisions: 'Decisions',
   choices: 'Choices',
+  chooseFile: 'Choose file…',
+  chooseFiles: 'Choose files…',
+  files: 'Files',
+  downloading: 'Downloading…',
 }
 
 /**
@@ -605,6 +614,10 @@ export interface Messages {
   channelActionDone: (args: { label: string }) => string
   /** A composer field over its `max`: `At most 140 characters.` */
   channelTooLong: (args: { max: number }) => string
+  /** The remove button of a picked file in the composer: `Remove report.pdf`. */
+  channelRemoveFile: (args: { name: string }) => string
+  /** The download button of a message's file: `Download report.pdf (2 MB)`. */
+  channelDownloadFile: (args: { name: string; size: string }) => string
   /**
    * Announced when messages arrive at the end of the log. `type` and `author`
    * are set when exactly one arrived. Session notices are not counted; see
@@ -907,6 +920,8 @@ export const DEFAULT_MESSAGES: Messages = {
   channelActionPending: ({ label }) => `${label}: pending`,
   channelActionDone: ({ label }) => `${label}: done`,
   channelTooLong: ({ max }) => `At most ${max} characters.`,
+  channelRemoveFile: ({ name }) => `Remove ${name}`,
+  channelDownloadFile: ({ name, size }) => `Download ${name} (${size})`,
   channelNewMessages: ({ count, type, author }) =>
     count === 1 && type ? `${type}${author ? ` from ${author}` : ''}` : `${count} new messages`,
   channelNewNotices: ({ notices, messages }) => `${[...(messages ? [messages] : []), ...notices].join('. ')}.`,

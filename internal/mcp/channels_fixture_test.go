@@ -240,7 +240,7 @@ func (f *channelFixture) deps(t *testing.T, refuseSignals bool) Deps {
 		BindIdentity:  reads.Rebind,
 		Channels: ChannelDeps{
 			Reader: f.svc, Sessions: f.svc, Writer: f.svc, Creator: f.svc, Waker: f.svc, Inbox: f.svc,
-			Marker: f.svc, RefuseSignals: refuseSignals,
+			Marker: f.svc, Files: mustFileOpener(t, f.svc), RefuseSignals: refuseSignals,
 		},
 	}
 }
@@ -357,4 +357,14 @@ func (f *channelFixture) useOutputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.cfg.Store(compiled)
+}
+
+// mustFileOpener is the file reader over svc.
+func mustFileOpener(t *testing.T, svc *realtime.Service) *realtime.FileOpener {
+	t.Helper()
+	o, err := realtime.NewFileOpener(svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return o
 }

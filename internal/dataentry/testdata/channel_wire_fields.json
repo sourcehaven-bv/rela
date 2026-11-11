@@ -98,11 +98,13 @@
     "ttl_seconds"
   ],
   "ChannelPropertySchema": [
+    "accept",
     "enum",
     "label",
     "list",
     "max",
     "max_items",
+    "max_size",
     "name",
     "required",
     "to",
@@ -308,6 +310,7 @@
     "author",
     "edit_until",
     "edited_at",
+    "files",
     "mentions",
     "outputs",
     "props",

@@ -35,7 +35,8 @@ const LIST: ChannelErrorRule = { place: 'toast', then: 'list' }
 const SCHEMA: ChannelErrorRule = { place: 'toast', then: 'schema' }
 
 /**
- * The rule per realtime refusal type (internal/realtime/errors.go).
+ * The rule per realtime refusal type (internal/realtime/errors.go and
+ * files.go).
  * channelErrors.test.ts reads that file and fails when a type is missing.
  *
  * Denials refetch: the button was offered, so the affordances the panel
@@ -51,8 +52,12 @@ export const CHANNEL_ERROR_RULES: Readonly<Record<string, ChannelErrorRule>> = {
   invalid_ref: FORM,
   promote_invalid: FORM,
   face_required: FORM,
+  // A picked file the property's policy refuses (type, size, scan).
+  file_refused: FORM,
   // Gone: the message refetches the page, the channel returns to the list.
   message_not_found: REFETCH,
+  // A download of a file the message no longer holds, or that is hidden.
+  file_not_found: REFETCH,
   channel_not_found: LIST,
   unknown_channel_type: LIST,
   // Only the MCP read_session tool returns it; the SPA reads sessions on the channel.

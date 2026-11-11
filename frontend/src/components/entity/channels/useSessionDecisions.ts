@@ -15,6 +15,7 @@ import type {
 import { fromPropValue } from '@/utils/channelValues'
 import { decisionPendingKey } from 'rela-components/components/channel/channelFields'
 import { problemType } from './channelErrors'
+import type { MessageFileUpload } from '@/api/channels'
 import type { AppDecisionView } from './presetViews'
 import {
   buttonTypesOf,
@@ -91,7 +92,8 @@ export interface DecisionDeps {
     type: string,
     values: Record<string, MessagePropInput>,
     replyTo: number | undefined,
-    expectGeneration: number | undefined
+    expectGeneration: number | undefined,
+    files?: readonly MessageFileUpload[]
   ) => Promise<unknown>
   setPending: (key: string, on: boolean) => void
   /** The composer is sending; a decision waits for it. */
@@ -340,7 +342,8 @@ export function useSessionDecisions(d: DecisionDeps) {
     type: string,
     values: Record<string, MessagePropInput>,
     replyTo: number | undefined,
-    composeKey?: string
+    composeKey?: string,
+    files?: readonly MessageFileUpload[]
   ): Promise<void> {
     const f = formDecision.value
     const generation = f?.messageType === type ? f.generation : undefined
@@ -352,7 +355,11 @@ export function useSessionDecisions(d: DecisionDeps) {
         ? f.compose.preset
         : undefined
     try {
-      await d.post(type, preset ? { ...values, ...preset } : values, replyTo, generation)
+      const sent = preset ? { ...values, ...preset } : values
+      // Files are passed only when there are some, so a plain post keeps
+      // the call it always made.
+      if (files?.length) await d.post(type, sent, replyTo, generation, files)
+      else await d.post(type, sent, replyTo, generation)
     } catch (err) {
       if (generation !== undefined && problemType(err) === 'session_moved') {
         formDecision.value = undefined

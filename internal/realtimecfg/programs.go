@@ -54,7 +54,8 @@ func messageEnv(props map[string]Property) (*predicate.Env, error) {
 }
 
 // messageRecordType is the record type of a message type's properties. A
-// list property is a list of strings.
+// list property is a list of strings. A file property is the number of
+// files the message holds in it.
 func messageRecordType(props map[string]Property) predicate.RecordType {
 	rec := predicate.RecordType{}
 	for name, p := range props {
@@ -63,7 +64,7 @@ func messageRecordType(props map[string]Property) predicate.RecordType {
 			continue
 		}
 		switch p.Type {
-		case PropertyInteger:
+		case PropertyInteger, PropertyFile:
 			rec[name] = predicate.IntType
 		case PropertyBoolean:
 			rec[name] = predicate.BoolType

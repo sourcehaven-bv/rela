@@ -398,6 +398,10 @@ type Message struct {
 	// from [NewMessage.Mentions], replaced by [Store.Edit] and cleared by
 	// [Store.Remove]. The store writes one addressed row per target.
 	Mentions []Mention `json:"mentions,omitempty"`
+	// Files are the files the message holds, set by the store from
+	// [NewMessage.Files]. An edit keeps them; a removal erases their bytes
+	// and clears them. See [File].
+	Files []File `json:"files,omitempty"`
 	// ReplyTarget names the user a reply addressed (see [ReplyTarget]), so
 	// the caller can wake that user without reading the parent.
 	//
@@ -458,6 +462,9 @@ type NewMessage struct {
 	// NoUnread marks a message of a type with `unread: false`; the store
 	// keeps it on [Message.NoUnread], which [Counts] reads.
 	NoUnread bool
+	// Files are the files to store with the message, in the same step
+	// (see [PrepareFiles]).
+	Files []NewFile
 }
 
 // CheckAppendState refuses an append that requires an open channel to one

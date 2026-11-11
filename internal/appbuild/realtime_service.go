@@ -9,6 +9,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -93,7 +94,7 @@ func policyChannelService(s *Services) (*realtime.Service, *acl.Declarative, err
 		meta: s.base.meta, worlds: s.base.worlds, config: realtimeConfigSource{h: s.base.realtime},
 		store: s.Store(), channels: s.channels, local: s.realtimeLocal, dueWake: s.dueWake,
 		declarative: c.declarative, redactor: c.fields.redactor, writes: c.acl, promoter: promoter,
-		outputs: outputs,
+		outputs: outputs, files: newChannelFileChecker(s.base.meta, s.base.channelFiles, s.Audit()),
 	})
 	if err != nil {
 		return nil, nil, err
@@ -129,7 +130,7 @@ func ACLAssignsNoRole(s *Services, user string) bool {
 // outputs go through mgr.
 func buildRealtimeService(
 	base *SharedBase, st store.Store, refs refHolders, mgr *entitymanager.Manager,
-	d *acl.Declarative, redactor visibility.FieldRedactor, writes acl.ACL,
+	d *acl.Declarative, redactor visibility.FieldRedactor, writes acl.ACL, sink audit.Audit,
 ) (*realtime.Service, error) {
 	join := txChannelsFor(st, refs.channels)
 	promoter, err := newManagerPromoter(mgr, join)
@@ -145,6 +146,7 @@ func buildRealtimeService(
 		store: st, channels: refs.channels, local: refs.realtimeLocal, dueWake: refs.dueWake,
 		declarative: d, redactor: redactor,
 		writes: writes, promoter: promoter, outputs: outputs,
+		files: newChannelFileChecker(base.meta, base.channelFiles, sink),
 	})
 	return svc, err
 }
@@ -170,6 +172,8 @@ type realtimeInputs struct {
 	// outputs writes session outputs; [realtime.NoOutputs] where nothing
 	// may write the graph.
 	outputs realtime.OutputWriter
+	// files checks the files posted with a message.
+	files realtime.FileChecker
 }
 
 // newRealtimeService builds the channel service from in, and makes the
@@ -202,6 +206,7 @@ func newRealtimeService(in realtimeInputs) (*realtime.Service, *realtime.Local, 
 		DueWake:  dueWake,
 		Outputs:  in.outputs,
 		Holders:  holderFinder{lookup: holders, world: in.worlds.DefaultWorld()},
+		Files:    in.files,
 	})
 	if err != nil {
 		return nil, nil, err

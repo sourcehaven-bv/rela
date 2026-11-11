@@ -370,11 +370,25 @@ type Message struct {
 	Outputs *ChannelMessageOutputs `json:"outputs,omitempty"`
 	// Mentions are the people and agents the message addresses, as the
 	// caller may see them: a user the caller cannot read is absent.
-	Mentions  []MessageMention `json:"mentions,omitempty"`
-	Actions   []string         `json:"_actions,omitempty"`
-	EditUntil string           `json:"edit_until,omitempty"`
+	Mentions []MessageMention `json:"mentions,omitempty"`
+	// Files are the files posted with the message, of the properties its
+	// type still declares `file`. Download one at
+	// `…/messages/{seq}/files/{id}`.
+	Files     []MessageFile `json:"files,omitempty"`
+	Actions   []string      `json:"_actions,omitempty"`
+	EditUntil string        `json:"edit_until,omitempty"`
 	// ReleaseAfter: see Message.
 	ReleaseAfter string `json:"release_after,omitempty"`
+}
+
+// MessageFile is one file of a message: the `file` property that holds
+// it, its display name, its sniffed MIME type and its size in bytes.
+type MessageFile struct {
+	ID       string `json:"id"`
+	Property string `json:"property"`
+	Name     string `json:"name"`
+	MIME     string `json:"mime"`
+	Size     int64  `json:"size"`
 }
 
 // MessageMention is one target of a message. Text is the code span text
@@ -589,6 +603,11 @@ type ChannelPropertySchema struct {
 	To       []string `json:"to,omitempty"`
 	List     bool     `json:"list,omitempty"`
 	MaxItems int      `json:"max_items,omitempty"`
+	// MaxSize and Accept are set on a file property: the most bytes of one
+	// file, and the MIME types it accepts (empty: any). Max is then the
+	// most files a message holds in it.
+	MaxSize int64    `json:"max_size,omitempty"`
+	Accept  []string `json:"accept,omitempty"`
 }
 
 // ChannelActionSchema describes one message action. PromoteTo is the

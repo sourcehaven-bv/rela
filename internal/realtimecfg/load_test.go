@@ -10,6 +10,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
 
@@ -504,6 +505,9 @@ func TestParse_Invalid(t *testing.T) {
 			"must be at most 5 characters"},
 		{"trigger prop over message_bytes", []replace{{"page_limit: 100", "page_limit: 100\n  message_bytes: 20"}},
 			"triggers.breach-escalated.post.props", "over message_bytes"},
+		{"trigger post type requires a file", []replace{{"summary:  { type: string, required: true }",
+			"summary:  { type: string, required: true }\n          evidence: { type: file, required: true }"}},
+			"triggers.breach-escalated.post.props", "requires a file in property evidence"},
 		{"trigger when_closed", []replace{{"channel: incident-room\n", "channel: incident-room\n    when_closed: drop\n"}},
 			"triggers.breach-escalated.when_closed", "skip or post"},
 	}
@@ -1111,4 +1115,96 @@ func TestParse_ListProperty(t *testing.T) {
 			t.Errorf("max_items got a problem although list: true is written: %v", err)
 		}
 	})
+}
+
+// TestParse_FileProperty pins AC 1 of TKT-BYKOM3V: a file property loads
+// with its limits and policy keys, and each bad declaration is refused at
+// its key.
+func TestParse_FileProperty(t *testing.T) {
+	src := func(persist, props string) string {
+		return "version: 1\nchannel_types:\n  room:\n    attach_to: [datalek]\n    roles: {m: {from: attached}}\n" +
+			"    message_types:\n      say:\n        post: [m]\n" + persist + "        properties:\n" + props
+	}
+	one := func(prop string) string { return src("", "          shot: "+prop+"\n") }
+	const k = "channel_types.room.message_types.say.properties.shot"
+	loads := []struct {
+		name     string
+		prop     string
+		maxFiles int
+		maxSize  int64
+	}{
+		{"defaults", "{ type: file }", 1, realtimelimits.MaxFileBytes},
+		{"declared", "{ type: file, max: 3, max_size: 512KiB, accept: [image/png], scan: off }", 3, 512 << 10},
+		{"bytes", "{ type: file, max_size: 1000 }", 1, 1000},
+		{"ceiling", "{ type: file, max: 4, max_size: 10MiB }", 4, realtimelimits.MaxFileBytes},
+	}
+	for _, tc := range loads {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Parse([]byte(one(tc.prop)), testMeta(t), nil)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			ct, _ := c.ChannelType("room")
+			mt := ct.MessageTypes["say"]
+			p := mt.Properties["shot"]
+			if p.Type != PropertyFile || p.File == nil || p.File.MaxFiles != tc.maxFiles || p.File.MaxSize != tc.maxSize {
+				t.Fatalf("shot = %+v; want a file property with max %d and max_size %d", p, tc.maxFiles, tc.maxSize)
+			}
+			if _, inSchema := mt.PropsSchema().Properties["shot"]; inSchema {
+				t.Error("the props schema lists a file property; files travel beside the props")
+			}
+		})
+	}
+	t.Run("policy keys carried", func(t *testing.T) {
+		c, err := Parse([]byte(one("{ type: file, accept: [application/pdf], scan_cmd: [clamdscan, \"{in}\"], "+
+			"transform: [{image: {reencode: png}}] }")), testMeta(t), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ct, _ := c.ChannelType("room")
+		pol := ct.MessageTypes["say"].Properties["shot"].File.Policy
+		if len(pol.Accept) != 1 || len(pol.ScanCmd) != 2 || len(pol.Transform) != 1 {
+			t.Errorf("policy = %+v; want accept, scan_cmd and transform carried", pol)
+		}
+	})
+	refused := []struct {
+		name, src, key, reason string
+	}{
+		{"max zero", one("{ type: file, max: 0 }"), k + ".max", "must be between 1 and 4 files"},
+		{"max over the cap", one("{ type: file, max: 5 }"), k + ".max", "must be between 1 and 4 files"},
+		{"max_size over the ceiling", one("{ type: file, max_size: 11MiB }"), k + ".max_size", "must be at most 10MiB"},
+		{"max_size garbage", one("{ type: file, max_size: 5MB }"), k + ".max_size", "invalid size"},
+		{"list", one("{ type: file, list: true }"), k + ".list", "only a string property may be a list"},
+		{"to", one("{ type: file, to: [datalek] }"), k + ".to", "only a ref property has to"},
+		{"bad transform", one("{ type: file, transform: [{}] }"), k, "must set exactly one of"},
+		{"accept on a string", one("{ type: string, accept: [image/png] }"), k, "apply to a file property only"},
+		{"max_size on a string", one("{ type: string, max_size: 5MiB }"), k, "apply to a file property only"},
+		{"ephemeral", src("        persist: ephemeral\n", "          shot: { type: file }\n"),
+			"channel_types.room.message_types.say.properties", "a signal is never stored"},
+		{"too many together", src("", "          a: { type: file, max: 3 }\n          b: { type: file, max: 2 }\n"),
+			"channel_types.room.message_types.say.properties", "together allow 5 files"},
+	}
+	for _, tc := range refused {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.src), testMeta(t), nil)
+			assertProblem(t, err, tc.key, tc.reason)
+		})
+	}
+}
+
+func TestProperty_FileValueRefused(t *testing.T) {
+	p := Property{Name: "shot", Type: PropertyFile, File: &FileSpec{MaxFiles: 1}}
+	if _, err := p.Normalize([]any{map[string]any{"id": "x"}}); err == nil {
+		t.Error("a file property took a value from the props")
+	}
+	mt := &MessageType{Name: "say", Properties: map[string]Property{"shot": p}}
+	mt.Properties["shot"] = Property{Name: "shot", Type: PropertyFile, Required: true, File: p.File}
+	if _, err := mt.NormalizeProps(map[string]any{}, 1<<10); err != nil {
+		t.Errorf("a required file property was checked against the props: %v", err)
+	}
+	fields := mt.PredicateFields(nil)
+	mt.SetFileCounts(fields, map[string]int{"shot": 2})
+	if got, ok := fields["shot"].(predicate.Int); !ok || got.Int64() != 2 {
+		t.Errorf("shot binds %v; want 2", got)
+	}
 }

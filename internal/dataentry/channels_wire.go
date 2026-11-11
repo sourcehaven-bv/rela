@@ -168,6 +168,11 @@ func wireMessage(m realtime.MessageView) v1.Message {
 	for _, mv := range m.Mentions {
 		out.Mentions = append(out.Mentions, v1.MessageMention{Text: mv.Text, Kind: mv.Kind, Ref: wireRef(mv.Ref)})
 	}
+	for _, f := range m.Files {
+		out.Files = append(out.Files, v1.MessageFile{
+			ID: f.ID, Property: f.Property, Name: f.Name, MIME: f.MIME, Size: f.Size,
+		})
+	}
 	return out
 }
 

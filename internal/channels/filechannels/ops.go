@@ -22,15 +22,14 @@ import (
 // session, the notice follows the message in the log, and the session
 // audit record is written last (see the package doc).
 func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessage) (channels.Message, error) {
-	if err := k.Validate(); err != nil {
-		return channels.Message{}, err
-	}
-	if err := channels.PrepareAppendStep(nm.Session); err != nil {
-		return channels.Message{}, err
-	}
-	nm, _, err := channels.PrepareMessage(nm)
+	nm, files, staged, err := prepareAppend(&s.disk, k, nm)
 	if err != nil {
 		return channels.Message{}, err
+	}
+	if staged != "" {
+		// After a placed append the directory is gone and the removal
+		// does nothing.
+		defer func() { _ = s.removeAll(staged) }()
 	}
 	unlock, err := s.lock(ctx)
 	if err != nil {
@@ -60,11 +59,22 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 
 	seq := last + 1
 	idx := s.idx(seq)
+	logged := false // the log records are written
 	msg := channels.Message{
 		Seq: seq, Rev: m.bump(idx), Type: nm.Type, Author: nm.Author, At: nm.At, Props: nm.Props,
 		ReplyTo: nm.ReplyTo, SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy, MovedSession: moved,
-		Mentions: nm.Mentions, NoUnread: nm.NoUnread, CreatedChannel: created,
+		Mentions: nm.Mentions, Files: files, NoUnread: nm.NoUnread, CreatedChannel: created,
 	}
+	discard, err := settleFiles(&s.disk, k, m, seq, staged)
+	if err != nil {
+		return channels.Message{}, err
+	}
+	// Runs before unlock: deferred calls run last in, first out.
+	defer func() {
+		if !logged {
+			discard()
+		}
+	}()
 	recs := []segRecord{{idx: idx, rec: encodeLine(line{K: "m", Message: msg})}}
 	if nm.ReplyTo > 0 {
 		recs = append(recs, replyCountRecord(&s.disk, m, parent, parentSeg))
@@ -72,32 +82,20 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 	m.advance(seq, msg.At)
 	var after channels.Channel
 	if moved {
-		var notice channels.Message
-		after, notice, err = moveSession(m, k, nm, msg, move, s.idx(seq), s.idx(seq+1))
-		if err != nil {
+		if after, recs, err = noticeRecord(&s.disk, m, k, nm, msg, move, recs); err != nil {
 			return channels.Message{}, err
 		}
-		recs = append(recs, segRecord{idx: s.idx(notice.Seq), rec: encodeLine(line{K: "m", Message: notice})})
 	}
 	if schedErr := m.scheduleStep(k, nm.Session); schedErr != nil {
 		return channels.Message{}, schedErr
 	}
-	if created {
-		// The create record goes before meta.yaml: a crash in between
-		// leaves a create record for a channel the next append creates
-		// again, so the trail may repeat a create but never misses one.
-		err = appendCreateAudit(&s.disk, k, nm.Author, nm.At)
-		if err != nil {
-			return channels.Message{}, err
-		}
-	}
-	err = s.writeMeta(k, m)
-	if err != nil {
+	if err := writeAppendMeta(&s.disk, k, m, nm, created); err != nil {
 		return channels.Message{}, err
 	}
 	if err := s.appendRecords(k, recs); err != nil {
 		return channels.Message{}, err
 	}
+	logged = true
 	if moved {
 		rec := channels.SessionAudit(k, nm.Session, msg, move, after.Session.Generation)
 		if err := s.appendAudit(k.ID, rec); err != nil {
@@ -110,6 +108,55 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 	}
 	msg.ReplyTarget = appendRows(&s.disk, k, msg, parent)
 	return msg, nil
+}
+
+// prepareAppend validates an append of nm to channel k and stages its
+// files in d before the lock (see files.go). staged is the staging
+// directory, or "" when the message has no files.
+func prepareAppend(d *disk, k channels.Key, nm channels.NewMessage) (
+	_ channels.NewMessage, files []channels.File, staged string, err error,
+) {
+	if verr := k.Validate(); verr != nil {
+		return nm, nil, "", verr
+	}
+	if serr := channels.PrepareAppendStep(nm.Session); serr != nil {
+		return nm, nil, "", serr
+	}
+	if nm, _, err = channels.PrepareMessage(nm); err != nil {
+		return nm, nil, "", err
+	}
+	if files, err = channels.PrepareFiles(nm.Files); err != nil || len(files) == 0 {
+		return nm, files, "", err
+	}
+	staged, err = stageFiles(d, files, nm.Files)
+	return nm, files, staged, err
+}
+
+// noticeRecord moves the session of channel m for the appended message
+// msg and adds the log record of the session notice to recs. It returns
+// the channel after the move.
+func noticeRecord(d *disk, m *meta, k channels.Key, nm channels.NewMessage, msg channels.Message,
+	move channels.SessionMove, recs []segRecord,
+) (channels.Channel, []segRecord, error) {
+	after, notice, err := moveSession(m, k, nm, msg, move, d.idx(msg.Seq), d.idx(msg.Seq+1))
+	if err != nil {
+		return channels.Channel{}, recs, err
+	}
+	return after, append(recs, segRecord{idx: d.idx(notice.Seq), rec: encodeLine(line{K: "m", Message: notice})}), nil
+}
+
+// writeAppendMeta writes the meta.yaml m of channel k after an append of
+// nm, and the create record first when the append created the channel.
+// The create record goes before meta.yaml: a crash in between leaves a
+// create record for a channel the next append creates again, so the trail
+// may repeat a create but never misses one.
+func writeAppendMeta(d *disk, k channels.Key, m *meta, nm channels.NewMessage, created bool) error {
+	if created {
+		if err := appendCreateAudit(d, k, nm.Author, nm.At); err != nil {
+			return err
+		}
+	}
+	return d.writeMeta(k, m)
 }
 
 // appendRows writes the addressed rows of the appended message msg after
@@ -259,18 +306,12 @@ func (s *Store) replyParent(k channels.Key, replyTo int64) (channels.Message, []
 	return parent, seg, nil
 }
 
-// mutate loads message seq of k under the lock, lets change edit it and
-// reserve its rev, writes meta.yaml and then rewrites the segment. A
-// removed message and a message with a pending action are refused.
-func (s *Store) mutate(
-	ctx context.Context, k channels.Key, seq int64,
-	change func(m *meta, msg *channels.Message, idx int64) error,
-) (channels.Message, error) {
-	return s.mutateThen(ctx, k, seq, change, nil)
-}
-
-// mutateThen is mutate with a step after the rewrite, still under the
-// lock. Nil: accepted; mutate passes it.
+// mutateThen loads message seq of k under the lock, lets change edit it
+// and reserve its rev, writes meta.yaml, rewrites the segment and then
+// runs after, still under the lock. A removed message and a message with
+// a pending action are refused.
+//
+// Nil: after accepted; no step runs.
 func (s *Store) mutateThen(
 	ctx context.Context, k channels.Key, seq int64,
 	change func(m *meta, msg *channels.Message, idx int64) error, after func(msg channels.Message),
@@ -371,7 +412,9 @@ func (s *Store) mutateRemove(
 ) (channels.Message, error) {
 	var out channels.Message
 	var auditErr error
-	_, err := s.mutate(ctx, k, seq, func(m *meta, msg *channels.Message, idx int64) error {
+	hadFiles := false
+	_, err := s.mutateThen(ctx, k, seq, func(m *meta, msg *channels.Message, idx int64) error {
+		hadFiles = len(msg.Files) > 0
 		*msg = channels.Message{
 			Seq: msg.Seq, Rev: m.bump(idx), ReplyTo: msg.ReplyTo, ReplyCount: msg.ReplyCount, Removed: &r,
 		}
@@ -386,7 +429,18 @@ func (s *Store) mutateRemove(
 		// The audit record goes first: a removal that is not audited must
 		// not happen, and the record holds nothing the removal would erase.
 		auditErr = s.appendAudit(k.ID, rec)
-		return auditErr
+		if auditErr != nil || !hadFiles {
+			return auditErr
+		}
+		// The bytes go before the segment rewrite (see files.go).
+		return trashFiles(&s.disk, k, seq)
+	}, func(channels.Message) {
+		// Under the lock, as in Delete and Purge: an unlocked walk
+		// could remove the trash between their creating it and moving
+		// a channel into it.
+		if hadFiles {
+			emptyTrash(&s.disk, k)
+		}
 	})
 	return out, err
 }

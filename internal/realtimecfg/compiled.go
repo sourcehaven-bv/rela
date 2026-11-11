@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/flow"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
@@ -562,6 +563,10 @@ const (
 	PropertyDatetime PropertyType = "datetime"
 	PropertyRef      PropertyType = "ref"
 	PropertyEnum     PropertyType = "enum"
+	// PropertyFile holds files. A post sends them beside the properties,
+	// never as a property value; the stored message lists them in its
+	// files, not in its properties.
+	PropertyFile PropertyType = "file"
 )
 
 // Property is one message property.
@@ -583,6 +588,22 @@ type Property struct {
 	List bool
 	// MaxItems is the most items of a list; 0 when List is not set.
 	MaxItems int
+	// File holds the settings of a file property; nil for any other type.
+	File *FileSpec
+}
+
+// FileSpec is the settings of a file property.
+type FileSpec struct {
+	// MaxFiles is the most files one message holds in the property: `max`,
+	// default 1.
+	MaxFiles int
+	// MaxSize is the most bytes of one file, after its transforms:
+	// `max_size`, default and ceiling [realtimelimits.MaxFileBytes].
+	MaxSize int64
+	// Policy carries accept, scan, scan_cmd and transform as an entity
+	// file property declares them, so the attachment policy resolves them
+	// the same way.
+	Policy metamodel.PropertyDef
 }
 
 // TypeName is the property's type as a reason names it: "list of string"

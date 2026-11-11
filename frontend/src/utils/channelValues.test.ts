@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import type { ChannelPropertySchema, ChannelPropertyType, MessagePropValue } from '@/types/channels'
 import {
+  checkFiles,
   codePoints,
   fromPropValue,
   initialValues,
@@ -234,5 +235,109 @@ describe('codePoints', () => {
   it('counts code points, not UTF-16 units', () => {
     expect(codePoints('a😀é')).toBe(3)
     expect('a😀é'.length).toBe(4)
+  })
+})
+
+describe('checkFiles', () => {
+  const MiB = 1024 * 1024
+  function file(name: string, size: number, type = ''): File {
+    const f = new File([], name, { type })
+    // A real body of that size would be slow to build; the check reads size only.
+    Object.defineProperty(f, 'size', { value: size })
+    return f
+  }
+  const shots = prop('file', {
+    name: 'shots',
+    label: 'Shots',
+    max: 2,
+    max_size: MiB,
+    accept: ['image/png', 'image/jpeg'],
+  })
+  const log = prop('file', { name: 'log', label: 'Log' })
+  const body = prop('markdown', { name: 'body', label: 'Body' })
+
+  it('passes the files in property order, one upload per file', () => {
+    const a = file('a.png', 10, 'image/png')
+    const b = file('b.jpg', 10, 'image/jpeg')
+    const l = file('run.log', 10, 'text/plain')
+    expect(checkFiles([body, shots, log], { log: [l], shots: [a, b] })).toEqual({
+      ok: true,
+      uploads: [
+        { property: 'shots', file: a },
+        { property: 'shots', file: b },
+        { property: 'log', file: l },
+      ],
+    })
+  })
+
+  it('asks a required file property for a file', () => {
+    const required = prop('file', { name: 'proof', label: 'Proof', required: true })
+    expect(checkFiles([required], {})).toEqual({ ok: false, errors: { proof: 'is required' } })
+    expect(checkFiles([required], { proof: [file('p.pdf', 1)] }).ok).toBe(true)
+  })
+
+  it('refuses more files than max, and more than one when max is unset', () => {
+    const three = [
+      file('a.png', 1, 'image/png'),
+      file('b.png', 1, 'image/png'),
+      file('c.png', 1, 'image/png'),
+    ]
+    expect(checkFiles([shots], { shots: three })).toEqual({
+      ok: false,
+      errors: { shots: 'may hold at most 2 files' },
+    })
+    expect(checkFiles([log], { log: [file('a', 1), file('b', 1)] })).toEqual({
+      ok: false,
+      errors: { log: 'may hold one file' },
+    })
+  })
+
+  it('refuses a file over max_size, naming it and the limit', () => {
+    expect(checkFiles([shots], { shots: [file('big.png', MiB + 1, 'image/png')] })).toEqual({
+      ok: false,
+      errors: { shots: 'big.png is larger than 1 MB' },
+    })
+    expect(checkFiles([shots], { shots: [file('edge.png', MiB, 'image/png')] }).ok).toBe(true)
+  })
+
+  it('leaves the type to the server, whatever the browser reports', () => {
+    // The server sniffs content; a browser type outside accept is no reason to refuse.
+    expect(checkFiles([shots], { shots: [file('notes.txt', 1, 'text/plain')] }).ok).toBe(true)
+    expect(checkFiles([shots], { shots: [file('raw', 1)] }).ok).toBe(true)
+  })
+
+  it('refuses a post over the server limits as a whole', () => {
+    const many = Array.from({ length: 5 }, (_, i) =>
+      prop('file', { name: `f${i}`, label: `F${i}` })
+    )
+    const five = Object.fromEntries(many.map((p) => [p.name, [file(`${p.name}.txt`, 1)]]))
+    expect(checkFiles(many, five)).toEqual({
+      ok: false,
+      errors: {},
+      error: 'A message may carry at most 4 files.',
+    })
+    const two = many.slice(0, 2)
+    expect(checkFiles(two, { f0: [file('a', 9 * MiB)], f1: [file('b', 8 * MiB)] })).toEqual({
+      ok: false,
+      errors: {},
+      error: 'The files of a message may be at most 16 MB together.',
+    })
+  })
+
+  it('ignores files of a property the type does not declare file', () => {
+    expect(checkFiles([body], { body: [file('x', 1)] })).toEqual({ ok: true, uploads: [] })
+  })
+})
+
+describe('file properties are never props', () => {
+  const attach = prop('file', { name: 'attach', label: 'Attach', required: true })
+  const text = prop('string', { name: 'text', label: 'Text' })
+
+  it('toProps and toEditProps skip them', () => {
+    expect(toProps([attach, text], { text: 'hi' })).toEqual({ ok: true, props: { text: 'hi' } })
+    expect(toEditProps([attach, text], new Set(['text', 'attach']), { text: 'hi' }, {})).toEqual({
+      ok: true,
+      props: { text: 'hi' },
+    })
   })
 })

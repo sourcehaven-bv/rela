@@ -11,6 +11,7 @@ import (
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
 	"github.com/Sourcehaven-BV/rela/internal/mcpwire"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
 )
 
 // RemoteMCP mounts the HTTP MCP endpoint on app, served by the server
@@ -146,8 +147,12 @@ func RemoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps
 	// reads the realtime config holder on every call, so a realtime.yaml
 	// reload applies to the next tool call.
 	if cs := appbuild.ChannelService(svc); cs != nil {
+		files, err := realtime.NewFileOpener(cs)
+		if err != nil { // coverage-ignore: cs is not nil
+			return relamcp.Deps{}, err
+		}
 		deps.Channels = relamcp.ChannelDeps{
-			Reader: cs, Sessions: cs, Writer: cs, Creator: cs, Waker: cs, Inbox: cs, Marker: cs,
+			Reader: cs, Sessions: cs, Writer: cs, Creator: cs, Waker: cs, Inbox: cs, Marker: cs, Files: files,
 		}
 	}
 	return deps, nil

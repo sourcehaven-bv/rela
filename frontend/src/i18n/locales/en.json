@@ -294,6 +294,12 @@
       "listed": "must be one of the listed values",
       "maxChars": "must be at most {max} characters",
       "unknownType": "has an unknown type"
+    },
+    "files": {
+      "tooMany": "may hold one file | may hold at most {n} files",
+      "tooLarge": "{name} is larger than {max}",
+      "postTooMany": "A message may carry at most {max} files.",
+      "postTooLarge": "The files of a message may be at most {max} together."
     }
   },
   "history": {

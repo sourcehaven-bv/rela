@@ -1,4 +1,6 @@
 import { t } from '@/i18n'
+import { MAX_POST_FILE_BYTES, MAX_POST_FILES, type MessageFileUpload } from '@/api/channels'
+import { formatBytes } from '@/utils/format'
 import type { ChannelPropertySchema, MessagePropInput, MessagePropValue } from '@/types/channels'
 
 /**
@@ -27,6 +29,9 @@ import type { ChannelPropertySchema, MessagePropInput, MessagePropValue } from '
  * the composer does not render (a `hidden:` field, or one the presentation
  * leaves out) through unchanged, and leaves out a ref the caller cannot
  * read, which the server then keeps as stored.
+ *
+ * A `file` property is never a prop: its files go in the post's multipart
+ * parts (checkFiles), and an edit leaves them as they are.
  */
 
 /** A composer field's raw value: input text, or a checkbox state. */
@@ -159,6 +164,7 @@ export function toProps(
   const out: Record<string, MessagePropInput> = {}
   const errors: Record<string, string> = {}
   for (const p of props) {
+    if (p.type === 'file') continue
     const c = toPropValue(p, values[p.name])
     if (!c.ok) errors[p.name] = c.error
     else if (c.value !== undefined) out[p.name] = c.value
@@ -229,6 +235,7 @@ export function toEditProps(
   const out: Record<string, MessagePropInput> = {}
   const errors: Record<string, string> = {}
   for (const p of props) {
+    if (p.type === 'file') continue
     const stored = current?.[p.name]
     if (!rendered.has(p.name)) {
       const carried = carryProp(p, stored)
@@ -274,4 +281,65 @@ export function fromPropValue(
     default:
       return typeof value === 'string' ? value : undefined
   }
+}
+
+export type CheckedFiles =
+  | { ok: true; uploads: MessageFileUpload[] }
+  | { ok: false; errors: Record<string, string>; error?: string }
+
+/**
+ * Checks the files picked for a new message against what the schema says,
+ * so a post the server would refuse is not uploaded first: a required
+ * property holds a file, a property at most `max` files (unset: one), each
+ * file at most `max_size` bytes, and the post at most MAX_POST_FILES files
+ * and MAX_POST_FILE_BYTES bytes together.
+ *
+ * The type is not checked here. The server sniffs each file's content,
+ * which often disagrees with the type the browser reports (a .csv the
+ * browser calls text/csv sniffs as text/plain, a .docx as
+ * application/zip), so only the server can judge `accept`. Field errors
+ * are keyed by property name; a limit of the whole post is `error`.
+ */
+export function checkFiles(
+  props: readonly ChannelPropertySchema[],
+  files: Readonly<Record<string, readonly File[]>> | undefined
+): CheckedFiles {
+  const uploads: MessageFileUpload[] = []
+  const errors: Record<string, string> = {}
+  for (const p of props) {
+    if (p.type !== 'file') continue
+    const list = files?.[p.name] ?? []
+    const max = p.max && p.max > 0 ? p.max : 1
+    if (!list.length) {
+      if (p.required) errors[p.name] = t('channels.value.required')
+      continue
+    }
+    if (list.length > max) {
+      errors[p.name] = t('channels.files.tooMany', max)
+      continue
+    }
+    for (const file of list) {
+      if (p.max_size && file.size > p.max_size) {
+        errors[p.name] = t('channels.files.tooLarge', {
+          name: file.name,
+          max: formatBytes(p.max_size),
+        })
+        break
+      }
+      uploads.push({ property: p.name, file })
+    }
+  }
+  if (Object.keys(errors).length) return { ok: false, errors }
+  if (uploads.length > MAX_POST_FILES) {
+    return { ok: false, errors, error: t('channels.files.postTooMany', { max: MAX_POST_FILES }) }
+  }
+  const total = uploads.reduce((n, u) => n + u.file.size, 0)
+  if (total > MAX_POST_FILE_BYTES) {
+    return {
+      ok: false,
+      errors,
+      error: t('channels.files.postTooLarge', { max: formatBytes(MAX_POST_FILE_BYTES) }),
+    }
+  }
+  return { ok: true, uploads }
 }

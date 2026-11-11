@@ -257,6 +257,10 @@ const CHANNEL_TEXT_NL: Record<ChannelTextKey, string> = {
   sessionContext: 'Stappen van de sessie',
   decisions: 'Beslissingen',
   choices: 'Keuzes',
+  chooseFile: 'Bestand kiezen…',
+  chooseFiles: 'Bestanden kiezen…',
+  files: 'Bestanden',
+  downloading: 'Downloaden…',
 }
 
 export const NL_MESSAGES: Messages = {
@@ -330,6 +334,8 @@ export const NL_MESSAGES: Messages = {
   channelActionPending: ({ label }) => `${label}: in afwachting`,
   channelActionDone: ({ label }) => `${label}: klaar`,
   channelTooLong: ({ max }) => `Hoogstens ${max} tekens.`,
+  channelRemoveFile: ({ name }) => `${name} verwijderen`,
+  channelDownloadFile: ({ name, size }) => `${name} downloaden (${size})`,
   channelNewMessages: ({ count, type, author }) =>
     count === 1 && type
       ? `${type}${author ? ` van ${author}` : ''}`

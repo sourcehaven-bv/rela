@@ -6,9 +6,11 @@
 //
 //	<root>/<b32(id)>/<b32(face)|_>/<type>/<name|_>/meta.yaml
 //	                                              /log-0000.jsonl ...
+//	                                              /files/<seq>/<file id>
 //	<root>/_audit/<b32(id)>.jsonl
 //	<root>/_types/records.yaml
 //	<root>/~detached/<b32(id)>-<stamp>/...
+//	<root>/~staging/<name>/<file id>
 //
 // b32 is lowercase unpadded base32. It keeps an entity id that differs
 // only in case apart on a case-insensitive filesystem (APFS, NTFS), and its
@@ -132,14 +134,14 @@ type Locker interface {
 // ConfirmTombstone, Tombstones, Purge and DropTypeRecord. 27 -> 29
 // (TKT-INM3AZ): SetSession and ListSessionsDue. 29 -> 30 (TKT-ZZ4PNX):
 // ListWaiting. 30 -> 33 (TKT-2B2AIA): SetRead, Reads and ListReads. 33 ->
-// 34 (TKT-6RXAC0): ListAddressed. 34 -> 35 (TKT-V05706X): GetMessages. The
-// exported methods are the mandated [channels.Store] interface, so this is
-// a required-interface exception rather than a ratchet target. Helpers
-// stay free functions. The total crossed 40 with the three read marker
-// methods; it is the same exception.
+// 34 (TKT-6RXAC0): ListAddressed. 34 -> 35 (TKT-V05706X): GetMessages. 35
+// -> 36 (TKT-BYKOM3V): OpenFile. The exported methods are the mandated
+// [channels.Store] interface, so this is a required-interface exception
+// rather than a ratchet target. Helpers stay free functions. The total
+// crossed 40 with the three read marker methods; it is the same exception.
 //
-//plimsoll:max-exported-methods=35
-//plimsoll:max-methods=46
+//plimsoll:max-exported-methods=36
+//plimsoll:max-methods=47
 type Store struct {
 	disk
 	locker Locker

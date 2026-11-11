@@ -56,6 +56,8 @@ type Deps struct {
 	// Holders finds the anchors whose role property names the caller, for
 	// the inbox.
 	Holders HolderFinder
+	// Files checks the files posted with a message.
+	Files FileChecker
 }
 
 // Service is the channel service.
@@ -77,6 +79,7 @@ type Service struct {
 	dueWake  *DueWake
 	outputs  outputEngine
 	holders  HolderFinder
+	files    FileChecker
 	// bounds are the inbox ceilings; a test lowers them on its own service.
 	bounds inboxBounds
 }
@@ -106,6 +109,8 @@ func New(d Deps) (*Service, error) {
 		return nil, errNil("Outputs")
 	case d.Holders == nil:
 		return nil, errNil("Holders")
+	case d.Files == nil:
+		return nil, errNil("Files")
 	}
 	if isNoPromoter(d.Promoter) && declaresPromote(d.Config.Load().Config) {
 		slog.Warn("realtime: realtime.yaml declares promoting actions, but this process cannot promote; " +
@@ -114,6 +119,7 @@ func New(d Deps) (*Service, error) {
 	return &Service{
 		store: d.Store, cfg: d.Config, access: d.Access, anchors: d.Anchors, refs: d.Refs,
 		local: d.Local, clock: d.Local.clock, promoter: d.Promoter, dueWake: d.DueWake, holders: d.Holders,
+		files:   d.Files,
 		bounds:  defaultInboxBounds(),
 		outputs: outputEngine{store: d.Store, cfg: d.Config, writer: d.Outputs, local: d.Local, clock: d.Local.clock},
 	}, nil
@@ -361,6 +367,9 @@ type PostInput struct {
 	// process that receives it, so nobody would see one posted there; such
 	// a post is refused with 422 signals_not_kept, after authorization.
 	LogOnly bool
+	// Files are posted with the message, each in a `file` property of its
+	// type. A signal type holds none (realtimecfg refuses the property).
+	Files []FileInput
 }
 
 // PostResult is a posted message. A log message has Message set. An
@@ -383,8 +392,10 @@ type PostResult struct {
 // message type and the shape of [PostInput.ExpectGeneration], a post role
 // of the message type, a transport that keeps the type (see
 // [PostInput.LogOnly]), an open channel, the session state (`in:`), the
-// session generation, the rate limit, the properties, the type's `when:`,
-// the refs. A denied caller is not charged a token, and neither is a
+// session generation, the rate limit (and the file rate for a post with
+// files), the shape of the files, the properties, the type's `when:`, the
+// refs, then each file's policy. A file property counts as its number of
+// files in `when:` and in transition guards. A denied caller is not charged a token, and neither is a
 // request whose type or expect_generation is unusable; an invalid message
 // is. The store checks the session state and
 // generation again under its lock (see [admitPost]); a refusal there,
@@ -420,20 +431,20 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 	if e := generationRefusal(c.ct.Session(), sessionChannel(c.head, c.now), in.ExpectGeneration); e != nil {
 		return PostResult{}, sessionMoved(e)
 	}
-	if err := s.local.limiter.take(c.now, bucketIdentity(c.p), c.key, opPostPfx+mt.Name,
-		postRate(c.snap.Config.Limits(), mt)); err != nil {
+	if err := takePostTokens(s.local.limiter, c, mt, len(in.Files) > 0); err != nil {
 		return PostResult{}, err
 	}
-	maxBytes := c.snap.Config.Limits().MessageBytes
-	if ephemeral {
-		maxBytes = min(maxBytes, realtimelimits.MaxEphemeralBytes)
+	if err := checkFileShape(mt, in.Files); err != nil {
+		return PostResult{}, err
 	}
+	counts := inputCounts(in.Files)
+	maxBytes := postMaxBytes(c, ephemeral)
 	// A signal is never stored, so it addresses no one.
 	var mplan *mentionPlan
 	if !ephemeral {
 		mplan = &mentionPlan{}
 	}
-	vp, refs, err := s.checkMessageKeeping(c, mt, in.Props, maxBytes, nil, mplan)
+	vp, refs, err := s.checkMessageKeeping(c, mt, in.Props, counts, maxBytes, nil, mplan)
 	if err != nil {
 		return PostResult{}, err
 	}
@@ -444,11 +455,20 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 	if len(targets) > channels.MaxMentions {
 		return PostResult{}, tooManyMentions()
 	}
+	files, err := checkFiles(c, s.files, mt, in.Files)
+	if err != nil {
+		return PostResult{}, err
+	}
+	if len(files) > 0 {
+		// A scan or transform may take a while; the message is stamped
+		// when its files are checked, not when the request arrived.
+		c.now = s.clock()
+	}
 	err = s.record(c)
 	if err != nil {
 		return PostResult{}, err
 	}
-	sp := newSessionPost(c.ctx, c.ct, mt, vp.props, c.now, poster{roles: c.transitionRoles(mt)}, "",
+	sp := newSessionPost(c.ctx, c.ct, mt, vp.props, counts, c.now, poster{roles: c.transitionRoles(mt)}, "",
 		in.ExpectGeneration)
 	plan, err := s.precheckOutputs(c, mt, sp)
 	if err != nil {
@@ -459,25 +479,64 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 	}
 	m, err := s.store.Append(c.ctx, c.key, channels.NewMessage{
 		Type: mt.Name, Author: authorOf(c.p), At: c.now, Props: vp.props, ReplyTo: in.ReplyTo, Session: sp.step,
-		MarkRead: true, Mentions: targets, NoUnread: mt.NoUnread,
+		MarkRead: true, Mentions: targets, NoUnread: mt.NoUnread, Files: files,
 	})
 	sp.logGuardFailure(c.ctx)
 	if err != nil {
 		return PostResult{}, appendRefusal(c, mt, err)
 	}
-	noteDue(s.dueWake, sp.step)
+	return afterPost(s, c, m, sp.step, plan, refs), nil
+}
+
+// afterPost finishes a stored post: it notes the session's due time and
+// the posted message, then renders the result. When the message moved a
+// marked session, it runs the outputs inline and reads the session again
+// once they have finished.
+func afterPost(
+	s *Service, c *call, m channels.Message, step *channels.SessionStep, plan *outputPlan,
+	refs map[string]RefView,
+) PostResult {
+	noteDue(s.dueWake, step)
 	s.local.notePosted(c, m)
 	v := rendererWith(c, refs).message(m)
-	out := PostResult{Message: &v, Session: postedSession(c, sp.step)}
-	if plan.marked && sp.step.Outcome.Moved {
-		out.Outputs = s.runInline(c, sp.step.Outcome.Notice, plan)
+	out := PostResult{Message: &v, Session: postedSession(c, step)}
+	if plan.marked && step.Outcome.Moved {
+		out.Outputs = s.runInline(c, step.Outcome.Notice, plan)
 		if out.Outputs != nil && out.Outputs.Status != OutputsPending {
 			// The on_final close may have closed the channel, and a set
 			// may have handed a role to someone else.
 			out.Session = s.sessionAfterOutputs(c, out.Session, wroteRoleProperty(c.ct, out.Outputs))
 		}
 	}
-	return out, nil
+	return out
+}
+
+// postMaxBytes is the size limit of a posted message: the configured
+// message size, and at most the ephemeral cap for an ephemeral message.
+func postMaxBytes(c *call, ephemeral bool) int {
+	maxBytes := c.snap.Config.Limits().MessageBytes
+	if ephemeral {
+		maxBytes = min(maxBytes, realtimelimits.MaxEphemeralBytes)
+	}
+	return maxBytes
+}
+
+// takePostTokens charges the rate limits of a post: the message type's
+// post rate, and for a post with files the channel's file rate and then
+// the identity's file rate across channels. It stops at the first refusal.
+func takePostTokens(l *limiter, c *call, mt *realtimecfg.MessageType, hasFiles bool) error {
+	if err := l.take(c.now, bucketIdentity(c.p), c.key, opPostPfx+mt.Name,
+		postRate(c.snap.Config.Limits(), mt)); err != nil {
+		return err
+	}
+	if !hasFiles {
+		return nil
+	}
+	if err := l.take(c.now, bucketIdentity(c.p), c.key, opFiles, realtimelimits.FileRate); err != nil {
+		return err
+	}
+	// The zero key is the identity's bucket across channels.
+	return l.take(c.now, bucketIdentity(c.p), channels.Key{}, opFiles, realtimelimits.FileIdentityRate)
 }
 
 // appendRefusal maps a failed append of a post: a session precondition
@@ -618,18 +677,19 @@ func (c *call) requireOpen() error {
 // does not resolve is no error: it is just not a target. An edit passes
 // the stored refs it keeps in kept (property name to id; see
 // [Service.Edit]): a kept ref skips the readability check, since the
-// caller did not choose it.
+// caller did not choose it. counts are the message's files per property,
+// for `when:`.
 //
-// Nil: kept and plan are accepted and mean none.
+// Nil: counts, kept and plan are accepted and mean none.
 func (s *Service) checkMessageKeeping(
-	c *call, mt *realtimecfg.MessageType, props map[string]any, maxBytes int, kept map[string]string,
-	plan *mentionPlan,
+	c *call, mt *realtimecfg.MessageType, props map[string]any, counts map[string]int, maxBytes int,
+	kept map[string]string, plan *mentionPlan,
 ) (validProps, map[string]RefView, error) {
 	vp, err := validateProps(mt, props, maxBytes)
 	if err != nil {
 		return validProps{}, nil, err
 	}
-	if !whenHolds(c.ctx, mt, vp.props, c.now) {
+	if !whenHolds(c.ctx, mt, vp.props, counts, c.now) {
 		return validProps{}, nil, forbidden(TypePostDenied,
 			"the message does not meet the when: condition of "+mt.Name,
 			"channel_types."+c.ct.Name+".message_types."+mt.Name+".when")

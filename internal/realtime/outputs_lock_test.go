@@ -204,7 +204,7 @@ func TestSessionBranches_GateRefusesOtherEntry(t *testing.T) {
 			t.Parallel()
 			ct, _ := testCompiled(t, branchOutputsRealtime(tc.goB)).ChannelType("review")
 			gate := &outputGate{}
-			decide := sessionDecider(context.Background(), ct.Session(), ct.MessageTypes["go"], props(), time.Now(),
+			decide := sessionDecider(context.Background(), ct.Session(), ct.MessageTypes["go"], ct.MessageTypes["go"].PredicateFields(props()), time.Now(),
 				poster{roles: map[string]bool{}}, &guardFailure{}, gate)
 
 			// The pre-check: count 1, so entry A (to working) applies.

@@ -7265,6 +7265,13 @@ body:
                         "items": {
                           "type": "object",
                           "properties": {
+                            "accept": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "MIME types a file property accepts; absent for any"
+                            },
                             "enum": {
                               "type": "string",
                               "description": "The schema.yaml enum type of an enum property"
@@ -7279,11 +7286,15 @@ body:
                             },
                             "max": {
                               "type": "integer",
-                              "description": "Most characters (Unicode code points) of a string or markdown value"
+                              "description": "Most characters (Unicode code points) of a string or markdown value; for a file property, the most files a message holds in it"
                             },
                             "max_items": {
                               "type": "integer",
                               "description": "Most items of a list property"
+                            },
+                            "max_size": {
+                              "type": "integer",
+                              "description": "Most bytes of one file of a file property"
                             },
                             "name": {
                               "type": "string"
@@ -7308,7 +7319,8 @@ body:
                                 "date",
                                 "datetime",
                                 "ref",
-                                "enum"
+                                "enum",
+                                "file"
                               ]
                             },
                             "values": {

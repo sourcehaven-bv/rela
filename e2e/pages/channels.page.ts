@@ -1,5 +1,13 @@
+import * as fs from 'fs';
 import { type Page, type Locator, expect } from '@playwright/test';
 import { BasePage } from './base.page';
+
+/** A file to pick or upload: its name, type and bytes. */
+export interface UploadFile {
+  name: string;
+  mimeType: string;
+  buffer: Buffer;
+}
 
 /**
  * The channels panel on an entity page (TKT-91BK6F), as one user sees it.
@@ -341,6 +349,95 @@ export class ChannelsPage extends BasePage {
   async expectReply(quoted: string, text: string, timeout = 15_000) {
     const row = this.messages.filter({ has: this.page.locator('.rl-channel-message__quote', { hasText: quoted }) });
     await expect(row.filter({ hasText: text })).toHaveCount(1, { timeout });
+  }
+
+  // --- Message files -------------------------------------------------------
+
+  /**
+   * Picks `file` in the composer's file field `field` through the file
+   * chooser its button opens, as a user does.
+   */
+  async attachFile(field: string, file: UploadFile) {
+    const chooser = this.page.waitForEvent('filechooser');
+    await this.composer.getByRole('button', { name: field, exact: true }).click();
+    await (await chooser).setFiles(file);
+  }
+
+  /** The composer lists the picked file `name`. */
+  async expectPickedFile(name: string) {
+    await expect(this.composer.getByRole('button', { name: `Remove ${name}`, exact: true })).toBeVisible();
+  }
+
+  /** The composer shows `text`, as a field error or the form's error. */
+  async expectComposerError(text: string | RegExp, timeout = 15_000) {
+    await expect(this.composer).toContainText(text, { timeout });
+  }
+
+  /** The composer's form-level error banner shows `text`. */
+  async expectComposerAlert(text: string | RegExp, timeout = 15_000) {
+    await expect(this.composer.getByRole('alert')).toContainText(text, { timeout });
+  }
+
+  /** The download button of the file `name` on the message holding `text`. */
+  private fileChip(text: string, name: string): Locator {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return this.messages
+      .filter({ hasText: text })
+      .getByRole('button', { name: new RegExp(`^Download ${escaped} \\(`) });
+  }
+
+  /** The message holding `text` shows a chip for the file `name`, with its size. */
+  async expectFileChip(text: string, name: string, timeout = 15_000) {
+    await expect(this.fileChip(text, name)).toBeVisible({ timeout });
+    await expect(this.fileChip(text, name)).toContainText(name);
+  }
+
+  /** The message holding `text` shows a loaded image preview, or none. */
+  async expectImagePreview(text: string, shown = true, timeout = 15_000) {
+    const thumb = this.messages.filter({ hasText: text }).locator('img.rl-channel-message__thumb');
+    if (!shown) {
+      await expect(thumb).toHaveCount(0, { timeout });
+      return;
+    }
+    await expect(thumb).toBeVisible({ timeout });
+    await expect
+      .poll(() => thumb.evaluate((img) => (img as HTMLImageElement).naturalWidth), { timeout })
+      .toBeGreaterThan(0);
+  }
+
+  /**
+   * Clicks the download button of the file `name` on the message holding
+   * `text`, and returns the saved file's name and bytes.
+   */
+  async downloadFile(text: string, name: string): Promise<{ name: string; bytes: Buffer }> {
+    const download = this.page.waitForEvent('download');
+    await this.fileChip(text, name).click();
+    const d = await download;
+    const file = await d.path();
+    return { name: d.suggestedFilename(), bytes: fs.readFileSync(file) };
+  }
+
+  /**
+   * Posts a message with files over the API as this page's user, as the
+   * web app does: a multipart body with the `message` JSON part first and
+   * one `file:<property>` part per file. Returns the status and the body.
+   */
+  async postFilesOverApi(
+    plural: string,
+    id: string,
+    channelType: string,
+    type: string,
+    props: Record<string, unknown>,
+    files: Record<string, UploadFile>,
+  ): Promise<{ status: number; body: Record<string, unknown> }> {
+    const origin = new URL(this.page.url()).origin;
+    const multipart: Record<string, string | UploadFile> = { message: JSON.stringify({ type, props }) };
+    for (const [property, file] of Object.entries(files)) multipart[`file:${property}`] = file;
+    const resp = await this.page.request.post(`${origin}/api/v1/${plural}/${id}/_channels/${channelType}/messages`, {
+      multipart,
+      headers: { Origin: origin },
+    });
+    return { status: resp.status(), body: (await resp.json()) as Record<string, unknown> };
   }
 
   // --- Inbox (TKT-9YRRM5) ---------------------------------------------------

@@ -46,6 +46,10 @@ const (
 func (mt *MessageType) PropsSchema() PropsSchema {
 	out := PropsSchema{Type: "object", Properties: make(map[string]PropSchema, len(mt.Properties))}
 	for name, p := range mt.Properties {
+		if p.Type == PropertyFile {
+			// Files travel beside the props, never as a prop value.
+			continue
+		}
 		out.Properties[name] = p.schema()
 		if p.Required {
 			out.Required = append(out.Required, name)
@@ -85,6 +89,7 @@ func (p Property) schema() PropSchema {
 		s.Description = joinDescription(p.Label, ref)
 	case PropertyString, PropertyMarkdown:
 		s.MaxLength = p.Max
+	case PropertyFile: // left out of props_schema by the caller
 	}
 	return s
 }

@@ -294,6 +294,12 @@
       "listed": "moet een van de getoonde waarden zijn",
       "maxChars": "mag hoogstens {max} tekens lang zijn",
       "unknownType": "heeft een onbekend type"
+    },
+    "files": {
+      "tooMany": "mag één bestand bevatten | mag hoogstens {n} bestanden bevatten",
+      "tooLarge": "{name} is groter dan {max}",
+      "postTooMany": "Een bericht mag hoogstens {max} bestanden meenemen.",
+      "postTooLarge": "De bestanden van een bericht mogen samen hoogstens {max} zijn."
     }
   },
   "history": {

@@ -10,7 +10,7 @@
  * panel's tests and this module's tests pin the same mapping.
  */
 import { t } from '@/i18n'
-import { formatDate, formatDatetime } from '@/utils/format'
+import { formatBytes, formatDate, formatDatetime } from '@/utils/format'
 import {
   renderMessageMarkdown,
   type MessageMentionLink,
@@ -45,6 +45,7 @@ import type {
   ChannelEditing,
   ChannelEnumOption,
   ChannelEphemeralView,
+  ChannelFileView,
   ChannelGroupView,
   ChannelLifecycleDef,
   ChannelMessageDisplay,
@@ -59,6 +60,7 @@ import type {
 } from 'rela-components/components/channel/types'
 import { resolveChannelFields } from 'rela-components/components/channel/channelFields'
 import { applyOptions, endTone, presetViews, type AppDecisionView } from './presetViews'
+import { isPreviewable } from './useChannelFiles'
 
 /** The longest reply excerpt, in code points. */
 export const EXCERPT_MAX = 80
@@ -107,6 +109,11 @@ export interface ChannelViewContext {
   world?: string
   /** The channel type's session, for the state labels in session notices. */
   session?: ChannelSessionSchema
+  /**
+   * The object URL of a file's loaded preview, if any (useChannelFiles). It
+   * returns one only for an image type that may render inline.
+   */
+  filePreview?: (seq: number, fileId: string) => string | undefined
 }
 
 /**
@@ -248,6 +255,7 @@ export function messageView(
   if (m.action) {
     view.action = { name: m.action.name, status: m.action.status, promoted: m.action.promoted }
   }
+  if (m.files?.length) view.files = fileViews(m, ctx)
   if (!mt || !m.props) return view
   const html: Record<string, string> = {}
   const text: Record<string, string> = {}
@@ -262,6 +270,17 @@ export function messageView(
   if (Object.keys(html).length) view.html = html
   if (Object.keys(text).length) view.text = text
   return view
+}
+
+/** The chips of a message's files: name, size, and a loaded preview. */
+function fileViews(m: Message, ctx: ChannelViewContext): ChannelFileView[] {
+  return (m.files ?? []).map((f) => {
+    const view: ChannelFileView = { id: f.id, name: f.name, size: formatBytes(f.size) }
+    // Checked here too, so no other type is drawn inline whatever the lookup holds.
+    const url = isPreviewable(f.mime) ? ctx.filePreview?.(m.seq, f.id) : undefined
+    if (url) view.previewUrl = url
+    return view
+  })
 }
 
 /** The label of a session state, or its name when the descriptor has no such state. */
