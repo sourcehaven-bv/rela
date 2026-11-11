@@ -64,11 +64,16 @@ func (c *RemotePullCmd) run(
 
 func writeRemoteReport(w io.Writer, r remotesync.Report) error {
 	var b strings.Builder
-	verb := "Pulled"
-	if r.DryRun {
-		verb = "Dry run of a pull"
+	verb := "Pulled from"
+	switch {
+	case r.DryRun && r.Pushed != nil:
+		verb = "Dry run of a sync with"
+	case r.DryRun:
+		verb = "Dry run of a pull from"
+	case r.Pushed != nil:
+		verb = "Synced with"
 	}
-	fmt.Fprintf(&b, "%s from remote %s.\n", verb, r.Remote)
+	fmt.Fprintf(&b, "%s remote %s.\n", verb, r.Remote)
 	if r.Refused != "" {
 		fmt.Fprintf(&b, "Refused: %s\n", reconclient.Sanitize(r.Refused))
 	}
@@ -79,6 +84,13 @@ func writeRemoteReport(w io.Writer, r remotesync.Report) error {
 	}
 	counts("Entities", r.Entities)
 	counts("Relations", r.Relations)
+	if p := r.Pushed; p != nil {
+		fmt.Fprintf(&b, "Pushed: %d created, %d updated, %d conflicts, %d refused, %d deferred, %d failed\n",
+			p.Created, p.Updated, p.Conflicts, p.Refused, p.Deferred, p.Failed)
+	}
+	if r.Held > 0 {
+		fmt.Fprintf(&b, "Held on the conflict list: %d (see rela remote conflicts %s)\n", r.Held, shown(r.Remote))
+	}
 	if r.Gone > 0 {
 		fmt.Fprintf(&b, "Gone from the source: %d\n", r.Gone)
 	}

@@ -14,6 +14,11 @@ type Report struct {
 	Waiting   int    `json:"waiting,omitempty"`
 	Entities  Counts `json:"entities"`
 	Relations Counts `json:"relations"`
+	// Pushed counts what a remote with push sent to the remote.
+	Pushed *PushCounts `json:"pushed,omitempty"`
+	// Held is how many entries the remote's conflict list holds after the
+	// run. `rela remote conflicts` lists them.
+	Held int `json:"held"`
 	// Skipped lists the source relation types the source refused to
 	// compare. Their rows are left alone.
 	Skipped []string `json:"skipped,omitempty"`
@@ -43,6 +48,25 @@ type Counts struct {
 	Failed int `json:"failed"`
 }
 
+// PushCounts are the outcomes of the push of a remote with push.
+type PushCounts struct {
+	// Created rows are new local rows the remote now has too.
+	Created int `json:"created"`
+	// Updated rows had local changes the remote accepted.
+	Updated int `json:"updated"`
+	// Conflicts are rows the remote changed again during the push, twice;
+	// they are compared again on the next run.
+	Conflicts int `json:"conflicts"`
+	// Refused rows were refused by the remote and are held on the conflict
+	// list.
+	Refused int `json:"refused"`
+	// Deferred rows wait for the next run: over max_fetch or max_bytes, or
+	// gone from the remote during the run.
+	Deferred int `json:"deferred"`
+	// Failed rows hit an error that may pass; they are tried again.
+	Failed int `json:"failed"`
+}
+
 // Issue is one row that was not applied as the source has it.
 type Issue struct {
 	Kind    string `json:"kind"`
@@ -60,4 +84,5 @@ const (
 	IssueRejected = "rejected"
 	IssueKept     = "kept"
 	IssueFailed   = "failed"
+	IssueRefused  = "refused"
 )

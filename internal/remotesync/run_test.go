@@ -108,13 +108,24 @@ func TestRun_ConflictLeavesRowAndAppliesOthers(t *testing.T) {
 	src.ents["R1"].Props = map[string]any{"title": "Theirs", "state": "open"}
 	src.ents["C1"].Props = map[string]any{"name": "Authn"}
 
-	for range 2 { // the conflict stays until someone resolves it
-		rep := pull(t, tg, m, src, Options{})
-		if rep.Entities.Conflicts != 1 || len(rep.Issues) != 1 || rep.Issues[0].Kind != IssueConflict ||
-			rep.Issues[0].Fields[0] != "title" {
+	rep := pull(t, tg, m, src, Options{})
+	if rep.Entities.Conflicts != 1 || rep.Held != 1 || len(rep.Issues) != 1 || rep.Issues[0].Kind != IssueConflict ||
+		rep.Issues[0].Fields[0] != "title" {
 
-			t.Fatalf("report: %+v", rep)
-		}
+		t.Fatalf("report: %+v", rep)
+	}
+	// The conflict waits on the list until someone resolves it; the next
+	// run does not fetch the row again or report it twice.
+	src.gets = nil
+	rep = pull(t, tg, m, src, Options{})
+	if rep.Entities.Conflicts != 0 || rep.Held != 1 || len(rep.Issues) != 0 || src.fetches() != 0 {
+		t.Fatalf("second run: %+v, fetches %v", rep, src.gets)
+	}
+	list, err := LoadConflicts(ctx, tg.kv, "cat")
+	if err != nil || len(list) != 1 || list[0].Field != "title" || string(list[0].RemoteValue) != `"Theirs"` ||
+		list[0].Reason != ReasonBothChanged || list[0].Local != r1.ID {
+
+		t.Fatalf("conflict list: %+v, %v", list, err)
 	}
 	if got := tg.byRef(t, "R1").Properties["title"]; got != "Ours" {
 		t.Fatalf("R1 title = %v", got)

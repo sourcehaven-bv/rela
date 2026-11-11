@@ -91,6 +91,21 @@ remotes:
 			"component: {ref: cat}\n      other: {ref: ref}", "system"},
 		{"same local type", "p", "https://x", "{secret: remote_credential.x}", "",
 			"component: {ref: cat}\n      c2: {type: component, ref: cat}", "both map"},
+		{"rule not yet", "p", "https://x", "{secret: remote_credential.x}", "push: true\n    conflict: latest", okEnt,
+			`rule "latest" is not supported yet; use hold`},
+		{"unknown rule", "p", "https://x", "{secret: remote_credential.x}", "conflict: newest", okEnt, "unknown rule"},
+		{"type rule", "p", "https://x", "{secret: remote_credential.x}", "push: true", `component: {ref: cat, conflict: remote}`,
+			"not supported yet"},
+		{"field rule", "p", "https://x", "{secret: remote_credential.x}", "push: true",
+			`component: {ref: cat, fields: {name: name}, field_conflicts: {name: local}}`, "not supported yet"},
+		{"field rule unmapped", "p", "https://x", "{secret: remote_credential.x}", "push: true",
+			`component: {ref: cat, field_conflicts: {name: hold}}`, "not a mapped field"},
+		{"share without push", "p", "https://x", "{secret: remote_credential.x}", "",
+			`component: {ref: cat, share: "entity.name == 'x'"}`, "share needs push"},
+		{"share invalid", "p", "https://x", "{secret: remote_credential.x}", "push: true",
+			`component: {ref: cat, share: "entity.nope =="}`, "share"},
+		{"share related", "p", "https://x", "{secret: remote_credential.x}", "push: true",
+			`component: {ref: cat, share: "related(entity, 'depends', { name = 'x' })"}`, "related(...) is not supported"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -100,6 +115,20 @@ remotes:
 				t.Fatalf("err = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestParse_PushAndHold(t *testing.T) {
+	meta := testMeta(t)
+	m := testMapping(t, meta, func(p *Remote) {
+		p.Push, p.Conflict = true, ConflictHold
+		em := p.Entities["req"]
+		em.Share, em.Conflict = "entity.status == 'open'", ConflictHold
+		em.FieldConflicts = map[string]string{"title": ConflictHold}
+		p.Entities["req"] = em
+	})
+	if m.Entities["req"].Share == nil || m.Entities["component"].Share != nil {
+		t.Fatalf("share: %+v", m.Entities)
 	}
 }
 
