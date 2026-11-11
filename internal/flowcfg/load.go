@@ -312,10 +312,12 @@ func (l *loader) flow(key, name string, n *yaml.Node) *Flow {
 	if len(l.problems) > before {
 		return nil
 	}
-	l.reachable(key, f)
-	l.doneCycles(key, f)
-	l.waiting(key, f)
-	l.grants(key, f)
+	c := flowCheck{l: l}
+	c.reachable(key, f)
+	c.doneCycles(key, f)
+	c.forks(key, f)
+	c.waiting(key, f)
+	c.grants(key, f)
 	if len(l.problems) > before {
 		return nil
 	}
@@ -517,11 +519,33 @@ func (l *loader) permission(key, name string) string {
 // restricts. A run's state is visible to every reader of its subject, so
 // a guard on a hidden property would disclose its value.
 func (l *loader) guard(key, subject, src string) *Guard {
+	return l.guardWith(key, subject, src, nil)
+}
+
+// The variables a join's `when:` sees besides `entity`: the branches that
+// reached the join, and the branches of the fork.
+const (
+	VarArrived  = "arrived"
+	VarBranches = "branches"
+)
+
+// joinVars declares [VarArrived] and [VarBranches] as ints.
+var joinVars = []string{VarArrived, VarBranches}
+
+// guardWith is [loader.guard] with the int variables ints declared
+// besides `entity`.
+func (l *loader) guardWith(key, subject, src string, ints []string) *Guard {
 	def, _ := l.meta.GetEntityDef(subject)
 	env := predicate.NewEnv()
 	if err := env.DeclareVar("entity", predicatefns.EntityRecordType(l.meta, def)); err != nil {
 		l.add(key, err.Error()) // coverage-ignore: a fresh env declares one variable
 		return nil
+	}
+	for _, name := range ints {
+		if err := env.DeclareVar(name, predicate.IntType); err != nil {
+			l.add(key, err.Error()) // coverage-ignore: the names are fixed and distinct
+			return nil
+		}
 	}
 	if err := predicatefns.Declare(env); err != nil {
 		l.add(key, err.Error()) // coverage-ignore: the standard library declares on a fresh env

@@ -123,6 +123,7 @@ every matching subject.
 | `outputs` | What rela writes when a run enters the state. See below. |
 | `on` | The events that move the run on. See below. |
 | `after` | Timers, by name, that move the run on. See below. |
+| `join` | Makes the state the join of parallel branches: `all`, `any` or `{ when: ... }`. See [Parallel branches](#parallel-branches). |
 
 Every state is reachable from `initial`, and every state that is not final
 has a way out. rela refuses a file where either is not so.
@@ -191,6 +192,57 @@ can read that entity follows acl.yaml for its own type, not for the
 subject. Like an automation that creates an entity, this is a choice the
 author of `flows.yaml` makes: do not copy subject values into a type that
 more people can read than the subject.
+
+### Parallel branches
+
+A branch whose `to:` is a list forks the run: the run goes into every
+state of the list at once, and each goes on as a branch of its own. The
+branches meet again at a state with `join:`.
+
+```yaml
+start:
+  on:
+    done: { to: [it, legal] }
+it:
+  waiting_for: [it_desk]
+  writes: [laptop]
+  on:
+    change: { to: joined, roles: [it_desk] }
+legal:
+  waiting_for: [hr]
+  on:
+    change: { to: joined, roles: [hr] }
+joined:
+  join: all
+  on:
+    done: { to: finished }
+```
+
+A fork names at least two and at most 8 states. A branch is every state
+its first state reaches before the join. `join:` says when the run goes
+on past the join:
+
+| Value | The run goes on when |
+| ----- | -------------------- |
+| `all` | every branch has reached the join. |
+| `any` | one branch has reached the join. The other branches stop. |
+| `{ when: ... }` | the condition holds, or every branch has arrived. Besides `entity`, it reads `arrived` (the branches that reached the join) and `branches` (the branches of the fork). |
+
+Each branch waits, writes its outputs, takes its timers and takes
+`change` branches like a run without a fork. While it is forked, the run
+itself is in the join state, and its status is `input_required` when a
+branch waits for a person. A branch that reaches a final state ends the
+whole run in that state.
+
+rela refuses a fork it cannot follow:
+
+- every branch reaches exactly one join, the same one for the whole fork,
+  and a join closes one fork;
+- branches share no state, and no state outside a branch moves into one;
+- a branch does not lead back to the state that forked, to the initial
+  state, or to another fork: forks do not nest;
+- from every state in a branch, the run can reach the join or a final
+  state.
 
 ## Conditions
 
@@ -349,9 +401,17 @@ tasks and the newest runs; past that they say the list is cut short, and a
 filter narrows it. The task list matches
 each run against the current `flows.yaml`.
 
+**Parallel branches.** A forked run shows each branch with its own state,
+reason and step form. The Flow tasks page lists one task per branch that
+waits for a role you hold. A branch that reached the join says it waits
+for the others. The diagram marks the state of every branch, and the
+timeline names the branch of each move.
+
 **One step at a time.** A run counts its moves in a generation. The step
 form sends the generation it was shown, and a step on a run that moved on
-since is refused, so a stale form never moves a run twice. While one
+since is refused, so a stale form never moves a run twice. In a forked
+run each branch has its own generation, under `parallel` in the run, so
+one branch's step does not refuse another's. While one
 person completes a step, the run is claimed for up to two minutes, and a
 second completion is refused.
 
@@ -370,7 +430,9 @@ second completion is refused.
 | `POST /api/v1/_flows/runs/{id}/_retry` | Retry the failed outputs now |
 
 `_actions` on a run says whether `complete`, `cancel` and `retry` would
-be accepted for you, by the same checks the POST routes make. A run you
+be accepted for you, by the same checks the POST routes make. In a forked
+run, `complete` is false and each entry of `parallel` has its own
+`complete`; send that entry's `generation` to complete its step. A run you
 cannot read answers 404, like a missing entity. A missing role or
 permission answers 403, a run that moved on or is claimed 409, and a
 property outside `writes:` 422. Without flows, every route answers 404.
@@ -431,8 +493,10 @@ a run that started under an older version of the flow. An
 
 A run's own writes are not edits outside the flow. The values a person
 writes when doing a step, and the run's `set` outputs, are not limited
-by that run's rules. They are still limited by every other run on the
-subject.
+by the rules of the state they come from. They are still limited by
+every other run on the subject. While a run is forked, the rules of every
+branch's state apply, so a step in one branch is still limited by the
+rules of the other branches' states.
 
 **Where the rules hold.** They apply wherever rela checks field rules on
 a write:

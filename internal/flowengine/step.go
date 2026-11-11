@@ -9,76 +9,152 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/flowrun"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/predicate"
-	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 )
 
-// settle runs run until it waits. While the run carries a pending mark it
-// writes the current state's outputs, finishes the run on a final state,
-// and follows the first `done` branch whose guard holds; when no branch
-// applies it clears the mark. flowcfg refuses a cycle of done branches, so
-// the loop ends; the bound is a backstop.
+// settle runs run until it waits. While a token of the run carries a
+// pending mark it writes the token's state's outputs, finishes the run on
+// a final state, and follows the first `done` branch whose guard holds;
+// when no branch applies it clears the mark. A forked run with no mark
+// left tests its join. flowcfg refuses a cycle of done branches, so the
+// loop ends; the bound is a backstop.
+//
+// It settles the branch first first, when it has a mark. A branch that
+// fails is backed off alone and the others settle; the run then returns
+// the failures as [*BranchError]s, with a zero run, since nothing is left
+// to back off.
 //
 // It returns the run as last stored, or a zero run when another engine
-// took it over or the run ended. On an error the returned run is the one
-// to back off: its mark is kept, so a later round settles it again.
-func (e *Engine) settle(ctx context.Context, f *flowcfg.Flow, run flowrun.Run) (flowrun.Run, error) {
-	def := f.Definition()
-	for range flow.MaxStates + 1 {
-		if run.Pending == nil {
-			return run, nil
-		}
-		cur := flow.Read(def, run.Instance, run.CreatedAt)
-		if cur.Stranded {
-			return run, fmt.Errorf("%w: state %q", ErrStranded, cur.State)
-		}
-		st, _ := f.State(cur.State)
-		var err error
-		if run, err = e.writeOutputs(ctx, f, run, cur, st); err != nil || run.ID == "" {
-			return run, err
-		}
-		if st.Final {
-			if ferr := e.finish(ctx, f, run, st.Status); ferr != nil {
-				return run, ferr
-			}
-			return flowrun.Run{}, nil
-		}
-		to, ok, err := e.doneTarget(ctx, f, run, cur)
-		if err != nil {
-			return run, err
-		}
+// took it over or the run ended. On another error the returned run is the
+// one to back off: its mark is kept, so a later round settles it again.
+func (e *Engine) settle(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, first string) (flowrun.Run, error) {
+	failed := map[string]bool{}
+	var errs []error
+	for range (flow.MaxStates+1)*(flowrun.MaxBranches+1) + 1 {
+		tok, ok := pendingToken(run, failed, first)
 		if !ok {
-			return e.rest(ctx, f, run, cur)
-		}
-		moved, err := e.move(ctx, f, run, cur, flowrun.Step{State: to, Via: flowrun.ViaDone}, e.now())
-		if err != nil {
-			if isLost(err) {
-				return flowrun.Run{}, nil
+			if len(errs) > 0 {
+				return flowrun.Run{}, errors.Join(errs...)
 			}
-			return run, err
+			if !forked(run) {
+				return run, nil
+			}
+			joined, fired, err := e.join(ctx, f, run)
+			if err != nil || !fired {
+				if isLost(err) {
+					return flowrun.Run{}, nil
+				}
+				return joined, err
+			}
+			run = joined
+			continue
 		}
-		run = moved
+		next, err := e.settleStep(ctx, f, run, tok)
+		if err == nil && next.ID != "" {
+			run = next
+			continue
+		}
+		if tok == "" || next.ID == "" {
+			return next, errors.Join(append(errs, err)...)
+		}
+		// A branch failed: it is backed off alone, and the others go on.
+		slog.WarnContext(ctx, "flowengine: a branch did not settle", "run", run.ID, "branch", tok, "error", err)
+		errs = append(errs, &BranchError{Branch: tok, Err: err})
+		failed[tok] = true
+		run = next
+		now := e.now()
+		if st, ok := branchBackedOff(next, tok, now); ok {
+			if run, err = e.put(ctx, next, st, now); err != nil {
+				return flowrun.Run{}, errors.Join(append(errs, notLost(err))...)
+			}
+		}
 	}
 	return run, fmt.Errorf("flowengine: run %s did not settle", run.ID)
 }
 
-// writeOutputs writes the outputs the run's pending mark leaves for the
-// current state, recording progress after each. It returns the run as
+// BranchError is the failure to settle one branch of a forked run, which
+// was backed off on its own.
+type BranchError struct {
+	Branch string
+	Err    error
+}
+
+func (b *BranchError) Error() string { return fmt.Sprintf("branch %s: %v", b.Branch, b.Err) }
+
+func (b *BranchError) Unwrap() error { return b.Err }
+
+// othersOnly reports whether err holds only failures of branches other
+// than tok: a step of tok that settled cleanly.
+func othersOnly(err error, tok string) bool {
+	if tok == "" {
+		return false
+	}
+	var list []error
+	if j, ok := err.(interface{ Unwrap() []error }); ok {
+		list = j.Unwrap()
+	} else {
+		list = []error{err}
+	}
+	for _, x := range list {
+		var b *BranchError
+		if !errors.As(x, &b) || b.Branch == tok {
+			return false
+		}
+	}
+	return true
+}
+
+// settleStep takes one step of settling token tok: it writes the outputs
+// left, then ends the run, follows a done branch or clears the mark.
+func (e *Engine) settleStep(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, tok string) (flowrun.Run, error) {
+	inst := instOf(run, tok)
+	cur := flow.Read(f.Definition(), inst, run.CreatedAt)
+	if cur.Stranded {
+		return run, fmt.Errorf("%w: state %q", ErrStranded, cur.State)
+	}
+	st, _ := f.State(cur.State)
+	var err error
+	if run, err = e.writeOutputs(ctx, f, run, tok, cur, st); err != nil || run.ID == "" {
+		return run, err
+	}
+	if st.Final {
+		if ferr := e.finish(ctx, f, run, st.Status); ferr != nil {
+			return run, ferr
+		}
+		return flowrun.Run{}, nil
+	}
+	b, ok, err := e.g.doneBranch(ctx, f, run, cur)
+	if err != nil {
+		return run, err
+	}
+	if !ok {
+		return e.rest(ctx, f, run, tok, cur)
+	}
+	moved, err := e.take(ctx, f, run, tok, cur, b.Targets(), flowrun.Step{Via: flowrun.ViaDone}, e.now())
+	if err != nil {
+		if isLost(err) {
+			return flowrun.Run{}, nil
+		}
+		return run, err
+	}
+	return moved, nil
+}
+
+// writeOutputs writes the outputs the pending mark of token tok leaves
+// for its state, recording progress after each. It returns the run as
 // stored after the last write, or a zero run when another engine took the
 // run over.
-func (e *Engine) writeOutputs(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, cur flow.Current,
+func (e *Engine) writeOutputs(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, tok string, cur flow.Current,
 	st flowcfg.State) (flowrun.Run, error) {
-	p := run.Pending
+	p := pendingOf(run, tok)
 	outs := st.Outputs()
 	if p.State != cur.State || p.Generation != cur.Generation {
 		// A mark that names a state the run left: never write the current
 		// state's outputs from it, but settle the state.
-		return e.mark(ctx, run, cur, len(outs))
+		return e.mark(ctx, run, tok, cur, len(outs), 0)
 	}
 	if p.Done >= len(outs) {
 		return run, nil
@@ -98,16 +174,16 @@ func (e *Engine) writeOutputs(ctx context.Context, f *flowcfg.Flow, run flowrun.
 	}
 	for i := p.Done; i < len(outs); i++ {
 		var err error
-		if run, err = e.writeOutput(ctx, f, run, cur, outs[i], i, vars); err != nil || run.ID == "" {
+		if run, err = e.writeOutput(ctx, f, run, tok, cur, outs[i], i, vars); err != nil || run.ID == "" {
 			return run, err
 		}
 	}
 	return run, nil
 }
 
-// writeOutput writes output o, number i of the current state, and records
+// writeOutput writes output o, number i of token tok's state, and records
 // it in the pending mark.
-func (e *Engine) writeOutput(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, cur flow.Current,
+func (e *Engine) writeOutput(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, tok string, cur flow.Current,
 	o flowcfg.Output, i int, vars flowcfg.Vars) (flowrun.Run, error) {
 	props := evalProps(o, vars)
 	wrap := func(err error) error {
@@ -116,22 +192,24 @@ func (e *Engine) writeOutput(ctx context.Context, f *flowcfg.Flow, run flowrun.R
 	if o.Kind != flowcfg.OutputCreate {
 		// A set is idempotent: written first, marked after, so a crash
 		// between the two writes it again.
-		if err := e.d.Outputs.Set(ctx, f.RunAs(), run.ID, run.Subject, props); err != nil {
+		if err := e.d.Outputs.Set(ctx, f.RunAs(), run.ID, cur.State, run.Subject, props); err != nil {
 			return run, wrap(err)
 		}
-		return e.mark(ctx, run, cur, i+1)
+		return e.mark(ctx, run, tok, cur, i+1, 0)
 	}
 	// Claim first: a crash after the claim skips the create rather than
 	// writing it twice.
-	claimed, err := e.mark(ctx, run, cur, i+1)
+	before := pendingOf(run, tok)
+	claimed, err := e.mark(ctx, run, tok, cur, i+1, 0)
 	if err != nil || claimed.ID == "" {
 		return claimed, err
 	}
 	created, err := e.d.Outputs.Create(ctx, f.RunAs(), o.Type, props, o.Relate, run.Subject)
 	if err != nil {
 		// The create reported its failure, so nothing was written: give
-		// the claim back, and a later round writes it again.
-		if back, merr := e.mark(ctx, claimed, cur, i); merr == nil && back.ID != "" {
+		// the claim back, and a later round writes it again. That is no
+		// progress, so the failures carry over.
+		if back, merr := e.mark(ctx, claimed, tok, cur, i, before.Failures); merr == nil && back.ID != "" {
 			claimed = back
 		}
 		return claimed, wrap(err)
@@ -143,24 +221,27 @@ func (e *Engine) writeOutput(ctx context.Context, f *flowcfg.Flow, run flowrun.R
 	return claimed, nil
 }
 
-// mark stores the pending mark for the current state with done outputs
-// written. Progress resets the failure count. A lost compare-and-set
-// returns a zero run.
-func (e *Engine) mark(ctx context.Context, run flowrun.Run, cur flow.Current, done int) (flowrun.Run, error) {
-	p := &flowrun.Pending{State: cur.State, Generation: cur.Generation, Done: done}
-	next, err := e.save(ctx, run, run.Instance, p, nil, e.now())
+// mark stores the pending mark of token tok, at cur, with done outputs
+// written and failures failed attempts; progress passes 0. A lost
+// compare-and-set returns a zero run.
+func (e *Engine) mark(ctx context.Context, run flowrun.Run, tok string, cur flow.Current,
+	done, failures int) (flowrun.Run, error) {
+	p := &flowrun.Pending{State: cur.State, Generation: cur.Generation, Done: done, Failures: failures}
+	inst := instOf(run, tok)
+	next, err := e.save(ctx, run, tok, inst, p, nil, e.now())
 	if isLost(err) {
 		return flowrun.Run{}, nil
 	}
 	return next, err
 }
 
-// rest clears the pending mark of a run that waits in its state, and makes
-// its due time its next timer.
-func (e *Engine) rest(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, cur flow.Current) (flowrun.Run, error) {
-	inst := run.Instance
+// rest clears the pending mark of token tok, which waits in its state,
+// and makes its due time its next timer.
+func (e *Engine) rest(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, tok string,
+	cur flow.Current) (flowrun.Run, error) {
+	inst := instOf(run, tok)
 	inst.NextDueAt = flow.NextDue(f.Definition(), cur)
-	next, err := e.save(ctx, run, inst, nil, nil, e.now())
+	next, err := e.save(ctx, run, tok, inst, nil, nil, e.now())
 	if isLost(err) {
 		return flowrun.Run{}, nil
 	}
@@ -170,44 +251,79 @@ func (e *Engine) rest(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, cur
 	return next, nil
 }
 
-// save stores the run's next state: inst with the pending mark p. It is the
-// one way the engine updates a run (RR-SHLMJUL): it carries the timeline,
-// adding step when set, and the step claim while the claim's generation is
-// the instance's, so a move clears it.
-func (e *Engine) save(ctx context.Context, run flowrun.Run, inst flow.Instance, p *flowrun.Pending,
+// save stores the next state of token tok: inst with the pending mark p.
+// It is the one way the engine updates a token (RR-SHLMJUL): it carries
+// the timeline, adding step when set, and the token's step claim while
+// the claim's generation is the instance's, so a move clears it. A branch
+// the run no longer carries is a lost compare-and-set.
+func (e *Engine) save(ctx context.Context, run flowrun.Run, tok string, inst flow.Instance, p *flowrun.Pending,
 	step *flowrun.Step, at time.Time) (flowrun.Run, error) {
-	st := flowrun.State{Instance: inst, Pending: p, Log: run.Log}
+	st := cloneState(run)
 	if step != nil {
 		st.Log = flowrun.AppendLog(run.Log, *step)
 	}
-	if c := run.Claim; c != nil && c.Generation == inst.Generation {
-		st.Claim = c
+	_, _, c, ok := slot(run, tok)
+	if !ok {
+		return flowrun.Run{}, flowrun.ErrConflict
 	}
-	return e.d.Runs.Update(ctx, run.ID, run.Rev, st, at)
+	if c != nil && c.Generation != inst.Generation {
+		c = nil
+	}
+	if tok == "" {
+		st.Instance, st.Pending, st.Claim = inst, p, c
+	} else {
+		i := branchAt(run, tok)
+		st.Branches[i].Instance, st.Branches[i].Pending, st.Branches[i].Claim = inst, p, c
+	}
+	return e.put(ctx, run, st, at)
 }
 
-// move stores the run's move into the state step names, made at now, with
-// a pending mark that makes the run due at once, and records the new state
-// on the header. step is the timeline entry; move fills in its time and the
-// state left.
-func (e *Engine) move(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, cur flow.Current,
-	step flowrun.Step, now time.Time) (flowrun.Run, error) {
-	def := f.Definition()
-	to := step.State
-	step.At, step.From = now, cur.State
-	inst := cur.Enter(flow.Move{From: cur.State, To: to}, now, 0)
-	next := flow.Read(def, inst, run.CreatedAt)
-	sched := flow.StepSchedule(def, cur, next)
-	inst.NextDueAt, inst.Restarts = now, sched.Restarts
-	if sched.Reminders != nil {
-		inst.Reminders = sched.Reminders
+// take moves token tok from cur along a branch to targets: one target is
+// a move, several a fork. A branch that moves into its join or a final
+// state arrives there; join ends the run in a final state once no
+// branch has outputs left to write.
+func (e *Engine) take(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, tok string, cur flow.Current,
+	targets []string, step flowrun.Step, now time.Time) (flowrun.Run, error) {
+	if len(targets) > 1 {
+		if tok != "" {
+			return flowrun.Run{}, fmt.Errorf("%w: branch %s forks again", ErrStranded, tok)
+		}
+		return e.fork(ctx, f, run, cur, targets, step, now)
 	}
+	step.State = targets[0]
+	if tok == "" {
+		return e.move(ctx, f, run, tok, cur, step, now)
+	}
+	// Every join closes a fork, which flowcfg checks.
+	ts, _ := f.State(step.State)
+	if _, joins := ts.Join(); joins || ts.Final {
+		st, ok := arrived(run, tok, cur, step, now)
+		if !ok {
+			return flowrun.Run{}, flowrun.ErrConflict
+		}
+		return e.put(ctx, run, st, now)
+	}
+	return e.move(ctx, f, run, tok, cur, step, now)
+}
+
+// move stores token tok's move into the state step names, made at now,
+// with a pending mark that makes the run due at once, and records the new
+// state of the run itself on the header; a branch's state is not the
+// header's. step is the timeline entry; move fills in its time, the state
+// left and the branch.
+func (e *Engine) move(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, tok string, cur flow.Current,
+	step flowrun.Step, now time.Time) (flowrun.Run, error) {
+	to := step.State
+	step.At, step.From, step.Branch = now, cur.State, tok
+	inst := cur.Enter(flow.Move{From: cur.State, To: to}, now, 0)
+	inst.Generation = maxGen(run) + 1
+	schedule(f.Definition(), cur, &inst, run.CreatedAt, now)
 	p := &flowrun.Pending{State: to, Generation: inst.Generation}
-	moved, err := e.save(ctx, run, inst, p, &step, now)
+	moved, err := e.save(ctx, run, tok, inst, p, &step, now)
 	if err != nil {
 		return flowrun.Run{}, err
 	}
-	if st, _ := f.State(to); !st.Final {
+	if st, _ := f.State(to); tok == "" && !st.Final {
 		e.patchHeader(ctx, run.ID, map[string]any{
 			metamodel.FlowRunPropState:  to,
 			metamodel.FlowRunPropStatus: string(st.Status),
@@ -243,65 +359,6 @@ func (e *Engine) patchHeader(ctx context.Context, id flow.RunID, props map[strin
 	if err := e.d.Headers.PatchHeader(ctx, id, props); err != nil {
 		slog.WarnContext(ctx, "flowengine: run header lags its run", "run", id, "error", err)
 	}
-}
-
-// doneTarget returns the state the first `done` branch of cur whose guard
-// holds moves to. A guard that fails to evaluate stops the run where it
-// is, as in [flow.Decide]; its mark stays, so a later round tries again.
-func (e *Engine) doneTarget(ctx context.Context, f *flowcfg.Flow, run flowrun.Run,
-	cur flow.Current) (to string, ok bool, err error) {
-	branches := f.Branches(cur.State, flowcfg.EventDone)
-	if len(branches) == 0 {
-		return "", false, nil
-	}
-	var subj *entity.Entity
-	holds := func(b flowcfg.Branch) (bool, error) {
-		if b.When == nil {
-			return true, nil
-		}
-		if subj == nil {
-			var err error
-			if subj, err = e.d.Subjects.Subject(ctx, run.Subject); err != nil {
-				return false, err
-			}
-		}
-		return e.guardHolds(ctx, b.When, subj)
-	}
-	d := flow.Decide(cur.State, branches, flow.Rules[flowcfg.Branch]{
-		Admits: func(flowcfg.Branch) bool { return true },
-		Holds:  holds,
-		Target: func(b flowcfg.Branch) string { return b.To },
-	})
-	switch d.Outcome {
-	case flow.Moved:
-		return d.Move.To, true, nil
-	case flow.GuardFailed:
-		return "", false, fmt.Errorf("flowengine: run %s: done guard %q: %w", run.ID, d.Branch.When.Source(), d.Err)
-	default:
-		return "", false, nil
-	}
-}
-
-// guardHolds evaluates g over subj, bound as `entity`.
-func (e *Engine) guardHolds(ctx context.Context, g *flowcfg.Guard, subj *entity.Entity) (bool, error) {
-	def, ok := e.d.Meta.GetEntityDef(subj.Type)
-	if !ok {
-		return false, fmt.Errorf("%w: type %q", ErrSubjectNotFound, subj.Type)
-	}
-	b := predicate.NewBindings()
-	err := b.SetVar("entity", predicatefns.EntityRecord(e.d.Meta, def, subj.ID, subj.Type, subj.Properties))
-	if err == nil {
-		err = predicatefns.Bind(b, e.now())
-	}
-	var v predicate.Value
-	if err == nil {
-		v, err = g.Program().Eval(ctx, b)
-	}
-	if err != nil {
-		return false, err
-	}
-	got, isBool := v.(predicate.Bool)
-	return isBool && got.Bool(), nil
 }
 
 // needsSubject reports whether a template of outs reads a subject property.

@@ -98,13 +98,26 @@ function subjectLink(flow: string, subject: string): string {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="task in result.tasks" :key="task.run" data-testid="flow-task-row">
+          <tr
+            v-for="task in result.tasks"
+            :key="`${task.run}:${task.branch ?? ''}`"
+            data-testid="flow-task-row"
+          >
             <td>
               <RouterLink :to="space.href(runHref(task.run))">
                 {{ task.flow_label || task.flow }}
               </RouterLink>
             </td>
-            <td>{{ task.state_label || task.state }}</td>
+            <td>
+              {{
+                task.branch
+                  ? t('flows.tasks.branchState', {
+                      state: task.state_label || task.state,
+                      branch: task.branch,
+                    })
+                  : task.state_label || task.state
+              }}
+            </td>
             <td>
               <RouterLink
                 v-if="subjectLink(task.flow, task.subject)"

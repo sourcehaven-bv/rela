@@ -45,12 +45,11 @@ function branchVerdict(b: { holds: boolean; failed?: boolean }): string {
     <div v-if="waiting.branches?.length" class="flow-waiting__group">
       <h4 class="flow-waiting__heading">{{ t('flows.waiting.branches') }}</h4>
       <ul class="flow-waiting__list">
-        <li
-          v-for="b in waiting.branches"
-          :key="`${b.to}:${b.guard ?? ''}`"
-          data-testid="flow-branch"
-        >
-          <span>{{ t('flows.waiting.branchTo', { state: b.label || b.to }) }}</span>
+        <li v-for="(b, i) in waiting.branches" :key="i" data-testid="flow-branch">
+          <span v-if="b.fork?.length">
+            {{ t('flows.waiting.branchFork', { states: b.fork.join(', ') }) }}
+          </span>
+          <span v-else>{{ t('flows.waiting.branchTo', { state: b.label || b.to }) }}</span>
           <code v-if="b.guard" class="flow-waiting__guard">{{ b.guard }}</code>
           <span
             class="flow-waiting__verdict"

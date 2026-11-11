@@ -87,10 +87,70 @@ func (l *loader) state(key, name string, raw *rawState, f *Flow) State {
 		}
 	}
 	st.timers = l.timers(key+".after", &raw.After, f)
+	st.join = l.join(key+".join", &raw.Join, raw.Final, f.subject)
 	if !raw.Final && len(st.on) == 0 && len(st.timers) == 0 {
 		l.add(key, "has no way out: give it an on: or an after:, or make it final")
 	}
 	return st
+}
+
+// join compiles a state's `join:`: all, any, or a mapping with `when:`.
+func (l *loader) join(key string, n *yaml.Node, final bool, subject string) *Join {
+	switch {
+	case n.Kind == 0, n.Kind == yaml.ScalarNode && n.Tag == "!!null":
+		return nil
+	case final:
+		l.add(key, "a final state ends the run; it cannot join branches")
+		return nil
+	case n.Kind == yaml.ScalarNode && n.Value == "all":
+		return &Join{}
+	case n.Kind == yaml.ScalarNode && n.Value == "any":
+		return &Join{Any: true}
+	case n.Kind == yaml.MappingNode:
+		var raw rawJoin
+		if err := decodeNode(n, &raw); err != nil {
+			l.add(key, err.Error())
+			return nil
+		}
+		if raw.When == "" {
+			l.add(key+".when", "is required: the condition that continues before every branch has arrived")
+			return nil
+		}
+		return &Join{When: l.guardWith(key+".when", subject, raw.When, joinVars)}
+	default:
+		l.add(key, "is all, any, or a mapping with when:")
+		return nil
+	}
+}
+
+// branchTargets checks a branch's `to:` and sets To, or Fork for a list.
+func (l *loader) branchTargets(key string, raw rawTargets, b *Branch, f *Flow) {
+	if !raw.List {
+		b.To = ""
+		if len(raw.States) == 1 {
+			b.To = raw.States[0]
+		}
+		l.target(key, b.To, f)
+		return
+	}
+	switch n := len(raw.States); {
+	case n < 2:
+		l.add(key, "a fork names at least two states; for one, write to: <state>")
+		return
+	case n > MaxForkTargets:
+		l.add(key, fmt.Sprintf("a fork names at most %d states", MaxForkTargets))
+		return
+	}
+	seen := map[string]bool{}
+	for i, to := range raw.States {
+		if seen[to] {
+			l.add(fmt.Sprintf("%s[%d]", key, i), fmt.Sprintf("names %q twice", to))
+			return
+		}
+		seen[to] = true
+		l.target(fmt.Sprintf("%s[%d]", key, i), to, f)
+	}
+	b.Fork = slices.Clone(raw.States)
 }
 
 // MaxWrites caps the properties one state's `writes:` names.
@@ -201,8 +261,8 @@ func (l *loader) branches(key string, ev Event, n *yaml.Node, f *Flow) []Branch 
 		if n.Kind == yaml.SequenceNode {
 			bk = fmt.Sprintf("%s[%d]", key, i)
 		}
-		b := Branch{To: r.To, Label: r.Label}
-		l.target(bk+".to", r.To, f)
+		b := Branch{Label: r.Label}
+		l.branchTargets(bk+".to", r.To, &b, f)
 		if ev == EventDone && len(r.Roles) > 0 {
 			l.add(bk+".roles", "a done branch fires when the step's outputs are written; nobody causes it")
 		}

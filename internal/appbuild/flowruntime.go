@@ -352,10 +352,11 @@ func (o flowOutputs) writer(ctx context.Context, runAs string) (context.Context,
 	return o.as(ctx, runAs)
 }
 
-// Set writes the output as run's own write: run's outside_edits do not
-// narrow it, every other run's still do (TKT-XI7IDBS).
+// Set writes the output of state as run's own write: the outside_edits of
+// that state do not narrow it, every other run's and state's still do
+// (TKT-XI7IDBS).
 func (o flowOutputs) Set(
-	ctx context.Context, runAs string, run flow.RunID, subject entity.Ref, props map[string]any,
+	ctx context.Context, runAs string, run flow.RunID, state string, subject entity.Ref, props map[string]any,
 ) error {
 	ctx, err := o.writer(ctx, runAs)
 	if err != nil {
@@ -364,7 +365,7 @@ func (o flowOutputs) Set(
 	if len(props) == 0 {
 		return nil
 	}
-	_, err = o.mgr.PatchEntity(flowedits.WithinRun(ctx, run), subject.String(), entity.Patch{Properties: props})
+	_, err = o.mgr.PatchEntity(flowedits.WithinRun(ctx, run, state), subject.String(), entity.Patch{Properties: props})
 	return err
 }
 

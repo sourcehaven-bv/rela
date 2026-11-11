@@ -136,7 +136,7 @@ func (s *Store) scanRun(row sqlexec.Row) (flowrun.Run, error) {
 	}
 	r.ID, r.Subject.Face, r.Singleton = flowrun.RunID(id), entity.Face(face), singleton != 0
 	r.CreatedAt, r.UpdatedAt, r.Rev = fromMicros(created), fromMicros(updated), revv
-	r.Instance, r.Pending, r.Log, r.Claim = st.Instance, st.Pending, st.Log, st.Claim
+	r.State = st
 	return r, nil
 }
 
@@ -191,7 +191,7 @@ func (s *Store) Create(ctx context.Context, nr flowrun.NewRun) (flowrun.Run, err
 		return flowrun.Run{}, err
 	}
 	run := flowrun.FromNew(nr)
-	doc, encErr := flowrun.EncodeState(run.State())
+	doc, encErr := flowrun.EncodeState(run.State)
 	if encErr != nil {
 		return flowrun.Run{}, s.errf("encode state: %w", encErr)
 	}
@@ -365,6 +365,12 @@ func (s *Store) List(ctx context.Context, q flowrun.Query) ([]flowrun.Run, error
 		where = append(where, "subject_id IN (?"+strings.Repeat(", ?", len(q.SubjectIDs)-1)+")")
 		for _, id := range q.SubjectIDs {
 			args = append(args, id)
+		}
+	}
+	if len(q.IDs) > 0 {
+		where = append(where, "id IN (?"+strings.Repeat(", ?", len(q.IDs)-1)+")")
+		for _, id := range q.IDs {
+			args = append(args, string(id))
 		}
 	}
 	args = append(args, q.Limit)
