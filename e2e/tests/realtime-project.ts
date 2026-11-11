@@ -139,6 +139,7 @@ export const QUIET = {
   stepType: "step",
   stepLabel: "Step",
   planType: "plan",
+  planLabel: "Plan",
   approveLabel: "Approve",
 } as const;
 
@@ -561,6 +562,20 @@ export function addQuietRun(dir: string): void {
   const yaml = fs.readFileSync(file, "utf8");
   if (/^channels:/m.test(yaml)) throw new Error("addQuietRun: data-entry.yaml already has a channels block");
   const messages = [QUIET.progressType, QUIET.stepType].map((t) => `      ${t}:\n        display: collapsed\n`).join("");
+  writeAtomic(file, `${yaml.trimEnd()}\nchannels:\n  ${ROOM.type}:\n    messages:\n${messages}`);
+}
+
+/**
+ * Marks QUIET's progress and step types as types people do not post
+ * (TKT-WC63SNN): adds `offer: false` for both under `channels.room.messages`
+ * in the data-entry.yaml written by the fixture. Their messages stay in
+ * full view.
+ */
+export function addOfferFalse(dir: string): void {
+  const file = path.join(dir, "data-entry.yaml");
+  const yaml = fs.readFileSync(file, "utf8");
+  if (/^channels:/m.test(yaml)) throw new Error("addOfferFalse: data-entry.yaml already has a channels block");
+  const messages = [QUIET.progressType, QUIET.stepType].map((t) => `      ${t}:\n        offer: false\n`).join("");
   writeAtomic(file, `${yaml.trimEnd()}\nchannels:\n  ${ROOM.type}:\n    messages:\n${messages}`);
 }
 

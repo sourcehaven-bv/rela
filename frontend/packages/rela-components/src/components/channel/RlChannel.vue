@@ -196,12 +196,15 @@ const lifecycleButtons = computed(() => {
   return props.lifecycle.filter((op) => allowed.has(op.name))
 })
 
-// The types the composer's picker offers: the postable ones without the
-// button types, or all of them when that would leave none (the composer's
-// safeguard). Reply shows when one of them can reply.
+// The types the composer's picker offers: the postable ones the
+// presentation does not keep out (`offer: false`), then without the
+// button types, or all of the former when that would leave none (the
+// composer's safeguard). Reply shows when one of them can reply.
 const canReply = computed(() => {
   if (props.state !== 'open') return false
-  const postable = props.messageTypes.filter((t) => props.postable.includes(t.name))
+  const postable = props.messageTypes.filter(
+    (t) => props.postable.includes(t.name) && props.presentation?.messages?.[t.name]?.offer !== false,
+  )
   const buttons = new Set(props.buttonTypes)
   const pickable = postable.filter((t) => !buttons.has(t.name))
   return (pickable.length ? pickable : postable).some((t) => t.reply)

@@ -14,6 +14,7 @@ import {
   ROOM,
   SESSION,
   addCompactSession,
+  addOfferFalse,
   addFeatureOwner,
   addQuietRun,
   addRoomAboveRelations,
@@ -551,6 +552,46 @@ inboxTest.describe("answering from the inbox", () => {
     await bob.expectReply(question, "After the audit");
     await bob.expectReply(second, "Both of them");
     await bob.expectSessionAt(INBOX.approved);
+  });
+});
+
+// A room whose agent types people do not post (`offer: false`, TKT-WC63SNN).
+const offerFalseTest = base.extend<ChannelFixtures>({
+  serverUrl: async ({ testProject, serverBinary }, use, testInfo) => {
+    writeRoomProject(testProject, { quiet: true });
+    addOfferFalse(testProject);
+    addFeatureOwner(testProject);
+    setFeatureOwner(testProject, FEATURE, CHANNEL_USERS.lead);
+    await serveWithPrincipalHeader(serverBinary, testProject, testInfo, use, CHANNEL_USERS.lead);
+  },
+  as: asFixture,
+});
+
+offerFalseTest.describe("message types people do not post", () => {
+  offerFalseTest.describe.configure({ timeout: 120_000 });
+
+  offerFalseTest("the web app offers no way to post them; the API still does and they show", async ({ as }) => {
+    const alice = await as(CHANNEL_USERS.lead);
+    const bob = await as(CHANNEL_USERS.member);
+    await alice.openEntity("feature", FEATURE);
+    await alice.expectChannel(ROOM.label);
+    await bob.openEntity("feature", FEATURE);
+    await bob.expectChannel(ROOM.label);
+
+    // Step moves the session but has offer: false, so it has no decision
+    // button; Plan keeps one. Progress is not in the composer.
+    await bob.expectComposer();
+    await bob.expectDecision(QUIET.planLabel, true);
+    await bob.expectDecision(QUIET.stepLabel, false);
+    await bob.expectMessageType(QUIET.progressLabel, false);
+    await bob.expectMessageType(QUIET.stepLabel, false);
+
+    await bob.postOverApi("features", FEATURE, ROOM.type, QUIET.progressType, { body: "Reading the code." });
+    await alice.expectMessage("Reading the code.");
+    await bob.expectMessage("Reading the code.");
+    await bob.postOverApi("features", FEATURE, ROOM.type, QUIET.stepType, { body: "Start building." });
+    await bob.expectMessage("Start building.");
+    await bob.expectSessionAt(QUIET.building);
   });
 });
 

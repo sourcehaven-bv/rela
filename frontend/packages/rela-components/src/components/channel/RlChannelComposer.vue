@@ -66,6 +66,14 @@
  * the default type. If leaving them out would leave nothing to pick, the
  * picker offers every type as before, so the composer never disappears.
  *
+ * A type whose presentation sets `offer: false` is left out of the
+ * picker too, also when that leaves nothing to pick: such a type is for
+ * agents, not people. It still shows when an edit, a compose decision or
+ * `select()` names it. `select()` keeps it in the picker until another
+ * type is selected, a message of it is posted (`reset`) or the reply ends;
+ * an edit puts the request aside and restores it. With nothing to pick and
+ * nothing named, the composer renders nothing.
+ *
  * `compose` puts the composer in compose mode, for a decision that opens it
  * with some properties fixed (a preset button with `compose: true`). The app
  * owns it, as it owns `replyTo`. A new `compose.key` selects `compose.type`
@@ -195,15 +203,25 @@ const offered = computed(() => {
   return [...first, ...list.filter((m) => !transitionByType.value.has(m.name))]
 })
 
+/** Whether the presentation keeps type out of the picker (`offer: false`). */
+const unoffered = (type: string) => props.presentation?.messages?.[type]?.offer === false
+
+/** A type kept out of the picker that `select()` selected; see `unoffered`. */
+const requested = ref('')
+
 /**
- * The types the picker offers: the offered ones without the button types,
- * or all of them when that would leave none. An edit offers its own type.
+ * The types the picker offers: the offered ones without the types the
+ * presentation keeps out (bar the one `select()` asked for), then without
+ * the button types, or all of the former when that would leave none. An
+ * edit offers its own type.
  */
 const pickable = computed(() => {
-  if (props.editing || !props.buttonTypes.length) return offered.value
+  if (props.editing) return offered.value
+  const shown = offered.value.filter((m) => !unoffered(m.name) || m.name === requested.value)
+  if (!props.buttonTypes.length) return shown
   const buttons = new Set(props.buttonTypes)
-  const list = offered.value.filter((m) => !buttons.has(m.name))
-  return list.length ? list : offered.value
+  const list = shown.filter((m) => !buttons.has(m.name))
+  return list.length ? list : shown
 })
 
 /** Whether type may be the selection now: pickable, or the live compose decision's type. */
@@ -228,6 +246,18 @@ const typeOptions = computed(() =>
 const typeGone = computed(() => !!props.editing && offered.value.length === 0)
 
 const selected = ref('')
+// Selecting another type, by the user or by the app, lets go of the type
+// `select()` asked for, so the picker leaves it out again.
+watch(selected, (type) => {
+  if (type !== requested.value) requested.value = ''
+})
+// The reply an Other answer opened is over, so is its request.
+watch(
+  () => props.replyTo?.seq,
+  (seq, prev) => {
+    if (prev !== undefined && seq === undefined && !props.editing) requested.value = ''
+  },
+)
 const current = computed(() => {
   const name = selected.value
   const own = name && selectable(name) ? offered.value.find((m) => m.name === name) : undefined
@@ -444,7 +474,7 @@ const chosen = computed<Refs>(() => (current.value ? (refs[current.value.name] ?
  * What an edit displaced: the selected type, and the draft and refs of the
  * edited type, put back when the edit ends.
  */
-let stashed: { selected: string; type: string; values?: Values; refs?: Refs } | null = null
+let stashed: { selected: string; requested: string; type: string; values?: Values; refs?: Refs } | null = null
 
 watch(
   () => (props.editing ? `${props.editing.seq}:${props.editing.type}` : ''),
@@ -461,11 +491,21 @@ watch(
       // wins over the selection the edit put aside.
       const c = liveCompose()
       if (c) selected.value = c.type
-      else if (selectable(s.selected)) selected.value = s.selected
+      else {
+        requested.value = s.requested
+        if (selectable(s.selected)) selected.value = s.selected
+        else requested.value = ''
+      }
     }
     const e = props.editing
     if (!e) return
-    stashed = { selected: selected.value, type: e.type, values: drafts[e.type], refs: refs[e.type] }
+    stashed = {
+      selected: selected.value,
+      requested: requested.value,
+      type: e.type,
+      values: drafts[e.type],
+      refs: refs[e.type],
+    }
     selected.value = e.type
     drafts[e.type] = { ...e.values }
     refs[e.type] = { ...e.refs }
@@ -578,6 +618,8 @@ function reset(posted?: ChannelPostEvent | ChannelEditEvent) {
   if (posted && 'seq' in posted) return
   const type = posted?.type ?? (props.editing ? undefined : current.value?.name)
   if (!type) return
+  // A posted message of the type `select()` asked for ends the request.
+  if (posted && posted.type === requested.value) requested.value = ''
   if (props.editing && stashed?.type === type) {
     // The posted draft is the one the edit put aside.
     stashed.values = undefined
@@ -610,7 +652,13 @@ function focusField() {
  * during an edit or when `type` is not offered now.
  */
 function select(type: string): boolean {
-  if (props.editing || !selectable(type)) return false
+  if (props.editing) return false
+  const prev = requested.value
+  if (unoffered(type) && offered.value.some((m) => m.name === type)) requested.value = type
+  if (!selectable(type)) {
+    requested.value = prev
+    return false
+  }
   selected.value = type
   void nextTick(focusField)
   return true

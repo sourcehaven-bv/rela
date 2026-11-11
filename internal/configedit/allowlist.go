@@ -199,6 +199,9 @@ var editable = map[File][]string{
 		// A message type's display only folds or hides it in the web app;
 		// the messages stay readable everywhere, so it restricts nothing.
 		"channels.*.messages.*.display",
+		// offer: false only keeps a type out of the web app composer
+		// (TKT-WC63SNN); it is not access control, so it restricts nothing.
+		"channels.*.messages.*.offer",
 		// A compact session header (TKT-56TPOTE) only folds the state list
 		// in the web app; it restricts nothing.
 		"channels.*.session.display",

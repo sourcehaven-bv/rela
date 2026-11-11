@@ -106,6 +106,11 @@ export interface DecisionDeps {
    * state, so they do not move when the reader toggles the view.
    */
   quiet?: (type: string) => boolean
+  /**
+   * Whether people do not post the type in the web app (a presentation
+   * `offer: false`): it gets no type button. Absent: every type is offered.
+   */
+  unoffered?: (type: string) => boolean
 }
 
 /**
@@ -180,6 +185,7 @@ export function useSessionDecisions(d: DecisionDeps) {
   let composeClicks = 0
   /** The compose decision the composer shows, if any. */
   const composeView = computed(() => formDecision.value?.compose?.view)
+  const unoffered = (type: string) => d.unoffered?.(type) ?? false
 
   // The head is replaced on every frame; the views are rebuilt only when
   // what they read changes, so the buttons keep their identity.
@@ -199,9 +205,10 @@ export function useSessionDecisions(d: DecisionDeps) {
         h?._actions.transitions,
         h?._actions.entries,
         d.ch.actionsGeneration.value,
+        ct.message_types.filter((mt) => unoffered(mt.name)).map((mt) => mt.name),
       ])
       if (prev && prev.ct === ct && prev.key === key) return prev
-      const value = h ? decisionViews(ct, h, d.ch.actionsGeneration.value) : []
+      const value = h ? decisionViews(ct, h, d.ch.actionsGeneration.value, unoffered) : []
       return { ct, key, value }
     }
   )

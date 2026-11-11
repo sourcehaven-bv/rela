@@ -124,6 +124,14 @@ export interface ChannelMessagePresentation {
   fields?: ChannelFieldPresentation[]
   /** A display option only: the messages stay readable everywhere else. */
   display?: ChannelMessageDisplay
+  /**
+   * `false`: people do not post the type here; only agents do. The
+   * composer's picker leaves it out and it does not make Reply show. A
+   * decision that names the type, and an edit of one of its messages,
+   * still open the composer with it. The app leaves out its automatic
+   * decision button.
+   */
+  offer?: boolean
 }
 
 /** The presentation of one channel type: data-entry.yaml `channels.<type>`. */

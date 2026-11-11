@@ -93,6 +93,7 @@ export function presentationView(
     messages[type] = {
       fields: mp.fields?.flatMap((f) => (f.property ? [{ ...f, property: f.property }] : [])),
       ...(isDisplay(mp.display) ? { display: mp.display } : {}),
+      ...(mp.offer === false ? { offer: false } : {}),
     }
   }
   if (p.session?.display === 'compact') return { messages, session: { display: 'compact' } }
@@ -406,11 +407,16 @@ export type DecisionHead = Pick<ChannelHead, 'channel'> & {
  * its state is final, and is `danger` when that state ends as cancelled or
  * failed (endTone). The type's `decision_button` and a preset's own
  * options override that look (applyOptions).
+ *
+ * A type `unoffered` names (presentation `offer: false`, TKT-WC63SNN) gets
+ * no type button: people do not post it in the web app. Its preset
+ * buttons still show, because the operator declared them for people.
  */
 export function decisionViews(
   ct: ChannelTypeSchema,
   head: DecisionHead,
-  actionsGeneration: number | undefined
+  actionsGeneration: number | undefined,
+  unoffered: (type: string) => boolean = () => false
 ): AppDecisionView[] {
   const s = ct.session
   const cs = head.channel.session
@@ -443,7 +449,7 @@ export function decisionViews(
       listed && (listed.get(name) ?? new Set()),
       stateOf
     )
-    if (!rest.length) return views
+    if (!rest.length || unoffered(name)) return views
     const targets = [...new Set(rest.map((tr) => tr.to))]
     const view: AppDecisionView = { key: name, messageType: name, label: mt.label || name }
     const [only, ...more] = targets

@@ -72,9 +72,19 @@ var sessionDisplayValues = []SessionDisplay{SessionDisplayCompact}
 // [MessageDisplayHidden] leaves them out until the reader shows all
 // messages. Empty shows them in full. This is presentation only: the
 // messages stay readable through the API, MCP and the CLI.
+//
+// Offer set to false says people do not post the type in the web app
+// (TKT-WC63SNN), for a type only agents or integrations post: the
+// composer's type picker leaves it out, it gets no automatic session
+// decision button, and it does not make Reply show. Nil offers it as
+// usual. Its messages show as usual, and a `button:` preset, a compose
+// decision, an Other answer or an edit that names the type still opens
+// it. This is presentation only, not access control: the type stays in
+// `_actions.post` and postable through the API, MCP and the CLI.
 type MessagePresentation struct {
 	Fields  []FormField    `yaml:"fields,omitempty" json:"fields,omitempty"`
 	Display MessageDisplay `yaml:"display,omitempty" json:"display,omitempty"`
+	Offer   *bool          `yaml:"offer,omitempty" json:"offer,omitempty"`
 }
 
 // MessageDisplay is how the web app shows the messages of one type; see
@@ -129,6 +139,9 @@ type MessageFacts struct {
 	// CountsUnread reports whether the type's messages count toward a
 	// reader's unread: a stored type without `unread: false`.
 	CountsUnread bool
+	// HasPresetButtons reports whether a session transition of the type
+	// declares a `button:` preset, which the web app shows to people.
+	HasPresetButtons bool
 }
 
 // BusyFacts is what [ValidateChannels] checks a `busy:` card field or column
@@ -151,7 +164,7 @@ type BusyFacts struct {
 
 var (
 	channelPresentationKeys = []string{"messages", "session", "placement"}
-	messagePresentationKeys = []string{"fields", "display"}
+	messagePresentationKeys = []string{"fields", "display", "offer"}
 	sessionPresentationKeys = []string{"display"}
 	channelFieldKeys        = []string{"property", "label", "placeholder", "help", "widget", "span", "hidden"}
 )
@@ -244,6 +257,13 @@ func channelsUnknownKeys(data []byte) []string {
 			mprefix := prefix + ".messages." + mtName
 			m, _ := mt.(map[string]any)
 			errs = append(errs, unknownKeysIn(mprefix, m, messagePresentationKeys)...)
+			// The decoder reads YAML 1.1 spellings such as `no` or `"off"` into
+			// a bool, so only a real true or false is accepted here.
+			if v, ok := m["offer"]; ok && v != nil {
+				if _, isBool := v.(bool); !isBool {
+					errs = append(errs, fmt.Sprintf("%s.offer: %v is not a boolean (use true or false)", mprefix, v))
+				}
+			}
 			fields, _ := m["fields"].([]any)
 			for i, f := range fields {
 				fm, _ := f.(map[string]any)
@@ -411,6 +431,10 @@ func checkChannelBlock(cfg *Config, schema ChannelSchema) (errs, warnings []stri
 			if mp.Display == MessageDisplayHidden && facts.CountsUnread {
 				warnings = append(warnings, fmt.Sprintf("%s.display: hidden, but realtime.yaml counts %s as unread; "+
 					"set unread: false on channel_types.%s.message_types.%s", prefix, mtName, ctName, mtName))
+			}
+			if mp.Offer != nil && !*mp.Offer && facts.HasPresetButtons {
+				warnings = append(warnings, fmt.Sprintf("%s.offer: false, but realtime.yaml declares a button: preset "+
+					"for %s, which the web app still shows to people", prefix, mtName))
 			}
 		}
 	}
