@@ -1470,13 +1470,18 @@ type UpdateGrant struct {
 // PatchEntity does, so a mismatched grant can cost a check but never skip
 // one. A zero grant is an error.
 //
+// A grant's caller checks the fields it writes before the write, so the
+// write also asks the field gate's [FieldWriteGate.WriteRecheck] inside its
+// transaction, on any handle: a flow run that starts between the caller's
+// check and the write then refuses it (TKT-XI7IDBS).
+//
 // It is a method on the grant, not on Manager, to keep Manager's method
 // count under its plimsoll line.
 func (g UpdateGrant) PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error) {
 	if g.m == nil {
 		return nil, errors.New("entitymanager: UpdateGrant.PatchEntity: grant not made by AuthorizeUpdate")
 	}
-	return patchEntity(ctx, g.m, id, p, patchPre{grant: &g})
+	return patchEntity(ctx, g.m, id, p, patchPre{grant: &g, recheck: true})
 }
 
 // covers reports whether g authorizes m's update of stored under ctx.
@@ -1495,6 +1500,12 @@ type patchPre struct {
 	// grant, when it covers the stored row, replaces the attempt's ACL
 	// check: [Manager.AuthorizeUpdate] already asked it.
 	grant *UpdateGrant
+	// recheck asks the field gate's [FieldWriteGate.WriteRecheck] inside
+	// the write transaction even on a handle that is not [FieldGated]. The
+	// caller checked the fields itself before the write, as the data-entry
+	// handlers do, and wants the part of that verdict another writer can
+	// change asked again at the write (TKT-XI7IDBS).
+	recheck bool
 }
 
 // entityUpdateRequest is the authorization question for updating the entity
@@ -1636,7 +1647,7 @@ func (m *Manager) patchEntityOnce(
 	// while the store's write lock is held.
 	var txCheck func(context.Context) error
 	var refused error
-	if fieldGated(m) {
+	if fieldGated(m) || (pre.recheck && !m.bypassACL && !m.cascadeWrite) {
 		if recheck := m.deps.FieldGate.WriteRecheck(ctx, stored, p.Properties, p.MetaUnset); recheck != nil {
 			txCheck = func(txCtx context.Context) error {
 				refused = recheck(txCtx)

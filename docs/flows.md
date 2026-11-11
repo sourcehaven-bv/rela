@@ -423,7 +423,8 @@ subject.
 **Where the rules hold.** They apply wherever rela checks field rules on
 a write:
 
-- the web app and the data-entry API (`PATCH` and `PUT`): a locked
+- the web app and the data-entry API (`PATCH`, attachment uploads and
+  restoring a past version): a locked
   property shows as read-only, `_transitions` lists its transitions as
   not allowed with reason `read-only`, and a write is refused with 403 and
   `field-affordance:read-only:<property>`;
@@ -445,12 +446,17 @@ If rela cannot read the runs of a subject, every property of that subject
 is read-only until it can.
 
 On PostgreSQL and SQLite, rela checks the rules again inside the
-transaction that writes the change. A run that starts or moves to another
-state takes the same lock, so it either lands before the check, which
-then sees it, or waits until the write is done. The same lock orders a
-rename against a run start. On the file backend there is no such lock: a
-run that starts between the check and the write does not stop that one
-write.
+transaction that writes the change. This holds for every surface above,
+including a `PATCH`, an attachment upload and a restore in the web app. A
+run that starts or moves to another state takes the same lock, so it
+either lands before the check, which then sees it, or waits until the
+write is done. The same lock orders a rename against a run start.
+
+On the file backend there is no such lock, by decision: a run that starts
+between the check and the write does not stop that one write. Resolving a
+merge conflict, which exists only on the file backend, writes the file
+directly and has the same gap. This is an accepted risk, tracked in
+TKT-LU8PSKJ. Use PostgreSQL or SQLite where it matters.
 
 **Stuck runs.** A run that cannot advance keeps its subject locked: a run
 that failed to store its working state, a run whose output keeps failing,

@@ -69,8 +69,8 @@ func restoreHistoryVersion(a *App,
 // restoreOntoLive applies the snapshot onto an existing entity as a
 // field-validated update: it computes which properties change (set) or are
 // removed (unset) and which content changes, gates that exact set through
-// validateFieldWrite, then applies via the entitymanager (which re-authorizes,
-// validates, and audits).
+// validateFieldWrite, then patches that set through the manager's update grant
+// (authorized once, validated and audited).
 func restoreOntoLive(a *App,
 	w http.ResponseWriter, r *http.Request, live *entityPkg.Entity, snap *store.VersionSnapshot, typeName string,
 ) {
@@ -100,16 +100,28 @@ func restoreOntoLive(a *App,
 		return
 	}
 
-	// Build the target: live entity with the snapshot's content + properties.
+	// Write exactly the gated set as a patch through the manager's grant: a
+	// property the caller could not see is left as stored, and the write
+	// asks the flow edit part of the field check again inside its
+	// transaction (TKT-XI7IDBS).
+	grant, err := a.write.manager.AuthorizeUpdate(ctx, live)
+	if err != nil {
+		writeRestoreWriteError(w, r, err)
+		return
+	}
+	content := snap.Content
+	patch := entityPkg.Patch{Properties: setKeys, MetaUnset: unsetKeys, Content: &content}
+	if _, err := a.write.manager.PatchGranted(ctx, grant, live.Ref().String(), patch); err != nil {
+		writeRestoreWriteError(w, r, err)
+		return
+	}
+
+	// The response target: live entity with the snapshot's content +
+	// properties.
 	target := entityPkg.New(live.ID, live.Type)
 	target.Face = live.Face
 	target.Content = snap.Content
 	target.Properties = props
-
-	if _, err := a.entityManager.UpdateEntity(ctx, target); err != nil {
-		writeRestoreWriteError(w, r, err)
-		return
-	}
 	writeRestoreResult(a, w, r, target, snap.Version, typeName)
 }
 
@@ -159,7 +171,7 @@ func restoreRecreate(a *App,
 // write path's 422, as on every other entity write.
 func writeRestoreWriteError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
-	case writeForbiddenIfACLDenied(w, r, err):
+	case writeForbiddenIfACLDenied(w, r, err), writeFieldWriteRefused(w, err):
 	case errors.Is(err, entitymanager.ErrEntityAlreadyExists),
 		errors.Is(err, entitymanager.ErrEntityNotFound),
 		errors.Is(err, store.ErrNotFound):

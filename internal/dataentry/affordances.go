@@ -599,6 +599,20 @@ func writeAffordanceDenialError(w http.ResponseWriter, denial AffordanceDenialEr
 	})
 }
 
+// writeFieldWriteRefused answers a field write the manager refused inside
+// its write transaction, after the handler's own check passed: a flow run
+// started on the row in between (TKT-XI7IDBS). The answer is the 403 the
+// handler's own check gives. The manager has recorded the denied-write
+// audit row, so this records none. It reports whether it wrote a response.
+func writeFieldWriteRefused(w http.ResponseWriter, err error) bool {
+	d, ok := errors.AsType[*affordances.FieldWriteError](err)
+	if !ok {
+		return false
+	}
+	writeAffordanceDenialError(w, *fieldWriteDenial(d))
+	return true
+}
+
 // denyAffordance writes the 403 response AND records a `denied-write`
 // audit row attributed to the request principal. Use from every
 // affordance-gate site so the audit stream is uniform with ACL
