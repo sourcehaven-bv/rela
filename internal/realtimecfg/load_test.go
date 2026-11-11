@@ -1092,9 +1092,9 @@ func TestParse_ListProperty(t *testing.T) {
 	refused := []struct {
 		name, prop, key, reason string
 	}{
-		{"list on markdown", "{ type: markdown, list: true }", k + ".list", "only a string property may be a list"},
-		{"list on integer", "{ type: integer, list: true }", k + ".list", "only a string property may be a list"},
-		{"list on an enum", "{ type: severity, list: true }", k + ".list", "only a string property may be a list"},
+		{"list on markdown", "{ type: markdown, list: true }", k + ".list", "only a string or object property may be a list"},
+		{"list on integer", "{ type: integer, list: true }", k + ".list", "only a string or object property may be a list"},
+		{"list on an enum", "{ type: severity, list: true }", k + ".list", "only a string or object property may be a list"},
 		{"max_items without list", "{ type: string, max_items: 3 }", k + ".max_items", "only a list property has max_items"},
 		{"max_items zero", "{ type: string, list: true, max_items: 0 }", k + ".max_items", "must be between 1 and 20"},
 		{"max_items over the cap", "{ type: string, list: true, max_items: 21 }", k + ".max_items",
@@ -1110,7 +1110,7 @@ func TestParse_ListProperty(t *testing.T) {
 	}
 	t.Run("list on integer with max_items has one problem", func(t *testing.T) {
 		_, err := Parse([]byte(src("{ type: integer, list: true, max_items: 3 }")), testMeta(t), nil)
-		assertProblem(t, err, k+".list", "only a string property may be a list")
+		assertProblem(t, err, k+".list", "only a string or object property may be a list")
 		if strings.Contains(err.Error(), k+".max_items") {
 			t.Errorf("max_items got a problem although list: true is written: %v", err)
 		}
@@ -1174,7 +1174,7 @@ func TestParse_FileProperty(t *testing.T) {
 		{"max over the cap", one("{ type: file, max: 5 }"), k + ".max", "must be between 1 and 4 files"},
 		{"max_size over the ceiling", one("{ type: file, max_size: 11MiB }"), k + ".max_size", "must be at most 10MiB"},
 		{"max_size garbage", one("{ type: file, max_size: 5MB }"), k + ".max_size", "invalid size"},
-		{"list", one("{ type: file, list: true }"), k + ".list", "only a string property may be a list"},
+		{"list", one("{ type: file, list: true }"), k + ".list", "only a string or object property may be a list"},
 		{"to", one("{ type: file, to: [datalek] }"), k + ".to", "only a ref property has to"},
 		{"bad transform", one("{ type: file, transform: [{}] }"), k, "must set exactly one of"},
 		{"accept on a string", one("{ type: string, accept: [image/png] }"), k, "apply to a file property only"},

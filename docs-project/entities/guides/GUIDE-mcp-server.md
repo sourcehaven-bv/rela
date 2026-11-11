@@ -562,6 +562,7 @@ later leaves them in place, and they answer that realtime is off.
 | `read_session` | Read only a channel's session: its `status` (`working`, `input_required`, `completed`, `cancelled` or `failed`), `waiting_for` with each role's label and holders, `waiting_on_me`, and `transitions`, the message types whose post by you would move it. It has no rev or messages, so a watch on it wakes only when the session moves or your turn changes. A channel type without a session answers `no_session` | `id`, `channel_type`, `name?` |
 | `post_message` | Post a message. In a channel with a session, the answer also holds the session after the post, and `outputs` when the move wrote to the graph. A post whose outputs you may not write is refused with `session_output_denied` before it is stored. A message type limited by `in:` or by `session.default_in` to some session states is refused outside them with `session_wrong_state`, which names the allowed states and the current one; nothing is stored. A code span in a markdown property can mention someone (see **Mentions** below); at most 10 per message. With `expect_generation`, the post is stored only while the session is at this generation; otherwise it is refused with `session_moved` and nothing is stored. With `files`, the post carries files for the message type's `file` properties: each item is `{property, file_name, content}`, with the content in base64. `read_channel` lists the file properties in `message_types[].files` | `id`, `channel_type`, `name?`, `message_type`, `props?`, `files?`, `reply_to?`, `expect_generation?` |
 | `read_message_file` | Read one file of a message, by the id in the message's `files`. An image comes back as image content, UTF-8 text as text, anything else as a base64 blob | `id`, `channel_type`, `name?`, `seq`, `file_id` |
+| `post_messages` | Post 1 to 10 top-level `log` messages as one step: all of them or none. Each item of `messages` is `{message_type, props}` and passes the checks of `post_message`; a refusal names the item's index. The messages share a batch id, and the session moves at most once. Use it to ask several questions at once, one message of a type with `choices` per question. In a channel with a session these are asked: the channel's `asked` counts their answers, you cannot edit or remove them until the session moves (`asked_question`), and `when: session.open_questions == 0` moves the session on the last answer. Wait for that with `watch` on `read_session` | `id`, `channel_type`, `name?`, `messages`, `expect_generation?` |
 | `edit_message` | Replace the props of your own message | `id`, `channel_type`, `name?`, `seq`, `props` |
 | `remove_message` | Withdraw your own message, or remove another as a moderator | `id`, `channel_type`, `name?`, `seq`, `reason?` |
 | `create_channel` | Create a named channel of a type with many channels per entity | `id`, `channel_type`, `title?` |
@@ -579,9 +580,13 @@ as `"options": ["Yes", "No"]`; its `props_schema` is an `array` with
 `maxItems` and `uniqueItems`. Each item is trimmed and may not hold a
 control, line-break or invisible character. The emoji style selectors
 U+FE0E and U+FE0F are dropped, and the joiner U+200D is allowed only
-between two emoji. A message type with `choices` names, under
+between two emoji. An object list takes a JSON array of objects, such as
+`"options": [{"label": "A", "recommended": true}]`; its `props_schema`
+item is a closed object with the declared fields. A message type with
+`choices` names, under
 `message_types[].choices` in `read_channel`, the list property that holds
-the options (`from`), the type that answers them (`answer`) and the
+the options (`from`), for an object list the field that is the option
+(`label`), the type that answers them (`answer`) and the
 property the answer puts the option in (`into`). To answer such a
 question, post the `answer` type with the option in `into` and
 `reply_to` the question. The realtime guide describes choices.

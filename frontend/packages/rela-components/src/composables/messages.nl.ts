@@ -261,6 +261,9 @@ const CHANNEL_TEXT_NL: Record<ChannelTextKey, string> = {
   chooseFiles: 'Bestanden kiezen…',
   files: 'Bestanden',
   downloading: 'Downloaden…',
+  questions: 'Vragen',
+  answered: 'Beantwoord',
+  changeAnswer: 'Wijzigen',
 }
 
 export const NL_MESSAGES: Messages = {
@@ -360,6 +363,9 @@ export const NL_MESSAGES: Messages = {
   channelDecisionHint: ({ to, form }) =>
     form ? ' (opent het formulier)' : to ? ` (zet de sessie op ${to})` : ' (zet de sessie verder)',
   channelChoiceHint: () => ' (plaatst dit antwoord als reactie)',
+  channelQuestionNumber: ({ index, total }) => `Vraag ${index} van ${total}`,
+  channelAnswer: ({ answer }) => `Antwoord: ${answer}`,
+  channelChangeAnswerHint: () => ' (toont de keuzes opnieuw)',
   channelSessionSummary: ({ status, label, outcome }) => {
     switch (status) {
       case 'stranded':

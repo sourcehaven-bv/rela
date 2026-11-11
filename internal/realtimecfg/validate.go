@@ -400,6 +400,7 @@ func (v *validator) messageType(key, name string, raw *rawMessageType, ct *Chann
 		if len(raw.Actions) > 0 {
 			v.add(key+".actions", "an ephemeral message is never stored, so it cannot carry actions")
 		}
+		refuseEphemeralObjects(v, key, raw.Properties)
 	default:
 		v.add(key+".persist", fmt.Sprintf("must be log or ephemeral, got %q", raw.Persist))
 	}
@@ -518,6 +519,24 @@ func (v *validator) ttl(key, s string) time.Duration {
 	return d
 }
 
+// listShape checks the keys of a property of type t that only an object
+// property, or a list, may have, and reports whether it is a list: only
+// a string property may be one here, since an object list is compiled
+// apart.
+func listShape(key string, raw *rawProperty, t PropertyType, add func(key, msg string)) bool {
+	if len(raw.Properties) > 0 {
+		add(key+".properties", "only an object property has properties; use type: object")
+	}
+	if !raw.List {
+		return false
+	}
+	if t != PropertyString {
+		add(key+".list", "only a string or object property may be a list")
+		return false
+	}
+	return true
+}
+
 func (v *validator) property(key, name string, raw *rawProperty, limits Limits) Property {
 	if !propertyNamePattern.MatchString(name) {
 		v.add(key, "property name must match ^[a-z][a-z0-9_]{0,62}$")
@@ -527,24 +546,20 @@ func (v *validator) property(key, name string, raw *rawProperty, limits Limits) 
 	case PropertyString, PropertyMarkdown, PropertyInteger, PropertyBoolean,
 		PropertyDate, PropertyDatetime, PropertyRef, PropertyFile:
 		p.Type = PropertyType(raw.Type)
+	case PropertyObject:
+		return objectChecker{v}.object(key, p, raw, limits)
 	case "":
 		v.add(key+".type", "name a type")
 	default:
 		ct, ok := v.meta.Types[raw.Type]
 		if !ok || len(ct.Values) == 0 {
 			v.add(key+".type", fmt.Sprintf("unknown type %q; use string, markdown, integer, boolean, date, "+
-				"datetime, ref, file or an enum type declared in schema.yaml", raw.Type))
+				"datetime, ref, file, object or an enum type declared in schema.yaml", raw.Type))
 		} else {
 			p.Type, p.Enum, p.Values = PropertyEnum, raw.Type, slices.Clone(ct.Values)
 		}
 	}
-	if raw.List {
-		if p.Type == PropertyString {
-			p.List = true
-		} else {
-			v.add(key+".list", "only a string property may be a list")
-		}
-	}
+	p.List = listShape(key, raw, p.Type, v.add)
 	maxRunes := limits.MessageBytes
 	if p.List {
 		maxRunes = realtimelimits.MaxListItemRunes
@@ -733,6 +748,18 @@ func (v *validator) promoteFace(key, typ, face string) {
 	}
 }
 
+// refuseEphemeralObjects refuses each object property of an ephemeral
+// message type, which the web app shows as one line of text. It is a
+// function, not a validator method, to keep the validator's method count.
+func refuseEphemeralObjects(v *validator, key string, props map[string]rawProperty) {
+	for _, name := range sortedKeys(props) {
+		if PropertyType(props[name].Type) == PropertyObject {
+			v.add(key+".properties."+name, "an ephemeral message shows as one line of text, so it cannot "+
+				"hold an object list")
+		}
+	}
+}
+
 // promotable reports whether a message property's value can fill entity
 // property pd. Text and a ref (the entity id) fill a string; an enum fills a
 // string or the same enum type; every other type fills only its own type. A
@@ -754,6 +781,7 @@ func promotable(mp Property, pd metamodel.PropertyDef) bool {
 		return pd.Type == metamodel.PropertyTypeDate
 	case PropertyDatetime:
 		return pd.Type == metamodel.PropertyTypeDatetime
+	case PropertyObject:
 	case PropertyFile:
 		// The files stay with the channel; promotion copies no bytes.
 		return false

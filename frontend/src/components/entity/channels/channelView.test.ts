@@ -203,7 +203,8 @@ describe('messageViews', () => {
   it('keeps memo entries for held revisions only', () => {
     const memo = new Map<string, string>()
     messageViews([m1, m2], byName, ctx, memo)
-    expect([...memo.keys()].sort()).toEqual(['1:1:body:', '2:2:body:'])
+    // m2 replies to m1, so m1's excerpt is held too.
+    expect([...memo.keys()].sort()).toEqual(['1:1::excerpt', '1:1:body:', '2:2:body:'])
     // m1 edited, m2 dropped by the held-list cap.
     messageViews([{ ...m1, rev: 3 }], byName, ctx, memo)
     expect([...memo.keys()]).toEqual(['1:3:body:'])
@@ -780,7 +781,12 @@ describe('sessions', () => {
 
     it('sets the notice on the message view and no card fields', () => {
       const [view] = messageViews([notice], () => undefined, { tz: 'UTC', session: breach.session })
-      expect(view!.notice).toEqual({ fromLabel: 'Detected', toLabel: 'Contained', reentry: false, toStatus: 'input_required' })
+      expect(view!.notice).toEqual({
+        fromLabel: 'Detected',
+        toLabel: 'Contained',
+        reentry: false,
+        toStatus: 'input_required',
+      })
       expect(view!.html).toBeUndefined()
     })
   })
@@ -1908,6 +1914,71 @@ describe('choices', () => {
     expect(rowDecisions(decisions, choices, undefined)).toBe(decisions)
   })
 
+  it('reads the button text of an object list from choices.label', () => {
+    const askObj: ChannelMessageTypeSchema = {
+      ...ask,
+      properties: [
+        { name: 'note', label: 'Note', type: 'string' },
+        {
+          name: 'options',
+          label: 'Options',
+          type: 'object',
+          list: true,
+          fields: [
+            { name: 'label', label: 'Label', type: 'string', required: true },
+            { name: 'pros', label: 'Pros', type: 'string', list: true },
+          ],
+        },
+      ],
+      choices: { from: 'options', label: 'label', answer: 'answer', into: 'body', other: false },
+    }
+    const ct: ChannelTypeSchema = { ...plain, message_types: [askObj, answer] }
+    const m = q(1, {
+      props: {
+        note: 'Which?',
+        // Labels stored before choices.label was set are not folded: an
+        // untrimmed, hazardous or repeated one gets no button.
+        options: [
+          { label: 'A', pros: ['fast'] },
+          { pros: ['x'] },
+          { label: 'B' },
+          { label: ' C' },
+          { label: 'D\u202e' },
+          { label: 'A' },
+          { label: '👩\u200d💻' },
+        ],
+      },
+    })
+    const views = choiceViews(ct, head(), undefined, false, [m]).get(1)!
+    expect(views.map((v) => [v.key, v.label, v.props])).toEqual([
+      ['choice:1:0', 'A', { body: 'A' }],
+      ['choice:1:2', 'B', { body: 'B' }],
+      ['choice:1:6', '👩\u200d💻', { body: '👩\u200d💻' }],
+    ])
+    expect(excerptOf(m, askObj)).toBe('Which?')
+  })
+
+  it('an excerpt of a markdown prop shows its text, not its syntax', () => {
+    const md: ChannelMessageTypeSchema = {
+      ...answer,
+      properties: [{ name: 'body', label: 'Body', type: 'markdown' }],
+    }
+    const m = reply(2, 1)
+    m.props = { body: '**Option A** is `fast`\n\n- one\n- two' }
+    expect(excerptOf(m, md)).toBe('Option A is fast one two')
+    m.props = { body: '**' }
+    expect(excerptOf(m, md)).toBe('**')
+
+    // The memo holds the excerpt by seq:rev; a new rev renders again.
+    const memo = new Map<string, string>()
+    m.props = { body: '*one*' }
+    expect(excerptOf(m, md, memo)).toBe('one')
+    m.props = { body: '*two*' }
+    expect(excerptOf(m, md, memo)).toBe('one')
+    m.rev++
+    expect(excerptOf(m, md, memo)).toBe('two')
+  })
+
   it('an excerpt reads a list as its items', () => {
     expect(excerptOf(q(1, { props: { options: ['A', 'B'] } }), ask)).toBe('A, B')
   })
@@ -1929,7 +2000,10 @@ describe('choices', () => {
 
     it('puts every decision in the fallback when the waiting message is not shown', () => {
       const choices = choiceViews(plain, head(), undefined, false, [q(1)])
-      expect(placeDecisions(decisions, choices, undefined)).toEqual({ row: [], fallback: decisions })
+      expect(placeDecisions(decisions, choices, undefined)).toEqual({
+        row: [],
+        fallback: decisions,
+      })
     })
 
     it('puts the decisions on the row, never both', () => {
@@ -1952,7 +2026,12 @@ describe('choices', () => {
 
   describe('buttonTypesOf', () => {
     const go = { key: 'go', messageType: 'go', label: 'Go' }
-    const yes = { key: 'preset:answer:0', messageType: 'answer', label: 'Yes', props: { body: 'yes' } }
+    const yes = {
+      key: 'preset:answer:0',
+      messageType: 'answer',
+      label: 'Yes',
+      props: { body: 'yes' },
+    }
 
     it('names the type of every placed decision, sorted, once', () => {
       const placed = { row: [go, yes], fallback: [] }
@@ -1970,7 +2049,10 @@ describe('choices', () => {
 
     it('leaves the answer type in the picker without Other or without a session', () => {
       const noOther = choiceViews(
-        { ...plain, message_types: [{ ...ask, choices: { ...ask.choices!, other: false } }, answer] },
+        {
+          ...plain,
+          message_types: [{ ...ask, choices: { ...ask.choices!, other: false } }, answer],
+        },
         head(),
         undefined,
         false,

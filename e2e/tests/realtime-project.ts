@@ -98,6 +98,10 @@ export const CHOICES = {
   optionsProperty: "options",
   answerLabel: "Answer",
   other: "Other answer…",
+  /** A question whose options are an object list, labelled by `label`. */
+  pickType: "pick",
+  optionLabel: "Option",
+  noteLabel: "Note",
 } as const;
 
 /**
@@ -156,6 +160,27 @@ export const FILES = {
   accept: "image/png",
 } as const;
 
+/**
+ * The session on ROOM when RoomOptions.asked is set (TKT-GR1MXL5). A
+ * member, standing in for an agent, asks several questions in one batch.
+ * Each option is an object with pros, cons and a recommended flag, shown as
+ * cards (addQuestionCards). The lead answers with a click, and the last
+ * answer moves the session from Asking to Answered, because the answer's
+ * transition waits for `session.open_questions == 0`.
+ */
+export const ASKED = {
+  label: "Questions",
+  asking: "Asking",
+  answered: "Answered",
+  askType: "decide",
+  questionLabel: "Question",
+  optionsProperty: "options",
+  answerLabel: "Answer",
+  prosLabel: "Pros",
+  consLabel: "Cons",
+  recommendedLabel: "Recommended",
+} as const;
+
 /** The face-anchored channel type on the faced project's `policy`. */
 export const POLICY_ROOM = {
   type: "policy-room",
@@ -185,7 +210,7 @@ export interface RoomOptions {
    * topic and opens the composer for the feedback.
    */
   composePreset?: boolean;
-  /** Adds the question and answer types of CHOICES. No session. */
+  /** Adds the question types (ask, pick) and answer type of CHOICES. No session. */
   choices?: boolean;
   /**
    * Gives the room the session of INBOX instead, with its question, answer,
@@ -206,15 +231,20 @@ export interface RoomOptions {
   quiet?: boolean;
   /** Adds the screenshot type of FILES, with its file property. */
   files?: boolean;
+  /**
+   * Gives the room the session of ASKED instead, with its question and
+   * answer types. Cannot be combined with another session or `choices`.
+   */
+  asked?: boolean;
 }
 
 /** realtime.yaml for the feature project. */
 export function roomRealtimeYaml(opts: RoomOptions = {}): string {
-  if ([opts.session, opts.decisions, opts.run, opts.inbox, opts.quiet].filter(Boolean).length > 1) {
-    throw new Error("RoomOptions: session, decisions, run, inbox and quiet are exclusive");
+  if ([opts.session, opts.decisions, opts.run, opts.inbox, opts.quiet, opts.asked].filter(Boolean).length > 1) {
+    throw new Error("RoomOptions: session, decisions, run, inbox, quiet and asked are exclusive");
   }
-  if (opts.inbox && opts.choices) {
-    throw new Error("RoomOptions: inbox brings its own question types");
+  if ((opts.inbox || opts.asked) && opts.choices) {
+    throw new Error("RoomOptions: inbox and asked bring their own question types");
   }
   if (opts.composePreset && !opts.decisions) {
     throw new Error("RoomOptions: composePreset needs decisions");
@@ -265,6 +295,20 @@ export function roomRealtimeYaml(opts: RoomOptions = {}): string {
           ${CHOICES.optionsProperty}: { type: string, list: true, max: 80, max_items: 4, label: Options }
         post: [member, lead]
         choices: { from: ${CHOICES.optionsProperty}, answer: answer, into: note, other: true }
+      ${CHOICES.pickType}:
+        label: ${CHOICES.questionLabel}
+        properties:
+          question: { type: string, required: true, label: ${CHOICES.questionLabel} }
+          ${CHOICES.optionsProperty}:
+            type: object
+            list: true
+            max_items: 4
+            label: Options
+            properties:
+              label: { type: string, required: true, max: 80, label: ${CHOICES.optionLabel} }
+              note: { type: string, label: ${CHOICES.noteLabel} }
+        post: [member, lead]
+        choices: { from: ${CHOICES.optionsProperty}, label: label, answer: answer, into: note }
       answer:
         label: ${CHOICES.answerLabel}
         properties:
@@ -432,6 +476,42 @@ export function roomRealtimeYaml(opts: RoomOptions = {}): string {
           ${FILES.property}: { type: file, required: true, max: 1, max_size: 1MiB, accept: [${FILES.accept}], label: ${FILES.fileLabel} }
         post: [member, lead]`
     : "";
+  const askedTypes = opts.asked
+    ? `
+      ${ASKED.askType}:
+        label: ${ASKED.questionLabel}
+        properties:
+          question: { type: string, required: true, label: ${ASKED.questionLabel} }
+          ${ASKED.optionsProperty}:
+            type: object
+            list: true
+            max_items: 4
+            label: Options
+            properties:
+              label: { type: string, required: true, max: 80, label: Option }
+              pros: { type: string, list: true, label: ${ASKED.prosLabel} }
+              cons: { type: string, list: true, label: ${ASKED.consLabel} }
+              recommended: { type: boolean, label: ${ASKED.recommendedLabel} }
+        post: [member, lead]
+        choices: { from: ${ASKED.optionsProperty}, label: label, answer: answer, into: body }
+      answer:
+        label: ${ASKED.answerLabel}
+        properties:
+          body: { type: string, required: true, max: 80, label: ${ASKED.answerLabel} }
+        post: [lead]`
+    : "";
+  const askedSession = opts.asked
+    ? `    session:
+      label: ${ASKED.label}
+      initial: asking
+      states:
+        asking:
+          label: ${ASKED.asking}
+          on:
+            answer: { to: answered, roles: [lead], when: "session.open_questions == 0" }
+        answered: { label: ${ASKED.answered}, final: true }
+`
+    : "";
   const ownerRole = opts.run || opts.inbox || opts.quiet ? "\n      owner:  { from: entity.owner }" : "";
   const session = opts.session
     ? `    session:
@@ -461,14 +541,14 @@ channel_types:
         label: Text
         properties:
           body: { type: markdown, required: true, max: 2000, label: ${ROOM.messageLabel} }
-        post: [member, lead]${contained}${decisionTypes}${choiceTypes}${runTypes}${inboxTypes}${quietTypes}${fileTypes}
+        post: [member, lead]${contained}${decisionTypes}${choiceTypes}${runTypes}${inboxTypes}${quietTypes}${fileTypes}${askedTypes}
     lifecycle:
       close:  { roles: [lead], label: Close }
       reopen: { roles: [lead], label: Reopen }
     message_ops:
       edit_own:   { roles: [member, lead] }
       delete_own: { roles: [member, lead] }
-${session}${decisionSession}${runSession}${inboxSession}${quietSession}`;
+${session}${decisionSession}${runSession}${inboxSession}${quietSession}${askedSession}`;
 }
 
 /** acl.yaml for the feature project: everyone reads, two may post. */
@@ -601,6 +681,22 @@ export function addOfferFalse(dir: string): void {
   if (/^channels:/m.test(yaml)) throw new Error("addOfferFalse: data-entry.yaml already has a channels block");
   const messages = [QUIET.progressType, QUIET.stepType].map((t) => `      ${t}:\n        offer: false\n`).join("");
   writeAtomic(file, `${yaml.trimEnd()}\nchannels:\n  ${ROOM.type}:\n    messages:\n${messages}`);
+}
+
+/**
+ * Shows the options of ASKED's question type as cards (TKT-GR1MXL5): adds
+ * `display: cards` for it under `channels.room.messages` in the
+ * data-entry.yaml written by the fixture.
+ */
+export function addQuestionCards(dir: string): void {
+  const file = path.join(dir, "data-entry.yaml");
+  const yaml = fs.readFileSync(file, "utf8");
+  if (/^channels:/m.test(yaml)) throw new Error("addQuestionCards: data-entry.yaml already has a channels block");
+  const cards =
+    `      ${ASKED.askType}:\n        display: cards\n        cards:\n` +
+    `          items: ${ASKED.optionsProperty}\n          body: question\n          title: label\n` +
+    `          plus: pros\n          minus: cons\n          badge: recommended\n`;
+  writeAtomic(file, `${yaml.trimEnd()}\nchannels:\n  ${ROOM.type}:\n    messages:\n${cards}`);
 }
 
 /** Adds an `owner` string property to `feature` in the schema.yaml in dir. */

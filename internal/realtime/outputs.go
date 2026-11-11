@@ -286,26 +286,41 @@ type outputPlan struct {
 	marked     bool
 }
 
-// precheckOutputs runs the transition mt fires in the state the call read
-// against the decider, and asks the writer about each of its outputs. The
-// post is refused when any is refused, when the snapshot is degraded or
-// when the process cannot write outputs. A post that fires no outputs
-// asks nothing.
-func (s *Service) precheckOutputs(c *call, mt *realtimecfg.MessageType, sp sessionPost) (*outputPlan, error) {
+// precheckOutputs plans posts against the state the call read, as the
+// store will (see [channels.PlanBatch]), and asks the writer about each
+// output of the transition the moving post fires. The posts are refused
+// when any output is refused, when the snapshot is degraded or when the
+// process cannot write outputs. Posts that fire no outputs ask nothing.
+// Afterwards every post's gate is active: under the store's lock, a
+// decider may move along an entry with outputs only when it is the one
+// checked here.
+func (s *Service) precheckOutputs(c *call, posts []logPost) (*outputPlan, error) {
 	plan := &outputPlan{claim: channels.NewName(), anchorType: c.anchor.Type}
-	if sp.step == nil {
+	stepped := false
+	for _, p := range posts {
+		stepped = stepped || p.sp.step != nil
+	}
+	if !stepped {
 		return plan, nil
 	}
 	ch := channels.Channel{State: channels.StateOpen, CreatedAt: c.now}
 	if c.head != nil {
 		ch = *c.head
 	}
-	move, moves := sp.step.Decide(ch)
-	sp.gate.active = true
-	if !moves {
+	bp, err := channels.PlanBatch(ch, newMessages(c, posts))
+	for _, p := range posts {
+		if p.sp.gate != nil {
+			p.sp.gate.active = true
+		}
+	}
+	if err != nil {
+		return nil, appendRefusal(c, posts, err)
+	}
+	if bp.MoveAt < 0 {
 		return plan, nil
 	}
-	t, _ := c.ct.Session().TransitionTo(move.From, mt.Name, move.To)
+	mover, move := posts[bp.MoveAt], bp.Move
+	t, _ := c.ct.Session().TransitionTo(move.From, mover.mt.Name, move.To)
 	outs := t.Outputs()
 	if len(outs) == 0 {
 		return plan, nil
@@ -331,7 +346,7 @@ func (s *Service) precheckOutputs(c *call, mt *realtimecfg.MessageType, sp sessi
 			return nil, fmt.Errorf("realtime: check output: %w", err)
 		}
 	}
-	sp.gate.from, sp.gate.to = move.From, move.To
+	mover.sp.gate.from, mover.sp.gate.to = move.From, move.To
 	return plan, nil
 }
 

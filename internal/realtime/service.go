@@ -64,9 +64,13 @@ type Deps struct {
 //
 // 40 -> 42 (TKT-2B2AIA): MarkRead and SubscribeLive (named SubscribeReads
 // until TKT-9YRRM5), the read marker entry points the transports call. Their helpers are free functions.
-// Ratchet target: TKT-N0IKN9.
+// Ratchet target: TKT-N0IKN9. 42 -> 47 (TKT-GR1MXL5): PostBatch, a
+// transport entry point like Post, and checkLogPost, checkLogProps,
+// appendLog and postEphemeral, the steps Post and PostBatch share; 20 -> 21
+// exported.
 //
-//plimsoll:max-methods=42
+//plimsoll:max-methods=47
+//plimsoll:max-exported-methods=21
 type Service struct {
 	store    channels.Store
 	cfg      ConfigSource
@@ -431,94 +435,42 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 	if e := generationRefusal(c.ct.Session(), sessionChannel(c.head, c.now), in.ExpectGeneration); e != nil {
 		return PostResult{}, sessionMoved(e)
 	}
+	if ephemeral {
+		return s.postEphemeral(c, mt, in)
+	}
+	p, err := s.checkLogPost(c, mt, in.Props, in.ReplyTo, in.Files)
+	if err != nil {
+		return PostResult{}, err
+	}
+	if recErr := s.record(c); recErr != nil {
+		return PostResult{}, recErr
+	}
+	p.sp = newSessionPost(c.ctx, c.ct, mt, p.props, p.counts, c.now, poster{roles: c.transitionRoles(mt)}, "",
+		in.ExpectGeneration)
+	ms, sv, outs, err := s.appendLog(c, []logPost{p})
+	if err != nil {
+		return PostResult{}, err
+	}
+	v := rendererWith(c, p.refs).message(ms[0])
+	return PostResult{Message: &v, Session: sv, Outputs: outs}, nil
+}
+
+// postEphemeral charges the caller a token for a signal of mt, checks its
+// properties and keeps it in memory. A signal is never stored, so it
+// addresses no one.
+func (s *Service) postEphemeral(c *call, mt *realtimecfg.MessageType, in PostInput) (PostResult, error) {
 	if err := takePostTokens(s.local.limiter, c, mt, len(in.Files) > 0); err != nil {
 		return PostResult{}, err
 	}
 	if err := checkFileShape(mt, in.Files); err != nil {
 		return PostResult{}, err
 	}
-	counts := inputCounts(in.Files)
-	maxBytes := postMaxBytes(c, ephemeral)
-	// A signal is never stored, so it addresses no one.
-	var mplan *mentionPlan
-	if !ephemeral {
-		mplan = &mentionPlan{}
-	}
-	vp, refs, err := s.checkMessageKeeping(c, mt, in.Props, counts, maxBytes, nil, mplan)
+	maxBytes := min(c.snap.Config.Limits().MessageBytes, realtimelimits.MaxEphemeralBytes)
+	vp, _, err := s.checkMessageKeeping(c, mt, in.Props, inputCounts(in.Files), maxBytes, nil, nil)
 	if err != nil {
 		return PostResult{}, err
 	}
-	if ephemeral {
-		return s.postSignal(c, mt, vp, in.ReplyTo)
-	}
-	targets := mplan.targets(refs, c.snap.Config.MentionUserType(), c.p.User)
-	if len(targets) > channels.MaxMentions {
-		return PostResult{}, tooManyMentions()
-	}
-	files, err := checkFiles(c, s.files, mt, in.Files)
-	if err != nil {
-		return PostResult{}, err
-	}
-	if len(files) > 0 {
-		// A scan or transform may take a while; the message is stamped
-		// when its files are checked, not when the request arrived.
-		c.now = s.clock()
-	}
-	err = s.record(c)
-	if err != nil {
-		return PostResult{}, err
-	}
-	sp := newSessionPost(c.ctx, c.ct, mt, vp.props, counts, c.now, poster{roles: c.transitionRoles(mt)}, "",
-		in.ExpectGeneration)
-	plan, err := s.precheckOutputs(c, mt, sp)
-	if err != nil {
-		return PostResult{}, err
-	}
-	if sp.step != nil {
-		sp.step.Mark = personMark(c.ct.Session(), mt.Name, authorOf(c.p), c.p.Roles(), c.now, plan)
-	}
-	m, err := s.store.Append(c.ctx, c.key, channels.NewMessage{
-		Type: mt.Name, Author: authorOf(c.p), At: c.now, Props: vp.props, ReplyTo: in.ReplyTo, Session: sp.step,
-		MarkRead: true, Mentions: targets, NoUnread: mt.NoUnread, Files: files,
-	})
-	sp.logGuardFailure(c.ctx)
-	if err != nil {
-		return PostResult{}, appendRefusal(c, mt, err)
-	}
-	return afterPost(s, c, m, sp.step, plan, refs), nil
-}
-
-// afterPost finishes a stored post: it notes the session's due time and
-// the posted message, then renders the result. When the message moved a
-// marked session, it runs the outputs inline and reads the session again
-// once they have finished.
-func afterPost(
-	s *Service, c *call, m channels.Message, step *channels.SessionStep, plan *outputPlan,
-	refs map[string]RefView,
-) PostResult {
-	noteDue(s.dueWake, step)
-	s.local.notePosted(c, m)
-	v := rendererWith(c, refs).message(m)
-	out := PostResult{Message: &v, Session: postedSession(c, step)}
-	if plan.marked && step.Outcome.Moved {
-		out.Outputs = s.runInline(c, step.Outcome.Notice, plan)
-		if out.Outputs != nil && out.Outputs.Status != OutputsPending {
-			// The on_final close may have closed the channel, and a set
-			// may have handed a role to someone else.
-			out.Session = s.sessionAfterOutputs(c, out.Session, wroteRoleProperty(c.ct, out.Outputs))
-		}
-	}
-	return out
-}
-
-// postMaxBytes is the size limit of a posted message: the configured
-// message size, and at most the ephemeral cap for an ephemeral message.
-func postMaxBytes(c *call, ephemeral bool) int {
-	maxBytes := c.snap.Config.Limits().MessageBytes
-	if ephemeral {
-		maxBytes = min(maxBytes, realtimelimits.MaxEphemeralBytes)
-	}
-	return maxBytes
+	return s.postSignal(c, mt, vp, in.ReplyTo)
 }
 
 // takePostTokens charges the rate limits of a post: the message type's
@@ -539,14 +491,22 @@ func takePostTokens(l *limiter, c *call, mt *realtimecfg.MessageType, hasFiles b
 	return l.take(c.now, bucketIdentity(c.p), channels.Key{}, opFiles, realtimelimits.FileIdentityRate)
 }
 
-// appendRefusal maps a failed append of a post: a session precondition
+// appendRefusal maps a failed append of posts: a session precondition
 // the store refused under its lock (the generation, then in:) is the same
-// denial as the pre-check's; anything else is a store error.
-func appendRefusal(c *call, mt *realtimecfg.MessageType, err error) error {
+// denial as the pre-check's, naming the first type the state refuses;
+// anything else is a store error.
+func appendRefusal(c *call, posts []logPost, err error) error {
 	if e, ok := errors.AsType[*channels.SessionGenerationError](err); ok {
 		return sessionMoved(e)
 	}
 	if e, ok := errors.AsType[*channels.SessionStateError](err); ok {
+		mt := posts[0].mt
+		for _, p := range posts {
+			if p.mt.In != nil && (e.Stranded || !p.mt.PostableIn(e.State)) {
+				mt = p.mt
+				break
+			}
+		}
 		return sessionWrongState(c.ct, mt, e)
 	}
 	return storeError(err)

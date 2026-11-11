@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -223,6 +224,9 @@ func writeMessageType(b *strings.Builder, mt realtime.MessageTypeView) {
 		}
 		if p.Type == "array" {
 			typ = "list of string"
+			if p.Items != nil && p.Items.Type == "object" {
+				typ = "list of object with " + strings.Join(slices.Sorted(maps.Keys(p.Items.Properties)), ", ")
+			}
 			if p.MaxItems > 0 {
 				typ += fmt.Sprintf(", at most %d", p.MaxItems)
 			}
@@ -249,8 +253,12 @@ func writeMessageType(b *strings.Builder, mt realtime.MessageTypeView) {
 		if c.Other {
 			other = ", other"
 		}
+		from := printable(c.From)
+		if c.Label != "" {
+			from += " (label " + printable(c.Label) + ")"
+		}
 		fmt.Fprintf(b, "  choices: from %s, answer %s into %s%s\n",
-			printable(c.From), printable(c.Answer), printable(c.Into), other)
+			from, printable(c.Answer), printable(c.Into), other)
 	}
 }
 
@@ -410,6 +418,10 @@ func writeProp(b *strings.Builder, name string, value any) {
 	if items, ok := value.([]any); ok {
 		fmt.Fprintf(b, "%s%s:\n", propIndent, printable(name))
 		for _, item := range items {
+			if obj, isObj := item.(map[string]any); isObj {
+				writeObjectItem(b, obj)
+				continue
+			}
 			fmt.Fprintf(b, "%s  - %s\n", propIndent, printable(propText(item)))
 		}
 		return
@@ -418,6 +430,25 @@ func writeProp(b *strings.Builder, name string, value any) {
 	fmt.Fprintf(b, "%s%s: %s\n", propIndent, printable(name), printable(lines[0]))
 	for _, line := range lines[1:] {
 		fmt.Fprintf(b, "%s%s\n", propIndent, printable(line))
+	}
+}
+
+// writeObjectItem prints one item of an object list: its fields by name,
+// the first after "- " and the rest under it, a list field as its items
+// joined by "; ".
+func writeObjectItem(b *strings.Builder, obj map[string]any) {
+	lead := "- "
+	for _, name := range slices.Sorted(maps.Keys(obj)) {
+		text := propText(obj[name])
+		if list, isList := obj[name].([]any); isList {
+			parts := make([]string, len(list))
+			for i, v := range list {
+				parts[i] = propText(v)
+			}
+			text = strings.Join(parts, "; ")
+		}
+		fmt.Fprintf(b, "%s  %s%s: %s\n", propIndent, lead, printable(name), printable(text))
+		lead = "  "
 	}
 }
 

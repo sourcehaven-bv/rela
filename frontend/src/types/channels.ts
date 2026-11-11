@@ -40,6 +40,21 @@ export interface Channel {
    * and only for a stored channel the caller has opened or posted in.
    */
   read?: ChannelRead
+  /**
+   * The questions of the session's current span, by seq. A question is a
+   * top-level message of a type with `choices:`; `answers` counts its
+   * replies of `answer_type`. While a question is listed, its author cannot
+   * edit or delete it (409 asked_question). The list clears when the
+   * session moves. Absent when there are none.
+   */
+  asked?: ChannelAsked[]
+}
+
+/** One question of a session's current span; see `Channel.asked`. */
+export interface ChannelAsked {
+  seq: number
+  answer_type: string
+  answers: number
 }
 
 /**
@@ -495,7 +510,10 @@ export const LIFECYCLE_DELETE = 'delete'
  * A prop value: a scalar, a RefProp for a ref property, or the items of a
  * list property.
  */
-export type MessagePropValue = string | number | boolean | RefProp | string[]
+export type MessagePropValue = string | number | boolean | RefProp | string[] | MessageObjectItem[]
+
+/** One item of an object list property: its set fields by name. */
+export type MessageObjectItem = Record<string, string | number | boolean | string[]>
 
 /**
  * One person or agent a message mentions. text is the code span text as
@@ -518,6 +536,12 @@ export interface Message {
   props?: Record<string, MessagePropValue>
   reply_to?: number
   reply_count?: number
+  /**
+   * The seq of the first message of the batch the message was posted in
+   * (`POST …/_batch`); absent for a single post. Every message of one batch
+   * has the same value.
+   */
+  batch?: number
   edited_at?: string
   triggered_by?: string
   removed?: MessageRemoval
@@ -587,7 +611,7 @@ export interface EphemeralAccepted {
 }
 
 /** A prop value as a request sends it: a ref is its entity id. */
-export type MessagePropInput = string | number | boolean | string[]
+export type MessagePropInput = string | number | boolean | string[] | MessageObjectItem[]
 
 export interface PostMessageRequest {
   type: string
@@ -688,17 +712,29 @@ export interface ChannelMessageTypeSchema {
 /**
  * The `choices:` of a question type: `from` is its list property, and a
  * click posts `answer` with the option in `into`, as a reply to the
- * question. `other` adds a button that opens the composer.
+ * question. `other` adds a button that opens the composer. When `from`
+ * is an object list, `label` names the field whose value is the button
+ * text and the posted option.
  */
 export interface ChannelChoicesSchema {
   from: string
+  label?: string
   answer: string
   into: string
   other: boolean
 }
 
 export type ChannelPropertyType =
-  'string' | 'markdown' | 'integer' | 'boolean' | 'date' | 'datetime' | 'ref' | 'enum' | 'file'
+  | 'string'
+  | 'markdown'
+  | 'integer'
+  | 'boolean'
+  | 'date'
+  | 'datetime'
+  | 'ref'
+  | 'enum'
+  | 'file'
+  | 'object'
 
 export interface ChannelPropertySchema {
   name: string
@@ -711,7 +747,10 @@ export interface ChannelPropertySchema {
    * message holds in it.
    */
   max?: number
-  /** Set for a list of strings (type string): the value is an array. */
+  /**
+   * Set for a list of strings (type string) or of objects (type object):
+   * the value is an array.
+   */
   list?: boolean
   /** The most items of a list property. */
   max_items?: number
@@ -724,6 +763,8 @@ export interface ChannelPropertySchema {
   max_size?: number
   /** On a `file` property: the MIME types it accepts; absent accepts the server's default. */
   accept?: string[]
+  /** The fields of each item of an object list. */
+  fields?: ChannelPropertySchema[]
 }
 
 export interface ChannelActionSchema {
@@ -769,6 +810,7 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'rev',
     'session',
     'read',
+    'asked',
   ]),
   ChannelRead: wireKeys<ChannelRead>()(['seq', 'unread']),
   ChannelMarkRead: wireKeys<ChannelMarkRead>()(['seq', 'unread', 'last_seq']),
@@ -868,6 +910,7 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'props',
     'reply_to',
     'reply_count',
+    'batch',
     'edited_at',
     'triggered_by',
     'removed',
@@ -1011,7 +1054,13 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'confirm_text',
     'style',
   ]),
-  ChannelChoicesSchema: wireKeys<ChannelChoicesSchema>()(['from', 'answer', 'into', 'other']),
+  ChannelChoicesSchema: wireKeys<ChannelChoicesSchema>()([
+    'from',
+    'label',
+    'answer',
+    'into',
+    'other',
+  ]),
   ChannelPropertySchema: wireKeys<ChannelPropertySchema>()([
     'name',
     'label',
@@ -1025,6 +1074,7 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'to',
     'max_size',
     'accept',
+    'fields',
   ]),
   ChannelActionSchema: wireKeys<ChannelActionSchema>()(['name', 'label', 'promote_to']),
 }

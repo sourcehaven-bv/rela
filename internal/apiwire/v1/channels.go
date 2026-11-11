@@ -34,6 +34,18 @@ type Channel struct {
 	// Read is the caller's own read marker; absent when the caller has
 	// none. The channel list and the head carry it, other answers do not.
 	Read *ChannelRead `json:"read,omitempty"`
+	// Asked lists the questions of the session's current span, by seq:
+	// messages whose replies of AnswerType answer them, and how many have.
+	// While a question is asked its author cannot edit or delete it (409
+	// asked_question). Absent when there are none.
+	Asked []ChannelAsked `json:"asked,omitempty"`
+}
+
+// ChannelAsked is one question of a session's current span.
+type ChannelAsked struct {
+	Seq        int64  `json:"seq"`
+	AnswerType string `json:"answer_type"`
+	Answers    int    `json:"answers"`
 }
 
 // ChannelRead is the caller's read marker on a channel: the highest seq
@@ -354,14 +366,17 @@ type ChannelMessageOutputResult struct {
 // renders as restricted, and that the edit does not name, keeps its stored
 // value, so edit is offered on such a message too.
 type Message struct {
-	Seq         int64           `json:"seq"`
-	Rev         int64           `json:"rev"`
-	Type        string          `json:"type,omitempty"`
-	Author      *ChannelAuthor  `json:"author,omitempty"`
-	At          string          `json:"at,omitempty"`
-	Props       map[string]any  `json:"props,omitempty"`
-	ReplyTo     int64           `json:"reply_to,omitempty"`
-	ReplyCount  int             `json:"reply_count,omitempty"`
+	Seq        int64          `json:"seq"`
+	Rev        int64          `json:"rev"`
+	Type       string         `json:"type,omitempty"`
+	Author     *ChannelAuthor `json:"author,omitempty"`
+	At         string         `json:"at,omitempty"`
+	Props      map[string]any `json:"props,omitempty"`
+	ReplyTo    int64          `json:"reply_to,omitempty"`
+	ReplyCount int            `json:"reply_count,omitempty"`
+	// Batch is the seq of the first message of the batch the message was
+	// posted in (`POST …/_batch`); absent for a single post.
+	Batch       int64           `json:"batch,omitempty"`
 	EditedAt    string          `json:"edited_at,omitempty"`
 	TriggeredBy string          `json:"triggered_by,omitempty"`
 	Removed     *MessageRemoval `json:"removed,omitempty"`
@@ -452,6 +467,26 @@ type PostMessageRequest struct {
 	// against; a post at another generation is refused with 409
 	// session_moved. Absent: no precondition.
 	ExpectGeneration *int64 `json:"expect_generation,omitempty"`
+}
+
+// PostBatchRequest is the `POST …/_batch` body: 1 to 10 top-level log
+// messages, posted as one step. They get consecutive seqs, and the session
+// moves at most once. ExpectGeneration applies to the whole batch.
+type PostBatchRequest struct {
+	Messages         []BatchMessage `json:"messages"`
+	ExpectGeneration *int64         `json:"expect_generation,omitempty"`
+}
+
+// BatchMessage is one message of a [PostBatchRequest].
+type BatchMessage struct {
+	Type  string         `json:"type"`
+	Props map[string]any `json:"props,omitempty"`
+}
+
+// PostBatchResponse answers `POST …/_batch`: the stored messages in seq
+// order.
+type PostBatchResponse struct {
+	Messages []Message `json:"messages"`
 }
 
 // EditMessageRequest is the `PATCH …/messages/{seq}` body. Props replaces
@@ -580,18 +615,20 @@ type ChannelDecisionButtonSchema struct {
 // selected.
 type ChannelChoicesSchema struct {
 	From   string `json:"from"`
+	Label  string `json:"label,omitempty"`
 	Answer string `json:"answer"`
 	Into   string `json:"into"`
 	Other  bool   `json:"other"`
 }
 
 // ChannelPropertySchema describes one message property. Type is string,
-// markdown, integer, boolean, date, datetime, ref or enum. Max is the most
+// markdown, integer, boolean, date, datetime, ref, enum or object. Max is the most
 // characters (Unicode code points) a string or markdown value may hold.
 // Enum names the schema.yaml enum type and Values its values; To lists the
-// entity types a ref may name. List is set for a list of strings, whose
-// value is a JSON array; Max then limits each item and MaxItems the number
-// of items.
+// entity types a ref may name. List is set for a list of strings or of
+// objects, whose value is a JSON array; Max then limits each string item
+// and MaxItems the number of items. Fields describes the fields of an
+// object list's items.
 type ChannelPropertySchema struct {
 	Name     string   `json:"name"`
 	Label    string   `json:"label"`
@@ -608,6 +645,9 @@ type ChannelPropertySchema struct {
 	// most files a message holds in it.
 	MaxSize int64    `json:"max_size,omitempty"`
 	Accept  []string `json:"accept,omitempty"`
+	// Fields are the fields of an object list (type object, always a
+	// list), required first, then by name. Absent for any other type.
+	Fields []ChannelPropertySchema `json:"fields,omitempty"`
 }
 
 // ChannelActionSchema describes one message action. PromoteTo is the

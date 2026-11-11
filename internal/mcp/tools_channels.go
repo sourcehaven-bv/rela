@@ -37,6 +37,7 @@ type ChannelWriter interface {
 	Post(ctx context.Context, addr realtime.RawAddress, in realtime.PostInput) (realtime.PostResult, error)
 	Edit(ctx context.Context, addr realtime.RawAddress, seq int64, props map[string]any) (realtime.MessageView, error)
 	Delete(ctx context.Context, addr realtime.RawAddress, seq int64, reason string) (realtime.MessageView, error)
+	PostBatch(ctx context.Context, addr realtime.RawAddress, in realtime.BatchInput) (realtime.BatchResult, error)
 }
 
 // ChannelCreator backs create_channel. The wiring site passes
@@ -152,6 +153,12 @@ func (u unavailableChannels) Post(
 	return realtime.PostResult{}, u.err
 }
 
+func (u unavailableChannels) PostBatch(
+	context.Context, realtime.RawAddress, realtime.BatchInput,
+) (realtime.BatchResult, error) {
+	return realtime.BatchResult{}, u.err
+}
+
 func (u unavailableChannels) Edit(
 	context.Context, realtime.RawAddress, int64, map[string]any,
 ) (realtime.MessageView, error) {
@@ -179,6 +186,8 @@ const (
 	toolReadChannel    = "read_channel"
 	toolReadSession    = "read_session"
 	toolMarkRead       = "mark_read"
+	toolPostMessages   = "post_messages"
+	chanMessagesArg    = "messages"
 	chanTypeArg        = "channel_type"
 	chanNameArg        = "name"
 	chanAfterRevArg    = "after_rev"
@@ -224,6 +233,7 @@ func registerChannelTools(s *Server, reads map[string]mcpgo.ToolHandler) {
 	reads[toolReadChannel] = addTool(s, toolReadChannelDef(), channelTool(s, channelHandler.handleRead))
 	reads[toolReadSession] = addTool(s, toolReadSessionDef(), channelTool(s, channelHandler.handleSession))
 	addTool(s, toolPostMessage(d.RefuseSignals), channelTool(s, channelHandler.handlePost))
+	addTool(s, toolPostMessagesDef(), channelTool(s, channelHandler.handlePostBatch))
 	addTool(s, toolEditMessage(), channelTool(s, channelHandler.handleEdit))
 	addTool(s, toolRemoveMessage(), channelTool(s, channelHandler.handleRemove))
 	addTool(s, toolCreateChannel(), channelTool(s, channelHandler.handleCreate))
@@ -305,10 +315,11 @@ func toolReadChannelDef() *mcpgo.Tool {
 			"To wait for a session's status or your turn, watch read_session instead: it carries no rev. "+
 			"A message's mentions lists the people and agents it addresses as you may see them: text (the "+
 			"code span), kind (user, job or login) and, for a user, ref. "+
-			"A list property has props_schema type array, and its value is a JSON array of strings. "+
+			"A list property has props_schema type array, and its value is a JSON array of strings, or of "+
+			"objects when its items have type object. "+
 			"A message type with choices in message_types[].choices is a question: the web app shows the "+
-			"items of its from list as buttons, and a click posts the answer type with the item in its into "+
-			"property, as a reply to the question. "+
+			"items of its from list as buttons, and a click posts the answer type with the item (for a list "+
+			"of objects, the item's choices.label field) in its into property, as a reply to the question. "+
 			realtime.UntrustedNotice),
 		withNumber(chanAfterRevArg, description("Messages changed after this rev, ordered by rev; 0 is valid")),
 		withNumber("after", description("Messages after this seq, oldest first")),
@@ -382,9 +393,12 @@ func toolPostMessage(refuseSignals bool) *mcpgo.Tool {
 		" per message. A reply addresses the author of the message it replies to. " +
 		"A list property (props_schema type array) takes a JSON array of distinct strings; each item is " +
 		"trimmed and may not hold control, line-break or invisible characters (U+FE0E and U+FE0F are " +
-		"dropped, and U+200D is allowed only between two emoji). To ask a person to choose, post a type with choices (message_types[].choices on " +
+		"dropped, and U+200D is allowed only between two emoji). An object list (items of type object) " +
+		"takes a JSON array of objects with only the fields its items declare. " +
+		"To ask a person to choose, post a type with choices (message_types[].choices on " +
 		"read_channel) with the options in its from list; the web app shows them as buttons, and the " +
-		"answer arrives as a reply of the answer type. " +
+		"answer arrives as a reply of the answer type. With choices.label, the options are objects and " +
+		"that field is the button text; the values of that field must differ. " +
 		"When you start work in a channel with a session, post the message that moves the session into " +
 		"a state with status working: boards in the web app then show the anchor as busy, also when you " +
 		"post from another process. "
@@ -400,6 +414,26 @@ func toolPostMessage(refuseSignals bool) *mcpgo.Tool {
 		withNumber("expect_generation", description("The session generation this post was decided against, "+
 			"0 or more; a post at another generation is refused with session_moved")),
 		withArray(chanFilesArg, description(filesArgDescription())),
+	)...)
+}
+
+func toolPostMessagesDef() *mcpgo.Tool {
+	desc := "Post 1 to " + strconv.Itoa(realtime.MaxBatch) + " top-level log messages as one step: all of " +
+		"them or none. Each item is {message_type, props}, checked as post_message checks it; a refusal " +
+		"names the item's index. The messages get consecutive seqs and share a batch id. " +
+		"Use it to ask several questions at once: post one message of a type with choices per question. " +
+		"In a channel with a session, each such message is asked: it is listed in the channel's asked " +
+		"with its answer count until the session moves, and you cannot edit or remove it meanwhile " +
+		"(asked_question). The guard session.open_questions counts the asked questions without an " +
+		"answer, so a transition with `when: session.open_questions == 0` moves on the last answer; " +
+		"wait for it with watch on read_session rather than reacting to each answer. " +
+		"The session moves at most once per batch, on the first message whose transition fires; " +
+		"expect_generation applies to the whole batch. "
+	return newTool(toolPostMessages, append(withChannelAddress(true),
+		withDescription(desc+realtime.UntrustedNotice),
+		withArray(chanMessagesArg, required(), description("The messages: objects {message_type, props}")),
+		withNumber("expect_generation", description("The session generation this batch was decided against, "+
+			"0 or more; a batch at another generation is refused with session_moved")),
 	)...)
 }
 
@@ -458,6 +492,12 @@ type (
 		Session *realtime.SessionView `json:"session,omitempty"`
 		// Outputs is the outputs mark of the notice a post's move wrote.
 		Outputs *realtime.OutputsView `json:"outputs,omitempty"`
+	}
+	batchResult struct {
+		Notice   string                 `json:"notice"`
+		Messages []realtime.MessageView `json:"messages"`
+		Session  *realtime.SessionView  `json:"session,omitempty"`
+		Outputs  *realtime.OutputsView  `json:"outputs,omitempty"`
 	}
 	signalResult struct {
 		Ephemeral bool   `json:"ephemeral"`
@@ -640,6 +680,61 @@ func (h channelHandler) handlePost(ctx context.Context, args toolRequest) *mcpgo
 	return channelJSON(messageResult{Notice: realtime.UntrustedNotice, Message: *got.Message, Session: got.Session,
 		Outputs: got.Outputs,
 	})
+}
+
+func (h channelHandler) handlePostBatch(ctx context.Context, args toolRequest) *mcpgo.CallToolResult {
+	addr, err := channelAddress(args)
+	if err != nil {
+		return errorResult(err.Error())
+	}
+	msgs, err := batchArg(args)
+	if err != nil {
+		return errorResult(err.Error())
+	}
+	expect, err := wholeArg(args, "expect_generation", 0)
+	if err != nil {
+		return errorResult(err.Error())
+	}
+	got, err := h.writer.PostBatch(ctx, addr, realtime.BatchInput{Messages: msgs, ExpectGeneration: expect})
+	if err != nil {
+		return h.failed(ctx, "post", addr.Anchor, err)
+	}
+	return channelJSON(batchResult{Notice: realtime.UntrustedNotice, Messages: got.Messages, Session: got.Session,
+		Outputs: got.Outputs,
+	})
+}
+
+// batchArg reads the messages argument of post_messages: an array of
+// {message_type, props} objects. The count is checked by the service.
+func batchArg(args toolRequest) ([]realtime.BatchMessage, error) {
+	raw, ok := args.GetArguments()[chanMessagesArg].([]any)
+	if !ok {
+		return nil, fmt.Errorf("argument %q must be an array of {message_type, props}", chanMessagesArg)
+	}
+	out := make([]realtime.BatchMessage, len(raw))
+	for i, item := range raw {
+		m, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("messages[%d] must be an object {message_type, props}", i)
+		}
+		for k := range m {
+			if k != "message_type" && k != chanPropsArg {
+				return nil, fmt.Errorf("messages[%d] has field %q; an item takes message_type and props", i, k)
+			}
+		}
+		typ, ok := m["message_type"].(string)
+		if !ok || typ == "" {
+			return nil, fmt.Errorf("messages[%d] needs a message_type", i)
+		}
+		props := map[string]any{}
+		if p, present := m[chanPropsArg]; present && p != nil {
+			if props, ok = p.(map[string]any); !ok {
+				return nil, fmt.Errorf("messages[%d].props is not an object", i)
+			}
+		}
+		out[i] = realtime.BatchMessage{Type: typ, Props: props}
+	}
+	return out, nil
 }
 
 func (h channelHandler) handleEdit(ctx context.Context, args toolRequest) *mcpgo.CallToolResult {

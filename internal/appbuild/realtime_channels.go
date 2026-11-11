@@ -57,7 +57,7 @@ func (s realtimeChannelSchema) MessageType(channelType, messageType string) (dat
 	}
 	props := make([]dataentryconfig.ChannelProperty, 0, len(mt.Properties))
 	for _, p := range mt.Properties {
-		props = append(props, dataentryconfig.ChannelProperty{Name: p.Name, Type: string(p.Type), Required: p.Required})
+		props = append(props, channelProperty(p))
 	}
 	sort.Slice(props, func(i, j int) bool { return props[i].Name < props[j].Name })
 	counts := mt.Persist == realtimecfg.PersistLog && !mt.NoUnread
@@ -83,6 +83,22 @@ func hasPresetButtons(sess *realtimecfg.Session, messageType string) bool {
 		}
 	}
 	return false
+}
+
+// channelProperty is p as the presentation check sees it, with the fields
+// of an object list sorted by name.
+func channelProperty(p realtimecfg.Property) dataentryconfig.ChannelProperty {
+	out := dataentryconfig.ChannelProperty{Name: p.Name, Type: string(p.Type), Required: p.Required, List: p.List}
+	if len(p.Fields) == 0 {
+		return out
+	}
+	out.Fields = make([]dataentryconfig.ChannelProperty, 0, len(p.Fields))
+	for name, f := range p.Fields {
+		f.Name = name
+		out.Fields = append(out.Fields, channelProperty(f))
+	}
+	sort.Slice(out.Fields, func(i, j int) bool { return out.Fields[i].Name < out.Fields[j].Name })
+	return out
 }
 
 func (s realtimeChannelSchema) BusyFacts(channelType string) (dataentryconfig.BusyFacts, bool) {

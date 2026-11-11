@@ -7198,6 +7198,10 @@ body:
                             "type": "string",
                             "description": "The string property of the answer type that receives the option"
                           },
+                          "label": {
+                            "type": "string",
+                            "description": "For an object list: the field of each item that is the option. Absent for a list of strings"
+                          },
                           "other": {
                             "type": "boolean",
                             "description": "Whether a button opens the composer for a free-text answer"
@@ -7276,13 +7280,81 @@ body:
                               "type": "string",
                               "description": "The schema.yaml enum type of an enum property"
                             },
+                            "fields": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "enum": {
+                                    "type": "string",
+                                    "description": "The schema.yaml enum type of an enum property"
+                                  },
+                                  "label": {
+                                    "type": "string",
+                                    "description": "The label from realtime.yaml, or the name when none is set; never empty"
+                                  },
+                                  "list": {
+                                    "type": "boolean",
+                                    "description": "Set for a list of strings (type string) or of objects (type object), whose value is a JSON array; max then limits each string item"
+                                  },
+                                  "max": {
+                                    "type": "integer",
+                                    "description": "Most characters (Unicode code points) of a string or markdown value; for a file property, the most files a message holds in it"
+                                  },
+                                  "max_items": {
+                                    "type": "integer",
+                                    "description": "Most items of a list property"
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "required": {
+                                    "type": "boolean"
+                                  },
+                                  "to": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    },
+                                    "description": "Entity types a ref property may name"
+                                  },
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "string",
+                                      "markdown",
+                                      "integer",
+                                      "boolean",
+                                      "date",
+                                      "datetime",
+                                      "ref",
+                                      "enum",
+                                      "file",
+                                      "object"
+                                    ]
+                                  },
+                                  "values": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "label",
+                                  "type"
+                                ]
+                              },
+                              "description": "The fields of each item of an object list, required first, then by name"
+                            },
                             "label": {
                               "type": "string",
                               "description": "The label from realtime.yaml, or the name when none is set; never empty"
                             },
                             "list": {
                               "type": "boolean",
-                              "description": "Set for a list of strings (type string), whose value is a JSON array; max then limits each item"
+                              "description": "Set for a list of strings (type string) or of objects (type object), whose value is a JSON array; max then limits each string item"
                             },
                             "max": {
                               "type": "integer",
@@ -7320,7 +7392,8 @@ body:
                                 "datetime",
                                 "ref",
                                 "enum",
-                                "file"
+                                "file",
+                                "object"
                               ]
                             },
                             "values": {

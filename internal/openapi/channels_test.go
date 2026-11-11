@@ -797,3 +797,77 @@ func TestChannelFilePaths(t *testing.T) {
 		t.Error("Message lacks files")
 	}
 }
+
+// TestChannelPaths_ObjectListProperty pins the post body schema of an
+// object list (TKT-GR1MXL5): an array of closed objects with the declared
+// fields, and the descriptor that names "object", fields and choices.label.
+func TestChannelPaths_ObjectListProperty(t *testing.T) {
+	y := channelTestRealtime + `  ask:
+    attach_to: [task]
+    read: { from: attached }
+    roles:
+      member: { from: attached }
+    message_types:
+      ask:
+        properties:
+          options:
+            type: object
+            list: true
+            max_items: 4
+            properties:
+              label: { type: string, required: true, max: 40 }
+              recommended: { type: boolean }
+        post: [member]
+        choices: { from: options, label: label, answer: answer, into: body }
+      answer:
+        properties: { body: { type: string, required: true } }
+        post: [member]
+`
+	rt, err := realtimecfg.Parse([]byte(y), attachmentTestMeta(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := New(attachmentTestMeta(), Config{Title: "T", Version: "1"})
+	g.SetRealtime(func() *realtimecfg.Compiled { return rt })
+	spec := g.Generate()
+	post := spec.Paths["/api/v1/tasks/{id}/_channels/ask/messages"].Post
+	var ask *Schema
+	for _, v := range post.RequestBody.Content["application/json"].Schema.OneOf {
+		if v.Title == "ask" {
+			ask = v
+		}
+	}
+	if ask == nil {
+		t.Fatal("no ask variant in the post body")
+	}
+	got, err := json.Marshal(ask.Properties["props"].Properties["options"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var options map[string]any
+	if err = json.Unmarshal(got, &options); err != nil {
+		t.Fatal(err)
+	}
+	delete(options, "description")
+	item, _ := options["items"].(map[string]any)
+	if item["type"] != "object" || item["additionalProperties"] != false {
+		t.Errorf("item schema = %v, want a closed object", item)
+	}
+	if !reflect.DeepEqual(item["required"], []any{"label"}) {
+		t.Errorf("item required = %v, want [label]", item["required"])
+	}
+	fields, _ := item["properties"].(map[string]any)
+	if _, ok := fields["recommended"]; !ok || len(fields) != 2 {
+		t.Errorf("item fields = %v, want label and recommended", fields)
+	}
+
+	desc, err := json.Marshal(spec.Components.Schemas)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{`"object"`, `"fields"`, `"label":{"type":"string","description":"For an object list`} {
+		if !strings.Contains(string(desc), s) {
+			t.Errorf("channel schema lacks %s", s)
+		}
+	}
+}

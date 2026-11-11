@@ -70,8 +70,10 @@ var sessionDisplayValues = []SessionDisplay{SessionDisplayCompact}
 // Display tones the message type down in the web app (TKT-03DMXH):
 // [MessageDisplayCollapsed] folds a run of such messages into one line,
 // [MessageDisplayHidden] leaves them out until the reader shows all
-// messages. Empty shows them in full. This is presentation only: the
-// messages stay readable through the API, MCP and the CLI.
+// messages. Empty shows them in full. [MessageDisplayCards] shows the
+// items of an object list as cards, as Cards says (TKT-GR1MXL5). This is
+// presentation only: the messages stay readable through the API, MCP and
+// the CLI.
 //
 // Offer set to false says people do not post the type in the web app
 // (TKT-WC63SNN), for a type only agents or integrations post: the
@@ -85,6 +87,25 @@ type MessagePresentation struct {
 	Fields  []FormField    `yaml:"fields,omitempty" json:"fields,omitempty"`
 	Display MessageDisplay `yaml:"display,omitempty" json:"display,omitempty"`
 	Offer   *bool          `yaml:"offer,omitempty" json:"offer,omitempty"`
+	// Cards says what the cards of `display: cards` show. It is required
+	// with that display and refused without it.
+	Cards *MessageCards `yaml:"cards,omitempty" json:"cards,omitempty"`
+}
+
+// MessageCards is the `cards:` of a message type with `display: cards`.
+// Items names an object-list property of the message; each item is one
+// card. Body names a string or markdown property of the message, shown
+// above the cards. Title, Plus, Minus and Badge name fields of the items:
+// the card's heading, its points for and against (often string lists),
+// and a boolean field shown as a badge labeled with the field's label.
+// Every key but Items is optional.
+type MessageCards struct {
+	Body  string `yaml:"body,omitempty" json:"body,omitempty"`
+	Items string `yaml:"items,omitempty" json:"items,omitempty"`
+	Title string `yaml:"title,omitempty" json:"title,omitempty"`
+	Plus  string `yaml:"plus,omitempty" json:"plus,omitempty"`
+	Minus string `yaml:"minus,omitempty" json:"minus,omitempty"`
+	Badge string `yaml:"badge,omitempty" json:"badge,omitempty"`
 }
 
 // MessageDisplay is how the web app shows the messages of one type; see
@@ -95,10 +116,11 @@ type MessageDisplay string
 const (
 	MessageDisplayCollapsed MessageDisplay = "collapsed"
 	MessageDisplayHidden    MessageDisplay = "hidden"
+	MessageDisplayCards     MessageDisplay = "cards"
 )
 
 // messageDisplayValues lists the valid non-empty values of [MessageDisplay].
-var messageDisplayValues = []MessageDisplay{MessageDisplayCollapsed, MessageDisplayHidden}
+var messageDisplayValues = []MessageDisplay{MessageDisplayCollapsed, MessageDisplayHidden, MessageDisplayCards}
 
 // displayList joins display values as the error text names them.
 func displayList[D ~string](values []D) string {
@@ -111,11 +133,15 @@ func displayList[D ~string](values []D) string {
 
 // ChannelProperty is a message property as the channel presentation check
 // needs it. Type is the realtime.yaml property type: string, markdown,
-// integer, boolean, date, datetime, ref or enum.
+// integer, boolean, date, datetime, ref, enum or object. List is set for a
+// list of strings and for an object list. Fields are the fields of each
+// item of an object list; nil for any other type.
 type ChannelProperty struct {
 	Name     string
 	Type     string
 	Required bool
+	List     bool
+	Fields   []ChannelProperty
 }
 
 // ChannelSchema is what [ValidateChannels] needs to know of realtime.yaml.
@@ -164,7 +190,8 @@ type BusyFacts struct {
 
 var (
 	channelPresentationKeys = []string{"messages", "session", "placement"}
-	messagePresentationKeys = []string{"fields", "display", "offer"}
+	messagePresentationKeys = []string{"fields", "display", "offer", "cards"}
+	messageCardsKeys        = []string{"body", "items", "title", "plus", "minus", "badge"}
 	sessionPresentationKeys = []string{"display"}
 	channelFieldKeys        = []string{"property", "label", "placeholder", "help", "widget", "span", "hidden"}
 )
@@ -212,6 +239,8 @@ func validateChannelsShape(data []byte, cfg *Config) []string {
 				errs = append(errs, fmt.Sprintf("channels.%s.messages.%s.display: unknown value %q (valid values: %s)",
 					ctName, mtName, d, displayList(messageDisplayValues)))
 			}
+			errs = append(errs, cardsShapeErrors(fmt.Sprintf("channels.%s.messages.%s", ctName, mtName),
+				ct.Messages[mtName])...)
 			prefix := fmt.Sprintf("channels.%s.messages.%s.fields", ctName, mtName)
 			seen := map[string]bool{}
 			for i, f := range ct.Messages[mtName].Fields {
@@ -264,6 +293,8 @@ func channelsUnknownKeys(data []byte) []string {
 					errs = append(errs, fmt.Sprintf("%s.offer: %v is not a boolean (use true or false)", mprefix, v))
 				}
 			}
+			cards, _ := m["cards"].(map[string]any)
+			errs = append(errs, unknownKeysIn(mprefix+".cards", cards, messageCardsKeys)...)
 			fields, _ := m["fields"].([]any)
 			for i, f := range fields {
 				fm, _ := f.(map[string]any)
@@ -428,6 +459,9 @@ func checkChannelBlock(cfg *Config, schema ChannelSchema) (errs, warnings []stri
 			}
 			mp := ct.Messages[mtName]
 			errs = append(errs, channelFieldErrors(prefix+".fields", mtName, mp.Fields, facts.Properties)...)
+			if mp.Display == MessageDisplayCards && mp.Cards != nil && mp.Cards.Items != "" {
+				errs = append(errs, cardsErrors(prefix+".cards", mtName, mp.Cards, facts.Properties)...)
+			}
 			if mp.Display == MessageDisplayHidden && facts.CountsUnread {
 				warnings = append(warnings, fmt.Sprintf("%s.display: hidden, but realtime.yaml counts %s as unread; "+
 					"set unread: false on channel_types.%s.message_types.%s", prefix, mtName, ctName, mtName))
@@ -466,4 +500,77 @@ func channelFieldErrors(prefix, mtName string, fields []FormField, props []Chann
 		}
 	}
 	return errs
+}
+
+// cardsShapeErrors checks the pairing of `display: cards` and `cards:`:
+// the display needs `cards:` with `items`, and `cards:` without the
+// display would show nothing.
+func cardsShapeErrors(prefix string, mp MessagePresentation) []string {
+	switch {
+	case mp.Display == MessageDisplayCards && mp.Cards == nil:
+		return []string{prefix + ": display: cards requires cards: with items"}
+	case mp.Display == MessageDisplayCards && mp.Cards.Items == "":
+		return []string{prefix + ".cards.items: is required with display: cards"}
+	case mp.Display != MessageDisplayCards && mp.Cards != nil:
+		return []string{prefix + ".cards: only applies with display: cards"}
+	}
+	return nil
+}
+
+// cardsErrors checks `cards:` against the message type: items must be an
+// object list of it, body a string or markdown property of it, and title,
+// plus, minus and badge fields of its items, badge a boolean one.
+func cardsErrors(prefix, mtName string, c *MessageCards, props []ChannelProperty) []string {
+	find := func(list []ChannelProperty, name string) (ChannelProperty, bool) {
+		i := slices.IndexFunc(list, func(p ChannelProperty) bool { return p.Name == name })
+		if i < 0 {
+			return ChannelProperty{}, false
+		}
+		return list[i], true
+	}
+	var errs []string
+	if c.Body != "" {
+		p, ok := find(props, c.Body)
+		switch {
+		case !ok:
+			errs = append(errs, fmt.Sprintf("%s.body: message type %s declares no property %q", prefix, mtName, c.Body))
+		case p.List || (p.Type != "string" && p.Type != "markdown"):
+			errs = append(errs, fmt.Sprintf("%s.body: property %q must be a string or markdown property, not %s",
+				prefix, c.Body, channelTypeName(p)))
+		}
+	}
+	items, ok := find(props, c.Items)
+	switch {
+	case !ok:
+		return append(errs, fmt.Sprintf("%s.items: message type %s declares no property %q", prefix, mtName, c.Items))
+	case items.Type != "object":
+		return append(errs, fmt.Sprintf("%s.items: property %q must be an object list (type: object, list: true), "+
+			"not %s", prefix, c.Items, channelTypeName(items)))
+	}
+	for _, f := range []struct{ key, name string }{
+		{"title", c.Title}, {"plus", c.Plus}, {"minus", c.Minus}, {"badge", c.Badge},
+	} {
+		if f.name == "" {
+			continue
+		}
+		field, ok := find(items.Fields, f.name)
+		switch {
+		case !ok:
+			errs = append(errs, fmt.Sprintf("%s.%s: the items of property %q declare no field %q",
+				prefix, f.key, c.Items, f.name))
+		case f.key == "badge" && (field.Type != "boolean" || field.List):
+			errs = append(errs, fmt.Sprintf("%s.badge: field %q must be a boolean, not %s",
+				prefix, f.name, channelTypeName(field)))
+		}
+	}
+	return errs
+}
+
+// channelTypeName names a property's type as an error does: "list of
+// string" for a list of strings, else the type.
+func channelTypeName(p ChannelProperty) string {
+	if p.List && p.Type != "object" {
+		return "list of " + p.Type
+	}
+	return p.Type
 }

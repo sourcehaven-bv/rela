@@ -2,6 +2,7 @@
   "Channel": [
     "anchor",
     "archived_at",
+    "asked",
     "closed_at",
     "created_at",
     "created_by",
@@ -39,6 +40,7 @@
     "answer",
     "from",
     "into",
+    "label",
     "other"
   ],
   "ChannelDecisionButtonSchema": [
@@ -100,6 +102,7 @@
   "ChannelPropertySchema": [
     "accept",
     "enum",
+    "fields",
     "label",
     "list",
     "max",
@@ -308,6 +311,7 @@
     "action",
     "at",
     "author",
+    "batch",
     "edit_until",
     "edited_at",
     "files",

@@ -72,6 +72,10 @@ var (
 	// ErrTooLarge reports a value over one of the caps below.
 	ErrTooLarge = errors.New("channels: value too large")
 
+	// ErrTooManyAsked reports a post that would leave more than [MaxAsked]
+	// unanswered questions in the session span (see [Asked]).
+	ErrTooManyAsked = errors.New("channels: too many open questions")
+
 	// ErrTooManyChannels reports an anchor that already holds as many
 	// channels of the type as allowed: [NewChannel.Max], at most
 	// [MaxChannelsPerType].
@@ -394,6 +398,10 @@ type Message struct {
 	// unread (see [Counts]). An edit keeps it; a removal clears it with the
 	// rest of the message, which [Message.Removed] already keeps out.
 	NoUnread bool `json:"no_unread,omitempty"`
+	// Batch is the seq of the first message of the [Store.AppendBatch]
+	// that posted this one, when the batch held more than one message;
+	// zero otherwise. A removal clears it with the rest of the message.
+	Batch int64 `json:"batch,omitempty"`
 	// Mentions are the principals the message mentions, set by the store
 	// from [NewMessage.Mentions], replaced by [Store.Edit] and cleared by
 	// [Store.Remove]. The store writes one addressed row per target.
@@ -465,6 +473,10 @@ type NewMessage struct {
 	// Files are the files to store with the message, in the same step
 	// (see [PrepareFiles]).
 	Files []NewFile
+	// Asks, when set, makes the message a question of the session's span:
+	// the store adds it to [Channel.Asked] with Asks as the answer type. A
+	// reply cannot ask.
+	Asks string
 }
 
 // CheckAppendState refuses an append that requires an open channel to one
@@ -513,6 +525,9 @@ type Channel struct {
 	Rev        int64     `json:"rev"`
 	// Session is the channel's session snapshot; zero when it never moved.
 	Session Session `json:"session,omitzero"`
+	// Asked are the questions of the session's current span, keyed by seq
+	// (see [Asked]); nil for none.
+	Asked map[int64]Asked `json:"asked,omitempty"`
 }
 
 // CheckIncarnation reports a channel whose incarnation is not live, the

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,18 +25,19 @@ import (
 // acl.yaml for the CLI's principal as `rela lease` does. A signal lives only
 // in the process that receives it, so the CLI posts log messages only.
 type ChannelCmd struct {
-	List     ChannelListCmd     `cmd:"" help:"List the channels on an entity that you may read."`
-	Read     ChannelReadCmd     `cmd:"" help:"Read a channel: its state, what you may post, and a page of messages."`
-	Post     ChannelPostCmd     `cmd:"" help:"Post a message to a channel."`
-	Edit     ChannelEditCmd     `cmd:"" help:"Replace the props of your own message."`
-	Remove   ChannelRemoveCmd   `cmd:"" help:"Withdraw your own message, or remove another as a moderator."`
-	Create   ChannelCreateCmd   `cmd:"" help:"Create a named channel of a type with many channels per entity."`
-	Watch    ChannelWatchCmd    `cmd:"" help:"Wait for new, edited or removed messages in a channel."`
-	Inbox    ChannelInboxCmd    `cmd:"" help:"List the sessions that wait on you, and the channels you have not read."`
-	MarkRead ChannelMarkReadCmd `cmd:"" name:"mark-read" help:"Mark a channel read up to a seq, or up to its last message."`
-	Action   ChannelActionCmd   `cmd:"" help:"Run a message action, such as a promote, or release a stuck one."`
-	Session  ChannelSessionCmd  `cmd:"" help:"Show a channel's session: its state, who it waits for, and what you may post to move it."`
-	File     ChannelFileCmd     `cmd:"" help:"Download a file of a message."`
+	List      ChannelListCmd      `cmd:"" help:"List the channels on an entity that you may read."`
+	Read      ChannelReadCmd      `cmd:"" help:"Read a channel: its state, what you may post, and a page of messages."`
+	Post      ChannelPostCmd      `cmd:"" help:"Post a message to a channel."`
+	PostBatch ChannelPostBatchCmd `cmd:"" name:"post-batch" help:"Post several messages to a channel as one step."`
+	Edit      ChannelEditCmd      `cmd:"" help:"Replace the props of your own message."`
+	Remove    ChannelRemoveCmd    `cmd:"" help:"Withdraw your own message, or remove another as a moderator."`
+	Create    ChannelCreateCmd    `cmd:"" help:"Create a named channel of a type with many channels per entity."`
+	Watch     ChannelWatchCmd     `cmd:"" help:"Wait for new, edited or removed messages in a channel."`
+	Inbox     ChannelInboxCmd     `cmd:"" help:"List the sessions that wait on you, and the channels you have not read."`
+	MarkRead  ChannelMarkReadCmd  `cmd:"" name:"mark-read" help:"Mark a channel read up to a seq, or up to its last message."`
+	Action    ChannelActionCmd    `cmd:"" help:"Run a message action, such as a promote, or release a stuck one."`
+	Session   ChannelSessionCmd   `cmd:"" help:"Show a channel's session: its state, who it waits for, and what you may post to move it."`
+	File      ChannelFileCmd      `cmd:"" help:"Download a file of a message."`
 }
 
 // channelReader reads channels. The wiring site passes the project's
@@ -50,6 +52,7 @@ type channelReader interface {
 // channelWriter writes messages.
 type channelWriter interface {
 	Post(ctx context.Context, addr realtime.RawAddress, in realtime.PostInput) (realtime.PostResult, error)
+	PostBatch(ctx context.Context, addr realtime.RawAddress, in realtime.BatchInput) (realtime.BatchResult, error)
 	Edit(ctx context.Context, addr realtime.RawAddress, seq int64, props map[string]any) (realtime.MessageView, error)
 	Delete(ctx context.Context, addr realtime.RawAddress, seq int64, reason string) (realtime.MessageView, error)
 	MarkRead(ctx context.Context, addr realtime.RawAddress, seq *int64) (realtime.MarkReadResult, error)
@@ -169,7 +172,7 @@ func (a channelAddr) raw() realtime.RawAddress {
 
 // channelProps are the props flags of post and edit.
 type channelProps struct {
-	Props     []string `short:"P" name:"prop" sep:"none" placeholder:"KEY=VALUE" help:"A message property (repeatable). The value is read as the property's declared type; commas are kept. Repeat the key for each item of a list property."`
+	Props     []string `short:"P" name:"prop" sep:"none" placeholder:"KEY=VALUE" help:"A message property (repeatable). The value is read as the property's declared type; commas are kept. Repeat the key for each item of a list property; an item of an object list is a JSON object."`
 	PropsJSON string   `name:"props-json" placeholder:"JSON|@FILE|-" help:"All message properties as one JSON object: inline, from a file (@path) or from stdin (-)."`
 }
 
@@ -179,7 +182,8 @@ func (p channelProps) set() bool { return len(p.Props) > 0 || p.PropsJSON != "" 
 // collect builds the props object. --props-json is taken as is; -P values
 // are coerced by the declared types in schema (nil reads every value as a
 // string). A repeated -P adds an item to a list property (JSON Schema type
-// array) and is refused for any other. The service validates the result.
+// array) and is refused for any other; an item of an object list is a JSON
+// object. The service validates the result.
 func (p channelProps) collect(schema map[string]string) (map[string]any, error) {
 	if len(p.Props) > 0 && p.PropsJSON != "" {
 		return nil, errors.New("use -P or --props-json, not both")
@@ -193,9 +197,19 @@ func (p channelProps) collect(schema map[string]string) (map[string]any, error) 
 		if !ok || key == "" {
 			return nil, fmt.Errorf("-P %q: want key=value", kv)
 		}
-		if schema[key] == "array" {
+		switch schema[key] {
+		case "array":
 			list, _ := props[key].([]any)
 			props[key] = append(list, value)
+			continue
+		case objectListType:
+			var item map[string]any
+			if err := json.Unmarshal([]byte(value), &item); err != nil || item == nil {
+				return nil, fmt.Errorf("-P %s: want one item as a JSON object, such as %s={\"label\":\"A\"}",
+					key, key)
+			}
+			list, _ := props[key].([]any)
+			props[key] = append(list, item)
 			continue
 		}
 		if _, dup := props[key]; dup {
@@ -235,28 +249,9 @@ const maxPropsJSON = 1 << 20
 
 // readPropsJSON reads --props-json: inline JSON, @file or - for stdin.
 func readPropsJSON(arg string) (map[string]any, error) {
-	data := []byte(arg)
-	switch {
-	case arg == "-":
-		b, err := io.ReadAll(io.LimitReader(channelStdin, maxPropsJSON+1))
-		if err != nil {
-			return nil, fmt.Errorf("--props-json: read stdin: %w", err)
-		}
-		data = b
-	case strings.HasPrefix(arg, "@"):
-		f, err := os.Open(arg[1:])
-		if err != nil {
-			return nil, fmt.Errorf("--props-json: %w", err)
-		}
-		defer f.Close()
-		b, err := io.ReadAll(io.LimitReader(f, maxPropsJSON+1))
-		if err != nil {
-			return nil, fmt.Errorf("--props-json: %w", err)
-		}
-		data = b
-	}
-	if len(data) > maxPropsJSON {
-		return nil, fmt.Errorf("--props-json: larger than %d bytes", maxPropsJSON)
+	data, err := readJSONArg("--props-json", arg, maxPropsJSON)
+	if err != nil {
+		return nil, err
 	}
 	var props map[string]any
 	if err := json.Unmarshal(data, &props); err != nil || props == nil {
@@ -265,8 +260,12 @@ func readPropsJSON(arg string) (map[string]any, error) {
 	return props, nil
 }
 
+// objectListType is the type [declaredTypes] gives an object list: an
+// array whose items are objects. Each -P of it is one item, as JSON.
+const objectListType = "array of object"
+
 // declaredTypes returns the declared property types of message type typ
-// in view, as JSON Schema type names. -P needs them to coerce. A type the
+// in view, as JSON Schema type names, or [objectListType]. -P needs them to coerce. A type the
 // read does not list yields no types, and the service refuses the write.
 func declaredTypes(view realtime.ReadView, typ string) map[string]string {
 	for _, mt := range view.MessageTypes {
@@ -276,6 +275,9 @@ func declaredTypes(view realtime.ReadView, typ string) map[string]string {
 		types := make(map[string]string, len(mt.Props.Properties))
 		for name, p := range mt.Props.Properties {
 			types[name] = p.Type
+			if p.Items != nil && p.Items.Type == "object" {
+				types[name] = objectListType
+			}
 		}
 		return types
 	}
@@ -455,6 +457,73 @@ func (c *ChannelPostCmd) Run(ctx context.Context, cs *channelServices) error {
 	return writeMessage(*got.Message, "posted", got.Session, outputsLine{got.Outputs, addr.Anchor})
 }
 
+// ChannelPostBatchCmd posts a batch of messages.
+type ChannelPostBatchCmd struct {
+	channelAddr
+	JSON             string `name:"json" required:"" placeholder:"JSON|@FILE|-" help:"The messages as a JSON array of {\"type\": ..., \"props\": {...}}: inline, from a file (@path) or from stdin (-)."`
+	ExpectGeneration *int64 `name:"expect-generation" help:"Post only while the session is at this generation."`
+}
+
+// batchJSON is the JSON document of post-batch.
+type batchJSON struct {
+	Notice   string                 `json:"notice"`
+	Messages []realtime.MessageView `json:"messages"`
+	Session  *realtime.SessionView  `json:"session,omitempty"`
+	Outputs  *realtime.OutputsView  `json:"outputs,omitempty"`
+}
+
+// Run posts the batch.
+func (c *ChannelPostBatchCmd) Run(ctx context.Context, cs *channelServices) error {
+	svc, err := cs.svc()
+	if err != nil {
+		return err
+	}
+	if c.ExpectGeneration != nil && *c.ExpectGeneration < 0 {
+		return errors.New("--expect-generation: a generation of at least 0")
+	}
+	data, err := readJSONArg("--json", c.JSON, realtime.MaxBatch*maxPropsJSON)
+	if err != nil {
+		return err
+	}
+	var items []struct {
+		Type  string         `json:"type"`
+		Props map[string]any `json:"props"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err = dec.Decode(&items); err != nil {
+		return fmt.Errorf("--json: an array of {\"type\": ..., \"props\": {...}}: %w", err)
+	}
+	in := realtime.BatchInput{Messages: make([]realtime.BatchMessage, len(items)), ExpectGeneration: c.ExpectGeneration}
+	for i, it := range items {
+		in.Messages[i] = realtime.BatchMessage{Type: it.Type, Props: it.Props}
+	}
+	addr := c.raw()
+	got, err := svc.PostBatch(ctx, addr, in)
+	if err != nil {
+		return channelFailed(ctx, "post", addr.Anchor, err)
+	}
+	if out.Format == output.FormatJSON {
+		return writeChannelJSON(batchJSON{
+			Notice: realtime.UntrustedNotice, Messages: got.Messages, Session: got.Session, Outputs: got.Outputs,
+		})
+	}
+	for _, m := range got.Messages {
+		if _, err = fmt.Fprintf(out.Out, "#%d posted\n", m.Seq); err != nil {
+			return err
+		}
+	}
+	if got.Session != nil {
+		if _, err = fmt.Fprintln(out.Out, sessionText(got.Session)); err != nil {
+			return err
+		}
+	}
+	if got.Outputs != nil {
+		_, err = fmt.Fprintln(out.Out, outputsText(got.Outputs, addr.Anchor))
+	}
+	return err
+}
+
 // ChannelEditCmd edits a message.
 type ChannelEditCmd struct {
 	channelAddr
@@ -579,6 +648,35 @@ func writeMessage(m realtime.MessageView, verb string, session *realtime.Session
 	}
 	_, err := fmt.Fprintln(out.Out, outputsText(outputs.view, outputs.anchor))
 	return err
+}
+
+// readJSONArg reads the value of flag: arg itself, the file @path, or
+// stdin for "-". It refuses more than limit bytes.
+func readJSONArg(flag, arg string, limit int) ([]byte, error) {
+	data := []byte(arg)
+	switch {
+	case arg == "-":
+		b, err := io.ReadAll(io.LimitReader(channelStdin, int64(limit)+1))
+		if err != nil {
+			return nil, fmt.Errorf("%s: read stdin: %w", flag, err)
+		}
+		data = b
+	case strings.HasPrefix(arg, "@"):
+		f, err := os.Open(arg[1:])
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", flag, err)
+		}
+		defer f.Close()
+		b, err := io.ReadAll(io.LimitReader(f, int64(limit)+1))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", flag, err)
+		}
+		data = b
+	}
+	if len(data) > limit {
+		return nil, fmt.Errorf("%s: larger than %d bytes", flag, limit)
+	}
+	return data, nil
 }
 
 // writeChannelJSON prints v as indented JSON.

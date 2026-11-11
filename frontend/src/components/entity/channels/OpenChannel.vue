@@ -63,6 +63,7 @@ import {
 } from '@/types/channels'
 import type {
   ChannelComposerTransition,
+  ChannelDecisionView,
   ChannelEditEvent,
   ChannelEditing,
   ChannelPostEvent,
@@ -98,6 +99,7 @@ import {
   lifecycleDefs,
   messageViews,
   presentationView,
+  questionStates,
   replyQuote,
   sessionView,
   typingViews,
@@ -475,6 +477,16 @@ const decisionsApi = useSessionDecisions({
 const { decisions, decisionSeq, deciding, onDecide, resetDecisions } = decisionsApi
 const placed = decisionsApi.placed
 const buttonTypes = decisionsApi.buttonTypes
+/**
+ * The buttons of every question the log shows them on, answered ones
+ * included for Change, and where each question stands (TKT-GR1MXL5).
+ */
+const rowChoices = computed(() => {
+  const out = new Map<number, ChannelDecisionView[]>()
+  for (const [seq, q] of decisionsApi.questions.value) out.set(seq, q.choices)
+  return out
+})
+const rowQuestions = computed(() => questionStates(decisionsApi.questions.value))
 
 /** The header's "Go to decision": shown when the decisions sit on the waiting message. */
 const showJump = computed(() => decisions.value.length > 0 && decisionSeq.value !== undefined)
@@ -744,7 +756,8 @@ const pickerTypes = picker.types
       :pending="shownPending"
       :decisions="placed.row"
       :decision-seq="decisionSeq"
-      :choices="decisionsApi.choices.value"
+      :choices="rowChoices"
+      :questions="rowQuestions"
       :button-types="buttonTypes"
       :has-older="ch.hasOlder.value"
       :has-newer="ch.hasNewer.value"

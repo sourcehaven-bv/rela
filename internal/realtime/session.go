@@ -588,7 +588,7 @@ func sessionDecider(
 		}
 		facts := realtimecfg.GuardFacts{
 			State: cur.State, Generation: cur.Generation, EnteredAt: cur.EnteredAt,
-			Reminders: reminderCounters(s, cur, ch),
+			Reminders: reminderCounters(s, cur, ch), OpenQuestions: ch.OpenQuestions(),
 		}
 		d := flow.Decide(cur.State, branches, flow.Rules[realtimecfg.Transition]{
 			Admits: p.admits,
@@ -645,6 +645,25 @@ func reminderMessage() *DenialError {
 // sessionNotice is the 409 for an edit or removal of a session notice.
 func sessionNotice() *DenialError {
 	return deny(http.StatusConflict, TypeSessionNotice, "a session notice records a transition and cannot be changed")
+}
+
+// askedQuestion is the 409 for an author's edit or delete of a question
+// of the session's span: its answers, and the session's wait for them,
+// refer to it as asked.
+func askedQuestion() *DenialError {
+	return deny(http.StatusConflict, TypeAskedQuestion,
+		"this question waits for answers, so it cannot be edited or deleted until the session moves on; "+
+			"a moderator may still remove it")
+}
+
+// asked reports whether seq is a question of the session's span on head,
+// the channel as read; false for nil.
+func asked(head *channels.Channel, seq int64) bool {
+	if head == nil {
+		return false
+	}
+	_, ok := head.Asked[seq]
+	return ok
 }
 
 // sessionMessage is the 409 for an author's edit or delete of a message

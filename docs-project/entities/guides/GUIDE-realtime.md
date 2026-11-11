@@ -226,7 +226,7 @@ client_baselines:
 | --- | --- |
 | `label` | The name the web app shows for the type. Without it, the type's name. |
 | `persist` | `log` (default) stores messages. `ephemeral` keeps signals, such as a status line, in memory for `ttl`, at most 60s. For a typing indicator, use `typing: true` on the channel type. |
-| `properties` | At most 32. Types: `string`, `markdown`, `integer`, `boolean`, `date`, `datetime`, `ref` (with `to:`), `file` (see [File properties](#file-properties)), or an enum type from `schema.yaml`. `max` limits a string or markdown property in characters (Unicode code points). A property may have a `label`; without one, the label is its name. A `ref` property may set `notify: false`, so a value that names a person does not mention them (see [Mentions and replies](#mentions-and-replies)). `notify` on any other type is a config error. A `string` property may set `list: true`: see [List properties](#list-properties). |
+| `properties` | At most 32. Types: `string`, `markdown`, `integer`, `boolean`, `date`, `datetime`, `ref` (with `to:`), `file` (see [File properties](#file-properties)), or an enum type from `schema.yaml`. `max` limits a string or markdown property in characters (Unicode code points). A property may have a `label`; without one, the label is its name. A `ref` property may set `notify: false`, so a value that names a person does not mention them (see [Mentions and replies](#mentions-and-replies)). `notify` on any other type is a config error. A `string` property may set `list: true`, and an `object` property is a list of items with named fields: see [List properties](#list-properties) and [Object lists](#object-lists). |
 | `when` | A condition on the `message` record that a post must meet. |
 | `post` | The roles that may post. Receiving needs only `read`. |
 | `in` | The session states in which the type may be posted. Without it, every state. Only on a channel type with a `session`. See [Sessions](#sessions). |
@@ -283,7 +283,8 @@ To hide or fold these types in the web app as well, set `display` in
 ### List properties
 
 A `string` property with `list: true` holds a list of strings, such as
-the options of a question. Only `string` properties can be lists.
+the options of a question. Only `string` and `object` properties can be
+lists; an `object` property is always one (see [Object lists](#object-lists)).
 
 ```yaml
 options: { type: string, list: true, max: 80, max_items: 4 }
@@ -329,6 +330,51 @@ If you change a `string` property to `list: true`, older messages still
 hold a single string there. A `when:` reads such a value as absent. When
 you edit such a message in the web app, the string is sent back as a list
 of one item. A post or edit through the API must send a list.
+
+### Object lists
+
+An `object` property holds a list of items, each with its own named
+fields. Use it when each option carries more than its text, such as a
+note, pros and cons, or a flag for the recommended option.
+
+```yaml
+options:
+  type: object
+  list: true
+  max_items: 4
+  properties:
+    label:       { type: string, required: true, max: 80 }
+    description: { type: string, max: 400 }
+    pros:        { type: string, list: true }
+    cons:        { type: string, list: true }
+    recommended: { type: boolean }
+```
+
+- `list: true` is required. `max_items` works as on a string list.
+- `properties` declares the fields, at most 16. A field may be a
+  `string` (also with `list: true`), `integer`, `boolean`, `date`,
+  `datetime` or an enum type. A `markdown`, `ref` or `object` field is
+  refused, because the server resolves refs and mentions only in
+  top-level properties. Objects nest one level only.
+- `required: true` on a field means each item must set it.
+- The field that `choices.label` names is checked as an item of a string
+  list is: it is trimmed and normalized to NFC, may not hold a control,
+  line-break or invisible character, and may hold 200 characters unless
+  its `max` says otherwise. Two items may not share its value.
+
+A post sends the value as a JSON array of objects. Each field is checked
+as a top-level property of its type would be. An item may not have a
+field the property does not declare, and may not be empty. A field with
+a null value or an empty list counts as absent. The post is refused with
+`invalid_message`, naming the property, the item and the field.
+
+A `when:` cannot read an object list yet: `len(message.options)` and
+similar conditions are refused when the file loads.
+
+The web app shows each item as one bullet, with its set fields as
+"label: value", required fields first and then by name. An enum field
+shows its label. The composer does
+not offer an object list; agents and scripts fill it.
 
 ### File properties
 
@@ -413,7 +459,8 @@ channel_types:
 
 | Key | Meaning |
 | --- | --- |
-| `from` | The list property of this type that holds the options. |
+| `from` | The list property of this type that holds the options: a list of strings or an object list. |
+| `label` | Only for an object list: the field of each item that is the option. It must be a required, non-list `string` field. The button shows it, and a click posts it. Two items may not have the same value. |
 | `answer` | The message type a click posts. It must be another `log` type of the same channel type, and may require no property but `into`. |
 | `into` | The `string` property of the answer type that receives the option. It may not be a list or `markdown`, and its `max` must fit the longest option. |
 | `other` | When `true`, an extra button, **Other answer…**, opens the composer with the answer type selected, for an answer in your own words. |
@@ -432,7 +479,8 @@ The buttons show on a question only when all of these hold:
   count, so removing a wrong answer brings the buttons back);
 - the page shows the newest messages;
 - in a channel with a session: the question is the message that moved the
-  session into its current state.
+  session into its current state, or it is an asked question of the
+  current span (see [Asking several questions](#asking-several-questions)).
 
 Otherwise the options show as a bulleted list. When the question is also
 the message that holds the session's decision buttons, it shows the
@@ -440,11 +488,85 @@ choices and not a second button for the answer type. The presets of the
 answer type stay, because they post values no option does. The session
 header then shows **Go to decision** instead of buttons.
 
-The server does not check that an answer is one of the options, and does
-not record that a question was answered. Outside a session, a second
+With an object list, only the `label` field is the option. The web app
+shows no button for an item without it, or whose label is not trimmed,
+holds a hidden character or repeats an earlier one; such a label can
+only come from a message posted before `choices.label` was set. Unlike a
+string list, an object list stays visible while its buttons show, so the
+other fields can inform the choice.
+
+The server does not check that an answer is one of the options. Outside
+a session it does not record that a question was answered, and a second
 answer to the same question is stored. Use a session if a question may be
 answered only once: the first answer moves the session, and a second
-click is refused because the session moved.
+click is refused because the session moved. In a channel with a session,
+the server counts the answers to each asked question, as described next.
+
+### Asking several questions
+
+An agent that needs several answers asks them in one batch, one message
+per question. A batch posts 1 to 10 top-level `log` messages as one
+step: all of them are stored or none is. Post a batch with `POST
+…/_batch` (see [HTTP API](#http-api)), the MCP tool `post_messages`, or
+`rela channel post-batch`. The messages get consecutive sequence numbers
+and share a batch id, the sequence number of the first; a message posted
+alone has none. Each message passes the checks of a single post. Once
+every message passes, the batch costs one post per message from the rate
+limit of its type, taken in one step, so a refused batch costs nothing. A
+batch with more messages of one type than that type's `rate` allows at
+all is refused with 400. The mentions of the whole batch count
+toward the limit of one message. A batch holds no replies. A refusal about
+one message names its index, starting at 0, such as "message 1: …".
+
+In a channel type with a session, a message of a type with `choices` is
+*asked* when it is posted, alone or in a batch. The channel keeps the
+asked questions of the session's current span: the time since the
+session last moved. For each it counts the replies of the `choices.answer`
+type. Removing such a reply uncounts it, and removing a question drops
+it. A removal is not a post, so it moves no session, even when it leaves
+no question open. The session then moves on the next post whose
+transition holds, such as another answer. When the session moves, the span ends and the list is cleared, also
+for a move by a timer. A span holds at most 20 questions. Past that,
+the oldest answered questions leave the list; if all 20 are still open,
+the post is refused with 409 `too_many_questions`.
+
+The guard fact `session.open_questions` counts the asked questions
+without an answer. A transition that waits for every answer reads:
+
+```yaml
+session:
+  initial: asking
+  states:
+    asking:
+      on:
+        answer: { to: answered, when: "session.open_questions == 0" }
+    answered:
+      on:
+        ask: { to: asking }
+```
+
+The guard sees the count after the reply being posted, so the last answer
+moves the session. Each answer is stored as it is clicked, and the
+person can change one by answering again while the span lasts. An agent
+waits for the move, not for each answer: watch `read_session` and act
+when `generation` changes.
+
+A batch moves the session at most once. Every `in:` and the
+`expect_generation` are judged against the session before the batch. The
+messages are then taken in order, and the first whose transition applies
+moves the session; its notice follows it, and the batch's later messages
+are not judged. Questions of a batch that moved the session belong to the
+new span.
+
+While a question is asked, its author cannot edit or delete it: the
+answer is 409 `asked_question`, and the web app offers neither. A changed
+question would no longer match the answers given to it. A moderator may
+still remove one. When the span ends, the author may edit or delete it
+again, within the usual `edit_own` window.
+
+The channel's `asked` lists the questions with their `seq`,
+`answer_type` and `answers`. The web app shows the buttons of each open
+question, and groups the questions of one batch as "Question 1 of 3".
 
 ## Actions and promote
 
@@ -1232,7 +1354,9 @@ end as cancelled or failed.
 **Guards.** `when` reads `message.<property>` (the posted properties, typed
 as for the message type's own `when`), `session.state`,
 `session.generation`, `session.entered_at`, `session.reminders`
-(see [Reminders](#reminders)) and the standard functions such as
+(see [Reminders](#reminders)), `session.open_questions` (see
+[Asking several questions](#asking-several-questions)) and the standard
+functions such as
 `today()`. A comparison on an optional property the message leaves out
 does not hold. A `when` that fails to evaluate moves nothing, and rela
 does not try the entries after it. rela logs such a failure as a warning, once per entry until the next reload,
@@ -1943,8 +2067,12 @@ unknown entity type "nope"`. It checks:
   only on a list and from 1 to 20, and that a list's `max` is from 1 to
   500. A trigger or reminder literal, a `promote_to.map` entry or a
   `{{message.<p>}}` template that names a list property is refused;
+- that an `object` property has `list: true` and 1 to 16 fields, each of
+  a type an item may hold, and no `max`, `to` or `notify` of its own, and
+  that no `ephemeral` type has one;
 - that `choices` is on a `log` type, that `from` names a list property of
-  that type, that `answer` names another `log` type of the channel type
+  that type, that `label` is set for an object list and names a required
+  string field of it, and is not set for a string list, that `answer` names another `log` type of the channel type
   that requires no property but `into`, and that `into` names a `string`
   property of the answer type that is not a list and whose `max` holds
   the longest option. An unknown key under `choices` is refused;
@@ -1995,9 +2123,9 @@ force. Six more checks only warn: an answer whose outputs no role in
 `acl.yaml` grants, a handoff `set:` from free text (see
 [Handoff](#handoff)), a `choices.from` list that allows more than 10 items
 or more than 100 characters per item ("too many or too long for
-buttons"), in a channel with a session, a question type that never
-moves the session into a state where its answer type may be posted ("the
-buttons never show"), a state with more than 10 preset buttons, and a
+buttons"), in a channel with a session, a question type that is never
+posted in, and never moves the session into, a state where its answer
+type may be posted ("the buttons never show"), a state with more than 10 preset buttons, and a
 button whose label equals the label of a message type in that state.
 
 An action named `edit`, `delete`, `remove` or `release` is refused too.
@@ -2297,6 +2425,11 @@ Revise opens the composer, where the owner can write the optional `note`.
   still shows its preset buttons. The message a click posts may then be
   folded or hidden in the log.
 
+**Reply quotes.** A reply shows a one-line quote of the message it
+answers: the first string or markdown property, cut at 80 characters.
+A markdown property is rendered first and its text taken, so `**bold**`
+shows as "bold" and not with its asterisks.
+
 **Choice buttons.** A question with live choices shows a group named
 **Choices** below its fields, with one button per option and, with
 `other: true`, **Other answer…**. A long option wraps onto as many lines
@@ -2526,6 +2659,7 @@ The data-entry API serves channels under the entity they are attached to.
 | `POST .../{channel}/messages` with files | Posts a message with files, as `multipart/form-data`. The first part, `message`, holds the JSON body of a plain post. Then one part per file, named `file:{property}` and with a file name. See [File properties](#file-properties). |
 | `GET .../{channel}/messages/{seq}/files/{id}` | Downloads a file of a message, by the `id` in the message's `files`. |
 | `DELETE .../{channel}/messages/{seq}` | Removes a message. The body may hold a `reason`. |
+| `POST .../{channel}/_batch` | Posts 1 to 10 `log` messages as one step: `{"messages": [{"type": ..., "props": {...}}], "expect_generation": n}`. The answer is a 201 with `{"messages": [...]}` in seq order. The body may be up to 10 times the size of a single post. See [Asking several questions](#asking-several-questions). |
 | `POST .../{channel}/messages/{seq}/_action/{name}` | Runs an action. The body is empty or `{}`. The answer is `{"message": ..., "warnings": [...]}`. |
 | `DELETE .../{channel}/messages/{seq}/_action` | Releases a pending action. The body is empty or `{}`. The answer is the message. |
 | `POST .../{channel}/_lifecycle/{op}` | Runs `close`, `reopen`, `archive` or `delete`. The body is empty or `{}`. A `delete` gets a 204; the other operations get the channel. |
@@ -2550,7 +2684,9 @@ property has its name, label, type, and when set `required`, `max`, the
 enum type with its `values`, and the entity types a `ref` may point to
 (`to`). A list property also has `"list": true` and `max_items`; its
 `max` limits each item. A message type with `choices` has
-`"choices": {"from", "answer", "into", "other"}`. A message type with
+`"choices": {"from", "answer", "into", "other"}`, and `"label"` when
+`from` is an object list. An `object` property has `"type": "object"`,
+`"list": true` and `"fields"`: its fields, each described as a property. A message type with
 `decision_button` has `"decision_button": {"confirm", "confirm_text",
 "style"}`, with the same rules as the options on a transition row's
 `button`, described below. A message type limited to some session states
@@ -2814,7 +2950,7 @@ Every error is a problem body (`application/problem+json`) with a `type`.
 | 503 `attachment_busy` | Too many uploads run at once. `Retry-After` gives the seconds to wait. |
 | 422 | A `ref` names an entity that does not exist or that the caller cannot read. Both get the same body. |
 | 422 `promote_invalid` | The promoted entity or its relation fails validation, for example a `unique` property that another entity already has, or a mapped `ref` names an entity the caller cannot read. The body names properties, never entity ids. |
-| 409 | The channel is not open, the channel is not in a state the lifecycle operation starts from (`lifecycle_wrong_state`), `retention` keeps the channel (`retention_active`), a concurrent change won (`conflict`), the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. An edit or removal targets a session notice (`session_notice`), or an author's edit or delete targets a message that moved the session (`session_message`). A post of a type whose `in:` does not hold the session's state (`session_wrong_state`; `title` names the allowed states, `detail` the rule: the type's `in:`, or `session.default_in` when the `in:` comes from `default_in: keyed`). A post whose `expect_generation` is not the session's generation (`session_moved`; `title` names the generation and state the session is at). For actions: the message already carries an action (`action_taken`), its action is pending (`action_pending`, also for an edit, a removal, a release within the release window, or an action that lost a race to a promote that started first), a release finds no pending action (`action_not_pending`), or the promoted entity already exists (`promote_conflict`). A removal of the message that moved the session, or a release of a notice's outputs mark, while the outputs still run (`outputs_pending`). |
+| 409 | The channel is not open, the channel is not in a state the lifecycle operation starts from (`lifecycle_wrong_state`), `retention` keeps the channel (`retention_active`), a concurrent change won (`conflict`), the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. An edit or removal targets a session notice (`session_notice`), or an author's edit or delete targets a message that moved the session (`session_message`), or an author's edit or delete targets a question the session still asks (`asked_question`). A post that would leave more than 20 unanswered questions in the session span (`too_many_questions`). A post of a type whose `in:` does not hold the session's state (`session_wrong_state`; `title` names the allowed states, `detail` the rule: the type's `in:`, or `session.default_in` when the `in:` comes from `default_in: keyed`). A post whose `expect_generation` is not the session's generation (`session_moved`; `title` names the generation and state the session is at). For actions: the message already carries an action (`action_taken`), its action is pending (`action_pending`, also for an edit, a removal, a release within the release window, or an action that lost a race to a promote that started first), a release finds no pending action (`action_not_pending`), or the promoted entity already exists (`promote_conflict`). A removal of the message that moved the session, or a release of a notice's outputs mark, while the outputs still run (`outputs_pending`). |
 | 429 | A rate limit. `Retry-After` gives the seconds to wait, rounded up. |
 | 400 `invalid_cursor` | The inbox `cursor` is not one an inbox answer gave, or comes with `kinds` that do not hold `waiting`. |
 | 503 `inbox_too_large` | The inbox would read more than 20 000 channels. Nothing is listed; see [Inbox](#inbox). The `detail` suggests `kinds=unread,mention,reply`, which still answers. |
@@ -2969,8 +3105,11 @@ the session stays; compare `session.generation` in the answer with the
 generation you sent to see whether the post moved it.
 
 **Lists and choices.** `post_message` takes a list property as a JSON
-array of strings. `rela channel post` takes one `-P` per item, such as
-`-P options=Yes -P options=No`, or the array in `--props-json`.
+array of strings, and an object list as a JSON array of objects.
+`rela channel post` takes one `-P` per item, such as
+`-P options=Yes -P options=No`; for an object list each item is a JSON
+object, such as `-P 'options={"label":"A"}'`. `--props-json` takes the
+whole array.
 `read_channel` lists a message type's `choices`, and `rela channel read`
 prints them on the type's `choices:` line and a list one item per line. To answer a question, post its `answer`
 type with the option in `into` and `reply_to` the question, as the web

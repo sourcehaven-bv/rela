@@ -728,6 +728,22 @@ func (s *countingStore) Append(ctx context.Context, k channels.Key, m channels.N
 	return s.Store.Append(ctx, k, m)
 }
 
+// AppendBatch counts a batch as one append and keeps its last message.
+func (s *countingStore) AppendBatch(
+	ctx context.Context, k channels.Key, batch []channels.NewMessage,
+) ([]channels.Message, error) {
+	s.appends.Add(1)
+	if len(batch) > 0 {
+		last := batch[len(batch)-1]
+		s.lastAppend.Store(&last)
+	}
+	if f := s.beforeAppend; f != nil {
+		s.beforeAppend = nil
+		f()
+	}
+	return s.Store.AppendBatch(ctx, k, batch)
+}
+
 func (s *countingStore) RecordTypes(ctx context.Context, r map[string]channels.TypeRecord) error {
 	s.records.Add(1)
 	if s.onRecord != nil {

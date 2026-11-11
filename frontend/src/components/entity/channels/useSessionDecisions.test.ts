@@ -730,6 +730,30 @@ describe('useSessionDecisions choices', () => {
     expect(s.deps.composer.select).not.toHaveBeenCalled()
     expect(s.deps.ui.focusRow).not.toHaveBeenCalled()
   })
+
+  it('an answered question in asked keeps its buttons, and Change posts a new answer', async () => {
+    const s = choiceSetup(true)
+    const reply: Message = {
+      seq: 12,
+      rev: 12,
+      type: 'answer',
+      at: '2026-03-01T10:01:00Z',
+      author: { user: 'ann' },
+      props: { body: 'A' },
+      reply_to: 10,
+    }
+    s.messages.value = [...s.messages.value, reply]
+    s.deps.ch.head.value!.channel.asked = [{ seq: 10, answer_type: 'answer', answers: 1 }]
+    await nextTick()
+    expect(s.d.choices.value.get(10)).toBeUndefined()
+    expect(s.d.questions.value.get(10)).toMatchObject({
+      answered: true,
+      answer: 'A',
+      answerSeq: 12,
+    })
+    await s.d.onChoose('choice:10:1')
+    expect(s.deps.post).toHaveBeenCalledWith('answer', { body: 'B' }, 10, 5)
+  })
 })
 
 // A plan review whose decide entries carry presets (TKT-S9TLJJ): entry 0

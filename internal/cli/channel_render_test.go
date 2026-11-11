@@ -352,6 +352,9 @@ func TestChannelRender_ListProp(t *testing.T) {
 		}, {
 			Name: "poll", Persist: realtimecfg.PersistLog, CanPost: true,
 			Choices: &realtime.ChoicesDescription{From: "picks", Answer: "vote", Into: "pick\nx"},
+		}, {
+			Name: "pick", Persist: realtimecfg.PersistLog, CanPost: true,
+			Choices: &realtime.ChoicesDescription{From: "options", Label: "label", Answer: "answer", Into: "body"},
 		}}
 		var buf bytes.Buffer
 		require.NoError(t, renderRead(&buf, view))
@@ -360,5 +363,7 @@ func TestChannelRender_ListProp(t *testing.T) {
 			"  choices: from options, answer answer into body, other\n")
 		assert.Contains(t, buf.String(), "Type poll (log)\n"+
 			"  choices: from picks, answer vote into pick\uFFFDx\n")
+		assert.Contains(t, buf.String(), "Type pick (log)\n"+
+			"  choices: from options (label label), answer answer into body\n")
 	})
 }

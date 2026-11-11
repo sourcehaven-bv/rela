@@ -1035,3 +1035,67 @@ func TestPostMessage_ListProp(t *testing.T) {
 		t.Errorf("read_channel lists no choices for text: %s", text)
 	}
 }
+
+// TestPostMessages pins post_messages: the messages in seq order sharing a
+// batch id, and a malformed item refused with its index before any post.
+func TestPostMessages(t *testing.T) {
+	t.Parallel()
+	f := newChannelFixture(t)
+	cs := f.client(t, "alice")
+	var got struct {
+		Messages []realtime.MessageView `json:"messages"`
+	}
+	mustCall(t, cs, toolPostMessages, map[string]any{
+		"id": "REQ-001", "channel_type": "room", "messages": []any{
+			map[string]any{"message_type": "text", "props": map[string]any{"body": "a"}},
+			map[string]any{"message_type": "text", "props": map[string]any{"body": "b"}},
+		},
+	}, &got)
+	if len(got.Messages) != 2 || got.Messages[0].Batch != got.Messages[0].Seq ||
+		got.Messages[1].Batch != got.Messages[0].Seq || got.Messages[1].Seq != got.Messages[0].Seq+1 {
+
+		t.Fatalf("messages = %+v", got.Messages)
+	}
+	for _, tc := range []struct {
+		name  string
+		items any
+		want  string
+	}{
+		{"not an array", "x", "must be an array"},
+		{"not an object", []any{"x"}, "messages[0] must be an object"},
+		{"no type", []any{map[string]any{"props": map[string]any{}}}, "messages[0] needs a message_type"},
+		{"extra field", []any{map[string]any{"message_type": "text", "reply_to": 1}}, `messages[0] has field "reply_to"`},
+	} {
+		text, isErr := call(t, cs, toolPostMessages, map[string]any{
+			"id": "REQ-001", "channel_type": "room", "messages": tc.items,
+		})
+		if !isErr || !strings.Contains(text, tc.want) {
+			t.Errorf("%s = %q (error %v), want %q", tc.name, text, isErr, tc.want)
+		}
+	}
+}
+
+// TestPostMessages_PostDenied pins that post_messages runs the post gate
+// per message: a type the caller may not post refuses the whole batch
+// with post_denied, and nothing is posted.
+func TestPostMessages_PostDenied(t *testing.T) {
+	t.Parallel()
+	f := newChannelFixture(t)
+	text, isErr := call(t, f.client(t, "alice"), toolPostMessages, map[string]any{
+		"id": "REQ-001", "channel_type": "room", "messages": []any{
+			map[string]any{"message_type": "text", "props": map[string]any{"body": "a"}},
+			map[string]any{"message_type": "announce", "props": map[string]any{"body": "b"}},
+		},
+	})
+	if !isErr || !strings.HasPrefix(text, realtime.TypePostDenied+": ") || !strings.Contains(text, "message 1: ") {
+		t.Fatalf("a batch with an announce without chat.moderate = %q, want %s for message 1",
+			text, realtime.TypePostDenied)
+	}
+	head, err := f.svc.Read(f.asBob(t), realtime.RawAddress{Anchor: "REQ-001", Type: "room"}, realtime.ReadRequest{})
+	if err != nil {
+		t.Fatalf("read as bob: %v", err)
+	}
+	if len(head.Messages) != 0 {
+		t.Fatalf("messages after a refused batch = %+v", head.Messages)
+	}
+}
