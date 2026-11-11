@@ -320,10 +320,10 @@ func (s *server) buildApp(
 	return app, nil
 }
 
-// startScheduler starts g's background scheduler, its lease watcher and its
-// realtime worker, unless they are running or g is held. All share one stop
-// and one done, so a pause, a resume and a retirement hand them over
-// together.
+// startScheduler starts g's background scheduler, its lease watcher, its
+// realtime worker and its flow worker, unless they are running or g is
+// held. All share one stop and one done, so a pause, a resume and a
+// retirement hand them over together.
 func (s *server) startScheduler(g *generation) {
 	g.schedMu.Lock()
 	defer g.schedMu.Unlock()
@@ -341,6 +341,7 @@ func (s *server) startScheduler(g *generation) {
 	sched := scheduler.StartBackground(ctx, g.svc, bind, slog.Default())
 	leases := appbuild.WatchLeases(ctx, g.svc)
 	worker := appbuild.RunRealtimeWorker(ctx, g.svc)
+	flows := appbuild.RunFlowWorker(ctx, g.svc)
 	follower := appbuild.FollowChannels(ctx, g.svc)
 	done := make(chan struct{})
 	go func() {
@@ -348,6 +349,7 @@ func (s *server) startScheduler(g *generation) {
 		<-sched
 		<-leases
 		<-worker
+		<-flows
 		<-follower
 	}()
 	g.schedDone = done

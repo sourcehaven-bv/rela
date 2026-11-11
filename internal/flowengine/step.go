@@ -110,7 +110,12 @@ func othersOnly(err error, tok string) bool {
 // settleStep takes one step of settling token tok: it writes the outputs
 // left, then ends the run, follows a done branch or clears the mark.
 func (e *Engine) settleStep(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, tok string) (flowrun.Run, error) {
-	inst := instOf(run, tok)
+	inst, p, _, ok := slot(run, tok)
+	if !ok || p == nil {
+		// Not a token with a mark: never read a zero instance as the
+		// initial state (RR-1D9R0UF). The run changed under the caller.
+		return flowrun.Run{}, nil
+	}
 	cur := flow.Read(f.Definition(), inst, run.CreatedAt)
 	if cur.Stranded {
 		return run, fmt.Errorf("%w: state %q", ErrStranded, cur.State)
@@ -204,17 +209,29 @@ func (e *Engine) writeOutput(ctx context.Context, f *flowcfg.Flow, run flowrun.R
 	if err != nil || claimed.ID == "" {
 		return claimed, err
 	}
-	created, err := e.d.Outputs.Create(ctx, f.RunAs(), o.Type, props, o.Relate, run.Subject)
+	// The caller's deadline or shutdown does not cut the create: a cut
+	// create may have landed, so it could only be skipped.
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), outputTimeout)
+	defer cancel()
+	created, err := e.d.Outputs.Create(cctx, f.RunAs(), o.Type, props, o.Relate, run.Subject)
 	if err != nil {
+		// A create that ran out of time may have written all the same, so
+		// the claim stays and the output is skipped rather than written
+		// twice.
+		if cctx.Err() != nil {
+			slog.ErrorContext(ctx, "flowengine: a create output timed out and is skipped",
+				"run", run.ID, "state", cur.State, "output", i, "error", err)
+			return claimed, wrap(err)
+		}
 		// The create reported its failure, so nothing was written: give
 		// the claim back, and a later round writes it again. That is no
 		// progress, so the failures carry over.
-		if back, merr := e.mark(ctx, claimed, tok, cur, i, before.Failures); merr == nil && back.ID != "" {
+		if back, merr := e.mark(cctx, claimed, tok, cur, i, before.Failures); merr == nil && back.ID != "" {
 			claimed = back
 		}
 		return claimed, wrap(err)
 	}
-	if lerr := e.d.Headers.LinkProduced(ctx, run.ID, created); lerr != nil {
+	if lerr := e.d.Headers.LinkProduced(cctx, run.ID, created); lerr != nil {
 		slog.WarnContext(ctx, "flowengine: a produced entity is not linked to its run",
 			"run", run.ID, "entity", created.String(), "error", lerr)
 	}

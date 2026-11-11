@@ -172,7 +172,8 @@ processes against one database, one process leads and runs every
 check: it holds a shared lock while it runs. If that process stops, or
 the database drops its connection, another one takes over within ten
 seconds. The lock keeps one database connection for as long as it is
-held, so with postgres `pool_max_conns` must be at least 3.
+held, so with postgres `pool_max_conns` must be at least 3, or 4 when
+the project also declares flows (the flow worker keeps one too).
 
 Names of channel types, message types, roles, actions and triggers use
 lowercase letters, digits and hyphens, and start with a letter. Property

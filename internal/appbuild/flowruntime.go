@@ -130,6 +130,7 @@ func buildFlowEngine(s *Services, runs flowrun.Store) (*flowengine.Engine, error
 		Compile: func(name string, src []byte, version string) (*flowcfg.Flow, error) {
 			return flowcfg.ParseFlow(name, src, version, meta, policy)
 		},
+		Now: s.base.clock(),
 	})
 }
 

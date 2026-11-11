@@ -323,8 +323,9 @@ func testUpdateLogAndClaim(t *testing.T, h Harness) {
 	require.Nil(t, got.Claim)
 }
 
-// fullState is a forked state with every field set, on the run and on
-// each branch.
+// fullState is a forked state with every field set on each branch, and on
+// the run every field a forked run may carry: a forked run has no pending
+// mark or claim of its own (see [flowrun.CheckState]).
 func fullState() flowrun.State {
 	in := func(state string, gen int64, due int) flow.Instance {
 		return flow.Instance{State: state, Generation: gen, EnteredAt: at(5), Previous: "submitted", Cause: 2,
@@ -333,14 +334,13 @@ func fullState() flowrun.State {
 	}
 	return flowrun.State{
 		Instance: flow.Instance{Generation: 3, EnteredAt: at(5), Previous: "submitted", NextDueAt: at(20)},
-		Pending:  &flowrun.Pending{State: "submitted", Generation: 3, Done: 1, Failures: 2},
 		Log: []flowrun.Step{{At: at(0), State: "submitted", Via: flowrun.ViaStart},
 			{At: at(5), State: "legal", From: "submitted", Via: flowrun.ViaChange, By: "alice", Branch: "legal"},
 			{At: at(6), State: "legal", From: "legal", Via: flowrun.ViaTimer, Timer: "escalate", Branch: "legal"}},
-		Claim: &flowrun.Claim{Generation: 3, By: "carol", At: at(4)},
 		Branches: []flowrun.Branch{
-			{Name: "legal", Instance: in("legal", 4, 20), Pending: &flowrun.Pending{State: "legal", Generation: 4},
-				Claim: &flowrun.Claim{Generation: 4, By: "bob", At: at(6)}},
+			{Name: "legal", Instance: in("legal", 4, 20),
+				Pending: &flowrun.Pending{State: "legal", Generation: 4, Done: 1, Failures: 2},
+				Claim:   &flowrun.Claim{Generation: 4, By: "bob", At: at(6)}},
 			{Name: "finance", Instance: in("reviewed", 6, 30), Arrived: true},
 		},
 	}
@@ -354,10 +354,12 @@ func testUpdateBranches(t *testing.T, h Harness) {
 	ctx := context.Background()
 	full := fullState()
 	b0, b1 := full.Branches[0], full.Branches[1]
-	requireCovers(t, full)
+	// The run-level mark and claim are covered by testUpdate and
+	// testUpdateLogAndClaim.
+	requireCovers(t, full, flowrun.State{Pending: &flowrun.Pending{}, Claim: &flowrun.Claim{}})
 	requireCovers(t, b0, b1)
-	requireCovers(t, *full.Pending, *b0.Pending)
-	requireCovers(t, *full.Claim)
+	requireCovers(t, *b0.Pending)
+	requireCovers(t, *b0.Claim)
 	requireCovers(t, full.Log[0], full.Log[1], full.Log[2])
 	requireCovers(t, full.Instance, b0.Instance, b1.Instance)
 	create(t, h.Store, newRun("FR-B", ref("EMP-8")))

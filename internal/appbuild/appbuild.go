@@ -243,6 +243,10 @@ type Services struct {
 	// long-running process (WithBackgroundAutomationJobs). The host starts
 	// it with RunRealtimeWorker; Close stops it. Per-assembled.
 	realtimeWorker *realtimeWorker
+	// flowWorker runs the flow engine's due rounds, built only for a
+	// long-running process with flows. The host starts it with
+	// RunFlowWorker; Close stops it. Per-assembled.
+	flowWorker *flowWorker
 	// comments is the commentary layer (internal/comments). Nil when the
 	// metamodel declares no `comments:` block — the feature then does not
 	// exist, and the data-entry app serves no comment routes.
@@ -3173,6 +3177,10 @@ func finishAssembly(
 		return nil, fmt.Errorf("flows: %w", err)
 	}
 	s.flowEngine = flowEngine
+	// Built, not started: the host starts it (see RunFlowWorker).
+	if s.flowWorker, err = buildFlowWorker(s.base, s.store, flowEngine); err != nil {
+		return nil, fmt.Errorf("flows: %w", err)
+	}
 	idpRoles, err := buildIDPRoles(s.base, s.store, s.stateKV)
 	if err != nil {
 		return nil, err
@@ -3454,6 +3462,11 @@ func (s *Services) CloseAssembly() {
 // bounded, so stopping it before anything else gives in-flight sends their
 // best chance without risking a hung shutdown.
 func (s *Services) stopBackgroundServices() {
+	// First: a tick writes entities, and those writes reach the services
+	// below.
+	if s.flowWorker != nil {
+		s.flowWorker.stop()
+	}
 	if s.mailStop != nil {
 		s.mailStop()
 		s.mailStop = nil
