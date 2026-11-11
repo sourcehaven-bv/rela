@@ -28,8 +28,10 @@ In scope:
 and no `app_editor_dist/`.
 - In a headless build, `/` answers a small 200 text body that points to
 `/api/v1` and carries the existing OpenAPI `Link` header. Other non-API paths
-and `/static/` answer 404. `CheckEmbeddedSPA` passes.
-- In tenant mode, `StaticShell` answers 404 for tenant-free requests.
+and `/static/` answer 404. `CheckEmbeddedSPA` returns an error, and
+rela-server skips that check when headless.
+- In tenant mode, a headless `StaticShell` answers tenant-free requests like
+the single-tenant root: 200 text on `/`, 404 on other paths.
 - Release: `rela-server-headless-sqlite` and `rela-server-headless-postgres`
 for linux/darwin/windows × amd64/arm64, in separate archives
 `rela-headless-sqlite_*` and `rela-headless-postgres_*`.

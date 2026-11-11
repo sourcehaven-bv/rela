@@ -403,9 +403,9 @@ jobs:
         if: ${{ !cancelled() }}
         run: golangci-lint run --build-tags memorybackend ./...
 
-      # The headless tag only swaps the UI embeds in internal/dataentry and adds
-      # compile guards to cmd/rela-desktop and cmd/rela-docs, which must not
-      # build under it, so the run is scoped to the one package it changes.
+      # The headless tag only swaps the UI embeds in internal/dataentry, so the
+      # run is scoped to that package. rela-desktop and rela-docs still build
+      # under the tag but refuse the missing UI at runtime (CheckEmbeddedSPA).
       - name: Run golangci-lint (headless)
         if: ${{ !cancelled() }}
         run: golangci-lint run --build-tags headless ./internal/dataentry/...

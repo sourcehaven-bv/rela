@@ -69,8 +69,7 @@ not enabled". Pinned by TestHeadless_Router and friends.
 3. PASS: untagged suite passes.
 4. PASS: `goreleaser check` ok; snapshot release produced all 12 headless
 archives (rela-headless-{sqlite,postgres} × 3 OS × 2 arch).
-5. PASS: CI `headless` job (build on 3 OSes, vet, tests, refusal of
-desktop/docs) and headless lint step; YAML has no duplicate keys.
+5. PASS: CI `headless` job (build on 3 OSes, vet, tests) and headless lint step; YAML has no duplicate keys.
 
 ## Documentation (enhancements only)
 
