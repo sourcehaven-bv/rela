@@ -56,3 +56,11 @@ and the `Link` header, `/assets/x.js` and `/static/favicon.svg` with 404.
 4. `goreleaser check` passes, and a snapshot build produces both headless
 archives.
 5. CI runs the headless-tagged tests.
+
+## Notes
+
+The first version had rela-desktop and rela-docs fail to compile under the
+`headless` tag. CI's tagged-file check (`scripts/check-tagged-tests.sh`) vets
+every package under each tag, so it failed on them. Both binaries already
+refuse to serve without the web UI through `dataentry.CheckEmbeddedSPA`, so
+the compile guards were removed.
