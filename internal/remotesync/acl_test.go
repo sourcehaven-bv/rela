@@ -281,3 +281,40 @@ func TestDeps_RequiresGate(t *testing.T) {
 		t.Fatalf("Run without a gate: %v", err)
 	}
 }
+
+// TestPush_LocalACLGatesThePusher pins on a real acl.yaml that the push
+// sends only rows the person it runs as may read: a new row of a type the
+// pusher cannot read is not created on the remote and not named, while a
+// readable new row is.
+func TestPush_LocalACLGatesThePusher(t *testing.T) {
+	policy := "roles:\n  mirror:\n    read: [component]\n    create: [requirement, component]\n" +
+		"    update: [component]\nassignments:\n  " + puller + ": mirror\n"
+	tg, _, ctx := aclTarget(t, policy)
+	m := testMapping(t, tg.meta, func(p *Remote) { p.Push = true })
+	src := newPushSource(seedSource())
+	if _, err := Run(ctx, m, tg.pushDeps(src), Options{}); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	hidden := &entity.Entity{ID: "REQ-HIDDEN", Type: "requirement", Properties: map[string]any{"title": "Hidden"}}
+	if err := tg.st.CreateEntity(ctx, hidden); err != nil {
+		t.Fatal(err)
+	}
+	shown := &entity.Entity{ID: "CMP-SHOWN", Type: "component", Properties: map[string]any{"name": "Shown"}}
+	if err := tg.st.CreateEntity(ctx, shown); err != nil {
+		t.Fatal(err)
+	}
+	src.sends = nil
+	rep, err := Run(ctx, m, tg.pushDeps(src), Options{})
+	if err != nil {
+		t.Fatalf("push run: %v (%+v)", err, rep.Issues)
+	}
+	if rep.Pushed.Created != 1 || src.writes() != 1 {
+		t.Fatalf("push: %+v, sends %v", rep.Pushed, src.sends)
+	}
+	for _, e := range src.ents {
+		if e.Props["title"] == "Hidden" {
+			t.Fatal("a row the pusher cannot read reached the remote")
+		}
+	}
+	noIssueNames(t, rep, hidden.ID)
+}

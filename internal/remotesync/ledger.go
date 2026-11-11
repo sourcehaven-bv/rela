@@ -70,6 +70,9 @@ type ledgerRow struct {
 	// pull never deletes it; when the source stops listing it, it is
 	// detached.
 	Adopted bool `json:"ad,omitempty"`
+	// ETag is the remote's ETag of the entity as last fetched or pushed, for
+	// the If-Match of the next push. Only a remote with push keeps it.
+	ETag string `json:"e,omitempty"`
 }
 
 // localRef is the local entity row an entity row maps to.
@@ -237,10 +240,11 @@ func addToIndex(ctx context.Context, kv state.KV, name string) error {
 	return writeIndex(ctx, kv, append(names, name))
 }
 
-// Prune deletes the ledger of every remote that has one and is not in keep,
-// the remotes remotes.yaml names. A ledger lives as long as its remote is
-// configured: it holds source addresses, local ids and field digests, which
-// mean nothing once the remote is gone. It returns the remotes it pruned.
+// Prune deletes the ledger and the conflict list of every remote that has a
+// ledger and is not in keep, the remotes remotes.yaml names. Both live as
+// long as their remote is configured: they hold source addresses, local
+// ids, field digests and held values, which mean nothing once the remote is
+// gone. It returns the remotes it pruned.
 //
 // keep must come from a remotes.yaml that loaded: a caller that could not
 // read the file does not call Prune, or it would delete every ledger.
@@ -255,8 +259,10 @@ func Prune(ctx context.Context, kv state.KV, keep []string) ([]string, error) {
 			left = append(left, n)
 			continue
 		}
-		if err := kv.Delete(ctx, ledgerKey(n)); err != nil && !errors.Is(err, fs.ErrNotExist) && !os.IsNotExist(err) {
-			return pruned, fmt.Errorf("remotesync: delete the ledger of %q: %w", n, err)
+		for _, key := range []string{ledgerKey(n), conflictsKey(n)} {
+			if err := kv.Delete(ctx, key); err != nil && !errors.Is(err, fs.ErrNotExist) && !os.IsNotExist(err) {
+				return pruned, fmt.Errorf("remotesync: delete the state of %q: %w", n, err)
+			}
 		}
 		pruned = append(pruned, n)
 	}
