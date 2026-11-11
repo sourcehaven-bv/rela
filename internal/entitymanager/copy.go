@@ -903,12 +903,15 @@ func (ce *copyEngine) planCopyEdges(ctx context.Context, plan *copyPlan) error {
 		}
 	}
 
-	// Only a type that copies at least one edge replaces anything (see
-	// applyCopyEdges), so only those types are asked about removal.
+	// A `replace` type makes the target's edges equal the source's, so a
+	// type with no readable source edge empties the target (BUG-FCQBONH).
+	// A type whose source edges the principal may not create is left alone:
+	// removing the target's edges without adding the source's would leave
+	// neither set.
 	plan.removable = map[copyEdgeKey]bool{}
 	removableType := map[string]bool{}
 	for _, rel := range existing {
-		if !readable[rel.To] || !creatable[rel.Type] {
+		if ok, seen := creatable[rel.Type]; !readable[rel.To] || (seen && !ok) {
 			continue
 		}
 		ok, seen := removableType[rel.Type]
