@@ -41,8 +41,7 @@
       "youDoNotHold": "U heeft geen van deze rollen.",
       "noRoles": "Wacht op niemand. Een wijziging, een timer of het systeem zet de run verder.",
       "claimedBy": "{who} rondt deze stap nu af.",
-      "pending": "De uitkomsten van deze stap zijn nog niet weggeschreven. Mislukte pogingen: {n}.",
-      "nextAttempt": "Volgende poging: {at}.",
+      "pending": "De uitkomsten van deze stap zijn nog niet weggeschreven. Mislukte pogingen: {n}. Iemand die deze flow beheert, kan de run opnieuw proberen of stoppen.",
       "branches": "Gaat verder als",
       "branchTo": "naar {state}",
       "guardHolds": "voorwaarde is vervuld",
@@ -65,7 +64,7 @@
       "problem": {
         "guard": "Uw waarden zijn opgeslagen, maar een voorwaarde van de volgende stap kon niet worden gecontroleerd. De run blijft staan.",
         "moved": "Uw waarden zijn opgeslagen, maar de run was al verder gegaan.",
-        "settling": "Uw waarden zijn opgeslagen en de run is verder gegaan, maar een latere stap mislukte. Die wordt opnieuw geprobeerd."
+        "settling": "Uw waarden zijn opgeslagen en de run is verder gegaan, maar een latere stap mislukte. Iemand die deze flow beheert, kan de run opnieuw proberen of stoppen."
       }
     },
     "run": {

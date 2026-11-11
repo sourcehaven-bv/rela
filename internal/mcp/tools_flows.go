@@ -83,7 +83,7 @@ func toolCompleteFlowStep() *mcpgo.Tool {
 			"Result: {written,moved,state,finished,problem}. problem is set when the properties were "+
 			"written but the run did not follow cleanly: guard (a branch guard could not be evaluated, "+
 			"so the run stays), moved (the run had already moved on) or settling (an output step "+
-			"failed after the move and is retried)"),
+			"failed after the move; it waits until someone retries it in the web app or cancels the run)"),
 		withString("run", required(), description("Run id")),
 		withNumber("generation", required(), description("The run's generation from show_flow_run")),
 		withObject("properties", description("Property values to write; only names the state writes")),

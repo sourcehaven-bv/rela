@@ -52,8 +52,10 @@ func (c *FlowStartCmd) Run(ctx context.Context, f *flowServices) error {
 	}
 	id, err := ctl.Start(ctx, c.Flow, c.Subject)
 	if err != nil && id != "" {
-		// The run exists but did not settle; the runtime retries it.
-		return fmt.Errorf("started %s, but its first step failed and will be retried: %w", id, err)
+		// The run exists but did not settle. Nothing retries it by itself
+		// yet (the flow worker is TKT-FWQZGAM), so say how to end it.
+		return fmt.Errorf("started %s, but its first step failed (%w); retry it in the web app or over HTTP, "+
+			"or run \"rela flow cancel %s\"", id, err, id)
 	}
 	if err != nil {
 		return err

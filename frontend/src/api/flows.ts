@@ -57,6 +57,7 @@ export interface FlowBranch {
 
 export interface FlowPending {
   failures: number
+  /** When the engine would try again. No worker acts on it yet (TKT-FWQZGAM). */
   next_attempt?: string
 }
 
@@ -160,7 +161,8 @@ export interface FlowCompleted {
   /**
    * Set when the values were saved but the run did not follow cleanly:
    * a guard could not be evaluated, the run moved on meanwhile, or an
-   * output step failed after the move and is retried.
+   * output step failed after the move and waits for a manual retry or a
+   * cancel.
    */
   problem?: 'guard' | 'moved' | 'settling'
 }
