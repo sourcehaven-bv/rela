@@ -179,3 +179,27 @@ func (g DeclarativeGate) HoldsPermission(ctx context.Context, permission string)
 // HoldsPermission implements [PermissionHolder]: without a policy every
 // permission is held, as every row is readable.
 func (NopGate) HoldsPermission(context.Context, string) bool { return true }
+
+// RelationMetaGatedBy reports whether reader may see less of relType's meta
+// than is stored: whether the field policy behind it declares meta
+// `visible:` grants for the type. An [UnrestrictedReader] hides nothing. A
+// [ScriptReader] answers from its redactor. Any other reader, a
+// [DenyReader] included, counts every type as gated, so a caller that sends
+// meta on fails closed. It is a package function because ScriptReader is at
+// its plimsoll cap.
+//
+// Nil: accepted; a nil reader counts every type as gated.
+func RelationMetaGatedBy(reader any, relType string) bool {
+	switch r := reader.(type) {
+	case *UnrestrictedReader:
+		return r == nil
+	case *ScriptReader:
+		if r == nil || r.res == nil {
+			return true
+		}
+		if p, ok := r.res.redact.(interface{ RelationMetaGated(relType string) bool }); ok {
+			return p.RelationMetaGated(relType)
+		}
+	}
+	return true
+}

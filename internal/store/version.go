@@ -126,14 +126,37 @@ func VersionOf(e *entity.Entity) EntityVersion {
 	writeVersionField(h, e.ID)
 	writeVersionField(h, e.Type)
 	writeVersionField(h, e.Content)
+	writeVersionProps(h, e.Properties)
+	return EntityVersion(base64.RawURLEncoding.EncodeToString(h.Sum(nil)))
+}
 
-	keys := make([]string, 0, len(e.Properties))
-	for k := range e.Properties {
+// RelationVersionOf computes the compare-and-swap token for a relation's
+// state: its triple and tail, its meta and its body. It follows the rules of
+// [VersionOf]: the type of each meta value is folded in, UpdatedAt and the
+// per-reader markers are not. Nil returns the empty version.
+func RelationVersionOf(r *entity.Relation) EntityVersion {
+	if r == nil {
+		return ""
+	}
+	h := sha256.New()
+	writeVersionField(h, r.From)
+	writeVersionField(h, string(r.FromFace))
+	writeVersionField(h, r.Type)
+	writeVersionField(h, r.To)
+	writeVersionField(h, r.Content)
+	writeVersionProps(h, r.Properties)
+	return EntityVersion(base64.RawURLEncoding.EncodeToString(h.Sum(nil)))
+}
+
+// writeVersionProps hashes properties in key order.
+func writeVersionProps(h io.Writer, props map[string]any) {
+	keys := make([]string, 0, len(props))
+	for k := range props {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		v := e.Properties[k]
+		v := props[k]
 		writeVersionField(h, k)
 		// Fold the TYPE in alongside the rendering. %v alone is type-blind:
 		// int64(1), float64(1) and the string "1" all render as "1", as do
@@ -147,7 +170,6 @@ func VersionOf(e *entity.Entity) EntityVersion {
 		writeVersionField(h, fmt.Sprintf("%T", v))
 		writeVersionField(h, fmt.Sprintf("%v", v))
 	}
-	return EntityVersion(base64.RawURLEncoding.EncodeToString(h.Sum(nil)))
 }
 
 // writeVersionField hashes one length-prefixed field. The prefix is what makes

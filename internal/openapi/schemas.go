@@ -35,6 +35,10 @@ func (g *Generator) buildEntitySchema(typeName string, def metamodel.EntityDef) 
 		Type: "array", Items: StringSchema(),
 		Description: "Properties withheld from this reader; absent when nothing is withheld",
 	}
+	props["_updated"] = &Schema{
+		Type: "string", Format: "date-time",
+		Description: "When the row last changed (per-entity responses); absent when any property is withheld",
+	}
 	// Per-entity response metadata. Typed loosely: these are UI hints and
 	// provenance whose detailed shape is documented in the API reference.
 	for name, desc := range map[string]string{

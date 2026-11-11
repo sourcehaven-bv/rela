@@ -100,13 +100,13 @@ func TestHistoryTagCmd_SQLite(t *testing.T) {
 	require.Contains(t, buf.String(), "tags: reviewed")
 
 	purge := HistoryPurgeCmd{ID: id, All: true, Reason: "test", ForceLive: true}
-	got, err = f.run(t, &purge)
+	got, err = f.run(t, purgeNoRemotes{&purge})
 	require.NoError(t, err)
 	require.Contains(t, got, `tagged "reviewed"`)
 	require.Contains(t, got, "--force-tags")
 
 	purge.Commit, purge.Yes = true, true
-	got, err = f.run(t, &purge)
+	got, err = f.run(t, purgeNoRemotes{&purge})
 	require.NoError(t, err)
 	require.Contains(t, got, "Refused: a version tag points at a target row")
 	require.Len(t, f.versions(t), 1, "a refused purge deletes nothing")
@@ -120,7 +120,7 @@ func TestHistoryTagCmd_SQLite(t *testing.T) {
 	require.ErrorContains(t, err, `has no tag "kept"`)
 
 	purge.ForceTags = true
-	got, err = f.run(t, &purge)
+	got, err = f.run(t, purgeNoRemotes{&purge})
 	require.NoError(t, err)
 	require.Contains(t, got, "Purged 1 version row(s)")
 	metas := f.versions(t)
@@ -143,9 +143,9 @@ func TestHistoryPurgeCmd_SQLiteForceLive(t *testing.T) {
 	require.Len(t, before, 1)
 	require.Equal(t, store.VersionOpCreate, before[0].Op)
 
-	got, err := f.run(t, &HistoryPurgeCmd{
+	got, err := f.run(t, purgeNoRemotes{&HistoryPurgeCmd{
 		ID: f.id, All: true, Reason: "test", ForceLive: true, Commit: true, Yes: true,
-	})
+	}})
 	require.NoError(t, err)
 	require.Contains(t, got, "Purged 1 version row(s)")
 	require.Contains(t, got, "Wrote a purge tombstone")
@@ -189,9 +189,9 @@ func TestHistoryPurgeCmd_SQLiteRefusedAtCommit(t *testing.T) {
 		return tagErr
 	}}
 
-	_, err = f.run(t, &HistoryPurgeCmd{
+	_, err = f.run(t, purgeNoRemotes{&HistoryPurgeCmd{
 		ID: f.id, All: true, Reason: "test", ForceLive: true, Commit: true, Yes: true,
-	})
+	}})
 	require.ErrorContains(t, err, string(store.PurgeRefusedTagged))
 	for _, r := range sink.Records() {
 		require.NotEqual(t, audit.OpPurgeVersion, r.Op, "a refused purge was audited")
@@ -199,4 +199,12 @@ func TestHistoryPurgeCmd_SQLiteRefusedAtCommit(t *testing.T) {
 	metas := f.versions(t)
 	require.Len(t, metas, 1, "nothing was deleted")
 	require.Equal(t, []string{"late"}, metas[0].Tags)
+}
+
+// purgeNoRemotes runs a history purge with no workspace, so no remote's
+// conflict list is touched.
+type purgeNoRemotes struct{ c *HistoryPurgeCmd }
+
+func (p purgeNoRemotes) Run(ctx context.Context, svc *writeServices) error {
+	return p.c.Run(ctx, svc, nil)
 }

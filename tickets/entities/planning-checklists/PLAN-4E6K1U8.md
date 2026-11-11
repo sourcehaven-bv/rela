@@ -92,9 +92,10 @@ type and a valid id the ledger does not map; refusal details are sanitized and
 capped; ETags are capped and must hold no CR or LF; methods are an allowlist.
 
 **Security-Sensitive Operations:** writes on the remote as the same principal
-and credential as the pull (no new credential, DEC-QKLMMD4); the push reads
-local rows past the read gate, so `share` and `fields` decide what leaves the
-project; the conflict list holds remote values outside the graph (step 10
+and credential as the pull (no new credential, DEC-QKLMMD4); since
+RR-XLXQ0XR the push reads local rows through `Deps.Gate`, so rows the run's
+principal cannot read and fields hidden by `visible:` are not sent, and
+`share` and `fields` narrow what leaves the project further; the conflict list holds remote values outside the graph (step 10
 must gate display by entity and field read). Credentials are never logged.
 
 ## Test Plan
@@ -142,6 +143,6 @@ and their CLI), docs/acl-security.md via GUIDE-acl-security (push threat model).
 - [x] All critical/significant findings addressed in plan
 
 **Design Review Findings:** RR-DI92SQY (significant, addressed: an uncertain
-create is held, not resent), RR-ZUVW8WM (minor, addressed: share errors are
-reported), RR-IS39JPA (minor, addressed in docs: rows mirrored from another
-remote), RR-XGCZSM5 (minor, deferred: conflict list size).
+create is held, not resent), RR-ZUVW8WM (minor, addressed in docs: rows
+mirrored from another remote), RR-IS39JPA (minor, addressed: share errors are
+reported), RR-XGCZSM5 (minor, deferred: conflict list size).

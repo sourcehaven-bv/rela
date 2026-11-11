@@ -71,6 +71,10 @@ export interface Entity {
   // Names only; values stay withheld. Present (possibly empty) on
   // per-entity responses, absent on list rows.
   _redacted?: string[]
+  // When the row last changed (RFC 3339), on per-entity responses. Absent
+  // when any field is hidden from the caller, since the time would say when
+  // that field may have changed.
+  _updated?: string
   // Per-relation-type affordances on per-entity GET responses. Same
   // sparse / closed-world semantics as _fields. Per-relation-type
   // uniform — per-link verdicts are predicate territory (deferred).

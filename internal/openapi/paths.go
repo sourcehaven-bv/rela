@@ -450,6 +450,8 @@ func (g *Generator) addRelationTypePaths(spec *Spec, typeName string, def metamo
 				{Name: "id", In: "path", Required: true, Description: "Source entity ID", Schema: StringSchema()},
 				{Name: "targetId", In: "path", Required: true, Description: "Target entity ID", Schema: StringSchema()},
 			},
+			Get:   relationGetOperation(typeName, relName, relDef.Label),
+			Patch: relationPatchOperation(typeName, relName, relDef.Label),
 			Delete: &Operation{
 				OperationID: fmt.Sprintf("delete%s%sRelation", capitalize(typeName), capitalize(relName)),
 				Summary:     fmt.Sprintf("Delete %s relation", relDef.Label),
@@ -460,6 +462,89 @@ func (g *Generator) addRelationTypePaths(spec *Spec, typeName string, def metamo
 				},
 			},
 		}
+	}
+}
+
+// relationReadSchema is the body of a single-relation GET.
+func relationReadSchema() *Schema {
+	return &Schema{
+		Type: "object",
+		Properties: map[string]*Schema{
+			"from": StringSchema(), "type": StringSchema(), "to": StringSchema(),
+			"meta":    {Type: "object"},
+			"content": StringSchema(),
+			"_redacted": {
+				Type: "array", Items: StringSchema(),
+				Description: "Meta keys withheld from this reader",
+			},
+			"_updated": {
+				Type: "string", Format: "date-time",
+				Description: "When the relation last changed; absent when the reader could be denied any meta key",
+			},
+		},
+	}
+}
+
+// relationGetOperation reads one relation with its ETag.
+func relationGetOperation(typeName, relName, label string) *Operation {
+	return &Operation{
+		OperationID: fmt.Sprintf("get%s%sRelation", capitalize(typeName), capitalize(relName)),
+		Summary:     fmt.Sprintf("Get one %s relation", label),
+		Tags:        []string{"Relations"},
+		Responses: map[string]Response{
+			"200": {
+				Description: "The relation as this reader sees it",
+				Content:     jsonContent(relationReadSchema()),
+				Headers: map[string]Header{
+					"ETag": {Description: "Relation version tag", Schema: StringSchema()},
+				},
+			},
+			"304": {Description: "Not modified (If-None-Match)"},
+			"404": {Description: "Relation not found", Content: problemContent()},
+		},
+	}
+}
+
+// relationPatchOperation updates one relation's meta, optionally guarded by
+// If-Match.
+func relationPatchOperation(typeName, relName, label string) *Operation {
+	return &Operation{
+		OperationID: fmt.Sprintf("update%s%sRelation", capitalize(typeName), capitalize(relName)),
+		Summary:     fmt.Sprintf("Update one %s relation", label),
+		Tags:        []string{"Relations"},
+		Parameters: []Parameter{
+			{Name: "If-Match", In: "header", Description: "Relation ETag for optimistic locking", Schema: StringSchema()},
+		},
+		RequestBody: &RequestBody{
+			Required: true,
+			Content: jsonContent(&Schema{
+				Type: "object",
+				Properties: map[string]*Schema{
+					"meta":      {Type: "object"},
+					"direction": StringSchema(),
+					"position":  {Type: "object"},
+				},
+			}),
+		},
+		Responses: map[string]Response{
+			"200": {
+				Description: "Relation updated",
+				Content: jsonContent(&Schema{
+					Type: "object",
+					Properties: map[string]*Schema{
+						"from": StringSchema(), "type": StringSchema(), "to": StringSchema(),
+						"meta": {Type: "object"},
+					},
+				}),
+				Headers: map[string]Header{
+					"ETag": {Description: "New relation version tag", Schema: StringSchema()},
+				},
+			},
+			"400": {Description: "Malformed body or invalid position (order_value_invalid)", Content: problemContent()},
+			"403": {Description: "Not allowed", Content: problemContent()},
+			"404": {Description: "Relation not found", Content: problemContent()},
+			"412": {Description: "Precondition failed (ETag mismatch)", Content: problemContent()},
+		},
 	}
 }
 
