@@ -704,6 +704,12 @@ database that serves tenants: one with `rela_control.tenants`, reached on
 `public` or on a tenant's schema. So forgetting the switch fails at start
 instead of serving every org from `public`.
 
+Anonymous requests reach no tenant. This includes requests that Pratique
+forwards on `upstream.anonymous_paths` with `X-Pratique-Anonymous: true`,
+because they carry no `org_id`. This is deliberate: every network deployment
+runs behind Pratique with a verified `org_id`, and public pages belong in
+Pratique or a separate publishing service, not in rela.
+
 The IdP webhook (`POST /webhooks/idp`) is routed by the `org_id` in its
 signed body. An event for an org this server does not host, or for one
 being erased, is acknowledged and ignored. An event for a suspended or
