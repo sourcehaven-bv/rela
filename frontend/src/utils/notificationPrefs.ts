@@ -1,6 +1,5 @@
 import { ref, type Ref } from 'vue'
 import { relaBase } from '@/api/base'
-import type { Seen } from '@/utils/inboxNotify'
 
 /**
  * Browser-notification preferences for the inbox (TKT-48S88RB), kept per
@@ -152,6 +151,13 @@ export function storageWorks(): boolean {
     // Written but not removable: still usable.
   }
   return true
+}
+
+/** What the notifier remembers between reads. */
+export interface Seen {
+  ids: Set<string>
+  /** The newest candidate time of the reads so far, or null for none. */
+  newest: string | null
 }
 
 /** What was seen, or null when nothing is stored (a silent baseline). */

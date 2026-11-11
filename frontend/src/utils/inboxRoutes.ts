@@ -1,4 +1,4 @@
-import { channelKey } from '@/components/entity/channels/channelView'
+import { channelKey } from '@/utils/channelKey'
 import type { InboxChannel } from '@/types/channels'
 
 /**

@@ -1,13 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_PREFS } from './notificationPrefs'
-import {
-  LATE_SLACK_MS,
-  MAX_PER_READ,
-  SEEN_CAP,
-  diffInbox,
-  inboxCandidates,
-  type Seen,
-} from './inboxNotify'
+import { DEFAULT_PREFS, type Seen } from './notificationPrefs'
+import { LATE_SLACK_MS, MAX_PER_READ, SEEN_CAP, diffInbox, inboxCandidates } from './inboxNotify'
 import type { Inbox, InboxChannel, InboxEntry, InboxMention } from '@/types/channels'
 
 const chan = (anchor: string): InboxChannel => ({

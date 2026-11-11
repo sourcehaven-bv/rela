@@ -1,5 +1,5 @@
 import { inboxRowKey } from '@/utils/inboxRoutes'
-import type { NotificationPrefs } from '@/utils/notificationPrefs'
+import type { NotificationPrefs, Seen } from '@/utils/notificationPrefs'
 import type { ChannelAuthor, Inbox, InboxChannel, InboxSession } from '@/types/channels'
 
 /**
@@ -38,13 +38,6 @@ export type Candidate =
       /** When the session entered its state (server time). */
       at: string
     }
-
-/** What the notifier remembers between reads. */
-export interface Seen {
-  ids: Set<string>
-  /** The newest candidate time of the reads so far, or null for none. */
-  newest: string | null
-}
 
 /** At most this many ids are kept; the ids of the latest read come first. */
 export const SEEN_CAP = 500
