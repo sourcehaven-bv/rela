@@ -62,3 +62,10 @@ recovered, and a join whose condition becomes true later continues on a later
 tick, all without a person acting.
 - Only one process runs `Due` at a time per project or tenant.
 - One tick advances at most the per-tick cap of runs.
+
+## Notes
+
+- CI found `TestDue_CreateOutlivesItsCaller` flaky. The cause was that
+`kvflowrun` took its lock on an ended context about half the time, because a
+`select` picks at random when both cases are ready. The lock now refuses an
+ended context first, as the database stores do.
