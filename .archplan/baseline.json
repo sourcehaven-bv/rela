@@ -2678,6 +2678,12 @@
       "reason": "Design: flowview is the stdlib-only wire leaf the HTTP and MCP transports share; its DTOs mirror the flowengine and flowrun types on purpose, as the rule against leaking engine types asks.",
       "at": "2026-11-10T10:45:00Z",
       "title": "TimerDue (flowengine) and Timer (flowview) share most of their fields."
+    },
+    "types.synonyms-c3c95fe17ef4": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs mirror domain types on purpose, as the rule against leaking storage types asks. apiwire.MessageFile is the HTTP shape of channels.File.",
+      "at": "2026-11-11T09:00:00Z",
+      "title": "MessageFile (apiwire) and File (channels) share most of their fields."
     }
   },
   "labels": {},
@@ -2687,9 +2693,9 @@
       "weight.structure": 90,
       "weight.layers": 0,
       "weight.vocabulary": 868,
-      "weight.types": 4132,
-      "weight.concepts": 7127,
-      "weight.boundaries": 1442,
+      "weight.types": 4127,
+      "weight.concepts": 7138,
+      "weight.boundaries": 1434,
       "weight.data": 1297,
       "weight.security": 140,
       "largest_tangle": 14,
@@ -2698,46 +2704,8 @@
       "propagation_cost": 9.1
     },
     "min_weight": 0,
-    "at": "2026-11-09T22:58:11Z",
+    "at": "2026-11-11T06:37:58Z",
     "log": [
-      {
-        "at": "2026-11-04T12:04:38Z",
-        "change": "tighten",
-        "reason": "Static metrics only; structure, security and profile need traces and hotspots, which the weekly scan has",
-        "metrics": {
-          "weight.types": [
-            4071,
-            4028
-          ],
-          "weight.concepts": [
-            7186,
-            7041
-          ],
-          "weight.boundaries": [
-            1512,
-            1478
-          ],
-          "cycle_edges": [
-            68,
-            61
-          ],
-          "propagation_cost": [
-            10.0,
-            9.8
-          ]
-        }
-      },
-      {
-        "at": "2026-11-04T15:40:00Z",
-        "change": "loosen",
-        "reason": "Adding the batch types re-formed five accepted config data clumps (weights 303 -> 309); the clumped types are unchanged, TKT-BO8CYG9",
-        "metrics": {
-          "weight.concepts": [
-            7041,
-            7047
-          ]
-        }
-      },
       {
         "at": "2026-11-04T15:40:00Z",
         "change": "tighten",
@@ -3012,6 +2980,25 @@
           "cycle_edges": [
             61,
             67
+          ]
+        }
+      },
+      {
+        "at": "2026-11-11T06:37:58Z",
+        "change": "loosen",
+        "reason": "TKT-BYKOM3V: channel message files add File, MessageFile and the file fields to channels, apiwire, realtime and the stores, raising accepted concepts findings by 11; the per-finding diff is not comparable across the model rename",
+        "metrics": {
+          "weight.types": [
+            4132,
+            4127
+          ],
+          "weight.concepts": [
+            7127,
+            7138
+          ],
+          "weight.boundaries": [
+            1442,
+            1434
           ]
         }
       }

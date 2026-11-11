@@ -68,9 +68,9 @@ func readCapped(path string, limit int) ([]byte, error) {
 // ChannelFileCmd downloads one file of a message.
 type ChannelFileCmd struct {
 	channelAddr
-	Seq    int64  `arg:"" help:"Seq of the message."`
-	FileID string `arg:"" name:"file-id" help:"File id, from rela channel read."`
-	To     string `name:"to" placeholder:"PATH" help:"Write the file to PATH, or to stdout with -. Without --to: stdout, unless a terminal."`
+	Seq  int64  `arg:"" help:"Seq of the message."`
+	File string `arg:"" name:"file-id" help:"File id, from rela channel read."`
+	To   string `name:"to" placeholder:"PATH" help:"Write the file to PATH, or to stdout with -. Without --to: stdout, unless a terminal."`
 }
 
 // Run writes the file.
@@ -82,7 +82,7 @@ func (c *ChannelFileCmd) Run(ctx context.Context, cs *channelServices) error {
 		return errors.New("seq: at least 1")
 	}
 	addr := c.raw()
-	got, err := cs.Files.OpenFile(ctx, addr, c.Seq, c.FileID)
+	got, err := cs.Files.OpenFile(ctx, addr, c.Seq, c.File)
 	if err != nil {
 		return channelFailed(ctx, "read file", addr.Anchor, err)
 	}
