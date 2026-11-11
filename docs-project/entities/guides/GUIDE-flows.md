@@ -486,8 +486,10 @@ a run that started under an older version of the flow. An
 
 A run's own writes are not edits outside the flow. The values a person
 writes when doing a step, and the run's `set` outputs, are not limited
-by that run's rules. They are still limited by every other run on the
-subject.
+by the rules of the state they come from. They are still limited by
+every other run on the subject. While a run is forked, the rules of every
+branch's state apply, so a step in one branch is still limited by the
+rules of the other branches' states.
 
 **Where the rules hold.** They apply wherever rela checks field rules on
 a write:
