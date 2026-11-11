@@ -11,6 +11,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/flow"
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 )
 
@@ -522,7 +523,7 @@ type guardFailure struct {
 // precondition, and always nil for a trigger or a reminder.
 func newSessionPost(
 	ctx context.Context, ct realtimecfg.ChannelType, mt *realtimecfg.MessageType, props map[string]any,
-	now time.Time, p poster, triggeredBy string, expect *int64,
+	counts map[string]int, now time.Time, p poster, triggeredBy string, expect *int64,
 ) sessionPost {
 	s := ct.Session()
 	sp := sessionPost{ct: ct.Name, mt: mt.Name, failed: &guardFailure{}, gate: &outputGate{}}
@@ -531,7 +532,7 @@ func newSessionPost(
 	}
 	sp.step = &channels.SessionStep{
 		Admit:      admitPost(s, mt, expect),
-		Decide:     sessionDecider(ctx, s, mt, props, now, p, sp.failed, sp.gate),
+		Decide:     sessionDecider(ctx, s, mt, messageFields(mt, props, counts), now, p, sp.failed, sp.gate),
 		NoticeType: realtimecfg.SessionNoticeType, NoticeBy: systemAuthor(),
 		TriggeredBy: channels.SessionMarker + ct.Name, AuditTriggeredBy: triggeredBy,
 		Outcome: &channels.SessionOutcome{},
@@ -572,10 +573,9 @@ func (sp sessionPost) logGuardFailure(ctx context.Context) {
 // fail, rather than not hold, reach a later entry such as a catch-all
 // with outputs (fail closed, as for a single entry).
 func sessionDecider(
-	ctx context.Context, s *realtimecfg.Session, mt *realtimecfg.MessageType, props map[string]any,
+	ctx context.Context, s *realtimecfg.Session, mt *realtimecfg.MessageType, fields map[string]predicate.Value,
 	now time.Time, p poster, failed *guardFailure, gate *outputGate,
 ) func(channels.Channel) (channels.SessionMove, bool) {
-	fields := mt.PredicateFields(props)
 	return func(ch channels.Channel) (channels.SessionMove, bool) {
 		*failed = guardFailure{}
 		if ch.State != channels.StateOpen {

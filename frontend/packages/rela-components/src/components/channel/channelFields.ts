@@ -35,6 +35,7 @@ const DEFAULT_WIDGET: Record<ChannelPropertyKind, ChannelWidget> = {
   datetime: 'datetime',
   enum: 'select',
   ref: 'ref',
+  file: 'file',
 }
 
 /**

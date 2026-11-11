@@ -7,12 +7,15 @@ import { resetLanguageState } from '@/i18n/locale'
 
 // The refusal types the channel service declares. Every one needs a rule,
 // so a type the server gains cannot fall through to "toast and do nothing"
-// unnoticed (TKT-91BK6F AC 14).
-const ERRORS_GO = resolve(__dirname, '../../../../../internal/realtime/errors.go')
+// unnoticed (TKT-91BK6F AC 14). The message-file types sit in files.go.
+const REALTIME_GO = resolve(__dirname, '../../../../../internal/realtime')
+const TYPE_FILES = ['errors.go', 'files.go']
 
 function goTypes(): string[] {
-  const src = readFileSync(ERRORS_GO, 'utf-8')
-  return [...src.matchAll(/^\s*Type[A-Za-z]+\s*=\s*"([a-z_]+)"/gm)].map((m) => m[1])
+  return TYPE_FILES.flatMap((name) => {
+    const src = readFileSync(resolve(REALTIME_GO, name), 'utf-8')
+    return [...src.matchAll(/^\s*Type[A-Za-z]+\s*=\s*"([a-z_]+)"/gm)].map((m) => m[1])
+  })
 }
 
 function problem(status: number, type: string, title = 'refused', detail?: string, headers = {}) {
@@ -25,7 +28,7 @@ function problem(status: number, type: string, title = 'refused', detail?: strin
 }
 
 describe('CHANNEL_ERROR_RULES', () => {
-  it('has a rule for every refusal type in internal/realtime/errors.go', () => {
+  it('has a rule for every refusal type in internal/realtime', () => {
     const types = goTypes()
     expect(types.length).toBeGreaterThan(30)
     expect(types.filter((t) => !(t in CHANNEL_ERROR_RULES))).toEqual([])

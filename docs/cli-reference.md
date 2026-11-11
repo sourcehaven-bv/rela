@@ -2224,7 +2224,7 @@ The project needs a `realtime.yaml`.
 rela channel list ID [--state open|closed|archived]
 rela channel read ID TYPE [--name N] [--limit N] [--before S | --after S | --after-rev R] [--schemas]
 rela channel post ID TYPE MESSAGE_TYPE [--name N] [-P key=value ...] [--props-json JSON|@FILE|-] [--reply-to S]
-                  [--expect-generation G]
+                  [--expect-generation G] [--file PROP=PATH ...]
 rela channel edit ID TYPE SEQ [--name N] [-P key=value ...] [--props-json JSON|@FILE|-]
 rela channel remove ID TYPE SEQ [--name N] [--reason R]
 rela channel create ID TYPE [--title T]
@@ -2233,6 +2233,7 @@ rela channel mark-read ID TYPE [--name N] [--seq S]
 rela channel action ID TYPE SEQ ACTION [--name N]
 rela channel action ID TYPE SEQ --release [--name N]
 rela channel session ID TYPE [--name N]
+rela channel file ID TYPE SEQ FILE_ID [--name N] [--to PATH]
 rela channel inbox [--limit N] [--cursor C] [--kinds waiting,unread,mention,reply]
 ```
 
@@ -2248,6 +2249,8 @@ channel of a type with many channels.
 | `--before`, `--after`, `--after-rev` | Page cursors; name at most one. `read` prints the flag that continues from the page |
 | `--schemas`    | Show each message type's properties. A list property shows as `list of string, at most N`. A question type also shows `choices: from <list>, answer <type> into <property>`, with `, other` when it offers Other |
 | `--expect-generation` | For `post`: store the message only while the session is at this generation, 0 or more. Otherwise the post is refused with `session_moved` and nothing is stored |
+| `--file`       | For `post`: attach the file at PATH to the `file` property PROP (repeatable, at most 4 files). The file keeps the base name of its path. `read --schemas` lists the file properties, and `read` prints each file's id |
+| `--to`         | For `file`: write the file to PATH; a failed download leaves no partial file. `-` writes to stdout. Without `--to` the file goes to stdout, unless stdout is a terminal |
 | `--reason`     | Why a message was removed; shown to moderators                                                 |
 | `--seq`        | For `mark-read`: mark read up to this sequence number, 0 or more. Without it, up to the last message |
 | `--kinds`      | For `inbox`: what to list, any of `waiting`, `unread`, `mention` and `reply`; all four by default. Comma separated |

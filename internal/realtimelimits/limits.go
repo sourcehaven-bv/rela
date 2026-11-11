@@ -19,6 +19,15 @@ const (
 	MaxMessageBytes = 16 << 10
 	// MaxMessageProperties caps the properties one message type declares.
 	MaxMessageProperties = 32
+	// MaxFilesPerMessage caps the files one message carries, over all its
+	// file properties.
+	MaxFilesPerMessage = 4
+	// MaxFileBytes caps one file of a message, after its transforms.
+	MaxFileBytes = 10 << 20
+	// MaxMessageFileBytes caps all files of one message together. It equals
+	// the MCP upload cap, so a message that one transport accepts fits
+	// through every transport.
+	MaxMessageFileBytes = 16 << 20
 	// MaxChannelsPerAnchor caps the channels of one type on one entity.
 	MaxChannelsPerAnchor = 200
 	// MaxPageLimit caps the messages one page returns.
@@ -238,6 +247,16 @@ var (
 	// OpRate applies to the channel operations that are not a post: create,
 	// edit, remove and the lifecycle operations.
 	OpRate = Rate{Count: 30, Per: time.Minute}
+	// FileRate applies to posts that carry files, per identity and
+	// channel, on top of the message type's rate: a file costs a scan and
+	// stored bytes that a text message does not.
+	FileRate = Rate{Count: 10, Per: time.Minute}
+	// FileIdentityRate caps the posts with files of one identity across
+	// every channel, so more channels do not mean more stored bytes.
+	FileIdentityRate = Rate{Count: 30, Per: time.Minute}
+	// FileReadRate applies to file downloads, per reader and channel. It
+	// leaves room for a page of image previews.
+	FileReadRate = Rate{Count: 120, Per: time.Minute}
 	// TypingRate applies to typing per identity and channel. The server
 	// owns it; `limits.signal_rate` does not apply to typing.
 	TypingRate = Rate{Count: 1, Per: time.Second}
@@ -304,4 +323,24 @@ func ParseRate(s string) (Rate, error) {
 		return Rate{}, errRateSyntax
 	}
 	return Rate{Count: n, Per: per}, nil
+}
+
+// ParseSize reads a byte size from realtime.yaml: a whole number of bytes,
+// or a whole number followed by KiB or MiB, such as 512KiB or 5MiB. The
+// result is positive.
+func ParseSize(s string) (int64, error) {
+	t := strings.TrimSpace(s)
+	mult := int64(1)
+	switch {
+	case strings.HasSuffix(t, "MiB"):
+		mult, t = 1<<20, strings.TrimSpace(strings.TrimSuffix(t, "MiB"))
+	case strings.HasSuffix(t, "KiB"):
+		mult, t = 1<<10, strings.TrimSpace(strings.TrimSuffix(t, "KiB"))
+	}
+	n, err := strconv.ParseInt(t, 10, 64)
+	if err != nil || n <= 0 || n > (1<<40)/mult {
+		return 0, fmt.Errorf("invalid size %q; write a whole number of bytes, or a number with KiB or MiB, "+
+			"such as 5MiB", s)
+	}
+	return n * mult, nil
 }

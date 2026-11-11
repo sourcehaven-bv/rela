@@ -214,7 +214,7 @@ func TestSessionPost_GuardAbsentProperty(t *testing.T) {
 	// An absent optional property is a valid config: nothing to warn about.
 	ct, _ := h.cfg.Load().Config.ChannelType("incident")
 	failed := guardFailure{}
-	decide := sessionDecider(context.Background(), ct.Session(), ct.MessageTypes["checked"], props(), time.Now(),
+	decide := sessionDecider(context.Background(), ct.Session(), ct.MessageTypes["checked"], ct.MessageTypes["checked"].PredicateFields(props()), time.Now(),
 		poster{roles: map[string]bool{}}, &failed, nil)
 	_, moved := decide(channels.Channel{State: channels.StateOpen})
 	require.False(t, moved)
@@ -455,7 +455,7 @@ func TestSessionLifecycleAndEdits(t *testing.T) {
 	// A post that reaches the store of a closed channel never moves it.
 	ct, _ := h.cfg.Load().Config.ChannelType("incident")
 	mt := ct.MessageTypes["assessed"]
-	decide := sessionDecider(context.Background(), ct.Session(), mt, props("risk", "high"), h.clock.Now(),
+	decide := sessionDecider(context.Background(), ct.Session(), mt, mt.PredicateFields(props("risk", "high")), h.clock.Now(),
 		poster{roles: map[string]bool{}}, &guardFailure{}, nil)
 	_, moved := decide(channels.Channel{
 		State: channels.StateClosed, Session: channels.Session{State: "contained", Generation: 1},
@@ -480,7 +480,7 @@ func TestSessionGuardFailure(t *testing.T) {
 	ct, _ := testCompiled(t, sessionRealtime("detected", sessionStates)).ChannelType("incident")
 	mt := ct.MessageTypes["probe"]
 	var failed guardFailure
-	decide := sessionDecider(context.Background(), ct.Session(), mt, props("text", "a", "pattern", "("), time.Now(),
+	decide := sessionDecider(context.Background(), ct.Session(), mt, mt.PredicateFields(props("text", "a", "pattern", "(")), time.Now(),
 		poster{roles: map[string]bool{}}, &failed, nil)
 	_, moved := decide(channels.Channel{State: channels.StateOpen})
 	require.False(t, moved)

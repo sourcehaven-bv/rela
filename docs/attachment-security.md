@@ -553,6 +553,27 @@ contract:
     - cmd: [gs, -q, -dNOPAUSE, -dBATCH, -dSAFER, -sDEVICE=pdfwrite, -sOutputFile={out}, "{in}"]
 ```
 
+## Channel message files
+
+A `file` property on a channel message type in `realtime.yaml` uses the same
+policy as a `file` property of an entity: the global `attachments:` settings,
+then the property's `accept`, `scan`, `scan_cmd` and `transform`. The rules
+of this page apply to it, with these differences:
+
+- A message holds at most 4 files. One file is at most 10 MiB, and the files
+  of one message are at most 16 MiB together.
+- Only the data-entry server runs scan and transform commands for channel
+  files. In the CLI and stdio MCP there is no command runner, so a property
+  with a `scan_cmd` or a command transform refuses every file there. rela
+  logs a warning once for a scan that cannot run.
+- A refused file writes a `denied-write` audit record with the file name and
+  no content.
+- Anyone who may read the channel may download its files. Removing the
+  message, deleting the channel or purging it erases the bytes.
+
+See [Realtime configuration](realtime.md#file-properties) for the property
+keys.
+
 ## Notes & limits
 
 - **Existing files are not retroactively processed.** Scanning, the allowlist,

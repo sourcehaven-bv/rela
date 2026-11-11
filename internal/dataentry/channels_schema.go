@@ -77,6 +77,7 @@ func wireMessageTypeSchema(mt realtime.MessageTypeDescription) v1.ChannelMessage
 		out.Properties = append(out.Properties, v1.ChannelPropertySchema{
 			Name: p.Name, Label: p.Label, Type: p.Type, Required: p.Required, Max: p.Max,
 			Enum: p.Enum, Values: p.Values, To: p.To, List: p.List, MaxItems: p.MaxItems,
+			MaxSize: p.MaxSize, Accept: p.Accept,
 		})
 	}
 	for _, a := range mt.Actions {

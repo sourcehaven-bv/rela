@@ -143,6 +143,19 @@ export const QUIET = {
   approveLabel: "Approve",
 } as const;
 
+/**
+ * The screenshot type on ROOM when RoomOptions.files is set: a required
+ * caption and one required file that must be a PNG.
+ */
+export const FILES = {
+  type: "shot",
+  label: "Screenshot",
+  captionLabel: "Caption",
+  property: "image",
+  fileLabel: "Image",
+  accept: "image/png",
+} as const;
+
 /** The face-anchored channel type on the faced project's `policy`. */
 export const POLICY_ROOM = {
   type: "policy-room",
@@ -191,6 +204,8 @@ export interface RoomOptions {
    * plan and approve types. Cannot be combined with another session.
    */
   quiet?: boolean;
+  /** Adds the screenshot type of FILES, with its file property. */
+  files?: boolean;
 }
 
 /** realtime.yaml for the feature project. */
@@ -408,6 +423,15 @@ export function roomRealtimeYaml(opts: RoomOptions = {}): string {
             approve: { to: planning, roles: [owner] }
 `
     : "";
+  const fileTypes = opts.files
+    ? `
+      ${FILES.type}:
+        label: ${FILES.label}
+        properties:
+          caption: { type: string, required: true, max: 200, label: ${FILES.captionLabel} }
+          ${FILES.property}: { type: file, required: true, max: 1, max_size: 1MiB, accept: [${FILES.accept}], label: ${FILES.fileLabel} }
+        post: [member, lead]`
+    : "";
   const ownerRole = opts.run || opts.inbox || opts.quiet ? "\n      owner:  { from: entity.owner }" : "";
   const session = opts.session
     ? `    session:
@@ -437,7 +461,7 @@ channel_types:
         label: Text
         properties:
           body: { type: markdown, required: true, max: 2000, label: ${ROOM.messageLabel} }
-        post: [member, lead]${contained}${decisionTypes}${choiceTypes}${runTypes}${inboxTypes}${quietTypes}
+        post: [member, lead]${contained}${decisionTypes}${choiceTypes}${runTypes}${inboxTypes}${quietTypes}${fileTypes}
     lifecycle:
       close:  { roles: [lead], label: Close }
       reopen: { roles: [lead], label: Reopen }

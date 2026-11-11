@@ -641,6 +641,10 @@ func TestParseChannelRoute(t *testing.T) {
 		{[]string{"threads", "0000000000001", "_read"}, channelRoute{addr: thread, read: true}, true},
 		{[]string{"room", "_read", "x"}, channelRoute{}, false},
 		{[]string{"room", "messages", "_read"}, channelRoute{}, false},
+		{[]string{"room", "messages", "3", "files", "abc"}, channelRoute{addr: room, msgs: true, seq: 3, file: "abc"}, true},
+		{[]string{"room", "messages", "3", "files"}, channelRoute{}, false},
+		{[]string{"room", "messages", "3", "files", "abc", "x"}, channelRoute{}, false},
+		{[]string{"room", "messages", "3", "_files", "abc"}, channelRoute{}, false},
 	} {
 		t.Run(strings.Join(tc.rest, "/"), func(t *testing.T) {
 			got, ok := parseChannelRoute("", "", tc.rest)

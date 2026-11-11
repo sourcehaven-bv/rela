@@ -160,7 +160,7 @@ func TestRead_OneCaptureFlatCost(t *testing.T) {
 			cfg := &countingConfig{ConfigSource: h.cfg}
 			svc, err := New(Deps{
 				Store: h.store, Config: cfg, Access: acc, Anchors: h.anchors, Refs: h.refs, Local: h.local, Promoter: NoPromoter{}, DueWake: NewDueWake(), Outputs: NoOutputs{},
-				Holders: h.holders,
+				Holders: h.holders, Files: h.files,
 			})
 			require.NoError(t, err)
 			h.store.heads.Store(0)

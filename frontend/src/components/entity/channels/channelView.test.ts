@@ -28,6 +28,7 @@ import {
   typingViews,
   excerptOf,
   lifecycleDefs,
+  messageView,
   messageViews,
   nextExpiry,
   noticeView,
@@ -1981,5 +1982,26 @@ describe('choices', () => {
       expect(buttonTypesOf(placed, choices, false)).toEqual(['go'])
       expect(buttonTypesOf({ row: [], fallback: [] }, new Map(), true)).toEqual([])
     })
+  })
+})
+
+describe('message files', () => {
+  const mime = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml', 'text/html', 'application/pdf']
+  const files = mime.map((m, i) => ({ id: `f${i}`, property: 'attach', name: `file${i}`, mime: m, size: 2048 }))
+  const msg: Message = { seq: 7, rev: 7, type: 'card', props: { body: 'see files' }, files }
+  const preview = vi.fn((seq: number, id: string) => `blob:${seq}/${id}`)
+
+  it('lists every file with its formatted size, and a preview only for the four raster types', () => {
+    const view = messageView(msg, byName('card'), { ...ctx, filePreview: preview })
+    expect(view.files?.map((f) => f.id)).toEqual(['f0', 'f1', 'f2', 'f3', 'f4', 'f5', 'f6'])
+    expect(view.files?.[0]).toEqual({ id: 'f0', name: 'file0', size: '2 kB', previewUrl: 'blob:7/f0' })
+    expect(view.files?.filter((f) => f.previewUrl).map((f) => f.id)).toEqual(['f0', 'f1', 'f2', 'f3'])
+    expect(preview).not.toHaveBeenCalledWith(7, 'f4')
+    expect(preview).not.toHaveBeenCalledWith(7, 'f5')
+  })
+
+  it('shows no preview until one is loaded', () => {
+    const view = messageView(msg, byName('card'), ctx)
+    expect(view.files?.every((f) => f.previewUrl === undefined)).toBe(true)
   })
 })

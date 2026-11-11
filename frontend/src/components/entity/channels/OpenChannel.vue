@@ -52,7 +52,8 @@ import { useChannelSchemaStore } from '@/stores/channelSchema'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { shouldDropHeldContent } from '@/api/errors'
 import { browserTimeZone } from '@/utils/format'
-import { toEditProps, toProps } from '@/utils/channelValues'
+import { checkFiles, toEditProps, toProps } from '@/utils/channelValues'
+import type { MessageFileUpload } from '@/api/channels'
 import {
   LIFECYCLE_DELETE,
   type ChannelStart,
@@ -81,6 +82,7 @@ import { useMessages } from 'rela-components/composables/useMessages'
 import EntityPickerModal from '@/components/forms/EntityPickerModal.vue'
 import ChannelTextDialog from './ChannelTextDialog.vue'
 import { blockedPending, handleChannelRefusal, type RefusalTarget } from './decisionGlue'
+import { useChannelFiles } from './useChannelFiles'
 import { useChannelLinks } from './useChannelLinks'
 import { useChannelPaging } from './useChannelPaging'
 import { useExpiryClock } from './useExpiryClock'
@@ -176,7 +178,15 @@ const presentation = computed(() =>
 const enumOptions = computed(() =>
   enumOptionsFor(props.channelType, schema.customTypes, schema.styles)
 )
-const ctx = computed(() => ({ tz, world: props.world, session: props.channelType.session }))
+// Previews of the held messages' images; dropped with the channel.
+const files = useChannelFiles(target)
+watch(ch.messages, (list) => files.sync(list), { immediate: true })
+const ctx = computed(() => ({
+  tz,
+  world: props.world,
+  session: props.channelType.session,
+  filePreview: files.previewUrl,
+}))
 const views = computed(() => messageViews(ch.messages.value, messageType, ctx.value, memo))
 
 // Ephemeral signals show until their expires_at; the head brings new ones.
@@ -306,6 +316,7 @@ const channelKey = () =>
   [props.entityType, props.address, props.channelType.name, props.name ?? ''].join('\u0000')
 watch(channelKey, () => {
   memo = new Map()
+  files.clear()
   replyTo.value = null
   stopEditing()
   clearErrors()
@@ -322,11 +333,12 @@ async function postTyped(
   type: string,
   values: Record<string, MessagePropInput>,
   replyTo?: number,
-  expectGeneration?: number
+  expectGeneration?: number,
+  uploads?: readonly MessageFileUpload[]
 ) {
   try {
     await typing.settle()
-    return await ch.post(type, values, replyTo, expectGeneration)
+    return await ch.post(type, values, replyTo, expectGeneration, uploads)
   } finally {
     typing.reset()
   }
@@ -340,8 +352,13 @@ async function onPost(event: ChannelPostEvent) {
     mt.properties.filter((p) => rendered.has(p.name)),
     event.values
   )
-  if (!converted.ok) {
-    fieldErrors.value = converted.errors
+  const picked = checkFiles(mt.properties, event.files)
+  if (!converted.ok || !picked.ok) {
+    fieldErrors.value = {
+      ...(converted.ok ? {} : converted.errors),
+      ...(picked.ok ? {} : picked.errors),
+    }
+    formError.value = picked.ok ? undefined : picked.error
     return
   }
   clearErrors()
@@ -352,7 +369,13 @@ async function onPost(event: ChannelPostEvent) {
     startedType === event.type &&
     decisionsApi.formDecision.value?.messageType === startedType
   try {
-    await decisionsApi.sendComposer(event.type, converted.props, event.replyTo, event.compose)
+    await decisionsApi.sendComposer(
+      event.type,
+      converted.props,
+      event.replyTo,
+      event.compose,
+      picked.uploads
+    )
     composer.value?.reset(event)
     replyTo.value = null
     if (fromStart) {
@@ -634,6 +657,12 @@ async function submitRemove(reason: string) {
   }
 }
 
+async function onDownload(seq: number, fileId: string) {
+  const file = ch.messages.value.find((m) => m.seq === seq)?.files?.find((f) => f.id === fileId)
+  if (!file) return
+  await runPending(messagePendingKey(seq, `file:${fileId}`), () => files.download(seq, file))
+}
+
 async function onRelease(seq: number) {
   await runPending(messagePendingKey(seq, 'release'), () => ch.release(seq))
 }
@@ -733,6 +762,7 @@ const pickerTypes = picker.types
       @jump="onJumpTracked"
       @decide="(key) => onDecide(key, 'row')"
       @choose="decisionsApi.onChoose"
+      @download="onDownload"
     >
       <template v-if="session.value" #session>
         <RlChannelSession

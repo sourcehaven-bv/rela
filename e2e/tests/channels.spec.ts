@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import * as zlib from "zlib";
 import type { Browser } from "@playwright/test";
 import { test as base, expect, SEED, contextsAs, serveWithPrincipalHeader } from "./fixtures";
 import { FACED_SEED, FACED_USERS, writeFacedProject } from "./faced-project";
@@ -8,6 +9,7 @@ import {
   CHANNEL_USERS,
   CHOICES,
   DECISIONS,
+  FILES,
   INBOX,
   POLICY_ROOM,
   QUIET,
@@ -790,5 +792,116 @@ placedTest.describe("channel placement", () => {
     // It still works where it sits.
     await alice.post("Placed above the relations");
     await alice.expectMessage("Placed above the relations");
+  });
+});
+
+// File properties on messages: a picked file goes up with the post, shows as
+// a chip with a download, and an accepted image also as a thumbnail.
+
+/** A valid PNG of `size` x `size` pixels in one colour, built here. */
+function pngBytes(size: number, rgb: [number, number, number]): Buffer {
+  const chunk = (type: string, data: Buffer) => {
+    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    const out = Buffer.alloc(body.length + 8);
+    out.writeUInt32BE(data.length, 0);
+    body.copy(out, 4);
+    out.writeUInt32BE(zlib.crc32(body), body.length + 4);
+    return out;
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(size, 0);
+  header.writeUInt32BE(size, 4);
+  header.writeUInt8(8, 8); // bit depth
+  header.writeUInt8(2, 9); // truecolour RGB
+  // Each row: filter byte 0, then the pixels.
+  const row = Buffer.concat([Buffer.from([0]), Buffer.from(Array.from({ length: size }, () => rgb).flat())]);
+  const pixels = Buffer.concat(Array.from({ length: size }, () => row));
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", header),
+    chunk("IDAT", zlib.deflateSync(pixels)),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+const fileTest = base.extend<ChannelFixtures>({
+  serverUrl: async ({ testProject, serverBinary }, use, testInfo) => {
+    writeRoomProject(testProject, { files: true });
+    await serveWithPrincipalHeader(serverBinary, testProject, testInfo, use, CHANNEL_USERS.lead);
+  },
+  as: asFixture,
+});
+
+fileTest.describe("message files", () => {
+  fileTest.describe.configure({ timeout: 120_000 });
+
+  fileTest("a posted image shows as a chip and a preview for every reader, and downloads intact", async ({ as }) => {
+    const alice = await as(CHANNEL_USERS.lead);
+    const bob = await as(CHANNEL_USERS.member);
+    for (const p of [alice, bob]) {
+      await p.openEntity("feature", FEATURE);
+      await p.expectChannel(ROOM.label);
+    }
+
+    const png = pngBytes(8, [200, 40, 40]);
+    const caption = "The login button overlaps the logo";
+    await bob.selectMessageType(FILES.label);
+    await bob.attachFile(FILES.fileLabel, { name: "overlap.png", mimeType: FILES.accept, buffer: png });
+    await bob.expectPickedFile("overlap.png");
+    await bob.post(caption, FILES.captionLabel);
+    await bob.expectComposerCleared(FILES.captionLabel);
+
+    for (const p of [bob, alice]) {
+      await p.expectMessage(caption);
+      await p.expectFileChip(caption, "overlap.png");
+      await p.expectImagePreview(caption);
+    }
+
+    const saved = await alice.downloadFile(caption, "overlap.png");
+    expect(saved.name).toBe("overlap.png");
+    expect(saved.bytes.equals(png)).toBe(true);
+  });
+
+  fileTest("a file of a type the property does not accept is refused and nothing is posted", async ({ as }) => {
+    const bob = await as(CHANNEL_USERS.member);
+    await bob.openEntity("feature", FEATURE);
+    await bob.expectChannel(ROOM.label);
+    await bob.selectMessageType(FILES.label);
+
+    // The composer leaves the type to the server, which sniffs the bytes
+    // as text/plain and refuses the post with file_refused.
+    const text = Buffer.from("not an image\n");
+    const local = "A text file in place of a screenshot";
+    await bob.attachFile(FILES.fileLabel, { name: "notes.txt", mimeType: "text/plain", buffer: text });
+    await bob.post(local, FILES.captionLabel);
+    await bob.expectComposerAlert(/text\/plain/);
+    await bob.expectNoMessage(local);
+
+    // A text file named and typed as a PNG is refused the same way: the
+    // server reads the bytes, not the name or the reported type.
+    const disguised = "A text file posing as a PNG";
+    await bob.attachFile(FILES.fileLabel, { name: "notes.png", mimeType: FILES.accept, buffer: text });
+    await bob.post(disguised, FILES.captionLabel);
+    await bob.expectComposerAlert(/text\/plain/);
+    await bob.expectNoMessage(disguised);
+
+    // The same refusal over the API.
+    const api = await bob.postFilesOverApi(
+      "features",
+      FEATURE,
+      ROOM.type,
+      FILES.type,
+      { caption: "Posted over the API" },
+      { [FILES.property]: { name: "notes.png", mimeType: FILES.accept, buffer: text } },
+    );
+    expect(api.status).toBe(422);
+    expect(api.body.type).toBe("https://rela.dev/errors/file_refused");
+    expect(api.body.title).toMatch(/text\/plain/);
+
+    // The log holds none of the three.
+    await bob.selectMessageType("Text");
+    await bob.post("A plain message after the refusals");
+    await bob.expectMessage("A plain message after the refusals");
+    for (const c of [local, disguised, "Posted over the API"]) await bob.expectNoMessage(c);
   });
 });

@@ -75,16 +75,20 @@ func addChannelDescriptorSchema(spec *Spec) {
 	}
 	property := labeled(map[string]*Schema{
 		"type": {Type: "string", Enum: []string{
-			"string", "markdown", "integer", "boolean", "date", "datetime", "ref", "enum",
+			"string", "markdown", "integer", "boolean", "date", "datetime", "ref", "enum", "file",
 		}},
 		"required": b(),
-		"max":      {Type: "integer", Description: "Most characters (Unicode code points) of a string or markdown value"},
-		"enum":     {Type: "string", Description: "The schema.yaml enum type of an enum property"},
-		"values":   ArraySchema(str()),
-		"to":       {Type: "array", Items: str(), Description: "Entity types a ref property may name"},
+		"max": {Type: "integer", Description: "Most characters (Unicode code points) of a string or markdown " +
+			"value; for a file property, the most files a message holds in it"},
+		"enum":   {Type: "string", Description: "The schema.yaml enum type of an enum property"},
+		"values": ArraySchema(str()),
+		"to":     {Type: "array", Items: str(), Description: "Entity types a ref property may name"},
 		"list": {Type: "boolean", Description: "Set for a list of strings (type string), whose value is a JSON " +
 			"array; max then limits each item"},
 		"max_items": {Type: "integer", Description: "Most items of a list property"},
+		"max_size":  {Type: "integer", Description: "Most bytes of one file of a file property"},
+		"accept": {Type: "array", Items: str(),
+			Description: "MIME types a file property accepts; absent for any"},
 	})
 	property.Required = append(property.Required, "type")
 	messageType := labeled(map[string]*Schema{
@@ -196,20 +200,7 @@ func addChannelTypePaths(spec *Spec, basePath, typeName, tag string, ct realtime
 	headPath := typePath
 	params := []Parameter{refParam()}
 	if ct.Cardinality == realtimecfg.CardinalityMany {
-		spec.Paths[typePath] = PathItem{
-			Parameters: params,
-			Post: &Operation{
-				OperationID: "createChannel" + opID,
-				Summary:     "Create a " + ct.Name + " channel",
-				Description: "Creates a named channel. The server mints the name.",
-				Tags:        []string{tag},
-				RequestBody: &RequestBody{Content: jsonContent(ObjectSchema(map[string]*Schema{
-					"title": {Type: "string", Description: "At most 200 characters"},
-				}, nil))},
-				Responses: channelResponses("201", "The new channel", Ref(channelSchema),
-					"400", "403", "404", "409", "413", "429"),
-			},
-		}
+		spec.Paths[typePath] = createChannelPathItem(ct.Name, opID, tag, params)
 		headPath = typePath + "/{name}"
 		params = append(params, Parameter{
 			Name: "name", In: "path", Required: true, Description: "Channel name", Schema: StringSchema(),
@@ -249,7 +240,7 @@ func addChannelTypePaths(spec *Spec, basePath, typeName, tag string, ct realtime
 			Summary:     "Post a message to a " + ct.Name + " channel",
 			Description: postMessageText,
 			Tags:        []string{tag},
-			RequestBody: &RequestBody{Required: true, Content: jsonContent(postBodySchema(ct))},
+			RequestBody: postRequestBody(ct),
 			Responses: withResponse(
 				channelResponses("201", "The stored message", Ref(messageSchema),
 					"400", "403", "404", "409", "413", "422", "429"),
@@ -290,6 +281,82 @@ func addChannelTypePaths(spec *Spec, basePath, typeName, tag string, ct realtime
 	addTypingPath(spec, headPath, opID, tag, params, ct)
 	addReadPath(spec, headPath, opID, tag, params)
 	addActionPaths(spec, headPath+"/messages/{seq}", opID, tag, seqParams, ct)
+	if hasFileProps(ct) {
+		addFilePath(spec, headPath+"/messages/{seq}", opID, tag, seqParams)
+	}
+}
+
+// createChannelPathItem is the route that creates a named channel of a
+// type with cardinality many.
+func createChannelPathItem(name, opID, tag string, params []Parameter) PathItem {
+	return PathItem{
+		Parameters: params,
+		Post: &Operation{
+			OperationID: "createChannel" + opID,
+			Summary:     "Create a " + name + " channel",
+			Description: "Creates a named channel. The server mints the name.",
+			Tags:        []string{tag},
+			RequestBody: &RequestBody{Content: jsonContent(ObjectSchema(map[string]*Schema{
+				"title": {Type: "string", Description: "At most 200 characters"},
+			}, nil))},
+			Responses: channelResponses("201", "The new channel", Ref(channelSchema),
+				"400", "403", "404", "409", "413", "429"),
+		},
+	}
+}
+
+// hasFileProps reports whether a message type of ct declares a `file`
+// property.
+func hasFileProps(ct realtimecfg.ChannelType) bool {
+	for _, mt := range ct.MessageTypes {
+		for _, p := range mt.Properties {
+			if p.Type == realtimecfg.PropertyFile {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// postRequestBody is the post body: JSON, and for a type with `file`
+// properties also multipart, the JSON in a `message` part followed by one
+// `file:<property>` part per file.
+func postRequestBody(ct realtimecfg.ChannelType) *RequestBody {
+	body := &RequestBody{Required: true, Content: jsonContent(postBodySchema(ct))}
+	if !hasFileProps(ct) {
+		return body
+	}
+	body.Description = "JSON, or multipart/form-data to post files: first a `message` part with the JSON " +
+		"body, then one part per file named `file:<property>`, with a file name. At most 4 files and 16 MiB " +
+		"of files a message; each property's max, max_size and accept apply."
+	body.Content["multipart/form-data"] = MediaType{
+		Schema: ObjectSchema(map[string]*Schema{
+			"message": postBodySchema(ct),
+		}, []string{"message"}),
+		Encoding: map[string]Encoding{"message": {ContentType: "application/json"}},
+	}
+	return body
+}
+
+// addFilePath adds `GET …/messages/{seq}/files/{id}`, which serves one
+// file of a message as a download.
+func addFilePath(spec *Spec, msgPath, opID, tag string, params []Parameter) {
+	spec.Paths[msgPath+"/files/{id}"] = PathItem{
+		Parameters: append(slices.Clone(params), Parameter{
+			Name: "id", In: "path", Required: true, Description: "File id", Schema: StringSchema(),
+		}),
+		Get: &Operation{
+			OperationID: "downloadMessageFile" + opID,
+			Summary:     "Download a file of a message",
+			Description: "Serves the file as an attachment download, never inline. A file the message does " +
+				"not hold, of a removed message, or of a property no longer declared file is a 404.",
+			Tags: []string{tag},
+			Responses: withResponse(channelErrors("404"), "200", Response{
+				Description: "The file",
+				Content:     map[string]MediaType{"application/octet-stream": {Schema: &Schema{Type: "string", Format: "binary"}}},
+			}),
+		},
+	}
 }
 
 // addActionPaths adds one `POST …/messages/{seq}/_action/{name}` path per
@@ -728,6 +795,11 @@ func addChannelSchemas(spec *Spec) {
 			}, []string{"name", "status", "at"}),
 			"outputs":  Ref(outputsSchema),
 			"mentions": messageMentionsSchema(),
+			"files": {Type: "array", Items: ObjectSchema(map[string]*Schema{
+				"id": str(), "property": str(), "name": str(), "mime": str(), "size": i64(),
+			}, []string{"id", "property", "name", "mime", "size"}),
+				Description: "The files posted with the message, of the properties its type still declares " +
+					"file. Download one at …/messages/{seq}/files/{id}."},
 			"_actions": {Type: "array", Items: str(),
 				Description: "What you may do with the message now, sorted: its actions, and the operations " +
 					"edit (PATCH), delete (your own, DELETE), remove (a moderator's DELETE with a reason) and " +

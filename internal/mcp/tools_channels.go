@@ -81,6 +81,10 @@ type ChannelDeps struct {
 	//
 	// Nil: accepted; no mark_read tool is registered.
 	Marker ChannelMarker
+	// Files backs read_message_file.
+	//
+	// Nil: accepted; no read_message_file tool is registered.
+	Files ChannelFileOpener
 	// RefuseSignals is set by a wiring that runs in another process than
 	// rela-server (stdio). A signal lives only in the process that receives
 	// it, so the tools refuse to post one ([realtime.PostInput.LogOnly]).
@@ -112,7 +116,7 @@ func (c ChannelDeps) validate() error {
 // registered and answer why, rather than open up or disappear.
 func UnavailableChannels(reason string) ChannelDeps {
 	u := unavailableChannels{err: &channelUnavailableError{reason: reason}}
-	return ChannelDeps{Reader: u, Sessions: u, Writer: u, Creator: u, Inbox: u, Marker: u}
+	return ChannelDeps{Reader: u, Sessions: u, Writer: u, Creator: u, Inbox: u, Marker: u, Files: u}
 }
 
 // channelUnavailableError is the refusal of [UnavailableChannels]. Its text
@@ -199,6 +203,8 @@ type channelHandler struct {
 	creator       ChannelCreator
 	inbox         InboxReader
 	marker        ChannelMarker
+	files         ChannelFileOpener
+	uploads       uploadSlots
 	refuseSignals bool
 	localIdentity bool
 	bindIdentity  func(context.Context) (context.Context, error)
@@ -227,6 +233,9 @@ func registerChannelTools(s *Server, reads map[string]mcpgo.ToolHandler) {
 	// mark_read is a write: it is not in reads, so a watch cannot replay it.
 	if d.Marker != nil {
 		addTool(s, toolMarkReadDef(), channelTool(s, channelHandler.handleMarkRead))
+	}
+	if d.Files != nil {
+		reads[toolReadMessageFile] = addTool(s, toolReadMessageFileDef(), channelTool(s, channelHandler.handleReadFile))
 	}
 }
 
@@ -390,6 +399,7 @@ func toolPostMessage(refuseSignals bool) *mcpgo.Tool {
 		withNumber("reply_to", description("Seq of the top-level message to reply to")),
 		withNumber("expect_generation", description("The session generation this post was decided against, "+
 			"0 or more; a post at another generation is refused with session_moved")),
+		withArray(chanFilesArg, description(filesArgDescription())),
 	)...)
 }
 
@@ -600,7 +610,21 @@ func (h channelHandler) handlePost(ctx context.Context, args toolRequest) *mcpgo
 	if err != nil {
 		return errorResult(err.Error())
 	}
-	in := realtime.PostInput{Type: typ, Props: props, LogOnly: h.refuseSignals, ExpectGeneration: expect}
+	if hasFilesArg(args) {
+		// A post with files shares the upload slots of attach_file.
+		release, admitted := h.uploads.TryAcquire()
+		if !admitted {
+			return errorResult("too many uploads in progress; retry shortly")
+		}
+		defer release()
+	}
+	files, err := filesArg(args)
+	if err != nil {
+		return errorResult(err.Error())
+	}
+	in := realtime.PostInput{
+		Type: typ, Props: props, LogOnly: h.refuseSignals, ExpectGeneration: expect, Files: files,
+	}
 	if replyTo != nil {
 		in.ReplyTo = *replyTo
 	}

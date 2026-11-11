@@ -1,11 +1,13 @@
 package realtime
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
@@ -746,6 +748,7 @@ type harness struct {
 	wake *DueWake
 	// holders answers the inbox's holder queries from anchors.
 	holders *fakeHolders
+	files   *fakeFiles
 }
 
 type harnessOpt func(*harnessOpts)
@@ -815,9 +818,11 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 		cfg: &fakeConfig{snap: Snapshot{Config: testCompiledWith(t, o.yaml, o.policy)}},
 	}
 	h.holders = &fakeHolders{anchors: h.anchors}
+	h.files = &fakeFiles{}
 	h.svc, err = New(Deps{
 		Store: st, Config: h.cfg, Access: fakeAccessSource{}, Anchors: h.anchors, Refs: h.refs, Local: local,
 		Promoter: o.promoter, DueWake: h.wake, Outputs: o.outputs, Holders: h.holders,
+		Files: h.files,
 	})
 	require.NoError(t, err)
 	return h
@@ -858,4 +863,32 @@ func (h *harness) post(t *testing.T, a *fakeAccess, in PostInput) MessageView {
 	require.NoError(t, err)
 	require.NotNil(t, res.Message)
 	return *res.Message
+}
+
+// fakeFiles is the test [FileChecker]: it refuses a file whose bytes hold
+// "VIRUS", turns "upper:" content into upper case under a .txt name, and
+// passes anything else with its sniffed type. It records every check.
+type fakeFiles struct {
+	mu     sync.Mutex
+	checks []FileCheck
+}
+
+func (f *fakeFiles) CheckFile(_ context.Context, c FileCheck) (CheckedFile, error) {
+	f.mu.Lock()
+	f.checks = append(f.checks, c)
+	f.mu.Unlock()
+	switch {
+	case bytes.Contains(c.Data, []byte("VIRUS")):
+		return CheckedFile{}, fmt.Errorf("%w: scan found a virus", ErrFileRefused)
+	case bytes.HasPrefix(c.Data, []byte("upper:")):
+		return CheckedFile{Name: c.Name + ".txt", MIME: "text/plain", Data: bytes.ToUpper(c.Data)}, nil
+	}
+	mime, _, _ := strings.Cut(http.DetectContentType(c.Data), ";")
+	return CheckedFile{Name: c.Name, MIME: mime, Data: c.Data}, nil
+}
+
+func (f *fakeFiles) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.checks)
 }

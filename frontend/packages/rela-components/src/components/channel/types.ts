@@ -27,6 +27,7 @@ export type ChannelPropertyKind =
   | 'datetime'
   | 'ref'
   | 'enum'
+  | 'file'
 
 /** One property of a message type. */
 export interface ChannelPropertyDef {
@@ -37,9 +38,14 @@ export interface ChannelPropertyDef {
   required?: boolean
   /**
    * The most Unicode code points a string or markdown value may hold; for a
-   * list, the most each item may hold.
+   * list, the most each item may hold. On a `file` property, the most files
+   * a message holds in it.
    */
   max?: number
+  /** On a `file` property: the most bytes of one file. */
+  max_size?: number
+  /** On a `file` property: the MIME types it accepts, for the file picker. */
+  accept?: string[]
   /** A list of strings: the value is an array, shown one item per line. */
   list?: boolean
   /** The enum type whose labels and colours `enumOptions` carries. */
@@ -96,6 +102,7 @@ export type ChannelWidget =
   | 'datetime'
   | 'select'
   | 'ref'
+  | 'file'
 
 /**
  * How one property is presented: one entry of a message type's `fields:` in
@@ -240,6 +247,11 @@ export interface ChannelMessageView {
    */
   text?: Record<string, string>
   replyTo?: ChannelReplyQuote
+  /**
+   * The files posted with the message, in the order the app gives. The
+   * library shows each as a chip that emits `download`; it never fetches.
+   */
+  files?: ChannelFileView[]
   /** Set once the message was edited; preformatted, shown as a tooltip. */
   editedAt?: string
   removed?: ChannelRemovalView
@@ -256,6 +268,20 @@ export interface ChannelMessageView {
    * controls instead of a card.
    */
   notice?: ChannelNoticeView
+}
+
+/** One file of a message, as the app prepared it. */
+export interface ChannelFileView {
+  /** Unique within the message; what `download` emits. */
+  id: string
+  name: string
+  /** The size, preformatted by the app. */
+  size: string
+  /**
+   * A URL of the image to show as a thumbnail. The app sets it only for
+   * an image type it lets render inline, and owns the URL's lifetime.
+   */
+  previewUrl?: string
 }
 
 /** What a session notice says, with the state labels the app looked up. */
@@ -466,6 +492,12 @@ export interface ChannelPostEvent {
    */
   rendered: string[]
   replyTo?: number
+  /**
+   * The files picked in the `file` fields, keyed by property name, in the
+   * order picked. A file field is never in `values` or `rendered`, and a
+   * property with no file is absent. An edit carries no files.
+   */
+  files?: Record<string, File[]>
   /**
    * The `compose.key` the composer applied when the message was sent, if
    * any: the given properties were shown fixed and have no field.

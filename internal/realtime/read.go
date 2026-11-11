@@ -105,6 +105,39 @@ type MessageTypeView struct {
 	// authoritative.
 	In        []string `json:"in,omitempty"`
 	InDerived bool     `json:"in_derived,omitempty"`
+	// Files lists the type's `file` properties, sorted by name. Props
+	// does not name them: a post sends files beside its properties.
+	Files []FilePropertyView `json:"files,omitempty"`
+}
+
+// FilePropertyView is a `file` property of a message type.
+type FilePropertyView struct {
+	Name     string `json:"name"`
+	Label    string `json:"label,omitempty"`
+	Required bool   `json:"required,omitempty"`
+	// Max is the most files a message holds in the property; MaxSize the
+	// most bytes of one file.
+	Max     int      `json:"max"`
+	MaxSize int64    `json:"max_size"`
+	Accept  []string `json:"accept,omitempty"`
+}
+
+// fileProperties describes the `file` properties of mt.
+//
+// Nil: returned when mt has none.
+func fileProperties(mt *realtimecfg.MessageType) []FilePropertyView {
+	var out []FilePropertyView
+	for _, name := range sortedKeys(mt.Properties) {
+		p := mt.Properties[name]
+		if p.Type != realtimecfg.PropertyFile {
+			continue
+		}
+		out = append(out, FilePropertyView{
+			Name: name, Label: p.Label, Required: p.Required, Max: p.File.MaxFiles, MaxSize: p.File.MaxSize,
+			Accept: slices.Clone(p.File.Policy.Accept),
+		})
+	}
+	return out
 }
 
 // ReadView is a channel and one page of its messages, oldest first, or by
@@ -242,6 +275,7 @@ func (c *call) messageTypes(post map[string]bool) []MessageTypeView {
 			DecisionButton: decisionButtonView(mt.DecisionButton),
 			In:             slices.Clone(mt.In),
 			InDerived:      mt.InDerived(),
+			Files:          fileProperties(mt),
 		})
 	}
 	return out

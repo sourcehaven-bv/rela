@@ -15,7 +15,7 @@ import (
 
 // CommandRunner drives an external command (scan or transform) over an
 // attachment's bytes. It is a consumer-side seam: the data-entry/CLI wiring
-// supplies a concrete runner (the cmd: harness); when nil the [PolicyProcessor]
+// supplies a concrete runner (the cmd: harness); when nil the [Checker]
 // performs native MIME validation and any native (image:) transforms only —
 // external (cmd:) scan/transform steps are then unavailable and rejected.
 //
@@ -39,12 +39,12 @@ type CommandRunner interface {
 // op (image:, no runner, no sandbox). Native steps run even when the runner is
 // nil; a scan or a cmd: step with a nil runner is a configuration error and
 // fails closed.
-func (p *PolicyProcessor) applyTransforms(
-	ctx context.Context, pc ProcessContext, prop metamodel.PropertyDef, r io.Reader, info ProcessInfo,
+func (p *Checker) applyTransforms(
+	ctx context.Context, pc ProcessContext, pol FilePolicy, r io.Reader, info ProcessInfo,
 ) (io.Reader, ProcessInfo, error) {
 	// Fast path: nothing to scan and nothing to transform.
-	scanCmd := metamodel.NewAttachmentPolicy(p.meta).ScanCommandFor(prop)
-	if len(scanCmd) == 0 && len(prop.Transform) == 0 {
+	scanCmd := pol.ScanCmd
+	if len(scanCmd) == 0 && len(pol.Transform) == 0 {
 		return r, info, nil
 	}
 
@@ -65,7 +65,7 @@ func (p *PolicyProcessor) applyTransforms(
 	}
 
 	// Transforms in declared order; each rewrites the bytes.
-	for i, step := range prop.Transform {
+	for i, step := range pol.Transform {
 		switch step.Kind() {
 		case "image":
 			data, info, err = p.applyImageStep(ctx, pc, step.Image, data, info)
@@ -87,7 +87,7 @@ func (p *PolicyProcessor) applyTransforms(
 // re-encode. It needs no runner and no sandbox. On success it updates the file
 // name's extension to match the re-encoded format so the stored bytes and the
 // download Content-Type stay consistent (RR-7R3EYR).
-func (p *PolicyProcessor) applyImageStep(
+func (p *Checker) applyImageStep(
 	ctx context.Context, pc ProcessContext, step *metamodel.ImageStep, data []byte, info ProcessInfo,
 ) ([]byte, ProcessInfo, error) {
 	out, iinfo, err := imgproc.Normalize(ctx, bytes.NewReader(data), imageConfig(step))
@@ -102,7 +102,7 @@ func (p *PolicyProcessor) applyImageStep(
 }
 
 // applyCmdStep runs one external (cmd:) transform step via the runner.
-func (p *PolicyProcessor) applyCmdStep(
+func (p *Checker) applyCmdStep(
 	ctx context.Context, pc ProcessContext, cmd []string, data []byte, info ProcessInfo,
 ) ([]byte, ProcessInfo, error) {
 	if p.runner == nil {

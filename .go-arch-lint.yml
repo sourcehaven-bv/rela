@@ -949,6 +949,9 @@ deps:
       - realtimecfg
       # Builds the channel service over the channel store.
       - realtime
+      # Checks channel message files through the attachment pipeline
+      # (TKT-BYKOM3V): its policy and the server's scan runner.
+      - attachment
       # hostconfig.Dir: the default source of secrets and AI/mail settings.
       - hostconfig
       # ai.Provider: the WithAIProvider seam and the in-memory world's
@@ -1484,6 +1487,9 @@ deps:
       - mcp
       - mcpwire
       - principal
+      # realtime: builds the channel file reader the remote MCP tools use
+      # from the shared channel service.
+      - realtime
   # MCP tool groups over appbuild services, shared by the stdio and remote
   # servers. Separate from appbuild because mcp's tests import appbuild.
   mcpwire:

@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -463,8 +464,12 @@ func channelDeps(svc *appbuild.Services) relamcp.ChannelDeps {
 	if cs == nil {
 		return relamcp.ChannelDeps{}
 	}
+	files, err := realtime.NewFileOpener(cs)
+	if err != nil { // coverage-ignore: cs is not nil
+		return relamcp.UnavailableChannels(err.Error())
+	}
 	return relamcp.ChannelDeps{
-		Reader: cs, Sessions: cs, Writer: cs, Creator: cs, Waker: cs, Inbox: cs, Marker: cs,
+		Reader: cs, Sessions: cs, Writer: cs, Creator: cs, Waker: cs, Inbox: cs, Marker: cs, Files: files,
 		RefuseSignals: true, LocalIdentity: true, BindIdentity: bind,
 	}
 }

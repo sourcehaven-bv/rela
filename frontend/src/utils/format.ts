@@ -374,3 +374,25 @@ export function isEnumPropertyDef(propDef: PropertyDef | undefined): boolean {
   if (!propDef) return false
   return propDef.type === 'enum' || (propDef.values?.length ?? 0) > 0
 }
+
+const BYTE_UNITS = ['byte', 'kilobyte', 'megabyte', 'gigabyte'] as const
+
+/**
+ * A size in bytes as short text in the interface language: `512 bytes`,
+ * `1.5 kB`, `16 MB`. Steps are 1024 bytes, the way the server's limits are
+ * set (16 MiB).
+ */
+export function formatBytes(bytes: number, locale?: string): string {
+  let value = Math.max(0, bytes)
+  let unit = 0
+  while (value >= 1024 && unit < BYTE_UNITS.length - 1) {
+    value /= 1024
+    unit++
+  }
+  return new Intl.NumberFormat(locale ?? intlLocale(), {
+    style: 'unit',
+    unit: BYTE_UNITS[unit],
+    unitDisplay: unit === 0 ? 'long' : 'short',
+    maximumFractionDigits: unit === 0 || value >= 10 ? 0 : 1,
+  }).format(value)
+}

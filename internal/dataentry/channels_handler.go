@@ -27,8 +27,9 @@ const (
 	actionSegment    = "_action"
 	typingSegment    = "_typing"
 	readSegment      = "_read"
+	filesSegment     = "files"
 	// messageRouteDepth is the most segments a message route has:
-	// messages/{seq}/_action/{name}.
+	// messages/{seq}/_action/{name} and messages/{seq}/files/{id}.
 	messageRouteDepth = 4
 	// channelBodyLimit caps a channel request body: the largest message
 	// realtime.yaml may allow, plus room for the JSON envelope. The service
@@ -92,11 +93,13 @@ type realtimeSwitch interface {
 //	POST   /api/v1/{plural}/{ref}/_channels/{type}             create (cardinality many)
 //	GET    /api/v1/{plural}/{ref}/_channels/{type}[/{name}]     channel head
 //	GET    …/_channels/{type}[/{name}]/messages                one page of messages
-//	POST   …/_channels/{type}[/{name}]/messages                post (201, or 202 ephemeral)
+//	POST   …/_channels/{type}[/{name}]/messages                post (201, or 202 ephemeral); JSON, or
+//	                                                            multipart with files (see [channelsHandler.postMultipart])
 //	PATCH  …/_channels/{type}[/{name}]/messages/{seq}          edit own message
 //	DELETE …/_channels/{type}[/{name}]/messages/{seq}          delete or remove
 //	POST   …/messages/{seq}/_action/{name}                      run an action
 //	DELETE …/messages/{seq}/_action                             release a pending action
+//	GET    …/messages/{seq}/files/{id}                          download a file of a message
 //	POST   …/_channels/{type}[/{name}]/_lifecycle/{op}         close, reopen, archive, delete
 //	POST   …/_channels/{type}[/{name}]/_typing                 typing (202)
 //	PUT    …/_channels/{type}[/{name}]/_read                   move the caller's read marker
@@ -128,6 +131,11 @@ type channelsHandler struct {
 	waitingMessages func(ctx context.Context, v realtime.InboxView) (realtime.InboxView, error)
 	// busy serves `?busy=` on list rows; see [serveRowBusy].
 	busy busyReader
+	// files serves the file download route.
+	files channelFileOpener
+	// uploads bounds concurrent multipart posts, shared with the entity
+	// uploads.
+	uploads uploadSlots
 }
 
 // SetChannels installs the channel service and describes its routes in the
@@ -144,6 +152,10 @@ func SetChannels(a *App, svc *realtime.Service) error {
 	if err != nil {
 		return fmt.Errorf("dataentry: SetChannels: %w", err)
 	}
+	files, err := realtime.NewFileOpener(svc)
+	if err != nil {
+		return fmt.Errorf("dataentry: SetChannels: %w", err)
+	}
 	a.channels = &channelsHandler{
 		read: svc, messageOps: svc, actions: svc, channels: svc, typist: svc, marker: svc,
 		on:       svc,
@@ -153,7 +165,7 @@ func SetChannels(a *App, svc *realtime.Service) error {
 		waitingMessages: func(ctx context.Context, v realtime.InboxView) (realtime.InboxView, error) {
 			return realtime.WaitingMessages(ctx, svc, v)
 		},
-		busy: busy,
+		busy: busy, files: files, uploads: a.attachmentUploads,
 	}
 	if st := a.State(); st != nil && st.OpenAPIGen != nil {
 		st.OpenAPIGen.SetRealtime(svc.Config)
@@ -195,6 +207,8 @@ type channelRoute struct {
 	typing bool
 	// read is set for …/_read.
 	read bool
+	// file is the id of …/messages/{seq}/files/{id}.
+	file string
 }
 
 // serve answers every route under /api/v1/{plural}/{ref}/_channels. rest
@@ -237,6 +251,10 @@ func (h *channelsHandler) serve(w http.ResponseWriter, r *http.Request, typeName
 	case rt.release:
 		if allowMethod(w, r, http.MethodDelete) {
 			h.releaseAction(w, r, rt)
+		}
+	case rt.file != "":
+		if allowMethod(w, r, http.MethodGet) {
+			h.downloadFile(w, r, rt)
 		}
 	case rt.seq != 0:
 		switch r.Method {
@@ -310,14 +328,17 @@ func parseChannelRoute(typeName, ref string, rest []string) (channelRoute, bool)
 			return channelRoute{}, false
 		}
 		rt.msgs, rt.seq = true, seq
-		if len(tail) > 2 {
-			if tail[2] != actionSegment {
-				return channelRoute{}, false
-			}
+		switch {
+		case len(tail) == 2:
+		case len(tail) == messageRouteDepth && tail[2] == filesSegment:
+			rt.file = tail[3]
+		case tail[2] == actionSegment:
 			rt.release = len(tail) == 3
 			if !rt.release {
 				rt.action = tail[3]
 			}
+		default:
+			return channelRoute{}, false
 		}
 	default:
 		return channelRoute{}, false
@@ -417,12 +438,23 @@ func queryInt(q url.Values, name string) (v int64, ok, bad bool) {
 }
 
 func (h *channelsHandler) post(w http.ResponseWriter, r *http.Request, rt channelRoute) {
+	if isMultipart(r) {
+		h.postMultipart(w, r, rt)
+		return
+	}
 	var req v1.PostMessageRequest
 	if !decodeChannelBody(w, r, &req, false) {
 		return
 	}
+	h.postMessage(w, r, rt, req, nil)
+}
+
+// postMessage posts req with files and writes the answer.
+func (h *channelsHandler) postMessage(
+	w http.ResponseWriter, r *http.Request, rt channelRoute, req v1.PostMessageRequest, files []realtime.FileInput,
+) {
 	in := realtime.PostInput{
-		Type: req.Type, Props: req.Props, ReplyTo: req.ReplyTo, ExpectGeneration: req.ExpectGeneration,
+		Type: req.Type, Props: req.Props, ReplyTo: req.ReplyTo, ExpectGeneration: req.ExpectGeneration, Files: files,
 	}
 	got, err := h.messageOps.Post(r.Context(), rt.addr, in)
 	if err != nil {
@@ -578,6 +610,12 @@ func decodeChannelBody(w http.ResponseWriter, r *http.Request, dst any, emptyOK 
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_request", "Invalid JSON", "the request needs a JSON body")
 		return false
 	}
+	return decodeChannelJSON(w, r, data, dst)
+}
+
+// decodeChannelJSON decodes data into dst strictly: an unknown field, or
+// data after the JSON value, is a 400.
+func decodeChannelJSON(w http.ResponseWriter, r *http.Request, data []byte, dst any) bool {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	dec.UseNumber()
