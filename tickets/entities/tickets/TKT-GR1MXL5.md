@@ -102,3 +102,9 @@ to `asking`. The person sees "Question 2 of 4" with two option cards (A with a
 Each click posts an answer at once. The fourth answer brings
 `session.open_questions` to 0, the session moves to `working`, and the agent's
 session watch wakes once.
+
+## Out of scope
+
+Crash repair for batches on the file backend. The file backend is the
+developer tier, with the project in git; sqlite and postgres write a batch in
+one transaction. See `.claude/rules/storage.md`.
