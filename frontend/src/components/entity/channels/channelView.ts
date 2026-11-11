@@ -17,6 +17,7 @@ import {
   type MessageRefLink,
 } from '@/utils/markdown'
 import { fromPropValue } from '@/utils/channelValues'
+import { channelKey } from '@/utils/channelKey'
 import { tagColor } from '@/configure/names'
 import type { ChannelPresentation as AppChannelPresentation, CustomType } from '@/types'
 import type {
@@ -824,10 +825,7 @@ export function enumOptionsFor(
   return out
 }
 
-/** The list key of a channel; a `one` type has no name. */
-export function channelKey(type: string, name?: string): string {
-  return `${type}/${name ?? ''}`
-}
+export { channelKey }
 
 function channelTitle(c: Channel, label: string): string {
   return c.title || c.name || label

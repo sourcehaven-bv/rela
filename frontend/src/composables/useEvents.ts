@@ -7,7 +7,7 @@ import { t } from '@/i18n'
 import {
   setLiveConnection,
   clearLiveConnection,
-  handleLiveChanged,
+  deliverLive,
   setLiveReconnect,
 } from './useLiveSubscription'
 import { invalidateWhenVisible, refetchJitter, runWhenVisible } from './visibleRefetch'
@@ -178,11 +178,9 @@ export function useEvents() {
       eventSource.addEventListener('live:changed', (event: MessageEvent) => {
         try {
           const data = JSON.parse(event.data) as { key?: unknown }
-          // A hidden tab refetches when it is shown again, not now.
-          if (typeof data.key === 'string') {
-            const key = data.key
-            runWhenVisible(`live:${key}`, () => handleLiveChanged(key))
-          }
+          // A hidden tab refetches when it is shown again, not now, unless
+          // the key asked for hidden delivery.
+          if (typeof data.key === 'string') deliverLive(data.key)
         } catch {
           console.warn('Failed to parse live:changed event data')
         }

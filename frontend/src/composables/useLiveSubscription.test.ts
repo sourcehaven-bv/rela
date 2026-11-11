@@ -13,16 +13,13 @@ import {
   setLiveConnection,
   clearLiveConnection,
   handleLiveChanged,
+  deliverLive,
   setLiveReconnect,
   resetLiveSubscriptions,
   MAX_LIVE_SUBSCRIPTIONS,
 } from './useLiveSubscription'
 import type { QueryCache } from '@pinia/colada'
-import {
-  installVisibleRefetch,
-  resetVisibleRefetch,
-  REFETCH_JITTER_MAX_MS,
-} from './visibleRefetch'
+import { installVisibleRefetch, resetVisibleRefetch, REFETCH_JITTER_MAX_MS } from './visibleRefetch'
 
 /** A query cache with no entries: these tests check only deferred work. */
 function useQueryCacheStub(): QueryCache {
@@ -219,6 +216,22 @@ describe('live subscription manager', () => {
     document.dispatchEvent(new Event('visibilitychange'))
     await vi.advanceTimersByTimeAsync(REFETCH_JITTER_MAX_MS)
     expect(onChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('delivers a hidden-delivery key at once in a hidden tab and defers the rest', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    const watched = vi.fn()
+    const other = vi.fn()
+    registerLive('inbox', '/api/v1/_inbox/summary', watched, { deliverHidden: true })
+    registerLive('list', '/api/v1/tickets', other)
+    setLiveConnection('c1')
+    await settle()
+    expect(watched).toHaveBeenCalledTimes(1) // baseline
+    expect(other).not.toHaveBeenCalled()
+    deliverLive('inbox')
+    deliverLive('list')
+    expect(watched).toHaveBeenCalledTimes(2)
+    expect(other).not.toHaveBeenCalled()
   })
 
   it('sends at most the server limit', async () => {

@@ -18,6 +18,17 @@ import { refetchJitter, runWhenVisible } from './visibleRefetch'
 interface Entry {
   path: string
   onChange: () => void
+  deliverHidden: boolean
+}
+
+/** Options of registerLive. */
+export interface LiveOptions {
+  /**
+   * Run onChange at once even while the page is hidden. Every other key
+   * waits for a visible tab (TASK-550RD), so set this only for the one key
+   * a browser elects to watch in the background (the inbox notifier).
+   */
+  deliverHidden?: boolean
 }
 
 /** The server's per-stream limit; entries past it are not sent. */
@@ -74,7 +85,7 @@ async function send() {
       const e = entries.get(key)
       // A reconnect re-accepts every key, so this refetches every live
       // baseline; a hidden tab does that once, when it is shown again.
-      if (e?.path === path) runWhenVisible(`live:${key}`, () => entries.get(key)?.onChange())
+      if (e?.path === path) deliverLive(key)
     }
   } catch (err) {
     const status = err instanceof ApiError ? err.status : undefined
@@ -121,6 +132,18 @@ export function handleLiveChanged(key: string) {
   entries.get(key)?.onChange()
 }
 
+/**
+ * Runs the key's onChange now if it asked for hidden delivery, otherwise
+ * when the tab is visible.
+ */
+export function deliverLive(key: string) {
+  if (entries.get(key)?.deliverHidden) {
+    handleLiveChanged(key)
+    return
+  }
+  runWhenVisible(`live:${key}`, () => handleLiveChanged(key))
+}
+
 /** Lets useEvents supply the reconnect a 409 asks for. */
 export function setLiveReconnect(fn: () => void) {
   reconnect = fn
@@ -130,8 +153,13 @@ export function setLiveReconnect(fn: () => void) {
  * Registers key → path until unregistered. Registering a key again replaces
  * it. The returned function removes only this registration.
  */
-export function registerLive(key: string, path: string, onChange: () => void): () => void {
-  const entry: Entry = { path, onChange }
+export function registerLive(
+  key: string,
+  path: string,
+  onChange: () => void,
+  opts: LiveOptions = {}
+): () => void {
+  const entry: Entry = { path, onChange, deliverHidden: opts.deliverHidden ?? false }
   entries.set(key, entry)
   schedule()
   return () => {
