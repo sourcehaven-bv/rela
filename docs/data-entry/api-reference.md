@@ -805,6 +805,32 @@ compare and the second could overwrite the first. A write that loses that race
 now returns 412 as well — the same status, and the same remedy for the client:
 re-read, re-apply, retry.
 
+### A single relation
+
+`GET /api/v1/{plural}/{id}/relations/{rel}/{target}` answers with the
+relation's `meta`, `content` and `_redacted`, and an `ETag` over the
+relation as the caller sees it, hidden meta removed. `PATCH` on the same
+path honors `If-Match` with that ETag: a mismatch is 412
+`precondition_failed`. The store compares the version again inside the
+write, so an edit that lands between the check and the write is a 412 too.
+The PATCH response is redacted like the GET and carries the new `ETag`.
+Without `If-Match` the update is unconditional.
+
+## Last-updated time (`_updated`)
+
+A per-entity GET, the entity in a write response, a view entry and a single
+relation GET carry `_updated`: the time the row last changed, in RFC 3339
+UTC. It is served only when nothing on the row is hidden from the caller.
+When a field is in `_redacted` or otherwise withheld, `_updated` is left
+out, because a change to the hidden field moves it too. A relation GET
+also leaves it out when the caller's `visible:` list for the relation type
+could hide a meta key the edge does not carry now. List rows and
+search results never carry it. Two-way sync uses it for the `latest`
+conflict rule (see [Syncing with a remote](../remote-sync.md#conflicts)).
+
+On the file-system backend, a row nobody wrote since the server started
+has its file's modification time.
+
 ## Per-field preconditions (`_versions`, `preconditions`)
 
 The ETag covers the whole entity, so a client that saves one field at a time

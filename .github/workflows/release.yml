@@ -160,6 +160,29 @@ jobs:
           check 'rela_*_linux_amd64.tar.gz'          rela-docs
           check 'rela-postgres_*_linux_amd64.tar.gz' rela-server-postgres
 
+      # The inverse guard: the headless servers must ship WITHOUT the SPA and
+      # the editor bundle. If the `headless` tag stopped excluding the embeds,
+      # the binaries would quietly grow the UI back; this fails the release.
+      - name: Verify headless binaries embed no SPA
+        run: |
+          set -euo pipefail
+          check_absent() {
+            local pattern="$1" binary="$2" archive dir
+            archive=$(find dist -maxdepth 1 -name "$pattern" | head -1)
+            if [ -z "$archive" ]; then
+              echo "FAIL: no $pattern found in dist/" >&2
+              exit 1
+            fi
+            dir=$(mktemp -d)
+            echo "Checking $binary in $archive has no SPA"
+            tar xzf "$archive" -C "$dir" "$binary"
+            ./scripts/check-embedded-spa.sh absent "$dir/$binary" \
+              internal/dataentry/static/v2
+            rm -rf "$dir"
+          }
+          check_absent 'rela-headless-sqlite_*_linux_amd64.tar.gz'   rela-server-headless-sqlite
+          check_absent 'rela-headless-postgres_*_linux_amd64.tar.gz' rela-server-headless-postgres
+
       # The tag GoReleaser released. Not github.ref_name: a workflow_dispatch
       # from a branch has the branch name there.
       - name: Record released tag

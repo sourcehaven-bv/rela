@@ -112,8 +112,9 @@ func TestLive_WriteRevertedBetweenRoundsFrames(t *testing.T) {
 	}
 }
 
-// What another principal fetched says nothing about what this client holds.
-func TestLive_OtherPrincipalsFetchSendsNoFrame(t *testing.T) {
+// What another principal fetched says nothing about what this client holds:
+// bob's fetch of the new state does not stand in for alice's.
+func TestLive_OtherPrincipalsFetchStillFrames(t *testing.T) {
 	var clk *liveStepper
 	env := newLiveEnv(t, func(app *App) {
 		clk = manualClock(app)
@@ -127,10 +128,9 @@ func TestLive_OtherPrincipalsFetchSendsNoFrame(t *testing.T) {
 
 	update(t, env.app, ticket1("two"))
 	env.get(t, "bob", "/api/v1/tickets/TKT-1")
-	update(t, env.app, ticket1("one"))
 
-	if got := keysAfterSteps(t, clk, c, 3); len(got) != 0 {
-		t.Fatalf("changed keys = %v, want none: alice fetched nothing new", got)
+	if got := keysAfterSteps(t, clk, c, 3); len(got) != 1 || got[0] != "detail" {
+		t.Fatalf("changed keys = %v, want [detail]: alice fetched nothing new", got)
 	}
 }
 
@@ -197,8 +197,14 @@ func TestLive_ServedAfterCommitFrames(t *testing.T) {
 
 	update(t, env.app, ticket1("two"))
 	update(t, env.app, ticket1("one"))
+	// The change back is not the response the client holds: `_updated`
+	// moved. The client fetches it, and is then up to date.
+	if got := keysAfterSteps(t, clk, c, 3); len(got) != 1 || got[0] != "detail" {
+		t.Fatalf("after the change back: changed keys = %v, want [detail]", got)
+	}
+	env.get(t, "alice", "/api/v1/tickets/TKT-1")
 	if got := keysAfterSteps(t, clk, c, 3); len(got) != 0 {
-		t.Fatalf("after the change back: changed keys = %v, want none", got)
+		t.Fatalf("after the fetch: changed keys = %v, want none", got)
 	}
 	// The response the client fetched while the ticket said "two".
 	env.app.live.noteServed([]subRef{env.app.live.onlySub(t, "alice")}, "200:two")

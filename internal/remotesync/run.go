@@ -91,6 +91,12 @@ type Deps struct {
 	// Now is the clock of the gone guard's delete window; nil means
 	// time.Now.
 	Now func() time.Time
+	// RelationMetaGated reports whether a local relation type's meta has
+	// `visible:` grants, so a reader may see less of it than is stored. On
+	// a remote with push such a type is pulled source-wins and not pushed,
+	// because the run cannot tell which of its meta the principal may read.
+	// Nil counts every type as gated.
+	RelationMetaGated func(relType string) bool
 }
 
 func (d Deps) validate() error {
@@ -230,9 +236,19 @@ func Run(ctx context.Context, m *Mapping, d Deps, o Options) (Report, error) {
 	if runErr == nil && m.Remote.Push {
 		rep.Pushed = &PushCounts{}
 		runErr = pusher{r}.push(ctx)
+		if runErr == nil {
+			rep.PushedRelations = &PushCounts{}
+			runErr = relSync{r}.push(ctx)
+		}
 	}
 	r.forgetConflicts()
-	rep.Held = len(held.entries)
+	for _, e := range held.entries {
+		if e.Reason == ReasonSuperseded {
+			rep.Superseded++
+		} else {
+			rep.Held++
+		}
+	}
 	if !o.DryRun {
 		wctx := context.WithoutCancel(ctx)
 		if err := l.save(wctx, d.State, m); err != nil {
@@ -245,6 +261,9 @@ func Run(ctx context.Context, m *Mapping, d Deps, o Options) (Report, error) {
 	failed := rep.Entities.Failed + rep.Relations.Failed
 	if rep.Pushed != nil {
 		failed += rep.Pushed.Failed
+	}
+	if rep.PushedRelations != nil {
+		failed += rep.PushedRelations.Failed
 	}
 	if runErr == nil && failed > 0 {
 		runErr = fmt.Errorf("remotesync: %d rows failed", failed)
@@ -274,6 +293,12 @@ type runner struct {
 	cur *heldRow
 	// pushSeen holds the local ids the push read, or nil when no push ran.
 	pushSeen map[string]bool
+	// localTimes holds the last-updated time of each local row when the run
+	// first read it, before its own writes.
+	localTimes map[string]time.Time
+	// relSeen holds the local relation keys the relation push read, or nil
+	// when it did not finish.
+	relSeen map[string]bool
 }
 
 // heldRow names a source row at one source hash.
@@ -685,16 +710,23 @@ type merged struct {
 	content   *string
 	base      map[string]string
 	conflicts []fieldConflict
-	// agreed are the reported fields that are not in conflict.
+	// settled are the fields both sides changed that a rule decided.
+	settled []fieldConflict
+	// agreed are the reported fields that are not held: those that agree
+	// or merged, and the settled ones.
 	agreed []FieldMapping
+	// verdict is the latest rule's judgement of the row.
+	verdict verdict
 }
 
-// fieldConflict is one field both sides changed: the source value and the
-// digests of both values.
+// fieldConflict is one field both sides changed: both values and their
+// digests. winner is the side a rule picked, or "" for a held field, with
+// fallback saying why a latest rule held it.
 type fieldConflict struct {
-	f             FieldMapping
-	theirs        any
-	ours, theirsD string
+	f                FieldMapping
+	theirs, oursV    any
+	ours, theirsD    string
+	winner, fallback string
 }
 
 // conflictNames returns the local names of the fields in conflict.
@@ -711,10 +743,14 @@ func (m merged) empty() bool { return len(m.props) == 0 && len(m.unset) == 0 && 
 // merge compares each reported owned field on digests: the same value on
 // both sides is unchanged; a local value still at the base takes theirs; a
 // source value still at the base keeps the local value; anything else, and
-// any difference without a base, is a conflict. A field in conflict keeps
-// its base and its local value; the other fields still merge.
-func merge(fields []FieldMapping, base map[string]string, ours *entity.Entity, th []theirsValue) merged {
-	out := merged{props: map[string]any{}, base: map[string]string{}}
+// any difference without a base, is a conflict. The field's rule decides a
+// conflict, with v as the latest rule's judgement of the row. A decided
+// field moves its base to the source value: the remote's value is then
+// written locally, and the local one is pushed and stays put on a pull. A
+// held field keeps its base and its local value; the other fields still
+// merge.
+func merge(fields []FieldMapping, base map[string]string, ours *entity.Entity, th []theirsValue, v verdict) merged {
+	out := merged{props: map[string]any{}, base: map[string]string{}, verdict: v}
 	for _, f := range fields {
 		if b, ok := base[f.baseKey()]; ok {
 			out.base[f.baseKey()] = b
@@ -724,21 +760,26 @@ func merge(fields []FieldMapping, base map[string]string, ours *entity.Entity, t
 		f, k := t.f.Local, t.f.baseKey()
 		dt, do := syncmerge.Digest(f, t.v), syncmerge.Digest(f, oursValue(f, ours))
 		b, hasBase := base[k]
-		conflict := fieldConflict{f: t.f, theirs: t.v, ours: do, theirsD: dt}
 		switch {
 		case do == dt:
 			out.base[k] = dt
-		case !hasBase:
-			out.conflicts = append(out.conflicts, conflict)
-			continue
-		case b == do:
+		case hasBase && b == do:
 			out.set(f, t.v)
 			out.base[k] = dt
-		case b == dt:
+		case hasBase && b == dt:
 			// The local edit stands; the base stays at the source value.
 		default:
-			out.conflicts = append(out.conflicts, conflict)
-			continue
+			c := fieldConflict{f: t.f, theirs: t.v, oursV: oursValue(f, ours), ours: do, theirsD: dt}
+			c.winner, c.fallback = decide(t.f.Rule, v)
+			if c.winner == "" {
+				out.conflicts = append(out.conflicts, c)
+				continue
+			}
+			if c.winner == TakeRemote {
+				out.set(f, t.v)
+			}
+			out.base[k] = dt
+			out.settled = append(out.settled, c)
 		}
 		out.agreed = append(out.agreed, t.f)
 	}
@@ -798,8 +839,15 @@ func (r *runner) pullEntity(ctx context.Context, addr string, hash canonical.Dig
 		r.record(row, "E", typ, addr, hash, localOf(row), stateRejected, baseOf(row))
 		return nil
 	}
-	r.mergeFetched(ctx, em, row, addr, id, hash, etag, th)
+	r.mergeFetched(ctx, em, row, addr, id, hash, etag, sourceRow{th: th, updated: parseStamp(e.Updated)})
 	return nil
+}
+
+// sourceRow is a fetched source row as a merge reads it: its owned fields
+// and its last-updated time.
+type sourceRow struct {
+	th      []theirsValue
+	updated stamp
 }
 
 // fetch reads one source entity, with its ETag on a remote with push.
@@ -825,10 +873,10 @@ func (r *runner) Send(
 // ETag for the next push.
 func (r *runner) mergeFetched(
 	ctx context.Context, em *EntityMapping, row *ledgerRow, addr, id string, hash canonical.Digest, etag string,
-	th []theirsValue,
+	src sourceRow,
 ) {
 	for range maxAttempts {
-		if !r.applyEntity(ctx, em, row, addr, id, hash, th) {
+		if !r.applyEntity(ctx, em, row, addr, id, hash, src) {
 			if cur := r.l.get(reconclient.KindEntity, addr); cur != nil && cur.State == stateLinked && !r.o.DryRun {
 				cur.ETag = etag
 			}
@@ -844,7 +892,7 @@ func (r *runner) mergeFetched(
 // true when the local row changed under the write and the row should be
 // tried again. Every other outcome is counted in the report.
 func (r *runner) applyEntity(
-	ctx context.Context, em *EntityMapping, row *ledgerRow, addr, id string, hash canonical.Digest, th []theirsValue,
+	ctx context.Context, em *EntityMapping, row *ledgerRow, addr, id string, hash canonical.Digest, src sourceRow,
 ) bool {
 	c := &r.rep.Entities
 	ours, err := r.locate(ctx, row, id)
@@ -861,10 +909,10 @@ func (r *runner) applyEntity(
 		return false
 	}
 	if ours == nil {
-		r.create(ctx, em, row, addr, id, hash, th)
+		r.create(ctx, em, row, addr, id, hash, src.th)
 		return false
 	}
-	readable, err := r.readable(ctx, ours.Ref().String())
+	readable, ourStamp, err := r.localStamp(ctx, ours)
 	if err != nil {
 		r.gateFailed(c, addr, err)
 		return false
@@ -885,8 +933,14 @@ func (r *runner) applyEntity(
 	linked := row != nil && row.State == stateLinked && row.Local == ours.ID
 	// The ledger never knew this local row: it was there before the pull.
 	adopted := row == nil || row.Local != ours.ID || row.Adopted
-	mg := merge(em.Fields, baseOf(row), ours, th)
-	r.noteConflicts(em, ours.ID, addr, mg)
+	var synced time.Time
+	if row != nil {
+		synced = row.Synced
+	}
+	v := latest(ourStamp, src.updated, synced, r.d.Now(), r.m.Remote.maxClockSkew())
+	mg := merge(em.Fields, baseOf(row), ours, src.th, v)
+	r.noteConflicts(conflictTarget{typ: em.Local, local: ours.ID, addr: addr}, mg)
+	c.Settled += len(mg.settled)
 	if len(mg.conflicts) > 0 {
 		c.Conflicts++
 		r.issue(IssueConflict, addr, ours.ID, "both sides changed these fields; held on the conflict list",
@@ -919,8 +973,48 @@ func (r *runner) applyEntity(
 			c.Adopted++
 		}
 	}
-	r.record(row, "E", em.Source, addr, hash, ours.ID, stateLinked, mg.base).adopt(ours.Face, adopted)
+	rec := r.record(row, "E", em.Source, addr, hash, ours.ID, stateLinked, mg.base)
+	rec.adopt(ours.Face, adopted)
+	r.markSynced(rec, ours.ID)
 	return false
+}
+
+// localStamp reports whether the principal on ctx may read the local row
+// ours, and the row's last-updated time as the run may use it for the
+// latest rule. The time is withheld when the principal does not see every
+// field of the row, as the API withholds it, and it is the time the row had
+// when the run first saw it: a write by this run does not count as a local
+// edit.
+func (r *runner) localStamp(ctx context.Context, ours *entity.Entity) (bool, stamp, error) {
+	gated, err := r.d.Gate.GetAddress(ctx, ours.Ref().String())
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return false, stamp{}, nil
+	case err != nil:
+		return false, stamp{}, fmt.Errorf("read the local row: %w", err)
+	}
+	at, seen := r.localTimes[ours.ID]
+	if !seen {
+		at = ours.UpdatedAt
+		if r.localTimes == nil {
+			r.localTimes = map[string]time.Time{}
+		}
+		r.localTimes[ours.ID] = at
+	}
+	if len(gated.Redacted) > 0 || len(gated.Inaccessible) > 0 {
+		return true, stamp{}, nil
+	}
+	return true, stamp{At: at}, nil
+}
+
+// markSynced records that both sides agree on every field of row now, unless
+// a field of the local row local is still held. A nil row (a dry run) is
+// left alone.
+func (r *runner) markSynced(row *ledgerRow, local string) {
+	if row == nil || r.c.holdsField(local) {
+		return
+	}
+	row.Synced = r.d.Now()
 }
 
 // readable reports whether the principal on ctx may read the local row addr
@@ -1050,7 +1144,9 @@ func (r *runner) create(
 		return
 	}
 	c.Created++
-	r.record(row, "E", em.Source, addr, hash, res.Entity.ID, stateLinked, base).adopt(res.Entity.Face, false)
+	rec := r.record(row, "E", em.Source, addr, hash, res.Entity.ID, stateLinked, base)
+	rec.adopt(res.Entity.Face, false)
+	r.markSynced(rec, res.Entity.ID)
 }
 
 // uniqueOn reports a unique violation on prop. A violation that names no
@@ -1195,25 +1291,9 @@ func (r *runner) pullRelation(ctx context.Context, addr string, hash canonical.D
 		return nil
 	}
 	key := entity.RelationKey{From: fromRow.Local, FromFace: fromRow.Face, Type: rm.Local, To: toRow.Local}
-	var th []theirsValue
-	if len(rm.Fields) > 0 {
-		if !r.budget(c) {
-			return nil
-		}
-		rel, err := fetchRelation(ctx, r, r.plurals[fromRow.Type], from, typ, to)
-		if err != nil {
-			rejected, runErr := r.fetchFailed(c, "relation", addr, err)
-			if rejected {
-				r.record(row, "R", typ, addr, hash, key.String(), stateRejected, nil)
-			}
-			return runErr
-		}
-		if th, err = theirs(rm.Fields, rel.Meta, rel.Content, rel.Redacted); err != nil {
-			c.Rejected++
-			r.issue(IssueRejected, addr, key.String(), err.Error())
-			r.record(row, "R", typ, addr, hash, key.String(), stateRejected, nil)
-			return nil
-		}
+	src, ok, err := relSync{r}.fetchSource(ctx, row, rm, addr, hash, key, r.plurals[fromRow.Type])
+	if !ok {
+		return err
 	}
 	existing, err := r.d.Store.GetRelation(ctx, key)
 	switch {
@@ -1229,7 +1309,11 @@ func (r *runner) pullRelation(ctx context.Context, addr string, hash canonical.D
 		r.record(row, "R", typ, addr, hash, row.Local, stateDropped, nil)
 		return nil
 	}
-	r.writeRelation(ctx, row, addr, typ, hash, key, existing, th)
+	if existing != nil && (relSync{r}).merges(rm) {
+		relSync{r}.mergeRelation(ctx, rm, row, addr, hash, key, existing, src)
+		return nil
+	}
+	r.writeRelation(ctx, row, addr, typ, hash, key, existing, src.th)
 	return nil
 }
 
@@ -1256,7 +1340,9 @@ func (r *runner) endpointsReadable(ctx context.Context, c *Counts, addr string, 
 }
 
 // writeRelation creates the local relation, or brings its owned meta to the
-// source's values: the source wins on relation meta.
+// source's values: the source wins on relation meta, except where
+// [relSync.mergeRelation] merges it. The ledger row keeps the source's meta
+// as the merge base.
 func (r *runner) writeRelation(
 	ctx context.Context, row *ledgerRow, addr, typ string, hash canonical.Digest,
 	key entity.RelationKey, existing *entity.Relation, th []theirsValue,
@@ -1309,7 +1395,9 @@ func (r *runner) writeRelation(
 		}
 		return
 	}
-	r.record(row, "R", typ, addr, hash, key.String(), stateLinked, nil).adopt("", adopted)
+	rec := r.record(row, "R", typ, addr, hash, key.String(), stateLinked, metaBase(th))
+	rec.adopt("", adopted)
+	r.markSynced(rec, key.String())
 }
 
 // relationChanges returns the writes that bring existing's owned fields to

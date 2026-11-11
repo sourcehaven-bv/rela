@@ -153,6 +153,47 @@ builds:
       - -trimpath
       - -tags=sqlite
 
+  # Headless server variants: the `headless` tag leaves the web UI (Vue SPA
+  # and custom-app editor bundle) out of the binary. They serve the REST API,
+  # SSE events and remote MCP only, for deployments that want no UI. Shipped
+  # in their own rela-headless-* archives so they never land on PATH next to a
+  # UI build of the same backend.
+  - id: rela-server-headless-sqlite
+    main: ./cmd/rela-server
+    binary: rela-server-headless-sqlite
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+    flags:
+      - -trimpath
+      - -tags=sqlite,headless
+
+  - id: rela-server-headless-postgres
+    main: ./cmd/rela-server
+    binary: rela-server-headless-postgres
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+    flags:
+      - -trimpath
+      - -tags=postgres,headless
+
 archives:
   # Default (filesystem) binaries: rela + rela-server bundled together,
   # keeping the historical archive name so existing download URLs/scripts
@@ -197,6 +238,33 @@ archives:
       - rela-server-sqlite
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}-sqlite_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE*
+      - README*
+      - CHANGELOG*
+
+  # Headless servers, one archive per backend.
+  - id: headless-sqlite
+    ids:
+      - rela-server-headless-sqlite
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}-headless-sqlite_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE*
+      - README*
+      - CHANGELOG*
+
+  - id: headless-postgres
+    ids:
+      - rela-server-headless-postgres
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}-headless-postgres_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
         formats: [zip]

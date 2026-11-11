@@ -121,12 +121,16 @@ type fakeEnt struct {
 	Content    string
 	Redacted   []string
 	noRedacted bool
+	// Updated is served as `_updated` when set.
+	Updated string
 }
 
 // fakeRel is one source relation.
 type fakeRel struct {
 	From, Type, To string
 	Meta           map[string]any
+	// Updated is served as `_updated` when set.
+	Updated string
 }
 
 // fakeSource is a source instance in memory: it answers reconcile requests
@@ -278,14 +282,20 @@ func (f *fakeSource) route(path string) ([]byte, error) {
 		if !e.noRedacted {
 			out["_redacted"] = append([]string{}, e.Redacted...)
 		}
+		if e.Updated != "" {
+			out["_updated"] = e.Updated
+		}
 		return json.Marshal(out)
 	case 5:
 		r, ok := f.rels[segs[1]+"--"+segs[3]+"--"+segs[4]]
 		if !ok {
 			return nil, fmt.Errorf("%w: fake", httpremote.ErrNotFound)
 		}
-		return json.Marshal(map[string]any{"from": r.From, "type": r.Type, "to": r.To, "meta": r.Meta,
-			"_redacted": []string{}})
+		out := map[string]any{"from": r.From, "type": r.Type, "to": r.To, "meta": r.Meta, "_redacted": []string{}}
+		if r.Updated != "" {
+			out["_updated"] = r.Updated
+		}
+		return json.Marshal(out)
 	}
 	return nil, fmt.Errorf("%w: fake route %s", httpremote.ErrNotFound, path)
 }
@@ -320,6 +330,8 @@ type target struct {
 	// gate is the read gate the run checks local rows with; newTarget
 	// reads every row.
 	gate ReadGate
+	// metaGated answers Deps.RelationMetaGated; newTarget gates no type.
+	metaGated func(string) bool
 }
 
 func newTarget(t *testing.T) *target {
@@ -335,7 +347,7 @@ func newTarget(t *testing.T) *target {
 		t.Fatalf("entitymanager.New: %v", err)
 	}
 	gate := visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope()))
-	return &target{st: st, mgr: mgr, kv: &mapKV{}, meta: meta, gate: gate}
+	return &target{st: st, mgr: mgr, kv: &mapKV{}, meta: meta, gate: gate, metaGated: func(string) bool { return false }}
 }
 
 func (tg *target) deps(src Source) Deps {
@@ -444,6 +456,9 @@ func (p *pushSource) Send(
 			return httpremote.Answer{Status: status, Body: []byte(detail)}, nil
 		}
 	}
+	if segs := strings.Split(path, "/"); len(segs) >= 4 && segs[2] == "relations" {
+		return p.sendRelation(method, path, segs, body, ifMatch)
+	}
 	plural, id, _ := strings.Cut(path, "/")
 	typ := map[string]string{"reqs": "req", "components": "component"}[plural]
 	var in struct {
@@ -501,6 +516,62 @@ func (p *pushSource) Send(
 	return httpremote.Answer{Status: http.StatusMethodNotAllowed}, nil
 }
 
+func relETagOf(r *fakeRel) string { return `"` + digestOf(r.Meta).String() + `"` }
+
+// sendRelation answers the relation routes as the data-entry API does: GET
+// and PATCH with If-Match on one relation, POST on a source entity's
+// relations of a type.
+func (p *pushSource) sendRelation(
+	method, path string, segs []string, body []byte, ifMatch string,
+) (httpremote.Answer, error) {
+	var in struct {
+		ID   string         `json:"id"`
+		Meta map[string]any `json:"meta"`
+	}
+	if body != nil {
+		if err := json.Unmarshal(body, &in); err != nil {
+			// The push always sends JSON; failing the send fails the test.
+			return httpremote.Answer{}, fmt.Errorf("the push sent invalid JSON: %w", err)
+		}
+	}
+	switch {
+	case method == http.MethodPost && len(segs) == 4:
+		key := segs[1] + "--" + segs[3] + "--" + in.ID
+		if _, ok := p.rels[key]; ok {
+			return httpremote.Answer{Status: http.StatusConflict, Body: []byte("exists")}, nil
+		}
+		r := &fakeRel{From: segs[1], Type: segs[3], To: in.ID, Meta: in.Meta}
+		p.rels[key] = r
+		return httpremote.Answer{Status: http.StatusCreated, ETag: relETagOf(r)}, nil
+	case len(segs) == 5:
+		r, ok := p.rels[segs[1]+"--"+segs[3]+"--"+segs[4]]
+		if !ok {
+			return httpremote.Answer{Status: http.StatusNotFound}, nil
+		}
+		if method == http.MethodGet {
+			raw, err := p.route(path)
+			if err != nil {
+				return httpremote.Answer{}, err
+			}
+			return httpremote.Answer{Status: http.StatusOK, Body: raw, ETag: relETagOf(r)}, nil
+		}
+		if method != http.MethodPatch {
+			break
+		}
+		if ifMatch != relETagOf(r) {
+			return httpremote.Answer{Status: http.StatusPreconditionFailed, Body: []byte("stale")}, nil
+		}
+		meta := maps.Clone(r.Meta)
+		if meta == nil {
+			meta = map[string]any{}
+		}
+		maps.Copy(meta, in.Meta)
+		r.Meta = meta
+		return httpremote.Answer{Status: http.StatusOK, ETag: relETagOf(r)}, nil
+	}
+	return httpremote.Answer{Status: http.StatusMethodNotAllowed}, nil
+}
+
 // writes counts the POST and PATCH requests.
 func (p *pushSource) writes() int {
 	n := 0
@@ -515,5 +586,6 @@ func (p *pushSource) writes() int {
 func (tg *target) pushDeps(src *pushSource) Deps {
 	d := tg.deps(src)
 	d.Pusher = src
+	d.RelationMetaGated = tg.metaGated
 	return d
 }

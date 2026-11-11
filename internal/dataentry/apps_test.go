@@ -746,6 +746,31 @@ func withTestEditorAssets(t *testing.T) {
 	})
 }
 
+// TestAppEditorAssets_NotEmbedded404 pins that an app asking for an editor
+// asset the binary does not embed (a headless build, or a checkout without the
+// frontend build) gets a 404, not an empty 200 it would run as a no-op.
+func TestAppEditorAssets_NotEmbedded404(t *testing.T) {
+	origJS, origCSS := appEditorSource, appEditorCSSSource
+	appEditorSource = func() []byte { return nil }
+	appEditorCSSSource = func() []byte { return nil }
+	t.Cleanup(func() { appEditorSource, appEditorCSSSource = origJS, origCSS })
+
+	app := newHandlerTestApp(t)
+	root := t.TempDir()
+	writeApp(t, root, "demo", map[string]string{
+		"index.html": `<!doctype html><meta name="rela-app:bridge-version" content="1">`,
+	})
+	app.paths = &project.Context{Root: root, CacheDir: filepath.Join(root, ".rela")}
+	app.assets = rootfs.New(root)
+
+	for _, entry := range []string{appEditorEntry, appEditorCSSEntry} {
+		w := doRequest(t, app, http.MethodGet, "/api/v1/_apps/demo/"+entry)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("%s: status = %d, want 404", entry, w.Code)
+		}
+	}
+}
+
 // TestAppEditorBundleEmbedded verifies the editor bundle + font, WHEN BUILT,
 // define the custom element and reference the same-path font. It skips on a
 // clean checkout where the frontend build hasn't run (see editorBundleBuilt).

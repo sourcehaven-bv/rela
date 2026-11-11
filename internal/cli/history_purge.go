@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -40,11 +42,16 @@ type HistoryPurgeCmd struct {
 	ForceTags   bool   `help:"Purge rows that a version tag points at, deleting those tags too. Without it a tagged row refuses the purge."`
 }
 
-// Run dispatches `rela history-purge <id> ...`.
-func (c *HistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) error {
+// Run dispatches `rela history-purge <id> ...`. A committed purge also drops
+// the entity's superseded entries from every remote's conflict list
+// ([purgeRemoteCopies]), whether or not the backend keeps versions.
+func (c *HistoryPurgeCmd) Run(ctx context.Context, svc *writeServices, ws scheduler.WorkspaceProvider) error {
 	if svc.Versions == nil {
 		out.WriteMessage("The active storage backend does not support version purge " +
 			"(history purge needs the PostgreSQL or SQLite build).")
+		if c.Commit && (c.Yes || confirmPurge(c.ID)) {
+			purgeRemoteCopies(ctx, ws, c.ID)
+		}
 		return nil
 	}
 	var purger store.VersionPurger = svc.Versions
@@ -95,6 +102,7 @@ func (c *HistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) error {
 	}
 	auditPurge(ctx, svc.Audit, p, audit.Subject{Kind: "entity", ID: ref.ID}, ref.Face, final, c.Reason)
 	out.WriteSuccess("Purged %d version row(s) for %s. This is irreversible.", final.Purged, target)
+	purgeRemoteCopies(ctx, ws, ref.ID)
 	// Pending `on.deleted` jobs hold the entity's last state too; erasing
 	// their keys makes it unreadable (TKT-RJS3KKJ). The version purge stands
 	// if this fails, so it is reported, not returned.
@@ -107,6 +115,25 @@ func (c *HistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) error {
 		out.WriteInfo("Wrote a purge tombstone (a live row still held the content); the sweep will not re-capture it.")
 	}
 	return nil
+}
+
+// purgeRemoteCopies drops the superseded entries of entity id, with the
+// losing local values they keep, from every remote's conflict list. A
+// remote that fails is reported, not returned: the version purge stands,
+// and the command can be run again.
+func purgeRemoteCopies(ctx context.Context, ws scheduler.WorkspaceProvider, id string) {
+	if ws == nil {
+		return
+	}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	n, err := scheduler.PurgeRemoteSuperseded(ctx, ws, id, logger)
+	if n > 0 {
+		out.WriteSuccess("Dropped %d superseded remote conflict entries for %s.", n, id)
+	}
+	if err != nil {
+		out.WriteWarning("Could not drop the superseded remote conflict entries for %s; run the purge again: %v",
+			id, err)
+	}
 }
 
 // RelationHistoryPurgeCmd is the relation analog.

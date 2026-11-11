@@ -1647,9 +1647,14 @@ func (h *writeHandler) handleV1UpdateRelation(
 	if !ok {
 		return
 	}
+	key := entityPkg.RelationKey{From: from, FromFace: tail, Type: relType, To: to}
+	expected, ok := relationIfMatch(w, r, h.store, h.affordances, entity, key)
+	if !ok {
+		return
+	}
 	if req.Position != nil {
 		writeRelationPosition(w, r, h, relationPositionRequest{
-			key:       entityPkg.RelationKey{From: from, FromFace: tail, Type: relType, To: to},
+			key:       key,
 			position:  *req.Position,
 			incoming:  req.Direction == string(DirectionIncoming),
 			sources:   sources,
@@ -1662,48 +1667,110 @@ func (h *writeHandler) handleV1UpdateRelation(
 		return
 	}
 
-	// Managed order properties must be finite numbers when present. Fast
-	// 400 here so wire-format errors don't surface as 422-from-manager.
-	if relDef, ok := h.schema().Meta.Relations[relType]; ok {
-		for _, prop := range []string{metamodel.OrderPropertyOut, metamodel.OrderPropertyIn} {
-			if (prop == metamodel.OrderPropertyOut && relDef.OutgoingOrderProperty() == "") ||
-				(prop == metamodel.OrderPropertyIn && relDef.IncomingOrderProperty() == "") {
-
-				continue
-			}
-			v, present := req.Meta[prop]
-			if !present {
-				continue
-			}
-			if _, ok := entitymanager.FiniteOrder(v); !ok {
-				writeV1Error(w, r, http.StatusBadRequest, "order_value_invalid",
-					"managed order property must be a finite number", prop)
-				return
-			}
-		}
+	if !orderMetaValidOr400(w, r, h.schema().Meta, relType, req.Meta) {
+		return
 	}
 
-	rel, err := h.manager.UpdateRelation(r.Context(),
-		entityPkg.RelationKey{From: from, FromFace: tail, Type: relType, To: to},
-		entityPkg.RelationOptions{Properties: req.Meta})
+	rel, err := h.manager.UpdateRelation(r.Context(), key,
+		entityPkg.RelationOptions{Properties: req.Meta, ExpectedVersion: expected})
 	if err != nil {
 		if writeForbiddenIfACLDenied(w, r, err) {
+			return
+		}
+		var conflict *store.VersionConflictError
+		if errors.As(err, &conflict) {
+			writeV1Error(w, r, http.StatusPreconditionFailed, "precondition_failed",
+				"Relation has been modified", "concurrent write detected")
 			return
 		}
 		writeV1Error(w, r, http.StatusNotFound, "relation_not_found", "Relation not found", err.Error())
 		return
 	}
 
+	// The response carries the caller's view of the meta and its ETag, the
+	// same pair a GET returns, so the caller's next If-Match matches.
+	view, etag := relationView(r.Context(), h.affordances, entity, rel)
+	w.Header().Set("ETag", etag)
 	result := map[string]any{
 		"from": rel.From,
 		"type": rel.Type,
 		"to":   rel.To,
 	}
-	if len(rel.Properties) > 0 {
-		result["meta"] = rel.Properties
+	if len(view.Properties) > 0 {
+		result["meta"] = view.Properties
 	}
 
 	writeV1JSON(w, http.StatusOK, result)
+}
+
+// orderMetaValidOr400 checks that the managed order properties in meta are
+// finite numbers when present, and answers 400 when one is not. It runs
+// before the write so a wire-format error does not surface as a 422 from
+// the manager. It is a package function for the same reason as
+// relationIfMatch.
+func orderMetaValidOr400(
+	w http.ResponseWriter, r *http.Request, mm *metamodel.Metamodel, relType string, meta map[string]any,
+) bool {
+	relDef, ok := mm.Relations[relType]
+	if !ok {
+		return true
+	}
+	for _, prop := range []string{metamodel.OrderPropertyOut, metamodel.OrderPropertyIn} {
+		if (prop == metamodel.OrderPropertyOut && relDef.OutgoingOrderProperty() == "") ||
+			(prop == metamodel.OrderPropertyIn && relDef.IncomingOrderProperty() == "") {
+
+			continue
+		}
+		v, present := meta[prop]
+		if !present {
+			continue
+		}
+		if _, ok := entitymanager.FiniteOrder(v); !ok {
+			writeV1Error(w, r, http.StatusBadRequest, "order_value_invalid",
+				"managed order property must be a finite number", prop)
+			return false
+		}
+	}
+	return true
+}
+
+// relationGetter reads one stored relation.
+type relationGetter interface {
+	GetRelation(ctx context.Context, k entityPkg.RelationKey) (*entityPkg.Relation, error)
+}
+
+// relationIfMatch compares a relation PATCH's If-Match with the ETag a GET of
+// the edge would serve this caller, and answers 412 on a mismatch. On a match
+// it returns the stored relation's version, which the manager compares again
+// inside its transaction, so a write landing between this read and the update
+// is a 412 too. The compare is against the caller's view, never the raw row,
+// so a caller cannot test guesses of hidden meta.
+//
+// Without If-Match it returns "" and the update is unconditional. It is a
+// package function so writeHandler stays under its plimsoll method cap.
+func relationIfMatch(
+	w http.ResponseWriter, r *http.Request, rels relationGetter, aff affordanceService,
+	src *entityPkg.Entity, key entityPkg.RelationKey,
+) (string, bool) {
+	ifMatch := r.Header.Get("If-Match")
+	if ifMatch == "" {
+		return "", true
+	}
+	raw, err := rels.GetRelation(r.Context(), key)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeV1Error(w, r, http.StatusNotFound, "relation_not_found", "Relation not found", "")
+			return "", false
+		}
+		writeGateError(w, r, err)
+		return "", false
+	}
+	if _, etag := relationView(r.Context(), aff, src, raw); etag != ifMatch {
+		writeV1Error(w, r, http.StatusPreconditionFailed, "precondition_failed",
+			"Relation has been modified", "ETag mismatch")
+		return "", false
+	}
+	return string(store.RelationVersionOf(raw)), true
 }
 
 //archplan:auth=authz

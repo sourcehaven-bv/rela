@@ -164,6 +164,11 @@ type RelationOptions struct {
 	MetaUnset  []string
 	Content    *string
 	Position   *OrderPosition
+	// ExpectedVersion, when non-empty, makes the update a compare-and-swap:
+	// it applies only if the stored relation still has this version
+	// (store.RelationVersionOf), otherwise it fails with a
+	// *store.VersionConflictError and writes nothing. A move ignores it.
+	ExpectedVersion string
 }
 
 // OrderPosition names where an edge moves among its siblings on one order

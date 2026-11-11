@@ -16,9 +16,15 @@ type Report struct {
 	Relations Counts `json:"relations"`
 	// Pushed counts what a remote with push sent to the remote.
 	Pushed *PushCounts `json:"pushed,omitempty"`
+	// PushedRelations counts the relations a remote with push sent.
+	PushedRelations *PushCounts `json:"pushed_relations,omitempty"`
 	// Held is how many entries the remote's conflict list holds after the
 	// run. `rela remote conflicts` lists them.
 	Held int `json:"held"`
+	// Superseded is how many entries keep a value the latest rule
+	// overwrote. They block nothing; `rela remote resolve --dismiss` removes
+	// them.
+	Superseded int `json:"superseded,omitempty"`
 	// Skipped lists the source relation types the source refused to
 	// compare. Their rows are left alone.
 	Skipped []string `json:"skipped,omitempty"`
@@ -35,6 +41,9 @@ type Counts struct {
 	// Conflicts are rows where both sides changed an owned field; the row
 	// is left as it is and compared again on the next run.
 	Conflicts int `json:"conflicts"`
+	// Settled counts the fields both sides changed that a conflict rule
+	// other than hold decided.
+	Settled int `json:"settled,omitempty"`
 	// Rejected rows did not fit the local schema.
 	Rejected int `json:"rejected"`
 	// Dropped rows were deleted locally and are not recreated.

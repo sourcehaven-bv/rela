@@ -239,19 +239,32 @@ function livePathFor(kind: LiveKind, id: string): string {
   return livePresencePath(TYPE, id)
 }
 
+// stamped replaces every `_updated` time with one marker: the two sides
+// write at different instants, so only whether the field is served can agree.
+function stamped<T>(data: T): T {
+  if (Array.isArray(data)) return data.map(stamped) as T
+  if (data === null || typeof data !== 'object') return data
+  return Object.fromEntries(
+    Object.entries(data).map(([k, v]) => [
+      k,
+      k === '_updated' && typeof v === 'string' ? 'UPDATED' : stamped(v),
+    ])
+  ) as T
+}
+
 async function run(side: Side, fn: () => Promise<unknown>): Promise<Outcome> {
   const client = api.getAxios()
   client.defaults.adapter = side.adapter
   client.defaults.baseURL = side.baseURL
   try {
-    const data = await fn()
+    const data = stamped(await fn())
     remember(side, data)
     return { ok: true, data }
   } catch (err) {
     if (!(err instanceof ApiError)) throw err
     const res = (err.original as { response?: { data?: unknown } }).response
     remember(side, { versions: (res?.data as { versions?: unknown })?.versions, failed: true })
-    return { ok: false, status: err.status, data: res?.data }
+    return { ok: false, status: err.status, data: stamped(res?.data) }
   }
 }
 

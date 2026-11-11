@@ -1573,6 +1573,7 @@ func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *ent
 	// (DEC-T0XIWQ). Rides the per-entity shapes only, like `_fields`.
 	redacted := redactedPropertyNames(verdicts)
 	result.Redacted = &redacted
+	result.Updated = updatedWhenWhole(e.UpdatedAt, len(redacted) == 0 && len(e.Inaccessible) == 0)
 	if transitions := svc.computeTransitions(ctx, e, verdicts); transitions != nil {
 		result.Transitions = &transitions
 	}

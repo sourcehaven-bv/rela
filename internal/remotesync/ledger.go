@@ -73,6 +73,11 @@ type ledgerRow struct {
 	// ETag is the remote's ETag of the entity as last fetched or pushed, for
 	// the If-Match of the next push. Only a remote with push keeps it.
 	ETag string `json:"e,omitempty"`
+	// Synced is when the two sides last agreed on every field of the row:
+	// a merge that held nothing, or a push the remote accepted. The latest
+	// rule distrusts an edit time before it. Zero means not known yet (a
+	// row from before step 9b); the check is then skipped.
+	Synced time.Time `json:"sy,omitzero"`
 }
 
 // localRef is the local entity row an entity row maps to.

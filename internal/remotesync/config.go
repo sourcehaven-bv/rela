@@ -34,6 +34,7 @@ package remotesync
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -44,7 +45,9 @@ import (
 	"net/url"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -68,16 +71,34 @@ const (
 	OnGoneDelete = "delete"
 )
 
-// The conflict rules. Step 9a accepts only [ConflictHold]; the others are
-// named so a config that uses one gets a clear refusal (TKT-8ZGAEC5).
+// The conflict rules (DEC-2NFLAHB). A rule decides a field both sides
+// changed since the last sync. It is set per remote, per type and per field;
+// the most specific one applies.
 const (
 	// ConflictHold changes neither side and puts the field on the
 	// conflict list until someone resolves it. It is the default.
-	ConflictHold   = "hold"
-	conflictLatest = "latest"
-	conflictLocal  = "local"
-	conflictRemote = "remote"
+	ConflictHold = "hold"
+	// ConflictLatest takes the value of the side that changed the row last,
+	// by the last-updated times both sides serve, and keeps the losing local
+	// value on the conflict list. It holds instead when a time is withheld,
+	// not trusted, or the same on both sides.
+	ConflictLatest = "latest"
+	// ConflictLocal keeps the local value and sends it to the remote.
+	ConflictLocal = "local"
+	// ConflictRemote takes the remote value.
+	ConflictRemote = "remote"
 )
+
+// DefaultMaxClockSkew is how far a last-updated time may lie in the future
+// before latest stops trusting it. MaxMaxClockSkew bounds the setting.
+const (
+	DefaultMaxClockSkew = 5 * time.Minute
+	MaxMaxClockSkew     = time.Hour
+)
+
+// DefaultSupersededRetention is how long a superseded entry stays on the
+// conflict list when superseded_retention is not set.
+const DefaultSupersededRetention = 30 * 24 * time.Hour
 
 // Defaults and bounds of the per-remote limits.
 const (
@@ -140,6 +161,16 @@ type Remote struct {
 	// Conflict is the rule for a field both sides changed since the last
 	// sync. Empty means [ConflictHold].
 	Conflict string `yaml:"conflict,omitempty"`
+	// MaxClockSkew is how far in the future a last-updated time may lie
+	// before the latest rule holds instead of trusting it, as a Go duration
+	// such as "5m". Empty means [DefaultMaxClockSkew].
+	MaxClockSkew string `yaml:"max_clock_skew,omitempty"`
+	// SupersededRetention is how long a superseded entry stays on the
+	// conflict list, as a Go duration or a whole number of days such as
+	// "30d". Empty means [DefaultSupersededRetention]. Zero keeps no losing
+	// local value at all; the entry then holds only digests and is not
+	// dropped by age.
+	SupersededRetention string `yaml:"superseded_retention,omitempty"`
 	// Entities maps source entity types, by name, to local ones.
 	Entities map[string]EntityMap `yaml:"entities"`
 	// Relations maps source relation types, by name, to local ones.
@@ -172,8 +203,13 @@ type RelationMap struct {
 	// Type is the local type; empty means the source type's name.
 	Type string `yaml:"type,omitempty"`
 	// Fields maps local relation meta to source meta; "content" is the
-	// body. The source wins on these.
+	// body. On a remote with push, meta flows both ways under the conflict
+	// rules; the body always comes from the source.
 	Fields map[string]string `yaml:"fields,omitempty"`
+	// Conflict overrides the remote's conflict rule for this type.
+	Conflict string `yaml:"conflict,omitempty"`
+	// FieldConflicts overrides the conflict rule per local meta field.
+	FieldConflicts map[string]string `yaml:"field_conflicts,omitempty"`
 }
 
 // Parse decodes and validates remotes.yaml against meta. Every problem is
@@ -247,11 +283,14 @@ type RelationMapping struct {
 	Fields        []FieldMapping
 }
 
-// FieldMapping is one owned field: the local field, typed, and the source
-// field it is read from.
+// FieldMapping is one owned field: the local field, typed, the source field
+// it is read from, and the conflict rule that applies to it.
 type FieldMapping struct {
 	Local  syncmerge.Field
 	Remote string
+	// Rule is the field's conflict rule, resolved from the field, type and
+	// remote settings. It is never empty after [Compile].
+	Rule string
 }
 
 // baseKey names the field in a ledger row's base. It holds both names, so a
@@ -340,6 +379,10 @@ func (c *compiler) remote(p Remote) {
 		c.fail("max_bytes %d must be between 0 (the default, %d) and %d", p.MaxBytes, DefaultMaxBytes, MaxMaxBytes)
 	}
 	c.rule("conflict", p.Conflict)
+	c.clockSkew(p.MaxClockSkew)
+	if _, err := parseRetention(p.SupersededRetention); err != nil {
+		c.fail("%v", err)
+	}
 	if len(p.Entities) == 0 {
 		c.fail("entities: map at least one source type")
 	}
@@ -410,14 +453,7 @@ func (c *compiler) entity(src string, em EntityMap) {
 			return
 		}
 	}
-	c.rule(fmt.Sprintf("entities: %q: conflict", src), em.Conflict)
-	for _, field := range sortedKeys(em.FieldConflicts) {
-		if !slices.ContainsFunc(fields, func(f FieldMapping) bool { return f.Local.Name == field }) {
-			c.fail("entities: %q: field_conflicts: %q is not a mapped field", src, field)
-			continue
-		}
-		c.rule(fmt.Sprintf("entities: %q: field_conflicts: %q", src, field), em.FieldConflicts[field])
-	}
+	c.rules(fmt.Sprintf("entities: %q", src), em.Conflict, em.FieldConflicts, fields)
 	share, ok := c.share(src, local, em.Share)
 	if !ok {
 		return
@@ -425,15 +461,41 @@ func (c *compiler) entity(src string, em EntityMap) {
 	c.m.Entities[src] = &EntityMapping{Source: src, Local: local, Ref: em.Ref, Fields: fields, Share: share}
 }
 
-// rule checks a conflict rule. Only hold is implemented; the other rules
-// of DEC-2NFLAHB are refused by name until they are.
+// rule checks a conflict rule.
 func (c *compiler) rule(where, rule string) {
 	switch rule {
-	case "", ConflictHold:
-	case conflictLatest, conflictLocal, conflictRemote:
-		c.fail("%s: rule %q is not supported yet; use %s", where, rule, ConflictHold)
+	case "", ConflictHold, ConflictLatest, ConflictLocal, ConflictRemote:
 	default:
-		c.fail("%s: unknown rule %q; use %s", where, rule, ConflictHold)
+		c.fail("%s: unknown rule %q; use %s, %s, %s or %s",
+			where, rule, ConflictHold, ConflictLatest, ConflictLocal, ConflictRemote)
+	}
+}
+
+// rules checks a type's conflict rule and its per-field rules, and sets each
+// field's rule: the field's own, else the type's, else the remote's, else
+// hold.
+func (c *compiler) rules(where, typeRule string, perField map[string]string, fields []FieldMapping) {
+	c.rule(where+": conflict", typeRule)
+	for _, field := range sortedKeys(perField) {
+		if !slices.ContainsFunc(fields, func(f FieldMapping) bool { return f.Local.Name == field }) {
+			c.fail("%s: field_conflicts: %q is not a mapped field", where, field)
+			continue
+		}
+		c.rule(fmt.Sprintf("%s: field_conflicts: %q", where, field), perField[field])
+	}
+	for i := range fields {
+		fields[i].Rule = cmp.Or(perField[fields[i].Local.Name], typeRule, c.m.Remote.Conflict, ConflictHold)
+	}
+}
+
+// clockSkew checks max_clock_skew.
+func (c *compiler) clockSkew(raw string) {
+	if raw == "" {
+		return
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 || d > MaxMaxClockSkew {
+		c.fail("max_clock_skew %q must be a duration above 0 and at most %s", raw, MaxMaxClockSkew)
 	}
 }
 
@@ -497,7 +559,42 @@ func (c *compiler) relation(src string, rm RelationMap) {
 			return
 		}
 	}
+	// A push finds the source type of a local relation by its local type, so
+	// two source types may not share one.
+	if c.m.Remote.Push {
+		for _, other := range sortedKeys(c.m.Relations) {
+			if c.m.Relations[other].Local == local {
+				c.fail("relations: %q and %q both map to local type %q, which a remote with push does not support",
+					other, src, local)
+				return
+			}
+		}
+	}
+	if !c.relationRules(src, &rm, fields) {
+		return
+	}
+	c.rules(fmt.Sprintf("relations: %q", src), rm.Conflict, rm.FieldConflicts, fields)
 	c.m.Relations[src] = &RelationMapping{Source: src, Local: local, Fields: fields}
+}
+
+// relationRules refuses relation conflict rules that would never apply: a
+// remote without push keeps the source's meta, and relation content is only
+// pulled.
+func (c *compiler) relationRules(src string, rm *RelationMap, fields []FieldMapping) bool {
+	if rm.Conflict == "" && len(rm.FieldConflicts) == 0 {
+		return true
+	}
+	if !c.m.Remote.Push {
+		c.fail("relations: %q: conflict rules need push: true; a remote without push keeps the source's meta", src)
+		return false
+	}
+	for _, f := range fields {
+		if f.Local.Kind == syncmerge.KindContent && rm.FieldConflicts[f.Local.Name] != "" {
+			c.fail("relations: %q: field_conflicts: %q is relation content, which is only pulled", src, f.Local.Name)
+			return false
+		}
+	}
+	return true
 }
 
 // typedFields types a local-to-source field map and checks the source
@@ -648,6 +745,48 @@ func (p Remote) maxFetch() int {
 		return DefaultMaxFetch
 	}
 	return p.MaxFetch
+}
+
+// maxClockSkew is the parsed max_clock_skew. [Compile] has checked it.
+func (p Remote) maxClockSkew() time.Duration {
+	d, err := time.ParseDuration(p.MaxClockSkew)
+	if err != nil || d <= 0 {
+		return DefaultMaxClockSkew
+	}
+	return d
+}
+
+// supersededRetention is the parsed superseded_retention. [Compile] has
+// checked it.
+func (p Remote) supersededRetention() time.Duration {
+	d, err := parseRetention(p.SupersededRetention)
+	if err != nil {
+		return DefaultSupersededRetention
+	}
+	return d
+}
+
+// maxRetentionDays bounds a retention in days, so it cannot overflow.
+const maxRetentionDays = 36500
+
+// parseRetention parses a superseded_retention value: empty for the
+// default, a whole number of days ("30d"), or a Go duration ("12h", "0").
+func parseRetention(raw string) (time.Duration, error) {
+	if raw == "" {
+		return DefaultSupersededRetention, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if days, ok := strings.CutSuffix(raw, "d"); ok {
+		n, aerr := strconv.Atoi(days)
+		if aerr == nil && n > maxRetentionDays {
+			aerr = errors.New("too long")
+		}
+		d, err = time.Duration(n)*24*time.Hour, aerr
+	}
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("superseded_retention %q must be a duration of 0 or more, such as 30d or 12h", raw)
+	}
+	return d, nil
 }
 
 func (p Remote) maxBytes() int64 {
