@@ -31,7 +31,9 @@
       "done": "moved to {state} when the step was done",
       "change": "moved to {state} after a change",
       "timer": "moved to {state} when timer {timer} ran out",
-      "moved": "moved to {state}"
+      "moved": "moved to {state}",
+      "join": "joined in {state}",
+      "inBranch": "{summary} (branch {branch})"
     },
     "waiting": {
       "title": "Why it waits",
@@ -51,7 +53,8 @@
       "branchRoles": "by: {roles}",
       "timers": "Timers",
       "timerDue": "to {state} at {at}",
-      "timerTo": "to {state}"
+      "timerTo": "to {state}",
+      "branchFork": "to {states} at the same time"
     },
     "step": {
       "title": "Step",
@@ -85,7 +88,10 @@
       "retry": "Retry",
       "retrying": "Retrying…",
       "retried": "The run will try again.",
-      "actionFailed": "That did not work."
+      "actionFailed": "That did not work.",
+      "parallel": "Parallel branches",
+      "branch": "Branch {branch}",
+      "arrived": "Done. Waits for the other branches."
     },
     "panel": {
       "title": "Flows",
@@ -115,7 +121,8 @@
       "title": "Flow tasks",
       "loadFailed": "Your tasks could not be loaded.",
       "empty": "Nothing waits for you.",
-      "truncated": "Not every task could be read. Pick a flow to see the rest."
+      "truncated": "Not every task could be read. Pick a flow to see the rest.",
+      "branchState": "{state} (branch {branch})"
     }
   },
   "inbox": {

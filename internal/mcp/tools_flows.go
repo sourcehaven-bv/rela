@@ -56,7 +56,8 @@ func registerFlowTools(s *Server) {
 func toolListFlowTasks() *mcpgo.Tool {
 	return newTool("list_flow_tasks",
 		withDescription("List your flow tasks: runs that wait for a role you hold on their subject, oldest "+
-			"first. Result: {tasks:[{run,flow,state,state_label,subject,started}],total,truncated}. "+
+			"first. Result: {tasks:[{run,flow,state,state_label,subject,started,branch}],total,truncated}. "+
+			"A run in parallel branches gives one task per waiting branch. "+
 			"Use show_flow_run for what a step needs"),
 		withString("flow", description("Only this flow")),
 		withNumber("page", description("Page, from 1 (default 1)")),
@@ -69,7 +70,9 @@ func toolShowFlowRun() *mcpgo.Tool {
 		withDescription("Show a flow run and why it waits: the roles it waits for and whether you hold one, "+
 			"the properties a step writes, its timers and due times, the change branches and whether "+
 			"their guards hold now, a failing output step, and the timeline. `_actions.complete` says "+
-			"whether complete_flow_step would be accepted"),
+			"whether complete_flow_step would be accepted. A run in parallel branches waits at its join and "+
+			"lists each branch under `parallel`, with its own state, generation, waiting and "+
+			"`_actions`-style complete flag"),
 		withString("run", required(), description("Run id")),
 	)
 }
@@ -85,7 +88,8 @@ func toolCompleteFlowStep() *mcpgo.Tool {
 			"so the run stays), moved (the run had already moved on) or settling (an output step "+
 			"failed after the move and is retried)"),
 		withString("run", required(), description("Run id")),
-		withNumber("generation", required(), description("The run's generation from show_flow_run")),
+		withNumber("generation", required(), description("The run's generation from show_flow_run, or "+
+			"the branch's generation from its `parallel` entry")),
 		withObject("properties", description("Property values to write; only names the state writes")),
 	)
 }

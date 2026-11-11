@@ -74,7 +74,8 @@ type Headers interface {
 // Outputs writes a state's outputs as runAs.
 type Outputs interface {
 	// Set patches props on the subject. run is the run whose output it is.
-	Set(ctx context.Context, runAs string, run flow.RunID, subject entity.Ref, props map[string]any) error
+	Set(ctx context.Context, runAs string, run flow.RunID, state string, subject entity.Ref,
+		props map[string]any) error
 	// Create creates an entity of typ with props and, when relate is set,
 	// an edge of that type from it to subject. It returns the new entity.
 	Create(ctx context.Context, runAs, typ string, props map[string]any, relate string,
@@ -121,6 +122,7 @@ type Deps struct {
 // write loses its compare-and-set and leaves the run to the winner.
 type Engine struct {
 	d Deps
+	g guards
 }
 
 // New returns an engine over d.
@@ -134,7 +136,9 @@ func New(d Deps) (*Engine, error) {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
-	return &Engine{d: d}, nil
+	return &Engine{d: d, g: guards{meta: d.Meta, subjects: d.Subjects, now: func() time.Time {
+		return flow.NormTime(d.Now())
+	}}}, nil
 }
 
 // Flow returns the flow name declares in the current flows.yaml.
@@ -223,7 +227,7 @@ func (e *Engine) Start(ctx context.Context, name string, subject entity.Ref) (fl
 		}
 		return "", err
 	}
-	if left, err := e.settle(ctx, f, run); err != nil {
+	if left, err := e.settle(ctx, f, run, ""); err != nil {
 		e.backoff(ctx, left)
 		return id, err
 	}
@@ -271,7 +275,8 @@ func (e *Engine) Cancel(ctx context.Context, id flow.RunID) error {
 			return err
 		}
 		props := endProps(flow.StatusCancelled, e.now())
-		if f, ferr := e.flowOf(ctx, run); ferr == nil {
+		// A forked run's header keeps the join it was headed for.
+		if f, ferr := e.flowOf(ctx, run); ferr == nil && !forked(run) {
 			props[metamodel.FlowRunPropState] = flow.Read(f.Definition(), run.Instance, run.CreatedAt).State
 		}
 		wctx := audit.WithFlowStep(ctx, audit.FlowStep{Flow: run.Flow, Run: string(id), By: byOf(ctx)})
@@ -354,27 +359,30 @@ func (e *Engine) Due(ctx context.Context) (int, error) {
 
 // backoff makes a run that failed to advance due again later: after
 // minBackoff, doubling with each failure in a row up to maxBackoff. A run
-// without a mark waits minBackoff. A zero run is left alone.
+// without a mark waits minBackoff. A forked run backs off each branch (see
+// branchesBackedOff). A zero run is left alone.
 func (e *Engine) backoff(ctx context.Context, run flowrun.Run) {
 	if run.ID == "" {
+		return
+	}
+	if forked(run) {
+		now := e.now()
+		if _, err := e.put(ctx, run, branchesBackedOff(run, now), now); err != nil && !isLost(err) {
+			slog.WarnContext(ctx, "flowengine: a failed run was not backed off", "run", run.ID, "error", err)
+		}
 		return
 	}
 	delay := minBackoff
 	var p *flowrun.Pending
 	if run.Pending != nil {
 		cp := *run.Pending
-		for range cp.Failures {
-			if delay *= 2; delay >= maxBackoff {
-				delay = maxBackoff
-				break
-			}
-		}
+		delay = backoffDelay(cp.Failures)
 		cp.Failures = min(cp.Failures+1, flowrun.MaxPendingFailures)
 		p = &cp
 	}
 	inst := run.Instance
 	inst.NextDueAt = e.now().Add(delay)
-	if _, err := e.save(ctx, run, inst, p, nil, e.now()); err != nil && !isLost(err) {
+	if _, err := e.save(ctx, run, "", inst, p, nil, e.now()); err != nil && !isLost(err) {
 		slog.WarnContext(ctx, "flowengine: a failed run was not backed off", "run", run.ID, "error", err)
 	}
 }
@@ -386,8 +394,11 @@ func (e *Engine) advance(ctx context.Context, run flowrun.Run, now time.Time) (f
 	if err != nil {
 		return run, err
 	}
+	if forked(run) {
+		return e.advanceBranches(ctx, f, run, now)
+	}
 	if run.Pending != nil {
-		return e.settle(ctx, f, run)
+		return e.settle(ctx, f, run, "")
 	}
 	def := f.Definition()
 	cur := flow.Read(def, run.Instance, run.CreatedAt)
@@ -402,20 +413,20 @@ func (e *Engine) advance(ctx context.Context, run flowrun.Run, now time.Time) (f
 		if !inst.NextDueAt.After(now) {
 			inst.NextDueAt = time.Time{} // never a busy loop on a due time nothing fires
 		}
-		_, uerr := e.save(ctx, run, inst, nil, nil, now)
+		_, uerr := e.save(ctx, run, "", inst, nil, nil, now)
 		if uerr != nil && !isLost(uerr) {
 			return run, uerr
 		}
 		return flowrun.Run{}, nil
 	}
-	moved, err := e.move(ctx, f, run, cur, flowrun.Step{State: t.To, Via: flowrun.ViaTimer, Timer: t.Name}, now)
+	moved, err := e.take(ctx, f, run, "", cur, []string{t.To}, flowrun.Step{Via: flowrun.ViaTimer, Timer: t.Name}, now)
 	if err != nil {
 		if isLost(err) {
 			return flowrun.Run{}, nil
 		}
 		return run, err
 	}
-	return e.settle(ctx, f, moved)
+	return e.settle(ctx, f, moved, "")
 }
 
 // flowOf returns the flow a run follows: the current declaration when its

@@ -48,15 +48,46 @@ type rawState struct {
 	Outputs    []rawOutput          `yaml:"outputs"`
 	On         map[string]yaml.Node `yaml:"on"`
 	After      yaml.Node            `yaml:"after"`
+	// Join is `join:`: all, any, or a mapping with `when:`.
+	Join yaml.Node `yaml:"join"`
 }
 
 // rawBranch is one entry of `on.<event>`, which is one mapping or a list
 // of them.
 type rawBranch struct {
-	To    string   `yaml:"to"`
-	Roles []string `yaml:"roles"`
-	When  string   `yaml:"when"`
-	Label string   `yaml:"label"`
+	To    rawTargets `yaml:"to"`
+	Roles []string   `yaml:"roles"`
+	When  string     `yaml:"when"`
+	Label string     `yaml:"label"`
+}
+
+// rawTargets is a branch's `to:`: one state, or a list of states for a
+// fork. List reports the list form, so `to: [a]` is refused as a fork of
+// one state rather than read as `to: a`.
+type rawTargets struct {
+	States []string
+	List   bool
+}
+
+// UnmarshalYAML reads a scalar or a sequence of scalars.
+func (t *rawTargets) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind == yaml.SequenceNode {
+		t.List = true
+		return n.Decode(&t.States)
+	}
+	var one string
+	if err := n.Decode(&one); err != nil {
+		return err
+	}
+	if one != "" {
+		t.States = []string{one}
+	}
+	return nil
+}
+
+// rawJoin is the mapping form of `join:`.
+type rawJoin struct {
+	When string `yaml:"when"`
 }
 
 // rawTimer is one entry of `after:`.

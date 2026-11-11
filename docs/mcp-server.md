@@ -533,6 +533,12 @@ Pass `complete_flow_step` the `generation` that `show_flow_run` returned.
 A run that moved on since is refused; call `show_flow_run` again and
 decide anew. Every property must be one the state writes.
 
+A run in [parallel branches](flows.md#parallel-branches) waits at its
+join. `show_flow_run` lists each branch under `parallel`, with its own
+state, reason, `generation` and `complete` flag. To do a branch's step,
+pass that branch's `generation`. `list_flow_tasks` gives one task per
+waiting branch, with its `branch`.
+
 `complete_flow_step` answers `{written, moved, state, finished, problem}`:
 the properties it wrote, whether the run moved, the run's state after the
 step, and whether the run ended. `problem` is set when the properties were

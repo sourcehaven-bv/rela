@@ -2,6 +2,8 @@
 /**
  * One flow run (TKT-ZAXRXND): its state and status, why it waits, the step
  * form, the diagram and the timeline, and the controls `_actions` allows.
+ * A run in parallel branches (TKT-ZO9IB6V) waits at its join: the card
+ * shows each branch with its own reason and step form instead.
  *
  * The run shown is the prop until the card reads the run itself: after a
  * step, a cancel or a retry, and on mount for an active run the prop holds
@@ -93,9 +95,24 @@ watch(
 )
 
 const timeline = computed(() => timelineEntries(shown.value, t))
-const waiting = computed(() => (shown.value.active ? shown.value.waiting : undefined))
+const places = computed(() => (shown.value.active ? (shown.value.parallel ?? []) : []))
+const waiting = computed(() =>
+  shown.value.active && places.value.length === 0 ? shown.value.waiting : undefined
+)
 const showStep = computed(
   () => !!waiting.value && shown.value._actions.complete && !!props.subjectType
+)
+
+/**
+ * Each branch as the run the step form completes: the branch's generation
+ * names its step, and its waiting says what the step writes.
+ */
+const branches = computed(() =>
+  places.value.map((place) => ({
+    place,
+    run: { ...shown.value, generation: place.generation, waiting: place.waiting },
+    showStep: !!place.waiting && place.complete && !!props.subjectType,
+  }))
 )
 
 // The notice for each Completed.problem, keyed literally so the i18n guard
@@ -180,6 +197,43 @@ async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: str
     <section v-if="waiting" class="flow-run-card__section" :aria-label="t('flows.waiting.title')">
       <h4 class="flow-run-card__heading">{{ t('flows.waiting.title') }}</h4>
       <FlowWaiting :waiting="waiting" />
+    </section>
+
+    <section
+      v-if="places.length > 0"
+      class="flow-run-card__section"
+      :aria-label="t('flows.run.parallel')"
+    >
+      <h4 class="flow-run-card__heading">{{ t('flows.run.parallel') }}</h4>
+      <div
+        v-for="b in branches"
+        :key="b.place.branch"
+        class="flow-run-card__branch"
+        data-testid="flow-run-branch"
+        :data-branch="b.place.branch"
+      >
+        <header class="flow-run-card__header">
+          <span class="flow-run-card__muted">
+            {{ t('flows.run.branch', { branch: b.place.branch }) }}
+          </span>
+          <span class="flow-run-card__state">{{ b.place.state_label || b.place.state }}</span>
+          <RlStatusPill
+            :label="statusLabel(b.place.status, t)"
+            :color="statusTone(b.place.status)"
+          />
+        </header>
+        <p v-if="b.place.arrived" class="flow-run-card__muted" data-testid="flow-branch-arrived">
+          {{ t('flows.run.arrived') }}
+        </p>
+        <FlowWaiting v-else-if="b.place.waiting" :waiting="b.place.waiting" />
+        <FlowStepForm
+          v-if="b.showStep"
+          :run="b.run"
+          :subject-type="subjectType"
+          @completed="onCompleted"
+          @stale="onStale"
+        />
+      </div>
     </section>
 
     <section v-if="showStep" class="flow-run-card__section" :aria-label="t('flows.step.title')">
@@ -273,6 +327,19 @@ async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: str
 
 .flow-run-card__section summary {
   cursor: pointer;
+  font-size: var(--font-size-sm);
+  color: var(--rl-color-text-muted);
+}
+
+.flow-run-card__branch {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm) 0;
+  border-top: 1px solid var(--rl-color-border);
+}
+
+.flow-run-card__muted {
   font-size: var(--font-size-sm);
   color: var(--rl-color-text-muted);
 }

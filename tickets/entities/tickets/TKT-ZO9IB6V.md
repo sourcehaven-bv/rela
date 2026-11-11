@@ -5,7 +5,9 @@ title: 'Flows M4a: parallel branches'
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+started: "2026-11-11"
+completed: "2026-11-11"
+status: done
 ---
 
 ## Description

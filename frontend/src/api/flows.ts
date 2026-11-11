@@ -46,6 +46,8 @@ export interface FlowTimer {
 
 export interface FlowBranch {
   to: string
+  /** The states a fork branch starts at once; `to` is then empty. */
+  fork?: string[]
   label?: string
   roles?: string[]
   guard?: string
@@ -83,15 +85,37 @@ export interface FlowEvent {
   /** The state's label, or its name when the flow lost the state. */
   label?: string
   from?: string
-  via: 'start' | 'done' | 'change' | 'timer' | string
+  via: 'start' | 'done' | 'change' | 'timer' | 'join' | string
   timer?: string
   by?: string
+  /** The parallel branch the move was in. */
+  branch?: string
 }
 
 export interface FlowActions {
   complete: boolean
   cancel: boolean
   retry: boolean
+}
+
+/**
+ * One parallel branch of a forked run: where it is, why it waits and
+ * whether the caller may complete its step.
+ */
+export interface FlowPlace {
+  /** The fork target the branch started in. */
+  branch: string
+  state: string
+  state_label: string
+  status: FlowRunStatus | string
+  /** The generation a step of this branch names. */
+  generation: number
+  entered_at?: string
+  /** The branch reached its join and waits for the others. */
+  arrived?: boolean
+  waiting?: FlowWaiting
+  /** complete_flow_step on this branch's generation would be accepted. */
+  complete: boolean
 }
 
 /** One run as the caller may see it. */
@@ -115,8 +139,10 @@ export interface FlowRun {
   waiting?: FlowWaiting
   /** The timeline, oldest first. */
   log?: FlowEvent[]
-  /** The flow's Mermaid diagram with the current state marked. */
+  /** The flow's Mermaid diagram with the current states marked. */
   diagram?: string
+  /** Set while the run is in parallel branches; `state` is then their join. */
+  parallel?: FlowPlace[]
   _actions: FlowActions
 }
 
@@ -129,6 +155,8 @@ export interface FlowTask {
   state_label: string
   subject: string
   started?: string
+  /** The parallel branch whose step waits. */
+  branch?: string
 }
 
 export interface FlowTaskPage {

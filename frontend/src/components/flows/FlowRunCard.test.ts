@@ -170,6 +170,58 @@ describe('FlowRunCard', () => {
     expect(cancelFlowRunMock).not.toHaveBeenCalled()
   })
 
+  it('shows each parallel branch with its own step, completed at the branch generation', async () => {
+    completeFlowStepMock.mockResolvedValue({
+      written: ['documents'],
+      moved: true,
+      state: 'joined',
+      finished: false,
+    })
+    getFlowRunMock.mockResolvedValue(run({ state: 'joined', waiting: undefined }))
+    const forked = run({
+      state: 'joined',
+      state_label: 'Joined',
+      generation: 0,
+      waiting: { you_hold: false },
+      _actions: { complete: false, cancel: false, retry: false },
+      parallel: [
+        {
+          branch: 'it',
+          state: 'it',
+          state_label: 'IT',
+          status: 'input_required',
+          generation: 2,
+          waiting: { roles: ['hr'], you_hold: true, writes: ['documents'] },
+          complete: true,
+        },
+        {
+          branch: 'legal',
+          state: 'joined',
+          state_label: 'Joined',
+          status: 'working',
+          generation: 3,
+          arrived: true,
+          complete: false,
+        },
+      ],
+    })
+    const wrapper = mountCard(forked)
+    await flushPromises()
+
+    // The join's own reason is not shown: the branches say why the run waits.
+    expect(wrapper.find('[data-testid="flow-waiting-roles"]').text()).toContain('hr')
+    const branches = wrapper.findAll('[data-testid="flow-run-branch"]')
+    expect(branches).toHaveLength(2)
+    expect(branches[1].find('[data-testid="flow-branch-arrived"]').exists()).toBe(true)
+    expect(branches[1].find('[data-testid="flow-step-form"]').exists()).toBe(false)
+
+    const form = branches[0].find('[data-testid="flow-step-form"]')
+    await form.find('input[type="checkbox"]').setValue(true)
+    await form.trigger('submit')
+    await flushPromises()
+    expect(completeFlowStepMock).toHaveBeenCalledWith('R1', 2, { documents: true })
+  })
+
   it('reads the detail of an active run that came without its timeline', async () => {
     getFlowRunMock.mockResolvedValue(run())
     mountCard(run({ log: undefined }))

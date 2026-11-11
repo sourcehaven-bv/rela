@@ -367,9 +367,11 @@ func (c *FlowControl) views(ctx context.Context, cl *caller, hdrs []*entity.Enti
 		if subj == nil {
 			v.Subject = ""
 		}
-		w := waitingOf(x, cl.holds(ctx, run.Subject.ID))
+		holds := cl.holds(ctx, run.Subject.ID)
+		w := waitingOf(x, holds)
 		if detail {
-			addDetail(ctx, &v, w, run, x, flows)
+			addDetail(w, x)
+			addTimeline(ctx, &v, run, x, flows)
 		}
 		if subj == nil {
 			// The guards were evaluated on a subject the caller cannot
@@ -377,9 +379,26 @@ func (c *FlowControl) views(ctx context.Context, cl *caller, hdrs []*entity.Enti
 			w.Branches = nil
 		}
 		v.Waiting = w
+		mayStep := func(w *flowview.Waiting, x flowengine.Explanation) bool {
+			return subj != nil && w.YouHold && x.Pending == nil && !x.Stranded && !x.Arrived && cl.mayUpdate(ctx, subj)
+		}
+		for _, bx := range x.Parallel {
+			bw := waitingOf(bx, holds)
+			if detail {
+				addDetail(bw, bx)
+			}
+			if subj == nil {
+				bw.Branches = nil
+			}
+			v.Parallel = append(v.Parallel, flowview.Place{
+				Branch: bx.Branch, State: bx.State, StateLabel: bx.Label, Status: string(bx.Status),
+				Generation: bx.Generation, EnteredAt: bx.EnteredAt, Arrived: bx.Arrived, Waiting: bw,
+				Complete: mayStep(bw, bx),
+			})
+		}
 		manage := c.authorize(ctx, run.Subject.ID, c.cancelPermissions(ctx, flows, run)) == nil
 		v.Actions = flowview.Actions{
-			Complete: subj != nil && w.YouHold && x.Pending == nil && !x.Stranded && cl.mayUpdate(ctx, subj),
+			Complete: len(x.Parallel) == 0 && mayStep(w, x),
 			Cancel:   manage,
 			Retry:    manage && x.Pending != nil,
 		}
@@ -423,17 +442,22 @@ func waitingOf(x flowengine.Explanation, holds func(string) bool) *flowview.Wait
 	return w
 }
 
-// addDetail adds the timers, branches, timeline and diagram of run to v
-// and w.
-func addDetail(ctx context.Context, v *flowview.Run, w *flowview.Waiting, run flowrun.Run,
-	x flowengine.Explanation, flows *flowengine.FlowCache) {
+// addDetail adds the timers and branches of x to w.
+func addDetail(w *flowview.Waiting, x flowengine.Explanation) {
 	for _, t := range x.Timers {
 		w.Timers = append(w.Timers, flowview.Timer{Name: t.Name, Label: t.Label, To: t.To, Due: t.Due})
 	}
 	for _, b := range x.Branches {
-		w.Branches = append(w.Branches, flowview.Branch{To: b.To, Label: b.Label, Roles: b.Roles,
+		w.Branches = append(w.Branches, flowview.Branch{To: b.To, Fork: b.Fork, Label: b.Label, Roles: b.Roles,
 			Guard: b.Guard, Holds: b.Holds, Failed: b.Failed})
 	}
+}
+
+// addTimeline adds the timeline and diagram of run to v. The diagram
+// marks every state the run is in: one per live branch while it is
+// forked.
+func addTimeline(ctx context.Context, v *flowview.Run, run flowrun.Run, x flowengine.Explanation,
+	flows *flowengine.FlowCache) {
 	f, ferr := flows.Of(ctx, run)
 	for _, st := range run.Log {
 		label := st.State
@@ -441,11 +465,19 @@ func addDetail(ctx context.Context, v *flowview.Run, w *flowview.Waiting, run fl
 			label = stateLabel(f, st.State)
 		}
 		v.Log = append(v.Log, flowview.Event{At: st.At, State: st.State, Label: label, From: st.From,
-			Via: string(st.Via), Timer: st.Timer, By: st.By})
+			Via: string(st.Via), Timer: st.Timer, By: st.By, Branch: st.Branch})
 	}
-	if ferr == nil {
-		v.Diagram = f.MermaidAt(x.State)
+	if ferr != nil {
+		return
 	}
+	current := []string{x.State}
+	if len(x.Parallel) > 0 {
+		current = current[:0]
+		for _, bx := range x.Parallel {
+			current = append(current, bx.State)
+		}
+	}
+	v.Diagram = f.MermaidAt(current...)
 }
 
 // cancelPermissions are the permissions that cancel or retry run: those of
@@ -538,25 +570,25 @@ func (c *FlowControl) complete(ctx context.Context, id flow.RunID, gen int64,
 		}
 		return flowview.Completed{}, err
 	}
-	if run.Instance.Generation != gen {
+	branch, ok := flowengine.StepAt(run, gen)
+	if !ok {
 		return flowview.Completed{}, flowengine.ErrStale
 	}
 	xs, err := c.eng.Explain(ctx, run)
 	if err != nil {
 		return flowview.Completed{}, err
 	}
-	x := xs[0]
+	x, ok := stepOf(xs[0], branch)
+	if !ok {
+		return flowview.Completed{}, flowengine.ErrStale
+	}
 	if x.Stranded {
 		return flowview.Completed{}, flowengine.ErrStranded
 	}
-	names := make([]string, 0, len(props))
-	for k := range props {
-		if !slices.Contains(x.Writes, k) {
-			return flowview.Completed{}, fmt.Errorf("%w: %q", errFlowInput, k)
-		}
-		names = append(names, k)
+	names, err := inputNames(props, x.Writes)
+	if err != nil {
+		return flowview.Completed{}, err
 	}
-	slices.Sort(names)
 	holds := cl.holds(ctx, run.Subject.ID)
 	if !slices.ContainsFunc(x.WaitingFor, holds) {
 		if len(x.WaitingFor) == 0 {
@@ -579,7 +611,7 @@ func (c *FlowControl) complete(ctx context.Context, id flow.RunID, gen int64,
 	if len(props) > 0 {
 		// The step's own write: this run's outside_edits do not narrow it,
 		// another run's on the subject still do (TKT-XI7IDBS).
-		pctx := flowedits.WithinRun(wctx, id)
+		pctx := flowedits.WithinRun(wctx, id, x.State)
 		if _, err = grant.PatchEntity(pctx, run.Subject.String(), entity.Patch{Properties: props}); err != nil {
 			c.eng.ReleaseClaim(ctx, id, gen, cl.user)
 			return flowview.Completed{}, err
@@ -625,10 +657,110 @@ func (c *FlowControl) Retry(ctx context.Context, id flow.RunID) error {
 	return classify(c.eng.Retry(byCaller(ctx), id))
 }
 
+// inputNames returns the names of props, sorted, or errFlowInput for a
+// name the step does not write.
+func inputNames(props map[string]any, writes []string) ([]string, error) {
+	names := make([]string, 0, len(props))
+	for k := range props {
+		if !slices.Contains(writes, k) {
+			return nil, fmt.Errorf("%w: %q", errFlowInput, k)
+		}
+		names = append(names, k)
+	}
+	slices.Sort(names)
+	return names, nil
+}
+
+// stepOf returns the explanation of the step of branch in x: x itself for
+// the run's own step. A step of a forked run is a branch's step: its state
+// names what it writes and who it waits for.
+func stepOf(x flowengine.Explanation, branch string) (flowengine.Explanation, bool) {
+	if branch == "" {
+		return x, true
+	}
+	i := slices.IndexFunc(x.Parallel, func(bx flowengine.Explanation) bool { return bx.Branch == branch })
+	if i < 0 {
+		return flowengine.Explanation{}, false
+	}
+	return x.Parallel[i], true
+}
+
 // taskState is one (flow, state) the task list asks the store for.
 type taskState struct {
 	flow  *flowcfg.Flow
 	state flowcfg.State
+	// join marks the join of a fork whose branches wait for a role the
+	// caller may hold: the header of a forked run names it.
+	join bool
+}
+
+// taskStates returns the (flow, state) pairs that wait for a role the
+// caller may hold, and the header groups the store reads candidates by.
+// A state in a parallel branch is not on any header: its fork's join is,
+// so the join's group stands in for it.
+func taskStates(flows []*flowcfg.Flow, flowName string, cl *caller) (
+	states map[[2]string]taskState, groups []map[string]string) {
+	states = map[[2]string]taskState{}
+	group := func(f *flowcfg.Flow, state string) {
+		groups = append(groups, map[string]string{
+			metamodel.FlowRunPropFlow: f.Name(), metamodel.FlowRunPropState: state,
+		})
+	}
+	for _, f := range flows {
+		if flowName != "" && f.Name() != flowName {
+			continue
+		}
+		for _, st := range f.States() {
+			if len(st.WaitingFor()) == 0 || !slices.ContainsFunc(st.WaitingFor(), cl.mayHold) {
+				continue
+			}
+			key := [2]string{f.Name(), st.Name}
+			had, grouped := states[key]
+			states[key] = taskState{flow: f, state: st, join: had.join}
+			fk, _, inBranch := f.Region(st.Name)
+			if !inBranch {
+				if !grouped {
+					group(f, st.Name)
+				}
+				continue
+			}
+			key = [2]string{f.Name(), fk.Join}
+			_, grouped = states[key]
+			js, _ := f.State(fk.Join)
+			states[key] = taskState{flow: f, state: js, join: true}
+			if !grouped {
+				group(f, fk.Join)
+			}
+		}
+	}
+	return states, groups
+}
+
+// forkedRuns reads the stored runs of the candidate headers that name a
+// join, in one run store read: their branches say which steps wait.
+func (c *FlowControl) forkedRuns(ctx context.Context, hdrs []store.EntityHeader,
+	states map[[2]string]taskState) (map[flow.RunID]flowrun.Run, error) {
+	var ids []flow.RunID
+	for _, h := range hdrs {
+		hv := headerView(&entity.Entity{ID: h.ID, Properties: h.Properties})
+		if states[[2]string{hv.Flow, hv.State}].join {
+			ids = append(ids, flow.RunID(h.ID))
+		}
+	}
+	out := map[flow.RunID]flowrun.Run{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	runs, err := c.eng.RunsByID(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range runs {
+		if len(r.Branches) > 0 {
+			out[r.ID] = r
+		}
+	}
+	return out, nil
 }
 
 // Tasks lists the runs that wait for a role the caller holds on their
@@ -648,22 +780,7 @@ func (c *FlowControl) Tasks(ctx context.Context, flowName string, page, perPage 
 	if err != nil {
 		return flowview.Tasks{}, err
 	}
-	states := map[[2]string]taskState{}
-	var groups []map[string]string
-	for _, f := range c.eng.Flows() {
-		if flowName != "" && f.Name() != flowName {
-			continue
-		}
-		for _, st := range f.States() {
-			if len(st.WaitingFor()) == 0 || !slices.ContainsFunc(st.WaitingFor(), cl.mayHold) {
-				continue
-			}
-			states[[2]string{f.Name(), st.Name}] = taskState{flow: f, state: st}
-			groups = append(groups, map[string]string{
-				metamodel.FlowRunPropFlow: f.Name(), metamodel.FlowRunPropState: st.Name,
-			})
-		}
-	}
+	states, groups := taskStates(c.eng.Flows(), flowName, cl)
 	out := flowview.Tasks{Tasks: []flowview.Task{}}
 	if len(groups) == 0 {
 		return out, nil
@@ -686,23 +803,43 @@ func (c *FlowControl) Tasks(ctx context.Context, flowName string, page, perPage 
 	if err != nil {
 		return flowview.Tasks{}, err
 	}
+	forked, err := c.forkedRuns(ctx, hdrs, states)
+	if err != nil {
+		return flowview.Tasks{}, err
+	}
 	for _, h := range hdrs {
 		hv := headerView(&entity.Entity{ID: h.ID, Properties: h.Properties})
-		ts := states[[2]string{hv.Flow, hv.State}]
 		subj, ok := subjects[h.ID]
-		if ts.flow == nil || !ok {
+		if !ok {
 			continue
 		}
-		held := slices.ContainsFunc(ts.state.WaitingFor(), func(r string) bool {
-			return cl.holdsGlobally(r) || local[[2]string{r, subj}]
-		})
-		if !held {
+		held := func(ts taskState) bool {
+			return slices.ContainsFunc(ts.state.WaitingFor(), func(r string) bool {
+				return cl.holdsGlobally(r) || local[[2]string{r, subj}]
+			})
+		}
+		task := flowview.Task{Run: h.ID, Subject: subj, Started: hv.Started}
+		ts := states[[2]string{hv.Flow, hv.State}]
+		if run, stored := forked[flow.RunID(h.ID)]; ts.join && stored {
+			// The header names the join: the steps are the branches'.
+			for _, b := range run.Branches {
+				bs := states[[2]string{hv.Flow, b.Instance.State}]
+				if b.Arrived || bs.flow == nil || !held(bs) {
+					continue
+				}
+				t := task
+				t.Flow, t.FlowLabel, t.State, t.StateLabel, t.Branch = bs.flow.Name(), bs.flow.Label(), bs.state.Name,
+					bs.state.Label, b.Name
+				out.Tasks = append(out.Tasks, t)
+			}
 			continue
 		}
-		out.Tasks = append(out.Tasks, flowview.Task{
-			Run: h.ID, Flow: ts.flow.Name(), FlowLabel: ts.flow.Label(), State: ts.state.Name,
-			StateLabel: ts.state.Label, Subject: subj, Started: hv.Started,
-		})
+		if ts.flow == nil || !held(ts) {
+			continue
+		}
+		task.Flow, task.FlowLabel, task.State, task.StateLabel = ts.flow.Name(), ts.flow.Label(), ts.state.Name,
+			ts.state.Label
+		out.Tasks = append(out.Tasks, task)
 	}
 	sort.SliceStable(out.Tasks, func(i, j int) bool {
 		if !out.Tasks[i].Started.Equal(out.Tasks[j].Started) {

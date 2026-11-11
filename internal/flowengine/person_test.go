@@ -252,7 +252,7 @@ func TestEngine_Explain(t *testing.T) {
 }
 
 // TestEngine_OneUpdatePath fails when engine code updates a run other than
-// through save, which carries the timeline and the claim (RR-SHLMJUL).
+// through put, which sets the due hint of a forked run (RR-SHLMJUL).
 func TestEngine_OneUpdatePath(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	require.NoError(t, err)
@@ -267,14 +267,14 @@ func TestEngine_OneUpdatePath(t *testing.T) {
 		require.NoError(t, err)
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Name.Name == "save" {
+			if !ok || fn.Name.Name == "put" {
 				continue
 			}
 			ast.Inspect(fn, func(n ast.Node) bool {
 				sel, ok := n.(*ast.SelectorExpr)
 				if ok && sel.Sel.Name == "Update" {
 					if inner, ok := sel.X.(*ast.SelectorExpr); ok && inner.Sel.Name == "Runs" {
-						t.Errorf("%s: %s updates a run directly; use save", fset.Position(sel.Pos()), fn.Name.Name)
+						t.Errorf("%s: %s updates a run directly; use put", fset.Position(sel.Pos()), fn.Name.Name)
 					}
 				}
 				return true

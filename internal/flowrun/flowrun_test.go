@@ -199,9 +199,9 @@ func TestDigest(t *testing.T) {
 func TestDueOrder(t *testing.T) {
 	at := flow.NormTime(t0)
 	runs := []flowrun.Run{
-		{ID: "B", Instance: flow.Instance{NextDueAt: at.Add(time.Second)}},
-		{ID: "C", Instance: flow.Instance{NextDueAt: at}},
-		{ID: "A", Instance: flow.Instance{NextDueAt: at}},
+		{ID: "B", State: flowrun.State{Instance: flow.Instance{NextDueAt: at.Add(time.Second)}}},
+		{ID: "C", State: flowrun.State{Instance: flow.Instance{NextDueAt: at}}},
+		{ID: "A", State: flowrun.State{Instance: flow.Instance{NextDueAt: at}}},
 	}
 	flowrun.SortDue(runs)
 	require.Equal(t, []flowrun.RunID{"A", "C", "B"}, []flowrun.RunID{runs[0].ID, runs[1].ID, runs[2].ID})

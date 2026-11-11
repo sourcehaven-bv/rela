@@ -8,23 +8,20 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 )
 
+// flowCheck checks a parsed flow as a whole: reachability, cycles, forks,
+// waiting and grants. It reports problems to its loader.
+type flowCheck struct {
+	l *loader
+}
+
 // reachable refuses a state no run can reach from the initial state.
-func (l *loader) reachable(key string, f *Flow) {
+func (c flowCheck) reachable(key string, f *Flow) {
 	seen := map[string]bool{f.initial: true}
 	queue := []string{f.initial}
 	for len(queue) > 0 {
 		st, _ := f.State(queue[0])
 		queue = queue[1:]
-		var next []string
-		for _, ev := range Events {
-			for _, b := range st.on[ev] {
-				next = append(next, b.To)
-			}
-		}
-		for _, t := range st.timers {
-			next = append(next, t.To)
-		}
-		for _, to := range next {
+		for _, to := range successors(st) {
 			if !seen[to] {
 				seen[to] = true
 				queue = append(queue, to)
@@ -33,7 +30,7 @@ func (l *loader) reachable(key string, f *Flow) {
 	}
 	for _, st := range f.states {
 		if !seen[st.Name] {
-			l.add(key+".states."+st.Name, fmt.Sprintf("no run reaches it from the initial state %q", f.initial))
+			c.l.add(key+".states."+st.Name, fmt.Sprintf("no run reaches it from the initial state %q", f.initial))
 		}
 	}
 }
@@ -41,7 +38,7 @@ func (l *loader) reachable(key string, f *Flow) {
 // doneCycles refuses a cycle made only of done branches. A done branch
 // fires without anyone acting, so such a cycle would move a run, and write
 // its outputs, forever.
-func (l *loader) doneCycles(key string, f *Flow) {
+func (c flowCheck) doneCycles(key string, f *Flow) {
 	const (
 		unvisited = iota
 		active
@@ -54,7 +51,7 @@ func (l *loader) doneCycles(key string, f *Flow) {
 		case active:
 			start := slices.Index(path, name)
 			cycle := append(slices.Clone(path[start:]), name)
-			l.add(key+".states."+name+".on.done", "is part of a cycle of done branches, which no one has to act on: "+
+			c.l.add(key+".states."+name+".on.done", "is part of a cycle of done branches, which no one has to act on: "+
 				strings.Join(cycle, " -> "))
 			return true
 		case finished:
@@ -63,8 +60,10 @@ func (l *loader) doneCycles(key string, f *Flow) {
 		mark[name] = active
 		st, _ := f.State(name)
 		for _, b := range st.on[EventDone] {
-			if visit(b.To, append(path, name)) {
-				return true
+			for _, to := range b.Targets() {
+				if visit(to, append(path, name)) {
+					return true
+				}
 			}
 		}
 		mark[name] = finished
@@ -80,14 +79,14 @@ func (l *loader) doneCycles(key string, f *Flow) {
 // waiting refuses a waiting role that cannot answer: a state waits for a
 // role only if a change branch out of it admits that role. A branch
 // without roles admits every role.
-func (l *loader) waiting(key string, f *Flow) {
+func (c flowCheck) waiting(key string, f *Flow) {
 	for _, st := range f.states {
 		for i, role := range st.waitingFor {
 			answers := slices.ContainsFunc(st.on[EventChange], func(b Branch) bool {
 				return len(b.Roles) == 0 || slices.Contains(b.Roles, role)
 			})
 			if !answers {
-				l.add(fmt.Sprintf("%s.states.%s.waiting_for[%d]", key, st.Name, i),
+				c.l.add(fmt.Sprintf("%s.states.%s.waiting_for[%d]", key, st.Name, i),
 					fmt.Sprintf("the state waits for %s, but no on.change entry admits that role", role))
 			}
 		}
@@ -103,14 +102,14 @@ const noGrant = "no role assigned to it or to everyone grants it"
 // conditions, local roles or a templated option value, so it is an early
 // check, not the gate: the runtime writes every output through
 // entitymanager as the run_as principal, which checks each write again.
-func (l *loader) grants(key string, f *Flow) {
-	if l.policy == nil || f.runAs == "" {
+func (c flowCheck) grants(key string, f *Flow) {
+	if c.l.policy == nil || f.runAs == "" {
 		return
 	}
-	g := acl.JobIdentityGrants(l.policy, f.runAs)
+	g := acl.JobIdentityGrants(c.l.policy, f.runAs)
 	for _, st := range f.states {
 		for i, o := range st.outputs {
-			l.grantOutput(fmt.Sprintf("%s.states.%s.outputs[%d]", key, st.Name, i), g, f.runAs, o)
+			c.l.grantOutput(fmt.Sprintf("%s.states.%s.outputs[%d]", key, st.Name, i), g, f.runAs, o)
 		}
 	}
 }

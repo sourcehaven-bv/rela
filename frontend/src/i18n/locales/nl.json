@@ -31,7 +31,9 @@
       "done": "naar {state} toen de stap klaar was",
       "change": "naar {state} na een wijziging",
       "timer": "naar {state} toen timer {timer} afliep",
-      "moved": "naar {state}"
+      "moved": "naar {state}",
+      "join": "samengekomen in {state}",
+      "inBranch": "{summary} (tak {branch})"
     },
     "waiting": {
       "title": "Waarom het wacht",
@@ -51,7 +53,8 @@
       "branchRoles": "door: {roles}",
       "timers": "Timers",
       "timerDue": "naar {state} op {at}",
-      "timerTo": "naar {state}"
+      "timerTo": "naar {state}",
+      "branchFork": "tegelijk naar {states}"
     },
     "step": {
       "title": "Stap",
@@ -85,7 +88,10 @@
       "retry": "Opnieuw proberen",
       "retrying": "Bezig…",
       "retried": "De run probeert het opnieuw.",
-      "actionFailed": "Dat is niet gelukt."
+      "actionFailed": "Dat is niet gelukt.",
+      "parallel": "Parallelle takken",
+      "branch": "Tak {branch}",
+      "arrived": "Klaar. Wacht op de andere takken."
     },
     "panel": {
       "title": "Flows",
@@ -115,7 +121,8 @@
       "title": "Mijn flowtaken",
       "loadFailed": "Uw taken konden niet worden geladen.",
       "empty": "Er wacht niets op u.",
-      "truncated": "Niet alle taken konden worden gelezen. Kies een flow om de rest te zien."
+      "truncated": "Niet alle taken konden worden gelezen. Kies een flow om de rest te zien.",
+      "branchState": "{state} (tak {branch})"
     }
   },
   "inbox": {
