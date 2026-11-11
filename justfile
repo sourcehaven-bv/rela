@@ -200,7 +200,7 @@ build-server-headless-sqlite:
 
 # Vet and test the headless tag, as the CI "Headless Server" job does.
 test-headless:
-    go vet -tags headless $(go list ./... | grep -v -E '/cmd/rela-(desktop|docs)$')
+    go vet -tags headless $(go list ./... | grep -v -E '/cmd/rela-desktop$')
     go test -tags headless -run 'Headless' ./internal/dataentry/
 
 # Build the headless PostgreSQL server (API + MCP, no web UI). Needs no frontend build.

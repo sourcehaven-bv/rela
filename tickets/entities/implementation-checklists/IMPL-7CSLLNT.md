@@ -47,8 +47,11 @@ guard expects.
 - AC4: `goreleaser check` validates the config; snapshot release run for the
 archives.
 - AC5: CI `headless` job and headless lint step added; `go vet -tags headless`
-over all packages except desktop/docs passes locally; `go build -tags headless
-./cmd/rela-docs` fails with the guard identifier.
+over all packages except rela-desktop passes locally. The compile-time guards
+in rela-desktop and rela-docs were dropped after CI: the tagged-file check
+(`scripts/check-tagged-tests.sh`) vets every package under each tag, and both
+binaries already refuse to serve without the web UI through
+`dataentry.CheckEmbeddedSPA` at runtime.
 - Edge cases: HEAD `/` 200 without body; POST `/` 404; `/index.html` 404.
 
 ## Quality

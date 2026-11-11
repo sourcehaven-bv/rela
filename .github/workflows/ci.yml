@@ -1303,7 +1303,7 @@ jobs:
       # clean checkout, because the release builds them without relying on it.
       # Every OS the release ships, so a platform-specific break fails here
       # and not as an empty release. Not a cross-compile matrix entry: that
-      # job also builds rela-docs, which refuses the tag.
+      # job also builds rela and rela-docs, which ship only with the web UI.
       - name: Build headless servers
         env:
           CGO_ENABLED: "0"
@@ -1318,22 +1318,14 @@ jobs:
       # go vet compiles every test file under the tag, so a test that only
       # breaks headless fails here. Only the headless tests RUN: the rest of
       # the suite pins UI routes a headless build leaves out by design.
-      # rela-desktop and rela-docs fail to compile under the tag on purpose.
+      # rela-desktop needs the Wails system libraries this job does not
+      # install; scripts/check-tagged-tests.sh vets it under the tag.
       - name: Vet and test the headless tag
         run: |
           set -euo pipefail
-          mapfile -t pkgs < <(go list ./... | grep -v -E '/cmd/rela-(desktop|docs)$')
+          mapfile -t pkgs < <(go list ./... | grep -v -E '/cmd/rela-desktop$')
           go vet -tags headless "${pkgs[@]}"
           go test -race -tags headless -run 'Headless' ./internal/dataentry/
-
-      - name: Assert desktop and docs refuse the headless tag
-        run: |
-          for pkg in ./cmd/rela-desktop ./cmd/rela-docs; do
-            if go build -tags headless -o /dev/null "$pkg" 2>/dev/null; then
-              echo "FAIL: $pkg built with -tags headless" >&2
-              exit 1
-            fi
-          done
 
   cross-compile:
     name: Cross-Compile (${{ matrix.goos }}/${{ matrix.tags || 'default' }})
