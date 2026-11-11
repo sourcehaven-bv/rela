@@ -55,9 +55,6 @@ type viewsHandler struct {
 	services func() Services
 	// logo backs the sidebar logo URL.
 	logo *logoStore
-	// gateRead is App.gateReadOrNotFound: ACL-gates an entity read,
-	// writing the uniform 404 on denial (hidden = nonexistent).
-	gateRead func(w http.ResponseWriter, r *http.Request, typeName, entityID string) bool
 	// aclImpl resolves the active ACL for permitsNavEntry's sidebar filter.
 	// A closure, not a captured value, for the same reason commandHandler
 	// holds one: tests reassign app.acl AFTER construction, so a captured
@@ -856,7 +853,10 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	// reachable only through it. Together the two gates make _views an
 	// entity-read chokepoint for the entry AND for every entity the traversal
 	// surfaces.
-	if !h.gateRead(w, r, entityType, ref.ID) {
+	//
+	// A miss here, or below, may be an id a rename or conversion retired:
+	// redirectRetired then sends a reader of the successor there.
+	if !gateViewEntry(w, r, h.viewReader, entityType, ref.ID) {
 		return
 	}
 
@@ -877,21 +877,8 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	// is a parameter rather than something the engine reads off ctx.
 	result, err := h.executeViewRef(r.Context(), viewCfg, ref,
 		viewWorldFromRequest(r.Context()))
-	if errors.Is(err, errNoFaceInWorld) {
-		// The entity EXISTS and this caller may read it; it simply has no face
-		// in the world they asked for — the ordinary state of an unpublished
-		// draft. Answer with the face that does exist plus a marker, so the
-		// page can offer a way through rather than a dead end (BUG-1).
-		h.writeWorldAbsentView(w, r, entityType, ref.ID)
-		return
-	}
-	var gerr *gateFaultError
-	if errors.As(err, &gerr) {
-		writeGateError(w, r, gerr.err)
-		return
-	}
 	if err != nil {
-		writeV1Error(w, r, http.StatusUnprocessableEntity, "view_execution_failed", "View execution failed", err.Error())
+		writeViewError(w, r, h.viewReader, ref.ID, err, func() { h.writeWorldAbsentView(w, r, entityType, ref.ID) })
 		return
 	}
 
@@ -1460,4 +1447,55 @@ func visibleHeaders(
 		out[hd.ID] = hd
 	}
 	return out
+}
+
+// writeViewError answers a view whose execution failed. absent writes the
+// world-absent page for an entry that has no face in the requested world.
+//
+// The view helpers below are free functions, not viewsHandler methods:
+// viewsHandler is at its plimsoll method load line.
+func writeViewError(w http.ResponseWriter, r *http.Request, vr visibility.Reader, id string, err error, absent func()) {
+	if errors.Is(err, errNoFaceInWorld) {
+		// The entity EXISTS and this caller may read it; it simply has no face
+		// in the world they asked for — the ordinary state of an unpublished
+		// draft. Answer with the face that does exist plus a marker, so the
+		// page can offer a way through rather than a dead end (BUG-1).
+		absent()
+		return
+	}
+	var gerr *gateFaultError
+	if errors.As(err, &gerr) {
+		writeGateError(w, r, gerr.err)
+		return
+	}
+	failed := func() {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "view_execution_failed", "View execution failed", err.Error())
+	}
+	if errors.Is(err, errEntryMissing) {
+		viewMiss(w, r, vr, id, failed)
+		return
+	}
+	failed()
+}
+
+// gateViewEntry runs the read gate on a view's entry. A denied entry is the
+// uniform 404, or a redirect when the id was retired ([viewMiss]).
+func gateViewEntry(w http.ResponseWriter, r *http.Request, vr visibility.Reader, entityType, id string) bool {
+	return gateReadOr(w, r, entityType, id, func() {
+		viewMiss(w, r, vr, id, func() {
+			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		})
+	})
+}
+
+// viewMiss answers a view whose entry the caller cannot be served. When the
+// id was retired into an entity the caller may read it redirects there
+// ([redirectRetired]); otherwise miss writes the answer this route has always
+// given, byte for byte: the uniform 404 for an entry the read gate refused,
+// the 422 for one the view could not find.
+func viewMiss(w http.ResponseWriter, r *http.Request, vr visibility.Reader, id string, miss func()) {
+	if redirectRetired(w, r, vr, id, func(entityType string) string { return entityType }) {
+		return
+	}
+	miss()
 }

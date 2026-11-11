@@ -101,6 +101,40 @@ describe('EntityDetail owned entity', () => {
     expect(w.text()).not.toContain('Book venue')
   })
 
+  // A retired id answers with its successor's view (TKT-2F1AUZ).
+  it("replaces the route with the successor's page when the view names another entity", async () => {
+    const w = await mountDetail(view({ id: 'INIT-7', type: 'initiative', _title: 'Moved' }))
+    expect(routerReplace).toHaveBeenCalledWith({
+      path: '/entity/initiative/INIT-7',
+      query: { world: 'nl' },
+      hash: undefined,
+    })
+    expect(w.text()).not.toContain('Moved')
+  })
+
+  it('follows a successor of the same type before its owner, keeping the list scope', async () => {
+    await mountDetail(view({ id: 'TASK-5', _owner: owner }))
+    expect(routerReplace).toHaveBeenCalledTimes(1)
+    expect(routerReplace).toHaveBeenCalledWith({
+      path: '/entity/task/TASK-5',
+      query: { from: 'list', list: 'steps', world: 'nl' },
+      hash: undefined,
+    })
+  })
+
+  it('shows the successor in place in a preview', async () => {
+    const w = await mountDetail(view({ id: 'INIT-7', type: 'initiative', _title: 'Moved' }), {
+      followOwner: false,
+    })
+    expect(routerReplace).not.toHaveBeenCalled()
+    expect(w.text()).toContain('Moved')
+  })
+
+  it('does not redirect when the route names a face of the served entity', async () => {
+    await mountDetail(view(), { entityId: 'TASK-2@draft' })
+    expect(routerReplace).not.toHaveBeenCalled()
+  })
+
   it('stays put in a preview and links to the owner', async () => {
     const w = await mountDetail(view({ _owner: owner }), { followOwner: false })
     expect(routerReplace).not.toHaveBeenCalled()

@@ -1291,6 +1291,31 @@ async function loadView(opts: { background?: boolean } = {}) {
       {
         background: opts.background,
         prepare: async (view) => {
+          // The server answers an id a rename or conversion retired with a
+          // redirect to its successor (TKT-2F1AUZ), so the view that lands
+          // names another entity than the route. Put the successor's address
+          // in the URL, before anything renders, so the page, its live
+          // subscription and its writes all follow the entity's current id.
+          // Checked before the owner, whose anchor names the routed id.
+          // An embedded preview (followOwner off) shows the successor in
+          // place instead of navigating the host.
+          const moved = view?.entry
+          if (
+            moved &&
+            props.followOwner &&
+            (moved.type !== props.entityType || moved.id !== refBareId(props.entityId))
+          ) {
+            // A successor of the same type stays in the list it was opened
+            // from, so its whole query carries over. One of another type is
+            // outside that list: only the world carries over, as for an owner.
+            const world = route.query.world
+            await router.replace({
+              path: entityDetailHref(moved),
+              query: moved.type === props.entityType ? route.query : world ? { world } : {},
+              hash: route.hash,
+            })
+            return false
+          }
           // An owned entity is shown as part of its owner. Redirect before
           // rendering anything, so the page does not flash this entity's own
           // view.
