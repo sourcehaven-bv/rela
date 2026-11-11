@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -271,4 +273,14 @@ func TestConversionHandler_PreviewListsAreArrays(t *testing.T) {
 	for _, key := range []string{"required", "relations_to_drop", "invalid_relations", "target_faces", "moves"} {
 		require.NotEqual(t, "null", string(raw[key]), key)
 	}
+}
+
+// A conversion the rename guard refuses (a flow run holds the entity) is a
+// 409 the client can show, not a 500 (TKT-XI7IDBS).
+func TestWriteConversionError_RenameBlocked(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/_conversions/x", http.NoBody)
+	writeConversionError(rec, req, fmt.Errorf("%w: an unfinished flow run holds PER-1", entitymanager.ErrRenameBlocked))
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "rename_blocked")
 }

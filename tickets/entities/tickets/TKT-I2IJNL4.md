@@ -11,9 +11,10 @@ status: backlog
 
 TKT-XI7IDBS added `outside_edits:` to flows.yaml. It narrows the writable
 properties of a subject while a run holds it. It does not narrow the entity
-body, relations, renames or deletes, and it does not cover surfaces that do not
-check field rules (CLI, stdio MCP, operator `_actions`, automations,
-`rela.bypass_acl`, CalDAV).
+body, relations or deletes, and it does not cover surfaces that do not check
+field rules (CLI, stdio MCP, operator `_actions`, automations,
+`rela.bypass_acl`, CalDAV). Renames and conversions are already covered: rela
+refuses to rename or convert a subject with an open run, on every surface.
 
 Decide whether a flow should also be able to lock the body, its relations and
 deletion of the subject while a run is open, and on which surfaces. The

@@ -234,6 +234,10 @@ func writeEntityMakingError(w http.ResponseWriter, r *http.Request, err error, k
 		writeV1Error(w, r, http.StatusConflict, "conflict", "Entity changed during conversion; try again", "")
 	case errors.Is(err, entitymanager.ErrEntityAlreadyExists):
 		writeV1Error(w, r, http.StatusConflict, "conflict", kind.label+" target is already taken", "")
+	case errors.Is(err, entitymanager.ErrRenameBlocked):
+		// A flow run holds the entity's id. The text is the guard's fixed
+		// message, which names only the id the caller sent.
+		writeV1Error(w, r, http.StatusConflict, "rename_blocked", kind.label+" is blocked now", err.Error())
 	case kind.input(err):
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "conversion_failed", kind.label+" could not be applied", err.Error())
 	case errors.Is(err, entitymanager.ErrCardinalityExceeded):

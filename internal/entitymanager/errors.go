@@ -67,10 +67,12 @@ var ErrEntityAlreadyExists = errors.New("entity already exists")
 // hand-typed id carries meaning a rename can improve.
 var ErrRenameNotSupported = errors.New("rename is only available for types with id_type: manual")
 
-// ErrRenameBlocked is returned by [Manager.RenameEntity] when a
-// [RenameGuard] refuses the rename: state kept outside
-// the graph still needs the old id. The flow runtime refuses while an
-// unfinished run holds the entity (TKT-XI7IDBS).
+// ErrRenameBlocked is returned by [Manager.RenameEntity] and by
+// [Converter.Convert] and [Converter.Preview] when a [RenameGuard] refuses
+// the new id: state kept outside the graph still needs the old one. A
+// conversion counts as a rename because it gives the entity a new id and
+// type. The flow runtime refuses while an unfinished run holds the entity
+// (TKT-XI7IDBS).
 var ErrRenameBlocked = errors.New("the entity cannot be renamed now")
 
 // ErrTypeImmutable is returned by the upsert/apply path when the caller

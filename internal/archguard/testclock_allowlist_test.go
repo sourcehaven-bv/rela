@@ -12,6 +12,7 @@ var wallClockAllowlist = map[string]allowed{
 	"internal/entitymanager/versiontags.go":     {1, "version-history stamp; stays on the wall clock like audit"},
 	"internal/entitymanager/cascadehost.go":     {1, "audit record stamp of a cascade write"},
 	"internal/entitymanager/conversion_flow.go": {1, "audit record stamp of a conversion"},
+	"internal/entitymanager/rename_guard.go":    {1, "audit record stamp of a refused rename or conversion"},
 	"internal/entitymanager/manager.go": {4, "three audit record stamps, and the default of " +
 		"Deps.Clock when the wiring site sets none"},
 	"internal/computed/computed.go": {1, "Compile is CompileWithClock on the wall clock; " +

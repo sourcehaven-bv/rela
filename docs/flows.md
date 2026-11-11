@@ -409,7 +409,8 @@ The rules apply to a subject while it has a run that has not ended. A
 finished, failed or cancelled run locks nothing. When a subject has runs
 of several flows, every run's rules apply: a property is writable only if
 each run allows it. A subject keeps its id while it has a run that has
-not ended: rela refuses to rename it until the run ends or is cancelled.
+not ended: rela refuses to rename it, or to convert it to another type,
+until the run ends or is cancelled.
 
 The rules in force are always those of the current `flows.yaml`, also for
 a run that started under an older version of the flow. An
@@ -433,12 +434,13 @@ a write:
 - the steps and outputs of other flows.
 
 They do not apply to the CLI, MCP over stdio, `_actions` declared by the
-operator, automations, `rela.bypass_acl`, declarative webhooks,
-conversions, or CalDAV clients. These act for the operator or the system
-and do not check field rules. The rules also do not cover the entity
-body, relations or deletes, and do not limit creating a new entity. The
-refusal to rename a subject with an open run is not a field rule: it
-holds on every surface, the CLI included. On the file backend without a
+operator, automations, `rela.bypass_acl`, declarative webhooks, or
+CalDAV clients. These act for the operator or the system and do not
+check field rules. The rules also do not cover the entity body,
+relations or deletes, and do not limit creating a new entity. The
+refusal to rename or convert a subject with an open run is not a field
+rule: it holds on every surface, the CLI included, and rela records each
+refused rename or conversion in the audit log. On the file backend without a
 cache directory, runs are kept in the process that started them, so
 another process does not see them and does not refuse the rename.
 

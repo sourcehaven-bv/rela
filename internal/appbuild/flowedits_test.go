@@ -202,6 +202,53 @@ func TestOutsideEdits_RenameRefusedWhileHeld(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestOutsideEdits_ConversionRefusedWhileHeld pins that a conversion, which
+// gives the subject a new id and type, is refused like a rename while a run
+// holds it, on the ungated manager too (TKT-XI7IDBS).
+func TestOutsideEdits_ConversionRefusedWhileHeld(t *testing.T) {
+	root := writeFlowProject(t)
+	schema, err := os.ReadFile(filepath.Join(root, "metamodel.yaml"))
+	require.NoError(t, err)
+	writeMetamodelBody(t, root, string(schema)+`conversions:
+  person-to-task:
+    from: person
+    to: task
+    fields:
+      title: "{{source.name}}"
+    relations:
+      about: drop
+      mentions: drop
+`)
+	// hr may convert a person to a task.
+	policy, err := os.ReadFile(filepath.Join(root, "acl.yaml"))
+	require.NoError(t, err)
+	const hr = "  hr:\n    read: [person, task]\n    update: [person]\n"
+	require.Contains(t, string(policy), hr)
+	writePolicy(t, root, strings.Replace(string(policy), hr,
+		hr+"    create: [task]\n    convert: [person]\n", 1))
+	svc, ctl := outsideEditsProjectIn(t, root)
+	addFlowPerson(t, svc, "PER-1", map[string]any{"name": "Ada"})
+	alice := flowUser(t, svc, "alice")
+	id, err := ctl.Start(alice, "onboarding", "PER-1")
+	require.NoError(t, err)
+	conv, err := entitymanager.NewConverter(svc.EntityManager())
+	require.NoError(t, err)
+	// The run's task is about PER-1; the conversion drops that edge.
+	req := entitymanager.ConversionRequest{Definition: "person-to-task", SourceID: "PER-1", DropRelations: []string{"about"}}
+
+	_, err = conv.Preview(alice, req)
+	require.ErrorIs(t, err, entitymanager.ErrRenameBlocked)
+	_, err = conv.Convert(alice, req)
+	require.ErrorIs(t, err, entitymanager.ErrRenameBlocked)
+	got, err := svc.Store().GetEntity(alice, entity.Ref{ID: "PER-1", Face: entity.ImplicitFace})
+	require.NoError(t, err)
+	require.Equal(t, "person", got.Type)
+
+	require.NoError(t, ctl.Cancel(alice, id))
+	_, err = conv.Preview(alice, req)
+	require.NoError(t, err, "the guard admits the conversion once the run has ended")
+}
+
 // TestOutsideEdits_UngatedWritesUnchanged: the manager without the field
 // gate (CLI, stdio MCP) is not narrowed.
 func TestOutsideEdits_UngatedWritesUnchanged(t *testing.T) {

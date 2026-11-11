@@ -2986,6 +2986,7 @@ func (m *Manager) RenameEntity(
 		return rErr
 	})
 	if txErr != nil {
+		recordRenameRefusal(ctx, m, oldID, txErr)
 		// A transactional backend rolled the rename back. fs and memstore
 		// cannot, so a denial after the store rename leaves it standing, and
 		// the logs must say so (the same reasoning as recordPartialCascade).
