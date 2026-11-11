@@ -47,7 +47,8 @@ func unmarkedTxCallbacks(fset *token.FileSet, file *ast.File) []token.Position {
 	return found
 }
 
-// callsContextInTx reports whether body calls ContextInTx, qualified or not.
+// callsContextInTx reports whether body calls ContextInTx or
+// ContextWithTxView (which marks the ctx the same way), qualified or not.
 func callsContextInTx(body *ast.BlockStmt) bool {
 	marked := false
 	ast.Inspect(body, func(n ast.Node) bool {
@@ -57,13 +58,19 @@ func callsContextInTx(body *ast.BlockStmt) bool {
 		}
 		switch fn := call.Fun.(type) {
 		case *ast.SelectorExpr:
-			marked = marked || fn.Sel.Name == "ContextInTx"
+			marked = marked || isTxMarker(fn.Sel.Name)
 		case *ast.Ident:
-			marked = marked || fn.Name == "ContextInTx"
+			marked = marked || isTxMarker(fn.Name)
 		}
 		return !marked
 	})
 	return marked
+}
+
+// isTxMarker reports whether name is a store function that marks a ctx as
+// inside a transaction.
+func isTxMarker(name string) bool {
+	return name == "ContextInTx" || name == "ContextWithTxView"
 }
 
 func TestNoUnmarkedTxCallbacks(t *testing.T) {

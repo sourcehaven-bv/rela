@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -208,9 +209,16 @@ func TestOutsideEdits_Rule(t *testing.T) {
 		})
 	}
 
+	if got := o.Permissions(); !slices.Equal(got, []string{"onboarding.start"}) {
+		t.Errorf("Permissions = %v, want [onboarding.start]", got)
+	}
+
 	var none *OutsideEdits
 	if got := none.Rule("collect", "name"); got.Kind != EditAllow {
 		t.Errorf("nil Rule = %+v, want allow", got)
+	}
+	if got := none.Permissions(); got != nil {
+		t.Errorf("nil Permissions = %v, want none", got)
 	}
 	// A block with no default and no rule for the property allows it.
 	c, err = parseSample(t, withEdits("      properties:\n        stage: deny\n"))

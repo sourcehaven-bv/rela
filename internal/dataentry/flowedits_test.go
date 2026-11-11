@@ -27,6 +27,8 @@ type stubPrimedKey struct{}
 
 func (*stubFlowEdits) Governs(entityType string) bool { return entityType == "ticket" }
 
+func (*stubFlowEdits) Permissions(string) []string { return nil }
+
 func (s *stubFlowEdits) PrimeRuns(ctx context.Context, _ []string) (context.Context, error) {
 	s.lookups.Add(1)
 	return context.WithValue(ctx, stubPrimedKey{}, true), nil

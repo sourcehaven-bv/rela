@@ -22,6 +22,10 @@ type FlowEditCeiling interface {
 	// returns a ctx that answers [FlowEditCeiling.Withheld] for them
 	// without another lookup. Read paths only: the answer is a snapshot.
 	PrimeRuns(ctx context.Context, ids []string) (context.Context, error)
+	// Permissions returns the permissions the rules of the flows on
+	// entityType can ask holds about, so a caller can answer them before
+	// it calls Withheld.
+	Permissions(entityType string) []string
 	// Withheld returns the properties of e that the runs on e keep
 	// read-only for the caller, each with the rule that withholds it
 	// (audit only). holds reports whether the caller holds a permission

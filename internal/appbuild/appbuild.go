@@ -2673,6 +2673,7 @@ func buildEntityManager(
 		// engine, face deletes and uploads exclude each other.
 		AttachmentLocker: attachLocker,
 		AnchorGuard:      anchorGuard,
+		RenameGuard:      flowRenameGuardFor(st, guard.flowRuns),
 		ValidationMode:   base.validationMode,
 		Clock:            base.clock(),
 	})

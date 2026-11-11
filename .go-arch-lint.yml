@@ -933,6 +933,9 @@ deps:
       - kvflowrun
       - pgflowrun
       - sqliteflowrun
+      # sqlflowrun: run writes join the store Tx only for the database run
+      # store (TKT-XI7IDBS).
+      - sqlflowrun
       # The reference element range reader, for stores without element
       # columns, handed to visibility.NewElements (TKT-VP02WHG).
       - elementnaive
@@ -1955,6 +1958,7 @@ deps:
       - flowcfg
       - flowrun
       - metamodel
+      - store
   # The engine drives the run store and the compiled flows; the graph writes
   # and reads are consumer-side interfaces the composition root fills.
   flowengine:

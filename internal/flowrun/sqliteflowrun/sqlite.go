@@ -8,12 +8,17 @@
 package sqliteflowrun
 
 import (
+	"database/sql"
+
 	"github.com/Sourcehaven-BV/rela/internal/flowrun/sqlflowrun"
 	"github.com/Sourcehaven-BV/rela/internal/sqlexec/sqliteexec"
 )
 
 // DB is the database handle: the *sql.DB of sqlitedb.DB in production.
 type DB = sqliteexec.DB
+
+// dialect is the SQLite dialect: no locks (see the package doc).
+var dialect = sqlflowrun.Dialect{Name: "sqliteflowrun"}
 
 // New returns a run store over db.
 //
@@ -23,5 +28,19 @@ func New(db DB) (*sqlflowrun.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return sqlflowrun.New(h, sqlflowrun.Dialect{Name: "sqliteflowrun"})
+	return sqlflowrun.New(h, dialect)
+}
+
+// NewInTx returns a run store whose writes join the transaction open on
+// conn, each under a savepoint, so they commit or roll back with it. conn is
+// the one sqlitestore.TxConn returns inside a store transaction; the store
+// is valid only until that transaction ends.
+//
+// Nil: rejected, so a wiring mistake fails at construction.
+func NewInTx(conn *sql.Conn) (*sqlflowrun.Store, error) {
+	h, err := sqliteexec.NewInTx(conn, "flowruns")
+	if err != nil {
+		return nil, err
+	}
+	return sqlflowrun.New(h, dialect)
 }

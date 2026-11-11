@@ -166,9 +166,10 @@ func TestOutsideEdits_OtherRunStillNarrows(t *testing.T) {
 	require.ErrorIs(t, err, flowview.ErrForbidden, "the transports answer a refused step with 403")
 }
 
-// TestOutsideEdits_RenameKeepsRules: a rename moves the subject's runs, so
-// the rules still hold under the new id.
-func TestOutsideEdits_RenameKeepsRules(t *testing.T) {
+// TestOutsideEdits_RenameRefusedWhileHeld: a subject an unfinished run
+// holds keeps its id, so the rules cannot be lifted by a rename. A dry run
+// says so too. Once the run has ended, the rename goes through.
+func TestOutsideEdits_RenameRefusedWhileHeld(t *testing.T) {
 	root := writeFlowProject(t)
 	schema, err := os.ReadFile(filepath.Join(root, "metamodel.yaml"))
 	require.NoError(t, err)
@@ -178,14 +179,21 @@ func TestOutsideEdits_RenameKeepsRules(t *testing.T) {
 	writeMetamodelBody(t, root, manual)
 	svc, ctl := outsideEditsProjectIn(t, root)
 	addFlowPerson(t, svc, "PER-1", map[string]any{"name": "Ada"})
-	_, err = ctl.Start(flowUser(t, svc, "alice"), "onboarding", "PER-1")
+	alice := flowUser(t, svc, "alice")
+	id, err := ctl.Start(alice, "onboarding", "PER-1")
 	require.NoError(t, err)
-	_, err = svc.EntityManager().RenameEntity(flowUser(t, svc, "alice"), "PER-1", "PER-9", entity.RenameOptions{})
-	require.NoError(t, err)
+	for _, dry := range []bool{true, false} {
+		_, err = svc.EntityManager().RenameEntity(alice, "PER-1", "PER-9", entity.RenameOptions{DryRun: dry})
+		require.ErrorIs(t, err, entitymanager.ErrRenameBlocked, "dry run %v", dry)
+	}
 	mgr := entitymanager.FieldGated(svc.EntityManager())
-	_, err = mgr.PatchEntity(flowUser(t, svc, "dave"), "PER-9",
+	_, err = mgr.PatchEntity(flowUser(t, svc, "dave"), "PER-1",
 		entity.Patch{Properties: map[string]any{"documents": true}})
 	requireFlowReadOnly(t, err, "documents")
+
+	require.NoError(t, ctl.Cancel(alice, id))
+	_, err = svc.EntityManager().RenameEntity(alice, "PER-1", "PER-9", entity.RenameOptions{})
+	require.NoError(t, err)
 }
 
 // TestOutsideEdits_UngatedWritesUnchanged: the manager without the field

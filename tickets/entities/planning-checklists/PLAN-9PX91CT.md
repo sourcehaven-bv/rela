@@ -77,14 +77,22 @@ CLI or stdio MCP injects NopACL.
 - In: a run-store lookup error fails closed: every declared property is
 read-only, with attribution `outside_edits:unavailable`, so the audit row does
 not read as a user's denial.
-- Out (documented): the entity body, relations, delete and rename are not
-narrowed; `outside_edits:` governs properties. Surfaces that act for the
-operator or the system and do not gate fields today are not narrowed either: the
-CLI, stdio MCP, operator-declared `_actions`, automation cascades,
-`rela.bypass_acl` and CalDAV client edits. Creates are not narrowed (a new row
-carries no run). The channel policy service (`compileDeclarative`) and
-`NewFromCollaborators` get no ceiling. Follow-up ticket for
-body/relations/delete.
+- In: a subject with a stored run keeps its id. The manager asks a
+RenameGuard inside the rename's store Tx, and the flow guard refuses with
+ErrRenameBlocked on every surface (the CLI included). A lookup error refuses.
+- In: on postgres and sqlite the check and the write are ordered. A field
+patch on a governed type asks the flow edit ceiling again inside its persist Tx,
+reading the runs on the transaction's handle, and the engine's run Create and
+Update write inside a store Tx on the transaction's handle, so the store's write
+lock (pg advisory lock, sqlite write mutex) serializes them. fs has no such lock
+and stays check-then-write (documented).
+- Out (documented): the entity body, relations and delete are not narrowed;
+`outside_edits:` governs properties. Surfaces that act for the operator or the
+system and do not gate fields today are not narrowed either: the CLI, stdio MCP,
+operator-declared `_actions`, automation cascades, `rela.bypass_acl` and CalDAV
+client edits. Creates are not narrowed (a new row carries no run). The channel
+policy service (`compileDeclarative`) and `NewFromCollaborators` get no ceiling.
+Follow-up ticket for body/relations/delete.
 - Out (documented): a merge conflict on a property a run restricts cannot be
 resolved through the API while the run holds it (the conflict resolve runs the
 same field check). Resolve it after the run moves on, or cancel the run.
@@ -276,7 +284,7 @@ the compile step has direct unit tests.
 | STRIDE | Threat | Mitigation |
 | ------ | ------ | ---------- |
 | Spoofing | A caller makes an outside edit look like a step of the run, to escape the ceiling | The exemption reads `flowedits.WithinRun` from ctx, an unexported key. Only two Go sites set it: `FlowControl.complete` (after the waiting-role check, with only the state's `writes:`) and `flowOutputs.Set` (values fixed by the definition). No HTTP, MCP or Lua input reaches it; an archguard test pins the callers. It exempts only from the named run; every other run on the subject still narrows. |
-| Tampering | A person changes a property the flow owns while a run is in a state that denies it | The field verdict removes the property from the writable set on every field-gated surface (data-entry PATCH/PUT, MCP on rela-server, scheduled Lua, flow steps and outputs, channel promote and outputs). The SPA shows it read-only. The run store is the source, so a lagging header does not open a property. A rename moves the subject's runs to the new id (a subscriber on the alias fanout), so renaming does not lift the rules; `TestOutsideEdits_RenameKeepsRules` pins it. Surfaces that do not gate fields (CLI, stdio MCP, operator actions, cascades, bypass_acl, declarative webhooks, conversions, CalDAV) are not narrowed, as documented. Residual, documented: the check and the write are not atomic, so a run that starts between them does not stop that one write; with no cache directory the run store is per process, so a separate scheduler process does not see the server's runs. |
+| Tampering | A person changes a property the flow owns while a run is in a state that denies it | The field verdict removes the property from the writable set on every field-gated surface (data-entry PATCH/PUT, MCP on rela-server, scheduled Lua, flow steps and outputs, channel promote and outputs). The SPA shows it read-only. The run store is the source, so a lagging header does not open a property. A rename of a subject with a stored run is refused inside the rename's Tx, so renaming does not lift the rules; `TestOutsideEdits_RenameRefusedWhileHeld` pins it. Surfaces that do not gate fields (CLI, stdio MCP, operator actions, cascades, bypass_acl, declarative webhooks, conversions, CalDAV) are not narrowed, as documented. On postgres and sqlite the gate is asked again inside the write Tx and run writes take the same lock, so a run that starts between the first check and the write is seen (`TestOutsideEdits_RunStartedDuringPatchFailsClosed`, `TestOutsideEdits_RunWriteTakesWriteLock`). Residual, documented: on the fs backend the check and the write are not ordered. |
 | Repudiation | A refused outside edit leaves no trace | The refusal is a field-gate denial: the manager records a `denied-write` audit row with attribution `outside_edits:flow=F state=S` (or `outside_edits:unavailable` on a lookup error); the data-entry PATCH records its denial the same way. |
 | Information disclosure | The read-only verdict reveals a run's state to a caller who cannot read the run | The verdict is one bit per property, the same channel a `fields:` grant with `related()` has. The wire carries only "not writable"; the flow and state appear in the audit attribution only. Config (flow, state, property names) is not secret. |
 | Denial of service | Field verdicts on a page query runs per row; a policy locks a subject for ever | Runs are looked up once per page (`PrimeFlowRuns`, one List per 500 ids), only where `_fields` are built; a nested section primes its whole tree once; redaction (list pages) does not look them up. Budget tests pin one lookup per section and zero per list page. Only stored runs count, and a run is deleted when it ends; cancelling the run or editing flows.yaml lifts the restriction. Per-level entries are capped at 64. |

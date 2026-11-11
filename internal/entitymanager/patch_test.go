@@ -3,6 +3,7 @@ package entitymanager_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -423,6 +424,20 @@ type recordingGate struct {
 	// onRel, when set, runs inside each CheckRelationMetaWrite call: a
 	// write that lands between the gate check and the update's own write.
 	onRel func()
+	// recheck makes WriteRecheck return CheckFieldWrite. onCheck, when set,
+	// runs after each CheckFieldWrite decision, with the ctx it was asked on.
+	recheck bool
+	onCheck func(ctx context.Context)
+}
+
+// WriteRecheck returns CheckFieldWrite on e when g.recheck is set.
+func (g *recordingGate) WriteRecheck(
+	_ context.Context, e *entity.Entity, set map[string]any, unset []string,
+) func(context.Context) error {
+	if !g.recheck {
+		return nil
+	}
+	return func(ctx context.Context) error { return g.CheckFieldWrite(ctx, e, set, unset) }
 }
 
 // CheckCreateFieldWrite records a create check like CheckFieldWrite.
@@ -432,10 +447,13 @@ func (g *recordingGate) CheckCreateFieldWrite(ctx context.Context, e *entity.Ent
 }
 
 func (g *recordingGate) CheckFieldWrite(
-	_ context.Context, _ *entity.Entity, set map[string]any, unset []string,
+	ctx context.Context, _ *entity.Entity, set map[string]any, unset []string,
 ) error {
 	g.calls++
 	g.lastSet, g.lastUn = set, unset
+	if g.onCheck != nil {
+		defer g.onCheck(ctx)
+	}
 	for k := range set {
 		if g.denied[k] {
 			return errors.New("field write denied: " + k)
@@ -506,6 +524,51 @@ func TestPatchEntity_FieldGateAllowsUngatedProperty(t *testing.T) {
 	if got := mustGet(t, st, "TASK-1").Properties["salary"]; got != "original" {
 		t.Errorf("salary = %v, want it preserved", got)
 	}
+}
+
+// TestPatchEntity_RecheckAtWrite pins the second field check of a gate whose
+// verdict can change under the caller (TKT-XI7IDBS): it runs inside the
+// write's transaction, and a refusal there stops the write even though the
+// first check allowed it. A gate that answers false is asked once.
+func TestPatchEntity_RecheckAtWrite(t *testing.T) {
+	t.Parallel()
+	t.Run("refusal inside the transaction stops the write", func(t *testing.T) {
+		t.Parallel()
+		gate := &recordingGate{recheck: true}
+		var inTx []bool
+		gate.onCheck = func(ctx context.Context) {
+			inTx = append(inTx, store.InTx(ctx) && store.TxView(ctx) != nil)
+			// A change after the first check: the title is now withheld.
+			gate.denied = map[string]bool{"title": true}
+		}
+		mgr, st := newPatchManager(t, gate)
+		seedTask(t, st, "TASK-1", map[string]any{"title": "T"}, "")
+
+		_, err := mgr.PatchEntity(context.Background(), "TASK-1",
+			entity.Patch{Properties: map[string]any{"title": "changed"}})
+		if err == nil || !strings.Contains(err.Error(), "field write denied: title") {
+			t.Fatalf("err = %v, want the check inside the transaction to refuse the title", err)
+		}
+		if want := []bool{false, true}; !slices.Equal(inTx, want) {
+			t.Errorf("checks ran in a transaction = %v, want %v", inTx, want)
+		}
+		if got := mustGet(t, st, "TASK-1").Properties["title"]; got != "T" {
+			t.Errorf("title = %v, want the refused write not persisted", got)
+		}
+	})
+	t.Run("no recheck when the gate reads nothing that changes", func(t *testing.T) {
+		t.Parallel()
+		gate := &recordingGate{}
+		mgr, st := newPatchManager(t, gate)
+		seedTask(t, st, "TASK-1", map[string]any{"title": "T"}, "")
+		if _, err := mgr.PatchEntity(context.Background(), "TASK-1",
+			entity.Patch{Properties: map[string]any{"title": "changed"}}); err != nil {
+			t.Fatalf("PatchEntity: %v", err)
+		}
+		if gate.calls != 1 {
+			t.Errorf("gate consulted %d times, want 1", gate.calls)
+		}
+	})
 }
 
 // TestPatchEntity_RunsFullPipeline pins AC1: a patch is a first-class

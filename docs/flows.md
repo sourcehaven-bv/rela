@@ -408,8 +408,8 @@ state.
 The rules apply to a subject while it has a run that has not ended. A
 finished, failed or cancelled run locks nothing. When a subject has runs
 of several flows, every run's rules apply: a property is writable only if
-each run allows it. Renaming the subject moves its runs to the new id,
-so the rules still hold after the rename.
+each run allows it. A subject keeps its id while it has a run that has
+not ended: rela refuses to rename it until the run ends or is cancelled.
 
 The rules in force are always those of the current `flows.yaml`, also for
 a run that started under an older version of the flow. An
@@ -427,24 +427,30 @@ a write:
   property shows as read-only, `_transitions` lists its transitions as
   not allowed with reason `read-only`, and a write is refused with 403 and
   `field-affordance:read-only:<property>`;
-- MCP on `rela-server`, scheduled Lua scripts (only when the scheduler
-  reads the same run store; see below), and channel promotes and outputs;
+- MCP on `rela-server`, scheduled Lua scripts, and channel promotes and
+  outputs;
 - the steps and outputs of other flows.
 
 They do not apply to the CLI, MCP over stdio, `_actions` declared by the
 operator, automations, `rela.bypass_acl`, declarative webhooks,
 conversions, or CalDAV clients. These act for the operator or the system
 and do not check field rules. The rules also do not cover the entity
-body, relations, renames or deletes, and do not limit creating a new
-entity.
+body, relations or deletes, and do not limit creating a new entity. The
+refusal to rename a subject with an open run is not a field rule: it
+holds on every surface, the CLI included. On the file backend without a
+cache directory, runs are kept in the process that started them, so
+another process does not see them and does not refuse the rename.
 
 If rela cannot read the runs of a subject, every property of that subject
-is read-only until it can. rela checks the rules and then writes; a run
-that starts between the two does not stop that one write.
+is read-only until it can.
 
-A process sees the runs in its own run store. When rela has no cache
-directory, runs are kept in the process only, so `rela scheduler` and
-`rela-server` in separate processes do not see each other's runs.
+On PostgreSQL and SQLite, rela checks the rules again inside the
+transaction that writes the change. A run that starts or moves to another
+state takes the same lock, so it either lands before the check, which
+then sees it, or waits until the write is done. The same lock orders a
+rename against a run start. On the file backend there is no such lock: a
+run that starts between the check and the write does not stop that one
+write.
 
 **Stuck runs.** A run that cannot advance keeps its subject locked: a run
 that failed to store its working state, a run whose output keeps failing,

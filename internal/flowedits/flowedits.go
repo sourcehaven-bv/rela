@@ -24,6 +24,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/flowrun"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // RunLister is the part of [flowrun.Store] a [Ceiling] reads.
@@ -100,6 +101,23 @@ func New(flows *flowcfg.Compiled, meta *metamodel.Metamodel, runs RunLister) (*C
 // Nil: accepted; a nil ceiling governs nothing.
 func (c *Ceiling) Governs(entityType string) bool {
 	return c != nil && c.governed[entityType]
+}
+
+// Permissions implements [affordances.FlowEditCeiling]: the permissions
+// the rules of every flow on entityType ask for, sorted.
+//
+// Nil: accepted; a nil ceiling asks for none.
+func (c *Ceiling) Permissions(entityType string) []string {
+	if c == nil {
+		return nil
+	}
+	var out []string
+	for _, f := range c.flows {
+		if f.Subject() == entityType {
+			out = append(out, f.OutsideEdits().Permissions()...)
+		}
+	}
+	return slices.Compact(slices.Sorted(slices.Values(out)))
 }
 
 // memoKey is the ctx key of the runs primed for a page.
@@ -180,9 +198,11 @@ func (c *Ceiling) Withheld(
 	return out, nil
 }
 
-// runsOn returns the runs on id: primed, or one lookup.
+// runsOn returns the runs on id: primed, or one lookup. Inside a store
+// transaction it always looks up: the check the manager repeats there must
+// see the runs as they are at the write, not as a page primed them.
 func (c *Ceiling) runsOn(ctx context.Context, id string) ([]run, error) {
-	if m, ok := ctx.Value(memoKey{}).(*memo); ok {
+	if m, ok := ctx.Value(memoKey{}).(*memo); ok && !store.InTx(ctx) {
 		m.mu.Lock()
 		runs, primed := m.runs[id]
 		m.mu.Unlock()

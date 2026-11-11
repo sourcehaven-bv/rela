@@ -9,7 +9,7 @@ status: done
 
 ## Code Documentation
 
-- [x] Comments where logic isn't obvious: why the ceiling applies after the role union and only removes, why an empty run state is the initial state, why a stored declaration skips `outside_edits:`, why a rename rekeys runs, why redaction-only reads skip the run lookup
+- [x] Comments where logic isn't obvious: why the ceiling applies after the role union and only removes, why an empty run state is the initial state, why a stored declaration skips `outside_edits:`, why a rename is refused while a run is stored, why the gate is asked again inside the write Tx, why redaction-only reads skip the run lookup
 - [x] Function/type docs if public API: godoc on `flowedits.New`, `WithinRun`, `affordances.FlowEditCeiling`, `appbuild.FlowEdits`, `flowcfg.OutsideEdits`, `flowrun.Query.SubjectIDs`; comment-lint `doclink` gate clean
 
 ## Project Documentation

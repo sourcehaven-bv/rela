@@ -35,6 +35,13 @@ type stubCeiling struct {
 
 func (s *stubCeiling) Governs(entityType string) bool { return entityType == "case" }
 
+func (s *stubCeiling) Permissions(string) []string {
+	if s.permission == "" {
+		return nil
+	}
+	return []string{s.permission}
+}
+
 func (s *stubCeiling) PrimeRuns(ctx context.Context, ids []string) (context.Context, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -258,4 +265,67 @@ func TestPrimeFlowRuns(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, ctx, affordances.PrimeFlowRuns(ctx, plain, rows))
 	})
+}
+
+// TestWriteGate_WriteRecheck pins the check the manager repeats inside a
+// write's transaction (TKT-XI7IDBS): only the flow edit ceiling, with the
+// permissions its rules ask for answered before the transaction.
+func TestWriteGate_WriteRecheck(t *testing.T) {
+	const melden = "outside_edits:flow=melden state=intake"
+	ernst := map[string]any{"ernst": "hoog"}
+	tests := []struct {
+		name    string
+		policy  string
+		ceiling *stubCeiling
+		row     *entity.Entity
+		set     map[string]any
+		unset   []string
+		noCheck bool
+		want    string // attribution of the refusal; empty means admitted
+	}{
+		{name: "ungoverned type", policy: flowEditPolicy, ceiling: &stubCeiling{},
+			row: entity.New("N-1", "note"), set: map[string]any{"text": "x"}, noCheck: true},
+		{name: "no property named", policy: flowEditPolicy, ceiling: &stubCeiling{}, noCheck: true},
+		{name: "withheld set", policy: flowEditPolicy, ceiling: &stubCeiling{withheld: map[string]string{"ernst": melden}},
+			set: ernst, want: "affordance:read-only role=" + melden},
+		{name: "withheld unset", policy: flowEditPolicy,
+			ceiling: &stubCeiling{withheld: map[string]string{"ernst": melden}},
+			unset:   []string{"ernst"}, want: "affordance:read-only role=" + melden},
+		{name: "other property", policy: flowEditPolicy,
+			ceiling: &stubCeiling{withheld: map[string]string{"ernst": melden}}, set: map[string]any{"notes": "x"}},
+		{name: "permission not held", policy: flowEditPolicy, ceiling: &stubCeiling{permission: "privacy.officer"},
+			set: map[string]any{"betrokkenen": "x"}, want: "affordance:read-only role=" + melden},
+		{name: "permission held", policy: flowEditOfficerPolicy, ceiling: &stubCeiling{permission: "privacy.officer"},
+			set: map[string]any{"betrokkenen": "x"}},
+		{name: "lookup error fails closed", policy: flowEditPolicy, ceiling: &stubCeiling{err: errors.New("down")},
+			set: ernst, want: "affordance:read-only role=outside_edits:unavailable"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newFlowEditWorld(t, tc.policy, tc.ceiling)
+			gate, err := affordances.NewWriteGate(w.resolver)
+			require.NoError(t, err)
+			row := tc.row
+			if row == nil {
+				row = w.row
+			}
+			recheck := gate.WriteRecheck(w.ctx(t), row, tc.set, tc.unset)
+			if tc.noCheck {
+				require.Nil(t, recheck)
+				return
+			}
+			require.NotNil(t, recheck)
+			// The check reads only the runs: the permissions were answered
+			// above, so it needs no identity on its ctx.
+			err = recheck(context.Background())
+			if tc.want == "" {
+				require.NoError(t, err)
+				return
+			}
+			var fe *affordances.FieldWriteError
+			require.ErrorAs(t, err, &fe)
+			require.Equal(t, affordances.RuleFieldReadOnly, fe.Rule)
+			require.Equal(t, tc.want, fe.Attribution)
+		})
+	}
 }

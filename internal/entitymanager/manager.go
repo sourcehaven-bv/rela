@@ -238,7 +238,12 @@ var _ autocascade.Mutator = (*Manager)(nil)
 // convert interpolation. It is a seam value like ValidationMode, so it has
 // no sub-struct to join either.
 //
-//plimsoll:max-fields=23
+// 23 -> 24 (TKT-XI7IDBS): [Deps.RenameGuard], so a subject an unfinished
+// flow run holds keeps its id. Like AnchorGuard it must run inside the
+// rename's transaction, which no post-commit hook can do. The optional-hook
+// sub-struct named above would take it along.
+//
+//plimsoll:max-fields=24
 type Deps struct {
 	// Store is the authoritative persistence layer. Required.
 	Store store.Store
@@ -398,6 +403,12 @@ type Deps struct {
 	// channels does.
 	AnchorGuard AnchorGuard
 
+	// RenameGuard refuses a rename that state kept outside the graph under
+	// the old id forbids (see [RenameGuard]).
+	//
+	// Nil: accepted — no such state, as a build without flows has.
+	RenameGuard RenameGuard
+
 	// ValidationMode is the deployment's validation policy (DEC-OYV2AK).
 	// The zero value is [ValidationAdvisory].
 	ValidationMode ValidationMode
@@ -447,8 +458,19 @@ type Deps struct {
 // CheckRelationMetaWrite judges the meta keys a relation create or update of
 // a [FieldGated] handle names, against the relation `fields:` grants of the
 // edge's source row (BUG-O8QP7GX).
+//
+// WriteRecheck returns the part of the CheckFieldWrite verdict on the row e
+// that another writer can change, such as the flow runs on the row
+// (TKT-XI7IDBS). The manager calls it before the write's store transaction
+// and runs the returned check inside it, on a ctx that carries the
+// transaction's view ([store.ContextWithTxView]). The check must not read
+// through a second connection of the store's database: the store's write
+// lock is held while it runs.
+//
+// Nil: returned when no part of the verdict can change under the caller.
 type FieldWriteGate interface {
 	CheckFieldWrite(ctx context.Context, e *entity.Entity, set map[string]any, unset []string) error
+	WriteRecheck(ctx context.Context, e *entity.Entity, set map[string]any, unset []string) func(context.Context) error
 	CheckCreateFieldWrite(ctx context.Context, e *entity.Entity, set map[string]any) error
 	CheckRelationMetaWrite(
 		ctx context.Context, source *entity.Entity, relType string, set map[string]any, unset []string,
@@ -467,6 +489,14 @@ type AllowAllFieldGate struct{}
 func (AllowAllFieldGate) CheckFieldWrite(
 	context.Context, *entity.Entity, map[string]any, []string,
 ) error {
+	return nil
+}
+
+// WriteRecheck implements [FieldWriteGate]: an allow-all verdict reads
+// nothing, so there is nothing to ask again.
+func (AllowAllFieldGate) WriteRecheck(
+	context.Context, *entity.Entity, map[string]any, []string,
+) func(context.Context) error {
 	return nil
 }
 
@@ -1245,7 +1275,7 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	// Unconditional: UpdateEntity is the whole-entity save, whose caller owns
 	// every field. A caller wanting compare-and-swap uses PatchEntity with
 	// entity.Patch.ExpectedVersion.
-	return m.updateCore(ctx, e, oldEntity, "")
+	return m.updateCore(ctx, e, oldEntity, "", nil)
 }
 
 // updateKeepingFileValues is the write half of [Manager.UpdateEntity] for a
@@ -1277,7 +1307,7 @@ func updateKeepingFileValues(
 		}
 		first = false
 		pinStoredFileValues(m.deps.Meta, old, e, "")
-		return m.updateCore(ctx, e, old, string(store.VersionOf(old)))
+		return m.updateCore(ctx, e, old, string(store.VersionOf(old)), nil)
 	})
 }
 
@@ -1599,7 +1629,26 @@ func (m *Manager) patchEntityOnce(
 	if pinToRead {
 		expected = string(store.VersionOf(stored))
 	}
-	return m.updateCore(ctx, updated, stored, expected)
+	// A verdict that reads state another writer can change (a flow run
+	// starting on the row) is asked again inside the write transaction, so
+	// such a change cannot fall between the check above and the write.
+	// The refusal is recorded after the transaction: no audit write runs
+	// while the store's write lock is held.
+	var txCheck func(context.Context) error
+	var refused error
+	if fieldGated(m) {
+		if recheck := m.deps.FieldGate.WriteRecheck(ctx, stored, p.Properties, p.MetaUnset); recheck != nil {
+			txCheck = func(txCtx context.Context) error {
+				refused = recheck(txCtx)
+				return refused
+			}
+		}
+	}
+	res, err := m.updateCore(ctx, updated, stored, expected, txCheck)
+	if refused != nil {
+		_ = recordFieldDenial(ctx, m, stored, refused)
+	}
+	return res, err
 }
 
 // updateCore is the shared post-authorization update pipeline: validate,
@@ -1622,9 +1671,10 @@ func (m *Manager) patchEntityOnce(
 // property names against the entity type before dispatching.
 // expectedVersion carries the caller's compare-and-swap precondition down to
 // the durable write. Empty means unconditional; PatchEntity passes the
-// version of its merge base even when its caller gave none.
+// version of its merge base even when its caller gave none. txCheck, when
+// set, runs inside the write's transaction (see [writeChecked]).
 func (m *Manager) updateCore(
-	ctx context.Context, e, oldEntity *entity.Entity, expectedVersion string,
+	ctx context.Context, e, oldEntity *entity.Entity, expectedVersion string, txCheck func(context.Context) error,
 ) (*entity.UpdateResult, error) {
 	// Type is immutable on update, on EVERY path:
 	// the store checks a non-default face's type against its family but not
@@ -1695,7 +1745,7 @@ func (m *Manager) updateCore(
 	// that can compare-and-write atomically. Empty expectedVersion yields the
 	// zero condition: an unconditional write, for a caller that owns the
 	// whole entity (UpdateEntity).
-	if err := writeWithUniqueCheck(ctx, m.deps, e, e.ID, func(st store.Store) error {
+	if err := writeChecked(ctx, m.deps, e, e.ID, txCheck, func(st store.Store) error {
 		_, werr := st.UpdateEntityIf(ctx, e, store.UpdateCondition{
 			ExpectedVersion: store.EntityVersion(expectedVersion),
 		})
@@ -2882,6 +2932,9 @@ func (m *Manager) RenameEntity(
 		visible = n
 	}
 	if opts.DryRun {
+		if err := checkRenameGuard(ctx, m.deps, oldID); err != nil {
+			return nil, err
+		}
 		res, err := renameEntity(ctx, m.deps.Store, oldID, newID, opts)
 		if err != nil {
 			return nil, err
@@ -2916,7 +2969,7 @@ func (m *Manager) RenameEntity(
 		renamed []*entity.Entity
 	)
 	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
-		txCtx := store.ContextInTx(ctx)
+		txCtx := store.ContextWithTxView(ctx, tx)
 		var rErr error
 		res, renamed, rErr = r.inTx(txCtx, tx)
 		return rErr
@@ -2994,6 +3047,9 @@ func (r *familyRename) inTx(
 	}
 	if aErr := r.m.authorizeRename(ctx, r.oldID, family, r.authorized); aErr != nil {
 		return nil, nil, aErr
+	}
+	if gErr := checkRenameGuard(ctx, r.m.deps, r.oldID); gErr != nil {
+		return nil, nil, gErr
 	}
 	res, err := renameEntity(ctx, tx, r.oldID, r.newID, entity.RenameOptions{})
 	if err != nil {

@@ -427,6 +427,12 @@ func (g denyFieldGate) CheckFieldWrite(context.Context, *entity.Entity, map[stri
 	return nil
 }
 
+func (denyFieldGate) WriteRecheck(
+	context.Context, *entity.Entity, map[string]any, []string,
+) func(context.Context) error {
+	return nil
+}
+
 func (g denyFieldGate) CheckCreateFieldWrite(_ context.Context, _ *entity.Entity, set map[string]any) error {
 	if _, ok := set[g.field]; ok {
 		return errFieldDenied

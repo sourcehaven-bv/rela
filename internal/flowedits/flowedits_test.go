@@ -18,6 +18,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/flowedits"
 	"github.com/Sourcehaven-BV/rela/internal/flowrun"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 const schema = `version: "1"
@@ -250,6 +251,14 @@ func TestCeiling_Withheld(t *testing.T) {
 	}
 }
 
+func TestCeiling_Permissions(t *testing.T) {
+	ceil := newCeiling(t, &fakeRuns{})
+	require.Equal(t, []string{"privacy.officer"}, ceil.Permissions("case"))
+	require.Empty(t, ceil.Permissions("note"))
+	var none *flowedits.Ceiling
+	require.Nil(t, none.Permissions("case"))
+}
+
 func TestCeiling_LookupError(t *testing.T) {
 	runs := &fakeRuns{err: errors.New("down")}
 	ceil := newCeiling(t, runs)
@@ -281,6 +290,10 @@ func TestCeiling_PrimeRuns(t *testing.T) {
 	_, err = ceil.Withheld(ctx, caseRow("C-3"), holds)
 	require.NoError(t, err)
 	require.Equal(t, 2, runs.callCount(), "an unprimed row looks up its own runs")
+
+	_, err = ceil.Withheld(store.ContextInTx(ctx), caseRow("C-1"), holds)
+	require.NoError(t, err)
+	require.Equal(t, 3, runs.callCount(), "inside a store transaction a primed row looks up again")
 }
 
 func TestCeiling_Batches(t *testing.T) {

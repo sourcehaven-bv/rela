@@ -79,6 +79,32 @@ func (o *OutsideEdits) Rule(state, property string) EditRule {
 	return EditRule{Kind: EditAllow}
 }
 
+// Permissions returns, sorted and without repeats, the permissions the
+// [EditPermission] rules of o ask for, at every level.
+//
+// Nil: accepted; a nil OutsideEdits asks for none.
+func (o *OutsideEdits) Permissions() []string {
+	if o == nil {
+		return nil
+	}
+	var out []string
+	add := func(lvl editLevel) {
+		if lvl.def != nil && lvl.def.Kind == EditPermission {
+			out = append(out, lvl.def.Permission)
+		}
+		for _, r := range lvl.props {
+			if r.Kind == EditPermission {
+				out = append(out, r.Permission)
+			}
+		}
+	}
+	add(o.flow)
+	for _, lvl := range o.states {
+		add(lvl)
+	}
+	return slices.Compact(slices.Sorted(slices.Values(out)))
+}
+
 // rawEditLevel is one level of `outside_edits:`. States appear only at the
 // flow level; [loader.outsideEdits] refuses them in a state.
 type rawEditLevel struct {

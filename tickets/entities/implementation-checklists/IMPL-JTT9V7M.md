@@ -46,8 +46,13 @@ not refused by its own rules.
 another run's rules, and the error maps to 403 (`flowview.ErrForbidden`).
 - TestOutsideEdits_UngatedWritesUnchanged: CLI-shaped (ungated) writes
 are not narrowed.
-- TestOutsideEdits_RenameKeepsRules: after a rename the rules hold under
-the new id; the test fails when the rekey subscriber is disabled.
+- TestOutsideEdits_RenameRefusedWhileHeld: a rename (and its dry run) of a
+subject with an open run is refused with ErrRenameBlocked; after the run is
+cancelled the rename succeeds.
+- TestOutsideEdits_RunStartedDuringPatchFailsClosed and
+TestOutsideEdits_RunWriteTakesWriteLock (sqlite, postgres): a run that starts
+between the first check and the write refuses the write; run writes wait for
+the store write lock.
 
 Data-entry surface (`internal/dataentry/flowedits_test.go`,
 `transitions_wire_test.go`): `_fields` marks the property read-only, PATCH

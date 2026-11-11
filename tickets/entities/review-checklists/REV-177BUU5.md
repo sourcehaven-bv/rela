@@ -41,10 +41,9 @@ unexplained suppression is a finding nobody can re-evaluate later.
 - [x] Self-reviewed the diff for unrelated changes
 
 **Review Responses:** cranky-code-reviewer: RR-U4Q55KZ, RR-CODIYGN, RR-KJVGQN4,
-RR-TUPD940, RR-I3F8C1A, RR-E3Y5N0R (deferred), RR-Y4LXMH6, RR-BNM4ZMM
-(wont-fix), RR-UFO9NJH, RR-VW4MTWN (wont-fix), RR-ICZAM2T (wont-fix),
+RR-TUPD940, RR-I3F8C1A, RR-E3Y5N0R (deferred), RR-Y4LXMH6, RR-BNM4ZMM, RR-UFO9NJH, RR-VW4MTWN (wont-fix), RR-ICZAM2T (wont-fix),
 RR-KRD8PCO. rela-security-reviewer: RR-8GXKPA9, RR-1LEDJ4R, RR-3QK26VQ,
-RR-81JM2A9. Design review: RR-2CV78VE, RR-3MLJB30, RR-5Y944MH, RR-A3CHADD,
+RR-81JM2A9, RR-MRCVXKK. Second round (race and rename): RR-C0TBJSW, RR-Q4GSSI4, RR-OQBYQS9, RR-8KENFAZ (wont-fix), RR-EI09E10, RR-BWXIQC2, RR-3JXCMMI (deferred), RR-85FMUX8 (wont-fix), RR-J7T9NJ7 (wont-fix), RR-6D8NPR9, RR-8GP0FOE (wont-fix). Design review: RR-2CV78VE, RR-3MLJB30, RR-5Y944MH, RR-A3CHADD,
 RR-AJZ229R, RR-EGDO17O, RR-EZFAAVH, RR-FCT21N7, RR-LTCZWY0, RR-MY1HH4U,
 RR-NGMV5L4, RR-PBC2XS7, RR-PQNXHO7, RR-Q1M2X2S, RR-ZHVS87Y.
 
@@ -62,7 +61,8 @@ RR-NGMV5L4, RR-PBC2XS7, RR-PQNXHO7, RR-Q1M2X2S, RR-ZHVS87Y.
 - PASS: a run lookup error locks every property (flowedits unit test).
 - PASS: one run lookup per section, none per list page (budget tests).
 - PASS: the affordance profile override is refused with a ceiling (TestFlowEdits_ProfileRefused).
-- PASS: a rename keeps the rules (TestOutsideEdits_RenameKeepsRules).
+- PASS: a rename of a subject with an open run is refused (TestOutsideEdits_RenameRefusedWhileHeld).
+- PASS: on sqlite and postgres a run started during a PATCH refuses the write (TestOutsideEdits_RunStartedDuringPatchFailsClosed, TestOutsideEdits_RunWriteTakesWriteLock).
 
 ## Documentation (enhancements only)
 

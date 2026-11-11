@@ -123,7 +123,7 @@ func buildFlowEngine(s *Services, runs flowrun.Store) (*flowengine.Engine, error
 	}
 	meta := s.meta
 	return flowengine.New(flowengine.Deps{
-		Flows: flows, Meta: meta, Runs: runs,
+		Flows: flows, Meta: meta, Runs: lockFlowRuns(s.store, runs),
 		Headers:  flowHeaders{mgr: s.entityManager, as: as},
 		Outputs:  flowOutputs{mgr: entitymanager.FieldGated(s.entityManager), as: as},
 		Subjects: flowSubjects{st: s.store, rows: reader, as: as},
@@ -146,7 +146,7 @@ func openFlowEdits(base *SharedBase, st store.Store, overrides *backendOverrides
 		return nil, fmt.Errorf("flows: %w", err)
 	}
 	overrides.flowRuns = runs
-	c, err := flowedits.New(base.flows, base.meta, runs)
+	c, err := flowedits.New(base.flows, base.meta, lockFlowRuns(st, runs))
 	if err != nil {
 		return nil, fmt.Errorf("flows: %w", err)
 	}
@@ -157,10 +157,11 @@ func openFlowEdits(base *SharedBase, st store.Store, overrides *backendOverrides
 }
 
 // flowRunAliases moves a subject's runs to its new id when it is renamed.
-// The run store keys runs by subject id, and the flow edit ceiling finds a
-// subject's runs by its id: without the move a rename would end the
-// subject's `outside_edits:` (TKT-XI7IDBS). Deletes are left to the
-// runtime.
+// The run store keys runs by subject id. [flowRenameGuard] refuses to rename
+// a subject that a run holds, inside the rename's transaction, so on
+// postgres and sqlite no run is left to move. On the fs and memory tiers the
+// guard and a run start are not ordered, and this move is the backstop for a
+// run that started while the rename ran. Deletes are left to the runtime.
 type flowRunAliases struct {
 	runs flowrun.Store
 }
@@ -192,6 +193,47 @@ func (*flowRunAliases) EntityDeleted(context.Context, string) error { return nil
 // EntityFaceDeleted keeps the runs: they follow the subject, which still
 // exists.
 func (*flowRunAliases) EntityFaceDeleted(context.Context, string, entity.Face) error { return nil }
+
+// flowRenameGuard refuses to rename a subject that an unfinished flow run
+// holds (TKT-XI7IDBS). The run keeps the subject's old id, so a rename would
+// separate the subject from its run and lift the run's `outside_edits:`. A
+// run is deleted when it ends, so every stored run counts.
+//
+// The manager asks inside the rename's store transaction. On postgres and
+// sqlite a run start writes under the same lock (see [txFlowRuns]), so the
+// check sees every run that started before the rename.
+type flowRenameGuard struct {
+	runs flowrun.Store
+}
+
+// flowRenameGuardFor returns the guard over runs, which reads on the
+// rename's transaction where st has one to join (see [txFlowRuns]). The
+// result is a nil interface, not a typed nil, so the manager's nil check
+// holds.
+//
+// Nil: runs is accepted (no flows) and gives no guard.
+func flowRenameGuardFor(st store.Store, runs flowrun.Store) entitymanager.RenameGuard {
+	if runs == nil {
+		return nil
+	}
+	return flowRenameGuard{runs: lockFlowRuns(st, runs)}
+}
+
+// CheckRename implements [entitymanager.RenameGuard]. It fails closed: a run
+// store it cannot read refuses the rename. The cause goes to the log, not
+// to the caller, because it can carry database detail.
+func (g flowRenameGuard) CheckRename(ctx context.Context, id string) error {
+	held, err := g.runs.List(ctx, flowrun.Query{SubjectID: id, Limit: 1})
+	if err != nil {
+		slog.ErrorContext(ctx, "flows: rename refused: the flow runs could not be read", "id", id, "err", err)
+		return fmt.Errorf("%w: the flow runs on %s could not be read", entitymanager.ErrRenameBlocked, id)
+	}
+	if len(held) > 0 {
+		return fmt.Errorf("%w: an unfinished flow run holds %s; finish or cancel the run first",
+			entitymanager.ErrRenameBlocked, id)
+	}
+	return nil
+}
 
 // FlowEdits returns the flow edit ceiling of s, for the data-entry
 // resolver (see dataentry.ResolverFromServices). It is a package function
