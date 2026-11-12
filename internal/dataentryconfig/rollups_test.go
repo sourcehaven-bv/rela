@@ -7,8 +7,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
-// TestValidateConfig_RollupMisuse pins that a list may show a roll-up
-// (TKT-6I2OPG) as a column but not sort, filter or group on it.
+// TestValidateConfig_RollupMisuse pins that a list may show, sort, filter
+// and group on a roll-up (TKT-6I2OPG), and a kanban may not filter on one.
 func TestValidateConfig_RollupMisuse(t *testing.T) {
 	meta, err := metamodel.Parse([]byte(`version: "1.0"
 entities:
@@ -34,36 +34,36 @@ relations:
 	if err != nil {
 		t.Fatal(err)
 	}
-	cases := []struct {
+	listCases := []struct {
 		name string
 		mut  func(*List)
-		want string
 	}{
-		{"column", func(*List) {}, ""},
-		{"sortable column", func(l *List) { l.Columns[1].Sortable = true }, "column[1] (sortable)"},
-		{"sort", func(l *List) { l.Sort = []SortSpec{{Property: "plans"}} }, "sort[0]"},
+		{"column", func(*List) {}},
+		{"sortable column", func(l *List) { l.Columns[1].Sortable = true }},
+		{"sort", func(l *List) { l.Sort = []SortSpec{{Property: "plans"}} }},
 		{"filter", func(l *List) {
-			l.Filters = []FilterConfig{{Property: "plans", Operator: "eq", Value: "1"}}
-		}, "filters[0]"},
-		{"group_by", func(l *List) { l.GroupBy = &ListGroupBy{Property: "plans"} }, "group_by"},
+			l.Filters = []FilterConfig{{Property: "plans", Operator: "=", Value: "1"}}
+		}},
+		{"group_by", func(l *List) { l.GroupBy = &ListGroupBy{Property: "plans"} }},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range listCases {
+		t.Run("list "+tc.name, func(t *testing.T) {
 			list := List{EntityType: "risk", Columns: []ListColumn{{Property: "title"}, {Property: "plans"}}}
 			tc.mut(&list)
 			cfg := &Config{App: AppConfig{Name: "t"}, Lists: map[string]List{"risks": list}}
-			err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
-			if tc.want == "" {
-				if err != nil {
-					t.Fatalf("ValidateConfig: %v", err)
-				}
-				return
-			}
-			if err == nil || !strings.Contains(err.Error(), tc.want) ||
-				!strings.Contains(err.Error(), `roll-up property "plans"`) {
-
-				t.Fatalf("ValidateConfig error = %v, want %q on the roll-up", err, tc.want)
+			if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err != nil {
+				t.Fatalf("ValidateConfig: %v", err)
 			}
 		})
 	}
+	t.Run("kanban filter", func(t *testing.T) {
+		cfg := &Config{App: AppConfig{Name: "t"}, Kanbans: map[string]Kanban{"board": {
+			EntityType: "risk", ColumnProperty: "title",
+			Filters: []FilterConfig{{Property: "plans", Operator: "=", Value: "1"}},
+		}}}
+		err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+		if err == nil || !strings.Contains(err.Error(), `filters[0] uses roll-up property "plans"`) {
+			t.Fatalf("ValidateConfig error = %v, want the kanban filter refused", err)
+		}
+	})
 }

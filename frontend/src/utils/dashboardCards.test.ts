@@ -5,6 +5,7 @@ import {
   groupKey,
   listBreakdown,
   queryBreakdown,
+  summaryText,
   tableRows,
   type CardSchema,
 } from './dashboardCards'
@@ -16,6 +17,9 @@ const types: Record<string, EntityType> = {
       stage: { type: 'enum', values: ['lead', 'won'], labels: { lead: 'Lead', won: 'Won' } },
       sector: { type: 'string' },
       title: { type: 'string' },
+      cost: { type: 'integer' },
+      amount: { type: 'decimal', scale: 2, display: { currency: 'EUR' } },
+      closed: { type: 'date' },
     },
   } as unknown as EntityType,
   lead: {
@@ -199,5 +203,38 @@ describe('tableRows', () => {
     expect(r.cells[0]).toMatchObject({ link: '/entity/deal/D-1', text: 'Big' })
     expect(r.cells[1].widget?.modelValue).toBe('won')
     expect(r.cells[1].text).toBe('')
+  })
+})
+
+describe('summaryText', () => {
+  const card = (display: DashboardCardEntry['display'], property: string): DashboardCardEntry => ({
+    index: 0,
+    title: 'T',
+    list: 'deals',
+    display,
+    property,
+  })
+  const value = (v: number | string | undefined) => ({
+    title: 'T',
+    display: 'sum' as const,
+    list: 'deals',
+    total: 1,
+    value: v,
+  })
+
+  it('formats an integer sum', () => {
+    expect(summaryText(schema, card('sum', 'cost'), value(3500), 'UTC')).toBe('3,500')
+  })
+  it('formats a decimal sum as an amount at the property scale', () => {
+    expect(summaryText(schema, card('sum', 'amount'), value('12.5'), 'UTC')).toBe('€12.50')
+  })
+  it('keeps the digits of an average', () => {
+    expect(summaryText(schema, card('avg', 'cost'), value('1.50'), 'UTC')).toBe('1.50')
+  })
+  it('formats a min like a table cell', () => {
+    expect(summaryText(schema, card('min', 'closed'), value('2026-01-02'), 'UTC')).toMatch(/2026/)
+  })
+  it('has no text without a value', () => {
+    expect(summaryText(schema, card('max', 'cost'), value(undefined), 'UTC')).toBeUndefined()
   })
 })

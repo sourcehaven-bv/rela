@@ -472,6 +472,10 @@ var validDashboardDisplayModes = map[string]bool{
 	"breakdown": true,
 	"matrix":    true,
 	"ratio":     true,
+	"sum":       true,
+	"avg":       true,
+	"min":       true,
+	"max":       true,
 }
 
 var validCommandContexts = map[string]bool{
@@ -1291,8 +1295,6 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 		}
 
 		errs = append(errs, validateSortSpecs(fmt.Sprintf("list %q", listID), entDef, list.Sort)...)
-		errs = append(errs, rollupMisuse(fmt.Sprintf("list %q", listID), entDef, list.Columns, list.Sort,
-			list.Filters, list.FilterControls, list.GroupBy)...)
 
 		// Validate filters
 		for i, f := range list.Filters {
@@ -2547,8 +2549,8 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 				kanbanID))
 		}
 
-		errs = append(errs, rollupMisuse(fmt.Sprintf("kanban %q", kanbanID), entDef, nil, nil,
-			kanban.Filters, kanban.FilterControls, nil)...)
+		errs = append(errs, rollupMisuse(fmt.Sprintf("kanban %q", kanbanID), entDef,
+			kanban.Filters, kanban.FilterControls)...)
 		for _, kp := range [][2]string{
 			{"column_property", kanban.ColumnProperty}, {"swimlane_property", kanban.SwimlaneProperty},
 		} {

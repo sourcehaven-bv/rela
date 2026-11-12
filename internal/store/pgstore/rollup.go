@@ -76,6 +76,10 @@ func rollupValue(q store.RollupQuery, text string) (any, error) {
 			return nil, nil //nolint:nilnil // a hidden pick is "no value", not a failure
 		}
 		return store.RollupScalar(pair[0]), nil
+	case q.Func == store.RollupSum && q.Decimal:
+		// numeric sums exactly and keeps the longest scale summed, as the
+		// generic fold renders it.
+		return text, nil
 	case q.Func == store.RollupSum || q.Numeric:
 		// The sum is exact numeric; a total outside int64 has no value, as
 		// in the generic fold. min and max are always in range.
@@ -157,6 +161,9 @@ func rollupAggregateSQL(b *sqlBuilder, q store.RollupQuery) string {
 	case store.RollupCount:
 		return "NULL::text"
 	case store.RollupSum:
+		if q.Decimal {
+			return "sum(" + decimalSQL(b, q.Value) + ")::text"
+		}
 		return "sum(" + integralSQL(b, q.Value) + ")::text"
 	case store.RollupMin, store.RollupMax:
 		fn := "min"
@@ -188,6 +195,16 @@ func integralSQL(b *sqlBuilder, prop string) string {
 	return fmt.Sprintf("(CASE WHEN jsonb_typeof(x.properties -> %s) = 'number' THEN "+
 		"CASE WHEN %s = trunc(%s) AND %s BETWEEN -9223372036854775808 AND 9223372036854775807 THEN trunc(%s) END END)",
 		p, n, n, n, n)
+}
+
+// decimalSQL is the property as numeric when it is a JSON number or a
+// string in plain decimal notation, else NULL: the values
+// [store.RollupDecimal] reads.
+func decimalSQL(b *sqlBuilder, prop string) string {
+	p := b.arg(prop)
+	return fmt.Sprintf("(CASE jsonb_typeof(x.properties -> %s) WHEN 'number' THEN (x.properties ->> %s)::numeric "+
+		"WHEN 'string' THEN CASE WHEN (x.properties ->> %s) ~ '^[+-]?[0-9]+([.][0-9]+)?$' "+
+		"THEN (x.properties ->> %s)::numeric END END)", p, p, p, p)
 }
 
 // nonEmptyStringSQL is the property's text when it is a non-empty JSON

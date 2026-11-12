@@ -1063,7 +1063,7 @@ entities:
 | `count`     | The number of related entities. The property must be `integer`                               |
 | `exists`    | Whether there is at least one. The property must be `boolean`                                 |
 | `min`/`max` | The lowest or highest value of an `integer` or `date` property; same type. Not yet `decimal`  |
-| `sum`       | The total of an `integer` property. The property must be `integer`. Not yet `decimal`         |
+| `sum`       | The exact total of an `integer` or `decimal` property; the roll-up has the same type          |
 | `latest_by` | With `pick`: the `pick` value of the entity with the latest `date` here                       |
 
 Declare exactly one function. `pick` must have the roll-up's declared type.
@@ -1081,7 +1081,7 @@ text, and only that date format sorts as text in time order.
 | Reads | The entity's own properties | Properties of related entities |
 | When | On every write, then stored | On every read, never stored |
 | Access | One value for every reader | Per reader: it counts only what the reader may read |
-| Filter, sort, group | Yes, like any stored property | No |
+| Filter, sort, group | Yes, like any stored property | In a list, yes; on a board, no |
 | Conditions and automations | Yes | No: a condition that names one fails to load |
 
 **Access.** A related entity the reader cannot read is never counted. A related
@@ -1092,12 +1092,13 @@ does not fall back to an older entity. Two readers can therefore see different
 values for the same entity.
 
 **Where the value appears.** The entity API (`GET /api/v1/{type}/{id}`, and the
-responses of create and update), the entity detail page, view sections, and the
-MCP `show_entity` tool. A list row carries roll-ups only when asked, because
-each roll-up costs one store query per page: send `rollups=1` for every roll-up,
-or `list_id` naming a configured list, which then carries the roll-ups shown as
-its columns. A list cannot filter, sort or group on a roll-up; the request
-answers `400 invalid_filter`, and a `data-entry.yaml` that tries fails to load.
+responses of create and update), the entity detail page, view sections, list
+rows, dashboard cards, and the MCP `show_entity` tool. Each roll-up costs one
+store query per page, whatever the page size; send `rollups=false` to leave
+roll-ups out of a list response. A list can filter, sort and group on a
+roll-up. rela then computes the roll-up for every row the list scopes before it
+pages, so such a list is slower on a large type. A kanban board cannot filter
+on a roll-up; a `data-entry.yaml` that tries fails to load.
 
 **Writes.** Setting or unsetting a roll-up through the CLI, MCP, Lua or the
 data-entry API is refused. A whole-entity update that sends back the value it

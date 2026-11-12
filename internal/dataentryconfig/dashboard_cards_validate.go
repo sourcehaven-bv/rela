@@ -23,7 +23,7 @@ func validateDashboardCardSource(
 	case card.List == "" && card.Query == "":
 		return []string{at + " sets neither list: nor query:; set exactly one"}
 	case card.List == "":
-		if card.Display == "matrix" || card.Display == "ratio" {
+		if card.Display == "matrix" || card.Display == "ratio" || IsSummaryDisplay(card.Display) {
 			return []string{fmt.Sprintf("%s uses %s display, which needs list:", at, card.Display)}
 		}
 		return nil
@@ -63,6 +63,13 @@ func validateDashboardCardSource(
 	case "table":
 		errs = append(errs, validateTableCard(at, card, prop)...)
 	}
+	if IsSummaryDisplay(card.Display) {
+		errs = append(errs, validateSummary(at, Summary{
+			Function: SummaryFunction(card.Display), Property: card.Property,
+		}, listCfg.EntityType, def)...)
+	} else if card.Property != "" {
+		errs = append(errs, at+": property applies to sum, avg, min and max display only")
+	}
 	if card.Display != "matrix" && card.setsMatrixOption() {
 		errs = append(errs, at+": rows, columns (a property), tone_by, colors, rows_label, columns_label, "+
 			"rows_order and columns_order apply to matrix display only")
@@ -71,6 +78,17 @@ func validateDashboardCardSource(
 		errs = append(errs, at+": match applies to ratio display only")
 	}
 	return errs
+}
+
+// IsSummaryDisplay reports whether a card display folds one property over
+// the card's rows: sum, avg, min or max.
+func IsSummaryDisplay(display string) bool {
+	switch SummaryFunction(display) {
+	case SummarySum, SummaryAvg, SummaryMin, SummaryMax:
+		return true
+	case SummaryCount:
+	}
+	return false
 }
 
 // validateRatioCard checks a ratio card's match scope. `all` admits every row,

@@ -12,29 +12,17 @@ func isRollup(def *metamodel.EntityDef, prop string) bool {
 	return ok && pd.Rollup != nil
 }
 
-// rollupMisuse reports every place a list or a kanban filters, sorts or
-// groups on a roll-up property. A roll-up is computed per reader when a row
-// is served, so no store query and no list filter can see it. A roll-up may
-// be a column; the column is served, not sortable.
-func rollupMisuse(
-	where string, def *metamodel.EntityDef, columns []ListColumn, sort []SortSpec,
-	filters []FilterConfig, controls []FilterControl, groupBy *ListGroupBy,
-) []string {
+// rollupMisuse reports every place a kanban filters on a roll-up property.
+// A board filters its cards in the browser, over the values the page
+// carries, so a filter there could judge a card before its roll-up is
+// computed. A list filters, sorts and groups in the server, where a roll-up
+// is computed for every row first (TKT-6I2OPG), so a list may use one
+// anywhere.
+func rollupMisuse(where string, def *metamodel.EntityDef, filters []FilterConfig, controls []FilterControl) []string {
 	var errs []string
 	add := func(what, prop string) {
 		errs = append(errs, fmt.Sprintf(
-			"%s: %s uses roll-up property %q; a roll-up is computed when a row is read, "+
-				"so it cannot be filtered, sorted or grouped on", where, what, prop))
-	}
-	for i, c := range columns {
-		if c.Sortable && isRollup(def, c.Property) {
-			add(fmt.Sprintf("column[%d] (sortable)", i), c.Property)
-		}
-	}
-	for i, s := range sort {
-		if isRollup(def, s.Property) {
-			add(fmt.Sprintf("sort[%d]", i), s.Property)
-		}
+			"%s: %s uses roll-up property %q; a board cannot filter on a roll-up, a list can", where, what, prop))
 	}
 	for i, f := range filters {
 		if isRollup(def, f.Property) {
@@ -45,9 +33,6 @@ func rollupMisuse(
 		if isRollup(def, fc.Property) {
 			add(fmt.Sprintf("filter_controls[%d]", i), fc.Property)
 		}
-	}
-	if groupBy != nil && isRollup(def, groupBy.Property) {
-		add("group_by", groupBy.Property)
 	}
 	return errs
 }

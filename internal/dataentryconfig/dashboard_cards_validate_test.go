@@ -50,6 +50,24 @@ dashboard:
 	assert.Equal(t, MatrixOrderAsc, card.ColumnsOrder)
 }
 
+// TestDashboardCard_SummaryDisplays pins that a list card may fold a
+// numeric property with sum, avg, min or max.
+func TestDashboardCard_SummaryDisplays(t *testing.T) {
+	cfg, err := loadAndValidate(t, `
+version: "1.0"
+lists:
+  all: {entity_type: ticket}
+dashboard:
+  cards:
+    - {title: Total, list: all, display: sum, property: score}
+    - {title: Mean, list: all, display: avg, property: score}
+    - {title: Low, list: all, display: min, property: score}
+    - {title: High, list: all, display: max, property: score}
+`)
+	require.NoError(t, err)
+	assert.Equal(t, "score", cfg.Dashboard.Cards[0].Property)
+}
+
 func TestMatrixAxisTooWide(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -114,6 +132,14 @@ func TestValidateDashboardCardSource(t *testing.T) {
 			`column "nope" is not a property of "ticket"`},
 		{"unknown table sort", `{title: X, list: all, display: table, columns: [{property: title}], sort: [{property: nope}]}`,
 			`sort "nope" is not a property of "ticket"`},
+		{"sum needs list", `{title: X, query: "type:ticket", display: sum, property: score}`,
+			"uses sum display, which needs list:"},
+		{"sum without property", `{title: X, list: all, display: sum}`, "sum needs a property"},
+		{"sum of a string", `{title: X, list: all, display: sum, property: title}`,
+			`sum needs a property of type integer, decimal; "title" is "string"`},
+		{"avg of a list", `{title: X, list: all, display: avg, property: tags}`, "needs a property of type"},
+		{"property on count", `{title: X, list: all, display: count, property: score}`,
+			"property applies to sum, avg, min and max display only"},
 		{"table limit too large", `{title: X, list: all, display: table, columns: [{property: title}], limit: 101}`,
 			"limit 101 is above the maximum of 100"},
 	}

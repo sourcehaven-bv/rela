@@ -188,3 +188,94 @@ func TestCompile_RejectsChain(t *testing.T) {
 		t.Fatalf("Compile error = %v, want a chain refusal", err)
 	}
 }
+
+// sumSchema sums a property of each numeric type, declared at the type of
+// the property it sums.
+const sumSchema = `version: "1.0"
+entities:
+  project:
+    label: Project
+    id_prefix: "PRJ-"
+    properties:
+      cost_cents:
+        type: integer
+        rollup: { via: has, sum: cents }
+      cost:
+        type: decimal
+        rollup: { via: has, sum: amount }
+  ticket:
+    label: Ticket
+    id_prefix: "TKT-"
+    properties:
+      cents: {type: integer}
+      amount: {type: decimal}
+      title: {type: string}
+relations:
+  has:
+    from: [project]
+    to: [ticket]
+`
+
+func TestCompile_SumDecimal(t *testing.T) {
+	t.Parallel()
+	meta, err := metamodel.Parse([]byte(sumSchema))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	set, err := rollup.Compile(meta)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	got := map[string]rollup.Column{}
+	for _, c := range set.For("project") {
+		got[c.Property] = c
+	}
+	if c := got["cost"]; c.StoreFunc() != store.RollupSum || !c.Decimal || c.Value != "amount" {
+		t.Errorf("cost compiled to %+v, want a decimal sum of amount", c)
+	}
+	if c := got["cost_cents"]; c.Decimal || !c.Numeric {
+		t.Errorf("cost_cents compiled to %+v, want an integer sum", c)
+	}
+}
+
+func TestCompile_SumRejects(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		replace [2]string
+		want    string
+	}{
+		{
+			name:    "decimal sum declared integer",
+			replace: [2]string{"type: decimal\n        rollup", "type: integer\n        rollup"},
+			want:    `sum "amount" has type "decimal", but the roll-up is declared "integer"`,
+		},
+		{
+			name:    "integer sum declared decimal",
+			replace: [2]string{"type: integer\n        rollup", "type: decimal\n        rollup"},
+			want:    `sum "cents" has type "integer", but the roll-up is declared "decimal"`,
+		},
+		{
+			name:    "sum of a string",
+			replace: [2]string{"sum: amount", "sum: title"},
+			want:    `sum "title" has type "string"; sum needs integer or decimal`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			src := strings.Replace(sumSchema, tc.replace[0], tc.replace[1], 1)
+			if src == sumSchema {
+				t.Fatalf("replacement %q not found", tc.replace[0])
+			}
+			meta, err := metamodel.Parse([]byte(src))
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			_, err = rollup.Compile(meta)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Compile error = %v, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+}

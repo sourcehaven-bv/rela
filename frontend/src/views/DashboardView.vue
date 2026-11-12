@@ -11,6 +11,7 @@ import Badge from '@/components/ui/Badge.vue'
 import {
   listBreakdown,
   queryBreakdown,
+  summaryText,
   tableRows,
   type BreakdownItem,
   type TableRow,
@@ -91,6 +92,11 @@ function cardKey(card: DashboardCardEntry): string {
  * reload between `/_dashboard` and `/_dashboard/card` can move the indexes;
  * a value for another card is dropped rather than shown on this tile.
  */
+/** Whether a card folds one property into one value. */
+function isSummary(display: DashboardCardEntry['display']): boolean {
+  return display === 'sum' || display === 'avg' || display === 'min' || display === 'max'
+}
+
 function valueMatches(card: DashboardCardEntry, value: DashboardCardValue): boolean {
   return value.title === card.title && value.display === card.display && value.list === card.list
 }
@@ -182,6 +188,8 @@ interface CardView {
   partial: boolean
   /** The server-computed value of a list card; absent for a query card. */
   value?: DashboardCardValue
+  /** A sum, avg, min or max card's formatted value; absent when it has none. */
+  summary?: string
   /** Where the card's link goes: its list, or the search for its query. */
   link: RouteLocationRaw
   /** True when a list card's value failed to load. */
@@ -269,6 +277,9 @@ const cardViews = computed<CardView[]>(() =>
           value && card.display === 'table'
             ? tableRows(schemaStore, card, valueRows(value), uiStore.effectiveTimezone)
             : [],
+        summary: value
+          ? summaryText(schemaStore, card, value, uiStore.effectiveTimezone)
+          : undefined,
         failed: cardErrors.value.has(key),
       }
     }
@@ -349,7 +360,9 @@ watch([() => props.name, worldParam], () => void loadData())
         by `permission:` (TKT-53KICM). Distinguishing them would tell a user
         about cards they cannot use, which is the opposite of the point.
       -->
-      <p v-if="cards.length === 0" class="no-data dashboard-empty">{{ t('dashboardView.noCards') }}</p>
+      <p v-if="cards.length === 0" class="no-data dashboard-empty">
+        {{ t('dashboardView.noCards') }}
+      </p>
 
       <div v-else class="dashboard-grid">
         <section
@@ -384,6 +397,14 @@ watch([() => props.name, worldParam], () => void loadData())
             <span class="count-number">{{ view.count }}</span>
           </div>
 
+          <!-- Sum, avg, min and max displays (list cards only) -->
+          <template v-else-if="isSummary(view.card.display)">
+            <div v-if="view.summary !== undefined" class="card-count" data-testid="card-summary">
+              <span class="count-number">{{ view.summary }}</span>
+            </div>
+            <div v-else class="no-data">{{ t('dashboard.noData') }}</div>
+          </template>
+
           <!-- Breakdown display -->
           <div v-else-if="view.card.display === 'breakdown'" class="card-breakdown">
             <div v-for="item in view.breakdown" :key="item.key" class="breakdown-row">
@@ -407,7 +428,9 @@ watch([() => props.name, worldParam], () => void loadData())
               </div>
               <span class="breakdown-count">{{ item.count }}</span>
             </div>
-            <div v-if="view.breakdown.length === 0" class="no-data">{{ t('dashboard.noData') }}</div>
+            <div v-if="view.breakdown.length === 0" class="no-data">
+              {{ t('dashboard.noData') }}
+            </div>
           </div>
 
           <!-- Table display -->
@@ -499,9 +522,17 @@ watch([() => props.name, worldParam], () => void loadData())
                 {{ t('dashboardView.errors', { n: analysisResult.errors }, analysisResult.errors) }}
               </span>
               <span v-if="analysisResult.warnings > 0" class="badge badge-warning">
-                {{ t('dashboardView.warnings', { n: analysisResult.warnings }, analysisResult.warnings) }}
+                {{
+                  t(
+                    'dashboardView.warnings',
+                    { n: analysisResult.warnings },
+                    analysisResult.warnings
+                  )
+                }}
               </span>
-              <router-link to="/analyze" class="view-details"> {{ t('dashboardView.viewDetails') }} &rarr; </router-link>
+              <router-link to="/analyze" class="view-details">
+                {{ t('dashboardView.viewDetails') }} &rarr;
+              </router-link>
             </template>
           </template>
         </div>

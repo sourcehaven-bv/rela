@@ -208,7 +208,7 @@ func (r *Rollups) column(
 	}
 	q := store.RollupQuery{
 		Related: related, Relation: col.Relation, SourceIsTo: col.SourceIsTo, Sources: ids,
-		Func: col.StoreFunc(), Value: col.Value, By: col.By, Numeric: col.Numeric,
+		Func: col.StoreFunc(), Value: col.Value, By: col.By, Numeric: col.Numeric, Decimal: col.Decimal,
 	}
 	for _, p := range col.Reads {
 		if c, gated := visibleWhen(fs, p); gated {
