@@ -594,19 +594,24 @@ describe('two tabs autosaving one note', () => {
   }, 120_000)
 
   // The faults the property is for: a merge that writes ours whatever the
-  // other tab did.
+  // other tab did. checkWrite reports such a blind write as writing a value
+  // the tab does not own, as overwriting a value it was never shown, or both,
+  // depending on what the tab was shown in that run. Either report catches
+  // the fault (BUG-IY5RC15).
+  const blindWrite = (kind: 'p' | 'c') => new RegExp(`^[AB] (over)?wrote ${kind}:`, 'm')
+
   it('catches a property merge that always writes ours', async () => {
     vi.mocked(merge.mergeProperty).mockImplementation(() => ({ kind: 'write' }))
     const found: string[] = []
     await expect(property(200, found)).rejects.toThrow()
-    expect(found.join('\n')).toMatch(/overwrote p:/)
+    expect(found.join('\n')).toMatch(blindWrite('p'))
   }, 120_000)
 
   it('catches a body merge that always writes ours', async () => {
     vi.mocked(merge.mergeText).mockImplementation((_b, ours) => ({ ok: true, merged: ours }))
     const found: string[] = []
     await expect(property(200, found)).rejects.toThrow()
-    expect(found.join('\n')).toMatch(/overwrote c:/)
+    expect(found.join('\n')).toMatch(blindWrite('c'))
   }, 120_000)
 
   it('edits to neighbouring slots merge cleanly', () => {
