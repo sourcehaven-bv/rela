@@ -493,9 +493,9 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 		rev := r.c.Rev + 1
 		out = channels.Message{
 			Seq: r.c.LastSeq + 1, Rev: rev, Type: nm.Type, Author: nm.Author, At: nm.At, Props: nm.Props,
-			ReplyTo: nm.ReplyTo, SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy, MovedSession: moved,
+			SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy, MovedSession: moved,
 			Mentions: nm.Mentions, Files: files, NoUnread: nm.NoUnread, CreatedChannel: created,
-			Inline: channels.ReplyInline(nm, parent, moved),
+			Thread: channels.Thread{ReplyTo: nm.ReplyTo, Inline: channels.ReplyInline(nm, parent, moved)},
 		}
 		rev, err = insertMessage(ctx, q, r.id, out)
 		if err != nil {
@@ -843,8 +843,7 @@ func (s *Store) Remove(ctx context.Context, k channels.Key, seq int64, rm channe
 			return err
 		}
 		*m = channels.Message{
-			Seq: m.Seq, Rev: m.Rev, ReplyTo: m.ReplyTo, ReplyCount: m.ReplyCount, LastReplyAt: m.LastReplyAt,
-			Inline: m.Inline, Removed: &rm,
+			Seq: m.Seq, Rev: m.Rev, Thread: m.Thread, Removed: &rm,
 		}
 		if err := removeAddressed(ctx, q, r.id, seq); err != nil {
 			return err

@@ -62,9 +62,9 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 	logged := false // the log records are written
 	msg := channels.Message{
 		Seq: seq, Rev: m.bump(idx), Type: nm.Type, Author: nm.Author, At: nm.At, Props: nm.Props,
-		ReplyTo: nm.ReplyTo, SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy, MovedSession: moved,
+		SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy, MovedSession: moved,
 		Mentions: nm.Mentions, Files: files, NoUnread: nm.NoUnread, CreatedChannel: created,
-		Inline: channels.ReplyInline(nm, &parent, moved), // false for a top-level message
+		Thread: channels.Thread{ReplyTo: nm.ReplyTo, Inline: channels.ReplyInline(nm, &parent, moved)},
 	}
 	discard, err := settleFiles(&s.disk, k, m, seq, staged)
 	if err != nil {
@@ -422,8 +422,7 @@ func (s *Store) mutateRemove(
 	_, err := s.mutateThen(ctx, k, seq, func(m *meta, msg *channels.Message, idx int64) error {
 		hadFiles = len(msg.Files) > 0
 		*msg = channels.Message{
-			Seq: msg.Seq, Rev: m.bump(idx), ReplyTo: msg.ReplyTo, ReplyCount: msg.ReplyCount,
-			LastReplyAt: msg.LastReplyAt, Inline: msg.Inline, Removed: &r,
+			Seq: msg.Seq, Rev: m.bump(idx), Thread: msg.Thread, Removed: &r,
 		}
 		delete(m.Pending, seq)
 		out = *msg

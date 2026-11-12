@@ -10,8 +10,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 )
 
-// threadTests pin the thread filters of [channels.Page], [channels.Message.Inline]
-// and [channels.Message.LastReplyAt] (TKT-ETL233O).
+// threadTests pin the thread filters of [channels.Page], [channels.Thread.Inline]
+// and [channels.Thread.LastReplyAt] (TKT-ETL233O).
 var threadTests = []conformanceTest{
 	{"ThreadPages", testThreadPages},
 	{"ThreadRemoval", testThreadRemoval},

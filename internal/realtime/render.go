@@ -81,10 +81,10 @@ type MessageView struct {
 	Props      map[string]any `json:"props,omitempty"`
 	ReplyTo    int64          `json:"reply_to,omitempty"`
 	ReplyCount int            `json:"reply_count,omitempty"`
-	// LastReplyAt is the time of the newest reply ([channels.Message.LastReplyAt]).
+	// LastReplyAt is the time of the newest reply ([channels.Thread.LastReplyAt]).
 	LastReplyAt time.Time `json:"last_reply_at,omitzero"`
 	// Inline marks a reply that also shows in the main stream
-	// ([channels.Message.Inline]).
+	// ([channels.Thread.Inline]).
 	Inline   bool      `json:"inline,omitempty"`
 	EditedAt time.Time `json:"edited_at,omitzero"`
 	// Mentions lists the principals the message addresses that the reader

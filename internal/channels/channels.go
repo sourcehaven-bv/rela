@@ -370,27 +370,31 @@ type Action struct {
 	Revert bool `json:"-"`
 }
 
-// Message is one stored message. A removed message keeps only Seq, Rev,
-// ReplyTo, ReplyCount, LastReplyAt, Inline and Removed.
-type Message struct {
-	Seq        int64          `json:"seq"`
-	Rev        int64          `json:"rev"`
-	Type       string         `json:"type,omitempty"`
-	Author     Author         `json:"author,omitzero"`
-	At         time.Time      `json:"at,omitzero"`
-	Props      map[string]any `json:"props,omitempty"`
-	ReplyTo    int64          `json:"reply_to,omitempty"`
-	ReplyCount int            `json:"reply_count,omitempty"`
+// Thread is a message's place in its thread. A removal keeps it whole.
+type Thread struct {
+	ReplyTo    int64 `json:"reply_to,omitempty"`
+	ReplyCount int   `json:"reply_count,omitempty"`
 	// LastReplyAt is the time of the newest reply to the message, set by
-	// the store in the step that raises ReplyCount. Removing a reply
-	// changes neither.
+	// the store in the step that raises ReplyCount. It never moves back,
+	// and removing a reply changes neither.
 	LastReplyAt time.Time `json:"last_reply_at,omitzero"`
 	// Inline marks a reply that also shows in the channel's main stream
 	// (see [InStream]): it answers a choice on its parent (see
 	// [NewMessage.InlineUnder]) or it moved the channel's session. The
-	// store sets it at the append; a removal keeps it. Always false on a
-	// top-level message.
-	Inline      bool      `json:"inline,omitempty"`
+	// store sets it at the append. Always false on a top-level message.
+	Inline bool `json:"inline,omitempty"`
+}
+
+// Message is one stored message. A removed message keeps only Seq, Rev,
+// Thread and Removed.
+type Message struct {
+	Seq    int64          `json:"seq"`
+	Rev    int64          `json:"rev"`
+	Type   string         `json:"type,omitempty"`
+	Author Author         `json:"author,omitzero"`
+	At     time.Time      `json:"at,omitzero"`
+	Props  map[string]any `json:"props,omitempty"`
+	Thread
 	EditedAt    time.Time `json:"edited_at,omitzero"`
 	Removed     *Removal  `json:"removed,omitempty"`
 	Action      *Action   `json:"action,omitempty"`
@@ -477,18 +481,18 @@ type NewMessage struct {
 	// (see [PrepareFiles]).
 	Files []NewFile
 	// InlineUnder are the parent message types under which a reply of
-	// this type is [Message.Inline]: the types whose choices this type
+	// this type is [Thread.Inline]: the types whose choices this type
 	// answers. The store checks the parent's type in the append step, so
 	// the caller needs no read of the parent.
 	InlineUnder []string
 }
 
 // InStream reports whether m shows in the channel's main stream: it is a
-// top-level message or an inline reply ([Message.Inline]).
+// top-level message or an inline reply ([Thread.Inline]).
 func InStream(m Message) bool { return m.ReplyTo == 0 || m.Inline }
 
 // ReplyInline reports whether the reply nm, appended under parent, is
-// [Message.Inline]: parent's type is in nm.InlineUnder, or the append
+// [Thread.Inline]: parent's type is in nm.InlineUnder, or the append
 // moved the session.
 //
 // Nil: parent is accepted and means nm is no reply, which is never inline.
