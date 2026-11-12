@@ -223,6 +223,14 @@
         "signals": {
           "description": "Include live signals (default true without a cursor, false with one)",
           "type": "boolean"
+        },
+        "thread": {
+          "description": "Only the top-level message with this seq and its replies; combines with one cursor",
+          "type": "number"
+        },
+        "top": {
+          "description": "Only the main stream: top-level messages and replies with inline set (they answer a question or moved the session); combines with one cursor",
+          "type": "boolean"
         }
       },
       "required": [

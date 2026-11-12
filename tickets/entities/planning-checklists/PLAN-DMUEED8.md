@@ -3,119 +3,112 @@ id: PLAN-DMUEED8
 type: planning-checklist
 title: 'Planning: Threads 1: read one thread and the top-level stream'
 started: "2026-11-12"
-status: in-progress
+completed: "2026-11-12"
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Understanding
 
-- [ ] Problem/requirements clearly understood
-- [ ] Scope defined (what's in/out documented below)
-- [ ] Acceptance criteria documented with specific test scenarios
+- [x] Problem/requirements clearly understood
+- [x] Scope defined (what's in/out documented below)
+- [x] Acceptance criteria documented with specific test scenarios
 
-**Scope:**
-<!-- Document explicitly what IS and IS NOT in scope -->
+**Scope:** In: `thread=` and `top=1` page filters on every channel backend,
+`last_reply_at` and `inline` on a message, the inline rule in the server,
+HTTP/MCP/CLI options. Out: read markers, followers, web app panel (slices 2-4).
 
 **Acceptance Criteria:**
-<!-- Each criterion must have a concrete test scenario -->
-1. ...
+1. A thread page holds the parent and only its replies, paged by seq and by after_rev (channelstest ThreadPages).
+2. A top page holds no reply that is not inline, and a full page is never thinned by hidden replies (ThreadPages, filter in the store query).
+3. last_reply_at matches the newest reply; a removal keeps it (ThreadPages, ThreadRemoval).
+4. A thread on an unreadable anchor answers like any read of it (realtime TestRead_Threads).
 
 ## Research
 
-- [ ] For larger features: run `/research` to create a structured research doc
-- [ ] Searched for existing libraries that solve this problem
-- [ ] Checked codebase for similar patterns or reusable code
-- [ ] Looked for reference implementations in other projects
-- [ ] Reviewed relevant rela concepts for prior art
+- [x] For larger features: run `/research` to create a structured research doc
+- [x] Searched for existing libraries that solve this problem
+- [x] Checked codebase for similar patterns or reusable code
+- [x] Looked for reference implementations in other projects
+- [x] Reviewed relevant rela concepts for prior art
 
-**Research Doc:** <!-- Link RES-xxxx if created, or N/A for small changes -->
+**Research Doc:** RES-TU7ZMMR
 
-**Existing Solutions:**
-<!-- Document what you found:
-- Libraries considered (with pros/cons, why chosen or rejected)
-- Similar patterns in codebase (file:line references)
-- Reference implementations that inspired the approach
-- Relevant concepts from rela-docs or rela-issues-and-design-tickets
--->
+**Existing Solutions:** Slack and Zulip thread models (in RES-TU7ZMMR). The
+inline rule mirrors `channelView.ts` in the web app; reply_count bookkeeping in
+filechannels/sqlchannels is extended rather than duplicated.
 
 ## Approach
 
-- [ ] Technical approach chosen and documented
-- [ ] Approach builds on existing patterns (not reinventing)
-- [ ] Alternatives considered (document why rejected)
-- [ ] Dependencies identified (packages, APIs, types)
+- [x] Technical approach chosen and documented
+- [x] Approach builds on existing patterns (not reinventing)
+- [x] Alternatives considered (document why rejected)
+- [x] Dependencies identified (packages, APIs, types)
 
-**Technical Approach:**
-<!-- Document the approach with enough detail that implementation is mechanical -->
+**Technical Approach:** `channels.Page` gains Thread and Stream; `Message` gains
+LastReplyAt and Inline, decided at append from `NewMessage.InlineUnder` (set by
+realtime from the channel type's choices) and the session move. SQL backends
+store `in_stream` and `last_reply_at` columns with partial indexes so the filter
+runs in the query; the file store filters in its scan with `Page.Admits`.
+Alternative rejected: computing inline on read, which cannot page in SQL.
 
-**Files to modify:**
-<!-- List specific files that will change -->
+**Files to modify:** internal/channels (channels.go, filechannels, sqlchannels,
+channelstest), internal/sqlitedb (migration v37), pgstore migration 0045,
+internal/realtime (read, render, service), internal/dataentry (handler, wire),
+internal/apiwire/v1, internal/mcp/tools_channels.go, internal/cli/channel*.go,
+frontend/src/types/channels.ts.
 
 ## Security Considerations
 
-- [ ] Input sources identified (user input, config, external APIs)
-- [ ] Input validation approach defined (allowlist preferred over blocklist)
-- [ ] Security-sensitive operations identified (file access, auth, crypto)
-- [ ] Error handling doesn't leak sensitive information
+- [x] Input sources identified (user input, config, external APIs)
+- [x] Input validation approach defined (allowlist preferred over blocklist)
+- [x] Security-sensitive operations identified (file access, auth, crypto)
+- [x] Error handling doesn't leak sensitive information
 
-**Input Sources & Validation:**
-<!-- For each input: source, validation approach, what happens on invalid input -->
+**Input Sources & Validation:** `thread` must be a whole number of at least 1,
+`top` is 1/0/true/false; anything else is 400 (HTTP), a tool error (MCP) or a
+flag error (CLI). Thread with top is refused.
 
-**Security-Sensitive Operations:**
-<!-- List operations and how they're protected -->
+**Security-Sensitive Operations:** Reads go through the existing `Service.Read`
+access path; the filters only narrow a page the caller may already read.
 
 ## Test Plan
 
-- [ ] Test scenarios documented for each acceptance criterion
-- [ ] Edge cases identified and documented
-- [ ] Negative test cases defined (invalid input, error conditions)
-- [ ] Integration test approach defined (not just unit tests)
+- [x] Test scenarios documented for each acceptance criterion
+- [x] Edge cases identified and documented
+- [x] Negative test cases defined (invalid input, error conditions)
+- [x] Integration test approach defined (not just unit tests)
 
-**Test Scenarios:**
-<!-- Map each acceptance criterion to how it will be tested -->
+**Test Scenarios:** channelstest conformance on file, sqlite and postgres;
+realtime TestRead_Threads; dataentry TestChannels_ThreadPages; MCP and CLI round
+trips; sqlite and postgres migration tests.
 
-**Edge Cases:**
-<!-- List specific edge cases and expected behavior. Consider:
-- Empty/null/missing values
-- Boundary values (0, -1, MAX_INT)
-- Special characters, unicode, null bytes
-- Concurrent access
-- Resource exhaustion
--->
+**Edge Cases:** thread naming a reply or a missing seq (empty page); removed
+parent and removed inline reply; legacy rows (backfill).
 
-**Negative Tests:**
-<!-- What should fail? How should it fail? -->
+**Negative Tests:** thread=-1, thread=x, top=yes, thread with top.
 
 ## Risk Assessment
 
-- [ ] Technical risks assessed with mitigations
-- [ ] Security risks assessed (see Security Considerations)
-- [ ] Effort estimated (xs/s/m/l/xl)
+- [x] Technical risks assessed with mitigations
+- [x] Security risks assessed (see Security Considerations)
+- [x] Effort estimated (xs/s/m/l/xl)
 
-**Risks:**
-<!-- List risks and how they will be mitigated -->
+**Risks:** Backfill cannot tell old SQL choice answers from plain replies, so
+they leave the stream (accepted; replies stay in their thread). last_reply_at is
+not backfilled. Effort: m.
 
 ## Documentation Planning
 
-For enhancements: identify what documentation needs updating.
+- [x] User-facing docs identified (skip if internal refactor)
+- [x] ~~Docs-checklist will be created when entering implementation~~ (N/A: docs are slice 5, TKT-771TAL2)
 
-- [ ] User-facing docs identified (skip if internal refactor)
-- [ ] Docs-checklist will be created when entering implementation
-
-**Documentation Impact:**
-<!-- Which docs need updating? Check all that apply:
-- [ ] docs/metamodel.md - New metamodel features
-- [ ] docs/cli-reference.md - New/changed commands
-- [ ] docs/data-entry.md - UI changes
-- [ ] CLAUDE.md - New patterns or conventions
-- [ ] README.md - Project-level changes
-- [ ] N/A - Internal change, no user-facing docs needed
--->
+**Documentation Impact:** API reference and channel guides, in slice 5.
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] ~~Run `/design-review` before starting implementation~~ (N/A: design reviewed in RES-TU7ZMMR with the user)
+- [x] ~~All critical/significant findings addressed in plan~~ (N/A: no separate design review)
 
-**Design Review Findings:** <!-- List review-response IDs, e.g., RR-xxxx -->
+**Design Review Findings:** None.

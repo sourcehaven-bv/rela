@@ -44,6 +44,7 @@ import (
 	"fmt"
 	"math/big"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -370,21 +371,31 @@ type Action struct {
 }
 
 // Message is one stored message. A removed message keeps only Seq, Rev,
-// ReplyTo, ReplyCount and Removed.
+// ReplyTo, ReplyCount, LastReplyAt, Inline and Removed.
 type Message struct {
-	Seq         int64          `json:"seq"`
-	Rev         int64          `json:"rev"`
-	Type        string         `json:"type,omitempty"`
-	Author      Author         `json:"author,omitzero"`
-	At          time.Time      `json:"at,omitzero"`
-	Props       map[string]any `json:"props,omitempty"`
-	ReplyTo     int64          `json:"reply_to,omitempty"`
-	ReplyCount  int            `json:"reply_count,omitempty"`
-	EditedAt    time.Time      `json:"edited_at,omitzero"`
-	Removed     *Removal       `json:"removed,omitempty"`
-	Action      *Action        `json:"action,omitempty"`
-	SchemaHash  string         `json:"schema_hash,omitempty"`
-	TriggeredBy string         `json:"triggered_by,omitempty"`
+	Seq        int64          `json:"seq"`
+	Rev        int64          `json:"rev"`
+	Type       string         `json:"type,omitempty"`
+	Author     Author         `json:"author,omitzero"`
+	At         time.Time      `json:"at,omitzero"`
+	Props      map[string]any `json:"props,omitempty"`
+	ReplyTo    int64          `json:"reply_to,omitempty"`
+	ReplyCount int            `json:"reply_count,omitempty"`
+	// LastReplyAt is the time of the newest reply to the message, set by
+	// the store in the step that raises ReplyCount. Removing a reply
+	// changes neither.
+	LastReplyAt time.Time `json:"last_reply_at,omitzero"`
+	// Inline marks a reply that also shows in the channel's main stream
+	// (see [InStream]): it answers a choice on its parent (see
+	// [NewMessage.InlineUnder]) or it moved the channel's session. The
+	// store sets it at the append; a removal keeps it. Always false on a
+	// top-level message.
+	Inline      bool      `json:"inline,omitempty"`
+	EditedAt    time.Time `json:"edited_at,omitzero"`
+	Removed     *Removal  `json:"removed,omitempty"`
+	Action      *Action   `json:"action,omitempty"`
+	SchemaHash  string    `json:"schema_hash,omitempty"`
+	TriggeredBy string    `json:"triggered_by,omitempty"`
 	// MovedSession is set by the store on a message whose append moved the
 	// channel's session (see [SessionStep]). Nothing else sets it, and a
 	// removal clears it with the rest of the message.
@@ -465,6 +476,27 @@ type NewMessage struct {
 	// Files are the files to store with the message, in the same step
 	// (see [PrepareFiles]).
 	Files []NewFile
+	// InlineUnder are the parent message types under which a reply of
+	// this type is [Message.Inline]: the types whose choices this type
+	// answers. The store checks the parent's type in the append step, so
+	// the caller needs no read of the parent.
+	InlineUnder []string
+}
+
+// InStream reports whether m shows in the channel's main stream: it is a
+// top-level message or an inline reply ([Message.Inline]).
+func InStream(m Message) bool { return m.ReplyTo == 0 || m.Inline }
+
+// ReplyInline reports whether the reply nm, appended under parent, is
+// [Message.Inline]: parent's type is in nm.InlineUnder, or the append
+// moved the session.
+//
+// Nil: parent is accepted and means nm is no reply, which is never inline.
+func ReplyInline(nm NewMessage, parent *Message, moved bool) bool {
+	if parent == nil || nm.ReplyTo == 0 {
+		return false
+	}
+	return moved || slices.Contains(nm.InlineUnder, parent.Type)
 }
 
 // CheckAppendState refuses an append that requires an open channel to one
@@ -628,13 +660,34 @@ func ApplyTransition(c *Channel, t Transition) {
 // started following an empty channel (rev 0) gets every message. A
 // positive AfterRev implies it.
 //
+// At most one filter narrows the messages the cursor walks:
+//
+//   - Thread: the top-level message with that seq and its replies. A seq
+//     that names no top-level message gives an empty page.
+//   - Stream: the messages of the main stream (see [InStream]).
+//
 // Limit is clamped to [1, MaxPageLimit]; zero means [DefaultPageLimit].
 type Page struct {
 	AfterSeq  int64
 	BeforeSeq int64
 	AfterRev  int64
 	ByRev     bool
+	Thread    int64
+	Stream    bool
 	Limit     int
+}
+
+// Admits reports whether m passes p's filter. A store that filters in
+// its query need not call it; the file store does.
+func (p Page) Admits(m Message) bool {
+	switch {
+	case p.Thread > 0:
+		return (m.Seq == p.Thread && m.ReplyTo == 0) || m.ReplyTo == p.Thread
+	case p.Stream:
+		return InStream(m)
+	default:
+		return true
+	}
 }
 
 // RevOrder reports whether p pages by rev.
@@ -656,6 +709,12 @@ func (p Page) Normalize() (Page, error) {
 	}
 	if set > 1 {
 		return p, fmt.Errorf("%w: name at most one cursor", ErrInvalidPage)
+	}
+	if p.Thread < 0 {
+		return p, fmt.Errorf("%w: negative thread", ErrInvalidPage)
+	}
+	if p.Thread > 0 && p.Stream {
+		return p, fmt.Errorf("%w: name at most one of thread and stream", ErrInvalidPage)
 	}
 	switch {
 	case p.Limit <= 0:

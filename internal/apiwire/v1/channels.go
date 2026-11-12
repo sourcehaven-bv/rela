@@ -354,14 +354,19 @@ type ChannelMessageOutputResult struct {
 // renders as restricted, and that the edit does not name, keeps its stored
 // value, so edit is offered on such a message too.
 type Message struct {
-	Seq         int64           `json:"seq"`
-	Rev         int64           `json:"rev"`
-	Type        string          `json:"type,omitempty"`
-	Author      *ChannelAuthor  `json:"author,omitempty"`
-	At          string          `json:"at,omitempty"`
-	Props       map[string]any  `json:"props,omitempty"`
-	ReplyTo     int64           `json:"reply_to,omitempty"`
-	ReplyCount  int             `json:"reply_count,omitempty"`
+	Seq        int64          `json:"seq"`
+	Rev        int64          `json:"rev"`
+	Type       string         `json:"type,omitempty"`
+	Author     *ChannelAuthor `json:"author,omitempty"`
+	At         string         `json:"at,omitempty"`
+	Props      map[string]any `json:"props,omitempty"`
+	ReplyTo    int64          `json:"reply_to,omitempty"`
+	ReplyCount int            `json:"reply_count,omitempty"`
+	// LastReplyAt is when the newest reply was posted; empty for none.
+	LastReplyAt string `json:"last_reply_at,omitempty"`
+	// Inline marks a reply that also shows in the main stream: it answers
+	// its parent's question or it moved the session.
+	Inline      bool            `json:"inline,omitempty"`
 	EditedAt    string          `json:"edited_at,omitempty"`
 	TriggeredBy string          `json:"triggered_by,omitempty"`
 	Removed     *MessageRemoval `json:"removed,omitempty"`

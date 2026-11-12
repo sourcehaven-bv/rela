@@ -65,8 +65,8 @@ type ActionView struct {
 }
 
 // MessageView is one message as a reader sees it. A removed message keeps
-// only Seq, Rev, ReplyTo, ReplyCount and Removed: the store erases its
-// type, author, time and properties.
+// only Seq, Rev, ReplyTo, ReplyCount, LastReplyAt, Inline and Removed: the
+// store erases its type, author, time and properties.
 //
 // Props holds only the properties the message's type declares now. A
 // message whose type the configuration no longer declares shows none.
@@ -81,7 +81,12 @@ type MessageView struct {
 	Props      map[string]any `json:"props,omitempty"`
 	ReplyTo    int64          `json:"reply_to,omitempty"`
 	ReplyCount int            `json:"reply_count,omitempty"`
-	EditedAt   time.Time      `json:"edited_at,omitzero"`
+	// LastReplyAt is the time of the newest reply ([channels.Message.LastReplyAt]).
+	LastReplyAt time.Time `json:"last_reply_at,omitzero"`
+	// Inline marks a reply that also shows in the main stream
+	// ([channels.Message.Inline]).
+	Inline   bool      `json:"inline,omitempty"`
+	EditedAt time.Time `json:"edited_at,omitzero"`
 	// Mentions lists the principals the message addresses that the reader
 	// may see (see [MentionView]). Nil when there are none.
 	Mentions []MentionView `json:"mentions,omitempty"`
@@ -274,7 +279,10 @@ func (r *renderer) props(typ string, in map[string]any) map[string]any {
 }
 
 func (r *renderer) message(m channels.Message) MessageView {
-	v := MessageView{Seq: m.Seq, Rev: m.Rev, ReplyTo: m.ReplyTo, ReplyCount: m.ReplyCount}
+	v := MessageView{
+		Seq: m.Seq, Rev: m.Rev, ReplyTo: m.ReplyTo, ReplyCount: m.ReplyCount, LastReplyAt: m.LastReplyAt,
+		Inline: m.Inline,
+	}
 	if m.Removed != nil {
 		kind := m.Removed.Kind
 		if kind == "" {

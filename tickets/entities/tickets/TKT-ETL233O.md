@@ -6,7 +6,8 @@ kind: enhancement
 priority: medium
 effort: m
 started: "2026-11-12"
-status: planning
+completed: "2026-11-12"
+status: done
 ---
 
 ## Description

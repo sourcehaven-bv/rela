@@ -480,12 +480,28 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 	m, err := s.store.Append(c.ctx, c.key, channels.NewMessage{
 		Type: mt.Name, Author: authorOf(c.p), At: c.now, Props: vp.props, ReplyTo: in.ReplyTo, Session: sp.step,
 		MarkRead: true, Mentions: targets, NoUnread: mt.NoUnread, Files: files,
+		InlineUnder: inlineUnder(&c.ct, mt.Name),
 	})
 	sp.logGuardFailure(c.ctx)
 	if err != nil {
 		return PostResult{}, appendRefusal(c, mt, err)
 	}
 	return afterPost(s, c, m, sp.step, plan, refs), nil
+}
+
+// inlineUnder lists the message types of ct whose choices a message of
+// type name answers: a reply of that type under one of them shows in the
+// main stream (see [channels.NewMessage.InlineUnder]).
+//
+// Nil: returned when no type's choices name it as their answer.
+func inlineUnder(ct *realtimecfg.ChannelType, name string) []string {
+	var out []string
+	for _, q := range sortedKeys(ct.MessageTypes) {
+		if c := ct.MessageTypes[q].Choices; c != nil && c.Answer == name {
+			out = append(out, q)
+		}
+	}
+	return out
 }
 
 // afterPost finishes a stored post: it notes the session's due time and
