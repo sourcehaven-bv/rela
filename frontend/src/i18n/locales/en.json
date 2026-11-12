@@ -45,6 +45,16 @@
       "claimedBy": "{who} is completing this step now.",
       "pending": "The outputs of this state are not written yet. Failed attempts: {n}.",
       "nextAttempt": "Next attempt: {at}.",
+      "jobRunning": "The job of this step runs: attempt {n} of {max}.",
+      "jobWaiting": "The job of this step waits for attempt {n} of {max}.",
+      "jobWaitingAt": "The job of this step waits for attempt {n} of {max}, at {at}.",
+      "jobFailed": "The job of this step failed after {n} failed attempts: {why}. Retry the run to start again.",
+      "jobFailKind": {
+        "exhausted": "no attempts are left",
+        "permanent": "another attempt cannot fix the error",
+        "timeout": "an attempt timed out, and its outcome is unknown",
+        "lost": "the worker stopped, and the outcome is unknown"
+      },
       "branches": "Moves on when",
       "branchTo": "to {state}",
       "guardHolds": "condition is met",

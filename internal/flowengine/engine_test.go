@@ -212,7 +212,7 @@ func readFixture(t *testing.T, name string) []byte {
 	return data
 }
 
-func newHarness(t *testing.T, flowsYAML string) harness {
+func newHarness(t *testing.T, flowsYAML string, opts ...func(*Deps)) harness {
 	t.Helper()
 	meta, err := metamodel.Parse(readFixture(t, "schema.yaml"))
 	require.NoError(t, err)
@@ -229,13 +229,17 @@ func newHarness(t *testing.T, flowsYAML string) harness {
 	require.NoError(t, err)
 	clock := time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)
 	f := newFakes()
-	eng, err := New(Deps{
+	d := Deps{
 		Flows: compiled, Meta: meta, Runs: runs, Headers: f, Outputs: f, Subjects: f,
 		Compile: func(name string, src []byte, version string) (*flowcfg.Flow, error) {
 			return flowcfg.ParseFlow(name, src, version, meta, policy)
 		},
 		Now: func() time.Time { return clock },
-	})
+	}
+	for _, o := range opts {
+		o(&d)
+	}
+	eng, err := New(d)
 	require.NoError(t, err)
 	return harness{eng: eng, f: f, runs: runs, clock: &clock}
 }

@@ -113,6 +113,12 @@ type Deps struct {
 	Subjects Subjects
 	// Compile compiles an older version of a flow. Nil: rejected.
 	Compile Compiler
+	// Jobs queues the attempts of job steps. Nil: accepted, for a
+	// process that runs no jobs; an attempt then waits for one that does.
+	Jobs JobQueue
+	// JobRunner runs the targets of job steps. Nil: accepted; then
+	// [AttemptHandler.HandleAttempt] fails.
+	JobRunner JobRunner
 	// Now is the clock. Nil: accepted, means time.Now.
 	Now func() time.Time
 }

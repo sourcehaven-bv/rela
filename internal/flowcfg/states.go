@@ -87,6 +87,7 @@ func (l *loader) state(key, name string, raw *rawState, f *Flow) State {
 		}
 	}
 	st.timers = l.timers(key+".after", &raw.After, f)
+	st.job = jobLoader{l}.job(key+".job", &raw.Job, raw)
 	st.join = l.join(key+".join", &raw.Join, raw.Final, f.subject)
 	if !raw.Final && len(st.on) == 0 && len(st.timers) == 0 {
 		l.add(key, "has no way out: give it an on: or an after:, or make it final")

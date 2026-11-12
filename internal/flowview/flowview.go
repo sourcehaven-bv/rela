@@ -116,6 +116,21 @@ type Branch struct {
 type Pending struct {
 	Failures    int       `json:"failures"`
 	NextAttempt time.Time `json:"next_attempt,omitzero"`
+	// Job is set in a state with a job step whose attempts have begun.
+	Job *Job `json:"job,omitempty"`
+}
+
+// Job is where a state's job step is.
+type Job struct {
+	// Phase is waiting, queued, started, finished or failed.
+	Phase string `json:"phase"`
+	// Failed counts the attempts that ran and failed.
+	Failed int `json:"failed"`
+	// Attempts is the budget: every execution, the first included.
+	Attempts int `json:"attempts"`
+	// FailKind is exhausted, permanent, timeout or lost once the job
+	// failed for good.
+	FailKind string `json:"fail_kind,omitempty"`
 }
 
 // Event is one entry of a run's timeline.

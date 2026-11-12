@@ -31,3 +31,10 @@ worker tests it on a poll.
 
 - The sample flow starts on create, moves on a change by hr, escalates on
 its timer and finishes, on fs, postgres and sqlite.
+
+## Loop guard for job steps (from TKT-PY2G11W)
+
+Once a write can start a run, a flow job's writes can start another run
+whose job writes again. Carry a hop count through the job handler
+(`appbuild` flow job context), as `automationjobs.go` does with
+`jobHopsKey`, and refuse a start past the bound.

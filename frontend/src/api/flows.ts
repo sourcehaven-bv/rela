@@ -57,9 +57,21 @@ export interface FlowBranch {
   failed?: boolean
 }
 
+/** Where a state's job step is (TKT-PY2G11W). */
+export interface FlowJob {
+  phase: 'waiting' | 'queued' | 'started' | 'finished' | 'failed'
+  /** Attempts that ran and failed. */
+  failed: number
+  /** The budget: every execution, the first included. */
+  attempts: number
+  fail_kind?: 'exhausted' | 'permanent' | 'timeout' | 'lost'
+}
+
 export interface FlowPending {
   failures: number
   next_attempt?: string
+  /** Set in a state with a job step whose attempts have begun. */
+  job?: FlowJob
 }
 
 /** Why an active run waits and what can move it. */

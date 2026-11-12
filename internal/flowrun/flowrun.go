@@ -151,6 +151,87 @@ type Pending struct {
 	// Failures counts the settle attempts that failed in a row. The
 	// runtime backs off by it.
 	Failures int `json:"failures,omitempty"`
+	// Job is the attempt of the state's job step, once its outputs are
+	// written; nil before that and in a state without a job.
+	Job *JobAttempt `json:"job,omitempty"`
+}
+
+// JobPhase is where a job attempt is.
+type JobPhase string
+
+const (
+	// JobWaiting: the next attempt is due at NextAt.
+	JobWaiting JobPhase = "waiting"
+	// JobQueued: the attempt is on the queue and has not started.
+	JobQueued JobPhase = "queued"
+	// JobStarted: a worker runs the attempt.
+	JobStarted JobPhase = "started"
+	// JobFinished: the attempt ended with Outcome, not yet acted on.
+	JobFinished JobPhase = "finished"
+	// JobFailed: the job failed for good, as FailKind says. Only an
+	// operator retry moves it on.
+	JobFailed JobPhase = "failed"
+)
+
+// JobOutcome is how an attempt ended.
+type JobOutcome string
+
+const (
+	// JobOK: the target succeeded.
+	JobOK JobOutcome = "ok"
+	// JobRetryable: the target failed and may be run again.
+	JobRetryable JobOutcome = "retryable"
+	// JobPermanent: the target failed and running it again cannot help.
+	JobPermanent JobOutcome = "permanent"
+	// JobTimeout: the attempt ran out of time; whether it took effect is
+	// unknown.
+	JobTimeout JobOutcome = "timeout"
+)
+
+// JobFailKind is why a job failed for good.
+type JobFailKind string
+
+const (
+	// JobExhausted: every attempt failed with a retryable error.
+	JobExhausted JobFailKind = "exhausted"
+	// JobFailedPermanent: an attempt failed with a permanent error.
+	JobFailedPermanent JobFailKind = "permanent"
+	// JobFailedTimeout: an attempt timed out and the job is not idempotent.
+	JobFailedTimeout JobFailKind = "timeout"
+	// JobLost: the worker of an attempt stopped without an outcome and the
+	// job is not idempotent.
+	JobLost JobFailKind = "lost"
+)
+
+// MaxJobSeq caps [JobAttempt.Seq].
+const MaxJobSeq = 1 << 20
+
+// JobAttempt is the state of a job step's attempts (TKT-PY2G11W). It holds
+// no error text: an error can quote subject values or secrets, so it goes
+// to the log only.
+type JobAttempt struct {
+	// Seq numbers the attempts that were queued, from 1. It names the
+	// attempt in the idempotency key and on the queue.
+	Seq int64 `json:"seq"`
+	// Failed counts the attempts that ran and failed since the job started
+	// or an operator retried it.
+	Failed int `json:"failed,omitempty"`
+	// Unsent counts the attempts in a row that never started.
+	Unsent int      `json:"unsent,omitempty"`
+	Phase  JobPhase `json:"phase"`
+	// Outcome is set in the finished phase.
+	Outcome JobOutcome `json:"outcome,omitempty"`
+	// FailKind is set in the failed phase.
+	FailKind JobFailKind `json:"fail_kind,omitempty"`
+	// QueuedAt is when the attempt was queued. Deadline is when a queued
+	// attempt must have started, and when a started one must have ended.
+	QueuedAt time.Time `json:"queued_at,omitzero"`
+	Deadline time.Time `json:"deadline,omitzero"`
+	// StartedAt is when a worker started it. A finished attempt keeps it:
+	// it is when the outcome is due.
+	StartedAt time.Time `json:"started_at,omitzero"`
+	// NextAt is when the next attempt is due, in the waiting phase.
+	NextAt time.Time `json:"next_at,omitzero"`
 }
 
 // State is a run's stored execution state: the engine's instance, the
@@ -464,6 +545,39 @@ func checkPending(p *Pending) error {
 
 		return invalid("pending mark out of range")
 	}
+	return checkJob(p.Job)
+}
+
+// checkJob checks a job attempt: a known phase with the fields it needs,
+// and counts in range.
+func checkJob(j *JobAttempt) error {
+	if j == nil {
+		return nil
+	}
+	if j.Seq < 0 || j.Seq > MaxJobSeq || j.Failed < 0 || j.Failed > MaxPendingFailures || j.Unsent < 0 ||
+		j.Unsent > MaxPendingFailures {
+
+		return invalid("job attempt out of range")
+	}
+	var ok bool
+	switch j.Phase {
+	case JobWaiting:
+		ok = j.Outcome == "" && j.FailKind == ""
+	case JobQueued, JobStarted:
+		ok = j.Seq > 0 && !j.Deadline.IsZero() && j.Outcome == "" && j.FailKind == "" &&
+			(j.Phase == JobQueued || !j.StartedAt.IsZero())
+	case JobFinished:
+		ok = j.Seq > 0 && !j.StartedAt.IsZero() && j.FailKind == "" && slices.Contains(
+			[]JobOutcome{JobOK, JobRetryable, JobPermanent, JobTimeout}, j.Outcome)
+	case JobFailed:
+		ok = j.Outcome == "" && slices.Contains(
+			[]JobFailKind{JobExhausted, JobFailedPermanent, JobFailedTimeout, JobLost}, j.FailKind)
+	default:
+		ok = false
+	}
+	if !ok {
+		return invalid("job attempt in phase %q is inconsistent", j.Phase)
+	}
 	return nil
 }
 
@@ -716,6 +830,12 @@ func copyPending(p *Pending) *Pending {
 		return nil
 	}
 	cp := *p
+	if p.Job != nil {
+		j := *p.Job
+		j.QueuedAt, j.Deadline = flow.NormTime(j.QueuedAt), flow.NormTime(j.Deadline)
+		j.StartedAt, j.NextAt = flow.NormTime(j.StartedAt), flow.NormTime(j.NextAt)
+		cp.Job = &j
+	}
 	return &cp
 }
 

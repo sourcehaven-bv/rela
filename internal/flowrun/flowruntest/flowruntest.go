@@ -339,9 +339,14 @@ func fullState() flowrun.State {
 			{At: at(6), State: "legal", From: "legal", Via: flowrun.ViaTimer, Timer: "escalate", Branch: "legal"}},
 		Branches: []flowrun.Branch{
 			{Name: "legal", Instance: in("legal", 4, 20),
-				Pending: &flowrun.Pending{State: "legal", Generation: 4, Done: 1, Failures: 2},
-				Claim:   &flowrun.Claim{Generation: 4, By: "bob", At: at(6)}},
+				Pending: &flowrun.Pending{State: "legal", Generation: 4, Done: 1, Failures: 2,
+					Job: &flowrun.JobAttempt{Seq: 3, Failed: 1, Unsent: 2, Phase: flowrun.JobFinished,
+						Outcome: flowrun.JobRetryable, QueuedAt: at(7), Deadline: at(9), StartedAt: at(8)}},
+				Claim: &flowrun.Claim{Generation: 4, By: "bob", At: at(6)}},
 			{Name: "finance", Instance: in("reviewed", 6, 30), Arrived: true},
+			{Name: "it", Instance: in("it", 7, 40),
+				Pending: &flowrun.Pending{State: "it", Generation: 7, Job: &flowrun.JobAttempt{Seq: 2, Failed: 3,
+					Phase: flowrun.JobFailed, FailKind: flowrun.JobExhausted, NextAt: at(10)}}},
 		},
 	}
 }
@@ -359,6 +364,7 @@ func testUpdateBranches(t *testing.T, h Harness) {
 	requireCovers(t, full, flowrun.State{Pending: &flowrun.Pending{}, Claim: &flowrun.Claim{}})
 	requireCovers(t, b0, b1)
 	requireCovers(t, *b0.Pending)
+	requireCovers(t, *b0.Pending.Job, *full.Branches[2].Pending.Job)
 	requireCovers(t, *b0.Claim)
 	requireCovers(t, full.Log[0], full.Log[1], full.Log[2])
 	requireCovers(t, full.Instance, b0.Instance, b1.Instance)

@@ -5,7 +5,9 @@ title: 'Flows M4b: job steps'
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+started: "2026-11-12"
+completed: "2026-11-12"
+status: done
 ---
 
 ## Description

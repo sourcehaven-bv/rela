@@ -50,6 +50,8 @@ type rawState struct {
 	After      yaml.Node            `yaml:"after"`
 	// Join is `join:`: all, any, or a mapping with `when:`.
 	Join yaml.Node `yaml:"join"`
+	// Job is `job:`, compiled by [loader.job].
+	Job yaml.Node `yaml:"job"`
 }
 
 // rawBranch is one entry of `on.<event>`, which is one mapping or a list

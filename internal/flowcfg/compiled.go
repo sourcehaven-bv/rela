@@ -278,6 +278,16 @@ type State struct {
 	timers     []Timer
 	// join is nil for a state that closes no fork.
 	join *Join
+	// job is nil for a state that runs no job.
+	job *Job
+}
+
+// Job returns the state's `job:`; ok is false for a state that runs none.
+func (st State) Job() (Job, bool) {
+	if st.job == nil {
+		return Job{}, false
+	}
+	return *st.job, true
 }
 
 // Join returns the state's `join:`; ok is false for a state that closes
@@ -294,6 +304,12 @@ func (st State) clone() State {
 	st.writes = slices.Clone(st.writes)
 	st.outputs = slices.Clone(st.outputs)
 	st.timers = slices.Clone(st.timers)
+	if st.job != nil {
+		j := *st.job
+		j.Capabilities.Secrets = slices.Clone(j.Capabilities.Secrets)
+		j.Capabilities.Tokens = slices.Clone(j.Capabilities.Tokens)
+		st.job = &j
+	}
 	on := make(map[Event][]Branch, len(st.on))
 	for e, bs := range st.on {
 		bs = slices.Clone(bs)

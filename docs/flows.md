@@ -117,6 +117,7 @@ every matching subject.
 | `outputs` | What rela writes when a run enters the state. See below. |
 | `on` | The events that move the run on. See below. |
 | `after` | Timers, by name, that move the run on. See below. |
+| `job` | Work rela runs through the job queue: a script, an action or a webhook. See [Job steps](#job-steps). |
 | `join` | Makes the state the join of parallel branches: `all`, `any` or `{ when: ... }`. See [Parallel branches](#parallel-branches). |
 
 Every state is reachable from `initial`, and every state that is not final
@@ -243,6 +244,97 @@ rela refuses a fork it cannot follow:
   state, or to another fork: forks do not nest;
 - from every state in a branch, the run can reach the join or a final
   state.
+
+### Job steps
+
+A state with `job:` runs one piece of work once its outputs are written,
+and follows its `done` branch when the work succeeds.
+
+```yaml
+notify:
+  job:
+    kind: webhook
+    url: https://hooks.example.com/onboarding
+    secret: onboarding_hook
+  on:
+    done: { to: waiting }
+provision:
+  job:
+    script: flows/provision.lua
+    capabilities: { http: true, secrets: [directory_token] }
+    retry: { attempts: 5, backoff: { initial: 30s, factor: 2, max: 10m }, timeout: 2m }
+  on:
+    done: { to: provisioned }
+```
+
+A job names exactly one target:
+
+| Key | Runs |
+| --- | ---- |
+| `script` | A Lua script under `scripts/`. `capabilities` grants it http, ai, mail, write_file, tokens and named secrets, as for an automation; without it the script gets none. |
+| `action` | An action from `data-entry.yaml`. It must be a plain script action: rela refuses an action with `set`, `request`, `available_on`, `allow_acl_bypass` or `elevated_updates`. `run_as` must hold the action's `permission`. The action's own `capabilities` apply. |
+| `kind: webhook` | A `POST` to `url` (http or https). `flows.yaml` is usually public, so keep tokens out of the URL and sign with `secret:` instead. |
+
+The work runs as the flow's `run_as`, through the job queue. A script or
+action sees the subject as `entity`, as `run_as` reads it, and
+`rela.params` with `flow`, `flow_run`, `flow_state`, `attempt`,
+`idempotency_key` and `step_key`.
+
+A webhook posts the ids only: the flow, the run, the state, the subject,
+the attempt and both keys. The receiver reads the subject through the API
+with its own credentials. The request carries `Idempotency-Key` (the
+attempt's key) and `X-Rela-Step` (the step's key). With `secret:`, it also
+carries `X-Rela-Timestamp` and `X-Rela-Signature: sha256=<hex>`, the
+HMAC-SHA256 of `<timestamp>.<body>` under the global secret of that name
+in `.rela/secrets.yaml`. Check the signature and refuse an old timestamp.
+rela does not follow a redirect.
+
+A job state has `on: { done: ... }` and nothing else: no `waiting_for`,
+`writes`, `after`, other events, and it may not be final. Its last `done`
+branch has no `when`, so the run always has a way out.
+
+**Retries.** rela tries the work again after an error that another
+attempt may fix:
+
+- a webhook answer of 429 or 5xx, or a network error;
+- a script or action error, unless the script raised a table with
+  `retry = false`: `error({ message = "unknown account", retry = false })`;
+- an attempt the queue never started. This one does not count against
+  `attempts`.
+
+Any other webhook answer (a 3xx or another 4xx) fails the job at once.
+
+| `retry` key | Meaning | Default |
+| ----------- | ------- | ------- |
+| `attempts` | Every execution, the first included: 1 to 10. | 3 |
+| `backoff.initial` | The wait before the second attempt. | 10s |
+| `backoff.factor` | What each next wait is multiplied by. | 2 |
+| `backoff.max` | The longest wait, at most 1h. | 5m |
+| `timeout` | How long one attempt may take once it starts: 1s to 10m. An attempt that does not start within this time is queued again. | 5m |
+
+`retry: false` fails the job on the first error.
+
+**Unknown outcomes.** When an attempt times out, or the process running it
+stops, rela cannot tell whether the work happened. It does not try again:
+the job fails with `timeout` or `lost`. Set `idempotent: true` when the
+target is safe to run twice, and rela then tries again. The
+`idempotency_key` (run, step and attempt) and the `step_key` (run and step,
+the same for every attempt) let a receiver drop a repeat.
+
+**A failed job** leaves the run in its state, with status `failed` in the
+run's view and the reason: `exhausted`, `permanent`, `timeout` or `lost`.
+In a fork, the other branches go on. A branch whose job waits or failed
+has not arrived: a join that needs it waits, and one that does not (`any`,
+a `when:` that holds, or another branch that reaches a final state) goes
+on without it. Retry the run
+(`Retry` on the run, as for a failed step) to start the job again with a
+fresh count of attempts.
+
+Jobs run in `rela-server` and the desktop app. A CLI command or an MCP
+session over stdio does not run them: a job step waits until a server
+runs it. On the filesystem backend and in the desktop app, the queue is
+kept in memory, so an attempt queued when the process stops never starts,
+and rela queues it again.
 
 ## Conditions
 

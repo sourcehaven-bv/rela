@@ -39,20 +39,21 @@ func (e *Engine) settle(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, f
 			if len(errs) > 0 {
 				return flowrun.Run{}, errors.Join(errs...)
 			}
-			if !forked(run) {
-				return run, nil
-			}
 			joined, fired, err := e.join(ctx, f, run)
-			if err != nil || !fired {
-				if isLost(err) {
-					return flowrun.Run{}, nil
-				}
+			if !fired {
 				return joined, err
 			}
 			run = joined
 			continue
 		}
 		next, err := e.settleStep(ctx, f, run, tok)
+		if errors.Is(err, errParked) {
+			if tok == "" {
+				return next, nil
+			}
+			failed[tok], run = true, next
+			continue
+		}
 		if err == nil && next.ID != "" {
 			run = next
 			continue
@@ -124,6 +125,11 @@ func (e *Engine) settleStep(ctx context.Context, f *flowcfg.Flow, run flowrun.Ru
 	var err error
 	if run, err = e.writeOutputs(ctx, f, run, tok, cur, st); err != nil || run.ID == "" {
 		return run, err
+	}
+	if job, hasJob := st.Job(); hasJob {
+		if run, err = (jobSteps{e}).jobStep(ctx, f, run, tok, cur, job); err != nil || run.ID == "" {
+			return run, err
+		}
 	}
 	if st.Final {
 		if ferr := e.finish(ctx, f, run, st.Status); ferr != nil {
@@ -244,6 +250,9 @@ func (e *Engine) writeOutput(ctx context.Context, f *flowcfg.Flow, run flowrun.R
 func (e *Engine) mark(ctx context.Context, run flowrun.Run, tok string, cur flow.Current,
 	done, failures int) (flowrun.Run, error) {
 	p := &flowrun.Pending{State: cur.State, Generation: cur.Generation, Done: done, Failures: failures}
+	if old := pendingOf(run, tok); old != nil && old.State == cur.State && old.Generation == cur.Generation {
+		p.Job = old.Job // never drop an attempt
+	}
 	inst := instOf(run, tok)
 	next, err := e.save(ctx, run, tok, inst, p, nil, e.now())
 	if isLost(err) {

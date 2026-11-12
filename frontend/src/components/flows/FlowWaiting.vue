@@ -7,7 +7,7 @@
  */
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { FlowWaiting } from '@/api/flows'
+import type { FlowJob, FlowWaiting } from '@/api/flows'
 import { formatInstant } from './flowView'
 
 const props = defineProps<{ waiting: FlowWaiting }>()
@@ -15,6 +15,23 @@ const props = defineProps<{ waiting: FlowWaiting }>()
 const { t } = useI18n()
 
 const roles = computed(() => (props.waiting.roles ?? []).join(', '))
+
+function jobLine(job: FlowJob): string {
+  if (job.phase === 'failed') {
+    return t('flows.waiting.jobFailed', {
+      n: job.failed,
+      why: t(`flows.waiting.jobFailKind.${job.fail_kind ?? 'exhausted'}`),
+    })
+  }
+  const attempt = { n: Math.min(job.failed + 1, job.attempts), max: job.attempts }
+  if (job.phase === 'waiting') {
+    const at = props.waiting.pending?.next_attempt
+    return at
+      ? t('flows.waiting.jobWaitingAt', { ...attempt, at: formatInstant(at) })
+      : t('flows.waiting.jobWaiting', attempt)
+  }
+  return t('flows.waiting.jobRunning', attempt)
+}
 
 function branchVerdict(b: { holds: boolean; failed?: boolean }): string {
   if (b.failed) return t('flows.waiting.guardFailed')
@@ -38,7 +55,15 @@ function branchVerdict(b: { holds: boolean; failed?: boolean }): string {
     <p v-if="waiting.claimed_by" class="flow-waiting__line">
       {{ t('flows.waiting.claimedBy', { who: waiting.claimed_by }) }}
     </p>
-    <p v-if="waiting.pending" class="flow-waiting__line" data-testid="flow-waiting-pending">
+    <p
+      v-if="waiting.pending?.job"
+      class="flow-waiting__line"
+      :role="waiting.pending.job.phase === 'failed' ? 'alert' : undefined"
+      data-testid="flow-waiting-job"
+    >
+      {{ jobLine(waiting.pending.job) }}
+    </p>
+    <p v-else-if="waiting.pending" class="flow-waiting__line" data-testid="flow-waiting-pending">
       {{ t('flows.waiting.pending', { n: waiting.pending.failures }) }}
       <template v-if="waiting.pending.next_attempt">
         {{ t('flows.waiting.nextAttempt', { at: formatInstant(waiting.pending.next_attempt) }) }}

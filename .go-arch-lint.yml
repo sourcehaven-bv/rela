@@ -1651,6 +1651,9 @@ deps:
       - predicate
       - predicatefns
       - principal
+      # secrets: ScriptReadable refuses a webhook secret no job may read
+      # (TKT-PY2G11W). secrets is a leaf.
+      - secrets
   # realtime.yaml consumes the schema and acl.yaml; neither knows it exists.
   # GUARD: metamodel and acl must never list realtimecfg.
   realtimecfg:
