@@ -544,8 +544,8 @@ the properties it wrote, whether the run moved, the run's state after the
 step, and whether the run ended. `problem` is set when the properties were
 written but the run did not follow cleanly: `guard` (a branch guard could
 not be evaluated, so the run stays), `moved` (the run had already moved
-on, for example by another person's step) or `settling` (an output step
-failed after the move; retry the run in the web app or cancel it).
+on, for example by a timer) or `settling` (an output step failed after the
+move and is retried while `rela-server` or the desktop app runs).
 
 ### Channel Tools
 

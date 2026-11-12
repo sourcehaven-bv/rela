@@ -202,4 +202,12 @@ func TestLockErrors(t *testing.T) {
 	cancel()
 	_, err = held.Get(ctx, "FR-1")
 	require.ErrorIs(t, err, context.Canceled)
+
+	// A free semaphore does not admit an ended context.
+	free, err := New(newMemKV(t), filelock.ProcessPrivate{})
+	require.NoError(t, err)
+	for range 50 {
+		_, err = free.Get(ctx, "FR-1")
+		require.ErrorIs(t, err, context.Canceled)
+	}
 }

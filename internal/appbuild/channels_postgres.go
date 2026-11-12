@@ -66,10 +66,7 @@ func (h pgHints) FollowHints(ctx context.Context, deliver func([]byte), gap func
 	return nil
 }
 
-// realtimeWorkerLockKey names the realtime worker lock in the database.
-const realtimeWorkerLockKey = "realtime-worker"
-
-// storeLeaderLockFor returns the realtime worker lock on st's database: a
+// storeLeaderLockFor returns the worker lock named key on st's database: a
 // keyed advisory lock (see [pgstore.TryKeyedLock]) that the leader holds
 // for as long as it leads, and that the other rela-server processes on the
 // schema try now and then without waiting. Its check is a round trip on
@@ -77,15 +74,19 @@ const realtimeWorkerLockKey = "realtime-worker"
 //
 // Nil: returned when st is not a pgstore; the caller falls back to a lock
 // file.
-func storeLeaderLockFor(st store.Store) leaderLock {
+func storeLeaderLockFor(st store.Store, key string) leaderLock {
 	if pgstore.HandleFor(st) == nil {
 		return nil
 	}
 	return func(ctx context.Context) (heldLock, bool, error) {
-		l, ok, err := pgstore.TryKeyedLock(ctx, st, realtimeWorkerLockKey)
+		l, ok, err := pgstore.TryKeyedLock(ctx, st, key)
 		if err != nil || !ok {
 			return heldLock{}, ok, err
 		}
 		return heldLock{release: l.Release, check: l.Check}, true, nil
 	}
 }
+
+// storeLockRoom reports an error when st's pool cannot hold n worker locks
+// at once (see [pgstore.CheckLockRoom]).
+func storeLockRoom(st store.Store, n int) error { return pgstore.CheckLockRoom(st, n) }

@@ -111,7 +111,7 @@ func newScopedPool(tb skipper) *pgxpool.Pool {
 }
 
 // newScopedPoolSized is [newScopedPool] with an explicit pool size, for tests
-// whose subject depends on it (the keyed-lock capacity is half the pool).
+// whose subject depends on it (the keyed-lock capacity depends on the pool).
 func newScopedPoolSized(tb skipper, maxConns int32) *pgxpool.Pool {
 	tb.Helper()
 	admin := adminConn(tb)

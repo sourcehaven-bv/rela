@@ -114,9 +114,7 @@ type Branch struct {
 
 // Pending is a run that has not settled in its state.
 type Pending struct {
-	Failures int `json:"failures"`
-	// NextAttempt is when the engine would try again. No worker acts on
-	// it yet (TKT-FWQZGAM), so a client does not show it.
+	Failures    int       `json:"failures"`
 	NextAttempt time.Time `json:"next_attempt,omitzero"`
 }
 
@@ -189,9 +187,8 @@ type Completed struct {
 	// Problem is set when the properties were written but the run did not
 	// follow cleanly: "guard" (a branch guard could not be evaluated, so
 	// the run stays), "moved" (the run moved on meanwhile, for example by
-	// another person's step) or "settling" (an output step failed after
-	// the move; it waits for a manual retry or a cancel). Empty means the
-	// step went through.
+	// a timer) or "settling" (an output step failed after the move; it is
+	// retried with backoff). Empty means the step went through.
 	Problem string `json:"problem,omitempty"`
 }
 

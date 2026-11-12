@@ -3,6 +3,7 @@ package flowengine
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"time"
 
@@ -145,22 +146,87 @@ func cloneState(run flowrun.Run) flowrun.State {
 	return st
 }
 
+// JoinRecheck is how long a join that waits on its `when:` waits before
+// the engine tests the condition again. Only an arrival or a settle tests
+// it otherwise, and the subject can change in between.
+const JoinRecheck = 5 * time.Minute
+
 // put stores st over run. It is the one way the engine updates a run
 // (RR-SHLMJUL); every caller builds st from the stored state, so the
 // timeline carries over. For a forked run it first sets the run's due
 // hint, the one value the store lists due runs by: the earliest due time
-// of a live branch.
+// of a live branch or of the join (see joinDue).
 func (e *Engine) put(ctx context.Context, run flowrun.Run, st flowrun.State, at time.Time) (flowrun.Run, error) {
 	if len(st.Branches) > 0 {
 		var due time.Time
-		for _, b := range st.Branches {
-			if d := b.Instance.NextDueAt; !b.Arrived && !d.IsZero() && (due.IsZero() || d.Before(due)) {
+		earlier := func(d time.Time) {
+			if !d.IsZero() && (due.IsZero() || d.Before(due)) {
 				due = d
 			}
 		}
+		for _, b := range st.Branches {
+			if !b.Arrived {
+				earlier(b.Instance.NextDueAt)
+			}
+		}
+		earlier(joinDue(ctx, e.flowOf, run, st, at))
 		st.Instance.NextDueAt = due
 	}
 	return e.d.Runs.Update(ctx, run.ID, run.Rev, st, at)
+}
+
+// joinDue returns when the join of the forked state st of run, stored at
+// at, must be tested again, or zero when only an arrival or a branch's
+// own due time can make it hold.
+//
+// An arrival and the join firing are two writes. A join that holds by its
+// shape (every branch arrived, one arrived at a final state, or an `any`
+// join with an arrival) is due minBackoff after at, so a crash or a failed
+// write between the two is picked up by a later due round. A `when:` join
+// that some branches but not all reached is due JoinRecheck after at,
+// because the subject can change in between. Neither applies while a live
+// branch carries a pending mark: the join is not tested until it settles,
+// and the branch's own due time keeps its backoff. A flow it cannot read is
+// logged and gives zero.
+func joinDue(ctx context.Context, flowOf func(context.Context, flowrun.Run) (*flowcfg.Flow, error),
+	run flowrun.Run, st flowrun.State, at time.Time) time.Time {
+	arrived := 0
+	for _, b := range st.Branches {
+		switch {
+		case b.Arrived:
+			arrived++
+		case b.Pending != nil:
+			return time.Time{}
+		}
+	}
+	if arrived == 0 {
+		return time.Time{}
+	}
+	if arrived == len(st.Branches) {
+		return at.Add(minBackoff)
+	}
+	f, err := flowOf(ctx, run)
+	if err != nil {
+		slog.WarnContext(ctx, "flowengine: a waiting join is not tested again", "run", run.ID, "error", err)
+		return time.Time{}
+	}
+	for _, b := range st.Branches {
+		if s, _ := f.State(b.Instance.State); b.Arrived && s.Final {
+			return at.Add(minBackoff)
+		}
+	}
+	fk, _, ok := f.Region(st.Branches[0].Name)
+	if !ok {
+		return time.Time{}
+	}
+	js, _ := f.State(fk.Join)
+	switch j, _ := js.Join(); {
+	case j.Any:
+		return at.Add(minBackoff)
+	case j.When != nil:
+		return at.Add(JoinRecheck)
+	}
+	return time.Time{}
 }
 
 // fork moves the run from cur into the branches that start in targets, in

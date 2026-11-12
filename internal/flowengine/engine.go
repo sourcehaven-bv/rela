@@ -331,30 +331,71 @@ const (
 	maxBackoff = time.Hour
 )
 
-// Due advances the runs due at or before the engine's clock: it settles
-// runs with a pending mark and fires due timers. It returns how many runs
-// it advanced. A run it cannot advance is logged and backed off, so a
-// stranded or failing run does not hold back the others.
+// Bounds of the writes the engine does not let its caller's context cut:
+// a create output, whose cut leaves it unknown whether it landed, and the
+// backoff of a run that failed, which would otherwise stay at the front of
+// the due order. A test shortens them.
+var (
+	outputTimeout  = 30 * time.Second
+	backoffTimeout = 10 * time.Second
+)
+
+// Due runs one round of [Engine.DueRound] from the start, and returns how
+// many runs it advanced.
 func (e *Engine) Due(ctx context.Context) (int, error) {
+	rep, err := e.DueRound(ctx, flowrun.DueCursor{})
+	return rep.Advanced, err
+}
+
+// DueReport is what one round of [Engine.DueRound] did.
+type DueReport struct {
+	// Advanced counts the runs the round advanced.
+	Advanced int
+	// Failed counts the runs it could not advance and backed off.
+	Failed int
+	// More reports a full round: more runs may be due after Next.
+	More bool
+	// Next resumes the listing after the last run of the round.
+	Next flowrun.DueCursor
+}
+
+// DueRound advances the runs due at or before the engine's clock, after
+// the cursor, at most [MaxDuePerRound] of them: it settles runs with a
+// pending mark, fires due timers and tests a join waiting on its `when:`.
+// A run it cannot advance is logged and backed off, so a stranded or
+// failing run does not hold back the others. A caller that runs several
+// rounds passes the last round's Next to go on after the last run.
+//
+// When ctx ends mid-round, the round stops with ctx's error and Next at
+// the run it cut off. That run keeps its pending mark, but a create output
+// it was writing is finished first, bounded by outputTimeout: a cut create
+// may have landed, so it would be skipped rather than written again.
+func (e *Engine) DueRound(ctx context.Context, after flowrun.DueCursor) (DueReport, error) {
 	now := e.now()
-	runs, err := e.d.Runs.ListDue(ctx, now, flowrun.DueCursor{}, MaxDuePerRound)
+	runs, err := e.d.Runs.ListDue(ctx, now, after, MaxDuePerRound)
 	if err != nil {
-		return 0, err
+		return DueReport{Next: after}, err
 	}
-	n := 0
+	rep := DueReport{Next: after, More: len(runs) == MaxDuePerRound}
 	for _, run := range runs {
 		if ctx.Err() != nil {
-			return n, ctx.Err()
+			return rep, ctx.Err()
 		}
+		rep.Next = flowrun.DueCursor{At: run.Instance.NextDueAt, ID: run.ID}
 		if left, err := e.advance(ctx, run, now); err != nil {
 			slog.WarnContext(ctx, "flowengine: a due run did not advance", "run", run.ID, "flow", run.Flow,
 				"error", err)
-			e.backoff(ctx, left)
+			// Backed off even when ctx ended: a run cut off by a deadline
+			// would else stay first in the due order.
+			bctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), backoffTimeout)
+			e.backoff(bctx, left)
+			cancel()
+			rep.Failed++
 			continue
 		}
-		n++
+		rep.Advanced++
 	}
-	return n, nil
+	return rep, nil
 }
 
 // backoff makes a run that failed to advance due again later: after

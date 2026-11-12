@@ -21,7 +21,11 @@ func storeChannelsFor(_ store.Store) channels.Store { return nil }
 func storeHintsFor(_ channels.Store, _ store.Store) hintEndpoint { return nil }
 
 // storeLeaderLockFor returns nil outside the postgres build: the other
-// tiers take the realtime worker lock on a lock file.
+// tiers take a worker lock on a lock file.
 //
 // Nil: always returned.
-func storeLeaderLockFor(_ store.Store) leaderLock { return nil }
+func storeLeaderLockFor(_ store.Store, _ string) leaderLock { return nil }
+
+// storeLockRoom has nothing to check outside the postgres build: a lock
+// file pins no connection.
+func storeLockRoom(_ store.Store, _ int) error { return nil }
