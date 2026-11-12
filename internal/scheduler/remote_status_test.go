@@ -9,6 +9,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/remotestatus"
 	"github.com/Sourcehaven-BV/rela/internal/remotesync"
 	"github.com/Sourcehaven-BV/rela/internal/schedulerstate"
 )
@@ -41,15 +42,15 @@ func TestRemoteStatuses(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	st := got[0]
-	require.Equal(t, "cat", st.Name)
-	require.Equal(t, "http://127.0.0.1:1", st.Settings.URL)
-	require.Equal(t, remotesync.ConflictHold, st.Settings.Conflict)
-	require.True(t, st.LastRun.IsZero())
-	require.True(t, st.NextRun.IsZero(), "no run yet: a pull is due now")
-	require.Equal(t, []RemoteType{{
+	require.Equal(t, "cat", st.Remote.Name)
+	require.Equal(t, "http://127.0.0.1:1", st.Remote.Settings.URL)
+	require.Equal(t, remotesync.ConflictHold, st.Remote.Settings.Conflict)
+	require.True(t, st.Remote.Run.LastRun.IsZero())
+	require.True(t, st.Remote.Run.NextRun.IsZero(), "no run yet: a pull is due now")
+	require.Equal(t, []remotestatus.MappedType{{
 		Local: "requirement", Source: "requirement",
-		Fields: []RemoteField{{Local: "title", Remote: "title", Rule: remotesync.ConflictHold}},
-	}}, st.Types)
+		Fields: []remotestatus.MappedField{{Local: "title", Remote: "title", Rule: remotesync.ConflictHold}},
+	}}, st.Remote.Types)
 	require.Empty(t, st.Linked)
 	require.Empty(t, st.Conflicts)
 
@@ -63,9 +64,9 @@ func TestRemoteStatuses(t *testing.T) {
 	require.NoError(t, err)
 	st = got[0]
 	require.Len(t, st.Conflicts, 1)
-	require.False(t, st.LastRun.IsZero())
-	require.Equal(t, st.LastRun.Add(time.Hour), st.NextRun)
-	require.False(t, st.Running)
+	require.False(t, st.Remote.Run.LastRun.IsZero())
+	require.Equal(t, st.Remote.Run.LastRun.Add(time.Hour), st.Remote.Run.NextRun)
+	require.False(t, st.Remote.Run.Running)
 }
 
 func TestRemoteStatuses_NoRemotes(t *testing.T) {

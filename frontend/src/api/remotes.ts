@@ -13,6 +13,10 @@ import { api } from './client'
 
 export type RemoteReason = 'both_changed' | 'refused' | 'uncertain' | 'superseded'
 
+/** A field's value as the conflict list keeps it: any JSON value. */
+export type RemoteValue =
+  string | number | boolean | null | RemoteValue[] | { [key: string]: RemoteValue }
+
 export interface RemoteTypeField {
   local: string
   remote: string
@@ -74,11 +78,11 @@ export interface RemoteEntry {
   fallback?: 'time_withheld' | 'time_untrusted' | 'same_time'
   since: string
   seen: string
-  remote_value?: unknown
+  remote_value?: RemoteValue
   remote_value_omitted?: boolean
   superseded?: {
     winner: 'local' | 'remote'
-    local_value?: unknown
+    local_value?: RemoteValue
     local_value_omitted?: boolean
     /** false when the overwritten value was not kept, as under superseded_retention 0. */
     lost_value_kept: boolean

@@ -13,7 +13,7 @@ import (
 type remoteGate struct {
 	aff   affordanceService
 	rows  map[string]*entityPkg.Entity
-	relOK map[RemoteRelationKey]bool
+	relOK map[entityPkg.RelationKey]bool
 }
 
 // remoteVerdict is the answer to one action on one entry.
@@ -34,9 +34,11 @@ const (
 func (h *remotesHandler) gate(
 	ctx context.Context, entries []RemoteEntry, linked []RemoteRow,
 ) (context.Context, remoteGate, error) {
-	g := remoteGate{aff: h.app.affordances, rows: map[string]*entityPkg.Entity{}, relOK: map[RemoteRelationKey]bool{}}
+	g := remoteGate{
+		aff: h.app.affordances, rows: map[string]*entityPkg.Entity{}, relOK: map[entityPkg.RelationKey]bool{},
+	}
 	var ids []string
-	var keys []RemoteRelationKey
+	var keys []entityPkg.RelationKey
 	add := func(row RemoteRow) {
 		if row.Kind == remoteKindRelation {
 			ids = append(ids, row.Relation.From, row.Relation.To)
@@ -68,7 +70,7 @@ func (h *remotesHandler) gate(
 	if len(keys) > 0 {
 		rels := make([]*entityPkg.Relation, len(keys))
 		for i, k := range keys {
-			rels[i] = &entityPkg.Relation{From: k.From, FromFace: entityPkg.Face(k.FromFace), Type: k.Type, To: k.To}
+			rels[i] = &entityPkg.Relation{From: k.From, FromFace: k.FromFace, Type: k.Type, To: k.To}
 		}
 		ok, err := resolver.EndpointsReadableErr(ctx, rels)
 		if err != nil {
@@ -176,7 +178,7 @@ func (h *remotesHandler) mayWriteRemoteValue(ctx context.Context, g remoteGate, 
 			return false
 		}
 		req := translateRelationWrite(h.app.Meta(), e.Relation.Type, from.Type, from.ID,
-			entityPkg.Face(e.Relation.FromFace))
+			e.Relation.FromFace)
 		if !g.aff.acl().AuthorizeWrite(ctx, req).Allow {
 			return false
 		}

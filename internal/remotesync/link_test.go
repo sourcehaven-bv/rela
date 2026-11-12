@@ -196,8 +196,9 @@ func TestTargetExact(t *testing.T) {
 func TestSettings(t *testing.T) {
 	meta := testMeta(t)
 	m := testMapping(t, meta, nil)
-	s := m.Remote.Settings()
-	if s.URL != "https://catalog.example" || s.Conflict != ConflictHold || s.Push || s.CredentialKind == "" {
+	s := m.Remote.Status("catalog")
+	set := s.Settings
+	if set.URL != "https://catalog.example" || set.Conflict != ConflictHold || set.Push || s.CredentialKind == "" {
 		t.Fatalf("settings: %+v", s)
 	}
 }

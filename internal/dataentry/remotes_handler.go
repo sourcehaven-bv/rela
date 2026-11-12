@@ -10,7 +10,9 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/remotestatus"
 )
 
 // remotesPath is the root of the remote-sync routes.
@@ -62,35 +64,11 @@ type RemoteEntryKey struct {
 
 // RemoteStatus is one remote as [RemoteService.Remotes] returns it.
 type RemoteStatus struct {
-	Name, URL, Description string
-	// CredentialKind is the kind of source the credential is read from,
-	// never the source's name or value.
-	CredentialKind                 string
-	RunAs, Every, Conflict, OnGone string
-	Push                           bool
-	MaxClockSkew                   time.Duration
-	SupersededRetention            time.Duration
-	Types                          []RemoteType
-	LastRun, NextRetry, NextRun    time.Time
-	Running                        bool
-	Failures                       int
-	Linked                         []RemoteRow
-	Entries                        []RemoteEntry
-}
-
-// RemoteType is one mapped type and its fields.
-type RemoteType struct {
-	Kind   string            `json:"kind,omitempty"`
-	Local  string            `json:"local"`
-	Source string            `json:"source"`
-	Fields []RemoteTypeField `json:"fields"`
-}
-
-// RemoteTypeField is one mapped field and its conflict rule.
-type RemoteTypeField struct {
-	Local  string `json:"local"`
-	Remote string `json:"remote"`
-	Rule   string `json:"rule"`
+	// Remote's settings carry the credential's kind, never its source or
+	// value.
+	Remote     remotestatus.Remote
+	LinkedRows []RemoteRow
+	Entries    []RemoteEntry
 }
 
 // RemoteRow is a local row a remote's ledger links: an entity of Type with
@@ -98,15 +76,7 @@ type RemoteTypeField struct {
 type RemoteRow struct {
 	Kind, Type, Local string
 	// Relation is the relation's key when Kind is [remoteKindRelation].
-	Relation RemoteRelationKey
-}
-
-// RemoteRelationKey is a relation's identity: FROM[@face]--Type--TO.
-type RemoteRelationKey struct {
-	From     string
-	FromFace string
-	Type     string
-	To       string
+	Relation entityPkg.RelationKey
 }
 
 // RemoteEntry is one conflict list entry. Detail text from the remote is
@@ -123,15 +93,7 @@ type RemoteEntry struct {
 	Since, Seen         time.Time
 	RemoteValue         json.RawMessage
 	RemoteValueOmitted  bool
-	Superseded          *RemoteSuperseded
-}
-
-// RemoteSuperseded is what the latest rule decided for a field.
-type RemoteSuperseded struct {
-	Winner                      string
-	LocalValue                  json.RawMessage
-	LocalValueOmitted           bool
-	LocalUpdated, RemoteUpdated time.Time
+	Superseded          *remotestatus.Superseded
 }
 
 // The entry kinds, reasons and sides the routes act on. They match the
@@ -229,23 +191,14 @@ func (h *remotesHandler) handleV1Remotes(w http.ResponseWriter, r *http.Request)
 
 // remoteSummary is one remote on GET /_remotes.
 type remoteSummary struct {
-	Name                       string       `json:"name"`
-	URL                        string       `json:"url"`
-	Description                string       `json:"description,omitempty"`
-	CredentialKind             string       `json:"credential_kind"`
-	RunAs                      string       `json:"run_as,omitempty"`
-	Every                      string       `json:"every,omitempty"`
-	Push                       bool         `json:"push"`
-	Conflict                   string       `json:"conflict"`
-	OnGone                     string       `json:"on_gone,omitempty"`
-	MaxClockSkewSeconds        int64        `json:"max_clock_skew_seconds"`
-	SupersededRetentionSeconds int64        `json:"superseded_retention_seconds"`
-	Types                      []RemoteType `json:"types"`
-	LastRun                    *time.Time   `json:"last_run,omitempty"`
-	NextRun                    *time.Time   `json:"next_run,omitempty"`
-	NextRetry                  *time.Time   `json:"next_retry,omitempty"`
-	Running                    bool         `json:"running"`
-	Failures                   int          `json:"failures"`
+	Name string `json:"name"`
+	remotestatus.Settings
+	// CredentialKind is the kind of source, never its name or value.
+	CredentialKind             string                    `json:"credential_kind"`
+	MaxClockSkewSeconds        int64                     `json:"max_clock_skew_seconds"`
+	SupersededRetentionSeconds int64                     `json:"superseded_retention_seconds"`
+	Types                      []remotestatus.MappedType `json:"types"`
+	remotestatus.Run
 	// Linked and Conflicts count only the rows the caller may read.
 	Linked    int          `json:"linked"`
 	Conflicts remoteCounts `json:"conflicts"`
@@ -273,7 +226,7 @@ func (h *remotesHandler) list(w http.ResponseWriter, r *http.Request) {
 	var linked []RemoteRow
 	for _, rs := range remotes {
 		entries = append(entries, rs.Entries...)
-		linked = append(linked, rs.Linked...)
+		linked = append(linked, rs.LinkedRows...)
 	}
 	ctx, g, err := h.gate(ctx, entries, linked)
 	if err != nil {
@@ -283,7 +236,7 @@ func (h *remotesHandler) list(w http.ResponseWriter, r *http.Request) {
 	out := remoteList{Data: make([]remoteSummary, 0, len(remotes))}
 	for _, rs := range remotes {
 		s := summaryOf(rs)
-		for _, row := range rs.Linked {
+		for _, row := range rs.LinkedRows {
 			if g.rowVisible(row) {
 				s.Linked++
 			}
@@ -301,23 +254,15 @@ func (h *remotesHandler) list(w http.ResponseWriter, r *http.Request) {
 
 // summaryOf is rs's settings and run health, with zero counts.
 func summaryOf(rs RemoteStatus) remoteSummary {
+	r := rs.Remote
 	return remoteSummary{
-		Name: rs.Name, URL: rs.URL, Description: rs.Description, CredentialKind: rs.CredentialKind,
-		RunAs: rs.RunAs, Every: rs.Every, Push: rs.Push, Conflict: rs.Conflict, OnGone: rs.OnGone,
-		MaxClockSkewSeconds:        int64(rs.MaxClockSkew / time.Second),
-		SupersededRetentionSeconds: int64(rs.SupersededRetention / time.Second),
-		Types:                      orEmpty(rs.Types),
-		LastRun:                    timeOrNil(rs.LastRun), NextRun: timeOrNil(rs.NextRun),
-		NextRetry: timeOrNil(rs.NextRetry), Running: rs.Running, Failures: rs.Failures,
-		Conflicts: remoteCounts{ByReason: map[string]int{}},
+		Name: r.Name, Settings: r.Settings, CredentialKind: r.CredentialKind,
+		MaxClockSkewSeconds:        int64(r.MaxClockSkew / time.Second),
+		SupersededRetentionSeconds: int64(r.SupersededRetention / time.Second),
+		Types:                      orEmpty(r.Types),
+		Run:                        r.Run,
+		Conflicts:                  remoteCounts{ByReason: map[string]int{}},
 	}
-}
-
-func timeOrNil(t time.Time) *time.Time {
-	if t.IsZero() {
-		return nil
-	}
-	return &t
 }
 
 // remoteEntryWire is one entry on GET /_remotes/{name}/conflicts.
@@ -342,17 +287,13 @@ type remoteEntryWire struct {
 	Actions            map[string]bool       `json:"_actions"`
 }
 
-// remoteSupersededWire is [RemoteSuperseded] on the wire. LostValueKept
-// says whether the list kept the overwritten value: under
+// remoteSupersededWire is [remotestatus.Superseded] on the wire.
+// LostValueKept says whether the list kept the overwritten value: under
 // superseded_retention 0 it keeps none, and a value too large to keep is
 // marked omitted instead.
 type remoteSupersededWire struct {
-	Winner            string          `json:"winner"`
-	LocalValue        json.RawMessage `json:"local_value,omitempty"`
-	LocalValueOmitted bool            `json:"local_value_omitted,omitempty"`
-	LostValueKept     bool            `json:"lost_value_kept"`
-	LocalUpdated      time.Time       `json:"local_updated"`
-	RemoteUpdated     time.Time       `json:"remote_updated"`
+	remotestatus.Superseded
+	LostValueKept bool `json:"lost_value_kept"`
 }
 
 // remoteConflictPage answers GET /_remotes/{name}/conflicts. Total and
@@ -409,7 +350,7 @@ func (h *remotesHandler) remote(w http.ResponseWriter, r *http.Request, name str
 		return RemoteStatus{}, false
 	}
 	for _, rs := range remotes {
-		if rs.Name == name {
+		if rs.Remote.Name == name {
 			return rs, true
 		}
 	}
@@ -430,10 +371,7 @@ func (h *remotesHandler) entryWire(ctx context.Context, g remoteGate, e RemoteEn
 		if s.Winner == remoteTakeLocal {
 			lost, omitted = e.RemoteValue, e.RemoteValueOmitted
 		}
-		out.Superseded = &remoteSupersededWire{
-			Winner: s.Winner, LocalValue: s.LocalValue, LocalValueOmitted: s.LocalValueOmitted,
-			LostValueKept: len(lost) > 0 || omitted, LocalUpdated: s.LocalUpdated, RemoteUpdated: s.RemoteUpdated,
-		}
+		out.Superseded = &remoteSupersededWire{Superseded: *s, LostValueKept: len(lost) > 0 || omitted}
 	}
 	for _, a := range remoteActions {
 		out.Actions[a] = h.verdict(ctx, g, e, a) == remoteAllowed

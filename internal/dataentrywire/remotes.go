@@ -99,28 +99,15 @@ func remoteError(err error) error {
 }
 
 func remoteStatus(st scheduler.RemoteStatus) dataentry.RemoteStatus {
-	s := st.Settings
 	out := dataentry.RemoteStatus{
-		Name: st.Name, URL: s.URL, Description: s.Description, CredentialKind: s.CredentialKind,
-		RunAs: s.RunAs, Every: s.Every, Conflict: s.Conflict, OnGone: s.OnGone, Push: s.Push,
-		MaxClockSkew: s.MaxClockSkew, SupersededRetention: s.SupersededRetention,
-		Types:   make([]dataentry.RemoteType, len(st.Types)),
-		LastRun: st.LastRun, NextRetry: st.NextRetry, NextRun: st.NextRun, Running: st.Running,
-		Failures: st.Failures,
-		Linked:   make([]dataentry.RemoteRow, 0, len(st.Linked)),
-		Entries:  make([]dataentry.RemoteEntry, 0, len(st.Conflicts)),
-	}
-	for i, t := range st.Types {
-		fields := make([]dataentry.RemoteTypeField, len(t.Fields))
-		for j, f := range t.Fields {
-			fields[j] = dataentry.RemoteTypeField{Local: f.Local, Remote: f.Remote, Rule: f.Rule}
-		}
-		out.Types[i] = dataentry.RemoteType{Kind: t.Kind, Local: t.Local, Source: t.Source, Fields: fields}
+		Remote:     st.Remote,
+		LinkedRows: make([]dataentry.RemoteRow, 0, len(st.Linked)),
+		Entries:    make([]dataentry.RemoteEntry, 0, len(st.Conflicts)),
 	}
 	for _, l := range st.Linked {
 		row, ok := remoteRow(l.Kind, l.Type, l.Local)
 		if ok {
-			out.Linked = append(out.Linked, row)
+			out.LinkedRows = append(out.LinkedRows, row)
 		}
 	}
 	for i := range st.Conflicts {
@@ -142,9 +129,7 @@ func remoteRow(kind, typ, local string) (dataentry.RemoteRow, bool) {
 	if !ok {
 		return dataentry.RemoteRow{}, false
 	}
-	row.Relation = dataentry.RemoteRelationKey{
-		From: key.From, FromFace: string(key.FromFace), Type: key.Type, To: key.To,
-	}
+	row.Relation = key
 	return row, true
 }
 
@@ -169,10 +154,8 @@ func remoteEntry(c *remotesync.Conflict) (dataentry.RemoteEntry, bool) {
 		e.Status = leadingStatus(c.Detail)
 	}
 	if s := c.Superseded; s != nil {
-		e.Superseded = &dataentry.RemoteSuperseded{
-			Winner: s.Winner, LocalValue: s.LocalValue, LocalValueOmitted: s.LocalValueOmitted,
-			LocalUpdated: s.LocalUpdated, RemoteUpdated: s.RemoteUpdated,
-		}
+		sup := *s
+		e.Superseded = &sup
 	}
 	return e, true
 }

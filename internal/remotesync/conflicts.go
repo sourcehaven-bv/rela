@@ -15,6 +15,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/remotestatus"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 )
 
@@ -149,19 +150,7 @@ type Conflict struct {
 	RemoteDigest  string            `json:"remote_digest,omitempty"`
 	RefusedFields map[string]string `json:"refused_fields,omitempty"`
 	// Superseded is set on a [ReasonSuperseded] entry.
-	Superseded *Superseded `json:"superseded,omitempty"`
-}
-
-// Superseded is what the latest rule decided for a field: the side that
-// won, both sides' last-updated times, and the losing value. A losing local
-// value is kept here; a losing remote value is the entry's RemoteValue.
-// Either is left out when larger than the list keeps.
-type Superseded struct {
-	Winner            string          `json:"winner"`
-	LocalValue        json.RawMessage `json:"local_value,omitempty"`
-	LocalValueOmitted bool            `json:"local_value_omitted,omitempty"`
-	LocalUpdated      time.Time       `json:"local_updated"`
-	RemoteUpdated     time.Time       `json:"remote_updated"`
+	Superseded *remotestatus.Superseded `json:"superseded,omitempty"`
 }
 
 // key identifies an entry: the local row and the field, and for a

@@ -4,11 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
-	"slices"
-	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/remotestatus"
 	"github.com/Sourcehaven-BV/rela/internal/remotesync"
 )
 
@@ -20,36 +18,9 @@ import (
 // filtered by acl.yaml; a caller that shows them to a principal gates each
 // row and field first, and counts after that.
 type RemoteStatus struct {
-	Name     string
-	Settings remotesync.Settings
-	Types    []RemoteType
-	// LastRun is when the last successful pull started; zero when none has.
-	LastRun time.Time
-	// Running reports a pull, resolve or other run holding the remote now.
-	Running bool
-	// Failures counts the pulls that failed in a row since the last
-	// success, and NextRetry is when the next attempt is due.
-	Failures  int
-	NextRetry time.Time
-	// NextRun is when the schedule next makes a pull due. It is zero when
-	// the remote has no schedule, or a pull is due now.
-	NextRun   time.Time
+	Remote    remotestatus.Remote
 	Linked    []remotesync.Linked
 	Conflicts []remotesync.Conflict
-}
-
-// RemoteType is one type a remote maps: an entity type, or a relation type
-// when Kind is [remotesync.KindRelation].
-type RemoteType struct {
-	Kind   string
-	Local  string
-	Source string
-	Fields []RemoteField
-}
-
-// RemoteField is one mapped field and its conflict rule.
-type RemoteField struct {
-	Local, Remote, Rule string
 }
 
 // RemoteStatuses returns the status of every remote in remotes.yaml, sorted
@@ -88,12 +59,13 @@ func RemoteStatuses(ctx context.Context, ws WorkspaceProvider) ([]RemoteStatus, 
 	for _, name := range names {
 		m := remotes.Mappings[name]
 		ts := states[RemoteTaskPrefix+name]
-		st := RemoteStatus{
-			Name: name, Settings: m.Remote.Settings(), Types: remoteTypes(m),
+		st := RemoteStatus{Remote: m.Remote.Status(name)}
+		st.Remote.Types = m.MappedTypes()
+		st.Remote.Run = remotestatus.Run{
 			LastRun: ts.LastRun, Running: ts.Active != nil, Failures: ts.Failures, NextRetry: ts.NextRetry,
 		}
 		if every, perr := parseSchedule(m.Remote.Every); perr == nil && m.Remote.Every != "" && !ts.LastRun.IsZero() {
-			st.NextRun = every.Next(ts.LastRun)
+			st.Remote.Run.NextRun = every.Next(ts.LastRun)
 		}
 		if st.Linked, err = remotesync.LoadLinked(ctx, ws.State(), m); err != nil {
 			return nil, err
@@ -104,29 +76,4 @@ func RemoteStatuses(ctx context.Context, ws WorkspaceProvider) ([]RemoteStatus, 
 		out = append(out, st)
 	}
 	return out, nil
-}
-
-// remoteTypes lists the types m maps, entities first, each sorted by source
-// type.
-func remoteTypes(m *remotesync.Mapping) []RemoteType {
-	out := make([]RemoteType, 0, len(m.Entities)+len(m.Relations))
-	for _, src := range slices.Sorted(maps.Keys(m.Entities)) {
-		em := m.Entities[src]
-		out = append(out, RemoteType{Local: em.Local, Source: em.Source, Fields: remoteFields(em.Fields)})
-	}
-	for _, src := range slices.Sorted(maps.Keys(m.Relations)) {
-		rm := m.Relations[src]
-		out = append(out, RemoteType{
-			Kind: remotesync.KindRelation, Local: rm.Local, Source: rm.Source, Fields: remoteFields(rm.Fields),
-		})
-	}
-	return out
-}
-
-func remoteFields(fields []remotesync.FieldMapping) []RemoteField {
-	out := make([]RemoteField, len(fields))
-	for i, f := range fields {
-		out[i] = RemoteField{Local: f.Local.Name, Remote: f.Remote, Rule: f.Rule}
-	}
-	return out
 }

@@ -34,6 +34,7 @@ import {
   fallbackLabel,
   formatValue,
   isPermissionRequired,
+  keepLocalSendsAgain,
   reasonLabel,
 } from '@/components/remotes/remoteView'
 
@@ -120,9 +121,7 @@ function key(e: RemoteEntry) {
 }
 
 async function keepLocal(e: RemoteEntry) {
-  // Keeping the local side of an uncertain create sends the row again, which
-  // makes a second copy when the first create did reach the remote.
-  if (e.reason === 'uncertain') {
+  if (keepLocalSendsAgain(e)) {
     const ok = await confirm({
       title: t('remotes.list.sendAgainTitle'),
       message: t('remotes.list.sendAgainMessage'),

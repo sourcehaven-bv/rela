@@ -174,6 +174,9 @@ components:
   # The read model of runs the data-entry API and the MCP tools serve
   # (TKT-ZAXRXND). A leaf of plain values: it imports no component.
   flowview:         { in: internal/flowview }
+  # A remote's status values shared by remotesync, the scheduler and the
+  # remote routes (TKT-0FMYPEZ). A leaf of plain values like flowview.
+  remotestatus:     { in: internal/remotestatus }
   # The statement interface the shared SQL backends are written against,
   # and its pgx and database/sql adapters.
   sqlexec:          { in: internal/sqlexec }
@@ -749,6 +752,10 @@ deps:
       # does not hand dataentry the predicate engine; dataentry only picks the
       # gate (the request gate for rules, the raw store for transitions).
       - relresolve
+      # remotestatus: the remote routes speak its status values (settings,
+      # mapped types, run health, superseded). The scheduler calls behind
+      # them stay in dataentrywire (TKT-0FMYPEZ).
+      - remotestatus
       # The one cardinality checker the CLI and MCP also use (TKT-5LW875).
       # The analyze view passes its gated reader, so the counts it reports
       # are folded from visible edges only.
@@ -1270,6 +1277,9 @@ deps:
       - principal
       - reconclient
       - reconclientHTTP
+      # remotestatus: the status values a remote's settings, mapped types and
+      # conflict list are shown as (TKT-0FMYPEZ).
+      - remotestatus
       - state
       - store
       - syncmerge
@@ -1496,6 +1506,7 @@ deps:
       # remotesync, scheduler: adapt the remote status, conflict list and
       # its run-locked changes to dataentry's own types (TKT-0FMYPEZ).
       - remotesync
+      - remotestatus
       - scheduler
   # MCP tool groups over appbuild services, shared by the stdio and remote
   # servers. Separate from appbuild because mcp's tests import appbuild.
@@ -2138,6 +2149,7 @@ deps:
       - store
       - subscription
       - remotesync
+      - remotestatus
       - lua
       - metamodel
       - filter

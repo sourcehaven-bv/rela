@@ -26,3 +26,10 @@ The hand-written `docs/remote-sync.md` moves into a guide.
 
 - Status and conflicts are visible in the data-entry app for operators.
 - The guides are generated into `docs/`.
+
+## Notes
+
+- The status values remotesync, the scheduler and the remote routes share
+live in the leaf package `internal/remotestatus`. A remote's shown settings
+are one struct, read inline from remotes.yaml, so the routes do not import
+remotesync and no second type repeats its fields.

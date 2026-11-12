@@ -17,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/remotestatus"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
 
@@ -104,11 +105,17 @@ func newRemoteEnv(t *testing.T, role acl.RoleDef, entries []RemoteEntry, seed fu
 	require.NoError(t, err)
 	setTestResolver(t, app, &policyResolver{inner: resolver})
 	fake := &fakeRemotes{status: RemoteStatus{
-		Name: "upstream", URL: "https://upstream.test", CredentialKind: "env", Conflict: "hold",
-		SupersededRetention: 24 * time.Hour, LastRun: remoteT0, Failures: 2, Entries: entries,
-		Types: []RemoteType{{Local: "ticket", Source: "ticket", Fields: []RemoteTypeField{
-			{Local: "title", Remote: "title", Rule: "hold"},
-		}}},
+		Remote: remotestatus.Remote{
+			Name:                "upstream",
+			Settings:            remotestatus.Settings{URL: "https://upstream.test", Conflict: "hold"},
+			CredentialKind:      "env",
+			SupersededRetention: 24 * time.Hour,
+			Run:                 remotestatus.Run{LastRun: remoteT0, Failures: 2},
+			Types: []remotestatus.MappedType{{Local: "ticket", Source: "ticket", Fields: []remotestatus.MappedField{
+				{Local: "title", Remote: "title", Rule: "hold"},
+			}}},
+		},
+		Entries: entries,
 	}}
 	require.NoError(t, SetRemotes(app, fake))
 	return &remoteEnv{app: app, d: d, fake: fake, counting: counting}
@@ -196,7 +203,7 @@ func TestRemotes_ListCountsAfterGating(t *testing.T) {
 		ticketEntry("TKT-002", "", "uncertain"),
 	}
 	e := newRemoteEnv(t, role, entries, nil)
-	e.fake.status.Linked = []RemoteRow{
+	e.fake.status.LinkedRows = []RemoteRow{
 		{Type: "ticket", Local: "TKT-001"}, {Type: "feature", Local: "FEAT-HID"},
 		{Type: "feature", Local: "TKT-002"}, // wrong type: not the row it names
 	}
@@ -209,8 +216,8 @@ func TestRemotes_ListCountsAfterGating(t *testing.T) {
 	require.Equal(t, "env", s.CredentialKind)
 	require.Equal(t, int64(86400), s.SupersededRetentionSeconds)
 	require.Equal(t, 2, s.Failures)
-	require.NotNil(t, s.LastRun)
-	require.Nil(t, s.NextRun)
+	require.Equal(t, remoteT0, s.LastRun.UTC())
+	require.NotContains(t, rec.Body.String(), "next_run", "a zero time is left out")
 	require.Equal(t, 1, s.Linked)
 	require.Equal(t, 2, s.Conflicts.Total)
 	require.Equal(t, map[string]int{"both_changed": 1, "uncertain": 1}, s.Conflicts.ByReason)
@@ -224,7 +231,7 @@ func TestRemotes_ConflictsPageAndActions(t *testing.T) {
 	role.Fields = map[string][]acl.FieldGrant{"ticket": {{Field: "status"}}}
 	sup := ticketEntry("TKT-002", "title", "superseded")
 	sup.Rule = "latest"
-	sup.Superseded = &RemoteSuperseded{Winner: "remote", LocalUpdated: remoteT0, RemoteUpdated: remoteT0}
+	sup.Superseded = &remotestatus.Superseded{Winner: "remote", LocalUpdated: remoteT0, RemoteUpdated: remoteT0}
 	entries := []RemoteEntry{
 		ticketEntry("TKT-001", "title", "both_changed"),
 		ticketEntry("TKT-001", "status", "both_changed"),
@@ -287,7 +294,7 @@ func TestRemotes_ActAgreesWithActions(t *testing.T) {
 	role := syncRole()
 	role.Fields = map[string][]acl.FieldGrant{"ticket": {{Field: "status"}}}
 	sup := ticketEntry("TKT-002", "title", "superseded")
-	sup.Superseded = &RemoteSuperseded{Winner: "local", LocalUpdated: remoteT0, RemoteUpdated: remoteT0}
+	sup.Superseded = &remotestatus.Superseded{Winner: "local", LocalUpdated: remoteT0, RemoteUpdated: remoteT0}
 	// An uncertain create that sent only the field the role may edit.
 	writableCreate := ticketEntry("TKT-003", "", "uncertain")
 	writableCreate.Fields = []string{"status"}
@@ -402,7 +409,7 @@ func TestRemotes_ServiceErrors(t *testing.T) {
 func TestRemotes_RelationEntries(t *testing.T) {
 	t.Parallel()
 	rel := func(from, to string) RemoteEntry {
-		key := RemoteRelationKey{From: from, Type: "blocks", To: to}
+		key := entity.RelationKey{From: from, Type: "blocks", To: to}
 		return RemoteEntry{
 			RemoteRow: RemoteRow{Kind: remoteKindRelation, Type: "blocks", Local: from + "--blocks--" + to,
 				Relation: key},
@@ -453,7 +460,7 @@ func TestRemotes_ReadBudget(t *testing.T) {
 			linked = append(linked, RemoteRow{Type: typ, Local: id})
 		}
 		e := newRemoteEnv(t, syncRole(), entries, seed)
-		e.fake.status.Linked = linked
+		e.fake.status.LinkedRows = linked
 		e.counting.Reset()
 		rec := e.do(t, http.MethodGet, path, "")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())

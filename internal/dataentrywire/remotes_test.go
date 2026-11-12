@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/remotestatus"
 	"github.com/Sourcehaven-BV/rela/internal/remotesync"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 )
@@ -53,12 +55,15 @@ func TestRemoteStatus_Mapping(t *testing.T) {
 	t.Parallel()
 	t0 := time.Date(2026, 11, 11, 0, 0, 0, 0, time.UTC)
 	st := scheduler.RemoteStatus{
-		Name: "cat",
-		Settings: remotesync.Settings{URL: "https://cat.test", CredentialKind: "env", Conflict: "latest",
-			Push: true, SupersededRetention: time.Hour},
-		Types: []scheduler.RemoteType{{Local: "requirement", Source: "requirement",
-			Fields: []scheduler.RemoteField{{Local: "title", Remote: "name", Rule: "latest"}}}},
-		LastRun: t0, Failures: 1,
+		Remote: remotestatus.Remote{
+			Name:                "cat",
+			Settings:            remotestatus.Settings{URL: "https://cat.test", Conflict: "latest", Push: true},
+			CredentialKind:      "env",
+			SupersededRetention: time.Hour,
+			Types: []remotestatus.MappedType{{Local: "requirement", Source: "requirement",
+				Fields: []remotestatus.MappedField{{Local: "title", Remote: "name", Rule: "latest"}}}},
+			Run: remotestatus.Run{LastRun: t0, Failures: 1},
+		},
 		Linked: []remotesync.Linked{
 			{Type: "requirement", Local: "REQ-1"},
 			{Kind: remotesync.KindRelation, Type: "traces", Local: "REQ-1--traces--REQ-2"},
@@ -70,18 +75,14 @@ func TestRemoteStatus_Mapping(t *testing.T) {
 				Detail: "422 token=secretvalue rejected", RefusedFields: map[string]string{"title<name": "d"}},
 			{Local: "REQ-2", Type: "requirement", Field: "title", Reason: remotesync.ReasonSuperseded,
 				RemoteValue: json.RawMessage(`"Theirs"`),
-				Superseded:  &remotesync.Superseded{Winner: "remote", LocalValueOmitted: true}},
+				Superseded:  &remotestatus.Superseded{Winner: "remote", LocalValueOmitted: true}},
 			{Kind: remotesync.KindRelation, Local: "broken", Reason: remotesync.ReasonRefused},
 		},
 	}
 	got := remoteStatus(st)
-	require.Equal(t, "env", got.CredentialKind)
-	require.True(t, got.Push)
-	require.Equal(t, time.Hour, got.SupersededRetention)
-	require.Equal(t, []dataentry.RemoteType{{Local: "requirement", Source: "requirement",
-		Fields: []dataentry.RemoteTypeField{{Local: "title", Remote: "name", Rule: "latest"}}}}, got.Types)
-	require.Len(t, got.Linked, 2, "an unparsable relation key names no row")
-	require.Equal(t, dataentry.RemoteRelationKey{From: "REQ-1", Type: "traces", To: "REQ-2"}, got.Linked[1].Relation)
+	require.Equal(t, st.Remote, got.Remote)
+	require.Len(t, got.LinkedRows, 2, "an unparsable relation key names no row")
+	require.Equal(t, entity.RelationKey{From: "REQ-1", Type: "traces", To: "REQ-2"}, got.LinkedRows[1].Relation)
 	require.Len(t, got.Entries, 2)
 
 	refused := got.Entries[0]

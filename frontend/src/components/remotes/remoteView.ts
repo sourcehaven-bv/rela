@@ -3,7 +3,7 @@
  * list (TKT-0FMYPEZ). The maps are literal so the i18n guard sees every key.
  */
 import type { StatusColor } from 'rela-components/types'
-import type { RemoteEntry, RemoteReason, RemoteSummary } from '@/api/remotes'
+import type { RemoteEntry, RemoteReason, RemoteSummary, RemoteValue } from '@/api/remotes'
 import { ApiError } from '@/api/errors'
 
 type Translate = (key: string, named?: Record<string, unknown>) => string
@@ -29,6 +29,22 @@ const FALLBACK_KEYS: Record<string, string> = {
   time_withheld: 'remotes.fallback.time_withheld',
   time_untrusted: 'remotes.fallback.time_untrusted',
   same_time: 'remotes.fallback.same_time',
+}
+
+/**
+ * Whether keeping the local side sends the row again. It does for an
+ * uncertain create, which makes a second copy when the first create did reach
+ * the remote.
+ */
+const SENDS_AGAIN: Record<RemoteReason, boolean> = {
+  both_changed: false,
+  refused: false,
+  uncertain: true,
+  superseded: false,
+}
+
+export function keepLocalSendsAgain(e: RemoteEntry): boolean {
+  return SENDS_AGAIN[e.reason] ?? false
 }
 
 /** The reasons in display order. */
@@ -60,7 +76,7 @@ export function runState(r: RemoteSummary, t: Translate): { label: string; color
 const MAX_VALUE_CHARS = 200
 
 /** A JSON value as short display text. */
-export function formatValue(value: unknown): string {
+export function formatValue(value: RemoteValue | undefined): string {
   if (value === undefined || value === null) return ''
   const s = typeof value === 'string' ? value : JSON.stringify(value)
   return s.length > MAX_VALUE_CHARS ? `${s.slice(0, MAX_VALUE_CHARS)}…` : s

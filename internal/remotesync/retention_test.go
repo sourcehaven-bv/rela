@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/remotestatus"
 )
 
 func TestParseRetention(t *testing.T) {
@@ -54,7 +56,7 @@ func TestCompile_RejectsBadRetention(t *testing.T) {
 }
 
 func superseded(local, field string, since time.Time) *Conflict {
-	return &Conflict{Local: local, Field: field, Reason: ReasonSuperseded, Since: since, Superseded: &Superseded{}}
+	return &Conflict{Local: local, Field: field, Reason: ReasonSuperseded, Since: since, Superseded: &remotestatus.Superseded{}}
 }
 
 func TestConflicts_Expire(t *testing.T) {

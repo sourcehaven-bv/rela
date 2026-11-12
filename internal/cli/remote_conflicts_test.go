@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/remotestatus"
 	"github.com/Sourcehaven-BV/rela/internal/remotesync"
 )
 
@@ -54,13 +55,13 @@ func TestWriteConflicts(t *testing.T) {
 		{Local: "REQ-5", Type: "requirement", Field: "title", Reason: remotesync.ReasonBothChanged,
 			Rule: remotesync.ConflictLatest, Fallback: remotesync.FallbackTimeWithheld, Since: since},
 		{Local: "REQ-6", Type: "requirement", Field: "title", Reason: remotesync.ReasonSuperseded, Since: since,
-			Superseded: &remotesync.Superseded{Winner: remotesync.TakeRemote, LocalValue: json.RawMessage(`"Ours"`),
+			Superseded: &remotestatus.Superseded{Winner: remotesync.TakeRemote, LocalValue: json.RawMessage(`"Ours"`),
 				LocalUpdated: since, RemoteUpdated: since.Add(time.Minute)}},
 		{Local: "REQ-7", Type: "requirement", Field: "title", Reason: remotesync.ReasonSuperseded, Since: since,
 			RemoteValueOmitted: true,
-			Superseded:         &remotesync.Superseded{Winner: remotesync.TakeLocal, LocalUpdated: since.Add(time.Minute)}},
+			Superseded:         &remotestatus.Superseded{Winner: remotesync.TakeLocal, LocalUpdated: since.Add(time.Minute)}},
 		{Local: "REQ-8", Type: "requirement", Field: "title", Reason: remotesync.ReasonSuperseded, Since: since,
-			Superseded: &remotesync.Superseded{Winner: remotesync.TakeRemote, LocalUpdated: since}},
+			Superseded: &remotestatus.Superseded{Winner: remotesync.TakeRemote, LocalUpdated: since}},
 	}))
 	out := b.String()
 	require.Contains(t, out, "Remote cat holds 8 conflicts:")

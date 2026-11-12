@@ -15,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient/httpremote"
+	"github.com/Sourcehaven-BV/rela/internal/remotestatus"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/syncmerge"
 )
@@ -579,7 +580,7 @@ func (r *runner) noteConflicts(t conflictTarget, mg merged) {
 		e := &Conflict{
 			Kind: t.kind, Local: t.local, Type: t.typ, Address: t.addr, Field: fc.f.Local.Name,
 			RemoteField: fc.f.Remote, LocalDigest: fc.ours, RemoteDigest: fc.theirsD,
-			Superseded: &Superseded{
+			Superseded: &remotestatus.Superseded{
 				Winner: fc.winner, LocalUpdated: mg.verdict.local, RemoteUpdated: mg.verdict.remote,
 			},
 		}
