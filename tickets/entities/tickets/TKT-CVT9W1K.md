@@ -26,3 +26,9 @@ type would be emptied, and an explicit confirmation above the cap.
 
 - Two-instance test: deletes on each side travel; guards refuse a mass
 delete.
+
+## Notes
+
+- A DELETE with `If-Match` compares the stored version inside the delete's
+own transaction (`entitymanager.IfMatchDeletes`), so a write between the
+compare and the delete is a 412.
