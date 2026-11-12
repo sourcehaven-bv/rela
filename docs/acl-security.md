@@ -3048,9 +3048,13 @@ other read:
   names, asked as the write path asks it (`fields:` and `visible:` for an
   entity, the relation's field grants for a relation). A link makes the
   next sync merge the remote row into the local one and set its `ref`, so it
-  needs the same rights on every field the create sent. Keeping the local
-  value and dismissing change only the conflict list, so read access
-  suffices.
+  needs the same rights on every field the create sent. Dismissing
+  changes only the conflict list. Keeping the local value changes no local
+  data, but the next push sends that value to the remote under the remote's
+  credential, overwriting the remote's change. That is the decision
+  `remote:sync` grants: the value is one the caller can read, and the
+  remote's own ACL decides what it accepts. So read access suffices for
+  both.
 - **The checked fields are the acted-on fields.** The route checks the
   rights before it takes the remote's run lock, so it passes the field set
   it checked. The change is refused if a sync changed the entry's fields in

@@ -119,8 +119,12 @@ func (g remoteGate) entryVisible(ctx context.Context, e RemoteEntry) bool {
 // verdict answers whether the caller may take action on the visible entry
 // e. `_actions` and the POST routes both ask it, so they cannot disagree.
 //
-// Taking the local side and dismissing change only the conflict list and
-// the ledger; remote:sync and read access suffice. Taking the remote side
+// Dismissing changes only the conflict list. Taking the local side changes
+// no local data either, but the next push sends the local value to the
+// remote as the remote's credential. That is the decision remote:sync
+// grants: the value is one the caller can read, and what the remote accepts
+// is up to the remote's own ACL. So remote:sync and read access suffice.
+// Taking the remote side
 // makes the next pull write the remote values into the local row, so it
 // also needs the caller's edit right on the row and on every field the
 // entry names. Linking does the same: the next pull takes the linked remote
