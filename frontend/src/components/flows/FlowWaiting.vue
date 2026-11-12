@@ -16,11 +16,19 @@ const { t } = useI18n()
 
 const roles = computed(() => (props.waiting.roles ?? []).join(', '))
 
+// The keys are literal so the i18n guard sees them used.
+const failKindKeys: Record<NonNullable<FlowJob['fail_kind']>, string> = {
+  exhausted: 'flows.waiting.jobFailKind.exhausted',
+  permanent: 'flows.waiting.jobFailKind.permanent',
+  timeout: 'flows.waiting.jobFailKind.timeout',
+  lost: 'flows.waiting.jobFailKind.lost',
+}
+
 function jobLine(job: FlowJob): string {
   if (job.phase === 'failed') {
     return t('flows.waiting.jobFailed', {
       n: job.failed,
-      why: t(`flows.waiting.jobFailKind.${job.fail_kind ?? 'exhausted'}`),
+      why: t(failKindKeys[job.fail_kind ?? 'exhausted']),
     })
   }
   const attempt = { n: Math.min(job.failed + 1, job.attempts), max: job.attempts }

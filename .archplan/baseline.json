@@ -2696,6 +2696,12 @@
       "reason": "Design: wire DTOs mirror domain types on purpose, as the rule against leaking storage types asks. apiwire.MessageFile is the HTTP shape of channels.File.",
       "at": "2026-11-11T09:00:00Z",
       "title": "MessageFile (apiwire) and File (channels) share most of their fields."
+    },
+    "types.synonyms-421ed87691f9": {
+      "state": "accepted",
+      "reason": "Design: flowview is the stdlib-only wire leaf the HTTP and MCP transports share; Job mirrors flowengine.JobStep on purpose, like Timer mirrors TimerDue (TKT-PY2G11W).",
+      "at": "2026-11-12T09:30:00Z",
+      "title": "JobStep (flowengine) and Job (flowview) share most of their fields."
     }
   },
   "labels": {},
@@ -2705,8 +2711,8 @@
       "weight.structure": 90,
       "weight.layers": 0,
       "weight.vocabulary": 868,
-      "weight.types": 4174,
-      "weight.concepts": 7139,
+      "weight.types": 4192,
+      "weight.concepts": 7140,
       "weight.boundaries": 1471,
       "weight.data": 1297,
       "weight.security": 140,
@@ -2716,19 +2722,8 @@
       "propagation_cost": 9.1
     },
     "min_weight": 0,
-    "at": "2026-11-11T10:50:01Z",
+    "at": "2026-11-12T09:23:09Z",
     "log": [
-      {
-        "at": "2026-11-05T14:50:14Z",
-        "change": "loosen",
-        "reason": "Schema wire EntityType mirrors EntityDef's new extends and namespace fields, like the other apiwire DTOs, TKT-C91W7H4",
-        "metrics": {
-          "weight.concepts": [
-            7047,
-            7052
-          ]
-        }
-      },
       {
         "at": "2026-11-05T20:33:00Z",
         "change": "tighten",
@@ -3019,6 +3014,21 @@
           "weight.boundaries": [
             1469,
             1471
+          ]
+        }
+      },
+      {
+        "at": "2026-11-12T09:23:09Z",
+        "change": "loosen",
+        "reason": "TKT-PY2G11W: flowview.Job mirrors flowengine.JobStep (accepted types.synonyms-421ed87691f9); flowcfg imports secrets for webhook keys, raising the accepted goos string-enum weight by 1",
+        "metrics": {
+          "weight.types": [
+            4174,
+            4192
+          ],
+          "weight.concepts": [
+            7139,
+            7140
           ]
         }
       }

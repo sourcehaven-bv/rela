@@ -14,7 +14,7 @@ import (
 // (TKT-PY2G11W).
 type JobInvocation struct {
 	// Subject is the run's subject as the job's identity may read it, as
-	// the `entity` global. The caller reads it through its gated reader;
+	// the `entity` global. The caller reads it under that identity's ACL;
 	// this package does no ACL of its own.
 	//
 	// Nil: accepted, leaves `entity` unset.
