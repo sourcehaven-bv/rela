@@ -5,7 +5,8 @@ title: 'Threads 1: read one thread and the top-level stream'
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-11-12"
+status: planning
 ---
 
 ## Description
