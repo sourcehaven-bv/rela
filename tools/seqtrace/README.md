@@ -74,9 +74,13 @@ diagrams in your browser. It runs these steps:
 The scenarios are the `req` lines in `tools/seqtrace/demo/run.sh`. The
 environment variables at the top of that script set the ports and the data
 size. `SEQTRACE_SUITE=routes` adds one request per route family: reads as the
-reader, writes the reader may not make, requests without an identity header,
-and the routes outside `/api/`. Their traces show the identity and access
-checks on each route, which the archplan security detectors read.
+reader, writes the reader may not make, allowed writes as the editor and
+manager, requests without an identity header, and the routes outside `/api/`.
+For conflicts and flows it adds a `flows.yaml`, a demo role with `git:sync`
+and conflicted files to the project copy. Each of these requests sets
+`EXPECT`, so a wrong status code stops the run. Their traces show the
+identity and access checks on each route, which the archplan security
+detectors read.
 
 ## Comparing two versions
 
