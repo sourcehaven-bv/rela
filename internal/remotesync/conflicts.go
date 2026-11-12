@@ -49,6 +49,37 @@ const (
 	ReasonSuperseded = "superseded"
 )
 
+// The causes of a refused or uncertain entry.
+const (
+	// CauseRefused: the remote answered 400, 403, 409 or 422.
+	CauseRefused = "refused"
+	// CauseServerError: the remote answered a 5xx status.
+	CauseServerError = "server_error"
+	// CauseNoNewRow: the remote answered 2xx without naming a new row.
+	CauseNoNewRow = "no_new_row"
+	// CauseAlreadyLinked: the remote named a row the ledger already links.
+	CauseAlreadyLinked = "already_linked"
+	// CauseCancelled: the run was cancelled after the request left.
+	CauseCancelled = "cancelled"
+	// CauseTimeout: the request timed out after it left.
+	CauseTimeout = "timeout"
+	// CauseNoAnswer: the request left but no usable answer came back: a
+	// broken connection, a redirect or a busy remote.
+	CauseNoAnswer = "no_answer"
+)
+
+// causeOfError names the cause of a push request that failed after it
+// left.
+func causeOfError(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return CauseCancelled
+	case errors.Is(err, context.DeadlineExceeded):
+		return CauseTimeout
+	}
+	return CauseNoAnswer
+}
+
 // KindRelation marks an entry about a relation: Local is then the local
 // relation key and Type the local relation type.
 const KindRelation = "relation"
@@ -84,8 +115,15 @@ type Conflict struct {
 	// Reason is [ReasonBothChanged], [ReasonRefused], [ReasonUncertain] or
 	// [ReasonSuperseded].
 	Reason string `json:"reason"`
-	// Detail explains a refusal, as the remote put it.
+	// Detail explains a refusal, as the remote put it. It quotes the
+	// remote, so it is for the operator's terminal only.
 	Detail string `json:"detail,omitempty"`
+	// Cause says in a fixed word why a refused or uncertain entry is held
+	// ([CauseRefused] and the others), and Status is the remote's HTTP
+	// status when it answered. Unlike Detail they hold nothing the remote
+	// wrote. An entry written before they existed has neither.
+	Cause  string `json:"cause,omitempty"`
+	Status int    `json:"status,omitempty"`
 	// Rule is the field's conflict rule.
 	Rule string `json:"rule"`
 	// Fallback says why a field under the latest rule was held instead of
@@ -262,13 +300,39 @@ func entryNames(e *Conflict, id string) bool {
 	if e.Kind != KindRelation {
 		return e.Local == id
 	}
-	// A relation entry's Local is [entity.RelationKey.String]: FROM--type--TO.
-	parts := strings.SplitN(e.Local, "--", 3)
-	if len(parts) != 3 {
-		return false
+	k, ok := e.RelationKey()
+	return ok && (k.From == id || k.To == id)
+}
+
+// RelationKey parses the local relation key of a relation entry. It
+// reports false for an entity entry and for a key that does not parse.
+func (c *Conflict) RelationKey() (entity.RelationKey, bool) {
+	if c.Kind != KindRelation {
+		return entity.RelationKey{}, false
 	}
-	from, _, err := entity.ParseStateRef(parts[0])
-	return err == nil && (from == id || parts[2] == id)
+	// A relation entry's Local is [entity.RelationKey.String]: FROM--type--TO.
+	parts := strings.SplitN(c.Local, "--", 3)
+	if len(parts) != 3 {
+		return entity.RelationKey{}, false
+	}
+	from, face, err := entity.ParseStateRef(parts[0])
+	if err != nil || parts[1] == "" || parts[2] == "" {
+		return entity.RelationKey{}, false
+	}
+	return entity.RelationKey{From: from, FromFace: face, Type: parts[1], To: parts[2]}, true
+}
+
+// RefusedLocalFields returns the local fields a refused push or uncertain
+// create tried to send, from the keys of RefusedFields, sorted. It is
+// empty for an entry about one field.
+func (c *Conflict) RefusedLocalFields() []string {
+	out := make([]string, 0, len(c.RefusedFields))
+	for k := range c.RefusedFields {
+		local, _, _ := strings.Cut(k, "<")
+		out = append(out, local)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // PurgeSuperseded drops the superseded entries of the local entity id from
@@ -339,30 +403,74 @@ func LoadConflicts(ctx context.Context, kv state.KV, name string) ([]Conflict, e
 // ErrNoConflict reports a resolve that named no entry on the list.
 var ErrNoConflict = errors.New("remotesync: no such conflict")
 
-// CheckResolve returns the entries of list that a resolve of the local row
-// local, all of its entries or the one of field, to side take would
-// resolve. It fails with [ErrNoConflict] when there is none, and for a
-// side an entry cannot take. A caller checks before it takes the run lock,
-// so a mistyped resolve does not count as a run.
-func CheckResolve(list []Conflict, local, field, take string) ([]Conflict, error) {
+// ErrRefused reports a resolve, dismiss or link the entry it names does not
+// admit, such as a dismiss of a held entry or a link to an address of
+// another type. Its message is the operator's, built from the request.
+var ErrRefused = errors.New("remotesync: refused")
+
+// Target names the entries of one local row that a resolve, a dismiss or a
+// link acts on. Without Exact, an empty Field names every entry of the row and a
+// set one the entry of that field. With Exact, it names the one entry of
+// Field only: the row-level entry when Field is empty. A caller that gated
+// each entry for a reader uses Exact, so the write acts on no entry it did
+// not check.
+//
+// Fields, when not nil, is the set of local fields the caller checked on a
+// row-level entry. A row-level entry whose fields differ, because a sync
+// replaced it after the check, is refused, so the write never covers a
+// field the caller was not checked on.
+type Target struct {
+	Local  string
+	Field  string
+	Exact  bool
+	Fields []string
+}
+
+// checked reports whether entry e is still the entry the caller checked.
+func (t Target) checked(e *Conflict) error {
+	if t.Fields == nil || e.Field != "" {
+		return nil
+	}
+	want := slices.Clone(t.Fields)
+	slices.Sort(want)
+	if !slices.Equal(slices.Compact(want), e.RefusedLocalFields()) {
+		return fmt.Errorf("%w: %s: the entry changed since it was checked; reload the list", ErrRefused, e.Local)
+	}
+	return nil
+}
+
+// names reports whether t names entry e.
+func (t Target) names(e *Conflict) bool {
+	return e.Local == t.Local && (e.Field == t.Field || !t.Exact && t.Field == "")
+}
+
+// CheckResolve returns the entries of list that a resolve of target t to
+// side take would resolve. It fails with [ErrNoConflict] when there is
+// none, and for a side an entry cannot take. A caller checks before it
+// takes the run lock, so a mistyped resolve does not count as a run.
+func CheckResolve(list []Conflict, t Target, take string) ([]Conflict, error) {
 	if take != TakeLocal && take != TakeRemote {
-		return nil, fmt.Errorf("remotesync: resolve to %q: use %s or %s", take, TakeLocal, TakeRemote)
+		return nil, fmt.Errorf("%w: resolve to %q: use %s or %s", ErrRefused, take, TakeLocal, TakeRemote)
 	}
 	var out []Conflict
 	for _, e := range list {
-		if e.Local != local || (field != "" && e.Field != field) {
+		if !t.names(&e) {
 			continue
 		}
 		if e.Reason == ReasonSuperseded {
-			if field != "" {
-				return nil, fmt.Errorf("remotesync: %s %s: the latest rule already decided this field; "+
-					"dismiss the entry instead", e.Local, e.Field)
+			if t.Field != "" || t.Exact {
+				return nil, fmt.Errorf("%w: %s %s: the latest rule already decided this field; "+
+					"dismiss the entry instead", ErrRefused, e.Local, e.Field)
 			}
 			continue
 		}
+		if err := t.checked(&e); err != nil {
+			return nil, err
+		}
 		if e.Reason != ReasonBothChanged && e.Address == "" && take == TakeRemote {
-			return nil, fmt.Errorf("remotesync: %s: the remote refused to create the row, so there is no remote "+
-				"value to take; resolve to %s to try again, or narrow share to stop pushing it", e.Local, TakeLocal)
+			return nil, fmt.Errorf("%w: %s: the remote refused to create the row, so there is no remote "+
+				"value to take; resolve to %s to try again, or narrow share to stop pushing it", ErrRefused, e.Local,
+				TakeLocal)
 		}
 		out = append(out, e)
 	}
@@ -372,9 +480,8 @@ func CheckResolve(list []Conflict, local, field, take string) ([]Conflict, error
 	return out, nil
 }
 
-// Resolve resolves the entries of the local row local on m's conflict
-// list, all of them or the one of field, to side take ([TakeLocal] or
-// [TakeRemote]). It writes neither side. It sets each field's merge base to
+// Resolve resolves the entries target t names on m's conflict list to side
+// take ([TakeLocal] or [TakeRemote]). It writes neither side. It sets each field's merge base to
 // the losing side's value and marks the row to be compared again, so the
 // next sync sends the winning value, by the normal write path on each side.
 // A refused push resolved to the local side is tried again; resolved to
@@ -383,7 +490,7 @@ func CheckResolve(list []Conflict, local, field, take string) ([]Conflict, error
 //
 // The caller holds the remote's run lock, so no sync rewrites the ledger
 // meanwhile. It returns how many entries it resolved.
-func Resolve(ctx context.Context, kv state.KV, m *Mapping, local, field, take string) (int, error) {
+func Resolve(ctx context.Context, kv state.KV, m *Mapping, t Target, take string) (int, error) {
 	if m == nil {
 		return 0, errors.New("remotesync: a mapping is required")
 	}
@@ -395,7 +502,7 @@ func Resolve(ctx context.Context, kv state.KV, m *Mapping, local, field, take st
 	if err != nil {
 		return 0, err
 	}
-	entries, err := CheckResolve(c.list(), local, field, take)
+	entries, err := CheckResolve(c.list(), t, take)
 	if err != nil {
 		return 0, err
 	}
@@ -405,7 +512,7 @@ func Resolve(ctx context.Context, kv state.KV, m *Mapping, local, field, take st
 	}
 	var row *ledgerRow
 	for _, r := range l.rows {
-		if r.Kind == kind && r.Local == local && r.State == stateLinked {
+		if r.Kind == kind && r.Local == t.Local && r.State == stateLinked {
 			row = r
 		}
 	}
@@ -444,15 +551,14 @@ func resolveOne(row *ledgerRow, e *Conflict, take string) {
 	row.Hash = canonical.Digest{}
 }
 
-// CheckDismiss returns the superseded entries of list that a dismiss of the
-// local row local, all of them or the one of field, would remove. It fails
-// with [ErrNoConflict] when there is none, and when field names a held entry,
-// which needs a resolve.
-func CheckDismiss(list []Conflict, local, field string) ([]Conflict, error) {
+// CheckDismiss returns the superseded entries of list that a dismiss of
+// target t would remove. It fails with [ErrNoConflict] when there is none,
+// and when t names only held entries, which need a resolve.
+func CheckDismiss(list []Conflict, t Target) ([]Conflict, error) {
 	var out []Conflict
 	held := false
 	for _, e := range list {
-		if e.Local != local || (field != "" && e.Field != field) {
+		if !t.names(&e) {
 			continue
 		}
 		if e.Reason != ReasonSuperseded {
@@ -465,16 +571,16 @@ func CheckDismiss(list []Conflict, local, field string) ([]Conflict, error) {
 	case len(out) > 0:
 		return out, nil
 	case held:
-		return nil, fmt.Errorf("remotesync: %s: the entry is held, not superseded; resolve it with --take", local)
+		return nil, fmt.Errorf("%w: %s: the entry is held, not superseded; resolve it with --take", ErrRefused,
+			t.Local)
 	}
 	return nil, ErrNoConflict
 }
 
-// Dismiss removes the superseded entries of the local row local on m's
-// conflict list, all of them or the one of field. It changes neither side
-// and no merge base. The caller holds the remote's run lock. It returns how
-// many entries it removed.
-func Dismiss(ctx context.Context, kv state.KV, m *Mapping, local, field string) (int, error) {
+// Dismiss removes the superseded entries target t names on m's conflict
+// list. It changes neither side and no merge base. The caller holds the
+// remote's run lock. It returns how many entries it removed.
+func Dismiss(ctx context.Context, kv state.KV, m *Mapping, t Target) (int, error) {
 	if m == nil {
 		return 0, errors.New("remotesync: a mapping is required")
 	}
@@ -482,7 +588,7 @@ func Dismiss(ctx context.Context, kv state.KV, m *Mapping, local, field string) 
 	if err != nil {
 		return 0, err
 	}
-	entries, err := CheckDismiss(c.list(), local, field)
+	entries, err := CheckDismiss(c.list(), t)
 	if err != nil {
 		return 0, err
 	}

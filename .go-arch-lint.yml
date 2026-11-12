@@ -1479,6 +1479,9 @@ deps:
   dataentrywire:
     mayDependOn:
       - appbuild
+      # audit: the remote routes require a workspace with an audit sink, so
+      # resolve, dismiss and link are always recorded (TKT-0FMYPEZ).
+      - audit
       - dataentry
       # entitymanager: builds the Converter the remote MCP conversion
       # tools run over the field-gated manager.
@@ -1490,6 +1493,10 @@ deps:
       # realtime: builds the channel file reader the remote MCP tools use
       # from the shared channel service.
       - realtime
+      # remotesync, scheduler: adapt the remote status, conflict list and
+      # its run-locked changes to dataentry's own types (TKT-0FMYPEZ).
+      - remotesync
+      - scheduler
   # MCP tool groups over appbuild services, shared by the stdio and remote
   # servers. Separate from appbuild because mcp's tests import appbuild.
   mcpwire:

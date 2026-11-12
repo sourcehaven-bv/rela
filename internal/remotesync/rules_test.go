@@ -118,16 +118,16 @@ func TestRules_LatestRemoteWinsAndKeepsTheLocalValue(t *testing.T) {
 		t.Fatalf("push after supersede: %+v, remote %v", rep.Pushed, src.ents["R1"].Props)
 	}
 
-	if _, err := CheckResolve(entries(t, tg), r1.ID, "title", TakeLocal); err == nil {
+	if _, err := CheckResolve(entries(t, tg), Target{Local: r1.ID, Field: "title"}, TakeLocal); err == nil {
 		t.Fatal("a superseded entry was resolvable")
 	}
-	if n, err := Dismiss(ctx, tg.kv, m, r1.ID, ""); err != nil || n != 1 {
+	if n, err := Dismiss(ctx, tg.kv, m, Target{Local: r1.ID}); err != nil || n != 1 {
 		t.Fatalf("dismiss: %d, %v", n, err)
 	}
 	if len(entries(t, tg)) != 0 {
 		t.Fatal("the dismissed entry stayed")
 	}
-	if _, err := Dismiss(ctx, tg.kv, m, r1.ID, ""); !errors.Is(err, ErrNoConflict) {
+	if _, err := Dismiss(ctx, tg.kv, m, Target{Local: r1.ID}); !errors.Is(err, ErrNoConflict) {
 		t.Fatalf("second dismiss: %v", err)
 	}
 }
@@ -231,10 +231,10 @@ func TestRules_FieldOverrideBeatsTheRemoteRule(t *testing.T) {
 
 func TestDismiss_RefusesAHeldEntry(t *testing.T) {
 	list := []Conflict{{Local: "REQ-1", Field: "title", Reason: ReasonBothChanged}}
-	if _, err := CheckDismiss(list, "REQ-1", ""); err == nil || errors.Is(err, ErrNoConflict) {
+	if _, err := CheckDismiss(list, Target{Local: "REQ-1"}); err == nil || errors.Is(err, ErrNoConflict) {
 		t.Fatalf("dismiss of a held entry: %v", err)
 	}
-	if _, err := CheckDismiss(list, "REQ-2", ""); !errors.Is(err, ErrNoConflict) {
+	if _, err := CheckDismiss(list, Target{Local: "REQ-2"}); !errors.Is(err, ErrNoConflict) {
 		t.Fatalf("dismiss of nothing: %v", err)
 	}
 }
@@ -323,7 +323,7 @@ func TestRelationPush_ConflictIsHeldAndResolved(t *testing.T) {
 	if rep.Held != 1 || len(list) != 1 || list[0].Kind != KindRelation || list[0].Local != key.String() {
 		t.Fatalf("run %+v, list %+v", rep, list)
 	}
-	if n, err := Resolve(ctx, tg.kv, m, key.String(), "weight", TakeRemote); err != nil || n != 1 {
+	if n, err := Resolve(ctx, tg.kv, m, Target{Local: key.String(), Field: "weight"}, TakeRemote); err != nil || n != 1 {
 		t.Fatalf("resolve: %d, %v", n, err)
 	}
 	runSync(t, tg, m, src, Options{})
@@ -494,5 +494,96 @@ func TestRelationPush_FailedMergeIsNotSent(t *testing.T) {
 	}
 	if w, _ := json.Marshal(src.rels["R1--satisfies--C1"].Meta["weight"]); string(w) != "9" {
 		t.Fatalf("remote weight = %s, want 9", w)
+	}
+}
+
+// TestRelationPush_TwiceStaleIsCountedNotSent pins that a relation the
+// remote changes again between the refetch and the PATCH is left for the
+// next run, not held or overwritten (RR-KUA77YM).
+func TestRelationPush_TwiceStaleIsCountedNotSent(t *testing.T) {
+	ctx := context.Background()
+	tg := newTarget(t)
+	m := pushMapping(t, tg, nil)
+	src := newPushSource(seedSource())
+	runSync(t, tg, m, src, Options{})
+	key := relKey(t, tg, "R1", "C1")
+	if _, err := tg.mgr.UpdateRelation(ctx, key, entity.RelationOptions{
+		Properties: map[string]any{"weight": 7},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	src.before = func(method, _ string) (int, string) {
+		if method == http.MethodPatch {
+			return http.StatusPreconditionFailed, "stale"
+		}
+		return 0, ""
+	}
+	rep := runSync(t, tg, m, src, Options{})
+	if rep.PushedRelations.Conflicts != 1 || rep.PushedRelations.Updated != 0 || rep.Held != 0 {
+		t.Fatalf("push: %+v held %d", rep.PushedRelations, rep.Held)
+	}
+	if w, _ := json.Marshal(src.rels["R1--satisfies--C1"].Meta["weight"]); string(w) != "3" {
+		t.Fatalf("remote weight = %s", w)
+	}
+	src.before = nil
+	if rep := runSync(t, tg, m, src, Options{}); rep.PushedRelations.Updated != 1 {
+		t.Fatalf("next run: %+v", rep.PushedRelations)
+	}
+}
+
+// TestRelationPush_ExistingRelationIsDeferred pins that a 409 on a relation
+// create is not held: the remote has the relation, and the next pull links
+// it (RR-KUA77YM).
+func TestRelationPush_ExistingRelationIsDeferred(t *testing.T) {
+	ctx := context.Background()
+	tg := newTarget(t)
+	m := pushMapping(t, tg, nil)
+	src := newPushSource(seedSource())
+	runSync(t, tg, m, src, Options{})
+	key := relKey(t, tg, "R2", "C2")
+	if _, err := tg.mgr.CreateRelation(ctx, key, entity.RelationOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	src.before = func(method, path string) (int, string) {
+		if method == http.MethodPost && strings.Contains(path, "/relations/") {
+			return http.StatusConflict, "exists"
+		}
+		return 0, ""
+	}
+	rep := runSync(t, tg, m, src, Options{})
+	if rep.PushedRelations.Deferred != 1 || rep.PushedRelations.Refused != 0 || len(entries(t, tg)) != 0 {
+		t.Fatalf("push: %+v, list %+v", rep.PushedRelations, entries(t, tg))
+	}
+}
+
+// TestRelationPush_RefusalIsForgottenWhenTheRelationGoes pins that the
+// conflict list drops a refused relation create once the local relation is
+// gone (RR-KUA77YM).
+func TestRelationPush_RefusalIsForgottenWhenTheRelationGoes(t *testing.T) {
+	ctx := context.Background()
+	tg := newTarget(t)
+	m := pushMapping(t, tg, nil)
+	src := newPushSource(seedSource())
+	runSync(t, tg, m, src, Options{})
+	key := relKey(t, tg, "R2", "C2")
+	if _, err := tg.mgr.CreateRelation(ctx, key, entity.RelationOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	src.before = func(method, path string) (int, string) {
+		if method == http.MethodPost && strings.Contains(path, "/relations/") {
+			return http.StatusUnprocessableEntity, "no"
+		}
+		return 0, ""
+	}
+	runSync(t, tg, m, src, Options{})
+	if list := entries(t, tg); len(list) != 1 || list[0].Cause != CauseRefused {
+		t.Fatalf("list %+v", list)
+	}
+	if err := tg.mgr.DeleteRelation(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	runSync(t, tg, m, src, Options{})
+	if list := entries(t, tg); len(list) != 0 {
+		t.Fatalf("the refusal outlived the relation: %+v", list)
 	}
 }

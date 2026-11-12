@@ -562,7 +562,7 @@ func (r relSync) relRefusedOrFailed(ans httpremote.Answer, t relTarget, local st
 		}
 		r.c.hold(&Conflict{
 			Kind: KindRelation, Local: local, Type: t.rm.Local, Address: addr, Reason: ReasonRefused,
-			Detail: detail, RefusedFields: digests,
+			Detail: detail, RefusedFields: digests, Cause: CauseRefused, Status: ans.Status,
 		}, r.d.Now())
 		r.issue(IssueRefused, t.addr, local, fmt.Sprintf("the remote refused the push (%d): %s; held on the conflict list",
 			ans.Status, detail))

@@ -795,3 +795,32 @@ func (p Remote) maxBytes() int64 {
 	}
 	return p.MaxBytes
 }
+
+// Settings are a remote's settings with their defaults applied, as a
+// status page shows them. They hold no credential: only the kind of source
+// it is read from.
+type Settings struct {
+	URL                 string
+	Description         string
+	CredentialKind      string
+	RunAs               string
+	Every               string
+	Push                bool
+	Conflict            string
+	OnGone              string
+	MaxClockSkew        time.Duration
+	SupersededRetention time.Duration
+}
+
+// Settings returns p's settings with their defaults applied.
+func (p Remote) Settings() Settings {
+	conflict := p.Conflict
+	if conflict == "" {
+		conflict = ConflictHold
+	}
+	return Settings{
+		URL: p.URL, Description: p.Description, CredentialKind: p.Credential.Kind(), RunAs: p.RunAs,
+		Every: p.Every, Push: p.Push, Conflict: conflict, OnGone: p.onGone(),
+		MaxClockSkew: p.maxClockSkew(), SupersededRetention: p.supersededRetention(),
+	}
+}

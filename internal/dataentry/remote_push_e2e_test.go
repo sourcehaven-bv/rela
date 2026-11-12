@@ -289,7 +289,8 @@ remotes:
 	}
 
 	// Resolved to the local side, the next sync sends it.
-	if _, err := remotesync.Resolve(ctx, kv, m, one.ID, "title", remotesync.TakeLocal); err != nil {
+	title := remotesync.Target{Local: one.ID, Field: "title"}
+	if _, err := remotesync.Resolve(ctx, kv, m, title, remotesync.TakeLocal); err != nil {
 		t.Fatal(err)
 	}
 	if rep := run("resolved sync"); rep.Pushed.Updated != 1 || rep.Held != 0 {
@@ -422,7 +423,7 @@ remotes:
 
 		t.Fatalf("conflict list: %+v, %v", list, err)
 	}
-	if n, err := remotesync.Dismiss(ctx, kv, m, one.ID, "title"); err != nil || n != 1 {
+	if n, err := remotesync.Dismiss(ctx, kv, m, remotesync.Target{Local: one.ID, Field: "title"}); err != nil || n != 1 {
 		t.Fatalf("dismiss: %d, %v", n, err)
 	}
 }

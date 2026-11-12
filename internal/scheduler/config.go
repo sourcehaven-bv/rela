@@ -175,6 +175,26 @@ func (s Schedule) String() string {
 	// constants; no valid Schedule has another kind
 }
 
+// daysPerWeek is the span of a weekday schedule.
+const daysPerWeek = 7
+
+// Next returns when the schedule next makes a run due after a run that
+// started at lastRun: the next local midnight for a day schedule, the next
+// midnight of the weekday for a weekday schedule, and lastRun plus the
+// interval otherwise. The scheduler checks on its tick, so the run starts
+// at or shortly after it.
+func (s Schedule) Next(lastRun time.Time) time.Time {
+	switch s.kind {
+	case dayKind:
+		y, m, d := lastRun.Date()
+		return time.Date(y, m, d+1, 0, 0, 0, 0, lastRun.Location())
+	case weekdayKind:
+		return mostRecentWeekday(lastRun, s.weekday).AddDate(0, 0, daysPerWeek)
+	default:
+		return lastRun.Add(s.interval)
+	}
+}
+
 // Period is the longest time between two runs of this schedule.
 func (s Schedule) Period() time.Duration {
 	const (

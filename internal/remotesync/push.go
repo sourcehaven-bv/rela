@@ -393,13 +393,14 @@ func (r pusher) pushCreate(ctx context.Context, em *EntityMapping, e *entity.Ent
 		// and a busy answer included, holds the row: the remote may have
 		// made it.
 		if !notSent(err) {
-			r.unknownCreate(em, e, digests, err.Error())
+			r.unknownCreate(em, e, digests, causeOfError(err), 0, err.Error())
 		}
 		return r.pushFailed("", e.ID, err)
 	}
 	switch {
 	case ans.Status >= http.StatusInternalServerError:
-		return r.uncertainCreate(em, e, digests, fmt.Sprintf("%d %s", ans.Status, reconclient.Sanitize(string(ans.Body))))
+		return r.uncertainCreate(em, e, digests, CauseServerError, ans.Status,
+			fmt.Sprintf("%d %s", ans.Status, reconclient.Sanitize(string(ans.Body))))
 	case ans.Status < 200 || ans.Status >= 300:
 		r.pushRefusedOrFailed(ans, em, e, "", digests)
 		return nil
@@ -412,14 +413,15 @@ func (r pusher) pushCreate(ctx context.Context, em *EntityMapping, e *entity.Ent
 	if ans.Status != http.StatusCreated && ans.Status != http.StatusOK || decodeErr != nil ||
 		created.Type != em.Source || entity.ValidateID(created.ID) != nil {
 
-		return r.uncertainCreate(em, e, digests, fmt.Sprintf("%d with an answer that does not name a new %s",
-			ans.Status, em.Source))
+		return r.uncertainCreate(em, e, digests, CauseNoNewRow, ans.Status,
+			fmt.Sprintf("%d with an answer that does not name a new %s", ans.Status, em.Source))
 	}
 	addr := em.Source + "/" + created.ID
 	if r.l.get(reconclient.KindEntity, addr) != nil {
 		// The remote named a row the ledger already maps; only the driver
 		// writes the mapping, so it is not linked to a second local row.
-		return r.uncertainCreate(em, e, digests, "the remote answered with "+addr+", which is already linked")
+		return r.uncertainCreate(em, e, digests, CauseAlreadyLinked, ans.Status,
+			"the remote answered with "+addr+", which is already linked")
 	}
 	// A pushed row counts as adopted: it was here before the remote had
 	// it, so on_gone never deletes it.
@@ -454,8 +456,10 @@ func notSent(err error) bool {
 }
 
 // uncertainCreate fails a create whose outcome is unknown and holds it.
-func (r pusher) uncertainCreate(em *EntityMapping, e *entity.Entity, digests map[string]string, detail string) error {
-	r.unknownCreate(em, e, digests, detail)
+func (r pusher) uncertainCreate(
+	em *EntityMapping, e *entity.Entity, digests map[string]string, cause string, status int, detail string,
+) error {
+	r.unknownCreate(em, e, digests, cause, status, detail)
 	return r.rowFailed("", e.ID, "push: the create may have reached the remote: "+detail)
 }
 
@@ -465,12 +469,14 @@ func (r pusher) uncertainCreate(em *EntityMapping, e *entity.Entity, digests map
 // no new row or a row the ledger already links.
 // Sending it again could make a second copy, so a person checks the remote
 // first and resolves the entry to the local side to send it again.
-func (r pusher) unknownCreate(em *EntityMapping, e *entity.Entity, digests map[string]string, detail string) {
+func (r pusher) unknownCreate(
+	em *EntityMapping, e *entity.Entity, digests map[string]string, cause string, status int, detail string,
+) {
 	if len(detail) > maxDetail {
 		detail = detail[:maxDetail]
 	}
 	r.c.hold(&Conflict{
-		Local: e.ID, Type: em.Local, Reason: ReasonUncertain, RefusedFields: digests,
+		Local: e.ID, Type: em.Local, Reason: ReasonUncertain, RefusedFields: digests, Cause: cause, Status: status,
 		Detail: "the create may have reached the remote (" + detail + "); check the remote for the row " +
 			"before you resolve this to local",
 	}, r.d.Now())
@@ -532,6 +538,7 @@ func (r pusher) pushRefusedOrFailed(
 		r.c.hold(&Conflict{
 			Local: e.ID, Type: em.Local, Address: addr, Reason: ReasonRefused,
 			Detail: fmt.Sprintf("%d %s", ans.Status, detail), RefusedFields: digests,
+			Cause: CauseRefused, Status: ans.Status,
 		}, r.d.Now())
 		r.issue(IssueRefused, addr, e.ID, fmt.Sprintf("the remote refused the push (%d): %s; held on the conflict list",
 			ans.Status, detail))
