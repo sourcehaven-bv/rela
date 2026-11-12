@@ -78,3 +78,29 @@ func JoinedFlowRuns(s *Services, view store.Store) (flowrun.Store, error) {
 	}
 	return join(view)
 }
+
+// FlowWorkerTick runs one tick of s's flow worker, without its lock, and
+// returns how many runs it advanced and how many failed. Test-only: it
+// lets the external tests drive the worker on every backend. ok is false
+// when s has no flow worker. The worker must not be running: a tick
+// belongs to the leading goroutine.
+func FlowWorkerTick(ctx context.Context, s *Services) (advanced, failed int, ok bool) {
+	if s.flowWorker == nil {
+		return 0, 0, false
+	}
+	advanced, failed = s.flowWorker.runTick(ctx)
+	return advanced, failed, true
+}
+
+// TryFlowWorkerLock takes s's flow worker lock if it is free. Test-only:
+// it lets the external tests check that one process leads.
+func TryFlowWorkerLock(ctx context.Context, s *Services) (release func(), ok bool, err error) {
+	if s.flowWorker == nil {
+		return nil, false, errors.New("no flow worker")
+	}
+	held, ok, err := s.flowWorker.lock(ctx)
+	if err != nil || !ok {
+		return nil, ok, err
+	}
+	return held.release, true, nil
+}

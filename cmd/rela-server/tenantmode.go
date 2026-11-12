@@ -177,16 +177,20 @@ func (s *server) openTenant(t tenant.Tenant, opened *tenant.Opened) (*tenantResi
 
 	// The scheduler is not started per tenant (TKT-M3SHYE0). The workers
 	// below serve live features of the app and read only this tenant's
-	// services.
+	// services. The flow worker runs while the tenant is resident, as the
+	// realtime timers do: an evicted tenant's due runs wait until it opens
+	// again (TKT-FWQZGAM).
 	ctx, cancel := context.WithCancel(context.Background())
 	leases := appbuild.WatchLeases(ctx, svc)
 	worker := appbuild.RunRealtimeWorker(ctx, svc)
+	flows := appbuild.RunFlowWorker(ctx, svc)
 	follower := appbuild.FollowChannels(ctx, svc)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		<-leases
 		<-worker
+		<-flows
 		<-follower
 	}()
 	slog.Info("tenant opened", "org_id", t.OrgID, "schema", t.Schema)

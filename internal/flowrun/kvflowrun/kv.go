@@ -131,7 +131,14 @@ func New(kv state.KV, locker Locker) (*Store, error) {
 // lock takes the semaphore and then the locker, and returns the release of
 // both. It stops waiting when ctx ends. Reads lock too: another process
 // may replace a document meanwhile.
+//
+// An ended ctx always fails, even with the semaphore free, as a database
+// store refuses a query on an ended context. The select alone would pick
+// at random when both cases are ready.
 func (s *Store) lock(ctx context.Context) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("kvflowrun: lock: %w", err)
+	}
 	select {
 	case s.sem <- struct{}{}:
 	case <-ctx.Done():

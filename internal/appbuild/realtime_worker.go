@@ -54,6 +54,8 @@ const (
 	// realtimeWorkerLockFile is the worker lock of the file backend, in the
 	// project's cache directory.
 	realtimeWorkerLockFile = "realtime-worker.lock"
+	// realtimeWorkerLockKey names the realtime worker lock in the database.
+	realtimeWorkerLockKey = "realtime-worker"
 )
 
 // tombstoneConfirmer connects the channel guard to the post-commit delete
@@ -212,20 +214,32 @@ func heldFor(release func(), ok bool, err error) (heldLock, bool, error) {
 	return heldLock{release: release}, ok, err
 }
 
-// realtimeLeaderLock returns the worker lock for st: the database's own lock
-// on a backend that runs several processes (see storeLeaderLockFor), a lock
-// file in the cache directory on disk, and a lock that is always free in
-// memory.
+// realtimeLeaderLock returns the realtime worker lock for st (see
+// workerLeaderLock).
 func realtimeLeaderLock(fs storage.FS, cacheDir string, st store.Store) (leaderLock, error) {
-	if l := storeLeaderLockFor(st); l != nil {
+	l, err := workerLeaderLock(fs, cacheDir, st, realtimeWorkerLockKey, realtimeWorkerLockFile)
+	if err != nil {
+		return nil, fmt.Errorf("realtime worker: %w", err)
+	}
+	return l, nil
+}
+
+// workerLeaderLock returns the lock of one background worker for st: the
+// database's own lock named key on a backend that runs several processes
+// (see storeLeaderLockFor), the lock file named file in the cache
+// directory on disk, and a lock that is always free in memory. The sqlite
+// tier takes the lock file; its store admits one process, so the file
+// only orders the services within that process.
+func workerLeaderLock(fs storage.FS, cacheDir string, st store.Store, key, file string) (leaderLock, error) {
+	if l := storeLeaderLockFor(st, key); l != nil {
 		return l, nil
 	}
 	if inMemoryFS(fs) || fs == nil || cacheDir == "" {
 		return func(context.Context) (heldLock, bool, error) { return heldLock{release: func() {}}, true, nil }, nil
 	}
-	l, err := filelock.New(filepath.Join(cacheDir, realtimeWorkerLockFile))
+	l, err := filelock.New(filepath.Join(cacheDir, file))
 	if err != nil {
-		return nil, fmt.Errorf("realtime worker: %w", err)
+		return nil, err
 	}
 	return func(context.Context) (heldLock, bool, error) { return heldFor(l.TryLock()) }, nil
 }
@@ -250,10 +264,7 @@ type realtimeWorker struct {
 	// outputsBusy is set while a round of the outputs runner runs.
 	outputsBusy atomic.Bool
 
-	mu      sync.Mutex
-	running chan struct{}
-	closed  chan struct{}
-	once    sync.Once
+	life *workerLife
 }
 
 // outputsRound is the part of [realtime.Outputs] the worker runs.
@@ -291,7 +302,7 @@ func newRealtimeWorker(p realtimeWorkerParts) (*realtimeWorker, error) {
 		sweeper: p.sweeper, triggers: p.triggers, timers: p.timers, outputs: p.outputs, dueWake: p.dueWake,
 		changes: p.changes,
 		lock:    p.lock, wake: p.wake,
-		takeover: realtimeTakeoverInterval, closed: make(chan struct{}),
+		takeover: realtimeTakeoverInterval, life: newWorkerLife(),
 	}, nil
 }
 
@@ -360,46 +371,68 @@ func buildRealtimeWorker(
 // long-running hosts call it, next to [WatchLeases]. A Services without a
 // worker, or one whose worker already runs, returns a closed channel.
 func RunRealtimeWorker(ctx context.Context, s *Services) <-chan struct{} {
-	done := make(chan struct{})
 	w := s.realtimeWorker
 	if w == nil {
+		done := make(chan struct{})
 		close(done)
 		return done
 	}
-	w.mu.Lock()
-	if w.running != nil {
-		w.mu.Unlock()
-		slog.Warn("realtime worker: already running")
+	return w.life.start(ctx, "realtime worker", w.run)
+}
+
+// stop ends a running worker and waits for it. Safe to call more than once.
+func (w *realtimeWorker) stop() { w.life.stop() }
+
+// workerLife runs one background worker's loop at a time and stops it:
+// the lifecycle the realtime worker and the flow worker share.
+type workerLife struct {
+	mu      sync.Mutex
+	running chan struct{}
+	closed  chan struct{}
+	once    sync.Once
+}
+
+func newWorkerLife() *workerLife { return &workerLife{closed: make(chan struct{})} }
+
+// start runs run on its own goroutine until ctx is cancelled or stop is
+// called, and returns a channel closed once run has returned. A loop that
+// already runs is not started again: start then returns a closed channel.
+func (l *workerLife) start(ctx context.Context, name string, run func(context.Context)) <-chan struct{} {
+	done := make(chan struct{})
+	l.mu.Lock()
+	if l.running != nil {
+		l.mu.Unlock()
+		slog.Warn(name + ": already running")
 		close(done)
 		return done
 	}
-	w.running = done
-	w.mu.Unlock()
+	l.running = done
+	l.mu.Unlock()
 	ctx, cancel := context.WithCancel(ctx)
 	go func() {
 		defer close(done)
 		defer cancel()
 		go func() {
 			select {
-			case <-w.closed:
+			case <-l.closed:
 				cancel()
 			case <-ctx.Done():
 			}
 		}()
-		w.run(ctx)
-		w.mu.Lock()
-		w.running = nil
-		w.mu.Unlock()
+		run(ctx)
+		l.mu.Lock()
+		l.running = nil
+		l.mu.Unlock()
 	}()
 	return done
 }
 
-// stop ends a running worker and waits for it. Safe to call more than once.
-func (w *realtimeWorker) stop() {
-	w.once.Do(func() { close(w.closed) })
-	w.mu.Lock()
-	done := w.running
-	w.mu.Unlock()
+// stop ends a running loop and waits for it. Safe to call more than once.
+func (l *workerLife) stop() {
+	l.once.Do(func() { close(l.closed) })
+	l.mu.Lock()
+	done := l.running
+	l.mu.Unlock()
 	if done != nil {
 		<-done
 	}

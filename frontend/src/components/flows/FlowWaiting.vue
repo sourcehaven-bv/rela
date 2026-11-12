@@ -40,6 +40,9 @@ function branchVerdict(b: { holds: boolean; failed?: boolean }): string {
     </p>
     <p v-if="waiting.pending" class="flow-waiting__line" data-testid="flow-waiting-pending">
       {{ t('flows.waiting.pending', { n: waiting.pending.failures }) }}
+      <template v-if="waiting.pending.next_attempt">
+        {{ t('flows.waiting.nextAttempt', { at: formatInstant(waiting.pending.next_attempt) }) }}
+      </template>
     </p>
 
     <div v-if="waiting.branches?.length" class="flow-waiting__group">

@@ -415,7 +415,34 @@ func CheckState(st State) error {
 	if err := checkPending(st.Pending); err != nil {
 		return err
 	}
-	return checkBranches(st.Branches)
+	if err := checkBranches(st.Branches); err != nil {
+		return err
+	}
+	return checkForked(st)
+}
+
+// checkForked checks the shape of a forked state (RR-ZRMWUYT): the run's
+// own instance carries no pending mark or claim, an arrived branch carries
+// neither, and no two places share a generation, so a generation names
+// one step.
+func checkForked(st State) error {
+	if len(st.Branches) == 0 {
+		return nil
+	}
+	if st.Pending != nil || st.Claim != nil {
+		return invalid("a forked run carries a pending mark or claim of its own")
+	}
+	gens := map[int64]bool{st.Instance.Generation: true}
+	for _, b := range st.Branches {
+		if b.Arrived && (b.Pending != nil || b.Claim != nil) {
+			return invalid("arrived branch %q carries a pending mark or claim", b.Name)
+		}
+		if gens[b.Instance.Generation] {
+			return invalid("branch %q repeats generation %d", b.Name, b.Instance.Generation)
+		}
+		gens[b.Instance.Generation] = true
+	}
+	return nil
 }
 
 func checkClaim(c *Claim) error {

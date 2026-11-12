@@ -20,12 +20,12 @@ changes. `schema.yaml` never refers to it.
 > the web app, over MCP or with `rela flow start`. A run writes its
 > outputs, follows `done` branches and ends in a final state. People do
 > their steps in the web app or over MCP, and a completed step takes the
-> `change` branches. The `create`, `predicate` and `schedule` triggers,
-> `change` events from ordinary edits, timers, retention and the inbox are
-> checked but not acted on yet; they follow in a later release. So does
-> the worker that retries a failed step: in this release a failed step
-> waits until someone retries it by hand or cancels the run. See
-> [Running flows](#running-flows) and [Doing a step](#doing-a-step).
+> `change` branches. Timers fire and failed steps are tried again while
+> `rela-server` or the desktop app runs. The `create`, `predicate` and
+> `schedule` triggers, `change` events from ordinary edits, retention and
+> the inbox are checked but not acted on yet; they follow in a later
+> release. See [Running flows](#running-flows) and
+> [Doing a step](#doing-a-step).
 
 ## Example
 
@@ -155,6 +155,8 @@ after:
 A timer moves the run to `to` once `period` has passed. `since: state`
 (the default) counts from when the run entered the state; `since: run`
 counts from when the run started. A state has at most 8 timers.
+Timers fire while `rela-server` or the desktop app runs; see
+[Running flows](#running-flows).
 
 ### Outputs
 
@@ -233,6 +235,10 @@ Each branch waits, writes its outputs, takes its timers and takes
 itself is in the join state, and its status is `input_required` when a
 branch waits for a person. A branch that reaches a final state ends the
 whole run in that state.
+
+A `when:` join is tested when a branch arrives. While some branches have
+arrived and the condition is false, it is tested again every 5 minutes,
+so a later change to the subject lets the run go on.
 
 rela refuses a fork it cannot follow:
 
@@ -330,15 +336,22 @@ edge as `system:flow`, and then enters the initial state:
 
 A failed step leaves the run in its state with the rest of the step
 pending: outputs not yet written, a `done` branch not yet taken, or the
-end of the run not yet recorded. In this release rela does not try the
-step again by itself. A worker that does this comes in a later release.
-Until then the run stays pending. Someone who holds the start's
-permission retries it with the Retry button in the web app or
-`POST /api/v1/_flows/runs/{id}/_retry`, or ends it with
-`rela flow cancel`. A retry never writes an output twice. With
-`per_subject: one`, a pending run, like any unfinished run, keeps others
-from starting on its subject. `rela flow start` names the run when its
-first step failed, because the run exists.
+end of the run not yet recorded. rela tries again later and never writes
+an output twice. It waits 30 seconds after the first failure and doubles
+the wait after each further failure, up to one hour. `rela flow start`
+names the run when its first step failed, because the run exists.
+
+**The flow worker** fires due timers, tries failed steps again and tests
+waiting `when:` joins. It runs inside `rela-server` and the desktop app,
+every 15 seconds. A CLI command or an MCP session over stdio does not run
+it: without a server, a timer fires and a failed step is tried again once
+a server starts. With several server processes on one project, one of
+them runs the worker; on PostgreSQL each tenant has its own. In
+multi-tenant `rela-server`, a tenant's worker runs while the tenant is
+loaded. One pass handles at most 256 runs; the rest wait for the next
+pass. On PostgreSQL the worker keeps one database connection while it
+runs, so `pool_max_conns` must be at least 4; `rela-server` refuses to
+start with a smaller pool when the project declares flows.
 
 If rela stops between recording a run and storing its working state, the
 run is listed but cannot advance. `rela flow cancel` closes such a run
@@ -370,7 +383,8 @@ step form:
 - which roles the state waits for, and whether you hold one;
 - the timers of the state and when each fires;
 - each `change` branch, its roles and whether its `when` holds now;
-- a step whose outputs failed, with the number of failures;
+- a step whose outputs failed, with the number of failures and the next
+  attempt;
 - the flow as a diagram with the current state marked, and the timeline:
   the start and the latest moves, with who made each.
 
@@ -384,14 +398,13 @@ run stays where it is.
 Once the values are saved, the step is not refused any more. If the run
 then does not follow cleanly, the answer says why in `problem`: `guard`
 (a `when` could not be evaluated, so the run stays), `moved` (the run had
-already moved on, for example by another person's step) or `settling`
-(the run moved, but a later output step failed; retry it or cancel the
-run).
+already moved on, for example by a timer) or `settling` (the run moved,
+but a later output step failed and is retried).
 
 The panel also offers a Start button for each flow with an `on: manual`
 start, and Cancel and Retry buttons when you hold that start's
-permission. Retry tries the failed outputs of a step again. In this
-release rela does not retry them by itself.
+permission. Retry tries the failed outputs of a step again now, instead of
+waiting for the next attempt.
 
 The sidebar has two pages when the project has flows. **Flow tasks**
 lists the runs that wait for a role you hold, oldest first. **Flow runs**
