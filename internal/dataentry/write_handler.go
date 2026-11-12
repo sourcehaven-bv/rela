@@ -1276,11 +1276,15 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 	var err error
 	switch {
 	case r.Header.Get("If-Match") != "":
-		version, ok := h.entityIfMatch(w, r, typeName, ref)
+		c := conditionalDelete{
+			reader: h.reader, visibleStored: h.visibleStored, computeETag: h.computeETag,
+			deletes: h.ifMatchDeletes, soft: h.softDeletes != nil,
+		}
+		version, ok := c.ifMatch(w, r, typeName, ref)
 		if !ok {
 			return
 		}
-		err = h.deleteIfMatch(r.Context(), ref, version)
+		err = c.delete(r.Context(), ref, version)
 	case ref.Face.IsImplicit():
 		err = h.deleteWholeEntity(r.Context(), ref.ID)
 	default:
