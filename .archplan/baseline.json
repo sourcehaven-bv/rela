@@ -2696,39 +2696,46 @@
       "reason": "Design: wire DTOs mirror domain types on purpose, as the rule against leaking storage types asks. apiwire.MessageFile is the HTTP shape of channels.File.",
       "at": "2026-11-11T09:00:00Z",
       "title": "MessageFile (apiwire) and File (channels) share most of their fields."
+    },
+    "security.untested_denial-8a8fea5e0298": {
+      "state": "accepted",
+      "reason": "Design: a dry run never refuses. It answers 200 with advisory field and relation verdicts (RR-Y85M); the real create is the only authorization point and refuses there.",
+      "at": "2026-11-11T21:04:46Z",
+      "title": "No test shows handleV1DryRunCreate refusing a caller."
+    },
+    "security.untested_denial-104bd06723bb": {
+      "state": "accepted",
+      "reason": "Design: help text is schema, served to every signed-in user like /api/v1/_schema. The only refusal is an unsigned caller, refused at the identity edge before the handler runs.",
+      "at": "2026-11-11T21:04:46Z",
+      "title": "No test shows handleEntityHelp refusing a caller."
+    },
+    "security.untested_denial-d95084da6e69": {
+      "state": "accepted",
+      "reason": "Design: reconcile filters ranges to the rows the caller may read and never refuses a signed-in caller on authorization; its admission gate refuses on load, not access. The routes suite shows an unsigned caller refused (401) at the identity edge, before the handler runs, and TestReconcile_NoIdentityFailsClosed pins the fail-closed path inside it.",
+      "at": "2026-11-11T21:04:46Z",
+      "title": "No test shows handleV1Reconcile refusing a caller."
     }
   },
   "labels": {},
   "ratchet": {
     "metrics": {
       "weight.profile": 49,
-      "weight.structure": 90,
+      "weight.structure": 859,
       "weight.layers": 0,
       "weight.vocabulary": 868,
-      "weight.types": 4174,
+      "weight.types": 4133,
       "weight.concepts": 7139,
       "weight.boundaries": 1471,
       "weight.data": 1297,
-      "weight.security": 140,
+      "weight.security": 2064,
       "largest_tangle": 14,
       "cycle_edges": 67,
       "upward_edges": 0,
       "propagation_cost": 9.1
     },
     "min_weight": 0,
-    "at": "2026-11-11T10:50:01Z",
+    "at": "2026-11-11T21:08:12Z",
     "log": [
-      {
-        "at": "2026-11-05T14:50:14Z",
-        "change": "loosen",
-        "reason": "Schema wire EntityType mirrors EntityDef's new extends and namespace fields, like the other apiwire DTOs, TKT-C91W7H4",
-        "metrics": {
-          "weight.concepts": [
-            7047,
-            7052
-          ]
-        }
-      },
       {
         "at": "2026-11-05T20:33:00Z",
         "change": "tighten",
@@ -3019,6 +3026,25 @@
           "weight.boundaries": [
             1469,
             1471
+          ]
+        }
+      },
+      {
+        "at": "2026-11-11T21:08:12Z",
+        "change": "loosen",
+        "reason": "Re-record from the traced model of just archplan-security. The tighten of 2026-11-06T18:45:56Z, which gave no reason, came from a static model: it cut weight.security from 2300 to 140 and weight.structure from 936 to 90, which need traces, so every weekly run read as worse (issue 2164). weight.types improved and is recorded too.",
+        "metrics": {
+          "weight.structure": [
+            90,
+            859
+          ],
+          "weight.types": [
+            4174,
+            4133
+          ],
+          "weight.security": [
+            140,
+            2064
           ]
         }
       }
