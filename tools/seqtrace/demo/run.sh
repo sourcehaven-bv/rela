@@ -185,6 +185,38 @@ channel_types:
           body: { type: markdown, required: true }
         post: [member]
 YAML
+    # The flow routes answer 404 without a flows.yaml. One manual flow on a
+    # task turns them on.
+    cat >"$WORK/project/flows.yaml" <<'YAML'
+flows:
+  seqtrace-review:
+    label: Review
+    subject: task
+    start:
+      - on: manual
+        permission: publish-policy
+    initial: open
+    states:
+      open:
+        on:
+          done: { to: closed }
+      closed:
+        final: true
+YAML
+    # Viewing and resolving a merge conflict needs git:sync, which no perf
+    # role holds. The manager gets it, so the conflict gates let it through.
+    # A role of its own, held by a principal outside the graph, gets it too
+    # but reads only tasks, so the row gate refuses it a risk's conflict.
+    granted='permissions: [manage-roles, publish-policy, "git:sync"]'
+    awk -v granted="$granted" '
+        /^    permissions: \[manage-roles, publish-policy\]$/ { print "    " granted; next }
+        { print }
+        /^roles:$/ { print "  seqtrace-sync:\n    read: [task]\n    permissions: [\"git:sync\"]" }
+        /^assignments:$/ { print "  sync@perf.example: seqtrace-sync" }
+    ' "$WORK/project/acl.yaml" >"$WORK/acl.yaml" && mv "$WORK/acl.yaml" "$WORK/project/acl.yaml"
+    grep -qF "    $granted" "$WORK/project/acl.yaml" || die "could not grant git:sync to the manager"
+    grep -q '^  sync@perf.example: seqtrace-sync$' "$WORK/project/acl.yaml" ||
+        die "could not assign the seqtrace-sync role"
 fi
 RELA_DATABASE_URL="$DSN" "$WORK/rela" --project "$WORK/project" dev seed --scale "$SCALE"
 
@@ -192,8 +224,27 @@ pick() { psql "select id from $SCHEMA.entities where $1 order by id limit 1"; }
 TASK=$(pick "type = 'task' and properties->>'status' = 'todo'")
 RISK=$(pick "type = 'risk'")
 PERSON=$(pick "type = 'person' and properties->>'email' <> 'alice@perf.example'")
+PROJECT=$(pick "type = 'project'")
 WORD=$(psql "select split_part(properties->>'title', ' ', 1) from $SCHEMA.entities where id = '$TASK'" | tr -cd '[:alnum:]')
-[[ -n "$TASK" && -n "$RISK" && -n "$PERSON" ]] || die "seeded data is missing tasks, risks or people"
+[[ -n "$TASK" && -n "$RISK" && -n "$PERSON" && -n "$PROJECT" ]] ||
+    die "seeded data is missing tasks, risks, people or projects"
+
+if [[ ${SEQTRACE_SUITE:-} == routes ]]; then
+    # Merge conflicts on a task file and a risk file. The conflict routes
+    # read the file from the project directory, whatever the store, so the
+    # trace reaches the row gate and the field write check behind them. The
+    # store here is postgres, so nothing reads the resolved file back: it
+    # only drives the handler, and the task row keeps its title.
+    conflicted() { # PATH ID TYPE [PROPERTY: VALUE]
+        mkdir -p "$(dirname "$WORK/project/$1")"
+        printf '<<<<<<< HEAD\n---\nid: %s\ntype: %s\ntitle: Ours\n%s\n---\n=======\n---\nid: %s\ntype: %s\ntitle: Theirs\n%s\n---\n>>>>>>> incoming\nBody text.\n' \
+            "$2" "$3" "$4" "$2" "$3" "${5:-$4}" >"$WORK/project/$1"
+    }
+    CONFLICT=entities/tasks/$TASK.md
+    conflicted "$CONFLICT" "$TASK" task $'status: todo\npriority: low' $'status: todo\npriority: high'
+    RISK_CONFLICT=entities/risks/$RISK.md
+    conflicted "$RISK_CONFLICT" "$RISK" risk "status: open"
+fi
 
 step "Starting the traced server on $BASE"
 # The server logs "starting server" before it binds, so a busy port would
@@ -237,10 +288,16 @@ req() {
     # reached the server would shift every later name.
     [[ $code != 000 ]] || { cat "$WORK/server.log" >&2; die "no response for: $name"; }
     printf '  %-45s %s\n' "$name" "$code"
+    # EXPECT is the status the request must answer. A request that fails
+    # earlier than intended (a renamed wire field, a missing fixture) still
+    # draws a diagram, but not of the gate it was meant to trace.
+    [[ -z ${EXPECT:-} || $code == "$EXPECT" ]] ||
+        die "$name answered $code, want $EXPECT; see $WORK/responses/$(printf %02d $n).json"
 }
 ALICE=alice@perf.example # manager
 BOB=bob@perf.example     # editor
 CAROL=carol@perf.example # reader
+SYNC=sync@perf.example   # git:sync, reads only tasks (routes suite)
 
 req "read task as manager" "$ALICE" GET "/api/v1/tasks/$TASK"
 req "read person as editor, salary redacted" "$BOB" GET "/api/v1/persons/$PERSON"
@@ -301,6 +358,29 @@ if [[ ${SEQTRACE_SUITE:-} == routes ]]; then
     req "route GET gantt as reader" "$CAROL" GET "/api/v1/_gantts/delivery"
     req "route GET analyze as reader" "$CAROL" GET "/api/v1/_analyze"
     req "route POST conflict resolve as reader, denied" "$CAROL" POST "/api/v1/_conflicts/resolve" '{}'
+    EXPECT=403 req "route GET conflict detail as editor, denied" "$BOB" GET "/api/v1/_conflicts/$CONFLICT"
+    EXPECT=200 req "route GET conflict detail as manager" "$ALICE" GET "/api/v1/_conflicts/$CONFLICT"
+    EXPECT=404 req "route GET risk conflict detail as sync role, hidden" "$SYNC" GET "/api/v1/_conflicts/$RISK_CONFLICT"
+    EXPECT=403 req "route POST conflict resolve as sync role, denied" "$SYNC" POST "/api/v1/_conflicts/resolve" \
+        "{\"path\":\"$CONFLICT\",\"property_choices\":{\"priority\":\"theirs\"}}"
+    EXPECT=200 req "route POST conflict resolve as manager" "$ALICE" POST "/api/v1/_conflicts/resolve" \
+        "{\"path\":\"$CONFLICT\",\"property_choices\":{\"priority\":\"theirs\"}}"
+    EXPECT=403 req "route POST batch as reader, denied" "$CAROL" POST "/api/v1/_batch" \
+        '{"entities":[{"type":"task","id":"TSK-SEQTRACE-BATCH-DENIED","properties":{"title":"Denied","status":"todo","priority":"low"}}]}'
+    EXPECT=200 req "route POST batch as editor" "$BOB" POST "/api/v1/_batch" \
+        "{\"entities\":[{\"ref\":\"t\",\"type\":\"task\",\"id\":\"TSK-SEQTRACE-BATCH\",\"properties\":{\"title\":\"Batch\",\"status\":\"todo\",\"priority\":\"low\"}}],\"relations\":[{\"from\":{\"ref\":\"t\"},\"type\":\"assigned-to\",\"to\":{\"id\":\"$PERSON\"}}]}"
+    EXPECT=200 req "route POST reconcile as reader" "$CAROL" POST "/api/v1/_reconcile" \
+        '{"ranges":[{"kind":"entity","entities":["task"],"op":"fingerprint"},{"kind":"entity","entities":["task","risk"],"op":"list","limit":5}]}'
+    EXPECT=401 req "route POST reconcile without identity" - POST "/api/v1/_reconcile" \
+        '{"ranges":[{"kind":"entity","entities":["task"],"op":"fingerprint"}]}'
+    EXPECT=200 req "route GET view entry as reader" "$CAROL" GET "/api/v1/_views/project/$PROJECT"
+    EXPECT=404 req "route GET view entry as reader, hidden" "$CAROL" GET "/api/v1/_views/person/$PERSON"
+    EXPECT=200 req "route GET flow tasks as reader" "$CAROL" GET "/api/v1/_flows/tasks"
+    EXPECT=200 req "route GET flow runs as reader" "$CAROL" GET "/api/v1/_flows/runs"
+    EXPECT=403 req "route POST flow start as reader, denied" "$CAROL" POST "/api/v1/_flows/runs" \
+        "{\"flow\":\"seqtrace-review\",\"subject\":\"$TASK\"}"
+    EXPECT=201 req "route POST flow start as manager" "$ALICE" POST "/api/v1/_flows/runs" \
+        "{\"flow\":\"seqtrace-review\",\"subject\":\"$TASK\"}"
     req "route POST action as reader, denied" "$CAROL" POST "/api/v1/_action/seqtrace-touch" "{\"entity_id\":\"$TASK\"}"
     req "route POST action as manager" "$ALICE" POST "/api/v1/_action/seqtrace-touch" "{\"entity_id\":\"$TASK\"}"
     req "route POST entity action as reader, denied" "$CAROL" POST "/api/v1/tasks/$TASK/_actions/seqtrace-touch" '{}'
