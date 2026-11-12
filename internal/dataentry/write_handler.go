@@ -133,11 +133,14 @@ type writeHandler struct {
 	// softDeletes backs the Undo toast; nil when the store cannot
 	// soft-delete. See softDeleter.
 	softDeletes softDeleter
-	reader      entityReader
-	serializer  entitySerializer
-	affordances affordanceService
-	acl         func() acl.ACL
-	audit       func() audit.Audit
+	// ifMatchDeletes runs a DELETE that carries If-Match, so the version
+	// compare and the delete are one transaction. See ifMatchDeleter.
+	ifMatchDeletes ifMatchDeleter
+	reader         entityReader
+	serializer     entitySerializer
+	affordances    affordanceService
+	acl            func() acl.ACL
+	audit          func() audit.Audit
 
 	// The Lua action surface (interactive actions + webhook dispatch). All
 	// three are live closures over App: the engine so fixtures that build App
@@ -1267,18 +1270,20 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 	// If-Match makes the delete conditional on the row the caller last
 	// saw, as on PATCH: a remote sync sends it so a row changed since the
 	// last sync is not deleted (TKT-CVT9W1K). It runs after the read gate,
-	// so a hidden row is still a 404. The compare and the delete are two
-	// steps; a write landing between them is not caught.
-	if ifMatch := r.Header.Get("If-Match"); ifMatch != "" && ifMatch != h.computeETag(r.Context(), entity) {
-		writeV1Error(w, r, http.StatusPreconditionFailed, "precondition_failed",
-			"Entity has been modified", "ETag mismatch")
-		return
-	}
-
+	// so a hidden row is still a 404. The delete compares the stored
+	// version inside its own transaction, so a write landing between the
+	// compare here and the delete is a 412 too.
 	var err error
-	if ref.Face.IsImplicit() {
+	switch {
+	case r.Header.Get("If-Match") != "":
+		version, ok := h.entityIfMatch(w, r, typeName, ref)
+		if !ok {
+			return
+		}
+		err = h.deleteIfMatch(r.Context(), ref, version)
+	case ref.Face.IsImplicit():
 		err = h.deleteWholeEntity(r.Context(), ref.ID)
-	} else {
+	default:
 		_, err = h.manager.DeleteEntityFace(r.Context(), ref.ID, ref.Face, true)
 	}
 	if err != nil {
@@ -1302,6 +1307,11 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 		if errors.Is(err, entitymanager.ErrConcurrentChange) {
 			writeV1Error(w, r, http.StatusConflict, "conflict", "Entity is being modified concurrently",
 				"retry the delete")
+			return
+		}
+		if _, ok := errors.AsType[*store.VersionConflictError](err); ok {
+			writeV1Error(w, r, http.StatusPreconditionFailed, "precondition_failed",
+				"Entity has been modified", "concurrent write detected")
 			return
 		}
 		// Another request deleted it between the read above and this write.
@@ -1829,16 +1839,29 @@ func (h *writeHandler) handleV1DeleteRelation(
 		return
 	}
 
-	// If-Match makes the delete conditional, as on PATCH (TKT-CVT9W1K). The
-	// manager's delete takes no version, so a write landing between this
-	// compare and the delete is not caught.
+	// If-Match makes the delete conditional, as on PATCH (TKT-CVT9W1K).
+	// relationIfMatch returns the stored version it compared, and the
+	// delete compares it again inside its own transaction, so a write
+	// landing between the two is a 412 too.
 	key := entityPkg.RelationKey{From: from, FromFace: tail, Type: relType, To: to}
-	if _, ok := relationIfMatch(w, r, h.store, h.affordances, entity, key); !ok {
+	version, ok := relationIfMatch(w, r, h.store, h.affordances, entity, key)
+	if !ok {
 		return
 	}
 
-	if err := h.manager.DeleteRelation(r.Context(), key); err != nil {
+	var err error
+	if version != "" {
+		err = h.ifMatchDeletes.DeleteRelation(r.Context(), key, store.EntityVersion(version))
+	} else {
+		err = h.manager.DeleteRelation(r.Context(), key)
+	}
+	if err != nil {
 		if writeForbiddenIfACLDenied(w, r, err) {
+			return
+		}
+		if _, ok := errors.AsType[*store.VersionConflictError](err); ok {
+			writeV1Error(w, r, http.StatusPreconditionFailed, "precondition_failed",
+				"Relation has been modified", "concurrent write detected")
 			return
 		}
 		writeV1Error(w, r, http.StatusNotFound, "relation_not_found", "Relation not found", err.Error())

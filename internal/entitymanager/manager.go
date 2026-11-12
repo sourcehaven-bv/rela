@@ -2101,6 +2101,14 @@ func (m *Manager) deleteEntityInTx(
 // entity has any incident relations, returns [ErrHasRelations]
 // without deleting anything.
 func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error) {
+	return deleteFamily(ctx, m, id, cascade, deleteExpect{})
+}
+
+// deleteFamily is [Manager.DeleteEntity], conditional on pre: the version
+// compare runs inside the delete's transaction.
+func deleteFamily(
+	ctx context.Context, m *Manager, id string, cascade bool, pre deleteExpect,
+) (*entity.DeleteResult, error) {
 	// Every face, not one: a delete addresses the whole FAMILY, so it is
 	// authorized on each face it removes (BUG-1YN750). Authorizing the single row
 	// a one-face read returned let a principal holding delete on `policy@draft` only
@@ -2168,6 +2176,9 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	)
 	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
 		txCtx := store.ContextInTx(ctx)
+		if pErr := pre.check(txCtx, tx); pErr != nil {
+			return pErr
+		}
 		var dErr error
 		res, captured, dErr = m.deleteEntityInTx(txCtx, tx, id, cascade, authorized, guardedOwned)
 		return dErr
@@ -2667,6 +2678,14 @@ func readFaceToDelete(ctx context.Context, st store.Store, id string, face entit
 func (m *Manager) DeleteEntityFace(
 	ctx context.Context, id string, face entity.Face, cascade bool,
 ) (*entity.DeleteResult, error) {
+	return deleteFace(ctx, m, id, face, cascade, deleteExpect{})
+}
+
+// deleteFace is [Manager.DeleteEntityFace], conditional on pre: the version
+// compare runs inside the delete's transaction.
+func deleteFace(
+	ctx context.Context, m *Manager, id string, face entity.Face, cascade bool, pre deleteExpect,
+) (*entity.DeleteResult, error) {
 	if face.IsImplicit() {
 		return nil, fmt.Errorf("delete face: %s names the bare face; delete the entity instead", id)
 	}
@@ -2712,6 +2731,9 @@ func (m *Manager) DeleteEntityFace(
 		// record must carry the row this transaction deletes, not one a
 		// concurrent update has since replaced. A row whose type changed in
 		// between is a different ACL subject and is authorized again.
+		if pErr := pre.check(txCtx, tx); pErr != nil {
+			return pErr
+		}
 		inTx, rErr := readFaceToDelete(txCtx, tx, id, face)
 		if rErr != nil {
 			return rErr
@@ -3512,6 +3534,13 @@ func (m *Manager) UpdateRelation(
 //
 // **No automation.**
 func (m *Manager) DeleteRelation(ctx context.Context, key entity.RelationKey) error {
+	return deleteRelation(ctx, m, key, "")
+}
+
+// deleteRelation is [Manager.DeleteRelation]. A non-empty expect makes it
+// conditional on the relation's version, compared inside the delete's
+// transaction ([deleteRelationIfVersion]).
+func deleteRelation(ctx context.Context, m *Manager, key entity.RelationKey, expect store.EntityVersion) error {
 	from, face, relType := key.From, key.FromFace, key.Type
 	if err := validTail(face); err != nil {
 		return err
@@ -3536,6 +3565,9 @@ func (m *Manager) DeleteRelation(ctx context.Context, key entity.RelationKey) er
 			return srcErr
 		}
 		return fmt.Errorf("delete relation: %w", store.ErrNotFound)
+	}
+	if expect != "" {
+		return deleteRelationIfVersion(ctx, m, key, expect)
 	}
 	// Fetch pre-delete AFTER authz (BUG-K6FEVB: a denied delete must return
 	// ForbiddenError regardless of whether the relation exists) so the audit

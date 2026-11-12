@@ -34,6 +34,63 @@ func softDeletesFor(em *entitymanager.Manager) softDeleter {
 	return entitymanager.SoftDeletes{M: em}
 }
 
+// ifMatchDeleter is the conditional delete a DELETE with If-Match runs.
+// Each method fails with a *store.VersionConflictError when the stored
+// version is no longer version, checked in the delete's own transaction.
+type ifMatchDeleter interface {
+	DeleteEntity(
+		ctx context.Context, ref entityPkg.Ref, cascade bool, version store.EntityVersion,
+	) (*entityPkg.DeleteResult, error)
+	SoftDeleteEntity(
+		ctx context.Context, ref entityPkg.Ref, version store.EntityVersion,
+	) (*entityPkg.DeleteResult, error)
+	DeleteRelation(ctx context.Context, key entityPkg.RelationKey, version store.EntityVersion) error
+}
+
+// deleteIfMatch deletes the row ref names when its stored version is still
+// version: a soft delete of the family for the implicit face when the
+// store supports it, otherwise the hard cascade delete of the face.
+func (h *writeHandler) deleteIfMatch(ctx context.Context, ref entityPkg.Ref, version store.EntityVersion) error {
+	var err error
+	if h.softDeletes != nil && ref.Face.IsImplicit() {
+		_, err = h.ifMatchDeletes.SoftDeleteEntity(ctx, ref, version)
+	} else {
+		_, err = h.ifMatchDeletes.DeleteEntity(ctx, ref, true, version)
+	}
+	return err
+}
+
+// entityIfMatch checks a DELETE's If-Match against the caller's view of ref
+// and returns the stored version the delete must still find. The raw row is
+// read before the caller's view, so a write between the two reads either
+// shows in the view (a 412 here) or moves the raw version (a 412 from the
+// delete). Only the stored version leaves this function, never sent to the
+// caller. It writes the response and reports false when the request stops.
+func (h *writeHandler) entityIfMatch(
+	w http.ResponseWriter, r *http.Request, typeName string, ref entityPkg.Ref,
+) (store.EntityVersion, bool) {
+	raw, err := h.reader.readWritePrep(r.Context(), ref)
+	if errors.Is(err, store.ErrNotFound) {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return "", false
+	}
+	if err != nil {
+		writeInternalError(w, r, "delete_failed", "Failed to delete entity", err)
+		return "", false
+	}
+	seen, ok := h.visibleStored(r.Context(), typeName, ref)
+	if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return "", false
+	}
+	if r.Header.Get("If-Match") != h.computeETag(r.Context(), seen) {
+		writeV1Error(w, r, http.StatusPreconditionFailed, "precondition_failed",
+			"Entity has been modified", "ETag mismatch")
+		return "", false
+	}
+	return store.VersionOf(raw), true
+}
+
 // deleteWholeEntity deletes the entity id with its relations: a soft delete
 // when the store supports it, otherwise the hard cascade delete.
 func (h *writeHandler) deleteWholeEntity(ctx context.Context, id string) error {

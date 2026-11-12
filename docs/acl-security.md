@@ -2056,8 +2056,10 @@ redacts its fields. This section is about the pulling side. See
   run fetches the remote row, compares it with the last agreed values, and
   sends `DELETE` with `If-Match` on the fetched ETag. The remote's ACL
   decides whether the push principal may delete. The ETag covers only what
-  that principal may see, so a change to a field hidden from it does not
-  stop the delete.
+  that principal may see, so a change to a field hidden from it before the
+  fetch does not stop the delete. The remote checks the stored row again in
+  the transaction that deletes it, so any write after the compare, hidden
+  field or not, makes the delete a 412. A 412 reveals no field value.
 - **The credential stays out of config and scripts.** `remotes.yaml` names
   where the token comes from: an environment variable whose name starts with
   `REMOTE_CREDENTIAL_`, an absolute path to a file whose name starts with

@@ -61,7 +61,11 @@ RR-TGQDV1J. Minor wont-fix: RR-K299282.
 4. PASS: `TestDeletes_RemoteDeleteOfEditedRow` and `...Rules`.
 5. PASS: `TestDeletes_GuardHoldsOnlyDeletes`, `TestDeletes_Window`,
    `TestDeletes_EmptiedHereIsRefused`; e2e guard then `--allow-gone 2`.
-6. PASS: `delete_ifmatch_test.go` for entity and relation.
+6. PASS: `delete_ifmatch_test.go` for entity and relation. The compare
+   and the delete share one transaction (`entitymanager.IfMatchDeletes`):
+   `TestIfMatchDeletes_WriteBetweenReadAndDelete` and
+   `TestDelete_IfMatchWriteBetweenCompareAndDelete` land a write between
+   the read and the delete and get a 412 with the row kept.
 7. PASS: `TestDeletes_RemoteEditHolds` (TakeLocal, TakeRemote),
    `TestDeletes_ResolveRemoteSurvivesGuard`, `TestDeletes_RemoteDeletedRelation`.
 8. PASS: `TestDeletes_NeedsPush`, `TestDeletes_OffByDefault`, `TestDeletes_TurnedOff`.

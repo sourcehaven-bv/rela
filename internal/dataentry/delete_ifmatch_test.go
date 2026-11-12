@@ -171,3 +171,70 @@ func TestDelete_IfMatchHiddenRowIs404(t *testing.T) {
 		t.Fatal("the row is gone")
 	}
 }
+
+// racingDeletes lands a write after the handler's If-Match compare and
+// before the conditional delete runs.
+type racingDeletes struct {
+	ifMatchDeleter
+	race func()
+}
+
+func (d racingDeletes) DeleteEntity(
+	ctx context.Context, ref entity.Ref, cascade bool, v store.EntityVersion,
+) (*entity.DeleteResult, error) {
+	d.race()
+	return d.ifMatchDeleter.DeleteEntity(ctx, ref, cascade, v)
+}
+
+func (d racingDeletes) SoftDeleteEntity(
+	ctx context.Context, ref entity.Ref, v store.EntityVersion,
+) (*entity.DeleteResult, error) {
+	d.race()
+	return d.ifMatchDeleter.SoftDeleteEntity(ctx, ref, v)
+}
+
+func (d racingDeletes) DeleteRelation(ctx context.Context, key entity.RelationKey, v store.EntityVersion) error {
+	d.race()
+	return d.ifMatchDeleter.DeleteRelation(ctx, key, v)
+}
+
+// A write that lands between the If-Match compare and the delete makes the
+// delete a 412 and leaves the row, also when the write changed only a field
+// the caller cannot see (TKT-CVT9W1K).
+func TestDelete_IfMatchWriteBetweenCompareAndDelete(t *testing.T) {
+	for _, user := range []string{"bob", "alice"} {
+		t.Run("entity/"+user, func(t *testing.T) {
+			app := deleteApp(t)
+			etag := getEntityETag(t, app, user)
+			app.write.ifMatchDeletes = racingDeletes{app.write.ifMatchDeletes, func() {
+				if err := app.store.UpdateEntity(context.Background(), &entity.Entity{ID: "TKT-001", Type: "ticket",
+					Properties: map[string]any{"title": "a", "status": "closed"}}); err != nil {
+					t.Fatalf("UpdateEntity: %v", err)
+				}
+			}}
+			if rec := deleteEntity(t, app, user, etag); rec.Code != http.StatusPreconditionFailed {
+				t.Fatalf("DELETE = %d %s, want 412", rec.Code, rec.Body)
+			}
+			if _, err := app.store.GetEntity(context.Background(), entity.Ref{ID: "TKT-001"}); err != nil {
+				t.Fatalf("the row is gone: %v", err)
+			}
+		})
+		t.Run("relation/"+user, func(t *testing.T) {
+			app := deleteApp(t)
+			etag := getRelationETag(t, app, user)
+			key := entity.RelationKey{From: "TKT-001", Type: "depends_on", To: "TKT-002"}
+			app.write.ifMatchDeletes = racingDeletes{app.write.ifMatchDeletes, func() {
+				if _, err := app.store.UpdateRelation(context.Background(), key,
+					store.RelationData{Properties: map[string]any{"reason": "r", "secret": "moved"}}); err != nil {
+					t.Fatalf("UpdateRelation: %v", err)
+				}
+			}}
+			if rec := deleteRelation(t, app, user, etag); rec.Code != http.StatusPreconditionFailed {
+				t.Fatalf("DELETE = %d %s, want 412", rec.Code, rec.Body)
+			}
+			if _, err := app.store.GetRelation(context.Background(), key); err != nil {
+				t.Fatalf("the relation is gone: %v", err)
+			}
+		})
+	}
+}
