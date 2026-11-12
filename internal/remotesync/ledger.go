@@ -87,6 +87,10 @@ type ledgerRow struct {
 	// row is deleted on the remote or restored here, a detached row is
 	// restored on the remote or deleted here.
 	Resolve string `json:"rs,omitempty"`
+	// Gone is when a deleting row's local row was found deleted. A row
+	// that waits longer than [deleteRetention] is dropped, so the digests
+	// of a deleted row do not outlive it without bound.
+	Gone time.Time `json:"gn,omitzero"`
 }
 
 // localRef is the local entity row an entity row maps to.
@@ -128,6 +132,11 @@ type ledgerDoc struct {
 // source that stops listing a few rows per run would otherwise delete in
 // bulk over a day without ever tripping a per-run limit.
 const deleteWindow = 24 * time.Hour
+
+// deleteRetention is how long a deleting row waits for its remote delete:
+// held on the conflict list, held by the gone guard, or refused. After it
+// the row is dropped with its digests and the remote row is left alone.
+const deleteRetention = 30 * 24 * time.Hour
 
 // ledger is the loaded ledger of one remote.
 type ledger struct {

@@ -92,6 +92,12 @@ Deletes in both directions count against `max_gone`. A run that would
 delete more, or would empty a type on either side, holds every delete and
 detach until you confirm with `--allow-gone`; the rest of the run applies.
 
+A delete waits at most 30 days: held on the conflict list, held by the
+guard, or refused by the remote. After that, or when you turn
+`send_deletes` off, the run stops trying, leaves the remote row alone and
+reports it as `kept`. The ledger then forgets the row's field digests, so
+nothing derived from a deleted row's values stays behind.
+
 The remote applies its own rules to a delete, as for any caller of its
 API: its ACL, and its cascade or soft delete. Give the push principal the
 right to delete the mapped types on the remote.

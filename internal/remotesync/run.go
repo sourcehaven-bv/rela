@@ -333,9 +333,9 @@ func (r *runner) sweep(ctx context.Context) error {
 	from := map[string][]string{}
 	var rows []*ledgerRow
 	for _, row := range r.l.rows {
-		if row.State == stateDeleting && !r.m.Remote.SendDeletes {
-			// send_deletes was turned off: the delete is not sent.
-			row.State, row.Base, row.Resolve = stateDropped, nil, ""
+		if why := r.expiredDelete(row); why != "" {
+			r.issue(IssueKept, row.Address, row.Local, why)
+			row.State, row.Base, row.Resolve, row.Gone = stateDropped, nil, "", time.Time{}
 			continue
 		}
 		if row.Local == "" || (row.State != stateLinked && row.State != stateDetached && row.State != stateDeleting) {
@@ -362,10 +362,10 @@ func (r *runner) sweep(ctx context.Context) error {
 	for _, row := range rows {
 		switch {
 		case row.State == stateDeleting && present[row.Kind+row.Local]:
-			row.State, row.Resolve = stateLinked, ""
+			row.State, row.Resolve, row.Gone = stateLinked, "", time.Time{}
 		case row.State == stateDeleting || present[row.Kind+row.Local]:
 		case row.State == stateLinked && r.m.Remote.SendDeletes:
-			row.State = stateDeleting
+			row.State, row.Gone = stateDeleting, r.d.Now()
 		default:
 			row.State, row.Base, row.Resolve = stateDropped, nil, ""
 		}
@@ -397,6 +397,21 @@ func (r *runner) present(ctx context.Context, ids, from map[string][]string) (ma
 		}
 	}
 	return present, nil
+}
+
+// expiredDelete reports why a deleting row is no longer to be deleted on
+// the remote: send_deletes was turned off, or the row waited longer than
+// [deleteRetention]. It returns "" for any other row.
+func (r *runner) expiredDelete(row *ledgerRow) string {
+	switch {
+	case row.State != stateDeleting:
+		return ""
+	case !r.m.Remote.SendDeletes:
+		return "not deleted on the remote: send_deletes is off"
+	case !row.Gone.IsZero() && r.d.Now().Sub(row.Gone) > deleteRetention:
+		return "not deleted on the remote: the delete waited longer than 30 days"
+	}
+	return ""
 }
 
 // hold marks the current row as stopped without being applied.

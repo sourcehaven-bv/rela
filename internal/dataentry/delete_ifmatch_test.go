@@ -6,7 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -30,9 +32,11 @@ roles:
     read: [ticket]
     update: [ticket]
     delete: [ticket]
+  outsider: {}
 assignments:
   alice: partial
   bob: full
+  carol: outsider
 `
 
 func deleteApp(t *testing.T) *App {
@@ -60,6 +64,18 @@ func getEntityETag(t *testing.T, app *App, user string) string {
 	return rec.Header().Get("ETag")
 }
 
+// gatedAs binds user and attaches the row gate the request middleware
+// attaches in production, so a row the user cannot read is missing.
+func gatedAs(t *testing.T, app *App, req *http.Request, user string) *http.Request {
+	t.Helper()
+	d, ok := app.acl.(*acl.Declarative)
+	if !ok {
+		t.Fatalf("app ACL is %T, want a policy", app.acl)
+	}
+	ctx := principal.With(req.Context(), principal.Principal{User: user, Tool: principal.ToolDataEntry})
+	return req.WithContext(gateCtxFor(ctx, t, d))
+}
+
 func deleteEntity(t *testing.T, app *App, user, ifMatch string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tickets/TKT-001", http.NoBody)
@@ -67,7 +83,7 @@ func deleteEntity(t *testing.T, app *App, user, ifMatch string) *httptest.Respon
 		req.Header.Set("If-Match", ifMatch)
 	}
 	rec := httptest.NewRecorder()
-	app.write.handleV1DeleteEntity(rec, boundAs(t, app, req, user), "ticket", "tickets", "TKT-001")
+	app.write.handleV1DeleteEntity(rec, gatedAs(t, app, req, user), "ticket", "tickets", "TKT-001")
 	return rec
 }
 
@@ -79,7 +95,7 @@ func deleteRelation(t *testing.T, app *App, user, ifMatch string) *httptest.Resp
 		req.Header.Set("If-Match", ifMatch)
 	}
 	rec := httptest.NewRecorder()
-	app.write.handleV1DeleteRelation(rec, boundAs(t, app, req, user), "ticket", "TKT-001", "depends_on", "TKT-002")
+	app.write.handleV1DeleteRelation(rec, gatedAs(t, app, req, user), "ticket", "TKT-001", "depends_on", "TKT-002")
 	return rec
 }
 
@@ -138,5 +154,20 @@ func TestDeleteRelation_IfMatch(t *testing.T) {
 				t.Fatalf("second DELETE = %d %s, want 404", rec.Code, rec.Body)
 			}
 		})
+	}
+}
+
+// A caller who cannot read the row gets the 404 of a missing row, never a
+// 412: a stale If-Match must not tell an outsider that the row exists.
+func TestDelete_IfMatchHiddenRowIs404(t *testing.T) {
+	app := deleteApp(t)
+	if rec := deleteEntity(t, app, "carol", `"stale"`); rec.Code != http.StatusNotFound {
+		t.Fatalf("entity DELETE by an outsider = %d %s, want 404", rec.Code, rec.Body)
+	}
+	if rec := deleteRelation(t, app, "carol", `"stale"`); rec.Code != http.StatusNotFound {
+		t.Fatalf("relation DELETE by an outsider = %d %s, want 404", rec.Code, rec.Body)
+	}
+	if getEntityETag(t, app, "bob") == "" {
+		t.Fatal("the row is gone")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -138,10 +139,54 @@ func TestDeletes_TurnedOff(t *testing.T) {
 		t.Fatalf("state %q", got)
 	}
 	m = pushMapping(t, tg, nil)
-	runSync(t, tg, m, src, Options{})
+	rep := runSync(t, tg, m, src, Options{})
 	if got := ledgerState(t, tg, m); got != stateDropped || src.ents["R2"] == nil {
 		t.Fatalf("state %q", got)
 	}
+	if !hasKeptIssue(rep, "send_deletes is off") {
+		t.Fatalf("the dropped delete is not reported: %+v", rep.Issues)
+	}
+}
+
+// A delete that waits longer than deleteRetention is dropped with its
+// digests, the remote row is left alone, and the report says so.
+func TestDeletes_RetentionDropsWaitingDelete(t *testing.T) {
+	tg := newTarget(t)
+	m := deleteMapping(t, tg, func(p *Remote) { p.MaxGone = new(int) })
+	src := newPushSource(seedSource())
+	runSync(t, tg, m, src, Options{})
+	deleteLocal(t, tg, "R2")
+	if _, err := Run(context.Background(), m, tg.pushDeps(src), Options{}); !errors.Is(err, ErrGoneGuard) {
+		t.Fatalf("err %v", err)
+	}
+	d := tg.pushDeps(src)
+	d.Now = func() time.Time { return time.Now().Add(deleteRetention + time.Hour) }
+	rep, err := Run(context.Background(), m, d, Options{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := ledgerState(t, tg, m); got != stateDropped || src.ents["R2"] == nil {
+		t.Fatalf("state %q", got)
+	}
+	if !hasKeptIssue(rep, "30 days") {
+		t.Fatalf("the expired delete is not reported: %+v", rep.Issues)
+	}
+	l, err := loadLedger(context.Background(), tg.kv, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row := l.rows["Ereq/R2"]; row == nil || row.Base != nil {
+		t.Fatalf("digests outlive the expired delete: %+v", row)
+	}
+}
+
+func hasKeptIssue(rep Report, why string) bool {
+	for _, is := range rep.Issues {
+		if is.Kind == IssueKept && strings.Contains(is.Reason, why) {
+			return true
+		}
+	}
+	return false
 }
 
 // A row deleted on both sides is forgotten without a request.
