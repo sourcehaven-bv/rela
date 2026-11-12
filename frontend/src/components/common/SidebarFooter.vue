@@ -32,6 +32,7 @@ import RlText from 'rela-components/components/common/RlText.vue'
 import RlKbd from 'rela-components/components/data/RlKbd.vue'
 import { renderMarkdown } from '@/utils/markdown'
 import { stripSpace } from '@/stores/space'
+import { useMe } from '@/queries/me'
 
 const gitStore = useGitStore()
 const schemaStore = useSchemaStore()
@@ -54,6 +55,11 @@ const {
   expanded: naExpanded,
   loadOnce: naLoadOnce,
 } = useNextAction()
+
+// The Remotes link shows when the server says this principal may use the
+// page. Display only: every /_remotes request checks remote:sync itself.
+const { data: me } = useMe()
+const canRemoteSync = computed(() => me.value?.can_remote_sync === true)
 
 const { t } = useI18n()
 const appName = computed(() => schemaStore.app?.name || 'rela')
@@ -195,6 +201,14 @@ async function handleSync() {
       icon="settings"
       :class="{ active: stripSpace(route.path) === '/settings' }"
       @click="router.push('/settings')"
+    />
+    <RlSidebarFooterLink
+      v-if="canRemoteSync"
+      :label="t('footer.remotes')"
+      icon="cloud"
+      data-testid="footer-remotes"
+      :class="{ active: stripSpace(route.path).startsWith('/remotes') }"
+      @click="router.push('/remotes')"
     />
     <RlSidebarFooterLink v-if="appDescription" :label="t('footer.about')" icon="help" @click="aboutOpen = true" />
     <button type="button" class="footer-row shortcuts-btn status-item" :title="t('footer.keyboardShortcuts')" @click="shortcutsModalOpen = true">

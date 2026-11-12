@@ -2,7 +2,7 @@
 //
 // Each entry answers with the empty value the real server gives for the
 // contract fixture (frontend/contract/fixture/project), which has no
-// commands, comments, presence, transforms or actions. The contract test
+// commands, comments, presence, transforms, actions or remotes. The contract test
 // replays every entry against the real server, so an entry cannot claim an
 // answer the server does not give. A route that is in neither this table nor
 // the FakeServer answers 501.
@@ -33,6 +33,8 @@ export const INERT_ROUTES: readonly InertRoute[] = [
     example: '/_schema/channels',
     data: { channel_types: [] },
   },
+  // The fixture has no remotes.yaml, so the remotes page lists none.
+  { method: 'GET', path: /^\/_remotes$/, example: '/_remotes', data: { data: [] } },
 ]
 
 export function inertRoute(method: string, path: string): FakeResponse | undefined {

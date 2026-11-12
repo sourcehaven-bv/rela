@@ -214,6 +214,8 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc(leasesPath+"/", a.leases.handleV1Leases)
 	mux.HandleFunc(flowsPath, a.flows.handleV1Flows)
 	mux.HandleFunc(flowsPath+"/", a.flows.handleV1Flows)
+	mux.HandleFunc(remotesPath, a.remotes.handleV1Remotes)
+	mux.HandleFunc(remotesPath+"/", a.remotes.handleV1Remotes)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
 	mux.HandleFunc("/api/v1/_views/", a.views.handleV1Views)
 	a.registerCopyRoutes(mux)

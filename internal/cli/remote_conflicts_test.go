@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/remotestatus"
 	"github.com/Sourcehaven-BV/rela/internal/remotesync"
 )
 
@@ -28,6 +29,10 @@ func TestRemoteConflicts_RejectsBadArguments(t *testing.T) {
 		nil, false)
 	require.ErrorContains(t, err, "not both")
 	err = (&RemoteResolveCmd{Name: "cat", Local: "REQ-1", Dismiss: true}).run(ctx, nil, nil, logger, nil, false)
+	require.ErrorContains(t, err, "workspace")
+	err = (&RemoteLinkCmd{Name: "Bad Name", Local: "REQ-1", Address: "req/R1"}).run(ctx, nil, logger, nil, false)
+	require.ErrorContains(t, err, "invalid remote name")
+	err = (&RemoteLinkCmd{Name: "cat", Local: "REQ-1", Address: "req/R1"}).run(ctx, nil, logger, nil, false)
 	require.ErrorContains(t, err, "workspace")
 }
 
@@ -50,14 +55,16 @@ func TestWriteConflicts(t *testing.T) {
 		{Local: "REQ-5", Type: "requirement", Field: "title", Reason: remotesync.ReasonBothChanged,
 			Rule: remotesync.ConflictLatest, Fallback: remotesync.FallbackTimeWithheld, Since: since},
 		{Local: "REQ-6", Type: "requirement", Field: "title", Reason: remotesync.ReasonSuperseded, Since: since,
-			Superseded: &remotesync.Superseded{Winner: remotesync.TakeRemote, LocalValue: json.RawMessage(`"Ours"`),
+			Superseded: &remotestatus.Superseded{Winner: remotesync.TakeRemote, LocalValue: json.RawMessage(`"Ours"`),
 				LocalUpdated: since, RemoteUpdated: since.Add(time.Minute)}},
 		{Local: "REQ-7", Type: "requirement", Field: "title", Reason: remotesync.ReasonSuperseded, Since: since,
 			RemoteValueOmitted: true,
-			Superseded:         &remotesync.Superseded{Winner: remotesync.TakeLocal, LocalUpdated: since.Add(time.Minute)}},
+			Superseded:         &remotestatus.Superseded{Winner: remotesync.TakeLocal, LocalUpdated: since.Add(time.Minute)}},
+		{Local: "REQ-8", Type: "requirement", Field: "title", Reason: remotesync.ReasonSuperseded, Since: since,
+			Superseded: &remotestatus.Superseded{Winner: remotesync.TakeRemote, LocalUpdated: since}},
 	}))
 	out := b.String()
-	require.Contains(t, out, "Remote cat holds 7 conflicts:")
+	require.Contains(t, out, "Remote cat holds 8 conflicts:")
 	require.Contains(t, out, "rule latest held it (time_withheld)")
 	require.Contains(t, out, `the latest rule took the remote value (local changed 2026-11-11T09:00:00Z, remote `+
 		`2026-11-11T09:01:00Z); overwritten local value "Ours"`)
@@ -65,7 +72,9 @@ func TestWriteConflicts(t *testing.T) {
 	require.Contains(t, out, `requirement REQ-1 field title (remote req/R1): both sides changed it; remote value "Theirs`)
 	require.Contains(t, out, "too large to show")
 	require.Contains(t, out, "REQ-3: the remote refused the push: 422 title is required (since 2026-11-11T09:00:00Z)")
-	require.Contains(t, out, "REQ-4: the create may have reached")
+	require.Contains(t, out, "REQ-4: the create may have reached; --take local sends it again, rela remote link")
+	require.Contains(t, out, "REQ-8 field title: the latest rule took the remote value")
+	require.Contains(t, out, "the overwritten local value was not kept")
 	require.NotContains(t, out, "\x1b")
 }
 

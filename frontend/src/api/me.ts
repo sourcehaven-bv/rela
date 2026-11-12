@@ -40,6 +40,11 @@ export interface MeResponse {
    * Configure API checks the permission on every request itself.
    */
   can_configure?: boolean
+  /**
+   * This principal holds remote:sync and the server has remotes wired. Absent
+   * means no. It only decides whether the Remotes link is shown.
+   */
+  can_remote_sync?: boolean
 }
 
 /**

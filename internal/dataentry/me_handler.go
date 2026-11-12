@@ -73,6 +73,7 @@ func handleV1Me(a *App, w http.ResponseWriter, r *http.Request) {
 	// Per principal; writeV1JSON marks every v1 response no-store.
 	me := buildMe(ctx, principal.From(ctx), deps)
 	me.CanConfigure = a.configure != nil && mayConfigure(a, r)
+	me.CanRemoteSync = a.remotes != nil && permitsRemoteSync(a.acl, r)
 	writeV1JSON(w, http.StatusOK, me)
 }
 

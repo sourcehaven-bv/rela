@@ -72,7 +72,8 @@ func writeConflicts(w io.Writer, name string, list []remotesync.Conflict) error 
 				fmt.Fprintf(&b, "; remote value %s", reconclient.Sanitize(string(e.RemoteValue)))
 			}
 		case remotesync.ReasonUncertain:
-			fmt.Fprintf(&b, ": %s", reconclient.Sanitize(e.Detail))
+			fmt.Fprintf(&b, ": %s; --take local sends it again, rela remote link links it to a remote row",
+				reconclient.Sanitize(e.Detail))
 		default:
 			fmt.Fprintf(&b, ": the remote refused the push: %s", reconclient.Sanitize(e.Detail))
 		}
@@ -96,6 +97,8 @@ func writeSuperseded(b *strings.Builder, e remotesync.Conflict) {
 		fmt.Fprintf(b, "; the overwritten %s value is too large to show", side)
 	case len(lost) > 0:
 		fmt.Fprintf(b, "; overwritten %s value %s", side, reconclient.Sanitize(string(lost)))
+	default:
+		fmt.Fprintf(b, "; the overwritten %s value was not kept", side)
 	}
 }
 
@@ -137,7 +140,7 @@ func (c *RemoteResolveCmd) run(
 	case c.Take == "":
 		return errors.New("use --take local, --take remote or --dismiss")
 	}
-	n, report, err := scheduler.ResolveRemote(ctx, ws, bind, c.Name, c.Local, c.Field, c.Take, logger)
+	n, report, err := scheduler.ResolveRemote(ctx, ws, bind, c.Name, c.target(), c.Take, logger)
 	if errors.Is(err, remotesync.ErrNoConflict) {
 		return fmt.Errorf("remote %s holds no conflict for %s", c.Name, shown(c.Local))
 	}
@@ -162,10 +165,16 @@ func (c *RemoteResolveCmd) run(
 	return err
 }
 
+// target names the entries the command acts on: the field's, or all of the
+// row's when no field is given.
+func (c *RemoteResolveCmd) target() remotesync.Target {
+	return remotesync.Target{Local: c.Local, Field: c.Field}
+}
+
 func (c *RemoteResolveCmd) dismiss(
 	ctx context.Context, ws scheduler.WorkspaceProvider, logger *slog.Logger, w io.Writer, asJSON bool,
 ) error {
-	n, err := scheduler.DismissRemote(ctx, ws, c.Name, c.Local, c.Field, logger)
+	n, err := scheduler.DismissRemote(ctx, ws, c.Name, c.target(), logger)
 	switch {
 	case errors.Is(err, remotesync.ErrNoConflict):
 		return fmt.Errorf("remote %s holds no superseded entry for %s", c.Name, shown(c.Local))
@@ -177,5 +186,45 @@ func (c *RemoteResolveCmd) dismiss(
 		}{n})
 	}
 	_, err = fmt.Fprintf(w, "Dismissed %d entries of %s.\n", n, shown(c.Local))
+	return err
+}
+
+// RemoteLinkCmd links an uncertain create to the remote row it made
+// (TKT-0FMYPEZ). A push holds a create whose outcome it could not tell; when
+// a person finds the row on the remote, linking the two settles the entry
+// without sending the create again. It writes neither side.
+type RemoteLinkCmd struct {
+	Name    string `arg:"" help:"Remote name, as in remotes.yaml."`
+	Local   string `arg:"" help:"Local entity id of the uncertain create."`
+	Address string `arg:"" help:"Remote row the create made, as type/id."`
+}
+
+// Run links the two rows.
+func (c *RemoteLinkCmd) Run(ctx context.Context, ws scheduler.WorkspaceProvider) error {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	w, asJSON := remoteOutput()
+	return c.run(ctx, ws, logger, w, asJSON)
+}
+
+func (c *RemoteLinkCmd) run(
+	ctx context.Context, ws scheduler.WorkspaceProvider, logger *slog.Logger, w io.Writer, asJSON bool,
+) error {
+	if !principal.ValidIntegrationName(c.Name) {
+		return fmt.Errorf("invalid remote name %q", c.Name)
+	}
+	err := scheduler.LinkRemote(ctx, ws, c.Name, remotesync.Target{Local: c.Local}, c.Address, logger)
+	switch {
+	case errors.Is(err, remotesync.ErrNoConflict):
+		return fmt.Errorf("remote %s holds no uncertain create of %s", c.Name, shown(c.Local))
+	case err != nil:
+		return err
+	case asJSON:
+		return json.NewEncoder(w).Encode(struct {
+			Linked  string `json:"linked"`
+			Address string `json:"address"`
+		}{c.Local, c.Address})
+	}
+	_, err = fmt.Fprintf(w, "Linked %s to remote row %s; the next sync compares the two.\n", shown(c.Local),
+		shown(c.Address))
 	return err
 }

@@ -37,9 +37,10 @@ func (g *Generator) addSystemPaths(spec *Spec) {
 	g.addReconcileRoute(spec)
 	addChannelSchemaPath(spec)
 
-	// The SSE stream and the git routes are left out: they are browser
-	// surfaces outside the non-browser CSRF exemption, so a generic client
-	// would get 403 origin_missing from every call.
+	// The SSE stream, the git routes and the remote-sync routes
+	// (/api/v1/_remotes) are left out: they are browser surfaces outside the
+	// non-browser CSRF exemption, so a generic client would get 403
+	// origin_missing from every call.
 }
 
 func (g *Generator) addConversionPaths(spec *Spec) {

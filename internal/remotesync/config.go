@@ -41,6 +41,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/url"
 	"slices"
@@ -56,6 +57,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient/httpremote"
+	"github.com/Sourcehaven-BV/rela/internal/remotestatus"
 	"github.com/Sourcehaven-BV/rela/internal/syncmerge"
 )
 
@@ -121,9 +123,9 @@ type Config struct {
 
 // Remote is one source this instance pulls from.
 type Remote struct {
-	Description string `yaml:"description,omitempty"`
-	// URL is the source's base address, as for `rela reconcile --remote`.
-	URL string `yaml:"url"`
+	// Settings are the settings a remote's status shows. Empty Conflict
+	// means [ConflictHold] and empty OnGone means [OnGoneDetach].
+	remotestatus.Settings `yaml:",inline"`
 	// Credential names where the credential presented to the remote comes
 	// from: exactly one of an environment variable, a file, or a global
 	// secret under remote_credential. The value never appears here.
@@ -131,17 +133,8 @@ type Remote struct {
 	// AuthHeader is the request header that carries the credential. Empty
 	// means Authorization, which sends it as a bearer token.
 	AuthHeader string `yaml:"auth_header,omitempty"`
-	// RunAs is the identity a scheduled pull runs and writes as. Empty means
-	// the scheduler's own identity, as for a scheduled task. A pull by hand
-	// runs as the person who starts it.
-	RunAs string `yaml:"run_as,omitempty"`
-	// Every is the pull schedule in schedules.yaml syntax. Empty means the
-	// remote is pulled only by `rela remote pull`.
-	Every string `yaml:"every,omitempty"`
 	// AllowInsecureHTTP permits plain http to a host that is not loopback.
 	AllowInsecureHTTP bool `yaml:"allow_insecure_http,omitempty"`
-	// OnGone is [OnGoneDetach] (the default) or [OnGoneDelete].
-	OnGone string `yaml:"on_gone,omitempty"`
 	// MaxGone is how many rows one run may detach or delete before it is
 	// refused. Nil means [DefaultMaxGone]; zero refuses any.
 	MaxGone *int `yaml:"max_gone,omitempty"`
@@ -154,13 +147,6 @@ type Remote struct {
 	// MaxBytes caps the bytes one run reads in fetched rows; the rest wait
 	// for the next run. Zero means [DefaultMaxBytes].
 	MaxBytes int64 `yaml:"max_bytes,omitempty"`
-	// Push makes the remote two-way: after each pull, the run pushes the
-	// local changes to mapped fields, and the shared local rows the remote
-	// does not have yet, through the remote's write API (DEC-2NFLAHB).
-	Push bool `yaml:"push,omitempty"`
-	// Conflict is the rule for a field both sides changed since the last
-	// sync. Empty means [ConflictHold].
-	Conflict string `yaml:"conflict,omitempty"`
 	// MaxClockSkew is how far in the future a last-updated time may lie
 	// before the latest rule holds instead of trusting it, as a Go duration
 	// such as "5m". Empty means [DefaultMaxClockSkew].
@@ -794,4 +780,43 @@ func (p Remote) maxBytes() int64 {
 		return DefaultMaxBytes
 	}
 	return p.MaxBytes
+}
+
+// MappedTypes lists the types m maps, entities first, each sorted by
+// source type.
+func (m *Mapping) MappedTypes() []remotestatus.MappedType {
+	out := make([]remotestatus.MappedType, 0, len(m.Entities)+len(m.Relations))
+	for _, src := range slices.Sorted(maps.Keys(m.Entities)) {
+		em := m.Entities[src]
+		out = append(out, remotestatus.MappedType{Local: em.Local, Source: em.Source, Fields: mappedFields(em.Fields)})
+	}
+	for _, src := range slices.Sorted(maps.Keys(m.Relations)) {
+		rm := m.Relations[src]
+		out = append(out, remotestatus.MappedType{
+			Kind: KindRelation, Local: rm.Local, Source: rm.Source, Fields: mappedFields(rm.Fields),
+		})
+	}
+	return out
+}
+
+func mappedFields(fields []FieldMapping) []remotestatus.MappedField {
+	out := make([]remotestatus.MappedField, len(fields))
+	for i, f := range fields {
+		out[i] = remotestatus.MappedField{Local: f.Local.Name, Remote: f.Remote, Rule: f.Rule}
+	}
+	return out
+}
+
+// Status is remote name's settings with their defaults applied. It has
+// no mapped types and no run health; the caller adds those.
+func (p Remote) Status(name string) remotestatus.Remote {
+	settings := p.Settings
+	if settings.Conflict == "" {
+		settings.Conflict = ConflictHold
+	}
+	settings.OnGone = p.onGone()
+	return remotestatus.Remote{
+		Name: name, Settings: settings, CredentialKind: p.Credential.Kind(),
+		MaxClockSkew: p.maxClockSkew(), SupersededRetention: p.supersededRetention(),
+	}
 }

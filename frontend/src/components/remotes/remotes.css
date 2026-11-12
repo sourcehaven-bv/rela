@@ -1,0 +1,52 @@
+/* The remotes page and a remote's conflict list (TKT-0FMYPEZ). */
+.remotes__error {
+  margin-bottom: var(--space-lg);
+}
+
+.remotes__table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: var(--space-md);
+}
+
+.remotes__table th,
+.remotes__table td {
+  text-align: left;
+  vertical-align: top;
+  padding: var(--space-xs) var(--space-sm);
+  border-bottom: 1px solid var(--rl-color-border);
+}
+
+.remotes__table th {
+  font-size: var(--font-size-sm);
+  color: var(--rl-color-text-muted);
+  font-weight: 600;
+}
+
+.remotes__muted {
+  color: var(--rl-color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.remotes__url,
+.remotes__value {
+  word-break: break-all;
+}
+
+.remotes__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.remotes__link-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.remotes__back {
+  margin-bottom: var(--space-md);
+}

@@ -42,6 +42,7 @@ func RunAll(t *testing.T, newStore NewStore) {
 		{"StartRunOnlyOnce", testStartRunOnlyOnce},
 		{"SuccessStampsCreatedAtAndClearsLadder", testSuccessStampsCreatedAtAndClearsLadder},
 		{"FailureAdvancesLadder", testFailureAdvancesLadder},
+		{"LockOnlyRunLeavesTaskState", testLockOnlyRunLeavesTaskState},
 		{"FinishRunIsIdempotent", testFinishRunIsIdempotent},
 		{"QueuedRunCanFinish", testQueuedRunCanFinish},
 		{"ReapAbandonsOnlyExpiredRuns", testReapAbandonsOnlyExpiredRuns},
@@ -118,6 +119,23 @@ func runToEnd(
 	fin, err := s.FinishRun(ctx, id, out, ladder)
 	require.NoError(t, err)
 	return fin
+}
+
+func testLockOnlyRunLeavesTaskState(t *testing.T, s schedulerstate.Store) {
+	t.Helper()
+	runToEnd(t, s, "task", "r1", base, schedulerstate.Outcome{At: base.Add(time.Minute)})
+	before := load(t, s, "task")
+
+	later := base.Add(time.Hour)
+	runToEnd(t, s, "task", "r2", later, schedulerstate.Outcome{At: later, LockOnly: true})
+	runToEnd(t, s, "task", "r3", later.Add(time.Minute),
+		schedulerstate.Outcome{Error: "boom", At: later.Add(time.Minute), LockOnly: true})
+
+	after := load(t, s, "task")
+	require.Nil(t, after.Active, "a lock-only run must still end and free the task")
+	require.Equal(t, before.LastRun, after.LastRun, "a lock-only run must not count as a pull")
+	require.Equal(t, 0, after.Failures, "a lock-only run must not climb the retry ladder")
+	require.True(t, after.NextRetry.IsZero())
 }
 
 func testLoadMissingIsAbsentNotZero(t *testing.T, s schedulerstate.Store) {

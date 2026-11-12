@@ -105,6 +105,12 @@ const (
 	// project-wide capability rather than an entity verb.
 	PermGitSync = "git:sync"
 
+	// PermRemoteSync permits viewing the remote sync status page and
+	// conflict list in the data-entry app, and resolving, dismissing and
+	// linking its entries (TKT-0FMYPEZ). Each entry is still gated by the
+	// principal's read access to the local row and field.
+	PermRemoteSync = "remote:sync"
+
 	// PermSettingsEdit permits saving the create-form defaults on the
 	// data-entry settings page. One set of defaults serves every principal,
 	// so changing it changes what everyone's new entities start with.
@@ -138,7 +144,7 @@ func BuiltinPermissions() []string {
 		PermCommentRead, PermCommentAdd,
 		PermCommentUpdateOwn, PermCommentUpdateAny,
 		PermCommentDeleteOwn, PermCommentDeleteAny,
-		PermConfigEdit, PermGitSync, PermSettingsEdit,
+		PermConfigEdit, PermGitSync, PermRemoteSync, PermSettingsEdit,
 	}
 }
 

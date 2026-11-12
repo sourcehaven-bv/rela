@@ -75,9 +75,10 @@ func translateVerb(verb, entityType, entityID string, face entityPkg.Face) acl.W
 // translateRelationWrite maps an update of a relType edge from fromID (type
 // fromType) at tail to the [acl.WriteRequest] [entitymanager.Manager.UpdateRelation]
 // authorizes it with, by delegating to [entitymanager.RelationUpdateRequest].
-// The only caller is the conflict-resolve handler, whose write is file-level
-// and cannot route through entitymanager, so it must ask the manager's
-// question rather than a copy of it.
+// Its callers decide a write that does not route through entitymanager
+// themselves: the conflict-resolve handler, whose write is file-level, and
+// the remote conflict gate, whose write the next pull makes. Each must ask
+// the manager's question rather than a copy of it.
 func translateRelationWrite(
 	meta *metamodel.Metamodel, relType, fromType, fromID string, tail entityPkg.Face,
 ) acl.WriteRequest {
