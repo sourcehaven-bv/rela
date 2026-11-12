@@ -1,6 +1,7 @@
 package diagram
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -170,4 +171,59 @@ func TestOutcome(t *testing.T) {
 func render(w *strings.Builder, root *Call, opt Options) (int, error) {
 	d := Build(root, opt)
 	return d.Arrows(), d.Mermaid(w)
+}
+
+// A closure a handler passes as a callback matches the title pattern too,
+// but never names the diagram, even under a handler nested in the first.
+func TestTitleSkipsHandlerClosures(t *testing.T) {
+	call := func(id, parent int, fn string) string {
+		return fmt.Sprintf(`{"e":"c","id":%d,"p":%d,"g":1,"pkg":"internal/dataentry","fn":%q,"t":%d}`, id, parent, fn, id)
+	}
+	tests := []struct {
+		name  string
+		calls []string
+		want  string
+	}{
+		{
+			name: "own closure",
+			calls: []string{
+				call(1, 0, "requestStats.func1"),
+				call(2, 1, "(*App).handleGet"),
+				call(3, 2, "readOr"),
+				call(4, 3, "(*App).handleGet.func1"),
+			},
+			want: "(*App).handleGet",
+		},
+		{
+			name: "handler called from a closure",
+			calls: []string{
+				call(1, 0, "requestStats.func1"),
+				call(2, 1, "(*App).handleGet"),
+				call(3, 2, "(*App).handleGet.func1"),
+				call(4, 3, "(*App).handleRedirect"),
+			},
+			want: "(*App).handleRedirect",
+		},
+		{
+			name: "outer handler's closure under a nested handler",
+			calls: []string{
+				call(1, 0, "requestStats.func1"),
+				call(2, 1, "(*App).handleBatch"),
+				call(3, 2, "(*App).handleCreate"),
+				call(4, 3, "(*App).handleBatch.func2"),
+			},
+			want: "(*App).handleCreate",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			roots, err := Read(strings.NewReader(strings.Join(tc.calls, "\n")))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := roots[0].Title(regexp.MustCompile(`\.handle`)).Fn; got != tc.want {
+				t.Errorf("Title = %s, want %s", got, tc.want)
+			}
+		})
+	}
 }

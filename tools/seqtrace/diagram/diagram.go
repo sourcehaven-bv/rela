@@ -19,6 +19,7 @@ import (
 	"io"
 	"regexp"
 	"sort"
+	"strings"
 )
 
 // Event mirrors seqtrace.Event. It is copied rather than imported because
@@ -48,10 +49,19 @@ type Call struct {
 // Title returns the most specific call matching re on the path down from
 // c, so a diagram can be named after its HTTP handler rather than the
 // outermost middleware closure. It returns c when nothing matches.
+//
+// A closure defined in a call on that path never names the diagram, though
+// its Fn ("handleX.func1") matches whatever handleX does. A handler passes
+// such closures as callbacks, so they run inside it, possibly under a
+// handler it calls; naming the diagram after one would hide the handler the
+// request entered. The rewriter numbers every literal under a declaration
+// flat ("handleX.funcN"), so the prefix "handleX." covers nested ones too.
 func (c *Call) Title(re *regexp.Regexp) *Call {
 	best := c
+	var closuresOf []string
 	for {
-		next := best.firstMatch(re)
+		closuresOf = append(closuresOf, best.Fn+".")
+		next := best.firstMatch(re, closuresOf)
 		if next == nil {
 			return best
 		}
@@ -59,17 +69,27 @@ func (c *Call) Title(re *regexp.Regexp) *Call {
 	}
 }
 
-// firstMatch is the first descendant of c, in call order, matching re.
-func (c *Call) firstMatch(re *regexp.Regexp) *Call {
+// firstMatch is the first descendant of c, in call order, matching re that
+// is not a closure of a call named in closuresOf.
+func (c *Call) firstMatch(re *regexp.Regexp, closuresOf []string) *Call {
 	for _, ch := range c.Children {
-		if re.MatchString(ch.Fn) {
+		if re.MatchString(ch.Fn) && !isClosureOf(ch.Fn, closuresOf) {
 			return ch
 		}
-		if m := ch.firstMatch(re); m != nil {
+		if m := ch.firstMatch(re, closuresOf); m != nil {
 			return m
 		}
 	}
 	return nil
+}
+
+func isClosureOf(fn string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(fn, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // Name is the label the runtime matched SEQTRACE_ROOT against.

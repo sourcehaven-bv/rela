@@ -78,8 +78,13 @@ jobs:
         # GTK4 + WebKitGTK headers are needed to build cmd/rela-desktop, which
         # links Wails v3; without them the package fails to build on Linux.
         run: |
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap libgtk-4-dev libwebkitgtk-6.0-dev
+          # Retry the index fetch: the Ubuntu mirror has outages (exit 100).
+          for i in 1 2 3; do
+            sudo apt-get -o Acquire::Retries=5 update && break
+            [ "$i" = 3 ] && exit 1
+            sleep 15
+          done
+          sudo apt-get -o Acquire::Retries=5 install -y bubblewrap libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Verify the sandbox actually works on this runner
         # A hard failure here is better than every sandbox test silently
@@ -161,8 +166,13 @@ jobs:
       # coverage run builds cmd/rela-desktop, which links Wails v3.
       - name: Install bubblewrap (command sandbox) and Wails deps
         run: |
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap libgtk-4-dev libwebkitgtk-6.0-dev
+          # Retry the index fetch: the Ubuntu mirror has outages (exit 100).
+          for i in 1 2 3; do
+            sudo apt-get -o Acquire::Retries=5 update && break
+            [ "$i" = 3 ] && exit 1
+            sleep 15
+          done
+          sudo apt-get -o Acquire::Retries=5 install -y bubblewrap libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Measure reachability (report-only, no threshold)
         run: ./scripts/reachability.sh
@@ -249,7 +259,14 @@ jobs:
 
       - name: Install bubblewrap and ClamAV
         if: steps.detect.outputs.changed == 'true'
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap clamav-daemon
+        run: |
+          # Retry the index fetch: the Ubuntu mirror has outages (exit 100).
+          for i in 1 2 3; do
+            sudo apt-get -o Acquire::Retries=5 update && break
+            [ "$i" = 3 ] && exit 1
+            sleep 15
+          done
+          sudo apt-get -o Acquire::Retries=5 install -y bubblewrap clamav-daemon
 
       - name: Verify the sandbox actually works on this runner
         # Without a working sandbox the integration test would pass vacuously:
@@ -368,8 +385,13 @@ jobs:
       # headers. Without them the cgo packages fail to build.
       - name: Install Wails Linux dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
+          # Retry the index fetch: the Ubuntu mirror has outages (exit 100).
+          for i in 1 2 3; do
+            sudo apt-get -o Acquire::Retries=5 update && break
+            [ "$i" = 3 ] && exit 1
+            sleep 15
+          done
+          sudo apt-get -o Acquire::Retries=5 install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Cache golangci-lint analysis
         uses: actions/cache@v6
@@ -476,8 +498,13 @@ jobs:
       # the analysis silently degrades to "skipped due to errors in package".
       - name: Install Wails Linux dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
+          # Retry the index fetch: the Ubuntu mirror has outages (exit 100).
+          for i in 1 2 3; do
+            sudo apt-get -o Acquire::Retries=5 update && break
+            [ "$i" = 3 ] && exit 1
+            sleep 15
+          done
+          sudo apt-get -o Acquire::Retries=5 install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Cache plimsoll
         id: cache-plimsoll
@@ -599,6 +626,15 @@ jobs:
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
+    # Playwright's image ships Chromium and its system libraries, so no apt
+    # step runs (`playwright install --with-deps` failed on mirror outages).
+    # The tag must match `playwright` in frontend/package-lock.json; the
+    # digest pins the image itself. Running as the runner's uid (1001) keeps
+    # the checkout owned by the job user, which is Playwright's documented CI
+    # setup and keeps git happy without a safe.directory override.
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
+      options: --user 1001
     defaults:
       run:
         working-directory: frontend
@@ -636,10 +672,6 @@ jobs:
       - name: Component library checks
         working-directory: frontend/packages/rela-components
         run: npx vue-tsc -b && npm run check
-
-      - name: Install Playwright browser (component library)
-        working-directory: frontend/packages/rela-components
-        run: npx playwright install --with-deps chromium
 
       - name: Component library tests
         working-directory: frontend/packages/rela-components
@@ -714,7 +746,14 @@ jobs:
       # `sh -c`). Without bubblewrap the fixture documents never render and the
       # document specs fail. Same rationale as the `test` job above.
       - name: Install bubblewrap (command sandbox)
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+        # Retried as a whole: the Ubuntu mirror has outages (exit 100).
+        run: |
+          for i in 1 2 3; do
+            sudo apt-get -o Acquire::Retries=5 update &&
+              sudo apt-get -o Acquire::Retries=5 install -y bubblewrap && break
+            [ "$i" = 3 ] && exit 1
+            sleep 15
+          done
 
       - name: Install frontend dependencies
         working-directory: frontend
@@ -756,7 +795,15 @@ jobs:
 
       - name: Install Playwright browser
         working-directory: e2e
-        run: npx playwright install --with-deps chromium
+        # --with-deps runs apt-get; retried for the same mirror outages. The
+        # apt.conf.d entry gives its apt-get calls Acquire::Retries too.
+        run: |
+          echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries
+          for i in 1 2 3; do
+            npx playwright install --with-deps chromium && break
+            [ "$i" = 3 ] && exit 1
+            sleep 15
+          done
 
       - name: Run E2E tests
         working-directory: e2e
@@ -1027,8 +1074,13 @@ jobs:
       # below, so the headers are needed even though this job is about postgres.
       - name: Install Wails Linux dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
+          # Retry the index fetch: the Ubuntu mirror has outages (exit 100).
+          for i in 1 2 3; do
+            sudo apt-get -o Acquire::Retries=5 update && break
+            [ "$i" = 3 ] && exit 1
+            sleep 15
+          done
+          sudo apt-get -o Acquire::Retries=5 install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Compile all backend build-tag combinations
         run: |
@@ -1244,8 +1296,13 @@ jobs:
       # Wails v3.
       - name: Install bubblewrap (command sandbox) and Wails deps
         run: |
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap libgtk-4-dev libwebkitgtk-6.0-dev
+          # Retry the index fetch: the Ubuntu mirror has outages (exit 100).
+          for i in 1 2 3; do
+            sudo apt-get -o Acquire::Retries=5 update && break
+            [ "$i" = 3 ] && exit 1
+            sleep 15
+          done
+          sudo apt-get -o Acquire::Retries=5 install -y bubblewrap libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Verify the sandbox actually works on this runner
         # A hard failure here beats a confusing test failure downstream: it
@@ -1415,8 +1472,13 @@ jobs:
       # Wails v3, whose Linux build needs the GTK4 and WebKitGTK headers.
       - name: Install Wails Linux dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
+          # Retry the index fetch: the Ubuntu mirror has outages (exit 100).
+          for i in 1 2 3; do
+            sudo apt-get -o Acquire::Retries=5 update && break
+            [ "$i" = 3 ] && exit 1
+            sleep 15
+          done
+          sudo apt-get -o Acquire::Retries=5 install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -1799,8 +1861,13 @@ jobs:
       # compile failure that is really a missing dependency.
       - name: Install graphviz and Wails Linux dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y graphviz libgtk-4-dev libwebkitgtk-6.0-dev
+          # Retry the index fetch: the Ubuntu mirror has outages (exit 100).
+          for i in 1 2 3; do
+            sudo apt-get -o Acquire::Retries=5 update && break
+            [ "$i" = 3 ] && exit 1
+            sleep 15
+          done
+          sudo apt-get -o Acquire::Retries=5 install -y graphviz libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Build rela
         run: go build -o bin/rela ./cmd/rela
