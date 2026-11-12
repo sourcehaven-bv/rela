@@ -32,3 +32,5 @@ delete.
 - A DELETE with `If-Match` compares the stored version inside the delete's
 own transaction (`entitymanager.IfMatchDeletes`), so a write between the
 compare and the delete is a 412.
+- The handler side is the `conditionalDelete` type in data-entry, so
+`writeHandler` stays on its plimsoll line of 40 methods.
