@@ -1264,6 +1264,17 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 	}
 	ref := entity.Ref()
 
+	// If-Match makes the delete conditional on the row the caller last
+	// saw, as on PATCH: a remote sync sends it so a row changed since the
+	// last sync is not deleted (TKT-CVT9W1K). It runs after the read gate,
+	// so a hidden row is still a 404. The compare and the delete are two
+	// steps; a write landing between them is not caught.
+	if ifMatch := r.Header.Get("If-Match"); ifMatch != "" && ifMatch != h.computeETag(r.Context(), entity) {
+		writeV1Error(w, r, http.StatusPreconditionFailed, "precondition_failed",
+			"Entity has been modified", "ETag mismatch")
+		return
+	}
+
 	var err error
 	if ref.Face.IsImplicit() {
 		err = h.deleteWholeEntity(r.Context(), ref.ID)
@@ -1739,7 +1750,7 @@ type relationGetter interface {
 	GetRelation(ctx context.Context, k entityPkg.RelationKey) (*entityPkg.Relation, error)
 }
 
-// relationIfMatch compares a relation PATCH's If-Match with the ETag a GET of
+// relationIfMatch compares a relation PATCH's or DELETE's If-Match with the ETag a GET of
 // the edge would serve this caller, and answers 412 on a mismatch. On a match
 // it returns the stored relation's version, which the manager compares again
 // inside its transaction, so a write landing between this read and the update
@@ -1818,8 +1829,15 @@ func (h *writeHandler) handleV1DeleteRelation(
 		return
 	}
 
-	if err := h.manager.DeleteRelation(r.Context(),
-		entityPkg.RelationKey{From: from, FromFace: tail, Type: relType, To: to}); err != nil {
+	// If-Match makes the delete conditional, as on PATCH (TKT-CVT9W1K). The
+	// manager's delete takes no version, so a write landing between this
+	// compare and the delete is not caught.
+	key := entityPkg.RelationKey{From: from, FromFace: tail, Type: relType, To: to}
+	if _, ok := relationIfMatch(w, r, h.store, h.affordances, entity, key); !ok {
+		return
+	}
+
+	if err := h.manager.DeleteRelation(r.Context(), key); err != nil {
 		if writeForbiddenIfACLDenied(w, r, err) {
 			return
 		}

@@ -2505,7 +2505,7 @@ rela remote link <name> <local> <address>
 | Option | Description |
 | --- | --- |
 | `--dry-run` | `pull`: report what the pull would do, and write nothing. |
-| `--allow-gone N` | `pull`: confirm that up to `N` rows the source no longer lists may be detached or deleted, above the remote's `max_gone`. |
+| `--allow-gone N` | `pull`: confirm that up to `N` detaches and deletes, in either direction, may apply in this run, above the remote's `max_gone`. |
 | `--take local\|remote` | `resolve`: the side whose value wins. |
 | `--dismiss` | `resolve`: remove the entries the `latest` rule left; changes no data. |
 

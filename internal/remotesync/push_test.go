@@ -623,9 +623,10 @@ func TestPush_StoppedPushKeepsHolds(t *testing.T) {
 	}
 }
 
-// TestPush_PushedRowIsNotDeletedWhenGone pins that on_gone: delete never
-// deletes a row this side created and pushed.
-func TestPush_PushedRowIsNotDeletedWhenGone(t *testing.T) {
+// TestPush_PushedRowIsDeletedWhenGone pins that on a remote with push,
+// on_gone: delete also follows the remote's delete of a row this side
+// created and pushed, when it was not edited since (TKT-CVT9W1K).
+func TestPush_PushedRowIsDeletedWhenGone(t *testing.T) {
 	ctx := context.Background()
 	tg := newTarget(t)
 	m := pushMapping(t, tg, func(p *Remote) { p.OnGone = OnGoneDelete })
@@ -636,9 +637,11 @@ func TestPush_PushedRowIsNotDeletedWhenGone(t *testing.T) {
 		t.Fatalf("create: %+v", rep.Pushed)
 	}
 	delete(src.ents, "N1")
-	runSync(t, tg, m, src, Options{})
-	if _, err := tg.st.GetEntity(ctx, entity.Ref{ID: local}); err != nil {
-		t.Fatalf("the pushed row was deleted: %v", err)
+	if rep := runSync(t, tg, m, src, Options{}); rep.Entities.Deleted != 1 {
+		t.Fatalf("gone: %+v", rep.Entities)
+	}
+	if _, err := tg.st.GetEntity(ctx, entity.Ref{ID: local}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("the pushed row was kept: %v", err)
 	}
 }
 

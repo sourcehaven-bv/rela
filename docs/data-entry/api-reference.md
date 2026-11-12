@@ -816,6 +816,15 @@ write, so an edit that lands between the check and the write is a 412 too.
 The PATCH response is redacted like the GET and carries the new `ETag`.
 Without `If-Match` the update is unconditional.
 
+### DELETE
+
+`DELETE` on an entity or on a single relation honors `If-Match` too, with
+the ETag of the GET on the same path. A mismatch is 412
+`precondition_failed`, and nothing is deleted. Remote sync uses this so it
+deletes only a row it has compared. Without `If-Match` the delete is
+unconditional. The compare and the delete are two steps, so a write that
+lands between them is not detected.
+
 ## Last-updated time (`_updated`)
 
 A per-entity GET, the entity in a write response, a view entry and a single

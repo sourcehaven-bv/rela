@@ -4,8 +4,10 @@ type: ticket
 title: 'Two-way sync: send deletes with guards'
 kind: enhancement
 priority: medium
-effort: m
-status: backlog
+effort: l
+started: "2026-11-12"
+completed: "2026-11-12"
+status: done
 ---
 
 ## Description

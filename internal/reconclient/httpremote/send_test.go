@@ -55,6 +55,11 @@ func TestSend(t *testing.T) {
 
 		t.Fatalf("request %s if-match %q body %q type %q auth %q", gotMethod, gotIfMatch, gotBody, gotType, gotAuth)
 	}
+	if ans, err = r.Send(ctx, http.MethodDelete, "things/T-1", nil, `"abc"`, 1024); err != nil ||
+		ans.Status != http.StatusOK || gotMethod != http.MethodDelete || gotIfMatch != `"abc"` || gotBody != "" {
+
+		t.Fatalf("DELETE = %+v, %v; request %s if-match %q body %q", ans, err, gotMethod, gotIfMatch, gotBody)
+	}
 	if _, err = r.Send(ctx, http.MethodGet, "things/T-1", nil, "", 1024); err != nil || gotIfMatch != "" ||
 		gotType != "" {
 
@@ -98,7 +103,7 @@ func TestSend_RejectsBadInput(t *testing.T) {
 	r, _ := serve(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	ctx := context.Background()
 	cases := map[string]func() error{
-		"method": func() error { _, err := r.Send(ctx, http.MethodDelete, "a", nil, "", 1); return err },
+		"method": func() error { _, err := r.Send(ctx, http.MethodPut, "a", nil, "", 1); return err },
 		"path":   func() error { _, err := r.Send(ctx, http.MethodGet, "../a", nil, "", 1); return err },
 		"if-match newline": func() error {
 			_, err := r.Send(ctx, http.MethodPatch, "a", nil, "\"x\"\r\nX-Evil: 1", 1)

@@ -42,6 +42,10 @@ const (
 	// stateDropped: someone deleted the local row. The pull does not
 	// recreate it.
 	stateDropped = "dropped"
+	// stateDeleting: someone deleted the local row of a linked row on a
+	// remote with send_deletes. The push deletes the remote row; until then
+	// the row keeps its base, so the push can tell a remote edit.
+	stateDeleting = "deleting"
 )
 
 // ledgerRow is one source row.
@@ -78,6 +82,11 @@ type ledgerRow struct {
 	// rule distrusts an edit time before it. Zero means not known yet (a
 	// row from before step 9b); the check is then skipped.
 	Synced time.Time `json:"sy,omitzero"`
+	// Resolve is the side a person resolved a delete conflict to
+	// ([TakeLocal] or [TakeRemote]). The next run acts on it: a deleting
+	// row is deleted on the remote or restored here, a detached row is
+	// restored on the remote or deleted here.
+	Resolve string `json:"rs,omitempty"`
 }
 
 // localRef is the local entity row an entity row maps to.
@@ -160,7 +169,7 @@ func loadLedger(ctx context.Context, kv state.KV, m *Mapping) (*ledger, error) {
 			return nil, fmt.Errorf("remotesync: the ledger %s holds an invalid row", l.key)
 		}
 		switch r.State {
-		case stateLinked, stateDetached, stateRejected, stateDropped:
+		case stateLinked, stateDetached, stateRejected, stateDropped, stateDeleting:
 		default:
 			return nil, fmt.Errorf("remotesync: the ledger %s holds a row in state %q", l.key, r.State)
 		}
@@ -361,4 +370,20 @@ func splitRelationAddress(a string) (from, typ, to string, ok bool) {
 		return "", "", "", false
 	}
 	return parts[0], parts[1], parts[2], true
+}
+
+// endsLinked reports whether both ends of the relation row are linked
+// entity rows. It scans the ledger, which is fine for a resolve.
+func (l *ledger) endsLinked(row *ledgerRow) bool {
+	from, _, to, ok := splitRelationAddress(row.Address)
+	if !ok {
+		return false
+	}
+	linked := map[string]bool{}
+	for _, e := range l.rows {
+		if id, ok := addressID(e.Address); e.Kind == "E" && ok && e.State == stateLinked {
+			linked[id] = true
+		}
+	}
+	return linked[from] && linked[to]
 }

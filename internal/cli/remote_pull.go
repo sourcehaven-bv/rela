@@ -26,7 +26,7 @@ import (
 type RemotePullCmd struct {
 	Name      string `arg:"" help:"Remote name, as in remotes.yaml."`
 	DryRun    bool   `name:"dry-run" help:"Report what the pull would do, and write nothing."`
-	AllowGone int    `name:"allow-gone" help:"Confirm that up to this many rows the source no longer lists may be detached or deleted, above the remote's max_gone."`
+	AllowGone int    `name:"allow-gone" help:"Confirm that up to this many deletes and detaches may apply in this run, in either direction, above the remote's max_gone."`
 }
 
 // Run pulls and prints the report.
@@ -84,9 +84,16 @@ func writeRemoteReport(w io.Writer, r remotesync.Report) error {
 	}
 	counts("Entities", r.Entities)
 	counts("Relations", r.Relations)
-	if p := r.Pushed; p != nil {
-		fmt.Fprintf(&b, "Pushed: %d created, %d updated, %d conflicts, %d refused, %d deferred, %d failed\n",
-			p.Created, p.Updated, p.Conflicts, p.Refused, p.Deferred, p.Failed)
+	pushed := func(kind string, p *remotesync.PushCounts) {
+		if p != nil {
+			fmt.Fprintf(&b, "%s: %d created, %d updated, %d deleted, %d conflicts, %d refused, %d deferred, "+
+				"%d failed\n", kind, p.Created, p.Updated, p.Deleted, p.Conflicts, p.Refused, p.Deferred, p.Failed)
+		}
+	}
+	pushed("Pushed", r.Pushed)
+	pushed("Pushed relations", r.PushedRelations)
+	if r.Deleting > 0 {
+		fmt.Fprintf(&b, "Deleted here, to delete on the remote: %d\n", r.Deleting)
 	}
 	if r.Held > 0 {
 		fmt.Fprintf(&b, "Held on the conflict list: %d (see rela remote conflicts %s)\n", r.Held, shown(r.Remote))

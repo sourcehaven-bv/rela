@@ -2039,17 +2039,25 @@ redacts its fields. This section is about the pulling side. See
   the row to this instance's principal. A deleted row and a hidden row look
   the same, as the ACL requires, so a revoked role, a narrowed `acl.yaml`, or
   a token that expired or was revoked makes every row in scope look gone at
-  once. A 401 or 403 from the source fails the pull. A pull also refuses to
-  detach or delete any row when more than `max_gone` linked rows (default
-  10) are gone, or when a type it linked rows of is empty at the source. With
-  `on_gone: delete` the guard also counts the deletes of the last 24 hours,
-  so a source that drops a few rows per run cannot delete in bulk over a
-  day. The operator confirms with `rela remote pull <name> --allow-gone N`.
-  `on_gone: detach` is the default; `on_gone: delete` never deletes an
-  entity with local relations, with a mapped field edited locally, or that
-  existed before the pull adopted it, and logs every delete with the run
-  id. The edit check and the delete are two calls, so an edit saved between
+  once. A 401 or 403 from the source fails the pull. A run also holds every
+  detach and delete when more than `max_gone` linked rows (default 10) are
+  gone, or when a type it linked rows of is empty on either side. The guard
+  counts the deletes of the last 24 hours in both directions, so a side
+  that drops a few rows per run cannot delete in bulk over a day. Only the
+  deletes and detaches wait; the operator confirms them with `rela remote
+  pull <name> --allow-gone N`. `on_gone: detach` is the default;
+  `on_gone: delete` never deletes an entity with local relations, and on a
+  remote without `push` never one with a mapped field edited locally or
+  that existed before the pull adopted it. On a remote with `push` such a
+  row follows the conflict rule. Every delete is logged with the run id.
+  The edit check and the delete are two calls, so an edit saved between
   them is lost with the entity; the window is one write long.
+- **A delete sent to the remote is conditional.** With `send_deletes` the
+  run fetches the remote row, compares it with the last agreed values, and
+  sends `DELETE` with `If-Match` on the fetched ETag. The remote's ACL
+  decides whether the push principal may delete. The ETag covers only what
+  that principal may see, so a change to a field hidden from it does not
+  stop the delete.
 - **The credential stays out of config and scripts.** `remotes.yaml` names
   where the token comes from: an environment variable whose name starts with
   `REMOTE_CREDENTIAL_`, an absolute path to a file whose name starts with

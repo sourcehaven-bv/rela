@@ -71,6 +71,11 @@ func writeConflicts(w io.Writer, name string, list []remotesync.Conflict) error 
 			} else if len(e.RemoteValue) > 0 {
 				fmt.Fprintf(&b, "; remote value %s", reconclient.Sanitize(string(e.RemoteValue)))
 			}
+		case remotesync.ReasonLocalDeleted:
+			writeDeleted(&b, e, "deleted here", "--take local deletes it on the remote, --take remote restores it here")
+		case remotesync.ReasonRemoteDeleted:
+			writeDeleted(&b, e, "deleted on the remote",
+				"--take local creates it on the remote again, --take remote deletes it here")
 		case remotesync.ReasonUncertain:
 			fmt.Fprintf(&b, ": %s; --take local sends it again, rela remote link links it to a remote row",
 				reconclient.Sanitize(e.Detail))
@@ -81,6 +86,15 @@ func writeConflicts(w io.Writer, name string, list []remotesync.Conflict) error 
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// writeDeleted describes an entry about a row one side deleted.
+func writeDeleted(b *strings.Builder, e remotesync.Conflict, what, how string) {
+	if e.Cause == remotesync.CauseRefused {
+		fmt.Fprintf(b, ": %s; the remote refused the delete: %s; %s", what, reconclient.Sanitize(e.Detail), how)
+		return
+	}
+	fmt.Fprintf(b, ": %s, but the other side changed it; %s", what, how)
 }
 
 // writeSuperseded describes an entry the latest rule decided.

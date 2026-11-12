@@ -85,6 +85,32 @@ func TestWriteRemoteReport_Push(t *testing.T) {
 	}))
 	out := b.String()
 	require.Contains(t, out, "Synced with remote cat.")
-	require.Contains(t, out, "Pushed: 1 created, 3 updated, 0 conflicts, 1 refused, 0 deferred, 0 failed")
+	require.Contains(t, out, "Pushed: 1 created, 3 updated, 0 deleted, 0 conflicts, 1 refused, 0 deferred, 0 failed")
 	require.Contains(t, out, "Held on the conflict list: 2 (see rela remote conflicts cat)")
+}
+
+func TestWriteConflicts_Deletes(t *testing.T) {
+	since := time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC)
+	var b bytes.Buffer
+	require.NoError(t, writeConflicts(&b, "cat", []remotesync.Conflict{
+		{Local: "REQ-1", Type: "requirement", Address: "req/R1", Reason: remotesync.ReasonLocalDeleted,
+			Cause: remotesync.CauseEdited, Since: since},
+		{Local: "REQ-2", Type: "requirement", Address: "req/R2", Reason: remotesync.ReasonLocalDeleted,
+			Cause: remotesync.CauseRefused, Detail: "403 no", Since: since},
+		{Local: "REQ-3", Type: "requirement", Address: "req/R3", Reason: remotesync.ReasonRemoteDeleted,
+			Cause: remotesync.CauseEdited, Since: since},
+	}))
+	out := b.String()
+	require.Contains(t, out, "deleted here, but the other side changed it; --take local deletes it on the remote")
+	require.Contains(t, out, "the remote refused the delete: 403 no")
+	require.Contains(t, out, "deleted on the remote, but the other side changed it; --take local creates it")
+}
+
+func TestWriteRemoteReport_Deletes(t *testing.T) {
+	var b bytes.Buffer
+	require.NoError(t, writeRemoteReport(&b, remotesync.Report{Remote: "cat", Deleting: 2,
+		Pushed: &remotesync.PushCounts{Deleted: 1}, PushedRelations: &remotesync.PushCounts{Deleted: 3}}))
+	require.Contains(t, b.String(), "Pushed: 0 created, 0 updated, 1 deleted")
+	require.Contains(t, b.String(), "Pushed relations: 0 created, 0 updated, 3 deleted")
+	require.Contains(t, b.String(), "Deleted here, to delete on the remote: 2")
 }

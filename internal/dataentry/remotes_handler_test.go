@@ -499,3 +499,66 @@ func TestRemotes_MeOffersPage(t *testing.T) {
 		})
 	}
 }
+
+// TestRemotes_RemoteDeletedNeedsDelete: taking the remote side of a row the
+// remote deleted deletes it here, so it needs the delete right (TKT-CVT9W1K).
+func TestRemotes_RemoteDeletedNeedsDelete(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		delete bool
+	}{{"update only", false}, {"with delete", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			role := syncRole()
+			if tc.delete {
+				role.Delete = []string{"ticket"}
+			}
+			entry := ticketEntry("TKT-001", "", "remote_deleted")
+			entry.Cause = "edited"
+			e := newRemoteEnv(t, role, []RemoteEntry{entry}, nil)
+			rec := e.do(t, http.MethodGet, remotesPath+"/upstream/conflicts", "")
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			page := decodeRemote[remoteConflictPage](t, rec)
+			require.Len(t, page.Data, 1)
+			require.True(t, page.Data[0].Actions["resolve_local"])
+			require.Equal(t, tc.delete, page.Data[0].Actions["resolve_remote"])
+		})
+	}
+}
+
+// TestRemotes_RemoteDeletedRelationNeedsRemove: the same holds for a
+// relation, judged as the relation DELETE route judges it.
+func TestRemotes_RemoteDeletedRelationNeedsRemove(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name           string
+		delete, remove bool
+	}{{"no delete", false, true}, {"remove denied", true, false}, {"allowed", true, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			role := syncRole()
+			if tc.delete {
+				role.Delete = []string{"ticket"}
+			}
+			if !tc.remove {
+				role.Relations = map[string][]acl.RelationGrant{"ticket": {{Relation: "blocks", Remove: new(bool)}}}
+			}
+			key := entity.RelationKey{From: "TKT-001", Type: "blocks", To: "TKT-002"}
+			entry := RemoteEntry{
+				RemoteRow: RemoteRow{Kind: remoteKindRelation, Type: "blocks", Local: "TKT-001--blocks--TKT-002",
+					Relation: key},
+				Address: "ticket/T-1/blocks/ticket/T-2", Reason: "remote_deleted", Cause: "edited", Rule: "hold",
+				Since: remoteT0, Seen: remoteT0,
+			}
+			e := newRemoteEnv(t, role, []RemoteEntry{entry}, func(app *App) {
+				seedRelation(app, &entity.Relation{From: "TKT-001", Type: "blocks", To: "TKT-002"})
+			})
+			rec := e.do(t, http.MethodGet, remotesPath+"/upstream/conflicts", "")
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			page := decodeRemote[remoteConflictPage](t, rec)
+			require.Len(t, page.Data, 1)
+			require.Equal(t, tc.delete && tc.remove, page.Data[0].Actions["resolve_remote"])
+		})
+	}
+}
