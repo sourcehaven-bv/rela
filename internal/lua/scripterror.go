@@ -35,6 +35,10 @@ type ScriptError struct {
 	Source         []SourceLine `json:"source,omitempty"`
 	CapturedOutput string       `json:"captured_output,omitempty"`
 	CorrelationID  string       `json:"correlation_id,omitempty"`
+	// Permanent is set when the script raised a table with `retry =
+	// false`: it asks a caller that retries, such as a flow job step, not
+	// to try again.
+	Permanent bool `json:"permanent,omitempty"`
 }
 
 // Surface identifies which Lua execution path produced an error.
@@ -67,6 +71,8 @@ const (
 	SurfaceLuaRun     Surface = "lua_run"
 	SurfaceLuaEval    Surface = "lua_eval"
 	SurfaceValidation Surface = "validation"
+	// SurfaceJob is a flow job step's script (TKT-PY2G11W).
+	SurfaceJob Surface = "job"
 )
 
 // BuildInput aggregates the inputs to BuildScriptError. Callers fill in only
@@ -235,10 +241,25 @@ func (e *ScriptError) fillFromError(err error) {
 		// with "<chunk>:<line>: " for string-typed errors, or just
 		// "table: 0x..." for non-string raises).
 		e.LuaMessage = stripChunkLinePrefix(ae.Object.String())
+		e.fillFromTable(ae.Object)
 		if frame := e.deepestUserFrame(); frame != nil {
 			e.LuaLine = frame.Line
 		}
 	}
+}
+
+// fillFromTable reads a raised table: `error({message = "...", retry =
+// false})`. The message replaces the table's address, and `retry = false`
+// marks the error permanent. Any other value is left alone.
+func (e *ScriptError) fillFromTable(v glua.LValue) {
+	t, ok := v.(*glua.LTable)
+	if !ok {
+		return
+	}
+	if msg, ok := t.RawGetString("message").(glua.LString); ok {
+		e.LuaMessage = string(msg)
+	}
+	e.Permanent = t.RawGetString("retry") == glua.LFalse
 }
 
 // deepestUserFrame returns the first frame in the trace that has a real

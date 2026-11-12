@@ -304,9 +304,14 @@ func (e *Engine) rejoin(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, f
 // join fires the join of a forked run when it holds: every branch has
 // arrived, or one has and the join is `any`, or its `when:` holds. A
 // branch that arrived at a final state ends the run there instead. The
-// caller has checked that no branch carries a pending mark. It returns the
-// run as stored and whether the join fired.
+// caller has settled every mark it could: a branch that waits for its job
+// has not arrived, so it holds a join that needs it and not one that does
+// not. It returns the run as stored and whether the join fired; a run that
+// is not forked does not join, and a lost write returns a zero run.
 func (e *Engine) join(ctx context.Context, f *flowcfg.Flow, run flowrun.Run) (flowrun.Run, bool, error) {
+	if !forked(run) {
+		return run, false, nil
+	}
 	fk, _, ok := f.Region(run.Branches[0].Name)
 	if !ok {
 		return run, false, fmt.Errorf("%w: branch %q is in no fork", ErrStranded, run.Branches[0].Name)
@@ -333,6 +338,9 @@ func (e *Engine) join(ctx context.Context, f *flowcfg.Flow, run flowrun.Run) (fl
 	from := flow.Current{Instance: flow.Instance{State: run.Instance.Previous}, CreatedAt: run.CreatedAt}
 	step := flowrun.Step{State: to, From: fk.State, Via: flowrun.ViaJoin}
 	moved, err := e.rejoin(ctx, f, run, from, step, e.now())
+	if isLost(err) {
+		return flowrun.Run{}, false, nil
+	}
 	if err != nil {
 		return flowrun.Run{}, false, err
 	}
@@ -344,13 +352,16 @@ func (e *Engine) join(ctx context.Context, f *flowcfg.Flow, run flowrun.Run) (fl
 // the right due times.
 func (e *Engine) advanceBranches(ctx context.Context, f *flowcfg.Flow, run flowrun.Run,
 	now time.Time) (flowrun.Run, error) {
-	if Pending(run) {
+	// A branch that waits for its job does not hold back the others'
+	// timers.
+	if settleable(run, now) {
 		return e.settle(ctx, f, run, "")
 	}
 	def := f.Definition()
 	st := cloneState(run)
 	for i, b := range run.Branches {
-		if b.Arrived {
+		// A branch that waits for its job keeps the due time its job set.
+		if b.Arrived || b.Pending != nil {
 			continue
 		}
 		cur := flow.Read(def, b.Instance, run.CreatedAt)
@@ -422,7 +433,7 @@ func branchesBackedOff(run flowrun.Run, now time.Time) flowrun.State {
 	st := cloneState(run)
 	for i, b := range st.Branches {
 		switch {
-		case b.Arrived:
+		case b.Arrived, jobParked(b.Pending, now):
 		case b.Pending != nil:
 			st.Branches[i] = backedOff(b, now)
 		case !b.Instance.NextDueAt.IsZero() && !b.Instance.NextDueAt.After(now):

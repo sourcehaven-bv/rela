@@ -122,8 +122,21 @@ func buildFlowEngine(s *Services, runs flowrun.Store) (*flowengine.Engine, error
 		policy = d.Policy()
 	}
 	meta := s.meta
-	return flowengine.New(flowengine.Deps{
+	if s.cfgLoader != nil {
+		if err := checkFlowActions(context.Background(), flows, s.cfgLoader); err != nil {
+			return nil, err
+		}
+	}
+	// Only a long-running process queues attempts: a one-shot one would
+	// exit before its queue ran them.
+	var queue flowengine.JobQueue
+	q := automationJobQueue(s.base, s.jobQueue)
+	if q != nil {
+		queue = flowJobQueue{q: q}
+	}
+	eng, err := flowengine.New(flowengine.Deps{
 		Flows: flows, Meta: meta, Runs: lockFlowRuns(s.store, runs),
+		Jobs: queue, JobRunner: newFlowJobRunner(s, as),
 		Headers:  flowHeaders{mgr: s.entityManager, as: as},
 		Outputs:  flowOutputs{mgr: entitymanager.FieldGated(s.entityManager), as: as},
 		Subjects: flowSubjects{st: s.store, rows: reader, as: as},
@@ -132,6 +145,13 @@ func buildFlowEngine(s *Services, runs flowrun.Store) (*flowengine.Engine, error
 		},
 		Now: s.base.clock(),
 	})
+	if err != nil || q == nil {
+		return eng, err
+	}
+	if err := registerFlowJobs(q, eng); err != nil {
+		return nil, err
+	}
+	return eng, nil
 }
 
 // openFlowEdits opens the run store into overrides.flowRuns and builds the

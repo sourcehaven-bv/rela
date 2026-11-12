@@ -45,6 +45,16 @@
       "claimedBy": "{who} rondt deze stap nu af.",
       "pending": "De uitkomsten van deze stap zijn nog niet weggeschreven. Mislukte pogingen: {n}.",
       "nextAttempt": "Volgende poging: {at}.",
+      "jobRunning": "De taak van deze stap loopt: poging {n} van {max}.",
+      "jobWaiting": "De taak van deze stap wacht op poging {n} van {max}.",
+      "jobWaitingAt": "De taak van deze stap wacht op poging {n} van {max}, om {at}.",
+      "jobFailed": "De taak van deze stap is mislukt na {n} mislukte pogingen: {why}. Probeer de run opnieuw om opnieuw te beginnen.",
+      "jobFailKind": {
+        "exhausted": "er zijn geen pogingen meer over",
+        "permanent": "een nieuwe poging kan de fout niet oplossen",
+        "timeout": "een poging duurde te lang, en de uitkomst is onbekend",
+        "lost": "de verwerker stopte, en de uitkomst is onbekend"
+      },
       "branches": "Gaat verder als",
       "branchTo": "naar {state}",
       "guardHolds": "voorwaarde is vervuld",

@@ -89,6 +89,27 @@ describe('FlowRunCard', () => {
     expect(wrapper.findAll('[data-testid="flow-timer"]')).toHaveLength(1)
   })
 
+  it('says where a job step is, and why it failed', async () => {
+    const waiting = (job: NonNullable<NonNullable<FlowRun['waiting']>['pending']>['job']) => ({
+      you_hold: false,
+      pending: { failures: 0, job },
+    })
+    let wrapper = mountCard(run({ waiting: waiting({ phase: 'started', failed: 1, attempts: 3 }) }))
+    await flushPromises()
+    let line = wrapper.find('[data-testid="flow-waiting-job"]')
+    expect(line.text()).toContain('attempt 2 of 3')
+    expect(line.attributes('role')).toBeUndefined()
+    expect(wrapper.find('[data-testid="flow-waiting-pending"]').exists()).toBe(false)
+
+    wrapper = mountCard(
+      run({ waiting: waiting({ phase: 'failed', failed: 1, attempts: 3, fail_kind: 'permanent' }) }),
+    )
+    await flushPromises()
+    line = wrapper.find('[data-testid="flow-waiting-job"]')
+    expect(line.text()).toContain('another attempt cannot fix the error')
+    expect(line.attributes('role')).toBe('alert')
+  })
+
   it('shows the step form only when complete is allowed', async () => {
     const wrapper = mountCard(run({ _actions: { complete: false, cancel: false, retry: false } }))
     await flushPromises()

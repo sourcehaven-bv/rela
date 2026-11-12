@@ -278,6 +278,10 @@ func (e *Engine) release(ctx context.Context, run flowrun.Run, tok string) {
 // follows `done` branches, as a [Engine.Due] round would. It returns
 // [ErrNotPending] for a run that waits in its state. A failure backs the
 // run off again and is returned.
+//
+// A failed job step starts again with a fresh attempt count, and a job
+// waiting for its next attempt runs it now. A run whose only pending work
+// is an attempt on the queue or running returns [ErrJobRunning].
 func (e *Engine) Retry(ctx context.Context, id flow.RunID) error {
 	run, err := e.Run(ctx, id)
 	if err != nil {
@@ -289,6 +293,19 @@ func (e *Engine) Retry(ctx context.Context, id flow.RunID) error {
 	f, err := e.flowOf(ctx, run)
 	if err != nil {
 		return err
+	}
+	now := e.now()
+	st, changed, running := retryJobs(run, now)
+	switch {
+	case changed:
+		if run, err = e.put(ctx, run, st, now); err != nil {
+			if isLost(err) {
+				return fmt.Errorf("flowengine: run %s changed; retry it again", id)
+			}
+			return err
+		}
+	case running && !settleable(run, now):
+		return ErrJobRunning
 	}
 	if left, err := e.settle(ctx, f, run, ""); err != nil {
 		e.backoff(ctx, left)
@@ -359,6 +376,20 @@ type BranchCheck struct {
 type PendingStep struct {
 	Failures    int
 	NextAttempt time.Time
+	// Job is set in a state with a job step whose attempts have begun.
+	Job *JobStep
+}
+
+// JobStep is where the job step of a state is.
+type JobStep struct {
+	// Phase is where the current attempt is.
+	Phase flowrun.JobPhase
+	// Failed counts the attempts that ran and failed.
+	Failed int
+	// Attempts is the budget: every execution, the first included.
+	Attempts int
+	// FailKind is set once the job failed for good.
+	FailKind flowrun.JobFailKind
 }
 
 // Explain reads why each run waits, in the order given. It evaluates the
@@ -465,6 +496,9 @@ func (ex *explainer) explain(ctx context.Context, run flowrun.Run) (Explanation,
 		if bx.Pending != nil {
 			x.Pending = bx.Pending
 		}
+		if bx.Status == flow.StatusFailed {
+			x.Status = flow.StatusFailed
+		}
 		x.Parallel = append(x.Parallel, bx)
 	}
 	return x, nil
@@ -506,6 +540,15 @@ func (ex *explainer) place(ctx context.Context, f *flowcfg.Flow, run flowrun.Run
 	}
 	if p != nil {
 		x.Pending = &PendingStep{Failures: p.Failures, NextAttempt: inst.NextDueAt}
+		if job, ok := st.Job(); ok && p.Job != nil && p.State == cur.State && p.Generation == cur.Generation {
+			x.Pending.Job = &JobStep{Phase: p.Job.Phase, Failed: p.Job.Failed, Attempts: job.Retry.Attempts,
+				FailKind: p.Job.FailKind}
+			if p.Job.Phase == flowrun.JobFailed {
+				// The run waits for an operator: it reads as failed, though its
+				// header does not, since a retry can still move it on.
+				x.Status = flow.StatusFailed
+			}
+		}
 	}
 	if c != nil && c.Generation == cur.Generation && e.now().Sub(c.At) < ClaimTTL {
 		cp := *c

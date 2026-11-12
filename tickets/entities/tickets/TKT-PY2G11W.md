@@ -5,7 +5,9 @@ title: 'Flows M4b: job steps'
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+started: "2026-11-12"
+completed: "2026-11-12"
+status: done
 ---
 
 ## Description
@@ -68,3 +70,9 @@ job's error classification and `idempotent`.
 - Tests cover a failing job that exhausts its retries, a permanent error, a
 timed-out attempt, a lost worker, `idempotent: true`, operator retry and the
 idempotency key.
+
+## Architecture notes
+
+- archplan finding `types.synonyms-421ed87691f9` (flowview.Job mirrors
+flowengine.JobStep) is accepted in `.archplan/baseline.json`: flowview is the
+wire leaf, like Timer and TimerDue.

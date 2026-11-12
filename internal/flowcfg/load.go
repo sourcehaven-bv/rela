@@ -427,11 +427,11 @@ func (l *loader) retention(key string, raw *rawRetention) Retention {
 func (l *loader) runAs(key string, raw *string, f *Flow) string {
 	writes := false
 	for _, st := range f.states {
-		writes = writes || len(st.outputs) > 0
+		writes = writes || len(st.outputs) > 0 || st.job != nil
 	}
 	switch {
 	case raw == nil && writes:
-		l.add(key, "is required: the flow's outputs write as run_as; set it to a job identity acl.yaml grants")
+		l.add(key, "is required: the flow's outputs and jobs run as run_as; set it to a job identity acl.yaml grants")
 		return ""
 	case raw == nil:
 		return ""
@@ -441,7 +441,7 @@ func (l *loader) runAs(key string, raw *string, f *Flow) string {
 		return ""
 	}
 	if !writes {
-		l.warn(key, "is not used: no state of the flow has outputs")
+		l.warn(key, "is not used: no state of the flow has outputs or a job")
 	}
 	return *raw
 }

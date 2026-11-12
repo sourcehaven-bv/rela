@@ -63,7 +63,7 @@ func classify(err error) error {
 	case errors.Is(err, flowengine.ErrStale), errors.Is(err, flowengine.ErrClaimed),
 		errors.Is(err, flowengine.ErrSettling), errors.Is(err, flowengine.ErrNotPending),
 		errors.Is(err, flowengine.ErrStranded), errors.Is(err, flowengine.ErrSubjectBusy),
-		errors.Is(err, flowengine.ErrGuard), errors.Is(err, errFlowBusy):
+		errors.Is(err, flowengine.ErrGuard), errors.Is(err, errFlowBusy), errors.Is(err, flowengine.ErrJobRunning):
 		return fmt.Errorf("%w: %w", flowview.ErrConflict, err)
 	case errors.Is(err, ErrFlowPermission), isFieldWriteError(err):
 		return fmt.Errorf("%w: %w", flowview.ErrForbidden, err)
@@ -435,6 +435,10 @@ func waitingOf(x flowengine.Explanation, holds func(string) bool) *flowview.Wait
 	}
 	if x.Pending != nil {
 		w.Pending = &flowview.Pending{Failures: x.Pending.Failures, NextAttempt: x.Pending.NextAttempt}
+		if j := x.Pending.Job; j != nil {
+			w.Pending.Job = &flowview.Job{Phase: string(j.Phase), Failed: j.Failed, Attempts: j.Attempts,
+				FailKind: string(j.FailKind)}
+		}
 	}
 	if x.Claim != nil {
 		w.ClaimedBy = x.Claim.By
