@@ -56,6 +56,32 @@ func withFlowRuns(data []byte, meta *metamodel.Metamodel) (*metamodel.Metamodel,
 	return m, nil
 }
 
+// flowConfigPolicy returns the policy flows.yaml is checked against: the
+// roles and permissions it names must be declared in acl.yaml.
+//
+// That is a check of the project's configuration, not enforcement. A host
+// that injects an ACL without a policy (MCP and the desktop inject
+// [acl.NopACL], a read-only rela-server [acl.ReadOnlyACL]) still has its
+// flows checked against acl.yaml, read through [loadConfigPolicy] as
+// realtime.yaml is. Without it every role would read as undeclared and the
+// boot would fail (BUG-E9A72XB). The file is read only when flows.yaml
+// declares flows.
+//
+// Nil: injected is accepted (no injection: loaded is the policy prepare
+// read and validated); loaded is accepted (no acl.yaml). The result is nil
+// when the project has no acl.yaml.
+func flowConfigPolicy(cfg Config, injected acl.ACL, loaded *acl.Policy, meta *metamodel.Metamodel,
+	flowsData []byte,
+) (*acl.Policy, error) {
+	if policy := resolvedPolicy(injected, loaded); policy != nil || injected == nil {
+		return policy, nil
+	}
+	if !flowcfg.DeclaresFlows(flowsData) {
+		return nil, nil //nolint:nilnil // no flows: no policy needed
+	}
+	return loadConfigPolicy(cfg, meta)
+}
+
 // compileFlows compiles flows.yaml for the base. An invalid file fails the
 // boot, as realtime.yaml does. Nil when the file declares no flows.
 func compileFlows(data []byte, meta *metamodel.Metamodel, policy *acl.Policy) (*flowcfg.Compiled, error) {
@@ -117,10 +143,7 @@ func buildFlowEngine(s *Services, runs flowrun.Store) (*flowengine.Engine, error
 		}
 		return bind(ctx)
 	}
-	var policy *acl.Policy
-	if d != nil {
-		policy = d.Policy()
-	}
+	policy := s.base.flowsPolicy
 	meta := s.meta
 	if s.cfgLoader != nil {
 		if err := checkFlowActions(context.Background(), flows, s.cfgLoader); err != nil {
