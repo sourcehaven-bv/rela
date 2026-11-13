@@ -1,13 +1,17 @@
 package dataentry
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // --- JSON API types ---
@@ -287,19 +291,13 @@ func (h *appearanceHandler) handleAPIGetSettings(w http.ResponseWriter, r *http.
 		if len(relDef.To) > 0 {
 			rd.TargetType = relDef.To[0]
 			for _, targetType := range relDef.To {
-				// Route candidates through the read gate + redactor (DEC-ZBI39P):
-				// listFromStoreByTypes is ungated, so without Filter this picker
-				// leaked every target entity's title — including unreadable ones
-				// and hidden display properties (BUG-R9EHKV, the worst surface: no
-				// gate at all). Filter drops unreadable targets and redacts the
-				// rest so DisplayTitle falls back to the id.
-				candidates := listFromStoreByTypes(r.Context(), h.services(), []string{targetType})
-				for _, e := range h.viewReader.Filter(r.Context(), candidates) {
-					rd.Targets = append(rd.Targets, APIRelationTarget{
-						ID:    e.ID,
-						Title: s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
-					})
+				targets, err := settingsRelationTargets(r.Context(), h.services(), h.viewReader, s.Meta, targetType)
+				if err != nil {
+					slog.Error("dataentry: settings relation targets failed", "type", targetType, "err", err)
+					writeJSONError(w, http.StatusInternalServerError, "failed to load relation targets")
+					return
 				}
+				rd.Targets = append(rd.Targets, targets...)
 			}
 		}
 		allRelations = append(allRelations, rd)
@@ -315,6 +313,29 @@ func (h *appearanceHandler) handleAPIGetSettings(w http.ResponseWriter, r *http.
 	data.LogoURL = h.logo.URL()
 
 	writeJSON(w, data)
+}
+
+// settingsRelationTargets lists the entities of targetType the principal may
+// read, as the settings page's relation-default choices.
+//
+// The rows come from the gated header read every list uses (scopedHeaders),
+// so an unreadable target never leaves the store and no body is read. reader
+// then redacts them, so a hidden display property falls back to the id
+// (BUG-R9EHKV); its row gate repeats the one above and drops nothing. The read still holds every readable row of the type; the
+// settings page needs a search picker to page it.
+func settingsRelationTargets(
+	ctx context.Context, svc Services, reader visibility.Reader, meta *metamodel.Metamodel, targetType string,
+) ([]APIRelationTarget, error) {
+	rqr := readGateFromContext(ctx).ReadQuery(ctx, targetType)
+	rows, _, err := scopedEntities(ctx, svc, rqr, scopeRequest{Type: targetType, Faces: rqr.Faces})
+	if err != nil {
+		return nil, err
+	}
+	var out []APIRelationTarget
+	for _, e := range reader.Filter(ctx, rows) {
+		out = append(out, APIRelationTarget{ID: e.ID, Title: meta.DisplayTitle(e.ID, e.Type, e.Properties)})
+	}
+	return out, nil
 }
 
 // refuseSettingsEdit answers 403 and returns true when the request's

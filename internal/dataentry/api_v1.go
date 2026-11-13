@@ -513,9 +513,33 @@ func scopedSortedEntitiesScoped(
 	// scope all live in scopedHeaders (scopedread.go) — see its doc for why
 	// they must not be re-implemented per handler.
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
+	if readWithheld(ctx, rqr) {
+		// Return BEFORE the free-text search: a principal who may read
+		// nothing must not be able to probe the search backend's latency or
+		// induce load through ?q= (RR-X56H).
+		return []*entityPkg.Entity{}, nil, nil
+	}
+
+	// Free-text search: the hits narrow the read when ?q=... is present.
+	// Full-text scores are discarded — the list's configured sort wins over
+	// relevance ranking, same approach SearchView uses for filtering.
+	// Backend errors surface as HTTP 500 rather than rendering an empty list
+	// and pretending the search succeeded.
+	searchResult, err := a.queries.freeTextIDsForType(ctx, queryGet(params, "q"), typeName)
+	if err != nil {
+		return nil, nil, err
+	}
+	// The page scope and the hits each name the rows the list may hold, so
+	// the read asks for those ids only rather than scanning the type
+	// (TKT-F2EJQY8). Each id still passes the verdict, the world, the faces
+	// and the query scope in scopedHeaders, so neither can surface a row the
+	// full read would not admit.
+	ids, byIDs := narrowingIDs(pageScoped, pageIDs, searchResult)
 	entities, withheld, err := scopedEntities(ctx, a.Services(), rqr, scopeRequest{
 		Type:        typeName,
 		Faces:       rqr.Faces,
+		ByIDs:       byIDs,
+		IDs:         ids,
 		Scope:       scope.Scope,
 		ScopeProps:  scope.Props,
 		ScopeFilter: scope.Filter,
@@ -524,40 +548,9 @@ func scopedSortedEntitiesScoped(
 		return nil, nil, err
 	}
 	if withheld {
-		// Return BEFORE the free-text search: a principal who may read
-		// nothing must not be able to probe the search backend's latency or
-		// induce load through ?q= (RR-X56H).
+		// Unreachable after the readWithheld check above (same ctx and
+		// verdict); kept so the empty shape does not depend on that check.
 		return []*entityPkg.Entity{}, nil, nil
-	}
-	// An intersection with the ACL-scoped set: the page scope only removes
-	// rows, so it cannot surface one the load above did not admit.
-	if pageScoped {
-		kept := entities[:0]
-		for _, e := range entities {
-			if pageIDs[e.ID] {
-				kept = append(kept, e)
-			}
-		}
-		entities = kept
-	}
-
-	// Free-text search: intersect with hits from the searcher when ?q=... is
-	// present. Full-text scores are discarded — the list's configured sort wins
-	// over relevance ranking, same approach SearchView uses for filtering.
-	// Backend errors surface as HTTP 500 rather than rendering an empty list
-	// and pretending the search succeeded.
-	searchResult, err := a.queries.freeTextIDsForType(ctx, queryGet(params, "q"), typeName)
-	if err != nil {
-		return nil, nil, err
-	}
-	if searchResult.HasFilter {
-		filtered := entities[:0]
-		for _, e := range entities {
-			if _, hit := searchResult.IDs[e.ID]; hit {
-				filtered = append(filtered, e)
-			}
-		}
-		entities = filtered
 	}
 
 	// Each filter[<key>] param was classified as property vs relation ONCE,

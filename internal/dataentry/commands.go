@@ -421,6 +421,36 @@ func (h *commandHandler) buildListInput(listID string, entities []*entity.Entity
 	}
 }
 
+// visibleListRows reads the rows of a list-context command: every row of
+// typeName the principal may read, with its body, redacted.
+//
+// The payload leaves the process, so it gets the treatment every other read
+// path gives its output: the gated header read (scopedHeaders) over the
+// whole type, the bodies of the admitted rows only, then field redaction
+// primed for the whole set. It does not apply the list's query scope or
+// page scope; the payload never did, and the ACL gate is what keeps it
+// safe. The list's own `filters:` run on the
+// redacted rows afterwards, so a filter on a hidden property cannot keep a
+// row because of the value the principal may not see.
+func (h *commandHandler) visibleListRows(ctx context.Context, typeName string) ([]*entity.Entity, error) {
+	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
+	svc := h.services()
+	rows, _, err := scopedEntities(ctx, svc, rqr, scopeRequest{Type: typeName, Faces: rqr.Faces})
+	if err != nil {
+		return nil, err
+	}
+	if err := loadRowContent(ctx, svc.Store, rows); err != nil {
+		return nil, fmt.Errorf("%w: %w", errListLoad, err)
+	}
+	if h.redactor != nil {
+		ctx = visibility.PrimeTraversals(ctx, h.redactor, rows)
+	}
+	for i, e := range rows {
+		rows[i] = h.redactEntity(ctx, e)
+	}
+	return rows, nil
+}
+
 // buildViewInput assembles the stdin JSON for a view-context command. The
 // viewResult it receives is already row-gated + field-redacted (executeView,
 // DEC-ZBI39P): a command script sees the same visibility the HTTP view does, so
@@ -621,7 +651,13 @@ func (h *commandHandler) buildCommandInput(
 			http.Error(w, "List not found: "+listID, http.StatusNotFound)
 			return nil, false
 		}
-		entities := listFromStoreByTypes(r.Context(), h.services(), []string{listCfg.EntityType})
+		entities, lerr := h.visibleListRows(r.Context(), listCfg.EntityType)
+		if lerr != nil {
+			slog.Error("dataentry: command payload read failed; not running the command",
+				"command", commandID, "err", lerr)
+			http.Error(w, "Failed to build input", http.StatusInternalServerError)
+			return nil, false
+		}
 		entities = applyFilters(entities, listCfg.Filters, filterUser(r.Context()))
 		input = h.buildListInput(listID, entities)
 	case "view":

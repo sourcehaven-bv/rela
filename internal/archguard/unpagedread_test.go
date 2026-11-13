@@ -511,13 +511,13 @@ func TestUnpagedReadAllowlist_HasReasons(t *testing.T) {
 }
 
 // The request-path scan TKT-A6A97WV's budget tests name stays on the list
-// as debt, not relabelled. TKT-F2EJQY8 deletes this test with the scan.
+// as debt, not relabelled. TKT-D3RAB0E deletes this test with the scan.
 func TestUnpagedReadAllowlist_ScopedHeadersIsDebt(t *testing.T) {
 	t.Parallel()
 	const key = "internal/dataentry/scopedread.go#scopedHeaders"
 	e, ok := unpagedReadAllowlist[key]
 	if !ok {
-		t.Fatalf("%s: not on the allowlist; if TKT-F2EJQY8 removed the scan, delete this test with it", key)
+		t.Fatalf("%s: not on the allowlist; if TKT-D3RAB0E removed the scan, delete this test with it", key)
 	}
 	if e.category != requestPath {
 		t.Errorf("%s: category %q, want %q", key, e.category, requestPath)
