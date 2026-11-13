@@ -472,6 +472,18 @@ the builder cannot render as a literal JSON path falls back to the naive
 path. It also refuses to open on a filesystem where WAL cannot be
 enabled (iCloud/Dropbox/SMB), because SQLite is unsafe there.
 
+**Design for postgres; the fs tier only has to work.** `fsstore` is local use:
+one person, with git as the history and the backup. Networked, multi-user
+deployments run on postgres. So in design discussions, research and reviews:
+
+- Judge security, performance, scale and concurrent-write consistency against
+  postgres, not fs.
+- Do not raise fs limits (single writer, file-per-row cost, git history size,
+  no transactions) as objections to a design, or as reasons to shrink it. An fs
+  backend that is simple and correct for one local user is enough.
+- The shared code paths still apply the same ACL and validation on every
+  backend. This rule is about what drives a design, not about removing checks.
+
 The rules for touching storage, comments, versioning and data migration are in
 `.claude/rules/` (`storage.md`, `comments.md`, `versioning.md`,
 `datamigration.md`).
