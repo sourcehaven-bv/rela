@@ -54,6 +54,13 @@ type pushRemote struct {
 
 func newPushRemote(t *testing.T) *pushRemote {
 	t.Helper()
+	return newPushRemoteAs(t, acl.RoleDef{Read: []string{"ticket"}, Create: []string{"ticket"},
+		Update: []string{"ticket"}})
+}
+
+// newPushRemoteAs is [newPushRemote] with role as the principal's role.
+func newPushRemoteAs(t *testing.T, role acl.RoleDef) *pushRemote {
+	t.Helper()
 	app := newTestAppV1(t)
 	// A meta field on blocks, so the relation push has a field to merge.
 	blocks := app.State().Meta.Relations["blocks"]
@@ -67,7 +74,7 @@ func newPushRemote(t *testing.T) *pushRemote {
 	}
 	d := mustNewACL(t, &acl.Policy{
 		Roles: map[string]acl.RoleDef{
-			"tickets-sync": {Read: []string{"ticket"}, Create: []string{"ticket"}, Update: []string{"ticket"}},
+			"tickets-sync": role,
 		},
 		Assignments: map[string]string{"catalog-mirror": "tickets-sync"},
 	}, app.store)

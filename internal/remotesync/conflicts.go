@@ -48,6 +48,14 @@ const (
 	// ReasonSuperseded: the latest rule decided the field, and the entry
 	// keeps the losing value. It blocks nothing.
 	ReasonSuperseded = "superseded"
+	// ReasonLocalDeleted: the row was deleted here, and the remote changed
+	// it since the last sync or refused the delete. Resolved to local, the
+	// next run deletes the remote row; to remote, it restores the row here.
+	ReasonLocalDeleted = "local_deleted"
+	// ReasonRemoteDeleted: the remote deleted the row, and it was changed
+	// here since the last sync. Resolved to local, the next run restores the
+	// row on the remote; to remote, it deletes the row here.
+	ReasonRemoteDeleted = "remote_deleted"
 )
 
 // The causes of a refused or uncertain entry.
@@ -67,6 +75,9 @@ const (
 	// CauseNoAnswer: the request left but no usable answer came back: a
 	// broken connection, a redirect or a busy remote.
 	CauseNoAnswer = "no_answer"
+	// CauseEdited: the side that did not delete the row changed it since
+	// the last sync.
+	CauseEdited = "edited"
 )
 
 // causeOfError names the cause of a push request that failed after it
@@ -113,8 +124,8 @@ type Conflict struct {
 	// to. Both are empty when the whole row is held.
 	Field       string `json:"field,omitempty"`
 	RemoteField string `json:"remote_field,omitempty"`
-	// Reason is [ReasonBothChanged], [ReasonRefused], [ReasonUncertain] or
-	// [ReasonSuperseded].
+	// Reason is [ReasonBothChanged], [ReasonRefused], [ReasonUncertain],
+	// [ReasonSuperseded], [ReasonLocalDeleted] or [ReasonRemoteDeleted].
 	Reason string `json:"reason"`
 	// Detail explains a refusal, as the remote put it. It quotes the
 	// remote, so it is for the operator's terminal only.
@@ -208,7 +219,16 @@ func loadConflicts(ctx context.Context, kv state.KV, name string) (*conflicts, e
 }
 
 func validReason(r string) bool {
-	return r == ReasonBothChanged || r == ReasonRefused || r == ReasonUncertain || r == ReasonSuperseded
+	switch r {
+	case ReasonBothChanged, ReasonRefused, ReasonUncertain, ReasonSuperseded, ReasonLocalDeleted, ReasonRemoteDeleted:
+		return true
+	}
+	return false
+}
+
+// isDelete reports whether reason is about a row one side deleted.
+func isDelete(reason string) bool {
+	return reason == ReasonLocalDeleted || reason == ReasonRemoteDeleted
 }
 
 // list returns the entries sorted by local id, then field, then reason.
@@ -477,6 +497,11 @@ func CheckResolve(list []Conflict, t Target, take string) ([]Conflict, error) {
 // the remote side, the local values it tried to send stop counting as
 // changes and the next sync brings the remote's values.
 //
+// A delete entry picks delete or keep. For [ReasonLocalDeleted], local
+// sends the delete without the edit check and remote restores the row here.
+// For [ReasonRemoteDeleted], local creates the row on the remote again and
+// remote deletes it here.
+//
 // The caller holds the remote's run lock, so no sync rewrites the ledger
 // meanwhile. It returns how many entries it resolved.
 func Resolve(ctx context.Context, kv state.KV, m *Mapping, t Target, take string) (int, error) {
@@ -499,13 +524,12 @@ func Resolve(ctx context.Context, kv state.KV, m *Mapping, t Target, take string
 	if entries[0].Kind == KindRelation {
 		kind = "R"
 	}
-	var row *ledgerRow
-	for _, r := range l.rows {
-		if r.Kind == kind && r.Local == t.Local && r.State == stateLinked {
-			row = r
-		}
-	}
 	for _, e := range entries {
+		row := entryRow(l, kind, &e)
+		if row != nil && kind == "R" && e.Reason == ReasonRemoteDeleted && take == TakeLocal && !l.endsLinked(row) {
+			return 0, fmt.Errorf("%w: an end of the relation %s is no longer linked to the remote, so it "+
+				"cannot be created there again; take remote", ErrRefused, e.Local)
+		}
 		resolveOne(row, &e, take)
 		c.drop(e.Local, e.Field)
 	}
@@ -515,10 +539,35 @@ func Resolve(ctx context.Context, kv state.KV, m *Mapping, t Target, take string
 	return len(entries), c.save(ctx, kv)
 }
 
-// resolveOne moves row's merge base for entry e to the losing side.
+// entryRow returns the ledger row entry e is about: the linked row of its
+// local row, or for a delete entry the row that waits on it. Nil means the
+// row is gone and the entry has nothing to apply to.
+func entryRow(l *ledger, kind string, e *Conflict) *ledgerRow {
+	want := stateLinked
+	switch e.Reason {
+	case ReasonLocalDeleted:
+		want = stateDeleting
+	case ReasonRemoteDeleted:
+		want = stateDetached
+	}
+	for _, r := range l.rows {
+		if r.Kind == kind && r.Local == e.Local && r.State == want {
+			return r
+		}
+	}
+	return nil
+}
+
+// resolveOne moves row's merge base for entry e to the losing side. A
+// delete entry instead records the side on the row, for the next run.
 // [CheckResolve] has checked that e can take that side.
 func resolveOne(row *ledgerRow, e *Conflict, take string) {
 	switch {
+	case isDelete(e.Reason):
+		if row != nil {
+			row.Resolve = take
+		}
+		return
 	case e.Reason != ReasonBothChanged && take == TakeLocal:
 		// Tried again on the next sync.
 		return

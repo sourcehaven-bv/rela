@@ -52,6 +52,9 @@ type Settings struct {
 	// OnGone is what a pull does to a linked row the source no longer
 	// has: detach or delete.
 	OnGone string `yaml:"on_gone,omitempty" json:"on_gone,omitempty"`
+	// SendDeletes makes a push delete the remote row of a linked local row
+	// that was deleted here. It needs Push.
+	SendDeletes bool `yaml:"send_deletes,omitempty" json:"send_deletes"`
 }
 
 // MappedType is one type a remote maps: an entity type, or a relation type

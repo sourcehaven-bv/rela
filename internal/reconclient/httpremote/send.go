@@ -44,7 +44,7 @@ func (r *Remote) Send(
 		return Answer{}, errors.New("httpremote: invalid path")
 	}
 	switch method {
-	case http.MethodGet, http.MethodPost, http.MethodPatch:
+	case http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete:
 	default:
 		return Answer{}, fmt.Errorf("httpremote: method %s is not sent", method)
 	}

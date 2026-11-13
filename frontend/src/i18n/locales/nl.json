@@ -1396,9 +1396,12 @@
       "both_changed": "Beide gewijzigd",
       "refused": "Geweigerd",
       "uncertain": "Onzeker aangemaakt",
-      "superseded": "Vervangen"
+      "superseded": "Vervangen",
+      "local_deleted": "Hier verwijderd",
+      "remote_deleted": "Op de remote verwijderd"
     },
     "cause": {
+      "edited": "De andere kant wijzigde de rij",
       "refused": "De remote weigerde de wijziging",
       "server_error": "De remote gaf een fout",
       "no_new_row": "De remote maakte geen rij aan",

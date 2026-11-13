@@ -11,7 +11,8 @@ import { api } from './client'
  * key says so and still handles a refusal.
  */
 
-export type RemoteReason = 'both_changed' | 'refused' | 'uncertain' | 'superseded'
+export type RemoteReason =
+  'both_changed' | 'refused' | 'uncertain' | 'superseded' | 'local_deleted' | 'remote_deleted'
 
 /** A field's value as the conflict list keeps it: any JSON value. */
 export type RemoteValue =
@@ -43,6 +44,7 @@ export interface RemoteSummary {
   push: boolean
   conflict: string
   on_gone?: string
+  send_deletes?: boolean
   max_clock_skew_seconds: number
   superseded_retention_seconds: number
   types: RemoteType[]

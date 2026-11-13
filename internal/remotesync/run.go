@@ -131,7 +131,8 @@ type Options struct {
 	AllowGone int
 }
 
-// ErrGoneGuard reports a run the gone guard refused. Nothing was applied.
+// ErrGoneGuard reports a run whose deletes and detaches the gone guard
+// held. The rest of the run was applied.
 var ErrGoneGuard = errors.New("remotesync: refused by the gone guard")
 
 // Dial returns the client of remote p, authenticated with credential, the
@@ -228,10 +229,7 @@ func Run(ctx context.Context, m *Mapping, d Deps, o Options) (Report, error) {
 	if err != nil {
 		return rep, err
 	}
-	gone, err := r.guard(diff)
-	if err != nil {
-		return rep, err
-	}
+	gone, sends, guardErr := guarder{r}.guard(diff)
 	runErr := r.apply(ctx, diff, gone)
 	if runErr == nil && m.Remote.Push {
 		rep.Pushed = &PushCounts{}
@@ -240,35 +238,12 @@ func Run(ctx context.Context, m *Mapping, d Deps, o Options) (Report, error) {
 			rep.PushedRelations = &PushCounts{}
 			runErr = relSync{r}.push(ctx)
 		}
-	}
-	r.forgetConflicts()
-	for _, e := range held.entries {
-		if e.Reason == ReasonSuperseded {
-			rep.Superseded++
-		} else {
-			rep.Held++
+		if runErr == nil {
+			runErr = deleter{r}.send(ctx, sends)
 		}
 	}
-	if !o.DryRun {
-		wctx := context.WithoutCancel(ctx)
-		if err := l.save(wctx, d.State, m); err != nil {
-			return rep, errors.Join(runErr, err)
-		}
-		if err := held.save(wctx, d.State); err != nil {
-			return rep, errors.Join(runErr, err)
-		}
-	}
-	failed := rep.Entities.Failed + rep.Relations.Failed
-	if rep.Pushed != nil {
-		failed += rep.Pushed.Failed
-	}
-	if rep.PushedRelations != nil {
-		failed += rep.PushedRelations.Failed
-	}
-	if runErr == nil && failed > 0 {
-		runErr = fmt.Errorf("remotesync: %d rows failed", failed)
-	}
-	return rep, runErr
+	runErr = r.finish(ctx, runErr)
+	return rep, errors.Join(runErr, guardErr)
 }
 
 // runner holds the state of one run.
@@ -284,6 +259,9 @@ type runner struct {
 	// byID maps a source entity id to its ledger row. Source ids are
 	// unique across types, as rela ids are.
 	byID map[string]*ledgerRow
+	// goneRows are the linked rows the source no longer lists, whether or
+	// not the guard lets the run act on them.
+	goneRows map[*ledgerRow]bool
 	// fetched counts the rows fetched against max_fetch, and read the
 	// bytes they took against max_bytes.
 	fetched int
@@ -301,6 +279,40 @@ type runner struct {
 	relSeen map[string]bool
 }
 
+// finish counts the conflict list, saves the ledger and the list, and turns
+// failed rows into the run's error when nothing else failed.
+func (r *runner) finish(ctx context.Context, runErr error) error {
+	rep := r.rep
+	r.forgetConflicts()
+	for _, e := range r.c.entries {
+		if e.Reason == ReasonSuperseded {
+			rep.Superseded++
+		} else {
+			rep.Held++
+		}
+	}
+	if !r.o.DryRun {
+		wctx := context.WithoutCancel(ctx)
+		if err := r.l.save(wctx, r.d.State, r.m); err != nil {
+			return errors.Join(runErr, err)
+		}
+		if err := r.c.save(wctx, r.d.State); err != nil {
+			return errors.Join(runErr, err)
+		}
+	}
+	failed := rep.Entities.Failed + rep.Relations.Failed
+	if rep.Pushed != nil {
+		failed += rep.Pushed.Failed
+	}
+	if rep.PushedRelations != nil {
+		failed += rep.PushedRelations.Failed
+	}
+	if runErr == nil && failed > 0 {
+		runErr = fmt.Errorf("remotesync: %d rows failed", failed)
+	}
+	return runErr
+}
+
 // heldRow names a source row at one source hash.
 type heldRow struct {
 	key  string
@@ -310,15 +322,23 @@ type heldRow struct {
 // sweep turns the ledger row of every linked or detached local row that is
 // gone into a dropped row, and clears its field digests. So no digest of a
 // deleted row's values outlives it, and the pull still does not recreate
-// it. It reads the ledger's own ids: one header scan per mapped entity type
-// and one relation scan per mapped relation type. A row of a type the
-// mapping no longer names is left alone.
+// it. On a remote with send_deletes a linked row becomes a deleting row
+// instead, which keeps its digests until the push has deleted the remote
+// row; a deleting row whose local row is back is linked again. It reads the
+// ledger's own ids: one header scan per mapped entity type and one relation
+// scan per mapped relation type. A row of a type the mapping no longer
+// names is left alone.
 func (r *runner) sweep(ctx context.Context) error {
 	ids := map[string][]string{}
 	from := map[string][]string{}
 	var rows []*ledgerRow
 	for _, row := range r.l.rows {
-		if row.Local == "" || (row.State != stateLinked && row.State != stateDetached) {
+		if why := r.expiredDelete(row); why != "" {
+			r.issue(IssueKept, row.Address, row.Local, why)
+			row.State, row.Base, row.Resolve, row.Gone = stateDropped, nil, "", time.Time{}
+			continue
+		}
+		if row.Local == "" || (row.State != stateLinked && row.State != stateDetached && row.State != stateDeleting) {
 			continue
 		}
 		if em, ok := r.m.Entities[row.Type]; ok && row.Kind == "E" {
@@ -335,12 +355,34 @@ func (r *runner) sweep(ctx context.Context) error {
 		}
 		rows = append(rows, row)
 	}
+	present, err := r.present(ctx, ids, from)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		switch {
+		case row.State == stateDeleting && present[row.Kind+row.Local]:
+			row.State, row.Resolve, row.Gone = stateLinked, "", time.Time{}
+		case row.State == stateDeleting || present[row.Kind+row.Local]:
+		case row.State == stateLinked && r.m.Remote.SendDeletes:
+			row.State, row.Gone = stateDeleting, r.d.Now()
+		default:
+			row.State, row.Base, row.Resolve = stateDropped, nil, ""
+		}
+	}
+	return nil
+}
+
+// present lists which of the ledger's local rows the store still holds:
+// entities by type and id, relations by type and source id. Keys are the
+// row kind plus its local address.
+func (r *runner) present(ctx context.Context, ids, from map[string][]string) (map[string]bool, error) {
 	present := map[string]bool{}
 	for _, typ := range sortedKeys(ids) {
 		q := store.EntityQuery{Type: typ, IDs: ids[typ], Faces: store.AllFaces()}
 		for h, err := range store.ListEntityHeaders(ctx, r.d.Store, q) {
 			if err != nil {
-				return fmt.Errorf("remotesync: list local %s rows: %w", typ, err)
+				return nil, fmt.Errorf("remotesync: list local %s rows: %w", typ, err)
 			}
 			present["E"+h.ID] = true
 		}
@@ -349,17 +391,27 @@ func (r *runner) sweep(ctx context.Context) error {
 		q := store.RelationQuery{Type: typ, EntityIDs: from[typ], Direction: store.DirectionOutgoing}
 		for rel, err := range r.d.Store.ListRelations(ctx, q) {
 			if err != nil {
-				return fmt.Errorf("remotesync: list local %s relations: %w", typ, err)
+				return nil, fmt.Errorf("remotesync: list local %s relations: %w", typ, err)
 			}
 			present["R"+rel.Key()] = true
 		}
 	}
-	for _, row := range rows {
-		if !present[row.Kind+row.Local] {
-			row.State, row.Base = stateDropped, nil
-		}
+	return present, nil
+}
+
+// expiredDelete reports why a deleting row is no longer to be deleted on
+// the remote: send_deletes was turned off, or the row waited longer than
+// [deleteRetention]. It returns "" for any other row.
+func (r *runner) expiredDelete(row *ledgerRow) string {
+	switch {
+	case row.State != stateDeleting:
+		return ""
+	case !r.m.Remote.SendDeletes:
+		return "not deleted on the remote: send_deletes is off"
+	case !row.Gone.IsZero() && r.d.Now().Sub(row.Gone) > deleteRetention:
+		return "not deleted on the remote: the delete waited longer than 30 days"
 	}
-	return nil
+	return ""
 }
 
 // hold marks the current row as stopped without being applied.
@@ -394,6 +446,7 @@ func (r *runner) prepare(ctx context.Context) error {
 		return err
 	}
 	r.plurals = p
+	r.resolved()
 	r.byID = map[string]*ledgerRow{}
 	for _, row := range r.l.rows {
 		if row.Kind == "E" {
@@ -402,6 +455,28 @@ func (r *runner) prepare(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// resolved acts on the delete conflicts a person resolved since the last
+// run. A deleting row resolved to the remote side is forgotten, so the pull
+// restores it as a new local row. A detached row resolved to the remote side
+// is linked again, so the gone path deletes the local row without the edit
+// check. The other two sides are acted on later in the run: the delete is
+// sent without the edit check, and the push restores the row on the remote.
+// A dry run changes nothing.
+func (r *runner) resolved() {
+	if r.o.DryRun {
+		return
+	}
+	for _, row := range r.l.rows {
+		switch {
+		case row.Resolve != TakeRemote:
+		case row.State == stateDeleting:
+			r.l.remove(row)
+		case row.State == stateDetached:
+			row.State = stateLinked
+		}
+	}
 }
 
 func (r *runner) diff(ctx context.Context) (reconclient.Result, error) {
@@ -423,91 +498,6 @@ func (r *runner) diff(ctx context.Context) (reconclient.Result, error) {
 		r.rep.Skipped = append(r.rep.Skipped, s.Type)
 	}
 	return res, nil
-}
-
-// guard picks the linked rows the source no longer lists, drops the other
-// gone rows from the ledger except the dropped ones, and refuses the run when the gone rows are
-// too many or empty a type. It writes nothing.
-func (r *runner) guard(diff reconclient.Result) ([]*ledgerRow, error) {
-	skipped := map[string]bool{}
-	for _, s := range diff.Skipped {
-		if s.Kind == reconclient.KindRelation {
-			skipped[s.Type] = true
-		}
-	}
-	var gone, forget []*ledgerRow
-	goneOf := map[string]int{}
-	for _, el := range diff.OnlyLocal {
-		row := r.l.get(el.Kind, el.Address)
-		if row == nil || (row.Kind == "R" && skipped[row.Type]) {
-			continue
-		}
-		goneOf[row.Kind+row.Type]++
-		switch row.State {
-		case stateLinked:
-			gone = append(gone, row)
-		case stateDropped:
-			// Kept, so a local delete stays one when the source lists
-			// the row again.
-		default:
-			forget = append(forget, row)
-		}
-	}
-	r.rep.Gone = len(gone)
-	if len(gone) > 0 && len(gone) > r.o.AllowGone {
-		limit := r.m.Remote.maxGone()
-		if len(gone) > limit {
-			r.rep.Refused = fmt.Sprintf("%d linked rows are gone from the source, over max_gone %d; "+
-				"confirm with --allow-gone %d", len(gone), limit, len(gone))
-			return nil, fmt.Errorf("%w: %s", ErrGoneGuard, r.rep.Refused)
-		}
-		if recent := r.l.recentDeletes(r.d.Now()); r.m.Remote.onGone() == OnGoneDelete && recent+len(gone) > limit {
-			r.rep.Refused = fmt.Sprintf("%d linked rows are gone from the source and %d were deleted in the last %s, "+
-				"over max_gone %d; confirm with --allow-gone %d", len(gone), recent, deleteWindow, limit, len(gone))
-			return nil, fmt.Errorf("%w: %s", ErrGoneGuard, r.rep.Refused)
-		}
-		if t, ok := r.emptied(diff, goneOf, skipped); ok {
-			r.rep.Refused = fmt.Sprintf("the source lists no rows of %s any more; confirm with --allow-gone %d",
-				t, len(gone))
-			return nil, fmt.Errorf("%w: %s", ErrGoneGuard, r.rep.Refused)
-		}
-	}
-	if !r.o.DryRun {
-		for _, row := range forget {
-			r.l.remove(row)
-		}
-	}
-	return gone, nil
-}
-
-// emptied returns a type that had linked rows and that the source now lists
-// no rows of. A type the source stopped serving, through its ACL or a
-// broken mapping, looks like that; deleting its rows on that evidence is the
-// mass delete the guard exists for.
-func (r *runner) emptied(diff reconclient.Result, goneOf map[string]int, skipped map[string]bool) (string, bool) {
-	listed, linked := map[string]int{}, map[string]int{}
-	for _, rows := range r.l.index {
-		for _, row := range rows {
-			k := row.Kind + row.Type
-			listed[k]++
-			if row.State == stateLinked {
-				linked[k]++
-			}
-		}
-	}
-	for _, el := range diff.OnlyRemote {
-		listed[kindLetter(el.Kind)+elementType(el)]++
-	}
-	for _, k := range sortedKeys(linked) {
-		if linked[k] > 0 && listed[k]-goneOf[k] <= 0 && (k[0] != 'R' || !skipped[k[1:]]) {
-			kind := "entity type"
-			if k[0] == 'R' {
-				kind = "relation type"
-			}
-			return fmt.Sprintf("%s %q", kind, k[1:]), true
-		}
-	}
-	return "", false
 }
 
 // apply pulls the new and changed rows, entities first so relations find
@@ -541,9 +531,9 @@ func (r *runner) apply(ctx context.Context, diff reconclient.Result, gone []*led
 			switch {
 			case row.Kind != kind:
 			case kind == "R":
-				r.goneRelation(ctx, row)
+				goner{r}.goneRelation(ctx, row)
 			default:
-				r.goneEntity(ctx, row)
+				goner{r}.goneEntity(ctx, row)
 			}
 		}
 	}
@@ -819,6 +809,10 @@ func (r *runner) pullEntity(ctx context.Context, addr string, hash canonical.Dig
 	if row != nil && row.State == stateDropped {
 		c.Dropped++
 		row.Hash = hash
+		return nil
+	}
+	if row != nil && row.State == stateDeleting {
+		// The push deletes it; it compares the remote row itself.
 		return nil
 	}
 	if !r.budget(c) {
@@ -1235,6 +1229,11 @@ func (r *runner) record(
 	return row
 }
 
+// goneHere reports whether an entity row's local row was deleted here.
+func goneHere(row *ledgerRow) bool {
+	return row != nil && (row.State == stateDropped || row.State == stateDeleting)
+}
+
 func localOf(row *ledgerRow) string {
 	if row == nil {
 		return ""
@@ -1268,8 +1267,11 @@ func (r *runner) pullRelation(ctx context.Context, addr string, hash canonical.D
 		row.Hash = hash
 		return nil
 	}
+	if row != nil && row.State == stateDeleting {
+		return nil
+	}
 	fromRow, toRow := r.byID[from], r.byID[to]
-	if (fromRow != nil && fromRow.State == stateDropped) || (toRow != nil && toRow.State == stateDropped) {
+	if goneHere(fromRow) || goneHere(toRow) {
 		// An endpoint was deleted locally, so the relation is not
 		// recreated either.
 		c.Dropped++
@@ -1453,145 +1455,10 @@ func (r *runner) checkRelationMeta(typ string, existing *entity.Relation, opts e
 	return fmt.Errorf("the relation meta does not fit the local schema: %s", strings.Join(msgs, "; "))
 }
 
-func (r *runner) goneRelation(ctx context.Context, row *ledgerRow) {
-	c := &r.rep.Relations
-	if r.m.Remote.onGone() == OnGoneDetach {
-		c.Detached++
-		r.detach(row)
-		return
-	}
-	fromKey, typ, to, ok := splitRelationAddress(row.Local)
-	from, err := entity.ParseRef(fromKey)
-	valid := ok && err == nil
-	if valid {
-		for _, end := range []string{from.String(), to} {
-			readable, err := r.readable(ctx, end)
-			if err != nil {
-				r.gateFailed(c, row.Address, err)
-				return
-			}
-			if !readable {
-				c.Detached++
-				r.issue(IssueKept, row.Address, "", "kept and detached: an endpoint is a local row the puller cannot read")
-				r.detach(row)
-				return
-			}
-		}
-	}
-	if row.Adopted {
-		c.Detached++
-		r.issue(IssueKept, row.Address, row.Local, "kept and detached: it was there before the pull")
-		r.detach(row)
-		return
-	}
-	if !valid {
-		c.Failed++
-		r.issue(IssueFailed, row.Address, row.Local, "the ledger holds an invalid local relation key")
-		return
-	}
-	if r.o.DryRun {
-		c.Deleted++
-		return
-	}
-	key := entity.RelationKey{From: from.ID, FromFace: from.Face, Type: typ, To: to}
-	if err := r.d.Writer.DeleteRelation(ctx, key); err != nil && !errors.Is(err, store.ErrNotFound) {
-		c.Failed++
-		r.issue(IssueFailed, row.Address, row.Local, err.Error())
-		return
-	}
-	c.Deleted++
-	r.l.deletes = append(r.l.deletes, r.d.Now().Unix())
-	r.d.Logger.Info("remote pull deleted a relation the source no longer lists",
-		"remote", r.m.Name, "run_id", r.d.RunID, "source", row.Address, "local", row.Local)
-	r.l.remove(row)
-}
-
-func (r *runner) goneEntity(ctx context.Context, row *ledgerRow) {
-	c := &r.rep.Entities
-	if r.m.Remote.onGone() == OnGoneDetach {
-		c.Detached++
-		r.detach(row)
-		return
-	}
-	ours, err := r.d.Store.GetEntity(ctx, row.localRef())
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		if !r.o.DryRun {
-			r.l.remove(row)
-		}
-		return
-	case err != nil:
-		c.Failed++
-		r.issue(IssueFailed, row.Address, row.Local, err.Error())
-		return
-	}
-	readable, err := r.readable(ctx, ours.Ref().String())
-	if err != nil {
-		r.gateFailed(c, row.Address, err)
-		return
-	}
-	if !readable {
-		// Neither the row nor whether it was edited or has relations is
-		// reported, and the run does not delete it.
-		c.Detached++
-		r.issue(IssueKept, row.Address, "", "kept and detached: the puller cannot read the local row")
-		r.detach(row)
-		return
-	}
-	if row.Adopted {
-		c.Detached++
-		r.issue(IssueKept, row.Address, row.Local, "kept and detached: it was there before the pull")
-		r.detach(row)
-		return
-	}
-	if field, edited := r.editedLocally(row, ours); edited {
-		c.Detached++
-		r.issue(IssueKept, row.Address, row.Local, "kept and detached: owned field "+field+" was edited locally")
-		r.detach(row)
-		return
-	}
-	if r.o.DryRun {
-		c.Deleted++
-		return
-	}
-	_, err = r.d.Writer.DeleteEntity(ctx, row.Local, false)
-	switch {
-	case errors.Is(err, entity.ErrHasRelations):
-		c.Detached++
-		r.issue(IssueKept, row.Address, row.Local, "kept and detached: it has local relations")
-		r.detach(row)
-		return
-	case err != nil && !errors.Is(err, store.ErrNotFound):
-		c.Failed++
-		r.issue(IssueFailed, row.Address, row.Local, err.Error())
-		return
-	}
-	c.Deleted++
-	r.l.deletes = append(r.l.deletes, r.d.Now().Unix())
-	r.d.Logger.Info("remote pull deleted an entity the source no longer lists",
-		"remote", r.m.Name, "run_id", r.d.RunID, "source", row.Address, "local", row.Local)
-	r.l.remove(row)
-}
-
-// editedLocally reports an owned field whose local value is not the base.
-func (r *runner) editedLocally(row *ledgerRow, ours *entity.Entity) (string, bool) {
-	typ, _, _ := strings.Cut(row.Address, "/")
-	em := r.m.Entities[typ]
-	if em == nil {
-		return "", true
-	}
-	for _, f := range em.Fields {
-		b, ok := row.Base[f.baseKey()]
-		if !ok || syncmerge.Digest(f.Local, oursValue(f.Local, ours)) != b {
-			return f.Local.Name, true
-		}
-	}
-	return "", false
-}
-
-// detach marks row detached, outside a dry run.
+// detach marks row detached, outside a dry run. A side a person chose for
+// it is spent.
 func (r *runner) detach(row *ledgerRow) {
 	if !r.o.DryRun {
-		row.State = stateDetached
+		row.State, row.Resolve = stateDetached, ""
 	}
 }

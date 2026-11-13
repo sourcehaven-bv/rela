@@ -103,6 +103,7 @@ const (
 	remoteReasonBoth      = "both_changed"
 	remoteReasonUncertain = "uncertain"
 	remoteReasonSupersede = "superseded"
+	remoteReasonRemoteDel = "remote_deleted"
 	remoteTakeLocal       = "local"
 	remoteTakeRemote      = "remote"
 )
