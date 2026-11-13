@@ -73,7 +73,7 @@ func (c Credential) Validate() error {
 
 // CredentialEnvPrefix starts the name of every environment variable a
 // declared credential may be read from.
-const CredentialEnvPrefix = "REMOTE_CREDENTIAL_" //nolint:gosec // G101: a variable name prefix, not a credential
+const CredentialEnvPrefix = secrets.RemoteCredentialEnvPrefix
 
 // ValidateDeclared is [Credential.Validate] for a credential a config file
 // names, such as remotes.yaml. The value is sent to the URL the file names,

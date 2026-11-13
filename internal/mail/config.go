@@ -484,6 +484,10 @@ func (c *Config) Validate() error {
 		return errors.New("password must not be set in the config file; " +
 			"use password_env to name an environment variable instead")
 	}
+	if secrets.IsRemoteCredentialEnv(c.PasswordVar) {
+		return fmt.Errorf("password_env may not name %q: a remote credential is only for "+
+			"remotes.yaml and rela reconcile", c.PasswordVar)
+	}
 
 	switch c.Transport {
 	case TransportMemory:

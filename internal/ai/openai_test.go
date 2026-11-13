@@ -154,6 +154,18 @@ func TestProvider_Chat_NoAuthHeaderWhenAPIKeyEnvEmpty(t *testing.T) {
 	}
 }
 
+// TestNewProvider_RefusesRemoteCredentialEnv pins that the provider
+// constructor refuses a remote credential variable, so the model's host
+// never receives it (TKT-RZSTAPZ).
+func TestNewProvider_RefusesRemoteCredentialEnv(t *testing.T) {
+	_, err := NewOpenAICompatProvider(&Config{
+		BaseURL: "https://api.example.com/v1", Model: "m", APIKeyEnv: "REMOTE_CREDENTIAL_UP",
+	})
+	if err == nil || !strings.Contains(err.Error(), "only for remotes.yaml") {
+		t.Fatalf("err = %v, want a remote credential refusal", err)
+	}
+}
+
 func TestProvider_Chat_AuthErrorWhenEnvVarMissing(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Errorf("server should not be called when env var missing")

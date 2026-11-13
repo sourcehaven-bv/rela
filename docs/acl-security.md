@@ -2071,9 +2071,12 @@ redacts its fields. This section is about the pulling side. See
   machine: whoever edits `remotes.yaml` chooses the URL, so a source it could
   name freely would send `RELA_DATABASE_URL` or the token key there. The
   token never appears in `remotes.yaml` or on a command line. No Lua script can be granted a
-  `remote_credential.` secret, and `subscriptions.yaml` and
-  `connections.yaml` refuse to name one, so only `remotes.yaml` and `rela
-  reconcile diff --token-secret` send it. It goes only to the configured
+  `remote_credential.` secret. Every other config refuses a remote
+  credential: `subscriptions.yaml`, `connections.yaml`, `flows.yaml` webhooks
+  and every `capabilities.secrets` list refuse a `remote_credential.` secret,
+  and `ai.yaml` `api_key_env` and `mail.yaml` `password_env` refuse a
+  `REMOTE_CREDENTIAL_` variable. So only `remotes.yaml` and `rela reconcile
+  diff` send it. It goes only to the configured
   URL, and errors and logs name its source, never its value. Plain http is
   refused to a host that is not loopback unless `allow_insecure_http` is
   set, and redirects are never followed.
