@@ -7,6 +7,8 @@ import (
 	"math"
 	"math/big"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -25,7 +27,8 @@ const (
 	// refuses datetimes and other date formats.
 	RollupMin
 	RollupMax
-	// RollupSum adds the integral numbers of [RollupQuery.Value].
+	// RollupSum adds the integral numbers of [RollupQuery.Value], or its
+	// decimals under [RollupQuery.Decimal].
 	RollupSum
 	// RollupLatest reads [RollupQuery.Value] from the row with the largest
 	// non-empty string [RollupQuery.By]; on a tie, the smallest id wins.
@@ -65,6 +68,11 @@ type RollupQuery struct {
 	By string
 	// Numeric compares Value as a number for RollupMin and RollupMax.
 	Numeric bool
+	// Decimal sums Value as exact decimals for RollupSum: a number, or a
+	// string in plain decimal notation (see [RollupDecimal]). The sum is the
+	// decimal text with as many digits after the point as the longest
+	// fraction summed, such as "14.00" for "12.50" and "1.5".
+	Decimal bool
 
 	// Require lists conditions every counted row must meet. A row meets a
 	// condition when any of its queries matches it.
@@ -87,7 +95,8 @@ type RowCondition struct {
 
 // RollupResult is one source's answer. Count is the number of related rows;
 // Value is the aggregate, nil when no row supplied one. A Value is an int64
-// for a number, a string, or a bool, whichever the stored JSON held.
+// for a number, a string, or a bool, whichever the stored JSON held. A
+// decimal sum is its decimal text.
 type RollupResult struct {
 	Count int
 	Value any
@@ -284,6 +293,9 @@ type rollupFold struct {
 	pick any
 	// sum is exact, so a total is judged once, at the end.
 	sum *big.Int
+	// dec and decScale hold a decimal sum and its longest fraction.
+	dec      *big.Rat
+	decScale int
 }
 
 func (f *rollupFold) add(h EntityHeader, pickable bool) {
@@ -292,6 +304,10 @@ func (f *rollupFold) add(h EntityHeader, pickable bool) {
 	case RollupMin, RollupMax:
 		f.addExtreme(h.Properties[f.q.Value])
 	case RollupSum:
+		if f.q.Decimal {
+			f.addDecimal(h.Properties[f.q.Value])
+			return
+		}
 		n, ok := RollupNumber(h.Properties[f.q.Value])
 		if !ok {
 			return
@@ -314,6 +330,19 @@ func (f *rollupFold) add(h EntityHeader, pickable bool) {
 		}
 	case RollupCount:
 	}
+}
+
+// addDecimal folds one value into the running decimal sum.
+func (f *rollupFold) addDecimal(raw any) {
+	r, scale, ok := RollupDecimal(raw)
+	if !ok {
+		return
+	}
+	if f.dec == nil {
+		f.dec = new(big.Rat)
+	}
+	f.dec.Add(f.dec, r)
+	f.decScale = max(f.decScale, scale)
 }
 
 // addExtreme folds one value into the running min or max.
@@ -347,6 +376,12 @@ func (f *rollupFold) result() RollupResult {
 			res.Value = f.str
 		}
 	case RollupSum:
+		if f.q.Decimal {
+			if f.dec != nil {
+				res.Value = f.dec.FloatString(f.decScale)
+			}
+			break
+		}
 		// A total outside int64 has no value: every backend sums exactly
 		// and refuses the same totals.
 		if f.sum != nil && f.sum.IsInt64() {
@@ -398,6 +433,65 @@ func RollupNumber(v any) (int64, bool) {
 		return RollupNumber(float64(n))
 	}
 	return 0, false
+}
+
+// RollupDecimal reads v as an exact decimal for a decimal sum, with the
+// number of digits after its point. A string counts only in plain decimal
+// notation: an optional sign, digits, and optionally a point and digits. A
+// float is read through its shortest decimal text, as the decimal property
+// type reads one. Anything else, a list included, is no decimal.
+func RollupDecimal(v any) (*big.Rat, int, bool) {
+	var text string
+	switch x := v.(type) {
+	case string:
+		if !decimalNotation(x) {
+			return nil, 0, false
+		}
+		text = x
+	case float64:
+		if math.IsInf(x, 0) || math.IsNaN(x) {
+			return nil, 0, false
+		}
+		text = strconv.FormatFloat(x, 'f', -1, 64)
+	case float32:
+		return RollupDecimal(float64(x))
+	default:
+		n, ok := RollupNumber(v)
+		if !ok {
+			return nil, 0, false
+		}
+		text = strconv.FormatInt(n, 10)
+	}
+	r, ok := new(big.Rat).SetString(text)
+	if !ok {
+		return nil, 0, false
+	}
+	scale := 0
+	if _, frac, found := strings.Cut(text, "."); found {
+		scale = len(frac)
+	}
+	return r, scale, true
+}
+
+// decimalNotation reports whether s is `[+-]?digits(.digits)?`.
+func decimalNotation(s string) bool {
+	if s != "" && (s[0] == '+' || s[0] == '-') {
+		s = s[1:]
+	}
+	whole, frac, hasPoint := strings.Cut(s, ".")
+	return allDigits(whole) && (!hasPoint || allDigits(frac))
+}
+
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := range len(s) {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // RollupText is the text a min, max or latest_by orders v by, or !ok when v

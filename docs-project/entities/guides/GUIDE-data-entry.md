@@ -3748,7 +3748,8 @@ dashboard:
 | `title`      | string | Card heading                                                                |
 | `list`       | string | A list under `lists:` that supplies the rows. Set `list` or `query`, not both |
 | `query`      | string | Search query (same syntax as the search page)                               |
-| `display`    | string | `count`, `breakdown`, `table`, `matrix` or `ratio`                          |
+| `display`    | string | `count`, `breakdown`, `table`, `matrix`, `ratio`, `sum`, `avg`, `min` or `max` |
+| `property`   | string | `sum`, `avg`, `min`, `max`: the property to fold over the list's rows        |
 | `group_by`   | string | Property to group by (`breakdown`, and optionally `ratio`)                  |
 | `columns`    | list or string | `table`: column definitions, same format as list columns. `matrix`: the property along the top |
 | `sort`       | list   | Sort order (`table` mode only), the same list as a list's `sort:`           |
@@ -3882,6 +3883,28 @@ dashboard:
       match: has-evidence
       group_by: status
 ```
+
+### Total cards (`display: sum`, `avg`, `min`, `max`)
+
+A total card folds one property over the rows of its list into one value.
+It needs `list:` and `property:`.
+
+```yaml
+dashboard:
+  cards:
+    - title: "Total cost"
+      list: open-projects
+      display: sum
+      property: cost_cents
+```
+
+- `sum` and `avg` take an `integer` or `decimal` property. A sum is exact; an
+  average shows at least two digits after the point.
+- `min` and `max` take a property a list can sort on, and pick the value the
+  list's sort puts first or last.
+- The property can be a [roll-up](metamodel.md#roll-up-properties).
+- A row without a value is left out. A row whose value is hidden from the
+  viewer is left out too, and the card says that some values are hidden.
 
 ### Card width (`width`)
 

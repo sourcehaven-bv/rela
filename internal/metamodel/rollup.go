@@ -33,7 +33,8 @@ const (
 // The value is computed when the entity is read, with the reader's access:
 // a related entity the reader cannot read does not count, and a related
 // entity on which the reader cannot see a property the roll-up reads is left
-// out. It is never stored, so it cannot be written, filtered on or sorted by.
+// out. It is never stored, so it cannot be written. A list filters and sorts
+// on it by computing it for every scoped row first.
 //
 // The loader checks the declaration's shape. The checks that need the
 // relation and the related type (does `via` exist, is `pick` declared there,
