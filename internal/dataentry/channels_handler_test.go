@@ -189,6 +189,7 @@ func TestChannels_HiddenAnchorUniform404(t *testing.T) {
 		{http.MethodGet, "/_channels/room", ""},
 		{http.MethodGet, "/_channels/room/messages", ""},
 		{http.MethodPost, "/_channels/room/messages", `{"type":"text","props":{"body":"x"}}`},
+		{http.MethodPost, "/_channels/room/_batch", `{"messages":[{"type":"text","props":{"body":"x"}}]}`},
 		{http.MethodPatch, "/_channels/room/messages/1", `{"props":{"body":"x"}}`},
 		{http.MethodDelete, "/_channels/room/messages/1", ""},
 		{http.MethodPost, "/_channels/chat/_typing", ""},
@@ -243,6 +244,7 @@ func TestChannels_OffIsUniform404(t *testing.T) {
 			{http.MethodGet, roomPath, ""},
 			{http.MethodGet, roomPath + "/messages", ""},
 			{http.MethodPost, roomPath + "/messages", `{"type":"text","props":{"body":"x"}}`},
+			{http.MethodPost, roomPath + "/_batch", `{"messages":[{"type":"text","props":{"body":"x"}}]}`},
 			{http.MethodPost, "/api/v1/tickets/TKT-1/_channels/threads", ""},
 			{http.MethodPost, roomPath + "/messages", `{"type":`},
 			{http.MethodPost, roomPath + "/messages", huge},
@@ -272,6 +274,9 @@ func TestChannels_DenialsNameTheRule(t *testing.T) {
 	}{
 		{"read", "alice", http.MethodGet, "/api/v1/tickets/TKT-1/_channels/secret", "", realtime.TypeReadDenied},
 		{"post", "alice", http.MethodPost, roomPath + "/messages", `{"type":"announce","props":{"body":"x"}}`, realtime.TypePostDenied},
+		{"batch post", "alice", http.MethodPost, roomPath + "/_batch",
+			`{"messages":[{"type":"text","props":{"body":"x"}},{"type":"announce","props":{"body":"x"}}]}`,
+			realtime.TypePostDenied},
 		{"create", "alice", http.MethodPost, "/api/v1/tickets/TKT-1/_channels/topics", "", realtime.TypeCreateDenied},
 		{"edit another's", "bob", http.MethodPatch, roomPath + "/messages/1", `{"props":{"body":"x"}}`, realtime.TypeEditDenied},
 	} {
@@ -518,6 +523,9 @@ func (s stubChannels) Edit(context.Context, realtime.RawAddress, int64, map[stri
 func (s stubChannels) Delete(context.Context, realtime.RawAddress, int64, string) (realtime.MessageView, error) {
 	return realtime.MessageView{}, s.err
 }
+func (s stubChannels) PostBatch(context.Context, realtime.RawAddress, realtime.BatchInput) (realtime.BatchResult, error) {
+	return realtime.BatchResult{}, s.err
+}
 func (s stubChannels) Lifecycle(context.Context, realtime.RawAddress, string) (realtime.ChannelView, error) {
 	return realtime.ChannelView{}, s.err
 }
@@ -634,6 +642,8 @@ func TestParseChannelRoute(t *testing.T) {
 		{[]string{"room", "messages", "1", "_action", "ack", "x"}, channelRoute{}, false},
 		{[]string{"room", "messages", "_action", "ack"}, channelRoute{}, false},
 		{[]string{"room", "_typing"}, channelRoute{addr: room, typing: true}, true},
+		{[]string{"room", "_batch"}, channelRoute{addr: room, batch: true}, true},
+		{[]string{"room", "_batch", "x"}, channelRoute{}, false},
 		{[]string{"threads", "0000000000001", "_typing"}, channelRoute{addr: thread, typing: true}, true},
 		{[]string{"room", "_typing", "x"}, channelRoute{}, false},
 		{[]string{"room", "messages", "_typing"}, channelRoute{}, false},
@@ -1129,4 +1139,79 @@ func TestWireChannelSession_Button(t *testing.T) {
 		require.NoError(t, err)
 		require.Contains(t, string(b), `"entries":[]`)
 	})
+}
+
+// TestChannels_PostBatch pins `POST …/_batch`: 201 with the messages in
+// seq order sharing a batch id, and a 400 that names the refused message.
+func TestChannels_PostBatch(t *testing.T) {
+	env := newChannelEnv(t)
+	resp, b := env.do(t, "alice", http.MethodPost, roomPath+"/_batch",
+		`{"messages":[{"type":"text","props":{"body":"a"}},{"type":"text","props":{"body":"b"}}]}`, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("batch = %d %s, want 201", resp.StatusCode, b)
+	}
+	got := decodeAs[v1.PostBatchResponse](t, b)
+	if len(got.Messages) != 2 || got.Messages[0].Seq != 1 || got.Messages[1].Seq != 2 ||
+		got.Messages[0].Batch != 1 || got.Messages[1].Batch != 1 {
+
+		t.Fatalf("batch = %+v", got.Messages)
+	}
+	resp, b = env.do(t, "alice", http.MethodPost, roomPath+"/_batch",
+		`{"messages":[{"type":"text","props":{"body":"a"}},{"type":"text","props":{}}]}`, nil)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(b), "message 1: ") {
+		t.Fatalf("invalid batch = %d %s, want 400 naming message 1", resp.StatusCode, b)
+	}
+	resp, _ = env.do(t, "alice", http.MethodGet, roomPath+"/_batch", "", nil)
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("GET _batch = %d, want 405", resp.StatusCode)
+	}
+}
+
+// TestChannels_ThreadPages pins the thread and top query parameters and the
+// reply fields on the wire (TKT-ETL233O).
+func TestChannels_ThreadPages(t *testing.T) {
+	env := newChannelEnv(t)
+	parent := env.postText(t, "alice", roomPath, "parent")
+	env.postText(t, "bob", roomPath, "other")
+	resp, b := env.do(t, "bob", http.MethodPost, roomPath+"/messages",
+		`{"type":"text","props":{"body":"reply"},"reply_to":1}`, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("reply = %d %s", resp.StatusCode, b)
+	}
+	reply := decodeAs[v1.Message](t, b)
+	if reply.Inline {
+		t.Fatalf("a plain reply is not inline: %+v", reply)
+	}
+	seqs := func(query string) []int64 {
+		t.Helper()
+		code, body := env.get(t, "alice", roomPath+"/messages?"+query)
+		if code != http.StatusOK {
+			t.Fatalf("%s = %d %s", query, code, body)
+		}
+		var out []int64
+		for _, m := range decodeAs[v1.MessagePage](t, body).Messages {
+			out = append(out, m.Seq)
+		}
+		return out
+	}
+	if got := seqs("thread=1"); !slices.Equal(got, []int64{1, reply.Seq}) {
+		t.Fatalf("thread page = %v", got)
+	}
+	if got := seqs("top=1"); !slices.Equal(got, []int64{1, 2}) {
+		t.Fatalf("top page = %v", got)
+	}
+	if got := seqs("top=0"); len(got) != 3 {
+		t.Fatalf("top=0 page = %v, want every message", got)
+	}
+	code, b := env.get(t, "alice", roomPath+"/messages?thread=1")
+	if m := decodeAs[v1.MessagePage](t, b).Messages[0]; code != http.StatusOK || m.Seq != parent.Seq ||
+		m.ReplyCount != 1 || m.LastReplyAt != reply.At {
+
+		t.Fatalf("parent = %d %s, want last_reply_at %s", code, b, reply.At)
+	}
+	for _, q := range []string{"thread=x", "top=yes", "thread=1&top=1", "thread=-1", "thread=0"} {
+		if code, b := env.get(t, "alice", roomPath+"/messages?"+q); code != http.StatusBadRequest {
+			t.Fatalf("%s = %d %s, want 400", q, code, b)
+		}
+	}
 }

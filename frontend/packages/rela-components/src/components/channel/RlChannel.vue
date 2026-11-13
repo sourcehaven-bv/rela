@@ -39,6 +39,10 @@
  *
  * `choices` are the reply buttons of open questions, keyed by the
  * question's seq; each row shows its own and emits `choose` with the key.
+ * `questions` says which of them are answered, so such a row shows its
+ * answer with a Change button instead (TKT-GR1MXL5). Consecutive questions
+ * of one batch (`message.batch`) show as one group, `RlChannelQuestions`,
+ * where an answered question collapses to one line.
  *
  * `typing` shows who else is typing as one line, in its own polite, atomic
  * live region apart from the signals, so it is read out only when the line
@@ -70,6 +74,8 @@ import RlTag from '../common/RlTag.vue'
 import RlChannelAuthor from './RlChannelAuthor.vue'
 import RlChannelFold from './RlChannelFold.vue'
 import RlChannelMessage from './RlChannelMessage.vue'
+import RlChannelQuestions from './RlChannelQuestions.vue'
+import { groupQuestions } from './channelQuestions'
 import { ephemeralText, lifecyclePendingKey } from './channelFields'
 import { foldMessages, hasTypeAction, rowFor, shownAs, type ChannelFoldRow } from './channelFold'
 import { findAnchor, firstVisible, measured, type Anchor } from './channelAnchor'
@@ -81,6 +87,7 @@ import type {
   ChannelMessageTypeDef,
   ChannelMessageView,
   ChannelPresentation,
+  ChannelQuestionState,
   ChannelReadableRef,
   ChannelStateView,
   ChannelTypingView,
@@ -128,6 +135,8 @@ const props = withDefaults(
     decisionSeq?: number
     /** The reply buttons of open questions, by the question's seq. */
     choices?: ReadonlyMap<number, ChannelDecisionView[]>
+    /** Where each question with choices stands, by seq; see the header comment. */
+    questions?: ReadonlyMap<number, ChannelQuestionState>
     /**
      * The types a decision button stands for, as passed to the composer.
      * Reply follows the composer's picker: it shows when a reply type is
@@ -153,6 +162,7 @@ const props = withDefaults(
     decisions: undefined,
     decisionSeq: undefined,
     choices: undefined,
+    questions: undefined,
     buttonTypes: () => [],
   },
 )
@@ -266,6 +276,11 @@ const rows = computed(() =>
   }),
 )
 
+/** The rows as drawn: a batch's consecutive questions grouped. */
+const drawnRows = computed(() =>
+  groupQuestions(rows.value, (m) => !!(m.type && typeByName.value.get(m.type)?.choices)),
+)
+
 const signals = computed(() =>
   quietOn.value ? props.ephemeral.filter((e) => !displayOf(e.type)) : props.ephemeral,
 )
@@ -273,8 +288,12 @@ const signals = computed(() =>
 const signalText = (e: ChannelEphemeralView) =>
   ephemeralText(e, typeByName.value, props.presentation, props.enumOptions, t)
 
-/** The props of one message row, the same in the log and in an expanded run. */
-function messageBind(m: ChannelMessageView) {
+/**
+ * The props of one message row, the same in the log, in an expanded run
+ * and in a question group. reopened: the reader reopened an answered
+ * question in a group, so it shows its choices rather than its answer.
+ */
+function messageBind(m: ChannelMessageView, reopened = false) {
   return {
     message: m,
     messageType: m.type ? typeByName.value.get(m.type) : undefined,
@@ -285,6 +304,7 @@ function messageBind(m: ChannelMessageView) {
     canReply: canReply.value,
     decisions: props.decisions && m.seq === props.decisionSeq ? props.decisions : undefined,
     choices: props.choices?.get(m.seq),
+    question: reopened ? undefined : props.questions?.get(m.seq),
   }
 }
 
@@ -610,9 +630,21 @@ defineExpose({
         {{ t(hasOlder ? 'onlyHiddenOlder' : 'onlyHidden') }}
       </p>
       <ol v-else ref="list" class="rl-channel__messages">
-        <template v-for="row in rows" :key="row.kind === 'fold' ? row.key : row.message.seq">
+        <template v-for="row in drawnRows" :key="row.kind === 'message' ? row.message.seq : row.key">
           <li v-if="row.kind === 'message'">
             <RlChannelMessage v-bind="messageBind(row.message)" v-on="messageOn" />
+          </li>
+          <li v-else-if="row.kind === 'questions'">
+            <RlChannelQuestions
+              :messages="row.messages"
+              :questions="questions"
+              :choices="choices"
+              :type-label="(type) => typeByName.get(type)?.label ?? type"
+            >
+              <template #message="{ message: m, reopened }">
+                <RlChannelMessage v-bind="messageBind(m, reopened)" v-on="messageOn" />
+              </template>
+            </RlChannelQuestions>
           </li>
           <li v-else :data-fold-seq="row.last" :data-fold-first="row.first">
             <RlChannelFold

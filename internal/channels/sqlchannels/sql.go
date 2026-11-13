@@ -104,9 +104,11 @@ type Dialect struct {
 // [channels.Store] interface, so this is a required-interface exception
 // rather than a ratchet target. Helpers stay free functions. The total
 // crossed 40 with the three read marker methods; it is the same exception.
+// 36 -> 37 (TKT-GR1MXL5): AppendBatch, with its unexported body
+// appendBatch.
 //
-//plimsoll:max-exported-methods=36
-//plimsoll:max-methods=46
+//plimsoll:max-exported-methods=37
+//plimsoll:max-methods=48
 type Store struct {
 	db DB
 	d  Dialect
@@ -164,13 +166,15 @@ type doc struct {
 	// UPDATE recomputes the counts column from the round-tripped doc, so a
 	// dropped field would make the row count again.
 	NoUnread bool `json:"no_unread,omitempty"`
+	// Batch round-trips [channels.Message.Batch].
+	Batch int64 `json:"batch,omitempty"`
 }
 
 func docOf(m channels.Message) string {
 	return mustJSON(doc{
 		Type: m.Type, Author: m.Author, At: m.At, Props: m.Props, EditedAt: m.EditedAt,
 		Removed: m.Removed, Action: m.Action, SchemaHash: m.SchemaHash, TriggeredBy: m.TriggeredBy,
-		MovedSession: m.MovedSession, Mentions: m.Mentions, Files: m.Files, NoUnread: m.NoUnread,
+		MovedSession: m.MovedSession, Mentions: m.Mentions, Files: m.Files, NoUnread: m.NoUnread, Batch: m.Batch,
 	})
 }
 
@@ -182,15 +186,36 @@ func mustJSON(v any) string {
 	return string(b)
 }
 
-const msgCols = `seq, rev, reply_to, reply_count, doc`
+const msgCols = `seq, rev, reply_to, reply_count, last_reply_at, in_stream, doc`
+
+// msgScan holds the columns of msgCols that are not message fields.
+type msgScan struct {
+	lastReplyAt int64
+	inStream    int
+	raw         string
+}
+
+// dest returns the scan destinations of msgCols for m and c, after any
+// leading columns.
+func (c *msgScan) dest(m *channels.Message) []any {
+	return []any{&m.Seq, &m.Rev, &m.ReplyTo, &m.ReplyCount, &c.lastReplyAt, &c.inStream, &c.raw}
+}
+
+// decode fills m from c's doc and columns. An error is damage: the row
+// was read.
+func (c *msgScan) decode(m channels.Message) (channels.Message, error) {
+	m.LastReplyAt = fromMicros(c.lastReplyAt)
+	m.Inline = m.ReplyTo != 0 && c.inStream == 1
+	return decodeMessage(m, c.raw)
+}
 
 func scanMessage(r interface{ Scan(...any) error }) (channels.Message, error) {
 	var m channels.Message
-	var raw string
-	if err := r.Scan(&m.Seq, &m.Rev, &m.ReplyTo, &m.ReplyCount, &raw); err != nil {
+	var c msgScan
+	if err := r.Scan(c.dest(&m)...); err != nil {
 		return m, err
 	}
-	return decodeMessage(m, raw)
+	return c.decode(m)
 }
 
 // decodeMessage fills m from its doc column raw. An error is damage: the
@@ -201,7 +226,7 @@ func decodeMessage(m channels.Message, raw string) (channels.Message, error) {
 		return m, fmt.Errorf("message %d has a damaged doc: %w", m.Seq, err)
 	}
 	m.Type, m.Author, m.Props, m.SchemaHash, m.TriggeredBy = d.Type, d.Author, d.Props, d.SchemaHash, d.TriggeredBy
-	m.MovedSession, m.Mentions, m.Files, m.NoUnread = d.MovedSession, d.Mentions, d.Files, d.NoUnread
+	m.MovedSession, m.Mentions, m.Files, m.NoUnread, m.Batch = d.MovedSession, d.Mentions, d.Files, d.NoUnread, d.Batch
 	m.At, m.EditedAt = utc(d.At), utc(d.EditedAt)
 	m.Removed, m.Action = d.Removed, d.Action
 	if m.Removed != nil {
@@ -225,7 +250,8 @@ func utc(t time.Time) time.Time {
 
 const chanCols = `id, anchor_id, anchor_face, type, name, incarnation, state, title, created_by,
 	created_at, closed_at, archived_at, reopened_at, last_seq, rev, session_state, session_gen, session_entered_at,
-	session_next_due_at, session_restarts, session_reminders, session_cause, session_previous`
+	session_next_due_at, session_restarts, session_reminders, session_cause, session_previous,
+	session_asked`
 
 // openSinceSQL is when an open channel entered its state, as
 // [channels.Channel.StateSince] reads it.
@@ -251,7 +277,7 @@ func (e *damagedRowError) Unwrap() error { return e.err }
 func scanChannel(r interface{ Scan(...any) error }) (row, error) { return scanChannelWith(r) }
 
 // chanColCount is the number of chanCols scanChannelWith scans.
-const chanColCount = 23
+const chanColCount = 24
 
 // scanChannelWith scans the chanCols of a row, and then extra, the columns
 // a query selects after them.
@@ -259,13 +285,13 @@ func scanChannelWith(r interface{ Scan(...any) error }, extra ...any) (row, erro
 	var out row
 	var face, by string
 	var created, closed, archived, reopened, entered, due int64
-	var restarts, reminders string
+	var restarts, reminders, asked string
 	c := &out.c
 	dest := make([]any, 0, chanColCount+len(extra))
 	dest = append(dest, &out.id, &c.Key.ID, &face, &c.Key.Type, &c.Key.Name, &c.Incarnation, &c.State, &c.Title, &by,
 		&created, &closed, &archived, &reopened, &c.LastSeq, &c.Rev,
 		&c.Session.State, &c.Session.Generation, &entered, &due, &restarts, &reminders,
-		&c.Session.Cause, &c.Session.Previous)
+		&c.Session.Cause, &c.Session.Previous, &asked)
 	if err := r.Scan(append(dest, extra...)...); err != nil {
 		return out, err
 	}
@@ -286,7 +312,39 @@ func scanChannelWith(r interface{ Scan(...any) error }, extra ...any) (row, erro
 		return out, &damagedRowError{key: c.Key, err: fmt.Errorf("channel %s has damaged session reminders: %w", c.Key, err)}
 	}
 	c.Session.Reminders = rems
+	if c.Asked, err = decodeAsked(asked); err != nil {
+		return out, &damagedRowError{key: c.Key, err: fmt.Errorf("channel %s has damaged asked questions: %w", c.Key, err)}
+	}
 	return out, nil
+}
+
+// encodeAsked is the session_asked column: the asked questions as a JSON
+// object keyed by seq, or empty for none.
+func encodeAsked(a map[int64]channels.Asked) string {
+	if len(a) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(a)
+	if err != nil { // coverage-ignore: invariant: a map of plain values always encodes
+		return ""
+	}
+	return string(data)
+}
+
+// decodeAsked reads the session_asked column and checks it (see
+// [channels.CheckAsked]); empty is no questions.
+func decodeAsked(col string) (map[int64]channels.Asked, error) {
+	if col == "" {
+		return nil, nil //nolint:nilnil // an empty column: no questions
+	}
+	var a map[int64]channels.Asked
+	if err := json.Unmarshal([]byte(col), &a); err != nil {
+		return nil, err
+	}
+	if err := channels.CheckAsked(a); err != nil {
+		return nil, err
+	}
+	return channels.CloneAsked(a), nil
 }
 
 // reminderCol is one reminder record in the session_reminders column, its
@@ -439,91 +497,141 @@ func (s *Store) bumpChannel(ctx context.Context, q Querier, id, lastSeq, rev int
 
 // --- mutations ---
 
-// Append implements [channels.Store].
+// Append implements [channels.Store] as a batch of one.
 func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessage) (channels.Message, error) {
-	if err := k.Validate(); err != nil {
-		return channels.Message{}, err
-	}
-	if err := channels.PrepareAppendStep(nm.Session); err != nil {
-		return channels.Message{}, err
-	}
-	nm, _, err := channels.PrepareMessage(nm)
+	out, err := s.AppendBatch(ctx, k, []channels.NewMessage{nm})
 	if err != nil {
 		return channels.Message{}, err
 	}
-	files, err := channels.PrepareFiles(nm.Files)
-	if err != nil {
-		return channels.Message{}, err
-	}
-	var out channels.Message
-	werr := s.write(ctx, []string{k.ID}, func(q Querier) error {
-		r, created, err := s.appendTarget(ctx, q, k, nm)
-		if err != nil {
-			return err
-		}
-		parent, err := checkParent(ctx, q, r.id, k, nm.ReplyTo)
-		if err != nil {
-			return err
-		}
-		move, moved, err := channels.DecideSession(nm.Session, r.c)
-		if err != nil {
-			return err
-		}
-		rev := r.c.Rev + 1
-		out = channels.Message{
-			Seq: r.c.LastSeq + 1, Rev: rev, Type: nm.Type, Author: nm.Author, At: nm.At, Props: nm.Props,
-			ReplyTo: nm.ReplyTo, SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy, MovedSession: moved,
-			Mentions: nm.Mentions, Files: files, NoUnread: nm.NoUnread, CreatedChannel: created,
-		}
-		rev, err = insertMessage(ctx, q, r.id, out)
-		if err != nil {
-			return err
-		}
-		if ferr := insertFiles(ctx, q, r.id, out.Seq, files, nm.Files); ferr != nil {
-			return ferr
-		}
-		if out.ReplyTarget, err = appendAddressed(ctx, q, r, out, parent); err != nil {
-			return err
-		}
-		lastSeq, rev, err := appendSession(ctx, q, &r, nm, out, move, moved, rev)
-		if err != nil {
-			return err
-		}
-		if err := bumpSession(ctx, q, r.id, lastSeq, rev, r.c.Session, out.At); err != nil {
-			return err
-		}
-		if nm.MarkRead {
-			if _, err := upsertRead(ctx, q, r.id, channels.ReaderOf(nm.Author), lastSeq, nm.At); err != nil {
-				return err
-			}
-		}
-		if err := appendAudits(ctx, q, k, nm, out, created, moved, move, r.c.Session.Generation); err != nil {
-			return err
-		}
-		channels.FillSessionOutcome(nm.Session, r.c, move, moved)
-		return nil
-	})
-	return out, s.wrap(werr, "append to %s", k)
+	return out[0], nil
 }
 
-// appendAudits writes the audit records of an append of nm to k that wrote
-// out: a create record when the append created the channel, and a session
-// record when it moved the session from generation gen.
+// AppendBatch implements [channels.Store] in one write transaction.
+func (s *Store) AppendBatch(
+	ctx context.Context, k channels.Key, batch []channels.NewMessage,
+) ([]channels.Message, error) {
+	if err := k.Validate(); err != nil {
+		return nil, err
+	}
+	batch, err := channels.PrepareBatch(batch)
+	if err != nil {
+		return nil, err
+	}
+	// Only the first message may hold files (see [channels.PrepareBatch]).
+	files, err := channels.PrepareFiles(batch[0].Files)
+	if err != nil {
+		return nil, err
+	}
+	var out []channels.Message
+	werr := s.write(ctx, []string{k.ID}, func(q Querier) error {
+		var err error
+		out, err = s.appendBatch(ctx, q, k, batch, files)
+		return err
+	})
+	if werr != nil {
+		return nil, s.wrap(werr, "append to %s", k)
+	}
+	return out, nil
+}
+
+// appendBatch is the body of [Store.AppendBatch] inside its transaction.
+// files are the prepared files of the first message of batch.
+func (s *Store) appendBatch(
+	ctx context.Context, q Querier, k channels.Key, batch []channels.NewMessage, files []channels.File,
+) ([]channels.Message, error) {
+	first := batch[0]
+	r, created, err := s.appendTarget(ctx, q, k, first)
+	if err != nil {
+		return nil, err
+	}
+	// Only a batch of one may reply (see [channels.PrepareBatch]).
+	parent, err := checkParent(ctx, q, r.id, k, first.ReplyTo)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := channels.PlanBatch(r.c, batch)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]channels.Message, len(batch))
+	rev, lastSeq := r.c.Rev, r.c.LastSeq
+	gen := r.c.Session.Generation
+	for i, nm := range batch {
+		msg := channels.Message{
+			Seq: plan.Seqs[i], Rev: rev + 1, Type: nm.Type, Author: nm.Author, At: nm.At, Props: nm.Props,
+			SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy,
+			MovedSession: plan.Moved(i), Mentions: nm.Mentions, NoUnread: nm.NoUnread, Batch: plan.Batch(),
+			CreatedChannel: created && i == 0,
+			Thread: channels.Thread{
+				ReplyTo: nm.ReplyTo, Inline: channels.ReplyInline(nm, parent, plan.Moved(i)),
+			},
+		}
+		if i == 0 {
+			msg.Files = files
+		}
+		if rev, err = insertMessage(ctx, q, r.id, msg); err != nil {
+			return nil, err
+		}
+		if i == 0 {
+			if ferr := insertFiles(ctx, q, r.id, msg.Seq, files, nm.Files); ferr != nil {
+				return nil, ferr
+			}
+		}
+		if msg.ReplyTarget, err = appendAddressed(ctx, q, r, msg, parent); err != nil {
+			return nil, err
+		}
+		lastSeq = msg.Seq
+		if plan.Moved(i) {
+			channels.ApplySession(&r.c, plan.Move, nm.At, msg.Seq)
+			gen = r.c.Session.Generation
+			notice, err := insertNotice(ctx, q, r.id, nm.Session, msg, plan.Move, gen, rev+1)
+			if err != nil {
+				return nil, err
+			}
+			lastSeq, rev = notice.Seq, notice.Rev
+		}
+		out[i] = msg
+	}
+	r.c.LastSeq, r.c.Rev, r.c.Asked = lastSeq, rev, plan.Asked
+	if step := plan.Due(batch); step != nil {
+		if err := channels.ApplySchedule(&r.c, step.Due); err != nil {
+			return nil, err
+		}
+	}
+	if err := bumpSession(ctx, q, r.id, r.c, out[len(out)-1].At); err != nil {
+		return nil, err
+	}
+	if last := batch[len(batch)-1]; last.MarkRead {
+		if _, err := upsertRead(ctx, q, r.id, channels.ReaderOf(first.Author), lastSeq, last.At); err != nil {
+			return nil, err
+		}
+	}
+	if err := appendAudits(ctx, q, k, batch, out, plan, created, gen); err != nil {
+		return nil, err
+	}
+	channels.FillBatchOutcome(batch, plan, r.c)
+	return out, nil
+}
+
+// appendAudits writes the audit records of a batch appended to k that
+// wrote out: a create record when the batch created the channel, and a
+// session record when it moved the session to generation gen.
 func appendAudits(
-	ctx context.Context, q Querier, k channels.Key, nm channels.NewMessage, out channels.Message,
-	created, moved bool, move channels.SessionMove, gen int64,
+	ctx context.Context, q Querier, k channels.Key, batch []channels.NewMessage, out []channels.Message,
+	plan channels.BatchPlan, created bool, gen int64,
 ) error {
 	if created {
-		rec := channels.KeyAudit(k, channels.AuditCreate, nm.At)
-		rec.By = nm.Author
+		rec := channels.KeyAudit(k, channels.AuditCreate, batch[0].At)
+		rec.By = batch[0].Author
 		if err := writeAudit(ctx, q, k.ID, rec); err != nil {
 			return err
 		}
 	}
-	if !moved {
+	if plan.MoveAt < 0 {
 		return nil
 	}
-	return writeAudit(ctx, q, k.ID, channels.SessionAudit(k, nm.Session, out, move, gen))
+	i := plan.MoveAt
+	return writeAudit(ctx, q, k.ID, channels.SessionAudit(k, batch[i].Session, out[i], plan.Move, gen))
 }
 
 // appendAddressed writes the addressed rows of the appended message out:
@@ -547,20 +655,33 @@ func appendAddressed(
 }
 
 // insertMessage inserts out and, for a reply, raises the parent's reply
-// count at the next rev. It returns the last rev the append used.
+// count and sets its last reply time at the next rev. It returns the last
+// rev the append used.
 func insertMessage(ctx context.Context, q Querier, chanID int64, out channels.Message) (int64, error) {
 	if _, err := q.Exec(ctx, `INSERT INTO channel_messages
-		(channel_id, seq, rev, reply_to, reply_count, pending_at, counts, doc) VALUES (?, ?, ?, ?, 0, 0, ?, ?)`,
-		chanID, out.Seq, out.Rev, out.ReplyTo, countsOf(out), docOf(out)); err != nil {
+		(channel_id, seq, rev, reply_to, reply_count, pending_at, counts, in_stream, doc)
+		VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?)`,
+		chanID, out.Seq, out.Rev, out.ReplyTo, countsOf(out), inStreamOf(out), docOf(out)); err != nil {
 		return 0, err
 	}
 	if out.ReplyTo == 0 {
 		return out.Rev, nil
 	}
 	rev := out.Rev + 1
-	_, err := q.Exec(ctx, `UPDATE channel_messages SET reply_count = reply_count + 1, rev = ?
-		WHERE channel_id = ? AND seq = ?`, rev, chanID, out.ReplyTo)
+	at := micros(out.At)
+	_, err := q.Exec(ctx, `UPDATE channel_messages SET reply_count = reply_count + 1,
+		last_reply_at = CASE WHEN ? > last_reply_at THEN ? ELSE last_reply_at END, rev = ?
+		WHERE channel_id = ? AND seq = ?`, at, at, rev, chanID, out.ReplyTo)
 	return rev, err
+}
+
+// inStreamOf is the in_stream column of m: 1 when it shows in the main
+// stream (see [channels.InStream]).
+func inStreamOf(m channels.Message) int {
+	if channels.InStream(m) {
+		return 1
+	}
+	return 0
 }
 
 // insertFiles stores the bytes of the files of message seq: news[i] under
@@ -592,23 +713,26 @@ func insertNotice(
 		pending = micros(notice.Action.PendingAt)
 	}
 	_, err = q.Exec(ctx, `INSERT INTO channel_messages
-		(channel_id, seq, rev, reply_to, reply_count, pending_at, counts, doc) VALUES (?, ?, ?, 0, 0, ?, ?, ?)`,
-		chanID, notice.Seq, notice.Rev, pending, countsOf(notice), docOf(notice))
+		(channel_id, seq, rev, reply_to, reply_count, pending_at, counts, in_stream, doc)
+		VALUES (?, ?, ?, 0, 0, ?, ?, ?, ?)`,
+		chanID, notice.Seq, notice.Rev, pending, countsOf(notice), inStreamOf(notice), docOf(notice))
 	return notice, err
 }
 
-// bumpSession sets a channel's head and its session after an append.
-// lastAt, when set, is the time of a message the write stored: last_at
-// takes it when it is later. A zero lastAt keeps last_at.
-func bumpSession(
-	ctx context.Context, q Querier, id, lastSeq, rev int64, sess channels.Session, lastAt time.Time,
-) error {
+// bumpSession sets a channel's head, its session and its asked questions
+// from c after a write. lastAt, when set, is the time of a message the
+// write stored: last_at takes it when it is later. A zero lastAt keeps
+// last_at.
+func bumpSession(ctx context.Context, q Querier, id int64, c channels.Channel, lastAt time.Time) error {
 	at := micros(lastAt)
+	sess := c.Session
 	_, err := q.Exec(ctx, `UPDATE channels SET last_seq = ?, rev = ?, session_state = ?, session_gen = ?,
 		session_entered_at = ?, session_next_due_at = ?, session_restarts = ?, session_reminders = ?,
-		session_cause = ?, session_previous = ?, last_at = CASE WHEN ? > last_at THEN ? ELSE last_at END WHERE id = ?`,
-		lastSeq, rev, sess.State, sess.Generation, micros(sess.EnteredAt), micros(sess.NextDueAt),
-		encodeRestarts(sess.Restarts), encodeReminders(sess.Reminders), sess.Cause, sess.Previous, at, at, id)
+		session_cause = ?, session_previous = ?, session_asked = ?,
+		last_at = CASE WHEN ? > last_at THEN ? ELSE last_at END WHERE id = ?`,
+		c.LastSeq, c.Rev, sess.State, sess.Generation, micros(sess.EnteredAt), micros(sess.NextDueAt),
+		encodeRestarts(sess.Restarts), encodeReminders(sess.Reminders), sess.Cause, sess.Previous,
+		encodeAsked(c.Asked), at, at, id)
 	return err
 }
 
@@ -626,31 +750,6 @@ func setSchedule(ctx context.Context, q Querier, id int64, sess channels.Session
 	_, err := q.Exec(ctx, `UPDATE channels SET session_next_due_at = ?, session_restarts = ?, session_reminders = ?
 		WHERE id = ?`, micros(sess.NextDueAt), encodeRestarts(sess.Restarts), encodeReminders(sess.Reminders), id)
 	return err
-}
-
-// appendSession applies an append's session step to r.c: on a move it
-// inserts the notice after out, whose rev is rev, and then it stores the
-// step's schedule. It returns the channel's last seq and rev after both.
-func appendSession(
-	ctx context.Context, q Querier, r *row, nm channels.NewMessage, out channels.Message,
-	move channels.SessionMove, moved bool, rev int64,
-) (lastSeq, lastRev int64, err error) {
-	lastSeq, lastRev = out.Seq, rev
-	if moved {
-		channels.ApplySession(&r.c, move, nm.At, out.Seq)
-		notice, err := insertNotice(ctx, q, r.id, nm.Session, out, move, r.c.Session.Generation, rev+1)
-		if err != nil {
-			return 0, 0, err
-		}
-		lastSeq, lastRev = notice.Seq, notice.Rev
-	}
-	if nm.Session != nil {
-		r.c.LastSeq, r.c.Rev = lastSeq, lastRev
-		if err := channels.ApplySchedule(&r.c, nm.Session.Due); err != nil {
-			return 0, 0, err
-		}
-	}
-	return lastSeq, lastRev, nil
 }
 
 // appendTarget returns the channel an append goes to, creating an implicit
@@ -806,7 +905,13 @@ func (s *Store) Remove(ctx context.Context, k channels.Key, seq int64, rm channe
 		if err := channels.CheckNotPending(m); err != nil {
 			return err
 		}
-		*m = channels.Message{Seq: m.Seq, Rev: m.Rev, ReplyTo: m.ReplyTo, ReplyCount: m.ReplyCount, Removed: &rm}
+		if asked, changed := channels.UnaskRemoved(r.c.Asked, *m); changed {
+			if _, err := q.Exec(ctx, `UPDATE channels SET session_asked = ? WHERE id = ?`,
+				encodeAsked(asked), r.id); err != nil {
+				return err
+			}
+		}
+		*m = channels.Message{Seq: m.Seq, Rev: m.Rev, Thread: m.Thread, Removed: &rm}
 		if err := removeAddressed(ctx, q, r.id, seq); err != nil {
 			return err
 		}
@@ -1208,8 +1313,10 @@ func (s *Store) SetSession(
 				pending = micros(notice.Action.PendingAt)
 			}
 			if _, err := q.Exec(ctx, `INSERT INTO channel_messages
-				(channel_id, seq, rev, reply_to, reply_count, pending_at, counts, doc) VALUES (?, ?, ?, 0, 0, ?, ?, ?)`,
-				r.id, notice.Seq, notice.Rev, pending, countsOf(notice), docOf(notice)); err != nil {
+				(channel_id, seq, rev, reply_to, reply_count, pending_at, counts, in_stream, doc)
+				VALUES (?, ?, ?, 0, 0, ?, ?, ?, ?)`,
+				r.id, notice.Seq, notice.Rev, pending, countsOf(notice), inStreamOf(notice),
+				docOf(notice)); err != nil {
 				return err
 			}
 			r.c.LastSeq, r.c.Rev = notice.Seq, notice.Rev
@@ -1221,7 +1328,7 @@ func (s *Store) SetSession(
 		if moved || reminded {
 			lastAt = notice.At
 		}
-		if err := bumpSession(ctx, q, r.id, r.c.LastSeq, r.c.Rev, r.c.Session, lastAt); err != nil {
+		if err := bumpSession(ctx, q, r.id, r.c, lastAt); err != nil {
 			return err
 		}
 		if moved {
@@ -1341,20 +1448,21 @@ func (s *Store) Messages(ctx context.Context, k channels.Key, p channels.Page) (
 	if err != nil {
 		return nil, s.wrap(err, "read %s", k)
 	}
-	base := `SELECT ` + msgCols + ` FROM channel_messages WHERE channel_id = ?`
-	var query string
-	args := []any{r.id}
+	var cursor, order string
+	var cursorArgs []any
 	reverse := false
 	switch {
 	case p.RevOrder():
-		query, args = base+` AND rev > ? ORDER BY rev LIMIT ?`, append(args, p.AfterRev, p.Limit)
+		cursor, order, cursorArgs = ` AND rev > ?`, ` ORDER BY rev LIMIT ?`, []any{p.AfterRev}
 	case p.AfterSeq > 0:
-		query, args = base+` AND seq > ? ORDER BY seq LIMIT ?`, append(args, p.AfterSeq, p.Limit)
+		cursor, order, cursorArgs = ` AND seq > ?`, ` ORDER BY seq LIMIT ?`, []any{p.AfterSeq}
 	case p.BeforeSeq > 0:
-		query, args, reverse = base+` AND seq < ? ORDER BY seq DESC LIMIT ?`, append(args, p.BeforeSeq, p.Limit), true
+		cursor, order, cursorArgs, reverse = ` AND seq < ?`, ` ORDER BY seq DESC LIMIT ?`, []any{p.BeforeSeq}, true
 	default:
-		query, args, reverse = base+` ORDER BY seq DESC LIMIT ?`, append(args, p.Limit), true
+		order, reverse = ` ORDER BY seq DESC LIMIT ?`, true
 	}
+	query, args := pageQuery(r.id, p, cursor, cursorArgs)
+	query, args = query+order, append(args, p.Limit)
 	out, err := collect(ctx, s.db, query, args, scanMessage)
 	if err != nil {
 		return nil, s.wrap(err, "page %s", k)
@@ -1365,6 +1473,27 @@ func (s *Store) Messages(ctx context.Context, k channels.Key, p channels.Page) (
 		}
 	}
 	return out, nil
+}
+
+// pageQuery is the SELECT of a [channels.Page] of channel id, less its
+// ORDER BY and LIMIT, with cursor and its args applied. A thread page is a
+// UNION ALL of the parent, read by key, and its replies, read through
+// channel_messages_thread_idx: written as one OR, the planner walks every
+// message of the channel instead. The result columns name seq and rev, so
+// the caller's ORDER BY applies to the union.
+func pageQuery(id int64, p channels.Page, cursor string, cursorArgs []any) (query string, args []any) {
+	sel := `SELECT ` + msgCols + ` FROM channel_messages WHERE channel_id = ?`
+	switch {
+	case p.Thread > 0:
+		args = append([]any{id, p.Thread}, cursorArgs...)
+		args = append(append(args, id, p.Thread), cursorArgs...)
+		return sel + ` AND seq = ? AND reply_to = 0` + cursor +
+			` UNION ALL ` + sel + ` AND reply_to = ? AND reply_to > 0` + cursor, args
+	case p.Stream:
+		return sel + ` AND in_stream = 1` + cursor, append([]any{id}, cursorArgs...)
+	default:
+		return sel + cursor, append([]any{id}, cursorArgs...)
+	}
 }
 
 // collect runs a query and scans every row. The result is non-nil.

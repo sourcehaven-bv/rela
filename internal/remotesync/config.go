@@ -135,8 +135,9 @@ type Remote struct {
 	AuthHeader string `yaml:"auth_header,omitempty"`
 	// AllowInsecureHTTP permits plain http to a host that is not loopback.
 	AllowInsecureHTTP bool `yaml:"allow_insecure_http,omitempty"`
-	// MaxGone is how many rows one run may detach or delete before it is
-	// refused. Nil means [DefaultMaxGone]; zero refuses any.
+	// MaxGone is how many rows may be detached or deleted, on either side,
+	// in one run and in any 24 hours before the deletes are held. Nil means
+	// [DefaultMaxGone]; zero holds every one.
 	MaxGone *int `yaml:"max_gone,omitempty"`
 	// MaxRows caps the rows in scope on either side. Zero means
 	// [DefaultMaxRows].
@@ -261,12 +262,18 @@ type EntityMapping struct {
 	Fields             []FieldMapping
 	// Share selects the local rows a push sends; nil shares every row.
 	Share *predicate.Program
+	// Rule is the conflict rule for a whole row: one side deleted it and
+	// the other changed it. It is the type's rule, else the remote's, else
+	// hold; field_conflicts do not apply.
+	Rule string
 }
 
 // RelationMapping maps one source relation type.
 type RelationMapping struct {
 	Source, Local string
 	Fields        []FieldMapping
+	// Rule is the row rule, as for [EntityMapping.Rule].
+	Rule string
 }
 
 // FieldMapping is one owned field: the local field, typed, the source field
@@ -351,6 +358,9 @@ func (c *compiler) remote(p Remote) {
 	case "", OnGoneDetach, OnGoneDelete:
 	default:
 		c.fail("on_gone %q must be %s or %s", p.OnGone, OnGoneDetach, OnGoneDelete)
+	}
+	if p.SendDeletes && !p.Push {
+		c.fail("send_deletes needs push: true")
 	}
 	if p.MaxGone != nil && *p.MaxGone < 0 {
 		c.fail("max_gone must not be negative")
@@ -444,7 +454,10 @@ func (c *compiler) entity(src string, em EntityMap) {
 	if !ok {
 		return
 	}
-	c.m.Entities[src] = &EntityMapping{Source: src, Local: local, Ref: em.Ref, Fields: fields, Share: share}
+	c.m.Entities[src] = &EntityMapping{
+		Source: src, Local: local, Ref: em.Ref, Fields: fields, Share: share,
+		Rule: cmp.Or(em.Conflict, c.m.Remote.Conflict, ConflictHold),
+	}
 }
 
 // rule checks a conflict rule.
@@ -560,7 +573,10 @@ func (c *compiler) relation(src string, rm RelationMap) {
 		return
 	}
 	c.rules(fmt.Sprintf("relations: %q", src), rm.Conflict, rm.FieldConflicts, fields)
-	c.m.Relations[src] = &RelationMapping{Source: src, Local: local, Fields: fields}
+	c.m.Relations[src] = &RelationMapping{
+		Source: src, Local: local, Fields: fields,
+		Rule: cmp.Or(rm.Conflict, c.m.Remote.Conflict, ConflictHold),
+	}
 }
 
 // relationRules refuses relation conflict rules that would never apply: a

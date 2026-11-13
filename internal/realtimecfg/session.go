@@ -726,8 +726,8 @@ func (v *validator) readsEntity(src string, mt *MessageType, ct *ChannelType, re
 
 // sessionGuardEnv declares what a transition guard reads: `message`, typed
 // as for the message type's own `when:`, the `session` record (state,
-// generation, entered_at, and `reminders` with one counter per name in
-// reminders) and the standard library. A non-nil entity is declared as
+// generation, entered_at, open_questions, and `reminders` with one counter
+// per name in reminders) and the standard library. A non-nil entity is declared as
 // `entity`; only the load check's probe for a guard that reads the entity
 // passes one.
 func sessionGuardEnv(props map[string]Property, reminders []string, entity predicate.Type) (*predicate.Env, error) {
@@ -744,6 +744,8 @@ func sessionGuardEnv(props map[string]Property, reminders []string, entity predi
 		"generation": predicate.IntType,
 		"entered_at": predicate.DateTypeWithLayout(metamodel.DefaultDatetimeFormat),
 		"reminders":  counters,
+		// The questions of the span with no answer (see choices:).
+		"open_questions": predicate.IntType,
 	}); err != nil {
 		return nil, err
 	}

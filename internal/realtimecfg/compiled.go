@@ -496,7 +496,11 @@ type MessageType struct {
 // check that an answer is one of the options: Other posts free text into
 // the same property.
 type Choices struct {
-	From   string
+	From string
+	// Label names the field of an object list From that holds an option's
+	// button text, and the value a click posts. Empty for a list of
+	// strings, whose items are the options.
+	Label  string
 	Answer string
 	Into   string
 	Other  bool
@@ -567,6 +571,9 @@ const (
 	// never as a property value; the stored message lists them in its
 	// files, not in its properties.
 	PropertyFile PropertyType = "file"
+	// PropertyObject is a list of objects whose keys are the property's
+	// [Property.Fields]. It is always a list.
+	PropertyObject PropertyType = "object"
 )
 
 // Property is one message property.
@@ -582,12 +589,20 @@ type Property struct {
 	// NoNotify is set by `notify: false` on a ref property: a value that
 	// names a person entity is then no mention target.
 	NoNotify bool
-	// List is `list: true`: the value is a list of strings. Only a string
-	// property may be a list. Max is then the most code points of one
-	// item, and is always set.
+	// List is `list: true`: the value is a list of strings or, with
+	// [PropertyObject], a list of objects. Only a string or object property
+	// may be a list, and an object property is always one. For a list of
+	// strings Max is the most code points of one item, and is always set.
 	List bool
 	// MaxItems is the most items of a list; 0 when List is not set.
 	MaxItems int
+	// Fields are the sub-properties of an object list, by name: one level,
+	// of the types fieldType admits. Nil for any other type.
+	Fields map[string]Property
+	// Key names the field of an object list whose values must differ
+	// between items, folded and checked as a list item is. `choices.label`
+	// sets it, so two buttons never read the same. Empty: no key.
+	Key string
 	// File holds the settings of a file property; nil for any other type.
 	File *FileSpec
 }
@@ -605,6 +620,22 @@ type FileSpec struct {
 	// the same way.
 	Policy metamodel.PropertyDef
 }
+
+// fieldType reports whether a property of type t may be a field of an
+// object list. A ref or markdown field would bypass the ref resolution and the
+// mention scan, which read top-level properties only; an object field
+// would nest; a file is posted beside the properties, never inside one.
+func fieldType(t PropertyType) bool {
+	switch t {
+	case PropertyString, PropertyInteger, PropertyBoolean, PropertyDate, PropertyDatetime, PropertyEnum:
+		return true
+	case PropertyMarkdown, PropertyRef, PropertyObject, PropertyFile:
+	}
+	return false
+}
+
+// IsObjectList reports whether p is a list of objects.
+func (p Property) IsObjectList() bool { return p.Type == PropertyObject }
 
 // TypeName is the property's type as a reason names it: "list of string"
 // for a list, else the type.

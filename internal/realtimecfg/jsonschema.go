@@ -33,6 +33,12 @@ type PropSchema struct {
 	Items       *PropSchema `json:"items,omitempty"`
 	MaxItems    int         `json:"maxItems,omitempty"`
 	UniqueItems bool        `json:"uniqueItems,omitempty"`
+	// Properties, Required and AdditionalProperties describe one item of
+	// an object list, whose Type is "object". AdditionalProperties is set
+	// only there, always false.
+	Properties           map[string]PropSchema `json:"properties,omitempty"`
+	Required             []string              `json:"required,omitempty"`
+	AdditionalProperties *bool                 `json:"additionalProperties,omitempty"`
 }
 
 // JSON Schema formats of the date and datetime property types.
@@ -61,8 +67,12 @@ func (mt *MessageType) PropsSchema() PropsSchema {
 
 // schema is the JSON Schema of p. The service limits only string and
 // markdown values by max, so only those carry maxLength. A list is an
-// array of unique strings; its max limits each item.
+// array of unique strings; its max limits each item. An object list is an
+// array of objects (see objectsSchema).
 func (p Property) schema() PropSchema {
+	if p.IsObjectList() {
+		return p.objectsSchema()
+	}
 	if p.List {
 		return PropSchema{
 			Type: "array", Description: p.Label, MaxItems: p.MaxItems, UniqueItems: true,
@@ -90,8 +100,27 @@ func (p Property) schema() PropSchema {
 	case PropertyString, PropertyMarkdown:
 		s.MaxLength = p.Max
 	case PropertyFile: // left out of props_schema by the caller
+	case PropertyObject:
+		// Unreachable: an object property is always a list, handled above.
 	}
 	return s
+}
+
+// objectsSchema is the JSON Schema of an object list: an array of objects
+// with exactly the declared fields.
+func (p Property) objectsSchema() PropSchema {
+	closed := false
+	item := PropSchema{
+		Type: "object", Properties: make(map[string]PropSchema, len(p.Fields)), AdditionalProperties: &closed,
+	}
+	for name, f := range p.Fields {
+		item.Properties[name] = f.schema()
+		if f.Required {
+			item.Required = append(item.Required, name)
+		}
+	}
+	slices.Sort(item.Required)
+	return PropSchema{Type: "array", Description: p.Label, MaxItems: p.MaxItems, Items: &item}
 }
 
 func joinDescription(label, rest string) string {

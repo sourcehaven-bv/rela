@@ -13,10 +13,13 @@ const REASON_KEYS: Record<RemoteReason, string> = {
   refused: 'remotes.reason.refused',
   uncertain: 'remotes.reason.uncertain',
   superseded: 'remotes.reason.superseded',
+  local_deleted: 'remotes.reason.local_deleted',
+  remote_deleted: 'remotes.reason.remote_deleted',
 }
 
 const CAUSE_KEYS: Record<string, string> = {
   refused: 'remotes.cause.refused',
+  edited: 'remotes.cause.edited',
   server_error: 'remotes.cause.server_error',
   no_new_row: 'remotes.cause.no_new_row',
   already_linked: 'remotes.cause.already_linked',
@@ -41,6 +44,8 @@ const SENDS_AGAIN: Record<RemoteReason, boolean> = {
   refused: false,
   uncertain: true,
   superseded: false,
+  local_deleted: false,
+  remote_deleted: false,
 }
 
 export function keepLocalSendsAgain(e: RemoteEntry): boolean {
@@ -48,7 +53,14 @@ export function keepLocalSendsAgain(e: RemoteEntry): boolean {
 }
 
 /** The reasons in display order. */
-export const REMOTE_REASONS: RemoteReason[] = ['both_changed', 'refused', 'uncertain', 'superseded']
+export const REMOTE_REASONS: RemoteReason[] = [
+  'both_changed',
+  'refused',
+  'uncertain',
+  'superseded',
+  'local_deleted',
+  'remote_deleted',
+]
 
 export function reasonLabel(reason: RemoteReason, t: Translate): string {
   return REASON_KEYS[reason] ? t(REASON_KEYS[reason]) : reason

@@ -90,7 +90,8 @@ catalog`, or let the scheduler pull it every hour.
 | `run_as` | The identity a scheduled pull runs and writes as. Default `system:scheduler`, as for a scheduled task. A pull by hand runs as you. |
 | `every` | The schedule, as in `schedules.yaml`. At least `5m`. Without it the remote is pulled only by `rela remote pull`. |
 | `on_gone` | `detach` (the default) or `delete`. See [Rows the source drops](#rows-the-source-drops). |
-| `max_gone` | How many linked rows one pull may detach or delete. Default 10. With `on_gone: delete` it also caps the deletes of the last 24 hours. |
+| `max_gone` | How many linked rows one run may detach or delete, in either direction. Default 10. It also caps the deletes of the last 24 hours. |
+| `send_deletes` | `true` sends a delete made here to the remote. Needs `push: true`. Default `false`. See [Deletes](GUIDE-remote-sync-two-way.md#deletes). |
 | `max_rows` | The most rows in scope on either side. Default 100,000. |
 | `max_fetch` | The most rows one pull fetches. Default 10,000. The rest wait for the next pull. |
 | `max_bytes` | The most bytes one pull reads in fetched rows. Default 256 MiB. The rest wait for the next pull. |
@@ -171,18 +172,21 @@ a token that expired or was revoked.
 - `on_gone: delete` deletes a gone relation. It deletes a gone entity only
   when no mapped field was edited locally and the entity has no local
   relations. Otherwise it keeps and detaches the entity and reports why.
-  Fields that are not mapped are deleted with the entity. A row that was
-  there before the pull linked it, through its `ref`, is never deleted; it
-  is detached.
+  Fields that are not mapped are deleted with the entity. On a remote
+  without `push`, a row that was there before the pull linked it, through
+  its `ref`, is never deleted; it is detached. On a remote with `push`, a
+  row edited here since the last sync follows the conflict rule instead;
+  see [Deletes](GUIDE-remote-sync-two-way.md#deletes).
 
-A pull refuses to touch any gone row when more than `max_gone` linked rows
-are gone, or when a type the pull linked rows of has no rows at the source
-any more. Both look like a source that lost access, not like a source that
-deleted rows. With `on_gone: delete` the pull also counts the deletes of
-the last 24 hours against `max_gone`, so a source cannot delete in bulk a
-few rows at a time. Check the source, then confirm with `rela remote pull
-<name> --allow-gone N`, which allows up to `N` gone rows for that one pull.
-A refused pull fails, so the scheduler reports it and tries again later.
+A run holds every detach and delete when more than `max_gone` linked rows
+are gone, or when a type the run linked rows of has no rows left on one
+side. Both look like a side that lost access, not like a side that deleted
+rows. The run also counts the deletes of the last 24 hours, in both
+directions, against `max_gone`, so a side cannot delete in bulk a few rows
+at a time. Only the detaches and deletes wait; the rest of the run applies.
+Check both sides, then confirm with `rela remote pull <name> --allow-gone
+N`, which allows up to `N` of them for that one run. A run that held them
+fails, so the scheduler reports it and tries again later.
 
 ## Commands
 

@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import type { ChannelPropertySchema, ChannelPropertyType, MessagePropValue } from '@/types/channels'
+import type {
+  ChannelPropertySchema,
+  ChannelPropertyType,
+  MessageObjectItem,
+  MessagePropValue,
+} from '@/types/channels'
 import {
   checkFiles,
   codePoints,
@@ -188,6 +193,24 @@ describe('toEditProps', () => {
       ok: true,
       props: { body: 'new', note: 'set by a trigger', flag: true, also: 'TKT-2' },
     })
+  })
+
+  it('an object list is carried through an edit only when it holds objects', () => {
+    const withObjects: ChannelPropertySchema[] = [
+      { name: 'body', label: 'body', type: 'string', required: true },
+      { name: 'options', label: 'options', type: 'object', list: true },
+    ]
+    const options: MessageObjectItem[] = [{ label: 'A', recommended: true }, { label: 'B' }]
+    expect(
+      toEditProps(withObjects, new Set(['body']), { body: 'new' }, { body: 'old', options })
+    ).toEqual({
+      ok: true,
+      props: { body: 'new', options },
+    })
+    // Stored as strings before a reload made it an object list: left out.
+    expect(
+      toEditProps(withObjects, new Set(['body']), { body: 'new' }, { body: 'old', options: ['A'] })
+    ).toEqual({ ok: true, props: { body: 'new' } })
   })
 
   it('list prop carried through an edit', () => {

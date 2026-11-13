@@ -67,13 +67,25 @@ func (r Rule) clone() Rule {
 	return r
 }
 
+// clone copies p and the slices and fields it holds.
+func (p Property) clone() Property {
+	p.Values = slices.Clone(p.Values)
+	p.To = slices.Clone(p.To)
+	if p.Fields != nil {
+		fields := make(map[string]Property, len(p.Fields))
+		for name, f := range p.Fields {
+			fields[name] = f.clone()
+		}
+		p.Fields = fields
+	}
+	return p
+}
+
 func (mt *MessageType) clone() MessageType {
 	out := *mt
 	out.Properties = make(map[string]Property, len(mt.Properties))
 	for name, p := range mt.Properties {
-		p.Values = slices.Clone(p.Values)
-		p.To = slices.Clone(p.To)
-		out.Properties[name] = p
+		out.Properties[name] = p.clone()
 	}
 	out.Post = slices.Clone(mt.Post)
 	out.In = slices.Clone(mt.In)

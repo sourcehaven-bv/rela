@@ -2215,6 +2215,10 @@ type SharedBase struct {
 	// flows is the compiled flows.yaml, nil when it declares no flows.
 	// Compiled here so an invalid file fails the boot, like realtime.yaml.
 	flows *flowcfg.Compiled
+	// flowsPolicy is the acl.yaml policy flows compiled against (see
+	// [flowConfigPolicy]). The engine compiles older run versions against
+	// it too. Nil when the project has no acl.yaml.
+	flowsPolicy *acl.Policy
 	// reassembly marks a base built to re-assemble against an ALREADY-OPEN
 	// store, so [assemble] skips the store-open-only steps. Set by
 	// [SharedBase.ForReassembly]; false for a base that will open its own store.
@@ -2416,7 +2420,11 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 	if vErr := validateResolvedPolicy(resolvedACL, aclPolicy, meta); vErr != nil {
 		return nil, vErr
 	}
-	flows, err := compileFlows(flowsData, meta, resolvedPolicy(resolvedACL, aclPolicy))
+	flowsPolicy, err := flowConfigPolicy(cfg, resolvedACL, aclPolicy, meta, flowsData)
+	if err != nil {
+		return nil, err
+	}
+	flows, err := compileFlows(flowsData, meta, flowsPolicy)
 	if err != nil {
 		return nil, err
 	}
@@ -2477,7 +2485,7 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 
 	return &SharedBase{
 		cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy,
-		meta: meta, worlds: compiledWorlds, conns: conns, realtime: rt, flows: flows,
+		meta: meta, worlds: compiledWorlds, conns: conns, realtime: rt, flows: flows, flowsPolicy: flowsPolicy,
 		validationMode: mode, channelFiles: &channelFileRunners{},
 	}, nil
 }

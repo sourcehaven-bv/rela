@@ -2225,6 +2225,7 @@ rela channel list ID [--state open|closed|archived]
 rela channel read ID TYPE [--name N] [--limit N] [--before S | --after S | --after-rev R] [--schemas]
 rela channel post ID TYPE MESSAGE_TYPE [--name N] [-P key=value ...] [--props-json JSON|@FILE|-] [--reply-to S]
                   [--expect-generation G] [--file PROP=PATH ...]
+rela channel post-batch ID TYPE --json JSON|@FILE|- [--name N] [--expect-generation G]
 rela channel edit ID TYPE SEQ [--name N] [-P key=value ...] [--props-json JSON|@FILE|-]
 rela channel remove ID TYPE SEQ [--name N] [--reason R]
 rela channel create ID TYPE [--title T]
@@ -2243,12 +2244,13 @@ channel of a type with many channels.
 
 | Option         | Description                                                                                    |
 | -------------- | ---------------------------------------------------------------------------------------------- |
-| `-P`           | One message property (repeatable). Commas in the value are kept. The value is read as the property's declared type: a whole number for `integer`, `true` or `false` for `boolean`, text otherwise. For a list property, repeat `-P` once per item, such as `-P options=Yes -P options=No`; any other property may be given once |
-| `--props-json` | All properties as one JSON object: inline, from a file (`@path`) or from stdin (`-`). A list property is a JSON array of strings. Not together with `-P` |
+| `-P`           | One message property (repeatable). Commas in the value are kept. The value is read as the property's declared type: a whole number for `integer`, `true` or `false` for `boolean`, text otherwise. For a list property, repeat `-P` once per item, such as `-P options=Yes -P options=No`; an item of an object list is a JSON object, such as `-P 'options={"label":"A"}'`. Any other property may be given once |
+| `--props-json` | All properties as one JSON object: inline, from a file (`@path`) or from stdin (`-`). A list property is a JSON array of strings, an object list a JSON array of objects. Not together with `-P` |
 | `--limit`      | Page size for `read` and `watch`, 1 to 200 (default 20). The project's page limit may cap it   |
 | `--before`, `--after`, `--after-rev` | Page cursors; name at most one. `read` prints the flag that continues from the page |
 | `--schemas`    | Show each message type's properties. A list property shows as `list of string, at most N`. A question type also shows `choices: from <list>, answer <type> into <property>`, with `, other` when it offers Other |
-| `--expect-generation` | For `post`: store the message only while the session is at this generation, 0 or more. Otherwise the post is refused with `session_moved` and nothing is stored |
+| `--json`       | For `post-batch`: the messages as a JSON array of `{"type": ..., "props": {...}}`, 1 to 10 of them: inline, from a file (`@path`) or from stdin (`-`). Each `props` is as for `--props-json` |
+| `--expect-generation` | For `post` and `post-batch`: store the messages only while the session is at this generation, 0 or more. Otherwise the post is refused with `session_moved` and nothing is stored |
 | `--file`       | For `post`: attach the file at PATH to the `file` property PROP (repeatable, at most 4 files). The file keeps the base name of its path. `read --schemas` lists the file properties, and `read` prints each file's id |
 | `--to`         | For `file`: write the file to PATH; a failed download leaves no partial file. `-` writes to stdout. Without `--to` the file goes to stdout, unless stdout is a terminal |
 | `--reason`     | Why a message was removed; shown to moderators                                                 |
@@ -2257,6 +2259,11 @@ channel of a type with many channels.
 
 `edit` replaces all properties of your message, so name every property you
 keep.
+
+`post-batch` posts the messages as one step: all of them or none. It
+prints one `#SEQ posted` line per message, then the session as `post`
+does. Use it to ask several questions at once; see "Asking several
+questions" in the realtime guide.
 
 `list` prints one row per channel with the columns `TYPE`, `NAME`, `STATE`,
 `TITLE` and `LAST_SEQ`. When you have unread messages in a channel, the row
@@ -2505,7 +2512,7 @@ rela remote link <name> <local> <address>
 | Option | Description |
 | --- | --- |
 | `--dry-run` | `pull`: report what the pull would do, and write nothing. |
-| `--allow-gone N` | `pull`: confirm that up to `N` rows the source no longer lists may be detached or deleted, above the remote's `max_gone`. |
+| `--allow-gone N` | `pull`: confirm that up to `N` detaches and deletes, in either direction, may apply in this run, above the remote's `max_gone`. |
 | `--take local\|remote` | `resolve`: the side whose value wins. |
 | `--dismiss` | `resolve`: remove the entries the `latest` rule left; changes no data. |
 

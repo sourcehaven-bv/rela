@@ -54,6 +54,12 @@ channel_types:
           urgent: { type: boolean }
           about:  { type: ref, to: [item, doc] }
           options: { type: string, list: true, max_items: 3 }
+          picks:
+            type: object
+            list: true
+            properties:
+              label: { type: string, required: true }
+              note:  { type: string }
         post: [member]
       typing: { persist: ephemeral, ttl: 5s, post: [member] }
     message_ops:
@@ -235,7 +241,7 @@ func TestChannelCLI_Loop(t *testing.T) {
 	assert.Contains(t, got, "  alice (cli)  text\n")
 	assert.Contains(t, got, propIndent+"body: hello, world\n")
 	assert.Contains(t, got, propIndent+"about: "+p.item+"\n")
-	assert.Contains(t, got, "  text  1 reply\n")
+	assert.Regexp(t, `  text  1 reply, last \d{4}-\d\d-\d\dT[^\n]*Z\n`, got)
 	assert.Contains(t, got, propIndent+"body: from\n"+propIndent+"stdin\n")
 
 	got, err = runChannel(t, p.svc, "alice", "", "channel", "edit", p.item, "room", "1",
@@ -254,6 +260,14 @@ func TestChannelCLI_Loop(t *testing.T) {
 	assert.Contains(t, got, propIndent+"body: changed\n"+propIndent+"line2\n", "-P keeps a newline")
 	assert.Contains(t, got, propIndent+"count: 4\n")
 	assert.Contains(t, got, "#2 (reply to #1)  [removed by author]\n")
+
+	got, err = runChannel(t, p.svc, "alice", "", "channel", "read", p.item, "room", "--thread", "1")
+	require.NoError(t, err)
+	assert.Contains(t, got, "#2 (reply to #1)")
+	got, err = runChannel(t, p.svc, "alice", "", "channel", "read", p.item, "room", "--top")
+	require.NoError(t, err)
+	assert.Contains(t, got, "#1 ")
+	assert.NotContains(t, got, "#2 ", "--top leaves out a reply that is not inline")
 
 	got, err = runChannel(t, p.svc, "alice", "", "-o", "json", "channel", "read", p.item, "room")
 	require.NoError(t, err)
@@ -337,6 +351,9 @@ func TestChannelCLI_Errors(t *testing.T) {
 		{"two cursors", "alice", []string{"channel", "read", p.item, "room", "--after", "1", "--before", "3"},
 			"at most one of"},
 		{"limit", "alice", []string{"channel", "read", p.item, "room", "--limit", "500"}, "--limit: 1 to 200"},
+		{"thread and top", "alice", []string{"channel", "read", p.item, "room", "--thread", "1", "--top"},
+			"at most one of --thread and --top"},
+		{"thread zero", "alice", []string{"channel", "read", p.item, "room", "--thread", "0"}, "--thread"},
 		{"no principal", principal.Unknown, []string{"channel", "post", p.item, "room", "text", "-P", "body=x"},
 			realtime.NoPrincipalHint},
 	}
@@ -611,4 +628,61 @@ func TestChannelCLI_Files(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.want)
 		})
 	}
+}
+
+// TestChannelCLI_ObjectListProp pins that each -P on an object list is one
+// item given as a JSON object, that a non-object value is refused, and
+// that the read prints each field of an item on its own line.
+func TestChannelCLI_ObjectListProp(t *testing.T) {
+	p := newChannelProject(t)
+	_, err := runChannel(t, p.svc, "alice", "", "channel", "post", p.item, "room", "text",
+		"-P", "body=Which", "-P", `picks={"label":"A","note":"fast"}`, "-P", `picks={"label":"B"}`)
+	require.NoError(t, err)
+
+	got, err := runChannel(t, p.svc, "alice", "", "-o", "json", "channel", "read", p.item, "room")
+	require.NoError(t, err)
+	var read struct {
+		Messages []struct {
+			Props map[string]any `json:"props"`
+		} `json:"messages"`
+	}
+	channelJSONOf(t, got, &read)
+	require.Len(t, read.Messages, 1)
+	assert.Equal(t, []any{
+		map[string]any{"label": "A", "note": "fast"},
+		map[string]any{"label": "B"},
+	}, read.Messages[0].Props["picks"])
+
+	got, err = runChannel(t, p.svc, "alice", "", "channel", "read", p.item, "room", "--schemas")
+	require.NoError(t, err)
+	assert.Contains(t, got, "  picks: list of object with label, note")
+	assert.Contains(t, got, propIndent+"picks:\n"+propIndent+"  - label: A\n"+propIndent+"    note: fast\n"+propIndent+"  - label: B\n")
+
+	_, err = runChannel(t, p.svc, "alice", "", "channel", "post", p.item, "room", "text",
+		"-P", "body=x", "-P", "picks=A")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "want one item as a JSON object")
+}
+
+// TestChannelCLI_PostBatch pins post-batch: one line per message, the
+// shared batch id in JSON, the array read from stdin, and a malformed
+// document refused before posting.
+func TestChannelCLI_PostBatch(t *testing.T) {
+	p := newChannelProject(t)
+	batch := `[{"type":"text","props":{"body":"a"}},{"type":"text","props":{"body":"b"}}]`
+	got, err := runChannel(t, p.svc, "alice", "", "channel", "post-batch", p.item, "room", "--json", batch)
+	require.NoError(t, err)
+	assert.Equal(t, "#1 posted\n#2 posted\n", got)
+
+	got, err = runChannel(t, p.svc, "alice", batch, "-o", "json", "channel", "post-batch", p.item, "room",
+		"--json", "-")
+	require.NoError(t, err)
+	var posted batchJSON
+	channelJSONOf(t, got, &posted)
+	require.Len(t, posted.Messages, 2)
+	assert.Equal(t, []int64{3, 3}, []int64{posted.Messages[0].Batch, posted.Messages[1].Batch})
+
+	_, err = runChannel(t, p.svc, "alice", "", "channel", "post-batch", p.item, "room",
+		"--json", `[{"type":"text","body":"a"}]`)
+	require.ErrorContains(t, err, `--json: an array of {"type": ..., "props": {...}}`)
 }

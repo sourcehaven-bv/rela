@@ -159,6 +159,26 @@ func loadRealtime(ctx context.Context, r configReader, meta *metamodel.Metamodel
 	return c, err
 }
 
+// loadConfigPolicy reads acl.yaml for the configuration checks of a host
+// whose injected ACL carries no policy (see [newRealtimeConfig] and
+// [flowConfigPolicy]). It validates the policy so an abstract type name
+// expands to its variants, as it does for the policy the rest of the
+// wiring uses. A policy that parses but does not fit the schema is still
+// returned: such a host does not enforce acl.yaml, and the ACL wiring
+// reports that error where it does. Expansion runs before any check that
+// can fail, so the returned policy never holds an unexpanded deny or
+// redact.
+//
+// Nil: meta is accepted (no validation). The policy is nil when the
+// project has no acl.yaml.
+func loadConfigPolicy(cfg Config, meta *metamodel.Metamodel) (*acl.Policy, error) {
+	p, err := loadACLPolicy(cfg)
+	if err == nil && p != nil && meta != nil {
+		_ = ValidateACLPolicy(p, meta)
+	}
+	return p, err
+}
+
 // newRealtimeConfig loads realtime.yaml for a base. The policy is the one
 // prepare loaded, else the injected Declarative's, else acl.yaml read again:
 // an injected NopACL or ReadOnlyACL changes who may write, not which fields
@@ -174,17 +194,7 @@ func newRealtimeConfig(cfg Config, o *options, loaded *acl.Policy,
 		if d, ok := o.acl.(*acl.Declarative); ok {
 			return d.Policy(), nil
 		}
-		// Validate so an abstract type name expands to its variants, as it
-		// does for the policy the rest of the wiring uses. A policy that
-		// parses but does not fit the schema is still returned: the ACL
-		// wiring reports that error, and the channel tools answer with it.
-		// Expansion runs before any check that can fail, so the returned
-		// policy never holds an unexpanded deny or redact.
-		p, err := loadACLPolicy(cfg)
-		if err == nil && p != nil && meta != nil {
-			_ = ValidateACLPolicy(p, meta)
-		}
-		return p, err
+		return loadConfigPolicy(cfg, meta)
 	})
 	compiled, err := loadRealtime(context.Background(), reader, meta, resolve)
 	r := &RealtimeConfig{reader: reader, meta: meta, policy: resolve, last: compiled}

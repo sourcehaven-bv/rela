@@ -28,6 +28,7 @@ export type ChannelPropertyKind =
   | 'ref'
   | 'enum'
   | 'file'
+  | 'object'
 
 /** One property of a message type. */
 export interface ChannelPropertyDef {
@@ -46,7 +47,10 @@ export interface ChannelPropertyDef {
   max_size?: number
   /** On a `file` property: the MIME types it accepts, for the file picker. */
   accept?: string[]
-  /** A list of strings: the value is an array, shown one item per line. */
+  /**
+   * A list of strings or of objects (type `object`): the value is an array,
+   * shown one item per line.
+   */
   list?: boolean
   /** The enum type whose labels and colours `enumOptions` carries. */
   enum?: string
@@ -54,6 +58,8 @@ export interface ChannelPropertyDef {
   values?: string[]
   /** The entity types a ref property may point to. */
   to?: string[]
+  /** The fields of each item of an object list, in display order. */
+  fields?: ChannelPropertyDef[]
 }
 
 /** An action a message of some type offers, such as promoting it to an entity. */
@@ -76,9 +82,25 @@ export interface ChannelMessageTypeDef {
   actions: ChannelActionDef[]
   /**
    * The options of a question: `from` names its list property, and a click
-   * posts `answer` with the option in `into`. The app builds the buttons.
+   * posts `answer` with the option in `into`. For an object list, `label`
+   * names the field that is the option. The app builds the buttons.
    */
-  choices?: { from: string; answer: string; into: string; other: boolean }
+  choices?: { from: string; label?: string; answer: string; into: string; other: boolean }
+}
+
+/**
+ * Where a question stands, for a message the app built choices for or knows
+ * to be answered. `answered` is set once a reply of the answer type exists;
+ * `answer` is its chosen option, when the app holds it.
+ */
+export interface ChannelQuestionState {
+  answered: boolean
+  answer?: string
+  /**
+   * The seq of the latest held answer. A new answer changes it, which
+   * closes the choices a reader reopened with Change.
+   */
+  answerSeq?: number
 }
 
 /** A lifecycle operation of a channel type, such as close or archive. */
@@ -126,6 +148,23 @@ export interface ChannelFieldPresentation {
  */
 export type ChannelMessageDisplay = 'collapsed' | 'hidden'
 
+/**
+ * What `display: cards` shows (data-entry.yaml `cards:`): each item of the
+ * object list `items` as a card. `body` is a string or markdown property of
+ * the message, shown above the cards. `title`, `plus`, `minus` and `badge`
+ * name fields of the items: the heading, the points for and against, and a
+ * boolean shown as a badge labeled with the field's label. The server
+ * checks the names at load.
+ */
+export interface ChannelMessageCards {
+  items: string
+  body?: string
+  title?: string
+  plus?: string
+  minus?: string
+  badge?: string
+}
+
 /** The presentation of one message type. */
 export interface ChannelMessagePresentation {
   fields?: ChannelFieldPresentation[]
@@ -139,6 +178,8 @@ export interface ChannelMessagePresentation {
    * decision button.
    */
   offer?: boolean
+  /** Shows an object list as cards; see `ChannelMessageCards`. */
+  cards?: ChannelMessageCards
 }
 
 /** The presentation of one channel type: data-entry.yaml `channels.<type>`. */
@@ -174,7 +215,10 @@ export interface ChannelRestrictedRef {
 export type ChannelRef = ChannelReadableRef | ChannelRestrictedRef
 
 /** A stored property value: a scalar, a ref, or the items of a list property. */
-export type ChannelPropValue = string | number | boolean | ChannelRef | string[]
+export type ChannelPropValue = string | number | boolean | ChannelRef | string[] | ChannelObjectItem[]
+
+/** One item of an object list property: its set fields by name. */
+export type ChannelObjectItem = Record<string, string | number | boolean | string[]>
 
 /**
  * A composer field's raw value: input text, a checkbox state, or a ref's
@@ -246,6 +290,21 @@ export interface ChannelMessageView {
    * the raw value.
    */
   text?: Record<string, string>
+  /**
+   * The same for the fields of object list items: by property name, then
+   * item index, then field name. Absent for an item with nothing formatted.
+   */
+  itemText?: Record<string, (Record<string, string> | undefined)[]>
+  /**
+   * A short plain-text excerpt, set by the app for a question. A collapsed
+   * answered question shows it as its title.
+   */
+  excerpt?: string
+  /**
+   * The seq of the first message of the batch this one was posted in, the
+   * same for every message of the batch; absent for a single post.
+   */
+  batch?: number
   replyTo?: ChannelReplyQuote
   /**
    * The files posted with the message, in the order the app gives. The

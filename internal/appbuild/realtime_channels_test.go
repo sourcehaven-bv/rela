@@ -258,3 +258,49 @@ channel_types:
 		require.Equal(t, tc.want, f.HasPresetButtons, "%s.%s", tc.ct, tc.mt)
 	}
 }
+
+// TestRealtimeChannelSchema_ObjectList pins that an object list reaches the
+// `channels:` check with its item fields sorted by name, so `display:
+// cards` can check the fields it names (TKT-GR1MXL5).
+func TestRealtimeChannelSchema_ObjectList(t *testing.T) {
+	meta, err := metamodel.Parse([]byte(`version: "1.0"
+entities:
+  doc:
+    label: Doc
+    id_prefix: "DOC-"
+    properties:
+      title: {type: string}
+`))
+	require.NoError(t, err)
+	c, err := realtimecfg.Parse([]byte(`version: 1
+channel_types:
+  room:
+    attach_to: [doc]
+    read: { from: attached }
+    roles:
+      member: { from: attached }
+    message_types:
+      pick:
+        properties:
+          options:
+            type: object
+            list: true
+            properties:
+              title: { type: string, max: 80 }
+              pros: { type: string, list: true, max: 200 }
+              recommended: { type: boolean }
+          tags: { type: string, list: true, max: 20 }
+        post: [member]
+`), meta, nil)
+	require.NoError(t, err)
+	facts, ok := appbuild.RealtimeChannelSchema(c).MessageType("room", "pick")
+	require.True(t, ok)
+	require.Equal(t, []dataentryconfig.ChannelProperty{
+		{Name: "options", Type: "object", List: true, Fields: []dataentryconfig.ChannelProperty{
+			{Name: "pros", Type: "string", List: true},
+			{Name: "recommended", Type: "boolean"},
+			{Name: "title", Type: "string"},
+		}},
+		{Name: "tags", Type: "string", List: true},
+	}, facts.Properties)
+}

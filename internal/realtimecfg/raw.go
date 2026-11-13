@@ -278,6 +278,7 @@ func (u rawUnread) set() bool { return u.node != nil && u.node.Tag != "!!null" }
 // rawChoices is `message_types.<mt>.choices`.
 type rawChoices struct {
 	From   string `yaml:"from"`
+	Label  string `yaml:"label"`
 	Answer string `yaml:"answer"`
 	Into   string `yaml:"into"`
 	Other  bool   `yaml:"other"`
@@ -299,6 +300,8 @@ type rawProperty struct {
 	Scan      metamodel.ScanPolicy      `yaml:"scan"`
 	ScanCmd   []string                  `yaml:"scan_cmd"`
 	Transform []metamodel.TransformStep `yaml:"transform"`
+	// Properties are the fields of an object list (`type: object`).
+	Properties map[string]rawProperty `yaml:"properties"`
 }
 
 type rawPromote struct {

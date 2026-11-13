@@ -35,7 +35,7 @@ import (
 // A 400, 403, 409 on an update, or 422 holds the relation on the conflict
 // list. A type whose meta has `visible:` grants is neither merged nor pushed:
 // the run cannot tell which of its meta the principal may read. A relation
-// is never deleted on the remote.
+// is deleted on the remote only by a remote with send_deletes (deletes.go).
 
 // relSync runs the relation half of a remote with push. It shares the run's
 // state.
@@ -313,6 +313,10 @@ func (r relSync) pushRelation(
 	switch {
 	case row == nil:
 		return r.pushCreateRelation(ctx, t, rel)
+	case row.State == stateDetached && row.Resolve == TakeLocal && row.Local == key.String():
+		// The remote deleted it and the local side was chosen: create it
+		// again. The new ledger row replaces this one.
+		return r.pushCreateRelation(ctx, t, rel)
 	case row.State == stateLinked && row.Local == key.String():
 		return r.pushUpdateRelation(ctx, t, rel, row)
 	}
@@ -391,7 +395,15 @@ func (r relSync) pushCreateRelation(ctx context.Context, t relTarget, rel *entit
 		})
 		pc.Created++
 	case ans.Status == http.StatusConflict:
-		// The remote has the relation already; the next pull links it.
+		// The remote has the relation already. A row restored after a
+		// remote delete is linked again, its base the local values, so
+		// the pull compares the remote's values with them; any other is
+		// linked by the next pull.
+		if row := r.l.get(reconclient.KindRelation, t.addr); row != nil && row.State == stateDetached &&
+			row.Resolve == TakeLocal && !r.o.DryRun {
+
+			row.State, row.Resolve, row.Base, row.Hash = stateLinked, "", digests, canonical.Digest{}
+		}
 		pc.Deferred++
 	default:
 		r.relRefusedOrFailed(ans, t, local, digests)

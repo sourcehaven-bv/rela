@@ -374,9 +374,11 @@ func DecideSession(step *SessionStep, cur Channel) (move SessionMove, moved bool
 // the restart anchors; the step's [SessionStep.Due] sets the new ones and
 // decides which anchors carry over. cause is the seq of the message whose
 // post made the move, or 0 for a timer move. The previous state becomes
-// move.From, except on a re-entry, which keeps it.
+// move.From, except on a re-entry, which keeps it. The move starts a new
+// span, so it clears [Channel.Asked].
 func ApplySession(c *Channel, move SessionMove, at time.Time, cause int64) {
 	c.Session = c.Session.Enter(move, at, cause)
+	c.Asked = nil
 }
 
 // PrepareAppendStep is [PrepareSessionStep] for [Store.Append], which also

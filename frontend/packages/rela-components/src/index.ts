@@ -131,6 +131,8 @@ export { default as RlChannelMessage } from './components/channel/RlChannelMessa
 export { default as RlChannelComposer } from './components/channel/RlChannelComposer.vue'
 export { default as RlChannelSession } from './components/channel/RlChannelSession.vue'
 export { default as RlChannelDecisions } from './components/channel/RlChannelDecisions.vue'
+export { default as RlChannelQuestions } from './components/channel/RlChannelQuestions.vue'
+export { default as RlChannelCards } from './components/channel/RlChannelCards.vue'
 export { default as RlChannelAuthor } from './components/channel/RlChannelAuthor.vue'
 export { default as RlEntityChannels } from './components/channel/RlEntityChannels.vue'
 export { default as RlRefChip } from './components/channel/RlRefChip.vue'
@@ -145,6 +147,8 @@ export {
   DECISIONS_BLOCKED_KEY,
 } from './components/channel/channelFields'
 export type { ResolvedChannelField } from './components/channel/channelFields'
+export { groupQuestions } from './components/channel/channelQuestions'
+export type { ChannelQuestionsRow, ChannelGroupedRow } from './components/channel/channelQuestions'
 
 export { default as RlCalendarGrid } from './components/calendar/RlCalendarGrid.vue'
 export { default as RlCalendarEventChip } from './components/calendar/RlCalendarEventChip.vue'
