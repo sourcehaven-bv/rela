@@ -92,6 +92,9 @@ type writeServices struct {
 	// has no token store; TokensErr then says why.
 	Tokens    tokenAdmin
 	TokensErr error
+	// IDPRoles erases stored IdP roles (GH-2118). Nil: accepted, the
+	// build has no role store.
+	IDPRoles idpRoleForgetter
 }
 
 // tokenAdmin returns the token manager, or the reason the project has none.
@@ -228,6 +231,10 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		write.TokensErr = err
 	} else {
 		write.Tokens = broker
+	}
+	// Assigned only when present, for the same reason as Comments above.
+	if r := appbuild.IDPRoles(svc); r != nil {
+		write.IDPRoles = r
 	}
 	leases := &leaseServices{}
 	// Assigned only when present, for the same reason as Comments above.

@@ -3046,7 +3046,7 @@ func assemble(
 	// holds for a new realtime Local, whose hint sender runs from the start.
 	//
 	// Before automation: add_to_pile actions push through refs.piles.
-	refs, err := buildRefHolders(base, st, overrides, aclDeclarative, fieldPol.redactor, resolvedACL)
+	refs, err := buildRefHolders(base, st, overrides, aclDeclarative, fieldPol.redactor, resolvedACL, stateKV)
 	defer func() { abandonFailedAssembly(base, jobQueue, refs.realtimeLocal, retErr) }()
 	if err != nil {
 		return nil, err
@@ -3075,7 +3075,7 @@ func assemble(
 	// comment fanout wrapping the alias rewriter.
 	attachLocker := base.attachmentLocker(st)
 	fanout := newAliasFanout(aliases, refs.comments, refs.piles, refs.leases, autoJobs,
-		refs.channelAliases, refs.realtimeLocal, newFlowRunAliases(refs.flowRuns))
+		refs.channelAliases, refs.realtimeLocal, newFlowRunAliases(refs.flowRuns), refs.idpEraser)
 	mgr, err := buildEntityManager(base, st, fanout, templater,
 		resolvedACL, autoEngine, cascadeRunner, readDeps, pileWriterFor(refs.piles), versions, tw, computedSet,
 		attachLocker, fieldPol.gate, refs.guardInputs())
@@ -3196,11 +3196,7 @@ func finishAssembly(
 	if s.flowWorker, err = buildFlowWorker(s.base, s.store, flowEngine); err != nil {
 		return nil, fmt.Errorf("flows: %w", err)
 	}
-	idpRoles, err := buildIDPRoles(s.base, s.store, s.stateKV)
-	if err != nil {
-		return nil, err
-	}
-	s.idpRoles = idpRoles
+	s.idpRoles = refs.idpRoles
 	// The channel service promotes through the entity manager, so it is
 	// built once the manager exists.
 	svc, err := buildRealtimeService(
