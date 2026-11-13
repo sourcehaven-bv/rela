@@ -2755,7 +2755,7 @@
       "largest_tangle": 14,
       "cycle_edges": 67,
       "upward_edges": 0,
-      "propagation_cost": 9.2
+      "propagation_cost": 9.3
     },
     "min_weight": 0,
     "at": "2026-11-13T09:30:00Z",
@@ -3090,7 +3090,7 @@
       {
         "at": "2026-11-13T09:30:00Z",
         "change": "loosen",
-        "reason": "TKT-UO8UIGO: the new apptest package (rela test) uses rela's ACL and store vocabulary and mirrors metamodel property shapes for its fakers, and cli now reaches it, raising propagation cost by 0.1. Its one new finding (duplicated enum_values) is fixed by metamodel.EnumValues. weight.structure and weight.security keep the traced values.",
+        "reason": "TKT-UO8UIGO: the new apptest package (rela test) uses rela's ACL and store vocabulary and mirrors metamodel property shapes for its fakers, and cli now reaches it, raising propagation cost to 9.3 together with develop. Its one new finding (duplicated enum_values) is fixed by metamodel.EnumValues. weight.structure and weight.security keep the traced values.",
         "metrics": {
           "weight.vocabulary": [
             868,
@@ -3106,7 +3106,7 @@
           ],
           "propagation_cost": [
             9.1,
-            9.2
+            9.3
           ]
         }
       }
