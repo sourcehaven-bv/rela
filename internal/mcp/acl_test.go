@@ -420,6 +420,12 @@ func (d denyEntityReader) ListRelations(
 	return d.raw.ListRelations(ctx, q)
 }
 
+func (d denyEntityReader) ListEntityPage(
+	ctx context.Context, q visibility.PageQuery,
+) (visibility.EntityPage, error) {
+	return visibility.Unrestricted(d.raw).ListEntityPage(ctx, q)
+}
+
 func (d denyEntityReader) ListRelationsStrict(
 	ctx context.Context, q store.RelationQuery,
 ) iter.Seq2[*entity.Relation, error] {

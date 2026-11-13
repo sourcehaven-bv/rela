@@ -35,6 +35,7 @@
 package search
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"iter"
@@ -206,118 +207,293 @@ func (s *Service) backendSearch(q Query) ([]Face, error) {
 	return ab.SearchAdmitted(q.Text, 0, q.World, q.Admit)
 }
 
-// listAll handles searches with no text query — returns all entities matching
-// type and property filters.
+// listAll handles searches with no text query: the rows of q.Types (every
+// type when empty) in id order that pass q.Filters, at most q.Limit of them.
+//
+// It reads the store a page at a time (Service.pagedRows) and stops once
+// the limit is met, so a limited search reads about a page, not the store
+// (TKT-D9UO9Y4). A filter that rejects most rows still reads until it has
+// found the limit; filters are not pushed into the store.
 func (s *Service) listAll(ctx context.Context, q Query) iter.Seq2[Hit, error] {
 	if q.Admit != nil {
 		return s.listAdmitted(ctx, q)
 	}
 	return func(yield func(Hit, error) bool) {
 		emitted := 0
-		for e, err := range s.reader.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(q.World)}) {
+		for e, err := range s.pagedRows(ctx, q.Types, store.InWorld(q.World), listPageSize(q)) {
 			if err != nil {
-				if !yield(Hit{}, err) {
-					return
-				}
-				continue
-			}
-
-			if q.Limit > 0 && emitted >= q.Limit {
+				yield(Hit{}, err)
 				return
 			}
-
-			if len(q.Types) > 0 && !toSet(q.Types)[e.Type] {
-				continue
-			}
-
 			if !MatchFilters(e, q.Filters) {
 				continue
 			}
-
 			if !yield(Hit{ID: e.ID, Type: e.Type, Title: e.Title(), Face: e.Face}, nil) {
 				return
 			}
 			emitted++
-		}
-	}
-}
-
-// listAdmitted is listAll with q.Admit applied before the world ranks. It
-// reads every face in one scan, admits them in one call, resolves the
-// primes, and emits them in scan order.
-func (s *Service) listAdmitted(ctx context.Context, q Query) iter.Seq2[Hit, error] {
-	return func(yield func(Hit, error) bool) {
-		scan, err := s.scanFaces(ctx, toSet(q.Types))
-		if err != nil {
-			yield(Hit{}, err)
-			return
-		}
-		rows, order := scan.rows, scan.order
-		admitted, err := q.Admit(scan.cands)
-		if err != nil {
-			yield(Hit{}, err)
-			return
-		}
-		byID := make(map[string]string, len(admitted))
-		for _, c := range admitted {
-			byID[c.ID] = c.Type
-		}
-		primes := ResolvePrimes(q.World, admitted)
-		emitted := 0
-		for _, id := range order {
-			res, ok := primes[id]
-			if !ok {
-				continue
-			}
 			if q.Limit > 0 && emitted >= q.Limit {
 				return
 			}
-			e := rows[Candidate{ID: id, Type: byID[id], Face: res.Face}]
-			if e == nil || !MatchFilters(e, q.Filters) {
-				continue
-			}
-			hit := Hit{ID: e.ID, Type: e.Type, Title: e.Title(), Face: e.Face, Via: res.Via,
-				ChainPosition: res.ChainPosition}
-			if !yield(hit, nil) {
+		}
+	}
+}
+
+// firstListPage is the first page Service.pagedRows reads when the limit
+// does not size it. Each later page doubles, up to [searchLoadPage], so a
+// search that stops early reads little and a long scan costs few calls.
+const firstListPage = 32
+
+// listPageSize is the first page Service.listAll and Service.listAdmitted
+// read: the limit when every row read becomes a hit, so a limited search
+// reads one page, and [firstListPage] otherwise.
+func listPageSize(q Query) int {
+	if q.Limit > 0 && q.Limit < searchLoadPage && len(q.Filters) == 0 && q.Admit == nil {
+		return q.Limit
+	}
+	return firstListPage
+}
+
+// listAdmitted is listAll with q.Admit applied before the world ranks. It
+// reads every face in id order, a page at a time, and admits and resolves
+// whole families a batch at a time. Once a batch holds as many rows as the
+// store page, every family in it but the last is admitted; the last may
+// continue in the next page, so its rows wait for the next batch. No family
+// is split across two admissions, and no page is read before the rows
+// already read are used. Batches grow as Service.typePages pages do, so a
+// long scan admits in few calls.
+func (s *Service) listAdmitted(ctx context.Context, q Query) iter.Seq2[Hit, error] {
+	return func(yield func(Hit, error) bool) {
+		size := listPageSize(q)
+		batchSize := size
+		out := &batchEmitter{q: q, yield: yield}
+		flush := out.flush
+		var batch []*entity.Entity
+		for e, err := range s.pagedRows(ctx, q.Types, store.AllFaces(), size) {
+			if err != nil {
+				yield(Hit{}, err)
 				return
 			}
-			emitted++
+			batch = append(batch, e)
+			if len(batch) < batchSize {
+				continue
+			}
+			cut := lastFamilyStart(batch)
+			if cut == 0 {
+				continue // one family fills the batch; it may go on
+			}
+			if !flush(batch[:cut]) {
+				return
+			}
+			batch = slices.Clone(batch[cut:])
+			batchSize = nextPageSize(batchSize)
+		}
+		if len(batch) > 0 {
+			flush(batch)
 		}
 	}
 }
 
-// faceScan is every stored face row of the scanned types: rows by
-// candidate, candidates in scan order, and ids in first-seen order.
-type faceScan struct {
-	rows  map[store.WorldCandidate]*entity.Entity
-	cands []Candidate
-	order []string
+// batchEmitter yields the hits of admitted batches until q.Limit of them
+// were yielded.
+type batchEmitter struct {
+	q       Query
+	yield   func(Hit, error) bool
+	emitted int
 }
 
-// scanFaces reads every face of every entity whose type is in types (all
-// types when types is empty) in one scan.
-func (s *Service) scanFaces(ctx context.Context, types map[string]bool) (faceScan, error) {
-	scan := faceScan{rows: make(map[store.WorldCandidate]*entity.Entity)}
-	seenID := make(map[string]bool)
-	for e, err := range s.reader.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
-		if err != nil {
-			return faceScan{}, err
+// flush admits rows and yields their hits; it reports whether to read on.
+func (b *batchEmitter) flush(rows []*entity.Entity) bool {
+	hits, err := admitBatch(b.q, rows)
+	if err != nil {
+		b.yield(Hit{}, err)
+		return false
+	}
+	for _, h := range hits {
+		if !b.yield(h, nil) {
+			return false
 		}
-		if len(types) > 0 && !types[e.Type] {
-			continue
+		b.emitted++
+		if b.q.Limit > 0 && b.emitted >= b.q.Limit {
+			return false
 		}
+	}
+	return true
+}
+
+// lastFamilyStart is the index of the first row of the last id in rows,
+// which are in id order.
+func lastFamilyStart(rows []*entity.Entity) int {
+	last := rows[len(rows)-1].ID
+	return slices.IndexFunc(rows, func(r *entity.Entity) bool { return r.ID == last })
+}
+
+// admitBatch admits the faces of rows, whole families in id order, resolves
+// each id's prime in q.World, and returns the hits that pass q.Filters, in
+// id order.
+func admitBatch(q Query, rows []*entity.Entity) ([]Hit, error) {
+	byCand := make(map[Candidate]*entity.Entity, len(rows))
+	cands := make([]Candidate, 0, len(rows))
+	var order []string
+	for _, e := range rows {
 		c := Candidate{ID: e.ID, Type: e.Type, Face: e.Face}
-		if _, seen := scan.rows[c]; seen {
+		if _, seen := byCand[c]; seen {
 			continue
 		}
-		if !seenID[e.ID] {
-			seenID[e.ID] = true
-			scan.order = append(scan.order, e.ID)
+		if len(order) == 0 || order[len(order)-1] != e.ID {
+			order = append(order, e.ID)
 		}
-		scan.rows[c] = e
-		scan.cands = append(scan.cands, c)
+		byCand[c] = e
+		cands = append(cands, c)
 	}
-	return scan, nil
+	admitted, err := q.Admit(cands)
+	if err != nil {
+		return nil, err
+	}
+	typeOf := make(map[string]string, len(admitted))
+	for _, c := range admitted {
+		typeOf[c.ID] = c.Type
+	}
+	primes := ResolvePrimes(q.World, admitted)
+	hits := make([]Hit, 0, len(primes))
+	for _, id := range order {
+		res, ok := primes[id]
+		if !ok {
+			continue
+		}
+		e := byCand[Candidate{ID: id, Type: typeOf[id], Face: res.Face}]
+		if e == nil || !MatchFilters(e, q.Filters) {
+			continue
+		}
+		hits = append(hits, Hit{ID: e.ID, Type: e.Type, Title: e.Title(), Face: e.Face, Via: res.Via,
+			ChainPosition: res.ChainPosition})
+	}
+	return hits, nil
+}
+
+// pagedRows yields the rows of types (every type when empty) at faces, in
+// id order and then face order, reading size rows in the first store call
+// (Service.typePages). Each type
+// is its own keyset-paged read; several types are merged by key, so the
+// order does not depend on how many types are asked for.
+func (s *Service) pagedRows(
+	ctx context.Context, types []string, faces store.FaceSelection, size int,
+) iter.Seq2[*entity.Entity, error] {
+	types = slices.Compact(slices.Sorted(slices.Values(types)))
+	if len(types) == 0 {
+		return s.typePages(ctx, "", faces, size)
+	}
+	streams := make([]iter.Seq2[*entity.Entity, error], len(types))
+	for i, t := range types {
+		streams[i] = s.typePages(ctx, t, faces, size)
+	}
+	if len(streams) == 1 {
+		return streams[0]
+	}
+	return mergeRows(streams)
+}
+
+// typePages yields the rows of one type (every type when typ is empty) a
+// keyset page at a time: size rows first, then twice as many each page, up
+// to [searchLoadPage].
+func (s *Service) typePages(
+	ctx context.Context, typ string, faces store.FaceSelection, size int,
+) iter.Seq2[*entity.Entity, error] {
+	return func(yield func(*entity.Entity, error) bool) {
+		q := store.EntityQuery{Type: typ, Faces: faces, Limit: size}
+		for {
+			page, err := s.reader.ListEntitiesPage(ctx, q)
+			if err != nil {
+				yield(nil, fmt.Errorf("search: list: %w", err))
+				return
+			}
+			for _, e := range page.Items {
+				if !yield(e, nil) {
+					return
+				}
+			}
+			if page.NextCursor == "" {
+				return
+			}
+			q.Cursor = page.NextCursor
+			q.Limit = nextPageSize(q.Limit)
+		}
+	}
+}
+
+// nextPageSize is the page read after one of size rows: twice as large, up
+// to [searchLoadPage], and never smaller.
+func nextPageSize(size int) int {
+	return max(size, min(2*size, searchLoadPage))
+}
+
+// mergeHead is one stream of [mergeRows] and the row it is at; a nil row
+// means the stream is done.
+type mergeHead struct {
+	next func() (*entity.Entity, error, bool)
+	row  *entity.Entity
+}
+
+// advance moves h to its stream's next row.
+func (h *mergeHead) advance() error {
+	e, err, ok := h.next()
+	h.row = nil
+	if err != nil {
+		return err
+	}
+	if ok {
+		h.row = e
+	}
+	return nil
+}
+
+// leastHead is the head at the least row, or nil when every stream is done.
+func leastHead(heads []*mergeHead) *mergeHead {
+	var least *mergeHead
+	for _, h := range heads {
+		if h.row != nil && (least == nil || compareRowKey(h.row, least.row) < 0) {
+			least = h
+		}
+	}
+	return least
+}
+
+// mergeRows merges streams that are each in (id, face) order into one
+// stream in that order.
+func mergeRows(streams []iter.Seq2[*entity.Entity, error]) iter.Seq2[*entity.Entity, error] {
+	return func(yield func(*entity.Entity, error) bool) {
+		heads := make([]*mergeHead, 0, len(streams))
+		stops := make([]func(), 0, len(streams))
+		defer func() {
+			for _, stop := range stops {
+				stop()
+			}
+		}()
+		for _, st := range streams {
+			next, stop := iter.Pull2(st)
+			stops = append(stops, stop)
+			h := &mergeHead{next: next}
+			heads = append(heads, h)
+			if err := h.advance(); err != nil {
+				yield(nil, err)
+				return
+			}
+		}
+		for least := leastHead(heads); least != nil; least = leastHead(heads) {
+			if !yield(least.row, nil) {
+				return
+			}
+			if err := least.advance(); err != nil {
+				yield(nil, err)
+				return
+			}
+		}
+	}
+}
+
+// compareRowKey orders rows by id, then face: the store's list order.
+func compareRowKey(a, b *entity.Entity) int {
+	return cmp.Or(cmp.Compare(a.ID, b.ID), cmp.Compare(a.Face, b.Face))
 }
 
 func toSet(ss []string) map[string]bool {
