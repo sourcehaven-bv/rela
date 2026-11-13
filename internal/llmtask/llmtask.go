@@ -78,40 +78,49 @@ type Item struct {
 	// Related marks a candidate the subject is already related to. The
 	// model may pick it; the proposal leaves it out.
 	Related bool
-	// properties holds only the configured fields the caller may read.
-	properties map[string]any
-	// truncated names the properties cut to MaxValueChars.
-	truncated []string
+	// source is the redacted entity the item was built from, and fields
+	// the configured fields to send from it.
+	source *entity.Entity
+	fields []string
 }
 
 // NewItem is e as sent to the model: its id, type and title, and those of
 // fields that are set and not redacted. e must already be redacted for the
-// caller.
+// caller, and must not change while the item is in use.
 func NewItem(meta *metamodel.Metamodel, e *entity.Entity, fields []string) Item {
-	item := Item{ID: e.ID, Type: e.Type, Title: meta.DisplayTitle(e.ID, e.Type, e.Properties)}
-	for _, f := range fields {
-		v, ok := e.Properties[f]
-		if !ok || v == nil || e.IsRedacted(f) {
-			continue
-		}
-		if item.properties == nil {
-			item.properties = map[string]any{}
-		}
-		item.properties[f] = v
+	return Item{
+		ID: e.ID, Type: e.Type, Title: meta.DisplayTitle(e.ID, e.Type, e.Properties),
+		source: e, fields: fields,
 	}
-	return item
 }
 
-// MarshalJSON encodes the item as the model reads it.
-func (it Item) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		ID         string         `json:"id"`
-		Type       string         `json:"type"`
-		Title      string         `json:"title"`
-		Properties map[string]any `json:"properties,omitempty"`
-		Related    bool           `json:"already_related,omitempty"`
-		Truncated  []string       `json:"truncated_fields,omitempty"`
-	}{it.ID, it.Type, it.Title, it.properties, it.Related, it.truncated})
+// itemDoc is an item as the model reads it, with every text value capped.
+type itemDoc struct {
+	ID         string         `json:"id"`
+	Type       string         `json:"type"`
+	Title      string         `json:"title"`
+	Properties map[string]any `json:"properties,omitempty"`
+	Related    bool           `json:"already_related,omitempty"`
+	Truncated  []string       `json:"truncated_fields,omitempty"`
+}
+
+// doc is the item's input document: the fields that are set and not
+// redacted, capped to MaxValueChars.
+func (it Item) doc() itemDoc {
+	d := itemDoc{ID: it.ID, Type: it.Type, Title: capText(it.Title), Related: it.Related}
+	if it.source == nil {
+		return d
+	}
+	props := map[string]any{}
+	for _, f := range it.fields {
+		if v, ok := it.source.Properties[f]; ok && v != nil && !it.source.IsRedacted(f) {
+			props[f] = v
+		}
+	}
+	if len(props) > 0 {
+		d.Properties, d.Truncated = capValues(props)
+	}
+	return d
 }
 
 // MaxValueChars caps one text value in the input document. Field values are
@@ -283,14 +292,12 @@ func (t *Task) inputProperties() []string {
 	return out
 }
 
-// capItems copies items with every text value capped to MaxValueChars.
-// It never returns nil, so an empty list encodes as [].
-func capItems(items []Item) []Item {
-	out := make([]Item, len(items))
+// capItems is the input documents of items, with every text value capped
+// to MaxValueChars. It never returns nil, so an empty list encodes as [].
+func capItems(items []Item) []itemDoc {
+	out := make([]itemDoc, len(items))
 	for i, it := range items {
-		it.Title = capText(it.Title)
-		it.properties, it.truncated = capValues(it.properties)
-		out[i] = it
+		out[i] = it.doc()
 	}
 	return out
 }

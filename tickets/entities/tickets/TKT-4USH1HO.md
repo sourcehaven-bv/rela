@@ -59,3 +59,5 @@ required properties are refused at config load.
 - The proposal has one type, `actionproposal.Proposal`, shared by the
   data-entry API, MCP and the script layer. Its values are JSON
   (`json.RawMessage`), so no exported type carries untyped data.
+- An `llmtask.Item` keeps the redacted entity and its field list, and
+  builds the property values only when it encodes the input document.

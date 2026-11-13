@@ -142,8 +142,10 @@ func TestRequest_CapsLongValues(t *testing.T) {
 	long := strings.Repeat("é", MaxValueChars+10)
 	in := testInput()
 	in.Subject.Properties["title"] = long
-	in.Related[0][0].properties = map[string]any{"title": long, "n": 3}
-	in.Candidates[0].Items[1].properties = map[string]any{"title": []any{"short", long}}
+	relSrc := &entity.Entity{ID: "C-1", Type: "concept", Properties: map[string]any{"title": long, "n": 3}}
+	in.Related[0][0] = NewItem(testMeta(), relSrc, []string{"title", "n"})
+	cand := &entity.Entity{ID: "C-2", Type: "concept", Properties: map[string]any{"title": []any{"short", long}}}
+	in.Candidates[0].Items[1] = NewItem(testMeta(), cand, []string{"title"})
 
 	req, err := testTask(t).Request(in)
 	if err != nil {
@@ -175,12 +177,12 @@ func TestRequest_CapsLongValues(t *testing.T) {
 
 		t.Errorf("related item = %+v", rel.Truncated)
 	}
-	cand := doc.Candidates["affects"].Entities[1]
-	if got := cand.Properties["title"].([]any); got[0] != "short" || got[1] != capped {
+	candDoc := doc.Candidates["affects"].Entities[1]
+	if got := candDoc.Properties["title"].([]any); got[0] != "short" || got[1] != capped {
 		t.Errorf("list value not capped per element")
 	}
 	// The caller's input is not modified.
-	if in.Related[0][0].properties["title"] != long {
+	if relSrc.Properties["title"] != long {
 		t.Error("input item was modified")
 	}
 }
