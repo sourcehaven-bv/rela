@@ -202,6 +202,10 @@ var editable = map[File][]string{
 		// offer: false only keeps a type out of the web app composer
 		// (TKT-WC63SNN); it is not access control, so it restricts nothing.
 		"channels.*.messages.*.offer",
+		// The cards map of display: cards (TKT-GR1MXL5) only names which
+		// listed properties fill a card; the load check validates it
+		// against realtime.yaml, and it restricts nothing.
+		"channels.*.messages.*.cards.*",
 		// A compact session header (TKT-56TPOTE) only folds the state list
 		// in the web app; it restricts nothing.
 		"channels.*.session.display",

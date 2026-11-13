@@ -31,8 +31,19 @@ func wireChannel(c realtime.ChannelView) v1.Channel {
 		CreatedBy: wireChannelAuthor(c.CreatedBy), CreatedAt: channelTime(c.CreatedAt),
 		ClosedAt: channelTime(c.ClosedAt), ArchivedAt: channelTime(c.ArchivedAt),
 		LastSeq: c.LastSeq, Rev: c.Rev, Session: wireChannelSession(c.Session),
-		Read: wireChannelRead(c.Read),
+		Read: wireChannelRead(c.Read), Asked: wireAsked(c.Asked),
 	}
+}
+
+func wireAsked(a []realtime.AskedView) []v1.ChannelAsked {
+	if len(a) == 0 {
+		return nil
+	}
+	out := make([]v1.ChannelAsked, len(a))
+	for i, q := range a {
+		out[i] = v1.ChannelAsked{Seq: q.Seq, AnswerType: q.AnswerType, Answers: q.Answers}
+	}
+	return out
 }
 
 func wireChannelRead(r *realtime.ChannelRead) *v1.ChannelRead {
@@ -148,7 +159,8 @@ func wireProps(props map[string]any) map[string]any {
 func wireMessage(m realtime.MessageView) v1.Message {
 	out := v1.Message{
 		Seq: m.Seq, Rev: m.Rev, Type: m.Type, Author: wireChannelAuthor(m.Author), At: channelTime(m.At),
-		Props: wireProps(m.Props), ReplyTo: m.ReplyTo, ReplyCount: m.ReplyCount, EditedAt: channelTime(m.EditedAt),
+		Props: wireProps(m.Props), ReplyTo: m.ReplyTo, ReplyCount: m.ReplyCount, Batch: m.Batch,
+		EditedAt:    channelTime(m.EditedAt),
 		LastReplyAt: channelTime(m.LastReplyAt), Inline: m.Inline,
 		TriggeredBy: m.TriggeredBy, Actions: m.Actions,
 		EditUntil: channelTime(m.EditUntil), ReleaseAfter: channelTime(m.ReleaseAfter),

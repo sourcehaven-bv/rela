@@ -138,8 +138,8 @@ func TestChoices_Problems(t *testing.T) {
 		{"answer requires another property", []replace{{"properties: { body: { type: string, required: true } }",
 			"properties: { body: { type: string }, why: { type: string, required: true } }"}},
 			choicesKey + ".answer", `message type answer requires property "why"; a click fills only "body"`},
-		{"unknown key", []replace{{"other: true }", "other: true, label: Pick }"}},
-			choicesKey + ".label", "unknown key"},
+		{"unknown key", []replace{{"other: true }", "other: true, pick: Pick }"}},
+			choicesKey + ".pick", "unknown key"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -196,14 +196,17 @@ func TestChoices_SessionWarning(t *testing.T) {
 		warn  bool
 	}{
 		{"PoC", nil, false},
-		{"answer only in review", []replace{
+		// ask may be posted in review, where it is asked and answer may be
+		// posted, so its buttons show without a move.
+		{"answer only in review, where ask is asked", []replace{
 			{"        in: [asking]\n", "        in: [review]\n"},
 			{"          on: { answer: { to: working, roles: [owner] } }",
 				"          on: { text: { to: working } }"},
-		}, true},
-		{"ask has no transition", []replace{
+		}, false},
+		// ask posted in asking stays asked there, where answer may be posted.
+		{"ask has no transition but is asked", []replace{
 			{"            ask: { to: asking, roles: [runner] }\n", ""},
-		}, true},
+		}, false},
 		{"ask leads only to working", []replace{
 			{"            ask: { to: asking, roles: [runner] }\n", ""},
 			{"          on: { go: { to: done } }", "          on: { go: { to: done }, ask: { to: working } }"},

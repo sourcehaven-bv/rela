@@ -1,5 +1,8 @@
 import type { StatusColor } from 'rela-components/types'
-import type { ChannelMessageDisplay } from 'rela-components/components/channel/types'
+import type {
+  ChannelMessageCards,
+  ChannelMessageDisplay,
+} from 'rela-components/components/channel/types'
 import type { SortSpec } from './schema'
 import type { ScriptError } from './scriptError'
 
@@ -237,10 +240,18 @@ export type ChannelField = Pick<
 
 /** One `channels.<channel type>` entry of data-entry.yaml. */
 export interface ChannelPresentation {
-  /** Keyed by message type. */
+  /**
+   * Keyed by message type. `display: cards` shows an object list as cards,
+   * as `cards` says; the server refuses the one without the other.
+   */
   messages?: Record<
     string,
-    { fields?: ChannelField[]; display?: ChannelMessageDisplay; offer?: boolean }
+    {
+      fields?: ChannelField[]
+      display?: ChannelMessageDisplay | 'cards'
+      cards?: ChannelMessageCards
+      offer?: boolean
+    }
   >
   /**
    * The session header. `display: compact` folds the list of states at

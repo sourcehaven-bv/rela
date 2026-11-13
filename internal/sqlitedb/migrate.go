@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 37
+const schemaVersion = 38
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -368,6 +368,14 @@ var migrations = []migration{
 		to:    37,
 		apply: addChannelThreads,
 	},
+	{
+		// v37 → v38: the asked questions of a channel's session span
+		// (TKT-GR1MXL5). A row from before reads '', no questions.
+		to: 38,
+		apply: func(ctx context.Context, conn *sql.Conn) error {
+			return addChannelColumns(ctx, conn, channelAskedColumns)
+		},
+	},
 }
 
 // messageThreadColumns are the thread columns of channel_messages.
@@ -407,6 +415,11 @@ var elementColumns = []struct{ name, def string }{
 // channelPreviousColumns are the session previous-state column of channels.
 var channelPreviousColumns = []struct{ name, def string }{
 	{"session_previous", "TEXT NOT NULL DEFAULT ''"},
+}
+
+// channelAskedColumns are the session asked-questions column of channels.
+var channelAskedColumns = []struct{ name, def string }{
+	{"session_asked", "TEXT NOT NULL DEFAULT ''"},
 }
 
 // channelCauseColumns are the session cause column of channels.

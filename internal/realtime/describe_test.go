@@ -200,3 +200,34 @@ func TestDescribe_In(t *testing.T) {
 	require.Equal(t, want["answer"].in, read()["answer"].In, "Read aliases a derived In")
 	require.Equal(t, want["progress"].in, read()["progress"].In, "Read aliases a written In")
 }
+
+// TestDescribe_ObjectList pins TKT-GR1MXL5: an object list carries its
+// fields, required first and then by name, and its choices name the label.
+func TestDescribe_ObjectList(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, withYAML(objectRealtime))
+	views := h.svc.Describe()
+	require.Len(t, views, 1)
+	var ask MessageTypeDescription
+	for _, mt := range views[0].MessageTypes {
+		if mt.Name == "ask" {
+			ask = mt
+		}
+	}
+	require.Equal(t, &ChoicesDescription{From: "options", Label: "label", Answer: "answer", Into: "body"}, ask.Choices)
+	var options PropertyDescription
+	for _, p := range ask.Properties {
+		if p.Name == "options" {
+			options = p
+		}
+	}
+	require.Equal(t, "object", options.Type)
+	require.True(t, options.List)
+	names := make([]string, len(options.Fields))
+	for i, f := range options.Fields {
+		names[i] = f.Name
+	}
+	require.Equal(t, []string{"label", "pros", "recommended"}, names)
+	require.True(t, options.Fields[0].Required)
+	require.True(t, options.Fields[1].List)
+}

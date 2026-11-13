@@ -29,12 +29,12 @@ func (v choiceChecker) choices(raw *rawChannelType, ct *ChannelType) {
 			v.add(key, "an ephemeral message is never stored, so it cannot carry choices")
 			continue
 		}
-		from, fromOK := v.choicesFrom(key+".from", rc.From, mt)
+		optionMax, fromOK := v.choicesFrom(key, rc, mt)
 		answer := v.choicesAnswer(key+".answer", rc, mt, ct)
 		if answer != nil && fromOK {
-			v.choicesInto(key+".into", rc.Into, from, answer)
+			v.choicesInto(key+".into", rc.Into, optionMax, answer)
 		}
-		mt.Choices = &Choices{From: rc.From, Answer: rc.Answer, Into: rc.Into, Other: rc.Other}
+		mt.Choices = &Choices{From: rc.From, Label: rc.Label, Answer: rc.Answer, Into: rc.Into, Other: rc.Other}
 		if answer != nil && ct.session != nil && !choicesReachable(ct.session, mt, answer) {
 			v.warn(key+".answer", fmt.Sprintf("in a channel with a session, buttons show only on the %s "+
 				"message that moved the session, and no transition on %s leads to a state where %s may be "+
@@ -43,30 +43,73 @@ func (v choiceChecker) choices(raw *rawChannelType, ct *ChannelType) {
 	}
 }
 
-// choicesFrom checks that name is a list property of the question type
-// mt and returns it. It warns when the list is too long or its items too
-// long for buttons.
-func (v choiceChecker) choicesFrom(key, name string, mt *MessageType) (Property, bool) {
+// choicesFrom checks that rc.From is a list property of the question type
+// mt: a list of strings, or a list of objects whose button text is the
+// field rc.Label names. It returns the most code points of one option. On
+// an object list it sets the property's Key to the label, so two options
+// never read the same. It warns when the list is too long or its options
+// too long for buttons.
+func (v choiceChecker) choicesFrom(key string, rc *rawChoices, mt *MessageType) (optionMax int, ok bool) {
+	name := rc.From
 	if name == "" {
-		v.add(key, "name the list property that holds the options")
-		return Property{}, false
+		v.add(key+".from", "name the list property that holds the options")
+		return 0, false
 	}
 	p, ok := mt.Properties[name]
 	switch {
 	case !ok:
-		v.add(key, fmt.Sprintf("message type %s has no property %q", mt.Name, name))
-		return Property{}, false
+		v.add(key+".from", fmt.Sprintf("message type %s has no property %q", mt.Name, name))
+		return 0, false
 	case !p.List:
-		v.add(key, fmt.Sprintf("property %s is a %s property; the options are a list, so declare it with "+
-			"type: string and list: true", name, p.TypeName()))
-		return Property{}, false
+		v.add(key+".from", fmt.Sprintf("property %s is a %s property; the options are a list, so declare it "+
+			"with type: string and list: true, or type: object and list: true", name, p.TypeName()))
+		return 0, false
+	case !p.IsObjectList() && rc.Label != "":
+		v.add(key+".label", fmt.Sprintf("property %s is a list of strings, so each string is its own button "+
+			"text; label names a field of an object list", name))
+		return 0, false
+	case !p.IsObjectList():
+		optionMax = p.Max
+	default:
+		optionMax, ok = v.choicesLabel(key+".label", rc.Label, p)
+		if !ok {
+			return 0, false
+		}
+		p.Key = rc.Label
+		mt.Properties[name] = p
 	}
-	if p.MaxItems > buttonItems || p.Max > buttonRunes {
-		v.warn(key, fmt.Sprintf("property %s allows %d items of up to %d characters; that is too many or too "+
-			"long for buttons, so keep max_items at most %d and max at most %d", name, p.MaxItems, p.Max,
-			buttonItems, buttonRunes))
+	if p.MaxItems > buttonItems || optionMax > buttonRunes {
+		v.warn(key+".from", fmt.Sprintf("property %s allows %d options of up to %d characters; that is too "+
+			"many or too long for buttons, so keep max_items at most %d and the option max at most %d", name,
+			p.MaxItems, optionMax, buttonItems, buttonRunes))
 	}
-	return p, true
+	return optionMax, true
+}
+
+// choicesLabel checks that label names a required, non-list string field
+// of the object list p, and returns the most code points of its value. A
+// markdown label is impossible, since an object field is never markdown:
+// a click would otherwise credit the clicker with markup the asker chose.
+func (v choiceChecker) choicesLabel(key, label string, p Property) (int, bool) {
+	if label == "" {
+		v.add(key, fmt.Sprintf("property %s is a list of objects; name the field that holds the button text",
+			p.Name))
+		return 0, false
+	}
+	f, ok := p.Fields[label]
+	switch {
+	case !ok:
+		v.add(key, fmt.Sprintf("property %s has no field %q", p.Name, label))
+		return 0, false
+	case f.List || f.Type != PropertyString:
+		v.add(key, fmt.Sprintf("field %s is of type %s; the button text is a string field", label, f.TypeName()))
+		return 0, false
+	case !f.Required:
+		v.add(key, fmt.Sprintf("field %s is the button text, so every option needs it; add required: true",
+			label))
+		return 0, false
+	}
+	return keyMax(f), true
 }
 
 // choicesAnswer checks that the answer type is another log type of ct
@@ -100,8 +143,8 @@ func (v choiceChecker) choicesAnswer(key string, rc *rawChoices, question *Messa
 }
 
 // choicesInto checks that name is a string property of the answer type
-// that holds every option of from.
-func (v choiceChecker) choicesInto(key, name string, from Property, answer *MessageType) {
+// that holds an option of up to optionMax code points.
+func (v choiceChecker) choicesInto(key, name string, optionMax int, answer *MessageType) {
 	if name == "" {
 		v.add(key, "name the property of the answer type that receives the option")
 		return
@@ -115,16 +158,17 @@ func (v choiceChecker) choicesInto(key, name string, from Property, answer *Mess
 		// chose, such as a disguised link or a mention.
 		v.add(key, fmt.Sprintf("property %s is a %s property; an option goes into a string property",
 			name, p.TypeName()))
-	case p.Max > 0 && p.Max < from.Max:
+	case p.Max > 0 && p.Max < optionMax:
 		v.add(key, fmt.Sprintf("an option of up to %d characters does not fit into %s, which holds at most %d",
-			from.Max, name, p.Max))
+			optionMax, name, p.Max))
 	}
 }
 
-// choicesReachable reports whether a question of type question can move
-// the session into a state where answer may be posted. In a channel with
-// a session, buttons show only on the question that moved it, so without
-// such a state they never show.
+// choicesReachable reports whether a question of type question can leave
+// the session in a state where answer may be posted. In a channel with a
+// session, buttons show on an asked question while the session stays in
+// the state it was posted in, and on the question that moved the session.
+// Without such a state they never show.
 //
 // It over-approximates: it counts every entry of `on.<question>`, guarded
 // or not, and ignores their order, so an entry after an unguarded one
@@ -134,6 +178,9 @@ func choicesReachable(s *Session, question, answer *MessageType) bool {
 	for _, st := range s.States() {
 		if !question.PostableIn(st.Name) {
 			continue
+		}
+		if answer.PostableIn(st.Name) {
+			return true
 		}
 		for _, t := range s.Branches(st.Name, question.Name) {
 			if answer.PostableIn(t.To) {

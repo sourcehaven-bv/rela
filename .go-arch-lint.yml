@@ -1925,6 +1925,8 @@ deps:
       - flow
       # A leaf: the reply rule refuses rela's own identities and unknown.
       - principal
+      # A leaf: the batch cap the HTTP API and OpenAPI quote too.
+      - realtimelimits
   # The channel service (TKT-ZU7P13): authorization, validation, rate limits
   # and ephemeral signals over the channel store. Every gate comes in through
   # a consumer-side interface appbuild implements, so it lists neither acl,

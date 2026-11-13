@@ -124,8 +124,11 @@ func (mt *MessageType) normalize(in map[string]any, maxBytes int, requireAll boo
 // Normalize checks raw against p and returns its stored form: a string
 // for string, markdown, enum, ref, date and datetime (a datetime in
 // RFC 3339, UTC); an int64 for integer; a bool for boolean; a []any of
-// strings for a list.
+// strings for a list; a []any of map[string]any for an object list.
 func (p Property) Normalize(raw any) (any, error) {
+	if p.IsObjectList() {
+		return normalizeObjects(p, raw)
+	}
 	if p.List {
 		return normalizeList(p, raw)
 	}
@@ -140,6 +143,8 @@ func (p Property) Normalize(raw any) (any, error) {
 			return nil, errors.New("must be a boolean")
 		}
 		return b, nil
+	case PropertyObject:
+		return nil, errors.New("must be a list of objects")
 	case PropertyString, PropertyMarkdown, PropertyDate, PropertyDatetime, PropertyRef, PropertyEnum:
 	}
 	s, ok := raw.(string)
@@ -172,7 +177,7 @@ func (p Property) Normalize(raw any) (any, error) {
 			return nil, fmt.Errorf("must be one of %v", p.Values)
 		}
 		return s, nil
-	case PropertyString, PropertyMarkdown, PropertyInteger, PropertyBoolean, PropertyFile:
+	case PropertyString, PropertyMarkdown, PropertyInteger, PropertyBoolean, PropertyFile, PropertyObject:
 	}
 	if p.Max > 0 && utf8.RuneCountInString(s) > p.Max {
 		return nil, fmt.Errorf("must be at most %d characters", p.Max)
@@ -216,6 +221,100 @@ func normalizeList(p Property, raw any) (any, error) {
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+// normalizeObjects checks an object list value against p and returns its
+// stored form: each item holds only declared fields, each normalized as
+// its field, with nil values and empty lists left out, and every required
+// field set. An empty item is refused. The list holds at most p.MaxItems
+// items, and the values of p.Key, when set, differ between items.
+func normalizeObjects(p Property, raw any) (any, error) {
+	var items []any
+	switch v := raw.(type) {
+	case []any:
+		items = v
+	case []map[string]any:
+		items = make([]any, len(v))
+		for i, m := range v {
+			items[i] = m
+		}
+	default:
+		return nil, errors.New("must be a list of objects")
+	}
+	if len(items) > p.MaxItems {
+		return nil, fmt.Errorf("must have at most %d items", p.MaxItems)
+	}
+	out := make([]any, 0, len(items))
+	seen := make(map[string]bool, len(items))
+	for i, item := range items {
+		obj, err := normalizeObject(p, item)
+		if err != nil {
+			return nil, fmt.Errorf("item %d %s", i+1, err.Error())
+		}
+		if p.Key != "" {
+			if k, isStr := obj[p.Key].(string); isStr {
+				if seen[k] {
+					return nil, fmt.Errorf("item %d repeats the %s of an earlier item", i+1, p.Key)
+				}
+				seen[k] = true
+			}
+		}
+		out = append(out, obj)
+	}
+	return out, nil
+}
+
+// normalizeObject checks one item of an object list and returns its
+// stored form. Its errors read after "item N". The p.Key field is folded
+// and checked as a string list item is, because it labels a button.
+func normalizeObject(p Property, item any) (map[string]any, error) {
+	in, ok := item.(map[string]any)
+	if !ok {
+		return nil, errors.New("must be an object")
+	}
+	out := make(map[string]any, len(in))
+	for _, name := range sortedKeys(in) {
+		raw := in[name]
+		if raw == nil {
+			continue
+		}
+		f, declared := p.Fields[name]
+		if !declared {
+			return nil, fmt.Errorf("has field %q, which %s does not declare", name, p.Name)
+		}
+		var v any
+		var err error
+		if name == p.Key {
+			v, err = normalizeListItem(Property{Max: keyMax(f)}, raw)
+		} else {
+			v, err = f.Normalize(raw)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("field %q %s", name, err.Error())
+		}
+		if list, isList := v.([]any); isList && len(list) == 0 {
+			continue
+		}
+		out[name] = v
+	}
+	if len(out) == 0 {
+		return nil, errors.New("is empty")
+	}
+	for _, name := range sortedKeys(p.Fields) {
+		if _, set := out[name]; !set && p.Fields[name].Required {
+			return nil, fmt.Errorf("needs field %q", name)
+		}
+	}
+	return out, nil
+}
+
+// keyMax is the most code points of a key field's value: its max, else the
+// item limit of a list without max.
+func keyMax(f Property) int {
+	if f.Max > 0 {
+		return f.Max
+	}
+	return realtimelimits.DefaultListItemRunes
 }
 
 // normalizeListItem checks one item of a list and returns its stored
@@ -279,6 +378,9 @@ func (p Property) PredicateValue(v any) predicate.Value {
 	if v == nil {
 		return predicate.NewNil()
 	}
+	if p.IsObjectList() {
+		return objectsValue(p, v)
+	}
 	if p.List {
 		items, ok := v.([]any)
 		if !ok {
@@ -317,6 +419,28 @@ func (p Property) PredicateValue(v any) predicate.Value {
 		}
 	}
 	return predicate.NewNil()
+}
+
+// objectsValue binds a stored object list as a list of records, each with
+// every field of p, an absent one nil (see [messageRecordType]).
+func objectsValue(p Property, v any) predicate.Value {
+	items, ok := v.([]any)
+	if !ok {
+		return predicate.NewNil()
+	}
+	elems := make([]predicate.Value, 0, len(items))
+	for _, item := range items {
+		obj, isObj := item.(map[string]any)
+		if !isObj {
+			continue
+		}
+		fields := make(map[string]predicate.Value, len(p.Fields))
+		for name, f := range p.Fields {
+			fields[name] = f.PredicateValue(obj[name])
+		}
+		elems = append(elems, predicate.NewRecord(fields))
+	}
+	return predicate.NewList(elems)
 }
 
 // PredicateFields binds props, in their stored form, as the fields of mt's

@@ -28,6 +28,7 @@ const (
 	typingSegment    = "_typing"
 	readSegment      = "_read"
 	filesSegment     = "files"
+	batchSegment     = "_batch"
 	// messageRouteDepth is the most segments a message route has:
 	// messages/{seq}/_action/{name} and messages/{seq}/files/{id}.
 	messageRouteDepth = 4
@@ -35,6 +36,8 @@ const (
 	// realtime.yaml may allow, plus room for the JSON envelope. The service
 	// applies the configured, possibly smaller, limit to the properties.
 	channelBodyLimit = realtimelimits.MaxMessageBytes + 1<<10
+	// channelBatchBodyLimit caps a `_batch` body: a full message per slot.
+	channelBatchBodyLimit = channels.MaxBatch * channelBodyLimit
 )
 
 // The channel routes use the channel service through five narrow
@@ -54,6 +57,7 @@ type messageWriter interface {
 	Post(ctx context.Context, addr realtime.RawAddress, in realtime.PostInput) (realtime.PostResult, error)
 	Edit(ctx context.Context, addr realtime.RawAddress, seq int64, props map[string]any) (realtime.MessageView, error)
 	Delete(ctx context.Context, addr realtime.RawAddress, seq int64, reason string) (realtime.MessageView, error)
+	PostBatch(ctx context.Context, addr realtime.RawAddress, in realtime.BatchInput) (realtime.BatchResult, error)
 }
 
 // messageActor serves the action routes: run an action and release a
@@ -95,6 +99,7 @@ type realtimeSwitch interface {
 //	GET    …/_channels/{type}[/{name}]/messages                one page of messages
 //	POST   …/_channels/{type}[/{name}]/messages                post (201, or 202 ephemeral); JSON, or
 //	                                                            multipart with files (see [channelsHandler.postMultipart])
+//	POST   …/_channels/{type}[/{name}]/_batch                  post a batch of log messages (201)
 //	PATCH  …/_channels/{type}[/{name}]/messages/{seq}          edit own message
 //	DELETE …/_channels/{type}[/{name}]/messages/{seq}          delete or remove
 //	POST   …/messages/{seq}/_action/{name}                      run an action
@@ -209,6 +214,8 @@ type channelRoute struct {
 	read bool
 	// file is the id of …/messages/{seq}/files/{id}.
 	file string
+	// batch is set for …/_batch.
+	batch bool
 }
 
 // serve answers every route under /api/v1/{plural}/{ref}/_channels. rest
@@ -239,6 +246,10 @@ func (h *channelsHandler) serve(w http.ResponseWriter, r *http.Request, typeName
 	case rt.typing:
 		if allowMethod(w, r, http.MethodPost) {
 			h.typing(w, r, rt)
+		}
+	case rt.batch:
+		if allowMethod(w, r, http.MethodPost) {
+			h.postBatch(w, r, rt)
 		}
 	case rt.lifecycle != "":
 		if allowMethod(w, r, http.MethodPost) {
@@ -296,8 +307,8 @@ func methodNotAllowed(w http.ResponseWriter, r *http.Request, allow string) {
 }
 
 // parseChannelRoute parses {type}[/{name}][/messages[/{seq}[/_action[/{name}]]]],
-// {type}[/{name}]/_lifecycle/{op}, {type}[/{name}]/_typing and
-// {type}[/{name}]/_read. It reports
+// {type}[/{name}]/_lifecycle/{op}, {type}[/{name}]/_typing,
+// {type}[/{name}]/_batch and {type}[/{name}]/_read. It reports
 // false for any other shape, including an op that is no lifecycle
 // operation.
 func parseChannelRoute(typeName, ref string, rest []string) (channelRoute, bool) {
@@ -315,6 +326,8 @@ func parseChannelRoute(typeName, ref string, rest []string) (channelRoute, bool)
 		rt.typing = true
 	case len(tail) == 1 && tail[0] == readSegment:
 		rt.read = true
+	case len(tail) == 1 && tail[0] == batchSegment:
+		rt.batch = true
 	case len(tail) == 2 && tail[0] == lifecycleSegment:
 		if !realtime.IsLifecycleOp(tail[1]) {
 			return channelRoute{}, false
@@ -481,6 +494,28 @@ func (h *channelsHandler) postMessage(
 	writeV1JSON(w, http.StatusCreated, wireMessage(*got.Message))
 }
 
+func (h *channelsHandler) postBatch(w http.ResponseWriter, r *http.Request, rt channelRoute) {
+	var req v1.PostBatchRequest
+	if !decodeChannelBodyLimit(w, r, &req, false, channelBatchBodyLimit) {
+		return
+	}
+	in := realtime.BatchInput{Messages: make([]realtime.BatchMessage, len(req.Messages)),
+		ExpectGeneration: req.ExpectGeneration}
+	for i, m := range req.Messages {
+		in.Messages[i] = realtime.BatchMessage{Type: m.Type, Props: m.Props}
+	}
+	got, err := h.messageOps.PostBatch(r.Context(), rt.addr, in)
+	if err != nil {
+		writeChannelError(w, r, err)
+		return
+	}
+	out := v1.PostBatchResponse{Messages: make([]v1.Message, len(got.Messages))}
+	for i, m := range got.Messages {
+		out.Messages[i] = wireMessage(m)
+	}
+	writeV1JSON(w, http.StatusCreated, out)
+}
+
 func (h *channelsHandler) create(w http.ResponseWriter, r *http.Request, rt channelRoute) {
 	var req v1.CreateChannelRequest
 	if !decodeChannelBody(w, r, &req, true) {
@@ -607,7 +642,13 @@ func (h *channelsHandler) releaseAction(w http.ResponseWriter, r *http.Request, 
 // into dst. An empty body is accepted only when emptyOK. The decode is
 // strict: an unknown field, or data after the JSON value, is a 400.
 func decodeChannelBody(w http.ResponseWriter, r *http.Request, dst any, emptyOK bool) bool {
-	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, channelBodyLimit))
+	return decodeChannelBodyLimit(w, r, dst, emptyOK, channelBodyLimit)
+}
+
+// decodeChannelBodyLimit is [decodeChannelBody] with a body cap of limit
+// bytes.
+func decodeChannelBodyLimit(w http.ResponseWriter, r *http.Request, dst any, emptyOK bool, limit int64) bool {
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	if err != nil {
 		if _, tooBig := errors.AsType[*http.MaxBytesError](err); tooBig {
 			writeV1Error(w, r, http.StatusRequestEntityTooLarge, realtime.TypeTooLarge, "Request body too large", "")
@@ -658,7 +699,7 @@ func splitChannelRoute(parts []string) (rest []string, ok bool) {
 // type rather than a channel name.
 func channelSegment(seg string) bool {
 	switch seg {
-	case messagesSegment, lifecycleSegment, typingSegment, readSegment:
+	case messagesSegment, lifecycleSegment, typingSegment, readSegment, batchSegment:
 		return true
 	}
 	return false

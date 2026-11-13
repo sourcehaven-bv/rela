@@ -52,6 +52,8 @@ var channelErrorStatus = map[string]int{
 	realtime.TypeTooManyMentions:     http.StatusUnprocessableEntity,
 	realtime.TypeSessionNotice:       http.StatusConflict,
 	realtime.TypeSessionMessage:      http.StatusConflict,
+	realtime.TypeAskedQuestion:       http.StatusConflict,
+	realtime.TypeTooManyQuestions:    http.StatusConflict,
 	realtime.TypeReminderMessage:     http.StatusConflict,
 	realtime.TypeOutputsPending:      http.StatusConflict,
 	realtime.TypeSessionOutputDenied: http.StatusForbidden,

@@ -202,7 +202,9 @@ function isRestrictedRef(value: MessagePropValue | undefined): boolean {
  * out. A list goes back as stored. A config reload can turn a string
  * property into a list, so an older message may hold a string there: a
  * non-empty string goes back as a list of one item, which the server
- * accepts. Any other stored value of a list property is left out.
+ * accepts. An object list goes back only when every item is an object;
+ * one stored as strings before a reload is left out. Any other stored
+ * value of a list property is left out.
  */
 function carryProp(
   prop: ChannelPropertySchema,
@@ -210,6 +212,12 @@ function carryProp(
 ): MessagePropInput | undefined {
   if (value === undefined || value === null) return undefined
   if (prop.list) {
+    if (prop.type === 'object') {
+      const objects =
+        Array.isArray(value) &&
+        value.every((x) => !!x && typeof x === 'object' && !Array.isArray(x))
+      return objects ? value : undefined
+    }
     if (Array.isArray(value)) return value
     return typeof value === 'string' && value.trim() !== '' ? [value] : undefined
   }
