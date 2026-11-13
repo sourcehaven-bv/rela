@@ -120,22 +120,23 @@ type uniqueScan struct {
 	violations    []*metamodel.ValidationError
 }
 
-// lookup reads the rows of e's type, at every face, whose property up.name
-// equals the value e writes, and compares them. One equality query per
-// unique property, so the check reads the rows that hold the value, not
-// the type (TKT-FED6FMM).
+// lookup reads the rows of e's type, at e's face, whose property up.name
+// holds the string value e writes, and compares them. One equality query per
+// unique property, so the check reads the rows that hold the value, not the
+// type (TKT-FED6FMM). The scalar spelling is what the derived unique index
+// serves on pgstore.
 //
-// The store's equality is a pre-filter, and [uniqueScan.compare] stays the
-// judge: PropEqual compares the stored value's string form and treats a
-// stored list as membership, so it can admit a row compare rejects, never
-// the reverse. A failed or partial read fails the write rather than admit a
+// [uniqueScan.compareProps] stays the judge; the store equality only selects
+// candidates. A failed or partial read fails the write rather than admit a
 // possible duplicate. The query does not set SkipUnreadable, so an
 // unreadable row fails it too.
 func (s *uniqueScan) lookup(ctx context.Context, st store.Store, up uniqueProp) error {
 	q := store.GraphQuery{
 		EntityType: s.e.Type,
-		Props:      []store.PropPredicate{{Property: up.name, Op: store.PropEqual, Value: up.value}},
-		Faces:      store.AllFaces(),
+		Props: []store.PropPredicate{
+			{Property: up.name, Op: store.PropEqual, Value: up.value, Scalar: true},
+		},
+		Faces: store.AtFaces(s.e.Face),
 	}
 	for h, err := range store.GraphQueryHeaders(ctx, st, q) {
 		if err != nil {
