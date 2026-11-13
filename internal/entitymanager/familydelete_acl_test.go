@@ -12,8 +12,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -126,7 +126,7 @@ func newFacedPolicyFixture(
 	gate := &deniedFaceACL{inner: d}
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: managed, Meta: meta, Templater: nopTemplater{}, Audit: aud,
-		ACL: gate, Transitions: statemachine.EmptySet(),
+		ACL: gate, Transitions: flowcfg.NoTransitions(),
 		FieldGate:       entitymanager.AllowAllFieldGate{},
 		CopyReadGate:    entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility:  allowAllCopyVisibility(t, st),

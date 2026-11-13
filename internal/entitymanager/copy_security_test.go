@@ -12,9 +12,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -110,7 +110,7 @@ func newCopyManager(
 		Templater:      nopTemplater{},
 		Audit:          audit.Nop{},
 		ACL:            acl.NopACL{},
-		Transitions:    statemachine.EmptySet(),
+		Transitions:    flowcfg.NoTransitions(),
 		FieldGate:      entitymanager.AllowAllFieldGate{},
 		CopyVisibility: reader,
 		CopyGuard:      guard,
@@ -231,7 +231,7 @@ func TestCopy_CrossEntityReadsThroughCallersGate_NoLaundering(t *testing.T) {
 
 // TestCopy_GuardDeniesWithoutPermission pins that the definition's guard is
 // a real gate, and that a guarded copy with NO guard wired fails CLOSED —
-// matching the statemachine's nil-guard rule, where a guarded edge with no
+// matching the transition enforcer's nil-guard rule, where a guarded edge with no
 // guard is denied rather than waved through.
 func TestCopy_GuardDeniesWithoutPermission(t *testing.T) {
 	const guardedMeta = `
@@ -263,7 +263,7 @@ copies:
 		mgr, err := entitymanager.New(entitymanager.Deps{
 			Store: st, Meta: meta, Templater: nopTemplater{},
 			Audit: audit.Nop{}, ACL: acl.NopACL{},
-			Transitions: statemachine.EmptySet(),
+			Transitions: flowcfg.NoTransitions(),
 			FieldGate:   entitymanager.AllowAllFieldGate{},
 			CopyGuard:   g,
 			AnchorGuard: entitymanager.NopAnchorGuard{},
@@ -357,7 +357,7 @@ func TestCopy_GuardedFaceIsWritableOnlyViaDefinition(t *testing.T) {
 	mgr, merr := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{},
 		Audit: audit.Nop{}, ACL: d,
-		Transitions: statemachine.EmptySet(),
+		Transitions: flowcfg.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		CopyGuard:   allowGuard{allow: true},
 		// The subject here is the GUARD and the write verdict, not the read
@@ -413,7 +413,7 @@ func TestCopy_GuardedFaceIsWritableOnlyViaDefinition(t *testing.T) {
 	denyMgr, derr2 := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{},
 		Audit: audit.Nop{}, ACL: d,
-		Transitions: statemachine.EmptySet(),
+		Transitions: flowcfg.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		CopyGuard:   allowGuard{allow: false},
 		// Permissive read gates, so the refusal below can only be the
@@ -468,7 +468,7 @@ func TestCopy_StrangerCannotPromote(t *testing.T) {
 	mgr, merr := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{},
 		Audit: audit.Nop{}, ACL: d,
-		Transitions:  statemachine.EmptySet(),
+		Transitions:  flowcfg.NoTransitions(),
 		FieldGate:    entitymanager.AllowAllFieldGate{},
 		CopyGuard:    allowGuard{allow: true}, // even a PERMISSIVE guard
 		CopyReadGate: req,
@@ -559,7 +559,7 @@ copies:
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: m, Templater: nopTemplater{},
 		Audit: audit.Nop{}, ACL: acl.NopACL{},
-		Transitions: statemachine.EmptySet(),
+		Transitions: flowcfg.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		CopyGuard:   allowGuard{allow: true},
 		AnchorGuard: entitymanager.NopAnchorGuard{},

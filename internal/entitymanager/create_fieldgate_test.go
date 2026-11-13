@@ -8,8 +8,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -29,7 +29,7 @@ func TestFieldGated_DefaultHandleSkipsGate(t *testing.T) {
 	st := memstore.New()
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{},
-		Transitions: statemachine.EmptySet(), FieldGate: gate,
+		Transitions: flowcfg.NoTransitions(), FieldGate: gate,
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
@@ -115,7 +115,7 @@ func TestFieldGate_DenialIsAudited(t *testing.T) {
 	sink := audit.NewMemory()
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: sink, ACL: acl.NopACL{},
-		Transitions: statemachine.EmptySet(),
+		Transitions: flowcfg.NoTransitions(),
 		FieldGate:   &recordingGate{denied: map[string]bool{"salary": true}},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})

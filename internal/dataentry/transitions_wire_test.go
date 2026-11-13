@@ -10,8 +10,8 @@ import (
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/search"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 )
 
 // fakeTransitionResolver is a FieldVerdictResolver that ALSO implements
@@ -19,7 +19,7 @@ import (
 // create-lock without compiling a real state machine. The base field/relation
 // verdicts are permissive (empty).
 type fakeTransitionResolver struct {
-	verdicts map[string][]statemachine.TransitionVerdict
+	verdicts map[string][]flowcfg.TransitionVerdict
 	entries  map[string]string
 	hidden   map[string]bool // field name → hidden (Visible=false)
 	readOnly map[string]bool // field name → read-only (Writable=false)
@@ -61,7 +61,7 @@ func (f fakeTransitionResolver) FieldVisibleOnEveryRow(_ context.Context, _, pro
 
 func (f fakeTransitionResolver) TransitionVerdicts(
 	_ context.Context, _ *entity.Entity,
-) map[string][]statemachine.TransitionVerdict {
+) map[string][]flowcfg.TransitionVerdict {
 	return f.verdicts
 }
 
@@ -98,10 +98,10 @@ func getEntityV1(t *testing.T, app *App, id string) v1.Entity {
 func TestTransitionsWire_GETCarriesTransitions(t *testing.T) {
 	app := newTestAppV1(t)
 	setTestResolver(t, app, fakeTransitionResolver{
-		verdicts: map[string][]statemachine.TransitionVerdict{
+		verdicts: map[string][]flowcfg.TransitionVerdict{
 			"status": {
-				{To: "doing", Label: "Start progress", Allowed: true, Reason: statemachine.VerdictAllowed},
-				{To: "done", Label: "Complete", Guard: "close", Allowed: false, Reason: statemachine.VerdictGuard},
+				{To: "doing", Label: "Start progress", Allowed: true, Reason: flowcfg.VerdictAllowed},
+				{To: "done", Label: "Complete", Guard: "close", Allowed: false, Reason: flowcfg.VerdictGuard},
 			},
 		},
 	})
@@ -157,7 +157,7 @@ func TestTransitionsWire_AbsentWithoutTransitionResolver(t *testing.T) {
 func TestTransitionsWire_TerminalStateKeyPresent(t *testing.T) {
 	app := newTestAppV1(t)
 	setTestResolver(t, app, fakeTransitionResolver{
-		verdicts: map[string][]statemachine.TransitionVerdict{
+		verdicts: map[string][]flowcfg.TransitionVerdict{
 			"status": {}, // terminal: key present, no moves
 		},
 	})
@@ -186,7 +186,7 @@ func TestTransitionsWire_TerminalStateKeyPresent(t *testing.T) {
 func TestTransitionsWire_HiddenMachineFieldOmitted(t *testing.T) {
 	app := newTestAppV1(t)
 	setTestResolver(t, app, fakeTransitionResolver{
-		verdicts: map[string][]statemachine.TransitionVerdict{
+		verdicts: map[string][]flowcfg.TransitionVerdict{
 			"status": {{To: "doing", Label: "Start progress", Allowed: true}},
 		},
 		hidden: map[string]bool{"status": true},
@@ -246,7 +246,7 @@ func TestTransitionsWire_CreateLocksMachineField(t *testing.T) {
 		// On a create candidate the resolver would still report transitions
 		// from the seeded value; applyCreateLock must strip them for the
 		// locked field.
-		verdicts: map[string][]statemachine.TransitionVerdict{
+		verdicts: map[string][]flowcfg.TransitionVerdict{
 			"status": {{To: "doing", Label: "Start progress", Allowed: true}},
 		},
 		entries: map[string]string{"status": "todo"},
@@ -291,10 +291,10 @@ func TestTransitionsWire_CreateLocksMachineField(t *testing.T) {
 func TestTransitionsWire_ReadOnlyFieldNotAllowed(t *testing.T) {
 	app := newTestAppV1(t)
 	setTestResolver(t, app, fakeTransitionResolver{
-		verdicts: map[string][]statemachine.TransitionVerdict{
+		verdicts: map[string][]flowcfg.TransitionVerdict{
 			"status": {
-				{To: "doing", Label: "Start progress", Allowed: true, Reason: statemachine.VerdictAllowed},
-				{To: "done", Label: "Complete", Guard: "close", Allowed: false, Reason: statemachine.VerdictGuard},
+				{To: "doing", Label: "Start progress", Allowed: true, Reason: flowcfg.VerdictAllowed},
+				{To: "done", Label: "Complete", Guard: "close", Allowed: false, Reason: flowcfg.VerdictGuard},
 			},
 		},
 		readOnly: map[string]bool{"status": true},

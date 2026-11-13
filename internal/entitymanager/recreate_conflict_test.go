@@ -9,8 +9,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -74,7 +74,7 @@ func TestRecreateEntity_SiblingFaceOfAnotherTypeIsRefused(t *testing.T) {
 	st := memstore.New()
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{},
-		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
+		ACL: acl.NopACL{}, Transitions: flowcfg.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -162,7 +162,7 @@ func TestRecreateEntity_CreateConflict_RejectsAndDoesNotClobber(t *testing.T) {
 	st := &raceCreateStore{Store: inner}
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		FieldGate: entitymanager.AllowAllFieldGate{},
-		Store:     st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
+		Store:     st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: flowcfg.NoTransitions(),
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
@@ -212,7 +212,7 @@ func TestRecreateEntity_SameTypeCreateConflict_NoClobber(t *testing.T) {
 	st := &raceCreateStore{Store: inner}
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		FieldGate: entitymanager.AllowAllFieldGate{},
-		Store:     st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
+		Store:     st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: flowcfg.NoTransitions(),
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {

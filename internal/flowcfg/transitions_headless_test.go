@@ -1,4 +1,4 @@
-package statemachine
+package flowcfg
 
 import (
 	"context"
@@ -53,7 +53,7 @@ func TestCompile_SelfLoopOnlyIsFinal(t *testing.T) {
 // refusal by the poster rule mean "guard denied".
 func TestCompile_OneBranchPerMove(t *testing.T) {
 	for _, meta := range []*metamodel.Metamodel{snapshotMeta(), relatedMeta(true)} {
-		set, err := Compile(meta, WithTraversals(&stubBinder{}))
+		set, err := CompileTransitions(meta, WithTransitionTraversals(&stubBinder{}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -73,8 +73,8 @@ func TestCompile_OneBranchPerMove(t *testing.T) {
 // reading a guard refusal of one branch as the answer for the move.
 func TestDecideMove_SeveralBranchesRefused(t *testing.T) {
 	compiled := mustCompile(t, snapshotMeta()).machines["snapshot-status"]
-	m := &Machine{name: compiled.name, def: compiled.def, exits: maps.Clone(compiled.exits)}
-	m.exits["in-review"] = append(slices.Clone(m.exits["in-review"]), branch{to: "approved"})
+	m := &HeadlessFlow{name: compiled.name, def: compiled.def, exits: maps.Clone(compiled.exits)}
+	m.exits["in-review"] = append(slices.Clone(m.exits["in-review"]), headlessBranch{to: "approved"})
 	res := m.decideMove(context.Background(), "status", "in-review", "approved",
 		ent("S1", "snapshot", "approved"), inertGuard{}, nil, edgeTraversal{})
 	if res.gate != gateUndeclared {
@@ -83,10 +83,10 @@ func TestDecideMove_SeveralBranchesRefused(t *testing.T) {
 }
 
 // An unset current value does not read as the initial state: no move leaves
-// it, not even to the initial state's successor.
+// it, not to the entry value and not to its successor (DEC-EJ00DNZ).
 func TestEnforceUpdate_UnsetIsNotInitial(t *testing.T) {
 	set := mustCompile(t, snapshotMeta())
-	for _, to := range []string{"in-review", "approved"} {
+	for _, to := range []string{"in-review", "approved", "established"} {
 		err := set.EnforceUpdate(context.Background(), ent("S1", "snapshot", ""), ent("S1", "snapshot", to),
 			inertGuard{}, nil)
 		if !errors.Is(err, ErrIllegalTransition) {
@@ -116,7 +116,7 @@ func TestEnforceUpdate_StrandedValue(t *testing.T) {
 func TestEnforceUpdate_GuardBeforePrecondition(t *testing.T) {
 	set := mustCompile(t, snapshotMeta())
 	noSignature := fakeLookup{counts: map[string]int{}}
-	for name, g := range map[string]Guard{"unheld": fakeGuard{}, "nil": nil} {
+	for name, g := range map[string]PermissionGuard{"unheld": fakeGuard{}, "nil": nil} {
 		err := set.EnforceUpdate(context.Background(), ent("S1", "snapshot", "approved"),
 			ent("S1", "snapshot", "established"), g, noSignature)
 		var ge *GuardError
@@ -158,7 +158,7 @@ func TestEnforceUpdate_PreconditionSkippedWhenGuardUnheld(t *testing.T) {
 // The rules set no Gate, so flow.Gated cannot occur; if it ever does, the
 // move is refused, never allowed.
 func TestOutcome_UnexpectedFailsClosed(t *testing.T) {
-	res := outcome(flow.Decision[branch]{Outcome: flow.Gated}, "")
+	res := outcome(flow.Decision[headlessBranch]{Outcome: flow.Gated}, "")
 	if res.gate == gateNone || !errors.Is(res.err, errUnexpectedOutcome) {
 		t.Fatalf("Gated outcome = %+v, want a refusal", res)
 	}
@@ -175,7 +175,7 @@ func TestPerformable_BindErrorFailsOnlyTraversingEdges(t *testing.T) {
 	ct.Values = append(ct.Values, "parked")
 	ct.Transitions = append(ct.Transitions, metamodel.TransitionDef{From: "open", To: "parked", When: `entity.value == "parked"`})
 	meta.Types["work-status"] = ct
-	set, err := Compile(meta, WithTraversals(&stubBinder{err: errors.New("store down")}))
+	set, err := CompileTransitions(meta, WithTransitionTraversals(&stubBinder{err: errors.New("store down")}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestPerformable_BindErrorFailsOnlyTraversingEdges(t *testing.T) {
 func TestDecideMove_VerdictMatchesEnforcement(t *testing.T) {
 	guards := map[string]struct {
 		permission string
-		holder     Guard
+		holder     PermissionGuard
 	}{
 		"unguarded": {"", fakeGuard{}},
 		"held":      {"p", fakeGuard{perms: map[string]bool{"p": true}}},
@@ -229,7 +229,7 @@ func TestDecideMove_VerdictMatchesEnforcement(t *testing.T) {
 					if bindErr {
 						binder.err = errors.New("store down")
 					}
-					set, err := Compile(meta, WithTraversals(binder))
+					set, err := CompileTransitions(meta, WithTransitionTraversals(binder))
 					if err != nil {
 						t.Fatal(err)
 					}

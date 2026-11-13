@@ -191,7 +191,6 @@ components:
   syncmerge:        { in: internal/syncmerge }
   relresolve:       { in: internal/relresolve }
   rollup:           { in: internal/rollup }
-  statemachine:     { in: internal/statemachine }
   writerule:        { in: internal/writerule }
   tracer:           { in: internal/tracer }
   validation:       { in: internal/validation }
@@ -769,7 +768,7 @@ deps:
       - search
       - searchparser
       - state
-      - statemachine
+      - flowcfg
       - storage
       - store
       - templating
@@ -1068,7 +1067,7 @@ deps:
       # appbuild constructs the affordance resolver so the field write gate
       # and the two gated-read bundles can share ONE instance (TKT-0XL8MF).
       # Safe as a dependency edge: affordances is a near-leaf (acl, entity,
-      # metamodel, predicate*, principal, statemachine) and imports no
+      # metamodel, predicate*, principal, flowcfg) and imports no
       # wiring package, so this cannot close a cycle.
       - affordances
       - app
@@ -1095,7 +1094,6 @@ deps:
       - script
       - search
       - state
-      - statemachine
       - storage
       - store
       - templating
@@ -1422,7 +1420,7 @@ deps:
       - predicate
       - predicatefns
       - principal
-      - statemachine
+      - flowcfg
       # SearchFieldScope compiles `visible:` grants into store predicates:
       # queryplan decides exact lowering, relresolve resolves related() hops,
       # and the result is a search.FieldScope (search never imports
@@ -1660,7 +1658,7 @@ deps:
       - mentions
       - metamodel
       - principal
-      - statemachine
+      - flowcfg
       - store
       - templating
       - writerule
@@ -1694,6 +1692,12 @@ deps:
       - filter
       - metamodel
   # flows.yaml consumes the schema and acl.yaml; neither knows it exists.
+  # flowcfg also compiles schema transitions into headless flows and
+  # enforces them on the write path (TKT-ZRQSGCM), so entitymanager,
+  # affordances and dataentry import it.
+  # GUARD: flowcfg takes no runtime component (store, lua, jobs, automation,
+  # flowengine, flowrun). The enforcer reads the graph only through the
+  # collaborators its caller injects.
   flowcfg:
     mayDependOn:
       - acl
@@ -1746,15 +1750,6 @@ deps:
       - predicate
       - predicatefns
       - store
-  statemachine:
-    mayDependOn:
-      - entity
-      # Enum transitions compile to headless flows and decide through
-      # flow.Decide (TKT-12RC7JT). flow is a leaf.
-      - flow
-      - metamodel
-      - predicate
-      - predicatefns
   # Write-enforced validation rules (TKT-5CESLHD): predicate only, never lua.
   writerule:
     mayDependOn:

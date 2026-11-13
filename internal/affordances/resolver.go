@@ -10,11 +10,11 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 )
 
 // FieldVerdicts carries per-entity field-level affordance decisions.
@@ -80,7 +80,7 @@ type PolicyResolver struct {
 	// [PolicyResolver.TransitionVerdicts] to resolve which transitions the
 	// current principal can perform on an entity. May be nil / empty (a
 	// metamodel with no transitions) — TransitionVerdicts then returns nil.
-	machines *statemachine.Set
+	machines *flowcfg.Transitions
 
 	// envs holds the compiled predicate env per entity type, reused
 	// across grants of that type.
@@ -235,7 +235,7 @@ func New(
 // the resolver escapes). It is a setter rather than a [New] parameter
 // deliberately: machines are optional and adding a required arg would churn all
 // [New] callers. Never call WithMachines concurrently with TransitionVerdicts.
-func (r *PolicyResolver) WithMachines(m *statemachine.Set) *PolicyResolver {
+func (r *PolicyResolver) WithMachines(m *flowcfg.Transitions) *PolicyResolver {
 	r.machines = m
 	// A transition verdict is served to principals (`_transitions`) and its
 	// when: reads the raw graph, so it carries the same bit an ACL grant does.
@@ -945,7 +945,7 @@ func (r *PolicyResolver) applyRelationVisible(
 // (subject-aware) AND `when:` precondition met — plus, for blocked edges, which
 // gate blocked them (TKT-FT8J9). It is the read-side counterpart of the write
 // path's transition enforcement, sharing the same evaluation via
-// [statemachine.Set.Performable], so the "what can I do" answer here cannot
+// [flowcfg.Transitions.Performable], so the "what can I do" answer here cannot
 // disagree with what a write would accept.
 //
 // Returns an empty map when no machines are wired, e is nil, or e's type has no
@@ -955,8 +955,8 @@ func (r *PolicyResolver) applyRelationVisible(
 // internal/entitymanager/CLAUDE.md.
 func (r *PolicyResolver) TransitionVerdicts(
 	ctx context.Context, e *entity.Entity,
-) map[string][]statemachine.TransitionVerdict {
-	out := map[string][]statemachine.TransitionVerdict{}
+) map[string][]flowcfg.TransitionVerdict {
+	out := map[string][]flowcfg.TransitionVerdict{}
 	if e == nil || r.machines == nil || r.machines.Empty() {
 		return out
 	}
@@ -973,7 +973,7 @@ func (r *PolicyResolver) TransitionVerdicts(
 		// [] rather than null.
 		vs := r.machines.Performable(ctx, e, prop, guard, r.lookup)
 		if vs == nil {
-			vs = []statemachine.TransitionVerdict{}
+			vs = []flowcfg.TransitionVerdict{}
 		}
 		out[prop] = vs
 	}
@@ -981,7 +981,7 @@ func (r *PolicyResolver) TransitionVerdicts(
 }
 
 // transitionGuard adapts the resolver's ACL into the subject-aware
-// [statemachine.Guard] the transition resolver needs, bound to the ctx
+// [flowcfg.PermissionGuard] the transition resolver needs, bound to the ctx
 // principal. It evaluates with the per-operation [acl.Request] the request edge
 // attached to ctx; with none attached the guard holds no permission. Answers
 // via [acl.Request.HoldsPermissionForEntity] so ownership-relation-conferred
@@ -997,7 +997,7 @@ func (r *PolicyResolver) TransitionVerdicts(
 // no-policy/CLI path expecting inert behavior: there, an unstamped principal
 // would be shown zero performable transitions even where a write would succeed
 // inert. If such a caller is ever needed, add the policy-active tier here first.
-func (r *PolicyResolver) transitionGuard(ctx context.Context) statemachine.Guard {
+func (r *PolicyResolver) transitionGuard(ctx context.Context) flowcfg.PermissionGuard {
 	req, err := r.requestFor(ctx)
 	if err != nil {
 		return requestGuard{} // no resolved identity → holds no guarded permission

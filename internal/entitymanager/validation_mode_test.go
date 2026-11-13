@@ -11,8 +11,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -69,7 +69,7 @@ func newModeManager(t *testing.T, mode entitymanager.ValidationMode) modeFixture
 	if err != nil {
 		t.Fatal(err)
 	}
-	set, err := statemachine.Compile(meta)
+	set, err := flowcfg.CompileTransitions(meta)
 	if err != nil {
 		t.Fatal(err)
 	}

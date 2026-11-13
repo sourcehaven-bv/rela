@@ -1,4 +1,4 @@
-package statemachine
+package flowcfg
 
 import (
 	"context"
@@ -63,17 +63,17 @@ func relatedMeta(both bool) *metamodel.Metamodel {
 // A machine shared by two types is checked per (type, property): the path
 // resolves from ticket but not from task.
 func TestCompile_RelatedValidatedPerType(t *testing.T) {
-	_, err := Compile(relatedMeta(false), WithTraversals(&stubBinder{}))
+	_, err := CompileTransitions(relatedMeta(false), WithTransitionTraversals(&stubBinder{}))
 	if err == nil || !strings.Contains(err.Error(), `entity "task"`) || strings.Contains(err.Error(), `entity "ticket"`) {
 		t.Fatalf("err = %v, want a problem for task only", err)
 	}
-	if _, err := Compile(relatedMeta(true), WithTraversals(&stubBinder{})); err != nil {
+	if _, err := CompileTransitions(relatedMeta(true), WithTransitionTraversals(&stubBinder{})); err != nil {
 		t.Fatalf("both types have the relation: %v", err)
 	}
 }
 
 func TestCompile_RelatedWithoutBinderRefused(t *testing.T) {
-	if _, err := Compile(relatedMeta(true)); err == nil {
+	if _, err := CompileTransitions(relatedMeta(true)); err == nil {
 		t.Fatal("want a compile problem when no binder answers related()")
 	}
 }
@@ -93,7 +93,7 @@ func TestEnforceUpdate_Related(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b := &stubBinder{answer: map[string]bool{"T-1": tc.owned}}
-			set, err := Compile(relatedMeta(true), WithTraversals(b))
+			set, err := CompileTransitions(relatedMeta(true), WithTransitionTraversals(b))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -112,7 +112,7 @@ func TestEnforceUpdate_Related(t *testing.T) {
 // which would pass the negated edge.
 func TestEnforceUpdate_RelatedBindErrorFailsClosed(t *testing.T) {
 	b := &stubBinder{err: errors.New("store down")}
-	set, err := Compile(relatedMeta(true), WithTraversals(b))
+	set, err := CompileTransitions(relatedMeta(true), WithTransitionTraversals(b))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestEnforceUpdate_RelatedBindErrorFailsClosed(t *testing.T) {
 
 func TestEnforceUpdate_RelatedOnNamedFaceFailsClosed(t *testing.T) {
 	b := &stubBinder{}
-	set, err := Compile(relatedMeta(true), WithTraversals(b))
+	set, err := CompileTransitions(relatedMeta(true), WithTransitionTraversals(b))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestEnforceUpdate_RelatedOnNamedFaceFailsClosed(t *testing.T) {
 // enforcement.
 func TestPerformable_RelatedBindsOnce(t *testing.T) {
 	b := &stubBinder{answer: map[string]bool{"T-1": true}}
-	set, err := Compile(relatedMeta(true), WithTraversals(b))
+	set, err := CompileTransitions(relatedMeta(true), WithTransitionTraversals(b))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestPerformable_RelatedBindsOnce(t *testing.T) {
 // A machine without related() never binds.
 func TestEnforceUpdate_NoRelatedNoBind(t *testing.T) {
 	b := &stubBinder{}
-	set, err := Compile(snapshotMeta(), WithTraversals(b))
+	set, err := CompileTransitions(snapshotMeta(), WithTransitionTraversals(b))
 	if err != nil {
 		t.Fatal(err)
 	}

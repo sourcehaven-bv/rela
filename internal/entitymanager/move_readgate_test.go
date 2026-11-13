@@ -9,8 +9,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -82,7 +82,7 @@ func readGatedOrderManager(
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: orderableMetamodel(t, mode), Templater: nopTemplater{}, Audit: sink,
 		ACL:         hideOneACL{hidden: hidden},
-		Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		Transitions: flowcfg.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {

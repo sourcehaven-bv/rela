@@ -10,8 +10,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -92,7 +92,7 @@ relations:
 	st := memstore.New()
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: aud,
-		ACL: a, Transitions: statemachine.EmptySet(),
+		ACL: a, Transitions: flowcfg.NoTransitions(),
 		FieldGate: entitymanager.AllowAllFieldGate{}, RelationVersionRecorder: rec,
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})

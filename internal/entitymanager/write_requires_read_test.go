@@ -11,7 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -53,7 +53,7 @@ func writeBlindManagerAudit(
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: parseMeta(t), Templater: nopTemplater{},
 		Audit: aud, ACL: a(st),
-		Transitions:    statemachine.EmptySet(),
+		Transitions:    flowcfg.NoTransitions(),
 		FieldGate:      entitymanager.AllowAllFieldGate{},
 		AnchorGuard:    entitymanager.NopAnchorGuard{},
 		CopyReadGate:   entitymanager.AllowAllCopyReadGate{},

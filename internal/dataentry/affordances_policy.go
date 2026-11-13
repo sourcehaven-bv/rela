@@ -6,8 +6,8 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/search"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -107,12 +107,12 @@ func (p *policyResolver) RelationFieldVerdicts(
 
 // TransitionVerdicts forwards to the wrapped policy resolver, making
 // policyResolver satisfy [TransitionResolver] (TKT-3G93B8). The affordances
-// resolver returns statemachine verdicts directly (no wire-shape mapping here);
+// resolver returns transition verdicts directly (no wire-shape mapping here);
 // the serializer maps them to v1.Transition. Only the policy-backed resolver
 // implements this — Nop / Demo do not, so `_transitions` is absent under them.
 func (p *policyResolver) TransitionVerdicts(
 	ctx context.Context, e *entityPkg.Entity,
-) map[string][]statemachine.TransitionVerdict {
+) map[string][]flowcfg.TransitionVerdict {
 	return p.inner.TransitionVerdicts(ctx, e)
 }
 

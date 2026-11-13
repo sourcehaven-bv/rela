@@ -10,7 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -50,9 +50,9 @@ func (s *idListingStore) EntityIDs(ctx context.Context) ([]string, error) {
 func TestCreate_GeneratesIDFromIDListing(t *testing.T) {
 	st := &idListingStore{Store: memstore.New()}
 	meta := parseMeta(t)
-	machines, err := statemachine.Compile(meta)
+	machines, err := flowcfg.CompileTransitions(meta)
 	if err != nil {
-		t.Fatalf("statemachine.Compile: %v", err)
+		t.Fatalf("flowcfg.CompileTransitions: %v", err)
 	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store:       st,

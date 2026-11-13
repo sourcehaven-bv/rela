@@ -12,8 +12,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -55,7 +55,7 @@ func newOwningManager(t *testing.T) (*entitymanager.Manager, store.Store) {
 		Templater:   nopTemplater{},
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
-		Transitions: statemachine.EmptySet(),
+		Transitions: flowcfg.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -249,7 +249,7 @@ func newOwnedDeleteFixtureWith(
 	// Seed with an allow-all manager; the one under test denies.
 	seed, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{},
-		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		ACL: acl.NopACL{}, Transitions: flowcfg.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
@@ -276,7 +276,7 @@ func newOwnedDeleteFixtureWith(
 	}
 	f.mgr, err = entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: f.aud,
-		ACL: denyIDsACL{ids: ids}, Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		ACL: denyIDsACL{ids: ids}, Transitions: flowcfg.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		AnchorGuard: guard,
 	})
 	if err != nil {
@@ -492,7 +492,7 @@ func TestAutomationCreateRelation_OwningRules(t *testing.T) {
 	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: m, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{},
-		Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		Transitions: flowcfg.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		Automations: engine, Cascade: runner,
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -596,7 +596,7 @@ func TestCreateRelation_TypeMismatchOnOwningEdgeRefused(t *testing.T) {
 		Templater:   nopTemplater{},
 		Audit:       mem,
 		ACL:         acl.NopACL{},
-		Transitions: statemachine.EmptySet(),
+		Transitions: flowcfg.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})

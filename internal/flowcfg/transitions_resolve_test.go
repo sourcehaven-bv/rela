@@ -1,4 +1,4 @@
-package statemachine
+package flowcfg
 
 import (
 	"context"
@@ -19,7 +19,7 @@ func TestPerformable_ShapeAndGates(t *testing.T) {
 
 	tests := []struct {
 		name   string
-		guard  Guard
+		guard  PermissionGuard
 		counts map[string]int
 		want   map[string]TransitionVerdict // keyed by To
 	}{
@@ -92,7 +92,7 @@ func TestPerformable_NilCases(t *testing.T) {
 		}
 	})
 	t.Run("nil set", func(t *testing.T) {
-		var s *Set
+		var s *Transitions
 		if got := s.Performable(ctx, ent("A", "snapshot", "approved"), "status", allow, fakeLookup{}); got != nil {
 			t.Fatalf("nil set should be nil, got %+v", got)
 		}
@@ -145,7 +145,7 @@ func TestPerformable_MatchesEnforceUpdate(t *testing.T) {
 		etype  string
 		prop   string
 		from   string
-		guard  Guard
+		guard  PermissionGuard
 		lookup GraphLookup
 		// targets to also enforce-check even if Performable omits them (e.g.
 		// self-loops, which Performable must NOT list but which are no-ops on

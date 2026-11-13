@@ -11,8 +11,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -80,7 +80,7 @@ func newRecheckManager(t *testing.T, autos []automation.Automation) (*entitymana
 		ACL:         acl.NopACL{},
 		Automations: engine,
 		Cascade:     runner,
-		Transitions: statemachine.EmptySet(),
+		Transitions: flowcfg.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -259,9 +259,9 @@ func TestCascadeWrite_TransitionRecheckedAfterAutomation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("metamodel.Parse: %v", err)
 	}
-	machines, err := statemachine.Compile(meta)
+	machines, err := flowcfg.CompileTransitions(meta)
 	if err != nil {
-		t.Fatalf("statemachine.Compile: %v", err)
+		t.Fatalf("flowcfg.CompileTransitions: %v", err)
 	}
 	st := memstore.New()
 
@@ -358,7 +358,7 @@ relations: {}`, 1)
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{},
 		ACL: acl.NopACL{}, Automations: engine, Cascade: runner,
-		Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		Transitions: flowcfg.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {

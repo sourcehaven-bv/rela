@@ -11,8 +11,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -131,9 +131,9 @@ func newCopyModeManager(t *testing.T, mode entitymanager.ValidationMode) (*entit
 	if err != nil {
 		t.Fatalf("autocascade.New: %v", err)
 	}
-	machines, err := statemachine.Compile(meta)
+	machines, err := flowcfg.CompileTransitions(meta)
 	if err != nil {
-		t.Fatalf("statemachine.Compile: %v", err)
+		t.Fatalf("flowcfg.CompileTransitions: %v", err)
 	}
 	st := memstore.New()
 	mgr, err := entitymanager.New(entitymanager.Deps{

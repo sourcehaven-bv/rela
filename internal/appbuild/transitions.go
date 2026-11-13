@@ -7,13 +7,13 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
-// transitionGuard adapts the ACL to the [statemachine.Guard] the transition
+// transitionGuard adapts the ACL to the [flowcfg.PermissionGuard] the transition
 // enforcer needs. It answers "does the ctx principal hold `permission` for the
 // subject entity" using the SUBJECT-AWARE resolver
 // ([acl.Request.HoldsPermissionForEntity]) — so a permission conferred by an
@@ -61,7 +61,7 @@ func requestFor(ctx context.Context, d *acl.Declarative) (*acl.Request, bool) {
 	return req, false
 }
 
-// transitionGraph adapts the store to the [statemachine.GraphLookup] a `when:`
+// transitionGraph adapts the store to the [flowcfg.GraphLookup] a `when:`
 // precondition needs (has_relation / count_relations). One outgoing scan per
 // evaluation answers both host functions.
 type transitionGraph struct{ st store.Store }
@@ -80,13 +80,13 @@ func (g transitionGraph) OutgoingCounts(ctx context.Context, fromID string) map[
 }
 
 // TransitionWiring bundles the compiled state machines and the collaborators
-// the entitymanager needs to enforce them. Returned by [CompileTransitions] so
+// the entitymanager needs to enforce them. Returned by [BuildTransitionWiring] so
 // every wiring site (production assemble + test fixtures) builds the enforcer
 // the same way.
 type TransitionWiring struct {
-	Enforcer *statemachine.Set
-	Guard    statemachine.Guard
-	Graph    statemachine.GraphLookup
+	Enforcer *flowcfg.Transitions
+	Guard    flowcfg.PermissionGuard
+	Graph    flowcfg.GraphLookup
 
 	// ReadGate and Visibility are the COPY path's two read gates. They live
 	// here rather than beside the copy code because they share this bundle's
@@ -98,7 +98,7 @@ type TransitionWiring struct {
 	// pass a policy-backed ACL with both gates nil — the exact
 	// forgotten-wiring state entitymanager.New now refuses (#1437).
 	//
-	// Nil: never — CompileTransitions always populates both. Their POSTURE
+	// Nil: never — BuildTransitionWiring always populates both. Their POSTURE
 	// follows resolvedACL (inert without a policy, fail-closed with one),
 	// which is what keeps the no-policy CLI case working without leaving a
 	// nil for a wiring site to inherit by accident.
@@ -106,7 +106,19 @@ type TransitionWiring struct {
 	Visibility entitymanager.CopyReader
 }
 
-// CompileTransitions builds the executable state machines from the metamodel
+// CompileHeadlessFlows compiles the transitions of meta into headless flows,
+// with `related(...)` in `when:` answered from the raw store st. Boot, the
+// schema check, the transition wiring and `rela flow show` all go through it,
+// so they load the same machines. The data-entry affordance resolver compiles
+// its own copy with its own binder (see dataentry's affordances_stub.go).
+//
+// A `when:` related() reads the raw store on both sides: enforcement is a
+// write-path decision, and Performable must agree with it (TKT-205V2N).
+func CompileHeadlessFlows(meta *metamodel.Metamodel, st store.Store) (*flowcfg.Transitions, error) {
+	return flowcfg.CompileTransitions(meta, flowcfg.WithTransitionTraversals(ungatedBinder(meta, st)))
+}
+
+// BuildTransitionWiring builds the executable state machines from the metamodel
 // and the wiring collaborators the entitymanager needs. A metamodel with no
 // transitions yields an empty (no-op) enforcer. Returns an error only when a
 // machine is malformed (surfaced at boot). Exported so test fixtures wire the
@@ -116,10 +128,8 @@ type TransitionWiring struct {
 // policy-backed [*acl.Declarative], a served write that is missing its
 // [acl.Request] is denied rather than allowed (RR-UOBUC). With NopACL /
 // ReadOnlyACL there is no policy, so the guard stays inert.
-func CompileTransitions(meta *metamodel.Metamodel, st store.Store, resolvedACL acl.ACL) (TransitionWiring, error) {
-	// A `when:` related() reads the raw store on both sides: enforcement is a
-	// write-path decision, and Performable must agree with it (TKT-205V2N).
-	set, err := statemachine.Compile(meta, statemachine.WithTraversals(ungatedBinder(meta, st)))
+func BuildTransitionWiring(meta *metamodel.Metamodel, st store.Store, resolvedACL acl.ACL) (TransitionWiring, error) {
+	set, err := CompileHeadlessFlows(meta, st)
 	if err != nil {
 		return TransitionWiring{}, err
 	}

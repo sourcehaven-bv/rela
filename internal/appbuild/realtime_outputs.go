@@ -12,11 +12,11 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -432,7 +432,7 @@ func patchDenial(err error) error {
 		return &realtime.OutputError{Code: realtime.OutputCodeConflict, WroteNothing: true}
 	case errors.As(err, &conflict):
 		return &realtime.OutputError{Code: realtime.OutputCodeConflict, Retryable: true, WroteNothing: true}
-	case errors.Is(err, statemachine.ErrIllegalTransition):
+	case errors.Is(err, flowcfg.ErrIllegalTransition):
 		// Only an update moves a state property, so the create classifier
 		// does not know this refusal.
 		return &realtime.OutputError{Code: realtime.OutputCodeInvalid, WroteNothing: true}

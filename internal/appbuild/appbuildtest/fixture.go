@@ -240,7 +240,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 	scriptEngine := script.NewEngine()
 	auditSink, aclImpl := cfg.auditOrNop(), cfg.aclOrNop()
 
-	tw, err := appbuild.CompileTransitions(meta, st, aclImpl)
+	tw, err := appbuild.BuildTransitionWiring(meta, st, aclImpl)
 	if err != nil {
 		panic(fmt.Sprintf("appbuildtest.New: compile transitions: %v", err))
 	}
@@ -281,7 +281,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		// The copy deps (TKT-WRLDAPI item 5), all three taken from the same
 		// TransitionWiring production uses. CopyGuard reuses tw.Guard for the
 		// reason production does: entitymanager.CopyGuard and
-		// statemachine.Guard are deliberately the same shape, so the two
+		// flowcfg.PermissionGuard are deliberately the same shape, so the two
 		// cannot drift into asking different questions.
 		//
 		// These were previously left nil here on the reasoning that this

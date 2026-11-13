@@ -1,8 +1,9 @@
-package statemachine
+package flowcfg
 
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/flow"
@@ -11,23 +12,23 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 )
 
-// Compile builds the executable state-machine [Set] from a metamodel's
+// CompileTransitions builds the executable state-machine [Transitions] from a metamodel's
 // declarative transitions. It runs once at startup. It returns an error
 // (aggregating every problem found) if any machine is malformed — a dangling
 // from/to/initial, or a `when:` predicate that fails to compile — so a bad
 // metamodel is rejected at boot, not at write time.
 //
-// A metamodel with no transitions compiles to an empty [Set]; [Set.EnforceUpdate] is
+// A metamodel with no transitions compiles to an empty [Transitions]; [Transitions.EnforceUpdate] is
 // then a no-op and every write behaves exactly as it did before this feature.
 //
 // meta must not be nil (a required input from appbuild).
-func Compile(meta *metamodel.Metamodel, opts ...Option) (*Set, error) {
+func CompileTransitions(meta *metamodel.Metamodel, opts ...TransitionOption) (*Transitions, error) {
 	if meta == nil {
-		return nil, errors.New("statemachine: Compile: nil metamodel")
+		return nil, errors.New("flowcfg: CompileTransitions: nil metamodel")
 	}
 
-	set := &Set{
-		machines: map[string]*Machine{},
+	set := &Transitions{
+		machines: map[string]*HeadlessFlow{},
 		propType: map[string]map[string]string{},
 	}
 	for _, opt := range opts {
@@ -94,15 +95,15 @@ func Compile(meta *metamodel.Metamodel, opts ...Option) (*Set, error) {
 
 	if len(problems) > 0 {
 		sort.Strings(problems)
-		return nil, fmt.Errorf("statemachine: invalid transitions:\n  %s", joinLines(problems))
+		return nil, fmt.Errorf("flowcfg: invalid transitions:\n  %s", joinLines(problems))
 	}
 	return set, nil
 }
 
 // compileMachine builds one machine and returns it plus any well-formedness
 // problems. A machine with fatal problems still returns a (partial) machine so
-// indexing proceeds, but Compile aggregates the problems into a boot error.
-func compileMachine(typeName string, ct metamodel.CustomType) (machine *Machine, problems []string) {
+// indexing proceeds, but CompileTransitions aggregates the problems into a boot error.
+func compileMachine(typeName string, ct metamodel.CustomType) (machine *HeadlessFlow, problems []string) {
 	values := map[string]bool{}
 	for _, v := range ct.Values {
 		values[v] = true
@@ -145,7 +146,7 @@ func compileMachine(typeName string, ct metamodel.CustomType) (machine *Machine,
 	}
 	// coverage-ignore-end
 
-	out := map[string][]branch{}
+	out := map[string][]headlessBranch{}
 	seen := map[[2]string]bool{}
 	for i, tr := range ct.Transitions {
 		if !values[tr.From] {
@@ -165,7 +166,7 @@ func compileMachine(typeName string, ct metamodel.CustomType) (machine *Machine,
 			}
 		}
 		// One branch per (from, to) is what lets a refusal by the poster
-		// rule mean "guard denied" (see Machine.decideMove).
+		// rule mean "guard denied" (see HeadlessFlow.decideMove).
 		key := [2]string{tr.From, tr.To}
 		if seen[key] {
 			problems = append(problems, fmt.Sprintf(
@@ -173,16 +174,20 @@ func compileMachine(typeName string, ct metamodel.CustomType) (machine *Machine,
 			continue
 		}
 		seen[key] = true
-		out[tr.From] = append(out[tr.From], branch{to: tr.To, guard: tr.Guard, when: prog, label: tr.Label})
+		out[tr.From] = append(out[tr.From], headlessBranch{
+			to: tr.To, guard: tr.Guard, when: prog, whenSource: tr.When, label: tr.Label,
+		})
 	}
 
-	return &Machine{name: typeName, def: definition(ct.Values, entry, out), exits: out}, problems
+	return &HeadlessFlow{
+		name: typeName, states: slices.Clone(ct.Values), def: headlessDefinition(ct.Values, entry, out), exits: out,
+	}, problems
 }
 
 // definition builds the headless flow's [flow.Definition]: one state per
 // enum value in declaration order, initial at entry. A value with no branch
 // to another value is final: nothing moves the entity out of it.
-func definition(values []string, entry string, out map[string][]branch) *flow.Definition {
+func headlessDefinition(values []string, entry string, out map[string][]headlessBranch) *flow.Definition {
 	states := make([]flow.State, 0, len(values))
 	for _, v := range values {
 		final := true
@@ -202,9 +207,9 @@ func definition(values []string, entry string, out map[string][]branch) *flow.De
 // and may be shared by several entity types, and a relation path resolves
 // from the entity type, so the same `when:` can be valid on one type and not
 // on another. Each pair that uses the machine is checked on its own.
-func (s *Set) traversalProblems(meta *metamodel.Metamodel, etName, propName, typeName string) []string {
+func (s *Transitions) traversalProblems(meta *metamodel.Metamodel, etName, propName, typeName string) []string {
 	var problems []string
-	s.machines[typeName].eachBranch(func(from string, b branch) {
+	s.machines[typeName].eachBranch(func(from string, b headlessBranch) {
 		if b.when == nil || len(b.when.Traversals()) == 0 {
 			return
 		}

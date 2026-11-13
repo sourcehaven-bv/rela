@@ -4,7 +4,7 @@ import (
 	"errors"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -49,14 +49,14 @@ func ClassifyCreateError(err error) CreateErrorClass {
 	switch {
 	case err == nil:
 		return CreateErrUnknown
-	case errors.As(err, &forbidden), errors.As(err, &denial), errors.Is(err, statemachine.ErrGuardDenied):
+	case errors.As(err, &forbidden), errors.As(err, &denial), errors.Is(err, flowcfg.ErrGuardDenied):
 		return CreateErrForbidden
 	case errors.Is(err, ErrEntityAlreadyExists), errors.Is(err, ErrRelationAlreadyExists):
 		return CreateErrConflict
 	case errors.Is(err, ErrFaceRequired), errors.Is(err, ErrFaceNotDeclared):
 		return CreateErrFace
 	case errors.As(err, &invalid), errors.As(err, &invalidRel), errors.As(err, &fileWrite),
-		errors.Is(err, statemachine.ErrIllegalEntry), errors.Is(err, statemachine.ErrPreconditionFailed),
+		errors.Is(err, flowcfg.ErrIllegalEntry), errors.Is(err, flowcfg.ErrPreconditionFailed),
 		errors.Is(err, ErrCustomIDNotAllowed), errors.Is(err, ErrCardinalityExceeded), errors.Is(err, ErrOwningRule),
 		errors.Is(err, ErrEntityNotFound), errors.Is(err, store.ErrConflictBlock):
 		return CreateErrInvalid

@@ -13,8 +13,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -93,7 +93,7 @@ func TestRestore_OwnedGrantThroughOwner(t *testing.T) {
 			require.NoError(t, err)
 			mgr, err := entitymanager.New(entitymanager.Deps{
 				Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: decl,
-				Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+				Transitions: flowcfg.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 				CopyReadGate: entitymanager.AllowAllCopyReadGate{}, CopyVisibility: allowAllCopyVisibility(t, st),
 				AnchorGuard: entitymanager.NopAnchorGuard{},
 			})
@@ -184,7 +184,7 @@ func allowAllManager(t *testing.T, st store.Store, meta *metamodel.Metamodel, si
 	t.Helper()
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: sink,
-		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		ACL: acl.NopACL{}, Transitions: flowcfg.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	require.NoError(t, err)
@@ -331,7 +331,7 @@ func TestCopy_OwningEdgeFollowsTheRules(t *testing.T) {
 	st := memstore.New()
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{},
-		Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		Transitions: flowcfg.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		CopyGuard:   allowGuard{allow: true},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})

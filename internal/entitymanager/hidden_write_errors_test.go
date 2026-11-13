@@ -11,8 +11,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -55,7 +55,7 @@ func hiddenWriteManager(t *testing.T, st store.Store) *entitymanager.Manager {
 		Templater:      nopTemplater{},
 		Audit:          audit.Nop{},
 		ACL:            d,
-		Transitions:    statemachine.EmptySet(),
+		Transitions:    flowcfg.NoTransitions(),
 		FieldGate:      entitymanager.AllowAllFieldGate{},
 		CopyReadGate:   entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility: allowAllCopyVisibility(t, st),
@@ -284,7 +284,7 @@ func facedHiddenManager(t *testing.T, edges []entity.RelationKey) *entitymanager
 	seedHidden(t, st, rows, edges)
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{},
-		ACL: d, Transitions: statemachine.EmptySet(),
+		ACL: d, Transitions: flowcfg.NoTransitions(),
 		FieldGate:      entitymanager.AllowAllFieldGate{},
 		CopyReadGate:   entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility: allowAllCopyVisibility(t, st),

@@ -11,7 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -221,10 +221,10 @@ func (s *ScopedUpdates) advancePin(written *entity.Entity) {
 // transitionSentinels are the state-machine failures whose message names the
 // stored value.
 var transitionSentinels = []error{
-	statemachine.ErrIllegalTransition,
-	statemachine.ErrGuardDenied,
-	statemachine.ErrPreconditionFailed,
-	statemachine.ErrIllegalEntry,
+	flowcfg.ErrIllegalTransition,
+	flowcfg.ErrGuardDenied,
+	flowcfg.ErrPreconditionFailed,
+	flowcfg.ErrIllegalEntry,
 }
 
 // valueFreeTransitionError replaces a state-machine failure with a message
@@ -238,7 +238,7 @@ func valueFreeTransitionError(err error) error {
 		return nil
 	}
 	// A guard denial reaches here as the 403 that mapTransitionError builds,
-	// with the statemachine message as its reason.
+	// with the transition enforcer message as its reason.
 	var fe *acl.ForbiddenError
 	if errors.As(err, &fe) && fe.Decision.RuleKind == transitionGuardRuleKind {
 		slog.Info("elevated update: transition refused", "rule_kind", fe.Decision.RuleKind)

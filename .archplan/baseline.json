@@ -302,11 +302,11 @@
       "at": "2026-10-28T13:29:06Z",
       "title": "EphemeralMessage (apiwire) and EphemeralView (realtime) share most of their fields."
     },
-    "types.synonyms-b1ec2e815eed": {
+    "types.synonyms-bd6f5a9191fe": {
       "state": "accepted",
       "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
       "at": "2026-10-28T13:29:06Z",
-      "title": "Transition (apiwire) and TransitionVerdict (statemachine) share most of their fields."
+      "title": "Transition (apiwire) and TransitionVerdict (flowcfg) share most of their fields."
     },
     "concepts.data_clump-b87dc3e520e1": {
       "state": "accepted",
@@ -2420,24 +2420,6 @@
       "at": "2026-10-28T13:29:07Z",
       "title": "sqlitedb uses the term \"Face selection\", owned by store."
     },
-    "vocabulary.leak-354a82c99d5f": {
-      "state": "accepted",
-      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
-      "at": "2026-10-28T13:29:07Z",
-      "title": "statemachine uses the term \"ACL policy\", owned by acl."
-    },
-    "vocabulary.leak-7d7347d8df1f": {
-      "state": "accepted",
-      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
-      "at": "2026-10-28T13:29:07Z",
-      "title": "statemachine uses the term \"Graph query\", owned by store."
-    },
-    "vocabulary.leak-697bcc35de3f": {
-      "state": "accepted",
-      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
-      "at": "2026-10-28T13:29:07Z",
-      "title": "statemachine uses the term \"Local role\", owned by acl."
-    },
     "vocabulary.leak-ace19766e40a": {
       "state": "accepted",
       "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
@@ -2738,6 +2720,18 @@
       "reason": "Debt: low value per finding.",
       "at": "2026-11-13T10:30:00Z",
       "title": "5 functions in web/components/entity take boolean flags."
+    },
+    "vocabulary.leak-61a2b33ec8a8": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-11-13T15:30:00Z",
+      "title": "flowcfg uses the term \"Graph query\", owned by store."
+    },
+    "boundaries.unrelated_parts-1a4f587523fa": {
+      "state": "accepted",
+      "reason": "Design: TKT-ZRQSGCM folds the schema transitions (headless flows) into flowcfg next to the flows.yaml loader. Both compile config into flow.Definition values for the same engine; they are separate entry points, so no file links one to the other.",
+      "at": "2026-11-13T15:30:00Z",
+      "title": "flowcfg holds 2 groups of files that neither refer to each other."
     }
   },
   "labels": {},
@@ -2747,7 +2741,7 @@
       "weight.structure": 859,
       "weight.layers": 0,
       "weight.vocabulary": 870,
-      "weight.types": 4203,
+      "weight.types": 4205,
       "weight.concepts": 7233,
       "weight.boundaries": 1471,
       "weight.data": 1297,
@@ -2758,7 +2752,7 @@
       "propagation_cost": 9.3
     },
     "min_weight": 0,
-    "at": "2026-11-13T09:30:00Z",
+    "at": "2026-11-13T15:30:00Z",
     "log": [
       {
         "at": "2026-11-05T20:33:00Z",
@@ -3107,6 +3101,17 @@
           "propagation_cost": [
             9.1,
             9.3
+          ]
+        }
+      },
+      {
+        "at": "2026-11-13T15:30:00Z",
+        "change": "loosen",
+        "reason": "TKT-ZRQSGCM: TransitionVerdict moved from statemachine to flowcfg. Its accepted synonym finding with apiwire.Transition got a new id and weighs 2 more. weight.structure and weight.security keep the traced values.",
+        "metrics": {
+          "weight.types": [
+            4203,
+            4205
           ]
         }
       }

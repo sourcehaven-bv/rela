@@ -13,10 +13,10 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -44,7 +44,7 @@ func TestOutputWriter_Errors(t *testing.T) {
 		{"field gate", &affordances.FieldWriteError{Path: "owner"}, true, realtime.OutputCodeFieldDenied, nil, false},
 		{"validation", invalid, true, realtime.OutputCodeInvalid, []string{"status"}, false},
 		{"unique", unique, true, realtime.OutputCodeConflict, nil, false},
-		{"illegal transition", fmt.Errorf("%w: phase of %s", statemachine.ErrIllegalTransition, secretID), true,
+		{"illegal transition", fmt.Errorf("%w: phase of %s", flowcfg.ErrIllegalTransition, secretID), true,
 			realtime.OutputCodeInvalid, nil, false},
 		{"not found", fmt.Errorf("%w: %s", entitymanager.ErrEntityNotFound, secretID), true,
 			realtime.OutputCodeNotFound, nil, false},

@@ -13,8 +13,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -87,7 +87,7 @@ func newUngatedPatchManager(t *testing.T, gate entitymanager.FieldWriteGate, st 
 		Templater:   nopTemplater{},
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
-		Transitions: statemachine.EmptySet(),
+		Transitions: flowcfg.NoTransitions(),
 		FieldGate:   gate,
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -657,7 +657,7 @@ func TestPatchEntity_RunsFullPipeline(t *testing.T) {
 		ACL:         acl.NopACL{},
 		Automations: engine,
 		Cascade:     runner,
-		Transitions: statemachine.EmptySet(),
+		Transitions: flowcfg.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -717,7 +717,7 @@ func TestPatchEntity_AutomationNotFieldGated(t *testing.T) {
 		ACL:         acl.NopACL{},
 		Automations: engine,
 		Cascade:     runner,
-		Transitions: statemachine.EmptySet(),
+		Transitions: flowcfg.NoTransitions(),
 		FieldGate:   gate,
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -785,7 +785,7 @@ func TestPatchEntity_GateRunsAfterAuthorize(t *testing.T) {
 				Templater:   nopTemplater{},
 				Audit:       audit.Nop{},
 				ACL:         denyWritesACL{},
-				Transitions: statemachine.EmptySet(),
+				Transitions: flowcfg.NoTransitions(),
 				FieldGate:   gate,
 				AnchorGuard: entitymanager.NopAnchorGuard{},
 			})

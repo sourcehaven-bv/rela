@@ -9,8 +9,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -50,13 +50,13 @@ type denyAllGuard struct{}
 
 func (denyAllGuard) HoldsPermission(context.Context, string, string) bool { return false }
 
-func newTransitionManager(t *testing.T, guard statemachine.Guard) *entitymanager.Manager {
+func newTransitionManager(t *testing.T, guard flowcfg.PermissionGuard) *entitymanager.Manager {
 	t.Helper()
 	meta, err := metamodel.Parse([]byte(transitionMetaYAML))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	machines, err := statemachine.Compile(meta)
+	machines, err := flowcfg.CompileTransitions(meta)
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestTransition_IllegalMoveIs422(t *testing.T) {
 
 	snap.SetString("status", "established") // skips approved
 	_, err := mgr.UpdateEntity(context.Background(), snap)
-	if !errors.Is(err, statemachine.ErrIllegalTransition) {
+	if !errors.Is(err, flowcfg.ErrIllegalTransition) {
 		t.Fatalf("expected ErrIllegalTransition, got %v", err)
 	}
 	// An illegal transition is NOT an ACL denial — it must not surface as 403.
@@ -138,7 +138,7 @@ func TestTransition_IllegalEntryOnCreateIs422(t *testing.T) {
 	e.SetString("title", "bad entry")
 	e.SetString("status", "established") // not the initial value
 	_, err := mgr.CreateEntity(context.Background(), e, entity.CreateOptions{})
-	if !errors.Is(err, statemachine.ErrIllegalEntry) {
+	if !errors.Is(err, flowcfg.ErrIllegalEntry) {
 		t.Fatalf("expected ErrIllegalEntry, got %v", err)
 	}
 }
@@ -161,7 +161,7 @@ func TestTransition_RecreateEntity_EnforcesEntry(t *testing.T) {
 	back.ID = snap.ID + "0"
 	back.SetString("status", "established") // not the initial value
 	_, err := entitymanager.RecreateEntity(context.Background(), mgr, back)
-	if !errors.Is(err, statemachine.ErrIllegalEntry) {
+	if !errors.Is(err, flowcfg.ErrIllegalEntry) {
 		t.Fatalf("RecreateEntity must enforce the entry rule; want ErrIllegalEntry, got %v", err)
 	}
 }
@@ -172,7 +172,7 @@ func TestTransition_IllegalEntry_DoesNotPersist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	machines, err := statemachine.Compile(meta)
+	machines, err := flowcfg.CompileTransitions(meta)
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestTransition_IllegalEntry_DoesNotPersist(t *testing.T) {
 	e := entity.New("", "snapshot")
 	e.SetString("title", "bad")
 	e.SetString("status", "established") // illegal entry
-	if _, err := mgr.CreateEntity(context.Background(), e, entity.CreateOptions{}); !errors.Is(err, statemachine.ErrIllegalEntry) {
+	if _, err := mgr.CreateEntity(context.Background(), e, entity.CreateOptions{}); !errors.Is(err, flowcfg.ErrIllegalEntry) {
 		t.Fatalf("want ErrIllegalEntry, got %v", err)
 	}
 	// No snapshot row must exist — the check runs before the store write, so a

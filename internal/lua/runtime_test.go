@@ -3092,7 +3092,7 @@ func TestRunValidationString_StripsShebang(t *testing.T) {
 }
 
 // misreportingMutator returns a NON-404 hard error whose text embeds a
-// caller-supplied value — the exact shape internal/statemachine produces
+// caller-supplied value — the exact shape internal/flowcfg (transitions) produces
 // for an illegal transition (`%s %q→%q is not a declared transition`).
 type misreportingMutator struct {
 	Mutator
@@ -3122,7 +3122,7 @@ func TestUpdateEntity_NonNotFoundErrorIsNotMisreported(t *testing.T) {
 	ws := newMockWorkspace(t)
 	deps := ws.services(t.TempDir())
 
-	// Verbatim shape of statemachine's illegal-transition error, with the
+	// Verbatim shape of transition enforcer's illegal-transition error, with the
 	// caller's own value ("entity not found") interpolated via %q.
 	deps.EntityManager = misreportingMutator{
 		err: fmt.Errorf(

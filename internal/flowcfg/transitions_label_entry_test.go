@@ -1,4 +1,4 @@
-package statemachine
+package flowcfg
 
 import (
 	"context"
@@ -65,7 +65,7 @@ func TestEntryValue(t *testing.T) {
 	if got := set.EntryValue("nonexistent", "status"); got != "" {
 		t.Errorf("EntryValue for unknown type = %q, want \"\"", got)
 	}
-	if got := EmptySet().EntryValue("task", "status"); got != "" {
+	if got := NoTransitions().EntryValue("task", "status"); got != "" {
 		t.Errorf("EntryValue on empty set = %q, want \"\"", got)
 	}
 }

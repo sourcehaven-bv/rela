@@ -15,9 +15,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/computed"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/writerule"
@@ -315,7 +315,7 @@ type Deps struct {
 	// no write path can silently skip the machine — but a metamodel with no
 	// transitions compiles to an empty enforcer whose checks are no-ops, so
 	// "required" costs nothing when the feature is unused. Constructed once at
-	// startup by [statemachine.Compile] and injected; the Manager never
+	// startup by [flowcfg.CompileTransitions] and injected; the Manager never
 	// re-derives it from the metamodel.
 	Transitions TransitionEnforcer
 
@@ -330,12 +330,12 @@ type Deps struct {
 	// the safe default when no ACL-backed guard was wired. Production wiring
 	// supplies an adapter over the ACL; the direct-CLI/no-policy case is
 	// handled inside that adapter (it allows when there is no policy).
-	TransitionGuard statemachine.Guard
+	TransitionGuard flowcfg.PermissionGuard
 
 	// TransitionGraph answers has_relation/count_relations for a transition
 	// `when:` precondition. May be nil when no precondition needs the graph;
 	// a `when:` that queries the graph then evaluates against an empty graph.
-	TransitionGraph statemachine.GraphLookup
+	TransitionGraph flowcfg.GraphLookup
 
 	// FieldGate decides whether the ctx principal may author the specific
 	// property changes in a [Manager.PatchEntity] call. Required — pass
@@ -372,7 +372,7 @@ type Deps struct {
 	// CopyGuard evaluates a copy definition's `guard:` permission against the
 	// SOURCE entity, so "the owner of THIS doc may publish it" works without
 	// a global grant. Nil makes a GUARDED copy fail closed, matching the
-	// statemachine's nil-guard rule; an unguarded copy is unaffected.
+	// transition enforcer's nil-guard rule; an unguarded copy is unaffected.
 	CopyGuard CopyGuard
 
 	// CopyReadGate answers "may this principal READ the copy's source at
@@ -515,7 +515,7 @@ func (AllowAllFieldGate) CheckRelationMetaWrite(
 // TransitionEnforcer is the narrow contract the Manager needs from the
 // compiled state machines: enforce an update (old→new) and a create's entry
 // value. Defined at the call site (CLAUDE.md consumer-side interfaces);
-// [*statemachine.Set] satisfies it.
+// [*flowcfg.Transitions] satisfies it.
 // CopyReader is the caller-scoped read a CROSS-ENTITY copy sees. Narrow by
 // design: the copy needs one lookup, and taking the whole visibility.Reader
 // would bind this package to methods it never calls.
@@ -536,7 +536,7 @@ type CopyReader interface {
 
 // CopyGuard answers a copy definition's `guard:` permission for one subject.
 //
-// The same shape as statemachine.Guard, and satisfied by the same wiring —
+// The same shape as flowcfg.PermissionGuard, and satisfied by the same wiring —
 // the point of reusing the vocabulary is that the two cannot drift into
 // asking different questions. Subject is the bare entity id, matching the
 // conferral model: identity-scoped roles confer on the entity in every
@@ -619,7 +619,7 @@ type CopyGuard interface {
 type TransitionEnforcer interface {
 	EnforceUpdate(
 		ctx context.Context, old, updated *entity.Entity,
-		guard statemachine.Guard, lookup statemachine.GraphLookup,
+		guard flowcfg.PermissionGuard, lookup flowcfg.GraphLookup,
 	) error
 	EnforceCreate(ctx context.Context, e *entity.Entity) error
 }
@@ -643,7 +643,7 @@ func New(d Deps) (*Manager, error) {
 	}
 	if d.Transitions == nil {
 		return nil, errors.New(
-			"entitymanager: New: Transitions is required (use statemachine.Compile; an empty set is a no-op)")
+			"entitymanager: New: Transitions is required (use flowcfg.CompileTransitions; an empty set is a no-op)")
 	}
 	if d.Clock == nil {
 		d.Clock = time.Now
@@ -848,7 +848,7 @@ func (m *Manager) mapTransitionError(ctx context.Context, subject acl.Subject, e
 	if err == nil {
 		return nil
 	}
-	var ge *statemachine.GuardError
+	var ge *flowcfg.GuardError
 	if errors.As(err, &ge) {
 		decision := acl.Decision{
 			Allow:    false,

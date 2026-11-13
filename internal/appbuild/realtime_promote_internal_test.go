@@ -10,9 +10,9 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 )
 
 // TestClassifyPromote pins the answer of each create error class, including
@@ -25,16 +25,16 @@ func TestClassifyPromote(t *testing.T) {
 		typ    string
 	}{
 		{"acl", &acl.ForbiddenError{}, http.StatusForbidden, realtime.TypePromoteDenied},
-		{"guard", fmt.Errorf("x: %w", statemachine.ErrGuardDenied), http.StatusForbidden, realtime.TypePromoteDenied},
+		{"guard", fmt.Errorf("x: %w", flowcfg.ErrGuardDenied), http.StatusForbidden, realtime.TypePromoteDenied},
 		{"entity exists", entitymanager.ErrEntityAlreadyExists, http.StatusConflict, realtime.TypePromoteConflict},
 		{"relation exists", entitymanager.ErrRelationAlreadyExists, http.StatusConflict, realtime.TypePromoteConflict},
 		{"validation", &entitymanager.ValidationError{}, http.StatusUnprocessableEntity, realtime.TypePromoteInvalid},
 		{"face", entitymanager.ErrFaceRequired, http.StatusUnprocessableEntity, realtime.TypePromoteInvalid},
 		{"face undeclared", entitymanager.ErrFaceNotDeclared, http.StatusUnprocessableEntity, realtime.TypePromoteInvalid},
 		{"target", entitymanager.ErrEntityNotFound, http.StatusUnprocessableEntity, realtime.TypePromoteInvalid},
-		{"illegal entry", fmt.Errorf("%w: status", statemachine.ErrIllegalEntry),
+		{"illegal entry", fmt.Errorf("%w: status", flowcfg.ErrIllegalEntry),
 			http.StatusUnprocessableEntity, realtime.TypePromoteInvalid},
-		{"precondition", fmt.Errorf("%w: status", statemachine.ErrPreconditionFailed),
+		{"precondition", fmt.Errorf("%w: status", flowcfg.ErrPreconditionFailed),
 			http.StatusUnprocessableEntity, realtime.TypePromoteInvalid},
 		{"cardinality", entitymanager.ErrCardinalityExceeded, http.StatusUnprocessableEntity, realtime.TypePromoteInvalid},
 		{"custom id", entitymanager.ErrCustomIDNotAllowed, http.StatusUnprocessableEntity, realtime.TypePromoteInvalid},

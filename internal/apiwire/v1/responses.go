@@ -313,7 +313,7 @@ type RelationAffordance struct {
 
 // Transition is one resolved outgoing move of a state-machine-typed property
 // on a per-entity response (TKT-3G93B8). It is the wire projection of
-// statemachine.TransitionVerdict.
+// flowcfg.TransitionVerdict.
 //
 // To is the target value. Label is optional display text for the MOVE (the
 // action, e.g. "Start progress"); when empty the SPA falls back to the target

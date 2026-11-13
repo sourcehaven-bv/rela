@@ -1,4 +1,4 @@
-package statemachine
+package flowcfg
 
 import (
 	"context"

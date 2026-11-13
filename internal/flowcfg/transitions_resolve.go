@@ -1,4 +1,4 @@
-package statemachine
+package flowcfg
 
 import (
 	"context"
@@ -40,20 +40,20 @@ const (
 // declared out-edge. Each verdict reflects BOTH the guard (evaluated
 // subject-aware via guard) and the `when:` precondition (evaluated against the
 // graph via lookup) — the same two gates, in the same order, that
-// [Set.EnforceUpdate] enforces on a write (they share Machine.decideMove). Verdicts are
+// [Transitions.EnforceUpdate] enforces on a write (they share HeadlessFlow.decideMove). Verdicts are
 // sorted by To for a stable UI order.
 //
 // Returns nil when prop is not a state machine on e's type, when e sits in a
 // terminal state (no declared out-edges from its current value), or on an
-// empty/nil Set.
+// empty/nil Transitions.
 //
 // This is a BOUNDED read: it evaluates only the out-edges of ONE field on ONE
 // entity (O(out-edges)), not a per-row scan across a result set. That is why
 // evaluating the `when:` predicate here is consistent with the
 // no-predicate-on-reads rule, whose concern is unbounded/hot list paths — see
 // internal/entitymanager/CLAUDE.md.
-func (s *Set) Performable(
-	ctx context.Context, e *entity.Entity, prop string, guard Guard, lookup GraphLookup,
+func (s *Transitions) Performable(
+	ctx context.Context, e *entity.Entity, prop string, guard PermissionGuard, lookup GraphLookup,
 ) []TransitionVerdict {
 	if s.Empty() || e == nil {
 		return nil
@@ -112,9 +112,9 @@ func (s *Set) Performable(
 
 // MachineProps returns the property names of entityType whose type is a state
 // machine, sorted. Empty when the type has no machine-typed property (or on a
-// nil/empty Set). Lets a consumer enumerate which fields of an entity have a
+// nil/empty Transitions). Lets a consumer enumerate which fields of an entity have a
 // lifecycle without knowing the metamodel.
-func (s *Set) MachineProps(entityType string) []string {
+func (s *Transitions) MachineProps(entityType string) []string {
 	if s.Empty() {
 		return nil
 	}
@@ -147,7 +147,7 @@ func reasonFor(g gate) VerdictGate {
 // TraversingWhens returns, per "from→to" edge label, the `when:` programs of
 // entityType's prop machine that use `related(...)`. A consumer that knows the
 // ACL policy uses it to warn about what a transition verdict reveals.
-func (s *Set) TraversingWhens(entityType, prop string) map[string]*predicate.Program {
+func (s *Transitions) TraversingWhens(entityType, prop string) map[string]*predicate.Program {
 	if s.Empty() {
 		return nil
 	}
@@ -156,7 +156,7 @@ func (s *Set) TraversingWhens(entityType, prop string) map[string]*predicate.Pro
 		return nil
 	}
 	out := map[string]*predicate.Program{}
-	m.eachBranch(func(from string, b branch) {
+	m.eachBranch(func(from string, b headlessBranch) {
 		if b.when != nil && len(b.when.Traversals()) > 0 {
 			out[from+"→"+b.to] = b.when
 		}

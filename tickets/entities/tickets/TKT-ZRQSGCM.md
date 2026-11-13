@@ -5,7 +5,9 @@ title: 'Flows M5c: delete the old transition and automation paths and dogfood th
 kind: refactor
 priority: medium
 effort: m
-status: backlog
+started: "2026-11-13"
+completed: "2026-11-13"
+status: done
 ---
 
 ## Description

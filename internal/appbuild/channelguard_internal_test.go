@@ -14,10 +14,10 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -94,7 +94,7 @@ func (f guardFixture) manager(t *testing.T, g entitymanager.AnchorGuard) *entity
 	require.NoError(t, err)
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: f.st, Meta: f.meta, Templater: gcNopTemplater{}, Audit: audit.Nop{},
-		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		ACL: acl.NopACL{}, Transitions: flowcfg.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		AliasRewriter: newAliasFanout(aliases), AnchorGuard: g,
 	})
 	require.NoError(t, err)
@@ -269,7 +269,7 @@ func TestChannelGuard_RenameTxFailureRestores(t *testing.T) {
 	appendTo(t, f.cs, chanKey("inc-b", "", "chat"))
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: failingTxStore{f.st}, Meta: f.meta, Templater: gcNopTemplater{}, Audit: audit.Nop{},
-		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		ACL: acl.NopACL{}, Transitions: flowcfg.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		AnchorGuard: f.guard,
 	})
 	require.NoError(t, err)
