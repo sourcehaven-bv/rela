@@ -2435,6 +2435,7 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 		}
 
 		errs = append(errs, validateKanbanLayout(kanbanID, kanban)...)
+		errs = append(errs, validateKanbanActions(kanbanID, kanban, cfg)...)
 
 		// Columns come from a relation or from an enum column_property. A
 		// wall may have neither: it is then one grid of all cards.
@@ -2811,7 +2812,14 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 				continue
 			}
 
-			if action.AvailableOn != nil {
+			// An entity-bound action runs from a list only as a batch llm
+			// action (TKT-I2SRNWR): the selection sends each row's address,
+			// and the server gates every row as the detail page would.
+			if action.LLM != nil && action.LLM.Batch != nil {
+				if msg := batchActionRefError(action, list.EntityType); msg != "" {
+					errs = append(errs, fmt.Sprintf("list %q: action %q %s", listID, actionID, msg))
+				}
+			} else if action.AvailableOn != nil {
 				errs = append(errs, entityBoundActionRefError(
 					fmt.Sprintf("list %q", listID), actionID))
 			}
@@ -2879,6 +2887,33 @@ func validateToolbarActions(listID string, list List, cfg *Config) []string {
 		case action.Label == "":
 			errs = append(errs, fmt.Sprintf(
 				"%s: action %q needs a label to show on the button", where, actionID))
+		}
+	}
+	return errs
+}
+
+// validateKanbanActions checks a board's `actions:`: each a labelled batch
+// llm action on the board's entity type, listed once.
+func validateKanbanActions(kanbanID string, kanban Kanban, cfg *Config) []string {
+	var errs []string
+	where := fmt.Sprintf("kanban %q actions", kanbanID)
+	seen := make(map[string]bool, len(kanban.Actions))
+	for _, actionID := range kanban.Actions {
+		if seen[actionID] {
+			errs = append(errs, fmt.Sprintf("%s: action %q is listed twice", where, actionID))
+			continue
+		}
+		seen[actionID] = true
+		action, ok := cfg.Actions[actionID]
+		if !ok {
+			errs = append(errs, fmt.Sprintf("%s: references unknown action %q", where, actionID))
+			continue
+		}
+		if msg := batchActionRefError(action, kanban.EntityType); msg != "" {
+			errs = append(errs, fmt.Sprintf("%s: action %q %s", where, actionID, msg))
+		}
+		if action.Label == "" {
+			errs = append(errs, fmt.Sprintf("%s: action %q needs a label to show on the button", where, actionID))
 		}
 	}
 	return errs

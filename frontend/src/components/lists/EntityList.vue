@@ -7,6 +7,8 @@ import { useSchemaStore, useUIStore } from '@/stores'
 import { useListKeyboard } from '@/composables/useListKeyboard'
 import { useListSelection } from '@/composables/useListSelection'
 import { useListActions } from '@/composables/useListActions'
+import { useBatchAction, isBatchAction } from '@/composables/useBatchAction'
+import LLMBatchProposalDialog from '@/components/entity/LLMBatchProposalDialog.vue'
 import { useToolbarActions } from '@/composables/useToolbarActions'
 import { useListReorder } from '@/composables/useListReorder'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
@@ -286,6 +288,7 @@ const entityNoun = computed(() => {
 })
 
 const listIdRef = computed(() => props.listId)
+const batchAction = useBatchAction()
 
 const { resolvedActions, processing: actionProcessing, executeAction, triggerAction } = useListActions({
   listId: listIdRef,
@@ -300,6 +303,12 @@ const { resolvedActions, processing: actionProcessing, executeAction, triggerAct
   onClearSelection: () => clearActionSelection(),
   onRequestConfirm: (action, actionId, triggerEl) => {
     void requestActionConfirm(action, actionId, triggerEl)
+  },
+  collectionActions,
+  onBatch: (actionId, action, addresses) => {
+    void batchAction.start(actionId, action, listConfig.value?.entity ?? '', addresses, (n, max) =>
+      t('entity.llmBatch.tooMany', { n, max }),
+    )
   },
   // Bulk actions mutate entities server-side; invalidate the list so it
   // refetches the post-action state.
@@ -1636,7 +1645,9 @@ watch(searchQuery, () => {
             variant="secondary"
             size="sm"
             :tone="config.confirm ? 'danger' : 'default'"
-            :disabled="actionProcessing"
+            :disabled="actionProcessing || batchAction.pending.value"
+            :loading="isBatchAction(config) && batchAction.pending.value"
+            :pending-label="t('entity.llmBatch.running')"
             data-testid="bulk-action"
             @click="(e: MouseEvent) => triggerAction(id, config, e)"
           >
@@ -1693,6 +1704,15 @@ watch(searchQuery, () => {
       @close="createModal.close"
       @created="createModal.created"
       @created-another="createModal.createdAnother"
+    />
+
+    <LLMBatchProposalDialog
+      v-if="batchAction.result.value"
+      :batch="batchAction.result.value.batch"
+      :entity-type="batchAction.result.value.entityType"
+      :label="batchAction.result.value.label"
+      @close="batchAction.close"
+      @applied="refreshAfterCreate"
     />
   </div>
 

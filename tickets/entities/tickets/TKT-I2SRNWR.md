@@ -6,7 +6,9 @@ kind: enhancement
 priority: medium
 effort: l
 tags: needs-design
-status: backlog
+started: "2026-11-13"
+completed: "2026-11-14"
+status: done
 ---
 
 ## Description

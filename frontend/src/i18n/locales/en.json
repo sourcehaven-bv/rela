@@ -557,6 +557,18 @@
       "saveFailed": "The changes could not be saved",
       "linkFailed": "Could not add {relation} to {title}: {reason}",
       "model": "Proposed by {model}"
+    },
+    "llmBatch": {
+      "intro": "The AI proposed changes for several entities at once. Nothing is saved until you apply them. Every change starts unticked: text in one entity can steer what the AI proposed for another, so read each change before you tick it.",
+      "confirm": "Send 1 entity to the AI provider? | Send {n} entities to the AI provider?",
+      "running": "Asking the AI…",
+      "runFailed": "{label} failed",
+      "tooMany": "This action runs on at most {max} entities at once; {n} are selected.",
+      "stale": "{entity}: {property} changed since the proposal was made, so it was not saved.",
+      "saveFailed": "{entity}: the changes could not be saved: {reason}",
+      "unchanged": "1 entity has no proposed change. | {count} entities have no proposed change.",
+      "skipped": "1 entity was not sent: the action does not apply to it, or you may not change it. | {count} entities were not sent: the action does not apply to them, or you may not change them.",
+      "failed": "{entity}: {reason}"
     }
   },
   "document": {
@@ -1227,7 +1239,8 @@
     "renameFailed": "Could not rename the group",
     "moveGroupFailed": "Could not move the group",
     "groupElsewhere": "This card is in a group this board does not show",
-    "groupForbidden": "You may not make a group of these cards"
+    "groupForbidden": "You may not make a group of these cards",
+    "batchTooMany": "This action runs on at most {max} cards at once; {n} are on the board. Filter the board or collapse columns."
   },
   "calendar": {
     "month": "Month",

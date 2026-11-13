@@ -20,6 +20,11 @@ import (
 // see each other's verdicts, which is harmless: each list renders only the
 // ids in its own toolbar_actions.
 //
+// Batch `llm:` actions (TKT-I2SRNWR) named in a list's `actions:` or a
+// kanban's `actions:` over entityType get a key the same way. Their gate
+// also judges each row's available_on and when, but those are per row: the
+// key says only that the caller may start a run.
+//
 // Nil cfg: accepted, adds nothing.
 func addToolbarActions(
 	ctx context.Context, cfg *Config, entityType string, out map[string]bool,
@@ -27,10 +32,30 @@ func addToolbarActions(
 	if cfg == nil {
 		return out
 	}
+	add := func(id string) {
+		if out == nil {
+			out = map[string]bool{}
+		}
+		out[detailActionKeyPrefix+id] = true
+	}
+	addBatch := func(ids []string) {
+		for _, id := range ids {
+			action, ok := cfg.Actions[id]
+			if ok && action.LLM != nil && action.LLM.Batch != nil && holdsActionPermission(ctx, action) {
+				add(id)
+			}
+		}
+	}
+	for _, kanban := range cfg.Kanbans {
+		if kanban.EntityType == entityType {
+			addBatch(kanban.Actions)
+		}
+	}
 	for _, list := range cfg.Lists {
 		if list.EntityType != entityType {
 			continue
 		}
+		addBatch(list.Actions)
 		for _, id := range list.ToolbarActions {
 			action, ok := cfg.Actions[id]
 			// An entity-bound action is refused at load; skipping it here
@@ -38,10 +63,7 @@ func addToolbarActions(
 			if !ok || action.AvailableOn != nil || !holdsActionPermission(ctx, action) {
 				continue
 			}
-			if out == nil {
-				out = map[string]bool{}
-			}
-			out[detailActionKeyPrefix+id] = true
+			add(id)
 		}
 	}
 	return out

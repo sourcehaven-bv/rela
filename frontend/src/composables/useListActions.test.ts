@@ -41,6 +41,8 @@ interface HarnessOptions {
   onComplete?: () => void
   onRequestConfirm?: (action: ActionConfig, actionId: string) => void
   addressOf?: (entityId: string) => string
+  onBatch?: (actionId: string, action: ActionConfig, addresses: string[]) => void
+  collectionActions?: Record<string, boolean>
 }
 
 function mountHarness(opts: HarnessOptions = {}) {
@@ -55,6 +57,8 @@ function mountHarness(opts: HarnessOptions = {}) {
         selectedIds,
         entities,
         addressOf: opts.addressOf,
+        onBatch: opts.onBatch,
+        collectionActions: ref(opts.collectionActions),
         onClearSelection: opts.onClearSelection ?? (() => {}),
         onRequestConfirm: opts.onRequestConfirm ?? (() => {}),
         onComplete: opts.onComplete ?? (() => {}),
@@ -335,5 +339,54 @@ describe('useActionFanout — mixed types', () => {
     expect(runAction).toHaveBeenCalledWith('notify', 'TKT-1', 'ticket')
     expect(runAction).toHaveBeenCalledWith('notify', 'RISK-2', 'risk')
     expect(errorSpy).toHaveBeenCalledWith('Notify: 1 failed, 1 succeeded')
+  })
+})
+
+// A batch `llm:` action (TKT-I2SRNWR) runs as one request on the host, with
+// the selected addresses; it neither fans out nor clears the selection.
+describe('useListActions — batch llm action', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.resetAllMocks()
+  })
+
+  it('hands the selected addresses to onBatch', () => {
+    const action: ActionConfig = { label: 'Triage', confirm: 'Sure?', llm: { batch: { max: 20 } } }
+    configureSchema(action)
+    const onBatch = vi.fn()
+    const onClearSelection = vi.fn()
+    const onRequestConfirm = vi.fn()
+    const { wrapper, selectedIds } = mountHarness({
+      selectedIds: new Set(['t1', 't2']),
+      entities: [ent('t1'), ent('t2')],
+      addressOf: (id) => `${id}@draft`,
+      onBatch,
+      onClearSelection,
+      onRequestConfirm,
+    })
+    const { triggerAction } = wrapper.vm as unknown as ReturnType<typeof useListActions>
+    triggerAction('act-1', action)
+    expect(onBatch).toHaveBeenCalledWith('act-1', action, ['t1@draft', 't2@draft'])
+    expect(runAction).not.toHaveBeenCalled()
+    expect(onRequestConfirm).not.toHaveBeenCalled()
+    expect(onClearSelection).not.toHaveBeenCalled()
+    expect(selectedIds.value.size).toBe(2)
+  })
+})
+
+describe('useListActions — batch action affordance', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.resetAllMocks()
+  })
+
+  it.each([
+    ['offered', { 'action:act-1': true }, ['act-1']],
+    ['not offered', {}, []],
+  ])('lists a batch action only when the server offers it (%s)', (_, actions, want) => {
+    configureSchema({ label: 'Triage', llm: { batch: { max: 20 } } })
+    const { wrapper } = mountHarness({ collectionActions: actions })
+    const { resolvedActions } = wrapper.vm as unknown as { resolvedActions: { id: string }[] }
+    expect(resolvedActions.map((a) => a.id)).toEqual(want)
   })
 })

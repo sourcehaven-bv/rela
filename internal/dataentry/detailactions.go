@@ -86,20 +86,23 @@ func (f fixedRedactor) HiddenProperties(context.Context, *entityPkg.Entity) map[
 //
 //archplan:guard=authz reason="detail action gate: permission and when: on the redacted entity"
 func (c *detailActionCheck) Allows(ctx context.Context, id string, action dataentryconfig.Action) bool {
-	scope := action.AvailableOn
-	if scope == nil {
-		return false
-	}
-	if !slices.Contains(scope.EntityTypes, c.e.Type) {
-		return false
-	}
-	if len(scope.Faces) > 0 && !slices.Contains(scope.Faces, string(c.e.Face)) {
+	if !actionScopeAllows(action, c.e) {
 		return false
 	}
 	if !holdsActionPermission(ctx, action) {
 		return false
 	}
 	return action.When == "" || c.whenHolds(ctx, id)
+}
+
+// actionScopeAllows reports whether e's type and face are in the action's
+// available_on.
+func actionScopeAllows(action dataentryconfig.Action, e *entityPkg.Entity) bool {
+	scope := action.AvailableOn
+	if scope == nil || !slices.Contains(scope.EntityTypes, e.Type) {
+		return false
+	}
+	return len(scope.Faces) == 0 || slices.Contains(scope.Faces, string(e.Face))
 }
 
 // entityAttributeReader reports the entity fields a compiled condition reads.
@@ -147,27 +150,40 @@ func (c *detailActionCheck) whenHolds(ctx context.Context, id string) bool {
 func (c *detailActionCheck) matcher(id string) ViewConditionMatcher {
 	if !c.lookupDone {
 		c.lookupDone = true
-		var compile ViewConditionFunc
-		if c.svc.actionConditions != nil {
-			compile = c.svc.actionConditions()
-		}
-		if compile == nil {
-			slog.Warn("dataentry: detail action has a when but no condition compiler is wired; not offering it",
-				"action", id)
-			return nil
-		}
-		lookup, problems := compile(c.schema.Cfg, c.schema.Meta)
-		if len(problems) > 0 {
-			slog.Warn("dataentry: conditions did not compile; not offering actions with a when",
-				"problems", problems)
-			return nil
-		}
-		c.lookup = lookup
+		c.lookup = c.svc.actionConditionLookup(c.schema, id)
 	}
-	if c.lookup == nil {
+	return actionWhenMatcher(c.lookup, id, c.e.Type)
+}
+
+// actionConditionLookup compiles the snapshot's conditions for judging an
+// action's when. Nil, logged, when no compiler is wired or a condition does
+// not compile; a caller treats that as "when does not hold".
+func (svc affordanceService) actionConditionLookup(s *Schema, id string) ViewConditionLookup {
+	var compile ViewConditionFunc
+	if svc.actionConditions != nil {
+		compile = svc.actionConditions()
+	}
+	if compile == nil {
+		slog.Warn("dataentry: detail action has a when but no condition compiler is wired; not offering it",
+			"action", id)
 		return nil
 	}
-	m := viewConditionFor(c.lookup, viewKindAction, dataentryconfig.ActionConditionID(id, c.e.Type))
+	lookup, problems := compile(s.Cfg, s.Meta)
+	if len(problems) > 0 {
+		slog.Warn("dataentry: conditions did not compile; not offering actions with a when",
+			"problems", problems)
+		return nil
+	}
+	return lookup
+}
+
+// actionWhenMatcher returns the compiled when of action id for entityType
+// from lookup. Nil fails closed.
+func actionWhenMatcher(lookup ViewConditionLookup, id, entityType string) ViewConditionMatcher {
+	if lookup == nil {
+		return nil
+	}
+	m := viewConditionFor(lookup, viewKindAction, dataentryconfig.ActionConditionID(id, entityType))
 	if m == nil {
 		slog.Warn("dataentry: detail action when did not compile; not offering it", "action", id)
 	}

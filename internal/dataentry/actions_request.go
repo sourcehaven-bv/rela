@@ -3,6 +3,7 @@ package dataentry
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -39,6 +40,14 @@ type actionPayload struct {
 	// block is never a second route to an entity — the caller still gets it
 	// resolved through visibility.ScriptReader in handleV1Action.
 	EntityID string
+
+	// EntityIDs is the addresses of a batch run of an `llm:` action
+	// (TKT-I2SRNWR). It is read only for an `llm:` action, so a script
+	// action's body keeps its meaning. Batch is whether the body carried
+	// the key at all, so an empty list is refused rather than read as a
+	// single-row run.
+	EntityIDs []string
+	Batch     bool
 
 	// Request is the lua.Request the script sees, or nil for an action with no
 	// request: block.
@@ -88,6 +97,17 @@ func readActionPayload(r *http.Request, action dataentryconfig.Action) (actionPa
 	}
 
 	payload := actionPayload{EntityID: stringField(body, "entity_id")}
+	if action.LLM != nil && len(raw) > 0 {
+		var typed struct {
+			EntityIDs *[]string `json:"entity_ids"`
+		}
+		if err := json.Unmarshal(raw, &typed); err != nil {
+			return actionPayload{}, fmt.Errorf("entity_ids must be a list of strings: %w", err)
+		}
+		if typed.EntityIDs != nil {
+			payload.EntityIDs, payload.Batch = *typed.EntityIDs, true
+		}
+	}
 	if action.Request == nil {
 		return payload, nil
 	}
@@ -146,7 +166,8 @@ func stringField(m map[string]any, key string) string {
 // the safety, and the content-type allowlist (script.validActionContentTypes)
 // is what keeps an active type off this surface in the first place.
 func writeActionResponse(w http.ResponseWriter, resp *script.ActionResponse) {
-	if resp == nil || (!resp.IsRich() && resp.Redirect == "" && resp.Message == "" && resp.Proposal == nil) {
+	if resp == nil || (!resp.IsRich() && resp.Redirect == "" && resp.Message == "" &&
+		resp.Proposal == nil && resp.Batch == nil) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -177,5 +198,6 @@ func actionEnvelope(resp *script.ActionResponse) v1.ActionResponse {
 		Message:     resp.Message,
 		MessageType: resp.MessageType,
 		Proposal:    resp.Proposal,
+		Batch:       resp.Batch,
 	}
 }

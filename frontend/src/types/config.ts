@@ -109,6 +109,11 @@ export interface ActionConfig {
   script?: string
   description?: string
   params?: Record<string, string>
+  /**
+   * Present on an `llm:` action that runs on several entities in one request
+   * (TKT-I2SRNWR). Only `batch` is served; the prompt and outputs are not.
+   */
+  llm?: { batch?: { max: number } }
 }
 
 export interface AppConfig {
@@ -572,6 +577,11 @@ export interface KanbanConfig {
   filter_controls?: FilterControl[]
   /** Named query scope; see the field of the same name on ListConfig. */
   query_scope?: string
+  /**
+   * Batch `llm:` actions offered in the board header (TKT-I2SRNWR). Each runs
+   * on the cards the board shows in its expanded columns.
+   */
+  actions?: string[]
 }
 
 /** The aggregate a {@link Summary} computes. */

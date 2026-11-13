@@ -66,6 +66,9 @@ type ActionResponse struct {
 	// nothing; the caller applies the changes it accepts through the
 	// ordinary write APIs. Nil for a script action.
 	Proposal *actionproposal.Proposal `json:"proposal,omitempty"`
+	// Batch is what a batch run of an `llm:` action proposes
+	// (TKT-I2SRNWR). Nil otherwise.
+	Batch *actionproposal.Batch `json:"batch,omitempty"`
 }
 
 // IsRich reports whether the script chose the {status, body, content_type}

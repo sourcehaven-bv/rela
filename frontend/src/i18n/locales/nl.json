@@ -557,6 +557,18 @@
       "saveFailed": "De wijzigingen konden niet worden opgeslagen",
       "linkFailed": "Kon {relation} naar {title} niet toevoegen: {reason}",
       "model": "Voorgesteld door {model}"
+    },
+    "llmBatch": {
+      "intro": "De AI stelt wijzigingen voor meerdere items tegelijk voor. Er wordt niets opgeslagen tot u ze toepast. Elke wijziging staat uit: tekst in het ene item kan sturen wat de AI voor een ander voorstelt, dus lees elke wijziging voordat u ze aanvinkt.",
+      "confirm": "1 item naar de AI-aanbieder sturen? | {n} items naar de AI-aanbieder sturen?",
+      "running": "AI wordt gevraagd…",
+      "runFailed": "{label} is mislukt",
+      "tooMany": "Deze actie werkt op hoogstens {max} items tegelijk; er zijn er {n} geselecteerd.",
+      "stale": "{entity}: {property} is gewijzigd sinds het voorstel en is niet opgeslagen.",
+      "saveFailed": "{entity}: de wijzigingen konden niet worden opgeslagen: {reason}",
+      "unchanged": "1 item heeft geen voorgestelde wijziging. | {count} items hebben geen voorgestelde wijziging.",
+      "skipped": "1 item is niet verstuurd: de actie geldt er niet voor, of u mag het niet wijzigen. | {count} items zijn niet verstuurd: de actie geldt er niet voor, of u mag ze niet wijzigen.",
+      "failed": "{entity}: {reason}"
     }
   },
   "document": {
@@ -1227,7 +1239,8 @@
     "renameFailed": "De groep kon niet worden hernoemd",
     "moveGroupFailed": "De groep kon niet worden verplaatst",
     "groupElsewhere": "Deze kaart zit in een groep die dit bord niet toont",
-    "groupForbidden": "Je mag van deze kaarten geen groep maken"
+    "groupForbidden": "Je mag van deze kaarten geen groep maken",
+    "batchTooMany": "Deze actie werkt op hoogstens {max} kaarten tegelijk; er staan er {n} op het bord. Filter het bord of klap kolommen in."
   },
   "calendar": {
     "month": "Maand",
