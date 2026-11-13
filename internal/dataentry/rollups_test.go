@@ -488,25 +488,51 @@ func TestRollups_WriteRefusedAndResponseCarriesValue(t *testing.T) {
 // sqlitestore) that is one Rollup call per column; memstore computes it in
 // Go over a constant number of batched reads.
 func TestQueryBudget_ListRollupsAreSizeIndependent(t *testing.T) {
-	extra := make([]int, 0, 2)
-	var detail string
-	for _, n := range []int{10, 50} {
+	// measure returns the cost of a list page of n rows with roll-ups and
+	// what the roll-ups add to it, in a store that also holds pad bewijs
+	// rows no maatregel has.
+	measure := func(n, pad int) (with, added storetest.Cost, detail string) {
 		counting := storetest.NewCounting(memstore.New())
 		app, d := newRollupWireApp(t, n, counting)
+		for i := range pad {
+			id := fmt.Sprintf("BEW-PAD-%d", i)
+			e := entity.New(id, "bewijs")
+			e.Properties["title"] = id
+			e.Properties["status"] = "geldig"
+			if err := counting.CreateEntity(context.Background(), e); err != nil {
+				t.Fatal(err)
+			}
+			// An edge of a type the fixture uses, so a relation scan shows.
+			if _, err := counting.CreateRelation(context.Background(),
+				entity.RelationKey{From: "PERS-B", Type: "shared-with", To: id}, nil); err != nil {
+				t.Fatal(err)
+			}
+		}
 		ctx := principalCtx("PERS-B")
-		reads := func(q string) int {
+		reads := func(q string) storetest.Cost {
 			counting.Reset()
 			resp, rec := listEntitiesAs(ctx, t, app, d, "maatregel", "maatregels", "per_page=100&"+q)
 			if rec.Code != http.StatusOK || len(resp.Data) != n {
 				t.Fatalf("list %s: %d, %d rows (%s)", q, rec.Code, len(resp.Data), rec.Body)
 			}
-			return counting.Reads()
+			return counting.Cost()
 		}
 		without := reads("rollups=false")
-		with := reads("")
-		detail = counting.String()
-		extra = append(extra, with-without)
+		with = reads("")
+		return with, with.Sub(without), counting.String()
 	}
+	extra := make([]int, 0, 2)
+	var detail string
+	for _, n := range []int{10, 50} {
+		_, c, d := measure(n, 0)
+		extra = append(extra, c.Calls)
+		detail = d
+	}
+	// The whole page with roll-ups, so a scan in the list itself shows too.
+	storetest.AssertScaleFree(t, func(pad int) (storetest.Cost, string) {
+		with, _, d := measure(10, pad)
+		return with, d
+	})
 	if extra[0] != extra[1] {
 		t.Errorf("roll-up reads grow with page size: %d extra at 10 rows, %d at 50 (%s)", extra[0], extra[1], detail)
 	}

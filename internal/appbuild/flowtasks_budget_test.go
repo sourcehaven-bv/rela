@@ -15,13 +15,20 @@ import (
 
 // TestFlowControl_TasksBudget pins AC 4: the task list and the run list
 // read the store a fixed number of times, whatever the number of runs, for a global holder
-// and for one who holds the role through a role relation.
+// and for one who holds the role through a role relation. Each also reads
+// the same rows for 10 runs whatever the number of other people.
 func TestFlowControl_TasksBudget(t *testing.T) {
-	reads := func(t *testing.T, runs int, user string) int {
+	// cost lists the tasks and the runs of user, with runs onboarding runs
+	// and pad people that no run is about.
+	cost := func(t *testing.T, runs, pad int, user string) (tasks, list storetest.Cost) {
 		t.Helper()
 		svc, ctl := stepProject(t)
 		addFlowPerson(t, svc, "carol", map[string]any{"name": "Carol"})
 		alice := flowUser(t, svc, "alice")
+		for i := range pad {
+			id := fmt.Sprintf("PAD-%d", i+1)
+			addFlowPerson(t, svc, id, map[string]any{"name": id})
+		}
 		for i := range runs {
 			id := fmt.Sprintf("PER-%d", i+1)
 			addFlowPerson(t, svc, id, map[string]any{"name": id})
@@ -37,17 +44,27 @@ func TestFlowControl_TasksBudget(t *testing.T) {
 		got, err := budget.Tasks(flowUser(t, svc, user), "", 1, 50)
 		require.NoError(t, err)
 		require.Equal(t, runs, got.Total)
-		tasks := counting.Reads()
+		tasks = counting.Cost()
 		counting.Reset()
-		list, err := budget.RunList(flowUser(t, svc, user), "", "", 1, 50)
+		runList, err := budget.RunList(flowUser(t, svc, user), "", "", 1, 50)
 		require.NoError(t, err)
-		require.Equal(t, runs, list.Total)
-		return tasks*1000 + counting.Reads()
+		require.Equal(t, runs, runList.Total)
+		return tasks, counting.Cost()
 	}
 	for _, user := range []string{"alice", "carol"} {
 		t.Run(user, func(t *testing.T) {
-			small, large := reads(t, 10, user), reads(t, 50, user)
-			require.Equal(t, small, large, "store reads grow with the number of runs")
+			smallTasks, smallList := cost(t, 10, 0, user)
+			largeTasks, largeList := cost(t, 50, 0, user)
+			require.Equal(t, smallTasks.Calls, largeTasks.Calls, "task list reads grow with the number of runs")
+			require.Equal(t, smallList.Calls, largeList.Calls, "run list reads grow with the number of runs")
+			// The fixture is on disk, so the padding is smaller than
+			// storetest.ScaleSmall/ScaleLarge; 20 against 200 still
+			// tells a scan from a page.
+			const padSmall, padLarge = 20, 200
+			ts, ls := cost(t, 10, padSmall, user)
+			tl, ll := cost(t, 10, padLarge, user)
+			storetest.AssertSameCost(t, padSmall, ts, "task list", padLarge, tl, "task list")
+			storetest.AssertSameCost(t, padSmall, ls, "run list", padLarge, ll, "run list")
 		})
 	}
 }

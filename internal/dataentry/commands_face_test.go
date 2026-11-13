@@ -219,10 +219,30 @@ func TestCommandViewInput_IDAtTwoFaces(t *testing.T) {
 // counts store reads made by the payload builders; the ACL gate is built over
 // the uncounted store, so its own membership reads are not in it.
 func TestCommandInputs_RelationReadBudget(t *testing.T) {
-	calls := func(t *testing.T, n int) (entityCalls, viewCalls int) {
+	measure := func(t *testing.T, n, pad int) (entityCost, viewCost storetest.Cost) {
 		t.Helper()
 		app, d := contentEdgeApp(t, contentEdgeReaders[0])
 		bg := context.Background()
+		// The padding is implemented by a policy of its own, so a scan of
+		// the relation type shows as well as a scan of features.
+		if pad > 0 {
+			if err := app.store.CreateEntity(bg, &entity.Entity{
+				ID: "POL-Z", Type: "policy", Face: "published", Properties: map[string]any{"title": "pad"},
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for i := range pad {
+			id := fmt.Sprintf("FEAT-Z%d", i)
+			if err := app.store.CreateEntity(bg, &entity.Entity{
+				ID: id, Type: "feature", Properties: map[string]any{"title": id},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := app.store.CreateRelation(bg, entity.RelationKey{From: "POL-Z", Type: "implements", To: id}, nil); err != nil {
+				t.Fatal(err)
+			}
+		}
 		for i := range n {
 			id := fmt.Sprintf("FEAT-N%d", i)
 			if err := app.store.CreateEntity(bg, &entity.Entity{
@@ -254,13 +274,26 @@ func TestCommandInputs_RelationReadBudget(t *testing.T) {
 		if got := len(mustEntityInput(ctx, t, app, e).Relations); got != n+2 {
 			t.Fatalf("entity payload has %d relations, want %d", got, n+2)
 		}
-		entityCalls = counting.Reads()
+		entityCost = counting.Cost()
 		counting.Reset()
 		if got := len(mustViewInput(ctx, t, app, "v", vr).Relations); got != n+1 {
 			t.Fatalf("view payload has %d relations, want %d", got, n+1)
 		}
-		return entityCalls, counting.Reads()
+		return entityCost, counting.Cost()
 	}
+	calls := func(t *testing.T, n int) (entityCalls, viewCalls int) {
+		t.Helper()
+		e, v := measure(t, n, 0)
+		return e.Calls, v.Calls
+	}
+	assertScaleFreeIndexed(t, func(pad int) (storetest.Cost, string) {
+		e, _ := measure(t, 10, pad)
+		return e, "entity payload"
+	})
+	assertScaleFreeIndexed(t, func(pad int) (storetest.Cost, string) {
+		_, v := measure(t, 10, pad)
+		return v, "view payload"
+	})
 	e10, v10 := calls(t, 10)
 	e50, v50 := calls(t, 50)
 	if e10 != e50 {

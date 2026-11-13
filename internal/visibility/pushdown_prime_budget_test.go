@@ -46,7 +46,9 @@ func (l edgeLookup) HasEdge(ctx context.Context, fromID, relType, toID string) b
 // whose PrimeTraversals primes traversals only. The pushed-down list must
 // prime the page's local roles itself, or every row's field verdict probes
 // the role relations one edge at a time (TKT-QM833U). The read count of a
-// whole-type list is the same at 10 rows and at 50.
+// whole-type list is the same at 10 rows and at 50. It pins calls only: a
+// whole-type list serves every row, so its rows grow with the store by
+// design.
 func TestScriptReader_PushdownPrimesLocalRolesUnderPolicyRedactor(t *testing.T) {
 	reads := map[int]int{}
 	var detail string

@@ -18,6 +18,7 @@ import (
 // the edge gate judges a relation type's endpoints in one batch, so the
 // store reads of a cardinality check do not grow with the number of
 // subjects, and neither does the hidden neighbor count toward the result.
+// It pins calls only: an unscoped check visits every subject by design.
 func TestScriptReader_CardinalityReadBudget(t *testing.T) {
 	one := 1
 	meta := &metamodel.Metamodel{

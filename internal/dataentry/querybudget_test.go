@@ -192,12 +192,56 @@ func newBudgetAppWith(
 	t *testing.T, n int, base store.Store, meta *metamodel.Metamodel,
 ) (*App, *storetest.Counting, *acl.Declarative, context.Context) {
 	t.Helper()
+	return newBudgetAppPadded(t, n, 0, base, meta)
+}
+
+// newBudgetAppPadded is [newBudgetAppWith] plus pad tickets that nothing
+// relates to and nothing mentions, with no status and a title no search in
+// these tests matches: they are in the store and in the
+// unfiltered ticket list, and in no view, scope, pile or traversal. They
+// sort after the n fixture tickets. Growing pad grows the store while the
+// rows an operation serves stay put (a list page is full of padding at
+// both sizes), so a read whose rows grow with pad is reading rows it does
+// not serve.
+func newBudgetAppPadded(
+	t *testing.T, n, pad int, base store.Store, meta *metamodel.Metamodel,
+) (*App, *storetest.Counting, *acl.Declarative, context.Context) {
+	t.Helper()
 	counting := storetest.NewCounting(base)
 	ctx := context.Background()
 	must := func(err error) {
 		t.Helper()
 		if err != nil {
 			t.Fatal(err)
+		}
+	}
+	// The padding carries every relation type a fixture ticket has, to
+	// targets only the padding uses, so the relation table grows with pad
+	// too and a scan of a relation type shows.
+	if pad > 0 {
+		for _, e := range []*entity.Entity{
+			entity.New("F-PAD", "feature"), entity.New("P-PAD", "person"),
+			entity.New("E-PAD", "epic"), entity.New("EP-PAD", "epic"),
+		} {
+			e.SetString("title", "Zpad target")
+			must(counting.CreateEntity(ctx, e))
+		}
+	}
+	for i := 1; i <= pad; i++ {
+		id := fmt.Sprintf("TKT-P%05d", i)
+		e := entity.New(id, "ticket")
+		e.SetString("title", fmt.Sprintf("Zpad %05d", i))
+		must(counting.CreateEntity(ctx, e))
+		for typ, to := range map[string]string{
+			"implements": "F-PAD", "assigned-to": "P-PAD", "tracked-by": "E-PAD", "in-epic": "EP-PAD",
+		} {
+			_, err := counting.CreateRelation(ctx, entity.RelationKey{From: id, Type: typ, To: to}, nil)
+			must(err)
+		}
+		if i > 1 {
+			_, err := counting.CreateRelation(ctx,
+				entity.RelationKey{From: id, Type: "blocks", To: fmt.Sprintf("TKT-P%05d", i-1)}, nil)
+			must(err)
 		}
 	}
 	mk := func(id, typ, title string) {
@@ -264,8 +308,23 @@ func newBudgetAppWith(
 	return app, counting, d, principalCtx("P1")
 }
 
-// readsFor runs op at both sizes and returns the read counts.
-func readsFor(t *testing.T, op budgetOp) (small, large int, detail string) {
+// budgetCost is one op measured two ways. Calls compares the store calls at
+// [budgetSizes] fixture tickets, which is what an N+1 grows. Rows compares
+// the rows read at budgetRowsN fixture tickets in a store padded to
+// [storetest.ScaleSmall] and to [storetest.ScaleLarge] tickets
+// ([newBudgetAppPadded]), which is what a scan grows (TKT-A6A97WV).
+type budgetCost struct {
+	small, large       storetest.Cost
+	padSmall, padLarge storetest.Cost
+	// padDetail is the per-method breakdown at each padded size.
+	padDetail [2]string
+}
+
+// budgetRowsN is the fixture size of the rows measurement.
+const budgetRowsN = 10
+
+// readsFor runs op at both sizes and returns the measured costs.
+func readsFor(t *testing.T, op budgetOp) (cost budgetCost, detail string) {
 	t.Helper()
 	return readsForOn(t, func(*testing.T) store.Store { return memstore.New() }, op)
 }
@@ -275,44 +334,78 @@ type budgetOp func(t *testing.T, app *App, d *acl.Declarative, ctx context.Conte
 
 // readsForOn is readsFor over a fresh store from newStore per size.
 //
-// It also runs op under [realisticBudgetPolicy] at both sizes and fails the
-// test when the reads differ there. The returned counts are the fixture
+// It also runs op under [realisticBudgetPolicy] and fails the test when the
+// calls or the rows differ there. The returned counts are the fixture
 // ACL's, so the pinned budgets are unchanged. The fixture ACL has no role
 // relations and no inheritance, and BUG-E2W1LS was a per-row cost only those
 // produce: every budget test passed while a production list ran 1,800
 // lookups. Running every shape under both ACLs means a new budget test
 // covers the realistic ACL without opting in.
-func readsForOn(t *testing.T, newStore func(*testing.T) store.Store, op budgetOp) (small, large int, detail string) {
+func readsForOn(
+	t *testing.T, newStore func(*testing.T) store.Store, op budgetOp,
+) (cost budgetCost, detail string) {
 	t.Helper()
 	return readsForWith(t, newStore, budgetMeta, op)
+}
+
+// indexedPad is the padding for a budget test whose app keeps a search
+// index. The index takes each padding entity as a write of its own, which
+// costs minutes under -race at [storetest.ScaleLarge]. Ten times apart still
+// shows a read that scans the store.
+var indexedPad = [2]int{20, 200}
+
+// assertScaleFreeIndexed is [storetest.AssertScaleFree] at [indexedPad].
+func assertScaleFreeIndexed(t *testing.T, measure func(pad int) (storetest.Cost, string)) storetest.Cost {
+	t.Helper()
+	small, smallDetail := measure(indexedPad[0])
+	large, largeDetail := measure(indexedPad[1])
+	storetest.AssertSameCost(t, indexedPad[0], small, smallDetail, indexedPad[1], large, largeDetail)
+	return large
+}
+
+// budgetSizes are the fixture sizes the calls are compared at.
+var budgetSizes = [2]int{10, 50}
+
+// measureBudget runs measure at the two fixture sizes and at the two
+// padded store sizes.
+func measureBudget(measure func(n, pad int) (storetest.Cost, string)) (c budgetCost, detail string) {
+	c.small, _ = measure(budgetSizes[0], 0)
+	c.large, detail = measure(budgetSizes[1], 0)
+	c.padSmall, c.padDetail[0] = measure(budgetRowsN, storetest.ScaleSmall)
+	c.padLarge, c.padDetail[1] = measure(budgetRowsN, storetest.ScaleLarge)
+	return c, detail
 }
 
 // readsForWith is [readsForOn] over the metamodel newMeta returns.
 func readsForWith(
 	t *testing.T, newStore func(*testing.T) store.Store, newMeta func() *metamodel.Metamodel, op budgetOp,
-) (small, large int, detail string) {
+) (c budgetCost, detail string) {
 	t.Helper()
-	counts := make([]int, 0, 2)
-	for _, n := range []int{10, 50} {
-		app, counting, d, ctx := newBudgetAppWith(t, n, newStore(t), newMeta())
+	measure := func(n, pad int, realistic bool) (storetest.Cost, string) {
+		app, counting, d, ctx := newBudgetAppPadded(t, n, pad, newStore(t), newMeta())
+		if realistic {
+			d = useRealisticBudgetPolicy(t, app, counting)
+		}
 		op(t, app, d, ctx)
-		counts = append(counts, counting.Reads())
-		detail = counting.String()
+		return counting.Cost(), counting.String()
 	}
-	realistic := make([]int, 0, 2)
-	var realisticDetail string
-	for _, n := range []int{10, 50} {
-		app, counting, _, ctx := newBudgetAppWith(t, n, newStore(t), newMeta())
-		d := useRealisticBudgetPolicy(t, app, counting)
-		op(t, app, d, ctx)
-		realistic = append(realistic, counting.Reads())
-		realisticDetail = counting.String()
+	c, detail = measureBudget(func(n, pad int) (storetest.Cost, string) { return measure(n, pad, false) })
+
+	rs, _ := measure(budgetSizes[0], 0, true)
+	rl, realisticDetail := measure(budgetSizes[1], 0, true)
+	if rs.Calls != rl.Calls {
+		t.Errorf("under the realistic ACL, store reads grow with page size: %d at %d rows, %d at %d rows (%s)",
+			rs.Calls, budgetSizes[0], rl.Calls, budgetSizes[1], realisticDetail)
 	}
-	if realistic[0] != realistic[1] {
-		t.Errorf("under the realistic ACL, store reads grow with page size: %d at 10 rows, %d at 50 rows (%s)",
-			realistic[0], realistic[1], realisticDetail)
+	rps, rpsDetail := measure(budgetRowsN, storetest.ScaleSmall, true)
+	rpl, rplDetail := measure(budgetRowsN, storetest.ScaleLarge, true)
+	if rps.Rows != rpl.Rows && c.padSmall.Rows == c.padLarge.Rows {
+		// Reported only when the fixture ACL is flat, so a test that is
+		// calls-only for a known scan (assertCallBudget) does not fail here.
+		t.Errorf("under the realistic ACL, store rows read grow with the store: %d at %d, %d at %d (%s | %s)",
+			rps.Rows, storetest.ScaleSmall, rpl.Rows, storetest.ScaleLarge, rpsDetail, rplDetail)
 	}
-	return counts[0], counts[1], detail
+	return c, detail
 }
 
 // realisticBudgetPolicy is the fixture ACL plus what a production acl.yaml
@@ -353,14 +446,27 @@ func useRealisticBudgetPolicy(t *testing.T, app *App, counting *storetest.Counti
 	return d
 }
 
-func assertBudget(t *testing.T, name string, small, large, pinned int, detail string) {
+// assertBudget fails unless the calls are the same at both fixture sizes
+// and the rows read are the same at both store sizes, and pins the calls.
+func assertBudget(t *testing.T, name string, c budgetCost, pinned int, detail string) {
 	t.Helper()
-	if small != large {
-		t.Errorf("%s: store reads grow with page size: %d at 10 rows, %d at 50 rows (%s)", name, small, large, detail)
+	assertCallBudget(t, name, c, pinned, detail)
+	storetest.AssertSameCost(t, storetest.ScaleSmall, c.padSmall, name+": "+c.padDetail[0],
+		storetest.ScaleLarge, c.padLarge, c.padDetail[1])
+}
+
+// assertCallBudget is [assertBudget] without the rows check, for an op
+// whose rows are known to grow with the store. Every caller says which read
+// grows: a TODO(TKT-FED6FMM) for a scan to remove, or why it is by design.
+func assertCallBudget(t *testing.T, name string, c budgetCost, pinned int, detail string) {
+	t.Helper()
+	if c.small.Calls != c.large.Calls {
+		t.Errorf("%s: store reads grow with page size: %d at %d rows, %d at %d rows (%s)",
+			name, c.small.Calls, budgetSizes[0], c.large.Calls, budgetSizes[1], detail)
 	}
-	if large != pinned {
+	if c.large.Calls != pinned {
 		t.Errorf("%s: store reads = %d, pinned budget %d (%s) — update the pin if the change is deliberate",
-			name, large, pinned, detail)
+			name, c.large.Calls, pinned, detail)
 	}
 }
 
@@ -368,8 +474,8 @@ func assertBudget(t *testing.T, name string, small, large, pinned int, detail st
 // (per row: outgoing + incoming edges, a GetEntity per neighbor, and two
 // membership walks per affordance verb).
 func TestQueryBudget_ListPageIsSizeIndependent(t *testing.T) {
-	small, large, detail := readsFor(t, listPageOp)
-	assertBudget(t, "list page", small, large, listPageBudget, detail)
+	b, detail := readsFor(t, listPageOp)
+	assertBudget(t, "list page", b, listPageBudget, detail)
 }
 
 var listPageOp budgetOp = func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
@@ -386,14 +492,14 @@ var listPageOp budgetOp = func(t *testing.T, app *App, d *acl.Declarative, ctx c
 // A view whose table section has two relation columns over the blockers of
 // TKT-0001 (n-1 rows). Before batching: ~4 + 4×rows reads.
 func TestQueryBudget_ViewTableSectionIsSizeIndependent(t *testing.T) {
-	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+	b, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
 		t.Helper()
 		rec := viewsAs(ctx, t, app, d, "ticket", "TKT-0001")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("view: %d %s", rec.Code, rec.Body)
 		}
 	})
-	assertBudget(t, "view table section", small, large, viewSectionBudget, detail)
+	assertBudget(t, "view table section", b, viewSectionBudget, detail)
 }
 
 // The same view with the section's opt-in create affordance enabled
@@ -407,7 +513,7 @@ func TestQueryBudget_ViewTableSectionIsSizeIndependent(t *testing.T) {
 // would pass even if the affordance added a fixed per-request store read to
 // every view in the app.
 func TestQueryBudget_ViewSectionCreateAddsNoStoreReads(t *testing.T) {
-	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+	b, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
 		t.Helper()
 		// Opt the section in, which is the only way the affordance appears.
 		view := app.State().Cfg.Views["ticket"]
@@ -430,14 +536,14 @@ func TestQueryBudget_ViewSectionCreateAddsNoStoreReads(t *testing.T) {
 			t.Fatalf("create affordance did not resolve, so this budget proves nothing: %s", rec.Body)
 		}
 	})
-	assertBudget(t, "view section create", small, large, viewSectionBudget, detail)
+	assertBudget(t, "view section create", b, viewSectionBudget, detail)
 }
 
 // The same view with an editable table column (TKT-4Q2EIVZ). Each row then
 // carries its values and write verdicts, which come from verdicts primed once
 // per section, so the read count must not move from the plain view.
 func TestQueryBudget_ViewEditableTableAddsNoStoreReads(t *testing.T) {
-	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+	b, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
 		t.Helper()
 		view := app.State().Cfg.Views["ticket"]
 		sections := append([]dataentryconfig.ViewSection(nil), view.Sections...)
@@ -460,13 +566,13 @@ func TestQueryBudget_ViewEditableTableAddsNoStoreReads(t *testing.T) {
 			t.Fatalf("no editable row data, so this budget proves nothing: %s", rec.Body)
 		}
 	})
-	assertBudget(t, "view editable table", small, large, viewSectionBudget, detail)
+	assertBudget(t, "view editable table", b, viewSectionBudget, detail)
 }
 
 // A structured search (the dashboard card shape). Before batching: 2 +
 // 6×hits reads from the per-hit affordance membership walks.
 func TestQueryBudget_SearchIsSizeIndependent(t *testing.T) {
-	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+	b, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/_search?q=type%3Aticket", http.NoBody)
 		req = req.WithContext(gateCtxFor(ctx, t, d))
@@ -476,13 +582,16 @@ func TestQueryBudget_SearchIsSizeIndependent(t *testing.T) {
 			t.Fatalf("search: %d %s", rec.Code, rec.Body)
 		}
 	})
-	assertBudget(t, "search", small, large, searchBudget, detail)
+	// TODO(TKT-FED6FMM): calls only. The search's structured filter reads
+	// every header of the type (scopedHeaders' type scan in scopedread.go,
+	// reached from helpers.go via queryservice.go).
+	assertCallBudget(t, "search", b, searchBudget, detail)
 }
 
 // The same search with a relation context (`linkable` per row): the rows'
 // source reads are batched, so the context adds a fixed number of reads.
 func TestQueryBudget_SearchLinkableIsSizeIndependent(t *testing.T) {
-	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+	b, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet,
 			"/api/v1/_search?q=type%3Aticket&relation=blocks&direction=incoming", http.NoBody)
@@ -496,13 +605,16 @@ func TestQueryBudget_SearchLinkableIsSizeIndependent(t *testing.T) {
 			t.Fatalf("no row is linkable, so this budget proves nothing: %s", rec.Body)
 		}
 	})
-	assertBudget(t, "search linkable", small, large, searchLinkableBudget, detail)
+	// TODO(TKT-FED6FMM): calls only. Besides the header scan named on the
+	// search budget above, the linkable search loads every candidate's body
+	// (rowcontent.go, from search_linkable.go).
+	assertCallBudget(t, "search linkable", b, searchLinkableBudget, detail)
 }
 
 // A list page with a relation context, the RelationPicker shape: like the
 // search, the context adds a fixed number of reads.
 func TestQueryBudget_ListLinkableIsSizeIndependent(t *testing.T) {
-	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+	b, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
 		t.Helper()
 		_, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets",
 			"per_page=100&relation=blocks&direction=incoming")
@@ -513,7 +625,7 @@ func TestQueryBudget_ListLinkableIsSizeIndependent(t *testing.T) {
 			t.Fatalf("no row is linkable, so this budget proves nothing: %s", rec.Body)
 		}
 	})
-	assertBudget(t, "list linkable", small, large, listLinkableBudget, detail)
+	assertBudget(t, "list linkable", b, listLinkableBudget, detail)
 }
 
 // A RECURSIVE view traversal, the shape that exercises the BFS frontier source
@@ -523,14 +635,14 @@ func TestQueryBudget_ListLinkableIsSizeIndependent(t *testing.T) {
 // n-1 blockers one level below TKT-0001, so if the gate were per-node this
 // count would grow from 10 to 50 rows.
 func TestQueryBudget_RecursiveViewTraversalIsSizeIndependent(t *testing.T) {
-	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+	b, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
 		t.Helper()
 		rec := viewsAs(ctx, t, app, d, "epic", "E1")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("view: %d %s", rec.Code, rec.Body)
 		}
 	})
-	assertBudget(t, "recursive view traversal", small, large, recursiveViewBudget, detail)
+	assertBudget(t, "recursive view traversal", b, recursiveViewBudget, detail)
 }
 
 // The budget fixtures pin numbers for a config an operator could actually
@@ -562,21 +674,21 @@ func TestQueryBudget_FixtureConfigIsValid(t *testing.T) {
 // resolveRelationColumns issues one ListRelations per (column, ROW TYPE), and
 // a nested section has two row types where a table section has one.
 func TestQueryBudget_NestedSectionIsSizeIndependent(t *testing.T) {
-	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+	b, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
 		t.Helper()
 		rec := viewsAs(ctx, t, app, d, "program", "PRG1")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("view: %d %s", rec.Code, rec.Body)
 		}
 	})
-	assertBudget(t, "nested section", small, large, nestedSectionBudget, detail)
+	assertBudget(t, "nested section", b, nestedSectionBudget, detail)
 }
 
 // A list page under a query scope the store cannot answer alone
 // (TKT-CXQEV0). The traversal is answered for the whole candidate set in one
 // gated MatchingIDs call, so it adds a constant, never a read per row.
 func TestQueryBudget_TraversalScopeIsSizeIndependent(t *testing.T) {
-	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+	b, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
 		t.Helper()
 		if err := app.SetQueryScopeResolver(AdaptQueryScopes(appbuild.QueryScopes)); err != nil {
 			t.Fatalf("wire query scopes: %v", err)
@@ -589,13 +701,19 @@ func TestQueryBudget_TraversalScopeIsSizeIndependent(t *testing.T) {
 			t.Fatal("the scope matched nothing, so this budget proves nothing")
 		}
 		for _, e := range resp.Data {
+			if strings.HasPrefix(e.ID, "TKT-P") {
+				continue // padding implements nothing
+			}
 			var n int
 			if _, err := fmt.Sscanf(e.ID, "TKT-%d", &n); err != nil || n%5 == 0 {
 				t.Fatalf("row %s implements Feature 1", e.ID)
 			}
 		}
 	})
-	assertBudget(t, "traversal scope list page", small, large, traversalScopeBudget, detail)
+	// TODO(TKT-FED6FMM): calls only. A scope that does not lower keeps the
+	// Go path, which reads every header of the type (scopedHeaders' type
+	// scan in scopedread.go) and judges the scope over that candidate set.
+	assertCallBudget(t, "traversal scope list page", b, traversalScopeBudget, detail)
 }
 
 // A list page under a scope that lowers exactly is served by the store
@@ -608,10 +726,8 @@ func TestQueryBudget_TraversalScopeIsPushedDown(t *testing.T) {
 
 func assertScopePushedDown(t *testing.T, newStore func(*testing.T) store.Store) {
 	t.Helper()
-	reads := make([]int, 0, 2)
-	var detail string
-	for _, n := range []int{10, 50} {
-		app, counting, d, ctx := newBudgetAppOn(t, n, newStore(t))
+	b, detail := measureBudget(func(n, pad int) (storetest.Cost, string) {
+		app, counting, d, ctx := newBudgetAppPadded(t, n, pad, newStore(t), budgetMeta())
 		if err := app.SetQueryScopeResolver(AdaptQueryScopes(appbuild.QueryScopes)); err != nil {
 			t.Fatalf("wire query scopes: %v", err)
 		}
@@ -635,24 +751,27 @@ func assertScopePushedDown(t *testing.T, newStore func(*testing.T) store.Store) 
 		if calls["MatchingFaces"] != 0 || calls["CountMatched"] != 1 {
 			t.Errorf("n=%d: the scope was not pushed down: %s", n, counting)
 		}
-		reads = append(reads, counting.Reads())
-		detail = counting.String()
-	}
-	assertBudget(t, "pushed traversal scope list page", reads[0], reads[1], listPageBudget, detail)
+		return counting.Cost(), counting.String()
+	})
+	assertBudget(t, "pushed traversal scope list page", b, listPageBudget, detail)
 }
 
 // Validating a relations body whose edges name n peers. Before batching
 // (RR-TYJON4): two header reads per edge, a stored-type read and the family
 // gate.
 func TestQueryBudget_EdgeWarningsAreSizeIndependent(t *testing.T) {
-	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+	b, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
 		t.Helper()
-		var data []v1.ResourceIdentifier
-		for e, err := range app.store.ListEntities(ctx, store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())}) {
+		// The peers are TKT-0001 and its blockers: every fixture ticket and
+		// no padding ticket.
+		data := []v1.ResourceIdentifier{{Type: "ticket", ID: "TKT-0001"}}
+		for r, err := range app.store.ListRelations(ctx, store.RelationQuery{
+			EntityIDs: []string{"TKT-0001"}, Type: "blocks", Direction: store.DirectionIncoming,
+		}) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			data = append(data, v1.ResourceIdentifier{Type: "ticket", ID: e.ID})
+			data = append(data, v1.ResourceIdentifier{Type: "ticket", ID: r.From})
 		}
 		// A peer declared with the wrong type, so the warning path is
 		// exercised too. A missing peer would be refused (DEC-0D8UZX3).
@@ -671,7 +790,7 @@ func TestQueryBudget_EdgeWarningsAreSizeIndependent(t *testing.T) {
 			t.Fatalf("warnings = %+v, want one target_type_mismatch", ws)
 		}
 	})
-	assertBudget(t, "edge warnings", small, large, edgeWarningsBudget, detail)
+	assertBudget(t, "edge warnings", b, edgeWarningsBudget, detail)
 }
 
 // A list page inside an entity page's tab (pagescope.go). The scope costs one
@@ -679,7 +798,7 @@ func TestQueryBudget_EdgeWarningsAreSizeIndependent(t *testing.T) {
 // keeps; it also takes the list off the pushdown path, so the rows come from
 // the whole-type read.
 func TestQueryBudget_PageScopedListIsSizeIndependent(t *testing.T) {
-	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+	b, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
 		t.Helper()
 		resp, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets",
 			"per_page=100&scope_page=epic&scope_tab=tickets&anchor=E1")
@@ -690,14 +809,17 @@ func TestQueryBudget_PageScopedListIsSizeIndependent(t *testing.T) {
 			t.Fatalf("list returned %d rows", len(resp.Data))
 		}
 	})
-	assertBudget(t, "page-scoped list", small, large, pageScopedListBudget, detail)
+	// TODO(TKT-FED6FMM): calls only. A page-scoped list takes the Go path,
+	// which reads every header of the type (scopedHeaders' type scan in
+	// scopedread.go) before it narrows to the anchor's rows.
+	assertCallBudget(t, "page-scoped list", b, pageScopedListBudget, detail)
 }
 
 // The same tab over a relation orderable on its incoming side: the list is
 // shown in relation order, and its movable check adds one edge gate and one
 // batch of source reads, whatever the number of rows.
 func TestQueryBudget_IncomingOrderedListIsSizeIndependent(t *testing.T) {
-	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+	b, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
 		t.Helper()
 		meta := app.State().Meta
 		rd := meta.Relations["tracked-by"]
@@ -712,7 +834,9 @@ func TestQueryBudget_IncomingOrderedListIsSizeIndependent(t *testing.T) {
 			t.Fatalf("list returned %d rows, order %+v", len(resp.Data), resp.Meta.RelationOrder)
 		}
 	})
-	assertBudget(t, "incoming-ordered list", small, large, incomingOrderedListBudget, detail)
+	// TODO(TKT-FED6FMM): calls only, for the type scan named on the
+	// page-scoped list budget above.
+	assertCallBudget(t, "incoming-ordered list", b, incomingOrderedListBudget, detail)
 }
 
 // The generated navigation entries (nav_items.go) of a group over the tickets
@@ -721,7 +845,7 @@ func TestQueryBudget_IncomingOrderedListIsSizeIndependent(t *testing.T) {
 // the rows are one store page, and the initials one relation query and one
 // header batch over the served rows, whatever their number.
 func TestQueryBudget_NavItemsWithInitialsAreSizeIndependent(t *testing.T) {
-	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+	b, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
 		t.Helper()
 		installNavItemsGroup(app, app.State().Cfg.Lists["tickets"], dataentryconfig.NavItemsFrom{
 			Limit:   20,
@@ -735,7 +859,7 @@ func TestQueryBudget_NavItemsWithInitialsAreSizeIndependent(t *testing.T) {
 			t.Fatalf("first entry has initial %q, want the assignee's", items["0"].Entries[0].Initial)
 		}
 	})
-	assertBudget(t, "nav items", small, large, navItemsBudget, detail)
+	assertBudget(t, "nav items", b, navItemsBudget, detail)
 }
 
 // Pinned budgets: the measured store-call count per request shape after
@@ -1008,10 +1132,8 @@ func TestQueryBudget_NestedRelationColumnsResolveOverEmittedRowsOnly(t *testing.
 // sources come back in index batches, each gated with one header read, so
 // the count must not move with the number of mentioning tickets.
 func TestQueryBudget_MentionedByIsSizeIndependent(t *testing.T) {
-	counts := make([]int, 0, 2)
-	var detail string
-	for _, n := range []int{10, 50} {
-		app, counting, d, ctx := newBudgetAppOn(t, n, memstore.New())
+	b, detail := measureBudget(func(n, pad int) (storetest.Cost, string) {
+		app, counting, d, ctx := newBudgetAppPadded(t, n, pad, memstore.New(), budgetMeta())
 		for i := 1; i <= n; i++ {
 			id := fmt.Sprintf("TKT-%04d", i)
 			e := entity.New(id, "ticket")
@@ -1026,20 +1148,17 @@ func TestQueryBudget_MentionedByIsSizeIndependent(t *testing.T) {
 		if len(got.Items) != n {
 			t.Fatalf("n=%d: got %d sources", n, len(got.Items))
 		}
-		counts = append(counts, counting.Reads())
-		detail = counting.String()
-	}
-	assertBudget(t, "mentioned-by", counts[0], counts[1], mentionedByBudget, detail)
+		return counting.Cost(), counting.String()
+	})
+	assertBudget(t, "mentioned-by", b, mentionedByBudget, detail)
 }
 
 // A view with a `mentioned_by` step and a `columns_by_type` table
 // (TKT-HF0D5W). The index is read once per view, not once per fixpoint pass,
 // and nothing scales with the number of sources.
 func TestQueryBudget_MentionsViewIsSizeIndependent(t *testing.T) {
-	counts := make([]int, 0, 2)
-	var detail string
-	for _, n := range []int{10, 50} {
-		app, counting, d, ctx := newBudgetAppOn(t, n, memstore.New())
+	b, detail := measureBudget(func(n, pad int) (storetest.Cost, string) {
+		app, counting, d, ctx := newBudgetAppPadded(t, n, pad, memstore.New(), budgetMeta())
 		for i := 1; i <= n; i++ {
 			id := fmt.Sprintf("TKT-%04d", i)
 			e := entity.New(id, "ticket")
@@ -1068,10 +1187,9 @@ func TestQueryBudget_MentionsViewIsSizeIndependent(t *testing.T) {
 		if calls := counting.Calls()["MentionSources"]; calls != 1 {
 			t.Errorf("n=%d: MentionSources called %d times, want once per view", n, calls)
 		}
-		counts = append(counts, counting.Reads())
-		detail = counting.String()
-	}
-	assertBudget(t, "mentions view", counts[0], counts[1], mentionsViewBudget, detail)
+		return counting.Cost(), counting.String()
+	})
+	assertBudget(t, "mentions view", b, mentionsViewBudget, detail)
 }
 
 // A list page with `?include=` — the SPA's relation-column shape, which the
@@ -1094,7 +1212,7 @@ func TestQueryBudget_ListIncludesAreSizeIndependent(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+			b, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
 				t.Helper()
 				_, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets",
 					"per_page=100&include="+url.QueryEscape(tc.include))
@@ -1115,7 +1233,7 @@ func TestQueryBudget_ListIncludesAreSizeIndependent(t *testing.T) {
 					t.Fatalf("include block lacks %s, so this budget proves nothing: %v", tc.wantIncluded, body.Included)
 				}
 			})
-			assertBudget(t, "list include="+tc.include, small, large, tc.pinned, detail)
+			assertBudget(t, "list include="+tc.include, b, tc.pinned, detail)
 		})
 	}
 }

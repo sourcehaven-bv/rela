@@ -40,6 +40,7 @@ func TestResolver_ResolveIDsBudget(t *testing.T) {
 		t.Run(strconv.Itoa(n), func(t *testing.T) {
 			base := memstore.New()
 			ids := seedFacedPolicies(t, base, n)
+			padStore(t, base, "policy", "draft")
 			st := storetest.NewCounting(base)
 			gate := &countingGate{}
 			r := mustResolver(t, gate, visibility.NopRedactor{}, st)
@@ -52,8 +53,10 @@ func TestResolver_ResolveIDsBudget(t *testing.T) {
 					t.Fatalf("%s served at %q, want the world prime draft", id, h.Face)
 				}
 			}
-			if st.Reads() != 1 || st.Calls()["ListEntityHeaders"] != 1 {
-				t.Errorf("reads = %s, want exactly one ListEntityHeaders", st)
+			// Each id is on two faces, so the batch may read both; the
+			// padding must stay unread.
+			if st.Reads() != 1 || st.Calls()["ListEntityHeaders"] != 1 || st.Rows() > 2*n {
+				t.Errorf("reads = %s, want exactly one ListEntityHeaders of at most %d rows", st, 2*n)
 			}
 			if gate.many != 1 || gate.single != 0 {
 				t.Errorf("gate calls = %d many, %d single; want 1 and 0", gate.many, gate.single)

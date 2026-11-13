@@ -131,6 +131,7 @@ func TestPolicyReader_FilterRelationsBudget(t *testing.T) {
 					&entity.Relation{From: pol, FromFace: faceDraft, Type: "cites", To: tkt},
 					&entity.Relation{From: tkt, Type: "governed-by", To: pol})
 			}
+			padStore(t, base, "ticket", "")
 			st := storetest.NewCounting(base)
 			gate := resolverGate{faces: map[string]visibility.FaceSet{"policy": visibility.SomeFaces(facePublished)}}
 			pr, err := visibility.NewPolicyReader(gate, visibility.NopRedactor{}, st)
@@ -141,8 +142,10 @@ func TestPolicyReader_FilterRelationsBudget(t *testing.T) {
 			if len(got) != n || slices.ContainsFunc(got, func(r *entity.Relation) bool { return r.Type == "cites" }) {
 				t.Fatalf("kept %d relations, want the %d identity edges only", len(got), n)
 			}
-			if calls := st.Calls(); st.Reads() != 1 || calls["ListEntityHeaders"] != 1 {
-				t.Errorf("reads = %s, want exactly one ListEntityHeaders", st)
+			// n tickets and n policies on two faces: at most 3n header
+			// rows, never the padding.
+			if calls := st.Calls(); st.Reads() != 1 || calls["ListEntityHeaders"] != 1 || st.Rows() > 3*n {
+				t.Errorf("reads = %s, want exactly one ListEntityHeaders of at most %d rows", st, 3*n)
 			}
 		})
 	}

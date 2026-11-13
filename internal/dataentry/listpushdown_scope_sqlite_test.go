@@ -39,8 +39,8 @@ func TestListPushdown_ScopeMatchesGoPath_SQLite(t *testing.T) {
 // one statement (GraphCount's two excepted, which a list page does not use),
 // so an equal count at 10 and 50 rows is an equal statement count.
 func TestQueryBudget_ListPageIsSizeIndependent_SQLite(t *testing.T) {
-	small, large, detail := readsForOn(t, sqliteStore, listPageOp)
-	assertBudget(t, "list page", small, large, listPageBudget, detail)
+	b, detail := readsForOn(t, sqliteStore, listPageOp)
+	assertBudget(t, "list page", b, listPageBudget, detail)
 }
 
 func TestQueryBudget_TraversalScopeIsPushedDown_SQLite(t *testing.T) {

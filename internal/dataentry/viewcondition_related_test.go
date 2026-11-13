@@ -8,6 +8,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
 
 // relatedListCondition narrows the budget list to tickets implementing
@@ -27,8 +28,7 @@ func withRelatedListCondition(t *testing.T, app *App) {
 // A list `condition:` using related() is answered for the whole candidate
 // set at once: one store query, whatever the list's size (TKT-205V2N).
 func TestViewCondition_RelatedIsSizeIndependent(t *testing.T) {
-	counts := make([]int, 0, 2)
-	for _, n := range []int{10, 50} {
+	run := func(n int) *storetest.Counting {
 		app, counting, d, ctx := newBudgetAppOn(t, n, memstore.New())
 		withRelatedListCondition(t, app)
 		counting.Reset()
@@ -39,11 +39,18 @@ func TestViewCondition_RelatedIsSizeIndependent(t *testing.T) {
 		if len(resp.Data) != n/5 {
 			t.Fatalf("n=%d: rows = %d, want %d", n, len(resp.Data), n/5)
 		}
-		counts = append(counts, counting.Calls()["MatchingFaces"])
+		return counting
+	}
+	counts := make([]int, 0, 2)
+	for _, n := range []int{10, 50} {
+		counts = append(counts, run(n).Calls()["MatchingFaces"])
 	}
 	if counts[0] != counts[1] || counts[1] != 1 {
 		t.Fatalf("MatchingIDs = %v, want 1 at both sizes", counts)
 	}
+	// TODO(TKT-FED6FMM): calls only. A list `condition:` keeps the list on
+	// the Go path, which reads every header of the type (scopedHeaders' type
+	// scan in scopedread.go), so the rows grow with the store.
 }
 
 // The condition's traversal is authorized by the reader's own gate: a reader
@@ -70,8 +77,7 @@ func TestViewCondition_RelatedUsesReaderGate(t *testing.T) {
 // independent together: every per-row redaction on the list path reads
 // primed answers (TKT-205V2N).
 func TestViewCondition_RelatedWithTraversingGrantIsSizeIndependent(t *testing.T) {
-	counts := make([]int, 0, 2)
-	for _, n := range []int{10, 50} {
+	run := func(n int) *storetest.Counting {
 		app, counting, _, ctx := newBudgetAppOn(t, n, memstore.New())
 		withRelatedListCondition(t, app)
 		d := mustNewACL(t, &acl.Policy{
@@ -95,11 +101,18 @@ func TestViewCondition_RelatedWithTraversingGrantIsSizeIndependent(t *testing.T)
 		if rec.Code != http.StatusOK || len(resp.Data) != n/5 {
 			t.Fatalf("n=%d: %d, %d rows, want %d", n, rec.Code, len(resp.Data), n/5)
 		}
-		counts = append(counts, counting.Calls()["MatchingFaces"])
+		return counting
+	}
+	counts := make([]int, 0, 2)
+	for _, n := range []int{10, 50} {
+		counts = append(counts, run(n).Calls()["MatchingFaces"])
 	}
 	if counts[0] != counts[1] {
 		t.Fatalf("MatchingIDs = %v, want the same at both sizes", counts)
 	}
+	// TODO(TKT-FED6FMM): calls only. A list `condition:` keeps the list on
+	// the Go path, which reads every header of the type (scopedHeaders' type
+	// scan in scopedread.go), so the rows grow with the store.
 }
 
 // A traversal the gate refuses, rather than denies, fails the request. Here

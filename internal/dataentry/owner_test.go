@@ -181,11 +181,20 @@ func TestOwner_Irregular(t *testing.T) {
 
 // TestOwner_ReadBudget pins that resolving owners costs the same number of
 // reads for 10 rows as for 50 (TKT-1U8XYN): one relation query and one header
-// batch per level, never one per row.
+// batch per level, never one per row. The rows read are the same with 20
+// or 200 unowned tasks in the store.
 func TestOwner_ReadBudget(t *testing.T) {
-	reads := func(n int) (int, int) {
+	measure := func(n, pad int) (*storetest.Counting, int) {
 		app := newOwnedApp(t)
 		seedTitled(app, "TASK-P", "task", "parent")
+		// The padding hangs under a parent of its own, so the subtask
+		// edges grow with pad too.
+		seedTitled(app, "TASK-PZ", "task", "pad parent")
+		for i := range pad {
+			id := fmt.Sprintf("TASK-Z%d", i)
+			seedTitled(app, id, "task", "unowned")
+			seedRelation(app, entity.NewRelation("TASK-PZ", "subtask", id))
+		}
 		rows := []*entity.Entity{}
 		for i := range n {
 			id := fmt.Sprintf("TASK-C%d", i)
@@ -211,8 +220,16 @@ func TestOwner_ReadBudget(t *testing.T) {
 		if len(got) != n {
 			t.Fatalf("resolved %d owners, want %d", len(got), n)
 		}
+		return counting, headerCalls
+	}
+	reads := func(n int) (int, int) {
+		counting, headerCalls := measure(n, 0)
 		return counting.Reads(), headerCalls
 	}
+	assertScaleFreeIndexed(t, func(pad int) (storetest.Cost, string) {
+		counting, _ := measure(10, pad)
+		return counting.Cost(), counting.String()
+	})
 	r10, h10 := reads(10)
 	r50, h50 := reads(50)
 	if r10 != r50 || h10 != h50 {

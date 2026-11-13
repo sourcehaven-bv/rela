@@ -56,7 +56,9 @@ func seedBudget(t *testing.T, st store.Store, n int) {
 // TestCheckCardinality_ReadBudget pins TKT-5LW875: the check reads edges
 // once per relation and subjects once per type, so its store reads do not
 // grow with the number of subjects. The per-subject CountRelations it
-// replaced made one read per subject per bound.
+// replaced made one read per subject per bound. It pins calls only: an
+// unscoped check visits every subject and edge by design, so its rows grow
+// with the store.
 func TestCheckCardinality_ReadBudget(t *testing.T) {
 	reads := func(n int) (int, int) {
 		counting := storetest.NewCounting(memstore.New())

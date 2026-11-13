@@ -65,5 +65,7 @@ func TestRanges_ReadsDoNotGrowWithRows(t *testing.T) {
 		require.NoError(t, err)
 		calls = append(calls, c.Calls())
 	}
+	// Calls only: an unbounded range covers every row by design, so its
+	// rows grow with the store.
 	require.Equal(t, calls[0], calls[1], "store reads at 10 and at 50 rows")
 }

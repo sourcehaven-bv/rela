@@ -599,7 +599,9 @@ func recordGoldenCase(t *testing.T, c goldenCase) string {
 			fmt.Fprintf(&b, "header %s: %s\n", h, window.normalize(strings.Join(v, ", ")))
 		}
 	}
-	fmt.Fprintf(&b, "reads: %s\n", g.calls.String())
+	// Calls only: the rows a request reads depend on what the principal
+	// may see, and a golden shared by every principal must not.
+	fmt.Fprintf(&b, "reads: %s\n", goldenVersionLine(g.calls.Calls()))
 	fmt.Fprintf(&b, "breadth: %s\n", g.breadth.String())
 	fmt.Fprintf(&b, "bodies: %s\n", g.bodies.String())
 	fmt.Fprintf(&b, "versions: %s\n", goldenVersionLine(g.versions.snapshot()))
