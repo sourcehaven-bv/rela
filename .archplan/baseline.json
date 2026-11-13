@@ -2728,19 +2728,19 @@
       "weight.profile": 49,
       "weight.structure": 859,
       "weight.layers": 0,
-      "weight.vocabulary": 868,
-      "weight.types": 4192,
-      "weight.concepts": 7140,
+      "weight.vocabulary": 870,
+      "weight.types": 4199,
+      "weight.concepts": 7147,
       "weight.boundaries": 1471,
       "weight.data": 1297,
       "weight.security": 2064,
       "largest_tangle": 14,
       "cycle_edges": 67,
       "upward_edges": 0,
-      "propagation_cost": 9.1
+      "propagation_cost": 9.2
     },
     "min_weight": 0,
-    "at": "2026-11-12T10:40:00Z",
+    "at": "2026-11-13T09:30:00Z",
     "log": [
       {
         "at": "2026-11-05T20:33:00Z",
@@ -3066,6 +3066,29 @@
           "weight.concepts": [
             7139,
             7140
+          ]
+        }
+      },
+      {
+        "at": "2026-11-13T09:30:00Z",
+        "change": "loosen",
+        "reason": "TKT-UO8UIGO: the new apptest package (rela test) uses rela's ACL and store vocabulary and mirrors metamodel property shapes for its fakers, and cli now reaches it, raising propagation cost by 0.1. Its one new finding (duplicated enum_values) is fixed by metamodel.EnumValues. weight.structure and weight.security keep the traced values.",
+        "metrics": {
+          "weight.vocabulary": [
+            868,
+            870
+          ],
+          "weight.types": [
+            4192,
+            4199
+          ],
+          "weight.concepts": [
+            7140,
+            7147
+          ],
+          "propagation_cost": [
+            9.1,
+            9.2
           ]
         }
       }
