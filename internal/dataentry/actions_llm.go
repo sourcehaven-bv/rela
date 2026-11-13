@@ -106,7 +106,9 @@ func (o actionOps) runLLM(
 	if err != nil {
 		var re *llmtask.ReplyError
 		if errors.As(err, &re) {
-			slog.Warn("llm action: unusable AI reply", "action", id, "error", err)
+			// Not the error text: it quotes values the model chose, which
+			// may come from entity data.
+			slog.Warn("llm action: unusable AI reply", "action", id)
 			return nil, failV1(http.StatusBadGateway, "ai_reply_invalid", re.Error())
 		}
 		return nil, failLLMInternal(err)

@@ -656,6 +656,40 @@ func TestLLMAction_Candidates(t *testing.T) {
 	}
 }
 
+// A target the caller cannot read is neither sent to the model nor
+// accepted when the model names it anyway.
+func TestLLMAction_HiddenCandidate(t *testing.T) {
+	relate := dataentryconfig.LLMRelateOutput{Relation: "touches", Candidates: "entity.area == 'auth'"}
+	tests := []struct {
+		name, reply string
+		wantStatus  int
+	}{
+		{name: "not offered", reply: `{"set":{"priority":null},"relate":{"touches":[]}}`, wantStatus: http.StatusOK},
+		{name: "refused when named", reply: `{"set":{"priority":null},"relate":{"touches":["CMP-1"]}}`, wantStatus: http.StatusBadGateway},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ents, edges := llmGraphSeed()
+			a := buildLLMApp(t, llmFixture{
+				meta: llmGraphMeta(t), seed: ents, edges: edges, read: []string{"ticket", "concept"},
+				action: llmAction(nil, []string{"priority"}, []dataentryconfig.LLMRelateOutput{relate}),
+				reply:  tc.reply,
+			})
+			code, _, body := a.run(t, "alice")
+			if code != tc.wantStatus {
+				t.Fatalf("status %d, want %d: %s", code, tc.wantStatus, body)
+			}
+			if tc.wantStatus == http.StatusBadGateway && !strings.Contains(body, "ai_reply_invalid") {
+				t.Errorf("body = %s, want ai_reply_invalid", body)
+			}
+			sent := a.chat.sent(t)
+			if strings.Contains(sent, "CMP-1") || strings.Contains(sent, "Gateway") {
+				t.Errorf("hidden candidate sent to the model: %s", sent)
+			}
+		})
+	}
+}
+
 func TestLLMAction_NoCandidatesSkipsProvider(t *testing.T) {
 	tests := []struct {
 		name     string
