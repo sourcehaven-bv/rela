@@ -73,6 +73,11 @@ type ActionView struct {
 // message whose type the configuration no longer declares shows none.
 // A session notice is the exception: its type is never declared, and it
 // shows its props from, to, generation and cause.
+//
+// Each exported field is one key of the message wire shape, so a new key
+// raises the pin by one (21: Batch, TKT-GR1MXL5).
+//
+//plimsoll:max-fields=21
 type MessageView struct {
 	Seq        int64          `json:"seq"`
 	Rev        int64          `json:"rev"`

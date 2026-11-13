@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-
-	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
 
-// MaxBatch caps the messages one [Store.AppendBatch] posts.
-const MaxBatch = realtimelimits.MaxBatch
+// MaxBatch caps the messages one [Store.AppendBatch] posts. The realtime
+// service and the API description use the same number; a realtime test
+// pins it against realtimelimits.MaxBatch, which channels may not import.
+const MaxBatch = 10
 
 // MaxAsked caps the questions [Channel.Asked] holds: those of the current
 // session span, across batches.

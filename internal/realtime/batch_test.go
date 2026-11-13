@@ -8,7 +8,15 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
+	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
+
+// TestMaxBatch_AgreesWithLimits pins the store's batch cap to the one the
+// API description reads, since channels may not import realtimelimits.
+func TestMaxBatch_AgreesWithLimits(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, realtimelimits.MaxBatch, channels.MaxBatch)
+}
 
 // questionRealtime is a room whose session waits in asking until every
 // question of the span has an answer, and a plain chat without a session.

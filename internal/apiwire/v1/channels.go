@@ -365,6 +365,11 @@ type ChannelMessageOutputResult struct {
 // An edit replaces every property the reader can read. A ref property that
 // renders as restricted, and that the edit does not name, keeps its stored
 // value, so edit is offered on such a message too.
+//
+// Each exported field is one JSON key of the message, so a new key raises
+// the pin by one (21: Batch, TKT-GR1MXL5).
+//
+//plimsoll:max-fields=21
 type Message struct {
 	Seq        int64          `json:"seq"`
 	Rev        int64          `json:"rev"`
