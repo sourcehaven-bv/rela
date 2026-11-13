@@ -71,16 +71,12 @@ func (c Credential) Validate() error {
 	return nil
 }
 
-// CredentialEnvPrefix starts the name of every environment variable a
-// declared credential may be read from.
-const CredentialEnvPrefix = "REMOTE_CREDENTIAL_" //nolint:gosec // G101: a variable name prefix, not a credential
-
 // ValidateDeclared is [Credential.Validate] for a credential a config file
 // names, such as remotes.yaml. The value is sent to the URL the file names,
 // so a source the file may name freely would let whoever edits it send any
 // host secret off the machine: RELA_DATABASE_URL, the token key, or a file
 // under $CREDENTIALS_DIRECTORY. So an env name starts with
-// [CredentialEnvPrefix], and a file is an absolute path whose base name is
+// [secrets.RemoteCredentialEnvPrefix], and a file is an absolute path whose base name is
 // a remote credential name, as a secret is. A relative path is refused
 // because it would resolve against whatever directory the process runs in.
 func (c Credential) ValidateDeclared() error {
@@ -89,9 +85,12 @@ func (c Credential) ValidateDeclared() error {
 	}
 	switch {
 	case c.Env != "":
-		if !strings.HasPrefix(c.Env, CredentialEnvPrefix) || len(c.Env) == len(CredentialEnvPrefix) {
+		// Upper case only, unlike the refusal in secrets.IsRemoteCredentialEnv:
+		// a lower-case name is refused everywhere else, so it is never read.
+		prefix := secrets.RemoteCredentialEnvPrefix
+		if !strings.HasPrefix(c.Env, prefix) || len(c.Env) == len(prefix) {
 			return fmt.Errorf("env %q: the variable name must start with %q followed by a name",
-				c.Env, CredentialEnvPrefix)
+				c.Env, secrets.RemoteCredentialEnvPrefix)
 		}
 	case c.File != "":
 		if !filepath.IsAbs(c.File) {

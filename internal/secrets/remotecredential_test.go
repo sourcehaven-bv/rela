@@ -36,6 +36,19 @@ func TestIsRemoteCredential(t *testing.T) {
 	}
 }
 
+// TestIsRemoteCredentialEnv pins the names every config other than the
+// remote config refuses as an environment variable (TKT-RZSTAPZ).
+func TestIsRemoteCredentialEnv(t *testing.T) {
+	for name, want := range map[string]bool{
+		"REMOTE_CREDENTIAL_UP": true, "REMOTE_CREDENTIAL_": true, "remote_credential_up": true,
+		"REMOTE_CREDENTIAL": false, "OPENAI_API_KEY": false, "X_REMOTE_CREDENTIAL_UP": false, "": false,
+	} {
+		if got := IsRemoteCredentialEnv(name); got != want {
+			t.Errorf("IsRemoteCredentialEnv(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
 func TestGlobal_IgnoresOverrides(t *testing.T) {
 	dir := t.TempDir()
 	writeYAML(t, dir, `
