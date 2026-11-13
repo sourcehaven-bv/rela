@@ -1,0 +1,142 @@
+version: "1"
+piles:
+  inbox: {name: Inbox, read_state: true, reasons: {done: done}}
+entities:
+  task:
+    label: Task
+    id_prefix: TASK
+    aliases: [todo]
+    properties:
+      title: {type: string}
+      status: {type: string}
+      count: {type: integer}
+      due: {type: date}
+      kind: {type: string}
+      owner: {type: string}
+      watchers: {type: string, list: true}
+  project:
+    label: Project
+    id_prefix: PROJ
+    properties:
+      title: {type: string}
+      owner: {type: string}
+  checklist:
+    label: Checklist
+    id_prefix: CHK
+    properties:
+      title: {type: string}
+      status: {type: string}
+      started: {type: date}
+  doc:
+    label: Doc
+    id_prefix: DOC
+    faces: {draft: {}, adopted: {}, nl: {}}
+    properties: {title: {type: string}}
+relations:
+  part-of:
+    from: [task]
+    to: [project]
+    inverse: has-task
+  has-checklist:
+    from: [task]
+    to: [checklist]
+copies:
+  adopt:
+    from: doc@draft
+    to: doc@adopted
+    fields: all
+    guard: {permission: adopt}
+automations:
+  - name: when-int
+    on: {entity: task, created: true, when: ["count>9"]}
+    do: [{set: flag-int, value: "yes"}]
+  - name: when-equal-and-undeclared
+    on: {entity: task, created: true, when: ["status=open", "nickname=bob"]}
+    do: [{set: flag-undeclared, value: "yes"}]
+  - name: when-regex-on-int
+    on: {entity: task, created: true, when: ["count~=1.*"]}
+    do: [{set: flag-regex, value: "yes"}]
+  - name: when-date
+    on: {entity: task, created: true, when: ["due<2026-12-01"]}
+    do: [{set: flag-date, value: "{{new.due}}"}]
+  - name: typeless-updated
+    on: {updated: true, when: ["status=open"]}
+    do: [{set: touched, value: "{{old.status}}->{{new.status}} by {{user.name}} on {{today}}"}]
+  - name: typeless-created-not-empty
+    on: {created: true, when: ["owner!="]}
+    do: [{set: owned, value: "{{new.owner}}"}]
+  - name: condition-done
+    on: {entity: task, property: status, becomes: done, condition: "entity.count > 3"}
+    do:
+      - lua: |
+          rela.log("{{new.title}} {{today}} {{user.name}}")
+  - name: condition-related
+    on: {entity: task, property: status, from: open, condition: "related(entity, 'part-of')"}
+    do: [{set: related, value: "yes"}]
+  - name: when-before-condition
+    on: {entity: task, updated: true, when: ["kind=gated"], condition: "related(entity, 'part-of')"}
+    do: [{set: gated, value: "yes"}]
+  - name: face-scoped
+    on: {entity: doc, created: true, faces: [nl]}
+    do: [{set: nl, value: "yes"}]
+  - name: copy-only
+    on: {entity: doc, copy: adopt}
+    do: [{lua_file: adopt.lua}]
+  - name: validate-checks
+    on: {entity: task, updated: true}
+    validate:
+      - {check: "count>5", severity: error, message: "{{new.title}} count too small"}
+      - {check: "status", message: "bad check"}
+      - {check: "nickname=bob", message: "no nickname"}
+      - {check: "status=open", message: "not open: {{new.status}}"}
+  - name: piles
+    on: {entity: task, property: owner}
+    do:
+      - add_to_pile: {pile: inbox, owner: "{{new.owner}}"}
+      - add_to_pile: {pile: "{{new.missing}}"}
+      - add_to_pile: {pile: inbox}
+  - name: notify-direct
+    on: {entity: task, property: status, becomes: done}
+    do:
+      - notify: {pile: inbox, reason: done, to: {property: watchers}}
+  - name: notify-via
+    on: {entity: task, property: status, becomes: done}
+    do:
+      - notify: {pile: inbox, to: {via: part-of, property: owner}}
+  - name: create-checklist
+    on: {entity: task, property: status, becomes: review}
+    do:
+      - create_entity:
+          type: checklist
+          template: "{{new.kind}}"
+          properties: {title: "Review: {{new.title}}", status: in-progress, started: "{{today}}"}
+          relation: has-checklist
+      - create_relation: {relation: part-of, to: "{{new.owner}}"}
+      - set: status-note
+        value: "reviewing {{new.title}}"
+  - name: create-replace
+    on: {entity: task, property: status, becomes: review}
+    do:
+      - create_entity:
+          type: checklist
+          properties: {title: "Again"}
+          relation: has-checklist
+          if_exists: replace
+  - name: same-prop-first
+    on: {entity: task, created: true}
+    do: [{set: shared, value: first}]
+  - name: same-prop-second
+    on: {entity: task, created: true}
+    do: [{set: shared, value: second}]
+  - name: relations
+    on: {entity: task, relation_created: part-of}
+    do: [{set: linked, value: "{{new.title}}"}]
+  - name: relations-removed
+    on: {entity: task, relation_removed: part-of}
+    do: [{set: unlinked, value: "yes"}]
+  - name: deleted-job
+    on: {entity: task, deleted: true}
+    do: [{lua_file: gone.lua, background: true, capabilities: {http: true}}]
+  - name: background-on-update
+    on: {entity: task, property: title}
+    do: [{lua_file: sync.lua, background: true}, {lua: "rela.log(1)", allow_acl_bypass: read}]
