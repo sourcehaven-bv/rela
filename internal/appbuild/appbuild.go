@@ -2192,7 +2192,7 @@ func loadMetamodel(ctx context.Context, cfg Config) (*metamodel.Metamodel, error
 // mutation through either during assembly would be visible to every other
 // consumer of the same base — a cross-tenant defect in a multi-tenant host, and
 // a cross-project one on the desktop. Assembly only reads them (the metamodel
-// consumers derive new values: `flowcfg.CompileTransitions`, `NewEngineFromMetamodel`),
+// consumers derive new values: `transitions.CompileTransitions`, `NewEngineFromMetamodel`),
 // and TestSharedBase_AssemblyDoesNotMutateSharedValues pins it.
 type SharedBase struct {
 	// channelFiles holds the runner of channel file scans; the data-entry
@@ -2686,7 +2686,7 @@ func buildEntityManager(
 		// happen on a deployment that has a policy.
 		//
 		// CopyGuard reuses tw.Guard: entitymanager.CopyGuard and
-		// flowcfg.PermissionGuard are the same shape ON PURPOSE, so a copy's
+		// transitions.PermissionGuard are the same shape ON PURPOSE, so a copy's
 		// `guard:` and a transition's ask the identical question of the
 		// identical implementation and cannot drift into asking different
 		// ones.

@@ -29,7 +29,7 @@ type VersionTagStore interface {
 }
 
 // TagGuard answers whether the ctx principal holds a permission for one
-// entity. Same shape as [CopyGuard] and flowcfg.PermissionGuard, and satisfied by
+// entity. Same shape as [CopyGuard] and transitions.PermissionGuard, and satisfied by
 // the same kind of wiring: a subject-aware check over the ACL that allows
 // everything when no policy is configured.
 type TagGuard interface {

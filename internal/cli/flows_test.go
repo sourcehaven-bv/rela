@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/config"
@@ -95,7 +97,7 @@ func TestFlowShow_Write(t *testing.T) {
 	})
 }
 
-func compileCLIHeadless(t *testing.T) *flowcfg.Transitions {
+func compileCLIHeadless(t *testing.T) *transitions.Transitions {
 	t.Helper()
 	meta, err := metamodel.Parse([]byte(`types:
   item-status:
@@ -114,7 +116,7 @@ entities:
 relations: {}
 `))
 	require.NoError(t, err)
-	tr, err := flowcfg.CompileTransitions(meta)
+	tr, err := transitions.CompileTransitions(meta)
 	require.NoError(t, err)
 	return tr
 }
@@ -220,17 +222,17 @@ func TestFlowShow_Run(t *testing.T) {
 		got, err := show(t, output.FormatTable, "", cliFlowsYAML)
 		require.NoError(t, err)
 		require.Contains(t, got, "review\tReview")
-		require.Contains(t, got, flowcfg.HeadlessPrefix+"item-status\theadless")
+		require.Contains(t, got, transitions.HeadlessPrefix+"item-status\theadless")
 	})
 	t.Run("headless name skips a broken flows.yaml", func(t *testing.T) {
-		got, err := show(t, output.FormatTable, flowcfg.HeadlessPrefix+"item-status", brokenFlowsYAML)
+		got, err := show(t, output.FormatTable, transitions.HeadlessPrefix+"item-status", brokenFlowsYAML)
 		require.NoError(t, err)
 		require.Contains(t, got, "stateDiagram")
 	})
 	t.Run("text list with a broken flows.yaml", func(t *testing.T) {
 		got, err := show(t, output.FormatTable, "", brokenFlowsYAML)
 		require.Error(t, err)
-		require.Contains(t, got, flowcfg.HeadlessPrefix+"item-status")
+		require.Contains(t, got, transitions.HeadlessPrefix+"item-status")
 	})
 	t.Run("json list with a broken flows.yaml", func(t *testing.T) {
 		got, err := show(t, output.FormatJSON, "", brokenFlowsYAML)

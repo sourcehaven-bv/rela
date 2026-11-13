@@ -5,11 +5,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -34,7 +35,7 @@ entities:
 	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: memstore.New(), Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{},
-		ACL: acl.NopACL{}, Transitions: flowcfg.NoTransitions(),
+		ACL: acl.NopACL{}, Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})

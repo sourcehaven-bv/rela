@@ -7,13 +7,14 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
@@ -44,7 +45,7 @@ func TestOutputWriter_Errors(t *testing.T) {
 		{"field gate", &affordances.FieldWriteError{Path: "owner"}, true, realtime.OutputCodeFieldDenied, nil, false},
 		{"validation", invalid, true, realtime.OutputCodeInvalid, []string{"status"}, false},
 		{"unique", unique, true, realtime.OutputCodeConflict, nil, false},
-		{"illegal transition", fmt.Errorf("%w: phase of %s", flowcfg.ErrIllegalTransition, secretID), true,
+		{"illegal transition", fmt.Errorf("%w: phase of %s", transitions.ErrIllegalTransition, secretID), true,
 			realtime.OutputCodeInvalid, nil, false},
 		{"not found", fmt.Errorf("%w: %s", entitymanager.ErrEntityNotFound, secretID), true,
 			realtime.OutputCodeNotFound, nil, false},

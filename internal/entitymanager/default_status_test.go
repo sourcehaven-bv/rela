@@ -5,11 +5,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -82,7 +83,7 @@ func newDefaultStatusManager(t *testing.T) *entitymanager.Manager {
 	if err != nil {
 		t.Fatal(err)
 	}
-	set, err := flowcfg.CompileTransitions(meta)
+	set, err := transitions.CompileTransitions(meta)
 	if err != nil {
 		t.Fatal(err)
 	}

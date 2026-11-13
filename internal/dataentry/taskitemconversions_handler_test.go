@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -18,7 +20,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -289,7 +290,7 @@ func TestTaskItemHandler_CreateErrors(t *testing.T) {
 		code   string
 		want   string
 	}{
-		{"illegal entry", fmt.Errorf("status: %w", flowcfg.ErrIllegalEntry),
+		{"illegal entry", fmt.Errorf("status: %w", transitions.ErrIllegalEntry),
 			http.StatusUnprocessableEntity, "conversion_failed", ""},
 		{"owning rule", fmt.Errorf("%w: owned twice", entitymanager.ErrOwningRule),
 			http.StatusUnprocessableEntity, "conversion_failed", ""},

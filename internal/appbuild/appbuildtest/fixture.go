@@ -281,7 +281,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		// The copy deps (TKT-WRLDAPI item 5), all three taken from the same
 		// TransitionWiring production uses. CopyGuard reuses tw.Guard for the
 		// reason production does: entitymanager.CopyGuard and
-		// flowcfg.PermissionGuard are deliberately the same shape, so the two
+		// transitions.PermissionGuard are deliberately the same shape, so the two
 		// cannot drift into asking different questions.
 		//
 		// These were previously left nil here on the reasoning that this

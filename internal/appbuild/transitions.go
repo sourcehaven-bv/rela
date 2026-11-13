@@ -4,16 +4,17 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
-// transitionGuard adapts the ACL to the [flowcfg.PermissionGuard] the transition
+// transitionGuard adapts the ACL to the [transitions.PermissionGuard] the transition
 // enforcer needs. It answers "does the ctx principal hold `permission` for the
 // subject entity" using the SUBJECT-AWARE resolver
 // ([acl.Request.HoldsPermissionForEntity]) — so a permission conferred by an
@@ -61,7 +62,7 @@ func requestFor(ctx context.Context, d *acl.Declarative) (*acl.Request, bool) {
 	return req, false
 }
 
-// transitionGraph adapts the store to the [flowcfg.GraphLookup] a `when:`
+// transitionGraph adapts the store to the [transitions.GraphLookup] a `when:`
 // precondition needs (has_relation / count_relations). One outgoing scan per
 // evaluation answers both host functions.
 type transitionGraph struct{ st store.Store }
@@ -84,9 +85,9 @@ func (g transitionGraph) OutgoingCounts(ctx context.Context, fromID string) map[
 // every wiring site (production assemble + test fixtures) builds the enforcer
 // the same way.
 type TransitionWiring struct {
-	Enforcer *flowcfg.Transitions
-	Guard    flowcfg.PermissionGuard
-	Graph    flowcfg.GraphLookup
+	Enforcer *transitions.Transitions
+	Guard    transitions.PermissionGuard
+	Graph    transitions.GraphLookup
 
 	// ReadGate and Visibility are the COPY path's two read gates. They live
 	// here rather than beside the copy code because they share this bundle's
@@ -114,8 +115,8 @@ type TransitionWiring struct {
 //
 // A `when:` related() reads the raw store on both sides: enforcement is a
 // write-path decision, and Performable must agree with it (TKT-205V2N).
-func CompileHeadlessFlows(meta *metamodel.Metamodel, st store.Store) (*flowcfg.Transitions, error) {
-	return flowcfg.CompileTransitions(meta, flowcfg.WithTransitionTraversals(ungatedBinder(meta, st)))
+func CompileHeadlessFlows(meta *metamodel.Metamodel, st store.Store) (*transitions.Transitions, error) {
+	return transitions.CompileTransitions(meta, transitions.WithTransitionTraversals(ungatedBinder(meta, st)))
 }
 
 // BuildTransitionWiring builds the executable state machines from the metamodel

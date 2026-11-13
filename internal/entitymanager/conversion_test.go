@@ -9,12 +9,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -143,7 +144,7 @@ func newConversionFixture(t *testing.T, opts conversionOptions) conversionFixtur
 			t.Fatalf("WithFlowRuns: %v", err)
 		}
 	}
-	transitions, err := flowcfg.CompileTransitions(meta)
+	transitions, err := transitions.CompileTransitions(meta)
 	if err != nil {
 		t.Fatalf("compile transitions: %v", err)
 	}

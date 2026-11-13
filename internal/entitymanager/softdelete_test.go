@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -14,7 +16,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -50,7 +51,7 @@ func newSoftDeleteFixture(t *testing.T) softDeleteFixture {
 	versions := &recordedVersions{}
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: parseMeta(t), Templater: nopTemplater{}, Audit: sink,
-		ACL: acl.NopACL{}, Transitions: flowcfg.NoTransitions(),
+		ACL: acl.NopACL{}, Transitions: transitions.NoTransitions(),
 		FieldGate: entitymanager.AllowAllFieldGate{}, VersionRecorder: versions,
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -178,7 +179,7 @@ entities:
 	require.NoError(t, err)
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: memstore.New(), Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{},
-		ACL: acl.NopACL{}, Transitions: flowcfg.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
+		ACL: acl.NopACL{}, Transitions: transitions.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	require.NoError(t, err)
@@ -249,7 +250,7 @@ role_relations:
 	st := memstore.New()
 	seed, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{},
-		ACL: acl.NopACL{}, Transitions: flowcfg.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
+		ACL: acl.NopACL{}, Transitions: transitions.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	require.NoError(t, err)
@@ -267,7 +268,7 @@ role_relations:
 	require.NoError(t, err)
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: declarative,
-		Transitions: flowcfg.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
+		Transitions: transitions.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		CopyReadGate: entitymanager.AllowAllCopyReadGate{}, CopyVisibility: allowAllCopyVisibility(t, st),
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})

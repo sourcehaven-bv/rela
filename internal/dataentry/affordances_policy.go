@@ -4,9 +4,10 @@ import (
 	"context"
 	"maps"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -112,7 +113,7 @@ func (p *policyResolver) RelationFieldVerdicts(
 // implements this — Nop / Demo do not, so `_transitions` is absent under them.
 func (p *policyResolver) TransitionVerdicts(
 	ctx context.Context, e *entityPkg.Entity,
-) map[string][]flowcfg.TransitionVerdict {
+) map[string][]transitions.TransitionVerdict {
 	return p.inner.TransitionVerdicts(ctx, e)
 }
 

@@ -7,10 +7,11 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/search"
@@ -137,7 +138,7 @@ func ResolverFromProfile(
 	// regardless. (Threading the entitymanager's single Transitions through
 	// appbuild.Services is the follow-up when the SPA status control wires
 	// the whole surface.)
-	machines, err := flowcfg.CompileTransitions(meta, flowcfg.WithTransitionTraversals(traversals))
+	machines, err := transitions.CompileTransitions(meta, transitions.WithTransitionTraversals(traversals))
 	if err != nil {
 		return nil, fmt.Errorf("dataentry: compiling state machines: %w", err)
 	}

@@ -7,11 +7,12 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -46,7 +47,7 @@ func incomingFixture(t *testing.T, a acl.ACL) (
 		Templater:   nopTemplater{},
 		Audit:       audit.Nop{},
 		ACL:         a,
-		Transitions: flowcfg.NoTransitions(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -157,7 +158,7 @@ func TestUpdateRelation_IncomingPositionAuthorizesSiblings(t *testing.T) {
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: orderableMetamodel(t, "incoming"), Templater: nopTemplater{}, Audit: audit.Nop{},
 		ACL:         denyUpdateFromACL{from: rs[2]},
-		Transitions: flowcfg.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
+		Transitions: transitions.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {

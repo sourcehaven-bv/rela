@@ -120,6 +120,7 @@
         "templating",
         "tracer",
         "transform",
+        "transitions",
         "validation",
         "validationgraph",
         "validator",

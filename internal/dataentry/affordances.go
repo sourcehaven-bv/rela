@@ -13,6 +13,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 
@@ -22,7 +24,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -351,7 +352,7 @@ func primeFlowRuns(ctx context.Context, res FieldVerdictResolver, rows []*entity
 // outgoing transitions for the ctx principal on e. An empty map means "no
 // machine-typed property on this entity" (or no machines wired).
 type TransitionResolver interface {
-	TransitionVerdicts(ctx context.Context, e *entityPkg.Entity) map[string][]flowcfg.TransitionVerdict
+	TransitionVerdicts(ctx context.Context, e *entityPkg.Entity) map[string][]transitions.TransitionVerdict
 	// EntryValues returns, per state-machine-typed property of entityType, the
 	// value a create must enter at (the machine's Initial/Default — BUG-X1C7S).
 	// The create form uses it to lock the field to its initial value. Empty when

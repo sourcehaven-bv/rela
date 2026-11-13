@@ -1,4 +1,4 @@
-package flowcfg
+package transitions
 
 import (
 	"errors"
@@ -24,7 +24,7 @@ import (
 // meta must not be nil (a required input from appbuild).
 func CompileTransitions(meta *metamodel.Metamodel, opts ...TransitionOption) (*Transitions, error) {
 	if meta == nil {
-		return nil, errors.New("flowcfg: CompileTransitions: nil metamodel")
+		return nil, errors.New("transitions: CompileTransitions: nil metamodel")
 	}
 
 	set := &Transitions{
@@ -95,7 +95,7 @@ func CompileTransitions(meta *metamodel.Metamodel, opts ...TransitionOption) (*T
 
 	if len(problems) > 0 {
 		sort.Strings(problems)
-		return nil, fmt.Errorf("flowcfg: invalid transitions:\n  %s", joinLines(problems))
+		return nil, fmt.Errorf("transitions: invalid transitions:\n  %s", joinLines(problems))
 	}
 	return set, nil
 }

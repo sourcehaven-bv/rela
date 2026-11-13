@@ -1,4 +1,4 @@
-package flowcfg
+package transitions
 
 import (
 	"strings"

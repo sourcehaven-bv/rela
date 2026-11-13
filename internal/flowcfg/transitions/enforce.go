@@ -1,4 +1,4 @@
-package flowcfg
+package transitions
 
 import (
 	"context"
@@ -214,7 +214,7 @@ var errUnexpectedOutcome = errors.New("unexpected decision outcome")
 //
 // The engine's words name the other check, so the mapping is:
 //
-//	flow (engine)             headless flow (flowcfg)
+//	flow (engine)             headless flow (transitions)
 //	Rules.Admits refuses      gateGuard (the ACL permission)
 //	Rules.Holds false         gatePrecondition (`when:` not met)
 //	GuardFailed               gatePrecondition with the `when:` error

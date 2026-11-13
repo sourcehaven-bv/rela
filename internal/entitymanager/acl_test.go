@@ -6,12 +6,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -31,7 +32,7 @@ func newManagerWithACL(
 		Templater:   nopTemplater{},
 		Audit:       sink,
 		ACL:         aclImpl,
-		Transitions: flowcfg.NoTransitions(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -53,7 +54,7 @@ func seedEntity(t *testing.T, store *countingStore, entityType, title string) {
 		Templater:   nopTemplater{},
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
-		Transitions: flowcfg.NoTransitions(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -76,7 +77,7 @@ func seedRelation(t *testing.T, store *countingStore, from, relType, to string) 
 		Templater:   nopTemplater{},
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
-		Transitions: flowcfg.NoTransitions(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -389,7 +390,7 @@ assignments:
 	seedMgr, err := entitymanager.New(entitymanager.Deps{
 		FieldGate: entitymanager.AllowAllFieldGate{},
 		Store:     store, Meta: meta, Templater: nopTemplater{},
-		Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: flowcfg.NoTransitions(),
+		Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: transitions.NoTransitions(),
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
@@ -443,7 +444,7 @@ assignments:
 		CopyReadGate:   entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility: allowAllCopyVisibility(t, store),
 		Store:          store, Meta: meta, Templater: nopTemplater{},
-		Audit: sink, ACL: declarative, Transitions: flowcfg.NoTransitions(),
+		Audit: sink, ACL: declarative, Transitions: transitions.NoTransitions(),
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
@@ -560,7 +561,7 @@ assignments:
 	seedMgr, err := entitymanager.New(entitymanager.Deps{
 		FieldGate: entitymanager.AllowAllFieldGate{},
 		Store:     store, Meta: meta, Templater: nopTemplater{},
-		Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: flowcfg.NoTransitions(),
+		Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: transitions.NoTransitions(),
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
@@ -601,7 +602,7 @@ assignments:
 		CopyReadGate:   entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility: allowAllCopyVisibility(t, store),
 		Store:          store, Meta: meta, Templater: nopTemplater{},
-		Audit: sink, ACL: declarative, Transitions: flowcfg.NoTransitions(),
+		Audit: sink, ACL: declarative, Transitions: transitions.NoTransitions(),
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {

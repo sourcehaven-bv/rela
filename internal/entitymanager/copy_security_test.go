@@ -6,13 +6,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -110,7 +111,7 @@ func newCopyManager(
 		Templater:      nopTemplater{},
 		Audit:          audit.Nop{},
 		ACL:            acl.NopACL{},
-		Transitions:    flowcfg.NoTransitions(),
+		Transitions:    transitions.NoTransitions(),
 		FieldGate:      entitymanager.AllowAllFieldGate{},
 		CopyVisibility: reader,
 		CopyGuard:      guard,
@@ -263,7 +264,7 @@ copies:
 		mgr, err := entitymanager.New(entitymanager.Deps{
 			Store: st, Meta: meta, Templater: nopTemplater{},
 			Audit: audit.Nop{}, ACL: acl.NopACL{},
-			Transitions: flowcfg.NoTransitions(),
+			Transitions: transitions.NoTransitions(),
 			FieldGate:   entitymanager.AllowAllFieldGate{},
 			CopyGuard:   g,
 			AnchorGuard: entitymanager.NopAnchorGuard{},
@@ -357,7 +358,7 @@ func TestCopy_GuardedFaceIsWritableOnlyViaDefinition(t *testing.T) {
 	mgr, merr := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{},
 		Audit: audit.Nop{}, ACL: d,
-		Transitions: flowcfg.NoTransitions(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		CopyGuard:   allowGuard{allow: true},
 		// The subject here is the GUARD and the write verdict, not the read
@@ -413,7 +414,7 @@ func TestCopy_GuardedFaceIsWritableOnlyViaDefinition(t *testing.T) {
 	denyMgr, derr2 := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{},
 		Audit: audit.Nop{}, ACL: d,
-		Transitions: flowcfg.NoTransitions(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		CopyGuard:   allowGuard{allow: false},
 		// Permissive read gates, so the refusal below can only be the
@@ -468,7 +469,7 @@ func TestCopy_StrangerCannotPromote(t *testing.T) {
 	mgr, merr := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{},
 		Audit: audit.Nop{}, ACL: d,
-		Transitions:  flowcfg.NoTransitions(),
+		Transitions:  transitions.NoTransitions(),
 		FieldGate:    entitymanager.AllowAllFieldGate{},
 		CopyGuard:    allowGuard{allow: true}, // even a PERMISSIVE guard
 		CopyReadGate: req,
@@ -559,7 +560,7 @@ copies:
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: m, Templater: nopTemplater{},
 		Audit: audit.Nop{}, ACL: acl.NopACL{},
-		Transitions: flowcfg.NoTransitions(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		CopyGuard:   allowGuard{allow: true},
 		AnchorGuard: entitymanager.NopAnchorGuard{},

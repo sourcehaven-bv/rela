@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
@@ -48,7 +50,7 @@ func loadProjectFlows(ctx context.Context, svc *readServices) (*flowcfg.Compiled
 
 // loadHeadlessFlows compiles the transitions of the project's schema into
 // headless flows, as boot does.
-func loadHeadlessFlows(svc *readServices) (*flowcfg.Transitions, error) {
+func loadHeadlessFlows(svc *readServices) (*transitions.Transitions, error) {
 	t, err := appbuild.CompileHeadlessFlows(svc.Meta, svc.Store)
 	if err != nil {
 		return nil, fmt.Errorf("schema transitions: %w", err)
@@ -136,9 +138,9 @@ func summarize(f *flowcfg.Flow, withDiagram bool) flowSummary {
 	return s
 }
 
-func summarizeHeadless(t *flowcfg.Transitions, f *flowcfg.HeadlessFlow, withDiagram bool) flowSummary {
+func summarizeHeadless(t *transitions.Transitions, f *transitions.HeadlessFlow, withDiagram bool) flowSummary {
 	s := flowSummary{
-		Name: flowcfg.HeadlessPrefix + f.Name(), Kind: flowKindHeadless, Label: f.Name(),
+		Name: transitions.HeadlessPrefix + f.Name(), Kind: flowKindHeadless, Label: f.Name(),
 		Uses: t.Uses(f.Name()), Initial: f.Initial(), States: f.States(),
 	}
 	if withDiagram {
@@ -161,7 +163,7 @@ func (c *FlowShowCmd) run(ctx context.Context, svc *readServices, w io.Writer) e
 	if err != nil {
 		return err
 	}
-	if strings.HasPrefix(c.Name, flowcfg.HeadlessPrefix) {
+	if strings.HasPrefix(c.Name, transitions.HeadlessPrefix) {
 		return c.write(w, nil, headless)
 	}
 	flows, flowsErr := loadProjectFlows(ctx, svc)
@@ -174,7 +176,7 @@ func (c *FlowShowCmd) run(ctx context.Context, svc *readServices, w io.Writer) e
 	return flowsErr
 }
 
-func (c *FlowShowCmd) write(w io.Writer, flows *flowcfg.Compiled, headless *flowcfg.Transitions) error {
+func (c *FlowShowCmd) write(w io.Writer, flows *flowcfg.Compiled, headless *transitions.Transitions) error {
 	jsonOut := out.Format == output.FormatJSON
 	if c.Name == "" {
 		return writeFlowList(w, flows, headless, jsonOut)
@@ -183,7 +185,7 @@ func (c *FlowShowCmd) write(w io.Writer, flows *flowcfg.Compiled, headless *flow
 	if !ok {
 		if _, isHeadless := headless.HeadlessFlow(c.Name); isHeadless {
 			return fmt.Errorf("no flow %q in %s; the schema transitions of %s are flow %q",
-				c.Name, flowcfg.FileName, c.Name, flowcfg.HeadlessPrefix+c.Name)
+				c.Name, flowcfg.FileName, c.Name, transitions.HeadlessPrefix+c.Name)
 		}
 		return fmt.Errorf("no flow %q in %s or in the schema transitions", c.Name, flowcfg.FileName)
 	}
@@ -195,9 +197,9 @@ func (c *FlowShowCmd) write(w io.Writer, flows *flowcfg.Compiled, headless *flow
 }
 
 // find looks the name up among the headless flows when it carries
-// [flowcfg.HeadlessPrefix], and among the flows of flows.yaml otherwise.
-func (c *FlowShowCmd) find(flows *flowcfg.Compiled, headless *flowcfg.Transitions) (flowSummary, bool) {
-	if name, ok := strings.CutPrefix(c.Name, flowcfg.HeadlessPrefix); ok {
+// [transitions.HeadlessPrefix], and among the flows of flows.yaml otherwise.
+func (c *FlowShowCmd) find(flows *flowcfg.Compiled, headless *transitions.Transitions) (flowSummary, bool) {
+	if name, ok := strings.CutPrefix(c.Name, transitions.HeadlessPrefix); ok {
 		f, found := headless.HeadlessFlow(name)
 		if !found {
 			return flowSummary{}, false
@@ -211,7 +213,7 @@ func (c *FlowShowCmd) find(flows *flowcfg.Compiled, headless *flowcfg.Transition
 	return summarize(f, true), true
 }
 
-func writeFlowList(w io.Writer, flows *flowcfg.Compiled, headless *flowcfg.Transitions, jsonOut bool) error {
+func writeFlowList(w io.Writer, flows *flowcfg.Compiled, headless *transitions.Transitions, jsonOut bool) error {
 	all, hl := flows.Flows(), headless.Headless()
 	list := make([]flowSummary, 0, len(all)+len(hl))
 	for _, f := range all {

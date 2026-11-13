@@ -8,13 +8,14 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -182,9 +183,9 @@ func newManager(t *testing.T, automations []automation.Automation) (*entitymanag
 	t.Helper()
 	cs := &countingStore{Store: memstore.New()}
 	meta := parseMeta(t)
-	machines, err := flowcfg.CompileTransitions(meta)
+	machines, err := transitions.CompileTransitions(meta)
 	if err != nil {
-		t.Fatalf("flowcfg.CompileTransitions: %v", err)
+		t.Fatalf("transitions.CompileTransitions: %v", err)
 	}
 	deps := entitymanager.Deps{
 		Store:       cs,
@@ -344,7 +345,7 @@ func TestNew_RejectsAutomationsWithoutCascade(t *testing.T) {
 		Templater:   nopTemplater{},
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
-		Transitions: flowcfg.NoTransitions(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		Automations: engine,
 		AnchorGuard: entitymanager.NopAnchorGuard{},
@@ -362,7 +363,7 @@ func TestNew_AllowsNoAutomation(t *testing.T) {
 		Templater:   nopTemplater{},
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
-		Transitions: flowcfg.NoTransitions(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	}); err != nil {
@@ -689,7 +690,7 @@ func TestCreate_PassesManagerAsMutator(t *testing.T) {
 		Templater:    nopTemplater{},
 		Audit:        audit.Nop{},
 		ACL:          acl.NopACL{},
-		Transitions:  flowcfg.NoTransitions(),
+		Transitions:  transitions.NoTransitions(),
 		FieldGate:    entitymanager.AllowAllFieldGate{},
 		Automations:  engine,
 		Cascade:      runner,
@@ -1009,7 +1010,7 @@ func TestCreate_PropagatesNonConflictStoreError(t *testing.T) {
 		Templater:   nopTemplater{},
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
-		Transitions: flowcfg.NoTransitions(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -1067,7 +1068,7 @@ func TestCreate_SoftValidationProducesWarning(t *testing.T) {
 		Templater:   nopTemplater{},
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
-		Transitions: flowcfg.NoTransitions(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -1129,7 +1130,7 @@ func TestUpdate_SoftValidationProducesWarning(t *testing.T) {
 		Templater:   nopTemplater{},
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
-		Transitions: flowcfg.NoTransitions(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})

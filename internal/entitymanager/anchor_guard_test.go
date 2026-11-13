@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -17,7 +19,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -163,7 +164,7 @@ func newGuardedManager(t *testing.T, st store.Store, g entitymanager.AnchorGuard
 	t.Helper()
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: parseMeta(t), Templater: nopTemplater{}, Audit: sink,
-		ACL: acl.NopACL{}, Transitions: flowcfg.NoTransitions(),
+		ACL: acl.NopACL{}, Transitions: transitions.NoTransitions(),
 		FieldGate: entitymanager.AllowAllFieldGate{}, AnchorGuard: g,
 	})
 	require.NoError(t, err)
@@ -194,7 +195,7 @@ func TestNew_RejectsNilAnchorGuard(t *testing.T) {
 	t.Parallel()
 	_, err := entitymanager.New(entitymanager.Deps{
 		Store: memstore.New(), Meta: parseMeta(t), Templater: nopTemplater{}, Audit: audit.Nop{},
-		ACL: acl.NopACL{}, Transitions: flowcfg.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
+		ACL: acl.NopACL{}, Transitions: transitions.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 	})
 	require.ErrorContains(t, err, "AnchorGuard")
 }

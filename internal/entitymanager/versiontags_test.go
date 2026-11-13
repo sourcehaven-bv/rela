@@ -6,11 +6,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -260,7 +261,7 @@ func TestVersionTags_NoFieldWrite(t *testing.T) {
 	seedEntity(t, cs, "decision", "A decision")
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: cs, Meta: parseMeta(t), Templater: nopTemplater{}, Audit: audit.Nop{},
-		ACL: acl.NopACL{}, Transitions: flowcfg.NoTransitions(), FieldGate: denyAllFieldGate{},
+		ACL: acl.NopACL{}, Transitions: transitions.NoTransitions(), FieldGate: denyAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
@@ -418,7 +419,7 @@ func TestManager_TxCallbacksMarkContext(t *testing.T) {
 	seedEntity(t, cs, "decision", "A decision")
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: cs, Meta: parseMeta(t), Templater: nopTemplater{}, Audit: audit.Nop{},
-		ACL: acl.NopACL{}, Transitions: flowcfg.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
+		ACL: acl.NopACL{}, Transitions: transitions.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {

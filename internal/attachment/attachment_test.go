@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"errors"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -17,7 +19,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -98,7 +99,7 @@ func setupAttachmentService(t *testing.T) attachmentFixture {
 		Templater:   templating.NewFSTemplater(fs, ctx),
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
-		Transitions: flowcfg.NoTransitions(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 
 		AttachmentLocker: lock.NewMemoryLocker(),

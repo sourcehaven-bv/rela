@@ -6,13 +6,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -133,7 +134,7 @@ func TestManager_Elevated_DoesNotLeakIntoNestedCascade(t *testing.T) {
 		Templater:    nopTemplater{},
 		Audit:        audit.Nop{},
 		ACL:          acl.ReadOnlyACL{}, // deny-all, so a gated write is refused
-		Transitions:  flowcfg.NoTransitions(),
+		Transitions:  transitions.NoTransitions(),
 		FieldGate:    entitymanager.AllowAllFieldGate{},
 		Automations:  engine,
 		Cascade:      runner,

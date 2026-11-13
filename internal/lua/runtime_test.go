@@ -3092,7 +3092,7 @@ func TestRunValidationString_StripsShebang(t *testing.T) {
 }
 
 // misreportingMutator returns a NON-404 hard error whose text embeds a
-// caller-supplied value — the exact shape internal/flowcfg (transitions) produces
+// caller-supplied value — the exact shape internal/flowcfg/transitions produces
 // for an illegal transition (`%s %q→%q is not a declared transition`).
 type misreportingMutator struct {
 	Mutator
