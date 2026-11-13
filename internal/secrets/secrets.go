@@ -72,6 +72,21 @@ func IsRemoteCredential(name string) bool {
 	return ok && rest != ""
 }
 
+// RemoteCredentialEnvPrefix starts the environment variables a remote
+// credential may be read from, such as `REMOTE_CREDENTIAL_UPSTREAM`. Only
+// the remote config may name one; every other config that names an
+// environment variable refuses it. See [IsRemoteCredentialEnv].
+const RemoteCredentialEnvPrefix = "REMOTE_CREDENTIAL_" //nolint:gosec // G101: a variable name prefix, not a credential
+
+// IsRemoteCredentialEnv reports whether name is under
+// [RemoteCredentialEnvPrefix], ignoring case because Windows reads
+// environment names that way. Unlike [IsRemoteCredential] it also reports
+// the bare prefix, because a refusal must cover it too.
+func IsRemoteCredentialEnv(name string) bool {
+	return len(name) >= len(RemoteCredentialEnvPrefix) &&
+		strings.EqualFold(name[:len(RemoteCredentialEnvPrefix)], RemoteCredentialEnvPrefix)
+}
+
 // ScriptReadable reports whether a script may be granted the secret name. A
 // script that could read [TokenKey] could decrypt every stored refresh token,
 // which defeats keeping refresh tokens out of Lua. A remote credential (see

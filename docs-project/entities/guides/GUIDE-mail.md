@@ -50,7 +50,7 @@ exactly as before — an absent config is a normal state, not an error.
 | `host` | for smtp | SMTP server hostname. A bare hostname, not a URL |
 | `port` | no | Defaults to `587` |
 | `username` | no | Omit for a relay that accepts unauthenticated submission |
-| `password_env` | no | **Name of an environment variable** holding the credential. Optional — see below |
+| `password_env` | no | **Name of an environment variable** holding the credential. Optional (see below). A name starting with `REMOTE_CREDENTIAL_` is refused: that credential is only for `remotes.yaml` |
 | `account_id` | for http | Provider account the API endpoint is scoped to |
 | `script` | for script | Project-relative path to a `.lua` send script |
 | `capabilities` | for script | What the **send script** may reach — `http` and `secrets` only. Not the same as a script's own `mail:` grant; see below |

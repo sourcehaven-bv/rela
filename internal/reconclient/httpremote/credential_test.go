@@ -86,7 +86,7 @@ func TestCredential_ValidateDeclared(t *testing.T) {
 		{name: "file", c: Credential{File: abs}},
 		{name: "two sources", c: Credential{Env: "REMOTE_CREDENTIAL_A", File: abs}, wantErr: "name one credential source"},
 		{name: "env without prefix", c: Credential{Env: "HOME"}, wantErr: "must start with"},
-		{name: "env prefix only", c: Credential{Env: CredentialEnvPrefix}, wantErr: "must start with"},
+		{name: "env prefix only", c: Credential{Env: secrets.RemoteCredentialEnvPrefix}, wantErr: "must start with"},
 		{name: "relative file", c: Credential{File: "remote_credential.upstream"}, wantErr: "absolute"},
 		{
 			name:    "file with another name",

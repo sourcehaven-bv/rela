@@ -1224,6 +1224,10 @@ deps:
       - validation
       - validationgraph
   cmdexec:
+    # secrets: Environ withholds every remote credential variable from child
+    # processes (TKT-RZSTAPZ). secrets is a leaf.
+    mayDependOn:
+      - secrets
     canUse:
       - xsys
   attachment:
@@ -1329,6 +1333,11 @@ deps:
       - mailrender
       - metamodel
       - store
+  # secrets: Validate refuses an api_key_env that names a remote credential
+  # variable (TKT-RZSTAPZ). secrets is a leaf.
+  ai:
+    mayDependOn:
+      - secrets
   # Sender seam, transports, config and the best-effort outbox. Depends on
   # mailrender for the body model only; it reaches the store through a narrow
   # structural interface at the wiring site, never by importing appbuild.
