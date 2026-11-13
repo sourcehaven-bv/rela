@@ -187,7 +187,7 @@ func (g grantChecker) fields(
 				faceAddr(typ, face), noGrant))
 			continue
 		}
-		if len(g.enumValues(pd)) == 0 {
+		if len(metamodel.EnumValues(pd, g.v.meta)) == 0 {
 			continue
 		}
 		for _, value := range templateValues(o.props[name], props) {
@@ -197,18 +197,6 @@ func (g grantChecker) fields(
 			}
 		}
 	}
-}
-
-// enumValues returns the values an enum property declares, inline or
-// through a custom type; nil for a property that is not an enum.
-func (g grantChecker) enumValues(pd metamodel.PropertyDef) []string {
-	if len(pd.Values) > 0 {
-		return pd.Values
-	}
-	if ct, ok := g.v.meta.Types[pd.Type]; ok {
-		return ct.Values
-	}
-	return nil
 }
 
 // templateValues returns the enum values t can write: its literal, or the

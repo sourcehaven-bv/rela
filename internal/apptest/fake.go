@@ -104,7 +104,7 @@ const dateSpan = 365
 const minutesPerDay = 24 * 60
 
 func (g *faker) scalar(name string, pd *metamodel.PropertyDef) (any, error) {
-	if values := g.enumValues(pd); len(values) > 0 {
+	if values := metamodel.EnumValues(*pd, g.meta); len(values) > 0 {
 		return g.pick(values), nil
 	}
 	switch pd.Type {
@@ -137,18 +137,6 @@ func (g *faker) scalar(name string, pd *metamodel.PropertyDef) (any, error) {
 		return g.f.Sentence(), nil
 	}
 	return nil, fmt.Errorf("property %s has type %q, which rela test cannot generate", name, pd.Type)
-}
-
-// enumValues returns the values an enum property allows: its own, or those
-// of the custom type it names.
-func (g *faker) enumValues(pd *metamodel.PropertyDef) []string {
-	if len(pd.Values) > 0 {
-		return pd.Values
-	}
-	if ct, ok := g.meta.Types[pd.Type]; ok {
-		return ct.Values
-	}
-	return nil
 }
 
 // Default bounds for a generated number without min or max.
