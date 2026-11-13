@@ -48,6 +48,26 @@ describe('useShellCommands', () => {
     w.unmount()
   })
 
+  it('focuses the page search box on find', () => {
+    const w = host()
+    const list = document.createElement('div')
+    list.className = 'entity-list'
+    list.innerHTML = '<div class="search-box"><input type="search" value="abc"></div>'
+    document.body.appendChild(list)
+    send('find')
+    expect(document.activeElement).toBe(list.querySelector('input'))
+    expect(push).not.toHaveBeenCalled()
+    list.remove()
+    w.unmount()
+  })
+
+  it('opens the search page on find when the page has no search box', () => {
+    const w = host()
+    send('find')
+    expect(push).toHaveBeenCalledWith('/search')
+    w.unmount()
+  })
+
   it('toggles the sidebar', () => {
     const w = host()
     const ui = useUIStore()

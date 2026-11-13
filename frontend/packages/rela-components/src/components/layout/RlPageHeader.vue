@@ -170,4 +170,9 @@ const emit = defineEmits<{ toggleStar: []; menu: []; openNav: [] }>()
 
   .rl-page-header__tools { display: none; }
 }
+
+/* Buttons do nothing on paper. */
+@media print {
+  .rl-page-header__actions { display: none; }
+}
 </style>
