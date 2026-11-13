@@ -131,9 +131,7 @@ func TestCommandExec_RedactsHiddenPropertyValue(t *testing.T) {
 }
 
 // A list-context command gets the rows the list would show its principal:
-// row-gated, with bodies, and redacted (TKT-F2EJQY8). It used to read the
-// whole type ungated, so every title, hidden value and body reached the
-// script.
+// row-gated, with bodies, and redacted (TKT-F2EJQY8, BUG-2TPO2F).
 func TestCommandExec_ListContextIsGatedAndRedacted(t *testing.T) {
 	app := newHandlerTestApp(t)
 	bindRepo(app, t.TempDir())
