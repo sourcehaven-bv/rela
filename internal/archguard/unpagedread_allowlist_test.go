@@ -158,8 +158,11 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 		"rela.md.entity_refs: reads every entity of the named types to build a replacement map"},
 	"internal/lua/runtime.go#Runtime.luaGetRelations": {1, requestPath,
 		"rela.get_relations: the script's from/type/to, possibly none"},
-	"internal/lua/runtime.go#Runtime.luaListEntities": {1, requestPath,
-		"rela.list_entities: reads the whole type, then applies the script's limit (DEC-IYHLNF stage 2)"},
+	"internal/lua/runtime.go#Runtime.luaListEntities": {1, bounded,
+		"rela.list_entities: stops the iterator at the script's limit, at most maxReadLimit (2000) rows " +
+			"(TestListEntities_BoundedByDefault). Bounded on the ACL pushdown path, which every server " +
+			"wiring takes, and on pgstore and sqlitestore, which page by keyset; ScriptReader's " +
+			"load-then-filter fallback and memstore still read the whole type before the break"},
 
 	"internal/mailtemplate/mailtemplate.go#buildSection": {1, batchJob,
 		"scheduled mail render: a section lists the entities of its declared type"},
