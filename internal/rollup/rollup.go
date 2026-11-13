@@ -41,9 +41,11 @@ type Column struct {
 	Where []store.PropPredicate
 	// Value is the related property aggregated (min, max, sum) or picked
 	// (latest_by); By orders latest_by. Numeric compares Value as a number.
+	// Decimal sums Value as exact decimals.
 	Value   string
 	By      string
 	Numeric bool
+	Decimal bool
 	// Reads are the related properties whose value decides whether a row
 	// counts: the where keys, the min/max/sum property and latest_by. The
 	// pick is not among them; a hidden pick withholds the value only.
@@ -232,13 +234,20 @@ func compileFunc(
 		col.Value, col.Numeric = prop, pd.Type == metamodel.PropertyTypeInteger
 		col.Reads = append(col.Reads, prop)
 	case metamodel.RollupSum:
-		if rp, ok := related("sum", prop); ok && rp.Type != metamodel.PropertyTypeInteger {
-			*problems = append(*problems, fmt.Sprintf("%s: sum %q has type %q; sum needs integer", at, prop, rp.Type))
+		if rp, ok := related("sum", prop); ok {
+			switch {
+			case !metamodel.IsNumericType(rp.Type):
+				*problems = append(*problems, fmt.Sprintf(
+					"%s: sum %q has type %q; sum needs integer or decimal", at, prop, rp.Type))
+			case rp.Type != pd.Type:
+				*problems = append(*problems, fmt.Sprintf(
+					"%s: sum %q has type %q, but the roll-up is declared %q", at, prop, rp.Type, pd.Type))
+			}
 		}
-		if pd.Type != metamodel.PropertyTypeInteger {
-			*problems = append(*problems, fmt.Sprintf("%s: sum needs type integer, not %q", at, pd.Type))
+		if !metamodel.IsNumericType(pd.Type) {
+			*problems = append(*problems, fmt.Sprintf("%s: sum needs type integer or decimal, not %q", at, pd.Type))
 		}
-		col.Value, col.Numeric = prop, true
+		col.Value, col.Numeric, col.Decimal = prop, true, pd.Type == metamodel.PropertyTypeDecimal
 		col.Reads = append(col.Reads, prop)
 	case metamodel.RollupLatest:
 		by := strings.TrimSpace(r.LatestBy)

@@ -18,6 +18,9 @@ type GuardFacts struct {
 	Generation int64
 	EnteredAt  time.Time
 	Reminders  predicate.Value
+	// OpenQuestions is the number of questions of the session's span with
+	// no answer yet, as the channel store counts them.
+	OpenQuestions int
 }
 
 // GuardHolds reports whether prog, a transition's `when:`, holds for the
@@ -43,6 +46,8 @@ func GuardHolds(
 			"generation": predicate.NewInt(facts.Generation),
 			"entered_at": predicate.NewDate(facts.EnteredAt),
 			"reminders":  facts.Reminders,
+			// open_questions counts the span's questions with no answer.
+			"open_questions": predicate.NewInt(int64(facts.OpenQuestions)),
 		}))
 	}
 	if err == nil {

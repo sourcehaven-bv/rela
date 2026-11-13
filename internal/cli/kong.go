@@ -112,7 +112,10 @@ type GlobalFlags struct {
 // Lowered to 51 when the global flags moved into the embedded [GlobalFlags]
 // (TKT-M3SHYE0), which made room for `--tenant` without raising the line.
 //
-//plimsoll:max-fields=51
+// Raised 51 → 52 for `test` (TKT-UO8UIGO), which runs the project's Lua
+// tests on in-memory worlds; it is a top-level verb like `validate`.
+//
+//plimsoll:max-fields=52
 type CLI struct {
 	GlobalFlags `embed:""`
 
@@ -143,6 +146,7 @@ type CLI struct {
 	Dev        DevCmd        `cmd:"" help:"Developer tooling (seed generated data)."`
 	Flow       FlowCmd       `cmd:"" help:"Run an interactive Lua flow, or check the flows in flows.yaml."`
 	Validate   ValidateCmd   `cmd:"" help:"Validate project configuration files."`
+	Test       TestCmd       `cmd:"" help:"Run the project's Lua tests (tests/*.test.lua) on in-memory worlds."`
 
 	Classification ClassificationCmd `cmd:"" help:"Maintain classification.yaml, the data classification overlay."`
 

@@ -340,7 +340,7 @@ export class ChannelsPage extends BasePage {
   }
 
   /** The message holding `text` lists `items` as a bulleted list. */
-  async expectListedOptions(text: string, items: string[], timeout = 15_000) {
+  async expectListedOptions(text: string, items: (string | RegExp)[], timeout = 15_000) {
     const list = this.messages.filter({ hasText: text }).locator('.rl-channel-message__list li');
     await expect(list).toHaveText(items, { timeout });
   }
@@ -438,6 +438,76 @@ export class ChannelsPage extends BasePage {
       headers: { Origin: origin },
     });
     return { status: resp.status(), body: (await resp.json()) as Record<string, unknown> };
+  }
+
+  // --- Asked questions (TKT-GR1MXL5) ---------------------------------------
+
+  /**
+   * Posts `messages` as one batch over the API as this page's user, the
+   * way an agent asks several questions at once.
+   */
+  async postBatchOverApi(
+    plural: string,
+    id: string,
+    channelType: string,
+    messages: { type: string; props: Record<string, unknown> }[],
+  ) {
+    const origin = new URL(this.page.url()).origin;
+    const resp = await this.page.request.post(`${origin}/api/v1/${plural}/${id}/_channels/${channelType}/_batch`, {
+      data: { messages },
+      headers: { Origin: origin },
+    });
+    expect(resp.status(), `post batch: ${await resp.text()}`).toBe(201);
+  }
+
+  /** The group of a batch's questions, a list named "Questions". */
+  private get questionGroup(): Locator {
+    return this.channel.getByRole('list', { name: 'Questions' });
+  }
+
+  /** The group's items are headed `headings` in order, such as "Question 1 of 2". */
+  async expectQuestionHeadings(headings: string[], timeout = 15_000) {
+    await expect(this.questionGroup.locator('.rl-channel-questions__number')).toHaveText(headings, { timeout });
+  }
+
+  /** The item of the question group that holds `text`. */
+  private questionItem(text: string): Locator {
+    return this.questionGroup.getByRole('listitem').filter({ hasText: text });
+  }
+
+  /**
+   * The message holding `text` shows its options as cards titled `titles`.
+   * With `badge`, the card titled `badge.title` carries the tag `badge.label`.
+   */
+  async expectCards(text: string, titles: string[], badge?: { title: string; label: string }, timeout = 15_000) {
+    const cards = this.messages.filter({ hasText: text }).locator('.rl-channel-cards__card');
+    await expect(cards.locator('.rl-channel-cards__title')).toHaveText(titles, { timeout });
+    if (badge) await expect(cards.filter({ hasText: badge.title })).toContainText(badge.label);
+  }
+
+  /** The card titled `title` on the message holding `text` lists `plus` and `minus` points. */
+  async expectCardPoints(text: string, title: string, plus: string[], minus: string[]) {
+    const card = this.messages
+      .filter({ hasText: text })
+      .locator('.rl-channel-cards__card')
+      .filter({ has: this.page.locator('.rl-channel-cards__title', { hasText: title }) });
+    await expect(card.locator('.rl-channel-cards__plus li')).toHaveText(plus);
+    await expect(card.locator('.rl-channel-cards__minus li')).toHaveText(minus);
+  }
+
+  /** The question holding `text` is collapsed to "Answer: `answer`", or is not collapsed. */
+  async expectCollapsedAnswer(text: string, answer: string | null, timeout = 15_000) {
+    const line = this.questionItem(text).locator('.rl-channel-questions__answered');
+    if (answer === null) await expect(line).toHaveCount(0, { timeout });
+    else await expect(line).toContainText(`Answer: ${answer}`, { timeout });
+  }
+
+  /** Clicks Change on the collapsed question holding `text`. */
+  async changeAnswer(text: string) {
+    await this.questionItem(text)
+      .locator('.rl-channel-questions__answered')
+      .getByRole('button', { name: /^Change\b/ })
+      .click();
   }
 
   // --- Inbox (TKT-9YRRM5) ---------------------------------------------------

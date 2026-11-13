@@ -562,19 +562,26 @@ func scopedSortedEntitiesScoped(
 
 	// Each filter[<key>] param was classified as property vs relation ONCE,
 	// by the gate, so both passes agree on routing with the gate itself.
-	entities, err = applyV1Filters(entities, query)
+	entities, err = withQueriedRollups(ctx, newRollupSource(a), typeName, query, entities,
+		func(rows []*entityPkg.Entity) ([]*entityPkg.Entity, error) {
+			rows, ferr := applyV1Filters(rows, query)
+			if ferr != nil {
+				return nil, ferr
+			}
+			rows, ferr = a.applyRelationFilters(ctx, rows, params, typeName, query.isRelationKey)
+			if ferr != nil {
+				return nil, ferr
+			}
+			if ordering != nil {
+				ordering.sort(rows)
+				return rows, nil
+			}
+			return applyV1Sorting(rows, query, a.Meta()), nil
+		})
 	if err != nil {
 		return nil, nil, err
 	}
-	entities, err = a.applyRelationFilters(ctx, entities, params, typeName, query.isRelationKey)
-	if err != nil {
-		return nil, nil, err
-	}
-	if ordering != nil {
-		ordering.sort(entities)
-		return entities, ordering, nil
-	}
-	return applyV1Sorting(entities, query, a.Meta()), nil, nil
+	return entities, ordering, nil
 }
 
 // relationFilterClassifier returns a predicate that decides, for a bare filter

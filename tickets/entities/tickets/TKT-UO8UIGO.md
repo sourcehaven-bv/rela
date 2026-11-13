@@ -5,7 +5,9 @@ title: 'rela test v1 (3/4): rela test command, rela.test Lua module, seeded fake
 kind: enhancement
 priority: medium
 effort: xl
-status: backlog
+started: "2026-11-13"
+completed: "2026-11-13"
+status: done
 ---
 
 ## Description

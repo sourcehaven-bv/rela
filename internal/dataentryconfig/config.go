@@ -2042,12 +2042,16 @@ type DashboardCard struct {
 	// (/api/v1/_dashboard/card). Matrix and ratio cards require it.
 	List string `yaml:"list,omitempty" json:"list,omitempty"`
 	// Query is a search query the SPA runs through /api/v1/_search.
-	Query   string       `yaml:"query,omitempty" json:"query,omitempty"`
-	Display string       `yaml:"display" json:"display"` // count, table, breakdown, matrix, ratio
-	GroupBy string       `yaml:"group_by,omitempty" json:"group_by,omitempty"`
-	Columns []ListColumn `yaml:"columns,omitempty" json:"columns,omitempty"`
-	Sort    []SortSpec   `yaml:"sort,omitempty" json:"sort,omitempty"`
-	Limit   int          `yaml:"limit,omitempty" json:"limit,omitempty"`
+	Query   string `yaml:"query,omitempty" json:"query,omitempty"`
+	Display string `yaml:"display" json:"display"` // count, table, breakdown, matrix, ratio, sum, avg, min, max
+	GroupBy string `yaml:"group_by,omitempty" json:"group_by,omitempty"`
+	// Property is the property a sum, avg, min or max card folds over the
+	// list's rows. sum and avg need an integer or decimal property; min and
+	// max also take a date or datetime. A roll-up property is allowed.
+	Property string       `yaml:"property,omitempty" json:"property,omitempty"`
+	Columns  []ListColumn `yaml:"columns,omitempty" json:"columns,omitempty"`
+	Sort     []SortSpec   `yaml:"sort,omitempty" json:"sort,omitempty"`
+	Limit    int          `yaml:"limit,omitempty" json:"limit,omitempty"`
 
 	// Rows and MatrixColumns name the properties a matrix card counts by. In
 	// YAML the column axis is `columns: <property>`; a sequence under the same

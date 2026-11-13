@@ -21,6 +21,7 @@ func TestMigrate_v32ToV33SessionPrevious(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "v32.db")
 	raw := openChannelDB(t, path)
 	for _, stmt := range []string{
+		`ALTER TABLE channels DROP COLUMN session_asked`,
 		`ALTER TABLE channels DROP COLUMN session_previous`,
 		`PRAGMA user_version = 32`,
 	} {

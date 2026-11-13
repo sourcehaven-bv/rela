@@ -1,6 +1,7 @@
 package realtime
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -72,6 +73,11 @@ type ActionView struct {
 // message whose type the configuration no longer declares shows none.
 // A session notice is the exception: its type is never declared, and it
 // shows its props from, to, generation and cause.
+//
+// Each exported field is one key of the message wire shape, so a new key
+// raises the pin by one (21: Batch, TKT-GR1MXL5).
+//
+//plimsoll:max-fields=21
 type MessageView struct {
 	Seq        int64          `json:"seq"`
 	Rev        int64          `json:"rev"`
@@ -85,7 +91,10 @@ type MessageView struct {
 	LastReplyAt time.Time `json:"last_reply_at,omitzero"`
 	// Inline marks a reply that also shows in the main stream
 	// ([channels.Thread.Inline]).
-	Inline   bool      `json:"inline,omitempty"`
+	Inline bool `json:"inline,omitempty"`
+	// Batch is the seq of the first message of the batch the message was
+	// posted in (see [Service.PostBatch]); 0 for a single post.
+	Batch    int64     `json:"batch,omitempty"`
 	EditedAt time.Time `json:"edited_at,omitzero"`
 	// Mentions lists the principals the message addresses that the reader
 	// may see (see [MentionView]). Nil when there are none.
@@ -148,6 +157,29 @@ type ChannelView struct {
 	// Read is the caller's read marker; nil when they hold none. Only the
 	// channel list and the head fill it.
 	Read *ChannelRead `json:"read,omitempty"`
+	// Asked lists the questions of the session's current span, by seq
+	// (see [channels.Asked]); nil when there are none.
+	Asked []AskedView `json:"asked,omitempty"`
+}
+
+// AskedView is one question of the session's current span: the seq of
+// the question, the type of the replies that answer it, and how many do.
+type AskedView struct {
+	Seq        int64  `json:"seq"`
+	AnswerType string `json:"answer_type"`
+	Answers    int    `json:"answers"`
+}
+
+// askedViews renders a sorted by seq; nil for none.
+func askedViews(a map[int64]channels.Asked) []AskedView {
+	if len(a) == 0 {
+		return nil
+	}
+	out := make([]AskedView, 0, len(a))
+	for _, seq := range slices.Sorted(maps.Keys(a)) {
+		out = append(out, AskedView{Seq: seq, AnswerType: a[seq].AnswerType, Answers: a[seq].Answers})
+	}
+	return out
 }
 
 // channelView renders h of c's channel type, or the empty open channel at
@@ -163,6 +195,7 @@ func (c *call) channelView(key channels.Key, h *channels.Channel) ChannelView {
 	by := authorView(h.CreatedBy)
 	v.State, v.Title, v.CreatedBy, v.CreatedAt = h.State, h.Title, &by, h.CreatedAt
 	v.ClosedAt, v.ArchivedAt, v.LastSeq, v.Rev = h.ClosedAt, h.ArchivedAt, h.LastSeq, h.Rev
+	v.Asked = askedViews(h.Asked)
 	return v
 }
 
@@ -281,7 +314,7 @@ func (r *renderer) props(typ string, in map[string]any) map[string]any {
 func (r *renderer) message(m channels.Message) MessageView {
 	v := MessageView{
 		Seq: m.Seq, Rev: m.Rev, ReplyTo: m.ReplyTo, ReplyCount: m.ReplyCount, LastReplyAt: m.LastReplyAt,
-		Inline: m.Inline,
+		Inline: m.Inline, Batch: m.Batch,
 	}
 	if m.Removed != nil {
 		kind := m.Removed.Kind

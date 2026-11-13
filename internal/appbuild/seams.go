@@ -2,9 +2,11 @@ package appbuild
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/mail"
@@ -152,3 +154,35 @@ type leaseClock func() time.Time
 
 // Now returns the time.
 func (c leaseClock) Now() time.Time { return c() }
+
+// WithPolicyAmendment lets amend edit the policy parsed from acl.yaml before
+// it is validated against the schema and used. The `rela test` runner uses it
+// to assign roles to the principals a case declares.
+//
+// Every build parses acl.yaml anew, so amend edits a policy no other
+// [Services] holds; the file and any other build's policy are untouched. An
+// error from amend fails the build.
+//
+// It is ignored when there is no acl.yaml (the build then allows every
+// access) and when [WithACL] supplies the ACL.
+//
+// Nil: ignored — the policy is used as parsed.
+func WithPolicyAmendment(amend func(*acl.Policy) error) Option {
+	return func(o *options) {
+		if amend != nil {
+			o.policyAmendment = amend
+		}
+	}
+}
+
+// amendPolicy applies amend to policy. A nil policy (no acl.yaml) or amend
+// is left alone.
+func amendPolicy(policy *acl.Policy, amend func(*acl.Policy) error) error {
+	if policy == nil || amend == nil {
+		return nil
+	}
+	if err := amend(policy); err != nil {
+		return fmt.Errorf("appbuild: amend acl.yaml: %w", err)
+	}
+	return nil
+}

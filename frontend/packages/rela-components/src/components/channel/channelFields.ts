@@ -36,6 +36,8 @@ const DEFAULT_WIDGET: Record<ChannelPropertyKind, ChannelWidget> = {
   enum: 'select',
   ref: 'ref',
   file: 'file',
+  // An object property is always a list, and a list has no composer field.
+  object: 'text',
 }
 
 /**

@@ -2720,6 +2720,24 @@
       "reason": "Design: flowview is the stdlib-only wire leaf the HTTP and MCP transports share; Job mirrors flowengine.JobStep on purpose, like Timer mirrors TimerDue (TKT-PY2G11W).",
       "at": "2026-11-12T09:30:00Z",
       "title": "JobStep (flowengine) and Job (flowview) share most of their fields."
+    },
+    "types.synonyms-6149f7f6310c": {
+      "state": "accepted",
+      "reason": "Design: ChannelPropertySchema is the wire form of realtime.PropertyDescription, as Message mirrors MessageView; Fields was added to both (TKT-GR1MXL5).",
+      "at": "2026-11-13T10:30:00Z",
+      "title": "ChannelPropertySchema (apiwire) and PropertyDescription (realtime) share most of their fields."
+    },
+    "concepts.string_enum-5e1a83e432ee": {
+      "state": "accepted",
+      "reason": "Design: one site is Go config validation, the other the TypeScript excerpt; the two languages cannot share a predicate (TKT-GR1MXL5).",
+      "at": "2026-11-13T10:30:00Z",
+      "title": "The same test, type in 'markdown', 'string', is written in 2 components (dataentryconfig, web/components/entity)."
+    },
+    "concepts.bool_params-377914830e60": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding.",
+      "at": "2026-11-13T10:30:00Z",
+      "title": "5 functions in web/components/entity take boolean flags."
     }
   },
   "labels": {},
@@ -2728,19 +2746,19 @@
       "weight.profile": 49,
       "weight.structure": 859,
       "weight.layers": 0,
-      "weight.vocabulary": 868,
-      "weight.types": 4192,
-      "weight.concepts": 7140,
+      "weight.vocabulary": 870,
+      "weight.types": 4203,
+      "weight.concepts": 7233,
       "weight.boundaries": 1471,
       "weight.data": 1297,
       "weight.security": 2064,
       "largest_tangle": 14,
       "cycle_edges": 67,
       "upward_edges": 0,
-      "propagation_cost": 9.1
+      "propagation_cost": 9.3
     },
     "min_weight": 0,
-    "at": "2026-11-12T10:40:00Z",
+    "at": "2026-11-13T09:30:00Z",
     "log": [
       {
         "at": "2026-11-05T20:33:00Z",
@@ -3066,6 +3084,29 @@
           "weight.concepts": [
             7139,
             7140
+          ]
+        }
+      },
+      {
+        "at": "2026-11-13T09:30:00Z",
+        "change": "loosen",
+        "reason": "TKT-UO8UIGO: the new apptest package (rela test) uses rela's ACL and store vocabulary and mirrors metamodel property shapes for its fakers, and cli now reaches it, raising propagation cost to 9.3 together with develop. Its one new finding (duplicated enum_values) is fixed by metamodel.EnumValues. weight.structure and weight.security keep the traced values.",
+        "metrics": {
+          "weight.vocabulary": [
+            868,
+            870
+          ],
+          "weight.types": [
+            4196,
+            4203
+          ],
+          "weight.concepts": [
+            7226,
+            7233
+          ],
+          "propagation_cost": [
+            9.1,
+            9.3
           ]
         }
       }

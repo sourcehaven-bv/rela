@@ -73,23 +73,34 @@ func addChannelDescriptorSchema(spec *Spec) {
 		maps.Copy(props, extra)
 		return ObjectSchema(props, []string{"name", "label"})
 	}
-	property := labeled(map[string]*Schema{
-		"type": {Type: "string", Enum: []string{
-			"string", "markdown", "integer", "boolean", "date", "datetime", "ref", "enum", "file",
-		}},
-		"required": b(),
-		"max": {Type: "integer", Description: "Most characters (Unicode code points) of a string or markdown " +
-			"value; for a file property, the most files a message holds in it"},
-		"enum":   {Type: "string", Description: "The schema.yaml enum type of an enum property"},
-		"values": ArraySchema(str()),
-		"to":     {Type: "array", Items: str(), Description: "Entity types a ref property may name"},
-		"list": {Type: "boolean", Description: "Set for a list of strings (type string), whose value is a JSON " +
-			"array; max then limits each item"},
-		"max_items": {Type: "integer", Description: "Most items of a list property"},
-		"max_size":  {Type: "integer", Description: "Most bytes of one file of a file property"},
-		"accept": {Type: "array", Items: str(),
-			Description: "MIME types a file property accepts; absent for any"},
-	})
+	propertyProps := func() map[string]*Schema {
+		return map[string]*Schema{
+			"type": {Type: "string", Enum: []string{
+				"string", "markdown", "integer", "boolean", "date", "datetime", "ref", "enum", "file", "object",
+			}},
+			"required": b(),
+			"max": {Type: "integer", Description: "Most characters (Unicode code points) of a string or markdown " +
+				"value; for a file property, the most files a message holds in it"},
+			"enum":   {Type: "string", Description: "The schema.yaml enum type of an enum property"},
+			"values": ArraySchema(str()),
+			"to":     {Type: "array", Items: str(), Description: "Entity types a ref property may name"},
+			"list": {Type: "boolean", Description: "Set for a list of strings (type string) or of objects " +
+				"(type object), whose value is a JSON array; max then limits each string item"},
+			"max_items": {Type: "integer", Description: "Most items of a list property"},
+		}
+	}
+	// A field of an object list is described as a property; objects nest
+	// one level only, so a field has no fields of its own, and it is never
+	// a file.
+	field := labeled(propertyProps())
+	field.Required = append(field.Required, "type")
+	withFields := propertyProps()
+	withFields["fields"] = &Schema{Type: "array", Items: field,
+		Description: "The fields of each item of an object list, required first, then by name"}
+	withFields["max_size"] = &Schema{Type: "integer", Description: "Most bytes of one file of a file property"}
+	withFields["accept"] = &Schema{Type: "array", Items: str(),
+		Description: "MIME types a file property accepts; absent for any"}
+	property := labeled(withFields)
 	property.Required = append(property.Required, "type")
 	messageType := labeled(map[string]*Schema{
 		"persist":     {Type: "string", Enum: []string{"log", "ephemeral"}},
@@ -280,6 +291,7 @@ func addChannelTypePaths(spec *Spec, basePath, typeName, tag string, ct realtime
 	addLifecyclePaths(spec, headPath, opID, tag, params, ct.Lifecycle)
 	addTypingPath(spec, headPath, opID, tag, params, ct)
 	addReadPath(spec, headPath, opID, tag, params)
+	addBatchPath(spec, headPath, opID, tag, params, ct)
 	addActionPaths(spec, headPath+"/messages/{seq}", opID, tag, seqParams, ct)
 	if hasFileProps(ct) {
 		addFilePath(spec, headPath+"/messages/{seq}", opID, tag, seqParams)
@@ -478,6 +490,51 @@ func addReadPath(spec *Spec, headPath, opID, tag string, params []Parameter) {
 	}
 }
 
+// addBatchPath adds `POST …/_batch`, which posts several log messages as
+// one step, when the channel type has a log message type.
+func addBatchPath(spec *Spec, headPath, opID, tag string, params []Parameter, ct realtimecfg.ChannelType) {
+	var variants []*Schema
+	for _, v := range postBodySchema(ct).OneOf {
+		if _, log := v.Properties["reply_to"]; !log {
+			continue
+		}
+		item := ObjectSchema(map[string]*Schema{"type": v.Properties["type"], "props": v.Properties["props"]},
+			v.Required)
+		item.Title, item.Description = v.Title, v.Description
+		variants = append(variants, item)
+	}
+	if len(variants) == 0 {
+		return
+	}
+	body := map[string]*Schema{
+		"messages": {Type: "array", Items: &Schema{OneOf: variants},
+			Limits: Limits{MaxItems: realtimelimits.MaxBatch}},
+	}
+	if ct.Session() != nil {
+		body["expect_generation"] = &Schema{Type: "integer", Limits: Limits{Minimum: new(float64)},
+			Description: expectGenerationText}
+	}
+	spec.Paths[headPath+"/_batch"] = PathItem{
+		Parameters: params,
+		Post: &Operation{
+			OperationID: "postBatch" + opID,
+			Summary:     "Post a batch of messages to a " + ct.Name + " channel",
+			Description: "Posts 1 to " + strconv.Itoa(realtimelimits.MaxBatch) + " top-level log messages as one " +
+				"step: all of them or none. They get consecutive seqs and share a batch id, the seq of the " +
+				"first. Each message passes the checks of a post. The session moves at most once, on the " +
+				"first message whose transition fires; every `in:` and expect_generation is judged against " +
+				"the session before the batch. A message of a type with `choices:` on a channel type with a " +
+				"session is asked: it is listed in the channel's `asked` until the session moves, and its " +
+				"author cannot edit or delete it meanwhile. A denial about one message names its index.",
+			Tags:        []string{tag},
+			RequestBody: &RequestBody{Required: true, Content: jsonContent(ObjectSchema(body, []string{"messages"}))},
+			Responses: channelResponses("201", "The stored messages, in seq order", ObjectSchema(map[string]*Schema{
+				"messages": ArraySchema(Ref(messageSchema)),
+			}, []string{"messages"}), "400", "403", "404", "409", "413", "422", "429"),
+		},
+	}
+}
+
 // releaseWindow is [realtimelimits.PendingRelease] in words, such as
 // "15 minutes".
 func releaseWindow() string {
@@ -573,7 +630,7 @@ var channelErrorText = map[string]string{
 		"a limit, the retention or a concurrent change refused. outputs_pending: the outputs of the session " +
 		"move the message caused are still running. session_wrong_state: the message type may not be " +
 		"posted in the session's current state. session_moved: the session is no longer at the post's " +
-		"expect_generation",
+		"expect_generation. too_many_questions: the session span already holds 20 unanswered questions",
 	"413": "Request body or a value too large",
 	"422": "A ref to an entity that cannot be referenced, or a bare id for a face-anchored type. " +
 		"too_many_mentions: a message may mention at most 10 people or agents",
@@ -641,7 +698,9 @@ func postBodySchema(ct realtimecfg.ChannelType) *Schema {
 // choicesSchema is `choices:` on a question type, in the channel schema.
 func choicesSchema() *Schema {
 	s := ObjectSchema(map[string]*Schema{
-		"from":   {Type: "string", Description: "The list property that holds the options"},
+		"from": {Type: "string", Description: "The list property that holds the options"},
+		"label": {Type: "string", Description: "For an object list: the field of each item that is the option. " +
+			"Absent for a list of strings"},
 		"answer": {Type: "string", Description: "The message type a click posts, as a reply to the question"},
 		"into":   {Type: "string", Description: "The string property of the answer type that receives the option"},
 		"other":  {Type: "boolean", Description: "Whether a button opens the composer for a free-text answer"},
@@ -695,7 +754,8 @@ func propsSchema(ps realtimecfg.PropsSchema) *Schema {
 	return &Schema{Type: ps.Type, Properties: props, Required: ps.Required, Closed: !ps.AdditionalProperties}
 }
 
-// propSchema converts one property schema; a list carries its items.
+// propSchema converts one property schema; a list carries its items, and
+// an object item its fields.
 func propSchema(p realtimecfg.PropSchema) *Schema {
 	s := &Schema{
 		Type: p.Type, Format: p.Format, Enum: p.Enum, Description: p.Description,
@@ -703,6 +763,14 @@ func propSchema(p realtimecfg.PropSchema) *Schema {
 	}
 	if p.Items != nil {
 		s.Items = propSchema(*p.Items)
+	}
+	if p.Properties != nil {
+		s.Properties = make(map[string]*Schema, len(p.Properties))
+		for name, f := range p.Properties {
+			s.Properties[name] = propSchema(f)
+		}
+		s.Required = p.Required
+		s.Closed = p.AdditionalProperties != nil && !*p.AdditionalProperties
 	}
 	return s
 }
@@ -745,6 +813,7 @@ func addChannelSchemas(spec *Spec) {
 		"created_at": dateTimeSchema(), "closed_at": dateTimeSchema(), "archived_at": dateTimeSchema(),
 		"last_seq": i64(), "rev": i64(),
 		"session": Ref(channelSessionRef),
+		"asked":   askedSchema(),
 	}, []string{"anchor", "type", "state", "last_seq", "rev"})
 	sc[channelSessionRef] = channelSessionSchema()
 	sc[channelTimerRef] = channelTimerSchema()
@@ -778,6 +847,8 @@ func addChannelSchemas(spec *Spec) {
 			"seq": i64(), "rev": i64(), "type": str(), "author": Ref(channelAuthorRef), "at": dateTimeSchema(),
 			"props":    {Type: "object", AdditionalProperties: &Schema{}},
 			"reply_to": i64(), "reply_count": i64(), "edited_at": dateTimeSchema(),
+			"batch": {Type: "integer", Description: "The seq of the first message of the batch the message " +
+				"was posted in; absent for a single post"},
 			"triggered_by": {Type: "string",
 				Description: "trigger:<name> of the trigger that posted the message, session:<channel type> " +
 					"for a session notice, reminder:<channel type>/<name> for a reminder; absent for a person's"},
@@ -795,11 +866,7 @@ func addChannelSchemas(spec *Spec) {
 			}, []string{"name", "status", "at"}),
 			"outputs":  Ref(outputsSchema),
 			"mentions": messageMentionsSchema(),
-			"files": {Type: "array", Items: ObjectSchema(map[string]*Schema{
-				"id": str(), "property": str(), "name": str(), "mime": str(), "size": i64(),
-			}, []string{"id", "property", "name", "mime", "size"}),
-				Description: "The files posted with the message, of the properties its type still declares " +
-					"file. Download one at …/messages/{seq}/files/{id}."},
+			"files":    messageFilesSchema(),
 			"_actions": {Type: "array", Items: str(),
 				Description: "What you may do with the message now, sorted: its actions, and the operations " +
 					"edit (PATCH), delete (your own, DELETE), remove (a moderator's DELETE with a reason) and " +
@@ -826,6 +893,25 @@ func addChannelSchemas(spec *Spec) {
 	}, []string{"channel", "messages", "has_more"})
 	addEphemeralSchemas(sc)
 	addHeadSchemas(sc)
+}
+
+// messageFilesSchema is a message's files.
+func messageFilesSchema() *Schema {
+	str := StringSchema
+	return &Schema{Type: "array", Items: ObjectSchema(map[string]*Schema{
+		"id": str(), "property": str(), "name": str(), "mime": str(), "size": IntegerSchema(),
+	}, []string{"id", "property", "name", "mime", "size"}),
+		Description: "The files posted with the message, of the properties its type still declares " +
+			"file. Download one at …/messages/{seq}/files/{id}."}
+}
+
+// askedSchema is a channel's asked list.
+func askedSchema() *Schema {
+	return &Schema{Type: "array", Description: "The questions of the session's current span, by seq. " +
+		"While a question is asked, its author cannot edit or delete it (409 asked_question).",
+		Items: ObjectSchema(map[string]*Schema{
+			"seq": IntegerSchema(), "answer_type": StringSchema(), "answers": IntegerSchema(),
+		}, []string{"seq", "answer_type", "answers"})}
 }
 
 // addEphemeralSchemas adds the schemas of an ephemeral message and the

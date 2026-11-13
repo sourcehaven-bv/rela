@@ -10,6 +10,10 @@ import {
   channelMessages,
   channelMessageTypes,
   channelPresentation,
+  pickBatch,
+  pickChoices,
+  pickMessageTypes,
+  pickPresentation,
   questionChoices,
   questionMessage,
   questionMessageTypes,
@@ -363,5 +367,138 @@ export const ListValueNotArray: Story = {
   play: async ({ canvasElement }) => {
     await expect(canvasElement.querySelector('.rl-channel-message__list')).toBeNull()
     await expect(within(canvasElement).getByText('PostgreSQL')).toBeVisible()
+  },
+}
+
+/**
+ * An object list (TKT-GR1MXL5): each item is one bullet with its set
+ * fields as "label: value", in the order of `fields` (the server sends
+ * required first, then by name).
+ */
+export const ObjectListValue: Story = {
+  args: {
+    message: {
+      ...questionMessage,
+      props: {
+        note: 'Which store?',
+        options: [
+          { label: 'PostgreSQL', recommended: true, pros: ['durable', 'shared'] },
+          { label: 'SQLite' },
+        ],
+      },
+    },
+    messageType: {
+      ...questionMessageTypes[0]!,
+      properties: [
+        { name: 'note', label: 'Note', type: 'string' },
+        {
+          name: 'options',
+          label: 'Options',
+          type: 'object',
+          list: true,
+          fields: [
+            { name: 'label', label: 'Option', type: 'string', required: true },
+            { name: 'pros', label: 'Pros', type: 'string', list: true },
+            { name: 'recommended', label: 'Recommended', type: 'boolean' },
+          ],
+        },
+      ],
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const items = [...canvasElement.querySelectorAll('.rl-channel-message__list li')].map((li) =>
+      [...li.querySelectorAll('.rl-channel-message__item-field')].map((f) => f.textContent?.trim()),
+    )
+    await expect(items).toEqual([
+      ['Option: PostgreSQL', 'Pros: durable, shared', 'Recommended: Yes'],
+      ['Option: SQLite'],
+    ])
+  },
+}
+
+/** An object list stays listed while its choices show. */
+export const ObjectListWithChoices: Story = {
+  args: {
+    ...ObjectListValue.args,
+    messageType: { ...ObjectListValue.args!.messageType!, choices: { from: 'options', label: 'label', answer: 'answer', into: 'body', other: false } },
+    choices: [
+      { key: 'choice:12:0', messageType: 'answer', label: 'PostgreSQL' },
+      { key: 'choice:12:1', messageType: 'answer', label: 'SQLite' },
+    ],
+    onChoose: fn(),
+  },
+  play: async ({ canvasElement }) => {
+    const group = within(canvasElement).getByRole('group', { name: 'Choices' })
+    await expect(within(group).getAllByRole('button')).toHaveLength(2)
+    await expect(canvasElement.querySelectorAll('.rl-channel-message__list li')).toHaveLength(2)
+  },
+}
+
+/**
+ * `display: cards` (TKT-GR1MXL5): the body above the cards, each option a
+ * card with its title, the Recommended badge, its pros and cons, and the
+ * other fields as "label: value", a date as the app formatted it.
+ */
+export const Cards: Story = {
+  args: {
+    message: pickBatch[0],
+    messageType: pickMessageTypes[0],
+    presentation: pickPresentation,
+    choices: pickChoices.get(30),
+    onChoose: fn(),
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByText('Which store should the importer use?')).toBeVisible()
+    const cards = canvas.getAllByRole('listitem').filter((li) => li.classList.contains('rl-channel-cards__card'))
+    await expect(cards).toHaveLength(2)
+    await expect(within(cards[0]!).getByText('Recommended')).toBeVisible()
+    await expect(within(cards[1]!).queryByText('Recommended')).toBeNull()
+    await expect(within(cards[0]!).getByText('Point-in-time recovery')).toBeVisible()
+    await expect(within(cards[1]!).getByText('One process only')).toBeVisible()
+    await expect(within(cards[0]!).getByText('14 Nov 2030')).toBeVisible()
+    // The options show as cards, not as a field list as well.
+    await expect(canvasElement.querySelector('.rl-channel-message__list')).toBeNull()
+    const group = canvas.getByRole('group', { name: 'Choices' })
+    await expect(within(group).getAllByRole('button')).toHaveLength(2)
+  },
+}
+
+/**
+ * An answered question that the session still takes another answer for:
+ * the answer and a Change button, which shows the choices again and moves
+ * focus to the first.
+ */
+export const AnsweredQuestion: Story = {
+  args: {
+    message: questionMessage,
+    messageType: questionMessageTypes[0],
+    choices: questionChoices,
+    question: { answered: true, answer: 'SQLite', answerSeq: 13 },
+    onChoose: fn(),
+  },
+  play: async ({ args, canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByText('Answer: SQLite')).toBeVisible()
+    await expect(canvas.queryByRole('group', { name: 'Choices' })).toBeNull()
+    await userEvent.click(canvas.getByRole('button', { name: /Change/ }))
+    const group = canvas.getByRole('group', { name: 'Choices' })
+    await expect(within(group).getAllByRole('button')[0]).toHaveFocus()
+    await userEvent.click(within(group).getByRole('button', { name: /^PostgreSQL / }))
+    await expect(args.onChoose).toHaveBeenCalledWith('choice:12:0')
+  },
+}
+
+/** An answered question with no choices left: the answer alone, no Change. */
+export const AnsweredClosed: Story = {
+  args: {
+    message: questionMessage,
+    messageType: questionMessageTypes[0],
+    question: { answered: true },
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByText('Answered')).toBeVisible()
+    await expect(canvas.queryByRole('button', { name: /Change/ })).toBeNull()
   },
 }

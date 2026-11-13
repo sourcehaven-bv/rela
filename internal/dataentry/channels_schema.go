@@ -66,25 +66,38 @@ func wireSessionSchema(s *realtime.SessionDescription) *v1.ChannelSessionSchema 
 	return out
 }
 
-func wireMessageTypeSchema(mt realtime.MessageTypeDescription) v1.ChannelMessageTypeSchema {
-	out := v1.ChannelMessageTypeSchema{
-		Name: mt.Name, Label: mt.Label, Persist: mt.Persist, TTLSeconds: mt.TTLSeconds, Reply: mt.Reply,
-		Properties: make([]v1.ChannelPropertySchema, 0, len(mt.Properties)),
-		Actions:    make([]v1.ChannelActionSchema, 0, len(mt.Actions)),
-		In:         mt.In, InDerived: mt.InDerived,
-	}
-	for _, p := range mt.Properties {
-		out.Properties = append(out.Properties, v1.ChannelPropertySchema{
+// wirePropertySchemas maps described properties, and the fields of an
+// object list, to the wire.
+func wirePropertySchemas(props []realtime.PropertyDescription) []v1.ChannelPropertySchema {
+	out := make([]v1.ChannelPropertySchema, 0, len(props))
+	for _, p := range props {
+		ps := v1.ChannelPropertySchema{
 			Name: p.Name, Label: p.Label, Type: p.Type, Required: p.Required, Max: p.Max,
 			Enum: p.Enum, Values: p.Values, To: p.To, List: p.List, MaxItems: p.MaxItems,
 			MaxSize: p.MaxSize, Accept: p.Accept,
-		})
+		}
+		if p.Fields != nil {
+			ps.Fields = wirePropertySchemas(p.Fields)
+		}
+		out = append(out, ps)
 	}
+	return out
+}
+
+func wireMessageTypeSchema(mt realtime.MessageTypeDescription) v1.ChannelMessageTypeSchema {
+	out := v1.ChannelMessageTypeSchema{
+		Name: mt.Name, Label: mt.Label, Persist: mt.Persist, TTLSeconds: mt.TTLSeconds, Reply: mt.Reply,
+		Actions: make([]v1.ChannelActionSchema, 0, len(mt.Actions)),
+		In:      mt.In, InDerived: mt.InDerived,
+	}
+	out.Properties = wirePropertySchemas(mt.Properties)
 	for _, a := range mt.Actions {
 		out.Actions = append(out.Actions, v1.ChannelActionSchema{Name: a.Name, Label: a.Label, PromoteTo: a.PromoteTo})
 	}
 	if c := mt.Choices; c != nil {
-		out.Choices = &v1.ChannelChoicesSchema{From: c.From, Answer: c.Answer, Into: c.Into, Other: c.Other}
+		out.Choices = &v1.ChannelChoicesSchema{
+			From: c.From, Label: c.Label, Answer: c.Answer, Into: c.Into, Other: c.Other,
+		}
 	}
 	if d := mt.DecisionButton; d != nil {
 		out.DecisionButton = &v1.ChannelDecisionButtonSchema{

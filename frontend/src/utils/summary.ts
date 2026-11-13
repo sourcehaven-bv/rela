@@ -24,6 +24,7 @@ import {
   formatDatetime,
   formatDecimal,
   formatDisplayNumber,
+  isDateType,
   numericValue,
 } from './format'
 
@@ -77,7 +78,7 @@ function summaryValue(
   if (spec.function === 'count' || !spec.property) return formatAmount(entities.length)
   const raw = entities.map((e) => e.properties[spec.property as string])
 
-  if (propDef?.type === 'date' || propDef?.type === 'datetime') {
+  if (propDef && isDateType(propDef.type)) {
     if (spec.function !== 'min' && spec.function !== 'max') return NO_VALUE
     const pick = extremeDate(raw, spec.function)
     if (pick === undefined) return NO_VALUE

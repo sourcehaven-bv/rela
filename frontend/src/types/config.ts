@@ -1,5 +1,8 @@
 import type { StatusColor } from 'rela-components/types'
-import type { ChannelMessageDisplay } from 'rela-components/components/channel/types'
+import type {
+  ChannelMessageCards,
+  ChannelMessageDisplay,
+} from 'rela-components/components/channel/types'
 import type { SortSpec } from './schema'
 import type { ScriptError } from './scriptError'
 
@@ -237,10 +240,18 @@ export type ChannelField = Pick<
 
 /** One `channels.<channel type>` entry of data-entry.yaml. */
 export interface ChannelPresentation {
-  /** Keyed by message type. */
+  /**
+   * Keyed by message type. `display: cards` shows an object list as cards,
+   * as `cards` says; the server refuses the one without the other.
+   */
   messages?: Record<
     string,
-    { fields?: ChannelField[]; display?: ChannelMessageDisplay; offer?: boolean }
+    {
+      fields?: ChannelField[]
+      display?: ChannelMessageDisplay | 'cards'
+      cards?: ChannelMessageCards
+      offer?: boolean
+    }
   >
   /**
    * The session header. `display: compact` folds the list of states at
@@ -807,7 +818,9 @@ export interface DashboardCard {
   list?: string
   /** A search query the SPA runs through `/_search`. */
   query?: string
-  display: 'count' | 'breakdown' | 'table' | 'matrix' | 'ratio'
+  display: 'count' | 'breakdown' | 'table' | 'matrix' | 'ratio' | 'sum' | 'avg' | 'min' | 'max'
+  /** The property a sum, avg, min or max card folds over its list's rows. */
+  property?: string
   group_by?: string
   /** A matrix card's row property. */
   rows?: string
@@ -923,6 +936,14 @@ export interface DashboardCardValue {
   groups?: DashboardGroup[]
   rows?: DashboardRow[]
   matrix?: DashboardMatrix
+  /** A sum, avg, min or max card's property. */
+  property?: string
+  /**
+   * A sum, avg, min or max card's value: a number for an integer sum,
+   * decimal text for a decimal sum or an average, the property's own value
+   * for min and max. Absent when no row has a value.
+   */
+  value?: number | string | boolean
   partial?: boolean
 }
 

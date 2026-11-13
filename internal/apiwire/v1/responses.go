@@ -1327,6 +1327,13 @@ type DashboardCardValue struct {
 	Rows []DashboardRow `json:"rows,omitempty"`
 	// Matrix is a matrix card's cells.
 	Matrix *DashboardMatrix `json:"matrix,omitempty"`
+	// Property and Value are a sum, avg, min or max card's property and its
+	// aggregate over the rows that have a value. An integer sum is a number;
+	// a decimal sum and an average are decimal text, such as "14.50"; a min
+	// or max is the property's own value. Value is absent when no row has
+	// one.
+	Property string `json:"property,omitempty"`
+	Value    any    `json:"value,omitempty"`
 	// Partial is true when a value the card groups, colors or shows was
 	// hidden from this principal on at least one row. That row still counts
 	// in Total.

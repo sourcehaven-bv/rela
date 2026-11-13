@@ -39,7 +39,9 @@ remote_credential.catalog: eyJhbGciOi...
 ```
 
 No Lua script can read a `remote_credential.` secret, and no other config
-file may name one.
+file may name one. In the same way, no other config file may name a
+`REMOTE_CREDENTIAL_` environment variable: `ai.yaml` `api_key_env` and
+`mail.yaml` `password_env` refuse it.
 
 Then declare the remote in `remotes.yaml`:
 

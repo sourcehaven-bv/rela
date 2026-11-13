@@ -502,6 +502,25 @@ func TestScriptConfig_RefusesUnreadableSecrets(t *testing.T) {
 	}
 }
 
+// TestConfig_RefusesRemoteCredentialEnv pins that password_env cannot name a
+// remote credential variable, so mail never sends it (TKT-RZSTAPZ). Every
+// sender constructor runs Validate.
+func TestConfig_RefusesRemoteCredentialEnv(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"REMOTE_CREDENTIAL_UP", "remote_credential_up", "REMOTE_CREDENTIAL_"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &mail.Config{
+				Transport: mail.TransportSMTP, Host: "smtp.example.com", From: "a@example.com", PasswordVar: name,
+			}
+			require.ErrorContains(t, cfg.Validate(), "only for remotes.yaml")
+			_, err := mail.NewSMTPSender(cfg)
+			require.ErrorContains(t, err, "only for remotes.yaml")
+		})
+	}
+}
+
 // TestScriptSender_RejectsWrongTransport pins the constructor guard.
 func TestScriptSender_RejectsWrongTransport(t *testing.T) {
 	t.Parallel()

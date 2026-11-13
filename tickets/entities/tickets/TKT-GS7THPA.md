@@ -5,7 +5,9 @@ title: 'Flows M5b: compile automations onto entity-change triggers'
 kind: refactor
 priority: medium
 effort: l
-status: backlog
+started: "2026-11-13"
+completed: "2026-11-13"
+status: done
 ---
 
 ## Description

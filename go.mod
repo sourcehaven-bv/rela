@@ -11,6 +11,7 @@ require (
 	github.com/alecthomas/kong v1.16.1
 	github.com/aymerick/douceur v0.2.0
 	github.com/blevesearch/bleve/v2 v2.6.1
+	github.com/brianvoe/gofakeit/v7 v7.18.2
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/charmbracelet/huh v1.0.0
 	github.com/chromedp/cdproto v0.159.0

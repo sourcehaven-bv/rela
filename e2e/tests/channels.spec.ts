@@ -6,6 +6,7 @@ import type { Browser } from "@playwright/test";
 import { test as base, expect, SEED, contextsAs, serveWithPrincipalHeader } from "./fixtures";
 import { FACED_SEED, FACED_USERS, writeFacedProject } from "./faced-project";
 import {
+  ASKED,
   CHANNEL_USERS,
   CHOICES,
   DECISIONS,
@@ -18,6 +19,7 @@ import {
   addCompactSession,
   addOfferFalse,
   addFeatureOwner,
+  addQuestionCards,
   addQuietRun,
   addRoomAboveRelations,
   setFeatureOwner,
@@ -523,6 +525,120 @@ choiceTest.describe("choices", () => {
     await alice.post("Both of them", CHOICES.answerLabel);
     for (const p of [alice, bob]) await p.expectReply(second, "Both of them");
     await alice.expectChoice(second, "Ann", false);
+  });
+
+  // TKT-GR1MXL5: the button text and the posted option come from the
+  // item's label field; the other fields show only in the list.
+  choiceTest("an object list option posts its label", async ({ as }) => {
+    const alice = await as(CHANNEL_USERS.lead);
+    const bob = await as(CHANNEL_USERS.member);
+    for (const p of [alice, bob]) {
+      await p.openEntity("feature", FEATURE);
+      await p.expectChannel(ROOM.label);
+    }
+
+    const question = "Which day?";
+    const options = [{ label: "Friday", note: "before the freeze" }, { label: "Monday" }];
+    await bob.postOverApi("features", FEATURE, ROOM.type, CHOICES.pickType, {
+      question,
+      [CHOICES.optionsProperty]: options,
+    });
+
+    for (const o of options) await alice.expectChoice(question, o.label, true);
+    await bob.expectListedOptions(question, [
+      new RegExp(`${CHOICES.optionLabel}: ${options[0].label}\\s*${CHOICES.noteLabel}: ${options[0].note}`),
+      `${CHOICES.optionLabel}: ${options[1].label}`,
+    ]);
+
+    await alice.choose(question, options[0].label);
+    for (const p of [alice, bob]) await p.expectReply(question, options[0].label);
+    await alice.expectChoice(question, options[1].label, false);
+  });
+});
+
+// A room where a member, standing in for an agent, asks two questions in
+// one batch, and the session moves once the lead has answered both
+// (TKT-GR1MXL5).
+const askedTest = base.extend<ChannelFixtures>({
+  serverUrl: async ({ testProject, serverBinary }, use, testInfo) => {
+    writeRoomProject(testProject, { asked: true });
+    addQuestionCards(testProject);
+    await serveWithPrincipalHeader(serverBinary, testProject, testInfo, use, CHANNEL_USERS.lead);
+  },
+  as: asFixture,
+});
+
+askedTest.describe("asked questions", () => {
+  askedTest.describe.configure({ timeout: 120_000 });
+
+  askedTest("a batch of questions shows as a group, and the last answer moves the session", async ({ as }) => {
+    const alice = await as(CHANNEL_USERS.lead);
+    const bob = await as(CHANNEL_USERS.member);
+    for (const p of [alice, bob]) {
+      await p.openEntity("feature", FEATURE);
+      await p.expectChannel(ROOM.label);
+      await p.expectSessionAt(ASKED.asking);
+    }
+
+    const first = "Which database do we use?";
+    const second = "When do we migrate?";
+    await bob.postBatchOverApi("features", FEATURE, ROOM.type, [
+      {
+        type: ASKED.askType,
+        props: {
+          question: first,
+          [ASKED.optionsProperty]: [
+            { label: "Postgres", pros: ["Mature", "Transactions"], cons: ["Needs a server"], recommended: true },
+            { label: "SQLite", pros: ["No server"], cons: ["One writer"] },
+          ],
+        },
+      },
+      {
+        type: ASKED.askType,
+        props: {
+          question: second,
+          [ASKED.optionsProperty]: [{ label: "This sprint" }, { label: "Next quarter" }],
+        },
+      },
+    ]);
+
+    // Both questions form one group, and their options show as cards.
+    for (const p of [alice, bob]) {
+      await p.expectQuestionHeadings(["Question 1 of 2", "Question 2 of 2"]);
+      await p.expectCards(first, ["Postgres", "SQLite"], { title: "Postgres", label: ASKED.recommendedLabel });
+    }
+    await alice.expectCardPoints(first, "Postgres", ["Mature", "Transactions"], ["Needs a server"]);
+    await alice.expectCards(second, ["This sprint", "Next quarter"]);
+
+    // Only the lead may answer, so only the lead sees the buttons of each
+    // open question.
+    for (const label of ["Postgres", "SQLite"]) await alice.expectChoice(first, label, true);
+    for (const label of ["This sprint", "Next quarter"]) await alice.expectChoice(second, label, true);
+    await bob.expectChoice(first, "Postgres", false);
+
+    // The first answer collapses the question for the lead. The member may
+    // not answer, so the question stays as it is and the answer shows as a
+    // reply. One question is still open, so the session stays.
+    await alice.choose(first, "SQLite");
+    await alice.expectCollapsedAnswer(first, "SQLite");
+    await bob.expectReply(first, "SQLite");
+    await alice.expectSessionAt(ASKED.asking);
+    await bob.expectSessionAt(ASKED.asking);
+
+    // Change shows the choices again; a new answer replaces the old one.
+    await alice.changeAnswer(first);
+    await alice.expectCollapsedAnswer(first, null);
+    await alice.expectChoice(first, "Postgres", true);
+    await alice.choose(first, "Postgres");
+    await alice.expectCollapsedAnswer(first, "Postgres");
+    await alice.expectSessionAt(ASKED.asking);
+
+    // The last open question's answer moves the session for every reader.
+    await alice.choose(second, "Next quarter");
+    for (const p of [alice, bob]) {
+      await p.expectSessionAt(ASKED.answered);
+      await p.expectMessage(`Session moved from ${ASKED.asking} to ${ASKED.answered}`);
+    }
   });
 });
 

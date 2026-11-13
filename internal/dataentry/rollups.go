@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"maps"
+	"slices"
 	"strconv"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -126,37 +127,87 @@ func (s rollupSource) addToEntities(ctx context.Context, world store.WorldScope,
 	}
 }
 
-// rollupsParam asks a collection response to carry every roll-up property
-// of its rows (TKT-6I2OPG). A roll-up costs store queries per column per
-// page, so a list row carries none unless asked: by this parameter, or by
-// naming (list_id) a configured list that shows a roll-up as a column, which
-// then carries those.
+// rollupsParam set to false leaves the roll-up properties out of a
+// collection response. A list row carries every roll-up of its type by
+// default (TKT-6I2OPG), as the entity GET does: a roll-up costs one store
+// query per column per page, whatever the page size.
 const rollupsParam = "rollups"
 
 // listRollups returns which roll-ups a collection read computes, or nil for
 // none.
-func listRollups(query map[string][]string, cfg *Config) func(string) bool {
-	if all, _ := strconv.ParseBool(queryGet(query, rollupsParam)); all {
-		return func(string) bool { return true }
-	}
-	id := queryGet(query, listIDParam)
-	if id == "" || cfg == nil {
-		return nil
-	}
-	list, ok := cfg.Lists[id]
-	if !ok {
-		return nil
-	}
-	shown := map[string]bool{}
-	for _, c := range list.Columns {
-		if c.Property != "" {
-			shown[c.Property] = true
+func listRollups(query map[string][]string) func(string) bool {
+	if v := queryGet(query, rollupsParam); v != "" {
+		if all, err := strconv.ParseBool(v); err == nil && !all {
+			return nil
 		}
 	}
-	if len(shown) == 0 {
+	return func(string) bool { return true }
+}
+
+// queriedRollups returns the roll-ups of typeName that query filters or
+// sorts on, or nil when it names none.
+func queriedRollups(meta *metamodel.Metamodel, typeName string, query gatedListQuery) map[string]bool {
+	names := meta.RollupNames(typeName)
+	if len(names) == 0 {
 		return nil
 	}
-	return func(p string) bool { return shown[p] }
+	var out map[string]bool
+	for _, ref := range listQueryProperties(query.params, query.isRelationKey) {
+		if slices.Contains(names, ref.property) {
+			if out == nil {
+				out = map[string]bool{}
+			}
+			out[ref.property] = true
+		}
+	}
+	return out
+}
+
+// withQueriedRollups runs narrow over copies of entities that carry the
+// roll-ups query filters or sorts on, and returns the originals narrow kept,
+// in its order. A roll-up is computed per reader and never stored, so the
+// list filter and sort see it only this way. It costs one store query per
+// queried roll-up for the whole population, before paging; the store
+// cannot page by a roll-up, so such a request never takes the pushdown
+// (listNarrowing.pushdownPlan).
+//
+// The originals are returned, not the copies: every later step (redaction,
+// serialization) reads raw store entities, and the served page computes
+// its roll-ups again, for its own rows only.
+func withQueriedRollups(
+	ctx context.Context, s rollupSource, typeName string, query gatedListQuery, entities []*entityPkg.Entity,
+	narrow func([]*entityPkg.Entity) ([]*entityPkg.Entity, error),
+) ([]*entityPkg.Entity, error) {
+	if s.schema == nil || s.schema() == nil {
+		return narrow(entities)
+	}
+	want := queriedRollups(s.schema().Meta, typeName, query)
+	if want == nil || len(entities) == 0 {
+		return narrow(entities)
+	}
+	copies := make([]*entityPkg.Entity, len(entities))
+	original := make(map[*entityPkg.Entity]*entityPkg.Entity, len(entities))
+	rows := make([]rollupRow, len(entities))
+	for i, e := range entities {
+		cp := *e
+		cp.Properties = maps.Clone(e.Properties)
+		if cp.Properties == nil {
+			cp.Properties = map[string]any{}
+		}
+		copies[i] = &cp
+		original[&cp] = e
+		rows[i] = rollupRow{ref: e.Ref(), props: cp.Properties}
+	}
+	s.add(ctx, typeName, rows, worldScopeFrom(ctx), func(p string) bool { return want[p] })
+	kept, err := narrow(copies)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*entityPkg.Entity, len(kept))
+	for i, c := range kept {
+		out[i] = original[c]
+	}
+	return out, nil
 }
 
 // serveRowRollups adds the roll-ups want selects to each row in data, which

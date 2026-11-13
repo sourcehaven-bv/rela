@@ -1,6 +1,9 @@
 ---
 paths:
   - "internal/store/**"
+  - "internal/channels/filechannels/**"
+  - "internal/piles/kvpiles/**"
+  - "internal/lease/kvlease/**"
   - "internal/appbuild/**"
   - "internal/state/**"
   - "internal/userstate/**"
@@ -21,6 +24,16 @@ paths:
 
 Rules when touching storage backends:
 
+- **The file backends are the developer tier; do not build crash repair for
+  them.** fsstore, filechannels, kvpiles and kvlease serve one developer whose
+  project lives in git, and git is their recovery path. Users who need
+  durability run sqlite or postgres, whose transactions already make a write
+  all or nothing. So a file backend may leave a half-written operation behind
+  after a crash. Keep its writes correct while the process runs, and keep its
+  errors loud, but do not add journals, repair-on-open passes or crash-point
+  tests to it. A review finding that asks for one is a won't-fix with this
+  reason (RR-JH8JPTD, RR-9J0UYQ2). Durability work goes to the database
+  backends.
 - **The `postgres` build must not link bleve; the default build must not link
   pgx; no build but `sqlite` may link `modernc.org/sqlite`.** CI asserts each of
   these via `go list -deps` (the `postgres` job in `ci.yml`). Keep

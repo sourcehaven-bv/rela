@@ -1525,8 +1525,10 @@ The server refuses the file when the block:
   it;
 - lists a property twice, or gives a widget that does not suit the
   property type;
-- gives a message type a `display` other than `collapsed` or `hidden`, or
-  an `offer` other than `true` or `false`.
+- gives a message type a `display` other than `collapsed`, `hidden` or
+  `cards`, a `cards:` block that does not fit (see
+  [Options as cards](#options-as-cards)), or an `offer` other than `true`
+  or `false`.
 
 Without `realtime.yaml`, realtime is off and the block has no effect. The
 server then logs a warning instead of refusing the file, so you can add the
@@ -1546,6 +1548,44 @@ The structure the composer needs, such as property types and labels, comes
 from `GET /api/v1/_schema/channels` (see the realtime guide). A page that
 shows channels reads both again on a `refresh` event, so a change to
 either file reaches it without a page reload.
+
+### Options as cards
+
+A message whose options are an object list (see the realtime guide) shows
+its items as a table of fields by default. `display: cards` shows each
+item as a card instead, which suits options that each carry a title, pros
+and cons:
+
+```yaml
+channels:
+  room:
+    messages:
+      ask:
+        display: cards
+        cards:
+          body: question
+          items: options
+          title: label
+          plus: pros
+          minus: cons
+          badge: recommended
+```
+
+| Key | Meaning |
+| --- | --- |
+| `items` | The object-list property (`type: object, list: true`) whose items become cards. Required. |
+| `body` | A `string` or `markdown` property shown above the cards. |
+| `title` | A field of the items, shown as the card's heading. |
+| `plus` | A field of the items, listed with "+". |
+| `minus` | A field of the items, listed with "−". |
+| `badge` | A `boolean` field of the items, shown as a tag with the field's label while it is true. |
+
+The other fields of an item show under the lists as label and value;
+dates are formatted, an enum shows its label, and a boolean shows yes or
+no. On a question with `choices`, the choice buttons show under the
+cards. `cards:` applies only with `display: cards`, and `display: cards`
+needs `cards:` with `items`. Every name must be declared in
+`realtime.yaml`: `items` on the message type, the others on its items.
 
 ### Quiet message types
 
@@ -3702,7 +3742,8 @@ dashboard:
 | `title`      | string | Card heading                                                                |
 | `list`       | string | A list under `lists:` that supplies the rows. Set `list` or `query`, not both |
 | `query`      | string | Search query (same syntax as the search page)                               |
-| `display`    | string | `count`, `breakdown`, `table`, `matrix` or `ratio`                          |
+| `display`    | string | `count`, `breakdown`, `table`, `matrix`, `ratio`, `sum`, `avg`, `min` or `max` |
+| `property`   | string | `sum`, `avg`, `min`, `max`: the property to fold over the list's rows        |
 | `group_by`   | string | Property to group by (`breakdown`, and optionally `ratio`)                  |
 | `columns`    | list or string | `table`: column definitions, same format as list columns. `matrix`: the property along the top |
 | `sort`       | list   | Sort order (`table` mode only), the same list as a list's `sort:`           |
@@ -3836,6 +3877,28 @@ dashboard:
       match: has-evidence
       group_by: status
 ```
+
+### Total cards (`display: sum`, `avg`, `min`, `max`)
+
+A total card folds one property over the rows of its list into one value.
+It needs `list:` and `property:`.
+
+```yaml
+dashboard:
+  cards:
+    - title: "Total cost"
+      list: open-projects
+      display: sum
+      property: cost_cents
+```
+
+- `sum` and `avg` take an `integer` or `decimal` property. A sum is exact; an
+  average shows at least two digits after the point.
+- `min` and `max` take a property a list can sort on, and pick the value the
+  list's sort puts first or last.
+- The property can be a [roll-up](metamodel.md#roll-up-properties).
+- A row without a value is left out. A row whose value is hidden from the
+  viewer is left out too, and the card says that some values are hidden.
 
 ### Card width (`width`)
 

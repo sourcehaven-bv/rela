@@ -21,8 +21,20 @@
  * `choices` are the reply buttons of a question's options, which the app
  * builds only while the question is open to an answer. They render after
  * the fields, as a group named "Choices", and emit `choose`. While they
- * show, the list property they come from is not rendered as well. A list
- * property renders as a bulleted list, each item as text.
+ * show, the string list they come from is not rendered as well; an object
+ * list stays. A list property renders as a bulleted list, each item as
+ * text; an item of an object list shows its set fields as "label: value"
+ * in field order, an enum field by its label.
+ *
+ * `question` says where a question stands (TKT-GR1MXL5). Once it is
+ * answered, the choices give way to one line with the answer and, while
+ * the app still passes choices (the session still takes another answer), a
+ * Change button that shows them again and focuses the first. A new answer
+ * (`answerSeq`) closes them again.
+ *
+ * A presentation with `cards` (data-entry.yaml `display: cards`) shows its
+ * body property and its object list as cards (`RlChannelCards`) under the
+ * card head; the other properties follow as fields.
  *
  * A session notice (`message.notice`) renders as one system line: the move,
  * and the time. It has no controls, not even reply: the server sends no
@@ -41,12 +53,13 @@
  * already rendered and sanitized. It is inserted as it is; this component
  * never renders or cleans markdown, so the app's sanitizer is the only one.
  */
-import { computed, useId } from 'vue'
+import { computed, nextTick, ref, useId, useTemplateRef, watch } from 'vue'
 import RlButton from '../common/RlButton.vue'
 import RlButtonGroup from '../common/RlButtonGroup.vue'
 import RlIcon from '../common/RlIcon.vue'
 import RlTag from '../common/RlTag.vue'
 import RlChannelAuthor from './RlChannelAuthor.vue'
+import RlChannelCards from './RlChannelCards.vue'
 import RlChannelDecisions from './RlChannelDecisions.vue'
 import RlRefChip from './RlRefChip.vue'
 import {
@@ -61,7 +74,10 @@ import type {
   ChannelMessagePresentation,
   ChannelMessageTypeDef,
   ChannelMessageView,
+  ChannelObjectItem,
+  ChannelPropertyDef,
   ChannelPropValue,
+  ChannelQuestionState,
   ChannelReadableRef,
   ChannelRef,
 } from './types'
@@ -85,6 +101,8 @@ const props = withDefaults(
     decisions?: ChannelDecisionView[]
     /** The reply buttons of this question's options; see the header comment. */
     choices?: ChannelDecisionView[]
+    /** Where this question stands; see the header comment. */
+    question?: ChannelQuestionState
   }>(),
   { canReply: false },
 )
@@ -124,20 +142,54 @@ const fields = computed<ResolvedChannelField[]>(() => {
 
 const choiceList = computed(() => props.choices ?? [])
 
-/** The list property the choices come from, while they show. */
-const choicesFrom = computed(() =>
-  choiceList.value.length ? props.messageType?.choices?.from : undefined,
+const root = useTemplateRef<HTMLElement>('root')
+/** The reader reopened the choices of an answered question. */
+const changing = ref(false)
+watch(
+  () => props.question?.answerSeq,
+  () => (changing.value = false),
 )
+/** Shows the answer line in place of the choices. */
+const showAnswer = computed(() => !!props.question?.answered && !changing.value)
+const buttonsShown = computed(() => choiceList.value.length > 0 && !showAnswer.value)
+
+async function changeAnswer() {
+  changing.value = true
+  await nextTick()
+  root.value?.querySelector<HTMLElement>('.rl-channel-message__choices button:not([disabled])')?.focus()
+}
+
+/** The cards of `display: cards`, when the message type has their list. */
+const cards = computed(() => {
+  const c = props.presentation?.cards
+  return c && props.messageType?.properties.some((p) => p.name === c.items) ? c : undefined
+})
+
+/**
+ * The string list the choices come from, while they show: its items are
+ * the buttons, so it is not listed twice. An object list stays, because
+ * its other fields inform the choice.
+ */
+const choicesFrom = computed(() => {
+  const from = buttonsShown.value ? props.messageType?.choices?.from : undefined
+  const prop = props.messageType?.properties.find((p) => p.name === from)
+  return prop?.type === 'object' ? undefined : from
+})
 
 const shown = computed(() =>
   fields.value.filter(
-    (f) => props.message.props?.[f.property.name] !== undefined && f.property.name !== choicesFrom.value,
+    (f) =>
+      props.message.props?.[f.property.name] !== undefined &&
+      f.property.name !== choicesFrom.value &&
+      f.property.name !== cards.value?.items &&
+      f.property.name !== cards.value?.body,
   ),
 )
 
 /** One markdown property and no actions: show it as plain prose, without a card. */
 const prose = computed(
   () =>
+    !cards.value &&
     !!props.messageType &&
     fields.value.length === 1 &&
     fields.value[0]!.property.type === 'markdown' &&
@@ -202,13 +254,38 @@ function plain(f: ResolvedChannelField, v: ChannelPropValue): string {
   return String(v)
 }
 
+/**
+ * The set fields of item i of the object list prop, as label and text, in
+ * field order. A field the app formatted (`message.itemText`) shows that.
+ */
+function itemFields(
+  prop: ChannelPropertyDef,
+  item: ChannelObjectItem,
+  i: number,
+): { name: string; label: string; text: string }[] {
+  const pre = props.message.itemText?.[prop.name]?.[i]
+  const defs: Pick<ChannelPropertyDef, 'name' | 'label' | 'enum'>[] =
+    prop.fields ?? Object.keys(item).sort().map((name) => ({ name, label: name }))
+  return defs
+    .filter((d) => item[d.name] !== undefined)
+    .map((d) => {
+      const v = item[d.name]!
+      const opt = d.enum ? props.enumOptions?.[d.enum]?.find((o) => o.value === v) : undefined
+      const text =
+        pre?.[d.name] ??
+        opt?.label ??
+        (typeof v === 'boolean' ? t(v ? 'yes' : 'no') : Array.isArray(v) ? v.join(', ') : String(v))
+      return { name: d.name, label: d.label, text }
+    })
+}
+
 function hrefFor(v: ChannelRef): string | undefined {
   return v.restricted ? undefined : props.entityHref?.(v)
 }
 </script>
 
 <template>
-  <div class="rl-channel-message" :data-seq="message.seq" tabindex="-1">
+  <div ref="root" class="rl-channel-message" :data-seq="message.seq" tabindex="-1">
     <p v-if="message.removed" class="rl-channel-message__removed">
       <RlIcon name="erase" :size="14" />
       <span>{{ messages.channelMessageRemoved(message.removed) }}</span>
@@ -256,16 +333,38 @@ function hrefFor(v: ChannelRef): string | undefined {
         </p>
       </template>
 
-      <div v-else-if="messageType || shown.length || message.action" class="rl-channel-message__card">
+      <div
+        v-else-if="messageType || shown.length || message.action"
+        class="rl-channel-message__card"
+        :class="{ 'rl-channel-message__card--wide': cards }"
+      >
         <div v-if="messageType" :id="headId" class="rl-channel-message__card-head">
           {{ messageType.label }}
         </div>
+        <RlChannelCards
+          v-if="cards && messageType"
+          :message="message"
+          :cards="cards"
+          :properties="messageType.properties"
+          :enum-options="enumOptions"
+        />
         <dl v-if="shown.length" class="rl-channel-message__fields">
           <template v-for="f in shown" :key="f.property.name">
             <dt>{{ f.label }}</dt>
             <dd>
               <ul v-if="Array.isArray(message.props![f.property.name])" class="rl-channel-message__list">
-                <li v-for="(item, i) in message.props![f.property.name] as string[]" :key="i">{{ item }}</li>
+                <li v-for="(item, i) in message.props![f.property.name] as (string | ChannelObjectItem)[]" :key="i">
+                  <template v-if="typeof item === 'string'">{{ item }}</template>
+                  <template v-else>
+                    <span
+                      v-for="x in itemFields(f.property, item, i)"
+                      :key="x.name"
+                      class="rl-channel-message__item-field"
+                    >
+                      <span class="rl-channel-message__item-label">{{ x.label }}:</span> {{ x.text }}
+                    </span>
+                  </template>
+                </li>
               </ul>
               <RlRefChip
                 v-else-if="isRef(message.props![f.property.name]!)"
@@ -328,8 +427,17 @@ function hrefFor(v: ChannelRef): string | undefined {
         </li>
       </ul>
 
+      <p v-if="question?.answered && showAnswer" class="rl-channel-message__answer">
+        <RlIcon name="check" :size="14" />
+        <span class="rl-channel-message__answer-text">{{
+          question.answer !== undefined ? messages.channelAnswer({ answer: question.answer }) : t('answered')
+        }}</span>
+        <RlButton v-if="choiceList.length" variant="ghost" size="sm" @click="changeAnswer">
+          {{ t('changeAnswer') }}<span class="rl-visually-hidden">{{ messages.channelChangeAnswerHint() }}</span>
+        </RlButton>
+      </p>
       <RlChannelDecisions
-        v-if="choiceList.length"
+        v-else-if="buttonsShown"
         kind="choice"
         class="rl-channel-message__choices"
         :decisions="choiceList"
@@ -585,6 +693,14 @@ function hrefFor(v: ChannelRef): string | undefined {
   border-top: 1px solid var(--rl-color-border);
 }
 
+.rl-channel-message__item-field {
+  display: block;
+}
+
+.rl-channel-message__item-label {
+  color: var(--rl-color-text-muted);
+}
+
 .rl-channel-message__list {
   margin: 0;
   padding-left: var(--rl-space-5);
@@ -594,6 +710,24 @@ function hrefFor(v: ChannelRef): string | undefined {
 
 .rl-channel-message__choices {
   margin-top: var(--rl-space-2);
+}
+
+.rl-channel-message__card--wide {
+  max-width: 720px;
+}
+
+.rl-channel-message__answer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--rl-space-2);
+  margin: var(--rl-space-2) 0 0;
+  color: var(--rl-color-text-muted);
+}
+
+.rl-channel-message__answer-text {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .rl-channel-message__controls {

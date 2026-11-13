@@ -38,6 +38,20 @@ func (fakeChannelSchema) MessageType(ct, mt string) (MessageFacts, bool) {
 		return MessageFacts{}, true
 	case "run.ask", "run.plan", "task.pr-event", "task.sized":
 		return MessageFacts{CountsUnread: true}, true
+	case "run.pick":
+		return MessageFacts{Properties: []ChannelProperty{
+			{Name: "question", Type: "markdown", Required: true},
+			{Name: "note", Type: "string"},
+			{Name: "tags", Type: "string", List: true},
+			{Name: "count", Type: "integer"},
+			{Name: "options", Type: "object", List: true, Required: true, Fields: []ChannelProperty{
+				{Name: "cons", Type: "string", List: true},
+				{Name: "due", Type: "date"},
+				{Name: "label", Type: "string"},
+				{Name: "pros", Type: "string", List: true},
+				{Name: "recommended", Type: "boolean"},
+			}},
+		}, CountsUnread: true}, true
 	}
 	return MessageFacts{}, false
 }
@@ -151,7 +165,7 @@ func TestChannelsPresentation_Validate(t *testing.T) {
 		{"display empty", `channels: {room: {messages: {note: {display: ""}}}}`, ""},
 		{"display null", "channels: {room: {messages: {note: {display: null}}}}", ""},
 		{"display bad value", "channels: {room: {messages: {note: {display: shown}}}}",
-			`channels.room.messages.note.display: unknown value "shown" (valid values: collapsed, hidden)`},
+			`channels.room.messages.note.display: unknown value "shown" (valid values: collapsed, hidden, cards)`},
 		{"display wrong case", "channels: {room: {messages: {note: {display: Hidden}}}}",
 			`channels.room.messages.note.display: unknown value "Hidden"`},
 		{"display number", "channels: {room: {messages: {note: {display: 1}}}}",
@@ -165,7 +179,7 @@ func TestChannelsPresentation_Validate(t *testing.T) {
 		{"offer true", "channels: {room: {messages: {note: {offer: true}}}}", ""},
 		{"offer with display", "channels: {run: {messages: {claim: {offer: false, display: hidden}}}}", ""},
 		{"offer misspelled", "channels: {room: {messages: {note: {compose: false}}}}",
-			`channels.room.messages.note: unknown key "compose" (valid keys: fields, display, offer)`},
+			`channels.room.messages.note: unknown key "compose" (valid keys: fields, display, offer, cards)`},
 		{"offer on unknown message type", "channels: {room: {messages: {poll: {offer: false}}}}",
 			`declares no message type "poll"`},
 		{"offer quoted no", `channels: {room: {messages: {note: {offer: "no"}}}}`,
@@ -276,11 +290,11 @@ func TestChannelsUnknownKeys_Sorted(t *testing.T) {
 		"  mid: {messages: {q: {y: 1}, c: {y: 1}}}\n")
 	want := []string{
 		`channels.alpha: unknown key "x" (valid keys: messages, session, placement)`,
-		`channels.mid.messages.c: unknown key "y" (valid keys: fields, display, offer)`,
-		`channels.mid.messages.q: unknown key "y" (valid keys: fields, display, offer)`,
+		`channels.mid.messages.c: unknown key "y" (valid keys: fields, display, offer, cards)`,
+		`channels.mid.messages.q: unknown key "y" (valid keys: fields, display, offer, cards)`,
 		`channels.zed: unknown key "x" (valid keys: messages, session, placement)`,
-		`channels.zed.messages.a: unknown key "y" (valid keys: fields, display, offer)`,
-		`channels.zed.messages.b: unknown key "y" (valid keys: fields, display, offer)`,
+		`channels.zed.messages.a: unknown key "y" (valid keys: fields, display, offer, cards)`,
+		`channels.zed.messages.b: unknown key "y" (valid keys: fields, display, offer, cards)`,
 	}
 	for range 20 {
 		if got := channelsUnknownKeys(data); !slices.Equal(got, want) {
@@ -596,5 +610,96 @@ func TestChannelsPresentation_SessionScalar(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error %q does not contain %q", err, want)
 		}
+	}
+}
+
+// TestValidateChannels_Cards pins the `display: cards` checks (TKT-GR1MXL5):
+// the display and `cards:` come together, items names an object list of
+// the message type, body a string or markdown property, and title, plus,
+// minus and badge fields of the items, badge a boolean one.
+func TestValidateChannels_Cards(t *testing.T) {
+	const at = "channels.run.messages.pick"
+	for _, tc := range []struct {
+		name string
+		yaml string
+		want string // the one error expected; "" means none
+	}{
+		{"full", "{display: cards, cards: {body: question, items: options, title: label, plus: pros, minus: cons, " +
+			"badge: recommended}}", ""},
+		{"items only", "{display: cards, cards: {items: options}}", ""},
+		{"string body", "{display: cards, cards: {body: note, items: options}}", ""},
+		{"date title", "{display: cards, cards: {items: options, title: due}}", ""},
+		{"with fields", "{display: cards, cards: {items: options}, fields: [{property: question}]}", ""},
+
+		{"display without cards", "{display: cards}", at + ": display: cards requires cards: with items"},
+		{"cards without items", "{display: cards, cards: {title: label}}",
+			at + ".cards.items: is required with display: cards"},
+		{"cards without display", "{cards: {items: options}}", at + ".cards: only applies with display: cards"},
+		{"cards with collapsed", "{display: collapsed, cards: {items: options}}",
+			at + ".cards: only applies with display: cards"},
+		{"unknown cards key", "{display: cards, cards: {items: options, subtitle: label}}",
+			at + `.cards: unknown key "subtitle" (valid keys: body, items, title, plus, minus, badge)`},
+		{"unknown items", "{display: cards, cards: {items: choices}}",
+			at + `.cards.items: message type pick declares no property "choices"`},
+		{"items not object", "{display: cards, cards: {items: tags}}",
+			at + `.cards.items: property "tags" must be an object list (type: object, list: true), not list of string`},
+		{"items scalar", "{display: cards, cards: {items: count}}",
+			at + `.cards.items: property "count" must be an object list (type: object, list: true), not integer`},
+		{"unknown body", "{display: cards, cards: {body: intro, items: options}}",
+			at + `.cards.body: message type pick declares no property "intro"`},
+		{"body list", "{display: cards, cards: {body: tags, items: options}}",
+			at + `.cards.body: property "tags" must be a string or markdown property, not list of string`},
+		{"body integer", "{display: cards, cards: {body: count, items: options}}",
+			at + `.cards.body: property "count" must be a string or markdown property, not integer`},
+		{"unknown title", "{display: cards, cards: {items: options, title: name}}",
+			at + `.cards.title: the items of property "options" declare no field "name"`},
+		{"unknown plus", "{display: cards, cards: {items: options, plus: upsides}}",
+			at + `.cards.plus: the items of property "options" declare no field "upsides"`},
+		{"unknown minus", "{display: cards, cards: {items: options, minus: downsides}}",
+			at + `.cards.minus: the items of property "options" declare no field "downsides"`},
+		{"unknown badge", "{display: cards, cards: {items: options, badge: best}}",
+			at + `.cards.badge: the items of property "options" declare no field "best"`},
+		{"badge not boolean", "{display: cards, cards: {items: options, badge: label}}",
+			at + `.cards.badge: field "label" must be a boolean, not string`},
+		{"message field as title", "{display: cards, cards: {items: options, title: note}}",
+			at + `.cards.title: the items of property "options" declare no field "note"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := []byte("version: \"1.0\"\nchannels: {run: {messages: {pick: " + tc.yaml + "}}}\n")
+			var cfg Config
+			if err := yaml.Unmarshal(data, &cfg); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			got := validateChannelsShape(data, &cfg)
+			errs, warnings := ValidateChannels(&cfg, fakeChannelSchema{})
+			got = append(got, errs...)
+			if len(warnings) > 0 {
+				t.Errorf("warnings: %v", warnings)
+			}
+			if tc.want == "" {
+				if len(got) > 0 {
+					t.Fatalf("unexpected errors: %v", got)
+				}
+				return
+			}
+			if len(got) != 1 || got[0] != tc.want {
+				t.Fatalf("errors %q; want [%q]", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestValidateChannels_CardsRealtimeOff pins that the pairing of `display:
+// cards` and `cards:` is checked without realtime.yaml too.
+func TestValidateChannels_CardsRealtimeOff(t *testing.T) {
+	data := []byte("version: \"1.0\"\nchannels: {run: {messages: {pick: {display: cards}}}}\n")
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	got := validateChannelsShape(data, &cfg)
+	want := "channels.run.messages.pick: display: cards requires cards: with items"
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("errors %q; want [%q]", got, want)
 	}
 }

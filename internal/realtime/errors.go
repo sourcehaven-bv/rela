@@ -116,6 +116,13 @@ const (
 	// TypeSessionMessage is a 409 for an author's edit or delete of a
 	// message that moved the session. A moderator may still remove it.
 	TypeSessionMessage = "session_message"
+	// TypeAskedQuestion is a 409 for an author's edit or delete of a
+	// question of the session's span (see [channels.Asked]) while the
+	// span lasts. A moderator may still remove it.
+	TypeAskedQuestion = "asked_question"
+	// TypeTooManyQuestions is a 409 for a post that would leave more than
+	// [channels.MaxAsked] unanswered questions in the session span.
+	TypeTooManyQuestions = "too_many_questions"
 	// TypeReminderMessage is a 409 for an edit or author delete of a
 	// message a session reminder posted. A moderator may still remove it.
 	TypeReminderMessage = "reminder_message"
@@ -269,6 +276,9 @@ func storeError(err error) error {
 		return deny(http.StatusConflict, TypeActionPending, "the message has a pending action")
 	case errors.Is(err, channels.ErrConflict):
 		return deny(http.StatusConflict, TypeConflict, "the channel changed concurrently; try again")
+	case errors.Is(err, channels.ErrTooManyAsked):
+		return deny(http.StatusConflict, TypeTooManyQuestions, fmt.Sprintf(
+			"%d questions are still open in this session span; wait for answers or a move", channels.MaxAsked))
 	case errors.Is(err, channels.ErrTooLarge):
 		return deny(http.StatusRequestEntityTooLarge, TypeTooLarge, "a value is over its size limit")
 	case errors.Is(err, channels.ErrInvalidReply):

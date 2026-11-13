@@ -3,13 +3,16 @@ package cmdexec
 import (
 	"os"
 	"strings"
+
+	"github.com/Sourcehaven-BV/rela/internal/secrets"
 )
 
 // withheldEnv names the environment variables no child process inherits:
 // the key that seals connector tokens (TKT-01KZSO) and the database DSN,
 // which carries the database password. Both reach rela through the
 // environment only, so leaving them out here keeps them out of every
-// configured command.
+// configured command. Every remote credential variable is withheld too
+// (TKT-RZSTAPZ), so only the remote config sends one.
 var withheldEnv = []string{"RELA_TOKEN_KEY", "RELA_DATABASE_URL"}
 
 // Environ returns the process environment without the variables in
@@ -32,6 +35,9 @@ func withoutWithheld(env []string) []string {
 // isWithheld compares without case, because Windows reads environment
 // names that way.
 func isWithheld(name string) bool {
+	if secrets.IsRemoteCredentialEnv(name) {
+		return true
+	}
 	for _, w := range withheldEnv {
 		if strings.EqualFold(name, w) {
 			return true

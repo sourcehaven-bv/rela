@@ -350,6 +350,11 @@ export function getCellValue(
   return ''
 }
 
+/** Whether a property type holds a date or a datetime. */
+export function isDateType(type: string | undefined): boolean {
+  return type === 'date' || type === 'datetime'
+}
+
 /**
  * Check if a property is an enum type (has defined values)
  */

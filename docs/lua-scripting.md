@@ -1398,6 +1398,9 @@ api_key_env: OPENAI_API_KEY            # optional, absent = no auth
 timeout_seconds: 60                    # optional, default 30
 ```
 
+`api_key_env` may not name a `REMOTE_CREDENTIAL_` variable: that credential
+is only for `remotes.yaml`.
+
 To have a model propose changes to one entity, you may not need a script. A
 data-entry `llm:` action takes a prompt, the inputs to send and the outputs the
 model may propose, and lets the user review the proposal before it is saved.

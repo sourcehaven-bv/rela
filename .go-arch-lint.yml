@@ -299,6 +299,9 @@ components:
   aclstore:         { in: internal/aclstore }
   aclaudit:         { in: internal/aclaudit }
   aclmap:           { in: internal/aclmap }
+  # `rela test` (TKT-UO8UIGO): runs the operator's Lua tests, each case on an
+  # appbuild.NewInMemory world.
+  apptest:          { in: internal/apptest }
   affordances:      { in: internal/affordances }
   visibility:       { in: internal/visibility }
   ai:               { in: internal/ai }
@@ -363,6 +366,7 @@ vendors:
   glamour:     { in: github.com/charmbracelet/glamour }
   huh:         { in: github.com/charmbracelet/huh }
   yaml:        { in: gopkg.in/yaml.v3 }
+  gofakeit:    { in: github.com/brianvoe/gofakeit/v7 }
   # CalDAV protocol surface (TKT-MF1CWZ). Granted ONLY to dataentry, which
   # contains it in the caldav_* adapter files: calfeed stays the domain model
   # and *ical.Calendar must not escape that boundary.
@@ -573,6 +577,7 @@ deps:
       - aclstore
       - aclaudit
       - aclmap
+      - apptest
       # `rela acl audit` evaluates field visibility per role for the
       # classification findings (TKT-8UCV32) through the resolver a request
       # uses. Cycle-free: affordances is a near-leaf importing no wiring.
@@ -1227,6 +1232,10 @@ deps:
       - validation
       - validationgraph
   cmdexec:
+    # secrets: Environ withholds every remote credential variable from child
+    # processes (TKT-RZSTAPZ). secrets is a leaf.
+    mayDependOn:
+      - secrets
     canUse:
       - xsys
   attachment:
@@ -1332,6 +1341,11 @@ deps:
       - mailrender
       - metamodel
       - store
+  # secrets: Validate refuses an api_key_env that names a remote credential
+  # variable (TKT-RZSTAPZ). secrets is a leaf.
+  ai:
+    mayDependOn:
+      - secrets
   # Sender seam, transports, config and the best-effort outbox. Depends on
   # mailrender for the body model only; it reaches the store through a narrow
   # structural interface at the wiring site, never by importing appbuild.
@@ -1390,8 +1404,34 @@ deps:
     mayDependOn:
       - acl
       - entity
+      # Expectations name entity types and relation types; the map probes
+      # the relation types the schema declares.
+      - metamodel
       - principal
       - store
+  # The test runner sits beside the CLI: it builds worlds through appbuild
+  # and drives them through the same write and read paths a server uses.
+  apptest:
+    mayDependOn:
+      - acl
+      - aclmap
+      - ai
+      - appbuild
+      - attachment
+      - entity
+      - entitymanager
+      - fsimport
+      - lua
+      - mail
+      - memcomments
+      - metamodel
+      - principal
+      - rootfs
+      - store
+    canUse:
+      - gofakeit
+      - gopherlua
+      - yaml
   affordances:
     mayDependOn:
       - acl
@@ -1457,6 +1497,9 @@ deps:
       # `on.updated`, with the value normalization the stores use.
       - canonical
       - filter
+      # Automations compile to flow triggers and fire through flow.Fire
+      # (TKT-GS7THPA). flow is a leaf.
+      - flow
       - metamodel
       - predicate
       - predicatefns
@@ -1935,6 +1978,8 @@ deps:
       - flow
       # A leaf: the reply rule refuses rela's own identities and unknown.
       - principal
+      # A leaf: the batch cap the HTTP API and OpenAPI quote too.
+      - realtimelimits
   # The channel service (TKT-ZU7P13): authorization, validation, rate limits
   # and ephemeral signals over the channel store. Every gate comes in through
   # a consumer-side interface appbuild implements, so it lists neither acl,

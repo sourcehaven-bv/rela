@@ -160,6 +160,9 @@ func (c *call) editCheck(m channels.Message) error {
 	if m.MovedSession {
 		return sessionMessage()
 	}
+	if asked(c.head, m.Seq) {
+		return askedQuestion()
+	}
 	if !c.editGate() {
 		return gateDenied(TypeEditDenied, "editing a message", rule, op.Gate, c.ct.Roles)
 	}

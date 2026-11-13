@@ -10,7 +10,7 @@
  * panel's tests and this module's tests pin the same mapping.
  */
 import { t } from '@/i18n'
-import { formatBytes, formatDate, formatDatetime } from '@/utils/format'
+import { formatBytes, formatDate, formatDatetime, isDateType } from '@/utils/format'
 import {
   renderMessageMarkdown,
   type MessageMentionLink,
@@ -49,8 +49,10 @@ import type {
   ChannelFileView,
   ChannelGroupView,
   ChannelLifecycleDef,
+  ChannelMessageCards,
   ChannelMessageDisplay,
   ChannelMessageView,
+  ChannelQuestionState,
   ChannelNoticeView,
   ChannelPresentation,
   ChannelReadableRef,
@@ -85,7 +87,9 @@ export type PresentationView = ChannelPresentation & { session?: { display: 'com
  * may omit `property`; a channel field names one (the server refuses any
  * other at load), so a field without one is left out rather than trusted.
  * A session display other than `compact`, say from a newer server, is
- * dropped, so the header keeps its default.
+ * dropped, so the header keeps its default. `display: cards` becomes the
+ * library's `cards`, only with `cards.items` set; it is not a quiet
+ * display, so it never folds a message.
  */
 export function presentationView(
   p: AppChannelPresentation | undefined
@@ -93,14 +97,27 @@ export function presentationView(
   if (!p) return undefined
   const messages: NonNullable<ChannelPresentation['messages']> = {}
   for (const [type, mp] of Object.entries(p.messages ?? {})) {
+    const cards = mp.display === 'cards' ? cardsView(mp.cards) : undefined
     messages[type] = {
       fields: mp.fields?.flatMap((f) => (f.property ? [{ ...f, property: f.property }] : [])),
       ...(isDisplay(mp.display) ? { display: mp.display } : {}),
       ...(mp.offer === false ? { offer: false } : {}),
+      ...(cards ? { cards } : {}),
     }
   }
   if (p.session?.display === 'compact') return { messages, session: { display: 'compact' } }
   return { messages }
+}
+
+/** The `cards:` keys the library takes; undefined without `items`. */
+function cardsView(c: Partial<ChannelMessageCards> | undefined): ChannelMessageCards | undefined {
+  if (!c?.items) return undefined
+  const out: ChannelMessageCards = { items: c.items }
+  for (const key of ['body', 'title', 'plus', 'minus', 'badge'] as const) {
+    const v = c[key]
+    if (v) out[key] = v
+  }
+  return out
 }
 
 /** What every mapping needs from the page. */
@@ -151,42 +168,72 @@ function when(value: string | undefined, tz: string): string | undefined {
 
 /**
  * A short plain-text excerpt of a message: its first string or markdown
- * prop, collapsed to one line, where a list reads as its items joined by
- * commas. It is rendered as text, so markdown syntax shows as written.
+ * prop, collapsed to one line, where a list of strings reads as its items
+ * joined by commas. A markdown prop is rendered first and its text taken,
+ * so the excerpt shows no markdown syntax. `memo` holds the excerpt by
+ * `seq:rev`, so a held reply does not render its original again.
  */
 export function excerptOf(
   m: Message,
-  mt: ChannelMessageTypeSchema | undefined
+  mt: ChannelMessageTypeSchema | undefined,
+  memo?: MarkdownMemo
 ): string | undefined {
   if (m.removed) return undefined
-  const names = mt
-    ? mt.properties.filter((p) => p.type === 'string' || p.type === 'markdown').map((p) => p.name)
-    : Object.keys(m.props ?? {})
-  for (const name of names) {
-    const raw = m.props?.[name]
-    const v = Array.isArray(raw) ? raw.join(', ') : raw
+  // An empty prop name cannot clash with renderProp's keys.
+  const key = `${m.seq}:${m.rev}::excerpt`
+  const held = memo?.get(key)
+  if (held !== undefined) return held || undefined
+  const out = excerptText(m, mt)
+  memo?.set(key, out ?? '')
+  return out
+}
+
+function excerptText(m: Message, mt: ChannelMessageTypeSchema | undefined): string | undefined {
+  const props = mt
+    ? mt.properties.filter((p) => p.type === 'string' || p.type === 'markdown')
+    : Object.keys(m.props ?? {}).map((name) => ({ name, type: undefined }))
+  for (const p of props) {
+    const raw = m.props?.[p.name]
+    const v = Array.isArray(raw) && raw.every((x) => typeof x === 'string') ? raw.join(', ') : raw
     if (typeof v !== 'string' || !v.trim()) continue
-    const line = v.replace(/\s+/g, ' ').trim()
+    const text = p.type === 'markdown' ? markdownText(v) : v
+    const line = text.replace(/\s+/g, ' ').trim()
+    if (!line) continue
     const chars = [...line]
     return chars.length > EXCERPT_MAX ? `${chars.slice(0, EXCERPT_MAX - 1).join('')}…` : line
   }
   return undefined
 }
 
+/** The text content of rendered markdown, with block breaks as spaces. */
+function markdownText(src: string): string {
+  const doc = new DOMParser().parseFromString(renderMessageMarkdown(src), 'text/html')
+  for (const el of doc.body.querySelectorAll(
+    'p, li, br, h1, h2, h3, h4, h5, h6, tr, td, th, pre, blockquote'
+  )) {
+    el.append(' ')
+  }
+  return doc.body.textContent ?? ''
+}
+
 /** The quote a reply shows: the original's author and excerpt when it is held. */
 export function replyQuote(
   seq: number,
   original: Message | undefined,
-  mt: ChannelMessageTypeSchema | undefined
+  mt: ChannelMessageTypeSchema | undefined,
+  memo?: MarkdownMemo
 ): ChannelReplyQuote {
   return {
     seq,
     author: original && !original.removed ? original.author?.user : undefined,
-    excerpt: original ? excerptOf(original, mt) : undefined,
+    excerpt: original ? excerptOf(original, mt, memo) : undefined,
   }
 }
 
-/** Renders a markdown prop. `memo` holds the HTML by `seq:rev:prop` (R19). */
+/**
+ * Renders a markdown prop. `memo` holds the HTML by `seq:rev:prop` (R19),
+ * and excerptOf's text by `seq:rev`.
+ */
 export type MarkdownMemo = Map<string, string>
 
 function renderProp(
@@ -222,6 +269,33 @@ function formatted(p: ChannelPropertySchema, v: MessagePropValue, tz: string): s
   return undefined
 }
 
+/**
+ * The item fields of an object list that the app formats (dates and
+ * datetimes), per item; undefined when no item has one.
+ */
+function formattedItems(
+  p: ChannelPropertySchema,
+  v: MessagePropValue,
+  tz: string
+): (Record<string, string> | undefined)[] | undefined {
+  if (p.type !== 'object' || !Array.isArray(v)) return undefined
+  const dated = (p.fields ?? []).filter((f) => isDateType(f.type))
+  if (!dated.length) return undefined
+  let any = false
+  const out = v.map((item) => {
+    if (!item || typeof item !== 'object') return undefined
+    const text: Record<string, string> = {}
+    for (const f of dated) {
+      const t = formatted(f, item[f.name] as MessagePropValue, tz)
+      if (t !== undefined) text[f.name] = t
+    }
+    if (!Object.keys(text).length) return undefined
+    any = true
+    return text
+  })
+  return any ? out : undefined
+}
+
 /** One wire message as the library draws it. */
 export function messageView(
   m: Message,
@@ -239,6 +313,7 @@ export function messageView(
     editedAt: when(m.edited_at, ctx.tz),
     actions: m._actions,
   }
+  if (m.batch) view.batch = m.batch
   if (m.removed) {
     view.removed = {
       kind: m.removed.kind,
@@ -261,6 +336,7 @@ export function messageView(
   if (!mt || !m.props) return view
   const html: Record<string, string> = {}
   const text: Record<string, string> = {}
+  const itemText: NonNullable<ChannelMessageView['itemText']> = {}
   for (const p of mt.properties) {
     const v = m.props[p.name]
     if (v === undefined) continue
@@ -268,9 +344,16 @@ export function messageView(
       html[p.name] = renderProp(m, p.name, v, ctx, memo)
     const t = formatted(p, v, ctx.tz)
     if (t !== undefined) text[p.name] = t
+    const items = formattedItems(p, v, ctx.tz)
+    if (items) itemText[p.name] = items
   }
   if (Object.keys(html).length) view.html = html
   if (Object.keys(text).length) view.text = text
+  if (Object.keys(itemText).length) view.itemText = itemText
+  if (mt.choices) {
+    const excerpt = excerptOf(m, mt, memo)
+    if (excerpt) view.excerpt = excerpt
+  }
   return view
 }
 
@@ -533,26 +616,17 @@ export function decisionCause(
 export type ChoiceHead = Pick<ChannelHead, 'channel'> & { _actions: Pick<ChannelActions, 'post'> }
 
 /**
+ * A question's reply buttons and where it stands. `choices` are the
+ * buttons; an answered question keeps them only while the head still lists
+ * it in `asked`, so a reader can change the answer.
+ */
+export interface QuestionView extends ChannelQuestionState {
+  choices: ChannelDecisionView[]
+}
+
+/**
  * The reply buttons of the questions open to an answer, keyed by the
- * question's seq. A question is a held message whose type has `choices`,
- * with a non-empty list in its `from` property. It gets one button per
- * option, which posts the answer type with the option in `into`, and with
- * `other` a button that opens the composer.
- *
- * There are none while newer messages exist than the held ones
- * (`hasNewer`), when the channel is not open, or when the caller may not
- * post the answer type. A question must not be removed, must be top-level
- * (a reply to a reply would address the thread's author, not the asker),
- * and must have no held reply of the answer type: once an answer is held,
- * its buttons go. A removed answer does not count, so a moderator who
- * removes a wrong answer brings the buttons back.
- *
- * In a channel with a session, only the question that moved the session
- * into its current state is open (`decisionCause`, or `cause` when the
- * caller already knows it, as the inbox row does), and only while the
- * held `_actions` were fetched at the head's generation. That proof is
- * what makes the click's `expect_generation` the question's own: a click
- * after the session moved on is refused with session_moved.
+ * question's seq: `questionViews` without the answered questions.
  */
 export function choiceViews(
   ct: ChannelTypeSchema,
@@ -563,33 +637,105 @@ export function choiceViews(
   cause?: number
 ): Map<number, ChannelDecisionView[]> {
   const out = new Map<number, ChannelDecisionView[]>()
-  if (hasNewer || head.channel.state !== 'open') return out
+  for (const [seq, q] of questionViews(ct, head, actionsGeneration, hasNewer, messages, cause)) {
+    if (!q.answered) out.set(seq, q.choices)
+  }
+  return out
+}
+
+/**
+ * The questions that offer reply buttons, keyed by the question's seq. A
+ * question is a held message whose type has `choices`, with a non-empty
+ * list in its `from` property. It gets one button per option, which posts
+ * the answer type with the option in `into`, and with `other` a button
+ * that opens the composer. For an object list the option is the item's
+ * `label` field; an item without one gets no button.
+ *
+ * There are none when the channel is not open or when the caller may not
+ * post the answer type. A question must not be removed and must be
+ * top-level (a reply to a reply would address the thread's author, not the
+ * asker). A removed answer does not count, so a moderator who removes a
+ * wrong answer brings the buttons back. `answer` is the `into` value of
+ * the latest held answer.
+ *
+ * In a channel with a session, the questions are those of the head's
+ * `asked` (TKT-GR1MXL5): every question of the session's current span, as
+ * long as the held `_actions` were fetched at the head's generation. That
+ * proof is what makes the click's `expect_generation` the question's own:
+ * a click after the session moved on is refused with session_moved. Such
+ * a question is answered once `asked` counts an answer or one is held; it
+ * keeps its buttons, since the server still takes another answer. A held
+ * page that lacks newer messages (`hasNewer`) does not matter here, since
+ * `asked` counts the answers.
+ *
+ * Without `asked` (an inbox row, which passes `cause`, or a head with no
+ * questions), only the message that moved the session into its current
+ * state can be a question (`decisionCause`, or `cause`). Then, and in a
+ * channel without a session, an answered question is left out, and there
+ * are none while newer messages exist than the held ones, since an answer
+ * may be among them.
+ */
+export function questionViews(
+  ct: ChannelTypeSchema,
+  head: ChoiceHead,
+  actionsGeneration: number | undefined,
+  hasNewer: boolean,
+  messages: readonly Message[],
+  cause?: number
+): Map<number, QuestionView> {
+  const out = new Map<number, QuestionView>()
+  if (head.channel.state !== 'open') return out
   const byName = new Map(ct.message_types.map((mt) => [mt.name, mt]))
   const post = new Set(head._actions.post)
+  const asked =
+    ct.session && cause === undefined && head.channel.asked
+      ? new Map(head.channel.asked.map((a) => [a.seq, a]))
+      : undefined
+  if (hasNewer && !asked) return out
   let candidates: readonly Message[] = messages
   if (ct.session) {
     const cs = head.channel.session
     if (!cs || actionsGeneration !== cs.generation) return out
-    const seq = cause ?? decisionCause(messages, cs)
-    const m = seq === undefined ? undefined : messages.find((x) => x.seq === seq)
-    candidates = m ? [m] : []
+    if (asked) {
+      candidates = messages.filter((m) => asked.has(m.seq))
+    } else {
+      const seq = cause ?? decisionCause(messages, cs)
+      const m = seq === undefined ? undefined : messages.find((x) => x.seq === seq)
+      candidates = m ? [m] : []
+    }
   }
-  const answered = new Set<string>()
+  // The latest held answer of each type to each message.
+  const answers = new Map<string, Message>()
   for (const m of messages) {
-    if (m.reply_to && m.type && !m.removed) answered.add(`${m.type}:${m.reply_to}`)
+    if (!m.reply_to || !m.type || m.removed) continue
+    const key = `${m.type}:${m.reply_to}`
+    const prev = answers.get(key)
+    if (!prev || prev.seq < m.seq) answers.set(key, m)
   }
   for (const m of candidates) {
     const c = m.type ? byName.get(m.type)?.choices : undefined
     if (!c || m.removed || m.reply_to || !post.has(c.answer)) continue
-    if (answered.has(`${c.answer}:${m.seq}`)) continue
+    const entry = asked?.get(m.seq)
+    if (entry && entry.answer_type !== c.answer) continue
+    const held = answers.get(`${c.answer}:${m.seq}`)
+    const answered = !!held || (entry?.answers ?? 0) > 0
+    if (answered && !entry) continue
     const options = m.props?.[c.from]
     if (!Array.isArray(options) || !options.length) continue
-    const views: ChannelDecisionView[] = options.map((option, i) => ({
-      key: `choice:${m.seq}:${i}`,
-      messageType: c.answer,
-      label: option,
-      props: { [c.into]: option },
-    }))
+    const views: ChannelDecisionView[] = []
+    const seen = new Set<string>()
+    options.forEach((item, i) => {
+      const option = optionText(item, c.label)
+      if (option === undefined || seen.has(option)) return
+      seen.add(option)
+      views.push({
+        key: `choice:${m.seq}:${i}`,
+        messageType: c.answer,
+        label: option,
+        props: { [c.into]: option },
+      })
+    })
+    if (!views.length) continue
     if (c.other) {
       views.push({
         key: `choice:${m.seq}:other`,
@@ -598,9 +744,46 @@ export function choiceViews(
         opensForm: true,
       })
     }
-    out.set(m.seq, views)
+    const q: QuestionView = { choices: views, answered }
+    const answer = held?.props?.[c.into]
+    if (typeof answer === 'string' && answer) q.answer = answer
+    if (held) q.answerSeq = held.seq
+    out.set(m.seq, q)
   }
   return out
+}
+
+/** The library's question states of views, by seq. */
+export function questionStates(
+  views: ReadonlyMap<number, QuestionView>
+): Map<number, ChannelQuestionState> {
+  const out = new Map<number, ChannelQuestionState>()
+  for (const [seq, q] of views) {
+    const state: ChannelQuestionState = { answered: q.answered }
+    if (q.answer !== undefined) state.answer = q.answer
+    if (q.answerSeq !== undefined) state.answerSeq = q.answerSeq
+    out.set(seq, state)
+  }
+  return out
+}
+
+// A character the server refuses in an option: a control, format or
+// line-separator character, except the joiner U+200D, which it allows
+// between emoji.
+const OPTION_HAZARD = /(?!\u200D)[\p{Cc}\p{Cf}\u2028\u2029]/u
+
+/**
+ * The button text of one option: the string, or the object's `label`
+ * field. The server folds and checks a label only while `choices.label`
+ * names it, so a label stored before that is checked here: one that is
+ * not trimmed or holds a hazard gets no button.
+ */
+function optionText(item: unknown, label: string | undefined): string | undefined {
+  if (label === undefined) return typeof item === 'string' ? item : undefined
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return undefined
+  const v = (item as Record<string, unknown>)[label]
+  if (typeof v !== 'string' || !v || v.trim() !== v || OPTION_HAZARD.test(v)) return undefined
+  return v
 }
 
 /**
@@ -711,7 +894,8 @@ export function messageViews(
       view.replyTo = replyQuote(
         m.reply_to,
         original,
-        original?.type ? messageType(original.type) : undefined
+        original?.type ? messageType(original.type) : undefined,
+        memo
       )
     }
     return view
