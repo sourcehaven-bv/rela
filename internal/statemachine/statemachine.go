@@ -5,8 +5,10 @@
 // # Two phases, cleanly split
 //
 // Compile runs ONCE at startup (from appbuild), turning the metamodel's
-// declarative transition data into a [Set] of ready-to-run [Machine] values: edge
-// lookups are indexed, `when:` predicates are compiled, and load-time
+// declarative transition data into a [Set] of ready-to-run [Machine] values,
+// each a headless flow on the engine in internal/flow (FEAT-J0O10QI): the
+// enum values are the states of a [flow.Definition], the transitions are its
+// branches, `when:` predicates are compiled, and load-time
 // well-formedness is checked (dangling from/to/initial, bad predicate syntax)
 // so a malformed machine fails fast at boot, never at write time. Nothing here
 // consults the metamodel again after Compile.
@@ -21,6 +23,11 @@
 //     permission must be held for the subject, checked via the injected [Guard]
 //     — else [ErrGuardDenied] (403);
 //   - when:     the edge's compiled precondition must hold, else [ErrPreconditionFailed] (422).
+//
+// The move is decided by [flow.Decide], the decider realtime sessions and
+// flowengine use: the guard is the poster rule (Rules.Admits), so it runs
+// before the precondition (Rules.Holds), and a precondition that fails to
+// evaluate stops the decision.
 //
 // # Why this shape
 //
@@ -37,8 +44,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 
+	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 )
 
@@ -120,47 +127,60 @@ func WithTraversals(b TraversalBinder) Option {
 	return func(s *Set) { s.traversals = b }
 }
 
-// edge is one compiled transition. guard is the (possibly empty) ACL
-// permission; when is the (possibly nil) compiled precondition; label is the
-// (possibly empty) display text for the move, surfaced on a read verdict for a
-// status control (display-only, never consulted for enforcement).
-type edge struct {
+// branch is one compiled transition out of a state of a headless flow: the
+// target value, the (possibly empty) guard permission, the (possibly nil)
+// compiled `when:` precondition, and the (possibly empty) display label of
+// the move. The label is display-only and never consulted for enforcement.
+type branch struct {
+	to    string
 	guard string
 	when  *predicate.Program
 	label string
 }
 
-// Machine is one compiled enum state machine: the indexed edge set plus the
-// entry value enforced on create. Immutable after Compile. The `when:`
-// predicate programs are self-contained after compilation, so the compile-time
-// env is not retained.
+// Machine is one enum state machine compiled to a headless flow
+// (TKT-12RC7JT): a flow whose state is a property of the entity itself, so it
+// has no `_flow-run` header, no run store entry, no timers and no outputs.
+//
+// def is the engine's [flow.Definition]: one state per enum value, in
+// declaration order, with the entry value as its initial state. A value with
+// no transition to another value is final. exits holds each state's branches
+// in declaration order; the event of a headless flow is "set the property to
+// a value", so a move from→to selects the branches of from that target to
+// (see Machine.branches).
+//
+// A headless flow does not read an unset property as its initial state, as
+// [flow.Read] does for an unset instance: an empty current value selects no
+// branch, so the write is refused (see Machine.decideMove).
+//
+// Immutable after Compile. The `when:` programs are self-contained after
+// compilation, so the compile-time env is not retained.
 type Machine struct {
 	name  string
-	edges map[transitionKey]edge
-	entry string // legal create value; "" means unconstrained on create
+	def   *flow.Definition
+	exits map[string][]branch
 }
 
-type transitionKey struct{ from, to string }
-
-// sortedKeys returns the machine's edge keys in (from, to) order.
-func (m *Machine) sortedKeys() []transitionKey {
-	keys := make([]transitionKey, 0, len(m.edges))
-	for k := range m.edges {
-		keys = append(keys, k)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].from != keys[j].from {
-			return keys[i].from < keys[j].from
+// branches returns the branches the move from→to selects. Compile refuses a
+// duplicate edge, so there is at most one.
+func (m *Machine) branches(from, to string) []branch {
+	var out []branch
+	for _, b := range m.exits[from] {
+		if b.to == to {
+			out = append(out, b)
 		}
-		return keys[i].to < keys[j].to
-	})
-	return keys
+	}
+	return out
 }
 
-// edgeFor returns the compiled edge for from→to and whether it is declared.
-func (m *Machine) edgeFor(from, to string) (edge, bool) {
-	e, ok := m.edges[transitionKey{from, to}]
-	return e, ok
+// eachBranch calls fn for every branch, ordered by from-state name and then
+// declaration order, so load problems and lints are deterministic.
+func (m *Machine) eachBranch(fn func(from string, b branch)) {
+	for _, from := range sortedKeys(m.exits) {
+		for _, b := range m.exits[from] {
+			fn(from, b)
+		}
+	}
 }
 
 // Set is the compiled collection of machines keyed by the CustomType name they
@@ -194,7 +214,7 @@ func (s *Set) EntryValue(entityType, prop string) string {
 	if !ok {
 		return ""
 	}
-	return s.machines[typeName].entry
+	return s.machines[typeName].def.Initial()
 }
 
 // EmptySet returns a machine-less [Set] whose Enforce methods are no-ops. It is

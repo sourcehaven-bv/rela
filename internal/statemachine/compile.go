@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
@@ -78,7 +79,7 @@ func Compile(meta *metamodel.Metamodel, opts ...Option) (*Set, error) {
 			// A property default that is not the machine's entry value can
 			// never be used: every create it fills in fails EnforceCreate.
 			// Reject at boot, as for a missing entry value (BUG-ZD4PIN).
-			if entry := set.machines[pd.Type].entry; pd.Default != "" && entry != "" && pd.Default != entry {
+			if entry := set.machines[pd.Type].def.Initial(); pd.Default != "" && entry != "" && pd.Default != entry {
 				problems = append(problems, fmt.Sprintf(
 					"entity %q property %q: default %q is not the entry value %q of state machine %q; "+
 						"creates must enter at the entry value", etName, propName, pd.Default, entry, pd.Type))
@@ -144,7 +145,8 @@ func compileMachine(typeName string, ct metamodel.CustomType) (machine *Machine,
 	}
 	// coverage-ignore-end
 
-	edges := map[transitionKey]edge{}
+	out := map[string][]branch{}
+	seen := map[[2]string]bool{}
 	for i, tr := range ct.Transitions {
 		if !values[tr.From] {
 			problems = append(problems, fmt.Sprintf(
@@ -154,12 +156,6 @@ func compileMachine(typeName string, ct metamodel.CustomType) (machine *Machine,
 			problems = append(problems, fmt.Sprintf(
 				"type %q: transition[%d] to %q is not a declared value", typeName, i, tr.To))
 		}
-		key := transitionKey{tr.From, tr.To}
-		if _, dup := edges[key]; dup {
-			problems = append(problems, fmt.Sprintf(
-				"type %q: transition[%d] %s→%s is declared more than once", typeName, i, tr.From, tr.To))
-		}
-
 		var prog *predicate.Program
 		if tr.When != "" && env != nil {
 			prog, err = predicate.Compile(env, tr.When)
@@ -168,10 +164,37 @@ func compileMachine(typeName string, ct metamodel.CustomType) (machine *Machine,
 					"type %q: transition[%d] %s→%s when: %v", typeName, i, tr.From, tr.To, err))
 			}
 		}
-		edges[key] = edge{guard: tr.Guard, when: prog, label: tr.Label}
+		// One branch per (from, to) is what lets a refusal by the poster
+		// rule mean "guard denied" (see Machine.decideMove).
+		key := [2]string{tr.From, tr.To}
+		if seen[key] {
+			problems = append(problems, fmt.Sprintf(
+				"type %q: transition[%d] %s→%s is declared more than once", typeName, i, tr.From, tr.To))
+			continue
+		}
+		seen[key] = true
+		out[tr.From] = append(out[tr.From], branch{to: tr.To, guard: tr.Guard, when: prog, label: tr.Label})
 	}
 
-	return &Machine{name: typeName, edges: edges, entry: entry}, problems
+	return &Machine{name: typeName, def: definition(ct.Values, entry, out), exits: out}, problems
+}
+
+// definition builds the headless flow's [flow.Definition]: one state per
+// enum value in declaration order, initial at entry. A value with no branch
+// to another value is final: nothing moves the entity out of it.
+func definition(values []string, entry string, out map[string][]branch) *flow.Definition {
+	states := make([]flow.State, 0, len(values))
+	for _, v := range values {
+		final := true
+		for _, b := range out[v] {
+			if b.to != v {
+				final = false
+				break
+			}
+		}
+		states = append(states, flow.NewState(v, final, nil))
+	}
+	return flow.NewDefinition(entry, states, nil)
 }
 
 // traversalProblems checks the `related(...)` in a machine's `when:` programs
@@ -180,21 +203,19 @@ func compileMachine(typeName string, ct metamodel.CustomType) (machine *Machine,
 // from the entity type, so the same `when:` can be valid on one type and not
 // on another. Each pair that uses the machine is checked on its own.
 func (s *Set) traversalProblems(meta *metamodel.Metamodel, etName, propName, typeName string) []string {
-	m := s.machines[typeName]
 	var problems []string
-	for _, key := range m.sortedKeys() {
-		ed := m.edges[key]
-		if ed.when == nil || len(ed.when.Traversals()) == 0 {
-			continue
+	s.machines[typeName].eachBranch(func(from string, b branch) {
+		if b.when == nil || len(b.when.Traversals()) == 0 {
+			return
 		}
-		err := predicatefns.ValidateTraversals(meta, etName, ed.when)
+		err := predicatefns.ValidateTraversals(meta, etName, b.when)
 		if err == nil && s.traversals == nil {
 			err = fmt.Errorf("%s(...) is not available: no store is wired to answer it", predicate.FuncRelated)
 		}
 		if err != nil {
 			problems = append(problems, fmt.Sprintf("entity %q property %q: transition %s→%s when: %v",
-				etName, propName, key.from, key.to, err))
+				etName, propName, from, b.to, err))
 		}
-	}
+	})
 	return problems
 }

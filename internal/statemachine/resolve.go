@@ -40,7 +40,7 @@ const (
 // declared out-edge. Each verdict reflects BOTH the guard (evaluated
 // subject-aware via guard) and the `when:` precondition (evaluated against the
 // graph via lookup) — the same two gates, in the same order, that
-// [Set.EnforceUpdate] enforces on a write (they share [evalEdge]). Verdicts are
+// [Set.EnforceUpdate] enforces on a write (they share Machine.decideMove). Verdicts are
 // sorted by To for a stable UI order.
 //
 // Returns nil when prop is not a state machine on e's type, when e sits in a
@@ -64,42 +64,44 @@ func (s *Set) Performable(
 	}
 	m := s.machines[typeName]
 	from := e.GetString(prop)
+	if st, declared := m.def.State(from); from == "" || !declared || st.Final() {
+		return nil // no out-edge: unset, undeclared, or a final state
+	}
 
 	// One bind answers every out-edge's `related(...)`. It is bound for e and
 	// serves the post-move clones below: they share e's id, and a traversal
 	// reads edges, never the moved property.
 	var whens []*predicate.Program
-	for key, ed := range m.edges {
-		if key.from == from && key.to != from {
-			whens = append(whens, ed.when)
+	for _, b := range m.exits[from] {
+		if b.to != from {
+			whens = append(whens, b.when)
 		}
 	}
 	traversal := s.bindTraversals(ctx, e, whens)
 
 	var out []TransitionVerdict
-	for key, ed := range m.edges {
-		if key.from != from || key.to == from {
-			// Not an out-edge from the current value, or a self-loop. A
-			// self-loop is a no-op write (EnforceUpdate skips unchanged
-			// values before reaching the edge), so it is never a
-			// *performable* transition — excluding it keeps read parity with
-			// write (a self-loop verdict would claim an action the write path
-			// never enforces).
+	for _, b := range m.exits[from] {
+		if b.to == from {
+			// A self-loop is a no-op write (EnforceUpdate skips unchanged
+			// values before deciding a move), so it is never a *performable*
+			// transition — excluding it keeps read parity with write (a
+			// self-loop verdict would claim an action the write path never
+			// enforces).
 			continue
 		}
-		// Evaluate the gates against the entity AS IT WOULD BE after the move —
-		// prop = key.to — exactly as the write path evaluates them (it feeds
-		// applyEdge the post-write `updated` entity). A `when:` that reads
-		// `entity.value` must see the target value here, or the read verdict
-		// would disagree with what the write actually enforces (the AC4 drift
-		// guard depends on this).
+		// Decide the move against the entity AS IT WOULD BE after it —
+		// prop = b.to — exactly as the write path does (it decides on the
+		// post-write `updated` entity). A `when:` that reads `entity.value`
+		// must see the target value here, or the read verdict would disagree
+		// with what the write actually enforces (the AC4 drift guard depends
+		// on this).
 		after := e.Clone()
-		after.SetString(prop, key.to)
-		res := evalEdge(ctx, ed, prop, after, guard, lookup, traversal)
+		after.SetString(prop, b.to)
+		res := m.decideMove(ctx, prop, from, b.to, after, guard, lookup, traversal)
 		out = append(out, TransitionVerdict{
-			To:      key.to,
-			Label:   ed.label,
-			Guard:   ed.guard,
+			To:      b.to,
+			Label:   b.label,
+			Guard:   b.guard,
 			Allowed: res.gate == gateNone,
 			Reason:  reasonFor(res.gate),
 		})
@@ -128,14 +130,17 @@ func (s *Set) MachineProps(entityType string) []string {
 	return out
 }
 
+// reasonFor names the gate that refused a move. Only gateNone is allowed; a
+// gate a verdict cannot otherwise name reads as a precondition, never as
+// allowed.
 func reasonFor(g gate) VerdictGate {
 	switch g {
+	case gateNone:
+		return VerdictAllowed
 	case gateGuard:
 		return VerdictGuard
-	case gatePrecondition:
-		return VerdictPrecondition
 	default:
-		return VerdictAllowed
+		return VerdictPrecondition
 	}
 }
 
@@ -151,10 +156,10 @@ func (s *Set) TraversingWhens(entityType, prop string) map[string]*predicate.Pro
 		return nil
 	}
 	out := map[string]*predicate.Program{}
-	for key, ed := range m.edges {
-		if ed.when != nil && len(ed.when.Traversals()) > 0 {
-			out[key.from+"→"+key.to] = ed.when
+	m.eachBranch(func(from string, b branch) {
+		if b.when != nil && len(b.when.Traversals()) > 0 {
+			out[from+"→"+b.to] = b.when
 		}
-	}
+	})
 	return out
 }

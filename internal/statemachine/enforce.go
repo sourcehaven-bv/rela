@@ -2,9 +2,12 @@ package statemachine
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 )
 
@@ -49,8 +52,8 @@ func (s *Set) EnforceUpdate(ctx context.Context, old, updated *entity.Entity, gu
 			continue // property did not change
 		}
 		moves = append(moves, move{prop: prop, from: from, to: to, m: m})
-		if ed, ok := m.edgeFor(from, to); ok {
-			whens = append(whens, ed.when)
+		for _, b := range m.branches(from, to) {
+			whens = append(whens, b.when)
 		}
 	}
 	// Every changed property's `related(...)` is answered in one bind. A bind
@@ -58,7 +61,7 @@ func (s *Set) EnforceUpdate(ctx context.Context, old, updated *entity.Entity, gu
 	// a precondition error, like any other `when:` evaluation error.
 	traversal := s.bindTraversals(ctx, updated, whens)
 	for _, mv := range moves {
-		if err := s.applyEdge(ctx, mv.m, mv.prop, mv.from, mv.to, updated, guard, lookup, traversal); err != nil {
+		if err := applyMove(ctx, mv.m, mv.prop, mv.from, mv.to, updated, guard, lookup, traversal); err != nil {
 			return err
 		}
 	}
@@ -66,7 +69,7 @@ func (s *Set) EnforceUpdate(ctx context.Context, old, updated *entity.Entity, gu
 }
 
 // edgeTraversal carries the answer to an entity's `related(...)` into
-// [evalEdge], or the reason there is none.
+// Machine.decideMove, or the reason there is none.
 type edgeTraversal struct {
 	fn  predicate.TraversalFunc
 	err error
@@ -120,7 +123,8 @@ func (s *Set) EnforceCreate(_ context.Context, e *entity.Entity) error {
 	props := s.propType[e.Type]
 	for _, prop := range sortedKeys(props) {
 		m := s.machines[props[prop]]
-		if m.entry == "" {
+		entry := m.def.Initial()
+		if entry == "" {
 			// Unreachable for a compiled Set (Compile requires an entry value on
 			// any machine with transitions). Kept as a defensive guard against a
 			// hand-built Machine; a create then imposes no constraint.
@@ -130,32 +134,35 @@ func (s *Set) EnforceCreate(_ context.Context, e *entity.Entity) error {
 		if got == "" {
 			continue // absent → the default applies elsewhere; not an illegal entry
 		}
-		if got != m.entry {
+		if got != entry {
 			return fmt.Errorf("%w: %s=%q on create; must enter at %q",
-				ErrIllegalEntry, prop, got, m.entry)
+				ErrIllegalEntry, prop, got, entry)
 		}
 	}
 	return nil
 }
 
-// applyEdge runs the three checks for one changed machine property, mapping a
-// failing gate to the wire-facing error. Legality (undeclared edge) and the
-// gate evaluation share one code path — [evalEdge] — with the read-side
-// [Set.Performable], so enforcement and the "what can I do" affordance can
-// never disagree about whether a transition is allowed (the drift guard).
-func (s *Set) applyEdge(
+// applyMove decides one changed machine property and maps a refused move
+// to the wire-facing error. It shares Machine.decideMove with the
+// read-side [Set.Performable], so enforcement and the "what can I do"
+// affordance can never disagree about whether a transition is allowed (the
+// drift guard).
+func applyMove(
 	ctx context.Context, m *Machine, prop, from, to string, e *entity.Entity, guard Guard, lookup GraphLookup,
 	traversal edgeTraversal,
 ) error {
-	ed, ok := m.edgeFor(from, to)
-	if !ok {
-		return fmt.Errorf("%w: %s %q→%q is not a declared transition", ErrIllegalTransition, prop, from, to)
-	}
-	switch res := evalEdge(ctx, ed, prop, e, guard, lookup, traversal); res.gate {
+	res := m.decideMove(ctx, prop, from, to, e, guard, lookup, traversal)
+	switch res.gate {
 	case gateNone:
 		return nil
+	case gateUndeclared:
+		if res.stranded {
+			return fmt.Errorf("%w: %s %q→%q is not a declared transition (%q is not a declared state)",
+				ErrIllegalTransition, prop, from, to, from)
+		}
+		return fmt.Errorf("%w: %s %q→%q is not a declared transition", ErrIllegalTransition, prop, from, to)
 	case gateGuard:
-		return &GuardError{Prop: prop, From: from, To: to, Permission: ed.guard}
+		return &GuardError{Prop: prop, From: from, To: to, Permission: res.permission}
 	default: // gatePrecondition
 		if res.err != nil {
 			return fmt.Errorf("%w: %s %q→%q when: %s", ErrPreconditionFailed, prop, from, to, res.err.Error())
@@ -164,49 +171,115 @@ func (s *Set) applyEdge(
 	}
 }
 
-// gate identifies which check on an edge failed (or none).
+// gate identifies which check refused a move (or none).
 type gate int
 
 const (
 	gateNone gate = iota
+	// gateUndeclared: the move is not a declared transition.
+	gateUndeclared
 	gateGuard
 	gatePrecondition
 )
 
-// edgeResult is the outcome of evaluating one edge's gates.
-type edgeResult struct {
+// moveResult is the outcome of deciding one move.
+type moveResult struct {
 	gate gate
-	err  error // non-nil only when a `when:` predicate errored (gatePrecondition)
+	// stranded: the current value is not a state of the machine
+	// (gateUndeclared only).
+	stranded bool
+	// permission is the guard the principal lacks (gateGuard only).
+	permission string
+	// err is set when a `when:` failed to evaluate (gatePrecondition only).
+	err error
 }
 
-// evalEdge evaluates an edge's guard then precondition for (principal-on-ctx,
-// entity e), in the same order and with the same semantics the write path
-// enforces. It is the single source of truth shared by Set.applyEdge (write,
-// maps to errors) and [Set.Performable] (read, maps to verdicts) so the two can
-// never drift. A guard is checked first (an unheld guard short-circuits without
-// evaluating the precondition, matching enforcement). A nil guard on a guarded
-// edge fails closed. The guard's served-vs-inert decision lives in the Guard
-// implementation.
-func evalEdge(
-	ctx context.Context, ed edge, prop string, e *entity.Entity, guard Guard, lookup GraphLookup,
+// errUnexpectedOutcome refuses a [flow.Decide] outcome the rules cannot
+// produce, so a later change to the rules fails closed.
+var errUnexpectedOutcome = errors.New("unexpected decision outcome")
+
+// decideMove decides the move from→to of prop on e, the entity as it is
+// after the write, through [flow.Decide]. It is the one evaluation path of a
+// transition, shared by [Set.EnforceUpdate] and [Set.Performable].
+//
+// The guard permission is the poster rule (Rules.Admits) and the `when:`
+// precondition is the guard (Rules.Holds), so the permission is checked
+// first: a caller without it is refused whatever the precondition says, and
+// the precondition is not evaluated for it. A nil guard refuses every
+// guarded branch. A `when:` that fails to evaluate, or needs a traversal
+// whose bind failed, stops the decision (fail closed).
+//
+// The engine's words name the other check, so the mapping is:
+//
+//	flow (engine)             statemachine (this package)
+//	Rules.Admits refuses      gateGuard (the ACL permission)
+//	Rules.Holds false         gatePrecondition (`when:` not met)
+//	GuardFailed               gatePrecondition with the `when:` error
+//	Moved                     gateNone (allowed)
+//
+// Invariant: a move selects at most one branch, because Compile refuses a
+// duplicate (from, to). That is what lets a refusal by the poster rule, which
+// the engine treats as "skip this branch", mean "guard denied" here. A move
+// that selects more than one branch is refused as undeclared.
+//
+// An empty from is refused as undeclared: a headless flow does not read an
+// unset property as its initial state (see [Machine]).
+func (m *Machine) decideMove(
+	ctx context.Context, prop, from, to string, e *entity.Entity, guard Guard, lookup GraphLookup,
 	traversal edgeTraversal,
-) edgeResult {
-	if ed.guard != "" {
-		if guard == nil || !guard.HoldsPermission(ctx, e.ID, ed.guard) {
-			return edgeResult{gate: gateGuard}
-		}
+) moveResult {
+	if from == "" {
+		return moveResult{gate: gateUndeclared}
 	}
-	if ed.when != nil {
-		if traversal.err != nil && len(ed.when.Traversals()) > 0 {
-			return edgeResult{gate: gatePrecondition, err: traversal.err}
-		}
-		ok, err := evalWhen(ctx, ed.when, e, prop, lookup, traversal.fn)
-		if err != nil {
-			return edgeResult{gate: gatePrecondition, err: err}
-		}
-		if !ok {
-			return edgeResult{gate: gatePrecondition}
-		}
+	cur := flow.Read(m.def, flow.Instance{State: from}, time.Time{})
+	if cur.Stranded {
+		return moveResult{gate: gateUndeclared, stranded: true}
 	}
-	return edgeResult{gate: gateNone}
+	branches := m.branches(cur.State, to)
+	if len(branches) != 1 {
+		return moveResult{gate: gateUndeclared}
+	}
+	var refused string
+	d := flow.Decide(cur.State, branches, flow.Rules[branch]{
+		Admits: func(b branch) bool {
+			if b.guard == "" {
+				return true
+			}
+			if guard == nil || !guard.HoldsPermission(ctx, e.ID, b.guard) {
+				refused = b.guard
+				return false
+			}
+			return true
+		},
+		Holds: func(b branch) (bool, error) {
+			if b.when == nil {
+				return true, nil
+			}
+			if traversal.err != nil && len(b.when.Traversals()) > 0 {
+				return false, traversal.err
+			}
+			return evalWhen(ctx, b.when, e, prop, lookup, traversal.fn)
+		},
+		Target: func(b branch) string { return b.to },
+	})
+	return outcome(d, refused)
+}
+
+// outcome maps a decision to a move result. refused is the guard permission
+// the poster rule refused, if any. Only a move is allowed; every other
+// outcome, including one the rules cannot produce, refuses.
+func outcome(d flow.Decision[branch], refused string) moveResult {
+	switch d.Outcome {
+	case flow.Moved:
+		return moveResult{gate: gateNone}
+	case flow.NoMove:
+		if refused != "" {
+			return moveResult{gate: gateGuard, permission: refused}
+		}
+		return moveResult{gate: gatePrecondition}
+	case flow.GuardFailed:
+		return moveResult{gate: gatePrecondition, err: d.Err}
+	default: // flow.Gated: the rules set no Gate.
+		return moveResult{gate: gatePrecondition, err: errUnexpectedOutcome}
+	}
 }
