@@ -2,6 +2,7 @@ package entitymanager_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -45,6 +46,13 @@ entities:
       email:
         type: string
         unique: true
+  page:
+    label: Page
+    plural: pages
+    id_type: manual
+    properties:
+      title:
+        type: string
 `
 
 // newWriteBudgetManager returns a manager over a counting memstore padded
@@ -63,6 +71,7 @@ func newWriteBudgetManager(t *testing.T, n int) (*entitymanager.Manager, *storet
 			entity.New(fmt.Sprintf("NOTE-PAD%04d", i), "note"),
 			entity.New(fmt.Sprintf("REQ-%03d", i+1), "requirement"),
 			entity.New(fmt.Sprintf("P-%03d", i+1), "person"),
+			entity.New(fmt.Sprintf("PAGE-%04d", i), "page"),
 		}
 		seed[2].SetString("email", fmt.Sprintf("pad%d@example.com", i))
 		for _, e := range seed {
@@ -154,5 +163,40 @@ func TestCreate_UniqueLookupStillRefusesDuplicate(t *testing.T) {
 	_, err := mgr.CreateEntity(context.Background(), e, entity.CreateOptions{})
 	if err == nil || !strings.Contains(err.Error(), "must be unique") {
 		t.Fatalf("duplicate email: err = %v, want a unique violation", err)
+	}
+}
+
+// TestRenameDryRun_CostIsScaleFree pins TKT-GIAGLQ3: the dry run asks the
+// store whether the new id is taken under case folding, so it reads the
+// same rows over a store of 100 and of 1,000 rows per type. Before it, the
+// dry run read every header of the store.
+func TestRenameDryRun_CostIsScaleFree(t *testing.T) {
+	storetest.AssertScaleFree(t, func(n int) (storetest.Cost, string) {
+		mgr, counting := newWriteBudgetManager(t, n)
+		counting.Reset()
+		res, err := mgr.RenameEntity(context.Background(), "PAGE-0000", "PAGE-RENAMED", entity.RenameOptions{DryRun: true})
+		if err != nil {
+			t.Fatalf("dry run: %v", err)
+		}
+		if res.NewID != "PAGE-RENAMED" {
+			t.Fatalf("NewID = %q", res.NewID)
+		}
+		return counting.Cost(), counting.String()
+	})
+}
+
+// TestRenameDryRun_FoldedCollision pins that the store probe keeps the dry
+// run's conflict rule: a case variant of another id is taken, and a change
+// of an entity's own casing is not.
+func TestRenameDryRun_FoldedCollision(t *testing.T) {
+	ctx := context.Background()
+	mgr, _ := newWriteBudgetManager(t, 2)
+	dry := entity.RenameOptions{DryRun: true}
+	_, err := mgr.RenameEntity(ctx, "PAGE-0000", "page-0001", dry)
+	if !errors.Is(err, entitymanager.ErrEntityAlreadyExists) {
+		t.Errorf("rename onto a case variant of another id: err = %v, want ErrEntityAlreadyExists", err)
+	}
+	if _, err := mgr.RenameEntity(ctx, "PAGE-0000", "page-0000", dry); err != nil {
+		t.Errorf("rename to its own id in another case: %v", err)
 	}
 }

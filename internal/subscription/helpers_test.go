@@ -3,7 +3,6 @@ package subscription
 import (
 	"context"
 	"fmt"
-	"iter"
 	"log/slog"
 	"maps"
 	"os"
@@ -26,19 +25,40 @@ type world struct {
 	nextID    int
 }
 
-func (w *world) GetAddress(context.Context, string) (*entity.Entity, error) {
+func (w *world) GetAddress(_ context.Context, addr string) (*entity.Entity, error) {
+	for _, e := range w.rows {
+		if e.Ref().String() == addr {
+			return e, nil
+		}
+	}
 	return nil, store.ErrNotFound
 }
 
-func (w *world) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
+// FirstEqual is the find over rows: type and every wanted value as a
+// string, lowest id first.
+func (w *world) FirstEqual(
+	_ context.Context, typ string, _ store.FaceSelection, want map[string]string,
+) (entity.Ref, bool, error) {
 	w.lists++
-	return func(yield func(*entity.Entity, error) bool) {
-		for _, e := range w.rows {
-			if e.Type == q.Type && !yield(e, nil) {
-				return
+	var best *entity.Entity
+	for _, e := range w.rows {
+		if e.Type != typ {
+			continue
+		}
+		matches := true
+		for prop, value := range want {
+			if v, ok := e.Properties[prop]; !ok || fmt.Sprint(v) != value {
+				matches = false
 			}
 		}
+		if matches && (best == nil || e.ID < best.ID) {
+			best = e
+		}
 	}
+	if best == nil {
+		return entity.Ref{}, false, nil
+	}
+	return best.Ref(), true, nil
 }
 
 func (w *world) GetEntity(_ context.Context, ref entity.Ref) (*entity.Entity, error) {
@@ -127,7 +147,7 @@ func (k *mapKV) Delete(_ context.Context, key string) error {
 
 func testDeps(w *world, kv *mapKV, secretValues map[string]string) Deps {
 	return Deps{
-		Ingest: ingest.Deps{Reader: w, Writer: w, WritePrep: w, MaxAttempts: 2, Label: "test"},
+		Ingest: ingest.Deps{Finder: w, Reader: w, Writer: w, WritePrep: w, MaxAttempts: 2, Label: "test"},
 		State:  kv,
 		Secrets: func() (map[string]string, error) {
 			return secretValues, nil

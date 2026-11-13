@@ -113,4 +113,33 @@ func RunQueryTests(t *testing.T, f Factory) {
 		require.NoError(t, err)
 		assert.Equal(t, 4, n, "_ in the prefix is a literal, not a wildcard")
 	})
+
+	// IDTakenFolded is the case-folded identity probe the rename dry run asks
+	// (TKT-GIAGLQ3): every face counts, and except skips its whole family
+	// under folding.
+	t.Run("IDTakenFolded", func(t *testing.T) {
+		s := f(t)
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("Feat-1", "feature")))
+		draft := entity.New("Draft-2", "feature")
+		draft.Face = "draft"
+		require.NoError(t, s.CreateEntity(ctx(), draft))
+
+		for _, tc := range []struct {
+			name, id, except string
+			want             bool
+		}{
+			{"exact", "Feat-1", "", true},
+			{"folded", "FEAT-1", "", true},
+			{"named face", "draft-2", "", true},
+			{"absent", "FEAT-2", "", false},
+			{"prefix is not a match", "Feat", "", false},
+			{"except skips the family", "FEAT-1", "feat-1", false},
+			{"except elsewhere", "feat-1", "Draft-2", true},
+			{"no LIKE wildcard", "Feat_1", "", false},
+		} {
+			got, err := s.IDTakenFolded(ctx(), tc.id, tc.except)
+			require.NoError(t, err, tc.name)
+			assert.Equal(t, tc.want, got, tc.name)
+		}
+	})
 }

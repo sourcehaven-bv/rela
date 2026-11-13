@@ -32,7 +32,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"iter"
 	"log/slog"
 	"math/rand/v2"
 	"strings"
@@ -97,14 +96,25 @@ const (
 	ValueMarkdown
 )
 
-// Reader is the ACL-gated read the find step uses.
+// Reader is the ACL-gated read of the row the find chose.
 //
-// GetAddress is not called. It is here because a store does not have it
-// (store.Store.GetEntity takes an entity.Ref), so the raw store cannot be
-// passed as a Reader by mistake; the visibility wrappers satisfy it.
+// It takes an address, which a store does not (store.Store.GetEntity takes
+// an entity.Ref), so the raw store cannot be passed as a Reader by mistake;
+// the visibility wrappers satisfy it.
 type Reader interface {
 	GetAddress(ctx context.Context, addr string) (*entity.Entity, error)
-	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
+}
+
+// Finder answers the find as one store query (TKT-GIAGLQ3):
+// visibility.HolderLookup implements it.
+type Finder interface {
+	// FirstEqual returns the readable row of entityType, at faces, with the
+	// lowest (id, face) whose every property in want holds its value: a
+	// string equal to it, or a number or bool whose text form is it. found
+	// is false when no readable row does.
+	FirstEqual(
+		ctx context.Context, entityType string, faces store.FaceSelection, want map[string]string,
+	) (ref entity.Ref, found bool, err error)
 }
 
 // Writer is the write path every mutation goes through.
@@ -122,10 +132,12 @@ type WritePrepReader interface {
 // because a caller's reader and writer may be swapped on a config reload and
 // must not be captured across records.
 type Deps struct {
-	// Reader serves the find. It must be the caller's ACL-gated reader: a
-	// denied entity then reads as a miss, so the mapping is not an existence
-	// oracle, and a principal that cannot see the match creates a new entity
-	// rather than silently updating an invisible one.
+	// Finder serves the find and Reader reads the row it chose. Both must
+	// be on the caller's ACL tier: a denied entity then reads as a miss, so
+	// the mapping is not an existence oracle, and a principal that cannot
+	// see the match creates a new entity rather than silently updating an
+	// invisible one.
+	Finder Finder
 	Reader Reader
 	// World is the world a faceless find type is read in.
 	World store.WorldScope
@@ -146,6 +158,8 @@ func (d Deps) validate() error {
 	switch {
 	case d.Reader == nil:
 		return errors.New("ingest: no visible reader configured")
+	case d.Finder == nil:
+		return errors.New("ingest: no finder configured")
 	case d.Writer == nil:
 		return errors.New("ingest: no writer configured")
 	case d.WritePrep == nil:
@@ -312,21 +326,24 @@ func findTarget(
 		}
 	}
 
-	for e, listErr := range d.Reader.ListEntities(ctx, store.EntityQuery{
-		Type: m.Find.Type, Faces: findFaces(m.Find, d.World),
-	}) {
-		if listErr != nil {
-			return nil, fmt.Errorf("ingest find: %w", listErr)
-		}
-		if e == nil || !matchesAll(e, want) {
-			continue
-		}
-		// Deterministic winner when the operator's schema does not enforce
-		// uniqueness: lowest ID. Without this, which duplicate a record
-		// appends to would vary per record and the history would interleave.
-		if match == nil || e.ID < match.ID {
-			match = e
-		}
+	// Several matches when the operator's schema does not enforce
+	// uniqueness: the lowest id wins, deterministically. Otherwise which
+	// duplicate a record appends to would vary per record and the history
+	// would interleave.
+	ref, found, err := d.Finder.FirstEqual(ctx, m.Find.Type, findFaces(m.Find, d.World), want)
+	if err != nil {
+		return nil, fmt.Errorf("ingest find: %w", err)
+	}
+	if !found {
+		return nil, nil
+	}
+	match, err = d.Reader.GetAddress(ctx, ref.String())
+	if errors.Is(err, store.ErrNotFound) {
+		// Deleted, or hidden, since the find: a miss, as it would be now.
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("ingest find: %w", err)
 	}
 	return match, nil
 }
@@ -339,32 +356,6 @@ func findFaces(find *ingestspec.Find, world store.WorldScope) store.FaceSelectio
 		return store.AtFaces(entity.Face(find.Face))
 	}
 	return store.InWorld(world)
-}
-
-// matchesAll reports whether e has every wanted property value.
-func matchesAll(e *entity.Entity, want map[string]string) bool {
-	for prop, value := range want {
-		if propString(e, prop) != value {
-			return false
-		}
-	}
-	return true
-}
-
-// propString renders a property as the string a match compares against.
-func propString(e *entity.Entity, prop string) string {
-	v, ok := e.Properties[prop]
-	if !ok {
-		return ""
-	}
-	switch t := v.(type) {
-	case string:
-		return t
-	case nil:
-		return ""
-	default:
-		return fmt.Sprintf("%v", t)
-	}
 }
 
 // createEntity creates the entity for a find-miss.

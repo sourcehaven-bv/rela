@@ -198,6 +198,20 @@ type Store interface {
 	Lifecycle
 	Freshness
 	Transactor
+	FoldedIDReader
+}
+
+// FoldedIDReader answers whether an id is taken under case folding, the
+// identity rule every backend enforces on create and rename
+// (storeutil.FoldID). It is a store query so a caller does not read every
+// header to ask it: pgstore and sqlitestore probe their lower(id) indexes,
+// memstore and fsstore scan their in-memory index.
+type FoldedIDReader interface {
+	// IDTakenFolded reports whether a live or a soft-deleted (marked)
+	// entity, at any face, has an id equal to id under ASCII case folding,
+	// other than the family whose id folds to except. These are the ids
+	// create and rename refuse. An empty except excludes nothing.
+	IDTakenFolded(ctx context.Context, id, except string) (bool, error)
 }
 
 // FamilyReplacer is the optional store capability used by an entity

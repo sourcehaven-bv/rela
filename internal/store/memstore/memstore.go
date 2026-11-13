@@ -90,8 +90,11 @@ import (
 // store.FamilyReplacer so a type change can replace all rows of one entity
 // family under the same store transaction.
 //
-//plimsoll:max-methods=51
-//plimsoll:max-exported-methods=33
+// +1 exported / +1 method (TKT-GIAGLQ3): IDTakenFolded, required by
+// store.FoldedIDReader in store.Store.
+//
+//plimsoll:max-methods=52
+//plimsoll:max-exported-methods=34
 type MemStore struct {
 	// txMu serializes an open Tx against ordinary writers: Tx holds it
 	// for the whole callback, every exported write method takes it
@@ -515,6 +518,14 @@ func (m *MemStore) CountEntities(_ context.Context, q store.EntityQuery) (int, e
 	// Counts must be world-scoped, not raw: an unscoped tally tells a
 	// published-world surface how many unpublished drafts exist.
 	return len(worldKeep(storeutil.RankingWorld(q), matched)), nil
+}
+
+// IDTakenFolded implements store.FoldedIDReader with the same scans create
+// and rename use (idTaken, markedTaken). It scans the in-memory index.
+func (m *MemStore) IDTakenFolded(_ context.Context, id, except string) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return idTaken(m.entities, id, except) || markedTaken(m.marked, id, except), nil
 }
 
 func (m *MemStore) HighestID(_ context.Context, prefix string) (int, error) {

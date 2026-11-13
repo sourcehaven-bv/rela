@@ -14,6 +14,17 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
 
+// IDTakenFolded implements store.FoldedIDReader as one indexed probe of
+// the live and the marked rows, the two that create and rename refuse.
+func (s *Store) IDTakenFolded(ctx context.Context, id, except string) (bool, error) {
+	var taken bool
+	err := s.q().QueryRowContext(ctx, `SELECT
+		EXISTS (SELECT 1 FROM entities WHERE lower(id) = lower(?1) AND lower(id) <> lower(?2))
+		OR EXISTS (SELECT 1 FROM marked_entities WHERE lower(id) = lower(?1) AND lower(id) <> lower(?2))`,
+		id, except).Scan(&taken)
+	return taken, err
+}
+
 // HighestID returns the largest numeric suffix among ids in the "PREFIX-N"
 // series, for sequential id generation.
 //

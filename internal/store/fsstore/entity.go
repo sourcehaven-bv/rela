@@ -194,6 +194,14 @@ func keepPrimes(w store.WorldScope, metas []entityMeta) []entityMeta {
 	return kept
 }
 
+// IDTakenFolded implements store.FoldedIDReader with the same scans create
+// and rename use (idTaken, markedTaken). It scans the in-memory index.
+func (s *FSStore) IDTakenFolded(_ context.Context, id, except string) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return idTaken(s.entities, id, except) || markedTaken(s, id, except), nil
+}
+
 func (s *FSStore) HighestID(_ context.Context, prefix string) (int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
