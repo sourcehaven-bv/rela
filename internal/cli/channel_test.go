@@ -235,7 +235,7 @@ func TestChannelCLI_Loop(t *testing.T) {
 	assert.Contains(t, got, "  alice (cli)  text\n")
 	assert.Contains(t, got, propIndent+"body: hello, world\n")
 	assert.Contains(t, got, propIndent+"about: "+p.item+"\n")
-	assert.Contains(t, got, "  text  1 reply\n")
+	assert.Regexp(t, `  text  1 reply, last \d{4}-\d\d-\d\dT[^\n]*Z\n`, got)
 	assert.Contains(t, got, propIndent+"body: from\n"+propIndent+"stdin\n")
 
 	got, err = runChannel(t, p.svc, "alice", "", "channel", "edit", p.item, "room", "1",
@@ -254,6 +254,14 @@ func TestChannelCLI_Loop(t *testing.T) {
 	assert.Contains(t, got, propIndent+"body: changed\n"+propIndent+"line2\n", "-P keeps a newline")
 	assert.Contains(t, got, propIndent+"count: 4\n")
 	assert.Contains(t, got, "#2 (reply to #1)  [removed by author]\n")
+
+	got, err = runChannel(t, p.svc, "alice", "", "channel", "read", p.item, "room", "--thread", "1")
+	require.NoError(t, err)
+	assert.Contains(t, got, "#2 (reply to #1)")
+	got, err = runChannel(t, p.svc, "alice", "", "channel", "read", p.item, "room", "--top")
+	require.NoError(t, err)
+	assert.Contains(t, got, "#1 ")
+	assert.NotContains(t, got, "#2 ", "--top leaves out a reply that is not inline")
 
 	got, err = runChannel(t, p.svc, "alice", "", "-o", "json", "channel", "read", p.item, "room")
 	require.NoError(t, err)
@@ -337,6 +345,9 @@ func TestChannelCLI_Errors(t *testing.T) {
 		{"two cursors", "alice", []string{"channel", "read", p.item, "room", "--after", "1", "--before", "3"},
 			"at most one of"},
 		{"limit", "alice", []string{"channel", "read", p.item, "room", "--limit", "500"}, "--limit: 1 to 200"},
+		{"thread and top", "alice", []string{"channel", "read", p.item, "room", "--thread", "1", "--top"},
+			"at most one of --thread and --top"},
+		{"thread zero", "alice", []string{"channel", "read", p.item, "room", "--thread", "0"}, "--thread"},
 		{"no principal", principal.Unknown, []string{"channel", "post", p.item, "room", "text", "-P", "body=x"},
 			realtime.NoPrincipalHint},
 	}

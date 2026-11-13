@@ -287,6 +287,15 @@ func TestChannelTools_RoundTrip(t *testing.T) {
 		t.Errorf("after_rev at head = %+v", follow.ReadView)
 	}
 
+	var thread, top struct {
+		realtime.ReadView
+	}
+	mustCall(t, cs, toolReadChannel, with(room, map[string]any{"thread": 1}), &thread)
+	mustCall(t, cs, toolReadChannel, with(room, map[string]any{"top": true}), &top)
+	if len(thread.Messages) != 2 || len(top.Messages) != 1 || top.Messages[0].Seq != 1 {
+		t.Errorf("thread page = %+v, top page = %+v", thread.Messages, top.Messages)
+	}
+
 	text = mustCall(t, cs, "remove_message", with(room, map[string]any{"seq": posted.Message.Seq}), nil)
 	assertNoticeFirst(t, "remove_message", text)
 	if strings.Contains(text, "edited") {
@@ -334,6 +343,9 @@ func TestChannelTools_Arguments(t *testing.T) {
 		{"negative after_rev", toolReadChannel, with(room, map[string]any{"after_rev": -1}), "after_rev"},
 		{"fraction", toolReadChannel, with(room, map[string]any{"before": 1.5}), "before"},
 		{"limit too big", toolReadChannel, with(room, map[string]any{"limit": 51}), "limit"},
+		{"thread and top", toolReadChannel, with(room, map[string]any{"thread": 1, "top": true}), "at most one"},
+		{"thread zero", toolReadChannel, with(room, map[string]any{"thread": 0}), "thread"},
+		{"top not bool", toolReadChannel, with(room, map[string]any{"top": "yes"}), "top"},
 		{"signals not bool", toolReadChannel, with(room, map[string]any{"signals": "yes"}), "signals"},
 		{"no type", toolReadChannel, map[string]any{"id": "REQ-001"}, "channel_type"},
 		{"props not object", "post_message", with(room, map[string]any{"message_type": "text", "props": "x"}), "props"},

@@ -387,9 +387,10 @@ func (h *channelsHandler) messages(w http.ResponseWriter, r *http.Request, rt ch
 	writeV1JSON(w, http.StatusOK, wirePage(got))
 }
 
-// parseMessagePage reads after, before, after_rev and limit. A value that
-// is not a whole number is a 400; the service checks the combination.
-// after_rev counts when present, so after_rev=0 follows an empty channel.
+// parseMessagePage reads after, before, after_rev, thread, top and limit.
+// A value that is not a whole number is a 400; the service checks the
+// combination. after_rev counts when present, so after_rev=0 follows an
+// empty channel. top=1 narrows the page to the main stream.
 func parseMessagePage(w http.ResponseWriter, r *http.Request) (realtime.ReadRequest, bool) {
 	q := r.URL.Query()
 	var page realtime.ReadRequest
@@ -397,7 +398,7 @@ func parseMessagePage(w http.ResponseWriter, r *http.Request) (realtime.ReadRequ
 	for _, f := range []struct {
 		name string
 		dst  *int64
-	}{{"after", &page.AfterSeq}, {"before", &page.BeforeSeq}, {"after_rev", &afterRev}} {
+	}{{"after", &page.AfterSeq}, {"before", &page.BeforeSeq}, {"after_rev", &afterRev}, {"thread", &page.Thread}} {
 		if v, ok, bad := queryInt(q, f.name); bad {
 			writeV1Error(w, r, http.StatusBadRequest, "invalid_request", "Invalid query", f.name+" must be a whole number")
 			return page, false
@@ -407,6 +408,18 @@ func parseMessagePage(w http.ResponseWriter, r *http.Request) (realtime.ReadRequ
 				page.AfterRev = &afterRev
 			}
 		}
+	}
+	if q.Has("thread") && page.Thread < 1 {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_request", "Invalid query", "thread must be a seq of at least 1")
+		return page, false
+	}
+	switch q.Get("top") {
+	case "", "0", "false":
+	case "1", "true":
+		page.Stream = true
+	default:
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_request", "Invalid query", "top must be 1 or 0")
+		return page, false
 	}
 	limit, ok, bad := queryInt(q, "limit")
 	if bad || (ok && limit <= 0) {

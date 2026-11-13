@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 36
+const schemaVersion = 37
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -361,6 +361,37 @@ var migrations = []migration{
 		to:    36,
 		apply: sqlSteps(channelFilesDDL),
 	},
+	{
+		// v36 → v37: the last reply time and the main-stream flag of each
+		// message (TKT-ETL233O). The indexes are created after the ladder
+		// (see channelThreadsIndexDDL).
+		to:    37,
+		apply: addChannelThreads,
+	},
+}
+
+// messageThreadColumns are the thread columns of channel_messages.
+var messageThreadColumns = []struct{ name, def string }{
+	{"last_reply_at", "INTEGER NOT NULL DEFAULT 0"},
+	{"in_stream", "INTEGER NOT NULL DEFAULT 1"},
+}
+
+// addChannelThreads is the v36 to v37 rung. It adds last_reply_at and
+// in_stream to channel_messages and takes every reply out of the main
+// stream except one that moved its session, as channels.ReplyInline
+// decides for a new reply. A reply that answered a choice cannot be told
+// from its row and joins its thread. A property may also be named
+// moved_session, so the test reads the top-level member of the doc; a doc
+// that is not valid JSON counts as not moved. last_reply_at starts at 0;
+// the next reply sets it. The rung runs once, before the store writes any
+// reply with in_stream set.
+func addChannelThreads(ctx context.Context, conn *sql.Conn) error {
+	if err := addTableColumns(ctx, conn, "channel_messages", messageThreadColumns); err != nil {
+		return err
+	}
+	return sqlSteps(`UPDATE channel_messages SET in_stream = 0
+		WHERE in_stream = 1 AND reply_to <> 0
+		AND (CASE WHEN json_valid(doc) THEN json_extract(doc, '$.moved_session') END) IS NOT 1`)(ctx, conn)
 }
 
 // elementColumns are the reconciliation element columns of entities and

@@ -313,6 +313,10 @@ func toolReadChannelDef() *mcpgo.Tool {
 		withNumber(chanAfterRevArg, description("Messages changed after this rev, ordered by rev; 0 is valid")),
 		withNumber("after", description("Messages after this seq, oldest first")),
 		withNumber("before", description("Messages before this seq")),
+		withNumber("thread", description("Only the top-level message with this seq and its replies; "+
+			"combines with one cursor")),
+		withBoolean("top", description("Only the main stream: top-level messages and replies with inline set "+
+			"(they answer a question or moved the session); combines with one cursor")),
 		withNumber("limit", description("Page size, 1 to 50 (default 20)")),
 		withBoolean("signals", description("Include live signals (default true without a cursor, false with one)")),
 		withBoolean("schemas", description("Include the message types (default true without a cursor, "+
@@ -562,6 +566,9 @@ func readRequest(args toolRequest) (realtime.ReadRequest, error) {
 	if cursors > 1 {
 		return req, errors.New("name at most one of after_rev, after and before")
 	}
+	if threadErr := threadArgs(args, &req); threadErr != nil {
+		return req, threadErr
+	}
 	limit, err := wholeArg(args, "limit", 1)
 	switch {
 	case err != nil:
@@ -587,6 +594,26 @@ func readRequest(args toolRequest) (realtime.ReadRequest, error) {
 		}
 	}
 	return req, nil
+}
+
+// threadArgs reads thread and top into req; at most one may be named.
+func threadArgs(args toolRequest, req *realtime.ReadRequest) error {
+	thread, err := wholeArg(args, "thread", 1)
+	if err != nil {
+		return err
+	}
+	top, err := optionalBool(args, "top")
+	if err != nil {
+		return err
+	}
+	if thread != nil {
+		req.Thread = *thread
+	}
+	req.Stream = top != nil && *top
+	if req.Thread > 0 && req.Stream {
+		return errors.New("name at most one of thread and top")
+	}
+	return nil
 }
 
 func (h channelHandler) handlePost(ctx context.Context, args toolRequest) *mcpgo.CallToolResult {

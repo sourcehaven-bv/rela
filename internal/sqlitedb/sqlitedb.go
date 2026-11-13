@@ -187,6 +187,12 @@ func (c *DB) init(ctx context.Context) error {
 	if _, err := c.db.ExecContext(ctx, channelReadsIndexDDL); err != nil {
 		return fmt.Errorf("sqlitedb: create channel read indexes: %w", err)
 	}
+	// After the ladder for the same reason: channelThreadsIndexDDL indexes
+	// channel_messages.in_stream, which a pre-v37 table gains in the v37
+	// rung.
+	if _, err := c.db.ExecContext(ctx, channelThreadsIndexDDL); err != nil {
+		return fmt.Errorf("sqlitedb: create channel thread indexes: %w", err)
+	}
 	return nil
 }
 
@@ -860,6 +866,8 @@ CREATE TABLE IF NOT EXISTS channel_messages (
 	pending_at  INTEGER NOT NULL DEFAULT 0,
 	doc         TEXT NOT NULL,
 	counts      INTEGER NOT NULL DEFAULT 1,
+	last_reply_at INTEGER NOT NULL DEFAULT 0,
+	in_stream   INTEGER NOT NULL DEFAULT 1,
 	PRIMARY KEY (channel_id, seq)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS channel_messages_rev_idx ON channel_messages(channel_id, rev);
@@ -935,6 +943,17 @@ CREATE TABLE IF NOT EXISTS channel_reads (
 const channelReadsIndexDDL = `
 CREATE INDEX IF NOT EXISTS channel_messages_counts_idx ON channel_messages(channel_id, seq) WHERE counts = 1;
 CREATE INDEX IF NOT EXISTS channel_reads_reader_idx ON channel_reads(reader_user, reader_org);`
+
+// channelThreadsIndexDDL holds the indexes of thread pages:
+// channel_messages_thread_idx reads the replies of one parent in seq
+// order, and channel_messages_stream_idx reads the main stream (see
+// channels.Page). pgstore migration 0045 has the same shape. It runs
+// after the ladder, as channelReadsIndexDDL does, because it names a
+// column the v37 rung adds.
+const channelThreadsIndexDDL = `
+CREATE INDEX IF NOT EXISTS channel_messages_thread_idx ON channel_messages(channel_id, reply_to, seq)
+	WHERE reply_to > 0;
+CREATE INDEX IF NOT EXISTS channel_messages_stream_idx ON channel_messages(channel_id, seq) WHERE in_stream = 1;`
 
 // channelMentionsDDL holds the addressed rows of channels.Store.Append:
 // one row per (channel, seq, target, kind), with the message's author and
