@@ -12,6 +12,7 @@ var entityTypes = []string{
 	"btype",
 	"client",
 	"concept",
+	"control",
 	"doc",
 	"document",
 	"epic",

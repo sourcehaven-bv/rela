@@ -30,11 +30,16 @@ type Column struct {
 	Property string
 	// Func is the declared function.
 	Func metamodel.RollupFunc
-	// Relation is the canonical relation walked; SourceIsTo says the edge
-	// runs from the related entity to the source (an inverse via).
+	// Path are the hops before the last one, from the source type, for a
+	// via that names several relations (TKT-LTSNHD). It is empty for a
+	// single relation.
+	Path []Hop
+	// Relation is the canonical relation of the last hop; SourceIsTo says
+	// its edge runs from the related entity to the entity before it (an
+	// inverse via).
 	Relation   string
 	SourceIsTo bool
-	// Target is the related entity type.
+	// Target is the related entity type, at the end of the path.
 	Target string
 	// Where are the equalities a related entity must meet, sorted by
 	// property.
@@ -50,6 +55,15 @@ type Column struct {
 	// counts: the where keys, the min/max/sum property and latest_by. The
 	// pick is not among them; a hidden pick withholds the value only.
 	Reads []string
+}
+
+// Hop is one step of a roll-up path before the last: the canonical relation
+// walked, whether its edge runs from the entity reached to the entity before
+// it, and the type reached.
+type Hop struct {
+	Relation   string
+	SourceIsTo bool
+	Target     string
 }
 
 // StoreFunc maps the declared function onto the store's aggregate. exists
@@ -154,25 +168,39 @@ func compileColumn(
 		// The loader reports the shape; nothing more to check.
 		return Column{}, []string{at + " must declare exactly one function"}
 	}
-	via := strings.TrimSpace(r.Via)
+	path := make([]string, len(r.Via))
+	for i, v := range r.Via {
+		path[i] = strings.TrimSpace(v)
+	}
+	via := viaText(path)
+	if len(path) == 0 || len(path) > metamodel.MaxRollupPath || slices.Contains(path, "") {
+		// The loader reports the shape; nothing more to check.
+		return Column{}, []string{fmt.Sprintf("%s via %s: needs 1 to %d relation names",
+			at, via, metamodel.MaxRollupPath)}
+	}
 	hops, err := predicatefns.ResolveTraversal(meta, typeName, predicate.TraversalSpec{
-		Subject: "entity", Path: []string{via}, EntityType: strings.TrimSpace(r.Type),
+		Subject: "entity", Path: path, EntityType: strings.TrimSpace(r.Type),
 	})
 	if err != nil {
-		return Column{}, []string{fmt.Sprintf("%s via %q: %s", at, via, strings.TrimPrefix(err.Error(), "related: "))}
+		return Column{}, []string{fmt.Sprintf("%s via %s: %s", at, via, strings.TrimPrefix(err.Error(), "related: "))}
 	}
-	hop := hops[0]
-	if metamodel.IsContentScoped(meta, hop.Relation) {
-		return Column{}, []string{fmt.Sprintf(
-			"%s via %q: relation %q is content-scoped; a roll-up follows identity-scoped relations only",
-			at, via, hop.Relation)}
+	for _, h := range hops {
+		if metamodel.IsContentScoped(meta, h.Relation) {
+			return Column{}, []string{fmt.Sprintf(
+				"%s via %s: relation %q is content-scoped; a roll-up follows identity-scoped relations only",
+				at, via, h.Relation)}
+		}
+		if _, ok := meta.Entities[h.Target]; !ok {
+			return Column{}, []string{fmt.Sprintf("%s via %s: related type %q is not an entity type", at, via, h.Target)}
+		}
 	}
-	target, ok := meta.Entities[hop.Target]
-	if !ok {
-		return Column{}, []string{fmt.Sprintf("%s via %q: related type %q is not an entity type", at, via, hop.Target)}
-	}
+	hop := hops[len(hops)-1]
+	target := meta.Entities[hop.Target]
 	col = Column{
 		Property: name, Func: fn, Relation: hop.Relation, SourceIsTo: hop.Incoming, Target: hop.Target,
+	}
+	for _, h := range hops[:len(hops)-1] {
+		col.Path = append(col.Path, Hop{Relation: h.Relation, SourceIsTo: h.Incoming, Target: h.Target})
 	}
 	related := func(role, p string) (metamodel.PropertyDef, bool) {
 		rp, ok := target.Properties[p]
@@ -263,6 +291,19 @@ func compileFunc(
 		col.Value, col.By = prop, by
 		col.Reads = append(col.Reads, by)
 	}
+}
+
+// viaText renders a via path for an error: the quoted name for one
+// relation, a bracketed list for a path.
+func viaText(path []string) string {
+	quoted := make([]string, len(path))
+	for i, p := range path {
+		quoted[i] = strconv.Quote(p)
+	}
+	if len(quoted) == 1 {
+		return quoted[0]
+	}
+	return "[" + strings.Join(quoted, ", ") + "]"
 }
 
 // isoDate reports whether pd is a date in the default YYYY-MM-DD format,
