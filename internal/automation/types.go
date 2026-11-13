@@ -1,6 +1,15 @@
 // Package automation provides a trigger-action engine for entity lifecycle events.
 // It enables automatic property updates, validation warnings, and relation creation
 // when entities change.
+//
+// Each automation compiles at load onto a flow trigger (TKT-GS7THPA): the
+// event keys and scope that select it, a guard of `when:` clauses and a
+// `condition:` compiled through internal/predicate, and outputs. An event
+// selects its triggers, [flow.Fire] decides which fire, and the fired
+// triggers render their outputs into a [Result], which internal/autocascade
+// executes. set, create_entity and create_relation are the flow output kinds
+// set, create and relate; add_to_pile, notify, the script actions and
+// `validate:` are named exceptions.
 package automation
 
 import (

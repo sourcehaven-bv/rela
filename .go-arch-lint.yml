@@ -1478,6 +1478,9 @@ deps:
       # `on.updated`, with the value normalization the stores use.
       - canonical
       - filter
+      # Automations compile to flow triggers and fire through flow.Fire
+      # (TKT-GS7THPA). flow is a leaf.
+      - flow
       - metamodel
       - predicate
       - predicatefns
