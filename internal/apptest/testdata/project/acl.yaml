@@ -1,0 +1,16 @@
+user_entity_type: user
+roles:
+  viewer:
+    read: [ticket, user]
+  outsider:
+    read: [user]
+  editor:
+    read: [ticket, user, kinds]
+    create: [ticket, kinds]
+    update: [ticket, kinds]
+assignments:
+  carol: editor
+  "system:automation": viewer
+role_relations:
+  member-of:
+    requires_permission: manage-members

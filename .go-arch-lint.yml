@@ -299,6 +299,9 @@ components:
   aclstore:         { in: internal/aclstore }
   aclaudit:         { in: internal/aclaudit }
   aclmap:           { in: internal/aclmap }
+  # `rela test` (TKT-UO8UIGO): runs the operator's Lua tests, each case on an
+  # appbuild.NewInMemory world.
+  apptest:          { in: internal/apptest }
   affordances:      { in: internal/affordances }
   visibility:       { in: internal/visibility }
   ai:               { in: internal/ai }
@@ -360,6 +363,7 @@ vendors:
   glamour:     { in: github.com/charmbracelet/glamour }
   huh:         { in: github.com/charmbracelet/huh }
   yaml:        { in: gopkg.in/yaml.v3 }
+  gofakeit:    { in: github.com/brianvoe/gofakeit/v7 }
   # CalDAV protocol surface (TKT-MF1CWZ). Granted ONLY to dataentry, which
   # contains it in the caldav_* adapter files: calfeed stays the domain model
   # and *ical.Calendar must not escape that boundary.
@@ -570,6 +574,7 @@ deps:
       - aclstore
       - aclaudit
       - aclmap
+      - apptest
       # `rela acl audit` evaluates field visibility per role for the
       # classification findings (TKT-8UCV32) through the resolver a request
       # uses. Cycle-free: affordances is a near-leaf importing no wiring.
@@ -1380,8 +1385,34 @@ deps:
     mayDependOn:
       - acl
       - entity
+      # Expectations name entity types and relation types; the map probes
+      # the relation types the schema declares.
+      - metamodel
       - principal
       - store
+  # The test runner sits beside the CLI: it builds worlds through appbuild
+  # and drives them through the same write and read paths a server uses.
+  apptest:
+    mayDependOn:
+      - acl
+      - aclmap
+      - ai
+      - appbuild
+      - attachment
+      - entity
+      - entitymanager
+      - fsimport
+      - lua
+      - mail
+      - memcomments
+      - metamodel
+      - principal
+      - rootfs
+      - store
+    canUse:
+      - gofakeit
+      - gopherlua
+      - yaml
   affordances:
     mayDependOn:
       - acl

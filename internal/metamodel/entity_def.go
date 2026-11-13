@@ -137,6 +137,25 @@ func DeclaredDefault(prop PropertyDef, m *Metamodel) string {
 	return ""
 }
 
+// EnumValues returns the values an enum property allows: its own `values:`,
+// else those of the custom type it names. It returns nil for a property that
+// is not an enum. A function rather than a method because Metamodel is at its
+// exported-method load line.
+//
+// Nil: m is accepted — only the property's own values count then.
+func EnumValues(prop PropertyDef, m *Metamodel) []string {
+	if len(prop.Values) > 0 {
+		return prop.Values
+	}
+	if m == nil {
+		return nil
+	}
+	if customType, ok := m.Types[prop.Type]; ok {
+		return customType.Values
+	}
+	return nil
+}
+
 // RankingTitleProperty names the property search ranking may treat as e's
 // title: a declared, non-template display_property, else a conventional
 // required `title`/`name`/`label`. A function rather than a method because

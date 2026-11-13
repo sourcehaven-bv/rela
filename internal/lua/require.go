@@ -70,8 +70,11 @@ type moduleLoader struct {
 	// files reads lib/. Nil: accepted — require then raises for every name
 	// that is not a standard library, because the runtime has no project to
 	// read modules from.
-	files  ProjectFiles
-	loaded map[string]lua.LValue
+	files ProjectFiles
+	// extraDirs are project directories searched after lib/, in order.
+	// Project scripts have none; the `rela test` sandbox adds tests/.
+	extraDirs []string
+	loaded    map[string]lua.LValue
 	// loading is the chain of modules being loaded, outermost first. A name
 	// already on it is a cycle.
 	loading []string
@@ -134,7 +137,7 @@ func (m *moduleLoader) require(ls *lua.LState) int {
 			name, maxModuleDepth, m.loading[0])
 	}
 
-	path := ModuleDir + "/" + strings.ReplaceAll(name, ".", "/") + ".lua"
+	path := m.locate(ls, strings.ReplaceAll(name, ".", "/")+".lua")
 	fn := m.compile(ls, name, path)
 
 	m.loading = append(m.loading, name)
@@ -219,8 +222,34 @@ func newModuleThread(ls *lua.LState) (*lua.LState, context.CancelFunc) {
 }
 
 // moduleErrorPosition matches the "lib/x.lua:12:" prefix gopher-lua puts on an
-// error raised in a module.
-var moduleErrorPosition = regexp.MustCompile(`^(` + ModuleDir + `/[a-z0-9_/]+\.lua):(\d+):`)
+// error raised in a module, in lib/ or an extra module directory.
+var moduleErrorPosition = regexp.MustCompile(`^([a-z0-9_]+/[a-z0-9_/]+\.lua):(\d+):`)
+
+// locate returns the path of the module file rel: under lib/, else under
+// the first extra directory that holds it. When no directory holds it, it
+// returns the lib/ path, and compile reports it missing.
+func (m *moduleLoader) locate(ls *lua.LState, rel string) string {
+	path := ModuleDir + "/" + rel
+	if len(m.extraDirs) == 0 {
+		return path
+	}
+	ctx := ls.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for _, dir := range append([]string{ModuleDir}, m.extraDirs...) {
+		candidate := dir + "/" + rel
+		if _, err := m.files.Load(ctx, candidate); !errors.Is(err, fs.ErrNotExist) {
+			return candidate
+		}
+	}
+	return path
+}
+
+// searchPath names the directories require looks in, for messages.
+func (m *moduleLoader) searchPath() string {
+	return strings.Join(append([]string{ModuleDir}, m.extraDirs...), "/, ") + "/"
+}
 
 // compile reads and compiles the module at path, raising a Lua error that
 // names the module and its project-relative path, never a filesystem path.
@@ -232,6 +261,9 @@ func (m *moduleLoader) compile(ls *lua.LState, name, path string) *lua.LFunction
 	src, err := m.files.Load(ctx, path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
+		if len(m.extraDirs) > 0 {
+			ls.RaiseError("module not found: %s (looked in %s)", name, m.searchPath())
+		}
 		ls.RaiseError("module not found: %s (looked in %s)", name, path)
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		ls.RaiseError("cannot read module %s (%s): the run was cancelled or timed out", name, path)

@@ -141,7 +141,8 @@ type Claims struct {
 // exception is an identity rela mints itself from no request input, such as
 // [Webhook], or from claims it persisted after verifying them: a scheduler
 // for_each child carries the roles a verified IdP webhook stored
-// (internal/idproles).
+// (internal/idproles). A `rela test` principal ([ToolRelaTest]) is minted
+// by the test runner for a world that lives only in memory.
 //
 // Slice claims are defensively copied so a later mutation of the caller's slice
 // cannot retroactively change an authorization decision.
@@ -446,6 +447,9 @@ const (
 	// ToolFlow attributes the writes the flow engine makes as [UserFlow]:
 	// the run header and its managed edges (FEAT-J0O10QI).
 	ToolFlow = "flow"
+	// ToolRelaTest attributes the writes of a `rela test` case. Its
+	// principals exist only in the case's in-memory world.
+	ToolRelaTest = "rela-test"
 )
 
 // TypeWebhook is the [Principal.PrincipalType] of a declarative webhook
