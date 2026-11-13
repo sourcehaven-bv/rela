@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"github.com/Sourcehaven-BV/rela/internal/actionproposal"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
@@ -1913,31 +1914,7 @@ type ActionResponse struct {
 	CorrelationID string `json:"correlation_id,omitempty"`
 	// Proposal is the reply of an `llm:` action. It is a proposal only:
 	// the action wrote nothing.
-	Proposal *ActionProposal `json:"proposal,omitempty"`
-}
-
-// ActionProposal is what an `llm:` action proposes for one entity.
-type ActionProposal struct {
-	Entity string                   `json:"entity"`
-	Set    []ActionProposedValue    `json:"set"`
-	Relate []ActionProposedRelation `json:"relate"`
-	Model  string                   `json:"model,omitempty"`
-}
-
-// ActionProposedValue is one proposed property value. Current is the value
-// the caller could see when the action ran, or null when it was unset.
-type ActionProposedValue struct {
-	Property string `json:"property"`
-	Current  any    `json:"current"`
-	Proposed any    `json:"proposed"`
-}
-
-// ActionProposedRelation is one proposed outgoing relation.
-type ActionProposedRelation struct {
-	Relation string `json:"relation"`
-	To       string `json:"to"`
-	ToType   string `json:"to_type"`
-	ToTitle  string `json:"to_title"`
+	Proposal *actionproposal.Proposal `json:"proposal,omitempty"`
 }
 
 // Mention is the resolved target of an entity-ID code span found in

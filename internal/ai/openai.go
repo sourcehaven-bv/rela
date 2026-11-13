@@ -113,9 +113,9 @@ type responseFormatWire struct {
 }
 
 type jsonSchemaWire struct {
-	Name   string         `json:"name"`
-	Schema map[string]any `json:"schema"`
-	Strict bool           `json:"strict"`
+	Name   string          `json:"name"`
+	Schema json.RawMessage `json:"schema"`
+	Strict bool            `json:"strict"`
 }
 
 type messageWire struct {

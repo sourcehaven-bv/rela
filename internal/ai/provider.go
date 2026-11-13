@@ -37,7 +37,10 @@
 // API keys, or message content.
 package ai
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 // Provider is the unified interface for AI capabilities.
 //
@@ -90,8 +93,8 @@ type JSONSchemaFormat struct {
 	// Name identifies the schema to the provider: 1 to 64 letters,
 	// digits, '_' or '-'.
 	Name string
-	// Schema is a JSON Schema object, marshaled as is.
-	Schema map[string]any
+	// Schema is a JSON Schema object, sent as is.
+	Schema json.RawMessage
 	// Strict asks the provider to enforce the schema exactly.
 	Strict bool
 }

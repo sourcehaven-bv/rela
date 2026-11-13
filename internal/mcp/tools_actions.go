@@ -7,6 +7,7 @@ import (
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/Sourcehaven-BV/rela/internal/actionproposal"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
@@ -183,7 +184,7 @@ type actionResult struct {
 	ContentType string `json:"content_type,omitempty"`
 	Body        string `json:"body,omitempty"`
 	// Proposal is an llm action's proposal; the action wrote nothing.
-	Proposal *script.ActionProposal `json:"proposal,omitempty"`
+	Proposal *actionproposal.Proposal `json:"proposal,omitempty"`
 }
 
 func actionResultView(resp *script.ActionResponse) actionResult {

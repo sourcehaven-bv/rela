@@ -142,23 +142,24 @@ func TestRequest_CapsLongValues(t *testing.T) {
 	long := strings.Repeat("é", MaxValueChars+10)
 	in := testInput()
 	in.Subject.Properties["title"] = long
-	in.Related[0][0].Properties = map[string]any{"title": long, "n": 3}
-	in.Candidates[0].Items[1].Properties = map[string]any{"title": []any{"short", long}}
+	in.Related[0][0].properties = map[string]any{"title": long, "n": 3}
+	in.Candidates[0].Items[1].properties = map[string]any{"title": []any{"short", long}}
 
 	req, err := testTask(t).Request(in)
 	if err != nil {
 		t.Fatal(err)
 	}
+	type wireItem struct {
+		Properties map[string]any `json:"properties"`
+		Truncated  []string       `json:"truncated_fields"`
+	}
 	var doc struct {
-		Record struct {
-			Properties map[string]any `json:"properties"`
-			Truncated  []string       `json:"truncated_fields"`
-		} `json:"record"`
+		Record  wireItem `json:"record"`
 		Related []struct {
-			Entities []Item `json:"entities"`
+			Entities []wireItem `json:"entities"`
 		} `json:"related"`
 		Candidates map[string]struct {
-			Entities []Item `json:"entities"`
+			Entities []wireItem `json:"entities"`
 		} `json:"candidates"`
 	}
 	if err := json.Unmarshal([]byte(req.Messages[1].Content), &doc); err != nil {
@@ -179,7 +180,7 @@ func TestRequest_CapsLongValues(t *testing.T) {
 		t.Errorf("list value not capped per element")
 	}
 	// The caller's input is not modified.
-	if in.Related[0][0].Properties["title"] != long {
+	if in.Related[0][0].properties["title"] != long {
 		t.Error("input item was modified")
 	}
 }
@@ -268,14 +269,14 @@ func TestParse_Valid(t *testing.T) {
 	if strings.Join(names, ",") != "priority,points,done,due,at,cost" {
 		t.Errorf("set = %v", names)
 	}
-	if p.Set[0].Current != "low" || p.Set[0].Proposed != "high" {
+	if string(p.Set[0].Current) != `"low"` || string(p.Set[0].Proposed) != `"high"` {
 		t.Errorf("priority change = %+v", p.Set[0])
 	}
-	if p.Set[5].Proposed != "12.50" {
-		t.Errorf("cost = %v", p.Set[5].Proposed)
+	if string(p.Set[5].Proposed) != `"12.50"` {
+		t.Errorf("cost = %s", p.Set[5].Proposed)
 	}
 	// C-1 is already related; C-2 is deduplicated.
-	if len(p.Relate) != 1 || len(p.Relate[0].To) != 1 || p.Relate[0].To[0].ID != "C-2" {
+	if len(p.Relate) != 1 || p.Relate[0].To != "C-2" || p.Relate[0].ToType != "concept" {
 		t.Errorf("relate = %+v", p.Relate)
 	}
 	if p.Model != "m" {

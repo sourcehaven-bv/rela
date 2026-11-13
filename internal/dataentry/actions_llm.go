@@ -9,6 +9,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/actionproposal"
 	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
@@ -69,7 +70,7 @@ func (o actionOps) runLLM(
 	// target: the model could only answer "nothing", so it is not asked.
 	hasCandidate := slices.ContainsFunc(in.Candidates, func(c llmtask.Candidates) bool { return len(c.Items) > 0 })
 	if len(in.Writable) == 0 && !hasCandidate {
-		return &script.ActionResponse{Proposal: proposalOut(subject, &llmtask.Proposal{})}, nil
+		return &script.ActionResponse{Proposal: actionproposal.Empty(subject.Ref().String())}, nil
 	}
 
 	provider, err := script.AIProvider(deps)
@@ -113,7 +114,7 @@ func (o actionOps) runLLM(
 		}
 		return nil, failLLMInternal(err)
 	}
-	return &script.ActionResponse{Proposal: proposalOut(subject, proposal)}, nil
+	return &script.ActionResponse{Proposal: proposal}, nil
 }
 
 // llmCallDetail describes a failed AI call to the caller. It names the kind
@@ -223,7 +224,7 @@ func llmRelated(
 			if err != nil {
 				return nil, fmt.Errorf("llm action: read %s peers: %w", r.Relation, err)
 			}
-			out[i] = append(out[i], llmItem(s, e, r.Fields))
+			out[i] = append(out[i], llmtask.NewItem(s.Meta, e, r.Fields))
 		}
 	}
 	return out, nil
@@ -295,7 +296,7 @@ func (o actionOps) collectCandidates(
 				cands.Truncated = true
 				return true, nil
 			}
-			item := llmItem(s, e, r.Fields)
+			item := llmtask.NewItem(s.Meta, e, r.Fields)
 			item.Related = existing[e.ID]
 			cands.Items = append(cands.Items, item)
 		}
@@ -393,42 +394,4 @@ func llmExistingTargets(ctx context.Context, deps lua.WriteDeps, subjectID, rela
 		out[rel.To] = true
 	}
 	return out, nil
-}
-
-// llmItem is e as sent to the model: id, type, title and the configured
-// fields that are set and not redacted.
-func llmItem(s *Schema, e *entityPkg.Entity, fields []string) llmtask.Item {
-	item := llmtask.Item{ID: e.ID, Type: e.Type, Title: s.Meta.DisplayTitle(e.ID, e.Type, e.Properties)}
-	for _, f := range fields {
-		v, ok := e.Properties[f]
-		if !ok || v == nil || e.IsRedacted(f) {
-			continue
-		}
-		if item.Properties == nil {
-			item.Properties = map[string]any{}
-		}
-		item.Properties[f] = v
-	}
-	return item
-}
-
-// proposalOut converts a parsed proposal to the action response.
-func proposalOut(subject *entityPkg.Entity, p *llmtask.Proposal) *script.ActionProposal {
-	out := &script.ActionProposal{
-		Entity: subject.Ref().String(),
-		Model:  p.Model,
-		Set:    make([]script.ProposedValue, 0, len(p.Set)),
-		Relate: []script.ProposedRelation{},
-	}
-	for _, c := range p.Set {
-		out.Set = append(out.Set, script.ProposedValue{Property: c.Property, Current: c.Current, Proposed: c.Proposed})
-	}
-	for _, r := range p.Relate {
-		for _, to := range r.To {
-			out.Relate = append(out.Relate, script.ProposedRelation{
-				Relation: r.Relation, To: to.ID, ToType: to.Type, ToTitle: to.Title,
-			})
-		}
-	}
-	return out
 }

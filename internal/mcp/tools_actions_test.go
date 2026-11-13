@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/actionproposal"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
@@ -271,10 +272,10 @@ func compactJSON(t *testing.T, text string) string {
 
 // An llm action's proposal reaches the MCP caller in the result.
 func TestActionResultView_Proposal(t *testing.T) {
-	p := &script.ActionProposal{
+	p := &actionproposal.Proposal{
 		Entity: "TKT-1",
-		Set:    []script.ProposedValue{{Property: "priority", Current: "low", Proposed: "high"}},
-		Relate: []script.ProposedRelation{{Relation: "affects", To: "CON-1", ToType: "concept", ToTitle: "Sessions"}},
+		Set:    []actionproposal.Value{{Property: "priority", Current: json.RawMessage(`"low"`), Proposed: json.RawMessage(`"high"`)}},
+		Relate: []actionproposal.Relation{{Relation: "affects", To: "CON-1", ToType: "concept", ToTitle: "Sessions"}},
 	}
 	got, err := json.Marshal(actionResultView(&script.ActionResponse{Proposal: p}))
 	if err != nil {

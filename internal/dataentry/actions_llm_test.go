@@ -259,7 +259,7 @@ func TestLLMAction_ProposesWithoutWriting(t *testing.T) {
 	if p.Entity != "TKT-1" || p.Model != "fake-1" {
 		t.Errorf("entity/model = %q/%q", p.Entity, p.Model)
 	}
-	if len(p.Set) != 1 || p.Set[0].Property != "priority" || p.Set[0].Current != "low" || p.Set[0].Proposed != "high" {
+	if len(p.Set) != 1 || p.Set[0].Property != "priority" || string(p.Set[0].Current) != `"low"` || string(p.Set[0].Proposed) != `"high"` {
 		t.Errorf("set = %+v", p.Set)
 	}
 	// CON-3 is already related, so only CON-1 is proposed.

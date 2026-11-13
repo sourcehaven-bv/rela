@@ -29,6 +29,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Sourcehaven-BV/rela/internal/actionproposal"
 	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -69,17 +70,48 @@ func (t *Task) Subject() string { return t.subject }
 func (t *Task) Config() dataentryconfig.LLMAction { return t.cfg }
 
 // Item is an entity sent to the model: a related entity or a candidate.
-// Properties holds only the configured fields the caller may read.
+// Build one with [NewItem].
 type Item struct {
-	ID         string         `json:"id"`
-	Type       string         `json:"type"`
-	Title      string         `json:"title"`
-	Properties map[string]any `json:"properties,omitempty"`
+	ID    string
+	Type  string
+	Title string
 	// Related marks a candidate the subject is already related to. The
 	// model may pick it; the proposal leaves it out.
-	Related bool `json:"already_related,omitempty"`
-	// Truncated names the properties cut to MaxValueChars.
-	Truncated []string `json:"truncated_fields,omitempty"`
+	Related bool
+	// properties holds only the configured fields the caller may read.
+	properties map[string]any
+	// truncated names the properties cut to MaxValueChars.
+	truncated []string
+}
+
+// NewItem is e as sent to the model: its id, type and title, and those of
+// fields that are set and not redacted. e must already be redacted for the
+// caller.
+func NewItem(meta *metamodel.Metamodel, e *entity.Entity, fields []string) Item {
+	item := Item{ID: e.ID, Type: e.Type, Title: meta.DisplayTitle(e.ID, e.Type, e.Properties)}
+	for _, f := range fields {
+		v, ok := e.Properties[f]
+		if !ok || v == nil || e.IsRedacted(f) {
+			continue
+		}
+		if item.properties == nil {
+			item.properties = map[string]any{}
+		}
+		item.properties[f] = v
+	}
+	return item
+}
+
+// MarshalJSON encodes the item as the model reads it.
+func (it Item) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		ID         string         `json:"id"`
+		Type       string         `json:"type"`
+		Title      string         `json:"title"`
+		Properties map[string]any `json:"properties,omitempty"`
+		Related    bool           `json:"already_related,omitempty"`
+		Truncated  []string       `json:"truncated_fields,omitempty"`
+	}{it.ID, it.Type, it.Title, it.properties, it.Related, it.truncated})
 }
 
 // MaxValueChars caps one text value in the input document. Field values are
@@ -138,18 +170,17 @@ func (t *Task) Request(in Input) (ai.ChatRequest, error) {
 	if len(t.writable(in)) == 0 && len(t.relatable(in)) == 0 {
 		return ai.ChatRequest{}, ErrNothingToPropose
 	}
-	schema := t.Schema(in)
+	schema, err := json.Marshal(t.Schema(in))
+	if err != nil {
+		return ai.ChatRequest{}, fmt.Errorf("llmtask: encode schema: %w", err)
+	}
 	doc, err := json.Marshal(t.document(in))
 	if err != nil {
 		return ai.ChatRequest{}, fmt.Errorf("llmtask: encode input: %w", err)
 	}
-	schemaText, err := json.Marshal(schema)
-	if err != nil {
-		return ai.ChatRequest{}, fmt.Errorf("llmtask: encode schema: %w", err)
-	}
 	// The schema is repeated in the system message for providers that
 	// ignore response_format.
-	system := preamble + t.cfg.Prompt + "\n\nResponse schema:\n" + string(schemaText)
+	system := preamble + t.cfg.Prompt + "\n\nResponse schema:\n" + string(schema)
 	req := ai.ChatRequest{
 		Messages: []ai.Message{
 			{Role: "system", Content: system},
@@ -258,7 +289,7 @@ func capItems(items []Item) []Item {
 	out := make([]Item, len(items))
 	for i, it := range items {
 		it.Title = capText(it.Title)
-		it.Properties, it.Truncated = capValues(it.Properties)
+		it.properties, it.truncated = capValues(it.properties)
 		out[i] = it
 	}
 	return out
@@ -450,27 +481,6 @@ func (t *Task) valueSchema(pd metamodel.PropertyDef) map[string]any {
 	return base
 }
 
-// Proposal is the checked reply: the changes the model proposes.
-type Proposal struct {
-	Set    []PropertyChange
-	Relate []RelationProposal
-	// Model is the model that answered, as the provider reports it.
-	Model string
-}
-
-// PropertyChange proposes a new value for one subject property.
-type PropertyChange struct {
-	Property string
-	Current  any // nil when unset or hidden from the caller
-	Proposed any
-}
-
-// RelationProposal proposes relations of one type from the subject.
-type RelationProposal struct {
-	Relation string
-	To       []Item
-}
-
 // ReplyError is a reply that does not match what the task allows. Its
 // message names the property or relation and the rule, and never quotes
 // more of the reply than the offending value.
@@ -494,7 +504,7 @@ const maxReplyErrChars = 200
 // Parse checks resp against the task for in and returns the proposal.
 // A property whose proposed value equals its current value is left out, as
 // is a relation the subject already has.
-func (t *Task) Parse(resp *ai.ChatResponse, in Input) (*Proposal, error) {
+func (t *Task) Parse(resp *ai.ChatResponse, in Input) (*actionproposal.Proposal, error) {
 	if resp == nil {
 		return nil, replyErr("no reply")
 	}
@@ -519,13 +529,15 @@ func (t *Task) Parse(resp *ai.ChatResponse, in Input) (*Proposal, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Proposal{Set: set, Relate: relate, Model: resp.Model}, nil
+	p := actionproposal.Empty(in.Subject.Ref().String())
+	p.Set, p.Relate, p.Model = set, relate, resp.Model
+	return p, nil
 }
 
 // parseSet checks the proposed property values and keeps the ones that
 // change the subject, in config order.
-func (t *Task) parseSet(reply map[string]json.RawMessage, in Input) ([]PropertyChange, error) {
-	var out []PropertyChange
+func (t *Task) parseSet(reply map[string]json.RawMessage, in Input) ([]actionproposal.Value, error) {
+	out := []actionproposal.Value{}
 	writable := t.writable(in)
 	for _, name := range slices.Sorted(maps.Keys(reply)) {
 		if !slices.Contains(writable, name) {
@@ -542,17 +554,21 @@ func (t *Task) parseSet(reply map[string]json.RawMessage, in Input) ([]PropertyC
 		}
 		// The schema's own rules (range, scale, pattern, length) apply as
 		// on a write, so a proposal the write would refuse is refused here.
-		if err := t.validate(name, pd, val); err != nil {
+		if err = t.validate(name, pd, val); err != nil {
 			return nil, replyErr("property %q: %v", name, err)
 		}
 		cur := in.Subject.Properties[name]
 		if sameValue(cur, val) {
 			continue
 		}
-		out = append(out, PropertyChange{Property: name, Current: cur, Proposed: val})
+		change, err := proposedValue(name, cur, val)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, change)
 	}
 	// Keep config order for a stable dialog.
-	slices.SortStableFunc(out, func(a, b PropertyChange) int {
+	slices.SortStableFunc(out, func(a, b actionproposal.Value) int {
 		return slices.Index(t.cfg.Outputs.Set, a.Property) - slices.Index(t.cfg.Outputs.Set, b.Property)
 	})
 
@@ -561,8 +577,8 @@ func (t *Task) parseSet(reply map[string]json.RawMessage, in Input) ([]PropertyC
 
 // parseRelate checks the proposed relation targets against the candidates
 // and keeps the ones not already related.
-func (t *Task) parseRelate(reply map[string][]string, in Input) ([]RelationProposal, error) {
-	var out []RelationProposal
+func (t *Task) parseRelate(reply map[string][]string, in Input) ([]actionproposal.Relation, error) {
+	out := []actionproposal.Relation{}
 	relatable := t.relatable(in)
 	for name := range reply {
 		if !slices.ContainsFunc(relatable, func(i int) bool { return t.cfg.Outputs.Relate[i].Relation == name }) {
@@ -575,21 +591,32 @@ func (t *Task) parseRelate(reply map[string][]string, in Input) ([]RelationPropo
 		if len(ids) > r.EffectiveMax() {
 			return nil, replyErr("relation %q: %d entities proposed, at most %d allowed", r.Relation, len(ids), r.EffectiveMax())
 		}
-		var to []Item
 		for _, id := range ids {
 			k := slices.IndexFunc(in.Candidates[i].Items, func(c Item) bool { return c.ID == id })
 			if k < 0 {
 				return nil, replyErr("relation %q: %q is not one of the candidates", r.Relation, id)
 			}
 			if c := in.Candidates[i].Items[k]; !c.Related {
-				to = append(to, c)
+				out = append(out, actionproposal.Relation{
+					Relation: r.Relation, To: c.ID, ToType: c.Type, ToTitle: c.Title,
+				})
 			}
-		}
-		if len(to) > 0 {
-			out = append(out, RelationProposal{Relation: r.Relation, To: to})
 		}
 	}
 	return out, nil
+}
+
+// proposedValue is the change of property name from cur to val, as JSON.
+func proposedValue(name string, cur, val any) (actionproposal.Value, error) {
+	curJSON, err := json.Marshal(cur)
+	if err != nil {
+		return actionproposal.Value{}, fmt.Errorf("llmtask: encode current %s: %w", name, err)
+	}
+	valJSON, err := json.Marshal(val)
+	if err != nil {
+		return actionproposal.Value{}, fmt.Errorf("llmtask: encode proposed %s: %w", name, err)
+	}
+	return actionproposal.Value{Property: name, Current: curJSON, Proposed: valJSON}, nil
 }
 
 // stripFence removes a markdown code fence some models put around JSON

@@ -997,7 +997,7 @@ func TestProvider_Chat_ResponseFormat(t *testing.T) {
 		Messages: hiMessages(),
 		ResponseFormat: &JSONSchemaFormat{
 			Name: "triage", Strict: true,
-			Schema: map[string]any{"type": "object"},
+			Schema: json.RawMessage(`{"type":"object"}`),
 		},
 	})
 	if err != nil {
