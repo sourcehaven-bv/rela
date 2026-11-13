@@ -504,13 +504,13 @@ func isStreamContentType(ct string) bool {
 }
 
 // logRequestStart emits a debug log when an AI request begins.
-// We log the base URL (which has no path), model, and message count —
-// never headers, content, or the API key.
-func (p *openAICompatProvider) logRequestStart(baseURL, model string, messageCount int) {
+// We log the base URL (which has no path), model, and the number of chat
+// turns — never headers, content, or the API key.
+func (p *openAICompatProvider) logRequestStart(baseURL, model string, turns int) {
 	p.logger.Debug("ai request start",
 		"base_url", baseURL,
 		"model", model,
-		"messages", messageCount)
+		"messages", turns)
 }
 
 // logRequestSuccess emits an info log on successful response.

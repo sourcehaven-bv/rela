@@ -474,9 +474,9 @@ func (t *Task) valueSchema(pd metamodel.PropertyDef) map[string]any {
 	case pd.Type == metamodel.PropertyTypeBoolean:
 		base = map[string]any{"type": "boolean"}
 	case pd.Type == metamodel.PropertyTypeDate:
-		base = map[string]any{"type": "string", "format": "date"}
+		base = map[string]any{"type": "string", "description": "Date as YYYY-MM-DD"}
 	case pd.Type == metamodel.PropertyTypeDatetime:
-		base = map[string]any{"type": "string", "format": "date-time"}
+		base = map[string]any{"type": "string", "description": "Date and time in RFC 3339, such as 2026-12-01T10:00:00Z"}
 	case pd.Type == metamodel.PropertyTypeDecimal:
 		base = map[string]any{"type": "string", "description": "Decimal text, such as 12.50"}
 	default:

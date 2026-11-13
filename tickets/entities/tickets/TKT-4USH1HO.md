@@ -61,3 +61,5 @@ required properties are refused at config load.
   (`json.RawMessage`), so no exported type carries untyped data.
 - An `llmtask.Item` keeps the redacted entity and its field list, and
   builds the property values only when it encodes the input document.
+- Date and date-time outputs are described in the response schema rather
+  than given a JSON Schema `format`; the reply is checked either way.
