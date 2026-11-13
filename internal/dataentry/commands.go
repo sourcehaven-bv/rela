@@ -1066,7 +1066,8 @@ func containedProjectPath(projectRoot, filePath string) (string, error) {
 }
 
 func (h *commandHandler) buildCommandEnv(cmd CommandConfig, input *commandInput) []string {
-	// Never the token key or the database DSN; see cmdexec.Environ.
+	// Never the token key, the database DSN or a remote credential; see
+	// cmdexec.Environ.
 	env := cmdexec.Environ()
 	env = append(env,
 		"RELA_PROJECT_ROOT="+h.projectRoot(),

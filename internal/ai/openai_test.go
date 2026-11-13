@@ -155,8 +155,8 @@ func TestProvider_Chat_NoAuthHeaderWhenAPIKeyEnvEmpty(t *testing.T) {
 }
 
 // TestNewProvider_RefusesRemoteCredentialEnv pins that the provider
-// constructor refuses a remote credential variable, so the model's host
-// never receives it (TKT-RZSTAPZ).
+// constructor keeps calling Validate, which refuses a remote credential
+// variable, so the model's host never receives it (TKT-RZSTAPZ).
 func TestNewProvider_RefusesRemoteCredentialEnv(t *testing.T) {
 	_, err := NewOpenAICompatProvider(&Config{
 		BaseURL: "https://api.example.com/v1", Model: "m", APIKeyEnv: "REMOTE_CREDENTIAL_UP",

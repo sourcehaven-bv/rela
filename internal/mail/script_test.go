@@ -509,12 +509,15 @@ func TestConfig_RefusesRemoteCredentialEnv(t *testing.T) {
 	t.Parallel()
 
 	for _, name := range []string{"REMOTE_CREDENTIAL_UP", "remote_credential_up", "REMOTE_CREDENTIAL_"} {
-		cfg := &mail.Config{
-			Transport: mail.TransportSMTP, Host: "smtp.example.com", From: "a@example.com", PasswordVar: name,
-		}
-		require.ErrorContains(t, cfg.Validate(), "only for remotes.yaml", name)
-		_, err := mail.NewSMTPSender(cfg)
-		require.ErrorContains(t, err, "only for remotes.yaml", name)
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &mail.Config{
+				Transport: mail.TransportSMTP, Host: "smtp.example.com", From: "a@example.com", PasswordVar: name,
+			}
+			require.ErrorContains(t, cfg.Validate(), "only for remotes.yaml")
+			_, err := mail.NewSMTPSender(cfg)
+			require.ErrorContains(t, err, "only for remotes.yaml")
+		})
 	}
 }
 

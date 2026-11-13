@@ -1217,6 +1217,10 @@ deps:
       - validation
       - validationgraph
   cmdexec:
+    # secrets: Environ withholds every remote credential variable from child
+    # processes (TKT-RZSTAPZ). secrets is a leaf.
+    mayDependOn:
+      - secrets
     canUse:
       - xsys
   attachment:
