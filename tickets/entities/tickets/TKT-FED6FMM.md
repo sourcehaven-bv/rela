@@ -5,7 +5,9 @@ title: Remove unpaged list reads from request paths
 kind: enhancement
 priority: high
 effort: l
-status: ready
+started: "2026-11-13"
+completed: "2026-11-13"
+status: done
 ---
 
 ## Description
