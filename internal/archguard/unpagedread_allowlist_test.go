@@ -59,6 +59,10 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/appbuild/scheduler_foreach.go#Services.ScheduledForEachEntities": {1, batchJob,
 		"scheduled task for_each: selects the task's subjects from its entity type"},
 
+	// apptest: `rela test`.
+	"internal/apptest/actor.go#fileRun.list": {1, batchJob,
+		"`rela test` actor:list(type): lists every readable entity of a type in a case's fresh in-memory world"},
+
 	// cli: commands that read or rewrite every row.
 	"internal/cli/analyze_prose.go#collectProse": {1, batchJob,
 		"`rela analyze prose`: runs the checkers over every entity body, optionally of one type"},
