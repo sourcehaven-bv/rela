@@ -15,28 +15,15 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
-// listEntitiesErrStore yields the wrapped store's entities, then a
-// terminal error — modeling a scan that fails partway through. ID
-// generation must not run on this partial list.
-type listEntitiesErrStore struct {
+// highestIDErrStore fails HighestID, modeling a store that cannot say
+// which numbers are taken. ID generation must not guess.
+type highestIDErrStore struct {
 	store.Store
 	err error
 }
 
-func (s *listEntitiesErrStore) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
-	inner := s.Store.ListEntities(ctx, q)
-	return func(yield func(*entity.Entity, error) bool) {
-		for e, err := range inner {
-			if err != nil {
-				yield(nil, err)
-				return
-			}
-			if !yield(e, nil) {
-				return
-			}
-		}
-		yield(nil, s.err)
-	}
+func (s *highestIDErrStore) HighestID(context.Context, string) (int, error) {
+	return 0, s.err
 }
 
 // listRelationsErrStore yields a terminal error from ListRelations,
@@ -84,11 +71,11 @@ func newManagerOver(t *testing.T, st store.Store) *entitymanager.Manager {
 // ErrEntityAlreadyExists (a create never overwrites), so a bad scan
 // would surface as a spurious conflict rather than data loss.
 func TestCreate_FailsWhenIDScanErrors(t *testing.T) {
-	sentinel := errors.New("boom: entity scan failed mid-stream")
-	st := &listEntitiesErrStore{Store: memstore.New(), err: sentinel}
+	sentinel := errors.New("boom: highest id lookup failed")
+	st := &highestIDErrStore{Store: memstore.New(), err: sentinel}
 	mgr := newManagerOver(t, st)
 
-	e := entity.New("", "requirement") // auto-ID path → triggers collectAllIDs
+	e := entity.New("", "requirement") // auto-ID path → triggers HighestID
 	e.SetString("title", "needs an id")
 	_, err := mgr.CreateEntity(context.Background(), e, entity.CreateOptions{})
 	if !errors.Is(err, sentinel) {

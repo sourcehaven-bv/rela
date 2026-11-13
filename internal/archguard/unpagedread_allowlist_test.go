@@ -119,8 +119,6 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/docs/resolvers_graph.go#docRuntime.luaResolution": {1, batchJob, "docs build: renders how a world resolves a seeded type"},
 
 	// entitymanager: the write path.
-	"internal/entitymanager/core.go#collectAllIDs": {1, requestPath,
-		"id generation on create: reads every entity id when the store has no EntityIDs lister"},
 	"internal/entitymanager/manager_order.go#assignManagedOrder": {1, bounded,
 		"order on create: the assignSide closure gets orderSiblingQuery's From or To query; the matcher " +
 			"does not follow closure parameters"},
@@ -135,8 +133,9 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 		"rename dry run: scans every header for a case-folded id collision"},
 	"internal/entitymanager/unique.go#checkExternalRefUnique": {1, bounded,
 		"external ref uniqueness: one PropKeyEqual lookup per declaring (type, property)"},
-	"internal/entitymanager/unique.go#checkUniqueProperties": {1, requestPath,
-		"`unique:` check on every write: reads every entity of the type to compare scalar values"},
+	"internal/entitymanager/unique.go#uniqueScan.lookup": {1, bounded,
+		"`unique:` check: one PropEqual GraphQuery per unique property on the value written, so it " +
+			"returns the rows that already hold that value"},
 
 	// fsimport and importer: moving a whole project.
 	"internal/fsimport/copy.go#copier.copyEntities":    {1, batchJob, "fs import: copies every entity"},
@@ -207,10 +206,6 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	// visibility: the read-side ACL readers.
 	"internal/visibility/externalref.go#findByExternalRef": {1, bounded,
 		"external ref lookup: one PropKeyEqual GraphQuery per holder type"},
-	"internal/visibility/headerquery.go#HolderLookup.headersFromList": {1, requestPath,
-		"holder lookup for a store without graph queries: every entity of the holder type"},
-	"internal/visibility/holders.go#HolderLookup.unrestricted": {1, requestPath,
-		"unrestricted holder lookup for a store without graph queries: every entity of the holder type"},
 	"internal/visibility/luareader.go#ScriptReader.listGatedThenRanked": {1, passThrough,
 		"ScriptReader.ListEntities' load-then-filter fallback: runs its caller's query at every face; " +
 			"the HolderLookup callers pass a whole type"},

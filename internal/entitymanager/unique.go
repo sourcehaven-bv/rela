@@ -79,15 +79,9 @@ func checkUniqueProperties(
 			scan.scalar = append(scan.scalar, up)
 		}
 	}
-	if len(scan.scalar) > 0 {
-		q := store.EntityQuery{Type: e.Type, Faces: store.AllFaces()}
-		for other, err := range st.ListEntities(ctx, q) {
-			if err != nil {
-				// A partial scan cannot prove uniqueness — fail the write loud
-				// rather than admit a possible duplicate.
-				return fmt.Errorf("entitymanager: unique check for %s: %w", e.ID, err)
-			}
-			scan.compare(other)
+	for _, up := range scan.scalar {
+		if err := scan.lookup(ctx, st, up); err != nil {
+			return err
 		}
 	}
 	for _, ref := range scan.refs {
@@ -126,13 +120,46 @@ type uniqueScan struct {
 	violations    []*metamodel.ValidationError
 }
 
+// lookup reads the rows of e's type, at every face, whose property up.name
+// equals the value e writes, and compares them. One equality query per
+// unique property, so the check reads the rows that hold the value, not
+// the type (TKT-FED6FMM).
+//
+// The store's equality is a pre-filter, and [uniqueScan.compare] stays the
+// judge: PropEqual compares the stored value's string form and treats a
+// stored list as membership, so it can admit a row compare rejects, never
+// the reverse. A failed or partial read fails the write rather than admit a
+// possible duplicate. The query does not set SkipUnreadable, so an
+// unreadable row fails it too.
+func (s *uniqueScan) lookup(ctx context.Context, st store.Store, up uniqueProp) error {
+	q := store.GraphQuery{
+		EntityType: s.e.Type,
+		Props:      []store.PropPredicate{{Property: up.name, Op: store.PropEqual, Value: up.value}},
+		Faces:      store.AllFaces(),
+	}
+	for h, err := range store.GraphQueryHeaders(ctx, st, q) {
+		if err != nil {
+			return fmt.Errorf("entitymanager: unique check for %s: %w", s.e.ID, err)
+		}
+		s.compareProps(h.ID, h.Face, h.Properties, []uniqueProp{up})
+	}
+	return nil
+}
+
 // compare records the scalar values other shares with e at e's face.
 func (s *uniqueScan) compare(other *entity.Entity) {
+	s.compareProps(other.ID, other.Face, other.Properties, s.scalar)
+}
+
+// compareProps records the values of props that the row (id, face, values)
+// shares with e at e's face.
+func (s *uniqueScan) compareProps(id string, face entity.Face, values map[string]any, props []uniqueProp) {
 	e := s.e
-	if other.Face != e.Face || other.ID == s.excludeSelfID || other.ID == e.ID {
+	if face != e.Face || id == s.excludeSelfID || id == e.ID {
 		return
 	}
-	for _, up := range s.scalar {
+	other := &entity.Entity{ID: id, Face: face, Properties: values}
+	for _, up := range props {
 		if other.GetString(up.name) != up.value {
 			continue
 		}

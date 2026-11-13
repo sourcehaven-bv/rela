@@ -80,8 +80,9 @@ func NewRefusingHolderLookup() *HolderLookup { return &HolderLookup{refuse: true
 // and the property test is ANDed onto every verdict, AllowAll included, so
 // the row gate, the face allowlist and the world apply as on a list read.
 // Each row is redacted and the property is tested again on the redacted
-// row. A store without graph queries, or a reader that cannot redact a row
-// on its own, gets the same answer from a gated list read filtered in Go.
+// row. A reader with no read-query provider, or one that cannot redact a
+// row on its own, gets the same answer from a gated list read filtered in
+// Go.
 func (h *HolderLookup) Matching(ctx context.Context, q HolderQuery) (refs []entity.Ref, more bool, err error) {
 	if q.EntityType == "" || q.Property == "" || q.Limit <= 0 {
 		return nil, false, fmt.Errorf("%w: holder query needs a type, a property and a positive limit",
@@ -148,20 +149,9 @@ func (h *HolderLookup) gatedFallback(ctx context.Context, q HolderQuery) ([]enti
 
 // unrestricted is Matching with no gate and no redaction.
 func (h *HolderLookup) unrestricted(ctx context.Context, q HolderQuery) ([]entity.Ref, bool, error) {
-	gq, ok := h.raw.(store.GraphQueryer)
-	if !ok {
-		var rows []*entity.Entity
-		for e, err := range h.raw.ListEntities(ctx, store.EntityQuery{Type: q.EntityType, Faces: q.Faces}) {
-			if err != nil {
-				return nil, false, err
-			}
-			rows = append(rows, e)
-		}
-		return firstHolders(rows, q)
-	}
 	base := store.GraphQuery{EntityType: q.EntityType, Props: []store.PropPredicate{holderProp(q)}, Faces: q.Faces}
 	keep := func(hd store.EntityHeader) store.EntityHeader { return hd }
-	return pageHolders(ctx, gq, base, q, keep)
+	return pageHolders(ctx, h.raw, base, q, keep)
 }
 
 // holderProp is the store predicate of q: non-scalar equality, which is

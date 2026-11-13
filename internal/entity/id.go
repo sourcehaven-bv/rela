@@ -242,12 +242,21 @@ func GenerateNextID(existingIDs []string, prefix string) string {
 // GenerateSequentialID is [GenerateNextID] skipping skip numbers past the
 // highest existing one: skip 0 yields highest+1. A negative skip counts as 0.
 func GenerateSequentialID(existingIDs []string, prefix string, skip int) string {
-	highest := ExtractHighestNumber(existingIDs, prefix)
-	// Ensure prefix ends with dash
-	if !strings.HasSuffix(prefix, "-") {
-		prefix += "-"
-	}
-	return fmt.Sprintf("%s%03d", strings.ToUpper(prefix), highest+1+max(skip, 0))
+	return SequentialID(prefix, ExtractHighestNumber(existingIDs, prefix), skip)
+}
+
+// SequentialID formats the id that follows highest for prefix, skipping skip
+// numbers: skip 0 yields highest+1. A negative skip counts as 0. It is the
+// formatting half of [GenerateSequentialID], for a caller that reads the
+// highest number from the store instead of listing every id.
+func SequentialID(prefix string, highest, skip int) string {
+	return fmt.Sprintf("%s-%03d", SequentialPrefix(prefix), highest+1+max(skip, 0))
+}
+
+// SequentialPrefix is the prefix [SequentialID] writes, without the dash:
+// upper case, with a trailing dash removed. A store's HighestID takes it.
+func SequentialPrefix(prefix string) string {
+	return strings.ToUpper(strings.TrimSuffix(prefix, "-"))
 }
 
 // Short ID generation constants
@@ -295,7 +304,7 @@ func GenerateShortID(existingIDs []string, prefix string, entityCount int, caps 
 		existing[id] = struct{}{}
 	}
 
-	length := calculateIDLength(entityCount)
+	length := ShortIDLength(entityCount)
 
 	for attempts := range shortIDMaxAttempts {
 		id := generateRandomBase36(prefix, length, caps)
@@ -312,9 +321,22 @@ func GenerateShortID(existingIDs []string, prefix string, entityCount int, caps 
 	return generateRandomBase36(prefix, maxShortIDLength, caps)
 }
 
-// calculateIDLength determines the optimal ID length based on entity count.
+// ShortIDCandidates returns n random short ids for prefix, each attempt
+// longer than the one before when retrying: round 0 uses the length
+// entityCount calls for, and each later round one more character, up to
+// the maximum. A caller checks the batch for collisions in one lookup.
+func ShortIDCandidates(prefix string, entityCount, round, n int, caps string) []string {
+	length := min(ShortIDLength(entityCount)+max(round, 0), maxShortIDLength)
+	out := make([]string, n)
+	for i := range out {
+		out[i] = generateRandomBase36(prefix, length, caps)
+	}
+	return out
+}
+
+// ShortIDLength determines the optimal ID length based on entity count.
 // Uses birthday paradox thresholds to keep collision probability low.
-func calculateIDLength(entityCount int) int {
+func ShortIDLength(entityCount int) int {
 	switch {
 	case entityCount <= shortIDThreshold500:
 		return shortIDLength4
