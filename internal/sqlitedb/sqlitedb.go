@@ -432,7 +432,34 @@ CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);
 ` + softDeleteDDL + `
 ` + retiredIDsDDL + `
 ` + flowRunsDDL + `
+` + recordsDDL + `
 ` + searchKeyDDL
+
+// recordsDDL holds the record store (sqlrecords, TKT-J7Q9C4K): typed rows
+// owned by an entity, and the ledger transaction ids claimed so far. Times
+// are integer microseconds since the epoch. pgstore migration 0045 has the
+// same shape. Shared between schemaSQL and the v36 to v37 rung.
+const recordsDDL = `
+CREATE TABLE IF NOT EXISTS records (
+	id          TEXT NOT NULL PRIMARY KEY,
+	type        TEXT NOT NULL,
+	owner       TEXT NOT NULL,
+	ts          INTEGER NOT NULL,
+	recorded_at INTEGER NOT NULL,
+	recorded_by TEXT NOT NULL DEFAULT '',
+	grp         TEXT NOT NULL DEFAULT '',
+	reverses    TEXT NOT NULL DEFAULT '',
+	doc         TEXT NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS records_owner_ts_idx ON records(type, owner, ts, id);
+CREATE INDEX IF NOT EXISTS records_ts_idx ON records(type, ts, id);
+CREATE INDEX IF NOT EXISTS records_grp_idx ON records(type, grp) WHERE grp <> '';
+CREATE INDEX IF NOT EXISTS records_by_owner_idx ON records(owner);
+CREATE TABLE IF NOT EXISTS record_groups (
+	type TEXT NOT NULL,
+	grp  TEXT NOT NULL,
+	PRIMARY KEY (type, grp)
+) STRICT;`
 
 // flowRunsDDL holds the flow run store (sqlflowrun, TKT-PV9R0GK): the
 // execution state of each running flow, deleted when the run completes,

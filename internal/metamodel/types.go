@@ -50,6 +50,11 @@ type Metamodel struct {
 	// graph. See internal/piles.
 	Piles map[string]PileDecl `yaml:"piles,omitempty"`
 
+	// Records declares the record types: append-only typed rows attached to
+	// an owner entity and stored outside the graph (see [RecordTypeDef]).
+	// Policy only. See internal/records.
+	Records map[string]RecordTypeDef `yaml:"records,omitempty"`
+
 	// Transforms is the view-export registry: named markdown -> format
 	// conversions run via an external command (e.g. pandoc). Registering a
 	// transform here makes it available to every markdown-producing surface

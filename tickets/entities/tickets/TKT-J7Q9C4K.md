@@ -5,7 +5,9 @@ title: 'Record types: pluggable append-only record store for time series and led
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+started: "2026-11-13"
+completed: "2026-11-14"
+status: done
 ---
 
 ## Description

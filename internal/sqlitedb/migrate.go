@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 36
+const schemaVersion = 37
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -360,6 +360,12 @@ var migrations = []migration{
 		// new table; nothing to backfill.
 		to:    36,
 		apply: sqlSteps(channelFilesDDL),
+	},
+	{
+		// v36 → v37: the record store (TKT-J7Q9C4K). New tables; nothing
+		// to backfill.
+		to:    37,
+		apply: sqlSteps(recordsDDL),
 	},
 }
 

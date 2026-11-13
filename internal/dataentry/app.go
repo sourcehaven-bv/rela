@@ -297,6 +297,10 @@ type App struct {
 	// [SetLeases], which is the "feature absent" signal; its methods accept
 	// a nil receiver.
 	leases *leasesHandler
+	// records owns the record routes (TKT-J7Q9C4K). Nil until [SetRecords],
+	// which is the "feature absent" signal; its methods accept a nil
+	// receiver.
+	records *recordsHandler
 	// channels owns the channel routes (TKT-ZU7P13). Nil until
 	// [SetChannels], which is the "feature absent" signal; its methods
 	// accept a nil receiver.

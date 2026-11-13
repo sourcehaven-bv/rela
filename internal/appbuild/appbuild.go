@@ -61,6 +61,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/piles"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
+	"github.com/Sourcehaven-BV/rela/internal/records"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/rollup"
 	"github.com/Sourcehaven-BV/rela/internal/rootfs"
@@ -203,6 +204,11 @@ type Services struct {
 	// leaseShared is the backend and hub under leases, which a re-assembly
 	// shares. The backend is closed by Close, not by CloseAssembly.
 	leaseShared leaseShared
+	// records is the record service (see [Records]), nil when the schema
+	// declares no record types. recordStore is its backend, which a
+	// re-assembly shares.
+	records     *records.Service
+	recordStore records.Store
 	// flowEngine runs flows.yaml (see [FlowEngine]). Nil when it declares
 	// no flows.
 	flowEngine *flowengine.Engine
@@ -277,6 +283,8 @@ type Services struct {
 	// softDeleteStop stops the soft-delete GC ticker. It runs before the job
 	// queue closes, so no tick enqueues into a closed queue.
 	softDeleteStop func()
+	// recordRetentionStop stops the record retention ticker.
+	recordRetentionStop func()
 	// versionSweep is the store's version-reconciliation sweep, nil on a
 	// build or store without one. Per-assembled: started by finishAssembly,
 	// stopped in stopBackgroundServices, so Close and CloseAssembly stop the
@@ -2224,6 +2232,10 @@ type SharedBase struct {
 	// leaseShared is the predecessor's lease backend and hub, reused for the
 	// same reason. Empty for a first assembly.
 	leaseShared leaseShared
+	// recordStore is the predecessor's record backend, reused for the same
+	// reason: the file backend serializes writers with an in-process mutex.
+	// Nil for a first assembly.
+	recordStore records.Store
 	// idpRoles is the predecessor's IdP role store, reused so the in-memory
 	// fallback survives a schema reload. Nil for a first assembly.
 	idpRoles *idproles.Store
@@ -2288,6 +2300,7 @@ func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
 	next.attachLocker = prev.attachLocker
 	next.pileStore = prev.pileStore
 	next.leaseShared = prev.leaseShared
+	next.recordStore = prev.recordStore
 	next.idpRoles = prev.idpRoles
 	next.realtimeLocal = prev.realtimeLocal
 	next.channelHints = prev.channelHints
@@ -2924,6 +2937,11 @@ type backendOverrides struct {
 	// runs travel with rela.db; postgres finds its pool through the store.
 	flowRuns flowrun.Store
 
+	// recordStore replaces the file record store. Supplied by the sqlite
+	// recipe so records travel with rela.db; postgres finds its pool through
+	// the store.
+	recordStore records.Store
+
 	// schedulerState replaces the state.KV-backed scheduler run-state
 	// (BUG-TKL08E). Supplied by the postgres recipe, whose job queue is
 	// durable and shared: a run queued by one process may execute on
@@ -3060,7 +3078,7 @@ func assemble(
 	// comment fanout wrapping the alias rewriter.
 	attachLocker := base.attachmentLocker(st)
 	fanout := newAliasFanout(aliases, refs.comments, refs.piles, refs.leases, autoJobs,
-		refs.channelAliases, refs.realtimeLocal, newFlowRunAliases(refs.flowRuns))
+		refs.channelAliases, refs.realtimeLocal, newFlowRunAliases(refs.flowRuns), recordAliases(refs.recordStore))
 	mgr, err := buildEntityManager(base, st, fanout, templater,
 		resolvedACL, autoEngine, cascadeRunner, readDeps, pileWriterFor(refs.piles), versions, tw, computedSet,
 		attachLocker, fieldPol.gate, refs.guardInputs())
@@ -3171,6 +3189,7 @@ func finishAssembly(
 	s.attachLocker = attachLocker
 	s.piles, s.pileStore = refs.piles, refs.pileStore
 	s.leases, s.leaseShared = refs.leases, refs.leaseShared
+	s.records, s.recordStore = refs.records, refs.recordStore
 	s.channels = refs.channels
 	flowEngine, err := buildFlowEngine(s, refs.flowRuns)
 	if err != nil {
@@ -3216,7 +3235,9 @@ func finishAssembly(
 	if s.realtimeWorker, err = buildRealtimeWorker(s.base, s.store, s.stateKV, refs, outputs); err != nil {
 		return nil, err
 	}
-	// Last, so a failed assembly never leaves a sweep goroutine running.
+	// Last, so a failed assembly never leaves a ticker or sweep running.
+	s.recordRetentionStop = startRecordRetention(s.records, s.jobQueue,
+		envDuration("RELA_RECORD_RETENTION_INTERVAL", defaultRecordRetentionInterval))
 	if sweep != nil {
 		s.versionSweep = sweep
 		sweep.Start()
@@ -3478,6 +3499,10 @@ func (s *Services) stopBackgroundServices() {
 	if s.softDeleteStop != nil {
 		s.softDeleteStop()
 		s.softDeleteStop = nil
+	}
+	if s.recordRetentionStop != nil {
+		s.recordRetentionStop()
+		s.recordRetentionStop = nil
 	}
 	if s.versionSweep != nil {
 		s.versionSweep.Stop()
