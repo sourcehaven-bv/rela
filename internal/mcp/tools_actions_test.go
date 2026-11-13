@@ -268,3 +268,21 @@ func compactJSON(t *testing.T, text string) string {
 	}
 	return string(out)
 }
+
+// An llm action's proposal reaches the MCP caller in the result.
+func TestActionResultView_Proposal(t *testing.T) {
+	p := &script.ActionProposal{
+		Entity: "TKT-1",
+		Set:    []script.ProposedValue{{Property: "priority", Current: "low", Proposed: "high"}},
+		Relate: []script.ProposedRelation{{Relation: "affects", To: "CON-1", ToType: "concept", ToTitle: "Sessions"}},
+	}
+	got, err := json.Marshal(actionResultView(&script.ActionResponse{Proposal: p}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"proposal":{"entity":"TKT-1"`, `"proposed":"high"`, `"to":"CON-1"`} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("result %s lacks %s", got, want)
+		}
+	}
+}

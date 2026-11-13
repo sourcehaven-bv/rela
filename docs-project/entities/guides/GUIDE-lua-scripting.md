@@ -1404,6 +1404,11 @@ api_key_env: OPENAI_API_KEY            # optional, absent = no auth
 timeout_seconds: 60                    # optional, default 30
 ```
 
+To have a model propose changes to one entity, you may not need a script. A
+data-entry `llm:` action takes a prompt, the inputs to send and the outputs the
+model may propose, and lets the user review the proposal before it is saved.
+See "AI actions" in the data-entry guide.
+
 #### ai.chat
 
 Send a chat completion request with full control over messages, model, and parameters.

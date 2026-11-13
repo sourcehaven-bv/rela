@@ -104,6 +104,11 @@ func LoadContextOptions(host HostConfig, scriptPath string, mailLoader MailSende
 	return opts, nil
 }
 
+// AIProvider is the provider ai.yaml configures on host, for the one caller
+// that needs it outside a runtime: the declarative llm action
+// (script.AIProvider). ai.ErrConfigNotFound when there is no ai.yaml.
+func AIProvider(host HostConfig) (ai.Provider, error) { return loadAIProvider(host) }
+
 // loadAIProvider builds the provider ai.yaml configures, reading its API key
 // from the global secrets first. ai.ErrConfigNotFound when there is no
 // ai.yaml.

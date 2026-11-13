@@ -60,6 +60,41 @@ type ActionResponse struct {
 	// receiver honors it; the HTTP action endpoint refuses a response that
 	// carries it, so a script cannot believe it stored roles when it did not.
 	AssertedRoles []string `json:"-"`
+
+	// Proposal is what an `llm:` action proposes. The action writes
+	// nothing; the caller applies the changes it accepts through the
+	// ordinary write APIs. Nil for a script action.
+	Proposal *ActionProposal `json:"proposal,omitempty"`
+}
+
+// ActionProposal is the reply of an `llm:` action: changes to one entity
+// that the caller may accept or reject.
+type ActionProposal struct {
+	// Entity is the address of the entity the changes apply to.
+	Entity string `json:"entity"`
+	// Set are proposed property values.
+	Set []ProposedValue `json:"set"`
+	// Relate are proposed outgoing relations.
+	Relate []ProposedRelation `json:"relate"`
+	// Model is the model that answered, when the provider reports it.
+	Model string `json:"model,omitempty"`
+}
+
+// ProposedValue is one proposed property value.
+type ProposedValue struct {
+	Property string `json:"property"`
+	// Current is the value the caller could see when the action ran; nil
+	// when the property was unset.
+	Current  any `json:"current"`
+	Proposed any `json:"proposed"`
+}
+
+// ProposedRelation is one proposed relation from the entity to To.
+type ProposedRelation struct {
+	Relation string `json:"relation"`
+	To       string `json:"to"`
+	ToType   string `json:"to_type"`
+	ToTitle  string `json:"to_title"`
 }
 
 // IsRich reports whether the script chose the {status, body, content_type}

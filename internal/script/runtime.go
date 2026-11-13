@@ -56,6 +56,22 @@ func NewWriterRuntime(deps lua.WriteDeps, scriptPath string,
 	return lua.NewWriter(deps, stdout, all...), nil
 }
 
+// AIProvider is the AI provider a writer runtime built from deps would use:
+// the injected seam when there is one, else the one ai.yaml configures. It
+// is the provider of a declarative llm action (TKT-4USH1HO), which calls the
+// model without running Lua, and keeps the same single load point as
+// [NewWriterRuntime]. ai.ErrConfigNotFound when neither is set.
+func AIProvider(deps lua.WriteDeps) (ai.Provider, error) {
+	if deps.Seams.AI != nil {
+		return deps.Seams.AI, nil
+	}
+	host := deps.Host
+	if host == nil {
+		host = hostconfig.Dir(cacheDirFor(deps.ProjectRoot))
+	}
+	return lua.AIProvider(host)
+}
+
 // withoutAIConfig is a host config that reports ai.yaml as absent.
 type withoutAIConfig struct{ lua.HostConfig }
 

@@ -7,6 +7,16 @@ export interface ActionResponse {
   // Error fields (returned with non-2xx status)
   error?: string
   correlation_id?: string
+  // What an `llm:` action proposes. The action wrote nothing; the user
+  // applies the changes they accept through the ordinary write APIs.
+  proposal?: ActionProposal
+}
+
+export interface ActionProposal {
+  entity: string
+  set: { property: string; current: unknown; proposed: unknown }[]
+  relate: { relation: string; to: string; to_type: string; to_title: string }[]
+  model?: string
 }
 
 /**

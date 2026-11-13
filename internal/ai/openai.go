@@ -101,6 +101,21 @@ type chatRequestWire struct {
 	Stream      bool          `json:"stream"`
 	Temperature *float64      `json:"temperature,omitempty"`
 	MaxTokens   *int          `json:"max_tokens,omitempty"`
+
+	ResponseFormat *responseFormatWire `json:"response_format,omitempty"`
+}
+
+// responseFormatWire is the OpenAI `response_format` object for a JSON
+// schema reply.
+type responseFormatWire struct {
+	Type       string         `json:"type"`
+	JSONSchema jsonSchemaWire `json:"json_schema"`
+}
+
+type jsonSchemaWire struct {
+	Name   string         `json:"name"`
+	Schema map[string]any `json:"schema"`
+	Strict bool           `json:"strict"`
 }
 
 type messageWire struct {
@@ -231,6 +246,12 @@ func (p *openAICompatProvider) buildChatHTTPRequest(
 		Stream:      false,
 		Temperature: req.Temperature,
 		MaxTokens:   req.MaxTokens,
+	}
+	if f := req.ResponseFormat; f != nil {
+		wire.ResponseFormat = &responseFormatWire{
+			Type:       "json_schema",
+			JSONSchema: jsonSchemaWire{Name: f.Name, Schema: f.Schema, Strict: f.Strict},
+		}
 	}
 	return p.buildJSONRequest(ctx, "/chat/completions", wire, apiKey)
 }

@@ -146,7 +146,7 @@ func stringField(m map[string]any, key string) string {
 // the safety, and the content-type allowlist (script.validActionContentTypes)
 // is what keeps an active type off this surface in the first place.
 func writeActionResponse(w http.ResponseWriter, resp *script.ActionResponse) {
-	if resp == nil || (!resp.IsRich() && resp.Redirect == "" && resp.Message == "") {
+	if resp == nil || (!resp.IsRich() && resp.Redirect == "" && resp.Message == "" && resp.Proposal == nil) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -176,5 +176,25 @@ func actionEnvelope(resp *script.ActionResponse) v1.ActionResponse {
 		Redirect:    resp.Redirect,
 		Message:     resp.Message,
 		MessageType: resp.MessageType,
+		Proposal:    proposalWire(resp.Proposal),
 	}
+}
+
+// proposalWire converts an llm action's proposal to its wire type.
+func proposalWire(p *script.ActionProposal) *v1.ActionProposal {
+	if p == nil {
+		return nil
+	}
+	out := &v1.ActionProposal{
+		Entity: p.Entity, Model: p.Model,
+		Set:    make([]v1.ActionProposedValue, 0, len(p.Set)),
+		Relate: make([]v1.ActionProposedRelation, 0, len(p.Relate)),
+	}
+	for _, v := range p.Set {
+		out.Set = append(out.Set, v1.ActionProposedValue(v))
+	}
+	for _, r := range p.Relate {
+		out.Relate = append(out.Relate, v1.ActionProposedRelation(r))
+	}
+	return out
 }

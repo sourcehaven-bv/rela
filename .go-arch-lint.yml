@@ -302,6 +302,9 @@ components:
   affordances:      { in: internal/affordances }
   visibility:       { in: internal/visibility }
   ai:               { in: internal/ai }
+  # Declarative LLM actions (TKT-4USH1HO): request building and reply checks.
+  # Pure: no store, reader or provider.
+  llmtask:          { in: internal/llmtask }
   mail:             { in: internal/mail }
   audit:            { in: internal/audit }
   jwtauth:          { in: internal/jwtauth }
@@ -680,6 +683,8 @@ deps:
       - dataentryconfig
   dataentry:
     mayDependOn:
+      - ai
+      - llmtask
       - ygows
       - mentions
       - rollup
@@ -835,6 +840,11 @@ deps:
   cmdGenIcons:
     mayDependOn:
       - icondefs
+  llmtask:
+    mayDependOn:
+      - ai
+      - dataentryconfig
+      - metamodel
   conditionlint:
     mayDependOn:
       - dataentryconfig

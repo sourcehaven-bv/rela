@@ -6433,15 +6433,16 @@ actions:
 | `script`      | string | Lua script path, relative to the `actions/` directory (mutually exclusive with `set`) |
 | `params`      | map    | Static key-value parameters from config, exposed as `rela.params` (values must be strings — quote them in YAML) |
 | `confirm`     | bool or string | Show a confirmation dialog before a list, list-button or detail-page action runs (default: `false`). A string is the dialog text. An unquoted `yes`, `no`, `on`, `off`, `y` or `n` is refused, also in a block scalar (`\|` or `>`); quote it or tag it `!!str` to show it as text. The sidebar does not ask |
-| `available_on`| map    | Offer the action on detail pages — see [Actions on the detail page](#actions-on-the-detail-page). Requires `script` |
+| `available_on`| map    | Offer the action on detail pages — see [Actions on the detail page](#actions-on-the-detail-page). Requires `script` or `llm` |
 | `when`        | string | Predicate that must hold for the entity. Requires `available_on` |
 | `permission`  | string | Global named permission the caller must hold to run the action from a list, a list button, the sidebar, a next-action offer or a detail page |
 | `request`     | map    | Opt into request-scoped execution — see [Request-scoped actions](#request-scoped-actions). Requires `script` |
 | `capabilities`| map    | Ambient capability grant (`http`, `ai`, `write_file`, named `secrets`). Omitting it grants none |
 | `allow_acl_bypass` | string | `write` gives the script `admin.update_entity` inside `rela.bypass_acl`. See [Elevated updates](#elevated-updates). Requires `script`, `permission` and `elevated_updates` |
 | `elevated_updates` | map | Type to list of properties that `admin.update_entity` may set. Requires `allow_acl_bypass: write` |
+| `llm`         | map    | Ask an AI model to propose changes to the entity — see [AI actions](#ai-actions-llm). Mutually exclusive with `set` and `script` |
 
-Each action must have either `set` or `script`, not both.
+Each action must have exactly one of `set`, `script` or `llm`.
 
 `params` is **static config**, not runtime context: the values come from
 `data-entry.yaml` and are the same for every invocation. The selected
@@ -6895,6 +6896,125 @@ These rules are checked when the configuration loads:
 
 The script is trusted code: review it like the `acl.yaml` rules it bypasses.
 
+### AI actions (`llm`)
+
+An `llm:` action asks an AI model to propose changes to one entity. You
+configure what the model reads, what it is asked, and what it may propose. You
+do not write a script.
+
+The action proposes and the user decides. It writes nothing. The detail page
+shows the proposal in a dialog with a checkbox per change. The user applies
+the changes they check, and those writes go through the ordinary edit APIs.
+So the user's own ACL, validation and audit apply to them, as if they had made
+the edit by hand.
+
+```yaml
+actions:
+  triage:
+    label: "Suggest triage"
+    permission: tickets:triage
+    available_on:
+      entity_types: [ticket]
+    llm:
+      prompt: |
+        Pick a priority for this ticket and the concepts it affects.
+        Prefer fewer concepts over more.
+      inputs:
+        properties: [title, kind]
+        content: { max_chars: 8000 }
+        related:
+          - { relation: implements, fields: [title] }
+      outputs:
+        set: [priority]
+        relate:
+          - relation: affects
+            candidates: "entity.status ~= 'retired'"
+            fields: [title, summary]
+            limit: 100
+            max: 3
+```
+
+**Prompt.** `prompt` is plain text, sent as written. It is not a template. The
+entity's data goes to the model as a separate JSON document, so the prompt
+never needs to quote it. A short fixed preamble tells the model to treat that
+document as data, not as instructions.
+
+**Inputs.** These are the data the model reads. Everything is read as the user
+who runs the action, so a hidden entity is left out and a hidden property is
+never sent.
+
+| Field | Description |
+| ----- | ----------- |
+| `properties` | Properties of the entity to send. The current values of the `outputs.set` properties are sent too |
+| `content` | Send the entity's body. `max_chars` caps it (default 8000, at most 100000); a longer body is cut and marked as cut |
+| `related` | Related entities to send. Each entry names a `relation`, a `direction` (`outgoing`, the default, or `incoming`), the `fields` to send for each entity, and a `limit` (default 20, at most 50). The id, type and title are always sent |
+
+**Outputs.** These are what the model may propose.
+
+| Field | Description |
+| ----- | ----------- |
+| `set` | Properties of the entity the model may propose a value for. Computed, rollup, file and external-reference properties are refused |
+| `relate` | Outgoing relations the model may propose. The model can only pick from the `candidates` list rela sends, never invent an id |
+
+Each `relate` entry takes these fields:
+
+| Field | Description |
+| ----- | ----------- |
+| `relation` | The relation type. The entity's type must be one of its `from` types |
+| `candidates` | A condition on the target entity, in the language of a list `condition:`. Empty sends every target the user may read. `related(...)` is refused |
+| `fields` | Properties to send for each candidate |
+| `limit` | How many candidates to send (default 100, at most 200). When more match, the list is cut and the model is told so. The `limit` of every `inputs.related` and `relate` entry of one action may add up to at most 400 |
+| `max` | How many relations the model may propose (default 1, at most 20, and not more than the relation's `max_outgoing`) |
+
+A candidate the entity already points at is sent, marked as already related,
+and left out of the proposal. A candidate whose condition reads a property the
+user cannot see is left out.
+
+**What the model must answer.** rela derives a JSON schema from the outputs and
+the metamodel and asks the provider for an answer in that shape. An enum
+property may only take its declared values, an integer must be in range, and a
+relation may only name a candidate. rela checks the answer itself as well,
+because not every provider enforces the schema, and applies the metamodel's
+own value rules, such as a decimal's scale. An answer that breaks a rule is
+refused with an error that names the property, and no change from it is
+proposed.
+
+**What the model reads.** Each property value is cut at 2000 characters, and
+the record names the properties that were cut. When the user may write none of
+the `set` properties and no candidate is readable, rela answers with an empty
+proposal without calling the model.
+
+**Who may run it.** `permission:` is required, because each run costs a call to
+the AI provider. The proposal only covers what the user may change: a property
+they cannot write and a relation they cannot create are left out of the schema.
+When that leaves nothing, the action is refused before the model is called.
+Without an `acl.yaml`, every user holds every permission, so `permission:`
+admits everyone.
+
+**Provider.** The action uses the AI provider in `.rela/ai.yaml`, the same one
+`ai.chat` uses in a [Lua action script](#lua-action-scripts). Without it the
+action answers 503 `ai_not_configured`. `model` and `max_tokens` override the
+provider's defaults for this action. One call may take at most two minutes.
+
+**Text from other people.** The model reads entity data that other users wrote.
+Such text can carry instructions aimed at the model (prompt injection). rela
+sends it as data and bounds what the answer can be, but a free-text value can
+still say anything. The dialog therefore shows a proposed text value unticked;
+the user ticks it after reading it. Enum, number, date and relation proposals
+start ticked.
+
+**Stale proposals.** The model may take a while to answer. Before applying, the
+dialog reads the entity again. A property that changed in the meantime is not
+saved, and the dialog says so. A proposal that arrives after the user has moved
+to another entity is dropped.
+
+**From an MCP client.** `run_action` returns the proposal as
+`{proposal: {entity, set, relate}}`. Apply the changes you accept with
+`update_entity` and `create_relation`.
+
+Limits in this version: the action runs on one entity type without faces, and
+it cannot create entities or set relation properties.
+
 ### Reserved Keyboard Shortcuts
 
 The following keys are reserved for built-in list navigation and cannot be used as action keys:
@@ -6918,6 +7038,9 @@ The following keys are reserved for built-in list navigation and cannot be used 
 - `allow_acl_bypass` must be `write`, and needs `script`, `permission` and a non-empty `elevated_updates`
 - `elevated_updates` types and properties must exist in the metamodel; see
   [Elevated updates](#elevated-updates) for the property kinds it refuses
+- An `llm` action needs `permission`, a `prompt`, and `available_on` with exactly
+  one entity type without faces; see [AI actions](#ai-actions-llm) for the
+  rules on its inputs and outputs
 
 ## Piles
 

@@ -408,7 +408,9 @@ names the same code, for example `[permission_required]` or
 question to ask the user. `request` is the request body and is accepted only by
 an action whose `request` block sets `body: true`. The result is
 `{message, message_type, redirect}`, or `{status, content_type, body}` for an
-action that answers with a body. A script error gives the script path, line,
+action that answers with a body. An AI action (`llm:`) returns
+`{proposal: {entity, set, relate}}` and writes nothing; apply the changes you
+accept with `update_entity` and `create_relation`. A script error gives the script path, line,
 message and a correlation id that matches the server log.
 
 The action set follows `data-entry.yaml` reloads; the tools exist even when no
