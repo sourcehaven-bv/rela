@@ -221,6 +221,17 @@ func buildHighestIDSQL(prefix string) (sql string, args []any) {
 		[]any{prefix + "-", prefix + "."}
 }
 
+// IDTakenFolded implements store.FoldedIDReader as one indexed probe of
+// the live and the marked rows, the two that create and rename refuse.
+func (s *Store) IDTakenFolded(ctx context.Context, id, except string) (bool, error) {
+	var taken bool
+	err := s.db.QueryRow(ctx, `SELECT
+		EXISTS (SELECT 1 FROM entities WHERE lower(id) = lower($1) AND lower(id) <> lower($2))
+		OR EXISTS (SELECT 1 FROM marked_entities WHERE lower(id) = lower($1) AND lower(id) <> lower($2))`,
+		id, except).Scan(&taken)
+	return taken, err
+}
+
 // HighestID returns the highest numeric suffix among IDs of the form
 // "<prefix>-<n>", or 0. Matching memstore/fsstore: non-numeric suffixes are
 // skipped and gaps are ignored. The parse is done in Go (not SQL) to keep the

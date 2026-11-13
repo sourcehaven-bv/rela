@@ -151,8 +151,11 @@ func parseTime(s string) (time.Time, error) { return time.Parse(time.RFC3339Nano
 // +1 exported / +1 method: TxRollsBack, the optional store.TxRollback
 // capability (TKT-ZMPDZ3R).
 //
-//plimsoll:max-methods=58
-//plimsoll:max-exported-methods=40
+// +1 exported / +1 method (TKT-GIAGLQ3): IDTakenFolded, required by
+// store.FoldedIDReader in store.Store.
+//
+//plimsoll:max-methods=59
+//plimsoll:max-exported-methods=41
 type Store struct {
 	db *sql.DB
 

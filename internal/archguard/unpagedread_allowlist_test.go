@@ -7,7 +7,7 @@ package archguard
 // Each entry has a category (see readCategory) and a reason that says what
 // the read is for. requestPath entries are debt. The follow-ups of
 // TKT-FED6FMM remove them: TKT-F2EJQY8 (dataentry), TKT-D9UO9Y4 (mcp,
-// search), TKT-GIAGLQ3 (ingest, rename), TKT-P9QMEVI (lua) and TKT-EBBHM55
+// search), TKT-P9QMEVI (lua) and TKT-EBBHM55
 // (desktopnotify).
 var unpagedReadAllowlist = map[string]unpagedRead{
 	// aclmap: the who-can report.
@@ -134,8 +134,6 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 		"move: orderSiblingQuery sets From or To; the matcher cannot see into the helper"},
 	"internal/entitymanager/manager_order.go#readableOrderSiblings": {1, bounded,
 		"move: orderSiblingQuery sets From or To; the matcher cannot see into the helper"},
-	"internal/entitymanager/rename.go#idTakenByOther": {1, requestPath,
-		"rename dry run: scans every header for a case-folded id collision"},
 	"internal/entitymanager/unique.go#checkExternalRefUnique": {1, bounded,
 		"external ref uniqueness: one PropKeyEqual lookup per declaring (type, property)"},
 	"internal/entitymanager/unique.go#uniqueScan.lookup": {1, bounded,
@@ -151,9 +149,6 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/fsimport/verify.go#verifier.relations":   {1, batchJob, "fs import verification: every relation"},
 	"internal/importer/importer.go#Importer.validateRelations": {1, batchJob,
 		"import: reads every header to check the imported relations' endpoints"},
-
-	"internal/ingest/ingest.go#findTarget": {1, requestPath,
-		"webhook and subscription delivery: scans the find type for the record's match values, per record"},
 
 	// lua: script bindings. Scripts run inside requests (automations on a
 	// write, actions), so a whole-type binding is request-path debt.

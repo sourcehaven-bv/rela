@@ -40,7 +40,7 @@ import (
 // readout (Reset, Cost, Reads, Calls, String). The count moves with
 // store.Store rather than with this type.
 //
-//plimsoll:max-exported-methods=26
+//plimsoll:max-exported-methods=27
 type Counting struct {
 	store.Store
 
@@ -206,6 +206,12 @@ func (c *Counting) ListEntitiesPage(ctx context.Context, q store.EntityQuery) (s
 func (c *Counting) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {
 	c.hit("CountEntities")
 	return c.Store.CountEntities(ctx, q)
+}
+
+// IDTakenFolded counts the call; the answer is a bool, not a row.
+func (c *Counting) IDTakenFolded(ctx context.Context, id, except string) (bool, error) {
+	c.hit("IDTakenFolded")
+	return c.Store.IDTakenFolded(ctx, id, except)
 }
 
 func (c *Counting) HighestID(ctx context.Context, prefix string) (int, error) {
