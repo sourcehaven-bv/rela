@@ -83,8 +83,6 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/dataentry/gantt_handler.go#ganttHandler.collectGanttRound": {1, bounded,
 		"gantt closure round: a GraphQuery for the descendants of the frontier, so it reads the subtree " +
 			"the chart shows, not the type"},
-	"internal/dataentry/gantt_handler.go#ganttHandler.ganttEdges": {1, requestPath,
-		"gantt endpoint: reads every edge of each hierarchy relation type, then keeps those inside the node set"},
 	"internal/dataentry/helpers.go#listAllFromStore": {1, requestPath,
 		"listFromStoreByTypes with no type: drains every entity in the world (unreached today, per its doc)"},
 	"internal/dataentry/helpers.go#listFromStoreByTypes": {1, requestPath,
