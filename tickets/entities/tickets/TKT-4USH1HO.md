@@ -53,3 +53,9 @@ required properties are refused at config load.
 - Auto-apply through `jobs.Queue`.
 - `create` outputs, flow step outputs, list and batch runs.
 - Server-level provider configuration.
+
+## Implementation notes
+
+- The proposal has one type, `actionproposal.Proposal`, shared by the
+  data-entry API, MCP and the script layer. Its values are JSON
+  (`json.RawMessage`), so no exported type carries untyped data.
