@@ -113,4 +113,32 @@ func RunQueryTests(t *testing.T, f Factory) {
 		require.NoError(t, err)
 		assert.Equal(t, 4, n, "_ in the prefix is a literal, not a wildcard")
 	})
+
+	// Ids are case-insensitive identities, so a hand-written id in any case
+	// holds its number (BUG-RLBXTG5). A backend that compared the prefix
+	// bytewise missed "Req-9", and the next mint could collide with it.
+	t.Run("HighestIDFoldsPrefixCase", func(t *testing.T) {
+		s := f(t)
+		for _, id := range []string{"REQ-4", "Req-9", "rEQ-7"} {
+			require.NoError(t, s.CreateEntity(ctx(), entity.New(id, "requirement")), id)
+		}
+		for _, prefix := range []string{"REQ", "req", "Req"} {
+			n, err := s.HighestID(ctx(), prefix)
+			require.NoError(t, err)
+			assert.Equal(t, 9, n, "prefix %q", prefix)
+		}
+	})
+
+	// Every backend parses the suffix the same way: digits only. Some read a
+	// leading digit run, so "FEAT-50x" counted as 50 on them and not on
+	// others (BUG-RLBXTG5).
+	t.Run("HighestIDCountsDigitsOnly", func(t *testing.T) {
+		s := f(t)
+		for _, id := range []string{"FEAT-007", "FEAT-50x", "FEAT-60-1", "FEAT-SUB-70", "FEAT80"} {
+			require.NoError(t, s.CreateEntity(ctx(), entity.New(id, "feature")), id)
+		}
+		n, err := s.HighestID(ctx(), "FEAT")
+		require.NoError(t, err)
+		assert.Equal(t, 7, n)
+	})
 }
