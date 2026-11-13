@@ -1598,6 +1598,10 @@ type options struct {
 	// seams replace the clock, mail transport, HTTP client, AI provider and
 	// write_file directory; see [WithClock] and its siblings.
 	seams seams
+
+	// policyAmendment edits the policy parsed from acl.yaml; see
+	// [WithPolicyAmendment].
+	policyAmendment func(*acl.Policy) error
 }
 
 // WithBackgroundAutomationJobs runs `background: true` automation actions
@@ -2385,6 +2389,9 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 		var err error
 		aclPolicy, err = loadACLPolicy(cfg)
 		if err != nil {
+			return nil, err
+		}
+		if err := amendPolicy(aclPolicy, o.policyAmendment); err != nil {
 			return nil, err
 		}
 	}
