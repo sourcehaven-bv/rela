@@ -10,7 +10,7 @@
  * panel's tests and this module's tests pin the same mapping.
  */
 import { t } from '@/i18n'
-import { formatBytes, formatDate, formatDatetime } from '@/utils/format'
+import { formatBytes, formatDate, formatDatetime, isDateType } from '@/utils/format'
 import {
   renderMessageMarkdown,
   type MessageMentionLink,
@@ -279,7 +279,7 @@ function formattedItems(
   tz: string
 ): (Record<string, string> | undefined)[] | undefined {
   if (p.type !== 'object' || !Array.isArray(v)) return undefined
-  const dated = (p.fields ?? []).filter((f) => f.type === 'date' || f.type === 'datetime')
+  const dated = (p.fields ?? []).filter((f) => isDateType(f.type))
   if (!dated.length) return undefined
   let any = false
   const out = v.map((item) => {
