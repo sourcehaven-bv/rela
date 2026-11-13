@@ -161,7 +161,8 @@ func TestFlowEngine_InjectedACLChecksFlowsAgainstACLYAML(t *testing.T) {
 // TestFlowEngine_InjectedACLConfigPolicyEdges pins the edges of the flows
 // check under an injected ACL without a policy (BUG-E9A72XB): a missing
 // acl.yaml is named, and an acl.yaml that does not fit the schema does not
-// stop a host that does not enforce it, as for realtime.yaml.
+// stop a host that does not enforce it, as for realtime.yaml, but is logged
+// as a warning (GH-2226).
 func TestFlowEngine_InjectedACLConfigPolicyEdges(t *testing.T) {
 	t.Run("no acl.yaml names it", func(t *testing.T) {
 		root := writeFlowProject(t)
@@ -176,10 +177,12 @@ func TestFlowEngine_InjectedACLConfigPolicyEdges(t *testing.T) {
 		require.NoError(t, err)
 		data = append(data, "user_entity_type: ghost\nprincipal_property: email\n"...)
 		require.NoError(t, os.WriteFile(path, data, 0o600))
+		logs := captureWarnings(t)
 		svc, err := newOnDisk(t, backendtest.DSN(t), root, appbuild.WithACL(acl.NopACL{}))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = svc.Close() })
 		require.NotNil(t, appbuild.FlowEngine(svc))
+		require.Contains(t, logs(), "acl.yaml does not fit the schema")
 	})
 }
 
