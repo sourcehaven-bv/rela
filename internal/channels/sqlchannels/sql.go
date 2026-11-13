@@ -186,15 +186,36 @@ func mustJSON(v any) string {
 	return string(b)
 }
 
-const msgCols = `seq, rev, reply_to, reply_count, doc`
+const msgCols = `seq, rev, reply_to, reply_count, last_reply_at, in_stream, doc`
+
+// msgScan holds the columns of msgCols that are not message fields.
+type msgScan struct {
+	lastReplyAt int64
+	inStream    int
+	raw         string
+}
+
+// dest returns the scan destinations of msgCols for m and c, after any
+// leading columns.
+func (c *msgScan) dest(m *channels.Message) []any {
+	return []any{&m.Seq, &m.Rev, &m.ReplyTo, &m.ReplyCount, &c.lastReplyAt, &c.inStream, &c.raw}
+}
+
+// decode fills m from c's doc and columns. An error is damage: the row
+// was read.
+func (c *msgScan) decode(m channels.Message) (channels.Message, error) {
+	m.LastReplyAt = fromMicros(c.lastReplyAt)
+	m.Inline = m.ReplyTo != 0 && c.inStream == 1
+	return decodeMessage(m, c.raw)
+}
 
 func scanMessage(r interface{ Scan(...any) error }) (channels.Message, error) {
 	var m channels.Message
-	var raw string
-	if err := r.Scan(&m.Seq, &m.Rev, &m.ReplyTo, &m.ReplyCount, &raw); err != nil {
+	var c msgScan
+	if err := r.Scan(c.dest(&m)...); err != nil {
 		return m, err
 	}
-	return decodeMessage(m, raw)
+	return c.decode(m)
 }
 
 // decodeMessage fills m from its doc column raw. An error is damage: the
@@ -538,9 +559,12 @@ func (s *Store) appendBatch(
 	for i, nm := range batch {
 		msg := channels.Message{
 			Seq: plan.Seqs[i], Rev: rev + 1, Type: nm.Type, Author: nm.Author, At: nm.At, Props: nm.Props,
-			ReplyTo: nm.ReplyTo, SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy,
+			SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy,
 			MovedSession: plan.Moved(i), Mentions: nm.Mentions, NoUnread: nm.NoUnread, Batch: plan.Batch(),
 			CreatedChannel: created && i == 0,
+			Thread: channels.Thread{
+				ReplyTo: nm.ReplyTo, Inline: channels.ReplyInline(nm, parent, plan.Moved(i)),
+			},
 		}
 		if i == 0 {
 			msg.Files = files
@@ -631,20 +655,33 @@ func appendAddressed(
 }
 
 // insertMessage inserts out and, for a reply, raises the parent's reply
-// count at the next rev. It returns the last rev the append used.
+// count and sets its last reply time at the next rev. It returns the last
+// rev the append used.
 func insertMessage(ctx context.Context, q Querier, chanID int64, out channels.Message) (int64, error) {
 	if _, err := q.Exec(ctx, `INSERT INTO channel_messages
-		(channel_id, seq, rev, reply_to, reply_count, pending_at, counts, doc) VALUES (?, ?, ?, ?, 0, 0, ?, ?)`,
-		chanID, out.Seq, out.Rev, out.ReplyTo, countsOf(out), docOf(out)); err != nil {
+		(channel_id, seq, rev, reply_to, reply_count, pending_at, counts, in_stream, doc)
+		VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?)`,
+		chanID, out.Seq, out.Rev, out.ReplyTo, countsOf(out), inStreamOf(out), docOf(out)); err != nil {
 		return 0, err
 	}
 	if out.ReplyTo == 0 {
 		return out.Rev, nil
 	}
 	rev := out.Rev + 1
-	_, err := q.Exec(ctx, `UPDATE channel_messages SET reply_count = reply_count + 1, rev = ?
-		WHERE channel_id = ? AND seq = ?`, rev, chanID, out.ReplyTo)
+	at := micros(out.At)
+	_, err := q.Exec(ctx, `UPDATE channel_messages SET reply_count = reply_count + 1,
+		last_reply_at = CASE WHEN ? > last_reply_at THEN ? ELSE last_reply_at END, rev = ?
+		WHERE channel_id = ? AND seq = ?`, at, at, rev, chanID, out.ReplyTo)
 	return rev, err
+}
+
+// inStreamOf is the in_stream column of m: 1 when it shows in the main
+// stream (see [channels.InStream]).
+func inStreamOf(m channels.Message) int {
+	if channels.InStream(m) {
+		return 1
+	}
+	return 0
 }
 
 // insertFiles stores the bytes of the files of message seq: news[i] under
@@ -676,8 +713,9 @@ func insertNotice(
 		pending = micros(notice.Action.PendingAt)
 	}
 	_, err = q.Exec(ctx, `INSERT INTO channel_messages
-		(channel_id, seq, rev, reply_to, reply_count, pending_at, counts, doc) VALUES (?, ?, ?, 0, 0, ?, ?, ?)`,
-		chanID, notice.Seq, notice.Rev, pending, countsOf(notice), docOf(notice))
+		(channel_id, seq, rev, reply_to, reply_count, pending_at, counts, in_stream, doc)
+		VALUES (?, ?, ?, 0, 0, ?, ?, ?, ?)`,
+		chanID, notice.Seq, notice.Rev, pending, countsOf(notice), inStreamOf(notice), docOf(notice))
 	return notice, err
 }
 
@@ -873,7 +911,7 @@ func (s *Store) Remove(ctx context.Context, k channels.Key, seq int64, rm channe
 				return err
 			}
 		}
-		*m = channels.Message{Seq: m.Seq, Rev: m.Rev, ReplyTo: m.ReplyTo, ReplyCount: m.ReplyCount, Removed: &rm}
+		*m = channels.Message{Seq: m.Seq, Rev: m.Rev, Thread: m.Thread, Removed: &rm}
 		if err := removeAddressed(ctx, q, r.id, seq); err != nil {
 			return err
 		}
@@ -1275,8 +1313,10 @@ func (s *Store) SetSession(
 				pending = micros(notice.Action.PendingAt)
 			}
 			if _, err := q.Exec(ctx, `INSERT INTO channel_messages
-				(channel_id, seq, rev, reply_to, reply_count, pending_at, counts, doc) VALUES (?, ?, ?, 0, 0, ?, ?, ?)`,
-				r.id, notice.Seq, notice.Rev, pending, countsOf(notice), docOf(notice)); err != nil {
+				(channel_id, seq, rev, reply_to, reply_count, pending_at, counts, in_stream, doc)
+				VALUES (?, ?, ?, 0, 0, ?, ?, ?, ?)`,
+				r.id, notice.Seq, notice.Rev, pending, countsOf(notice), inStreamOf(notice),
+				docOf(notice)); err != nil {
 				return err
 			}
 			r.c.LastSeq, r.c.Rev = notice.Seq, notice.Rev
@@ -1408,20 +1448,21 @@ func (s *Store) Messages(ctx context.Context, k channels.Key, p channels.Page) (
 	if err != nil {
 		return nil, s.wrap(err, "read %s", k)
 	}
-	base := `SELECT ` + msgCols + ` FROM channel_messages WHERE channel_id = ?`
-	var query string
-	args := []any{r.id}
+	var cursor, order string
+	var cursorArgs []any
 	reverse := false
 	switch {
 	case p.RevOrder():
-		query, args = base+` AND rev > ? ORDER BY rev LIMIT ?`, append(args, p.AfterRev, p.Limit)
+		cursor, order, cursorArgs = ` AND rev > ?`, ` ORDER BY rev LIMIT ?`, []any{p.AfterRev}
 	case p.AfterSeq > 0:
-		query, args = base+` AND seq > ? ORDER BY seq LIMIT ?`, append(args, p.AfterSeq, p.Limit)
+		cursor, order, cursorArgs = ` AND seq > ?`, ` ORDER BY seq LIMIT ?`, []any{p.AfterSeq}
 	case p.BeforeSeq > 0:
-		query, args, reverse = base+` AND seq < ? ORDER BY seq DESC LIMIT ?`, append(args, p.BeforeSeq, p.Limit), true
+		cursor, order, cursorArgs, reverse = ` AND seq < ?`, ` ORDER BY seq DESC LIMIT ?`, []any{p.BeforeSeq}, true
 	default:
-		query, args, reverse = base+` ORDER BY seq DESC LIMIT ?`, append(args, p.Limit), true
+		order, reverse = ` ORDER BY seq DESC LIMIT ?`, true
 	}
+	query, args := pageQuery(r.id, p, cursor, cursorArgs)
+	query, args = query+order, append(args, p.Limit)
 	out, err := collect(ctx, s.db, query, args, scanMessage)
 	if err != nil {
 		return nil, s.wrap(err, "page %s", k)
@@ -1432,6 +1473,27 @@ func (s *Store) Messages(ctx context.Context, k channels.Key, p channels.Page) (
 		}
 	}
 	return out, nil
+}
+
+// pageQuery is the SELECT of a [channels.Page] of channel id, less its
+// ORDER BY and LIMIT, with cursor and its args applied. A thread page is a
+// UNION ALL of the parent, read by key, and its replies, read through
+// channel_messages_thread_idx: written as one OR, the planner walks every
+// message of the channel instead. The result columns name seq and rev, so
+// the caller's ORDER BY applies to the union.
+func pageQuery(id int64, p channels.Page, cursor string, cursorArgs []any) (query string, args []any) {
+	sel := `SELECT ` + msgCols + ` FROM channel_messages WHERE channel_id = ?`
+	switch {
+	case p.Thread > 0:
+		args = append([]any{id, p.Thread}, cursorArgs...)
+		args = append(append(args, id, p.Thread), cursorArgs...)
+		return sel + ` AND seq = ? AND reply_to = 0` + cursor +
+			` UNION ALL ` + sel + ` AND reply_to = ? AND reply_to > 0` + cursor, args
+	case p.Stream:
+		return sel + ` AND in_stream = 1` + cursor, append([]any{id}, cursorArgs...)
+	default:
+		return sel + cursor, append([]any{id}, cursorArgs...)
+	}
 }
 
 // collect runs a query and scans every row. The result is non-nil.

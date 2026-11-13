@@ -14,6 +14,25 @@ SQL-queryable) rather than a directory of markdown files — including
 deployments with **multiple server processes** sharing one database (see
 [Multiple writers](#multiple-writers)).
 
+## Headless server
+
+`rela-server-headless-postgres` is the same server with the web UI left out.
+It serves the REST API under `/api/v1`, server-sent events and the remote
+MCP endpoint, and nothing else:
+
+- `/` answers a short text that points to `/api/v1` and to the OpenAPI
+  document.
+- `/static/` and every other web UI path answer 404.
+- Custom apps no longer get the built-in editor, so `_rela-editor.js` and
+  `_rela-editor.css` answer 404.
+- Co-editing is off, and operator assets under `/_custom/` are not served.
+
+Use it when clients reach rela only through the API or MCP, or when you host
+a UI elsewhere. It ships in its own archive,
+`rela-headless-postgres_<version>_<os>_<arch>`, and takes the same flags as
+`rela-server-postgres`. To build it from source, run
+`just build-server-headless-postgres`. That build does not need the frontend.
+
 ## What still lives on disk
 
 PostgreSQL backs **data only**. The project's schema and configuration
@@ -340,6 +359,19 @@ write — are keyed by the schema they act on. PostgreSQL advisory locks
 are otherwise database-global, so without this two rela schemas sharing
 one database would migrate, sweep, and write behind each other's locks
 despite being entirely independent deployments.
+
+A long-running host (rela-server or the desktop app) whose project
+declares flows also runs the flow worker. The flow worker and the
+realtime worker each hold a session advisory lock while they lead, and
+each lock pins a pool connection. These pins share the pool with keyed
+entity locks:
+
+- `pool_max_conns` must be at least 4. rela-server refuses to start with
+  a smaller pool when the project declares flows.
+- At most `max(1, (pool_max_conns - 2) / 2)` keyed locks are held at
+  once. A further lock request waits for a free slot.
+- In tenant mode, each open tenant with flows pins one more connection.
+  Count it when you size `max_connections`.
 
 ## Version history (time machine)
 

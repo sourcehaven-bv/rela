@@ -1166,3 +1166,52 @@ func TestChannels_PostBatch(t *testing.T) {
 		t.Fatalf("GET _batch = %d, want 405", resp.StatusCode)
 	}
 }
+
+// TestChannels_ThreadPages pins the thread and top query parameters and the
+// reply fields on the wire (TKT-ETL233O).
+func TestChannels_ThreadPages(t *testing.T) {
+	env := newChannelEnv(t)
+	parent := env.postText(t, "alice", roomPath, "parent")
+	env.postText(t, "bob", roomPath, "other")
+	resp, b := env.do(t, "bob", http.MethodPost, roomPath+"/messages",
+		`{"type":"text","props":{"body":"reply"},"reply_to":1}`, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("reply = %d %s", resp.StatusCode, b)
+	}
+	reply := decodeAs[v1.Message](t, b)
+	if reply.Inline {
+		t.Fatalf("a plain reply is not inline: %+v", reply)
+	}
+	seqs := func(query string) []int64 {
+		t.Helper()
+		code, body := env.get(t, "alice", roomPath+"/messages?"+query)
+		if code != http.StatusOK {
+			t.Fatalf("%s = %d %s", query, code, body)
+		}
+		var out []int64
+		for _, m := range decodeAs[v1.MessagePage](t, body).Messages {
+			out = append(out, m.Seq)
+		}
+		return out
+	}
+	if got := seqs("thread=1"); !slices.Equal(got, []int64{1, reply.Seq}) {
+		t.Fatalf("thread page = %v", got)
+	}
+	if got := seqs("top=1"); !slices.Equal(got, []int64{1, 2}) {
+		t.Fatalf("top page = %v", got)
+	}
+	if got := seqs("top=0"); len(got) != 3 {
+		t.Fatalf("top=0 page = %v, want every message", got)
+	}
+	code, b := env.get(t, "alice", roomPath+"/messages?thread=1")
+	if m := decodeAs[v1.MessagePage](t, b).Messages[0]; code != http.StatusOK || m.Seq != parent.Seq ||
+		m.ReplyCount != 1 || m.LastReplyAt != reply.At {
+
+		t.Fatalf("parent = %d %s, want last_reply_at %s", code, b, reply.At)
+	}
+	for _, q := range []string{"thread=x", "top=yes", "thread=1&top=1", "thread=-1", "thread=0"} {
+		if code, b := env.get(t, "alice", roomPath+"/messages?"+q); code != http.StatusBadRequest {
+			t.Fatalf("%s = %d %s, want 400", q, code, b)
+		}
+	}
+}

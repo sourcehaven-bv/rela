@@ -38,6 +38,11 @@ type ReadRequest struct {
 	AfterSeq  int64
 	BeforeSeq int64
 	AfterRev  *int64
+	// Thread narrows the page to the top-level message with that seq and
+	// its replies; Stream to the main stream. At most one is set (see
+	// [channels.Page]).
+	Thread int64
+	Stream bool
 	// Limit is clamped to the configured page limit; 0 means that limit.
 	Limit int
 	// Signals includes the live ephemeral signals.
@@ -213,7 +218,9 @@ func (s *Service) Read(ctx context.Context, addr RawAddress, req ReadRequest) (R
 
 // readPage is the store page of req, its limit clamped to pageLimit.
 func readPage(req ReadRequest, pageLimit int) (channels.Page, error) {
-	page := channels.Page{AfterSeq: req.AfterSeq, BeforeSeq: req.BeforeSeq, Limit: req.Limit}
+	page := channels.Page{
+		AfterSeq: req.AfterSeq, BeforeSeq: req.BeforeSeq, Thread: req.Thread, Stream: req.Stream, Limit: req.Limit,
+	}
 	if req.AfterRev != nil {
 		page.AfterRev, page.ByRev = *req.AfterRev, true
 	}

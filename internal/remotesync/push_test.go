@@ -290,7 +290,8 @@ func TestPush_RefusalHoldsTheRow(t *testing.T) {
 	}
 	list, _ := LoadConflicts(ctx, tg.kv, "cat")
 	if len(list) != 1 || list[0].Reason != ReasonRefused || list[0].Field != "" ||
-		!strings.Contains(list[0].Detail, "422") || strings.Contains(list[0].Detail, "\x1b") {
+		!strings.Contains(list[0].Detail, "422") || strings.Contains(list[0].Detail, "\x1b") ||
+		list[0].Cause != CauseRefused || list[0].Status != http.StatusUnprocessableEntity {
 
 		t.Fatalf("conflict list: %+v", list)
 	}
@@ -331,10 +332,10 @@ func TestPush_RefusedCreate(t *testing.T) {
 		t.Fatalf("refused create: %+v", rep.Pushed)
 	}
 	list, _ := LoadConflicts(ctx, tg.kv, "cat")
-	if _, err = CheckResolve(list, local.Entity.ID, "", TakeRemote); err == nil {
+	if _, err = CheckResolve(list, Target{Local: local.Entity.ID}, TakeRemote); err == nil {
 		t.Fatal("a refused create resolved to the remote side")
 	}
-	if _, err = Resolve(ctx, tg.kv, m, local.Entity.ID, "", TakeLocal); err != nil {
+	if _, err = Resolve(ctx, tg.kv, m, Target{Local: local.Entity.ID}, TakeLocal); err != nil {
 		t.Fatal(err)
 	}
 	src.before = nil
@@ -391,10 +392,10 @@ func TestPush_ConflictIsHeldAndResolved(t *testing.T) {
 				t.Fatal("the local value was overwritten")
 			}
 
-			if _, err := Resolve(ctx, tg.kv, m, r1.ID, "nope", take); !errors.Is(err, ErrNoConflict) {
+			if _, err := Resolve(ctx, tg.kv, m, Target{Local: r1.ID, Field: "nope"}, take); !errors.Is(err, ErrNoConflict) {
 				t.Fatalf("resolve of an unknown field: %v", err)
 			}
-			if n, err := Resolve(ctx, tg.kv, m, r1.ID, "title", take); err != nil || n != 1 {
+			if n, err := Resolve(ctx, tg.kv, m, Target{Local: r1.ID, Field: "title"}, take); err != nil || n != 1 {
 				t.Fatalf("resolve: %d, %v", n, err)
 			}
 			rep = runSync(t, tg, m, src, Options{})
@@ -494,7 +495,9 @@ func TestPush_UncertainCreateIsNotRepeated(t *testing.T) {
 		t.Fatalf("uncertain create: %+v, %v", rep, err)
 	}
 	list, _ := LoadConflicts(ctx, tg.kv, "cat")
-	if len(list) != 1 || list[0].Reason != ReasonUncertain {
+	if len(list) != 1 || list[0].Reason != ReasonUncertain || list[0].Cause != CauseServerError ||
+		list[0].Status != http.StatusBadGateway {
+
 		t.Fatalf("conflict list: %+v", list)
 	}
 	src.before, src.sends = nil, nil
@@ -502,10 +505,10 @@ func TestPush_UncertainCreateIsNotRepeated(t *testing.T) {
 	if rep := runSync(t, tg, m, src, Options{}); rep.Held != 1 || src.writes() != 0 {
 		t.Fatalf("an uncertain create was sent again: %+v, %v", rep, src.sends)
 	}
-	if _, err := Resolve(ctx, tg.kv, m, local.Entity.ID, "", TakeRemote); err == nil {
+	if _, err := Resolve(ctx, tg.kv, m, Target{Local: local.Entity.ID}, TakeRemote); err == nil {
 		t.Fatal("an uncertain create resolved to the remote side")
 	}
-	if _, err := Resolve(ctx, tg.kv, m, local.Entity.ID, "", TakeLocal); err != nil {
+	if _, err := Resolve(ctx, tg.kv, m, Target{Local: local.Entity.ID}, TakeLocal); err != nil {
 		t.Fatal(err)
 	}
 	if rep := runSync(t, tg, m, src, Options{}); rep.Pushed.Created != 1 || rep.Held != 0 {

@@ -631,9 +631,11 @@ func writeMetaAt(d *disk, dir string, k channels.Key, m *meta) error {
 type line struct {
 	K string `json:"k"`
 	channels.Message
-	ReplyCount *int             `json:"p_reply_count,omitempty"`
-	Action     *channels.Action `json:"p_action,omitempty"`
-	Clear      bool             `json:"p_clear,omitempty"`
+	ReplyCount *int `json:"p_reply_count,omitempty"`
+	// LastReplyAt is set with ReplyCount: the time of the reply.
+	LastReplyAt *time.Time       `json:"p_last_reply_at,omitempty"`
+	Action      *channels.Action `json:"p_action,omitempty"`
+	Clear       bool             `json:"p_clear,omitempty"`
 }
 
 func encodeLine(l line) []byte {
@@ -686,6 +688,9 @@ func foldWith(data []byte, damaged func()) []channels.Message {
 			if l.ReplyCount != nil {
 				m.ReplyCount = *l.ReplyCount
 			}
+			if l.LastReplyAt != nil {
+				m.LastReplyAt = utc(*l.LastReplyAt)
+			}
 			if l.Clear {
 				m.Action = nil
 			} else if l.Action != nil {
@@ -704,6 +709,13 @@ func foldWith(data []byte, damaged func()) []channels.Message {
 }
 
 func normalize(m *channels.Message) {
+	// A reply stored before Inline existed carries only MovedSession,
+	// which made it inline then as now. A removal then cleared
+	// MovedSession, so such a reply removed before Inline existed leaves
+	// the stream, as the SQL backfill decides for the same row.
+	if m.ReplyTo != 0 && m.MovedSession {
+		m.Inline = true
+	}
 	m.At = utc(m.At)
 	m.EditedAt = utc(m.EditedAt)
 	if m.Removed != nil {

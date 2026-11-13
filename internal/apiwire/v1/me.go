@@ -29,6 +29,10 @@ type MeResponse struct {
 	// CanConfigure is true when the server offers the Configure space and
 	// the principal may use it (the config:edit permission).
 	CanConfigure bool `json:"can_configure,omitempty"`
+	// CanRemoteSync is true when the server serves the remote-sync routes
+	// and the principal holds remote:sync. It only decides whether the
+	// Remotes link is shown; the routes check the permission themselves.
+	CanRemoteSync bool `json:"can_remote_sync,omitempty"`
 }
 
 // MeOrg is the principal's org. ID is always set; Slug and Name are omitted

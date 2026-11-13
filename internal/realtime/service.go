@@ -473,6 +473,21 @@ func (s *Service) postEphemeral(c *call, mt *realtimecfg.MessageType, in PostInp
 	return s.postSignal(c, mt, vp, in.ReplyTo)
 }
 
+// inlineUnder lists the message types of ct whose choices a message of
+// type name answers: a reply of that type under one of them shows in the
+// main stream (see [channels.NewMessage.InlineUnder]).
+//
+// Nil: returned when no type's choices name it as their answer.
+func inlineUnder(ct *realtimecfg.ChannelType, name string) []string {
+	var out []string
+	for _, q := range sortedKeys(ct.MessageTypes) {
+		if c := ct.MessageTypes[q].Choices; c != nil && c.Answer == name {
+			out = append(out, q)
+		}
+	}
+	return out
+}
+
 // takePostTokens charges the rate limits of a post: the message type's
 // post rate, and for a post with files the channel's file rate and then
 // the identity's file rate across channels. It stops at the first refusal.

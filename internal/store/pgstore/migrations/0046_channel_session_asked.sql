@@ -1,4 +1,4 @@
--- pgstore schema, version 45: asked questions of a channel's session span
+-- pgstore schema, version 46: asked questions of a channel's session span
 -- (TKT-GR1MXL5).
 --
 -- Each channel row carries in session_asked the questions of the session's

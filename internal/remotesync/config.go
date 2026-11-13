@@ -34,17 +34,21 @@ package remotesync
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/url"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -53,6 +57,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient/httpremote"
+	"github.com/Sourcehaven-BV/rela/internal/remotestatus"
 	"github.com/Sourcehaven-BV/rela/internal/syncmerge"
 )
 
@@ -68,16 +73,34 @@ const (
 	OnGoneDelete = "delete"
 )
 
-// The conflict rules. Step 9a accepts only [ConflictHold]; the others are
-// named so a config that uses one gets a clear refusal (TKT-8ZGAEC5).
+// The conflict rules (DEC-2NFLAHB). A rule decides a field both sides
+// changed since the last sync. It is set per remote, per type and per field;
+// the most specific one applies.
 const (
 	// ConflictHold changes neither side and puts the field on the
 	// conflict list until someone resolves it. It is the default.
-	ConflictHold   = "hold"
-	conflictLatest = "latest"
-	conflictLocal  = "local"
-	conflictRemote = "remote"
+	ConflictHold = "hold"
+	// ConflictLatest takes the value of the side that changed the row last,
+	// by the last-updated times both sides serve, and keeps the losing local
+	// value on the conflict list. It holds instead when a time is withheld,
+	// not trusted, or the same on both sides.
+	ConflictLatest = "latest"
+	// ConflictLocal keeps the local value and sends it to the remote.
+	ConflictLocal = "local"
+	// ConflictRemote takes the remote value.
+	ConflictRemote = "remote"
 )
+
+// DefaultMaxClockSkew is how far a last-updated time may lie in the future
+// before latest stops trusting it. MaxMaxClockSkew bounds the setting.
+const (
+	DefaultMaxClockSkew = 5 * time.Minute
+	MaxMaxClockSkew     = time.Hour
+)
+
+// DefaultSupersededRetention is how long a superseded entry stays on the
+// conflict list when superseded_retention is not set.
+const DefaultSupersededRetention = 30 * 24 * time.Hour
 
 // Defaults and bounds of the per-remote limits.
 const (
@@ -100,9 +123,9 @@ type Config struct {
 
 // Remote is one source this instance pulls from.
 type Remote struct {
-	Description string `yaml:"description,omitempty"`
-	// URL is the source's base address, as for `rela reconcile --remote`.
-	URL string `yaml:"url"`
+	// Settings are the settings a remote's status shows. Empty Conflict
+	// means [ConflictHold] and empty OnGone means [OnGoneDetach].
+	remotestatus.Settings `yaml:",inline"`
 	// Credential names where the credential presented to the remote comes
 	// from: exactly one of an environment variable, a file, or a global
 	// secret under remote_credential. The value never appears here.
@@ -110,17 +133,8 @@ type Remote struct {
 	// AuthHeader is the request header that carries the credential. Empty
 	// means Authorization, which sends it as a bearer token.
 	AuthHeader string `yaml:"auth_header,omitempty"`
-	// RunAs is the identity a scheduled pull runs and writes as. Empty means
-	// the scheduler's own identity, as for a scheduled task. A pull by hand
-	// runs as the person who starts it.
-	RunAs string `yaml:"run_as,omitempty"`
-	// Every is the pull schedule in schedules.yaml syntax. Empty means the
-	// remote is pulled only by `rela remote pull`.
-	Every string `yaml:"every,omitempty"`
 	// AllowInsecureHTTP permits plain http to a host that is not loopback.
 	AllowInsecureHTTP bool `yaml:"allow_insecure_http,omitempty"`
-	// OnGone is [OnGoneDetach] (the default) or [OnGoneDelete].
-	OnGone string `yaml:"on_gone,omitempty"`
 	// MaxGone is how many rows one run may detach or delete before it is
 	// refused. Nil means [DefaultMaxGone]; zero refuses any.
 	MaxGone *int `yaml:"max_gone,omitempty"`
@@ -133,13 +147,16 @@ type Remote struct {
 	// MaxBytes caps the bytes one run reads in fetched rows; the rest wait
 	// for the next run. Zero means [DefaultMaxBytes].
 	MaxBytes int64 `yaml:"max_bytes,omitempty"`
-	// Push makes the remote two-way: after each pull, the run pushes the
-	// local changes to mapped fields, and the shared local rows the remote
-	// does not have yet, through the remote's write API (DEC-2NFLAHB).
-	Push bool `yaml:"push,omitempty"`
-	// Conflict is the rule for a field both sides changed since the last
-	// sync. Empty means [ConflictHold].
-	Conflict string `yaml:"conflict,omitempty"`
+	// MaxClockSkew is how far in the future a last-updated time may lie
+	// before the latest rule holds instead of trusting it, as a Go duration
+	// such as "5m". Empty means [DefaultMaxClockSkew].
+	MaxClockSkew string `yaml:"max_clock_skew,omitempty"`
+	// SupersededRetention is how long a superseded entry stays on the
+	// conflict list, as a Go duration or a whole number of days such as
+	// "30d". Empty means [DefaultSupersededRetention]. Zero keeps no losing
+	// local value at all; the entry then holds only digests and is not
+	// dropped by age.
+	SupersededRetention string `yaml:"superseded_retention,omitempty"`
 	// Entities maps source entity types, by name, to local ones.
 	Entities map[string]EntityMap `yaml:"entities"`
 	// Relations maps source relation types, by name, to local ones.
@@ -172,8 +189,13 @@ type RelationMap struct {
 	// Type is the local type; empty means the source type's name.
 	Type string `yaml:"type,omitempty"`
 	// Fields maps local relation meta to source meta; "content" is the
-	// body. The source wins on these.
+	// body. On a remote with push, meta flows both ways under the conflict
+	// rules; the body always comes from the source.
 	Fields map[string]string `yaml:"fields,omitempty"`
+	// Conflict overrides the remote's conflict rule for this type.
+	Conflict string `yaml:"conflict,omitempty"`
+	// FieldConflicts overrides the conflict rule per local meta field.
+	FieldConflicts map[string]string `yaml:"field_conflicts,omitempty"`
 }
 
 // Parse decodes and validates remotes.yaml against meta. Every problem is
@@ -247,11 +269,14 @@ type RelationMapping struct {
 	Fields        []FieldMapping
 }
 
-// FieldMapping is one owned field: the local field, typed, and the source
-// field it is read from.
+// FieldMapping is one owned field: the local field, typed, the source field
+// it is read from, and the conflict rule that applies to it.
 type FieldMapping struct {
 	Local  syncmerge.Field
 	Remote string
+	// Rule is the field's conflict rule, resolved from the field, type and
+	// remote settings. It is never empty after [Compile].
+	Rule string
 }
 
 // baseKey names the field in a ledger row's base. It holds both names, so a
@@ -340,6 +365,10 @@ func (c *compiler) remote(p Remote) {
 		c.fail("max_bytes %d must be between 0 (the default, %d) and %d", p.MaxBytes, DefaultMaxBytes, MaxMaxBytes)
 	}
 	c.rule("conflict", p.Conflict)
+	c.clockSkew(p.MaxClockSkew)
+	if _, err := parseRetention(p.SupersededRetention); err != nil {
+		c.fail("%v", err)
+	}
 	if len(p.Entities) == 0 {
 		c.fail("entities: map at least one source type")
 	}
@@ -410,14 +439,7 @@ func (c *compiler) entity(src string, em EntityMap) {
 			return
 		}
 	}
-	c.rule(fmt.Sprintf("entities: %q: conflict", src), em.Conflict)
-	for _, field := range sortedKeys(em.FieldConflicts) {
-		if !slices.ContainsFunc(fields, func(f FieldMapping) bool { return f.Local.Name == field }) {
-			c.fail("entities: %q: field_conflicts: %q is not a mapped field", src, field)
-			continue
-		}
-		c.rule(fmt.Sprintf("entities: %q: field_conflicts: %q", src, field), em.FieldConflicts[field])
-	}
+	c.rules(fmt.Sprintf("entities: %q", src), em.Conflict, em.FieldConflicts, fields)
 	share, ok := c.share(src, local, em.Share)
 	if !ok {
 		return
@@ -425,15 +447,41 @@ func (c *compiler) entity(src string, em EntityMap) {
 	c.m.Entities[src] = &EntityMapping{Source: src, Local: local, Ref: em.Ref, Fields: fields, Share: share}
 }
 
-// rule checks a conflict rule. Only hold is implemented; the other rules
-// of DEC-2NFLAHB are refused by name until they are.
+// rule checks a conflict rule.
 func (c *compiler) rule(where, rule string) {
 	switch rule {
-	case "", ConflictHold:
-	case conflictLatest, conflictLocal, conflictRemote:
-		c.fail("%s: rule %q is not supported yet; use %s", where, rule, ConflictHold)
+	case "", ConflictHold, ConflictLatest, ConflictLocal, ConflictRemote:
 	default:
-		c.fail("%s: unknown rule %q; use %s", where, rule, ConflictHold)
+		c.fail("%s: unknown rule %q; use %s, %s, %s or %s",
+			where, rule, ConflictHold, ConflictLatest, ConflictLocal, ConflictRemote)
+	}
+}
+
+// rules checks a type's conflict rule and its per-field rules, and sets each
+// field's rule: the field's own, else the type's, else the remote's, else
+// hold.
+func (c *compiler) rules(where, typeRule string, perField map[string]string, fields []FieldMapping) {
+	c.rule(where+": conflict", typeRule)
+	for _, field := range sortedKeys(perField) {
+		if !slices.ContainsFunc(fields, func(f FieldMapping) bool { return f.Local.Name == field }) {
+			c.fail("%s: field_conflicts: %q is not a mapped field", where, field)
+			continue
+		}
+		c.rule(fmt.Sprintf("%s: field_conflicts: %q", where, field), perField[field])
+	}
+	for i := range fields {
+		fields[i].Rule = cmp.Or(perField[fields[i].Local.Name], typeRule, c.m.Remote.Conflict, ConflictHold)
+	}
+}
+
+// clockSkew checks max_clock_skew.
+func (c *compiler) clockSkew(raw string) {
+	if raw == "" {
+		return
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 || d > MaxMaxClockSkew {
+		c.fail("max_clock_skew %q must be a duration above 0 and at most %s", raw, MaxMaxClockSkew)
 	}
 }
 
@@ -497,7 +545,42 @@ func (c *compiler) relation(src string, rm RelationMap) {
 			return
 		}
 	}
+	// A push finds the source type of a local relation by its local type, so
+	// two source types may not share one.
+	if c.m.Remote.Push {
+		for _, other := range sortedKeys(c.m.Relations) {
+			if c.m.Relations[other].Local == local {
+				c.fail("relations: %q and %q both map to local type %q, which a remote with push does not support",
+					other, src, local)
+				return
+			}
+		}
+	}
+	if !c.relationRules(src, &rm, fields) {
+		return
+	}
+	c.rules(fmt.Sprintf("relations: %q", src), rm.Conflict, rm.FieldConflicts, fields)
 	c.m.Relations[src] = &RelationMapping{Source: src, Local: local, Fields: fields}
+}
+
+// relationRules refuses relation conflict rules that would never apply: a
+// remote without push keeps the source's meta, and relation content is only
+// pulled.
+func (c *compiler) relationRules(src string, rm *RelationMap, fields []FieldMapping) bool {
+	if rm.Conflict == "" && len(rm.FieldConflicts) == 0 {
+		return true
+	}
+	if !c.m.Remote.Push {
+		c.fail("relations: %q: conflict rules need push: true; a remote without push keeps the source's meta", src)
+		return false
+	}
+	for _, f := range fields {
+		if f.Local.Kind == syncmerge.KindContent && rm.FieldConflicts[f.Local.Name] != "" {
+			c.fail("relations: %q: field_conflicts: %q is relation content, which is only pulled", src, f.Local.Name)
+			return false
+		}
+	}
+	return true
 }
 
 // typedFields types a local-to-source field map and checks the source
@@ -650,9 +733,90 @@ func (p Remote) maxFetch() int {
 	return p.MaxFetch
 }
 
+// maxClockSkew is the parsed max_clock_skew. [Compile] has checked it.
+func (p Remote) maxClockSkew() time.Duration {
+	d, err := time.ParseDuration(p.MaxClockSkew)
+	if err != nil || d <= 0 {
+		return DefaultMaxClockSkew
+	}
+	return d
+}
+
+// supersededRetention is the parsed superseded_retention. [Compile] has
+// checked it.
+func (p Remote) supersededRetention() time.Duration {
+	d, err := parseRetention(p.SupersededRetention)
+	if err != nil {
+		return DefaultSupersededRetention
+	}
+	return d
+}
+
+// maxRetentionDays bounds a retention in days, so it cannot overflow.
+const maxRetentionDays = 36500
+
+// parseRetention parses a superseded_retention value: empty for the
+// default, a whole number of days ("30d"), or a Go duration ("12h", "0").
+func parseRetention(raw string) (time.Duration, error) {
+	if raw == "" {
+		return DefaultSupersededRetention, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if days, ok := strings.CutSuffix(raw, "d"); ok {
+		n, aerr := strconv.Atoi(days)
+		if aerr == nil && n > maxRetentionDays {
+			aerr = errors.New("too long")
+		}
+		d, err = time.Duration(n)*24*time.Hour, aerr
+	}
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("superseded_retention %q must be a duration of 0 or more, such as 30d or 12h", raw)
+	}
+	return d, nil
+}
+
 func (p Remote) maxBytes() int64 {
 	if p.MaxBytes == 0 {
 		return DefaultMaxBytes
 	}
 	return p.MaxBytes
+}
+
+// MappedTypes lists the types m maps, entities first, each sorted by
+// source type.
+func (m *Mapping) MappedTypes() []remotestatus.MappedType {
+	out := make([]remotestatus.MappedType, 0, len(m.Entities)+len(m.Relations))
+	for _, src := range slices.Sorted(maps.Keys(m.Entities)) {
+		em := m.Entities[src]
+		out = append(out, remotestatus.MappedType{Local: em.Local, Source: em.Source, Fields: mappedFields(em.Fields)})
+	}
+	for _, src := range slices.Sorted(maps.Keys(m.Relations)) {
+		rm := m.Relations[src]
+		out = append(out, remotestatus.MappedType{
+			Kind: KindRelation, Local: rm.Local, Source: rm.Source, Fields: mappedFields(rm.Fields),
+		})
+	}
+	return out
+}
+
+func mappedFields(fields []FieldMapping) []remotestatus.MappedField {
+	out := make([]remotestatus.MappedField, len(fields))
+	for i, f := range fields {
+		out[i] = remotestatus.MappedField{Local: f.Local.Name, Remote: f.Remote, Rule: f.Rule}
+	}
+	return out
+}
+
+// Status is remote name's settings with their defaults applied. It has
+// no mapped types and no run health; the caller adds those.
+func (p Remote) Status(name string) remotestatus.Remote {
+	settings := p.Settings
+	if settings.Conflict == "" {
+		settings.Conflict = ConflictHold
+	}
+	settings.OnGone = p.onGone()
+	return remotestatus.Remote{
+		Name: name, Settings: settings, CredentialKind: p.Credential.Kind(),
+		MaxClockSkew: p.maxClockSkew(), SupersededRetention: p.supersededRetention(),
+	}
 }

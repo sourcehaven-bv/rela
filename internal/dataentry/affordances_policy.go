@@ -90,6 +90,11 @@ func relationVerdictsWire(v affordances.RelationVerdicts) RelationVerdicts {
 	return RelationVerdicts{Types: maps.Clone(v.Types)}
 }
 
+// RelationMetaRestricted implements [relationMetaRestrictor].
+func (p *policyResolver) RelationMetaRestricted(ctx context.Context, from *entityPkg.Entity, relType string) bool {
+	return affordances.RelationMetaRestricted(ctx, p.inner, from, relType)
+}
+
 // RelationFieldVerdicts forwards to the wrapped policy resolver, making
 // policyResolver satisfy [RelationVisibilityResolver] (TKT-B1F5Q1). Only the
 // policy-backed resolver implements this — Nop / Demo do not, so relation meta

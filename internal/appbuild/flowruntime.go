@@ -122,15 +122,36 @@ func buildFlowEngine(s *Services, runs flowrun.Store) (*flowengine.Engine, error
 		policy = d.Policy()
 	}
 	meta := s.meta
-	return flowengine.New(flowengine.Deps{
+	if s.cfgLoader != nil {
+		if err := checkFlowActions(context.Background(), flows, s.cfgLoader); err != nil {
+			return nil, err
+		}
+	}
+	// Only a long-running process queues attempts: a one-shot one would
+	// exit before its queue ran them.
+	var queue flowengine.JobQueue
+	q := automationJobQueue(s.base, s.jobQueue)
+	if q != nil {
+		queue = flowJobQueue{q: q}
+	}
+	eng, err := flowengine.New(flowengine.Deps{
 		Flows: flows, Meta: meta, Runs: lockFlowRuns(s.store, runs),
+		Jobs: queue, JobRunner: newFlowJobRunner(s, as),
 		Headers:  flowHeaders{mgr: s.entityManager, as: as},
 		Outputs:  flowOutputs{mgr: entitymanager.FieldGated(s.entityManager), as: as},
 		Subjects: flowSubjects{st: s.store, rows: reader, as: as},
 		Compile: func(name string, src []byte, version string) (*flowcfg.Flow, error) {
 			return flowcfg.ParseFlow(name, src, version, meta, policy)
 		},
+		Now: s.base.clock(),
 	})
+	if err != nil || q == nil {
+		return eng, err
+	}
+	if err := registerFlowJobs(q, eng); err != nil {
+		return nil, err
+	}
+	return eng, nil
 }
 
 // openFlowEdits opens the run store into overrides.flowRuns and builds the
@@ -352,10 +373,11 @@ func (o flowOutputs) writer(ctx context.Context, runAs string) (context.Context,
 	return o.as(ctx, runAs)
 }
 
-// Set writes the output as run's own write: run's outside_edits do not
-// narrow it, every other run's still do (TKT-XI7IDBS).
+// Set writes the output of state as run's own write: the outside_edits of
+// that state do not narrow it, every other run's and state's still do
+// (TKT-XI7IDBS).
 func (o flowOutputs) Set(
-	ctx context.Context, runAs string, run flow.RunID, subject entity.Ref, props map[string]any,
+	ctx context.Context, runAs string, run flow.RunID, state string, subject entity.Ref, props map[string]any,
 ) error {
 	ctx, err := o.writer(ctx, runAs)
 	if err != nil {
@@ -364,7 +386,7 @@ func (o flowOutputs) Set(
 	if len(props) == 0 {
 		return nil
 	}
-	_, err = o.mgr.PatchEntity(flowedits.WithinRun(ctx, run), subject.String(), entity.Patch{Properties: props})
+	_, err = o.mgr.PatchEntity(flowedits.WithinRun(ctx, run, state), subject.String(), entity.Patch{Properties: props})
 	return err
 }
 

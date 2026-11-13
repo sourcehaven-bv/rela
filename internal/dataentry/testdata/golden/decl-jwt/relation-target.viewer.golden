@@ -11,5 +11,6 @@ body:
   "from": "TKT-1",
   "type": "implements",
   "to": "POL-1",
-  "_redacted": []
+  "_redacted": [],
+  "_updated": "<now>"
 }

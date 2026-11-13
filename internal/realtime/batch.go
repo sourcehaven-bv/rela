@@ -234,7 +234,7 @@ func newMessages(c *call, posts []logPost) []channels.NewMessage {
 		out[i] = channels.NewMessage{
 			Type: p.mt.Name, Author: authorOf(c.p), At: c.now, Props: p.props, ReplyTo: p.replyTo,
 			Session: p.sp.step, MarkRead: i == len(posts)-1, Mentions: p.targets, NoUnread: p.mt.NoUnread,
-			Asks: asks(c.ct, p), Files: p.files,
+			Asks: asks(c.ct, p), Files: p.files, InlineUnder: inlineUnder(&c.ct, p.mt.Name),
 		}
 	}
 	return out

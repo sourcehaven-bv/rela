@@ -2,7 +2,6 @@ package dataentry
 
 import (
 	"crypto/sha256"
-	"embed"
 	"encoding/hex"
 	"io/fs"
 	"net/http"
@@ -10,7 +9,7 @@ import (
 
 // The <rela-editor> Custom Element bundle and its stylesheet, built by the
 // standalone editor build (frontend/vite.editor.config.ts) into
-// frontend → ../internal/dataentry/app_editor_dist and embedded here. Served at
+// frontend → ../internal/dataentry/app_editor_dist and embedded in static.go. Served at
 // the reserved per-app paths _rela-editor.js / _rela-editor.css (see apps.go
 // and apps_handler.go). TKT-5F9V56.
 //
@@ -31,10 +30,9 @@ import (
 // Rebuild with:
 //
 //	cd frontend && npx vite build --config vite.editor.config.ts
-
-//go:embed all:app_editor_dist
-var appEditorDist embed.FS
-
+//
+// appEditorAsset returns one file of that bundle, or nil when it is not
+// embedded: a clean checkout, or a headless build (see static.go).
 func appEditorAsset(name string) []byte {
 	b, err := fs.ReadFile(appEditorDist, "app_editor_dist/"+name)
 	if err != nil {
@@ -81,7 +79,15 @@ func weakETagFor(b []byte) string {
 // 304 instead of re-transferring the full bundle every time, while still picking
 // up a new build immediately (the ETag changes with the bytes). Returns true if
 // it handled a 304 (caller should stop).
+//
+// An asset that is not embedded (a headless build, or a checkout without the
+// frontend build) answers 404 rather than an empty 200, so an app that loads
+// the editor fails visibly.
 func serveCachedAsset(w http.ResponseWriter, r *http.Request, contentType, etag string, body []byte) {
+	if len(body) == 0 {
+		http.NotFound(w, r)
+		return
+	}
 	h := w.Header()
 	h.Set("Content-Type", contentType)
 	if etag != "" {

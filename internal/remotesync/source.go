@@ -37,8 +37,10 @@ type Source interface {
 
 // Pusher sends requests to the remote's API that need the ETag: the reads
 // and writes of a remote with push. It returns the answer for every status
-// a row can explain, and fails for a 401 (wrapping [httpremote.ErrDenied])
-// and a transport error. *httpremote.Remote implements it.
+// a row can explain. It fails for a transport error, a redirect, a 401
+// (wrapping [httpremote.ErrDenied]), a 429 or 503
+// ([reconclient.RefusedError]) and a success body over the limit; see
+// [httpremote.Remote.Send]. *httpremote.Remote implements it.
 type Pusher interface {
 	Send(ctx context.Context, method, path string, body []byte, ifMatch string, limit int64) (httpremote.Answer, error)
 }
@@ -55,6 +57,9 @@ type remoteEntity struct {
 	// Redacted is present on every per-entity read of a source that
 	// reports redaction; nil means the source does not say.
 	Redacted *[]string `json:"_redacted"`
+	// Updated is when the row last changed, in RFC 3339. The source serves
+	// it only when nothing on the row is hidden from this instance.
+	Updated string `json:"_updated"`
 }
 
 // remoteRelation is the part of a fetched relation a pull reads.
@@ -65,6 +70,7 @@ type remoteRelation struct {
 	Meta     map[string]any `json:"meta"`
 	Content  *string        `json:"content"`
 	Redacted *[]string      `json:"_redacted"`
+	Updated  string         `json:"_updated"`
 }
 
 // plurals reads the source schema and returns the route name of each
@@ -148,6 +154,12 @@ func fetchRelation(ctx context.Context, g Getter, fromPlural, from, typ, to stri
 	if err != nil {
 		return remoteRelation{}, err
 	}
+	return checkRelation(raw, from, typ, to)
+}
+
+// checkRelation decodes a fetched relation and checks it is the one asked
+// for.
+func checkRelation(raw []byte, from, typ, to string) (remoteRelation, error) {
 	var r remoteRelation
 	if err := decode(raw, &r); err != nil {
 		return remoteRelation{}, err

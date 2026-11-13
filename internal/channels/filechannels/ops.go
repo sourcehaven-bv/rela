@@ -173,11 +173,16 @@ func appendRows(d *disk, k channels.Key, msg, parent channels.Message) string {
 
 // replyCountRecord is the log record that raises the reply count of
 // parent, read from segment seg of d, at the next rev of its segment in m.
-func replyCountRecord(d *disk, m *meta, parent channels.Message, seg []byte) segRecord {
+// The reply time only moves forward, so a reply with an earlier clock
+// does not lower it.
+func replyCountRecord(d *disk, m *meta, parent channels.Message, at time.Time, seg []byte) segRecord {
 	count := parent.ReplyCount + 1
+	if parent.LastReplyAt.After(at) {
+		at = parent.LastReplyAt
+	}
 	idx := d.idx(parent.Seq)
 	return segRecord{idx: idx, seg: seg, rec: encodeLine(line{K: "p",
-		Message: channels.Message{Seq: parent.Seq, Rev: m.bump(idx)}, ReplyCount: &count})}
+		Message: channels.Message{Seq: parent.Seq, Rev: m.bump(idx)}, ReplyCount: &count, LastReplyAt: &at})}
 }
 
 // appendCreateAudit appends the create record of channel k, by by at at.
@@ -410,7 +415,7 @@ func (s *Store) mutateRemove(
 		hadFiles = len(msg.Files) > 0
 		m.Asked, _ = channels.UnaskRemoved(m.Asked, *msg)
 		*msg = channels.Message{
-			Seq: msg.Seq, Rev: m.bump(idx), ReplyTo: msg.ReplyTo, ReplyCount: msg.ReplyCount, Removed: &r,
+			Seq: msg.Seq, Rev: m.bump(idx), Thread: msg.Thread, Removed: &r,
 		}
 		delete(m.Pending, seq)
 		out = *msg
@@ -1048,7 +1053,8 @@ func (s *Store) afterSeq(k channels.Key, idxs []int64, p channels.Page) ([]chann
 		if len(out) == p.Limit {
 			break
 		}
-		if idx < s.idx(p.AfterSeq+1) {
+		// No reply has a seq below its parent.
+		if idx < s.idx(max(p.AfterSeq+1, p.Thread)) {
 			continue
 		}
 		data, err := s.segment(k, idx)
@@ -1056,7 +1062,7 @@ func (s *Store) afterSeq(k channels.Key, idxs []int64, p channels.Page) ([]chann
 			return nil, err
 		}
 		for _, msg := range fold(data, segKey(k, idx)) {
-			if msg.Seq > p.AfterSeq && len(out) < p.Limit {
+			if msg.Seq > p.AfterSeq && len(out) < p.Limit && p.Admits(msg) {
 				out = append(out, msg)
 			}
 		}
@@ -1073,6 +1079,9 @@ func (s *Store) beforeSeq(k channels.Key, idxs []int64, p channels.Page) ([]chan
 	}
 	var out []channels.Message
 	for i := len(idxs) - 1; i >= 0 && len(out) < p.Limit; i-- {
+		if p.Thread > 0 && idxs[i] < s.idx(p.Thread) {
+			break // no reply has a seq below its parent
+		}
 		if upper < 1 || idxs[i] > s.idx(upper) {
 			continue
 		}
@@ -1082,7 +1091,7 @@ func (s *Store) beforeSeq(k channels.Key, idxs []int64, p channels.Page) ([]chan
 		}
 		msgs := fold(data, segKey(k, idxs[i]))
 		for j := len(msgs) - 1; j >= 0 && len(out) < p.Limit; j-- {
-			if msgs[j].Seq <= upper {
+			if msgs[j].Seq <= upper && p.Admits(msgs[j]) {
 				out = append(out, msgs[j])
 			}
 		}
@@ -1110,7 +1119,7 @@ func (s *Store) byRev(k channels.Key, m *meta, idxs []int64, p channels.Page) ([
 			return nil, err
 		}
 		for _, msg := range fold(data, segKey(k, idx)) {
-			if msg.Rev <= p.AfterRev {
+			if msg.Rev <= p.AfterRev || !p.Admits(msg) {
 				continue
 			}
 			if best.Len() < p.Limit {
@@ -1632,16 +1641,19 @@ func batchRecords(
 		idx := s.idx(seq)
 		msg := channels.Message{
 			Seq: seq, Rev: m.bump(idx), Type: nm.Type, Author: nm.Author, At: nm.At, Props: nm.Props,
-			ReplyTo: nm.ReplyTo, SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy,
+			SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy,
 			MovedSession: plan.Moved(i), Mentions: nm.Mentions, NoUnread: nm.NoUnread, Batch: plan.Batch(),
 			CreatedChannel: created && i == 0,
+			Thread: channels.Thread{
+				ReplyTo: nm.ReplyTo, Inline: channels.ReplyInline(nm, &in.parent, plan.Moved(i)),
+			},
 		}
 		if i == 0 {
 			msg.Files = in.files
 		}
 		recs = append(recs, segRecord{idx: idx, rec: encodeLine(line{K: "m", Message: msg})})
 		if nm.ReplyTo > 0 {
-			recs = append(recs, replyCountRecord(&s.disk, m, in.parent, in.seg))
+			recs = append(recs, replyCountRecord(&s.disk, m, in.parent, msg.At, in.seg))
 		}
 		m.advance(seq, msg.At)
 		if plan.Moved(i) {

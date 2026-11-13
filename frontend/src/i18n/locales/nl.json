@@ -31,7 +31,9 @@
       "done": "naar {state} toen de stap klaar was",
       "change": "naar {state} na een wijziging",
       "timer": "naar {state} toen timer {timer} afliep",
-      "moved": "naar {state}"
+      "moved": "naar {state}",
+      "join": "samengekomen in {state}",
+      "inBranch": "{summary} (tak {branch})"
     },
     "waiting": {
       "title": "Waarom het wacht",
@@ -43,6 +45,16 @@
       "claimedBy": "{who} rondt deze stap nu af.",
       "pending": "De uitkomsten van deze stap zijn nog niet weggeschreven. Mislukte pogingen: {n}.",
       "nextAttempt": "Volgende poging: {at}.",
+      "jobRunning": "De taak van deze stap loopt: poging {n} van {max}.",
+      "jobWaiting": "De taak van deze stap wacht op poging {n} van {max}.",
+      "jobWaitingAt": "De taak van deze stap wacht op poging {n} van {max}, om {at}.",
+      "jobFailed": "De taak van deze stap is mislukt na {n} mislukte pogingen: {why}. Probeer de run opnieuw om opnieuw te beginnen.",
+      "jobFailKind": {
+        "exhausted": "er zijn geen pogingen meer over",
+        "permanent": "een nieuwe poging kan de fout niet oplossen",
+        "timeout": "een poging duurde te lang, en de uitkomst is onbekend",
+        "lost": "de verwerker stopte, en de uitkomst is onbekend"
+      },
       "branches": "Gaat verder als",
       "branchTo": "naar {state}",
       "guardHolds": "voorwaarde is vervuld",
@@ -51,7 +63,8 @@
       "branchRoles": "door: {roles}",
       "timers": "Timers",
       "timerDue": "naar {state} op {at}",
-      "timerTo": "naar {state}"
+      "timerTo": "naar {state}",
+      "branchFork": "tegelijk naar {states}"
     },
     "step": {
       "title": "Stap",
@@ -85,7 +98,10 @@
       "retry": "Opnieuw proberen",
       "retrying": "Bezig…",
       "retried": "De run probeert het opnieuw.",
-      "actionFailed": "Dat is niet gelukt."
+      "actionFailed": "Dat is niet gelukt.",
+      "parallel": "Parallelle takken",
+      "branch": "Tak {branch}",
+      "arrived": "Klaar. Wacht op de andere takken."
     },
     "panel": {
       "title": "Flows",
@@ -115,7 +131,8 @@
       "title": "Mijn flowtaken",
       "loadFailed": "Uw taken konden niet worden geladen.",
       "empty": "Er wacht niets op u.",
-      "truncated": "Niet alle taken konden worden gelezen. Kies een flow om de rest te zien."
+      "truncated": "Niet alle taken konden worden gelezen. Kies een flow om de rest te zien.",
+      "branchState": "{state} (tak {branch})"
     }
   },
   "inbox": {
@@ -136,7 +153,8 @@
     "clickToSync": "Klik om te synchroniseren",
     "resolveConflicts": "Conflicten oplossen",
     "suggestedNextAction": "Voorgestelde volgende stap",
-    "suggestion": "Suggestie"
+    "suggestion": "Suggestie",
+    "remotes": "Remotes"
   },
   "git": {
     "syncing": "Synchroniseren…",
@@ -1348,5 +1366,91 @@
     "waiting": "Wacht op jou: {state}",
     "body": "{type}: {title}",
     "more": "Nog {n} in je inbox | Nog {n} in je inbox"
+  },
+  "remotes": {
+    "title": "Remotes",
+    "needPermission": "Voor de pagina met remotes heb je de permissie remote:sync nodig. Vraag een beheerder die toe te kennen.",
+    "loadFailed": "De remotes konden niet worden geladen",
+    "empty": "Er zijn geen remotes ingesteld. Voeg er een toe in .rela/remotes.yaml.",
+    "name": "Naam",
+    "status": "Status",
+    "lastRun": "Laatste run",
+    "nextRun": "Volgende run",
+    "push": "Push",
+    "conflictRule": "Conflictregel",
+    "conflicts": "Conflicten",
+    "linked": "Gekoppelde rijen",
+    "credential": "Inloggegeven",
+    "on": "Aan",
+    "off": "Uit",
+    "never": "Nooit",
+    "state": {
+      "running": "Bezig",
+      "failing": "{n} keer achter elkaar mislukt",
+      "ok": "OK",
+      "neverRun": "Nog niet gedraaid"
+    },
+    "nextRetry": "Volgende poging {at}",
+    "noScheduledRun": "Niet gepland",
+    "reason": {
+      "both_changed": "Beide gewijzigd",
+      "refused": "Geweigerd",
+      "uncertain": "Onzeker aangemaakt",
+      "superseded": "Vervangen"
+    },
+    "cause": {
+      "refused": "De remote weigerde de wijziging",
+      "server_error": "De remote gaf een fout",
+      "no_new_row": "De remote maakte geen rij aan",
+      "already_linked": "De remote rij is al gekoppeld",
+      "cancelled": "De push is afgebroken",
+      "timeout": "De push duurde te lang",
+      "no_answer": "De remote gaf geen antwoord"
+    },
+    "fallback": {
+      "time_withheld": "vastgehouden: een tijd van laatste wijziging ontbreekt",
+      "time_untrusted": "vastgehouden: een tijd ligt te ver in de toekomst",
+      "same_time": "vastgehouden: beide kanten wijzigden tegelijk"
+    },
+    "list": {
+      "title": "Conflicten op {name}",
+      "back": "Alle remotes",
+      "loadFailed": "De conflictlijst kon niet worden geladen",
+      "unknown": "Er is geen remote met de naam {name}.",
+      "empty": "De conflictlijst is leeg.",
+      "row": "Rij",
+      "field": "Veld",
+      "reasonCol": "Reden",
+      "remoteValue": "Remote waarde",
+      "since": "Sinds",
+      "actions": "Acties",
+      "wholeRow": "Hele rij",
+      "valueOmitted": "Te groot om te tonen",
+      "noValue": "Geen waarde",
+      "summary": "{n} items",
+      "winner": {
+        "local": "De lokale waarde is gehouden",
+        "remote": "De remote waarde is overgenomen"
+      },
+      "lostKept": "Overschreven waarde: {value}",
+      "lostNotKept": "De overschreven waarde is niet bewaard",
+      "status": "HTTP {status}",
+      "keepLocal": "Lokaal houden",
+      "keepingLocal": "Bezig…",
+      "takeRemote": "Remote overnemen",
+      "takingRemote": "Bezig…",
+      "dismiss": "Verwijderen",
+      "dismissing": "Bezig…",
+      "link": "Koppelen",
+      "linking": "Bezig…",
+      "cancel": "Annuleren",
+      "address": "Remote rij (type/id)",
+      "sendAgainTitle": "Rij opnieuw versturen?",
+      "sendAgainMessage": "Het eerste aanmaken kan de remote bereikt hebben. Opnieuw versturen maakt daar dan een tweede kopie. Bestaat de rij op de remote, koppel haar dan.",
+      "sendAgain": "Opnieuw versturen",
+      "done": "Klaar. De volgende synchronisatie voert het uit.",
+      "actionFailed": "De actie is mislukt",
+      "busy": "Er loopt een synchronisatie op deze remote. Probeer het zo opnieuw."
+    }
   }
 }

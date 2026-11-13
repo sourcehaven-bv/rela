@@ -31,7 +31,9 @@
       "done": "moved to {state} when the step was done",
       "change": "moved to {state} after a change",
       "timer": "moved to {state} when timer {timer} ran out",
-      "moved": "moved to {state}"
+      "moved": "moved to {state}",
+      "join": "joined in {state}",
+      "inBranch": "{summary} (branch {branch})"
     },
     "waiting": {
       "title": "Why it waits",
@@ -43,6 +45,16 @@
       "claimedBy": "{who} is completing this step now.",
       "pending": "The outputs of this state are not written yet. Failed attempts: {n}.",
       "nextAttempt": "Next attempt: {at}.",
+      "jobRunning": "The job of this step runs: attempt {n} of {max}.",
+      "jobWaiting": "The job of this step waits for attempt {n} of {max}.",
+      "jobWaitingAt": "The job of this step waits for attempt {n} of {max}, at {at}.",
+      "jobFailed": "The job of this step failed after {n} failed attempts: {why}. Retry the run to start again.",
+      "jobFailKind": {
+        "exhausted": "no attempts are left",
+        "permanent": "another attempt cannot fix the error",
+        "timeout": "an attempt timed out, and its outcome is unknown",
+        "lost": "the worker stopped, and the outcome is unknown"
+      },
       "branches": "Moves on when",
       "branchTo": "to {state}",
       "guardHolds": "condition is met",
@@ -51,7 +63,8 @@
       "branchRoles": "by: {roles}",
       "timers": "Timers",
       "timerDue": "to {state} at {at}",
-      "timerTo": "to {state}"
+      "timerTo": "to {state}",
+      "branchFork": "to {states} at the same time"
     },
     "step": {
       "title": "Step",
@@ -85,7 +98,10 @@
       "retry": "Retry",
       "retrying": "Retrying…",
       "retried": "The run will try again.",
-      "actionFailed": "That did not work."
+      "actionFailed": "That did not work.",
+      "parallel": "Parallel branches",
+      "branch": "Branch {branch}",
+      "arrived": "Done. Waits for the other branches."
     },
     "panel": {
       "title": "Flows",
@@ -115,7 +131,8 @@
       "title": "Flow tasks",
       "loadFailed": "Your tasks could not be loaded.",
       "empty": "Nothing waits for you.",
-      "truncated": "Not every task could be read. Pick a flow to see the rest."
+      "truncated": "Not every task could be read. Pick a flow to see the rest.",
+      "branchState": "{state} (branch {branch})"
     }
   },
   "inbox": {
@@ -136,7 +153,8 @@
     "clickToSync": "Click to sync",
     "resolveConflicts": "Resolve conflicts",
     "suggestedNextAction": "Suggested next action",
-    "suggestion": "Suggestion"
+    "suggestion": "Suggestion",
+    "remotes": "Remotes"
   },
   "git": {
     "syncing": "Syncing…",
@@ -1348,5 +1366,91 @@
     "waiting": "Waiting on you: {state}",
     "body": "{type}: {title}",
     "more": "{n} more in your inbox | {n} more in your inbox"
+  },
+  "remotes": {
+    "title": "Remotes",
+    "needPermission": "The remotes page needs the remote:sync permission. Ask an administrator to grant it.",
+    "loadFailed": "Could not load the remotes",
+    "empty": "No remotes are set up. Add one to .rela/remotes.yaml.",
+    "name": "Name",
+    "status": "Status",
+    "lastRun": "Last run",
+    "nextRun": "Next run",
+    "push": "Push",
+    "conflictRule": "Conflict rule",
+    "conflicts": "Conflicts",
+    "linked": "Linked rows",
+    "credential": "Credential",
+    "on": "On",
+    "off": "Off",
+    "never": "Never",
+    "state": {
+      "running": "Running",
+      "failing": "Failed {n} times in a row",
+      "ok": "OK",
+      "neverRun": "Not run yet"
+    },
+    "nextRetry": "Next try {at}",
+    "noScheduledRun": "Not scheduled",
+    "reason": {
+      "both_changed": "Both changed",
+      "refused": "Refused",
+      "uncertain": "Uncertain create",
+      "superseded": "Superseded"
+    },
+    "cause": {
+      "refused": "The remote refused the write",
+      "server_error": "The remote failed to answer",
+      "no_new_row": "The remote created no row",
+      "already_linked": "The remote row is already linked",
+      "cancelled": "The push was cancelled",
+      "timeout": "The push timed out",
+      "no_answer": "The remote did not answer"
+    },
+    "fallback": {
+      "time_withheld": "held: a last-updated time is not served",
+      "time_untrusted": "held: a time lies too far in the future",
+      "same_time": "held: both sides changed at the same time"
+    },
+    "list": {
+      "title": "Conflicts on {name}",
+      "back": "All remotes",
+      "loadFailed": "Could not load the conflict list",
+      "unknown": "There is no remote named {name}.",
+      "empty": "The conflict list is empty.",
+      "row": "Row",
+      "field": "Field",
+      "reasonCol": "Reason",
+      "remoteValue": "Remote value",
+      "since": "Since",
+      "actions": "Actions",
+      "wholeRow": "Whole row",
+      "valueOmitted": "Too large to show",
+      "noValue": "No value",
+      "summary": "{n} entries",
+      "winner": {
+        "local": "The local value was kept",
+        "remote": "The remote value was taken"
+      },
+      "lostKept": "Overwritten value: {value}",
+      "lostNotKept": "The overwritten value was not kept",
+      "status": "HTTP {status}",
+      "keepLocal": "Keep local",
+      "keepingLocal": "Keeping…",
+      "takeRemote": "Take remote",
+      "takingRemote": "Taking…",
+      "dismiss": "Dismiss",
+      "dismissing": "Dismissing…",
+      "link": "Link",
+      "linking": "Linking…",
+      "cancel": "Cancel",
+      "address": "Remote row (type/id)",
+      "sendAgainTitle": "Send the row again?",
+      "sendAgainMessage": "The first create may have reached the remote. Sending the row again then makes a second copy there. If the row exists on the remote, link it instead.",
+      "sendAgain": "Send again",
+      "done": "Done. The next sync applies it.",
+      "actionFailed": "The action failed",
+      "busy": "A sync is running on this remote. Try again shortly."
+    }
   }
 }

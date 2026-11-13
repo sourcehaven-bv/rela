@@ -7,5 +7,6 @@ bodies: ListEntityHeaders=0/1
 versions: 
 body:
 {
-  "user": "editor@example.test"
+  "user": "editor@example.test",
+  "can_remote_sync": true
 }

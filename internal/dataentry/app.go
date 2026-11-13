@@ -412,6 +412,9 @@ type App struct {
 	// flows owns /api/v1/_flows (TKT-ZAXRXND); nil until SetFlows, and the
 	// routes then answer 404.
 	flows *flowsHandler
+	// remotes owns /api/v1/_remotes (TKT-0FMYPEZ); nil until SetRemotes,
+	// and the routes then answer 404.
+	remotes *remotesHandler
 	// reconcile owns POST /api/v1/_reconcile (TKT-VP02WHG); nil until
 	// SetReconcile, and the endpoint then answers 501.
 	reconcile *reconcileHandler

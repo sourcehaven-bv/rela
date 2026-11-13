@@ -36,9 +36,23 @@ type RunLister interface {
 type run struct {
 	id   flowrun.RunID
 	flow string
-	// state is the stored instance's state. Empty: the instance has not
-	// left its start, so the run is in the flow's initial state.
-	state string
+	// states are the states the run is in: the stored instance's, or for a
+	// run in parallel branches each branch's (TKT-ZO9IB6V), so the rules of
+	// every branch apply. An empty state: the instance has not left its
+	// start, so the run is in the flow's initial state.
+	states []string
+}
+
+// statesOf returns the states r is in.
+func statesOf(r flowrun.Run) []string {
+	if len(r.Branches) == 0 {
+		return []string{r.Instance.State}
+	}
+	out := make([]string, len(r.Branches))
+	for i, b := range r.Branches {
+		out[i] = b.Instance.State
+	}
+	return out
 }
 
 // Ceiling narrows the writable properties of the subjects that runs hold.
@@ -150,8 +164,8 @@ func (c *Ceiling) PrimeRuns(ctx context.Context, ids []string) (context.Context,
 }
 
 // Withheld implements [affordances.FlowEditCeiling]. A property is withheld
-// when, for some run on e other than the one [WithinRun] names, the rule of
-// the run's flow and state is deny, or asks for a permission holds does not
+// when, for some run on e and state it is in other than the ones
+// [WithinRun] names, the rule of the run's flow and state is deny, or asks for a permission holds does not
 // grant. The value names the flow and state of the first such run, by run
 // id: `outside_edits:flow=F state=S`.
 func (c *Ceiling) Withheld(
@@ -164,38 +178,49 @@ func (c *Ceiling) Withheld(
 	if err != nil {
 		return nil, err
 	}
-	within, _ := ctx.Value(withinKey{}).(flowrun.RunID)
+	in, _ := ctx.Value(withinKey{}).(within)
 	var out map[string]string
 	for _, r := range runs {
 		f, ok := c.flows[r.flow]
-		if !ok || f.Subject() != e.Type || (within != "" && r.id == within) {
+		if !ok || f.Subject() != e.Type {
 			continue
 		}
-		rules := f.OutsideEdits()
-		state := r.state
-		if state == "" {
-			state = f.Initial()
-		}
-		for _, prop := range c.properties[e.Type] {
-			if _, done := out[prop]; done {
+		for _, state := range r.states {
+			if state == "" {
+				state = f.Initial()
+			}
+			if in.run != "" && r.id == in.run && state == in.state {
 				continue
 			}
-			switch rule := rules.Rule(state, prop); rule.Kind {
-			case flowcfg.EditDeny:
-			case flowcfg.EditPermission:
-				if holds(rule.Permission) {
-					continue
-				}
-			default:
-				continue
-			}
-			if out == nil {
-				out = map[string]string{}
-			}
-			out[prop] = "outside_edits:flow=" + r.flow + " state=" + state
+			out = withhold(out, f.OutsideEdits(), r.flow, state, c.properties[e.Type], holds)
 		}
 	}
 	return out, nil
+}
+
+// withhold adds to out each of props that the rule of flow's state
+// withholds, and returns out.
+func withhold(out map[string]string, rules *flowcfg.OutsideEdits, flow, state string, props []string,
+	holds func(permission string) bool) map[string]string {
+	for _, prop := range props {
+		if _, done := out[prop]; done {
+			continue
+		}
+		switch rule := rules.Rule(state, prop); rule.Kind {
+		case flowcfg.EditDeny:
+		case flowcfg.EditPermission:
+			if holds(rule.Permission) {
+				continue
+			}
+		default:
+			continue
+		}
+		if out == nil {
+			out = map[string]string{}
+		}
+		out[prop] = "outside_edits:flow=" + flow + " state=" + state
+	}
+	return out
 }
 
 // runsOn returns the runs on id: primed, or one lookup. Inside a store
@@ -233,7 +258,7 @@ func (c *Ceiling) activeRuns(ctx context.Context, ids []string) (map[string][]ru
 			}
 			for _, r := range page {
 				if _, governs := c.flows[r.Flow]; governs {
-					out[r.Subject.ID] = append(out[r.Subject.ID], run{id: r.ID, flow: r.Flow, state: r.Instance.State})
+					out[r.Subject.ID] = append(out[r.Subject.ID], run{id: r.ID, flow: r.Flow, states: statesOf(r)})
 				}
 			}
 			if len(page) < flowrun.MaxPage {

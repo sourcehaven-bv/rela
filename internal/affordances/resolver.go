@@ -876,6 +876,41 @@ func RelationMetaGated(r *PolicyResolver, relType string) bool {
 	return false
 }
 
+// RelationMetaRestricted reports whether the request bound to ctx can be
+// denied any meta key of a relType edge whose source is from, including a key
+// the edge does not carry now. [PolicyResolver.RelationFieldVerdicts] judges
+// only the keys it is given, so it cannot tell "every present key is visible"
+// from "nothing on this edge can be hidden". A last-updated time served next
+// to a restricted edge would say when a hidden key was set or cleared.
+//
+// A request with no identity is restricted. A role that holds read on the
+// source and declares no meta `visible:` list for relType lifts every
+// restriction (the role union, BUG-Y5UF3K). It is a function, not a method,
+// because PolicyResolver is at its method cap.
+func RelationMetaRestricted(ctx context.Context, r *PolicyResolver, from *entity.Entity, relType string) bool {
+	if from == nil || r.policy == nil {
+		return false
+	}
+	req, err := r.requestFor(ctx)
+	if err != nil {
+		return true
+	}
+	if !RelationMetaGated(r, relType) {
+		return false // no role restricts it, so skip binding the row
+	}
+	bc, roles := r.bindingFor(ctx, req, from)
+	if bc == nil {
+		return false
+	}
+	visible := newDimension()
+	for _, role := range roles {
+		if !r.applyRelationVisible(ctx, bc, role, relType, visible) && bc.roleHoldsVerb(role, acl.VerbRead) {
+			return false
+		}
+	}
+	return visible.optedIn
+}
+
 // applyRelationVisible folds role's meta `visible:` grants for relType into
 // visible and reports whether the role declares any. A meta key is allowed
 // when both the relation grant's `when:` and the key's own `when:` pass.

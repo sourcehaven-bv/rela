@@ -374,6 +374,11 @@ type Message struct {
 	Props      map[string]any `json:"props,omitempty"`
 	ReplyTo    int64          `json:"reply_to,omitempty"`
 	ReplyCount int            `json:"reply_count,omitempty"`
+	// LastReplyAt is when the newest reply was posted; empty for none.
+	LastReplyAt string `json:"last_reply_at,omitempty"`
+	// Inline marks a reply that also shows in the main stream: it answers
+	// its parent's question or it moved the session.
+	Inline bool `json:"inline,omitempty"`
 	// Batch is the seq of the first message of the batch the message was
 	// posted in (`POST …/_batch`); absent for a single post.
 	Batch       int64           `json:"batch,omitempty"`

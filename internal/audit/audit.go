@@ -235,6 +235,16 @@ const (
 	// entity, when there is one; the summary gives the role count, never the
 	// IdP subject or the role names.
 	OpIDPRolesSet = "idp-roles-set"
+
+	// OpRemoteResolve, OpRemoteDismiss and OpRemoteLink record a change to
+	// a remote's conflict list (TKT-0FMYPEZ): a resolve to one side, a
+	// dismiss of the entries the latest rule left, and the link of an
+	// uncertain create to a remote row. The subject is the local row; the
+	// summary names the remote, the field, the side or the remote address,
+	// and never a value.
+	OpRemoteResolve = "remote-resolve"
+	OpRemoteDismiss = "remote-dismiss"
+	OpRemoteLink    = "remote-link"
 )
 
 // Subject identifies what an op acted on. Exactly one of {Type, ID}

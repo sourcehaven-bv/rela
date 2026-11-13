@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
@@ -32,6 +33,13 @@ entities:
       status: {type: string}
       note: {type: string}
       src: {type: external_ref, system: source}
+relations:
+  blocks:
+    label: Blocks
+    from: [item]
+    to: [item]
+    properties:
+      weight: {type: integer}
 `
 
 // pushRemote is a data-entry server behind the identity proxy of
@@ -47,6 +55,10 @@ type pushRemote struct {
 func newPushRemote(t *testing.T) *pushRemote {
 	t.Helper()
 	app := newTestAppV1(t)
+	// A meta field on blocks, so the relation push has a field to merge.
+	blocks := app.State().Meta.Relations["blocks"]
+	blocks.Properties = map[string]metamodel.PropertyDef{"weight": {Type: "integer"}}
+	app.State().Meta.Relations["blocks"] = blocks
 	for _, e := range []*entity.Entity{
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "one", "status": "open"}},
 		{ID: "TKT-002", Type: "ticket", Properties: map[string]any{"title": "two", "status": "open"}},
@@ -277,7 +289,8 @@ remotes:
 	}
 
 	// Resolved to the local side, the next sync sends it.
-	if _, err := remotesync.Resolve(ctx, kv, m, one.ID, "title", remotesync.TakeLocal); err != nil {
+	title := remotesync.Target{Local: one.ID, Field: "title"}
+	if _, err := remotesync.Resolve(ctx, kv, m, title, remotesync.TakeLocal); err != nil {
 		t.Fatal(err)
 	}
 	if rep := run("resolved sync"); rep.Pushed.Updated != 1 || rep.Held != 0 {
@@ -285,5 +298,132 @@ remotes:
 	}
 	if got, _ := f.app.store.GetEntity(ctx, entity.Ref{ID: "TKT-001"}); got.Properties["title"] != "one, ours" {
 		t.Fatalf("remote title after resolve = %v", got.Properties["title"])
+	}
+}
+
+// TestRemotePush_RelationsAndLatest pushes a relation and its meta to a real
+// data-entry server, and settles a field both sides changed under the
+// latest rule with the `_updated` times the server serves.
+func TestRemotePush_RelationsAndLatest(t *testing.T) {
+	f := newPushRemote(t)
+	ctx := context.Background()
+
+	meta, err := metamodel.Parse([]byte(pushTargetSchema))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := remotesync.Parse([]byte(`
+remotes:
+  acme:
+    url: `+f.url+`
+    credential: {secret: remote_credential.acme}
+    push: true
+    conflict: latest
+    entities:
+      ticket: {type: item, ref: src, fields: {title: title, status: status}}
+    relations:
+      blocks: {fields: {weight: weight}}
+`), meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := cfg.Mappings["acme"]
+	src, err := remotesync.Dial(m.Remote, pullToken, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := memstore.New()
+	mgr, err := entitymanager.New(entitymanager.Deps{
+		Store: st, Meta: meta, Templater: pullTemplater{}, Audit: audit.NewMemory(), ACL: acl.NopACL{},
+		Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		AttachmentLocker: lock.NewMemoryLocker(), AnchorGuard: entitymanager.NopAnchorGuard{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kv := &pullKV{}
+	gate := visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope()))
+	deps := remotesync.Deps{
+		Source: src, Pusher: src, Meta: meta, Writer: mgr, Store: st, State: kv,
+		Gate: gate, Fingerprint: visibility.SumHeld, Logger: slog.New(slog.DiscardHandler), RunID: "e2e",
+		RelationMetaGated: func(relType string) bool { return visibility.RelationMetaGatedBy(gate, relType) },
+	}
+	run := func(what string) remotesync.Report {
+		t.Helper()
+		rep, runErr := remotesync.Run(ctx, m, deps, remotesync.Options{})
+		if runErr != nil {
+			t.Fatalf("%s: %v (%+v)", what, runErr, rep)
+		}
+		return rep
+	}
+	run("first sync")
+	one, two := pulledByTitle(t, st, "one"), pulledByTitle(t, st, "two")
+	localKey := entity.RelationKey{From: one.ID, FromFace: one.Face, Type: "blocks", To: two.ID}
+
+	// A new local relation between two linked rows is created on the remote.
+	if _, err = mgr.CreateRelation(ctx, localKey,
+		entity.RelationOptions{Properties: map[string]any{"weight": 3}}); err != nil {
+		t.Fatal(err)
+	}
+	if rep := run("relation sync"); rep.PushedRelations == nil || rep.PushedRelations.Created != 1 {
+		t.Fatalf("relation sync: %+v %+v", rep, rep.PushedRelations)
+	}
+	remoteWeight := func() any {
+		t.Helper()
+		rel, getErr := f.app.store.GetRelation(ctx,
+			entity.RelationKey{From: "TKT-001", Type: "blocks", To: "TKT-002"})
+		if getErr != nil {
+			t.Fatal(getErr)
+		}
+		return rel.Properties["weight"]
+	}
+	if w := remoteWeight(); w != 3 && w != int64(3) && w != float64(3) {
+		t.Fatalf("remote weight = %v (%T)", w, w)
+	}
+
+	// A local meta change is sent with If-Match and lands.
+	if _, err = mgr.UpdateRelation(ctx, localKey,
+		entity.RelationOptions{Properties: map[string]any{"weight": 5}}); err != nil {
+		t.Fatal(err)
+	}
+	if rep := run("meta sync"); rep.PushedRelations.Updated != 1 || rep.Held != 0 {
+		t.Fatalf("meta sync: %+v %+v", rep, rep.PushedRelations)
+	}
+	if w := remoteWeight(); w != 5 && w != int64(5) && w != float64(5) {
+		t.Fatalf("remote weight after update = %v", w)
+	}
+	if rep := run("idle sync"); rep.PushedRelations.Updated+rep.PushedRelations.Created != 0 {
+		t.Fatalf("idle sync pushed relations: %+v", rep.PushedRelations)
+	}
+
+	// Both sides change the title; the remote changes it last, so the
+	// latest rule takes the remote value and keeps the local one.
+	if _, err = mgr.PatchEntity(ctx, one.ID, entity.Patch{Properties: map[string]any{"title": "one, ours"}}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	got, err := f.app.store.GetEntity(ctx, entity.Ref{ID: "TKT-001"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got.Properties["title"] = "one, theirs"
+	if err = f.app.store.UpdateEntity(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	rep := run("latest sync")
+	if rep.Held != 0 || rep.Superseded != 1 {
+		t.Fatalf("latest sync: %+v %+v", rep, rep.Issues)
+	}
+	if got, _ := st.GetEntity(ctx, one.Ref()); got.Properties["title"] != "one, theirs" {
+		t.Fatalf("local title = %v", got.Properties["title"])
+	}
+	list, err := remotesync.LoadConflicts(ctx, kv, "acme")
+	if err != nil || len(list) != 1 || list[0].Superseded == nil ||
+		string(list[0].Superseded.LocalValue) != `"one, ours"` {
+
+		t.Fatalf("conflict list: %+v, %v", list, err)
+	}
+	if n, err := remotesync.Dismiss(ctx, kv, m, remotesync.Target{Local: one.ID, Field: "title"}); err != nil || n != 1 {
+		t.Fatalf("dismiss: %d, %v", n, err)
 	}
 }

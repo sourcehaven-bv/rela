@@ -20,10 +20,12 @@ changes. `schema.yaml` never refers to it.
 > the web app, over MCP or with `rela flow start`. A run writes its
 > outputs, follows `done` branches and ends in a final state. People do
 > their steps in the web app or over MCP, and a completed step takes the
-> `change` branches. The `create`, `predicate` and `schedule` triggers,
-> `change` events from ordinary edits, timers, retention and the inbox are
-> checked but not acted on yet; they follow in a later release. See
-> [Running flows](#running-flows) and [Doing a step](#doing-a-step).
+> `change` branches. Timers fire and failed steps are tried again while
+> `rela-server` or the desktop app runs. The `create`, `predicate` and
+> `schedule` triggers, `change` events from ordinary edits, retention and
+> the inbox are checked but not acted on yet; they follow in a later
+> release. See [Running flows](#running-flows) and
+> [Doing a step](#doing-a-step).
 
 ## Example
 
@@ -121,6 +123,8 @@ every matching subject.
 | `outputs` | What rela writes when a run enters the state. See below. |
 | `on` | The events that move the run on. See below. |
 | `after` | Timers, by name, that move the run on. See below. |
+| `job` | Work rela runs through the job queue: a script, an action or a webhook. See [Job steps](#job-steps). |
+| `join` | Makes the state the join of parallel branches: `all`, `any` or `{ when: ... }`. See [Parallel branches](#parallel-branches). |
 
 Every state is reachable from `initial`, and every state that is not final
 has a way out. rela refuses a file where either is not so.
@@ -152,6 +156,8 @@ after:
 A timer moves the run to `to` once `period` has passed. `since: state`
 (the default) counts from when the run entered the state; `since: run`
 counts from when the run started. A state has at most 8 timers.
+Timers fire while `rela-server` or the desktop app runs; see
+[Running flows](#running-flows).
 
 ### Outputs
 
@@ -189,6 +195,152 @@ can read that entity follows acl.yaml for its own type, not for the
 subject. Like an automation that creates an entity, this is a choice the
 author of `flows.yaml` makes: do not copy subject values into a type that
 more people can read than the subject.
+
+### Parallel branches
+
+A branch whose `to:` is a list forks the run: the run goes into every
+state of the list at once, and each goes on as a branch of its own. The
+branches meet again at a state with `join:`.
+
+```yaml
+start:
+  on:
+    done: { to: [it, legal] }
+it:
+  waiting_for: [it_desk]
+  writes: [laptop]
+  on:
+    change: { to: joined, roles: [it_desk] }
+legal:
+  waiting_for: [hr]
+  on:
+    change: { to: joined, roles: [hr] }
+joined:
+  join: all
+  on:
+    done: { to: finished }
+```
+
+A fork names at least two and at most 8 states. A branch is every state
+its first state reaches before the join. `join:` says when the run goes
+on past the join:
+
+| Value | The run goes on when |
+| ----- | -------------------- |
+| `all` | every branch has reached the join. |
+| `any` | one branch has reached the join. The other branches stop. |
+| `{ when: ... }` | the condition holds, or every branch has arrived. Besides `entity`, it reads `arrived` (the branches that reached the join) and `branches` (the branches of the fork). |
+
+Each branch waits, writes its outputs, takes its timers and takes
+`change` branches like a run without a fork. While it is forked, the run
+itself is in the join state, and its status is `input_required` when a
+branch waits for a person. A branch that reaches a final state ends the
+whole run in that state.
+
+A `when:` join is tested when a branch arrives. While some branches have
+arrived and the condition is false, it is tested again every 5 minutes,
+so a later change to the subject lets the run go on.
+
+rela refuses a fork it cannot follow:
+
+- every branch reaches exactly one join, the same one for the whole fork,
+  and a join closes one fork;
+- branches share no state, and no state outside a branch moves into one;
+- a branch does not lead back to the state that forked, to the initial
+  state, or to another fork: forks do not nest;
+- from every state in a branch, the run can reach the join or a final
+  state.
+
+### Job steps
+
+A state with `job:` runs one piece of work once its outputs are written,
+and follows its `done` branch when the work succeeds.
+
+```yaml
+notify:
+  job:
+    kind: webhook
+    url: https://hooks.example.com/onboarding
+    secret: onboarding_hook
+  on:
+    done: { to: waiting }
+provision:
+  job:
+    script: flows/provision.lua
+    capabilities: { http: true, secrets: [directory_token] }
+    retry: { attempts: 5, backoff: { initial: 30s, factor: 2, max: 10m }, timeout: 2m }
+  on:
+    done: { to: provisioned }
+```
+
+A job names exactly one target:
+
+| Key | Runs |
+| --- | ---- |
+| `script` | A Lua script under `scripts/`. `capabilities` grants it http, ai, mail, write_file, tokens and named secrets, as for an automation; without it the script gets none. |
+| `action` | An action from `data-entry.yaml`. It must be a plain script action: rela refuses an action with `set`, `request`, `available_on`, `allow_acl_bypass` or `elevated_updates`. `run_as` must hold the action's `permission`. The action's own `capabilities` apply. |
+| `kind: webhook` | A `POST` to `url` (http or https). `flows.yaml` is usually public, so keep tokens out of the URL and sign with `secret:` instead. |
+
+The work runs as the flow's `run_as`, through the job queue. A script or
+action sees the subject as `entity`, as `run_as` reads it, and
+`rela.params` with `flow`, `flow_run`, `flow_state`, `attempt`,
+`idempotency_key` and `step_key`.
+
+A webhook posts the ids only: the flow, the run, the state, the subject,
+the attempt and both keys. The receiver reads the subject through the API
+with its own credentials. The request carries `Idempotency-Key` (the
+attempt's key) and `X-Rela-Step` (the step's key). With `secret:`, it also
+carries `X-Rela-Timestamp` and `X-Rela-Signature: sha256=<hex>`, the
+HMAC-SHA256 of `<timestamp>.<body>` under the global secret of that name
+in `.rela/secrets.yaml`. Check the signature and refuse an old timestamp.
+rela does not follow a redirect.
+
+A job state has `on: { done: ... }` and nothing else: no `waiting_for`,
+`writes`, `after`, other events, and it may not be final. Its last `done`
+branch has no `when`, so the run always has a way out.
+
+**Retries.** rela tries the work again after an error that another
+attempt may fix:
+
+- a webhook answer of 429 or 5xx, or a network error;
+- a script or action error, unless the script raised a table with
+  `retry = false`: `error({ message = "unknown account", retry = false })`;
+- an attempt the queue never started. This one does not count against
+  `attempts`.
+
+Any other webhook answer (a 3xx or another 4xx) fails the job at once.
+
+| `retry` key | Meaning | Default |
+| ----------- | ------- | ------- |
+| `attempts` | Every execution, the first included: 1 to 10. | 3 |
+| `backoff.initial` | The wait before the second attempt. | 10s |
+| `backoff.factor` | What each next wait is multiplied by. | 2 |
+| `backoff.max` | The longest wait, at most 1h. | 5m |
+| `timeout` | How long one attempt may take once it starts: 1s to 10m. An attempt that does not start within this time is queued again. | 5m |
+
+`retry: false` fails the job on the first error.
+
+**Unknown outcomes.** When an attempt times out, or the process running it
+stops, rela cannot tell whether the work happened. It does not try again:
+the job fails with `timeout` or `lost`. Set `idempotent: true` when the
+target is safe to run twice, and rela then tries again. The
+`idempotency_key` (run, step and attempt) and the `step_key` (run and step,
+the same for every attempt) let a receiver drop a repeat.
+
+**A failed job** leaves the run in its state, with status `failed` in the
+run's view and the reason: `exhausted`, `permanent`, `timeout` or `lost`.
+In a fork, the other branches go on. A branch whose job waits or failed
+has not arrived: a join that needs it waits, and one that does not (`any`,
+a `when:` that holds, or another branch that reaches a final state) goes
+on without it. Retry the run
+(`Retry` on the run, as for a failed step) to start the job again with a
+fresh count of attempts.
+
+Jobs run in `rela-server` and the desktop app. A CLI command or an MCP
+session over stdio does not run them: a job step waits until a server
+runs it. On the filesystem backend and in the desktop app, the queue is
+kept in memory, so an attempt queued when the process stops never starts,
+and rela queues it again.
 
 ## Conditions
 
@@ -281,6 +433,18 @@ an output twice. It waits 30 seconds after the first failure and doubles
 the wait after each further failure, up to one hour. `rela flow start`
 names the run when its first step failed, because the run exists.
 
+**The flow worker** fires due timers, tries failed steps again and tests
+waiting `when:` joins. It runs inside `rela-server` and the desktop app,
+every 15 seconds. A CLI command or an MCP session over stdio does not run
+it: without a server, a timer fires and a failed step is tried again once
+a server starts. With several server processes on one project, one of
+them runs the worker; on PostgreSQL each tenant has its own. In
+multi-tenant `rela-server`, a tenant's worker runs while the tenant is
+loaded. One pass handles at most 256 runs; the rest wait for the next
+pass. On PostgreSQL the worker keeps one database connection while it
+runs, so `pool_max_conns` must be at least 4; `rela-server` refuses to
+start with a smaller pool when the project declares flows.
+
 If rela stops between recording a run and storing its working state, the
 run is listed but cannot advance. `rela flow cancel` closes such a run
 once it is a minute old.
@@ -342,9 +506,17 @@ tasks and the newest runs; past that they say the list is cut short, and a
 filter narrows it. The task list matches
 each run against the current `flows.yaml`.
 
+**Parallel branches.** A forked run shows each branch with its own state,
+reason and step form. The Flow tasks page lists one task per branch that
+waits for a role you hold. A branch that reached the join says it waits
+for the others. The diagram marks the state of every branch, and the
+timeline names the branch of each move.
+
 **One step at a time.** A run counts its moves in a generation. The step
 form sends the generation it was shown, and a step on a run that moved on
-since is refused, so a stale form never moves a run twice. While one
+since is refused, so a stale form never moves a run twice. In a forked
+run each branch has its own generation, under `parallel` in the run, so
+one branch's step does not refuse another's. While one
 person completes a step, the run is claimed for up to two minutes, and a
 second completion is refused.
 
@@ -363,7 +535,9 @@ second completion is refused.
 | `POST /api/v1/_flows/runs/{id}/_retry` | Retry the failed outputs now |
 
 `_actions` on a run says whether `complete`, `cancel` and `retry` would
-be accepted for you, by the same checks the POST routes make. A run you
+be accepted for you, by the same checks the POST routes make. In a forked
+run, `complete` is false and each entry of `parallel` has its own
+`complete`; send that entry's `generation` to complete its step. A run you
 cannot read answers 404, like a missing entity. A missing role or
 permission answers 403, a run that moved on or is claimed 409, and a
 property outside `writes:` 422. Without flows, every route answers 404.
@@ -424,8 +598,10 @@ a run that started under an older version of the flow. An
 
 A run's own writes are not edits outside the flow. The values a person
 writes when doing a step, and the run's `set` outputs, are not limited
-by that run's rules. They are still limited by every other run on the
-subject.
+by the rules of the state they come from. They are still limited by
+every other run on the subject. While a run is forked, the rules of every
+branch's state apply, so a step in one branch is still limited by the
+rules of the other branches' states.
 
 **Where the rules hold.** They apply wherever rela checks field rules on
 a write:

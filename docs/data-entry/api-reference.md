@@ -805,6 +805,32 @@ compare and the second could overwrite the first. A write that loses that race
 now returns 412 as well — the same status, and the same remedy for the client:
 re-read, re-apply, retry.
 
+### A single relation
+
+`GET /api/v1/{plural}/{id}/relations/{rel}/{target}` answers with the
+relation's `meta`, `content` and `_redacted`, and an `ETag` over the
+relation as the caller sees it, hidden meta removed. `PATCH` on the same
+path honors `If-Match` with that ETag: a mismatch is 412
+`precondition_failed`. The store compares the version again inside the
+write, so an edit that lands between the check and the write is a 412 too.
+The PATCH response is redacted like the GET and carries the new `ETag`.
+Without `If-Match` the update is unconditional.
+
+## Last-updated time (`_updated`)
+
+A per-entity GET, the entity in a write response, a view entry and a single
+relation GET carry `_updated`: the time the row last changed, in RFC 3339
+UTC. It is served only when nothing on the row is hidden from the caller.
+When a field is in `_redacted` or otherwise withheld, `_updated` is left
+out, because a change to the hidden field moves it too. A relation GET
+also leaves it out when the caller's `visible:` list for the relation type
+could hide a meta key the edge does not carry now. List rows and
+search results never carry it. Two-way sync uses it for the `latest`
+conflict rule (see [Two-way sync](../remote-sync-two-way.md#conflicts)).
+
+On the file-system backend, a row nobody wrote since the server started
+has its file's modification time.
+
 ## Per-field preconditions (`_versions`, `preconditions`)
 
 The ETag covers the whole entity, so a client that saves one field at a time
@@ -2140,3 +2166,79 @@ The request is answered in the default world. Like the data routes, the
 endpoint accepts a request without a browser origin and without a cookie,
 so a peer can call it; a request with a cookie needs a same-origin `Origin`.
 The route is in the OpenAPI spec.
+
+## Remote sync (`/_remotes`)
+
+These routes show the remotes in `.rela/remotes.yaml` and let a person act on
+their conflict lists (TKT-0FMYPEZ). They do the same as `rela remote
+conflicts`, `rela remote resolve` and `rela remote link`. They never start a
+sync: the next scheduled pull applies a decision.
+[Two-way sync](../remote-sync-two-way.md#the-conflict-list) explains the
+conflict list itself.
+
+### Routes
+
+| Method | Path | Body | Success |
+| --- | --- | --- | --- |
+| GET | `/_remotes` | | 200 `{data: [RemoteSummary]}` |
+| GET | `/_remotes/{name}/conflicts?page=&per_page=` | | 200 `{data, total, page, per_page, counts}` |
+| POST | `/_remotes/{name}/conflicts/_resolve` | `{local, field?, take}` | 200 `{changed}` |
+| POST | `/_remotes/{name}/conflicts/_dismiss` | `{local, field?}` | 200 `{changed}` |
+| POST | `/_remotes/{name}/conflicts/_link` | `{local, address}` | 200 `{changed}` |
+
+- Every route needs the `remote:sync` permission. Without it the answer is
+  403 `permission_required`, which names the permission.
+- A summary holds the remote's settings, its run health (`last_run`,
+  `next_run`, `next_retry`, `running`, `failures`) and two counts: `linked` and
+  `conflicts.{total, by_reason}`. `credential_kind` says where the credential
+  is read from (`env`, `file` or `secret`). The credential's name and value are
+  never sent. Durations are in seconds.
+- An entry has `reason` (`both_changed`, `refused`, `uncertain` or
+  `superseded`), and for a `latest` rule that held, a `fallback`
+  (`time_withheld`, `time_untrusted` or `same_time`). A refused or uncertain
+  push has `cause` and `status` instead of the remote's error text.
+- A superseded entry has `superseded.lost_value_kept`. It is `false` when the
+  list did not keep the overwritten value, as under `superseded_retention: 0`.
+- `local` names the local row: an entity id, or the relation key
+  `FROM--type--TO`. `field` is empty for a row-level entry, such as an
+  uncertain create.
+- `take` is `local` or `remote`. Taking the local side of an uncertain create
+  sends the row again. If the first create did reach the remote, that makes a
+  second copy there; use `_link` with the remote row's `type/id` instead.
+- The bodies are strict: an unknown key or a missing field is a 400.
+
+### What a response never reveals
+
+Every entry and count is gated by the caller's read access, after the
+`remote:sync` check:
+
+- An entry is shown only when the caller can read its local row and, for a
+  field entry, the field. A relation entry needs both endpoints readable.
+- `total`, `counts`, `linked` and `conflicts` count only the entries the
+  caller can see. They are computed per request and never cached.
+- A POST that names a hidden entry gets the same 404 as one that does not
+  exist.
+- `_actions` on each entry says which of `resolve_local`, `resolve_remote`,
+  `dismiss` and `link` the caller may take. The POST asks the same question.
+  `resolve_remote` also needs update access to the local row and write access
+  to every field the entry names, because the next pull writes them. `link`
+  needs the same rights, on every field the create tried to send, because
+  the next sync merges the remote row into the local one.
+
+### Errors
+
+| Status | Type | When |
+| --- | --- | --- |
+| 400 | `invalid_request` | The body is malformed or names the wrong keys |
+| 403 | `permission_required` | The caller lacks `remote:sync` |
+| 403 | `forbidden` | `take: remote` or a link without edit rights on the local fields |
+| 404 | `not_found` | No such remote, or no entry the caller may read |
+| 409 | `invalid_state` | The entry's reason does not admit the action, or the link address is refused |
+| 409 | `remote_busy` | A sync or another change holds the remote; try again |
+
+Each POST is written to the audit log as `remote-resolve`, `remote-dismiss` or
+`remote-link`, with the entry's row and no values.
+
+The routes are a browser surface. Like the git routes, they are not exempt
+from the same-origin check and are not in the OpenAPI spec. Use the `rela
+remote` commands from a script.

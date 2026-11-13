@@ -105,6 +105,8 @@ go build -o rela ./cmd/rela
 | [Driving rela-server from the command line with restish](docs/restish.md) | Call a remote rela-server from the command line, including file uploads, through its OpenAPI spec |
 | [Realtime Channels (realtime.yaml)](docs/realtime.md) | Declare channel types, message types, roles, lifecycle, sessions and triggers in realtime.yaml, and how rela checks the file |
 | [Flows (flows.yaml)](docs/flows.md) | Declare multi-step processes over an entity in flows.yaml: states, events, timers and outputs, and how rela checks the file |
+| [Syncing with a remote](docs/remote-sync.md) | Pull entities and relations from another rela with remotes.yaml: credentials, mapping, schedules, rows the source drops, and the status page |
+| [Two-way sync with a remote](docs/remote-sync-two-way.md) | Push local changes to a remote: share, conflict rules and clock bounds, retention, the conflict list and how to act on it, and why approval is a workflow |
 
 ### Tutorials
 

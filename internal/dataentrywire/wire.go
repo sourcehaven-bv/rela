@@ -15,6 +15,7 @@ package dataentrywire
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
@@ -54,6 +55,16 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 		if err := dataentry.SetFlows(app, ctl); err != nil {
 			return fmt.Errorf("wire flows: %w", err)
 		}
+	}
+
+	// The remote routes list every remote in remotes.yaml; a project
+	// without one lists none.
+	rs, rsErr := newRemotes(svc, slog.Default())
+	if rsErr != nil {
+		return fmt.Errorf("wire remotes: %w", rsErr)
+	}
+	if err := dataentry.SetRemotes(app, rs); err != nil {
+		return fmt.Errorf("wire remotes: %w", err)
 	}
 
 	// The realtime holder is absent only for a Services built from

@@ -74,7 +74,8 @@ type Headers interface {
 // Outputs writes a state's outputs as runAs.
 type Outputs interface {
 	// Set patches props on the subject. run is the run whose output it is.
-	Set(ctx context.Context, runAs string, run flow.RunID, subject entity.Ref, props map[string]any) error
+	Set(ctx context.Context, runAs string, run flow.RunID, state string, subject entity.Ref,
+		props map[string]any) error
 	// Create creates an entity of typ with props and, when relate is set,
 	// an edge of that type from it to subject. It returns the new entity.
 	Create(ctx context.Context, runAs, typ string, props map[string]any, relate string,
@@ -112,6 +113,12 @@ type Deps struct {
 	Subjects Subjects
 	// Compile compiles an older version of a flow. Nil: rejected.
 	Compile Compiler
+	// Jobs queues the attempts of job steps. Nil: accepted, for a
+	// process that runs no jobs; an attempt then waits for one that does.
+	Jobs JobQueue
+	// JobRunner runs the targets of job steps. Nil: accepted; then
+	// [AttemptHandler.HandleAttempt] fails.
+	JobRunner JobRunner
 	// Now is the clock. Nil: accepted, means time.Now.
 	Now func() time.Time
 }
@@ -121,6 +128,7 @@ type Deps struct {
 // write loses its compare-and-set and leaves the run to the winner.
 type Engine struct {
 	d Deps
+	g guards
 }
 
 // New returns an engine over d.
@@ -134,7 +142,9 @@ func New(d Deps) (*Engine, error) {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
-	return &Engine{d: d}, nil
+	return &Engine{d: d, g: guards{meta: d.Meta, subjects: d.Subjects, now: func() time.Time {
+		return flow.NormTime(d.Now())
+	}}}, nil
 }
 
 // Flow returns the flow name declares in the current flows.yaml.
@@ -223,7 +233,7 @@ func (e *Engine) Start(ctx context.Context, name string, subject entity.Ref) (fl
 		}
 		return "", err
 	}
-	if left, err := e.settle(ctx, f, run); err != nil {
+	if left, err := e.settle(ctx, f, run, ""); err != nil {
 		e.backoff(ctx, left)
 		return id, err
 	}
@@ -271,7 +281,8 @@ func (e *Engine) Cancel(ctx context.Context, id flow.RunID) error {
 			return err
 		}
 		props := endProps(flow.StatusCancelled, e.now())
-		if f, ferr := e.flowOf(ctx, run); ferr == nil {
+		// A forked run's header keeps the join it was headed for.
+		if f, ferr := e.flowOf(ctx, run); ferr == nil && !forked(run) {
 			props[metamodel.FlowRunPropState] = flow.Read(f.Definition(), run.Instance, run.CreatedAt).State
 		}
 		wctx := audit.WithFlowStep(ctx, audit.FlowStep{Flow: run.Flow, Run: string(id), By: byOf(ctx)})
@@ -326,55 +337,99 @@ const (
 	maxBackoff = time.Hour
 )
 
-// Due advances the runs due at or before the engine's clock: it settles
-// runs with a pending mark and fires due timers. It returns how many runs
-// it advanced. A run it cannot advance is logged and backed off, so a
-// stranded or failing run does not hold back the others.
+// Bounds of the writes the engine does not let its caller's context cut:
+// a create output, whose cut leaves it unknown whether it landed, and the
+// backoff of a run that failed, which would otherwise stay at the front of
+// the due order. A test shortens them.
+var (
+	outputTimeout  = 30 * time.Second
+	backoffTimeout = 10 * time.Second
+)
+
+// Due runs one round of [Engine.DueRound] from the start, and returns how
+// many runs it advanced.
 func (e *Engine) Due(ctx context.Context) (int, error) {
+	rep, err := e.DueRound(ctx, flowrun.DueCursor{})
+	return rep.Advanced, err
+}
+
+// DueReport is what one round of [Engine.DueRound] did.
+type DueReport struct {
+	// Advanced counts the runs the round advanced.
+	Advanced int
+	// Failed counts the runs it could not advance and backed off.
+	Failed int
+	// More reports a full round: more runs may be due after Next.
+	More bool
+	// Next resumes the listing after the last run of the round.
+	Next flowrun.DueCursor
+}
+
+// DueRound advances the runs due at or before the engine's clock, after
+// the cursor, at most [MaxDuePerRound] of them: it settles runs with a
+// pending mark, fires due timers and tests a join waiting on its `when:`.
+// A run it cannot advance is logged and backed off, so a stranded or
+// failing run does not hold back the others. A caller that runs several
+// rounds passes the last round's Next to go on after the last run.
+//
+// When ctx ends mid-round, the round stops with ctx's error and Next at
+// the run it cut off. That run keeps its pending mark, but a create output
+// it was writing is finished first, bounded by outputTimeout: a cut create
+// may have landed, so it would be skipped rather than written again.
+func (e *Engine) DueRound(ctx context.Context, after flowrun.DueCursor) (DueReport, error) {
 	now := e.now()
-	runs, err := e.d.Runs.ListDue(ctx, now, flowrun.DueCursor{}, MaxDuePerRound)
+	runs, err := e.d.Runs.ListDue(ctx, now, after, MaxDuePerRound)
 	if err != nil {
-		return 0, err
+		return DueReport{Next: after}, err
 	}
-	n := 0
+	rep := DueReport{Next: after, More: len(runs) == MaxDuePerRound}
 	for _, run := range runs {
 		if ctx.Err() != nil {
-			return n, ctx.Err()
+			return rep, ctx.Err()
 		}
+		rep.Next = flowrun.DueCursor{At: run.Instance.NextDueAt, ID: run.ID}
 		if left, err := e.advance(ctx, run, now); err != nil {
 			slog.WarnContext(ctx, "flowengine: a due run did not advance", "run", run.ID, "flow", run.Flow,
 				"error", err)
-			e.backoff(ctx, left)
+			// Backed off even when ctx ended: a run cut off by a deadline
+			// would else stay first in the due order.
+			bctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), backoffTimeout)
+			e.backoff(bctx, left)
+			cancel()
+			rep.Failed++
 			continue
 		}
-		n++
+		rep.Advanced++
 	}
-	return n, nil
+	return rep, nil
 }
 
 // backoff makes a run that failed to advance due again later: after
 // minBackoff, doubling with each failure in a row up to maxBackoff. A run
-// without a mark waits minBackoff. A zero run is left alone.
+// without a mark waits minBackoff. A forked run backs off each branch (see
+// branchesBackedOff). A zero run is left alone.
 func (e *Engine) backoff(ctx context.Context, run flowrun.Run) {
 	if run.ID == "" {
+		return
+	}
+	if forked(run) {
+		now := e.now()
+		if _, err := e.put(ctx, run, branchesBackedOff(run, now), now); err != nil && !isLost(err) {
+			slog.WarnContext(ctx, "flowengine: a failed run was not backed off", "run", run.ID, "error", err)
+		}
 		return
 	}
 	delay := minBackoff
 	var p *flowrun.Pending
 	if run.Pending != nil {
 		cp := *run.Pending
-		for range cp.Failures {
-			if delay *= 2; delay >= maxBackoff {
-				delay = maxBackoff
-				break
-			}
-		}
+		delay = backoffDelay(cp.Failures)
 		cp.Failures = min(cp.Failures+1, flowrun.MaxPendingFailures)
 		p = &cp
 	}
 	inst := run.Instance
 	inst.NextDueAt = e.now().Add(delay)
-	if _, err := e.save(ctx, run, inst, p, nil, e.now()); err != nil && !isLost(err) {
+	if _, err := e.save(ctx, run, "", inst, p, nil, e.now()); err != nil && !isLost(err) {
 		slog.WarnContext(ctx, "flowengine: a failed run was not backed off", "run", run.ID, "error", err)
 	}
 }
@@ -386,8 +441,11 @@ func (e *Engine) advance(ctx context.Context, run flowrun.Run, now time.Time) (f
 	if err != nil {
 		return run, err
 	}
+	if forked(run) {
+		return e.advanceBranches(ctx, f, run, now)
+	}
 	if run.Pending != nil {
-		return e.settle(ctx, f, run)
+		return e.settle(ctx, f, run, "")
 	}
 	def := f.Definition()
 	cur := flow.Read(def, run.Instance, run.CreatedAt)
@@ -402,20 +460,20 @@ func (e *Engine) advance(ctx context.Context, run flowrun.Run, now time.Time) (f
 		if !inst.NextDueAt.After(now) {
 			inst.NextDueAt = time.Time{} // never a busy loop on a due time nothing fires
 		}
-		_, uerr := e.save(ctx, run, inst, nil, nil, now)
+		_, uerr := e.save(ctx, run, "", inst, nil, nil, now)
 		if uerr != nil && !isLost(uerr) {
 			return run, uerr
 		}
 		return flowrun.Run{}, nil
 	}
-	moved, err := e.move(ctx, f, run, cur, flowrun.Step{State: t.To, Via: flowrun.ViaTimer, Timer: t.Name}, now)
+	moved, err := e.take(ctx, f, run, "", cur, []string{t.To}, flowrun.Step{Via: flowrun.ViaTimer, Timer: t.Name}, now)
 	if err != nil {
 		if isLost(err) {
 			return flowrun.Run{}, nil
 		}
 		return run, err
 	}
-	return e.settle(ctx, f, moved)
+	return e.settle(ctx, f, moved, "")
 }
 
 // flowOf returns the flow a run follows: the current declaration when its

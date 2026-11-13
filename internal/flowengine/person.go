@@ -62,11 +62,18 @@ func (e *Engine) Claim(ctx context.Context, id flow.RunID, gen int64, by string)
 		if err != nil {
 			return err
 		}
-		if cerr := e.claimable(run, gen, by); cerr != nil {
+		tok, cerr := claimable(run, gen, by, e.now())
+		if cerr != nil {
 			return cerr
 		}
-		run.Claim = &flowrun.Claim{Generation: gen, By: by, At: e.now()}
-		_, err = e.save(ctx, run, run.Instance, run.Pending, nil, e.now())
+		st := cloneState(run)
+		c := &flowrun.Claim{Generation: gen, By: by, At: e.now()}
+		if tok == "" {
+			st.Claim = c
+		} else {
+			st.Branches[branchAt(run, tok)].Claim = c
+		}
+		_, err = e.put(ctx, run, st, e.now())
 		if errors.Is(err, flowrun.ErrConflict) {
 			continue // re-read: someone else may have claimed it
 		}
@@ -78,55 +85,88 @@ func (e *Engine) Claim(ctx context.Context, id flow.RunID, gen int64, by string)
 	return ErrClaimed
 }
 
-// claimable checks that by may claim or change run's step at gen.
-func (e *Engine) claimable(run flowrun.Run, gen int64, by string) error {
-	if run.Pending != nil {
-		return ErrSettling
+// claimable checks that by may claim or change run's step at gen, and
+// returns the token at gen, at now: the run, or the branch whose step it is.
+func claimable(run flowrun.Run, gen int64, by string, now time.Time) (string, error) {
+	if !forked(run) && run.Pending != nil {
+		return "", ErrSettling
 	}
-	if run.Instance.Generation != gen {
-		return ErrStale
+	tok, ok := tokenAt(run, gen)
+	if !ok {
+		return "", ErrStale
 	}
-	if c := run.Claim; c != nil && c.Generation == gen && c.By != by && e.now().Sub(c.At) < ClaimTTL {
-		return ErrClaimed
+	_, p, c, _ := slot(run, tok)
+	if p != nil {
+		return "", ErrSettling
 	}
-	return nil
+	if c != nil && c.Generation == gen && c.By != by && now.Sub(c.At) < ClaimTTL {
+		return "", ErrClaimed
+	}
+	return tok, nil
 }
 
 // Changed is what [Engine.Change] did.
 type Changed struct {
 	// Moved reports whether a change branch applied.
 	Moved bool
-	// State is the run's state after the change; for a run that finished,
-	// the final state.
+	// State is the state of the step's branch after the change, or of the
+	// run when it has no branches; empty when that place is gone.
 	State string
 	// Finished reports that the run ended.
 	Finished bool
 }
 
 // Change fires the `change` event on run id at generation gen, caused by
-// by: the first change branch of the run's state whose roles by holds
+// by: the first change branch of the state at gen, the run's or one of
+// its branches', whose roles by holds
 // (holds reports one role; a branch without roles admits anyone) and whose
 // guard holds on the raw subject moves the run, which then settles. No
 // branch applying is not an error. The claim by holds on the step, if any,
 // is released either way.
+//
+// A write to another branch of a forked run between the read and the move
+// does not make the step stale: Change reads the run again and retries
+// while the step's branch is still at gen. A failure of another branch to
+// settle is logged, not returned.
 //
 // The caller has authorized the event; the engine does not. The writes
 // carry the [audit.FlowStep] By of ctx, if any.
 func (e *Engine) Change(ctx context.Context, id flow.RunID, gen int64, by string,
 	holds func(role string) bool) (Changed, error) {
 	by = clip(by)
+	for range changeAttempts {
+		out, err := e.change(ctx, id, gen, by, holds)
+		if !errors.Is(err, errLostMove) {
+			return out, err
+		}
+	}
+	return Changed{}, ErrStale
+}
+
+// changeAttempts bounds the times [Engine.Change] reads the run again
+// after losing a compare-and-set to another write on it.
+const changeAttempts = 5
+
+// errLostMove is change losing the compare-and-set of its move.
+var errLostMove = errors.New("flowengine: the move lost to another write")
+
+// change is one attempt of [Engine.Change].
+func (e *Engine) change(ctx context.Context, id flow.RunID, gen int64, by string,
+	holds func(role string) bool) (Changed, error) {
 	run, err := e.Run(ctx, id)
 	if err != nil {
 		return Changed{}, err
 	}
-	if cerr := e.claimable(run, gen, by); cerr != nil {
+	tok, cerr := claimable(run, gen, by, e.now())
+	if cerr != nil {
 		return Changed{}, cerr
 	}
 	f, err := e.flowOf(ctx, run)
 	if err != nil {
 		return Changed{}, err
 	}
-	cur := flow.Read(f.Definition(), run.Instance, run.CreatedAt)
+	inst := instOf(run, tok)
+	cur := flow.Read(f.Definition(), inst, run.CreatedAt)
 	if cur.Stranded {
 		return Changed{}, fmt.Errorf("%w: state %q", ErrStranded, cur.State)
 	}
@@ -144,7 +184,7 @@ func (e *Engine) Change(ctx context.Context, id flow.RunID, gen int64, by string
 					return false, serr
 				}
 			}
-			return e.guardHolds(ctx, b.When, subj)
+			return e.g.holds(ctx, b.When, subj)
 		},
 		Target: func(b flowcfg.Branch) string { return b.To },
 	})
@@ -152,36 +192,53 @@ func (e *Engine) Change(ctx context.Context, id flow.RunID, gen int64, by string
 	case flow.Moved:
 	case flow.GuardFailed:
 		slog.WarnContext(ctx, "flowengine: a change guard failed", "run", id, "state", cur.State, "error", d.Err)
-		e.release(ctx, run)
+		e.release(ctx, run, tok)
 		return Changed{State: cur.State}, ErrGuard
 	default:
-		e.release(ctx, run)
+		e.release(ctx, run, tok)
 		return Changed{State: cur.State}, nil
 	}
-	moved, err := e.move(ctx, f, run, cur, flowrun.Step{State: d.Move.To, Via: flowrun.ViaChange, By: by}, e.now())
+	moved, err := e.take(ctx, f, run, tok, cur, d.Branch.Targets(), flowrun.Step{Via: flowrun.ViaChange, By: by},
+		e.now())
 	if err != nil {
 		if isLost(err) {
-			return Changed{}, ErrStale
+			return Changed{}, errLostMove
 		}
 		return Changed{}, err
 	}
 	out := Changed{Moved: true, State: d.Move.To}
-	left, err := e.settle(ctx, f, moved)
+	left, err := e.settle(ctx, f, moved, tok)
+	if err != nil && othersOnly(err, tok) {
+		// The step settled; another branch did not, and was backed off.
+		left, err = flowrun.Run{}, nil
+	}
 	if err != nil {
 		e.backoff(ctx, left)
 		return out, err
 	}
 	if left.ID == "" {
-		// Ended, or another engine took it over: read what is stored.
-		if now, gerr := e.Run(ctx, id); gerr == nil {
-			out.State = now.Instance.State
-		} else {
-			out.Finished = true
+		// Ended, or another engine took it over: read what is stored. A
+		// run that cannot be read any more has ended.
+		now, gerr := e.Run(ctx, id)
+		if out.Finished = gerr != nil; out.Finished {
+			return out, nil
 		}
-	} else {
-		out.State = left.Instance.State
+		left = now
 	}
+	out.State = placeOf(left, tok)
 	return out, nil
+}
+
+// placeOf returns the state of token tok in run: the branch's while it
+// is live, else the run's own. A forked run has none of its own.
+func placeOf(run flowrun.Run, tok string) string {
+	if i := branchAt(run, tok); tok != "" && i >= 0 {
+		return run.Branches[i].Instance.State
+	}
+	if forked(run) {
+		return ""
+	}
+	return run.Instance.State
 }
 
 // ReleaseClaim drops the claim by holds on the step of run id at
@@ -189,20 +246,30 @@ func (e *Engine) Change(ctx context.Context, id flow.RunID, gen int64, by string
 // not keep other holders out for [ClaimTTL].
 func (e *Engine) ReleaseClaim(ctx context.Context, id flow.RunID, gen int64, by string) {
 	run, err := e.Run(ctx, id)
-	if err != nil || run.Claim == nil || run.Claim.By != clip(by) || run.Claim.Generation != gen {
+	if err != nil {
 		return
 	}
-	e.release(ctx, run)
+	tok, ok := tokenAt(run, gen)
+	if _, _, c, _ := slot(run, tok); !ok || c == nil || c.By != clip(by) || c.Generation != gen {
+		return
+	}
+	e.release(ctx, run, tok)
 }
 
-// release drops the claim on run's step, best effort: a claim left behind
-// runs out after [ClaimTTL].
-func (e *Engine) release(ctx context.Context, run flowrun.Run) {
-	if run.Claim == nil {
+// release drops the claim on token tok's step, best effort: a claim left
+// behind runs out after [ClaimTTL].
+func (e *Engine) release(ctx context.Context, run flowrun.Run, tok string) {
+	_, _, c, ok := slot(run, tok)
+	if !ok || c == nil {
 		return
 	}
-	run.Claim = nil
-	if _, err := e.save(ctx, run, run.Instance, run.Pending, nil, e.now()); err != nil && !isLost(err) {
+	st := cloneState(run)
+	if tok == "" {
+		st.Claim = nil
+	} else {
+		st.Branches[branchAt(run, tok)].Claim = nil
+	}
+	if _, err := e.put(ctx, run, st, e.now()); err != nil && !isLost(err) {
 		slog.WarnContext(ctx, "flowengine: a step claim was not released", "run", run.ID, "error", err)
 	}
 }
@@ -211,19 +278,36 @@ func (e *Engine) release(ctx context.Context, run flowrun.Run) {
 // follows `done` branches, as a [Engine.Due] round would. It returns
 // [ErrNotPending] for a run that waits in its state. A failure backs the
 // run off again and is returned.
+//
+// A failed job step starts again with a fresh attempt count, and a job
+// waiting for its next attempt runs it now. A run whose only pending work
+// is an attempt on the queue or running returns [ErrJobRunning].
 func (e *Engine) Retry(ctx context.Context, id flow.RunID) error {
 	run, err := e.Run(ctx, id)
 	if err != nil {
 		return err
 	}
-	if run.Pending == nil {
+	if !Pending(run) {
 		return ErrNotPending
 	}
 	f, err := e.flowOf(ctx, run)
 	if err != nil {
 		return err
 	}
-	if left, err := e.settle(ctx, f, run); err != nil {
+	now := e.now()
+	st, changed, running := retryJobs(run, now)
+	switch {
+	case changed:
+		if run, err = e.put(ctx, run, st, now); err != nil {
+			if isLost(err) {
+				return fmt.Errorf("flowengine: run %s changed; retry it again", id)
+			}
+			return err
+		}
+	case running && !settleable(run, now):
+		return ErrJobRunning
+	}
+	if left, err := e.settle(ctx, f, run, ""); err != nil {
 		e.backoff(ctx, left)
 		return err
 	}
@@ -252,6 +336,14 @@ type Explanation struct {
 	Claim *flowrun.Claim
 	// Stranded is set when the run's state or definition is gone.
 	Stranded bool
+	// Parallel explains each branch of a forked run, in fork order. The
+	// run itself then explains as the join it waits at, with generation
+	// 0: its steps are the branches'.
+	Parallel []Explanation
+	// Branch names the branch a Parallel entry explains.
+	Branch string
+	// Arrived reports a branch that waits at the join for the others.
+	Arrived bool
 }
 
 // TimerDue is one timer of the run's state.
@@ -265,7 +357,9 @@ type TimerDue struct {
 
 // BranchCheck is one change branch of the run's state.
 type BranchCheck struct {
-	To    string
+	To string
+	// Fork are the states a fork branch starts, in place of To.
+	Fork  []string
 	Label string
 	Roles []string
 	// Guard is the guard's source, or empty for none.
@@ -282,6 +376,20 @@ type BranchCheck struct {
 type PendingStep struct {
 	Failures    int
 	NextAttempt time.Time
+	// Job is set in a state with a job step whose attempts have begun.
+	Job *JobStep
+}
+
+// JobStep is where the job step of a state is.
+type JobStep struct {
+	// Phase is where the current attempt is.
+	Phase flowrun.JobPhase
+	// Failed counts the attempts that ran and failed.
+	Failed int
+	// Attempts is the budget: every execution, the first included.
+	Attempts int
+	// FailKind is set once the job failed for good.
+	FailKind flowrun.JobFailKind
 }
 
 // Explain reads why each run waits, in the order given. It evaluates the
@@ -353,7 +461,6 @@ func (ex *explainer) subject(ctx context.Context, ref entity.Ref) (*entity.Entit
 }
 
 func (ex *explainer) explain(ctx context.Context, run flowrun.Run) (Explanation, error) {
-	e := ex.e
 	f, err := ex.flows.Of(ctx, run)
 	if err != nil {
 		if errors.Is(err, ErrStranded) {
@@ -362,7 +469,47 @@ func (ex *explainer) explain(ctx context.Context, run flowrun.Run) (Explanation,
 		}
 		return Explanation{}, err
 	}
-	cur := flow.Read(f.Definition(), run.Instance, run.CreatedAt)
+	if !forked(run) {
+		return ex.place(ctx, f, run, run.Instance, run.Pending, run.Claim)
+	}
+	// A forked run waits at its join for its branches: the run explains as
+	// the join, with no step of its own, and each branch as a place.
+	fk, _, ok := f.Region(run.Branches[0].Name)
+	if !ok {
+		return Explanation{State: run.Instance.State, Label: run.Instance.State, Stranded: true}, nil
+	}
+	js, _ := f.State(fk.Join)
+	x := Explanation{State: js.Name, Label: js.Label, Status: flow.StatusWorking, EnteredAt: run.Instance.EnteredAt}
+	if fk.Waits {
+		x.Status = flow.StatusInputRequired
+	}
+	for _, b := range run.Branches {
+		bx, err := ex.place(ctx, f, run, b.Instance, b.Pending, b.Claim)
+		if err != nil {
+			return Explanation{}, err
+		}
+		bx.Branch, bx.Arrived = b.Name, b.Arrived
+		if b.Arrived {
+			// It waits for the others, not for anyone in the join.
+			bx.WaitingFor, bx.Writes, bx.Timers, bx.Branches = nil, nil, nil, nil
+		}
+		if bx.Pending != nil {
+			x.Pending = bx.Pending
+		}
+		if bx.Status == flow.StatusFailed {
+			x.Status = flow.StatusFailed
+		}
+		x.Parallel = append(x.Parallel, bx)
+	}
+	return x, nil
+}
+
+// place explains one place of run: the run itself, or a branch, at inst
+// with its pending mark p and claim c.
+func (ex *explainer) place(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, inst flow.Instance,
+	p *flowrun.Pending, c *flowrun.Claim) (Explanation, error) {
+	e := ex.e
+	cur := flow.Read(f.Definition(), inst, run.CreatedAt)
 	x := Explanation{State: cur.State, Label: cur.State, Generation: cur.Generation, EnteredAt: cur.EnteredAt}
 	if cur.Stranded {
 		x.Stranded = true
@@ -379,22 +526,31 @@ func (ex *explainer) explain(ctx context.Context, run flowrun.Run) (Explanation,
 		x.Timers = append(x.Timers, td)
 	}
 	for _, b := range st.Branches(flowcfg.EventChange) {
-		bc := BranchCheck{To: b.To, Label: b.Label, Roles: b.Roles, Holds: true}
+		bc := BranchCheck{To: b.To, Fork: b.Fork, Label: b.Label, Roles: b.Roles, Holds: true}
 		if b.When != nil {
 			bc.Guard = b.When.Source()
 			subj, err := ex.subject(ctx, run.Subject)
 			if err != nil {
 				return Explanation{}, err
 			}
-			ok, gerr := e.guardHolds(ctx, b.When, subj)
+			ok, gerr := e.g.holds(ctx, b.When, subj)
 			bc.Holds, bc.Failed = ok && gerr == nil, gerr != nil
 		}
 		x.Branches = append(x.Branches, bc)
 	}
-	if p := run.Pending; p != nil {
-		x.Pending = &PendingStep{Failures: p.Failures, NextAttempt: run.Instance.NextDueAt}
+	if p != nil {
+		x.Pending = &PendingStep{Failures: p.Failures, NextAttempt: inst.NextDueAt}
+		if job, ok := st.Job(); ok && p.Job != nil && p.State == cur.State && p.Generation == cur.Generation {
+			x.Pending.Job = &JobStep{Phase: p.Job.Phase, Failed: p.Job.Failed, Attempts: job.Retry.Attempts,
+				FailKind: p.Job.FailKind}
+			if p.Job.Phase == flowrun.JobFailed {
+				// The run waits for an operator: it reads as failed, though its
+				// header does not, since a retry can still move it on.
+				x.Status = flow.StatusFailed
+			}
+		}
 	}
-	if c := run.Claim; c != nil && c.Generation == cur.Generation && e.now().Sub(c.At) < ClaimTTL {
+	if c != nil && c.Generation == cur.Generation && e.now().Sub(c.At) < ClaimTTL {
 		cp := *c
 		x.Claim = &cp
 	}

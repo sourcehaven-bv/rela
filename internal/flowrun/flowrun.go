@@ -71,19 +71,10 @@ type Run struct {
 	UpdatedAt time.Time
 	// Rev rises by one on every update; it is 1 after create. Update and
 	// Delete compare it.
-	Rev      int64
-	Instance flow.Instance
-	// Pending is the run's pending-outputs mark, or nil (see [Pending]).
-	Pending *Pending
-	// Log is the run's timeline, oldest first (see [Step]).
-	Log []Step
-	// Claim is the step a person is completing, or nil (see [Claim]).
-	Claim *Claim
-}
-
-// State returns the run's execution state.
-func (r Run) State() State {
-	return State{Instance: r.Instance, Pending: r.Pending, Log: r.Log, Claim: r.Claim}
+	Rev int64
+	// State is the run's execution state. It is embedded, so a backend or
+	// a caller that changes one field carries the others along.
+	State
 }
 
 // MaxLog caps [State.Log]. A longer log keeps its first entry, the start,
@@ -99,6 +90,8 @@ const (
 	ViaDone   Via = "done"
 	ViaChange Via = "change"
 	ViaTimer  Via = "timer"
+	// ViaJoin: the parallel branches continued as one run at the join.
+	ViaJoin Via = "join"
 )
 
 // Step is one entry of a run's timeline: the run entered State at At.
@@ -114,6 +107,9 @@ type Step struct {
 	Timer string `json:"timer,omitempty"`
 	// By is the principal who caused the move, when a person did.
 	By string `json:"by,omitempty"`
+	// Branch names the parallel branch that moved: its first state. Empty
+	// for a move of the run itself.
+	Branch string `json:"branch,omitempty"`
 }
 
 // MaxClaimBy caps the length of [Claim.By] and [Step.By].
@@ -155,11 +151,96 @@ type Pending struct {
 	// Failures counts the settle attempts that failed in a row. The
 	// runtime backs off by it.
 	Failures int `json:"failures,omitempty"`
+	// Job is the attempt of the state's job step, once its outputs are
+	// written; nil before that and in a state without a job.
+	Job *JobAttempt `json:"job,omitempty"`
+}
+
+// JobPhase is where a job attempt is.
+type JobPhase string
+
+const (
+	// JobWaiting: the next attempt is due at NextAt.
+	JobWaiting JobPhase = "waiting"
+	// JobQueued: the attempt is on the queue and has not started.
+	JobQueued JobPhase = "queued"
+	// JobStarted: a worker runs the attempt.
+	JobStarted JobPhase = "started"
+	// JobFinished: the attempt ended with Outcome, not yet acted on.
+	JobFinished JobPhase = "finished"
+	// JobFailed: the job failed for good, as FailKind says. Only an
+	// operator retry moves it on.
+	JobFailed JobPhase = "failed"
+)
+
+// JobOutcome is how an attempt ended.
+type JobOutcome string
+
+const (
+	// JobOK: the target succeeded.
+	JobOK JobOutcome = "ok"
+	// JobRetryable: the target failed and may be run again.
+	JobRetryable JobOutcome = "retryable"
+	// JobPermanent: the target failed and running it again cannot help.
+	JobPermanent JobOutcome = "permanent"
+	// JobTimeout: the attempt ran out of time; whether it took effect is
+	// unknown.
+	JobTimeout JobOutcome = "timeout"
+)
+
+// JobFailKind is why a job failed for good.
+type JobFailKind string
+
+const (
+	// JobExhausted: every attempt failed with a retryable error.
+	JobExhausted JobFailKind = "exhausted"
+	// JobFailedPermanent: an attempt failed with a permanent error.
+	JobFailedPermanent JobFailKind = "permanent"
+	// JobFailedTimeout: an attempt timed out and the job is not idempotent.
+	JobFailedTimeout JobFailKind = "timeout"
+	// JobLost: the worker of an attempt stopped without an outcome and the
+	// job is not idempotent.
+	JobLost JobFailKind = "lost"
+)
+
+// MaxJobSeq caps [JobAttempt.Seq].
+const MaxJobSeq = 1 << 20
+
+// JobAttempt is the state of a job step's attempts (TKT-PY2G11W). It holds
+// no error text: an error can quote subject values or secrets, so it goes
+// to the log only.
+type JobAttempt struct {
+	// Seq numbers the attempts that were queued, from 1. It names the
+	// attempt in the idempotency key and on the queue.
+	Seq int64 `json:"seq"`
+	// Failed counts the attempts that ran and failed since the job started
+	// or an operator retried it.
+	Failed int `json:"failed,omitempty"`
+	// Unsent counts the attempts in a row that never started.
+	Unsent int      `json:"unsent,omitempty"`
+	Phase  JobPhase `json:"phase"`
+	// Outcome is set in the finished phase.
+	Outcome JobOutcome `json:"outcome,omitempty"`
+	// FailKind is set in the failed phase.
+	FailKind JobFailKind `json:"fail_kind,omitempty"`
+	// QueuedAt is when the attempt was queued. Deadline is when a queued
+	// attempt must have started, and when a started one must have ended.
+	QueuedAt time.Time `json:"queued_at,omitzero"`
+	Deadline time.Time `json:"deadline,omitzero"`
+	// StartedAt is when a worker started it. A finished attempt keeps it:
+	// it is when the outcome is due.
+	StartedAt time.Time `json:"started_at,omitzero"`
+	// NextAt is when the next attempt is due, in the waiting phase.
+	NextAt time.Time `json:"next_at,omitzero"`
 }
 
 // State is a run's stored execution state: the engine's instance, the
-// pending-outputs mark, the timeline and the step claim.
+// pending-outputs mark, the timeline, the step claim and the parallel
+// branches.
 type State struct {
+	// Instance is the run's own instance. While the run has branches it
+	// is inert: its state is empty, so [flow.Read] reads it as stranded,
+	// and Previous names the state that forked.
 	Instance flow.Instance
 	// Pending is nil when the run waits in its state.
 	Pending *Pending
@@ -167,6 +248,26 @@ type State struct {
 	Log []Step
 	// Claim is nil when nobody is completing the step.
 	Claim *Claim
+	// Branches are the live parallel branches, in the order of the fork's
+	// targets; empty for a run that has not forked. At most [MaxBranches].
+	Branches []Branch
+}
+
+// MaxBranches caps [State.Branches]: the targets of one fork.
+const MaxBranches = 8
+
+// Branch is one parallel branch of a forked run. It carries what the run
+// carries for its own instance: an instance, a pending mark and a claim.
+// Generations are unique across the run, so a generation names one step.
+type Branch struct {
+	// Name is the state the branch started in: a target of the fork.
+	Name     string        `json:"name"`
+	Instance flow.Instance `json:"instance"`
+	Pending  *Pending      `json:"pending,omitempty"`
+	Claim    *Claim        `json:"claim,omitempty"`
+	// Arrived reports that the branch reached the join and waits there
+	// for the others.
+	Arrived bool `json:"arrived,omitempty"`
 }
 
 // NewRun is a run to create.
@@ -201,6 +302,9 @@ type Query struct {
 	// SubjectIDs selects the runs on any of these subject ids, on every
 	// face: at most [MaxPage] ids. Empty: no narrowing.
 	SubjectIDs []string
+	// IDs selects the runs with any of these ids: at most [MaxPage] ids.
+	// Empty: no narrowing.
+	IDs []RunID
 	// After resumes a listing: only runs with a greater id.
 	After RunID
 	// Limit is 1 to [MaxPage].
@@ -386,10 +490,50 @@ func CheckState(st State) error {
 	if err := checkLog(st.Log); err != nil {
 		return err
 	}
-	if c := st.Claim; c != nil && (c.Generation < 0 || c.By == "" || len(c.By) > MaxClaimBy) {
+	if err := checkClaim(st.Claim); err != nil {
+		return err
+	}
+	if err := checkPending(st.Pending); err != nil {
+		return err
+	}
+	if err := checkBranches(st.Branches); err != nil {
+		return err
+	}
+	return checkForked(st)
+}
+
+// checkForked checks the shape of a forked state (RR-ZRMWUYT): the run's
+// own instance carries no pending mark or claim, an arrived branch carries
+// neither, and no two places share a generation, so a generation names
+// one step.
+func checkForked(st State) error {
+	if len(st.Branches) == 0 {
+		return nil
+	}
+	if st.Pending != nil || st.Claim != nil {
+		return invalid("a forked run carries a pending mark or claim of its own")
+	}
+	gens := map[int64]bool{st.Instance.Generation: true}
+	for _, b := range st.Branches {
+		if b.Arrived && (b.Pending != nil || b.Claim != nil) {
+			return invalid("arrived branch %q carries a pending mark or claim", b.Name)
+		}
+		if gens[b.Instance.Generation] {
+			return invalid("branch %q repeats generation %d", b.Name, b.Instance.Generation)
+		}
+		gens[b.Instance.Generation] = true
+	}
+	return nil
+}
+
+func checkClaim(c *Claim) error {
+	if c != nil && (c.Generation < 0 || c.By == "" || len(c.By) > MaxClaimBy) {
 		return invalid("claim out of range")
 	}
-	p := st.Pending
+	return nil
+}
+
+func checkPending(p *Pending) error {
 	if p == nil {
 		return nil
 	}
@@ -400,6 +544,65 @@ func CheckState(st State) error {
 		p.Failures > MaxPendingFailures {
 
 		return invalid("pending mark out of range")
+	}
+	return checkJob(p.Job)
+}
+
+// checkJob checks a job attempt: a known phase with the fields it needs,
+// and counts in range.
+func checkJob(j *JobAttempt) error {
+	if j == nil {
+		return nil
+	}
+	if j.Seq < 0 || j.Seq > MaxJobSeq || j.Failed < 0 || j.Failed > MaxPendingFailures || j.Unsent < 0 ||
+		j.Unsent > MaxPendingFailures {
+
+		return invalid("job attempt out of range")
+	}
+	var ok bool
+	switch j.Phase {
+	case JobWaiting:
+		ok = j.Outcome == "" && j.FailKind == ""
+	case JobQueued, JobStarted:
+		ok = j.Seq > 0 && !j.Deadline.IsZero() && j.Outcome == "" && j.FailKind == "" &&
+			(j.Phase == JobQueued || !j.StartedAt.IsZero())
+	case JobFinished:
+		ok = j.Seq > 0 && !j.StartedAt.IsZero() && j.FailKind == "" && slices.Contains(
+			[]JobOutcome{JobOK, JobRetryable, JobPermanent, JobTimeout}, j.Outcome)
+	case JobFailed:
+		ok = j.Outcome == "" && slices.Contains(
+			[]JobFailKind{JobExhausted, JobFailedPermanent, JobFailedTimeout, JobLost}, j.FailKind)
+	default:
+		ok = false
+	}
+	if !ok {
+		return invalid("job attempt in phase %q is inconsistent", j.Phase)
+	}
+	return nil
+}
+
+// checkBranches checks the parallel branches: at most [MaxBranches], with
+// distinct valid names, each checked like the run's own instance, mark
+// and claim.
+func checkBranches(bs []Branch) error {
+	if len(bs) > MaxBranches {
+		return invalid("more than %d branches", MaxBranches)
+	}
+	seen := map[string]bool{}
+	for _, b := range bs {
+		if !flow.ValidName(b.Name) || seen[b.Name] {
+			return invalid("branch name %q", b.Name)
+		}
+		seen[b.Name] = true
+		if err := CheckInstance(b.Instance); err != nil {
+			return err
+		}
+		if err := checkClaim(b.Claim); err != nil {
+			return err
+		}
+		if err := checkPending(b.Pending); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -414,11 +617,13 @@ func checkLog(log []Step) error {
 		if !flow.ValidName(s.State) || s.From != "" && !flow.ValidName(s.From) {
 			return invalid("log state name %q", s.State)
 		}
-		if s.Timer != "" && !flow.ValidName(s.Timer) || len(s.By) > MaxClaimBy {
+		if s.Timer != "" && !flow.ValidName(s.Timer) || s.Branch != "" && !flow.ValidName(s.Branch) ||
+			len(s.By) > MaxClaimBy {
+
 			return invalid("log entry out of range")
 		}
 		switch s.Via {
-		case ViaStart, ViaDone, ViaChange, ViaTimer:
+		case ViaStart, ViaDone, ViaChange, ViaTimer, ViaJoin:
 		default:
 			return invalid("log cause %q", s.Via)
 		}
@@ -504,9 +709,9 @@ func CheckDue(until time.Time, after DueCursor, limit int) error {
 	return checkLimit(limit)
 }
 
-// CheckQuery checks q: a set Flow, SubjectID, SubjectIDs or After must be
-// valid, SubjectIDs holds at most [MaxPage] ids, and Limit must be 1 to
-// [MaxPage].
+// CheckQuery checks q: a set Flow, SubjectID, SubjectIDs, IDs or After
+// must be valid, SubjectIDs and IDs hold at most [MaxPage] ids each, and
+// Limit must be 1 to [MaxPage].
 func CheckQuery(q Query) error {
 	if q.Flow != "" {
 		if err := CheckFlow(q.Flow); err != nil {
@@ -523,6 +728,14 @@ func CheckQuery(q Query) error {
 	}
 	for _, id := range q.SubjectIDs {
 		if err := CheckSubjectID(id); err != nil {
+			return err
+		}
+	}
+	if len(q.IDs) > MaxPage {
+		return invalid("%d run ids; at most %d", len(q.IDs), MaxPage)
+	}
+	for _, id := range q.IDs {
+		if err := CheckID(id); err != nil {
 			return err
 		}
 	}
@@ -588,16 +801,13 @@ type envelope struct {
 	Pending  *Pending      `json:"pending,omitempty"`
 	Log      []Step        `json:"log,omitempty"`
 	Claim    *Claim        `json:"claim,omitempty"`
+	Branches []Branch      `json:"branches,omitempty"`
 }
 
-// NormState returns st with its instance normalized ([NormInstance]) and
-// its pending mark copied.
+// NormState returns a deep copy of st with every instance and time
+// normalized ([NormInstance], [flow.NormTime]).
 func NormState(st State) State {
-	out := State{Instance: NormInstance(st.Instance)}
-	if st.Pending != nil {
-		p := *st.Pending
-		out.Pending = &p
-	}
+	out := State{Instance: NormInstance(st.Instance), Pending: copyPending(st.Pending), Claim: normClaim(st.Claim)}
 	if len(st.Log) > 0 {
 		out.Log = make([]Step, len(st.Log))
 		for i, s := range st.Log {
@@ -605,12 +815,37 @@ func NormState(st State) State {
 			out.Log[i] = s
 		}
 	}
-	if st.Claim != nil {
-		c := *st.Claim
-		c.At = flow.NormTime(c.At)
-		out.Claim = &c
+	if len(st.Branches) > 0 {
+		out.Branches = make([]Branch, len(st.Branches))
+		for i, b := range st.Branches {
+			out.Branches[i] = Branch{Name: b.Name, Instance: NormInstance(b.Instance), Pending: copyPending(b.Pending),
+				Claim: normClaim(b.Claim), Arrived: b.Arrived}
+		}
 	}
 	return out
+}
+
+func copyPending(p *Pending) *Pending {
+	if p == nil {
+		return nil
+	}
+	cp := *p
+	if p.Job != nil {
+		j := *p.Job
+		j.QueuedAt, j.Deadline = flow.NormTime(j.QueuedAt), flow.NormTime(j.Deadline)
+		j.StartedAt, j.NextAt = flow.NormTime(j.StartedAt), flow.NormTime(j.NextAt)
+		cp.Job = &j
+	}
+	return &cp
+}
+
+func normClaim(c *Claim) *Claim {
+	if c == nil {
+		return nil
+	}
+	cp := *c
+	cp.At = flow.NormTime(c.At)
+	return &cp
 }
 
 // EncodeState returns the stored form of st, normalized.
@@ -635,7 +870,7 @@ func FromNew(nr NewRun) Run {
 	st := NormState(State{Instance: nr.Instance, Pending: nr.Pending, Log: nr.Log})
 	return Run{
 		ID: nr.ID, Flow: nr.Flow, Version: nr.Version, Subject: nr.Subject, Singleton: nr.Singleton,
-		CreatedAt: at, UpdatedAt: at, Rev: 1, Instance: st.Instance, Pending: st.Pending, Log: st.Log,
+		CreatedAt: at, UpdatedAt: at, Rev: 1, State: st,
 	}
 }
 

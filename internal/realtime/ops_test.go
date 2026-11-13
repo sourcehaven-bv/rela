@@ -15,7 +15,8 @@ import (
 )
 
 // TestOps_RemovePlaceholder pins AC6: a removed message renders only its
-// seq, rev, thread link and removal; props, author, type and time are gone.
+// seq, rev, thread link (reply count and last reply time) and removal;
+// props, author, type and time are gone.
 func TestOps_RemovePlaceholder(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -35,7 +36,7 @@ func TestOps_RemovePlaceholder(t *testing.T) {
 	require.NoError(t, err)
 	var fields map[string]any
 	require.NoError(t, json.Unmarshal(raw, &fields))
-	require.ElementsMatch(t, []string{"seq", "rev", "reply_count", "removed"}, keys(fields))
+	require.ElementsMatch(t, []string{"seq", "rev", "reply_count", "last_reply_at", "removed"}, keys(fields))
 	require.Equal(t, 1, removed.ReplyCount)
 	require.Equal(t, channels.RemovalModerator, removed.Removed.Kind)
 	require.Nil(t, removed.Removed.By, "a reader without the remove gate does not see who removed it")

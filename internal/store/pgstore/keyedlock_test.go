@@ -23,9 +23,9 @@ func TestKeyedLock_Conformance(t *testing.T) {
 		tb.Helper()
 		// A fresh schema per subtest: advisory locks are database-global, so
 		// subtests sharing a schema would contend on the same keys.
-		// Four connections give a keyed-lock capacity of two, so two distinct
+		// Six connections give a keyed-lock capacity of two, so two distinct
 		// keys can be held at once as DistinctKeysDoNotContend requires.
-		pool := newScopedPoolSized(tb.(*testing.T), 4)
+		pool := newScopedPoolSized(tb.(*testing.T), 6)
 		st, err := pgstore.New(pool)
 		require.NoError(tb, err)
 		l, err := lock.NewBackendLocker(st)
@@ -68,7 +68,7 @@ func TestKeyedLock_ExclusiveAcrossStores(t *testing.T) {
 // once released, and excludes AcquireKeyedLock on the same key.
 func TestTryKeyedLock(t *testing.T) {
 	_ = testDSN(t)
-	pool := newScopedPoolSized(t, 3)
+	pool := newScopedPoolSized(t, 4) // a and b share it: two lock pins plus two
 	a, err := pgstore.New(pool)
 	require.NoError(t, err)
 	b, err := pgstore.New(pool)
@@ -107,6 +107,55 @@ func TestTryKeyedLock(t *testing.T) {
 	require.ErrorContains(t, err, "pool_max_conns >= 3")
 }
 
+// Every held lock pins a connection, so a second lock on one pool needs a
+// larger pool than the first (the realtime and the flow worker).
+func TestTryKeyedLock_CountsHeldLocks(t *testing.T) {
+	_ = testDSN(t)
+	st, err := pgstore.New(newScopedPoolSized(t, 3))
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	held, ok, err := pgstore.TryKeyedLock(ctx, st, "realtime-worker")
+	require.NoError(t, err)
+	require.True(t, ok)
+	_, _, err = pgstore.TryKeyedLock(ctx, st, "flow-worker")
+	require.ErrorContains(t, err, "pool_max_conns >= 4", "two pinned connections leave too few")
+
+	require.ErrorContains(t, pgstore.CheckLockRoom(st, 2), "pool_max_conns >= 4")
+	require.NoError(t, pgstore.CheckLockRoom(st, 1))
+
+	held.Release()
+	other, ok, err := pgstore.TryKeyedLock(ctx, st, "flow-worker")
+	require.NoError(t, err, "a released lock gives its pin back")
+	require.True(t, ok)
+	other.Release()
+}
+
+// The pins and the keyed slots share one budget: on a pool of four, with
+// both workers' locks held and every keyed slot taken, the slot holder can
+// still write.
+func TestTryKeyedLock_SharesTheBudgetWithKeyedSlots(t *testing.T) {
+	_ = testDSN(t)
+	st, err := pgstore.New(newScopedPoolSized(t, 4))
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for _, key := range []string{"realtime-worker", "flow-worker"} {
+		held, ok, lerr := pgstore.TryKeyedLock(ctx, st, key)
+		require.NoError(t, lerr)
+		require.True(t, ok)
+		t.Cleanup(held.Release)
+	}
+	release, err := st.AcquireKeyedLock(ctx, "budget/E-1")
+	require.NoError(t, err)
+	defer release()
+	waitCtx, waitCancel := context.WithTimeout(ctx, 200*time.Millisecond)
+	defer waitCancel()
+	_, err = st.AcquireKeyedLock(waitCtx, "budget/E-2")
+	require.Error(t, err, "a pool of four has one keyed slot next to two pins")
+	require.NoError(t, st.CreateEntity(ctx, entity.New("E-1", "ticket")), "the holder can still write")
+}
+
 // A held lock whose session the server drops fails its check, and the key
 // is free for another holder.
 func TestTryKeyedLock_LostSession(t *testing.T) {
@@ -126,6 +175,12 @@ func TestTryKeyedLock_LostSession(t *testing.T) {
 		5*time.Second, 20*time.Millisecond, "the check sees the lost session")
 	require.Error(t, held.Check(ctx), "and keeps failing")
 	held.Release()
+	// A pool of three has room for one pin, so this lock only fits once
+	// the lost one gave its pin back.
+	second, ok, err := pgstore.TryKeyedLock(ctx, a, "flow-worker")
+	require.NoError(t, err, "a lost lock gives its pin back")
+	require.True(t, ok)
+	second.Release()
 	var other *pgstore.HeldLock
 	require.Eventually(t, func() bool {
 		other, ok, err = pgstore.TryKeyedLock(ctx, a, "realtime-worker")

@@ -66,6 +66,10 @@ func TestMigrate_v27ToV28ChannelReads(t *testing.T) {
 	for _, stmt := range []string{
 		`DROP INDEX channel_messages_counts_idx`,
 		`DROP INDEX channel_reads_reader_idx`,
+		`DROP INDEX channel_messages_thread_idx`,
+		`DROP INDEX channel_messages_stream_idx`,
+		`ALTER TABLE channel_messages DROP COLUMN last_reply_at`,
+		`ALTER TABLE channel_messages DROP COLUMN in_stream`,
 		`DROP TABLE channel_reads`,
 		`ALTER TABLE channel_messages DROP COLUMN counts`,
 		`ALTER TABLE channels DROP COLUMN last_at`,

@@ -161,6 +161,7 @@ func wireMessage(m realtime.MessageView) v1.Message {
 		Seq: m.Seq, Rev: m.Rev, Type: m.Type, Author: wireChannelAuthor(m.Author), At: channelTime(m.At),
 		Props: wireProps(m.Props), ReplyTo: m.ReplyTo, ReplyCount: m.ReplyCount, Batch: m.Batch,
 		EditedAt:    channelTime(m.EditedAt),
+		LastReplyAt: channelTime(m.LastReplyAt), Inline: m.Inline,
 		TriggeredBy: m.TriggeredBy, Actions: m.Actions,
 		EditUntil: channelTime(m.EditUntil), ReleaseAfter: channelTime(m.ReleaseAfter),
 	}

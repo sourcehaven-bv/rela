@@ -15,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient/httpremote"
+	"github.com/Sourcehaven-BV/rela/internal/remotestatus"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/syncmerge"
 )
@@ -26,7 +27,7 @@ import (
 //     merge base, by PATCH with If-Match on the ETag the run last saw. A
 //     412 means the remote changed the row: the run fetches it, merges it as
 //     a pull does, and tries once more. A second 412 leaves the row for the
-//     next run. A 403, 409 or 422 holds the row on the conflict list.
+//     next run. A 400, 403, 409 or 422 holds the row on the conflict list.
 //   - a row the ledger does not know and whose ref is empty is created on
 //     the remote by POST, without an id: the remote picks it, as its API
 //     does for any caller. The ledger then maps the local id to the remote
@@ -158,20 +159,26 @@ func (r pusher) pushEntity(ctx context.Context, em *EntityMapping, e *entity.Ent
 }
 
 // rowHeld reports whether the whole local row waits on the conflict list.
-// A refused push stops waiting once a local value it tried to send changed:
-// the next push sends the new values, and the remote judges them again.
 func (r pusher) rowHeld(em *EntityMapping, e *entity.Entity) bool {
-	held, ok := r.c.entries[conflictKey(e.ID, "")]
+	return r.c.rowHeld(pushFields(em, e), e.ID, e)
+}
+
+// rowHeld reports whether the whole local row local, with the values of e,
+// waits on the conflict list. A refused push stops waiting once a local
+// value it tried to send changed: the next push sends the new values, and
+// the remote judges them again.
+func (c *conflicts) rowHeld(fields []FieldMapping, local string, e *entity.Entity) bool {
+	held, ok := c.entries[conflictKey(local, "")]
 	if !ok {
 		return false
 	}
 	if held.Reason != ReasonRefused {
 		return true
 	}
-	for _, f := range pushFields(em, e) {
+	for _, f := range fields {
 		d, tried := held.RefusedFields[f.baseKey()]
 		if tried && syncmerge.Digest(f.Local, oursValue(f.Local, e)) != d {
-			r.c.drop(e.ID, "")
+			c.drop(local, "")
 			return false
 		}
 	}
@@ -179,24 +186,30 @@ func (r pusher) rowHeld(em *EntityMapping, e *entity.Entity) bool {
 }
 
 // changed returns the mapped fields of e whose value moved off row's merge
-// base and are not held. A field without a base is left alone: the pull has
-// not agreed a value for it yet.
+// base and are not held.
 func (r pusher) changed(em *EntityMapping, e *entity.Entity, row *ledgerRow) []FieldMapping {
+	return r.c.changed(pushFields(em, e), e.ID, e, row)
+}
+
+// changed returns the fields whose value in e, the local row local, moved
+// off row's merge base and are not held. A field without a base is left
+// alone: the pull has not agreed a value for it yet.
+func (c *conflicts) changed(fields []FieldMapping, local string, e *entity.Entity, row *ledgerRow) []FieldMapping {
 	var out []FieldMapping
-	for _, f := range pushFields(em, e) {
+	for _, f := range fields {
 		b, ok := row.Base[f.baseKey()]
 		if !ok {
 			continue
 		}
 		d := syncmerge.Digest(f.Local, oursValue(f.Local, e))
-		if held, isHeld := r.c.entries[conflictKey(e.ID, f.Local.Name)]; isHeld && held.RemoteDigest == d {
+		if held, isHeld := c.entries[conflictKey(local, f.Local.Name)]; isHeld && held.RemoteDigest == d {
 			// The local side now has the remote's value: the two agree, and
 			// the agreed value is the new base.
-			r.c.drop(e.ID, f.Local.Name)
+			c.drop(local, f.Local.Name)
 			row.Base[f.baseKey()] = d
 			continue
 		}
-		if r.c.blocked(e.ID, f.Local.Name) {
+		if c.blocked(local, f.Local.Name) {
 			continue
 		}
 		if d != b {
@@ -284,6 +297,7 @@ func (r pusher) pushUpdate(ctx context.Context, em *EntityMapping, e *entity.Ent
 		case ans.Status >= 200 && ans.Status < 300:
 			maps.Copy(row.Base, digests)
 			row.ETag = ans.ETag
+			r.markSynced(row, e.ID)
 			pc.Updated++
 			return nil
 		case ans.Status == http.StatusPreconditionFailed:
@@ -323,7 +337,8 @@ func (r pusher) refresh(
 	}
 	// The merge records the row with no source hash: the run does not know
 	// the view hash of what it fetched, so the next run compares it again.
-	r.mergeFetched(ctx, em, row, row.Address, id, canonical.Digest{}, etag, th)
+	r.mergeFetched(ctx, em, row, row.Address, id, canonical.Digest{}, etag,
+		sourceRow{th: th, updated: parseStamp(re.Updated)})
 	if cur := r.l.get(reconclient.KindEntity, row.Address); cur != row || row.State != stateLinked {
 		return nil, false, nil
 	}
@@ -379,13 +394,14 @@ func (r pusher) pushCreate(ctx context.Context, em *EntityMapping, e *entity.Ent
 		// and a busy answer included, holds the row: the remote may have
 		// made it.
 		if !notSent(err) {
-			r.unknownCreate(em, e, digests, err.Error())
+			r.unknownCreate(em, e, digests, causeOfError(err), 0, err.Error())
 		}
 		return r.pushFailed("", e.ID, err)
 	}
 	switch {
 	case ans.Status >= http.StatusInternalServerError:
-		return r.uncertainCreate(em, e, digests, fmt.Sprintf("%d %s", ans.Status, reconclient.Sanitize(string(ans.Body))))
+		return r.uncertainCreate(em, e, digests, CauseServerError, ans.Status,
+			fmt.Sprintf("%d %s", ans.Status, reconclient.Sanitize(string(ans.Body))))
 	case ans.Status < 200 || ans.Status >= 300:
 		r.pushRefusedOrFailed(ans, em, e, "", digests)
 		return nil
@@ -398,20 +414,21 @@ func (r pusher) pushCreate(ctx context.Context, em *EntityMapping, e *entity.Ent
 	if ans.Status != http.StatusCreated && ans.Status != http.StatusOK || decodeErr != nil ||
 		created.Type != em.Source || entity.ValidateID(created.ID) != nil {
 
-		return r.uncertainCreate(em, e, digests, fmt.Sprintf("%d with an answer that does not name a new %s",
-			ans.Status, em.Source))
+		return r.uncertainCreate(em, e, digests, CauseNoNewRow, ans.Status,
+			fmt.Sprintf("%d with an answer that does not name a new %s", ans.Status, em.Source))
 	}
 	addr := em.Source + "/" + created.ID
 	if r.l.get(reconclient.KindEntity, addr) != nil {
 		// The remote named a row the ledger already maps; only the driver
 		// writes the mapping, so it is not linked to a second local row.
-		return r.uncertainCreate(em, e, digests, "the remote answered with "+addr+", which is already linked")
+		return r.uncertainCreate(em, e, digests, CauseAlreadyLinked, ans.Status,
+			"the remote answered with "+addr+", which is already linked")
 	}
 	// A pushed row counts as adopted: it was here before the remote had
 	// it, so on_gone never deletes it.
 	row := &ledgerRow{
 		Kind: "E", Type: em.Source, Address: addr, Local: e.ID, Face: e.Face, State: stateLinked,
-		Base: digests, ETag: ans.ETag, Adopted: true,
+		Base: digests, ETag: ans.ETag, Adopted: true, Synced: r.d.Now(),
 	}
 	r.l.put(row)
 	r.byID[created.ID] = row
@@ -440,21 +457,27 @@ func notSent(err error) bool {
 }
 
 // uncertainCreate fails a create whose outcome is unknown and holds it.
-func (r pusher) uncertainCreate(em *EntityMapping, e *entity.Entity, digests map[string]string, detail string) error {
-	r.unknownCreate(em, e, digests, detail)
+func (r pusher) uncertainCreate(
+	em *EntityMapping, e *entity.Entity, digests map[string]string, cause string, status int, detail string,
+) error {
+	r.unknownCreate(em, e, digests, cause, status, detail)
 	return r.rowFailed("", e.ID, "push: the create may have reached the remote: "+detail)
 }
 
 // unknownCreate holds a row whose create failed in a way that does not say
-// whether the remote made the row: a broken connection or a server error.
+// whether the remote made the row: a cancelled or timed-out run, a broken
+// connection, a 5xx, a 429 or 503, a redirect, or a 2xx answer that names
+// no new row or a row the ledger already links.
 // Sending it again could make a second copy, so a person checks the remote
 // first and resolves the entry to the local side to send it again.
-func (r pusher) unknownCreate(em *EntityMapping, e *entity.Entity, digests map[string]string, detail string) {
+func (r pusher) unknownCreate(
+	em *EntityMapping, e *entity.Entity, digests map[string]string, cause string, status int, detail string,
+) {
 	if len(detail) > maxDetail {
 		detail = detail[:maxDetail]
 	}
 	r.c.hold(&Conflict{
-		Local: e.ID, Type: em.Local, Reason: ReasonUncertain, RefusedFields: digests,
+		Local: e.ID, Type: em.Local, Reason: ReasonUncertain, RefusedFields: digests, Cause: cause, Status: status,
 		Detail: "the create may have reached the remote (" + detail + "); check the remote for the row " +
 			"before you resolve this to local",
 	}, r.d.Now())
@@ -516,6 +539,7 @@ func (r pusher) pushRefusedOrFailed(
 		r.c.hold(&Conflict{
 			Local: e.ID, Type: em.Local, Address: addr, Reason: ReasonRefused,
 			Detail: fmt.Sprintf("%d %s", ans.Status, detail), RefusedFields: digests,
+			Cause: CauseRefused, Status: ans.Status,
 		}, r.d.Now())
 		r.issue(IssueRefused, addr, e.ID, fmt.Sprintf("the remote refused the push (%d): %s; held on the conflict list",
 			ans.Status, detail))
@@ -525,39 +549,76 @@ func (r pusher) pushRefusedOrFailed(
 	}
 }
 
-// noteConflicts holds each field of mg in conflict on the conflict list and
-// drops the entries of the fields that agree again.
-func (r *runner) noteConflicts(em *EntityMapping, local, addr string, mg merged) {
+// conflictTarget names the row a merge was about: the local type and id
+// (for a relation, its key), the remote address, and the kind of entry.
+type conflictTarget struct {
+	typ, local, addr, kind string
+}
+
+// noteConflicts records the outcome of mg on the conflict list. It holds
+// each field in conflict, keeps the losing value of each field the latest
+// rule decided, and drops the held entries of the fields that agree again.
+// A field the local or remote rule decided leaves nothing: the operator
+// chose that side for every conflict of the field.
+func (r *runner) noteConflicts(t conflictTarget, mg merged) {
+	now := r.d.Now()
 	for _, f := range mg.agreed {
-		r.c.drop(local, f.Local.Name)
+		r.c.drop(t.local, f.Local.Name)
 	}
 	for _, fc := range mg.conflicts {
 		v, omitted := heldValue(fc.theirs)
 		r.c.hold(&Conflict{
-			Local: local, Type: em.Local, Address: addr, Field: fc.f.Local.Name, RemoteField: fc.f.Remote,
-			Reason: ReasonBothChanged, RemoteValue: v, RemoteValueOmitted: omitted,
-			LocalDigest: fc.ours, RemoteDigest: fc.theirsD,
-		}, r.d.Now())
+			Kind: t.kind, Local: t.local, Type: t.typ, Address: t.addr, Field: fc.f.Local.Name,
+			RemoteField: fc.f.Remote, Reason: ReasonBothChanged, Rule: fc.f.Rule, Fallback: fc.fallback,
+			RemoteValue: v, RemoteValueOmitted: omitted, LocalDigest: fc.ours, RemoteDigest: fc.theirsD,
+		}, now)
+	}
+	for _, fc := range mg.settled {
+		if fc.f.Rule != ConflictLatest {
+			continue
+		}
+		e := &Conflict{
+			Kind: t.kind, Local: t.local, Type: t.typ, Address: t.addr, Field: fc.f.Local.Name,
+			RemoteField: fc.f.Remote, LocalDigest: fc.ours, RemoteDigest: fc.theirsD,
+			Superseded: &remotestatus.Superseded{
+				Winner: fc.winner, LocalUpdated: mg.verdict.local, RemoteUpdated: mg.verdict.remote,
+			},
+		}
+		switch {
+		case fc.winner != TakeRemote:
+			e.RemoteValue, e.RemoteValueOmitted = heldValue(fc.theirs)
+		case r.m.Remote.supersededRetention() > 0:
+			// A retention of 0 keeps no local value, only the digests.
+			e.Superseded.LocalValue, e.Superseded.LocalValueOmitted = heldValue(fc.oursV)
+		}
+		r.c.supersede(e, now)
 	}
 }
 
 // forgetConflicts drops the entries whose row is gone: an entry of a remote
-// row the ledger no longer links, and a refused create of a local row the
-// push no longer shares.
+// row the ledger no longer links, and a refused create of a local row or
+// relation the push no longer shares. It also drops the superseded entries
+// older than the remote's retention.
 func (r *runner) forgetConflicts() {
+	r.c.expire(r.d.Now(), r.m.Remote.supersededRetention())
 	linked := map[string]bool{}
 	for _, row := range r.l.rows {
-		if row.Kind == "E" && row.State == stateLinked {
-			linked[row.Local] = true
+		if row.State == stateLinked {
+			linked[row.Kind+"\x00"+row.Local] = true
 		}
 	}
 	for k, e := range r.c.entries {
+		kind, seen := "E", r.pushSeen
+		if e.Kind == KindRelation {
+			kind, seen = "R", r.relSeen
+		}
+		isLinked := linked[kind+"\x00"+e.Local]
 		switch {
-		case e.Address != "" && !linked[e.Local]:
+		case e.Address != "" && !isLinked:
 			delete(r.c.entries, k)
-		case e.Address == "" && r.pushSeen != nil && !r.pushSeen[e.Local]:
+		case e.Address == "" && seen != nil && !seen[e.Local]:
 			delete(r.c.entries, k)
-		case e.Address == "" && linked[e.Local]:
+		case e.Address == "" && isLinked:
 			delete(r.c.entries, k)
 		}
 	}

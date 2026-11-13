@@ -45,6 +45,11 @@ export function formatInstant(value: string | undefined): string {
 
 /** What one timeline entry says, without the actor. */
 function eventSummary(e: FlowEvent, t: Translate): string {
+  const summary = moveSummary(e, t)
+  return e.branch ? t('flows.log.inBranch', { summary, branch: e.branch }) : summary
+}
+
+function moveSummary(e: FlowEvent, t: Translate): string {
   switch (e.via) {
     case 'start':
       return t('flows.log.start', { state: e.label || e.state })
@@ -54,6 +59,8 @@ function eventSummary(e: FlowEvent, t: Translate): string {
       return t('flows.log.change', { state: e.label || e.state })
     case 'timer':
       return t('flows.log.timer', { state: e.label || e.state, timer: e.timer ?? '' })
+    case 'join':
+      return t('flows.log.join', { state: e.label || e.state })
     default:
       return t('flows.log.moved', { state: e.label || e.state })
   }
@@ -61,10 +68,12 @@ function eventSummary(e: FlowEvent, t: Translate): string {
 
 /**
  * The run's timeline, newest first. The server sends it oldest first; the
- * newest entry is the state the run is in.
+ * newest entry is the state the run is in. While the run is in parallel
+ * branches, the newest entry of each branch still under way is.
  */
 export function timelineEntries(run: FlowRun, t: Translate): TimelineEntry[] {
   const log = run.log ?? []
+  const current = currentEntries(run)
   return log
     .map((e, i) => ({
       id: `${i}`,
@@ -73,9 +82,23 @@ export function timelineEntries(run: FlowRun, t: Translate): TimelineEntry[] {
       timestamp: formatInstant(e.at),
       datetime: e.at,
       tone: (e.via === 'timer' ? 'amber' : 'grey') as StatusColor,
-      current: run.active && i === log.length - 1,
+      current: current.has(i),
     }))
     .reverse()
+}
+
+/** The indexes of the log entries for the states the run is in now. */
+function currentEntries(run: FlowRun): Set<number> {
+  const log = run.log ?? []
+  if (!run.active || log.length === 0) return new Set()
+  if (!run.parallel?.length) return new Set([log.length - 1])
+  const live = new Set(run.parallel.filter((p) => !p.arrived).map((p) => p.branch))
+  const out = new Set<number>()
+  for (let i = log.length - 1; i >= 0 && live.size > 0; i--) {
+    const b = log[i].branch
+    if (b && live.delete(b)) out.add(i)
+  }
+  return out
 }
 
 /** The route of one run's page. */

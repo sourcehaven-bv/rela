@@ -57,6 +57,13 @@ type fakes struct {
 	failSet  error
 	// failCreate fails every create output.
 	failCreate error
+	// cutCreate, when set, is called after a create landed, which then
+	// reports its context's error, if any: the caller's context ending
+	// during a create.
+	cutCreate context.CancelFunc
+	// slowCreate makes a create wait for its context to end, then land
+	// and report the context's error: a create that ran out of time.
+	slowCreate bool
 	// failEnd fails a header patch that records the end of a run.
 	failEnd error
 	next    int
@@ -113,7 +120,8 @@ func (f *fakes) LinkProduced(_ context.Context, id flow.RunID, created entity.Re
 	return nil
 }
 
-func (f *fakes) Set(_ context.Context, runAs string, _ flow.RunID, subject entity.Ref, props map[string]any) error {
+func (f *fakes) Set(_ context.Context, runAs string, _ flow.RunID, _ string, subject entity.Ref,
+	props map[string]any) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.failSet != nil {
@@ -129,8 +137,14 @@ func (f *fakes) Set(_ context.Context, runAs string, _ flow.RunID, subject entit
 	return nil
 }
 
-func (f *fakes) Create(_ context.Context, _ string, typ string, props map[string]any, relate string,
+func (f *fakes) Create(ctx context.Context, _ string, typ string, props map[string]any, relate string,
 	subject entity.Ref) (entity.Ref, error) {
+	f.mu.Lock()
+	slow := f.slowCreate
+	f.mu.Unlock()
+	if slow {
+		<-ctx.Done()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.failCreate != nil {
@@ -140,6 +154,12 @@ func (f *fakes) Create(_ context.Context, _ string, typ string, props map[string
 	props["_relate"] = relate + "->" + subject.ID
 	props["_type"] = typ
 	f.creates = append(f.creates, props)
+	if f.cutCreate != nil {
+		f.cutCreate()
+	}
+	if err := ctx.Err(); err != nil {
+		return entity.Ref{}, err
+	}
 	return entity.Ref{ID: fmt.Sprintf("TSK-%d", f.next)}, nil
 }
 
@@ -192,7 +212,7 @@ func readFixture(t *testing.T, name string) []byte {
 	return data
 }
 
-func newHarness(t *testing.T, flowsYAML string) harness {
+func newHarness(t *testing.T, flowsYAML string, opts ...func(*Deps)) harness {
 	t.Helper()
 	meta, err := metamodel.Parse(readFixture(t, "schema.yaml"))
 	require.NoError(t, err)
@@ -209,13 +229,17 @@ func newHarness(t *testing.T, flowsYAML string) harness {
 	require.NoError(t, err)
 	clock := time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)
 	f := newFakes()
-	eng, err := New(Deps{
+	d := Deps{
 		Flows: compiled, Meta: meta, Runs: runs, Headers: f, Outputs: f, Subjects: f,
 		Compile: func(name string, src []byte, version string) (*flowcfg.Flow, error) {
 			return flowcfg.ParseFlow(name, src, version, meta, policy)
 		},
 		Now: func() time.Time { return clock },
-	})
+	}
+	for _, o := range opts {
+		o(&d)
+	}
+	eng, err := New(d)
 	require.NoError(t, err)
 	return harness{eng: eng, f: f, runs: runs, clock: &clock}
 }
@@ -431,6 +455,58 @@ func TestDue_FailedCreateIsRetried(t *testing.T) {
 	require.Equal(t, 1, n)
 	require.Len(t, h.f.sets, 1, "the set is not repeated")
 	require.Len(t, h.f.creates, 1)
+}
+
+// TestDue_TimedOutCreateIsNotWrittenAgain pins that a create that ran out
+// of time keeps its claim: it may have landed, so it is not written twice.
+func TestDue_TimedOutCreateIsNotWrittenAgain(t *testing.T) {
+	h := newHarness(t, "")
+	h.f.addPerson("PER-1", map[string]any{"name": "Ada"})
+	defer func(d time.Duration) { outputTimeout = d }(outputTimeout)
+	outputTimeout = 10 * time.Millisecond
+	h.f.slowCreate = true
+	id, err := h.eng.Start(context.Background(), "onboarding", entity.Ref{ID: "PER-1"})
+	require.Error(t, err)
+	h.f.slowCreate = false
+	run, err := h.runs.Get(context.Background(), id)
+	require.NoError(t, err)
+	require.Equal(t, 2, run.Pending.Done, "the claim on the create stays")
+
+	*h.clock = h.clock.Add(time.Hour)
+	_, err = h.eng.Due(context.Background())
+	require.NoError(t, err)
+	require.Len(t, h.f.creates, 1, "the create is not written again")
+}
+
+// TestDue_CreateOutlivesItsCaller pins that a create is not cut when the
+// caller's context ends during it, so the output is written, and that the
+// run the round could not finish is backed off all the same.
+func TestDue_CreateOutlivesItsCaller(t *testing.T) {
+	h := newHarness(t, "")
+	h.f.addPerson("PER-1", map[string]any{"name": "Ada"})
+	h.f.failCreate = errors.New("refused")
+	id, err := h.eng.Start(context.Background(), "onboarding", entity.Ref{ID: "PER-1"})
+	require.Error(t, err)
+	h.f.failCreate = nil
+
+	*h.clock = h.clock.Add(time.Hour)
+	ctx, cancel := context.WithCancel(context.Background())
+	h.f.cutCreate = cancel
+	rep, err := h.eng.DueRound(ctx, flowrun.DueCursor{})
+	require.NoError(t, err)
+	require.Equal(t, 1, rep.Failed, "the steps after the create need the ended context")
+	h.f.cutCreate = nil
+	require.Len(t, h.f.creates, 1)
+	require.Len(t, h.f.produced[id], 1, "the create landed and is linked to its run")
+
+	run, err := h.runs.Get(context.Background(), id)
+	require.NoError(t, err)
+	require.True(t, run.Instance.NextDueAt.After(*h.clock), "the run was backed off past the ended context")
+
+	*h.clock = h.clock.Add(time.Hour)
+	_, err = h.eng.Due(context.Background())
+	require.NoError(t, err)
+	require.Len(t, h.f.creates, 1, "the create is not written again")
 }
 
 func TestDue_FailedFinishIsRetried(t *testing.T) {

@@ -315,6 +315,8 @@
     "edit_until",
     "edited_at",
     "files",
+    "inline",
+    "last_reply_at",
     "mentions",
     "outputs",
     "props",

@@ -36,7 +36,8 @@ type Run struct {
 	State      string `json:"state"`
 	StateLabel string `json:"state_label"`
 	Status     string `json:"status"`
-	// Generation counts the run's moves; a step names the one it saw.
+	// Generation counts the run's moves; a step names the one it saw. It
+	// is 0 while the run is in parallel branches: each branch has its own.
 	Generation int64     `json:"generation"`
 	Started    time.Time `json:"started,omitzero"`
 	Completed  time.Time `json:"completed,omitzero"`
@@ -48,8 +49,27 @@ type Run struct {
 	// Log is the timeline, oldest first; the start and the newest moves.
 	Log []Event `json:"log,omitempty"`
 	// Diagram is the flow's Mermaid diagram with the current state marked.
-	Diagram string  `json:"diagram,omitempty"`
-	Actions Actions `json:"_actions"`
+	Diagram string `json:"diagram,omitempty"`
+	// Parallel are the branches of a run that forked (TKT-ZO9IB6V), in
+	// fork order. The run's State is then the join they continue at.
+	Parallel []Place `json:"parallel,omitempty"`
+	Actions  Actions `json:"_actions"`
+}
+
+// Place is one parallel branch of a run: where it is and why it waits.
+type Place struct {
+	// Branch names the branch: the state it started in.
+	Branch     string    `json:"branch"`
+	State      string    `json:"state"`
+	StateLabel string    `json:"state_label"`
+	Status     string    `json:"status"`
+	Generation int64     `json:"generation"`
+	EnteredAt  time.Time `json:"entered_at,omitzero"`
+	// Arrived reports a branch that waits at the join for the others.
+	Arrived bool     `json:"arrived,omitempty"`
+	Waiting *Waiting `json:"waiting,omitempty"`
+	// Complete reports whether the caller may complete the branch's step.
+	Complete bool `json:"complete"`
 }
 
 // Waiting says why a run waits and what can move it.
@@ -80,7 +100,9 @@ type Timer struct {
 
 // Branch is one change branch of the run's state.
 type Branch struct {
-	To    string   `json:"to"`
+	To string `json:"to"`
+	// Fork are the states a branch that forks starts, in place of To.
+	Fork  []string `json:"fork,omitempty"`
 	Label string   `json:"label,omitempty"`
 	Roles []string `json:"roles,omitempty"`
 	Guard string   `json:"guard,omitempty"`
@@ -94,6 +116,21 @@ type Branch struct {
 type Pending struct {
 	Failures    int       `json:"failures"`
 	NextAttempt time.Time `json:"next_attempt,omitzero"`
+	// Job is set in a state with a job step whose attempts have begun.
+	Job *Job `json:"job,omitempty"`
+}
+
+// Job is where a state's job step is.
+type Job struct {
+	// Phase is waiting, queued, started, finished or failed.
+	Phase string `json:"phase"`
+	// Failed counts the attempts that ran and failed.
+	Failed int `json:"failed"`
+	// Attempts is the budget: every execution, the first included.
+	Attempts int `json:"attempts"`
+	// FailKind is exhausted, permanent, timeout or lost once the job
+	// failed for good.
+	FailKind string `json:"fail_kind,omitempty"`
 }
 
 // Event is one entry of a run's timeline.
@@ -106,6 +143,8 @@ type Event struct {
 	Via   string `json:"via"`
 	Timer string `json:"timer,omitempty"`
 	By    string `json:"by,omitempty"`
+	// Branch names the parallel branch that moved; empty for the run.
+	Branch string `json:"branch,omitempty"`
 }
 
 // Actions are what the caller may do with a run. Each key is computed with
@@ -125,6 +164,9 @@ type Task struct {
 	StateLabel string    `json:"state_label"`
 	Subject    string    `json:"subject"`
 	Started    time.Time `json:"started,omitzero"`
+	// Branch names the parallel branch whose step it is; empty for the
+	// run's own step.
+	Branch string `json:"branch,omitempty"`
 }
 
 // Tasks is one page of the caller's tasks.

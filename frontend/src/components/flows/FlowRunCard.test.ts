@@ -89,6 +89,27 @@ describe('FlowRunCard', () => {
     expect(wrapper.findAll('[data-testid="flow-timer"]')).toHaveLength(1)
   })
 
+  it('says where a job step is, and why it failed', async () => {
+    const waiting = (job: NonNullable<NonNullable<FlowRun['waiting']>['pending']>['job']) => ({
+      you_hold: false,
+      pending: { failures: 0, job },
+    })
+    let wrapper = mountCard(run({ waiting: waiting({ phase: 'started', failed: 1, attempts: 3 }) }))
+    await flushPromises()
+    let line = wrapper.find('[data-testid="flow-waiting-job"]')
+    expect(line.text()).toContain('attempt 2 of 3')
+    expect(line.attributes('role')).toBeUndefined()
+    expect(wrapper.find('[data-testid="flow-waiting-pending"]').exists()).toBe(false)
+
+    wrapper = mountCard(
+      run({ waiting: waiting({ phase: 'failed', failed: 1, attempts: 3, fail_kind: 'permanent' }) }),
+    )
+    await flushPromises()
+    line = wrapper.find('[data-testid="flow-waiting-job"]')
+    expect(line.text()).toContain('another attempt cannot fix the error')
+    expect(line.attributes('role')).toBe('alert')
+  })
+
   it('shows the step form only when complete is allowed', async () => {
     const wrapper = mountCard(run({ _actions: { complete: false, cancel: false, retry: false } }))
     await flushPromises()
@@ -168,6 +189,58 @@ describe('FlowRunCard', () => {
     await wrapper.find('[data-testid="flow-cancel"]').trigger('click')
     await flushPromises()
     expect(cancelFlowRunMock).not.toHaveBeenCalled()
+  })
+
+  it('shows each parallel branch with its own step, completed at the branch generation', async () => {
+    completeFlowStepMock.mockResolvedValue({
+      written: ['documents'],
+      moved: true,
+      state: 'joined',
+      finished: false,
+    })
+    getFlowRunMock.mockResolvedValue(run({ state: 'joined', waiting: undefined }))
+    const forked = run({
+      state: 'joined',
+      state_label: 'Joined',
+      generation: 0,
+      waiting: { you_hold: false },
+      _actions: { complete: false, cancel: false, retry: false },
+      parallel: [
+        {
+          branch: 'it',
+          state: 'it',
+          state_label: 'IT',
+          status: 'input_required',
+          generation: 2,
+          waiting: { roles: ['hr'], you_hold: true, writes: ['documents'] },
+          complete: true,
+        },
+        {
+          branch: 'legal',
+          state: 'joined',
+          state_label: 'Joined',
+          status: 'working',
+          generation: 3,
+          arrived: true,
+          complete: false,
+        },
+      ],
+    })
+    const wrapper = mountCard(forked)
+    await flushPromises()
+
+    // The join's own reason is not shown: the branches say why the run waits.
+    expect(wrapper.find('[data-testid="flow-waiting-roles"]').text()).toContain('hr')
+    const branches = wrapper.findAll('[data-testid="flow-run-branch"]')
+    expect(branches).toHaveLength(2)
+    expect(branches[1].find('[data-testid="flow-branch-arrived"]').exists()).toBe(true)
+    expect(branches[1].find('[data-testid="flow-step-form"]').exists()).toBe(false)
+
+    const form = branches[0].find('[data-testid="flow-step-form"]')
+    await form.find('input[type="checkbox"]').setValue(true)
+    await form.trigger('submit')
+    await flushPromises()
+    expect(completeFlowStepMock).toHaveBeenCalledWith('R1', 2, { documents: true })
   })
 
   it('reads the detail of an active run that came without its timeline', async () => {

@@ -542,6 +542,10 @@ export interface Message {
    * has the same value.
    */
   batch?: number
+  /** When the newest reply was posted; absent for none, and for a parent whose replies predate the field. */
+  last_reply_at?: string
+  /** A reply that also shows in the main stream. */
+  inline?: boolean
   edited_at?: string
   triggered_by?: string
   removed?: MessageRemoval
@@ -911,6 +915,8 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'reply_to',
     'reply_count',
     'batch',
+    'last_reply_at',
+    'inline',
     'edited_at',
     'triggered_by',
     'removed',

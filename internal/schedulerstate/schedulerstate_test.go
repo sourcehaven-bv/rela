@@ -75,6 +75,17 @@ func TestApplyOutcome(t *testing.T) {
 		require.Equal(t, ts, got)
 	})
 
+	t.Run("a lock-only run changes nothing", func(t *testing.T) {
+		t.Parallel()
+
+		ts := TaskState{LastRun: start.Add(-time.Hour), Failures: 2, NextRetry: observed, Version: 4}
+		for _, out := range []Outcome{{At: observed, LockOnly: true}, {Error: "x", At: observed, LockOnly: true}} {
+			got, changed := ApplyOutcome(ts, start, out, policy)
+			require.False(t, changed)
+			require.Equal(t, ts, got)
+		}
+	})
+
 	t.Run("an older success cannot regress a newer one", func(t *testing.T) {
 		t.Parallel()
 

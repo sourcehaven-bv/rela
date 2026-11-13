@@ -141,6 +141,35 @@ type Flow struct {
 	def        *flow.Definition
 	// outsideEdits is nil when the flow declares no `outside_edits:`.
 	outsideEdits *OutsideEdits
+	// forks are the flow's forks; region maps each state of a fork's
+	// branch to its fork, by index, and its branch: a fork target.
+	forks  []Fork
+	region map[string]regionOf
+}
+
+// regionOf places a state in a fork's branch.
+type regionOf struct {
+	fork   int
+	branch string
+}
+
+// Forks returns the flow's forks, in file order of their states.
+func (f *Flow) Forks() []Fork {
+	out := slices.Clone(f.forks)
+	for i := range out {
+		out[i].Targets = slices.Clone(out[i].Targets)
+	}
+	return out
+}
+
+// Region returns the fork and the branch, by its first state, a state
+// belongs to; ok is false for a state outside every branch.
+func (f *Flow) Region(state string) (fork Fork, branch string, ok bool) {
+	r, ok := f.region[state]
+	if !ok {
+		return Fork{}, "", false
+	}
+	return f.Forks()[r.fork], r.branch, true
 }
 
 // Name is the flow's key in flows.yaml.
@@ -247,6 +276,27 @@ type State struct {
 	outputs    []Output
 	on         map[Event][]Branch
 	timers     []Timer
+	// join is nil for a state that closes no fork.
+	join *Join
+	// job is nil for a state that runs no job.
+	job *Job
+}
+
+// Job returns the state's `job:`; ok is false for a state that runs none.
+func (st State) Job() (Job, bool) {
+	if st.job == nil {
+		return Job{}, false
+	}
+	return *st.job, true
+}
+
+// Join returns the state's `join:`; ok is false for a state that closes
+// no fork.
+func (st State) Join() (Join, bool) {
+	if st.join == nil {
+		return Join{}, false
+	}
+	return *st.join, true
 }
 
 func (st State) clone() State {
@@ -254,11 +304,18 @@ func (st State) clone() State {
 	st.writes = slices.Clone(st.writes)
 	st.outputs = slices.Clone(st.outputs)
 	st.timers = slices.Clone(st.timers)
+	if st.job != nil {
+		j := *st.job
+		j.Capabilities.Secrets = slices.Clone(j.Capabilities.Secrets)
+		j.Capabilities.Tokens = slices.Clone(j.Capabilities.Tokens)
+		st.job = &j
+	}
 	on := make(map[Event][]Branch, len(st.on))
 	for e, bs := range st.on {
 		bs = slices.Clone(bs)
 		for i := range bs {
 			bs[i].Roles = slices.Clone(bs[i].Roles)
+			bs[i].Fork = slices.Clone(bs[i].Fork)
 		}
 		on[e] = bs
 	}
@@ -297,7 +354,11 @@ func (st State) Branches(e Event) []Branch { return slices.Clone(st.on[e]) }
 
 // Branch is one entry of `on.<event>`.
 type Branch struct {
-	To    string
+	// To is the state the branch moves to; empty for a fork.
+	To string
+	// Fork are the states a fork moves to, in file order: 2 to
+	// [MaxForkTargets] of them. Nil for an ordinary branch.
+	Fork  []string
 	Label string
 	// Roles are the acl.yaml roles, one of which the author of a change
 	// must hold on the subject. Empty: anyone whose write reaches the
@@ -305,6 +366,44 @@ type Branch struct {
 	Roles []string
 	// When is the guard over the subject, or nil for none.
 	When *Guard
+}
+
+// Targets returns the states the branch moves to: To, or the fork's
+// targets.
+func (b Branch) Targets() []string {
+	if b.Fork != nil {
+		return slices.Clone(b.Fork)
+	}
+	return []string{b.To}
+}
+
+// MaxForkTargets caps the targets of one fork. It equals
+// flowrun.MaxBranches, which caps the branches a run stores.
+const MaxForkTargets = 8
+
+// Join is a state's `join:`: when the branches of the fork it closes
+// continue as one run.
+type Join struct {
+	// Any continues with the first branch that arrives (`join: any`).
+	Any bool
+	// When continues early, once it holds after an arrival
+	// (`join: {when:}`). Nil: wait for every branch, unless Any.
+	When *Guard
+}
+
+// Fork is one fork of a flow: a branch with several targets and the join
+// that closes it.
+type Fork struct {
+	// State is the state the fork leaves.
+	State string
+	// Targets are the states the branches start in, in file order. Each
+	// names its branch.
+	Targets []string
+	// Join is the state that closes the fork.
+	Join string
+	// Waits reports that a state of one of the fork's branches waits for
+	// a role.
+	Waits bool
 }
 
 // Timer is one entry of a state's `after:`.

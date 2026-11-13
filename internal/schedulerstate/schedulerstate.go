@@ -193,6 +193,11 @@ type Outcome struct {
 	// At is when the outcome was observed. A failure's retry is measured
 	// from here.
 	At time.Time
+	// LockOnly marks a run that only held the task's lock, such as a change
+	// to a remote's conflict list. It ends the run but leaves the task's
+	// state alone: it is neither a success that moves LastRun, and so
+	// postpones the next scheduled run, nor a failure on the retry ladder.
+	LockOnly bool
 }
 
 // RetryPolicy returns the delay before the next attempt after the given
@@ -353,8 +358,12 @@ func ClampRetry(ts TaskState, now time.Time, maxDelay time.Duration) (TaskState,
 //
 // A failure of a run that began before an already-recorded success changes
 // nothing: it must not resurrect a ladder for a task that has since
-// succeeded. Likewise a success never regresses a newer LastRun.
+// succeeded. Likewise a success never regresses a newer LastRun. A
+// [Outcome.LockOnly] outcome changes nothing.
 func ApplyOutcome(ts TaskState, start time.Time, out Outcome, policy RetryPolicy) (TaskState, bool) {
+	if out.LockOnly {
+		return ts, false
+	}
 	if out.Error == "" {
 		if !ts.LastRun.IsZero() && !ts.LastRun.Before(start) {
 			return ts, false

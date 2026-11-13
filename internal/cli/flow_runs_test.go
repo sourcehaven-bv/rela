@@ -67,6 +67,8 @@ func TestFlowRunCmds(t *testing.T) {
 	err := (&FlowStartCmd{}).Run(ctx, svc)
 	require.ErrorIs(t, err, boom)
 	require.ErrorContains(t, err, "started FLR-1", "a run created before the failure is named")
+	require.ErrorContains(t, err, "will be retried while rela-server", "the message says what retries the run")
+	require.ErrorContains(t, err, "rela flow cancel FLR-1", "and how to give up on it")
 	require.ErrorIs(t, (&FlowCancelCmd{}).Run(ctx, svc), boom)
 	require.ErrorIs(t, (&FlowRunsCmd{}).Run(ctx, svc), boom)
 

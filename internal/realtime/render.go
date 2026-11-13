@@ -66,8 +66,8 @@ type ActionView struct {
 }
 
 // MessageView is one message as a reader sees it. A removed message keeps
-// only Seq, Rev, ReplyTo, ReplyCount and Removed: the store erases its
-// type, author, time and properties.
+// only Seq, Rev, ReplyTo, ReplyCount, LastReplyAt, Inline and Removed: the
+// store erases its type, author, time and properties.
 //
 // Props holds only the properties the message's type declares now. A
 // message whose type the configuration no longer declares shows none.
@@ -82,6 +82,11 @@ type MessageView struct {
 	Props      map[string]any `json:"props,omitempty"`
 	ReplyTo    int64          `json:"reply_to,omitempty"`
 	ReplyCount int            `json:"reply_count,omitempty"`
+	// LastReplyAt is the time of the newest reply ([channels.Thread.LastReplyAt]).
+	LastReplyAt time.Time `json:"last_reply_at,omitzero"`
+	// Inline marks a reply that also shows in the main stream
+	// ([channels.Thread.Inline]).
+	Inline bool `json:"inline,omitempty"`
 	// Batch is the seq of the first message of the batch the message was
 	// posted in (see [Service.PostBatch]); 0 for a single post.
 	Batch    int64     `json:"batch,omitempty"`
@@ -302,7 +307,10 @@ func (r *renderer) props(typ string, in map[string]any) map[string]any {
 }
 
 func (r *renderer) message(m channels.Message) MessageView {
-	v := MessageView{Seq: m.Seq, Rev: m.Rev, ReplyTo: m.ReplyTo, ReplyCount: m.ReplyCount, Batch: m.Batch}
+	v := MessageView{
+		Seq: m.Seq, Rev: m.Rev, ReplyTo: m.ReplyTo, ReplyCount: m.ReplyCount, LastReplyAt: m.LastReplyAt,
+		Inline: m.Inline, Batch: m.Batch,
+	}
 	if m.Removed != nil {
 		kind := m.Removed.Kind
 		if kind == "" {

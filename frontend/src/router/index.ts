@@ -127,6 +127,18 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/ConflictsView.vue'),
   },
   {
+    // Remote sync status and conflict lists (TKT-0FMYPEZ).
+    path: '/remotes',
+    name: 'remotes',
+    component: () => import('@/views/RemotesView.vue'),
+  },
+  {
+    path: '/remotes/:name',
+    name: 'remote-conflicts',
+    component: () => import('@/views/RemoteConflictsView.vue'),
+    props: true,
+  },
+  {
     path: '/document/:name/:entityId',
     name: 'document',
     component: () => import('@/views/DocumentView.vue'),

@@ -498,6 +498,41 @@ When editing on a protected branch, the UI shows a banner suggesting the user cr
 branch. Commits are auto-created on every entity change, but push is blocked until the user
 switches to a non-protected branch.
 
+## Remotes
+
+When the project syncs with other rela instances through `remotes.yaml`,
+the app shows them on the Remotes page. The sidebar footer links to it.
+
+- **`/remotes`** lists every remote: its URL and settings, where its
+  credential is read from (never the credential itself), the last and next
+  pull, failures in a row, and how many linked rows and conflict entries you
+  may read.
+- **`/remotes/<name>`** lists the remote's conflict list. Each entry shows
+  the row, the field, the reason, the cause or fallback when there is one,
+  and the remote's value. A `superseded` entry under
+  `superseded_retention: 0` says that the overwritten value was not kept.
+
+The page needs the `remote:sync` permission, and it shows only the entries
+whose local row and field you may read. Each entry offers the actions that
+apply to it:
+
+| Action | Applies to | Effect |
+| --- | --- | --- |
+| Keep local | `both_changed`, `refused`, `uncertain` | The next sync sends the local value. On an uncertain create it sends the row again. |
+| Take remote | `both_changed`, and a refused update | The next sync writes the remote value here. Needs edit rights on the field. |
+| Dismiss | `superseded` | Removes the entry; changes no data. |
+| Link | `uncertain` create | Links the local row to the remote row you name as `type/id`. Needs edit rights on the fields the create sent. |
+
+Keeping the local side of an uncertain create asks first: if the first
+create did reach the remote, sending again makes a second copy there. When
+the remote has the row, use Link instead.
+
+The page never starts a sync. The next scheduled pull applies what you
+decide, and the page shows when that is. See
+[Two-way sync](remote-sync-two-way.md#the-conflict-list) for the reasons and
+actions, and the [API reference](data-entry/api-reference.md#remote-sync-_remotes)
+for the routes.
+
 ## Styles
 
 Map enum values to colors for visual display in lists and forms:

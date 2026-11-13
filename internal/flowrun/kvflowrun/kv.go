@@ -131,7 +131,14 @@ func New(kv state.KV, locker Locker) (*Store, error) {
 // lock takes the semaphore and then the locker, and returns the release of
 // both. It stops waiting when ctx ends. Reads lock too: another process
 // may replace a document meanwhile.
+//
+// An ended ctx always fails, even with the semaphore free, as a database
+// store refuses a query on an ended context. The select alone would pick
+// at random when both cases are ready.
 func (s *Store) lock(ctx context.Context) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("kvflowrun: lock: %w", err)
+	}
 	select {
 	case s.sem <- struct{}{}:
 	case <-ctx.Done():
@@ -226,7 +233,7 @@ func (r storedRun) run(id flowrun.RunID) (flowrun.Run, error) {
 		ID: id, Flow: r.Flow, Version: r.Version,
 		Subject:   entity.Ref{ID: r.SubjectID, Face: r.SubjectFace},
 		Singleton: r.Singleton, CreatedAt: r.CreatedAt.UTC(), UpdatedAt: r.UpdatedAt.UTC(),
-		Rev: r.Rev, Instance: st.Instance, Pending: st.Pending, Log: st.Log, Claim: st.Claim,
+		Rev: r.Rev, State: st,
 	}, nil
 }
 
@@ -260,7 +267,7 @@ func (s *Store) Create(ctx context.Context, nr flowrun.NewRun) (flowrun.Run, err
 		return flowrun.Run{}, err
 	}
 	run := flowrun.FromNew(nr)
-	stateDoc, err := flowrun.EncodeState(run.State())
+	stateDoc, err := flowrun.EncodeState(run.State)
 	if err != nil {
 		return flowrun.Run{}, fmt.Errorf("kvflowrun: encode state: %w", err)
 	}
@@ -403,10 +410,15 @@ func (s *Store) List(ctx context.Context, q flowrun.Query) ([]flowrun.Run, error
 	for _, id := range q.SubjectIDs {
 		subjects[id] = true
 	}
+	ids := make(map[flowrun.RunID]bool, len(q.IDs))
+	for _, id := range q.IDs {
+		ids[id] = true
+	}
 	return s.collect(ctx, func(r flowrun.Run) bool {
 		return (q.Flow == "" || r.Flow == q.Flow) &&
 			(q.SubjectID == "" || r.Subject.ID == q.SubjectID) &&
 			(len(subjects) == 0 || subjects[r.Subject.ID]) &&
+			(len(ids) == 0 || ids[r.ID]) &&
 			r.ID > q.After
 	}, sortByID, q.Limit)
 }

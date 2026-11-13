@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -52,6 +53,7 @@ func RunAll(t *testing.T, open Factory) {
 		{"SubjectCap", testSubjectCap},
 		{"Update", testUpdate},
 		{"UpdateLogAndClaim", testUpdateLogAndClaim},
+		{"UpdateBranches", testUpdateBranches},
 		{"Delete", testDelete},
 		{"ListDue", testListDue},
 		{"ListDueCursor", testListDueCursor},
@@ -134,7 +136,7 @@ func testCreateGet(t *testing.T, h Harness) {
 	want := flowrun.Run{
 		ID: "FR-1", Flow: "onboard", Version: v1, Subject: entity.Ref{ID: "EMP-1", Face: "draft"},
 		Singleton: true, CreatedAt: flow.NormTime(at(0)), UpdatedAt: flow.NormTime(at(0)), Rev: 1,
-		Instance: flowrun.NormInstance(fullInstance()),
+		State: flowrun.State{Instance: flowrun.NormInstance(fullInstance())},
 	}
 	require.Equal(t, want, got)
 	require.Equal(t, time.UTC, got.CreatedAt.Location())
@@ -321,6 +323,87 @@ func testUpdateLogAndClaim(t *testing.T, h Harness) {
 	require.Nil(t, got.Claim)
 }
 
+// fullState is a forked state with every field set on each branch, and on
+// the run every field a forked run may carry: a forked run has no pending
+// mark or claim of its own (see [flowrun.CheckState]).
+func fullState() flowrun.State {
+	in := func(state string, gen int64, due int) flow.Instance {
+		return flow.Instance{State: state, Generation: gen, EnteredAt: at(5), Previous: "submitted", Cause: 2,
+			NextDueAt: at(due), Restarts: map[string]time.Time{"escalate": at(6)},
+			Reminders: map[string]flow.ReminderRecord{"nudge": {Since: at(5), Last: at(35), Count: 2}}}
+	}
+	return flowrun.State{
+		Instance: flow.Instance{Generation: 3, EnteredAt: at(5), Previous: "submitted", NextDueAt: at(20)},
+		Log: []flowrun.Step{{At: at(0), State: "submitted", Via: flowrun.ViaStart},
+			{At: at(5), State: "legal", From: "submitted", Via: flowrun.ViaChange, By: "alice", Branch: "legal"},
+			{At: at(6), State: "legal", From: "legal", Via: flowrun.ViaTimer, Timer: "escalate", Branch: "legal"}},
+		Branches: []flowrun.Branch{
+			{Name: "legal", Instance: in("legal", 4, 20),
+				Pending: &flowrun.Pending{State: "legal", Generation: 4, Done: 1, Failures: 2,
+					Job: &flowrun.JobAttempt{Seq: 3, Failed: 1, Unsent: 2, Phase: flowrun.JobFinished,
+						Outcome: flowrun.JobRetryable, QueuedAt: at(7), Deadline: at(9), StartedAt: at(8)}},
+				Claim: &flowrun.Claim{Generation: 4, By: "bob", At: at(6)}},
+			{Name: "finance", Instance: in("reviewed", 6, 30), Arrived: true},
+			{Name: "it", Instance: in("it", 7, 40),
+				Pending: &flowrun.Pending{State: "it", Generation: 7, Job: &flowrun.JobAttempt{Seq: 2, Failed: 3,
+					Phase: flowrun.JobFailed, FailKind: flowrun.JobExhausted, NextAt: at(10)}}},
+		},
+	}
+}
+
+// testUpdateBranches pins that every field of a forked state, the
+// branches included, is stored and read back, and that an update without
+// branches clears them.
+func testUpdateBranches(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	full := fullState()
+	b0, b1 := full.Branches[0], full.Branches[1]
+	// The run-level mark and claim are covered by testUpdate and
+	// testUpdateLogAndClaim.
+	requireCovers(t, full, flowrun.State{Pending: &flowrun.Pending{}, Claim: &flowrun.Claim{}})
+	requireCovers(t, b0, b1)
+	requireCovers(t, *b0.Pending)
+	requireCovers(t, *b0.Pending.Job, *full.Branches[2].Pending.Job)
+	requireCovers(t, *b0.Claim)
+	requireCovers(t, full.Log[0], full.Log[1], full.Log[2])
+	requireCovers(t, full.Instance, b0.Instance, b1.Instance)
+	create(t, h.Store, newRun("FR-B", ref("EMP-8")))
+	want := flowrun.NormState(fullState())
+	got, err := h.Store.Update(ctx, "FR-B", 1, fullState(), at(7))
+	require.NoError(t, err)
+	require.Equal(t, want, got.State)
+	read, err := h.Store.Get(ctx, "FR-B")
+	require.NoError(t, err)
+	require.Equal(t, want, read.State)
+	due, err := h.Store.ListDue(ctx, at(20), flowrun.DueCursor{}, flowrun.MaxPage)
+	require.NoError(t, err)
+	require.Equal(t, []string{"FR-B"}, ids(due), "the run-level due time is the index")
+
+	got, err = h.Store.Update(ctx, "FR-B", 2, flowrun.State{Instance: flow.Instance{State: "reviewed", Generation: 7}},
+		at(8))
+	require.NoError(t, err)
+	require.Nil(t, got.Branches)
+	read, err = h.Store.Get(ctx, "FR-B")
+	require.NoError(t, err)
+	require.Nil(t, read.Branches)
+}
+
+// requireCovers fails unless every field of the struct type of values is
+// set in at least one of them, so a field added to the stored state
+// without a value in fullState fails here rather than going unchecked.
+func requireCovers(t *testing.T, values ...any) {
+	t.Helper()
+	typ := reflect.TypeOf(values[0])
+	for i := range typ.NumField() {
+		set := false
+		for _, v := range values {
+			set = set || !reflect.ValueOf(v).Field(i).IsZero()
+		}
+		require.True(t, set, "fullState leaves %s.%s unset", typ.Name(), typ.Field(i).Name)
+	}
+}
+
 func testDelete(t *testing.T, h Harness) {
 	t.Helper()
 	ctx := context.Background()
@@ -454,12 +537,23 @@ func testList(t *testing.T, h Harness) {
 		list(flowrun.Query{SubjectIDs: []string{"EMP-1", "EMP-2"}, Limit: 2}))
 	require.Equal(t, []string{"FR-2"}, list(flowrun.Query{SubjectID: "EMP-2", SubjectIDs: []string{"EMP-1", "EMP-2"}}))
 
+	// IDs selects any of the run ids and combines with the other fields.
+	require.Equal(t, []string{"FR-1", "FR-4"}, list(flowrun.Query{IDs: []flowrun.RunID{"FR-4", "FR-1", "FR-9"}}))
+	require.Equal(t, []string{"FR-1"},
+		list(flowrun.Query{IDs: []flowrun.RunID{"FR-4", "FR-1"}, Flow: "onboard"}))
+	require.Empty(t, list(flowrun.Query{IDs: []flowrun.RunID{"FR-9"}}))
+
 	// A full batch of ids is one query.
 	many := make([]string, flowrun.MaxPage)
 	for i := range many {
 		many[i] = fmt.Sprintf("EMP-%d", i+1)
 	}
 	require.Equal(t, []string{"FR-1", "FR-2", "FR-3", "FR-4"}, list(flowrun.Query{SubjectIDs: many}))
+	runIDs := make([]flowrun.RunID, flowrun.MaxPage)
+	for i := range runIDs {
+		runIDs[i] = flowrun.RunID(fmt.Sprintf("FR-%d", i+1))
+	}
+	require.Equal(t, []string{"FR-1", "FR-2", "FR-3", "FR-4"}, list(flowrun.Query{IDs: runIDs}))
 }
 
 func testRekeySubject(t *testing.T, h Harness) {
@@ -610,21 +704,35 @@ func testInvalidArguments(t *testing.T, h Harness) {
 	require.ErrorIs(t, err, flowrun.ErrNotFound, "no refused create stored a run")
 
 	errs := map[string]error{
-		"get id":            second(h.Store.Get(ctx, "")),
-		"update rev":        second(h.Store.Update(ctx, "FR-1", 0, flowrun.State{Instance: flow.Instance{}}, at(1))),
-		"update time":       second(h.Store.Update(ctx, "FR-1", 1, flowrun.State{Instance: flow.Instance{}}, time.Time{})),
-		"update instance":   second(h.Store.Update(ctx, "FR-1", 1, flowrun.State{Instance: flow.Instance{State: "X"}}, at(1))),
-		"update id":         second(h.Store.Update(ctx, "a/b", 1, flowrun.State{Instance: flow.Instance{}}, at(1))),
-		"delete rev":        h.Store.Delete(ctx, "FR-1", 0),
-		"delete id":         h.Store.Delete(ctx, "", 1),
-		"due until":         second(h.Store.ListDue(ctx, time.Time{}, flowrun.DueCursor{}, 1)),
-		"due limit 0":       second(h.Store.ListDue(ctx, at(1), flowrun.DueCursor{}, 0)),
-		"due limit max":     second(h.Store.ListDue(ctx, at(1), flowrun.DueCursor{}, flowrun.MaxPage+1)),
-		"due cursor":        second(h.Store.ListDue(ctx, at(1), flowrun.DueCursor{ID: "a b"}, 1)),
-		"list limit":        second(h.Store.List(ctx, flowrun.Query{})),
-		"list flow":         second(h.Store.List(ctx, flowrun.Query{Flow: "X", Limit: 1})),
-		"list subject":      second(h.Store.List(ctx, flowrun.Query{SubjectID: "a b", Limit: 1})),
-		"list after":        second(h.Store.List(ctx, flowrun.Query{After: "a b", Limit: 1})),
+		"get id":          second(h.Store.Get(ctx, "")),
+		"update rev":      second(h.Store.Update(ctx, "FR-1", 0, flowrun.State{Instance: flow.Instance{}}, at(1))),
+		"update time":     second(h.Store.Update(ctx, "FR-1", 1, flowrun.State{Instance: flow.Instance{}}, time.Time{})),
+		"update instance": second(h.Store.Update(ctx, "FR-1", 1, flowrun.State{Instance: flow.Instance{State: "X"}}, at(1))),
+		"update id":       second(h.Store.Update(ctx, "a/b", 1, flowrun.State{Instance: flow.Instance{}}, at(1))),
+		"delete rev":      h.Store.Delete(ctx, "FR-1", 0),
+		"delete id":       h.Store.Delete(ctx, "", 1),
+		"due until":       second(h.Store.ListDue(ctx, time.Time{}, flowrun.DueCursor{}, 1)),
+		"due limit 0":     second(h.Store.ListDue(ctx, at(1), flowrun.DueCursor{}, 0)),
+		"due limit max":   second(h.Store.ListDue(ctx, at(1), flowrun.DueCursor{}, flowrun.MaxPage+1)),
+		"due cursor":      second(h.Store.ListDue(ctx, at(1), flowrun.DueCursor{ID: "a b"}, 1)),
+		"list limit":      second(h.Store.List(ctx, flowrun.Query{})),
+		"list flow":       second(h.Store.List(ctx, flowrun.Query{Flow: "X", Limit: 1})),
+		"list subject":    second(h.Store.List(ctx, flowrun.Query{SubjectID: "a b", Limit: 1})),
+		"list after":      second(h.Store.List(ctx, flowrun.Query{After: "a b", Limit: 1})),
+		"list run id":     second(h.Store.List(ctx, flowrun.Query{IDs: []flowrun.RunID{"a b"}, Limit: 1})),
+		"list run ids":    second(h.Store.List(ctx, flowrun.Query{IDs: make([]flowrun.RunID, flowrun.MaxPage+1), Limit: 1})),
+		"branch name":     second(h.Store.Update(ctx, "FR-1", 1, branchState(flowrun.Branch{Name: "X"}), at(1))),
+		"branch instance": second(h.Store.Update(ctx, "FR-1", 1,
+			branchState(flowrun.Branch{Name: "a", Instance: flow.Instance{Generation: -1}}), at(1))),
+		"branch pending": second(h.Store.Update(ctx, "FR-1", 1,
+			branchState(flowrun.Branch{Name: "a", Pending: &flowrun.Pending{State: "a", Done: -1}}), at(1))),
+		"branch claim": second(h.Store.Update(ctx, "FR-1", 1,
+			branchState(flowrun.Branch{Name: "a", Claim: &flowrun.Claim{Generation: 1}}), at(1))),
+		"branch twice": second(h.Store.Update(ctx, "FR-1", 1,
+			branchState(flowrun.Branch{Name: "a"}, flowrun.Branch{Name: "a"}), at(1))),
+		"too many branches": second(h.Store.Update(ctx, "FR-1", 1, manyBranches(flowrun.MaxBranches+1), at(1))),
+		"log branch": second(h.Store.Update(ctx, "FR-1", 1, flowrun.State{
+			Log: []flowrun.Step{{State: "a", Via: flowrun.ViaDone, Branch: "B C"}}}, at(1))),
 		"rekey old":         second(h.Store.RekeySubject(ctx, "", "EMP-2")),
 		"rekey new":         second(h.Store.RekeySubject(ctx, "EMP-1", "../x")),
 		"definition flow":   second(h.Store.Definition(ctx, "X", v1)),
@@ -637,6 +745,18 @@ func testInvalidArguments(t *testing.T, h Harness) {
 	r, err := h.Store.Get(ctx, "FR-1")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), r.Rev, "no refused update wrote")
+}
+
+func branchState(bs ...flowrun.Branch) flowrun.State {
+	return flowrun.State{Instance: flow.Instance{Generation: 1}, Branches: bs}
+}
+
+func manyBranches(n int) flowrun.State {
+	bs := make([]flowrun.Branch, n)
+	for i := range bs {
+		bs[i] = flowrun.Branch{Name: fmt.Sprintf("b%d", i)}
+	}
+	return branchState(bs...)
 }
 
 func names(n int) map[string]time.Time {

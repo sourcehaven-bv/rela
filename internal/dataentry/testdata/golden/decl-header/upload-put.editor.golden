@@ -42,6 +42,7 @@ body:
       "removable": false
     }
   },
+  "_updated": "<now>",
   "_redacted": [],
   "_attachments": {
     "screenshot": [

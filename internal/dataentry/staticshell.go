@@ -19,7 +19,13 @@ import (
 //
 // Panics only if the binary was built without the embedded SPA filesystem,
 // which [CheckEmbeddedSPA] reports at startup.
+//
+// A headless build has no shell, so it serves the same root as
+// [App.NewRouter] does there: a text pointer to the API at `/`, 404 elsewhere.
 func StaticShell() http.Handler {
+	if Headless {
+		return withSpecLink(headlessRoot())
+	}
 	staticFS, err := fs.Sub(staticFiles, "static")
 	// coverage-ignore-start: panic-invariant: fs.Sub on the compile-time embed.FS with a literal path cannot fail
 	if err != nil {

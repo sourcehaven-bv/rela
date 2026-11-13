@@ -43,22 +43,22 @@ func TestRemoteConflictsAndResolve(t *testing.T) {
 		if tc.nilL {
 			logger = nil
 		}
-		_, _, err = ResolveRemote(ctx, tc.ws, tc.bind, "cat", "REQ-1", "", remotesync.TakeLocal, logger)
+		_, _, err = ResolveRemote(ctx, tc.ws, tc.bind, "cat", remotesync.Target{Local: "REQ-1"}, remotesync.TakeLocal, logger)
 		require.Error(t, err)
 	}
 
 	// A resolve that names nothing fails before it takes the lock, so it
 	// does not count as a run.
-	_, _, err = ResolveRemote(ctx, ws, bind, "cat", "REQ-9", "", remotesync.TakeLocal, discardLogger())
+	_, _, err = ResolveRemote(ctx, ws, bind, "cat", remotesync.Target{Local: "REQ-9"}, remotesync.TakeLocal, discardLogger())
 	require.ErrorIs(t, err, remotesync.ErrNoConflict)
-	_, _, err = ResolveRemote(ctx, ws, bind, "cat", "REQ-1", "", "both", discardLogger())
+	_, _, err = ResolveRemote(ctx, ws, bind, "cat", remotesync.Target{Local: "REQ-1"}, "both", discardLogger())
 	require.Error(t, err)
 	_, ok := taskState(t, ws, "remote:cat")
 	require.False(t, ok)
 
 	// A resolve applies, then syncs; nothing listens on the source's port,
 	// so the sync fails and the run records it.
-	n, _, err := ResolveRemote(ctx, ws, bind, "cat", "REQ-1", "title", remotesync.TakeLocal, discardLogger())
+	n, _, err := ResolveRemote(ctx, ws, bind, "cat", remotesync.Target{Local: "REQ-1", Field: "title"}, remotesync.TakeLocal, discardLogger())
 	require.Error(t, err)
 	require.Equal(t, 1, n)
 	list, err = RemoteConflicts(ctx, ws, "cat")
@@ -82,5 +82,77 @@ func TestRemoteDeps_PushRemoteGetsAPusher(t *testing.T) {
 		deps, err := remoteDeps(ws, remotes.Mappings["cat"], "r", nil, discardLogger(), func(string) string { return "" })
 		require.NoError(t, err)
 		require.Equal(t, push, deps.Pusher != nil)
+		require.Equal(t, push, deps.RelationMetaGated != nil)
 	}
+}
+
+const supersededConflicts = `{"version":1,"conflicts":[{"local":"REQ-1","type":"requirement",` +
+	`"address":"requirement/R1","field":"title","remote_field":"title","reason":"superseded","rule":"latest",` +
+	`"since":"2026-11-11T00:00:00Z","seen":"2026-11-11T00:00:00Z","remote_value":"Theirs","local_digest":"a",` +
+	`"remote_digest":"b","superseded":{"winner":"remote","local_value":"Ours",` +
+	`"local_updated":"2026-11-11T00:00:00Z","remote_updated":"2026-11-11T00:01:00Z"}}]}`
+
+func TestDismissRemote(t *testing.T) {
+	t.Parallel()
+	ctx := principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolCLI})
+	ws := newRemoteWorkspace(t, "secretvalue")
+
+	_, err := DismissRemote(ctx, nil, "cat", remotesync.Target{Local: "REQ-1"}, discardLogger())
+	require.Error(t, err)
+	_, err = DismissRemote(ctx, ws, "cat", remotesync.Target{Local: "REQ-1"}, nil)
+	require.Error(t, err)
+	_, err = DismissRemote(ctx, ws, "other", remotesync.Target{Local: "REQ-1"}, discardLogger())
+	require.ErrorContains(t, err, `no remote "other"`)
+
+	// A held entry is not dismissed, and the refusal takes no run.
+	require.NoError(t, ws.State().Put(ctx, "remotesync/cat/conflicts.json", []byte(heldConflicts)))
+	_, err = DismissRemote(ctx, ws, "cat", remotesync.Target{Local: "REQ-1", Field: "title"}, discardLogger())
+	require.Error(t, err)
+	_, ok := taskState(t, ws, "remote:cat")
+	require.False(t, ok)
+
+	require.NoError(t, ws.State().Put(ctx, "remotesync/cat/conflicts.json", []byte(supersededConflicts)))
+	n, err := DismissRemote(ctx, ws, "cat", remotesync.Target{Local: "REQ-1"}, discardLogger())
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	list, err := RemoteConflicts(ctx, ws, "cat")
+	require.NoError(t, err)
+	require.Empty(t, list)
+	// The run held the lock only: it ended, and did not count as a pull.
+	ts, _ := taskState(t, ws, "remote:cat")
+	require.Nil(t, ts.Active)
+	require.Zero(t, ts.Failures)
+	require.True(t, ts.LastRun.IsZero())
+}
+
+func TestPurgeRemoteSuperseded(t *testing.T) {
+	t.Parallel()
+	ctx := principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolCLI})
+	ws := newRemoteWorkspace(t, "secretvalue")
+
+	_, err := PurgeRemoteSuperseded(ctx, nil, "REQ-1", discardLogger())
+	require.Error(t, err)
+	_, err = PurgeRemoteSuperseded(ctx, ws, "REQ-1", nil)
+	require.Error(t, err)
+
+	// No entry of the entity: nothing dropped, but the run is recorded.
+	n, err := PurgeRemoteSuperseded(ctx, ws, "REQ-1", discardLogger())
+	require.NoError(t, err)
+	require.Zero(t, n)
+
+	require.NoError(t, ws.State().Put(ctx, "remotesync/cat/conflicts.json", []byte(supersededConflicts)))
+	n, err = PurgeRemoteSuperseded(ctx, ws, "REQ-2", discardLogger())
+	require.NoError(t, err)
+	require.Zero(t, n)
+	n, err = PurgeRemoteSuperseded(ctx, ws, "REQ-1", discardLogger())
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	list, err := RemoteConflicts(ctx, ws, "cat")
+	require.NoError(t, err)
+	require.Empty(t, list)
+	// The run held the lock only: it ended, and did not count as a pull.
+	ts, _ := taskState(t, ws, "remote:cat")
+	require.Nil(t, ts.Active)
+	require.Zero(t, ts.Failures)
+	require.True(t, ts.LastRun.IsZero())
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -106,9 +107,20 @@ type fakeRuns struct {
 	err   error
 }
 
+// add stores a run in state; a state "a|b" stores a forked run whose
+// branches are in a and b, and whose own instance is inert.
 func (f *fakeRuns) add(id, flowName, subject, state string) {
-	f.runs = append(f.runs, flowrun.Run{ID: flowrun.RunID(id), Flow: flowName,
-		Subject: entity.Ref{ID: subject, Face: entity.ImplicitFace}, Instance: flow.Instance{State: state}})
+	r := flowrun.Run{ID: flowrun.RunID(id), Flow: flowName, Subject: entity.Ref{ID: subject, Face: entity.ImplicitFace}}
+	if branches := strings.Split(state, "|"); len(branches) > 1 {
+		r.Instance = flow.Instance{Generation: 2, Previous: "intake"}
+		for i, b := range branches {
+			r.Branches = append(r.Branches, flowrun.Branch{Name: b, Instance: flow.Instance{State: b,
+				Generation: int64(3 + i)}})
+		}
+	} else {
+		r.Instance = flow.Instance{State: state}
+	}
+	f.runs = append(f.runs, r)
 	slices.SortFunc(f.runs, func(a, b flowrun.Run) int {
 		switch {
 		case a.ID < b.ID:
@@ -163,7 +175,7 @@ func TestCeiling_Withheld(t *testing.T) {
 	tests := []struct {
 		name   string
 		runs   [][4]string // id, flow, subject, state
-		within flowrun.RunID
+		within [2]string   // run, state
 		holds  func(string) bool
 		row    *entity.Entity
 		want   map[string]string
@@ -203,13 +215,27 @@ func TestCeiling_Withheld(t *testing.T) {
 				"notes":       "outside_edits:flow=melden state=melden-ap",
 				"betrokkenen": "outside_edits:flow=melden state=melden-ap",
 			}},
+		{name: "a forked run applies the rules of every branch", runs: [][4]string{
+			{"FR-1", "melden", "C-1", "intake|melden-ap"}},
+			holds: holdsOfficer, row: caseRow("C-1"), want: map[string]string{
+				"ernst":       "outside_edits:flow=melden state=intake",
+				"notes":       "outside_edits:flow=melden state=melden-ap",
+				"betrokkenen": "outside_edits:flow=melden state=melden-ap",
+			}},
 		{name: "own run exempt only", runs: [][4]string{
 			{"FR-1", "melden", "C-1", "melden-ap"}, {"FR-2", "review", "C-1", "open"}},
-			within: "FR-1", holds: holdsNone, row: caseRow("C-1"), want: map[string]string{
+			within: [2]string{"FR-1", "melden-ap"}, holds: holdsNone, row: caseRow("C-1"),
+			want: map[string]string{
 				"notes": "outside_edits:flow=review state=open",
 			}},
+		{name: "a branch's own write still meets its sibling branch's rules", runs: [][4]string{
+			{"FR-1", "melden", "C-1", "intake|melden-ap"}},
+			within: [2]string{"FR-1", "melden-ap"}, holds: holdsOfficer, row: caseRow("C-1"),
+			want: map[string]string{
+				"ernst": "outside_edits:flow=melden state=intake",
+			}},
 		{name: "another run's mark exempts nothing", runs: [][4]string{{"FR-1", "melden", "C-1", "intake"}},
-			within: "FR-9", holds: holdsOfficer, row: caseRow("C-1"), want: map[string]string{
+			within: [2]string{"FR-9", "intake"}, holds: holdsOfficer, row: caseRow("C-1"), want: map[string]string{
 				"ernst": "outside_edits:flow=melden state=intake",
 			}},
 		{name: "stranded state uses the flow rules", runs: [][4]string{{"FR-1", "melden", "C-1", "gone"}},
@@ -237,8 +263,8 @@ func TestCeiling_Withheld(t *testing.T) {
 			}
 			ceil := newCeiling(t, runs)
 			ctx := context.Background()
-			if tc.within != "" {
-				ctx = flowedits.WithinRun(ctx, tc.within)
+			if tc.within[0] != "" {
+				ctx = flowedits.WithinRun(ctx, flowrun.RunID(tc.within[0]), tc.within[1])
 			}
 			got, err := ceil.Withheld(ctx, tc.row, tc.holds)
 			require.NoError(t, err)

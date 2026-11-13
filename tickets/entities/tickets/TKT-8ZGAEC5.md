@@ -5,7 +5,9 @@ title: 'Two-way sync: latest/local/remote rules and relation push (9b)'
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-11-11"
+completed: "2026-11-11"
+status: done
 ---
 
 ## Description

@@ -199,9 +199,9 @@ func TestDigest(t *testing.T) {
 func TestDueOrder(t *testing.T) {
 	at := flow.NormTime(t0)
 	runs := []flowrun.Run{
-		{ID: "B", Instance: flow.Instance{NextDueAt: at.Add(time.Second)}},
-		{ID: "C", Instance: flow.Instance{NextDueAt: at}},
-		{ID: "A", Instance: flow.Instance{NextDueAt: at}},
+		{ID: "B", State: flowrun.State{Instance: flow.Instance{NextDueAt: at.Add(time.Second)}}},
+		{ID: "C", State: flowrun.State{Instance: flow.Instance{NextDueAt: at}}},
+		{ID: "A", State: flowrun.State{Instance: flow.Instance{NextDueAt: at}}},
 	}
 	flowrun.SortDue(runs)
 	require.Equal(t, []flowrun.RunID{"A", "C", "B"}, []flowrun.RunID{runs[0].ID, runs[1].ID, runs[2].ID})
@@ -239,6 +239,54 @@ func TestCheckState_LogAndClaim(t *testing.T) {
 		{"claim", flowrun.State{Claim: &flowrun.Claim{Generation: 2, By: "alice"}}, true},
 		{"claim without by", flowrun.State{Claim: &flowrun.Claim{Generation: 2}}, false},
 		{"claim negative", flowrun.State{Claim: &flowrun.Claim{Generation: -1, By: "a"}}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := flowrun.CheckState(tc.st)
+			require.Equal(t, tc.ok, err == nil, "err = %v", err)
+		})
+	}
+}
+
+// TestCheckState_ForkedShape pins the shape of a forked state (RR-ZRMWUYT):
+// no run-level mark or claim, no mark or claim on an arrived branch, and
+// one generation per place.
+func TestCheckState_ForkedShape(t *testing.T) {
+	inst := func(state string, gen int64) flow.Instance { return flow.Instance{State: state, Generation: gen} }
+	forked := func(edit func(st *flowrun.State)) flowrun.State {
+		st := flowrun.State{
+			Instance: flow.Instance{Generation: 1, Previous: "start"},
+			Branches: []flowrun.Branch{
+				{Name: "a", Instance: inst("a", 2), Pending: &flowrun.Pending{State: "a", Generation: 2},
+					Claim: &flowrun.Claim{Generation: 2, By: "alice"}},
+				{Name: "b", Instance: inst("joined", 4), Arrived: true},
+			},
+		}
+		if edit != nil {
+			edit(&st)
+		}
+		return st
+	}
+	tests := []struct {
+		name string
+		st   flowrun.State
+		ok   bool
+	}{
+		{"valid", forked(nil), true},
+		{"run-level mark", forked(func(st *flowrun.State) { st.Pending = &flowrun.Pending{State: "start"} }), false},
+		{"run-level claim", forked(func(st *flowrun.State) { st.Claim = &flowrun.Claim{By: "bob"} }), false},
+		{"arrived with mark", forked(func(st *flowrun.State) {
+			st.Branches[1].Pending = &flowrun.Pending{State: "joined", Generation: 4}
+		}), false},
+		{"arrived with claim", forked(func(st *flowrun.State) {
+			st.Branches[1].Claim = &flowrun.Claim{Generation: 4, By: "bob"}
+		}), false},
+		{"branch repeats the run's generation", forked(func(st *flowrun.State) {
+			st.Branches[0].Instance.Generation = 1
+		}), false},
+		{"branches share a generation", forked(func(st *flowrun.State) {
+			st.Branches[1].Instance.Generation = 2
+		}), false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

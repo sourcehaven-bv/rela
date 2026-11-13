@@ -47,10 +47,10 @@ func TestUnaskRemoved(t *testing.T) {
 		changed bool
 	}{
 		{"a question", channels.Message{Seq: 2}, map[int64]channels.Asked{1: {AnswerType: "answer", Answers: 1}}, true},
-		{"an answer", channels.Message{Seq: 5, ReplyTo: 1, Type: "answer"},
+		{"an answer", channels.Message{Seq: 5, Thread: channels.Thread{ReplyTo: 1}, Type: "answer"},
 			map[int64]channels.Asked{1: {AnswerType: "answer"}, 2: {AnswerType: "answer"}}, true},
-		{"another type", channels.Message{Seq: 5, ReplyTo: 1, Type: "text"}, a, false},
-		{"an uncounted question", channels.Message{Seq: 5, ReplyTo: 2, Type: "answer"}, a, false},
+		{"another type", channels.Message{Seq: 5, Thread: channels.Thread{ReplyTo: 1}, Type: "text"}, a, false},
+		{"an uncounted question", channels.Message{Seq: 5, Thread: channels.Thread{ReplyTo: 2}, Type: "answer"}, a, false},
 		{"top level", channels.Message{Seq: 5}, a, false},
 	} {
 		got, changed := channels.UnaskRemoved(a, tc.m)

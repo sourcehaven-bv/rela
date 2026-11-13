@@ -1797,6 +1797,19 @@ its meta unchanged (permissive default). Roles combine by union here too:
 a role with no meta `visible:` list for the relation shows every meta key
 when it reads the source row's type and face.
 
+**The last-updated time goes only with a whole row.** A per-entity GET, a
+view entry and a relation GET carry `_updated`, the time the row last
+changed (TKT-8ZGAEC5). It is served only when nothing on the row is hidden
+from the caller: nothing in `_redacted` and no field withheld. A
+change to a hidden field moves the time too, so on a partly hidden row it
+would tell the caller when a field they cannot see changed. On a relation
+the test is wider: a caller whose `visible:` list for the relation type
+could hide any meta key gets no `_updated`, even when the edge carries none
+of those keys now, because the time would say when one was cleared. List rows and
+search results never carry it. The relation PATCH takes `If-Match` with the
+relation's ETag and answers 412 on a mismatch; its response, like the GET,
+is redacted for the caller.
+
 ## Field write grants on MCP and scheduled scripts
 
 A role's `fields:` and `options:` grants limit which properties it may
@@ -1999,7 +2012,8 @@ instance is an ordinary principal: it authenticates at the source's identity
 edge with whatever that edge accepts, such as a machine-client token from an
 OIDC proxy. The source's `acl.yaml` decides what it reads, and `visible:`
 redacts its fields. This section is about the pulling side. See
-[Syncing with a remote](remote-sync.md) for the configuration.
+[Syncing with a remote](remote-sync.md) and
+[Two-way sync](remote-sync-two-way.md) for the configuration.
 
 - **The source is untrusted.** A pull treats every answer as input from
   outside: a fetched row must carry the id and type it was asked for, its
@@ -2113,9 +2127,37 @@ pull (TKT-UH2Q9MN, DEC-2NFLAHB).
   16 KiB per entry) and local ids outside the graph, in the state store, and
   is read with `rela remote conflicts`, not through `acl.yaml`. A surface
   that shows it to other people must gate each entry by that reader's access
-  to the local row and field. Resolving takes the run lock and only moves the
-  merge base; the sync that follows writes through the normal write path as
-  the person who resolved.
+  to the local row and field, as the Remotes page does (see
+  [Remote sync page](#remote-sync-page-remotesync)). Resolving takes the
+  run lock and only moves the merge base. After `rela remote resolve`, the
+  sync that follows writes through the normal write path as the person who
+  resolved; after the Remotes page, the next scheduled pull writes as the
+  remote's `run_as`.
+- **Conflict rules trust a clock only within bounds.** Under `latest`, the
+  side that changed a row last wins a field both sides changed. The times
+  come from the remote's `_updated` and the local row, so a remote that
+  lies about its clock can win every such field. A time is used only when
+  it lies no more than `max_clock_skew` (default 5m) in the future and no
+  more than `max_clock_skew` before the row's last sync; equal times, a withheld time and a time that
+  does not parse hold the field instead. A remote whose principal sees a
+  hidden field gets no `_updated`, so `latest` holds rather than learning
+  when the hidden field changed. Use `hold` or `local` for a remote you do
+  not trust. `local` and `remote` decide without a clock.
+- **The losing value is kept, bounded.** When `latest` overwrites a value,
+  the conflict list keeps the value that lost (up to 16 KiB), so a person
+  can restore it. It is removed by `rela remote
+  resolve --dismiss`, when the row is no longer linked, with the remote, by
+  `rela history-purge` of the entity, and at the first sync after
+  `superseded_retention` (per remote, default 30 days). With
+  `superseded_retention: 0` the losing local value is not stored; the entry
+  keeps only its digest.
+- **Relations are pushed only when nothing on them is hidden.** A local
+  relation is sent when both of its ends are linked rows the run's
+  principal may read, and its type has no relation-meta `visible:` grant.
+  A gated type is not pushed at all, and the run reports it once, because a
+  merge cannot tell a hidden meta key from an absent one. Meta is merged
+  three-way under the same rules, and every update carries `If-Match`. The
+  relation body is never pushed.
 - **Deletes are not pushed.**
 
 ## Presence
@@ -2967,6 +3009,92 @@ with an invalid value does not show its value in a 422 or in a warning.
 **Upgrading.** With an `acl.yaml`, nobody may sync after the upgrade until
 you grant `git:sync` to the roles that used the sync button or resolved merge
 conflicts.
+
+## Remote sync page (`remote:sync`)
+
+`remote:sync` is a built-in global permission. It lets a principal use the
+Remotes page of the data-entry app and its routes under `/api/v1/_remotes`
+(TKT-0FMYPEZ): the status of each remote in `remotes.yaml`, its conflict
+list, and the resolve, dismiss and link actions on that list. It is checked
+like `git:sync`: without an `acl.yaml` every principal holds it, and with
+`--read-only` nobody does.
+
+```yaml
+# acl.yaml
+roles:
+  integrator:
+    permissions: [remote:sync]
+```
+
+Without the permission every route answers 403 `permission_required`, and
+the response names `remote:sync`. The permission names a config-declared
+capability, so the 403 is the right answer; remote names, URLs, mapped
+types and conflict rules are configuration, which is not a secret.
+
+The conflict list is operator state outside the graph, and the permission
+does not make it readable as a whole. Each entry and each count is gated by
+the reader's own access, through the same visibility wrappers as every
+other read:
+
+- **An entry is shown only when its local row is readable.** The routes
+  resolve every row the response names in one batch through the row gate,
+  in the request's world. A relation entry needs both endpoints readable.
+  A row the reader cannot read is nonexistent: it is left out of the list,
+  out of every count, and a POST that names it answers the same 404 as an
+  entry that does not exist.
+- **A field entry also needs the field.** A field that `visible:` hides
+  from the reader hides the entry. For a relation the relation's
+  `visible:` grants on its source row decide.
+- **Aggregates are computed after the gate.** `total`, the counts by
+  reason and the linked-row count are taken over the gated entries, per
+  request. Nothing caches them across requests or principals.
+- **Taking the remote value and linking are edits.** Taking the remote
+  value makes the next pull write the remote's value into the local row, so
+  it needs `update` on the row and write access to every field the entry
+  names, asked as the write path asks it (`fields:` and `visible:` for an
+  entity, the relation's field grants for a relation). A link makes the
+  next sync merge the remote row into the local one and set its `ref`, so it
+  needs the same rights on every field the create sent. Dismissing
+  changes only the conflict list. Keeping the local value changes no local
+  data, but the next push sends that value to the remote under the remote's
+  credential, overwriting the remote's change. That is the decision
+  `remote:sync` grants: the value is one the caller can read, and the
+  remote's own ACL decides what it accepts. So read access suffices for
+  both.
+- **The checked fields are the acted-on fields.** The route checks the
+  rights before it takes the remote's run lock, so it passes the field set
+  it checked. The change is refused if a sync changed the entry's fields in
+  between.
+  `_actions` on each entry and the POST ask the same question, so a button
+  and its route cannot disagree.
+- **No secret goes on the wire.** A remote shows where its credential is
+  read from (`env`, `file` or `secret`), never the source's name or value.
+  A refused or uncertain push shows a structured `cause` and HTTP status,
+  never the remote's error text, which may quote the remote's data or echo
+  a header. A failure inside the route answers 500 without detail.
+- **Each action is audited.** Resolve, dismiss and link record
+  `remote-resolve`, `remote-dismiss` and `remote-link` with the principal,
+  the remote, the row and the side taken. The audit record carries no
+  field value. The CLI commands record the same.
+- **No web-triggered sync.** The routes change the conflict list and the
+  ledger under the remote's run lock, and never call the remote. The next
+  scheduled pull applies the decision as the remote's `run_as`, through the
+  entity manager, which authorizes and audits each write again.
+- **A browser surface.** Like the git routes, the remote routes are not
+  exempt from the same-origin check and are not in the OpenAPI spec. A
+  script uses the `rela remote` commands instead.
+
+One residual is accepted. The link route refuses an address that the
+ledger already links to some local row, with a 409. To a caller who holds
+`remote:sync` this is a one-bit signal that a local row links that remote
+address, even when the caller cannot read the local row. The answer names
+no local row and carries no local content, and the address is a remote row
+id the caller already knows. The permission is for operators of the
+integration, so this is accepted rather than hidden behind a uniform 404.
+
+The CLI commands (`rela remote conflicts`, `resolve`, `link`) read the list
+as operator state, without the gate. Run them only where the operator may
+read every row.
 
 ## Saving the settings page (`settings:edit`)
 

@@ -61,8 +61,9 @@ func (s *Store) AcquireKeyedLock(ctx context.Context, key string) (release func(
 		// connection, C concurrent holders that also write need C+1 <= MaxConns
 		// to make progress: at C == MaxConns every connection is a lock and the
 		// writes wait for one that only frees on release. keyedSlots enforces
-		// that by admitting at most half the pool as holders; further callers
-		// wait for a slot, bounded by their ctx deadline. Prefer a conditional
+		// that by admitting at most keyedSlotCount holders, which leaves room
+		// for the workers' pins too; further callers wait for a slot, bounded
+		// by their ctx deadline. Prefer a conditional
 		// write (unique: / If-Match) over a lock when the critical section is a
 		// single write anyway.
 		return nil, errors.New(
@@ -129,9 +130,9 @@ func (s *Store) AcquireKeyedLock(ctx context.Context, key string) (release func(
 // It is for work one process does on behalf of all, such as the realtime
 // worker: the leader holds it for as long as it leads, and the others try
 // it now and then to take over. Holding it pins one pool connection for
-// that whole time, because the lock is session-scoped, so it needs
-// pool_max_conns >= 3: one for the lock, and at least two left for the
-// leader's writes and for requests.
+// that whole time, because the lock is session-scoped. The pins share one
+// budget with the keyed slots (see pinned): one held lock needs
+// pool_max_conns >= 3, two need 4.
 //
 // The database frees the lock when it drops the session (an idle timeout,
 // a proxy cut, a failover), and the holder is not told. A holder calls
@@ -147,13 +148,12 @@ func TryKeyedLock(ctx context.Context, st store.Store, key string) (lock *HeldLo
 	if !isPool {
 		return nil, false, errors.New("pgstore: keyed lock requires a pgxpool-backed store")
 	}
-	if pool.Config().MaxConns < 3 {
-		return nil, false, errors.New(
-			"pgstore: a held keyed lock needs pool_max_conns >= 3 (the lock pins one connection for as long as " +
-				"it is held, and writes and requests need the others)")
+	if perr := pin(pool); perr != nil {
+		return nil, false, perr
 	}
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
+		unpin(pool)
 		return nil, false, fmt.Errorf("pgstore: keyed lock acquire connection: %w", err)
 	}
 	if err := conn.QueryRow(ctx,
@@ -162,13 +162,91 @@ func TryKeyedLock(ctx context.Context, st store.Store, key string) (lock *HeldLo
 	).Scan(&ok); err != nil {
 		// The answer is lost, so the session may hold the lock: destroy it.
 		conn.Hijack().Close(context.WithoutCancel(ctx))
+		unpin(pool)
 		return nil, false, fmt.Errorf("pgstore: keyed lock %q: %w", key, err)
 	}
 	if !ok {
 		conn.Release()
+		unpin(pool)
 		return nil, false, nil
 	}
-	return &HeldLock{conn: conn, key: key}, true, nil
+	return &HeldLock{conn: conn, key: key, pool: pool}, true, nil
+}
+
+// pinned counts, per pool, the connections that held keyed locks pin. A
+// pool leaves the map when its count drops to zero.
+//
+// The pins and the keyed slots share one budget: a pool keeps
+// keyedSlotCount connections for [Store.AcquireKeyedLock] holders, one
+// more for their writes and for requests, and the rest may be pinned. So
+// pins + slots + 1 <= pool_max_conns however many workers lead in one
+// process.
+var (
+	pinnedMu sync.Mutex
+	pinned   = map[*pgxpool.Pool]int{}
+)
+
+// workerPins is how many held keyed locks one long-running process takes:
+// the realtime worker's and the flow worker's. The keyed slots leave room
+// for them (see keyedSlotCount).
+const workerPins = 2
+
+// pinRoom is how many held keyed locks a pool of maxConns connections
+// admits: what is left after the keyed slots and one free connection.
+func pinRoom(maxConns int) int {
+	return maxConns - keyedSlotCount(maxConns) - 1
+}
+
+// poolForLocks is the smallest pool_max_conns that admits n held keyed
+// locks.
+func poolForLocks(n int) int {
+	m := n + 1
+	for pinRoom(m) < n {
+		m++
+	}
+	return m
+}
+
+// pin counts one more held lock on pool, or fails when the pool has no
+// room for it.
+func pin(pool *pgxpool.Pool) error {
+	pinnedMu.Lock()
+	defer pinnedMu.Unlock()
+	n := pinned[pool] + 1
+	if n > pinRoom(int(pool.Config().MaxConns)) {
+		return heldLocksError(n)
+	}
+	pinned[pool] = n
+	return nil
+}
+
+// heldLocksError says what pool holding n keyed locks needs.
+func heldLocksError(n int) error {
+	return fmt.Errorf("pgstore: holding %d keyed locks needs pool_max_conns >= %d (each held lock pins one "+
+		"connection, and keyed-lock holders, writes and requests need the rest)", n, poolForLocks(n))
+}
+
+// CheckLockRoom reports an error when st's pool cannot hold n keyed locks
+// taken with [TryKeyedLock] at once. A host that will hold n checks it at
+// startup, so a pool that is too small fails there with the remedy rather
+// than leaving a worker that never leads. A store that is not a
+// pool-backed pgstore has nothing to check.
+func CheckLockRoom(st store.Store, n int) error {
+	pool, isPool := HandleFor(st).(*pgxpool.Pool)
+	if !isPool || n <= pinRoom(int(pool.Config().MaxConns)) {
+		return nil
+	}
+	return heldLocksError(n)
+}
+
+// unpin gives back a pin taken with pin.
+func unpin(pool *pgxpool.Pool) {
+	pinnedMu.Lock()
+	defer pinnedMu.Unlock()
+	pinned[pool]--
+	if pinned[pool] <= 0 {
+		delete(pinned, pool)
+	}
 }
 
 // HeldLock is a keyed lock taken with [TryKeyedLock].
@@ -176,6 +254,7 @@ type HeldLock struct {
 	mu   sync.Mutex
 	conn *pgxpool.Conn
 	key  string
+	pool *pgxpool.Pool
 }
 
 // Check reports whether the lock's session is still alive, with a round
@@ -195,6 +274,7 @@ func (l *HeldLock) Check(ctx context.Context) error {
 		}
 		l.conn.Hijack().Close(context.WithoutCancel(ctx))
 		l.conn = nil
+		unpin(l.pool)
 		return fmt.Errorf("pgstore: keyed lock %q lost its session: %w", l.key, err)
 	}
 	return nil
@@ -210,6 +290,7 @@ func (l *HeldLock) Release() {
 	}
 	conn := l.conn
 	l.conn = nil
+	defer unpin(l.pool)
 	ctx := context.Background()
 	if _, err := conn.Exec(ctx,
 		`SELECT pg_advisory_unlock($1::int, hashtext(current_schema() || '/' || $2::text))`,
@@ -222,8 +303,8 @@ func (l *HeldLock) Release() {
 	conn.Release()
 }
 
-// keyedLockSlots caps how many keyed locks one store holds at once: half the
-// pool, at least one. Each holder pins a connection and needs another to
+// keyedLockSlots caps how many keyed locks one store holds at once (see
+// keyedSlotCount). Each holder pins a connection and needs another to
 // write, so capping holders here leaves connections for their writes and for
 // unrelated requests (see the C+1 <= MaxConns note in
 // [Store.AcquireKeyedLock]). Nil for a store without a pool, which cannot take
@@ -233,7 +314,13 @@ func keyedLockSlots(db DBTX) chan struct{} {
 	if !isPool {
 		return nil
 	}
-	return make(chan struct{}, max(1, int(pool.Config().MaxConns)/2))
+	return make(chan struct{}, keyedSlotCount(int(pool.Config().MaxConns)))
+}
+
+// keyedSlotCount is the keyed slots of a pool of maxConns connections: half
+// of what the workers' pins leave, at least one.
+func keyedSlotCount(maxConns int) int {
+	return max(1, (maxConns-workerPins)/2)
 }
 
 // takeKeyedSlot waits for a free slot in slots and returns the function that

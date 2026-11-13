@@ -17,6 +17,7 @@ package mermaid
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -38,16 +39,17 @@ type Transition struct {
 // edge with no label (matching the convention that a move named after its
 // target adds no information).
 func StateDiagram(initial string, transitions []Transition) string {
-	return StateDiagramAt(initial, transitions, "")
+	return StateDiagramAt(initial, transitions)
 }
 
 // currentStyle is the style [StateDiagramAt] gives the marked state.
 const currentStyle = "fill:#fde68a,stroke:#b45309,stroke-width:2px"
 
-// StateDiagramAt renders the diagram [StateDiagram] renders and styles the
-// state named current with the class `current`. A current state the
-// diagram does not draw, or an empty one, marks nothing.
-func StateDiagramAt(initial string, transitions []Transition, current string) string {
+// StateDiagramAt renders the diagram [StateDiagram] renders and styles each
+// state named in current with the class `current`; a run in parallel
+// branches is in several states at once. A current state the diagram does
+// not draw, or an empty one, marks nothing.
+func StateDiagramAt(initial string, transitions []Transition, current ...string) string {
 	ids := map[string]string{}
 	idFor := func(value string) string {
 		if id, ok := ids[value]; ok {
@@ -94,8 +96,14 @@ func StateDiagramAt(initial string, transitions []Transition, current string) st
 			fmt.Fprintf(&b, "    %s --> %s\n", ids[tr.From], ids[tr.To])
 		}
 	}
-	if id, ok := ids[current]; ok && current != "" {
-		fmt.Fprintf(&b, "    classDef current %s\n    class %s current\n", currentStyle, id)
+	var marked []string
+	for _, c := range current {
+		if id, ok := ids[c]; ok && c != "" && !slices.Contains(marked, id) {
+			marked = append(marked, id)
+		}
+	}
+	if len(marked) > 0 {
+		fmt.Fprintf(&b, "    classDef current %s\n    class %s current\n", currentStyle, strings.Join(marked, ","))
 	}
 	return b.String()
 }

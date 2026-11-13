@@ -56,6 +56,58 @@ describe('flowView', () => {
     expect(entries[1].current).toBe(false)
   })
 
+  it('marks the newest entry of each live branch current in a forked run', () => {
+    const entries = timelineEntries(
+      run({
+        state: 'joined',
+        parallel: [
+          {
+            branch: 'it',
+            state: 'it_done',
+            state_label: 'IT done',
+            status: 'working',
+            generation: 4,
+            arrived: true,
+            complete: false,
+          },
+          {
+            branch: 'legal',
+            state: 'legal',
+            state_label: 'Legal',
+            status: 'input_required',
+            generation: 3,
+            complete: false,
+          },
+        ],
+        log: [
+          { at: '2026-01-01T10:00:00Z', state: 'start', via: 'start' },
+          { at: '2026-01-01T10:01:00Z', state: 'it', from: 'start', via: 'done', branch: 'it' },
+          {
+            at: '2026-01-01T10:01:00Z',
+            state: 'legal',
+            from: 'start',
+            via: 'done',
+            branch: 'legal',
+          },
+          { at: '2026-01-02T10:00:00Z', state: 'joined', from: 'it', via: 'change', branch: 'it' },
+        ],
+      }),
+      t
+    )
+    expect(entries.map((e) => e.current)).toEqual([false, true, false, false])
+    expect(entries[1].summary).toBe(
+      'flows.log.inBranch {"summary":"flows.log.done {\\"state\\":\\"legal\\"}","branch":"legal"}'
+    )
+  })
+
+  it('says when the branches joined', () => {
+    const entries = timelineEntries(
+      run({ log: [{ at: '2026-01-01T10:00:00Z', state: 'joined', via: 'join' }] }),
+      t
+    )
+    expect(entries[0].summary).toBe('flows.log.join {"state":"joined"}')
+  })
+
   it('marks no entry current once the run has finished', () => {
     const entries = timelineEntries(
       run({ active: false, log: [{ at: '2026-01-01T10:00:00Z', state: 'finished', via: 'done' }] }),

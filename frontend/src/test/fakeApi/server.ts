@@ -118,6 +118,8 @@ interface StoredEntity {
   // The wire leaves the key out when the body is empty, so an entity created
   // without a body and one with "" look the same.
   content: string
+  // When the entity was last written, served as `_updated`.
+  updated: string
 }
 
 const ENTITY_ACTIONS = { delete: true, rename: false, update: true }
@@ -265,6 +267,7 @@ export class FakeServer {
       type,
       properties,
       content: goDecodeString(body.content ?? ''),
+      updated: new Date().toISOString(),
     }
     this.entities.set(key(type, id), stored)
     this.emit(type)
@@ -378,6 +381,7 @@ export class FakeServer {
     if (refused) return refused
     e.properties = merged
     if (body.content !== undefined) e.content = goDecodeString(body.content)
+    e.updated = new Date().toISOString()
     this.emit(type)
     const warnings = this.warnings(e)
     return ok({ ...this.wire(e, true), ...(warnings.length ? { warnings } : {}) })
@@ -511,7 +515,9 @@ export class FakeServer {
   }
 
   // The per-entity wire shape. A create response carries no `_versions`: the
-  // server issues tokens on reads and on PATCH, not on create.
+  // server issues tokens on reads and on PATCH, not on create. Nor does it
+  // carry `_updated`, which the server stamps after the create returns. The
+  // fake hides no field, so every other per-entity answer carries it.
   private wire(e: StoredEntity, withVersions: boolean) {
     return {
       ...this.header(e),
@@ -522,6 +528,7 @@ export class FakeServer {
       _relations: {},
       ...(withVersions ? { _versions: this.versions(e) } : {}),
       _redacted: [],
+      ...(withVersions ? { _updated: e.updated } : {}),
       _attachments: {},
       _copies: [],
       _conversions: [],

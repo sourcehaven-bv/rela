@@ -286,6 +286,9 @@ func writeMessageLines(b *strings.Builder, m realtime.MessageView, anchor string
 	case m.ReplyCount > 1:
 		fmt.Fprintf(b, "  %d replies", m.ReplyCount)
 	}
+	if !m.LastReplyAt.IsZero() {
+		fmt.Fprintf(b, ", last %s", m.LastReplyAt.UTC().Format(time.RFC3339))
+	}
 	b.WriteString("\n")
 	if m.IsSessionNotice() {
 		fmt.Fprintf(b, "  moved from %s to %s",

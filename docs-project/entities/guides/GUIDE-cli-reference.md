@@ -2494,6 +2494,42 @@ redirects. It stops with an error on an answer that breaks the protocol.
 
 ---
 
+### rela remote
+
+Sync with the remotes declared in `remotes.yaml`, and act on their conflict
+lists. See [Syncing with a remote](remote-sync.md) and
+[Two-way sync](remote-sync-two-way.md).
+
+```bash
+rela remote pull <name> [--dry-run] [--allow-gone N]
+rela remote conflicts <name>
+rela remote resolve <name> <local> [field] --take local|remote
+rela remote resolve <name> <local> [field] --dismiss
+rela remote link <name> <local> <address>
+```
+
+| Command | Description |
+| --- | --- |
+| `pull` | Sync a remote in remotes.yaml: pull the rows it maps, and push local changes when it has push. |
+| `conflicts` | List the conflicts a remote holds for a person to resolve. |
+| `resolve` | Resolve a held conflict to one side and sync, or dismiss what the latest rule left. |
+| `link` | Link an uncertain create to the remote row it made. |
+
+| Option | Description |
+| --- | --- |
+| `--dry-run` | `pull`: report what the pull would do, and write nothing. |
+| `--allow-gone N` | `pull`: confirm that up to `N` rows the source no longer lists may be detached or deleted, above the remote's `max_gone`. |
+| `--take local\|remote` | `resolve`: the side whose value wins. |
+| `--dismiss` | `resolve`: remove the entries the `latest` rule left; changes no data. |
+
+`<local>` is a local entity id, or for a relation the local relation key
+that `rela remote conflicts` shows. Without `[field]`, `resolve` acts on
+every entry of the row. `link` takes the remote row's address as
+`type/id`, of the remote type the local type maps from. It writes neither
+side; the next sync compares the two rows. Every command takes `-o json`.
+
+---
+
 ### rela validate
 
 Validate project configuration files.

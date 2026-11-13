@@ -336,6 +336,8 @@ type ChannelReadCmd struct {
 	Before   *int64 `help:"Messages before this seq."`
 	After    *int64 `help:"Messages after this seq, oldest first."`
 	AfterRev *int64 `name:"after-rev" help:"Messages changed after this rev, ordered by rev; 0 is valid."`
+	Thread   *int64 `help:"Only the top-level message with this seq and its replies."`
+	Top      bool   `help:"Only the main stream: top-level messages and inline replies."`
 	Schemas  bool   `help:"Show each message type's properties."`
 }
 
@@ -392,6 +394,16 @@ func (c *ChannelReadCmd) request() (realtime.ReadRequest, error) {
 	if cursors > 1 {
 		return req, errors.New("name at most one of --before, --after and --after-rev")
 	}
+	if c.Thread != nil {
+		if *c.Thread < 1 {
+			return req, errors.New("--thread: a seq of at least 1")
+		}
+		if c.Top {
+			return req, errors.New("name at most one of --thread and --top")
+		}
+		req.Thread = *c.Thread
+	}
+	req.Stream = c.Top
 	return req, nil
 }
 

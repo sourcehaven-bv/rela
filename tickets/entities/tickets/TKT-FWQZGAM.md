@@ -1,67 +1,71 @@
 ---
 id: TKT-FWQZGAM
 type: ticket
-title: 'Flows M1e: triggers, events, worker, retention and inbox'
+title: 'Flows M1e: flow worker'
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+started: "2026-11-11"
+completed: "2026-11-11"
+status: done
 ---
 
 ## Description
 
-Part 2 of TKT-9IT3LN8. Part 1 runs flows a person starts with `rela flow start`:
-outputs as run_as, `done` branches, final states, cancel, the run store on every
-backend, and `db import-fs`. This ticket finishes the runtime.
+Part 2 of TKT-9IT3LN8, narrowed to the flow worker. Part 1 runs flows a person
+starts with `rela flow start`: outputs as run_as, `done` branches, final states,
+cancel, the run store on every backend, and `db import-fs`. Nothing calls
+`Engine.Due` in a server yet, so timers never fire and a step whose outputs
+failed waits for a manual retry.
 
-- Start triggers `create`, `predicate` and `schedule` (a basic schedule;
-TKT-311Q282 and TKT-QROHRJ0 stay separate).
-- `change` events through a write-path hook that knows the author, so a
-branch's `roles:` is checked against the person who made the change. RR-EMIUGI8:
-a run's own outputs (writes as run_as with the flow step on ctx) do not count as
-`change` events.
-- A flow worker in long-running hosts that calls `Engine.Due` under a
-leader lock, so timers fire and pending outputs are recovered. Nothing calls
-`Due` in a server yet.
-- Deleting a subject cancels its runs; renaming it rekeys them
-(`flowrun.Store.RekeySubject`). RR-DTSDBII: part 1 handles the start race;
-delete and rename are here.
-- Retention: archive or delete finished runs after `retention.after`.
-- Waiting runs in `_inbox`, read through the header's visibility gate
-(RR-R5I7UE0).
-- RR-LU55NIL: queued jobs started inside a step carry the step.
-- `db load` into an existing sqlite database (the in-transaction import)
-refuses a source with unfinished runs, because `sqliteflowrun` needs its own
-connection. Copy them there too.
+This ticket adds a flow worker to the long-running hosts (rela-server, each
+resident tenant of the multi-tenant server, and rela-desktop). It calls
+`Engine.Due` under a leader lock, so that:
+
+- timers fire;
+- a run left with a pending mark (a crash or a failed output) is settled
+again, with the backoff the engine stores;
+- a join whose `when:` became true after the last arrival continues: the
+engine makes a partly arrived run with a `when:` join due again on a poll.
+
+The leader lock is the realtime worker's: a keyed advisory lock on postgres, a
+lock file on fs and sqlite, and a free lock in memory. The work per tick is
+capped.
+
+Also in scope: the review responses deferred to the worker from TKT-ZO9IB6V that
+touch `Due` and the run state (RR-1D9R0UF, RR-ZRMWUYT), and the text TKT-U9MKKGD
+(#2198) asked to restore once the worker lands: GUIDE-flows "Running flows",
+GUIDE-mcp-server, `internal/cli/flow_runs.go`, `internal/mcp/tools_flows.go`,
+`flowview.Completed.Problem`, and the `flows.waiting.pending` and
+`flows.step.problem.settling` strings.
+
+## Split
+
+The rest of the original ticket moved to follow-ups that depend on this one:
+
+- TKT-GYXOTQC: start triggers and `change` events (and the acceptance
+test with the sample flow).
+- TKT-8137DHO: cancel runs when their subject is deleted.
+- TKT-H43D60E: retention of finished runs.
+- TKT-IVL2LF9: waiting runs in `_inbox`.
+- TKT-TWLN8UB: `db load` copies unfinished runs into sqlite.
+- TKT-YNQPHPP: M2 and M4b review leftovers.
+- TKT-ZOU5BCT: fire due runs of tenants that are not resident (from the
+design review).
+
+TKT-PY2G11W (job steps) depends on this ticket for backoff and timeouts.
 
 ## Acceptance
 
-- The sample flow starts on create, moves on a change by hr, escalates on
-its timer and finishes, on fs, postgres and sqlite.
+- On fs, sqlite and postgres: a timer escalates, a pending output is
+recovered, and a join whose condition becomes true later continues on a later
+tick, all without a person acting.
+- Only one process runs `Due` at a time per project or tenant.
+- One tick advances at most the per-tick cap of runs.
 
-## Notes from M2 (TKT-ZAXRXND)
+## Notes
 
-- `Engine.Change(ctx, id, gen, by, holds)` takes the generation the caller
-saw and refuses a stale one with `ErrStale`. The change hook passes the
-generation it read with the run, so a move that landed in between is not
-applied twice.
-- A step completed in the run panel writes with an `audit.FlowStep` on ctx
-(By = the person) and then calls `Change` itself. The write-path hook must
-skip writes that carry a flow step, or the step moves the run twice.
-- `appbuild.FlowControl.Tasks` already lists the runs waiting for a role
-the caller holds, through the header's visibility gate. `_inbox` can reuse
-it, which satisfies RR-R5I7UE0.
-- Deferred from the M2 code review, for this ticket to pick up:
-  - `FlowControl.SubjectRuns` reads every run of a subject with no cap and
-    builds the detailed view for each. Cap it, report `truncated`, and drop
-    the detail from the list.
-  - `localHolders` caps the local-role query at `maxRoleHolders` without
-    setting `Truncated`. Narrow it to the candidate subjects instead.
-  - The `complete` affordance (`mayUpdate`) builds its own write request.
-    Ask the manager for a dry-run decision so the button and the POST
-    cannot drift.
-  - A timer can move a claimed run before the step's write lands.
-    `advance` could defer to a live claim at the current generation.
-  - `useFlowList` reads a transient error as "no flows".
-  - `RunList` and `Tasks` take the subject from the `_carries` edge (bare
-    id); `Run` uses `run.Subject` with its face. Use one source.
+- CI found `TestDue_CreateOutlivesItsCaller` flaky. The cause was that
+`kvflowrun` took its lock on an ended context about half the time, because a
+`select` picks at random when both cases are ready. The lock now refuses an
+ended context first, as the database stores do.
