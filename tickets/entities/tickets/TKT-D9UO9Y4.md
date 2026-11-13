@@ -5,7 +5,9 @@ title: Gated paged reads for MCP list_entities and search with no text
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-11-13"
+completed: "2026-11-13"
+status: done
 ---
 
 ## Description

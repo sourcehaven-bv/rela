@@ -321,7 +321,9 @@ type EntityReader interface {
 	// (NextCursor is always empty). When q.Limit > 0, at most Limit
 	// entities are returned; NextCursor is non-empty iff more results
 	// exist. Callers resume by setting q.Cursor to the returned
-	// NextCursor on the next call, keeping other query fields identical.
+	// NextCursor on the next call, keeping other query fields identical
+	// except Limit: a cursor names the last row read, so the next page
+	// may be larger or smaller.
 	//
 	// Cursors are opaque — callers MUST NOT parse or construct them.
 	// A cursor is only valid for the same query on the same store;

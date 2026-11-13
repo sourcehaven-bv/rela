@@ -313,7 +313,7 @@
   },
   {
     "name": "list_entities",
-    "description": "List entities as {id,type,title,status} summaries, sorted by ID. Result: {total,has_more,entities}.",
+    "description": "List entities as {id,type,title,status} summaries, sorted by ID and then face, byte-wise (REQ-10 sorts before REQ-2). Result: {total,has_more,entities}.",
     "inputSchema": {
       "properties": {
         "filter": {
@@ -321,7 +321,7 @@
           "type": "string"
         },
         "limit": {
-          "description": "Max results (default 50)",
+          "description": "Max results (default 50, at most 1000)",
           "type": "number"
         },
         "offset": {
