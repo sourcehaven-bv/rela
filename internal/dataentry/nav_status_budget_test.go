@@ -125,7 +125,7 @@ func TestQueryBudget_NavStatusIsSizeIndependent(t *testing.T) {
 				t.Fatalf("no marker counted, so this budget proves nothing: %v", got)
 			}
 		})
-	// TODO(TKT-FED6FMM): calls only. The marker counts in Go over a full
+	// TODO(TKT-F2EJQY8): calls only. The marker counts in Go over a full
 	// header scan of the type (navStatusRows in nav_status.go, through
 	// scopedSortedEntitiesScoped to scopedHeaders' type scan in
 	// scopedread.go).
@@ -141,7 +141,7 @@ func TestQueryBudget_NavStatusRuleOnlyIsSizeIndependent(t *testing.T) {
 				t.Fatalf("no marker counted, so this budget proves nothing: %v", got)
 			}
 		})
-	// TODO(TKT-FED6FMM): calls only, for the scan named on the test above.
+	// TODO(TKT-F2EJQY8): calls only, for the scan named on the test above.
 	assertCallBudget(t, "nav status (rule only)", b, navStatusRuleOnlyFieldPolicyBudget, detail)
 }
 
@@ -156,7 +156,7 @@ func TestQueryBudget_NavItemsRedactionIsSizeIndependent(t *testing.T) {
 		scan bool
 	}{
 		{"nav items", dataentryconfig.List{EntityType: "ticket"}, navItemsFieldPolicyBudget, false},
-		// TODO(TKT-FED6FMM): a list condition keeps the list off the pushed
+		// TODO(TKT-F2EJQY8): a list condition keeps the list off the pushed
 		// path, so the group reads every header of the type (scopedHeaders'
 		// type scan in scopedread.go) and judges the condition in Go.
 		{"nav items (condition)", dataentryconfig.List{

@@ -39,7 +39,7 @@ const (
 	batchJob readCategory = "batch-job"
 	// requestPath: a handler, MCP tool, script binding or read path serving
 	// one request whose answer is a page or a few rows, yet whose cost grows
-	// with the store. This is debt; TKT-FED6FMM removes it.
+	// with the store. This is debt; the follow-ups of TKT-FED6FMM remove it.
 	requestPath readCategory = "request-path"
 	// bounded: the call is unpaged, but its filter bounds the result
 	// independently of the store's size (a lookup on a unique property, or
@@ -511,13 +511,13 @@ func TestUnpagedReadAllowlist_HasReasons(t *testing.T) {
 }
 
 // The request-path scan TKT-A6A97WV's budget tests name stays on the list
-// as debt, not relabelled. TKT-FED6FMM deletes this test with the scan.
+// as debt, not relabelled. TKT-F2EJQY8 deletes this test with the scan.
 func TestUnpagedReadAllowlist_ScopedHeadersIsDebt(t *testing.T) {
 	t.Parallel()
 	const key = "internal/dataentry/scopedread.go#scopedHeaders"
 	e, ok := unpagedReadAllowlist[key]
 	if !ok {
-		t.Fatalf("%s: not on the allowlist; if TKT-FED6FMM removed the scan, delete this test with it", key)
+		t.Fatalf("%s: not on the allowlist; if TKT-F2EJQY8 removed the scan, delete this test with it", key)
 	}
 	if e.category != requestPath {
 		t.Errorf("%s: category %q, want %q", key, e.category, requestPath)

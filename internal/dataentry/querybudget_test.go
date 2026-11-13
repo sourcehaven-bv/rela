@@ -457,7 +457,7 @@ func assertBudget(t *testing.T, name string, c budgetCost, pinned int, detail st
 
 // assertCallBudget is [assertBudget] without the rows check, for an op
 // whose rows are known to grow with the store. Every caller says which read
-// grows: a TODO(TKT-FED6FMM) for a scan to remove, or why it is by design.
+// grows: a TODO(TKT-F2EJQY8) for a scan to remove, or why it is by design.
 func assertCallBudget(t *testing.T, name string, c budgetCost, pinned int, detail string) {
 	t.Helper()
 	if c.small.Calls != c.large.Calls {
@@ -582,7 +582,7 @@ func TestQueryBudget_SearchIsSizeIndependent(t *testing.T) {
 			t.Fatalf("search: %d %s", rec.Code, rec.Body)
 		}
 	})
-	// TODO(TKT-FED6FMM): calls only. The search's structured filter reads
+	// TODO(TKT-F2EJQY8): calls only. The search's structured filter reads
 	// every header of the type (scopedHeaders' type scan in scopedread.go,
 	// reached from helpers.go via queryservice.go).
 	assertCallBudget(t, "search", b, searchBudget, detail)
@@ -605,7 +605,7 @@ func TestQueryBudget_SearchLinkableIsSizeIndependent(t *testing.T) {
 			t.Fatalf("no row is linkable, so this budget proves nothing: %s", rec.Body)
 		}
 	})
-	// TODO(TKT-FED6FMM): calls only. Besides the header scan named on the
+	// TODO(TKT-F2EJQY8): calls only. Besides the header scan named on the
 	// search budget above, the linkable search loads every candidate's body
 	// (rowcontent.go, from search_linkable.go).
 	assertCallBudget(t, "search linkable", b, searchLinkableBudget, detail)
@@ -710,7 +710,7 @@ func TestQueryBudget_TraversalScopeIsSizeIndependent(t *testing.T) {
 			}
 		}
 	})
-	// TODO(TKT-FED6FMM): calls only. A scope that does not lower keeps the
+	// TODO(TKT-F2EJQY8): calls only. A scope that does not lower keeps the
 	// Go path, which reads every header of the type (scopedHeaders' type
 	// scan in scopedread.go) and judges the scope over that candidate set.
 	assertCallBudget(t, "traversal scope list page", b, traversalScopeBudget, detail)
@@ -809,7 +809,7 @@ func TestQueryBudget_PageScopedListIsSizeIndependent(t *testing.T) {
 			t.Fatalf("list returned %d rows", len(resp.Data))
 		}
 	})
-	// TODO(TKT-FED6FMM): calls only. A page-scoped list takes the Go path,
+	// TODO(TKT-F2EJQY8): calls only. A page-scoped list takes the Go path,
 	// which reads every header of the type (scopedHeaders' type scan in
 	// scopedread.go) before it narrows to the anchor's rows.
 	assertCallBudget(t, "page-scoped list", b, pageScopedListBudget, detail)
@@ -834,7 +834,7 @@ func TestQueryBudget_IncomingOrderedListIsSizeIndependent(t *testing.T) {
 			t.Fatalf("list returned %d rows, order %+v", len(resp.Data), resp.Meta.RelationOrder)
 		}
 	})
-	// TODO(TKT-FED6FMM): calls only, for the type scan named on the
+	// TODO(TKT-F2EJQY8): calls only, for the type scan named on the
 	// page-scoped list budget above.
 	assertCallBudget(t, "incoming-ordered list", b, incomingOrderedListBudget, detail)
 }

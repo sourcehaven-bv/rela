@@ -5,7 +5,10 @@ package archguard
 // "repo/relative/file.go#Func" or "...#Recv.Method". It may only shrink.
 //
 // Each entry has a category (see readCategory) and a reason that says what
-// the read is for. requestPath entries are debt that TKT-FED6FMM removes.
+// the read is for. requestPath entries are debt. The follow-ups of
+// TKT-FED6FMM remove them: TKT-F2EJQY8 (dataentry), TKT-D9UO9Y4 (mcp,
+// search), TKT-GIAGLQ3 (ingest, rename), TKT-P9QMEVI (lua) and TKT-EBBHM55
+// (desktopnotify).
 var unpagedReadAllowlist = map[string]unpagedRead{
 	// aclmap: the who-can report.
 	"internal/aclmap/enumerate.go#Engine.enumeratePrincipals": {2, batchJob,
@@ -95,7 +98,7 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/dataentry/scopedread.go#scopedHeaders": {3, requestPath,
 		"the scoped collection read behind lists, kanban and views: every header of the type in the world, " +
 			"directly or as the ACL-scoped GraphQuery with no Limit through collectHeaders " +
-			"(the TODO(TKT-FED6FMM) scan the budget tests name)"},
+			"(the TODO(TKT-F2EJQY8) scan the budget tests name)"},
 
 	// datamigration: migrations rewrite whole types.
 	"internal/datamigration/adoptface.go#faceAdoption.plan": {1, batchJob, "face adoption: scans a type for zero-face rows to move"},

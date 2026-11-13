@@ -45,5 +45,6 @@ paths:
   `internal/archguard/unpagedread_allowlist_test.go` (TKT-1VAVZ3O). A new
   `ListEntities`/`ListRelations`/`ListEntityHeaders` call, or a
   `GraphQuery`/`*Page` call without `Limit`, that is not bounded by ids fails
-  `TestNoNewUnpagedReads`; the list may only shrink, and its `request-path`
-  entries are the debt TKT-FED6FMM removes.
+  `TestNoNewUnpagedReads`; the list may only shrink. Its `request-path`
+  entries are debt, and the allowlist names the follow-up ticket for each
+  area.
