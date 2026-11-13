@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
@@ -71,7 +72,7 @@ func buildHighestIDSQL(prefix string) (sqlText string, args []any) {
 		UNION SELECT id FROM retired_ids WHERE lower(id) >= lower(?1) AND lower(id) < lower(?2)
 		UNION SELECT successor FROM retired_ids
 		      WHERE lower(successor) >= lower(?1) AND lower(successor) < lower(?2)`,
-		[]any{prefix + "-", prefix + "."}
+		[]any{strings.TrimSuffix(prefix, "-") + "-", strings.TrimSuffix(prefix, "-") + "."}
 }
 
 // RenameFamily changes an entity's id and re-keys every relation referencing

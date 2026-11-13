@@ -196,4 +196,9 @@ func sqlLiteral(t *testing.T, v any) string {
 func TestBuildHighestIDSQLBounds(t *testing.T) {
 	_, args := pgstore.BuildHighestIDSQLForTest("FEAT")
 	require.Equal(t, []any{"FEAT-", "FEAT."}, args)
+
+	// A prefix that already ends in the dash names the same series
+	// (BUG-RLBXTG5), as it does in [entity.SequentialNumber].
+	_, args = pgstore.BuildHighestIDSQLForTest("FEAT-")
+	require.Equal(t, []any{"FEAT-", "FEAT."}, args)
 }

@@ -215,22 +215,15 @@ func ValidateID(s string) error {
 	return nil
 }
 
-// ExtractHighestNumber finds the highest number for a given prefix from a list of IDs
+// ExtractHighestNumber returns the highest number among ids in the series of
+// prefix, matched by [SequentialNumber], or 0.
 func ExtractHighestNumber(ids []string, prefix string) int {
 	highest := 0
-	prefix = strings.ToUpper(strings.TrimSuffix(prefix, "-"))
-
-	for _, idStr := range ids {
-		id, err := ParseEntityID(idStr)
-		if err != nil {
-			continue
-		}
-		idPrefix := strings.ToUpper(strings.TrimSuffix(id.Prefix, "-"))
-		if idPrefix == prefix && id.Number > highest {
-			highest = id.Number
+	for _, id := range ids {
+		if n, ok := SequentialNumber(id, prefix); ok && n > highest {
+			highest = n
 		}
 	}
-
 	return highest
 }
 
@@ -273,12 +266,15 @@ func SequentialPrefix(prefix string) string {
 //
 // An id without the dash, such as "REQ7", is not in the series. It cannot
 // equal a minted id, which always has the dash, so it cannot collide.
+//
+// It allocates nothing, because the file backends call it for every stored
+// id on every create.
 func SequentialNumber(id, prefix string) (int, bool) {
-	pfx := SequentialPrefix(prefix) + "-"
-	if len(id) <= len(pfx) || !asciiEqualFold(id[:len(pfx)], pfx) {
+	base := strings.TrimSuffix(prefix, "-")
+	if len(id) <= len(base)+1 || id[len(base)] != '-' || !asciiEqualFold(id[:len(base)], base) {
 		return 0, false
 	}
-	digits := id[len(pfx):]
+	digits := id[len(base)+1:]
 	for i := range len(digits) {
 		if digits[i] < '0' || digits[i] > '9' {
 			return 0, false

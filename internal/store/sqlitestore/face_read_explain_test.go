@@ -119,4 +119,9 @@ func TestFaceReadExplain(t *testing.T) {
 func TestBuildHighestIDSQLBounds(t *testing.T) {
 	_, args := sqlitestore.BuildHighestIDSQLForTest("FEAT")
 	require.Equal(t, []any{"FEAT-", "FEAT."}, args)
+
+	// A prefix that already ends in the dash names the same series
+	// (BUG-RLBXTG5), as it does in [entity.SequentialNumber].
+	_, args = sqlitestore.BuildHighestIDSQLForTest("FEAT-")
+	require.Equal(t, []any{"FEAT-", "FEAT."}, args)
 }
