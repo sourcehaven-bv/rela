@@ -43,3 +43,8 @@ Assess only. See the finding's reason for the result.
 - ai.yaml and mail.yaml with an env name under `REMOTE_CREDENTIAL_` fail validation with a message naming remotes.yaml.
 - Every surface that names a secret or env variable has a test refusing a remote credential.
 - RR-Q09NYPQ addressed; RR-T2DQV3D closed with a reason.
+
+## Notes
+
+- Code review added: `cmdexec` withholds `REMOTE_CREDENTIAL_*` from every child process.
+- CodeQL treats `api_key_env` and `password_env` as credentials, so the refusal errors name the prefix, not the configured name (RR-4BT1TIJ).

@@ -485,8 +485,9 @@ func (c *Config) Validate() error {
 			"use password_env to name an environment variable instead")
 	}
 	if secrets.IsRemoteCredentialEnv(c.PasswordVar) {
-		return fmt.Errorf("password_env may not name %q: a remote credential is only for "+
-			"remotes.yaml and rela reconcile", c.PasswordVar)
+		// The error leaves out the name; see PasswordVar.
+		return fmt.Errorf("password_env may not name a %s variable: a remote credential is only for "+
+			"remotes.yaml and rela reconcile", secrets.RemoteCredentialEnvPrefix)
 	}
 
 	switch c.Transport {
