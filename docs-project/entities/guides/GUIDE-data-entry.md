@@ -6048,6 +6048,7 @@ lowercase letter and has at most 32 lowercase letters, digits, `-` or `_`.
 | `tabs`  | yes      | The views of the page, in tab order. At least one |
 | `entity_type` | no | Makes the page an [entity page](#entity-pages) for entities of this type |
 | `badge` | no       | On an entity page, a property of the entity shown beside the title |
+| `mode`  | no       | `tabs` (the default) or `steps`. See [Steps and present mode](#steps-and-present-mode) |
 
 Each tab names exactly one view:
 
@@ -6060,6 +6061,7 @@ Each tab names exactly one view:
 | `list`, `kanban`, `calendar`, `gantt`, `document` | one of | The view the tab shows, by name |
 | `dashboard`  | one of   | `true` shows the default dashboard; a name shows a [named dashboard](#named-dashboards-dashboards) |
 | `scope`      | on an entity page | How the tab narrows its view to the page's entity. See [Entity pages](#entity-pages) |
+| `prompt`     | no       | On a steps page, the question shown above the view. See [Steps and present mode](#steps-and-present-mode) |
 
 ### Entity pages
 
@@ -6175,6 +6177,65 @@ entity page the menu offers every type of the space.
 
 An entity page is not a navigation destination: a `page:` entry or a space's
 `home:` that names one is a config error. It opens from an entity, by URL.
+
+### Steps and present mode
+
+A page with `mode: steps` shows its tabs as numbered steps instead of a tab bar.
+Use it for a session that walks through several views in order, such as a
+workshop: first collect risks in a list, then place them on a board, then add
+measures.
+
+```yaml
+pages:
+  dpia:
+    label: "DPIA workshop"
+    entity_type: dpia
+    mode: steps
+    tabs:
+      - id: risks
+        label: "Pre-mortem"
+        list: risks
+        scope: { relation: has-risk }
+        prompt: "It is a year from now and this went wrong. What happened?"
+      - id: matrix
+        label: "Risk matrix"
+        kanban: risk-matrix
+        scope: { relation: has-risk }
+        prompt: "How likely is each risk, and how bad would it be?"
+      - id: measures
+        label: "Measures"
+        list: measures
+        scope: { relation: has-measure }
+```
+
+The step bar above the view shows:
+
+- the steps, numbered, with the current one marked. Each step is a link;
+- **Back** and **Next**, which open the previous and the next step;
+- **Present**, which enters present mode.
+
+Each step has its own URL, as a tab has, so the browser's back button returns to
+the previous step. A step hidden from the user by `permission:` is left out, and
+the numbers follow the steps the user sees.
+
+`prompt` is the question the step puts to the room. It is shown as a large
+heading above the view. It is plain text of at most 280 characters, on one line,
+and is only allowed on a steps page.
+
+**Present mode** is for a screen the whole room reads. It hides the sidebar and
+the suggestion card, and enlarges the view. In present mode:
+
+- **Full screen** asks the browser to fill the screen. Press Esc to leave it.
+- **PageDown** and **PageUp** open the next and the previous step, so a
+  presentation clicker works. Outside present mode these keys scroll as usual.
+- **Exit** leaves present mode.
+
+Present mode is part of the URL: `?present=1` at the end of a step's URL opens it
+in present mode, and moving between steps keeps it. On a page without
+`mode: steps`, `?present=1` does nothing.
+
+Present mode changes only what the screen shows. Every view in it reads and
+writes with the user's own permissions, as it does outside present mode.
 
 ### Linking to a page
 

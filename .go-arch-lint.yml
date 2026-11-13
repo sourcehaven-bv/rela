@@ -817,6 +817,8 @@ deps:
       - metamodel
       # piles.Icons, the allowlist a `piles.toggles` icon is checked against.
       - piles
+      # texthazard.Find, the invisible-character check on a step prompt.
+      - texthazard
       - yamlscalar
     canUse:
       - rrulego
