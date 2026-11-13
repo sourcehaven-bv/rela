@@ -41,9 +41,9 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 		"startup reindex: streams every entity into the in-memory bleve index"},
 	"internal/appbuild/flowcontrol.go#FlowControl.Runs": {1, batchJob,
 		"`rela flow runs`: lists every flow run row; its only caller is the CLI"},
-	"internal/appbuild/idproles.go#roleHolders.PrincipalsWithRole": {1, requestPath,
-		"rela.role_holders script binding: reads every user header to match stored IdP roles; scripts run " +
-			"inside requests (automations, actions)"},
+	"internal/appbuild/idproles.go#roleHolders.usersWithProp": {1, bounded,
+		"rela.role_holders script binding: one narrowing branch per role holder's subject, so it reads the " +
+			"user rows holding those subjects"},
 	"internal/appbuild/projectdata_sqlite.go#checkDeclaredTypes": {1, batchJob,
 		"project export to sqlite: checks every entity's type before writing"},
 	"internal/appbuild/projectdata_sqlite.go#copyData": {2, batchJob,
