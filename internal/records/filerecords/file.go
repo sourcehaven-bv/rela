@@ -66,13 +66,15 @@ func (s *Store) lock(ctx context.Context) (func(), error) {
 	return func() { unlock(); s.mu.Unlock() }, nil
 }
 
-// escape maps an id to a path segment: letters, digits, - and _ stay, and
-// every other byte becomes %XX, so no id can name . or .. or a separator.
+// escape maps an id to a path segment: lower-case letters, digits, - and _
+// stay, and every other byte becomes %XX, so no id can name . or .. or a
+// separator. Upper-case letters are escaped too, so ids that differ only in
+// case stay apart on a case-folding filesystem.
 func escape(id string) string {
 	var b strings.Builder
 	for i := range len(id) {
 		c := id[i]
-		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' {
+		if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_' {
 			b.WriteByte(c)
 			continue
 		}
@@ -179,7 +181,11 @@ func (s *Store) ownerRows(typ, owner string) ([]records.Record, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, rows...)
+		for _, r := range rows {
+			if r.Owner == owner {
+				out = append(out, r)
+			}
+		}
 	}
 	return out, nil
 }

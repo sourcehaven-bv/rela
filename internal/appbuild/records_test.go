@@ -121,3 +121,66 @@ func TestRecords_GatedThroughPolicy(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, pts)
 }
+
+const facedRecordsMetamodel = `version: "1.0"
+entities:
+  meter:
+    label: Meter
+    plural: meters
+    id_type: manual
+    faces:
+      draft: { label: Draft }
+      published: { label: Published }
+    properties:
+      title: {type: string}
+records:
+  reading:
+    owner: meter
+    fields:
+      kwh: {type: decimal, scale: 2}
+`
+
+// alice reads and updates both faces; dave reads and updates the draft
+// face only, so the published face is hidden from him.
+const facedRecordsPolicy = `roles:
+  both:
+    read: ["meter@draft", "meter@published"]
+    update: ["meter@draft", "meter@published"]
+  draftonly:
+    read: ["meter@draft"]
+    update: ["meter@draft"]
+assignments:
+  alice: both
+  dave: draftonly
+`
+
+// TestRecords_HiddenFaceRefusesAppend pins the per-face write check against
+// a real acl.yaml: rows belong to the whole family, so a caller who cannot
+// see one face of the owner may not append, even though the face it sees is
+// writable to it.
+func TestRecords_HiddenFaceRefusesAppend(t *testing.T) {
+	root := t.TempDir()
+	writeMetamodelBody(t, root, facedRecordsMetamodel)
+	writePolicy(t, root, facedRecordsPolicy)
+	svc, err := appbuild.Discover(root, script.NewEngine(), backendtest.Options(t)...)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Close() })
+	rs := appbuild.Records(svc)
+	require.NotNil(t, rs)
+
+	for _, face := range []string{"draft", "published"} {
+		require.NoError(t, svc.Store().CreateEntity(t.Context(), &entity.Entity{
+			ID: "MTR-1", Type: "meter", Face: entity.Face(face),
+			Properties: map[string]any{"title": face},
+		}))
+	}
+	in := []records.Input{{Owner: "MTR-1", TS: time.Date(2026, 1, 5, 10, 0, 0, 0, time.UTC),
+		Fields: map[string]any{"kwh": "1"}}}
+
+	dave := boundAs(t, svc, principal.Principal{User: "dave", Tool: principal.ToolMCP})
+	_, err = rs.Append(dave, "reading", in)
+	require.ErrorIs(t, err, records.ErrForbidden)
+
+	_, err = rs.Append(asAlice(t, svc), "reading", in)
+	require.NoError(t, err)
+}

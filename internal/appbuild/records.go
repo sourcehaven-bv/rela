@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"log/slog"
 	"path/filepath"
 
@@ -111,6 +112,7 @@ type recordOwners struct {
 	// posting into a closed period. Nothing it reads reaches a response.
 	raw interface {
 		GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error)
+		ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	}
 }
 
@@ -119,9 +121,10 @@ func (o recordOwners) Readable(ctx context.Context, ids []string) (map[string]bo
 	return leaseGate{rows: o.rows}.Readable(ctx, ids)
 }
 
-// Writable checks update access on every readable face of id. Rows belong
-// to the whole family, not to one face, so no face is picked as a write
-// target: the caller must be able to update each face it can see.
+// Writable checks update access on every stored face of id. Rows belong to
+// the whole family, not to one face, so no face is picked as a write target,
+// and a face the caller cannot read refuses the write: its lock date still
+// governs the rows.
 func (o recordOwners) Writable(ctx context.Context, id string) (records.Owner, error) {
 	fam, ok, err := o.rows.Family(ctx, id)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -130,8 +133,16 @@ func (o recordOwners) Writable(ctx context.Context, id string) (records.Owner, e
 	if !ok || err != nil {
 		return records.Owner{}, fmt.Errorf("%w: %s", records.ErrNotFound, id)
 	}
-	owner := records.Owner{ID: id, Type: fam.Type, Faces: make([]map[string]any, 0, len(fam.Faces))}
-	for _, face := range fam.Faces {
+	stored, err := store.FamilyHeaders(ctx, o.raw, id)
+	if err != nil {
+		return records.Owner{}, fmt.Errorf("records: read owner %s: %w", id, err)
+	}
+	if len(stored) != len(fam.Faces) {
+		return records.Owner{}, fmt.Errorf("%w: update %s", records.ErrForbidden, id)
+	}
+	owner := records.Owner{ID: id, Type: fam.Type, Faces: make([]map[string]any, 0, len(stored))}
+	for _, h := range stored {
+		face := h.Face
 		dec := o.writes.AuthorizeWrite(ctx, acl.WriteRequest{
 			Op: acl.OpUpdate, Subject: acl.NewEntitySubject(fam.Type, id, face),
 		})

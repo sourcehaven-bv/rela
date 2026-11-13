@@ -405,6 +405,7 @@ Domain and storage:
 | `internal/jobs`          | Background-job seam: ephemeral (fs/desktop) or durable (postgres)                                |
 | `internal/piles`         | Per-user piles of entity refs, outside the graph; kvpiles (file-locked KV) or pgpiles (tenant schema) |
 | `internal/lease`         | Advisory entity leases, outside the graph; kvlease (file-locked KV) or pglease (tenant schema)  |
+| `internal/records`       | Append-only time series and ledger rows owned by entities; file, sqlite or postgres backend      |
 | `internal/principal`     | Identity attribution (`Principal{User, Tool}`) on ctx                                            |
 | `internal/validator`     | Validation engine invoked by entitymanager                                                       |
 | `internal/markdown`      | Parse/write entity and relation markdown                                                         |

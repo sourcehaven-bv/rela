@@ -58,3 +58,24 @@ func TestOwnerIDIsEscaped(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"../x/y"}, owners)
 }
+
+// Owner ids that differ only in case keep separate rows, also on a
+// case-folding filesystem such as the macOS default.
+func TestOwnerIDCaseIsKept(t *testing.T) {
+	dir := t.TempDir()
+	l, err := filelock.New(filepath.Join(dir, "records.lock"))
+	require.NoError(t, err)
+	s, err := filerecords.New(storage.NewOsFS(), filepath.Join(dir, "records"), l)
+	require.NoError(t, err)
+	ctx := t.Context()
+	require.NoError(t, s.Append(ctx, records.AppendRequest{Records: []records.Record{
+		recordstest.Row("a", "m", "mtr-1", 0, nil),
+		recordstest.Row("b", "m", "MTR-1", 0, nil),
+	}}))
+	for _, owner := range []string{"mtr-1", "MTR-1"} {
+		page, err := s.List(ctx, records.ListQuery{Type: "m", Owner: owner, Limit: 10})
+		require.NoError(t, err)
+		require.Len(t, page.Records, 1, owner)
+		require.Equal(t, owner, page.Records[0].Owner)
+	}
+}
