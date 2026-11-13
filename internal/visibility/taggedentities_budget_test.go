@@ -70,7 +70,7 @@ func TestTaggedEntities_Budget(t *testing.T) {
 			if err != nil || len(got) != 2*n {
 				t.Fatalf("got %d rows, %v; want %d", len(got), err, 2*n)
 			}
-			if st.Reads() != 1 || st.Calls()["ListEntityHeaders"] != 1 || st.Rows() > n {
+			if st.Reads() != 1 || st.Calls()["ListEntityHeaders"] != 1 || st.Cost().Rows > n {
 				t.Errorf("reads = %s, want exactly one ListEntityHeaders of at most %d rows", st, n)
 			}
 			if many != 1 || single != 0 || perms != 1 {

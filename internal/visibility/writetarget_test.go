@@ -153,7 +153,7 @@ func TestResolver_WriteRowBudget(t *testing.T) {
 			if _, ok, err := r.WriteRow(ctx, WorldOf(store.TrivialScope()), typeOf(addr), addr); err != nil || !ok {
 				t.Fatalf("n=%d %v: WriteRow = (%v, %v)", n, addr, ok, err)
 			}
-			if calls := st.Calls(); st.Reads() != 1 || calls["GetEntity"] != 1 || st.Rows() != 1 {
+			if calls := st.Calls(); st.Reads() != 1 || calls["GetEntity"] != 1 || st.Cost().Rows != 1 {
 				t.Errorf("n=%d %v: reads = %s, want exactly one GetEntity of one row", n, addr, st)
 			}
 			if gate.passes != 1 {

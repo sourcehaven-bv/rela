@@ -229,7 +229,7 @@ func TestResolver_ResolveHeadersBudget(t *testing.T) {
 			if got := r.ResolveHeaders(ctx, visibility.WorldOf(store.TrivialScope()), refs); len(got) != n {
 				t.Fatalf("got %d hits, want %d", len(got), n)
 			}
-			if calls := st.Calls(); st.Reads() != 1 || calls["ListEntityHeaders"] != 1 || st.Rows() != n {
+			if calls := st.Calls(); st.Reads() != 1 || calls["ListEntityHeaders"] != 1 || st.Cost().Rows != n {
 				t.Errorf("reads = %s, want exactly one ListEntityHeaders of %d rows", st, n)
 			}
 			if gate.many != 1 || gate.single != 0 {
@@ -387,7 +387,7 @@ func TestResolver_ReadableTypesBudget(t *testing.T) {
 			if err != nil || len(got) != n {
 				t.Fatalf("got %d types, %v; want %d", len(got), err, n)
 			}
-			if calls := st.Calls(); st.Reads() != 1 || calls["ListEntityHeaders"] != 1 || st.Rows() != n {
+			if calls := st.Calls(); st.Reads() != 1 || calls["ListEntityHeaders"] != 1 || st.Cost().Rows != n {
 				t.Errorf("reads = %s, want exactly one ListEntityHeaders of %d rows", st, n)
 			}
 			if gate.many != 1 || gate.single != 0 {
@@ -493,7 +493,7 @@ func TestScriptReader_ResolveHeadersBudget(t *testing.T) {
 			if got := sr.ResolveHeaders(ctx, refs); len(got) != 2*n {
 				t.Fatalf("got %d hits, want %d", len(got), 2*n)
 			}
-			if calls := st.Calls(); st.Reads() != 1 || calls["ListEntityHeaders"] != 1 || st.Rows() != 2*n {
+			if calls := st.Calls(); st.Reads() != 1 || calls["ListEntityHeaders"] != 1 || st.Cost().Rows != 2*n {
 				t.Errorf("reads = %s, want exactly one ListEntityHeaders of %d rows", st, 2*n)
 			}
 			if gate.many != 2 || gate.single != 0 {
