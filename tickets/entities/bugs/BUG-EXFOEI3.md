@@ -11,7 +11,9 @@ why3: The splitter tolerated stray whitespace on both fences for hand-authored f
 why4: No round-trip test covered values or keys whose text contains the fence line; earlier fuzz fixes targeted the YAML emitter rather than the fence splitter.
 why5: 'Framing and payload were not separated by a rule the payload cannot break: column 0 is the position YAML block-scalar content cannot occupy, and the splitter did not use it.'
 prevention: The closing fence must start at column 0. The fuzz input is kept as a seed and TestSplit pins an indented --- as content. Delimiter-based framing must define a fence the framed payload cannot emit.
-status: ready
+started: "2026-11-13"
+completed: "2026-11-14"
+status: done
 ---
 
 An indented --- line inside a YAML block scalar closed the frontmatter block and

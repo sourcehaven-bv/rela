@@ -47,7 +47,7 @@ func Split(content string) (frontmatter, body string) {
 			inFrontmatter = true
 			continue
 		}
-		if inFrontmatter && isClosingDelimiter(line) {
+		if inFrontmatter && IsClosingDelimiter(line) {
 			inFrontmatter = false
 			frontmatterEnded = true
 			continue
@@ -72,15 +72,12 @@ func Split(content string) (frontmatter, body string) {
 	return frontmatter, body
 }
 
-// isClosingDelimiter reports whether a line inside the frontmatter block
-// closes it. The delimiter must start at column 0; trailing whitespace is
-// tolerated. An indented "---" is YAML content: yaml.v3 writes a block
-// scalar whose text has a "---" line (a value "a\n---\nb", or a key "---\n"
-// emitted as "? |") with that line indented. Trimming the indent closed the
-// block there, so the property was truncated or renamed and the rest of the
-// YAML leaked into the body (BUG-EXFOEI3).
-func isClosingDelimiter(line string) bool {
-	return strings.TrimRight(line, " \t") == Delimiter
+// IsClosingDelimiter reports whether a line inside a frontmatter block closes
+// it. The delimiter must start at column 0; trailing whitespace is tolerated.
+// An indented "---" is block-scalar text, such as a value "a\n---\nb", and
+// must not end the block (BUG-EXFOEI3).
+func IsClosingDelimiter(line string) bool {
+	return strings.TrimRight(line, " \t\r") == Delimiter
 }
 
 // splitLines splits content into lines with the same observable
