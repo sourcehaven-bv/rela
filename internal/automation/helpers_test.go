@@ -14,3 +14,10 @@ func buildEntity(b *testutil.EntityBuilder) *entity.Entity {
 func buildRelation(b *testutil.RelationBuilder) *entity.Relation {
 	return b.Build()
 }
+
+// useAutomations replaces the engine's automations and compiles them again,
+// for tests that build the engine from a metamodel first.
+func useAutomations(e *Engine, autos []Automation) {
+	e.automations = autos
+	e.compile()
+}

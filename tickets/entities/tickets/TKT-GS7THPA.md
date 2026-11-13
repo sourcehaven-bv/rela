@@ -6,7 +6,8 @@ kind: refactor
 priority: medium
 effort: l
 started: "2026-11-13"
-status: planning
+completed: "2026-11-13"
+status: done
 ---
 
 ## Description

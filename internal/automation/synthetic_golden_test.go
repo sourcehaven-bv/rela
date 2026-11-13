@@ -23,7 +23,10 @@ import (
 // engines run it: with a metamodel and a working traversal binder, with a
 // failing binder, and string-only (NewEngine). The golden file was written
 // by the engine before automations compiled onto flow triggers
-// (TKT-GS7THPA). Run with -update to rewrite it on purpose.
+// (TKT-GS7THPA) and changed once, on purpose, by that ticket: a condition is
+// evaluated only when the event selects its automation, so a condition that
+// cannot be evaluated no longer warns on writes that could never fire it.
+// Run with -update to rewrite it on purpose.
 func TestSyntheticAutomations_Golden(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("testdata", "golden", "synthetic-schema.yaml"))
 	if err != nil {

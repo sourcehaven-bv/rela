@@ -150,3 +150,25 @@ func TestProcess_TraversalOnNamedFaceDoesNotFire(t *testing.T) {
 		t.Fatalf("fired on a named face (set=%v warnings=%v)", res.PropertiesSet, res.Warnings)
 	}
 }
+
+// TestProcess_GuardRunsOnlyWhenSelected pins the order of TKT-GS7THPA: an
+// event selects its triggers before any guard runs. An update that does not
+// change the trigger's property binds no traversal and reports no warning
+// for a condition that could not be evaluated; before, it did both.
+func TestProcess_GuardRunsOnlyWhenSelected(t *testing.T) {
+	b := &stubBinder{err: errors.New("boom")}
+	engine, err := NewEngineFromMetamodel(traversalMeta(),
+		[]metamodel.AutomationDef{updAutomation("related(entity, 'owned-by')")}, WithTraversals(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	same := buildEntity(testutil.Entity("taak").ID("taak-1").With("due", "2026-01-01"))
+	res := engine.Process(context.Background(), Event{Type: EventEntityUpdated, Entity: same, OldEntity: same})
+	if len(res.Warnings) != 0 || b.calls != 0 {
+		t.Fatalf("unselected trigger: warnings %v, Bind calls %d; want none", res.Warnings, b.calls)
+	}
+	res = engine.Process(context.Background(), updated("taak-2"))
+	if len(res.Warnings) != 1 || b.calls != 1 {
+		t.Fatalf("selected trigger: warnings %v, Bind calls %d; want one of each", res.Warnings, b.calls)
+	}
+}
