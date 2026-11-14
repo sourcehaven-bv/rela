@@ -105,7 +105,7 @@ func graphPages[T any](
 		if err != nil {
 			return nil, nil, err
 		}
-		items, next, err := queryPage(ctx, db, sqlText, args, scan, key)
+		items, next, err := queryPage(ctx, db, sqlText, args, pagePlan{}, scan, key)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s: %w", errPrefix, err)
 		}

@@ -100,14 +100,67 @@ func queryAll[T any](ctx context.Context, db DBTX, sql string, args []any, scan 
 // keyset, and keyOf returns a row's key. It appends the page LIMIT and reports
 // a nil next key once a page comes back short.
 func queryPage[T any, K any](
-	ctx context.Context, db DBTX, sql string, args []any,
+	ctx context.Context, db DBTX, sql string, args []any, p pagePlan,
 	scan func(scanner) (T, error), keyOf func(T) K,
 ) (items []T, next *K, err error) {
 	size := int(iteratorPageSize.Load())
+	if p.oneShot {
+		size = max(size, p.size)
+		args = append([]any{pgx.QueryExecModeDescribeExec}, args...)
+	}
 	items, err = queryAll(ctx, db, sql+fmt.Sprintf(" LIMIT %d", size), args, scan)
 	if err != nil || len(items) < size {
 		return items, nil, err
 	}
 	k := keyOf(items[len(items)-1])
 	return items, &k, nil
+}
+
+// pagePlan is how [queryPage] reads a statement that carries id arrays (an
+// EntityIDs, PeerIDs or IDs filter). The zero value is the cached statement
+// and the fixed page, for a statement with no large array.
+//
+// A large array changes two things (TKT-K7EM7Z5):
+//
+//   - The statement runs unnamed (oneShot), so PostgreSQL plans it for its
+//     arguments. pgx prepares and caches every statement, and after five
+//     runs PostgreSQL may switch a cached statement to a generic plan, made
+//     without the argument values. A generic plan cannot hash an `= ANY($n)`
+//     array, so a filter such as `to_id = ANY($3)` compares each row with
+//     every element: rows times ids. Measured on the gantt edge read at 57k
+//     entities: 8.4 s with the generic plan, 33 ms with a plan for the
+//     arguments. Planning for the arguments costs about a millisecond per
+//     thousand ids, so a small array keeps the cached statement.
+//   - The page holds size rows instead of the fixed number. Every page sends
+//     the arrays again, so at the fixed page size n ids that match about n
+//     rows cost n/500 statements that each carry all n ids. With pages of n
+//     rows the ids cross the wire about once.
+//
+// The page grows only for a one-shot statement. The LIMIT is part of the
+// statement text, so a cached statement with a page sized to its batch would
+// put one statement per batch size into pgx's statement cache.
+type pagePlan struct {
+	oneShot bool
+	size    int
+}
+
+// oneShotIDs is the array length above which a statement runs one-shot.
+const oneShotIDs = 500
+
+// idBatchPage plans a read whose page rows are small (headers, relations):
+// past the threshold it runs one-shot with a page of total rows. longest is
+// the longest id array, the one a generic plan filters linearly; total is
+// all ids the statement carries.
+func idBatchPage(longest, total int) pagePlan {
+	if longest <= oneShotIDs {
+		return pagePlan{}
+	}
+	return pagePlan{oneShot: true, size: total}
+}
+
+// bodyPage plans a read of full entities: one-shot past the threshold, but
+// on the fixed page, because a row carries its markdown body and a page of
+// every requested id could hold far more memory than the ids do.
+func bodyPage(ids int) pagePlan {
+	return pagePlan{oneShot: ids > oneShotIDs}
 }
