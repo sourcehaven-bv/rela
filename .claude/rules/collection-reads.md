@@ -26,8 +26,10 @@ paths:
   per row). When the request's shape allows it, the list handler pushes paging,
   ordering and equality filters into `store.GraphQuery` (`listpushdown.go`) and
   takes the scoped count through `store.CountMatched`, never `GraphCount`'s
-  total. A query scope joins that pushdown only when `queryplan.LowerScope`
-  lowers it EXACTLY (TKT-XKCNCL): nothing re-checks a pushed scope, so a
+  total. A read whose rows are already named by ids (a page scope's rows, the
+  `?q=` hits) sets `scopeRequest.ByIDs`: one `MatchingFaces` call and a header
+  read per face, never a scan of the type (TKT-F2EJQY8). A query scope joins
+  that pushdown only when `queryplan.LowerScope` lowers it EXACTLY (TKT-XKCNCL): nothing re-checks a pushed scope, so a
   superset pre-filter is not enough, and a scope that does not lower keeps the
   Go path. Its traversals ride in `GraphQuery.Related`, never in
   `HasInbound`/`HasOutbound`, which belong to the ACL read gate. New read
