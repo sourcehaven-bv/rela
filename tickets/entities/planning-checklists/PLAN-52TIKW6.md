@@ -50,8 +50,8 @@ answers keeps the question answered; removing the only answer reopens it. Any
 move clears the set. The author cannot edit or delete an asked question during
 the span.
 5. Web app: the batch shows as "Question k of N"; an answered question collapses
-to its value with Change; Change edits or removes the own answer as the answer
-type allows; another device sees the same state after reload.
+to its value with Change; Change shows the choices again and posts a new
+answer (corrected, issue #2233); another device sees the same state after reload.
 6. `display: cards` renders body prose, cards with + / − lines and a badge, and
 no raw items list; load refuses map entries that name undeclared or wrongly
 typed properties.
@@ -154,8 +154,7 @@ for the SPA only, never on `read_session`, so a session watch wakes only on the
 move.
 - SPA: buttons on every question in `Asked` with zero answers; the group and
 N come from `Asked`, not from held messages. `RlChannelQuestions` renders a
-batch as "Question k of N"; Change uses the answer type's edit_own or
-delete_own.
+batch as "Question k of N"; Change answers again (corrected, issue #2233).
 
 PR 3: cards.
 - `MessagePresentation.Cards{Body, Items, Title, Plus, Minus, Badge}` with
