@@ -2594,9 +2594,10 @@ does. See [Flows](flows.md).
 Work with the flows in `flows.yaml`, or run a Lua flow script.
 
 ```bash
-rela flow validate        # check flows.yaml against the schema and acl.yaml
-rela flow show            # list the flows with their version
+rela flow validate        # check flows.yaml and the schema transitions
+rela flow show            # list the flows, also the headless ones
 rela flow show onboarding # print one flow as a Mermaid state diagram
+rela flow show schema.ticket-status # print a headless flow
 rela flow start onboarding PER-12   # start a run by hand
 rela flow runs [--flow onboarding]  # list the runs you can read
 rela flow cancel RUN-4OSX           # cancel an unfinished run
@@ -2605,7 +2606,9 @@ rela flow scripts/create-ticket.lua   # run a Lua flow script
 
 `rela flow validate` exits `1` and prints one line per problem, each with
 the key it is about, when `flows.yaml` does not load. `rela flow show`
-accepts `-o json`. A bare `rela flow <script.lua>` runs the script, as
+accepts `-o json`. It also lists the headless flows: the state machines
+that `transitions:` declares on an enum type in `schema.yaml`, named
+`schema.<type>`; see [Flows](flows.md#checking-the-file). A bare `rela flow <script.lua>` runs the script, as
 before. A script file named after a subcommand (`validate`, `show`,
 `start`, `runs` or `cancel`) needs a path, such as `rela flow ./show`.
 `rela flow start`, `runs` and `cancel` work on runs; see

@@ -353,7 +353,10 @@ func (e jobSteps) HandleAttempt(ctx context.Context, ref AttemptRef) error {
 		return err
 	}
 	ctx = audit.WithFlowStep(ctx, audit.FlowStep{Flow: call.Flow, Run: string(call.Run), Step: call.State})
-	actx, cancel := context.WithDeadline(ctx, deadline)
+	// The deadline is on the engine's clock, which a test may pin; the
+	// context runs on the wall clock, so it gets the time left. A deadline
+	// already past expires the context at once, as WithDeadline did.
+	actx, cancel := context.WithTimeout(ctx, deadline.Sub(e.now()))
 	rerr := e.d.JobRunner.RunJob(actx, call)
 	timedOut := errors.Is(actx.Err(), context.DeadlineExceeded)
 	cancel()

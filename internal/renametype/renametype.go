@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/frontmatter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -172,7 +173,7 @@ func replaceYAMLType(content, newType string) (string, bool) {
 	}
 	for i := 1; i < len(lines); i++ {
 		line := lines[i]
-		if strings.TrimSpace(line) == "---" {
+		if frontmatter.IsClosingDelimiter(line) {
 			return content, false
 		}
 		trimmed := strings.TrimLeft(line, " \t")
