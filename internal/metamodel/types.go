@@ -45,15 +45,11 @@ type Metamodel struct {
 	// internal/comments.
 	Comments *CommentsConfig `yaml:"comments,omitempty"`
 
-	// Piles declares the piles every user holds, keyed by pile key (see
-	// [PileDecl]). Policy only: pile items are per-user state outside the
-	// graph. See internal/piles.
-	Piles map[string]PileDecl `yaml:"piles,omitempty"`
-
-	// Records declares the record types: append-only typed rows attached to
-	// an owner entity and stored outside the graph (see [RecordTypeDef]).
-	// Policy only. See internal/records.
-	Records map[string]RecordTypeDef `yaml:"records,omitempty"`
+	// SideStores declares the data kept outside the graph: piles and
+	// record types. Its fields are promoted and inlined, so they read as
+	// Metamodel.Piles and Metamodel.Records and sit at the top level of
+	// schema.yaml.
+	SideStores `yaml:",inline"`
 
 	// Transforms is the view-export registry: named markdown -> format
 	// conversions run via an external command (e.g. pandoc). Registering a
@@ -108,6 +104,20 @@ type Metamodel struct {
 	worldOrder    []string                // world names in YAML order; see [WorldOrderOf]
 	abstracts     map[string]AbstractType // abstract types removed at load; see [AbstractTypes]
 	flowRuns      bool                    // set only by [WithFlowRuns]; see [Metamodel.HasFlowRuns]
+}
+
+// SideStores holds the schema sections that declare data kept outside the
+// graph.
+type SideStores struct {
+	// Piles declares the piles every user holds, keyed by pile key (see
+	// [PileDecl]). Policy only: pile items are per-user state outside the
+	// graph. See internal/piles.
+	Piles map[string]PileDecl `yaml:"piles,omitempty"`
+
+	// Records declares the record types: append-only typed rows attached to
+	// an owner entity and stored outside the graph (see [RecordTypeDef]).
+	// Policy only. See internal/records.
+	Records map[string]RecordTypeDef `yaml:"records,omitempty"`
 }
 
 // ConversionDef is an operator-declared transformation from one entity type
