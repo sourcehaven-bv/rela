@@ -614,3 +614,44 @@ func TestGenerateSequentialID(t *testing.T) {
 		})
 	}
 }
+
+// TestSequentialNumber pins the matching rule every store's HighestID shares
+// (BUG-RLBXTG5): the prefix folds ASCII case, the suffix is digits only.
+func TestSequentialNumber(t *testing.T) {
+	tests := []struct {
+		name   string
+		id     string
+		prefix string
+		want   int
+		ok     bool
+	}{
+		{"upper case", "REQ-7", "REQ", 7, true},
+		{"mixed case id", "Req-7", "REQ", 7, true},
+		{"lower case id", "req-7", "REQ", 7, true},
+		{"lower case prefix", "REQ-7", "req", 7, true},
+		{"prefix with trailing dash", "REQ-7", "REQ-", 7, true},
+		{"leading zeros", "REQ-007", "REQ", 7, true},
+		{"zero", "REQ-0", "REQ", 0, true},
+		{"multi-segment prefix", "Iso-Ca-12", "ISO-CA", 12, true},
+		{"underscore and digit prefix", "a_b2-4", "A_B2", 4, true},
+		{"no number", "REQ-", "REQ", 0, false},
+		{"bare prefix", "REQ", "REQ", 0, false},
+		{"trailing letters", "REQ-12a", "REQ", 0, false},
+		{"sign", "REQ-+5", "REQ", 0, false},
+		{"nested series", "REQ-1-2", "REQ", 0, false},
+		{"longer prefix", "REQX-5", "REQ", 0, false},
+		{"sub-series", "REQ-SUB-5", "REQ", 0, false},
+		{"no dash", "REQ5", "REQ", 0, false},
+		{"other prefix", "DEC-5", "REQ", 0, false},
+		{"out of range", "REQ-99999999999999999999", "REQ", 0, false},
+		{"non-ASCII fold is not a match", "KEY-5", "KEY", 0, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := SequentialNumber(tc.id, tc.prefix)
+			if got != tc.want || ok != tc.ok {
+				t.Errorf("SequentialNumber(%q, %q) = %d, %v; want %d, %v", tc.id, tc.prefix, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}

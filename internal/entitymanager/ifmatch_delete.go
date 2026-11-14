@@ -85,6 +85,10 @@ func (e deleteExpect) check(ctx context.Context, tx store.Store) error {
 // The lineage id is read before the transaction and the version and audit
 // are recorded after it commits, as [Manager.ReplaceRelations] does, so a
 // refused delete leaves no history behind.
+//
+// An empty expect skips the compare. The unconditional delete takes this
+// path when a relation rule reads the edge, so the rule is checked in the
+// same transaction as the delete ([checkRelationRules]).
 func deleteRelationIfVersion(
 	ctx context.Context, m *Manager, key entity.RelationKey, expect store.EntityVersion,
 ) error {
@@ -99,8 +103,13 @@ func deleteRelationIfVersion(
 		if gErr != nil {
 			return fmt.Errorf("delete relation: %w", gErr)
 		}
-		if v := store.RelationVersionOf(got); v != expect {
+		if v := store.RelationVersionOf(got); expect != "" && v != expect {
 			return &store.VersionConflictError{ID: key.String(), Expected: expect, Actual: v}
+		}
+		if relationWritesChecked(m.deps, key) {
+			if cErr := checkRelationRules(txCtx, m.deps, view, nil, []entity.RelationKey{key}); cErr != nil {
+				return cErr
+			}
 		}
 		if dErr := view.DeleteRelation(txCtx, key); dErr != nil {
 			return fmt.Errorf("delete relation: %w", dErr)
