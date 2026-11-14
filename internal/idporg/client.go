@@ -35,8 +35,13 @@ const (
 	StatusSuspended Status = "suspended"
 )
 
-// ErrNotFound reports an org the IdP does not know.
+// ErrNotFound reports an org the IdP answered it does not know.
 var ErrNotFound = errors.New("idporg: organization not found")
+
+// ErrInvalidOrgID reports an org id the client refuses to put into a
+// request path, so the IdP was not asked. It is not [ErrNotFound]: nothing
+// says the org is gone.
+var ErrInvalidOrgID = errors.New("idporg: invalid organization id")
 
 // ErrUnavailable marks every failure to get an answer from the IdP: it
 // could not be reached, refused the request, or answered something that is
@@ -165,14 +170,14 @@ type org struct {
 }
 
 // OrgStatus returns orgID's status at the IdP. It returns [ErrNotFound] for
-// an org the IdP does not know, and an error wrapping [ErrUnavailable] for
-// every other failure.
+// an org the IdP does not know, [ErrInvalidOrgID] for an id it cannot ask
+// about, and an error wrapping [ErrUnavailable] for every other failure.
 func (c *Client) OrgStatus(ctx context.Context, orgID string) (Status, error) {
 	// The signature covers the decoded path. An id that needs escaping
 	// would be signed in one form and checked in another, and is not an
 	// IdP org id anyway.
 	if orgID == "" || url.PathEscape(orgID) != orgID {
-		return "", fmt.Errorf("%w: org id %q cannot name an IdP organization", ErrNotFound, orgID)
+		return "", fmt.Errorf("%w: org id %q cannot name an IdP organization", ErrInvalidOrgID, orgID)
 	}
 	path := "/api/v1/orgs/" + orgID
 	u := *c.base

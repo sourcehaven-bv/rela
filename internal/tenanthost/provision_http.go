@@ -22,10 +22,13 @@ const (
 )
 
 // Retry-After values, in seconds. A provisioning run takes seconds, so the
-// client polls quickly; a refusal at the cap waits longer.
+// client polls quickly; a refusal at the cap waits longer. A webhook whose
+// create needs an operator waits longest: until an operator acts, each
+// retry meets the failure hold and starts no run.
 const (
-	retryProvisioning = "2"
-	retryBusy         = "10"
+	retryProvisioning  = "2"
+	retryBusy          = "10"
+	retryNeedsOperator = "300"
 )
 
 // tenantStatus is the body of [StatusPath] and of a 202 answer.
@@ -120,10 +123,9 @@ func (h *Host) provisionLazily(w http.ResponseWriter, r *http.Request, orgID str
 // provisionFromWebhook creates the tenant a verified `organization.created`
 // names and waits a bounded time for it. Success is 200. A run still going
 // is 202: the IdP does not retry, and lazy provisioning or the next event
-// finishes it. A failure or a refusal at the cap asks the IdP to retry,
-// except one that needs an operator or finds the tenant existing but not
-// active: retrying cannot change those, so they are 200 with a body that
-// says so.
+// finishes it. A failure, a refusal at the cap and a create that needs an
+// operator ask the IdP to retry. A create that finds the tenant existing
+// but not active is 200 with a body that says so.
 //
 // It relies on the trust assumption written at [provisioning].
 func (h *Host) provisionFromWebhook(w http.ResponseWriter, r *http.Request, claims dataentry.WebhookClaims) {
@@ -176,8 +178,15 @@ func (h *Host) provisionFromWebhook(w http.ResponseWriter, r *http.Request, clai
 func webhookProvisionFailed(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNeedsOperator):
-		http.Error(w, "not provisioned: operator action is needed; see the server log", http.StatusOK)
+		// Not acknowledged: the IdP keeps the event until an operator has
+		// fixed the cause. The failure hold keeps the retries cheap; each
+		// one meets the hold and starts no run.
+		w.Header().Set("Retry-After", retryNeedsOperator)
+		http.Error(w, "not provisioned: operator action is needed; see the server log",
+			http.StatusServiceUnavailable)
 	case errors.Is(err, tenant.ErrTenantExists):
+		// Not a dropped event: the org has a tenant, and its status is
+		// governed by status sync and operators, not by this create.
 		http.Error(w, "not provisioned: the tenant exists but is not active", http.StatusOK)
 	default:
 		http.Error(w, "provisioning failed", http.StatusBadGateway)

@@ -35,11 +35,13 @@ func (o *idpOrgs) OrgSuspended(_ context.Context, orgID string) (bool, error) {
 }
 
 // idpSuspension applies the IdP rules of [tenant.Provisioner] to a
-// controlTable, recording who suspended each tenant.
+// controlTable, recording who suspended each tenant. When fail is set,
+// every call returns it and changes nothing.
 type idpSuspension struct {
 	c     *controlTable
 	mu    sync.Mutex
 	cause map[string]tenant.SuspendCause
+	fail  error
 }
 
 func (s *idpSuspension) status(org string) (tenant.Status, bool) {
@@ -52,6 +54,9 @@ func (s *idpSuspension) status(org string) (tenant.Status, bool) {
 func (s *idpSuspension) SuspendForIDP(_ context.Context, org string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.fail != nil {
+		return false, s.fail
+	}
 	st, ok := s.status(org)
 	switch {
 	case !ok:
@@ -69,6 +74,9 @@ func (s *idpSuspension) SuspendForIDP(_ context.Context, org string) (bool, erro
 func (s *idpSuspension) ResumeForIDP(_ context.Context, org string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.fail != nil {
+		return false, s.fail
+	}
 	st, ok := s.status(org)
 	switch {
 	case !ok:
@@ -111,8 +119,15 @@ type syncFixture struct {
 
 func newSyncHost(t *testing.T, statuses map[string]tenant.Status, idp *idpOrgs) syncFixture {
 	t.Helper()
+	return newSyncHostFailing(t, statuses, idp, nil)
+}
+
+// newSyncHostFailing is newSyncHost whose suspension writer returns fail,
+// when set, from every call.
+func newSyncHostFailing(t *testing.T, statuses map[string]tenant.Status, idp *idpOrgs, fail error) syncFixture {
+	t.Helper()
 	c := newControl(statuses)
-	apply := &idpSuspension{c: c, cause: map[string]tenant.SuspendCause{}}
+	apply := &idpSuspension{c: c, cause: map[string]tenant.SuspendCause{}, fail: fail}
 	revals := &revalidations{}
 	ss, err := tenanthost.NewStatusSync(idp, apply, revals.revalidate)
 	if err != nil {
@@ -130,6 +145,8 @@ func newSyncHost(t *testing.T, statuses map[string]tenant.Status, idp *idpOrgs) 
 }
 
 func updated(org string) string { return "organization.updated|" + org }
+
+func deleted(org string) string { return "organization.deleted|" + org }
 
 // TestStatusSync_FollowsTheIdP walks one tenant through an IdP suspension
 // and reactivation, and checks that the events are not passed on.
@@ -189,13 +206,14 @@ func TestStatusSync_Answers(t *testing.T) {
 		name     string
 		statuses map[string]tenant.Status
 		idp      *idpOrgs
+		fail     error
 		org      string
 		want     int
 	}{
 		{name: "org with no tenant", idp: &idpOrgs{suspended: map[string]bool{"org-z": true}},
 			org: "org-z", want: http.StatusOK},
-		{name: "org the IdP does not know", statuses: map[string]tenant.Status{"org-a": tenant.StatusActive},
-			idp: &idpOrgs{}, org: "org-a", want: http.StatusOK},
+		{name: "org id the IdP cannot be asked about", statuses: map[string]tenant.Status{"org-a": tenant.StatusActive},
+			idp: &idpOrgs{err: tenanthost.ErrInvalidOrgID}, org: "org-a", want: http.StatusInternalServerError},
 		{name: "IdP unreachable", statuses: map[string]tenant.Status{"org-a": tenant.StatusActive},
 			idp: &idpOrgs{err: errors.New("dial: connection refused")}, org: "org-a", want: http.StatusBadGateway},
 		{name: "tenant still being created", statuses: map[string]tenant.Status{"org-a": tenant.StatusProvisioning},
@@ -206,11 +224,19 @@ func TestStatusSync_Answers(t *testing.T) {
 			idp: &idpOrgs{suspended: map[string]bool{"org-a": true}}, org: "org-a", want: http.StatusOK},
 		{name: "erased tenant, IdP active", statuses: map[string]tenant.Status{"org-a": tenant.StatusErased},
 			idp: &idpOrgs{suspended: map[string]bool{"org-a": false}}, org: "org-a", want: http.StatusOK},
+		// Retrying cannot fix a collision, but acknowledging would drop the
+		// event; an error status keeps it at the IdP.
+		{name: "schema recorded for another org", statuses: map[string]tenant.Status{"org-a": tenant.StatusActive},
+			idp: &idpOrgs{suspended: map[string]bool{"org-a": true}}, org: "org-a",
+			fail: fmt.Errorf("x: %w", tenant.ErrSchemaCollision), want: http.StatusInternalServerError},
+		{name: "control table unavailable", statuses: map[string]tenant.Status{"org-a": tenant.StatusActive},
+			idp: &idpOrgs{suspended: map[string]bool{"org-a": true}}, org: "org-a",
+			fail: errors.New("connect: refused"), want: http.StatusBadGateway},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			f := newSyncHost(t, tc.statuses, tc.idp)
+			f := newSyncHostFailing(t, tc.statuses, tc.idp, tc.fail)
 			w := do(f.host, http.MethodPost, tenanthost.WebhookPath, "", updated(tc.org))
 			if w.Code != tc.want {
 				t.Fatalf("%s: %d %q; want %d", tc.name, w.Code, w.Body.String(), tc.want)
@@ -225,8 +251,8 @@ func TestStatusSync_Answers(t *testing.T) {
 	}
 }
 
-// TestStatusSync_OtherEventsUnchanged pins that only organization.updated
-// is handled by the host: another event for a suspended tenant is still
+// TestStatusSync_OtherEventsUnchanged pins that only the org status events
+// are handled by the host: another event for a suspended tenant is still
 // refused with a retryable status.
 func TestStatusSync_OtherEventsUnchanged(t *testing.T) {
 	t.Parallel()
@@ -236,24 +262,121 @@ func TestStatusSync_OtherEventsUnchanged(t *testing.T) {
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("user.deleted for a suspended tenant: %d; want 503", w.Code)
 	}
-	w = do(f.host, http.MethodPost, tenanthost.WebhookPath, "", "organization.deleted|org-a")
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("organization.deleted for a suspended tenant: %d; want 503", w.Code)
-	}
 	if st, _ := f.apply.status("org-a"); st != tenant.StatusSuspended {
 		t.Errorf("status changed to %s", st)
 	}
 }
 
-// TestStatusSync_Off pins that without StatusSync an organization.updated
-// is passed to the tenant as before.
+// TestStatusSync_NotFoundRevokes pins that an org the IdP no longer knows
+// is a deactivation: its tenant is suspended and closed, not erased.
+func TestStatusSync_NotFoundRevokes(t *testing.T) {
+	t.Parallel()
+	f := newSyncHost(t, map[string]tenant.Status{"org-a": tenant.StatusActive}, &idpOrgs{})
+	w := do(f.host, http.MethodPost, tenanthost.WebhookPath, "", updated("org-a"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("update for an org the IdP does not know: %d %q; want 200", w.Code, w.Body.String())
+	}
+	if st, _ := f.apply.status("org-a"); st != tenant.StatusSuspended {
+		t.Fatalf("status = %s; want suspended", st)
+	}
+	if f.apply.cause["org-a"] != tenant.SuspendedByIDP {
+		t.Errorf("cause = %q; want the IdP", f.apply.cause["org-a"])
+	}
+	if got := f.revals.list(); len(got) != 1 || got[0] != "org-a" {
+		t.Errorf("revalidated %v; want [org-a]", got)
+	}
+}
+
+// TestStatusSync_InvalidIDDoesNotRevoke pins that an org id the IdP cannot
+// be asked about changes nothing and is answered with an error status.
+func TestStatusSync_InvalidIDDoesNotRevoke(t *testing.T) {
+	t.Parallel()
+	f := newSyncHost(t, map[string]tenant.Status{"org-a": tenant.StatusActive},
+		&idpOrgs{err: fmt.Errorf("%w: bad id", tenanthost.ErrInvalidOrgID)})
+	w := do(f.host, http.MethodPost, tenanthost.WebhookPath, "", updated("org-a"))
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("update with an invalid id: %d; want 500", w.Code)
+	}
+	if st, _ := f.apply.status("org-a"); st != tenant.StatusActive {
+		t.Errorf("status = %s; want active", st)
+	}
+	if got := f.revals.list(); len(got) != 0 {
+		t.Errorf("revalidated %v; want none", got)
+	}
+}
+
+// TestStatusSync_DeletionRevokes pins that an organization.deleted is
+// handled by the host: an active tenant is suspended and closed at once,
+// never erased, and the event is not passed to the tenant.
+func TestStatusSync_DeletionRevokes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		statuses   map[string]tenant.Status
+		fail       error
+		org        string
+		want       int
+		wantStatus tenant.Status
+	}{
+		{name: "active tenant", statuses: map[string]tenant.Status{"org-a": tenant.StatusActive},
+			org: "org-a", want: http.StatusOK, wantStatus: tenant.StatusSuspended},
+		{name: "suspended tenant", statuses: map[string]tenant.Status{"org-a": tenant.StatusSuspended},
+			org: "org-a", want: http.StatusOK, wantStatus: tenant.StatusSuspended},
+		{name: "erased tenant", statuses: map[string]tenant.Status{"org-a": tenant.StatusErased},
+			org: "org-a", want: http.StatusOK, wantStatus: tenant.StatusErased},
+		{name: "org with no tenant", org: "org-z", want: http.StatusOK},
+		{name: "tenant still being created", statuses: map[string]tenant.Status{"org-a": tenant.StatusProvisioning},
+			org: "org-a", want: http.StatusServiceUnavailable, wantStatus: tenant.StatusProvisioning},
+		{name: "invalid org id", org: "bad\x00org", want: http.StatusInternalServerError},
+		{name: "schema recorded for another org", statuses: map[string]tenant.Status{"org-a": tenant.StatusActive},
+			fail: fmt.Errorf("x: %w", tenant.ErrSchemaCollision), org: "org-a",
+			want: http.StatusInternalServerError, wantStatus: tenant.StatusActive},
+		{name: "control table unavailable", statuses: map[string]tenant.Status{"org-a": tenant.StatusActive},
+			fail: errors.New("connect: refused"), org: "org-a",
+			want: http.StatusBadGateway, wantStatus: tenant.StatusActive},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			// The IdP is never asked about a deletion.
+			f := newSyncHostFailing(t, tc.statuses, &idpOrgs{err: errors.New("not asked")}, tc.fail)
+			w := do(f.host, http.MethodPost, tenanthost.WebhookPath, "", deleted(tc.org))
+			if w.Code != tc.want || strings.Contains(w.Body.String(), "tenant=") {
+				t.Fatalf("%d %q; want %d, not passed to the tenant", w.Code, w.Body.String(), tc.want)
+			}
+			if tc.want == http.StatusServiceUnavailable && w.Header().Get("Retry-After") == "" {
+				t.Error("503 without Retry-After")
+			}
+			if st, _ := f.apply.status(tc.org); st != tc.wantStatus {
+				t.Errorf("status = %q; want %q", st, tc.wantStatus)
+			}
+			revalidated := len(f.revals.list()) > 0
+			if wantReval := tc.want == http.StatusOK && tc.statuses[tc.org] != ""; revalidated != wantReval {
+				t.Errorf("revalidated = %v; want %v", revalidated, wantReval)
+			}
+			if f.control.calls.Load() != 0 {
+				t.Errorf("the tenant was acquired %d times; want none", f.control.calls.Load())
+			}
+		})
+	}
+}
+
+// TestStatusSync_Off pins that without StatusSync the org status events are
+// refused with a retryable status: neither acknowledged, which would drop a
+// deactivation, nor passed to the tenant, whose handler only logs them.
 func TestStatusSync_Off(t *testing.T) {
 	t.Parallel()
 	c := newControl(map[string]tenant.Status{"org-a": tenant.StatusActive})
 	h := newProvHost(t, c, tenanthost.ProvisionConfig{})
-	w := do(h, http.MethodPost, tenanthost.WebhookPath, "", updated("org-a"))
-	if w.Code != http.StatusOK || w.Body.String() != "tenant=org-a" {
-		t.Fatalf("update without sync: %d %q; want it passed to the tenant", w.Code, w.Body.String())
+	for _, body := range []string{updated("org-a"), deleted("org-a")} {
+		w := do(h, http.MethodPost, tenanthost.WebhookPath, "", body)
+		if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") == "" {
+			t.Errorf("%s without sync: %d %q (Retry-After %q); want 503 with Retry-After",
+				body, w.Code, w.Body.String(), w.Header().Get("Retry-After"))
+		}
+	}
+	if c.calls.Load() != 0 {
+		t.Errorf("the tenant was acquired %d times; want none", c.calls.Load())
 	}
 }
 

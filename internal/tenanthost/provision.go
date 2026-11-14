@@ -104,8 +104,8 @@ const operatorHold = time.Hour
 // ErrNeedsOperator marks a provisioning refusal that retrying cannot fix,
 // such as a schema that exists without a control row. A [Provisioner]
 // wraps it around the cause. The host logs it, holds it for an hour,
-// acknowledges the webhook and answers requests 503
-// `provisioning_needs_operator`.
+// answers the webhook 503 with Retry-After so the IdP keeps the event, and
+// answers requests 503 `provisioning_needs_operator`.
 var ErrNeedsOperator = errors.New("tenanthost: provisioning needs an operator")
 
 // elsewhereHold is how long a run that found another process creating the

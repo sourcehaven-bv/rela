@@ -37,8 +37,9 @@ type tenantFlags struct {
 	provision     string
 	provisionRate int
 	// idpOrgAPI is the IdP operator API address that org status is read
-	// from, so a tenant's suspension follows its org's. Empty turns that
-	// off. Its secret is $RELA_IDP_OPERATOR_SECRET, never a flag.
+	// from, so a tenant's suspension follows its org's. Required with the
+	// IdP webhook (validateStatusSync). Its secret is
+	// $RELA_IDP_OPERATOR_SECRET, never a flag.
 	idpOrgAPI string
 	// luaHTTPAllow is the -lua-http-allow list: CIDRs, IPs and host:port
 	// destinations that tenant mode's strict Lua HTTP policy reopens.
@@ -79,9 +80,10 @@ func registerTenantFlags(t *tenantFlags) {
 			"Also RELA_TENANT_PROVISION_RATE.")
 	flag.StringVar(&t.idpOrgAPI, "tenant-idp-org-api", envOr("RELA_TENANT_IDP_ORG_API", ""),
 		"Tenant mode: the IdP operator API (https://host:port, unix:///path/to/socket, or http://host:port "+
-			"for localhost or a loopback IP only). When set, a "+
-			"verified organization.updated webhook suspends or resumes the org's tenant to match the IdP. "+
-			"Needs -webhook-* and the secret in "+envIDPOperatorSecret+". Also RELA_TENANT_IDP_ORG_API.")
+			"for localhost or a loopback IP only). A verified organization.updated webhook suspends or "+
+			"resumes the org's tenant to match the IdP, and organization.deleted suspends it. Needs -webhook-* "+
+			"and the secret in "+envIDPOperatorSecret+"; required when -webhook-* is set in tenant mode. "+
+			"Also RELA_TENANT_IDP_ORG_API.")
 	flag.StringVar(&t.luaHTTPAllow, "lua-http-allow", envOr("RELA_LUA_HTTP_ALLOW", ""),
 		"Tenant mode: comma-separated CIDRs, IPs and host:port destinations that Lua http.* may reach "+
 			"although they are not public addresses, such as an internal IdP. Tenant mode refuses every "+
@@ -231,8 +233,18 @@ func refuseTenantOnlyFlags(t tenantFlags) error {
 
 // validateStatusSync refuses a status-sync configuration the host cannot
 // act on. secret is $RELA_IDP_OPERATOR_SECRET.
+//
+// With the IdP webhook on, status sync is required: an
+// `organization.updated` or `organization.deleted` the host cannot apply
+// would leave a deactivated org's users their access, and the host refuses
+// such events with 503 rather than acknowledge them. Starting without it
+// would turn every deactivation into a retry loop.
 func validateStatusSync(f *serverFlags, secret string) error {
 	if f.tenant.idpOrgAPI == "" {
+		if f.webhookAudience != "" || f.webhookAction != "" {
+			return errors.New("tenant mode with the IdP webhook (-webhook-audience, -webhook-action) needs " +
+				"-tenant-idp-org-api: an organization suspension or deletion must revoke the tenant's access")
+		}
 		return nil
 	}
 	if f.webhookAudience == "" || f.webhookAction == "" {
@@ -254,8 +266,11 @@ type idpOrgAdapter struct{ c *idporg.Client }
 // OrgSuspended reports whether orgID is suspended at the IdP.
 func (a idpOrgAdapter) OrgSuspended(ctx context.Context, orgID string) (bool, error) {
 	st, err := a.c.OrgStatus(ctx, orgID)
-	if errors.Is(err, idporg.ErrNotFound) {
+	switch {
+	case errors.Is(err, idporg.ErrNotFound):
 		return false, fmt.Errorf("%w: %w", tenanthost.ErrOrgNotFound, err)
+	case errors.Is(err, idporg.ErrInvalidOrgID):
+		return false, fmt.Errorf("%w: %w", tenanthost.ErrInvalidOrgID, err)
 	}
 	if err != nil {
 		return false, err
@@ -279,7 +294,13 @@ func statusSyncSource(t tenantFlags, secret string) (tenanthost.OrgStatusSource,
 // control row may hold another org's data, so only an operator adopts it.
 // It never recreates an erased tenant either: an erasure is undone only by
 // an operator's `tenant create -recreate`.
-type provisionAdapter struct{ p tenantCreator }
+//
+// A create that made the tenant active is written to the lifecycle log
+// with actor [actorProvision].
+type provisionAdapter struct {
+	p   tenantCreator
+	log lifecycleRecorder
+}
 
 // tenantCreator is what provisionAdapter needs from [tenant.Provisioner].
 type tenantCreator interface {
@@ -291,10 +312,14 @@ type tenantCreator interface {
 // is returned as the [tenant.ExistsError]. A refusal only an operator can
 // resolve is wrapped in [tenanthost.ErrNeedsOperator].
 func (a provisionAdapter) Provision(ctx context.Context, orgID string) error {
-	_, err := a.p.Create(ctx, orgID, tenant.CreateOptions{})
+	t, err := a.p.Create(ctx, orgID, tenant.CreateOptions{})
 	var exists *tenant.ExistsError
 	switch {
+	case err == nil:
+		a.log.recordSystem(actorProvision, "create", orgID, t.Schema)
+		return nil
 	case errors.As(err, &exists) && exists.Status == tenant.StatusActive:
+		// Another server created it and recorded that.
 		return nil
 	case errors.Is(err, tenant.ErrSchemaExists), errors.Is(err, tenant.ErrSchemaCollision),
 		errors.Is(err, tenant.ErrTenantErased), errors.Is(err, tenant.ErrWrongStatus):
@@ -305,8 +330,8 @@ func (a provisionAdapter) Provision(ctx context.Context, orgID string) error {
 
 // provisionConfig builds the host's provisioning config from the flags.
 // tenanthost.New validates it. p is the server's one provisioner, nil when
-// provisioning is off.
-func provisionConfig(t tenantFlags, p tenantCreator) (tenanthost.ProvisionConfig, error) {
+// provisioning is off. log records the creates.
+func provisionConfig(t tenantFlags, p tenantCreator, log lifecycleRecorder) (tenanthost.ProvisionConfig, error) {
 	mode, err := tenanthost.ParseProvisionMode(t.provision)
 	if err != nil {
 		return tenanthost.ProvisionConfig{}, fmt.Errorf("-tenant-provision: %w", err)
@@ -316,15 +341,16 @@ func provisionConfig(t tenantFlags, p tenantCreator) (tenanthost.ProvisionConfig
 	}
 	cfg := tenanthost.ProvisionConfig{Mode: mode, PerMinute: t.provisionRate}
 	if p != nil {
-		cfg.Provisioner = provisionAdapter{p}
+		cfg.Provisioner = provisionAdapter{p: p, log: log}
 	}
 	return cfg, nil
 }
 
 // tenantWriter builds the server's one [tenant.Provisioner], which serves
 // both provisioning and status sync, and the provisioning config over it.
-// The provisioner is nil when neither is on.
-func tenantWriter(t tenantFlags, baseDSN, auditRoot string) (tenanthost.ProvisionConfig, *tenant.Provisioner, error) {
+// The provisioner is nil when neither is on. log records the creates.
+func tenantWriter(t tenantFlags, baseDSN, auditRoot string, log lifecycleRecorder,
+) (tenanthost.ProvisionConfig, *tenant.Provisioner, error) {
 	var writer *tenant.Provisioner
 	var creator tenantCreator // stays a nil interface without a writer
 	if (t.provision != "" && t.provision != string(tenanthost.ProvisionOff)) || t.idpOrgAPI != "" {
@@ -334,8 +360,65 @@ func tenantWriter(t tenantFlags, baseDSN, auditRoot string) (tenanthost.Provisio
 		}
 		writer, creator = p, p
 	}
-	prov, err := provisionConfig(t, creator)
+	prov, err := provisionConfig(t, creator, log)
 	return prov, writer, err
+}
+
+// The actors the server's own lifecycle changes are recorded under. They
+// take the place of the operator name the tenant command records.
+const (
+	actorProvision = "system:provision"
+	actorIDP       = "system:idp"
+)
+
+// lifecycleRecorder writes the server's own lifecycle changes to the
+// lifecycle log, the record `rela-server tenant create/suspend/resume`
+// writes. The zero value records nothing; tests that do not read the log
+// use it.
+type lifecycleRecorder struct {
+	// cacheDir is the project's .rela directory; the log is in its audit
+	// directory, beside the per-tenant ones.
+	cacheDir string
+}
+
+// recordSystem appends one applied change. It is called after the change
+// is committed, so a failure to write the record is logged as an error and
+// does not undo or fail the change.
+func (l lifecycleRecorder) recordSystem(actor, action, orgID, schema string) {
+	if l.cacheDir == "" {
+		return
+	}
+	rec := lifecycleEntry(actor, "rela-server", action, orgID, schema, nil)
+	if err := writeLifecycle(l.cacheDir, rec); err != nil {
+		slog.Error("tenant lifecycle change not recorded", "file", lifecycleLog, "actor", actor,
+			"action", action, "org_id", orgID, "error", err)
+	}
+}
+
+// idpSuspensionAdapter is the host's [tenanthost.IDPSuspension] over the
+// control table's writer. Each change it applies is written to the
+// lifecycle log with actor [actorIDP].
+type idpSuspensionAdapter struct {
+	w   tenanthost.IDPSuspension
+	log lifecycleRecorder
+}
+
+// SuspendForIDP suspends orgID's tenant and records the change.
+func (a idpSuspensionAdapter) SuspendForIDP(ctx context.Context, orgID string) (bool, error) {
+	changed, err := a.w.SuspendForIDP(ctx, orgID)
+	if err == nil && changed {
+		a.log.recordSystem(actorIDP, "suspend", orgID, "")
+	}
+	return changed, err
+}
+
+// ResumeForIDP resumes orgID's tenant and records the change.
+func (a idpSuspensionAdapter) ResumeForIDP(ctx context.Context, orgID string) (bool, error) {
+	changed, err := a.w.ResumeForIDP(ctx, orgID)
+	if err == nil && changed {
+		a.log.recordSystem(actorIDP, "resume", orgID, "")
+	}
+	return changed, err
 }
 
 // tenantResident is one open tenant: its services, the data-entry app over
@@ -542,7 +625,9 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 		return nil, err
 	}
 
-	prov, writer, err := tenantWriter(f.tenant, os.Getenv("RELA_DATABASE_URL"), tenant.AuditRoot(base.CacheDir()))
+	lifecycle := lifecycleRecorder{cacheDir: base.CacheDir()}
+	prov, writer, err := tenantWriter(f.tenant, os.Getenv("RELA_DATABASE_URL"), tenant.AuditRoot(base.CacheDir()),
+		lifecycle)
 	if err != nil {
 		_ = resolver.Close()
 		return nil, err
@@ -553,7 +638,7 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 			_ = resolver.Close()
 			return nil, err
 		}
-		opts.idpWriter = writer
+		opts.idpWriter = idpSuspensionAdapter{w: writer, log: lifecycle}
 	}
 	th, err := s.tenantHost(base, resolver, opts, adapter)
 	if err != nil {

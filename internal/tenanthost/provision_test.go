@@ -232,7 +232,8 @@ func TestProvision_Webhook(t *testing.T) {
 		{name: "created for an erased org is never provisioned", body: "organization.created|org-e",
 			statuses: map[string]tenant.Status{"org-e": tenant.StatusErased}, want: http.StatusOK},
 		{name: "other event for a new org", body: "membership.created|org-new", want: http.StatusOK},
-		{name: "deletion stays log only", body: "organization.deleted|org-new", want: http.StatusOK},
+		{name: "deletion without status sync is refused", body: "organization.deleted|org-new",
+			want: http.StatusServiceUnavailable},
 		{name: "invalid org id never reaches the provisioner", body: "organization.created|bad\x00org",
 			want: http.StatusOK},
 	}
@@ -610,9 +611,9 @@ func TestProvision_WriteDuringProvisioningIsRefused(t *testing.T) {
 }
 
 // TestProvision_NeedsOperator pins the answer to a create that retrying
-// cannot fix: the webhook is acknowledged, requests get 503
-// provisioning_needs_operator without Retry-After, and no run starts again
-// within the hold.
+// cannot fix: the webhook is refused with 503 and Retry-After so the IdP
+// keeps the event, requests get 503 provisioning_needs_operator without
+// Retry-After, and no run starts again within the hold.
 func TestProvision_NeedsOperator(t *testing.T) {
 	t.Parallel()
 	c := newControl(nil)
@@ -623,10 +624,17 @@ func TestProvision_NeedsOperator(t *testing.T) {
 	now := time.Now()
 	tenanthost.SetProvisionClock(h, func() time.Time { mu.Lock(); defer mu.Unlock(); return now })
 
-	w := do(h, http.MethodPost, tenanthost.WebhookPath, "", "organization.created|org-new")
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "operator") {
-		t.Fatalf("webhook: %d %q, want 200 naming operator action", w.Code, w.Body.String())
+	webhookRefused := func(when string) {
+		t.Helper()
+		w := do(h, http.MethodPost, tenanthost.WebhookPath, "", "organization.created|org-new")
+		if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "operator") ||
+			w.Header().Get("Retry-After") == "" {
+
+			t.Errorf("webhook %s: %d %q (Retry-After %q), want 503 naming operator action with Retry-After",
+				when, w.Code, w.Body.String(), w.Header().Get("Retry-After"))
+		}
 	}
+	webhookRefused("first")
 	for _, advance := range []time.Duration{0, 10 * time.Minute} {
 		mu.Lock()
 		now = now.Add(advance)
@@ -638,9 +646,7 @@ func TestProvision_NeedsOperator(t *testing.T) {
 		if ra := rec.Header().Get("Retry-After"); ra != "" {
 			t.Errorf("Retry-After = %q, want none", ra)
 		}
-		if w := do(h, http.MethodPost, tenanthost.WebhookPath, "", "organization.created|org-new"); w.Code != http.StatusOK {
-			t.Errorf("webhook during the hold: status = %d, want 200", w.Code)
-		}
+		webhookRefused("during the hold")
 	}
 	if got := p.calls.Load(); got != 1 {
 		t.Errorf("provisioner calls = %d, want 1", got)

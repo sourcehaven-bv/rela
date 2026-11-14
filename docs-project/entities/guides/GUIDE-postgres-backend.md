@@ -810,7 +810,7 @@ The webhook waits up to 10 seconds for the create:
 | --- | --- |
 | Created, or the tenant already exists and is active | 200 |
 | The tenant already exists but is not active (suspended, erasing) | 200 with a body that says so; nothing is created |
-| Needs an operator (see below) | 200 with a body that says so, so the IdP stops retrying |
+| Needs an operator (see below) | 503 with `Retry-After: 300` and a body that says operator action is needed, so the IdP keeps the event until the cause is fixed |
 | Still running after 10 seconds, or another server is creating it | 202 (the IdP does not retry; a later request or event finishes it) |
 | Failed for another reason | 502, so the IdP retries |
 | Over the rate or running cap | 503 with `Retry-After` |
@@ -827,7 +827,9 @@ needing an operator:
 
 The server logs such a failure once at error level, with the fix, and
 does not try again for an hour. During that hour requests for the org get
-503 `provisioning_needs_operator` without `Retry-After`. Once an operator
+503 `provisioning_needs_operator` without `Retry-After`, and a redelivered
+`organization.created` gets the same 503 with `Retry-After` without
+starting a create. Once an operator
 has created the tenant, requests reach it at once; restart the server to
 retry sooner after any other fix, such as dropping the schema.
 
@@ -861,8 +863,8 @@ webhook gets 503 with `Retry-After`.
 
 The server never adopts an existing schema that has no control row; that
 is an operator decision (`tenant create -adopt`). It never erases a
-tenant: `organization.deleted` is still only logged. It never recreates an
-erased tenant either. A request for an erased org gets 403, and an
+tenant: `organization.deleted` suspends it (see "Suspension follows the
+IdP"). It never recreates an erased tenant either. A request for an erased org gets 403, and an
 `organization.created` webhook for it gets 200 and a warning in the log.
 Only `tenant create -recreate` brings it back.
 
@@ -900,7 +902,10 @@ start with any other address. Put the operator API's HMAC secret in
 `$RELA_IDP_OPERATOR_SECRET`. There is no flag for the secret, so it never
 shows in `ps` or shell history. The server refuses to start when the flag
 is set without the secret, without the IdP webhook (`-webhook-audience`
-and `-webhook-action`), or without tenant mode.
+and `-webhook-action`), or without tenant mode. In tenant mode it also
+refuses to start with the IdP webhook and without the flag: a suspension
+or deletion at the IdP must revoke the tenant's access, and the server
+cannot apply one without the operator API.
 
 The IdP sends `organization.updated` with only the org id. On a verified
 event the server asks the operator API for the org's current status
@@ -910,8 +915,17 @@ event the server asks the operator API for the org's current status
 | --- | --- |
 | `suspended` | Suspends an active tenant. Open sessions close at once, as after `tenant suspend`. An already suspended tenant stays as it is. |
 | `active` | Resumes the tenant, but only if the IdP suspended it. A tenant an operator suspended stays suspended. |
-| unknown (404) | Nothing. Erasure is an operator decision. |
+| unknown (404) | Suspends the tenant, as for `suspended`. Its data stays: erasure is an operator decision. |
 | no status, or another status | Nothing. The server answers 502, so the IdP sends the event again. |
+
+An org id the server cannot send to the operator API (empty, or one that
+needs escaping in a URL path) changes nothing and gets 500, so the event
+stays at the IdP and the error is in the log.
+
+The IdP also sends `organization.deleted`. On a verified event the server
+suspends the tenant without asking the operator API, and open sessions
+close at once. An already suspended tenant stays as it is. The data stays:
+erasure is an operator decision (see "When the IdP deletes an org").
 
 An erased tenant is left as it is, whatever the IdP says.
 
@@ -921,10 +935,16 @@ undo a newer one. Servers do not coordinate with each other, so after a
 resume the server reads the status once more and suspends the tenant again
 if the org is suspended by then.
 
-The server answers 200 when it applied a change or had nothing to do, also
-for an org that has no tenant. It answers 502 when the operator API or the
-control table cannot answer, and 503 with `Retry-After` for a tenant that
-is still being created, so the IdP sends the event again. This works for a
+For both events the server answers:
+
+| Outcome | Response |
+| --- | --- |
+| A change was applied, or there was nothing to do (also for an org that has no tenant) | 200 |
+| The tenant is still being created | 503 with `Retry-After` |
+| The operator API or the control table cannot answer | 502 |
+| The org id cannot name an IdP org or a tenant, or the derived schema is recorded for another org | 500; investigate with `rela-server tenant show <org_id>` |
+
+Every answer but 200 makes the IdP send the event again. This works for a
 suspended tenant too; other events for a suspended tenant still get 503.
 The event is not passed on to the tenant.
 
@@ -936,8 +956,10 @@ prints who suspended a tenant. The first lifecycle command of this release
 adds the column to an existing control table. A tenant suspended before
 that has no recorded cause, and the IdP does not resume it.
 
-Without `-tenant-idp-org-api`, `organization.updated` is passed to the
-tenant as before.
+Each suspension and resume the IdP causes is appended to
+`.rela/audit/tenant-lifecycle.jsonl` with the operator `system:idp`, and
+each tenant the server provisions with `system:provision` (see "Managing
+tenants").
 
 Every tenant uses the same database role, the one in `$RELA_DATABASE_URL`.
 The `rela-server tenant` commands connect as that role too, so the tables a
@@ -989,8 +1011,13 @@ statement, so two operators cannot undo each other's change.
 Each `create`, `suspend` and `resume` attempt, whether it fails or
 succeeds, is appended to `.rela/audit/tenant-lifecycle.jsonl` on the host
 that ran it: the time, the operator (`$USER`), the command, the org id,
-the schema when known and the result. Erasures have their own record,
-described below. Neither record holds tenant data.
+the schema when known and the result. The server appends the changes it
+makes itself to the same file, with a system actor in place of the
+operator: `system:provision` for a tenant it provisioned, `system:idp`
+for a suspension or resume the IdP caused. It records only changes it
+applied; a failed attempt is in the server log, and the IdP retries it.
+Erasures have their own record, described below. Neither record holds
+tenant data.
 
 A `rela-postgres --tenant <org_id>` process, such as the scheduler or stdio
 MCP, checks the same status every 30 seconds. When the tenant is no longer
@@ -1172,10 +1199,11 @@ within which their data is erased. Restoring a backup taken before the
 erasure restores the tenant, so erase it again after such a restore.
 
 **When the IdP deletes an org.** A verified `organization.deleted` webhook
-does not erase anything. The server logs a warning that names the org and
-says that erasure is needed, and acknowledges the event. Erasure stays an
-operator action at the host: it cannot be undone, and a signed event is a
-weaker authorization than an operator who can reach the database.
+suspends the org's tenant, so its users lose access at once, but does not
+erase anything. The server logs a warning that names the org and says
+that erasure is needed. Erasure stays an operator action at the host: it
+cannot be undone, and a signed event is a weaker authorization than an
+operator who can reach the database.
 
 ## Other scope notes
 

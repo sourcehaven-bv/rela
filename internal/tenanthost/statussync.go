@@ -3,6 +3,7 @@ package tenanthost
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -17,29 +18,47 @@ import (
 // the org's current status.
 const eventOrgUpdated = "organization.updated"
 
+// eventOrgDeleted is the IdP event that makes the host suspend the org's
+// tenant. It never erases: erasure stays an operator's decision
+// (TKT-TNERAS).
+const eventOrgDeleted = "organization.deleted"
+
 // retryProvisioningSync is the Retry-After, in seconds, of an
 // `organization.updated` for a tenant that is still being created.
 const retryProvisioningSync = "30"
 
+// retryNoStatusSync is the Retry-After, in seconds, of a status event that
+// arrives while status sync is not configured.
+const retryNoStatusSync = "300"
+
 // StatusSyncer brings the status of orgID's tenant in line with the org's
-// status at the IdP. It returns nil when it applied a change or found
-// nothing to do, including for an org with no tenant. Any error means the
-// IdP should send the event again. An error wrapping
+// status at the IdP. Its methods return nil when they applied a change or
+// found nothing to do, including for an org with no tenant. Any error
+// means the IdP should send the event again. An error wrapping
 // [tenant.ErrTenantProvisioning] means the tenant is still being created.
 //
 // The production value is a [*StatusSync].
 type StatusSyncer interface {
+	// SyncStatus handles an `organization.updated`.
 	SyncStatus(ctx context.Context, orgID string) error
+	// SyncDeleted handles an `organization.deleted`.
+	SyncDeleted(ctx context.Context, orgID string) error
 }
 
 // ErrOrgNotFound reports an org the IdP does not know. An [OrgStatusSource]
 // returns it.
 var ErrOrgNotFound = errors.New("tenanthost: the IdP does not know the organization")
 
+// ErrInvalidOrgID reports an org id the IdP cannot be asked about. An
+// [OrgStatusSource] returns it. Unlike [ErrOrgNotFound] it says nothing
+// about the org, so it never changes the tenant.
+var ErrInvalidOrgID = errors.New("tenanthost: the org id cannot name an IdP organization")
+
 // OrgStatusSource reports whether orgID is suspended at the IdP. It returns
-// [ErrOrgNotFound] for an org the IdP does not know; any other error means
-// the IdP could not answer. The production value is an adapter over the
-// operator API client in internal/idporg.
+// [ErrOrgNotFound] for an org the IdP does not know and [ErrInvalidOrgID]
+// for an id it cannot ask about; any other error means the IdP could not
+// answer. The production value is an adapter over the operator API client
+// in internal/idporg.
 type OrgStatusSource interface {
 	OrgSuspended(ctx context.Context, orgID string) (bool, error)
 }
@@ -131,10 +150,10 @@ func (t *orgTurns) take(ctx context.Context, orgID string) (func(), error) {
 }
 
 // SyncStatus reads orgID's status at the IdP and applies it. A suspended
-// org suspends its tenant, which closes at once. An active org resumes a
-// tenant only the IdP suspended. An org the IdP does not know changes
-// nothing: erasure is an operator's decision (TKT-TNERAS). Neither does an
-// erased tenant change.
+// org suspends its tenant, which closes at once. So does an org the IdP no
+// longer knows: a deleted org is a deactivation, and its data stays until
+// an operator erases it (TKT-TNERAS). An active org resumes a tenant only
+// the IdP suspended. An erased tenant never changes.
 //
 // Syncs of one org take turns, and a resume is checked against the IdP
 // again; see [StatusSync] for why.
@@ -145,22 +164,16 @@ func (s *StatusSync) SyncStatus(ctx context.Context, orgID string) error {
 	}
 	defer release()
 	suspended, err := s.src.OrgSuspended(ctx, orgID)
-	if errors.Is(err, ErrOrgNotFound) {
-		slog.Warn("tenant host: the IdP does not know an org it sent an update for; nothing changed",
-			"org_id", orgID)
-		return nil
-	}
-	if err != nil {
+	gone := errors.Is(err, ErrOrgNotFound)
+	switch {
+	case gone:
+		suspended = true
+	case err != nil:
 		return err
 	}
 	var changed bool
 	if suspended {
-		changed, err = s.apply.SuspendForIDP(ctx, orgID)
-		if err == nil {
-			// Also when nothing changed: a tenant already suspended may
-			// still be open until the next revalidation pass.
-			s.revalidateNow(ctx, orgID)
-		}
+		changed, err = s.suspend(ctx, orgID)
 	} else {
 		changed, err = s.apply.ResumeForIDP(ctx, orgID)
 		if err == nil && changed {
@@ -184,17 +197,15 @@ func (s *StatusSync) SyncStatus(ctx context.Context, orgID string) error {
 	case errors.Is(err, tenant.ErrUnknownTenant):
 		slog.Info("tenant host: org status update for an org with no tenant", "org_id", orgID)
 		return nil
-	case errors.Is(err, tenant.ErrSchemaCollision):
-		// Sending the event again cannot help.
-		slog.Error("tenant host: org status update for an org whose schema belongs to another org",
-			"org_id", orgID, "error", err)
-		return nil
 	case errors.Is(err, tenant.ErrOperatorSuspended):
 		slog.Info("tenant host: the IdP reactivated an org an operator suspended; it stays suspended "+
 			"until `rela-server tenant resume`", "org_id", orgID)
 		return nil
 	case err != nil:
-		return err
+		return syncFailed(orgID, err)
+	case changed && gone:
+		slog.Warn("tenant host: tenant suspended because the IdP no longer knows its org; "+
+			"its data stays until an operator erases it (rela-server tenant erase)", "org_id", orgID)
 	case changed && suspended:
 		slog.Info("tenant host: tenant suspended because the IdP suspended its org", "org_id", orgID)
 	case changed:
@@ -203,29 +214,83 @@ func (s *StatusSync) SyncStatus(ctx context.Context, orgID string) error {
 	return nil
 }
 
+// SyncDeleted suspends orgID's tenant because the IdP deleted the org, and
+// closes it at once. It never erases: the data stays until an operator
+// erases it (TKT-TNERAS). An org with no tenant, and a tenant already
+// suspended, erasing or erased, change nothing. It takes the org's turn
+// like [StatusSync.SyncStatus]. An id that cannot name a tenant is
+// [ErrInvalidOrgID], as for a status update the IdP cannot be asked about.
+func (s *StatusSync) SyncDeleted(ctx context.Context, orgID string) error {
+	if _, err := tenant.SchemaFor(orgID); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidOrgID, err)
+	}
+	release, err := s.turns.take(ctx, orgID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	changed, err := s.suspend(ctx, orgID)
+	switch {
+	case errors.Is(err, tenant.ErrUnknownTenant):
+		// An org being erased, or one this server never had: worth an
+		// operator's look, since an erasure may be in progress.
+		slog.Warn("tenant host: idp webhook organization deletion for an org this server does not "+
+			"serve; check that its erasure completed (PROCEDURE-u020, rela-server tenant erase)",
+			"org_id", orgID)
+		return nil
+	case err != nil:
+		return syncFailed(orgID, err)
+	case changed:
+		slog.Warn("tenant host: tenant suspended because the IdP deleted its org; "+
+			"its data stays until an operator erases it (rela-server tenant erase)", "org_id", orgID)
+	}
+	return nil
+}
+
+// suspend suspends orgID's tenant for the IdP and closes it when that
+// succeeded. It closes it also when nothing changed: a tenant already
+// suspended may still be open until the next revalidation pass.
+func (s *StatusSync) suspend(ctx context.Context, orgID string) (bool, error) {
+	changed, err := s.apply.SuspendForIDP(ctx, orgID)
+	if err == nil {
+		s.revalidateNow(ctx, orgID)
+	}
+	return changed, err
+}
+
+// syncFailed logs a sync that cannot apply because orgID's derived schema
+// is recorded for another org, which only an operator resolves, and returns
+// err. The caller answers with an error status in every case, so the IdP
+// keeps the event until the cause is fixed.
+func syncFailed(orgID string, err error) error {
+	if errors.Is(err, tenant.ErrSchemaCollision) {
+		slog.Error("tenant host: org status update for an org whose schema belongs to another org; "+
+			"see `rela-server tenant show <org_id>`", "org_id", orgID, "error", err)
+	}
+	return err
+}
+
 // recheck reads orgID's status at the IdP again after its tenant was
-// resumed, and suspends the tenant again when the org is suspended now.
-// The IdP may have suspended the org between this sync's read and its
-// resume, and a sync in another process then found the tenant still
-// suspended and changed nothing. It reports whether the IdP now says the
-// org is suspended, and whether this call changed the tenant to suspended.
-// An error means the IdP should send the event again, so that the next
-// sync decides.
+// resumed, and suspends the tenant again when the org is suspended or
+// unknown now. The IdP may have suspended or deleted the org between this
+// sync's read and its resume, and a sync in another process then found the
+// tenant still suspended and changed nothing. It reports whether the IdP
+// now says the org is not active, and whether this call changed the tenant
+// to suspended. An error means the IdP should send the event again, so
+// that the next sync decides.
 func (s *StatusSync) recheck(ctx context.Context, orgID string) (suspended, changed bool, err error) {
 	suspended, err = s.src.OrgSuspended(ctx, orgID)
 	switch {
 	case errors.Is(err, ErrOrgNotFound):
-		return false, false, nil
 	case err != nil:
 		return false, false, err
 	case !suspended:
 		return false, false, nil
 	}
-	changed, err = s.apply.SuspendForIDP(ctx, orgID)
+	changed, err = s.suspend(ctx, orgID)
 	if err != nil {
 		return true, false, err
 	}
-	s.revalidateNow(ctx, orgID)
 	return true, changed, nil
 }
 
@@ -241,23 +306,49 @@ func (s *StatusSync) revalidateNow(ctx context.Context, orgID string) {
 	s.revalidate(ctx, orgID)
 }
 
-// syncFromWebhook applies a verified `organization.updated`. It runs before
-// the tenant is acquired, so it works for a suspended tenant too, and the
-// event is not passed on: the tenant app's org handler only logs it.
+// syncFromWebhook applies a verified `organization.updated` or
+// `organization.deleted`. It runs before the tenant is acquired, so it
+// works for a suspended tenant too, and the event is not passed on: the
+// tenant app's org handler only logs it.
+//
+// Without status sync the event cannot be applied, so it is refused with a
+// retryable status rather than acknowledged: a deactivation that is
+// answered 200 and not applied leaves the org's users their access.
+// cmd/rela-server refuses to start with the IdP webhook and without status
+// sync, so this answer means a wiring fault.
 func (h *Host) syncFromWebhook(w http.ResponseWriter, r *http.Request, claims dataentry.WebhookClaims) {
-	err := h.cfg.StatusSync.SyncStatus(r.Context(), claims.OrgID)
+	if h.cfg.StatusSync == nil {
+		slog.Error("tenant host: org status event received but status sync is not configured "+
+			"(-tenant-idp-org-api); asking the IdP to retry",
+			"org_id", claims.OrgID, "event", claims.Event, "id", claims.ID)
+		w.Header().Set("Retry-After", retryNoStatusSync)
+		http.Error(w, "org status sync is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var err error
+	if claims.Event == eventOrgDeleted {
+		err = h.cfg.StatusSync.SyncDeleted(r.Context(), claims.OrgID)
+	} else {
+		err = h.cfg.StatusSync.SyncStatus(r.Context(), claims.OrgID)
+	}
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusOK)
 	case errors.Is(err, tenant.ErrTenantProvisioning):
-		slog.Warn("tenant host: org status update for a tenant still being created; asking the IdP to retry",
-			"org_id", claims.OrgID, "id", claims.ID)
+		slog.Warn("tenant host: org status event for a tenant still being created; asking the IdP to retry",
+			"org_id", claims.OrgID, "event", claims.Event, "id", claims.ID)
 		w.Header().Set("Retry-After", retryProvisioningSync)
 		http.Error(w, "tenant is being created", http.StatusServiceUnavailable)
+	case errors.Is(err, tenant.ErrSchemaCollision), errors.Is(err, ErrInvalidOrgID):
+		// Retrying cannot help until an operator acts, but acknowledging
+		// would drop a deactivation. syncFailed logged the collision.
+		slog.Error("tenant host: org status event not applied; it needs an operator",
+			"org_id", claims.OrgID, "event", claims.Event, "id", claims.ID, "error", err)
+		http.Error(w, "org status event not applied: operator action is needed", http.StatusInternalServerError)
 	default:
 		// Logged only: the cause can name the IdP's address or the database.
-		slog.Error("tenant host: org status update not applied; asking the IdP to retry",
-			"org_id", claims.OrgID, "id", claims.ID, "error", err)
+		slog.Error("tenant host: org status event not applied; asking the IdP to retry",
+			"org_id", claims.OrgID, "event", claims.Event, "id", claims.ID, "error", err)
 		http.Error(w, "org status unavailable", http.StatusBadGateway)
 	}
 }

@@ -84,8 +84,8 @@ func TestOrgStatus(t *testing.T) {
 		{name: "empty status", org: "org-e", wantErr: idporg.ErrUnavailable},
 		{name: "unknown org", org: "org-z", wantErr: idporg.ErrNotFound},
 		{name: "unknown status", org: "org-x", wantErr: idporg.ErrUnavailable},
-		{name: "id needing escaping", org: "a/b", wantErr: idporg.ErrNotFound},
-		{name: "empty id", org: "", wantErr: idporg.ErrNotFound},
+		{name: "id needing escaping", org: "a/b", wantErr: idporg.ErrInvalidOrgID},
+		{name: "empty id", org: "", wantErr: idporg.ErrInvalidOrgID},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -94,6 +94,11 @@ func TestOrgStatus(t *testing.T) {
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Fatalf("OrgStatus(%q) = %q, %v; want %v", tc.org, got, err, tc.wantErr)
+				}
+				// An id the client refuses says nothing about the org, so it
+				// must not read as not found, which revokes the tenant.
+				if errors.Is(tc.wantErr, idporg.ErrInvalidOrgID) && errors.Is(err, idporg.ErrNotFound) {
+					t.Fatalf("OrgStatus(%q) = %v; an invalid id must not be ErrNotFound", tc.org, err)
 				}
 				return
 			}

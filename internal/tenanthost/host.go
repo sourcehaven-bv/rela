@@ -21,14 +21,18 @@
 //
 // # Suspension follows the IdP
 //
-// With [Config.StatusSync] set, a verified `organization.updated` webhook
-// is handled here and not passed to the tenant. The host asks the IdP for
-// the org's status and suspends or resumes the tenant to match (see
-// [StatusSync.SyncStatus]). It answers 200 when it applied a change or had
-// nothing to do, 503 with Retry-After for a tenant still being created,
-// and 502 when the IdP or the control table could not answer, so the IdP
-// sends the event again. This works for a suspended tenant, which every
-// other webhook event finds refused with 503.
+// A verified `organization.updated` or `organization.deleted` webhook is
+// handled here and not passed to the tenant. For an update the host asks
+// the IdP for the org's status and suspends or resumes the tenant to match
+// (see [StatusSync.SyncStatus]); an org the IdP no longer knows is
+// suspended. A deletion suspends the tenant (see [StatusSync.SyncDeleted]).
+// Neither erases: erasure stays an operator's action. The host answers 200
+// when it applied a change or had nothing to do, 503 with Retry-After for
+// a tenant still being created or when [Config.StatusSync] is not set, 500
+// for an org id the IdP cannot be asked about or a schema recorded for
+// another org, and 502 when the IdP or the control table could not answer,
+// so the IdP sends the event again. This works for a suspended tenant,
+// which every other webhook event finds refused with 503.
 //
 // The one exception is the embedded SPA shell and its static assets, which a
 // browser needs before it can authenticate. They are served by
@@ -106,9 +110,10 @@ type Config struct {
 	// Provision enables creating a tenant for a verified org that has none.
 	// The zero value is [ProvisionOff].
 	Provision ProvisionConfig
-	// StatusSync makes a verified `organization.updated` webhook sync the
-	// tenant's status with the org's at the IdP, instead of passing the
-	// event to the tenant. Optional; it needs Webhook.
+	// StatusSync applies a verified `organization.updated` or
+	// `organization.deleted` webhook to the tenant's status. It needs
+	// Webhook. Without it those events are refused with 503, never passed
+	// to the tenant or acknowledged.
 	StatusSync StatusSyncer
 }
 
@@ -253,7 +258,7 @@ func (h *Host) serveWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.cfg.StatusSync != nil && claims.Event == eventOrgUpdated {
+	if claims.Event == eventOrgUpdated || claims.Event == eventOrgDeleted {
 		h.syncFromWebhook(w, r, claims)
 		return
 	}
@@ -285,18 +290,10 @@ func (h *Host) serveWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	case errors.Is(err, tenant.ErrUnknownTenant):
 		// Acknowledged so the IdP does not retry an event for an org this
-		// server does not host. With provisioning on, an
-		// `organization.created` was handled above.
-		if claims.Event == "organization.deleted" {
-			// An org being erased, or one this server never had: worth an
-			// operator's look, since an erasure may be in progress.
-			slog.Warn("tenant host: idp webhook organization deletion for an org this server does not "+
-				"serve; check that its erasure completed (PROCEDURE-u020, rela-server tenant erase)",
-				"org_id", claims.OrgID, "id", claims.ID)
-		} else {
-			slog.Info("tenant host: idp webhook for an org this server does not host",
-				"org_id", claims.OrgID, "event", claims.Event, "id", claims.ID)
-		}
+		// server does not host. Every org status event, and with
+		// provisioning on an `organization.created`, was handled above.
+		slog.Info("tenant host: idp webhook for an org this server does not host",
+			"org_id", claims.OrgID, "event", claims.Event, "id", claims.ID)
 		w.WriteHeader(http.StatusOK)
 		return
 	case err != nil:

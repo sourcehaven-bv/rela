@@ -150,7 +150,7 @@ func (d tenantDeployment) hostFlags(t *testing.T, tf tenantFlags, edit func(*ser
 	s := &server{f: f, addr: "127.0.0.1:8080", mode: identityJWT, assertion: tenanthost.ReuseAssertion(orgVerifier{})}
 	writer, err := tenant.NewProvisioner(d.base, tenant.AuditRoot(shared.CacheDir()))
 	require.NoError(t, err)
-	prov, err := provisionConfig(tf, writer)
+	prov, err := provisionConfig(tf, writer, lifecycleRecorder{cacheDir: shared.CacheDir()})
 	require.NoError(t, err)
 	th, err := s.tenantHost(shared, resolver, tenantOptions{resident: 4, provision: prov}, orgVerifier{})
 	require.NoError(t, err)
@@ -408,6 +408,8 @@ func TestTenantMode_LazyProvisioning(t *testing.T) {
 		require.True(t, time.Now().Before(deadline), "tenant not provisioned in time: %s", rec.Body.String())
 		time.Sleep(50 * time.Millisecond)
 	}
+	requireLifecycleLine(t, d.dir, `"operator":"system:provision"`, `"action":"create"`, `"org_id":"org-new"`,
+		`"schema":"`+mustSchema(t, "org-new")+`"`, `"ok":true`)
 	rec := tenantCall(t, th, "tok-org-new", http.MethodPost, "/api/v1/tasks",
 		map[string]any{"properties": map[string]any{"title": "fresh"}})
 	require.Contains(t, []int{http.StatusOK, http.StatusCreated}, rec.Code, rec.Body.String())
@@ -435,6 +437,66 @@ func TestTenantMode_LazyProvisioning(t *testing.T) {
 	list = tenantCall(t, th, "tok-org-new", http.MethodGet, "/api/v1/tasks", nil)
 	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
 	require.NotContains(t, list.Body.String(), "fresh", "the recreated tenant kept data from before the erasure")
+}
+
+// requireLifecycleLine fails unless a line of the project's lifecycle log
+// contains every one of want.
+func requireLifecycleLine(t *testing.T, dir string, want ...string) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(dir, ".rela", "audit", lifecycleLog))
+	require.NoError(t, err)
+	for line := range strings.SplitSeq(strings.TrimSpace(string(raw)), "\n") {
+		if containsAll(line, want) {
+			return
+		}
+	}
+	t.Fatalf("no lifecycle record with %v in:\n%s", want, raw)
+}
+
+func mustSchema(t *testing.T, orgID string) string {
+	t.Helper()
+	schema, err := tenant.SchemaFor(orgID)
+	require.NoError(t, err)
+	return schema
+}
+
+func containsAll(s string, subs []string) bool {
+	for _, sub := range subs {
+		if !strings.Contains(s, sub) {
+			return false
+		}
+	}
+	return true
+}
+
+// TestTenantMode_IDPChangesAreRecorded pins that a suspension and a resume
+// the IdP causes are written to the lifecycle log under the system actor,
+// as an operator's are under the operator's name, and that a call that
+// changes nothing writes nothing.
+func TestTenantMode_IDPChangesAreRecorded(t *testing.T) {
+	d := newTenantDeployment(t)
+	writer, err := tenant.NewProvisioner(d.base, tenant.AuditRoot(filepath.Join(d.dir, ".rela")))
+	require.NoError(t, err)
+	a := idpSuspensionAdapter{w: writer, log: lifecycleRecorder{cacheDir: filepath.Join(d.dir, ".rela")}}
+
+	changed, err := a.SuspendForIDP(t.Context(), "org-a")
+	require.NoError(t, err)
+	require.True(t, changed)
+	requireLifecycleLine(t, d.dir, `"operator":"system:idp"`, `"action":"suspend"`, `"org_id":"org-a"`, `"ok":true`)
+	before, err := os.ReadFile(filepath.Join(d.dir, ".rela", "audit", lifecycleLog))
+	require.NoError(t, err)
+
+	changed, err = a.SuspendForIDP(t.Context(), "org-a")
+	require.NoError(t, err)
+	require.False(t, changed)
+	after, err := os.ReadFile(filepath.Join(d.dir, ".rela", "audit", lifecycleLog))
+	require.NoError(t, err)
+	require.Equal(t, string(before), string(after), "a suspension that changed nothing was recorded")
+
+	changed, err = a.ResumeForIDP(t.Context(), "org-a")
+	require.NoError(t, err)
+	require.True(t, changed)
+	requireLifecycleLine(t, d.dir, `"operator":"system:idp"`, `"action":"resume"`, `"org_id":"org-a"`, `"ok":true`)
 }
 
 // saasDataEntry configures a shell command and git sync, which tenant mode

@@ -377,34 +377,49 @@ func recordLifecycle(tio tenantIO, a tenantArgs, schema string, cmdErr error) {
 	if tio.user != nil {
 		operator = tio.user()
 	}
-	rec := map[string]any{
-		"time":     time.Now().UTC().Format(time.RFC3339),
-		"operator": operator,
-		"tool":     "rela-server tenant " + a.cmd,
-		"action":   a.cmd,
-		"org_id":   a.orgID,
-		"ok":       cmdErr == nil,
-	}
-	if schema != "" {
-		rec["schema"] = schema
-	}
+	rec := lifecycleEntry(operator, "rela-server tenant "+a.cmd, a.cmd, a.orgID, schema, cmdErr)
 	if a.cmd == "create" {
 		rec["adopt"] = a.adopt
 		rec["recreate"] = a.recreate
 	}
 	if cmdErr != nil {
-		rec["error"] = cmdErr.Error()
 		slog.Warn("tenant "+a.cmd+" failed", "org_id", a.orgID, "error", cmdErr)
 	} else {
 		slog.Info("tenant "+a.cmd, "org_id", a.orgID, "schema", schema)
 	}
-	line, err := json.Marshal(rec)
-	if err == nil {
-		err = appendLine(filepath.Join(a.cacheDir, "audit", lifecycleLog), line)
-	}
-	if err != nil {
+	if err := writeLifecycle(a.cacheDir, rec); err != nil {
 		_, _ = fmt.Fprintf(tio.err, "warning: the %s was not recorded in %s: %v\n", a.cmd, lifecycleLog, err)
 	}
+}
+
+// lifecycleEntry is one lifecycle log record. operator is who acted: an
+// operator's name, or a system actor for a change the server made. schema
+// is left out when empty.
+func lifecycleEntry(operator, tool, action, orgID, schema string, err error) map[string]any {
+	rec := map[string]any{
+		"time":     time.Now().UTC().Format(time.RFC3339),
+		"operator": operator,
+		"tool":     tool,
+		"action":   action,
+		"org_id":   orgID,
+		"ok":       err == nil,
+	}
+	if schema != "" {
+		rec["schema"] = schema
+	}
+	if err != nil {
+		rec["error"] = err.Error()
+	}
+	return rec
+}
+
+// writeLifecycle appends rec to the lifecycle log under cacheDir.
+func writeLifecycle(cacheDir string, rec map[string]any) error {
+	line, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	return appendLine(filepath.Join(cacheDir, "audit", lifecycleLog), line)
 }
 
 // Permissions of the erasure log and its directory: the audit sinks' own.
