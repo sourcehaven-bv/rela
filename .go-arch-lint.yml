@@ -1486,6 +1486,8 @@ deps:
       # canonical.HashEntity decides whether an update changed anything for
       # `on.updated`, with the value normalization the stores use.
       - canonical
+      # cmdexec: Environ for the `git config` child that fills {{user.*}}.
+      - cmdexec
       - filter
       # Automations compile to flow triggers and fire through flow.Fire
       # (TKT-GS7THPA). flow is a leaf.
@@ -1564,6 +1566,8 @@ deps:
     mayDependOn:
       - acl
       - appbuild
+      # cmdexec: Environ for the `cp -r` fixture copy.
+      - cmdexec
       - dataentry
       - docs
       - principal

@@ -16,7 +16,9 @@ import (
 var withheldEnv = []string{"RELA_TOKEN_KEY", "RELA_DATABASE_URL"}
 
 // Environ returns the process environment without the variables in
-// withheldEnv. Every command rela starts gets its environment from here.
+// withheldEnv. Every command rela starts gets its environment from here;
+// TestExecCommandsSetEnv in internal/archguard fails on an exec.Command
+// whose function never sets Env.
 func Environ() []string {
 	return withoutWithheld(os.Environ())
 }
