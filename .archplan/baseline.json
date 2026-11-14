@@ -2766,7 +2766,7 @@
       "weight.layers": 0,
       "weight.vocabulary": 884,
       "weight.types": 4203,
-      "weight.concepts": 7275,
+      "weight.concepts": 7276,
       "weight.boundaries": 1473,
       "weight.data": 1297,
       "weight.security": 2064,
@@ -3142,7 +3142,7 @@
       {
         "at": "2026-11-14T17:00:00Z",
         "change": "loosen",
-        "reason": "TKT-K7HR49Y: the new mapimport package (rela import --mapping) adds three accepted findings (vocabulary.leak-222b575ff897, concepts.untyped_bag-620a9a73d156, boundaries.misplaced_file-c6583b1f519e), and cli now reaches it, raising propagation cost to 9.4. weight.structure and weight.security keep the traced values.",
+        "reason": "TKT-K7HR49Y: the new mapimport package (rela import --mapping) adds three accepted findings (vocabulary.leak-222b575ff897, concepts.untyped_bag-620a9a73d156, boundaries.misplaced_file-c6583b1f519e), and cli now reaches it, raising propagation cost to 9.4. After the merge with TKT-EBARYBI one shared field set adds one more concepts point. weight.structure and weight.security keep the traced values.",
         "metrics": {
           "weight.vocabulary": [
             870,
@@ -3150,7 +3150,7 @@
           ],
           "weight.concepts": [
             7233,
-            7275
+            7276
           ],
           "weight.boundaries": [
             1471,
