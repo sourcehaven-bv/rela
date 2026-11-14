@@ -443,3 +443,83 @@ func loadHitHeaders(ctx context.Context, st store.Store, hits []search.Hit) (map
 	}
 	return out, nil
 }
+
+// searchPage is the read behind /_search: the query's result, of
+// opts.exactType only when it is set, cut to opts.limit when it is set, and
+// the number of rows the query matched before the cut.
+//
+// A structured query the store can answer ([planSearch]) reads only the
+// rows it returns and counts the rest in the store (TKT-D3RAB0E), so its
+// total is every match. Every other query takes executeQueryWith and is cut
+// here. Its total is the length before the cut, and for free text that
+// length is already bounded by the relevance cap (freeTextLimit), so there
+// it is a lower bound.
+func (q *queryService) searchPage(
+	ctx context.Context, query string, opts queryOptions,
+) (rows []*entity.Entity, total int, err error) {
+	svc := q.services()
+	if plan, scope, ok := structuredPlan(ctx, svc, query, opts.exactType); ok {
+		if len(scope) == 0 {
+			return []*entity.Entity{}, 0, nil
+		}
+		return plan.page(ctx, svc, scope, opts.limit)
+	}
+
+	rows, err = q.executeQueryWith(ctx, query, opts)
+	if err != nil {
+		return nil, 0, err
+	}
+	// The exact filter stays: a `type:` clause already in the query unions
+	// with the caller's type.
+	if opts.exactType != "" {
+		rows = slices.DeleteFunc(rows, func(e *entity.Entity) bool { return e.Type != opts.exactType })
+	}
+	// Cut after the read gate and the type filter, so the cap counts only
+	// rows this principal may see and a hidden row cannot take a slot.
+	total = len(rows)
+	if opts.limit > 0 && len(rows) > opts.limit {
+		rows = rows[:opts.limit]
+	}
+	return rows, total, nil
+}
+
+// searchPosition answers where id sits in a search scope's result (the
+// query, then exactType when set) from the store, when the query is a
+// structured one over a single type that [planSearch] accepts. handled=false
+// means "take the Go path" (resolveScope).
+func (q *queryService) searchPosition(
+	ctx context.Context, query, exactType, id string,
+) (pos store.Position, found, handled bool, err error) {
+	svc := q.services()
+	plan, scope, ok := structuredPlan(ctx, svc, query, exactType)
+	if !ok || len(plan.types) > 1 {
+		// Several types concatenate per-type results, which is not one
+		// store query.
+		return store.Position{}, false, false, nil
+	}
+	if len(scope) == 0 {
+		return store.Position{}, false, true, nil
+	}
+	return plan.position(ctx, svc, scope, id)
+}
+
+// structuredPlan parses query and plans it for the store, with the read
+// scope the plan runs under. ok=false means the query is free text, empty,
+// or one the store cannot answer exactly. A denied world, or a plan that
+// matches nothing, is ok with an empty scope: nothing is read, which is what
+// executeQueryWith answers too.
+func structuredPlan(
+	ctx context.Context, svc Services, query, exactType string,
+) (plan searchPlan, scope map[string]search.TypeScope, ok bool) {
+	sq := searchparser.ParseQuery(query)
+	if sq.IsEmpty() {
+		return searchPlan{}, nil, false
+	}
+	if plan, ok = planSearch(svc.Meta, sq, exactType); !ok {
+		return searchPlan{}, nil, false
+	}
+	if worldFromContext(ctx).blocksAllReads() || len(plan.types) == 0 {
+		return plan, nil, true
+	}
+	return plan, readGateFromContext(ctx).SearchScope(ctx, plan.types), true
+}

@@ -2230,34 +2230,20 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		query = "type:" + typeFilter + " " + query
 	}
 
-	// executeQuery is read-gated (TKT-BA8BSX): only entities the
-	// request principal may read come back, and gate/load/search
-	// failures surface instead of silently truncating. The limit lowers
-	// the relevance cap where that cannot change which rows survive the
-	// filters below (TKT-T2I7P2, see freeTextLimit).
-	entities, err := a.queries.executeQueryWith(r.Context(), query,
+	// The read is gated (TKT-BA8BSX): only entities the request principal
+	// may read come back, and gate/load/search failures surface instead of
+	// silently truncating. The limit lowers the relevance cap where that
+	// cannot change which rows survive the filters (TKT-T2I7P2, see
+	// freeTextLimit), and a structured query reads only the rows it serves
+	// (TKT-D3RAB0E, see searchPage). total counts the matches before the
+	// cut.
+	entities, total, err := a.queries.searchPage(r.Context(), query,
 		queryOptions{limit: limit, exactType: typeFilter})
 	if err != nil {
 		writeListPipelineError(w, r, err)
 		return
 	}
 
-	// The exact filter stays: a `type:` clause already in `q` unions with
-	// the spliced one.
-	if typeFilter != "" {
-		filtered := make([]*entityPkg.Entity, 0)
-		for _, e := range entities {
-			if e.Type == typeFilter {
-				filtered = append(filtered, e)
-			}
-		}
-		entities = filtered
-	}
-	// Truncated after the read gate and the type filter, so the cap counts
-	// only rows this principal may see and a hidden row cannot take a slot.
-	if limit > 0 && len(entities) > limit {
-		entities = entities[:limit]
-	}
 	// Search rows are content-free (rowcontent.go); bodies are opt-in and
 	// bounded by the search result cap.
 	if wantContent(r.URL.Query()) {
@@ -2297,7 +2283,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 	resp := v1.LinkListResponse{
 		Data: linkRows(data, entities, linkable),
 		Meta: v1.ListMeta{
-			Total:   len(data),
+			Total:   total,
 			Page:    1,
 			PerPage: len(data),
 		},

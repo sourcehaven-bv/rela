@@ -95,13 +95,18 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/dataentry/helpers.go#listFromStoreByTypes": {1, requestPath,
 		"view and query helpers: loads every entity of each requested type"},
 	"internal/dataentry/helpers.go#visibleListByTypes": {1, requestPath,
-		"executeQuery without free text: loads every entity of the requested types, then gates"},
+		"executeQuery without free text, when planSearch declines the query (a filter or sort the store " +
+			"would judge differently, several types with a sort, no type named): loads every entity of the " +
+			"requested types, then gates (TKT-D3RAB0E)"},
+	"internal/dataentry/searchplan.go#searchPlan.page": {1, requestPath,
+		"structured /_search without a limit returns every match, as visibleListByTypes did before it; " +
+			"the filter and the ACL gate run in the store, and with a limit the GraphQuery carries it (TKT-D3RAB0E)"},
 	"internal/dataentry/listpushdown.go#listPlan.run": {1, bounded,
 		"list pushdown page: the plan's GraphQuery carries Limit = perPage and Offset (planListPushdown); " +
 			"the matcher cannot see a field set in another function"},
-	"internal/dataentry/scopedread.go#scopedHeaders": {3, requestPath,
+	"internal/dataentry/scopedread.go#scopedHeaders": {2, requestPath,
 		"the scoped collection read behind lists, kanban and views: every header of the type in the world, " +
-			"directly or as the ACL-scoped GraphQuery with no Limit through collectHeaders " +
+			"directly or as the ACL-scoped GraphQuery (built by scopedQuery) with no Limit through collectHeaders " +
 			"(the TODO(TKT-F2EJQY8) scan the budget tests name)"},
 
 	// datamigration: migrations rewrite whole types.
