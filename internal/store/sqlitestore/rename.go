@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -14,15 +13,15 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
 
-// HighestID returns the largest numeric suffix among ids in the "PREFIX-N"
-// series, for sequential id generation.
+// HighestID returns the highest number among the ids in the series of
+// prefix, for sequential id generation.
 //
 // The caller passes the bare prefix ("FEAT"); the separator is this function's
-// business, matching memstore. The scan runs in SQL but the parse in Go:
-// SQLite's CAST yields 0 for a non-numeric suffix, which would make "FEAT-abc"
-// indistinguishable from "FEAT-0".
+// business. The range in SQL selects the candidates; which of them count is
+// decided in Go by [entity.SequentialNumber], the rule every backend shares
+// (BUG-RLBXTG5). SQLite's CAST would yield 0 for a non-numeric suffix, which
+// would make "FEAT-abc" indistinguishable from "FEAT-0".
 func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
-	pfx := prefix + "-"
 	// Every face, DISTINCT by id: states share their family's number
 	// (TKT-DOFYR1), so a family must be seen at least once and counting it
 	// twice does not change the answer. Scoping to `face = ''` saw a type
@@ -41,20 +40,7 @@ func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
 		if err := rows.Scan(&id); err != nil {
 			return 0, fmt.Errorf("sqlitestore: highest id for %q: %w", prefix, err)
 		}
-		// The range folds ASCII case, so the scan above also matches "feat-9"
-		// for prefix "FEAT-". Folding is the right answer here: IDs are
-		// case-insensitive identities (see the entities_id_lower_key index).
-		// This guard states the fold in Go rather than leaving it to SQLite's
-		// lower(), and stops a non-length-preserving fold from slicing at the
-		// wrong offset.
-		if !strings.EqualFold(id[:min(len(pfx), len(id))], pfx) {
-			continue
-		}
-		n, err := strconv.Atoi(id[len(pfx):])
-		if err != nil {
-			continue // not a sequential id in this series
-		}
-		if n > highest {
+		if n, ok := entity.SequentialNumber(id, prefix); ok && n > highest {
 			highest = n
 		}
 	}
@@ -86,7 +72,7 @@ func buildHighestIDSQL(prefix string) (sqlText string, args []any) {
 		UNION SELECT id FROM retired_ids WHERE lower(id) >= lower(?1) AND lower(id) < lower(?2)
 		UNION SELECT successor FROM retired_ids
 		      WHERE lower(successor) >= lower(?1) AND lower(successor) < lower(?2)`,
-		[]any{prefix + "-", prefix + "."}
+		[]any{strings.TrimSuffix(prefix, "-") + "-", strings.TrimSuffix(prefix, "-") + "."}
 }
 
 // RenameFamily changes an entity's id and re-keys every relation referencing

@@ -198,35 +198,42 @@ func entityPageSQL(q store.EntityQuery) (sql string, args []any, err error) {
 	return sql, args, nil
 }
 
-// buildHighestIDSQL selects the ids that start with prefix + "-", as a range the
-// primary key serves (migration 0019).
+// buildHighestIDSQL selects the ids that start with prefix + "-", ASCII case
+// folded, as a range on lower(id) that the lower(id) index of each table
+// serves: entities_id_lower_key, marked_entities_id_lower_idx,
+// retired_ids_id_lower_key and retired_ids_successor_lower_idx.
 //
-// A range, not `id LIKE $1`: the planner turns LIKE into an index range only
-// when it sees the pattern, and pgx prepares statements, so after five
+// A range, not `lower(id) LIKE $1`: the planner turns LIKE into an index range
+// only when it sees the pattern, and pgx prepares statements, so after five
 // executions PostgreSQL plans them generically with the pattern unknown and
-// scans the table. entities.id is COLLATE "C", so >= and < compare bytes, the
-// primary key (id, face) is in that order, and the rows are exactly the ids
-// with prefix + "-" as a byte prefix. The exclusive upper bound is prefix +
-// ".", "." being the byte after "-".
+// scans the table. The id columns are COLLATE "C", so lower(id) is too: it
+// folds ASCII letters only, >= and < compare bytes, and the rows are exactly
+// the ids with prefix + "-" as a case-folded byte prefix. Both bounds go
+// through lower() in SQL, so the query and the index fold with one function.
+// The exclusive upper bound is prefix + ".", "." being the byte after "-".
+//
+// The fold is the point (BUG-RLBXTG5): ids are case-insensitive identities,
+// so a hand-written "Req-7" holds 7 for the prefix "REQ", and a bytewise range
+// that missed it let the next mint collide with it.
 //
 // marked_entities is read too: a soft-deleted id may yet come back, so it
 // must not be minted again. So is retired_ids: both the ids renamed away
 // from and their successors are reserved, even after the successor is
 // deleted.
 func buildHighestIDSQL(prefix string) (sql string, args []any) {
-	return `SELECT id FROM entities WHERE id >= $1 AND id < $2
-	        UNION SELECT id FROM marked_entities WHERE id >= $1 AND id < $2
-	        UNION SELECT id FROM retired_ids WHERE id >= $1 AND id < $2
-	        UNION SELECT successor FROM retired_ids WHERE successor >= $1 AND successor < $2`,
-		[]any{prefix + "-", prefix + "."}
+	return `SELECT id FROM entities WHERE lower(id) >= lower($1) AND lower(id) < lower($2)
+	        UNION SELECT id FROM marked_entities WHERE lower(id) >= lower($1) AND lower(id) < lower($2)
+	        UNION SELECT id FROM retired_ids WHERE lower(id) >= lower($1) AND lower(id) < lower($2)
+	        UNION SELECT successor FROM retired_ids
+	              WHERE lower(successor) >= lower($1) AND lower(successor) < lower($2)`,
+		[]any{strings.TrimSuffix(prefix, "-") + "-", strings.TrimSuffix(prefix, "-") + "."}
 }
 
-// HighestID returns the highest numeric suffix among IDs of the form
-// "<prefix>-<n>", or 0. Matching memstore/fsstore: non-numeric suffixes are
-// skipped and gaps are ignored. The parse is done in Go (not SQL) to keep the
-// Sscanf("%d") semantics identical across backends.
+// HighestID returns the highest number among the ids in the series of
+// prefix, or 0. The range in SQL selects the candidates; which of them count
+// is decided in Go by [entity.SequentialNumber], the rule every backend
+// shares.
 func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
-	pfx := prefix + "-"
 	// Every face, DISTINCT by id: states share their family's number
 	// (TKT-DOFYR1), so a family must be seen at least once and counting it
 	// twice is harmless. The old `face = ''` predicate saw a faced type not
@@ -245,11 +252,7 @@ func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
 		if err := rows.Scan(&id); err != nil {
 			return 0, err
 		}
-		if !strings.HasPrefix(id, pfx) {
-			continue
-		}
-		var n int
-		if _, err := fmt.Sscanf(id[len(pfx):], "%d", &n); err == nil && n > highest {
+		if n, ok := entity.SequentialNumber(id, prefix); ok && n > highest {
 			highest = n
 		}
 	}

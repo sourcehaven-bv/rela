@@ -215,22 +215,15 @@ func ValidateID(s string) error {
 	return nil
 }
 
-// ExtractHighestNumber finds the highest number for a given prefix from a list of IDs
+// ExtractHighestNumber returns the highest number among ids in the series of
+// prefix, matched by [SequentialNumber], or 0.
 func ExtractHighestNumber(ids []string, prefix string) int {
 	highest := 0
-	prefix = strings.ToUpper(strings.TrimSuffix(prefix, "-"))
-
-	for _, idStr := range ids {
-		id, err := ParseEntityID(idStr)
-		if err != nil {
-			continue
-		}
-		idPrefix := strings.ToUpper(strings.TrimSuffix(id.Prefix, "-"))
-		if idPrefix == prefix && id.Number > highest {
-			highest = id.Number
+	for _, id := range ids {
+		if n, ok := SequentialNumber(id, prefix); ok && n > highest {
+			highest = n
 		}
 	}
-
 	return highest
 }
 
@@ -257,6 +250,63 @@ func SequentialID(prefix string, highest, skip int) string {
 // upper case, with a trailing dash removed. A store's HighestID takes it.
 func SequentialPrefix(prefix string) string {
 	return strings.ToUpper(strings.TrimSuffix(prefix, "-"))
+}
+
+// SequentialNumber returns the number of id in the series of prefix, and
+// whether id belongs to that series. It is the one matching rule every
+// store's HighestID applies (BUG-RLBXTG5), so that all backends agree on
+// which ids hold a number:
+//
+//   - id starts with [SequentialPrefix](prefix) and a dash, compared with
+//     ASCII case folded, because ids are case-insensitive identities and
+//     the SQL backends fold with lower(), which changes ASCII letters only.
+//     "Req-7" holds 7 in the series of "REQ".
+//   - the rest of id is one or more ASCII digits and nothing else, and fits
+//     an int. "REQ-12a", "REQ-+5" and "REQ-1-2" hold no number.
+//
+// An id without the dash, such as "REQ7", is not in the series. It cannot
+// equal a minted id, which always has the dash, so it cannot collide.
+//
+// It allocates nothing, because the file backends call it for every stored
+// id on every create.
+func SequentialNumber(id, prefix string) (int, bool) {
+	base := strings.TrimSuffix(prefix, "-")
+	if len(id) <= len(base)+1 || id[len(base)] != '-' || !asciiEqualFold(id[:len(base)], base) {
+		return 0, false
+	}
+	digits := id[len(base)+1:]
+	for i := range len(digits) {
+		if digits[i] < '0' || digits[i] > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.Atoi(digits)
+	if err != nil {
+		return 0, false // out of range
+	}
+	return n, true
+}
+
+// asciiEqualFold reports whether a and b are equal with ASCII letters case
+// folded. strings.EqualFold folds Unicode too ("K" with the Kelvin sign),
+// which lower() in SQLite and in PostgreSQL's C collation does not.
+func asciiEqualFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range len(a) {
+		if asciiLower(a[i]) != asciiLower(b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func asciiLower(c byte) byte {
+	if c >= 'A' && c <= 'Z' {
+		return c + ('a' - 'A')
+	}
+	return c
 }
 
 // Short ID generation constants

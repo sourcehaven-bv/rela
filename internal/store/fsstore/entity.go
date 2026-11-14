@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -199,13 +198,8 @@ func (s *FSStore) HighestID(_ context.Context, prefix string) (int, error) {
 	defer s.mu.RUnlock()
 
 	highest := 0
-	pfx := prefix + "-"
 	consider := func(id string) {
-		if !strings.HasPrefix(id, pfx) {
-			return
-		}
-		var n int
-		if _, err := fmt.Sscanf(id[len(pfx):], "%d", &n); err == nil && n > highest {
+		if n, ok := entity.SequentialNumber(id, prefix); ok && n > highest {
 			highest = n
 		}
 	}

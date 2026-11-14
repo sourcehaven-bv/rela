@@ -335,6 +335,12 @@ type EntityReader interface {
 	// given prefix (e.g. "FEAT" → 42 if FEAT-042 is the highest), over
 	// every face of every family: an id stored only at named faces is
 	// taken. Returns 0 if no entities with the prefix exist.
+	//
+	// Which ids count, and for what number, is [entity.SequentialNumber]:
+	// the prefix and dash compare with ASCII case folded ("Req-7" counts
+	// for "REQ"), and the rest must be digits only. Every backend applies
+	// it, so they agree (BUG-RLBXTG5). Soft-deleted and retired ids count
+	// too, where the backend keeps them.
 	HighestID(ctx context.Context, prefix string) (int, error)
 }
 
