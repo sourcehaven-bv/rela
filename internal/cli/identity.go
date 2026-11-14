@@ -222,7 +222,7 @@ var identityWrites = map[string]bool{
 	"flow start": true, "flow cancel": true, "flow runs": false,
 	"link": true, "unlink": true, "import": true, "fmt": true, "normalize": true,
 	"rename entity": true, "rename id": true, "restore": true, "relation-restore": true,
-	"token set": true, "token delete": true, "history-tag": true, "history-purge": true,
+	"token set": true, "token delete": true, "acl forget-idp-roles": true, "history-tag": true, "history-purge": true,
 	"relation-history-purge": true, "attach": true, "detach": true, "gc": true, "script": true,
 	"scheduler": true, "renumber": true, "lease claim": true, "lease renew": true, "lease release": true,
 	"channel post": true, "channel post-batch": true, "channel edit": true, "channel remove": true, "channel create": true, "channel mark-read": true,
