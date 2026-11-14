@@ -52,7 +52,9 @@ func NewTracker(kv KV) (*Tracker, error) {
 // For a rule with no stored record (first launch, or a newly added rule), it
 // records the current matches and returns none of them; see the package
 // documentation. An entity that no longer matches is dropped from the record,
-// so it is reported again if it matches later.
+// so it is reported again if it matches later. For a rule in res.Truncated,
+// only the ids up to its last match can be known to have stopped matching;
+// see keepPastCap.
 //
 // State for a rule that is no longer in the config is left in place. It is
 // small, and keeping it means removing and restoring a rule does not
@@ -87,6 +89,9 @@ func (t *Tracker) Update(ctx context.Context, res Result) ([]Match, error) {
 		}
 		slices.Sort(current)
 		current = slices.Compact(current)
+		if slices.Contains(res.Truncated, ruleID) && len(current) > 0 {
+			current = keepPastCap(prev, current)
+		}
 		if !known || !slices.Equal(prev, current) {
 			if err := t.save(ctx, ruleID, current); err != nil {
 				return fresh, err
@@ -95,6 +100,22 @@ func (t *Tracker) Update(ctx context.Context, res Result) ([]Match, error) {
 		fresh = append(fresh, added...)
 	}
 	return fresh, nil
+}
+
+// keepPastCap returns current, a truncated rule's sorted matches, plus the
+// ids in prev that sort after its last match. The evaluation did not look
+// past that id, so those entities may still match. Forgetting them would
+// notify each one again as soon as it moves under the cap.
+func keepPastCap(prev, current []string) []string {
+	last := current[len(current)-1]
+	i, found := slices.BinarySearch(prev, last)
+	if found {
+		i++
+	}
+	if i == len(prev) {
+		return current
+	}
+	return append(slices.Clip(current), prev[i:]...)
 }
 
 // load returns the stored ids for ruleID and whether a record exists.

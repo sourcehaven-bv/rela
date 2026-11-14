@@ -57,7 +57,7 @@ type projectNotifier struct {
 	projectID string
 	files     desktopnotify.ConfigLoader
 	meta      func() *metamodel.Metamodel
-	entities  store.EntityReader
+	entities  store.GraphQueryer
 	world     store.WorldScope // the world entities are read in
 	feed      changeFeed
 	tracker   *desktopnotify.Tracker
@@ -142,6 +142,10 @@ func (n *projectNotifier) evaluate(ctx context.Context) {
 	}
 	for _, e := range res.EvalErrors {
 		slog.Debug("desktop notifications: condition failed", "project", n.projectID, "error", e)
+	}
+	for _, id := range res.Truncated {
+		slog.Debug("desktop notifications: rule matches more entities than it reports",
+			"project", n.projectID, "rule", id, "max", desktopnotify.MaxMatchesPerRule)
 	}
 
 	// Update returns what it recorded even when it also fails, and those

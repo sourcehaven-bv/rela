@@ -228,6 +228,11 @@ The first time a rule runs, it shows nothing. This applies when you first open a
 project and when you add a rule. Without it, opening a project with fifty
 overdue tasks would show fifty notifications. From then on, only changes notify.
 
+A rule looks at no more than 100 matching entities per check: the 100 with the
+lowest ids. If more entities match, an entity past the first 100 notifies when
+it moves into them, for example because a lower one stopped matching. The
+badge is not limited; it counts every match.
+
 Clicking a notification opens the entity.
 
 ### The badge
@@ -243,6 +248,12 @@ Conditions use the same expression language as list `condition:` in
 
 - `current_user`: the desktop app has no person record for its user.
 - `related(...)`: conditions see the entity's own properties only.
+
+A condition made only of `==` comparisons of text properties joined by `and`,
+such as `entity.status == 'open'`, is answered by the database, so a check
+costs the same however many entities the type has. Any other condition reads
+every entity of the type that passes its `==` comparisons, and checks the rest
+in the app.
 
 ### When rules run
 

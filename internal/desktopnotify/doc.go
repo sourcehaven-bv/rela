@@ -12,8 +12,8 @@
 //  1. [Load] reads desktop.yaml through the project's config loader and
 //     compiles every condition and template. A bad file fails here, once,
 //     rather than on every evaluation.
-//  2. [Config.Evaluate] reads the entities from the store and returns every
-//     current match plus the badge count.
+//  2. [Config.Evaluate] asks the store for the current matches, at most
+//     [MaxMatchesPerRule] per rule, and the badge count.
 //  3. [Tracker.Update] compares the matches with the ones it has seen before
 //     and returns only the new ones. Those are the notifications to show.
 //

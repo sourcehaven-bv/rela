@@ -4,9 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
+
+// MaxMatchesPerRule caps the matches one rule reports per evaluation. A rule
+// whose condition lowers reads at most this many rows plus one, so a poll
+// costs the same however many entities match. The cap keeps the matches with
+// the lowest ids.
+const MaxMatchesPerRule = 100
 
 // Match is one entity that satisfies one notification rule.
 type Match struct {
@@ -24,8 +32,14 @@ type Result struct {
 	// [Tracker.Update] needs it to tell "no matches" from "not evaluated".
 	Rules []string
 	// Matches holds the current matches, grouped by rule in declaration
-	// order and ordered by entity id within a rule.
+	// order and ordered by entity id within a rule. A rule contributes at
+	// most [MaxMatchesPerRule] of them.
 	Matches []Match
+	// Truncated lists the rules that matched more than [MaxMatchesPerRule]
+	// entities. Their Matches are the ones with the lowest ids.
+	// [Tracker.Update] keeps its record of the ids past the last match,
+	// because this evaluation did not look at them.
+	Truncated []string
 	// Badge is the number of entities matching the badge rule. It is zero
 	// when desktop.yaml declares no badge; see [Config.HasBadge].
 	Badge int
@@ -35,60 +49,48 @@ type Result struct {
 	EvalErrors []error
 }
 
-// Evaluate reads the entities of every type a rule names and returns the
-// current matches and badge count. It reads each entity type once, however
-// many rules name it. A store error fails the whole evaluation.
+// Evaluate returns the current matches and badge count. A store error fails
+// the whole evaluation.
+//
+// A condition that lowers exactly to store predicates (see
+// Config.compileCondition) is answered by the store: its rule reads at most
+// [MaxMatchesPerRule] plus one headers, and a badge is one count. Any other
+// condition reads every header of its type that passes the condition's
+// pushable equalities, and judges the rest in Go. Conditions that share a
+// type and those equalities share that read.
 //
 // world is the world the entities are read in: one face per entity, the one
 // the desktop shows. An unset world is rejected.
 //
 // The reader must be the store the desktop user sees. The desktop is a
 // single-user app with no read ACL, so no visibility wrapper is applied here.
-// It takes store.EntityReader, not a narrower interface, because that is what
-// store.ListEntityHeaders accepts; the helper reads content-free headers when
-// the backend can, which is all a condition and a template need.
-func (c *Config) Evaluate(ctx context.Context, entities store.EntityReader, world store.WorldScope) (Result, error) {
+func (c *Config) Evaluate(ctx context.Context, entities store.GraphQueryer, world store.WorldScope) (Result, error) {
 	if entities == nil {
 		return Result{}, errors.New("desktopnotify: Evaluate requires an entity reader")
 	}
 	if !world.IsSet() {
 		return Result{}, errors.New("desktopnotify: Evaluate requires a world")
 	}
-	res := Result{Rules: c.RuleIDs()}
-
-	headers := map[string][]store.EntityHeader{}
-	read := func(entityType string) ([]store.EntityHeader, error) {
-		if hs, ok := headers[entityType]; ok {
-			return hs, nil
-		}
-		var hs []store.EntityHeader
-		q := store.EntityQuery{Type: entityType, Faces: store.InWorld(world)}
-		for h, err := range store.ListEntityHeaders(ctx, entities, q) {
-			if err != nil {
-				return nil, fmt.Errorf("list %s: %w", entityType, err)
-			}
-			hs = append(hs, h)
-		}
-		headers[entityType] = hs
-		return hs, nil
-	}
+	ev := evaluation{cfg: c, entities: entities, world: world, scans: map[string][]store.EntityHeader{}}
+	ev.res.Rules = c.RuleIDs()
 
 	for _, r := range c.rules {
-		hs, err := read(r.entityType)
+		hs, err := ev.ruleMatches(ctx, r)
 		if err != nil {
 			return Result{}, err
 		}
+		if len(hs) > MaxMatchesPerRule {
+			hs = hs[:MaxMatchesPerRule]
+			ev.res.Truncated = append(ev.res.Truncated, r.id)
+		}
 		for _, h := range hs {
-			if !c.matches(ctx, r.condition, h, r.id, &res) {
-				continue
-			}
 			f := fields{
 				id:         h.ID,
 				entityType: h.Type,
 				title:      c.meta.DisplayTitle(h.ID, h.Type, h.Properties),
 				props:      h.Properties,
 			}
-			res.Matches = append(res.Matches, Match{
+			ev.res.Matches = append(ev.res.Matches, Match{
 				RuleID:     r.id,
 				EntityID:   h.ID,
 				EntityType: h.Type,
@@ -99,27 +101,130 @@ func (c *Config) Evaluate(ctx context.Context, entities store.EntityReader, worl
 	}
 
 	if c.badge != nil {
-		hs, err := read(c.badge.entityType)
+		n, err := ev.count(ctx, *c.badge)
 		if err != nil {
 			return Result{}, err
 		}
-		for _, h := range hs {
-			if c.matches(ctx, *c.badge, h, "badge", &res) {
-				res.Badge++
+		ev.res.Badge = n
+	}
+	return ev.res, nil
+}
+
+// evaluation is the state of one [Config.Evaluate] call.
+type evaluation struct {
+	cfg      *Config
+	entities store.GraphQueryer
+	world    store.WorldScope
+	// scans holds the candidates of the conditions that do not lower,
+	// keyed by [scanKey], so conditions that share a scan read once.
+	scans map[string][]store.EntityHeader
+	res   Result
+}
+
+// ruleMatches returns the headers matching r, ordered by id. A rule whose
+// condition lowers gets at most [MaxMatchesPerRule] plus one of them, so the caller
+// can tell a rule over the cap from one at it.
+func (ev *evaluation) ruleMatches(ctx context.Context, r rule) ([]store.EntityHeader, error) {
+	var hs []store.EntityHeader
+	if r.exact {
+		// A query that names no order is ordered by id, so the limit
+		// keeps the lowest ids.
+		q := store.GraphQuery{
+			EntityType: r.entityType,
+			Props:      slices.Clone(r.pushed),
+			Faces:      store.InWorld(ev.world),
+			Limit:      MaxMatchesPerRule + 1,
+		}
+		for h, err := range store.GraphQueryHeaders(ctx, ev.entities, q) {
+			if err != nil {
+				return nil, fmt.Errorf("rule %q: query %s: %w", r.id, r.entityType, err)
+			}
+			hs = append(hs, h)
+		}
+	} else {
+		candidates, err := ev.scan(ctx, r.condition)
+		if err != nil {
+			return nil, err
+		}
+		for _, h := range candidates {
+			if ev.matches(ctx, r.condition, h, r.id) {
+				hs = append(hs, h)
 			}
 		}
 	}
-	return res, nil
+	// Sorting here keeps the order, and so the cap, the same on every
+	// backend.
+	slices.SortFunc(hs, func(a, b store.EntityHeader) int { return strings.Compare(a.ID, b.ID) })
+	return hs, nil
 }
 
-// matches evaluates cond for h. An evaluation error is recorded on res and
-// counts as no match.
-func (c *Config) matches(
-	ctx context.Context, cond condition, h store.EntityHeader, label string, res *Result,
-) bool {
-	ok, err := c.eval.Matches(ctx, cond.prog, h.Type, h.ID, h.Properties)
+// count returns how many entities match cond.
+func (ev *evaluation) count(ctx context.Context, cond condition) (int, error) {
+	if cond.exact {
+		n, err := store.CountMatched(ctx, ev.entities, store.GraphQuery{
+			EntityType: cond.entityType,
+			Props:      slices.Clone(cond.pushed),
+			Faces:      store.InWorld(ev.world),
+		})
+		if err != nil {
+			return 0, fmt.Errorf("badge: count %s: %w", cond.entityType, err)
+		}
+		return n, nil
+	}
+	candidates, err := ev.scan(ctx, cond)
 	if err != nil {
-		res.EvalErrors = append(res.EvalErrors, fmt.Errorf("%s: entity %s: %w", label, h.ID, err))
+		return 0, err
+	}
+	n := 0
+	for _, h := range candidates {
+		if ev.matches(ctx, cond, h, "badge") {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// scan reads the candidates of a condition that does not lower exactly:
+// every header of its type that passes its pushed equalities. Its cost
+// grows with those rows, not with the matches.
+func (ev *evaluation) scan(ctx context.Context, cond condition) ([]store.EntityHeader, error) {
+	key := scanKey(cond)
+	if hs, ok := ev.scans[key]; ok {
+		return hs, nil
+	}
+	var hs []store.EntityHeader
+	q := store.GraphQuery{
+		EntityType: cond.entityType,
+		Props:      slices.Clone(cond.pushed),
+		Faces:      store.InWorld(ev.world),
+	}
+	for h, err := range store.GraphQueryHeaders(ctx, ev.entities, q) {
+		if err != nil {
+			return nil, fmt.Errorf("list %s: %w", cond.entityType, err)
+		}
+		hs = append(hs, h)
+	}
+	ev.scans[key] = hs
+	return hs, nil
+}
+
+// scanKey identifies a scan by its type and pushed predicates. They are
+// sorted by Config.compileCondition, so equal sets give equal keys.
+func scanKey(cond condition) string {
+	var b strings.Builder
+	b.WriteString(cond.entityType)
+	for _, p := range cond.pushed {
+		fmt.Fprintf(&b, "\x00%s\x00%d\x00%t\x00%s", p.Property, p.Op, p.Scalar, p.Value)
+	}
+	return b.String()
+}
+
+// matches evaluates cond for h. An evaluation error is recorded on the
+// result and counts as no match.
+func (ev *evaluation) matches(ctx context.Context, cond condition, h store.EntityHeader, label string) bool {
+	ok, err := ev.cfg.eval.Matches(ctx, cond.prog, h.Type, h.ID, h.Properties)
+	if err != nil {
+		ev.res.EvalErrors = append(ev.res.EvalErrors, fmt.Errorf("%s: entity %s: %w", label, h.ID, err))
 		return false
 	}
 	return ok
