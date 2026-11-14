@@ -176,6 +176,36 @@ func (s *Store) Set(ctx context.Context, subject, orgID, entityID string, roles 
 	return s.flush(ctx, doc)
 }
 
+// ForgetEntity removes every record bound to the user entity entityID and
+// returns how many it removed. It runs when that entity is deleted or
+// renamed, and on an operator's erasure request, so a record does not outlive
+// the person it describes.
+func (s *Store) ForgetEntity(ctx context.Context, entityID string) (int, error) {
+	if err := validName("entity id", entityID); err != nil {
+		return 0, err
+	}
+	release, err := s.locker.Acquire(ctx, LockKey)
+	if err != nil {
+		return 0, fmt.Errorf("idproles: lock: %w", err)
+	}
+	defer release()
+	doc, err := s.load(ctx)
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for subject, rec := range doc.Subjects {
+		if rec.EntityID == entityID {
+			delete(doc.Subjects, subject)
+			removed++
+		}
+	}
+	if removed == 0 {
+		return 0, nil
+	}
+	return removed, s.flush(ctx, doc)
+}
+
 // RolesFor returns the stored roles of subject when they were stored for the
 // user entity entityID, else nil.
 func (s *Store) RolesFor(ctx context.Context, subject, entityID string) ([]string, error) {

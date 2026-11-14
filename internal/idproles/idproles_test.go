@@ -111,6 +111,32 @@ func TestRolesFor_BoundToTheEntity(t *testing.T) {
 	require.Nil(t, got, "another entity holding the subject gets nothing")
 }
 
+func TestForgetEntity(t *testing.T) {
+	t.Parallel()
+	s, _ := newStore(t)
+	ctx := t.Context()
+	require.NoError(t, s.Set(ctx, "a@example.org", "", "PER-1", []string{"cpo"}))
+	require.NoError(t, s.Set(ctx, "b@example.org", "", "PER-1", []string{"fg"}))
+	require.NoError(t, s.Set(ctx, "c@example.org", "", "PER-2", []string{"cpo"}))
+
+	n, err := s.ForgetEntity(ctx, "PER-1")
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+	got, err := s.RolesFor(ctx, "a@example.org", "PER-1")
+	require.NoError(t, err)
+	require.Empty(t, got)
+	got, err = s.RolesFor(ctx, "c@example.org", "PER-2")
+	require.NoError(t, err)
+	require.Equal(t, []string{"cpo"}, got, "another entity's record stays")
+
+	n, err = s.ForgetEntity(ctx, "PER-1")
+	require.NoError(t, err)
+	require.Zero(t, n, "forgetting twice is a no-op")
+
+	_, err = s.ForgetEntity(ctx, "")
+	require.Error(t, err)
+}
+
 func TestHoldersWithAny(t *testing.T) {
 	t.Parallel()
 	s, _ := newStore(t)

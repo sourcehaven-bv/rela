@@ -81,6 +81,55 @@ func (w *IDPRoleWriter) Set(ctx context.Context, subject, orgID string, roles []
 	return nil
 }
 
+// Forget removes every record bound to the user entity entityID, for an
+// erasure request about that person (GH-2118). It audits one cleared role
+// list when it removed anything, and returns how many records it removed.
+func (w *IDPRoleWriter) Forget(ctx context.Context, entityID string) (int, error) {
+	n, err := w.roles.ForgetEntity(ctx, entityID)
+	if err != nil || n == 0 {
+		return n, err
+	}
+	w.record(ctx, entityID, 0)
+	return n, nil
+}
+
+// idpRoleEraser drops the records bound to a user entity when that entity
+// leaves the graph or changes id, so a record never outlives the person it
+// describes (GH-2118). A renamed entity loses its record rather than having
+// it rebound: the next verified webhook binds the roles again.
+//
+// It rides the [entitymanager.AliasRewriter] hook for the reason
+// buildRefHolders gives.
+type idpRoleEraser struct{ w *IDPRoleWriter }
+
+// newIDPRoleEraser returns the eraser over roles.
+//
+// Nil: returns nil when roles is nil; newAliasFanout drops it.
+func newIDPRoleEraser(
+	roles *idproles.Store, policy *acl.Policy, st store.Store, aud audit.Audit,
+) *idpRoleEraser {
+	if roles == nil {
+		return nil
+	}
+	return &idpRoleEraser{w: &IDPRoleWriter{roles: roles, policy: policy, st: st, audit: aud}}
+}
+
+// EntityRenamed drops the records bound to oldID.
+func (e *idpRoleEraser) EntityRenamed(ctx context.Context, oldID, _ string) error {
+	_, err := e.w.Forget(ctx, oldID)
+	return err
+}
+
+// EntityDeleted drops the records bound to entityID.
+func (e *idpRoleEraser) EntityDeleted(ctx context.Context, entityID string) error {
+	_, err := e.w.Forget(ctx, entityID)
+	return err
+}
+
+// EntityFaceDeleted does nothing: a record is bound to the entity, which
+// still exists.
+func (*idpRoleEraser) EntityFaceDeleted(context.Context, string, entity.Face) error { return nil }
+
 // record audits one stored or cleared role list. It names the bound entity
 // and the role count only: the IdP subject and the role names stay out of
 // the audit log.
@@ -97,7 +146,10 @@ func (w *IDPRoleWriter) record(ctx context.Context, entityID string, count int) 
 		Summary:     fmt.Sprintf("roles=%d", count),
 	}
 	if entityID != "" {
-		rec.Subject = &audit.Subject{Kind: "entity", Type: w.policy.UserEntityType, ID: entityID}
+		rec.Subject = &audit.Subject{Kind: "entity", ID: entityID}
+		if w.policy != nil {
+			rec.Subject.Type = w.policy.UserEntityType
+		}
 	}
 	w.audit.Record(rec)
 }
