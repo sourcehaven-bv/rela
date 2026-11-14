@@ -154,28 +154,31 @@ func TestPostBatch_Refusals(t *testing.T) {
 	}
 }
 
-// TestPostBatch_ChargesOnlyWhenAccepted pins that a batch is charged one
-// token per message in one step, after every message passed its checks: a
-// refused batch spends nothing, and a batch over a type's rate is a 400
-// rather than a 429 no wait could meet.
-func TestPostBatch_ChargesOnlyWhenAccepted(t *testing.T) {
+// TestPostBatch_Charges pins that a batch is charged one token per message
+// in one step, at the point a single post is charged: a batch refused
+// before that point spends nothing, a batch with an invalid message spends
+// its tokens and gets a 429 once they are gone, and a batch over a type's
+// rate is a 400 rather than a 429 no wait could meet.
+func TestPostBatch_Charges(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, withYAML(questionRealtime))
-	bob := user("bob")
+	bob, carol := user("bob"), user("carol")
 	slow := func(body string) BatchMessage { return BatchMessage{Type: "slow", Props: map[string]any{"body": body}} }
-
-	_, err := h.svc.PostBatch(as(bob), room, BatchInput{Messages: []BatchMessage{slow("a"), slow("b"), slow("c"), slow("d")}})
-	d := requireDenial(t, err, http.StatusBadRequest, TypeInvalid)
-	require.Contains(t, d.Title, "at most 3 messages of type slow")
-
-	for range 3 {
-		_, err = h.svc.PostBatch(as(bob), room, BatchInput{Messages: []BatchMessage{slow("a"), {Type: "slow"}}})
-		requireDenial(t, err, http.StatusBadRequest, TypeInvalid)
+	post := func(a *fakeAccess, msgs ...BatchMessage) error {
+		_, err := h.svc.PostBatch(as(a), room, BatchInput{Messages: msgs})
+		return err
 	}
+
+	d := requireDenial(t, post(bob, slow("a"), slow("b"), slow("c"), slow("d")), http.StatusBadRequest, TypeInvalid)
+	require.Contains(t, d.Title, "at most 3 messages of type slow")
+	requireDenial(t, post(bob, slow("a"), BatchMessage{Type: "nope"}), http.StatusBadRequest, TypeInvalid)
 	res := h.askBatch(t, bob, room, slow("a"), slow("b"), slow("c"))
-	require.Len(t, res.Messages, 3, "the refused batches spent no token")
-	_, err = h.svc.PostBatch(as(bob), room, BatchInput{Messages: []BatchMessage{slow("d")}})
-	requireDenial(t, err, http.StatusTooManyRequests, TypeRateLimited)
+	require.Len(t, res.Messages, 3, "a batch refused before the charge spent no token")
+	requireDenial(t, post(bob, slow("d")), http.StatusTooManyRequests, TypeRateLimited)
+
+	requireDenial(t, post(carol, slow("a"), BatchMessage{Type: "slow"}), http.StatusBadRequest, TypeInvalid)
+	requireDenial(t, post(carol, slow("a"), BatchMessage{Type: "slow"}), http.StatusTooManyRequests, TypeRateLimited)
+	requireDenial(t, post(carol, slow("a"), slow("b")), http.StatusTooManyRequests, TypeRateLimited)
 }
 
 // TestPostBatch_AskedLock pins that the author can neither edit nor delete
