@@ -67,4 +67,43 @@ export class PageTabsPage extends BasePage {
   async cancelForm() {
     await this.page.getByRole("button", { name: /^(Cancel|Back) Esc$/ }).click();
   }
+
+  // Steps pages (TKT-35BY3PE).
+
+  /** The step links of a steps page, in order. */
+  get steps(): Locator {
+    return this.page.getByRole("navigation", { name: "Steps" }).getByRole("link");
+  }
+
+  step(label: string): Locator {
+    return this.page.getByRole("navigation", { name: "Steps" }).getByRole("link", { name: label });
+  }
+
+  async expectSteps(labels: RegExp[]) {
+    await expect(this.steps).toHaveText(labels);
+  }
+
+  async expectCurrentStep(label: string) {
+    await expect(this.step(label)).toHaveAttribute("aria-current", "step");
+  }
+
+  async expectPrompt(text: string) {
+    await expect(this.page.getByRole("heading", { name: text, level: 2 })).toBeVisible();
+  }
+
+  stepButton(name: "Back" | "Next" | "Present" | "Exit"): Locator {
+    return this.page.getByRole("button", { name, exact: true });
+  }
+
+  async clickStepButton(name: "Back" | "Next" | "Present" | "Exit") {
+    await this.stepButton(name).click();
+  }
+
+  async pressKey(key: string) {
+    await this.page.keyboard.press(key);
+  }
+
+  async expectSidebarShown(shown: boolean) {
+    await expect(this.page.locator("#main-sidebar")).toHaveCount(shown ? 1 : 0);
+  }
 }

@@ -9,6 +9,15 @@ status: done
 
 <!-- @managed: claude-workflow v1 -->
 
+**Corrected (issue #2167).** The design was renamed before #2165 merged, and
+this checklist still uses the old names. In the code, `peers.yaml` is
+`remotes.yaml`, `rela peer pull` is `rela remote pull`, `internal/peersync` is
+`internal/remotesync`, `peer_credential.` is `remote_credential.`, and
+`TestPeerPull_EndToEnd` is `TestRemotePull_EndToEnd`. There is no `system:peer:`
+principal. A scheduled pull writes as the remote's `run_as`, or as
+`system:scheduler` when `run_as` is not set. `rela remote pull` writes as the
+person who runs it.
+
 ## Understanding
 
 - [x] Problem/requirements clearly understood

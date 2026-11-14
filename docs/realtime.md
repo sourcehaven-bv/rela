@@ -505,11 +505,13 @@ step: all of them are stored or none is. Post a batch with `POST
 …/_batch` (see [HTTP API](#http-api)), the MCP tool `post_messages`, or
 `rela channel post-batch`. The messages get consecutive sequence numbers
 and share a batch id, the sequence number of the first; a message posted
-alone has none. Each message passes the checks of a single post. Once
-every message passes, the batch costs one post per message from the rate
-limit of its type, taken in one step, so a refused batch costs nothing. A
-batch with more messages of one type than that type's `rate` allows at
-all is refused with 400. The mentions of the whole batch count
+alone has none. Each message passes the checks of a single post, and the
+batch is charged where a single post is: after the session checks and
+before the properties are validated. It costs one post per message from
+the rate limit of its type, taken in one step. A batch refused before
+that point costs nothing; a batch with an invalid message costs its
+posts, like an invalid single post. A batch with more messages of one
+type than that type's `rate` allows at all is refused with 400. The mentions of the whole batch count
 toward the limit of one message. A batch holds no replies. A refusal about
 one message names its index, starting at 0, such as "message 1: …".
 
