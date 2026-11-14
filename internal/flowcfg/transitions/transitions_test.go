@@ -1,4 +1,4 @@
-package statemachine
+package transitions
 
 import (
 	"context"
@@ -60,9 +60,9 @@ type fakeLookup struct{ counts map[string]int }
 
 func (l fakeLookup) OutgoingCounts(_ context.Context, _ string) map[string]int { return l.counts }
 
-func mustCompile(t *testing.T, m *metamodel.Metamodel) *Set {
+func mustCompile(t *testing.T, m *metamodel.Metamodel) *Transitions {
 	t.Helper()
-	set, err := Compile(m)
+	set, err := CompileTransitions(m)
 	if err != nil {
 		t.Fatalf("Compile: unexpected error: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestCompile_Errors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := snapshotMeta()
 			tc.mutate(m)
-			_, err := Compile(m)
+			_, err := CompileTransitions(m)
 			if err == nil {
 				t.Fatal("expected a compile error")
 			}
@@ -156,7 +156,7 @@ func TestCompile_RejectsUndeclaredDefaultEntry(t *testing.T) {
 	ct.Initial = ""
 	ct.Default = "aproved" // typo
 	m.Types["snapshot-status"] = ct
-	_, err := Compile(m)
+	_, err := CompileTransitions(m)
 	if err == nil || !strings.Contains(err.Error(), `default "aproved" is not a declared value`) {
 		t.Fatalf("expected default-not-declared boot error, got %v", err)
 	}
@@ -171,7 +171,7 @@ func TestCompile_RejectsTransitionsWithoutEntry(t *testing.T) {
 	ct.Initial = ""
 	ct.Default = "" // no entry value at all
 	m.Types["snapshot-status"] = ct
-	_, err := Compile(m)
+	_, err := CompileTransitions(m)
 	if err == nil || !strings.Contains(err.Error(), "must declare an `initial`") {
 		t.Fatalf("expected entry-required boot error, got %v", err)
 	}
@@ -184,7 +184,7 @@ func TestCompile_RejectsTransitionsOnListProperty(t *testing.T) {
 	et := m.Entities["snapshot"]
 	et.Properties["status"] = metamodel.PropertyDef{Type: "snapshot-status", List: true}
 	m.Entities["snapshot"] = et
-	_, err := Compile(m)
+	_, err := CompileTransitions(m)
 	if err == nil || !strings.Contains(err.Error(), "is a list") {
 		t.Fatalf("expected list-property rejection, got %v", err)
 	}
@@ -202,7 +202,7 @@ func TestCompile_RejectsPropertyDefaultOffEntry(t *testing.T) {
 		et := m.Entities["snapshot"]
 		et.Properties["status"] = metamodel.PropertyDef{Type: "snapshot-status", Default: tc.def}
 		m.Entities["snapshot"] = et
-		_, err := Compile(m)
+		_, err := CompileTransitions(m)
 		if tc.wantErr != (err != nil) || (err != nil && !strings.Contains(err.Error(), "is not the entry value")) {
 			t.Errorf("default %q: err = %v, wantErr %v", tc.def, err, tc.wantErr)
 		}
@@ -221,7 +221,7 @@ func TestCompile_NoTransitions_Empty(t *testing.T) {
 }
 
 func TestCompile_NilMetamodel(t *testing.T) {
-	if _, err := Compile(nil); err == nil {
+	if _, err := CompileTransitions(nil); err == nil {
 		t.Fatal("expected error on nil metamodel")
 	}
 }
@@ -266,7 +266,7 @@ func TestEnforceUpdate_Guard(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		guard   Guard
+		guard   PermissionGuard
 		wantErr error
 	}{
 		{"holds permission", fakeGuard{perms: map[string]bool{"approve": true}}, nil},
@@ -402,8 +402,8 @@ func TestEnforceUpdate_NonMachineProperty_NoOp(t *testing.T) {
 	}
 }
 
-func TestEnforceUpdate_EmptySet_NoOp(t *testing.T) {
-	var set *Set
+func TestEnforceUpdate_NoTransitions_NoOp(t *testing.T) {
+	var set *Transitions
 	if err := set.EnforceUpdate(context.Background(), nil, ent("A", "snapshot", "approved"), nil, nil); err != nil {
 		t.Fatalf("nil set should be a no-op, got %v", err)
 	}

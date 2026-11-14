@@ -191,7 +191,7 @@ components:
   syncmerge:        { in: internal/syncmerge }
   relresolve:       { in: internal/relresolve }
   rollup:           { in: internal/rollup }
-  statemachine:     { in: internal/statemachine }
+  transitions:      { in: internal/flowcfg/transitions }
   writerule:        { in: internal/writerule }
   tracer:           { in: internal/tracer }
   validation:       { in: internal/validation }
@@ -600,6 +600,8 @@ deps:
       - entitymanager
       - filter
       - flowcfg
+      # `rela flow show` lists the headless flows of the schema.
+      - transitions
       # `rela flow start|runs|cancel` speaks the run id and the engine's
       # errors; the access checks stay in appbuild.FlowControl.
       - flow
@@ -769,7 +771,7 @@ deps:
       - search
       - searchparser
       - state
-      - statemachine
+      - transitions
       - storage
       - store
       - templating
@@ -1068,7 +1070,7 @@ deps:
       # appbuild constructs the affordance resolver so the field write gate
       # and the two gated-read bundles can share ONE instance (TKT-0XL8MF).
       # Safe as a dependency edge: affordances is a near-leaf (acl, entity,
-      # metamodel, predicate*, principal, statemachine) and imports no
+      # metamodel, predicate*, principal, transitions) and imports no
       # wiring package, so this cannot close a cycle.
       - affordances
       - app
@@ -1095,7 +1097,7 @@ deps:
       - script
       - search
       - state
-      - statemachine
+      - transitions
       - storage
       - store
       - templating
@@ -1431,7 +1433,7 @@ deps:
       - predicate
       - predicatefns
       - principal
-      - statemachine
+      - transitions
       # SearchFieldScope compiles `visible:` grants into store predicates:
       # queryplan decides exact lowering, relresolve resolves related() hops,
       # and the result is a search.FieldScope (search never imports
@@ -1669,7 +1671,7 @@ deps:
       - mentions
       - metamodel
       - principal
-      - statemachine
+      - transitions
       - store
       - templating
       - writerule
@@ -1755,12 +1757,18 @@ deps:
       - predicate
       - predicatefns
       - store
-  statemachine:
+  # Schema transitions compiled into headless flows and enforced on the
+  # write path (TKT-12RC7JT, TKT-ZRQSGCM). It sits under flowcfg but shares
+  # no code with the flows.yaml loader.
+  # GUARD: transitions takes no runtime component (store, lua, jobs,
+  # automation, flowengine, flowrun). The enforcer reads the graph only
+  # through the collaborators its caller injects.
+  transitions:
     mayDependOn:
       - entity
-      # Enum transitions compile to headless flows and decide through
-      # flow.Decide (TKT-12RC7JT). flow is a leaf.
+      # Enum transitions decide through flow.Decide. flow is a leaf.
       - flow
+      - mermaid
       - metamodel
       - predicate
       - predicatefns

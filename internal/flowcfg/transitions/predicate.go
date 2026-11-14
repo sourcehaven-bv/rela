@@ -1,4 +1,4 @@
-package statemachine
+package transitions
 
 import (
 	"context"

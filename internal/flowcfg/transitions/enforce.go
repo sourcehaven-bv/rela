@@ -1,4 +1,4 @@
-package statemachine
+package transitions
 
 import (
 	"context"
@@ -18,15 +18,17 @@ import (
 // return means every changed machine property made a legal, authorized,
 // precondition-satisfying move (or nothing machine-typed changed).
 //
-// The guard's served/inert behavior is the guard's own concern: [Guard]
+// The guard's served/inert behavior is the guard's own concern: [PermissionGuard]
 // resolves the acting principal from ctx and returns true (allow) when there is
 // no principal/policy to evaluate — so on a direct CLI write with no policy the
 // guard is inert while legality and preconditions still apply. Passing a nil
 // guard makes every guarded edge fail closed.
 //
 // old and updated are the same entity's prior and post-write state; updated
-// must be non-nil. Use [Set.EnforceCreate] for creates (no prior state).
-func (s *Set) EnforceUpdate(ctx context.Context, old, updated *entity.Entity, guard Guard, lookup GraphLookup) error {
+// must be non-nil. Use [Transitions.EnforceCreate] for creates (no prior state).
+func (s *Transitions) EnforceUpdate(
+	ctx context.Context, old, updated *entity.Entity, guard PermissionGuard, lookup GraphLookup,
+) error {
 	if s.Empty() || updated == nil {
 		return nil
 	}
@@ -37,7 +39,7 @@ func (s *Set) EnforceUpdate(ctx context.Context, old, updated *entity.Entity, gu
 
 	type move struct {
 		prop, from, to string
-		m              *Machine
+		m              *HeadlessFlow
 	}
 	var moves []move
 	var whens []*predicate.Program
@@ -69,7 +71,7 @@ func (s *Set) EnforceUpdate(ctx context.Context, old, updated *entity.Entity, gu
 }
 
 // edgeTraversal carries the answer to an entity's `related(...)` into
-// Machine.decideMove, or the reason there is none.
+// HeadlessFlow.decideMove, or the reason there is none.
 type edgeTraversal struct {
 	fn  predicate.TraversalFunc
 	err error
@@ -81,7 +83,7 @@ type edgeTraversal struct {
 // A row on a named face is refused: the store answers a traversal from the
 // default face's edges, so the answer would describe another row. The
 // refusal fails the precondition, which is the closed direction.
-func (s *Set) bindTraversals(
+func (s *Transitions) bindTraversals(
 	ctx context.Context, e *entity.Entity, whens []*predicate.Program,
 ) edgeTraversal {
 	traverses := false
@@ -95,7 +97,7 @@ func (s *Set) bindTraversals(
 	case !traverses:
 		return edgeTraversal{}
 	case s.traversals == nil:
-		// coverage-ignore: invariant: Compile refuses a traversing `when:` without a binder
+		// coverage-ignore: invariant: CompileTransitions refuses a traversing `when:` without a binder
 		return edgeTraversal{err: fmt.Errorf("%s(...) is not available: no store is wired to answer it",
 			predicate.FuncRelated)}
 	case e.Face != "":
@@ -116,7 +118,7 @@ func (s *Set) bindTraversals(
 // non-entry value is rejected with [ErrIllegalEntry] (422). Guards do not apply
 // on create: create is entry, not a transition, and the operator's `initial`
 // declares the (trusted) entry point.
-func (s *Set) EnforceCreate(_ context.Context, e *entity.Entity) error {
+func (s *Transitions) EnforceCreate(_ context.Context, e *entity.Entity) error {
 	if s.Empty() || e == nil {
 		return nil
 	}
@@ -125,9 +127,9 @@ func (s *Set) EnforceCreate(_ context.Context, e *entity.Entity) error {
 		m := s.machines[props[prop]]
 		entry := m.def.Initial()
 		if entry == "" {
-			// Unreachable for a compiled Set (Compile requires an entry value on
+			// Unreachable for a compiled Transitions (CompileTransitions requires an entry value on
 			// any machine with transitions). Kept as a defensive guard against a
-			// hand-built Machine; a create then imposes no constraint.
+			// hand-built HeadlessFlow; a create then imposes no constraint.
 			continue
 		}
 		got := e.GetString(prop)
@@ -143,12 +145,13 @@ func (s *Set) EnforceCreate(_ context.Context, e *entity.Entity) error {
 }
 
 // applyMove decides one changed machine property and maps a refused move
-// to the wire-facing error. It shares Machine.decideMove with the
-// read-side [Set.Performable], so enforcement and the "what can I do"
+// to the wire-facing error. It shares HeadlessFlow.decideMove with the
+// read-side [Transitions.Performable], so enforcement and the "what can I do"
 // affordance can never disagree about whether a transition is allowed (the
 // drift guard).
 func applyMove(
-	ctx context.Context, m *Machine, prop, from, to string, e *entity.Entity, guard Guard, lookup GraphLookup,
+	ctx context.Context, m *HeadlessFlow, prop, from, to string, e *entity.Entity,
+	guard PermissionGuard, lookup GraphLookup,
 	traversal edgeTraversal,
 ) error {
 	res := m.decideMove(ctx, prop, from, to, e, guard, lookup, traversal)
@@ -200,7 +203,7 @@ var errUnexpectedOutcome = errors.New("unexpected decision outcome")
 
 // decideMove decides the move from→to of prop on e, the entity as it is
 // after the write, through [flow.Decide]. It is the one evaluation path of a
-// transition, shared by [Set.EnforceUpdate] and [Set.Performable].
+// transition, shared by [Transitions.EnforceUpdate] and [Transitions.Performable].
 //
 // The guard permission is the poster rule (Rules.Admits) and the `when:`
 // precondition is the guard (Rules.Holds), so the permission is checked
@@ -211,21 +214,21 @@ var errUnexpectedOutcome = errors.New("unexpected decision outcome")
 //
 // The engine's words name the other check, so the mapping is:
 //
-//	flow (engine)             statemachine (this package)
+//	flow (engine)             headless flow (transitions)
 //	Rules.Admits refuses      gateGuard (the ACL permission)
 //	Rules.Holds false         gatePrecondition (`when:` not met)
 //	GuardFailed               gatePrecondition with the `when:` error
 //	Moved                     gateNone (allowed)
 //
-// Invariant: a move selects at most one branch, because Compile refuses a
+// Invariant: a move selects at most one branch, because CompileTransitions refuses a
 // duplicate (from, to). That is what lets a refusal by the poster rule, which
 // the engine treats as "skip this branch", mean "guard denied" here. A move
 // that selects more than one branch is refused as undeclared.
 //
 // An empty from is refused as undeclared: a headless flow does not read an
-// unset property as its initial state (see [Machine]).
-func (m *Machine) decideMove(
-	ctx context.Context, prop, from, to string, e *entity.Entity, guard Guard, lookup GraphLookup,
+// unset property as its initial state (see [HeadlessFlow]).
+func (m *HeadlessFlow) decideMove(
+	ctx context.Context, prop, from, to string, e *entity.Entity, guard PermissionGuard, lookup GraphLookup,
 	traversal edgeTraversal,
 ) moveResult {
 	if from == "" {
@@ -240,8 +243,8 @@ func (m *Machine) decideMove(
 		return moveResult{gate: gateUndeclared}
 	}
 	var refused string
-	d := flow.Decide(cur.State, branches, flow.Rules[branch]{
-		Admits: func(b branch) bool {
+	d := flow.Decide(cur.State, branches, flow.Rules[headlessBranch]{
+		Admits: func(b headlessBranch) bool {
 			if b.guard == "" {
 				return true
 			}
@@ -251,7 +254,7 @@ func (m *Machine) decideMove(
 			}
 			return true
 		},
-		Holds: func(b branch) (bool, error) {
+		Holds: func(b headlessBranch) (bool, error) {
 			if b.when == nil {
 				return true, nil
 			}
@@ -260,7 +263,7 @@ func (m *Machine) decideMove(
 			}
 			return evalWhen(ctx, b.when, e, prop, lookup, traversal.fn)
 		},
-		Target: func(b branch) string { return b.to },
+		Target: func(b headlessBranch) string { return b.to },
 	})
 	return outcome(d, refused)
 }
@@ -268,7 +271,7 @@ func (m *Machine) decideMove(
 // outcome maps a decision to a move result. refused is the guard permission
 // the poster rule refused, if any. Only a move is allowed; every other
 // outcome, including one the rules cannot produce, refuses.
-func outcome(d flow.Decision[branch], refused string) moveResult {
+func outcome(d flow.Decision[headlessBranch], refused string) moveResult {
 	switch d.Outcome {
 	case flow.Moved:
 		return moveResult{gate: gateNone}
