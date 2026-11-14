@@ -361,10 +361,16 @@ func (e *EntityDef) HasPattern(pattern string) bool {
 	return slices.Contains(e.GetIDPrefixes(), pattern)
 }
 
-// MatchesID checks if an ID matches any of this entity type's prefixes
+// MatchesID reports whether id starts with one of this entity type's
+// prefixes, with case folded. Ids are case-insensitive identities, and a
+// sequential type mints its prefix in upper case whatever case the schema
+// declares, so "NT-001" matches the prefix "nt-" (BUG-4OPP525).
+// [ValidateIDPrefix] keeps a schema prefix ASCII, and a non-ASCII rune in
+// id cannot fold onto an ASCII prefix byte for byte, so this folds ASCII
+// letters only.
 func (e *EntityDef) MatchesID(id string) bool {
 	for _, prefix := range e.GetIDPrefixes() {
-		if len(id) >= len(prefix) && id[:len(prefix)] == prefix {
+		if len(id) >= len(prefix) && strings.EqualFold(id[:len(prefix)], prefix) {
 			return true
 		}
 	}

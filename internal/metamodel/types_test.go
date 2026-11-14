@@ -1166,6 +1166,37 @@ func TestEntityDef_MatchesID(t *testing.T) {
 			id:   "REQ-",
 			want: true,
 		},
+		// BUG-4OPP525: ids are case-insensitive identities.
+		{
+			name: "upper-case id, lower-case prefix",
+			def:  EntityDef{IDPrefix: "nt-"},
+			id:   "NT-001",
+			want: true,
+		},
+		{
+			name: "upper-case id, mixed-case prefix",
+			def:  EntityDef{IDPrefix: "Memo-"},
+			id:   "MEMO-001",
+			want: true,
+		},
+		{
+			name: "lower-case id, upper-case prefix",
+			def:  EntityDef{IDPrefix: "REQ-"},
+			id:   "req-7",
+			want: true,
+		},
+		{
+			name: "folded but different prefix",
+			def:  EntityDef{IDPrefix: "nt-"},
+			id:   "NX-001",
+			want: false,
+		},
+		{
+			name: "Kelvin sign does not fold onto K",
+			def:  EntityDef{IDPrefix: "KEY-"},
+			id:   "KEY-5",
+			want: false,
+		},
 	}
 
 	for _, tt := range tests {

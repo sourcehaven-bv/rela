@@ -293,22 +293,12 @@ func (v Validator) ValidateEntity(id, entityType string, properties map[string]a
 	// Validate properties using shared function
 	errs = append(errs, v.ValidateProperties(properties, def)...)
 
-	// Validate ID matches prefix
-	prefixes := def.GetIDPrefixes()
-	if len(prefixes) > 0 {
-		matched := false
-		for _, prefix := range prefixes {
-			if len(id) >= len(prefix) && id[:len(prefix)] == prefix {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			errs = append(errs, &ValidationError{
-				Type:    ValidationErrorIDPrefix,
-				Message: fmt.Sprintf("entity ID %s does not match any prefix for type %s: %v", id, entityType, prefixes),
-			})
-		}
+	// Validate ID matches prefix, with case folded ([EntityDef.MatchesID]).
+	if prefixes := def.GetIDPrefixes(); len(prefixes) > 0 && !def.MatchesID(id) {
+		errs = append(errs, &ValidationError{
+			Type:    ValidationErrorIDPrefix,
+			Message: fmt.Sprintf("entity ID %s does not match any prefix for type %s: %v", id, entityType, prefixes),
+		})
 	}
 
 	return errs
