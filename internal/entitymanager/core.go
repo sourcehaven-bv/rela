@@ -285,88 +285,109 @@ func generateID(ctx context.Context, deps Deps, entityType, prefix string, sprea
 		prefix = prefixes[0]
 	}
 
-	existingIDs, err := collectAllIDs(ctx, deps.Store)
-	if err != nil {
-		return "", fmt.Errorf("collect existing IDs: %w", err)
-	}
 	if entityDef.IsShortID() {
-		return entity.GenerateShortID(existingIDs, prefix, len(existingIDs), entityDef.GetIDCaps()), nil
+		return mintShortID(ctx, deps.Store, prefix, entityDef.GetIDCaps())
 	}
+	highest, err := highestIDNumber(ctx, deps.Store, prefix)
+	if err != nil {
+		return "", fmt.Errorf("highest existing ID: %w", err)
+	}
+	skip := 0
 	if spread > 1 {
 		//nolint:gosec // G404: spreading contenders over a window, not a secret
-		skip := rand.IntN(spread)
-		return entity.GenerateSequentialID(existingIDs, prefix, skip), nil
+		skip = rand.IntN(spread)
 	}
-	return entity.GenerateNextID(existingIDs, prefix), nil
+	return entity.SequentialID(prefix, highest, skip), nil
 }
 
-// entityIDLister is the optional store capability [collectAllIDs] prefers:
-// the bare id of every entity, every face included, without loading the
-// entities. fsstore answers it from its in-memory index; without it, every
-// generated id read every entity file, so a script creating N entities did
-// N² file reads (BUG-TT73D0P).
-type entityIDLister interface {
-	EntityIDs(ctx context.Context) ([]string, error)
-}
-
-// collectAllIDs returns every entity ID currently in the store.
-// A partial scan must not feed ID generation: a truncated list can hide
-// a high-numbered existing ID, so the generator would mint one that
-// already exists. createCore then rejects that collision with
-// ErrEntityAlreadyExists (a create never overwrites), so a truncated
-// scan would surface as a spurious conflict rather than data loss — but
-// fail loudly here regardless, so the generator is never fed bad data.
+// highestIDNumber is the highest number taken under prefix, read with the
+// store's HighestID rather than by listing every entity id (TKT-FED6FMM):
+// on a database backend the listing read every row of the store on every
+// create. HighestID counts every face, soft-deleted ids and retired ids.
 //
-// A store with [entityIDLister] answers from its index; its result is
-// deduped again, so an implementation may list a family more than once.
-// The fallback scan uses AllFaces, then dedupes by bare id. Without
-// AllFaces the scan sees only
-// zero-coordinate rows, which a type declaring faces has none of — so the
-// generator saw an EMPTY id set for such a type and minted the same id for
-// every entity of it (BUG-HC6I2T). Counting a family once is what the query
-// used to get from the zero coordinate; with no face privileged, dedup is
-// what provides it.
-func collectAllIDs(ctx context.Context, st store.Store) ([]string, error) {
-	seen := make(map[string]struct{})
-	ids := make([]string, 0)
-	if lister, ok := st.(entityIDLister); ok {
-		listed, err := lister.EntityIDs(ctx)
+// The prefix is asked for in upper and in lower case, because ids are
+// case-insensitive identities and the stores compare the prefix bytewise
+// (sqlitestore folds it already). A mixed-case prefix such as "Tkt-" is not
+// seen; a hand-written id in that shape can make the next mint collide,
+// which createCore refuses as ErrEntityAlreadyExists rather than overwrite.
+func highestIDNumber(ctx context.Context, st store.Store, prefix string) (int, error) {
+	upper := entity.SequentialPrefix(prefix)
+	highest, err := st.HighestID(ctx, upper)
+	if err != nil {
+		return 0, err
+	}
+	if lower := strings.ToLower(upper); lower != upper {
+		n, err := st.HighestID(ctx, lower)
 		if err != nil {
-			return nil, err
+			return 0, err
 		}
-		for _, id := range listed {
-			if _, dup := seen[id]; !dup {
-				seen[id] = struct{}{}
-				ids = append(ids, id)
-			}
-		}
-	} else {
-		for e, err := range st.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
+		highest = max(highest, n)
+	}
+	return highest, nil
+}
+
+// shortIDBatch is how many random candidates [mintShortID] checks per
+// store lookup, and shortIDRounds how many lookups it makes before it
+// gives up. Each round is one character longer than the one before.
+const (
+	shortIDBatch  = 10
+	shortIDRounds = 10
+)
+
+// mintShortID returns a random short id that no stored face and no
+// soft-deleted entity holds. The candidates of one round are checked with
+// one lookup by id, so minting costs one count and normally one lookup,
+// however large the store is (TKT-FED6FMM).
+//
+// The length follows the number of stored rows, every face counted, which
+// is at least the number of entities; a longer id only lowers the chance
+// of a collision. A partial answer must not feed the choice: every error
+// fails the create rather than risk minting a taken id.
+func mintShortID(ctx context.Context, st store.Store, prefix, caps string) (string, error) {
+	count, err := st.CountEntities(ctx, store.EntityQuery{Faces: store.AllFaces()})
+	if err != nil {
+		return "", fmt.Errorf("count entities: %w", err)
+	}
+	marked, err := markedIDs(ctx, st)
+	if err != nil {
+		return "", err
+	}
+	for round := range shortIDRounds {
+		candidates := entity.ShortIDCandidates(prefix, count, round, shortIDBatch, caps)
+		taken := make(map[string]bool, len(candidates))
+		for h, err := range store.ListEntityHeaders(ctx, st, store.EntityQuery{
+			IDs: candidates, Faces: store.AllFaces(),
+		}) {
 			if err != nil {
-				return nil, err
+				return "", fmt.Errorf("check generated IDs: %w", err)
 			}
-			if _, dup := seen[e.ID]; dup {
-				continue
-			}
-			seen[e.ID] = struct{}{}
-			ids = append(ids, e.ID)
+			taken[h.ID] = true
 		}
-	}
-	// A soft-deleted id is still taken: the store refuses to create it until
-	// the purge, so the generator must not hand it out.
-	if sd, ok := st.(store.SoftDeleteProvider); ok {
-		marked, err := sd.SoftDelete().ListMarked(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, me := range marked {
-			if _, dup := seen[me.ID]; !dup {
-				seen[me.ID] = struct{}{}
-				ids = append(ids, me.ID)
+		for _, id := range candidates {
+			if !taken[id] && !marked[id] {
+				return id, nil
 			}
 		}
 	}
-	return ids, nil
+	return "", fmt.Errorf("no free short ID for prefix %s after %d attempts", prefix, shortIDBatch*shortIDRounds)
+}
+
+// markedIDs returns the soft-deleted ids: they are still taken, because the
+// store refuses to create one until the purge.
+func markedIDs(ctx context.Context, st store.Store) (map[string]bool, error) {
+	out := map[string]bool{}
+	sd, ok := st.(store.SoftDeleteProvider)
+	if !ok {
+		return out, nil
+	}
+	marked, err := sd.SoftDelete().ListMarked(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list soft-deleted IDs: %w", err)
+	}
+	for _, me := range marked {
+		out[me.ID] = true
+	}
+	return out, nil
 }
 
 // collectIncidentRelations gathers a store's relations in the given

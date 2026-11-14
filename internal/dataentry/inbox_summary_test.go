@@ -20,6 +20,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
 
 // summary serves /api/v1/_inbox/summary?query as alice and returns what
@@ -31,7 +32,7 @@ func (e *inboxEnv) summary(t *testing.T, method, query string) (rec *httptest.Re
 	rec = httptest.NewRecorder()
 	req := httptest.NewRequest(method, inboxSummaryPath+query, http.NoBody)
 	e.app.channels.handleV1InboxSummary(rec, req.WithContext(gateCtxFor(principalCtx("alice"), t, e.d)))
-	return rec, channelCost{entity: e.counting.Calls(), channel: e.chans.snapshot()}
+	return rec, channelCost{entity: e.counting.Calls(), channel: e.chans.snapshot(), rows: e.counting.Cost()}
 }
 
 // TestInboxSummaryHandler_Shape pins AC 1: the summary carries the counts
@@ -130,7 +131,7 @@ func TestInboxSummaryHandler_Errors(t *testing.T) {
 		requireProblem(t, rec, http.StatusForbidden, realtime.TypeNoPrincipal)
 	})
 	t.Run("row ceiling", func(t *testing.T) {
-		capped, _ := seedInbox(t, 2)
+		capped, _ := seedInbox(t)
 		capped.chans.mu.Lock()
 		capped.chans.maxRows = 2
 		capped.chans.mu.Unlock()
@@ -216,22 +217,38 @@ func TestInboxSummary_HiddenRowsChangeNothing(t *testing.T) {
 // TestInboxSummaryBudget_10vs50 pins AC 4: the summary costs the same
 // store calls at 10 rows of each kind as at 50.
 func TestInboxSummaryBudget_10vs50(t *testing.T) {
-	cost := func(n int) channelCost {
-		e, want := seedInbox(t, n)
-		at := time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC)
-		for i := range n {
-			e.markAndChat(t, fmt.Sprintf("TKT-%d", 100+i), at)
-			e.markAndChat(t, fmt.Sprintf("FEAT-%d", 100+i), at)
-			e.mentionAlice(t, fmt.Sprintf("TKT-%d", 100+i), at)
-			e.mentionAlice(t, fmt.Sprintf("TKT-%d", 500+i), at)
-		}
-		rec, c := e.summary(t, http.MethodGet, "")
-		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-		got := decodeAs[v1.InboxSummary](t, rec.Body.Bytes())
-		require.Equal(t, v1.InboxSummary{Waiting: want, UnreadChannels: n, Mentions: n}, got)
-		return c
-	}
+	cost := func(n int) channelCost { return summaryCost(t, n, 0) }
 	small, large := cost(10), cost(50)
+	assertSummaryBudget(t, small, large)
+	assertScaleFreeIndexed(t, func(pad int) (storetest.Cost, string) {
+		c := summaryCost(t, 10, pad)
+		return c.rows, c.String()
+	})
+}
+
+// summaryCost is what the inbox summary costs alice with n rows of each
+// kind, over a store padded with pad unrelated tickets and features.
+func summaryCost(t *testing.T, n, pad int) channelCost {
+	t.Helper()
+	e, want := seedInboxPadded(t, n, pad)
+	at := time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC)
+	for i := range n {
+		e.markAndChat(t, fmt.Sprintf("TKT-%d", 100+i), at)
+		e.markAndChat(t, fmt.Sprintf("FEAT-%d", 100+i), at)
+		e.mentionAlice(t, fmt.Sprintf("TKT-%d", 100+i), at)
+		e.mentionAlice(t, fmt.Sprintf("TKT-%d", 500+i), at)
+	}
+	rec, c := e.summary(t, http.MethodGet, "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	got := decodeAs[v1.InboxSummary](t, rec.Body.Bytes())
+	require.Equal(t, v1.InboxSummary{Waiting: want, UnreadChannels: n, Mentions: n}, got)
+	return c
+}
+
+// assertSummaryBudget holds the calls of the summary at 10 rows to those
+// at 50, and pins which reads they are.
+func assertSummaryBudget(t *testing.T, small, large channelCost) {
+	t.Helper()
 	require.True(t, small.equal(large), "10 rows: %s\n50 rows: %s", small, large)
 	require.Equal(t, 1, small.channel["ListWaiting"], small.String())
 	require.Equal(t, 1, small.channel["ListReads"], small.String())

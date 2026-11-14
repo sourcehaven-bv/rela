@@ -16,7 +16,7 @@ import (
 // reader which rows hold one.
 func TestElements_StoreCallBudget(t *testing.T) {
 	types := visibility.ElementTypes{Entities: []string{"ticket"}}
-	measure := func(t *testing.T, n int, clearHidden bool) (fp, list int, detail string) {
+	measure := func(t *testing.T, n int, clearHidden bool) (fp, list, rows int, detail string) {
 		t.Helper()
 		st := storetest.NewCounting(memstore.New())
 		f := newElementsFixture(t, st, n, elementsPolicy())
@@ -32,23 +32,26 @@ func TestElements_StoreCallBudget(t *testing.T) {
 		if _, err := x.Fingerprint(alice, types, allEntities); err != nil {
 			t.Fatal(err)
 		}
-		fp = st.Reads()
+		fp, rows = st.Reads(), st.Cost().Rows
 		fpDetail := st.String()
 
 		st.Reset()
 		if _, err := x.List(alice, types, allEntities, n); err != nil {
 			t.Fatal(err)
 		}
-		return fp, st.Reads(), "Fingerprint " + fpDetail + "; List " + st.String()
+		return fp, st.Reads(), rows + st.Cost().Rows, "Fingerprint " + fpDetail + "; List " + st.String()
 	}
 
-	fp10, list10, d10 := measure(t, 10, false)
-	fp50, list50, d50 := measure(t, 50, false)
+	// The calls are compared across sizes; the rows are not, since a range
+	// over every row reads every row by design.
+	fp10, list10, _, d10 := measure(t, 10, false)
+	fp50, list50, rows50, d50 := measure(t, 50, false)
 	if fp10 != fp50 || list10 != list50 {
 		t.Errorf("store calls grow with rows:\n  n=10: %s\n  n=50: %s", d10, d50)
 	}
-	fpClear, listClear, dClear := measure(t, 50, true)
-	if fpClear != fp50 || listClear != list50 {
-		t.Errorf("store calls depend on whether hidden values are set:\n  set:   %s\n  unset: %s", d50, dClear)
+	// Whether a hidden value is set must not change the rows read either.
+	fpClear, listClear, rowsClear, dClear := measure(t, 50, true)
+	if fpClear != fp50 || listClear != list50 || rowsClear != rows50 {
+		t.Errorf("store cost depends on whether hidden values are set:\n  set:   %s\n  unset: %s", d50, dClear)
 	}
 }

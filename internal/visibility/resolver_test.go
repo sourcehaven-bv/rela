@@ -427,14 +427,15 @@ func TestResolver_FamilyBudget(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			padStore(t, base, "policy", "f000")
 			st := storetest.NewCounting(base)
 			r := mustResolver(t, visibility.NopGate{}, visibility.NopRedactor{}, st)
 			fam, ok, err := r.Family(ctx, "policy", "POL-1")
 			if err != nil || !ok || len(fam.Faces) != n {
 				t.Fatalf("Family = (%d faces, %v, %v), want %d faces", len(fam.Faces), ok, err, n)
 			}
-			if got := st.Calls(); st.Reads() != 1 || got["ListEntityHeaders"] != 1 {
-				t.Errorf("reads = %s, want exactly one ListEntityHeaders", st)
+			if got := st.Calls(); st.Reads() != 1 || got["ListEntityHeaders"] != 1 || st.Cost().Rows != n {
+				t.Errorf("reads = %s, want exactly one ListEntityHeaders of %d rows", st, n)
 			}
 		})
 	}

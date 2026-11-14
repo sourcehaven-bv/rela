@@ -1130,7 +1130,7 @@ operator debugging.
 ### Retired ids redirect only to a readable successor (TKT-2F1AUZ)
 
 A rename or a conversion retires the old id. A `GET` of
-`/api/v1/<type>/<id>` or `/api/v1/_views/<view>/<id>` that misses on a
+`/api/v1/<type>/<id>` or `/api/v1/_views/<type>/<id>` that misses on a
 retired id answers `307` to the successor, with `Cache-Control: no-store`.
 It does so only when the caller may read the successor in the request's
 world: the successor passes the row gate, the face gate and the world,
@@ -2534,6 +2534,13 @@ the key; this section covers what it means for `acl.yaml`.
     hidden entity is refused with `owning_rule` (TKT-QO14GB). That shows some
     hidden owning edge exists. The message is the same for all three clashes,
     so it does not say which one;
+  - a write refused by an `enforce: write` validation that uses
+    `related(...)` (TKT-EBARYBI) counts edges to hidden entities too, so the
+    verdict is the same for every writer. The 422 names the rule and quotes
+    its description, never an entity. It shows whether an end the caller can
+    read has another edge the rule counts. On a relation create or delete
+    that end may be the far end, so the refusal can show that it has an edge
+    to an entity the caller cannot see;
   - deleting an owner that owns an entity the caller may not delete fails
     with a 403, on every write path. The denial names the owned entity's type
     but not its id. Nothing is deleted.

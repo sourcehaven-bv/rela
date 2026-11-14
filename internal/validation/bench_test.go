@@ -42,7 +42,17 @@ func benchTickets(n int) []*entity.Entity {
 	return out
 }
 
+// BenchmarkCheck_WhenThen runs at 100 and 1000 entities: the cost should be
+// linear in the entities checked, and the weekly scale run
+// (tools/scalerun) compares both sizes with the previous run.
 func BenchmarkCheck_WhenThen(b *testing.B) {
+	for _, n := range []int{100, 1_000} {
+		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) { benchCheckWhenThen(b, n) })
+	}
+}
+
+func benchCheckWhenThen(b *testing.B, n int) {
+	b.Helper()
 	meta := benchTicketMeta(metamodel.ValidationRule{
 		Name:        "ready-needs-priority",
 		Description: "Ready tickets must have priority",
@@ -51,7 +61,7 @@ func BenchmarkCheck_WhenThen(b *testing.B) {
 		Then:        []string{"priority!="},
 		Severity:    "error",
 	})
-	entities := benchTickets(100)
+	entities := benchTickets(n)
 	svc := New(meta, newMockWorkspace().services(b.TempDir()))
 
 	b.ReportAllocs()

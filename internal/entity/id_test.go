@@ -483,9 +483,9 @@ func TestCalculateIDLength(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := calculateIDLength(tt.entityCount)
+		got := ShortIDLength(tt.entityCount)
 		if got != tt.wantLength {
-			t.Errorf("calculateIDLength(%d) = %d, want %d", tt.entityCount, got, tt.wantLength)
+			t.Errorf("ShortIDLength(%d) = %d, want %d", tt.entityCount, got, tt.wantLength)
 		}
 	}
 }
