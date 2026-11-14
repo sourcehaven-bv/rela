@@ -1552,7 +1552,8 @@ either file reaches it without a page reload.
 ### Options as cards
 
 A message whose options are an object list (see the realtime guide) shows
-its items as a table of fields by default. `display: cards` shows each
+its items as a bulleted list by default, one bullet per item with its set
+fields as "label: value". `display: cards` shows each
 item as a card instead, which suits options that each carry a title, pros
 and cons:
 
