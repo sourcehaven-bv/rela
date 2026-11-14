@@ -40,11 +40,13 @@ tests in `internal/dataentrywire/withheld_test.go`,
 - [x] ~~Each acceptance criterion verified with test scenario from planning~~ (not done manually: each criterion maps to an automated test in the planning checklist)
 - [x] ~~Edge cases manually verified~~ (not done manually: edge cases are pinned by automated tests)
 
-**Verification Evidence:** Automated only. `just check` passed earlier on this
-branch; a final run on the last commit is still in progress at the time of
-writing. A security review by the rela-security-reviewer agent and an automated
+**Verification Evidence:** Automated only. On the final commit 13cd61e18: `just test` passed
+(all packages, plus the pre-commit hook's `go test -race ./...`), `just lint`
+0 issues on every build tag, `just comment-lint` clean, `just arch-lint` OK,
+`just plimsoll` OK, `just lint-md` 0 issues, `just coverage-check` PASS (total
+85.8%). A security review by the rela-security-reviewer agent and an automated
 reviewer found the issues recorded as RR-A2FK6GR, RR-N5ZY6L4, RR-0Z8GN02 and
-RR-1IBQECU; all were fixed on the branch.
+RR-1IBQECU; all were fixed on the branch. The later `/code-review` findings are recorded on the review checklist.
 
 ## Quality
 

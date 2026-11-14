@@ -3,72 +3,62 @@ id: REV-QQ7FRGJ
 type: review-checklist
 title: 'Review: tenant: provision a new org — eager IdP webhook plus a single-flighted lazy backstop'
 started: "2026-11-14"
-status: in-progress
+completed: "2026-11-14"
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
-
-**Comment findings.** `just comment-report` lists the advisory rules
-(duplication, nil-contract, param-contract, restatement). They are not a merge
-gate, but a finding your diff *introduces* should be fixed or suppressed — don't
-grow the backlog.
-
-Every rule is a heuristic over prose, so false positives are expected. To
-suppress one, prefer the inline form on the declaration line, which travels with
-the code and is reviewed in this diff:
-
-```go
-func f(p string) {} //commentlint:ignore param-contract  p is contained by Clone
-```
-
-Use `.commentlint.yml` (`ignore:` path globs, `allow-phrases:`) only when the
-same prose recurs across many sites. A reason is required either way — an
-unexplained suppression is a finding nobody can re-evaluate later.
+- [x] All tests pass (`just test`): all packages, full run plus the pre-commit hook's `go test -race ./...` on 13cd61e18
+- [x] Lint clean (`just lint`): 0 issues on every build tag; `just arch-lint` OK, `just plimsoll` OK, `just lint-md` 0 issues
+- [x] Comment lint gate clean (`just comment-lint`)
+- [x] Coverage maintained (`just coverage-check`): PASS, total 85.8%
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` command (invokes cranky-code-reviewer agent): the agent reviewed the full branch diff; findings fixed in 13cd61e18
+- [x] All critical review-responses addressed (none raised)
+- [x] All significant review-responses addressed
+- [x] Self-reviewed the diff for unrelated changes
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** code review: RR-ARWVX6I (S1), RR-4LU5ZUD (S2), RR-GIQ04LL
+(M1), RR-61VSNBB (M2), RR-VC83AWK (M3), RR-XUWCSGC (M4), RR-4LBG3R2 (M5),
+RR-3EI8RHL (M8), RR-JQ008B0 (M9), RR-8AZPMZW (N1), RR-6PKBBVI (N3, wont-fix).
+Earlier security review: RR-RQ2INPS, RR-G9KL9T5, RR-6EHB7NR, RR-SM1A2S7,
+RR-GA0WMBD.
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (reference planning checklist)
+- [x] Test evidence documented in implementation checklist
 
-**Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+**Acceptance Status:** Criteria from TKT-TNPRV8, test scenarios in PLAN-DZ6EJGH.
+
+1. PASS. `organization.created` creates and migrates a schema and the org resolves without a restart: webhook cases in `TestProvision_Webhook`, `TestTenantMode_LazyProvisioning` and `TestTenantMode_CreateServeSuspendErase` (postgres).
+2. PASS. Lazy path provisions, is single-flighted and can be turned off: `TestProvision_LazySingleFlight`, `TestProvision_OffKeepsDenial`, `TestProvision_WebhookModeLeavesRequestsDenied`.
+3. PASS. Reads get `202` with a pollable status (`GET /api/v1/_tenant`); no request is held open across migration: `TestProvision_StatusRoute`, `TestProvision_RunOutlivesRequest`. After review finding RR-ARWVX6I, writes during provisioning get 503 `tenant_provisioning` instead of 202 (`TestProvision_WriteDuringProvisioningIsRefused`), so the 202 applies to GET and HEAD only.
+4. PASS. Trust assumption documented at `tenanthost.provisioning` (checked in review).
+5. PASS. Schema names from a claim are validated before use: `TestProvision_InvalidOrgNeverReachesProvisioner`.
 
 ## Documentation (enhancements only)
 
-Skip this section for bugs and internal refactors.
+- [x] Docs-checklist created and linked via `has-docs`
+- [x] User-facing documentation updated
+- [x] Docs-checklist marked as done
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
-
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+**Docs Checklist:** DOCS-STKPI0E
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] ~~Commit message explains the why, not just what~~ (skipped: commit messages are deliberately minimal per the user's standing instruction; the ticket body carries the why)
+- [x] No TODOs or FIXMEs left unaddressed (none added on the branch)
+- [x] Ready for another developer to use (known limitation, documented in the postgres backend guide: the SPA does not handle the provisioning state yet)
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] ~~Run `/pr` command to create PR and monitor CI~~ (N/A: PR opens after done per TKT-UFV01M)
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.

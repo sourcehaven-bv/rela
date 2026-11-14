@@ -9,7 +9,8 @@ tags:
     - security
     - needs-design
 started: "2026-11-14"
-status: review
+completed: "2026-11-14"
+status: done
 ---
 
 ## Description
@@ -182,6 +183,15 @@ or a loopback IP literal. Any other address stops startup.
 remembered for 5 seconds. During that hold a request for the org answers 202
 provisioning and a webhook 202, without starting a run or taking a start-rate
 token.
+- **Writes during provisioning (review RR-ARWVX6I).** Only GET and HEAD
+get the 202 provisioning answer. Any other method gets 503 `tenant_provisioning`
+with `Retry-After`, because the SPA reads 202 as success and nothing was
+written.
+- **Refusals that need an operator (review RR-4LU5ZUD).** A create refusal
+that retrying cannot fix is marked `tenanthost.ErrNeedsOperator`. The host holds
+it for 1 hour, acknowledges the webhook with 200, and answers requests 503
+`provisioning_needs_operator`. During any hold, `Retry-After` is the time left.
+A tenant that stays in provisioning is logged with a rate-limited warning.
 - **Not changed.** The server still refuses to start without the control
 table, so the first tenant is created with `tenant create`. The SPA does not yet
 poll the status route; the API contract is in place.
