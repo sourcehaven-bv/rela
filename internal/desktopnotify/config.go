@@ -2,6 +2,7 @@ package desktopnotify
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -246,7 +247,9 @@ func (c *Config) lower(prog *predicate.Program, entityType string) ([]store.Prop
 		exact = false
 		pushed = queryplan.ConditionPrefilters(prog, c.meta, []string{entityType}, "")
 	}
-	slices.SortFunc(pushed, func(a, b store.PropPredicate) int { return strings.Compare(a.Property, b.Property) })
+	slices.SortFunc(pushed, func(a, b store.PropPredicate) int {
+		return cmp.Or(strings.Compare(a.Property, b.Property), strings.Compare(a.Value, b.Value))
+	})
 	return pushed, exact
 }
 

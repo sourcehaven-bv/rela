@@ -36,6 +36,9 @@ type trackerState struct {
 	// Seen holds the ids of the entities matching at the last update,
 	// sorted.
 	Seen []string `json:"seen"`
+	// Untracked marks a rule that went over [MaxMatchesPerRule]. It reads
+	// as no record, so the rule's next update is silent.
+	Untracked bool `json:"untracked,omitempty"`
 }
 
 // NewTracker returns a Tracker persisting to kv.
@@ -52,9 +55,12 @@ func NewTracker(kv KV) (*Tracker, error) {
 // For a rule with no stored record (first launch, or a newly added rule), it
 // records the current matches and returns none of them; see the package
 // documentation. An entity that no longer matches is dropped from the record,
-// so it is reported again if it matches later. For a rule in res.Truncated,
-// only the ids up to its last match can be known to have stopped matching;
-// see keepPastCap.
+// so it is reported again if it matches later.
+//
+// A rule in res.Truncated notifies nothing. Its record is replaced by an
+// untracked marker, so the first update after it is back under the cap is
+// silent again, like a first launch. Without that, every entity that started
+// matching while the rule was over the cap would notify at once.
 //
 // State for a rule that is no longer in the config is left in place. It is
 // small, and keeping it means removing and restoring a rule does not
@@ -79,6 +85,15 @@ func (t *Tracker) Update(ctx context.Context, res Result) ([]Match, error) {
 		if err != nil {
 			return fresh, err
 		}
+		if slices.Contains(res.Truncated, ruleID) {
+			// An absent or untracked record already reads as unknown.
+			if known {
+				if err := t.put(ctx, ruleID, trackerState{Untracked: true}); err != nil {
+					return fresh, err
+				}
+			}
+			continue
+		}
 		current := make([]string, 0, len(matches))
 		var added []Match
 		for _, m := range matches {
@@ -89,9 +104,6 @@ func (t *Tracker) Update(ctx context.Context, res Result) ([]Match, error) {
 		}
 		slices.Sort(current)
 		current = slices.Compact(current)
-		if slices.Contains(res.Truncated, ruleID) && len(current) > 0 {
-			current = keepPastCap(prev, current)
-		}
 		if !known || !slices.Equal(prev, current) {
 			if err := t.save(ctx, ruleID, current); err != nil {
 				return fresh, err
@@ -100,22 +112,6 @@ func (t *Tracker) Update(ctx context.Context, res Result) ([]Match, error) {
 		fresh = append(fresh, added...)
 	}
 	return fresh, nil
-}
-
-// keepPastCap returns current, a truncated rule's sorted matches, plus the
-// ids in prev that sort after its last match. The evaluation did not look
-// past that id, so those entities may still match. Forgetting them would
-// notify each one again as soon as it moves under the cap.
-func keepPastCap(prev, current []string) []string {
-	last := current[len(current)-1]
-	i, found := slices.BinarySearch(prev, last)
-	if found {
-		i++
-	}
-	if i == len(prev) {
-		return current
-	}
-	return append(slices.Clip(current), prev[i:]...)
 }
 
 // load returns the stored ids for ruleID and whether a record exists.
@@ -133,10 +129,10 @@ func (t *Tracker) load(ctx context.Context, ruleID string) (seen []string, known
 
 // decodeState parses a stored record. A corrupt record is treated as absent:
 // the rule then starts over silently, instead of failing on every update until
-// someone deletes the record by hand.
+// someone deletes the record by hand. An untracked marker is absent too.
 func decodeState(data []byte) (seen []string, ok bool) {
 	var st trackerState
-	if json.Unmarshal(data, &st) != nil {
+	if json.Unmarshal(data, &st) != nil || st.Untracked {
 		return nil, false
 	}
 	slices.Sort(st.Seen)
@@ -144,7 +140,11 @@ func decodeState(data []byte) (seen []string, ok bool) {
 }
 
 func (t *Tracker) save(ctx context.Context, ruleID string, ids []string) error {
-	data, err := json.Marshal(trackerState{Seen: ids})
+	return t.put(ctx, ruleID, trackerState{Seen: ids})
+}
+
+func (t *Tracker) put(ctx context.Context, ruleID string, st trackerState) error {
+	data, err := json.Marshal(st)
 	if err != nil {
 		return fmt.Errorf("desktopnotify: encode state for rule %q: %w", ruleID, err)
 	}

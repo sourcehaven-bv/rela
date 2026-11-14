@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -67,6 +68,7 @@ type projectNotifier struct {
 
 	interval, debounce time.Duration
 	lastErr            string // the last load error logged, so it is logged once
+	lastTruncated      string // the truncated rules last logged, so they are logged once
 }
 
 // newProjectNotifier checks its collaborators; see the struct for each one.
@@ -143,9 +145,12 @@ func (n *projectNotifier) evaluate(ctx context.Context) {
 	for _, e := range res.EvalErrors {
 		slog.Debug("desktop notifications: condition failed", "project", n.projectID, "error", e)
 	}
-	for _, id := range res.Truncated {
-		slog.Debug("desktop notifications: rule matches more entities than it reports",
-			"project", n.projectID, "rule", id, "max", desktopnotify.MaxMatchesPerRule)
+	if truncated := strings.Join(res.Truncated, ","); truncated != n.lastTruncated {
+		n.lastTruncated = truncated
+		if truncated != "" {
+			slog.Warn("desktop notifications: rules match too many entities and notify nothing",
+				"project", n.projectID, "rules", truncated, "max", desktopnotify.MaxMatchesPerRule)
+		}
 	}
 
 	// Update returns what it recorded even when it also fails, and those

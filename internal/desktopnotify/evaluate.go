@@ -10,11 +10,15 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// MaxMatchesPerRule caps the matches one rule reports per evaluation. A rule
-// whose condition lowers reads at most this many rows plus one, so a poll
-// costs the same however many entities match. The cap keeps the matches with
-// the lowest ids.
-const MaxMatchesPerRule = 100
+// MaxMatchesPerRule is the most entities a rule can match and still notify.
+// A rule whose condition lowers reads at most this many rows plus one, so a
+// poll costs the same however many entities match.
+//
+// A rule over the cap reports no matches and is listed in
+// [Result.Truncated]. Reporting part of its matches would make the
+// [Tracker] diff against an arbitrary window: an entity outside the window
+// could not be told apart from one that stopped matching.
+const MaxMatchesPerRule = 1000
 
 // Match is one entity that satisfies one notification rule.
 type Match struct {
@@ -32,20 +36,20 @@ type Result struct {
 	// [Tracker.Update] needs it to tell "no matches" from "not evaluated".
 	Rules []string
 	// Matches holds the current matches, grouped by rule in declaration
-	// order and ordered by entity id within a rule. A rule contributes at
-	// most [MaxMatchesPerRule] of them.
+	// order and ordered by entity id within a rule.
 	Matches []Match
 	// Truncated lists the rules that matched more than [MaxMatchesPerRule]
-	// entities. Their Matches are the ones with the lowest ids.
-	// [Tracker.Update] keeps its record of the ids past the last match,
-	// because this evaluation did not look at them.
+	// entities. They contribute no Matches, and [Tracker.Update] stops
+	// tracking them until they are back under the cap.
 	Truncated []string
 	// Badge is the number of entities matching the badge rule. It is zero
 	// when desktop.yaml declares no badge; see [Config.HasBadge].
 	Badge int
 	// EvalErrors holds conditions that failed to evaluate for one entity,
 	// for example because a stored value has the wrong type. Such an entity
-	// counts as not matching; the error is kept so it can be logged.
+	// counts as not matching; the error is kept so it can be logged. A
+	// condition the store answers never adds one: its string equalities
+	// cannot fail.
 	EvalErrors []error
 }
 
@@ -80,8 +84,8 @@ func (c *Config) Evaluate(ctx context.Context, entities store.GraphQueryer, worl
 			return Result{}, err
 		}
 		if len(hs) > MaxMatchesPerRule {
-			hs = hs[:MaxMatchesPerRule]
 			ev.res.Truncated = append(ev.res.Truncated, r.id)
+			continue
 		}
 		for _, h := range hs {
 			f := fields{
@@ -122,13 +126,13 @@ type evaluation struct {
 }
 
 // ruleMatches returns the headers matching r, ordered by id. A rule whose
-// condition lowers gets at most [MaxMatchesPerRule] plus one of them, so the caller
-// can tell a rule over the cap from one at it.
+// condition lowers gets at most [MaxMatchesPerRule] plus one of them, so the
+// caller can tell a rule over the cap from one at it.
 func (ev *evaluation) ruleMatches(ctx context.Context, r rule) ([]store.EntityHeader, error) {
 	var hs []store.EntityHeader
 	if r.exact {
-		// A query that names no order is ordered by id, so the limit
-		// keeps the lowest ids.
+		// Which rows the limit keeps does not matter: a rule over the cap
+		// reports none of them.
 		q := store.GraphQuery{
 			EntityType: r.entityType,
 			Props:      slices.Clone(r.pushed),
@@ -152,8 +156,7 @@ func (ev *evaluation) ruleMatches(ctx context.Context, r rule) ([]store.EntityHe
 			}
 		}
 	}
-	// Sorting here keeps the order, and so the cap, the same on every
-	// backend.
+	// The store's order is its own; the result promises id order.
 	slices.SortFunc(hs, func(a, b store.EntityHeader) int { return strings.Compare(a.ID, b.ID) })
 	return hs, nil
 }
@@ -209,7 +212,7 @@ func (ev *evaluation) scan(ctx context.Context, cond condition) ([]store.EntityH
 }
 
 // scanKey identifies a scan by its type and pushed predicates. They are
-// sorted by Config.compileCondition, so equal sets give equal keys.
+// sorted by Config.lower, so equal sets give equal keys.
 func scanKey(cond condition) string {
 	var b strings.Builder
 	b.WriteString(cond.entityType)

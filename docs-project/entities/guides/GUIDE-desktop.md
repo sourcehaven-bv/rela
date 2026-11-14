@@ -234,10 +234,10 @@ The first time a rule runs, it shows nothing. This applies when you first open a
 project and when you add a rule. Without it, opening a project with fifty
 overdue tasks would show fifty notifications. From then on, only changes notify.
 
-A rule looks at no more than 100 matching entities per check: the 100 with the
-lowest ids. If more entities match, an entity past the first 100 notifies when
-it moves into them, for example because a lower one stopped matching. The
-badge is not limited; it counts every match.
+A rule that matches more than 1,000 entities shows no notifications, and Rela
+logs a warning that names it. When it matches 1,000 or fewer again, its next
+check is silent, like a first run, and later changes notify as usual. The
+badge has no such limit; it counts every match.
 
 Clicking a notification opens the entity.
 

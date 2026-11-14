@@ -2,7 +2,9 @@ package desktopnotify
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"slices"
 	"strings"
 	"testing"
@@ -93,6 +95,46 @@ badge:
 	}
 }
 
+// A lowered rule reads a capped page however many entities match, so its
+// rows do not grow with the matches either.
+func TestEvaluate_LoweredRuleReadsAtMostTheCap(t *testing.T) {
+	t.Parallel()
+	cfg := load(t, `
+notifications:
+  - id: open
+    type: taak
+    condition: "entity.status == 'open'"
+badge:
+  type: taak
+  condition: "entity.status == 'open'"
+`)
+	measure := func(n int) (storetest.Cost, string) {
+		st := newStore(t)
+		ctx := context.Background()
+		for i := range n {
+			if err := st.CreateEntity(ctx, newTaak(fmt.Sprintf("TAAK-%05d", i), "open", "")); err != nil {
+				t.Fatalf("CreateEntity: %v", err)
+			}
+		}
+		counting := storetest.NewCounting(st)
+		res, err := cfg.Evaluate(ctx, counting, store.TrivialScope())
+		if err != nil {
+			t.Fatalf("Evaluate: %v", err)
+		}
+		if res.Badge != n || !slices.Equal(res.Truncated, []string{"open"}) {
+			t.Fatalf("at %d: badge %d, truncated %v", n, res.Badge, res.Truncated)
+		}
+		return counting.Cost(), counting.String()
+	}
+	const small, large = MaxMatchesPerRule + 100, 2 * MaxMatchesPerRule
+	s, sDetail := measure(small)
+	l, lDetail := measure(large)
+	storetest.AssertSameCost(t, small, s, sDetail, large, l, lDetail)
+	if want := (storetest.Cost{Calls: 2, Rows: MaxMatchesPerRule + 1}); l != want {
+		t.Errorf("cost = %s, want %s", l, want)
+	}
+}
+
 func TestEvaluate_CapsMatchesPerRule(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -103,11 +145,12 @@ func TestEvaluate_CapsMatchesPerRule(t *testing.T) {
 		{"judged in Go", "entity.status == 'open' and entity.vervaldatum <= today()"},
 	}
 	const total = MaxMatchesPerRule + 5
-	var taken []taak
-	// Created in reverse, so the result order cannot come from insertion.
-	for i := total; i > 0; i-- {
+	taken := make([]taak, 0, total+1)
+	for i := range total {
 		taken = append(taken, taak{fmt.Sprintf("TAAK-%04d", i), "t", "open", "2026-10-01"})
 	}
+	// The "few" rule stays under the cap and still reports.
+	taken = append(taken, taak{"TAAK-X", "t", "few", ""})
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -116,9 +159,9 @@ notifications:
   - id: a
     type: taak
     condition: %q
-  - id: none
+  - id: few
     type: taak
-    condition: "entity.status == 'nope'"
+    condition: "entity.status == 'few'"
 badge:
   type: taak
   condition: %q
@@ -127,15 +170,8 @@ badge:
 			if err != nil {
 				t.Fatalf("Evaluate: %v", err)
 			}
-			if len(res.Matches) != MaxMatchesPerRule {
-				t.Fatalf("matches = %d, want %d", len(res.Matches), MaxMatchesPerRule)
-			}
-			first, last := res.Matches[0].EntityID, res.Matches[MaxMatchesPerRule-1].EntityID
-			if first != "TAAK-0001" || last != fmt.Sprintf("TAAK-%04d", MaxMatchesPerRule) {
-				t.Errorf("matches run %s..%s, want the lowest ids", first, last)
-			}
-			if !slices.IsSortedFunc(res.Matches, func(a, b Match) int { return strings.Compare(a.EntityID, b.EntityID) }) {
-				t.Error("matches are not ordered by id")
+			if len(res.Matches) != 1 || res.Matches[0].RuleID != "few" {
+				t.Fatalf("matches = %+v, want only rule few's", res.Matches)
 			}
 			if !slices.Equal(res.Truncated, []string{"a"}) {
 				t.Errorf("Truncated = %v, want [a]", res.Truncated)
@@ -196,47 +232,74 @@ func TestLower(t *testing.T) {
 	}
 }
 
-func TestTracker_TruncatedRuleKeepsIDsPastCap(t *testing.T) {
+func TestTracker_TruncatedRuleStartsOver(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	tr, err := NewTracker(newKV(t))
 	if err != nil {
 		t.Fatalf("NewTracker: %v", err)
 	}
-	result := func(truncated bool, ids ...string) Result {
-		res := Result{Rules: []string{"a"}}
-		for _, id := range ids {
-			res.Matches = append(res.Matches, Match{RuleID: "a", EntityID: id})
-		}
-		if truncated {
-			res.Truncated = []string{"a"}
-		}
-		return res
-	}
+	// Rule a is never truncated; rule b goes over the cap and back.
 	steps := []struct {
-		name string
-		res  Result
-		want []string
+		name       string
+		a, b       []string
+		bTruncated bool
+		want       []string
 	}{
-		{"first run is silent", result(false, "X-1", "X-2", "X-3", "X-4", "X-5"), nil},
-		// X-2 stopped matching; X-4 and X-5 lie past the cap and are kept.
-		{"truncated run", result(true, "X-1", "X-3"), nil},
-		{"id kept past the cap does not notify", result(true, "X-1", "X-3", "X-4"), nil},
-		{"id dropped under the cap notifies again", result(true, "X-1", "X-2", "X-3"), []string{"X-2"}},
-		{"full run forgets", result(false, "X-1"), nil},
-		{"forgotten id notifies", result(true, "X-1", "X-5"), []string{"X-5"}},
+		{name: "first run is silent", a: []string{"A-1"}, b: []string{"B-1"}},
+		{
+			name: "new matches notify", a: []string{"A-1", "A-2"}, b: []string{"B-1", "B-2"},
+			want: []string{"a:A-2", "b:B-2"},
+		},
+		{
+			name: "truncated rule notifies nothing", a: []string{"A-1", "A-2", "A-3"}, bTruncated: true,
+			want: []string{"a:A-3"},
+		},
+		{name: "still truncated", a: []string{"A-1", "A-2", "A-3"}, bTruncated: true},
+		{name: "back under the cap is silent", a: []string{"A-1", "A-2", "A-3"}, b: []string{"B-1", "B-2", "B-3"}},
+		{
+			name: "then a new match notifies", a: []string{"A-1"}, b: []string{"B-1", "B-2", "B-3", "B-4"},
+			want: []string{"b:B-4"},
+		},
 	}
 	for _, step := range steps {
-		fresh, err := tr.Update(ctx, step.res)
+		res := Result{Rules: []string{"a", "b"}}
+		for _, id := range step.a {
+			res.Matches = append(res.Matches, Match{RuleID: "a", EntityID: id})
+		}
+		for _, id := range step.b {
+			res.Matches = append(res.Matches, Match{RuleID: "b", EntityID: id})
+		}
+		if step.bTruncated {
+			res.Truncated = []string{"b"}
+		}
+		fresh, err := tr.Update(ctx, res)
 		if err != nil {
 			t.Fatalf("%s: Update: %v", step.name, err)
 		}
 		var got []string
 		for _, m := range fresh {
-			got = append(got, m.EntityID)
+			got = append(got, m.RuleID+":"+m.EntityID)
 		}
 		if !slices.Equal(got, step.want) {
 			t.Fatalf("%s: new = %v, want %v", step.name, got, step.want)
 		}
+	}
+}
+
+// A rule that is over the cap the first time it runs leaves no record.
+func TestTracker_TruncatedFirstRunWritesNothing(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	kv := newKV(t)
+	tr, err := NewTracker(kv)
+	if err != nil {
+		t.Fatalf("NewTracker: %v", err)
+	}
+	if _, err := tr.Update(ctx, Result{Rules: []string{"a"}, Truncated: []string{"a"}}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if _, err := kv.Get(ctx, stateKeyPrefix+"a"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("Get = %v, want no record", err)
 	}
 }
