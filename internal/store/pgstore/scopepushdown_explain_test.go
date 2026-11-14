@@ -93,10 +93,10 @@ relations:
 	def, _ := meta.GetEntityDef("ticket")
 	prog, err := predicatefns.NewEvaluator(meta).CompileWithCurrentUser("ticket", def.QueryScopes["open-rare"])
 	require.NoError(t, err)
-	lowered, ok := queryplan.LowerScope(prog, meta, "ticket", "")
+	lowered, ok := queryplan.LowerCondition(prog, meta, "ticket", "")
 	require.True(t, ok, "the scope must lower")
 	require.Len(t, lowered.Traversals, 1)
-	spec := lowered.Traversals[0]
+	spec := lowered.Traversals[0].Spec
 	resolved, err := predicatefns.ResolveTraversal(meta, "ticket", spec)
 	require.NoError(t, err)
 	require.Len(t, resolved, 1)

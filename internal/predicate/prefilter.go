@@ -257,15 +257,67 @@ func attrTypeOf(n node) Type {
 // twice, and a membership keeps List set. Deciding which of those a store can
 // answer exactly is the caller's job, since it depends on the metamodel.
 func (p *Program) Conjunction(spec PrefilterSpec) (eqs []ConstEquality, traversals []TraversalSpec, ok bool) {
+	cmps, terms, ok := p.conjunction(spec, false)
+	if !ok {
+		return nil, nil, false
+	}
+	for _, c := range cmps {
+		eqs = append(eqs, c.ConstEquality)
+	}
+	for _, t := range terms {
+		traversals = append(traversals, t.Spec)
+	}
+	return eqs, traversals, true
+}
+
+// Comparison is one comparison leaf of [Program.ConditionConjunction]: a
+// [ConstEquality], or its negation when NotEqual is set.
+type Comparison struct {
+	ConstEquality
+
+	// NotEqual reports a `~=` leaf. The language's equality table has
+	// `nil ~= 'x'` true, so a store must read it as "not this value, or
+	// unset". Never set together with List: `~=` has no membership form.
+	NotEqual bool
+}
+
+// TraversalTerm is one `related(...)` leaf of
+// [Program.ConditionConjunction], negated when the leaf is
+// `not related(...)`.
+type TraversalTerm struct {
+	Spec    TraversalSpec
+	Negated bool
+}
+
+// ConditionConjunction is [Program.Conjunction] widened with two leaf
+// shapes: a `~=` against the same constants an `==` may compare with, and
+// `not related(...)` on spec.RecordVar. It is for a caller that answers a
+// query condition in the store (a list `condition:`, a list query scope)
+// and whose store expresses both shapes exactly.
+//
+// It is a separate method so the callers of Conjunction keep their narrower
+// contract: a `visible:` grant compiles only what Conjunction admits.
+func (p *Program) ConditionConjunction(spec PrefilterSpec) (cmps []Comparison, traversals []TraversalTerm, ok bool) {
+	return p.conjunction(spec, true)
+}
+
+// conjunction walks the AND spine for [Program.Conjunction] and
+// [Program.ConditionConjunction]. widened admits `~=` and a negated
+// traversal.
+func (p *Program) conjunction(spec PrefilterSpec, widened bool) ([]Comparison, []TraversalTerm, bool) {
 	if p == nil || spec.RecordVar == "" {
 		return nil, nil, false
 	}
-	var leaves []node
+	var (
+		leaves     []node
+		cmps       []Comparison
+		traversals []TraversalTerm
+	)
 	collectConjuncts(p.root, &leaves)
 	for _, n := range leaves {
 		switch x := n.(type) {
 		case *relationalNode:
-			if x.op != "==" {
+			if x.op != "==" && (!widened || x.op != "~=") {
 				return nil, nil, false
 			}
 			_, eq, found := constEqualityFrom(x.lhs, x.rhs, spec)
@@ -275,24 +327,35 @@ func (p *Program) Conjunction(spec PrefilterSpec) (eqs []ConstEquality, traversa
 			if !found {
 				return nil, nil, false
 			}
-			eqs = append(eqs, eq)
+			cmps = append(cmps, Comparison{ConstEquality: eq, NotEqual: x.op == "~="})
 		case *callNode:
 			_, eq, found := constFuncEquality(x, spec)
 			if !found {
 				return nil, nil, false
 			}
-			eqs = append(eqs, eq)
+			cmps = append(cmps, Comparison{ConstEquality: eq})
 		case *traversalNode:
-			v, isVar := x.subject.(*varNode)
-			if !isVar || v.name != spec.RecordVar {
+			if !recordTraversal(x, spec) {
 				return nil, nil, false
 			}
-			traversals = append(traversals, x.spec)
+			traversals = append(traversals, TraversalTerm{Spec: x.spec})
+		case *notNode:
+			t, isTraversal := x.expr.(*traversalNode)
+			if !widened || !isTraversal || !recordTraversal(t, spec) {
+				return nil, nil, false
+			}
+			traversals = append(traversals, TraversalTerm{Spec: t.spec, Negated: true})
 		default:
 			return nil, nil, false
 		}
 	}
-	return eqs, traversals, true
+	return cmps, traversals, true
+}
+
+// recordTraversal reports whether t starts at spec.RecordVar itself.
+func recordTraversal(t *traversalNode, spec PrefilterSpec) bool {
+	v, isVar := t.subject.(*varNode)
+	return isVar && v.name == spec.RecordVar
 }
 
 // collectConjuncts flattens the top-level AND spine into its leaves. A

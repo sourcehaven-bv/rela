@@ -427,6 +427,12 @@ func propCondOn(b *sqlBuilder, alias string, p store.PropPredicate) string {
 		valArg := b.arg(p.Value)
 		return fmt.Sprintf("(jsonb_typeof(%s) = 'string' AND %s = %s)", jsn, txt, valArg)
 	}
+	if p.Scalar && p.Op == store.PropNotEqualOrEmpty {
+		// The negation of the arm above. COALESCE because jsonb_typeof of
+		// an absent key is NULL, and NOT NULL would drop the unset row.
+		valArg := b.arg(p.Value)
+		return fmt.Sprintf("(NOT COALESCE(jsonb_typeof(%s) = 'string' AND %s = %s, FALSE))", jsn, txt, valArg)
+	}
 
 	// isEmpty covers: missing key, JSON null, empty string, empty array.
 	isEmpty := fmt.Sprintf(

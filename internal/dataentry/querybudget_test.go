@@ -684,9 +684,9 @@ func TestQueryBudget_NestedSectionIsSizeIndependent(t *testing.T) {
 	assertBudget(t, "nested section", b, nestedSectionBudget, detail)
 }
 
-// A list page under a query scope the store cannot answer alone
-// (TKT-CXQEV0). The traversal is answered for the whole candidate set in one
-// gated MatchingIDs call, so it adds a constant, never a read per row.
+// A list page under a negated traversal scope. It once took the Go path
+// (TKT-CXQEV0), with one gated MatchingIDs call over the candidate set; it
+// now lowers (TKT-I39Y7N4), so this pins rows as well as calls.
 func TestQueryBudget_TraversalScopeIsSizeIndependent(t *testing.T) {
 	b, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
 		t.Helper()
@@ -710,10 +710,9 @@ func TestQueryBudget_TraversalScopeIsSizeIndependent(t *testing.T) {
 			}
 		}
 	})
-	// TODO(TKT-F2EJQY8): calls only. A scope that does not lower keeps the
-	// Go path, which reads every header of the type (scopedHeaders' type
-	// scan in scopedread.go) and judges the scope over that candidate set.
-	assertCallBudget(t, "traversal scope list page", b, traversalScopeBudget, detail)
+	// `not related(...)` lowers to a negated store traversal (TKT-I39Y7N4),
+	// so the page is read in the store and its rows do not grow with it.
+	assertBudget(t, "traversal scope list page", b, traversalScopeBudget, detail)
 }
 
 // A list page under a scope that lowers exactly is served by the store
@@ -873,11 +872,9 @@ const (
 	// list page: scoped count + one bounded page read (listpushdown.go),
 	// page edges, neighbor headers, membership walk.
 	listPageBudget = 6
-	// traversal-scoped list page on the Go path (a scope that does not
-	// lower): the type's headers, ONE MatchingIDs for the traversal, then the
-	// page's edges, neighbor headers and membership walk as on a plain page.
-	// A scope that lowers costs listPageBudget instead.
-	traversalScopeBudget = 6
+	// list page under a negated traversal scope: it lowers, so it costs
+	// what a plain page does (TKT-I39Y7N4).
+	traversalScopeBudget = listPageBudget
 	// view: entry, two traverse passes, collection load, section columns +
 	// target headers, entry edges, membership walk.
 	viewSectionBudget = 12
