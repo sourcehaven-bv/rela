@@ -70,7 +70,7 @@ func openProject(startDir, org string, opts ...appbuild.Option) (*appbuild.Servi
 		}
 		return svc, svc, nil
 	}
-	profileOpts, err := applyTenantProfile(os.Getenv, appbuild.TenantProfile.ApplyLuaHTTPPolicy)
+	profileOpts, err := applyTenantProfile(os.Getenv, appbuild.TenantProfile.ApplyLuaPolicy)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -119,7 +119,7 @@ func cliTenantProfile(getenv func(string) string) appbuild.TenantProfile {
 // applyTenantProfile applies tenant mode's SaaS profile (TKT-3RWQ1PK) to a
 // CLI command that opens a tenant, as rela-server -tenant-mode does: it
 // installs the strict Lua HTTP policy through apply, which is
-// [appbuild.TenantProfile.ApplyLuaHTTPPolicy] outside tests, and returns
+// [appbuild.TenantProfile.ApplyLuaPolicy] outside tests, and returns
 // the build options that withhold secrets.yaml and ai.yaml unless
 // $RELA_TENANT_SHARED_HOST_CONFIG is 1. An allowlist that does not parse,
 // or a policy that is not installed, fails the command. The scheduler and

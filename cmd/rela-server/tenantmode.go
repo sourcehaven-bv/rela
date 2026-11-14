@@ -78,7 +78,8 @@ func registerTenantFlags(t *tenantFlags) {
 		"Tenant mode: most tenant creations started per minute (default 10; at most 2 run at once). "+
 			"Also RELA_TENANT_PROVISION_RATE.")
 	flag.StringVar(&t.idpOrgAPI, "tenant-idp-org-api", envOr("RELA_TENANT_IDP_ORG_API", ""),
-		"Tenant mode: the IdP operator API (http(s)://host:port or unix:///path/to/socket). When set, a "+
+		"Tenant mode: the IdP operator API (https://host:port, unix:///path/to/socket, or http://host:port "+
+			"for localhost or a loopback IP only). When set, a "+
 			"verified organization.updated webhook suspends or resumes the org's tenant to match the IdP. "+
 			"Needs -webhook-* and the secret in "+envIDPOperatorSecret+". Also RELA_TENANT_IDP_ORG_API.")
 	flag.StringVar(&t.luaHTTPAllow, "lua-http-allow", envOr("RELA_LUA_HTTP_ALLOW", ""),
@@ -482,7 +483,7 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 	// The strict Lua HTTP policy is set before anything can build a Lua
 	// runtime; validateTenantMode has parsed the allowlist. Startup fails
 	// unless the strict policy is installed afterwards.
-	policy, err := tenantProfile(f.tenant).ApplyLuaHTTPPolicy()
+	policy, err := tenantProfile(f.tenant).ApplyLuaPolicy()
 	if err != nil {
 		return nil, err
 	}

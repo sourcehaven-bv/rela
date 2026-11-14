@@ -29,7 +29,7 @@ import (
 // Status is an organization's status at the IdP.
 type Status string
 
-// The statuses the operator API reports. An empty status is active.
+// The statuses the operator API reports.
 const (
 	StatusActive    Status = "active"
 	StatusSuspended Status = "suspended"
@@ -69,7 +69,8 @@ type Client struct {
 }
 
 // New builds a client for the operator API at base, which is
-// `http(s)://host[:port]` or `unix:///path/to/socket`, signing with secret.
+// `https://host[:port]`, `unix:///path/to/socket`, or
+// `http://host[:port]` for a loopback host, signing with secret.
 // A request is bounded by [DefaultTimeout] and follows no redirect.
 //
 // Nil: rejected — an empty base or secret is an error, so a misconfigured
@@ -124,6 +125,13 @@ func parseBase(base string) (*url.URL, *http.Transport, error) {
 		if u.Host == "" || (u.Path != "" && u.Path != "/") {
 			return nil, nil, errors.New("idporg: the operator API address must be scheme://host[:port]")
 		}
+		// The answer is not signed, so whoever can change it in transit
+		// can suspend or resume an org. Plain http is safe only when the
+		// traffic never leaves the machine.
+		if u.Scheme == "http" && !isLoopback(u.Hostname()) {
+			return nil, nil, fmt.Errorf("idporg: operator API host %q needs https; "+
+				"plain http is allowed only for localhost or a loopback IP", u.Hostname())
+		}
 		return &url.URL{Scheme: u.Scheme, Host: u.Host}, transport, nil
 	case "unix":
 		if u.Host != "" || u.Path == "" {
@@ -137,6 +145,17 @@ func parseBase(base string) (*url.URL, *http.Transport, error) {
 		return &url.URL{Scheme: "http", Host: socketHost}, transport, nil
 	}
 	return nil, nil, fmt.Errorf("idporg: operator API scheme %q is not http, https or unix", u.Scheme)
+}
+
+// isLoopback reports whether host is localhost or a loopback IP literal. A
+// name other than localhost is not resolved: what it resolves to can
+// change after startup.
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // org is the part of the operator API's org record the client reads.
@@ -192,8 +211,12 @@ func (c *Client) OrgStatus(ctx context.Context, orgID string) (Status, error) {
 	if o.ID != orgID {
 		return "", fmt.Errorf("%w: the answer names org %q, not %q", ErrUnavailable, o.ID, orgID)
 	}
+	// An empty or missing status is not read as active: an answer that
+	// does not say the org is active must not resume it, so it is
+	// unavailable and the caller retries. pratique's operator API always
+	// sends the status and reports an org without one as active itself.
 	switch Status(o.Status) {
-	case "", StatusActive:
+	case StatusActive:
 		return StatusActive, nil
 	case StatusSuspended:
 		return StatusSuspended, nil

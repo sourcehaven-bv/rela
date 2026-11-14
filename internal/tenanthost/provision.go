@@ -87,6 +87,18 @@ const (
 // start another one. It spaces out retries of a create that keeps failing.
 const failureHold = 30 * time.Second
 
+// elsewhereHold is how long a run that found another process creating the
+// tenant ([tenant.ErrTenantInUse]) is remembered. During it a request
+// answers provisioning without starting a run, so polling an org another
+// server is creating does not use up the start rate. It is a little longer
+// than the Retry-After of a provisioning answer, so one poll interval
+// starts at most one run.
+const elsewhereHold = 5 * time.Second
+
+// errProvisionElsewhere reports that another process was creating the
+// org's tenant less than [elsewhereHold] ago, so no run started.
+var errProvisionElsewhere = errors.New("tenanthost: the tenant is being provisioned by another process")
+
 // errProvisionBusy reports that a run could not start because the rate or
 // the running cap is reached.
 var errProvisionBusy = errors.New("tenanthost: provisioning is at its limit")
@@ -126,6 +138,9 @@ type provisioning struct {
 	closed bool
 	runs   map[string]*run
 	failed map[string]failure
+	// elsewhere holds when a run last found another process creating the
+	// org's tenant.
+	elsewhere map[string]time.Time
 }
 
 // run is one provisioning run. done closes when it ends; err is set before.
@@ -157,6 +172,7 @@ func newProvisioning(cfg ProvisionConfig) *provisioning {
 		stop:       make(chan struct{}),
 		runs:       map[string]*run{},
 		failed:     map[string]failure{},
+		elsewhere:  map[string]time.Time{},
 	}
 }
 
@@ -196,8 +212,10 @@ func validateProvision(cfg ProvisionConfig, webhook bool) error {
 // abort a migration.
 //
 // It refuses with errProvisionFailed while the org's last run failed less
-// than failureHold ago, and with errProvisionBusy when the rate or the
-// running cap is reached or the host is closing.
+// than failureHold ago, with errProvisionElsewhere while its last run found
+// another process creating the tenant less than elsewhereHold ago, and with
+// errProvisionBusy when the rate or the running cap is reached or the host
+// is closing. Only a run that starts takes a token from the rate.
 func (p *provisioning) start(ctx context.Context, orgID string) (*run, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -210,8 +228,16 @@ func (p *provisioning) start(ctx context.Context, orgID string) (*run, error) {
 			delete(p.failed, org)
 		}
 	}
+	for org, at := range p.elsewhere {
+		if now.Sub(at) >= elsewhereHold {
+			delete(p.elsewhere, org)
+		}
+	}
 	if f, ok := p.failed[orgID]; ok {
 		return nil, fmt.Errorf("%w: %w", errProvisionFailed, f.err)
+	}
+	if _, ok := p.elsewhere[orgID]; ok {
+		return nil, errProvisionElsewhere
 	}
 	if p.closed || len(p.runs) >= p.maxRunning || !p.limiter.Allow() {
 		return nil, errProvisionBusy
@@ -245,7 +271,10 @@ func (p *provisioning) execute(ctx context.Context, orgID string, r *run) {
 	}
 	p.mu.Lock()
 	delete(p.runs, orgID)
-	if err != nil && !errors.Is(err, tenant.ErrTenantInUse) {
+	switch {
+	case errors.Is(err, tenant.ErrTenantInUse):
+		p.elsewhere[orgID] = p.now()
+	case err != nil:
 		p.failed[orgID] = failure{err: err, at: p.now()}
 	}
 	r.err = err

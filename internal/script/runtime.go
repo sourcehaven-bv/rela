@@ -1,10 +1,12 @@
 package script
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"path/filepath"
+	"sync/atomic"
 
 	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/hostconfig"
@@ -16,8 +18,9 @@ import (
 // NewWriterRuntime builds a read-write lua.Runtime wired with AI provider,
 // per-script secrets and the mail transport, read from deps.Host or, when
 // that is nil, from the project's .rela/ directory (derived from
-// deps.ProjectRoot). scriptPath is used to locate
-// per-script secrets; pass "" for inline code. The caller owns the returned
+// deps.ProjectRoot). After [RequireHostConfig] a nil deps.Host is an
+// error. scriptPath is used to locate per-script secrets; pass "" for
+// inline code. The caller owns the returned
 // runtime and must call Close.
 //
 // Option precedence: caller opts are applied first, then context opts (AI
@@ -36,6 +39,17 @@ func NewWriterRuntime(deps lua.WriteDeps, scriptPath string,
 	// than adding a parallel mail-loading call site.
 	host := deps.Host
 	if host == nil {
+		// The .rela fallback serves a single-project process: the CLI, the
+		// desktop and tests, where that directory is the project's own. A
+		// tenant-mode process shares one .rela directory between tenants,
+		// so there a missing host config is a wiring bug that would hand a
+		// tenant the operator's secrets; it is refused instead. Every
+		// production caller sets Host (appbuild's Lua deps and the
+		// data-entry App through dataentry.SetLuaHost), so the refusal only
+		// catches a new surface that forgot it.
+		if hostConfigRequired.Load() {
+			return nil, errors.New("lua context: no host config in tenant mode")
+		}
 		host = hostconfig.Dir(cacheDirFor(deps.ProjectRoot))
 	}
 	mailLoader := lua.MailSenderLoader(loadMailSender)
@@ -55,6 +69,16 @@ func NewWriterRuntime(deps lua.WriteDeps, scriptPath string,
 	all = append(all, ctxOpts...)
 	return lua.NewWriter(deps, stdout, all...), nil
 }
+
+// hostConfigRequired is set by [RequireHostConfig].
+var hostConfigRequired atomic.Bool
+
+// RequireHostConfig makes [NewWriterRuntime] refuse deps without a host
+// config for the rest of the process, instead of reading the project's
+// .rela directory. Tenant mode calls it at startup, through
+// appbuild.TenantProfile.ApplyLuaPolicy, because there that directory is
+// the operator's and is shared by every tenant.
+func RequireHostConfig() { hostConfigRequired.Store(true) }
 
 // withoutAIConfig is a host config that reports ai.yaml as absent.
 type withoutAIConfig struct{ lua.HostConfig }

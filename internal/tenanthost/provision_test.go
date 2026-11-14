@@ -401,6 +401,56 @@ func TestProvision_LazyFailureIsRetryable(t *testing.T) {
 	waitFor(t, func() bool { return p.calls.Load() == 2 })
 }
 
+// TestProvision_LazyHoldsWhileAnotherProcessProvisions pins that a run that
+// finds another process creating the tenant is remembered for a short
+// hold. During it, polls answer 202 provisioning without starting a run or
+// taking a token from the start rate, so another org can still start. After
+// the hold a poll starts a run again.
+func TestProvision_LazyHoldsWhileAnotherProcessProvisions(t *testing.T) {
+	t.Parallel()
+	c := newControl(nil)
+	p := &stubProvisioner{control: c, err: fmt.Errorf("lock held: %w", tenant.ErrTenantInUse)}
+	h := newProvHost(t, c, tenanthost.ProvisionConfig{
+		Mode: tenanthost.ProvisionLazy, Provisioner: p, PerMinute: 3, MaxRunning: 10,
+	})
+	var mu sync.Mutex
+	now := time.Now()
+	tenanthost.SetProvisionClock(h, func() time.Time { mu.Lock(); defer mu.Unlock(); return now })
+
+	poll := func(org string) *httptest.ResponseRecorder {
+		t.Helper()
+		w := do(h, http.MethodGet, "/api/v1/tickets", "tok-"+org, "")
+		if w.Code != http.StatusAccepted || statusOf(t, w.Body.String()) != "provisioning" {
+			t.Fatalf("%s: %d %s, want 202 provisioning", org, w.Code, w.Body.String())
+		}
+		return w
+	}
+	poll("org-new")
+	waitFor(t, func() bool { return p.calls.Load() == 1 && !tenanthost.ProvisionRunning(h, "org-new") })
+
+	for range 5 {
+		if w := poll("org-new"); w.Header().Get("Retry-After") == "" {
+			t.Fatal("a provisioning answer during the hold has no Retry-After")
+		}
+	}
+	if got := p.calls.Load(); got != 1 {
+		t.Fatalf("provisioner calls = %d during the hold, want 1", got)
+	}
+	if w := do(h, http.MethodPost, tenanthost.WebhookPath, "", "organization.created|org-new"); w.Code != http.StatusAccepted {
+		t.Errorf("webhook during the hold: status = %d, want 202", w.Code)
+	}
+
+	// The polls took no token, so a second org still starts.
+	poll("org-2")
+	waitFor(t, func() bool { return p.calls.Load() == 2 })
+
+	mu.Lock()
+	now = now.Add(time.Minute)
+	mu.Unlock()
+	poll("org-new")
+	waitFor(t, func() bool { return p.calls.Load() == 3 })
+}
+
 // TestProvision_RateCap pins that runs over the cap are refused with 503.
 func TestProvision_RateCap(t *testing.T) {
 	t.Parallel()

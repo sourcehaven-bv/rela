@@ -819,7 +819,9 @@ gets 202 at once, with `Retry-After` and the body
 it migrates. While a tenant's status is `provisioning`, every request gets
 the same 202. If the create failed, requests get 503 `provisioning_failed`
 with `Retry-After` for 30 seconds; the next request after that tries again.
-A create that failed part way is finished by the next one.
+A create that failed part way is finished by the next one. If another
+server is creating the tenant, requests get the same 202 for 5 seconds
+without starting a create, so polling does not use up the start rate.
 
 The SPA can poll `GET /api/v1/_tenant`. It answers 200 with
 `{"status":"active"}`, `{"status":"provisioning"}` or
@@ -859,8 +861,12 @@ so create the first tenant with `rela-server tenant create`.
 
 The server can suspend and resume a tenant when the IdP suspends or
 reactivates its org. Set `-tenant-idp-org-api` (`RELA_TENANT_IDP_ORG_API`)
-to the IdP's operator API, as `http://host:port`, `https://host:port` or
-`unix:///path/to/socket`. Put the operator API's HMAC secret in
+to the IdP's operator API, as `https://host:port` or
+`unix:///path/to/socket`. Plain `http://host:port` is allowed only when the
+host is `localhost` or a loopback IP such as `127.0.0.1`. The operator API
+signs requests but not its answers, so over plain http to another machine a
+network attacker could suspend or resume a tenant. The server refuses to
+start with any other address. Put the operator API's HMAC secret in
 `$RELA_IDP_OPERATOR_SECRET`. There is no flag for the secret, so it never
 shows in `ps` or shell history. The server refuses to start when the flag
 is set without the secret, without the IdP webhook (`-webhook-audience`
@@ -875,6 +881,7 @@ event the server asks the operator API for the org's current status
 | `suspended` | Suspends an active tenant. Open sessions close at once, as after `tenant suspend`. An already suspended tenant stays as it is. |
 | `active` | Resumes the tenant, but only if the IdP suspended it. A tenant an operator suspended stays suspended. |
 | unknown (404) | Nothing. Erasure is an operator decision. |
+| no status, or another status | Nothing. The server answers 502, so the IdP sends the event again. |
 
 An erased tenant is left as it is, whatever the IdP says.
 

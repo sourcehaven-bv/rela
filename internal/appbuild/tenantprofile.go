@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
 // TenantProfile is the part of tenant mode's SaaS profile (TKT-3RWQ1PK)
@@ -58,16 +59,23 @@ func (p TenantProfile) Options() []Option {
 	return []Option{WithWithheldHostConfig(p.WithheldReason)}
 }
 
-// ApplyLuaHTTPPolicy installs the profile's Lua HTTP policy with
-// [lua.SetHTTPPolicy] and returns it. It must run before any Lua runtime is
-// built, so no script sees the single-tenant default. It fails closed: it
-// returns an error unless [lua.CurrentHTTPPolicy] reports a strict policy
-// afterwards.
-func (p TenantProfile) ApplyLuaHTTPPolicy() (lua.HTTPPolicy, error) {
-	return p.applyLuaHTTPPolicy(lua.SetHTTPPolicy, lua.CurrentHTTPPolicy)
+// ApplyLuaPolicy sets the profile's process-wide Lua policy and returns its
+// HTTP policy. It installs the HTTP policy with [lua.SetHTTPPolicy], and it
+// calls [script.RequireHostConfig], so a script runtime built without a host
+// config fails instead of reading the shared .rela directory. It must run
+// before any Lua runtime is built, so no script sees the single-tenant
+// default. It fails closed: it returns an error unless
+// [lua.CurrentHTTPPolicy] reports a strict policy afterwards.
+func (p TenantProfile) ApplyLuaPolicy() (lua.HTTPPolicy, error) {
+	policy, err := p.applyLuaHTTPPolicy(lua.SetHTTPPolicy, lua.CurrentHTTPPolicy)
+	if err != nil {
+		return lua.HTTPPolicy{}, err
+	}
+	script.RequireHostConfig()
+	return policy, nil
 }
 
-// applyLuaHTTPPolicy is [TenantProfile.ApplyLuaHTTPPolicy] over an
+// applyLuaHTTPPolicy is the HTTP half of [TenantProfile.ApplyLuaPolicy] over an
 // injected setter and query, so a test does not swap the process-wide
 // client.
 func (p TenantProfile) applyLuaHTTPPolicy(

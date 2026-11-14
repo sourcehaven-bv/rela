@@ -3,6 +3,7 @@ package lua
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
@@ -110,12 +111,13 @@ func boundedStrRep(ls *lua.LState) int {
 // explicit argument indexes (%[1]s) and a * width, so one large argument
 // could be used many times and no size estimate over the arguments would
 // hold. This version parses the format itself and formats verb by verb,
-// with one argument each. Each argument is used at most once. A verb is
-// formatted with fmt.Sprintf on the same Lua value as before, so the output
-// of a valid format does not change.
+// with one argument each. Each argument is used at most once.
 //
-// The whole result is estimated before anything is built, and the running
-// size is checked again as each verb is added.
+// Each argument is converted to a Go value first, as Lua 5.1 does (see
+// [formatVerb.convert]), so fmt never sees a raw Lua value: a table or
+// userdata cannot print Go internals, and every string the result holds
+// has a known length. The whole result is then estimated before anything
+// is built, and the running size is checked again as each verb is added.
 func boundedStrFormat(ls *lua.LState) int {
 	f := ls.CheckString(1)
 	verbs, err := parseLuaFormat(f)
@@ -124,33 +126,42 @@ func boundedStrFormat(ls *lua.LState) int {
 		return 0
 	}
 	top := ls.GetTop()
-	argOf := func(v formatVerb) lua.LValue {
-		if v.arg < 0 || v.arg > top {
-			return nil
-		}
-		return ls.Get(v.arg)
-	}
+	args := make([]any, len(verbs))
 	size := len(f)
-	for _, v := range verbs {
-		size += v.estimate(argOf(v))
+	missing := 0
+	for i, v := range verbs {
+		switch {
+		case v.arg < 0:
+			continue
+		case v.arg > top:
+			// Counted at the most a verb adds, so a format of many verbs
+			// over too few arguments is refused for its size first.
+			if missing == 0 {
+				missing = v.arg
+			}
+			size += maxFormatVerbBytes
+		default:
+			args[i] = v.convert(ls)
+			size += v.estimate(args[i])
+		}
 		if size > maxBuiltString {
 			raiseTooLarge(ls, "string.format")
 			return 0
 		}
 	}
+	if missing > 0 {
+		ls.ArgError(missing, "no value")
+		return 0
+	}
 	var b strings.Builder
 	lit := 0
-	for _, v := range verbs {
+	for i, v := range verbs {
 		b.WriteString(f[lit:v.start])
 		lit = v.end
-		switch arg := argOf(v); {
-		case v.arg < 0:
+		if v.arg < 0 {
 			b.WriteByte('%')
-		case arg == nil:
-			ls.ArgError(v.arg, "no value")
-			return 0
-		default:
-			fmt.Fprintf(&b, v.spec, arg)
+		} else {
+			fmt.Fprintf(&b, v.spec, args[i])
 		}
 		if b.Len() > maxBuiltString {
 			raiseTooLarge(ls, "string.format")
@@ -172,15 +183,41 @@ type formatVerb struct {
 	verb       byte
 }
 
-// estimate bounds the bytes this verb adds for arg. A width or precision is
-// at most 99 and a %f of 1e308 has 309 digits, so a verb adds at most
-// maxFormatVerbBytes besides its string argument. %q escapes a byte in at
-// most four bytes.
-func (v formatVerb) estimate(arg lua.LValue) int {
-	s, isStr := arg.(lua.LString)
+// convert returns the verb's argument as the Go value spec formats, with
+// the Lua 5.1 rules. An argument of the wrong type raises an argument
+// error.
+//
+//   - d i u o x X take a number, as an int64. A numeric string converts.
+//   - c takes a number and prints the one byte it names (spec is %s).
+//   - e E f g G take a number, as a float64.
+//   - s takes any value and prints tostring of it, so a __tostring
+//     metamethod applies.
+//   - q takes a string or a number.
+func (v formatVerb) convert(ls *lua.LState) any {
+	switch v.verb {
+	case 'd', 'i', 'u', 'o', 'x', 'X':
+		return int64(ls.CheckNumber(v.arg))
+	case 'c':
+		// Lua 5.1 casts to a C char, so only the low byte counts.
+		low := int64(ls.CheckNumber(v.arg)) & math.MaxUint8
+		return string([]byte{byte(low)})
+
+	case 'e', 'E', 'f', 'g', 'G':
+		return float64(ls.CheckNumber(v.arg))
+	case 'q':
+		return ls.CheckString(v.arg)
+	default: // 's'
+		return ls.ToStringMeta(ls.Get(v.arg)).String()
+	}
+}
+
+// estimate bounds the bytes this verb adds for arg, the value [convert]
+// returned. A width or precision is at most 99 and a %f of 1e308 has 309
+// digits, so a verb adds at most maxFormatVerbBytes besides its string
+// argument. %q escapes a byte in at most four bytes.
+func (v formatVerb) estimate(arg any) int {
+	s, isStr := arg.(string)
 	switch {
-	case v.arg < 0:
-		return 0
 	case !isStr:
 		return maxFormatVerbBytes
 	case v.verb == 'q':
@@ -240,10 +277,15 @@ func parseLuaFormat(f string) ([]formatVerb, error) {
 			return nil, fmt.Errorf("invalid option '%%%c' to 'format'", c)
 		}
 		goVerb := c
-		if c == 'u' {
-			// Go has no %u. An unsigned Lua 5.1 conversion of a
-			// non-negative number prints as %d.
+		switch c {
+		case 'i', 'u':
+			// Go has no %i or %u. Both print an integer as %d; an
+			// unsigned Lua 5.1 conversion of a non-negative number does.
 			goVerb = 'd'
+		case 'c':
+			// The byte is converted to a one-byte string: Go's %c would
+			// print the code point, which is two bytes above 127.
+			goVerb = 's'
 		}
 		spec := f[start:i] + string(goVerb)
 		verbs = append(verbs, formatVerb{start: start, end: i + 1, arg: nextArg, spec: spec, verb: c})

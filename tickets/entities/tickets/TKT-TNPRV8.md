@@ -169,6 +169,17 @@ As implemented.
   `CreateOptions.Recreate` is set; only `tenant create -recreate` sets it.
   The status check is widened and `erased_at` added on the first lifecycle
   command, in one transaction.
+- **Explicit IdP status.** The operator API client reads only `active` and
+  `suspended`. An empty, missing or other status is `ErrUnavailable`, so the
+  IdP retries and nothing resumes. pratique's `orgJSON` always sends the
+  status and maps an empty one to `active` itself.
+- **Operator API transport.** The operator API answers are not signed, so
+  `-tenant-idp-org-api` takes `https`, `unix`, or plain `http` only to
+  `localhost` or a loopback IP literal. Any other address stops startup.
+- **Another server provisioning.** A run that ends with `ErrTenantInUse` is
+  remembered for 5 seconds. During that hold a request for the org answers
+  202 provisioning and a webhook 202, without starting a run or taking a
+  start-rate token.
 - **Not changed.** The server still refuses to start without the control
   table, so the first tenant is created with `tenant create`. The SPA does
   not yet poll the status route; the API contract is in place.

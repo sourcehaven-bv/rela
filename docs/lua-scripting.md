@@ -3005,6 +3005,13 @@ These limits apply to every script, in every mode:
   or precision of more than two digits, an unknown conversion, a missing
   argument, and the Go extensions `%[n]` (argument index) and `*` (width
   from an argument). Each conversion uses its own argument.
+- `string.format` checks each argument as Lua 5.1 does. `%d`, `%i`, `%u`,
+  `%c`, `%o`, `%x`, `%X`, `%e`, `%E`, `%f`, `%g` and `%G` take a number; a
+  string that holds a number also works. `%c` prints one byte. `%s` takes
+  any value and prints what `tostring` returns, so a `__tostring`
+  metamethod applies. `%q` takes a string or a number. Any other argument
+  fails with `bad argument`. So `string.format("%x", "abc")` and
+  `string.format("%d", {})` are errors.
 
 There is no limit on the total memory a script uses. The embedded Lua
 engine cannot measure it. The `..` operator, `string.gsub` and table

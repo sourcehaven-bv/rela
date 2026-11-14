@@ -110,8 +110,11 @@ func TestValidateStatusSync(t *testing.T) {
 			wantErr: "needs the IdP webhook"},
 		{name: "no secret", flags: withAPI("http://127.0.0.1:8091", true), wantErr: envIDPOperatorSecret},
 		{name: "bad address", flags: withAPI("ftp://idp", true), secret: "s", wantErr: "-tenant-idp-org-api"},
-		{name: "credentials in the address", flags: withAPI("http://u:p@idp:8091", true), secret: "s",
+		{name: "credentials in the address", flags: withAPI("https://u:p@idp:8091", true), secret: "s",
 			wantErr: "-tenant-idp-org-api"},
+		{name: "plain http to a remote host", flags: withAPI("http://idp:8091", true), secret: "s",
+			wantErr: "needs https"},
+		{name: "https to a remote host", flags: withAPI("https://idp:8091", true), secret: "s"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

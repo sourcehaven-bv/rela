@@ -70,3 +70,20 @@ strict destination policy.
   multicast) and the Lua memory bounds apply in every mode. Loopback and
   private addresses stay reachable outside tenant mode, because the Lua
   guide documents that single-team deployments call local services.
+- **Request-path scripts.** The data-entry App builds its own Lua deps for
+  actions, document renders and webhook scripts. `dataentry.SetLuaHost`,
+  called from `dataentrywire.Services`, gives it the host config and seams
+  of its services (`appbuild.LuaHost`), so they see the withheld config too.
+  `TenantProfile.ApplyLuaPolicy` calls `script.RequireHostConfig`, so in
+  tenant mode `script.NewWriterRuntime` refuses deps without a host config
+  instead of reading the shared `.rela` directory. The fallback stays for
+  the CLI, the desktop and tests, where `.rela` is the project's own.
+- **Format arguments.** `string.format` converts each argument as Lua 5.1
+  does before Go's fmt sees it: numeric verbs take a number, `%s` takes
+  `tostring` of the value with `__tostring`, `%q` a string or number.
+  Anything else is an argument error, so a table cannot print Go internals
+  and the size estimate covers every string. No case of the gopher-lua
+  comparison test changed.
+- **No hex of strings.** With the conversion, `%x` and `%X` refuse a string
+  that is not a number, which removes the 2x hex expansion of a large
+  string.

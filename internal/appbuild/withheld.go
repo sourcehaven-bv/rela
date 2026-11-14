@@ -39,3 +39,18 @@ func mailHost(host lua.HostConfig) lua.HostConfig {
 	}
 	return host
 }
+
+// LuaHost is the host config and the Lua seams of s, for surfaces that build
+// their own [lua.WriteDeps] (the data-entry App). Under
+// [WithWithheldHostConfig] the host config withholds ai.yaml and the
+// secrets, and the seams read mail through [mailHost], exactly as the
+// automation and scheduler runtimes do.
+//
+// The seams are zero for a Services built from collaborators, which has no
+// shared base.
+func LuaHost(s *Services) (lua.HostConfig, lua.Seams) {
+	if s.base == nil {
+		return s.host, lua.Seams{}
+	}
+	return s.host, s.base.luaSeams()
+}

@@ -448,6 +448,16 @@ commands:
     script: touch command-ran
     context: global
     permission: command:touch
+actions:
+  probe:
+    label: Probe
+    script: probe.lua
+    capabilities: {secrets: [token]}
+`
+
+// saasProbeAction reports what an action script sees of the host's secret.
+const saasProbeAction = `local _, v = pcall(function() return rela.secrets.token end)
+return {message = "saw: " .. tostring(v)}
 `
 
 // TestTenantMode_SaaSProfile is the acceptance test of TKT-3RWQ1PK over
@@ -459,6 +469,7 @@ func TestTenantMode_SaaSProfile(t *testing.T) {
 	d := newTenantDeploymentWith(t, map[string]string{
 		"data-entry.yaml":    saasDataEntry,
 		".rela/secrets.yaml": "token: operator-token\n",
+		"actions/probe.lua":  saasProbeAction,
 		// ada may sync and run the command, so only tenant mode refuses them.
 		"acl.yaml": strings.Replace(tenantACL, "    update: [task]\n",
 			"    update: [task]\n    permissions: [git:sync, command:touch]\n", 1),
@@ -513,6 +524,13 @@ func TestTenantMode_SaaSProfile(t *testing.T) {
 
 		shared := d.hostWith(t, tenantFlags{sharedHostConfig: true})
 		require.NoError(t, secretsOf(shared), "-tenant-shared-host-config shares the secrets")
+	})
+
+	t.Run("an action script sees the host config withheld", func(t *testing.T) {
+		rec := tenantCall(t, th, "tok-org-a", http.MethodPost, "/api/v1/_action/probe", map[string]any{})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), "-tenant-shared-host-config")
+		require.NotContains(t, rec.Body.String(), "operator-token")
 	})
 
 	t.Run("remote MCP has no Lua tools", func(t *testing.T) {

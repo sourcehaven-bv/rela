@@ -233,3 +233,71 @@ func TestBoundedStrFormat_MatchesGopherLua(t *testing.T) {
 		})
 	}
 }
+
+// TestBoundedStrFormat_ConvertsArguments pins the Lua 5.1 argument rules of
+// string.format: a numeric verb takes a number, %s takes tostring of any
+// value, and %q takes a string or a number. Go's fmt never sees a raw Lua
+// value, so a table cannot print Go internals of unbounded size.
+func TestBoundedStrFormat_ConvertsArguments(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		args string
+		want string // the result, or "" when wantErr is set
+		// wantErr is a substring of the argument error.
+		wantErr string
+	}{
+		{name: "table as string", args: `"%s", {}`, want: "table: 0x"},
+		{name: "function as string", args: `"%s", print`, want: "function: 0x"},
+		{
+			name: "__tostring applies to %s",
+			args: `"[%s]", custom`,
+			want: "[custom]",
+		},
+		{name: "byte above 127 is one byte", args: `"%c", 200`, want: "\xc8"},
+		{name: "int from numeric string", args: `"%x", "255"`, want: "ff"},
+		{name: "table to an integer verb", args: `"%d", {}`, wantErr: "number expected"},
+		{name: "table to a float verb", args: `"%f", {}`, wantErr: "number expected"},
+		{name: "table to %q", args: `"%q", {}`, wantErr: "string expected"},
+		{name: "nil to %c", args: `"%c", nil`, wantErr: "number expected"},
+		{name: "string to %x", args: `"%x", "abc"`, wantErr: "number expected"},
+		{name: "big string to %x", args: `"%x", string.rep("a", 1048576)`, wantErr: "number expected"},
+		{name: "big string to %X", args: `"%X", string.rep("a", 1048576)`, wantErr: "number expected"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ls := NewSandbox(nil, nil, nil)
+			defer ls.Close()
+			// Scripts cannot call setmetatable, so a value with __tostring
+			// comes from Go, as a binding's would.
+			custom, mt := ls.NewTable(), ls.NewTable()
+			mt.RawSetString("__tostring", ls.NewFunction(func(l *glua.LState) int {
+				l.Push(glua.LString("custom"))
+				return 1
+			}))
+			ls.SetMetatable(custom, mt)
+			ls.SetGlobal("custom", custom)
+			err := ls.DoString("return string.format(" + tc.args + ")")
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error = %v, want an argument error containing %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := ls.Get(-1).String()
+			if tc.want == "table: 0x" || tc.want == "function: 0x" {
+				if !strings.HasPrefix(got, tc.want) || len(got) > 64 {
+					t.Fatalf("got %q, want a short %q... address", got, tc.want)
+				}
+				return
+			}
+			if got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

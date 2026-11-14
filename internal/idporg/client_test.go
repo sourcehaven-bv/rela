@@ -81,7 +81,7 @@ func TestOrgStatus(t *testing.T) {
 	}{
 		{name: "active", org: "org-a", want: idporg.StatusActive},
 		{name: "suspended", org: "org-s", want: idporg.StatusSuspended},
-		{name: "empty status is active", org: "org-e", want: idporg.StatusActive},
+		{name: "empty status", org: "org-e", wantErr: idporg.ErrUnavailable},
 		{name: "unknown org", org: "org-z", wantErr: idporg.ErrNotFound},
 		{name: "unknown status", org: "org-x", wantErr: idporg.ErrUnavailable},
 		{name: "id needing escaping", org: "a/b", wantErr: idporg.ErrNotFound},
@@ -131,6 +131,9 @@ func TestOrgStatus_BadAnswers(t *testing.T) {
 		}},
 		{name: "not json", handler: func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte("<html>"))
+		}},
+		{name: "missing status", handler: func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"id":"org-a"}`))
 		}},
 		{name: "another org", handler: func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte(`{"id":"org-b","status":"active"}`))
@@ -204,9 +207,13 @@ func TestNew_RefusesBadConfig(t *testing.T) {
 		{name: "no base", secret: "s"},
 		{name: "ftp", base: "ftp://host", secret: "s"},
 		{name: "user info", base: "http://u:p@host", secret: "s"},
-		{name: "path", base: "http://host/api", secret: "s"},
-		{name: "query", base: "http://host?x=1", secret: "s"},
-		{name: "no host", base: "http://", secret: "s"},
+		{name: "path", base: "https://host/api", secret: "s"},
+		{name: "query", base: "https://host?x=1", secret: "s"},
+		{name: "no host", base: "https://", secret: "s"},
+		{name: "plain http to a remote host", base: "http://idp.internal:8090", secret: "s"},
+		{name: "plain http to a public IP", base: "http://203.0.113.7", secret: "s"},
+		{name: "plain http to a private IP", base: "http://10.0.0.5:8090", secret: "s"},
+		{name: "plain http to a name ending in localhost", base: "http://evil.localhost", secret: "s"},
 		{name: "unix with host", base: "unix://host/sock", secret: "s"},
 		{name: "unix without path", base: "unix://", secret: "s"},
 	}
@@ -218,7 +225,10 @@ func TestNew_RefusesBadConfig(t *testing.T) {
 			}
 		})
 	}
-	for _, ok := range []string{"http://127.0.0.1:8090", "https://idp.internal/", "unix:///run/pratique/op.sock"} {
+	for _, ok := range []string{
+		"http://127.0.0.1:8090", "http://[::1]:8090", "http://localhost:8090", "http://127.0.0.2",
+		"https://idp.internal/", "unix:///run/pratique/op.sock",
+	} {
 		if _, err := idporg.New(ok, []byte("s")); err != nil {
 			t.Errorf("New(%q) = %v", ok, err)
 		}

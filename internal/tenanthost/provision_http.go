@@ -77,6 +77,8 @@ func (h *Host) provisionLazily(w http.ResponseWriter, r *http.Request, orgID str
 	}
 	_, err := h.prov.start(r.Context(), orgID)
 	switch {
+	case errors.Is(err, errProvisionElsewhere):
+		writeStatus(w, code, statusProvisioning)
 	case errors.Is(err, errProvisionBusy):
 		slog.WarnContext(r.Context(), "tenant host: provisioning at its limit", "org_id", orgID)
 		w.Header().Set("Retry-After", retryBusy)
@@ -114,6 +116,11 @@ func (h *Host) provisionFromWebhook(w http.ResponseWriter, r *http.Request, clai
 			"org_id", claims.OrgID, "id", claims.ID)
 		w.Header().Set("Retry-After", retryBusy)
 		http.Error(w, "provisioning busy", http.StatusServiceUnavailable)
+		return
+	case errors.Is(err, errProvisionElsewhere):
+		// Another server is creating the tenant, as for a run that found
+		// it so below.
+		w.WriteHeader(http.StatusAccepted)
 		return
 	case err != nil:
 		http.Error(w, "provisioning failed", http.StatusBadGateway)

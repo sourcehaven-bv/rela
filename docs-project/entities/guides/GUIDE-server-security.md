@@ -727,7 +727,7 @@ server logs each one once at startup.
 | Lua `http.*` | Strict address policy: only public addresses, plus the destinations in `-lua-http-allow`. Startup fails if the strict policy is not installed. | `TestTenantProfile`, `TestTenantProfile_ApplyFailsClosed`, `TestValidateTenantMode` |
 | `commands:` in `data-entry.yaml` | Off. `POST /api/command/...` answers 403 with code `commands_disabled_in_tenant_mode`. The UI offers no command buttons. | `TestCommandExecTenantModeRefused`, `TestBuildCommandAuthorizer_TenantMode`, `TestTenantMode_SaaSProfile` |
 | `/api/git/sync` | Off. Sync answers "git not configured" and the status reports git as unavailable. | `TestDisableGitSync`, `TestTenantMode_SaaSProfile` |
-| `.rela/secrets.yaml`, `.rela/ai.yaml` | Withheld unless `-tenant-shared-host-config` is set, also after a schema reload | `TestWithWithheldHostConfig`, `TestWithWithheldHostConfig_SurvivesReassembly`, `TestLoadContextOptions_Withheld`, `TestTenantMode_SaaSProfile` |
+| `.rela/secrets.yaml`, `.rela/ai.yaml` | Withheld unless `-tenant-shared-host-config` is set, also after a schema reload | `TestWithWithheldHostConfig`, `TestWithWithheldHostConfig_SurvivesReassembly`, `TestLoadContextOptions_Withheld`, `TestServices_RequestScriptsSeeWithheldHostConfig`, `TestNewWriterRuntime_RequireHostConfig`, `TestTenantMode_SaaSProfile` |
 | `.rela/mail.yaml` | Shared, with its SMTP password | `TestWithWithheldHostConfig` |
 | Remote MCP | Serves no Lua tool | `TestTenantMode_SaaSProfile`, `TestRemoteMCPDeps_UsesGatedHandles`, `TestNewServer_LuaToolsAreOptIn` |
 | Webhooks (`/hooks/...`) | A request without a verified assertion gets 401 | `TestTenantMode_SaaSProfile`, the "declarative hook without assertion" case in `internal/tenanthost` |
@@ -779,7 +779,10 @@ They are the same for every tenant. In tenant mode they are withheld by
 default:
 
 - In Lua, reading `rela.secrets.<name>` raises an error that says the secrets
-  are not shared in tenant mode and names `-tenant-shared-host-config`.
+  are not shared in tenant mode and names `-tenant-shared-host-config`. This
+  holds for every script: automations, schedules, actions, document renders
+  and webhook scripts. A process in tenant mode refuses to start a script
+  that has no host config, instead of reading the shared `.rela` directory.
 - `ai.*` returns an error of kind `not_configured` with the same reason.
 - Flows and connections that need a secret fail with that error. The token
   broker reports that no connection is configured.
