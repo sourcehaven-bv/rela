@@ -5,13 +5,14 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -61,7 +62,7 @@ func newD4Manager(t *testing.T, b concBackend) (*entitymanager.Manager, store.St
 	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{},
-		ACL: d, Transitions: statemachine.EmptySet(),
+		ACL: d, Transitions: transitions.NoTransitions(),
 		FieldGate:       entitymanager.AllowAllFieldGate{},
 		CopyReadGate:    entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility:  allowAllCopyVisibility(t, st),

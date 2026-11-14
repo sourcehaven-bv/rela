@@ -101,8 +101,8 @@ func (ungatedCopyEdges) RelationRemovable(context.Context, *entity.Entity, strin
 }
 
 // Copy errors. ErrUnknownCopy is caller input (4xx); the guard errors map to
-// 403/422 exactly as the statemachine's do, because they ARE the
-// statemachine's vocabulary (design doc §9.1: shared guard machinery,
+// 403/422 exactly as the transition enforcer's do, because they ARE the
+// transition enforcer's vocabulary (design doc §9.1: shared guard machinery,
 // separate declaration).
 var (
 	// ErrUnknownCopy names a definition the metamodel does not declare. A
@@ -644,7 +644,7 @@ func (ce *copyEngine) authorizeCopy(ctx context.Context, plan *copyPlan) error {
 	if guarded {
 		if ce.m.deps.CopyGuard == nil {
 			// A guarded copy with no guard implementation fails CLOSED,
-			// matching the statemachine's nil-guard rule: a guarded edge with
+			// matching the transition enforcer's nil-guard rule: a guarded edge with
 			// no guard is denied, never waved through.
 			return &acl.ForbiddenError{Decision: acl.Decision{
 				RuleKind: "copy-guard", RuleID: perm,

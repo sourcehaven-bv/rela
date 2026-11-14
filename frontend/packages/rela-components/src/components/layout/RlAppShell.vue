@@ -45,9 +45,16 @@ const props = withDefaults(
     sidebarMaxWidth?: number
     /** Width a double-click or Enter returns the sidebar to. */
     sidebarDefaultWidth?: number
+    /**
+     * Presenting to a room: the sidebar is not drawn and the main pane is
+     * enlarged by `--rl-app-shell-present-zoom` (1.25 by default), so a
+     * screen across the room stays readable.
+     */
+    presenting?: boolean
   }>(),
   {
     navOpen: false,
+    presenting: false,
     panelOpen: false,
     panelMode: 'inline',
     sidebarMinWidth: 200,
@@ -110,17 +117,18 @@ onBeforeUnmount(() => {
   <div
     class="rl-app-shell"
     :class="[
-      { 'rl-app-shell--panel-open': panelOpen },
+      { 'rl-app-shell--panel-open': panelOpen, 'rl-app-shell--presenting': presenting },
       `rl-app-shell--panel-${panelMode}`,
     ]"
   >
     <div
-      v-if="navOpen"
+      v-if="navOpen && !presenting"
       class="rl-app-shell__scrim"
       @click="close"
     />
 
     <div
+      v-if="!presenting"
       class="rl-app-shell__sidebar"
       :class="{ 'rl-app-shell__sidebar--open': navOpen }"
       :style="sidebarStyle"
@@ -135,7 +143,7 @@ onBeforeUnmount(() => {
       screen and there is no edge between two panes to move.
     -->
     <RlResizer
-      v-if="resizable"
+      v-if="resizable && !presenting"
       class="rl-app-shell__resizer"
       :label="messages.chromeText({ key: 'resizeSidebar' })"
       :model-value="sidebarWidth as number"
@@ -236,6 +244,15 @@ onBeforeUnmount(() => {
 }
 
 .rl-app-shell__panel { display: contents; }
+
+/*
+ * `zoom` rather than a larger font size: views size their cards and columns
+ * in px, so only zoom enlarges a board as a whole. Pointer coordinates
+ * follow it in current browsers, so drag and drop keeps working.
+ */
+.rl-app-shell--presenting .rl-app-shell__main {
+  zoom: var(--rl-app-shell-present-zoom, 1.25);
+}
 
 /*
  * Overlay: the panel floats above the content, anchored right. No scrim and
@@ -422,6 +439,12 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) {
   .rl-app-shell__sidebar { transition: none; }
 }
+
+/*
+ * No drawer to open while presenting, so the header offers no toggle at any
+ * width. Two classes, so it wins over the breakpoint rules above.
+ */
+.rl-app-shell.rl-app-shell--presenting { --rl-nav-toggle-display: none; }
 
 /*
  * Print the page, not the screen. On screen the shell is one viewport high
