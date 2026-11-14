@@ -39,9 +39,12 @@ import (
 // **No Lua tools.** The server is built without [relamcp.WithLuaTools], so
 // lua_eval and lua_run do not exist here. A remote caller may not
 // run scripts in the server process.
-func RemoteMCP(app *dataentry.App, svc *appbuild.Services, version string) error {
+//
+// opts are added to the server's own options. rela-server passes
+// [relamcp.WithToolFilter] from the operator's `remote_mcp.tools`.
+func RemoteMCP(app *dataentry.App, svc *appbuild.Services, version string, opts ...relamcp.Option) error {
 	return app.SetRemoteMCP(func(host dataentry.MCPHost) (http.Handler, error) {
-		srv, err := RemoteMCPServer(svc, host, version)
+		srv, err := RemoteMCPServer(svc, host, version, opts...)
 		if err != nil {
 			return nil, err
 		}
@@ -68,19 +71,23 @@ func remoteAttachmentDeps(svc *appbuild.Services, host dataentry.MCPHost) relamc
 }
 
 // RemoteMCPServer builds the remote MCP server, reporting version in its
-// `initialize` response. It does not pass [relamcp.WithLuaTools]; see
-// [RemoteMCP].
-func RemoteMCPServer(svc *appbuild.Services, host dataentry.MCPHost, version string) (*relamcp.Server, error) {
+// `initialize` response, with opts added to its own options. It does not
+// pass [relamcp.WithLuaTools]; see [RemoteMCP].
+func RemoteMCPServer(
+	svc *appbuild.Services, host dataentry.MCPHost, version string, opts ...relamcp.Option,
+) (*relamcp.Server, error) {
 	deps, err := RemoteMCPDeps(svc, host)
 	if err != nil {
 		return nil, err
 	}
-	return relamcp.NewServer(deps, version,
+	all := make([]relamcp.Option, 0, 3+len(opts))
+	all = append(all,
 		relamcp.WithPrincipal(principal.Principal{
 			User: principal.SystemUser(),
 			Tool: principal.ToolMCP,
 		}),
 		mcpwire.Piles(svc), mcpwire.Flows(svc))
+	return relamcp.NewServer(deps, version, append(all, opts...)...)
 }
 
 // RemoteMCPDeps builds the MCP dependencies for the remote endpoint. Every

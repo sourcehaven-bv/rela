@@ -15,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -87,6 +88,45 @@ func TestRemoteMCPDeps_UsesGatedHandles(t *testing.T) {
 	}
 
 	assertNoLuaTools(t, svc)
+	assertToolFilterApplies(t, svc)
+}
+
+// assertToolFilterApplies pins that RemoteMCPServer passes its options to
+// the server: a denied tool is not listed, and an unknown name is refused.
+func assertToolFilterApplies(t *testing.T, svc *appbuild.Services) {
+	t.Helper()
+	ctx := context.Background()
+
+	host := testHost(t, svc)
+	host.AttachmentUploads = attachment.NewLimiter(attachment.DefaultMaxUploads)
+	if _, err := RemoteMCPServer(svc, host, "test", relamcp.WithToolFilter(nil, []string{"no_such_tool"})); err == nil {
+		t.Error("RemoteMCPServer accepted a filter naming an unknown tool")
+	}
+	srv, err := RemoteMCPServer(svc, host, "test", relamcp.WithToolFilter(nil, []string{"create_entity"}))
+	if err != nil {
+		t.Fatalf("RemoteMCPServer: %v", err)
+	}
+	ts := httptest.NewServer(srv.HTTPHandler())
+	t.Cleanup(ts.Close)
+
+	client := mcpgo.NewClient(&mcpgo.Implementation{Name: "test", Version: "0"}, nil)
+	cs, err := client.Connect(ctx, &mcpgo.StreamableClientTransport{
+		Endpoint: ts.URL, DisableStandaloneSSE: true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+
+	tools, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("tools/list: %v", err)
+	}
+	for _, tool := range tools.Tools {
+		if tool.Name == "create_entity" {
+			t.Error("create_entity served although the filter denies it")
+		}
+	}
 }
 
 // assertNoLuaTools builds the server through the production constructor,

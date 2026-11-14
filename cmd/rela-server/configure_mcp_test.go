@@ -83,7 +83,7 @@ func mcpConfigServer(t *testing.T) (*server, string, testIDP) {
 	dir := newConfigProject(t)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "realtime.yaml"), []byte(mcpRealtime), 0o644))
 	f := &serverFlags{
-		projectDir: dir, bind: "127.0.0.1", port: "8080", configEditing: true, remoteMCP: true,
+		projectDir: dir, bind: "127.0.0.1", port: "8080", configEditing: true, remoteMCP: toggleOn,
 		jwtIssuer: "https://idp.test", jwtAudience: "rela", jwtJWKSURL: idp.url, jwtHeader: "X-Auth-Assertion",
 	}
 	svc, err := discoverProject(f)

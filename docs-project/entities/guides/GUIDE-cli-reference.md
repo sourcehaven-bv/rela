@@ -91,6 +91,11 @@ validation: advisory # advisory (default) or strict
 | ----------------------- | ------------------------------------------------------------- | ---------- |
 | `formatting.line_width` | Maximum line width for paragraph wrapping                     | 80         |
 | `validation`            | Validation mode of this deployment: `advisory` or `strict`    | `advisory` |
+| `remote_mcp.enabled`    | Serve rela-server's HTTP MCP endpoint: `true` or `false`      | unset      |
+| `remote_mcp.tools`      | `allow` and `deny` lists of tools the HTTP MCP endpoint serves | every tool |
+
+The `remote_mcp` settings are described in
+[mcp-server.md](mcp-server.md#turning-it-on-and-off).
 
 ### Validation mode
 

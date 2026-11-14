@@ -56,11 +56,15 @@ type serverFlags struct {
 	unconfinedCommand bool
 	// sandboxReadPaths holds the operator's read paths per cmdexec.Purpose.
 	sandboxReadPaths map[cmdexec.Purpose]*string
-	// remoteMCP serves the MCP endpoint over HTTP at dataentry.MCPPath.
-	// Off by default; requires the JWT identity flags below (dataentry
-	// refuses to enable it otherwise — the endpoint is CSRF-exempt, and
-	// that is only sound while rela verifies a bearer token itself).
-	remoteMCP bool
+	// remoteMCP is the -mcp flag's say on serving the MCP endpoint over
+	// HTTP at dataentry.MCPPath, and remoteMCPEnv the raw $RELA_MCP.
+	// wireRemoteMCP combines both with `remote_mcp.enabled` in
+	// .rela/config.yaml. Off by default; requires the JWT identity flags
+	// below (dataentry refuses to enable it otherwise — the endpoint is
+	// CSRF-exempt, and that is only sound while rela verifies a bearer token
+	// itself).
+	remoteMCP    toggle
+	remoteMCPEnv string
 	// allowUnauthCommands opts a network bind back into ungated command
 	// execution when there is no acl.yaml. Off by default: a non-loopback bind
 	// with no policy refuses commands. See docs/server-security.md.
@@ -173,7 +177,8 @@ func parseFlags() *serverFlags {
 				"/var/run. Defaults to $"+cmdexec.EnvSandboxScanReadPaths+
 				". See docs/attachment-security.md."),
 	}
-	flag.BoolVar(&f.remoteMCP, "mcp", os.Getenv("RELA_MCP") == "1",
+	f.remoteMCPEnv = os.Getenv(remoteMCPEnv)
+	flag.Var(toggleFlag{&f.remoteMCP}, "mcp",
 		"Serve the Model Context Protocol endpoint over HTTP at /api/v1/_mcp, "+
 			"so AI assistants can reach a deployed rela the same way `rela mcp` "+
 			"serves a local one. Off by default. REQUIRES the -jwt-* identity "+
@@ -181,7 +186,9 @@ func parseFlags() *serverFlags {
 			"which is only sound while rela verifies a bearer token itself — "+
 			"startup is refused otherwise. Every tool call runs as the requesting "+
 			"principal and is ACL-gated like any other API request. Also enabled "+
-			"by RELA_MCP=1.")
+			"by RELA_MCP=1 or remote_mcp.enabled: true in .rela/config.yaml. "+
+			"-mcp=false, RELA_MCP=0 or remote_mcp.enabled: false turns it off, "+
+			"and an off from any of them wins. See docs/mcp-server.md.")
 	flag.BoolVar(&f.allowUnauthCommands, "allow-unauthenticated-commands",
 		os.Getenv("RELA_ALLOW_UNAUTHENTICATED_COMMANDS") == "1",
 		"Allow configured commands to run WITHOUT access control on a non-loopback "+
