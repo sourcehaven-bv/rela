@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
@@ -13,7 +15,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
@@ -68,7 +69,7 @@ func aliasHookManager(t *testing.T, rw entitymanager.AliasRewriter) (*entitymana
 		Templater:     nopTemplater{},
 		Audit:         audit.Nop{},
 		ACL:           acl.NopACL{},
-		Transitions:   statemachine.EmptySet(),
+		Transitions:   transitions.NoTransitions(),
 		AliasRewriter: rw,
 		AnchorGuard:   entitymanager.NopAnchorGuard{},
 	})

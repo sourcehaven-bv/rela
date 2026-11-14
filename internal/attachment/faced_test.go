@@ -13,6 +13,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -20,7 +22,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
@@ -116,7 +117,7 @@ func newFacedFixture(t *testing.T) facedFixture {
 		Templater:        nopTemplater{},
 		Audit:            audit.Nop{},
 		ACL:              acl.NopACL{},
-		Transitions:      statemachine.EmptySet(),
+		Transitions:      transitions.NoTransitions(),
 		FieldGate:        entitymanager.AllowAllFieldGate{},
 		CopyGuard:        allowCopies{},
 		AttachmentLocker: lock.NewMemoryLocker(),
