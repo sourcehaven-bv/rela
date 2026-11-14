@@ -21,7 +21,7 @@ seen.
 - Marking the channel read also moves the thread marker of each inline exception's thread up to that reply.
 - `PUT .../messages/<seq>/_read`; MCP `mark_read` gains `thread`; `rela channel mark-read --thread`.
 - Reply and mention rows in a thread turn read against the thread marker.
-- All backends and `storetest`.
+- All backends and `channelstest`.
 
 ### Acceptance criteria
 
