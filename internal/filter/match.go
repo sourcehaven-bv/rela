@@ -79,19 +79,33 @@ func Match(rec Record, filter *Filter, propDef *metamodel.PropertyDef, m *metamo
 		return matchDecimal(val, filter)
 	case metamodel.PropertyTypeBoolean:
 		return matchBoolean(val, filter)
-	case metamodel.PropertyTypeEnum:
-		return matchEnum(val, filter, propDef.Values)
 	case "status", "priority":
 		// Legacy built-in types - treat as enum
 		return matchEnumLegacy(val, filter, propDef.Type, m)
 	default:
-		// Custom type - treat as enum
-		if customType, ok := m.Types[propDef.Type]; ok {
-			return matchEnum(val, filter, customType.Values)
+		if values, ok := EnumValues(m, *propDef); ok {
+			return matchEnum(val, filter, values)
 		}
 		// Unknown type - fall back to string comparison
 		return matchString(val, filter)
 	}
+}
+
+// EnumValues returns the declared values Match compares an enum property
+// against: an inline enum's values, or a custom type's. The legacy built-in
+// status and priority types are matched by their own rule, so they report
+// false, as does any other type.
+func EnumValues(m *metamodel.Metamodel, pd metamodel.PropertyDef) ([]string, bool) {
+	switch pd.Type {
+	case "status", "priority":
+		return nil, false
+	case metamodel.PropertyTypeEnum:
+		return pd.Values, true
+	}
+	if ct, ok := m.Types[pd.Type]; ok {
+		return ct.Values, true
+	}
+	return nil, false
 }
 
 // matchList checks if any element in a list matches the filter.

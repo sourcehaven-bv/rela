@@ -176,7 +176,7 @@ func exactSearchPredicate(meta *metamodel.Metamodel, types []string, f *filter.F
 		if !ok || pd.List {
 			return store.PropPredicate{}, false
 		}
-		values, isEnum := enumValues(meta, pd)
+		values, isEnum := filter.EnumValues(meta, pd)
 		switch {
 		case pd.Type == metamodel.PropertyTypeString:
 		case isEnum && (f.Value == "" || slices.Contains(values, f.Value)):
@@ -191,23 +191,6 @@ func exactSearchPredicate(meta *metamodel.Metamodel, types []string, f *filter.F
 		p.Scalar = f.Value != ""
 	}
 	return p, true
-}
-
-// enumValues returns the declared values of an enum property, the way
-// filter.Match resolves them: an inline enum's `values:`, or a custom
-// type's. The legacy built-in `status` and `priority` types are matched by
-// another rule in Go, so they are not enums here.
-func enumValues(meta *metamodel.Metamodel, pd metamodel.PropertyDef) ([]string, bool) {
-	switch pd.Type {
-	case "status", "priority":
-		return nil, false
-	case metamodel.PropertyTypeEnum:
-		return pd.Values, true
-	}
-	if ct, ok := meta.Types[pd.Type]; ok {
-		return ct.Values, true
-	}
-	return nil, false
 }
 
 // searchQueries builds the store query of each readable type in the plan,
