@@ -303,6 +303,25 @@ func TestScopedHeaders_ScopeWithoutEvaluatorIsRefused(t *testing.T) {
 	}
 }
 
+// TestScopedHeaders_WindowWithScopeIsRefused pins that a read window is not
+// combined with a scope. The scope filters after the store read, so a window
+// of the store's rows would not be a window of the result (TKT-CKLZMWB).
+func TestScopedHeaders_WindowWithScopeIsRefused(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-1", Type: "ticket"})
+
+	for _, req := range []scopeRequest{
+		{Type: "ticket", Scope: "something", Limit: 20},
+		{Type: "ticket", Scope: "something", Offset: 20},
+	} {
+		_, _, err := scopedHeaders(context.Background(), app.Services(),
+			acl.ReadQueryResult{AllowAll: true}, req)
+		if !errors.Is(err, errListLoad) || !strings.Contains(err.Error(), "read window") {
+			t.Fatalf("limit %d offset %d: err = %v, want the read-window refusal", req.Limit, req.Offset, err)
+		}
+	}
+}
+
 // TestScopedHeaders_ScopeErrorPropagates pins that an evaluation failure
 // fails the request. Folding it into a non-match would render an empty page
 // for an identity scope with no principal — indistinguishable from "you have
