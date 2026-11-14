@@ -215,7 +215,7 @@ func (t *Task) parseRecord(raw json.RawMessage, r BatchRow) ([]actionproposal.Va
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&rec); err != nil {
+	if dec.Decode(&rec) != nil {
 		return nil, "the AI reply for this record is not the JSON the schema asks for", nil
 	}
 	set, err := t.parseSet(rec.Set, Input{Subject: r.Subject, Writable: r.Writable})

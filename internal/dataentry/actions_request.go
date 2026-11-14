@@ -166,8 +166,9 @@ func stringField(m map[string]any, key string) string {
 // the safety, and the content-type allowlist (script.validActionContentTypes)
 // is what keeps an active type off this surface in the first place.
 func writeActionResponse(w http.ResponseWriter, resp *script.ActionResponse) {
-	if resp == nil || (!resp.IsRich() && resp.Redirect == "" && resp.Message == "" &&
-		resp.Proposal == nil && resp.Batch == nil) {
+	empty := resp == nil || (!resp.IsRich() && resp.Redirect == "" && resp.Message == "" &&
+		resp.Proposal == nil && resp.Batch == nil)
+	if empty {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}

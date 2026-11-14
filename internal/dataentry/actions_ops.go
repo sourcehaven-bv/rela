@@ -127,11 +127,6 @@ func (o actionOps) run(
 	}
 
 	if payload.Batch {
-		// As for the single-row gate below: judge the config the run uses.
-		if h.schema() != s {
-			return nil, failV1(http.StatusConflict, "config_reloaded",
-				"The configuration was reloaded; retry the action")
-		}
 		return o.runLLMBatch(ctx, s, id, action, payload.EntityIDs, deps)
 	}
 

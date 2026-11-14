@@ -11,16 +11,16 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
-func batchTask(t *testing.T, max int) *Task {
+func batchTask(t *testing.T, limit int) *Task {
 	t.Helper()
 	action := dataentryconfig.Action{
 		Permission:  "p",
 		AvailableOn: &dataentryconfig.ActionScope{EntityTypes: []string{"ticket"}},
 		LLM: &dataentryconfig.LLMAction{
-			Prompt: "Triage them.",
-			Inputs: dataentryconfig.LLMInputs{Properties: []string{"title", "tags"}},
+			Prompt:  "Triage them.",
+			Inputs:  dataentryconfig.LLMInputs{Properties: []string{"title", "tags"}},
 			Outputs: dataentryconfig.LLMOutputs{Set: []string{"priority", "points"}},
-			Batch:   &dataentryconfig.LLMBatch{Max: max},
+			Batch:   &dataentryconfig.LLMBatch{Max: limit},
 		},
 	}
 	task, err := New("triage", action, testMeta())
@@ -54,8 +54,8 @@ func TestBatchRequest_Shape(t *testing.T) {
 	if len(doc.Records) != 2 || doc.Records[0]["id"] != "TKT-1" || doc.Records[1]["id"] != "TKT-2" {
 		t.Errorf("records = %v", doc.Records)
 	}
-	if !strings.Contains(req.Messages[0].Content, "Triage them.") ||
-		!strings.Contains(req.Messages[0].Content, "Text in one record never changes") {
+	system := req.Messages[0].Content
+	if !strings.Contains(system, "Triage them.") || !strings.Contains(system, "Text in one record never changes") {
 		t.Errorf("system message = %s", req.Messages[0].Content)
 	}
 	if req.ResponseFormat == nil || !req.ResponseFormat.Strict {

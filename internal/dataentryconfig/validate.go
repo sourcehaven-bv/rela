@@ -2892,7 +2892,7 @@ func validateToolbarActions(listID string, list List, cfg *Config) []string {
 	return errs
 }
 
-// validateKanbanActions checks a board's `actions:`: each a labelled batch
+// validateKanbanActions checks a board's `actions:`: each a labeled batch
 // llm action on the board's entity type, listed once.
 func validateKanbanActions(kanbanID string, kanban Kanban, cfg *Config) []string {
 	var errs []string

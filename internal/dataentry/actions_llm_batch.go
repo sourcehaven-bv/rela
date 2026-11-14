@@ -43,9 +43,9 @@ func checkBatchPayload(id string, action dataentryconfig.Action, payload actionP
 	if len(payload.EntityIDs) == 0 {
 		return failV1(http.StatusBadRequest, "invalid_body", "entity_ids is empty")
 	}
-	if n, max := len(payload.EntityIDs), action.LLM.Batch.EffectiveMax(); n > max {
+	if n, limit := len(payload.EntityIDs), action.LLM.Batch.EffectiveMax(); n > limit {
 		return failV1(http.StatusBadRequest, "batch_too_large",
-			fmt.Sprintf("action %q runs on at most %d entities at once; %d were sent", id, max, n))
+			fmt.Sprintf("action %q runs on at most %d entities at once; %d were sent", id, limit, n))
 	}
 	return nil
 }
@@ -66,6 +66,11 @@ func (o actionOps) runLLMBatch(
 	ctx context.Context, s *Schema, id string, action dataentryconfig.Action,
 	addresses []string, deps lua.WriteDeps,
 ) (*script.ActionResponse, *opFailure) {
+	// As for the single-row gate in run: judge the config the run uses.
+	if o.h.schema() != s {
+		return nil, failV1(http.StatusConflict, "config_reloaded",
+			"The configuration was reloaded; retry the action")
+	}
 	task, err := llmtask.New(id, action, s.Meta)
 	if err != nil {
 		return nil, failLLMInternal(err)
@@ -151,7 +156,7 @@ func (o actionOps) runLLMBatch(
 func (o actionOps) batchRows(
 	ctx context.Context, s *Schema, id string, action dataentryconfig.Action, addresses []string,
 ) ([]llmBatchRow, int, error) {
-	refs := make([]entityPkg.Ref, 0, len(addresses))
+	addrs := make([]entityPkg.Address, 0, len(addresses))
 	ids := make([]string, 0, len(addresses))
 	sent := 0
 	seen := map[string]bool{}
@@ -161,22 +166,23 @@ func (o actionOps) batchRows(
 		}
 		seen[a] = true
 		sent++
-		ref, err := entityPkg.ParseRef(a)
+		addr, err := entityPkg.ParseAddress(a)
 		if err != nil {
 			continue
 		}
-		refs = append(refs, ref)
-		ids = append(ids, ref.ID)
+		addrs = append(addrs, addr)
+		ids = append(ids, addr.ID())
 	}
 	served, err := o.h.visible.servedIDsErr(ctx, ids)
 	if err != nil {
 		return nil, 0, err
 	}
-	keys := make([]entityPkg.Ref, 0, len(refs))
+	keys := make([]entityPkg.Ref, 0, len(addrs))
 	taken := map[entityPkg.Ref]bool{}
-	for _, ref := range refs {
-		hdr, ok := served[ref.ID]
-		if !ok || (ref.Face != "" && ref.Face != hdr.Face) {
+	for _, addr := range addrs {
+		hdr, ok := served[addr.ID()]
+		named, isNamed := addr.Named()
+		if !ok || (isNamed && named.Face != hdr.Face) {
 			// A face other than the served one is skipped. llm actions
 			// run only on types without faces (validateLLMAction), so
 			// no readable row is lost here; revisit with face support.
@@ -274,10 +280,11 @@ func (g batchActionGate) judgeWhen(
 	page := make([]*entityPkg.Entity, 0, len(idx))
 	pageIdx := make([]int, 0, len(idx))
 	for _, i := range idx {
-		if slices.ContainsFunc(attrs.EntityAttributes(), func(name string) bool {
+		readsHidden := slices.ContainsFunc(attrs.EntityAttributes(), func(name string) bool {
 			_, h := hidden[i][name]
 			return h
-		}) {
+		})
+		if readsHidden {
 			continue
 		}
 		page = append(page, rows[i].redacted)

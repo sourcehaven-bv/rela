@@ -132,9 +132,9 @@ func TestLLMBatch_JSON(t *testing.T) {
 	if strings.Contains(string(raw), "Triage the ticket.") {
 		t.Errorf("prompt serialized: %s", raw)
 	}
-	if got := llmUnknownKeys([]byte("actions:\n  t:\n    llm:\n      batch: { mx: 3 }\n")); len(got) != 1 ||
-		!strings.Contains(got[0], `llm.batch: unknown key "mx"`) {
-		t.Errorf("unknown batch key: %v", got)
+	unknown := llmUnknownKeys([]byte("actions:\n  t:\n    llm:\n      batch: { mx: 3 }\n"))
+	if len(unknown) != 1 || !strings.Contains(unknown[0], `llm.batch: unknown key "mx"`) {
+		t.Errorf("unknown batch key: %v", unknown)
 	}
 }
 

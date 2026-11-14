@@ -20,7 +20,7 @@ import (
 // Batch runs of LLM actions (TKT-I2SRNWR): one model call for several
 // entities, each gated as the detail action is.
 
-func batchTriageAction(max int) dataentryconfig.Action {
+func batchTriageAction(limit int) dataentryconfig.Action {
 	return dataentryconfig.Action{
 		Label:       "Triage",
 		Permission:  "ticket.triage",
@@ -33,7 +33,7 @@ func batchTriageAction(max int) dataentryconfig.Action {
 				Content:    &dataentryconfig.LLMContentInput{},
 			},
 			Outputs: dataentryconfig.LLMOutputs{Set: []string{"priority"}},
-			Batch:   &dataentryconfig.LLMBatch{Max: max},
+			Batch:   &dataentryconfig.LLMBatch{Max: limit},
 		},
 	}
 }
@@ -63,7 +63,7 @@ func newBatchApp(t *testing.T, reply string) llmApp {
 	})
 }
 
-func (a llmApp) runBatch(t *testing.T, user, body string) (int, *actionproposal.Batch, string) {
+func (a llmApp) runBatch(t *testing.T, user, body string) (code int, batch *actionproposal.Batch, raw string) {
 	t.Helper()
 	rec := postAction(principalCtx(user), t, a.app, a.decl, "triage", body)
 	var resp v1.ActionResponse
