@@ -2755,10 +2755,10 @@
       "largest_tangle": 14,
       "cycle_edges": 67,
       "upward_edges": 0,
-      "propagation_cost": 9.3
+      "propagation_cost": 9.4
     },
     "min_weight": 0,
-    "at": "2026-11-13T09:30:00Z",
+    "at": "2026-11-14T15:00:00Z",
     "log": [
       {
         "at": "2026-11-05T20:33:00Z",
@@ -3107,6 +3107,17 @@
           "propagation_cost": [
             9.1,
             9.3
+          ]
+        }
+      },
+      {
+        "at": "2026-11-14T15:00:00Z",
+        "change": "loosen",
+        "reason": "origin/develop itself exports at 9.4 against this 9.3 baseline; the merge of develop into the scaling branch carries that, and the branch adds no internal import edges (TKT-UHKZKOB).",
+        "metrics": {
+          "propagation_cost": [
+            9.3,
+            9.4
           ]
         }
       }
