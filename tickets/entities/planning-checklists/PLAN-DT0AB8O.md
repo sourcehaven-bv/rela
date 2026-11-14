@@ -1,7 +1,7 @@
 ---
 id: PLAN-DT0AB8O
 type: planning-checklist
-title: 'Planning: Run E2E and Frontend CI jobs in the Playwright image'
+title: 'Planning: Run Frontend CI in the Playwright image and retry apt steps'
 started: "2026-11-11"
 completed: "2026-11-11"
 status: done

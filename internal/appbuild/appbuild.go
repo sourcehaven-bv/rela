@@ -70,7 +70,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/state"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
@@ -1503,7 +1502,7 @@ func buildFieldPolicy(
 	if err != nil {
 		return fieldPolicy{}, fmt.Errorf("appbuild: compiling acl.yaml affordance predicates: %w", err)
 	}
-	machines, err := statemachine.Compile(meta, statemachine.WithTraversals(ungatedBinder(meta, st)))
+	machines, err := CompileHeadlessFlows(meta, st)
 	if err != nil {
 		return fieldPolicy{}, fmt.Errorf("appbuild: compiling state machines: %w", err)
 	}
@@ -2193,7 +2192,7 @@ func loadMetamodel(ctx context.Context, cfg Config) (*metamodel.Metamodel, error
 // mutation through either during assembly would be visible to every other
 // consumer of the same base — a cross-tenant defect in a multi-tenant host, and
 // a cross-project one on the desktop. Assembly only reads them (the metamodel
-// consumers derive new values: `statemachine.Compile`, `NewEngineFromMetamodel`),
+// consumers derive new values: `transitions.CompileTransitions`, `NewEngineFromMetamodel`),
 // and TestSharedBase_AssemblyDoesNotMutateSharedValues pins it.
 type SharedBase struct {
 	// channelFiles holds the runner of channel file scans; the data-entry
@@ -2687,7 +2686,7 @@ func buildEntityManager(
 		// happen on a deployment that has a policy.
 		//
 		// CopyGuard reuses tw.Guard: entitymanager.CopyGuard and
-		// statemachine.Guard are the same shape ON PURPOSE, so a copy's
+		// transitions.PermissionGuard are the same shape ON PURPOSE, so a copy's
 		// `guard:` and a transition's ask the identical question of the
 		// identical implementation and cannot drift into asking different
 		// ones.
@@ -3007,7 +3006,7 @@ func assemble(
 		return nil, err
 	}
 	cfgLoader := cfg.configLoader()
-	tw, err := CompileTransitions(base.meta, st, resolvedACL)
+	tw, err := BuildTransitionWiring(base.meta, st, resolvedACL)
 	if err != nil {
 		return nil, fmt.Errorf("compile transitions: %w", err)
 	}

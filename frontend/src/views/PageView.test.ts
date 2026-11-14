@@ -2,11 +2,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, reactive } from 'vue'
 import PageView from './PageView.vue'
 import { usePageStore } from '@/stores/pages'
 import { useSchemaStore } from '@/stores/schema'
 import { usePageHeaderOutlet, resetPageHeader } from '@/composables/usePageHeader'
+import { usePresentationOutlet, resetPresentation } from '@/composables/usePresentation'
+import { useDetailPanel, resetDetailPanel } from '@/composables/useDetailPanel'
+import PageSteps from '@/components/pages/PageSteps.vue'
 import { ApiError } from '@/api/errors'
 import type { SidebarPage } from '@/types'
 
@@ -20,9 +23,12 @@ vi.mock('@/api/entities', async (orig) => ({
 }))
 
 const replaceMock = vi.fn()
+const pushMock = vi.fn()
+const routeState = reactive<{ path: string; query: Record<string, string> }>({ path: '/', query: {} })
 vi.mock('vue-router', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: replaceMock }),
-  RouterLink: { props: ['to'], template: '<a><slot /></a>' },
+  useRouter: () => ({ push: pushMock, replace: replaceMock }),
+  useRoute: () => routeState,
+  RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' },
 }))
 
 /* Each view records the props the page passed it. */
@@ -62,6 +68,11 @@ beforeEach(() => {
   resetPageHeader()
   getEntityMock.mockReset()
   replaceMock.mockReset()
+  pushMock.mockReset()
+  routeState.path = '/'
+  routeState.query = {}
+  resetPresentation()
+  resetDetailPanel()
   usePageStore().set({ topic: topicPage })
   useSchemaStore().entityTypes.set('topic', {
     label: 'Topic',
@@ -213,5 +224,182 @@ describe('PageView dashboard tabs', () => {
   it('passes the default dashboard tab no name', async () => {
     const wrapper = await mountPage({ page: 'sales', tab: 'home' })
     expect(viewProps(wrapper, 'DashboardView')).toEqual({})
+  })
+})
+
+const workshopPage: SidebarPage = {
+  label: 'Workshop',
+  mode: 'steps',
+  tabs: [
+    { id: 'premortem', label: 'Pre-mortem', view: 'list', target: 'risks', prompt: 'What could go wrong?' },
+    { id: 'matrix', label: 'Matrix', view: 'kanban', target: 'matrix' },
+    { id: 'measures', label: 'Measures', view: 'list', target: 'measures' },
+  ],
+}
+
+describe('PageView on a steps page', () => {
+  beforeEach(() => {
+    usePageStore().set({ topic: topicPage, workshop: workshopPage })
+  })
+
+  it('draws numbered steps instead of a tab bar, the current one marked', async () => {
+    const w = await mountPage({ page: 'workshop', tab: 'matrix' })
+    expect(usePageHeaderOutlet().frame.value?.tabs).toEqual([])
+    const links = w.findAll('.page-steps__step')
+    expect(links.map((l) => l.text())).toEqual(['1Pre-mortem', '2Matrix', '3Measures'])
+    expect(links.map((l) => l.attributes('aria-current'))).toEqual([undefined, 'step', undefined])
+    expect(links[2].attributes('href')).toBe('/p/workshop/measures')
+    expect(w.find('.stub-KanbanView').exists()).toBe(true)
+  })
+
+  it('shows the prompt of the current step only', async () => {
+    const first = await mountPage({ page: 'workshop', tab: 'premortem' })
+    expect(first.find('.page-steps__prompt').text()).toBe('What could go wrong?')
+    const second = await mountPage({ page: 'workshop', tab: 'matrix' })
+    expect(second.find('.page-steps__prompt').exists()).toBe(false)
+  })
+
+  it('moves with Back and Next, each disabled at its end', async () => {
+    const first = await mountPage({ page: 'workshop', tab: 'premortem' })
+    const steps = first.findComponent(PageSteps)
+    const [back, next] = steps.findAll('.page-steps__actions button')
+    expect(back.attributes('disabled')).toBeDefined()
+    await next.trigger('click')
+    expect(pushMock).toHaveBeenCalledWith('/p/workshop/matrix')
+
+    const last = await mountPage({ page: 'workshop', tab: 'measures' })
+    const [lastBack, lastNext] = last.findAll('.page-steps__actions button')
+    expect(lastNext.attributes('disabled')).toBeDefined()
+    await lastBack.trigger('click')
+    expect(pushMock).toHaveBeenCalledWith('/p/workshop/matrix')
+  })
+
+  it('presents with ?present=1, keeps it from step to step, and follows the route out', async () => {
+    const w = await mountPage({ page: 'workshop', tab: 'matrix' })
+    const outlet = usePresentationOutlet()
+    expect(outlet.presenting.value).toBe(false)
+
+    routeState.query = { present: '1' }
+    await flushPromises()
+    expect(outlet.presenting.value).toBe(true)
+    expect(w.findAll('.page-steps__step')[2].attributes('href')).toBe('/p/workshop/measures?present=1')
+
+    // The browser's back button drops the query; the shell comes back.
+    routeState.query = {}
+    await flushPromises()
+    expect(outlet.presenting.value).toBe(false)
+  })
+
+  it('enters and leaves present mode through the URL, keeping the rest of the query', async () => {
+    routeState.path = '/p/workshop/matrix'
+    routeState.query = { world: 'draft', sort: 'title' }
+    const w = await mountPage({ page: 'workshop', tab: 'matrix' })
+    const present = () => w.findAll('.page-steps__actions button').slice(-1)[0]
+    await present().trigger('click')
+    expect(pushMock).toHaveBeenLastCalledWith({
+      path: '/p/workshop/matrix',
+      query: { world: 'draft', sort: 'title', present: '1' },
+    })
+
+    routeState.query = { world: 'draft', sort: 'title', present: '1' }
+    await flushPromises()
+    await present().trigger('click')
+    expect(pushMock).toHaveBeenLastCalledWith({
+      path: '/p/workshop/matrix',
+      query: { world: 'draft', sort: 'title' },
+    })
+  })
+
+  it('keeps the world in step links and drops other query keys', async () => {
+    routeState.query = { world: 'draft', sort: 'title', present: '1' }
+    const w = await mountPage({ page: 'workshop', tab: 'matrix' })
+    expect(w.findAll('.page-steps__step')[2].attributes('href')).toBe(
+      '/p/workshop/measures?world=draft&present=1'
+    )
+  })
+
+  it('opens the first step of the bare page, presented if asked', async () => {
+    routeState.query = { present: '1' }
+    await mountPage({ page: 'workshop' })
+    expect(replaceMock).toHaveBeenCalledWith('/p/workshop/premortem?present=1')
+  })
+
+  it('clears present mode when the page unmounts', async () => {
+    routeState.query = { present: '1' }
+    const w = await mountPage({ page: 'workshop', tab: 'matrix' })
+    expect(usePresentationOutlet().presenting.value).toBe(true)
+    w.unmount()
+    mounted.splice(mounted.indexOf(w), 1)
+    expect(usePresentationOutlet().presenting.value).toBe(false)
+  })
+
+  it('does not present an entity page whose entity is missing', async () => {
+    usePageStore().set({ topicSteps: { ...topicPage, mode: 'steps' } })
+    getEntityMock.mockRejectedValue(new ApiError('Entity not found', { kind: 'http', status: 404, original: null }))
+    routeState.query = { present: '1' }
+    const w = await mountPage({ page: 'topicSteps', entity: 'TOP-X', tab: 'board' })
+    expect(usePresentationOutlet().presenting.value).toBe(false)
+    expect(w.find('.page-steps').exists()).toBe(false)
+  })
+
+  it('ignores ?present=1 on a page with tabs', async () => {
+    usePageStore().set({ tabs: { ...workshopPage, mode: undefined } })
+    routeState.query = { present: '1' }
+    const w = await mountPage({ page: 'tabs', tab: 'matrix' })
+    expect(usePresentationOutlet().presenting.value).toBe(false)
+    expect(w.find('.page-steps').exists()).toBe(false)
+    expect(usePageHeaderOutlet().frame.value?.tabs).toHaveLength(3)
+  })
+
+  describe('PageDown and PageUp', () => {
+    function press(key: string) {
+      const event = new KeyboardEvent('keydown', { key, cancelable: true })
+      window.dispatchEvent(event)
+      return event
+    }
+
+    it('step while presenting', async () => {
+      routeState.query = { present: '1' }
+      await mountPage({ page: 'workshop', tab: 'matrix' })
+      expect(press('PageDown').defaultPrevented).toBe(true)
+      expect(pushMock).toHaveBeenLastCalledWith('/p/workshop/measures?present=1')
+      press('PageUp')
+      expect(pushMock).toHaveBeenLastCalledWith('/p/workshop/premortem?present=1')
+    })
+
+    it('do nothing past the last step', async () => {
+      routeState.query = { present: '1' }
+      await mountPage({ page: 'workshop', tab: 'measures' })
+      press('PageDown')
+      expect(pushMock).not.toHaveBeenCalled()
+    })
+
+    it('scroll as usual when not presenting', async () => {
+      await mountPage({ page: 'workshop', tab: 'matrix' })
+      expect(press('PageDown').defaultPrevented).toBe(false)
+      expect(pushMock).not.toHaveBeenCalled()
+    })
+
+    it('leave the open detail panel alone', async () => {
+      routeState.query = { present: '1' }
+      await mountPage({ page: 'workshop', tab: 'matrix' })
+      useDetailPanel().show({ component: defineComponent({ render: () => null }), props: {}, mode: 'inline' })
+      expect(press('PageDown').defaultPrevented).toBe(false)
+      expect(pushMock).not.toHaveBeenCalled()
+    })
+
+    it('leave a focused text field alone', async () => {
+      routeState.query = { present: '1' }
+      await mountPage({ page: 'workshop', tab: 'matrix' })
+      const input = document.createElement('input')
+      document.body.appendChild(input)
+      input.focus()
+      try {
+        expect(press('PageDown').defaultPrevented).toBe(false)
+        expect(pushMock).not.toHaveBeenCalled()
+      } finally {
+        input.remove()
+      }
+    })
   })
 })

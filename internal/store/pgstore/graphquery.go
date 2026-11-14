@@ -210,11 +210,13 @@ func buildMatchingFacesSQL(q store.GraphQuery, ids []string) (sqlText string, ar
 	return withClause(with) + "SELECT e.id, e.face FROM " + source, b.args, nil
 }
 
-// buildPredicateParts emits the CTE definitions and the WHERE-clause
+// buildPredicatePartsPrefixed emits the CTE definitions and the WHERE-clause
 // conjuncts shared by [buildMatchingFacesSQL] and [buildGraphQuerySQL] —
 // relation predicates (as EXISTS / NOT EXISTS) and property predicates
 // (as jsonb comparisons). Kept in one place so the two query shapes
-// cannot drift.
+// cannot drift. Every CTE name is prefixed, so several queries' predicates
+// can share one statement (the field grants of a visible search, the path
+// steps of a roll-up); a lone query passes "".
 //
 // The conjuncts come back in two groups because a world ranks between them
 // (BUG-2SKLD3). pre trims the CANDIDATE faces before the rank: the relation
@@ -222,13 +224,6 @@ func buildMatchingFacesSQL(q store.GraphQuery, ids []string) (sqlText string, ar
 // are documented as candidate filters. post tests the PRIME the world picked:
 // Props and Narrowing. Filtering the faces on those first would let a
 // lower-ranked face answer for an entity whose prime fails the filter.
-func buildPredicateParts(b *sqlBuilder, q store.GraphQuery, typeArg string) (with, pre, post []string) {
-	return buildPredicatePartsPrefixed(b, "", q, typeArg)
-}
-
-// buildPredicatePartsPrefixed is [buildPredicateParts] with every CTE name
-// prefixed, so several queries' predicates can share one statement (the
-// field grants of a visible search).
 func buildPredicatePartsPrefixed(
 	b *sqlBuilder, prefix string, q store.GraphQuery, typeArg string,
 ) (with, pre, post []string) {
@@ -267,12 +262,21 @@ func buildPredicatePartsPrefixed(
 // In the default world each id has one row, so everything is one WHERE
 // clause and the derived indexes apply as before. Under a world the primes
 // are picked in an inner DISTINCT ON query over the candidates that pass pre,
-// and post is applied to them outside it (see [buildPredicateParts]).
+// and post is applied to them outside it (see [buildPredicatePartsPrefixed]).
 // idIn, when set, is an id restriction ANDed with pre. It may sit before the
 // rank only because it depends on the id alone; a face-dependent conjunct
 // passed here would reintroduce BUG-2SKLD3.
 func graphSource(b *sqlBuilder, q store.GraphQuery, typeArg, idIn string) (with []string, source string) {
-	with, pre, post := buildPredicateParts(b, q, typeArg)
+	return graphSourcePrefixed(b, "", q, typeArg, idIn)
+}
+
+// graphSourcePrefixed is [graphSource] with every CTE name prefixed, so
+// several graph sources can share one statement (the path steps of a
+// roll-up).
+func graphSourcePrefixed(
+	b *sqlBuilder, prefix string, q store.GraphQuery, typeArg, idIn string,
+) (with []string, source string) {
+	with, pre, post := buildPredicatePartsPrefixed(b, prefix, q, typeArg)
 	scope, distinctOn, rankOrder := graphWorldScope(b, q)
 	if (distinctOn == "") != (rankOrder == "") {
 		panic("pgstore: graphWorldScope returned DISTINCT ON without its ORDER BY, or vice versa")

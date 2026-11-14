@@ -164,17 +164,20 @@ func loadRealtime(ctx context.Context, r configReader, meta *metamodel.Metamodel
 // [flowConfigPolicy]). It validates the policy so an abstract type name
 // expands to its variants, as it does for the policy the rest of the
 // wiring uses. A policy that parses but does not fit the schema is still
-// returned: such a host does not enforce acl.yaml, and the ACL wiring
-// reports that error where it does. Expansion runs before any check that
-// can fail, so the returned policy never holds an unexpanded deny or
-// redact.
+// returned, and the error is logged as a warning: such a host does not
+// enforce acl.yaml, and the ACL wiring reports that error where it does.
+// Expansion runs before any check that can fail, so the returned policy
+// never holds an unexpanded deny or redact.
 //
 // Nil: meta is accepted (no validation). The policy is nil when the
 // project has no acl.yaml.
 func loadConfigPolicy(cfg Config, meta *metamodel.Metamodel) (*acl.Policy, error) {
 	p, err := loadACLPolicy(cfg)
 	if err == nil && p != nil && meta != nil {
-		_ = ValidateACLPolicy(p, meta)
+		if verr := ValidateACLPolicy(p, meta); verr != nil {
+			slog.Warn("acl.yaml does not fit the schema; checking the configuration against it anyway",
+				"error", verr)
+		}
 	}
 	return p, err
 }

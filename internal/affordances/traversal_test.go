@@ -8,11 +8,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
@@ -219,7 +220,7 @@ func TestResolver_WithMachinesWarnsOnHiddenTraversalFilter(t *testing.T) {
 	def := meta.Entities["ticket"]
 	def.Properties["stage"] = metamodel.PropertyDef{Type: "flow"}
 	meta.Entities["ticket"] = def
-	machines, err := statemachine.Compile(meta, statemachine.WithTraversals(&stubBinder{}))
+	machines, err := transitions.CompileTransitions(meta, transitions.WithTransitionTraversals(&stubBinder{}))
 	if err != nil {
 		t.Fatal(err)
 	}
