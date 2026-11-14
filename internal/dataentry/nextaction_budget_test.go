@@ -161,6 +161,45 @@ func TestFirstN_SameLeadingRowsAsAFullRead(t *testing.T) {
 	}
 }
 
+// TestFirstN_CountsAfterTheRowGate pins that a windowed read is gated in the
+// store query: hidden rows are never returned and do not take a place among
+// the first n. Alice reads only the tickets of the project she edits, which
+// are every other ticket in id order.
+func TestFirstN_CountsAfterTheRowGate(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{ID: "alice", Type: "person", Properties: map[string]any{"title": "Alice"}})
+	seedEntity(app, &entity.Entity{ID: "PRJ-42", Type: "project", Properties: map[string]any{"title": "Granted"}})
+	seedEntity(app, &entity.Entity{ID: "PRJ-9", Type: "project", Properties: map[string]any{"title": "Hidden"}})
+	seedRelation(app, entity.NewRelation("alice", "editor-of", "PRJ-42"))
+	const tickets = 3 * nextaction.DefaultCandidateCap
+	var visible []string
+	for i := 1; i <= tickets; i++ {
+		id := fmt.Sprintf("TKT-%04d", i)
+		seedEntity(app, &entity.Entity{ID: id, Type: "ticket", Properties: map[string]any{"title": id}})
+		project := "PRJ-9"
+		if i%2 == 1 {
+			project = "PRJ-42"
+			visible = append(visible, id)
+		}
+		seedRelation(app, entity.NewRelation(id, "belongs-to", project))
+	}
+	d := mustNewACL(t, &acl.Policy{
+		Roles:               map[string]acl.RoleDef{"editor": {Read: []string{"ticket"}}},
+		RoleRelations:       map[string]acl.RoleRelationDef{"editor-of": {Confers: "editor"}},
+		InheritRolesThrough: []string{"belongs-to"},
+	}, app.store)
+	setTestACL(t, app, d)
+	ctx := gateCtxFor(aliceCtx(), t, d)
+
+	n := nextaction.DefaultCandidateCap
+	for _, query := range []string{"type:ticket", "type:ticket prop:title!=none"} {
+		got, cut, err := app.queries.executeQueryCut(ctx, query, queryOptions{firstN: n})
+		require.NoError(t, err)
+		require.True(t, cut, query)
+		require.Equal(t, visible[:n], entityIDs(got), query)
+	}
+}
+
 // TestFirstN_SparseMatchReadsBoundedWindows pins the cost of a match the
 // store cannot narrow: growing windows, then the rest of the type in one
 // read, rather than one read per window to the end of the type.
