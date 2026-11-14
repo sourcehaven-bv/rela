@@ -55,6 +55,7 @@ func (d darwinSandbox) Available() error {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sandbox-exec", "-p",
 		"(version 1)(allow default)(deny network*)", "/usr/bin/true")
+	cmd.Env = Environ()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%w: sandbox-exec probe failed: %w: %s",
 			ErrSandboxUnavailable, err, strings.TrimSpace(string(out)))
