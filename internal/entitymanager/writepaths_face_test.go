@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
@@ -12,7 +14,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -77,7 +78,7 @@ func newCascadeFaceManager(t *testing.T, st store.Store) (*entitymanager.Manager
 	aud := audit.NewMemory()
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: aud,
-		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
+		ACL: acl.NopACL{}, Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		Automations: engine, Cascade: runner,
 		AnchorGuard: entitymanager.NopAnchorGuard{},
@@ -190,7 +191,7 @@ func TestCascadeHostDelete_DeletesEveryFace(t *testing.T) {
 				Store: f.st, Meta: meta, Templater: nopTemplater{}, Audit: aud,
 				// Deny-all: the cascade was authorized by its trigger, so the
 				// host's delete does not consult the ACL.
-				ACL: acl.ReadOnlyACL{}, Transitions: statemachine.EmptySet(),
+				ACL: acl.ReadOnlyACL{}, Transitions: transitions.NoTransitions(),
 				FieldGate: entitymanager.AllowAllFieldGate{}, VersionRecorder: rec,
 				AnchorGuard: entitymanager.NopAnchorGuard{},
 			})
@@ -290,7 +291,7 @@ func TestDeleteEntityFace_RecordsTheRowReadInsideTheTx(t *testing.T) {
 			rec := &fakeRecorder{}
 			mgr, err := entitymanager.New(entitymanager.Deps{
 				Store: &updateBeforeTx{Store: f.st}, Meta: meta, Templater: nopTemplater{},
-				Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
+				Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: transitions.NoTransitions(),
 				FieldGate: entitymanager.AllowAllFieldGate{}, VersionRecorder: rec,
 				AnchorGuard: entitymanager.NopAnchorGuard{},
 			})
