@@ -17,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
 
 // Read marker route tests (TKT-2B2AIA). They run the real router over a
@@ -266,7 +267,7 @@ func TestInboxUnread_ACL(t *testing.T) {
 // TestInboxHandler_Kinds pins TKT-2B2AIA AC 11 on the route: the kinds
 // query and its refusals.
 func TestInboxHandler_Kinds(t *testing.T) {
-	e, _ := seedInbox(t, 2)
+	e, _ := seedInbox(t)
 	for _, tc := range []struct {
 		name, query string
 		code        int
@@ -311,22 +312,31 @@ func TestInboxHandler_Kinds(t *testing.T) {
 // TestChannelsBudget_HeadRead pins TKT-2B2AIA AC 10: a head with a marker
 // makes one Reads beside its Head and Get, at 10 messages as at 50.
 func TestChannelsBudget_HeadRead(t *testing.T) {
-	cost := func(n int) channelCost {
-		b := newChannelBudgetWith(t, 0, channelTestRealtime)
-		for i := range n {
-			appendText(t, b, "bob", i)
-		}
-		_, _, err := b.ch.store.SetRead(context.Background(), roomKey, readerAlice, 1, time.Now())
-		require.NoError(t, err)
-		got, body := b.get(t, roomPath)
-		require.Equal(t, &v1.ChannelRead{Seq: 1, Unread: n - 1}, decodeAs[v1.ChannelHead](t, body).Channel.Read)
-		return got
-	}
+	cost := func(n int) channelCost { return headReadCost(t, n, 0) }
 	small, large := cost(10), cost(50)
 	require.True(t, small.equal(large), "10: %s\n50: %s", small, large)
 	require.Equal(t, 1, small.channel["Reads"], small.String())
 	require.Equal(t, 1, small.channel["Head"], small.String())
 	require.Equal(t, 1, small.channel["Get"], small.String())
+	assertScaleFreeIndexed(t, func(pad int) (storetest.Cost, string) {
+		c := headReadCost(t, 10, pad)
+		return c.rows, c.String()
+	})
+}
+
+// headReadCost is what alice's head of the room costs with n messages and
+// a marker, over a store padded with pad tickets and features.
+func headReadCost(t *testing.T, n, pad int) channelCost {
+	t.Helper()
+	b := newChannelBudgetPadded(t, 0, pad, channelTestRealtime, false)
+	for i := range n {
+		appendText(t, b, "bob", i)
+	}
+	_, _, err := b.ch.store.SetRead(context.Background(), roomKey, readerAlice, 1, time.Now())
+	require.NoError(t, err)
+	got, body := b.get(t, roomPath)
+	require.Equal(t, &v1.ChannelRead{Seq: 1, Unread: n - 1}, decodeAs[v1.ChannelHead](t, body).Channel.Read)
+	return got
 }
 
 // TestChannelsBudget_MarkRead pins TKT-2B2AIA AC 10: a mark makes one Head
@@ -345,7 +355,7 @@ func TestChannelsBudget_MarkRead(t *testing.T) {
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		require.Equal(t, v1.ChannelMarkRead{Seq: int64(n), LastSeq: int64(n)},
 			decodeAs[v1.ChannelMarkRead](t, rec.Body.Bytes()))
-		return channelCost{entity: b.counting.Calls(), channel: b.chans.snapshot()}
+		return channelCost{entity: b.counting.Calls(), channel: b.chans.snapshot(), rows: b.counting.Cost()}
 	}
 	small, large := cost(10), cost(50)
 	require.True(t, small.equal(large), "10: %s\n50: %s", small, large)

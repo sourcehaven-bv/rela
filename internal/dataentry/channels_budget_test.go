@@ -164,12 +164,18 @@ type channelBudget struct {
 
 // channelCost is what one request cost: the entity-store reads by method
 // (a header batch is one of them) and the channel-store reads by method.
+//
+// rows is the entity-store cost, rows included. equal leaves it out: a
+// page of n messages resolves n refs, so its rows grow with n by design.
+// The scale tests pin the rows instead, at a fixed page over a growing
+// store.
 type channelCost struct {
 	entity, channel map[string]int
+	rows            storetest.Cost
 }
 
 func (c channelCost) String() string {
-	return fmt.Sprintf("entity store %v, channel store %v", c.entity, c.channel)
+	return fmt.Sprintf("entity store %v (%s), channel store %v", c.entity, c.rows, c.channel)
 }
 
 func (c channelCost) equal(o channelCost) bool {
@@ -191,6 +197,14 @@ func newChannelBudgetWith(t *testing.T, n int, yaml string) *channelBudget {
 // GetRelation in the entity-store counts.
 func newChannelBudgetACL(t *testing.T, n int, yaml string, countACL bool) *channelBudget {
 	t.Helper()
+	return newChannelBudgetPadded(t, n, 0, yaml, countACL)
+}
+
+// newChannelBudgetPadded is newChannelBudgetACL plus pad tickets and pad
+// features that no message names, so a read that scans the store reads
+// more rows the larger pad is.
+func newChannelBudgetPadded(t *testing.T, n, pad int, yaml string, countACL bool) *channelBudget {
+	t.Helper()
 	app := newTestAppV1(t)
 	seedEntity(app, ticket1("one"))
 	for i := range n {
@@ -198,6 +212,12 @@ func newChannelBudgetACL(t *testing.T, n int, yaml string, countACL bool) *chann
 			ID: fmt.Sprintf("TKT-%d", 100+i), Type: "ticket", Properties: map[string]any{"title": fmt.Sprintf("t%d", i)},
 		})
 		seedEntity(app, feature(fmt.Sprintf("FEAT-%d", 100+i), fmt.Sprintf("f%d", i)))
+	}
+	for i := range pad {
+		seedEntity(app, &entity.Entity{
+			ID: fmt.Sprintf("TKT-%d", 900000+i), Type: "ticket", Properties: map[string]any{"title": "pad"},
+		})
+		seedEntity(app, feature(fmt.Sprintf("FEAT-%d", 900000+i), "pad"))
 	}
 	counting := storetest.NewCounting(app.store)
 	policy := &acl.Policy{
@@ -234,7 +254,12 @@ func (b *channelBudget) get(t *testing.T, path string) (cost channelCost, body [
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET %s = %d %s", path, rec.Code, rec.Body)
 	}
-	return channelCost{entity: b.counting.Calls(), channel: b.chans.snapshot()}, rec.Body.Bytes()
+	return b.cost(), rec.Body.Bytes()
+}
+
+// cost is what the counters hold.
+func (b *channelBudget) cost() channelCost {
+	return channelCost{entity: b.counting.Calls(), channel: b.chans.snapshot(), rows: b.counting.Cost()}
 }
 
 // budgetRef is the entity message i names: a ticket alice reads for an even
@@ -250,7 +275,14 @@ func budgetRef(i int) string {
 // message must offer want as its actions, next to the message operations.
 func messagesCost(t *testing.T, n int, yaml string, want []string) channelCost {
 	t.Helper()
-	b := newChannelBudgetWith(t, n, yaml)
+	return messagesCostPadded(t, n, 0, yaml, want)
+}
+
+// messagesCostPadded is messagesCost over a store padded with pad tickets
+// and pad features no message names.
+func messagesCostPadded(t *testing.T, n, pad int, yaml string, want []string) channelCost {
+	t.Helper()
+	b := newChannelBudgetPadded(t, n, pad, yaml, false)
 	ctx := gateCtxFor(aliceCtx(), t, b.d)
 	addr := realtime.RawAddress{EntityType: "ticket", Anchor: "TKT-1", Type: "room"}
 	// The first post goes through the service, which records the
@@ -309,6 +341,25 @@ func TestChannelsBudget_Messages10vs50(t *testing.T) {
 	if !c10.equal(c50) {
 		t.Errorf("a message page grows with rows:\n10: %s\n50: %s", c10, c50)
 	}
+}
+
+// TestChannelsBudget_MessagesScaleFree pins the rows a page of 10
+// messages reads: the same over a store of 20 padding entities as over
+// one of 200 ([indexedPad]).
+func TestChannelsBudget_MessagesScaleFree(t *testing.T) {
+	assertScaleFreeIndexed(t, func(pad int) (storetest.Cost, string) {
+		c := messagesCostPadded(t, 10, pad, channelTestRealtime, []string{"ack"})
+		return c.rows, c.String()
+	})
+}
+
+// TestChannelsBudget_NoticeOutputsScaleFree is
+// TestChannelsBudget_MessagesScaleFree for a page of notices.
+func TestChannelsBudget_NoticeOutputsScaleFree(t *testing.T) {
+	assertScaleFreeIndexed(t, func(pad int) (storetest.Cost, string) {
+		c := noticesCostPadded(t, 10, pad)
+		return c.rows, c.String()
+	})
 }
 
 // TestChannelsBudget_ActionsReadNothing pins that the `_actions`
@@ -491,7 +542,14 @@ func TestChannelsBudget_List10vs50(t *testing.T) {
 // page's one batch resolve, as message refs do.
 func noticesCost(t *testing.T, n int) channelCost {
 	t.Helper()
-	b := newChannelBudgetWith(t, n, channelTestRealtime)
+	return noticesCostPadded(t, n, 0)
+}
+
+// noticesCostPadded is noticesCost over a store padded with pad tickets
+// and pad features no notice names.
+func noticesCostPadded(t *testing.T, n, pad int) channelCost {
+	t.Helper()
+	b := newChannelBudgetPadded(t, n, pad, channelTestRealtime, false)
 	ctx := gateCtxFor(aliceCtx(), t, b.d)
 	addr := realtime.RawAddress{EntityType: "ticket", Anchor: "TKT-1", Type: "incident"}
 	if _, err := b.ch.svc.Post(ctx, addr, realtime.PostInput{
@@ -593,7 +651,7 @@ func TestChannelsBudget_ListBusy10vs50(t *testing.T) {
 		e.counting.Reset()
 		e.chans.reset()
 		resp, _ := e.list(t, "alice", "/api/v1/pages?world=published&busy=facerun&per_page=100")
-		got := channelCost{entity: e.counting.Calls(), channel: e.chans.snapshot()}
+		got := channelCost{entity: e.counting.Calls(), channel: e.chans.snapshot(), rows: e.counting.Cost()}
 		if len(resp.Data) != n {
 			t.Fatalf("%d rows, want %d", len(resp.Data), n)
 		}

@@ -433,10 +433,11 @@ func TestRemotes_RelationEntries(t *testing.T) {
 
 // TestRemotes_ReadBudget (collection-reads.md): the list and the conflict
 // page read the store the same number of times for 10 entries as for 50,
-// half of them on hidden rows.
+// half of them on hidden rows, and read the same rows whether the store
+// holds 20 or 200 tickets no entry names.
 func TestRemotes_ReadBudget(t *testing.T) {
 	t.Parallel()
-	measure := func(t *testing.T, n int, path string) string {
+	measure := func(t *testing.T, n, pad int, path string) (calls string, cost storetest.Cost) {
 		t.Helper()
 		var entries []RemoteEntry
 		var linked []RemoteRow
@@ -447,6 +448,10 @@ func TestRemotes_ReadBudget(t *testing.T) {
 					typ = "feature"
 				}
 				seedEntity(app, &entity.Entity{ID: id, Type: typ, Properties: map[string]any{"title": id}})
+			}
+			for i := range pad {
+				id := fmt.Sprintf("PAD-%05d", i)
+				seedEntity(app, &entity.Entity{ID: id, Type: "ticket", Properties: map[string]any{"title": id}})
 			}
 		}
 		for i := range n {
@@ -465,10 +470,16 @@ func TestRemotes_ReadBudget(t *testing.T) {
 		rec := e.do(t, http.MethodGet, path, "")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		require.NotZero(t, e.counting.Reads(), "the budget measures nothing")
-		return e.counting.String()
+		return fmt.Sprint(e.counting.Calls()), e.counting.Cost()
 	}
 	for _, path := range []string{remotesPath, remotesPath + "/upstream/conflicts?per_page=100"} {
-		require.Equal(t, measure(t, 10, path), measure(t, 50, path), path)
+		small, _ := measure(t, 10, 0, path)
+		large, _ := measure(t, 50, 0, path)
+		require.Equal(t, small, large, path)
+		assertScaleFreeIndexed(t, func(pad int) (storetest.Cost, string) {
+			_, cost := measure(t, 10, pad, path)
+			return cost, path
+		})
 	}
 }
 
