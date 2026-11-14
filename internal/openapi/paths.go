@@ -264,9 +264,13 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 			OperationID: "delete" + capitalize(typeName),
 			Summary:     "Delete a " + def.Label,
 			Tags:        []string{tag},
+			Parameters: []Parameter{
+				{Name: "If-Match", In: "header", Description: "ETag for optimistic locking", Schema: StringSchema()},
+			},
 			Responses: map[string]Response{
 				"204": {Description: "Entity deleted"},
 				"404": {Description: "Entity not found", Content: problemContent()},
+				"412": {Description: "Precondition failed (ETag mismatch)", Content: problemContent()},
 				"409": {
 					Description: "Cannot delete: the entity has incoming relations, a channel whose type sets " +
 						"on_entity_delete: block is attached (code channel_blocks_delete), or the entity changed " +
@@ -457,9 +461,13 @@ func (g *Generator) addRelationTypePaths(spec *Spec, typeName string, def metamo
 				OperationID: fmt.Sprintf("delete%s%sRelation", capitalize(typeName), capitalize(relName)),
 				Summary:     fmt.Sprintf("Delete %s relation", relDef.Label),
 				Tags:        []string{def.Label, "Relations"},
+				Parameters: []Parameter{
+					{Name: "If-Match", In: "header", Description: "Relation ETag for optimistic locking", Schema: StringSchema()},
+				},
 				Responses: map[string]Response{
 					"204": {Description: "Relation deleted"},
 					"404": {Description: "Relation not found", Content: problemContent()},
+					"412": {Description: "Precondition failed (ETag mismatch)", Content: problemContent()},
 				},
 			},
 		}
