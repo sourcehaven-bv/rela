@@ -6,7 +6,8 @@ kind: enhancement
 priority: medium
 effort: s
 started: "2026-11-14"
-status: in-progress
+completed: "2026-11-14"
+status: done
 ---
 
 ## Description
