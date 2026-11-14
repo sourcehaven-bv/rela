@@ -38,6 +38,6 @@ Fold case in `metamodel.EntityDef.MatchesID` and make
 `Validator.ValidateEntity` call it instead of its own copy of the loop.
 Minting keeps writing the upper-case prefix, so the store-side numbering of
 BUG-RLBXTG5 is unchanged. Related areas: `Metamodel.InferEntityType` uses
-`MatchesID` and folds too. `dataentry.validateCreateIDOpts` still compares a
-manual id with the prefix case-sensitively; that only narrows what the HTTP
-create accepts and is filed as a follow-up.
+`MatchesID` and folds too. `dataentry.validateCreateIDOpts` compared a
+manual id with the prefix case-sensitively when this analysis was written;
+review finding RR-JE23B3A made it fold case as well, in this same change.
