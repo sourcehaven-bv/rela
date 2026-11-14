@@ -777,6 +777,13 @@ func (r lateGatedReader) ListRelations(ctx context.Context, q store.RelationQuer
 	return r.reader().ListRelations(ctx, q)
 }
 
+// ListRelationsPage resolves the gated reader per call, like ListRelations.
+func (r lateGatedReader) ListRelationsPage(
+	ctx context.Context, q store.RelationQuery,
+) (store.Page[*entity.Relation], error) {
+	return r.reader().ListRelationsPage(ctx, q)
+}
+
 // errNoStrictRelations reports a gated reader without the strict relation
 // read. Every reader gatedScriptReader returns has it, so this is a wiring
 // bug; the tolerant read is never substituted, because a count over edges a

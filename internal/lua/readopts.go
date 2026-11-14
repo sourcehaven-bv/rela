@@ -156,26 +156,35 @@ func parseReadOpts(s *lua.LState, pos int, known ...string) (readOpts, error) {
 	if err := rejectUnknownKeys(tbl, append([]string{"limit"}, known...)...); err != nil {
 		return o, err
 	}
+	limit, err := limitOption(tbl)
+	if err != nil {
+		return o, err
+	}
+	o.limit = limit
+	return o, nil
+}
 
+// limitOption reads the `limit` key of an options table: maxReadLimit when
+// absent, a positive whole number clamped to maxReadLimit otherwise.
+func limitOption(tbl *lua.LTable) (int, error) {
 	switch lv := tbl.RawGetString("limit").(type) {
 	case *lua.LNilType:
-		// Absent: keep the ceiling.
+		return maxReadLimit, nil
 	case lua.LNumber:
 		n := int(lv)
 		if float64(n) != float64(lv) {
-			return o, fmt.Errorf("option \"limit\" must be a whole number, got %v", float64(lv))
+			return 0, fmt.Errorf("option \"limit\" must be a whole number, got %v", float64(lv))
 		}
 		// 0 is rejected rather than meaning "unbounded" — that is what it
 		// means on store.ListEntitiesPage, and silently inheriting the
 		// opposite meaning here would be the worst kind of near-miss.
 		if n <= 0 {
-			return o, fmt.Errorf("option \"limit\" must be positive, got %d", n)
+			return 0, fmt.Errorf("option \"limit\" must be positive, got %d", n)
 		}
-		o.limit = min(n, maxReadLimit)
+		return min(n, maxReadLimit), nil
 	default:
-		return o, fmt.Errorf("option \"limit\" must be a number, got %s", lv.Type())
+		return 0, fmt.Errorf("option \"limit\" must be a number, got %s", lv.Type())
 	}
-	return o, nil
 }
 
 // rejectUnknownKeys raises on any key of tbl not in allowed. A typo'd option

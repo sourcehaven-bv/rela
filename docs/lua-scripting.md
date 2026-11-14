@@ -440,6 +440,16 @@ rela.get_relations(e.id)               -- NOT a filter: a bare id is not a
                                        -- table, so this returns EVERY relation
 ```
 
+`get_relations` is bounded like `list_entities`. It returns at most 2000
+relations, and a `limit` option lowers that bound by the same rules
+(`limit = 0` is an error, a larger value clamps). Hidden edges do not count
+toward the limit. Unknown option keys are still ignored here, for older
+scripts. A store failure raises an error instead of returning a short list.
+
+```lua
+local first = rela.get_relations({ type = "implements", limit = 100 })
+```
+
 ### History Functions
 
 | Function | Description | Returns |
@@ -1104,8 +1114,12 @@ end)
 | `admin.delete_relation(from, type, to, opts?)` | Unlink, skipping the ACL deny |
 | `admin.delete_entity(id, cascade?)` | Remove, skipping the ACL deny |
 | `admin.get_entity(id)` | Read **raw** — full properties, no redaction |
-| `admin.list_entities(type, opts?)` | Every entity of `type`, ungated; `opts.face` lists one face |
-| `admin.get_relations(opts?)` | Every matching edge, not peer-gated |
+| `admin.list_entities(type, opts?)` | Up to `opts.limit` (at most 2000) entities of `type`, ungated; `opts.face` lists one face |
+| `admin.get_relations(opts?)` | Up to `opts.limit` (at most 2000) matching edges, not peer-gated |
+
+Both list reads take the same `limit` option as their gated counterparts.
+`admin.list_entities` rejects unknown option keys, as `rela.list_entities`
+does.
 
 **Elevated reads return raw data.** `admin.get_entity` returns the entity with
 all properties, including ones the triggering user cannot see; `list_entities`
@@ -2584,8 +2598,21 @@ in the project. Pass the result to `resolve_refs`.
 
 Options (all optional):
 
+- `content`: a markdown string. Only the ids it mentions in code
+  spans are read, by the rule `resolve_refs` uses. This is the cheap
+  form: pass the body you are about to resolve.
+- `ids`: a list of entity ids to read. Use `ids` or `content`, not
+  both. An id that is not well formed, such as an address with `@`,
+  raises an error.
 - `types`: list of entity-type names to include. Unknown names raise
-  an error. Default: every entity type in the metamodel.
+  an error. Default: every entity type in the metamodel. With `ids`
+  or `content`, it filters the ids read.
+- `limit`: the most entities to read, at most 2000 (the default).
+  Without `ids` or `content`, more readable entities than the limit
+  raise an error, so a large project never gets a partial map by
+  accident. Set `limit` yourself to accept the first `limit`
+  entities instead. With `ids` or `content`, more ids than `limit`
+  is an error.
 - `style`: `"title-slug"` (default) or `"id"`. Controls the anchor in
   the default replacement value.
   - `"title-slug"` produces `[Title](#title-slug)` where the slug is
@@ -2600,6 +2627,8 @@ Options (all optional):
   newlines. The entity table has the usual fields plus a top-level
   `title` convenience.
 
+Unknown option keys raise an error.
+
 Default-form replacement values escape `[`, `]`, and `\` in entity
 titles so a malicious or unusual title cannot break out of the
 link-text slot. Custom format callbacks remain responsible for their
@@ -2607,7 +2636,7 @@ own escaping.
 
 ```lua
 -- Common case: link every entity-ID code span to its title-slug anchor.
-local refs = rela.md.entity_refs()
+local refs = rela.md.entity_refs({ content = entity.content })
 local ast  = rela.md.parse(entity.content)
 ast = rela.md.resolve_refs(ast, refs)
 print(rela.md.render(ast))

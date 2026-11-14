@@ -22,8 +22,7 @@ import (
 
 // EntityReader is the read-OUT surface every graph-reading Lua binding
 // goes through. Defined here at the consumer per CLAUDE.md "interfaces at
-// the call site" (same rationale as [Mutator] and cacheStore) — three
-// methods, which is exactly what the bindings call.
+// the call site" (same rationale as [Mutator] and cacheStore).
 //
 // The wiring site decides what backs it, and that decision IS the read-ACL
 // (DEC-O59WM4): a visibility-backed adapter binds reads to the acting
@@ -37,7 +36,25 @@ type EntityReader interface {
 	// method, because its GetEntity takes an entity.Ref.
 	GetAddress(ctx context.Context, addr string) (*entity.Entity, error)
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
+	// ListRelations is not called by a binding; it stays because the
+	// validation graph is built over this reader (validationgraph.Reader).
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
+	// ListRelationsPage returns at most q.Limit relations, which must be
+	// positive, and the cursor of the next page (TKT-P9QMEVI). A gated
+	// reader fills the page with the edges the caller may read.
+	ListRelationsPage(ctx context.Context, q store.RelationQuery) (store.Page[*entity.Relation], error)
+}
+
+// ElevatedReader is the raw read handle behind the `admin` reads of
+// rela.bypass_acl: [EntityReader] plus a paged entity list, so
+// admin.list_entities reads one bounded page rather than a whole type
+// (TKT-P9QMEVI). The gated runtime has no use for it; rela.list_entities
+// keeps the ACL pushdown of [EntityReader.ListEntities].
+type ElevatedReader interface {
+	EntityReader
+	// ListEntitiesPage returns at most q.Limit entities, which must be
+	// positive, and the cursor of the next page.
+	ListEntitiesPage(ctx context.Context, q store.EntityQuery) (store.Page[*entity.Entity], error)
 }
 
 // ReadDeps is the capability bundle required to run a read-only Lua runtime.
@@ -365,7 +382,7 @@ type WriteDeps struct {
 	// silently reading through the gated VisibleReader. Elevation that
 	// quietly degrades to the caller's view is worse than a loud failure —
 	// the script would see a partial graph and treat it as complete.
-	ElevatedReader EntityReader
+	ElevatedReader ElevatedReader
 
 	// ElevationRecorder, when non-nil, is notified once per bypass_acl
 	// closure that performed at least one elevated READ (TKT-ACSBSA).
