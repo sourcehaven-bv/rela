@@ -19,8 +19,8 @@ retention, and the REST surface under `/api/v1/_records`.
 This ticket covers the parts TKT-J7Q9C4K deferred:
 
 - MCP tools and Lua bindings (`rela.records`) for append, list and aggregate.
-- CLI: `rela records append|list|aggregate|expire`, and running `Expire` on a
-schedule.
+- CLI: `rela records append|list|aggregate|expire`. The hourly retention job
+shipped in TKT-J7Q9C4K.
 - Rollup source: a rollup column reads a record type (`latest`, `sum`, `avg`
 over a window), with decimal `sum` and `avg` in rollups generally.
 - SPA: a records panel on the entity page with a table and a line chart.
