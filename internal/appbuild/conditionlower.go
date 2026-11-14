@@ -95,3 +95,56 @@ func lowerQueryCondition(
 	}
 	return frag, false, true
 }
+
+// QueryConditions answers a caller's query condition in the store, for an
+// identity-bearing consumer outside the data-entry API: MCP list_entities
+// (TKT-Z099FGY). It holds the metamodel and the traversal gate of the
+// [GatedReadBundle] it came from, so a lowered `related(...)` is gated by
+// the same policy as the bundle's Traversals binder, which answers the
+// same condition in Go. It holds no principal: the gate resolves the ctx
+// principal per call, so one value serves every request.
+//
+// It also stamps the query identity, because `current_user` must bind to
+// the same caller in the store and in Go; a consumer that lowers a
+// condition is the one that needs it.
+type QueryConditions struct {
+	meta *metamodel.Metamodel
+	gate relresolve.Gate
+}
+
+// StampQueryIdentity stamps the caller's query identity onto ctx, so
+// `current_user` lowers and evaluates against the caller. It is the
+// derivation query scopes use ([QueryScopeResolver.StampQueryIdentity]).
+func (q QueryConditions) StampQueryIdentity(ctx context.Context) (context.Context, error) {
+	return nextActionRequestScope(ctx)
+}
+
+// Lower rewrites prog, compiled against entityType, as store predicates for
+// the ctx principal: props on the STORED row, and related entries already
+// gated for the principal. See [lowerQueryCondition] for the outcomes.
+//
+// Every entity field prog reads is the property of one of props: a
+// condition that reads a field no prop names, or uses the entity record
+// whole other than as a traversal subject, does not lower. So a caller
+// whose Go path judges REDACTED rows decides whether the store may answer by
+// checking the visibility of the props' properties alone. The zero value
+// lowers nothing: lowerQueryCondition declines without a gate.
+func (q QueryConditions) Lower(
+	ctx context.Context, prog *predicate.Program, entityType string,
+) (props []store.PropPredicate, related []store.DirectedRelation, empty, ok bool) {
+	frag, empty, ok := lowerQueryCondition(ctx, q.meta, prog, entityType, q.gate)
+	if !ok || empty {
+		return nil, nil, empty, ok
+	}
+	named := make(map[string]bool, len(frag.Props))
+	for _, p := range frag.Props {
+		named[p.Property] = true
+	}
+	for _, attr := range prog.Attributes("entity") {
+		if !named[attr] {
+			return nil, nil, false, false
+		}
+	}
+	// lowerQueryCondition sets only Props and Related on frag.
+	return frag.Props, frag.Related, false, true
+}

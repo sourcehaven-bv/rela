@@ -25,6 +25,12 @@ type PageQuery struct {
 	// [ErrPropsNotPushable]); the store compares raw values, so a property
 	// hidden on some row would answer for a value the caller cannot see.
 	Props []store.PropPredicate
+	// Related narrows the rows by their edges (TKT-Z099FGY). Each entry
+	// must already have passed the caller's traversal gate
+	// (acl.Request.GateTraversal): the read ANDs it onto the read scope
+	// and checks nothing more, so an ungated entry would let the row set
+	// depend on edges the caller cannot see. It only ever narrows.
+	Related []store.DirectedRelation
 	// Limit is the page size. It must be positive: a page read never
 	// returns the whole type.
 	Limit int
@@ -42,10 +48,11 @@ type EntityPage struct {
 	Total int
 }
 
-// ErrPropsNotPushable reports a [PageQuery] whose Props name a property the
-// caller does not see on every row. The caller answers such a filter over
-// redacted rows instead.
-var ErrPropsNotPushable = errors.New("visibility: a filtered property is hidden on some rows")
+// ErrPropsNotPushable reports a [PageQuery] narrowing the reader cannot
+// push: Props naming a property the caller does not see on every row, or,
+// on a reader without pushdown, any Props or Related. The caller answers
+// such a filter over redacted rows instead.
+var ErrPropsNotPushable = errors.New("visibility: the page filter cannot be pushed to the store")
 
 // errPageLimit reports a [PageQuery] without a positive Limit.
 var errPageLimit = errors.New("visibility: a page query needs a positive limit")
@@ -111,11 +118,11 @@ func checkPageQuery(q PageQuery) error {
 // runs on the page, primed once for it (PolicyReader.redactPage).
 //
 // Props are pushed only when the caller sees each property on every row it
-// reads; otherwise the read returns [ErrPropsNotPushable]. Without pushdown
-// (a reader that cannot redact without gating, or no read-scope provider) a
-// query without Props is answered by load-then-Filter, and one with Props
-// is refused with ErrPropsNotPushable. Both are a cost or a refusal, never a
-// weaker gate.
+// reads; otherwise the read returns [ErrPropsNotPushable]. Related is pushed
+// as given. Without pushdown (a reader that cannot redact without gating, or
+// no read-scope provider) a query without Props or Related is answered by
+// load-then-Filter, and one with either is refused with
+// ErrPropsNotPushable. Both are a cost or a refusal, never a weaker gate.
 func (s *ScriptReader) ListEntityPage(ctx context.Context, q PageQuery) (EntityPage, error) {
 	if err := checkPageQuery(q); err != nil {
 		return EntityPage{}, err
@@ -161,6 +168,7 @@ func readPage(
 	ctx context.Context, raw store.GraphQueryer, gq store.GraphQuery, q PageQuery, redact pageRedactor,
 ) (EntityPage, error) {
 	gq.Props = slices.Concat(gq.Props, q.Props)
+	gq.Related = slices.Concat(gq.Related, q.Related)
 	total, err := store.CountMatched(ctx, raw, gq)
 	if err != nil {
 		return EntityPage{}, err
@@ -193,7 +201,7 @@ func headerRow(h store.EntityHeader) *entity.Entity {
 // type, so it only serves a reader that cannot push the gate down; no
 // production wiring builds one.
 func (s *ScriptReader) pageViaFilter(ctx context.Context, q PageQuery) (EntityPage, error) {
-	if len(q.Props) > 0 {
+	if len(q.Props) > 0 || len(q.Related) > 0 {
 		return EntityPage{}, ErrPropsNotPushable
 	}
 	rows, err := s.listGatedThenRanked(ctx, store.EntityQuery{Type: q.Type, Faces: q.Faces})

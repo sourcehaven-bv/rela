@@ -6,7 +6,7 @@ package archguard
 //
 // Each entry has a category (see readCategory) and a reason that says what
 // the read is for. requestPath entries are debt. The follow-ups of
-// TKT-FED6FMM remove them: TKT-F2EJQY8 (dataentry), TKT-Z099FGY (mcp
+// TKT-FED6FMM remove them: TKT-F2EJQY8 (dataentry), TKT-9BKVQ9I (mcp
 // filters), TKT-GIAGLQ3 (ingest, rename), TKT-P9QMEVI (lua) and TKT-EBBHM55
 // (desktopnotify).
 var unpagedReadAllowlist = map[string]unpagedRead{
@@ -180,8 +180,9 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/mcp/tools_analysis.go#Server.handleAnalyzeUnique": {1, batchJob,
 		"analyze unique tool: compares the unique values of every entity of each type"},
 	"internal/mcp/tools_entity.go#listPage.filterInGo": {1, requestPath,
-		"list_entities tool with a filter that does not lower to store predicates (related(...), current_user, " +
-			"ordered comparisons): reads the whole readable type, then filters and pages in Go (TKT-Z099FGY)"},
+		"list_entities tool with a filter the store cannot answer (see its doc): reads the whole readable " +
+			"type, then filters and pages in Go. The exact total needs every row judged, so paging the read " +
+			"would not bound it (TKT-9BKVQ9I)"},
 
 	// remotesync: a sync pass over the mapped types.
 	"internal/remotesync/push.go#pusher.localRows": {1, batchJob, "remote sync push: every local row of a mapped type"},

@@ -140,6 +140,14 @@ func pageIDs(p visibility.EntityPage) []string {
 
 var openStatus = []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}}
 
+// assigned is the traversal "has an incoming assigned-to edge", negated or
+// not, as a caller's traversal gate would hand it to a page read.
+func assigned(negate bool) []store.DirectedRelation {
+	return []store.DirectedRelation{{
+		Incoming: true, Pred: store.RelationPredicate{OfTypes: []string{"assigned-to"}, Negate: negate},
+	}}
+}
+
 // ListEntityPage serves the page and the total for the caller: the row gate
 // and the filter run in the store, the field gate on the page, and the total
 // counts only the rows the caller may read (TKT-D9UO9Y4).
@@ -171,6 +179,21 @@ func assertEntityPages(t *testing.T, f pageFixture) {
 			name: "global reader filters in the store", user: "alice",
 			q:       visibility.PageQuery{Props: openStatus, Limit: 3, Offset: 1},
 			wantIDs: []string{"TKT-0002", "TKT-0004", "TKT-0006"}, wantTotal: 20,
+		},
+		{
+			name: "a gated traversal narrows in the store", user: "alice",
+			q:       visibility.PageQuery{Related: assigned(false), Limit: 2, Offset: 10},
+			wantIDs: []string{"TKT-0010", "TKT-0011"}, wantTotal: pageAssigned,
+		},
+		{
+			name: "a negated traversal narrows in the store", user: "alice",
+			q:       visibility.PageQuery{Related: assigned(true), Limit: 2},
+			wantIDs: []string{"TKT-0012", "TKT-0013"}, wantTotal: 40 - pageAssigned,
+		},
+		{
+			name: "a traversal composes with the row gate", user: "bob",
+			q:       visibility.PageQuery{Related: assigned(true), Limit: 2},
+			wantIDs: nil, wantTotal: 0,
 		},
 		{
 			name: "offset past the end", user: "alice",
@@ -269,6 +292,15 @@ func TestUnrestrictedReader_ListEntityPage(t *testing.T) {
 	}
 	if got := pageIDs(page); !slices.Equal(got, []string{"TKT-0002", "TKT-0004"}) || page.Total != 5 {
 		t.Errorf("page = %v of %d, want [TKT-0002 TKT-0004] of 5", got, page.Total)
+	}
+	page, err = visibility.Unrestricted(f.st).ListEntityPage(context.Background(), visibility.PageQuery{
+		Type: "ticket", Faces: store.AllFaces(), Related: assigned(false), Props: openStatus, Limit: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := pageIDs(page); !slices.Equal(got, []string{"TKT-0000", "TKT-0002"}) || page.Total != 5 {
+		t.Errorf("related page = %v of %d, want [TKT-0000 TKT-0002] of 5", got, page.Total)
 	}
 }
 

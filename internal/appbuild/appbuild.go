@@ -860,6 +860,7 @@ func (s *Services) GatedReads() GatedReadBundle {
 		Validator:  newValidator(reader, s.meta, deps, gate, s.store),
 		Searcher:   deps.Searcher,
 		Traversals: b,
+		Conditions: QueryConditions{meta: s.meta, gate: gate},
 		LuaReads:   deps,
 		Rebind:     rebindFor(s.aclDeclarative),
 		Rollups:    gatedRollups(s),
@@ -931,6 +932,10 @@ type GatedReadBundle struct {
 
 	// Traversals answers `related(...)` under the same gate as Reader.
 	Traversals *relresolve.Binder
+
+	// Conditions lowers a query condition to store predicates under the
+	// same traversal gate as Traversals (TKT-Z099FGY).
+	Conditions QueryConditions
 
 	// Searcher gates hits by the principal's read scope, drops hits that
 	// matched only hidden properties, and clears the indexed title (see
