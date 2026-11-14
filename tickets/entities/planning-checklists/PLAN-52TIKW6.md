@@ -131,7 +131,7 @@ Answers}` (not on `flow.Instance`; flows untouched). Realtime sets
 it, so they join the new span's set. An append whose `reply_to` is in `Asked`
 and whose type matches adds one answer; `Remove` subtracts one, reading the type
 before it erases. All under the same lock; no config in the store.
-- The same logic is one pure function, `channels.ApplyBatch(head, batch)`,
+- The same logic is one pure function, `channels.PlanBatch(cur, batch)`,
 used by the store and by the service pre-check, so `precheckOutputs`, the output
 gate, `personMark` and `runInline` see the state the store will see.
 - `session.open_questions` (entries with zero answers) is a variable of the
@@ -144,7 +144,7 @@ Answer edits after the move stay allowed (documented).
 - Storage: pg and sqlite migrations for the asked column; `meta.yaml` field;
 a cap check on read and write (at most `MaxBatch` entries per span plus
 questions from later batches, capped at `MaxAsked = 20`).
-- Transports: `POST .../messages:batch` with its own body limit
+- Transports: `POST .../_batch` with its own body limit
 (`MaxBatch * MaxMessageBytes` plus overhead) and a total-bytes cap; MCP
 `post_messages`; CLI `rela channel post-batch --json`. `MaxBatch = 10`. Rate
 tokens are charged once the batch validates; mentions are capped per batch and
@@ -213,7 +213,7 @@ post (role, `in:`, `when:`, size, mentions); one refusal refuses all.
 as text. Button labels and `into` stay plain strings, so a click never posts
 markup the asker chose.
 - Quote stripping inserts text, not HTML.
-- No new read path: messages keep the channel gates; `session.open` holds only
+- No new read path: messages keep the channel gates; `Channel.Asked` holds only
 seqs of messages in the same channel.
 - A batch cannot bypass the per-message session checks, because each message
 runs the same Admit/Decide.
@@ -247,7 +247,7 @@ types: only `choices:` types become open.
 - Answer to a question not in Asked (old question, other span): stored, no
 effect on Asked.
 - Two answers to one open question: the first closes it; the second is stored
-as today and does not change the count.
+as today and raises the count again.
 - Session moved by a timer or another post: Asked cleared; buttons drop.
 - Empty object list; duplicate labels (buttons keyed by index); unicode.
 
@@ -269,7 +269,7 @@ message is not postable (nothing stored, error names index 2).
 - `AppendBatch` across three backends: mitigate with the conformance harness
 and by building it on the existing single-append step code, called in a loop
 under one lock/transaction.
-- Pre-check and store drifting apart: one pure `ApplyBatch` used by both,
+- Pre-check and store drifting apart: one pure `PlanBatch` used by both,
 with tests that compare them for the last answer and each batch message.
 - Remove changes `Asked` outside a session step: same lock, type read before
 erase; answer/remove races covered on all three backends.
