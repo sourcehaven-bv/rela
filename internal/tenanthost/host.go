@@ -12,6 +12,9 @@
 //   - no assertion, or one that does not verify: 401;
 //   - a verified assertion with no `org_id`, or an org that is not an active
 //     tenant (unknown, suspended or being erased): 403 `unknown_tenant`;
+//   - with provisioning on ([ProvisionConfig]), an org whose tenant is being
+//     created: 202 with a `{"status":"provisioning"}` body. No tenant is
+//     opened for it;
 //   - the tenant lookup or the store open failed, or the org's derived
 //     schema is recorded for another org: 503.
 //
@@ -49,6 +52,10 @@ import (
 // the tenant, so the host routes it by the body rather than by a header.
 const WebhookPath = "/webhooks/idp"
 
+// StatusPath answers the caller's own tenant status, for the SPA to poll
+// while its tenant is being created. It never names another org.
+const StatusPath = "/api/v1/_tenant"
+
 // webhookMaxBody caps the webhook body read before verification, matching
 // the data-entry receiver's own cap.
 const webhookMaxBody = 64 << 10
@@ -84,11 +91,16 @@ type Config struct {
 	// Webhook verifies the IdP webhook body. Optional: nil leaves
 	// [WebhookPath] an ordinary path that needs an assertion.
 	Webhook WebhookVerifier
+	// Provision enables creating a tenant for a verified org that has none.
+	// The zero value is [ProvisionOff].
+	Provision ProvisionConfig
 }
 
 // Host is the front http.Handler of a multi-tenant server.
 type Host struct {
 	cfg Config
+	// prov is nil when provisioning is off.
+	prov *provisioning
 }
 
 // New builds a Host.
@@ -106,7 +118,19 @@ func New(cfg Config) (*Host, error) {
 	case cfg.Static == nil:
 		return nil, errors.New("tenanthost: static handler is required")
 	}
-	return &Host{cfg: cfg}, nil
+	if err := validateProvision(cfg.Provision, cfg.Webhook != nil); err != nil {
+		return nil, err
+	}
+	return &Host{cfg: cfg, prov: newProvisioning(cfg.Provision)}, nil
+}
+
+// Close cancels the provisioning runs in progress and waits for them to
+// end. A cancelled create is finished by the next one. Safe to call when
+// provisioning is off.
+func (h *Host) Close() {
+	if h.prov != nil {
+		h.prov.close()
+	}
 }
 
 // ServeHTTP routes r to its tenant's application, or refuses it.
@@ -164,6 +188,11 @@ func (h *Host) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if clean == StatusPath && r.Method == http.MethodGet {
+		h.serveStatus(w, r, id.OrgID)
+		return
+	}
+
 	next, release, err := h.cfg.Acquire(r.Context(), id.OrgID)
 	if err != nil {
 		if !shell() {
@@ -206,6 +235,10 @@ func (h *Host) serveWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	next, release, err := h.cfg.Acquire(r.Context(), claims.OrgID)
+	if err != nil && h.prov != nil && claims.Event == eventOrgCreated && provisionable(err) {
+		h.provisionFromWebhook(w, r, claims)
+		return
+	}
 	switch {
 	case errors.Is(err, tenant.ErrTenantInactive):
 		// A suspended tenant keeps its data, and a role removal or user
@@ -219,7 +252,8 @@ func (h *Host) serveWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	case errors.Is(err, tenant.ErrUnknownTenant):
 		// Acknowledged so the IdP does not retry an event for an org this
-		// server does not host. Provisioning a tenant is TKT-TNPRV8.
+		// server does not host. With provisioning on, an
+		// `organization.created` was handled above.
 		if claims.Event == "organization.deleted" {
 			// An org being erased, or one this server never had: worth an
 			// operator's look, since an erasure may be in progress.
@@ -245,6 +279,16 @@ func (h *Host) serveWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Host) acquireFailed(w http.ResponseWriter, r *http.Request, orgID string, err error) {
+	if h.prov != nil && provisionable(err) {
+		if h.prov.lazy {
+			h.provisionLazily(w, r, orgID, http.StatusAccepted)
+			return
+		}
+		if errors.Is(err, tenant.ErrTenantProvisioning) {
+			writeStatus(w, http.StatusAccepted, statusProvisioning)
+			return
+		}
+	}
 	if errors.Is(err, tenant.ErrUnknownTenant) {
 		slog.InfoContext(r.Context(), "tenant host: org is not a tenant of this server",
 			"org_id", orgID, "path", r.URL.Path)

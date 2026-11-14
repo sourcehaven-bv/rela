@@ -678,8 +678,10 @@ derived from its verified `org_id` claim:
   that schema. Every other setting, including TLS, is kept.
 
 A table records which tenants exist: `rela_control.tenants`. It has one row
-per tenant with the schema name, the org id and a status. The server only
-reads it. Only the `rela-server tenant` commands write it.
+per tenant with the schema name, the org id and a status. The
+`rela-server tenant` commands write it. The server only reads it, unless
+`-tenant-provision` lets it create tenants (see "Provisioning tenants
+automatically").
 
 The table lives in a schema of its own, `rela_control`, for these reasons:
 
@@ -696,8 +698,9 @@ Every other case is refused and opens no store:
 
 | Case | Response |
 | --- | --- |
-| No row for the org | 403 `unknown_tenant` |
-| Status `provisioning`, `suspended` or `erasing` | 403 `unknown_tenant` |
+| No row for the org | 403 `unknown_tenant`; 202 with `-tenant-provision=lazy` |
+| Status `provisioning` | 403 `unknown_tenant`; 202 with `-tenant-provision` on |
+| Status `suspended` or `erasing` | 403 `unknown_tenant` |
 | The org's schema is recorded for another org | 503 |
 | Status `active`, but the schema does not exist | 503 |
 | The control table cannot be read | 503 |
@@ -767,6 +770,68 @@ server cannot tell their tenant and refuses them.
 
 Each open tenant holds one extra connection, which holds the tenant's
 schema lock while the tenant is open (see "Erasing a tenant").
+
+### Provisioning tenants automatically
+
+By default the server never creates a tenant: an operator runs
+`rela-server tenant create` for each org. The `-tenant-provision` flag
+(`RELA_TENANT_PROVISION`) lets the server create the tenant of a verified
+org that has none. Creating a tenant reserves its control row, creates the
+schema and runs the migrations, exactly as `tenant create` does.
+
+| Value | What happens |
+| --- | --- |
+| `off` (default) | An unknown org gets 403. The IdP webhook acknowledges and drops events for it. |
+| `webhook` | A verified `organization.created` webhook creates the tenant. Requests for an unknown org still get 403. Needs `-webhook-audience` and `-webhook-action`. |
+| `lazy` | As `webhook`, and a request with a verified but unknown org also starts the create. Works without the webhook; then it is the only path. |
+
+The webhook waits up to 10 seconds for the create:
+
+| Outcome | Response |
+| --- | --- |
+| Created, or the tenant already exists and is active | 200 |
+| Still running after 10 seconds, or another server is creating it | 202 (the IdP does not retry; a later request or event finishes it) |
+| Failed | 502, so the IdP retries |
+| Over the rate or running cap | 503 with `Retry-After` |
+
+With `lazy`, a request for an org that has no tenant starts the create and
+gets 202 at once, with `Retry-After` and the body
+`{"status":"provisioning"}`. The server never holds a request open while
+it migrates. While a tenant's status is `provisioning`, every request gets
+the same 202. If the create failed, requests get 503 `provisioning_failed`
+with `Retry-After` for 30 seconds; the next request after that tries again.
+A create that failed part way is finished by the next one.
+
+The SPA can poll `GET /api/v1/_tenant`. It answers 200 with
+`{"status":"active"}`, `{"status":"provisioning"}` or
+`{"status":"suspended"}` for the caller's own verified org, and nothing
+about any other org. An org that has no tenant gets 403 `unknown_tenant`,
+unless `lazy` is on, which starts its create and answers `provisioning`.
+
+Concurrent requests and webhooks for one org share one create. The create
+runs on its own context with a 5 minute timeout, so a client that hangs up
+does not abort a migration. Starts are capped across all orgs:
+`-tenant-provision-rate` (`RELA_TENANT_PROVISION_RATE`, default 10 per
+minute), and at most 2 creates run at once. Over either cap a request or
+webhook gets 503 with `Retry-After`.
+
+The server never adopts an existing schema that has no control row; that
+is an operator decision (`tenant create -adopt`). It never erases a
+tenant: `organization.deleted` is still only logged.
+
+Every tenant shares the project configuration, so a new tenant starts with
+an empty store and nothing is seeded into it.
+
+**Trust assumption.** Provisioning on a verified org means anyone who can
+mint an assertion, or a signed webhook, can make the server create
+schemas. That is acceptable only while one issuer is trusted, the audience
+is pinned (the webhook has its own), and Pratique sets `org_id` on every
+verified assertion. So an org the server has not seen is new, not
+malicious. If a second issuer is ever trusted, turn provisioning off. This
+is why the default is `off`.
+
+The server still refuses to start when the control table does not exist,
+so create the first tenant with `rela-server tenant create`.
 
 Every tenant uses the same database role, the one in `$RELA_DATABASE_URL`.
 The `rela-server tenant` commands connect as that role too, so the tables a

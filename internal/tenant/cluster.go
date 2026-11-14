@@ -143,12 +143,19 @@ func newClusterResolver(base string, control controlReader, closer io.Closer) *C
 // other than active, and with [ErrSchemaCollision] an org whose derived
 // schema is recorded for another org. An active row whose schema is missing
 // is an integrity failure, reported as neither, so it maps to 503.
+//
+// A missing row also carries [ErrTenantAbsent], and a provisioning one
+// [ErrTenantProvisioning], so a host that provisions can tell them apart.
 func (r *ClusterResolver) Resolve(ctx context.Context, orgID string) (Tenant, error) {
 	rec, err := r.Lookup(ctx, orgID)
 	if err != nil {
 		return Tenant{}, err
 	}
-	if rec.Status == StatusSuspended || rec.Status == StatusProvisioning {
+	if rec.Status == StatusProvisioning {
+		return Tenant{}, fmt.Errorf("%w: %w: %w: org_id %q is %s",
+			ErrUnknownTenant, ErrTenantInactive, ErrTenantProvisioning, orgID, rec.Status)
+	}
+	if rec.Status == StatusSuspended {
 		return Tenant{}, fmt.Errorf("%w: %w: org_id %q is %s", ErrUnknownTenant, ErrTenantInactive, orgID, rec.Status)
 	}
 	if rec.Status != StatusActive {
@@ -178,7 +185,7 @@ func (r *ClusterResolver) Lookup(ctx context.Context, orgID string) (Record, err
 		return Record{}, fmt.Errorf("tenant: look up org_id %q: %w", orgID, err)
 	}
 	if !found {
-		return Record{}, fmt.Errorf("%w: %q", ErrUnknownTenant, orgID)
+		return Record{}, fmt.Errorf("%w: %w: %q", ErrUnknownTenant, ErrTenantAbsent, orgID)
 	}
 	if rec.OrgID != orgID {
 		return Record{}, fmt.Errorf("%w: org_id %q derives schema %q, which is recorded for another org",

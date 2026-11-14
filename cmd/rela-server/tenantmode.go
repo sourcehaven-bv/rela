@@ -29,6 +29,11 @@ type tenantFlags struct {
 	// maxResident and maxOpen are the registry bounds; zero takes the
 	// registry's defaults.
 	maxResident, maxOpen int
+	// provision is the -tenant-provision mode: off, webhook or lazy
+	// (TKT-TNPRV8). provisionRate caps provisioning starts per minute; zero
+	// takes the host's default.
+	provision     string
+	provisionRate int
 }
 
 // coverage-ignore-start: main-or-wiring: registers flags on the global flag.CommandLine
@@ -42,6 +47,14 @@ func registerTenantFlags(t *tenantFlags) {
 	flag.IntVar(&t.maxOpen, "tenant-max-open", envInt("RELA_TENANT_MAX_OPEN"),
 		"Tenant mode: hard ceiling on open tenants (default twice -tenant-max-resident). "+
 			"Also RELA_TENANT_MAX_OPEN.")
+	flag.StringVar(&t.provision, "tenant-provision", envOr("RELA_TENANT_PROVISION", string(tenanthost.ProvisionOff)),
+		"Tenant mode: create a tenant for a verified org that has none. off (default): an unknown org is "+
+			"refused. webhook: on a verified organization.created IdP webhook (needs -webhook-*). lazy: also "+
+			"on the org's first request, which is answered 202 while the tenant is created. Trusts every "+
+			"assertion the one configured issuer signs. Also RELA_TENANT_PROVISION.")
+	flag.IntVar(&t.provisionRate, "tenant-provision-rate", envInt("RELA_TENANT_PROVISION_RATE"),
+		"Tenant mode: most tenant creations started per minute (default 10; at most 2 run at once). "+
+			"Also RELA_TENANT_PROVISION_RATE.")
 }
 
 // coverage-ignore-end
@@ -100,7 +113,48 @@ func validateTenantMode(f *serverFlags, envUser string, supported bool) (identit
 	if f.configEditing {
 		return mode, errors.New("--config-editing is not supported in tenant mode")
 	}
+	prov, err := tenanthost.ParseProvisionMode(f.tenant.provision)
+	if err != nil {
+		return mode, fmt.Errorf("-tenant-provision: %w", err)
+	}
+	if prov == tenanthost.ProvisionWebhook && (f.webhookAudience == "" || f.webhookAction == "") {
+		return mode, errors.New("-tenant-provision=webhook needs the IdP webhook (-webhook-audience, -webhook-action)")
+	}
+	if f.tenant.provisionRate < 0 {
+		return mode, errors.New("-tenant-provision-rate must not be negative")
+	}
 	return mode, nil
+}
+
+// provisionAdapter is the host's [tenanthost.Provisioner] over the control
+// table's writer. It never adopts an existing schema: a schema without a
+// control row may hold another org's data, so only an operator adopts it.
+type provisionAdapter struct{ p *tenant.Provisioner }
+
+// Provision creates orgID's tenant. A tenant that already exists is
+// success: two servers may race the same create, and the host acquires the
+// tenant afterwards, which refuses one that is not active.
+func (a provisionAdapter) Provision(ctx context.Context, orgID string) error {
+	_, err := a.p.Create(ctx, orgID, false)
+	if errors.Is(err, tenant.ErrTenantExists) {
+		return nil
+	}
+	return err
+}
+
+// provisionConfig builds the host's provisioning config from the flags,
+// which validateTenantMode checked. baseDSN and auditRoot are as for
+// [tenant.NewProvisioner].
+func provisionConfig(t tenantFlags, baseDSN, auditRoot string) (tenanthost.ProvisionConfig, error) {
+	mode, err := tenanthost.ParseProvisionMode(t.provision)
+	if err != nil || mode == tenanthost.ProvisionOff {
+		return tenanthost.ProvisionConfig{Mode: tenanthost.ProvisionOff}, err
+	}
+	p, err := tenant.NewProvisioner(baseDSN, auditRoot)
+	if err != nil {
+		return tenanthost.ProvisionConfig{}, err
+	}
+	return tenanthost.ProvisionConfig{Mode: mode, Provisioner: provisionAdapter{p}, PerMinute: t.provisionRate}, nil
 }
 
 // tenantResident is one open tenant: its services, the data-entry app over
@@ -199,9 +253,11 @@ func (s *server) openTenant(t tenant.Tenant, opened *tenant.Opened) (*tenantResi
 	}, nil
 }
 
-// tenantLimits are the registry bounds; zero takes the registry's defaults.
-type tenantLimits struct {
+// tenantOptions are the registry bounds, where zero takes the registry's
+// defaults, and the host's provisioning config.
+type tenantOptions struct {
 	resident, open int
+	provision      tenanthost.ProvisionConfig
 }
 
 // tenantHost is a running multi-tenant server: the front handler and the
@@ -209,13 +265,16 @@ type tenantLimits struct {
 type tenantHost struct {
 	addr     string
 	handler  http.Handler
+	host     *tenanthost.Host
 	registry *tenant.Registry[*tenantResident]
 	// resolver is closed after the registry.
 	resolver io.Closer
 }
 
-// close closes the registry, then the resolver it reads.
+// close ends the host's provisioning runs, then closes the registry and
+// the resolver it reads.
 func (th *tenantHost) close() {
+	th.host.Close()
 	if err := th.registry.Close(); err != nil {
 		slog.Warn("closing tenants", "error", err)
 	}
@@ -285,8 +344,13 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 		return nil, err
 	}
 
-	th, err := s.tenantHost(base, resolver, tenantLimits{resident: f.tenant.maxResident, open: f.tenant.maxOpen},
-		adapter)
+	prov, err := provisionConfig(f.tenant, os.Getenv("RELA_DATABASE_URL"), tenant.AuditRoot(base.CacheDir()))
+	if err != nil {
+		_ = resolver.Close()
+		return nil, err
+	}
+	th, err := s.tenantHost(base, resolver,
+		tenantOptions{resident: f.tenant.maxResident, open: f.tenant.maxOpen, provision: prov}, adapter)
 	if err != nil {
 		_ = resolver.Close()
 		return nil, err
@@ -300,7 +364,7 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 // around the same verifier, so every tenant's gate trusts what the host
 // verified and nothing else.
 func (s *server) tenantHost(
-	base *appbuild.SharedBase, resolver tenant.Resolver, limits tenantLimits, verifier tenanthost.AssertionVerifier,
+	base *appbuild.SharedBase, resolver tenant.Resolver, limits tenantOptions, verifier tenanthost.AssertionVerifier,
 ) (*tenantHost, error) {
 	openSvc, err := tenant.SharedBaseOpener(base, tenant.AuditRoot(base.CacheDir()))
 	if err != nil {
@@ -322,6 +386,7 @@ func (s *server) tenantHost(
 		Verifier:   verifier,
 		HeaderName: s.f.jwtHeader,
 		Static:     dataentry.StaticShell(),
+		Provision:  limits.provision,
 		Acquire: func(ctx context.Context, orgID string) (http.Handler, func(), error) {
 			lease, aerr := registry.Acquire(ctx, orgID)
 			if aerr != nil {
@@ -338,8 +403,13 @@ func (s *server) tenantHost(
 		_ = registry.Close()
 		return nil, err
 	}
-	slog.Info("tenant mode enabled", "max_resident", limits.resident, "max_open", limits.open)
-	return &tenantHost{addr: s.addr, handler: host, registry: registry}, nil
+	mode := limits.provision.Mode
+	if mode == "" {
+		mode = tenanthost.ProvisionOff
+	}
+	slog.Info("tenant mode enabled", "max_resident", limits.resident, "max_open", limits.open,
+		"provision", string(mode))
+	return &tenantHost{addr: s.addr, handler: host, host: host, registry: registry}, nil
 }
 
 // runTenantMode serves tenant mode until a signal and returns the exit code.

@@ -1147,11 +1147,14 @@ deps:
   # tenant registry and serves that tenant's data-entry router. It names
   # dataentry for the verified-identity types and the static shell, and
   # tenant for its sentinel error. The registry itself is reached through a
-  # consumer-side func, wired in cmd/rela-server.
+  # consumer-side func, wired in cmd/rela-server. It uses x/time/rate to cap
+  # how many tenant creations start per minute (TKT-TNPRV8).
   tenanthost:
     mayDependOn:
       - dataentry
       - tenant
+    canUse:
+      - xtimerate
   appbuildtest:
     mayDependOn:
       - acl

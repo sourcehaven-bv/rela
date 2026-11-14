@@ -160,10 +160,16 @@ goes:
 The action receives every event outside `organization.*`, including event types
 rela does not know. The action decides which ones to act on.
 
-Organization events are acknowledged and logged; tenant provisioning and erasure
-will act on them later. The IdP does not redeliver an acknowledged event, so an
-event received before then is not replayed. An `organization.deleted` is logged
-at warning level; erase that tenant by hand.
+Organization events are acknowledged and logged. In tenant mode with
+`-tenant-provision=webhook` or `lazy`, an `organization.created` for an org
+that has no tenant creates its tenant first: 200 when it is ready, 202 when it
+is still running after 10 seconds, 502 on a failure so the IdP retries, and 503
+over the rate cap. With the default `-tenant-provision=off` the event is
+acknowledged and dropped. See "Provisioning tenants automatically" in
+[postgres-backend.md](postgres-backend.md). The IdP does not redeliver an
+acknowledged event, so an event received before provisioning was on is not
+replayed. An `organization.deleted` is logged at warning level; erase that
+tenant by hand.
 
 A `membership.*` event without `org_id` used to reach the action. It is now
 rejected with 400. The reference action already failed without `org_id`.

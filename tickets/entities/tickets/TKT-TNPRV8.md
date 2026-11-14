@@ -99,3 +99,68 @@ separately.
    across migration.
 4. The trust assumption is documented at the code that depends on it.
 5. Schema names derived from a claim are validated before use.
+
+## Design decisions
+
+As implemented.
+
+- **Where.** Provisioning lives in the tenant host (`internal/tenanthost`),
+  before `Acquire`, because no tenant app exists yet for a new org. The host
+  takes a consumer-side `tenanthost.Provisioner` (`Provision(ctx, orgID)`).
+  The wiring in `cmd/rela-server` adapts `tenant.Provisioner.Create` with
+  `adopt=false`; `ErrTenantExists` counts as success. The CLI
+  `rela-server tenant create` stays as the operator fallback.
+- **Which refusals provision.** The resolver now marks a valid org with no
+  control row with `tenant.ErrTenantAbsent`, and a provisioning row with
+  `tenant.ErrTenantProvisioning`. Only these two start a create. An org id
+  that `SchemaFor` refuses, an erasing tenant, a suspended one and a schema
+  collision never do. The host also runs `tenant.SchemaFor` before it starts
+  a run, so a bad org id never reaches `Create` (pinned by
+  `TestProvision_InvalidOrgNeverReachesProvisioner`).
+- **Operator switch.** `-tenant-provision` (`RELA_TENANT_PROVISION`):
+  `off` (default, today's behaviour: unknown orgs are a 403, the webhook
+  acknowledges and drops), `webhook` (eager only; needs `-webhook-audience`
+  and `-webhook-action`, refused at startup otherwise), `lazy` (webhook plus
+  the lazy backstop; works without the webhook, which then is simply not the
+  eager path). The value is validated at startup.
+- **Eager path.** A verified `organization.created` for an org without a
+  tenant (or with a half create) starts a run and waits up to 10 s: success
+  200; still running, or another process holds the tenant lock, 202 (the IdP
+  does not retry; lazy or a later event finishes it); failure 502 so the IdP
+  retries; over the cap 503 with `Retry-After`. `organization.created` for
+  an active tenant is routed to the tenant as before and answers 200. Other
+  events for unknown orgs keep today's behaviour. `organization.deleted`
+  stays log only; erasure is operator only (TKT-TNERAS).
+- **Lazy path.** A request with a verified but unknown org starts a run and
+  gets 202 at once, with `Retry-After: 2` and `{"status":"provisioning"}`.
+  No request is held open across a migration. With `webhook` or `lazy`, a
+  tenant in status provisioning also gets 202 instead of 403. A failed run
+  answers 503 `provisioning_failed` with `Retry-After: 30` for 30 s, then the
+  next request retries.
+- **Status route.** `GET /api/v1/_tenant` answers 200 with
+  `{"status":"active"|"provisioning"|"suspended"}` for the caller's own
+  verified org only. It takes no org parameter. An unknown org gets 403
+  `unknown_tenant`, unless `lazy` is on, which starts a run and answers
+  `provisioning`.
+- **Single flight.** Runs are keyed by org id; concurrent requests and
+  webhooks share one. A run uses its own context with a 5 minute timeout, so
+  a client disconnect does not abort a migration (pinned by
+  `TestProvision_LazySingleFlight` and `TestProvision_RunOutlivesRequest`).
+  Host shutdown cancels runs in progress; the next create finishes them.
+- **Rate cap.** Process wide: `-tenant-provision-rate`
+  (`RELA_TENANT_PROVISION_RATE`, default 10 starts per minute, token bucket
+  with a burst of the same size) and at most 2 runs at once. Over the cap:
+  503 with `Retry-After: 10` for requests and the webhook.
+- **Trust assumption.** Written at `tenanthost.provisioning`: one issuer,
+  `aud` pinned (the webhook has its own), Pratique always sets `org_id` on
+  verified assertions, so a verified unknown org is new, not malicious.
+  Anyone who can mint an assertion can create schemas. It stops holding when
+  a second issuer is trusted, which is why the default is `off`.
+- **Seeding is out of scope.** Configuration is shared by design
+  (RES-D54281), so no per-tenant config is seeded and a new tenant starts
+  empty. No seed-data feature was added.
+- **Not changed.** The server still refuses to start without the control
+  table, so the first tenant is created with `tenant create`. The SPA does
+  not yet poll the status route; the API contract is in place.
+- **Follow-up in this branch.** Syncing suspension from the IdP is a separate
+  step.

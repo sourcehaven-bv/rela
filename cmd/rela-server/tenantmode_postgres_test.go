@@ -109,6 +109,12 @@ func (d tenantDeployment) run(t *testing.T, stdin string, args ...string) (code 
 // except for the JWKS-backed verifier.
 func (d tenantDeployment) host(t *testing.T) *tenantHost {
 	t.Helper()
+	return d.hostWith(t, tenantFlags{})
+}
+
+// hostWith is host with the provisioning flags of tf.
+func (d tenantDeployment) hostWith(t *testing.T, tf tenantFlags) *tenantHost {
+	t.Helper()
 	f := &serverFlags{projectDir: d.dir, bind: "127.0.0.1", port: "8080", jwtHeader: "X-Auth-Assertion"}
 	shared, err := appbuild.DiscoverSharedBase(d.dir, script.NewEngine(), discoverOptions(f)...)
 	require.NoError(t, err)
@@ -117,7 +123,9 @@ func (d tenantDeployment) host(t *testing.T) *tenantHost {
 	require.NoError(t, resolver.Check(t.Context()))
 
 	s := &server{f: f, addr: "127.0.0.1:8080", mode: identityJWT, assertion: tenanthost.ReuseAssertion(orgVerifier{})}
-	th, err := s.tenantHost(shared, resolver, tenantLimits{resident: 4}, orgVerifier{})
+	prov, err := provisionConfig(tf, d.base, tenant.AuditRoot(shared.CacheDir()))
+	require.NoError(t, err)
+	th, err := s.tenantHost(shared, resolver, tenantOptions{resident: 4, provision: prov}, orgVerifier{})
 	require.NoError(t, err)
 	th.resolver = resolver
 	t.Cleanup(th.close)
@@ -336,4 +344,37 @@ func TestTenantMode_RevokeRacesLastRelease(t *testing.T) {
 			return true
 		}, 5*time.Second, 20*time.Millisecond)
 	}
+}
+
+// TestTenantMode_LazyProvisioning is the acceptance test of TKT-TNPRV8 over
+// a real database: a verified org with no tenant is answered 202, its
+// tenant is created in the background, and it is served afterwards without
+// a restart. With provisioning off the same org stays a 403.
+func TestTenantMode_LazyProvisioning(t *testing.T) {
+	d := newTenantDeployment(t)
+
+	off := d.host(t)
+	require.Equal(t, http.StatusForbidden,
+		tenantCall(t, off, "tok-org-new", http.MethodGet, "/api/v1/tasks", nil).Code)
+
+	th := d.hostWith(t, tenantFlags{provision: "lazy"})
+	first := tenantCall(t, th, "tok-org-new", http.MethodGet, "/api/v1/tasks", nil)
+	require.Equal(t, http.StatusAccepted, first.Code, first.Body.String())
+	require.JSONEq(t, `{"status":"provisioning"}`, first.Body.String())
+
+	deadline := time.Now().Add(time.Minute)
+	for {
+		rec := tenantCall(t, th, "tok-org-new", http.MethodGet, tenanthost.StatusPath, nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		if strings.Contains(rec.Body.String(), "active") {
+			break
+		}
+		require.True(t, time.Now().Before(deadline), "tenant not provisioned in time: %s", rec.Body.String())
+		time.Sleep(50 * time.Millisecond)
+	}
+	rec := tenantCall(t, th, "tok-org-new", http.MethodPost, "/api/v1/tasks",
+		map[string]any{"properties": map[string]any{"title": "fresh"}})
+	require.Contains(t, []int{http.StatusOK, http.StatusCreated}, rec.Code, rec.Body.String())
+	list := tenantCall(t, th, "tok-org-a", http.MethodGet, "/api/v1/tasks", nil)
+	require.NotContains(t, list.Body.String(), "fresh", "CROSS-TENANT LEAK after provisioning")
 }

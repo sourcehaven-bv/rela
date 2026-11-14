@@ -30,6 +30,21 @@ func TestValidateTenantMode(t *testing.T) {
 		{name: "jwt with env user", flags: jwtFlags, envUser: "jeroen", supported: true, wantErr: "cannot be set"},
 		{name: "config editing", supported: true, wantErr: "--config-editing",
 			flags: func() *serverFlags { f := jwtFlags(); f.configEditing = true; return f }},
+		{name: "provision lazy without webhook", supported: true,
+			flags: func() *serverFlags { f := jwtFlags(); f.tenant.provision = "lazy"; return f }},
+		{name: "provision off", supported: true,
+			flags: func() *serverFlags { f := jwtFlags(); f.tenant.provision = "off"; return f }},
+		{name: "provision webhook with webhook", supported: true, flags: func() *serverFlags {
+			f := jwtFlags()
+			f.tenant.provision, f.webhookAudience, f.webhookAction = "webhook", "rela-webhook", "idp-sync"
+			return f
+		}},
+		{name: "provision webhook without webhook", supported: true, wantErr: "needs the IdP webhook",
+			flags: func() *serverFlags { f := jwtFlags(); f.tenant.provision = "webhook"; return f }},
+		{name: "provision unknown mode", supported: true, wantErr: "-tenant-provision",
+			flags: func() *serverFlags { f := jwtFlags(); f.tenant.provision = "always"; return f }},
+		{name: "provision negative rate", supported: true, wantErr: "-tenant-provision-rate",
+			flags: func() *serverFlags { f := jwtFlags(); f.tenant.provisionRate = -1; return f }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
