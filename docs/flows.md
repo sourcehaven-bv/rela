@@ -673,5 +673,15 @@ does not declare`. `rela validate` runs the same check. `rela flow show`
 lists the flows, and with a name prints that flow as a Mermaid state
 diagram.
 
+`rela flow show` also lists the *headless flows*: the state machines that
+`transitions:` declares on an enum type in `schema.yaml` (see
+[Metamodel](metamodel.md#state-machines-transitions)). A headless flow has
+no runs; its state is the property itself. It is named `schema.` followed
+by the enum type's name, such as `schema.ticket-status`, and it lists the
+properties that use the type instead of a subject. `rela flow show
+schema.ticket-status` prints its diagram, and `rela flow validate` checks it
+too. In JSON output, each flow has `kind`: `flow` for one from `flows.yaml`,
+`headless` for one from the schema.
+
 Names starting with `_` are reserved in `schema.yaml` for the types rela
 adds for flows. See [Metamodel](metamodel.md).

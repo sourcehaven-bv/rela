@@ -434,7 +434,7 @@ func TestResolver_FamilyBudget(t *testing.T) {
 			if err != nil || !ok || len(fam.Faces) != n {
 				t.Fatalf("Family = (%d faces, %v, %v), want %d faces", len(fam.Faces), ok, err, n)
 			}
-			if got := st.Calls(); st.Reads() != 1 || got["ListEntityHeaders"] != 1 || st.Rows() != n {
+			if got := st.Calls(); st.Reads() != 1 || got["ListEntityHeaders"] != 1 || st.Cost().Rows != n {
 				t.Errorf("reads = %s, want exactly one ListEntityHeaders of %d rows", st, n)
 			}
 		})

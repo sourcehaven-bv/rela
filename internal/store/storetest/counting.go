@@ -35,11 +35,12 @@ import (
 // readers, the matched counter and the mention index (counted), soft delete
 // (a write, so uncounted), and the transaction view (its reads counted too).
 //
-// Its exported methods are the store read surface it decorates plus the
-// optional capabilities above, plus Unwrap for store.Decorator, so the count
-// moves with store.Store rather than with this type.
+// Its exported methods are the store read surface it decorates, the
+// optional capabilities above, Unwrap for store.Decorator, and the counter
+// readout (Reset, Cost, Reads, Calls, String). The count moves with
+// store.Store rather than with this type.
 //
-//plimsoll:max-exported-methods=25
+//plimsoll:max-exported-methods=26
 type Counting struct {
 	store.Store
 
@@ -92,21 +93,15 @@ func (c *Counting) Reset() {
 	c.counts.mu.Unlock()
 }
 
-// Rows returns the total number of rows the read calls returned since the
-// last Reset.
-func (c *Counting) Rows() int {
-	c.counts.mu.Lock()
-	defer c.counts.mu.Unlock()
-	n := 0
-	for _, v := range c.counts.rows {
-		n += v
-	}
-	return n
-}
-
 // Cost returns the read calls and rows since the last Reset.
 func (c *Counting) Cost() Cost {
-	return Cost{Calls: c.Reads(), Rows: c.Rows()}
+	rows := 0
+	c.counts.mu.Lock()
+	for _, v := range c.counts.rows {
+		rows += v
+	}
+	c.counts.mu.Unlock()
+	return Cost{Calls: c.Reads(), Rows: rows}
 }
 
 // Reads returns the total number of read calls since the last Reset.

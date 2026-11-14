@@ -37,6 +37,14 @@ title: Something
 			replaced: true,
 		},
 		{
+			// BUG-EXFOEI3: an indented "---" in a block scalar is not the fence.
+			name:     "indented delimiter in an earlier value does not stop the scan",
+			input:    "---\nid: REQ-1\nnotes: |-\n    a\n    ---\n    b\ntype: requirement\n---\n",
+			newType:  "feature",
+			want:     "---\nid: REQ-1\nnotes: |-\n    a\n    ---\n    b\ntype: feature\n---\n",
+			replaced: true,
+		},
+		{
 			name: "no frontmatter returns unchanged",
 			input: `# Just body
 type: not-yaml

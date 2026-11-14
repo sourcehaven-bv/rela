@@ -32,14 +32,14 @@ func TestElements_StoreCallBudget(t *testing.T) {
 		if _, err := x.Fingerprint(alice, types, allEntities); err != nil {
 			t.Fatal(err)
 		}
-		fp, rows = st.Reads(), st.Rows()
+		fp, rows = st.Reads(), st.Cost().Rows
 		fpDetail := st.String()
 
 		st.Reset()
 		if _, err := x.List(alice, types, allEntities, n); err != nil {
 			t.Fatal(err)
 		}
-		return fp, st.Reads(), rows + st.Rows(), "Fingerprint " + fpDetail + "; List " + st.String()
+		return fp, st.Reads(), rows + st.Cost().Rows, "Fingerprint " + fpDetail + "; List " + st.String()
 	}
 
 	// The calls are compared across sizes; the rows are not, since a range

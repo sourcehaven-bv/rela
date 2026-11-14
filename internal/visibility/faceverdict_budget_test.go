@@ -55,7 +55,7 @@ func TestResolver_ResolveIDsBudget(t *testing.T) {
 			}
 			// Each id is on two faces, so the batch may read both; the
 			// padding must stay unread.
-			if st.Reads() != 1 || st.Calls()["ListEntityHeaders"] != 1 || st.Rows() > 2*n {
+			if st.Reads() != 1 || st.Calls()["ListEntityHeaders"] != 1 || st.Cost().Rows > 2*n {
 				t.Errorf("reads = %s, want exactly one ListEntityHeaders of at most %d rows", st, 2*n)
 			}
 			if gate.many != 1 || gate.single != 0 {

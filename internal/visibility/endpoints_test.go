@@ -144,7 +144,7 @@ func TestPolicyReader_FilterRelationsBudget(t *testing.T) {
 			}
 			// n tickets and n policies on two faces: at most 3n header
 			// rows, never the padding.
-			if calls := st.Calls(); st.Reads() != 1 || calls["ListEntityHeaders"] != 1 || st.Rows() > 3*n {
+			if calls := st.Calls(); st.Reads() != 1 || calls["ListEntityHeaders"] != 1 || st.Cost().Rows > 3*n {
 				t.Errorf("reads = %s, want exactly one ListEntityHeaders of at most %d rows", st, 3*n)
 			}
 		})
