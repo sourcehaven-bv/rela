@@ -66,6 +66,40 @@ func TestValidatePages(t *testing.T) {
 			`pages[tickets].tabs[table]: references unknown calendar "nope"`},
 		{"unknown document", pages(tab(func(t *PageTab) { t.List, t.Document = "", "nope" })), nil, nil,
 			`pages[tickets].tabs[table]: references unknown document "nope"`},
+		{"steps page with prompts", pages(func(p *Page) {
+			p.Mode = PageModeSteps
+			p.Tabs[0].Prompt = "Wat kan er misgaan?"
+			p.Tabs[1].Prompt = strings.Repeat("é", maxPagePromptLen)
+		}), nil, nil, ""},
+		{"explicit tabs mode", pages(func(p *Page) { p.Mode = PageModeTabs }), nil, nil, ""},
+		{"unknown mode", pages(func(p *Page) { p.Mode = "slides" }), nil, nil,
+			`pages[tickets]: unknown mode "slides" (valid: tabs, steps)`},
+		{"prompt on a tabs page", pages(tab(func(t *PageTab) { t.Prompt = "Why?" })), nil, nil,
+			"pages[tickets].tabs[table]: prompt needs mode: steps on the page"},
+		{"prompt too long", pages(func(p *Page) {
+			p.Mode = PageModeSteps
+			p.Tabs[0].Prompt = strings.Repeat("a", maxPagePromptLen+1)
+		}), nil, nil, "pages[tickets].tabs[table]: prompt is longer than 280 characters"},
+		{"prompt with a newline", pages(func(p *Page) {
+			p.Mode = PageModeSteps
+			p.Tabs[0].Prompt = "one\ntwo"
+		}), nil, nil, "pages[tickets].tabs[table]: prompt contains the invisible or control character U+000A"},
+		{"prompt with a direction override", pages(func(p *Page) {
+			p.Mode = PageModeSteps
+			p.Tabs[0].Prompt = "abc\u202edef"
+		}), nil, nil, "prompt contains the invisible or control character U+202E"},
+		{"prompt with a line separator", pages(func(p *Page) {
+			p.Mode = PageModeSteps
+			p.Tabs[0].Prompt = "one\u2028two"
+		}), nil, nil, "prompt contains the invisible or control character U+2028"},
+		{"prompt with an emoji sequence", pages(func(p *Page) {
+			p.Mode = PageModeSteps
+			p.Tabs[0].Prompt = "\U0001F469\u200D\U0001F4BB Who owns this?"
+		}), nil, nil, ""},
+		{"prompt on a tab without id", pages(func(p *Page) {
+			p.Tabs[0].ID = ""
+			p.Tabs[0].Prompt = "Why?"
+		}), nil, nil, "pages[tickets].tabs[0]: prompt needs mode: steps"},
 		{"nav entry names an unknown page", pages(nil), []NavigationEntry{{Label: "X", Page: "nope"}}, nil,
 			`navigation: references unknown page "nope"`},
 		{"nav status counts the first tab", pages(nil), []NavigationEntry{{Page: "tickets",
@@ -116,7 +150,8 @@ pages:
     icon: folder
     tabs:
       - { id: table, list: tickets, label: Table }
-      - { id: home, dashboard: true, label: Home, permission: admin:read }
+      - { id: home, dashboard: true, label: Home, permission: admin:read, prompt: "Where are we?" }
+    mode: steps
 navigation:
   - page: tickets
 `)
@@ -130,6 +165,9 @@ navigation:
 	page := cfg.Pages["tickets"]
 	if len(page.Tabs) != 2 || page.Tabs[0].ID != "table" || page.Tabs[1].Permission != "admin:read" {
 		t.Fatalf("tabs = %+v", page.Tabs)
+	}
+	if !page.IsSteps() || page.Tabs[1].Prompt != "Where are we?" {
+		t.Errorf("mode = %q, prompt = %q", page.Mode, page.Tabs[1].Prompt)
 	}
 	if cfg.Navigation[0].Page != "tickets" {
 		t.Errorf("navigation = %+v", cfg.Navigation)
