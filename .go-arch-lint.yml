@@ -562,6 +562,8 @@ deps:
       - metamodel
       - predicate
       - predicatefns
+      # queryplan: lowers a rule's condition to store predicates.
+      - queryplan
       - store
 
   # CLI layer — orchestrates everything. memstore is here because

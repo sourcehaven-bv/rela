@@ -7,7 +7,7 @@ package archguard
 // Each entry has a category (see readCategory) and a reason that says what
 // the read is for. requestPath entries are debt. The follow-ups of
 // TKT-FED6FMM remove them: TKT-F2EJQY8 (dataentry), TKT-D9UO9Y4 (mcp,
-// search), TKT-GIAGLQ3 (ingest, rename), TKT-P9QMEVI (lua) and TKT-EBBHM55
+// search), TKT-GIAGLQ3 (ingest, rename), TKT-P9QMEVI (lua) and TKT-I3MGCRT
 // (desktopnotify).
 var unpagedReadAllowlist = map[string]unpagedRead{
 	// aclmap: the who-can report.
@@ -114,8 +114,10 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/datamigration/steps.go#collectRelations":      {1, batchJob, "relation steps: collect every edge of the step's type"},
 	"internal/datamigration/steps.go#renameFaceStep.Run":    {1, batchJob, "rename-face step: scans the type for rows at the old face"},
 
-	"internal/desktopnotify/evaluate.go#Config.Evaluate": {1, requestPath,
-		"desktop badge poll: reads every header of each type a notification rule names, on every poll"},
+	"internal/desktopnotify/evaluate.go#evaluation.scan": {1, requestPath,
+		"desktop notification poll, for a condition queryplan.LowerScope does not lower exactly: reads every " +
+			"header of the type that passes the condition's pushed equalities and judges the rest in Go. A " +
+			"condition that lowers reads a capped page and counts in the store instead; TKT-I3MGCRT lowers more"},
 
 	// docs: the documentation build's assertions over seeded projects.
 	"internal/docs/assert.go#docRuntime.entityIDs":              {1, batchJob, "docs build: lists the seeded ids of a type"},

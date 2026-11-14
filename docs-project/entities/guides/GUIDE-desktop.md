@@ -234,6 +234,11 @@ The first time a rule runs, it shows nothing. This applies when you first open a
 project and when you add a rule. Without it, opening a project with fifty
 overdue tasks would show fifty notifications. From then on, only changes notify.
 
+A rule that matches more than 1,000 entities shows no notifications, and Rela
+logs a warning that names it. When it matches 1,000 or fewer again, its next
+check is silent, like a first run, and later changes notify as usual. The
+badge has no such limit; it counts every match.
+
 Clicking a notification opens the entity.
 
 ### The badge
@@ -249,6 +254,12 @@ Conditions use the same expression language as list `condition:` in
 
 - `current_user`: the desktop app has no person record for its user.
 - `related(...)`: conditions see the entity's own properties only.
+
+A condition made only of `==` comparisons of text properties joined by `and`,
+such as `entity.status == 'open'`, is answered by the database, so a check
+costs the same however many entities the type has. Any other condition reads
+every entity of the type that passes its `==` comparisons, and checks the rest
+in the app.
 
 ### When rules run
 

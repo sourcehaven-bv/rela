@@ -2,12 +2,15 @@ package desktopnotify
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"regexp"
+	"slices"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -15,6 +18,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
+	"github.com/Sourcehaven-BV/rela/internal/queryplan"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // ConfigFile is the project-root file this package reads.
@@ -62,10 +67,17 @@ type Config struct {
 	badge *condition
 }
 
-// condition is one compiled (type, predicate) pair.
+// condition is one compiled (type, predicate) pair, with the store
+// predicates that answer it.
 type condition struct {
 	entityType string
 	prog       *predicate.Program
+	// exact reports that pushed answers prog on its own, so the store
+	// decides which entities match and prog is not run. Otherwise pushed
+	// holds only the equalities prog implies: they narrow the read, and
+	// prog judges every row it returns.
+	exact  bool
+	pushed []store.PropPredicate
 }
 
 type rule struct {
@@ -210,7 +222,35 @@ func (c *Config) compileCondition(entityType, source string) (condition, error) 
 		return condition{}, fmt.Errorf(
 			"condition %q: related() is not available in %s", source, ConfigFile)
 	}
-	return condition{entityType: canonical, prog: prog}, nil
+	cond := condition{entityType: canonical, prog: prog}
+	cond.pushed, cond.exact = c.lower(prog, canonical)
+	return cond, nil
+}
+
+// lower returns the store predicates for prog on entityType, and whether
+// they answer prog exactly.
+//
+// The desktop has no current user, so the identity is empty: a condition
+// naming current_user does not compile here, and an empty identity makes
+// both lowerings decline what such a condition would need. A traversal
+// never lowers, because compileCondition refuses related().
+//
+// A condition that does not lower exactly still pushes the equalities
+// [queryplan.ConditionPrefilters] finds. Those are a superset: the Go
+// evaluation re-checks every row they return.
+func (c *Config) lower(prog *predicate.Program, entityType string) ([]store.PropPredicate, bool) {
+	var pushed []store.PropPredicate
+	low, exact := queryplan.LowerScope(prog, c.meta, entityType, "")
+	if exact && len(low.Traversals) == 0 {
+		pushed = low.Props
+	} else {
+		exact = false
+		pushed = queryplan.ConditionPrefilters(prog, c.meta, []string{entityType}, "")
+	}
+	slices.SortFunc(pushed, func(a, b store.PropPredicate) int {
+		return cmp.Or(strings.Compare(a.Property, b.Property), strings.Compare(a.Value, b.Value))
+	})
+	return pushed, exact
 }
 
 // RuleIDs returns the notification rule ids in declaration order.
