@@ -82,6 +82,7 @@ go build -o rela ./cmd/rela
 | [How To Publish Content with Faces and Worlds](docs/content-states.md) | Give an entity type several content states (draft, published, translations), declare worlds that pick one face per reader, and publish through a guarded copy |
 | [Export Guide](docs/export.md) | Export, import, and data integration |
 | [Best Practices](docs/best-practices.md) | Maintenance tips and team workflows |
+| [Importing structured data with a mapping](docs/mapped-import.md) | Map JSON, YAML, XML or CSV onto entities and relations with a file in imports/, and see the plan first |
 | [MCP Server](docs/mcp-server.md) | AI assistant integration via MCP |
 | [Data Entry Web App](docs/data-entry.md) | Config-driven web UI for entity management |
 | [Lua Scripting](docs/lua-scripting.md) | Programmable automation with embedded Lua |

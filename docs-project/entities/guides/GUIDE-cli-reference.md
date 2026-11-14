@@ -1251,13 +1251,20 @@ rela import <file> [flags]
 
 **Flags:**
 
-| Flag              | Description                                                                           |
-| ----------------- | ------------------------------------------------------------------------------------- |
-| `-f, --format`    | Input format: `json`, `yaml`, or `csv`. Auto-detected from extension if not specified |
-| `-n, --dry-run`   | Validate without creating files                                                       |
-| `-u, --update`    | Replace existing entities instead of failing on duplicates                            |
-| `--skip-errors`   | Continue importing on validation errors                                               |
-| `-r, --relations` | Path to relations CSV file (for CSV imports)                                          |
+| Flag              | Description                                                                                 |
+| ----------------- | ------------------------------------------------------------------------------------------- |
+| `-f, --format`    | Input format: `json`, `yaml`, `csv`, or `xml` with `--mapping`. Default: from the extension |
+| `-m, --mapping`   | Import through the mapping file `imports/<name>.yaml`                                       |
+| `-n, --dry-run`   | Validate, or with `--mapping` show the plan, without writing                                |
+| `-u, --update`    | Replace existing entities instead of failing on duplicates                                  |
+| `--skip-errors`   | Continue importing on validation errors                                                     |
+| `-r, --relations` | Path to relations CSV file (for CSV imports)                                                |
+
+With `--mapping`, any JSON, YAML, XML or CSV file is mapped onto the schema
+by an operator-written mapping file. The import plans creates, updates and
+relations by key, shows the plan, and writes through the entity manager.
+A second run of the same file plans nothing. See
+[Importing structured data with a mapping](mapped-import.md).
 
 **Input Formats:**
 
@@ -1328,6 +1335,9 @@ rela import entities.csv --relations relations.csv
 
 # Dry-run to validate without creating files
 rela import --dry-run data.json
+
+# Show what the mapping imports/oscal.yaml would change, as JSON
+rela import catalog.xml --mapping oscal --dry-run -o json
 
 # Update existing entities instead of failing
 rela import --update data.json
