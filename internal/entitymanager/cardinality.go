@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -391,6 +392,11 @@ func (rp *relationReplace) write(ctx context.Context, view store.Store) ([]*enti
 			return nil, &RelationCreateError{Key: c.Key, Err: err}
 		}
 		pending = append(pending, c.Key)
+	}
+	if relationWritesChecked(rp.m.deps, slices.Concat(pending, rp.removes)...) {
+		if err := checkRelationRules(ctx, rp.m.deps, view, pending, rp.removes); err != nil {
+			return nil, err
+		}
 	}
 	for i, c := range rp.creates {
 		if err := writeRelationCreate(ctx, view, rp.m.deps.Meta, c.Key, rp.rels[i], rp.leaving); err != nil {

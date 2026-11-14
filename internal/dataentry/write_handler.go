@@ -68,6 +68,9 @@ type entityMutator interface {
 	ReplaceRelations(
 		ctx context.Context, creates []entitymanager.RelationCreate, removes []entityPkg.RelationKey,
 	) ([]*entityPkg.Relation, error)
+	// ChecksRelation reports whether a write-enforced relation rule reads
+	// relType. See entitymanager.ChecksRelation.
+	ChecksRelation(relType string) bool
 
 	// PatchEntity is how the webhook pipeline writes: it names only the
 	// properties a hook actually sets, so a property the hook does not mention
@@ -99,6 +102,12 @@ func (grantedManager) PatchGranted(
 	ctx context.Context, grant entitymanager.UpdateGrant, id string, patch entityPkg.Patch,
 ) (*entityPkg.UpdateResult, error) {
 	return grant.PatchEntity(ctx, id, patch)
+}
+
+// ChecksRelation reports whether a write-enforced relation rule reads
+// relType.
+func (g grantedManager) ChecksRelation(relType string) bool {
+	return entitymanager.ChecksRelation(g.Manager, relType)
 }
 
 // writeHandler owns the data-entry write nucleus: the entity/relation CRUD
@@ -827,6 +836,18 @@ func writeWriteRefused(w http.ResponseWriter, r *http.Request, err error) {
 	_ = json.NewEncoder(w).Encode(problem)
 }
 
+// writeRuleRefusal answers a relation write that a write-enforced relation
+// rule refused (TKT-EBARYBI) with the 422 an entity write gets, and reports
+// whether it did. The problem names the rule and quotes its description,
+// never an entity.
+func writeRuleRefusal(w http.ResponseWriter, r *http.Request, err error) bool {
+	if _, ok := errors.AsType[*entitymanager.ValidationError](err); !ok {
+		return false
+	}
+	writeWriteRefused(w, r, err)
+	return true
+}
+
 // validationFieldErrors maps each failure of a refused write to a
 // [v1.FieldError]. The detail is the failure's own message, which never
 // quotes a property value (see [metamodel.ValidationError]).
@@ -1141,6 +1162,12 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 			}
 		}
 	}
+	// The update is judged on the edges this PATCH leaves (TKT-EBARYBI).
+	patchCtx, planErr := withRuledEdgeChanges(r.Context(), h, ref, entityChanged, req.Relations.Modern)
+	if planErr != nil {
+		h.writeRelationsApplyError(w, r, planErr)
+		return
+	}
 	if entityChanged {
 		// PatchEntity + ExpectedVersion, NOT a read-modify-write into
 		// UpdateEntity (TKT-34XS2R). Two things change:
@@ -1168,7 +1195,7 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		// default face — so a write to POL-1@published would be authorized
 		// (and applied) against POL-1's default state instead.
 		stateRef := entityPkg.FormatStateRef(entity.ID, entity.Face)
-		updateResult, err := h.manager.PatchGranted(r.Context(), grant, stateRef, patch)
+		updateResult, err := h.manager.PatchGranted(patchCtx, grant, stateRef, patch)
 		if err != nil {
 			if req.Preconditions != nil && h.writeLostRace(w, r, err, req.Preconditions, typeName, ref, plural) {
 				return
@@ -1479,7 +1506,7 @@ func (h *writeHandler) writeRelationsValidationError(w http.ResponseWriter, r *h
 // under this one maps to 409; everything else is a 500 whose detail names
 // the relation, op and target, with the cause in the server log.
 func (h *writeHandler) writeRelationsApplyError(w http.ResponseWriter, r *http.Request, err error) {
-	if writeForbiddenIfACLDenied(w, r, err) {
+	if writeForbiddenIfACLDenied(w, r, err) || writeRuleRefusal(w, r, err) {
 		return
 	}
 	detail := reconcileDetail(err)
@@ -1599,7 +1626,9 @@ func (h *writeHandler) handleV1CreateRelation(
 		entityPkg.RelationOptions{Properties: req.Meta},
 	)
 	if err != nil {
-		if writeForbiddenIfACLDenied(w, r, err) || writeCardinalityIfExceeded(w, r, err) {
+		if writeForbiddenIfACLDenied(w, r, err) || writeCardinalityIfExceeded(w, r, err) ||
+			writeRuleRefusal(w, r, err) {
+
 			return
 		}
 		if te := endpointTypeRefusal(err, relType); te != nil {
@@ -1860,7 +1889,7 @@ func (h *writeHandler) handleV1DeleteRelation(
 		err = h.manager.DeleteRelation(r.Context(), key)
 	}
 	if err != nil {
-		if writeForbiddenIfACLDenied(w, r, err) {
+		if writeForbiddenIfACLDenied(w, r, err) || writeRuleRefusal(w, r, err) {
 			return
 		}
 		if _, ok := errors.AsType[*store.VersionConflictError](err); ok {

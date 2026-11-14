@@ -381,7 +381,9 @@ func applyRelationWrapper(
 		return nil, planErr
 	}
 	var warnings []Warning
-	if w.relDef.MaxOutgoing != nil || w.relDef.MaxIncoming != nil {
+	// A relation a write-enforced rule reads is written the same way, so the
+	// rule judges the wrapper's edges together (TKT-EBARYBI).
+	if w.relDef.MaxOutgoing != nil || w.relDef.MaxIncoming != nil || h.manager.ChecksRelation(canonical) {
 		// A bounded relation writes its creates and removes as one atomic
 		// replace, so re-pointing it (with `data`, or `add` and `remove`, on
 		// either side) never trips the bound on the edge it is leaving
@@ -393,6 +395,63 @@ func applyRelationWrapper(
 		}
 	}
 	return w.applyEdgeOps(ctx, ops, warnings)
+}
+
+// withRuledEdgeChanges returns ctx with the edge changes of desired that a
+// relation rule reads, for the entity update that runs before them. It
+// returns ctx unchanged when there are none, or when the PATCH does not
+// update the entity (updates is false), so nothing reads them.
+//
+// A function, not a method, to keep writeHandler under its plimsoll line.
+func withRuledEdgeChanges(
+	ctx context.Context, h *writeHandler, addr entity.Ref, updates bool, desired map[string]v1.RelationsUpdate,
+) (context.Context, error) {
+	if !updates || desired == nil {
+		return ctx, nil
+	}
+	adds, removes, err := ruledEdgeChanges(ctx, h, addr, desired)
+	if err != nil {
+		return ctx, err
+	}
+	if len(adds) == 0 && len(removes) == 0 {
+		return ctx, nil
+	}
+	return entitymanager.WithPendingRelations(ctx, adds, removes), nil
+}
+
+// ruledEdgeChanges plans the edges of desired that a write-enforced relation
+// rule reads, and returns the ones the PATCH will create and delete. The
+// entity update runs before the relation writes, and judges its rules on the
+// edges these leave (entitymanager.WithPendingRelations). Wrappers no rule
+// reads are not planned.
+func ruledEdgeChanges(
+	ctx context.Context, h *writeHandler, addr entity.Ref, desired map[string]v1.RelationsUpdate,
+) (adds, removes []entity.RelationKey, err error) {
+	meta := h.schema().Meta
+	for bodyKey, upd := range desired {
+		canonical, incoming, ok := resolveDirection(meta, bodyKey)
+		if !ok || !h.manager.ChecksRelation(canonical) {
+			continue
+		}
+		w := &wrapperWrite{
+			h: h, addr: addr, bodyKey: bodyKey, relType: canonical, incoming: incoming, upd: upd,
+			relDef: meta.Relations[canonical], path: "/relations/" + v1.JSONPointerEscape(bodyKey),
+		}
+		ops, planErr := w.plan(ctx)
+		if planErr != nil {
+			return nil, nil, planErr
+		}
+		for _, op := range ops {
+			k := edgeKeyOf(addr.ID, canonical, op.slot, incoming)
+			switch {
+			case op.remove:
+				removes = append(removes, k)
+			case op.existing == nil:
+				adds = append(adds, k)
+			}
+		}
+	}
+	return adds, removes, nil
 }
 
 // wrapperWrite is one relation wrapper of a PATCH, resolved, and the

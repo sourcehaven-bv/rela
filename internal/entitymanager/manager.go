@@ -1756,6 +1756,7 @@ func (m *Manager) updateCore(
 	// that can compare-and-write atomically. Empty expectedVersion yields the
 	// zero condition: an unconditional write, for a caller that owns the
 	// whole entity (UpdateEntity).
+	txCheck = chainTxChecks(txCheck, relationRuleCheck(m.deps, oldEntity, e))
 	if err := writeChecked(ctx, m.deps, e, e.ID, txCheck, func(st store.Store) error {
 		_, werr := st.UpdateEntityIf(ctx, e, store.UpdateCondition{
 			ExpectedVersion: store.EntityVersion(expectedVersion),
@@ -3252,14 +3253,21 @@ func (m *Manager) CreateRelation(
 	// The GetRelation pre-check above is advisory; the store's atomic
 	// create is the real guard, and a conflict surfaces as
 	// ErrRelationAlreadyExists (BUG-ZWTDH9).
+	ruled := relationWritesChecked(m.deps, key)
 	create := func(ctx context.Context, st store.Store) error {
+		if ruled {
+			if err := checkRelationRules(ctx, m.deps, st, []entity.RelationKey{key}, nil); err != nil {
+				return err
+			}
+		}
 		return writeRelationCreate(ctx, st, m.deps.Meta, key, rel, nil)
 	}
 	var createErr error
 	// An owning edge reads its neighbors' edges to decide whether it may
-	// exist, so the reads and the write share one Tx for the same reason.
+	// exist, and a relation rule reads the ends' edges, so the reads and the
+	// write share one Tx for the same reason.
 	inTx := relTypeIsOrdered(m.deps.Meta, key.Type) || relTypeHasMax(m.deps.Meta, key.Type) ||
-		metamodel.IsOwning(m.deps.Meta, key.Type)
+		metamodel.IsOwning(m.deps.Meta, key.Type) || ruled
 	if inTx {
 		createErr = m.deps.Store.Tx(ctx, func(st store.Store) error { return create(store.ContextInTx(ctx), st) })
 	} else {
@@ -3566,7 +3574,7 @@ func deleteRelation(ctx context.Context, m *Manager, key entity.RelationKey, exp
 		}
 		return fmt.Errorf("delete relation: %w", store.ErrNotFound)
 	}
-	if expect != "" {
+	if expect != "" || relationWritesChecked(m.deps, key) {
 		return deleteRelationIfVersion(ctx, m, key, expect)
 	}
 	// Fetch pre-delete AFTER authz (BUG-K6FEVB: a denied delete must return
