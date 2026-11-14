@@ -19,7 +19,9 @@ import (
 //
 //   - Rows: the related rows are the reader's own read query for the related
 //     type ([ReadQueryProvider]), in the request's world, so a related entity
-//     the reader cannot read never counts.
+//     the reader cannot read never counts. On a roll-up over a path, every
+//     entity on the path is gated the same way, so one the reader cannot
+//     read breaks each path through it.
 //   - Fields: a related row counts only when every property the roll-up reads
 //     on it (where keys, the min/max/sum property, latest_by) is visible to
 //     the reader there. A latest_by roll-up whose winning row hides the pick
@@ -179,35 +181,34 @@ var errNoReadQuery = errors.New("visibility: the read policy for the related typ
 func (r *Rollups) column(
 	ctx context.Context, col rollup.Column, ids []string, world store.WorldScope,
 ) (map[string]store.RollupResult, error) {
-	rqr, err := r.rows.ReadQueryFor(ctx, col.Target)
+	related, denied, err := r.gate(ctx, col.Target, world)
 	if err != nil {
 		return nil, err
 	}
-	var related store.GraphQuery
-	switch {
-	case rqr.DenyAll:
+	if denied {
 		return map[string]store.RollupResult{}, nil
-	case rqr.AllowAll:
-	case rqr.Query != nil:
-		// A copy: the ACL may cache the template per principal, so the
-		// slices it shares must not be appended to in place.
-		related = *rqr.Query
-		related.Props = slices.Clone(related.Props)
-		related.Related = slices.Clone(related.Related)
-	default:
-		return nil, errNoReadQuery
 	}
-	related.EntityType = col.Target
-	related.Faces = store.InWorld(world)
-	related.FaceIn = rqr.Faces
 	related.Props = append(related.Props, col.Where...)
+	// Every entity on a path is gated as the related rows are: one the
+	// reader cannot read breaks each path through it (TKT-LTSNHD).
+	path := make([]store.RollupStep, 0, len(col.Path))
+	for _, hop := range col.Path {
+		through, hopDenied, hopErr := r.gate(ctx, hop.Target, world)
+		if hopErr != nil {
+			return nil, hopErr
+		}
+		if hopDenied {
+			return map[string]store.RollupResult{}, nil
+		}
+		path = append(path, store.RollupStep{Relation: hop.Relation, SourceIsTo: hop.SourceIsTo, Through: through})
+	}
 
 	fs, err := r.fields.SearchFieldScope(ctx, col.Target)
 	if err != nil {
 		return nil, fmt.Errorf("field scope: %w", err)
 	}
 	q := store.RollupQuery{
-		Related: related, Relation: col.Relation, SourceIsTo: col.SourceIsTo, Sources: ids,
+		Related: related, Path: path, Relation: col.Relation, SourceIsTo: col.SourceIsTo, Sources: ids,
 		Func: col.StoreFunc(), Value: col.Value, By: col.By, Numeric: col.Numeric, Decimal: col.Decimal,
 	}
 	for _, p := range col.Reads {
@@ -221,6 +222,34 @@ func (r *Rollups) column(
 		}
 	}
 	return store.Rollup(ctx, r.st, q)
+}
+
+// gate is the reader's read query for entityType in world: the rows of that
+// type the reader may read. denied reports that the reader reads none.
+func (r *Rollups) gate(
+	ctx context.Context, entityType string, world store.WorldScope,
+) (q store.GraphQuery, denied bool, err error) {
+	rqr, err := r.rows.ReadQueryFor(ctx, entityType)
+	if err != nil {
+		return store.GraphQuery{}, false, fmt.Errorf("read query for %s: %w", entityType, err)
+	}
+	switch {
+	case rqr.DenyAll:
+		return store.GraphQuery{}, true, nil
+	case rqr.AllowAll:
+	case rqr.Query != nil:
+		// A copy: the ACL may cache the template per principal, so the
+		// slices it shares must not be appended to in place.
+		q = *rqr.Query
+		q.Props = slices.Clone(q.Props)
+		q.Related = slices.Clone(q.Related)
+	default:
+		return store.GraphQuery{}, false, errNoReadQuery
+	}
+	q.EntityType = entityType
+	q.Faces = store.InWorld(world)
+	q.FaceIn = rqr.Faces
+	return q, false, nil
 }
 
 // visibleWhen is the row condition under which fs shows prop, and whether
