@@ -28,4 +28,6 @@ func TestConformance(t *testing.T) {
 func TestNewRejectsNil(t *testing.T) {
 	_, err := sqliterecords.New(nil)
 	require.Error(t, err)
+	_, err = sqliterecords.NewInTx(nil)
+	require.Error(t, err)
 }

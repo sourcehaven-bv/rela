@@ -11,6 +11,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/datamigration"
 	"github.com/Sourcehaven-BV/rela/internal/flowrun"
 	"github.com/Sourcehaven-BV/rela/internal/flowrun/sqliteflowrun"
+	"github.com/Sourcehaven-BV/rela/internal/records"
+	"github.com/Sourcehaven-BV/rela/internal/records/sqliterecords"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -19,7 +21,7 @@ import (
 
 // SQLiteData is every store rela keeps inside one sqlite database file: the
 // entity graph, the runtime state KV, comments, the applied-migration
-// record and the flow runs.
+// record, the flow runs and the record rows.
 //
 // It exists for `rela db import-fs`, which fills a new database without
 // building a full [Services]: no search index, no metamodel, no ACL. The
@@ -31,6 +33,7 @@ type SQLiteData struct {
 	Comments   comments.Store
 	Migrations datamigration.StateStore
 	FlowRuns   flowrun.Store
+	Records    records.Store
 
 	db *sqlitedb.DB
 }
@@ -61,12 +64,19 @@ func OpenSQLiteData(ctx context.Context, path string) (*SQLiteData, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	recordStore, err := sqliterecords.New(db.DB())
+	if err != nil { // coverage-ignore: unreachable: db.DB() is non-nil
+		_ = st.Close()
+		_ = db.Close()
+		return nil, err
+	}
 	return &SQLiteData{
 		Store:      st,
 		State:      svc.kv,
 		Comments:   svc.comments,
 		Migrations: svc.migState,
 		FlowRuns:   runs,
+		Records:    recordStore,
 		db:         db,
 	}, nil
 }

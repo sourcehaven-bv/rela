@@ -41,12 +41,32 @@ type Owners interface {
 	Writable(ctx context.Context, id string) (Owner, error)
 }
 
+// WriteLock runs the owner check and the insert of one append as a unit
+// that entity writes cannot interleave with. A wiring that keeps the rows in
+// the entity store's database implements it with one store transaction, so
+// an owner whose period is closed by an entity update either commits first,
+// and the check sees the new lock date, or waits until the append has
+// committed.
+type WriteLock interface {
+	// Locked runs fn inside the unit. fn reads owners on the ctx it
+	// receives and writes rows through st, which is valid only during fn.
+	// An error from fn leaves no rows written.
+	Locked(ctx context.Context, fn func(ctx context.Context, st Store) error) error
+}
+
 // Deps are the collaborators of a [Service]. Store, Owners and Meta are
 // required.
 type Deps struct {
 	Store  Store
 	Owners Owners
 	Meta   *metamodel.Metamodel
+	// Lock orders appends against entity writes.
+	//
+	// Nil: accepted. The owner check and the insert then run one after the
+	// other on Store, so an entity write that lands between them is not
+	// seen. The file backend of the fs and memory tiers has no transaction
+	// in common with the entity store and is wired this way.
+	Lock WriteLock
 	// Now is the clock. Nil means time.Now.
 	Now func() time.Time
 }
@@ -65,6 +85,7 @@ type Service struct {
 	store  Store
 	owners Owners
 	meta   *metamodel.Metamodel
+	lock   WriteLock
 	now    func() time.Time
 }
 
@@ -78,7 +99,16 @@ func NewService(d Deps) (*Service, error) {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
-	return &Service{store: d.Store, owners: d.Owners, meta: d.Meta, now: d.Now}, nil
+	return &Service{store: d.Store, owners: d.Owners, meta: d.Meta, lock: d.Lock, now: d.Now}, nil
+}
+
+// locked runs fn under the write lock, or on the store directly when none is
+// wired.
+func (s *Service) locked(ctx context.Context, fn func(ctx context.Context, st Store) error) error {
+	if s.lock == nil {
+		return fn(ctx, s.store)
+	}
+	return s.lock.Locked(ctx, fn)
 }
 
 // TypeInfo describes one record type for a client.
@@ -169,6 +199,24 @@ func (s *Service) Append(ctx context.Context, typ string, in []Input) ([]Record,
 	if len(in) > MaxBatch {
 		return nil, fmt.Errorf("%w: at most %d rows per append", ErrInvalid, MaxBatch)
 	}
+	var out []Record
+	err = s.locked(ctx, func(ctx context.Context, st Store) error {
+		var lockedErr error
+		out, lockedErr = s.appendLocked(ctx, st, typ, d, in)
+		return lockedErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// appendLocked checks the owners and the rows and stores them on st. It runs
+// under the write lock, so the owner check reads what the insert commits
+// against.
+func (s *Service) appendLocked(
+	ctx context.Context, st Store, typ string, d metamodel.RecordTypeDef, in []Input,
+) ([]Record, error) {
 	owners, err := s.writableOwners(ctx, d, in)
 	if err != nil {
 		return nil, err
@@ -196,7 +244,7 @@ func (s *Service) Append(ctx context.Context, typ string, in []Input) ([]Record,
 		}
 		req.Groups = groups
 	}
-	if err := s.store.Append(ctx, req); err != nil {
+	if err := st.Append(ctx, req); err != nil {
 		return nil, err
 	}
 	return recs, nil
@@ -340,8 +388,9 @@ func checkOpenFace(l *metamodel.LedgerDef, rec Record, id string, raw any) error
 }
 
 // Reverse appends the negation of ledger transaction group, dated now, and
-// returns the new rows. The caller must be able to update every owner in the
-// transaction. A transaction is reversed at most once.
+// returns the new rows. The caller must be able to read every owner in the
+// transaction, or it is [ErrNotFound], and to update every owner, or it is
+// [ErrForbidden]. A transaction is reversed at most once.
 func (s *Service) Reverse(ctx context.Context, typ, group string) ([]Record, error) {
 	d, err := s.def(typ)
 	if err != nil {
@@ -353,12 +402,31 @@ func (s *Service) Reverse(ctx context.Context, typ, group string) ([]Record, err
 	if group == "" {
 		return nil, fmt.Errorf("%w: group is required", ErrInvalid)
 	}
-	orig, err := s.groupRows(ctx, typ, group)
+	var out []Record
+	err = s.locked(ctx, func(ctx context.Context, st Store) error {
+		var lockedErr error
+		out, lockedErr = s.reverseLocked(ctx, st, typ, d, group)
+		return lockedErr
+	})
 	if err != nil {
 		return nil, err
 	}
-	if len(orig) == 0 {
-		return nil, fmt.Errorf("%w: transaction %q", ErrNotFound, group)
+	return out, nil
+}
+
+// reverseLocked reads the transaction, checks its owners and stores the
+// reversal on st, under the write lock as appendLocked does.
+func (s *Service) reverseLocked(
+	ctx context.Context, st Store, typ string, d metamodel.RecordTypeDef, group string,
+) ([]Record, error) {
+	orig, err := groupRows(ctx, st, typ, group)
+	if err != nil {
+		return nil, err
+	}
+	// A transaction with a leg the caller cannot read is not found, as in
+	// [Service.Transaction], whichever owner the update check meets first.
+	if readErr := s.everyOwnerReadable(ctx, group, orig); readErr != nil {
+		return nil, readErr
 	}
 	in := make([]Input, len(orig))
 	for i, r := range orig {
@@ -400,7 +468,7 @@ func (s *Service) Reverse(ctx context.Context, typ, group string) ([]Record, err
 		return nil, err
 	}
 	req := AppendRequest{Records: recs, Groups: []GroupKey{{Type: typ, Group: rev}}}
-	if err := s.store.Append(ctx, req); err != nil {
+	if err := st.Append(ctx, req); err != nil {
 		return nil, err
 	}
 	return recs, nil
@@ -409,14 +477,14 @@ func (s *Service) Reverse(ctx context.Context, typ, group string) ([]Record, err
 // groupRows returns every row of group, across owners, unfiltered. Callers
 // gate the result. An append holds at most [MaxBatch] rows, so a longer
 // group is refused rather than read without bound.
-func (s *Service) groupRows(ctx context.Context, typ, group string) ([]Record, error) {
+func groupRows(ctx context.Context, st Store, typ, group string) ([]Record, error) {
 	if group == "" {
 		return nil, fmt.Errorf("%w: group is required", ErrInvalid)
 	}
 	var out []Record
 	q := ListQuery{Type: typ, Group: group, Limit: MaxPage}
 	for {
-		page, err := s.store.List(ctx, q)
+		page, err := st.List(ctx, q)
 		if err != nil {
 			return nil, err
 		}
@@ -442,27 +510,36 @@ func (s *Service) Transaction(ctx context.Context, typ, group string) ([]Record,
 	if d.Ledger == nil {
 		return nil, fmt.Errorf("%w: %s is not a ledger", ErrInvalid, typ)
 	}
-	rows, err := s.groupRows(ctx, typ, group)
+	rows, err := groupRows(ctx, s.store, typ, group)
 	if err != nil {
 		return nil, err
 	}
+	if err := s.everyOwnerReadable(ctx, group, rows); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// everyOwnerReadable returns [ErrNotFound] unless rows is not empty and the
+// caller may read the owner of every row.
+func (s *Service) everyOwnerReadable(ctx context.Context, group string, rows []Record) error {
 	ids := make([]string, 0, len(rows))
 	for _, r := range rows {
 		ids = append(ids, r.Owner)
 	}
 	readable, err := s.owners.Readable(ctx, ids)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if len(rows) == 0 {
-		return nil, fmt.Errorf("%w: transaction %q", ErrNotFound, group)
+		return fmt.Errorf("%w: transaction %q", ErrNotFound, group)
 	}
 	for _, r := range rows {
 		if !readable[r.Owner] {
-			return nil, fmt.Errorf("%w: transaction %q", ErrNotFound, group)
+			return fmt.Errorf("%w: transaction %q", ErrNotFound, group)
 		}
 	}
-	return rows, nil
+	return nil
 }
 
 // List returns one page of owner's rows of type typ.

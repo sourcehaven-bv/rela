@@ -597,6 +597,8 @@ deps:
       - config
       - configsql
       - dataentryconfig
+      # records: `rela export --all` writes every record row (records.Each).
+      - records
       - sqlitedb
       - datamigration
       - entitymanager
@@ -1034,6 +1036,8 @@ deps:
       - filerecords
       - pgrecords
       - sqliterecords
+      # sqlrecords: record writes join a store transaction (joinRecordsFor).
+      - sqlrecords
       # The cross-process lock for kvpiles and kvlease over the on-disk cache KV.
       - filelock
       - datamigration
@@ -2425,6 +2429,9 @@ deps:
       - metamodel
       - principal
       - project
+      # The source's record rows, read through the file record backend.
+      - records
+      - filerecords
       - state
       - storage
       - store

@@ -77,10 +77,15 @@ Records have no grants of their own. They follow their owner:
 
 - You can read an owner's rows when you can read the owner. To anyone else
   the owner's rows do not exist, and a request for them answers 404.
-- You can append rows when you may update the owner.
+- You can append rows when you may update every face of the owner.
 - An aggregate folds only the rows of owners you can read.
 - You can see a ledger transaction only when you can read every owner in
   it.
+
+A record type therefore has its owner type's classification. When records
+need stricter rules than their owner, such as a salary ledger on a person,
+declare a separate owner type with those rules (for example a
+`salary-account` related to the person) and put the record type on it.
 
 A group key is unique across the whole ledger type. When you append a
 transaction whose key is already used, rela answers 409, even when the
@@ -92,13 +97,24 @@ Record writes are not in the audit log. Each row stores who appended it
 (`recorded_by`) and when (`recorded_at`).
 
 When an owner is renamed, its rows move with it. When an owner is deleted,
-its rows are deleted too. For a ledger, that removes one side of its
-transactions, so archive an account that has postings instead of deleting
-it.
+its rows are deleted too. A soft-deleted owner keeps its rows until it is
+purged, so a restore brings them back. For a ledger, deleting an owner
+removes one side of its transactions, so archive an account that has
+postings instead of deleting it.
 
-The closed-period check reads the owner's lock date before the rows are
-stored. A posting that is in flight while someone closes the period can
-still land in it.
+On PostgreSQL and SQLite the rows move and go in the same transaction as
+the rename or delete. If that fails, the rename or delete fails too, so a
+new entity that later gets the same id never sees an old entity's rows.
+On the file backend the rows move and go just after the rename or delete,
+and a failure there is only logged.
+
+On PostgreSQL and SQLite an append checks the owner and its lock date in
+the same transaction that stores the rows, under the lock that entity
+writes take. A posting that is in flight while someone closes the period
+either lands before the period closes, or is checked against the new lock
+date. On the file backend the two steps are not locked together, so a
+posting that is in flight while someone closes the period can still land
+in it.
 
 ## HTTP API
 
@@ -131,3 +147,7 @@ hour. Set `RELA_RECORD_RETENTION_INTERVAL` to change the interval.
 
 The record store is a separate service behind one interface, so a
 specialised time-series backend can replace it later.
+
+Records are part of the exports: `rela export --all` lists them under
+`records`, and `rela db dump --data` and `rela db load --data` carry them as
+`records/` files.

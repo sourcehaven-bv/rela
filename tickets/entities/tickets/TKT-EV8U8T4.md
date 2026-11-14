@@ -34,11 +34,6 @@ Review items deferred from TKT-J7Q9C4K:
 - A native SQL `Aggregator` for `sqlrecords` (bucket and fold in the
 database), so aggregates are not capped at `MaxAggregateRows`, with a
 `storetest.Counting`-style budget test.
-- Drop an owner's rows inside the entity delete transaction on postgres and
-sqlite, or tombstone the id, so a failed hook never leaves rows a reused id
-would inherit.
-- Read the ledger lock date inside the append transaction, so a period
-closed while a posting is in flight stays closed.
 - Refuse to delete an owner that still has ledger rows.
 - Decide whether record writes go to the audit log.
 

@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 37
+const schemaVersion = 38
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -366,6 +366,16 @@ var migrations = []migration{
 		// to backfill.
 		to:    37,
 		apply: sqlSteps(recordsDDL),
+	},
+	{
+		// v37 → v38: record rows follow their owner through delete and
+		// rename (see recordsOwnerDDL). The second step drops the rows a
+		// failed post-commit hook, which the triggers replace, left behind.
+		to: 38,
+		apply: sqlSteps(recordsOwnerDDL, `DELETE FROM records
+			WHERE owner NOT IN (SELECT id FROM entities UNION SELECT id FROM marked_entities)`,
+			`DELETE FROM record_groups WHERE NOT EXISTS (
+			SELECT 1 FROM records r WHERE r.type = record_groups.type AND r.grp = record_groups.grp)`),
 	},
 }
 

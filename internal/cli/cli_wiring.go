@@ -54,6 +54,10 @@ type readServices struct {
 	// Families selects one row per entity whichever face it stores, for
 	// per-type counts (worlds.Compiled.Families). Never a read world.
 	Families store.WorldScope
+	// Records is the raw record store, for `rela export --all`.
+	//
+	// Nil: accepted; the export then has no record rows to write.
+	Records recordReader
 }
 
 // writeServices is the read-write capability bundle. It embeds
@@ -202,6 +206,10 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		FS:        svc.FS(),
 		World:     appbuild.CompiledWorlds(svc).DefaultWorld(),
 		Families:  appbuild.CompiledWorlds(svc).Families(),
+	}
+	// Assigned only when present, so a missing store stays a nil interface.
+	if rs := appbuild.RecordStore(svc); rs != nil {
+		read.Records = rs
 	}
 	write := writeServices{
 		readServices:  read,

@@ -88,6 +88,7 @@ func newRecordsService(
 		Store:  backend,
 		Owners: recordOwners{rows: rows, writes: writes, raw: st},
 		Meta:   meta,
+		Lock:   recordLock(st, backend),
 	})
 }
 
@@ -110,10 +111,27 @@ type recordOwners struct {
 	// ledger's closed period. It is the write-prep read the entity manager
 	// also makes: a redacted read could hide the lock date and admit a
 	// posting into a closed period. Nothing it reads reaches a response.
-	raw interface {
-		GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error)
-		ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
+	// Inside the append's transaction the read goes to the transaction view
+	// instead (see rawReader).
+	raw rawOwnerReader
+}
+
+// rawOwnerReader reads an owner's stored faces.
+type rawOwnerReader interface {
+	GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error)
+	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
+}
+
+// rawReader returns the transaction view on ctx when the append runs in a
+// store transaction (see txRecordLock), and the raw store otherwise. The
+// lock date must be read on the view: a read on another connection could
+// miss an update the transaction is already ordered after, and on sqlite it
+// would not see the transaction's own state.
+func (o recordOwners) rawReader(ctx context.Context) rawOwnerReader {
+	if view := store.TxView(ctx); view != nil {
+		return view
 	}
+	return o.raw
 }
 
 // Readable answers through one batch header resolve, as the lease gate does.
@@ -133,9 +151,14 @@ func (o recordOwners) Writable(ctx context.Context, id string) (records.Owner, e
 	if !ok || err != nil {
 		return records.Owner{}, fmt.Errorf("%w: %s", records.ErrNotFound, id)
 	}
-	stored, err := store.FamilyHeaders(ctx, o.raw, id)
+	raw := o.rawReader(ctx)
+	stored, err := store.FamilyHeaders(ctx, raw, id)
 	if err != nil {
 		return records.Owner{}, fmt.Errorf("records: read owner %s: %w", id, err)
+	}
+	if len(stored) == 0 {
+		// Deleted since the gated read: the owner is gone.
+		return records.Owner{}, fmt.Errorf("%w: %s", records.ErrNotFound, id)
 	}
 	if len(stored) != len(fam.Faces) {
 		return records.Owner{}, fmt.Errorf("%w: update %s", records.ErrForbidden, id)
@@ -149,7 +172,7 @@ func (o recordOwners) Writable(ctx context.Context, id string) (records.Owner, e
 		if !dec.Allow {
 			return records.Owner{}, fmt.Errorf("%w: update %s", records.ErrForbidden, id)
 		}
-		e, err := o.raw.GetEntity(ctx, entity.Ref{ID: id, Face: face})
+		e, err := raw.GetEntity(ctx, entity.Ref{ID: id, Face: face})
 		if err != nil {
 			return records.Owner{}, fmt.Errorf("records: read owner %s: %w", id, err)
 		}
@@ -170,20 +193,33 @@ func Records(s *Services) *records.Service {
 	return s.records
 }
 
-// recordStoreAliases keeps records attached to their owner across a rename
-// and drops them with a deleted owner. It wraps the store rather than the
-// service so rows of a type the schema no longer declares still follow
-// their owner. It is an alias subscriber (see newAliasFanout).
+// recordStoreAliases keeps file-backed records attached to their owner
+// across a rename and drops them with a deleted owner. It wraps the store
+// rather than the service so rows of a type the schema no longer declares
+// still follow their owner. It is an alias subscriber (see newAliasFanout).
+//
+// It runs after the entity write has committed, and a failure is only
+// logged, so a missed drop would let a later entity with the same id inherit
+// the rows. On postgres and sqlite the records live in the entity store's
+// database, and triggers on the entity tables drop and rekey them inside the
+// delete or rename itself (pgstore migration 0046, sqlitedb v38): a failure
+// there rolls the entity write back, and no write path can skip it. Those
+// tiers get no alias subscriber, because a late post-commit drop could
+// remove the rows of a new entity that reused the id meanwhile. The fs and
+// memory tiers keep this best-effort hook; a single local user is the only
+// writer there.
 type recordStoreAliases struct{ store records.Store }
 
-// recordAliases returns the alias subscriber for st.
+// recordAliases returns the alias subscriber for backend over st.
 //
-// Nil: returns a nil pointer for a nil st, which newAliasFanout drops.
-func recordAliases(st records.Store) *recordStoreAliases {
-	if st == nil {
+// Nil: returns a nil pointer for a nil backend, and for a backend in the
+// entity store's database, whose triggers do the work; newAliasFanout drops
+// it.
+func recordAliases(st store.Store, backend records.Store) *recordStoreAliases {
+	if backend == nil || joinRecordsFor(st, backend) != nil {
 		return nil
 	}
-	return &recordStoreAliases{store: st}
+	return &recordStoreAliases{store: backend}
 }
 
 // EntityRenamed moves the rows of oldID to newID. The rename has committed,
