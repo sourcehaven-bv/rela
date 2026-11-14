@@ -1,9 +1,9 @@
 request: GET /api/v1/_settings
 identity: header admin@example.test
 status: 200
-reads: GraphQueryHeaders=1 ListEntityHeaders=3 ListRelations=4 MatchingFaces=2
-breadth: ListEntityHeaders=0/3 ListRelations=13/4 MatchingFaces=12/2
-bodies: GraphQuery=0/1 ListEntityHeaders=0/3
+reads: GraphQueryHeaders=1 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GraphQuery=0/1
 versions: 
 body (allProperties, allRelations, entityTypes sorted):
 {
@@ -81,73 +81,24 @@ body (allProperties, allRelations, entityTypes sorted):
       "name": "contains",
       "label": "",
       "targetType": "ticket",
-      "targets": [
-        {
-          "id": "TKT-1",
-          "title": "Alpha"
-        },
-        {
-          "id": "TKT-2",
-          "title": "Bravo"
-        },
-        {
-          "id": "TKT-3",
-          "title": "Charlie"
-        },
-        {
-          "id": "TKT-4",
-          "title": "Delta"
-        },
-        {
-          "id": "TKT-5",
-          "title": "Echo"
-        },
-        {
-          "id": "TKT-6",
-          "title": "Foxtrot"
-        }
+      "targetTypes": [
+        "ticket"
       ]
     },
     {
       "name": "implements",
       "label": "",
       "targetType": "policy",
-      "targets": [
-        {
-          "id": "POL-1",
-          "title": "Access"
-        }
+      "targetTypes": [
+        "policy"
       ]
     },
     {
       "name": "watches",
       "label": "",
       "targetType": "ticket",
-      "targets": [
-        {
-          "id": "TKT-1",
-          "title": "Alpha"
-        },
-        {
-          "id": "TKT-2",
-          "title": "Bravo"
-        },
-        {
-          "id": "TKT-3",
-          "title": "Charlie"
-        },
-        {
-          "id": "TKT-4",
-          "title": "Delta"
-        },
-        {
-          "id": "TKT-5",
-          "title": "Echo"
-        },
-        {
-          "id": "TKT-6",
-          "title": "Foxtrot"
-        }
+      "targetTypes": [
+        "ticket"
       ]
     }
   ],

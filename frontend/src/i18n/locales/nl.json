@@ -190,6 +190,17 @@
       "denied": "Meldingen zijn voor deze site geblokkeerd. Sta ze toe in de site-instellingen van je browser en zet dit daarna opnieuw aan.",
       "signedOut": "Log in om meldingen te kiezen.",
       "noStorage": "Deze browser laat rela geen gegevens voor deze site bewaren, dus nieuwe items in je inbox zijn niet van oude te onderscheiden. Sta sitegegevens toe en probeer het opnieuw."
+    },
+    "relationDefault": {
+      "none": "Geen",
+      "notFound": "niet gevonden",
+      "choose": "Kiezen…",
+      "change": "Wijzigen…",
+      "clear": "Wissen",
+      "chooseFor": "Kies het standaarddoel van {relation}",
+      "clearFor": "Wis het standaarddoel van {relation}",
+      "changeFor": "Wijzig het standaarddoel van {relation}",
+      "loadFailed": "kon niet laden"
     }
   },
   "errors": {
