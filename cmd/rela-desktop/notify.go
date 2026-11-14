@@ -265,11 +265,15 @@ func (d *Desktop) onNotificationClicked(result notifications.NotificationResult)
 	if !ok {
 		return
 	}
-	if active := d.registry.activeProject(); active != nil && active.id == projectID && d.win != nil {
-		d.win.Show()
-		d.win.Focus()
-		d.win.ExecJS(shellCommandJS(shellCommand{Command: "navigate", Arg: path}))
-		return
+	// A closed main window has no page to navigate, so the target then opens
+	// in a window of its own like any other.
+	if active := d.registry.activeProject(); active != nil && active.id == projectID {
+		if win := liveMainWindow(d.wails); win != nil {
+			win.Show()
+			win.Focus()
+			win.ExecJS(shellCommandJS(shellCommand{Command: "navigate", Arg: path}))
+			return
+		}
 	}
 	if errMsg := d.OpenWindow(path, "", projectPrefix+projectID+"/"); errMsg != "" {
 		slog.Warn("could not open notification target", "error", errMsg)

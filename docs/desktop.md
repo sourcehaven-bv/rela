@@ -166,6 +166,8 @@ spaces have shortcuts ⌘1 to ⌘9.
 | ⌘O       | Open project or document   |
 | ⌘⇧O      | Clone from Git             |
 | ⌘W       | Close window               |
+| ⌘F       | Find                       |
+| ⌘P       | Print                      |
 | ⌘,       | Settings                   |
 | ⌘[ / ⌘]  | Back / forward             |
 | ⌘K       | Command palette            |
@@ -173,6 +175,15 @@ spaces have shortcuts ⌘1 to ⌘9.
 | ⌘/       | Keyboard shortcuts         |
 
 On Windows and Linux, use Ctrl instead of ⌘.
+
+Find puts the cursor in the search box of the current list. On a page without
+one, it opens the search page. Print leaves out the sidebar and the page's
+buttons. On macOS, **File > Show in Finder** shows the project's folder, and
+**Help > Rela Help** opens this documentation.
+
+On macOS, closing the last window does not quit the app. Click the Dock icon,
+use **File > Open Recent**, or open a `.rela` document to get a window back. The
+app remembers the size and position of the main window.
 
 Right-click a link to an entity or a page to open it in a new window, or to copy
 its title. For an entity you can also copy its ID.

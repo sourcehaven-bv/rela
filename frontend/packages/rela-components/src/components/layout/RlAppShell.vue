@@ -445,4 +445,27 @@ onBeforeUnmount(() => {
  * width. Two classes, so it wins over the breakpoint rules above.
  */
 .rl-app-shell.rl-app-shell--presenting { --rl-nav-toggle-display: none; }
+
+/*
+ * Print the page, not the screen. On screen the shell is one viewport high
+ * and the content scrolls inside it, so a print would stop at the first
+ * screenful; here the shell grows with its content and the navigation stays
+ * off the paper.
+ */
+@media print {
+  .rl-app-shell__sidebar,
+  .rl-app-shell__resizer,
+  .rl-app-shell__scrim { display: none; }
+
+  .rl-app-shell,
+  .rl-app-shell__frame,
+  .rl-app-shell__row,
+  .rl-app-shell__main {
+    display: block;
+    height: auto;
+    overflow: visible;
+  }
+
+  .rl-app-shell__main :deep(*) { overflow: visible !important; }
+}
 </style>

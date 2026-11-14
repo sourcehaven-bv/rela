@@ -26,6 +26,9 @@ import (
 // navigate the webview directly. They send a shell command the SPA runs (see
 // sendShellCommand), so the page stays the one place that knows its routes.
 
+// helpURL is the documentation Help > Rela Help opens in the browser.
+const helpURL = "https://github.com/Sourcehaven-BV/rela/tree/develop/docs"
+
 // maxSpaceShortcuts is how many spaces get ⌘1…⌘9.
 const maxSpaceShortcuts = 9
 
@@ -132,7 +135,7 @@ func (m *menuBar) build() *application.Menu {
 		m.addAppMenu(menu)
 	}
 	m.addFileMenu(menu, mac)
-	menu.AddRole(application.EditMenu)
+	m.addEditMenu(menu, mac)
 	m.addViewMenu(menu)
 	m.addGoMenu(menu)
 	if mac {
@@ -173,6 +176,13 @@ func (m *menuBar) addFileMenu(menu *application.Menu, mac bool) {
 	file.Add("Open Project…").SetAccelerator("CmdOrCtrl+o").OnClick(d.openProjectFromMenu)
 	m.addRecentMenu(file)
 	file.Add("Clone from Git…").SetAccelerator("CmdOrCtrl+shift+o").OnClick(d.cloneFromGitMenu)
+	if mac {
+		file.Add("Show in Finder").SetEnabled(m.focusedPath() != "").OnClick(func(*application.Context) {
+			if err := revealInFinder(m.focusedPath()); err != nil {
+				d.errorDialog("Could not show the project in Finder", err.Error())
+			}
+		})
+	}
 	file.AddSeparator()
 	m.addDatabaseMenu(file)
 	file.Add("Project Settings…").OnClick(func(*application.Context) {
@@ -183,6 +193,14 @@ func (m *menuBar) addFileMenu(menu *application.Menu, mac bool) {
 		}
 		if errMsg := d.settings.open(id); errMsg != "" {
 			d.errorDialog("Could not open Project Settings", errMsg)
+		}
+	})
+	file.AddSeparator()
+	file.Add("Print…").SetAccelerator("CmdOrCtrl+p").OnClick(func(*application.Context) {
+		if w := d.wails.Window.Current(); w != nil {
+			if err := w.Print(); err != nil {
+				d.errorDialog("Could not print", err.Error())
+			}
 		}
 	})
 	file.AddSeparator()
@@ -201,6 +219,47 @@ func (m *menuBar) addFileMenu(menu *application.Menu, mac bool) {
 			d.wails.Quit()
 		}
 	})
+}
+
+// addEditMenu is the platform's Edit menu with Find added. Built from roles
+// rather than the EditMenu role, because the role has no Find item.
+func (m *menuBar) addEditMenu(menu *application.Menu, mac bool) {
+	edit := menu.AddSubmenu("Edit")
+	edit.AddRole(application.Undo)
+	edit.AddRole(application.Redo)
+	edit.AddSeparator()
+	edit.AddRole(application.Cut)
+	edit.AddRole(application.Copy)
+	edit.AddRole(application.Paste)
+	if mac {
+		edit.AddRole(application.PasteAndMatchStyle)
+	}
+	edit.AddRole(application.Delete)
+	edit.AddRole(application.SelectAll)
+	edit.AddSeparator()
+	// A webview has no find bar, so ⌘F goes to the page's own search.
+	edit.Add("Find…").SetAccelerator("CmdOrCtrl+f").OnClick(m.command("find", ""))
+	if mac {
+		edit.AddSeparator()
+		edit.AddRole(application.SpeechMenu)
+	}
+}
+
+// focusedPath is what the project in the focused window was opened from: a
+// folder or a .rela file. It is "" when no project is open.
+func (m *menuBar) focusedPath() string {
+	d := m.d
+	if id := m.focused.Load(); id != nil && *id != "" {
+		if p := d.registry.get(*id); p != nil {
+			return p.root
+		}
+	}
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.app == nil {
+		return ""
+	}
+	return d.activePath
 }
 
 func (m *menuBar) addRecentMenu(file *application.Menu) {
@@ -284,6 +343,12 @@ func spaceLabel(s menuSpace) string {
 func (m *menuBar) addHelpMenu(menu *application.Menu, mac bool) {
 	d := m.d
 	help := menu.AddSubmenu("Help")
+	help.Add("Rela Help").OnClick(func(*application.Context) {
+		if err := d.wails.Browser.OpenURL(helpURL); err != nil {
+			d.errorDialog("Could not open the documentation", err.Error())
+		}
+	})
+	help.AddSeparator()
 	help.Add("Keyboard Shortcuts").SetAccelerator("CmdOrCtrl+/").OnClick(m.command("shortcuts", ""))
 	if !mac {
 		help.AddSeparator()

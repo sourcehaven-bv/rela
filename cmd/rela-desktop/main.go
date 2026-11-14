@@ -96,9 +96,8 @@ type Desktop struct {
 	// ctx carries the desktop Principal for the life of the process. Under
 	// Wails v2 this doubled as the runtime handle; v3 separates the two, so
 	// this is now only an attribution context.
-	ctx   context.Context            //nolint:containedctx // lives for the struct lifetime
-	wails *application.App           // Wails v3 runtime handle
-	win   *application.WebviewWindow // main window
+	ctx   context.Context  //nolint:containedctx // lives for the struct lifetime
+	wails *application.App // Wails v3 runtime handle
 	mu    sync.RWMutex
 	// registry holds every loaded project. The single-project fields below
 	// still track the active one; they are the "no project loaded" path and
@@ -191,12 +190,8 @@ func (d *Desktop) onSecondInstanceLaunch(data application.SecondInstanceData) {
 		}
 	}
 
-	// Bring this window forward regardless — the user asked for the app.
-	if d.win != nil {
-		d.win.Show()
-		d.win.UnMinimise()
-		d.win.Focus()
-	}
+	// Bring the main window forward regardless — the user asked for the app.
+	d.showMainWindow()
 }
 
 // projectDirFromArgs extracts an absolute project directory from a second
@@ -230,25 +225,6 @@ func projectDirFromArgs(args []string, workingDir string) string {
 	return val
 }
 
-// saveWindowState records the window geometry for the next launch. Failures
-// are logged and swallowed: losing window position must never block a quit.
-// coverage-ignore-func: requires Wails runtime
-func (d *Desktop) saveWindowState() {
-	if d.win == nil {
-		return
-	}
-	w, h := d.win.Size()
-	x, y := d.win.Position()
-	st := desktop.WindowState{Width: w, Height: h, X: x, Y: y, Maximized: d.win.IsMaximised()}
-	if !st.Valid() {
-		return // don't overwrite good state with a minimized/degenerate size
-	}
-	d.prefs.Window = st
-	if err := d.prefs.Save(); err != nil {
-		slog.Warn("could not save window state", "error", err)
-	}
-}
-
 // onOpenedWithFile handles a .rela document or a project folder opened from
 // Finder (double click, drop on the Dock icon, or "Open With"). macOS
 // delivers this as an Apple Event rather than argv, so it arrives here and
@@ -268,11 +244,7 @@ func (d *Desktop) onOpenedWithFile(path string) {
 		return
 	}
 	d.reloadWindow()
-	if d.win != nil {
-		d.win.Show()
-		d.win.UnMinimise()
-		d.win.Focus()
-	}
+	d.showMainWindow()
 }
 
 // pickDirectory shows a native directory chooser and returns the chosen path
@@ -317,12 +289,15 @@ func (d *Desktop) errorDialog(title, message string) {
 	d.wails.Dialog.Error().SetTitle(title).SetMessage(message).Show()
 }
 
-// reloadWindow reloads the webview. Replaces v2's runtime.WindowReloadApp.
+// reloadWindow reloads the main window so it shows the active project. When
+// the user closed it, a new one opens, which loads the page fresh anyway.
 // coverage-ignore-func: requires Wails runtime
 func (d *Desktop) reloadWindow() {
-	if d.win != nil {
-		d.win.Reload()
+	if win := liveMainWindow(d.wails); win != nil {
+		win.Reload()
+		return
 	}
+	d.showMainWindow()
 }
 
 // OpenProject opens a native directory picker and loads the selected project.
@@ -513,8 +488,8 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 
 	d.startNotifier(schedCtx, projectID(app.ProjectRoot()), svc, appbuild.CompiledWorlds(svc).DefaultWorld())
 
-	if d.win != nil {
-		d.win.SetTitle(name)
+	if win := liveMainWindow(d.wails); win != nil {
+		win.SetTitle(name)
 	}
 
 	rememberRecent(d.prefs, opened, name)
@@ -1160,21 +1135,7 @@ func main() {
 	})
 	d.wails = app
 
-	winOpts := application.WebviewWindowOptions{
-		Title:  title,
-		Width:  defaultWindowWidth,
-		Height: defaultWindowHeight,
-		Mac:    macWindow(),
-	}
-	// Restore the previous geometry when we have usable saved state. X/Y are
-	// only honored with InitialPosition set; the default centers the window.
-	if ws := prefs.Window; ws.Valid() {
-		winOpts.Width, winOpts.Height = ws.Width, ws.Height
-		winOpts.X, winOpts.Y = ws.X, ws.Y
-		winOpts.InitialPosition = application.WindowXY
-	}
-	d.win = app.Window.NewWithOptions(winOpts)
-	d.menu.trackWindow(d.win, "")
+	d.newMainWindow(title)
 	registerContextMenus(d.wails, d.OpenWindow)
 
 	// Finder handing us a .rela bundle. Registered before Run so a cold launch
@@ -1184,13 +1145,8 @@ func main() {
 			d.onOpenedWithFile(e.Context().Filename())
 		})
 
-	// Persist geometry on close. Reading it after the window is gone returns
-	// zeroes, so this must run while the window still exists.
-	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
-		d.win.OnWindowEvent(events.Common.WindowClosing, func(*application.WindowEvent) {
-			d.saveWindowState()
-		})
-	})
+	// A click on the Dock icon with every window closed opens a new one.
+	app.Event.OnApplicationEvent(events.Mac.ApplicationShouldHandleReopen, d.onDockReopen)
 
 	// Wails calls this on the main thread while initializing, which is the
 	// only context where the native menu can be built. Any refreshMenu before
