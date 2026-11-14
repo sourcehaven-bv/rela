@@ -12,7 +12,8 @@ why4: No test created an entity of a sequential type with a non-upper-case prefi
 why5: Id case rules are spread over the minter, the stores and the metamodel with no shared statement, so a change to one does not reach the others.
 prevention: MatchesID is the one prefix check and folds case; TestCreate_MintsForNonUpperCasePrefix creates entities for lower- and mixed-case prefixes, and the MatchesID and ValidateEntity tables pin the fold.
 started: "2026-11-14"
-status: in-progress
+completed: "2026-11-14"
+status: done
 severity: minor
 ---
 
