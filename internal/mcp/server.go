@@ -262,6 +262,12 @@ type GraphReader interface {
 	// MentionedBy pages the readable entities whose body mentions target
 	// as an `id` code span ([visibility.Resolver.MentionedBy]).
 	MentionedBy(ctx context.Context, target, after string, limit int) (visibility.MentionPage, error)
+
+	// ListEntityPage reads one page of a type's readable rows, without
+	// bodies, and the number of rows the query matches for the caller
+	// ([visibility.ScriptReader.ListEntityPage]). Both run in the store, so
+	// list_entities costs a page, not the type.
+	ListEntityPage(ctx context.Context, q visibility.PageQuery) (visibility.EntityPage, error)
 }
 
 // TraversalBinder answers the `related(...)` calls of a list_entities filter

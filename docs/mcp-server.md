@@ -99,10 +99,10 @@ results leave `url` out.
 
 | Tool | Description | Parameters |
 |------|-------------|------------|
-| `list_entities` | List entity summaries, sorted by ID | `type?`, `filter?`, `limit?` (default 50), `offset?`, `world?` |
+| `list_entities` | List entity summaries, sorted by ID and then face, byte-wise (`REQ-10` before `REQ-2`) | `type?`, `filter?`, `limit?` (default 50, max 1000), `offset?`, `world?` |
 | `list_worlds` | List the worlds the read tools accept, and which you may select | none |
 | `show_entity` | Get one entity with its relations, and `other_faces` for a faced entity | `id`, `content?` (default true), `world?` |
-| `search_entities` | Full-text search across entities | `query`, `type?`, `limit?` (default 20), `world?` |
+| `search_entities` | Full-text search across entities | `query`, `type?`, `limit?` (default 20, max 1000), `world?` |
 | `create_entity` | Create an entity; a faced type needs `face` | `type`, `properties`, `content?`, `id?`, `face?` |
 | `update_entity` | Update named properties or the body of one face | `id`, `properties?`, `content?` |
 | `delete_entity` | Delete an entity, or one face of it as `ID@face` | `id`, `cascade?` |
@@ -155,7 +155,7 @@ there are several, the error lists them, for example
 
 | Tool | Description | Parameters |
 |------|-------------|------------|
-| `list_relations` | List relations | `type?`, `from?`, `to?`, `limit?` (default 50), `offset?` |
+| `list_relations` | List relations | `type?`, `from?`, `to?`, `limit?` (default 50, max 1000), `offset?` |
 | `create_relation` | Create a relation between entities | `from`, `type`, `to`, `content?`, `properties?` |
 | `delete_relation` | Delete a relation | `from`, `type`, `to` |
 

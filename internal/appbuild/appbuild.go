@@ -636,6 +636,7 @@ type scriptEntityReaderFamily interface {
 	CountEntities(ctx context.Context, q store.EntityQuery) (int, error)
 	CountRelations(ctx context.Context, q store.RelationQuery) (int, error)
 	MentionedBy(ctx context.Context, target, after string, limit int) (visibility.MentionPage, error)
+	ListEntityPage(ctx context.Context, q visibility.PageQuery) (visibility.EntityPage, error)
 }
 
 // scriptReads returns the principal-bound script reader and the traversal gate
@@ -1008,6 +1009,9 @@ type GatedGraphReader interface {
 	// MentionedBy pages the readable entities whose body mentions target
 	// ([visibility.Resolver.MentionedBy]).
 	MentionedBy(ctx context.Context, target, after string, limit int) (visibility.MentionPage, error)
+	// ListEntityPage reads one gated page of a type and its gated total
+	// ([visibility.ScriptReader.ListEntityPage]).
+	ListEntityPage(ctx context.Context, q visibility.PageQuery) (visibility.EntityPage, error)
 }
 
 // gatedGraphReader composes the ACL-gated row reader with the raw store for
@@ -1090,6 +1094,12 @@ func (g gatedGraphReader) MentionedBy(
 	ctx context.Context, target, after string, limit int,
 ) (visibility.MentionPage, error) {
 	return g.rows.MentionedBy(ctx, target, after, limit)
+}
+
+func (g gatedGraphReader) ListEntityPage(
+	ctx context.Context, q visibility.PageQuery,
+) (visibility.EntityPage, error) {
+	return g.rows.ListEntityPage(ctx, q)
 }
 
 func (g gatedGraphReader) ListRelationsStrict(
