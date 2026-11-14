@@ -206,18 +206,25 @@ func (o actionOps) batchRows(
 	// afterwards. Gate what was read, so a row that became unreadable in
 	// between is not sent. One probe per type.
 	raws = o.h.visible.filterVisible(ctx, raws)
-	return o.h.affordances.batchActionRows(ctx, s, id, action, raws), sent, nil
+	return batchActionGate{svc: o.h.affordances}.rows(ctx, s, id, action, raws), sent, nil
 }
 
-// batchActionRows is [detailActionCheck.Allows] for many rows of one
-// action at once: the rows in raws the action may run on, each with its
+// batchActionGate is [detailActionCheck.Allows] for many rows of one action
+// at once. It is its own type so affordanceService stays under its method
+// load line.
+type batchActionGate struct {
+	svc affordanceService
+}
+
+// rows returns the rows in raws the action may run on, each with its
 // redacted form. The caller has checked the permission and row-gated raws.
 // The conditions compile once, and each type's when runs as one page.
 //
 //archplan:guard=authz reason="batch detail action gate: available_on and when: on the redacted rows"
-func (svc affordanceService) batchActionRows(
+func (g batchActionGate) rows(
 	ctx context.Context, s *Schema, id string, action dataentryconfig.Action, raws []*entityPkg.Entity,
 ) []llmBatchRow {
+	svc := g.svc
 	rows := make([]llmBatchRow, 0, len(raws))
 	hidden := make([]map[string]struct{}, 0, len(raws))
 	for _, e := range raws {
@@ -238,7 +245,7 @@ func (svc affordanceService) batchActionRows(
 	}
 	keep := make([]bool, len(rows))
 	for _, typ := range slices.Sorted(maps.Keys(byType)) {
-		svc.judgeWhen(ctx, id, actionWhenMatcher(lookup, id, typ), rows, hidden, byType[typ], keep)
+		g.judgeWhen(ctx, id, actionWhenMatcher(lookup, id, typ), rows, hidden, byType[typ], keep)
 	}
 	out := rows[:0]
 	for i, r := range rows {
@@ -252,7 +259,7 @@ func (svc affordanceService) batchActionRows(
 // judgeWhen sets keep[i] for each i in idx whose row passes m. It fails
 // closed as [detailActionCheck.whenHolds] does: a nil m, a condition that
 // reads a property hidden on the row, or an evaluation error keeps nothing.
-func (svc affordanceService) judgeWhen(
+func (g batchActionGate) judgeWhen(
 	ctx context.Context, id string, m ViewConditionMatcher, rows []llmBatchRow,
 	hidden []map[string]struct{}, idx []int, keep []bool,
 ) {
@@ -280,7 +287,7 @@ func (svc affordanceService) judgeWhen(
 		return
 	}
 	var gq store.GraphQueryer
-	if q, ok := svc.store.(store.GraphQueryer); ok {
+	if q, ok := g.svc.store.(store.GraphQueryer); ok {
 		gq = q
 	}
 	verdicts, err := m.MatchPage(ctx, page, traversalGateFromContext(ctx).GateTraversal, pageMatch(gq))
