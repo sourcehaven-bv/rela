@@ -24,12 +24,16 @@ import (
 const (
 	navStatusFieldPolicyBudget         = 8
 	navStatusRuleOnlyFieldPolicyBudget = 7
+	// nav status answered in the store: one scoped count per rule and the
+	// membership walk. Measured.
+	navStatusInStoreBudget = 4
 	// navItemsBudget (querybudget_test.go) measures the same endpoint with
 	// the default resolver, which redacts nothing; these redact through the
-	// field policy. With a list condition listPage primes the whole
-	// population and navItemsFor primes the page again, a fixed cost.
+	// field policy. A list condition that lowers is a store traversal on
+	// the page query, so it adds no read (TKT-I39Y7N4); it cost 12 on the
+	// Go path, which primed the whole population and then the page again.
 	navItemsFieldPolicyBudget          = 8
-	navItemsConditionFieldPolicyBudget = 12
+	navItemsConditionFieldPolicyBudget = 8
 )
 
 // fieldPolicy is [realisticBudgetPolicy] with `visible:` blocks on ticket:
@@ -145,23 +149,43 @@ func TestQueryBudget_NavStatusRuleOnlyIsSizeIndependent(t *testing.T) {
 	assertCallBudget(t, "nav status (rule only)", b, navStatusRuleOnlyFieldPolicyBudget, detail)
 }
 
+// A rule and a list condition that read no field hidden from the principal
+// lower, so each rule is one scoped count in the store (TKT-I39Y7N4): no row
+// is read, whatever the size of the store.
+func TestQueryBudget_NavStatusInStoreIsSizeIndependent(t *testing.T) {
+	b, detail := fieldPolicyReads(t,
+		func(app *App) {
+			installNavStatusConfig(app,
+				map[string]dataentryconfig.List{"tickets": {
+					EntityType: "ticket", Condition: "related(entity, 'implements')",
+				}},
+				[]dataentryconfig.NavigationEntry{{Label: "Tickets", List: "tickets", Status: []dataentryconfig.NavStatusRule{
+					rule("warning", "{count} for nobody", "related(entity, 'assigned-to', { title = 'Nobody' })"),
+					rule("error", "{count} mine", "related(entity, 'assigned-to', { id = current_user.id })"),
+				}}})
+		},
+		func(app *App, ctx context.Context) {
+			got := navStatusAs(ctx, t, app)
+			if got["0"].Count == 0 || got["0"].Tone != "error" {
+				t.Fatalf("the second rule did not count, so this budget proves nothing: %v", got)
+			}
+		})
+	assertBudget(t, "nav status (in store)", b, navStatusInStoreBudget, detail)
+}
+
 // A generated sidebar group redacts each of its rows before taking the title.
 func TestQueryBudget_NavItemsRedactionIsSizeIndependent(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		list   dataentryconfig.List
 		pinned int
-		// scan marks a case whose rows grow with the store; it is
-		// asserted on calls only.
-		scan bool
 	}{
-		{"nav items", dataentryconfig.List{EntityType: "ticket"}, navItemsFieldPolicyBudget, false},
-		// TODO(TKT-F2EJQY8): a list condition keeps the list off the pushed
-		// path, so the group reads every header of the type (scopedHeaders'
-		// type scan in scopedread.go) and judges the condition in Go.
+		{"nav items", dataentryconfig.List{EntityType: "ticket"}, navItemsFieldPolicyBudget},
+		// The condition lowers to a store traversal (TKT-I39Y7N4), so the
+		// group is paged in the store like a list without one.
 		{"nav items (condition)", dataentryconfig.List{
 			EntityType: "ticket", Condition: "related(entity, 'assigned-to', { id = current_user.id })",
-		}, navItemsConditionFieldPolicyBudget, true},
+		}, navItemsConditionFieldPolicyBudget},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b, detail := fieldPolicyReads(t,
@@ -176,10 +200,6 @@ func TestQueryBudget_NavItemsRedactionIsSizeIndependent(t *testing.T) {
 						t.Fatalf("nav items: %d %s", rec.Code, rec.Body)
 					}
 				})
-			if tc.scan {
-				assertCallBudget(t, tc.name, b, tc.pinned, detail)
-				return
-			}
 			assertBudget(t, tc.name, b, tc.pinned, detail)
 		})
 	}

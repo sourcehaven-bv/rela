@@ -98,8 +98,9 @@ type QueryScopeFilter func(
 //
 // ok=false means the scope does not lower exactly, or a traversal cannot be
 // gated for this principal: take the [QueryScopeFilter] path, which gives the
-// same rows or the same error. empty=true means a traversal is denied and
-// none is refused, so no row matches. Otherwise frag's Props and Related are
+// same rows or the same error. empty=true means a positive traversal is
+// denied and none is refused, so no row matches; a denied negated traversal
+// narrows nothing and drops out. Otherwise frag's Props and Related are
 // ANDed onto the read query. gate is the request's traversal gate, the one
 // [QueryScopeFilter] receives.
 type QueryScopeLower func(

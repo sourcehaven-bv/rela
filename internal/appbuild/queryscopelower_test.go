@@ -28,6 +28,8 @@ entities:
       out: "related(entity, 'tracks')"
       idle: "not related(entity, 'implementedBy')"
       twice: "related(entity, 'implementedBy') and related(entity, 'implementedBy')"
+      either: "related(entity, 'implementedBy') or related(entity, 'ownedBy')"
+      idleOwned: "not related(entity, 'implementedBy') and related(entity, 'ownedBy')"
   ticket:
     label: Ticket
     plural: tickets
@@ -125,7 +127,7 @@ func TestQueryScopeLower(t *testing.T) {
 
 	t.Run("a scope that does not lower falls back without gating", func(t *testing.T) {
 		gated := false
-		_, _, ok := lowerScope(t, "idle", func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error) {
+		_, _, ok := lowerScope(t, "either", func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error) {
 			gated = true
 			return &store.RelationPredicate{}, nil
 		})
@@ -154,5 +156,37 @@ func TestQueryScopeLower(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, 1, calls)
 		require.Len(t, frag.Related, 1)
+	})
+
+	t.Run("not related lowers to a negated entry", func(t *testing.T) {
+		frag, empty, ok := lowerScope(t, "idle", gateBy(nil))
+		require.True(t, ok)
+		require.False(t, empty)
+		require.Len(t, frag.Related, 1)
+		require.True(t, frag.Related[0].Pred.Negate)
+		require.True(t, frag.Related[0].Incoming)
+	})
+
+	t.Run("a denied negated traversal narrows nothing", func(t *testing.T) {
+		// related() is false on every row for a reader who may not read
+		// tickets, so not related() is true on every row.
+		frag, empty, ok := lowerScope(t, "idleOwned", gateBy(map[string]error{"ticket": denied}))
+		require.True(t, ok)
+		require.False(t, empty)
+		require.Len(t, frag.Related, 1)
+		require.False(t, frag.Related[0].Pred.Negate)
+		require.Equal(t, []string{"user"}, frag.Related[0].Pred.Endpoints)
+	})
+
+	t.Run("a refused negated traversal falls back", func(t *testing.T) {
+		_, _, ok := lowerScope(t, "idle", gateBy(map[string]error{"ticket": refused}))
+		require.False(t, ok)
+	})
+
+	t.Run("a negated gate predicate falls back", func(t *testing.T) {
+		_, _, ok := lowerScope(t, "idle", func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error) {
+			return &store.RelationPredicate{Negate: true}, nil
+		})
+		require.False(t, ok)
 	})
 }

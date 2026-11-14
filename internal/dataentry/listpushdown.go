@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -38,10 +39,11 @@ import (
 // with the request's world and face set stamped on a copy, and the total is
 // the scoped count — never the type's row count (RR-SSPCCI, RR-J1VAW0).
 //
-// A query scope is pushed only when it lowers EXACTLY (queryplan.LowerScope):
-// its equalities join the props and each `related(...)` becomes a
-// [store.GraphQuery.Related] entry gated for the principal. A scope that does
-// not lower keeps the whole request on the Go path (TKT-XKCNCL).
+// A query scope or a list `condition:` is pushed only when it lowers EXACTLY
+// (queryplan.LowerCondition): its comparisons join the props and each
+// `related(...)` becomes a [store.GraphQuery.Related] entry gated for the
+// principal. One that does not lower keeps the whole request on the Go path
+// (TKT-XKCNCL, TKT-I39Y7N4).
 
 // listPlan is a list request the store can page by itself. errClass is
 // the failure the Go path would have reported for the same principal —
@@ -162,6 +164,10 @@ type listNarrowing struct {
 	// state is the schema the operation loaded once; pushdownPlan reads the
 	// metamodel from it rather than loading the schema again.
 	state *Schema
+	// fields decides whether the condition may be pushed: the Go path
+	// judges it on the redacted row. Nil: accepted, and the condition then
+	// stays on the Go path.
+	fields fieldVisibility
 }
 
 // resolveListNarrowing resolves both narrowings and stamps the query identity
@@ -172,8 +178,9 @@ func resolveListNarrowing(
 	ctx context.Context, a *App, state *Schema, typeName string, query map[string][]string,
 ) (context.Context, listNarrowing, error) {
 	n := listNarrowing{
-		cond:  viewCondition(a.viewConditions, state, viewKindList, queryGet(query, listIDParam)),
-		state: state,
+		cond:   viewCondition(a.viewConditions, state, viewKindList, queryGet(query, listIDParam)),
+		state:  state,
+		fields: a.fieldResolver,
 	}
 	scopeName, err := queryScopeParam(query)
 	if err != nil {
@@ -192,41 +199,109 @@ func resolveListNarrowing(
 
 // pushdownPlan is the ONE eligibility decision for serving a list request
 // from the store. ok is false when the store may not serve it, and the caller
-// keeps the Go path. empty reports a scope whose traversal the gate denied: no
-// row matches, and the Go path would read the whole type to learn that.
+// keeps the Go path. empty reports a narrowing whose traversal the gate
+// denied: no row matches, and the Go path would read the whole type to learn
+// that.
 //
-// Every narrowing must be one the store applies. A condition never is. A
-// scope is only when it lowers exactly (TKT-XKCNCL); one using `~=`, an
-// ordered comparison or a disjunction has a Go-side remainder, and a
-// store-side page computed without it would paginate over rows the scope
-// excludes: wrong counts and wrong page boundaries, not merely extra rows.
-// Declining is always correct, only slower. The plan's own checks run before
-// the scope is lowered, because lowering gates every traversal and that work
-// is wasted on a request the plan would decline anyway.
+// Every narrowing must be one the store applies. A scope and a condition are
+// only when they lower exactly (queryplan.LowerCondition: TKT-XKCNCL,
+// TKT-I39Y7N4); one using an ordered comparison or a disjunction has a
+// Go-side remainder, and a store-side page computed without it would
+// paginate over rows it excludes: wrong counts and wrong page boundaries, not
+// merely extra rows. A condition also needs every field it reads visible on
+// every row ([lowerViewCondition]). Declining is always correct, only slower.
+// The plan's own checks run before the narrowings are lowered, because
+// lowering gates every traversal and that work is wasted on a request the
+// plan would decline anyway.
+//
+// The scope is lowered before the condition, as the Go path applies it
+// first: a denied scope is an empty page even when the condition would not
+// lower, because the Go path never evaluates a condition over no rows.
 func (n listNarrowing) pushdownPlan(
 	ctx context.Context, typeName string, query gatedListQuery, page, perPage int,
 ) (plan listPlan, empty, ok bool) {
-	// A page scope (pagescope.go) narrows membership the way a condition does,
-	// so it declines too.
+	// A page scope (pagescope.go) narrows membership the store cannot apply,
+	// so it declines.
 	// So does a filter or sort on a roll-up: the value is not in the store.
-	if n.cond != nil || hasPageScope(query.params) || worldFromContext(ctx).blocksAllReads() ||
+	if hasPageScope(query.params) || worldFromContext(ctx).blocksAllReads() ||
 		queriedRollups(n.state.Meta, typeName, query) != nil {
 
 		return listPlan{}, false, false
 	}
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 	plan, ok = planListPushdown(n.state.Meta, typeName, query, rqr, worldScopeFrom(ctx), page, perPage)
-	if !ok || n.scope.Scope == nil {
-		return plan, false, ok
-	}
-	frag, denied, lowered := n.scope.lower(ctx, typeName)
-	switch {
-	case !lowered:
+	if !ok {
 		return listPlan{}, false, false
-	case denied:
-		return listPlan{}, true, true
 	}
-	return plan.narrowed(frag), false, true
+	if n.scope.Scope != nil {
+		frag, denied, lowered := n.scope.lower(ctx, typeName)
+		switch {
+		case !lowered:
+			return listPlan{}, false, false
+		case denied:
+			return listPlan{}, true, true
+		}
+		plan = plan.narrowed(frag)
+	}
+	if n.cond != nil {
+		frag, denied, lowered := lowerViewCondition(ctx, n.state.Meta, n.cond, n.fields, typeName)
+		switch {
+		case !lowered:
+			return listPlan{}, false, false
+		case denied:
+			return listPlan{}, true, true
+		}
+		plan = plan.narrowed(frag)
+	}
+	return plan, false, true
+}
+
+// viewConditionLowerer is the optional capability a [ViewConditionMatcher]
+// offers to be answered in the store (TKT-I39Y7N4). Optional so a matcher
+// without it keeps every condition on the Go path, which is always correct.
+type viewConditionLowerer interface {
+	// EntityType is the type the condition was compiled against.
+	EntityType() string
+	// EntityAttributes are the entity fields the condition reads.
+	EntityAttributes() []string
+	// Lower rewrites the condition for the principal gate authorizes; see
+	// [QueryScopeLower] for the outcomes.
+	Lower(
+		ctx context.Context, gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
+	) (frag store.GraphQuery, empty, ok bool)
+}
+
+// lowerViewCondition rewrites a view condition as a store query fragment for
+// rows of typeName, or reports ok=false to keep the Go path.
+//
+// The Go path judges the condition on the REDACTED row (applyViewCondition),
+// and the store judges the stored one. They agree only when redaction removes
+// nothing the condition reads, so every attribute it reads must be visible to
+// the principal on every row: the rule gatedListQuery applies to a caller's
+// filter. A condition over a field some row hides from the principal keeps
+// the Go path, where the hidden value binds nil. A roll-up is never stored,
+// so a condition reading one keeps the Go path too.
+//
+// Each `related(...)` is gated with the request's traversal gate, as a
+// lowered scope's is.
+func lowerViewCondition(
+	ctx context.Context, meta *metamodel.Metamodel, m ViewConditionMatcher, fields fieldVisibility, typeName string,
+) (frag store.GraphQuery, empty, ok bool) {
+	l, isLowerer := m.(viewConditionLowerer)
+	if !isLowerer || fields == nil || l.EntityType() != typeName {
+		return store.GraphQuery{}, false, false
+	}
+	// EntityAttributes is complete here only because the lowering admits no
+	// call that takes the record whole except related(...), which reads no
+	// near-side field. A lowering that admits another such call must check
+	// it here too, or a hidden field could decide which rows match.
+	rollups := meta.RollupNames(typeName)
+	for _, attr := range l.EntityAttributes() {
+		if slices.Contains(rollups, attr) || !fields.FieldVisibleOnEveryRow(ctx, typeName, attr) {
+			return store.GraphQuery{}, false, false
+		}
+	}
+	return l.Lower(ctx, traversalGateFromContext(ctx).GateTraversal)
 }
 
 // position answers where id sits in the plan's ordered, ACL-scoped result

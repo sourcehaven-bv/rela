@@ -317,7 +317,7 @@ func genProp(rng *rand.Rand) store.PropPredicate {
 		prop = graphDiffUnsafeProp
 	}
 	p := store.PropPredicate{Property: prop, Op: pick(rng, ops), Value: pick(rng, graphDiffTargets)}
-	p.Scalar = p.Op == store.PropEqual && rng.IntN(2) == 0
+	p.Scalar = (p.Op == store.PropEqual || p.Op == store.PropNotEqualOrEmpty) && rng.IntN(2) == 0
 	return p
 }
 

@@ -164,6 +164,11 @@ func propCondOn(b *sqlBuilder, alias string, p store.PropPredicate) string {
 	if p.Scalar && p.Op == store.PropEqual && p.Value != "" {
 		return scalarEqualCond(alias, path, b.arg(p.Value))
 	}
+	if p.Scalar && p.Op == store.PropNotEqualOrEmpty && p.Value != "" {
+		// The negation of the arm above. COALESCE because json_type of an
+		// absent key is NULL, and NOT NULL would drop the unset row.
+		return "(NOT COALESCE(" + scalarEqualCond(alias, path, b.arg(p.Value)) + ", 0))"
+	}
 	raw := rawExpr(alias, path)
 	isEmpty := "(" + raw + " IS NULL OR " + raw + " = '' OR (" + typeExpr(alias, path) +
 		" = 'array' AND json_array_length(" + propsCol(alias) + ", " + path + ") = 0))"

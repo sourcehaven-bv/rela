@@ -585,6 +585,12 @@ func matchesProp(e *entity.Entity, p store.PropPredicate) (bool, error) {
 	case store.PropNotEqual:
 		return propmatch.Decide(raw, propmatch.OpNotEqual, p.Value) == propmatch.Match, nil
 	case store.PropNotEqualOrEmpty:
+		if p.Scalar && p.Value != "" {
+			// The negation of the scalar PropEqual arm: any value that is
+			// not this string, including a list or a number.
+			value, ok := raw.(string)
+			return !ok || value != p.Value, nil
+		}
 		// PropNotEqualOrEmpty is PropNotEqual widened to accept an unset
 		// property — the Lua `~=` reading. propmatch deliberately answers
 		// the filter-DSL question instead (empty is not in the population),

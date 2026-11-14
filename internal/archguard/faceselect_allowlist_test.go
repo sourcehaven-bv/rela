@@ -13,12 +13,14 @@ var unselectedGraphQueryAllowlist = map[string]allowed{
 		"readquery.go's; each executor stamps a selection onto a copy"},
 	"internal/acl/readquery.go": {1, "the ACL read query is a template; each executor stamps a " +
 		"selection onto a copy"},
-	"internal/appbuild/queryscopes.go": {5, "a lowered scope is a fragment (four are \"no query\" " +
+	"internal/appbuild/conditionlower.go": {6, "a lowered condition is a fragment (five are \"no query\" " +
 		"returns); the caller merges it into a selected query"},
+	"internal/appbuild/queryscopes.go":    {1, "a \"no query\" return of the scope lowering"},
 	"internal/dataentry/gantt_handler.go": {1, "completed by stampScope before it runs"},
-	"internal/dataentry/listpushdown.go":  {1, "completed by stampScope before it runs"},
-	"internal/dataentry/queryscope.go":    {1, "a \"no query\" return of the scope lowering"},
-	"internal/dataentry/scopedread.go":    {1, "completed by stampScope before it runs"},
+	"internal/dataentry/listpushdown.go": {3, "one is completed by stampScope before it runs; two are " +
+		"\"no query\" returns of the view condition lowering"},
+	"internal/dataentry/queryscope.go": {1, "a \"no query\" return of the scope lowering"},
+	"internal/dataentry/scopedread.go": {1, "completed by stampScope before it runs"},
 }
 
 // trivialScopeAllowlist pins the store.TrivialScope calls outside the store
