@@ -1942,6 +1942,29 @@ that rolls back (SQLite, PostgreSQL); other stores answer 501.
 - **Scripts and agents may call it without a browser origin,** like the data
   routes. A request with a cookie keeps the same-origin check.
 
+## Records
+
+`/api/v1/_records` serves time-series and ledger rows owned by entities
+(TKT-J7Q9C4K, DEC-7B6DNZQ). Record types have no grants of their own.
+
+- **Rows follow their owner's row gate.** A caller reads an owner's rows
+  only when it can read every stored face of the owner. Otherwise the owner
+  is missing, and the request answers 404 like an id that does not exist.
+- **Appending needs update on every face.** A face the caller cannot read
+  refuses the append. A reversal needs update on every owner in the
+  transaction.
+- **Aggregates gate before they fold.** An aggregate or a ledger
+  transaction counts only rows whose owners the caller can read. A
+  transaction with a hidden leg answers 404.
+- **Closing a period is ordered against postings** on SQLite and
+  PostgreSQL. The owner check, the lock-date read and the insert run under
+  the store's write lock.
+- **Rows leave with their owner.** A database trigger drops the rows when
+  the owner's last face is deleted, and moves them on rename, in the entity
+  write's own transaction. An id used again later starts with no rows.
+- **Scripts and agents may call it without a browser origin,** like the
+  batch route. A request with a cookie keeps the same-origin check.
+
 ## Reconcile
 
 `POST /api/v1/_reconcile` answers a sync peer with the count and fingerprint
@@ -2460,6 +2483,10 @@ the key; this section covers what it means for `acl.yaml`.
 
 ## What still leaks (deferred)
 
+- **Ledger group keys are unique per record type.** A posting whose key
+  is already in use answers 409, even when the existing transaction belongs
+  to owners the caller cannot read. A caller who may post can learn that a
+  key exists. Use keys that reveal nothing on their own.
 - **`/api/v1/_position` per-id semantics** — `_position` is gated on
   both scope sources: list scopes share the gated list pipeline, and
   search scopes filter the search result through the read gate before

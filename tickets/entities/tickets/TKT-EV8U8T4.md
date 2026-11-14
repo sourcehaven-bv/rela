@@ -34,7 +34,7 @@ Review items deferred from TKT-J7Q9C4K:
 - A native SQL `Aggregator` for `sqlrecords` (bucket and fold in the
 database), so aggregates are not capped at `MaxAggregateRows`, with a
 `storetest.Counting`-style budget test.
-- Refuse to delete an owner that still has ledger rows.
+- Refuse to delete an owner that still has ledger rows (BUG-WOFSBFM).
 - Decide whether record writes go to the audit log.
 
 ## Acceptance

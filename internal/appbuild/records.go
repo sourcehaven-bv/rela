@@ -84,9 +84,13 @@ func newRecordsService(
 		return nil, errors.New("records: a write ACL is required")
 	}
 	rows, _, _ := scriptReads(st, d, redactor, w)
+	owners := recordOwners{rows: rows, writes: writes, raw: st}
+	if d != nil {
+		owners.bound = d
+	}
 	return records.NewService(records.Deps{
 		Store:  backend,
-		Owners: recordOwners{rows: rows, writes: writes, raw: st},
+		Owners: owners,
 		Meta:   meta,
 		Lock:   recordLock(st, backend),
 	})
@@ -94,14 +98,12 @@ func newRecordsService(
 
 // recordOwners is the owner gate of the record service. Reads go through
 // the gated reader with the Request bound at the request edge, so a caller
-// without one reads nothing. The write check is the ACL's update check on
-// every readable face of the owner.
+// without one reads nothing. Rows belong to the whole family, so both checks
+// cover every stored face: a read needs read access on each, and a write
+// needs update access on each.
 type recordOwners struct {
 	rows interface {
 		Family(ctx context.Context, id string) (visibility.Family, bool, error)
-		// WriteTarget is unused here; leaseGate, which Readable reuses,
-		// asks for it.
-		WriteTarget(ctx context.Context, addr string) (entity.Ref, error)
 		ResolveHeadersErr(ctx context.Context, refs []entity.Ref) (map[entity.Ref]visibility.ResolvedHeader, error)
 	}
 	writes interface {
@@ -114,6 +116,30 @@ type recordOwners struct {
 	// Inside the append's transaction the read goes to the transaction view
 	// instead (see rawReader).
 	raw rawOwnerReader
+	// bound checks that ctx carries the Request bound at the request edge.
+	// The gated reader answers a missing Request as "nothing is readable",
+	// which would turn an unbound aggregate into an empty success; this
+	// check makes every call fail with acl.ErrNoIdentity instead.
+	//
+	// Nil: accepted, and then nothing is checked. It is nil exactly when
+	// there is no declarative policy (no acl.yaml, or a read-only override),
+	// where reads are unrestricted and writes are decided by the write ACL
+	// alone.
+	bound interface {
+		RequestFrom(ctx context.Context) (*acl.Request, error)
+	}
+}
+
+// requireIdentity returns the error of a call made without the Request the
+// request edge binds. See recordOwners.bound.
+func (o recordOwners) requireIdentity(ctx context.Context) error {
+	if o.bound == nil {
+		return nil
+	}
+	if _, err := o.bound.RequestFrom(ctx); err != nil {
+		return fmt.Errorf("records: %w", err)
+	}
+	return nil
 }
 
 // rawOwnerReader reads an owner's stored faces.
@@ -134,9 +160,60 @@ func (o recordOwners) rawReader(ctx context.Context) rawOwnerReader {
 	return o.raw
 }
 
-// Readable answers through one batch header resolve, as the lease gate does.
+// Readable reports the owners in ids whose every stored face the caller may
+// read. An owner with a hidden face is unreadable: its rows belong to that
+// face too, and Writable refuses it for the same reason.
+//
+// The cost does not grow with len(ids): one gated header resolve counts the
+// readable faces per id, and one raw header query over the ids it found
+// counts the stored faces. A failed read is returned; it is the same for
+// every id, so it tells no id apart.
 func (o recordOwners) Readable(ctx context.Context, ids []string) (map[string]bool, error) {
-	return leaseGate{rows: o.rows}.Readable(ctx, ids)
+	if err := o.requireIdentity(ctx); err != nil {
+		return nil, err
+	}
+	refs := make([]entity.Ref, 0, len(ids))
+	for _, id := range ids {
+		// A bare id parses to the implicit face, the form ResolveHeaders
+		// reads as the whole family. An id that does not parse is a miss.
+		if ref, err := entity.ParseRef(id); err == nil && ref.Face.IsImplicit() {
+			refs = append(refs, ref)
+		}
+	}
+	got, err := o.rows.ResolveHeadersErr(ctx, refs)
+	if err != nil {
+		return nil, err
+	}
+	readable := make(map[string]int, len(got))
+	found := make([]string, 0, len(got))
+	for ref, h := range got {
+		if h.Family && h.ReadableFaces > 0 {
+			readable[ref.ID] = h.ReadableFaces
+			found = append(found, ref.ID)
+		}
+	}
+	out := make(map[string]bool, len(found))
+	if len(found) == 0 {
+		return out, nil
+	}
+	stored := make(map[string]int, len(found))
+	q := store.EntityQuery{IDs: found, Faces: store.AllFaces()}
+	for h, err := range store.ListEntityHeaders(ctx, o.rawReader(ctx), q) {
+		if err != nil {
+			return nil, fmt.Errorf("records: read owners: %w", err)
+		}
+		// A backend may match ids case-insensitively; a family is the
+		// exact id, as in store.FamilyHeaders.
+		if _, ok := readable[h.ID]; ok {
+			stored[h.ID]++
+		}
+	}
+	for id, n := range readable {
+		if stored[id] == n {
+			out[id] = true
+		}
+	}
+	return out, nil
 }
 
 // Writable checks update access on every stored face of id. Rows belong to
@@ -144,6 +221,9 @@ func (o recordOwners) Readable(ctx context.Context, ids []string) (map[string]bo
 // and a face the caller cannot read refuses the write: its lock date still
 // governs the rows.
 func (o recordOwners) Writable(ctx context.Context, id string) (records.Owner, error) {
+	if err := o.requireIdentity(ctx); err != nil {
+		return records.Owner{}, err
+	}
 	fam, ok, err := o.rows.Family(ctx, id)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return records.Owner{}, err

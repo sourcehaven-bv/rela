@@ -3,10 +3,12 @@ package records
 import (
 	"context"
 	"fmt"
+	"slices"
 )
 
 // Reader is the part of a [Store] that [Each] and [Copy] read from.
 type Reader interface {
+	Types(ctx context.Context) ([]string, error)
 	Owners(ctx context.Context, typ string) ([]string, error)
 	List(ctx context.Context, q ListQuery) (Page, error)
 }
@@ -21,8 +23,9 @@ type Appender interface {
 // order. It reads no access rules, so it is for an operator export or copy,
 // never for a request.
 //
-// Only the listed types are read. The Store contract cannot list the types
-// it holds, so rows of a type the caller does not name are not visited.
+// Only the listed types are read. To reach every stored row, including
+// rows of a type the schema no longer declares, pass the list from
+// [AllTypes].
 func Each(ctx context.Context, src Reader, types []string, fn func(Record) error) error {
 	for _, typ := range types {
 		owners, err := src.Owners(ctx, typ)
@@ -49,6 +52,19 @@ func Each(ctx context.Context, src Reader, types []string, fn func(Record) error
 		}
 	}
 	return nil
+}
+
+// AllTypes returns the union of declared and the types src holds rows of,
+// sorted. An operator export or copy reads this list, so that rows of a
+// type the schema no longer declares are not left behind.
+func AllTypes(ctx context.Context, src Reader, declared []string) ([]string, error) {
+	stored, err := src.Types(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("records: stored types: %w", err)
+	}
+	out := slices.Concat(declared, stored)
+	slices.Sort(out)
+	return slices.Compact(out), nil
 }
 
 // CopyOptions tunes [Copy].

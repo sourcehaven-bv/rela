@@ -33,22 +33,28 @@ func sourceRecords(src *source) (records.Reader, error) {
 	return filerecords.New(src.fs, filepath.Join(src.root, recordsDir), noLock{})
 }
 
-// copyRecords copies the rows of every record type the source schema
-// declares. Ids, times, attribution and ledger groups are kept, and each
-// group is claimed in the target so its transaction id cannot be used
+// copyRecords copies every source row: the rows of the types the source
+// schema declares and of any other type the source holds rows of. A row of
+// an undeclared type is copied as stored; there is no schema to check its
+// fields against. Ids, times, attribution and ledger groups are kept, and
+// each group is claimed in the target so its transaction id cannot be used
 // again.
 func (c *copier) copyRecords(ctx context.Context) error {
-	types := c.src.meta.RecordKeys()
+	types, err := records.AllTypes(ctx, c.src.records, c.src.meta.RecordKeys())
+	if err != nil {
+		c.rep.fail("read record types: %v", err)
+		return nil
+	}
 	if len(types) == 0 {
 		return nil
 	}
 	if c.dst.Records == nil {
 		n := 0
-		if err := records.Each(ctx, c.src.records, types, func(records.Record) error {
+		if readErr := records.Each(ctx, c.src.records, types, func(records.Record) error {
 			n++
 			return nil
-		}); err != nil {
-			c.rep.fail("read record rows: %v", err)
+		}); readErr != nil {
+			c.rep.fail("read record rows: %v", readErr)
 			return nil
 		}
 		if n > 0 {
@@ -64,11 +70,19 @@ func (c *copier) copyRecords(ctx context.Context) error {
 	return nil
 }
 
-// records checks that every source row of a declared record type is in the
-// target, unchanged. The target may hold rows of its own (a forced import).
+// records checks that every source row, of a declared type or not, is in
+// the target, unchanged. The target may hold rows of its own (a forced
+// import).
 func (v verifier) records(ctx context.Context) {
-	types := v.src.meta.RecordKeys()
-	if len(types) == 0 || v.dst.Records == nil {
+	if v.dst.Records == nil {
+		return
+	}
+	types, err := records.AllTypes(ctx, v.src.records, v.src.meta.RecordKeys())
+	if err != nil {
+		v.rep.fail("verify: read source record types: %v", err)
+		return
+	}
+	if len(types) == 0 {
 		return
 	}
 	got := map[string]string{}
@@ -106,21 +120,14 @@ func recordForm(rec records.Record) (string, error) {
 	return string(b), err
 }
 
-// records accounts for the files below records/. A file of a declared
-// record type was read by the copy, which fails on one it cannot parse; a
-// file of an undeclared type is listed as not copied.
+// records accounts for the files below records/. Every record file was
+// read by the copy, whether its type is declared or not, and the copy fails
+// on one it cannot parse.
 func (w *fileWalk) records() error {
-	declared := w.src.meta.Records
 	return w.walk(recordsDir, func(p string, _ fs.DirEntry) {
 		parts := strings.Split(p, "/")
 		if len(parts) != 4 || !strings.HasSuffix(parts[3], ".jsonl") {
 			w.rep.skip(p, "not a record file (records/<type>/<owner>/<month>.jsonl)")
-			return
-		}
-		// A record type key is lower-case letters, digits, - and _, which
-		// the file backend keeps unescaped, so the folder is the key.
-		if _, ok := declared[parts[1]]; !ok {
-			w.rep.skip(p, "record type %q is not declared in the schema", parts[1])
 		}
 	})
 }

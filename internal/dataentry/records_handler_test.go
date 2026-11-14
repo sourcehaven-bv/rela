@@ -131,3 +131,36 @@ func TestRecordsHandler_AbsentWithoutService(t *testing.T) {
 	var h *recordsHandler
 	require.Equal(t, http.StatusNotFound, serveRecords(h, http.MethodGet, recordsPath, "").Code)
 }
+
+// TestRecords_CrossOriginRefused pins the CSRF exemption of the records
+// routes to the non-browser shape: a request that carries a cookie, with or
+// without an Origin, is still refused, so a cross-site page cannot append or
+// reverse rows with the user's session.
+func TestRecords_CrossOriginRefused(t *testing.T) {
+	h := newSecuredTestApp(t).NewRouter()
+	for _, path := range []string{recordsPath + "/posting", recordsPath + "/posting/_reverse"} {
+		send := func(hdr map[string]string) *httptest.ResponseRecorder {
+			r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+			r.Host = "127.0.0.1:8080"
+			r.Header.Set("Content-Type", "application/json")
+			for k, v := range hdr {
+				r.Header.Set(k, v)
+			}
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			return w
+		}
+		if w := send(map[string]string{"Origin": "https://evil.example", "Cookie": "session=abc"}); w.Code != http.StatusForbidden {
+			t.Errorf("%s cross-origin = %d %s, want 403", path, w.Code, w.Body)
+		}
+		if w := send(map[string]string{"Cookie": "session=abc"}); w.Code != http.StatusForbidden {
+			t.Errorf("%s origin-less cookie = %d %s, want 403", path, w.Code, w.Body)
+		}
+		// A script request passes the CSRF check and reaches the handler,
+		// which answers 404 because the fixture declares no record types.
+		if w := send(nil); w.Code != http.StatusNotFound {
+			t.Errorf("%s script request = %d %s, want 404", path, w.Code, w.Body)
+		}
+		require.True(t, isCSRFExempt(httptest.NewRequest(http.MethodPost, path, http.NoBody)))
+	}
+}

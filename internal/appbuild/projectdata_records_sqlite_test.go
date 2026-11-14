@@ -27,12 +27,15 @@ const recordsSchemaYAML = dataSchemaYAML + `records:
       value: {type: integer}
 `
 
-var recordTypes = []string{"reading"}
+// recordTypes are the types the test rows use: "gone" is not declared in
+// the schema.
+var recordTypes = []string{"gone", "reading"}
 
 // writeRecordsProject is writeDataProject with a record type and three
 // rows of it in the file record backend, two of them in one group, plus a
 // row of a type the schema does not declare. The rows are in the order
-// records.Each reads them: by owner, then by (TS, ID).
+// records.Each reads them over recordTypes: by type, then by owner, then by
+// (TS, ID).
 func writeRecordsProject(t *testing.T) (string, []records.Record) {
 	t.Helper()
 	root := writeDataProject(t)
@@ -50,11 +53,12 @@ func writeRecordsProject(t *testing.T) (string, []records.Record) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gone := records.Record{ID: "G1", Type: "gone", Owner: "DOC-1", TS: ts, RecordedAt: ts, Fields: map[string]any{}}
+	gone := records.Record{ID: "G1", Type: "gone", Owner: "DOC-1", TS: ts, RecordedAt: ts,
+		Fields: map[string]any{"note": "kept as stored"}}
 	if err := fsrec.Append(context.Background(), records.AppendRequest{Records: append(rows, gone)}); err != nil {
 		t.Fatal(err)
 	}
-	return root, rows
+	return root, append([]records.Record{gone}, rows...)
 }
 
 func allRows(t *testing.T, src records.Reader) []records.Record {
@@ -84,9 +88,10 @@ func withRecordDB(t *testing.T, root string, fn func(records.Store)) {
 	fn(rs)
 }
 
-// `rela db load --data` copies the record rows of declared types into the
-// database with their group claims, and `rela db dump --data` writes them
-// back in the file layout, so the round trip keeps every row.
+// `rela db load --data` copies every record row into the database with its
+// group claims, and `rela db dump --data` writes them back in the file
+// layout, so the round trip keeps every row. That includes a row of a type
+// the schema does not declare, which is copied as stored.
 func TestMarkdownData_RecordsRoundTrip(t *testing.T) {
 	root, want := writeRecordsProject(t)
 	rep, err := importData(t, root, false, audit.NewMemory())
@@ -96,12 +101,10 @@ func TestMarkdownData_RecordsRoundTrip(t *testing.T) {
 	if rep.Records != len(want) {
 		t.Fatalf("imported %d record rows, want %d", rep.Records, len(want))
 	}
-	skippedGone := false
 	for _, s := range rep.Skipped {
-		skippedGone = skippedGone || strings.HasPrefix(s.Path, "records/gone/")
-	}
-	if !skippedGone {
-		t.Fatalf("the undeclared record type is not listed as skipped: %+v", rep.Skipped)
+		if strings.HasPrefix(s.Path, "records/") {
+			t.Fatalf("a record file is listed as skipped: %+v", s)
+		}
 	}
 	withRecordDB(t, root, func(rs records.Store) {
 		if got := allRows(t, rs); !reflect.DeepEqual(got, want) {

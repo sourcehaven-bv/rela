@@ -176,6 +176,24 @@ func (s *Store) Owners(ctx context.Context, typ string) ([]string, error) {
 	return out, s.wrap("owners", rows.Err())
 }
 
+// Types implements [records.Store.Types].
+func (s *Store) Types(ctx context.Context) ([]string, error) {
+	rows, err := s.db.Query(ctx, `SELECT DISTINCT type FROM records ORDER BY type`)
+	if err != nil {
+		return nil, s.wrap("types", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var typ string
+		if err := rows.Scan(&typ); err != nil {
+			return nil, s.wrap("types", err)
+		}
+		out = append(out, typ)
+	}
+	return out, s.wrap("types", rows.Err())
+}
+
 // RekeyOwner implements [records.Store.RekeyOwner].
 func (s *Store) RekeyOwner(ctx context.Context, oldID, newID string) error {
 	if oldID == newID {

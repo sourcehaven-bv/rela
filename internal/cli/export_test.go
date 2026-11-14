@@ -388,9 +388,8 @@ func TestCollectPropertyKeys(t *testing.T) {
 	}
 }
 
-// TestExportAllData_Records: --all writes every row of every declared
-// record type, in JSON and YAML, and leaves out a type the schema does not
-// declare.
+// TestExportAllData_Records: --all writes every stored row, in JSON and
+// YAML, including a row of a type the schema no longer declares.
 func TestExportAllData_Records(t *testing.T) {
 	svc, meta := setupExportGraph(t)
 	meta.Records = map[string]metamodel.RecordTypeDef{
@@ -427,11 +426,13 @@ func TestExportAllData_Records(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse output: %v\n%s", err, output)
 			}
-			if len(got.Records) != 2 {
-				t.Fatalf("records = %+v, want R1 and R2", got.Records)
+			// Ordered by type: "gone" before "reading".
+			if len(got.Records) != 3 {
+				t.Fatalf("records = %+v, want R3, R1 and R2", got.Records)
 			}
-			if got.Records[0].ID != "R1" || got.Records[0].Owner != "CTRL-001" || !got.Records[0].TS.Equal(ts) ||
-				got.Records[1].ID != "R2" {
+			if got.Records[0].ID != "R3" || got.Records[0].Type != "gone" ||
+				got.Records[1].ID != "R1" || got.Records[1].Owner != "CTRL-001" || !got.Records[1].TS.Equal(ts) ||
+				got.Records[2].ID != "R2" {
 
 				t.Errorf("records = %+v", got.Records)
 			}

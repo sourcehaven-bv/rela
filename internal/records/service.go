@@ -31,9 +31,11 @@ type Owner struct {
 // principal on ctx per call, so one Service serves every caller, and fails
 // closed without one.
 type Owners interface {
-	// Readable reports the ids in ids the caller may read some face of, in
-	// one batch read. A row's owner type was checked when it was appended,
-	// so a read needs only the row gate.
+	// Readable reports the ids in ids the caller may read every stored face
+	// of, in one batch read. Rows belong to the whole family, so an owner
+	// with a hidden face is unreadable, as it is unwritable. A row's owner
+	// type was checked when it was appended, so a read needs only the row
+	// gate.
 	Readable(ctx context.Context, ids []string) (map[string]bool, error)
 	// Writable returns the owner the caller may update. A miss (no such
 	// entity, or one the caller may not read) is [ErrNotFound]; an owner
@@ -274,8 +276,8 @@ func (s *Service) writableOwners(ctx context.Context, d metamodel.RecordTypeDef,
 	return out, nil
 }
 
-// ledgerGroups sets each row's group, checks the closed periods and the
-// balance, and returns the groups the append claims. The legs of one
+// ledgerGroups sets each row's group, checks the balance and then the closed
+// periods, and returns the groups the append claims. The legs of one
 // transaction share one ts, so no row of it can expire or close apart from
 // the others.
 func ledgerGroups(typ string, d metamodel.RecordTypeDef, recs []Record, owners map[string]Owner) ([]GroupKey, error) {
@@ -292,12 +294,19 @@ func ledgerGroups(typ string, d metamodel.RecordTypeDef, recs []Record, owners m
 			return nil, fmt.Errorf("row %d: %w: every row of transaction %s must have the same ts", i+1, ErrInvalid, g)
 		}
 		dated[g] = recs[i].TS
+	}
+	// The closed period is checked last. Every earlier answer depends only on
+	// what the caller sent, so a caller who cannot see the lock date can
+	// only learn it by committing a real, balanced posting. Checked first, an
+	// unbalanced probe would answer "closed" or "unbalanced" and reveal the
+	// date without writing anything.
+	if err := checkBalance(l, recs); err != nil {
+		return nil, err
+	}
+	for i := range recs {
 		if err := checkOpen(l, recs[i], owners[recs[i].Owner]); err != nil {
 			return nil, fmt.Errorf("row %d: %w", i+1, err)
 		}
-	}
-	if err := checkBalance(l, recs); err != nil {
-		return nil, err
 	}
 	groups := make([]GroupKey, 0, len(dated))
 	for g := range dated {

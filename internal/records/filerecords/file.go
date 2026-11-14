@@ -350,6 +350,33 @@ func (s *Store) Owners(ctx context.Context, typ string) ([]string, error) {
 	return s.owners(typ)
 }
 
+// Types implements [records.Store.Types]. A type directory stays behind
+// when its last owner directory is removed, so only a type with an owner
+// directory counts.
+func (s *Store) Types(ctx context.Context) ([]string, error) {
+	unlock, err := s.lock(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	types, err := s.typesOnDisk()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, typ := range types {
+		owners, err := s.owners(typ)
+		if err != nil {
+			return nil, err
+		}
+		if len(owners) > 0 {
+			out = append(out, typ)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 // RekeyOwner implements [records.Store.RekeyOwner].
 func (s *Store) RekeyOwner(ctx context.Context, oldID, newID string) error {
 	if oldID == newID {

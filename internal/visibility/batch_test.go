@@ -125,6 +125,34 @@ func TestResolver_ResolveHeaders(t *testing.T) {
 	}
 }
 
+// TestResolver_ResolveHeadersReadableFaces checks the readable face count:
+// every readable face of a bare id, and zero for a named face.
+func TestResolver_ResolveHeadersReadableFaces(t *testing.T) {
+	pol := entity.Ref{ID: "POL-1"}
+	polPub := entity.Ref{ID: "POL-1", Face: facePublished}
+	for _, tc := range []struct {
+		name     string
+		gate     resolverGate
+		wantBare int
+	}{
+		{"every face readable", resolverGate{}, 2},
+		{"one face hidden", resolverGate{faces: map[string]visibility.FaceSet{
+			"policy": visibility.SomeFaces(facePublished)}}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := mustResolver(t, tc.gate, visibility.NopRedactor{}, resolverStore(t))
+			got := r.ResolveHeaders(context.Background(), visibility.WorldOf(store.TrivialScope()),
+				[]entity.Ref{pol, polPub})
+			if n := got[pol].ReadableFaces; n != tc.wantBare {
+				t.Errorf("bare ReadableFaces = %d, want %d", n, tc.wantBare)
+			}
+			if n := got[polPub].ReadableFaces; n != 0 {
+				t.Errorf("named ReadableFaces = %d, want 0", n)
+			}
+		})
+	}
+}
+
 // TestResolver_ResolveHeadersTypeAndRedaction checks that a family stored
 // under two types is a miss, and that a served header is redacted once for
 // the whole batch without touching the stored row.

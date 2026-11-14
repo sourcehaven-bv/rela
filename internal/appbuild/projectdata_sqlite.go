@@ -191,13 +191,13 @@ func databaseFilesBelow(dir string, paths *project.Context) []string {
 
 // ExportMarkdownData writes every entity, relation and attachment in the
 // project's SQLite database as a markdown project into toDir, and every
-// record row of a declared record type into toDir/records in the file
-// record backend's layout (one JSON line per row). Together with
+// record row into toDir/records in the file record backend's layout (one
+// JSON line per row). Together with
 // [DumpProjectConfig] the result is a project the filesystem build opens.
 //
 // Records are read raw, as the entities are: this is an operator copy of the
 // whole tenant, not a request. Rows of a record type the schema no longer
-// declares are not exported, because the record store cannot list them.
+// declares are exported too, as stored.
 //
 // It refuses before writing anything when toDir already has an entities,
 // relations, attachments or records directory: merging into existing data could
@@ -258,16 +258,18 @@ func ExportMarkdownData(
 	return sum, nil
 }
 
-// exportRecords copies the rows of every declared record type from the
-// database into the file record backend under toDir.
+// exportRecords copies every record row from the database into the file
+// record backend under toDir: the rows of the declared types and of any
+// type the database still holds rows of.
 func exportRecords(
 	ctx context.Context, fsys storage.FS, db *sqlitedb.DB, meta *metamodel.Metamodel, toDir string,
 ) (int, error) {
-	if len(meta.Records) == 0 {
-		return 0, nil
-	}
 	src, err := sqliterecords.New(db.DB())
 	if err != nil { // coverage-ignore: unreachable: db.DB() is non-nil
+		return 0, err
+	}
+	types, err := records.AllTypes(ctx, src, meta.RecordKeys())
+	if err != nil || len(types) == 0 {
 		return 0, err
 	}
 	// The target directory is new and no rela process has it open, so a
@@ -277,7 +279,7 @@ func exportRecords(
 		return 0, err
 	}
 	// The file backend derives its group claims from the rows.
-	return records.Copy(ctx, src, dst, meta.RecordKeys(), records.CopyOptions{})
+	return records.Copy(ctx, src, dst, types, records.CopyOptions{})
 }
 
 // checkDeclaredTypes refuses an export whose source holds entities of a

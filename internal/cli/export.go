@@ -75,13 +75,15 @@ type ExportRecord struct {
 type FullExport struct {
 	Entities  []ExportEntity   `json:"entities" yaml:"entities"`
 	Relations []ExportRelation `json:"relations" yaml:"relations"`
-	// Records holds every row of every declared record type, ordered by
-	// type, owner and then (ts, id). Absent when there are none.
+	// Records holds every stored row, including rows of a type the schema
+	// no longer declares, ordered by type, owner and then (ts, id). Absent
+	// when there are none.
 	Records []ExportRecord `json:"records,omitempty" yaml:"records,omitempty"`
 }
 
 // recordReader is the part of the record store the export reads.
 type recordReader interface {
+	Types(ctx context.Context) ([]string, error)
 	Owners(ctx context.Context, typ string) ([]string, error)
 	List(ctx context.Context, q records.ListQuery) (records.Page, error)
 }
@@ -214,15 +216,20 @@ func (c *ExportCmd) exportAllData(ctx context.Context, svc *readServices) error 
 	}
 }
 
-// allRecords reads every row of every declared record type from the raw
-// record store, as the entity export reads the raw entity store: `rela
-// export` is the operator shell exporting the whole tenant.
+// allRecords reads every stored row from the raw record store, as the
+// entity export reads the raw entity store: `rela export` is the operator
+// shell exporting the whole tenant. That includes rows of a type the schema
+// no longer declares; they are exported as stored.
 func allRecords(ctx context.Context, svc *readServices) ([]ExportRecord, error) {
 	if svc.Records == nil || svc.Meta == nil {
 		return nil, nil
 	}
+	types, err := records.AllTypes(ctx, svc.Records, svc.Meta.RecordKeys())
+	if err != nil {
+		return nil, fmt.Errorf("export records: %w", err)
+	}
 	var out []ExportRecord
-	err := records.Each(ctx, svc.Records, svc.Meta.RecordKeys(), func(r records.Record) error {
+	err = records.Each(ctx, svc.Records, types, func(r records.Record) error {
 		out = append(out, ExportRecord{
 			ID: r.ID, Type: r.Type, Owner: r.Owner, TS: r.TS, RecordedAt: r.RecordedAt,
 			RecordedBy: r.RecordedBy, Group: r.Group, Reverses: r.Reverses, Fields: r.Fields,

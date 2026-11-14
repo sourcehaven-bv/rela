@@ -42,6 +42,7 @@ func RunAll(t *testing.T, newStore Factory) {
 		{"OrderAndPaging", testOrderAndPaging},
 		{"Filters", testFilters},
 		{"Owners", testOwners},
+		{"Types", testTypes},
 		{"GroupClaim", testGroupClaim},
 		{"GroupClaimIsAtomic", testGroupClaimAtomic},
 		{"ConcurrentClaim", testConcurrentClaim},
@@ -147,6 +148,27 @@ func testOwners(t *testing.T, s records.Store) {
 	got, err = s.Owners(context.Background(), "none")
 	require.NoError(t, err)
 	require.Empty(t, got)
+}
+
+// testTypes: Types lists every type with rows, sorted, and drops a type
+// once its last row is gone.
+func testTypes(t *testing.T, s records.Store) {
+	t.Helper()
+	ctx := context.Background()
+	got, err := s.Types(ctx)
+	require.NoError(t, err)
+	require.Empty(t, got)
+	appendRows(t, s, Row("a", "n", "O", 0, nil), Row("b", "m", "O", 0, nil), Row("c", "m", "P", 0, nil),
+		Row("d", "x", "Q", 0, nil))
+	got, err = s.Types(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{"m", "n", "x"}, got)
+	require.NoError(t, s.DropOwner(ctx, "Q"))
+	_, err = s.Expire(ctx, "n", T0.Add(time.Hour))
+	require.NoError(t, err)
+	got, err = s.Types(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{"m"}, got)
 }
 
 func grouped(id, owner, group string) records.Record {

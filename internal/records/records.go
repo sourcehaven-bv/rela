@@ -150,6 +150,10 @@ type Store interface {
 	List(ctx context.Context, q ListQuery) (Page, error)
 	// Owners returns the ids of the owners with rows of type typ, sorted.
 	Owners(ctx context.Context, typ string) ([]string, error)
+	// Types returns the record types that have stored rows, sorted. It
+	// includes a type the schema no longer declares: such rows stay with
+	// their owner, and an export or copy must still reach them.
+	Types(ctx context.Context) ([]string, error)
 	// RekeyOwner moves the rows of oldID to newID, for an entity rename.
 	RekeyOwner(ctx context.Context, oldID, newID string) error
 	// DropOwner deletes the rows of id, for an entity delete.

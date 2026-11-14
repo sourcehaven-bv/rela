@@ -216,6 +216,18 @@ func TestLedger_ClosedPeriod(t *testing.T) {
 	require.ErrorIs(t, err, records.ErrClosed, "an unreadable lock fails closed")
 }
 
+// An unbalanced posting in a closed period answers unbalanced, not closed.
+// Otherwise a caller who cannot see the lock date could find it with
+// postings that never commit.
+func TestLedger_UnbalancedBeforeClosed(t *testing.T) {
+	s, o := newService(t)
+	ctx := context.Background()
+	o.props["ACC-1"] = map[string]any{"locked_until": "2026-03-30"}
+	_, err := s.Append(ctx, "posting", []records.Input{posting("ACC-1", "T1", "1"), posting("ACC-2", "T1", "-2")})
+	require.ErrorIs(t, err, records.ErrUnbalanced)
+	require.NotErrorIs(t, err, records.ErrClosed, "the answer must not depend on the lock date")
+}
+
 // A transaction with one hidden leg is not found: the visible legs would
 // otherwise reveal the hidden leg's amount as what they are off by.
 func TestTransaction_HiddenLegHidesTransaction(t *testing.T) {

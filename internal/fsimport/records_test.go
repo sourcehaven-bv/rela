@@ -67,3 +67,37 @@ func TestRun_RefusesRecordsWithoutRecordStore(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, strings.Join(rep.Errors, "\n"), "the source has 2 record row(s)")
 }
+
+// TestRun_CopiesUndeclaredRecords: a row of a type the schema no longer
+// declares is copied as stored and passes the verify step, and its file is
+// not listed as skipped.
+func TestRun_CopiesUndeclaredRecords(t *testing.T) {
+	source, declared := recordSource(t)
+	ts := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	gone := records.Record{ID: "G1", Type: "gone", Owner: "ITEM-1", TS: ts, RecordedAt: ts,
+		Fields: map[string]any{"note": "kept as stored"}}
+	src, err := filerecords.New(storage.NewOsFS(), filepath.Join(source, "records"), filelock.ProcessPrivate{})
+	require.NoError(t, err)
+	require.NoError(t, src.Append(context.Background(), records.AppendRequest{Records: []records.Record{gone}}))
+
+	b := newMemBackend(t)
+	dst, err := filerecords.New(storage.NewMemFS(), "/records", filelock.ProcessPrivate{})
+	require.NoError(t, err)
+	b.target.Records = dst
+
+	rep, err := run(t, source, filepath.Join(filepath.Dir(source), "target"), b)
+	require.NoError(t, err, "errors: %v", rep.Errors)
+	assert.Equal(t, 3, rep.Records)
+	for _, s := range rep.Skipped {
+		assert.False(t, strings.HasPrefix(s.Path, "records/"), "record file listed as skipped: %+v", s)
+	}
+
+	types, err := records.AllTypes(context.Background(), dst, nil)
+	require.NoError(t, err)
+	var got []records.Record
+	require.NoError(t, records.Each(context.Background(), dst, types, func(r records.Record) error {
+		got = append(got, r)
+		return nil
+	}))
+	assert.Equal(t, append([]records.Record{gone}, declared...), got)
+}

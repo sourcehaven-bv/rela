@@ -66,7 +66,9 @@ rela refuses a transaction that does not balance, and refuses a second
 transaction with a group key that is already used.
 
 `closed_before` names a date property on the owner. A posting dated before
-that date is refused, so a closed period stays closed.
+that date is refused, so a closed period stays closed. rela checks the
+balance first, so an unbalanced posting never tells you whether a period is
+closed.
 
 To correct a transaction, reverse it. A reversal appends the same rows with
 the amounts negated. Each transaction can be reversed once.
@@ -75,8 +77,9 @@ the amounts negated. Each transaction can be reversed once.
 
 Records have no grants of their own. They follow their owner:
 
-- You can read an owner's rows when you can read the owner. To anyone else
-  the owner's rows do not exist, and a request for them answers 404.
+- You can read an owner's rows when you can read every face of the owner.
+  Rows belong to the whole owner, not to one face. To anyone else the
+  owner's rows do not exist, and a request for them answers 404.
 - You can append rows when you may update every face of the owner.
 - An aggregate folds only the rows of owners you can read.
 - You can see a ledger transaction only when you can read every owner in
@@ -151,3 +154,9 @@ specialised time-series backend can replace it later.
 Records are part of the exports: `rela export --all` lists them under
 `records`, and `rela db dump --data` and `rela db load --data` carry them as
 `records/` files.
+
+When you remove a record type from the schema, its rows are kept with
+their owner until the owner is deleted. They are still in every export and
+copied as stored, but the retention job does not expire them, and no
+command deletes them by type. To bring them under a retention again,
+declare the type again with a `retention`.

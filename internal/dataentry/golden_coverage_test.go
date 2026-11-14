@@ -233,6 +233,8 @@ const (
 		"server enables no relay, and collab_test.go covers admission"
 	exemptFlows = "the corpus project declares no flows, so the routes answer 404 to every method; " +
 		"flows_handler_test.go covers their statuses and bodies"
+	exemptRecords = "the corpus project declares no record types, so the routes answer 404 to every " +
+		"method; records_handler_test.go covers their statuses and bodies"
 )
 
 // goldenUnsweptRoutes are the patterns the sweep does not send to, with the
@@ -247,15 +249,20 @@ var goldenUnsweptRoutes = map[string]string{
 // record although the route answers them, with the reason. A method of "*"
 // exempts every method of the pattern.
 var goldenMethodExemptions = map[string]string{
-	"* /api/git/status":                    exemptGit,
-	"* /api/git/sync":                      exemptGit,
-	"* /api/v1/_git/status":                exemptGit,
-	"* /api/v1/_git/sync":                  exemptGit,
-	"* /api/v1/_flows":                     exemptFlows,
-	"* /api/v1/_flows/tasks":               exemptFlows,
-	"* /api/v1/_flows/runs":                exemptFlows,
-	"* /api/v1/_flows/runs/{id}":           exemptFlows,
-	"* /api/v1/_flows/runs/{id}/_complete": exemptFlows,
+	"* /api/git/status":                      exemptGit,
+	"* /api/git/sync":                        exemptGit,
+	"* /api/v1/_git/status":                  exemptGit,
+	"* /api/v1/_git/sync":                    exemptGit,
+	"* /api/v1/_flows":                       exemptFlows,
+	"* /api/v1/_flows/tasks":                 exemptFlows,
+	"* /api/v1/_flows/runs":                  exemptFlows,
+	"* /api/v1/_flows/runs/{id}":             exemptFlows,
+	"* /api/v1/_flows/runs/{id}/_complete":   exemptFlows,
+	"* /api/v1/_records":                     exemptRecords,
+	"* /api/v1/_records/{type}":              exemptRecords,
+	"* /api/v1/_records/{type}/_aggregate":   exemptRecords,
+	"* /api/v1/_records/{type}/_reverse":     exemptRecords,
+	"* /api/v1/_records/{type}/_transaction": exemptRecords,
 	"GET /api/v1/_conflicts/resolve": "reads the conflicted file named resolve, which is the " +
 		"GET /api/v1/_conflicts/{path...} read the conflict cases record",
 }

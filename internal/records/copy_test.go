@@ -3,6 +3,7 @@ package records_test
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -136,4 +137,24 @@ func TestCopy(t *testing.T) {
 			t.Fatal("the copy differs from the source")
 		}
 	})
+}
+
+// TestAllTypes: the union of the declared types and the stored ones,
+// sorted and without repeats.
+func TestAllTypes(t *testing.T) {
+	src := fileStore(t)
+	ts := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := src.Append(context.Background(), records.AppendRequest{Records: []records.Record{
+		{ID: "a", Type: "reading", Owner: "O", TS: ts, RecordedAt: ts, Fields: map[string]any{}},
+		{ID: "b", Type: "gone", Owner: "O", TS: ts, RecordedAt: ts, Fields: map[string]any{}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := records.AllTypes(context.Background(), src, []string{"reading", "empty"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"empty", "gone", "reading"}; !slices.Equal(got, want) {
+		t.Fatalf("AllTypes = %v, want %v", got, want)
+	}
 }
