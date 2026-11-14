@@ -8,6 +8,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/ai"
+	"github.com/Sourcehaven-BV/rela/internal/flowengine"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/mail"
 )
@@ -21,6 +22,7 @@ type seams struct {
 	http      *http.Client
 	ai        ai.Provider
 	outputDir string
+	flowJobs  flowengine.JobQueue
 }
 
 // WithClock sets the clock of the world. It reaches:
@@ -104,6 +106,21 @@ func WithOutputDir(dir string) Option {
 	return func(o *options) {
 		if dir != "" {
 			o.seams.outputDir = dir
+		}
+	}
+}
+
+// WithFlowJobQueue makes the flow engine put job step attempts on q instead
+// of the job queue, in every process, long-running or not. The caller runs
+// each attempt with [flowengine.AttemptHandler.HandleAttempt] over
+// [FlowEngine], when it chooses. `rela test` uses it to run attempts in the
+// case, one by one, on the case's clock.
+//
+// Nil: ignored — the job queue of a long-running process, else none.
+func WithFlowJobQueue(q flowengine.JobQueue) Option {
+	return func(o *options) {
+		if q != nil {
+			o.seams.flowJobs = q
 		}
 	}
 }

@@ -42,6 +42,7 @@ func (fr *fileRun) actor(ls *lua.LState, user string) *lua.LTable {
 		"unlink":     fr.unlink,
 		"get":        fr.get,
 		"list":       fr.list,
+		"start_flow": fr.startFlow,
 	}
 	for name, m := range methods {
 		a.RawSetString(name, ls.NewFunction(func(ls *lua.LState) int {

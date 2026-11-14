@@ -1414,13 +1414,21 @@ deps:
       - attachment
       - entity
       - entitymanager
+      # t.flows runs job attempts and reads runs through the engine.
+      - flow
+      - flowengine
       - fsimport
+      # The case's host config: mail.yaml as the world reads it, fake secrets.
+      - hostconfig
       - lua
       - mail
       - memcomments
       - metamodel
       - principal
+      - project
       - rootfs
+      - secrets
+      - state
       - store
     canUse:
       - gofakeit

@@ -20,9 +20,12 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/fsimport"
+	"github.com/Sourcehaven-BV/rela/internal/hostconfig"
 	"github.com/Sourcehaven-BV/rela/internal/mail"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -38,10 +41,16 @@ type world struct {
 	// clock is the case's clock in Unix nanoseconds. Atomic, because the
 	// world's background workers read it while the case sets it.
 	clock atomic.Int64
-	// network is set when the case's code tried a real HTTP or AI call.
+	// network is set when the case's code tried a real AI call.
 	network atomic.Bool
-	rng     *rand.Rand
-	fake    *faker
+	// http answers the case's HTTP calls from its stubs.
+	http *stubTransport
+	// secrets are the fake secrets of t.secrets.
+	secrets *testSecrets
+	// flowJobs holds the flow job attempts t.flows.work() runs.
+	flowJobs *flowQueue
+	rng      *rand.Rand
+	fake     *faker
 
 	// Setup recorded before the world is built.
 	fixtures   []string
@@ -100,7 +109,8 @@ func idSlug(name string) string {
 }
 
 func newWorld(r *runner, seed uint64) *world {
-	w := &world{r: r, seed: seed, ctx: context.Background(), rng: seededRand(seed), mail: mail.NewMemorySender(0)}
+	w := &world{r: r, seed: seed, ctx: context.Background(), rng: seededRand(seed), mail: mail.NewMemorySender(0),
+		http: &stubTransport{}, secrets: &testSecrets{}, flowJobs: &flowQueue{}}
 	w.clock.Store(startClock(seed).UnixNano())
 	// The faker exists before the world so t.fake.name and the like work in
 	// setup; build gives it the schema.
@@ -129,8 +139,12 @@ func (w *world) build() error {
 		appbuild.WithClock(w.now),
 		appbuild.WithMailTransport(w.mail),
 		appbuild.WithPolicyAmendment(w.assignRoles),
-		appbuild.WithHTTPClient(&http.Client{Transport: refusingTransport{tried: &w.network}}),
+		appbuild.WithHTTPClient(&http.Client{Transport: w.http}),
 		appbuild.WithAIProvider(refusingAI{tried: &w.network}),
+		appbuild.WithHostConfig(func(state.KV) (appbuild.HostConfig, error) {
+			return testHost{dir: hostconfig.Dir(filepath.Join(w.r.root, project.CacheDir)), secrets: w.secrets}, nil
+		}),
+		appbuild.WithFlowJobQueue(w.flowJobs),
 	)
 	if err != nil {
 		return fmt.Errorf("build the test world: %w", err)
@@ -393,9 +407,15 @@ func (w *world) anyExists(ctx context.Context, ids []string) bool {
 
 // fail records the case's first failed assertion.
 func (w *world) fail(where, msg string) {
-	if w.failure == nil {
-		w.failure = &failure{where: where, msg: msg}
+	if w.failure != nil {
+		return
 	}
+	// An unexpected HTTP call made before this assertion came first.
+	if f := w.http.takeFailure(); f != nil {
+		w.failure = f
+		return
+	}
+	w.failure = &failure{where: where, msg: msg}
 }
 
 // attachGenerated attaches a generated file to each of e's file properties
