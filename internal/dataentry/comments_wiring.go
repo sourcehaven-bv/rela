@@ -114,7 +114,7 @@ func (g commentPermissionGate) HoldsPermission(ctx context.Context, subjectID, p
 	if g.policy == nil {
 		return false
 	}
-	// Mirrors the statemachine transition guard (appbuild/transitions.go):
+	// Mirrors the transition guard (appbuild/transitions.go):
 	// inert when no policy exists at all, fail CLOSED when one does but the
 	// Request is missing or bound to another principal — a served path that
 	// lost its middleware must not silently open commenting.
