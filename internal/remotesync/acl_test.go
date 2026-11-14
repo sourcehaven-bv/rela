@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -12,7 +14,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -54,7 +55,7 @@ func aclTarget(t *testing.T, policy string) (*target, *audit.Memory, context.Con
 	sink := audit.NewMemory()
 	tg.mgr, err = entitymanager.New(entitymanager.Deps{
 		Store: tg.st, Meta: tg.meta, Templater: nopTemplater{}, Audit: sink, ACL: d,
-		Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		Transitions: transitions.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		CopyReadGate: entitymanager.AllowAllCopyReadGate{}, CopyVisibility: copyVis,
 		AttachmentLocker: lock.NewMemoryLocker(), AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
