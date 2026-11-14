@@ -109,9 +109,9 @@ type listPage struct {
 // Without a filter, the store pages and counts. A filter that lowers
 // exactly ([ConditionLowerer]) joins the store read when every property it
 // reads is visible to the caller on every row: its comparisons as Props, its
-// traversals as gated Related entries (TKT-Z099FGY). A filter that requires
-// a denied traversal matches nothing and reads nothing. Any other filter is
-// answered in Go over the whole type (listPage.filterInGo).
+// traversals as Traversals, which the reader gates (TKT-Z099FGY). A filter
+// that requires a denied traversal matches nothing and reads nothing. Any
+// other filter is answered in Go over the whole type (listPage.filterInGo).
 func (p listPage) ofType(
 	ctx context.Context, d Deps, entityType string, prog *predicate.Program,
 ) ([]*entity.Entity, int, error) {
@@ -120,19 +120,17 @@ func (p listPage) ofType(
 		if d.Related.Conditions == nil {
 			return p.filterInGo(ctx, d, entityType, prog)
 		}
-		props, related, empty, ok := d.Related.Conditions.Lower(ctx, prog, entityType)
-		switch {
-		case !ok:
+		props, traversals, ok := d.Related.Conditions.Lower(ctx, prog, entityType)
+		if !ok {
 			return p.filterInGo(ctx, d, entityType, prog)
-		case empty:
-			return nil, 0, nil
 		}
-		q.Props, q.Related = props, related
+		q.Props, q.Traversals = props, traversals
 	}
 	page, err := d.Store.ListEntityPage(ctx, q)
 	if errors.Is(err, visibility.ErrPropsNotPushable) {
-		// A property the filter reads is hidden on some row: the Go path
-		// judges the redacted row, where the hidden value is nil.
+		// A property the filter reads is hidden on some row, or the gate
+		// refuses a traversal: the Go path judges the redacted row, where
+		// the hidden value is nil, and reports the refusal.
 		return p.filterInGo(ctx, d, entityType, prog)
 	}
 	if err != nil {

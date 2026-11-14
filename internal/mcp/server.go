@@ -288,22 +288,19 @@ type TraversalBinder interface {
 	) (func(rowID string) predicate.TraversalFunc, error)
 }
 
-// ConditionLowerer rewrites a list_entities filter as store predicates for
-// the ctx principal, declared here at the call site. It also stamps the
-// query identity, so `current_user` binds to the same caller in the store
-// and in Go.
+// ConditionLowerer rewrites a list_entities filter as a page filter,
+// declared here at the call site. It also stamps the query identity, so
+// `current_user` binds to the same caller in the store and in Go.
 type ConditionLowerer interface {
 	// StampQueryIdentity returns ctx with the caller's query identity
 	// stamped. An error fails the call.
 	StampQueryIdentity(ctx context.Context) (context.Context, error)
-	// Lower rewrites prog, compiled against entityType, as predicates to
-	// AND onto the page read: props on the stored row, naming every entity
-	// field prog reads, and related entries already gated for the ctx
-	// principal. ok=false means the filter does not lower exactly or a
-	// traversal cannot be gated; the caller answers it in Go. empty=true
-	// means a traversal the filter requires is denied, so no row matches.
+	// Lower rewrites prog, compiled against entityType, as a page filter:
+	// props on the stored row, naming every entity field prog reads, and
+	// traversals the page reader gates for the caller. ok=false means the
+	// filter does not lower exactly; the caller answers it in Go.
 	Lower(ctx context.Context, prog *predicate.Program, entityType string) (
-		props []store.PropPredicate, related []store.DirectedRelation, empty, ok bool)
+		props []store.PropPredicate, traversals []visibility.PageTraversal, ok bool)
 }
 
 // GraphCounter is the structural half of [GraphReader]: type-level tallies

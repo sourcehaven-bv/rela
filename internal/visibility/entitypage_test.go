@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -140,11 +141,12 @@ func pageIDs(p visibility.EntityPage) []string {
 
 var openStatus = []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}}
 
-// assigned is the traversal "has an incoming assigned-to edge", negated or
-// not, as a caller's traversal gate would hand it to a page read.
-func assigned(negate bool) []store.DirectedRelation {
-	return []store.DirectedRelation{{
-		Incoming: true, Pred: store.RelationPredicate{OfTypes: []string{"assigned-to"}, Negate: negate},
+// assigned is the traversal "has an incoming assigned-to edge from a
+// person", negated or not. The reader gates it for the caller.
+func assigned(negate bool) []visibility.PageTraversal {
+	return []visibility.PageTraversal{{
+		Hop:    acl.TraversalHop{RelationTypes: []string{"assigned-to"}, Incoming: true, EntityType: "person"},
+		Negate: negate,
 	}}
 }
 
@@ -182,18 +184,29 @@ func assertEntityPages(t *testing.T, f pageFixture) {
 		},
 		{
 			name: "a gated traversal narrows in the store", user: "alice",
-			q:       visibility.PageQuery{Related: assigned(false), Limit: 2, Offset: 10},
+			q:       visibility.PageQuery{Traversals: assigned(false), Limit: 2, Offset: 10},
 			wantIDs: []string{"TKT-0010", "TKT-0011"}, wantTotal: pageAssigned,
 		},
 		{
 			name: "a negated traversal narrows in the store", user: "alice",
-			q:       visibility.PageQuery{Related: assigned(true), Limit: 2},
+			q:       visibility.PageQuery{Traversals: assigned(true), Limit: 2},
 			wantIDs: []string{"TKT-0012", "TKT-0013"}, wantTotal: 40 - pageAssigned,
 		},
 		{
-			name: "a traversal composes with the row gate", user: "bob",
-			q:       visibility.PageQuery{Related: assigned(true), Limit: 2},
-			wantIDs: nil, wantTotal: 0,
+			name: "a denied traversal matches nothing", user: "bob",
+			q: visibility.PageQuery{Traversals: assigned(false), Limit: 2},
+		},
+		{
+			name: "a denied negated traversal narrows nothing", user: "bob",
+			q:       visibility.PageQuery{Traversals: assigned(true), Limit: 2},
+			wantIDs: []string{"TKT-0000", "TKT-0001"}, wantTotal: pageAssigned,
+		},
+		{
+			name: "a traversal the gate refuses is not pushed", user: "alice",
+			q: visibility.PageQuery{Traversals: []visibility.PageTraversal{{
+				Hop: acl.TraversalHop{RelationTypes: []string{"assigned-to"}, Incoming: true},
+			}}, Limit: 2},
+			wantErr: visibility.ErrPropsNotPushable,
 		},
 		{
 			name: "offset past the end", user: "alice",
@@ -294,7 +307,7 @@ func TestUnrestrictedReader_ListEntityPage(t *testing.T) {
 		t.Errorf("page = %v of %d, want [TKT-0002 TKT-0004] of 5", got, page.Total)
 	}
 	page, err = visibility.Unrestricted(f.st).ListEntityPage(context.Background(), visibility.PageQuery{
-		Type: "ticket", Faces: store.AllFaces(), Related: assigned(false), Props: openStatus, Limit: 2,
+		Type: "ticket", Faces: store.AllFaces(), Traversals: assigned(false), Props: openStatus, Limit: 2,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -336,4 +349,35 @@ func TestScriptReader_ListEntityPage_ScaleFree(t *testing.T) {
 			})
 		})
 	}
+}
+
+// A page query cannot carry a store edge test: every edge test the read
+// applies comes from the caller's traversal gate (TKT-Z099FGY). A field
+// that could hold one would let a caller narrow the rows by edges the
+// caller cannot see.
+func TestPageQuery_CarriesNoEdgeTest(t *testing.T) {
+	t.Parallel()
+	forbidden := map[reflect.Type]bool{
+		reflect.TypeFor[store.DirectedRelation]():  true,
+		reflect.TypeFor[store.RelationPredicate](): true,
+		reflect.TypeFor[store.GraphQuery]():        true,
+	}
+	pkg := reflect.TypeFor[visibility.PageQuery]().PkgPath()
+	var walk func(path string, typ reflect.Type)
+	walk = func(path string, typ reflect.Type) {
+		for typ.Kind() == reflect.Pointer || typ.Kind() == reflect.Slice || typ.Kind() == reflect.Array {
+			typ = typ.Elem()
+		}
+		if forbidden[typ] {
+			t.Errorf("%s holds a %s", path, typ)
+			return
+		}
+		if typ.Kind() != reflect.Struct || typ.PkgPath() != pkg {
+			return
+		}
+		for f := range typ.Fields() {
+			walk(path+"."+f.Name, f.Type)
+		}
+	}
+	walk("PageQuery", reflect.TypeFor[visibility.PageQuery]())
 }

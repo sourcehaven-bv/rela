@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -25,17 +26,77 @@ type PageQuery struct {
 	// [ErrPropsNotPushable]); the store compares raw values, so a property
 	// hidden on some row would answer for a value the caller cannot see.
 	Props []store.PropPredicate
-	// Related narrows the rows by their edges (TKT-Z099FGY). Each entry
-	// must already have passed the caller's traversal gate
-	// (acl.Request.GateTraversal): the read ANDs it onto the read scope
-	// and checks nothing more, so an ungated entry would let the row set
-	// depend on edges the caller cannot see. It only ever narrows.
-	Related []store.DirectedRelation
+	// Traversals narrow the rows by their edges (TKT-Z099FGY). The reader
+	// gates each one itself with the caller's traversal gate, so the row
+	// set never depends on an edge the caller cannot see. See
+	// [PageTraversal].
+	Traversals []PageTraversal
 	// Limit is the page size. It must be positive: a page read never
 	// returns the whole type.
 	Limit int
 	// Offset counts rows in the ordered result.
 	Offset int
+}
+
+// PageTraversal is one `related(...)` term of a page filter: the hop it
+// walks and whether the filter negates it. It carries no store predicate:
+// the reader builds the edge test from the gate's answer for the caller,
+// so a caller cannot pass one the gate did not produce. A traversal onto a
+// type the caller may not read makes a positive term match nothing and a
+// negated term match everything, as the Go evaluation does.
+type PageTraversal struct {
+	Hop    acl.TraversalHop
+	Negate bool
+}
+
+// traversalGate answers one hop for the caller: the store edge test, or
+// [acl.ErrTraversalDenied]. [DeclarativeGate.GateTraversal] and
+// [acl.UngatedTraversal] (wrapped) are the two in use.
+type traversalGate func(ctx context.Context, candidateType string, hop acl.TraversalHop) (
+	*store.RelationPredicate, error)
+
+// traversalGater is the binder capability a page read with traversals
+// needs. [DeclarativeGate] implements it.
+type traversalGater interface {
+	GateTraversal(ctx context.Context, candidateType string, hop acl.TraversalHop) (*store.RelationPredicate, error)
+}
+
+// ungatedTraversal is the traversal gate of a reader that reads everything.
+func ungatedTraversal(_ context.Context, _ string, hop acl.TraversalHop) (*store.RelationPredicate, error) {
+	return acl.UngatedTraversal(hop)
+}
+
+// gateTraversals turns ts into store edge tests through gate. empty
+// reports that a positive term is denied and none is refused, so no row
+// matches. A denied negated term drops out. Any other gate error, a nil
+// predicate, or a predicate the gate already negated is
+// [ErrPropsNotPushable], so the caller answers the filter on its own path,
+// which reports the same refusal.
+func gateTraversals(
+	ctx context.Context, gate traversalGate, entityType string, ts []PageTraversal,
+) (rels []store.DirectedRelation, empty bool, err error) {
+	for _, t := range ts {
+		pred, gerr := gate(ctx, entityType, t.Hop)
+		switch {
+		case errors.Is(gerr, acl.ErrTraversalDenied):
+			// Keep gating the rest: a refusal must still win over a denial.
+			if !t.Negate {
+				empty = true
+			}
+			continue
+		case gerr != nil:
+			return nil, false, fmt.Errorf("%w: %w", ErrPropsNotPushable, gerr)
+		case pred == nil, pred.Negate:
+			return nil, false, ErrPropsNotPushable
+		}
+		rel := store.DirectedRelation{Incoming: t.Hop.Incoming, Pred: *pred}
+		rel.Pred.Negate = t.Negate
+		rels = append(rels, rel)
+	}
+	if empty {
+		return nil, true, nil
+	}
+	return rels, false, nil
 }
 
 // EntityPage is one page of a [PageQuery]. Rows carry no body: they are
@@ -49,9 +110,10 @@ type EntityPage struct {
 }
 
 // ErrPropsNotPushable reports a [PageQuery] narrowing the reader cannot
-// push: Props naming a property the caller does not see on every row, or,
-// on a reader without pushdown, any Props or Related. The caller answers
-// such a filter over redacted rows instead.
+// push: Props naming a property the caller does not see on every row, a
+// traversal the gate refuses, or, on a reader without pushdown, any Props
+// or Traversals. The caller answers such a filter over redacted rows
+// instead.
 var ErrPropsNotPushable = errors.New("visibility: the page filter cannot be pushed to the store")
 
 // errPageLimit reports a [PageQuery] without a positive Limit.
@@ -118,11 +180,13 @@ func checkPageQuery(q PageQuery) error {
 // runs on the page, primed once for it (PolicyReader.redactPage).
 //
 // Props are pushed only when the caller sees each property on every row it
-// reads; otherwise the read returns [ErrPropsNotPushable]. Related is pushed
-// as given. Without pushdown (a reader that cannot redact without gating, or
-// no read-scope provider) a query without Props or Related is answered by
-// load-then-Filter, and one with either is refused with
-// ErrPropsNotPushable. Both are a cost or a refusal, never a weaker gate.
+// reads; otherwise the read returns [ErrPropsNotPushable]. Traversals are
+// gated with the binder's traversal gate before anything is read (see
+// [PageTraversal]); a binder without one refuses them. Without pushdown (a
+// reader that cannot redact without gating, or no read-scope provider) a
+// query without Props or Traversals is answered by load-then-Filter, and
+// one with either is refused with ErrPropsNotPushable. Both are a cost or a
+// refusal, never a weaker gate.
 func (s *ScriptReader) ListEntityPage(ctx context.Context, q PageQuery) (EntityPage, error) {
 	if err := checkPageQuery(q); err != nil {
 		return EntityPage{}, err
@@ -132,6 +196,21 @@ func (s *ScriptReader) ListEntityPage(ctx context.Context, q PageQuery) (EntityP
 		if pf, ok := s.reader.(propsFilterer); !ok || !pf.propsFilterable(bound, q.Type, q.Props) {
 			return EntityPage{}, ErrPropsNotPushable
 		}
+	}
+	var related []store.DirectedRelation
+	if len(q.Traversals) > 0 {
+		g, ok := s.binder.(traversalGater)
+		if !ok {
+			return EntityPage{}, ErrPropsNotPushable
+		}
+		rels, empty, err := gateTraversals(bound, g.GateTraversal, q.Type, q.Traversals)
+		switch {
+		case err != nil:
+			return EntityPage{}, err
+		case empty:
+			return EntityPage{}, nil
+		}
+		related = rels
 	}
 	red, ok := s.reader.(pushdownRedactor)
 	if !ok {
@@ -159,16 +238,18 @@ func (s *ScriptReader) ListEntityPage(ctx context.Context, q PageQuery) (EntityP
 	if !ok { // coverage-ignore: composeReadScope returned ok, so raw is a GraphQueryer
 		return EntityPage{}, errEmptyScope
 	}
-	return readPage(bound, raw, gq, q, red.redactPage)
+	return readPage(bound, raw, gq, q, related, red.redactPage)
 }
 
 // readPage runs the page and the count of q on gq, a copy of the caller's
-// read scope, and redacts the page with redact.
+// read scope, narrowed by related, the gated edge tests of q.Traversals,
+// and redacts the page with redact.
 func readPage(
-	ctx context.Context, raw store.GraphQueryer, gq store.GraphQuery, q PageQuery, redact pageRedactor,
+	ctx context.Context, raw store.GraphQueryer, gq store.GraphQuery, q PageQuery,
+	related []store.DirectedRelation, redact pageRedactor,
 ) (EntityPage, error) {
 	gq.Props = slices.Concat(gq.Props, q.Props)
-	gq.Related = slices.Concat(gq.Related, q.Related)
+	gq.Related = slices.Concat(gq.Related, related)
 	total, err := store.CountMatched(ctx, raw, gq)
 	if err != nil {
 		return EntityPage{}, err
@@ -201,7 +282,7 @@ func headerRow(h store.EntityHeader) *entity.Entity {
 // type, so it only serves a reader that cannot push the gate down; no
 // production wiring builds one.
 func (s *ScriptReader) pageViaFilter(ctx context.Context, q PageQuery) (EntityPage, error) {
-	if len(q.Props) > 0 || len(q.Related) > 0 {
+	if len(q.Props) > 0 || len(q.Traversals) > 0 {
 		return EntityPage{}, ErrPropsNotPushable
 	}
 	rows, err := s.listGatedThenRanked(ctx, store.EntityQuery{Type: q.Type, Faces: q.Faces})
@@ -237,8 +318,15 @@ func (r *UnrestrictedReader) ListEntityPage(ctx context.Context, q PageQuery) (E
 	if !ok { // coverage-ignore: store.Store embeds GraphQueryer
 		return EntityPage{}, fmt.Errorf("visibility: store %T cannot run a graph query", r.st)
 	}
+	related, empty, err := gateTraversals(ctx, ungatedTraversal, q.Type, q.Traversals)
+	switch {
+	case err != nil:
+		return EntityPage{}, err
+	case empty: // coverage-ignore: the ungated lowering never denies
+		return EntityPage{}, nil
+	}
 	keep := func(_ context.Context, rows []*entity.Entity) []*entity.Entity { return rows }
-	return readPage(ctx, gq, store.GraphQuery{EntityType: q.Type, Faces: q.Faces}, q, keep)
+	return readPage(ctx, gq, store.GraphQuery{EntityType: q.Type, Faces: q.Faces}, q, related, keep)
 }
 
 // ListEntityPage implements the page read: always refuses.

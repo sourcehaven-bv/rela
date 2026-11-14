@@ -37,7 +37,7 @@ unexplained suppression is a finding nobody can re-evaluate later.
 
 - [x] Run `/code-review` command (invokes cranky-code-reviewer agent): cranky-code-reviewer and rela-security-reviewer run; the security review had no findings
 - [x] All critical review-responses addressed (none)
-- [x] All significant review-responses addressed: RR-O8TE9TN and RR-GQ84MYF addressed; RR-CY6WIFE deferred with reason (the field only narrows, its one producer gates every entry; follow-up under TKT-9BKVQ9I)
+- [x] All significant review-responses addressed: RR-CY6WIFE, RR-O8TE9TN and RR-GQ84MYF
 - [x] Self-reviewed the diff for unrelated changes
 
 **Review Responses:** RR-CY6WIFE, RR-O8TE9TN, RR-GQ84MYF, RR-KWQPV6C,
