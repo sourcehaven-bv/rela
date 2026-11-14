@@ -1417,6 +1417,8 @@ deps:
       # t.flows runs job attempts and reads runs through the engine.
       - flow
       - flowengine
+      # t.expect_denied recognises the flow control's forbidden error.
+      - flowview
       - fsimport
       # The case's host config: mail.yaml as the world reads it, fake secrets.
       - hostconfig

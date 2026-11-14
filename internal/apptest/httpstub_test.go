@@ -291,6 +291,7 @@ roles:
     update: [ticket]
 assignments:
   carol: editor
+  vera: viewer
   "system:automation": viewer
   "system:payments": payments-bot
 `,
@@ -373,6 +374,12 @@ t.case("a 503 then a 201 retries the job", function()
   t.expect(mollie:count()).to_be(2)
   t.expect(mollie:calls()[2].json.description).to_be(tk.id)
   t.expect(carol:get(tk).properties.note).to_be("tr_test")
+end)
+
+t.case("start_flow checks the start permission", function()
+  local tk = t.as("carol"):create("ticket", {title = "pay"})
+  t.expect_denied(function() t.as("vera"):start_flow("pay", tk) end)
+  t.expect(#t.http.calls()).to_be(0)
 end)
 
 t.case("a 4xx fails the job at once", function()
