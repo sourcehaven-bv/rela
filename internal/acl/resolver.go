@@ -254,7 +254,7 @@ func (r *Request) HoldsPermission(_ context.Context, perm string) bool {
 // X on their own entity" where the assignee role is conferred by an ownership
 // relation, not a global assignment.
 //
-// It is the entry point the statemachine transition guard uses (TKT-E4LW2):
+// It is the entry point the transition guard uses (TKT-E4LW2):
 // the guard permission is a coarse capability noun (e.g. "establish"), and the
 // per-subject scope comes from whether a role-relation confers the granting
 // role for this entity — resolved here, not baked into the permission.

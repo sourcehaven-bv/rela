@@ -15,7 +15,7 @@ status: done
 - [x] Integration tests written (test full flow, not just units) (the test boots appbuild twice under NopACL, starts a run and compiles its older version)
 - [x] Happy path implemented
 - [x] Edge cases from planning handled (no acl.yaml: nil policy as before; no flows: acl.yaml not read; declarative injection unchanged)
-- [x] Error handling in place (errors surfaced, not swallowed) (an unreadable or schema-mismatched acl.yaml fails the boot, as `rela flow validate` does)
+- [x] Error handling in place (errors surfaced, not swallowed) (an unreadable acl.yaml fails the boot; a schema mismatch is tolerated, as with realtime.yaml (RR-GT629C0))
 
 ## Test Quality
 
@@ -41,5 +41,5 @@ without the prepare change and at FlowOf without the engine change.
 - [x] Code follows project patterns (check similar code) (mirrors newRealtimeConfig, which reloads acl.yaml under an injected ACL)
 - [x] Checked for DRY opportunities
 - [x] No security issues introduced (the policy is used for config checks only; enforcement is unchanged)
-- [x] No silent failures (errors logged AND returned)
+- [x] No silent failures (errors logged AND returned) (exception: loadConfigPolicy tolerates a schema-mismatched acl.yaml (RR-GT629C0) and logs the validation error as a warning instead of returning it (GH-2226))
 - [x] No debug code left behind

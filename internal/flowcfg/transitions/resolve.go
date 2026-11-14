@@ -1,0 +1,165 @@
+package transitions
+
+import (
+	"context"
+	"sort"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
+)
+
+// TransitionVerdict is the resolved, read-side view of one outgoing transition
+// for a specific (principal, entity): the target value, the guard permission it
+// requires (empty when unguarded), whether the principal can perform it right
+// now, and — when they can't — which gate blocked it. It carries no compiled
+// predicate; it is the answer to "what can this principal do to this field on
+// this entity", suitable for a UI status control or a CLI.
+type TransitionVerdict struct {
+	To      string
+	Label   string      // display text for the MOVE; "" falls back to the target value's label at the display layer
+	Guard   string      // ACL permission name; "" when the edge is unguarded
+	Allowed bool        // true iff the guard is held AND the precondition holds
+	Reason  VerdictGate // why Allowed is false; VerdictAllowed when it's true
+}
+
+// VerdictGate names the gate that made a transition non-performable.
+type VerdictGate string
+
+const (
+	// VerdictAllowed means the transition is performable now.
+	VerdictAllowed VerdictGate = ""
+	// VerdictGuard means the principal lacks the edge's guard permission.
+	VerdictGuard VerdictGate = "guard"
+	// VerdictPrecondition means the edge's `when:` precondition is not met
+	// (or errored) against the entity's current graph state.
+	VerdictPrecondition VerdictGate = "precondition"
+)
+
+// Performable resolves the outgoing transitions from the current value of prop
+// on e, for the principal carried on ctx, returning a [TransitionVerdict] per
+// declared out-edge. Each verdict reflects BOTH the guard (evaluated
+// subject-aware via guard) and the `when:` precondition (evaluated against the
+// graph via lookup) — the same two gates, in the same order, that
+// [Transitions.EnforceUpdate] enforces on a write (they share HeadlessFlow.decideMove). Verdicts are
+// sorted by To for a stable UI order.
+//
+// Returns nil when prop is not a state machine on e's type, when e sits in a
+// terminal state (no declared out-edges from its current value), or on an
+// empty/nil Transitions.
+//
+// This is a BOUNDED read: it evaluates only the out-edges of ONE field on ONE
+// entity (O(out-edges)), not a per-row scan across a result set. That is why
+// evaluating the `when:` predicate here is consistent with the
+// no-predicate-on-reads rule, whose concern is unbounded/hot list paths — see
+// internal/entitymanager/CLAUDE.md.
+func (s *Transitions) Performable(
+	ctx context.Context, e *entity.Entity, prop string, guard PermissionGuard, lookup GraphLookup,
+) []TransitionVerdict {
+	if s.Empty() || e == nil {
+		return nil
+	}
+	typeName, ok := s.propType[e.Type][prop]
+	if !ok {
+		return nil // prop is not a state machine on this entity type
+	}
+	m := s.machines[typeName]
+	from := e.GetString(prop)
+	if st, declared := m.def.State(from); from == "" || !declared || st.Final() {
+		return nil // no out-edge: unset, undeclared, or a final state
+	}
+
+	// One bind answers every out-edge's `related(...)`. It is bound for e and
+	// serves the post-move clones below: they share e's id, and a traversal
+	// reads edges, never the moved property.
+	var whens []*predicate.Program
+	for _, b := range m.exits[from] {
+		if b.to != from {
+			whens = append(whens, b.when)
+		}
+	}
+	traversal := s.bindTraversals(ctx, e, whens)
+
+	var out []TransitionVerdict
+	for _, b := range m.exits[from] {
+		if b.to == from {
+			// A self-loop is a no-op write (EnforceUpdate skips unchanged
+			// values before deciding a move), so it is never a *performable*
+			// transition — excluding it keeps read parity with write (a
+			// self-loop verdict would claim an action the write path never
+			// enforces).
+			continue
+		}
+		// Decide the move against the entity AS IT WOULD BE after it —
+		// prop = b.to — exactly as the write path does (it decides on the
+		// post-write `updated` entity). A `when:` that reads `entity.value`
+		// must see the target value here, or the read verdict would disagree
+		// with what the write actually enforces (the AC4 drift guard depends
+		// on this).
+		after := e.Clone()
+		after.SetString(prop, b.to)
+		res := m.decideMove(ctx, prop, from, b.to, after, guard, lookup, traversal)
+		out = append(out, TransitionVerdict{
+			To:      b.to,
+			Label:   b.label,
+			Guard:   b.guard,
+			Allowed: res.gate == gateNone,
+			Reason:  reasonFor(res.gate),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].To < out[j].To })
+	return out
+}
+
+// MachineProps returns the property names of entityType whose type is a state
+// machine, sorted. Empty when the type has no machine-typed property (or on a
+// nil/empty Transitions). Lets a consumer enumerate which fields of an entity have a
+// lifecycle without knowing the metamodel.
+func (s *Transitions) MachineProps(entityType string) []string {
+	if s.Empty() {
+		return nil
+	}
+	props := s.propType[entityType]
+	if len(props) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(props))
+	for name := range props {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// reasonFor names the gate that refused a move. Only gateNone is allowed; a
+// gate a verdict cannot otherwise name reads as a precondition, never as
+// allowed.
+func reasonFor(g gate) VerdictGate {
+	switch g {
+	case gateNone:
+		return VerdictAllowed
+	case gateGuard:
+		return VerdictGuard
+	default:
+		return VerdictPrecondition
+	}
+}
+
+// TraversingWhens returns, per "from→to" edge label, the `when:` programs of
+// entityType's prop machine that use `related(...)`. A consumer that knows the
+// ACL policy uses it to warn about what a transition verdict reveals.
+func (s *Transitions) TraversingWhens(entityType, prop string) map[string]*predicate.Program {
+	if s.Empty() {
+		return nil
+	}
+	m := s.machines[s.propType[entityType][prop]]
+	if m == nil {
+		return nil
+	}
+	out := map[string]*predicate.Program{}
+	m.eachBranch(func(from string, b headlessBranch) {
+		if b.when != nil && len(b.when.Traversals()) > 0 {
+			out[from+"→"+b.to] = b.when
+		}
+	})
+	return out
+}
