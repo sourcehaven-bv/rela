@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -165,33 +164,22 @@ func validateTenantMode(f *serverFlags, envUser string, supported bool) (identit
 	return mode, nil
 }
 
+// tenantProfile is the shared part of tenant mode's SaaS profile, from the
+// -lua-http-allow and -tenant-shared-host-config flags.
+func tenantProfile(t tenantFlags) appbuild.TenantProfile {
+	return appbuild.TenantProfile{
+		LuaHTTPAllow:     t.luaHTTPAllow,
+		SharedHostConfig: t.sharedHostConfig,
+		WithheldReason:   withheldHostConfigReason,
+	}
+}
+
 // luaHTTPPolicy is tenant mode's Lua HTTP destination policy: strict, with
 // the -lua-http-allow destinations reopened.
 func luaHTTPPolicy(t tenantFlags) (lua.HTTPPolicy, error) {
-	var entries []string
-	for e := range strings.SplitSeq(t.luaHTTPAllow, ",") {
-		if e = strings.TrimSpace(e); e != "" {
-			entries = append(entries, e)
-		}
-	}
-	prefixes, hosts, err := lua.ParseHTTPAllowList(entries)
+	p, err := tenantProfile(t).LuaHTTPPolicy()
 	if err != nil {
 		return lua.HTTPPolicy{}, fmt.Errorf("-lua-http-allow: %w", err)
-	}
-	return lua.HTTPPolicy{Strict: true, Allow: prefixes, AllowHosts: hosts}, nil
-}
-
-// applyLuaHTTPPolicy sets tenant mode's Lua HTTP policy through set, which
-// is [lua.SetHTTPPolicy] outside tests, and returns the policy it set. It
-// must run before any Lua runtime is built, so no script sees the
-// single-tenant default.
-func applyLuaHTTPPolicy(t tenantFlags, set func(lua.HTTPPolicy) error) (lua.HTTPPolicy, error) {
-	p, err := luaHTTPPolicy(t)
-	if err != nil {
-		return lua.HTTPPolicy{}, err
-	}
-	if err := set(p); err != nil {
-		return lua.HTTPPolicy{}, fmt.Errorf("set the Lua HTTP policy: %w", err)
 	}
 	return p, nil
 }
@@ -492,8 +480,9 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 		return nil, legacyErr
 	}
 	// The strict Lua HTTP policy is set before anything can build a Lua
-	// runtime; validateTenantMode has parsed the allowlist.
-	policy, err := applyLuaHTTPPolicy(f.tenant, lua.SetHTTPPolicy)
+	// runtime; validateTenantMode has parsed the allowlist. Startup fails
+	// unless the strict policy is installed afterwards.
+	policy, err := tenantProfile(f.tenant).ApplyLuaHTTPPolicy()
 	if err != nil {
 		return nil, err
 	}

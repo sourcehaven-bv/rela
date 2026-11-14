@@ -780,6 +780,10 @@ mode:
   operator's own credentials, the same for every tenant. Mail is always
   shared.
 
+The CLI applies the same profile when `RELA_TENANT_MODE=1` and a command
+opens a tenant, `rela-postgres --tenant <org_id> scheduler` and stdio MCP
+included. It reads the two environment variables above.
+
 ### Provisioning tenants automatically
 
 By default the server never creates a tenant: an operator runs

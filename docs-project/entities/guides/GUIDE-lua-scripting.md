@@ -1677,7 +1677,9 @@ Some addresses are always refused, in every mode:
   the cloud metadata service at `169.254.169.254`;
 - the AWS IPv6 metadata address `fd00:ec2::254`;
 - unspecified addresses (`0.0.0.0`, `::`), multicast and broadcast;
-- the same addresses written in IPv4-mapped, NAT64 or 6to4 form.
+- the same addresses written in IPv4-mapped, NAT64 (`64:ff9b::/96` and
+  the local-use `64:ff9b:1::/48`), IPv4-compatible (`::a.b.c.d`) or 6to4
+  form.
 
 No documented use of rela needs these. The metadata service hands out
 cloud credentials, so a script must not reach it.
@@ -3005,8 +3007,10 @@ These limits apply to every script, in every mode:
   runtime cannot run another script afterwards.
 - `string.rep`, `string.format` and `table.concat` refuse to build a
   string larger than 16 MiB. They fail before they allocate it.
-- `string.format` refuses a width or precision of more than two digits,
-  as standard Lua 5.1 does.
+- `string.format` follows the Lua 5.1 format rules. It refuses a width
+  or precision of more than two digits, an unknown conversion, a missing
+  argument, and the Go extensions `%[n]` (argument index) and `*` (width
+  from an argument). Each conversion uses its own argument.
 
 There is no limit on the total memory a script uses. The embedded Lua
 engine cannot measure it. The `..` operator, `string.gsub` and table

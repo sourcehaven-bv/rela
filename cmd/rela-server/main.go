@@ -233,8 +233,8 @@ func discoverOptions(f *serverFlags) []appbuild.Option {
 	}
 	// Tenant mode withholds the one .rela directory's secrets and ai.yaml
 	// from every tenant unless the operator shares them (TKT-3RWQ1PK).
-	if f.tenant.enabled && !f.tenant.sharedHostConfig {
-		opts = append(opts, appbuild.WithWithheldHostConfig(withheldHostConfigReason))
+	if f.tenant.enabled {
+		opts = append(opts, tenantProfile(f.tenant).Options()...)
 	}
 	return opts
 }

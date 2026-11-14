@@ -49,8 +49,23 @@ strict destination policy.
 - **Scheduler, mail, flows, CLI.** Verified and documented with existing
   tests. Known residue, documented only: the mail outbox is in memory per
   resident tenant, so queued mail can be lost on eviction; flows of an
-  evicted tenant wait until it is resident again; the operator's
-  per-tenant CLI scheduler does not apply the tenant profile.
+  evicted tenant wait until it is resident again.
+- **CLI tenant profile.** `appbuild.TenantProfile` holds the shared part of
+  the profile: the strict Lua HTTP policy and the withheld host config.
+  rela-server builds it from its flags. The CLI builds it from
+  `RELA_LUA_HTTP_ALLOW` and `RELA_TENANT_SHARED_HOST_CONFIG` in
+  `openProject`, so every command that opens a tenant applies it: the
+  scheduler, stdio MCP with `lua_eval`, and the data commands. Applying the
+  policy fails closed: it is an error unless `lua.CurrentHTTPPolicy` reports
+  a strict policy afterwards. `lua.SetHTTPPolicy` accepts a second call with
+  an equal policy, because one CLI process may open a tenant more than once.
+  `ForReassembly` keeps the withheld host config, so stdio MCP's schema
+  reload does not drop it.
+- **Lua format and NAT64.** `string.format` parses the Lua 5.1 format itself
+  and formats each conversion with its own argument. Go's `%[n]` and `*` are
+  refused, so one large argument cannot be repeated past the 16 MiB cap. The
+  always-on address check also reads the IPv4 address inside local-use NAT64
+  (`64:ff9b:1::/48`) and IPv4-compatible (`::/96`) addresses.
 - **Every mode.** The always-refused Lua destinations (link-local, metadata,
   multicast) and the Lua memory bounds apply in every mode. Loopback and
   private addresses stay reachable outside tenant mode, because the Lua

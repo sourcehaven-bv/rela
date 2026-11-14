@@ -7,8 +7,10 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -28,7 +30,8 @@ import (
 //   - Always, in every mode: link-local (169.254.0.0/16, fe80::/10, which
 //     holds the cloud metadata address 169.254.169.254), the AWS IPv6
 //     metadata address fd00:ec2::254, unspecified (0.0.0.0, ::), multicast
-//     and broadcast are refused, also in IPv4-mapped, NAT64 and 6to4 form.
+//     and broadcast are refused, also in IPv4-mapped,
+//     NAT64, local-use NAT64, IPv4-compatible and 6to4 form.
 //     No documented rela use reaches these, and the metadata service hands
 //     out cloud credentials.
 //   - Strict, set for tenant mode: every address that is not global unicast
@@ -122,8 +125,12 @@ func normalizeHostPort(s string) (string, error) {
 // and so a surface that builds its own deps still gets the policy.
 var sharedHTTPClient atomic.Pointer[http.Client]
 
-// httpPolicySet records that [SetHTTPPolicy] ran.
-var httpPolicySet atomic.Bool
+// installedPolicy is the policy [SetHTTPPolicy] installed. Nil: not set,
+// the single-tenant default applies. httpPolicyMu serializes setters.
+var (
+	installedPolicy atomic.Pointer[HTTPPolicy]
+	httpPolicyMu    sync.Mutex
+)
 
 func init() {
 	c, err := NewHTTPClient(HTTPPolicy{})
@@ -134,18 +141,46 @@ func init() {
 }
 
 // SetHTTPPolicy replaces the process-wide http.* client with one that
-// enforces p. Call it once at startup, before any script runs; a second
-// call is an error, so two wiring sites cannot disagree silently.
+// enforces p. Call it at startup, before any script runs. A second call
+// with an equal policy does nothing. A second call with another policy is
+// an error, so two wiring sites cannot disagree silently.
 func SetHTTPPolicy(p HTTPPolicy) error {
+	httpPolicyMu.Lock()
+	defer httpPolicyMu.Unlock()
+	if cur := installedPolicy.Load(); cur != nil {
+		if cur.equal(p) {
+			return nil
+		}
+		return errors.New("lua: the HTTP policy is already set")
+	}
 	c, err := NewHTTPClient(p)
 	if err != nil {
 		return err
 	}
-	if !httpPolicySet.CompareAndSwap(false, true) {
-		return errors.New("lua: the HTTP policy is already set")
-	}
 	sharedHTTPClient.Store(c)
+	stored := p.clone()
+	installedPolicy.Store(&stored)
 	return nil
+}
+
+// CurrentHTTPPolicy returns the policy [SetHTTPPolicy] installed, and false
+// when none was installed and the single-tenant default applies. Tenant
+// mode checks it after wiring, so it fails closed when the strict policy
+// is not in place.
+func CurrentHTTPPolicy() (HTTPPolicy, bool) {
+	p := installedPolicy.Load()
+	if p == nil {
+		return HTTPPolicy{}, false
+	}
+	return p.clone(), true
+}
+
+func (p HTTPPolicy) equal(o HTTPPolicy) bool {
+	return p.Strict == o.Strict && slices.Equal(p.Allow, o.Allow) && slices.Equal(p.AllowHosts, o.AllowHosts)
+}
+
+func (p HTTPPolicy) clone() HTTPPolicy {
+	return HTTPPolicy{Strict: p.Strict, Allow: slices.Clone(p.Allow), AllowHosts: slices.Clone(p.AllowHosts)}
 }
 
 // NewHTTPClient returns a client for the http.* bindings that enforces p.
@@ -269,10 +304,13 @@ var (
 	// awsIPv6Metadata is the IPv6 address of the EC2 instance metadata
 	// service. It lies in fc00::/7, which only strict mode refuses, so it
 	// is named on its own.
-	awsIPv6Metadata = netip.MustParseAddr("fd00:ec2::254")
-	ipv4Broadcast   = netip.MustParseAddr("255.255.255.255")
-	nat64Prefix     = netip.MustParsePrefix("64:ff9b::/96")
-	sixToFourPrefix = netip.MustParsePrefix("2002::/16")
+	awsIPv6Metadata  = netip.MustParseAddr("fd00:ec2::254")
+	ipv4Broadcast    = netip.MustParseAddr("255.255.255.255")
+	nat64Prefix      = netip.MustParsePrefix("64:ff9b::/96")
+	localNAT64Prefix = netip.MustParsePrefix("64:ff9b:1::/48")
+	ipv4CompatPrefix = netip.MustParsePrefix("::/96")
+	sixToFourPrefix  = netip.MustParsePrefix("2002::/16")
+	ipv6Loopback     = netip.IPv6Loopback()
 )
 
 // alwaysRefused reports the addresses no mode may reach. a is unmapped.
@@ -314,27 +352,44 @@ func strictRefused(a netip.Addr) bool {
 	if !a.IsGlobalUnicast() || a.IsPrivate() || a.IsLoopback() {
 		return true
 	}
-	if v4, ok := embeddedIPv4(a); ok {
-		return strictRefused(v4)
-	}
+	// The prefixes come first: local-use NAT64 and IPv4-compatible
+	// addresses are refused whatever IPv4 address they hold.
 	for _, p := range strictSpecialPrefixes {
 		if p.Contains(a) {
 			return true
 		}
 	}
+	if v4, ok := embeddedIPv4(a); ok {
+		return strictRefused(v4)
+	}
 	return false
 }
 
-// embeddedIPv4 returns the IPv4 address a NAT64 (64:ff9b::/96) or 6to4
-// (2002::/16) address routes to.
+// embeddedIPv4 returns the IPv4 address an IPv6 address routes to or
+// stands for:
+//
+//   - NAT64 (64:ff9b::/96, RFC 6052) and local-use NAT64
+//     (64:ff9b:1::/48, RFC 8215): the last 32 bits. RFC 8215 lets an
+//     operator use other RFC 6052 layouts inside the /48. The /96 layout
+//     is the common one, so that is the one read here. Strict mode refuses
+//     the whole /48 anyway.
+//   - IPv4-compatible (::/96, deprecated): the last 32 bits. "::" and
+//     "::1" are the IPv6 unspecified and loopback addresses, not IPv4.
+//   - 6to4 (2002::/16): bits 16 to 47.
 func embeddedIPv4(a netip.Addr) (netip.Addr, bool) {
 	if !a.Is6() {
 		return netip.Addr{}, false
 	}
 	b := a.As16()
+	last32 := netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]})
 	switch {
-	case nat64Prefix.Contains(a):
-		return netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]}), true
+	case nat64Prefix.Contains(a), localNAT64Prefix.Contains(a):
+		return last32, true
+	case ipv4CompatPrefix.Contains(a):
+		if a.IsUnspecified() || a == ipv6Loopback {
+			return netip.Addr{}, false
+		}
+		return last32, true
 	case sixToFourPrefix.Contains(a):
 		return netip.AddrFrom4([4]byte{b[2], b[3], b[4], b[5]}), true
 	}

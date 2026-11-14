@@ -724,14 +724,15 @@ server logs each one once at startup.
 
 | Feature | In tenant mode | Pinned by |
 | --- | --- | --- |
-| Lua `http.*` | Strict address policy: only public addresses, plus the destinations in `-lua-http-allow` | `TestApplyLuaHTTPPolicy`, `TestValidateTenantMode` |
+| Lua `http.*` | Strict address policy: only public addresses, plus the destinations in `-lua-http-allow`. Startup fails if the strict policy is not installed. | `TestTenantProfile`, `TestTenantProfile_ApplyFailsClosed`, `TestValidateTenantMode` |
 | `commands:` in `data-entry.yaml` | Off. `POST /api/command/...` answers 403 with code `commands_disabled_in_tenant_mode`. The UI offers no command buttons. | `TestCommandExecTenantModeRefused`, `TestBuildCommandAuthorizer_TenantMode`, `TestTenantMode_SaaSProfile` |
 | `/api/git/sync` | Off. Sync answers "git not configured" and the status reports git as unavailable. | `TestDisableGitSync`, `TestTenantMode_SaaSProfile` |
-| `.rela/secrets.yaml`, `.rela/ai.yaml` | Withheld unless `-tenant-shared-host-config` is set | `TestWithWithheldHostConfig`, `TestLoadContextOptions_Withheld`, `TestTenantMode_SaaSProfile` |
+| `.rela/secrets.yaml`, `.rela/ai.yaml` | Withheld unless `-tenant-shared-host-config` is set, also after a schema reload | `TestWithWithheldHostConfig`, `TestWithWithheldHostConfig_SurvivesReassembly`, `TestLoadContextOptions_Withheld`, `TestTenantMode_SaaSProfile` |
 | `.rela/mail.yaml` | Shared, with its SMTP password | `TestWithWithheldHostConfig` |
 | Remote MCP | Serves no Lua tool | `TestTenantMode_SaaSProfile`, `TestRemoteMCPDeps_UsesGatedHandles`, `TestNewServer_LuaToolsAreOptIn` |
 | Webhooks (`/hooks/...`) | A request without a verified assertion gets 401 | `TestTenantMode_SaaSProfile`, the "declarative hook without assertion" case in `internal/tenanthost` |
 | Scheduler | Not started by the server | `TestTenantScheduler_WritesOnlyIntoItsTenant` (the per-tenant CLI scheduler) |
+| CLI, CLI scheduler, stdio MCP | Same Lua HTTP policy and host config rules as the server | `TestApplyTenantProfile`, `TestTenantCLI_AppliesTheTenantProfile` |
 
 ### Lua HTTP destinations
 
@@ -805,13 +806,22 @@ transport even when the secrets are withheld from scripts.
   [postgres-backend.md](postgres-backend.md#operator-commands-in-tenant-mode)).
   The CLI, the scheduler and stdio MCP need `--tenant` for every command that
   touches data, and `rela-docs` refuses tenant mode.
+- The CLI applies the tenant profile to every command that opens a tenant,
+  the scheduler and stdio MCP included. Lua `http.*` is strict, with the
+  destinations in `RELA_LUA_HTTP_ALLOW`; an entry that does not parse fails
+  the command. `.rela/secrets.yaml` and `.rela/ai.yaml` are withheld unless
+  `RELA_TENANT_SHARED_HOST_CONFIG=1`. Stdio MCP offers `lua_eval` and
+  `lua_run` to the operator who started it, and those run under the same
+  profile.
 
 ### Limits that apply in every mode
 
 These bounds do not depend on tenant mode:
 
 - Lua `http.*` always refuses link-local addresses, the cloud metadata
-  service, unspecified, multicast and broadcast addresses.
+  service, unspecified, multicast and broadcast addresses. It also refuses
+  them in IPv4-mapped, NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`),
+  IPv4-compatible and 6to4 form.
 - Every script has a timeout, a call-stack limit, a value-stack limit and a
   16 MiB cap on the strings that `string.rep`, `string.format` and
   `table.concat` build. Total script memory has no limit, so run the server
@@ -830,10 +840,6 @@ and the Lua guide documents that.
 - **Flows of an evicted tenant wait.** The flow worker runs only while its
   tenant is resident. A flow step that is due while the tenant is evicted
   runs when the tenant is next opened.
-- **Operator commands do not apply the tenant profile.** A
-  `rela-postgres --tenant <org_id> scheduler` process is started by the
-  operator. It reads `.rela/secrets.yaml` and `.rela/ai.yaml`, and its Lua
-  HTTP policy is not strict.
 
 ## Residual risks and known limitations
 

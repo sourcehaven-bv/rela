@@ -34,7 +34,14 @@ func TestAddrPolicy_Permits(t *testing.T) {
 		{"::ffff:169.254.169.254", false, false, false}, // v4-mapped metadata
 		{"64:ff9b::a9fe:a9fe", false, false, false},     // NAT64 metadata
 		{"2002:a9fe:a9fe::1", false, false, false},      // 6to4 metadata
-		{"fd00:ec2::254", false, false, false},          // AWS IPv6 metadata
+		{"64:ff9b:1::a9fe:a9fe", false, false, false},   // local-use NAT64 metadata
+		{"64:ff9b:1:ffff::a9fe:101", false, false, false},
+		{"64:ff9b:1::e000:1", false, false, false}, // local-use NAT64 multicast
+		{"::a9fe:a9fe", false, false, false},       // IPv4-compatible metadata
+		{"::169.254.1.1", false, false, false},
+		{"::ffff:ffff", false, false, false},   // IPv4-compatible broadcast
+		{"::e000:1", false, false, false},      // IPv4-compatible multicast
+		{"fd00:ec2::254", false, false, false}, // AWS IPv6 metadata
 		{"fe80::1", false, false, false},
 		{"fe80::1%en0", false, false, false},
 		{"0.0.0.0", false, false, false},
@@ -63,9 +70,12 @@ func TestAddrPolicy_Permits(t *testing.T) {
 		{"192.0.2.1", true, false, false},
 		{"240.0.0.1", true, false, false},
 		{"2001:db8::1", true, false, false},
-		{"64:ff9b::a00:1", true, false, false}, // NAT64 of 10.0.0.1
-		{"2002:7f00:1::1", true, false, false}, // 6to4 of 127.0.0.1
-		{"::7f00:1", true, false, false},       // IPv4-compatible 127.0.0.1
+		{"64:ff9b::a00:1", true, false, false},       // NAT64 of 10.0.0.1
+		{"2002:7f00:1::1", true, false, false},       // 6to4 of 127.0.0.1
+		{"::7f00:1", true, false, false},             // IPv4-compatible 127.0.0.1
+		{"::5db8:d822", true, false, false},          // IPv4-compatible public: deprecated
+		{"64:ff9b:1::5db8:d822", true, false, false}, // local-use NAT64 of a public address
+		{"64:ff9b:1::a00:1", true, false, false},     // local-use NAT64 of 10.0.0.1
 	}
 	def := addrPolicy{}
 	strict := addrPolicy{strict: true}
@@ -296,26 +306,75 @@ func TestClassifyHTTPError_BlockedHidesAddress(t *testing.T) {
 func TestSetHTTPPolicy_Once(t *testing.T) {
 	// Not parallel: it swaps the process-wide client.
 	prevClient := sharedHTTPClient.Load()
-	prevSet := httpPolicySet.Load()
+	prevPolicy := installedPolicy.Load()
 	t.Cleanup(func() {
 		sharedHTTPClient.Store(prevClient)
-		httpPolicySet.Store(prevSet)
+		installedPolicy.Store(prevPolicy)
 	})
-	httpPolicySet.Store(false)
+	installedPolicy.Store(nil)
 
+	if _, ok := CurrentHTTPPolicy(); ok {
+		t.Fatal("CurrentHTTPPolicy reports a policy before any was set")
+	}
 	if err := SetHTTPPolicy(HTTPPolicy{AllowHosts: []string{"bad"}}); err == nil {
 		t.Fatal("SetHTTPPolicy accepted a bad policy")
 	}
-	if httpPolicySet.Load() {
+	if _, ok := CurrentHTTPPolicy(); ok {
 		t.Fatal("a rejected policy counted as set")
 	}
-	if err := SetHTTPPolicy(HTTPPolicy{Strict: true}); err != nil {
+	strict := HTTPPolicy{Strict: true, Allow: []netip.Prefix{netip.MustParsePrefix("10.1.0.0/16")},
+		AllowHosts: []string{"idp.internal:8443"}}
+	if err := SetHTTPPolicy(strict); err != nil {
 		t.Fatalf("SetHTTPPolicy: %v", err)
 	}
-	if sharedHTTPClient.Load() == prevClient {
+	set := sharedHTTPClient.Load()
+	if set == prevClient {
 		t.Fatal("the shared client was not replaced")
 	}
-	if err := SetHTTPPolicy(HTTPPolicy{}); err == nil {
-		t.Fatal("a second SetHTTPPolicy succeeded")
+	if got, ok := CurrentHTTPPolicy(); !ok || !got.equal(strict) {
+		t.Fatalf("CurrentHTTPPolicy = %+v, %v; want %+v", got, ok, strict)
+	}
+	if err := SetHTTPPolicy(strict.clone()); err != nil {
+		t.Fatalf("an equal second SetHTTPPolicy: %v", err)
+	}
+	if sharedHTTPClient.Load() != set {
+		t.Fatal("an equal second SetHTTPPolicy replaced the client")
+	}
+	for _, other := range []HTTPPolicy{{}, {Strict: true}, {Strict: true, Allow: strict.Allow}} {
+		if err := SetHTTPPolicy(other); err == nil {
+			t.Fatalf("a second SetHTTPPolicy with %+v succeeded", other)
+		}
+	}
+}
+
+func TestEmbeddedIPv4(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		addr string
+		want string // empty when no IPv4 address is embedded
+	}{
+		{"64:ff9b::a9fe:a9fe", "169.254.169.254"},
+		{"64:ff9b:1::a9fe:a9fe", "169.254.169.254"},
+		{"64:ff9b:1:abcd::a00:1", "10.0.0.1"},
+		{"::a9fe:a9fe", "169.254.169.254"},
+		{"::2", "0.0.0.2"},
+		{"2002:a9fe:a9fe::1", "169.254.169.254"},
+		{"::", ""},
+		{"::1", ""},
+		{"64:ff9b:2::1", ""},
+		{"2606:2800:220:1::1", ""},
+		{"10.0.0.1", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.addr, func(t *testing.T) {
+			t.Parallel()
+			got, ok := embeddedIPv4(netip.MustParseAddr(tc.addr))
+			switch {
+			case tc.want == "" && ok:
+				t.Fatalf("embeddedIPv4 = %v, want none", got)
+			case tc.want != "" && (!ok || got.String() != tc.want):
+				t.Fatalf("embeddedIPv4 = %v, %v, want %s", got, ok, tc.want)
+			}
+		})
 	}
 }

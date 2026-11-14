@@ -115,3 +115,25 @@ func TestWithWithheldHostConfig(t *testing.T) {
 		require.Equal(t, "sent", probeNote(t, svc, "mail"))
 	})
 }
+
+// TestWithWithheldHostConfig_SurvivesReassembly pins that a schema reload
+// keeps the host config withheld although its new base is built from the
+// config alone, as stdio MCP's reload does.
+func TestWithWithheldHostConfig_SurvivesReassembly(t *testing.T) {
+	const reason = "withheld by the test host"
+	opts := append(backendtest.Options(t), appbuild.WithWithheldHostConfig(reason))
+	origin, err := appbuild.Discover(writeWithheldProject(t), script.NewEngine(), opts...)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = origin.Close() })
+
+	base, err := appbuild.NewSharedBase(origin.Base().Config())
+	require.NoError(t, err)
+	successor, err := base.ForReassembly(origin).Assemble(
+		origin.Store(), origin.Searcher(), origin.VisibleSearcher(), nil)
+	require.NoError(t, err)
+	t.Cleanup(successor.CloseAssembly)
+
+	secret := probeNote(t, successor, "secret")
+	require.Contains(t, secret, reason)
+	require.NotContains(t, secret, "operator-token")
+}

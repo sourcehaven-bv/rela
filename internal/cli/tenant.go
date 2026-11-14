@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
 )
@@ -68,6 +70,11 @@ func openProject(startDir, org string, opts ...appbuild.Option) (*appbuild.Servi
 		}
 		return svc, svc, nil
 	}
+	profileOpts, err := applyTenantProfile(os.Getenv, appbuild.TenantProfile.ApplyLuaHTTPPolicy)
+	if err != nil {
+		return nil, nil, err
+	}
+	opts = append(slices.Clone(opts), profileOpts...)
 	base, err := appbuild.DiscoverSharedBase(startDir, script.NewEngine(), opts...)
 	if err != nil {
 		return nil, nil, err
@@ -84,6 +91,50 @@ func openProject(startDir, org string, opts ...appbuild.Option) (*appbuild.Servi
 		return nil, nil, err
 	}
 	return opened.Services, watchedTenant{opened: opened, stop: stop}, nil
+}
+
+// Environment variables of the CLI's tenant profile. rela-server reads the
+// same ones as the defaults of -lua-http-allow and
+// -tenant-shared-host-config.
+const (
+	envLuaHTTPAllow           = "RELA_LUA_HTTP_ALLOW"
+	envTenantSharedHostConfig = "RELA_TENANT_SHARED_HOST_CONFIG"
+)
+
+// cliWithheldReason is what a tenant's script sees when it reads a secret or
+// calls ai.* while the host config is withheld.
+const cliWithheldReason = "the operator's secrets and AI settings are not shared in tenant mode " +
+	"(" + envTenantSharedHostConfig + "=1)"
+
+// cliTenantProfile is tenant mode's SaaS profile as the CLI reads it from
+// the environment.
+func cliTenantProfile(getenv func(string) string) appbuild.TenantProfile {
+	return appbuild.TenantProfile{
+		LuaHTTPAllow:     getenv(envLuaHTTPAllow),
+		SharedHostConfig: getenv(envTenantSharedHostConfig) == "1",
+		WithheldReason:   cliWithheldReason,
+	}
+}
+
+// applyTenantProfile applies tenant mode's SaaS profile (TKT-3RWQ1PK) to a
+// CLI command that opens a tenant, as rela-server -tenant-mode does: it
+// installs the strict Lua HTTP policy through apply, which is
+// [appbuild.TenantProfile.ApplyLuaHTTPPolicy] outside tests, and returns
+// the build options that withhold secrets.yaml and ai.yaml unless
+// $RELA_TENANT_SHARED_HOST_CONFIG is 1. An allowlist that does not parse,
+// or a policy that is not installed, fails the command. The scheduler and
+// stdio MCP (lua_eval included) run under it like every other command.
+func applyTenantProfile(
+	getenv func(string) string, apply func(appbuild.TenantProfile) (lua.HTTPPolicy, error),
+) ([]appbuild.Option, error) {
+	prof := cliTenantProfile(getenv)
+	if _, err := prof.LuaHTTPPolicy(); err != nil {
+		return nil, fmt.Errorf("%s: %w", envLuaHTTPAllow, err)
+	}
+	if _, err := apply(prof); err != nil {
+		return nil, err
+	}
+	return prof.Options(), nil
 }
 
 // tenantWatchInterval is how often [watchTenant] checks the tenant. A

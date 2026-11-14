@@ -2,14 +2,12 @@ package main
 
 import (
 	"context"
-	"errors"
 	"net/netip"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
-	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
 )
 
@@ -156,39 +154,40 @@ func TestRefuseTenantOnlyFlags(t *testing.T) {
 	}
 }
 
-// TestApplyLuaHTTPPolicy pins that tenant mode sets a strict Lua HTTP
-// policy with the -lua-http-allow destinations, and that a failure to set
-// it stops startup.
-func TestApplyLuaHTTPPolicy(t *testing.T) {
-	var got []lua.HTTPPolicy
-	record := func(p lua.HTTPPolicy) error { got = append(got, p); return nil }
-
-	p, err := applyLuaHTTPPolicy(tenantFlags{enabled: true}, record)
+// TestTenantProfile pins that the flags map onto the shared tenant
+// profile: a strict Lua HTTP policy with the -lua-http-allow destinations,
+// and the host config withheld unless -tenant-shared-host-config is set.
+// appbuild's tests pin that applying the policy fails closed.
+func TestTenantProfile(t *testing.T) {
+	p, err := luaHTTPPolicy(tenantFlags{enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || !got[0].Strict || len(got[0].Allow) != 0 || len(got[0].AllowHosts) != 0 {
-		t.Fatalf("set %+v; want one strict policy with no allowlist", got)
-	}
-	if !p.Strict {
-		t.Error("returned policy is not strict")
+	if !p.Strict || len(p.Allow) != 0 || len(p.AllowHosts) != 0 {
+		t.Fatalf("policy %+v; want strict with no allowlist", p)
 	}
 
-	got = nil
-	if _, err = applyLuaHTTPPolicy(tenantFlags{enabled: true, luaHTTPAllow: "10.1.0.0/16,idp.internal:8443"},
-		record); err != nil {
+	p, err = luaHTTPPolicy(tenantFlags{enabled: true, luaHTTPAllow: "10.1.0.0/16,idp.internal:8443"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	want := []netip.Prefix{netip.MustParsePrefix("10.1.0.0/16")}
-	if len(got) != 1 || !got[0].Strict || !slices.Equal(got[0].Allow, want) ||
-		!slices.Equal(got[0].AllowHosts, []string{"idp.internal:8443"}) {
-
-		t.Fatalf("set %+v; want strict with the allowlist", got)
+	if !p.Strict || !slices.Equal(p.Allow, want) || !slices.Equal(p.AllowHosts, []string{"idp.internal:8443"}) {
+		t.Fatalf("policy %+v; want strict with the allowlist", p)
 	}
 
-	if _, err = applyLuaHTTPPolicy(tenantFlags{enabled: true},
-		func(lua.HTTPPolicy) error { return errors.New("already set") }); err == nil {
-		t.Error("a failed SetHTTPPolicy did not stop startup")
+	if _, err = luaHTTPPolicy(tenantFlags{enabled: true, luaHTTPAllow: "nope"}); err == nil ||
+		!strings.Contains(err.Error(), "-lua-http-allow") {
+
+		t.Errorf("bad allowlist = %v; want an error naming -lua-http-allow", err)
+	}
+
+	prof := tenantProfile(tenantFlags{enabled: true})
+	if prof.SharedHostConfig || prof.WithheldReason != withheldHostConfigReason || len(prof.Options()) != 1 {
+		t.Errorf("profile %+v; want the host config withheld", prof)
+	}
+	if opts := tenantProfile(tenantFlags{enabled: true, sharedHostConfig: true}).Options(); len(opts) != 0 {
+		t.Errorf("shared host config: %d options; want none", len(opts))
 	}
 }
 

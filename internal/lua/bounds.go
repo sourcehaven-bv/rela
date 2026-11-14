@@ -1,6 +1,8 @@
 package lua
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
@@ -72,9 +74,7 @@ func newBoundedState() *lua.LState {
 func installBuilderCaps(ls *lua.LState) {
 	if str, ok := ls.GetGlobal(lua.StringLibName).(*lua.LTable); ok {
 		ls.SetField(str, "rep", ls.NewFunction(boundedStrRep))
-		if orig, isFn := ls.GetField(str, "format").(*lua.LFunction); isFn {
-			ls.SetField(str, "format", ls.NewFunction(boundedStrFormat(orig)))
-		}
+		ls.SetField(str, "format", ls.NewFunction(boundedStrFormat))
 	}
 	if tbl, ok := ls.GetGlobal(lua.TabLibName).(*lua.LTable); ok {
 		if orig, isFn := ls.GetField(tbl, "concat").(*lua.LFunction); isFn {
@@ -103,63 +103,153 @@ func boundedStrRep(ls *lua.LState) int {
 	return 1
 }
 
-// boundedStrFormat wraps string.format. Like Lua 5.1 it refuses a width or
-// precision of more than two digits; Go's fmt would accept up to a million.
-// It then refuses a call whose largest possible result is over the cap.
-func boundedStrFormat(orig *lua.LFunction) lua.LGFunction {
-	return func(ls *lua.LState) int {
-		f := ls.CheckString(1)
-		verbs, ok := countFormatVerbs(f)
-		if !ok {
-			ls.RaiseError("string.format: invalid format (width or precision too long)")
-			return 0
+// boundedStrFormat is string.format with Lua 5.1 format syntax and the
+// result capped.
+//
+// gopher-lua passes the whole format to Go's fmt.Sprintf. Go's fmt accepts
+// explicit argument indexes (%[1]s) and a * width, so one large argument
+// could be used many times and no size estimate over the arguments would
+// hold. This version parses the format itself and formats verb by verb,
+// with one argument each. Each argument is used at most once. A verb is
+// formatted with fmt.Sprintf on the same Lua value as before, so the output
+// of a valid format does not change.
+//
+// The whole result is estimated before anything is built, and the running
+// size is checked again as each verb is added.
+func boundedStrFormat(ls *lua.LState) int {
+	f := ls.CheckString(1)
+	verbs, err := parseLuaFormat(f)
+	if err != nil {
+		ls.RaiseError("string.format: %s", err.Error())
+		return 0
+	}
+	top := ls.GetTop()
+	argOf := func(v formatVerb) lua.LValue {
+		if v.arg < 0 || v.arg > top {
+			return nil
 		}
-		size := len(f) + verbs*maxFormatVerbBytes
-		top := ls.GetTop()
-		for i := 2; i <= top; i++ {
-			if s, isStr := ls.Get(i).(lua.LString); isStr {
-				size += len(s)
-			}
-			if size > maxBuiltString {
-				raiseTooLarge(ls, "string.format")
-				return 0
-			}
-		}
+		return ls.Get(v.arg)
+	}
+	size := len(f)
+	for _, v := range verbs {
+		size += v.estimate(argOf(v))
 		if size > maxBuiltString {
 			raiseTooLarge(ls, "string.format")
 			return 0
 		}
-		return callOriginal(ls, orig)
+	}
+	var b strings.Builder
+	lit := 0
+	for _, v := range verbs {
+		b.WriteString(f[lit:v.start])
+		lit = v.end
+		switch arg := argOf(v); {
+		case v.arg < 0:
+			b.WriteByte('%')
+		case arg == nil:
+			ls.ArgError(v.arg, "no value")
+			return 0
+		default:
+			fmt.Fprintf(&b, v.spec, arg)
+		}
+		if b.Len() > maxBuiltString {
+			raiseTooLarge(ls, "string.format")
+			return 0
+		}
+	}
+	b.WriteString(f[lit:])
+	ls.Push(lua.LString(b.String()))
+	return 1
+}
+
+// formatVerb is one conversion of a Lua format string. f[start:end] is the
+// conversion as written; spec is the Go format for it. arg is the stack
+// index of its argument, or -1 for "%%", which takes none.
+type formatVerb struct {
+	start, end int
+	arg        int
+	spec       string
+	verb       byte
+}
+
+// estimate bounds the bytes this verb adds for arg. A width or precision is
+// at most 99 and a %f of 1e308 has 309 digits, so a verb adds at most
+// maxFormatVerbBytes besides its string argument. %q escapes a byte in at
+// most four bytes.
+func (v formatVerb) estimate(arg lua.LValue) int {
+	s, isStr := arg.(lua.LString)
+	switch {
+	case v.arg < 0:
+		return 0
+	case !isStr:
+		return maxFormatVerbBytes
+	case v.verb == 'q':
+		return maxFormatVerbBytes + 4*len(s)
+	default:
+		return maxFormatVerbBytes + len(s)
 	}
 }
 
-// countFormatVerbs counts the conversions in a format string and reports
-// false when one has a width or precision of more than two digits.
-func countFormatVerbs(f string) (int, bool) {
-	verbs := 0
+const (
+	luaFormatFlags = "-+ #0"
+	luaFormatVerbs = "cdiouxXeEfgGqs"
+)
+
+// parseLuaFormat splits f into its conversions with the Lua 5.1 rules:
+// flags from "-+ #0", a width and a precision of at most two digits each,
+// and one of the verbs cdiouxXeEfgGqs. "%%" is a literal percent sign and is
+// returned as a verb that takes no argument. An explicit argument index
+// ("[") and a "*" width are refused.
+func parseLuaFormat(f string) ([]formatVerb, error) {
+	var verbs []formatVerb
+	nextArg := 2 // stack index 1 is the format itself
 	for i := 0; i < len(f); i++ {
 		if f[i] != '%' {
 			continue
 		}
+		start := i
 		i++
 		if i < len(f) && f[i] == '%' {
+			verbs = append(verbs, formatVerb{start: start, end: i + 1, arg: -1, spec: "%%", verb: '%'})
 			continue
 		}
-		for i < len(f) && strings.IndexByte("-+ #0", f[i]) >= 0 {
+		flagStart := i
+		for i < len(f) && strings.IndexByte(luaFormatFlags, f[i]) >= 0 {
 			i++
 		}
+		if i-flagStart >= len(luaFormatFlags) {
+			return nil, errors.New("invalid format (repeated flags)")
+		}
 		if digitsAt(f, &i) > 2 {
-			return 0, false
+			return nil, errors.New("invalid format (width or precision too long)")
 		}
 		if i < len(f) && f[i] == '.' {
 			i++
 			if digitsAt(f, &i) > 2 {
-				return 0, false
+				return nil, errors.New("invalid format (width or precision too long)")
 			}
 		}
-		verbs++
+		if i >= len(f) {
+			return nil, errors.New("invalid format (ends in a conversion)")
+		}
+		c := f[i]
+		if c == '[' || c == '*' {
+			return nil, fmt.Errorf("invalid format (%q is not supported)", c)
+		}
+		if strings.IndexByte(luaFormatVerbs, c) < 0 {
+			return nil, fmt.Errorf("invalid option '%%%c' to 'format'", c)
+		}
+		goVerb := c
+		if c == 'u' {
+			// Go has no %u. An unsigned Lua 5.1 conversion of a
+			// non-negative number prints as %d.
+			goVerb = 'd'
+		}
+		spec := f[start:i] + string(goVerb)
+		verbs = append(verbs, formatVerb{start: start, end: i + 1, arg: nextArg, spec: spec, verb: c})
+		nextArg++
 	}
-	return verbs, true
+	return verbs, nil
 }
 
 // digitsAt advances *i past a run of decimal digits and returns its length.

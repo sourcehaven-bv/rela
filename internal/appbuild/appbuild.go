@@ -2304,6 +2304,9 @@ func (b *SharedBase) IsReassembly() bool { return b.reassembly }
 // It carries prev's store schema refresher too: the caller applies the new
 // schema to the store with [RefreshStoreSchema] once the successor is in
 // force.
+// It keeps prev's [WithWithheldHostConfig] too. A reload builds its base
+// from the config alone, and withholding must not end with it: stdio MCP
+// in tenant mode reloads on every schema edit.
 //
 // Nil: rejected by use — prev is dereferenced.
 func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
@@ -2318,6 +2321,9 @@ func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
 	next.dueWake = prev.dueWake
 	if prev.base != nil {
 		next.channelFiles = prev.base.channelFiles
+		if next.opts.withheld == "" {
+			next.opts.withheld = prev.base.opts.withheld
+		}
 	}
 	next.storeSchema = prev.storeSchema
 	return &next
