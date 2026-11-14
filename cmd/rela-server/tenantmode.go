@@ -12,12 +12,14 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/idporg"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
 	"github.com/Sourcehaven-BV/rela/internal/tenanthost"
@@ -39,7 +41,18 @@ type tenantFlags struct {
 	// from, so a tenant's suspension follows its org's. Empty turns that
 	// off. Its secret is $RELA_IDP_OPERATOR_SECRET, never a flag.
 	idpOrgAPI string
+	// luaHTTPAllow is the -lua-http-allow list: CIDRs, IPs and host:port
+	// destinations that tenant mode's strict Lua HTTP policy reopens.
+	luaHTTPAllow string
+	// sharedHostConfig is -tenant-shared-host-config: share the .rela
+	// directory's secrets and ai.yaml with every tenant.
+	sharedHostConfig bool
 }
+
+// withheldHostConfigReason is what a tenant's script sees when it reads a
+// secret or calls ai.* while the host config is withheld.
+const withheldHostConfigReason = "the operator's secrets and AI settings are not shared in tenant mode " +
+	"(rela-server -tenant-shared-host-config)"
 
 // envIDPOperatorSecret holds the HMAC secret of the IdP operator API. It is
 // read from the environment only, so it never shows in `ps` or shell
@@ -69,6 +82,15 @@ func registerTenantFlags(t *tenantFlags) {
 		"Tenant mode: the IdP operator API (http(s)://host:port or unix:///path/to/socket). When set, a "+
 			"verified organization.updated webhook suspends or resumes the org's tenant to match the IdP. "+
 			"Needs -webhook-* and the secret in "+envIDPOperatorSecret+". Also RELA_TENANT_IDP_ORG_API.")
+	flag.StringVar(&t.luaHTTPAllow, "lua-http-allow", envOr("RELA_LUA_HTTP_ALLOW", ""),
+		"Tenant mode: comma-separated CIDRs, IPs and host:port destinations that Lua http.* may reach "+
+			"although they are not public addresses, such as an internal IdP. Tenant mode refuses every "+
+			"loopback, private and other non-public address otherwise. Also RELA_LUA_HTTP_ALLOW.")
+	flag.BoolVar(&t.sharedHostConfig, "tenant-shared-host-config", os.Getenv("RELA_TENANT_SHARED_HOST_CONFIG") == "1",
+		"Tenant mode: let every tenant's scripts, flows and connections use .rela/secrets.yaml and "+
+			".rela/ai.yaml. These are the operator's own credentials, the same for every tenant, used by "+
+			"operator-authored scripts on tenant data. Off by default: secrets and ai.* then fail with an "+
+			"error. Mail is always shared. Also RELA_TENANT_SHARED_HOST_CONFIG=1.")
 }
 
 // coverage-ignore-end
@@ -137,15 +159,88 @@ func validateTenantMode(f *serverFlags, envUser string, supported bool) (identit
 	if f.tenant.provisionRate < 0 {
 		return mode, errors.New("-tenant-provision-rate must not be negative")
 	}
+	if _, err := luaHTTPPolicy(f.tenant); err != nil {
+		return mode, err
+	}
 	return mode, nil
+}
+
+// luaHTTPPolicy is tenant mode's Lua HTTP destination policy: strict, with
+// the -lua-http-allow destinations reopened.
+func luaHTTPPolicy(t tenantFlags) (lua.HTTPPolicy, error) {
+	var entries []string
+	for e := range strings.SplitSeq(t.luaHTTPAllow, ",") {
+		if e = strings.TrimSpace(e); e != "" {
+			entries = append(entries, e)
+		}
+	}
+	prefixes, hosts, err := lua.ParseHTTPAllowList(entries)
+	if err != nil {
+		return lua.HTTPPolicy{}, fmt.Errorf("-lua-http-allow: %w", err)
+	}
+	return lua.HTTPPolicy{Strict: true, Allow: prefixes, AllowHosts: hosts}, nil
+}
+
+// applyLuaHTTPPolicy sets tenant mode's Lua HTTP policy through set, which
+// is [lua.SetHTTPPolicy] outside tests, and returns the policy it set. It
+// must run before any Lua runtime is built, so no script sees the
+// single-tenant default.
+func applyLuaHTTPPolicy(t tenantFlags, set func(lua.HTTPPolicy) error) (lua.HTTPPolicy, error) {
+	p, err := luaHTTPPolicy(t)
+	if err != nil {
+		return lua.HTTPPolicy{}, err
+	}
+	if err := set(p); err != nil {
+		return lua.HTTPPolicy{}, fmt.Errorf("set the Lua HTTP policy: %w", err)
+	}
+	return p, nil
+}
+
+// logTenantProfile logs once at startup what tenant mode turns off or
+// scopes (TKT-3RWQ1PK), so an operator sees it before the first tenant
+// opens. Each tenant logs what it would have served on its first open.
+func logTenantProfile(t tenantFlags, p lua.HTTPPolicy) {
+	hostConfig := "withheld"
+	if t.sharedHostConfig {
+		hostConfig = "shared"
+	}
+	slog.Info("tenant mode: shell commands, git sync and the scheduler are off; "+
+		"Lua http.* reaches public addresses only",
+		"lua_http_allow", len(p.Allow)+len(p.AllowHosts), "secrets_and_ai", hostConfig, "mail", "shared")
+}
+
+// noteTenantRestrictions turns off git sync on a tenant's app and logs,
+// once per process, how many configured commands and whether git sync
+// tenant mode turned off. Every tenant shares one configuration, so one
+// line describes them all.
+func (s *server) noteTenantRestrictions(app *dataentry.App) {
+	gitWasOn := dataentry.DisableGitSync(app)
+	s.tenantNotice.Do(func() {
+		if n := len(app.Cfg().Commands); n > 0 || gitWasOn {
+			slog.Warn("tenant mode: data-entry.yaml features are turned off",
+				"commands", n, "git_sync", gitWasOn)
+		}
+	})
 }
 
 // refuseTenantOnlyFlags refuses, outside tenant mode, a flag that only
 // tenant mode acts on, so a server never runs without a behavior its
 // operator asked for.
+//
+// -lua-http-allow is refused too: outside tenant mode Lua http.* is not
+// strict, so an allowlist would suggest a restriction that is not there.
 func refuseTenantOnlyFlags(t tenantFlags) error {
-	if !t.enabled && t.idpOrgAPI != "" {
+	if t.enabled {
+		return nil
+	}
+	switch {
+	case t.idpOrgAPI != "":
 		return errors.New("-tenant-idp-org-api needs tenant mode (-tenant-mode)")
+	case t.luaHTTPAllow != "":
+		return errors.New("-lua-http-allow needs tenant mode (-tenant-mode): " +
+			"outside it Lua http.* may reach every address but link-local and metadata ones")
+	case t.sharedHostConfig:
+		return errors.New("-tenant-shared-host-config needs tenant mode (-tenant-mode)")
 	}
 	return nil
 }
@@ -295,6 +390,8 @@ func (s *server) openTenant(t tenant.Tenant, opened *tenant.Opened) (*tenantResi
 		slog.Warn("tenant mode: declarative webhooks need a verified assertion and are refused without one",
 			"org_id", t.OrgID, "schema", t.Schema, "hooks", len(app.Cfg().Webhooks))
 	}
+	// Before StartWatching, which would start git sync's periodic fetch.
+	s.noteTenantRestrictions(app)
 	if err := app.StartWatching(); err != nil {
 		slog.Warn("tenant: file watcher not started", "org_id", t.OrgID, "schema", t.Schema, "error", err)
 	}
@@ -394,6 +491,13 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 	if legacyErr := tenant.RefuseLegacyMap(root); legacyErr != nil {
 		return nil, legacyErr
 	}
+	// The strict Lua HTTP policy is set before anything can build a Lua
+	// runtime; validateTenantMode has parsed the allowlist.
+	policy, err := applyLuaHTTPPolicy(f.tenant, lua.SetHTTPPolicy)
+	if err != nil {
+		return nil, err
+	}
+	logTenantProfile(f.tenant, policy)
 	ctx := context.Background()
 	resolver, err := tenant.NewClusterResolver(ctx, os.Getenv("RELA_DATABASE_URL"))
 	if err != nil {

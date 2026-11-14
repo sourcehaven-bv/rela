@@ -1684,7 +1684,7 @@ In tenant mode many customers share one server, so a script must not
 reach the server itself or the operator's internal network. The
 operator can keep named destinations reachable with an allowlist of
 address ranges (`10.1.0.0/16`) or `host:port` entries
-(`idp.internal:8443`). The allowlist never reopens an address that is
+(`idp.internal:8443`), given with `rela-server -lua-http-allow`. The allowlist never reopens an address that is
 always refused. In strict mode the `HTTP_PROXY` and `HTTPS_PROXY`
 environment variables are ignored, because a proxy would make the
 connection on the script's behalf.

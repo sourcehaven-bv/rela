@@ -1,9 +1,15 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"net/netip"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
 )
 
@@ -45,6 +51,13 @@ func TestValidateTenantMode(t *testing.T) {
 			flags: func() *serverFlags { f := jwtFlags(); f.tenant.provision = "always"; return f }},
 		{name: "provision negative rate", supported: true, wantErr: "-tenant-provision-rate",
 			flags: func() *serverFlags { f := jwtFlags(); f.tenant.provisionRate = -1; return f }},
+		{name: "lua http allowlist", supported: true, flags: func() *serverFlags {
+			f := jwtFlags()
+			f.tenant.luaHTTPAllow = "10.1.0.0/16, 10.2.3.4,idp.internal:8443"
+			return f
+		}},
+		{name: "lua http allowlist unparsable", supported: true, wantErr: "-lua-http-allow",
+			flags: func() *serverFlags { f := jwtFlags(); f.tenant.luaHTTPAllow = "idp.internal"; return f }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -131,5 +144,67 @@ func TestRefuseTenantOnlyFlags(t *testing.T) {
 	}
 	if err := refuseTenantOnlyFlags(tenantFlags{}); err != nil {
 		t.Fatalf("no flags = %v", err)
+	}
+	for _, tf := range []tenantFlags{{luaHTTPAllow: "10.0.0.0/8"}, {sharedHostConfig: true}} {
+		if err := refuseTenantOnlyFlags(tf); err == nil || !strings.Contains(err.Error(), "needs tenant mode") {
+			t.Errorf("%+v without tenant mode = %v; want a refusal", tf, err)
+		}
+		tf.enabled = true
+		if err := refuseTenantOnlyFlags(tf); err != nil {
+			t.Errorf("%+v in tenant mode = %v", tf, err)
+		}
+	}
+}
+
+// TestApplyLuaHTTPPolicy pins that tenant mode sets a strict Lua HTTP
+// policy with the -lua-http-allow destinations, and that a failure to set
+// it stops startup.
+func TestApplyLuaHTTPPolicy(t *testing.T) {
+	var got []lua.HTTPPolicy
+	record := func(p lua.HTTPPolicy) error { got = append(got, p); return nil }
+
+	p, err := applyLuaHTTPPolicy(tenantFlags{enabled: true}, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || !got[0].Strict || len(got[0].Allow) != 0 || len(got[0].AllowHosts) != 0 {
+		t.Fatalf("set %+v; want one strict policy with no allowlist", got)
+	}
+	if !p.Strict {
+		t.Error("returned policy is not strict")
+	}
+
+	got = nil
+	if _, err = applyLuaHTTPPolicy(tenantFlags{enabled: true, luaHTTPAllow: "10.1.0.0/16,idp.internal:8443"},
+		record); err != nil {
+		t.Fatal(err)
+	}
+	want := []netip.Prefix{netip.MustParsePrefix("10.1.0.0/16")}
+	if len(got) != 1 || !got[0].Strict || !slices.Equal(got[0].Allow, want) ||
+		!slices.Equal(got[0].AllowHosts, []string{"idp.internal:8443"}) {
+
+		t.Fatalf("set %+v; want strict with the allowlist", got)
+	}
+
+	if _, err = applyLuaHTTPPolicy(tenantFlags{enabled: true},
+		func(lua.HTTPPolicy) error { return errors.New("already set") }); err == nil {
+		t.Error("a failed SetHTTPPolicy did not stop startup")
+	}
+}
+
+// TestBuildCommandAuthorizer_TenantMode pins that tenant mode installs the
+// authorizer that refuses every command, whatever the ACL and bind.
+func TestBuildCommandAuthorizer_TenantMode(t *testing.T) {
+	f := &serverFlags{bind: "127.0.0.1", allowUnauthCommands: true}
+	f.tenant.enabled = true
+	authz, err := buildCommandAuthorizer(f, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authz != dataentry.TenantModeCommandAuthorizer() {
+		t.Fatalf("authorizer = %T; want the tenant-mode one", authz)
+	}
+	if authz.Authorize(context.Background(), dataentry.CommandConfig{Script: "true"}) {
+		t.Error("tenant mode authorized a command")
 	}
 }

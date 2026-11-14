@@ -8,7 +8,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -1050,6 +1052,34 @@ func TestCommandExecReadOnlyDenied(t *testing.T) {
 				t.Errorf("403 body must not echo the permission name: %s", w.Body.String())
 			}
 		})
+	}
+}
+
+// TestCommandExecTenantModeRefused pins tenant mode's command switch: the
+// exec route answers 403 with a problem type naming that commands are off
+// in tenant mode, the command does not run, and the page lists no command.
+func TestCommandExecTenantModeRefused(t *testing.T) {
+	app := newHandlerTestApp(t)
+	root := t.TempDir()
+	bindRepo(app, root)
+	app.commands.authz = TenantModeCommandAuthorizer()
+	app.Cfg().Commands = map[string]CommandConfig{
+		"cmd": {Label: "Cmd", Script: "touch ran", Context: "global"},
+	}
+
+	w := httptest.NewRecorder()
+	app.commands.handleCommandExec(w, httptest.NewRequest(http.MethodPost, "/api/command/cmd", http.NoBody))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "/errors/commands_disabled_in_tenant_mode") {
+		t.Errorf("body %q does not name the tenant-mode refusal", w.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "ran")); err == nil {
+		t.Error("the command ran")
+	}
+	if got := app.commands.resolveCommands(context.Background(), "dashboard", "", ""); len(got) != 0 {
+		t.Errorf("tenant mode offers commands: %v", got)
 	}
 }
 

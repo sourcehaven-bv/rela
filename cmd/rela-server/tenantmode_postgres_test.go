@@ -7,9 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -17,11 +19,13 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/backendtest"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
 	"github.com/Sourcehaven-BV/rela/internal/tenanthost"
@@ -72,13 +76,24 @@ type tenantDeployment struct {
 // through the tenant command.
 func newTenantDeployment(t *testing.T) tenantDeployment {
 	t.Helper()
+	return newTenantDeploymentWith(t, nil)
+}
+
+// newTenantDeploymentWith is newTenantDeployment with extra project files,
+// which replace the defaults of the same name.
+func newTenantDeploymentWith(t *testing.T, extra map[string]string) tenantDeployment {
+	t.Helper()
 	dir := t.TempDir()
-	for name, body := range map[string]string{
+	files := map[string]string{
 		"schema.yaml":     tenantSchema,
 		"data-entry.yaml": "app:\n  name: Tasks\n",
 		"acl.yaml":        tenantACL,
-	} {
-		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600))
+	}
+	maps.Copy(files, extra)
+	for name, body := range files {
+		path := filepath.Join(dir, name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 	}
 	base := backendtest.Database(t)
 	d := tenantDeployment{dir: dir, base: base, env: func(k string) string {
@@ -112,10 +127,20 @@ func (d tenantDeployment) host(t *testing.T) *tenantHost {
 	return d.hostWith(t, tenantFlags{})
 }
 
-// hostWith is host with the provisioning flags of tf.
+// hostWith is host with the tenant flags of tf. Tenant mode is on.
 func (d tenantDeployment) hostWith(t *testing.T, tf tenantFlags) *tenantHost {
 	t.Helper()
-	f := &serverFlags{projectDir: d.dir, bind: "127.0.0.1", port: "8080", jwtHeader: "X-Auth-Assertion"}
+	return d.hostFlags(t, tf, nil)
+}
+
+// hostFlags is hostWith with edit applied to the server flags.
+func (d tenantDeployment) hostFlags(t *testing.T, tf tenantFlags, edit func(*serverFlags)) *tenantHost {
+	t.Helper()
+	f := &serverFlags{projectDir: d.dir, bind: "127.0.0.1", port: "8080", jwtHeader: "X-Auth-Assertion", tenant: tf}
+	f.tenant.enabled = true
+	if edit != nil {
+		edit(f)
+	}
 	shared, err := appbuild.DiscoverSharedBase(d.dir, script.NewEngine(), discoverOptions(f)...)
 	require.NoError(t, err)
 	resolver, err := tenant.NewClusterResolver(t.Context(), d.base)
@@ -408,4 +433,116 @@ func TestTenantMode_LazyProvisioning(t *testing.T) {
 	list = tenantCall(t, th, "tok-org-new", http.MethodGet, "/api/v1/tasks", nil)
 	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
 	require.NotContains(t, list.Body.String(), "fresh", "the recreated tenant kept data from before the erasure")
+}
+
+// saasDataEntry configures a shell command and git sync, which tenant mode
+// must not serve.
+const saasDataEntry = `app:
+  name: Tasks
+git:
+  enabled: true
+  branch: main
+commands:
+  touch:
+    label: Touch
+    script: touch command-ran
+    context: global
+    permission: command:touch
+`
+
+// TestTenantMode_SaaSProfile is the acceptance test of TKT-3RWQ1PK over
+// real tenants: commands are refused and not offered, git sync answers as
+// not configured, declarative hooks need an assertion, the host's secrets
+// and ai.yaml are withheld unless shared, and the remote MCP server has no
+// Lua tools.
+func TestTenantMode_SaaSProfile(t *testing.T) {
+	d := newTenantDeploymentWith(t, map[string]string{
+		"data-entry.yaml":    saasDataEntry,
+		".rela/secrets.yaml": "token: operator-token\n",
+		// ada may sync and run the command, so only tenant mode refuses them.
+		"acl.yaml": strings.Replace(tenantACL, "    update: [task]\n",
+			"    update: [task]\n    permissions: [git:sync, command:touch]\n", 1),
+	})
+	for _, args := range [][]string{{"init", "-q"}, {"remote", "add", "origin", filepath.Join(t.TempDir(), "none")}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = d.dir
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+	th := d.hostFlags(t, tenantFlags{}, func(f *serverFlags) { f.remoteMCP = true })
+
+	t.Run("commands are refused", func(t *testing.T) {
+		rec := tenantCall(t, th, "tok-org-a", http.MethodPost, "/api/command/touch", nil)
+		require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), "/errors/commands_disabled_in_tenant_mode")
+		_, err := os.Stat(filepath.Join(d.dir, "command-ran"))
+		require.ErrorIs(t, err, os.ErrNotExist, "the command ran")
+
+		list := tenantCall(t, th, "tok-org-a", http.MethodGet, "/api/v1/_commands?page_type=dashboard", nil)
+		require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+		require.NotContains(t, list.Body.String(), "touch", "tenant mode offers a command")
+	})
+
+	t.Run("git sync is off", func(t *testing.T) {
+		rec := tenantCall(t, th, "tok-org-a", http.MethodPost, "/api/git/sync", nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), "git not configured")
+		status := tenantCall(t, th, "tok-org-a", http.MethodGet, "/api/git/status", nil)
+		require.Contains(t, status.Body.String(), `"available":false`)
+	})
+
+	t.Run("declarative hooks need an assertion", func(t *testing.T) {
+		rec := tenantCall(t, th, "", http.MethodPost, "/hooks/deploy", map[string]any{})
+		require.Equal(t, http.StatusUnauthorized, rec.Code, rec.Body.String())
+	})
+
+	t.Run("host config", func(t *testing.T) {
+		secretsOf := func(th *tenantHost) error {
+			lease, err := th.registry.Acquire(t.Context(), "org-a")
+			require.NoError(t, err)
+			defer lease.Release()
+			sec, err := lease.Value().opened.Services.LuaReadDeps().Host.Secrets("")
+			if err == nil {
+				require.Equal(t, "operator-token", sec["token"])
+			}
+			return err
+		}
+		err := secretsOf(th)
+		require.ErrorIs(t, err, lua.ErrHostConfigWithheld)
+		require.Contains(t, err.Error(), "-tenant-shared-host-config")
+
+		shared := d.hostWith(t, tenantFlags{sharedHostConfig: true})
+		require.NoError(t, secretsOf(shared), "-tenant-shared-host-config shares the secrets")
+	})
+
+	t.Run("remote MCP has no Lua tools", func(t *testing.T) {
+		ts := httptest.NewServer(th.handler)
+		t.Cleanup(ts.Close)
+		client := mcpgo.NewClient(&mcpgo.Implementation{Name: "test", Version: "0"}, nil)
+		cs, err := client.Connect(t.Context(), &mcpgo.StreamableClientTransport{
+			Endpoint: ts.URL + dataentry.MCPPath, DisableStandaloneSSE: true,
+			HTTPClient: &http.Client{Transport: assertionTransport{token: "tok-org-a", host: th.addr}},
+		}, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = cs.Close() })
+		tools, err := cs.ListTools(t.Context(), nil)
+		require.NoError(t, err)
+		require.NotEmpty(t, tools.Tools)
+		for _, tool := range tools.Tools {
+			require.False(t, strings.HasPrefix(tool.Name, "lua_"), "tenant mode's remote MCP lists %s", tool.Name)
+		}
+	})
+}
+
+// assertionTransport sends every request as the tenant's caller: with its
+// assertion, and with the Host and Origin the server's security config
+// accepts.
+type assertionTransport struct{ token, host string }
+
+func (a assertionTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Host = a.host
+	r.Header.Set("Origin", "http://"+a.host)
+	r.Header.Set("X-Auth-Assertion", a.token)
+	return http.DefaultTransport.RoundTrip(r)
 }

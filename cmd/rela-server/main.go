@@ -231,6 +231,11 @@ func discoverOptions(f *serverFlags) []appbuild.Option {
 	if f.readOnly {
 		opts = append(opts, appbuild.WithACL(acl.ReadOnlyACL{}))
 	}
+	// Tenant mode withholds the one .rela directory's secrets and ai.yaml
+	// from every tenant unless the operator shares them (TKT-3RWQ1PK).
+	if f.tenant.enabled && !f.tenant.sharedHostConfig {
+		opts = append(opts, appbuild.WithWithheldHostConfig(withheldHostConfigReason))
+	}
 	return opts
 }
 
@@ -753,6 +758,11 @@ type commandAuthorizer = interface {
 // degrading: a server that cannot decide how to gate shell execution must not
 // start and quietly pick a default.
 func buildCommandAuthorizer(f *serverFlags, svc *appbuild.Services) (commandAuthorizer, error) {
+	// Tenant mode turns commands off: they run with sh -c in the one
+	// project root every tenant shares (TKT-3RWQ1PK).
+	if f.tenant.enabled {
+		return dataentry.TenantModeCommandAuthorizer(), nil
+	}
 	authz, err := dataentry.SelectCommandAuthorizer(
 		svc.ACL(), svc.ACLDeclarative(), isLoopbackHost(f.bind), f.allowUnauthCommands,
 		dataentry.CommandAuthNotifier{

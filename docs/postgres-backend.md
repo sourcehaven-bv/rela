@@ -765,6 +765,21 @@ server cannot tell their tenant and refuses them.
 Each open tenant holds one extra connection, which holds the tenant's
 schema lock while the tenant is open (see "Erasing a tenant").
 
+Tenant mode is also the SaaS profile. It turns off shell `commands:`, git
+sync and the server's scheduler, makes Lua `http.*` reach public addresses
+only, and withholds `.rela/secrets.yaml` and `.rela/ai.yaml` from tenants.
+[server-security.md](server-security.md#tenant-mode-saas-profile) lists
+each restriction. Two flags adjust it, and both are refused without tenant
+mode:
+
+- `-lua-http-allow` (`RELA_LUA_HTTP_ALLOW`) is a comma-separated list of
+  CIDRs, IP addresses and `host:port` entries that Lua `http.*` may reach
+  although they are not public, such as an internal IdP.
+- `-tenant-shared-host-config` (`RELA_TENANT_SHARED_HOST_CONFIG=1`) shares
+  `.rela/secrets.yaml` and `.rela/ai.yaml` with every tenant. They are the
+  operator's own credentials, the same for every tenant. Mail is always
+  shared.
+
 ### Provisioning tenants automatically
 
 By default the server never creates a tenant: an operator runs

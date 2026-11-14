@@ -132,6 +132,10 @@ type Runtime struct {
 	refWrites     bool              // may set external_ref properties; see WithExternalRefWrites
 	document      documentMode      // set by the document options; zero outside a render
 
+	// secretsWithheld, when set, is why the host withholds the secrets:
+	// every index of rela.secrets raises it. See [ErrHostConfigWithheld].
+	secretsWithheld string
+
 	// listRender is set (non-nil Rows) only for a LIST document render — the
 	// lists: export_render override. It rides on document mode rather than
 	// introducing a third mode: a list render wants document mode's stdout
@@ -407,6 +411,14 @@ func WithCapabilities(c Capabilities) Option {
 func WithSecrets(secrets map[string]string) Option {
 	return func(r *Runtime) {
 		r.secrets = secrets
+	}
+}
+
+// withSecretsWithheld makes every index of rela.secrets raise reason. Set
+// by [LoadContextOptions] when the host withholds the secrets.
+func withSecretsWithheld(reason string) Option {
+	return func(r *Runtime) {
+		r.secretsWithheld = reason
 	}
 }
 
@@ -1106,6 +1118,17 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 	secretsTable := r.L.NewTable()
 	for k, v := range r.caps.filterSecrets(r.secrets) {
 		r.L.SetField(secretsTable, k, lua.LString(v))
+	}
+	if reason := r.secretsWithheld; reason != "" {
+		// A withheld secret raises rather than reading as nil, so a
+		// script fails at the use site with the reason instead of
+		// sending an empty credential.
+		mt := r.L.NewTable()
+		r.L.SetField(mt, "__index", r.L.NewFunction(func(ls *lua.LState) int {
+			ls.RaiseError("rela.secrets: secrets are not available: %s", reason)
+			return 0
+		}))
+		r.L.SetMetatable(secretsTable, mt)
 	}
 	r.L.SetField(rela, "secrets", secretsTable)
 
