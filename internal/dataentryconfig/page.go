@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/texthazard"
 )
 
 // Page is a named screen that shows several views of one subject as tabs, such
@@ -25,11 +27,36 @@ type Page struct {
 	PageHeader `yaml:",inline"`
 	// Tabs are the views of the page, in tab-bar order. At least one.
 	Tabs []PageTab `yaml:"tabs" json:"tabs"`
+	// Mode is how the tabs are shown: [PageModeTabs] (the default when
+	// empty) or [PageModeSteps].
+	Mode PageMode `yaml:"mode,omitempty" json:"mode,omitempty"`
 	// Suggestions switches next-action suggestions on or off for this view,
 	// overriding next_action_surfaces. Nil: accepted, means inherit. See
 	// [Config.NextActionsEnabled].
 	Suggestions *bool `yaml:"suggestions,omitempty" json:"suggestions,omitempty"`
 }
+
+// PageMode says how a [Page] shows its tabs.
+type PageMode string
+
+const (
+	// PageModeTabs shows the tabs as a tab bar. The default.
+	PageModeTabs PageMode = "tabs"
+	// PageModeSteps shows the tabs as numbered steps with Back and Next, for
+	// a session that walks through the views in order, such as a workshop.
+	// The page can then be presented: the SPA hides the sidebar and enlarges
+	// the view.
+	PageModeSteps PageMode = "steps"
+)
+
+// IsSteps reports whether the page shows its tabs as steps.
+func (p Page) IsSteps() bool {
+	return p.Mode == PageModeSteps
+}
+
+// maxPagePromptLen is the longest [PageTab.Prompt], in characters. A prompt is
+// one question on screen, not a text.
+const maxPagePromptLen = 280
 
 // PageHeader is what the header of a [Page] shows. The sidebar payload
 // (apiwire's SidebarPage) embeds it too, so the two cannot drift.
@@ -72,6 +99,11 @@ type PageTab struct {
 	Dashboard DashboardRef `yaml:"dashboard,omitempty" json:"dashboard,omitempty"`
 	// Document names a standalone document, as on a navigation entry.
 	Document string `yaml:"document,omitempty" json:"document,omitempty"`
+
+	// Prompt is the question a step puts to the room, shown large above the
+	// view. Only on a page with mode: steps. Plain text, at most
+	// [maxPagePromptLen] characters.
+	Prompt string `yaml:"prompt,omitempty" json:"prompt,omitempty"`
 
 	// Scope narrows the tab to the page's anchor entity. Required on every
 	// tab of an entity page, and refused on any other page.
@@ -228,13 +260,48 @@ func validatePages(cfg *Config, meta *metamodel.Metamodel) []string {
 			errs = append(errs, name+": tabs is required (at least one tab)")
 		}
 		errs = append(errs, validateEntityPage(name, page, meta)...)
+		if page.Mode != "" && page.Mode != PageModeTabs && page.Mode != PageModeSteps {
+			errs = append(errs, fmt.Sprintf("%s: unknown mode %q (valid: %s, %s)",
+				name, page.Mode, PageModeTabs, PageModeSteps))
+		}
 		seen := make(map[string]bool, len(page.Tabs))
 		for i, tab := range page.Tabs {
 			errs = append(errs, validatePageTab(cfg, name, i, tab, seen)...)
+			errs = append(errs, validatePagePrompt(name, page, i, tab)...)
 			errs = append(errs, validatePageTabScope(cfg, meta, name, page, i, tab)...)
 		}
 	}
 	return errs
+}
+
+// validatePagePrompt checks a tab's prompt: only on a steps page, short, and
+// free of display hazards (see [texthazard.Find]), which could hide or
+// reorder text on a screen the whole room reads. A line break is one too: a
+// prompt is one line.
+func validatePagePrompt(pageName string, page Page, i int, tab PageTab) []string {
+	if tab.Prompt == "" {
+		return nil
+	}
+	name := pageTabName(pageName, i, tab)
+	switch {
+	case !page.IsSteps():
+		return []string{name + ": prompt needs mode: steps on the page"}
+	case utf8.RuneCountInString(tab.Prompt) > maxPagePromptLen:
+		return []string{fmt.Sprintf("%s: prompt is longer than %d characters", name, maxPagePromptLen)}
+	}
+	if r, bad := texthazard.Find(tab.Prompt); bad {
+		return []string{fmt.Sprintf("%s: prompt contains the invisible or control character %U", name, r)}
+	}
+	return nil
+}
+
+// pageTabName names a tab in an error: by id when the id is usable, by
+// position otherwise.
+func pageTabName(pageName string, i int, tab PageTab) string {
+	if tab.ID == "" || !urlSegmentPattern.MatchString(tab.ID) {
+		return fmt.Sprintf("%s.tabs[%d]", pageName, i)
+	}
+	return fmt.Sprintf("%s.tabs[%s]", pageName, tab.ID)
 }
 
 // validateEntityPage checks a page's entity_type and badge.
@@ -267,10 +334,7 @@ func validateEntityPage(name string, page Page, meta *metamodel.Metamodel) []str
 func validatePageTabScope(
 	cfg *Config, meta *metamodel.Metamodel, pageName string, page Page, i int, tab PageTab,
 ) []string {
-	name := fmt.Sprintf("%s.tabs[%s]", pageName, tab.ID)
-	if tab.ID == "" || !urlSegmentPattern.MatchString(tab.ID) {
-		name = fmt.Sprintf("%s.tabs[%d]", pageName, i)
-	}
+	name := pageTabName(pageName, i, tab)
 	if !page.IsEntityPage() {
 		if tab.Scope != nil {
 			return []string{name + ": scope needs entity_type on the page (only an entity page has an anchor)"}

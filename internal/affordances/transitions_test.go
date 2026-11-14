@@ -3,10 +3,11 @@ package affordances_test
 import (
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 )
 
 // transitionMeta is a ticket type whose `status` is a NAMED state-machine type
@@ -50,20 +51,20 @@ assignments:
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	machines, err := statemachine.Compile(meta)
+	machines, err := transitions.CompileTransitions(meta)
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
 	return r.WithMachines(machines)
 }
 
-func verdictByTo(vs []statemachine.TransitionVerdict, to string) (statemachine.TransitionVerdict, bool) {
+func verdictByTo(vs []transitions.TransitionVerdict, to string) (transitions.TransitionVerdict, bool) {
 	for _, v := range vs {
 		if v.To == to {
 			return v, true
 		}
 	}
-	return statemachine.TransitionVerdict{}, false
+	return transitions.TransitionVerdict{}, false
 }
 
 func TestTransitionVerdicts_GuardHeld(t *testing.T) {
@@ -76,7 +77,7 @@ func TestTransitionVerdicts_GuardHeld(t *testing.T) {
 		t.Fatalf("open has one out-edge (→review), got %+v", vs)
 	}
 	v := vs[0]
-	if v.To != "review" || !v.Allowed || v.Reason != statemachine.VerdictAllowed {
+	if v.To != "review" || !v.Allowed || v.Reason != transitions.VerdictAllowed {
 		t.Errorf("open→review with review-it held should be allowed, got %+v", v)
 	}
 }
@@ -86,7 +87,7 @@ func TestTransitionVerdicts_GuardDenied(t *testing.T) {
 	e := ticket("T-1", map[string]any{"status": "open"})
 
 	v := r.TransitionVerdicts(ctxFor(t, r, "alice"), e)["status"][0]
-	if v.Allowed || v.Reason != statemachine.VerdictGuard {
+	if v.Allowed || v.Reason != transitions.VerdictGuard {
 		t.Errorf("open→review without review-it should be guard-denied, got %+v", v)
 	}
 	// The guard name is surfaced for the UI to explain the disabled option.
@@ -104,7 +105,7 @@ func TestTransitionVerdicts_PreconditionGate(t *testing.T) {
 		if !ok {
 			t.Fatal("expected a →done verdict")
 		}
-		if done.Allowed || done.Reason != statemachine.VerdictPrecondition {
+		if done.Allowed || done.Reason != transitions.VerdictPrecondition {
 			t.Errorf("review→done without signed-off should be precondition-blocked, got %+v", done)
 		}
 	})
