@@ -148,7 +148,9 @@ func (d tenantDeployment) hostFlags(t *testing.T, tf tenantFlags, edit func(*ser
 	require.NoError(t, resolver.Check(t.Context()))
 
 	s := &server{f: f, addr: "127.0.0.1:8080", mode: identityJWT, assertion: tenanthost.ReuseAssertion(orgVerifier{})}
-	prov, err := provisionConfig(tf, d.base, tenant.AuditRoot(shared.CacheDir()))
+	writer, err := tenant.NewProvisioner(d.base, tenant.AuditRoot(shared.CacheDir()))
+	require.NoError(t, err)
+	prov, err := provisionConfig(tf, writer)
 	require.NoError(t, err)
 	th, err := s.tenantHost(shared, resolver, tenantOptions{resident: 4, provision: prov}, orgVerifier{})
 	require.NoError(t, err)

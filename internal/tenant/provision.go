@@ -1,6 +1,9 @@
 package tenant
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // Provisioner makes the lifecycle writes to the control table: create,
 // suspend, resume and erase. It is a separate type from [ClusterResolver] so
@@ -54,6 +57,21 @@ type CreateOptions struct {
 // ErrTenantExists reports a create for an org that already has a control
 // row that is not mid-provisioning.
 var ErrTenantExists = errors.New("tenant: already exists")
+
+// ExistsError is the [ErrTenantExists] a create returns. Status is the
+// existing row's status, so a caller can tell an active tenant from a
+// suspended or erasing one.
+type ExistsError struct {
+	OrgID  string
+	Status Status
+}
+
+func (e *ExistsError) Error() string {
+	return fmt.Sprintf("%v: org_id %q is %s", ErrTenantExists, e.OrgID, e.Status)
+}
+
+// Unwrap returns [ErrTenantExists].
+func (e *ExistsError) Unwrap() error { return ErrTenantExists }
 
 // ErrSchemaExists reports a create whose derived schema already exists
 // without a control row. It may hold another org's data, so it is not taken

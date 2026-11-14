@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
@@ -158,16 +159,24 @@ func (s *StatusSync) SyncStatus(ctx context.Context, orgID string) error {
 		if err == nil {
 			// Also when nothing changed: a tenant already suspended may
 			// still be open until the next revalidation pass.
-			s.revalidate(ctx, orgID)
+			s.revalidateNow(ctx, orgID)
 		}
 	} else {
 		changed, err = s.apply.ResumeForIDP(ctx, orgID)
 		if err == nil && changed {
-			var resuspended bool
-			if resuspended, err = s.recheck(ctx, orgID); resuspended {
+			var nowSuspended, resuspended bool
+			nowSuspended, resuspended, err = s.recheck(ctx, orgID)
+			switch {
+			case err != nil:
+			case resuspended:
 				slog.Info("tenant host: the IdP suspended the org again while its tenant was being resumed; "+
 					"suspended it again", "org_id", orgID)
-				return err
+				return nil
+			case nowSuspended:
+				// Another process suspended it again first.
+				slog.Info("tenant host: the IdP suspended the org again while its tenant was being resumed; "+
+					"it is suspended", "org_id", orgID)
+				return nil
 			}
 		}
 	}
@@ -198,25 +207,38 @@ func (s *StatusSync) SyncStatus(ctx context.Context, orgID string) error {
 // resumed, and suspends the tenant again when the org is suspended now.
 // The IdP may have suspended the org between this sync's read and its
 // resume, and a sync in another process then found the tenant still
-// suspended and changed nothing. It reports whether it suspended the
-// tenant. An error
-// means the IdP should send the event again, so that the next sync decides.
-func (s *StatusSync) recheck(ctx context.Context, orgID string) (bool, error) {
-	suspended, err := s.src.OrgSuspended(ctx, orgID)
+// suspended and changed nothing. It reports whether the IdP now says the
+// org is suspended, and whether this call changed the tenant to suspended.
+// An error means the IdP should send the event again, so that the next
+// sync decides.
+func (s *StatusSync) recheck(ctx context.Context, orgID string) (suspended, changed bool, err error) {
+	suspended, err = s.src.OrgSuspended(ctx, orgID)
 	switch {
 	case errors.Is(err, ErrOrgNotFound):
-		return false, nil
+		return false, false, nil
 	case err != nil:
-		return false, err
+		return false, false, err
 	case !suspended:
-		return false, nil
+		return false, false, nil
 	}
-	changed, err := s.apply.SuspendForIDP(ctx, orgID)
+	changed, err = s.apply.SuspendForIDP(ctx, orgID)
 	if err != nil {
-		return false, err
+		return true, false, err
 	}
+	s.revalidateNow(ctx, orgID)
+	return true, changed, nil
+}
+
+// revalidateTimeout bounds one revalidation after a status change.
+const revalidateTimeout = 10 * time.Second
+
+// revalidateNow closes orgID's open tenant when it is no longer served. It
+// runs after the status changed, so the webhook hanging up must not cancel
+// it.
+func (s *StatusSync) revalidateNow(ctx context.Context, orgID string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), revalidateTimeout)
+	defer cancel()
 	s.revalidate(ctx, orgID)
-	return changed, nil
 }
 
 // syncFromWebhook applies a verified `organization.updated`. It runs before

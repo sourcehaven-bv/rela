@@ -42,7 +42,8 @@ func TestLuaBounds_Refused(t *testing.T) {
 		{"format star precision", `local s = string.format("%.*f", 2, 1)`, "not supported"},
 		{"format unknown verb", `local s = string.format("%v", 1)`, "invalid option '%v'"},
 		{"format trailing percent", `local s = string.format("100%", 1)`, "invalid format"},
-		{"format repeated flags", `local s = string.format("%-----d", 1)`, "repeated flags"},
+		{"format repeated flags", `local s = string.format("%------d", 1)`, "repeated flags"},
+		{"format six flags", `local s = string.format("%-+ #0-d", 1)`, "repeated flags"},
 		{"format missing argument", `local s = string.format("%s %s", "a")`, "no value"},
 		{
 			"format of many %s over one large arg each",
@@ -202,6 +203,7 @@ func TestBoundedStrFormat_MatchesGopherLua(t *testing.T) {
 		{"octal", `"%o|%#o", 8, 8`},
 		{"char", `"%c%c", 72, 105`},
 		{"space flag", `"% d", 5`},
+		{"five flags", `"[%-+ #0d]", 5`},
 		{"mixed", `"%5.2f|%-3d|%s|%%|%02x", 3.14159, 7, "hi", 255`},
 		{"date", `"%04d-%02d-%02d", 2026, 1, 9`},
 		{"extra args", `"%s", "a", "b"`},

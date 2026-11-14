@@ -13,7 +13,8 @@
 //   - a verified assertion with no `org_id`, or an org that is not an active
 //     tenant (unknown, suspended or being erased): 403 `unknown_tenant`;
 //   - with provisioning on ([ProvisionConfig]), an org whose tenant is being
-//     created: 202 with a `{"status":"provisioning"}` body. No tenant is
+//     created: 202 with a `{"status":"provisioning"}` body for GET and HEAD,
+//     and 503 `tenant_provisioning` for any other method. No tenant is
 //     opened for it;
 //   - the tenant lookup or the store open failed, or the org's derived
 //     schema is recorded for another org: 503.
@@ -63,7 +64,7 @@ import (
 // the tenant, so the host routes it by the body rather than by a header.
 const WebhookPath = "/webhooks/idp"
 
-// StatusPath answers the caller's own tenant status, for the SPA to poll
+// StatusPath answers the caller's own tenant status, for a client to poll
 // while its tenant is being created. It never names another org.
 const StatusPath = "/api/v1/_tenant"
 
@@ -317,7 +318,9 @@ func (h *Host) acquireFailed(w http.ResponseWriter, r *http.Request, orgID strin
 			return
 		}
 		if errors.Is(err, tenant.ErrTenantProvisioning) {
-			writeStatus(w, http.StatusAccepted, statusProvisioning)
+			// Webhook mode does not finish a create that stopped.
+			h.prov.noteStuck(r.Context(), orgID)
+			writeProvisioning(w, r, http.StatusAccepted)
 			return
 		}
 	}

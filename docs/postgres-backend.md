@@ -803,21 +803,44 @@ The webhook waits up to 10 seconds for the create:
 | Outcome | Response |
 | --- | --- |
 | Created, or the tenant already exists and is active | 200 |
+| The tenant already exists but is not active (suspended, erasing) | 200 with a body that says so; nothing is created |
+| Needs an operator (see below) | 200 with a body that says so, so the IdP stops retrying |
 | Still running after 10 seconds, or another server is creating it | 202 (the IdP does not retry; a later request or event finishes it) |
-| Failed | 502, so the IdP retries |
+| Failed for another reason | 502, so the IdP retries |
 | Over the rate or running cap | 503 with `Retry-After` |
 
-With `lazy`, a request for an org that has no tenant starts the create and
-gets 202 at once, with `Retry-After` and the body
-`{"status":"provisioning"}`. The server never holds a request open while
-it migrates. While a tenant's status is `provisioning`, every request gets
-the same 202. If the create failed, requests get 503 `provisioning_failed`
-with `Retry-After` for 30 seconds; the next request after that tries again.
+Some failures cannot be fixed by trying again. The server treats these as
+needing an operator:
+
+| Cause | Fix |
+| --- | --- |
+| The tenant's schema exists without a control row | Check that the schema holds no other org's data, then run `rela-server tenant create -adopt <org_id>`, or drop the schema |
+| The org was erased | `rela-server tenant create -recreate <org_id>`, if the org may come back |
+| The derived schema is recorded for another org | Investigate with `rela-server tenant show <org_id>`; no flag resolves it |
+| The tenant's status changed during the create | Investigate with `rela-server tenant show <org_id>` |
+
+The server logs such a failure once at error level, with the fix, and
+does not try again for an hour. During that hour requests for the org get
+503 `provisioning_needs_operator` without `Retry-After`. Once an operator
+has created the tenant, requests reach it at once; restart the server to
+retry sooner after any other fix, such as dropping the schema.
+
+With `lazy`, a `GET` or `HEAD` request for an org that has no tenant
+starts the create and gets 202 at once, with `Retry-After` and the body
+`{"status":"provisioning"}`. A request with any other method also starts
+the create, but gets 503 `tenant_provisioning` with `Retry-After`: nothing
+was written, and a 202 would read as success. The server never holds a
+request open while it migrates. While a tenant's status is
+`provisioning`, every request gets the same answers. If the create
+failed, requests get 503 `provisioning_failed` for 30 seconds, with
+`Retry-After` set to the time left; the next request after that tries
+again.
 A create that failed part way is finished by the next one. If another
 server is creating the tenant, requests get the same 202 for 5 seconds
 without starting a create, so polling does not use up the start rate.
 
-The SPA can poll `GET /api/v1/_tenant`. It answers 200 with
+A client calling the API can poll `GET /api/v1/_tenant`. The SPA does
+not handle the provisioning state yet. The route answers 200 with
 `{"status":"active"}`, `{"status":"provisioning"}` or
 `{"status":"suspended"}` for the caller's own verified org, and nothing
 about any other org. An org that has no tenant gets 403 `unknown_tenant`,
@@ -836,6 +859,13 @@ tenant: `organization.deleted` is still only logged. It never recreates an
 erased tenant either. A request for an erased org gets 403, and an
 `organization.created` webhook for it gets 200 and a warning in the log.
 Only `tenant create -recreate` brings it back.
+
+With `webhook`, the server does not finish a create that stopped part
+way, for example because the server crashed. The tenant then stays in the
+`provisioning` status, and its requests keep getting 202 (reads) or 503
+(writes). The server logs a warning for such an org at most once a
+minute. Finish the create with `rela-server tenant create <org_id>`, or by
+sending the `organization.created` webhook again.
 
 Every tenant shares the project configuration, so a new tenant starts with
 an empty store and nothing is seeded into it.

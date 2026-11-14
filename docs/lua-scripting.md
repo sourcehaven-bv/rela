@@ -2121,6 +2121,13 @@ A script only sees the keys its `capabilities.secrets` list names (see
 [Capabilities](#capabilities--http-ai-mail-secrets-tokens-write_file) above); everything
 below describes how the *values* are resolved once a key has been granted.
 
+In tenant mode the secrets are withheld unless the operator shares them
+(see [server-security.md](server-security.md#operator-secrets-and-ai)).
+Then every index of `rela.secrets` raises an error, so
+`rela.secrets.x or "default"` fails rather than taking the default, and
+`pairs(rela.secrets)` yields nothing. `ai.*` returns `nil` and an error
+of kind `not_configured` instead of raising.
+
 Two kinds of secret are never given to a script, not even one granted every
 secret: `token_key` (see [OAuth Tokens](#oauth-tokens)) and any name that starts with
 `remote_credential.`, which holds a credential for another server (see
@@ -3001,10 +3008,15 @@ These limits apply to every script, in every mode:
   runtime cannot run another script afterwards.
 - `string.rep`, `string.format` and `table.concat` refuse to build a
   string larger than 16 MiB. They fail before they allocate it.
-- `string.format` follows the Lua 5.1 format rules. It refuses a width
-  or precision of more than two digits, an unknown conversion, a missing
-  argument, and the Go extensions `%[n]` (argument index) and `*` (width
-  from an argument). Each conversion uses its own argument.
+- `string.format` accepts the Lua 5.1 conversions: at most five flags
+  from `-+ #0`, a width and a precision of at most two digits each, and
+  one of `cdiouxXeEfgGqs`. It raises an error for a longer width or
+  precision, an unknown conversion (including the Go verbs `%v` and
+  `%t`), a missing argument, and the Go extensions `%[n]` (argument
+  index) and `*` (width from an argument). Each conversion uses its own
+  argument. It differs from Lua 5.1 in two ways: `%q` quotes with Go's
+  rules, and `%x`, `%o` and `%u` print a negative number with a minus
+  sign rather than as its two's complement.
 - `string.format` checks each argument as Lua 5.1 does. `%d`, `%i`, `%u`,
   `%c`, `%o`, `%x`, `%X`, `%e`, `%E`, `%f`, `%g` and `%G` take a number; a
   string that holds a number also works. `%c` prints one byte. `%s` takes

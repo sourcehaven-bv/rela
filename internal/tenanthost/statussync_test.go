@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
 	"github.com/Sourcehaven-BV/rela/internal/tenanthost"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 // idpOrgs is a fake IdP operator API: org id to suspended. An org it does
@@ -370,9 +372,11 @@ func TestStatusSync_ConcurrentSyncsTakeTurns(t *testing.T) {
 // answers "active", and then "suspended" because the org was suspended
 // meanwhile, and a sync in another process found nothing to change. The
 // resume is followed by a second read, which suspends the tenant again and
-// closes it.
+// closes it. When another process suspended it first, the recheck changes
+// nothing, still closes it, and does not log a resume.
+//
+// Not parallel: it reads the default logger.
 func TestStatusSync_ResumeRechecksTheIdP(t *testing.T) {
-	t.Parallel()
 	apply := idpSuspended("org-a")
 	idp := &changingIDP{answer: func(n int) bool { return n > 1 }}
 	revals := &revalidations{}
@@ -402,7 +406,45 @@ func TestStatusSync_ResumeRechecksTheIdP(t *testing.T) {
 	if st, _ := apply.status("org-a"); st != tenant.StatusActive || idp2.count() != 2 {
 		t.Errorf("status = %s after %d IdP calls; want active after 2", st, idp2.count())
 	}
+
+	// Another process suspended the tenant again before the recheck.
+	logs := logtest.Capture(t, slog.LevelInfo)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	raced := racedWriter{cancel: cancel}
+	var revalErr error
+	ss3, err := tenanthost.NewStatusSync(&changingIDP{answer: func(n int) bool { return n > 1 }}, raced,
+		func(rctx context.Context, _ string) {
+			_, hasDeadline := rctx.Deadline()
+			if rctx.Err() != nil || !hasDeadline {
+				revalErr = fmt.Errorf("revalidate ctx err %w, deadline %v", rctx.Err(), hasDeadline)
+			}
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = ss3.SyncStatus(ctx, "org-a"); err != nil {
+		t.Fatal(err)
+	}
+	if revalErr != nil {
+		t.Errorf("%v; want a live context with a timeout after the webhook hung up", revalErr)
+	}
+	if out := logs(); strings.Contains(out, "tenant resumed") || !strings.Contains(out, "it is suspended") {
+		t.Errorf("log %q; want the suspension reported and no resume", out)
+	}
 }
+
+// racedWriter resumes, and then finds the tenant already suspended by
+// another process. Its suspend cancels the caller's context, as a webhook
+// that hung up would.
+type racedWriter struct{ cancel context.CancelFunc }
+
+func (w racedWriter) SuspendForIDP(context.Context, string) (bool, error) {
+	w.cancel()
+	return false, nil
+}
+
+func (racedWriter) ResumeForIDP(context.Context, string) (bool, error) { return true, nil }
 
 // TestStatusSync_WaitHonoursContext pins that a sync waiting for the org's
 // turn gives up when its context ends.

@@ -117,6 +117,12 @@ func TestProvisioner_Lifecycle(t *testing.T) {
 	if err = pv.p.Suspend(ctx, "org-a"); err != nil {
 		t.Errorf("second Suspend: %v", err)
 	}
+	var exists *tenant.ExistsError
+	if _, err = pv.p.Create(ctx, "org-a", tenant.CreateOptions{}); !errors.As(err, &exists) ||
+		exists.Status != tenant.StatusSuspended {
+
+		t.Errorf("Create of a suspended tenant = %v, want an ExistsError with status suspended", err)
+	}
 	if _, err = pv.r.Resolve(ctx, "org-a"); !errors.Is(err, tenant.ErrUnknownTenant) {
 		t.Errorf("Resolve(suspended) = %v", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -46,9 +47,15 @@ func ParseProvisionMode(s string) (ProvisionMode, error) {
 
 // Provisioner creates the tenant of orgID: its control row, schema and
 // migrations. It must be idempotent: a call for an org whose tenant exists
-// returns nil, and a call for one whose create failed part way finishes it.
-// It returns [tenant.ErrTenantInUse] when another process holds the
-// tenant's lock, which the host reports as still running.
+// and is active returns nil, and a call for one whose create failed part
+// way finishes it. It returns:
+//
+//   - an error wrapping [tenant.ErrTenantExists] for an org whose tenant
+//     exists in another status, such as suspended;
+//   - [tenant.ErrTenantInUse] when another process holds the tenant's lock,
+//     which the host reports as still running;
+//   - an error wrapping [ErrNeedsOperator] for a refusal that retrying
+//     cannot fix.
 //
 // The production value is an adapter over [tenant.Provisioner.Create].
 type Provisioner interface {
@@ -87,6 +94,20 @@ const (
 // start another one. It spaces out retries of a create that keeps failing.
 const failureHold = 30 * time.Second
 
+// operatorHold is how long a run that failed with [ErrNeedsOperator] is
+// reported before a request may start another one. A retry cannot succeed
+// until an operator acts, and `rela-server tenant create` makes the tenant
+// active, which ends the hold early: the next request acquires the tenant
+// and starts no run. So the hold only spaces out the error log.
+const operatorHold = time.Hour
+
+// ErrNeedsOperator marks a provisioning refusal that retrying cannot fix,
+// such as a schema that exists without a control row. A [Provisioner]
+// wraps it around the cause. The host logs it, holds it for an hour,
+// acknowledges the webhook and answers requests 503
+// `provisioning_needs_operator`.
+var ErrNeedsOperator = errors.New("tenanthost: provisioning needs an operator")
+
 // elsewhereHold is how long a run that found another process creating the
 // tenant ([tenant.ErrTenantInUse]) is remembered. During it a request
 // answers provisioning without starting a run, so polling an org another
@@ -104,8 +125,31 @@ var errProvisionElsewhere = errors.New("tenanthost: the tenant is being provisio
 var errProvisionBusy = errors.New("tenanthost: provisioning is at its limit")
 
 // errProvisionFailed reports that the org's last run failed less than
-// [failureHold] ago.
+// [failureHold] ago, or less than [operatorHold] ago for [ErrNeedsOperator].
 var errProvisionFailed = errors.New("tenanthost: provisioning failed")
+
+// heldFailureError is the refusal of a start during a failure hold. It wraps
+// errProvisionFailed and the run's error, and says how long the hold
+// lasts.
+type heldFailureError struct {
+	cause error
+	left  time.Duration
+}
+
+func (e *heldFailureError) Error() string {
+	return errProvisionFailed.Error() + ": " + e.cause.Error()
+}
+
+func (e *heldFailureError) Unwrap() []error { return []error{errProvisionFailed, e.cause} }
+
+// retryAfter is the hold left, in whole seconds rounded up, at least 1.
+func (e *heldFailureError) retryAfter() string {
+	return strconv.Itoa(max(1, int((e.left+time.Second-1)/time.Second)))
+}
+
+// stuckLogEvery is how often, per org, the host logs a tenant left in the
+// provisioning status that it does not finish itself.
+const stuckLogEvery = time.Minute
 
 // provisioning single-flights provisioning runs by org id and bounds how
 // many start.
@@ -141,6 +185,9 @@ type provisioning struct {
 	// elsewhere holds when a run last found another process creating the
 	// org's tenant.
 	elsewhere map[string]time.Time
+	// stuck holds when the host last logged that an org's tenant is left
+	// in the provisioning status.
+	stuck map[string]time.Time
 }
 
 // run is one provisioning run. done closes when it ends; err is set before.
@@ -152,6 +199,14 @@ type run struct {
 type failure struct {
 	err error
 	at  time.Time
+}
+
+// hold is how long f is reported.
+func (f failure) hold() time.Duration {
+	if errors.Is(f.err, ErrNeedsOperator) {
+		return operatorHold
+	}
+	return failureHold
 }
 
 // newProvisioning builds the runner for cfg. It returns nil for
@@ -173,6 +228,7 @@ func newProvisioning(cfg ProvisionConfig) *provisioning {
 		runs:       map[string]*run{},
 		failed:     map[string]failure{},
 		elsewhere:  map[string]time.Time{},
+		stuck:      map[string]time.Time{},
 	}
 }
 
@@ -211,8 +267,8 @@ func validateProvision(cfg ProvisionConfig, webhook bool) error {
 // values but not its cancellation, so a client that disconnects does not
 // abort a migration.
 //
-// It refuses with errProvisionFailed while the org's last run failed less
-// than failureHold ago, with errProvisionElsewhere while its last run found
+// It refuses with a *heldFailureError while the org's last run failed less
+// than its hold ago, with errProvisionElsewhere while its last run found
 // another process creating the tenant less than elsewhereHold ago, and with
 // errProvisionBusy when the rate or the running cap is reached or the host
 // is closing. Only a run that starts takes a token from the rate.
@@ -224,7 +280,7 @@ func (p *provisioning) start(ctx context.Context, orgID string) (*run, error) {
 	}
 	now := p.now()
 	for org, f := range p.failed {
-		if now.Sub(f.at) >= failureHold {
+		if now.Sub(f.at) >= f.hold() {
 			delete(p.failed, org)
 		}
 	}
@@ -234,7 +290,7 @@ func (p *provisioning) start(ctx context.Context, orgID string) (*run, error) {
 		}
 	}
 	if f, ok := p.failed[orgID]; ok {
-		return nil, fmt.Errorf("%w: %w", errProvisionFailed, f.err)
+		return nil, &heldFailureError{cause: f.err, left: f.hold() - now.Sub(f.at)}
 	}
 	if _, ok := p.elsewhere[orgID]; ok {
 		return nil, errProvisionElsewhere
@@ -266,6 +322,11 @@ func (p *provisioning) execute(ctx context.Context, orgID string, r *run) {
 		slog.Info("tenant host: tenant provisioned", "org_id", orgID)
 	case errors.Is(err, tenant.ErrTenantInUse):
 		slog.Info("tenant host: tenant is being provisioned by another process", "org_id", orgID)
+	case errors.Is(err, tenant.ErrTenantExists):
+		slog.Info("tenant host: tenant exists but is not active; not provisioned", "org_id", orgID, "error", err)
+	case errors.Is(err, ErrNeedsOperator):
+		slog.Error("tenant host: provisioning needs an operator; not retried for an hour",
+			"org_id", orgID, "error", err, "fix", operatorHint(err))
 	default:
 		slog.Error("tenant host: provisioning failed", "org_id", orgID, "error", err)
 	}
@@ -274,12 +335,52 @@ func (p *provisioning) execute(ctx context.Context, orgID string, r *run) {
 	switch {
 	case errors.Is(err, tenant.ErrTenantInUse):
 		p.elsewhere[orgID] = p.now()
+	case errors.Is(err, tenant.ErrTenantExists):
+		// Not a failure: the next request acquires the tenant and is
+		// refused for its status.
 	case err != nil:
 		p.failed[orgID] = failure{err: err, at: p.now()}
 	}
 	r.err = err
 	p.mu.Unlock()
 	close(r.done)
+}
+
+// operatorHint names the operator command that resolves err.
+func operatorHint(err error) string {
+	switch {
+	case errors.Is(err, tenant.ErrSchemaExists):
+		return "check that the schema holds no other org's data, then run " +
+			"`rela-server tenant create -adopt <org_id>`, or drop the schema"
+	case errors.Is(err, tenant.ErrTenantErased):
+		return "only `rela-server tenant create -recreate <org_id>` brings an erased tenant back"
+	case errors.Is(err, tenant.ErrSchemaCollision):
+		return "the org's derived schema is recorded for another org; see `rela-server tenant show <org_id>`"
+	default:
+		return "inspect the tenant with `rela-server tenant show <org_id>`"
+	}
+}
+
+// noteStuck logs, at most once per [stuckLogEvery] per org, that orgID's
+// tenant is in the provisioning status and this host does not finish it.
+func (p *provisioning) noteStuck(ctx context.Context, orgID string) {
+	p.mu.Lock()
+	now := p.now()
+	for org, at := range p.stuck {
+		if now.Sub(at) >= stuckLogEvery {
+			delete(p.stuck, org)
+		}
+	}
+	_, logged := p.stuck[orgID]
+	if !logged {
+		p.stuck[orgID] = now
+	}
+	p.mu.Unlock()
+	if !logged {
+		slog.WarnContext(ctx, "tenant host: tenant is still in the provisioning status; if its create "+
+			"stopped, finish it with `rela-server tenant create <org_id>` or another organization.created webhook",
+			"org_id", orgID)
+	}
 }
 
 // close stops new runs, cancels the ones in progress and waits for them.

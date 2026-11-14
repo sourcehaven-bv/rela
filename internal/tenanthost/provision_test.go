@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
 	"github.com/Sourcehaven-BV/rela/internal/tenanthost"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 // controlTable is a fake tenant registry with statuses. An org it does not
@@ -391,6 +393,12 @@ func TestProvision_LazyFailureIsRetryable(t *testing.T) {
 	if p.calls.Load() != 1 {
 		t.Errorf("provisioner calls = %d during the hold, want 1", p.calls.Load())
 	}
+	mu.Lock()
+	now = now.Add(20 * time.Second)
+	mu.Unlock()
+	if got := do(h, http.MethodGet, "/api/v1/tickets", "tok-org-new", "").Header().Get("Retry-After"); got != "10" {
+		t.Errorf("Retry-After 20s into the hold = %q, want 10 (the hold left)", got)
+	}
 
 	mu.Lock()
 	now = now.Add(time.Minute)
@@ -570,3 +578,167 @@ func TestProvision_StatusRoute(t *testing.T) {
 }
 
 var _ io.Writer = discard{}
+
+// TestProvision_WriteDuringProvisioningIsRefused pins that only a read is
+// answered 202 while a tenant is created. A write gets 503
+// tenant_provisioning, so a client cannot read it as done.
+func TestProvision_WriteDuringProvisioningIsRefused(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []tenanthost.ProvisionMode{tenanthost.ProvisionWebhook, tenanthost.ProvisionLazy} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			c := newControl(map[string]tenant.Status{"org-p": tenant.StatusProvisioning})
+			p := &stubProvisioner{control: c, gate: make(chan struct{})}
+			defer close(p.gate)
+			h := newProvHost(t, c, tenanthost.ProvisionConfig{Mode: mode, Provisioner: p})
+			for _, m := range []string{http.MethodGet, http.MethodHead} {
+				if w := do(h, m, "/api/v1/tickets", "tok-org-p", ""); w.Code != http.StatusAccepted {
+					t.Errorf("%s: status = %d, want 202", m, w.Code)
+				}
+			}
+			for _, m := range []string{http.MethodPost, http.MethodPatch, http.MethodPut, http.MethodDelete} {
+				w := do(h, m, "/api/v1/tickets", "tok-org-p", `{"title":"x"}`)
+				if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "tenant_provisioning") ||
+					w.Header().Get("Retry-After") == "" {
+
+					t.Errorf("%s: %d %q (Retry-After %q), want 503 tenant_provisioning with Retry-After",
+						m, w.Code, w.Body.String(), w.Header().Get("Retry-After"))
+				}
+			}
+		})
+	}
+}
+
+// TestProvision_NeedsOperator pins the answer to a create that retrying
+// cannot fix: the webhook is acknowledged, requests get 503
+// provisioning_needs_operator without Retry-After, and no run starts again
+// within the hold.
+func TestProvision_NeedsOperator(t *testing.T) {
+	t.Parallel()
+	c := newControl(nil)
+	p := &stubProvisioner{control: c,
+		err: fmt.Errorf("%w: %w", tenanthost.ErrNeedsOperator, tenant.ErrSchemaExists)}
+	h := newProvHost(t, c, tenanthost.ProvisionConfig{Mode: tenanthost.ProvisionLazy, Provisioner: p})
+	var mu sync.Mutex
+	now := time.Now()
+	tenanthost.SetProvisionClock(h, func() time.Time { mu.Lock(); defer mu.Unlock(); return now })
+
+	w := do(h, http.MethodPost, tenanthost.WebhookPath, "", "organization.created|org-new")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "operator") {
+		t.Fatalf("webhook: %d %q, want 200 naming operator action", w.Code, w.Body.String())
+	}
+	for _, advance := range []time.Duration{0, 10 * time.Minute} {
+		mu.Lock()
+		now = now.Add(advance)
+		mu.Unlock()
+		rec := do(h, http.MethodGet, "/api/v1/tickets", "tok-org-new", "")
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "provisioning_needs_operator") {
+			t.Errorf("request: %d %q, want 503 provisioning_needs_operator", rec.Code, rec.Body.String())
+		}
+		if ra := rec.Header().Get("Retry-After"); ra != "" {
+			t.Errorf("Retry-After = %q, want none", ra)
+		}
+		if w := do(h, http.MethodPost, tenanthost.WebhookPath, "", "organization.created|org-new"); w.Code != http.StatusOK {
+			t.Errorf("webhook during the hold: status = %d, want 200", w.Code)
+		}
+	}
+	if got := p.calls.Load(); got != 1 {
+		t.Errorf("provisioner calls = %d, want 1", got)
+	}
+}
+
+// TestProvision_ExistsButNotActive pins that a create that finds the tenant
+// existing in another status is acknowledged with a body that says so, and
+// is not held as a failure.
+func TestProvision_ExistsButNotActive(t *testing.T) {
+	t.Parallel()
+	c := newControl(nil)
+	p := &stubProvisioner{control: c,
+		err: &tenant.ExistsError{OrgID: "org-new", Status: tenant.StatusSuspended}}
+	h := newProvHost(t, c, tenanthost.ProvisionConfig{Mode: tenanthost.ProvisionLazy, Provisioner: p})
+	w := do(h, http.MethodPost, tenanthost.WebhookPath, "", "organization.created|org-new")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "not active") {
+		t.Fatalf("webhook: %d %q, want 200 saying the tenant is not active", w.Code, w.Body.String())
+	}
+	// Not held: the next request starts a run rather than answering a failure.
+	if w := do(h, http.MethodGet, "/api/v1/tickets", "tok-org-new", ""); w.Code != http.StatusAccepted {
+		t.Errorf("request after: status = %d, want 202", w.Code)
+	}
+}
+
+// TestProvision_CloseCancelsAndWaits pins that Host.Close cancels a run in
+// progress and returns only once it has ended.
+func TestProvision_CloseCancelsAndWaits(t *testing.T) {
+	t.Parallel()
+	c := newControl(nil)
+	ended := make(chan error, 1)
+	p := provisionFunc(func(ctx context.Context, _ string) error {
+		<-ctx.Done()
+		time.Sleep(10 * time.Millisecond)
+		ended <- ctx.Err()
+		return ctx.Err()
+	})
+	h, err := tenanthost.New(tenanthost.Config{
+		Verifier: &fakeVerifier{}, HeaderName: header, Acquire: c.acquire, Static: static,
+		Provision: tenanthost.ProvisionConfig{Mode: tenanthost.ProvisionLazy, Provisioner: p},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := do(h, http.MethodGet, "/api/v1/tickets", "tok-org-new", ""); w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", w.Code)
+	}
+	waitFor(t, func() bool { return tenanthost.ProvisionRunning(h, "org-new") })
+	h.Close()
+	select {
+	case err := <-ended:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("run ended with %v, want context.Canceled", err)
+		}
+	default:
+		t.Fatal("Close returned before the run ended")
+	}
+	if tenanthost.ProvisionRunning(h, "org-new") {
+		t.Error("a run is still recorded after Close")
+	}
+}
+
+type provisionFunc func(ctx context.Context, orgID string) error
+
+func (f provisionFunc) Provision(ctx context.Context, orgID string) error { return f(ctx, orgID) }
+
+// TestProvision_StuckProvisioningIsLogged pins that webhook mode, which does
+// not finish a create that stopped, warns about a tenant left in the
+// provisioning status at most once a minute per org.
+//
+// Not parallel: it reads the default logger.
+func TestProvision_StuckProvisioningIsLogged(t *testing.T) {
+	logs := logtest.Capture(t, slog.LevelInfo)
+
+	c := newControl(map[string]tenant.Status{"org-p": tenant.StatusProvisioning})
+	h := newProvHost(t, c, tenanthost.ProvisionConfig{
+		Mode: tenanthost.ProvisionWebhook, Provisioner: &stubProvisioner{control: c},
+	})
+	var mu sync.Mutex
+	now := time.Now()
+	tenanthost.SetProvisionClock(h, func() time.Time { mu.Lock(); defer mu.Unlock(); return now })
+	count := func() int { return strings.Count(logs(), "still in the provisioning status") }
+
+	for range 3 {
+		do(h, http.MethodGet, "/api/v1/tickets", "tok-org-p", "")
+		do(h, http.MethodGet, tenanthost.StatusPath, "tok-org-p", "")
+	}
+	if got := count(); got != 1 {
+		t.Fatalf("warnings = %d within a minute, want 1", got)
+	}
+	if !strings.Contains(logs(), "rela-server tenant create") {
+		t.Errorf("warning %q does not name the command that finishes the create", logs())
+	}
+	mu.Lock()
+	now = now.Add(time.Minute)
+	mu.Unlock()
+	do(h, http.MethodGet, "/api/v1/tickets", "tok-org-p", "")
+	if got := count(); got != 2 {
+		t.Errorf("warnings = %d after a minute, want 2", got)
+	}
+}

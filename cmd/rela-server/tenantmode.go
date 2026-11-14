@@ -149,16 +149,7 @@ func validateTenantMode(f *serverFlags, envUser string, supported bool) (identit
 	if f.configEditing {
 		return mode, errors.New("--config-editing is not supported in tenant mode")
 	}
-	prov, err := tenanthost.ParseProvisionMode(f.tenant.provision)
-	if err != nil {
-		return mode, fmt.Errorf("-tenant-provision: %w", err)
-	}
-	if prov == tenanthost.ProvisionWebhook && (f.webhookAudience == "" || f.webhookAction == "") {
-		return mode, errors.New("-tenant-provision=webhook needs the IdP webhook (-webhook-audience, -webhook-action)")
-	}
-	if f.tenant.provisionRate < 0 {
-		return mode, errors.New("-tenant-provision-rate must not be negative")
-	}
+	// The provisioning flags are checked by tenanthost.New.
 	if _, err := luaHTTPPolicy(f.tenant); err != nil {
 		return mode, err
 	}
@@ -230,6 +221,10 @@ func refuseTenantOnlyFlags(t tenantFlags) error {
 			"outside it Lua http.* may reach every address but link-local and metadata ones")
 	case t.sharedHostConfig:
 		return errors.New("-tenant-shared-host-config needs tenant mode (-tenant-mode)")
+	case t.provision != "" && t.provision != string(tenanthost.ProvisionOff):
+		return errors.New("-tenant-provision needs tenant mode (-tenant-mode)")
+	case t.provisionRate != 0:
+		return errors.New("-tenant-provision-rate needs tenant mode (-tenant-mode)")
 	}
 	return nil
 }
@@ -284,32 +279,63 @@ func statusSyncSource(t tenantFlags, secret string) (tenanthost.OrgStatusSource,
 // control row may hold another org's data, so only an operator adopts it.
 // It never recreates an erased tenant either: an erasure is undone only by
 // an operator's `tenant create -recreate`.
-type provisionAdapter struct{ p *tenant.Provisioner }
+type provisionAdapter struct{ p tenantCreator }
 
-// Provision creates orgID's tenant. A tenant that already exists is
-// success: two servers may race the same create, and the host acquires the
-// tenant afterwards, which refuses one that is not active.
+// tenantCreator is what provisionAdapter needs from [tenant.Provisioner].
+type tenantCreator interface {
+	Create(ctx context.Context, orgID string, opts tenant.CreateOptions) (tenant.Tenant, error)
+}
+
+// Provision creates orgID's tenant. An active tenant that already exists
+// is success: two servers may race the same create. One in another status
+// is returned as the [tenant.ExistsError]. A refusal only an operator can
+// resolve is wrapped in [tenanthost.ErrNeedsOperator].
 func (a provisionAdapter) Provision(ctx context.Context, orgID string) error {
 	_, err := a.p.Create(ctx, orgID, tenant.CreateOptions{})
-	if errors.Is(err, tenant.ErrTenantExists) {
+	var exists *tenant.ExistsError
+	switch {
+	case errors.As(err, &exists) && exists.Status == tenant.StatusActive:
 		return nil
+	case errors.Is(err, tenant.ErrSchemaExists), errors.Is(err, tenant.ErrSchemaCollision),
+		errors.Is(err, tenant.ErrTenantErased), errors.Is(err, tenant.ErrWrongStatus):
+		return fmt.Errorf("%w: %w", tenanthost.ErrNeedsOperator, err)
 	}
 	return err
 }
 
-// provisionConfig builds the host's provisioning config from the flags,
-// which validateTenantMode checked. baseDSN and auditRoot are as for
-// [tenant.NewProvisioner].
-func provisionConfig(t tenantFlags, baseDSN, auditRoot string) (tenanthost.ProvisionConfig, error) {
+// provisionConfig builds the host's provisioning config from the flags.
+// tenanthost.New validates it. p is the server's one provisioner, nil when
+// provisioning is off.
+func provisionConfig(t tenantFlags, p tenantCreator) (tenanthost.ProvisionConfig, error) {
 	mode, err := tenanthost.ParseProvisionMode(t.provision)
-	if err != nil || mode == tenanthost.ProvisionOff {
-		return tenanthost.ProvisionConfig{Mode: tenanthost.ProvisionOff}, err
-	}
-	p, err := tenant.NewProvisioner(baseDSN, auditRoot)
 	if err != nil {
-		return tenanthost.ProvisionConfig{}, err
+		return tenanthost.ProvisionConfig{}, fmt.Errorf("-tenant-provision: %w", err)
 	}
-	return tenanthost.ProvisionConfig{Mode: mode, Provisioner: provisionAdapter{p}, PerMinute: t.provisionRate}, nil
+	if mode == tenanthost.ProvisionOff {
+		return tenanthost.ProvisionConfig{Mode: tenanthost.ProvisionOff}, nil
+	}
+	cfg := tenanthost.ProvisionConfig{Mode: mode, PerMinute: t.provisionRate}
+	if p != nil {
+		cfg.Provisioner = provisionAdapter{p}
+	}
+	return cfg, nil
+}
+
+// tenantWriter builds the server's one [tenant.Provisioner], which serves
+// both provisioning and status sync, and the provisioning config over it.
+// The provisioner is nil when neither is on.
+func tenantWriter(t tenantFlags, baseDSN, auditRoot string) (tenanthost.ProvisionConfig, *tenant.Provisioner, error) {
+	var writer *tenant.Provisioner
+	var creator tenantCreator // stays a nil interface without a writer
+	if (t.provision != "" && t.provision != string(tenanthost.ProvisionOff)) || t.idpOrgAPI != "" {
+		p, err := tenant.NewProvisioner(baseDSN, auditRoot)
+		if err != nil {
+			return tenanthost.ProvisionConfig{}, nil, err
+		}
+		writer, creator = p, p
+	}
+	prov, err := provisionConfig(t, creator)
+	return prov, writer, err
 }
 
 // tenantResident is one open tenant: its services, the data-entry app over
@@ -516,7 +542,7 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 		return nil, err
 	}
 
-	prov, err := provisionConfig(f.tenant, os.Getenv("RELA_DATABASE_URL"), tenant.AuditRoot(base.CacheDir()))
+	prov, writer, err := tenantWriter(f.tenant, os.Getenv("RELA_DATABASE_URL"), tenant.AuditRoot(base.CacheDir()))
 	if err != nil {
 		_ = resolver.Close()
 		return nil, err
@@ -527,11 +553,7 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 			_ = resolver.Close()
 			return nil, err
 		}
-		if opts.idpWriter, err = tenant.NewProvisioner(os.Getenv("RELA_DATABASE_URL"),
-			tenant.AuditRoot(base.CacheDir())); err != nil {
-			_ = resolver.Close()
-			return nil, err
-		}
+		opts.idpWriter = writer
 	}
 	th, err := s.tenantHost(base, resolver, opts, adapter)
 	if err != nil {

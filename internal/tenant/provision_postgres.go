@@ -215,7 +215,7 @@ func (p *Provisioner) reserve(ctx context.Context, conn *pgx.Conn, t Tenant, opt
 		return fmt.Errorf("%w: org_id %q; an operator recreates it with `rela-server tenant create -recreate`",
 			ErrTenantErased, t.OrgID)
 	case found && rec.Status != StatusErased:
-		return fmt.Errorf("%w: org_id %q is %s", ErrTenantExists, t.OrgID, rec.Status)
+		return &ExistsError{OrgID: t.OrgID, Status: rec.Status}
 	}
 	var exists bool
 	if err := conn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = $1)",

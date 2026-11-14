@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
@@ -23,7 +22,7 @@ const (
 )
 
 // Retry-After values, in seconds. A provisioning run takes seconds, so the
-// SPA polls quickly; a refusal at the cap or after a failure waits longer.
+// client polls quickly; a refusal at the cap waits longer.
 const (
 	retryProvisioning = "2"
 	retryBusy         = "10"
@@ -44,6 +43,19 @@ func writeStatus(w http.ResponseWriter, code int, status string) {
 	_ = json.NewEncoder(w).Encode(tenantStatus{Status: status})
 }
 
+// writeProvisioning answers a request for a tenant being created. A read
+// gets code with the provisioning status. Any other method gets 503
+// `tenant_provisioning`: a 202 would read as success, and nothing was
+// written.
+func writeProvisioning(w http.ResponseWriter, r *http.Request, code int) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Retry-After", retryProvisioning)
+		writeError(w, r, http.StatusServiceUnavailable, "tenant_provisioning", "Tenant is being created")
+		return
+	}
+	writeStatus(w, code, statusProvisioning)
+}
+
 // serveStatus answers the status of the caller's own org, orgID, which the
 // host verified. An active tenant is opened to tell, as any request for it
 // would. With lazy provisioning an unknown org starts its create here too.
@@ -56,6 +68,9 @@ func (h *Host) serveStatus(w http.ResponseWriter, r *http.Request, orgID string)
 	case h.prov != nil && h.prov.lazy && provisionable(err):
 		h.provisionLazily(w, r, orgID, http.StatusOK)
 	case errors.Is(err, tenant.ErrTenantProvisioning):
+		if h.prov != nil {
+			h.prov.noteStuck(r.Context(), orgID)
+		}
 		writeStatus(w, http.StatusOK, statusProvisioning)
 	case errors.Is(err, tenant.ErrTenantInactive):
 		writeStatus(w, http.StatusOK, statusSuspended)
@@ -76,30 +91,39 @@ func (h *Host) provisionLazily(w http.ResponseWriter, r *http.Request, orgID str
 		return
 	}
 	_, err := h.prov.start(r.Context(), orgID)
+	var held *heldFailureError
 	switch {
 	case errors.Is(err, errProvisionElsewhere):
-		writeStatus(w, code, statusProvisioning)
+		writeProvisioning(w, r, code)
 	case errors.Is(err, errProvisionBusy):
 		slog.WarnContext(r.Context(), "tenant host: provisioning at its limit", "org_id", orgID)
 		w.Header().Set("Retry-After", retryBusy)
 		writeError(w, r, http.StatusServiceUnavailable, "provisioning_busy", "Tenant provisioning is busy")
-	case errors.Is(err, errProvisionFailed):
+	case errors.Is(err, ErrNeedsOperator):
+		// No Retry-After: a retry cannot help until an operator acts. The
+		// cause and the fix are in the log of the run.
+		writeError(w, r, http.StatusServiceUnavailable, "provisioning_needs_operator",
+			"Tenant provisioning needs an operator")
+	case errors.As(err, &held):
 		// The cause is in the log of the run; it can name the database.
-		w.Header().Set("Retry-After", strconv.Itoa(int(failureHold/time.Second)))
+		w.Header().Set("Retry-After", held.retryAfter())
 		writeError(w, r, http.StatusServiceUnavailable, "provisioning_failed", "Tenant provisioning failed")
 	case err != nil:
 		slog.ErrorContext(r.Context(), "tenant host: provisioning not started", "org_id", orgID, "error", err)
 		w.Header().Set("Retry-After", retryBusy)
 		writeError(w, r, http.StatusServiceUnavailable, "tenant_unavailable", "Tenant unavailable")
 	default:
-		writeStatus(w, code, statusProvisioning)
+		writeProvisioning(w, r, code)
 	}
 }
 
 // provisionFromWebhook creates the tenant a verified `organization.created`
 // names and waits a bounded time for it. Success is 200. A run still going
 // is 202: the IdP does not retry, and lazy provisioning or the next event
-// finishes it. A failure or a refusal at the cap asks the IdP to retry.
+// finishes it. A failure or a refusal at the cap asks the IdP to retry,
+// except one that needs an operator or finds the tenant existing but not
+// active: retrying cannot change those, so they are 200 with a body that
+// says so.
 //
 // It relies on the trust assumption written at [provisioning].
 func (h *Host) provisionFromWebhook(w http.ResponseWriter, r *http.Request, claims dataentry.WebhookClaims) {
@@ -123,7 +147,7 @@ func (h *Host) provisionFromWebhook(w http.ResponseWriter, r *http.Request, clai
 		w.WriteHeader(http.StatusAccepted)
 		return
 	case err != nil:
-		http.Error(w, "provisioning failed", http.StatusBadGateway)
+		webhookProvisionFailed(w, err)
 		return
 	}
 	timer := time.NewTimer(h.prov.wait)
@@ -142,6 +166,19 @@ func (h *Host) provisionFromWebhook(w http.ResponseWriter, r *http.Request, clai
 		w.WriteHeader(http.StatusOK)
 	case errors.Is(run.err, tenant.ErrTenantInUse):
 		w.WriteHeader(http.StatusAccepted)
+	default:
+		webhookProvisionFailed(w, run.err)
+	}
+}
+
+// webhookProvisionFailed answers a webhook whose create failed with err.
+// The cause stays in the log of the run.
+func webhookProvisionFailed(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ErrNeedsOperator):
+		http.Error(w, "not provisioned: operator action is needed; see the server log", http.StatusOK)
+	case errors.Is(err, tenant.ErrTenantExists):
+		http.Error(w, "not provisioned: the tenant exists but is not active", http.StatusOK)
 	default:
 		http.Error(w, "provisioning failed", http.StatusBadGateway)
 	}

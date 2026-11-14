@@ -233,7 +233,7 @@ const (
 )
 
 // parseLuaFormat splits f into its conversions with the Lua 5.1 rules:
-// flags from "-+ #0", a width and a precision of at most two digits each,
+// at most five flags from "-+ #0", a width and a precision of at most two digits each,
 // and one of the verbs cdiouxXeEfgGqs. "%%" is a literal percent sign and is
 // returned as a verb that takes no argument. An explicit argument index
 // ("[") and a "*" width are refused.
@@ -254,7 +254,7 @@ func parseLuaFormat(f string) ([]formatVerb, error) {
 		for i < len(f) && strings.IndexByte(luaFormatFlags, f[i]) >= 0 {
 			i++
 		}
-		if i-flagStart >= len(luaFormatFlags) {
+		if i-flagStart > len(luaFormatFlags) {
 			return nil, errors.New("invalid format (repeated flags)")
 		}
 		if digitsAt(f, &i) > 2 {

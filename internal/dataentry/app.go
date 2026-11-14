@@ -1495,8 +1495,8 @@ func NewApp(
 
 	// Initialize git ops if enabled and repo is a git repository
 	if cfg.Git != nil && cfg.Git.Enabled && git.IsRepo(paths.Root) {
+		// Logged by NewRouter: tenant mode turns it off before then.
 		app.gitOps = git.NewOps(paths.Root, *cfg.Git)
-		slog.Info("git sync enabled", "mode", cfg.Git.Mode)
 	}
 
 	// Wire the external-command runner for attachment scan/transform. It is

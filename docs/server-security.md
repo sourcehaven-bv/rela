@@ -777,7 +777,11 @@ default:
   holds for every script: automations, schedules, actions, document renders
   and webhook scripts. A process in tenant mode refuses to start a script
   that has no host config, instead of reading the shared `.rela` directory.
-- `ai.*` returns an error of kind `not_configured` with the same reason.
+  Every index raises, so `rela.secrets.x or "default"` fails too rather
+  than taking the default. `pairs(rela.secrets)` yields nothing and does
+  not raise.
+- `ai.*` does not raise. It returns `nil` and an error table of kind
+  `not_configured` with the same reason, so check the error.
 - Flows and connections that need a secret fail with that error. The token
   broker reports that no connection is configured.
 - Remotes in `remotes.yaml` sync from the scheduler, which the server does
