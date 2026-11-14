@@ -2747,7 +2747,7 @@
       "weight.structure": 859,
       "weight.layers": 0,
       "weight.vocabulary": 870,
-      "weight.types": 4203,
+      "weight.types": 4255,
       "weight.concepts": 7233,
       "weight.boundaries": 1471,
       "weight.data": 1297,
@@ -3107,6 +3107,17 @@
           "propagation_cost": [
             9.1,
             9.3
+          ]
+        }
+      },
+      {
+        "at": "2026-11-14T12:00:00Z",
+        "change": "loosen",
+        "reason": "records.TypeInfo mirrors metamodel.RecordTypeDef so the record store stays independent of the metamodel, TKT-J7Q9C4K",
+        "metrics": {
+          "weight.types": [
+            4203,
+            4255
           ]
         }
       }

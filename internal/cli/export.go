@@ -10,7 +10,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -57,20 +56,6 @@ type ExportRelation struct {
 	Properties map[string]any `json:"properties,omitempty" yaml:"properties,omitempty"`
 }
 
-// ExportRecord is the per-row export shape of a record type row. It has the
-// fields of records.Record, with YAML keys as well as JSON ones.
-type ExportRecord struct {
-	ID         string         `json:"id" yaml:"id"`
-	Type       string         `json:"type" yaml:"type"`
-	Owner      string         `json:"owner" yaml:"owner"`
-	TS         time.Time      `json:"ts" yaml:"ts"`
-	RecordedAt time.Time      `json:"recorded_at" yaml:"recorded_at"`
-	RecordedBy string         `json:"recorded_by,omitempty" yaml:"recorded_by,omitempty"`
-	Group      string         `json:"group,omitempty" yaml:"group,omitempty"`
-	Reverses   string         `json:"reverses,omitempty" yaml:"reverses,omitempty"`
-	Fields     map[string]any `json:"fields" yaml:"fields"`
-}
-
 // FullExport is the --all export shape.
 type FullExport struct {
 	Entities  []ExportEntity   `json:"entities" yaml:"entities"`
@@ -78,7 +63,7 @@ type FullExport struct {
 	// Records holds every stored row, including rows of a type the schema
 	// no longer declares, ordered by type, owner and then (ts, id). Absent
 	// when there are none.
-	Records []ExportRecord `json:"records,omitempty" yaml:"records,omitempty"`
+	Records []records.Record `json:"records,omitempty" yaml:"records,omitempty"`
 }
 
 // recordReader is the part of the record store the export reads.
@@ -220,7 +205,7 @@ func (c *ExportCmd) exportAllData(ctx context.Context, svc *readServices) error 
 // entity export reads the raw entity store: `rela export` is the operator
 // shell exporting the whole tenant. That includes rows of a type the schema
 // no longer declares; they are exported as stored.
-func allRecords(ctx context.Context, svc *readServices) ([]ExportRecord, error) {
+func allRecords(ctx context.Context, svc *readServices) ([]records.Record, error) {
 	if svc.Records == nil || svc.Meta == nil {
 		return nil, nil
 	}
@@ -228,12 +213,9 @@ func allRecords(ctx context.Context, svc *readServices) ([]ExportRecord, error) 
 	if err != nil {
 		return nil, fmt.Errorf("export records: %w", err)
 	}
-	var out []ExportRecord
+	var out []records.Record
 	err = records.Each(ctx, svc.Records, types, func(r records.Record) error {
-		out = append(out, ExportRecord{
-			ID: r.ID, Type: r.Type, Owner: r.Owner, TS: r.TS, RecordedAt: r.RecordedAt,
-			RecordedBy: r.RecordedBy, Group: r.Group, Reverses: r.Reverses, Fields: r.Fields,
-		})
+		out = append(out, r)
 		return nil
 	})
 	if err != nil {

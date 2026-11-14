@@ -24,7 +24,7 @@
 // sqlite) are the shipped backends; a specialized one (a TSDB, a separate
 // service) implements the same contract. Nothing in the contract needs the
 // entity store: an aggregate receives an owner list the Service has already
-// gated, never a graph query.
+// gated; it never queries the graph.
 //
 // # The contract every backend keeps
 //
@@ -85,25 +85,25 @@ var (
 // Record is one stored row.
 type Record struct {
 	// ID is unique and assigned by the Service. IDs sort by creation.
-	ID string `json:"id"`
+	ID string `json:"id" yaml:"id"`
 	// Type is the record type key.
-	Type string `json:"type"`
+	Type string `json:"type" yaml:"type"`
 	// Owner is the id of the owner entity, the whole face family.
-	Owner string `json:"owner"`
+	Owner string `json:"owner" yaml:"owner"`
 	// TS is when the row applies: the reading time, the booking date.
-	TS time.Time `json:"ts"`
+	TS time.Time `json:"ts" yaml:"ts"`
 	// RecordedAt is when the row was appended.
-	RecordedAt time.Time `json:"recorded_at"`
+	RecordedAt time.Time `json:"recorded_at" yaml:"recorded_at"`
 	// RecordedBy is the user that appended the row.
-	RecordedBy string `json:"recorded_by,omitempty"`
+	RecordedBy string `json:"recorded_by,omitempty" yaml:"recorded_by,omitempty"`
 	// Group is the ledger transaction the row belongs to; empty for a
 	// type without a ledger.
-	Group string `json:"group,omitempty"`
+	Group string `json:"group,omitempty" yaml:"group,omitempty"`
 	// Reverses is the group this row reverses; empty otherwise.
-	Reverses string `json:"reverses,omitempty"`
+	Reverses string `json:"reverses,omitempty" yaml:"reverses,omitempty"`
 	// Fields are the declared fields with a value. Values are string,
 	// int64 or bool; a decimal is its canonical text.
-	Fields map[string]any `json:"fields"`
+	Fields map[string]any `json:"fields" yaml:"fields"`
 }
 
 // GroupKey names one group of one record type.
