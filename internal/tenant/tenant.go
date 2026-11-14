@@ -90,6 +90,12 @@ var ErrTenantProvisioning = errors.New("tenant: organization is being provisione
 // neither does an erasing tenant or a colliding schema.
 var ErrTenantAbsent = errors.New("tenant: organization has no tenant")
 
+// ErrTenantErased marks an [ErrUnknownTenant] for an org whose tenant was
+// erased. Its control row is a tombstone, so nothing creates the tenant
+// again on its own: [Provisioner.Create] refuses it unless an operator asks
+// to recreate it.
+var ErrTenantErased = errors.New("tenant: organization was erased")
+
 // ErrSchemaCollision reports that an org's derived schema is recorded for a
 // different org. Two org ids whose hashes share a prefix would otherwise share
 // one schema, which is a cross-tenant leak, so the second org is refused and

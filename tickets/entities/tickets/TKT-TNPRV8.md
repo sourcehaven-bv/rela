@@ -159,6 +159,16 @@ As implemented.
 - **Seeding is out of scope.** Configuration is shared by design
   (RES-D54281), so no per-tenant config is seeded and a new tenant starts
   empty. No seed-data feature was added.
+- **Erased tenants stay erased.** Erase used to delete the control row, so
+  an erased org looked absent and lazy provisioning or a replayed
+  `organization.created` recreated it. Erase now leaves a tombstone: status
+  `erased` with `erased_at`, and no tenant data. The resolver reports it as
+  `ErrUnknownTenant` plus `ErrTenantErased`, never `ErrTenantAbsent`, so the
+  host refuses it with a plain 403 and acknowledges the webhook with a
+  warning. `Provisioner.Create` refuses it with `ErrTenantErased` unless
+  `CreateOptions.Recreate` is set; only `tenant create -recreate` sets it.
+  The status check is widened and `erased_at` added on the first lifecycle
+  command, in one transaction.
 - **Not changed.** The server still refuses to start without the control
   table, so the first tenant is created with `tenant create`. The SPA does
   not yet poll the status route; the API contract is in place.
@@ -181,6 +191,15 @@ As implemented.
 - **Answers.** 200 when applied or nothing to do (also no tenant, or an org
   the IdP does not know), 502 when Pratique or the database cannot answer,
   503 with `Retry-After` for a tenant still being created.
+- **Ordering.** Two `organization.updated` events for one org could race: one
+  reads active, the other reads suspended and suspends, and then the first
+  resumes. Syncs of one org now take turns in each process, and each reads
+  the IdP only once it holds the turn. Across processes, a resume that
+  changed the status reads the IdP again and suspends again if the org is
+  suspended by then. Pinned by `TestStatusSync_ConcurrentSyncsTakeTurns` and
+  `TestStatusSync_ResumeRechecksTheIdP`.
+- **Erased tenants.** `SuspendForIDP` and `ResumeForIDP` leave an erased
+  tenant alone, and the event is answered 200.
 - **Effect on open tenants.** After a suspension the host calls
   `Registry.RevalidateOrg`, which closes the open tenant at once, as the
   next request would after `tenant suspend`.

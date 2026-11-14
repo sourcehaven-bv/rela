@@ -198,13 +198,15 @@ func statusSyncSource(t tenantFlags, secret string) (tenanthost.OrgStatusSource,
 // provisionAdapter is the host's [tenanthost.Provisioner] over the control
 // table's writer. It never adopts an existing schema: a schema without a
 // control row may hold another org's data, so only an operator adopts it.
+// It never recreates an erased tenant either: an erasure is undone only by
+// an operator's `tenant create -recreate`.
 type provisionAdapter struct{ p *tenant.Provisioner }
 
 // Provision creates orgID's tenant. A tenant that already exists is
 // success: two servers may race the same create, and the host acquires the
 // tenant afterwards, which refuses one that is not active.
 func (a provisionAdapter) Provision(ctx context.Context, orgID string) error {
-	_, err := a.p.Create(ctx, orgID, false)
+	_, err := a.p.Create(ctx, orgID, tenant.CreateOptions{})
 	if errors.Is(err, tenant.ErrTenantExists) {
 		return nil
 	}

@@ -25,7 +25,7 @@ func (pv provisioned) lookup(t *testing.T) (tenant.Status, tenant.SuspendCause) 
 func TestProvisioner_IDPSuspension(t *testing.T) {
 	pv := newProvisioned(t)
 	ctx := t.Context()
-	if _, err := pv.p.Create(ctx, "org-a", false); err != nil {
+	if _, err := pv.p.Create(ctx, "org-a", tenant.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	expect := func(step string, wantStatus tenant.Status, wantBy tenant.SuspendCause) {
@@ -113,7 +113,7 @@ func TestProvisioner_IDPSuspension(t *testing.T) {
 func TestProvisioner_IDPSuspensionOtherStatuses(t *testing.T) {
 	pv := newProvisioned(t)
 	ctx := t.Context()
-	a, err := pv.p.Create(ctx, "org-a", false)
+	a, err := pv.p.Create(ctx, "org-a", tenant.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestProvisioner_IDPSuspensionOtherStatuses(t *testing.T) {
 func TestProvisioner_UpgradesOldControlTable(t *testing.T) {
 	pv := newProvisioned(t)
 	ctx := t.Context()
-	a, err := pv.p.Create(ctx, "org-a", false)
+	a, err := pv.p.Create(ctx, "org-a", tenant.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestProvisioner_UpgradesOldControlTable(t *testing.T) {
 func TestRegistry_IDPSuspensionClosesOpenTenant(t *testing.T) {
 	pv := newProvisioned(t)
 	ctx := t.Context()
-	if _, err := pv.p.Create(ctx, "org-a", false); err != nil {
+	if _, err := pv.p.Create(ctx, "org-a", tenant.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	var opened *revokeCounter

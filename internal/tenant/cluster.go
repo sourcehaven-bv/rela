@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -36,12 +37,16 @@ const ControlSchema = "rela_control"
 type Status string
 
 // The statuses a tenant moves through. Provisioning is set while `tenant
-// create` builds the schema; erasing is one-way.
+// create` builds the schema; erasing is one-way. Erased is the tombstone an
+// erasure leaves: the row keeps the org id, schema name, status and
+// timestamps, and no tenant data. Only `tenant create -recreate` turns it
+// back into a tenant, so automatic provisioning cannot undo an erasure.
 const (
 	StatusProvisioning Status = "provisioning"
 	StatusActive       Status = "active"
 	StatusSuspended    Status = "suspended"
 	StatusErasing      Status = "erasing"
+	StatusErased       Status = "erased"
 )
 
 // SuspendCause records who suspended a tenant, in the control table's
@@ -112,10 +117,13 @@ func checkOrgID(orgID string) error {
 
 // Record is one row of the control table, plus whether its schema exists.
 type Record struct {
-	OrgID        string
-	Schema       string
-	Status       Status
-	SuspendedBy  SuspendCause
+	OrgID       string
+	Schema      string
+	Status      Status
+	SuspendedBy SuspendCause
+	// ErasedAt is when the erasure finished. It is zero unless Status is
+	// [StatusErased].
+	ErasedAt     time.Time
 	SchemaExists bool
 }
 
@@ -159,6 +167,8 @@ func newClusterResolver(base string, control controlReader, closer io.Closer) *C
 //
 // A missing row also carries [ErrTenantAbsent], and a provisioning one
 // [ErrTenantProvisioning], so a host that provisions can tell them apart.
+// An erased row carries [ErrTenantErased] and neither of those, so a host
+// never provisions it again.
 func (r *ClusterResolver) Resolve(ctx context.Context, orgID string) (Tenant, error) {
 	rec, err := r.Lookup(ctx, orgID)
 	if err != nil {
@@ -170,6 +180,9 @@ func (r *ClusterResolver) Resolve(ctx context.Context, orgID string) (Tenant, er
 	}
 	if rec.Status == StatusSuspended {
 		return Tenant{}, fmt.Errorf("%w: %w: org_id %q is %s", ErrUnknownTenant, ErrTenantInactive, orgID, rec.Status)
+	}
+	if rec.Status == StatusErased {
+		return Tenant{}, fmt.Errorf("%w: %w: %q", ErrUnknownTenant, ErrTenantErased, orgID)
 	}
 	if rec.Status != StatusActive {
 		return Tenant{}, fmt.Errorf("%w: org_id %q is %s", ErrUnknownTenant, orgID, rec.Status)

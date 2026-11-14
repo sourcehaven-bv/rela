@@ -60,7 +60,7 @@ func NewClusterResolver(context.Context, string) (*ClusterResolver, error) {
 // [NewProvisioner] refuses to build a Provisioner here, so none is reached.
 
 // Create refuses on a build with no PostgreSQL.
-func (*Provisioner) Create(context.Context, string, bool) (Tenant, error) {
+func (*Provisioner) Create(context.Context, string, CreateOptions) (Tenant, error) {
 	return Tenant{}, ErrUnsupportedBuild
 }
 

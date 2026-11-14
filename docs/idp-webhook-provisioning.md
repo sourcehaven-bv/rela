@@ -164,8 +164,10 @@ Organization events are acknowledged and logged. In tenant mode with
 `-tenant-provision=webhook` or `lazy`, an `organization.created` for an org
 that has no tenant creates its tenant first: 200 when it is ready, 202 when it
 is still running after 10 seconds, 502 on a failure so the IdP retries, and 503
-over the rate cap. With the default `-tenant-provision=off` the event is
-acknowledged and dropped. See "Provisioning tenants automatically" in
+over the rate cap. An `organization.created` for an erased org does not
+recreate it: it is acknowledged and logged at warning level, and only
+`rela-server tenant create -recreate` brings the org back. With the default
+`-tenant-provision=off` the event is acknowledged and dropped. See "Provisioning tenants automatically" in
 [postgres-backend.md](postgres-backend.md). The IdP does not redeliver an
 acknowledged event, so an event received before provisioning was on is not
 replayed. An `organization.deleted` is logged at warning level; erase that

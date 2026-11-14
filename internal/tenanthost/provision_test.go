@@ -55,6 +55,8 @@ func (c *controlTable) acquire(_ context.Context, orgID string) (http.Handler, f
 			tenant.ErrTenantProvisioning)
 	case s == tenant.StatusSuspended:
 		return nil, nil, fmt.Errorf("%w: %w", tenant.ErrUnknownTenant, tenant.ErrTenantInactive)
+	case s == tenant.StatusErased:
+		return nil, nil, fmt.Errorf("%w: %w: %q", tenant.ErrUnknownTenant, tenant.ErrTenantErased, orgID)
 	case s != tenant.StatusActive:
 		return nil, nil, fmt.Errorf("%w: %s", tenant.ErrUnknownTenant, s)
 	}
@@ -225,6 +227,8 @@ func TestProvision_Webhook(t *testing.T) {
 			want: http.StatusAccepted, calls: 1},
 		{name: "failed", body: "organization.created|org-new", err: errors.New("migrate: boom"),
 			want: http.StatusBadGateway, calls: 1},
+		{name: "created for an erased org is never provisioned", body: "organization.created|org-e",
+			statuses: map[string]tenant.Status{"org-e": tenant.StatusErased}, want: http.StatusOK},
 		{name: "other event for a new org", body: "membership.created|org-new", want: http.StatusOK},
 		{name: "deletion stays log only", body: "organization.deleted|org-new", want: http.StatusOK},
 		{name: "invalid org id never reaches the provisioner", body: "organization.created|bad\x00org",
@@ -270,6 +274,29 @@ func TestProvision_WebhookModeLeavesRequestsDenied(t *testing.T) {
 	}
 	if p.calls.Load() != 0 {
 		t.Errorf("a request provisioned in webhook mode")
+	}
+}
+
+// TestProvision_LazyRefusesErased pins that lazy provisioning never
+// recreates an erased tenant: a request for it is a plain 403, and the
+// status route reports no tenant either.
+func TestProvision_LazyRefusesErased(t *testing.T) {
+	t.Parallel()
+	c := newControl(map[string]tenant.Status{"org-e": tenant.StatusErased})
+	p := &stubProvisioner{control: c}
+	h := newProvHost(t, c, tenanthost.ProvisionConfig{Mode: tenanthost.ProvisionLazy, Provisioner: p})
+
+	if w := do(h, http.MethodGet, "/api/v1/tickets", "tok-org-e", ""); w.Code != http.StatusForbidden {
+		t.Errorf("request for an erased org: status = %d, want 403 (body %q)", w.Code, w.Body.String())
+	}
+	if w := do(h, http.MethodGet, tenanthost.StatusPath, "tok-org-e", ""); w.Code != http.StatusForbidden {
+		t.Errorf("status route for an erased org: status = %d, want 403 (body %q)", w.Code, w.Body.String())
+	}
+	if w := do(h, http.MethodPost, tenanthost.WebhookPath, "", "organization.created|org-e"); w.Code != http.StatusOK {
+		t.Errorf("organization.created for an erased org: status = %d, want 200", w.Code)
+	}
+	if got := p.calls.Load(); got != 0 {
+		t.Errorf("provisioner calls = %d, want 0", got)
 	}
 }
 

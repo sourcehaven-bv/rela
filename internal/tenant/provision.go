@@ -39,6 +39,18 @@ func NewProvisioner(baseDSN, auditRoot string) (*Provisioner, error) {
 	return &Provisioner{base: baseDSN, auditRoot: auditRoot, derive: SchemaFor}, nil
 }
 
+// CreateOptions are the operator's choices for [Provisioner.Create]. The
+// zero value is what the tenant host passes: take over nothing.
+type CreateOptions struct {
+	// Adopt takes over a schema that already exists with the derived name
+	// but has no control row.
+	Adopt bool
+	// Recreate turns an erased tenant's tombstone back into a fresh, empty
+	// tenant. Without it a create for an erased org fails with
+	// [ErrTenantErased].
+	Recreate bool
+}
+
 // ErrTenantExists reports a create for an org that already has a control
 // row that is not mid-provisioning.
 var ErrTenantExists = errors.New("tenant: already exists")

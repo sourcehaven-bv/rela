@@ -32,19 +32,24 @@ control table rela_control.tenants records each tenant's status. The
 database is the one $RELA_DATABASE_URL names.
 
 Commands:
-  create [-adopt] ORG_ID   create the schema, run the migrations, and set
+  create [-adopt] [-recreate] ORG_ID
+                           create the schema, run the migrations, and set
                            the status to active. -adopt takes over a schema
-                           that already has the derived name.
+                           that already has the derived name. -recreate
+                           makes a fresh, empty tenant for an erased org;
+                           without it an erased org is refused.
   suspend ORG_ID           stop serving the tenant; its data stays. The
                            IdP cannot resume a tenant an operator suspended.
   resume ORG_ID            serve a suspended tenant again, also one the IdP
                            suspended.
-  erase [-force] ORG_ID    set the status to erasing, which cannot be
-                           undone, then drop the schema and remove the
-                           audit directory. Without -force the command asks
-                           you to type the org id to confirm.
-  show ORG_ID              print the tenant's schema and status, and who
-                           suspended it.
+  erase [-force] ORG_ID    set the status to erasing, then drop the schema,
+                           remove the audit directory, and set the status
+                           to erased. The erased row keeps no tenant data;
+                           it stops automatic provisioning from creating
+                           the tenant again. Without -force the command
+                           asks you to type the org id to confirm.
+  show ORG_ID              print the tenant's schema and status, who
+                           suspended it, and when it was erased.
 
 Before erasing, check that no open or recently closed incident, NCR or
 dispute refers to the tenant while its evaluation period is still running
@@ -53,7 +58,7 @@ dispute refers to the tenant while its evaluation period is still running
 
 // lifecycle is what the tenant commands need from [tenant.Provisioner].
 type lifecycle interface {
-	Create(ctx context.Context, orgID string, adopt bool) (tenant.Tenant, error)
+	Create(ctx context.Context, orgID string, opts tenant.CreateOptions) (tenant.Tenant, error)
 	Suspend(ctx context.Context, orgID string) error
 	Resume(ctx context.Context, orgID string) error
 	Erase(ctx context.Context, orgID string) (tenant.Tenant, tenant.Erasure, error)
@@ -107,8 +112,8 @@ func runTenantCommand(args []string) int {
 
 // tenantArgs are the parsed arguments of one tenant command.
 type tenantArgs struct {
-	cmd, orgID, cacheDir string
-	adopt, force         bool
+	cmd, orgID, cacheDir   string
+	adopt, recreate, force bool
 }
 
 // runTenant parses `COMMAND [flags] ORG_ID` and runs it. It returns the exit
@@ -137,7 +142,7 @@ func runTenant(ctx context.Context, args []string, tio tenantIO) int {
 	}
 	switch a.cmd {
 	case "create":
-		t, err := p.Create(ctx, a.orgID, a.adopt)
+		t, err := p.Create(ctx, a.orgID, tenant.CreateOptions{Adopt: a.adopt, Recreate: a.recreate})
 		recordLifecycle(tio, a, t.Schema, err)
 		return report(tio, a, err, fmt.Sprintf("created org_id %q in schema %q; it is active", a.orgID, t.Schema))
 	case "suspend":
@@ -160,6 +165,9 @@ func report(tio tenantIO, a tenantArgs, err error, success string) int {
 	if err != nil {
 		if errors.Is(err, tenant.ErrSchemaExists) {
 			err = fmt.Errorf("%w; if the schema is this org's, run create again with -adopt", err)
+		}
+		if errors.Is(err, tenant.ErrTenantErased) && a.cmd == "create" {
+			err = fmt.Errorf("%w; to make a fresh, empty tenant for it, run create again with -recreate", err)
 		}
 		_, _ = fmt.Fprintf(tio.err, "tenant %s failed: %v\n", a.cmd, err)
 		return 1
@@ -189,6 +197,7 @@ func parseTenantArgs(args []string, stderr io.Writer) (a tenantArgs, code int, o
 	projectDir := fs.String("project", ".", "Path to the rela project directory")
 	if a.cmd == "create" {
 		fs.BoolVar(&a.adopt, "adopt", false, "Take over a schema that already has the derived name")
+		fs.BoolVar(&a.recreate, "recreate", false, "Make a fresh, empty tenant for an erased org")
 	}
 	if a.cmd == "erase" {
 		fs.BoolVar(&a.force, "force", false, "Erase without asking to type the org id")
@@ -237,9 +246,25 @@ func showTenant(ctx context.Context, a tenantArgs, base string, tio tenantIO) in
 		_, _ = fmt.Fprintf(tio.err, "tenant show: %v\n", err)
 		return 1
 	}
-	_, _ = fmt.Fprintf(tio.out, "org_id %q: schema %q, %s%s%s\n", rec.OrgID, rec.Schema, rec.Status,
-		suspendedBy(rec), done(rec.SchemaExists, "", " (the schema does not exist)"))
+	exists := done(rec.SchemaExists, "", " (the schema does not exist)")
+	if rec.Status == tenant.StatusErased {
+		// The schema is gone by design; saying so would read as a fault.
+		exists = done(rec.SchemaExists, " (the schema still exists)", "")
+	}
+	_, _ = fmt.Fprintf(tio.out, "org_id %q: schema %q, %s%s%s%s\n", rec.OrgID, rec.Schema, rec.Status,
+		suspendedBy(rec), erasedAt(rec), exists)
 	return 0
+}
+
+// erasedAt says when an erased tenant was erased, for `tenant show`.
+func erasedAt(rec tenant.Record) string {
+	if rec.Status != tenant.StatusErased {
+		return ""
+	}
+	if rec.ErasedAt.IsZero() {
+		return " (time not recorded)"
+	}
+	return " at " + rec.ErasedAt.UTC().Format(time.RFC3339)
 }
 
 // suspendedBy describes who suspended a suspended tenant, for `tenant show`.
@@ -365,6 +390,7 @@ func recordLifecycle(tio tenantIO, a tenantArgs, schema string, cmdErr error) {
 	}
 	if a.cmd == "create" {
 		rec["adopt"] = a.adopt
+		rec["recreate"] = a.recreate
 	}
 	if cmdErr != nil {
 		rec["error"] = cmdErr.Error()

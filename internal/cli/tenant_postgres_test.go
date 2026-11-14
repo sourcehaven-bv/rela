@@ -56,9 +56,9 @@ func writeTwoTenantProject(t *testing.T) (root, schemaA, schemaB string) {
 	}
 	p, err := tenant.NewProvisioner(base, tenant.AuditRoot(filepath.Join(root, ".rela")))
 	require.NoError(t, err)
-	a, err := p.Create(t.Context(), "org-a", false)
+	a, err := p.Create(t.Context(), "org-a", tenant.CreateOptions{})
 	require.NoError(t, err)
-	b, err := p.Create(t.Context(), "org-b", false)
+	b, err := p.Create(t.Context(), "org-b", tenant.CreateOptions{})
 	require.NoError(t, err)
 	return root, a.Schema, b.Schema
 }

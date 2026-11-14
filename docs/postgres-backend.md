@@ -756,7 +756,7 @@ Pratique or a separate publishing service, not in rela.
 
 The IdP webhook (`POST /webhooks/idp`) is routed by the `org_id` in its
 signed body. An event for an org this server does not host, or for one
-being erased, is acknowledged and ignored. An event for a suspended or
+being erased or erased, is acknowledged and ignored. An event for a suspended or
 provisioning tenant gets 503 with `Retry-After`, so the IdP delivers it
 again: a role removal sent during a suspension still applies after the
 resume. Declarative webhooks (`/hooks/<id>`) carry no assertion, so the
@@ -811,7 +811,10 @@ webhook gets 503 with `Retry-After`.
 
 The server never adopts an existing schema that has no control row; that
 is an operator decision (`tenant create -adopt`). It never erases a
-tenant: `organization.deleted` is still only logged.
+tenant: `organization.deleted` is still only logged. It never recreates an
+erased tenant either. A request for an erased org gets 403, and an
+`organization.created` webhook for it gets 200 and a warning in the log.
+Only `tenant create -recreate` brings it back.
 
 Every tenant shares the project configuration, so a new tenant starts with
 an empty store and nothing is seeded into it.
@@ -847,6 +850,14 @@ event the server asks the operator API for the org's current status
 | `suspended` | Suspends an active tenant. Open sessions close at once, as after `tenant suspend`. An already suspended tenant stays as it is. |
 | `active` | Resumes the tenant, but only if the IdP suspended it. A tenant an operator suspended stays suspended. |
 | unknown (404) | Nothing. Erasure is an operator decision. |
+
+An erased tenant is left as it is, whatever the IdP says.
+
+Events for one org are applied one at a time in each server, and each
+reads the IdP's status only when its turn comes, so an older answer cannot
+undo a newer one. Servers do not coordinate with each other, so after a
+resume the server reads the status once more and suspends the tenant again
+if the org is suspended by then.
 
 The server answers 200 when it applied a change or had nothing to do, also
 for an org that has no tenant. It answers 502 when the operator API or the
@@ -896,9 +907,11 @@ rela-server-postgres tenant erase   -project /srv/rela org_7f3a
   which is not served; run it again to finish. It refuses an org that
   already has a row, and a schema that already exists without a row,
   because that schema may hold other data. Use `-adopt` to take over such
-  a schema on purpose.
+  a schema on purpose. It refuses an erased org too. Use `-recreate` to
+  make a fresh, empty tenant for it; the server never does that itself.
 - `show` prints the org's derived schema and its status, or "no tenant".
-  For a suspended tenant it also prints who suspended it.
+  For a suspended tenant it also prints who suspended it, and for an
+  erased one when it was erased.
 - `suspend` stops serving the org and keeps its data. Requests get 403 at
   once. Each server closes the tenant within 30 seconds, and ends its live
   update streams. IdP webhooks for the org are refused with 503 so that the
@@ -1009,15 +1022,29 @@ log for it:
    rela-server-postgres tenant erase -project /srv/rela org_acme
    ```
 
-3. On each other server host, remove that host's audit directory,
-   `.rela/audit/tenants/<schema>/`, by hand. The command printed the schema
-   name, and `tenant show` prints it too.
+3. On each other server host, run the same `tenant erase` command. The org
+   is already erased, so it changes nothing in the database and removes
+   that host's audit directory, `.rela/audit/tenants/<schema>/`. You can
+   also remove that directory by hand; the command printed the schema name,
+   and `tenant show` prints it too.
 
 The command first sets the status to `erasing`. From that moment the org
 is not served, and the status cannot be changed back: neither `resume` nor
 `suspend` accepts an erasing tenant. Servers close the tenant, and
 `rela-postgres --tenant` processes exit, within 30 seconds. The command then drops the schema under the tenant's lock,
-removes the audit directory and deletes the control row.
+removes the audit directory and sets the status to `erased`.
+
+The `erased` row is a tombstone. It keeps the org id, the schema name, the
+status and the time of the erasure (`erased_at`), and no tenant data. It
+exists so that automatic provisioning cannot create the tenant again: with
+`-tenant-provision` on, a request or an `organization.created` webhook for
+an erased org does not start a create. Only an operator brings the org
+back, with `tenant create -recreate`, which makes a fresh, empty tenant.
+Running `erase` on an erased org succeeds and changes nothing. The first
+lifecycle command of this release adds the `erased_at` column and the
+`erased` status to an existing control table. An org erased by an earlier
+release has no row, so automatic provisioning would create it again; keep
+`-tenant-provision` off until no such org can still sign in.
 
 If a server or command still has the tenant open, the drop is refused with
 "open in a running server or being erased". The status stays `erasing`.
@@ -1034,13 +1061,13 @@ What it removes:
   Each tenant has its own audit directory so that it can be deleted with
   the tenant. If that directory is a symlink, the command refuses, so that
   it never reports records removed that are still on disk.
-- The tenant's row in `rela_control.tenants`.
-
 What it does not remove:
 
 - Audit directories on other server hosts (step 3), and copies of any
   audit log.
 - Server and access logs, which name the org id and the paths requested.
+- The tenant's row in `rela_control.tenants`. It stays as the `erased`
+  tombstone described above.
 - Backups (see below).
 
 Each erasure attempt that passes the confirmation, whether it is refused
@@ -1059,8 +1086,8 @@ The command refuses:
 **The schema lock.** Every server holds a lock on each tenant it has open,
 on a connection of its own, and the erasure takes that lock exclusively.
 While a server has the tenant open, the erasure is refused. While the
-erasure runs, no server can open the tenant. After it, the org has no
-control row, so no server opens it again.
+erasure runs, no server can open the tenant. After it, the org's status is
+`erased`, so no server opens it again.
 
 The lock only lasts as long as the connection that holds it. A database
 restart, `pg_terminate_backend` or an `idle_session_timeout` ends it while
@@ -1075,8 +1102,8 @@ A process that reaches the schema without tenant mode, such as `psql`,
 holds no lock.
 
 **What erasure guarantees.** When the command returns, the tenant's schema
-and control row are gone from the live database, and its audit directory
-from this host. PITR backups (for example pgBackRest) still hold the data
+is gone from the live database, and its audit directory from this host.
+The control row holds only the tombstone. PITR backups (for example pgBackRest) still hold the data
 until they expire, so erasure is complete when the backup retention period
 has passed. State that period in days to your customers, as the time
 within which their data is erased. Restoring a backup taken before the

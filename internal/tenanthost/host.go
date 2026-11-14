@@ -273,6 +273,15 @@ func (h *Host) serveWebhook(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "300")
 		http.Error(w, "tenant not served now", http.StatusServiceUnavailable)
 		return
+	case errors.Is(err, tenant.ErrTenantErased):
+		// Acknowledged and never provisioned: only an operator recreates
+		// an erased tenant. Worth a look when the event is a create, since
+		// the IdP then has an org whose data this server erased.
+		slog.Warn("tenant host: idp webhook for an erased org; not provisioned "+
+			"(an operator recreates it with rela-server tenant create -recreate)",
+			"org_id", claims.OrgID, "event", claims.Event, "id", claims.ID)
+		w.WriteHeader(http.StatusOK)
+		return
 	case errors.Is(err, tenant.ErrUnknownTenant):
 		// Acknowledged so the IdP does not retry an event for an org this
 		// server does not host. With provisioning on, an

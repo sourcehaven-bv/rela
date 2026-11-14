@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
 	"github.com/Sourcehaven-BV/rela/internal/tenanthost"
@@ -199,6 +200,10 @@ func TestStatusSync_Answers(t *testing.T) {
 			idp: &idpOrgs{suspended: map[string]bool{"org-a": true}}, org: "org-a", want: http.StatusServiceUnavailable},
 		{name: "erasing tenant", statuses: map[string]tenant.Status{"org-a": tenant.StatusErasing},
 			idp: &idpOrgs{suspended: map[string]bool{"org-a": true}}, org: "org-a", want: http.StatusOK},
+		{name: "erased tenant, IdP suspended", statuses: map[string]tenant.Status{"org-a": tenant.StatusErased},
+			idp: &idpOrgs{suspended: map[string]bool{"org-a": true}}, org: "org-a", want: http.StatusOK},
+		{name: "erased tenant, IdP active", statuses: map[string]tenant.Status{"org-a": tenant.StatusErased},
+			idp: &idpOrgs{suspended: map[string]bool{"org-a": false}}, org: "org-a", want: http.StatusOK},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -273,4 +278,150 @@ func TestNewStatusSync_RejectsMissingCollaborators(t *testing.T) {
 	}); err == nil {
 		t.Error("status sync without the webhook accepted")
 	}
+}
+
+// changingIDP is an IdP whose answer changes between calls. answer gives
+// the answer of call n, counting from 1. When gate is set, call 1 waits
+// for it. Every call is announced on entered.
+type changingIDP struct {
+	answer  func(n int) bool
+	gate    chan struct{}
+	entered chan int
+	mu      sync.Mutex
+	calls   int
+}
+
+func (o *changingIDP) OrgSuspended(ctx context.Context, _ string) (bool, error) {
+	o.mu.Lock()
+	o.calls++
+	n := o.calls
+	o.mu.Unlock()
+	if o.entered != nil {
+		o.entered <- n
+	}
+	if n == 1 && o.gate != nil {
+		select {
+		case <-o.gate:
+		case <-ctx.Done():
+			return false, ctx.Err()
+		}
+	}
+	return o.answer(n), nil
+}
+
+func (o *changingIDP) count() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.calls
+}
+
+// idpSuspended returns an idpSuspension over one tenant the IdP suspended.
+func idpSuspended(org string) *idpSuspension {
+	c := newControl(map[string]tenant.Status{org: tenant.StatusSuspended})
+	return &idpSuspension{c: c, cause: map[string]tenant.SuspendCause{org: tenant.SuspendedByIDP}}
+}
+
+// TestStatusSync_ConcurrentSyncsTakeTurns interleaves two syncs of one org.
+// The first reads "active" from the IdP and is held there; the IdP then
+// suspends the org, and a second sync starts. The second must not read the
+// IdP until the first is done, and the tenant must end up suspended, not
+// resumed by the first sync's stale answer.
+func TestStatusSync_ConcurrentSyncsTakeTurns(t *testing.T) {
+	t.Parallel()
+	apply := idpSuspended("org-a")
+	idp := &changingIDP{
+		answer:  func(n int) bool { return n > 1 },
+		gate:    make(chan struct{}),
+		entered: make(chan int, 8),
+	}
+	revals := &revalidations{}
+	ss, err := tenanthost.NewStatusSync(idp, apply, revals.revalidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	wg.Go(func() { errs[0] = ss.SyncStatus(t.Context(), "org-a") })
+	if n := <-idp.entered; n != 1 {
+		t.Fatalf("first IdP call is call %d", n)
+	}
+	wg.Go(func() { errs[1] = ss.SyncStatus(t.Context(), "org-a") })
+	select {
+	case n := <-idp.entered:
+		t.Fatalf("the second sync read the IdP (call %d) while the first held the org's turn", n)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(idp.gate)
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("sync %d: %v", i, err)
+		}
+	}
+	if st, _ := apply.status("org-a"); st != tenant.StatusSuspended {
+		t.Fatalf("status after the interleaved syncs = %s, want suspended", st)
+	}
+	if got := idp.count(); got != 3 {
+		t.Errorf("IdP calls = %d, want 3 (read, recheck after the resume, second sync)", got)
+	}
+}
+
+// TestStatusSync_ResumeRechecksTheIdP pins the cross-process guard: the IdP
+// answers "active", and then "suspended" because the org was suspended
+// meanwhile, and a sync in another process found nothing to change. The
+// resume is followed by a second read, which suspends the tenant again and
+// closes it.
+func TestStatusSync_ResumeRechecksTheIdP(t *testing.T) {
+	t.Parallel()
+	apply := idpSuspended("org-a")
+	idp := &changingIDP{answer: func(n int) bool { return n > 1 }}
+	revals := &revalidations{}
+	ss, err := tenanthost.NewStatusSync(idp, apply, revals.revalidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = ss.SyncStatus(t.Context(), "org-a"); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := apply.status("org-a"); st != tenant.StatusSuspended {
+		t.Fatalf("status = %s, want suspended again after the recheck", st)
+	}
+	if got := revals.list(); len(got) != 1 || got[0] != "org-a" {
+		t.Errorf("revalidated %v; want [org-a]", got)
+	}
+
+	// A resume the IdP still agrees with stays.
+	idp2 := &changingIDP{answer: func(int) bool { return false }}
+	ss2, err := tenanthost.NewStatusSync(idp2, apply, revals.revalidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = ss2.SyncStatus(t.Context(), "org-a"); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := apply.status("org-a"); st != tenant.StatusActive || idp2.count() != 2 {
+		t.Errorf("status = %s after %d IdP calls; want active after 2", st, idp2.count())
+	}
+}
+
+// TestStatusSync_WaitHonoursContext pins that a sync waiting for the org's
+// turn gives up when its context ends.
+func TestStatusSync_WaitHonoursContext(t *testing.T) {
+	t.Parallel()
+	apply := idpSuspended("org-a")
+	idp := &changingIDP{answer: func(int) bool { return true }, gate: make(chan struct{}), entered: make(chan int, 8)}
+	ss, err := tenanthost.NewStatusSync(idp, apply, func(context.Context, string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	wg.Go(func() { _ = ss.SyncStatus(t.Context(), "org-a") })
+	<-idp.entered
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err = ss.SyncStatus(ctx, "org-a"); !errors.Is(err, context.Canceled) {
+		t.Errorf("waiting sync with a cancelled context: %v, want context.Canceled", err)
+	}
+	close(idp.gate)
+	wg.Wait()
 }

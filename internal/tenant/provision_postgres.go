@@ -143,10 +143,14 @@ func (p *Provisioner) record(ctx context.Context, conn *pgx.Conn, orgID string) 
 // Create again finishes it.
 //
 // A schema that already exists without a control row is refused with
-// [ErrSchemaExists] unless adopt is set. Adopting is for a schema an
+// [ErrSchemaExists] unless opts.Adopt is set. Adopting is for a schema an
 // operator renamed to the derived name on purpose, such as a tenant from a
 // deployment that still used a tenant map file.
-func (p *Provisioner) Create(ctx context.Context, orgID string, adopt bool) (Tenant, error) {
+//
+// An erased org's tombstone is refused with [ErrTenantErased] unless
+// opts.Recreate is set. Recreating makes a fresh, empty tenant from the
+// tombstone; it is an operator's act, and the tenant host never asks for it.
+func (p *Provisioner) Create(ctx context.Context, orgID string, opts CreateOptions) (Tenant, error) {
 	// derive runs the same check, but reports an unknown organization;
 	// checking first makes create say what is wrong with the org id.
 	if err := checkOrgID(orgID); err != nil {
@@ -175,7 +179,7 @@ func (p *Provisioner) Create(ctx context.Context, orgID string, adopt bool) (Ten
 	if err := lockExclusive(ctx, conn, schema); err != nil {
 		return Tenant{}, fmt.Errorf("tenant: create org_id %q: %w", orgID, err)
 	}
-	if err := p.reserve(ctx, conn, t, adopt); err != nil {
+	if err := p.reserve(ctx, conn, t, opts); err != nil {
 		return Tenant{}, err
 	}
 	if _, err := conn.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+pgx.Identifier{schema}.Sanitize()); err != nil {
@@ -194,8 +198,9 @@ func (p *Provisioner) Create(ctx context.Context, orgID string, adopt bool) (Ten
 }
 
 // reserve records t as provisioning, or accepts an existing provisioning
-// row for the same org, which is a create that failed part way.
-func (p *Provisioner) reserve(ctx context.Context, conn *pgx.Conn, t Tenant, adopt bool) error {
+// row for the same org, which is a create that failed part way. With
+// opts.Recreate it turns an erased row back into a provisioning one.
+func (p *Provisioner) reserve(ctx context.Context, conn *pgx.Conn, t Tenant, opts CreateOptions) error {
 	rec, found, err := queryRecord(ctx, conn, t.Schema)
 	if err != nil {
 		return fmt.Errorf("tenant: create org_id %q: look up: %w", t.OrgID, err)
@@ -206,7 +211,10 @@ func (p *Provisioner) reserve(ctx context.Context, conn *pgx.Conn, t Tenant, ado
 			ErrSchemaCollision, t.OrgID, t.Schema)
 	case found && rec.Status == StatusProvisioning:
 		return nil
-	case found:
+	case found && rec.Status == StatusErased && !opts.Recreate:
+		return fmt.Errorf("%w: org_id %q; an operator recreates it with `rela-server tenant create -recreate`",
+			ErrTenantErased, t.OrgID)
+	case found && rec.Status != StatusErased:
 		return fmt.Errorf("%w: org_id %q is %s", ErrTenantExists, t.OrgID, rec.Status)
 	}
 	var exists bool
@@ -214,8 +222,22 @@ func (p *Provisioner) reserve(ctx context.Context, conn *pgx.Conn, t Tenant, ado
 		t.Schema).Scan(&exists); err != nil {
 		return fmt.Errorf("tenant: create org_id %q: look up schema: %w", t.OrgID, err)
 	}
-	if exists && !adopt {
+	if exists && !opts.Adopt {
 		return fmt.Errorf("%w: schema %q for org_id %q", ErrSchemaExists, t.Schema, t.OrgID)
+	}
+	if found {
+		// The erased row, recreated: a compare-and-set, so a concurrent
+		// recreate makes this one fail rather than both proceed.
+		tag, err := conn.Exec(ctx, "UPDATE "+controlTable+" SET status = $1, suspended_by = NULL, erased_at = NULL, "+
+			"created_at = now(), updated_at = now() WHERE schema_name = $2 AND org_id = $3 AND status = $4",
+			string(StatusProvisioning), t.Schema, t.OrgID, string(StatusErased))
+		if err != nil {
+			return fmt.Errorf("tenant: create org_id %q: recreate: %w", t.OrgID, err)
+		}
+		if tag.RowsAffected() != 1 {
+			return fmt.Errorf("%w: org_id %q is no longer erased", ErrWrongStatus, t.OrgID)
+		}
+		return nil
 	}
 	// No ON CONFLICT: a row inserted meanwhile is an error, never merged.
 	if _, err := conn.Exec(ctx, "INSERT INTO "+controlTable+" (schema_name, org_id, status) VALUES ($1, $2, $3)",
@@ -243,7 +265,7 @@ func (p *Provisioner) Resume(ctx context.Context, orgID string) error {
 // SuspendForIDP suspends orgID because the IdP suspended its org. It reports
 // whether the status changed. A tenant that is already suspended stays so
 // and keeps its recorded cause, so an operator suspension stays one. An
-// erasing tenant is left alone. A provisioning tenant is refused with an
+// erasing or erased tenant is left alone. A provisioning tenant is refused with an
 // error that wraps [ErrTenantProvisioning]: its create would make it
 // active, so the caller retries once the create is done.
 func (p *Provisioner) SuspendForIDP(ctx context.Context, orgID string) (bool, error) {
@@ -362,10 +384,19 @@ func setStatus(ctx context.Context, conn *pgx.Conn, t Tenant, to Status, by Susp
 // It first sets the status to erasing, which stops every server serving the
 // org; the status cannot be undone. It then drops the schema and removes the
 // audit directory with [Erase], under the tenant's exclusive lock, and last
-// deletes the control row. While a server still has the tenant open the
-// drop is refused with [ErrTenantInUse]; servers close a tenant that is no
-// longer active within their revalidation interval, and running Erase again
-// continues where it stopped.
+// sets the status to erased and records erased_at. While a server still has
+// the tenant open the drop is refused with [ErrTenantInUse]; servers close a
+// tenant that is no longer active within their revalidation interval, and
+// running Erase again continues where it stopped.
+//
+// The erased row is a tombstone (TKT-TNPRV8). It holds the org id, schema
+// name, status and timestamps, and no tenant data. It stays so that a host
+// that provisions automatically finds the org erased, not absent, and does
+// not recreate it.
+//
+// Erasing an erased tenant succeeds and changes nothing in the control
+// table. It still runs the idempotent removal, so the result reports the
+// schema and audit directory as already absent.
 func (p *Provisioner) Erase(ctx context.Context, orgID string) (Tenant, Erasure, error) {
 	ctx, cancel := context.WithTimeout(ctx, provisionTimeout)
 	defer cancel()
@@ -383,6 +414,12 @@ func (p *Provisioner) Erase(ctx context.Context, orgID string) (Tenant, Erasure,
 		return Tenant{}, Erasure{}, err
 	}
 	t := Tenant{OrgID: orgID, Schema: rec.Schema, DSN: dsn}
+	if rec.Status == StatusErased {
+		// Only the removal runs. It finds nothing on the host that erased
+		// the tenant, and removes the audit directory on any other host.
+		res, rerr := Erase(ctx, t, p.auditRoot)
+		return t, res, rerr
+	}
 	if err = setStatus(ctx, conn, t, StatusErasing, "",
 		StatusProvisioning, StatusActive, StatusSuspended, StatusErasing); err != nil {
 		return t, Erasure{}, fmt.Errorf("tenant: erase org_id %q: %w", orgID, err)
@@ -391,10 +428,11 @@ func (p *Provisioner) Erase(ctx context.Context, orgID string) (Tenant, Erasure,
 	if err != nil {
 		return t, res, err
 	}
-	if _, err := conn.Exec(ctx, "DELETE FROM "+controlTable+" WHERE schema_name = $1 AND org_id = $2 AND status = $3",
-		t.Schema, t.OrgID, string(StatusErasing)); err != nil {
-		return t, res, fmt.Errorf("tenant: erase org_id %q: the data is gone, but the control row was not "+
-			"deleted: %w; run the command again", orgID, err)
+	if _, err := conn.Exec(ctx, "UPDATE "+controlTable+" SET status = $1, suspended_by = NULL, erased_at = now(), "+
+		"updated_at = now() WHERE schema_name = $2 AND org_id = $3 AND status = $4",
+		string(StatusErased), t.Schema, t.OrgID, string(StatusErasing)); err != nil {
+		return t, res, fmt.Errorf("tenant: erase org_id %q: the data is gone, but the status was not set to "+
+			"erased: %w; run the command again", orgID, err)
 	}
 	return t, res, nil
 }

@@ -266,7 +266,16 @@ func TestTenantMode_CreateServeSuspendErase(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 	code, out, _ = d.run(t, "", "show", "-project", d.dir, "org-a")
 	require.Equal(t, 0, code)
-	require.Contains(t, out, "no tenant")
+	require.Contains(t, out, "erased at ")
+	require.NotContains(t, out, "does not exist")
+	// Erasing again, as on another server host, removes that host's audit
+	// directory and leaves the tombstone.
+	require.NoError(t, os.MkdirAll(auditA, 0o750))
+	code, out, stderr = d.run(t, "", "erase", "-project", d.dir, "-force", "org-a")
+	require.Equal(t, 0, code, stderr)
+	require.Contains(t, out, "audit directory removed")
+	_, err = os.Stat(auditA)
+	require.ErrorIs(t, err, os.ErrNotExist)
 	require.Equal(t, http.StatusForbidden, tenantCall(t, th, "tok-org-a", http.MethodGet, "/api/v1/tasks", nil).Code)
 
 	rec, err := os.ReadFile(filepath.Join(d.dir, ".rela", "audit", erasureLog))
@@ -377,4 +386,26 @@ func TestTenantMode_LazyProvisioning(t *testing.T) {
 	require.Contains(t, []int{http.StatusOK, http.StatusCreated}, rec.Code, rec.Body.String())
 	list := tenantCall(t, th, "tok-org-a", http.MethodGet, "/api/v1/tasks", nil)
 	require.NotContains(t, list.Body.String(), "fresh", "CROSS-TENANT LEAK after provisioning")
+
+	// Erased, the org is never provisioned again on its own: the next
+	// request is a plain 403, not a 202 that recreates it.
+	code, _, _ := d.run(t, "", "erase", "-project", d.dir, "-force", "org-new")
+	require.Equal(t, 1, code, "the erase ran while the host held the tenant")
+	th.registry.Revalidate(t.Context())
+	code, _, stderr := d.run(t, "", "erase", "-project", d.dir, "-force", "org-new")
+	require.Equal(t, 0, code, stderr)
+	after := tenantCall(t, th, "tok-org-new", http.MethodGet, "/api/v1/tasks", nil)
+	require.Equal(t, http.StatusForbidden, after.Code, after.Body.String())
+	after = tenantCall(t, th, "tok-org-new", http.MethodGet, tenanthost.StatusPath, nil)
+	require.Equal(t, http.StatusForbidden, after.Code, after.Body.String())
+
+	// Only the operator's explicit recreate brings it back, empty.
+	code, _, stderr = d.run(t, "", "create", "-project", d.dir, "org-new")
+	require.Equal(t, 1, code)
+	require.Contains(t, stderr, "-recreate")
+	code, _, stderr = d.run(t, "", "create", "-project", d.dir, "-recreate", "org-new")
+	require.Equal(t, 0, code, stderr)
+	list = tenantCall(t, th, "tok-org-new", http.MethodGet, "/api/v1/tasks", nil)
+	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+	require.NotContains(t, list.Body.String(), "fresh", "the recreated tenant kept data from before the erasure")
 }

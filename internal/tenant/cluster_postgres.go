@@ -26,29 +26,57 @@ const controlDDL = `CREATE SCHEMA IF NOT EXISTS ` + ControlSchema + `;
 CREATE TABLE IF NOT EXISTS ` + controlTable + ` (
 	schema_name  text PRIMARY KEY,
 	org_id       text NOT NULL UNIQUE,
-	status       text NOT NULL CHECK (status IN ('provisioning', 'active', 'suspended', 'erasing')),
+	status       text NOT NULL CONSTRAINT ` + statusCheck + ` CHECK (status IN ` + statusValues + `),
 	suspended_by text CHECK (suspended_by IN ('operator', 'idp')),
+	erased_at    timestamptz,
 	created_at   timestamptz NOT NULL DEFAULT now(),
 	updated_at   timestamptz NOT NULL DEFAULT now()
 )`
 
-// controlUpgradeDDL adds the columns a control table made by an older
-// release lacks. Each statement is idempotent. [ensureControl] runs it only
-// when a column is missing, because ALTER TABLE locks the table even when it
-// changes nothing.
+// statusCheck names the CHECK constraint on `status`. PostgreSQL gives an
+// unnamed column constraint the same name, so a table an older release made
+// has it too.
+const statusCheck = "tenants_status_check"
+
+// statusValues lists every [Status] the control table accepts.
+const statusValues = `('provisioning', 'active', 'suspended', 'erasing', 'erased')`
+
+// controlUpgradeDDL brings a control table made by an older release up to
+// this one: it adds the missing columns and widens the status check to
+// allow erased. Each statement is idempotent, and they run in one
+// transaction, so a table with `erased_at` always has the wide check.
+// [ensureControl] runs it only when a column is missing, because ALTER
+// TABLE locks the table even when it changes nothing.
+//
+// It drops every CHECK constraint on `status`, whatever its name, before
+// adding the wide one, so an old narrow check cannot survive beside it.
 const controlUpgradeDDL = `ALTER TABLE ` + controlTable + `
-	ADD COLUMN IF NOT EXISTS suspended_by text CHECK (suspended_by IN ('operator', 'idp'))`
+	ADD COLUMN IF NOT EXISTS suspended_by text CHECK (suspended_by IN ('operator', 'idp')),
+	ADD COLUMN IF NOT EXISTS erased_at timestamptz;
+DO $$
+DECLARE c name;
+BEGIN
+	FOR c IN SELECT con.conname FROM pg_constraint con
+		JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = ANY (con.conkey)
+		WHERE con.conrelid = '` + controlTable + `'::regclass AND con.contype = 'c' AND a.attname = 'status'
+	LOOP
+		EXECUTE format('ALTER TABLE ` + controlTable + ` DROP CONSTRAINT %I', c);
+	END LOOP;
+END $$;
+ALTER TABLE ` + controlTable + ` ADD CONSTRAINT ` + statusCheck + ` CHECK (status IN ` + statusValues + `)`
 
 // controlCurrentQuery reports whether the control table has every column
-// this release writes.
-const controlCurrentQuery = `SELECT EXISTS (SELECT 1 FROM pg_attribute
-	WHERE attrelid = to_regclass($1) AND attname = 'suspended_by' AND NOT attisdropped)`
+// this release writes. `erased_at` is the newest, and [controlUpgradeDDL]
+// adds it in the same transaction as the others and the status check.
+const controlCurrentQuery = `SELECT count(*) = 2 FROM pg_attribute
+	WHERE attrelid = to_regclass($1) AND attname IN ('suspended_by', 'erased_at') AND NOT attisdropped`
 
 // recordQuery reads one control row and whether its schema exists. It reads
-// `suspended_by` through to_jsonb, which yields NULL when the column does
-// not exist, so a server reads a control table no provisioner of this
-// release has upgraded yet.
+// `suspended_by` and `erased_at` through to_jsonb, which yields NULL for a
+// column that does not exist, so a server reads a control table no
+// provisioner of this release has upgraded yet.
 const recordQuery = `SELECT t.org_id, t.status, coalesce(to_jsonb(t)->>'suspended_by', ''),
+	(to_jsonb(t)->>'erased_at')::timestamptz,
 	EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspname = t.schema_name)
 	FROM ` + controlTable + ` t WHERE t.schema_name = $1`
 
@@ -62,7 +90,8 @@ type rowQuerier interface {
 func queryRecord(ctx context.Context, q rowQuerier, schema string) (Record, bool, error) {
 	rec := Record{Schema: schema}
 	var status, suspendedBy string
-	err := q.QueryRow(ctx, recordQuery, schema).Scan(&rec.OrgID, &status, &suspendedBy, &rec.SchemaExists)
+	var erasedAt *time.Time
+	err := q.QueryRow(ctx, recordQuery, schema).Scan(&rec.OrgID, &status, &suspendedBy, &erasedAt, &rec.SchemaExists)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Record{}, false, nil
 	}
@@ -71,6 +100,9 @@ func queryRecord(ctx context.Context, q rowQuerier, schema string) (Record, bool
 	}
 	rec.Status = Status(status)
 	rec.SuspendedBy = SuspendCause(suspendedBy)
+	if erasedAt != nil {
+		rec.ErasedAt = *erasedAt
+	}
 	return rec, true, nil
 }
 
