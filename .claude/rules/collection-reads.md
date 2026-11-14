@@ -16,8 +16,9 @@ paths:
 
 - **Collection reads are content-free, batched per page, and paged in the store
   when they can be** (TKT-1U8XYN). A list, search, kanban or scope pipeline
-  reads `store.EntityHeader` rows (`ListEntityHeaders`, `GraphQueryHeaders`) and
-  never a body it will not render; a body is loaded for the served rows only, on
+  reads `store.EntityHeader` rows (`ListEntityHeaders`, `GraphQueryHeaders`,
+  and `store.ListEntityHeadersPage` for keyset pages) and never a body it will
+  not render; a body is loaded for the served rows only, on
   `include_content=true`. Per-row lookups are the defect this rule exists to
   prevent: a page loads its edges with ONE `RelationQuery.EntityIDs` query, its
   neighbours with ONE header batch, a table section its relation columns with
