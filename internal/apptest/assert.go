@@ -14,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclmap"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowview"
 	relalua "github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/mail"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -184,7 +185,8 @@ func (fr *fileRun) luaExpectDenied(ls *lua.LState) int {
 	// lastErr must be the error fn ended with, not one it caught earlier.
 	var hidden hiddenTargetError
 	denied := w.lastErr != nil && strings.HasSuffix(luaErrorText(err), w.lastErr.Error()) &&
-		(errors.Is(w.lastErr, acl.ErrForbidden) || errors.As(w.lastErr, &hidden))
+		(errors.Is(w.lastErr, acl.ErrForbidden) || errors.Is(w.lastErr, flowview.ErrForbidden) ||
+			errors.As(w.lastErr, &hidden))
 	if !denied {
 		_, msg := splitLuaError(luaErrorText(err))
 		fr.failNow(ls, "expected the ACL to deny the call, but it failed otherwise: %s", msg)

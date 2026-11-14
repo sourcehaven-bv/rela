@@ -157,6 +157,10 @@ func buildFlowEngine(s *Services, runs flowrun.Store) (*flowengine.Engine, error
 	if q != nil {
 		queue = flowJobQueue{q: q}
 	}
+	if fq := s.base.opts.seams.flowJobs; fq != nil {
+		// The caller runs the attempts; see [WithFlowJobQueue].
+		queue, q = fq, nil
+	}
 	eng, err := flowengine.New(flowengine.Deps{
 		Flows: flows, Meta: meta, Runs: lockFlowRuns(s.store, runs),
 		Jobs: queue, JobRunner: newFlowJobRunner(s, as),

@@ -122,6 +122,7 @@ func (fr *fileRun) runCase(ctx context.Context, c testCase) CaseResult {
 	w := newWorld(fr.r, seed)
 	fr.current = w
 	fr.rng = w.rng
+	w.http.where = func() string { return where(fr.ls) }
 	defer func() { fr.current = nil }()
 
 	caseCtx, cancel := context.WithTimeout(ctx, fr.r.timeout)
@@ -134,6 +135,11 @@ func (fr *fileRun) runCase(ctx context.Context, c testCase) CaseResult {
 	closeErr := w.close()
 
 	res := CaseResult{File: fr.file, Case: c.name, OK: true}
+	// An unexpected HTTP call comes before a raised error, which it may
+	// have caused; an assertion that failed before it is kept (world.fail).
+	if f := w.http.takeFailure(); f != nil && w.failure == nil {
+		w.failure = f
+	}
 	switch {
 	case w.failure == nil && err == nil && closeErr != nil:
 		res.OK, res.Message = false, "close the test world: "+closeErr.Error()
