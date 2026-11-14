@@ -409,7 +409,11 @@ t.case("handled", function() t.as("carol"):create("ticket", {title = "http-quiet
 `)
 	require.Equal(t, 3, rep.Failed)
 	for _, c := range rep.Cases {
-		assert.Contains(t, c.Message, "real HTTP/AI calls are not allowed in rela test")
+		want := "unexpected HTTP call GET http://127.0.0.1:9/; no stubs are registered"
+		if c.Case == "ai" {
+			want = "real AI calls are not allowed in rela test"
+		}
+		assert.Contains(t, c.Message, want, c.Case)
 	}
 }
 
