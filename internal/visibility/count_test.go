@@ -146,7 +146,8 @@ func TestScriptReader_CountEntitiesPushesDown(t *testing.T) {
 // TestScriptReader_CountRelationsBudget: a relation count reads the edges in
 // one query and gates their endpoints in one batch, at 10 edges and at 50.
 // Relations have no store pushdown, so the count is a scan; this pins that
-// the scan costs a fixed number of store calls.
+// the scan costs a fixed number of store calls. It pins calls only: the
+// scan's rows grow with the edges by design.
 func TestScriptReader_CountRelationsBudget(t *testing.T) {
 	reads := map[int]int{}
 	for _, n := range []int{10, 50} {

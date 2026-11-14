@@ -3,21 +3,21 @@ package dataentry
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
 
 // An ACL `visible:` grant whose `when:` uses related() is answered once per
 // page, not once per row (TKT-205V2N): the reads prime the grant traversals
 // before they redact the rows.
 func TestQueryBudget_ListPageACLRelatedWhenIsSizeIndependent(t *testing.T) {
-	counts := make([]int, 0, 2)
-	var detail string
-	for _, n := range []int{10, 50} {
-		app, counting, _, ctx := newBudgetAppOn(t, n, memstore.New())
+	run := func(n, pad int) *storetest.Counting {
+		app, counting, _, ctx := newBudgetAppPadded(t, n, pad, memstore.New(), budgetMeta())
 		d := mustNewACL(t, &acl.Policy{
 			Roles: map[string]acl.RoleDef{"editor": {
 				Read: []string{"*"}, Create: []string{"ticket"}, Update: []string{"ticket"}, Delete: []string{"ticket"},
@@ -43,12 +43,22 @@ func TestQueryBudget_ListPageACLRelatedWhenIsSizeIndependent(t *testing.T) {
 		for _, row := range resp.Data {
 			assertStatusVerdict(t, row)
 		}
+		return counting
+	}
+	counts := make([]int, 0, 2)
+	var detail string
+	for _, n := range []int{10, 50} {
+		counting := run(n, 0)
 		counts = append(counts, counting.Calls()["MatchingFaces"])
 		detail = counting.String()
 	}
 	if counts[0] != counts[1] || counts[1] != 1 {
 		t.Fatalf("MatchingIDs = %d at 10 rows, %d at 50; want 1 at both (%s)", counts[0], counts[1], detail)
 	}
+	storetest.AssertScaleFree(t, func(pad int) (storetest.Cost, string) {
+		counting := run(10, pad)
+		return counting.Cost(), counting.String()
+	})
 }
 
 // A single GET evaluates the grants several times (strip, `_fields`,
@@ -91,6 +101,9 @@ func TestQueryBudget_GetEntityACLRelatedWhenBindsOnce(t *testing.T) {
 // Feature 1 and only those show their status.
 func assertStatusVerdict(t *testing.T, row v1.Entity) {
 	t.Helper()
+	if strings.HasPrefix(row.ID, "TKT-P") {
+		return // padding (newBudgetAppPadded) implements nothing
+	}
 	var i int
 	if _, err := fmt.Sscanf(row.ID, "TKT-%04d", &i); err != nil {
 		t.Fatal(err)
@@ -108,10 +121,8 @@ func assertStatusVerdict(t *testing.T, row v1.Entity) {
 // and the `when:` traversal runs once per page, not once per hit.
 func TestQueryBudget_ListFreeTextUnderFieldHiding(t *testing.T) {
 	type sample struct{ fixed, entityLoads, traversals int }
-	var got []sample
-	var detail string
-	for _, n := range []int{10, 50} {
-		app, counting, _, ctx := newBudgetAppOn(t, n, memstore.New())
+	run := func(n, pad int) *storetest.Counting {
+		app, counting, _, ctx := newBudgetAppPadded(t, n, pad, memstore.New(), budgetMeta())
 		d := mustNewACL(t, &acl.Policy{
 			Roles: map[string]acl.RoleDef{"editor": {
 				Read: []string{"*"},
@@ -143,6 +154,12 @@ func TestQueryBudget_ListFreeTextUnderFieldHiding(t *testing.T) {
 		if rec.Code != http.StatusOK || len(resp.Data) != n/10 {
 			t.Fatalf("list ?q=open: %d, %d rows, want %d (%s)", rec.Code, len(resp.Data), n/10, rec.Body)
 		}
+		return counting
+	}
+	var got []sample
+	var detail string
+	for _, n := range []int{10, 50} {
+		counting := run(n, 0)
 		calls := counting.Calls()
 		got = append(got, sample{
 			fixed:       counting.Reads() - calls["GetEntity"] - calls["MatchingFaces"],
@@ -163,4 +180,8 @@ func TestQueryBudget_ListFreeTextUnderFieldHiding(t *testing.T) {
 		t.Errorf("field-check traversals grow with hits: %d at 10, %d at 50 (%s)",
 			got[0].traversals, got[1].traversals, detail)
 	}
+	// TODO(TKT-F2EJQY8): calls only. A `?q=` list takes the Go path, which
+	// reads every header of the type (scopedHeaders' type scan in
+	// scopedread.go) before it intersects the hits, so its rows grow with
+	// the store. Assert storetest.AssertScaleFree once that read is gone.
 }

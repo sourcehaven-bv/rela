@@ -188,7 +188,7 @@ func (e *inboxEnv) get(t *testing.T, method, query string) (rec *httptest.Respon
 	rec = httptest.NewRecorder()
 	req := httptest.NewRequest(method, inboxPath+query, http.NoBody)
 	e.app.channels.handleV1Inbox(rec, req.WithContext(gateCtxFor(principalCtx("alice"), t, e.d)), e.app.State().Meta)
-	return rec, channelCost{entity: e.counting.Calls(), channel: e.chans.snapshot()}
+	return rec, channelCost{entity: e.counting.Calls(), channel: e.chans.snapshot(), rows: e.counting.Cost()}
 }
 
 // waitOn seeds an open case channel on id, which waits on its owner and
@@ -212,15 +212,33 @@ func (e *inboxEnv) thread(t *testing.T, id, user string, at time.Time) {
 	require.NoError(t, err)
 }
 
-// seedInbox seeds n tickets that wait on alice, half through owner and
-// half through watchers, n features that wait on her (she cannot read
+// seedInbox seeds two tickets that wait on alice, as seedInboxPadded does
+// for n = 2 and no padding.
+func seedInbox(t *testing.T) (env *inboxEnv, entries int) {
+	t.Helper()
+	return seedInboxPadded(t, 2, 0)
+}
+
+// seedInboxPadded seeds n tickets that wait on alice, half through owner
+// and half through watchers, n features that wait on her (she cannot read
 // features), and n tickets that name her but whose channel she may not
 // read. Two threads she opened wait on her too. alice's officer relation
-// covers the n readable tickets.
-func seedInbox(t *testing.T, n int) (env *inboxEnv, entries int) {
+// covers the n readable tickets. It adds pad tickets and pad features owned
+// by bob, with no channel, and bob an officer of each pad ticket, so a read
+// that scans the store reads more rows the larger pad is.
+func seedInboxPadded(t *testing.T, n, pad int) (env *inboxEnv, entries int) {
 	t.Helper()
 	ticket := func(i int) string { return fmt.Sprintf("TKT-%d", 100+i) }
 	e := newInboxEnv(t, func(app *App) {
+		for i := range pad {
+			seedEntity(app, &entity.Entity{ID: fmt.Sprintf("TKT-%d", 900000+i), Type: "ticket",
+				Properties: map[string]any{"title": "pad", "owner": "bob"}})
+			// bob's officer edges grow with pad, so a scan of the role
+			// relation shows.
+			seedRelation(app, entity.NewRelation("bob", "officer-of", fmt.Sprintf("TKT-%d", 900000+i)))
+			seedEntity(app, &entity.Entity{ID: fmt.Sprintf("FEAT-%d", 900000+i), Type: "feature",
+				Properties: map[string]any{"title": "pad", "owner": "bob"}})
+		}
 		for i := range n {
 			props := map[string]any{"title": "t" + strconv.Itoa(i), "owner": "alice"}
 			if i%2 == 1 {
@@ -256,29 +274,47 @@ func seedInbox(t *testing.T, n int) (env *inboxEnv, entries int) {
 // n on hidden ones (TKT-6RXAC0 AC 13): one ListAddressed and no message
 // read pays for them.
 func TestInboxBudget_10vs50(t *testing.T) {
-	cost := func(n int) channelCost {
-		e, want := seedInbox(t, n)
-		at := time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC)
-		for i := range n {
-			e.markAndChat(t, fmt.Sprintf("TKT-%d", 100+i), at)
-			e.markAndChat(t, fmt.Sprintf("FEAT-%d", 100+i), at)
-			e.mentionAlice(t, fmt.Sprintf("TKT-%d", 100+i), at)
-			e.mentionAlice(t, fmt.Sprintf("TKT-%d", 500+i), at)
-		}
-		rec, c := e.get(t, http.MethodGet, "?limit=200")
-		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-		got := decodeAs[v1.Inbox](t, rec.Body.Bytes())
-		require.Len(t, got.Entries, want)
-		require.Equal(t, want, *got.Count)
-		for _, en := range got.Entries {
-			require.True(t, strings.HasPrefix(en.Channel.Anchor, "TKT-1"), en.Channel.Anchor)
-		}
-		require.Equal(t, n, *got.UnreadCount)
-		require.Equal(t, n, *got.MentionCount)
-		require.Len(t, got.Mentions, n)
-		return c
-	}
+	cost := func(n int) channelCost { return inboxCost(t, n, 0) }
 	small, large := cost(10), cost(50)
+	assertInboxBudget(t, small, large)
+	// The rows: 10 entries over a store that grows from 20 to 200
+	// unrelated tickets and features read the same rows.
+	assertScaleFreeIndexed(t, func(pad int) (storetest.Cost, string) {
+		c := inboxCost(t, 10, pad)
+		return c.rows, c.String()
+	})
+}
+
+// inboxCost is what alice's inbox costs with n entries of each kind, over
+// a store padded with pad unrelated tickets and features.
+func inboxCost(t *testing.T, n, pad int) channelCost {
+	t.Helper()
+	e, want := seedInboxPadded(t, n, pad)
+	at := time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC)
+	for i := range n {
+		e.markAndChat(t, fmt.Sprintf("TKT-%d", 100+i), at)
+		e.markAndChat(t, fmt.Sprintf("FEAT-%d", 100+i), at)
+		e.mentionAlice(t, fmt.Sprintf("TKT-%d", 100+i), at)
+		e.mentionAlice(t, fmt.Sprintf("TKT-%d", 500+i), at)
+	}
+	rec, c := e.get(t, http.MethodGet, "?limit=200")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	got := decodeAs[v1.Inbox](t, rec.Body.Bytes())
+	require.Len(t, got.Entries, want)
+	require.Equal(t, want, *got.Count)
+	for _, en := range got.Entries {
+		require.True(t, strings.HasPrefix(en.Channel.Anchor, "TKT-1"), en.Channel.Anchor)
+	}
+	require.Equal(t, n, *got.UnreadCount)
+	require.Equal(t, n, *got.MentionCount)
+	require.Len(t, got.Mentions, n)
+	return c
+}
+
+// assertInboxBudget holds the calls of the inbox at 10 entries to those
+// at 50, and pins which reads they are.
+func assertInboxBudget(t *testing.T, small, large channelCost) {
+	t.Helper()
 	require.True(t, small.equal(large), "10 entries: %s\n50 entries: %s", small, large)
 	require.Equal(t, 1, small.channel["ListWaiting"], small.String())
 	require.Zero(t, small.channel["ListEntity"], small.String())
@@ -374,7 +410,7 @@ func TestInbox_HiddenRowsChangeNothingRealACL(t *testing.T) {
 // TestInboxHandler_Shape pins AC 13: the wire shape, with links and
 // RFC 3339 times, and that the route is served by the router.
 func TestInboxHandler_Shape(t *testing.T) {
-	e, _ := seedInbox(t, 2)
+	e, _ := seedInbox(t)
 	rec, _ := e.get(t, http.MethodGet, "?limit=1")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var raw map[string]any
@@ -484,7 +520,7 @@ func TestInboxHandler_Errors(t *testing.T) {
 		requireProblem(t, rec, http.StatusForbidden, realtime.TypeNoPrincipal)
 	})
 
-	e, _ := seedInbox(t, 2)
+	e, _ := seedInbox(t)
 	for _, q := range []string{"?limit=x", "?limit=0.5", "?limit=0", "?limit=-1", "?limit=201"} {
 		t.Run("limit "+q, func(t *testing.T) {
 			rec, _ := e.get(t, http.MethodGet, q)
@@ -501,7 +537,7 @@ func TestInboxHandler_Errors(t *testing.T) {
 		require.Equal(t, http.MethodGet, rec.Header().Get("Allow"))
 	})
 	t.Run("row ceiling", func(t *testing.T) {
-		capped, _ := seedInbox(t, 2)
+		capped, _ := seedInbox(t)
 		capped.chans.mu.Lock()
 		capped.chans.maxRows = 2
 		capped.chans.mu.Unlock()
