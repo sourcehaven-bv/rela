@@ -219,3 +219,18 @@ func TestLoadConfig_ReadError(t *testing.T) {
 		t.Errorf("unexpectedly got ErrNotExist: %v", err)
 	}
 }
+
+// TestParseConfig_RefusesRemoteCredentialEnv pins that api_key_env cannot
+// name a remote credential variable, so the model's host never receives it
+// (TKT-RZSTAPZ).
+func TestParseConfig_RefusesRemoteCredentialEnv(t *testing.T) {
+	for _, name := range []string{"REMOTE_CREDENTIAL_UP", "remote_credential_up", "REMOTE_CREDENTIAL_"} {
+		t.Run(name, func(t *testing.T) {
+			data := "base_url: https://api.example.com/v1\nmodel: m\napi_key_env: " + name + "\n"
+			_, err := ParseConfig([]byte(data), "ai.yaml")
+			if err == nil || !strings.Contains(err.Error(), "only for remotes.yaml") {
+				t.Errorf("err = %v, want a remote credential refusal", err)
+			}
+		})
+	}
+}

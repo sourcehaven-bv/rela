@@ -385,6 +385,7 @@ func testSessionReply(t *testing.T, h Harness) {
 	msg := mustAppend(t, h.Store, k, reply)
 	require.Equal(t, int64(3), msg.Seq)
 	require.True(t, msg.MovedSession)
+	require.True(t, msg.Inline, "a reply that moved the session shows in the stream")
 
 	page, err := h.Store.Messages(ctx, k, channels.Page{AfterRev: msg.Rev - 1})
 	require.NoError(t, err)

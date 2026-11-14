@@ -9,7 +9,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
-// TestCompileTransitions_AlwaysSuppliesCopyGates pins the invariant that makes
+// TestBuildTransitionWiring_AlwaysSuppliesCopyGates pins the invariant that makes
 // the #1437 guard hold at the WIRING layer rather than only at the constructor.
 //
 // entitymanager.New refuses a policy-backed Deps whose copy read gates are
@@ -29,7 +29,7 @@ import (
 // copywiring_test.go and entitymanager's own suite. This test asserts only
 // that a gate EXISTS, because a nil is the one failure that is invisible at
 // the call site.
-func TestCompileTransitions_AlwaysSuppliesCopyGates(t *testing.T) {
+func TestBuildTransitionWiring_AlwaysSuppliesCopyGates(t *testing.T) {
 	t.Parallel()
 
 	meta, err := metamodel.Parse([]byte(copyWiringMeta))
@@ -65,9 +65,9 @@ func TestCompileTransitions_AlwaysSuppliesCopyGates(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			tw, cerr := appbuild.CompileTransitions(meta, memstore.New(), tc.aclFunc(t))
+			tw, cerr := appbuild.BuildTransitionWiring(meta, memstore.New(), tc.aclFunc(t))
 			if cerr != nil {
-				t.Fatalf("CompileTransitions: %v", cerr)
+				t.Fatalf("BuildTransitionWiring: %v", cerr)
 			}
 			if tw.ReadGate == nil {
 				t.Error("ReadGate must never be nil: a nil copy read gate makes the " +

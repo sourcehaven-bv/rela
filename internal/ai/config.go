@@ -20,6 +20,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Sourcehaven-BV/rela/internal/secrets"
 )
 
 // ConfigFile is the name of the AI config file inside .rela/.
@@ -140,6 +142,12 @@ func (c *Config) Validate() error {
 
 	if c.TimeoutSeconds < 0 {
 		return fmt.Errorf("timeout_seconds must be >= 0, got %d", c.TimeoutSeconds)
+	}
+	if secrets.IsRemoteCredentialEnv(c.APIKeyEnv) {
+		// The error leaves out the name: it is config, not a secret, but
+		// static analysis treats this field as a credential.
+		return fmt.Errorf("api_key_env may not name a %s variable: a remote credential is only for "+
+			"remotes.yaml and rela reconcile", secrets.RemoteCredentialEnvPrefix)
 	}
 
 	return nil

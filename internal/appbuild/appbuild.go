@@ -71,7 +71,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/state"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
@@ -1511,7 +1510,7 @@ func buildFieldPolicy(
 	if err != nil {
 		return fieldPolicy{}, fmt.Errorf("appbuild: compiling acl.yaml affordance predicates: %w", err)
 	}
-	machines, err := statemachine.Compile(meta, statemachine.WithTraversals(ungatedBinder(meta, st)))
+	machines, err := CompileHeadlessFlows(meta, st)
 	if err != nil {
 		return fieldPolicy{}, fmt.Errorf("appbuild: compiling state machines: %w", err)
 	}
@@ -1606,6 +1605,10 @@ type options struct {
 	// seams replace the clock, mail transport, HTTP client, AI provider and
 	// write_file directory; see [WithClock] and its siblings.
 	seams seams
+
+	// policyAmendment edits the policy parsed from acl.yaml; see
+	// [WithPolicyAmendment].
+	policyAmendment func(*acl.Policy) error
 }
 
 // WithBackgroundAutomationJobs runs `background: true` automation actions
@@ -2197,7 +2200,7 @@ func loadMetamodel(ctx context.Context, cfg Config) (*metamodel.Metamodel, error
 // mutation through either during assembly would be visible to every other
 // consumer of the same base — a cross-tenant defect in a multi-tenant host, and
 // a cross-project one on the desktop. Assembly only reads them (the metamodel
-// consumers derive new values: `statemachine.Compile`, `NewEngineFromMetamodel`),
+// consumers derive new values: `transitions.CompileTransitions`, `NewEngineFromMetamodel`),
 // and TestSharedBase_AssemblyDoesNotMutateSharedValues pins it.
 type SharedBase struct {
 	// channelFiles holds the runner of channel file scans; the data-entry
@@ -2219,6 +2222,10 @@ type SharedBase struct {
 	// flows is the compiled flows.yaml, nil when it declares no flows.
 	// Compiled here so an invalid file fails the boot, like realtime.yaml.
 	flows *flowcfg.Compiled
+	// flowsPolicy is the acl.yaml policy flows compiled against (see
+	// [flowConfigPolicy]). The engine compiles older run versions against
+	// it too. Nil when the project has no acl.yaml.
+	flowsPolicy *acl.Policy
 	// reassembly marks a base built to re-assemble against an ALREADY-OPEN
 	// store, so [assemble] skips the store-open-only steps. Set by
 	// [SharedBase.ForReassembly]; false for a base that will open its own store.
@@ -2400,6 +2407,9 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 		if err != nil {
 			return nil, err
 		}
+		if err := amendPolicy(aclPolicy, o.policyAmendment); err != nil {
+			return nil, err
+		}
 	}
 
 	meta, err := loadMetamodel(context.Background(), cfg)
@@ -2422,7 +2432,11 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 	if vErr := validateResolvedPolicy(resolvedACL, aclPolicy, meta); vErr != nil {
 		return nil, vErr
 	}
-	flows, err := compileFlows(flowsData, meta, resolvedPolicy(resolvedACL, aclPolicy))
+	flowsPolicy, err := flowConfigPolicy(cfg, resolvedACL, aclPolicy, meta, flowsData)
+	if err != nil {
+		return nil, err
+	}
+	flows, err := compileFlows(flowsData, meta, flowsPolicy)
 	if err != nil {
 		return nil, err
 	}
@@ -2483,7 +2497,7 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 
 	return &SharedBase{
 		cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy,
-		meta: meta, worlds: compiledWorlds, conns: conns, realtime: rt, flows: flows,
+		meta: meta, worlds: compiledWorlds, conns: conns, realtime: rt, flows: flows, flowsPolicy: flowsPolicy,
 		validationMode: mode, channelFiles: &channelFileRunners{},
 	}, nil
 }
@@ -2685,7 +2699,7 @@ func buildEntityManager(
 		// happen on a deployment that has a policy.
 		//
 		// CopyGuard reuses tw.Guard: entitymanager.CopyGuard and
-		// statemachine.Guard are the same shape ON PURPOSE, so a copy's
+		// transitions.PermissionGuard are the same shape ON PURPOSE, so a copy's
 		// `guard:` and a transition's ask the identical question of the
 		// identical implementation and cannot drift into asking different
 		// ones.
@@ -3010,7 +3024,7 @@ func assemble(
 		return nil, err
 	}
 	cfgLoader := cfg.configLoader()
-	tw, err := CompileTransitions(base.meta, st, resolvedACL)
+	tw, err := BuildTransitionWiring(base.meta, st, resolvedACL)
 	if err != nil {
 		return nil, fmt.Errorf("compile transitions: %w", err)
 	}

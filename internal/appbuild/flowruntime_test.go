@@ -10,7 +10,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/backendtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/flowengine"
@@ -113,6 +115,72 @@ func TestFlowEngine_InvalidFlowsFailBoot(t *testing.T) {
 		[]byte("flows:\n  bad:\n    subject: nothing\n"), 0o600))
 	_, err := appbuildOnDiskNoBackend(t, root)
 	require.ErrorContains(t, err, "flows.yaml")
+}
+
+// TestFlowEngine_InjectedACLChecksFlowsAgainstACLYAML: a host that injects
+// an ACL without a policy (rela mcp and the desktop inject NopACL) still
+// compiles flows.yaml against acl.yaml, so the roles it names resolve. The
+// engine compiles a run's older version against the same policy
+// (BUG-E9A72XB).
+func TestFlowEngine_InjectedACLChecksFlowsAgainstACLYAML(t *testing.T) {
+	ctx := context.Background()
+	root := writeFlowProject(t)
+	dsn := backendtest.DSN(t) // both boots open the same store
+	svc, err := newOnDisk(t, dsn, root, appbuild.WithACL(acl.NopACL{}))
+	require.NoError(t, err, "flows.yaml names roles acl.yaml declares")
+	eng := appbuild.FlowEngine(svc)
+	require.NotNil(t, eng)
+	person := entity.New("PER-1", "person")
+	person.Properties = map[string]any{"name": "Ada", "status": "hired"}
+	require.NoError(t, svc.Store().CreateEntity(ctx, person))
+	id, err := eng.Start(ctx, "onboarding", person.Ref())
+	require.NoError(t, err)
+	require.NoError(t, svc.Close())
+
+	// A new flows.yaml version leaves the run on the old one.
+	path := filepath.Join(root, "flows.yaml")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	changed := strings.Replace(string(data), "label: Collect documents", "label: Collect the documents", 1)
+	require.NotEqual(t, string(data), changed)
+	require.NoError(t, os.WriteFile(path, []byte(changed), 0o600))
+
+	svc, err = newOnDisk(t, dsn, root, appbuild.WithACL(acl.NopACL{}))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Close() })
+	eng = appbuild.FlowEngine(svc)
+	run, err := eng.Run(ctx, id)
+	require.NoError(t, err)
+	cur, ok := eng.Flow("onboarding")
+	require.True(t, ok)
+	require.NotEqual(t, cur.Version(), run.Version, "the run follows the older version")
+	_, err = eng.FlowOf(ctx, run)
+	require.NoError(t, err, "the older version compiles against acl.yaml")
+}
+
+// TestFlowEngine_InjectedACLConfigPolicyEdges pins the edges of the flows
+// check under an injected ACL without a policy (BUG-E9A72XB): a missing
+// acl.yaml is named, and an acl.yaml that does not fit the schema does not
+// stop a host that does not enforce it, as for realtime.yaml.
+func TestFlowEngine_InjectedACLConfigPolicyEdges(t *testing.T) {
+	t.Run("no acl.yaml names it", func(t *testing.T) {
+		root := writeFlowProject(t)
+		require.NoError(t, os.Remove(filepath.Join(root, "acl.yaml")))
+		_, err := newOnDisk(t, "", root, appbuild.WithACL(acl.NopACL{}))
+		require.ErrorContains(t, err, `names role "hr", but the project has no acl.yaml`)
+	})
+	t.Run("acl.yaml that does not fit the schema still boots", func(t *testing.T) {
+		root := writeFlowProject(t)
+		path := filepath.Join(root, "acl.yaml")
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		data = append(data, "user_entity_type: ghost\nprincipal_property: email\n"...)
+		require.NoError(t, os.WriteFile(path, data, 0o600))
+		svc, err := newOnDisk(t, backendtest.DSN(t), root, appbuild.WithACL(acl.NopACL{}))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = svc.Close() })
+		require.NotNil(t, appbuild.FlowEngine(svc))
+	})
 }
 
 func collectRelations(t *testing.T, st store.Store, q store.RelationQuery) []*entity.Relation {

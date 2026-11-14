@@ -8,7 +8,7 @@
 import type { DashboardCardEntry, DashboardCardValue, Entity, EntityType } from '@/types'
 import { isPropertyRedacted } from '@/utils/affordances'
 import { createDenseCellResolver, type DenseCell } from '@/utils/denseCell'
-import { formatCellValue } from '@/utils/format'
+import { formatCellValue, formatDecimal } from '@/utils/format'
 import { styleBarColor, styleClassFor } from '@/utils/styleColors'
 
 /** The schema lookups the derivations need; the schema store provides them. */
@@ -220,4 +220,27 @@ export function tableRows(
     })
     return { entity, cells }
   })
+}
+
+/**
+ * The text of a sum, avg, min or max card, or undefined when the card has no
+ * value. A sum or average is formatted from the server's exact text, as an
+ * amount when the property declares a currency. A min or max reads like the
+ * property's own table cell.
+ */
+export function summaryText(
+  schema: CardSchema,
+  card: DashboardCardEntry,
+  value: DashboardCardValue,
+  tz: string
+): string | undefined {
+  if (value.value === undefined || value.value === null || !card.property) return undefined
+  const typeName = card.list ? schema.getList(card.list)?.entity : undefined
+  const entityType = typeName ? schema.getEntityType(typeName) : undefined
+  const propDef = entityType?.properties[card.property]
+  if (card.display === 'sum' || card.display === 'avg') {
+    const scale = card.display === 'sum' && propDef?.type === 'decimal' ? propDef.scale : undefined
+    return formatDecimal(value.value, propDef?.display?.currency, scale) ?? String(value.value)
+  }
+  return formatCellValue(value.value, card.property, entityType, tz)
 }

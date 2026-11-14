@@ -157,6 +157,10 @@ export type ChannelTextKey =
   | 'chooseFiles'
   | 'files'
   | 'downloading'
+  // Answered questions and question groups
+  | 'questions'
+  | 'answered'
+  | 'changeAnswer'
 
 /**
  * The fixed captions of every component outside the channel set: control
@@ -481,6 +485,9 @@ const CHANNEL_TEXT: Record<ChannelTextKey, string> = {
   chooseFiles: 'Choose files…',
   files: 'Files',
   downloading: 'Downloading…',
+  questions: 'Questions',
+  answered: 'Answered',
+  changeAnswer: 'Change',
 }
 
 /**
@@ -677,6 +684,15 @@ export interface Messages {
    * posts that option as a reply: ` (posts this answer as a reply)`.
    */
   channelChoiceHint: () => string
+  /** The heading of one question of a group: `Question 2 of 3`. */
+  channelQuestionNumber: (args: { index: number; total: number }) => string
+  /** The answer an answered question shows: `Answer: Postgres`. */
+  channelAnswer: (args: { answer: string }) => string
+  /**
+   * Screen-reader text read after the Change button of an answered
+   * question: ` (shows the choices again)`.
+   */
+  channelChangeAnswerHint: () => string
   /**
    * The one-line summary of a narrow session stepper. `label` is the
    * current state's label, or its stored name when stranded or loading.
@@ -943,6 +959,9 @@ export const DEFAULT_MESSAGES: Messages = {
   channelDecisionHint: ({ to, form }) =>
     form ? ' (opens the form)' : to ? ` (moves the session to ${to})` : ' (moves the session)',
   channelChoiceHint: () => ' (posts this answer as a reply)',
+  channelQuestionNumber: ({ index, total }) => `Question ${index} of ${total}`,
+  channelAnswer: ({ answer }) => `Answer: ${answer}`,
+  channelChangeAnswerHint: () => ' (shows the choices again)',
   channelSessionSummary: ({ status, label, outcome }) => {
     switch (status) {
       case 'stranded':

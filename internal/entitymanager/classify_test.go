@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 )
 
 // TestClassifyCreateError pins the class of each refusal a create returns,
@@ -25,7 +26,7 @@ func TestClassifyCreateError(t *testing.T) {
 		{"store failure", errors.New("disk full"), CreateErrUnknown},
 		{"acl", &acl.ForbiddenError{}, CreateErrForbidden},
 		{"field grant", &affordances.FieldWriteError{Rule: "fields", Path: "status"}, CreateErrForbidden},
-		{"guard", &statemachine.GuardError{}, CreateErrForbidden},
+		{"guard", &transitions.GuardError{}, CreateErrForbidden},
 		{"entity exists", fmt.Errorf("%w: X-1", ErrEntityAlreadyExists), CreateErrConflict},
 		{"relation exists", ErrRelationAlreadyExists, CreateErrConflict},
 		{"face required", ErrFaceRequired, CreateErrFace},
@@ -33,8 +34,8 @@ func TestClassifyCreateError(t *testing.T) {
 		{"validation", newValidationError(nil), CreateErrInvalid},
 		{"invalid relation", &InvalidRelationError{err: errors.New("x")}, CreateErrInvalid},
 		{"file property", &FileWriteError{EntityType: "doc", Properties: []string{"f"}}, CreateErrInvalid},
-		{"illegal entry", fmt.Errorf("%w: status", statemachine.ErrIllegalEntry), CreateErrInvalid},
-		{"precondition", fmt.Errorf("%w: status", statemachine.ErrPreconditionFailed), CreateErrInvalid},
+		{"illegal entry", fmt.Errorf("%w: status", transitions.ErrIllegalEntry), CreateErrInvalid},
+		{"precondition", fmt.Errorf("%w: status", transitions.ErrPreconditionFailed), CreateErrInvalid},
 		{"custom id", customIDNotAllowedError("doc", def, "DOC-9"), CreateErrInvalid},
 		{"cardinality", fmt.Errorf("%w: max 1", ErrCardinalityExceeded), CreateErrInvalid},
 		{"missing target", fmt.Errorf("%w: DOC-9", ErrEntityNotFound), CreateErrInvalid},

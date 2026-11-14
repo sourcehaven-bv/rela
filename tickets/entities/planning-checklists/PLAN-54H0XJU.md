@@ -59,7 +59,7 @@ As in the ticket's Design section. Group claims use a `record_groups` table
 with `ON CONFLICT DO NOTHING` in the append transaction.
 
 **Files to modify:**
-`internal/metamodel/records.go`, `internal/records/...`, pg migration 0045,
+`internal/metamodel/records.go`, `internal/records/...`, pg migration 0047,
 `internal/sqlitedb` v37, `internal/appbuild/records*.go`,
 `internal/dataentry/records_handler.go`, `.go-arch-lint.yml`.
 

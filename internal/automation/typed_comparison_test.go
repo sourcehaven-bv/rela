@@ -39,7 +39,7 @@ func TestEngine_WhenCondition_IntegerComparisonIsNumeric(t *testing.T) {
 
 	t.Run("with metamodel: numeric comparison fires", func(t *testing.T) {
 		engine := mustEngine(t, intPropMeta())
-		engine.automations = []Automation{auto}
+		useAutomations(engine, []Automation{auto})
 
 		result := engine.Process(context.Background(), Event{Type: EventEntityCreated, Entity: ent})
 		if result.PropertiesSet["status"] != "escalated" {
@@ -76,7 +76,7 @@ func TestEngine_Validation_IntegerComparisonIsNumeric(t *testing.T) {
 	ent := buildEntity(testutil.Entity("bug").With("count", 10))
 
 	engine := mustEngine(t, intPropMeta())
-	engine.automations = []Automation{auto}
+	useAutomations(engine, []Automation{auto})
 
 	result := engine.Process(context.Background(), Event{Type: EventEntityCreated, Entity: ent})
 	if !result.HasWarnings() {
@@ -97,7 +97,7 @@ func TestEngine_WhenCondition_UnknownPropertyFallsBackToString(t *testing.T) {
 	ent := buildEntity(testutil.Entity("bug").With("adhoc", "yes"))
 
 	engine := mustEngine(t, intPropMeta())
-	engine.automations = []Automation{auto}
+	useAutomations(engine, []Automation{auto})
 
 	result := engine.Process(context.Background(), Event{Type: EventEntityCreated, Entity: ent})
 	if result.PropertiesSet["status"] != "tagged" {
@@ -122,7 +122,7 @@ func TestEngine_WhenCondition_UntranspilableClauseKeepsLegacyVerdict(t *testing.
 	ent := buildEntity(testutil.Entity("bug").With("count", 5))
 
 	engine := mustEngine(t, intPropMeta())
-	engine.automations = []Automation{auto}
+	useAutomations(engine, []Automation{auto})
 
 	result := engine.Process(context.Background(), Event{Type: EventEntityCreated, Entity: ent})
 	if result.PropertiesSet["status"] == "escalated" {

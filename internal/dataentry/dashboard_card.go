@@ -48,12 +48,15 @@ func dashboardCardValue(
 	}
 	out.Total = len(raw)
 
+	typeName := listCfg.EntityType
 	switch card.Display {
+	case "sum", "avg", "min", "max":
+		return dashboardSummary(ctx, a, s, card, def, typeName, raw, out), nil
 	case "breakdown":
-		rows := redactRows(ctx, a, raw)
+		rows := cardRows(ctx, a, typeName, raw, card.GroupBy)
 		out.Groups, out.Partial = groupCounts(rows, newAxisProperty(s.Meta, def, card.GroupBy), nil)
 	case "matrix":
-		rows := redactRows(ctx, a, raw)
+		rows := cardRows(ctx, a, typeName, raw, card.Rows, card.MatrixColumns, card.ToneBy)
 		in := matrixInput{
 			rows:    newMatrixAxis(s.Meta, def, card.Rows, card.RowsLabel, card.RowsOrder),
 			columns: newMatrixAxis(s.Meta, def, card.MatrixColumns, card.ColumnsLabel, card.ColumnsOrder),
@@ -78,7 +81,7 @@ func dashboardCardValue(
 		}
 		if card.GroupBy != "" {
 			// Only a grouping reads property values, so only it redacts.
-			rows := redactRows(ctx, a, raw)
+			rows := cardRows(ctx, a, typeName, raw, card.GroupBy)
 			out.Groups, out.Partial = groupCounts(rows, newAxisProperty(s.Meta, def, card.GroupBy), matched)
 		}
 	}
@@ -173,12 +176,14 @@ func dashboardTable(
 	}
 	out.Total = total
 	wanted := map[string]bool{}
+	var columns []string
 	for _, c := range card.Columns {
 		if c.Property != "" {
 			wanted[c.Property] = true
+			columns = append(columns, c.Property)
 		}
 	}
-	for _, e := range redactRows(ctx, a, raw) {
+	for _, e := range cardRows(ctx, a, listCfg.EntityType, raw, columns...) {
 		row := v1.DashboardRow{
 			ID:         e.ID,
 			Type:       e.Type,

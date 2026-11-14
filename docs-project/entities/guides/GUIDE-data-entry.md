@@ -1531,8 +1531,10 @@ The server refuses the file when the block:
   it;
 - lists a property twice, or gives a widget that does not suit the
   property type;
-- gives a message type a `display` other than `collapsed` or `hidden`, or
-  an `offer` other than `true` or `false`.
+- gives a message type a `display` other than `collapsed`, `hidden` or
+  `cards`, a `cards:` block that does not fit (see
+  [Options as cards](#options-as-cards)), or an `offer` other than `true`
+  or `false`.
 
 Without `realtime.yaml`, realtime is off and the block has no effect. The
 server then logs a warning instead of refusing the file, so you can add the
@@ -1552,6 +1554,44 @@ The structure the composer needs, such as property types and labels, comes
 from `GET /api/v1/_schema/channels` (see the realtime guide). A page that
 shows channels reads both again on a `refresh` event, so a change to
 either file reaches it without a page reload.
+
+### Options as cards
+
+A message whose options are an object list (see the realtime guide) shows
+its items as a table of fields by default. `display: cards` shows each
+item as a card instead, which suits options that each carry a title, pros
+and cons:
+
+```yaml
+channels:
+  room:
+    messages:
+      ask:
+        display: cards
+        cards:
+          body: question
+          items: options
+          title: label
+          plus: pros
+          minus: cons
+          badge: recommended
+```
+
+| Key | Meaning |
+| --- | --- |
+| `items` | The object-list property (`type: object, list: true`) whose items become cards. Required. |
+| `body` | A `string` or `markdown` property shown above the cards. |
+| `title` | A field of the items, shown as the card's heading. |
+| `plus` | A field of the items, listed with "+". |
+| `minus` | A field of the items, listed with "−". |
+| `badge` | A `boolean` field of the items, shown as a tag with the field's label while it is true. |
+
+The other fields of an item show under the lists as label and value;
+dates are formatted, an enum shows its label, and a boolean shows yes or
+no. On a question with `choices`, the choice buttons show under the
+cards. `cards:` applies only with `display: cards`, and `display: cards`
+needs `cards:` with `items`. Every name must be declared in
+`realtime.yaml`: `items` on the message type, the others on its items.
 
 ### Quiet message types
 
@@ -3708,7 +3748,8 @@ dashboard:
 | `title`      | string | Card heading                                                                |
 | `list`       | string | A list under `lists:` that supplies the rows. Set `list` or `query`, not both |
 | `query`      | string | Search query (same syntax as the search page)                               |
-| `display`    | string | `count`, `breakdown`, `table`, `matrix` or `ratio`                          |
+| `display`    | string | `count`, `breakdown`, `table`, `matrix`, `ratio`, `sum`, `avg`, `min` or `max` |
+| `property`   | string | `sum`, `avg`, `min`, `max`: the property to fold over the list's rows        |
 | `group_by`   | string | Property to group by (`breakdown`, and optionally `ratio`)                  |
 | `columns`    | list or string | `table`: column definitions, same format as list columns. `matrix`: the property along the top |
 | `sort`       | list   | Sort order (`table` mode only), the same list as a list's `sort:`           |
@@ -3842,6 +3883,28 @@ dashboard:
       match: has-evidence
       group_by: status
 ```
+
+### Total cards (`display: sum`, `avg`, `min`, `max`)
+
+A total card folds one property over the rows of its list into one value.
+It needs `list:` and `property:`.
+
+```yaml
+dashboard:
+  cards:
+    - title: "Total cost"
+      list: open-projects
+      display: sum
+      property: cost_cents
+```
+
+- `sum` and `avg` take an `integer` or `decimal` property. A sum is exact; an
+  average shows at least two digits after the point.
+- `min` and `max` take a property a list can sort on, and pick the value the
+  list's sort puts first or last.
+- The property can be a [roll-up](metamodel.md#roll-up-properties).
+- A row without a value is left out. A row whose value is hidden from the
+  viewer is left out too, and the card says that some values are hidden.
 
 ### Card width (`width`)
 
@@ -6008,6 +6071,7 @@ lowercase letter and has at most 32 lowercase letters, digits, `-` or `_`.
 | `tabs`  | yes      | The views of the page, in tab order. At least one |
 | `entity_type` | no | Makes the page an [entity page](#entity-pages) for entities of this type |
 | `badge` | no       | On an entity page, a property of the entity shown beside the title |
+| `mode`  | no       | `tabs` (the default) or `steps`. See [Steps and present mode](#steps-and-present-mode) |
 
 Each tab names exactly one view:
 
@@ -6020,6 +6084,7 @@ Each tab names exactly one view:
 | `list`, `kanban`, `calendar`, `gantt`, `document` | one of | The view the tab shows, by name |
 | `dashboard`  | one of   | `true` shows the default dashboard; a name shows a [named dashboard](#named-dashboards-dashboards) |
 | `scope`      | on an entity page | How the tab narrows its view to the page's entity. See [Entity pages](#entity-pages) |
+| `prompt`     | no       | On a steps page, the question shown above the view. See [Steps and present mode](#steps-and-present-mode) |
 
 ### Entity pages
 
@@ -6135,6 +6200,65 @@ entity page the menu offers every type of the space.
 
 An entity page is not a navigation destination: a `page:` entry or a space's
 `home:` that names one is a config error. It opens from an entity, by URL.
+
+### Steps and present mode
+
+A page with `mode: steps` shows its tabs as numbered steps instead of a tab bar.
+Use it for a session that walks through several views in order, such as a
+workshop: first collect risks in a list, then place them on a board, then add
+measures.
+
+```yaml
+pages:
+  dpia:
+    label: "DPIA workshop"
+    entity_type: dpia
+    mode: steps
+    tabs:
+      - id: risks
+        label: "Pre-mortem"
+        list: risks
+        scope: { relation: has-risk }
+        prompt: "It is a year from now and this went wrong. What happened?"
+      - id: matrix
+        label: "Risk matrix"
+        kanban: risk-matrix
+        scope: { relation: has-risk }
+        prompt: "How likely is each risk, and how bad would it be?"
+      - id: measures
+        label: "Measures"
+        list: measures
+        scope: { relation: has-measure }
+```
+
+The step bar above the view shows:
+
+- the steps, numbered, with the current one marked. Each step is a link;
+- **Back** and **Next**, which open the previous and the next step;
+- **Present**, which enters present mode.
+
+Each step has its own URL, as a tab has, so the browser's back button returns to
+the previous step. A step hidden from the user by `permission:` is left out, and
+the numbers follow the steps the user sees.
+
+`prompt` is the question the step puts to the room. It is shown as a large
+heading above the view. It is plain text of at most 280 characters, on one line,
+and is only allowed on a steps page.
+
+**Present mode** is for a screen the whole room reads. It hides the sidebar and
+the suggestion card, and enlarges the view. In present mode:
+
+- **Full screen** asks the browser to fill the screen. Press Esc to leave it.
+- **PageDown** and **PageUp** open the next and the previous step, so a
+  presentation clicker works. Outside present mode these keys scroll as usual.
+- **Exit** leaves present mode.
+
+Present mode is part of the URL: `?present=1` at the end of a step's URL opens it
+in present mode, and moving between steps keeps it. On a page without
+`mode: steps`, `?present=1` does nothing.
+
+Present mode changes only what the screen shows. Every view in it reads and
+writes with the user's own permissions, as it does outside present mode.
 
 ### Linking to a page
 

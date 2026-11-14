@@ -1,0 +1,92 @@
+version: "1.0"
+entities:
+  ticket:
+    label: Ticket
+    plural: tickets
+    id_prefix: "TKT-"
+    id_type: sequential
+    properties:
+      title: {type: string, required: true}
+      status: {type: enum, values: [open, ready, done], default: open}
+      start: {type: date, required: true}
+      stamp: {type: string}
+      note: {type: string}
+      age: {type: integer, computed: "days_between(today(), entity.start)"}
+  user:
+    label: User
+    plural: users
+    id_type: manual
+    properties:
+      name: {type: string}
+      email: {type: string, unique: true}
+  kinds:
+    label: Kinds
+    plural: kinds
+    id_type: manual
+    id_prefix: "K"
+    properties:
+      s: {type: string, required: true}
+      d: {type: date, required: true}
+      dt: {type: datetime, required: true}
+      i: {type: integer, required: true, min: 3, max: 9}
+      dec: {type: decimal, required: true, scale: 2}
+      b: {type: boolean, required: true}
+      e: {type: enum, values: [x, y], required: true}
+      r: {type: rrule, required: true}
+      f: {type: file, required: true}
+      st: {type: stage, required: true}
+      neg: {type: decimal, required: true, min: -5, max: -1, scale: 2}
+types:
+  stage:
+    values: [todo, doing, done]
+    initial: todo
+    transitions:
+      - {from: todo, to: doing}
+      - {from: doing, to: done}
+relations:
+  member-of:
+    from: [user]
+    to: [user]
+  blocks:
+    from: [ticket]
+    to: [ticket]
+validations:
+  - name: no-future-start
+    entity_type: ticket
+    enforce: write
+    when_condition: "entity.start > today()"
+    then: ["title=never"]
+automations:
+  - name: stamp
+    on: {entity: [ticket], created: true}
+    do:
+      - set: stamp
+        value: "{{today}}"
+  - name: ready-note
+    on: {entity: [ticket], property: status, becomes: ready}
+    do:
+      - set: note
+        value: "made ready"
+  - name: done-mail
+    on: {entity: [ticket], property: status, becomes: done}
+    do:
+      - lua_file: done_mail.lua
+        capabilities: {mail: true}
+        background: true
+  - name: probe
+    on: {entity: [ticket], created: true}
+    do:
+      - lua: |
+          local t = entity.properties.title
+          if t == "http" then
+            local _, err = http.get("http://127.0.0.1:9/")
+            if err then error(err.message) end
+          elseif t == "ai" then
+            local _, err = ai.chat({messages = {{role = "user", content = "hi"}}})
+            if err then error(err.message) end
+          elseif t == "http-quiet" then
+            http.get("http://127.0.0.1:9/")
+          elseif t == "clock" then
+            rela.update_entity(entity.id, {note = rela.today})
+          end
+        capabilities: {http: true, ai: true}

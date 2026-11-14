@@ -42,6 +42,7 @@ func TestMigrate_v26ToV27ChannelCreator(t *testing.T) {
 		`ALTER TABLE channels DROP COLUMN created_by_user`,
 		// last_at comes after created_by_user; the v28 rung adds it back.
 		`ALTER TABLE channels DROP COLUMN last_at`,
+		`ALTER TABLE channels DROP COLUMN session_asked`,
 		`ALTER TABLE channels DROP COLUMN session_previous`,
 		`ALTER TABLE channels DROP COLUMN session_cause`,
 		`PRAGMA user_version = 26`,

@@ -64,6 +64,12 @@ func (s SoftDeletes) RestoreEntity(ctx context.Context, id string) (*entity.Dele
 // restore must not leave a delete marker behind. [PurgeSoftDeleted] records
 // the delete versions when the rows really go.
 func SoftDeleteEntity(ctx context.Context, m *Manager, id string) (*entity.DeleteResult, error) {
+	return softDeleteFamily(ctx, m, id, deleteExpect{})
+}
+
+// softDeleteFamily is [SoftDeleteEntity], conditional on pre: the version
+// compare runs inside the mark's transaction.
+func softDeleteFamily(ctx context.Context, m *Manager, id string, pre deleteExpect) (*entity.DeleteResult, error) {
 	if !SupportsSoftDelete(m) {
 		return nil, ErrSoftDeleteUnsupported
 	}
@@ -94,6 +100,9 @@ func SoftDeleteEntity(ctx context.Context, m *Manager, id string) (*entity.Delet
 	var marked familyChange
 	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
 		txCtx := store.ContextInTx(ctx)
+		if pErr := pre.check(txCtx, tx); pErr != nil {
+			return pErr
+		}
 		return softDeleteInTx(txCtx, m, tx, id, authorized, &marked)
 	})
 	if txErr != nil {

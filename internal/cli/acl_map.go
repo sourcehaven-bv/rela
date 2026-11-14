@@ -12,7 +12,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/aclmap"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
@@ -167,7 +166,7 @@ func (c *ACLMapCmd) Run(ctx context.Context, svc *readServices) error {
 	// whose report exists to be checked.
 	var extras aclmap.Extras
 	if hookID != "" || expectation != nil {
-		extras = mapExtras(svc.Meta, policy)
+		extras = aclmap.ExtrasFor(svc.Meta, policy)
 	}
 	var result *aclmap.MapPrincipalResult
 	if hookID != "" {
@@ -186,7 +185,7 @@ func (c *ACLMapCmd) Run(ctx context.Context, svc *readServices) error {
 // file (for --expect), each nil when its flag is unset.
 func (c *ACLMapCmd) loadInputs(
 	ctx context.Context, svc *readServices, hookID string,
-) (*aclmap.WebhookMapping, *accessExpectation, error) {
+) (*aclmap.WebhookMapping, *aclmap.Expectation, error) {
 	var mapping *aclmap.WebhookMapping
 	if hookID != "" {
 		m, err := loadWebhookMapping(ctx, svc, hookID)
@@ -195,7 +194,7 @@ func (c *ACLMapCmd) loadInputs(
 		}
 		mapping = m
 	}
-	var expectation *accessExpectation
+	var expectation *aclmap.Expectation
 	if c.Expect != "" {
 		e, err := loadExpectation(c.Expect, svc.Meta)
 		if err != nil {
@@ -208,10 +207,10 @@ func (c *ACLMapCmd) loadInputs(
 
 // report writes one principal's map and, with --expect, the comparison. It
 // returns exit code 1 when the mapping check fails or the access differs.
-func (c *ACLMapCmd) report(result *aclmap.MapPrincipalResult, expectation *accessExpectation) error {
-	var compared *expectationResult
+func (c *ACLMapCmd) report(result *aclmap.MapPrincipalResult, expectation *aclmap.Expectation) error {
+	var compared *aclmap.ExpectationResult
 	if expectation != nil {
-		compared = expectation.compare(c.Expect, result)
+		compared = expectation.Compare(c.Expect, result)
 	}
 	if out.Format == output.FormatJSON {
 		enc := json.NewEncoder(out.Out)
@@ -243,7 +242,7 @@ func (c *ACLMapCmd) report(result *aclmap.MapPrincipalResult, expectation *acces
 // the comparison when --expect was given.
 type mapReport struct {
 	*aclmap.MapPrincipalResult
-	Expectation *expectationResult `json:"expectation,omitempty"`
+	Expectation *aclmap.ExpectationResult `json:"expectation,omitempty"`
 }
 
 // loadWebhookMapping looks the hook up in data-entry.yaml and returns what
@@ -271,28 +270,6 @@ func loadWebhookMapping(ctx context.Context, svc *readServices, hookID string) (
 		mapping.Match = m.Find.Match
 	}
 	return mapping, nil
-}
-
-// mapExtras builds the permission and relation universes the map probes.
-//
-// Permissions are the names the policy's roles grant. A role's "*" matches no
-// named permission, so a permission no role lists is held by nobody and need
-// not be probed. Relations are every relation type the schema declares, with
-// its source types.
-func mapExtras(meta *metamodel.Metamodel, policy *acl.Policy) aclmap.Extras {
-	var perms []string
-	for _, role := range policy.Roles {
-		perms = append(perms, role.Permissions...)
-	}
-	var rels []aclmap.RelationType
-	for _, name := range meta.RelationTypes() {
-		def, ok := meta.GetRelationDef(name)
-		if !ok {
-			continue
-		}
-		rels = append(rels, aclmap.RelationType{Name: name, From: def.From})
-	}
-	return aclmap.Extras{Permissions: perms, Relations: rels}
 }
 
 // runAll executes the whole-graph inventory (no --principal).
@@ -459,13 +436,7 @@ func writeTypeAccess(types []aclmap.TypeAccess) {
 }
 
 // joinRoutes renders a verb's routes as a compact list.
-func joinRoutes(routes []aclmap.Route) string {
-	parts := make([]string, len(routes))
-	for i, rt := range routes {
-		parts[i] = formatRoute(rt)
-	}
-	return strings.Join(parts, "; ")
-}
+func joinRoutes(routes []aclmap.Route) string { return aclmap.JoinRoutes(routes) }
 
 func joinVerbs(verbs []string) string { return strings.Join(verbs, ", ") }
 

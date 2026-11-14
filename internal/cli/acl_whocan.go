@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -135,30 +134,9 @@ func writeWhoCanText(r *aclmap.WhoCanResult) {
 		}
 		out.WriteMessage("  %s", who)
 		for _, rt := range p.Routes {
-			out.WriteMessage("      via %s", formatRoute(rt))
+			out.WriteMessage("      via %s", rt.String())
 		}
 	}
-}
-
-// formatRoute renders one route's terminal facts as a compact,
-// action-oriented string naming the role and the key entities/relation.
-func formatRoute(rt aclmap.Route) string {
-	parts := []string{"role " + rt.Role}
-	switch {
-	case rt.Claim != "":
-		parts = append(parts, fmt.Sprintf("asserted claim %q", rt.Claim))
-	case rt.Group != "" && rt.Ancestor != "":
-		parts = append(parts, fmt.Sprintf("group %s → %s edge on ancestor %s", rt.Group, rt.Relation, rt.Ancestor))
-	case rt.Group != "" && rt.Relation != "":
-		parts = append(parts, fmt.Sprintf("group %s → %s edge", rt.Group, rt.Relation))
-	case rt.Group != "":
-		parts = append(parts, "group "+rt.Group)
-	case rt.Ancestor != "":
-		parts = append(parts, fmt.Sprintf("%s edge on ancestor %s", rt.Relation, rt.Ancestor))
-	case rt.Relation != "":
-		parts = append(parts, rt.Relation+" edge")
-	}
-	return fmt.Sprintf("%s [%s]", strings.Join(parts, ", "), rt.Kind)
 }
 
 // errNoACLPolicy signals that the project has no acl.yaml. Callers treat

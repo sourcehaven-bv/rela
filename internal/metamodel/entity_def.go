@@ -118,7 +118,7 @@ func (e *EntityDef) GetDefaultStatus(m *Metamodel) string {
 // property, or "" when it declares none. Only config counts, in this order:
 // the property's `default:`, else its named type's `initial:` (a state
 // machine's entry value), else that type's `default:`. The type order
-// matches the state machine's entry value; statemachine.Compile rejects a
+// matches the state machine's entry value; transitions.CompileTransitions rejects a
 // property default that differs from it, so a defaulted create is a legal
 // entry. There is no fallback to a first enum value or a zero value.
 func DeclaredDefault(prop PropertyDef, m *Metamodel) string {
@@ -135,6 +135,25 @@ func DeclaredDefault(prop PropertyDef, m *Metamodel) string {
 		return customType.Default
 	}
 	return ""
+}
+
+// EnumValues returns the values an enum property allows: its own `values:`,
+// else those of the custom type it names. It returns nil for a property that
+// is not an enum. A function rather than a method because Metamodel is at its
+// exported-method load line.
+//
+// Nil: m is accepted — only the property's own values count then.
+func EnumValues(prop PropertyDef, m *Metamodel) []string {
+	if len(prop.Values) > 0 {
+		return prop.Values
+	}
+	if m == nil {
+		return nil
+	}
+	if customType, ok := m.Types[prop.Type]; ok {
+		return customType.Values
+	}
+	return nil
 }
 
 // RankingTitleProperty names the property search ranking may treat as e's

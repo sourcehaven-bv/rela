@@ -5,10 +5,14 @@ type Report struct {
 	Remote string `json:"remote"`
 	RunID  string `json:"run_id,omitempty"`
 	DryRun bool   `json:"dry_run,omitempty"`
-	// Refused says why the gone guard refused the run; nothing was applied.
+	// Refused says why the gone guard held the run's deletes and detaches.
+	// The rest of the run was applied.
 	Refused string `json:"refused,omitempty"`
 	// Gone is how many linked rows the source no longer lists.
 	Gone int `json:"gone"`
+	// Deleting is how many rows deleted here wait to be deleted on the
+	// remote.
+	Deleting int `json:"deleting,omitempty"`
 	// Waiting is how many changed rows were not fetched because the run
 	// reached max_fetch or max_bytes. They are fetched by a later run.
 	Waiting   int    `json:"waiting,omitempty"`
@@ -72,6 +76,8 @@ type PushCounts struct {
 	// Deferred rows wait for the next run: over max_fetch or max_bytes, or
 	// gone from the remote during the run.
 	Deferred int `json:"deferred"`
+	// Deleted rows were deleted here and are now deleted on the remote too.
+	Deleted int `json:"deleted"`
 	// Failed rows hit an error that may pass; they are tried again.
 	Failed int `json:"failed"`
 }

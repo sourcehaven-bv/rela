@@ -1404,6 +1404,9 @@ api_key_env: OPENAI_API_KEY            # optional, absent = no auth
 timeout_seconds: 60                    # optional, default 30
 ```
 
+`api_key_env` may not name a `REMOTE_CREDENTIAL_` variable: that credential
+is only for `remotes.yaml`.
+
 #### ai.chat
 
 Send a chat completion request with full control over messages, model, and parameters.

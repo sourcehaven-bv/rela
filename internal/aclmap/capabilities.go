@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -197,4 +198,26 @@ func dedupeSorted(in []string) []string {
 	}
 	sort.Strings(out)
 	return slices.Compact(out)
+}
+
+// ExtrasFor builds the permission and relation universes a map probes.
+//
+// Permissions are the names the policy's roles grant. A role's "*" matches no
+// named permission, so a permission no role lists is held by nobody and need
+// not be probed. Relations are every relation type the schema declares, with
+// its source types.
+func ExtrasFor(meta *metamodel.Metamodel, policy *acl.Policy) Extras {
+	var perms []string
+	for _, role := range policy.Roles {
+		perms = append(perms, role.Permissions...)
+	}
+	var rels []RelationType
+	for _, name := range meta.RelationTypes() {
+		def, ok := meta.GetRelationDef(name)
+		if !ok {
+			continue
+		}
+		rels = append(rels, RelationType{Name: name, From: def.From})
+	}
+	return Extras{Permissions: perms, Relations: rels}
 }

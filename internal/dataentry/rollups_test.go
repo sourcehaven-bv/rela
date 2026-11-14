@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
@@ -287,7 +289,7 @@ func TestRollups_ReadSurfacesPerPrincipal(t *testing.T) {
 			}
 			assertRollups(t, "GET", decodeProps(t, rec.Body.Bytes()), want)
 
-			for _, q := range []string{"rollups=1", "list_id=maatregelen"} {
+			for _, q := range []string{"", "rollups=1", "list_id=maatregelen"} {
 				resp, lrec := listEntitiesAs(ctx, t, app, d, "maatregel", "maatregels", q)
 				if lrec.Code != http.StatusOK {
 					t.Fatalf("list %s = %d %s", q, lrec.Code, lrec.Body)
@@ -296,17 +298,13 @@ func TestRollups_ReadSurfacesPerPrincipal(t *testing.T) {
 					t.Fatalf("list %s: %d rows, want 2", q, len(resp.Data))
 				}
 				for _, row := range resp.Data {
-					w := want
-					if q == "list_id=maatregelen" {
-						w.latest = nil // not a column of the list
-					}
-					assertRollups(t, "list "+q+" "+row.ID, row.Properties, w)
+					assertRollups(t, "list "+q+" "+row.ID, row.Properties, want)
 				}
 			}
-			resp, _ := listEntitiesAs(ctx, t, app, d, "maatregel", "maatregels", "")
+			resp, _ := listEntitiesAs(ctx, t, app, d, "maatregel", "maatregels", "rollups=false")
 			for _, row := range resp.Data {
 				if _, has := row.Properties["bewijs_aantal"]; has {
-					t.Errorf("list without opt-in carries bewijs_aantal on %s: %v", row.ID, row.Properties)
+					t.Errorf("list with rollups=false carries bewijs_aantal on %s: %v", row.ID, row.Properties)
 				}
 			}
 
@@ -343,15 +341,113 @@ func TestRollups_ReadSurfacesPerPrincipal(t *testing.T) {
 	}
 }
 
-// TestRollups_ListFilterAndSortRefused pins that a list cannot filter or
-// sort on a roll-up: the value is not in the store, so the query cannot
-// answer it.
-func TestRollups_ListFilterAndSortRefused(t *testing.T) {
-	app, d := newRollupWireApp(t, 1, memstore.New())
-	for _, q := range []string{"filter[bewijs_aantal]=3", "sort=bewijs_aantal", "sort=-laatste_testresultaat"} {
-		_, rec := listEntitiesAs(principalCtx("PERS-A"), t, app, d, "maatregel", "maatregels", q)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("list ?%s = %d, want 400 (%s)", q, rec.Code, rec.Body)
+// newRollupSortApp seeds three maatregelen whose roll-ups differ:
+//   - MAAT-1: one geldig bewijs (shared with PERS-B); latest test gefaald.
+//   - MAAT-2: three geldig bewijs, two shared with PERS-B; latest test
+//     geslaagd.
+//   - MAAT-3: no bewijs and no test, and a stored bewijs_aantal of 99 that
+//     must never count.
+func newRollupSortApp(t *testing.T) (*App, *acl.Declarative) {
+	t.Helper()
+	meta, err := metamodel.Parse([]byte(rollupWireMeta))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	st := memstore.New()
+	ctx := context.Background()
+	mk := func(id, typ string, props map[string]any) {
+		e := entity.New(id, typ)
+		maps.Copy(e.Properties, props)
+		if cerr := st.CreateEntity(ctx, e); cerr != nil {
+			t.Fatal(cerr)
+		}
+	}
+	rel := func(from, typ, to string) {
+		if _, cerr := st.CreateRelation(ctx, entity.RelationKey{From: from, Type: typ, To: to}, nil); cerr != nil {
+			t.Fatal(cerr)
+		}
+	}
+	for _, p := range []string{"PERS-A", "PERS-B", "PERS-D"} {
+		mk(p, "person", map[string]any{"title": p})
+	}
+	mk("MAAT-1", "maatregel", map[string]any{"title": "MAAT-1"})
+	mk("MAAT-2", "maatregel", map[string]any{"title": "MAAT-2"})
+	mk("MAAT-3", "maatregel", map[string]any{"title": "MAAT-3", "bewijs_aantal": 99})
+	for id, b := range map[string]struct {
+		to     string
+		shared bool
+	}{
+		"BEW-1": {"MAAT-1", true}, "BEW-2": {"MAAT-2", true}, "BEW-3": {"MAAT-2", true}, "BEW-4": {"MAAT-2", false},
+	} {
+		mk(id, "bewijs", map[string]any{"title": id, "status": "geldig"})
+		rel(id, "evidences", b.to)
+		if b.shared {
+			rel("PERS-B", "shared-with", id)
+		}
+	}
+	for id, tr := range map[string]struct{ to, resultaat, datum string }{
+		"TST-1": {"MAAT-1", "geslaagd", "2026-01-01"}, "TST-2": {"MAAT-1", "gefaald", "2026-02-01"},
+		"TST-3": {"MAAT-2", "geslaagd", "2026-03-01"},
+	} {
+		mk(id, "test", map[string]any{"title": id, "resultaat": tr.resultaat, "datum": tr.datum})
+		rel(id, "tests", tr.to)
+	}
+	app := newAppFromParts(rollupWireConfig(), meta, newFixture(), appbuildtest.WithStore(st))
+	d := mustNewACL(t, rollupWirePolicy(), app.store)
+	setTestACL(t, app, d)
+	res, err := ResolverFromProfile("", meta, app.store, d, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.fieldResolver = res
+	return app, d
+}
+
+// TestRollups_ListFilterAndSort pins that a list filters and sorts on a
+// roll-up as each reader computes it: PERS-B counts only the bewijs shared
+// with it, and a value stored under the roll-up name never matches.
+func TestRollups_ListFilterAndSort(t *testing.T) {
+	app, d := newRollupSortApp(t)
+	tests := []struct {
+		user, query string
+		want        []string
+	}{
+		{"PERS-A", "sort=-bewijs_aantal", []string{"MAAT-2", "MAAT-1", "MAAT-3"}},
+		{"PERS-A", "sort=bewijs_aantal", []string{"MAAT-3", "MAAT-1", "MAAT-2"}},
+		{"PERS-A", "filter[bewijs_aantal][gte]=1&sort=title", []string{"MAAT-1", "MAAT-2"}},
+		{"PERS-A", "filter[bewijs_aantal]=2", nil},
+		{"PERS-A", "filter[bewijs_aantal]=99", nil},
+		{"PERS-B", "filter[bewijs_aantal]=2", []string{"MAAT-2"}},
+		{"PERS-A", "filter[laatste_testresultaat]=gefaald", []string{"MAAT-1"}},
+		{"PERS-A", "filter[bewijs_aantal][gte]=1&sort=-laatste_testresultaat", []string{"MAAT-1", "MAAT-2"}},
+		{"PERS-A", "sort=-bewijs_aantal&per_page=1&page=2", []string{"MAAT-1"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.user+" "+tc.query, func(t *testing.T) {
+			resp, rec := listEntitiesAs(principalCtx(tc.user), t, app, d, "maatregel", "maatregels", tc.query)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("list = %d %s", rec.Code, rec.Body)
+			}
+			var got []string
+			for _, row := range resp.Data {
+				got = append(got, row.ID)
+			}
+			if fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Errorf("rows = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRollups_ListQueryOnHiddenRollupRefused pins that a reader who cannot
+// see a roll-up cannot filter or sort on it: the field gate judges a
+// roll-up as any other property.
+func TestRollups_ListQueryOnHiddenRollupRefused(t *testing.T) {
+	app, d := newRollupSortApp(t)
+	for _, q := range []string{"filter[bewijs_aantal]=1", "sort=bewijs_aantal"} {
+		_, rec := listEntitiesAs(principalCtx("PERS-D"), t, app, d, "maatregel", "maatregels", q)
+		if rec.Code < 400 {
+			t.Errorf("list ?%s = %d, want a refusal (%s)", q, rec.Code, rec.Body)
 		}
 	}
 }
@@ -406,8 +502,8 @@ func TestQueryBudget_ListRollupsAreSizeIndependent(t *testing.T) {
 			}
 			return counting.Reads()
 		}
-		without := reads("")
-		with := reads("rollups=1")
+		without := reads("rollups=false")
+		with := reads("")
 		detail = counting.String()
 		extra = append(extra, with-without)
 	}
@@ -419,4 +515,60 @@ func TestQueryBudget_ListRollupsAreSizeIndependent(t *testing.T) {
 		t.Errorf("roll-up reads = %d extra, pinned %d (%s) — update the pin if the change is deliberate",
 			extra[1], pinned, detail)
 	}
+}
+
+// TestRollups_DashboardCards pins that a dashboard card reads a roll-up as
+// a list row does: the table shows it, a breakdown groups on it, and a sum,
+// avg or max card folds it, each per reader. PERS-D cannot see the
+// roll-up, so its sum has no value and is partial.
+func TestRollups_DashboardCards(t *testing.T) {
+	app, d := newRollupSortApp(t)
+	list := map[string]dataentryconfig.List{"all": {EntityType: "maatregel"}}
+	installDashboardCards(app, list,
+		dataentryconfig.DashboardCard{Title: "Total", List: "all", Display: "sum", Property: "bewijs_aantal"},
+		dataentryconfig.DashboardCard{Title: "Average", List: "all", Display: "avg", Property: "bewijs_aantal"},
+		dataentryconfig.DashboardCard{Title: "Most", List: "all", Display: "max", Property: "bewijs_aantal"},
+		dataentryconfig.DashboardCard{Title: "Rows", List: "all", Display: "table",
+			Sort:    []dataentryconfig.SortSpec{{Property: "bewijs_aantal", Direction: "desc"}},
+			Columns: []dataentryconfig.ListColumn{{Property: "title"}, {Property: "bewijs_aantal"}}},
+		dataentryconfig.DashboardCard{Title: "By result", List: "all", Display: "breakdown",
+			GroupBy: "laatste_testresultaat"},
+	)
+
+	t.Run("PERS-A", func(t *testing.T) {
+		ctx := gateCtxFor(principalCtx("PERS-A"), t, d)
+		sum, _ := dashboardCardValueAs(ctx, t, app, 0)
+		require.Equal(t, "bewijs_aantal", sum.Property)
+		require.InDelta(t, 4, sum.Value, 0, "1 + 3 + 0; the stored 99 never counts")
+		require.False(t, sum.Partial)
+		avg, _ := dashboardCardValueAs(ctx, t, app, 1)
+		require.Equal(t, "1.33", avg.Value)
+		most, _ := dashboardCardValueAs(ctx, t, app, 2)
+		require.InDelta(t, 3, most.Value, 0)
+		table, _ := dashboardCardValueAs(ctx, t, app, 3)
+		require.Len(t, table.Rows, 3)
+		require.Equal(t, "MAAT-2", table.Rows[0].ID, "sorted by the roll-up, descending")
+		require.InDelta(t, 3, table.Rows[0].Properties["bewijs_aantal"], 0)
+		breakdown, _ := dashboardCardValueAs(ctx, t, app, 4)
+		counts := map[string]int{}
+		for _, g := range breakdown.Groups {
+			counts[g.Value] = g.Count
+		}
+		require.Equal(t, map[string]int{"gefaald": 1, "geslaagd": 1, "": 1}, counts)
+	})
+	t.Run("PERS-B", func(t *testing.T) {
+		ctx := gateCtxFor(principalCtx("PERS-B"), t, d)
+		sum, _ := dashboardCardValueAs(ctx, t, app, 0)
+		require.InDelta(t, 3, sum.Value, 0, "BEW-4 is not shared with PERS-B")
+	})
+	t.Run("PERS-D", func(t *testing.T) {
+		ctx := gateCtxFor(principalCtx("PERS-D"), t, d)
+		sum, body := dashboardCardValueAs(ctx, t, app, 0)
+		require.Nil(t, sum.Value, body)
+		require.True(t, sum.Partial)
+		table, _ := dashboardCardValueAs(ctx, t, app, 3)
+		for _, row := range table.Rows {
+			require.NotContains(t, row.Properties, "bewijs_aantal")
+		}
+	})
 }

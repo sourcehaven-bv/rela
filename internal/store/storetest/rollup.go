@@ -457,6 +457,35 @@ func RunRollupTests(t *testing.T, f Factory) {
 		}
 	})
 
+	// A decimal sum is exact: 0.1 + 0.2 is 0.3, and the result keeps the
+	// longest fraction summed. A string counts only in plain decimal
+	// notation; a malformed one, a list or a bool is skipped.
+	t.Run("decimal_sum_is_exact", func(t *testing.T) {
+		s := f(t)
+		seedGraphQueryEntities(t, s, "risk", "RSK-1", "RSK-2", "RSK-3")
+		for id, v := range map[string]any{
+			"EV-1": "12.50", "EV-2": 1.5, "EV-3": "0.1", "EV-4": "0.2", "EV-5": 3, "EV-6": "-0.30",
+			"EV-7": "1e3", "EV-8": "abc", "EV-9": []any{"1"}, "EV-10": true, "EV-11": "+2", "EV-12": ".5",
+		} {
+			seedEntityWithProps(t, s, "evidence", id, map[string]any{"score": v})
+		}
+		for _, ev := range []string{"EV-1", "EV-2", "EV-5", "EV-7", "EV-8", "EV-9", "EV-10", "EV-11", "EV-12"} {
+			mustRel(t, s, "RSK-1", "evidenced-by", ev)
+		}
+		for _, ev := range []string{"EV-3", "EV-4", "EV-6"} {
+			mustRel(t, s, "RSK-2", "evidenced-by", ev)
+		}
+		mustRel(t, s, "RSK-3", "evidenced-by", "EV-8")
+		requireRollup(t, s, store.RollupQuery{
+			Related: evidence(), Relation: "evidenced-by", Sources: []string{"RSK-1", "RSK-2", "RSK-3"},
+			Func: store.RollupSum, Value: "score", Decimal: true,
+		}, map[string]store.RollupResult{
+			"RSK-1": {Count: 9, Value: "19.00"},
+			"RSK-2": {Count: 3, Value: "0.00"},
+			"RSK-3": {Count: 1},
+		})
+	})
+
 	t.Run("invalid_queries_are_refused", func(t *testing.T) {
 		s := f(t)
 		for name, q := range map[string]store.RollupQuery{

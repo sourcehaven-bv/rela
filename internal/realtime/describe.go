@@ -100,9 +100,40 @@ type MessageTypeDescription struct {
 // [realtimecfg.Choices].
 type ChoicesDescription struct {
 	From   string `json:"from"`
+	Label  string `json:"label,omitempty"`
 	Answer string `json:"answer"`
 	Into   string `json:"into"`
 	Other  bool   `json:"other"`
+}
+
+// describeProperties describes props, required first, then by name. An
+// object list carries its fields, described the same way.
+func describeProperties(props map[string]realtimecfg.Property) []PropertyDescription {
+	out := make([]PropertyDescription, 0, len(props))
+	for _, p := range props {
+		pd := PropertyDescription{
+			Name: p.Name, Label: p.Label, Type: string(p.Type), Required: p.Required, Max: p.Max,
+			Enum: p.Enum, Values: slices.Clone(p.Values), To: slices.Clone(p.To),
+			List: p.List, MaxItems: p.MaxItems,
+		}
+		if p.Fields != nil {
+			pd.Fields = describeProperties(p.Fields)
+		}
+		if p.File != nil {
+			pd.Max, pd.MaxSize, pd.Accept = p.File.MaxFiles, p.File.MaxSize, slices.Clone(p.File.Policy.Accept)
+		}
+		out = append(out, pd)
+	}
+	slices.SortFunc(out, func(a, b PropertyDescription) int {
+		switch {
+		case a.Required && !b.Required:
+			return -1
+		case !a.Required && b.Required:
+			return 1
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	return out
 }
 
 // describeChoices describes c; nil for nil.
@@ -110,18 +141,19 @@ func describeChoices(c *realtimecfg.Choices) *ChoicesDescription {
 	if c == nil {
 		return nil
 	}
-	return &ChoicesDescription{From: c.From, Answer: c.Answer, Into: c.Into, Other: c.Other}
+	return &ChoicesDescription{From: c.From, Label: c.Label, Answer: c.Answer, Into: c.Into, Other: c.Other}
 }
 
 // PropertyDescription describes one message property. Type is string,
-// markdown, integer, boolean, date, datetime, ref or enum. Max is the most
-// code points a string or markdown value may hold, 0 for no limit. Enum
+// markdown, integer, boolean, date, datetime, ref, enum, file or object. Max is
+// the most code points a string or markdown value may hold, 0 for no limit. Enum
 // names the schema.yaml enum type and Values its values; To lists the
-// entity types a ref may name. List is set for a list of strings; Max then
-// limits each item and MaxItems the number of items. For a file property
-// (type file) Max is the most files a message holds in it, MaxSize the
-// most bytes of one file, and Accept the MIME types it accepts, empty for
-// any.
+// entity types a ref may name. List is set for a list of strings or of
+// objects; Max then limits each string item and MaxItems the number of
+// items. Fields describes the fields of an object list's items. For a
+// file property (type file) Max is the most files a message holds in it,
+// MaxSize the most bytes of one file, and Accept the MIME types it
+// accepts, empty for any.
 type PropertyDescription struct {
 	Name     string
 	Label    string
@@ -135,6 +167,9 @@ type PropertyDescription struct {
 	MaxItems int
 	MaxSize  int64
 	Accept   []string
+	// Fields describes the fields of an object list, sorted as the
+	// properties of a message type are; nil for any other type.
+	Fields []PropertyDescription
 }
 
 // ActionDescription describes one message action.
@@ -200,33 +235,13 @@ func describeMessageType(mt *realtimecfg.MessageType) MessageTypeDescription {
 	ttl, reply := messageTypeTiming(mt)
 	d := MessageTypeDescription{
 		Name: mt.Name, Label: mt.Label, Persist: string(mt.Persist), TTLSeconds: ttl, Reply: reply,
-		Properties:     make([]PropertyDescription, 0, len(mt.Properties)),
 		Actions:        []ActionDescription{},
 		Choices:        describeChoices(mt.Choices),
 		DecisionButton: decisionButtonView(mt.DecisionButton),
 		In:             slices.Clone(mt.In),
 		InDerived:      mt.InDerived(),
 	}
-	for _, p := range mt.Properties {
-		pd := PropertyDescription{
-			Name: p.Name, Label: p.Label, Type: string(p.Type), Required: p.Required, Max: p.Max,
-			Enum: p.Enum, Values: slices.Clone(p.Values), To: slices.Clone(p.To),
-			List: p.List, MaxItems: p.MaxItems,
-		}
-		if p.File != nil {
-			pd.Max, pd.MaxSize, pd.Accept = p.File.MaxFiles, p.File.MaxSize, slices.Clone(p.File.Policy.Accept)
-		}
-		d.Properties = append(d.Properties, pd)
-	}
-	slices.SortFunc(d.Properties, func(a, b PropertyDescription) int {
-		switch {
-		case a.Required && !b.Required:
-			return -1
-		case !a.Required && b.Required:
-			return 1
-		}
-		return strings.Compare(a.Name, b.Name)
-	})
+	d.Properties = describeProperties(mt.Properties)
 	for _, name := range sortedKeys(mt.Actions) {
 		a := mt.Actions[name]
 		ad := ActionDescription{Name: a.Name, Label: a.Label}

@@ -575,7 +575,16 @@
     "deleteTitle": "Delete {type}?",
     "deleteFailed": "Failed to delete",
     "deleted": "Deleted",
-    "confirmRun": "Run {label}?"
+    "confirmRun": "Run {label}?",
+    "steps": {
+      "label": "Steps",
+      "back": "Back",
+      "next": "Next",
+      "present": "Present",
+      "exitPresent": "Exit",
+      "fullscreen": "Full screen",
+      "exitFullscreen": "Exit full screen"
+    }
   },
   "editor": {
     "command": {
@@ -1396,9 +1405,12 @@
       "both_changed": "Both changed",
       "refused": "Refused",
       "uncertain": "Uncertain create",
-      "superseded": "Superseded"
+      "superseded": "Superseded",
+      "local_deleted": "Deleted here",
+      "remote_deleted": "Deleted on the remote"
     },
     "cause": {
+      "edited": "The other side changed the row",
       "refused": "The remote refused the write",
       "server_error": "The remote failed to answer",
       "no_new_row": "The remote created no row",

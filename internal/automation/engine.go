@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
+	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
@@ -52,7 +53,12 @@ func WithClock(now func() time.Time) Option {
 // Engine evaluates automations against entity events.
 type Engine struct {
 	automations []Automation
-	vars        TemplateVars
+	// triggers are the automations compiled onto flow triggers, in
+	// declaration order; byEvent indexes them by the event types that may
+	// fire them. Both are built by the constructor and only read after.
+	triggers []trigger
+	byEvent  map[EventType][]int
+	vars     TemplateVars
 	// meta is the active metamodel, used to evaluate `when:` and
 	// `validate:` comparisons against the property's declared type
 	// (so `count>9` compares numerically, not lexicographically).
@@ -97,9 +103,16 @@ func (e *Engine) evaluator() *predicatefns.Evaluator {
 
 // NewEngine creates an automation engine with the given automations.
 // The engine has no metamodel, so `when:`/`validate:` comparisons fall
-// back to string matching; use [Engine.SetMetamodel] (or
-// [NewEngineFromMetamodel]) to get type-aware comparison.
+// back to string matching; use [NewEngineFromMetamodel] to get type-aware
+// comparison.
 func NewEngine(automations []Automation) *Engine {
+	e := newEngine(automations)
+	e.compile()
+	return e
+}
+
+// newEngine returns an engine whose trigger table is not compiled yet.
+func newEngine(automations []Automation) *Engine {
 	return &Engine{
 		automations: automations,
 		vars:        DefaultTemplateVars(),
@@ -128,7 +141,7 @@ func NewEngineFromMetamodel(
 		}
 		automations[i] = auto
 	}
-	e := NewEngine(automations)
+	e := newEngine(automations)
 	e.meta = meta
 	for _, opt := range opts {
 		opt(e)
@@ -142,6 +155,7 @@ func NewEngineFromMetamodel(
 	if err := resolveNotifyPaths(meta, e.automations); err != nil {
 		return nil, err
 	}
+	e.compile()
 	return e, nil
 }
 
@@ -254,16 +268,6 @@ func (e *Engine) checkTraversals(entityType string, prog *predicate.Program) err
 	return predicatefns.ValidateTraversals(e.meta, entityType, prog)
 }
 
-// SetMetamodel wires the metamodel used for type-aware `when:`/
-// `validate:` comparison. Optional; without it the engine compares as
-// strings.
-func (e *Engine) SetMetamodel(meta *metamodel.Metamodel) {
-	e.meta = meta
-	e.evMu.Lock()
-	e.ev = nil // rebuild against the new meta on next use
-	e.evMu.Unlock()
-}
-
 // convertFromMetamodel converts a metamodel AutomationDef to the internal
 // Automation type. An unparseable `when:` clause is an ERROR, not a skip:
 // dropping a constraint makes the automation fire on MORE entities than the
@@ -374,6 +378,12 @@ func (e *Engine) SetTemplateVars(vars TemplateVars) {
 }
 
 // Process evaluates all automations against an event and returns the result.
+//
+// The event selects its triggers through the event index, the scope
+// (managed name, `entity:`, `faces:`, `copy:`) and the event keys; the
+// selected triggers fire through [flow.Fire], and each fired trigger
+// renders its outputs in declaration order. A guard that fails to evaluate
+// adds a warning in its place and fires nothing.
 func (e *Engine) Process(ctx context.Context, event Event) *Result {
 	result := &Result{
 		PropertiesSet:     make(map[string]string),
@@ -386,27 +396,27 @@ func (e *Engine) Process(ctx context.Context, event Event) *Result {
 		Errors:            make([]string, 0),
 	}
 
-	for _, auto := range e.automations {
-		if !e.matches(ctx, auto.On, event, result) {
-			continue
-		}
-
-		// Execute actions
-		for _, action := range auto.Do {
-			e.executeAction(action, event, result, auto.Name)
-		}
-
-		// Evaluate validations
-		for _, validation := range auto.Validate {
-			e.evaluateValidation(ctx, validation, event, result)
+	var selected []*trigger
+	for _, i := range e.byEvent[event.Type] {
+		t := &e.triggers[i]
+		if e.admits(t.on, event) && e.selects(t.on, event) {
+			selected = append(selected, t)
 		}
 	}
-
+	fired := flow.Fire(selected, func(t *trigger) (bool, error) { return e.holds(ctx, t, event.Entity) })
+	for _, f := range fired {
+		if f.Err != nil {
+			result.Warnings = append(result.Warnings,
+				"automation condition could not be evaluated: "+f.Err.Error())
+			continue
+		}
+		e.render(ctx, f.Trigger, event, result)
+	}
 	return result
 }
 
-// matches checks if a trigger matches an event.
-func (e *Engine) matches(ctx context.Context, trigger Trigger, event Event, res *Result) bool {
+// admits applies a trigger's scope to the event.
+func (e *Engine) admits(trigger Trigger, event Event) bool {
 	// A rela-managed record (a flow run, its `_carries` edge) is written by
 	// the flow engine only; no operator automation fires on it, not even a
 	// type-less one (TKT-BC5G8RP). The schema refuses an automation that
@@ -416,32 +426,22 @@ func (e *Engine) matches(ctx context.Context, trigger Trigger, event Event, res 
 
 		return false
 	}
-	// Check entity type constraint
-	if len(trigger.Entity) > 0 && event.Entity != nil {
-		matched := slices.Contains(trigger.Entity, event.Entity.Type)
-		if !matched {
-			return false
-		}
+	// The type scope is an exact match on the type as written.
+	if len(trigger.Entity) > 0 && event.Entity != nil && !slices.Contains(trigger.Entity, event.Entity.Type) {
+		return false
 	}
-
-	// Check the content-state constraint before any condition runs: a trigger
-	// scoped away from this row does not apply, which is a different thing from
-	// a condition that failed to match, and evaluating conditions for it would
-	// be wasted work.
+	// A trigger scoped away from this row does not apply, which is a
+	// different thing from a guard that does not hold.
 	if !e.matchesFace(trigger, event.Entity) {
 		return false
 	}
-	// The copy scope too, so a copy trigger evaluates no condition on a write
-	// it can never match.
-	if !e.copyScopeAdmits(trigger, event) {
-		return false
-	}
+	return e.copyScopeAdmits(trigger, event)
+}
 
-	// Check when conditions (property filters on the entity)
-	if !e.matchesWhenConditions(ctx, trigger, event.Entity, res) {
-		return false
-	}
-
+// selects reports whether the event's keys fire the trigger: the event
+// type, and for an update the changed property or body, for a relation
+// event its type.
+func (e *Engine) selects(trigger Trigger, event Event) bool {
 	if len(trigger.Copy) > 0 && event.Type != EventEntityRenamed && copyOnly(trigger) {
 		// Alone, `on.copy:` fires on every run of the copy, changed or not.
 		return event.Type == EventEntityCreated || event.Type == EventEntityUpdated
@@ -558,167 +558,6 @@ func (e *Engine) matchesPropertyChange(trigger Trigger, event Event) bool {
 	return true
 }
 
-// matchesWhenConditions checks if all when conditions are satisfied.
-// Returns true if no conditions are specified (backward compatible).
-func (e *Engine) matchesWhenConditions(
-	ctx context.Context, trigger Trigger, entity *entity.Entity, res *Result,
-) bool {
-	if len(trigger.When) == 0 && trigger.Condition == "" {
-		return true
-	}
-	if entity == nil {
-		return false
-	}
-
-	for _, f := range trigger.When {
-		if !e.matchProperty(ctx, entity, f) {
-			return false
-		}
-	}
-	matched, err := e.matchesCondition(ctx, trigger, entity)
-	if err != nil && res != nil {
-		res.Warnings = append(res.Warnings,
-			"automation condition could not be evaluated: "+err.Error())
-	}
-	return matched
-}
-
-// matchesCondition evaluates the trigger's `condition:` expression, ANDed
-// with the When clauses the caller has already checked.
-//
-// The program was compiled at load, so a failure here is an EVAL error (a
-// missing property binding, the step budget) rather than a syntax
-// mistake. The automation does NOT fire — it must not act on a condition
-// that could not be shown to hold — but the error is returned rather than
-// swallowed, so [Engine.Process] can surface it as a warning. A condition
-// that silently never matches is the exact failure this whole key exists
-// to remove; reintroducing it here would defeat the point.
-func (e *Engine) matchesCondition(
-	ctx context.Context, trigger Trigger, ent *entity.Entity,
-) (bool, error) {
-	if trigger.Condition == "" {
-		return true, nil
-	}
-	ev := e.evaluator()
-	if ev == nil {
-		// compileConditions rejects this at load; reaching it means an
-		// engine was assembled by another path. Fail closed, and say so.
-		return false, fmt.Errorf("condition %q: no metamodel", trigger.Condition)
-	}
-	prog, err := ev.Compile(ent.Type, trigger.Condition)
-	if err != nil {
-		return false, fmt.Errorf("condition %q: %w", trigger.Condition, err)
-	}
-	var traversal predicate.TraversalFunc
-	if len(prog.Traversals()) > 0 {
-		if e.traversals == nil {
-			return false, fmt.Errorf("condition %q: related(...) has no store to answer it", trigger.Condition)
-		}
-		if ent.Face != "" {
-			// The store answers from the default face's edges; a named face
-			// has its own, so the answer would be about another entity.
-			return false, fmt.Errorf("condition %q: related(...) cannot be answered on face %q", trigger.Condition, ent.Face)
-		}
-		bound, berr := e.traversals.Bind(ctx, ent.Type, []string{ent.ID}, prog)
-		if berr != nil {
-			return false, fmt.Errorf("condition %q: %w", trigger.Condition, berr)
-		}
-		traversal = bound(ent.ID)
-	}
-	matched, err := ev.MatchesWithTraversals(ctx, prog, ent.Type, ent.ID, ent.Properties, traversal)
-	if err != nil {
-		return false, fmt.Errorf("condition %q: %w", trigger.Condition, err)
-	}
-	return matched, nil
-}
-
-// executeAction performs an action and updates the result.
-func (e *Engine) executeAction(action Action, event Event, result *Result, automationName string) {
-	if action.Set != "" {
-		value := e.interpolate(action.Value, event)
-		result.PropertiesSet[action.Set] = value
-	}
-
-	if action.CreateRelation != nil {
-		targetID := e.interpolate(action.CreateRelation.To, event)
-		if targetID != "" && event.Entity != nil {
-			rel := entity.NewRelation(event.Entity.ID, action.CreateRelation.Relation, targetID)
-			result.RelationsToCreate = append(result.RelationsToCreate,
-				RelationToCreate{Relation: rel, AutomationName: automationName})
-		}
-	}
-
-	if action.AddToPile != nil && event.Entity != nil {
-		e.planPilePush(*action.AddToPile, event, result, automationName)
-	}
-
-	if action.Notify != nil && event.Entity != nil {
-		e.planNotify(*action.Notify, event, result, automationName)
-	}
-
-	if action.CreateEntity != nil {
-		entityType := action.CreateEntity.Type
-		if entityType == "" {
-			result.Errors = append(result.Errors, "create_entity action requires 'type' field")
-			return
-		}
-
-		// Interpolate template name (allows {{new.kind}} etc.)
-		template := e.interpolate(action.CreateEntity.Template, event)
-
-		// Validate template name using allowlist (alphanumeric, hyphen, underscore only).
-		if !isValidTemplateName(template) {
-			result.Errors = append(result.Errors,
-				"create_entity template name contains invalid characters (only alphanumeric, hyphen, underscore allowed)")
-			return
-		}
-
-		props := make(map[string]any)
-		for k, v := range action.CreateEntity.Properties {
-			props[k] = e.interpolate(v, event)
-		}
-
-		// Default to skip if not specified.
-		ifExists := action.CreateEntity.IfExists
-		if ifExists == "" {
-			ifExists = IfExistsSkip
-		}
-
-		result.EntitiesToCreate = append(result.EntitiesToCreate, EntityToCreate{
-			Type:                entityType,
-			Template:            template,
-			Properties:          props,
-			RelationFromTrigger: action.CreateEntity.Relation,
-			IfExists:            ifExists,
-			AutomationName:      automationName,
-		})
-	}
-
-	if action.Lua != "" {
-		// Interpolate only safe values ({{today}}, {{user.name}}, etc.)
-		// Entity properties are accessed via Lua globals, NOT interpolated into code
-		code := e.interpolateSafeOnly(action.Lua, event)
-		result.LuaToExecute = append(result.LuaToExecute, LuaToExecute{
-			Code:           code,
-			AutomationName: automationName,
-			AllowACLBypass: action.AllowACLBypass,
-			Capabilities:   action.Capabilities,
-		})
-	}
-
-	if action.LuaFile != "" {
-		// Path validation is handled by the script package at execution time.
-		// This keeps validation centralized and consistent across all script execution paths.
-		result.LuaToExecute = append(result.LuaToExecute, LuaToExecute{
-			FilePath:       action.LuaFile,
-			AutomationName: automationName,
-			AllowACLBypass: action.AllowACLBypass,
-			Capabilities:   action.Capabilities,
-			Background:     action.Background,
-		})
-	}
-}
-
 // planPilePush appends an add_to_pile action to result.PilesToPush with its
 // pile and owner interpolated.
 //
@@ -745,97 +584,6 @@ func (e *Engine) planPilePush(action AddToPileAction, event Event, result *Resul
 	})
 }
 
-// evaluateValidation checks a validation and adds warnings/errors to the result.
-func (e *Engine) evaluateValidation(ctx context.Context, validation Validation, event Event, result *Result) {
-	if event.Entity == nil {
-		return
-	}
-
-	// Parse the check expression and evaluate against the entity
-	f, err := filter.Parse(validation.Check)
-	if err != nil {
-		result.Warnings = append(result.Warnings, "Invalid validation check: "+validation.Check)
-		return
-	}
-
-	if !e.matchProperty(ctx, event.Entity, f) {
-		msg := e.interpolate(validation.Message, event)
-		if validation.GetSeverity() == "error" {
-			result.Errors = append(result.Errors, msg)
-		} else {
-			result.Warnings = append(result.Warnings, msg)
-		}
-	}
-}
-
-// matchProperty evaluates a filter against an entity property. When the
-// engine has a metamodel and the property is declared, it uses the
-// type-aware [filter.Match] so ordered comparisons respect the
-// property's type (`count>9` is numeric, `due<2025-02-01` is a date).
-// Without a metamodel, or for an undeclared property, it falls back to
-// the string-only [matchSimple] — preserving the pre-metamodel
-// behavior and tolerating ad-hoc/unknown properties rather than
-// rejecting them.
-func (e *Engine) matchProperty(ctx context.Context, ent *entity.Entity, f *filter.Filter) bool {
-	if matched, handled := e.matchTyped(ctx, ent, f); handled {
-		return matched
-	}
-	var val any
-	if ent != nil {
-		val = ent.Properties[f.Property]
-	}
-	return matchSimple(val, f)
-}
-
-// matchTyped attempts a type-aware comparison through the predicate
-// condition engine (TKT-J4IR1G): the filter clause is transpiled to a
-// predicate via predicatefns.FromFilter, compiled once (cached in the
-// Evaluator), and evaluated against the entity. handled is false when
-// there is no metamodel, no entity, or the property isn't declared — in
-// which case the caller falls back to string matching, preserving the
-// pre-metamodel behavior for ad-hoc properties.
-//
-// A transpile/compile error (e.g. an unsupported filter form) also
-// returns handled=false so the string fallback still runs — this keeps
-// the migration strictly no-worse than the prior filter.Match path.
-func (e *Engine) matchTyped(ctx context.Context, ent *entity.Entity, f *filter.Filter) (matched, handled bool) {
-	ev := e.evaluator()
-	if ev == nil || ent == nil {
-		return false, false
-	}
-	def, ok := e.meta.GetEntityDef(ent.Type)
-	if !ok {
-		return false, false
-	}
-	if _, ok := def.Properties[f.Property]; !ok {
-		return false, false
-	}
-	propDef := def.Properties[f.Property]
-	prog, err := ev.CompileFilter(ent.Type, []*filter.Filter{f})
-	if err != nil {
-		// The clause is untranspilable (e.g. fuzzy-with-wildcard, or an
-		// operator/type combination FromFilter rejects). Reproduce the
-		// EXACT legacy verdict via filter.Match rather than dropping to
-		// the string matcher — the string path would accept ops
-		// filter.Match rejected (e.g. regex on an int property), flipping
-		// the verdict (RR-G9KT8H). handled=true so the caller does NOT
-		// fall back to matchSimple.
-		rec := filter.Record{ID: ent.ID, Type: ent.Type, Properties: ent.Properties}
-		m, mErr := filter.Match(rec, f, &propDef, e.meta)
-		if mErr != nil {
-			return false, true
-		}
-		return m, true
-	}
-	m, err := ev.Matches(ctx, prog, ent.Type, ent.ID, ent.Properties)
-	if err != nil {
-		// A type/parse error means the comparison can't hold — no match,
-		// same as the prior type-aware path.
-		return false, true
-	}
-	return m, true
-}
-
 // matchSimple does simple value matching without metamodel context.
 // Handles the most common automation validation cases.
 func matchSimple(val any, f *filter.Filter) bool {
@@ -856,12 +604,6 @@ func matchSimple(val any, f *filter.Filter) bool {
 // interpolate replaces template variables in a string.
 func (e *Engine) interpolate(template string, event Event) string {
 	return Interpolate(template, e.vars, event.Entity, event.OldEntity)
-}
-
-// interpolateSafeOnly replaces only safe template variables (not entity properties).
-// Used for Lua code where entity properties should be accessed via globals.
-func (e *Engine) interpolateSafeOnly(template string, _ Event) string {
-	return InterpolateSafeOnly(template, e.vars)
 }
 
 // isValidTemplateName validates that a template name contains only safe identifier characters.
@@ -892,11 +634,6 @@ func isValidTemplateName(name string) bool {
 // default. The comparison is against the DECLARED face name, because the bare
 // face is stored as the empty coordinate and an operator writes `faces: [en]`,
 // not `faces: [""]`.
-//
-// Nil meta: falls back to the stored coordinate. An engine built via NewEngine
-// has no metamodel (the pre-metamodel construction path), and a scoped trigger
-// there can only be compared literally. Unscoped triggers — every existing one
-// — are unaffected either way.
 func (e *Engine) matchesFace(trigger Trigger, ent *entity.Entity) bool {
 	if len(trigger.Faces) == 0 {
 		return true
@@ -906,9 +643,5 @@ func (e *Engine) matchesFace(trigger Trigger, ent *entity.Entity) bool {
 		// scoped trigger simply does not apply to it.
 		return false
 	}
-	declared := ent.Face.String()
-	if e.meta != nil {
-		declared = ent.Face.String()
-	}
-	return slices.Contains(trigger.Faces, declared)
+	return slices.Contains(trigger.Faces, ent.Face.String())
 }

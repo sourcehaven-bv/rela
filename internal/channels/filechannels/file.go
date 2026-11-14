@@ -135,12 +135,12 @@ type Locker interface {
 // (TKT-INM3AZ): SetSession and ListSessionsDue. 29 -> 30 (TKT-ZZ4PNX):
 // ListWaiting. 30 -> 33 (TKT-2B2AIA): SetRead, Reads and ListReads. 33 ->
 // 34 (TKT-6RXAC0): ListAddressed. 34 -> 35 (TKT-V05706X): GetMessages. 35
-// -> 36 (TKT-BYKOM3V): OpenFile. The exported methods are the mandated
-// [channels.Store] interface, so this is a required-interface exception
-// rather than a ratchet target. Helpers stay free functions. The total
+// -> 36 (TKT-BYKOM3V): OpenFile. 36 -> 37 (TKT-GR1MXL5): AppendBatch.
+// The exported methods are the mandated [channels.Store] interface, so
+// this is a required-interface exception rather than a ratchet target. Helpers stay free functions. The total
 // crossed 40 with the three read marker methods; it is the same exception.
 //
-//plimsoll:max-exported-methods=36
+//plimsoll:max-exported-methods=37
 //plimsoll:max-methods=47
 type Store struct {
 	disk
@@ -377,7 +377,8 @@ func (d *disk) replayJobRecords(k channels.Key, m *meta, last int64) (int64, err
 	return next - 1, nil
 }
 
-// dropDangling drops the pending refs above last, the log's last seq. An
+// dropDangling drops the pending refs and asked questions above last, the
+// log's last seq. An
 // append writes meta.yaml before its log line, so a crash in between
 // leaves a ref at a seq the log does not hold, and the next append would
 // reuse that seq for a message without the action.
@@ -385,6 +386,11 @@ func dropDangling(m *meta, last int64) {
 	for seq := range m.Pending {
 		if seq > last {
 			delete(m.Pending, seq)
+		}
+	}
+	for seq := range m.Asked {
+		if seq > last {
+			delete(m.Asked, seq)
 		}
 	}
 }
@@ -416,6 +422,9 @@ type meta struct {
 	// The session's reminder records. A meta.yaml from before reminders
 	// has none.
 	SessionReminders map[string]reminderMeta `yaml:"session_reminders,omitempty"`
+	// Asked is [channels.Channel.Asked]. A meta.yaml from before questions
+	// has none.
+	Asked map[int64]channels.Asked `yaml:"asked,omitempty"`
 	// JobRecords are the log records of the last move whose notice carries
 	// a job outputs mark, written with the move in this meta.yaml. A crash
 	// before they reach the log is repaired by replayJobRecords.
@@ -477,6 +486,9 @@ func (m *meta) setSession(s channels.Session) {
 		}
 	}
 }
+
+// setAsked stores a as the asked set; an empty set clears it.
+func (m *meta) setAsked(a map[int64]channels.Asked) { m.Asked = channels.CloneAsked(a) }
 
 // reminders returns the stored reminder records in UTC, or nil for none.
 func (m *meta) reminders() map[string]channels.ReminderRecord {
@@ -545,6 +557,7 @@ func (m *meta) channel(k channels.Key) channels.Channel {
 			Cause: m.SessionCause, Previous: m.SessionPrevious, NextDueAt: utc(m.SessionNextDueAt),
 			Restarts: m.restarts(), Reminders: m.reminders(),
 		},
+		Asked: channels.CloneAsked(m.Asked),
 	}
 }
 
@@ -590,6 +603,9 @@ func parseMeta(data []byte, k channels.Key) (*meta, error) {
 	if err := channels.CheckReminders(m.reminders()); err != nil {
 		return nil, fmt.Errorf("filechannels: channel %s has damaged session reminders: %w", k, err)
 	}
+	if err := channels.CheckAsked(m.Asked); err != nil {
+		return nil, fmt.Errorf("filechannels: channel %s has damaged asked questions: %w", k, err)
+	}
 	return &m, nil
 }
 
@@ -615,9 +631,11 @@ func writeMetaAt(d *disk, dir string, k channels.Key, m *meta) error {
 type line struct {
 	K string `json:"k"`
 	channels.Message
-	ReplyCount *int             `json:"p_reply_count,omitempty"`
-	Action     *channels.Action `json:"p_action,omitempty"`
-	Clear      bool             `json:"p_clear,omitempty"`
+	ReplyCount *int `json:"p_reply_count,omitempty"`
+	// LastReplyAt is set with ReplyCount: the time of the reply.
+	LastReplyAt *time.Time       `json:"p_last_reply_at,omitempty"`
+	Action      *channels.Action `json:"p_action,omitempty"`
+	Clear       bool             `json:"p_clear,omitempty"`
 }
 
 func encodeLine(l line) []byte {
@@ -670,6 +688,9 @@ func foldWith(data []byte, damaged func()) []channels.Message {
 			if l.ReplyCount != nil {
 				m.ReplyCount = *l.ReplyCount
 			}
+			if l.LastReplyAt != nil {
+				m.LastReplyAt = utc(*l.LastReplyAt)
+			}
 			if l.Clear {
 				m.Action = nil
 			} else if l.Action != nil {
@@ -688,6 +709,13 @@ func foldWith(data []byte, damaged func()) []channels.Message {
 }
 
 func normalize(m *channels.Message) {
+	// A reply stored before Inline existed carries only MovedSession,
+	// which made it inline then as now. A removal then cleared
+	// MovedSession, so such a reply removed before Inline existed leaves
+	// the stream, as the SQL backfill decides for the same row.
+	if m.ReplyTo != 0 && m.MovedSession {
+		m.Inline = true
+	}
 	m.At = utc(m.At)
 	m.EditedAt = utc(m.EditedAt)
 	if m.Removed != nil {

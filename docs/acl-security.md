@@ -2062,17 +2062,27 @@ redacts its fields. This section is about the pulling side. See
   the row to this instance's principal. A deleted row and a hidden row look
   the same, as the ACL requires, so a revoked role, a narrowed `acl.yaml`, or
   a token that expired or was revoked makes every row in scope look gone at
-  once. A 401 or 403 from the source fails the pull. A pull also refuses to
-  detach or delete any row when more than `max_gone` linked rows (default
-  10) are gone, or when a type it linked rows of is empty at the source. With
-  `on_gone: delete` the guard also counts the deletes of the last 24 hours,
-  so a source that drops a few rows per run cannot delete in bulk over a
-  day. The operator confirms with `rela remote pull <name> --allow-gone N`.
-  `on_gone: detach` is the default; `on_gone: delete` never deletes an
-  entity with local relations, with a mapped field edited locally, or that
-  existed before the pull adopted it, and logs every delete with the run
-  id. The edit check and the delete are two calls, so an edit saved between
+  once. A 401 or 403 from the source fails the pull. A run also holds every
+  detach and delete when more than `max_gone` linked rows (default 10) are
+  gone, or when a type it linked rows of is empty on either side. The guard
+  counts the deletes of the last 24 hours in both directions, so a side
+  that drops a few rows per run cannot delete in bulk over a day. Only the
+  deletes and detaches wait; the operator confirms them with `rela remote
+  pull <name> --allow-gone N`. `on_gone: detach` is the default;
+  `on_gone: delete` never deletes an entity with local relations, and on a
+  remote without `push` never one with a mapped field edited locally or
+  that existed before the pull adopted it. On a remote with `push` such a
+  row follows the conflict rule. Every delete is logged with the run id.
+  The edit check and the delete are two calls, so an edit saved between
   them is lost with the entity; the window is one write long.
+- **A delete sent to the remote is conditional.** With `send_deletes` the
+  run fetches the remote row, compares it with the last agreed values, and
+  sends `DELETE` with `If-Match` on the fetched ETag. The remote's ACL
+  decides whether the push principal may delete. The ETag covers only what
+  that principal may see, so a change to a field hidden from it before the
+  fetch does not stop the delete. The remote checks the stored row again in
+  the transaction that deletes it, so any write after the compare, hidden
+  field or not, makes the delete a 412. A 412 reveals no field value.
 - **The credential stays out of config and scripts.** `remotes.yaml` names
   where the token comes from: an environment variable whose name starts with
   `REMOTE_CREDENTIAL_`, an absolute path to a file whose name starts with
@@ -2084,9 +2094,18 @@ redacts its fields. This section is about the pulling side. See
   machine: whoever edits `remotes.yaml` chooses the URL, so a source it could
   name freely would send `RELA_DATABASE_URL` or the token key there. The
   token never appears in `remotes.yaml` or on a command line. No Lua script can be granted a
-  `remote_credential.` secret, and `subscriptions.yaml` and
-  `connections.yaml` refuse to name one, so only `remotes.yaml` and `rela
-  reconcile diff --token-secret` send it. It goes only to the configured
+  `remote_credential.` secret. Every other config refuses a remote
+  credential: `subscriptions.yaml`, `connections.yaml`, `flows.yaml` webhooks
+  and every `capabilities.secrets` list refuse a `remote_credential.` secret,
+  and `ai.yaml` `api_key_env` and `mail.yaml` `password_env` refuse a
+  `REMOTE_CREDENTIAL_` variable. No external command rela starts inherits a
+  `REMOTE_CREDENTIAL_` variable. So of the config files, only `remotes.yaml`
+  sends a remote credential. `rela reconcile diff --token-env` and
+  `--token-file` take any name, because the operator types them on the
+  command line. This holds for config that cannot run code. A configured
+  command (`commands:`, a transform, an attachment scanner) runs an
+  operator's program, which can read `.rela/secrets.yaml` or a credential
+  file like any other file it can reach. It goes only to the configured
   URL, and errors and logs name its source, never its value. Plain http is
   refused to a host that is not loopback unless `allow_insecure_http` is
   set, and redirects are never followed.

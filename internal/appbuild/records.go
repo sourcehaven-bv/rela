@@ -282,7 +282,7 @@ func Records(s *Services) *records.Service {
 // logged, so a missed drop would let a later entity with the same id inherit
 // the rows. On postgres and sqlite the records live in the entity store's
 // database, and triggers on the entity tables drop and rekey them inside the
-// delete or rename itself (pgstore migration 0046, sqlitedb v38): a failure
+// delete or rename itself (pgstore migration 0048, sqlitedb v40): a failure
 // there rolls the entity write back, and no write path can skip it. Those
 // tiers get no alias subscriber, because a late post-commit drop could
 // remove the rows of a new entity that reused the id meanwhile. The fs and

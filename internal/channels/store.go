@@ -48,6 +48,20 @@ type Store interface {
 	// backends that index pending actions index it at its PendingAt.
 	Append(ctx context.Context, key Key, msg NewMessage) (Message, error)
 
+	// AppendBatch appends the messages of batch as one step, all or
+	// nothing, and returns them with their seqs and revs. Append is a batch
+	// of one. A batch holds at most [MaxBatch] messages; one of several
+	// messages is no reply, and all have one author and incarnation (see
+	// [PrepareBatch]). The messages take ascending seqs. Each message of a
+	// batch of several carries [Message.Batch]. The session logic is
+	// [PlanBatch]: every Admit sees the channel before the batch, the
+	// session moves at most once, and the move's notice follows the moving
+	// message, before the next one. The step of the moving message, else
+	// of the last message with a step, sets the schedule. The batch's
+	// questions ([NewMessage.Asks]) join [Channel.Asked] after it. The
+	// author's read marker moves when the last message sets MarkRead.
+	AppendBatch(ctx context.Context, key Key, batch []NewMessage) ([]Message, error)
+
 	// SetSession runs step against the channel's session without a
 	// message: a timer fire when the decider returns a move, a reminder
 	// post when it does not and step.Remind returns a post, a reschedule

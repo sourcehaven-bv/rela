@@ -313,7 +313,7 @@ type RelationAffordance struct {
 
 // Transition is one resolved outgoing move of a state-machine-typed property
 // on a per-entity response (TKT-3G93B8). It is the wire projection of
-// statemachine.TransitionVerdict.
+// transitions.TransitionVerdict.
 //
 // To is the target value. Label is optional display text for the MOVE (the
 // action, e.g. "Start progress"); when empty the SPA falls back to the target
@@ -1186,9 +1186,13 @@ type SidebarSpace struct {
 // EntityType is set on an entity page, which shows one entity of that type
 // (the anchor) and is addressed as `/p/<page>/<entity>/<tab>`. Badge names
 // the anchor's property the header shows beside its title.
+//
+// Mode is "steps" when the SPA shows the tabs as numbered steps, and empty
+// for a tab bar.
 type SidebarPage struct {
 	dataentryconfig.PageHeader
-	Tabs []SidebarPageTab `json:"tabs"`
+	Mode dataentryconfig.PageMode `json:"mode,omitempty"`
+	Tabs []SidebarPageTab         `json:"tabs"`
 }
 
 // SidebarPageTab is one tab of a [SidebarPage]. View is the kind of view the
@@ -1200,6 +1204,8 @@ type SidebarPage struct {
 // "incoming", from the anchor's side), "root" when a gantt starts at the
 // anchor. The SPA uses Relation and Direction to link a new row to the
 // anchor; the server narrows the rows from its own config, never from these.
+//
+// Prompt is the question shown above the view on a steps page.
 //
 // Links names, per entity type, the relation a row created while the tab is
 // open is linked to the anchor over. The space's Create menu uses it, so a
@@ -1213,6 +1219,7 @@ type SidebarPageTab struct {
 	Scope     string            `json:"scope,omitempty"`
 	Relation  string            `json:"relation,omitempty"`
 	Direction string            `json:"direction,omitempty"`
+	Prompt    string            `json:"prompt,omitempty"`
 	Links     []SidebarPageLink `json:"links,omitempty"`
 }
 
@@ -1327,6 +1334,13 @@ type DashboardCardValue struct {
 	Rows []DashboardRow `json:"rows,omitempty"`
 	// Matrix is a matrix card's cells.
 	Matrix *DashboardMatrix `json:"matrix,omitempty"`
+	// Property and Value are a sum, avg, min or max card's property and its
+	// aggregate over the rows that have a value. An integer sum is a number;
+	// a decimal sum and an average are decimal text, such as "14.50"; a min
+	// or max is the property's own value. Value is absent when no row has
+	// one.
+	Property string `json:"property,omitempty"`
+	Value    any    `json:"value,omitempty"`
 	// Partial is true when a value the card groups, colors or shows was
 	// hidden from this principal on at least one row. That row still counts
 	// in Total.

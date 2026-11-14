@@ -208,7 +208,10 @@ func (n listNarrowing) pushdownPlan(
 ) (plan listPlan, empty, ok bool) {
 	// A page scope (pagescope.go) narrows membership the way a condition does,
 	// so it declines too.
-	if n.cond != nil || hasPageScope(query.params) || worldFromContext(ctx).blocksAllReads() {
+	// So does a filter or sort on a roll-up: the value is not in the store.
+	if n.cond != nil || hasPageScope(query.params) || worldFromContext(ctx).blocksAllReads() ||
+		queriedRollups(n.state.Meta, typeName, query) != nil {
+
 		return listPlan{}, false, false
 	}
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)

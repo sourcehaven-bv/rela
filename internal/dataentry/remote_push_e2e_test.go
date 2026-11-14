@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -16,7 +18,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/remotesync"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
@@ -54,6 +55,13 @@ type pushRemote struct {
 
 func newPushRemote(t *testing.T) *pushRemote {
 	t.Helper()
+	return newPushRemoteAs(t, acl.RoleDef{Read: []string{"ticket"}, Create: []string{"ticket"},
+		Update: []string{"ticket"}})
+}
+
+// newPushRemoteAs is [newPushRemote] with role as the principal's role.
+func newPushRemoteAs(t *testing.T, role acl.RoleDef) *pushRemote {
+	t.Helper()
 	app := newTestAppV1(t)
 	// A meta field on blocks, so the relation push has a field to merge.
 	blocks := app.State().Meta.Relations["blocks"]
@@ -67,7 +75,7 @@ func newPushRemote(t *testing.T) *pushRemote {
 	}
 	d := mustNewACL(t, &acl.Policy{
 		Roles: map[string]acl.RoleDef{
-			"tickets-sync": {Read: []string{"ticket"}, Create: []string{"ticket"}, Update: []string{"ticket"}},
+			"tickets-sync": role,
 		},
 		Assignments: map[string]string{"catalog-mirror": "tickets-sync"},
 	}, app.store)
@@ -155,7 +163,7 @@ remotes:
 	localAudit := audit.NewMemory()
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: pullTemplater{}, Audit: localAudit, ACL: acl.NopACL{},
-		Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		Transitions: transitions.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		AttachmentLocker: lock.NewMemoryLocker(), AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
@@ -335,7 +343,7 @@ remotes:
 	st := memstore.New()
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: pullTemplater{}, Audit: audit.NewMemory(), ACL: acl.NopACL{},
-		Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		Transitions: transitions.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		AttachmentLocker: lock.NewMemoryLocker(), AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {

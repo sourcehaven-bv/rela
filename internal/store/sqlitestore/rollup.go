@@ -76,6 +76,8 @@ func rollupValue(q store.RollupQuery, text string) (any, error) {
 			return nil, nil //nolint:nilnil // a hidden pick is "no value", not a failure
 		}
 		return store.RollupScalar(pair[0]), nil
+	case q.Func == store.RollupSum && q.Decimal:
+		return sumDecimals(text)
 	case q.Func == store.RollupSum:
 		return splitSum(text)
 	case q.Numeric:
@@ -107,6 +109,47 @@ func splitSum(text string) (any, error) {
 		return nil, nil //nolint:nilnil // out of range is "no value", not a failure
 	}
 	return total.Int64(), nil
+}
+
+// sumDecimals folds the JSON array of values rollupAggregateSQL returns
+// for a decimal sum. SQLite has no exact decimal type, so the values are
+// summed here, with the generic fold's rules: a number reads as the float
+// the generic fold would see, a string through [store.RollupDecimal].
+func sumDecimals(text string) (any, error) {
+	dec := json.NewDecoder(strings.NewReader(text))
+	dec.UseNumber()
+	var values []any
+	if err := dec.Decode(&values); err != nil {
+		return nil, fmt.Errorf("sqlitestore: rollup decimal sum: %w", err)
+	}
+	var (
+		sum   *big.Rat
+		scale int
+	)
+	for _, v := range values {
+		if n, ok := v.(json.Number); ok {
+			if i, err := n.Int64(); err == nil {
+				v = i
+			} else if f, err := n.Float64(); err == nil {
+				v = f
+			} else {
+				continue
+			}
+		}
+		r, sc, ok := store.RollupDecimal(v)
+		if !ok {
+			continue
+		}
+		if sum == nil {
+			sum = new(big.Rat)
+		}
+		sum.Add(sum, r)
+		scale = max(scale, sc)
+	}
+	if sum == nil {
+		return nil, nil //nolint:nilnil // no decimal summed is "no value", not a failure
+	}
+	return sum.FloatString(scale), nil
 }
 
 // buildRollupSQL renders q as one grouped statement, or reports !ok when a
@@ -191,6 +234,16 @@ func rowConditionsSQL(
 func rollupAggregateSQL(b *sqlBuilder, q store.RollupQuery) string {
 	switch q.Func {
 	case store.RollupSum:
+		if q.Decimal {
+			// Every candidate value as JSON, summed exactly in Go
+			// (sumDecimals): a number as its stored token, a string
+			// quoted.
+			path := b.jsonPath(q.Value)
+			return "json_group_array(json(CASE " + typeExpr("x", path) +
+				" WHEN 'integer' THEN (x.properties -> " + path + ")" +
+				" WHEN 'real' THEN (x.properties -> " + path + ")" +
+				" WHEN 'text' THEN json_quote(" + rawExpr("x", path) + ") END))"
+		}
 		// SQLite's integer sum raises on overflow, so the value is summed
 		// in two halves that cannot overflow for any realistic row count,
 		// and splitSum joins them exactly.

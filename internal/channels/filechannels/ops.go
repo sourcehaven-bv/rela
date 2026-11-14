@@ -18,13 +18,35 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
-// Append implements [channels.Store]. With a session step that moves the
-// session, the notice follows the message in the log, and the session
-// audit record is written last (see the package doc).
+// Append implements [channels.Store] as a batch of one.
 func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessage) (channels.Message, error) {
-	nm, files, staged, err := prepareAppend(&s.disk, k, nm)
+	out, err := s.AppendBatch(ctx, k, []channels.NewMessage{nm})
 	if err != nil {
 		return channels.Message{}, err
+	}
+	return out[0], nil
+}
+
+// AppendBatch implements [channels.Store]. It builds every record in
+// memory and writes meta.yaml once and the log records once. A session
+// move's notice follows its message in the log, and the session audit
+// record is written last (see the package doc). A crash after meta.yaml
+// and before the log leaves a head past the log's end, which the next
+// append repairs (see dropDangling). The files of a batch of one are
+// staged before the lock and placed under it (see files.go).
+func (s *Store) AppendBatch(
+	ctx context.Context, k channels.Key, batch []channels.NewMessage,
+) ([]channels.Message, error) {
+	if err := k.Validate(); err != nil {
+		return nil, err
+	}
+	batch, err := channels.PrepareBatch(batch)
+	if err != nil {
+		return nil, err
+	}
+	files, staged, err := stageBatchFiles(&s.disk, batch[0])
+	if err != nil {
+		return nil, err
 	}
 	if staged != "" {
 		// After a placed append the directory is gone and the removal
@@ -33,116 +55,87 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 	}
 	unlock, err := s.lock(ctx)
 	if err != nil {
-		return channels.Message{}, err
+		return nil, err
 	}
 	defer unlock()
 
-	m, created, err := s.appendTarget(k, nm)
+	first := batch[0]
+	m, created, err := s.appendTarget(k, first)
 	if err != nil {
-		return channels.Message{}, err
+		return nil, err
 	}
 	last, err := s.logEnd(k, m)
 	if err != nil {
-		return channels.Message{}, err
+		return nil, err
 	}
-	parent, parentSeg, err := s.replyParent(k, nm.ReplyTo)
+	// Only a batch of one may reply (see [channels.PrepareBatch]).
+	parent, parentSeg, err := s.replyParent(k, first.ReplyTo)
 	if err != nil {
-		return channels.Message{}, err
+		return nil, err
 	}
 	dropDangling(m, last)
 	committed := m.channel(k)
 	committed.LastSeq = last
-	move, moved, err := channels.DecideSession(nm.Session, committed)
+	plan, err := channels.PlanBatch(committed, batch)
 	if err != nil {
-		return channels.Message{}, err
+		return nil, err
 	}
 
-	seq := last + 1
-	idx := s.idx(seq)
-	logged := false // the log records are written
-	msg := channels.Message{
-		Seq: seq, Rev: m.bump(idx), Type: nm.Type, Author: nm.Author, At: nm.At, Props: nm.Props,
-		ReplyTo: nm.ReplyTo, SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy, MovedSession: moved,
-		Mentions: nm.Mentions, Files: files, NoUnread: nm.NoUnread, CreatedChannel: created,
-	}
-	discard, err := settleFiles(&s.disk, k, m, seq, staged)
+	out, recs, after, err := batchRecords(s, k, m, batch, plan, created, batchInput{parent, parentSeg, files})
 	if err != nil {
-		return channels.Message{}, err
+		return nil, err
 	}
+	logged := false // the log records are written
+	discards, err := settleBatchFiles(&s.disk, k, m, plan.Seqs, staged)
 	// Runs before unlock: deferred calls run last in, first out.
 	defer func() {
 		if !logged {
-			discard()
+			for _, discard := range discards {
+				discard()
+			}
 		}
 	}()
-	recs := []segRecord{{idx: idx, rec: encodeLine(line{K: "m", Message: msg})}}
-	if nm.ReplyTo > 0 {
-		recs = append(recs, replyCountRecord(&s.disk, m, parent, parentSeg))
+	if err != nil {
+		return nil, err
 	}
-	m.advance(seq, msg.At)
-	var after channels.Channel
-	if moved {
-		if after, recs, err = noticeRecord(&s.disk, m, k, nm, msg, move, recs); err != nil {
-			return channels.Message{}, err
-		}
+	m.setAsked(plan.Asked)
+	if schedErr := m.scheduleStep(k, plan.Due(batch)); schedErr != nil {
+		return nil, schedErr
 	}
-	if schedErr := m.scheduleStep(k, nm.Session); schedErr != nil {
-		return channels.Message{}, schedErr
-	}
-	if err := writeAppendMeta(&s.disk, k, m, nm, created); err != nil {
-		return channels.Message{}, err
+	if err := writeAppendMeta(&s.disk, k, m, first, created); err != nil {
+		return nil, err
 	}
 	if err := s.appendRecords(k, recs); err != nil {
-		return channels.Message{}, err
+		return nil, err
 	}
 	logged = true
-	if moved {
-		rec := channels.SessionAudit(k, nm.Session, msg, move, after.Session.Generation)
+	if plan.MoveAt >= 0 {
+		rec := channels.SessionAudit(k, batch[plan.MoveAt].Session, out[plan.MoveAt], plan.Move,
+			after.Session.Generation)
 		if err := s.appendAudit(k.ID, rec); err != nil {
-			return channels.Message{}, err
+			return nil, err
 		}
 	}
-	channels.FillSessionOutcome(nm.Session, m.channel(k), move, moved)
-	if nm.MarkRead {
-		markAfterWrite(&s.disk, k, channels.ReaderOf(nm.Author), m.LastSeq, nm.At)
+	channels.FillBatchOutcome(batch, plan, m.channel(k))
+	if batch[len(batch)-1].MarkRead {
+		markAfterWrite(&s.disk, k, channels.ReaderOf(first.Author), m.LastSeq, batch[len(batch)-1].At)
 	}
-	msg.ReplyTarget = appendRows(&s.disk, k, msg, parent)
-	return msg, nil
+	for i := range out {
+		out[i].ReplyTarget = appendRows(&s.disk, k, out[i], parent)
+	}
+	return out, nil
 }
 
-// prepareAppend validates an append of nm to channel k and stages its
-// files in d before the lock (see files.go). staged is the staging
+// stageBatchFiles prepares the files of nm, the first message of a batch,
+// and stages them in d before the lock (see files.go). Only a batch of one
+// may hold files (see [channels.PrepareBatch]). staged is the staging
 // directory, or "" when the message has no files.
-func prepareAppend(d *disk, k channels.Key, nm channels.NewMessage) (
-	_ channels.NewMessage, files []channels.File, staged string, err error,
-) {
-	if verr := k.Validate(); verr != nil {
-		return nm, nil, "", verr
-	}
-	if serr := channels.PrepareAppendStep(nm.Session); serr != nil {
-		return nm, nil, "", serr
-	}
-	if nm, _, err = channels.PrepareMessage(nm); err != nil {
-		return nm, nil, "", err
-	}
+func stageBatchFiles(d *disk, nm channels.NewMessage) (files []channels.File, staged string, err error) {
 	if files, err = channels.PrepareFiles(nm.Files); err != nil || len(files) == 0 {
-		return nm, files, "", err
+		return files, "", err
 	}
 	staged, err = stageFiles(d, files, nm.Files)
-	return nm, files, staged, err
-}
-
-// noticeRecord moves the session of channel m for the appended message
-// msg and adds the log record of the session notice to recs. It returns
-// the channel after the move.
-func noticeRecord(d *disk, m *meta, k channels.Key, nm channels.NewMessage, msg channels.Message,
-	move channels.SessionMove, recs []segRecord,
-) (channels.Channel, []segRecord, error) {
-	after, notice, err := moveSession(m, k, nm, msg, move, d.idx(msg.Seq), d.idx(msg.Seq+1))
-	if err != nil {
-		return channels.Channel{}, recs, err
-	}
-	return after, append(recs, segRecord{idx: d.idx(notice.Seq), rec: encodeLine(line{K: "m", Message: notice})}), nil
+	return files, staged, err
 }
 
 // writeAppendMeta writes the meta.yaml m of channel k after an append of
@@ -180,11 +173,16 @@ func appendRows(d *disk, k channels.Key, msg, parent channels.Message) string {
 
 // replyCountRecord is the log record that raises the reply count of
 // parent, read from segment seg of d, at the next rev of its segment in m.
-func replyCountRecord(d *disk, m *meta, parent channels.Message, seg []byte) segRecord {
+// The reply time only moves forward, so a reply with an earlier clock
+// does not lower it.
+func replyCountRecord(d *disk, m *meta, parent channels.Message, at time.Time, seg []byte) segRecord {
 	count := parent.ReplyCount + 1
+	if parent.LastReplyAt.After(at) {
+		at = parent.LastReplyAt
+	}
 	idx := d.idx(parent.Seq)
 	return segRecord{idx: idx, seg: seg, rec: encodeLine(line{K: "p",
-		Message: channels.Message{Seq: parent.Seq, Rev: m.bump(idx)}, ReplyCount: &count})}
+		Message: channels.Message{Seq: parent.Seq, Rev: m.bump(idx)}, ReplyCount: &count, LastReplyAt: &at})}
 }
 
 // appendCreateAudit appends the create record of channel k, by by at at.
@@ -415,8 +413,9 @@ func (s *Store) mutateRemove(
 	hadFiles := false
 	_, err := s.mutateThen(ctx, k, seq, func(m *meta, msg *channels.Message, idx int64) error {
 		hadFiles = len(msg.Files) > 0
+		m.Asked, _ = channels.UnaskRemoved(m.Asked, *msg)
 		*msg = channels.Message{
-			Seq: msg.Seq, Rev: m.bump(idx), ReplyTo: msg.ReplyTo, ReplyCount: msg.ReplyCount, Removed: &r,
+			Seq: msg.Seq, Rev: m.bump(idx), Thread: msg.Thread, Removed: &r,
 		}
 		delete(m.Pending, seq)
 		out = *msg
@@ -1054,7 +1053,8 @@ func (s *Store) afterSeq(k channels.Key, idxs []int64, p channels.Page) ([]chann
 		if len(out) == p.Limit {
 			break
 		}
-		if idx < s.idx(p.AfterSeq+1) {
+		// No reply has a seq below its parent.
+		if idx < s.idx(max(p.AfterSeq+1, p.Thread)) {
 			continue
 		}
 		data, err := s.segment(k, idx)
@@ -1062,7 +1062,7 @@ func (s *Store) afterSeq(k channels.Key, idxs []int64, p channels.Page) ([]chann
 			return nil, err
 		}
 		for _, msg := range fold(data, segKey(k, idx)) {
-			if msg.Seq > p.AfterSeq && len(out) < p.Limit {
+			if msg.Seq > p.AfterSeq && len(out) < p.Limit && p.Admits(msg) {
 				out = append(out, msg)
 			}
 		}
@@ -1079,6 +1079,9 @@ func (s *Store) beforeSeq(k channels.Key, idxs []int64, p channels.Page) ([]chan
 	}
 	var out []channels.Message
 	for i := len(idxs) - 1; i >= 0 && len(out) < p.Limit; i-- {
+		if p.Thread > 0 && idxs[i] < s.idx(p.Thread) {
+			break // no reply has a seq below its parent
+		}
 		if upper < 1 || idxs[i] > s.idx(upper) {
 			continue
 		}
@@ -1088,7 +1091,7 @@ func (s *Store) beforeSeq(k channels.Key, idxs []int64, p channels.Page) ([]chan
 		}
 		msgs := fold(data, segKey(k, idxs[i]))
 		for j := len(msgs) - 1; j >= 0 && len(out) < p.Limit; j-- {
-			if msgs[j].Seq <= upper {
+			if msgs[j].Seq <= upper && p.Admits(msgs[j]) {
 				out = append(out, msgs[j])
 			}
 		}
@@ -1116,7 +1119,7 @@ func (s *Store) byRev(k channels.Key, m *meta, idxs []int64, p channels.Page) ([
 			return nil, err
 		}
 		for _, msg := range fold(data, segKey(k, idx)) {
-			if msg.Rev <= p.AfterRev {
+			if msg.Rev <= p.AfterRev || !p.Admits(msg) {
 				continue
 			}
 			if best.Len() < p.Limit {
@@ -1421,6 +1424,7 @@ func applySessionStep(
 	if w.moved {
 		channels.ApplySession(&after, w.move, at, 0)
 		m.setSession(after.Session)
+		m.setAsked(after.Asked)
 		w.written, _, err = channels.TimerNotice(step, seq, at, w.move, after.Session.Generation, m.bump(idx(seq)))
 		if err != nil {
 			return w, err
@@ -1592,4 +1596,76 @@ func readTypes(d *disk) (map[string]channels.TypeRecord, error) {
 	}
 	maps.Copy(out, cur)
 	return out, nil
+}
+
+// batchInput is what [batchRecords] needs besides the batch: the message
+// a reply answers and the segment holding it, and the files of the batch's
+// first message. Only a batch of one replies or holds files.
+type batchInput struct {
+	parent channels.Message
+	seg    []byte
+	files  []channels.File
+}
+
+// settleBatchFiles settles the files of each message of a batch at seqs:
+// staged holds those of the first, and the others hold none (see
+// settleFiles). It returns the discard of each settled message, also when
+// a later one fails.
+func settleBatchFiles(d *disk, k channels.Key, m *meta, seqs []int64, staged string) ([]func(), error) {
+	discards := make([]func(), 0, len(seqs))
+	for i, seq := range seqs {
+		dir := ""
+		if i == 0 {
+			dir = staged
+		}
+		discard, err := settleFiles(d, k, m, seq, dir)
+		if err != nil {
+			return discards, err
+		}
+		discards = append(discards, discard)
+	}
+	return discards, nil
+}
+
+// batchRecords builds the stored messages of a planned batch on m and the
+// log records to write: each message, a reply's count update, and the
+// notice after the message that moves the session. after is the channel
+// after that move; zero when none moves.
+func batchRecords(
+	s *Store, k channels.Key, m *meta, batch []channels.NewMessage, plan channels.BatchPlan, created bool,
+	in batchInput,
+) (out []channels.Message, recs []segRecord, after channels.Channel, _ error) {
+	out = make([]channels.Message, len(batch))
+	for i, nm := range batch {
+		seq := plan.Seqs[i]
+		idx := s.idx(seq)
+		msg := channels.Message{
+			Seq: seq, Rev: m.bump(idx), Type: nm.Type, Author: nm.Author, At: nm.At, Props: nm.Props,
+			SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy,
+			MovedSession: plan.Moved(i), Mentions: nm.Mentions, NoUnread: nm.NoUnread, Batch: plan.Batch(),
+			CreatedChannel: created && i == 0,
+			Thread: channels.Thread{
+				ReplyTo: nm.ReplyTo, Inline: channels.ReplyInline(nm, &in.parent, plan.Moved(i)),
+			},
+		}
+		if i == 0 {
+			msg.Files = in.files
+		}
+		recs = append(recs, segRecord{idx: idx, rec: encodeLine(line{K: "m", Message: msg})})
+		if nm.ReplyTo > 0 {
+			recs = append(recs, replyCountRecord(&s.disk, m, in.parent, msg.At, in.seg))
+		}
+		m.advance(seq, msg.At)
+		if plan.Moved(i) {
+			var notice channels.Message
+			var err error
+			after, notice, err = moveSession(m, k, nm, msg, plan.Move, idx, s.idx(seq+1))
+			if err != nil {
+				return nil, nil, channels.Channel{}, err
+			}
+			recs = append(recs, segRecord{idx: s.idx(notice.Seq), rec: encodeLine(line{K: "m", Message: notice})})
+		}
+		out[i] = msg
+	}
+	return out, recs, after, nil
 }

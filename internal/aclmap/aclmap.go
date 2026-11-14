@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -86,6 +87,27 @@ type Route struct {
 	Ancestor string `json:"ancestor,omitempty"`
 	Relation string `json:"relation,omitempty"`
 	Claim    string `json:"claim,omitempty"`
+}
+
+// String renders the route's terminal facts as a compact, action-oriented
+// string naming the role and the key entities or relation.
+func (rt Route) String() string {
+	parts := []string{"role " + rt.Role}
+	switch {
+	case rt.Claim != "":
+		parts = append(parts, fmt.Sprintf("asserted claim %q", rt.Claim))
+	case rt.Group != "" && rt.Ancestor != "":
+		parts = append(parts, fmt.Sprintf("group %s → %s edge on ancestor %s", rt.Group, rt.Relation, rt.Ancestor))
+	case rt.Group != "" && rt.Relation != "":
+		parts = append(parts, fmt.Sprintf("group %s → %s edge", rt.Group, rt.Relation))
+	case rt.Group != "":
+		parts = append(parts, "group "+rt.Group)
+	case rt.Ancestor != "":
+		parts = append(parts, fmt.Sprintf("%s edge on ancestor %s", rt.Relation, rt.Ancestor))
+	case rt.Relation != "":
+		parts = append(parts, rt.Relation+" edge")
+	}
+	return fmt.Sprintf("%s [%s]", strings.Join(parts, ", "), rt.Kind)
 }
 
 // PrincipalAccess is one principal's grant of the verb on the entity,

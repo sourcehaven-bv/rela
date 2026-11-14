@@ -5,7 +5,7 @@
 //
 // # Schema
 //
-// Two tables, created by pgstore migration 0045 and the sqlitedb v37 rung:
+// Two tables, created by pgstore migration 0047 and the sqlitedb v39 rung:
 //
 //   - records: one row per record. The envelope (type, owner, ts,
 //     recorded_at, recorded_by, grp, reverses) is columns; the fields are

@@ -16,6 +16,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
@@ -26,7 +28,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/reconcile"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient/httpremote"
 	"github.com/Sourcehaven-BV/rela/internal/reconwire"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
@@ -340,7 +341,7 @@ func newTarget(t *testing.T) *target {
 	st := memstore.New()
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{},
-		Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		Transitions: transitions.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		AttachmentLocker: lock.NewMemoryLocker(), AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
@@ -420,8 +421,8 @@ func (k *mapKV) Delete(_ context.Context, key string) error {
 }
 
 // pushSource is a fake source that also takes writes, as the remote's
-// data-entry API does: GET with an ETag, POST without an id, and PATCH with
-// If-Match.
+// data-entry API does: GET with an ETag, POST without an id, and PATCH and
+// DELETE with If-Match.
 type pushSource struct {
 	*fakeSource
 	sends []string
@@ -512,6 +513,21 @@ func (p *pushSource) Send(
 			e.Content = *in.Content
 		}
 		return httpremote.Answer{Status: http.StatusOK, ETag: etagOf(e)}, nil
+	case http.MethodDelete:
+		e, ok := p.ents[id]
+		if !ok || e.Type != typ {
+			return httpremote.Answer{Status: http.StatusNotFound}, nil
+		}
+		if ifMatch != "" && ifMatch != etagOf(e) {
+			return httpremote.Answer{Status: http.StatusPreconditionFailed, Body: []byte("stale")}, nil
+		}
+		delete(p.ents, id)
+		for k, r := range p.rels {
+			if r.From == id || r.To == id {
+				delete(p.rels, k)
+			}
+		}
+		return httpremote.Answer{Status: http.StatusNoContent}, nil
 	}
 	return httpremote.Answer{Status: http.StatusMethodNotAllowed}, nil
 }
@@ -555,11 +571,15 @@ func (p *pushSource) sendRelation(
 			}
 			return httpremote.Answer{Status: http.StatusOK, Body: raw, ETag: relETagOf(r)}, nil
 		}
-		if method != http.MethodPatch {
+		if method != http.MethodPatch && method != http.MethodDelete {
 			break
 		}
 		if ifMatch != relETagOf(r) {
 			return httpremote.Answer{Status: http.StatusPreconditionFailed, Body: []byte("stale")}, nil
+		}
+		if method == http.MethodDelete {
+			delete(p.rels, segs[1]+"--"+segs[3]+"--"+segs[4])
+			return httpremote.Answer{Status: http.StatusNoContent}, nil
 		}
 		meta := maps.Clone(r.Meta)
 		if meta == nil {
@@ -572,7 +592,7 @@ func (p *pushSource) sendRelation(
 	return httpremote.Answer{Status: http.StatusMethodNotAllowed}, nil
 }
 
-// writes counts the POST and PATCH requests.
+// writes counts the POST, PATCH and DELETE requests.
 func (p *pushSource) writes() int {
 	n := 0
 	for _, s := range p.sends {

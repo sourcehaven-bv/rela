@@ -46,10 +46,7 @@ pull, the run pushes:
 - **No echo.** A value the run pushed becomes the agreed value, so the pull
   that sees it come back writes nothing. A run with no new edits on either
   side changes no version and writes no audit row on either side.
-- **Deletes are not sent.** Deleting a row on one side does not delete it
-  on the other. A row this project created on the remote is never deleted
-  here by `on_gone: delete`; when the remote stops listing it, it is
-  detached.
+- **Deletes are sent only with `send_deletes`.** See [Deletes](#deletes).
 - **Relations are pushed too.** A local relation of a mapped type is
   created on the remote when both of its ends are linked rows and you may
   read them. Its mapped meta flows both ways under the conflict rules, and
@@ -58,7 +55,46 @@ pull, the run pushes:
   linked and their meta is merged. A relation type whose meta has a
   `visible:` grant in this project's `acl.yaml` is not pushed; the run
   reports it once. A refused relation push is held on the conflict list.
-  Deleting a relation is not sent.
+
+## Deletes
+
+Two settings decide what a delete does, and both are off by default:
+
+- `on_gone: delete` follows a delete on the remote: the run deletes the
+  linked row here. See [Rows the source
+  drops](GUIDE-remote-sync.md#rows-the-source-drops).
+- `send_deletes: true` sends a delete made here: the run deletes the linked
+  row on the remote. It needs `push: true`.
+
+A delete never overwrites an edit blindly. Before it deletes a row on the
+remote, the run fetches it. When a mapped field changed on the remote
+since the last sync, the conflict rule decides: `hold` and `latest` put
+the row on the conflict list as `local_deleted`, `remote` restores the row
+here, and `local` deletes it anyway. (`latest` holds, because neither side
+records when a row was deleted.) Otherwise the run sends `DELETE` with
+`If-Match`, so a remote edit that lands between the fetch and the delete
+is a 412, and the run fetches again. When the remote refuses the delete
+(400, 403, 409 or 422), the row is held as `local_deleted` with cause
+`refused`. Relations are deleted before the entities they connect.
+
+The same holds the other way. When the remote deletes a row that was
+edited here since the last sync, `on_gone: delete` applies the rule: `hold`
+and `latest` keep the row and hold it as `remote_deleted`, `local` keeps it
+and creates it on the remote again, and `remote` deletes it here.
+
+Deletes in both directions count against `max_gone`. A run that would
+delete more, or would empty a type on either side, holds every delete and
+detach until you confirm with `--allow-gone`; the rest of the run applies.
+
+A delete waits at most 30 days: held on the conflict list, held by the
+guard, or refused by the remote. After that, or when you turn
+`send_deletes` off, the run stops trying, leaves the remote row alone and
+reports it as `kept`. The ledger then forgets the row's field digests, so
+nothing derived from a deleted row's values stays behind.
+
+The remote applies its own rules to a delete, as for any caller of its
+API: its ACL, and its cascade or soft delete. Give the push principal the
+right to delete the mapped types on the remote.
 
 ### Choosing what to share
 
@@ -176,6 +212,8 @@ there:
 | `refused` | The remote refused a push. `cause` and `status` say how. | Take local to send it again, or take remote to stop sending. |
 | `uncertain` | A create failed without saying whether the remote made the row. | Send it again, or link it to the remote row. |
 | `superseded` | `latest` decided the field; the losing value is kept. | Dismiss it once you have checked it. |
+| `local_deleted` | The row was deleted here, and the remote changed or refused it. | Take local to delete it on the remote, or take remote to restore it here. |
+| `remote_deleted` | The remote deleted the row, and it was edited here. | Take local to create it on the remote again, or take remote to delete it here. |
 
 A refused or uncertain entry keeps a structured `cause` (such as
 `refused`, `server_error`, `timeout` or `no_answer`) and the HTTP status,
@@ -236,7 +274,10 @@ On the Remotes page every action needs `remote:sync` and read access to the
 entry's row and field. Taking the remote value also needs the right to edit
 the field, because the next pull writes it here. Linking needs the right to
 edit every field the create sent, because the next sync merges the remote
-row into the local one. A button you may not use is
+row into the local one. Taking the remote side of a `remote_deleted` entry
+needs the right to delete the row. A `local_deleted` entry names a row that
+no longer exists here, so the Remotes page does not show it; resolve it
+with the CLI. A button you may not use is
 not shown. Each action is written to the audit log as `remote-resolve`,
 `remote-dismiss` or `remote-link`, with the row and without values.
 

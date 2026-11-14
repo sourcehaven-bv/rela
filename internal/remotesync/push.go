@@ -145,6 +145,9 @@ func (r pusher) pushEntity(ctx context.Context, em *EntityMapping, e *entity.Ent
 		}
 		return r.pushCreate(ctx, em, e)
 	}
+	if row.State == stateDetached && row.Resolve == TakeLocal {
+		return r.restore(ctx, em, e, row)
+	}
 	if row.State != stateLinked || r.rowHeld(em, e) {
 		return nil
 	}
@@ -156,6 +159,21 @@ func (r pusher) pushEntity(ctx context.Context, em *EntityMapping, e *entity.Ent
 		}
 	}
 	return r.pushUpdate(ctx, em, e, row)
+}
+
+// restore creates on the remote a row the remote deleted and that is kept
+// here, after the row rule or a person chose the local side. The new remote
+// row replaces the detached ledger row once the remote has made it; until
+// then the detached row stays, so a failed create is tried again.
+func (r pusher) restore(ctx context.Context, em *EntityMapping, e *entity.Entity, row *ledgerRow) error {
+	before := r.rep.Pushed.Created
+	if err := r.pushCreate(ctx, em, e); err != nil {
+		return err
+	}
+	if r.rep.Pushed.Created > before && !r.o.DryRun {
+		r.l.remove(row)
+	}
+	return nil
 }
 
 // rowHeld reports whether the whole local row waits on the conflict list.
@@ -425,7 +443,7 @@ func (r pusher) pushCreate(ctx context.Context, em *EntityMapping, e *entity.Ent
 			"the remote answered with "+addr+", which is already linked")
 	}
 	// A pushed row counts as adopted: it was here before the remote had
-	// it, so on_gone never deletes it.
+	// it. On a remote with push, on_gone applies the conflict rule to it.
 	row := &ledgerRow{
 		Kind: "E", Type: em.Source, Address: addr, Local: e.ID, Face: e.Face, State: stateLinked,
 		Base: digests, ETag: ans.ETag, Adopted: true, Synced: r.d.Now(),
@@ -597,20 +615,35 @@ func (r *runner) noteConflicts(t conflictTarget, mg merged) {
 
 // forgetConflicts drops the entries whose row is gone: an entry of a remote
 // row the ledger no longer links, and a refused create of a local row or
-// relation the push no longer shares. It also drops the superseded entries
-// older than the remote's retention.
+// relation the push no longer shares. A delete entry stays while its row
+// still waits: a deleting row for [ReasonLocalDeleted], a detached one for
+// [ReasonRemoteDeleted]. It also drops the superseded entries older than
+// the remote's retention.
 func (r *runner) forgetConflicts() {
 	r.c.expire(r.d.Now(), r.m.Remote.supersededRetention())
 	linked := map[string]bool{}
+	waits := map[string]string{}
 	for _, row := range r.l.rows {
-		if row.State == stateLinked {
-			linked[row.Kind+"\x00"+row.Local] = true
+		k := row.Kind + "\x00" + row.Local
+		switch row.State {
+		case stateLinked:
+			linked[k] = true
+		case stateDeleting:
+			waits[k] = ReasonLocalDeleted
+		case stateDetached:
+			waits[k] = ReasonRemoteDeleted
 		}
 	}
 	for k, e := range r.c.entries {
 		kind, seen := "E", r.pushSeen
 		if e.Kind == KindRelation {
 			kind, seen = "R", r.relSeen
+		}
+		if isDelete(e.Reason) {
+			if waits[kind+"\x00"+e.Local] != e.Reason {
+				delete(r.c.entries, k)
+			}
+			continue
 		}
 		isLinked := linked[kind+"\x00"+e.Local]
 		switch {

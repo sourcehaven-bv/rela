@@ -110,10 +110,10 @@ type refMessage struct {
 func scanRefMessage(r interface{ Scan(...any) error }) (refMessage, error) {
 	var out refMessage
 	var m channels.Message
-	var raw string
-	if err := r.Scan(&out.channelID, &m.Seq, &m.Rev, &m.ReplyTo, &m.ReplyCount, &raw); err != nil {
+	var c msgScan
+	if err := r.Scan(append([]any{&out.channelID}, c.dest(&m)...)...); err != nil {
 		return out, err
 	}
-	out.msg, out.damaged = decodeMessage(m, raw)
+	out.msg, out.damaged = c.decode(m)
 	return out, nil
 }

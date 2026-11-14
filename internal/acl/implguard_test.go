@@ -45,7 +45,7 @@ var aclImplementation = regexp.MustCompile(
 //
 //   - internal/entitymanager New (requireCopyGates) — refuses a nil copy read
 //     gate when the ACL is *Declarative (#1437)
-//   - internal/appbuild CompileTransitions — sets the fail-closed posture of
+//   - internal/appbuild BuildTransitionWiring — sets the fail-closed posture of
 //     the transition guard and both copy gates
 //   - internal/dataentry views_handler.go, commands.go,
 //     standalone_document_handler.go — switch on NopACL/ReadOnlyACL

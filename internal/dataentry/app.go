@@ -1570,11 +1570,12 @@ func NewApp(
 	// shared read/write helpers (visible/denyAfford/computeETag) as closures
 	// so both paths stay behaviorally identical.
 	app.write = &writeHandler{
-		schema:      app.State,
-		rollups:     newRollupSource(app),
-		store:       st,
-		manager:     grantedManager{em}, // writeHandler narrows to entityMutator
-		softDeletes: softDeletesFor(em),
+		schema:         app.State,
+		rollups:        newRollupSource(app),
+		store:          st,
+		manager:        grantedManager{em}, // writeHandler narrows to entityMutator
+		softDeletes:    softDeletesFor(em),
+		ifMatchDeletes: entitymanager.IfMatchDeletes{M: em},
 
 		reader:      app.reader,
 		serializer:  app.serializer,

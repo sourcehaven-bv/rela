@@ -130,7 +130,9 @@ func (g remoteGate) entryVisible(ctx context.Context, e RemoteEntry) bool {
 // makes the next pull write the remote values into the local row, so it
 // also needs the caller's edit right on the row and on every field the
 // entry names. Linking does the same: the next pull takes the linked remote
-// row's value for every field the create tried to send.
+// row's value for every field the create tried to send. Taking the remote
+// side of a row the remote deleted deletes the local row, so it needs the
+// caller's delete right instead.
 func (h *remotesHandler) verdict(ctx context.Context, g remoteGate, e RemoteEntry, action string) remoteVerdict {
 	switch action {
 	case remoteActionResolveLocal:
@@ -177,6 +179,9 @@ func (h *remotesHandler) mayWriteRemoteValue(ctx context.Context, g remoteGate, 
 		if from == nil {
 			return false
 		}
+		if e.Reason == remoteReasonRemoteDel {
+			return h.mayDeleteRelation(ctx, g, from, e.Relation)
+		}
 		req := translateRelationWrite(h.app.Meta(), e.Relation.Type, from.Type, from.ID,
 			e.Relation.FromFace)
 		if !g.aff.acl().AuthorizeWrite(ctx, req).Allow {
@@ -194,6 +199,15 @@ func (h *remotesHandler) mayWriteRemoteValue(ctx context.Context, g remoteGate, 
 	if row == nil || !g.aff.acl().AuthorizeWrite(ctx, translateVerb("update", row.Type, row.ID, row.Face)).Allow {
 		return false
 	}
+	if e.Reason == remoteReasonRemoteDel {
+		// The pull deletes the whole family by bare id, which the gate can
+		// judge only from the one served face. A faced type is refused, as
+		// the DELETE route refuses a bare id on one.
+		if def, ok := h.app.Meta().Entities[row.Type]; !ok || len(def.Faces) > 0 {
+			return false
+		}
+		return g.aff.acl().AuthorizeWrite(ctx, translateVerb("delete", row.Type, row.ID, row.Face)).Allow
+	}
 	v := g.aff.fieldVerdicts(ctx, row)
 	for _, f := range fields {
 		if !v.IsVisible(f) || !v.IsWritable(f) {
@@ -201,4 +215,23 @@ func (h *remotesHandler) mayWriteRemoteValue(ctx context.Context, g remoteGate, 
 		}
 	}
 	return true
+}
+
+// mayDeleteRelation reports whether the caller may delete the relation key
+// from the served source row from, asked as the relation DELETE route asks
+// it: the ACL's delete verdict and the type's remove affordance.
+func (h *remotesHandler) mayDeleteRelation(
+	ctx context.Context, g remoteGate, from *entityPkg.Entity, key entityPkg.RelationKey,
+) bool {
+	req := translateRelationDelete(h.app.Meta(), key.Type, from.Type, from.ID, key.FromFace)
+	if !g.aff.acl().AuthorizeWrite(ctx, req).Allow {
+		return false
+	}
+	sources, err := g.aff.relationSources(ctx, from, entityPkg.Ref{ID: from.ID, Face: key.FromFace},
+		string(DirectionOutgoing), key.Type)
+	if err != nil {
+		return false
+	}
+	_, denial := g.aff.relationOpDenial(ctx, sources, key.Type, RelationOpRemove)
+	return denial == nil
 }

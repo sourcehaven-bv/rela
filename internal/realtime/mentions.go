@@ -24,6 +24,9 @@ const maxCandidateSpans = 64
 // ([channels.MaxMentions]), for transports that do not import channels.
 const MaxMentions = channels.MaxMentions
 
+// MaxBatch caps the messages of one [Service.PostBatch].
+const MaxBatch = channels.MaxBatch
+
 // loginPrefix starts a login mention: `@jeroen` names the login jeroen.
 const loginPrefix = "@"
 

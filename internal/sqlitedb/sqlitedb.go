@@ -187,6 +187,12 @@ func (c *DB) init(ctx context.Context) error {
 	if _, err := c.db.ExecContext(ctx, channelReadsIndexDDL); err != nil {
 		return fmt.Errorf("sqlitedb: create channel read indexes: %w", err)
 	}
+	// After the ladder for the same reason: channelThreadsIndexDDL indexes
+	// channel_messages.in_stream, which a pre-v37 table gains in the v37
+	// rung.
+	if _, err := c.db.ExecContext(ctx, channelThreadsIndexDDL); err != nil {
+		return fmt.Errorf("sqlitedb: create channel thread indexes: %w", err)
+	}
 	return nil
 }
 
@@ -438,8 +444,8 @@ CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);
 
 // recordsDDL holds the record store (sqlrecords, TKT-J7Q9C4K): typed rows
 // owned by an entity, and the ledger transaction ids claimed so far. Times
-// are integer microseconds since the epoch. pgstore migration 0045 has the
-// same shape. Shared between schemaSQL and the v36 to v37 rung.
+// are integer microseconds since the epoch. pgstore migration 0047 has the
+// same shape. Shared between schemaSQL and the v38 to v39 rung.
 const recordsDDL = `
 CREATE TABLE IF NOT EXISTS records (
 	id          TEXT NOT NULL PRIMARY KEY,
@@ -472,8 +478,8 @@ CREATE TABLE IF NOT EXISTS record_groups (
 // A soft delete copies the faces to marked_entities before it deletes them
 // from entities, so the rows stay for a restore; the purge drops them. A
 // ledger group claim goes with the last row of its group, as sqlrecords'
-// DropOwner does. pgstore migration 0046 has the same triggers. Shared
-// between schemaSQL and the v37 to v38 rung.
+// DropOwner does. pgstore migration 0048 has the same triggers. Shared
+// between schemaSQL and the v39 to v40 rung.
 //
 // A rung that rebuilds entities or marked_entities (create, copy, drop,
 // rename) drops these triggers with the old table and must create them
@@ -923,6 +929,7 @@ CREATE TABLE IF NOT EXISTS channels (
 	last_at             INTEGER NOT NULL DEFAULT 0,
 	session_cause       INTEGER NOT NULL DEFAULT 0,
 	session_previous    TEXT NOT NULL DEFAULT '',
+	session_asked       TEXT NOT NULL DEFAULT '',
 	UNIQUE (anchor_id, anchor_face, type, name, tomb)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS channels_state_idx ON channels(tomb, state);
@@ -936,6 +943,8 @@ CREATE TABLE IF NOT EXISTS channel_messages (
 	pending_at  INTEGER NOT NULL DEFAULT 0,
 	doc         TEXT NOT NULL,
 	counts      INTEGER NOT NULL DEFAULT 1,
+	last_reply_at INTEGER NOT NULL DEFAULT 0,
+	in_stream   INTEGER NOT NULL DEFAULT 1,
 	PRIMARY KEY (channel_id, seq)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS channel_messages_rev_idx ON channel_messages(channel_id, rev);
@@ -1011,6 +1020,17 @@ CREATE TABLE IF NOT EXISTS channel_reads (
 const channelReadsIndexDDL = `
 CREATE INDEX IF NOT EXISTS channel_messages_counts_idx ON channel_messages(channel_id, seq) WHERE counts = 1;
 CREATE INDEX IF NOT EXISTS channel_reads_reader_idx ON channel_reads(reader_user, reader_org);`
+
+// channelThreadsIndexDDL holds the indexes of thread pages:
+// channel_messages_thread_idx reads the replies of one parent in seq
+// order, and channel_messages_stream_idx reads the main stream (see
+// channels.Page). pgstore migration 0045 has the same shape. It runs
+// after the ladder, as channelReadsIndexDDL does, because it names a
+// column the v37 rung adds.
+const channelThreadsIndexDDL = `
+CREATE INDEX IF NOT EXISTS channel_messages_thread_idx ON channel_messages(channel_id, reply_to, seq)
+	WHERE reply_to > 0;
+CREATE INDEX IF NOT EXISTS channel_messages_stream_idx ON channel_messages(channel_id, seq) WHERE in_stream = 1;`
 
 // channelMentionsDDL holds the addressed rows of channels.Store.Append:
 // one row per (channel, seq, target, kind), with the message's author and

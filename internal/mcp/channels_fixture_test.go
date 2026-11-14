@@ -326,7 +326,7 @@ func toolNames(t *testing.T, cs *mcpgo.ClientSession) map[string]*mcpgo.Tool {
 
 // channelToolNames are the tools registered with realtime on.
 var channelToolNames = []string{
-	"list_channels", toolReadChannel, toolReadSession, "post_message", "edit_message", "remove_message", "create_channel",
+	"list_channels", toolReadChannel, toolReadSession, "post_message", toolPostMessages, "edit_message", "remove_message", "create_channel",
 	toolListInbox, toolMarkRead,
 }
 

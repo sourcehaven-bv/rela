@@ -17,6 +17,8 @@ import (
 const (
 	// MaxMessageBytes caps the JSON encoding of one message's properties.
 	MaxMessageBytes = 16 << 10
+	// MaxBatch caps the messages of one batch post.
+	MaxBatch = 10
 	// MaxMessageProperties caps the properties one message type declares.
 	MaxMessageProperties = 32
 	// MaxFilesPerMessage caps the files one message carries, over all its
@@ -97,6 +99,9 @@ const (
 	// DefaultListItemRunes is the item limit of a list property without
 	// `max`.
 	DefaultListItemRunes = 200
+	// MaxObjectFields caps the fields of an object list (`type: object`).
+	// Its items count against [MaxListItems] like a string list's.
+	MaxObjectFields = 16
 )
 
 // Typing indicator. The server owns these numbers: `limits:` in

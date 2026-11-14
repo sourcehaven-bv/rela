@@ -59,7 +59,7 @@ type Authorizer struct {
 // NewAuthorizer returns an Authorizer over the supplied gates.
 //
 // policyActive distinguishes the two ways a gate can be absent, and the
-// distinction is load-bearing (the same rule the statemachine transition guard
+// distinction is load-bearing (the same rule the transition guard
 // documents):
 //
 //   - No policy configured at all: the Authorizer is INERT and permits. This is

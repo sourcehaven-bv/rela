@@ -56,16 +56,16 @@ func (b *bucket) tokensAt(now time.Time, rate realtimelimits.Rate) float64 {
 	return min(t, float64(rate.Count))
 }
 
-// waitFor is how long until a bucket holding tokens has one under rate.
-func waitFor(tokens float64, rate realtimelimits.Rate) time.Duration {
-	if tokens >= 1 {
+// waitFor is how long until a bucket holding tokens has n under rate.
+func waitFor(tokens float64, n int, rate realtimelimits.Rate) time.Duration {
+	if tokens >= float64(n) {
 		return 0
 	}
 	ps := rate.PerSecond()
 	if ps <= 0 { // coverage-ignore: invariant: every rate is positive
 		return time.Minute
 	}
-	return time.Duration((1 - tokens) / ps * float64(time.Second))
+	return time.Duration((float64(n) - tokens) / ps * float64(time.Second))
 }
 
 // fullAt is when b holds Count tokens again. From then on it is no
@@ -159,63 +159,92 @@ func bucketIdentity(p principal.Principal) string {
 }
 
 // take charges one token from the bucket of (identity, key, op) at rate and
-// from the identity's aggregate bucket. Either empty, or no room for a
-// bucket it needs, refuses with a 429 [DenialError] naming when to retry;
-// a refusal charges and inserts nothing.
+// from the identity's aggregate bucket (see [limiter.takeAll]).
 func (l *limiter) take(now time.Time, identity string, key channels.Key, op string, rate realtimelimits.Rate) error {
+	return l.takeAll(now, identity, key, []charge{{op: op, rate: rate, n: 1}})
+}
+
+// charge is n tokens from the bucket of one operation at rate.
+type charge struct {
+	op   string
+	rate realtimelimits.Rate
+	n    int
+}
+
+// takeAll charges every charge of cs from its bucket of (identity, key)
+// and their sum from the identity's aggregate bucket, as one step: all of
+// them or none. Any bucket short of its tokens, or no room for a bucket it
+// needs, refuses with a 429 [DenialError] naming when to retry; a refusal
+// charges and inserts nothing. The ops of cs are distinct, and no n is
+// over its rate's Count: such a charge could never be met.
+func (l *limiter) takeAll(now time.Time, identity string, key channels.Key, cs []charge) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.calls++
 	if l.calls%sweepEvery == 0 {
 		l.sweepLocked(now)
 	}
-	co := channelOp{key: key, op: op}
 	ib := l.ids[identity]
-	var agg, per *bucket
+	var agg *bucket
 	if ib != nil {
-		agg, per = ib.aggregate, ib.perOp[co]
+		agg = ib.aggregate
+	}
+	total := 0
+	pers := make([]*bucket, len(cs))
+	perTokens := make([]float64, len(cs))
+	var wait time.Duration
+	newPer := 0
+	for i, c := range cs {
+		if ib != nil {
+			pers[i] = ib.perOp[channelOp{key: key, op: c.op}]
+		}
+		if pers[i] == nil {
+			newPer++
+		}
+		perTokens[i] = pers[i].tokensAt(now, c.rate)
+		wait = max(wait, waitFor(perTokens[i], c.n, c.rate))
+		total += c.n
 	}
 	aggTokens := agg.tokensAt(now, l.agg)
-	perTokens := per.tokensAt(now, rate)
-	if wait := max(waitFor(aggTokens, l.agg), waitFor(perTokens, rate)); wait > 0 {
+	if wait = max(wait, waitFor(aggTokens, total, l.agg)); wait > 0 {
 		return rateLimited(wait)
 	}
-	if err := l.roomLocked(now, identity, agg == nil, per == nil); err != nil {
+	if err := l.roomLocked(now, identity, agg == nil, newPer); err != nil {
 		return err
 	}
 	if ib = l.ids[identity]; ib == nil {
 		ib = &identityBuckets{perOp: map[channelOp]*bucket{}}
 		l.ids[identity] = ib
 	}
-	ib.aggregate = &bucket{tokens: aggTokens - 1, last: now, rate: l.agg}
-	if per == nil {
-		l.perOp++
+	ib.aggregate = &bucket{tokens: aggTokens - float64(total), last: now, rate: l.agg}
+	l.perOp += newPer
+	for i, c := range cs {
+		ib.perOp[channelOp{key: key, op: c.op}] = &bucket{tokens: perTokens[i] - float64(c.n), last: now, rate: c.rate}
 	}
-	ib.perOp[co] = &bucket{tokens: perTokens - 1, last: now, rate: rate}
 	return nil
 }
 
 // roomLocked checks that the buckets a take must insert fit: a new
-// identity, and a new per-channel bucket. It sweeps full buckets once
+// identity, and newPer new per-channel buckets. It sweeps full buckets once
 // before it refuses.
-func (l *limiter) roomLocked(now time.Time, identity string, newAgg, newPer bool) error {
+func (l *limiter) roomLocked(now time.Time, identity string, newAgg bool, newPer int) error {
 	fits := func() error {
 		cur := l.ids[identity]
 		if cur == nil && len(l.ids) >= l.caps.identities {
 			return rateLimited(l.soonestLocked(now, func(ib *identityBuckets) *bucket { return ib.aggregate }))
 		}
-		if !newPer {
+		if newPer == 0 {
 			return nil
 		}
-		if cur != nil && len(cur.perOp) >= l.caps.perIdentity {
+		if cur != nil && len(cur.perOp)+newPer > l.caps.perIdentity {
 			return rateLimited(soonest(now, cur.perOp))
 		}
-		if l.perOp >= l.caps.buckets {
+		if l.perOp+newPer > l.caps.buckets {
 			return rateLimited(l.soonestPerOpLocked(now))
 		}
 		return nil
 	}
-	if !newAgg && !newPer {
+	if !newAgg && newPer == 0 {
 		return nil
 	}
 	if fits() == nil {

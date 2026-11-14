@@ -4,8 +4,10 @@ type: ticket
 title: 'Two-way sync: send deletes with guards'
 kind: enhancement
 priority: medium
-effort: m
-status: backlog
+effort: l
+started: "2026-11-12"
+completed: "2026-11-12"
+status: done
 ---
 
 ## Description
@@ -24,3 +26,11 @@ type would be emptied, and an explicit confirmation above the cap.
 
 - Two-instance test: deletes on each side travel; guards refuse a mass
 delete.
+
+## Notes
+
+- A DELETE with `If-Match` compares the stored version inside the delete's
+own transaction (`entitymanager.IfMatchDeletes`), so a write between the
+compare and the delete is a 412.
+- The handler side is the `conditionalDelete` type in data-entry, so
+`writeHandler` stays on its plimsoll line of 40 methods.

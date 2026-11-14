@@ -83,3 +83,33 @@ func explainPrepared(t *testing.T, conn *pgxpool.Conn, name, query, args string)
 	t.Logf("%s plan:\n%s", name, plan)
 	return plan
 }
+
+// TestChannelThreadExplain pins that a thread page reads the replies of
+// one parent through channel_messages_thread_idx under a generic plan,
+// where the planner cannot see the bound parent (TKT-ETL233O). The
+// statement is a copy of sqlchannels' thread page: keep it in step.
+func TestChannelThreadExplain(t *testing.T) {
+	pool := newScopedPool(t)
+	ctx := context.Background()
+	for _, stmt := range []string{
+		`INSERT INTO channels (id, anchor_id, type, state, created_by, created_at, last_seq, last_at)
+			VALUES (1, 'TKT-1', 'room', 'open', '{}', 1, 20000, 1)`,
+		`INSERT INTO channel_messages (channel_id, seq, rev, reply_to, in_stream, doc)
+			SELECT 1, s, s, CASE WHEN s % 2 = 0 THEN s - 1 ELSE 0 END, CASE WHEN s % 2 = 0 THEN 0 ELSE 1 END, '{}'
+			FROM generate_series(1, 20000) s`,
+		`ANALYZE channel_messages`,
+	} {
+		_, err := pool.Exec(ctx, stmt)
+		require.NoError(t, err, stmt)
+	}
+	conn, err := pool.Acquire(ctx)
+	require.NoError(t, err)
+	defer conn.Release()
+	_, err = conn.Exec(ctx, `SET plan_cache_mode = force_generic_plan`)
+	require.NoError(t, err)
+	plan := explainPrepared(t, conn, "thread_page", `SELECT seq FROM channel_messages
+		WHERE channel_id = ? AND seq = ? AND reply_to = 0
+		UNION ALL SELECT seq FROM channel_messages WHERE channel_id = ? AND reply_to = ? AND reply_to > 0
+		ORDER BY seq DESC LIMIT ?`, `1, 501, 1, 501, 20`)
+	require.Contains(t, plan, "channel_messages_thread_idx")
+}

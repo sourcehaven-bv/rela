@@ -11,7 +11,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/rollup"
 	"github.com/Sourcehaven-BV/rela/internal/scopes"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/worlds"
 	"github.com/Sourcehaven-BV/rela/internal/writerule"
@@ -41,7 +40,7 @@ func CheckSchemaCompiles(meta *metamodel.Metamodel, st store.Store) []string {
 	add("roll-up properties", err)
 	_, err = scopes.Compile(meta)
 	add("query scopes", err)
-	_, err = statemachine.Compile(meta, statemachine.WithTraversals(ungatedBinder(meta, st)))
+	_, err = CompileHeadlessFlows(meta, st)
 	add("transitions", err)
 	if len(meta.Automations) > 0 {
 		_, err = automation.NewEngineFromMetamodel(meta, meta.Automations,

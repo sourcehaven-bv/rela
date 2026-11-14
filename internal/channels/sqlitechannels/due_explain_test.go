@@ -63,6 +63,28 @@ func TestListWaiting_CreatorUsesIndex(t *testing.T) {
 	require.NotContains(t, plan, "SCAN channels\n", "the creator branch must not scan the table")
 }
 
+// threadQuery is the thread page of sqlchannels' Messages, newest first.
+// It is a copy: keep it in step with that query.
+const threadQuery = `SELECT seq FROM channel_messages WHERE channel_id = ? AND seq = ? AND reply_to = 0
+	UNION ALL SELECT seq FROM channel_messages WHERE channel_id = ? AND reply_to = ? AND reply_to > 0
+	ORDER BY seq DESC LIMIT ?`
+
+// TestThreadPage_UsesIndex pins that a thread page reads the parent by
+// key and its replies through channel_messages_thread_idx, not every
+// message of the channel (TKT-ETL233O).
+func TestThreadPage_UsesIndex(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlitedb.Open(ctx, sqlitedb.Options{Path: filepath.Join(t.TempDir(), "rela.db")})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	plan := explain(t, db, threadQuery, 1, 5, 1, 5, 20)
+	require.Contains(t, plan, "channel_messages_thread_idx")
+	require.NotContains(t, plan, "(channel_id=?)\n", "neither arm walks the whole channel")
+	stream := explain(t, db, `SELECT seq FROM channel_messages WHERE channel_id = ? AND in_stream = 1
+		ORDER BY seq DESC LIMIT ?`, 1, 20)
+	require.NotContains(t, stream, "SCAN channel_messages\n")
+}
+
 // explain returns the EXPLAIN QUERY PLAN details of query, one per line.
 func explain(t *testing.T, db *sqlitedb.DB, query string, args ...any) string {
 	t.Helper()

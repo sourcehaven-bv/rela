@@ -9,6 +9,8 @@ import type {
   ChannelGroupView,
   ChannelLifecycleDef,
   ChannelMessageTypeDef,
+  ChannelMessagePresentation,
+  ChannelObjectItem,
   ChannelComposerTransition,
   ChannelDecisionView,
   ChannelMessageView,
@@ -678,3 +680,90 @@ export function longRunMessages(count: number): ChannelMessageView[] {
     return runMessage(seq, seq % 3 === 1 ? 'text' : seq % 3 === 2 ? 'progress' : 'claim', `Message ${seq}.`)
   })
 }
+
+/*
+ * A batch of questions (TKT-GR1MXL5): an agent asks three questions at
+ * once, each with options as an object list. The type presents the options
+ * as cards (`display: cards`).
+ */
+
+export const pickMessageTypes: ChannelMessageTypeDef[] = [
+  {
+    name: 'pick',
+    label: 'Question',
+    persist: 'log',
+    reply: true,
+    properties: [
+      { name: 'question', label: 'Question', type: 'markdown', required: true },
+      {
+        name: 'options',
+        label: 'Options',
+        type: 'object',
+        list: true,
+        required: true,
+        fields: [
+          { name: 'label', label: 'Option', type: 'string', required: true },
+          { name: 'cons', label: 'Cons', type: 'string', list: true },
+          { name: 'pros', label: 'Pros', type: 'string', list: true },
+          { name: 'recommended', label: 'Recommended', type: 'boolean' },
+          { name: 'until', label: 'Supported until', type: 'date' },
+        ],
+      },
+    ],
+    actions: [],
+    choices: { from: 'options', label: 'label', answer: 'answer', into: 'note', other: false },
+  },
+  questionMessageTypes[1]!,
+]
+
+/** The cards presentation of `pick`. */
+export const pickPresentation: ChannelMessagePresentation = {
+  cards: { body: 'question', items: 'options', title: 'label', plus: 'pros', minus: 'cons', badge: 'recommended' },
+}
+
+function pick(seq: number, question: string, options: ChannelObjectItem[]): ChannelMessageView {
+  return {
+    seq,
+    rev: seq,
+    type: 'pick',
+    author: agent,
+    at: '11:00',
+    datetime: '2026-10-29T11:00:00Z',
+    batch: 30,
+    props: { question, options },
+    html: { question: `<p>${question}</p>` },
+    excerpt: question,
+  }
+}
+
+/** Three questions posted as one batch. */
+export const pickBatch: ChannelMessageView[] = [
+  {
+    ...pick(30, 'Which store should the importer use?', [
+      {
+        label: 'PostgreSQL',
+        pros: ['Shared by every node', 'Point-in-time recovery'],
+        cons: ['A server to run'],
+        recommended: true,
+        until: '2030-11-14',
+      },
+      { label: 'SQLite', pros: ['No server', 'One file'], cons: ['One process only'], until: '2050-01-01' },
+    ]),
+    itemText: { options: [{ until: '14 Nov 2030' }, { until: '1 Jan 2050' }] },
+  },
+  pick(31, 'Keep the old import tables?', [{ label: 'Keep' }, { label: 'Drop' }]),
+  pick(32, 'Run the import nightly?', [{ label: 'Yes' }, { label: 'No' }]),
+]
+
+/** The reply buttons of each question of `pickBatch`. */
+export const pickChoices: ReadonlyMap<number, ChannelDecisionView[]> = new Map(
+  pickBatch.map((m) => [
+    m.seq,
+    (m.props!.options as ChannelObjectItem[]).map((o, i) => ({
+      key: `choice:${m.seq}:${i}`,
+      messageType: 'answer',
+      label: String(o.label),
+      props: { note: String(o.label) },
+    })),
+  ]),
+)

@@ -19,11 +19,12 @@ import type { MessageFileUpload } from '@/api/channels'
 import type { AppDecisionView } from './presetViews'
 import {
   buttonTypesOf,
-  choiceViews,
   decisionCause,
   decisionReplyTo,
   decisionViews,
   placeDecisions,
+  questionViews,
+  type QuestionView,
 } from './channelView'
 
 /**
@@ -235,22 +236,23 @@ export function useSessionDecisions(d: DecisionDeps) {
    */
   const decisionSeq = computed(() => {
     const seq = causeSeq.value
-    if (seq === undefined || d.ch.head.value?.channel.session?.status !== 'working' || !d.quiet) return seq
+    if (seq === undefined || d.ch.head.value?.channel.session?.status !== 'working' || !d.quiet)
+      return seq
     const type = d.ch.messages.value.find((m) => m.seq === seq)?.type
     return type && d.quiet(type) ? undefined : seq
   })
 
-  // The choices also read the held messages. That ref is replaced on every
-  // merge, so its identity is part of the key: an answer arriving, an edit
-  // or a removal rebuilds them. The Other label is text, so the language is
-  // part of the key too.
-  type ChoicesMemo = {
+  // The questions also read the held messages. That ref is replaced on
+  // every merge, so its identity is part of the key: an answer arriving, an
+  // edit or a removal rebuilds them. The Other label is text, so the
+  // language is part of the key too.
+  type QuestionsMemo = {
     ct: ChannelTypeSchema
     key: string
     messages: unknown
-    value: Map<number, ChannelDecisionView[]>
+    value: Map<number, QuestionView>
   }
-  const choicesMemo = computed<ChoicesMemo>((prev) => {
+  const questionsMemo = computed<QuestionsMemo>((prev) => {
     const ct = d.channelType()
     const h = d.ch.head.value
     const messages = d.ch.messages.value
@@ -262,6 +264,7 @@ export function useSessionDecisions(d: DecisionDeps) {
     const key = JSON.stringify([
       h.channel.session?.generation,
       h.channel.state,
+      h.channel.asked,
       h._actions.post,
       d.ch.actionsGeneration.value,
       d.ch.hasNewer.value,
@@ -269,7 +272,7 @@ export function useSessionDecisions(d: DecisionDeps) {
       i18n.global.locale.value,
     ])
     if (prev && prev.ct === ct && prev.key === key && prev.messages === messages) return prev
-    const value = choiceViews(
+    const value = questionViews(
       ct,
       h,
       d.ch.actionsGeneration.value,
@@ -279,7 +282,17 @@ export function useSessionDecisions(d: DecisionDeps) {
     )
     return { ct, key, messages, value }
   })
-  const choices = computed(() => choicesMemo.value.value)
+  /**
+   * Every question with buttons, answered ones included while the head
+   * still lists them in `asked` (TKT-GR1MXL5), so their answer can change.
+   */
+  const questions = computed(() => questionsMemo.value.value)
+  /** The buttons of the questions not answered yet, by the question's seq. */
+  const choices = computed(() => {
+    const out = new Map<number, ChannelDecisionView[]>()
+    for (const [seq, q] of questions.value) if (!q.answered) out.set(seq, q.choices)
+    return out
+  })
 
   // Each decision once: on the waiting message when it is held, else in the
   // fallback place. The question's own answer button is left out where its
@@ -310,10 +323,13 @@ export function useSessionDecisions(d: DecisionDeps) {
 
   const find = (key: string) => decisions.value.find((x) => x.key === key)
 
-  /** The choice with key, and the seq of its question. */
+  /**
+   * The choice with key, and the seq of its question. An answered
+   * question's choices count, for a changed answer.
+   */
   function findChoice(key: string): { seq: number; view: ChannelDecisionView } | undefined {
-    for (const [seq, views] of choices.value) {
-      const view = views.find((v) => v.key === key)
+    for (const [seq, q] of questions.value) {
+      const view = q.choices.find((v) => v.key === key)
       if (view) return { seq, view }
     }
     return undefined
@@ -633,7 +649,12 @@ export function useSessionDecisions(d: DecisionDeps) {
     const given: ChannelComposeView['given'] = {}
     for (const [name, v] of Object.entries(preset)) {
       const p = props.find((x) => x.name === name)
-      given[name] = Array.isArray(v) ? [...v] : p ? fromPropValue(p, v) : String(v)
+      // The composer has no field for an object list; it posts as preset.
+      if (Array.isArray(v)) {
+        if (v.every((x) => typeof x === 'string')) given[name] = [...v]
+        continue
+      }
+      given[name] = p ? fromPropValue(p, v) : String(v)
     }
     const key = `${view.key}#${++composeClicks}`
     return {
@@ -687,6 +708,7 @@ export function useSessionDecisions(d: DecisionDeps) {
   return {
     buttonTypes,
     choices,
+    questions,
     decisions,
     decisionSeq,
     placed,

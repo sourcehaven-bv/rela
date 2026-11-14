@@ -215,6 +215,7 @@ func (s *Service) Delete(ctx context.Context, addr RawAddress, seq int64, reason
 		}
 		removal.Kind, removal.Reason = channels.RemovalModerator, reason
 	case ownRefusal.Type == TypeSessionMessage, ownRefusal.Type == TypeReminderMessage,
+		ownRefusal.Type == TypeAskedQuestion,
 		ownRefusal.Type == TypeDeleteDenied && ownRefusal.Rule != "":
 		return MessageView{}, ownRefusal
 	default:
@@ -248,6 +249,9 @@ func (c *call) deleteOwn(m channels.Message) *DenialError {
 	}
 	if m.MovedSession {
 		return sessionMessage()
+	}
+	if asked(c.head, m.Seq) {
+		return askedQuestion()
 	}
 	if op.From != "" && string(c.state()) != string(op.From) {
 		return forbidden(TypeDeleteDenied,

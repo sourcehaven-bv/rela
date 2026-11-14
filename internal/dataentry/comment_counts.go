@@ -41,7 +41,7 @@ func serveListRowExtras(
 		serveRowBusy(r.Context(), channelsBusy(a.channels), typ, rows, data)
 	}
 	a.leases.serveRowLeases(r.Context(), rows, data)
-	if want := listRollups(query, a.Cfg()); want != nil {
+	if want := listRollups(query); want != nil {
 		serveRowRollups(r.Context(), newRollupSource(a), rows, data, want)
 	}
 	return true

@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 38
+const schemaVersion = 40
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -362,21 +362,60 @@ var migrations = []migration{
 		apply: sqlSteps(channelFilesDDL),
 	},
 	{
-		// v36 → v37: the record store (TKT-J7Q9C4K). New tables; nothing
-		// to backfill.
+		// v36 → v37: the last reply time and the main-stream flag of each
+		// message (TKT-ETL233O). The indexes are created after the ladder
+		// (see channelThreadsIndexDDL).
 		to:    37,
+		apply: addChannelThreads,
+	},
+	{
+		// v37 → v38: the asked questions of a channel's session span
+		// (TKT-GR1MXL5). A row from before reads '', no questions.
+		to: 38,
+		apply: func(ctx context.Context, conn *sql.Conn) error {
+			return addChannelColumns(ctx, conn, channelAskedColumns)
+		},
+	},
+	{
+		// v38 → v39: the record store (TKT-J7Q9C4K). New tables; nothing
+		// to backfill.
+		to:    39,
 		apply: sqlSteps(recordsDDL),
 	},
 	{
-		// v37 → v38: record rows follow their owner through delete and
+		// v39 → v40: record rows follow their owner through delete and
 		// rename (see recordsOwnerDDL). The second step drops the rows a
 		// failed post-commit hook, which the triggers replace, left behind.
-		to: 38,
+		to: 40,
 		apply: sqlSteps(recordsOwnerDDL, `DELETE FROM records
 			WHERE owner NOT IN (SELECT id FROM entities UNION SELECT id FROM marked_entities)`,
 			`DELETE FROM record_groups WHERE NOT EXISTS (
 			SELECT 1 FROM records r WHERE r.type = record_groups.type AND r.grp = record_groups.grp)`),
 	},
+}
+
+// messageThreadColumns are the thread columns of channel_messages.
+var messageThreadColumns = []struct{ name, def string }{
+	{"last_reply_at", "INTEGER NOT NULL DEFAULT 0"},
+	{"in_stream", "INTEGER NOT NULL DEFAULT 1"},
+}
+
+// addChannelThreads is the v36 to v37 rung. It adds last_reply_at and
+// in_stream to channel_messages and takes every reply out of the main
+// stream except one that moved its session, as channels.ReplyInline
+// decides for a new reply. A reply that answered a choice cannot be told
+// from its row and joins its thread. A property may also be named
+// moved_session, so the test reads the top-level member of the doc; a doc
+// that is not valid JSON counts as not moved. last_reply_at starts at 0;
+// the next reply sets it. The rung runs once, before the store writes any
+// reply with in_stream set.
+func addChannelThreads(ctx context.Context, conn *sql.Conn) error {
+	if err := addTableColumns(ctx, conn, "channel_messages", messageThreadColumns); err != nil {
+		return err
+	}
+	return sqlSteps(`UPDATE channel_messages SET in_stream = 0
+		WHERE in_stream = 1 AND reply_to <> 0
+		AND (CASE WHEN json_valid(doc) THEN json_extract(doc, '$.moved_session') END) IS NOT 1`)(ctx, conn)
 }
 
 // elementColumns are the reconciliation element columns of entities and
@@ -392,6 +431,11 @@ var elementColumns = []struct{ name, def string }{
 // channelPreviousColumns are the session previous-state column of channels.
 var channelPreviousColumns = []struct{ name, def string }{
 	{"session_previous", "TEXT NOT NULL DEFAULT ''"},
+}
+
+// channelAskedColumns are the session asked-questions column of channels.
+var channelAskedColumns = []struct{ name, def string }{
+	{"session_asked", "TEXT NOT NULL DEFAULT ''"},
 }
 
 // channelCauseColumns are the session cause column of channels.

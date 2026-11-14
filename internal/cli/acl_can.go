@@ -115,6 +115,6 @@ func writeCanText(r *aclmap.CanResult) {
 		out.WriteMessage("      via the built-in everyone role — all principals.")
 	}
 	for _, rt := range r.Routes {
-		out.WriteMessage("      via %s", formatRoute(rt))
+		out.WriteMessage("      via %s", rt.String())
 	}
 }
