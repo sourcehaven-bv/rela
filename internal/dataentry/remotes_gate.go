@@ -168,7 +168,9 @@ func stateVerdict(ok bool) remoteVerdict {
 
 // mayWriteRemoteValue reports whether the caller may write the fields e
 // names on its local row: the update the next pull makes when e is
-// resolved to the remote side, asked as the write path asks it.
+// resolved to the remote side, asked as the write path asks it. For a
+// remote_deleted entry the pull deletes the row instead, so only the
+// delete right is asked, as the DELETE route asks it.
 func (h *remotesHandler) mayWriteRemoteValue(ctx context.Context, g remoteGate, e RemoteEntry) bool {
 	fields := e.Fields
 	if e.Field != "" {
@@ -196,7 +198,7 @@ func (h *remotesHandler) mayWriteRemoteValue(ctx context.Context, g remoteGate, 
 		return true
 	}
 	row := g.rows[e.Local]
-	if row == nil || !g.aff.acl().AuthorizeWrite(ctx, translateVerb("update", row.Type, row.ID, row.Face)).Allow {
+	if row == nil {
 		return false
 	}
 	if e.Reason == remoteReasonRemoteDel {
@@ -207,6 +209,9 @@ func (h *remotesHandler) mayWriteRemoteValue(ctx context.Context, g remoteGate, 
 			return false
 		}
 		return g.aff.acl().AuthorizeWrite(ctx, translateVerb("delete", row.Type, row.ID, row.Face)).Allow
+	}
+	if !g.aff.acl().AuthorizeWrite(ctx, translateVerb("update", row.Type, row.ID, row.Face)).Allow {
+		return false
 	}
 	v := g.aff.fieldVerdicts(ctx, row)
 	for _, f := range fields {
