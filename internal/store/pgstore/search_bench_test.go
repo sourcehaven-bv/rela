@@ -10,7 +10,7 @@ import (
 
 // BenchmarkSearchBackend measures the in-database full-text search the
 // postgres build's _search endpoint sits on: a trigram substring match
-// ranked by similarity, 20 hits, over 1k and 10k entities of which a
+// ranked by title distance, 20 hits, over 1k and 10k entities of which a
 // quarter match. The weekly scale run (tools/scalerun) compares it with the
 // previous run, so a size label stays stable once added.
 func BenchmarkSearchBackend(b *testing.B) {

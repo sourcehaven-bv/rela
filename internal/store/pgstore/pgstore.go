@@ -189,6 +189,10 @@ type Store struct {
 	// mentions.go). Nil unless Open started it. Close takes it under
 	// changeFeedMu, with the listener.
 	mentionReindex *mentionReindexer
+	// searchTitleHeal recomputes search_title where it is out of date (see
+	// searchtitle.go). Nil unless Open started it; Close takes it like
+	// mentionReindex.
+	searchTitleHeal *searchTitleHealer
 
 	// uniqueSpecs, when set (at wiring, via SetUniqueSpecProvider), yields the
 	// current metamodel's (type, property) unique pairs. The write path uses it
@@ -229,7 +233,8 @@ type Option func(*Store)
 // and the app.FSFactory.AddObserver contract, so callers can pass the result
 // of an optional search-backend factory without a nil guard.
 // WithSearchTitles sets the type-to-title-property map free-text ranking
-// uses; see [SearchTitles]. Nil keeps the prefix ranking.
+// uses; see [SearchTitles]. [Open] records it in the database; a store built
+// with New alone ranks by whatever map was last recorded there.
 func WithSearchTitles(t SearchTitles) Option {
 	return func(s *Store) { s.searchTitles = t }
 }
@@ -388,9 +393,12 @@ func (s *Store) Close() error {
 	s.listener = nil
 	mr := s.mentionReindex
 	s.mentionReindex = nil
+	th := s.searchTitleHeal
+	s.searchTitleHeal = nil
 	s.changeFeedMu.Unlock()
 
 	mr.stop() // nil-safe; blocks until the reindex goroutine exits
+	th.stop() // likewise
 	l.stop()  // nil-safe; blocks until the listener goroutine exits
 
 	s.changeFeedMu.Lock()

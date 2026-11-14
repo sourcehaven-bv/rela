@@ -185,16 +185,22 @@ func SetIteratorPageSizeForTest(t *testing.T, n int) {
 	t.Cleanup(func() { iteratorPageSize.Store(prev) })
 }
 
+// HealSearchTitlesForTest runs one search_title heal pass synchronously; full
+// checks every row, as the first pass after open does.
+func HealSearchTitlesForTest(ctx context.Context, db DBTX, full bool) error {
+	return healSearchTitles(ctx, db, full)
+}
+
 // ReindexMentionsForTest runs one mention reindex pass synchronously.
 func ReindexMentionsForTest(ctx context.Context, s *Store) error { return reindexMentions(ctx, s) }
 
 // BuildVisibleSearchSQLForTest exposes buildVisibleSearchSQL for the
 // search EXPLAIN test (first page, no keyset).
 func BuildVisibleSearchSQLForTest(
-	t *testing.T, q search.Query, scope map[string]search.TypeScope, titles SearchTitles, pageLimit int,
+	t *testing.T, q search.Query, scope map[string]search.TypeScope, pageLimit int,
 ) (sqlText string, args []any) {
 	t.Helper()
-	sqlText, args, anyVisible, err := buildVisibleSearchSQL(q, scope, titles, nil, pageLimit)
+	sqlText, args, anyVisible, err := buildVisibleSearchSQL(q, scope, nil, pageLimit)
 	if err != nil || !anyVisible {
 		t.Fatalf("buildVisibleSearchSQL: visible=%v err=%v", anyVisible, err)
 	}
@@ -202,6 +208,6 @@ func BuildVisibleSearchSQLForTest(
 }
 
 // BuildSearchSQLForTest exposes buildSearchSQL for the search EXPLAIN test.
-func BuildSearchSQLForTest(needle string, limit int, w store.WorldScope, titles SearchTitles) (sqlText string, args []any) {
-	return buildSearchSQL(needle, limit, w, titles)
+func BuildSearchSQLForTest(needle string, limit int, w store.WorldScope) (sqlText string, args []any) {
+	return buildSearchSQL(needle, limit, w)
 }
