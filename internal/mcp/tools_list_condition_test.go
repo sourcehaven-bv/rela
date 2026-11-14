@@ -335,15 +335,24 @@ func TestHandleListEntities_CurrentUserFilterAnswersForCaller(t *testing.T) {
 	}
 }
 
-// A current_user filter with no bound identity fails the call rather than
-// matching against an empty one.
-func TestHandleListEntities_CurrentUserFilterNeedsPrincipal(t *testing.T) {
+// list_entities with no bound identity fails the call, with or without a
+// filter, rather than serving rows for an empty principal. A current_user
+// filter must not match against an empty identity either.
+func TestHandleListEntities_NoIdentityFailsClosed(t *testing.T) {
 	t.Parallel()
 	f := newConditionFixtureOn(t, memstore.New(), 4)
-	result, err := f.srv.handleListEntities(context.Background(), makeToolRequest(map[string]any{
-		"type": "ticket", "filter": "is_current_user(entity.assignee)",
-	}))
-	if err == nil && !isErrorResult(result) {
-		t.Fatalf("served %s without a principal", getResultText(t, result))
+	for name, args := range map[string]map[string]any{
+		"no filter":           {"type": "ticket"},
+		"lowered filter":      {"type": "ticket", "filter": listConditionFilters["impl-open"]},
+		"current_user filter": {"type": "ticket", "filter": listConditionFilters["mine"]},
+		"go-only filter":      {"type": "ticket", "filter": listConditionFilters["title-from-b"]},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			result, err := f.srv.handleListEntities(context.Background(), makeToolRequest(args))
+			if err == nil && !isErrorResult(result) {
+				t.Fatalf("served %s without an identity", getResultText(t, result))
+			}
+		})
 	}
 }

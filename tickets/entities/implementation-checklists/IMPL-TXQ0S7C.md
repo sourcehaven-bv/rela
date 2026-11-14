@@ -34,7 +34,7 @@ status: done
 
 - `TestListEntities_ConditionMatchesGoPath` (memstore, sqlite, postgres): 13 filters x 5 principals x 4 pages. Rows and totals match the Go path, and each case asserts which path served it.
 - `TestHandleListEntities_ConditionScaleFree`: 9 lowered filters cost the same at 100 and 1,000 tickets. It fails with the lowering disabled.
-- `TestHandleListEntities_CurrentUserFilterAnswersForCaller` and `..._CurrentUserFilterNeedsPrincipal`.
+- `TestHandleListEntities_CurrentUserFilterAnswersForCaller` and `TestHandleListEntities_NoIdentityFailsClosed`.
 - `TestQueryConditions_Lower` and `TestQueryConditions_LowerDeniedTraversal` in appbuild; Related cases in `TestScriptReader_ListEntityPage`.
 - go test -race on mcp, visibility, appbuild, archguard, cli, dataentrywire; golangci-lint (default, sqlite, postgres tags), arch-lint and comment-lint clean.
 
