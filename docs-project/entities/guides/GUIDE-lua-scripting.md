@@ -3036,7 +3036,9 @@ engine cannot measure it. The `..` operator, `string.gsub` and table
 construction are limited only by the timeout. A loop that doubles a
 string with `s = s .. s` can use gigabytes of memory in under a second.
 Run rela with a memory limit (`GOMEMLIMIT`, a container limit) so a
-runaway script cannot exhaust the host.
+runaway script cannot exhaust the host. In tenant mode the memory is
+shared by every tenant, so one tenant's script can still exhaust it for
+all of them. This gap is tracked as BUG-88F0XLW.
 
 API keys are never logged or included in error messages.
 

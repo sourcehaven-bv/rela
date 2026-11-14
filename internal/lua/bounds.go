@@ -42,7 +42,7 @@ import (
 // bounded only by the process memory limit (GOMEMLIMIT, the container's
 // limit). A sampled heap watchdog was rejected: the heap is shared by every
 // tenant, so it would cancel whichever script happened to run when another
-// one grew it.
+// one grew it. The gap is tracked as BUG-88F0XLW.
 const (
 	luaCallStackSize   = 1024
 	luaRegistryInitial = 4 * 1024
