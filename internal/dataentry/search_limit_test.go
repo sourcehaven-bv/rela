@@ -47,7 +47,8 @@ func limitedIDs(resp v1.ListResponse) []string {
 }
 
 // TestSearchLimit_RecentlyModified pins the mention menu's "recently modified"
-// query: sorted newest first, then cut to `limit`.
+// query: sorted newest first, then cut to `limit`. meta.total counts every
+// match, as a list's does, not the rows served (TKT-D3RAB0E).
 func TestSearchLimit_RecentlyModified(t *testing.T) {
 	app := newTestAppV1(t)
 	for _, id := range []string{"TKT-001", "TKT-002", "TKT-003"} {
@@ -68,8 +69,8 @@ func TestSearchLimit_RecentlyModified(t *testing.T) {
 	if len(got) != 2 || got[0] != "TKT-001" || got[1] != "TKT-003" {
 		t.Errorf("got %v, want [TKT-001 TKT-003]", got)
 	}
-	if resp.Meta.Total != 2 {
-		t.Errorf("meta.total = %d, want 2", resp.Meta.Total)
+	if resp.Meta.Total != 3 {
+		t.Errorf("meta.total = %d, want 3", resp.Meta.Total)
 	}
 }
 

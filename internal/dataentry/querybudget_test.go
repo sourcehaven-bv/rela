@@ -569,23 +569,56 @@ func TestQueryBudget_ViewEditableTableAddsNoStoreReads(t *testing.T) {
 	assertBudget(t, "view editable table", b, viewSectionBudget, detail)
 }
 
-// A structured search (the dashboard card shape). Before batching: 2 +
-// 6×hits reads from the per-hit affordance membership walks.
+// budgetSearch runs GET /api/v1/_search with the raw query string params as the
+// gated principal of ctx and fails the test unless it answers 200.
+func budgetSearch(ctx context.Context, t *testing.T, app *App, d *acl.Declarative, params string) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_search?"+params, http.NoBody)
+	req = req.WithContext(gateCtxFor(ctx, t, d))
+	rec := httptest.NewRecorder()
+	app.handleV1Search(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("search: %d %s", rec.Code, rec.Body)
+	}
+	return rec.Body.String()
+}
+
+// A structured search (the dashboard card shape). The affordance
+// membership walks are batched, so the calls are fixed.
 func TestQueryBudget_SearchIsSizeIndependent(t *testing.T) {
 	b, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
 		t.Helper()
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/_search?q=type%3Aticket", http.NoBody)
-		req = req.WithContext(gateCtxFor(ctx, t, d))
-		rec := httptest.NewRecorder()
-		app.handleV1Search(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("search: %d %s", rec.Code, rec.Body)
+		budgetSearch(ctx, t, app, d, "q=type%3Aticket")
+	})
+	// Calls only, by design: a search without a limit returns every match,
+	// so its rows grow with the matches. The filtered and limited budgets
+	// below show the store reads no row it does not serve.
+	assertCallBudget(t, "search", b, searchBudget, detail)
+}
+
+// A filtered structured search: the filter runs in the store, inside the
+// read gate, so the padding (no status) is never read.
+func TestQueryBudget_SearchFilteredIsSizeIndependent(t *testing.T) {
+	b, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+		t.Helper()
+		if body := budgetSearch(ctx, t, app, d, "q=type%3Aticket+status%3Aopen"); !strings.Contains(body, `"TKT-0002"`) {
+			t.Fatalf("the open tickets are missing, so this budget proves nothing: %s", body)
 		}
 	})
-	// TODO(TKT-F2EJQY8): calls only. The search's structured filter reads
-	// every header of the type (scopedHeaders' type scan in scopedread.go,
-	// reached from helpers.go via queryservice.go).
-	assertCallBudget(t, "search", b, searchBudget, detail)
+	assertBudget(t, "search filtered", b, searchBudget, detail)
+}
+
+// A sorted structured search with a limit: one ordered page of limit rows
+// and one count, however many tickets the store holds (TKT-D3RAB0E). The Go
+// path read every ticket to sort and cut them.
+func TestQueryBudget_SearchLimitIsSizeIndependent(t *testing.T) {
+	b, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+		t.Helper()
+		if body := budgetSearch(ctx, t, app, d, "q=type%3Aticket+sort%3Atitle&limit=5"); strings.Contains(body, "Zpad") {
+			t.Fatalf("the page holds padding, so the sort did not run: %s", body)
+		}
+	})
+	assertBudget(t, "search limit", b, searchLimitBudget, detail)
 }
 
 // The same search with a relation context (`linkable` per row): the rows'
@@ -593,22 +626,12 @@ func TestQueryBudget_SearchIsSizeIndependent(t *testing.T) {
 func TestQueryBudget_SearchLinkableIsSizeIndependent(t *testing.T) {
 	b, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
 		t.Helper()
-		req := httptest.NewRequest(http.MethodGet,
-			"/api/v1/_search?q=type%3Aticket&relation=blocks&direction=incoming", http.NoBody)
-		req = req.WithContext(gateCtxFor(ctx, t, d))
-		rec := httptest.NewRecorder()
-		app.handleV1Search(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("search: %d %s", rec.Code, rec.Body)
-		}
-		if !strings.Contains(rec.Body.String(), `"linkable":true`) {
-			t.Fatalf("no row is linkable, so this budget proves nothing: %s", rec.Body)
+		body := budgetSearch(ctx, t, app, d, "q=type%3Aticket+status%3Aopen&relation=blocks&direction=incoming")
+		if !strings.Contains(body, `"linkable":true`) {
+			t.Fatalf("no row is linkable, so this budget proves nothing: %s", body)
 		}
 	})
-	// TODO(TKT-F2EJQY8): calls only. Besides the header scan named on the
-	// search budget above, the linkable search loads every candidate's body
-	// (rowcontent.go, from search_linkable.go).
-	assertCallBudget(t, "search linkable", b, searchLinkableBudget, detail)
+	assertBudget(t, "search linkable", b, searchLinkableBudget, detail)
 }
 
 // A list page with a relation context, the RelationPicker shape: like the
@@ -895,8 +918,10 @@ const (
 	// nav items: scoped count + one bounded page read (listpushdown.go), the
 	// initials' relation query and neighbor headers, membership walk.
 	navItemsBudget = 6
-	// search: whole-type read, membership walk.
+	// search: one gated page per type, membership walk (TKT-D3RAB0E).
 	searchBudget = 3
+	// limited search: searchBudget plus the count of a full page.
+	searchLimitBudget = 4
 	// search with a relation context: plus the family headers and the
 	// source rows of the page.
 	searchLinkableBudget = 5

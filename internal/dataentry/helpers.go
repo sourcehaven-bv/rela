@@ -442,7 +442,12 @@ func visibleListByTypes(
 	}
 
 	var out []*entity.Entity
-	for _, typ := range types {
+	for i, typ := range types {
+		if slices.Contains(types[:i], typ) {
+			// A repeated type (`type:task` from /_search's `type`
+			// parameter plus the same clause in q) is read once.
+			continue
+		}
 		ts, ok := search.ResolveTypeScope(scope, typ)
 		if !ok {
 			continue // denied type
