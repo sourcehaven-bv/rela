@@ -1978,7 +1978,7 @@ func TestValidateActions_NeitherSetNorScript(t *testing.T) {
 		Actions: map[string]Action{"foo": {}},
 	}
 	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
-	if err == nil || !strings.Contains(err.Error(), "neither script nor set") {
+	if err == nil || !strings.Contains(err.Error(), "neither script, set nor llm") {
 		t.Errorf("expected neither error, got: %v", err)
 	}
 }

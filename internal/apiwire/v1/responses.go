@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"github.com/Sourcehaven-BV/rela/internal/actionproposal"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
@@ -1918,6 +1919,9 @@ type ActionResponse struct {
 	MessageType   string `json:"message_type,omitempty"`
 	Error         string `json:"error,omitempty"`
 	CorrelationID string `json:"correlation_id,omitempty"`
+	// Proposal is the reply of an `llm:` action. It is a proposal only:
+	// the action wrote nothing.
+	Proposal *actionproposal.Proposal `json:"proposal,omitempty"`
 }
 
 // Mention is the resolved target of an entity-ID code span found in

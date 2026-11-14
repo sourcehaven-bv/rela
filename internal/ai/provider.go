@@ -12,7 +12,9 @@
 //
 // Single wiring path: lua.LoadContextOptions(cacheDir, scriptPath) loads
 // AI + secrets; script.NewWriterRuntime calls it. Do not add parallel
-// ai.LoadProvider call sites — go through NewWriterRuntime.
+// ai.LoadProvider call sites — go through NewWriterRuntime, or
+// script.AIProvider for a caller that runs no Lua (the declarative llm
+// action).
 //
 // # Convention deviation
 //
@@ -35,7 +37,10 @@
 // API keys, or message content.
 package ai
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 // Provider is the unified interface for AI capabilities.
 //
@@ -75,6 +80,23 @@ type ChatRequest struct {
 	Model       string   // optional; provider falls back to Config.Model
 	Temperature *float64 // optional
 	MaxTokens   *int     // optional
+
+	// ResponseFormat asks the provider to answer with JSON matching a
+	// schema. Optional; nil sends no response_format.
+	ResponseFormat *JSONSchemaFormat
+}
+
+// JSONSchemaFormat is a structured-output request: the reply must be a
+// JSON value matching Schema. Providers that ignore response_format still
+// answer, so a caller must validate the reply itself.
+type JSONSchemaFormat struct {
+	// Name identifies the schema to the provider: 1 to 64 letters,
+	// digits, '_' or '-'.
+	Name string
+	// Schema is a JSON Schema object, sent as is.
+	Schema json.RawMessage
+	// Strict asks the provider to enforce the schema exactly.
+	Strict bool
 }
 
 // ChatResponse is the response from Provider.Chat.

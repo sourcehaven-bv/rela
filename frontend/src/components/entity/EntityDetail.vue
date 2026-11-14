@@ -13,7 +13,7 @@ import { isCancelledFetch } from '@/composables/usePageData'
 import { fetchView, getCommands, getErrorMessage } from '@/api'
 import { liveViewPath } from '@/api/live'
 import { useLiveSubscription } from '@/composables/useLiveSubscription'
-import { runAction } from '@/api/actions'
+import { runAction, type ActionProposal } from '@/api/actions'
 import { useActionFeedback } from '@/composables/useActionFeedback'
 import { useWorld, worldQuery, DEFAULT_WORLD } from '@/composables/useWorld'
 import { entityRef, refBareId, refFace } from '@/utils/entityRef'
@@ -100,6 +100,7 @@ import { faceToggleOptions } from '@/components/entity/faceToggleOptions'
 import EntityActionsMenu from '@/components/entity/EntityActionsMenu.vue'
 import type { EntityAction } from '@/components/entity/entityActions'
 import DuplicateModal from '@/components/entity/DuplicateModal.vue'
+import LLMProposalDialog from '@/components/entity/LLMProposalDialog.vue'
 import WorldBadge from '@/components/ui/WorldBadge.vue'
 import WorldBanner from '@/components/common/WorldBanner.vue'
 import { invokeCopy } from '@/api/copies'
@@ -1119,6 +1120,15 @@ const detailActions = computed<DetailAction[]>(() => {
   return out.sort((a, b) => a.label.localeCompare(b.label))
 })
 const detailActionBusy = ref(false)
+// The action whose request is in flight; its button shows the pending label.
+const runningActionId = ref<string | null>(null)
+// The open proposal of an `llm:` action (TKT-4USH1HO). The action wrote
+// nothing; the dialog applies what the user accepts. It belongs to the
+// entity it was made for: a reply for an entity the user has left is
+// dropped, and leaving the entity closes the dialog.
+const llmProposal = ref<{ proposal: ActionProposal; label: string; entityType: string } | null>(
+  null
+)
 const { reportResult, reportError } = useActionFeedback()
 
 async function runDetailAction(action: DetailAction, ev?: Event) {
@@ -1139,10 +1149,18 @@ async function runDetailAction(action: DetailAction, ev?: Event) {
   // The served face address, never the bare id: the server checks the face
   // against `available_on.faces` and hands it to the script as entity.face.
   const address = servedRef.value
-  if (address === null) return
+  const entityType = entry.value?.type
+  if (address === null || !entityType) return
   detailActionBusy.value = true
+  runningActionId.value = id
   try {
     const res = await runAction(id, address)
+    if (res?.proposal) {
+      if (servedRef.value === address) {
+        llmProposal.value = { proposal: res.proposal, label, entityType }
+      }
+      return
+    }
     reportResult(res, t('entity.action.done', { label }))
     if (res?.redirect) {
       router.push(res.redirect)
@@ -1155,6 +1173,7 @@ async function runDetailAction(action: DetailAction, ev?: Event) {
     reportError(err, triggerEl, label)
   } finally {
     detailActionBusy.value = false
+    runningActionId.value = null
   }
 }
 
@@ -1250,7 +1269,9 @@ function runSessionWrite<T>(send: () => Promise<T>): Promise<T> {
 // Comments and pile scope navigation belong to the row on screen, which
 // changes when a view lands, not when the route does.
 watch(servedRef, (now, before) => {
-  if (now === null || now === before) return
+  if (now === before) return
+  llmProposal.value = null
+  if (now === null) return
   void loadScopeNav()
   void loadComments()
 })
@@ -2637,7 +2658,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
               v-for="a in detailActions"
               :key="`action-${a.id}`"
               variant="secondary"
-              :disabled="detailActionBusy"
+              :disabled="detailActionBusy && runningActionId !== a.id"
+              :loading="runningActionId === a.id"
+              :pending-label="t('entity.action.running')"
               @click="runDetailAction(a, $event)"
             >
               {{ a.label }}
@@ -2742,6 +2765,14 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
         `world` is threaded explicitly: it decides which face the copy lands in,
         and an embedded form reads props rather than the route.
       -->
+      <LLMProposalDialog
+        v-if="llmProposal"
+        :proposal="llmProposal.proposal"
+        :entity-type="llmProposal.entityType"
+        :label="llmProposal.label"
+        @close="llmProposal = null"
+        @applied="loadView()"
+      />
       <DuplicateModal
         v-if="showDuplicateModal && entry && duplicateFormId"
         :source="entry"

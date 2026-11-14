@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/actionproposal"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
@@ -267,4 +268,22 @@ func compactJSON(t *testing.T, text string) string {
 		t.Fatal(err)
 	}
 	return string(out)
+}
+
+// An llm action's proposal reaches the MCP caller in the result.
+func TestActionResultView_Proposal(t *testing.T) {
+	p := &actionproposal.Proposal{
+		Entity: "TKT-1",
+		Set:    []actionproposal.Value{{Property: "priority", Current: json.RawMessage(`"low"`), Proposed: json.RawMessage(`"high"`)}},
+		Relate: []actionproposal.Relation{{Relation: "affects", To: "CON-1", ToType: "concept", ToTitle: "Sessions"}},
+	}
+	got, err := json.Marshal(actionResultView(&script.ActionResponse{Proposal: p}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"proposal":{"entity":"TKT-1"`, `"proposed":"high"`, `"to":"CON-1"`} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("result %s lacks %s", got, want)
+		}
+	}
 }

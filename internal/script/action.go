@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/actionproposal"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -60,6 +61,11 @@ type ActionResponse struct {
 	// receiver honors it; the HTTP action endpoint refuses a response that
 	// carries it, so a script cannot believe it stored roles when it did not.
 	AssertedRoles []string `json:"-"`
+
+	// Proposal is what an `llm:` action proposes. The action writes
+	// nothing; the caller applies the changes it accepts through the
+	// ordinary write APIs. Nil for a script action.
+	Proposal *actionproposal.Proposal `json:"proposal,omitempty"`
 }
 
 // IsRich reports whether the script chose the {status, body, content_type}

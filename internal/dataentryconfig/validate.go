@@ -538,6 +538,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateQueryScopes(cfg, meta)...)
 	errs = append(errs, validateNavEntities(cfg, meta)...)
 	errs = append(errs, validateAccount(data, cfg, meta)...)
+	errs = append(errs, llmUnknownKeys(data)...)
 	errs = append(errs, validatePiles(data, cfg, meta)...)
 	errs = append(errs, validateChannelsShape(data, cfg)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
@@ -2727,6 +2728,22 @@ var reservedListKeys = map[string]bool{
 // actionKeyRegex allows a single lowercase letter or digit as a shortcut key.
 var actionKeyRegex = regexp.MustCompile(`^[a-z0-9]$`)
 
+// validateActionKey checks an action's optional shortcut key. A key is only
+// required when a list references the action.
+func validateActionKey(id, key string) []string {
+	switch {
+	case key == "":
+		return nil
+	case !actionKeyRegex.MatchString(key):
+		return []string{fmt.Sprintf(
+			"actions: %q key %q must be a single lowercase letter or digit", id, key)}
+	case reservedListKeys[key]:
+		return []string{fmt.Sprintf(
+			"actions: %q key %q conflicts with reserved list shortcut", id, key)}
+	}
+	return nil
+}
+
 // validateActions checks action definitions: ID format, set/script exclusivity,
 // script path safety, and key shortcut validity.
 //
@@ -2744,6 +2761,12 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 		hasScript := action.Script != ""
 		hasSet := len(action.Set) > 0
 
+		if action.LLM != nil {
+			errs = append(errs, validateLLMAction(id, action, meta)...)
+			errs = append(errs, validateActionScope(id, action, true, meta)...)
+			continue
+		}
+
 		if hasScript && hasSet {
 			errs = append(errs, fmt.Sprintf(
 				"actions: %q has both script and set (must have one, not both)", id))
@@ -2751,7 +2774,7 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 		}
 		if !hasScript && !hasSet {
 			errs = append(errs, fmt.Sprintf(
-				"actions: %q has neither script nor set (must have one)", id))
+				"actions: %q has neither script, set nor llm (must have one)", id))
 			continue
 		}
 
@@ -2772,16 +2795,7 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 		errs = append(errs, validateActionScope(id, action, hasScript, meta)...)
 		errs = append(errs, validateActionElevation(id, action, hasScript, meta)...)
 
-		// Key validation (optional — only required when referenced by a list)
-		if action.Key != "" {
-			if !actionKeyRegex.MatchString(action.Key) {
-				errs = append(errs, fmt.Sprintf(
-					"actions: %q key %q must be a single lowercase letter or digit", id, action.Key))
-			} else if reservedListKeys[action.Key] {
-				errs = append(errs, fmt.Sprintf(
-					"actions: %q key %q conflicts with reserved list shortcut", id, action.Key))
-			}
-		}
+		errs = append(errs, validateActionKey(id, action.Key)...)
 	}
 
 	// Validate list action references
