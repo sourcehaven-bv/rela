@@ -1243,11 +1243,15 @@ export interface PageConfig {
   icon?: string
   entity_type?: string
   badge?: string
+  /** `steps` draws the tabs as numbered steps; absent or `tabs` is a tab bar. */
+  mode?: PageMode
   tabs: Array<{
     id: string
     label: string
     icon?: string
     permission?: string
+    /** The question a step shows above its view. Only on a steps page. */
+    prompt?: string
     list?: string
     kanban?: string
     calendar?: string
@@ -1258,6 +1262,9 @@ export interface PageConfig {
     scope?: { root?: boolean; relation?: string; direction?: 'outgoing' | 'incoming' }
   }>
 }
+
+/** How a page shows its tabs (TKT-35BY3PE). */
+export type PageMode = 'tabs' | 'steps'
 
 /** The kind of view a page tab shows; the route name of its standalone view. */
 export type PageTabView = 'list' | 'kanban' | 'calendar' | 'gantt' | 'document' | 'dashboard'
@@ -1279,6 +1286,8 @@ export interface SidebarPageTab {
   scope?: 'relation' | 'root'
   relation?: string
   direction?: 'outgoing' | 'incoming'
+  /** The question shown above the view on a steps page. */
+  prompt?: string
   /**
    * Per entity type, the relation a row created while this tab is open is
    * linked to the page's entity over. The space's Create menu uses it.
@@ -1304,6 +1313,8 @@ export interface SidebarPage {
   entity_type?: string
   /** The entity's property the header shows as a pill beside its title. */
   badge?: string
+  /** `steps` on a page that draws its tabs as numbered steps; absent for a tab bar. */
+  mode?: 'steps'
   tabs: SidebarPageTab[]
 }
 

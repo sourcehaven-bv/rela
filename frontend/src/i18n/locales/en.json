@@ -575,7 +575,16 @@
     "deleteTitle": "Delete {type}?",
     "deleteFailed": "Failed to delete",
     "deleted": "Deleted",
-    "confirmRun": "Run {label}?"
+    "confirmRun": "Run {label}?",
+    "steps": {
+      "label": "Steps",
+      "back": "Back",
+      "next": "Next",
+      "present": "Present",
+      "exitPresent": "Exit",
+      "fullscreen": "Full screen",
+      "exitFullscreen": "Exit full screen"
+    }
   },
   "editor": {
     "command": {

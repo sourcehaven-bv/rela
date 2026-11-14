@@ -134,7 +134,7 @@ func TestEntityDef_GetDefaultStatus(t *testing.T) {
 			want: "b",
 		},
 		{
-			// Only valid when "wf" is not a state machine: statemachine.Compile
+			// Only valid when "wf" is not a state machine: transitions.CompileTransitions
 			// rejects a property default other than the entry value at boot.
 			name: "property default wins over type",
 			def:  status(PropertyDef{Type: "wf", Default: "c"}),
