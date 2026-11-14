@@ -2293,11 +2293,6 @@ function totalRowsFor(section: ViewSection): TotalRow[] {
   )
 }
 
-function scrollToSection(sectionId: string) {
-  const el = document.getElementById(sectionId)
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-}
-
 // Lifecycle
 onMounted(() => {
   document.addEventListener('keydown', handleKeydown)
@@ -2784,18 +2779,6 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           </p>
         </div>
       </aside>
-
-      <!-- Jump bar (only when there's enough to jump between) -->
-      <nav v-if="viewData && viewData.sections.length > 1" class="jump-bar">
-        <button
-          v-for="section in viewData.sections.filter((s) => s.heading)"
-          :key="section.sectionId"
-          class="jump-link"
-          @click="scrollToSection(section.sectionId)"
-        >
-          {{ section.heading }}
-        </button>
-      </nav>
 
       <!-- Sections -->
       <div v-if="viewData" class="sections">
@@ -3749,33 +3732,6 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   flex: 1;
   font-size: var(--font-size-dense);
   color: var(--rl-color-text-muted);
-}
-
-/* Jump bar */
-.jump-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
-  padding: 12px 0;
-  border-bottom: 1px solid var(--rl-color-border);
-  margin-bottom: 24px;
-}
-
-.jump-link {
-  padding: 6px 12px;
-  background: var(--rl-color-bg-hover);
-  border: 1px solid var(--rl-color-border);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-dense);
-  color: var(--rl-color-text);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.jump-link:hover {
-  background: var(--rl-color-accent);
-  border-color: var(--rl-color-accent);
-  color: white;
 }
 
 /* Sections */
