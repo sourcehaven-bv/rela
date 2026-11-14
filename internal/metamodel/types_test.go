@@ -1241,6 +1241,43 @@ func TestMetamodel_InferEntityType(t *testing.T) {
 	}
 }
 
+// TestMetamodel_InferEntityType_CaseFold pins BUG-4OPP525: prefixes match
+// with case folded, an exact-case match wins over a folded one, then the
+// longer prefix, then the smaller type name, whatever the map order.
+func TestMetamodel_InferEntityType_CaseFold(t *testing.T) {
+	meta := &Metamodel{
+		Entities: map[string]EntityDef{
+			"note":        {IDPrefix: "nt-"},
+			"shout":       {IDPrefix: "NT-"},
+			"requirement": {IDPrefix: "REQ-"},
+			"subreq":      {IDPrefix: "req-sub-"},
+			"alpha":       {IDPrefix: "dup-"},
+			"beta":        {IDPrefix: "dup-"},
+		},
+	}
+	tests := []struct {
+		id   string
+		want string
+	}{
+		{"nt-001", "note"},
+		{"NT-001", "shout"},
+		{"Nt-001", "note"}, // both fold; same length; smaller name
+		{"REQ-SUB-1", "requirement"},
+		{"req-sub-1", "subreq"},
+		{"Req-Sub-1", "subreq"}, // both fold; longer prefix
+		{"DUP-1", "alpha"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			for range 20 { // map order varies per range
+				if got := meta.InferEntityType(tt.id); got != tt.want {
+					t.Fatalf("InferEntityType(%q) = %q, want %q", tt.id, got, tt.want)
+				}
+			}
+		})
+	}
+}
+
 func TestMetamodel_EntityTypes(t *testing.T) {
 	meta := &Metamodel{
 		Entities: map[string]EntityDef{

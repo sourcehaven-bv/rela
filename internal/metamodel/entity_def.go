@@ -369,12 +369,40 @@ func (e *EntityDef) HasPattern(pattern string) bool {
 // id cannot fold onto an ASCII prefix byte for byte, so this folds ASCII
 // letters only.
 func (e *EntityDef) MatchesID(id string) bool {
+	_, ok := e.idPrefixMatch(id)
+	return ok
+}
+
+// prefixMatch ranks how well an id matches a type's prefix for
+// [Metamodel.InferEntityType]: a match in the id's exact case beats a
+// folded one, then a longer prefix beats a shorter one.
+type prefixMatch struct {
+	exact  bool
+	length int
+}
+
+func (m prefixMatch) beats(o prefixMatch) bool {
+	if m.exact != o.exact {
+		return m.exact
+	}
+	return m.length > o.length
+}
+
+// idPrefixMatch returns the best of this type's prefixes that id starts
+// with, compared with case folded, and whether any does.
+func (e *EntityDef) idPrefixMatch(id string) (prefixMatch, bool) {
+	var best prefixMatch
+	found := false
 	for _, prefix := range e.GetIDPrefixes() {
-		if len(id) >= len(prefix) && strings.EqualFold(id[:len(prefix)], prefix) {
-			return true
+		if len(id) < len(prefix) || !strings.EqualFold(id[:len(prefix)], prefix) {
+			continue
+		}
+		m := prefixMatch{exact: id[:len(prefix)] == prefix, length: len(prefix)}
+		if !found || m.beats(best) {
+			best, found = m, true
 		}
 	}
-	return false
+	return best, found
 }
 
 // GetPropertyOrder returns the property names in their definition order.
