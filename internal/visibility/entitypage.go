@@ -68,8 +68,9 @@ func ungatedTraversal(_ context.Context, _ string, hop acl.TraversalHop) (*store
 
 // gateTraversals turns ts into store edge tests through gate. empty
 // reports that a positive term is denied and none is refused, so no row
-// matches. A denied negated term drops out. Any other gate error, a nil
-// predicate, or a predicate the gate already negated is
+// matches. A denied negated term drops out. A missing or mismatched
+// identity fails the read. Any other gate error, a nil predicate, or a
+// predicate the gate already negated is
 // [ErrPropsNotPushable], so the caller answers the filter on its own path,
 // which reports the same refusal.
 func gateTraversals(
@@ -84,6 +85,9 @@ func gateTraversals(
 				empty = true
 			}
 			continue
+		case errors.Is(gerr, acl.ErrNoIdentity), errors.Is(gerr, acl.ErrIdentityMismatch):
+			// No caller to answer for: fail the read, never fall back.
+			return nil, false, gerr
 		case gerr != nil:
 			return nil, false, fmt.Errorf("%w: %w", ErrPropsNotPushable, gerr)
 		case pred == nil, pred.Negate:
