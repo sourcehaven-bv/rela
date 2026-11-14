@@ -15,10 +15,10 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
 	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
@@ -122,7 +122,7 @@ func newWorld(t *testing.T) *world {
 	st := memstore.New()
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{},
-		Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		Transitions: transitions.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		AttachmentLocker: lock.NewMemoryLocker(), AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
@@ -154,7 +154,7 @@ func aclWorld(t *testing.T, policy, user string) *world {
 	}
 	w.mgr, err = entitymanager.New(entitymanager.Deps{
 		Store: w.st, Meta: w.meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: d,
-		Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		Transitions: transitions.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		CopyReadGate: entitymanager.AllowAllCopyReadGate{}, CopyVisibility: copyVis,
 		AttachmentLocker: lock.NewMemoryLocker(), AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
