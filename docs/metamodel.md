@@ -3518,7 +3518,9 @@ mode" in the CLI reference).
 
 1. **Start with warnings**: Begin with `severity: warning` and promote to `error` once your data is cleaned up
 2. **Use specific entity types**: Narrow rules to specific types when possible for clearer error messages
-3. **Combine with cardinality**: Use cardinality constraints for a fixed bound on a relation, and a validation with `related(...)` when the relation is needed only in some states
+3. **Combine with cardinality**: Use cardinality constraints for a fixed bound on
+   a relation, and a validation with `related(...)` when the relation is needed
+   only in some states
 4. **Check for empty values**: Use `property!=` to require that a property has any value
 
 ## Declared Piles
