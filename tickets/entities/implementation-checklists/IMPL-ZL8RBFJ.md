@@ -1,7 +1,7 @@
 ---
 id: IMPL-ZL8RBFJ
 type: implementation-checklist
-title: 'Implementation: Run E2E and Frontend CI jobs in the Playwright image'
+title: 'Implementation: Run Frontend CI in the Playwright image and retry apt steps'
 started: "2026-11-11"
 completed: "2026-11-11"
 status: done

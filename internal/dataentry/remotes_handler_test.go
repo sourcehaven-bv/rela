@@ -501,16 +501,20 @@ func TestRemotes_MeOffersPage(t *testing.T) {
 }
 
 // TestRemotes_RemoteDeletedNeedsDelete: taking the remote side of a row the
-// remote deleted deletes it here, so it needs the delete right (TKT-CVT9W1K).
+// remote deleted deletes it here, so it needs the delete right and not the
+// update right (TKT-CVT9W1K, #2230).
 func TestRemotes_RemoteDeletedNeedsDelete(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name   string
-		delete bool
-	}{{"update only", false}, {"with delete", true}} {
+		name           string
+		update, delete bool
+	}{{"update only", true, false}, {"with delete", true, true}, {"delete without update", false, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			role := syncRole()
+			if !tc.update {
+				role.Update = nil
+			}
 			if tc.delete {
 				role.Delete = []string{"ticket"}
 			}
