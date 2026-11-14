@@ -26,7 +26,6 @@ func TestGanttEdges_OneStatementPerRelationType_Postgres(t *testing.T) {
 	ctx := context.Background()
 	// More edges than one 500-row iterator page holds.
 	const total = 1200
-	nodes := map[string]*ganttNode{}
 	for i := range total {
 		key := entity.RelationKey{From: fmt.Sprintf("PRJ-%04d", i), Type: "contains", To: fmt.Sprintf("TSK-%04d", i)}
 		_, err := st.CreateRelation(ctx, key, &store.RelationData{})
@@ -35,6 +34,7 @@ func TestGanttEdges_OneStatementPerRelationType_Postgres(t *testing.T) {
 	h := &ganttHandler{store: st}
 	g := dataentryconfig.Gantt{Hierarchy: []string{"contains"}}
 	for _, n := range []int{100, total} {
+		nodes := map[string]*ganttNode{}
 		for i := range n {
 			for _, id := range []string{fmt.Sprintf("PRJ-%04d", i), fmt.Sprintf("TSK-%04d", i)} {
 				nodes[id] = &ganttNode{id: id}

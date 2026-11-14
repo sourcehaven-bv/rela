@@ -68,6 +68,13 @@ func (queryTracer) TraceQueryStart(
 	v.sql = data.SQL
 	if debug {
 		v.args = data.Args
+		// pgx passes its query options through Args; queryPage prepends an
+		// exec mode, which is not a bind parameter.
+		if len(v.args) > 0 {
+			if _, isMode := v.args[0].(pgx.QueryExecMode); isMode {
+				v.args = v.args[1:]
+			}
+		}
 	}
 	return context.WithValue(ctx, tracerCtxKey{}, v)
 }

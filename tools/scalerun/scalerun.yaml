@@ -89,7 +89,7 @@ endpoints:
     # p50 grew 5.3x (165 -> 880 ms) for 5x the data: the chart still reads
     # every row of the hierarchy to roll its dates up. TKT-K7EM7Z5 removed
     # the faster-than-linear part; TKT-EBTVUL8 tracks the rest.
-    ratio_max: 8
+    ratio_max: 7
   - name: search
     method: GET
     path: /api/v1/_search?q={word}&limit=20

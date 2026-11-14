@@ -44,9 +44,10 @@ func (s *Store) GetRelation(ctx context.Context, k entity.RelationKey) (*entity.
 // soft-deleted ones. Cursor and Limit are ignored (per the RelationReader
 // contract).
 func (s *Store) ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
+	plan := idBatchPage(max(len(q.EntityIDs), len(q.PeerIDs)), len(q.EntityIDs)+len(q.PeerIDs))
 	live := pagedSeq(func(after *relationKey) ([]*entity.Relation, *relationKey, error) {
 		sql, args := buildRelationListSQL(q, after)
-		return queryPage(ctx, s.db, sql, args, len(q.EntityIDs)+len(q.PeerIDs), scanRelation, keyOfRelation)
+		return queryPage(ctx, s.db, sql, args, plan, scanRelation, keyOfRelation)
 	})
 	return func(yield func(*entity.Relation, error) bool) {
 		for r, err := range live {

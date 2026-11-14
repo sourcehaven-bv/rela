@@ -22,5 +22,5 @@ the Go fold. Where that cannot be matched exactly the request falls back to the
 full build, as the drill fast path already does. A smaller step is a header read
 that projects only the properties the chart uses.
 
-`tools/scalerun/scalerun.yaml` holds the gantt at `ratio_max: 8`; lower it to
+`tools/scalerun/scalerun.yaml` holds the gantt at `ratio_max: 7`; lower it to
 the default when this lands.
