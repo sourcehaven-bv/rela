@@ -2738,6 +2738,24 @@
       "reason": "Debt: low value per finding.",
       "at": "2026-11-13T10:30:00Z",
       "title": "5 functions in web/components/entity take boolean flags."
+    },
+    "concepts.untyped_bag-620a9a73d156": {
+      "state": "accepted",
+      "reason": "Design: Value.Const holds a mapping constant and PropertyChange.Old/New hold property values, which take any scalar or list a schema property allows, like entity.Entity.Properties. The cli only prints them in the plan.",
+      "at": "2026-11-14T12:00:00Z",
+      "title": "2 types of mapimport that other components use carry untyped data: Value.Const (any), PropertyChange.Old (any), PropertyChange.New (any)."
+    },
+    "boundaries.misplaced_file-c6583b1f519e": {
+      "state": "accepted",
+      "reason": "Design: import_mapped.go is the cobra adapter for mapimport, as every cli command file is for its package; the command stays in cli with the other commands.",
+      "at": "2026-11-14T12:00:00Z",
+      "title": "cli/import_mapped.go in cli has most of its links to mapimport (weighted links: 3.2 to mapimport, 1.6 to cli)."
+    },
+    "vocabulary.leak-222b575ff897": {
+      "state": "accepted",
+      "reason": "Design: mapimport names the gated reader it gets at wiring, as validator and analysis do (accepted vocabulary.leak-edef7b6b6ea0).",
+      "at": "2026-11-14T12:00:00Z",
+      "title": "mapimport uses the term \"Gated reader\", owned by visibility."
     }
   },
   "labels": {},
@@ -2746,19 +2764,19 @@
       "weight.profile": 49,
       "weight.structure": 859,
       "weight.layers": 0,
-      "weight.vocabulary": 870,
+      "weight.vocabulary": 884,
       "weight.types": 4203,
-      "weight.concepts": 7233,
-      "weight.boundaries": 1471,
+      "weight.concepts": 7275,
+      "weight.boundaries": 1473,
       "weight.data": 1297,
       "weight.security": 2064,
       "largest_tangle": 14,
       "cycle_edges": 67,
       "upward_edges": 0,
-      "propagation_cost": 9.3
+      "propagation_cost": 9.4
     },
     "min_weight": 0,
-    "at": "2026-11-13T09:30:00Z",
+    "at": "2026-11-14T12:00:00Z",
     "log": [
       {
         "at": "2026-11-05T20:33:00Z",
@@ -3107,6 +3125,29 @@
           "propagation_cost": [
             9.1,
             9.3
+          ]
+        }
+      },
+      {
+        "at": "2026-11-14T12:00:00Z",
+        "change": "loosen",
+        "reason": "TKT-K7HR49Y: the new mapimport package (rela import --mapping) adds three accepted findings (vocabulary.leak-222b575ff897, concepts.untyped_bag-620a9a73d156, boundaries.misplaced_file-c6583b1f519e), and cli now reaches it, raising propagation cost to 9.4. weight.structure and weight.security keep the traced values.",
+        "metrics": {
+          "weight.vocabulary": [
+            870,
+            884
+          ],
+          "weight.concepts": [
+            7233,
+            7275
+          ],
+          "weight.boundaries": [
+            1471,
+            1473
+          ],
+          "propagation_cost": [
+            9.3,
+            9.4
           ]
         }
       }

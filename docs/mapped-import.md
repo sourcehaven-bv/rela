@@ -262,10 +262,17 @@ trusted:
 - XML is read without a DTD, so external entities and entity expansion
   ("billion laughs") are refused.
 - The import runs no external commands and the hook has no network.
-- The plan names a stored entity only when you may read it, and shows only
-  property values you may see. A record that would compare or write a
-  property hidden from you by a `visible:` rule is an error. An entity that
-  hides its key or scope property from you counts as one you cannot read.
+- The plan reads stored rows through the caller's read gate. A caller with
+  an identity sees only the entities it may read and the property values it
+  may see. A record that would compare or write a property hidden by a
+  `visible:` rule is an error. An entity that hides its key or scope
+  property counts as one the caller cannot read.
+- The `rela` CLI is the operator trust boundary: whoever runs it already has
+  the project files, so its reads are unrestricted, as for `rela list`. The
+  plan then shows every stored row, also with `--run-as`. The writes are
+  still checked for the principal. An update to an entity that principal
+  may not read fails as `entity not found`, the same answer as for an
+  entity that does not exist.
 
 ## Example: an OSCAL catalog
 

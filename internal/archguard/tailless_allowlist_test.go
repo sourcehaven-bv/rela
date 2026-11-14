@@ -8,4 +8,6 @@ var taillessKeyAllowlist = map[string]allowed{
 	"internal/aclstore/graph.go": {1, "HasEdge: the ACL walks membership and role relations only, " +
 		"and Policy.ValidateAgainstMetamodel refuses a content-scoped one, so the identity edge is " +
 		"the only edge it can mean"},
+	"internal/mapimport/apply.go": {1, "Apply adds edges between entities of mapped types, and Parse " +
+		"refuses a type that declares faces, so the identity edge is the only edge it can mean"},
 }
