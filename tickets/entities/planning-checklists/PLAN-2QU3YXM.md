@@ -235,8 +235,10 @@ matcher.
 - Alias entity type: canonical compiled clauses.
 - `when:` clause on an undeclared property: string matcher, as today.
 - Untranspilable clause (regex on an int): `filter.Match` verdict, as today.
-- Engine without a metamodel (`NewEngine`): string matching; a condition is
-still a load error.
+- Engine without a metamodel (`NewEngine`): string matching. `NewEngine`
+cannot reject a `condition:` at load; the condition does not fire and warns
+`no metamodel` on each selected write. Only `NewEngineFromMetamodel` rejects
+it at load.
 - Several automations setting the same property: the later one wins (order
 kept).
 - `create_entity` with an empty type or an invalid interpolated template: an
