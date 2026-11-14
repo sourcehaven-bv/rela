@@ -59,11 +59,11 @@ func shouldOpenOnReopen(hasVisibleWindows bool, windowCount int) bool {
 
 // liveMainWindow returns the main window, or nil when it is closed.
 // coverage-ignore-func: requires Wails runtime
-func (d *Desktop) liveMainWindow() *application.WebviewWindow {
-	if d.wails == nil {
+func liveMainWindow(app *application.App) *application.WebviewWindow {
+	if app == nil {
 		return nil
 	}
-	w, ok := d.wails.Window.GetByName(mainWindowName)
+	w, ok := app.Window.GetByName(mainWindowName)
 	if !ok {
 		return nil
 	}
@@ -80,7 +80,7 @@ func (d *Desktop) newMainWindow(title string) *application.WebviewWindow {
 	// Reading the geometry after the window is gone returns zeroes, so it is
 	// saved while the window closes, not after.
 	win.OnWindowEvent(events.Common.WindowClosing, func(*application.WindowEvent) {
-		d.saveWindowState(win)
+		saveWindowState(d.prefs, win)
 	})
 	return win
 }
@@ -93,7 +93,7 @@ func (d *Desktop) showMainWindow() {
 		return
 	}
 	mainWindowMu.Lock()
-	win := d.liveMainWindow()
+	win := liveMainWindow(d.wails)
 	if win == nil {
 		win = d.newMainWindow(d.projectTitle())
 	}
@@ -117,15 +117,15 @@ func (d *Desktop) onDockReopen(e *application.ApplicationEvent) {
 // Failures are logged and swallowed: losing window position must never block
 // a quit.
 // coverage-ignore-func: requires Wails runtime
-func (d *Desktop) saveWindowState(win *application.WebviewWindow) {
+func saveWindowState(prefs *desktop.Preferences, win *application.WebviewWindow) {
 	w, h := win.Size()
 	x, y := win.Position()
 	st := desktop.WindowState{Width: w, Height: h, X: x, Y: y, Maximized: win.IsMaximised()}
 	if !st.Valid() {
 		return // don't overwrite good state with a minimized/degenerate size
 	}
-	d.prefs.Window = st
-	if err := d.prefs.Save(); err != nil {
+	prefs.Window = st
+	if err := prefs.Save(); err != nil {
 		slog.Warn("could not save window state", "error", err)
 	}
 }

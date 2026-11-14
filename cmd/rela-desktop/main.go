@@ -293,7 +293,7 @@ func (d *Desktop) errorDialog(title, message string) {
 // the user closed it, a new one opens, which loads the page fresh anyway.
 // coverage-ignore-func: requires Wails runtime
 func (d *Desktop) reloadWindow() {
-	if win := d.liveMainWindow(); win != nil {
+	if win := liveMainWindow(d.wails); win != nil {
 		win.Reload()
 		return
 	}
@@ -488,7 +488,7 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 
 	d.startNotifier(schedCtx, projectID(app.ProjectRoot()), svc, appbuild.CompiledWorlds(svc).DefaultWorld())
 
-	if win := d.liveMainWindow(); win != nil {
+	if win := liveMainWindow(d.wails); win != nil {
 		win.SetTitle(name)
 	}
 
