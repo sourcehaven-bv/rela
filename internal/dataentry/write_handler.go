@@ -90,6 +90,13 @@ type entityMutator interface {
 	PatchGranted(
 		ctx context.Context, grant entitymanager.UpdateGrant, id string, patch entityPkg.Patch,
 	) (*entityPkg.UpdateResult, error)
+	// PatchGrantedWithRelations is PatchGranted with a replace of edges at
+	// the row, written in the same transaction. See
+	// entitymanager.PatchWithRelations.
+	PatchGrantedWithRelations(
+		ctx context.Context, grant entitymanager.UpdateGrant, id string, patch entityPkg.Patch,
+		creates []entitymanager.RelationCreate, removes []entityPkg.RelationKey,
+	) (*entityPkg.UpdateResult, error)
 }
 
 // grantedManager is the production [entityMutator]: the manager, plus the
@@ -102,6 +109,57 @@ func (grantedManager) PatchGranted(
 	ctx context.Context, grant entitymanager.UpdateGrant, id string, patch entityPkg.Patch,
 ) (*entityPkg.UpdateResult, error) {
 	return grant.PatchEntity(ctx, id, patch)
+}
+
+// PatchGrantedWithRelations writes through the grant with
+// entitymanager.PatchWithRelations.
+func (grantedManager) PatchGrantedWithRelations(
+	ctx context.Context, grant entitymanager.UpdateGrant, id string, patch entityPkg.Patch,
+	creates []entitymanager.RelationCreate, removes []entityPkg.RelationKey,
+) (*entityPkg.UpdateResult, error) {
+	res, _, err := entitymanager.PatchWithRelations(ctx, grant, id, patch, creates, removes)
+	return res, err
+}
+
+// patchJoined writes patch through grant, with the relation writes of joined
+// in the same transaction when joined is not nil, and adds joined's warnings
+// to the result.
+//
+// A function, not a method, to keep writeHandler under its plimsoll line.
+func patchJoined(
+	ctx context.Context, h *writeHandler, grant entitymanager.UpdateGrant, id string, patch entityPkg.Patch,
+	joined *joinedRelations,
+) (*entityPkg.UpdateResult, error) {
+	if joined == nil {
+		return h.manager.PatchGranted(ctx, grant, id, patch)
+	}
+	res, err := h.manager.PatchGrantedWithRelations(ctx, grant, id, patch, joined.creates, joined.removes)
+	if err != nil {
+		return nil, err
+	}
+	if res != nil {
+		res.Warnings = append(res.Warnings, joined.warnings...)
+	}
+	return res, nil
+}
+
+// writeUpdateError answers a failed entity patch of a PATCH: a refusal of
+// the joined relation writes as a relation error, a lost precondition race
+// as that, and anything else as a patch error.
+//
+// A function, not a method, to keep writeHandler under its plimsoll line.
+func writeUpdateError(
+	w http.ResponseWriter, r *http.Request, h *writeHandler, err error, joined *joinedRelations,
+	pre *v1.Preconditions, typeName string, ref entityPkg.Ref, plural string,
+) {
+	if relErr := joined.relationError(err); relErr != nil {
+		h.writeRelationsApplyError(w, r, relErr)
+		return
+	}
+	if pre != nil && h.writeLostRace(w, r, err, pre, typeName, ref, plural) {
+		return
+	}
+	writePatchError(w, r, err)
 }
 
 // ChecksRelation reports whether a write-enforced relation rule reads
@@ -463,7 +521,7 @@ func (h *writeHandler) writeCreateRelations(
 	// content-scoped edges (BUG-64MU2Q). The address comes from the row the
 	// manager returned, not from the request: a create mints its id during
 	// the write, so the row it produced is what names the face.
-	ws, err = h.applyRelationsModern(r.Context(), created.Ref(), desired)
+	ws, err = h.applyRelationsModern(r.Context(), created.Ref(), desired, nil)
 	warnings = append(warnings, ws...)
 	if err != nil {
 		h.writeRelationsApplyError(w, r, err)
@@ -1162,8 +1220,9 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 			}
 		}
 	}
-	// The update is judged on the edges this PATCH leaves (TKT-EBARYBI).
-	patchCtx, planErr := withRuledEdgeChanges(r.Context(), h, ref, entityChanged, req.Relations.Modern)
+	// The edges a relation rule reads are written with the update, which is
+	// judged on the edges they leave (TKT-EBARYBI).
+	joined, planErr := planJoinedRelations(r.Context(), h, ref, entityChanged, req.Relations.Modern)
 	if planErr != nil {
 		h.writeRelationsApplyError(w, r, planErr)
 		return
@@ -1195,12 +1254,9 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		// default face — so a write to POL-1@published would be authorized
 		// (and applied) against POL-1's default state instead.
 		stateRef := entityPkg.FormatStateRef(entity.ID, entity.Face)
-		updateResult, err := h.manager.PatchGranted(patchCtx, grant, stateRef, patch)
+		updateResult, err := patchJoined(r.Context(), h, grant, stateRef, patch, joined)
 		if err != nil {
-			if req.Preconditions != nil && h.writeLostRace(w, r, err, req.Preconditions, typeName, ref, plural) {
-				return
-			}
-			writePatchError(w, r, err)
+			writeUpdateError(w, r, h, err, joined, req.Preconditions, typeName, ref, plural)
 			return
 		}
 		// PatchEntity merged against the raw stored entity; refresh the
@@ -1220,7 +1276,7 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 	// Phase C: relation writes. Produces warnings on soft conditions
 	// and structured errors on hard failures.
 	if req.Relations.Modern != nil {
-		ws, err := h.applyRelationsModern(r.Context(), ref, req.Relations.Modern)
+		ws, err := h.applyRelationsModern(r.Context(), ref, req.Relations.Modern, joined)
 		warnings = append(warnings, ws...)
 		if err != nil {
 			h.writeRelationsApplyError(w, r, err)

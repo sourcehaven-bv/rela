@@ -51,37 +51,19 @@ func ChecksRelation(m *Manager, relType string) bool {
 	return m != nil && m.deps.writeRules.ReadsRelation(relType)
 }
 
-type pendingRelationsKey struct{}
-
-// pendingRelations is what [WithPendingRelations] puts on the ctx.
-type pendingRelations struct{ adds, removes []entity.RelationKey }
-
-// WithPendingRelations returns ctx with the edges a request writes right
-// after an update of the entity at one of their ends. The update's relation
-// rule check judges the entity's new state against its edges as the request
-// leaves them. So a data-entry PATCH that sets a status and links the plan
-// the status needs is accepted, and one that unlinks the last plan is
-// refused before its property change is stored.
-//
-// The caller must write these edges next, and that write checks the rules
-// again. If it fails, the stored update may break a rule. This is the same
-// gap as any other failure between the two phases of the PATCH.
-func WithPendingRelations(ctx context.Context, adds, removes []entity.RelationKey) context.Context {
-	return context.WithValue(ctx, pendingRelationsKey{}, pendingRelations{adds: adds, removes: removes})
-}
-
 // afterEdges returns the edges entity id has after the request: the stored
-// ones, with the pending edges on ctx that end at id applied.
+// ones, with the edges of a replace joined to the update of id applied (see
+// [PatchWithRelations]).
 func afterEdges(ctx context.Context, id string, stored *storedEdges) writerule.Edges {
-	pr, ok := ctx.Value(pendingRelationsKey{}).(pendingRelations)
-	if !ok {
+	j := joinedFor(ctx, id)
+	if j == nil {
 		return stored
 	}
 	p := &pendingEdges{stored: stored}
 	for _, list := range []struct {
 		keys []entity.RelationKey
 		add  bool
-	}{{pr.adds, true}, {pr.removes, false}} {
+	}{{j.adds(), true}, {j.rp.removes, false}} {
 		for _, k := range list.keys {
 			if k.From == id {
 				p.note(writerule.Hop{Relation: k.Type}, k.To, list.add)
@@ -97,7 +79,7 @@ func afterEdges(ctx context.Context, id string, stored *storedEdges) writerule.E
 // relationRuleCheck returns the check an update of oldEntity to e runs in its
 // transaction, or nil when no relation rule applies to e's type. An update
 // does not change edges, so both states are judged against the same edges,
-// unless the request names the edges it writes next ([WithPendingRelations]).
+// unless a replace is joined to it ([PatchWithRelations]).
 func relationRuleCheck(deps Deps, oldEntity, e *entity.Entity) func(context.Context) error {
 	if oldEntity == nil || !deps.writeRules.HasRelationRules(e.Type) {
 		return nil
@@ -159,6 +141,14 @@ func relationWritesChecked(deps Deps, keys ...entity.RelationKey) bool {
 func checkRelationRules(
 	ctx context.Context, deps Deps, view store.Store, adds, removes []entity.RelationKey,
 ) error {
+	return checkRelationRulesExcept(ctx, deps, view, adds, removes, "")
+}
+
+// checkRelationRulesExcept is checkRelationRules without the rules of the
+// entity skip, whose update judges them itself. An empty skip skips nothing.
+func checkRelationRulesExcept(
+	ctx context.Context, deps Deps, view store.Store, adds, removes []entity.RelationKey, skip string,
+) error {
 	changes := map[string]*pendingEdges{}
 	var order []string
 	note := func(id string, hop writerule.Hop, far string, add bool) {
@@ -195,6 +185,9 @@ func checkRelationRules(
 	slices.Sort(order)
 	var all []*ValidationError
 	for _, id := range order {
+		if id == skip {
+			continue
+		}
 		p := changes[id]
 		e, err := view.GetEntity(ctx, entity.Ref{ID: id, Face: entity.ImplicitFace})
 		if errors.Is(err, store.ErrNotFound) {

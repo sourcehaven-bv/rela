@@ -11,8 +11,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
-// relationRuleSchema: a closed ticket belongs to a category, enforced on
-// write (TKT-EBARYBI).
+// relationRuleSchema: a closed ticket belongs to a category, and a locked
+// category has no tickets, both enforced on write (TKT-EBARYBI).
 const relationRuleSchema = `
 version: "1.0"
 entities:
@@ -31,6 +31,7 @@ relations:
   belongs-to:
     from: [ticket]
     to: [category]
+    inverse: has-ticket
 validations:
   - name: closed-has-category
     description: A closed ticket belongs to a category.
@@ -38,6 +39,12 @@ validations:
     enforce: write
     when: ["status=closed"]
     then_condition: "related(entity, 'belongs-to')"
+  - name: locked-has-no-tickets
+    description: A locked category has no tickets.
+    entity_type: category
+    enforce: write
+    when: ["title=locked"]
+    then_condition: "not related(entity, 'has-ticket')"
 `
 
 func newRelationRuleApp(t *testing.T) *App {
@@ -114,6 +121,8 @@ func TestRelationRule_PatchJudgesTheStateItLeaves(t *testing.T) {
 		refused   bool
 		wantEdges int
 		wantTitle string
+		// wantStatus, when set, is the status the PATCH leaves stored.
+		wantStatus string
 	}{
 		{name: "status and the needed edge together", id: "TKT-002", body: add, wantEdges: 1},
 		{
@@ -132,6 +141,15 @@ func TestRelationRule_PatchJudgesTheStateItLeaves(t *testing.T) {
 			refused: true, wantEdges: 2,
 		},
 		{
+			// The edge the status counts on is refused by the far end's
+			// rule, inside the update's transaction, so the status is not
+			// stored either.
+			name: "status with an edge the far end refuses", id: "TKT-002",
+			body: `{"properties":{"status":"closed"},` +
+				`"relations":{"belongs-to":{"add":[{"type":"category","id":"C-LOCK"}]}}}`,
+			refused: true, wantStatus: "open",
+		},
+		{
 			name: "removing one of two edges", id: "TKT-001", extra: true,
 			body:      `{"relations":{"belongs-to":{"remove":[{"type":"category","id":"C-001"}]}}}`,
 			wantEdges: 1,
@@ -143,6 +161,8 @@ func TestRelationRule_PatchJudgesTheStateItLeaves(t *testing.T) {
 			seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket",
 				Properties: map[string]any{"title": "t", "status": "open"}})
 			seedEntity(app, &entity.Entity{ID: "C-002", Type: "category", Properties: map[string]any{"title": "d"}})
+			seedEntity(app, &entity.Entity{ID: "C-LOCK", Type: "category",
+				Properties: map[string]any{"title": "locked"}})
 			if tc.extra {
 				seedRelation(app, entity.NewRelation("TKT-001", "belongs-to", "C-002"))
 			}
@@ -158,19 +178,24 @@ func TestRelationRule_PatchJudgesTheStateItLeaves(t *testing.T) {
 				t.Errorf("edges = %v, want %d", got, tc.wantEdges)
 			}
 			if tc.wantTitle != "" {
-				if got := storedTitle(t, app, tc.id); got != tc.wantTitle {
+				if got := storedProp(t, app, tc.id, "title"); got != tc.wantTitle {
 					t.Errorf("title = %v, want %q kept", got, tc.wantTitle)
+				}
+			}
+			if tc.wantStatus != "" {
+				if got := storedProp(t, app, tc.id, "status"); got != tc.wantStatus {
+					t.Errorf("status = %v, want %q", got, tc.wantStatus)
 				}
 			}
 		})
 	}
 }
 
-func storedTitle(t *testing.T, app *App, id string) any {
+func storedProp(t *testing.T, app *App, id, prop string) any {
 	t.Helper()
 	for _, e := range entitiesByType(app, "ticket") {
 		if e.ID == id {
-			return e.Properties["title"]
+			return e.Properties[prop]
 		}
 	}
 	t.Fatalf("%s not stored", id)

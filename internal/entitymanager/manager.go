@@ -1757,12 +1757,20 @@ func (m *Manager) updateCore(
 	// zero condition: an unconditional write, for a caller that owns the
 	// whole entity (UpdateEntity).
 	txCheck = chainTxChecks(txCheck, relationRuleCheck(m.deps, oldEntity, e))
-	if err := writeChecked(ctx, m.deps, e, e.ID, txCheck, func(st store.Store) error {
+	write := func(st store.Store) error {
 		_, werr := st.UpdateEntityIf(ctx, e, store.UpdateCondition{
 			ExpectedVersion: store.EntityVersion(expectedVersion),
 		})
 		return werr
-	}); err != nil {
+	}
+	// A replace joined to this update (PatchWithRelations) is checked and
+	// written in the same transaction.
+	joined := joinedFor(ctx, e.ID)
+	if joined != nil {
+		txCheck = chainTxChecks(txCheck, joined.check)
+		write = joined.after(ctx, write)
+	}
+	if err := writeChecked(ctx, m.deps, e, e.ID, txCheck, write); err != nil {
 		var invalid *ValidationError
 		if errors.As(err, &invalid) {
 			return nil, err
@@ -1780,6 +1788,9 @@ func (m *Manager) updateCore(
 		// dropped the cause made a retry loop unreachable and turned 8 of 8
 		// concurrent losers into 500s, silently.
 		return nil, fmt.Errorf("write entity: %w", err)
+	}
+	if joined != nil {
+		joined.committed = true
 	}
 
 	// Audit the durable write now, before the cascade run. The entity

@@ -3484,8 +3484,11 @@ These writes are checked:
 
 A data-entry PATCH that changes properties and relations in one request is
 judged on the state it leaves: setting `status` to `in_behandeling` and adding
-the plan in one PATCH is accepted. The edges of one relation that a PATCH
-writes are checked together, so removing two of three plans is judged once.
+the plan in one PATCH is accepted. The properties and the edges a rule reads
+are written in one transaction, after every check of both has passed. So when
+the access control, a bound or the rule of the far end refuses the plan, the
+status is not stored either. The edges of one relation that a PATCH writes are
+checked together, so removing two of three plans is judged once.
 
 These writes are not checked:
 
