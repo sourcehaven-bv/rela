@@ -19,6 +19,7 @@ import {
 import { useConfirmHost } from '@/composables/useConfirm'
 import { useDetailPanelOutlet } from '@/composables/useDetailPanel'
 import { usePageHeaderOutlet } from '@/composables/usePageHeader'
+import { usePresentationOutlet } from '@/composables/usePresentation'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { unknownWorldQuery } from '@/composables/useWorld'
 import ActivityBar from '@/components/common/ActivityBar.vue'
@@ -66,6 +67,9 @@ const NON_TOP_LEVEL_ROUTES = new Set(['form-create', 'form-edit'])
  * migrated keeps its own in-view header.
  */
 const pageHeader = usePageHeaderOutlet()
+// A presented steps page (TKT-35BY3PE) hides the sidebar, the hamburger and
+// the suggestion card, so the room sees only the step.
+const presentation = usePresentationOutlet()
 const pageTabs = computed(() => {
   const frame = pageHeader.frame.value
   return frame && frame.tabs.length > 1 ? frame : null
@@ -258,6 +262,7 @@ watch(
     <RlAppShell
       v-model:nav-open="navOpen"
       class="app-layout"
+      :presenting="presentation.presenting.value"
       :sidebar-width="sidebarWidth"
       :sidebar-default-width="SIDEBAR_DEFAULT_WIDTH"
       :panel-open="detailPanel.open.value"
@@ -321,7 +326,7 @@ watch(
         the drawer covers.
       -->
       <RlIconButton
-        v-if="showHamburger && !navOpen"
+        v-if="showHamburger && !navOpen && !presentation.presenting.value"
         class="mobile-menu-btn"
         icon="menu"
         :label="t('shell.toggleNav')"
@@ -332,7 +337,7 @@ watch(
       <!-- One suggestion slot for every page, above the routed view. The
            server applies the operator's placement for the page, so the card
            is always mounted and simply renders nothing where none is owed. -->
-      <NextActionCard />
+      <NextActionCard v-if="!presentation.presenting.value" />
       <RouterView />
       <RlToastHost :toasts="toasts" @dismiss="dismissToast" />
       <ScriptErrorDialog />

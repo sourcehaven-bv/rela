@@ -486,6 +486,8 @@ func RunRollupTests(t *testing.T, f Factory) {
 		})
 	})
 
+	t.Run("path", func(t *testing.T) { runRollupPathTests(t, f) })
+
 	t.Run("invalid_queries_are_refused", func(t *testing.T) {
 		s := f(t)
 		for name, q := range map[string]store.RollupQuery{

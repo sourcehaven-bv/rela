@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
@@ -14,7 +16,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -55,7 +56,7 @@ func newScopedManagerWithACL(t *testing.T, aud audit.Audit, a acl.ACL) (*entitym
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: aud,
 		ACL:         a,
-		Transitions: statemachine.EmptySet(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -277,7 +278,7 @@ func TestScopedUpdates_Transitions(t *testing.T) {
 		sentinel error // nil: the update lands
 	}{
 		{name: "guard admits the caller", user: "bob", to: "approved"},
-		{name: "undeclared move", user: "bob", to: "established", sentinel: statemachine.ErrIllegalTransition},
+		{name: "undeclared move", user: "bob", to: "established", sentinel: transitions.ErrIllegalTransition},
 		{name: "guard refuses another caller", user: "alice", to: "approved", sentinel: acl.ErrForbidden},
 	}
 	for _, tc := range tests {
@@ -392,7 +393,7 @@ func scopedPolicyManager(t *testing.T, aud audit.Audit, policyYAML string) (*ent
 	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: parseMeta(t), Templater: nopTemplater{}, Audit: aud, ACL: decl,
-		Transitions:    statemachine.EmptySet(),
+		Transitions:    transitions.NoTransitions(),
 		FieldGate:      entitymanager.AllowAllFieldGate{},
 		CopyReadGate:   entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility: allowAllCopyVisibility(t, st),
