@@ -575,7 +575,16 @@
     "deleteTitle": "{type} verwijderen?",
     "deleteFailed": "Verwijderen mislukt",
     "deleted": "Verwijderd",
-    "confirmRun": "{label} uitvoeren?"
+    "confirmRun": "{label} uitvoeren?",
+    "steps": {
+      "label": "Stappen",
+      "back": "Terug",
+      "next": "Volgende",
+      "present": "Presenteren",
+      "exitPresent": "Stoppen",
+      "fullscreen": "Volledig scherm",
+      "exitFullscreen": "Volledig scherm sluiten"
+    }
   },
   "editor": {
     "command": {
