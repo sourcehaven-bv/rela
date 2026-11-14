@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<catalog xmlns="http://csrc.nist.gov/ns/oscal/1.0" uuid="0b1c2d3e-0000-4000-8000-000000000001">
+  <metadata>
+    <title>Example control catalog</title>
+    <version>1.0</version>
+    <oscal-version>1.1.2</oscal-version>
+  </metadata>
+  <group id="org" class="category">
+    <title>Organizational controls</title>
+    <control id="org-1" class="control">
+      <title>Policies for information security</title>
+      <prop name="label" value="5.1"/>
+      <part id="org-1_smt" name="statement">
+        <p>Define, approve and publish an information security policy.</p>
+      </part>
+      <part id="org-1_gdn" name="guidance">
+        <p>Review the policy at planned intervals.</p>
+      </part>
+      <control id="org-1.1" class="enhancement">
+        <title>Topic-specific policies</title>
+        <prop name="label" value="5.1.1"/>
+        <part id="org-1.1_smt" name="statement">
+          <p>Write topic-specific policies.</p>
+        </part>
+      </control>
+    </control>
+    <control id="org-2" class="control">
+      <title>Information security roles and responsibilities</title>
+      <prop name="label" value="5.2"/>
+      <part id="org-2_smt" name="statement">
+        <p>Define and allocate security roles.</p>
+      </part>
+    </control>
+    <control id="org-3" class="control">
+      <title>Segregation of duties</title>
+      <prop name="status" value="withdrawn"/>
+    </control>
+  </group>
+  <group id="tech" class="category">
+    <title>Technological controls</title>
+    <control id="tech-1" class="control">
+      <title>User endpoint devices</title>
+      <part id="tech-1_smt" name="statement">
+        <p>Protect information on endpoint devices.</p>
+      </part>
+    </control>
+  </group>
+</catalog>

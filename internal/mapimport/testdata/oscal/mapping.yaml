@@ -1,0 +1,36 @@
+# Imports an OSCAL catalog in its JSON form. Groups become control groups;
+# controls, at any depth, become controls. An enhancement refines its parent
+# control. The hook skips withdrawn controls.
+description: OSCAL catalog (JSON)
+format: json
+entities:
+  groups:
+    type: control-group
+    select: $.catalog.groups
+    key: oscal_id
+    scope:
+      catalog: example
+    properties:
+      oscal_id: id
+      title: title
+  controls:
+    type: control
+    select: $.catalog.groups..controls
+    key: oscal_id
+    scope:
+      catalog: example
+    properties:
+      oscal_id: id
+      title: title
+      label: props[name=label].value
+    content: parts[name=statement].prose
+    relations:
+      - type: part-of
+        target: groups
+        key: ^[class=category].id
+        optional: true
+      - type: refines
+        target: controls
+        key: ^[class=control].id
+        optional: true
+    hook: scripts/oscal.lua

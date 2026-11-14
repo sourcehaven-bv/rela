@@ -144,6 +144,8 @@ override:
     threshold: 70
   - path: ^internal/ingest$
     threshold: 90 # the webhook and feed write path, including the per-value flattening guard
+  - path: ^internal/mapimport$
+    threshold: 80 # mapping-file import: decode caps, plan diff, read gate and apply
   - path: ^internal/subscription$
     threshold: 85 # feed polling: untrusted content, redirects and dedupe state
   - path: ^internal/reconclient$

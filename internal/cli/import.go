@@ -1,15 +1,19 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/importer"
 )
 
-// ImportCmd imports entities and relations from JSON, YAML, or CSV.
+// ImportCmd imports entities and relations from JSON, YAML, or CSV, or from
+// any structured file through a mapping in imports/ (--mapping).
 type ImportCmd struct {
 	File          string `arg:"" help:"Input file path."`
-	Format        string `short:"f" help:"Input format (json, yaml, csv). Auto-detected from extension if not specified."`
+	Format        string `short:"f" help:"Input format: json, yaml, csv, or xml with --mapping. Default: from the extension."`
+	Mapping       string `short:"m" help:"Import through the mapping imports/<name>.yaml (see the mapped-import guide)."`
 	DryRun        bool   `short:"n" name:"dry-run" help:"Validate without creating files."`
 	Update        bool   `short:"u" help:"Replace existing entities instead of failing on duplicates (full replacement, not merge)."`
 	SkipErrors    bool   `name:"skip-errors" help:"Continue importing on validation errors."`
@@ -17,7 +21,17 @@ type ImportCmd struct {
 }
 
 // Run dispatches `rela import <file>`.
-func (c *ImportCmd) Run(svc *readServices) error {
+func (c *ImportCmd) Run(ctx context.Context, w *writeServices) error {
+	if c.Mapping != "" {
+		if c.Update || c.RelationsFile != "" {
+			return errors.New("--update and --relations do not apply with --mapping; a mapping updates by key")
+		}
+		return c.runMapped(ctx, w)
+	}
+	return c.runNative(&w.readServices) //nolint:contextcheck // the native importer takes no context
+}
+
+func (c *ImportCmd) runNative(svc *readServices) error {
 	opts := importer.Options{
 		Format:        importer.Format(c.Format),
 		DryRun:        c.DryRun,

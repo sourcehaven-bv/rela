@@ -121,6 +121,8 @@ components:
   # changed rows and writes them through entitymanager. The scheduler and
   # `rela remote pull` run it.
   remotesync:       { in: internal/remotesync }
+  # Mapping-file import (TKT-K7HR49Y): structured data to a write plan.
+  mapimport:        { in: internal/mapimport }
   # Which entity ids a markdown body mentions (TKT-Q6AKUN). A leaf: every store
   # backend indexes with it and the data-entry renderer links with it, so the
   # backlink index and the rendered links agree on what counts as a mention.
@@ -605,6 +607,8 @@ deps:
       - flow
       - flowengine
       - importer
+      # `rela import --mapping` plans and applies a mapping-file import.
+      - mapimport
       # `rela lease` (TKT-B610IP) speaks its request, lease and error types;
       # the access checks stay in lease.Service.
       - lease
@@ -1198,6 +1202,8 @@ deps:
       - subscription
       # `rela validate` checks remotes.yaml.
       - remotesync
+      # `rela validate` checks imports/*.yaml.
+      - mapimport
       # The scheduler's loader reads through a config.Loader.
       - config
       # `rela validate` checks connections.yaml (TKT-01KZSO).
@@ -1303,6 +1309,18 @@ deps:
       - safexml
       - secrets
       - state
+  # Decodes a file, plans against raw rows gated per row, and applies the
+  # plan through a consumer-side Writer (entitymanager at the wiring site).
+  # The hook runs on a bare lua sandbox with no rela bindings.
+  mapimport:
+    mayDependOn:
+      - ingest
+      - lua
+      - metamodel
+      - safexml
+      - store
+    canUse:
+      - gopherlua
   # Mapping.Validate checks types and properties against the schema.
   ingestspec:
     mayDependOn:

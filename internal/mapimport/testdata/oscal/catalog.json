@@ -1,0 +1,68 @@
+{
+  "catalog": {
+    "uuid": "0b1c2d3e-0000-4000-8000-000000000001",
+    "metadata": {
+      "title": "Example control catalog",
+      "version": "1.0",
+      "oscal-version": "1.1.2"
+    },
+    "groups": [
+      {
+        "id": "org",
+        "class": "category",
+        "title": "Organizational controls",
+        "controls": [
+          {
+            "id": "org-1",
+            "class": "control",
+            "title": "Policies for information security",
+            "props": [{ "name": "label", "value": "5.1" }],
+            "parts": [
+              {
+                "id": "org-1_smt",
+                "name": "statement",
+                "prose": "Define, approve and publish an information security policy."
+              },
+              { "id": "org-1_gdn", "name": "guidance", "prose": "Review the policy at planned intervals." }
+            ],
+            "controls": [
+              {
+                "id": "org-1.1",
+                "class": "enhancement",
+                "title": "Topic-specific policies",
+                "props": [{ "name": "label", "value": "5.1.1" }],
+                "parts": [{ "id": "org-1.1_smt", "name": "statement", "prose": "Write topic-specific policies." }]
+              }
+            ]
+          },
+          {
+            "id": "org-2",
+            "class": "control",
+            "title": "Information security roles and responsibilities",
+            "props": [{ "name": "label", "value": "5.2" }],
+            "parts": [{ "id": "org-2_smt", "name": "statement", "prose": "Define and allocate security roles." }]
+          },
+          {
+            "id": "org-3",
+            "class": "control",
+            "title": "Segregation of duties",
+            "props": [{ "name": "status", "value": "withdrawn" }]
+          }
+        ]
+      },
+      {
+        "id": "tech",
+        "class": "category",
+        "title": "Technological controls",
+        "controls": [
+          {
+            "id": "tech-1",
+            "class": "control",
+            "title": "User endpoint devices",
+            "parts": [{ "id": "tech-1_smt", "name": "statement", "prose": "Protect information on endpoint devices." }]
+          }
+        ]
+      }
+    ]
+  }
+}
