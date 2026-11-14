@@ -1,9 +1,9 @@
 request: GET /api/v1/_documents/elevated_report
 identity: header admin@example.test
 status: 200
-reads: GraphQueryHeaders=1 ListEntities=1 ListRelations=1
-breadth: ListEntities=0/1 ListRelations=0/1
-bodies: GraphQuery=0/1 ListEntities=4/1
+reads: GraphQueryHeaders=1 ListEntitiesPage=1 ListRelations=1
+breadth: ListEntitiesPage=0/1 ListRelations=0/1
+bodies: GraphQuery=0/1 ListEntitiesPage=4/1
 versions: 
 body:
 {

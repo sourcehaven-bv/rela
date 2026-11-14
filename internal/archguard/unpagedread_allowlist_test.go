@@ -7,8 +7,7 @@ package archguard
 // Each entry has a category (see readCategory) and a reason that says what
 // the read is for. requestPath entries are debt. The follow-ups of
 // TKT-FED6FMM remove them: TKT-F2EJQY8 (dataentry), TKT-D9UO9Y4 (mcp,
-// search), TKT-GIAGLQ3 (ingest, rename), TKT-P9QMEVI (lua) and TKT-EBBHM55
-// (desktopnotify).
+// search), TKT-GIAGLQ3 (ingest, rename) and TKT-EBBHM55 (desktopnotify).
 var unpagedReadAllowlist = map[string]unpagedRead{
 	// aclmap: the who-can report.
 	"internal/aclmap/enumerate.go#Engine.enumeratePrincipals": {2, batchJob,
@@ -157,14 +156,11 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 
 	// lua: script bindings. Scripts run inside requests (automations on a
 	// write, actions), so a whole-type binding is request-path debt.
-	"internal/lua/elevation.go#elevatedGetRelations": {1, requestPath,
-		"admin.get_relations: the script's from/type/to, possibly none"},
-	"internal/lua/elevation.go#elevatedListEntities": {1, requestPath,
-		"admin.list_entities: every entity of a type"},
-	"internal/lua/markdown.go#mdEntityRefs.luaMdEntityRefs": {1, requestPath,
-		"rela.md.entity_refs: reads every entity of the named types to build a replacement map"},
-	"internal/lua/runtime.go#Runtime.luaGetRelations": {1, requestPath,
-		"rela.get_relations: the script's from/type/to, possibly none"},
+	"internal/lua/markdown.go#mdEntityRefs.refsByTypes": {1, bounded,
+		"legacy rela.md.entity_refs() without ids or content: stops one row past limit across the named types, " +
+			"at most maxReadLimit (2000) (TestEntityRefs_LegacyRaisesPastDefaultLimit). Bounded on the ACL " +
+			"pushdown path and on pgstore and sqlitestore, as for luaListEntities; ScriptReader's " +
+			"load-then-filter fallback and memstore still read the whole type before the stop"},
 	"internal/lua/runtime.go#Runtime.luaListEntities": {1, bounded,
 		"rela.list_entities: stops the iterator at the script's limit, at most maxReadLimit (2000) rows " +
 			"(TestListEntities_BoundedByDefault). Bounded on the ACL pushdown path, which every server " +

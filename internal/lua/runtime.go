@@ -1377,13 +1377,13 @@ func (r *Runtime) luaListEntities(ls *lua.LState) int {
 }
 
 // luaGetRelations implements rela.get_relations(opts?) -> table
-// opts can have: from, type, to — each an optional string.
+// opts can have: from, type, to (each an optional string) and limit.
 func (r *Runtime) luaGetRelations(ls *lua.LState) int {
 	// Shares relationQuery with the elevated admin.get_relations so the two
 	// surfaces cannot drift on what a filter means (RR-D7KXKV). A non-string
 	// option raises here as it does there: silently dropping it turns a scoped
 	// question into a whole-graph one that the script reads as scoped.
-	q, err := relationQuery(ls)
+	q, limit, err := relationQuery(ls)
 	if err != nil {
 		ls.RaiseError("rela.get_relations: %s", err.Error())
 		return 0
@@ -1398,16 +1398,17 @@ func (r *Runtime) luaGetRelations(ls *lua.LState) int {
 	// the caller cannot see, so an explicit opts.from can legitimately
 	// return fewer rows than the graph holds. An empty result means "no
 	// edges you may see", not "no edges".
-	result := ls.NewTable()
-	idx := 1
-	for rel, err := range rd.ListRelations(r.callerCtx(), q) {
-		if err != nil {
-			break
-		}
-		result.RawSetInt(idx, relationToTable(ls, rel))
-		idx++
+	//
+	// One page of at most `limit` edges the caller may see (TKT-P9QMEVI).
+	// A store error RAISES: a short list would read as a complete one
+	// (TKT-FVQ4).
+	q.Limit = limit
+	page, err := rd.ListRelationsPage(r.callerCtx(), q)
+	if err != nil {
+		ls.RaiseError("rela.get_relations: %s", err.Error())
+		return 0
 	}
-	ls.Push(result)
+	ls.Push(relationsToTable(ls, page.Items))
 	return 1
 }
 
@@ -2137,20 +2138,30 @@ func WarningsToTable(ls *lua.LState, warnings []entity.Warning) lua.LValue {
 	return tbl
 }
 
-// relationQuery reads the optional {from,type,to} options table off the Lua
-// stack. An absent or non-table argument yields the zero query, which matches
-// every relation.
+// relationQuery reads the optional {from,type,to,limit} options table off the
+// Lua stack. An absent or non-table argument yields the zero query, which
+// matches every relation, and the maxReadLimit ceiling.
+//
+// limit bounds the rows returned, with the default, ceiling and validation
+// of every read binding (DEC-IYHLNF, TKT-P9QMEVI). The caller sets it on
+// the query it pages with.
 //
 // Shared by the gated rela.get_relations and the elevated admin.get_relations
 // so the two cannot disagree about what a filter means. Callers differ only in
 // what they do with the result: the gated reader additionally peer-gates the
 // rows, the elevated one does not.
-func relationQuery(s *lua.LState) (store.RelationQuery, error) {
-	var q store.RelationQuery
+//
+// Unknown keys are still ignored, unlike the newer read bindings: the
+// binding predates the options convention, and scripts in the wild pass
+// tables built for other calls.
+func relationQuery(s *lua.LState) (q store.RelationQuery, limit int, err error) {
 	if s.GetTop() < 1 || s.Get(1).Type() != lua.LTTable {
-		return q, nil
+		return q, maxReadLimit, nil
 	}
 	opts := s.CheckTable(1)
+	if limit, err = limitOption(opts); err != nil {
+		return q, 0, err
+	}
 	fields := []struct {
 		name string
 		dst  *string
@@ -2171,11 +2182,20 @@ func relationQuery(s *lua.LState) (store.RelationQuery, error) {
 			// nothing gates that at all; on the gated path peer-gating bounds
 			// the rows to the caller's own view, so the disclosure is bounded
 			// but the answer is still silently the wrong question.
-			return q, fmt.Errorf(
+			return q, 0, fmt.Errorf(
 				"option %q must be a string, got %s", f.name, v.Type())
 		}
 	}
-	return q, nil
+	return q, limit, nil
+}
+
+// relationsToTable converts relations to a Lua array of relation tables.
+func relationsToTable(ls *lua.LState, rels []*entity.Relation) *lua.LTable {
+	t := ls.CreateTable(len(rels), 0)
+	for i, rel := range rels {
+		t.RawSetInt(i+1, relationToTable(ls, rel))
+	}
+	return t
 }
 
 // luaDeleteEntity implements rela.delete_entity(id, cascade?) -> boolean

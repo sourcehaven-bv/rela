@@ -73,7 +73,7 @@ type documentDepsFunc func() lua.WriteDeps
 // "interfaces at the call site" — documentService needs exactly these two
 // fields and must not depend on the script package's bundle type.
 type documentElevation struct {
-	Reader   lua.EntityReader
+	Reader   lua.ElevatedReader
 	Recorder lua.ElevationRecorder
 }
 

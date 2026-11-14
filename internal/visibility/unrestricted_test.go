@@ -139,6 +139,8 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 	// already returns, filtered by their bodies.
 	// TaggedEntities (TKT-7LRUPB) lists the version rows a tag names, a read
 	// of the same history VersionByTag serves.
+	// ListEntitiesPage and ListRelationsPage (TKT-P9QMEVI) are one bounded
+	// page of ListEntities and ListRelations.
 	want := map[string]bool{
 		"GetAddress": true, "ListEntities": true, "ListRelations": true,
 		"ListEntityHeaders": true, "Family": true, "WithWorld": true,
@@ -148,6 +150,7 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 		"VersionByTag":      true,
 		"FindByExternalRef": true, "SyncReady": true,
 		"MentionedBy": true, "TaggedEntities": true,
+		"ListEntitiesPage": true, "ListRelationsPage": true,
 	}
 
 	typ := reflect.TypeOf(visibility.Unrestricted(seedStore(t)).WithWorld(visibility.WorldOf(store.TrivialScope())))

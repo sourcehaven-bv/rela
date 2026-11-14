@@ -36,6 +36,12 @@ import (
 // The field redactor still runs PER ROW (one verdict resolution each), which
 // batching does not amortize (RR-3U1V80). Bounding these bindings is
 // TKT-YWDGZD; this type does not paper over it.
+//
+// Its exported methods are the gated script read surface; ListRelationsPage
+// (TKT-P9QMEVI) took it over the line. A required-interface exception, like
+// the store implementations.
+//
+//plimsoll:max-exported-methods=21
 type ScriptReader struct {
 	reader Reader
 	res    *Resolver

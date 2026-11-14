@@ -27,6 +27,13 @@ import (
 // Deliberately NOT a store.Store: it exposes read methods only, so it
 // cannot be passed where a full store is wanted (a write path, say) and
 // cannot silently widen back into one.
+//
+// Its exported methods are the script read surface (lua.EntityReader and
+// lua.ElevatedReader) plus the history and count reads; the paged reads of
+// TKT-P9QMEVI took it over the line. A required-interface exception, like
+// the store implementations.
+//
+//plimsoll:max-exported-methods=22
 type UnrestrictedReader struct {
 	st    store.Store
 	res   *Resolver

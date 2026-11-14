@@ -2164,6 +2164,9 @@ deps:
       # rela.xml / rela.feed (TKT-6KN0AC); pure leaves, no cycle possible.
       - safexml
       - feed
+      # rela.md.entity_refs {content = ...} reads the ids a body mentions by
+      # the rule the mention index uses (TKT-P9QMEVI); a leaf, no cycle.
+      - mentions
       - metamodel
       - principal
       - search

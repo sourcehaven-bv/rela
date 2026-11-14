@@ -59,7 +59,7 @@ type LuaScriptRunner struct {
 	// closure (TKT-ACSBSA). Nil means this wiring scope grants no read
 	// elevation: admin.get_entity et al. raise rather than degrading to the
 	// caller's gated view.
-	elevatedReader lua.EntityReader
+	elevatedReader lua.ElevatedReader
 
 	// elevationRecorder receives the post-closure notification when elevated
 	// reads occurred. Travels WITH elevatedReader — granting the capability
@@ -98,7 +98,7 @@ type ReadElevation struct {
 	// worse than no elevation at all. Wiring sites name it through
 	// visibility.Unrestricted so `grep -rn visibility.Unrestricted`
 	// enumerates this path with every other ungated read (TKT-1WV50C).
-	Reader lua.EntityReader
+	Reader lua.ElevatedReader
 
 	// Recorder is notified once per closure that used Reader. Nil is
 	// permitted (a deployment may genuinely have no audit sink) but is a
