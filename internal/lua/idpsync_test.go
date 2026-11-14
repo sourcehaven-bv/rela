@@ -210,6 +210,30 @@ func TestIdpSyncAction_IgnoresOtherOrg(t *testing.T) {
 	}
 }
 
+// TestIdpSyncAction_MissingSecretIsError: rela.secrets leaves out a secret that
+// is not configured, so the script sees nil, not "". A missing secret must
+// answer an error so the IdP retries, not ignore every event as another org's.
+func TestIdpSyncAction_MissingSecretIsError(t *testing.T) {
+	for _, missing := range []string{"idp_operator_url", "idp_operator_key", "idp_org_id"} {
+		t.Run(missing, func(t *testing.T) {
+			srv := pratiqueStub(t, http.StatusOK,
+				`{"members":[{"user_id":"usr_1","roles":["owner"],"status":"active"}]}`)
+			ws := newMockWorkspaceWith(personMeta())
+			secrets := idpSecrets(srv.URL)
+			delete(secrets, missing)
+			params := map[string]string{"user_id": "usr_1", "org_id": idpOrgID, "event": "membership.updated"}
+
+			m := resultMap(t, runIdpSync(t, ws, secrets, params))
+			if m["message_type"] != "error" {
+				t.Fatalf("message_type = %v, want error; result %v", m["message_type"], m)
+			}
+			if _, ok := m["asserted_roles"]; ok {
+				t.Fatalf("an error result must not carry asserted_roles: %v", m)
+			}
+		})
+	}
+}
+
 // TestIdpSyncAction_DeletedClearsWithoutAPI: membership.deleted proves the
 // membership is gone, so a failed fetch still clears the roles instead of
 // leaving them until the IdP gives up retrying.

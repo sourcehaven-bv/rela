@@ -87,7 +87,7 @@ func TestNew_WithDeclarative_WiresBothACLAndDeclarative(t *testing.T) {
 	// fixture path that reaches entitymanager.New with a POLICY-backed ACL, so
 	// a fixture that left CopyReadGate / CopyVisibility nil panics here rather
 	// than quietly handing back a manager whose copy path reads its source
-	// ungated. appbuild's TestCompileTransitions_AlwaysSuppliesCopyGates proves
+	// ungated. appbuild's TestBuildTransitionWiring_AlwaysSuppliesCopyGates proves
 	// the bundle offers the gates; this proves the fixture CONSUMES them —
 	// which is the half that actually broke, since the gates were available
 	// and simply not passed.

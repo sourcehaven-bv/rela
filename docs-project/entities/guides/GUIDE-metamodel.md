@@ -501,6 +501,16 @@ the [data-entry API reference](data-entry/api-reference.md)). `transitions` is
 optional and backwards compatible: an enum type without it keeps the historical
 "any value may change to any other" behavior.
 
+A property that is unset has no state. Every move from an unset value is
+refused, also the move to the `initial` value. To give existing entities a
+value, for example after adding `transitions:` to a type in use, set it with
+a [data migration](data-migration.md).
+
+rela runs a state machine as a *headless flow*: a flow whose state is the
+property itself, with no run. `rela flow show` lists it as
+`schema.<type name>`, and `rela flow show schema.ticket-status` prints it as a
+Mermaid state diagram. See [Flows](flows.md#checking-the-file).
+
 ### Regex Validations
 
 Define validation patterns with user-friendly error messages. Multiple patterns

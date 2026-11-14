@@ -69,9 +69,9 @@ func TestCopyVisibility_NamesHiddenFieldsWithoutValues(t *testing.T) {
 			t.Fatalf("CreateEntity: %v", cErr)
 		}
 	}
-	tw, err := appbuild.CompileTransitions(meta, st, d)
+	tw, err := appbuild.BuildTransitionWiring(meta, st, d)
 	if err != nil {
-		t.Fatalf("CompileTransitions: %v", err)
+		t.Fatalf("BuildTransitionWiring: %v", err)
 	}
 	ctx := acltest.Bind(principal.With(t.Context(), principal.Principal{User: "bob", Tool: principal.ToolDataEntry}), t, d)
 	for _, id := range []string{"PERS-1", "PERS-2"} {

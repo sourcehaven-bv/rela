@@ -5,7 +5,7 @@ paths:
   - "internal/filter/**"
   - "internal/automation/**"
   - "internal/validation/**"
-  - "internal/statemachine/**"
+  - "internal/flowcfg/transitions/*.go"
   - "internal/affordances/**"
   - "internal/conditionlint/**"
   - "internal/metamodel/**"
@@ -32,7 +32,7 @@ Program cache). New condition/`when:`-style code evaluates through `predicate`.
 
 These surfaces are on predicate: ACL affordance `when:`
 (`internal/affordances`), state-machine transition `When:`
-(`internal/statemachine`), wizard-form condition lint
+(`internal/flowcfg/transitions/*.go`), wizard-form condition lint
 (`internal/conditionlint`), automation `on.when:`/`validate:`
 (`internal/automation`), metamodel validation `When:`/`Then:`
 (`internal/validation`), and the CLI `--filter` flag (`internal/cli/list.go`).

@@ -5,12 +5,13 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -23,7 +24,7 @@ func newRecreateManager(t *testing.T, st store.Store, sink audit.Audit) *entitym
 		Templater:   nopTemplater{},
 		Audit:       sink,
 		ACL:         acl.NopACL{},
-		Transitions: statemachine.EmptySet(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -259,7 +260,7 @@ func TestRecreateEntity_ACLDenied(t *testing.T) {
 	st := memstore.New()
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		FieldGate: entitymanager.AllowAllFieldGate{},
-		Store:     st, Meta: parseMeta(t), Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.ReadOnlyACL{}, Transitions: statemachine.EmptySet(),
+		Store:     st, Meta: parseMeta(t), Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.ReadOnlyACL{}, Transitions: transitions.NoTransitions(),
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {

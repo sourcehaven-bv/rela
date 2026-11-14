@@ -7,13 +7,14 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/search"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -129,14 +130,15 @@ func ResolverFromProfile(
 	// Wire the enum state machines so the resolver can answer
 	// TransitionVerdicts (TKT-FT8J9). Compiled from the same (load-once,
 	// read-only) metamodel the entitymanager compiled its enforcer from:
-	// Compile is a deterministic pure transform AND meta is immutable between
-	// the two calls, so the two Sets are semantically identical. Correctness
-	// does not actually depend on that identity, though — the read/write
-	// drift guard is the shared evalEdge, so two Sets from the same source
-	// cannot disagree regardless. (Threading the entitymanager's single Set
-	// through appbuild.Services is the follow-up when the SPA status control
-	// wires the whole surface.)
-	machines, err := statemachine.Compile(meta, statemachine.WithTraversals(traversals))
+	// CompileTransitions is a deterministic pure transform AND meta is
+	// immutable between the two calls, so the two Transitions values are
+	// semantically identical. Correctness does not actually depend on that
+	// identity, though — the read/write drift guard is the shared evalEdge,
+	// so two Transitions values from the same source cannot disagree
+	// regardless. (Threading the entitymanager's single Transitions through
+	// appbuild.Services is the follow-up when the SPA status control wires
+	// the whole surface.)
+	machines, err := transitions.CompileTransitions(meta, transitions.WithTransitionTraversals(traversals))
 	if err != nil {
 		return nil, fmt.Errorf("dataentry: compiling state machines: %w", err)
 	}

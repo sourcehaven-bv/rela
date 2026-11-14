@@ -6,13 +6,14 @@ import (
 	"iter"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -116,7 +117,7 @@ func newFaceEdgeFixtureWith(t *testing.T, b concBackend, guard entitymanager.Anc
 	aud := audit.NewMemory()
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: aud,
-		ACL: d, Transitions: statemachine.EmptySet(),
+		ACL: d, Transitions: transitions.NoTransitions(),
 		FieldGate:       entitymanager.AllowAllFieldGate{},
 		CopyReadGate:    entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility:  allowAllCopyVisibility(t, st),
@@ -346,7 +347,7 @@ func TestDeleteEntityFace_SourceReadErrorAborts(t *testing.T) {
 	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: failingTailStore{f.st}, Meta: meta, Templater: nopTemplater{}, Audit: f.aud,
-		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
+		ACL: acl.NopACL{}, Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})

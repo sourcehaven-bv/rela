@@ -302,11 +302,11 @@
       "at": "2026-10-28T13:29:06Z",
       "title": "EphemeralMessage (apiwire) and EphemeralView (realtime) share most of their fields."
     },
-    "types.synonyms-b1ec2e815eed": {
+    "types.synonyms-ad7ee9b84d12": {
       "state": "accepted",
       "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
       "at": "2026-10-28T13:29:06Z",
-      "title": "Transition (apiwire) and TransitionVerdict (statemachine) share most of their fields."
+      "title": "Transition (apiwire) and TransitionVerdict (transitions) share most of their fields."
     },
     "concepts.data_clump-b87dc3e520e1": {
       "state": "accepted",
@@ -2420,23 +2420,23 @@
       "at": "2026-10-28T13:29:07Z",
       "title": "sqlitedb uses the term \"Face selection\", owned by store."
     },
-    "vocabulary.leak-354a82c99d5f": {
+    "vocabulary.leak-3c6ed0f8c202": {
       "state": "accepted",
       "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
       "at": "2026-10-28T13:29:07Z",
-      "title": "statemachine uses the term \"ACL policy\", owned by acl."
+      "title": "transitions uses the term \"ACL policy\", owned by acl."
     },
-    "vocabulary.leak-7d7347d8df1f": {
+    "vocabulary.leak-fb2075ba33dd": {
       "state": "accepted",
       "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
       "at": "2026-10-28T13:29:07Z",
-      "title": "statemachine uses the term \"Graph query\", owned by store."
+      "title": "transitions uses the term \"Graph query\", owned by store."
     },
-    "vocabulary.leak-697bcc35de3f": {
+    "vocabulary.leak-ecd348974b76": {
       "state": "accepted",
       "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
       "at": "2026-10-28T13:29:07Z",
-      "title": "statemachine uses the term \"Local role\", owned by acl."
+      "title": "transitions uses the term \"Local role\", owned by acl."
     },
     "vocabulary.leak-ace19766e40a": {
       "state": "accepted",

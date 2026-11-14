@@ -36,6 +36,17 @@ pages:
         label: "Triage"
         list: bugs_triage
         permission: work:triage
+  workshop:
+    label: "Workshop"
+    mode: steps
+    tabs:
+      - id: features
+        label: "Features"
+        list: features
+        prompt: "Which features are in scope?"
+      - id: board
+        label: "Board"
+        kanban: feature-board
   gated:
     label: "Gated"
     tabs:
@@ -49,6 +60,7 @@ const PAGE_NAV = `navigation:
   - page: work
   - page: solo
   - page: gated
+  - page: workshop
 `;
 
 const ACL_YAML = `roles:
@@ -169,5 +181,33 @@ test.describe("Pages", () => {
     await appPage.goto(`${serverUrl}/list/features`);
     await pages.expectTitle("Features");
     await pages.expectNoTabBar();
+  });
+
+  test("a steps page walks its steps, and presents without the sidebar", async ({ appPage, serverUrl }) => {
+    const pages = new PageTabsPage(appPage);
+    await appPage.goto(`${serverUrl}/p/workshop/features`);
+    await pages.expectNoTabBar();
+    await pages.expectSteps([/1\s*Features/, /2\s*Board/]);
+    await pages.expectCurrentStep("Features");
+    await pages.expectPrompt("Which features are in scope?");
+    await expect(pages.stepButton("Back")).toBeDisabled();
+
+    await pages.clickStepButton("Next");
+    await expect(appPage).toHaveURL(/\/p\/workshop\/board$/);
+    await pages.expectCurrentStep("Board");
+    await expect(pages.stepButton("Next")).toBeDisabled();
+    await pages.goBack();
+    await pages.expectCurrentStep("Features");
+
+    await pages.clickStepButton("Present");
+    await expect(appPage).toHaveURL(/\/p\/workshop\/features\?present=1$/);
+    await pages.expectSidebarShown(false);
+    await pages.pressKey("PageDown");
+    await expect(appPage).toHaveURL(/\/p\/workshop\/board\?present=1$/);
+    await pages.expectCurrentStep("Board");
+
+    await pages.clickStepButton("Exit");
+    await expect(appPage).toHaveURL(/\/p\/workshop\/board$/);
+    await pages.expectSidebarShown(true);
   });
 });

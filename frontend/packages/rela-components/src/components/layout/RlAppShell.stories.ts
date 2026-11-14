@@ -178,3 +178,30 @@ export const OverlayPanelLeavesRoomToScroll: Story = {
     `,
   }),
 }
+
+/**
+ * Presenting to a room: no sidebar and no resize handle, and the main pane
+ * is enlarged so a board stays readable from across the room.
+ */
+export const Presenting: Story = {
+  render: () => ({
+    components: { RlAppShell, RlSidebar, RlPageHeader },
+    setup: () => ({ navOpen: ref(false), groups: navGroups, sidebarWidth: ref(260) }),
+    template: `
+      <RlAppShell v-model:nav-open="navOpen" v-model:sidebar-width="sidebarWidth" presenting>
+        <template #sidebar>
+          <RlSidebar workspace-name="Atlas Projects" :groups="groups" active-id="atlas" @close="navOpen = false" />
+        </template>
+        <RlPageHeader title="Workshop" @open-nav="navOpen = true" />
+        ${filler}
+      </RlAppShell>
+    `,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvasElement.querySelector('.rl-sidebar')).toBeNull()
+    await expect(canvas.queryByRole('separator', { name: 'Resize sidebar' })).toBeNull()
+    const main = canvasElement.querySelector('.rl-app-shell__main') as HTMLElement
+    await expect(getComputedStyle(main).zoom).toBe('1.25')
+  },
+}
