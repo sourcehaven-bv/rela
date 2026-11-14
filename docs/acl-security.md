@@ -1130,7 +1130,7 @@ operator debugging.
 ### Retired ids redirect only to a readable successor (TKT-2F1AUZ)
 
 A rename or a conversion retires the old id. A `GET` of
-`/api/v1/<type>/<id>` or `/api/v1/_views/<view>/<id>` that misses on a
+`/api/v1/<type>/<id>` or `/api/v1/_views/<type>/<id>` that misses on a
 retired id answers `307` to the successor, with `Cache-Control: no-store`.
 It does so only when the caller may read the successor in the request's
 world: the successor passes the row gate, the face gate and the world,
