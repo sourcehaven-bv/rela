@@ -1130,7 +1130,7 @@ operator debugging.
 ### Retired ids redirect only to a readable successor (TKT-2F1AUZ)
 
 A rename or a conversion retires the old id. A `GET` of
-`/api/v1/<type>/<id>` or `/api/v1/_views/<view>/<id>` that misses on a
+`/api/v1/<type>/<id>` or `/api/v1/_views/<type>/<id>` that misses on a
 retired id answers `307` to the successor, with `Cache-Control: no-store`.
 It does so only when the caller may read the successor in the request's
 world: the successor passes the row gate, the face gate and the world,
@@ -2048,8 +2048,10 @@ redacts its fields. This section is about the pulling side. See
   pull <name> --allow-gone N`. `on_gone: detach` is the default;
   `on_gone: delete` never deletes an entity with local relations, and on a
   remote without `push` never one with a mapped field edited locally or
-  that existed before the pull adopted it. On a remote with `push` such a
-  row follows the conflict rule. Every delete is logged with the run id.
+  that existed before the pull adopted it. On a remote with `push`, a row
+  that existed before the pull adopted it is deleted like any other linked
+  row; a row edited here since the last sync follows the conflict rule.
+  Every delete is logged with the run id.
   The edit check and the delete are two calls, so an edit saved between
   them is lost with the entity; the window is one write long.
 - **A delete sent to the remote is conditional.** With `send_deletes` the

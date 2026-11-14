@@ -58,6 +58,7 @@ func (l linuxSandbox) Available() error {
 	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "bwrap", "--unshare-all", "--ro-bind", "/", "/", "/bin/true")
+	cmd.Env = Environ()
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return nil

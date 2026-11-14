@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
@@ -45,15 +46,27 @@ func GetGitUser() UserVars {
 	ctx, cancel := context.WithTimeout(context.Background(), gitConfigTimeout)
 	defer cancel()
 
-	if out, err := exec.CommandContext(ctx, "git", "config", "user.name").Output(); err == nil {
-		vars.Name = strings.TrimSpace(string(out))
+	if name, err := gitConfig(ctx, "user.name"); err == nil {
+		vars.Name = name
 	}
 
-	if out, err := exec.CommandContext(ctx, "git", "config", "user.email").Output(); err == nil {
-		vars.Email = strings.TrimSpace(string(out))
+	if email, err := gitConfig(ctx, "user.email"); err == nil {
+		vars.Email = email
 	}
 
 	return vars
+}
+
+// gitConfig reads one git config key, with the environment every child
+// process gets (cmdexec.Environ).
+func gitConfig(ctx context.Context, key string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "config", key)
+	cmd.Env = cmdexec.Environ()
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // Interpolate replaces template variables in a string.
