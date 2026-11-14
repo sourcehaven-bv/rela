@@ -25,6 +25,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/docs"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -320,7 +321,9 @@ func copyDirIfExists(src, dst string) error {
 		return nil
 	}
 	// Shell cp -r keeps this simple and matches the e2e test's approach.
-	if out, cerr := exec.CommandContext(context.Background(), "cp", "-r", src, dst).CombinedOutput(); cerr != nil {
+	cmd := exec.CommandContext(context.Background(), "cp", "-r", src, dst)
+	cmd.Env = cmdexec.Environ()
+	if out, cerr := cmd.CombinedOutput(); cerr != nil {
 		return fmt.Errorf("copy %s: %w: %s", src, cerr, out)
 	}
 	return nil
