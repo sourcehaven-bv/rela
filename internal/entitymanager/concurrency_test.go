@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -16,7 +18,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
@@ -119,7 +120,7 @@ func concurrencyManager(t *testing.T, st store.Store) *entitymanager.Manager {
 		Templater:   nopTemplater{},
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
-		Transitions: statemachine.EmptySet(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -351,7 +352,7 @@ func TestConcurrency_PostAutomationRewriteKeepsInterleavedWrite(t *testing.T) {
 		Templater:   nopTemplater{},
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
-		Transitions: statemachine.EmptySet(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		Automations: engine,
 		Cascade:     runner,

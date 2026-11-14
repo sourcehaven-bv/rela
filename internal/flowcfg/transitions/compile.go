@@ -1,0 +1,226 @@
+package transitions
+
+import (
+	"errors"
+	"fmt"
+	"slices"
+	"sort"
+
+	"github.com/Sourcehaven-BV/rela/internal/flow"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
+	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
+)
+
+// CompileTransitions builds the executable state-machine [Transitions] from a metamodel's
+// declarative transitions. It runs once at startup. It returns an error
+// (aggregating every problem found) if any machine is malformed — a dangling
+// from/to/initial, or a `when:` predicate that fails to compile — so a bad
+// metamodel is rejected at boot, not at write time.
+//
+// A metamodel with no transitions compiles to an empty [Transitions]; [Transitions.EnforceUpdate] is
+// then a no-op and every write behaves exactly as it did before this feature.
+//
+// meta must not be nil (a required input from appbuild).
+func CompileTransitions(meta *metamodel.Metamodel, opts ...TransitionOption) (*Transitions, error) {
+	if meta == nil {
+		return nil, errors.New("transitions: CompileTransitions: nil metamodel")
+	}
+
+	set := &Transitions{
+		machines: map[string]*HeadlessFlow{},
+		propType: map[string]map[string]string{},
+	}
+	for _, opt := range opts {
+		opt(set)
+	}
+	var problems []string
+
+	// Build one machine per state-machine custom type, in name order so the
+	// error report and the compiled env are deterministic.
+	for _, typeName := range sortedKeys(meta.Types) {
+		ct := meta.Types[typeName]
+		if len(ct.Transitions) == 0 {
+			continue // not a machine
+		}
+		m, errs := compileMachine(typeName, ct)
+		problems = append(problems, errs...)
+		if m != nil {
+			set.machines[typeName] = m
+		}
+	}
+
+	// Index which (entity type, property) pairs are state machines, so Enforce
+	// can find the machine-typed properties of a written entity without
+	// consulting the metamodel again.
+	for _, etName := range sortedKeys(meta.Entities) {
+		et := meta.Entities[etName]
+		for _, propName := range sortedKeys(et.Properties) {
+			pd := et.Properties[propName]
+			if _, ok := set.machines[pd.Type]; !ok {
+				continue
+			}
+			// A roll-up borrows the type to describe a value read from a
+			// related entity. It is never written, so there is no lifecycle
+			// to enforce (TKT-6I2OPG).
+			if pd.Rollup != nil {
+				continue
+			}
+			// A state machine is a single-valued lifecycle; a list-typed
+			// property has no single "current value" to transition (Enforce
+			// reads it via GetString, which would flatten the list to a
+			// coincidental scalar). Reject at boot rather than mis-enforce
+			// (RR-F30CZ/N4).
+			if pd.List {
+				problems = append(problems, fmt.Sprintf(
+					"entity %q property %q: type %q declares transitions but the property is a list; "+
+						"state machines require a single-valued property", etName, propName, pd.Type))
+				continue
+			}
+			// A property default that is not the machine's entry value can
+			// never be used: every create it fills in fails EnforceCreate.
+			// Reject at boot, as for a missing entry value (BUG-ZD4PIN).
+			if entry := set.machines[pd.Type].def.Initial(); pd.Default != "" && entry != "" && pd.Default != entry {
+				problems = append(problems, fmt.Sprintf(
+					"entity %q property %q: default %q is not the entry value %q of state machine %q; "+
+						"creates must enter at the entry value", etName, propName, pd.Default, entry, pd.Type))
+			}
+			if set.propType[etName] == nil {
+				set.propType[etName] = map[string]string{}
+			}
+			set.propType[etName][propName] = pd.Type
+			problems = append(problems, set.traversalProblems(meta, etName, propName, pd.Type)...)
+		}
+	}
+
+	if len(problems) > 0 {
+		sort.Strings(problems)
+		return nil, fmt.Errorf("transitions: invalid transitions:\n  %s", joinLines(problems))
+	}
+	return set, nil
+}
+
+// compileMachine builds one machine and returns it plus any well-formedness
+// problems. A machine with fatal problems still returns a (partial) machine so
+// indexing proceeds, but CompileTransitions aggregates the problems into a boot error.
+func compileMachine(typeName string, ct metamodel.CustomType) (machine *HeadlessFlow, problems []string) {
+	values := map[string]bool{}
+	for _, v := range ct.Values {
+		values[v] = true
+	}
+
+	// Entry value: Initial if set, else Default. Whichever supplies it must be
+	// a declared value — validate the RESOLVED entry, not just Initial, so a
+	// typo'd Default-as-entry fails fast at boot too (RR-VB2DE).
+	entry := ct.Initial
+	if entry == "" {
+		entry = ct.Default
+	}
+	switch {
+	case entry == "":
+		// A state machine (compileMachine is only reached for types WITH
+		// transitions) MUST declare an entry value, so create is pinned to it
+		// (BUG-X1C7S). Without one, EnforceCreate would treat create as
+		// unconstrained — letting an entity enter ANY state, including a
+		// guard-protected target, bypassing the machine via create instead of
+		// a transition. Reject at boot; the operator declares `initial` (or
+		// `default`) to say which state new entities start in.
+		problems = append(problems, fmt.Sprintf(
+			"type %q: a state machine (has transitions) must declare an `initial` "+
+				"(or `default`) entry value so creates are constrained to it", typeName))
+	case !values[entry]:
+		source := "initial"
+		if ct.Initial == "" {
+			source = "default"
+		}
+		problems = append(problems, fmt.Sprintf(
+			"type %q: %s %q is not a declared value", typeName, source, entry))
+	}
+
+	env, err := buildEnv(ct)
+	// coverage-ignore-start: defensive: buildEnv declares fixed non-empty names and valid non-nil types on a fresh env,
+	// so it never returns an
+	// error here
+	if err != nil {
+		problems = append(problems, fmt.Sprintf("type %q: %v", typeName, err))
+	}
+	// coverage-ignore-end
+
+	out := map[string][]headlessBranch{}
+	seen := map[[2]string]bool{}
+	for i, tr := range ct.Transitions {
+		if !values[tr.From] {
+			problems = append(problems, fmt.Sprintf(
+				"type %q: transition[%d] from %q is not a declared value", typeName, i, tr.From))
+		}
+		if !values[tr.To] {
+			problems = append(problems, fmt.Sprintf(
+				"type %q: transition[%d] to %q is not a declared value", typeName, i, tr.To))
+		}
+		var prog *predicate.Program
+		if tr.When != "" && env != nil {
+			prog, err = predicate.Compile(env, tr.When)
+			if err != nil {
+				problems = append(problems, fmt.Sprintf(
+					"type %q: transition[%d] %s→%s when: %v", typeName, i, tr.From, tr.To, err))
+			}
+		}
+		// One branch per (from, to) is what lets a refusal by the poster
+		// rule mean "guard denied" (see HeadlessFlow.decideMove).
+		key := [2]string{tr.From, tr.To}
+		if seen[key] {
+			problems = append(problems, fmt.Sprintf(
+				"type %q: transition[%d] %s→%s is declared more than once", typeName, i, tr.From, tr.To))
+			continue
+		}
+		seen[key] = true
+		out[tr.From] = append(out[tr.From], headlessBranch{
+			to: tr.To, guard: tr.Guard, when: prog, whenSource: tr.When, label: tr.Label,
+		})
+	}
+
+	return &HeadlessFlow{
+		name: typeName, states: slices.Clone(ct.Values), def: headlessDefinition(ct.Values, entry, out), exits: out,
+	}, problems
+}
+
+// definition builds the headless flow's [flow.Definition]: one state per
+// enum value in declaration order, initial at entry. A value with no branch
+// to another value is final: nothing moves the entity out of it.
+func headlessDefinition(values []string, entry string, out map[string][]headlessBranch) *flow.Definition {
+	states := make([]flow.State, 0, len(values))
+	for _, v := range values {
+		final := true
+		for _, b := range out[v] {
+			if b.to != v {
+				final = false
+				break
+			}
+		}
+		states = append(states, flow.NewState(v, final, nil))
+	}
+	return flow.NewDefinition(entry, states, nil)
+}
+
+// traversalProblems checks the `related(...)` in a machine's `when:` programs
+// for ONE (entity type, property) pair. A machine is declared on a custom type
+// and may be shared by several entity types, and a relation path resolves
+// from the entity type, so the same `when:` can be valid on one type and not
+// on another. Each pair that uses the machine is checked on its own.
+func (s *Transitions) traversalProblems(meta *metamodel.Metamodel, etName, propName, typeName string) []string {
+	var problems []string
+	s.machines[typeName].eachBranch(func(from string, b headlessBranch) {
+		if b.when == nil || len(b.when.Traversals()) == 0 {
+			return
+		}
+		err := predicatefns.ValidateTraversals(meta, etName, b.when)
+		if err == nil && s.traversals == nil {
+			err = fmt.Errorf("%s(...) is not available: no store is wired to answer it", predicate.FuncRelated)
+		}
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("entity %q property %q: transition %s→%s when: %v",
+				etName, propName, from, b.to, err))
+		}
+	})
+	return problems
+}

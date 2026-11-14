@@ -10,8 +10,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
@@ -78,7 +78,7 @@ func newWriteBudgetManager(t *testing.T, n int) (*entitymanager.Manager, *storet
 		Templater:   nopTemplater{},
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
-		Transitions: statemachine.EmptySet(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})

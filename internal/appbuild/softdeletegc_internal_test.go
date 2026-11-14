@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -15,7 +17,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
@@ -49,7 +50,7 @@ entities:
 	sink := audit.NewMemory()
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: gcNopTemplater{}, Audit: sink,
-		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		ACL: acl.NopACL{}, Transitions: transitions.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	require.NoError(t, err)

@@ -523,7 +523,9 @@ func sidebarPages(
 		tabs := make([]v1.SidebarPageTab, 0, len(visible))
 		for _, tab := range visible {
 			kind, target := pageTabView(tab)
-			wire := v1.SidebarPageTab{ID: tab.ID, Label: tab.Label, Icon: tab.Icon, View: kind, Target: target}
+			wire := v1.SidebarPageTab{
+				ID: tab.ID, Label: tab.Label, Icon: tab.Icon, View: kind, Target: target, Prompt: tab.Prompt,
+			}
 			switch sc := tab.Scope; {
 			case sc == nil:
 			case sc.Root:
@@ -536,7 +538,11 @@ func sidebarPages(
 			wire.Links = pageTabLinks(cfg, meta, page.EntityType, tab)
 			tabs = append(tabs, wire)
 		}
-		out[id] = v1.SidebarPage{PageHeader: page.PageHeader, Tabs: tabs}
+		mode := page.Mode
+		if mode == dataentryconfig.PageModeTabs {
+			mode = "" // the default needs no wire value
+		}
+		out[id] = v1.SidebarPage{PageHeader: page.PageHeader, Mode: mode, Tabs: tabs}
 	}
 	return out
 }
