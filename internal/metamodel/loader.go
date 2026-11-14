@@ -2085,13 +2085,14 @@ func validateValidationFaces(m *Metamodel) []string {
 // (TKT-5CESLHD).
 //
 // A write-enforced rule runs on every write of its types, inside the write.
-// It may therefore read only the entity being written, through the predicate
-// engine. The load refuses the parts of a rule that would need more: Lua,
-// which must never run on the write path, and `relations:` or `content:`,
-// which the write-path evaluator does not answer. Refusing them is the safe
-// direction: dropping them silently would leave a rule that looks enforced
-// but checks less than it says. `related(...)` in a condition is refused
-// where the conditions compile, in internal/writerule.
+// It reads the entity being written through the predicate engine, and its
+// relations only through a one-hop `related(...)`. The load refuses the parts
+// of a rule that would need more: Lua, which must never run on the write
+// path, and `relations:` or `content:`, which the write-path evaluator does
+// not answer. Refusing them is the safe direction: dropping them silently
+// would leave a rule that looks enforced but checks less than it says. The
+// shapes of `related(...)` are checked where the conditions compile, in
+// internal/writerule.
 func validateValidationEnforce(m *Metamodel) []string {
 	var errs []string
 	for _, rule := range m.Validations {

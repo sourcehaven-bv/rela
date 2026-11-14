@@ -344,11 +344,23 @@ func (e *gateFaultError) Unwrap() error { return e.err }
 // that prevented further writes. On a write-loop error, the relations
 // already written stay written — the caller treats this as the
 // documented atomicity gap.
+//
+// The creates and removes of the wrappers in joined were written with the
+// entity update; only their remaining ops are written here. joined may be
+// nil.
 func (h *writeHandler) applyRelationsModern(
-	ctx context.Context, addr entity.Ref, desired map[string]v1.RelationsUpdate,
+	ctx context.Context, addr entity.Ref, desired map[string]v1.RelationsUpdate, joined *joinedRelations,
 ) ([]Warning, error) {
 	var warnings []Warning
 	for bodyKey, upd := range desired {
+		if jw, ok := joined.wrapper(bodyKey); ok {
+			ws, err := jw.w.applyEdgeOps(ctx, jw.rest, nil)
+			warnings = append(warnings, ws...)
+			if err != nil {
+				return warnings, err
+			}
+			continue
+		}
 		ws, err := applyRelationWrapper(ctx, h, addr, bodyKey, upd)
 		warnings = append(warnings, ws...)
 		if err != nil {
@@ -381,7 +393,9 @@ func applyRelationWrapper(
 		return nil, planErr
 	}
 	var warnings []Warning
-	if w.relDef.MaxOutgoing != nil || w.relDef.MaxIncoming != nil {
+	// A relation a write-enforced rule reads is written the same way, so the
+	// rule judges the wrapper's edges together (TKT-EBARYBI).
+	if w.relDef.MaxOutgoing != nil || w.relDef.MaxIncoming != nil || h.manager.ChecksRelation(canonical) {
 		// A bounded relation writes its creates and removes as one atomic
 		// replace, so re-pointing it (with `data`, or `add` and `remove`, on
 		// either side) never trips the bound on the edge it is leaving
@@ -393,6 +407,98 @@ func applyRelationWrapper(
 		}
 	}
 	return w.applyEdgeOps(ctx, ops, warnings)
+}
+
+// joinedRelations is the part of a PATCH's relation writes that the entity
+// update writes in its own store transaction
+// (entitymanager.PatchWithRelations, TKT-EBARYBI): the creates and removes of
+// every wrapper a write-enforced relation rule reads. The update's rules are
+// judged on the edges these leave, and a refusal of either write stores
+// neither. The meta updates of the edges those wrappers keep are written
+// after the update, with the other wrappers.
+type joinedRelations struct {
+	creates  []entitymanager.RelationCreate
+	removes  []entity.RelationKey
+	wrappers map[string]joinedWrapper // by body key
+	warnings []Warning
+}
+
+// joinedWrapper is one wrapper of a joinedRelations: its plan, and the ops
+// left for applyEdgeOps.
+type joinedWrapper struct {
+	w    *wrapperWrite
+	plan boundedPlan
+	rest []edgeOp
+}
+
+// planJoinedRelations plans the wrappers of desired that a write-enforced
+// relation rule reads, for a PATCH that also updates the entity (updates).
+// Nil: returned with a nil error when the PATCH does not update the entity
+// or the wrappers create and remove nothing, so there is nothing to join.
+//
+// A function, not a method, to keep writeHandler under its plimsoll line.
+func planJoinedRelations(
+	ctx context.Context, h *writeHandler, addr entity.Ref, updates bool, desired map[string]v1.RelationsUpdate,
+) (*joinedRelations, error) {
+	if !updates || desired == nil {
+		return nil, nil //nolint:nilnil // nil means nothing to join; see the doc comment
+	}
+	meta := h.schema().Meta
+	j := &joinedRelations{wrappers: map[string]joinedWrapper{}}
+	for bodyKey, upd := range desired {
+		canonical, incoming, ok := resolveDirection(meta, bodyKey)
+		if !ok || !h.manager.ChecksRelation(canonical) {
+			continue
+		}
+		w := &wrapperWrite{
+			h: h, addr: addr, bodyKey: bodyKey, relType: canonical, incoming: incoming, upd: upd,
+			relDef: meta.Relations[canonical], path: "/relations/" + v1.JSONPointerEscape(bodyKey),
+		}
+		ops, planErr := w.plan(ctx)
+		if planErr != nil {
+			return nil, planErr
+		}
+		plan, rest, ws := w.boundedPlan(ops)
+		j.warnings = append(j.warnings, ws...)
+		j.creates = append(j.creates, plan.creates...)
+		j.removes = append(j.removes, plan.removes...)
+		j.wrappers[bodyKey] = joinedWrapper{w: w, plan: plan, rest: rest}
+	}
+	if len(j.creates) == 0 && len(j.removes) == 0 {
+		return nil, nil //nolint:nilnil // nil means nothing to join; see the doc comment
+	}
+	return j, nil
+}
+
+// wrapper returns the joined wrapper of bodyKey. j may be nil.
+func (j *joinedRelations) wrapper(bodyKey string) (joinedWrapper, bool) {
+	if j == nil {
+		return joinedWrapper{}, false
+	}
+	jw, ok := j.wrappers[bodyKey]
+	return jw, ok
+}
+
+// relationError maps an error of PatchWithRelations that its replace
+// returned, as the wrapper whose edge it names would map it, and returns nil
+// for any other error. j may be nil.
+func (j *joinedRelations) relationError(err error) error {
+	if j == nil {
+		return nil
+	}
+	if _, ok := errors.AsType[*entitymanager.JoinedRelationError](err); !ok {
+		return nil
+	}
+	keys := slices.Sorted(maps.Keys(j.wrappers))
+	jw := j.wrappers[keys[0]]
+	if ce, ok := errors.AsType[*entitymanager.RelationCreateError](err); ok {
+		for _, k := range keys {
+			if _, named := j.wrappers[k].plan.refs[ce.Key]; named {
+				jw = j.wrappers[k]
+			}
+		}
+	}
+	return boundedError(jw.w, jw.plan, err)
 }
 
 // wrapperWrite is one relation wrapper of a PATCH, resolved, and the
@@ -937,6 +1043,21 @@ type boundedPlan struct {
 func (w *wrapperWrite) writeBoundedOps(
 	ctx context.Context, ops []edgeOp,
 ) ([]edgeOp, []Warning, error) {
+	p, rest, warnings := w.boundedPlan(ops)
+	if len(p.creates) == 0 && len(p.removes) == 0 {
+		return rest, warnings, nil
+	}
+	_, err := w.h.manager.ReplaceRelations(ctx, p.creates, p.removes)
+	if err != nil {
+		return nil, warnings, boundedError(w, p, err)
+	}
+	return rest, warnings, nil
+}
+
+// boundedPlan splits ops, the plan of w, into the creates and removes one
+// replace writes, and the ops left for applyEdgeOps: the upserts of edges
+// that exist already.
+func (w *wrapperWrite) boundedPlan(ops []edgeOp) (boundedPlan, []edgeOp, []Warning) {
 	var (
 		rest     []edgeOp
 		warnings []Warning
@@ -961,14 +1082,7 @@ func (w *wrapperWrite) writeBoundedOps(
 			rest = append(rest, op)
 		}
 	}
-	if len(p.creates) == 0 && len(p.removes) == 0 {
-		return rest, warnings, nil
-	}
-	_, err := w.h.manager.ReplaceRelations(ctx, p.creates, p.removes)
-	if err != nil {
-		return nil, warnings, boundedError(w, p, err)
-	}
-	return rest, warnings, nil
+	return p, rest, warnings
 }
 
 // boundedError maps a ReplaceRelations error the way writeCreateRelation maps

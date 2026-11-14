@@ -3406,12 +3406,13 @@ and quotes the `description`, never a property value. The rule keeps running in
 `rela analyze validations`, which finds the rows stored before the rule was
 enforced.
 
-An enforced rule reads only the entity being written, so it may use
-`entity_type`, `faces`, `when`, `then`, `when_condition` and `then_condition`.
-The schema fails to load when an enforced rule also has:
+An enforced rule reads the entity being written, and may count its relations
+(see "Rules that read relations" below). It may use `entity_type`, `faces`,
+`when`, `then`, `when_condition` and `then_condition`. The schema fails to load
+when an enforced rule also has:
 
 - `lua`, `lua_file` or `lua_args`: Lua never runs on the write path.
-- `relations` or a `related(...)` condition: these read other entities.
+- `relations`: use a `related(...)` condition instead.
 - `content`: an enforced rule checks properties only.
 - a roll-up property: a roll-up is computed when it is read, so a write does
   not carry it.
@@ -3435,6 +3436,83 @@ that role learns something about the value from the refusal. The server logs a
 warning at startup for each such rule. Write the rule on properties every
 writer of the type may read.
 
+#### Rules that read relations
+
+An enforced rule may ask whether the entity has a relation, with
+`related(entity, '<relation>')` in `when_condition` or `then_condition`:
+
+```yaml
+validations:
+  - name: behandelplan-nodig
+    description: Een risico in behandeling heeft een behandelplan.
+    entity_type: risico
+    enforce: write
+    when: ["status=in_behandeling"]
+    then_condition: "related(entity, 'heeft_behandelplan')"
+  - name: toepasbaar-implementeert-control
+    description: Een toepasbare maatregel implementeert een control.
+    entity_type: maatregel
+    enforce: write
+    when_condition: "entity.toepasbaar == true"
+    then_condition: "related(entity, 'implementeert', {type = 'control'})"
+```
+
+The relation may be named by its inverse name to read incoming relations. The
+only constraint the third argument may have is `type`, and it is required when
+the relation reaches more than one type. The schema fails to load when the rule
+follows more than one relation, constrains properties or ids of the far end,
+uses a content-scoped or symmetric relation, or is on a type with `faces:`.
+
+A relation rule refuses a write only when the write turns a satisfied rule
+into a broken one. This has three effects:
+
+- A create is never refused. A new entity has no relations yet, and the client
+  links them after the create. Create the risk, link its plan, then set the
+  status; or create it in `in_behandeling` and link the plan next.
+- A row that already breaks the rule stays editable. `rela analyze validations`
+  finds it.
+- Leaving the rule's `when` is always allowed.
+
+These writes are checked:
+
+| Write                                                | Checked on                     |
+| ---------------------------------------------------- | ------------------------------ |
+| Update or patch of the entity                        | The entity                     |
+| Create of a relation the rule reads                  | Both ends                      |
+| Delete of a relation the rule reads (also If-Match)  | Both ends                      |
+| PATCH `relations` (`data`, `add`, `remove`)          | Both ends of each changed edge |
+
+A data-entry PATCH that changes properties and relations in one request is
+judged on the state it leaves: setting `status` to `in_behandeling` and adding
+the plan in one PATCH is accepted. The properties and the edges a rule reads
+are written in one transaction, after every check of both has passed. So when
+the access control, a bound or the rule of the far end refuses the plan, the
+status is not stored either. The edges of one relation that a PATCH writes are
+checked together, so removing two of three plans is judged once.
+
+These writes are not checked:
+
+- Creates, copies, conversions and restores.
+- The relations a batch or a create with `relations` writes, also when both
+  ends already existed.
+- Entity deletes, including the relations a cascade delete removes. A rule on a
+  neighbor the caller cannot see would otherwise refuse the delete, and so
+  reveal the neighbor.
+- Relations written by automations. They are written after the update that
+  triggers them, so an update is judged on the relations it finds, and an
+  automation that would link the required relation cannot satisfy the rule.
+
+The relations are counted without access control: a relation to an entity the
+caller cannot read counts. So the verdict is the same for every writer, and the
+same as in `rela analyze validations`. The refusal names the rule and quotes its
+description, never a related entity. It does show whether an end the caller
+can read has another relation the rule counts. On a relation create or delete
+that end may be the far end, so the refusal can show that it has a relation to
+an entity the caller cannot see. `docs/acl-security.md` records this channel.
+
+Each check reads the relations of the ends once and the type of each far end
+once, in the transaction of the write.
+
 Writes that bypass the write path do not check the rule: `rela import` and data
 migrations write to the store directly.
 
@@ -3446,7 +3524,9 @@ mode" in the CLI reference).
 
 1. **Start with warnings**: Begin with `severity: warning` and promote to `error` once your data is cleaned up
 2. **Use specific entity types**: Narrow rules to specific types when possible for clearer error messages
-3. **Combine with cardinality**: Use cardinality constraints for relation rules, validations for property rules
+3. **Combine with cardinality**: Use cardinality constraints for a fixed bound on
+   a relation, and a validation with `related(...)` when the relation is needed
+   only in some states
 4. **Check for empty values**: Use `property!=` to require that a property has any value
 
 ## Declared Piles
