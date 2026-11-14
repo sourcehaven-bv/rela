@@ -29,6 +29,8 @@ vi.mock('@/stores', () => ({
       properties: {
         priority: { type: 'enum', label: 'Priority' },
         summary: { type: 'string', label: 'Summary' },
+        contact: { type: 'email', label: 'Contact' },
+        points: { type: 'integer', label: 'Points' },
       },
     }),
     getRelationType: () => ({ label: 'Affects' }),
@@ -137,6 +139,26 @@ describe('LLMProposalDialog', () => {
     expect(updateEntity).toHaveBeenCalledWith('ticket', 'TKT-1', {
       properties: { priority: 'high' },
     })
+  })
+
+  it('starts a pattern-only custom type unticked and a number ticked', async () => {
+    const w = mount(LLMProposalDialog, {
+      props: {
+        proposal: {
+          ...proposal,
+          set: [
+            { property: 'contact', current: null, proposed: 'a@example.test' },
+            { property: 'points', current: 1, proposed: 3 },
+          ],
+          relate: [],
+        },
+        entityType: 'ticket',
+        label: 'Triage',
+      },
+      global: { stubs: { Teleport: true } },
+    })
+    const boxes = w.findAll('input[type="checkbox"]')
+    expect(boxes.map((b) => (b.element as HTMLInputElement).checked)).toEqual([false, true])
   })
 
   it('applying again retries only what did not go through', async () => {
