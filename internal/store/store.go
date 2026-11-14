@@ -723,6 +723,10 @@ type HeaderReader interface {
 // stop satisfying the interface, and [ListEntityHeaders] would then send it
 // down the fallback without a compile error. The read decorators in
 // internal/visibility implement HeaderReader only.
+//
+// fsstore does not implement it, as it does not implement HeaderReader: it
+// parses each file whole, so a native page would read the same bytes as the
+// fallback while telling storetest.BodyWatch that no body was read.
 type HeaderPager interface {
 	// ListEntityHeadersPage returns the page [EntityReader.ListEntitiesPage]
 	// returns for q, projected onto headers: the same rows in the same

@@ -411,11 +411,11 @@ func (m *MemStore) ListEntitiesPage(_ context.Context, q store.EntityQuery) (sto
 	return pageOf(m, q, (*entity.Entity).Clone)
 }
 
+var _ store.HeaderPager = (*MemStore)(nil)
+
 // ListEntityHeadersPage implements store.HeaderPager: the page
 // ListEntitiesPage returns, with each row copied as a header so no body is
 // cloned.
-var _ store.HeaderPager = (*MemStore)(nil)
-
 func (m *MemStore) ListEntityHeadersPage(
 	_ context.Context, q store.EntityQuery,
 ) (store.Page[store.EntityHeader], error) {

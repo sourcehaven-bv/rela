@@ -317,8 +317,6 @@ func mustFace(t *testing.T, name string) entity.Face {
 	return f
 }
 
-// listerOnly hides every optional capability of a store, so
-// [store.ListEntityHeaders] takes its generic fallback.
 // pagerOnly hides every capability of s but ListEntitiesPage, so
 // store.ListEntityHeadersPage takes its generic fallback.
 type pagerOnly struct{ s store.EntityPager }
@@ -336,6 +334,8 @@ func headerKeys(hs []store.EntityHeader) []string {
 	return out
 }
 
+// listerOnly hides every optional capability of a store, so
+// [store.ListEntityHeaders] takes its generic fallback.
 type listerOnly struct{ s store.EntityLister }
 
 func (l listerOnly) ListEntities(c context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {

@@ -138,19 +138,23 @@ func RunHeaderPageTests(t *testing.T, f Factory) {
 		_, wantErr := s.ListEntitiesPage(ctx(), q)
 		require.Error(t, wantErr, "precondition: the entity page refuses the cursor")
 		_, err := store.ListEntityHeadersPage(ctx(), s, q)
-		assert.Error(t, err)
+		assert.Error(t, err, "native")
+		_, err = store.ListEntityHeadersPage(ctx(), pagerOnly{s}, q)
+		assert.Error(t, err, "fallback")
 	})
 
 	t.Run("MutatingHeaderPropsDoesNotAffectStore", func(t *testing.T) {
 		s := seed(t)
-		page, err := store.ListEntityHeadersPage(ctx(), s,
-			store.EntityQuery{Type: "note", Limit: 1, Faces: store.InWorld(store.TrivialScope())})
-		require.NoError(t, err)
-		require.Len(t, page.Items, 1)
-		page.Items[0].Properties["title"] = "mutated"
-		got, err := s.GetEntity(ctx(), entity.Ref{ID: "NOTE-1"})
-		require.NoError(t, err)
-		assert.Equal(t, "NOTE-1", got.GetString("title"))
+		q := store.EntityQuery{Type: "note", Limit: 1, Faces: store.InWorld(store.TrivialScope())}
+		for name, r := range map[string]store.EntityPager{"native": s, "fallback": pagerOnly{s}} {
+			page, err := store.ListEntityHeadersPage(ctx(), r, q)
+			require.NoError(t, err)
+			require.Len(t, page.Items, 1)
+			page.Items[0].Properties["title"] = "mutated"
+			got, err := s.GetEntity(ctx(), entity.Ref{ID: "NOTE-1"})
+			require.NoError(t, err)
+			assert.Equal(t, "NOTE-1", got.GetString("title"), name)
+		}
 	})
 }
 

@@ -186,8 +186,7 @@ func (b *BodyWatch) ListEntityHeaders(
 
 // ListEntityHeadersPage forwards to the wrapped store's header pager. A store
 // without one is served by the projection of ListEntitiesPage, routed
-// through this decorator so the bodies that fallback reads are counted, as
-// GraphQueryHeaders does.
+// through this decorator so the bodies that fallback reads are counted.
 func (b *BodyWatch) ListEntityHeadersPage(
 	ctx context.Context, q store.EntityQuery,
 ) (store.Page[store.EntityHeader], error) {
@@ -204,12 +203,17 @@ func (f entityPageFunc) ListEntitiesPage(
 	return f(ctx, q)
 }
 
-// headerPageOf reads a header page from s natively when s has a
-// [store.HeaderPager], and otherwise projects the page counted reads.
+// headerPageOf reads a header page from s natively when s and the backend
+// under every decorator of s have a [store.HeaderPager], and otherwise
+// projects the page counted reads. Asking s alone is not enough: [Counting]
+// and [Breadth] always have the method and fall back below themselves,
+// where this recorder would not see the bodies.
 func headerPageOf(
 	ctx context.Context, s store.Store, counted entityPageFunc, q store.EntityQuery,
 ) (store.Page[store.EntityHeader], error) {
-	if _, native := s.(store.HeaderPager); native {
+	_, forwards := s.(store.HeaderPager)
+	_, native := store.Innermost(s).(store.HeaderPager)
+	if forwards && native {
 		return store.ListEntityHeadersPage(ctx, s, q)
 	}
 	return store.ListEntityHeadersPage(ctx, counted, q)

@@ -22,9 +22,8 @@ import (
 func (s *Store) ListEntitiesPage(
 	ctx context.Context, q store.EntityQuery,
 ) (store.Page[*entity.Entity], error) {
-	return queryEntityPage(ctx, s.q(), q, entityColumns, scanEntity, func(e *entity.Entity) entity.Ref {
-		return entity.Ref{ID: e.ID, Face: e.Face}
-	})
+	return queryEntityPage(ctx, s.q(), "list entities page", q, entityColumns, scanEntity,
+		func(e *entity.Entity) entity.Ref { return entity.Ref{ID: e.ID, Face: e.Face} })
 }
 
 var _ store.HeaderPager = (*Store)(nil)
@@ -34,14 +33,15 @@ var _ store.HeaderPager = (*Store)(nil)
 func (s *Store) ListEntityHeadersPage(
 	ctx context.Context, q store.EntityQuery,
 ) (store.Page[store.EntityHeader], error) {
-	return queryEntityPage(ctx, s.q(), q, entityHeaderColumns, scanEntityHeader,
+	return queryEntityPage(ctx, s.q(), "list entity headers page", q, entityHeaderColumns, scanEntityHeader,
 		func(h store.EntityHeader) entity.Ref { return entity.Ref{ID: h.ID, Face: h.Face} })
 }
 
 // queryEntityPage reads q's keyset page of columns, scanning each row with
-// scan. key names a row's state, from which the next cursor is made.
+// scan. key names a row's state, from which the next cursor is made. op names
+// the read in errors.
 func queryEntityPage[T any](
-	ctx context.Context, qr querier, q store.EntityQuery, columns string,
+	ctx context.Context, qr querier, op string, q store.EntityQuery, columns string,
 	scan func(scanner) (T, error), key func(T) entity.Ref,
 ) (store.Page[T], error) {
 	if err := storeutil.ValidateEntityQuery(q); err != nil {
@@ -54,7 +54,7 @@ func queryEntityPage[T any](
 
 	rows, err := qr.QueryContext(ctx, sqlText, args...)
 	if err != nil {
-		return store.Page[T]{}, fmt.Errorf("sqlitestore: list entities page: %w", err)
+		return store.Page[T]{}, fmt.Errorf("sqlitestore: %s: %w", op, err)
 	}
 	defer rows.Close()
 
@@ -67,7 +67,7 @@ func queryEntityPage[T any](
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return store.Page[T]{}, fmt.Errorf("sqlitestore: list entities page: %w", err)
+		return store.Page[T]{}, fmt.Errorf("sqlitestore: %s: %w", op, err)
 	}
 
 	var next string

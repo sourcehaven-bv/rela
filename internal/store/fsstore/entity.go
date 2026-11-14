@@ -69,30 +69,12 @@ func (s *FSStore) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq2
 }
 
 func (s *FSStore) ListEntitiesPage(_ context.Context, q store.EntityQuery) (store.Page[*entity.Entity], error) {
-	return pageOf(s, q, func(e *entity.Entity) *entity.Entity { return e })
-}
-
-var _ store.HeaderPager = (*FSStore)(nil)
-
-// ListEntityHeadersPage implements store.HeaderPager: the page
-// ListEntitiesPage returns, projected onto headers. The file store parses
-// each file whole, so it still reads the bodies; it drops them before they
-// leave the store.
-func (s *FSStore) ListEntityHeadersPage(
-	_ context.Context, q store.EntityQuery,
-) (store.Page[store.EntityHeader], error) {
-	return pageOf(s, q, store.HeaderOf)
-}
-
-// pageOf reads q's keyset page from the index, loads each row, and keeps
-// what conv makes of it.
-func pageOf[T any](s *FSStore, q store.EntityQuery, conv func(*entity.Entity) T) (store.Page[T], error) {
 	if err := storeutil.ValidateEntityQuery(q); err != nil {
-		return store.Page[T]{}, err
+		return store.Page[*entity.Entity]{}, err
 	}
 	cursorKey, err := storeutil.DecodeCursor(q.Cursor)
 	if err != nil {
-		return store.Page[T]{}, err
+		return store.Page[*entity.Entity]{}, err
 	}
 
 	s.mu.RLock()
@@ -127,15 +109,15 @@ func pageOf[T any](s *FSStore, q store.EntityQuery, conv func(*entity.Entity) T)
 	}
 	s.mu.RUnlock()
 
-	items := make([]T, 0, len(pairs))
+	items := make([]*entity.Entity, 0, len(pairs))
 	for _, p := range pairs {
 		e, err := s.loadEntityMeta(p)
 		if err != nil {
-			return store.Page[T]{}, err
+			return store.Page[*entity.Entity]{}, err
 		}
-		items = append(items, conv(e))
+		items = append(items, e)
 	}
-	return store.Page[T]{Items: items, NextCursor: keys.NextCursor}, nil
+	return store.Page[*entity.Entity]{Items: items, NextCursor: keys.NextCursor}, nil
 }
 
 // entityIDSet builds the ID-lookup set used by ListEntities and its page
