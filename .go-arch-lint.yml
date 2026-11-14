@@ -506,6 +506,9 @@ deps:
       - mcpwire
       - metamodel
       - principal
+      # project: reads `remote_mcp:` from .rela/config.yaml to decide whether
+      # to mount the remote MCP endpoint and which tools it serves.
+      - project
       - projectsetup
       - scheduler
       - script

@@ -436,6 +436,10 @@ type Server struct {
 	// asks for it with [WithLuaTools]; see that option for why.
 	luaTools bool
 
+	// tools limits which tools register; see [WithToolFilter]. Nil
+	// registers every tool.
+	tools *toolFilter
+
 	// channelTools records that the channel tools are registered: realtime
 	// was on when [NewServer] ran. A reload must then keep Deps.Channels.
 	channelTools bool
@@ -704,6 +708,9 @@ func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 	s.mcp.AddReceivingMiddleware(s.principalMiddleware)
 
 	s.registerTools()
+	if err := s.tools.check(); err != nil {
+		return nil, err
+	}
 	s.registerResources()
 	s.registerPrompts()
 
