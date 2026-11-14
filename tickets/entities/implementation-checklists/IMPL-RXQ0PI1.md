@@ -41,5 +41,5 @@ without the prepare change and at FlowOf without the engine change.
 - [x] Code follows project patterns (check similar code) (mirrors newRealtimeConfig, which reloads acl.yaml under an injected ACL)
 - [x] Checked for DRY opportunities
 - [x] No security issues introduced (the policy is used for config checks only; enforcement is unchanged)
-- [x] No silent failures (errors logged AND returned)
+- [x] No silent failures (errors logged AND returned) (exception: loadConfigPolicy tolerates a schema-mismatched acl.yaml (RR-GT629C0) and logs the validation error as a warning instead of returning it (GH-2226))
 - [x] No debug code left behind
