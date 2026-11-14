@@ -7,6 +7,18 @@ status: done
 
 <!-- @managed: claude-workflow v1 -->
 
+**Corrected (issue #2167).** The design was renamed before #2165 merged, and
+this checklist still uses the old names. In the code, `peers.yaml` is
+`remotes.yaml`, `rela peer pull` is `rela remote pull`, `internal/peersync` is
+`internal/remotesync`, `peer_credential.` is `remote_credential.`, and
+`TestPeerPull_EndToEnd` is `TestRemotePull_EndToEnd`. There is no `system:peer:`
+principal. A scheduled pull writes as the remote's `run_as`, or as
+`system:scheduler` when `run_as` is not set. `rela remote pull` writes as the
+person who runs it.
+
+GUIDE-cli-reference did not change in #2165. The `rela remote` section was added
+later, in #2214 (TKT-0FMYPEZ).
+
 ## Code Documentation
 
 - [x] Comments where logic isn't obvious: the ledger states, held rows and delete window (ledger.go), the gone guard and emptied check, the three-way merge, relation meta validation and the dry-run byID tracking (run.go), the run lock and stale retry (scheduler/peers.go)

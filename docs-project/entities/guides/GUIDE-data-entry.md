@@ -1558,7 +1558,8 @@ either file reaches it without a page reload.
 ### Options as cards
 
 A message whose options are an object list (see the realtime guide) shows
-its items as a table of fields by default. `display: cards` shows each
+its items as a bulleted list by default, one bullet per item with its set
+fields as "label: value". `display: cards` shows each
 item as a card instead, which suits options that each carry a title, pros
 and cons:
 
@@ -3900,8 +3901,8 @@ dashboard:
 
 - `sum` and `avg` take an `integer` or `decimal` property. A sum is exact; an
   average shows at least two digits after the point.
-- `min` and `max` take a property a list can sort on, and pick the value the
-  list's sort puts first or last.
+- `min` and `max` take an `integer`, `decimal`, `date` or `datetime`
+  property, and pick the value the list's sort puts first or last.
 - The property can be a [roll-up](metamodel.md#roll-up-properties).
 - A row without a value is left out. A row whose value is hidden from the
   viewer is left out too, and the card says that some values are hidden.
