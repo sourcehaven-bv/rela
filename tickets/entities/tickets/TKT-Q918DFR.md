@@ -5,7 +5,8 @@ title: Content-free keyset pages for search with no text
 kind: enhancement
 priority: low
 effort: s
-status: backlog
+started: "2026-11-14"
+status: in-progress
 ---
 
 ## Description

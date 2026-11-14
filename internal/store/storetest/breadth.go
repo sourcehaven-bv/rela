@@ -148,6 +148,13 @@ func (b *Breadth) ListEntityHeaders(ctx context.Context, q store.EntityQuery) it
 	return store.ListEntityHeaders(ctx, b.Store, q)
 }
 
+func (b *Breadth) ListEntityHeadersPage(
+	ctx context.Context, q store.EntityQuery,
+) (store.Page[store.EntityHeader], error) {
+	b.record("ListEntityHeadersPage", len(q.IDs))
+	return store.ListEntityHeadersPage(ctx, b.Store, q)
+}
+
 // MentionSources forwards to the wrapped store's mention index, unrecorded:
 // it takes no id batch. Declared so the recorder does not hide the capability.
 func (b *Breadth) MentionSources(
@@ -222,6 +229,13 @@ func (v *breadthView) MatchingFaces(
 func (v *breadthView) ListEntityHeaders(ctx context.Context, q store.EntityQuery) iter.Seq2[store.EntityHeader, error] {
 	v.parent.record("ListEntityHeaders", len(q.IDs))
 	return store.ListEntityHeaders(ctx, v.Store, q)
+}
+
+func (v *breadthView) ListEntityHeadersPage(
+	ctx context.Context, q store.EntityQuery,
+) (store.Page[store.EntityHeader], error) {
+	v.parent.record("ListEntityHeadersPage", len(q.IDs))
+	return store.ListEntityHeadersPage(ctx, v.Store, q)
 }
 
 // SoftDelete forwards the transaction view's soft-delete capability, so a

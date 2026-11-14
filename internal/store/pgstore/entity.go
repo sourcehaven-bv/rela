@@ -107,42 +107,65 @@ func parseStateCursor(cursor string) *entity.Ref {
 // ListEntitiesPage returns a page of entities. A keyset cursor on id keeps
 // pages stable; see store.ListEntitiesPage for the contract.
 func (s *Store) ListEntitiesPage(ctx context.Context, q store.EntityQuery) (store.Page[*entity.Entity], error) {
+	return queryEntityPage(ctx, s.db, q, entityListColumns, scanEntity, func(e *entity.Entity) entity.Ref {
+		return entity.Ref{ID: e.ID, Face: e.Face}
+	})
+}
+
+var _ store.HeaderPager = (*Store)(nil)
+
+// ListEntityHeadersPage implements store.HeaderPager: the page
+// ListEntitiesPage reads, with the content column left out of the SELECT.
+func (s *Store) ListEntityHeadersPage(
+	ctx context.Context, q store.EntityQuery,
+) (store.Page[store.EntityHeader], error) {
+	return queryEntityPage(ctx, s.db, q, entityHeaderColumns, scanEntityHeader, func(h store.EntityHeader) entity.Ref {
+		return entity.Ref{ID: h.ID, Face: h.Face}
+	})
+}
+
+// queryEntityPage reads q's keyset page of columns, scanning each row with
+// scan. key names a row's state, from which the next cursor is made.
+func queryEntityPage[T any](
+	ctx context.Context, db DBTX, q store.EntityQuery, columns string,
+	scan func(scanner) (T, error), key func(T) entity.Ref,
+) (store.Page[T], error) {
 	if err := checkQueryScope(q); err != nil {
-		return store.Page[*entity.Entity]{}, err
+		return store.Page[T]{}, err
 	}
-	sql, args, err := entityPageSQL(q)
+	sql, args, err := entityPageSQL(q, columns)
 	if err != nil {
-		return store.Page[*entity.Entity]{}, err
+		return store.Page[T]{}, err
 	}
 
-	rows, err := s.db.Query(ctx, sql, args...)
+	rows, err := db.Query(ctx, sql, args...)
 	if err != nil {
-		return store.Page[*entity.Entity]{}, err
+		return store.Page[T]{}, err
 	}
 	defer rows.Close()
 
-	items := make([]*entity.Entity, 0)
+	items := make([]T, 0)
 	for rows.Next() {
-		e, err := scanEntity(rows)
+		item, err := scan(rows)
 		if err != nil {
-			return store.Page[*entity.Entity]{}, err
+			return store.Page[T]{}, err
 		}
-		items = append(items, e)
+		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return store.Page[*entity.Entity]{}, err
+		return store.Page[T]{}, err
 	}
 
 	var next string
 	if q.Limit > 0 && len(items) > q.Limit {
-		last := items[q.Limit-1]
+		last := key(items[q.Limit-1])
 		items = items[:q.Limit]
 		// The cursor is the STATE key so AllFaces pagination resumes
 		// mid-family; for default-only queries it degenerates to the
 		// historical bare id.
 		next = storeutil.EncodeCursor(entity.FormatStateRef(last.ID, last.Face))
 	}
-	return store.Page[*entity.Entity]{Items: items, NextCursor: next}, nil
+	return store.Page[T]{Items: items, NextCursor: next}, nil
 }
 
 // CountEntities counts entities matching q.
@@ -182,10 +205,11 @@ func buildEntityCountSQL(q store.EntityQuery) (sql string, args []any) {
 	return "SELECT count(DISTINCT id) FROM entities" + scope, args
 }
 
-// entityPageSQL is the query [Store.ListEntitiesPage] sends for q: the
-// cursor decoded and limit+1 rows fetched, the extra row telling whether a
-// further page exists.
-func entityPageSQL(q store.EntityQuery) (sql string, args []any, err error) {
+// entityPageSQL is the query [Store.ListEntitiesPage] and
+// [Store.ListEntityHeadersPage] send for q, selecting columns: the cursor
+// decoded and limit+1 rows fetched, the extra row telling whether a further
+// page exists.
+func entityPageSQL(q store.EntityQuery, columns string) (sql string, args []any, err error) {
 	cursorKey, err := storeutil.DecodeCursor(q.Cursor)
 	if err != nil {
 		return "", nil, err
@@ -194,7 +218,7 @@ func entityPageSQL(q store.EntityQuery) (sql string, args []any, err error) {
 	if fetch > 0 {
 		fetch++
 	}
-	sql, args = buildEntityListSQL(q, parseStateCursor(cursorKey), fetch)
+	sql, args = buildEntitySelectSQL(q, parseStateCursor(cursorKey), columns, fetch)
 	return sql, args, nil
 }
 
@@ -1136,13 +1160,20 @@ func scanEntityHeader(row scanner) (store.EntityHeader, error) {
 // the digits (0x30-0x39), so plain string order puts PAGE-10's family
 // inside PAGE-1's. Changing either side's ordering breaks the other.
 func buildEntityListSQL(q store.EntityQuery, after *entity.Ref, limit int) (sql string, args []any) {
-	return buildEntitySelectSQL(q, after, "id, type, face, properties, content, updated_at", limit)
+	return buildEntitySelectSQL(q, after, entityListColumns, limit)
 }
 
+// entityListColumns are the columns scanEntity reads, in its order.
+const entityListColumns = "id, type, face, properties, content, updated_at"
+
+// entityHeaderColumns are entityListColumns WITHOUT content, in the order
+// scanEntityHeader reads them.
+const entityHeaderColumns = "id, type, face, properties, updated_at"
+
 // buildEntityHeaderListSQL mirrors buildEntityListSQL WITHOUT the content
-// column. Column order must stay in sync with scanEntityHeader.
+// column.
 func buildEntityHeaderListSQL(q store.EntityQuery, after *entity.Ref) (sql string, args []any) {
-	return buildEntitySelectSQL(q, after, "id, type, face, properties, updated_at", 0)
+	return buildEntitySelectSQL(q, after, entityHeaderColumns, 0)
 }
 
 // buildEntitySelectSQL is the shared body of the two list builders: the

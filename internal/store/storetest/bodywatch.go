@@ -184,6 +184,37 @@ func (b *BodyWatch) ListEntityHeaders(
 	return store.ListEntityHeaders(ctx, b.Store, q)
 }
 
+// ListEntityHeadersPage forwards to the wrapped store's header pager. A store
+// without one is served by the projection of ListEntitiesPage, routed
+// through this decorator so the bodies that fallback reads are counted, as
+// GraphQueryHeaders does.
+func (b *BodyWatch) ListEntityHeadersPage(
+	ctx context.Context, q store.EntityQuery,
+) (store.Page[store.EntityHeader], error) {
+	b.call("ListEntityHeadersPage")
+	return headerPageOf(ctx, b.Store, b.ListEntitiesPage, q)
+}
+
+// entityPageFunc is a ListEntitiesPage method value as a [store.EntityPager].
+type entityPageFunc func(context.Context, store.EntityQuery) (store.Page[*entity.Entity], error)
+
+func (f entityPageFunc) ListEntitiesPage(
+	ctx context.Context, q store.EntityQuery,
+) (store.Page[*entity.Entity], error) {
+	return f(ctx, q)
+}
+
+// headerPageOf reads a header page from s natively when s has a
+// [store.HeaderPager], and otherwise projects the page counted reads.
+func headerPageOf(
+	ctx context.Context, s store.Store, counted entityPageFunc, q store.EntityQuery,
+) (store.Page[store.EntityHeader], error) {
+	if _, native := s.(store.HeaderPager); native {
+		return store.ListEntityHeadersPage(ctx, s, q)
+	}
+	return store.ListEntityHeadersPage(ctx, counted, q)
+}
+
 // GraphQueryHeaders mirrors ListEntityHeaders for the graph-query shape.
 //
 // Forwarding through store.GraphQueryHeaders rather than asserting the
@@ -276,6 +307,13 @@ func (v *bodyWatchView) ListEntityHeaders(
 ) iter.Seq2[store.EntityHeader, error] {
 	v.parent.call("ListEntityHeaders")
 	return store.ListEntityHeaders(ctx, v.Store, q)
+}
+
+func (v *bodyWatchView) ListEntityHeadersPage(
+	ctx context.Context, q store.EntityQuery,
+) (store.Page[store.EntityHeader], error) {
+	v.parent.call("ListEntityHeadersPage")
+	return headerPageOf(ctx, v.Store, v.ListEntitiesPage, q)
 }
 
 func (v *bodyWatchView) GraphQueryHeaders(

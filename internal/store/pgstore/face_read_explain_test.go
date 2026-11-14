@@ -90,6 +90,11 @@ func TestFaceReadExplain(t *testing.T) {
 		sqlText, args := pgstore.BuildEntityListSQLForTest(t, q)
 		return shape{name, sqlText, args, "entities_type_id_face_idx", sortOK}
 	}
+	headerPage := func(name string, q store.EntityQuery) shape {
+		sqlText, args := pgstore.BuildEntityHeaderPageSQLForTest(t, q)
+		require.NotContains(t, sqlText, "content", "a header page selects no body")
+		return shape{name, sqlText, args, "entities_type_id_face_idx", false}
+	}
 	highestSQL, highestArgs := pgstore.BuildHighestIDSQLForTest("POL")
 	familySQL, familyArgs := pgstore.BuildEntityListSQLForTest(t, store.EntityQuery{IDs: family, Faces: store.AllFaces()})
 
@@ -104,6 +109,13 @@ func TestFaceReadExplain(t *testing.T) {
 		page("explicit-faces page", store.EntityQuery{
 			Type: "policy", Faces: store.AllFaces(), FaceIn: []entity.Face{"published"}, Limit: 100,
 		}, false),
+		headerPage("default-face header page", store.EntityQuery{
+			Type: "task", Limit: 100, Faces: store.InWorld(store.TrivialScope()),
+		}),
+		headerPage("world header page after a cursor", store.EntityQuery{
+			Type: "policy", Faces: store.InWorld(published), Limit: 100,
+			Cursor: storeutil.EncodeCursor("POL-001200@published"),
+		}),
 		{"family read", familySQL, familyArgs, "entities_pkey", true},
 		{"single row", pgstore.GetEntitySQLForTest, []any{"POL-000007", "published"}, "entities_pkey", false},
 		{"highest id", highestSQL, highestArgs, "entities_pkey", true},
