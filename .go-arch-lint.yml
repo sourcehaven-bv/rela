@@ -1478,6 +1478,7 @@ deps:
       - jwtlib
   renametype:
     mayDependOn:
+      - frontmatter
       - metamodel
       - project
       - storage
