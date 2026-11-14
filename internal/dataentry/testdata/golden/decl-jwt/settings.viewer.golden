@@ -1,9 +1,9 @@
 request: GET /api/v1/_settings
 identity: signed assertion for viewer@example.test
 status: 200
-reads: GraphQueryHeaders=1 ListEntities=3 ListRelations=4 MatchingFaces=4
-breadth: ListEntities=0/3 ListRelations=7/4 MatchingFaces=18/4
-bodies: GraphQuery=0/1 ListEntities=8/3
+reads: GraphQueryHeaders=3 ListEntityHeaders=1 ListRelations=4 MatchingFaces=4
+breadth: ListEntityHeaders=0/1 ListRelations=7/4 MatchingFaces=12/4
+bodies: GraphQuery=4/3 ListEntityHeaders=0/1
 versions: 
 body (allProperties, allRelations, entityTypes sorted):
 {
