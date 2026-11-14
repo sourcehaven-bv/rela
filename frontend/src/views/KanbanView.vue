@@ -9,6 +9,7 @@ import { liveListPath } from '@/api/live'
 import { useLiveSubscription } from '@/composables/useLiveSubscription'
 import { beginOptimistic, rollbackOptimistic, settleOptimistic } from '@/queries/optimisticList'
 import type {
+  ActionConfig,
   Entity,
   KanbanConfig,
   KanbanCardField,
@@ -31,6 +32,8 @@ import { useBoardFlip } from '@/composables/useBoardFlip'
 import { useWallGrouping } from '@/composables/useWallGrouping'
 import { useListReorder } from '@/composables/useListReorder'
 import { useKanbanCollapse } from '@/composables/useKanbanCollapse'
+import { useBatchAction, isBatchAction } from '@/composables/useBatchAction'
+import LLMBatchProposalDialog from '@/components/entity/LLMBatchProposalDialog.vue'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
@@ -589,6 +592,26 @@ const boardSections = computed((): Section<BoardCard>[] =>
     }
   })
 )
+
+// Batch `llm:` actions in the header (TKT-I2SRNWR). A button shows when the
+// list response offers `action:<id>`; it runs on the cards in the open
+// columns, after the board's filters.
+const batchAction = useBatchAction()
+const boardActions = computed(() =>
+  (kanbanConfig.value?.actions ?? []).flatMap((id) => {
+    const action = schemaStore.getAction(id)
+    if (!action || !isBatchAction(action) || collectionActions.value?.[`action:${id}`] !== true) return []
+    return [{ id, action }]
+  })
+)
+function runBoardAction(id: string, action: ActionConfig) {
+  const addresses = columns.value
+    .filter((c) => !columnCollapse.isCollapsed(c.value))
+    .flatMap((c) => (entitiesByColumn.value[c.value] ?? []).map((e) => entityRef(e)))
+  void batchAction.start(id, action, kanbanConfig.value?.entity ?? '', addresses, (n, max) =>
+    t('kanban.batchTooMany', { n, max })
+  )
+}
 
 function sectionId(section: string | Section<BoardCard>): string {
   return typeof section === 'string' ? section : section.id
@@ -1167,6 +1190,16 @@ watch(createModal.open, (open) => {
       <template #actions>
         <BackButton v-if="backTarget" :target="backTarget" />
         <RlButton
+          v-for="b in boardActions"
+          :key="b.id"
+          variant="secondary"
+          :loading="batchAction.pending.value"
+          :pending-label="t('entity.llmBatch.running')"
+          @click="runBoardAction(b.id, b.action)"
+        >
+          {{ b.action.label || b.id }}
+        </RlButton>
+        <RlButton
           v-if="kanbanConfig?.create_form && canCreate()"
           variant="primary"
           icon="plus"
@@ -1351,6 +1384,15 @@ watch(createModal.open, (open) => {
       @close="createModal.close"
       @created="createModal.created"
       @created-another="createModal.createdAnother"
+    />
+
+    <LLMBatchProposalDialog
+      v-if="batchAction.result.value"
+      :batch="batchAction.result.value.batch"
+      :entity-type="batchAction.result.value.entityType"
+      :label="batchAction.result.value.label"
+      @close="batchAction.close"
+      @applied="void refreshBoard()"
     />
   </div>
 </template>

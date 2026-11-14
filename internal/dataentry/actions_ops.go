@@ -55,6 +55,10 @@ func (o actionOps) run(
 			fmt.Sprintf("action %q requires the %q permission", id, action.Permission))
 	}
 
+	if fail := checkBatchPayload(id, action, payload); fail != nil {
+		return nil, fail
+	}
+
 	correlationID := newCorrelationID()
 
 	// Resolve the caller-supplied entity_id through the SCRIPT READER before
@@ -120,6 +124,10 @@ func (o actionOps) run(
 	// like CRUD.
 	if h.provision != nil {
 		ctx = h.provision(ctx)
+	}
+
+	if payload.Batch {
+		return o.runLLMBatch(ctx, s, id, action, payload.EntityIDs, deps)
 	}
 
 	if action.AvailableOn != nil {

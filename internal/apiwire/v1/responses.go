@@ -1915,6 +1915,9 @@ type ActionResponse struct {
 	// Proposal is the reply of an `llm:` action. It is a proposal only:
 	// the action wrote nothing.
 	Proposal *actionproposal.Proposal `json:"proposal,omitempty"`
+	// Batch is the reply of a batch run of an `llm:` action. Like
+	// Proposal, it wrote nothing.
+	Batch *actionproposal.Batch `json:"batch,omitempty"`
 }
 
 // Mention is the resolved target of an entity-ID code span found in

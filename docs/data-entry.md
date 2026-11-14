@@ -7078,6 +7078,87 @@ to another entity is dropped.
 Limits in this version: the action runs on one entity type without faces, and
 it cannot create entities or set relation properties.
 
+#### Running on several entities (`batch`)
+
+A `batch:` block lets the action run on several entities in one request: the
+rows selected in a list, or the cards on a kanban board. The model gets every
+entity in one call and proposes changes for each.
+
+```yaml
+actions:
+  triage:
+    label: "Suggest priorities"
+    permission: tickets:triage
+    available_on:
+      entity_types: [ticket]
+    when: "entity.status == 'new'"
+    llm:
+      prompt: Pick a priority for each ticket.
+      inputs:
+        properties: [title, kind]
+        content: { max_chars: 4000 }
+      outputs:
+        set: [priority]
+      batch:
+        max: 20
+
+lists:
+  open_tickets:
+    entity_type: ticket
+    columns:
+      - property: title
+    actions: [triage]
+
+kanbans:
+  board:
+    entity_type: ticket
+    column_property: status
+    actions: [triage]
+```
+
+| Field | Description |
+| ----- | ----------- |
+| `max` | How many entities one run takes (default 20, at most 50). `max` times `inputs.content.max_chars` may be at most 200000 |
+
+A batch action proposes property values only, so `inputs.related` and
+`outputs.relate` are refused.
+
+**Where it runs.** List it in a list's `actions:` to run it on the selected
+rows, or in a kanban board's `actions:` to show it as a button in the board's
+header. A board button runs on the cards in the columns that are open, after
+the board's filters. Collapse columns or filter the board to run on fewer
+cards. Both surfaces refuse to start when there are more entities than `max`.
+Every entry must be a labelled batch action on the list's or board's entity
+type; anything else is a config error. The button appears for users who hold
+the action's `permission:`.
+
+**Each entity is checked as on its detail page.** The server checks the
+permission once, then each entity: the user must be able to read it, and it
+must match `available_on` and `when`. An entity that fails, or on which the
+user may write none of the `set` properties, is not sent. The dialog says how
+many entities were not sent, but not which or why. When no entity is left,
+the model is not called.
+
+**Review.** The run writes nothing. The dialog lists the proposed changes per
+entity, and every change starts unticked: all entities go to the model in one
+request, so text in one entity can steer what the model proposes for another.
+The user ticks single changes, or a whole entity, and applies them. Each
+entity is saved with an ordinary edit, and a property that changed since the
+proposal is not saved. An entity whose part of the answer breaks a rule is
+listed with the reason; the other entities' proposals still stand.
+
+**Answer size.** `max_tokens` caps the whole answer, which covers every entity
+of the run. Set it for `max` entities, not for one; an answer that is cut off
+fails the whole run.
+
+**Time.** One batch call may take at most five minutes. A proxy in front of
+`rela-server` must allow a request that long.
+
+**On a detail page and over MCP**, a batch action still runs on one entity, as
+any `llm:` action does. Over the API, send `{"entity_ids": [...]}` to
+`POST /api/v1/_action/<id>`; the answer is
+`{batch: {proposals, failed, skipped}}`.
+
 ### Reserved Keyboard Shortcuts
 
 The following keys are reserved for built-in list navigation and cannot be used as action keys:

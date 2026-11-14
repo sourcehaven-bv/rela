@@ -2738,6 +2738,12 @@
       "reason": "Debt: low value per finding.",
       "at": "2026-11-13T10:30:00Z",
       "title": "5 functions in web/components/entity take boolean flags."
+    },
+    "concepts.data_clump-bad832861811": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose. Kanban boards gained actions (TKT-I2SRNWR), as lists have.",
+      "at": "2026-11-14T12:00:00Z",
+      "title": "The fields actions, columns, create_form, edit_form, filter_controls, … and title appear together in 3 types across 2 components."
     }
   },
   "labels": {},
