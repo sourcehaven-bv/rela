@@ -467,5 +467,15 @@ onBeforeUnmount(() => {
   }
 
   .rl-app-shell__main :deep(*) { overflow: visible !important; }
+
+  /*
+   * Print the page, not an open side panel. On a narrow window the panel
+   * hides the main area with a rule of two or three classes, so these
+   * selectors carry as many to win.
+   */
+  .rl-app-shell .rl-app-shell__panel { display: none !important; }
+
+  .rl-app-shell.rl-app-shell--panel-open .rl-app-shell__main,
+  .rl-app-shell.rl-app-shell--panel-open .rl-app-shell__header { display: block !important; }
 }
 </style>

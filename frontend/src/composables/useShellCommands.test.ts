@@ -61,6 +61,25 @@ describe('useShellCommands', () => {
     w.unmount()
   })
 
+  it('skips a hidden search box on find', () => {
+    const w = host()
+    const hidden = document.createElement('div')
+    hidden.className = 'entity-list'
+    hidden.innerHTML = '<div class="search-box"><input type="search"></div>'
+    const shown = hidden.cloneNode(true) as HTMLElement
+    document.body.append(hidden, shown)
+    // happy-dom does no layout and gives every element one box, so the
+    // hidden box is emptied by hand.
+    vi.spyOn(hidden.querySelector('input')!, 'getClientRects').mockReturnValue(
+      [] as unknown as DOMRectList
+    )
+    send('find')
+    expect(document.activeElement).toBe(shown.querySelector('input'))
+    hidden.remove()
+    shown.remove()
+    w.unmount()
+  })
+
   it('opens the search page on find when the page has no search box', () => {
     const w = host()
     send('find')

@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"time"
@@ -26,6 +28,9 @@ func revealInFinder(path string) error {
 		return errors.New("no project is open")
 	}
 	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("the project is no longer at %s", path)
+		}
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), revealTimeout)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/http"
 	"slices"
 	"testing"
 
@@ -51,18 +52,45 @@ func TestMainWindowOptions(t *testing.T) {
 
 func TestShouldOpenOnReopen(t *testing.T) {
 	tests := []struct {
+		name    string
 		visible bool
 		count   int
 		want    bool
 	}{
-		{false, 0, true},  // every window closed: open one
-		{false, 1, false}, // a hidden window: Wails shows it
-		{true, 1, false},  // a window is already there
+		{"every window closed", false, 0, true},
+		{"a hidden window, which Wails shows", false, 1, false},
+		{"a visible window", true, 1, false},
+		{"visible but none left", true, 0, false},
 	}
 	for _, tc := range tests {
-		if got := shouldOpenOnReopen(tc.visible, tc.count); got != tc.want {
-			t.Errorf("shouldOpenOnReopen(%v, %d) = %v, want %v", tc.visible, tc.count, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldOpenOnReopen(tc.visible, tc.count); got != tc.want {
+				t.Errorf("shouldOpenOnReopen(%v, %d) = %v, want %v", tc.visible, tc.count, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestOpenWindowCount(t *testing.T) {
+	a, b := &application.WebviewWindow{}, &application.WebviewWindow{}
+	tests := []struct {
+		name    string
+		windows []application.Window
+		closing application.Window
+		want    int
+	}{
+		{"none", nil, nil, 0},
+		{"nothing closing", []application.Window{a, b}, nil, 2},
+		{"one closing", []application.Window{a, b}, a, 1},
+		{"the only one closing", []application.Window{a}, a, 0},
+		{"closing one already gone", []application.Window{b}, a, 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := openWindowCount(tc.windows, tc.closing); got != tc.want {
+				t.Errorf("openWindowCount = %d, want %d", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -92,6 +120,11 @@ func TestFocusedPath(t *testing.T) {
 
 	d.app = &dataentry.App{}
 	d.activePath = "/work/active.rela"
+	if got := m.focusedPath(); got != "" {
+		t.Errorf("no handler (Clone from Git running): focusedPath = %q, want empty", got)
+	}
+
+	d.handler = http.NotFoundHandler()
 	if got := m.focusedPath(); got != "/work/active.rela" {
 		t.Errorf("active project: focusedPath = %q", got)
 	}

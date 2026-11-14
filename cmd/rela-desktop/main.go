@@ -98,6 +98,7 @@ type Desktop struct {
 	// this is now only an attribution context.
 	ctx   context.Context  //nolint:containedctx // lives for the struct lifetime
 	wails *application.App // Wails v3 runtime handle
+	main  mainWindows      // the main window, found again after a close
 	mu    sync.RWMutex
 	// registry holds every loaded project. The single-project fields below
 	// still track the active one; they are the "no project loaded" path and
@@ -293,7 +294,7 @@ func (d *Desktop) errorDialog(title, message string) {
 // the user closed it, a new one opens, which loads the page fresh anyway.
 // coverage-ignore-func: requires Wails runtime
 func (d *Desktop) reloadWindow() {
-	if win := liveMainWindow(d.wails); win != nil {
+	if win := d.main.live(d.wails); win != nil {
 		win.Reload()
 		return
 	}
@@ -488,7 +489,7 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 
 	d.startNotifier(schedCtx, projectID(app.ProjectRoot()), svc, appbuild.CompiledWorlds(svc).DefaultWorld())
 
-	if win := liveMainWindow(d.wails); win != nil {
+	if win := d.main.live(d.wails); win != nil {
 		win.SetTitle(name)
 	}
 
@@ -990,6 +991,8 @@ func (d *Desktop) cloneFromGitMenu(_ *application.Context) {
 	d.handler = nil
 	d.loadErr = ""
 	d.mu.Unlock()
+	// File > Show in Finder no longer has a project to show.
+	d.refreshMenu()
 
 	// Reload app to show welcome page, then emit event to show clone dialog
 	d.reloadWindow()
@@ -1123,7 +1126,15 @@ func main() {
 			d.notify.services()...),
 		// v2 had no shutdown hook, so the scheduler and services leaked on
 		// quit. ServiceShutdown now releases them.
-		OnShutdown: func() { slog.Info("shutting down") },
+		//
+		// Quitting closes the windows without a WindowClosing event, so the
+		// main window's geometry is saved here, while it still exists.
+		OnShutdown: func() {
+			slog.Info("shutting down")
+			if win := d.main.live(d.wails); win != nil {
+				saveWindowState(d.prefs, win)
+			}
+		},
 		// Lets Finder hand .rela bundles to this app; see onOpenedWithFile.
 		FileAssociations: []string{".rela"},
 		// One instance only: see onSecondInstanceLaunch.

@@ -3,6 +3,7 @@ package main
 import (
 	"log/slog"
 	"sync"
+	"sync/atomic"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -20,12 +21,38 @@ import (
 // would point at a destroyed window.
 
 // mainWindowName names the main window. Wails removes a closed window from
-// its manager, so a lookup by this name fails once the user closes it.
+// its manager, but only after two round trips to the main thread, so a
+// lookup by name can still find a window that is closing. [mainWindows]
+// covers that gap.
 const mainWindowName = "main"
 
-// mainWindowMu serializes creating the main window, so two events arriving
-// together (a Dock click and a Finder open) cannot open two of them.
-var mainWindowMu sync.Mutex
+// mainWindows tracks the main window across closes and reopens.
+type mainWindows struct {
+	// mu serializes creating the main window, so two events arriving
+	// together (a Dock click and a Finder open) cannot open two of them.
+	mu sync.Mutex
+	// closing is the main window the user is closing. Wails still lists it
+	// until it is removed, but it shows nothing any more, so it counts as
+	// gone.
+	closing atomic.Pointer[application.WebviewWindow]
+}
+
+// live returns the main window, or nil when it is closed or closing.
+// coverage-ignore-func: requires Wails runtime
+func (m *mainWindows) live(app *application.App) *application.WebviewWindow {
+	if app == nil {
+		return nil
+	}
+	w, ok := app.Window.GetByName(mainWindowName)
+	if !ok {
+		return nil
+	}
+	win, _ := w.(*application.WebviewWindow)
+	if win == nil || win == m.closing.Load() {
+		return nil
+	}
+	return win
+}
 
 // mainWindowOptions is the main window's configuration: the saved geometry
 // when there is usable state, else the default size, centered.
@@ -57,18 +84,15 @@ func shouldOpenOnReopen(hasVisibleWindows bool, windowCount int) bool {
 	return !hasVisibleWindows && windowCount == 0
 }
 
-// liveMainWindow returns the main window, or nil when it is closed.
-// coverage-ignore-func: requires Wails runtime
-func liveMainWindow(app *application.App) *application.WebviewWindow {
-	if app == nil {
-		return nil
+// openWindowCount counts the windows that are not closing.
+func openWindowCount(windows []application.Window, closing application.Window) int {
+	n := 0
+	for _, w := range windows {
+		if w != closing {
+			n++
+		}
 	}
-	w, ok := app.Window.GetByName(mainWindowName)
-	if !ok {
-		return nil
-	}
-	win, _ := w.(*application.WebviewWindow)
-	return win
+	return n
 }
 
 // newMainWindow creates the main window. Called once from main, before Run,
@@ -77,10 +101,13 @@ func liveMainWindow(app *application.App) *application.WebviewWindow {
 func (d *Desktop) newMainWindow(title string) *application.WebviewWindow {
 	win := d.wails.Window.NewWithOptions(mainWindowOptions(title, d.prefs.Window))
 	d.menu.trackWindow(win, "")
-	// Reading the geometry after the window is gone returns zeroes, so it is
-	// saved while the window closes, not after.
-	win.OnWindowEvent(events.Common.WindowClosing, func(*application.WindowEvent) {
+	// A hook, not a listener: Wails runs hooks before it starts the listener
+	// that destroys the window, and each listener in a goroutine of its own.
+	// Read from a listener, the geometry can come back as zeroes. Quitting
+	// closes no window this way; main saves the geometry on shutdown.
+	win.RegisterHook(events.Common.WindowClosing, func(*application.WindowEvent) {
 		saveWindowState(d.prefs, win)
+		d.main.closing.Store(win)
 	})
 	return win
 }
@@ -92,12 +119,12 @@ func (d *Desktop) showMainWindow() {
 	if d.wails == nil {
 		return
 	}
-	mainWindowMu.Lock()
-	win := liveMainWindow(d.wails)
+	d.main.mu.Lock()
+	win := d.main.live(d.wails)
 	if win == nil {
 		win = d.newMainWindow(d.projectTitle())
 	}
-	mainWindowMu.Unlock()
+	d.main.mu.Unlock()
 	win.Show()
 	win.UnMinimise()
 	win.Focus()
@@ -107,7 +134,11 @@ func (d *Desktop) showMainWindow() {
 // window is left.
 // coverage-ignore-func: requires the Dock
 func (d *Desktop) onDockReopen(e *application.ApplicationEvent) {
-	if !shouldOpenOnReopen(e.Context().HasVisibleWindows(), len(d.wails.Window.GetAll())) {
+	var closing application.Window
+	if c := d.main.closing.Load(); c != nil {
+		closing = c
+	}
+	if !shouldOpenOnReopen(e.Context().HasVisibleWindows(), openWindowCount(d.wails.Window.GetAll(), closing)) {
 		return
 	}
 	d.showMainWindow()

@@ -256,7 +256,9 @@ func (m *menuBar) focusedPath() string {
 	}
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	if d.app == nil {
+	// Clone from Git drops the handler to show the welcome page but keeps
+	// the app, so a nil handler also means no project is shown.
+	if d.app == nil || d.handler == nil {
 		return ""
 	}
 	return d.activePath
