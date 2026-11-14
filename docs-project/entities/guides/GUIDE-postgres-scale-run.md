@@ -28,13 +28,16 @@ Measured on 2026-11-13 on a laptop (p50, scale 1 and scale 5):
 | View with table sections | 7-30 ms | 3-22 ms |
 | Create, update, delete | 14-26 ms | 1-4 ms |
 | Dashboard query card | 53-140 ms | 270-500 ms |
-| Next action | 33 ms | 210 ms |
+| Next action | 3.5 ms | 2-3 ms |
 | Full-text search | 250-520 ms | 1.4-2.9 s |
 | Gantt chart | 340 ms | 3.8 s |
 
-Paged reads and writes do not get slower as the data grows. Search, dashboard
-query cards, the next-action suggestion and the gantt chart still read data in
-proportion to its size, so they grow with it. Follow-up tickets track each of
+The next-action row was measured on 2026-11-14, after TKT-CKLZMWB. Before
+that change it took 33 ms and 210 ms.
+
+Paged reads, writes and the next-action suggestion do not get slower as the
+data grows. Search, dashboard query cards and the gantt chart still read data
+in proportion to its size, so they grow with it. Follow-up tickets track each of
 them; until they land, the check holds them to their current growth so they
 cannot get worse unnoticed.
 

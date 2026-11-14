@@ -481,8 +481,20 @@ func visibleEntitiesOfType(
 	// and the world ranks withheld faces too, serving their titles
 	// (BUG-SMPOZB review). It narrows the candidates before the world ranks
 	// them, as on the list path.
+	return visibleEntitiesOfTypeWindow(ctx, svc, typ, ts, props, 0, 0)
+}
+
+// visibleEntitiesOfTypeWindow is visibleEntitiesOfType reading one window of
+// the type's visible rows in id order: limit rows after offset, or every row
+// when limit is 0. The window is cut after the row gate, in the store query.
+func visibleEntitiesOfTypeWindow(
+	ctx context.Context, svc Services, typ string,
+	ts search.TypeScope, props []store.PropPredicate, limit, offset int,
+) ([]*entity.Entity, error) {
 	rqr := acl.ReadQueryResult{AllowAll: ts.AllowAll, Query: ts.Query, Faces: ts.Faces}
-	entities, _, err := scopedEntities(ctx, svc, rqr, scopeRequest{Type: typ, Props: props, Faces: ts.Faces})
+	entities, _, err := scopedEntities(ctx, svc, rqr, scopeRequest{
+		Type: typ, Props: props, Faces: ts.Faces, Limit: limit, Offset: offset,
+	})
 	return entities, err
 }
 

@@ -122,10 +122,10 @@ endpoints:
     path: /api/v1/_next_action
     as: [manager, reader]
     expect: 200
-    p95_ms: {"1": 400, "5": 800}
-    # p50 grew 6.6x (33 -> 217 ms) and statements 12 -> 34.
-    # TKT-CKLZMWB.
-    ratio_max: 9
+    # Reads a window of candidates since TKT-CKLZMWB: p50 2-4 ms and 9
+    # statements at both scales (before: 33 -> 217 ms, 12 -> 34
+    # statements), so the default ratio applies.
+    p95_ms: {"1": 100, "5": 100}
   - name: entity-detail
     method: GET
     path: /api/v1/tasks/{task}

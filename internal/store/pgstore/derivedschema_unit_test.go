@@ -75,7 +75,7 @@ func TestQueryIndexNameAndDDL(t *testing.T) {
 	})
 	for _, want := range []string{
 		`CREATE INDEX IF NOT EXISTS "rela_derived_query__`,
-		`(properties->>'owner'), (properties->>'status')`,
+		`(face, (properties->>'owner'), (properties->>'status'), id)`,
 		`type = 'task'`,
 		`jsonb_typeof(properties->'owner') = 'string'`,
 	} {

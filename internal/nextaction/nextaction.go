@@ -147,7 +147,30 @@ type BatchMatcher interface {
 // Implementations MUST apply the caller's read gate. The engine never sees
 // an entity the principal may not read, which is also why there is no cache
 // here — see [Engine.Resolve].
-type CandidateFunc func(ctx context.Context, id string, src dataentryconfig.NextActionSource) ([]Candidate, error)
+//
+// want says how much of the list the engine will use, so the func can read
+// less than the whole match set (TKT-CKLZMWB). Returning everything is
+// always correct.
+type CandidateFunc func(
+	ctx context.Context, id string, src dataentryconfig.NextActionSource, want Want,
+) ([]Candidate, error)
+
+// Want is the part of a source's candidate list the engine uses.
+//
+// The engine keeps the first First candidates in the order the
+// [CandidateFunc] returns them, plus the suggestion on screen (Keep) wherever
+// it falls. A func that honors Want returns at least that: every candidate
+// of the leading First of the full ordered list, and the candidate whose
+// entity id is Keep if there is one. It may return more.
+type Want struct {
+	// First is how many leading candidates the engine keeps, or 0 for all.
+	// It is 0 for a source with a `condition:`, because the condition runs
+	// after the fetch and may drop any of the leading rows.
+	First int
+	// Keep is the entity id of the suggestion on screen for this source, or
+	// "" when there is none. See [WithCurrent].
+	Keep string
+}
 
 // Suggestion is the resolved hint.
 type Suggestion struct {
@@ -489,7 +512,7 @@ func (e *Engine) applyCondition(
 func (e *Engine) eligibleFromSource(
 	ctx context.Context, user, id string, src dataentryconfig.NextActionSource, bandID string, now time.Time,
 ) ([]Suggestion, error) {
-	cands, err := e.candidates(ctx, id, src)
+	cands, err := e.candidates(ctx, id, src, e.want(id, src))
 	if err != nil {
 		return nil, fmt.Errorf("nextaction: candidates for %q: %w", id, err)
 	}
@@ -541,6 +564,20 @@ func (e *Engine) eligibleFromSource(
 		out = append(out, sug)
 	}
 	return out, nil
+}
+
+// want is the part of a source's list eligibleFromSource uses: the first cap
+// candidates and the one on screen. A condition runs after the fetch and may
+// drop any candidate, so a source with one reads everything.
+func (e *Engine) want(id string, src dataentryconfig.NextActionSource) Want {
+	var w Want
+	if src.Condition == "" {
+		w.First = e.cap
+	}
+	if e.current != nil && e.current.Source == id {
+		w.Keep = e.current.EntityID
+	}
+	return w
 }
 
 // truncateKeepingCurrent cuts cands to the cap. The suggestion on screen is

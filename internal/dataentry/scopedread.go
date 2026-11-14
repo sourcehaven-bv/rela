@@ -55,6 +55,14 @@ type scopeRequest struct {
 	// Passing none is always correct, only slower.
 	ScopeProps []store.PropPredicate
 
+	// Limit and Offset read one window of the type's rows in id order, the
+	// order an unpaged read returns them in, so a caller that keeps only a
+	// prefix reads only that prefix (TKT-CKLZMWB). Limit 0 reads every row.
+	//
+	// A window is refused alongside Scope: Scope filters after the store
+	// read, so a window of the store's rows is not a window of the result.
+	Limit, Offset int
+
 	// ScopeFilter applies Scope to the rows the store returned. Supplied by
 	// the caller because this package may not import predicatefns (arch-lint
 	// keeps the condition engine above the data-entry app).
@@ -167,12 +175,16 @@ func scopedHeaders(
 		return nil, true, nil
 	}
 
+	if (req.Limit > 0 || req.Offset > 0) && req.Scope != nil {
+		return nil, false, fmt.Errorf("%w: a read window with a query scope on %q", errListLoad, req.Type)
+	}
+
 	var out []store.EntityHeader
 	switch {
 	case rqr.DenyAll:
 		return nil, true, nil
 
-	case rqr.AllowAll && len(req.Props) == 0 && len(req.ScopeProps) == 0:
+	case rqr.AllowAll && len(req.Props) == 0 && len(req.ScopeProps) == 0 && req.Limit == 0 && req.Offset == 0:
 		// No extra conjuncts, so the cheaper type-scan serves it. Stamping
 		// the world here as well as on the branches below is the RR-GQWRLD
 		// invariant; note store.TrivialScope() is the zero value, so a
@@ -191,13 +203,13 @@ func scopedHeaders(
 		return out, false, err
 
 	case rqr.AllowAll:
-		// Extra conjuncts need a GraphQuery even though the ACL permits
+		// Extra conjuncts or a read window need a GraphQuery even though the ACL permits
 		// everything — and they must be carried HERE as well as on the
 		// ACL-gated branch below. Props on only one branch is the same
 		// fail-open shape as RR-GQWRLD: the AllowAll population would get
 		// an unnarrowed read while everyone else got a narrowed one.
 		q := store.GraphQuery{EntityType: req.Type, Props: allProps(req)}
-		out, err := collectHeaders(ctx, svc, stampScope(ctx, q, req), errListLoad)
+		out, err := collectHeaders(ctx, svc, windowed(stampScope(ctx, q, req), req), errListLoad)
 		if err != nil {
 			return nil, false, err
 		}
@@ -213,7 +225,7 @@ func scopedHeaders(
 		// COPY before stamping — see the doc comment.
 		q := *rqr.Query
 		q.Props = append(append([]store.PropPredicate(nil), q.Props...), allProps(req)...)
-		out, err := collectHeaders(ctx, svc, stampScope(ctx, q, req), errACLListQuery)
+		out, err := collectHeaders(ctx, svc, windowed(stampScope(ctx, q, req), req), errACLListQuery)
 		if err != nil {
 			return nil, false, err
 		}
@@ -281,6 +293,14 @@ func stampScope(ctx context.Context, q store.GraphQuery, req scopeRequest) store
 	if len(req.Faces) > 0 {
 		q.FaceIn = req.Faces
 	}
+	return q
+}
+
+// windowed applies req's read window to a stamped row query. Kept out of
+// stampScope, whose result also answers applyScope's traversal matches,
+// which a window must not cut.
+func windowed(q store.GraphQuery, req scopeRequest) store.GraphQuery {
+	q.Limit, q.Offset = req.Limit, req.Offset
 	return q
 }
 
