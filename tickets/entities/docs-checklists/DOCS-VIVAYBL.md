@@ -10,7 +10,7 @@ status: done
 ## Code Documentation
 
 - [x] Comments where logic isn't obvious: the tenant gate's rules (package comment in `internal/cli/tenant.go`), why validate is tenant-free, why `db` commands pin the schema and guard a bare DSN, and why callers close the `tenant.Opened` rather than the services
-- [x] Function/type docs if public API: godoc on `tenant.ConfigPath`, `LoadDeployment`, `Config.Select`, `SelectIn`, `OpenOne`, `Pin`, `CheckBareTarget`, `Supported` and the new sentinel errors; comment-lint `doclink` gate clean
+- [x] Function/type docs if public API: godoc on `tenant.ConfigPath`, `LoadDeployment`, `tenant.Select`, `tenant.ForProject`, `appbuild.DiscoverRoot`, `OpenOne`, `Pin`, `CheckBareTarget`, `Supported` and the new sentinel errors; comment-lint `doclink` gate clean
 
 ## Project Documentation
 
