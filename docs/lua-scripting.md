@@ -2613,8 +2613,6 @@ Options (all optional):
   accident. Set `limit` yourself to accept the first `limit`
   entities instead. With `ids` or `content`, more ids than `limit`
   is an error.
-
-Unknown option keys raise an error.
 - `style`: `"title-slug"` (default) or `"id"`. Controls the anchor in
   the default replacement value.
   - `"title-slug"` produces `[Title](#title-slug)` where the slug is
@@ -2628,6 +2626,8 @@ Unknown option keys raise an error.
   The callback runs once per entity and must return a string with no
   newlines. The entity table has the usual fields plus a top-level
   `title` convenience.
+
+Unknown option keys raise an error.
 
 Default-form replacement values escape `[`, `]`, and `\` in entity
 titles so a malicious or unusual title cannot break out of the
