@@ -2758,7 +2758,7 @@
       "propagation_cost": 9.4
     },
     "min_weight": 0,
-    "at": "2026-11-14T15:00:00Z",
+    "at": "2026-11-14T17:00:00Z",
     "log": [
       {
         "at": "2026-11-05T20:33:00Z",
@@ -3111,24 +3111,24 @@
         }
       },
       {
-        "at": "2026-11-14T12:00:00Z",
+        "at": "2026-11-14T16:30:00Z",
+        "change": "loosen",
+        "reason": "TKT-35BY3PE: dataentryconfig imports the leaf texthazard to check step prompts, so every component that reaches dataentryconfig reaches texthazard; renametype imports frontmatter (BUG-EXFOEI3). Both edges are intended. Only propagation_cost changes; the traced weights keep their values.",
+        "metrics": {
+          "propagation_cost": [
+            9.3,
+            9.4
+          ]
+        }
+      },
+      {
+        "at": "2026-11-14T17:00:00Z",
         "change": "loosen",
         "reason": "TKT-M58EQ1W: pgstore's search_title trigger and heal pass add write sites to the entities table, which pgstore already writes; the shared_table finding for entities weighs one more.",
         "metrics": {
           "weight.data": [
             1297,
             1298
-          ]
-        }
-      },
-      {
-        "at": "2026-11-14T15:00:00Z",
-        "change": "loosen",
-        "reason": "origin/develop itself exports at 9.4 against this 9.3 baseline; the merge of develop into the scaling branch carries that, and the branch adds no internal import edges (TKT-UHKZKOB).",
-        "metrics": {
-          "propagation_cost": [
-            9.3,
-            9.4
           ]
         }
       }

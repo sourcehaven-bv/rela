@@ -46,6 +46,19 @@ func TestSplit(t *testing.T) {
 			wantBody: "",
 		},
 		{
+			// BUG-EXFOEI3: an indented "---" is block-scalar text, not the fence.
+			name:     "indented delimiter inside a block scalar is content",
+			content:  "---\np: |-\n    a\n    ---\n    b\n---\n\nBody\n",
+			wantFM:   "p: |-\n    a\n    ---\n    b\n",
+			wantBody: "Body",
+		},
+		{
+			name:     "closing delimiter tolerates trailing whitespace",
+			content:  "---\nid: REQ-001\n--- \nBody\n",
+			wantFM:   "id: REQ-001\n",
+			wantBody: "Body",
+		},
+		{
 			name:     "CRLF line endings are normalized",
 			content:  "---\r\nid: REQ-001\r\n---\r\n\r\nBody line\r\n",
 			wantFM:   "id: REQ-001\n",
