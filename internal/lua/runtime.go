@@ -69,6 +69,14 @@ func stripShebang(code string) string {
 	return code[idx:]
 }
 
+// secretSet is what rela.secrets exposes.
+type secretSet struct {
+	values map[string]string
+	// withheld, when set, is why the host withholds the secrets: every
+	// index of rela.secrets raises it. See [ErrHostConfigWithheld].
+	withheld string
+}
+
 // Runtime wraps gopher-lua VM with rela bindings.
 //
 // The runtime is constructed via NewReader (read-only) or NewWriter (read-
@@ -126,15 +134,11 @@ type Runtime struct {
 	cancelTimeout context.CancelFunc
 	params        map[string]string // rela.params values (used by action scripts)
 	request       *Request          // rela.request; nil leaves the field absent (TKT-EFMRQM)
-	secrets       map[string]string // rela.secrets values (from .rela/secrets.yaml)
+	secrets       secretSet         // rela.secrets values (from .rela/secrets.yaml)
 	caps          Capabilities      // ambient capability grants; zero value denies all (TKT-YH52OM)
 	isAction      bool              // true when running as an action (changes rela.output behavior)
 	refWrites     bool              // may set external_ref properties; see WithExternalRefWrites
 	document      documentMode      // set by the document options; zero outside a render
-
-	// secretsWithheld, when set, is why the host withholds the secrets:
-	// every index of rela.secrets raises it. See [ErrHostConfigWithheld].
-	secretsWithheld string
 
 	// listRender is set (non-nil Rows) only for a LIST document render — the
 	// lists: export_render override. It rides on document mode rather than
@@ -173,13 +177,18 @@ type Runtime struct {
 	// rela.now_unix. Nil: accepted — the wall clock.
 	clock func() time.Time
 
+	// pcall is the state of protected calls; see pcallWithCapture.
+	pcall pcallState
+}
+
+// pcallState is what pcallWithCapture records across runs.
+type pcallState struct {
 	// errorFrames holds typed stack frames captured by the PCall message
 	// handler on the most recent failed run. Read via ErrorFrames() after
 	// PCall returns an error. Reset before every PCall.
 	errorFrames []StackFrame
 
-	// broken is set when a run escaped gopher-lua's PCall; see
-	// pcallWithCapture.
+	// broken is set when a run escaped gopher-lua's PCall.
 	broken bool
 }
 
@@ -410,7 +419,7 @@ func WithCapabilities(c Capabilities) Option {
 // Secrets are loaded from .rela/secrets.yaml by the caller.
 func WithSecrets(secrets map[string]string) Option {
 	return func(r *Runtime) {
-		r.secrets = secrets
+		r.secrets.values = secrets
 	}
 }
 
@@ -418,7 +427,7 @@ func WithSecrets(secrets map[string]string) Option {
 // by [LoadContextOptions] when the host withholds the secrets.
 func withSecretsWithheld(reason string) Option {
 	return func(r *Runtime) {
-		r.secretsWithheld = reason
+		r.secrets.withheld = reason
 	}
 }
 
@@ -626,7 +635,7 @@ func openSafeLibraries(ls *lua.LState) {
 // Frames are ordered innermost-first: frame[0] is where the error was
 // raised; frame[len-1] is the main chunk.
 func (r *Runtime) ErrorFrames() []StackFrame {
-	return r.errorFrames
+	return r.pcall.errorFrames
 }
 
 // pcallWithCapture runs r.L.PCall(0, MultRet, ...) with a message handler
@@ -644,21 +653,21 @@ func (r *Runtime) ErrorFrames() []StackFrame {
 // down. The state's call stack is left inconsistent, so the runtime is
 // marked broken and every later run fails.
 func (r *Runtime) pcallWithCapture() (err error) {
-	r.errorFrames = nil
-	if r.broken {
+	r.pcall.errorFrames = nil
+	if r.pcall.broken {
 		return errRuntimeBroken
 	}
 	defer func() {
 		if rcv := recover(); rcv != nil {
-			r.broken = true
+			r.pcall.broken = true
 			r.L.SetTop(0)
 			err = &lua.ApiError{Type: lua.ApiErrorRun, Object: lua.LString(fmt.Sprint(rcv))}
 		}
 	}()
 	handler := r.L.NewFunction(func(L *lua.LState) int {
-		r.errorFrames = collectStackFrames(L)
+		r.pcall.errorFrames = collectStackFrames(L)
 		if frame := r.modules.takePendingFrame(L.Get(1)); frame != nil {
-			r.errorFrames = append([]StackFrame{*frame}, r.errorFrames...)
+			r.pcall.errorFrames = append([]StackFrame{*frame}, r.pcall.errorFrames...)
 		}
 		// Pass the original error object (arg #1) through unchanged so
 		// gopher-lua wraps it into ApiError as usual.
@@ -1116,10 +1125,10 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 	// present-and-empty, so a missing grant surfaces as a nil index at the use
 	// site instead of as a silently-wrong credential.
 	secretsTable := r.L.NewTable()
-	for k, v := range r.caps.filterSecrets(r.secrets) {
+	for k, v := range r.caps.filterSecrets(r.secrets.values) {
 		r.L.SetField(secretsTable, k, lua.LString(v))
 	}
-	if reason := r.secretsWithheld; reason != "" {
+	if reason := r.secrets.withheld; reason != "" {
 		// A withheld secret raises rather than reading as nil, so a
 		// script fails at the use site with the reason instead of
 		// sending an empty credential.

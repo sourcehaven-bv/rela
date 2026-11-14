@@ -20,6 +20,8 @@ func newBoundsRuntime(t *testing.T) *Runtime {
 	return rt
 }
 
+const valueStackCase = "value stack past the registry maximum"
+
 func TestLuaBounds_Refused(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -83,7 +85,7 @@ func TestLuaBounds_Refused(t *testing.T) {
 		},
 		{"deep recursion", `local function f(n) return 1 + f(n + 1) end; f(1)`, "stack overflow"},
 		{
-			"value stack past the registry maximum",
+			valueStackCase,
 			`local t = {}; for i = 1, 70000 do t[i] = i end; local x = {unpack(t)}`,
 			"registry overflow",
 		},
@@ -99,6 +101,12 @@ func TestLuaBounds_Refused(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("error = %v, want it to contain %q", err, tc.wantErr)
+			}
+			// The value-stack case runs a 70,000-step loop before it
+			// overflows, which takes seconds under the race detector.
+			// The time bound is for refusals that come before any work.
+			if tc.name == valueStackCase {
+				return
 			}
 			if d := time.Since(start); d > 5*time.Second {
 				t.Fatalf("refusal took %v", d)
