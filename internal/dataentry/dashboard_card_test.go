@@ -536,7 +536,7 @@ func TestQueryBudget_DashboardCardsAreSizeIndependent(t *testing.T) {
 					t.Fatalf("ratio matched %d of %d; the scope did not run", got.Matched, got.Total)
 				}
 			})
-			// TODO(TKT-F2EJQY8): calls only. A card aggregates in Go over a
+			// TODO(TKT-D3RAB0E): calls only. A card aggregates in Go over a
 			// full header scan of the type (navStatusRows, nav_status.go,
 			// through scopedHeaders' type scan in scopedread.go), so its rows grow
 			// with the store. Assert rows once the count is pushed down.

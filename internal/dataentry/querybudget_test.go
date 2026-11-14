@@ -457,7 +457,7 @@ func assertBudget(t *testing.T, name string, c budgetCost, pinned int, detail st
 
 // assertCallBudget is [assertBudget] without the rows check, for an op
 // whose rows are known to grow with the store. Every caller says which read
-// grows: a TODO(TKT-F2EJQY8) for a scan to remove, or why it is by design.
+// grows: a TODO naming the ticket that removes the scan, or why it is by design.
 func assertCallBudget(t *testing.T, name string, c budgetCost, pinned int, detail string) {
 	t.Helper()
 	if c.small.Calls != c.large.Calls {
@@ -582,7 +582,7 @@ func TestQueryBudget_SearchIsSizeIndependent(t *testing.T) {
 			t.Fatalf("search: %d %s", rec.Code, rec.Body)
 		}
 	})
-	// TODO(TKT-F2EJQY8): calls only. The search's structured filter reads
+	// TODO(TKT-D3RAB0E): calls only. The search's structured filter reads
 	// every header of the type (scopedHeaders' type scan in scopedread.go,
 	// reached from helpers.go via queryservice.go).
 	assertCallBudget(t, "search", b, searchBudget, detail)
@@ -605,7 +605,7 @@ func TestQueryBudget_SearchLinkableIsSizeIndependent(t *testing.T) {
 			t.Fatalf("no row is linkable, so this budget proves nothing: %s", rec.Body)
 		}
 	})
-	// TODO(TKT-F2EJQY8): calls only. Besides the header scan named on the
+	// TODO(TKT-D3RAB0E): calls only. Besides the header scan named on the
 	// search budget above, the linkable search loads every candidate's body
 	// (rowcontent.go, from search_linkable.go).
 	assertCallBudget(t, "search linkable", b, searchLinkableBudget, detail)
@@ -710,7 +710,7 @@ func TestQueryBudget_TraversalScopeIsSizeIndependent(t *testing.T) {
 			}
 		}
 	})
-	// TODO(TKT-F2EJQY8): calls only. A scope that does not lower keeps the
+	// TODO(TKT-I39Y7N4): calls only. A scope that does not lower keeps the
 	// Go path, which reads every header of the type (scopedHeaders' type
 	// scan in scopedread.go) and judges the scope over that candidate set.
 	assertCallBudget(t, "traversal scope list page", b, traversalScopeBudget, detail)
@@ -795,24 +795,23 @@ func TestQueryBudget_EdgeWarningsAreSizeIndependent(t *testing.T) {
 
 // A list page inside an entity page's tab (pagescope.go). The scope costs one
 // gated anchor read and one relation query, whatever the number of rows it
-// keeps; it also takes the list off the pushdown path, so the rows come from
-// the whole-type read.
+// keeps. It takes the list off the pushdown path, and the Go path reads the
+// tab's rows by id rather than the whole type (TKT-F2EJQY8).
 func TestQueryBudget_PageScopedListIsSizeIndependent(t *testing.T) {
-	b, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
-		t.Helper()
-		resp, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets",
-			"per_page=100&scope_page=epic&scope_tab=tickets&anchor=E1")
-		if rec.Code != http.StatusOK {
-			t.Fatalf("list: %d %s", rec.Code, rec.Body)
-		}
-		if len(resp.Data) < 10 {
-			t.Fatalf("list returned %d rows", len(resp.Data))
-		}
-	})
-	// TODO(TKT-F2EJQY8): calls only. A page-scoped list takes the Go path,
-	// which reads every header of the type (scopedHeaders' type scan in
-	// scopedread.go) before it narrows to the anchor's rows.
-	assertCallBudget(t, "page-scoped list", b, pageScopedListBudget, detail)
+	b, detail := readsFor(t, pageScopedListOp)
+	assertBudget(t, "page-scoped list", b, pageScopedListBudget, detail)
+}
+
+var pageScopedListOp budgetOp = func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+	t.Helper()
+	resp, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets",
+		"per_page=100&scope_page=epic&scope_tab=tickets&anchor=E1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list: %d %s", rec.Code, rec.Body)
+	}
+	if len(resp.Data) < 10 {
+		t.Fatalf("list returned %d rows", len(resp.Data))
+	}
 }
 
 // The same tab over a relation orderable on its incoming side: the list is
@@ -834,9 +833,7 @@ func TestQueryBudget_IncomingOrderedListIsSizeIndependent(t *testing.T) {
 			t.Fatalf("list returned %d rows, order %+v", len(resp.Data), resp.Meta.RelationOrder)
 		}
 	})
-	// TODO(TKT-F2EJQY8): calls only, for the type scan named on the
-	// page-scoped list budget above.
-	assertCallBudget(t, "incoming-ordered list", b, incomingOrderedListBudget, detail)
+	assertBudget(t, "incoming-ordered list", b, incomingOrderedListBudget, detail)
 }
 
 // The generated navigation entries (nav_items.go) of a group over the tickets
@@ -886,12 +883,13 @@ const (
 	edgeWarningsBudget = 4
 
 	// page-scoped list: the anchor read, the scope's relation query, the
-	// whole-type read, page edges, neighbor headers, membership walk.
-	pageScopedListBudget = 7
+	// rows read by id (one MatchingFaces and one header read), page edges,
+	// neighbor headers, membership walk.
+	pageScopedListBudget = 8
 	// incoming-ordered list: pageScopedListBudget plus the edge gate's
 	// header read and the movable check's batched source rows and gate.
 	// Measured, not derived.
-	incomingOrderedListBudget = 10
+	incomingOrderedListBudget = 11
 	// nav items: scoped count + one bounded page read (listpushdown.go), the
 	// initials' relation query and neighbor headers, membership walk.
 	navItemsBudget = 6

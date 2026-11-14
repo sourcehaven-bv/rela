@@ -1,9 +1,9 @@
 request: GET /api/v1/_settings
 identity: header editor@example.test
 status: 200
-reads: GraphQueryHeaders=1 ListEntities=3 ListRelations=4 MatchingFaces=2
-breadth: ListEntities=0/3 ListRelations=13/4 MatchingFaces=12/2
-bodies: GraphQuery=0/1 ListEntities=8/3
+reads: GraphQueryHeaders=1 ListEntityHeaders=3 ListRelations=4 MatchingFaces=2
+breadth: ListEntityHeaders=0/3 ListRelations=13/4 MatchingFaces=12/2
+bodies: GraphQuery=0/1 ListEntityHeaders=0/3
 versions: 
 body (allProperties, allRelations, entityTypes sorted):
 {
