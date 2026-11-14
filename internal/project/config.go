@@ -111,8 +111,8 @@ func refuseMisspelledRemoteMCP(data []byte) error {
 		return nil //nolint:nilerr // the main decode reports it
 	}
 	for key := range top {
-		norm := strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(key))
-		if norm == "remotemcp" && key != "remote_mcp" {
+		folded := strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(key))
+		if folded == "remotemcp" && key != "remote_mcp" {
 			return fmt.Errorf("unknown key %q; the remote MCP block is spelled remote_mcp", key)
 		}
 	}
