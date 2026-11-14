@@ -75,8 +75,9 @@ question. A move clears the set.
 
 5. **Grouped display.** The web app shows a batch of questions as one group:
 "Question k of N", answered questions collapsed to the chosen value with
-"Change" (edit or remove the own answer, as the answer type allows) until the
-session moves.
+"Change" (show the choices again and answer again) until the session moves.
+Corrected (issue #2233): Change posts a new answer; it does not edit or
+remove the earlier one.
 
 6. **A display hint per message type** in `data-entry.yaml`:
 `display: cards` with a `cards:` map naming the properties to use (`body`,

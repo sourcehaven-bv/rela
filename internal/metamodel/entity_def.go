@@ -118,7 +118,7 @@ func (e *EntityDef) GetDefaultStatus(m *Metamodel) string {
 // property, or "" when it declares none. Only config counts, in this order:
 // the property's `default:`, else its named type's `initial:` (a state
 // machine's entry value), else that type's `default:`. The type order
-// matches the state machine's entry value; statemachine.Compile rejects a
+// matches the state machine's entry value; transitions.CompileTransitions rejects a
 // property default that differs from it, so a defaulted create is a legal
 // entry. There is no fallback to a first enum value or a zero value.
 func DeclaredDefault(prop PropertyDef, m *Metamodel) string {

@@ -132,3 +132,36 @@ func TestPages_ConfigUnfiltered(t *testing.T) {
 	require.Len(t, resp.Pages["tickets"].Tabs, 2)
 	require.Equal(t, "admin:read", resp.Pages["admin"].Tabs[0].Permission)
 }
+
+// A steps page carries its mode and each tab's prompt to the SPA; a page with
+// the default mode carries none.
+func TestPages_SidebarCarriesStepsModeAndPrompt(t *testing.T) {
+	app := newTestAppV1(t)
+	installPagesConfig(app, map[string]dataentryconfig.List{"all": {EntityType: "ticket"}},
+		map[string]dataentryconfig.Page{
+			"workshop": {
+				PageHeader: dataentryconfig.PageHeader{Label: "Workshop"},
+				Mode:       dataentryconfig.PageModeSteps,
+				Tabs: []dataentryconfig.PageTab{
+					{ID: "risks", Label: "Risks", List: "all", Prompt: "What can go wrong?"},
+					{ID: "home", Label: "Home", Dashboard: dataentryconfig.DefaultDashboard},
+				},
+			},
+			"plain": {
+				PageHeader: dataentryconfig.PageHeader{Label: "Plain"},
+				Mode:       dataentryconfig.PageModeTabs,
+				Tabs:       []dataentryconfig.PageTab{{ID: "all", Label: "All", List: "all"}},
+			},
+		}, nil)
+
+	resp, _ := sidebarFor(principalCtx("alice"), t, app, "")
+	require.Equal(t, v1.SidebarPage{
+		PageHeader: dataentryconfig.PageHeader{Label: "Workshop"},
+		Mode:       dataentryconfig.PageModeSteps,
+		Tabs: []v1.SidebarPageTab{
+			{ID: "risks", Label: "Risks", View: "list", Target: "all", Prompt: "What can go wrong?"},
+			{ID: "home", Label: "Home", View: "dashboard"},
+		},
+	}, resp.Pages["workshop"])
+	require.Empty(t, resp.Pages["plain"].Mode, "the default mode is left off the wire")
+}

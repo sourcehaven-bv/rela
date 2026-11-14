@@ -34,10 +34,11 @@ local uid = rela.params["user_id"]
 local org = rela.params["org_id"]
 local event = rela.params["event"]
 
-if base == "" or key == "" or want_org == "" then
+-- rela.secrets and rela.params leave a missing key out, so treat nil as empty.
+if (base or "") == "" or (key or "") == "" or (want_org or "") == "" then
   return { message_type = "error", message = "idp-sync: operator url/key/org not configured in secrets" }
 end
-if uid == "" or org == "" then
+if (uid or "") == "" or (org or "") == "" then
   return { message_type = "error", message = "idp-sync: missing user_id/org_id param" }
 end
 
