@@ -29,7 +29,7 @@ var _ search.VisibleSearcher = (*Store)(nil)
 // AllowAll entries, the [buildPredicateSQL] EXISTS chain (with
 // per-type CTE prefixes) for Query entries, denied types omitted. A
 // wildcard-allow scope drops the disjunction entirely. Ordering
-// matches the ungated backend (`similarity DESC, id ASC`; plain id
+// matches the ungated backend (title distance ASC, id ASC; plain id
 // order for empty text) so the gated stream is the ungated stream
 // minus hidden rows — the conformance suite's ordered-subsequence
 // invariant. A [search.TypeScope.Fields] entry adds the field check (see
@@ -60,7 +60,7 @@ func (s *Store) SearchVisible(
 		}
 
 		emitted := 0
-		for page, err := range visiblePages(ctx, s.db, s.searchTitles, q, scope) {
+		for page, err := range visiblePages(ctx, s.db, q, scope) {
 			if err != nil {
 				yield(search.Hit{}, err)
 				return
@@ -74,14 +74,18 @@ func (s *Store) SearchVisible(
 				}
 				emitted++
 			}
+			// Stop before visiblePages reads another page nobody will use.
+			if q.Limit > 0 && emitted >= q.Limit {
+				return
+			}
 		}
 	}
 }
 
-// visibleKey is a visible-search row's keyset key: the rank the result is
-// ordered by (descending; zero when the query has no text) and the id.
+// visibleKey is a visible-search row's keyset key: the distance the result is
+// ordered by (ascending; zero when the query has no text) and the id.
 type visibleKey struct {
-	rank float32
+	dist float32
 	id   string
 }
 
@@ -92,10 +96,12 @@ type visibleKey struct {
 // the scope admits nothing.
 //
 // A page is at most q.Limit rows when no Go-side check can drop any, so a
-// limited search usually costs one statement. Otherwise a page costs the
+// limited search usually costs one statement. A later page cannot start the
+// distance-ordered index scan at the cursor: it reads past every row before
+// it again, so a search that drops many rows in Go costs more per page. Otherwise a page costs the
 // search statement plus at most one body read for the field check.
 func visiblePages(
-	ctx context.Context, db DBTX, titles SearchTitles, q search.Query, scope map[string]search.TypeScope,
+	ctx context.Context, db DBTX, q search.Query, scope map[string]search.TypeScope,
 ) iter.Seq2[[]*entity.Entity, error] {
 	return func(yield func([]*entity.Entity, error) bool) {
 		gated := q.Text != "" && fieldGated(scope)
@@ -105,7 +111,7 @@ func visiblePages(
 		}
 		var after *visibleKey
 		for {
-			rows, anyVisible, err := readVisiblePage(ctx, db, titles, q, scope, after, size)
+			rows, anyVisible, err := readVisiblePage(ctx, db, q, scope, after, size)
 			if err != nil {
 				yield(nil, fmt.Errorf("%w: pgstore visible search: %w", search.ErrScope, err))
 				return
@@ -137,14 +143,14 @@ func visiblePages(
 // readVisiblePage builds and runs one keyset page of a visible search.
 // anyVisible is false, with no query run, when the scope admits nothing.
 func readVisiblePage(
-	ctx context.Context, db DBTX, titles SearchTitles, q search.Query, scope map[string]search.TypeScope,
+	ctx context.Context, db DBTX, q search.Query, scope map[string]search.TypeScope,
 	after *visibleKey, size int,
 ) (rows []visibleRow, anyVisible bool, err error) {
-	sqlText, args, anyVisible, err := buildVisibleSearchSQL(q, scope, titles, after, size)
+	sqlText, args, anyVisible, err := buildVisibleSearchSQL(q, scope, after, size)
 	if err != nil || !anyVisible {
 		return nil, false, err
 	}
-	rows, err = queryAll(ctx, db, sqlText, args, scanVisibleRow)
+	rows, err = queryAll(ctx, db, sqlText, append([]any{searchQueryMode}, args...), scanVisibleRow)
 	return rows, err == nil, err
 }
 
@@ -197,7 +203,7 @@ func scanVisibleRow(row scanner) (visibleRow, error) {
 	if e.Properties, err = unmarshalProps(props); err != nil {
 		return visibleRow{}, err
 	}
-	return visibleRow{e: e, key: visibleKey{rank: rank, id: id}, grants: grants}, nil
+	return visibleRow{e: e, key: visibleKey{dist: rank, id: id}, grants: grants}, nil
 }
 
 // visibleSearchColumns is scanEntity's column list with the body projected
@@ -219,11 +225,11 @@ const visibleSearchColumns = "e.id, e.type, e.face, e.properties, ''::text AS co
 // buildGraphQuerySQL.
 //
 // It reads one keyset page of at most pageLimit rows after the key after (nil
-// for the first page). Each row carries its rank as a seventh column, which
+// for the first page). Each row carries its distance as a seventh column, which
 // is the key's first part, and its field-grant verdicts as an eighth; see
 // visiblePages.
 func buildVisibleSearchSQL(
-	q search.Query, scope map[string]search.TypeScope, titles SearchTitles, after *visibleKey, pageLimit int,
+	q search.Query, scope map[string]search.TypeScope, after *visibleKey, pageLimit int,
 ) (sqlText string, args []any, anyVisible bool, err error) {
 	b := &sqlBuilder{}
 
@@ -240,21 +246,18 @@ func buildVisibleSearchSQL(
 		}
 	}
 
-	var sb strings.Builder
 	// The world scope rides q.World (TKT-9KZGJO). Two shapes, exactly as in
-	// SearchBackend.Search:
+	// SearchBackend.Search, and from the same helpers (see buildSearchSQL):
 	//
-	//   - DEFAULT world: `e.face = ''`, the historical query verbatim, so
-	//     a project with no faces pays nothing.
-	//   - non-default: resolve per FAMILY with DISTINCT ON, because a world
+	//   - DEFAULT world: the empty face, so a project with no faces pays
+	//     nothing.
+	//   - non-default: resolve per FAMILY (worldPrimeSQL), because a world
 	//     is a ranked preference and `face IN (...)` would return two rows
 	//     for an entity holding two coordinates.
 	//
 	// LOCKSTEP with pgstore/search.go's SearchBackend.Search: the gated and
 	// ungated streams are held to an ordered-subsequence conformance
-	// contract, so these two scopes must change together. Both now build
-	// their candidate/rank expressions from the SAME worldSQL helper, which
-	// is what makes "together" structural rather than a promise.
+	// contract, so these two scopes must change together.
 	//
 	// Note the ACL row gate cannot cover for a mistake here: guard rule 1
 	// makes the row gate world-INDEPENDENT, so a draft leaking through this
@@ -266,21 +269,21 @@ func buildVisibleSearchSQL(
 	// face rather than losing the entity. The verdict is evaluated per face
 	// row, and only the resolved rows come out, so a face the world ranked
 	// out is never counted or matched.
-	visCond := ""
+	vis := ""
 	if !wildcardAllow {
-		visCond = " AND (" + strings.Join(visParts, " OR ") + ")"
+		vis = strings.Join(visParts, " OR ")
 	}
-	// Text match + ordering mirror SearchBackend.Search exactly:
-	// escaped needle for LIKE, raw lowercased needle for similarity,
-	// id ASC ties — the parity baseline orders by the same expressions.
-	// The rank is rendered twice, as a column and in the keyset condition,
-	// because WHERE cannot name a SELECT alias.
-	rankCol, orderBy := "0::real", " ORDER BY e.id ASC"
+	// Text match and ordering mirror SearchBackend.Search exactly: escaped
+	// needle for LIKE, raw lowercased needle for the distance, id ASC ties.
+	// The distance is rendered twice, as a column and in the keyset
+	// condition, because WHERE cannot name a SELECT alias.
+	rankCol, orderBy, dist := "0::real", " ORDER BY e.id ASC", ""
 	var needle string
 	if q.Text != "" {
 		needle = strings.ToLower(q.Text)
-		rankCol = titles.rankSQL("e", func(v any) string { return b.arg(v) }, needle)
-		orderBy = " ORDER BY search_rank DESC, e.id ASC"
+		dist = searchDistanceSQL(b.arg(needle))
+		rankCol = dist
+		orderBy = " ORDER BY search_rank ASC, e.id ASC"
 	}
 	grantsCol := "NULL::boolean[]"
 	if q.Text != "" {
@@ -289,50 +292,34 @@ func buildVisibleSearchSQL(
 		withParts = append(withParts, w...)
 	}
 	columns := visibleSearchColumns + ", " + rankCol + " AS search_rank, " + grantsCol + " AS field_grants"
-	likeArg := ""
-	if q.Text != "" {
-		likeArg = b.arg(escapeLike(needle))
-	}
-	typesCond := ""
-	if len(q.Types) > 0 {
-		typesCond = " AND e.type = ANY(" + b.arg(q.Types) + ")"
-	}
-	textCond := ""
-	if q.Text != "" {
-		textCond = " AND e.search_text LIKE '%' || " + likeArg + ` || '%' ESCAPE '\'`
-	}
+	var sb strings.Builder
+	var where []string
 	if q.World.IsTrivial() {
-		sb.WriteString("SELECT " + columns + " FROM entities e WHERE e.face = ''" + visCond)
-	} else {
-		rank, candidate := worldSQL(q.World, "e", &b.args)
-		hits := ""
-		if q.Text != "" && trigramIndexable(needle) {
-			// See textHitsCTE. The CTE repeats the candidate, visibility and
-			// type conditions so it holds only faces this statement could
-			// return; it goes after the visibility CTEs it may name. With a
-			// query scope that means each matching face runs the visibility
-			// checks twice, here and in the inner query; a cost, not a
-			// different result.
-			withParts = append(withParts, textHitsCTE+" AS MATERIALIZED (SELECT e.id, e.face FROM entities e WHERE "+
-				"e.search_text LIKE '%' || "+likeArg+` || '%' ESCAPE '\' AND `+candidate+visCond+typesCond+")")
-			hits = textHitsJoin
-			textCond = " AND e.face = ANY(e.hit_faces)"
+		where = append(where, "e.face = ''")
+		if vis != "" {
+			where = append(where, "("+vis+")")
 		}
-		sb.WriteString("SELECT " + columns + " FROM (" +
-			"SELECT DISTINCT ON (id) * FROM entities e" + hits + " WHERE " + candidate + visCond +
-			" ORDER BY id ASC, (" + rank + ") ASC, face ASC) e WHERE true")
+		sb.WriteString("SELECT " + columns + " FROM entities e")
+	} else {
+		from, _, prime := worldPrimeSQL(q.World, vis, &b.args)
+		where = append(where, prime...)
+		sb.WriteString("SELECT " + columns + " FROM " + from)
 	}
-	sb.WriteString(textCond)
+	if q.Text != "" {
+		where = append(where, likeSQL(b.arg(escapeLike(needle))))
+	}
 	if after != nil {
 		if q.Text == "" {
-			sb.WriteString(" AND e.id > " + b.arg(after.id))
+			where = append(where, "e.id > "+b.arg(after.id))
 		} else {
-			rank := titles.rankSQL("e", func(v any) string { return b.arg(v) }, needle)
-			r, id := b.arg(after.rank), b.arg(after.id)
-			sb.WriteString(" AND (" + rank + " < " + r + " OR (" + rank + " = " + r + " AND e.id > " + id + "))")
+			d, id := b.arg(after.dist), b.arg(after.id)
+			where = append(where, "("+dist+" > "+d+" OR ("+dist+" = "+d+" AND e.id > "+id+"))")
 		}
 	}
-	sb.WriteString(typesCond)
+	if len(q.Types) > 0 {
+		where = append(where, "e.type = ANY("+b.arg(q.Types)+")")
+	}
+	sb.WriteString(" WHERE " + strings.Join(where, " AND "))
 	sb.WriteString(orderBy)
 	sb.WriteString(" LIMIT " + b.arg(pageLimit))
 	if b.err != nil {

@@ -29,14 +29,18 @@ Measured on 2026-11-13 on a laptop (p50, scale 1 and scale 5):
 | Create, update, delete | 14-26 ms | 1-4 ms |
 | Dashboard query card | 53-140 ms | 270-500 ms |
 | Next action | 33 ms | 210 ms |
-| Full-text search | 250-520 ms | 1.4-2.9 s |
+| Full-text search (2026-11-14) | 9-22 ms | 28-42 ms |
 | Gantt chart | 340 ms | 3.8 s |
 
-Paged reads and writes do not get slower as the data grows. Search, dashboard
+Paged reads and writes do not get slower as the data grows. Dashboard
 query cards, the next-action suggestion and the gantt chart still read data in
 proportion to its size, so they grow with it. Follow-up tickets track each of
 them; until they land, the check holds them to their current growth so they
 cannot get worse unnoticed.
+
+Search reads its hits from an index in title order and stops at the limit. It
+still grows about 3x from scale 1 to scale 5, because the index scan reads
+more of the index as it grows.
 
 The filesystem and SQLite backends are not part of this check. They are
 single-process backends meant for smaller datasets.

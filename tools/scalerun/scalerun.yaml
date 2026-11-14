@@ -94,10 +94,10 @@ endpoints:
     path: /api/v1/_search?q={word}&limit=20
     as: [manager, editor, reader]
     expect: 200
-    p95_ms: {"1": 2000, "5": 9000}
-    # p50 grew 5.6x (520 ms -> 2.9 s): the text match scans every row.
-    # TKT-M58EQ1W.
-    ratio_max: 8
+    p95_ms: {"1": 100, "5": 150}
+    # p50 9-22 ms at scale 1 and 28-42 ms at scale 5 after TKT-M58EQ1W. The
+    # title index scan still reads more of the index as it grows. TKT-1BNSQRR.
+    ratio_max: 5
   # Dashboard query cards: the SPA runs each card's query through _search.
   - name: dashboard-count
     method: GET
