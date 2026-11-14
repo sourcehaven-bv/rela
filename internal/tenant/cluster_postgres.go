@@ -24,15 +24,31 @@ const controlTable = ControlSchema + ".tenants"
 // that finds the table missing refuses to start rather than create it.
 const controlDDL = `CREATE SCHEMA IF NOT EXISTS ` + ControlSchema + `;
 CREATE TABLE IF NOT EXISTS ` + controlTable + ` (
-	schema_name text PRIMARY KEY,
-	org_id      text NOT NULL UNIQUE,
-	status      text NOT NULL CHECK (status IN ('provisioning', 'active', 'suspended', 'erasing')),
-	created_at  timestamptz NOT NULL DEFAULT now(),
-	updated_at  timestamptz NOT NULL DEFAULT now()
+	schema_name  text PRIMARY KEY,
+	org_id       text NOT NULL UNIQUE,
+	status       text NOT NULL CHECK (status IN ('provisioning', 'active', 'suspended', 'erasing')),
+	suspended_by text CHECK (suspended_by IN ('operator', 'idp')),
+	created_at   timestamptz NOT NULL DEFAULT now(),
+	updated_at   timestamptz NOT NULL DEFAULT now()
 )`
 
-// recordQuery reads one control row and whether its schema exists.
-const recordQuery = `SELECT t.org_id, t.status,
+// controlUpgradeDDL adds the columns a control table made by an older
+// release lacks. Each statement is idempotent. [ensureControl] runs it only
+// when a column is missing, because ALTER TABLE locks the table even when it
+// changes nothing.
+const controlUpgradeDDL = `ALTER TABLE ` + controlTable + `
+	ADD COLUMN IF NOT EXISTS suspended_by text CHECK (suspended_by IN ('operator', 'idp'))`
+
+// controlCurrentQuery reports whether the control table has every column
+// this release writes.
+const controlCurrentQuery = `SELECT EXISTS (SELECT 1 FROM pg_attribute
+	WHERE attrelid = to_regclass($1) AND attname = 'suspended_by' AND NOT attisdropped)`
+
+// recordQuery reads one control row and whether its schema exists. It reads
+// `suspended_by` through to_jsonb, which yields NULL when the column does
+// not exist, so a server reads a control table no provisioner of this
+// release has upgraded yet.
+const recordQuery = `SELECT t.org_id, t.status, coalesce(to_jsonb(t)->>'suspended_by', ''),
 	EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspname = t.schema_name)
 	FROM ` + controlTable + ` t WHERE t.schema_name = $1`
 
@@ -45,8 +61,8 @@ type rowQuerier interface {
 // queryRecord reads schema's control row through q.
 func queryRecord(ctx context.Context, q rowQuerier, schema string) (Record, bool, error) {
 	rec := Record{Schema: schema}
-	var status string
-	err := q.QueryRow(ctx, recordQuery, schema).Scan(&rec.OrgID, &status, &rec.SchemaExists)
+	var status, suspendedBy string
+	err := q.QueryRow(ctx, recordQuery, schema).Scan(&rec.OrgID, &status, &suspendedBy, &rec.SchemaExists)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Record{}, false, nil
 	}
@@ -54,6 +70,7 @@ func queryRecord(ctx context.Context, q rowQuerier, schema string) (Record, bool
 		return Record{}, false, err
 	}
 	rec.Status = Status(status)
+	rec.SuspendedBy = SuspendCause(suspendedBy)
 	return rec, true, nil
 }
 

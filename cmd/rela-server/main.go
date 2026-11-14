@@ -574,6 +574,10 @@ func main() {
 
 	// -tenant-mode (or RELA_TENANT_MODE=1) turns tenant mode on; without it
 	// the server runs one store, and refuses a tenant deployment.
+	if err := refuseTenantOnlyFlags(f.tenant); err != nil {
+		slog.Error("refusing to start", "error", err)
+		os.Exit(1)
+	}
 	if f.tenant.enabled {
 		os.Exit(runTenantMode(f, accessLog))
 	}

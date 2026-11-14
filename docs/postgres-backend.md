@@ -827,6 +827,45 @@ is why the default is `off`.
 The server still refuses to start when the control table does not exist,
 so create the first tenant with `rela-server tenant create`.
 
+### Suspension follows the IdP
+
+The server can suspend and resume a tenant when the IdP suspends or
+reactivates its org. Set `-tenant-idp-org-api` (`RELA_TENANT_IDP_ORG_API`)
+to the IdP's operator API, as `http://host:port`, `https://host:port` or
+`unix:///path/to/socket`. Put the operator API's HMAC secret in
+`$RELA_IDP_OPERATOR_SECRET`. There is no flag for the secret, so it never
+shows in `ps` or shell history. The server refuses to start when the flag
+is set without the secret, without the IdP webhook (`-webhook-audience`
+and `-webhook-action`), or without tenant mode.
+
+The IdP sends `organization.updated` with only the org id. On a verified
+event the server asks the operator API for the org's current status
+(`GET /api/v1/orgs/{id}`, 5 second timeout, no redirects), and then:
+
+| Org at the IdP | What the server does |
+| --- | --- |
+| `suspended` | Suspends an active tenant. Open sessions close at once, as after `tenant suspend`. An already suspended tenant stays as it is. |
+| `active` | Resumes the tenant, but only if the IdP suspended it. A tenant an operator suspended stays suspended. |
+| unknown (404) | Nothing. Erasure is an operator decision. |
+
+The server answers 200 when it applied a change or had nothing to do, also
+for an org that has no tenant. It answers 502 when the operator API or the
+control table cannot answer, and 503 with `Retry-After` for a tenant that
+is still being created, so the IdP sends the event again. This works for a
+suspended tenant too; other events for a suspended tenant still get 503.
+The event is not passed on to the tenant.
+
+The control table records who suspended a tenant, in the column
+`suspended_by` (`operator` or `idp`). `tenant suspend` sets `operator`,
+also on a tenant the IdP suspended, so the IdP can no longer resume it.
+`tenant resume` resumes either kind and clears the column. `tenant show`
+prints who suspended a tenant. The first lifecycle command of this release
+adds the column to an existing control table. A tenant suspended before
+that has no recorded cause, and the IdP does not resume it.
+
+Without `-tenant-idp-org-api`, `organization.updated` is passed to the
+tenant as before.
+
 Every tenant uses the same database role, the one in `$RELA_DATABASE_URL`.
 The `rela-server tenant` commands connect as that role too, so the tables a
 create makes belong to the role the server uses.
@@ -859,13 +898,14 @@ rela-server-postgres tenant erase   -project /srv/rela org_7f3a
   because that schema may hold other data. Use `-adopt` to take over such
   a schema on purpose.
 - `show` prints the org's derived schema and its status, or "no tenant".
+  For a suspended tenant it also prints who suspended it.
 - `suspend` stops serving the org and keeps its data. Requests get 403 at
   once. Each server closes the tenant within 30 seconds, and ends its live
   update streams. IdP webhooks for the org are refused with 503 so that the
   IdP retries them. If the suspension outlasts the IdP's retries, resync
   the org's roles from the IdP after the resume.
-- `resume` serves a suspended org again. It cannot resume an org that is
-  being erased.
+- `resume` serves a suspended org again, also one the IdP suspended. It
+  cannot resume an org that is being erased.
 - `erase` is described below.
 
 Every status change is checked against the current status in the same
@@ -880,9 +920,6 @@ described below. Neither record holds tenant data.
 A `rela-postgres --tenant <org_id>` process, such as the scheduler or stdio
 MCP, checks the same status every 30 seconds. When the tenant is no longer
 served, it prints a message and exits.
-
-Automatic creation when the IdP reports a new organization is not built
-yet (TKT-TNPRV8).
 
 **Upgrading from `tenants.yaml`.** Earlier versions listed tenants in
 `tenants.yaml` with schema names you chose. That file is no longer read.

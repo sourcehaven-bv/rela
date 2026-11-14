@@ -44,6 +44,18 @@ const (
 	StatusErasing      Status = "erasing"
 )
 
+// SuspendCause records who suspended a tenant, in the control table's
+// `suspended_by` column. It is empty when the tenant is not suspended, and
+// for a suspension recorded before the column existed.
+type SuspendCause string
+
+// The suspension causes. An IdP suspension is undone when the IdP
+// reactivates the org; an operator suspension only by an operator.
+const (
+	SuspendedByOperator SuspendCause = "operator"
+	SuspendedByIDP      SuspendCause = "idp"
+)
+
 // schemaPrefix starts every derived schema name, so a derived name can never
 // be `public`, a `pg_` name or [ControlSchema].
 const schemaPrefix = "org_"
@@ -103,6 +115,7 @@ type Record struct {
 	OrgID        string
 	Schema       string
 	Status       Status
+	SuspendedBy  SuspendCause
 	SchemaExists bool
 }
 

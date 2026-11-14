@@ -51,3 +51,7 @@ var ErrSchemaExists = errors.New("tenant: the schema already exists without a co
 // ErrWrongStatus reports a status change the tenant's current status does
 // not allow.
 var ErrWrongStatus = errors.New("tenant: not allowed in the current status")
+
+// ErrOperatorSuspended reports that the IdP asked to resume a tenant an
+// operator suspended. Only an operator resumes it.
+var ErrOperatorSuspended = errors.New("tenant: suspended by an operator")

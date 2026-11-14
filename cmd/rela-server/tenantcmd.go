@@ -35,13 +35,16 @@ Commands:
   create [-adopt] ORG_ID   create the schema, run the migrations, and set
                            the status to active. -adopt takes over a schema
                            that already has the derived name.
-  suspend ORG_ID           stop serving the tenant; its data stays.
-  resume ORG_ID            serve a suspended tenant again.
+  suspend ORG_ID           stop serving the tenant; its data stays. The
+                           IdP cannot resume a tenant an operator suspended.
+  resume ORG_ID            serve a suspended tenant again, also one the IdP
+                           suspended.
   erase [-force] ORG_ID    set the status to erasing, which cannot be
                            undone, then drop the schema and remove the
                            audit directory. Without -force the command asks
                            you to type the org id to confirm.
-  show ORG_ID              print the tenant's schema and status.
+  show ORG_ID              print the tenant's schema and status, and who
+                           suspended it.
 
 Before erasing, check that no open or recently closed incident, NCR or
 dispute refers to the tenant while its evaluation period is still running
@@ -234,9 +237,23 @@ func showTenant(ctx context.Context, a tenantArgs, base string, tio tenantIO) in
 		_, _ = fmt.Fprintf(tio.err, "tenant show: %v\n", err)
 		return 1
 	}
-	_, _ = fmt.Fprintf(tio.out, "org_id %q: schema %q, %s%s\n", rec.OrgID, rec.Schema, rec.Status,
-		done(rec.SchemaExists, "", " (the schema does not exist)"))
+	_, _ = fmt.Fprintf(tio.out, "org_id %q: schema %q, %s%s%s\n", rec.OrgID, rec.Schema, rec.Status,
+		suspendedBy(rec), done(rec.SchemaExists, "", " (the schema does not exist)"))
 	return 0
+}
+
+// suspendedBy describes who suspended a suspended tenant, for `tenant show`.
+func suspendedBy(rec tenant.Record) string {
+	if rec.Status != tenant.StatusSuspended {
+		return ""
+	}
+	switch rec.SuspendedBy {
+	case tenant.SuspendedByIDP:
+		return " by the IdP"
+	case tenant.SuspendedByOperator:
+		return " by an operator"
+	}
+	return " (cause not recorded; the IdP does not resume it)"
 }
 
 // eraseTenant confirms and erases the tenant, and records the outcome.

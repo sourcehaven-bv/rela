@@ -75,3 +75,61 @@ func TestTenantModeBackend(t *testing.T) {
 		t.Fatal("a build without a DSN store accepted tenant mode")
 	}
 }
+
+// TestValidateStatusSync pins the boot refusals of IdP status sync.
+func TestValidateStatusSync(t *testing.T) {
+	withAPI := func(api string, webhook bool) *serverFlags {
+		f := jwtFlags()
+		f.tenant.enabled, f.tenant.idpOrgAPI = true, api
+		if webhook {
+			f.webhookAudience, f.webhookAction = "rela-webhook", "idp-sync"
+		}
+		return f
+	}
+	tests := []struct {
+		name    string
+		flags   *serverFlags
+		secret  string
+		wantErr string
+	}{
+		{name: "off", flags: jwtFlags()},
+		{name: "http with webhook and secret", flags: withAPI("http://127.0.0.1:8091", true), secret: "s"},
+		{name: "unix socket", flags: withAPI("unix:///run/pratique/op.sock", true), secret: "s"},
+		{name: "no webhook", flags: withAPI("http://127.0.0.1:8091", false), secret: "s",
+			wantErr: "needs the IdP webhook"},
+		{name: "no secret", flags: withAPI("http://127.0.0.1:8091", true), wantErr: envIDPOperatorSecret},
+		{name: "bad address", flags: withAPI("ftp://idp", true), secret: "s", wantErr: "-tenant-idp-org-api"},
+		{name: "credentials in the address", flags: withAPI("http://u:p@idp:8091", true), secret: "s",
+			wantErr: "-tenant-idp-org-api"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateStatusSync(tc.flags, tc.secret)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want one containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestRefuseTenantOnlyFlags pins that the IdP org API is refused without
+// tenant mode.
+func TestRefuseTenantOnlyFlags(t *testing.T) {
+	if err := refuseTenantOnlyFlags(tenantFlags{idpOrgAPI: "http://idp:8091"}); err == nil ||
+		!strings.Contains(err.Error(), "needs tenant mode") {
+
+		t.Fatalf("org API without tenant mode = %v; want a refusal", err)
+	}
+	if err := refuseTenantOnlyFlags(tenantFlags{enabled: true, idpOrgAPI: "http://idp:8091"}); err != nil {
+		t.Fatalf("org API in tenant mode = %v", err)
+	}
+	if err := refuseTenantOnlyFlags(tenantFlags{}); err != nil {
+		t.Fatalf("no flags = %v", err)
+	}
+}

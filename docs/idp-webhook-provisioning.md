@@ -169,7 +169,10 @@ acknowledged and dropped. See "Provisioning tenants automatically" in
 [postgres-backend.md](postgres-backend.md). The IdP does not redeliver an
 acknowledged event, so an event received before provisioning was on is not
 replayed. An `organization.deleted` is logged at warning level; erase that
-tenant by hand.
+tenant by hand. With `-tenant-idp-org-api` set, an `organization.updated` makes the
+server read the org's status from the IdP and suspend or resume its tenant
+to match; see "Suspension follows the IdP" in
+[postgres-backend.md](postgres-backend.md).
 
 A `membership.*` event without `org_id` used to reach the action. It is now
 rejected with 400. The reference action already failed without `org_id`.

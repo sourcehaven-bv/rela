@@ -162,5 +162,25 @@ As implemented.
 - **Not changed.** The server still refuses to start without the control
   table, so the first tenant is created with `tenant create`. The SPA does
   not yet poll the status route; the API contract is in place.
-- **Follow-up in this branch.** Syncing suspension from the IdP is a separate
-  step.
+
+## Suspension
+
+- **Thin events.** Pratique's `organization.updated` names only the org, so
+  the host reads the org's status from Pratique's operator API
+  (`internal/idporg`, HMAC-signed `GET /api/v1/orgs/{id}`). The address is
+  `-tenant-idp-org-api`; the secret is `$RELA_IDP_OPERATOR_SECRET` only.
+- **Where.** In the tenant host, before `Acquire`, through the consumer-side
+  `tenanthost.StatusSyncer`. So it works for a suspended tenant, which every
+  other event finds refused with 503. The event is not passed on.
+- **Who suspended.** The control table has `suspended_by` (`operator` or
+  `idp`). `ResumeForIDP` is a compare-and-set on `suspended` and `idp`, so the
+  IdP never undoes an operator suspension. `SuspendForIDP` keeps an existing
+  cause. `tenant suspend` sets `operator`; `tenant resume` clears it.
+- **Upgrade.** The column is added on the first lifecycle command. The
+  resolver reads it through `to_jsonb`, so a server reads an old table.
+- **Answers.** 200 when applied or nothing to do (also no tenant, or an org
+  the IdP does not know), 502 when Pratique or the database cannot answer,
+  503 with `Retry-After` for a tenant still being created.
+- **Effect on open tenants.** After a suspension the host calls
+  `Registry.RevalidateOrg`, which closes the open tenant at once, as the
+  next request would after `tenant suspend`.

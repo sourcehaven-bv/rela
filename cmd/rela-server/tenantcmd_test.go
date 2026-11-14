@@ -230,6 +230,17 @@ func TestTenantCommand_Show(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "suspended") {
 		t.Errorf("show: exit %d, out %q", code, out)
 	}
+	for cause, want := range map[tenant.SuspendCause]string{
+		tenant.SuspendedByIDP: "suspended by the IdP", tenant.SuspendedByOperator: "suspended by an operator",
+		"": "cause not recorded",
+	} {
+		code, out, _ = runTenantFake(t, &fakeLifecycle{}, fakeReader{rec: tenant.Record{
+			OrgID: "org-a", Schema: "org_x", Status: tenant.StatusSuspended, SuspendedBy: cause, SchemaExists: true,
+		}}, "", "show", "-project", dir, "org-a")
+		if code != 0 || !strings.Contains(out, want) {
+			t.Errorf("show suspended by %q: exit %d, out %q; want %q", cause, code, out, want)
+		}
+	}
 	code, out, _ = runTenantFake(t, &fakeLifecycle{}, fakeReader{err: tenant.ErrUnknownTenant}, "",
 		"show", "-project", dir, "org-z")
 	want, _ := tenant.SchemaFor("org-z")

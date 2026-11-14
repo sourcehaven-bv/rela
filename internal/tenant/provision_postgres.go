@@ -42,9 +42,48 @@ func controlExists(ctx context.Context, conn *pgx.Conn) (bool, error) {
 	return exists, nil
 }
 
-// ensureControl creates the control schema and table if missing, under a
-// transaction-scoped lock so two first creates do not race the DDL.
+// ensureControl creates the control schema and table if missing, and adds
+// the columns an older release's table lacks, under a transaction-scoped
+// lock so two first creates do not race the DDL.
 func ensureControl(ctx context.Context, conn *pgx.Conn) error {
+	return controlDDLTx(ctx, conn, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, controlDDL); err != nil {
+			return err
+		}
+		return upgradeIfOld(ctx, tx)
+	})
+}
+
+// upgradeControl adds the columns an older release's control table lacks.
+// The table exists. It checks first and alters only when a column is
+// missing, so the common case takes no table lock.
+func upgradeControl(ctx context.Context, conn *pgx.Conn) error {
+	var current bool
+	if err := conn.QueryRow(ctx, controlCurrentQuery, controlTable).Scan(&current); err != nil {
+		return fmt.Errorf("control table: %w", err)
+	}
+	if current {
+		return nil
+	}
+	return controlDDLTx(ctx, conn, func(tx pgx.Tx) error { return upgradeIfOld(ctx, tx) })
+}
+
+// upgradeIfOld runs [controlUpgradeDDL] on tx when a column is missing.
+func upgradeIfOld(ctx context.Context, tx pgx.Tx) error {
+	var current bool
+	if err := tx.QueryRow(ctx, controlCurrentQuery, controlTable).Scan(&current); err != nil {
+		return err
+	}
+	if current {
+		return nil
+	}
+	_, err := tx.Exec(ctx, controlUpgradeDDL)
+	return err
+}
+
+// controlDDLTx runs fn in a transaction that holds the control table's DDL
+// lock.
+func controlDDLTx(ctx context.Context, conn *pgx.Conn, fn func(pgx.Tx) error) error {
 	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("control table: %w", err)
@@ -54,7 +93,7 @@ func ensureControl(ctx context.Context, conn *pgx.Conn) error {
 		controlLockClass, ControlSchema); err != nil {
 		return fmt.Errorf("control table: %w", err)
 	}
-	if _, err := tx.Exec(ctx, controlDDL); err != nil {
+	if err := fn(tx); err != nil {
 		return fmt.Errorf("control table: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -76,6 +115,9 @@ func (p *Provisioner) record(ctx context.Context, conn *pgx.Conn, orgID string) 
 	}
 	if !exists {
 		return Record{}, fmt.Errorf("%w: %q", ErrUnknownTenant, orgID)
+	}
+	if uerr := upgradeControl(ctx, conn); uerr != nil {
+		return Record{}, uerr
 	}
 	rec, found, err := queryRecord(ctx, conn, schema)
 	if err != nil {
@@ -145,7 +187,7 @@ func (p *Provisioner) Create(ctx context.Context, orgID string, adopt bool) (Ten
 	if err := pgstore.MigrateDSN(ctx, dsn); err != nil {
 		return Tenant{}, fmt.Errorf("tenant: create org_id %q: migrate: %w", orgID, err)
 	}
-	if err := setStatus(ctx, conn, t, StatusActive, StatusProvisioning); err != nil {
+	if err := setStatus(ctx, conn, t, StatusActive, "", StatusProvisioning); err != nil {
 		return Tenant{}, fmt.Errorf("tenant: create org_id %q: %w", orgID, err)
 	}
 	return t, nil
@@ -183,22 +225,99 @@ func (p *Provisioner) reserve(ctx context.Context, conn *pgx.Conn, t Tenant, ado
 	return nil
 }
 
-// Suspend stops serving orgID. Servers refuse its next request, and close it
-// within their revalidation interval. Suspending a suspended tenant is a
-// no-op.
+// Suspend stops serving orgID on an operator's command. Servers refuse its
+// next request, and close it within their revalidation interval.
+// Suspending a suspended tenant is a no-op, except that it records the
+// operator as the cause: the IdP then cannot resume it.
 func (p *Provisioner) Suspend(ctx context.Context, orgID string) error {
-	return p.transition(ctx, orgID, StatusSuspended, StatusActive, StatusSuspended)
+	return p.transition(ctx, orgID, StatusSuspended, SuspendedByOperator, StatusActive, StatusSuspended)
 }
 
-// Resume serves a suspended orgID again. Only a suspended tenant can be
-// resumed: an erasing one is on its way out, and a provisioning one is
-// finished by running Create again.
+// Resume serves a suspended orgID again, whoever suspended it. Only a
+// suspended tenant can be resumed: an erasing one is on its way out, and a
+// provisioning one is finished by running Create again.
 func (p *Provisioner) Resume(ctx context.Context, orgID string) error {
-	return p.transition(ctx, orgID, StatusActive, StatusSuspended)
+	return p.transition(ctx, orgID, StatusActive, "", StatusSuspended)
 }
 
-// transition sets orgID's status to to when it is one of from.
-func (p *Provisioner) transition(ctx context.Context, orgID string, to Status, from ...Status) error {
+// SuspendForIDP suspends orgID because the IdP suspended its org. It reports
+// whether the status changed. A tenant that is already suspended stays so
+// and keeps its recorded cause, so an operator suspension stays one. An
+// erasing tenant is left alone. A provisioning tenant is refused with an
+// error that wraps [ErrTenantProvisioning]: its create would make it
+// active, so the caller retries once the create is done.
+func (p *Provisioner) SuspendForIDP(ctx context.Context, orgID string) (bool, error) {
+	var changed bool
+	err := p.withRecord(ctx, orgID, func(ctx context.Context, conn *pgx.Conn, rec Record) error {
+		tag, err := conn.Exec(ctx, "UPDATE "+controlTable+" SET status = $1, suspended_by = $2, updated_at = now() "+
+			"WHERE schema_name = $3 AND org_id = $4 AND status = $5",
+			string(StatusSuspended), string(SuspendedByIDP), rec.Schema, orgID, string(StatusActive))
+		if err != nil {
+			return fmt.Errorf("tenant: org_id %q: suspend: %w", orgID, err)
+		}
+		if changed = tag.RowsAffected() == 1; changed {
+			return nil
+		}
+		now, err := p.reread(ctx, conn, rec)
+		if err != nil || now.Status != StatusProvisioning {
+			return err
+		}
+		return fmt.Errorf("%w: %w: org_id %q is still being created", ErrWrongStatus, ErrTenantProvisioning, orgID)
+	})
+	return changed, err
+}
+
+// ResumeForIDP serves orgID again because the IdP reactivated its org. It
+// reports whether the status changed. Only a tenant the IdP suspended is
+// resumed: one an operator suspended is refused with
+// [ErrOperatorSuspended], and so is one suspended before the cause was
+// recorded. Any other status is left alone.
+func (p *Provisioner) ResumeForIDP(ctx context.Context, orgID string) (bool, error) {
+	var changed bool
+	err := p.withRecord(ctx, orgID, func(ctx context.Context, conn *pgx.Conn, rec Record) error {
+		tag, err := conn.Exec(ctx, "UPDATE "+controlTable+" SET status = $1, suspended_by = NULL, updated_at = now() "+
+			"WHERE schema_name = $2 AND org_id = $3 AND status = $4 AND suspended_by = $5",
+			string(StatusActive), rec.Schema, orgID, string(StatusSuspended), string(SuspendedByIDP))
+		if err != nil {
+			return fmt.Errorf("tenant: org_id %q: resume: %w", orgID, err)
+		}
+		if changed = tag.RowsAffected() == 1; changed {
+			return nil
+		}
+		now, err := p.reread(ctx, conn, rec)
+		if err != nil || now.Status != StatusSuspended {
+			return err
+		}
+		return fmt.Errorf("%w: org_id %q", ErrOperatorSuspended, orgID)
+	})
+	return changed, err
+}
+
+// reread reads rec's row again after a conditional update changed nothing,
+// to tell why. A row that is gone is [ErrUnknownTenant].
+func (p *Provisioner) reread(ctx context.Context, conn *pgx.Conn, rec Record) (Record, error) {
+	now, found, err := queryRecord(ctx, conn, rec.Schema)
+	switch {
+	case err != nil:
+		return Record{}, fmt.Errorf("tenant: look up org_id %q: %w", rec.OrgID, err)
+	case !found || now.OrgID != rec.OrgID:
+		return Record{}, fmt.Errorf("%w: %q", ErrUnknownTenant, rec.OrgID)
+	}
+	return now, nil
+}
+
+// transition sets orgID's status to to and its cause to by when its status
+// is one of from.
+func (p *Provisioner) transition(ctx context.Context, orgID string, to Status, by SuspendCause, from ...Status) error {
+	return p.withRecord(ctx, orgID, func(ctx context.Context, conn *pgx.Conn, rec Record) error {
+		return setStatus(ctx, conn, Tenant{OrgID: orgID, Schema: rec.Schema}, to, by, from...)
+	})
+}
+
+// withRecord connects, reads orgID's control row and calls fn with it.
+func (p *Provisioner) withRecord(ctx context.Context, orgID string,
+	fn func(context.Context, *pgx.Conn, Record) error,
+) error {
 	ctx, cancel := context.WithTimeout(ctx, provisionTimeout)
 	defer cancel()
 	conn, err := p.connect(ctx)
@@ -210,20 +329,25 @@ func (p *Provisioner) transition(ctx context.Context, orgID string, to Status, f
 	if err != nil {
 		return err
 	}
-	t := Tenant{OrgID: orgID, Schema: rec.Schema}
-	return setStatus(ctx, conn, t, to, from...)
+	return fn(ctx, conn, rec)
 }
 
-// setStatus sets t's status to to, only when its row belongs to t's org and
-// its status is one of from. Zero rows changed is [ErrWrongStatus].
-func setStatus(ctx context.Context, conn *pgx.Conn, t Tenant, to Status, from ...Status) error {
+// setStatus sets t's status to to and its suspension cause to by, only when
+// its row belongs to t's org and its status is one of from. An empty by
+// clears the cause. Zero rows changed is [ErrWrongStatus].
+func setStatus(ctx context.Context, conn *pgx.Conn, t Tenant, to Status, by SuspendCause, from ...Status) error {
 	allowed := make([]string, len(from))
 	for i, s := range from {
 		allowed[i] = string(s)
 	}
-	tag, err := conn.Exec(ctx, "UPDATE "+controlTable+" SET status = $1, updated_at = now() "+
-		"WHERE schema_name = $2 AND org_id = $3 AND status = ANY($4)",
-		string(to), t.Schema, t.OrgID, allowed)
+	var cause *string
+	if by != "" {
+		c := string(by)
+		cause = &c
+	}
+	tag, err := conn.Exec(ctx, "UPDATE "+controlTable+" SET status = $1, suspended_by = $2, updated_at = now() "+
+		"WHERE schema_name = $3 AND org_id = $4 AND status = ANY($5)",
+		string(to), cause, t.Schema, t.OrgID, allowed)
 	if err != nil {
 		return fmt.Errorf("set status %s: %w", to, err)
 	}
@@ -259,7 +383,7 @@ func (p *Provisioner) Erase(ctx context.Context, orgID string) (Tenant, Erasure,
 		return Tenant{}, Erasure{}, err
 	}
 	t := Tenant{OrgID: orgID, Schema: rec.Schema, DSN: dsn}
-	if err = setStatus(ctx, conn, t, StatusErasing,
+	if err = setStatus(ctx, conn, t, StatusErasing, "",
 		StatusProvisioning, StatusActive, StatusSuspended, StatusErasing); err != nil {
 		return t, Erasure{}, fmt.Errorf("tenant: erase org_id %q: %w", orgID, err)
 	}

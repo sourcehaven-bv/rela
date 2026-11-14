@@ -17,6 +17,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/idporg"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
 	"github.com/Sourcehaven-BV/rela/internal/tenanthost"
@@ -34,7 +35,16 @@ type tenantFlags struct {
 	// takes the host's default.
 	provision     string
 	provisionRate int
+	// idpOrgAPI is the IdP operator API address that org status is read
+	// from, so a tenant's suspension follows its org's. Empty turns that
+	// off. Its secret is $RELA_IDP_OPERATOR_SECRET, never a flag.
+	idpOrgAPI string
 }
+
+// envIDPOperatorSecret holds the HMAC secret of the IdP operator API. It is
+// read from the environment only, so it never shows in `ps` or shell
+// history.
+const envIDPOperatorSecret = "RELA_IDP_OPERATOR_SECRET" //nolint:gosec // G101: the name of the variable, not a secret
 
 // coverage-ignore-start: main-or-wiring: registers flags on the global flag.CommandLine
 func registerTenantFlags(t *tenantFlags) {
@@ -55,6 +65,10 @@ func registerTenantFlags(t *tenantFlags) {
 	flag.IntVar(&t.provisionRate, "tenant-provision-rate", envInt("RELA_TENANT_PROVISION_RATE"),
 		"Tenant mode: most tenant creations started per minute (default 10; at most 2 run at once). "+
 			"Also RELA_TENANT_PROVISION_RATE.")
+	flag.StringVar(&t.idpOrgAPI, "tenant-idp-org-api", envOr("RELA_TENANT_IDP_ORG_API", ""),
+		"Tenant mode: the IdP operator API (http(s)://host:port or unix:///path/to/socket). When set, a "+
+			"verified organization.updated webhook suspends or resumes the org's tenant to match the IdP. "+
+			"Needs -webhook-* and the secret in "+envIDPOperatorSecret+". Also RELA_TENANT_IDP_ORG_API.")
 }
 
 // coverage-ignore-end
@@ -124,6 +138,61 @@ func validateTenantMode(f *serverFlags, envUser string, supported bool) (identit
 		return mode, errors.New("-tenant-provision-rate must not be negative")
 	}
 	return mode, nil
+}
+
+// refuseTenantOnlyFlags refuses, outside tenant mode, a flag that only
+// tenant mode acts on, so a server never runs without a behavior its
+// operator asked for.
+func refuseTenantOnlyFlags(t tenantFlags) error {
+	if !t.enabled && t.idpOrgAPI != "" {
+		return errors.New("-tenant-idp-org-api needs tenant mode (-tenant-mode)")
+	}
+	return nil
+}
+
+// validateStatusSync refuses a status-sync configuration the host cannot
+// act on. secret is $RELA_IDP_OPERATOR_SECRET.
+func validateStatusSync(f *serverFlags, secret string) error {
+	if f.tenant.idpOrgAPI == "" {
+		return nil
+	}
+	if f.webhookAudience == "" || f.webhookAction == "" {
+		return errors.New("-tenant-idp-org-api needs the IdP webhook (-webhook-audience, -webhook-action)")
+	}
+	if secret == "" {
+		return errors.New("-tenant-idp-org-api needs the operator API secret in $" + envIDPOperatorSecret)
+	}
+	if _, err := idporg.New(f.tenant.idpOrgAPI, []byte(secret)); err != nil {
+		return fmt.Errorf("-tenant-idp-org-api: %w", err)
+	}
+	return nil
+}
+
+// idpOrgAdapter is the host's [tenanthost.OrgStatusSource] over the IdP
+// operator API client.
+type idpOrgAdapter struct{ c *idporg.Client }
+
+// OrgSuspended reports whether orgID is suspended at the IdP.
+func (a idpOrgAdapter) OrgSuspended(ctx context.Context, orgID string) (bool, error) {
+	st, err := a.c.OrgStatus(ctx, orgID)
+	if errors.Is(err, idporg.ErrNotFound) {
+		return false, fmt.Errorf("%w: %w", tenanthost.ErrOrgNotFound, err)
+	}
+	if err != nil {
+		return false, err
+	}
+	return st == idporg.StatusSuspended, nil
+}
+
+// statusSyncSource builds the IdP side of status sync from the flags, which
+// validateStatusSync checked. The caller checked that -tenant-idp-org-api
+// is set.
+func statusSyncSource(t tenantFlags, secret string) (tenanthost.OrgStatusSource, error) {
+	c, err := idporg.New(t.idpOrgAPI, []byte(secret))
+	if err != nil {
+		return nil, err
+	}
+	return idpOrgAdapter{c}, nil
 }
 
 // provisionAdapter is the host's [tenanthost.Provisioner] over the control
@@ -254,10 +323,13 @@ func (s *server) openTenant(t tenant.Tenant, opened *tenant.Opened) (*tenantResi
 }
 
 // tenantOptions are the registry bounds, where zero takes the registry's
-// defaults, and the host's provisioning config.
+// defaults, the host's provisioning config, and the two sides of status
+// sync. Status sync is on when both orgStatus and idpWriter are set.
 type tenantOptions struct {
 	resident, open int
 	provision      tenanthost.ProvisionConfig
+	orgStatus      tenanthost.OrgStatusSource
+	idpWriter      tenanthost.IDPSuspension
 }
 
 // tenantHost is a running multi-tenant server: the front handler and the
@@ -305,6 +377,10 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 	if err != nil {
 		return nil, err
 	}
+	secret := os.Getenv(envIDPOperatorSecret)
+	if verr := validateStatusSync(f, secret); verr != nil {
+		return nil, verr
+	}
 	absDir, err := filepath.Abs(f.projectDir)
 	if err != nil {
 		return nil, fmt.Errorf("invalid project dir: %w", err)
@@ -349,8 +425,19 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 		_ = resolver.Close()
 		return nil, err
 	}
-	th, err := s.tenantHost(base, resolver,
-		tenantOptions{resident: f.tenant.maxResident, open: f.tenant.maxOpen, provision: prov}, adapter)
+	opts := tenantOptions{resident: f.tenant.maxResident, open: f.tenant.maxOpen, provision: prov}
+	if f.tenant.idpOrgAPI != "" {
+		if opts.orgStatus, err = statusSyncSource(f.tenant, secret); err != nil {
+			_ = resolver.Close()
+			return nil, err
+		}
+		if opts.idpWriter, err = tenant.NewProvisioner(os.Getenv("RELA_DATABASE_URL"),
+			tenant.AuditRoot(base.CacheDir())); err != nil {
+			_ = resolver.Close()
+			return nil, err
+		}
+	}
+	th, err := s.tenantHost(base, resolver, opts, adapter)
 	if err != nil {
 		_ = resolver.Close()
 		return nil, err
@@ -398,6 +485,13 @@ func (s *server) tenantHost(
 	if s.webhook != nil {
 		hcfg.Webhook = webhookVerifierAdapter{s.webhook}
 	}
+	if limits.orgStatus != nil && limits.idpWriter != nil {
+		if hcfg.StatusSync, err = tenanthost.NewStatusSync(limits.orgStatus, limits.idpWriter,
+			registry.RevalidateOrg); err != nil {
+			_ = registry.Close()
+			return nil, err
+		}
+	}
 	host, err := tenanthost.New(hcfg)
 	if err != nil {
 		_ = registry.Close()
@@ -408,7 +502,7 @@ func (s *server) tenantHost(
 		mode = tenanthost.ProvisionOff
 	}
 	slog.Info("tenant mode enabled", "max_resident", limits.resident, "max_open", limits.open,
-		"provision", string(mode))
+		"provision", string(mode), "idp_status_sync", hcfg.StatusSync != nil)
 	return &tenantHost{addr: s.addr, handler: host, host: host, registry: registry}, nil
 }
 

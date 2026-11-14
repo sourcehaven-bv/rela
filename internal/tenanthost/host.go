@@ -18,6 +18,17 @@
 //   - the tenant lookup or the store open failed, or the org's derived
 //     schema is recorded for another org: 503.
 //
+// # Suspension follows the IdP
+//
+// With [Config.StatusSync] set, a verified `organization.updated` webhook
+// is handled here and not passed to the tenant. The host asks the IdP for
+// the org's status and suspends or resumes the tenant to match (see
+// [StatusSync.SyncStatus]). It answers 200 when it applied a change or had
+// nothing to do, 503 with Retry-After for a tenant still being created,
+// and 502 when the IdP or the control table could not answer, so the IdP
+// sends the event again. This works for a suspended tenant, which every
+// other webhook event finds refused with 503.
+//
 // The one exception is the embedded SPA shell and its static assets, which a
 // browser needs before it can authenticate. They are served by
 // [dataentry.StaticShell], which returns only bytes compiled into the binary,
@@ -94,6 +105,10 @@ type Config struct {
 	// Provision enables creating a tenant for a verified org that has none.
 	// The zero value is [ProvisionOff].
 	Provision ProvisionConfig
+	// StatusSync makes a verified `organization.updated` webhook sync the
+	// tenant's status with the org's at the IdP, instead of passing the
+	// event to the tenant. Optional; it needs Webhook.
+	StatusSync StatusSyncer
 }
 
 // Host is the front http.Handler of a multi-tenant server.
@@ -117,6 +132,9 @@ func New(cfg Config) (*Host, error) {
 		return nil, errors.New("tenanthost: acquire is required")
 	case cfg.Static == nil:
 		return nil, errors.New("tenanthost: static handler is required")
+	}
+	if cfg.StatusSync != nil && cfg.Webhook == nil {
+		return nil, errors.New("tenanthost: status sync needs the IdP webhook")
 	}
 	if err := validateProvision(cfg.Provision, cfg.Webhook != nil); err != nil {
 		return nil, err
@@ -231,6 +249,11 @@ func (h *Host) serveWebhook(w http.ResponseWriter, r *http.Request) {
 		// 400.
 		slog.Warn("tenant host: idp webhook carries no org_id", "event", claims.Event, "id", claims.ID)
 		http.Error(w, "missing org_id", http.StatusBadRequest)
+		return
+	}
+
+	if h.cfg.StatusSync != nil && claims.Event == eventOrgUpdated {
+		h.syncFromWebhook(w, r, claims)
 		return
 	}
 
