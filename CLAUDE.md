@@ -405,6 +405,7 @@ Domain and storage:
 | `internal/jobs`          | Background-job seam: ephemeral (fs/desktop) or durable (postgres)                                |
 | `internal/piles`         | Per-user piles of entity refs, outside the graph; kvpiles (file-locked KV) or pgpiles (tenant schema) |
 | `internal/lease`         | Advisory entity leases, outside the graph; kvlease (file-locked KV) or pglease (tenant schema)  |
+| `internal/records`       | Append-only time series and ledger rows owned by entities; file, sqlite or postgres backend      |
 | `internal/principal`     | Identity attribution (`Principal{User, Tool}`) on ctx                                            |
 | `internal/validator`     | Validation engine invoked by entitymanager                                                       |
 | `internal/markdown`      | Parse/write entity and relation markdown                                                         |
@@ -471,6 +472,18 @@ compares the two on randomized queries for both database backends, and a name
 the builder cannot render as a literal JSON path falls back to the naive
 path. It also refuses to open on a filesystem where WAL cannot be
 enabled (iCloud/Dropbox/SMB), because SQLite is unsafe there.
+
+**Design for postgres; the fs tier only has to work.** `fsstore` is local use:
+one person, with git as the history and the backup. Networked, multi-user
+deployments run on postgres. So in design discussions, research and reviews:
+
+- Judge security, performance, scale and concurrent-write consistency against
+  postgres, not fs.
+- Do not raise fs limits (single writer, file-per-row cost, git history size,
+  no transactions) as objections to a design, or as reasons to shrink it. An fs
+  backend that is simple and correct for one local user is enough.
+- The shared code paths still apply the same ACL and validation on every
+  backend. This rule is about what drives a design, not about removing checks.
 
 The rules for touching storage, comments, versioning and data migration are in
 `.claude/rules/` (`storage.md`, `comments.md`, `versioning.md`,

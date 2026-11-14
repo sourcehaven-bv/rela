@@ -36,6 +36,7 @@ func verifyTarget(ctx context.Context, src *source, dst Target, kept importedSet
 	v.comments(ctx)
 	v.migrations(ctx)
 	v.stateKeys(ctx)
+	v.records(ctx)
 	if n := len(rep.Errors) - before; n > 0 {
 		return fmt.Errorf("verification found %d difference(s) between the source and the new project", n)
 	}

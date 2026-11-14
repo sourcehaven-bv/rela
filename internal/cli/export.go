@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
+	"github.com/Sourcehaven-BV/rela/internal/records"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -59,6 +60,17 @@ type ExportRelation struct {
 type FullExport struct {
 	Entities  []ExportEntity   `json:"entities" yaml:"entities"`
 	Relations []ExportRelation `json:"relations" yaml:"relations"`
+	// Records holds every stored row, including rows of a type the schema
+	// no longer declares, ordered by type, owner and then (ts, id). Absent
+	// when there are none.
+	Records []records.Record `json:"records,omitempty" yaml:"records,omitempty"`
+}
+
+// recordReader is the part of the record store the export reads.
+type recordReader interface {
+	Types(ctx context.Context) ([]string, error)
+	Owners(ctx context.Context, typ string) ([]string, error)
+	List(ctx context.Context, q records.ListQuery) (records.Page, error)
 }
 
 // Run dispatches `rela export [type]`.
@@ -171,7 +183,11 @@ func (c *ExportCmd) exportAllData(ctx context.Context, svc *readServices) error 
 		})
 	}
 
-	fullExport := FullExport{Entities: exportEntities, Relations: exportRelations}
+	exportRecords, err := allRecords(ctx, svc)
+	if err != nil {
+		return err
+	}
+	fullExport := FullExport{Entities: exportEntities, Relations: exportRelations, Records: exportRecords}
 
 	switch c.Format {
 	case "json":
@@ -183,6 +199,29 @@ func (c *ExportCmd) exportAllData(ctx context.Context, svc *readServices) error 
 	default:
 		return fmt.Errorf("unsupported format: %s (use json, csv, or yaml)", c.Format)
 	}
+}
+
+// allRecords reads every stored row from the raw record store, as the
+// entity export reads the raw entity store: `rela export` is the operator
+// shell exporting the whole tenant. That includes rows of a type the schema
+// no longer declares; they are exported as stored.
+func allRecords(ctx context.Context, svc *readServices) ([]records.Record, error) {
+	if svc.Records == nil || svc.Meta == nil {
+		return nil, nil
+	}
+	types, err := records.AllTypes(ctx, svc.Records, svc.Meta.RecordKeys())
+	if err != nil {
+		return nil, fmt.Errorf("export records: %w", err)
+	}
+	var out []records.Record
+	err = records.Each(ctx, svc.Records, types, func(r records.Record) error {
+		out = append(out, r)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("export records: %w", err)
+	}
+	return out, nil
 }
 
 func entityToExport(e *entity.Entity) ExportEntity {

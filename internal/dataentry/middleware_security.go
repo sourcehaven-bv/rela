@@ -298,6 +298,11 @@ var nonBrowserExemptPrefixes = []string{
 	// request keeps the same-origin check. The match is a prefix, as for
 	// every entry here; no route other than this one starts with it.
 	batchPath,
+	// Record appends and reversals (TKT-J7Q9C4K). Like the batch create they
+	// are meant for scripts and agents, and every write rides the same owner
+	// write gate as an entity update. The no-cookie, no-Origin,
+	// no-Sec-Fetch shape is still required.
+	recordsPath,
 	// The reconcile read (TKT-VP02WHG). A peer is a script, not a browser.
 	// It is a POST only because a request lists many ranges; it writes
 	// nothing, and its answer is the caller's own read, which a cross-site

@@ -71,6 +71,7 @@ func (c *copier) copyAll(ctx context.Context) error {
 		c.copyMigrations,
 		c.copyState,
 		c.copyFlowRuns,
+		c.copyRecords,
 	}
 	for _, step := range steps {
 		if err := step(ctx); err != nil {

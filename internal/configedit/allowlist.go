@@ -333,6 +333,10 @@ var locked = map[File][]string{
 		// Abstract types and variants reshape the type set at load, and
 		// Configure parses one file without its includes.
 		"entities.*.abstract.**", "entities.*.extends",
+		// Record types (TKT-J7Q9C4K) decide which rows a write accepts, how
+		// long rows are kept and when a ledger period is closed. A retention
+		// edit deletes data on the next run, so the section stays on disk.
+		"records.**",
 		// External commands and upload policy.
 		"attachments.**", "transforms.**", "checkers.**",
 		"entities.*.properties.*.accept.**",
@@ -426,6 +430,10 @@ var protective = map[File][]string{
 		"relations.*.properties.*.scan_cmd.**",
 		"types.*.transitions.[].guard",
 		"validations.[].enforce",
+		// A record type's retention and a ledger's balance and lock rules
+		// limit what is kept and what may be posted.
+		"records.*.retention",
+		"records.*.ledger.**",
 	},
 	DataEntryFile: {
 		"app.disable_custom_injection", "app.max_attachment_bytes",

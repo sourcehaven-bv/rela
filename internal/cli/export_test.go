@@ -9,11 +9,16 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/records"
+	"github.com/Sourcehaven-BV/rela/internal/records/filerecords"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
@@ -380,5 +385,63 @@ func TestCollectPropertyKeys(t *testing.T) {
 		if !keySet[expected] {
 			t.Errorf("Missing expected key: %s", expected)
 		}
+	}
+}
+
+// TestExportAllData_Records: --all writes every stored row, in JSON and
+// YAML, including a row of a type the schema no longer declares.
+func TestExportAllData_Records(t *testing.T) {
+	svc, meta := setupExportGraph(t)
+	meta.Records = map[string]metamodel.RecordTypeDef{
+		"reading": {Owner: "control", Fields: map[string]metamodel.PropertyDef{"value": {Type: "integer"}}},
+	}
+	rs, err := filerecords.New(storage.NewMemFS(), "/records", filelock.ProcessPrivate{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	rows := []records.Record{
+		{ID: "R1", Type: "reading", Owner: "CTRL-001", TS: ts, RecordedAt: ts, Fields: map[string]any{"value": int64(1)}},
+		{ID: "R2", Type: "reading", Owner: "CTRL-002", TS: ts, RecordedAt: ts, Fields: map[string]any{"value": int64(2)}},
+		{ID: "R3", Type: "gone", Owner: "CTRL-001", TS: ts, RecordedAt: ts, Fields: map[string]any{}},
+	}
+	if err := rs.Append(context.Background(), records.AppendRequest{Records: rows}); err != nil {
+		t.Fatal(err)
+	}
+	svc.Records = rs
+
+	for _, format := range []string{"json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			cmd := &ExportCmd{Format: format, All: true}
+			output, err := captureStdout(t, func() error { return cmd.exportAllData(context.Background(), svc) })
+			if err != nil {
+				t.Fatalf("exportAllData: %v", err)
+			}
+			var got FullExport
+			if format == "json" {
+				err = json.Unmarshal([]byte(output), &got)
+			} else {
+				err = yaml.Unmarshal([]byte(output), &got)
+			}
+			if err != nil {
+				t.Fatalf("parse output: %v\n%s", err, output)
+			}
+			// Ordered by type: "gone" before "reading".
+			if len(got.Records) != 3 {
+				t.Fatalf("records = %+v, want R3, R1 and R2", got.Records)
+			}
+			if got.Records[0].ID != "R3" || got.Records[0].Type != "gone" ||
+				got.Records[1].ID != "R1" || got.Records[1].Owner != "CTRL-001" || !got.Records[1].TS.Equal(ts) ||
+				got.Records[2].ID != "R2" {
+
+				t.Errorf("records = %+v", got.Records)
+			}
+			if format == "json" && !strings.Contains(output, `"recorded_at"`) {
+				t.Errorf("JSON output lacks recorded_at:\n%s", output)
+			}
+			if format == "yaml" && !strings.Contains(output, "recorded_at:") {
+				t.Errorf("YAML output lacks recorded_at:\n%s", output)
+			}
+		})
 	}
 }

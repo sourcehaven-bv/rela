@@ -22,6 +22,7 @@ exclude:
   - internal/lease/leasetest
   - internal/channels/channelstest
   - internal/flowrun/flowruntest
+  - internal/records/recordstest
   - internal/schedulerstate/schedulerstatetest
   - frontend
   - e2e
@@ -254,6 +255,12 @@ components:
   sqlchannels:      { in: internal/channels/sqlchannels }
   sqlitechannels:   { in: internal/channels/sqlitechannels }
   pgchannels:       { in: internal/channels/pgchannels }
+  # Records (TKT-J7Q9C4K): typed rows owned by an entity, outside the graph.
+  records:          { in: internal/records }
+  filerecords:      { in: internal/records/filerecords }
+  sqlrecords:       { in: internal/records/sqlrecords }
+  sqliterecords:    { in: internal/records/sqliterecords }
+  pgrecords:        { in: internal/records/pgrecords }
   # In-memory presence tracker (TKT-MHXH87). A leaf: it reads no clock and
   # imports nothing of rela; the live hub keys and drives it.
   presence:         { in: internal/presence }
@@ -595,6 +602,8 @@ deps:
       - config
       - configsql
       - dataentryconfig
+      # records: `rela export --all` writes every record row (records.Each).
+      - records
       - sqlitedb
       - datamigration
       - entitymanager
@@ -688,6 +697,8 @@ deps:
   dataentry:
     mayDependOn:
       - ygows
+      # The records REST surface (TKT-J7Q9C4K).
+      - records
       - mentions
       - rollup
       - rootfs
@@ -1028,6 +1039,14 @@ deps:
       - filechannels
       - pgchannels
       - sqlitechannels
+      # Records: the backend is picked like the channel store's, and the
+      # service is built over the gated reader and the write ACL.
+      - records
+      - filerecords
+      - pgrecords
+      - sqliterecords
+      # sqlrecords: record writes join a store transaction (joinRecordsFor).
+      - sqlrecords
       # The cross-process lock for kvpiles and kvlease over the on-disk cache KV.
       - filelock
       - datamigration
@@ -2029,6 +2048,34 @@ deps:
     mayDependOn:
       - sqlchannels
       - pgexec
+  # Records (TKT-J7Q9C4K). The domain package holds the Store contract, the
+  # service and the aggregate fold. Every gate comes in through the
+  # consumer-side Owners interface appbuild implements, so it lists neither
+  # acl, store nor visibility: a record is not graph content.
+  records:
+    mayDependOn:
+      - entity
+      - metamodel
+      - principal
+  # The file backend: JSON lines per owner per month, through the storage
+  # seam.
+  filerecords:
+    mayDependOn:
+      - records
+      - storage
+  # The SQL implementation shared by both database backends.
+  sqlrecords:
+    mayDependOn:
+      - records
+      - sqlexec
+  sqliterecords:
+    mayDependOn:
+      - sqlrecords
+      - sqliteexec
+  pgrecords:
+    mayDependOn:
+      - sqlrecords
+      - pgexec
   # The run store's domain package: value types, limits, checks and the
   # Store contract. It knows no backend and no graph store. It authorizes
   # nothing, so only the flow runtime, the flow edit ceiling and the
@@ -2441,6 +2488,9 @@ deps:
       - metamodel
       - principal
       - project
+      # The source's record rows, read through the file record backend.
+      - records
+      - filerecords
       - state
       - storage
       - store
