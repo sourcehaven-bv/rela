@@ -34,9 +34,11 @@ type BatchResult struct {
 
 // PostBatch posts the messages of in as one store step (see
 // [channels.Store.AppendBatch]): all of them or none. Each message passes
-// the checks of [Service.Post], in order. Once all pass, the batch is
-// charged one token per message in one step, so a refused batch spends
-// nothing. The batch then counts as one post for the session: every `in:` and
+// the checks of [Service.Post], in order, and is charged at the same point:
+// after the session generation and before the properties, one token per
+// message in one step. A batch refused before that point spends nothing; a
+// batch with an invalid message spends its tokens, as an invalid post does.
+// The batch counts as one post for the session: every `in:` and
 // the expect_generation are judged against the session before the batch,
 // and the session moves at most once, on the first message whose
 // transition fires. A batch holds 1 to [channels.MaxBatch] top-level log
@@ -84,6 +86,9 @@ func (s *Service) PostBatch(ctx context.Context, addr RawAddress, in BatchInput)
 	if e := generationRefusal(sess, before, in.ExpectGeneration); e != nil {
 		return BatchResult{}, sessionMoved(e)
 	}
+	if err := chargeBatch(s.local.limiter, c, mts); err != nil {
+		return BatchResult{}, err
+	}
 	posts := make([]logPost, len(mts))
 	mentions := 0
 	for i, mt := range mts {
@@ -96,9 +101,6 @@ func (s *Service) PostBatch(ctx context.Context, addr RawAddress, in BatchInput)
 	}
 	if mentions > channels.MaxMentions {
 		return BatchResult{}, tooManyMentions()
-	}
-	if err := chargeBatch(s.local.limiter, c, mts); err != nil {
-		return BatchResult{}, err
 	}
 	if err := s.record(c); err != nil {
 		return BatchResult{}, err
@@ -146,7 +148,7 @@ type logPost struct {
 }
 
 // chargeBatch charges the caller one token per message of mts, from the
-// bucket of each message type, as one step: a refused batch spends nothing.
+// bucket of each message type, as one step: a refused charge spends nothing.
 // A batch holding more messages of one type than that type's rate allows
 // at all is refused with a 400, since no wait would let it through.
 func chargeBatch(l *limiter, c *call, mts []*realtimecfg.MessageType) error {

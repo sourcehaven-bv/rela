@@ -47,7 +47,7 @@ func Split(content string) (frontmatter, body string) {
 			inFrontmatter = true
 			continue
 		}
-		if inFrontmatter && strings.TrimSpace(line) == Delimiter {
+		if inFrontmatter && IsClosingDelimiter(line) {
 			inFrontmatter = false
 			frontmatterEnded = true
 			continue
@@ -70,6 +70,14 @@ func Split(content string) (frontmatter, body string) {
 	}
 	body = strings.TrimPrefix(strings.Join(bodyLines, "\n"), "\n")
 	return frontmatter, body
+}
+
+// IsClosingDelimiter reports whether a line inside a frontmatter block closes
+// it. The delimiter must start at column 0; trailing whitespace is tolerated.
+// An indented "---" is block-scalar text, such as a value "a\n---\nb", and
+// must not end the block (BUG-EXFOEI3).
+func IsClosingDelimiter(line string) bool {
+	return strings.TrimRight(line, " \t\r") == Delimiter
 }
 
 // splitLines splits content into lines with the same observable

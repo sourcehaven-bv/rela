@@ -19,15 +19,21 @@ var _ store.Rollupper = (*Store)(nil)
 
 // Rollup implements [store.Rollupper] in one statement, as pgstore's does:
 // the related rows are the graph source of q.Related (the caller's gate),
-// joined to the identity-scoped edges of the sources and grouped per source.
-// A query whose names the builder cannot render is answered by
-// [store.RollupGeneric], the reference both backends are tested against.
+// joined to the identity-scoped edges of the sources (through the gated
+// path, when q has one) and grouped per source. A query whose names the
+// builder cannot render is answered by [store.RollupGeneric], the reference
+// both backends are tested against.
 func (s *Store) Rollup(ctx context.Context, q store.RollupQuery) (map[string]store.RollupResult, error) {
 	if err := store.ValidateRollupQuery(q); err != nil {
 		return nil, err
 	}
 	if err := graphquerynaive.CheckEndpointShape(q.Related); err != nil {
 		return nil, err
+	}
+	for _, step := range q.Path {
+		if err := graphquerynaive.CheckEndpointShape(step.Through); err != nil {
+			return nil, err
+		}
 	}
 	out := map[string]store.RollupResult{}
 	if len(q.Sources) == 0 {
@@ -156,18 +162,13 @@ func sumDecimals(text string) (any, error) {
 // name cannot be rendered.
 func buildRollupSQL(q store.RollupQuery) (sqlText string, args []any, ok bool) {
 	b := &sqlBuilder{}
-	srcCol, relCol := "from_id", "to_id"
-	if q.SourceIsTo {
-		srcCol, relCol = relCol, srcCol
-	}
-	relArg := b.arg(q.Relation)
-	srcList := b.jsonList(q.Sources)
-	edges := fmt.Sprintf("SELECT r0.%s FROM relations r0 WHERE r0.rel_type = %s AND r0.from_face = '' AND r0.%s IN (%s)",
-		relCol, relArg, srcCol, srcList)
+	with, pairs := rollupPairsSQL(b, q)
+	ids := "SELECT p.id FROM " + pairs + " p"
 
 	typeArg := b.arg(q.Related.EntityType)
-	with, source := graphSource(b, q.Related, typeArg, edges)
-	seed := "SELECT e0.id FROM entities e0 WHERE e0.id IN (" + edges + ") AND +e0.type = " + typeArg
+	relWith, source := graphSource(b, q.Related, typeArg, ids)
+	with = append(with, relWith...)
+	seed := "SELECT e0.id FROM entities e0 WHERE e0.id IN (" + ids + ") AND +e0.type = " + typeArg
 
 	requireWith, require := rowConditionsSQL(b, "rq", q.Require, seed)
 	pickWith, pick := rowConditionsSQL(b, "pk", q.PickRequire, seed)
@@ -181,15 +182,56 @@ func buildRollupSQL(q store.RollupQuery) (sqlText string, args []any, ok bool) {
 	rowsSQL := fmt.Sprintf(
 		"SELECT e.id, e.properties, %s AS pickok FROM (SELECT e.* FROM %s) e WHERE %s", pick, source, require)
 	joined := fmt.Sprintf(
-		"SELECT r.%s AS src, x.id, x.properties, x.pickok, "+
-			"ROW_NUMBER() OVER (PARTITION BY r.%s ORDER BY %s) AS rk "+
-			"FROM relations r JOIN (%s) x ON x.id = r.%s "+
-			"WHERE r.rel_type = %s AND r.from_face = '' AND r.%s IN (%s)",
-		srcCol, srcCol, order, rowsSQL, relCol, relArg, srcCol, srcList)
+		"SELECT p.src AS src, x.id, x.properties, x.pickok, "+
+			"ROW_NUMBER() OVER (PARTITION BY p.src ORDER BY %s) AS rk "+
+			"FROM %s p JOIN (%s) x ON x.id = p.id",
+		order, pairs, rowsSQL)
 
 	agg := rollupAggregateSQL(b, q)
 	sqlText = withClause(with) + "SELECT x.src, count(*), " + agg + " FROM (" + joined + ") x GROUP BY x.src"
 	return sqlText, b.args, !b.unsafe
+}
+
+// rollupPairsSQL renders the walk from q's sources as CTEs and returns the
+// name of the last: the distinct (src, id) pairs of a source and an entity
+// the last relation reaches from it, before Related gates that entity. A
+// path step's pairs keep only the entities its Through selects, so a gated
+// out entity breaks every path through it. DISTINCT makes a related row
+// reached by several paths count once per source. See pgstore's.
+func rollupPairsSQL(b *sqlBuilder, q store.RollupQuery) (with []string, last string) {
+	prev := ""
+	for i, step := range q.Path {
+		name := fmt.Sprintf("rup%d", i)
+		with = append(with, name+"_raw AS ("+rollupHopSQL(b, q.Sources, prev, step.Relation, step.SourceIsTo)+")")
+		typeArg := b.arg(step.Through.EntityType)
+		gateWith, source := graphSourcePrefixed(b, name+"_", step.Through, typeArg,
+			"SELECT p.id FROM "+name+"_raw p")
+		with = append(with, gateWith...)
+		with = append(with, fmt.Sprintf(
+			"%s AS (SELECT p.src, p.id FROM %s_raw p WHERE p.id IN (SELECT e.id FROM %s))", name, name, source))
+		prev = name
+	}
+	last = fmt.Sprintf("rup%d", len(q.Path))
+	with = append(with, last+" AS ("+rollupHopSQL(b, q.Sources, prev, q.Relation, q.SourceIsTo)+")")
+	return with, last
+}
+
+// rollupHopSQL selects the distinct (src, id) pairs one identity-scoped
+// relation reaches: from the sources when prev is "", else from the ids of
+// the pairs CTE prev.
+func rollupHopSQL(b *sqlBuilder, sources []string, prev, relation string, sourceIsTo bool) string {
+	nearCol, farCol := "from_id", "to_id"
+	if sourceIsTo {
+		nearCol, farCol = farCol, nearCol
+	}
+	relArg := b.arg(relation)
+	if prev == "" {
+		return fmt.Sprintf("SELECT DISTINCT r.%s AS src, r.%s AS id FROM relations r "+
+			"WHERE r.rel_type = %s AND r.from_face = '' AND r.%s IN (%s)",
+			nearCol, farCol, relArg, nearCol, b.jsonList(sources))
+	}
+	return fmt.Sprintf("SELECT DISTINCT p.src, r.%s AS id FROM %s p JOIN relations r ON r.%s = p.id "+
+		"WHERE r.rel_type = %s AND r.from_face = ''", farCol, prev, nearCol, relArg)
 }
 
 // rowConditionsSQL renders conds as one boolean over e: every condition
