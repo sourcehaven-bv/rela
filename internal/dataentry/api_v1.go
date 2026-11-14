@@ -2952,8 +2952,9 @@ func validateCreateIDOpts(def *metamodel.EntityDef, id, prefix string) string {
 			for _, p := range prefixes {
 				// Reject the bare prefix (id == p) — the entity needs a
 				// distinguishing suffix or it conflicts with the prefix
-				// concept itself. (RR-…)
-				if strings.HasPrefix(id, p) && len(id) > len(p) {
+				// concept itself. (RR-…) The prefix compares with case
+				// folded, like metamodel.EntityDef.MatchesID (BUG-4OPP525).
+				if len(id) > len(p) && strings.EqualFold(id[:len(p)], p) {
 					matched = true
 					break
 				}
