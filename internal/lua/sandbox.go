@@ -26,11 +26,7 @@ import (
 func NewSandbox(
 	files ProjectFiles, moduleDirs []string, preload map[string]func(*lua.LState) lua.LValue,
 ) *lua.LState {
-	ls := lua.NewState(lua.Options{
-		SkipOpenLibs:  true,
-		CallStackSize: 1024,
-		RegistrySize:  1024 * 64,
-	})
+	ls := newBoundedState()
 	openSafeLibraries(ls)
 	installRequire(ls, files).extraDirs = moduleDirs
 	if len(preload) > 0 {

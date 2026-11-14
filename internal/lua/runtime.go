@@ -173,7 +173,15 @@ type Runtime struct {
 	// handler on the most recent failed run. Read via ErrorFrames() after
 	// PCall returns an error. Reset before every PCall.
 	errorFrames []StackFrame
+
+	// broken is set when a run escaped gopher-lua's PCall; see
+	// pcallWithCapture.
+	broken bool
 }
+
+// errRuntimeBroken is returned by every run after one that escaped
+// gopher-lua's PCall.
+var errRuntimeBroken = errors.New("lua: runtime unusable after a value stack overflow")
 
 // egress holds the backends of the bindings that reach outside the process.
 type egress struct {
@@ -413,7 +421,9 @@ func WithAIProvider(p ai.Provider) Option {
 
 // WithHTTPClient sets the client the http.* bindings send through, for this
 // runtime only. Omitting it (or passing nil) uses the shared process-wide
-// client, which pools connections across short-lived runtimes.
+// client, which pools connections across short-lived runtimes and enforces
+// the [SetHTTPPolicy] policy. A client given here replaces that policy too;
+// build it with [NewHTTPClient] to keep one.
 func WithHTTPClient(c *http.Client) Option {
 	return func(r *Runtime) {
 		r.egress.http = c
@@ -499,12 +509,9 @@ func newRuntime(deps WriteDeps, stdout io.Writer, allowWrites bool, opts ...Opti
 		panic("lua: ReadDeps.World is unset; wire the default world (worlds.Compiled.DefaultWorld)")
 	}
 
-	// Create sandboxed Lua state - skip default libraries for security
-	L := lua.NewState(lua.Options{
-		SkipOpenLibs:  true,
-		CallStackSize: 1024,      // Limit call stack depth to prevent stack overflow
-		RegistrySize:  1024 * 64, // Limit registry size
-	})
+	// Create sandboxed Lua state - skip default libraries for security. The
+	// stack bounds are described in bounds.go.
+	L := newBoundedState()
 
 	// Load only safe libraries (NOT io, os, or debug)
 	openSafeLibraries(L)
@@ -593,6 +600,8 @@ func openSafeLibraries(ls *lua.LState) {
 	ls.SetGlobal("rawlen", lua.LNil)
 	ls.SetGlobal("getmetatable", lua.LNil)
 	ls.SetGlobal("setmetatable", lua.LNil)
+
+	installBuilderCaps(ls)
 }
 
 // RunFile executes a Lua script file with arguments.
@@ -615,8 +624,25 @@ func (r *Runtime) ErrorFrames() []StackFrame {
 // straight from gopher-lua's debug API.
 //
 // See https://github.com/yuin/gopher-lua/issues/46 for the rationale.
-func (r *Runtime) pcallWithCapture() error {
+//
+// A script that fills the value stack (see bounds.go) makes gopher-lua
+// v1.1.2 panic out of PCall: on the error path it pushes the message
+// handler onto the full stack outside its own recover. That panic is caught
+// here and returned as the script's error, so it cannot take the process
+// down. The state's call stack is left inconsistent, so the runtime is
+// marked broken and every later run fails.
+func (r *Runtime) pcallWithCapture() (err error) {
 	r.errorFrames = nil
+	if r.broken {
+		return errRuntimeBroken
+	}
+	defer func() {
+		if rcv := recover(); rcv != nil {
+			r.broken = true
+			r.L.SetTop(0)
+			err = &lua.ApiError{Type: lua.ApiErrorRun, Object: lua.LString(fmt.Sprint(rcv))}
+		}
+	}()
 	handler := r.L.NewFunction(func(L *lua.LState) int {
 		r.errorFrames = collectStackFrames(L)
 		if frame := r.modules.takePendingFrame(L.Get(1)); frame != nil {
