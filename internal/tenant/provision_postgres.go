@@ -25,7 +25,7 @@ const controlLockClass int32 = 0x72656c63 // "relc"
 // connect opens a connection on the base DSN. Only Create makes the control
 // table ([ensureControl]); every other command finds no tenant without it.
 func (p *Provisioner) connect(ctx context.Context) (*pgx.Conn, error) {
-	conn, err := pgx.Connect(ctx, p.base)
+	conn, err := pgstore.ConnectDirect(ctx, p.base)
 	if err != nil {
 		// pgx redacts the password in connect errors.
 		return nil, fmt.Errorf("connect: %w", err)
@@ -304,7 +304,7 @@ func lockExclusive(ctx context.Context, conn *pgx.Conn, schema string) error {
 // migrations never run in `public`. Unlike pinSchema it takes no lock: the
 // caller holds the tenant's lock exclusively.
 func checkLanding(ctx context.Context, dsn, schema string) error {
-	conn, err := pgx.Connect(ctx, dsn)
+	conn, err := pgstore.ConnectDirect(ctx, dsn)
 	if err != nil {
 		return fmt.Errorf("check schema: %w", err)
 	}

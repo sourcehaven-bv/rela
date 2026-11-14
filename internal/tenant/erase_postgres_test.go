@@ -9,11 +9,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/backendtest"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
 )
 
@@ -122,7 +121,7 @@ func TestErase_RemovesOnlyThatTenant(t *testing.T) {
 func TestErase_RefusesOpenDuringErasure(t *testing.T) {
 	root := writeIsolationProject(t)
 	dsn, schema := backendtest.SchemaDSN(t)
-	conn, err := pgx.Connect(t.Context(), dsn)
+	conn, err := pgstore.ConnectDirect(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -146,7 +145,7 @@ func TestErase_RefusesOpenDuringErasure(t *testing.T) {
 func TestErase_RefusesWhenPublicHasTables(t *testing.T) {
 	db := backendtest.Database(t)
 	dsn, schema := backendtest.SchemaIn(t, db)
-	conn, err := pgx.Connect(t.Context(), db)
+	conn, err := pgstore.ConnectDirect(t.Context(), db)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -239,7 +238,7 @@ func TestErase_LostLockFailsClosed(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	conn, err := pgx.Connect(t.Context(), db)
+	conn, err := pgstore.ConnectDirect(t.Context(), db)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -265,7 +264,7 @@ func TestErase_LostLockFailsClosed(t *testing.T) {
 
 func schemaExists(t *testing.T, dsn, schema string) bool {
 	t.Helper()
-	conn, err := pgx.Connect(t.Context(), dsn)
+	conn, err := pgstore.ConnectDirect(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}

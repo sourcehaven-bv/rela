@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/backendtest"
+	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
 )
 
@@ -38,7 +39,7 @@ func newProvisioned(t *testing.T) provisioned {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = r.Close() })
-	conn, err := pgx.Connect(t.Context(), base)
+	conn, err := pgstore.ConnectDirect(t.Context(), base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +86,7 @@ func TestProvisioner_Lifecycle(t *testing.T) {
 		t.Fatalf("Resolve(org-a) = %+v, %v", got, err)
 	}
 	// The tenant DSN lands in the tenant's schema with the store migrated.
-	conn, err := pgx.Connect(ctx, got.DSN)
+	conn, err := pgstore.ConnectDirect(ctx, got.DSN)
 	if err != nil {
 		t.Fatal(err)
 	}

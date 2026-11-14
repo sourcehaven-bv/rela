@@ -23,6 +23,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/backendtest"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/script"
+	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
 	"github.com/Sourcehaven-BV/rela/internal/tenanthost"
 )
@@ -284,7 +285,7 @@ func TestTenantCommand_CreateRefusals(t *testing.T) {
 
 	schema, err := tenant.SchemaFor("org-c")
 	require.NoError(t, err)
-	conn, err := pgx.Connect(t.Context(), d.base)
+	conn, err := pgstore.ConnectDirect(t.Context(), d.base)
 	require.NoError(t, err)
 	defer func() { _ = conn.Close(context.Background()) }()
 	_, err = conn.Exec(t.Context(), "CREATE SCHEMA "+pgx.Identifier{schema}.Sanitize())
