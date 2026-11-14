@@ -218,17 +218,13 @@ func equalsCond(b *sqlBuilder, alias, path, value string) string {
 		" ELSE " + txtExpr(alias, path) + " = " + valArg + " END)"
 }
 
-// buildPredicateParts emits the CTE definitions and the conjuncts shared by
-// every graph statement, in pgstore's two groups: pre trims the candidate
-// faces before a world ranks them, post tests the prime (BUG-2SKLD3). seed
-// selects the ids an entity-inheritance closure starts from.
-func buildPredicateParts(b *sqlBuilder, q store.GraphQuery, seed string) (with, pre, post []string) {
-	return buildPredicatePartsPrefixed(b, "", q, seed)
-}
-
-// buildPredicatePartsPrefixed is [buildPredicateParts] with every CTE name
-// prefixed, so several queries' predicates can share one statement (the
-// row conditions of a roll-up), as pgstore's does.
+// buildPredicatePartsPrefixed emits the CTE definitions and the conjuncts
+// shared by every graph statement, in pgstore's two groups: pre trims the
+// candidate faces before a world ranks them, post tests the prime
+// (BUG-2SKLD3). seed selects the ids an entity-inheritance closure starts
+// from. Every CTE name is prefixed, so several queries' predicates can
+// share one statement (the row conditions and path steps of a roll-up), as
+// pgstore's does; a lone query passes "".
 func buildPredicatePartsPrefixed(
 	b *sqlBuilder, prefix string, q store.GraphQuery, seed string,
 ) (with, pre, post []string) {
@@ -271,6 +267,15 @@ func buildPredicatePartsPrefixed(
 // about; it restricts the candidates and the closure seeds alike, so a page's
 // statement costs the page, not the type.
 func graphSource(b *sqlBuilder, q store.GraphQuery, typeArg, ids string) (with []string, source string) {
+	return graphSourcePrefixed(b, "", q, typeArg, ids)
+}
+
+// graphSourcePrefixed is [graphSource] with every CTE name prefixed, so
+// several graph sources can share one statement (the path steps of a
+// roll-up).
+func graphSourcePrefixed(
+	b *sqlBuilder, prefix string, q store.GraphQuery, typeArg, ids string,
+) (with []string, source string) {
 	if q.EntityType == "" {
 		// graphquerynaive reads every type for an empty EntityType, which
 		// `e.type = ''` would silently turn into no rows.
@@ -281,7 +286,7 @@ func graphSource(b *sqlBuilder, q store.GraphQuery, typeArg, ids string) (with [
 		// Unary + as for the candidates below: the id list must drive.
 		seed = "SELECT e0.id FROM entities e0 WHERE e0.id IN (" + ids + ") AND +e0.type = " + typeArg
 	}
-	with, pre, post := buildPredicateParts(b, q, seed)
+	with, pre, post := buildPredicatePartsPrefixed(b, prefix, q, seed)
 	scope, rank := graphScope(b, q)
 	where := []string{scope}
 	if len(q.FaceIn) > 0 {

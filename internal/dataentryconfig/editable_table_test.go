@@ -158,7 +158,7 @@ func TestValidateConfig_InputColumnPropertyTypes(t *testing.T) {
 	ticket.Properties["attachment"] = metamodel.PropertyDef{Type: metamodel.PropertyTypeFile}
 	ticket.Properties["double"] = metamodel.PropertyDef{Type: "integer", Computed: "score * 2"}
 	ticket.Properties["children"] = metamodel.PropertyDef{
-		Type: "integer", Rollup: &metamodel.RollupDef{Via: "blocks", Count: true},
+		Type: "integer", Rollup: &metamodel.RollupDef{Via: metamodel.StringOrSlice{"blocks"}, Count: true},
 	}
 	ticket.Properties["jira"] = metamodel.PropertyDef{Type: metamodel.PropertyTypeExternalRef}
 	meta.Entities["ticket"] = ticket

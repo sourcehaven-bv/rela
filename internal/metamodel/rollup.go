@@ -21,7 +21,8 @@ const (
 )
 
 // RollupDef declares a property whose value aggregates the entities related
-// through one relation (TKT-6I2OPG):
+// through one relation, or through a path of up to [MaxRollupPath] relations
+// (TKT-6I2OPG, TKT-LTSNHD):
 //
 //	bewijs_aantal:
 //	  type: integer
@@ -29,24 +30,34 @@ const (
 //	laatste_testresultaat:
 //	  type: testresultaat
 //	  rollup: { via: testedBy, pick: resultaat, latest_by: datum }
+//	gedekt:
+//	  type: boolean
+//	  rollup: { via: [verwijst_naar, wordt_geimplementeerd_door], exists: true }
 //
 // The value is computed when the entity is read, with the reader's access:
-// a related entity the reader cannot read does not count, and a related
-// entity on which the reader cannot see a property the roll-up reads is left
-// out. It is never stored, so it cannot be written. A list filters and sorts
-// on it by computing it for every scoped row first.
+// a related entity the reader cannot read does not count, an entity on the
+// path the reader cannot read breaks the path, and a related entity on which
+// the reader cannot see a property the roll-up reads is left out. A related
+// entity reached by several paths counts once. A path that leads back to the
+// source type can reach the source itself, and then counts it. It is never stored, so it
+// cannot be written. A list filters and sorts on it by computing it for
+// every scoped row first.
 //
 // The loader checks the declaration's shape. The checks that need the
 // relation and the related type (does `via` exist, is `pick` declared there,
 // do the types agree, is there a chain) run in internal/rollup, at the same
 // point computed expressions are compiled.
 type RollupDef struct {
-	// Via is one relation name: the canonical name walks FROM -> TO, the
-	// relation's inverse id walks TO -> FROM, as in related().
-	Via string `yaml:"via"`
-	// Type picks the related type when the relation's far side names several.
+	// Via is the path from the entity to the related entities: one relation
+	// name, or a list of up to [MaxRollupPath]. A canonical name walks
+	// FROM -> TO, the relation's inverse id walks TO -> FROM, as in
+	// related().
+	Via StringOrSlice `yaml:"via"`
+	// Type picks the related type when the last relation's far side names
+	// several.
 	Type string `yaml:"type,omitempty"`
 	// Where keeps the related entities whose properties equal these values.
+	// It filters the far end of the path only.
 	Where map[string]string `yaml:"where,omitempty"`
 
 	Count    bool   `yaml:"count,omitempty"`
@@ -57,6 +68,14 @@ type RollupDef struct {
 	Pick     string `yaml:"pick,omitempty"`
 	LatestBy string `yaml:"latest_by,omitempty"`
 }
+
+// MaxRollupPath is the most relations a roll-up's via may name. Each hop is
+// one more join in the statement that computes the roll-up for a page, and
+// the number of (entity, related entity) pairs it carries grows with the
+// fan-out of every hop. Three covers the GRC paths (requirement -> control
+// -> measure -> evidence); a longer chain is better modeled with a direct
+// relation.
+const MaxRollupPath = 3
 
 // RollupNames returns the roll-up properties of entityType, sorted. The
 // entity read surfaces (data-entry, MCP show_entity, CLI show and list) drop
@@ -118,8 +137,19 @@ func validateRollupShape(schemaName, propName string, pd PropertyDef, allowRollu
 	if !allowRollup {
 		errs = append(errs, at+" is only supported on entity properties")
 	}
-	if strings.TrimSpace(r.Via) == "" {
+	switch {
+	case len(r.Via) == 0, len(r.Via) == 1 && strings.TrimSpace(r.Via[0]) == "":
+		// A blank scalar via is a missing via, not an empty path element.
 		errs = append(errs, at+" needs via: the relation to aggregate over")
+	case len(r.Via) > MaxRollupPath:
+		errs = append(errs, fmt.Sprintf("%s: via names %d relations; a roll-up follows at most %d",
+			at, len(r.Via), MaxRollupPath))
+	default:
+		for i, name := range r.Via {
+			if strings.TrimSpace(name) == "" {
+				errs = append(errs, fmt.Sprintf("%s: via[%d] is empty", at, i))
+			}
+		}
 	}
 	fn, _, ok := r.Func()
 	if !ok {

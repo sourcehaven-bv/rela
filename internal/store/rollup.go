@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"maps"
 	"math"
 	"math/big"
 	"slices"
@@ -45,6 +46,13 @@ const (
 // runs before the fold, inside the backend, and no ungated row is ever
 // loaded. Only identity-scoped edges (an empty tail) are followed.
 //
+// A roll-up over a path (TKT-LTSNHD) first walks [RollupQuery.Path] from
+// the sources; Relation then joins the entities the last step reached to the
+// related rows. Each step's Through gates the entities it reaches as Related
+// gates the rows, so an entity on the path that Through does not select
+// breaks every path through it. A related row reached from one source by
+// several paths counts once.
+//
 // A value that is not of the expected shape is skipped, never coerced:
 // a number is an integral JSON number (Go integer kinds, or a float64 with no
 // fraction), a string is a non-empty string. A list never counts as either.
@@ -53,7 +61,11 @@ type RollupQuery struct {
 	// selection, so each related entity is one row; OrderBy, Limit and
 	// Offset must be unset.
 	Related GraphQuery
-	// Relation is the canonical relation type joining a source to a row.
+	// Path are the steps from a source to the entities Relation starts
+	// from. Empty means Relation starts from the sources.
+	Path []RollupStep
+	// Relation is the canonical relation type joining a source, or the
+	// entity the last step reached, to a row.
 	Relation string
 	// SourceIsTo says the edge runs from the related row to the source.
 	// False means it runs from the source to the related row.
@@ -81,6 +93,20 @@ type RollupQuery struct {
 	// not hold, the result has no Value, but the row still wins: an older
 	// row is never read instead.
 	PickRequire []RowCondition
+}
+
+// RollupStep is one step of a [RollupQuery.Path]: the identity-scoped edges
+// of Relation from the entities reached so far, to the entities Through
+// selects.
+type RollupStep struct {
+	// Relation is the canonical relation type walked.
+	Relation string
+	// SourceIsTo says the edge runs from the entity this step reaches to
+	// the entity before it.
+	SourceIsTo bool
+	// Through selects the entities the step may reach, with the rules of
+	// [RollupQuery.Related]: a world selection, no paging or sorting.
+	Through GraphQuery
 }
 
 // RowCondition holds for a row when any query in Any matches it. A nil query
@@ -126,16 +152,19 @@ func Rollup(ctx context.Context, st Store, q RollupQuery) (map[string]RollupResu
 // ValidateRollupQuery refuses a query every backend would answer
 // differently or not at all.
 func ValidateRollupQuery(q RollupQuery) error {
-	switch {
-	case q.Relation == "":
+	if q.Relation == "" {
 		return fmt.Errorf("%w: rollup: relation is required", ErrInvalidQuery)
-	case q.Related.EntityType == "":
-		return fmt.Errorf("%w: rollup: related entity type is required", ErrInvalidQuery)
-	case q.Related.Limit != 0 || q.Related.Offset != 0 || len(q.Related.OrderBy) > 0:
-		return fmt.Errorf("%w: rollup: the related query must not page or sort", ErrInvalidQuery)
 	}
-	if _, ok := q.Related.Faces.World(); !ok {
-		return fmt.Errorf("%w: rollup: the related query must select a world", ErrInvalidQuery)
+	if err := validateRollupGate("related", q.Related); err != nil {
+		return err
+	}
+	for i, step := range q.Path {
+		if step.Relation == "" {
+			return fmt.Errorf("%w: rollup: path step %d: relation is required", ErrInvalidQuery, i)
+		}
+		if err := validateRollupGate(fmt.Sprintf("path step %d", i), step.Through); err != nil {
+			return err
+		}
 	}
 	switch q.Func {
 	case RollupCount:
@@ -153,9 +182,25 @@ func ValidateRollupQuery(q RollupQuery) error {
 	return nil
 }
 
-// RollupGeneric answers q with ordinary reads and folds in Go: one relation
-// read, one header read of the related rows, and one MatchingFaces per
-// condition query. It is the reference the SQL backends are tested against.
+// validateRollupGate refuses a related or step query that does not select
+// one row per entity.
+func validateRollupGate(what string, q GraphQuery) error {
+	switch {
+	case q.EntityType == "":
+		return fmt.Errorf("%w: rollup: %s entity type is required", ErrInvalidQuery, what)
+	case q.Limit != 0 || q.Offset != 0 || len(q.OrderBy) > 0:
+		return fmt.Errorf("%w: rollup: the %s query must not page or sort", ErrInvalidQuery, what)
+	}
+	if _, ok := q.Faces.World(); !ok {
+		return fmt.Errorf("%w: rollup: the %s query must select a world", ErrInvalidQuery, what)
+	}
+	return nil
+}
+
+// RollupGeneric answers q with ordinary reads and folds in Go: per path
+// step and for the last relation one relation read and one header read, and
+// one MatchingFaces per condition query. It is the reference the SQL
+// backends are tested against.
 func RollupGeneric(ctx context.Context, st RollupReader, q RollupQuery) (map[string]RollupResult, error) {
 	if err := ValidateRollupQuery(q); err != nil {
 		return nil, err
@@ -164,46 +209,25 @@ func RollupGeneric(ctx context.Context, st RollupReader, q RollupQuery) (map[str
 	if len(q.Sources) == 0 {
 		return out, nil
 	}
-	sources := slices.Compact(slices.Sorted(slices.Values(q.Sources)))
-
-	identity := entity.Face("")
-	rq := RelationQuery{Type: q.Relation, EntityIDs: sources, FromFace: &identity, Direction: DirectionOutgoing}
-	if q.SourceIsTo {
-		rq.Direction = DirectionIncoming
+	// reached maps each entity reached so far to the sources it is
+	// reached from.
+	reached := map[string][]string{}
+	for _, src := range q.Sources {
+		reached[src] = []string{src}
 	}
-	linked := map[string][]string{} // related id -> source ids
-	for r, err := range st.ListRelations(ctx, rq) {
-		if err != nil {
-			return nil, err
+	for _, step := range q.Path {
+		rows, linked, err := rollupStep(ctx, st, reached, step.Relation, step.SourceIsTo, step.Through)
+		if err != nil || len(rows) == 0 {
+			return out, err
 		}
-		src, rel := r.From, r.To
-		if q.SourceIsTo {
-			src, rel = r.To, r.From
-		}
-		if !slices.Contains(linked[rel], src) {
-			linked[rel] = append(linked[rel], src)
+		reached = make(map[string][]string, len(rows))
+		for _, h := range rows {
+			reached[h.ID] = linked[h.ID]
 		}
 	}
-	if len(linked) == 0 {
-		return out, nil
-	}
-
-	related := q.Related
-	related.Related = append(slices.Clone(related.Related), DirectedRelation{
-		Incoming: !q.SourceIsTo,
-		Pred:     RelationPredicate{OfTypes: []string{q.Relation}, Endpoints: sources},
-	})
-	var rows []EntityHeader
-	for h, err := range GraphQueryHeaders(ctx, st, related) {
-		if err != nil {
-			return nil, err
-		}
-		if _, ok := linked[h.ID]; ok {
-			rows = append(rows, h)
-		}
-	}
-	if len(rows) == 0 {
-		return out, nil
+	rows, linked, err := rollupStep(ctx, st, reached, q.Relation, q.SourceIsTo, q.Related)
+	if err != nil || len(rows) == 0 {
+		return out, err
 	}
 	ids := make([]string, len(rows))
 	for i, h := range rows {
@@ -236,6 +260,53 @@ func RollupGeneric(ctx context.Context, st RollupReader, q RollupQuery) (map[str
 		out[src] = f.result()
 	}
 	return out, nil
+}
+
+// rollupStep follows the identity-scoped edges of relation from the
+// entities in reached to the rows gate selects. It returns those rows and,
+// per row id, the sources it is reached from, each once.
+func rollupStep(
+	ctx context.Context, st RollupReader, reached map[string][]string,
+	relation string, sourceIsTo bool, gate GraphQuery,
+) (rows []EntityHeader, linked map[string][]string, err error) {
+	near := slices.Sorted(maps.Keys(reached))
+	identity := entity.Face("")
+	rq := RelationQuery{Type: relation, EntityIDs: near, FromFace: &identity, Direction: DirectionOutgoing}
+	if sourceIsTo {
+		rq.Direction = DirectionIncoming
+	}
+	linked = map[string][]string{} // far id -> source ids
+	for r, lerr := range st.ListRelations(ctx, rq) {
+		if lerr != nil {
+			return nil, nil, lerr
+		}
+		from, far := r.From, r.To
+		if sourceIsTo {
+			from, far = r.To, r.From
+		}
+		for _, src := range reached[from] {
+			if !slices.Contains(linked[far], src) {
+				linked[far] = append(linked[far], src)
+			}
+		}
+	}
+	if len(linked) == 0 {
+		return nil, linked, nil
+	}
+
+	gate.Related = append(slices.Clone(gate.Related), DirectedRelation{
+		Incoming: !sourceIsTo,
+		Pred:     RelationPredicate{OfTypes: []string{relation}, Endpoints: near},
+	})
+	for h, err := range GraphQueryHeaders(ctx, st, gate) {
+		if err != nil {
+			return nil, nil, err
+		}
+		if _, ok := linked[h.ID]; ok {
+			rows = append(rows, h)
+		}
+	}
+	return rows, linked, nil
 }
 
 // HoldingRows returns a test for "every condition holds on this row",

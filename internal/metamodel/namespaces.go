@@ -370,7 +370,7 @@ func (q qualifier) props(props map[string]PropertyDef) map[string]PropertyDef {
 		pd.Type = q.ref(q.localTypes, pd.Type)
 		if pd.Rollup != nil {
 			r := *pd.Rollup
-			r.Via = q.relationRef(r.Via)
+			r.Via = StringOrSlice(mapNames(r.Via, q.relationRef))
 			if r.Type != "" {
 				r.Type = q.entityRef(r.Type)
 			}

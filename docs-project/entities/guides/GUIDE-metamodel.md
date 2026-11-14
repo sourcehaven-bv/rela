@@ -1073,9 +1073,9 @@ entities:
 
 | Key         | Meaning                                                                                       |
 | ----------- | --------------------------------------------------------------------------------------------- |
-| `via`       | One relation. Its name walks from → to; its `inverse` walks to → from, as in `related()`      |
-| `type`      | The related type, when the relation's far side names several                                  |
-| `where`     | Keep only related entities whose properties equal these values (enum, string, boolean, integer) |
+| `via`       | One relation, or a list of up to three. A name walks from → to; an `inverse` walks to → from |
+| `type`      | The related type, when the last relation's far side names several                             |
+| `where`     | Keep only related entities whose properties equal these values (enum, string, boolean, integer). On a path, it filters the far end only |
 | `count`     | The number of related entities. The property must be `integer`                               |
 | `exists`    | Whether there is at least one. The property must be `boolean`                                 |
 | `min`/`max` | The lowest or highest value of an `integer` or `date` property; same type. Not yet `decimal`  |
@@ -1083,12 +1083,38 @@ entities:
 | `latest_by` | With `pick`: the `pick` value of the entity with the latest `date` here                       |
 
 Declare exactly one function. `pick` must have the roll-up's declared type.
-A roll-up follows one relation, and cannot read another roll-up. It cannot be
+A roll-up cannot read another roll-up. It cannot be
 `required`, `list`, `unique`, `computed`, have a `default`, or be a file. The
 schema fails to load when a roll-up names an unknown relation or property, or
 when a type does not match. `min`, `max` and `latest_by` take a `date` only in
 the default `YYYY-MM-DD` format, and no `datetime`: rela orders these values as
 text, and only that date format sorts as text in time order.
+
+**Paths.** `via` can name a list of relations. The roll-up then follows each
+relation in turn and summarizes the entities at the far end. A requirement
+that refers to ISO controls can ask whether any active measure implements one
+of them:
+
+```yaml
+entities:
+  nalevingseis:
+    properties:
+      gedekt:
+        type: boolean
+        rollup:
+          via: [verwijst_naar, wordt_geimplementeerd_door]
+          exists: true
+          where: { status: actief }
+```
+
+Each relation must start from the type where the previous one ended. Every
+relation except the last must have one far type; `type:` picks the far type of
+the last one. A far entity reached along several paths counts once. `where`
+filters the far entities only; the entities in between are filtered only by
+access. A path has at most three relations, because each relation adds a join
+and the number of rows to join grows with the fan-out of every step. The schema
+fails to load when a path is longer, names an unknown or content-scoped
+relation, or has a step that does not start where the previous one ended.
 
 **How a roll-up differs from a computed property.**
 
@@ -1104,8 +1130,10 @@ text, and only that date format sorts as text in time order.
 entity whose `where`, `latest_by`, `min`, `max` or `sum` property is hidden from
 the reader by a `visible:` grant is left out, as if it did not match. When the
 `pick` property of the latest entity is hidden, the roll-up has no value; rela
-does not fall back to an older entity. Two readers can therefore see different
-values for the same entity.
+does not fall back to an older entity. On a path, every entity in between is
+checked too: an entity the reader cannot read breaks the paths through it, so
+a far entity reached only through it is not counted. Two readers can therefore
+see different values for the same entity.
 
 **Where the value appears.** The entity API (`GET /api/v1/{type}/{id}`, and the
 responses of create and update), the entity detail page, view sections, list

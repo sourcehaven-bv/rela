@@ -19,6 +19,8 @@ var unselectedGraphQueryAllowlist = map[string]allowed{
 	"internal/dataentry/listpushdown.go":  {1, "completed by stampScope before it runs"},
 	"internal/dataentry/queryscope.go":    {1, "a \"no query\" return of the scope lowering"},
 	"internal/dataentry/scopedread.go":    {1, "completed by stampScope before it runs"},
+	"internal/visibility/rollup.go": {3, "\"no query\" returns of Rollups.gate (deny and error); " +
+		"the query it returns sets Faces from the world"},
 }
 
 // trivialScopeAllowlist pins the store.TrivialScope calls outside the store
