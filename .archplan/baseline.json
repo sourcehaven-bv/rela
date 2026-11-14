@@ -2738,6 +2738,18 @@
       "reason": "Debt: low value per finding.",
       "at": "2026-11-13T10:30:00Z",
       "title": "5 functions in web/components/entity take boolean flags."
+    },
+    "concepts.untyped_bag-d595e51fc887": {
+      "state": "accepted",
+      "reason": "By design: record fields are declared per record type in schema.yaml, like entity properties, so a row carries them as a map; the Service checks each value against the declared field type. TKT-J7Q9C4K.",
+      "at": "2026-11-14T12:00:00Z",
+      "title": "3 types of records that other components use carry untyped data: Record.Fields (map[string]any), Input.Fields (map[string]any), Owner.Faces ([]map[string]any)."
+    },
+    "types.synonyms-3bbe0078a563": {
+      "state": "accepted",
+      "reason": "By design: records.TypeInfo is the wire shape the records API serves for a record type. It adds the key, a default label and the field order to metamodel.RecordTypeDef and keeps the YAML-only parts out of the JSON. TKT-J7Q9C4K.",
+      "at": "2026-11-14T12:00:00Z",
+      "title": "RecordTypeDef (metamodel) and TypeInfo (records) share most of their fields."
     }
   },
   "labels": {},
@@ -3113,7 +3125,7 @@
       {
         "at": "2026-11-14T12:00:00Z",
         "change": "loosen",
-        "reason": "records.TypeInfo mirrors metamodel.RecordTypeDef so the record store stays independent of the metamodel, TKT-J7Q9C4K",
+        "reason": "records.TypeInfo is the records API wire shape of metamodel.RecordTypeDef, TKT-J7Q9C4K",
         "metrics": {
           "weight.types": [
             4203,
