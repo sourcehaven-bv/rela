@@ -3186,8 +3186,8 @@ sections:
     hide_empty: true
 ```
 
-The section also drops out of the jump bar. It comes back the next time the
-page loads with a row in the collection.
+The section comes back the next time the page loads with a row in the
+collection.
 
 The server decides, after access control: a section whose rows you may not
 read is empty for you, and hides for you. A collection that rela could only
