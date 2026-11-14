@@ -4,7 +4,9 @@ type: ticket
 title: Gantt read grows faster than the data on postgres
 kind: enhancement
 priority: medium
-status: backlog
+effort: s
+started: "2026-11-14"
+status: in-progress
 ---
 
 ## Description

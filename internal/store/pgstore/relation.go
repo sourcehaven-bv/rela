@@ -46,7 +46,7 @@ func (s *Store) GetRelation(ctx context.Context, k entity.RelationKey) (*entity.
 func (s *Store) ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
 	live := pagedSeq(func(after *relationKey) ([]*entity.Relation, *relationKey, error) {
 		sql, args := buildRelationListSQL(q, after)
-		return queryPage(ctx, s.db, sql, args, scanRelation, keyOfRelation)
+		return queryPage(ctx, s.db, sql, args, len(q.EntityIDs)+len(q.PeerIDs), scanRelation, keyOfRelation)
 	})
 	return func(yield func(*entity.Relation, error) bool) {
 		for r, err := range live {

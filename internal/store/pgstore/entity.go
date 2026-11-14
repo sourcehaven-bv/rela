@@ -58,7 +58,7 @@ func (s *Store) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2
 	}
 	return pagedSeq(func(after *entity.Ref) ([]*entity.Entity, *entity.Ref, error) {
 		sql, args := buildEntityListSQL(q, after, 0)
-		return queryPage(ctx, s.db, sql, args, scanEntity, func(e *entity.Entity) entity.Ref {
+		return queryPage(ctx, s.db, sql, args, len(q.IDs), scanEntity, func(e *entity.Entity) entity.Ref {
 			return entity.Ref{ID: e.ID, Face: e.Face}
 		})
 	})
@@ -80,7 +80,7 @@ func (s *Store) ListEntityHeaders(
 	}
 	return pagedSeq(func(after *entity.Ref) ([]store.EntityHeader, *entity.Ref, error) {
 		sql, args := buildEntityHeaderListSQL(q, after)
-		return queryPage(ctx, s.db, sql, args, scanEntityHeader, func(h store.EntityHeader) entity.Ref {
+		return queryPage(ctx, s.db, sql, args, len(q.IDs), scanEntityHeader, func(h store.EntityHeader) entity.Ref {
 			return entity.Ref{ID: h.ID, Face: h.Face}
 		})
 	})

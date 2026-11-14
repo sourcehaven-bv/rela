@@ -85,10 +85,11 @@ endpoints:
     path: /api/v1/_gantts/delivery
     as: [manager, reader]
     expect: 200
-    p95_ms: {"1": 1500, "5": 12000}
-    # p50 grew 11x (344 ms -> 3.8 s) and statements 50 -> 229: the chart
-    # reads the whole hierarchy. TKT-K7EM7Z5.
-    ratio_max: 16
+    p95_ms: {"1": 600, "5": 4000}
+    # p50 grew 5.3x (165 -> 880 ms) for 5x the data: the chart still reads
+    # every row of the hierarchy to roll its dates up. TKT-K7EM7Z5 removed
+    # the faster-than-linear part; TKT-EBTVUL8 tracks the rest.
+    ratio_max: 8
   - name: search
     method: GET
     path: /api/v1/_search?q={word}&limit=20
