@@ -47,9 +47,7 @@ type Match = func(ctx context.Context, q store.GraphQuery, ids []string) (map[st
 // Ungated lowers a traversal with no authorization. It is for operator- and
 // system-trust surfaces (the CLI, automations) and for deployments with no
 // ACL policy, where every read is already unrestricted.
-func Ungated(_ context.Context, _ string, hop acl.TraversalHop) (*store.RelationPredicate, error) {
-	return acl.UngatedTraversal(hop)
-}
+var Ungated Gate = acl.UngatedGate
 
 // Answers holds, per traversal (keyed by [predicate.TraversalSpec.Key]), the
 // candidate ids that satisfy it, and the ids it was asked about. Only those

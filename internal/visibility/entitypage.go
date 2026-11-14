@@ -61,11 +61,6 @@ type traversalGater interface {
 	GateTraversal(ctx context.Context, candidateType string, hop acl.TraversalHop) (*store.RelationPredicate, error)
 }
 
-// ungatedTraversal is the traversal gate of a reader that reads everything.
-func ungatedTraversal(_ context.Context, _ string, hop acl.TraversalHop) (*store.RelationPredicate, error) {
-	return acl.UngatedTraversal(hop)
-}
-
 // gateTraversals turns ts into store edge tests through gate. empty
 // reports that a positive term is denied and none is refused, so no row
 // matches. A denied negated term drops out. A missing or mismatched
@@ -322,7 +317,7 @@ func (r *UnrestrictedReader) ListEntityPage(ctx context.Context, q PageQuery) (E
 	if !ok { // coverage-ignore: store.Store embeds GraphQueryer
 		return EntityPage{}, fmt.Errorf("visibility: store %T cannot run a graph query", r.st)
 	}
-	related, empty, err := gateTraversals(ctx, ungatedTraversal, q.Type, q.Traversals)
+	related, empty, err := gateTraversals(ctx, acl.UngatedGate, q.Type, q.Traversals)
 	switch {
 	case err != nil:
 		return EntityPage{}, err
