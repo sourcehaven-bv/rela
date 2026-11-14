@@ -78,6 +78,50 @@ func TestHiddenScope_NotNamed(t *testing.T) {
 	}
 }
 
+// TestHiddenProperty_RealPolicy runs the hidden-property case through the
+// real ACL path: an acl.yaml `visible:` grant, the policy redactor and the
+// declarative gate.
+func TestHiddenProperty_RealPolicy(t *testing.T) {
+	const policy = `roles:
+  reader:
+    read: ["*"]
+    update: [control]
+    visible:
+      control:
+        - field: oscal_id
+        - field: title
+assignments:
+  alice: reader
+`
+	w := aclWorld(t, policy, "alice")
+	if err := w.st.CreateEntity(w.ctx, &entity.Entity{
+		ID: "CTL-1", Type: "control",
+		Properties: map[string]any{"oscal_id": "c1", "title": "Old", "weight": int64(987)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	weighted := w.mapping(controlsMapping + "      weight: weight\n")
+	p := w.plan(weighted, FormatJSON, `{"controls": [{"id": "c1", "title": "Old", "weight": 3}]}`)
+	if len(p.Errors) != 1 || !strings.Contains(p.Errors[0].Message, "property weight") {
+		t.Fatalf("errors = %+v", p.Errors)
+	}
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "987") || len(p.Updates)+p.Unchanged != 0 {
+		t.Fatalf("plan shows or compares the hidden value: %s", data)
+	}
+
+	// A mapping of visible fields only updates, and the hidden value stays.
+	w.run(w.mapping(controlsMapping), FormatJSON, `{"controls": [{"id": "c1", "title": "New"}]}`)
+	got := w.byKey("control", "c1")
+	if got == nil || got.Properties["title"] != "New" || normalize(got.Properties["weight"]) != "987" {
+		t.Fatalf("stored = %+v", got)
+	}
+}
+
 // TestRelationErrors_DropRecordsInChain pins that a record whose relation
 // fails is left out, and that a record relating to it fails in turn.
 func TestRelationErrors_DropRecordsInChain(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
+	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -164,7 +165,15 @@ func aclWorld(t *testing.T, policy, user string) *world {
 	if err != nil {
 		t.Fatalf("NewDeclarativeGate: %v", err)
 	}
-	policyReader, err := visibility.NewPolicyReader(gate, visibility.NopRedactor{}, w.st)
+	resolver, err := affordances.New(w.meta, relLookup{w.st}, d)
+	if err != nil {
+		t.Fatalf("affordances.New: %v", err)
+	}
+	redactor, err := visibility.NewPolicyRedactor(resolver)
+	if err != nil {
+		t.Fatalf("NewPolicyRedactor: %v", err)
+	}
+	policyReader, err := visibility.NewPolicyReader(gate, redactor, w.st)
 	if err != nil {
 		t.Fatalf("NewPolicyReader: %v", err)
 	}
@@ -178,6 +187,28 @@ func aclWorld(t *testing.T, policy, user string) *world {
 		t.Fatalf("BindRequest: %v", err)
 	}
 	return w
+}
+
+// relLookup answers the resolver's relation questions from the store.
+type relLookup struct{ st store.Store }
+
+func (l relLookup) OutgoingCounts(ctx context.Context, fromID string) map[string]int {
+	counts := map[string]int{}
+	for r, err := range l.st.ListRelations(ctx, store.RelationQuery{From: fromID, Direction: store.DirectionOutgoing}) {
+		if err == nil {
+			counts[r.Type]++
+		}
+	}
+	return counts
+}
+
+func (l relLookup) HasEdge(ctx context.Context, fromID, relType, toID string) bool {
+	for r, err := range l.st.ListRelations(ctx, store.RelationQuery{From: fromID, Direction: store.DirectionOutgoing}) {
+		if err == nil && r.Type == relType && r.To == toID {
+			return true
+		}
+	}
+	return false
 }
 
 func readTestdata(t *testing.T, name string) string {
