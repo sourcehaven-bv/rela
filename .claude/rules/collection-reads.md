@@ -32,6 +32,19 @@ paths:
   Go path. Its traversals ride in `GraphQuery.Related`, never in
   `HasInbound`/`HasOutbound`, which belong to the ACL read gate. New read
   paths pin their cost with a `storetest.Counting` budget test
-  asserting the count is the same at 10 and 50 rows. Measure on the postgres
+  asserting the calls are the same at 10 and 50 rows, and the rows read are
+  the same over a store of 100 and of 1,000 entities
+  (`storetest.AssertScaleFree`, TKT-A6A97WV). Grow the store, not the output:
+  a single call that scans the whole type has flat calls and only the rows
+  show it. The counter sees the rows the store returns, so pad with what a
+  scan would return: the same type and face, with edges of the relation types
+  the operation reads. Measure on the postgres
   backend with `rela-server -verbose` (`Server-Timing`, one `request` log line
   each) against `prototypes/perf/project` seeded by `rela dev seed`.
+- **Unpaged whole-collection reads are pinned per function** in
+  `internal/archguard/unpagedread_allowlist_test.go` (TKT-1VAVZ3O). A new
+  `ListEntities`/`ListRelations`/`ListEntityHeaders` call, or a
+  `GraphQuery`/`*Page` call without `Limit`, that is not bounded by ids fails
+  `TestNoNewUnpagedReads`; the list may only shrink. Its `request-path`
+  entries are debt, and the allowlist names the follow-up ticket for each
+  area.

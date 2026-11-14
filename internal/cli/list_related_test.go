@@ -120,4 +120,14 @@ func TestListFilter_RelatedBudget(t *testing.T) {
 	if got := calls(10, "entity.title == 't'"); got != 0 {
 		t.Fatalf("MatchingIDs calls without related() = %d, want 0", got)
 	}
+	// Filtering 10 rows reads the same rows however many other tickets
+	// the store holds.
+	storetest.AssertScaleFree(t, func(n int) (storetest.Cost, string) {
+		st, all := seedOwned(t, n)
+		st.Reset()
+		if _, err := applyListFilters(context.Background(), all[:10], nil, f, "ticket", meta, store.IDMatcher(st)); err != nil {
+			t.Fatal(err)
+		}
+		return st.Cost(), st.String()
+	})
 }

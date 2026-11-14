@@ -116,9 +116,12 @@ jobs:
       - name: Run tests
         # -shuffle=on randomizes test order to surface inter-test ordering
         # dependencies; the seed is printed on failure for reproduction.
+        # -timeout is per package: internal/dataentry takes about 10 minutes
+        # under -race since its budget tests measure at two store sizes
+        # (TKT-A6A97WV), past go test's 10-minute default.
         env:
           RELA_TEST_RESTISH: '1'
-        run: go test -v -race -shuffle=on -coverprofile=coverage.out -covermode=atomic ./...
+        run: go test -v -race -shuffle=on -timeout 20m -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Check coverage thresholds
         uses: vladopajic/go-test-coverage@v2.21.0

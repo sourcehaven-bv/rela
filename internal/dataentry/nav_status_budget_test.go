@@ -70,20 +70,18 @@ func useFieldPolicy(t *testing.T, app *App, counting *storetest.Counting) *acl.D
 	return d
 }
 
-// fieldPolicyReads runs op at 10 and 50 tickets under [useFieldPolicy] and
-// returns the store reads of each run. Setup reads are not counted.
-func fieldPolicyReads(t *testing.T, install func(*App), op func(*App, context.Context)) (small, large int, detail string) {
+// fieldPolicyReads measures op under [useFieldPolicy] as [readsFor] does.
+// Setup reads are not counted.
+func fieldPolicyReads(t *testing.T, install func(*App), op func(*App, context.Context)) (cost budgetCost, detail string) {
 	t.Helper()
-	counts := make([]int, 0, 2)
-	for _, n := range []int{10, 50} {
-		app, counting, _, ctx := newBudgetAppOn(t, n, memstore.New())
+	measure := func(n, pad int) (storetest.Cost, string) {
+		app, counting, _, ctx := newBudgetAppPadded(t, n, pad, memstore.New(), budgetMeta())
 		install(app)
 		d := useFieldPolicy(t, app, counting)
 		op(app, gateCtxFor(ctx, t, d))
-		counts = append(counts, counting.Reads())
-		detail = counting.String()
+		return counting.Cost(), counting.String()
 	}
-	return counts[0], counts[1], detail
+	return measureBudget(measure)
 }
 
 // leadDoneCount is how many of the fixture's done tickets lie in EP1, the
@@ -115,7 +113,7 @@ func installDoneStatus(app *App, list dataentryconfig.List) {
 // principal's local roles per row: 867 statements per request on Atlas
 // (TKT-YLG695).
 func TestQueryBudget_NavStatusIsSizeIndependent(t *testing.T) {
-	small, large, detail := fieldPolicyReads(t,
+	b, detail := fieldPolicyReads(t,
 		func(app *App) {
 			installDoneStatus(app, dataentryconfig.List{
 				EntityType: "ticket",
@@ -127,19 +125,24 @@ func TestQueryBudget_NavStatusIsSizeIndependent(t *testing.T) {
 				t.Fatalf("no marker counted, so this budget proves nothing: %v", got)
 			}
 		})
-	assertBudget(t, "nav status", small, large, navStatusFieldPolicyBudget, detail)
+	// TODO(TKT-F2EJQY8): calls only. The marker counts in Go over a full
+	// header scan of the type (navStatusRows in nav_status.go, through
+	// scopedSortedEntitiesScoped to scopedHeaders' type scan in
+	// scopedread.go).
+	assertCallBudget(t, "nav status", b, navStatusFieldPolicyBudget, detail)
 }
 
 // Without a list condition, only the rules redact, and they are primed too.
 func TestQueryBudget_NavStatusRuleOnlyIsSizeIndependent(t *testing.T) {
-	small, large, detail := fieldPolicyReads(t,
+	b, detail := fieldPolicyReads(t,
 		func(app *App) { installDoneStatus(app, dataentryconfig.List{EntityType: "ticket"}) },
 		func(app *App, ctx context.Context) {
 			if got := navStatusAs(ctx, t, app); got["0"].Count == 0 {
 				t.Fatalf("no marker counted, so this budget proves nothing: %v", got)
 			}
 		})
-	assertBudget(t, "nav status (rule only)", small, large, navStatusRuleOnlyFieldPolicyBudget, detail)
+	// TODO(TKT-F2EJQY8): calls only, for the scan named on the test above.
+	assertCallBudget(t, "nav status (rule only)", b, navStatusRuleOnlyFieldPolicyBudget, detail)
 }
 
 // A generated sidebar group redacts each of its rows before taking the title.
@@ -148,14 +151,20 @@ func TestQueryBudget_NavItemsRedactionIsSizeIndependent(t *testing.T) {
 		name   string
 		list   dataentryconfig.List
 		pinned int
+		// scan marks a case whose rows grow with the store; it is
+		// asserted on calls only.
+		scan bool
 	}{
-		{"nav items", dataentryconfig.List{EntityType: "ticket"}, navItemsFieldPolicyBudget},
+		{"nav items", dataentryconfig.List{EntityType: "ticket"}, navItemsFieldPolicyBudget, false},
+		// TODO(TKT-F2EJQY8): a list condition keeps the list off the pushed
+		// path, so the group reads every header of the type (scopedHeaders'
+		// type scan in scopedread.go) and judges the condition in Go.
 		{"nav items (condition)", dataentryconfig.List{
 			EntityType: "ticket", Condition: "related(entity, 'assigned-to', { id = current_user.id })",
-		}, navItemsConditionFieldPolicyBudget},
+		}, navItemsConditionFieldPolicyBudget, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			small, large, detail := fieldPolicyReads(t,
+			b, detail := fieldPolicyReads(t,
 				func(app *App) {
 					installNavItemsGroup(app, tc.list, dataentryconfig.NavItemsFrom{Limit: 100})
 				},
@@ -167,7 +176,11 @@ func TestQueryBudget_NavItemsRedactionIsSizeIndependent(t *testing.T) {
 						t.Fatalf("nav items: %d %s", rec.Code, rec.Body)
 					}
 				})
-			assertBudget(t, tc.name, small, large, tc.pinned, detail)
+			if tc.scan {
+				assertCallBudget(t, tc.name, b, tc.pinned, detail)
+				return
+			}
+			assertBudget(t, tc.name, b, tc.pinned, detail)
 		})
 	}
 }

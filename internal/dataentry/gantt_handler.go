@@ -1013,8 +1013,9 @@ func (b *ganttBudget) take() bool {
 	return true
 }
 
-// ganttEdges lists every hierarchy edge (one bulk query per relation type)
-// and keeps those whose endpoints are both in the gated node set.
+// ganttEdges lists the hierarchy edges between nodes of the gated node set:
+// one query per relation type, outgoing from a node to a node, so it reads
+// no edge that leaves the set (TKT-FED6FMM).
 //
 // A content-scoped edge is kept only when its tail is the face its parent
 // node was loaded at ([ownedByFace], BUG-BZQQDP). Another face's edge would
@@ -1026,8 +1027,14 @@ func (h *ganttHandler) ganttEdges(
 	ctx context.Context, meta *metamodel.Metamodel, g dataentryconfig.Gantt, nodes map[string]*ganttNode,
 ) (map[string][][2]string, *ganttError) {
 	out := map[string][][2]string{}
+	ids := make([]string, 0, len(nodes))
+	for id := range nodes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
 	for _, relType := range g.Hierarchy {
-		for rel, err := range h.store.ListRelations(ctx, store.RelationQuery{Type: relType}) {
+		q := store.RelationQuery{Type: relType, Direction: store.DirectionOutgoing, EntityIDs: ids, PeerIDs: ids}
+		for rel, err := range h.store.ListRelations(ctx, q) {
 			if err != nil {
 				slog.Error("gantt: relation list failed", "relation", relType, "error", err)
 				return nil, &ganttError{http.StatusInternalServerError, "internal", "Failed to list relations", ""}

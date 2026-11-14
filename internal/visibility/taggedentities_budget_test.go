@@ -51,6 +51,7 @@ func TestTaggedEntities_Budget(t *testing.T) {
 				read[live] = true
 				tags = append(tags, tagRow(live, "ticket", false), tagRow(fmt.Sprintf("OLD-%03d", i), "ticket", true))
 			}
+			padStore(t, base, "ticket", "")
 			st := storetest.NewCounting(base)
 			var many, perms, single int
 			gate := countingTagGate{tagGate: tagGate{read: read, history: true}, many: &many, perms: &perms, single: &single}
@@ -69,8 +70,8 @@ func TestTaggedEntities_Budget(t *testing.T) {
 			if err != nil || len(got) != 2*n {
 				t.Fatalf("got %d rows, %v; want %d", len(got), err, 2*n)
 			}
-			if st.Reads() != 1 || st.Calls()["ListEntityHeaders"] != 1 {
-				t.Errorf("reads = %s, want exactly one ListEntityHeaders", st)
+			if st.Reads() != 1 || st.Calls()["ListEntityHeaders"] != 1 || st.Cost().Rows > n {
+				t.Errorf("reads = %s, want exactly one ListEntityHeaders of at most %d rows", st, n)
 			}
 			if many != 1 || single != 0 || perms != 1 {
 				t.Errorf("gate calls = %d many, %d single, %d permission; want 1, 0, 1", many, single, perms)

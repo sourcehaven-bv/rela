@@ -116,52 +116,65 @@ func TestPrimeLocalRoles_MatchesPerEntityWalk(t *testing.T) {
 // graph has a fixed shape (every doc in f0, f0 in f1, alice owning every
 // third doc), so only the row count changes.
 func TestPrimeLocalRoles_ReadsAreSizeIndependent(t *testing.T) {
-	counts := map[int]int{}
-	for _, n := range []int{10, 50} {
-		ctx := context.Background()
-		base := memstore.New()
-		for _, e := range []entity.Entity{{ID: "alice", Type: "user"}, {ID: "f0", Type: "folder"}, {ID: "f1", Type: "folder"}} {
-			if err := base.CreateEntity(ctx, &e); err != nil {
-				t.Fatal(err)
-			}
-		}
-		link := func(from, rel, to string) {
-			if _, err := base.CreateRelation(ctx, entity.RelationKey{From: from, Type: rel, To: to}, nil); err != nil {
-				t.Fatal(err)
-			}
-		}
-		link("f0", "in", "f1")
-		ids := make([]string, 0, n)
-		for i := range n {
-			id := fmt.Sprintf("d%02d", i)
-			if err := base.CreateEntity(ctx, &entity.Entity{ID: id, Type: "doc"}); err != nil {
-				t.Fatal(err)
-			}
-			link(id, "in", "f0")
-			if i%3 == 0 {
-				link("alice", "owns", id)
-			}
-			ids = append(ids, id)
-		}
-		st := storetest.NewCounting(base)
-		d, err := NewDeclarative(primePolicy(), aclstore.MustNewGraph(st), st)
-		if err != nil {
+	c10, _ := primeCost(t, 10, 0)
+	c50, _ := primeCost(t, 50, 0)
+	if c10.Calls != c50.Calls {
+		t.Errorf("reads grow with the page: %d at 10 rows, %d at 50", c10.Calls, c50.Calls)
+	}
+	// A page of 10 reads the same rows whatever the number of other docs
+	// in the same folder, owned by alice in the same pattern.
+	storetest.AssertScaleFree(t, func(pad int) (storetest.Cost, string) {
+		return primeCost(t, 10, pad)
+	})
+}
+
+// primeCost primes the local roles of a page of n docs and checks each,
+// over a store that holds pad more docs of the same shape, and returns
+// what it cost.
+func primeCost(t *testing.T, n, pad int) (cost storetest.Cost, detail string) {
+	t.Helper()
+	ctx := context.Background()
+	base := memstore.New()
+	for _, e := range []entity.Entity{{ID: "alice", Type: "user"}, {ID: "f0", Type: "folder"}, {ID: "f1", Type: "folder"}} {
+		if err := base.CreateEntity(ctx, &e); err != nil {
 			t.Fatal(err)
 		}
-		alice := principal.Principal{User: "alice", Tool: principal.ToolDataEntry}
-		req, _ := d.ForIdentity(identityFor(context.Background(), t, d, alice))
-		ctx = bindTo(ctx, req)
-		req.Globals()
-		st.Reset()
-		pctx := PrimeLocalRoles(ctx, ids)
-		for _, id := range ids {
-			req.computeForEntity(pctx, id)
+	}
+	link := func(from, rel, to string) {
+		if _, err := base.CreateRelation(ctx, entity.RelationKey{From: from, Type: rel, To: to}, nil); err != nil {
+			t.Fatal(err)
 		}
-		counts[n] = st.Reads()
 	}
-	if counts[10] != counts[50] {
-		t.Errorf("reads grow with the page: %d at 10 rows, %d at 50", counts[10], counts[50])
+	link("f0", "in", "f1")
+	ids := make([]string, 0, n)
+	for i := range n + pad {
+		id := fmt.Sprintf("d%04d", i)
+		if err := base.CreateEntity(ctx, &entity.Entity{ID: id, Type: "doc"}); err != nil {
+			t.Fatal(err)
+		}
+		link(id, "in", "f0")
+		if i%3 == 0 {
+			link("alice", "owns", id)
+		}
+		if i < n {
+			ids = append(ids, id)
+		}
 	}
+	st := storetest.NewCounting(base)
+	d, err := NewDeclarative(primePolicy(), aclstore.MustNewGraph(st), st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice := principal.Principal{User: "alice", Tool: principal.ToolDataEntry}
+	req, _ := d.ForIdentity(identityFor(context.Background(), t, d, alice))
+	ctx = bindTo(ctx, req)
+	req.Globals()
+	st.Reset()
+	pctx := PrimeLocalRoles(ctx, ids)
+	for _, id := range ids {
+		req.computeForEntity(pctx, id)
+	}
+	return st.Cost(), st.String()
 }
 
 // A prime is computed for one Request; another Request on the same ctx

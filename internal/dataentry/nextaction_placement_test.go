@@ -17,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 	"github.com/Sourcehaven-BV/rela/internal/userstate"
 )
 
@@ -261,11 +262,12 @@ func TestNextAction_BadPages(t *testing.T) {
 
 // A page with suggestions switched off must cost nothing: the answer comes
 // before any source runs. An enabled context source costs the same at 10 and
-// 50 rows, because it reads one entity, not the type.
+// 50 rows, and reads the same rows in a store of 100 or 1,000 tickets,
+// because it reads one entity, not the type.
 func TestNextAction_PlacementReadBudget(t *testing.T) {
-	reads := func(t *testing.T, n int, edit func(cfg *dataentryconfig.Config)) int {
+	measure := func(t *testing.T, n, pad int, edit func(cfg *dataentryconfig.Config)) *storetest.Counting {
 		t.Helper()
-		app, counting, _, ctx := newBudgetAppWith(t, n, memstore.New(), analyzeBudgetMeta())
+		app, counting, _, ctx := newBudgetAppPadded(t, n, pad, memstore.New(), analyzeBudgetMeta())
 		withPlacement(t, app, edit)
 		withNextActions(t, app, oneBand, map[string]dataentryconfig.NextActionSource{
 			"about-this": {Band: "b", Context: "ticket", Suggest: "{id}"},
@@ -275,13 +277,21 @@ func TestNextAction_PlacementReadBudget(t *testing.T) {
 		if edit == nil {
 			require.NotNil(t, got.Suggestion, "the measured path must have resolved the entity")
 		}
-		return counting.Reads()
+		return counting
+	}
+	reads := func(t *testing.T, n int, edit func(cfg *dataentryconfig.Config)) int {
+		t.Helper()
+		return measure(t, n, 0, edit).Reads()
 	}
 	disabled := func(cfg *dataentryconfig.Config) {
 		cfg.NextActionSurfaces = map[dataentryconfig.NextActionSurface]bool{"entity": false}
 	}
 	require.Zero(t, reads(t, 10, disabled), "a disabled page must not read")
 	require.Equal(t, reads(t, 10, nil), reads(t, 50, nil), "a context source reads one entity, not the type")
+	storetest.AssertScaleFree(t, func(pad int) (storetest.Cost, string) {
+		counting := measure(t, 10, pad, nil)
+		return counting.Cost(), counting.String()
+	})
 }
 
 // The context candidate is redacted before the message is built, like a

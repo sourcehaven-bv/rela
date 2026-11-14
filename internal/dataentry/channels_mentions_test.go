@@ -168,7 +168,7 @@ func (e *mentionEnv) serve(t *testing.T, user, method, path, body string) (*http
 	} else {
 		e.app.handleV1DynamicRoutes(rec, req.WithContext(ctx))
 	}
-	return rec, channelCost{entity: e.counting.Calls(), channel: e.chans.snapshot()}
+	return rec, channelCost{entity: e.counting.Calls(), channel: e.chans.snapshot(), rows: e.counting.Cost()}
 }
 
 func (e *mentionEnv) inbox(t *testing.T, user string) v1.Inbox {
@@ -220,37 +220,47 @@ func TestChannelsBudget_PostTooManyMentions(t *testing.T) {
 // messages that each mention two people costs the same at 10 as at 50,
 // and each message lists both as entity refs.
 func TestChannelsBudget_MessagesMentions(t *testing.T) {
-	cost := func(n int) channelCost {
-		e := newMentionEnv(t, 3, nil)
-		key := channels.Key{Anchor: channels.Anchor{ID: "TKT-1"}, Type: "room"}
-		for range n {
-			_, err := e.store.Append(context.Background(), key, channels.NewMessage{
-				Type: "text", Author: channels.Author{User: "USR-1", Tool: principal.ToolDataEntry}, At: time.Now(),
-				Props: map[string]any{"body": "`USR-2` `USR-3`"},
-				Mentions: []channels.Mention{
-					{Target: "USR-2", Form: channels.FormUser}, {Target: "USR-3", Form: channels.FormUser},
-				},
-			})
-			require.NoError(t, err)
-		}
-		rec, c := e.serve(t, "USR-1", http.MethodGet, fmt.Sprintf("%s/messages?limit=%d", roomPath, n), "")
-		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-		page := decodeAs[v1.MessagePage](t, rec.Body.Bytes())
-		require.Len(t, page.Messages, n)
-		for _, m := range page.Messages {
-			require.Len(t, m.Mentions, 2)
-			for i, mm := range m.Mentions {
-				id := fmt.Sprintf("USR-%d", i+2)
-				require.Equal(t, v1.MessageMention{Text: id, Kind: "user", Ref: &v1.RefProp{
-					ID: id, Type: "person", Title: mm.Ref.Title,
-				}}, mm)
-				require.NotEmpty(t, mm.Ref.Title)
-			}
-		}
-		return c
-	}
+	cost := func(n int) channelCost { return mentionsPageCost(t, n, 0) }
 	small, large := cost(10), cost(50)
 	require.True(t, small.equal(large), "10: %s\n50: %s", small, large)
+	assertScaleFreeIndexed(t, func(pad int) (storetest.Cost, string) {
+		c := mentionsPageCost(t, 10, pad)
+		return c.rows, c.String()
+	})
+}
+
+// mentionsPageCost is what a page of n messages, each mentioning two
+// people, costs USR-1 over a store padded with pad people no message
+// mentions, so a scan of the mentioned type shows.
+func mentionsPageCost(t *testing.T, n, pad int) channelCost {
+	t.Helper()
+	e := newMentionEnv(t, 3+pad, nil)
+	key := channels.Key{Anchor: channels.Anchor{ID: "TKT-1"}, Type: "room"}
+	for range n {
+		_, err := e.store.Append(context.Background(), key, channels.NewMessage{
+			Type: "text", Author: channels.Author{User: "USR-1", Tool: principal.ToolDataEntry}, At: time.Now(),
+			Props: map[string]any{"body": "`USR-2` `USR-3`"},
+			Mentions: []channels.Mention{
+				{Target: "USR-2", Form: channels.FormUser}, {Target: "USR-3", Form: channels.FormUser},
+			},
+		})
+		require.NoError(t, err)
+	}
+	rec, c := e.serve(t, "USR-1", http.MethodGet, fmt.Sprintf("%s/messages?limit=%d", roomPath, n), "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	page := decodeAs[v1.MessagePage](t, rec.Body.Bytes())
+	require.Len(t, page.Messages, n)
+	for _, m := range page.Messages {
+		require.Len(t, m.Mentions, 2)
+		for i, mm := range m.Mentions {
+			id := fmt.Sprintf("USR-%d", i+2)
+			require.Equal(t, v1.MessageMention{Text: id, Kind: "user", Ref: &v1.RefProp{
+				ID: id, Type: "person", Title: mm.Ref.Title,
+			}}, mm)
+			require.NotEmpty(t, mm.Ref.Title)
+		}
+	}
+	return c
 }
 
 // TestInboxMention_ACL pins TKT-6RXAC0 AC 11 through the deployed wiring:

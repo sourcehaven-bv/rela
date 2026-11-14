@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
@@ -30,7 +32,7 @@ import (
 func BenchmarkGraphQuery(b *testing.B) {
 	for _, n := range []int{1_000, 10_000} {
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
-			s := benchSetup(b, n)
+			s, _ := benchSetup(b, n)
 			q := store.GraphQuery{
 				EntityType: "ticket",
 				HasInbound: &store.RelationPredicate{
@@ -41,8 +43,9 @@ func BenchmarkGraphQuery(b *testing.B) {
 				},
 				Faces: store.InWorld(store.TrivialScope()),
 			}
-			b.ResetTimer()
-			for range b.N {
+			// b.Loop runs this closure once per -count, so the seed above
+			// is not repeated for every b.N probe.
+			for b.Loop() {
 				count := 0
 				for _, err := range s.GraphQuery(context.Background(), q) {
 					if err != nil {
@@ -60,8 +63,10 @@ func BenchmarkGraphQuery(b *testing.B) {
 
 // benchSetup seeds n tickets, one team, one principal, and a
 // member-of + owns chain. Every 10th ticket is owned by the team,
-// so the predicate matches ~n/10 entities.
-func benchSetup(b *testing.B, n int) store.Store {
+// so the predicate matches ~n/10 entities. The seed runs in one
+// transaction: 10k autocommitted inserts take most of a run, and the
+// setup reruns for every -count.
+func benchSetup(b *testing.B, n int) (store.Store, *pgxpool.Pool) {
 	b.Helper()
 	pool := newScopedPool(b)
 	s, err := pgstore.New(pool)
@@ -69,26 +74,41 @@ func benchSetup(b *testing.B, n int) store.Store {
 		b.Fatalf("New: %v", err)
 	}
 	ctx := context.Background()
-	mustCreate := func(e *entity.Entity) {
-		if err := s.CreateEntity(ctx, e); err != nil {
-			b.Fatalf("create %s: %v", e.ID, err)
-		}
+	if err := s.Tx(ctx, func(tx store.Store) error { return benchSeed(ctx, tx, n) }); err != nil {
+		b.Fatalf("seed: %v", err)
 	}
-	mustRel := func(from, relType, to string) {
-		if _, err := s.CreateRelation(ctx, entity.RelationKey{From: from, Type: relType, To: to}, nil); err != nil {
-			b.Fatalf("relation %s --%s--> %s: %v", from, relType, to, err)
-		}
-	}
+	return s, pool
+}
 
-	mustCreate(entity.New("alice", "person"))
-	mustCreate(entity.New("engineering", "team"))
-	mustRel("alice", "member-of", "engineering")
+func benchSeed(ctx context.Context, tx store.Store, n int) error {
+	rel := func(from, relType, to string) error {
+		_, err := tx.CreateRelation(ctx, entity.RelationKey{From: from, Type: relType, To: to}, nil)
+		return err
+	}
+	if err := tx.CreateEntity(ctx, entity.New("alice", "person")); err != nil {
+		return err
+	}
+	if err := tx.CreateEntity(ctx, entity.New("engineering", "team")); err != nil {
+		return err
+	}
+	if err := rel("alice", "member-of", "engineering"); err != nil {
+		return err
+	}
 	for i := range n {
 		id := fmt.Sprintf("TKT-%06d", i)
-		mustCreate(entity.New(id, "ticket"))
+		e := entity.New(id, "ticket")
+		// Searchable text for BenchmarkSearchBackend: a quarter of the
+		// tickets mention "login".
+		e.SetString("title", fmt.Sprintf("ticket %d: %s in widget %d",
+			i, []string{"login failure", "render glitch", "sync stall", "crash report"}[i%4], i%37))
+		if err := tx.CreateEntity(ctx, e); err != nil {
+			return fmt.Errorf("create %s: %w", id, err)
+		}
 		if i%10 == 0 {
-			mustRel("engineering", "owns", id)
+			if err := rel("engineering", "owns", id); err != nil {
+				return err
+			}
 		}
 	}
-	return s
+	return nil
 }

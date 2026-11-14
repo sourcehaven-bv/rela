@@ -18,6 +18,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
 
 // countingComments counts Count calls and fails them when err is set; every
@@ -206,8 +207,8 @@ func TestCommentCounts_PerFace(t *testing.T) {
 // rule for the new per-row value: one comment-store call per page whatever its
 // size, and no extra graph-store reads over a plain list page.
 func TestQueryBudget_CommentCountsAreOneCallPerPage(t *testing.T) {
-	for _, n := range []int{10, 50} {
-		app, counting, _, ctx := newBudgetAppOn(t, n, memstore.New())
+	run := func(n, pad int) *storetest.Counting {
+		app, counting, _, ctx := newBudgetAppPadded(t, n, pad, memstore.New(), budgetMeta())
 		app.State().Meta.Comments = &metamodel.CommentsConfig{Enabled: true, On: []string{"ticket"}}
 		cc := &countingComments{Store: memcomments.New()}
 		svc, err := comments.NewService(cc, nil)
@@ -226,9 +227,17 @@ func TestQueryBudget_CommentCountsAreOneCallPerPage(t *testing.T) {
 
 		resp, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets", "per_page=100&comment_counts=1")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-		require.Len(t, resp.Data, n)
+		require.Len(t, resp.Data, min(n+pad, 100))
 		require.NotNil(t, resp.Data[0].CommentCount, "the budget principal must be served counts")
 		require.Equal(t, 1, cc.counts, "comment-store calls at %d rows", n)
+		return counting
+	}
+	for _, n := range []int{10, 50} {
+		counting := run(n, 0)
 		require.Equal(t, listPageBudget, counting.Reads(), "graph-store reads at %d rows (%s)", n, counting)
 	}
+	storetest.AssertScaleFree(t, func(pad int) (storetest.Cost, string) {
+		counting := run(10, pad)
+		return counting.Cost(), counting.String()
+	})
 }

@@ -879,4 +879,23 @@ func TestBuildStoreRelations_ReadBudget(t *testing.T) {
 	if at10, at50 := reads(10), reads(50); at10 != at50 {
 		t.Errorf("reads grow with edges: %d at 10, %d at 50", at10, at50)
 	}
+	// 10 edges read the same rows however many other requirements the
+	// store holds.
+	storetest.AssertScaleFree(t, func(n int) (storetest.Cost, string) {
+		base := memstore.New()
+		sol := &entity.Entity{ID: "SOL-1", Type: "solution", Properties: map[string]any{"title": "S"}}
+		seedEntity(t, base, sol)
+		for i := range n {
+			id := fmt.Sprintf("REQ-%04d", i)
+			seedEntity(t, base, &entity.Entity{ID: id, Type: "requirement", Properties: map[string]any{"title": "t" + id}})
+			if i < 10 {
+				seedRelation(t, base, "SOL-1", "addresses", id)
+			}
+		}
+		st := storetest.NewCounting(base)
+		if rels := buildStoreRelations(context.Background(), sol, graphOf(st), testMeta()); rels == nil {
+			t.Fatal("no relations")
+		}
+		return st.Cost(), st.String()
+	})
 }

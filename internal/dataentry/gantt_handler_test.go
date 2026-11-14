@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"iter"
 	"maps"
 	"math/rand"
 	"net/http"
@@ -19,7 +18,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 
@@ -1002,10 +1000,18 @@ func TestGantt_SubtreeDrillBoundsItsEdgeRead(t *testing.T) {
 // round is one query per source type, stamped with the request's world and
 // face ceiling (TKT-KQXVF7), never one per node.
 func TestGantt_SubtreeDrillQueryBudget(t *testing.T) {
-	calls := func(t *testing.T, children int) (int, string) {
+	measure := func(t *testing.T, children, pad int) *storetest.Counting {
 		t.Helper()
 		app := newGanttTestApp(t)
 		seedProject(app, "PRJ-A", "Root", nil)
+		// The padding sits under a root of its own, so the contains
+		// edges grow with pad too.
+		seedProject(app, "PRJ-ZROOT", "Unrelated root", nil)
+		for i := range pad {
+			id := fmt.Sprintf("PRJ-Z%04d", i)
+			seedProject(app, id, "Unrelated", nil)
+			seedRelation(app, &entity.Relation{From: "PRJ-ZROOT", Type: "contains", To: id})
+		}
 		for i := range children {
 			id := fmt.Sprintf("PRJ-C%03d", i)
 			seedProject(app, id, "Child", nil)
@@ -1026,8 +1032,17 @@ func TestGantt_SubtreeDrillQueryBudget(t *testing.T) {
 		if c := counting.Calls(); c["GraphQuery"]+c["GraphQueryHeaders"] == 0 {
 			t.Fatalf("drill declined to the full build; the budget measures nothing (%s)", counting.String())
 		}
+		return counting
+	}
+	calls := func(t *testing.T, children int) (int, string) {
+		t.Helper()
+		counting := measure(t, children, 0)
 		return counting.Reads(), counting.String()
 	}
+	assertScaleFreeIndexed(t, func(pad int) (storetest.Cost, string) {
+		counting := measure(t, 10, pad)
+		return counting.Cost(), counting.String()
+	})
 	small, detail := calls(t, 10)
 	large, _ := calls(t, 50)
 	if small != large {
@@ -1396,65 +1411,15 @@ func TestGantt_SubtreeDrillOutsideParentGating(t *testing.T) {
 	})
 }
 
-// ganttRowCounter decorates a store and counts the ROWS its reads return.
-// storetest.Counting counts calls, which a whole-type scan keeps constant, so
-// it cannot tell a drilled read from a full build; rows can.
-type ganttRowCounter struct {
-	store.Store
-	rows int
-}
-
-func (c *ganttRowCounter) GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error) {
-	e, err := c.Store.GetEntity(ctx, ref)
-	if e != nil {
-		c.rows++
-	}
-	return e, err
-}
-
-func (c *ganttRowCounter) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
-	return countRows(&c.rows, c.Store.ListEntities(ctx, q))
-}
-
-func (c *ganttRowCounter) ListEntityHeaders(
-	ctx context.Context, q store.EntityQuery,
-) iter.Seq2[store.EntityHeader, error] {
-	return countRows(&c.rows, store.ListEntityHeaders(ctx, c.Store, q))
-}
-
-func (c *ganttRowCounter) ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
-	return countRows(&c.rows, c.Store.ListRelations(ctx, q))
-}
-
-func (c *ganttRowCounter) GraphQuery(ctx context.Context, q store.GraphQuery) iter.Seq2[*entity.Entity, error] {
-	return countRows(&c.rows, c.Store.GraphQuery(ctx, q))
-}
-
-func countRows[T any](n *int, seq iter.Seq2[T, error]) iter.Seq2[T, error] {
-	return func(yield func(T, error) bool) {
-		for v, err := range seq {
-			if err == nil {
-				*n++
-			}
-			if !yield(v, err) {
-				return
-			}
-		}
-	}
-}
-
 // TestGantt_SubtreeDrillReadBudget pins that a drill whose subtree has a
 // parent outside it reads only what that subtree needs: the rows and calls
-// are the same with 10 and with 50 unrelated projects in the graph. Before
-// the outside-parent lookup, this shape fell back to the full build and read
-// every project, epic and hierarchy edge.
+// are the same with 20 and with 200 unrelated projects in the graph.
+// Before the outside-parent lookup, this shape fell back to the full build
+// and read every project, epic and hierarchy edge.
 func TestGantt_SubtreeDrillReadBudget(t *testing.T) {
-	type reads struct{ rows, calls int }
-	measure := func(t *testing.T, unrelated int) reads {
-		t.Helper()
+	assertScaleFreeIndexed(t, func(unrelated int) (storetest.Cost, string) {
 		counting := storetest.NewCounting(memstore.New())
-		rows := &ganttRowCounter{Store: counting}
-		app := newGanttTestAppWith(t, []appbuildtest.Option{appbuildtest.WithStore(rows)})
+		app := newGanttTestAppWith(t, []appbuildtest.Option{appbuildtest.WithStore(counting)})
 		seedProject(app, "PRJ-ROOT", "Drilled", nil)
 		seedProject(app, "PRJ-KID", "Kid", nil)
 		seedProject(app, "PRJ-OUT", "Outside parent", nil)
@@ -1472,17 +1437,10 @@ func TestGantt_SubtreeDrillReadBudget(t *testing.T) {
 		assertDrillMatchesFull(context.Background(), t, app)
 
 		counting.Reset()
-		rows.rows = 0
 		rec := ganttGet(context.Background(), app, "plan?root=PRJ-ROOT")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("got %d; body=%s", rec.Code, rec.Body)
 		}
-		t.Logf("unrelated=%d rows=%d calls=%s", unrelated, rows.rows, counting)
-		return reads{rows: rows.rows, calls: counting.Reads()}
-	}
-
-	small, large := measure(t, 10), measure(t, 50)
-	if small != large {
-		t.Errorf("drill reads grow with unrelated graph size: 10 -> %+v, 50 -> %+v", small, large)
-	}
+		return counting.Cost(), counting.String()
+	})
 }

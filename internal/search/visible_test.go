@@ -192,6 +192,62 @@ func TestSearchVisible_FieldScopeReadBudget(t *testing.T) {
 	}
 }
 
+// TestSearchVisible_FieldScopeRowsScaleFree pins the rows a field-scoped
+// search reads for 10 matching rows: the same over a store that holds 100
+// other tickets as over one that holds 1,000. A grant query that read the whole
+// type, not the page's hits, would grow with them.
+func TestSearchVisible_FieldScopeRowsScaleFree(t *testing.T) {
+	fields := &search.FieldScope{
+		Gated: []string{"code", "status", "title"},
+		Grants: []search.FieldGrant{
+			{Fields: []string{"status"}},
+			{Fields: []string{"code"}, When: &store.GraphQuery{
+				Props: []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}},
+			}},
+		},
+	}
+	storetest.AssertScaleFree(t, func(pad int) (storetest.Cost, string) {
+		ms := memstore.New()
+		ls := search.NewLinearSearch()
+		for i := range 10 + pad {
+			e := entity.New(fmt.Sprintf("TKT-%04d", i), "ticket")
+			e.SetString("title", "row")
+			e.SetString("code", "other")
+			if i < 10 {
+				e.SetString("code", "budget code")
+			}
+			e.SetString("status", []string{"open", "done"}[i%2])
+			if err := ms.CreateEntity(t.Context(), e); err != nil {
+				t.Fatal(err)
+			}
+			_ = ls.EntityPut(e)
+		}
+		counting := storetest.NewCounting(ms)
+		v, err := search.NewVisible(search.New(counting, ls), counting)
+		if err != nil {
+			t.Fatal(err)
+		}
+		measure := func(fs *search.FieldScope, want int) storetest.Cost {
+			counting.Reset()
+			scope := map[string]search.TypeScope{"ticket": {AllowAll: true, Fields: fs}}
+			n := 0
+			for _, err := range v.SearchVisible(t.Context(), search.Query{Text: "budget", World: store.TrivialScope()}, scope) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				n++
+			}
+			if n != want {
+				t.Fatalf("got %d hits, want %d", n, want)
+			}
+			return counting.Cost()
+		}
+		// The whole gated search, so a scan in the search the field check
+		// rides on shows too.
+		return measure(fields, 5), counting.String()
+	})
+}
+
 // TestSearchVisible_BleveHiddenOnlyMatchDropped: bleve matches the word
 // "foo,bar" against the hidden code "foobar" (one edit). The visible title
 // "foo visible" holds the analyzer token "foo" but not the word, so it must
