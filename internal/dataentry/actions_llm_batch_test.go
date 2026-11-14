@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/actionproposal"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -57,7 +58,7 @@ func newBatchApp(t *testing.T, reply string) llmApp {
 	// The edge is what llmApp.unchanged expects to find.
 	return buildLLMApp(t, llmFixture{
 		meta: llmMeta(t), seed: seed, read: []string{"ticket", "concept"},
-		edges: []entity.RelationKey{{From: "TKT-1", Type: "affects", To: "CON-1"}},
+		edges:  []entity.RelationKey{{From: "TKT-1", Type: "affects", To: "CON-1"}},
 		action: batchTriageAction(5), reply: reply,
 	})
 }
@@ -307,5 +308,56 @@ func TestLLMBatch_GatedRowsAreNotSent(t *testing.T) {
 				t.Errorf("provider called %d times for gated-out rows", n)
 			}
 		})
+	}
+}
+
+// newPolicyBatchApp is newBatchApp with field verdicts taken from the ACL
+// policy itself and extra roles on top of the defaults.
+func newPolicyBatchApp(t *testing.T, reply string, roles map[string]acl.RoleDef, assign map[string]string) llmApp {
+	t.Helper()
+	return buildLLMApp(t, llmFixture{
+		meta: llmMeta(t), seed: batchTickets(2), read: []string{"ticket", "concept"},
+		action: batchTriageAction(5), reply: reply,
+		roles: roles, assign: assign, policyFields: true,
+	})
+}
+
+// TestLLMBatch_PolicyHiddenFieldIsNotSent runs the redaction through a real
+// `visible:` grant rather than a stubbed verdict.
+func TestLLMBatch_PolicyHiddenFieldIsNotSent(t *testing.T) {
+	a := newPolicyBatchApp(t, `{"records":{"TKT-1":{"set":{"priority":null}},"TKT-2":{"set":{"priority":null}}}}`,
+		map[string]acl.RoleDef{"masked": {
+			Read: []string{"ticket", "concept"}, Update: []string{"ticket"}, Permissions: []string{"ticket.triage"},
+			Visible: map[string][]acl.FieldGrant{"ticket": {{Field: "title"}, {Field: "priority"}}},
+		}},
+		map[string]string{"carol": "masked"})
+	code, b, body := a.runBatch(t, "carol", `{"entity_ids":["TKT-1","TKT-2"]}`)
+	if code != http.StatusOK || b == nil {
+		t.Fatalf("status %d: %s", code, body)
+	}
+	sent := a.chat.sent(t)
+	if strings.Contains(sent, "S3CRET") {
+		t.Errorf("hidden field sent to the model:\n%s", sent)
+	}
+	if !strings.Contains(sent, "Ticket 1") {
+		t.Errorf("visible field missing from the prompt:\n%s", sent)
+	}
+}
+
+// TestLLMBatch_ReadableButNotUpdatableIsSkipped pins that a row the caller
+// may read but not update is not sent: a proposal for it could not be applied.
+func TestLLMBatch_ReadableButNotUpdatableIsSkipped(t *testing.T) {
+	a := newPolicyBatchApp(t, "",
+		map[string]acl.RoleDef{"viewer": {Read: []string{"ticket", "concept"}, Permissions: []string{"ticket.triage"}}},
+		map[string]string{"dave": "viewer"})
+	code, b, body := a.runBatch(t, "dave", `{"entity_ids":["TKT-1","TKT-2"]}`)
+	if code != http.StatusOK || b == nil {
+		t.Fatalf("status %d: %s", code, body)
+	}
+	if len(b.Proposals) != 0 || b.Skipped != 2 {
+		t.Errorf("batch = %+v, want every row skipped", b)
+	}
+	if n := a.chat.calls(); n != 0 {
+		t.Errorf("provider called %d times for rows the caller cannot update", n)
 	}
 }
