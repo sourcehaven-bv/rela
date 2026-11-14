@@ -20,7 +20,7 @@ client read one thread, or the main stream without the replies it hides.
 - `GET .../messages?thread=<seq>`: the parent and its replies, with the existing `after`, `before`, `after_rev` and `limit` cursors.
 - `GET .../messages?top=1`: top-level messages plus the inline exceptions. An inline exception is a reply of the answer type of a choice on its parent, or a reply that moved the session. The rule moves from `channelView.ts` into `internal/realtime`, so the server and the web app agree.
 - `last_reply_at` on a parent, set in the same write that raises `reply_count`.
-- All channel backends (file, sqlite, postgres) and `storetest` conformance cases.
+- All channel backends (file, sqlite, postgres) and `channelstest` conformance cases.
 - MCP `read_channel` gains `thread` and `top`; `rela channel read` gains `--thread` and `--top`.
 
 ### Out of scope

@@ -150,7 +150,7 @@ flag on the message and a rule for how it counts; add it when users ask.
 
 ### Slices
 
-1. **Store: thread reads.** `thread=` and `top=` page filters, `last_reply_at`, the inline-exception rule in `realtime`; all backends and `storetest`. M.
+1. **Store: thread reads.** `thread=` and `top=` page filters, `last_reply_at`, the inline-exception rule in `realtime`; all backends and `channelstest`. M.
 2. **Store: thread markers and counts.** `thread_reads`, split unread counts, mark-read per thread; HTTP, MCP, CLI. L.
 3. **Followers and the `thread` inbox kind.** Follower rows, automatic follows, follow and mute on every transport, fan-out under the caps, inbox and watch. L.
 4. **Web app thread panel.** "N replies" on the parent, side panel with composer, inline exceptions, follow and mute, unread badges. L.
