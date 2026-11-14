@@ -114,6 +114,52 @@ func TestGenerator_Generate(t *testing.T) {
 	}
 }
 
+// TestGenerator_ConditionalWritesDeclareIfMatch pins If-Match and 412 on
+// every operation whose handler honors If-Match (GH-2228).
+func TestGenerator_ConditionalWritesDeclareIfMatch(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket":  {Label: "Ticket", LabelPlural: "Tickets"},
+			"feature": {Label: "Feature", LabelPlural: "Features"},
+		},
+		Relations: map[string]metamodel.RelationDef{
+			"implements": {Label: "implements", From: []string{"ticket"}, To: []string{"feature"}},
+		},
+	}
+	spec := New(meta, Config{Title: "Test API", Version: "1.0.0"}).Generate()
+
+	entity := spec.Paths["/api/v1/tickets/{id}"]
+	relation := spec.Paths["/api/v1/tickets/{id}/relations/implements/{targetId}"]
+	tests := []struct {
+		name string
+		op   *Operation
+	}{
+		{"entity PATCH", entity.Patch},
+		{"entity DELETE", entity.Delete},
+		{"relation PATCH", relation.Patch},
+		{"relation DELETE", relation.Delete},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.op == nil {
+				t.Fatal("operation missing")
+			}
+			found := false
+			for _, p := range tc.op.Parameters {
+				if p.Name == "If-Match" && p.In == "header" {
+					found = true
+				}
+			}
+			if !found {
+				t.Error("missing If-Match header parameter")
+			}
+			if _, ok := tc.op.Responses["412"]; !ok {
+				t.Error("missing 412 response")
+			}
+		})
+	}
+}
+
 func TestGenerator_GenerateJSON(t *testing.T) {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
