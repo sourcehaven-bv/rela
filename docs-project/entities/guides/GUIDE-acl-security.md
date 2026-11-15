@@ -733,6 +733,11 @@ names of a user, and the child then holds the rela roles they map to
   binds the roles again. Keep `principal_property` writable by
   administrators only all the same: the next webhook for that subject would
   bind to whoever holds it.
+- **Erased with the person.** Deleting the bound user entity, or renaming
+  it, removes its record. For an erasure request about a person,
+  `rela acl forget-idp-roles <entity-id>` removes the records bound to that
+  entity, also when the entity was already deleted. Both write an
+  `idp-roles-set` audit record with `roles=0`.
 - **Ordered per subject.** The receiver holds a per-subject lock from before
   its action fetches the roles until it stored them. Two deliveries for one
   user therefore store in fetch order, and a slow older fetch cannot undo a
