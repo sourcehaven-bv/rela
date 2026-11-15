@@ -6,6 +6,7 @@ import (
 	"errors"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -36,10 +37,18 @@ func (g redactGate) GetAddress(ctx context.Context, addr string) (*entity.Entity
 }
 
 // TestHiddenProperty_NotCompared pins that the plan neither shows nor
-// compares a property value the principal may not see.
+// compares a property value the principal may not see. The id is fixed
+// and the hidden value occurs nowhere else in the plan, so finding it in
+// the plan means it leaked.
 func TestHiddenProperty_NotCompared(t *testing.T) {
+	const hidden = 987654
 	w := newWorld(t)
-	w.create("control", "", map[string]any{"oscal_id": "c1", "title": "Old", "weight": int64(9)})
+	if err := w.st.CreateEntity(w.ctx, &entity.Entity{
+		ID: "CTL-1", Type: "control",
+		Properties: map[string]any{"oscal_id": "c1", "title": "Old", "weight": int64(hidden)},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	w.gate = redactGate{inner: w.gate, fields: map[string]bool{"weight": true}}
 
 	weighted := w.mapping(controlsMapping + "      weight: weight\n")
@@ -51,7 +60,7 @@ func TestHiddenProperty_NotCompared(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(data), "9") || len(p.Updates)+p.Unchanged != 0 {
+	if strings.Contains(string(data), strconv.Itoa(hidden)) || len(p.Updates)+p.Unchanged != 0 {
 		t.Fatalf("plan shows or compares the hidden value: %s", data)
 	}
 
