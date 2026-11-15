@@ -48,9 +48,10 @@
 // Resolution ([ClusterResolver]), per-tenant store acquisition ([Registry])
 // and the lifecycle writes ([Provisioner]: create, suspend, resume, erase)
 // live here. The request path receives only a [Resolver], so it can never
-// create or erase a tenant. Automatic provisioning from the IdP webhook
-// (TKT-TNPRV8) is not built yet; until then an operator creates a tenant
-// with `rela-server tenant create`.
+// erase a tenant. A tenant host may create one: `-tenant-provision` lets it
+// call [Provisioner.Create] for a verified org that has no tenant
+// (TKT-TNPRV8, see package tenanthost). Otherwise an operator creates a
+// tenant with `rela-server tenant create`.
 package tenant
 
 import (
@@ -77,6 +78,23 @@ var ErrUnknownTenant = errors.New("tenant: unknown organization")
 // An erasing tenant is not inactive: its data is being destroyed, so its
 // events have nothing to apply to.
 var ErrTenantInactive = errors.New("tenant: organization is not served now")
+
+// ErrTenantProvisioning marks an [ErrTenantInactive] for an org whose create
+// has not finished. Running [Provisioner.Create] again finishes it, so a host
+// that provisions may treat it like [ErrTenantAbsent].
+var ErrTenantProvisioning = errors.New("tenant: organization is being provisioned")
+
+// ErrTenantAbsent marks an [ErrUnknownTenant] for a valid org id that has no
+// control row. It is the only refusal for which creating the tenant is the
+// right answer: an org id that [SchemaFor] refuses never carries it, and
+// neither does an erasing tenant or a colliding schema.
+var ErrTenantAbsent = errors.New("tenant: organization has no tenant")
+
+// ErrTenantErased marks an [ErrUnknownTenant] for an org whose tenant was
+// erased. Its control row is a tombstone, so nothing creates the tenant
+// again on its own: [Provisioner.Create] refuses it unless an operator asks
+// to recreate it.
+var ErrTenantErased = errors.New("tenant: organization was erased")
 
 // ErrSchemaCollision reports that an org's derived schema is recorded for a
 // different org. Two org ids whose hashes share a prefix would otherwise share

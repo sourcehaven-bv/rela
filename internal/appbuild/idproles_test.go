@@ -1,6 +1,7 @@
 package appbuild
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
 
 // idpRolesFixture seeds people and the IdP roles the webhook stored for
@@ -231,4 +233,28 @@ func TestFileKeyLocker(t *testing.T) {
 	again, err := l.Acquire(ctx, idproles.SubjectLockPrefix+"usr_1")
 	require.NoError(t, err, "a released subject can be held again")
 	again()
+}
+
+// TestRoleHolders_CostIsScaleFree pins TKT-FED6FMM: the binding reads the
+// user rows of the role's holders, not every user.
+func TestRoleHolders_CostIsScaleFree(t *testing.T) {
+	for _, property := range []string{"email", ""} {
+		t.Run("property="+property, func(t *testing.T) {
+			storetest.AssertScaleFree(t, func(n int) (storetest.Cost, string) {
+				svc := idpRolesFixture(t, property)
+				for i := range n {
+					require.NoError(t, svc.store.CreateEntity(t.Context(), &entity.Entity{
+						ID: fmt.Sprintf("PER-PAD%04d", i), Type: "person",
+						Properties: map[string]any{"email": fmt.Sprintf("pad%d@x", i)},
+					}))
+				}
+				counting := storetest.NewCounting(svc.store)
+				svc.store = counting
+				_, ids, err := roleHoldersFor(svc).PrincipalsWithRole(t.Context(), "cpo")
+				require.NoError(t, err)
+				require.Len(t, ids, 1)
+				return counting.Cost(), counting.String()
+			})
+		})
+	}
 }

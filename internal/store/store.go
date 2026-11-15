@@ -321,7 +321,9 @@ type EntityReader interface {
 	// (NextCursor is always empty). When q.Limit > 0, at most Limit
 	// entities are returned; NextCursor is non-empty iff more results
 	// exist. Callers resume by setting q.Cursor to the returned
-	// NextCursor on the next call, keeping other query fields identical.
+	// NextCursor on the next call, keeping other query fields identical
+	// except Limit: a cursor names the last row read, so the next page
+	// may be larger or smaller.
 	//
 	// Cursors are opaque — callers MUST NOT parse or construct them.
 	// A cursor is only valid for the same query on the same store;
@@ -335,6 +337,12 @@ type EntityReader interface {
 	// given prefix (e.g. "FEAT" → 42 if FEAT-042 is the highest), over
 	// every face of every family: an id stored only at named faces is
 	// taken. Returns 0 if no entities with the prefix exist.
+	//
+	// Which ids count, and for what number, is [entity.SequentialNumber]:
+	// the prefix and dash compare with ASCII case folded ("Req-7" counts
+	// for "REQ"), and the rest must be digits only. Every backend applies
+	// it, so they agree (BUG-RLBXTG5). Soft-deleted and retired ids count
+	// too, where the backend keeps them.
 	HighestID(ctx context.Context, prefix string) (int, error)
 }
 

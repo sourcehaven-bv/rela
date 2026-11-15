@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"testing"
@@ -8,6 +9,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
 
 // relatedListCondition narrows the budget list to tickets implementing
@@ -24,25 +26,37 @@ func withRelatedListCondition(t *testing.T, app *App) {
 	}
 }
 
-// A list `condition:` using related() is answered for the whole candidate
-// set at once: one store query, whatever the list's size (TKT-205V2N).
+// A list `condition:` using related() lowers to a store traversal on the
+// page query (TKT-I39Y7N4): the store counts and pages it, so neither the
+// calls nor the rows read grow with the list or the store.
 func TestViewCondition_RelatedIsSizeIndependent(t *testing.T) {
-	counts := make([]int, 0, 2)
-	for _, n := range []int{10, 50} {
-		app, counting, d, ctx := newBudgetAppOn(t, n, memstore.New())
+	b, detail := measureBudget(func(n, pad int) (storetest.Cost, string) {
+		app, counting, d, ctx := newBudgetAppPadded(t, n, pad, memstore.New(), budgetMeta())
 		withRelatedListCondition(t, app)
 		counting.Reset()
-		resp, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets", "per_page=100&list_id=tickets")
-		if rec.Code != http.StatusOK {
-			t.Fatalf("list: %d %s", rec.Code, rec.Body)
-		}
-		if len(resp.Data) != n/5 {
-			t.Fatalf("n=%d: rows = %d, want %d", n, len(resp.Data), n/5)
-		}
-		counts = append(counts, counting.Calls()["MatchingFaces"])
+		assertRelatedConditionPage(ctx, t, app, d, counting, n, 0)
+		return counting.Cost(), counting.String()
+	})
+	assertBudget(t, "related list condition", b, listPageBudget, detail)
+}
+
+// assertRelatedConditionPage lists the tickets under [relatedListCondition]
+// and fails unless the store served the page: a fifth of the n fixture
+// tickets, counted with CountMatched. matching is how many traversals the
+// page may answer over its rows: 0 for the condition, which the store judges.
+func assertRelatedConditionPage(
+	ctx context.Context, t *testing.T, app *App, d *acl.Declarative, counting *storetest.Counting, n, matching int,
+) {
+	t.Helper()
+	resp, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets", "per_page=100&list_id=tickets")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list: %d %s", rec.Code, rec.Body)
 	}
-	if counts[0] != counts[1] || counts[1] != 1 {
-		t.Fatalf("MatchingIDs = %v, want 1 at both sizes", counts)
+	if len(resp.Data) != n/5 || resp.Meta.Total != n/5 {
+		t.Fatalf("n=%d: rows = %d, total %d, want %d", n, len(resp.Data), resp.Meta.Total, n/5)
+	}
+	if calls := counting.Calls(); calls["MatchingFaces"] != matching || calls["CountMatched"] != 1 {
+		t.Errorf("n=%d: the condition was not pushed down: %s", n, counting)
 	}
 }
 
@@ -67,12 +81,11 @@ func TestViewCondition_RelatedUsesReaderGate(t *testing.T) {
 }
 
 // A list condition and a grant `when:` that both traverse stay size
-// independent together: every per-row redaction on the list path reads
-// primed answers (TKT-205V2N).
+// independent together. The condition reads no gated field, so it lowers
+// (TKT-I39Y7N4); the grant is answered once per page (TKT-205V2N).
 func TestViewCondition_RelatedWithTraversingGrantIsSizeIndependent(t *testing.T) {
-	counts := make([]int, 0, 2)
-	for _, n := range []int{10, 50} {
-		app, counting, _, ctx := newBudgetAppOn(t, n, memstore.New())
+	b, detail := measureBudget(func(n, pad int) (storetest.Cost, string) {
+		app, counting, _, ctx := newBudgetAppPadded(t, n, pad, memstore.New(), budgetMeta())
 		withRelatedListCondition(t, app)
 		d := mustNewACL(t, &acl.Policy{
 			Roles: map[string]acl.RoleDef{"editor": {
@@ -91,16 +104,15 @@ func TestViewCondition_RelatedWithTraversingGrantIsSizeIndependent(t *testing.T)
 		}
 		setTestResolver(t, app, res)
 		counting.Reset()
-		resp, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets", "per_page=100&list_id=tickets")
-		if rec.Code != http.StatusOK || len(resp.Data) != n/5 {
-			t.Fatalf("n=%d: %d, %d rows, want %d", n, rec.Code, len(resp.Data), n/5)
-		}
-		counts = append(counts, counting.Calls()["MatchingFaces"])
-	}
-	if counts[0] != counts[1] {
-		t.Fatalf("MatchingIDs = %v, want the same at both sizes", counts)
-	}
+		assertRelatedConditionPage(ctx, t, app, d, counting, n, 1)
+		return counting.Cost(), counting.String()
+	})
+	assertBudget(t, "related list condition with traversing grant", b, relatedGrantConditionBudget, detail)
 }
+
+// relatedGrantConditionBudget is listPageBudget plus the grant's batched
+// traversal for the page (ONE MatchingFaces). Measured.
+const relatedGrantConditionBudget = 7
 
 // A traversal the gate refuses, rather than denies, fails the request. Here
 // the condition filters on feature.title, which a `visible:` block hides from

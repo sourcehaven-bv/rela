@@ -344,6 +344,12 @@ func TestValidateEntity_IDPatternValidation(t *testing.T) {
 			id:      "TASK-001",
 			wantErr: true,
 		},
+		{
+			// BUG-4OPP525: the prefix compares with case folded.
+			name:    "lower-case ID",
+			id:      "req-001",
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -354,8 +360,13 @@ func TestValidateEntity_IDPatternValidation(t *testing.T) {
 
 			hasIDError := false
 			for _, err := range errs {
-				if err.Error() == "entity ID TASK-001 does not match any prefix for type requirement: [REQ-]" {
-					hasIDError = true
+				if err.Type != ValidationErrorIDPrefix {
+					continue
+				}
+				hasIDError = true
+				want := "entity ID " + tt.id + " does not match any prefix for type requirement: [REQ-]"
+				if err.Error() != want {
+					t.Errorf("ID prefix message = %q, want %q", err.Error(), want)
 				}
 			}
 

@@ -1,0 +1,249 @@
+# The postgres scale run (TKT-UHKZKOB), weekly.
+#
+# Seeds prototypes/perf/project into postgres at scale 1 (~20k entities) and
+# scale 5 (~100k), measures rela-server's key endpoints as several
+# principals, and runs the size-parameterised benchmarks. `scalerun check`
+# fails the run when an endpoint's p95 is over its limit in
+# tools/scalerun/scalerun.yaml, when scale 5 is more than twice as slow as
+# scale 1, or when a benchmark is more than 20% slower than the last passing
+# run on the default branch. That run's benchmark output is the baseline,
+# kept as an artifact for 90 days (the actions cache evicts entries unused
+# for 7 days, which a weekly job can miss); the first run has none. After an
+# intended slowdown, start the workflow by hand with reset_baseline, so the
+# run compares with nothing and, if the endpoints pass, becomes the baseline.
+#
+# A slowdown found here is in code that is already merged, so it must not
+# block the PR in flight (the same reasoning as security.yml). The run files
+# a tracking issue instead, updates it on later failures and closes it on the
+# first pass. Reproduce locally with `just scale-run`; see the "PostgreSQL Scale
+# Check" guide (docs/postgres-scale-run.md).
+name: Scale run
+
+on:
+  schedule:
+    - cron: "0 3 * * 6" # Saturdays 03:00 UTC, when the runners are quiet
+  workflow_dispatch:
+    inputs:
+      scales:
+        description: Comma-separated seed scales; must include 1
+        default: "1,5"
+      reset_baseline:
+        description: Do not compare the benchmarks; this run becomes the baseline if it passes
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scale-run
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    name: Measure postgres at scale
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    # actions: read, to download the baseline artifact of an earlier run.
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      rc: ${{ steps.run.outputs.rc }}
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: rela
+          POSTGRES_DB: rela_scale
+          # Throwaway, runner-local DB: no password, trust auth.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rela"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+
+      # Pinned: check parses benchstat's CSV output.
+      - name: Install benchstat
+        run: go install golang.org/x/perf/cmd/benchstat@v0.0.0-20261009192801-be2c69fb417e
+
+      # The newest passing run on the default branch holds the baseline. A
+      # run that fails, or runs elsewhere, never becomes one.
+      - name: Fetch the benchmark baseline
+        if: ${{ !inputs.reset_baseline }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          # A schedule event carries no repository payload, but it always
+          # runs on the default branch.
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
+        run: |
+          set -euo pipefail
+          run_id=$(gh run list --workflow scale-run.yml --branch "$DEFAULT_BRANCH" --status success \
+            --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [[ -z "$run_id" ]]; then
+            echo "No passing run yet; the benchmarks run without a baseline."
+            exit 0
+          fi
+          mkdir -p .ignored/scalerun
+          if gh run download "$run_id" --name scale-run-baseline --dir "$RUNNER_TEMP/baseline"; then
+            cp "$RUNNER_TEMP/baseline/bench.txt" .ignored/scalerun/bench-baseline.txt
+          else
+            echo "Run $run_id has no baseline artifact (expired?); the benchmarks run without one."
+          fi
+
+      # A step timeout counts as a failure, so the issue job still runs; a
+      # job timeout counts as cancelled and would skip it. The likeliest
+      # cause of a timeout is an endpoint that got much slower.
+      - name: Run the scale run
+        id: run
+        timeout-minutes: 85
+        env:
+          RELA_DATABASE_URL: postgres://rela@localhost:5432/rela_scale?sslmode=disable
+          SCALES: ${{ inputs.scales || '1,5' }}
+          SCALERUN_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$SCALES" =~ ^[0-9.,]+$ ]] || { echo "scales must be numbers separated by commas"; exit 2; }
+          rc=0
+          just scale-run "$SCALES" || rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+
+      - name: Write the report to the job summary
+        if: always()
+        run: |
+          if [[ -f .ignored/scalerun/out/report.md ]]; then
+            cat .ignored/scalerun/out/report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The scale run wrote no report; see the job log." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload the report, results and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scale-run
+          path: |
+            .ignored/scalerun/out/report.md
+            .ignored/scalerun/out/results.json
+            .ignored/scalerun/out/bench.txt
+            .ignored/scalerun/out/*.log
+          if-no-files-found: warn
+          # Everything is under .ignored/, which upload-artifact skips by
+          # default as a hidden directory.
+          include-hidden-files: true
+          retention-days: 30
+
+      - name: Upload the benchmark baseline
+        if: steps.run.outputs.rc == '0'
+        uses: actions/upload-artifact@v7
+        with:
+          name: scale-run-baseline
+          path: .ignored/scalerun/out/bench.txt
+          include-hidden-files: true
+          retention-days: 90
+
+      - name: Fail when a limit is broken
+        if: steps.run.outputs.rc != '0'
+        env:
+          RC: ${{ steps.run.outputs.rc }}
+        run: |
+          echo "just scale-run exited $RC (1: a limit is broken; 2: the run could not measure)"
+          exit 1
+
+  # A job of its own, so only this step holds issues: write. Only runs on
+  # the default branch touch the issue: a manual run on a feature branch
+  # must not open or close it.
+  report:
+    name: Open, update or close the tracking issue
+    needs: measure
+    if: >-
+      always() && needs.measure.result != 'cancelled'
+      && (github.event_name == 'schedule'
+          || github.ref_name == github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: scale-run
+
+      - name: Open, update or close the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RC: ${{ needs.measure.outputs.rc }}
+        run: |
+          set -euo pipefail
+          title='Scale run: postgres limits exceeded'
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+          # Match the exact title, and only issues this workflow filed, so an
+          # issue anyone opens with the same title cannot capture the reports.
+          existing=$(gh issue list --state open --search "\"$title\" in:title" \
+            --json number,title,author \
+            | jq -r --arg title "$title" '
+                [ .[] | select(.title == $title)
+                      | select(.author.login == "app/github-actions") ][0].number // empty')
+
+          if [[ "$RC" == "0" ]]; then
+            if [[ -n "$existing" ]]; then
+              gh issue close "$existing" --comment "The scale run passed in $run_url. Closing."
+            fi
+            exit 0
+          fi
+
+          gh label create performance --color FBCA04 --description "Performance or scaling" --force >/dev/null
+          gh label create automated --color EDEDED --description "Filed by an automated job" --force >/dev/null
+
+          case "$RC" in
+            1) what="An endpoint or benchmark broke a limit in \`tools/scalerun/scalerun.yaml\`." ;;
+            *) what="The run could not measure (exit ${RC:-unknown}). Check the job log." ;;
+          esac
+          if [[ -f report.md ]]; then
+            # Whole lines only, and a code fence left open by the cut is
+            # closed, so </details> below stays outside it.
+            report=$(head -n 600 report.md)
+            if (( $(grep -c '^```' <<<"$report") % 2 == 1 )); then
+              report+=$'\n```'
+            fi
+          else
+            report="(no report)"
+          fi
+          body="The weekly postgres scale run failed. $what
+
+          - Run: $run_url
+          - Reproduce: \`just scale-run\` with \`RELA_DATABASE_URL\` pointing at a scratch database (see docs/postgres-scale-run.md).
+
+          Fix the slowdown. If the change is intended, recalibrate the endpoint's limit with a reason, or, for a benchmark, start this workflow by hand with \`reset_baseline\`. This issue is updated by later failing runs and closed by the first passing run.
+
+          <details><summary>Report</summary>
+
+          $report
+
+          </details>"
+
+          if [[ -z "$existing" ]]; then
+            gh issue create --title "$title" --label performance,automated --body "$body"
+            exit 0
+          fi
+          gh issue edit "$existing" --body "$body"
+          gh issue comment "$existing" --body "Failed again in $run_url."

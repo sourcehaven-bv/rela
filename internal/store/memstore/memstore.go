@@ -27,7 +27,6 @@ import (
 	"maps"
 	"slices"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -522,7 +521,6 @@ func (m *MemStore) HighestID(_ context.Context, prefix string) (int, error) {
 	defer m.mu.RUnlock()
 
 	highest := 0
-	pfx := prefix + "-"
 	// A soft-deleted id still holds its number, so the generator does not
 	// hand out an id that CreateEntity would refuse.
 	ids := make([]string, 0, len(m.entities)+len(m.marked))
@@ -537,12 +535,7 @@ func (m *MemStore) HighestID(_ context.Context, prefix string) (int, error) {
 		// seeing a family more than once is harmless — max is idempotent —
 		// while skipping non-default faces made a faced type invisible to
 		// the generator entirely (BUG-HC6I2T).
-		if !strings.HasPrefix(id, pfx) {
-			continue
-		}
-		suffix := id[len(pfx):]
-		var n int
-		if _, err := fmt.Sscanf(suffix, "%d", &n); err == nil && n > highest {
+		if n, ok := entity.SequentialNumber(id, prefix); ok && n > highest {
 			highest = n
 		}
 	}

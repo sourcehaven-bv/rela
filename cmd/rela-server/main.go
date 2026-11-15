@@ -56,11 +56,15 @@ type serverFlags struct {
 	unconfinedCommand bool
 	// sandboxReadPaths holds the operator's read paths per cmdexec.Purpose.
 	sandboxReadPaths map[cmdexec.Purpose]*string
-	// remoteMCP serves the MCP endpoint over HTTP at dataentry.MCPPath.
-	// Off by default; requires the JWT identity flags below (dataentry
-	// refuses to enable it otherwise — the endpoint is CSRF-exempt, and
-	// that is only sound while rela verifies a bearer token itself).
-	remoteMCP bool
+	// remoteMCP is the -mcp flag's say on serving the MCP endpoint over
+	// HTTP at dataentry.MCPPath, and remoteMCPEnv the raw $RELA_MCP.
+	// wireRemoteMCP combines both with `remote_mcp.enabled` in
+	// .rela/config.yaml. Off by default; requires the JWT identity flags
+	// below (dataentry refuses to enable it otherwise — the endpoint is
+	// CSRF-exempt, and that is only sound while rela verifies a bearer token
+	// itself).
+	remoteMCP    toggle
+	remoteMCPEnv string
 	// allowUnauthCommands opts a network bind back into ungated command
 	// execution when there is no acl.yaml. Off by default: a non-loopback bind
 	// with no policy refuses commands. See docs/server-security.md.
@@ -173,7 +177,8 @@ func parseFlags() *serverFlags {
 				"/var/run. Defaults to $"+cmdexec.EnvSandboxScanReadPaths+
 				". See docs/attachment-security.md."),
 	}
-	flag.BoolVar(&f.remoteMCP, "mcp", os.Getenv("RELA_MCP") == "1",
+	f.remoteMCPEnv = os.Getenv(remoteMCPEnv)
+	flag.Var(toggleFlag{&f.remoteMCP}, "mcp",
 		"Serve the Model Context Protocol endpoint over HTTP at /api/v1/_mcp, "+
 			"so AI assistants can reach a deployed rela the same way `rela mcp` "+
 			"serves a local one. Off by default. REQUIRES the -jwt-* identity "+
@@ -181,7 +186,9 @@ func parseFlags() *serverFlags {
 			"which is only sound while rela verifies a bearer token itself — "+
 			"startup is refused otherwise. Every tool call runs as the requesting "+
 			"principal and is ACL-gated like any other API request. Also enabled "+
-			"by RELA_MCP=1.")
+			"by RELA_MCP=1 or remote_mcp.enabled: true in .rela/config.yaml. "+
+			"-mcp=false, RELA_MCP=0 or remote_mcp.enabled: false turns it off, "+
+			"and an off from any of them wins. See docs/mcp-server.md.")
 	flag.BoolVar(&f.allowUnauthCommands, "allow-unauthenticated-commands",
 		os.Getenv("RELA_ALLOW_UNAUTHENTICATED_COMMANDS") == "1",
 		"Allow configured commands to run WITHOUT access control on a non-loopback "+
@@ -230,6 +237,11 @@ func discoverOptions(f *serverFlags) []appbuild.Option {
 	opts := []appbuild.Option{appbuild.WithBackgroundAutomationJobs()}
 	if f.readOnly {
 		opts = append(opts, appbuild.WithACL(acl.ReadOnlyACL{}))
+	}
+	// Tenant mode withholds the one .rela directory's secrets and ai.yaml
+	// from every tenant unless the operator shares them (TKT-3RWQ1PK).
+	if f.tenant.enabled {
+		opts = append(opts, tenantProfile(f.tenant).Options()...)
 	}
 	return opts
 }
@@ -574,6 +586,10 @@ func main() {
 
 	// -tenant-mode (or RELA_TENANT_MODE=1) turns tenant mode on; without it
 	// the server runs one store, and refuses a tenant deployment.
+	if err := refuseTenantOnlyFlags(f.tenant); err != nil {
+		slog.Error("refusing to start", "error", err)
+		os.Exit(1)
+	}
 	if f.tenant.enabled {
 		os.Exit(runTenantMode(f, accessLog))
 	}
@@ -749,6 +765,11 @@ type commandAuthorizer = interface {
 // degrading: a server that cannot decide how to gate shell execution must not
 // start and quietly pick a default.
 func buildCommandAuthorizer(f *serverFlags, svc *appbuild.Services) (commandAuthorizer, error) {
+	// Tenant mode turns commands off: they run with sh -c in the one
+	// project root every tenant shares (TKT-3RWQ1PK).
+	if f.tenant.enabled {
+		return dataentry.TenantModeCommandAuthorizer(), nil
+	}
 	authz, err := dataentry.SelectCommandAuthorizer(
 		svc.ACL(), svc.ACLDeclarative(), isLoopbackHost(f.bind), f.allowUnauthCommands,
 		dataentry.CommandAuthNotifier{

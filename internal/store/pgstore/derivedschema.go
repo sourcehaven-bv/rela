@@ -192,9 +192,17 @@ func orderRankSQL(property string, values []string) string {
 	return sb.String()
 }
 
+// queryIndexShape is hashed into every query index name, on top of
+// derivedIndexShape, so a change to the query index layout renames only the
+// query indexes. "id-key" is TKT-CKLZMWB: id became the last key column.
+const queryIndexShape = "id-key"
+
 func queryIndexName(entityType string, properties []string) string {
 	h := sha256.New()
 	_, _ = h.Write([]byte(derivedIndexShape))
+	_, _ = h.Write([]byte{'\x00'})
+	_, _ = h.Write([]byte(queryIndexShape))
+	_, _ = h.Write([]byte{'\x00'})
 	_, _ = h.Write([]byte(entityType))
 	for _, property := range properties {
 		_, _ = h.Write([]byte{'\x00'})
@@ -500,6 +508,12 @@ func listOwnedIndexes(ctx context.Context, conn *pgxpool.Conn, prefix string) (m
 	return out, rows.Err()
 }
 
+// createQueryIndexDDL is the shape a static query's equality filters seek:
+// face, then the filtered properties, then id. The trailing id makes the
+// matching rows come out in id order, the order every unsorted row query
+// returns (TKT-CKLZMWB). Without it, a query that pages or stops early
+// (`ORDER BY id LIMIT n`) had to read and sort every matching row for each
+// page, so reading k pages of a match cost k times the whole match.
 func createQueryIndexDDL(name string, spec store.DerivedObjectSpec) string {
 	expressions := make([]string, 0, len(spec.Properties))
 	guards := make([]string, 0, len(spec.Properties)+1)
@@ -509,7 +523,7 @@ func createQueryIndexDDL(name string, spec store.DerivedObjectSpec) string {
 		guards = append(guards, "jsonb_typeof(properties->"+quoteLiteral(property)+") = 'string'")
 	}
 	return "CREATE INDEX IF NOT EXISTS " + quoteIdent(name) + " ON entities (face, " +
-		strings.Join(expressions, ", ") + ") WHERE " + strings.Join(guards, " AND ")
+		strings.Join(expressions, ", ") + ", id) WHERE " + strings.Join(guards, " AND ")
 }
 
 // listOwnedUniqueIndexes returns the set of this schema's unique-rule indexes.

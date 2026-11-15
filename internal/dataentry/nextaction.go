@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -67,7 +68,7 @@ func (a *App) nextActionCandidates(
 	meta *metamodel.Metamodel, lookup nextaction.MatcherFunc, page nextActionPage,
 ) nextaction.CandidateFunc {
 	return func(
-		ctx context.Context, id string, src dataentryconfig.NextActionSource,
+		ctx context.Context, id string, src dataentryconfig.NextActionSource, want nextaction.Want,
 	) ([]nextaction.Candidate, error) {
 		// The SOURCE world is resolved per source, before any read, and
 		// REPLACES whatever world the request carried. See
@@ -86,7 +87,7 @@ func (a *App) nextActionCandidates(
 		case src.Count != "":
 			return a.countCandidates(ctx, src.Count, src.CountUngated)
 		case src.Query != "":
-			return a.queryCandidates(ctx, src.Query, nextActionPrefilters(ctx, meta, lookup, id, src))
+			return a.queryCandidates(ctx, src.Query, nextActionPrefilters(ctx, meta, lookup, id, src), want)
 		case src.Context != "":
 			return a.contextCandidates(ctx, src, page.entityID)
 		default:
@@ -260,7 +261,7 @@ func (a *App) nextActionOptions(meta *metamodel.Metamodel) nextaction.OptionFunc
 		if !ok {
 			return nil, nil
 		}
-		entities, err := a.queries.executeQuery(ctx, query)
+		entities, err := a.queries.executeQueryWith(ctx, query, queryOptions{firstN: limit, limit: limit})
 		if err != nil {
 			return nil, fmt.Errorf("next-action pick_one query %q: %w", query, err)
 		}
@@ -301,10 +302,22 @@ func (a *App) nextActionOptions(meta *metamodel.Metamodel) nextaction.OptionFunc
 //
 // `prefilters` are the condition's store-evaluable conjuncts (see
 // nextActionPrefilters); nil pushes only the query's own filters.
+//
+// `want` bounds the read to the leading rows the engine keeps (TKT-CKLZMWB),
+// so a source matching thousands of rows reads about want.First of them. The
+// suggestion on screen (want.Keep) can lie past that prefix when the match set
+// changed since it was picked. When the read was cut short and missed it,
+// the source is read whole, as before, so the engine can keep it on screen.
 func (a *App) queryCandidates(
-	ctx context.Context, query string, prefilters []store.PropPredicate,
+	ctx context.Context, query string, prefilters []store.PropPredicate, want nextaction.Want,
 ) ([]nextaction.Candidate, error) {
-	entities, err := a.queries.executeQueryWith(ctx, query, queryOptions{prefilters: prefilters})
+	entities, cut, err := a.queries.executeQueryCut(ctx, query,
+		queryOptions{prefilters: prefilters, firstN: want.First})
+	if err == nil && cut && want.Keep != "" &&
+		!slices.ContainsFunc(entities, func(e *entityPkg.Entity) bool { return e.ID == want.Keep }) {
+
+		entities, err = a.queries.executeQueryWith(ctx, query, queryOptions{prefilters: prefilters})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("next-action query %q: %w", query, err)
 	}

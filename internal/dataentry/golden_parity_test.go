@@ -30,9 +30,9 @@ import (
 // are the wire contract a refactor of the access layer must keep: a change in
 // any of them is either the intended fix of a recorded gap or a regression.
 //
-// Cases named after a bug (BUG-2TPO2F, BUG-VUNO11)
-// record a known gap as it is today. The fix of that bug is expected to
-// change those files.
+// Cases named after an open bug (BUG-VUNO11) record a known gap as it is
+// today. The fix of that bug is expected to change those files. A case named
+// after a fixed bug (BUG-2TPO2F) pins the fix.
 //
 // Rewrite the recordings with:
 //
@@ -349,8 +349,8 @@ var goldenReads = []goldenEndpoint{
 	{slug: "attachment-file", method: http.MethodGet, path: "/api/v1/tickets/TKT-1/_attachments/screenshot/shot.txt"},
 	{slug: "command-entity", method: http.MethodPost, path: "/api/command/entity_ids?entity_id=TKT-1"},
 	{slug: "command-entity-closed", method: http.MethodPost, path: "/api/command/entity_ids?entity_id=TKT-2"},
-	// The list-context command feeds the script raw rows: hidden tickets and
-	// hidden fields reach its stdin, and the script echoes them.
+	// The list-context command feeds the script the rows GET /api/v1/tickets
+	// shows the principal: row-gated and field-redacted (BUG-2TPO2F).
 	{slug: "BUG-2TPO2F-command-list-input", method: http.MethodPost, path: "/api/command/dump_ids?list_id=tickets"},
 	{slug: "command-cancel", method: http.MethodPost, path: "/api/command-cancel/none", principalFree: true},
 	{slug: "command-file", method: http.MethodGet, path: "/api/command-file/none", principalFree: true},
@@ -599,7 +599,9 @@ func recordGoldenCase(t *testing.T, c goldenCase) string {
 			fmt.Fprintf(&b, "header %s: %s\n", h, window.normalize(strings.Join(v, ", ")))
 		}
 	}
-	fmt.Fprintf(&b, "reads: %s\n", g.calls.String())
+	// Calls only: the rows a request reads depend on what the principal
+	// may see, and a golden shared by every principal must not.
+	fmt.Fprintf(&b, "reads: %s\n", goldenVersionLine(g.calls.Calls()))
 	fmt.Fprintf(&b, "breadth: %s\n", g.breadth.String())
 	fmt.Fprintf(&b, "bodies: %s\n", g.bodies.String())
 	fmt.Fprintf(&b, "versions: %s\n", goldenVersionLine(g.versions.snapshot()))

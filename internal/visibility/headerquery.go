@@ -36,8 +36,7 @@ type HeaderQuery struct {
 // equalities are ANDed onto every verdict, and AnyOf rides on
 // [store.GraphQuery.Narrowing], which only narrows. The predicates are
 // tested again on the redacted row, so a value `visible:` hides from the
-// caller never selects a row. A store without graph queries gets the same
-// answer from a gated list read filtered in Go.
+// caller never selects a row.
 func (h *HolderLookup) Headers(ctx context.Context, q HeaderQuery) (rows []store.EntityHeader, more bool,
 	err error) {
 	if q.EntityType == "" || q.Limit <= 0 {
@@ -51,11 +50,8 @@ func (h *HolderLookup) Headers(ctx context.Context, q HeaderQuery) (rows []store
 	}
 	keep := func(hd store.EntityHeader) store.EntityHeader { return hd }
 	if h.sr == nil {
-		gq, ok := h.raw.(store.GraphQueryer)
-		if !ok {
-			return h.headersFromList(ctx, h.raw, q)
-		}
-		return pageHeaders(ctx, gq, headerBase(store.GraphQuery{EntityType: q.EntityType, Faces: q.Faces}, q), q, keep)
+		base := headerBase(store.GraphQuery{EntityType: q.EntityType, Faces: q.Faces}, q)
+		return pageHeaders(ctx, h.raw, base, q, keep)
 	}
 	bound := h.sr.bind(ctx)
 	gq, isGQ := h.sr.raw.(store.GraphQueryer)
@@ -123,23 +119,6 @@ func sortedKeys(m map[string]string) []string {
 	}
 	slices.Sort(keys)
 	return keys
-}
-
-// headersFromList is the unrestricted answer for a store without graph
-// queries.
-func (h *HolderLookup) headersFromList(ctx context.Context, st store.Store, q HeaderQuery) (
-	[]store.EntityHeader, bool, error) {
-	var out []store.EntityHeader
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: q.EntityType, Faces: q.Faces}) {
-		if err != nil {
-			return nil, false, err
-		}
-		hd := store.EntityHeader{ID: e.ID, Type: e.Type, Face: e.Face, Properties: e.Properties}
-		if headerMatches(hd, q) {
-			out = append(out, hd)
-		}
-	}
-	return cutHeaders(out, q)
 }
 
 // pageHeaders runs base in bounded pages of q.Limit+1 header rows until

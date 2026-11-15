@@ -140,13 +140,13 @@ func TestQueryScope_RelatedToCurrentUser(t *testing.T) {
 		want              []string
 		pushed            bool
 	}{
-		// `~=` keeps mijn on the Go path; the traversal is still answered
-		// with one gated store query.
-		{"alice mijn", "sub-alice", "mijn", []string{"TAAK-1"}, false},
-		{"bob mijn", "sub-bob", "mijn", []string{"TAAK-3"}, false},
+		// `~=` and `not related` lower through queryplan.LowerCondition
+		// (TKT-I39Y7N4), so every scope here is answered by the store.
+		{"alice mijn", "sub-alice", "mijn", []string{"TAAK-1"}, true},
+		{"bob mijn", "sub-bob", "mijn", []string{"TAAK-3"}, true},
 		{"alice alles", "sub-alice", "alles-van-mij", []string{"TAAK-1", "TAAK-2"}, true},
 		{"bob alles", "sub-bob", "alles-van-mij", []string{"TAAK-3"}, true},
-		{"alice niet", "sub-alice", "niet-van-mij", []string{"TAAK-3", "TAAK-4"}, false},
+		{"alice niet", "sub-alice", "niet-van-mij", []string{"TAAK-3", "TAAK-4"}, true},
 		// An identified principal who maps to no persoon keeps the raw
 		// identifier, which is no persoon's id: nothing matches.
 		{"unmapped alles", "sub-mallory", "alles-van-mij", nil, true},

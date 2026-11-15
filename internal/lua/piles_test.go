@@ -362,4 +362,22 @@ func TestPiles_AddReadBudget(t *testing.T) {
 	if reads[0] != reads[1] {
 		t.Errorf("reads grew with the entity count: %d at 10, %d at 50", reads[0], reads[1])
 	}
+	// Adding 10 entities reads the same rows however many the store holds.
+	storetest.AssertScaleFree(t, func(n int) (storetest.Cost, string) {
+		st := memstore.New()
+		ids := make([]string, n)
+		for i := range ids {
+			ids[i] = fmt.Sprintf("TKT-%04d", i+1)
+			if err := st.CreateEntity(context.Background(), &entity.Entity{ID: ids[i], Type: "ticket"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		counting := storetest.NewCounting(st)
+		_, pf := newFakePiles(t)
+		src := `rela.piles.add{pile = "P", entities = {"` + strings.Join(ids[:10], `", "`) + `"}}`
+		if err := runPileScript(t, unrestricted(counting), pf, true, src); err != nil {
+			t.Fatalf("RunString: %v", err)
+		}
+		return counting.Cost(), counting.String()
+	})
 }

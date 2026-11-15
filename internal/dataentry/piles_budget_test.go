@@ -12,20 +12,20 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/piles"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
 
 // pileBudgetOp is one piles request measured at two pile sizes. ids are
 // the seeded tickets; pileID is a pile already holding all of them.
 type pileBudgetOp func(t *testing.T, app *App, d *acl.Declarative, pileID string, ids []string)
 
-// pileReads runs op over the budget fixture at 10 and 50 tickets, with a
-// pile holding every ticket, and returns the store reads op made. The pile
-// store is not the counted store, so only entity reads are measured.
-func pileReads(t *testing.T, op pileBudgetOp) (small, large int, detail string) {
+// pileReads measures op as [readsFor] does, with a pile holding every
+// fixture ticket. The pile store is not the counted store, so only entity
+// reads are measured.
+func pileReads(t *testing.T, op pileBudgetOp) (cost budgetCost, detail string) {
 	t.Helper()
-	counts := make([]int, 0, 2)
-	for _, n := range []int{10, 50} {
-		app, counting, d, ctx := newBudgetAppOn(t, n, memstore.New())
+	measure := func(n, pad int) (storetest.Cost, string) {
+		app, counting, d, ctx := newBudgetAppPadded(t, n, pad, memstore.New(), budgetMeta())
 		app.State().Meta.Transforms = map[string]metamodel.TransformDef{
 			"copy": {From: "markdown", Command: []string{"cp", "{in}", "{out}"}, Produces: "text/plain"},
 		}
@@ -49,10 +49,9 @@ func pileReads(t *testing.T, op pileBudgetOp) (small, large int, detail string) 
 		}
 		counting.Reset()
 		op(t, app, d, p.ID, ids)
-		counts = append(counts, counting.Reads())
-		detail = counting.String()
+		return counting.Cost(), counting.String()
 	}
-	return counts[0], counts[1], detail
+	return measureBudget(measure)
 }
 
 // budgetPileCall runs one piles request as the budget fixture's principal.
@@ -109,8 +108,8 @@ func TestQueryBudget_Piles(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			small, large, detail := pileReads(t, tc.op)
-			assertBudget(t, tc.name, small, large, tc.pinned, detail)
+			b, detail := pileReads(t, tc.op)
+			assertBudget(t, tc.name, b, tc.pinned, detail)
 		})
 	}
 }

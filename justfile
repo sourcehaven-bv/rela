@@ -415,6 +415,52 @@ bench:
     @echo "Running benchmarks..."
     go test -run='^$$' -bench=. -benchmem ./internal/entitymanager/ ./internal/affordances/ ./internal/search/ ./internal/validation/ ./internal/lua/
 
+# The postgres scale run (TKT-UHKZKOB), as the weekly "Scale run" workflow
+# runs it: seed prototypes/perf/project at each scale, measure rela-server's
+# key endpoints, run the size-parameterised benchmarks and compare them with
+# the last passing run, then write {{out}}/report.md. Needs RELA_DATABASE_URL
+# pointing at a scratch database (each scale gets its own schema, dropped
+# afterwards) and benchstat on PATH. Exits 1 when a limit in
+# tools/scalerun/scalerun.yaml is broken. See docs/postgres-scale-run.md.
+scale-run scales="1,5" out=".ignored/scalerun/out" baseline=".ignored/scalerun/bench-baseline.txt":
+    #!/usr/bin/env bash
+    set -uo pipefail
+    : "${RELA_DATABASE_URL:?point RELA_DATABASE_URL at a scratch postgres database}"
+    # scalerun exits 1 for a broken limit and 2 for a run that could not
+    # measure; every other failure here exits 2 too, so 1 always means a
+    # limit. After a failed measuring step the recipe keeps going, so the
+    # report still shows what was measured, and exits with the first
+    # failure at the end.
+    bin="{{out}}/bin"
+    mkdir -p "$bin" || exit 2
+    go build -tags postgres -o "$bin/rela-postgres" ./cmd/rela || exit 2
+    # headless: the run drives the API only, so no SPA build is needed.
+    go build -tags postgres,headless -o "$bin/rela-server-postgres" ./cmd/rela-server || exit 2
+    go build -o "$bin/scalerun" ./tools/scalerun/cmd/scalerun || exit 2
+    rc=0
+    "$bin/scalerun" run -rela "$bin/rela-postgres" -server "$bin/rela-server-postgres" \
+      -scales "{{scales}}" -out "{{out}}" -commit "$(git rev-parse --short HEAD)" || rc=$?
+    # Six samples each: benchstat needs at least that many for a confidence
+    # interval. -cpu pins the name suffix (BenchmarkX-4), or a runner with
+    # another core count would match no baseline row.
+    bench=(-bench-note "The benchmarks failed; see bench.txt in the artifact.")
+    if RELA_TEST_DATABASE_URL="${RELA_TEST_DATABASE_URL:-$RELA_DATABASE_URL}" \
+        go test -tags postgres -run '^$' -count 6 -cpu 4 -timeout 30m \
+        -bench '^Benchmark(GraphQuery|SearchBackend|Search|Check_WhenThen)$' \
+        ./internal/store/pgstore/ ./internal/search/ ./internal/validation/ > "{{out}}/bench.txt"; then
+      bench=(-bench-old "{{baseline}}" -bench-new "{{out}}/bench.txt")
+    else
+      echo "benchmarks failed; see {{out}}/bench.txt" >&2
+      [[ $rc -ne 0 ]] || rc=2
+    fi
+    check_rc=0
+    "$bin/scalerun" check -results "{{out}}/results.json" "${bench[@]}" || check_rc=$?
+    [[ $rc -ne 0 ]] || rc=$check_rc
+    # Only a passing run becomes the baseline, so a regression cannot hide
+    # by becoming the thing the next run is compared with.
+    if [[ $rc -eq 0 ]]; then cp "{{out}}/bench.txt" "{{baseline}}" || exit 2; fi
+    exit $rc
+
 # Run quick fuzz tests (5 seconds each)
 fuzz-short:
     @echo "Running quick fuzz tests..."

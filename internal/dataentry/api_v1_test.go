@@ -3938,6 +3938,8 @@ func TestValidateCreateIDOpts(t *testing.T) {
 		{"manual prefixed, matching id", manualPrefixed, "TAG-books", "", ""},
 		{"manual prefixed, missing prefix", manualPrefixed, "books", "", "must start with"},
 		{"manual prefixed, wrong prefix", manualPrefixed, "CAT-books", "", "must start with"},
+		{"manual prefixed, id in other case", manualPrefixed, "tag-books", "", ""}, // BUG-4OPP525
+		{"manual prefixed, bare prefix in other case", manualPrefixed, "tag-", "", "must start with"},
 		{"manual multi, matches A-", manualMulti, "A-foo", "", ""},
 		{"manual multi, matches B-", manualMulti, "B-foo", "", ""},
 		{"manual multi, no match", manualMulti, "C-foo", "", "must start with"},

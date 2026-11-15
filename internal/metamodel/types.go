@@ -216,9 +216,11 @@ type ValidationRule struct {
 	// write path refuse a write whose new state violates the rule, with the
 	// same 422 a structural error gets (TKT-5CESLHD).
 	//
-	// An enforced rule may only read the entity being written, so the load
-	// refuses one that uses Lua, `relations:`, `content:` or `related(...)`.
-	// See [ValidationRule.IsWriteEnforced].
+	// An enforced rule reads the entity being written and, through a
+	// one-hop `related(...)`, whether it has a relation (TKT-EBARYBI). The
+	// load refuses one that uses Lua, `relations:` or `content:`; the shapes
+	// of `related(...)` it allows are checked in internal/writerule. See
+	// [ValidationRule.IsWriteEnforced].
 	Enforce string `yaml:"enforce,omitempty"`
 
 	// Lua specifies inline Lua code for custom validation logic.

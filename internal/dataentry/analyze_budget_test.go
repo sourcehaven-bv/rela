@@ -43,9 +43,11 @@ func analyzeBudgetMeta() *metamodel.Metamodel {
 // atlas came from a per-row local-role probe on the pushed-down list path
 // and a per-violator re-load.
 func TestQueryBudget_AnalyzeIsSizeIndependent(t *testing.T) {
-	small, large, detail := readsForWith(t, func(*testing.T) store.Store { return memstore.New() },
+	b, detail := readsForWith(t, func(*testing.T) store.Store { return memstore.New() },
 		analyzeBudgetMeta, analyzeOp)
-	assertBudget(t, "_analyze", small, large, analyzeBudget, detail)
+	// Calls only: _analyze reads every row by design (see above), so its
+	// rows grow with the store and that is not a defect.
+	assertCallBudget(t, "_analyze", b, analyzeBudget, detail)
 }
 
 // The realistic budget ACL has no field rules, so field redaction never asks
@@ -69,6 +71,8 @@ func TestQueryBudget_AnalyzeWithFieldRulesIsSizeIndependent(t *testing.T) {
 		t.Errorf("_analyze under field rules: store reads = %d, pinned budget %d (%s)",
 			counts[1], analyzeFieldRulesBudget, detail)
 	}
+	// Calls only: _analyze reads every row by design, so its rows grow
+	// with the store and that is not a defect.
 }
 
 // A caller that primed the rows itself (TKT-YLG695 primes at handler level)

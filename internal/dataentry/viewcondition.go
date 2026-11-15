@@ -77,6 +77,9 @@ const (
 	// viewKindAction is a detail action's `when:` (TKT-VVS16W), keyed by
 	// dataentryconfig.ActionConditionID.
 	viewKindAction = "actions"
+	// viewKindLLMCandidates is an llm action's relate `candidates:`, keyed
+	// by dataentryconfig.LLMCandidateConditionID.
+	viewKindLLMCandidates = "llm_candidates"
 
 	// listIDParam names which configured list a generic collection read is
 	// serving, so the server can apply that list's condition. Absent means
@@ -200,10 +203,12 @@ func viewCondition(fn ViewConditionFunc, s *Schema, kind, id string) ViewConditi
 // serialized (the IB-review finding on #1593).
 //
 // Evaluating post-redaction is sound in the direction that matters: redaction
-// REMOVES a hidden property, so it binds Nil, and every current-user form is
-// false on Nil. The result is strictly narrower than an unredacted pass for
-// those forms — the same asymmetry [ConditionPrefilterer] documents for next
-// actions, reached here by the same remedy.
+// REMOVES a hidden property, so it binds Nil, and the verdict is then the
+// same on every row whatever the hidden value is. For most forms Nil gives
+// false, the same asymmetry [ConditionPrefilterer] documents for next
+// actions; a `~=` gives true. Either way row presence carries no bit of the
+// hidden value. The store pushdown cannot reproduce that Nil, which is why
+// lowerViewCondition sends a condition over a hidden field here.
 //
 // The KEPT rows are the originals, not the redacted copies: redaction for the
 // response happens at serialization, and substituting stripped entities here
