@@ -247,11 +247,3 @@ func writeRecordsError(w http.ResponseWriter, r *http.Request, err error) {
 			"check server logs")
 	}
 }
-
-// registerRecordsRoutes mounts /api/v1/_records. The handler is read at
-// request time because [SetRecords] runs after the routes are registered.
-func (a *App) registerRecordsRoutes(mux *http.ServeMux) {
-	serve := func(w http.ResponseWriter, r *http.Request) { a.records.handleV1Records(w, r) }
-	mux.HandleFunc(recordsPath, serve)
-	mux.HandleFunc(recordsPath+"/", serve)
-}
