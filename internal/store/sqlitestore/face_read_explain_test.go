@@ -116,22 +116,12 @@ func TestFaceReadExplain(t *testing.T) {
 	}
 }
 
-// HighestID folds ASCII case on this backend, as the LIKE it replaced did:
-// ids are case-insensitive identities (entities_id_lower_key). storetest
-// cannot pin the fold, because the other backends are case-sensitive.
-func TestHighestIDFoldsASCIICase(t *testing.T) {
-	s := open(t)
-	seed(t, s, func(v store.Store) {
-		for _, id := range []string{"FEAT-4", "feat-9", "FEATURE-20"} {
-			mustCreate(t, v, entity.New(id, "feature"))
-		}
-	})
-	n, err := s.HighestID(context.Background(), "FEAT")
-	require.NoError(t, err)
-	require.Equal(t, 9, n)
-}
-
 func TestBuildHighestIDSQLBounds(t *testing.T) {
 	_, args := sqlitestore.BuildHighestIDSQLForTest("FEAT")
+	require.Equal(t, []any{"FEAT-", "FEAT."}, args)
+
+	// A prefix that already ends in the dash names the same series
+	// (BUG-RLBXTG5), as it does in [entity.SequentialNumber].
+	_, args = sqlitestore.BuildHighestIDSQLForTest("FEAT-")
 	require.Equal(t, []any{"FEAT-", "FEAT."}, args)
 }

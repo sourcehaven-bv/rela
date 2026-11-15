@@ -303,27 +303,11 @@ func generateID(ctx context.Context, deps Deps, entityType, prefix string, sprea
 // highestIDNumber is the highest number taken under prefix, read with the
 // store's HighestID rather than by listing every entity id (TKT-FED6FMM):
 // on a database backend the listing read every row of the store on every
-// create. HighestID counts every face, soft-deleted ids and retired ids.
-//
-// The prefix is asked for in upper and in lower case, because ids are
-// case-insensitive identities and the stores compare the prefix bytewise
-// (sqlitestore folds it already). A mixed-case prefix such as "Tkt-" is not
-// seen; a hand-written id in that shape can make the next mint collide,
-// which createCore refuses as ErrEntityAlreadyExists rather than overwrite.
+// create. HighestID counts every face, soft-deleted ids and retired ids, and
+// folds the prefix's case, so a hand-written "Req-7" counts for "REQ"
+// (BUG-RLBXTG5).
 func highestIDNumber(ctx context.Context, st store.Store, prefix string) (int, error) {
-	upper := entity.SequentialPrefix(prefix)
-	highest, err := st.HighestID(ctx, upper)
-	if err != nil {
-		return 0, err
-	}
-	if lower := strings.ToLower(upper); lower != upper {
-		n, err := st.HighestID(ctx, lower)
-		if err != nil {
-			return 0, err
-		}
-		highest = max(highest, n)
-	}
-	return highest, nil
+	return st.HighestID(ctx, entity.SequentialPrefix(prefix))
 }
 
 // shortIDBatch is how many random candidates [mintShortID] checks per
