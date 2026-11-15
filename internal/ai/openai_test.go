@@ -975,3 +975,36 @@ func TestParseConfig(t *testing.T) {
 		t.Fatal("malformed yaml accepted")
 	}
 }
+
+func TestProvider_Chat_ResponseFormat(t *testing.T) {
+	var bodySeen []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodySeen, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(canonicalSuccessBody))
+	}))
+	t.Cleanup(server.Close)
+
+	p := newTestProvider(t, server, "TEST_KEY")
+	if _, err := p.Chat(context.Background(), ChatRequest{Messages: hiMessages()}); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if strings.Contains(string(bodySeen), "response_format") {
+		t.Errorf("expected no response_format without one requested, got %s", bodySeen)
+	}
+
+	_, err := p.Chat(context.Background(), ChatRequest{
+		Messages: hiMessages(),
+		ResponseFormat: &JSONSchemaFormat{
+			Name: "triage", Strict: true,
+			Schema: json.RawMessage(`{"type":"object"}`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	want := `"response_format":{"type":"json_schema","json_schema":{"name":"triage","schema":{"type":"object"},"strict":true}}`
+	if !strings.Contains(string(bodySeen), want) {
+		t.Errorf("expected %s in body, got %s", want, bodySeen)
+	}
+}

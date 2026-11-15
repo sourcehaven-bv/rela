@@ -48,7 +48,7 @@ func TestViewCondition_RelatedIsSizeIndependent(t *testing.T) {
 	if counts[0] != counts[1] || counts[1] != 1 {
 		t.Fatalf("MatchingIDs = %v, want 1 at both sizes", counts)
 	}
-	// TODO(TKT-F2EJQY8): calls only. A list `condition:` keeps the list on
+	// TODO(TKT-I39Y7N4): calls only. A list `condition:` keeps the list on
 	// the Go path, which reads every header of the type (scopedHeaders' type
 	// scan in scopedread.go), so the rows grow with the store.
 }
@@ -110,7 +110,7 @@ func TestViewCondition_RelatedWithTraversingGrantIsSizeIndependent(t *testing.T)
 	if counts[0] != counts[1] {
 		t.Fatalf("MatchingIDs = %v, want the same at both sizes", counts)
 	}
-	// TODO(TKT-F2EJQY8): calls only. A list `condition:` keeps the list on
+	// TODO(TKT-I39Y7N4): calls only. A list `condition:` keeps the list on
 	// the Go path, which reads every header of the type (scopedHeaders' type
 	// scan in scopedread.go), so the rows grow with the store.
 }

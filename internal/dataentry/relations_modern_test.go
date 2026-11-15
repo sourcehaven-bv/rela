@@ -138,8 +138,6 @@ func decodeV1(t *testing.T, body []byte) v1.Entity {
 }
 
 // outgoingByType returns the current outgoing edges of the given type for entityID.
-//
-//nolint:unparam // entityID is "TKT-001" everywhere today; kept generic for future tests
 func outgoingByType(app *App, entityID, relType string) []*entity.Relation {
 	out := []*entity.Relation{}
 	for r, err := range app.store.ListRelations(context.Background(), store.RelationQuery{

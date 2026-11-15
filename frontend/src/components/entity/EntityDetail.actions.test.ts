@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import EntityDetail from './EntityDetail.vue'
 import EntityActionsMenu from './EntityActionsMenu.vue'
+import LLMProposalDialog from './LLMProposalDialog.vue'
 import type { EntityAction } from './entityActions'
 import { useSchemaStore } from '@/stores/schema'
 import { useUIStore } from '@/stores/ui'
@@ -98,7 +99,8 @@ describe('EntityDetail detail actions', () => {
   }
 
   function desktopButton(wrapper: VueWrapper, label: string) {
-    return wrapper.findAll('.desktop-actions button').find((b) => b.text().trim() === label)
+    // The button also holds its hidden pending label, so match on inclusion.
+    return wrapper.findAll('.desktop-actions button').find((b) => b.text().includes(label))
   }
 
   it('renders only the action keys the server sent as true', async () => {
@@ -157,5 +159,55 @@ describe('EntityDetail detail actions', () => {
     await flushPromises()
     expect(confirmMock).not.toHaveBeenCalled()
     expect(runActionMock).toHaveBeenCalledWith('notify', 'DOC-1@concept')
+  })
+
+  // An `llm:` action answers with a proposal (TKT-4USH1HO). The dialog
+  // applies it to the entity it was made for, never to the one on screen.
+  const proposal = {
+    entity: 'DOC-1',
+    set: [{ property: 'title', current: 'old', proposed: 'new' }],
+    relate: [],
+  }
+
+  it('opens the proposal of an llm action', async () => {
+    runActionMock.mockResolvedValue({ proposal })
+    const w = await mountDetail(viewResponse({ 'action:notify': true }))
+    await desktopButton(w, 'Notify owner')!.trigger('click')
+    await flushPromises()
+    const dialog = w.findComponent(LLMProposalDialog)
+    expect(dialog.exists()).toBe(true)
+    expect(dialog.props('entityType')).toBe('document')
+  })
+
+  it('drops a proposal for an entity the user has left', async () => {
+    let answer: (v: unknown) => void = () => {}
+    runActionMock.mockReturnValue(new Promise((r) => (answer = r)))
+    const w = await mountDetail(viewResponse({ 'action:notify': true }))
+    await desktopButton(w, 'Notify owner')!.trigger('click')
+    await flushPromises()
+
+    const other = viewResponse({})
+    other.entry = { ...other.entry, id: 'DOC-2', _self: '/api/v1/documents/DOC-2@concept' }
+    fetchViewMock.mockResolvedValue(other)
+    await w.setProps({ entityId: 'DOC-2' })
+    await flushPromises()
+    answer({ proposal })
+    await flushPromises()
+    expect(w.findComponent(LLMProposalDialog).exists()).toBe(false)
+  })
+
+  it('closes the proposal when the user leaves the entity', async () => {
+    runActionMock.mockResolvedValue({ proposal })
+    const w = await mountDetail(viewResponse({ 'action:notify': true }))
+    await desktopButton(w, 'Notify owner')!.trigger('click')
+    await flushPromises()
+    expect(w.findComponent(LLMProposalDialog).exists()).toBe(true)
+
+    const other = viewResponse({})
+    other.entry = { ...other.entry, id: 'DOC-2', _self: '/api/v1/documents/DOC-2@concept' }
+    fetchViewMock.mockResolvedValue(other)
+    await w.setProps({ entityId: 'DOC-2' })
+    await flushPromises()
+    expect(w.findComponent(LLMProposalDialog).exists()).toBe(false)
   })
 })
