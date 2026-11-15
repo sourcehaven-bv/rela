@@ -712,6 +712,142 @@ or run from a same-origin context.
 proxy in `frontend/vite.config.ts` forwards `/api/events` and that you
 passed `--allowed-origin http://localhost:5173`.
 
+## Tenant mode (SaaS profile)
+
+`-tenant-mode` (or `RELA_TENANT_MODE=1`) is the switch for a hosted
+deployment, where one `rela-server-postgres` process serves many
+organizations. See [postgres-backend.md](postgres-backend.md#tenant-mode)
+for how tenants are found and provisioned. There is no second switch. Tenant
+mode also turns off or narrows each feature that is unsafe when tenants share
+one process and one project directory. Every restriction fails closed. The
+server logs each one once at startup.
+
+| Feature | In tenant mode | Pinned by |
+| --- | --- | --- |
+| Lua `http.*` | Strict address policy: only public addresses, plus the destinations in `-lua-http-allow`. Startup fails if the strict policy is not installed. | `TestTenantProfile`, `TestTenantProfile_ApplyFailsClosed`, `TestValidateTenantMode` |
+| `commands:` in `data-entry.yaml` | Off. `POST /api/command/...` answers 403 with code `commands_disabled_in_tenant_mode`. The UI offers no command buttons. | `TestCommandExecTenantModeRefused`, `TestBuildCommandAuthorizer_TenantMode`, `TestTenantMode_SaaSProfile` |
+| `/api/git/sync` | Off. Sync answers "git not configured" and the status reports git as unavailable. | `TestDisableGitSync`, `TestTenantMode_SaaSProfile` |
+| `.rela/secrets.yaml`, `.rela/ai.yaml` | Withheld unless `-tenant-shared-host-config` is set, also after a schema reload | `TestWithWithheldHostConfig`, `TestWithWithheldHostConfig_SurvivesReassembly`, `TestLoadContextOptions_Withheld`, `TestServices_RequestScriptsSeeWithheldHostConfig`, `TestNewWriterRuntime_RequireHostConfig`, `TestTenantMode_SaaSProfile` |
+| `.rela/mail.yaml` | Shared, with its SMTP password | `TestWithWithheldHostConfig` |
+| Remote MCP | Serves no Lua tool | `TestTenantMode_SaaSProfile`, `TestRemoteMCPDeps_UsesGatedHandles`, `TestNewServer_LuaToolsAreOptIn` |
+| Webhooks (`/hooks/...`) | A request without a verified assertion gets 401 | `TestTenantMode_SaaSProfile`, the "declarative hook without assertion" case in `internal/tenanthost` |
+| Scheduler | Not started by the server | `TestTenantScheduler_WritesOnlyIntoItsTenant` (the per-tenant CLI scheduler) |
+| CLI, CLI scheduler, stdio MCP | Same Lua HTTP policy and host config rules as the server | `TestApplyTenantProfile`, `TestTenantCLI_AppliesTheTenantProfile` |
+
+### Lua HTTP destinations
+
+Tenant mode sets the strict
+[destination address policy](lua-scripting.md#destination-address-policy).
+A script may reach public addresses only. Loopback, private ranges and the
+other special-purpose ranges are refused, so a script cannot reach the server
+itself or the operator's internal network. Proxy variables in the environment
+are ignored.
+
+To keep a named internal service reachable, pass `-lua-http-allow` (or
+`RELA_LUA_HTTP_ALLOW`). It takes a comma-separated list of CIDRs, IP
+addresses and `host:port` entries:
+
+```sh
+rela-server-postgres -tenant-mode -lua-http-allow '10.1.0.0/16,idp.internal:8443' ...
+```
+
+An entry that does not parse stops the server at startup. The allowlist
+never reopens an address that is always refused, such as the cloud metadata
+service. Outside tenant mode the flag is refused: there the policy is not
+strict, so an allowlist would suggest a restriction that does not exist.
+
+### Configured commands
+
+A configured command runs a shell script in the project directory, and every
+tenant shares that directory. In tenant mode the server therefore refuses
+every command, whatever `acl.yaml` grants. The refusal is a 403 with the error
+code `commands_disabled_in_tenant_mode`. The command list is empty, so the UI
+shows no command buttons. At startup the server logs how many configured
+commands it turned off.
+
+### Git sync
+
+Git sync commits and pushes the shared project directory, which in tenant
+mode holds no tenant data. The server never wires it up in tenant mode.
+`POST /api/git/sync` answers "git not configured", and the git status
+reports it as unavailable.
+
+### Operator secrets and AI
+
+`.rela/secrets.yaml` and `.rela/ai.yaml` hold the operator's own credentials.
+They are the same for every tenant. In tenant mode they are withheld by
+default:
+
+- In Lua, reading `rela.secrets.<name>` raises an error that says the secrets
+  are not shared in tenant mode and names `-tenant-shared-host-config`. This
+  holds for every script: automations, schedules, actions, document renders
+  and webhook scripts. A process in tenant mode refuses to start a script
+  that has no host config, instead of reading the shared `.rela` directory.
+  Every index raises, so `rela.secrets.x or "default"` fails too rather
+  than taking the default. `pairs(rela.secrets)` yields nothing and does
+  not raise.
+- `ai.*` does not raise. It returns `nil` and an error table of kind
+  `not_configured` with the same reason, so check the error.
+- Flows and connections that need a secret fail with that error. The token
+  broker reports that no connection is configured.
+- Remotes in `remotes.yaml` sync from the scheduler, which the server does
+  not start in tenant mode.
+
+To share them with every tenant, set `-tenant-shared-host-config` (or
+`RELA_TENANT_SHARED_HOST_CONFIG=1`). Do this only when every tenant may use
+those credentials: an operator-authored script then uses them on any tenant's
+data. Outside tenant mode the flag is refused.
+
+Mail is always shared. `.rela/mail.yaml` is the operator's outgoing mail
+service, and its SMTP password in `secrets.yaml` stays available to the mail
+transport even when the secrets are withheld from scripts.
+
+### Remote MCP, webhooks and the scheduler
+
+- Remote MCP (`-mcp`) never serves `lua_eval`, `lua_run` or `lua_list`. Tenant
+  mode does not change that; the test pins it for a tenant's MCP endpoint.
+- Webhooks need a verified assertion in tenant mode, like every other route
+  that reaches a tenant. An unauthenticated `POST /hooks/<name>` gets 401.
+- The server does not run the scheduler in tenant mode. Run one scheduler
+  per tenant with `rela-postgres --tenant <org_id> scheduler` (see
+  [postgres-backend.md](postgres-backend.md#operator-commands-in-tenant-mode)).
+  The CLI, the scheduler and stdio MCP need `--tenant` for every command that
+  touches data, and `rela-docs` refuses tenant mode.
+- The CLI applies the tenant profile to every command that opens a tenant,
+  the scheduler and stdio MCP included. Lua `http.*` is strict, with the
+  destinations in `RELA_LUA_HTTP_ALLOW`; an entry that does not parse fails
+  the command. `.rela/secrets.yaml` and `.rela/ai.yaml` are withheld unless
+  `RELA_TENANT_SHARED_HOST_CONFIG=1`. Stdio MCP offers `lua_eval` and
+  `lua_run` to the operator who started it, and those run under the same
+  profile.
+
+### Limits that apply in every mode
+
+These bounds do not depend on tenant mode:
+
+- Lua `http.*` always refuses link-local addresses, the cloud metadata
+  service, unspecified, multicast and broadcast addresses. It also refuses
+  them in IPv4-mapped, NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`),
+  IPv4-compatible and 6to4 form.
+- Every script has a timeout, a call-stack limit, a value-stack limit and a
+  16 MiB cap on the strings that `string.rep`, `string.format` and
+  `table.concat` build. Total script memory has no limit, so run the server
+  with `GOMEMLIMIT` or a container memory limit. See
+  [Resource limits](lua-scripting.md#resource-limits).
+
+Outside tenant mode, Lua can still reach loopback and private addresses.
+Single-team deployments call local services and internal APIs from scripts,
+and the Lua guide documents that.
+
+### Known gaps in tenant mode
+
+- **Queued mail can be lost on eviction.** The mail outbox is in memory, one
+  per resident tenant. When the host evicts an idle tenant, mail still queued
+  for it is lost.
+- **Flows of an evicted tenant wait.** The flow worker runs only while its
+  tenant is resident. A flow step that is due while the tenant is evicted
+  runs when the tenant is next opened.
+
 ## Residual risks and known limitations
 
 The following risks are **not** fully mitigated by the defenses above. They
@@ -758,6 +894,8 @@ The `commands` section of `data-entry.yaml` lets you wire up arbitrary
 shell scripts that run with your user privileges. Be careful what you put
 there. The `/api/command/` endpoint is `POST`-only and protected by the
 Origin allowlist, but the scripts themselves are still trusted code.
+In tenant mode every command is refused (see
+[Tenant mode](#tenant-mode-saas-profile)).
 
 Because a command is arbitrary shell execution, `rela-server` gates
 `/api/command/` by the active access-control mode and the bind:
@@ -796,9 +934,9 @@ with an `acl.yaml` never need this flag.
 > pass `--allow-unauthenticated-commands`. This is deliberate — the old
 > default exposed unauthenticated shell execution to the network.
 
-### Remote MCP exposes every tool except Lua
+### Remote MCP serves every tool except Lua, unless limited
 
-`-mcp` (see [mcp-server.md](mcp-server.md#remote-mcp-over-http)) serves the
+Remote MCP (see [mcp-server.md](mcp-server.md#remote-mcp-over-http)) serves the
 MCP tool set over HTTP, except the Lua tools (`lua_eval`, `lua_run`,
 `lua_list`). A script is caller-supplied code that runs in the server process,
 so a remote caller could use it to exhaust server resources. Lua tools are
@@ -808,8 +946,24 @@ authorized by the same ACL as the web API, and audited as the requesting
 principal — so a remote caller can do exactly what that person could do
 through the UI, no more.
 
-Apart from Lua there is no per-transport allowlist: a new tool added for local
-stdio use becomes remotely reachable the moment `-mcp` is on.
+Tenant mode serves the same tool set, so a tenant's remote MCP endpoint has
+no Lua tool either.
+
+The endpoint is on when no source turns it off and at least one turns it on.
+The sources are the `-mcp` flag, `RELA_MCP`, and `remote_mcp.enabled` in
+`.rela/config.yaml`. An off from any of them wins, so on an instance that must
+never serve MCP, write `remote_mcp.enabled: false` in its config file. A flag
+or variable added to the environment later cannot turn it back on. See
+[Turning it on and off](mcp-server.md#turning-it-on-and-off).
+
+`remote_mcp.tools` limits the tools the endpoint serves, with an `allow` list,
+a `deny` list, or both (see
+[Limiting the tools](mcp-server.md#limiting-the-tools)). An unknown tool name
+stops startup, so a typo cannot leave a tool on. Without a list, every tool
+except Lua is served, and a new tool added in a later release becomes remotely
+reachable on upgrade. Use `allow` for an endpoint that must not write. The
+filter does not limit reads: MCP resources and prompts still read what the
+caller's ACL allows, so `acl.yaml` remains the read boundary.
 
 Two related gaps, both deliberate and tracked:
 

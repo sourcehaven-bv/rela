@@ -18,6 +18,7 @@
 //   - canceled:     request was canceled (e.g., runtime shutting down)
 //   - network:      DNS, connection refused, TLS, read error, etc.
 //   - bad_response: response body exceeded the 10 MiB cap
+//   - blocked:      the [HTTPPolicy] refused the destination address
 //
 // # Request encodings
 //
@@ -65,44 +66,6 @@ const httpMaxResponseBytes = 10 * 1024 * 1024 // 10 MiB
 // script does not specify a per-request timeout.
 const httpDefaultTimeout = 30 * time.Second
 
-// newHTTPClient creates the shared HTTP client used by the http module.
-// Redirect following is disabled so scripts handle redirects explicitly.
-//
-// The Transport is explicitly bounded rather than reusing
-// http.DefaultTransport: rela's scheduler and MCP server are
-// long-running processes, and a script that fans out to many distinct
-// hosts would otherwise grow idle connections without bound.
-// MaxResponseHeaderBytes also caps header memory before the 10 MiB body
-// cap fires, defending against a hostile server returning thousands of
-// huge headers.
-func newHTTPClient() *http.Client {
-	return &http.Client{
-		Timeout: httpDefaultTimeout,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-		Transport: &http.Transport{
-			Proxy:                  http.ProxyFromEnvironment,
-			MaxIdleConns:           100,
-			MaxIdleConnsPerHost:    10,
-			MaxConnsPerHost:        50,
-			IdleConnTimeout:        90 * time.Second,
-			TLSHandshakeTimeout:    10 * time.Second,
-			ExpectContinueTimeout:  1 * time.Second,
-			ResponseHeaderTimeout:  30 * time.Second,
-			MaxResponseHeaderBytes: 1 << 20, // 1 MiB
-			ForceAttemptHTTP2:      true,
-		},
-	}
-}
-
-// httpClient is the shared HTTP client for all Lua HTTP requests within
-// a process. Connection pooling is reused across requests. Process-global
-// rather than per-Runtime so that connection-pooling benefits hold even
-// when scripts run in short-lived runtimes (CLI script invocations,
-// scheduler ticks, MCP tool calls).
-var httpClient = newHTTPClient()
-
 // httpBindings implements the http.* module bindings: request plus the
 // per-method convenience functions. A type of its own rather than more
 // methods on [Runtime] (the urlHelpers rationale in urls.go): these
@@ -113,7 +76,8 @@ var httpClient = newHTTPClient()
 // registerBindings on Runtime registers this module only when caps.HTTP
 // was granted.
 //
-// Nil: the zero value is ready to use and sends through the shared client.
+// Nil: the zero value is ready to use and sends through the shared client,
+// which enforces the process [HTTPPolicy].
 type httpBindings struct {
 	// client is the runtime's [WithHTTPClient] client.
 	//
@@ -130,7 +94,8 @@ func (h httpBindings) do(req *http.Request) (*http.Response, error) {
 	if h.client != nil {
 		return h.client.Do(req) //nolint:gosec // G704: script-chosen URL behind the operator-granted http capability.
 	}
-	return httpClient.Do(req) //nolint:gosec // G704: script-chosen URL behind the operator-granted http capability.
+	client := sharedHTTPClient.Load()
+	return client.Do(req) //nolint:gosec // G704: script-chosen URL behind the operator-granted http capability.
 }
 
 // registerHTTPModule installs the top-level `http` global with `request`
@@ -777,6 +742,13 @@ func classifyHTTPError(err error) *httpError {
 	var uerr *url.Error
 	if errors.As(err, &uerr) {
 		uerr.URL = redactURL(uerr.URL)
+	}
+	// A refused dial is reported without the transport's text, which names
+	// the resolved address. The script named the host; what it resolved to
+	// may be internal.
+	if errors.Is(err, errDestinationNotAllowed) {
+		msg := errDestinationNotAllowed.Error()
+		return &httpError{Kind: "blocked", Message: msg, Cause: errDestinationNotAllowed}
 	}
 	msg := err.Error()
 

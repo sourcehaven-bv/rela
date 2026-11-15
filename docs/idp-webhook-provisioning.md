@@ -160,10 +160,23 @@ goes:
 The action receives every event outside `organization.*`, including event types
 rela does not know. The action decides which ones to act on.
 
-Organization events are acknowledged and logged; tenant provisioning and erasure
-will act on them later. The IdP does not redeliver an acknowledged event, so an
-event received before then is not replayed. An `organization.deleted` is logged
-at warning level; erase that tenant by hand.
+Organization events are acknowledged and logged. In tenant mode with
+`-tenant-provision=webhook` or `lazy`, an `organization.created` for an org
+that has no tenant creates its tenant first: 200 when it is ready, 202 when it
+is still running after 10 seconds, 502 on a failure so the IdP retries, 503
+over the rate cap, and 503 with `Retry-After` when the create needs an
+operator, so the IdP keeps the event until the operator has acted. An `organization.created` for an erased org does not
+recreate it: it is acknowledged and logged at warning level, and only
+`rela-server tenant create -recreate` brings the org back. With the default
+`-tenant-provision=off` the event is acknowledged and dropped. See "Provisioning tenants automatically" in
+[postgres-backend.md](postgres-backend.md). The IdP does not redeliver an
+acknowledged event, so an event received before provisioning was on is not
+replayed. In tenant mode the IdP webhook needs `-tenant-idp-org-api`. An
+`organization.deleted` suspends the org's tenant and is logged at warning
+level; erase that tenant by hand. An `organization.updated` makes the server
+read the org's status from the IdP and suspend or resume its tenant to match;
+an org the IdP no longer knows is suspended. See "Suspension follows the IdP"
+in [postgres-backend.md](postgres-backend.md) for the responses.
 
 A `membership.*` event without `org_id` used to reach the action. It is now
 rejected with 400. The reference action already failed without `org_id`.
@@ -208,7 +221,7 @@ model and the revocation caveat.
 | Operator API answers non-200 (404 included) or bad JSON | 502 so Pratique retries, stored roles unchanged; for `membership.deleted`, roles cleared; 200 |
 | Bad / unsigned / wrong-audience body | 401, action not run |
 | Missing a claim the event requires (see the table in section 5) | 400, nothing runs |
-| Valid `organization.*` event | acknowledged and logged, action not run; 200 |
+| Valid `organization.*` event | acknowledged and logged, action not run; 200 (tenant mode: see "Suspension follows the IdP" in [postgres-backend.md](postgres-backend.md)) |
 | Redelivered webhook (same `jti`) | deduped, action not re-run; 200 |
 | Action fails, or returns `message_type = "error"` (IdP fetch error, etc.) | 502, stored roles unchanged, `jti` forgotten so a retry runs again |
 | Action returns `asserted_roles` | roles stored for the verified subject; 200 |

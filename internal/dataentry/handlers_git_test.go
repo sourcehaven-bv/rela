@@ -194,3 +194,32 @@ func TestGitStatusResponse_ConflictFiles(t *testing.T) {
 		"attachments/TKT-001/screenshot/a.png", "schema.yaml", "scripts/hook.lua",
 	}, shown.ConflictFiles)
 }
+
+// TestDisableGitSync pins tenant mode's git switch: after DisableGitSync a
+// sync by a principal who may sync answers as when git is not configured,
+// commits nothing, and the status reports git as unavailable.
+func TestDisableGitSync(t *testing.T) {
+	app := newTestAppV1(t)
+	setTestACL(t, app, acl.NopACL{})
+	dir := gitSyncRepo(t)
+	app.gitOps = git.NewOps(dir, git.Config{Enabled: true, Branch: "master"})
+	before := gitCommitCount(t, dir)
+
+	require.True(t, DisableGitSync(app), "git sync was on")
+	require.False(t, DisableGitSync(app), "a second call reports it off")
+
+	ctx := withReadGate(context.Background(), fakeGate{holdsPermission: true})
+	rec := httptest.NewRecorder()
+	app.handleGitSync(rec, httptest.NewRequest(http.MethodPost, "/api/v1/_git/sync", http.NoBody).WithContext(ctx))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var sync GitSyncResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sync))
+	require.Equal(t, "git not configured", sync.Error)
+	require.Zero(t, gitCommitCount(t, dir)-before, "a disabled sync must not commit")
+
+	rec = httptest.NewRecorder()
+	app.handleGitStatus(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_git/status", http.NoBody).WithContext(ctx))
+	var status GitStatusResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &status))
+	require.False(t, status.Available)
+}

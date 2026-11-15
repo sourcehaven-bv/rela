@@ -1590,6 +1590,10 @@ type options struct {
 	// directory.
 	hostConfig func(state.KV) (HostConfig, error)
 
+	// withheld, when non-empty, withholds ai.yaml and the secrets of the
+	// host config; see [WithWithheldHostConfig].
+	withheld string
+
 	// backgroundAutomationJobs runs `background: true` automation actions
 	// on the job queue instead of in the foreground.
 	backgroundAutomationJobs bool
@@ -1681,6 +1685,19 @@ func WithDatabaseURL(dsn string) Option {
 // The desktop uses it to read secrets from the OS keychain.
 func WithHostConfig(build func(state.KV) (HostConfig, error)) Option {
 	return func(o *options) { o.hostConfig = build }
+}
+
+// WithWithheldHostConfig withholds the host's ai.yaml and secrets from the
+// project, for a host that serves many projects with one .rela directory
+// (tenant mode). Lua runtimes, flows and the token broker built from these
+// services then see [lua.ErrHostConfigWithheld] with reason, so ai.* and
+// rela.secrets fail with that reason instead of reading the operator's
+// credentials. mail.yaml and the mail outbox stay served: mail is the
+// host's transport, and its SMTP password stays with it.
+//
+// Empty: ignored — the host config is shared as usual.
+func WithWithheldHostConfig(reason string) Option {
+	return func(o *options) { o.withheld = reason }
 }
 
 // resolveDatabaseURL decides which DSN [Discover] hands to [New]: an explicit
@@ -2297,6 +2314,9 @@ func (b *SharedBase) IsReassembly() bool { return b.reassembly }
 // It carries prev's store schema refresher too: the caller applies the new
 // schema to the store with [RefreshStoreSchema] once the successor is in
 // force.
+// It keeps prev's [WithWithheldHostConfig] too. A reload builds its base
+// from the config alone, and withholding must not end with it: stdio MCP
+// in tenant mode reloads on every schema edit.
 //
 // Nil: rejected by use — prev is dereferenced.
 func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
@@ -2311,6 +2331,9 @@ func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
 	next.dueWake = prev.dueWake
 	if prev.base != nil {
 		next.channelFiles = prev.base.channelFiles
+		if next.opts.withheld == "" {
+			next.opts.withheld = prev.base.opts.withheld
+		}
 	}
 	next.storeSchema = prev.storeSchema
 	return &next
@@ -2372,15 +2395,21 @@ func NewSharedBase(cfg Config, opts ...Option) (*SharedBase, error) {
 // point may render.
 // hostConfigFor returns the host config for one assembled store: the
 // [WithHostConfig] source, else the project's .rela directory.
+//
+// Under [WithWithheldHostConfig] the source is wrapped in a [withheldHost].
 func (b *SharedBase) hostConfigFor(stateKV state.KV) (lua.HostConfig, error) {
+	var host lua.HostConfig = hostconfig.Dir(b.cfg.Paths.CacheDir)
 	if b.opts.hostConfig != nil {
-		host, err := b.opts.hostConfig(stateKV)
+		h, err := b.opts.hostConfig(stateKV)
 		if err != nil {
 			return nil, fmt.Errorf("host config: %w", err)
 		}
-		return host, nil
+		host = h
 	}
-	return hostconfig.Dir(b.cfg.Paths.CacheDir), nil
+	if b.opts.withheld != "" {
+		host = withheldHost{inner: host, err: fmt.Errorf("%s: %w", b.opts.withheld, lua.ErrHostConfigWithheld)}
+	}
+	return host, nil
 }
 
 func prepare(cfg Config, opts []Option) (*SharedBase, error) {
@@ -2775,7 +2804,7 @@ func startBackgroundServices(
 	// here: nothing can enqueue until the declarative layer (TKT-U2R7GU)
 	// lands, and storing a handle no code reads would look wired when it is
 	// not. Only the stop function is retained, because Close genuinely uses it.
-	mailRuntime, mailStop := startMailRuntime(host, base.opts.seams.mail)
+	mailRuntime, mailStop := startMailRuntime(mailHost(host), base.opts.seams.mail)
 
 	return backgroundServices{
 		gcStop:         gcStop,
@@ -3055,7 +3084,7 @@ func assemble(
 	// holds for a new realtime Local, whose hint sender runs from the start.
 	//
 	// Before automation: add_to_pile actions push through refs.piles.
-	refs, err := buildRefHolders(base, st, overrides, aclDeclarative, fieldPol.redactor, resolvedACL)
+	refs, err := buildRefHolders(base, st, overrides, aclDeclarative, fieldPol.redactor, resolvedACL, stateKV)
 	defer func() { abandonFailedAssembly(base, jobQueue, refs.realtimeLocal, retErr) }()
 	if err != nil {
 		return nil, err
@@ -3084,7 +3113,7 @@ func assemble(
 	// comment fanout wrapping the alias rewriter.
 	attachLocker := base.attachmentLocker(st)
 	fanout := newAliasFanout(aliases, refs.comments, refs.piles, refs.leases, autoJobs,
-		refs.channelAliases, refs.realtimeLocal, newFlowRunAliases(refs.flowRuns))
+		refs.channelAliases, refs.realtimeLocal, newFlowRunAliases(refs.flowRuns), refs.idpEraser)
 	mgr, err := buildEntityManager(base, st, fanout, templater,
 		resolvedACL, autoEngine, cascadeRunner, readDeps, pileWriterFor(refs.piles), versions, tw, computedSet,
 		attachLocker, fieldPol.gate, refs.guardInputs())
@@ -3205,11 +3234,7 @@ func finishAssembly(
 	if s.flowWorker, err = buildFlowWorker(s.base, s.store, flowEngine); err != nil {
 		return nil, fmt.Errorf("flows: %w", err)
 	}
-	idpRoles, err := buildIDPRoles(s.base, s.store, s.stateKV)
-	if err != nil {
-		return nil, err
-	}
-	s.idpRoles = idpRoles
+	s.idpRoles = refs.idpRoles
 	// The channel service promotes through the entity manager, so it is
 	// built once the manager exists.
 	svc, err := buildRealtimeService(

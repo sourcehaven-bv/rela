@@ -66,11 +66,11 @@ func TestProvisioner_Lifecycle(t *testing.T) {
 	if err := pv.r.Check(ctx); err == nil || !strings.Contains(err.Error(), "tenant create") {
 		t.Fatalf("Check before any tenant = %v; want a pointer at tenant create", err)
 	}
-	a, err := pv.p.Create(ctx, "org-a", false)
+	a, err := pv.p.Create(ctx, "org-a", tenant.CreateOptions{})
 	if err != nil {
 		t.Fatalf("Create(org-a): %v", err)
 	}
-	b, err := pv.p.Create(ctx, "org-b", false)
+	b, err := pv.p.Create(ctx, "org-b", tenant.CreateOptions{})
 	if err != nil {
 		t.Fatalf("Create(org-b): %v", err)
 	}
@@ -106,7 +106,7 @@ func TestProvisioner_Lifecycle(t *testing.T) {
 		t.Errorf("RefuseTenantDatabase(base DSN) = %v", err)
 	}
 
-	if _, err = pv.p.Create(ctx, "org-a", false); !errors.Is(err, tenant.ErrTenantExists) {
+	if _, err = pv.p.Create(ctx, "org-a", tenant.CreateOptions{}); !errors.Is(err, tenant.ErrTenantExists) {
 		t.Errorf("second Create = %v, want ErrTenantExists", err)
 	}
 
@@ -116,6 +116,12 @@ func TestProvisioner_Lifecycle(t *testing.T) {
 	}
 	if err = pv.p.Suspend(ctx, "org-a"); err != nil {
 		t.Errorf("second Suspend: %v", err)
+	}
+	var exists *tenant.ExistsError
+	if _, err = pv.p.Create(ctx, "org-a", tenant.CreateOptions{}); !errors.As(err, &exists) ||
+		exists.Status != tenant.StatusSuspended {
+
+		t.Errorf("Create of a suspended tenant = %v, want an ExistsError with status suspended", err)
 	}
 	if _, err = pv.r.Resolve(ctx, "org-a"); !errors.Is(err, tenant.ErrUnknownTenant) {
 		t.Errorf("Resolve(suspended) = %v", err)
@@ -166,15 +172,18 @@ func TestProvisioner_Lifecycle(t *testing.T) {
 	if pv.schemaExists(t, a.Schema) {
 		t.Error("the erased tenant's schema survived")
 	}
-	if _, err := pv.r.Lookup(ctx, "org-a"); !errors.Is(err, tenant.ErrUnknownTenant) {
-		t.Errorf("Lookup(erased) = %v, want ErrUnknownTenant", err)
+	if rec, err := pv.r.Lookup(ctx, "org-a"); err != nil || rec.Status != tenant.StatusErased {
+		t.Errorf("Lookup(erased) = %+v, %v; want the erased tombstone", rec, err)
 	}
 	if _, err := pv.r.Resolve(ctx, "org-b"); err != nil || !pv.schemaExists(t, b.Schema) {
 		t.Errorf("erasing org-a disturbed org-b: %v", err)
 	}
-	// A recreated org starts empty.
-	if _, err := pv.p.Create(ctx, "org-a", false); err != nil {
-		t.Errorf("Create after erase: %v", err)
+	// Only an explicit recreate makes the org a tenant again.
+	if _, err := pv.p.Create(ctx, "org-a", tenant.CreateOptions{}); !errors.Is(err, tenant.ErrTenantErased) {
+		t.Errorf("Create after erase = %v, want ErrTenantErased", err)
+	}
+	if _, err := pv.p.Create(ctx, "org-a", tenant.CreateOptions{Recreate: true}); err != nil {
+		t.Errorf("Create -recreate after erase: %v", err)
 	}
 }
 
@@ -184,7 +193,7 @@ func TestProvisioner_Lifecycle(t *testing.T) {
 func TestProvisioner_CollisionRefused(t *testing.T) {
 	pv := newProvisioned(t)
 	ctx := t.Context()
-	if _, err := pv.p.Create(ctx, "org-a", false); err != nil {
+	if _, err := pv.p.Create(ctx, "org-a", tenant.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	schemaX, err := tenant.SchemaFor("org-x")
@@ -197,7 +206,7 @@ func TestProvisioner_CollisionRefused(t *testing.T) {
 		"VALUES ($1, 'someone-else', 'active')", schemaX); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pv.p.Create(ctx, "org-x", false); !errors.Is(err, tenant.ErrSchemaCollision) {
+	if _, err := pv.p.Create(ctx, "org-x", tenant.CreateOptions{}); !errors.Is(err, tenant.ErrSchemaCollision) {
 		t.Errorf("Create(colliding) = %v, want ErrSchemaCollision", err)
 	}
 	if _, err := pv.r.Resolve(ctx, "org-x"); !errors.Is(err, tenant.ErrSchemaCollision) {
@@ -220,13 +229,13 @@ func TestProvisioner_ExistingSchemaNeedsAdopt(t *testing.T) {
 	if _, err := pv.conn.Exec(ctx, "CREATE SCHEMA "+pgx.Identifier{schema}.Sanitize()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pv.p.Create(ctx, "org-old", false); !errors.Is(err, tenant.ErrSchemaExists) {
+	if _, err := pv.p.Create(ctx, "org-old", tenant.CreateOptions{}); !errors.Is(err, tenant.ErrSchemaExists) {
 		t.Fatalf("Create over an existing schema = %v, want ErrSchemaExists", err)
 	}
 	if _, err := pv.r.Lookup(ctx, "org-old"); !errors.Is(err, tenant.ErrUnknownTenant) {
 		t.Errorf("a refused create left a control row: %v", err)
 	}
-	if _, err := pv.p.Create(ctx, "org-old", true); err != nil {
+	if _, err := pv.p.Create(ctx, "org-old", tenant.CreateOptions{Adopt: true}); err != nil {
 		t.Fatalf("Create -adopt: %v", err)
 	}
 	if _, err := pv.r.Resolve(ctx, "org-old"); err != nil {
@@ -238,7 +247,7 @@ func TestProvisioner_ExistingSchemaNeedsAdopt(t *testing.T) {
 func TestProvisioner_RefusesBadOrgIDs(t *testing.T) {
 	pv := newProvisioned(t)
 	for _, org := range []string{"", "a\nb", strings.Repeat("x", 300)} {
-		if _, err := pv.p.Create(t.Context(), org, false); err == nil {
+		if _, err := pv.p.Create(t.Context(), org, tenant.CreateOptions{}); err == nil {
 			t.Errorf("Create(%q) succeeded", org)
 		}
 	}
