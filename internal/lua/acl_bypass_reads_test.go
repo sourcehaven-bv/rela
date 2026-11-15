@@ -94,10 +94,23 @@ func (g gatedReader) ListRelations(ctx context.Context, q store.RelationQuery) i
 	}
 }
 
-// failingElevatedReader yields one good row and then an error, to exercise
-// the mid-iteration failure path. The panic after the failing yield is the
-// point: if s.RaiseError did NOT unwind the range loop, the iterator would be
-// resumed and the panic would fire.
+// ListRelationsPage is [gatedReader.ListRelations] as one page of the raw
+// store, with the edges touching SECRET-1 dropped.
+func (g gatedReader) ListRelationsPage(
+	ctx context.Context, q store.RelationQuery,
+) (store.Page[*entity.Relation], error) {
+	page, err := g.raw.ListRelationsPage(ctx, q)
+	if err != nil {
+		return page, err
+	}
+	page.Items = slices.DeleteFunc(page.Items, func(rel *entity.Relation) bool {
+		return rel.From == "SECRET-1" || rel.To == "SECRET-1"
+	})
+	return page, nil
+}
+
+// failingElevatedReader fails every page read, the read the elevated list
+// bindings make (TKT-P9QMEVI).
 type failingElevatedReader struct{ raw store.Store }
 
 func (f failingElevatedReader) GetAddress(ctx context.Context, addr string) (*entity.Entity, error) {
@@ -108,12 +121,7 @@ func (f failingElevatedReader) ListEntities(
 	context.Context, store.EntityQuery,
 ) iter.Seq2[*entity.Entity, error] {
 	return func(yield func(*entity.Entity, error) bool) {
-		if !yield(&entity.Entity{ID: "A", Type: "ticket"}, nil) {
-			return
-		}
 		yield(nil, errors.New("synthetic store failure"))
-		panic("iterator resumed after RaiseError -- the longjmp did not unwind " +
-			"the range loop, so the binding is leaking an in-flight iterator")
 	}
 }
 
@@ -121,6 +129,18 @@ func (f failingElevatedReader) ListRelations(
 	context.Context, store.RelationQuery,
 ) iter.Seq2[*entity.Relation, error] {
 	return func(func(*entity.Relation, error) bool) {}
+}
+
+func (f failingElevatedReader) ListEntitiesPage(
+	context.Context, store.EntityQuery,
+) (store.Page[*entity.Entity], error) {
+	return store.Page[*entity.Entity]{}, errors.New("synthetic store failure")
+}
+
+func (f failingElevatedReader) ListRelationsPage(
+	context.Context, store.RelationQuery,
+) (store.Page[*entity.Relation], error) {
+	return store.Page[*entity.Relation]{}, errors.New("synthetic store failure")
 }
 
 // brokenElevatedReader fails every GetAddress with an INFRASTRUCTURE error
@@ -142,6 +162,18 @@ func (brokenElevatedReader) ListRelations(
 	context.Context, store.RelationQuery,
 ) iter.Seq2[*entity.Relation, error] {
 	return func(func(*entity.Relation, error) bool) {}
+}
+
+func (brokenElevatedReader) ListEntitiesPage(
+	context.Context, store.EntityQuery,
+) (store.Page[*entity.Entity], error) {
+	return store.Page[*entity.Entity]{}, nil
+}
+
+func (brokenElevatedReader) ListRelationsPage(
+	context.Context, store.RelationQuery,
+) (store.Page[*entity.Relation], error) {
+	return store.Page[*entity.Relation]{}, nil
 }
 
 // recordingElevationRecorder captures the post-closure audit
@@ -567,18 +599,11 @@ func TestElevatedRead_DeniedReadIsNotAudited(t *testing.T) {
 	}
 }
 
-// TestElevatedRead_StoreErrorMidIterationUnwindsCleanly pins two properties
-// of the failure path that are easy to get wrong together.
-//
-// The elevated list bindings call s.RaiseError from INSIDE a range-over-func
-// loop -- unlike the gated bindings, which `break` on an iterator error. That
-// is a longjmp out of a running iterator, so this pins that (a) the range loop
-// really unwinds rather than resuming the iterator (the fixture panics if it
-// is resumed), (b) the store error reaches the script instead of being
-// silently swallowed into a short result -- a truncated list that looked
-// complete would be worse than an error -- and (c) the audit defer still
-// fires, so a read that partially succeeded before failing is still recorded.
-func TestElevatedRead_StoreErrorMidIterationUnwindsCleanly(t *testing.T) {
+// TestElevatedRead_StoreErrorRaisesAndAudits pins the failure path of an
+// elevated list read: (a) the store error reaches the script instead of a
+// short result that looks complete, and (b) the audit defer still fires, so
+// the attempted read is recorded.
+func TestElevatedRead_StoreErrorRaisesAndAudits(t *testing.T) {
 	t.Parallel()
 	ws := newMockWorkspace(t)
 	rec := &recordingElevationRecorder{}
@@ -593,15 +618,15 @@ func TestElevatedRead_StoreErrorMidIterationUnwindsCleanly(t *testing.T) {
 
 	err := r.RunString(`rela.bypass_acl(function(admin) admin.list_entities("ticket") end)`)
 	if err == nil {
-		t.Fatal("a store failure mid-iteration was swallowed -- the script got a " +
+		t.Fatal("a store failure was swallowed -- the script got a " +
 			"TRUNCATED list it would read as complete")
 	}
 	if !strings.Contains(err.Error(), "synthetic store failure") {
 		t.Errorf("error = %v, want it to carry the underlying store failure", err)
 	}
 	if len(rec.calls) != 1 {
-		t.Errorf("got %d audit records, want 1 -- the read partially succeeded "+
-			"before failing, so it must still be recorded", len(rec.calls))
+		t.Errorf("got %d audit records, want 1 -- the read was attempted, "+
+			"so it must still be recorded", len(rec.calls))
 	}
 }
 
