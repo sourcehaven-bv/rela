@@ -67,6 +67,16 @@ func TestScopedHeaders_NarrowingsApplyToBothVerdictBranches(t *testing.T) {
 			}},
 			want: nil,
 		},
+		{
+			name: "ByIDs narrows to the listed ids",
+			req:  scopeRequest{Type: "ticket", ByIDs: true, IDs: []string{"TKT-mine"}},
+			want: []string{"TKT-mine"},
+		},
+		{
+			name: "ByIDs with no ids reads nothing",
+			req:  scopeRequest{Type: "ticket", ByIDs: true},
+			want: nil,
+		},
 	}
 
 	for _, tc := range tests {
@@ -384,5 +394,134 @@ func TestScopedHeaders_ScopePropsAreASuperset(t *testing.T) {
 	if unpushed := idsOf(context.Background(), t, app, acl.ReadQueryResult{AllowAll: true}, req); strings.Join(unpushed, ",") != strings.Join(got, ",") {
 		t.Errorf("pushed=%v unpushed=%v — the prefilter changed the answer, so it is not a superset",
 			got, unpushed)
+	}
+}
+
+// TestScopedHeaders_ByIDsIsTheFullReadRestricted pins the id narrowing
+// (TKT-F2EJQY8): reading by ids returns exactly the rows of the full read
+// whose id is listed, on both verdict branches, so the ids can only narrow.
+// ByIDs with no ids reads nothing; reading it as "no narrowing" would serve
+// the whole type.
+func TestScopedHeaders_ByIDsIsTheFullReadRestricted(t *testing.T) {
+	app := newTestAppV1(t)
+	for _, e := range []*entity.Entity{
+		{ID: "TKT-a", Type: "ticket", Properties: map[string]any{"status": "open"}},
+		{ID: "TKT-b", Type: "ticket", Properties: map[string]any{"status": "closed"}},
+		{ID: "TKT-c", Type: "ticket", Properties: map[string]any{"status": "open"}},
+		{ID: "F-1", Type: "feature", Properties: map[string]any{"status": "open"}},
+	} {
+		seedEntity(app, e)
+	}
+	openOnly := acl.ReadQueryResult{Query: &store.GraphQuery{
+		EntityType: "ticket",
+		Props:      []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}},
+	}}
+	allowAll := acl.ReadQueryResult{AllowAll: true}
+	closedProp := []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "closed", Scalar: true}}
+
+	tests := []struct {
+		name string
+		rqr  acl.ReadQueryResult
+		req  scopeRequest
+		want []string
+	}{
+		{"allow-all", allowAll, scopeRequest{Type: "ticket", ByIDs: true, IDs: []string{"TKT-c", "TKT-b"}},
+			[]string{"TKT-b", "TKT-c"}},
+		{"verdict drops a listed id", openOnly,
+			scopeRequest{Type: "ticket", ByIDs: true, IDs: []string{"TKT-a", "TKT-b"}}, []string{"TKT-a"}},
+		{"props drop a listed id", allowAll,
+			scopeRequest{Type: "ticket", Props: closedProp, ByIDs: true, IDs: []string{"TKT-a", "TKT-b"}},
+			[]string{"TKT-b"}},
+		{"another type's id is not read", allowAll,
+			scopeRequest{Type: "ticket", ByIDs: true, IDs: []string{"F-1", "TKT-a"}}, []string{"TKT-a"}},
+		{"unknown id", allowAll, scopeRequest{Type: "ticket", ByIDs: true, IDs: []string{"TKT-nope"}}, nil},
+		{"no ids reads nothing", allowAll, scopeRequest{Type: "ticket", ByIDs: true}, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			got := idsOf(ctx, t, app, tc.rqr, tc.req)
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Fatalf("ids = %v, want %v", got, tc.want)
+			}
+			// The same rows as the full read restricted to the ids.
+			full := tc.req
+			full.ByIDs, full.IDs = false, nil
+			listed := make(map[string]bool, len(tc.req.IDs))
+			for _, id := range tc.req.IDs {
+				listed[id] = true
+			}
+			var want []string
+			for _, id := range idsOf(ctx, t, app, tc.rqr, full) {
+				if listed[id] {
+					want = append(want, id)
+				}
+			}
+			if strings.Join(got, ",") != strings.Join(want, ",") {
+				t.Fatalf("by ids = %v, full read restricted = %v", got, want)
+			}
+		})
+	}
+}
+
+// TestScopedHeaders_ByIDsKeepsTheWorldsFace pins the id read on a faced
+// type: the world picks each id's face exactly as the full read does, and a
+// face allowlist that excludes the first face in the chain falls through to
+// the next one rather than dropping the id.
+func TestScopedHeaders_ByIDsKeepsTheWorldsFace(t *testing.T) {
+	app, _ := facedApp(t, nil)
+	ctx := context.Background()
+	// facedApp seeds POL-1 at draft and published; POL-2 exists as a draft.
+	if err := app.store.CreateEntity(ctx, &entity.Entity{
+		ID: "POL-2", Type: "policy", Face: "draft", Properties: map[string]any{"title": "d"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx = withWorld(ctx, worldHandle{name: "published", scope: rankedPolicyWorld()})
+	gated := acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "policy"}}
+	allowAll := acl.ReadQueryResult{AllowAll: true}
+
+	faceRefs := func(t *testing.T, rqr acl.ReadQueryResult, req scopeRequest) string {
+		t.Helper()
+		headers, _, err := scopedHeaders(ctx, app.Services(), rqr, req)
+		if err != nil {
+			t.Fatalf("scopedHeaders: %v", err)
+		}
+		refs := make([]string, 0, len(headers))
+		for _, h := range headers {
+			refs = append(refs, h.ID+"@"+h.Face.String())
+		}
+		return strings.Join(refs, ",")
+	}
+	for _, tc := range []struct {
+		name  string
+		faces []entity.Face
+		ids   []string
+		want  string
+	}{
+		{"the world's first face", nil, []string{"POL-1", "POL-2"}, "POL-1@published,POL-2@draft"},
+		{"one id of two", nil, []string{"POL-1"}, "POL-1@published"},
+		{"an allowlist falls through the chain", []entity.Face{"draft"}, []string{"POL-1"}, "POL-1@draft"},
+	} {
+		for name, rqr := range map[string]acl.ReadQueryResult{"allow-all": allowAll, "gated": gated} {
+			t.Run(tc.name+"/"+name, func(t *testing.T) {
+				req := scopeRequest{Type: "policy", Faces: tc.faces, ByIDs: true, IDs: tc.ids}
+				if got := faceRefs(t, rqr, req); got != tc.want {
+					t.Fatalf("by ids = %s, want %s", got, tc.want)
+				}
+				full := scopeRequest{Type: "policy", Faces: tc.faces}
+				var restricted []string
+				for ref := range strings.SplitSeq(faceRefs(t, rqr, full), ",") {
+					for _, id := range tc.ids {
+						if strings.HasPrefix(ref, id+"@") {
+							restricted = append(restricted, ref)
+						}
+					}
+				}
+				if got, want := faceRefs(t, rqr, req), strings.Join(restricted, ","); got != want {
+					t.Fatalf("by ids = %s, full read restricted = %s", got, want)
+				}
+			})
+		}
 	}
 }

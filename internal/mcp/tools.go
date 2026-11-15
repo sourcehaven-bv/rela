@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"maps"
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -33,6 +34,8 @@ func (s *Server) registerTools() {
 	// Comment tools, when the project enables commenting; list_comments
 	// joins reads.
 	s.registerCommentTools(reads)
+	// A read the tool filter kept out must not be reachable through watch.
+	maps.DeleteFunc(reads, func(_ string, h mcpgo.ToolHandler) bool { return h == nil })
 	s.watch = newWatchHandler(s, reads)
 	addTool(s, toolWatch(s.watch.names), s.watch.handle)
 	addTool(s, toolCreateRelation(), s.handleCreateRelation)

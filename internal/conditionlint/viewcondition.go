@@ -34,6 +34,11 @@ const (
 	// keyed by dataentryconfig.TraverseConditionID: one program per entity
 	// type the step can collect.
 	ViewConditionTraverse ViewConditionKind = "traverse"
+
+	// ViewConditionLLMCandidate is the `candidates:` of an llm action's relate
+	// output (TKT-4USH1HO), keyed by dataentryconfig.LLMCandidateConditionID:
+	// one program per target type of the relation.
+	ViewConditionLLMCandidate ViewConditionKind = "llm_candidates"
 )
 
 // ViewConditionKey identifies one compiled view condition.
@@ -97,6 +102,7 @@ func CompileViewConditions(
 		}
 	}
 	compileActionConditions(ev, meta, cfg, programs, &problems)
+	compileLLMCandidateConditions(ev, meta, cfg, programs, &problems)
 	compileTraverseConditions(ev, meta, cfg, programs, &problems)
 
 	sort.Strings(problems)
@@ -142,6 +148,52 @@ func compileActionConditions(
 				continue
 			}
 			programs[key] = prog
+		}
+	}
+}
+
+// compileLLMCandidateConditions compiles the `candidates:` of each llm
+// action's relate output once per target type of its relation.
+//
+// `related(...)` is refused, as for an action's when: the candidate list is
+// read once per run, and a traversal per candidate would multiply its cost.
+// Every target type must compile, so a candidate of any type is judged.
+func compileLLMCandidateConditions(
+	ev *predicatefns.Evaluator, meta *metamodel.Metamodel, cfg *dataentryconfig.Config,
+	programs map[ViewConditionKey]*predicate.Program, problems *[]string,
+) {
+	for id, a := range cfg.Actions {
+		if a.LLM == nil {
+			continue
+		}
+		for i, r := range a.LLM.Outputs.Relate {
+			if r.Candidates == "" {
+				continue
+			}
+			rd, ok := meta.GetRelationDef(r.Relation)
+			if !ok {
+				continue // reported by validateActions
+			}
+			for _, et := range rd.To {
+				if _, ok := meta.GetEntityDef(et); !ok {
+					continue
+				}
+				key := ViewConditionKey{ViewConditionLLMCandidate, dataentryconfig.LLMCandidateConditionID(id, i, et)}
+				prog, err := ev.CompileWithCurrentUser(et, r.Candidates)
+				if err != nil {
+					*problems = append(*problems, fmt.Sprintf(
+						"actions[%q]: llm.outputs.relate[%d].candidates does not compile against entity type %q: %v",
+						id, i, et, err))
+					continue
+				}
+				if len(prog.Traversals()) > 0 {
+					*problems = append(*problems, fmt.Sprintf(
+						"actions[%q]: %s(...) is not available in llm.outputs.relate[%d].candidates; it may only "+
+							"test the candidate's own properties", id, predicate.FuncRelated, i))
+					continue
+				}
+				programs[key] = prog
+			}
 		}
 	}
 }
@@ -294,6 +346,8 @@ func entityTypeFor(cfg *dataentryconfig.Config, key ViewConditionKey) string {
 	case ViewConditionTraverse:
 		et, _ := dataentryconfig.SplitTraverseConditionID(key.ID)
 		return et
+	case ViewConditionLLMCandidate:
+		return dataentryconfig.LLMCandidateConditionType(key.ID)
 	case ViewConditionNavStatus:
 		for _, ns := range dataentryconfig.NavStatusEntries(cfg) {
 			for i := range ns.Entry.Status {
