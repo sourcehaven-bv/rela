@@ -254,6 +254,12 @@ type App struct {
 	// [SetOAuthTokens]; rela.oauth then reports not_configured.
 	oauth lua.OAuthTokens
 
+	// luaHost is the host config and the Lua seams of the services the App
+	// serves, set by [SetLuaHost]. Every script runtime the App builds
+	// (actions, document renders, webhook scripts) carries them, so tenant
+	// mode's withheld host config applies here as it does to automations.
+	luaHost luaHostWiring
+
 	// recreator brings a deleted face back at its own id on a history
 	// restore, create-only (see entitymanager.RecreateEntity).
 	recreator entityRecreator
@@ -649,7 +655,9 @@ func (a *App) luaWriteDeps() lua.WriteDeps {
 			Meta:          a.Meta(),
 			ProjectRoot:   a.paths.Root,
 			Files:         a.cfgLoader,
+			Host:          a.luaHost.host,
 			World:         defaultWorldScope(a.worlds),
+			Seams:         a.luaHost.seams,
 		},
 		EntityManager: a.entityManager,
 	})
@@ -1019,6 +1027,23 @@ func SetVersionTags(a *App, writer lua.VersionTagWriter, reader visibility.Versi
 //
 // Nil: accepted; rela.oauth then reports not_configured.
 func SetOAuthTokens(a *App, t lua.OAuthTokens) { a.oauth = t }
+
+// luaHostWiring is the host config and seams [SetLuaHost] stores.
+type luaHostWiring struct {
+	host  lua.HostConfig
+	seams lua.Seams
+}
+
+// SetLuaHost gives the App's script runtimes the host config and Lua seams
+// of the services it serves (appbuild.LuaHost). A package function because
+// App is at its plimsoll method cap. Call it before serving.
+//
+// Nil host: accepted for an App outside tenant mode; the runtime then reads
+// the project's .rela directory. In tenant mode script.NewWriterRuntime
+// refuses a runtime without a host config, so a missed call fails closed.
+func SetLuaHost(a *App, host lua.HostConfig, seams lua.Seams) {
+	a.luaHost = luaHostWiring{host: host, seams: seams}
+}
 
 // scriptTraversalGate authorizes a validation rule's traversal under the same
 // tier as [gatedScriptReader], resolved at call time because a.acl is set
@@ -1477,8 +1502,8 @@ func NewApp(
 
 	// Initialize git ops if enabled and repo is a git repository
 	if cfg.Git != nil && cfg.Git.Enabled && git.IsRepo(paths.Root) {
+		// Logged by NewRouter: tenant mode turns it off before then.
 		app.gitOps = git.NewOps(paths.Root, *cfg.Git)
-		slog.Info("git sync enabled", "mode", cfg.Git.Mode)
 	}
 
 	// Wire the external-command runner for attachment scan/transform. It is

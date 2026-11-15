@@ -69,6 +69,14 @@ func stripShebang(code string) string {
 	return code[idx:]
 }
 
+// secretSet is what rela.secrets exposes.
+type secretSet struct {
+	values map[string]string
+	// withheld, when set, is why the host withholds the secrets: every
+	// index of rela.secrets raises it. See [ErrHostConfigWithheld].
+	withheld string
+}
+
 // Runtime wraps gopher-lua VM with rela bindings.
 //
 // The runtime is constructed via NewReader (read-only) or NewWriter (read-
@@ -126,7 +134,7 @@ type Runtime struct {
 	cancelTimeout context.CancelFunc
 	params        map[string]string // rela.params values (used by action scripts)
 	request       *Request          // rela.request; nil leaves the field absent (TKT-EFMRQM)
-	secrets       map[string]string // rela.secrets values (from .rela/secrets.yaml)
+	secrets       secretSet         // rela.secrets values (from .rela/secrets.yaml)
 	caps          Capabilities      // ambient capability grants; zero value denies all (TKT-YH52OM)
 	isAction      bool              // true when running as an action (changes rela.output behavior)
 	refWrites     bool              // may set external_ref properties; see WithExternalRefWrites
@@ -169,11 +177,24 @@ type Runtime struct {
 	// rela.now_unix. Nil: accepted — the wall clock.
 	clock func() time.Time
 
+	// pcall is the state of protected calls; see pcallWithCapture.
+	pcall pcallState
+}
+
+// pcallState is what pcallWithCapture records across runs.
+type pcallState struct {
 	// errorFrames holds typed stack frames captured by the PCall message
 	// handler on the most recent failed run. Read via ErrorFrames() after
 	// PCall returns an error. Reset before every PCall.
 	errorFrames []StackFrame
+
+	// broken is set when a run escaped gopher-lua's PCall.
+	broken bool
 }
+
+// errRuntimeBroken is returned by every run after one that escaped
+// gopher-lua's PCall.
+var errRuntimeBroken = errors.New("lua: runtime unusable after a value stack overflow")
 
 // egress holds the backends of the bindings that reach outside the process.
 type egress struct {
@@ -398,7 +419,15 @@ func WithCapabilities(c Capabilities) Option {
 // Secrets are loaded from .rela/secrets.yaml by the caller.
 func WithSecrets(secrets map[string]string) Option {
 	return func(r *Runtime) {
-		r.secrets = secrets
+		r.secrets.values = secrets
+	}
+}
+
+// withSecretsWithheld makes every index of rela.secrets raise reason. Set
+// by [LoadContextOptions] when the host withholds the secrets.
+func withSecretsWithheld(reason string) Option {
+	return func(r *Runtime) {
+		r.secrets.withheld = reason
 	}
 }
 
@@ -413,7 +442,9 @@ func WithAIProvider(p ai.Provider) Option {
 
 // WithHTTPClient sets the client the http.* bindings send through, for this
 // runtime only. Omitting it (or passing nil) uses the shared process-wide
-// client, which pools connections across short-lived runtimes.
+// client, which pools connections across short-lived runtimes and enforces
+// the [SetHTTPPolicy] policy. A client given here replaces that policy too;
+// build it with [NewHTTPClient] to keep one.
 func WithHTTPClient(c *http.Client) Option {
 	return func(r *Runtime) {
 		r.egress.http = c
@@ -499,12 +530,9 @@ func newRuntime(deps WriteDeps, stdout io.Writer, allowWrites bool, opts ...Opti
 		panic("lua: ReadDeps.World is unset; wire the default world (worlds.Compiled.DefaultWorld)")
 	}
 
-	// Create sandboxed Lua state - skip default libraries for security
-	L := lua.NewState(lua.Options{
-		SkipOpenLibs:  true,
-		CallStackSize: 1024,      // Limit call stack depth to prevent stack overflow
-		RegistrySize:  1024 * 64, // Limit registry size
-	})
+	// Create sandboxed Lua state - skip default libraries for security. The
+	// stack bounds are described in bounds.go.
+	L := newBoundedState()
 
 	// Load only safe libraries (NOT io, os, or debug)
 	openSafeLibraries(L)
@@ -593,6 +621,8 @@ func openSafeLibraries(ls *lua.LState) {
 	ls.SetGlobal("rawlen", lua.LNil)
 	ls.SetGlobal("getmetatable", lua.LNil)
 	ls.SetGlobal("setmetatable", lua.LNil)
+
+	installBuilderCaps(ls)
 }
 
 // RunFile executes a Lua script file with arguments.
@@ -605,7 +635,7 @@ func openSafeLibraries(ls *lua.LState) {
 // Frames are ordered innermost-first: frame[0] is where the error was
 // raised; frame[len-1] is the main chunk.
 func (r *Runtime) ErrorFrames() []StackFrame {
-	return r.errorFrames
+	return r.pcall.errorFrames
 }
 
 // pcallWithCapture runs r.L.PCall(0, MultRet, ...) with a message handler
@@ -615,12 +645,29 @@ func (r *Runtime) ErrorFrames() []StackFrame {
 // straight from gopher-lua's debug API.
 //
 // See https://github.com/yuin/gopher-lua/issues/46 for the rationale.
-func (r *Runtime) pcallWithCapture() error {
-	r.errorFrames = nil
+//
+// A script that fills the value stack (see bounds.go) makes gopher-lua
+// v1.1.2 panic out of PCall: on the error path it pushes the message
+// handler onto the full stack outside its own recover. That panic is caught
+// here and returned as the script's error, so it cannot take the process
+// down. The state's call stack is left inconsistent, so the runtime is
+// marked broken and every later run fails.
+func (r *Runtime) pcallWithCapture() (err error) {
+	r.pcall.errorFrames = nil
+	if r.pcall.broken {
+		return errRuntimeBroken
+	}
+	defer func() {
+		if rcv := recover(); rcv != nil {
+			r.pcall.broken = true
+			r.L.SetTop(0)
+			err = &lua.ApiError{Type: lua.ApiErrorRun, Object: lua.LString(fmt.Sprint(rcv))}
+		}
+	}()
 	handler := r.L.NewFunction(func(L *lua.LState) int {
-		r.errorFrames = collectStackFrames(L)
+		r.pcall.errorFrames = collectStackFrames(L)
 		if frame := r.modules.takePendingFrame(L.Get(1)); frame != nil {
-			r.errorFrames = append([]StackFrame{*frame}, r.errorFrames...)
+			r.pcall.errorFrames = append([]StackFrame{*frame}, r.pcall.errorFrames...)
 		}
 		// Pass the original error object (arg #1) through unchanged so
 		// gopher-lua wraps it into ApiError as usual.
@@ -1078,8 +1125,19 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 	// present-and-empty, so a missing grant surfaces as a nil index at the use
 	// site instead of as a silently-wrong credential.
 	secretsTable := r.L.NewTable()
-	for k, v := range r.caps.filterSecrets(r.secrets) {
+	for k, v := range r.caps.filterSecrets(r.secrets.values) {
 		r.L.SetField(secretsTable, k, lua.LString(v))
+	}
+	if reason := r.secrets.withheld; reason != "" {
+		// A withheld secret raises rather than reading as nil, so a
+		// script fails at the use site with the reason instead of
+		// sending an empty credential.
+		mt := r.L.NewTable()
+		r.L.SetField(mt, "__index", r.L.NewFunction(func(ls *lua.LState) int {
+			ls.RaiseError("rela.secrets: secrets are not available: %s", reason)
+			return 0
+		}))
+		r.L.SetMetatable(secretsTable, mt)
 	}
 	r.L.SetField(rela, "secrets", secretsTable)
 

@@ -28,12 +28,12 @@ import (
 // cannot be passed where a full store is wanted (a write path, say) and
 // cannot silently widen back into one.
 //
-// Its exported methods are the script read surface (lua.EntityReader and
-// lua.ElevatedReader) plus the history and count reads; the paged reads of
-// TKT-P9QMEVI took it over the line. A required-interface exception, like
-// the store implementations.
+// Its exported methods are the gated read surface every reader family
+// implements (appbuild's scriptEntityReaderFamily) plus the history and count
+// reads, a required interface rather than a ratchet target. ListEntityPage
+// (TKT-D9UO9Y4) and the paged reads of TKT-P9QMEVI took it over the line.
 //
-//plimsoll:max-exported-methods=22
+//plimsoll:max-exported-methods=23
 type UnrestrictedReader struct {
 	st    store.Store
 	res   *Resolver

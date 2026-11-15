@@ -37,11 +37,12 @@ import (
 // batching does not amortize (RR-3U1V80). Bounding these bindings is
 // TKT-YWDGZD; this type does not paper over it.
 //
-// Its exported methods are the gated script read surface; ListRelationsPage
-// (TKT-P9QMEVI) took it over the line. A required-interface exception, like
-// the store implementations.
+// Its exported methods are the gated read surface every reader family
+// implements (appbuild's scriptEntityReaderFamily), a required interface
+// rather than a ratchet target. ListEntityPage (TKT-D9UO9Y4) and
+// ListRelationsPage (TKT-P9QMEVI) took it over the line.
 //
-//plimsoll:max-exported-methods=21
+//plimsoll:max-exported-methods=22
 type ScriptReader struct {
 	reader Reader
 	res    *Resolver

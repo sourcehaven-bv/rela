@@ -14,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/mailtemplate"
+	"github.com/Sourcehaven-BV/rela/internal/mapimport"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -47,13 +48,16 @@ type ValidateResult struct {
 	// RemotesError is why remotes.yaml does not parse or validate. Nil when
 	// the file is valid or absent.
 	RemotesError error
+	// ImportsError lists the mapping files in imports/ that do not parse or
+	// validate. Nil when all are valid or there are none.
+	ImportsError error
 }
 
 // HasErrors returns true if any validation failed.
 func (r *ValidateResult) HasErrors() bool {
 	return r.MetamodelError != nil || r.DataEntryError != nil || r.MailTemplatesError != nil ||
 		r.SchedulesError != nil || r.ConnectionsError != nil || r.SubscriptionsError != nil ||
-		r.RemotesError != nil
+		r.RemotesError != nil || r.ImportsError != nil
 }
 
 // Validate validates project configuration files (metamodel.yaml, data-entry.yaml)
@@ -119,6 +123,7 @@ func ValidateWithFS(ctx context.Context, startDir string, fs storage.FS) (*Valid
 	result.ConnectionsError = validateConnections(proj.Root, fs)
 	result.SubscriptionsError = validateSubscriptions(ctx, proj.Root, mm, fs)
 	result.RemotesError = validateRemotes(ctx, proj.Root, mm, fs)
+	result.ImportsError = validateImports(ctx, proj.Root, mm, fs)
 
 	return result, nil
 }
@@ -167,6 +172,39 @@ func validateRemotes(ctx context.Context, root string, mm *metamodel.Metamodel, 
 		return err
 	}
 	return scheduler.AddRemotes(&scheduler.Config{}, remotes)
+}
+
+// validateImports parses every mapping file in imports/ the way `rela import
+// --mapping` does. Without a schema there is nothing to check them against.
+func validateImports(ctx context.Context, root string, mm *metamodel.Metamodel, fs storage.FS) error {
+	if mm == nil {
+		return nil
+	}
+	loader := config.NewFSLoader(fs, root)
+	names, err := loader.List(ctx, mapimport.Dir)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, file := range names {
+		name, isYAML := strings.CutSuffix(file, ".yaml")
+		if !isYAML {
+			// --mapping only finds <name>.yaml, so a .yml file would never run.
+			if strings.HasSuffix(file, ".yml") {
+				errs = append(errs, fmt.Errorf("%s/%s: rename to .yaml; --mapping reads only .yaml files",
+					mapimport.Dir, file))
+			}
+			continue
+		}
+		data, err := loader.Load(ctx, mapimport.FilePath(name))
+		if err == nil {
+			_, err = mapimport.Parse(name, data, mm)
+		}
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func validateScheduledMail(root string, mm *metamodel.Metamodel, fs storage.FS) (mailErr, schedulesErr error) {
