@@ -251,3 +251,39 @@ func TestPageStatus_JudgesTheWorldsRows(t *testing.T) {
 		})
 	}
 }
+
+// A property the principal may not see counts as empty: done_when judges the
+// redacted row, so a hidden status that matches does not complete the step.
+func TestPageStatus_HiddenPropertyCountsAsEmpty(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		grant []acl.FieldGrant
+		want  map[string]v1.PageStepStatus
+	}{
+		{"status visible", []acl.FieldGrant{{Field: "title"}, {Field: "status"}},
+			map[string]v1.PageStepStatus{"s0": {Done: true}, "s1": {Done: true}}},
+		{"status hidden", []acl.FieldGrant{{Field: "title"}},
+			map[string]v1.PageStepStatus{"s0": {Done: false}, "s1": {Done: true}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newTestAppV1(t)
+			seedEntity(app, &entity.Entity{ID: "TKT-1", Type: "ticket",
+				Properties: map[string]any{"title": "A", "status": "done"}})
+			installPagesConfig(app, map[string]dataentryconfig.List{"all": {EntityType: "ticket"}},
+				stepsPage("entity.status == 'done'", "entity.title == 'A'"), nil)
+			d := mustNewACL(t, &acl.Policy{
+				Roles: map[string]acl.RoleDef{"viewer": {
+					Read:    []string{"ticket"},
+					Visible: map[string][]acl.FieldGrant{"ticket": tc.grant},
+				}},
+				Assignments: map[string]string{"alice": "viewer"},
+			}, app.store)
+			setTestACL(t, app, d)
+			res, err := ResolverFromProfile("", app.Meta(), app.store, d, nil)
+			require.NoError(t, err)
+			setTestResolver(t, app, res)
+			wireRealViewConditions(t, app)
+			require.Equal(t, tc.want, pageStatusAs(gateCtxFor(aliceCtx(), t, d), t, app, "workshop", ""))
+		})
+	}
+}

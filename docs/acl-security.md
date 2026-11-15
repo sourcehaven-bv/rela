@@ -1492,6 +1492,14 @@ list shows that principal: rows are gated and redacted before they are
 counted, and the response is `no-store`, never cached across principals.
 An entry hidden by `permission:` gets no count.
 
+**Step done marks follow the same rule.** A `done_when:` on a page tab
+puts a check on the step number. Whether a step is done is about data, so
+it is served by `/api/v1/_page_status`; the sidebar only carries the
+tab's `done_check` flag. The verdict is taken over the rows the step's
+list shows that principal, after gating and redaction, so a property the
+principal cannot see counts as empty. A list with no visible rows is never
+done. The response is `no-store`.
+
 **Generated nav entries are per principal too.** A group with `items_from:`
 lists entity titles, and a title is data. So the entries are served by
 `/api/v1/_nav_items`, never by `_sidebar`; the sidebar carries only the
