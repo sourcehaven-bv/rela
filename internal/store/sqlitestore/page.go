@@ -22,42 +22,64 @@ import (
 func (s *Store) ListEntitiesPage(
 	ctx context.Context, q store.EntityQuery,
 ) (store.Page[*entity.Entity], error) {
+	return queryEntityPage(ctx, s.q(), "list entities page", q, entityColumns, scanEntity,
+		func(e *entity.Entity) entity.Ref { return entity.Ref{ID: e.ID, Face: e.Face} })
+}
+
+var _ store.HeaderPager = (*Store)(nil)
+
+// ListEntityHeadersPage implements [store.HeaderPager]: the page
+// ListEntitiesPage reads, with the content column left out of the SELECT.
+func (s *Store) ListEntityHeadersPage(
+	ctx context.Context, q store.EntityQuery,
+) (store.Page[store.EntityHeader], error) {
+	return queryEntityPage(ctx, s.q(), "list entity headers page", q, entityHeaderColumns, scanEntityHeader,
+		func(h store.EntityHeader) entity.Ref { return entity.Ref{ID: h.ID, Face: h.Face} })
+}
+
+// queryEntityPage reads q's keyset page of columns, scanning each row with
+// scan. key names a row's state, from which the next cursor is made. op names
+// the read in errors.
+func queryEntityPage[T any](
+	ctx context.Context, qr querier, op string, q store.EntityQuery, columns string,
+	scan func(scanner) (T, error), key func(T) entity.Ref,
+) (store.Page[T], error) {
 	if err := storeutil.ValidateEntityQuery(q); err != nil {
-		return store.Page[*entity.Entity]{}, err
+		return store.Page[T]{}, err
 	}
-	sqlText, args, err := entityPageSQL(q)
+	sqlText, args, err := entityPageSQL(q, columns)
 	if err != nil {
-		return store.Page[*entity.Entity]{}, err
+		return store.Page[T]{}, err
 	}
 
-	rows, err := s.q().QueryContext(ctx, sqlText, args...)
+	rows, err := qr.QueryContext(ctx, sqlText, args...)
 	if err != nil {
-		return store.Page[*entity.Entity]{}, fmt.Errorf("sqlitestore: list entities page: %w", err)
+		return store.Page[T]{}, fmt.Errorf("sqlitestore: %s: %w", op, err)
 	}
 	defer rows.Close()
 
-	items := make([]*entity.Entity, 0)
+	items := make([]T, 0)
 	for rows.Next() {
-		e, err := scanEntity(rows)
+		item, err := scan(rows)
 		if err != nil {
-			return store.Page[*entity.Entity]{}, err
+			return store.Page[T]{}, err
 		}
-		items = append(items, e)
+		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return store.Page[*entity.Entity]{}, fmt.Errorf("sqlitestore: list entities page: %w", err)
+		return store.Page[T]{}, fmt.Errorf("sqlitestore: %s: %w", op, err)
 	}
 
 	var next string
 	if q.Limit > 0 && len(items) > q.Limit {
 		items = items[:q.Limit]
-		last := items[q.Limit-1]
+		last := key(items[q.Limit-1])
 		// The cursor is the STATE key so AllFaces pagination resumes
 		// mid-family; for default-only queries it degenerates to the
 		// historical bare id.
 		next = storeutil.EncodeCursor(entity.FormatStateRef(last.ID, last.Face))
 	}
-	return store.Page[*entity.Entity]{Items: items, NextCursor: next}, nil
+	return store.Page[T]{Items: items, NextCursor: next}, nil
 }
 
 // ListRelationsPage implements [store.RelationReader].
@@ -138,19 +160,20 @@ func splitRelationKey(key string) (from, face, relType, to string, ok bool) {
 	return parts[0], parts[1], parts[2], parts[3], true
 }
 
-// entityPageSQL is the query [Store.ListEntitiesPage] sends for q, cursor
+// entityPageSQL is the query [Store.ListEntitiesPage] and
+// [Store.ListEntityHeadersPage] send for q, selecting columns, cursor
 // decoded.
 //
 // It fetches one extra row to learn whether a further page exists, without
 // a second COUNT query. Under a world the rows are already PRIMES — the
 // window resolves each family before LIMIT applies — so limit+1 counts
 // entities rather than candidate state rows.
-func entityPageSQL(q store.EntityQuery) (sqlText string, args []any, err error) {
+func entityPageSQL(q store.EntityQuery, columns string) (sqlText string, args []any, err error) {
 	cursorKey, err := storeutil.DecodeCursor(q.Cursor)
 	if err != nil {
 		return "", nil, err
 	}
-	sqlText, args = buildEntitySelectSQL(q, cursorKey, entityColumns)
+	sqlText, args = buildEntitySelectSQL(q, cursorKey, columns)
 	if q.Limit > 0 {
 		sqlText += limitClause(q.Limit + 1)
 	}

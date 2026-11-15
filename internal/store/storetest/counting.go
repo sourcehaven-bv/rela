@@ -32,15 +32,16 @@ import (
 // Reads are counted; writes pass through uncounted (a test seeds through
 // the same handle, and seeding is not the thing under measurement). The
 // optional capabilities a consumer type-asserts are forwarded: the header
-// readers, the matched counter and the mention index (counted), soft delete
-// (a write, so uncounted), and the transaction view (its reads counted too).
+// readers and pager, the matched counter and the mention index (counted),
+// soft delete (a write, so uncounted), and the transaction view (its reads
+// counted too).
 //
 // Its exported methods are the store read surface it decorates, the
 // optional capabilities above, Unwrap for store.Decorator, and the counter
 // readout (Reset, Cost, Reads, Calls, String). The count moves with
 // store.Store rather than with this type.
 //
-//plimsoll:max-exported-methods=27
+//plimsoll:max-exported-methods=28
 type Counting struct {
 	store.Store
 
@@ -298,6 +299,18 @@ func (c *Counting) Rollup(ctx context.Context, q store.RollupQuery) (map[string]
 func (c *Counting) ListEntityHeaders(ctx context.Context, q store.EntityQuery) iter.Seq2[store.EntityHeader, error] {
 	c.hit("ListEntityHeaders")
 	return countRows(c, "ListEntityHeaders", store.ListEntityHeaders(ctx, c.Store, q))
+}
+
+// ListEntityHeadersPage forwards to the wrapped store's header pager, or to
+// the projection of its ListEntitiesPage when it has none. Either way it is
+// counted as one read.
+func (c *Counting) ListEntityHeadersPage(
+	ctx context.Context, q store.EntityQuery,
+) (store.Page[store.EntityHeader], error) {
+	c.hit("ListEntityHeadersPage")
+	p, err := store.ListEntityHeadersPage(ctx, c.Store, q)
+	c.addRowsOK("ListEntityHeadersPage", len(p.Items), err)
+	return p, err
 }
 
 // MentionSources forwards to the wrapped store's mention index, counted as

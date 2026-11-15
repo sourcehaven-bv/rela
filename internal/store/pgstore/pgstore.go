@@ -171,9 +171,12 @@ type DBTX interface {
 //
 // +1 exported / +1 method (TKT-GIAGLQ3): IDTakenFolded, required by
 // store.FoldedIDReader in store.Store.
+// +1 exported / +1 method (TKT-Q918DFR): ListEntityHeadersPage, the optional
+// store.HeaderPager capability. It shares the free function queryEntityPage
+// with ListEntitiesPage.
 //
-//plimsoll:max-exported-methods=49
-//plimsoll:max-methods=59
+//plimsoll:max-exported-methods=50
+//plimsoll:max-methods=60
 type Store struct {
 	db           DBTX
 	searchTitles SearchTitles

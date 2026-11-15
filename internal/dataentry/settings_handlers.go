@@ -1,17 +1,13 @@
 package dataentry
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 
 	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // --- JSON API types ---
@@ -180,17 +176,17 @@ type APIPropertyDef struct {
 }
 
 // APIRelationDef describes a relation for the settings page.
+//
+// It carries the target types, not the targets: the page picks a default
+// target through the search endpoint and reads the saved one by id, so a
+// settings load reads no entity rows (TKT-WJP6PBM).
 type APIRelationDef struct {
-	Name       string              `json:"name"`
-	Label      string              `json:"label"`
-	TargetType string              `json:"targetType"`
-	Targets    []APIRelationTarget `json:"targets"`
-}
-
-// APIRelationTarget is a possible target for a relation.
-type APIRelationTarget struct {
-	ID    string `json:"id"`
-	Title string `json:"title"`
+	Name  string `json:"name"`
+	Label string `json:"label"`
+	// TargetType is the first declared target type, kept for the label.
+	TargetType string `json:"targetType"`
+	// TargetTypes are all declared target types, which the picker searches.
+	TargetTypes []string `json:"targetTypes"`
 }
 
 // handleAPISettingsCRUD routes /api/v1/settings requests based on HTTP method.
@@ -205,10 +201,11 @@ func (h *appearanceHandler) handleAPISettingsCRUD(w http.ResponseWriter, r *http
 	}
 }
 
-// handleAPIGetSettings returns the settings data for the settings page.
+// handleAPIGetSettings returns the settings data for the settings page. It
+// reads no entities; see [APIRelationDef].
 //
 //nolint:gocognit // assembles the settings response from many independent optional sources; each block guards a distinct setting, with no shared structure to factor out.
-func (h *appearanceHandler) handleAPIGetSettings(w http.ResponseWriter, r *http.Request) {
+func (h *appearanceHandler) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
 	s := h.schema()
 	ud := h.settings.UserDefaults()
 	if ud == nil {
@@ -277,7 +274,7 @@ func (h *appearanceHandler) handleAPIGetSettings(w http.ResponseWriter, r *http.
 		allProperties = append(allProperties, p)
 	}
 
-	// Collect all relation types with their targets
+	// Collect all relation types with their target types.
 	allRelations := make([]APIRelationDef, 0)
 	for _, relName := range s.Meta.RelationTypes() {
 		relDef, ok := s.Meta.GetRelationDef(relName)
@@ -285,20 +282,12 @@ func (h *appearanceHandler) handleAPIGetSettings(w http.ResponseWriter, r *http.
 			continue
 		}
 		rd := APIRelationDef{
-			Name:  relName,
-			Label: relDef.Label,
+			Name:        relName,
+			Label:       relDef.Label,
+			TargetTypes: append([]string{}, relDef.To...),
 		}
 		if len(relDef.To) > 0 {
 			rd.TargetType = relDef.To[0]
-			for _, targetType := range relDef.To {
-				targets, err := settingsRelationTargets(r.Context(), h.services(), h.viewReader, s.Meta, targetType)
-				if err != nil {
-					slog.Error("dataentry: settings relation targets failed", "type", targetType, "err", err)
-					writeJSONError(w, http.StatusInternalServerError, "failed to load relation targets")
-					return
-				}
-				rd.Targets = append(rd.Targets, targets...)
-			}
 		}
 		allRelations = append(allRelations, rd)
 	}
@@ -313,29 +302,6 @@ func (h *appearanceHandler) handleAPIGetSettings(w http.ResponseWriter, r *http.
 	data.LogoURL = h.logo.URL()
 
 	writeJSON(w, data)
-}
-
-// settingsRelationTargets lists the entities of targetType the principal may
-// read, as the settings page's relation-default choices.
-//
-// The rows come from the gated header read every list uses (scopedHeaders),
-// so an unreadable target never leaves the store and no body is read. reader
-// then redacts them, so a hidden display property falls back to the id
-// (BUG-R9EHKV); its row gate repeats the one above and drops nothing. The read still holds every readable row of the type; the
-// settings page needs a search picker to page it.
-func settingsRelationTargets(
-	ctx context.Context, svc Services, reader visibility.Reader, meta *metamodel.Metamodel, targetType string,
-) ([]APIRelationTarget, error) {
-	rqr := readGateFromContext(ctx).ReadQuery(ctx, targetType)
-	rows, _, err := scopedEntities(ctx, svc, rqr, scopeRequest{Type: targetType, Faces: rqr.Faces})
-	if err != nil {
-		return nil, err
-	}
-	var out []APIRelationTarget
-	for _, e := range reader.Filter(ctx, rows) {
-		out = append(out, APIRelationTarget{ID: e.ID, Title: meta.DisplayTitle(e.ID, e.Type, e.Properties)})
-	}
-	return out, nil
 }
 
 // refuseSettingsEdit answers 403 and returns true when the request's

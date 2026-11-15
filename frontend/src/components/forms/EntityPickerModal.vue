@@ -34,12 +34,15 @@ const MAX_RESULTS = 50
 const props = defineProps<{
   open: boolean
   /**
-   * Limits the results to these entity types. A single type is passed to
-   * the search; several are filtered from its answer.
+   * Limits the results to these entity types. A single type is passed as
+   * the search's type parameter; several join the query as one `type:`
+   * clause. Either way the server scopes the search before its limit.
    */
   types?: readonly string[]
   /** The dialog's accessible name. */
   label?: string
+  /** At most this many results. Defaults to 50. */
+  maxResults?: number
 }>()
 
 const emit = defineEmits<{
@@ -106,16 +109,19 @@ async function runSearch(q: string): Promise<void> {
   loading.value = true
   try {
     const types = props.types ?? []
-    // With several types the hits are filtered here, so the server must
-    // return its full set: a limit would spend slots on other types.
-    const resp = await searchEntities(q, {
+    const max = props.maxResults ?? MAX_RESULTS
+    // Several types join the query as one `type:` clause, so the limit
+    // spends no slot on another type. Type names come from the schema. The
+    // filter below still drops a type the user's own `type:` text added.
+    const searchText = types.length > 1 ? `type:${types.join(',')} ${q}` : q
+    const resp = await searchEntities(searchText, {
       type: types.length === 1 ? types[0] : undefined,
       signal: abort.signal,
       world: worldParam.value,
-      limit: types.length > 1 ? undefined : MAX_RESULTS,
+      limit: max,
     })
     const hits = types.length > 1 ? resp.data.filter((e) => types.includes(e.type)) : resp.data
-    results.value = hits.slice(0, MAX_RESULTS)
+    results.value = hits.slice(0, max)
     errorMsg.value = ''
     highlightedIndex.value = 0
     // Reset scroll to the new top result. Without this, if the previous
