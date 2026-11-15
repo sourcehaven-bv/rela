@@ -63,12 +63,14 @@ func (c *ImportCmd) runMapped(ctx context.Context, w *writeServices) error {
 		}
 	}
 	if outputFormat == "json" {
-		enc := json.NewEncoder(out.Out)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(struct {
+		data, err := json.MarshalIndent(struct {
 			Plan   *mapimport.Plan   `json:"plan"`
 			Result *mapimport.Result `json:"result,omitempty"`
-		}{plan, res}); err != nil {
+		}{plan, res}, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := writeJSONLine(data); err != nil {
 			return err
 		}
 	} else {
@@ -112,38 +114,38 @@ func printImportPlan(p *mapimport.Plan, dryRun bool) {
 		verb = "Would"
 	}
 	for _, c := range p.Creates {
-		out.WriteInfo("+ %s %s", c.Type, entityLabel(c))
+		safeLine(out.WriteInfo, "+ %s %s", c.Type, entityLabel(c))
 		for _, pc := range c.Properties {
-			out.WriteInfo("    %s: %s", pc.Name, showValue(pc.New))
+			safeLine(out.WriteInfo, "    %s: %s", pc.Name, showValue(pc.New))
 		}
 	}
 	for _, c := range p.Updates {
-		out.WriteInfo("~ %s %s", c.Type, entityLabel(c))
+		safeLine(out.WriteInfo, "~ %s %s", c.Type, entityLabel(c))
 		for _, pc := range c.Properties {
 			if pc.Cleared {
-				out.WriteInfo("    %s: %s -> (removed)", pc.Name, showValue(pc.Old))
+				safeLine(out.WriteInfo, "    %s: %s -> (removed)", pc.Name, showValue(pc.Old))
 				continue
 			}
-			out.WriteInfo("    %s: %s -> %s", pc.Name, showValue(pc.Old), showValue(pc.New))
+			safeLine(out.WriteInfo, "    %s: %s -> %s", pc.Name, showValue(pc.Old), showValue(pc.New))
 		}
 		if c.ContentChanged {
-			out.WriteInfo("    (content)")
+			safeLine(out.WriteInfo, "    (content)")
 		}
 	}
 	for _, r := range p.RelationRemoves {
-		out.WriteInfo("- %s --%s--> %s", r.From, r.Type, r.To)
+		safeLine(out.WriteInfo, "- %s --%s--> %s", r.From, r.Type, r.To)
 	}
 	for _, r := range p.RelationAdds {
-		out.WriteInfo("+ %s --%s--> %s", r.From, r.Type, r.To)
+		safeLine(out.WriteInfo, "+ %s --%s--> %s", r.From, r.Type, r.To)
 	}
 	for _, r := range p.Stale {
-		out.WriteWarning("stale (kept): %s --%s--> %s", r.From, r.Type, r.To)
+		safeLine(out.WriteWarning, "stale (kept): %s --%s--> %s", r.From, r.Type, r.To)
 	}
 	for _, m := range p.Missing {
-		out.WriteWarning("missing from the source (kept): %s %s (key %s)", m.Type, m.ID, m.Key)
+		safeLine(out.WriteWarning, "missing from the source (kept): %s %s (key %s)", m.Type, m.ID, m.Key)
 	}
 	for _, e := range p.Errors {
-		out.WriteError("%s: %s: %s", e.Mapping, e.Location, e.Message)
+		safeLine(out.WriteError, "%s: %s: %s", e.Mapping, e.Location, e.Message)
 	}
 	out.WriteInfo("%s create %d, update %d, add %d and remove %d relations; %d unchanged, %d skipped by the hook",
 		verb, len(p.Creates), len(p.Updates), len(p.RelationAdds), len(p.RelationRemoves), p.Unchanged, p.Skipped)
@@ -177,6 +179,14 @@ func printImportResult(res *mapimport.Result) {
 	out.WriteSuccess("Created %d, updated %d, added %d and removed %d relations",
 		res.Created, res.Updated, res.RelationsAdded, res.RelationsRemoved)
 	for _, f := range res.Failures {
-		out.WriteError("%s: %s", f.What, f.Error)
+		safeLine(out.WriteError, "%s: %s", f.What, f.Error)
 	}
+}
+
+// safeLine writes one line built from import data through write. The data
+// comes from an untrusted file, so [printable] replaces every rune that
+// could hide or rewrite a line of the plan the operator checks before
+// applying it.
+func safeLine(write func(string, ...any), format string, args ...any) {
+	write("%s", printable(fmt.Sprintf(format, args...)))
 }
