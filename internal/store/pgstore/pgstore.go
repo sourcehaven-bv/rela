@@ -169,8 +169,14 @@ type DBTX interface {
 // +1 exported / +1 method: TxRollsBack, the optional store.TxRollback
 // capability (TKT-ZMPDZ3R).
 //
-//plimsoll:max-exported-methods=48
-//plimsoll:max-methods=58
+// +1 exported / +1 method (TKT-GIAGLQ3): IDTakenFolded, required by
+// store.FoldedIDReader in store.Store.
+// +1 exported / +1 method (TKT-Q918DFR): ListEntityHeadersPage, the optional
+// store.HeaderPager capability. It shares the free function queryEntityPage
+// with ListEntitiesPage.
+//
+//plimsoll:max-exported-methods=50
+//plimsoll:max-methods=60
 type Store struct {
 	db           DBTX
 	searchTitles SearchTitles

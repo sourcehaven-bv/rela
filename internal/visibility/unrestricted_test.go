@@ -139,6 +139,8 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 	// already returns, filtered by their bodies.
 	// TaggedEntities (TKT-7LRUPB) lists the version rows a tag names, a read
 	// of the same history VersionByTag serves.
+	// ListEntitiesPage and ListRelationsPage (TKT-P9QMEVI) are one bounded
+	// page of ListEntities and ListRelations.
 	// ListEntityPage (TKT-D9UO9Y4) is one page of ListEntityHeaders for a
 	// type, with its total; it reads no more than that list does.
 	want := map[string]bool{
@@ -150,6 +152,7 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 		"VersionByTag":      true,
 		"FindByExternalRef": true, "SyncReady": true,
 		"MentionedBy": true, "TaggedEntities": true,
+		"ListEntitiesPage": true, "ListRelationsPage": true,
 		"ListEntityPage": true,
 	}
 

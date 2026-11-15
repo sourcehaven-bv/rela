@@ -244,8 +244,9 @@ type Action struct {
 
 	// LLM makes this a declarative LLM action (TKT-4USH1HO), the third mode
 	// next to Set and Script. It requires AvailableOn with one entity type
-	// and a Permission. See [LLMAction]. Not serialized: the server runs it.
-	LLM *LLMAction `yaml:"llm,omitempty" json:"-"`
+	// and a Permission. See [LLMAction]. Only `batch` is serialized, so the SPA
+	// knows to send all selected rows of a batch action in one request.
+	LLM *LLMAction `yaml:"llm,omitempty" json:"llm,omitempty"`
 
 	// AvailableOn offers the action on entity detail pages (TKT-VVS16W). Nil
 	// means no detail page, which is the behavior before the key existed.
@@ -1197,7 +1198,7 @@ func (c *Config) HasPropertyFilterControl(entityType, property string) bool {
 // [Config]: each exported field is one key of a kanban in data-entry.yaml.
 // `add_column` (TKT-1X5G3BP) is the most recent.
 //
-//plimsoll:max-fields=21
+//plimsoll:max-fields=22
 type Kanban struct {
 	EntityType     string `yaml:"entity_type" json:"entity"`
 	Title          string `yaml:"title" json:"title"`
@@ -1261,6 +1262,11 @@ type Kanban struct {
 	// overriding next_action_surfaces. Nil: accepted, means inherit. See
 	// [Config.NextActionsEnabled].
 	Suggestions *bool `yaml:"suggestions,omitempty" json:"suggestions,omitempty"`
+	// Actions are ids of batch llm actions (TKT-I2SRNWR) offered as buttons
+	// in the board's header. A button runs its action on the cards the board
+	// shows, so each must be an llm action with a `batch:` block on the
+	// board's entity type, with a label.
+	Actions []string `yaml:"actions,omitempty" json:"actions,omitempty"`
 }
 
 // Kanban layouts and card styles; "" is the default for both.

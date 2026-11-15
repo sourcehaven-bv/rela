@@ -5,7 +5,9 @@ title: Push ingest find and rename dry-run lookups into the store
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-11-13"
+completed: "2026-11-13"
+status: done
 ---
 
 ## Description
