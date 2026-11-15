@@ -7,7 +7,7 @@ package archguard
 // Each entry has a category (see readCategory) and a reason that says what
 // the read is for. requestPath entries are debt. The follow-ups of
 // TKT-FED6FMM remove them: TKT-D3RAB0E and TKT-I39Y7N4 (dataentry),
-// TKT-Z099FGY (mcp filters), TKT-GIAGLQ3 (ingest, rename), TKT-P9QMEVI (lua) and TKT-EBBHM55
+// TKT-Z099FGY (mcp filters), TKT-P9QMEVI (lua) and TKT-I3MGCRT
 // (desktopnotify).
 var unpagedReadAllowlist = map[string]unpagedRead{
 	// aclmap: the who-can report.
@@ -90,15 +90,18 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/dataentry/gantt_handler.go#ganttHandler.collectGanttRound": {1, bounded,
 		"gantt closure round: a GraphQuery for the descendants of the frontier, so it reads the subtree " +
 			"the chart shows, not the type"},
+	"internal/dataentry/searchplan.go#searchPlan.page": {1, requestPath,
+		"structured /_search without a limit returns every match, as visibleListByTypes did before it; " +
+			"the filter and the ACL gate run in the store, and with a limit the GraphQuery carries it (TKT-D3RAB0E)"},
 	"internal/dataentry/listpushdown.go#listPlan.run": {1, bounded,
 		"list pushdown page: the plan's GraphQuery carries Limit = perPage and Offset (planListPushdown); " +
 			"the matcher cannot see a field set in another function"},
 	"internal/dataentry/scopedread.go#scopedHeaders": {2, requestPath,
 		"the scoped collection read behind the list Go path, executeQuery (search, dashboard, nav status, " +
 			"next action), kanban, export, feed, gantt and the command picker: every header " +
-			"of the type in the world, directly or as the ACL-scoped GraphQuery with no Limit through " +
-			"collectHeaders. A page scope or ?q= reads by ids instead (headersByIDs). The rest needs " +
-			"the whole filtered set in Go; TKT-D3RAB0E and TKT-I39Y7N4 page it"},
+			"of the type in the world, directly or as the ACL-scoped GraphQuery (built by scopedQuery) with " +
+			"no Limit through collectHeaders. A page scope or ?q= reads by ids instead (headersByIDs). The " +
+			"rest needs the whole filtered set in Go; TKT-D3RAB0E and TKT-I39Y7N4 page it"},
 
 	// datamigration: migrations rewrite whole types.
 	"internal/datamigration/adoptface.go#faceAdoption.plan": {1, batchJob, "face adoption: scans a type for zero-face rows to move"},
@@ -110,8 +113,10 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/datamigration/steps.go#collectRelations":      {1, batchJob, "relation steps: collect every edge of the step's type"},
 	"internal/datamigration/steps.go#renameFaceStep.Run":    {1, batchJob, "rename-face step: scans the type for rows at the old face"},
 
-	"internal/desktopnotify/evaluate.go#Config.Evaluate": {1, requestPath,
-		"desktop badge poll: reads every header of each type a notification rule names, on every poll"},
+	"internal/desktopnotify/evaluate.go#evaluation.scan": {1, requestPath,
+		"desktop notification poll, for a condition queryplan.LowerScope does not lower exactly: reads every " +
+			"header of the type that passes the condition's pushed equalities and judges the rest in Go. A " +
+			"condition that lowers reads a capped page and counts in the store instead; TKT-I3MGCRT lowers more"},
 
 	// docs: the documentation build's assertions over seeded projects.
 	"internal/docs/assert.go#docRuntime.entityIDs":              {1, batchJob, "docs build: lists the seeded ids of a type"},
@@ -130,8 +135,6 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 		"move: orderSiblingQuery sets From or To; the matcher cannot see into the helper"},
 	"internal/entitymanager/manager_order.go#readableOrderSiblings": {1, bounded,
 		"move: orderSiblingQuery sets From or To; the matcher cannot see into the helper"},
-	"internal/entitymanager/rename.go#idTakenByOther": {1, requestPath,
-		"rename dry run: scans every header for a case-folded id collision"},
 	"internal/entitymanager/unique.go#checkExternalRefUnique": {1, bounded,
 		"external ref uniqueness: one PropKeyEqual lookup per declaring (type, property)"},
 	"internal/entitymanager/unique.go#uniqueScan.lookup": {1, bounded,
@@ -147,9 +150,6 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/fsimport/verify.go#verifier.relations":   {1, batchJob, "fs import verification: every relation"},
 	"internal/importer/importer.go#Importer.validateRelations": {1, batchJob,
 		"import: reads every header to check the imported relations' endpoints"},
-
-	"internal/ingest/ingest.go#findTarget": {1, requestPath,
-		"webhook and subscription delivery: scans the find type for the record's match values, per record"},
 
 	// lua: script bindings. Scripts run inside requests (automations on a
 	// write, actions), so a whole-type binding is request-path debt.

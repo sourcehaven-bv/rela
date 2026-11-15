@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -106,4 +107,50 @@ func TestImportMapped_CLI(t *testing.T) {
 	require.ErrorContains(t, err, "invalid import name")
 	_, err = runCLI(t, svc, "", "import", input, "--mapping", "absent")
 	require.ErrorContains(t, err, "imports/absent.yaml")
+}
+
+// TestImportMapped_ControlCharacters checks that text from the import file
+// cannot hide or rewrite plan lines: the text plan replaces control and
+// bidi runes, and the JSON output escapes them but decodes to the same key.
+func TestImportMapped_ControlCharacters(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".rela"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "imports"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "metamodel.yaml"), []byte(mappedImportMetamodel), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "imports", "catalog.yaml"), []byte(mappedImportMapping), 0o600))
+	const key = "a\u001b[2K\rb\u202e"
+	long := "\u009b2K" + strings.Repeat("x", 90)
+	input := filepath.Join(root, "catalog.json")
+	src, err := json.Marshal(map[string]any{"controls": []map[string]string{
+		{"id": key, "title": "short\u001b[8m"},
+		{"id": "c", "title": long},
+	}})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(input, src, 0o600))
+
+	svc, err := appbuild.Discover(root, script.NewEngine())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Close() })
+	prev := outputFormat
+	t.Cleanup(func() { outputFormat = prev })
+	hazards := []string{"\u001b", "\r", "\u009b", "\u202e"}
+
+	outputFormat = "text"
+	text, err := runCLI(t, svc, "", "import", input, "--mapping", "catalog", "--dry-run")
+	require.NoError(t, err, text)
+	for _, h := range hazards {
+		require.NotContains(t, text, h)
+	}
+	require.Contains(t, text, "a\uFFFD[2K\uFFFDb\uFFFD")
+
+	outputFormat = "json"
+	got, err := runCLI(t, svc, "", "-o", "json", "import", input, "--mapping", "catalog", "--dry-run")
+	require.NoError(t, err, got)
+	for _, h := range hazards {
+		require.NotContains(t, got, h)
+	}
+	var o mappedImportOutput
+	require.NoError(t, json.Unmarshal([]byte(got), &o), got)
+	require.Len(t, o.Plan.Creates, 2)
+	require.Contains(t, []string{o.Plan.Creates[0].Key, o.Plan.Creates[1].Key}, key)
 }

@@ -104,9 +104,20 @@ func BuildGraphQuerySQLForTest(q store.GraphQuery, countOnly bool) (sqlText stri
 // each face selection. Test-only.
 func BuildEntityListSQLForTest(t *testing.T, q store.EntityQuery) (sqlText string, args []any) {
 	t.Helper()
-	sqlText, args, err := entityPageSQL(q)
+	sqlText, args, err := entityPageSQL(q, entityListColumns)
 	if err != nil {
 		t.Fatalf("entity page sql: %v", err)
+	}
+	return sqlText, args
+}
+
+// BuildEntityHeaderPageSQLForTest exposes the SQL
+// [Store.ListEntityHeadersPage] issues for q. Test-only.
+func BuildEntityHeaderPageSQLForTest(t *testing.T, q store.EntityQuery) (sqlText string, args []any) {
+	t.Helper()
+	sqlText, args, err := entityPageSQL(q, entityHeaderColumns)
+	if err != nil {
+		t.Fatalf("entity header page sql: %v", err)
 	}
 	return sqlText, args
 }
