@@ -396,19 +396,23 @@ func (s *Service) pagedRows(
 // typePages yields the rows of one type (every type when typ is empty) a
 // keyset page at a time: size rows first, then twice as many each page, up
 // to [searchLoadPage].
+//
+// It reads headers, not entities: a hit needs the id, type, face and
+// properties, so no body is read (collection-reads rule, TKT-Q918DFR). A
+// header page holds the rows and cursor of the entity page.
 func (s *Service) typePages(
 	ctx context.Context, typ string, faces store.FaceSelection, size int,
 ) iter.Seq2[*entity.Entity, error] {
 	return func(yield func(*entity.Entity, error) bool) {
 		q := store.EntityQuery{Type: typ, Faces: faces, Limit: size}
 		for {
-			page, err := s.reader.ListEntitiesPage(ctx, q)
+			page, err := store.ListEntityHeadersPage(ctx, s.reader, q)
 			if err != nil {
 				yield(nil, fmt.Errorf("search: list: %w", err))
 				return
 			}
-			for _, e := range page.Items {
-				if !yield(e, nil) {
+			for _, h := range page.Items {
+				if !yield(&entity.Entity{ID: h.ID, Type: h.Type, Face: h.Face, Properties: h.Properties}, nil) {
 					return
 				}
 			}
