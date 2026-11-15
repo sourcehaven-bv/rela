@@ -133,6 +133,21 @@ func navStatusFor(
 func navStatusRows(
 	ctx context.Context, a *App, s *Schema, listID string, listCfg dataentryconfig.List,
 ) (context.Context, []*entityPkg.Entity, error) {
+	return listRowsFor(ctx, a, s, listID, listCfg, "", nil)
+}
+
+// listRowsFor is navStatusRows with an optional sort and an optional reach.
+// A non-empty sort orders the rows, in the list endpoint's sort syntax. A
+// non-nil reach narrows the read to those ids, as a page scope does; see
+// gatedListQuery.reach.
+func listRowsFor(
+	ctx context.Context, a *App, s *Schema, listID string, listCfg dataentryconfig.List,
+	sort string, reach map[string]bool,
+) (context.Context, []*entityPkg.Entity, error) {
+	query := navStatusListQuery(listCfg)
+	if sort != "" {
+		query["sort"] = []string{sort}
+	}
 	typeName := listCfg.EntityType
 	scope, err := viewQueryScope(a.queryScopes, s.Cfg, s.Meta, typeName, listCfg.QueryScope)
 	if err != nil {
@@ -145,10 +160,11 @@ func navStatusRows(
 	}
 	// A configured filter on a property hidden from this principal fails
 	// this one entry, as any other error here does; the caller degrades it.
-	gated, err := gateAppListQuery(ctx, a, s, typeName, navStatusListQuery(listCfg))
+	gated, err := gateAppListQuery(ctx, a, s, typeName, query)
 	if err != nil {
 		return ctx, nil, err
 	}
+	gated.reach = reach
 	rows, _, err := scopedSortedEntitiesScoped(ctx, a, typeName, gated, scope)
 	if err != nil {
 		return ctx, nil, err

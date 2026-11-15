@@ -1279,6 +1279,8 @@
     "loading": "Loading dashboard...",
     "notFound": "Dashboard not found",
     "notFoundDescription": "No dashboard is named “{name}”.",
+    "anchorMissing": "Open this dashboard from an entity",
+    "anchorMissingDescription": "This dashboard counts for one entity. Open it as a tab of that entity's page.",
     "noCards": "No dashboard cards to show.",
     "noResults": "No results",
     "validation": "Validation",

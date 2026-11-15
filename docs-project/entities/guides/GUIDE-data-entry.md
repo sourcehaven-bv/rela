@@ -3741,6 +3741,7 @@ dashboard:
 | `title`       | string | Page heading                           |
 | `description` | string | Subtitle shown below the heading       |
 | `cards`       | list   | Card definitions                       |
+| `entity_type` | string | Named dashboards only: makes it an [entity dashboard](#entity-dashboards) |
 
 ### Card Options
 
@@ -3763,6 +3764,7 @@ dashboard:
 | `match`      | string | `ratio`: the query scope on the list's type that counts as matched          |
 | `width`      | string | `normal` (default), `wide` or `full`: how much of the row the card takes    |
 | `permission` | string | Hide this card from principals who do not hold the named ACL permission     |
+| `scope`      | map    | On an [entity dashboard](#entity-dashboards): `{ relation, direction }` from the entity to the card's rows |
 
 ### Cards from a list (`list:`)
 
@@ -4069,6 +4071,52 @@ page itself does not list commands.
 In the Configure space, the Dashboard screen edits the default dashboard and
 every named one; pick a dashboard at the top of the screen. Adding or renaming
 a named dashboard is done in `data-entry.yaml`.
+
+#### Entity dashboards
+
+An entity dashboard counts for one entity, for example the risks and measures
+of one DPIA. Give a named dashboard an `entity_type:`, and give each card a
+`scope:` that says how the entity reaches the card's rows:
+
+```yaml
+dashboards:
+  dpia_figures:
+    title: "DPIA figures"
+    entity_type: dpia
+    cards:
+      - title: "Risks"
+        list: risks
+        display: breakdown
+        group_by: level
+        scope: { relation: has-risk, direction: outgoing }
+      - title: "Open measures"
+        list: open_measures
+        display: count
+        scope: { relation: mitigated-by, direction: outgoing }
+```
+
+The rules:
+
+- Every card needs `list:` and a `scope:` with a `relation`. `direction` works
+  as on an [entity page](#entity-pages) tab, and may be left out when the
+  relation connects the two types one way only. `scope: root` is not allowed
+  on a card.
+- The dashboard is shown only as a `scope: root` tab of an entity page of
+  that type. It cannot be a navigation entry or a space `home:`.
+- `entity_type:` is not allowed on the default `dashboard:`. A card `scope:`
+  is not allowed on a dashboard without `entity_type:`.
+- A card counts the rows of its list that the user may read, and then keeps
+  the ones the entity reaches. The count and the breakdown are computed from
+  those rows only, so a row the user may not read is never counted.
+- A card has no link to its list, because the list would show every row of
+  the type. The validation card is not shown.
+
+The API takes the entity as `anchor`:
+`/api/v1/_dashboard/card?name=<dashboard>&card=<index>&anchor=<id>`. A card
+of an entity dashboard without exactly one `anchor` returns 400 with the error
+type `anchor_required`. An `anchor` on another dashboard returns 400 with
+`anchor_not_allowed`. An entity the user may not read returns the same 404 as
+an entity that does not exist.
 
 ### Display Modes
 
@@ -6129,7 +6177,25 @@ Every tab of an entity page needs a `scope:`:
 - A `gantt:` tab takes `scope: root`. The timeline starts at the entity. The
   entity's type must be one of the timeline's `sources:`, and one of its
   `hierarchy:` relations must start from that type.
-- An entity page cannot show a calendar, a document or the dashboard.
+- A `document:` tab takes `scope: root`. It renders the document for the
+  entity. The document's `entity_type:` must be the page's type.
+- A `dashboard:` tab takes `scope: root`. It names an
+  [entity dashboard](#entity-dashboards), whose `entity_type:` must be the
+  page's type. Each card counts only the rows the entity reaches.
+- An entity page cannot show a calendar or the default dashboard.
+
+A DPIA page, for example, can walk from the report to its figures:
+
+```yaml
+pages:
+  dpia:
+    entity_type: dpia
+    label: DPIA
+    mode: steps
+    tabs:
+      - { id: report, label: Report, document: dpia_report, scope: root }
+      - { id: figures, label: Figures, dashboard: dpia_figures, scope: root }
+```
 
 ### Rows in relation order
 

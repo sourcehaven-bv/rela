@@ -98,6 +98,16 @@ export class DashboardPage extends BasePage {
     return card.locator('a[href*="/entity/"]').first().isVisible();
   }
 
+  /** An entity dashboard shows no project-wide validation card. */
+  async expectNoValidationCard() {
+    await expect(this.page.locator('.validation-card')).toHaveCount(0);
+  }
+
+  /** A card of an entity dashboard has no link to its unscoped list. */
+  async expectNoCardLink(cardTitle: string) {
+    await expect(this.card(cardTitle).locator('.card-link')).toHaveCount(0);
+  }
+
   /** A card by its exact title. */
   card(cardTitle: string): Locator {
     return this.cards.filter({ has: this.page.getByRole('heading', { name: cardTitle, exact: true }) });

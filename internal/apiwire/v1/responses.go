@@ -1300,9 +1300,12 @@ type NavItem struct {
 // one with an empty `cards:`, and one where every card was filtered all
 // serialize as `[]`, so the SPA has a single "render what you got" path.
 type DashboardResponse struct {
-	Title       string               `json:"title,omitempty"`
-	Description string               `json:"description,omitempty"`
-	Cards       []DashboardCardEntry `json:"cards"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	// EntityType is set on an entity dashboard, whose cards count for the
+	// anchor named in `?anchor=` on /api/v1/_dashboard/card.
+	EntityType string               `json:"entity_type,omitempty"`
+	Cards      []DashboardCardEntry `json:"cards"`
 }
 
 // DashboardCardEntry is one card of a DashboardResponse: its config plus its

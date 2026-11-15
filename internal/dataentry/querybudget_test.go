@@ -157,6 +157,19 @@ func budgetConfig() *Config {
 				},
 			}}},
 		},
+		// An entity dashboard over epics whose cards count the tickets
+		// tracked by the anchor (TKT-OF4O8PZ).
+		Dashboards: map[string]dataentryconfig.DashboardConfig{
+			"epic": {Title: "Epic", EntityType: "epic", Cards: []dataentryconfig.DashboardCard{
+				{Title: "Tickets", List: "tickets", Display: "count", Scope: &dataentryconfig.PageTabScope{
+					Relation: "tracked-by", Direction: dataentryconfig.DirectionIncoming,
+				}},
+				{Title: "Rows", List: "tickets", Display: "table", Limit: 5,
+					Columns: []dataentryconfig.ListColumn{{Property: "title"}}, Scope: &dataentryconfig.PageTabScope{
+						Relation: "tracked-by", Direction: dataentryconfig.DirectionIncoming,
+					}},
+			}},
+		},
 		Forms:      map[string]dataentryconfig.Form{},
 		Kanbans:    map[string]dataentryconfig.Kanban{},
 		Navigation: []dataentryconfig.NavigationEntry{},
@@ -814,6 +827,38 @@ var pageScopedListOp budgetOp = func(t *testing.T, app *App, d *acl.Declarative,
 	}
 }
 
+// An entity dashboard card reads its list's rows by the ids the anchor
+// reaches, as a page-scoped list tab does, rather than the whole type
+// (TKT-OF4O8PZ).
+func TestQueryBudget_EntityDashboardCardIsSizeIndependent(t *testing.T) {
+	for _, tc := range []struct {
+		name, card string
+		budget     int
+	}{
+		{"count card", "0", entityDashboardCardBudget},
+		{"table card", "1", entityDashboardCardBudget},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+				t.Helper()
+				q := url.Values{"name": {"epic"}, "card": {tc.card}, "anchor": {"E1"}}
+				req := httptest.NewRequest(http.MethodGet, "/api/v1/_dashboard/card?"+q.Encode(), http.NoBody)
+				req = req.WithContext(gateCtxFor(ctx, t, d))
+				rec := httptest.NewRecorder()
+				handleV1DashboardCard(app, rec, req)
+				if rec.Code != http.StatusOK {
+					t.Fatalf("card: %d %s", rec.Code, rec.Body)
+				}
+				var v v1.DashboardCardValue
+				if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil || v.Total < 10 {
+					t.Fatalf("card total %d (%v): %s", v.Total, err, rec.Body)
+				}
+			})
+			assertBudget(t, "entity dashboard "+tc.name, b, tc.budget, detail)
+		})
+	}
+}
+
 // The same tab over a relation orderable on its incoming side: the list is
 // shown in relation order, and its movable check adds one edge gate and one
 // batch of source reads, whatever the number of rows.
@@ -886,6 +931,10 @@ const (
 	// rows read by id (one MatchingFaces and one header read), page edges,
 	// neighbor headers, membership walk.
 	pageScopedListBudget = 8
+	// entity dashboard card, count or table: the anchor read, the scope's
+	// relation query, the rows read by id (one MatchingFaces and one header
+	// read), and the membership walk. Measured, not derived.
+	entityDashboardCardBudget = 6
 	// incoming-ordered list: pageScopedListBudget plus the edge gate's
 	// header read and the movable check's batched source rows and gate.
 	// Measured, not derived.
