@@ -86,6 +86,8 @@ components:
   backendtest:      { in: internal/appbuild/backendtest }
   tenant:           { in: internal/tenant }
   tenanthost:       { in: internal/tenanthost }
+  # Reads an org's status from the IdP operator API (TKT-TNPRV8).
+  idporg:           { in: internal/idporg }
 
   # Domain services
   analysis:         { in: internal/analysis }
@@ -523,6 +525,8 @@ deps:
       # tenant, tenanthost: the multi-tenant host (TKT-D6MF3SW) is wired here.
       - tenant
       - tenanthost
+      # idporg: tenant mode reads org status from the IdP (TKT-TNPRV8).
+      - idporg
     canUse:
       - http2
   cmdDesktop:
@@ -1169,11 +1173,14 @@ deps:
   # tenant registry and serves that tenant's data-entry router. It names
   # dataentry for the verified-identity types and the static shell, and
   # tenant for its sentinel error. The registry itself is reached through a
-  # consumer-side func, wired in cmd/rela-server.
+  # consumer-side func, wired in cmd/rela-server. It uses x/time/rate to cap
+  # how many tenant creations start per minute (TKT-TNPRV8).
   tenanthost:
     mayDependOn:
       - dataentry
       - tenant
+    canUse:
+      - xtimerate
   appbuildtest:
     mayDependOn:
       - acl
