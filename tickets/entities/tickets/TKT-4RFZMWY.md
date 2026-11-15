@@ -26,6 +26,10 @@ same job, so they still gate the merge.
 and closes it when a later push passes.
 - Postgres Backend keeps `-race`. Its pgstore step took 366 s without the
 detector and 334 s with it, so its time goes to the database.
+- Postgres Backend runs as parallel jobs: a build job, and a matrix that splits
+the database suites into four parts (pgstore in three by test name, the other
+suites in one). A job named "Postgres Backend" stays the required check and
+passes only when every part passed.
 
 ## Not done
 
