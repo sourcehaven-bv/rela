@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import KanbanView from './KanbanView.vue'
 import { useSchemaStore } from '@/stores/schema'
+import { useUIStore } from '@/stores/ui'
 import { _setEntityPluralForTest } from '@/api/entities'
 import { ApiError } from '@/api/errors'
 import type { Entity, ListResponse } from '@/types'
@@ -27,6 +28,16 @@ vi.mock('vue-router', async (importOriginal) => ({
   useRoute: () => ({ query: {}, path: '/kanban/board' }),
 }))
 vi.mock('@/composables/useBackTarget', () => ({ useBackTarget: () => null }))
+// The tab's link to the page entity has its own tests; here only the call.
+const linkCreatedMock = vi.fn()
+vi.mock('@/composables/usePageTabScope', async (orig) => ({
+  ...(await orig<typeof import('@/composables/usePageTabScope')>()),
+  usePageTabScope: () => ({
+    params: { value: {} },
+    linkCreated: (...args: unknown[]) => linkCreatedMock(...args),
+    relationOrdered: { value: false },
+  }),
+}))
 
 const TYPE = 'risk'
 
@@ -67,19 +78,23 @@ function seedSchema(config: Record<string, unknown>) {
   } as never)
 }
 
-function seedBoard(entities: Entity[], actions?: Record<string, boolean>) {
-  const response: ListResponse<Entity> = {
-    data: entities,
-    meta: { total: entities.length, page: 1, per_page: 25, has_more: false },
-    ...(actions ? { _actions: actions } : {}),
-  }
-  listAllEntitiesMock.mockImplementation(async (type: string) =>
+// The board's rows. A created card joins them, so the refetch after a
+// quick-add returns it, as the server would.
+let rows: Entity[] = []
+
+function seedBoard(actions?: Record<string, boolean>) {
+  rows = []
+  listAllEntitiesMock.mockImplementation(async (type: string): Promise<ListResponse<Entity>> =>
     type === 'topic'
       ? {
           data: [{ id: 'TOP-1', type: 'topic', properties: { name: 'Privacy' }, relations: {} }],
           meta: { total: 1, page: 1, per_page: 25, has_more: false },
         }
-      : response
+      : {
+          data: [...rows],
+          meta: { total: rows.length, page: 1, per_page: 25, has_more: false },
+          ...(actions ? { _actions: actions } : {}),
+        }
   )
 }
 
@@ -90,14 +105,19 @@ beforeEach(() => {
   _setEntityPluralForTest(TYPE, 'risks')
   _setEntityPluralForTest('topic', 'topics')
   listAllEntitiesMock.mockReset()
+  linkCreatedMock.mockReset().mockResolvedValue(undefined)
   createEntityMock
     .mockReset()
-    .mockImplementation(async (_type: string, body: { properties: Record<string, unknown> }) => ({
-      id: 'RSK-9',
-      type: TYPE,
-      properties: body.properties,
-      relations: {},
-    }))
+    .mockImplementation(async (_type: string, body: { properties: Record<string, unknown> }) => {
+      const created: Entity = {
+        id: `RSK-${rows.length + 1}`,
+        type: TYPE,
+        properties: body.properties,
+        relations: {},
+      } as Entity
+      rows.push(created)
+      return created
+    })
 })
 
 afterEach(() => {
@@ -106,7 +126,7 @@ afterEach(() => {
 
 async function mountBoard(config: Record<string, unknown> = {}, actions?: Record<string, boolean>) {
   seedSchema(config)
-  seedBoard([], actions)
+  seedBoard(actions)
   const wrapper = mount(KanbanView, {
     props: { id: 'board' },
     attachTo: document.body,
@@ -216,5 +236,83 @@ describe('KanbanView quick-add', () => {
   it('is absent when the reader may not create the type', async () => {
     const wrapper = await mountBoard({}, { create: false })
     expect(inputs(wrapper)).toHaveLength(0)
+  })
+
+  it('leaves the property unset in a column with an empty value', async () => {
+    const wrapper = await mountBoard({
+      columns: [
+        { value: '', label: 'Unsorted' },
+        { value: 'open', label: 'Open' },
+      ],
+    })
+    await type(wrapper, 0, 'Loose')
+    expect(createEntityMock).toHaveBeenCalledWith(TYPE, { properties: { title: 'Loose' } })
+  })
+
+  it('sends the world of a world-bound board', async () => {
+    const wrapper = await mountBoard()
+    useSchemaStore().defaultWorld = 'draft'
+    await flushPromises()
+    await type(wrapper, 0, 'Draft risk')
+    expect(createEntityMock).toHaveBeenCalledWith(TYPE, {
+      properties: { title: 'Draft risk', stage: 'open' },
+      world: 'draft',
+    })
+  })
+
+  it('links the card to the page and shows the card on the board', async () => {
+    const wrapper = await mountBoard()
+    const info = vi.spyOn(useUIStore(), 'info')
+    await type(wrapper, 0, 'Data leak')
+    expect(linkCreatedMock).toHaveBeenCalledWith(expect.objectContaining({ id: rows[0].id }))
+    expect(wrapper.findAll('.kanban-card').map((c) => c.text())).toEqual([
+      expect.stringContaining('Data leak'),
+    ])
+    expect(info).not.toHaveBeenCalled()
+  })
+
+  it('clears the text when the card was made but not linked', async () => {
+    linkCreatedMock.mockRejectedValue(new Error('link refused'))
+    const wrapper = await mountBoard()
+    const error = vi.spyOn(useUIStore(), 'error')
+    const input = await type(wrapper, 0, 'Data leak')
+    expect(error).toHaveBeenCalledWith('link refused')
+    expect((input.element as HTMLInputElement).value).toBe('')
+  })
+
+  it('shows the warnings of an accepted create', async () => {
+    createEntityMock.mockResolvedValue({
+      id: 'RSK-1',
+      type: TYPE,
+      properties: { title: 'Data leak' },
+      relations: {},
+      warnings: [{ code: 'required_property_unset', detail: 'owner is unset' }],
+    })
+    const wrapper = await mountBoard()
+    const warning = vi.spyOn(useUIStore(), 'warning')
+    await type(wrapper, 0, 'Data leak')
+    expect(warning).toHaveBeenCalledWith('Card added with warnings: owner is unset')
+  })
+
+  it('says so when the board filters hide the new card', async () => {
+    const wrapper = await mountBoard({
+      filters: [{ property: 'level', operator: '==', value: 'high' }],
+    })
+    const info = vi.spyOn(useUIStore(), 'info')
+    await type(wrapper, 0, 'Data leak')
+    expect(info).toHaveBeenCalledWith('Added "Data leak". This board\'s filters hide it.')
+  })
+
+  it('sends one create for a second Enter while the first is out', async () => {
+    let finish: (e: Entity) => void = () => {}
+    createEntityMock.mockImplementation(() => new Promise<Entity>((resolve) => (finish = resolve)))
+    const wrapper = await mountBoard()
+    const input = inputs(wrapper)[0]
+    await input.setValue('Data leak')
+    await input.trigger('keydown', { key: 'Enter' })
+    await input.trigger('keydown', { key: 'Enter' })
+    finish({ id: 'RSK-1', type: TYPE, properties: { title: 'Data leak' }, relations: {} } as Entity)
+    await flushPromises()
+    expect(createEntityMock).toHaveBeenCalledTimes(1)
   })
 })

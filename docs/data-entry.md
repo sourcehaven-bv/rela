@@ -5129,6 +5129,10 @@ so access rules, validation and the audit log apply as for any other create.
   the Other column gets no link.
 - The input is hidden when you may not create the type.
 - A refused create shows its error under the input. The text you typed stays.
+- The card gets no value for the board's `filters:` or `query_scope:`. When
+  those hide the new card, a message says it was added.
+- A column or lane with an empty value collects cards that have none. A card
+  added there leaves the property unset.
 - The type's default template applies, as with any create.
 
 The board refuses to load when quick-add cannot make a valid card:
@@ -5173,6 +5177,18 @@ The control only adds to an inline enum (`type: enum` with its own
 refuses `add_column` at startup, because a new value there would reach every
 property that uses the type. Change a shared type in the Configure space. A
 `columns_from` board or a wall adds columns as groups instead.
+
+When the board lists `columns:`, it can leave out values the property has.
+Typing the name of such a value adds it to the board. The schema does not
+change.
+
+Some schemas cannot be edited this way:
+
+- A type from a namespace is declared in another file. The board refuses
+  `add_column` at startup.
+- The Configure space does not edit a `schema.yaml` that uses `includes:`,
+  and a property inherited through `extends:` is not on the type's own
+  entry. In both cases the control shows the reason when you press Enter.
 
 ### Drag and Drop
 

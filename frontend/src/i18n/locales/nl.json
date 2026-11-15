@@ -1253,6 +1253,7 @@
     "quickAddLaneLabel": "Kaart toevoegen aan {column}, {lane}",
     "quickAddFailed": "De kaart kon niet worden toegevoegd",
     "quickAddWarnings": "Kaart toegevoegd met waarschuwingen: {warnings}",
+    "quickAddHidden": "\"{title}\" is toegevoegd. De filters van dit bord verbergen de kaart.",
     "addColumn": "Kolom toevoegen",
     "addColumnLabel": "Naam van de nieuwe kolom",
     "addColumnPlaceholder": "Naam van de kolom…",

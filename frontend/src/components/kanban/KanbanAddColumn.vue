@@ -20,6 +20,7 @@ import RlTextField from 'rela-components/components/form/RlTextField.vue'
 import { getErrorMessage } from '@/api'
 import { getConfigure, saveConfigure } from '@/api/configure'
 import { addEnumColumn, type AddColumnTarget } from '@/configure/addEnumColumn'
+import { machineName } from '@/configure/names'
 import { beginConfigSave, endConfigSave, setConfigIncomplete } from '@/configure/saveGate'
 
 const props = defineProps<{ target: AddColumnTarget }>()
@@ -30,22 +31,37 @@ const text = ref('')
 const busy = ref(false)
 const error = ref('')
 const field = ref<InstanceType<typeof RlTextField> | null>(null)
+const button = ref<InstanceType<typeof RlButton> | null>(null)
+
+function focusIn(component: { $el?: unknown } | null, selector: string) {
+  const el = component?.$el
+  if (!(el instanceof HTMLElement)) return
+  ;(el.matches(selector) ? el : el.querySelector<HTMLElement>(selector))?.focus()
+}
 
 async function start() {
   open.value = true
   await nextTick()
-  ;(field.value?.$el as HTMLElement | undefined)?.querySelector('input')?.focus()
+  focusIn(field.value, 'input')
 }
 
-function cancel() {
+// Focus goes back to the button, so a keyboard user is not left on the page.
+async function cancel() {
   if (busy.value) return
   open.value = false
   text.value = ''
   error.value = ''
+  await nextTick()
+  focusIn(button.value, 'button')
 }
 
 async function onEnter(event: KeyboardEvent) {
   if (event.isComposing || busy.value) return
+  // A name with no letter or digit is refused before anything is fetched.
+  if (!machineName(text.value)) {
+    error.value = t('kanban.addColumnNoName')
+    return
+  }
   busy.value = true
   error.value = ''
   let reloading = false
@@ -84,7 +100,7 @@ async function onEnter(event: KeyboardEvent) {
 
 <template>
   <div class="kanban-add-column" data-testid="kanban-add-column">
-    <RlButton v-if="!open" variant="ghost" size="sm" @click="start">
+    <RlButton v-if="!open" ref="button" variant="ghost" size="sm" @click="start">
       {{ t('kanban.addColumn') }}
     </RlButton>
     <template v-else>
@@ -100,7 +116,7 @@ async function onEnter(event: KeyboardEvent) {
         :hint="busy ? t('kanban.addColumnSaving') : undefined"
         autocomplete="off"
         @keydown.enter.prevent="onEnter"
-        @keydown.esc="cancel"
+        @keydown.esc.stop="cancel"
       />
       <RlButton variant="ghost" size="sm" :disabled="busy" @click="cancel">
         {{ t('kanban.addColumnCancel') }}

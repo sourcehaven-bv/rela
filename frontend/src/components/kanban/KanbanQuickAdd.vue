@@ -61,7 +61,7 @@ function onEscape() {
     autocomplete="off"
     data-testid="kanban-quick-add"
     @keydown.enter.prevent="onEnter"
-    @keydown.esc="onEscape"
+    @keydown.esc.stop="onEscape"
   />
 </template>
 

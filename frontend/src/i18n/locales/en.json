@@ -1253,6 +1253,7 @@
     "quickAddLaneLabel": "Add a card to {column}, {lane}",
     "quickAddFailed": "Could not add the card",
     "quickAddWarnings": "Card added with warnings: {warnings}",
+    "quickAddHidden": "Added \"{title}\". This board's filters hide it.",
     "addColumn": "Add column",
     "addColumnLabel": "Name of the new column",
     "addColumnPlaceholder": "Column name…",

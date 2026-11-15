@@ -25,6 +25,13 @@ func validateKanbanAddColumn(kanbanID string, kanban Kanban, entDef *metamodel.E
 	if kanban.ColumnsFrom != nil || kanban.ColumnProperty == "" {
 		return []string{prefix + " needs column_property; a columns_from board or a wall adds columns as groups"}
 	}
+	// The edit is made on schema.yaml's own tree, under the type's name in
+	// the root file. A namespaced type is declared in another file.
+	if ns := metamodel.NamespaceOf(kanban.EntityType); ns != "" {
+		return []string{fmt.Sprintf(
+			"%s needs a type declared in schema.yaml itself, but %q comes from namespace %q",
+			prefix, kanban.EntityType, ns)}
+	}
 	prop, ok := entDef.Properties[kanban.ColumnProperty]
 	if !ok {
 		// validateKanbans already reports the unknown column property.

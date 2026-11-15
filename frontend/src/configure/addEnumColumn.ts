@@ -40,11 +40,26 @@ export type AddColumnRefusal =
 
 export type AddColumnEdit = { value: string; draft: ConfigDraftBody } | AddColumnRefusal
 
+interface Option {
+  value: string
+  label: string
+}
+
+/** The option a typed name stands for: the same value, or the same label in any case. */
+function matching(options: Option[], value: string, name: string): Option | undefined {
+  const folded = name.toLowerCase()
+  return options.find((o) => o.value === value || o.label.toLowerCase() === folded)
+}
+
 /**
  * The draft that adds a column labelled `label` to the board: the value
  * appended to the property's `values:`, a `labels:` entry when the label is
  * not the value itself, and an item on the board's `columns:` when it lists
  * them. The snapshot is not changed.
+ *
+ * A board that lists `columns:` may leave out values the property has. Naming
+ * one of those shows it: the column is added to the board, and the schema is
+ * left alone.
  */
 export function addEnumColumn(
   snapshot: ConfigSnapshot,
@@ -60,26 +75,32 @@ export function addEnumColumn(
   if (!prop || str(get(prop, 'type')) !== 'enum') return { reason: 'unsupported' }
 
   const labels = get(prop, 'labels')
+  const values: Option[] = strList(get(prop, 'values')).map((v) => ({
+    value: v,
+    label: str(get(labels, v)) || v,
+  }))
   const dataEntry = clone(snapshot.data_entry)
   const board = mapAt(dataEntry, ['kanbans', target.kanbanId])
-  const columns = board ? mapItems(get(board, 'columns')) : []
-  const taken = [
-    ...strList(get(prop, 'values')).map((v) => ({ value: v, label: str(get(labels, v)) || v })),
-    ...columns.map((c) => ({
-      value: str(get(c, 'value')) ?? '',
-      label: str(get(c, 'label')) ?? '',
-    })),
-  ]
-  const clash = taken.find((c) => c.value === value || c.label.toLowerCase() === name.toLowerCase())
-  if (clash) return { reason: 'exists', name: clash.label || clash.value }
+  const listed = board && get(board, 'columns') !== undefined
+  const columns: Option[] = (board ? mapItems(get(board, 'columns')) : []).map((c) => ({
+    value: str(get(c, 'value')) ?? '',
+    label: str(get(c, 'label')) ?? '',
+  }))
 
-  ensureList(prop, 'values').push(value)
-  if (name !== value) set(ensureMap(prop, 'labels'), value, name)
+  const shown = listed ? matching(columns, value, name) : matching(values, value, name)
+  if (shown) return { reason: 'exists', name: shown.label || shown.value }
 
-  const draft: ConfigDraftBody = { base_version: snapshot.version, schema }
-  if (board && get(board, 'columns') !== undefined) {
-    ensureList(board, 'columns').push(newMap({ value, label: name }))
+  const draft: ConfigDraftBody = { base_version: snapshot.version }
+  const known = matching(values, value, name)
+  const column = known ?? { value, label: name }
+  if (!known) {
+    ensureList(prop, 'values').push(value)
+    if (name !== value) set(ensureMap(prop, 'labels'), value, name)
+    draft.schema = schema
+  }
+  if (board && listed) {
+    ensureList(board, 'columns').push(newMap({ value: column.value, label: column.label }))
     draft.data_entry = dataEntry
   }
-  return { value, draft }
+  return { value: column.value, draft }
 }

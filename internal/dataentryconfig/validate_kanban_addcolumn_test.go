@@ -18,6 +18,7 @@ func addColumnMetamodel() *metamodel.Metamodel {
 			"stage": {Type: "enum", Values: []string{"open", "decided"}},
 		},
 	}
+	m.Entities["isms.card"] = m.Entities["card"]
 	return m
 }
 
@@ -39,6 +40,11 @@ func TestValidateConfig_KanbanAddColumn(t *testing.T) {
 			name:    "named custom type",
 			kanban:  Kanban{EntityType: "ticket", ColumnProperty: "status", AddColumn: true},
 			wantErr: `add_column needs column property "status" to be an inline enum`,
+		},
+		{
+			name:    "namespaced type",
+			kanban:  Kanban{EntityType: "isms.card", ColumnProperty: "stage", AddColumn: true},
+			wantErr: `"isms.card" comes from namespace "isms"`,
 		},
 		{
 			name: "columns_from board",

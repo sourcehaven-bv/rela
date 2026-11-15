@@ -135,6 +135,23 @@ describe('KanbanView add column', () => {
     expect(isConfigSaveInFlight()).toBe(true)
   })
 
+  it('refuses a name with no letter or digit without fetching', async () => {
+    const wrapper = await mountBoard()
+    await addColumn(wrapper, '!!!')
+    expect(getConfigureMock).not.toHaveBeenCalled()
+    expect(control(wrapper).text()).toContain('Use at least one letter or digit in the name')
+  })
+
+  it('Escape closes the input and puts focus back on the button', async () => {
+    const wrapper = await mountBoard()
+    const input = await addColumn(wrapper, '!!!')
+    await input.trigger('keydown', { key: 'Escape' })
+    await flushPromises()
+    const button = control(wrapper).find('button')
+    expect(control(wrapper).find('input').exists()).toBe(false)
+    expect(document.activeElement).toBe(button.element)
+  })
+
   it('refuses an existing column before any save', async () => {
     const wrapper = await mountBoard()
     const input = await addColumn(wrapper, 'Open')

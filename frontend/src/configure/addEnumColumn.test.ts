@@ -71,6 +71,25 @@ describe('addEnumColumn', () => {
     expect(addEnumColumn(snap, target, label)).toEqual(want)
   })
 
+  it('shows a value the board leaves out, without a schema change', () => {
+    const columns = [newMap({ value: 'open', label: 'Open' })]
+    const snap = snapshot({ columns, labels: { decided: 'Decided' } })
+    const edit = addEnumColumn(snap, target, 'DECIDED')
+    if (!('draft' in edit)) throw new Error(`refused: ${edit.reason}`)
+    expect(edit.value).toBe('decided')
+    expect(edit.draft.schema).toBeUndefined()
+    const listed = getIn(edit.draft.data_entry, ['kanbans', 'board', 'columns']) as TreeValue[]
+    expect(listed[1]).toEqual(newMap({ value: 'decided', label: 'Decided' }))
+  })
+
+  it('refuses a board column label in another case', () => {
+    const columns = [newMap({ value: 'open', label: 'To do' })]
+    expect(addEnumColumn(snapshot({ columns }), target, 'TO DO')).toEqual({
+      reason: 'exists',
+      name: 'To do',
+    })
+  })
+
   it('refuses a property that is not an inline enum', () => {
     expect(addEnumColumn(snapshot({ type: 'risk_stage' }), target, 'Parked')).toEqual({
       reason: 'unsupported',

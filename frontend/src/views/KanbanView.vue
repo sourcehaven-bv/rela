@@ -1224,8 +1224,10 @@ function quickAddBody(
     }
     return body
   }
-  properties[config.column_property] = section.id
-  if (lane && config.swimlane_property) properties[config.swimlane_property] = lane.id
+  // A column or lane with an empty value collects the cards that have none,
+  // so a card added there leaves the property unset.
+  if (section.id) properties[config.column_property] = section.id
+  if (lane?.id && config.swimlane_property) properties[config.swimlane_property] = lane.id
   return body
 }
 
@@ -1256,7 +1258,12 @@ async function quickAdd(
     uiStore.error(getErrorMessage(err, t('kanban.quickAddFailed')))
   }
   flip.flash(created.id)
-  refreshAfterCreate()
+  await queryCache.invalidateQueries({ key: entityKeys.list(config.entity) })
+  // The board's filters, query scope or filter controls can hide the new
+  // card. Say so, or the facilitator types it again.
+  if (!filteredEntities.value.some((e) => e.id === created.id)) {
+    uiStore.info(t('kanban.quickAddHidden', { title }))
+  }
   return ''
 }
 
