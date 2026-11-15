@@ -7,7 +7,7 @@ toolchain go1.26.11
 require (
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.2
 	github.com/MicahParks/jwkset v0.11.4
-	github.com/MicahParks/keyfunc/v3 v3.8.2
+	github.com/MicahParks/keyfunc/v3 v3.9.1
 	github.com/alecthomas/kong v1.16.1
 	github.com/aymerick/douceur v0.2.0
 	github.com/blevesearch/bleve/v2 v2.6.1
@@ -34,7 +34,7 @@ require (
 	github.com/reearth/ygo v1.55.0
 	github.com/riverqueue/river v0.51.1
 	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.51.1
-	github.com/riverqueue/river/rivertype v0.51.1
+	github.com/riverqueue/river/rivertype v0.51.2
 	github.com/stretchr/testify v1.12.1
 	github.com/teambition/rrule-go v1.8.2
 	github.com/teekennedy/goldmark-markdown v0.5.1
