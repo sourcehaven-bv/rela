@@ -7125,8 +7125,10 @@ provider's defaults for this action. One call may take at most two minutes.
 Such text can carry instructions aimed at the model (prompt injection). rela
 sends it as data and bounds what the answer can be, but a free-text value can
 still say anything. The dialog therefore shows a proposed text value unticked;
-the user ticks it after reading it. Enum, number, date and relation proposals
-start ticked.
+the user ticks it after reading it. Only enum, number, boolean, date and
+relation proposals, and values of a property with a list of allowed values,
+start ticked. Every other value starts unticked, including a custom type that
+only checks a pattern, such as an email address or a URL.
 
 **Stale proposals.** The model may take a while to answer. Before applying, the
 dialog reads the entity again. A property that changed in the meantime is not
@@ -8183,8 +8185,9 @@ The Settings page is accessible from the sidebar (gear icon at the bottom). It h
 type (text input, dropdown, date picker, etc.) matches the property's type. For enum/custom types,
 a dropdown shows the allowed values.
 
-**Relation Defaults** — Set a default target entity for any relation type. When creating a new
-entity, the relation will be pre-filled with this target.
+**Relation Defaults** — Set a default target entity for any relation type. Choose the target
+by searching its title or ID among the relation's target types. When creating a new entity, the
+relation will be pre-filled with this target.
 
 **Overrides** — Scope defaults to specific entity types. For example, set `priority: critical`
 only when creating tickets, while leaving the global default as `medium`.

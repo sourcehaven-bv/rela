@@ -43,8 +43,12 @@ useModalStack(computed(() => true))
 
 // A free-text value starts unticked. The model read entity data that other
 // people wrote, so such a value may carry text injected through it; the user
-// opts in to it after reading it. Constrained values (enums, numbers, dates,
-// candidate ids) start ticked.
+// opts in to it after reading it. Only values the type constrains to a
+// closed or structured set (enums, numbers, booleans, dates) and candidate
+// ids start ticked. Anything else starts unticked, including a custom type
+// whose only check is a pattern: an email or URL is still text the model
+// chose.
+const CONSTRAINED_TYPES = new Set(['enum', 'integer', 'decimal', 'boolean', 'date', 'datetime'])
 const selectedSet = ref(
   new Set(props.proposal.set.filter((c) => !isFreeText(c.property)).map((c) => c.property))
 )
@@ -63,7 +67,8 @@ const nothingChecked = computed(
 
 function isFreeText(name: string): boolean {
   const def = schemaStore.getEntityType(props.entityType)?.properties?.[name]
-  return !def || (def.type === 'string' && !def.values?.length)
+  if (!def) return true
+  return !def.values?.length && !CONSTRAINED_TYPES.has(def.type)
 }
 
 function propertyLabel(name: string): string {

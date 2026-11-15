@@ -15,11 +15,11 @@ writing Lua. Today that needs a script action with `capabilities: ai`.
 
 ## Shape
 
-A declarative `llm_tasks:` registry. Each task names a subject type, an
+An inline `llm:` block on a data-entry action. The block holds an
 untemplated prompt, the inputs rela serializes as JSON (gated for the invoking
 principal), and outputs constrained by a JSON schema derived from the metamodel:
-set properties, relate to candidates chosen from a gated query. Actions
-reference a task with `llm: <task>`.
+set properties, relate to candidates chosen from a gated query. The action's
+entity type is the subject. There is no separate task registry.
 
 ## Principles
 
