@@ -3,7 +3,8 @@ id: IMPL-UHE9AL7
 type: implementation-checklist
 title: 'Implementation: Mac conventions in rela-desktop: reopen after closing the last window, Find, Print, Show in Finder, Help'
 started: "2026-11-14"
-status: in-progress
+completed: "2026-11-15"
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -26,17 +27,30 @@ status: in-progress
 
 ## Manual Verification
 
-- [ ] Feature manually tested end-to-end
-- [ ] Each acceptance criterion verified with test scenario from planning
-- [ ] Edge cases manually verified
+- [x] Feature manually tested end-to-end
+- [x] Each acceptance criterion verified with test scenario from planning
+- [x] Edge cases manually verified
 
 **Verification Evidence:**
 
 Automated: `go test -race ./cmd/rela-desktop/...`, golangci-lint, plimsoll,
 comment-lint, vitest for `useShellCommands`, vue-tsc and the SPA build pass.
 
-Manual acceptance tests are pending; Jeroen runs them in a built
-rela-desktop.
+Manual, in a production build of rela-desktop on macOS:
+
+- Close Window, then reopen the app (the Dock's reopen event): a main window
+opens on the active project. Same after File > Open Recent and after opening the
+project folder from Finder with no window.
+- Edit > Find focuses the list's search box on All Tickets; on the dashboard
+it opens /search. File > Print, Show in Finder and Help > Rela Help are present.
+- Print of All Tickets: no sidebar or header buttons, two pages, cells keep
+their ellipsis (checked with a Playwright print as well).
+- Quit and Close Window both save the frame; relaunch restores it exactly
+(1100x700 at 300,200 stays the same across cycles).
+- Show in Finder reveals the project; it is disabled on the Clone from Git
+screen.
+
+Manual testing found three bugs, now fixed: RR-F1NDL57, RR-PR1NTC3, RR-S1ZEDR1.
 
 ## Quality
 
