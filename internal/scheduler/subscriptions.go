@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/remotesync"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/subscription"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // SubscriptionKind is the job kind for one poll of a feed subscription.
@@ -233,6 +234,7 @@ func (s *Scheduler) subscriptionDeps(name string) (subscription.Deps, error) {
 	}
 	return subscription.Deps{
 		Ingest: ingest.Deps{
+			Finder:      visibility.HolderLookupFor(lua.VisibleReader),
 			Reader:      lua.VisibleReader,
 			World:       lua.World,
 			Writer:      lua.EntityManager,

@@ -1,9 +1,9 @@
 request: GET /api/v1/_settings
 identity: header stranger@example.test
 status: 200
-reads: GraphQueryHeaders=3 ListRelations=1
+reads: GraphQueryHeaders=1 ListRelations=1
 breadth: ListRelations=0/1
-bodies: GraphQuery=0/3
+bodies: GraphQuery=0/1
 versions: 
 body (allProperties, allRelations, entityTypes sorted):
 {
@@ -81,19 +81,25 @@ body (allProperties, allRelations, entityTypes sorted):
       "name": "contains",
       "label": "",
       "targetType": "ticket",
-      "targets": null
+      "targetTypes": [
+        "ticket"
+      ]
     },
     {
       "name": "implements",
       "label": "",
       "targetType": "policy",
-      "targets": null
+      "targetTypes": [
+        "policy"
+      ]
     },
     {
       "name": "watches",
       "label": "",
       "targetType": "ticket",
-      "targets": null
+      "targetTypes": [
+        "ticket"
+      ]
     }
   ],
   "entityTypes": [

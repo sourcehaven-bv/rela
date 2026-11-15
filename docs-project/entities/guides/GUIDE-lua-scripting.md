@@ -446,6 +446,16 @@ rela.get_relations(e.id)               -- NOT a filter: a bare id is not a
                                        -- table, so this returns EVERY relation
 ```
 
+`get_relations` is bounded like `list_entities`. It returns at most 2000
+relations, and a `limit` option lowers that bound by the same rules
+(`limit = 0` is an error, a larger value clamps). Hidden edges do not count
+toward the limit. Unknown option keys are still ignored here, for older
+scripts. A store failure raises an error instead of returning a short list.
+
+```lua
+local first = rela.get_relations({ type = "implements", limit = 100 })
+```
+
 ### History Functions
 
 | Function | Description | Returns |
@@ -794,6 +804,79 @@ because attaching a file updates the entity. Guard it with a `when:` that
 the write does not keep true, such as a status change, or run it from an
 action or a schedule instead.
 
+### Attach bytes the script holds: `rela.attach_file`
+
+`rela.attach_file` stores bytes the script already holds as a file on a
+`file` property. Use it to keep a file you fetched with `http.request`, such
+as an invoice PDF from an accounting system, on the entity it belongs to.
+Readers then download it from rela under the ACL, instead of through a
+public link:
+
+```lua
+local resp = http.request({ method = "GET", url = pdf_url })
+local att, err = rela.attach_file{
+  entity   = invoice.id,         -- the entity that gets the file
+  property = "pdf",              -- a `file` property of that entity
+  content  = resp.body,          -- the bytes, as a Lua string
+  filename = "F001",             -- with `mime`, the extension is added when missing
+  mime     = "application/pdf",  -- optional: the type the bytes must be
+}
+if not att then
+  error("invoice PDF not stored: " .. err)
+end
+```
+
+On success it returns a table `{name, size, sha256, mime}`, as
+`rela.attach_render` does. `mime` there is the type a download of the file
+serves. On a refusal or a failure it returns `nil` and a message. A wrong
+argument, such as an unknown option, a missing `content` or a `content` that
+is not a string, raises an error.
+
+Lua strings hold bytes, so `content` can be binary. The bytes are stored
+unchanged, unless the property's attachment processing rewrites them, as it
+would for an upload.
+
+`mime` is optional:
+
+- Without it, the file is stored under `filename` exactly as an upload of
+  the same bytes with that name.
+- With it, the bytes must not contradict that type, judged by the same
+  detection the `accept:` check uses. A type the detection recognizes by its
+  bytes, such as `application/pdf`, `image/png` or `image/jpeg`, must match
+  exactly, so an error page returned in place of the PDF is refused rather
+  than stored as `F001.pdf`. For other types, such as `text/csv` or an
+  Office document, the bytes only need to sniff as a generic type
+  (`text/plain`, `application/zip` or `application/octet-stream`). The
+  upload policy's own extension check still applies after that. The
+  filename gets the type's extension when it has none, and an extension of
+  another type is refused, as for `rela.attach_render`.
+- The size limit is checked before anything else, so an oversized file is
+  refused without touching the entity.
+
+The call acts as the script's principal and runs the checks an upload runs:
+
+- The principal must be able to read the entity and the property, and needs
+  `update` on the entity and leave to change the property. A hidden or
+  missing entity gets the same `not found` message.
+- The size limit (`max_attachment_bytes` in `data-entry.yaml`), the
+  property's `accept:` and `max:`, and the attachment scanner apply. On a
+  property with `max: 1` the new file replaces the old one.
+- The write is audited like an upload. `rela.bypass_acl` does not widen it.
+
+The principal is the same as for `rela.attach_render`: the user in an
+action, the `run_as` identity in a background automation, and the task's
+identity in a schedule or a flow step. The file can be downloaded by
+everyone who can read the entity.
+
+`rela.attach_file` exists where `rela.attach_render` exists: in action
+scripts, and in `rela-server` and the desktop app also in scheduled scripts,
+flow steps and background automation actions, in single-project and tenant
+mode. In other runtimes it returns `nil` and `"attach_file is not available
+in this runtime"`. It is absent in a synchronous automation, in a document
+render and in a validation rule. A declarative webhook runs no Lua; to
+attach a file from one, let the webhook's write start a flow or a
+background automation.
+
 ### Pile Functions
 
 A pile is a personal, named stack of entities. The `rela.piles` functions
@@ -1110,8 +1193,12 @@ end)
 | `admin.delete_relation(from, type, to, opts?)` | Unlink, skipping the ACL deny |
 | `admin.delete_entity(id, cascade?)` | Remove, skipping the ACL deny |
 | `admin.get_entity(id)` | Read **raw** — full properties, no redaction |
-| `admin.list_entities(type, opts?)` | Every entity of `type`, ungated; `opts.face` lists one face |
-| `admin.get_relations(opts?)` | Every matching edge, not peer-gated |
+| `admin.list_entities(type, opts?)` | Up to `opts.limit` (at most 2000) entities of `type`, ungated; `opts.face` lists one face |
+| `admin.get_relations(opts?)` | Up to `opts.limit` (at most 2000) matching edges, not peer-gated |
+
+Both list reads take the same `limit` option as their gated counterparts.
+`admin.list_entities` rejects unknown option keys, as `rela.list_entities`
+does.
 
 **Elevated reads return raw data.** `admin.get_entity` returns the entity with
 all properties, including ones the triggering user cannot see; `list_entities`
@@ -1640,7 +1727,7 @@ table with `status_code` populated):
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `kind` | string | One of `timeout`, `canceled`, `network`, `bad_response` |
+| `kind` | string | One of `timeout`, `canceled`, `network`, `bad_response`, `blocked` |
 | `message` | string | Human-readable summary |
 | `retry_after` | number | Always `0` on an error table. A rate limit is a response; see `resp.retry_after` above. |
 | `details` | string | Unwrapped transport error (TLS cert, DNS record, etc.) when present |
@@ -1651,6 +1738,7 @@ table with `status_code` populated):
 | `canceled` | Request was canceled (runtime shutting down) |
 | `network` | DNS failure, connection refused, TLS error, generic body read error |
 | `bad_response` | Response body exceeded the 10 MiB cap |
+| `blocked` | The destination address policy refused the address (see below) |
 
 Programming errors (missing URL, URL with userinfo, wrong argument types,
 invalid HTTP method, non-positive timeout) raise Lua errors.
@@ -1665,13 +1753,55 @@ HTTP redirects are **not** followed automatically. The 3xx response is
 returned directly so scripts can inspect the `Location` header and
 follow redirects explicitly if needed.
 
+#### Destination address policy
+
+rela checks every connection `http.*` opens. The check runs on the IP
+address the connection goes to, after DNS resolution. A host name is
+judged by the address it resolves to at that moment, so a name that
+later resolves to another address is judged again. A refused connection
+returns `(nil, err)` with `err.kind == "blocked"` and the message
+`http: destination address not allowed`. The message does not name the
+resolved address.
+
+Some addresses are always refused, in every mode:
+
+- link-local addresses (`169.254.0.0/16`, `fe80::/10`), which include
+  the cloud metadata service at `169.254.169.254`;
+- the AWS IPv6 metadata address `fd00:ec2::254`;
+- unspecified addresses (`0.0.0.0`, `::`), multicast and broadcast;
+- the same addresses written in IPv4-mapped, NAT64 (`64:ff9b::/96` and
+  the local-use `64:ff9b:1::/48`), IPv4-compatible (`::a.b.c.d`) or 6to4
+  form.
+
+No documented use of rela needs these. The metadata service hands out
+cloud credentials, so a script must not reach it.
+
+In tenant mode (`rela-server -tenant-mode`) the policy is strict. It
+also refuses every address that is not public: loopback (`127.0.0.0/8`,
+`::1`), private ranges (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`),
+carrier-grade NAT (`100.64/10`) and the other special-purpose ranges.
+In tenant mode many customers share one server, so a script must not
+reach the server itself or the operator's internal network. The
+operator can keep named destinations reachable with an allowlist of
+address ranges (`10.1.0.0/16`) or `host:port` entries
+(`idp.internal:8443`), given with `rela-server -lua-http-allow`. The allowlist never reopens an address that is
+always refused. In strict mode the `HTTP_PROXY` and `HTTPS_PROXY`
+environment variables are ignored, because a proxy would make the
+connection on the script's behalf.
+
+Outside tenant mode, localhost and private-network addresses stay
+reachable. Scripts in a single-team deployment call local services and
+internal APIs, and that is documented behaviour. If a proxy is set in
+the environment, rela connects to the proxy, and the check applies to
+the proxy's address only.
+
 #### Security
 
-`http.*` is a new threat surface: a Lua script can make arbitrary
-outbound requests using the user's machine. There is no SSRF protection
-(the localhost / private-IP range is reachable). URLs containing
-embedded credentials (`http://user:pass@host/`) are rejected — set the
-`Authorization` header explicitly. Treat Lua scripts as trusted code.
+`http.*` lets a Lua script make outbound requests from the machine rela
+runs on. Outside tenant mode the address policy above blocks only the
+link-local, metadata, multicast and similar addresses. URLs containing
+embedded credentials (`http://user:pass@host/`) are rejected. Set the
+`Authorization` header instead. Treat Lua scripts as trusted code.
 
 ### Crypto Functions
 
@@ -2088,6 +2218,13 @@ directory.
 A script only sees the keys its `capabilities.secrets` list names (see
 [Capabilities](#capabilities--http-ai-mail-secrets-tokens-write_file) above); everything
 below describes how the *values* are resolved once a key has been granted.
+
+In tenant mode the secrets are withheld unless the operator shares them
+(see [server-security.md](server-security.md#operator-secrets-and-ai)).
+Then every index of `rela.secrets` raises an error, so
+`rela.secrets.x or "default"` fails rather than taking the default, and
+`pairs(rela.secrets)` yields nothing. `ai.*` returns `nil` and an error
+of kind `not_configured` instead of raising.
 
 Two kinds of secret are never given to a script, not even one granted every
 secret: `token_key` (see [OAuth Tokens](#oauth-tokens)) and any name that starts with
@@ -2595,8 +2732,21 @@ in the project. Pass the result to `resolve_refs`.
 
 Options (all optional):
 
+- `content`: a markdown string. Only the ids it mentions in code
+  spans are read, by the rule `resolve_refs` uses. This is the cheap
+  form: pass the body you are about to resolve.
+- `ids`: a list of entity ids to read. Use `ids` or `content`, not
+  both. An id that is not well formed, such as an address with `@`,
+  raises an error.
 - `types`: list of entity-type names to include. Unknown names raise
-  an error. Default: every entity type in the metamodel.
+  an error. Default: every entity type in the metamodel. With `ids`
+  or `content`, it filters the ids read.
+- `limit`: the most entities to read, at most 2000 (the default).
+  Without `ids` or `content`, more readable entities than the limit
+  raise an error, so a large project never gets a partial map by
+  accident. Set `limit` yourself to accept the first `limit`
+  entities instead. With `ids` or `content`, more ids than `limit`
+  is an error.
 - `style`: `"title-slug"` (default) or `"id"`. Controls the anchor in
   the default replacement value.
   - `"title-slug"` produces `[Title](#title-slug)` where the slug is
@@ -2611,6 +2761,8 @@ Options (all optional):
   newlines. The entity table has the usual fields plus a top-level
   `title` convenience.
 
+Unknown option keys raise an error.
+
 Default-form replacement values escape `[`, `]`, and `\` in entity
 titles so a malicious or unusual title cannot break out of the
 link-text slot. Custom format callbacks remain responsible for their
@@ -2618,7 +2770,7 @@ own escaping.
 
 ```lua
 -- Common case: link every entity-ID code span to its title-slug anchor.
-local refs = rela.md.entity_refs()
+local refs = rela.md.entity_refs({ content = entity.content })
 local ast  = rela.md.parse(entity.content)
 ast = rela.md.resolve_refs(ast, refs)
 print(rela.md.render(ast))
@@ -2951,10 +3103,49 @@ When `.rela/ai.yaml` is configured, scripts can make HTTP requests to the config
 AI provider via `ai.chat`, `ai.complete`, and `ai.embed`. This means scripts can send
 entity content to an external service.
 
-The `http.*` module additionally lets scripts make arbitrary HTTP(S)
-requests to any reachable URL. There is no SSRF filter — localhost and
-private-network IPs are reachable. **Treat Lua scripts as trusted code** —
-don't run scripts from untrusted sources.
+The `http.*` module additionally lets scripts make HTTP(S) requests to
+any reachable URL, within the destination address policy described
+under [HTTP Functions](#destination-address-policy). Outside tenant mode
+localhost and private-network addresses are reachable. **Treat Lua
+scripts as trusted code.** Do not run scripts from untrusted sources.
+
+### Resource limits
+
+These limits apply to every script, in every mode:
+
+- A script stops after its timeout (30 seconds by default).
+- The call stack holds at most 1024 frames. Deeper recursion fails with
+  `stack overflow`.
+- The value stack holds at most 65,536 values. A call such as
+  `unpack()` on a larger table fails with `registry overflow`, and the
+  runtime cannot run another script afterwards.
+- `string.rep`, `string.format` and `table.concat` refuse to build a
+  string larger than 16 MiB. They fail before they allocate it.
+- `string.format` accepts the Lua 5.1 conversions: at most five flags
+  from `-+ #0`, a width and a precision of at most two digits each, and
+  one of `cdiouxXeEfgGqs`. It raises an error for a longer width or
+  precision, an unknown conversion (including the Go verbs `%v` and
+  `%t`), a missing argument, and the Go extensions `%[n]` (argument
+  index) and `*` (width from an argument). Each conversion uses its own
+  argument. It differs from Lua 5.1 in two ways: `%q` quotes with Go's
+  rules, and `%x`, `%o` and `%u` print a negative number with a minus
+  sign rather than as its two's complement.
+- `string.format` checks each argument as Lua 5.1 does. `%d`, `%i`, `%u`,
+  `%c`, `%o`, `%x`, `%X`, `%e`, `%E`, `%f`, `%g` and `%G` take a number; a
+  string that holds a number also works. `%c` prints one byte. `%s` takes
+  any value and prints what `tostring` returns, so a `__tostring`
+  metamethod applies. `%q` takes a string or a number. Any other argument
+  fails with `bad argument`. So `string.format("%x", "abc")` and
+  `string.format("%d", {})` are errors.
+
+There is no limit on the total memory a script uses. The embedded Lua
+engine cannot measure it. The `..` operator, `string.gsub` and table
+construction are limited only by the timeout. A loop that doubles a
+string with `s = s .. s` can use gigabytes of memory in under a second.
+Run rela with a memory limit (`GOMEMLIMIT`, a container limit) so a
+runaway script cannot exhaust the host. In tenant mode the memory is
+shared by every tenant, so one tenant's script can still exhaust it for
+all of them. This gap is tracked as BUG-88F0XLW.
 
 API keys are never logged or included in error messages.
 

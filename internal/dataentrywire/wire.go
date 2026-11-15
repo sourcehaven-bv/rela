@@ -24,7 +24,7 @@ import (
 // Services wires app to the services in svc: CalDAV aliases, comments, piles, leases,
 // the element range read behind /api/v1/_reconcile,
 // the realtime.yaml holder,
-// the worlds' relation scopes, version tags, next-action user state, and the
+// the worlds' relation scopes, version tags, the Lua host config, next-action user state, and the
 // predicate compilers behind next-action sources, list and kanban
 // `condition:`, and `query_scopes:`.
 //
@@ -95,6 +95,11 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 	// Version tags for action scripts (TKT-VO6VG9).
 	dataentry.SetVersionTags(app, appbuild.ScriptVersionTags(svc), appbuild.VersionTagReader(svc))
 	dataentry.SetOAuthTokens(app, appbuild.ScriptOAuth(svc))
+	// The host config and seams of the services, so action, document and
+	// webhook scripts see tenant mode's withheld secrets and ai.yaml rather
+	// than the shared .rela directory.
+	luaHost, luaSeams := appbuild.LuaHost(svc)
+	dataentry.SetLuaHost(app, luaHost, luaSeams)
 
 	// rela.attach_render for schedules and background automations
 	// (TKT-1TS55R); action scripts get it from the app itself.
@@ -102,8 +107,16 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 	if err != nil {
 		return fmt.Errorf("wire attach_render: %w", err)
 	}
-	if err := appbuild.SetAttachRenderer(svc, renderer); err != nil {
+	if err = appbuild.SetAttachRenderer(svc, renderer); err != nil {
 		return fmt.Errorf("wire attach_render: %w", err)
+	}
+	// rela.attach_file for the same scripts (TKT-36DHKH8).
+	filer, err := dataentry.AttachFiler(app)
+	if err != nil {
+		return fmt.Errorf("wire attach_file: %w", err)
+	}
+	if err = appbuild.SetAttachFiler(svc, filer); err != nil {
+		return fmt.Errorf("wire attach_file: %w", err)
 	}
 
 	// The reconcile endpoint (TKT-VP02WHG). A build failure is returned, not

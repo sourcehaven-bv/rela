@@ -146,7 +146,12 @@ func failLLMInternal(err error) *opFailure {
 // llmWritable is the part of outputs.set the caller may write on raw: the
 // update verb holds, and each property is visible and writable to them.
 func (o actionOps) llmWritable(ctx context.Context, raw *entityPkg.Entity, set []string) []string {
-	if len(set) == 0 || !o.h.affordances.computeActions(ctx, raw)["update"] {
+	if len(set) == 0 {
+		return nil
+	}
+	// Only the update verdict: computeActions would also authorize delete
+	// and rename, once per row of a batch run.
+	if !o.h.affordances.acl().AuthorizeWrite(ctx, translateVerb("update", raw.Type, raw.ID, raw.Face)).Allow {
 		return nil
 	}
 	fv := o.h.affordances.fieldVerdicts(ctx, raw)

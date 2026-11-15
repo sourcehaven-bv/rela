@@ -33,8 +33,10 @@ func newTestDeps(t *testing.T, meta *metamodel.Metamodel, st store.Store) Deps {
 	t.Cleanup(func() { _ = svc.Close() })
 
 	deps := Deps{
-		Store:         svc.GatedReads().Reader,
-		Related:       RelatedReads{Traversals: svc.GatedReads().Traversals},
+		Store: svc.GatedReads().Reader,
+		Related: RelatedReads{
+			Traversals: svc.GatedReads().Traversals, Conditions: svc.GatedReads().Conditions,
+		},
 		Meta:          meta,
 		Tracer:        svc.Tracer(),
 		Searcher:      svc.Searcher(),

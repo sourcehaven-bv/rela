@@ -65,14 +65,27 @@ func (m *Metamodel) GetRelationDef(name string) (*RelationDef, bool) {
 	return nil, false
 }
 
-// InferEntityType tries to determine the entity type from an ID
+// InferEntityType returns the type whose id prefix id starts with, or "" if
+// none does. Prefixes compare with case folded ([EntityDef.MatchesID]).
+// When several types match, a prefix in the id's exact case wins over a
+// folded one, so folding never changes an answer a byte-exact match gave
+// (BUG-4OPP525). Then the longer prefix wins, then the smaller type name,
+// so the answer does not depend on map order.
 func (m *Metamodel) InferEntityType(id string) string {
+	var (
+		bestName  string
+		bestMatch prefixMatch
+	)
 	for name, def := range m.Entities {
-		if def.MatchesID(id) {
-			return name
+		match, ok := def.idPrefixMatch(id)
+		if !ok {
+			continue
+		}
+		if bestName == "" || match.beats(bestMatch) || (!bestMatch.beats(match) && name < bestName) {
+			bestName, bestMatch = name, match
 		}
 	}
-	return ""
+	return bestName
 }
 
 // EntityTypes returns all entity type names

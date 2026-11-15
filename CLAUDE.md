@@ -497,7 +497,15 @@ The rules for touching storage, comments, versioning and data migration are in
   `store.Store` implementation must pass it. Likewise any new
   `search.VisibleSearcher` implementation must pass
   `storetest.RunVisibleSearchTests` (the ACL-scoped search contract).
-- Race detector is on in CI; don't add `//go:build !race` tags.
+- Race detector: in the Test job, PRs and the merge queue run under `-race`
+  only the tests that `scripts/ci-race-gate.sh` selects by name: top-level
+  `Test*Concurren*`, `Test*Race*` and `Test*Parallel*`, plus subtests with
+  those names in the shared conformance suites. A push to `develop` or `main`
+  runs the whole suite under `-race` and files an issue when it fails. The
+  Postgres Backend job always runs under `-race`. Name a test that races
+  goroutines on purpose to match, so it gates the merge; a matching subtest
+  under another parent only counts if the script lists its path. Don't add
+  `//go:build !race` tags.
 
 ## Coverage
 

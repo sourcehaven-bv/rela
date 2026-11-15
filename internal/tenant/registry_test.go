@@ -932,3 +932,60 @@ func TestRegistry_StatusChangeDuringOpen(t *testing.T) {
 		t.Fatalf("Resident() = %d, want 0", n)
 	}
 }
+
+// TestRegistry_RevalidateOrg pins the one-org revalidation a host runs after
+// it suspends a tenant itself: only the named org is closed, at once, and an
+// org that is not resident is not opened.
+func TestRegistry_RevalidateOrg(t *testing.T) {
+	t.Parallel()
+
+	res := mapResolver(t, "a", "b")
+	var mu sync.Mutex
+	opened := map[string]*revokeCounter{}
+	open := func(_ context.Context, tn tenant.Tenant) (*revokeCounter, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		c := &revokeCounter{}
+		opened[tn.OrgID] = c
+		return c, nil
+	}
+	reg, err := tenant.NewRegistry(res, open, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reg.Close() })
+	held, err := reg.Acquire(t.Context(), "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := reg.Acquire(t.Context(), "b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Release()
+
+	reg.RevalidateOrg(t.Context(), "a")
+	if opened["a"].revoked() != 0 {
+		t.Fatal("a served org was revoked")
+	}
+
+	res.Remove("a")
+	res.Remove("b")
+	reg.RevalidateOrg(t.Context(), "a")
+	if opened["a"].revoked() != 1 {
+		t.Fatalf("in-use resident revoked %d times, want 1", opened["a"].revoked())
+	}
+	held.Release()
+	reg.WaitClosing()
+	if opened["a"].count() != 1 || opened["b"].count() != 0 || reg.Resident() != 1 {
+		t.Fatalf("closes a=%d b=%d, resident %d; want 1, 0, 1",
+			opened["a"].count(), opened["b"].count(), reg.Resident())
+	}
+
+	reg.RevalidateOrg(t.Context(), "c")
+	mu.Lock()
+	defer mu.Unlock()
+	if _, ok := opened["c"]; ok {
+		t.Error("RevalidateOrg opened an org that was not resident")
+	}
+}

@@ -118,7 +118,7 @@ func gatedServerAs(t *testing.T) (srv *Server, as func(user string) context.Cont
 	reads := svc.GatedReads()
 	deps := Deps{
 		Store:         reads.Reader,
-		Related:       RelatedReads{Traversals: reads.Traversals},
+		Related:       RelatedReads{Traversals: reads.Traversals, Conditions: reads.Conditions},
 		Meta:          meta,
 		Tracer:        reads.Tracer,
 		Searcher:      reads.Searcher,
@@ -418,6 +418,12 @@ func (d denyEntityReader) ListRelations(
 	ctx context.Context, q store.RelationQuery,
 ) iter.Seq2[*entity.Relation, error] {
 	return d.raw.ListRelations(ctx, q)
+}
+
+func (d denyEntityReader) ListEntityPage(
+	ctx context.Context, q visibility.PageQuery,
+) (visibility.EntityPage, error) {
+	return visibility.Unrestricted(d.raw).ListEntityPage(ctx, q)
 }
 
 func (d denyEntityReader) ListRelationsStrict(

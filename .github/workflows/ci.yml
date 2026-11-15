@@ -113,6 +113,14 @@ jobs:
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/restish" restish
           echo "$RUNNER_TEMP/restish" >> "$GITHUB_PATH"
 
+      # The race detector makes the slowest packages 6 to 11 times slower
+      # (internal/dataentry: 492 s with -race, 85 s without), and it set the
+      # length of every merge-queue run. So PRs and the merge queue run the
+      # suite without it, plus the concurrency tests under -race in the next
+      # step. A push to develop or main runs the whole suite under -race after
+      # the merge; post-merge-alert files an issue when that fails. The
+      # Postgres Backend job keeps -race everywhere: its time goes to the
+      # database, and its pgstore step ran no faster without the detector.
       - name: Run tests
         # -shuffle=on randomizes test order to surface inter-test ordering
         # dependencies; the seed is printed on failure for reproduction.
@@ -121,10 +129,18 @@ jobs:
         # (TKT-A6A97WV), past go test's 10-minute default.
         env:
           RELA_TEST_RESTISH: '1'
-        run: go test -v -race -shuffle=on -timeout 20m -coverprofile=coverage.out -covermode=atomic ./...
+          GOFLAGS: ${{ github.event_name == 'push' && '-race' || '' }}
+        run: go test -v -shuffle=on -timeout 20m -coverprofile=coverage.out -covermode=atomic ./...
+
+      # The tests that race goroutines on purpose, selected by name; see the
+      # script for which names count. About 85 top-level tests plus the
+      # conformance suites' concurrency subtests, in a few minutes.
+      - name: Run concurrency tests under -race
+        if: ${{ !cancelled() && github.event_name != 'push' }}
+        run: scripts/ci-race-gate.sh
 
       - name: Check coverage thresholds
-        uses: vladopajic/go-test-coverage@v2.21.0
+        uses: vladopajic/go-test-coverage@v2.23.0
         with:
           config: .testcoverage.yml
           github-action-output: true
@@ -932,43 +948,15 @@ jobs:
           run_fuzz FuzzParseEntityID ./internal/entity/
           run_fuzz FuzzValidateID ./internal/entity/
 
-  postgres:
-    name: Postgres Backend
+  # Postgres Backend runs as parallel jobs: one compiles and checks the
+  # dependency rules, and a matrix runs the database suites in parts. The job
+  # named "Postgres Backend" at the end is the required check; it passes only
+  # when every part passed. The pgstore package alone took 436 s, so it is
+  # split three ways by test name. The "rest" part takes the complement of the
+  # other two, so a new pgstore test always lands in exactly one part.
+  postgres-build:
+    name: Postgres Backend (build)
     runs-on: ubuntu-latest
-    # The CI database is ephemeral and reachable only from this job's runner —
-    # it holds no real data and is torn down with the runner. There is no
-    # credential to protect, so the container uses trust auth (no password)
-    # rather than a secret. This lets the job run everywhere, including
-    # Dependabot and fork PRs where GitHub does not expose repository secrets
-    # (a secret-sourced password resolved to empty there and the container
-    # failed to start, failing CI on every dependency bump).
-    env:
-      POSTGRES_USER: rela
-      POSTGRES_DB: rela_test
-      # This job's entire purpose is proving the postgres backend matches the
-      # default one, and the pgstore suite SKIPS itself when the DSN is absent
-      # — a skip that is indistinguishable from a pass in the exit code and the
-      # CI summary. Without this, a dropped env var or a renamed service
-      # container silently turns the backend-parity gate into a no-op and
-      # nothing goes red. Setting it makes the suite hard-fail instead of
-      # skipping (see requireDBEnv in internal/store/pgstore/testdb_test.go).
-      RELA_TEST_DATABASE_REQUIRED: "1"
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: rela
-          POSTGRES_DB: rela_test
-          # Throwaway, runner-local DB: no password, trust auth.
-          POSTGRES_HOST_AUTH_METHOD: trust
-        ports:
-          - 5432:5432
-        # Wait for the server to accept connections before tests run.
-        options: >-
-          --health-cmd "pg_isready -U rela"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - uses: actions/checkout@v7
 
@@ -983,16 +971,9 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
-          key: go-postgres-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
+          key: go-postgres-build-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
           restore-keys: |
-            go-postgres-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}-
-
-      # Trust auth: no password in the DSN. The DB is ephemeral and
-      # runner-local, so there is no credential to keep out of the log.
-      - name: Configure test database URL
-        run: |
-          printf 'RELA_TEST_DATABASE_URL=postgres://%s@127.0.0.1:5432/%s?sslmode=disable\n' \
-            "$POSTGRES_USER" "$POSTGRES_DB" >> "$GITHUB_ENV"
+            go-postgres-build-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}-
 
       # The default build must NOT link pgx, and the postgres build must NOT
       # link bleve. These greps are the load-bearing assertions for the
@@ -1092,6 +1073,79 @@ jobs:
           go build -tags memorybackend ./...
           go build -tags postgres ./...
 
+  postgres-tests:
+    name: Postgres Backend (${{ matrix.part }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - part: pgstore-conformance
+            pgstore-select: '-run=^TestConformance$'
+          - part: pgstore-explain
+            pgstore-select: '-run=^Test[A-Za-z0-9_]*Explain'
+          - part: pgstore-rest
+            pgstore-select: '-skip=^(TestConformance$|Test[A-Za-z0-9_]*Explain)'
+          - part: others
+    # The CI database is ephemeral and reachable only from this job's runner —
+    # it holds no real data and is torn down with the runner. There is no
+    # credential to protect, so the container uses trust auth (no password)
+    # rather than a secret. This lets the job run everywhere, including
+    # Dependabot and fork PRs where GitHub does not expose repository secrets
+    # (a secret-sourced password resolved to empty there and the container
+    # failed to start, failing CI on every dependency bump).
+    env:
+      POSTGRES_USER: rela
+      POSTGRES_DB: rela_test
+      # This job's entire purpose is proving the postgres backend matches the
+      # default one, and the pgstore suite SKIPS itself when the DSN is absent
+      # — a skip that is indistinguishable from a pass in the exit code and the
+      # CI summary. Without this, a dropped env var or a renamed service
+      # container silently turns the backend-parity gate into a no-op and
+      # nothing goes red. Setting it makes the suite hard-fail instead of
+      # skipping (see requireDBEnv in internal/store/pgstore/testdb_test.go).
+      RELA_TEST_DATABASE_REQUIRED: "1"
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: rela
+          POSTGRES_DB: rela_test
+          # Throwaway, runner-local DB: no password, trust auth.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        # Wait for the server to accept connections before tests run.
+        options: >-
+          --health-cmd "pg_isready -U rela"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        id: setup-go
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cache Go build cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/go-build
+          key: go-postgres-${{ matrix.part }}-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-postgres-${{ matrix.part }}-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}-
+
+      # Trust auth: no password in the DSN. The DB is ephemeral and
+      # runner-local, so there is no credential to keep out of the log.
+      - name: Configure test database URL
+        run: |
+          printf 'RELA_TEST_DATABASE_URL=postgres://%s@127.0.0.1:5432/%s?sslmode=disable\n' \
+            "$POSTGRES_USER" "$POSTGRES_DB" >> "$GITHUB_ENV"
+
       # RELA_TEST_DATABASE_REQUIRED (job env) makes the suite hard-fail rather
       # than skip if the DSN is missing. The grep below is the second, blunter
       # half of the same guard: it catches a suite that skipped for any OTHER
@@ -1099,10 +1153,18 @@ jobs:
       # conformance case quietly excluded — which the env var alone would not
       # notice. Both are cheap; the failure they prevent (silent backend
       # divergence) is not.
-      - name: Run pgstore conformance + fuzz seeds (race) against PostgreSQL
+      - name: Run pgstore tests (race) against PostgreSQL
+        if: ${{ matrix.part != 'others' }}
+        env:
+          PGSTORE_SELECT: ${{ matrix.pgstore-select }}
         run: |
           set -euo pipefail
-          go test -race -tags postgres -v ./internal/store/pgstore/... 2>&1 | tee pgstore-test.log
+          go test -race -tags postgres -v "$PGSTORE_SELECT" ./internal/store/pgstore/... 2>&1 | tee pgstore-test.log
+          # A selection that matches nothing passes with "no tests to run".
+          if ! grep -q -- '--- PASS' pgstore-test.log; then
+            echo "::error::pgstore part ${{ matrix.part }} ran no tests."
+            exit 1
+          fi
           if grep -q -- '--- SKIP' pgstore-test.log; then
             echo "::error::pgstore tests SKIPPED in the Postgres Backend job."
             echo "This job exists to prove backend parity; a skipped suite is not a pass."
@@ -1118,6 +1180,7 @@ jobs:
       # `just test-postgres` has always included this package; CI did not, so
       # the durable tier was unpinned here despite the local recipe covering it.
       - name: Run job-queue conformance (race) against PostgreSQL
+        if: ${{ matrix.part == 'others' }}
         run: |
           set -euo pipefail
           go test -race -tags postgres -v ./internal/jobs/... 2>&1 | tee jobs-test.log
@@ -1135,6 +1198,7 @@ jobs:
       # DSN decides whether it runs, which is exactly why it needs this step —
       # the untagged CI job compiles it and skips every meaningful test.
       - name: Run comment-backend conformance (race) against PostgreSQL
+        if: ${{ matrix.part == 'others' }}
         run: |
           set -euo pipefail
           go test -race -v ./internal/comments/... 2>&1 | tee comments-test.log
@@ -1149,6 +1213,7 @@ jobs:
       # Scheduler run-state conformance, DB-gated on the same terms and, like
       # pgcomments, untagged.
       - name: Run scheduler run-state conformance (race) against PostgreSQL
+        if: ${{ matrix.part == 'others' }}
         run: |
           set -euo pipefail
           go test -race -v ./internal/schedulerstate/... 2>&1 | tee schedstate-test.log
@@ -1162,6 +1227,7 @@ jobs:
       # Flow run store conformance (TKT-PV9R0GK), DB-gated and untagged like
       # pgcomments. pgchannels shares its pgx adapter (internal/sqlexec).
       - name: Run flow run store conformance (race) against PostgreSQL
+        if: ${{ matrix.part == 'others' }}
         run: |
           set -euo pipefail
           go test -race -v ./internal/flowrun/... ./internal/channels/pgchannels/ 2>&1 | tee flowrun-test.log
@@ -1176,6 +1242,7 @@ jobs:
       # checked against a real pgstore. Untagged, like pgcomments; only the
       # DSN decides whether the pgstore case runs, so a skip fails the step.
       - name: Run migration graph-read tests (race) against PostgreSQL
+        if: ${{ matrix.part == 'others' }}
         run: |
           set -euo pipefail
           go test -race -v -run 'TestLuaReads_' ./internal/datamigration/ 2>&1 | tee migreads-test.log
@@ -1228,6 +1295,7 @@ jobs:
       # TKT-WZYWM9's headline feature, and the path TKT-9TOEBH changed the wire
       # format of. Verified non-vacuous: with remote emission disabled it fails.
       - name: Run composition-root wiring tests against PostgreSQL
+        if: ${{ matrix.part == 'others' }}
         run: |
           set -euo pipefail
           go test -race -tags postgres ./internal/appbuild/...
@@ -1242,6 +1310,20 @@ jobs:
           # process and across two stores on one schema.
           go test -race -tags postgres -run 'TestConcurrency_' ./internal/entitymanager/
           go test -race -tags postgres -run 'TestWebhookConflict' ./internal/dataentry/
+
+  postgres:
+    name: Postgres Backend
+    needs: [postgres-build, postgres-tests]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every part to pass
+        env:
+          BUILD_RESULT: ${{ needs.postgres-build.result }}
+          TESTS_RESULT: ${{ needs.postgres-tests.result }}
+        run: |
+          echo "build: $BUILD_RESULT, tests: $TESTS_RESULT"
+          test "$BUILD_RESULT" = success && test "$TESTS_RESULT" = success
 
   # Cross-compile every (GOOS, build-tag) combination GoReleaser ships so a
   # platform-specific compile break (e.g. a unix-only syscall used without a
@@ -1963,3 +2045,54 @@ jobs:
              echo "Changed files:" && \
              git diff --name-only docs/ README.md && \
              exit 1)
+
+  # A push to develop or main is the only run with the full -race suites (see
+  # the Test job), and nothing blocks on it. A red run there is easy to miss,
+  # so this files one issue, comments on it while it stays open, and closes it
+  # when a later push passes both jobs.
+  post-merge-alert:
+    name: Post-merge alert
+    needs: [test, postgres]
+    if: ${{ always() && github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: File, update or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF_NAME: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TEST_RESULT: ${{ needs.test.result }}
+          POSTGRES_RESULT: ${{ needs.postgres.result }}
+        run: |
+          set -euo pipefail
+          TITLE="CI failed on ${REF_NAME} after merge"
+
+          # Only issues this workflow filed. TITLE goes to jq as --arg.
+          EXISTING=$(gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state open \
+            --search "\"$TITLE\" in:title" \
+            --json number,title,author \
+            | jq -r --arg title "$TITLE" '
+                [ .[]
+                  | select(.title == $title)
+                  | select(.author.login == "app/github-actions")
+                ][0].number // empty')
+
+          if [[ "$TEST_RESULT" == success && "$POSTGRES_RESULT" == success ]]; then
+            if [[ -n "$EXISTING" ]]; then
+              gh issue close "$EXISTING" --repo "$GITHUB_REPOSITORY" \
+                --comment "Commit $GITHUB_SHA passed the post-merge run: $RUN_URL"
+            fi
+            exit 0
+          fi
+
+          BODY=$(printf 'Commit %s did not pass the post-merge run, which includes the full -race suites.\n\n- Test: %s\n- Postgres Backend: %s\n\nRun: %s\n' \
+            "$GITHUB_SHA" "$TEST_RESULT" "$POSTGRES_RESULT" "$RUN_URL")
+          if [[ -n "$EXISTING" ]]; then
+            gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" --body "$BODY"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$BODY"
+          fi
