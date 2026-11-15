@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"iter"
 	"log/slog"
 	"path/filepath"
 	"slices"
@@ -261,9 +262,9 @@ func roleHoldersFor(s *Services) lua.RoleHolders {
 var errUnknownRole = errors.New("role is not declared in acl.yaml")
 
 // PrincipalsWithRole returns the user entity rows whose stored IdP roles map
-// to role through asserted_role_assignments. It reads the user type's headers
-// once, whatever the number of holders, and leaves the read gate to the
-// binding.
+// to role through asserted_role_assignments. It reads only the user rows that
+// hold a holder's subject ([roleHolders.usersBySubject]) and leaves the read
+// gate to the binding.
 func (r roleHolders) PrincipalsWithRole(ctx context.Context, role string) (string, []entity.Ref, error) {
 	if _, ok := r.policy.Roles[role]; !ok {
 		return "", nil, fmt.Errorf("%q: %w", role, errUnknownRole)
@@ -282,20 +283,9 @@ func (r roleHolders) PrincipalsWithRole(ctx context.Context, role string) (strin
 	// The subject of a user entity is its principal_property value, or its
 	// id when none is set.
 	prop := strings.TrimSpace(r.policy.PrincipalProperty)
-	bySubject := map[string][]store.EntityHeader{}
-	for h, err := range store.ListEntityHeaders(ctx, r.st, store.EntityQuery{
-		Type: userType, Faces: store.AtFaces(entity.ImplicitFace),
-	}) {
-		if err != nil {
-			return "", nil, err
-		}
-		subject := h.ID
-		if prop != "" {
-			subject, _ = h.Properties[prop].(string)
-		}
-		if subject != "" {
-			bySubject[subject] = append(bySubject[subject], h)
-		}
+	bySubject, err := r.usersBySubject(ctx, userType, prop, holders)
+	if err != nil {
+		return "", nil, err
 	}
 	var refs []entity.Ref
 	for _, holder := range holders {
@@ -307,4 +297,77 @@ func (r roleHolders) PrincipalsWithRole(ctx context.Context, role string) (strin
 	}
 	slices.SortFunc(refs, func(a, b entity.Ref) int { return strings.Compare(a.ID, b.ID) })
 	return userType, refs, nil
+}
+
+// usersBySubject reads the user rows whose subject is one of the holders'
+// subjects, keyed by subject. It reads only those rows (TKT-FED6FMM): by id
+// when the subject is the id, else one query whose narrowing branches are
+// the subject values. Every user row holding a subject is returned, so the
+// caller can tell a subject held by one entity from one held by several.
+func (r roleHolders) usersBySubject(
+	ctx context.Context, userType, prop string, holders []idproles.Holder,
+) (map[string][]store.EntityHeader, error) {
+	subjects := make([]string, 0, len(holders))
+	for _, h := range holders {
+		if h.Subject != "" {
+			subjects = append(subjects, h.Subject)
+		}
+	}
+	slices.Sort(subjects)
+	subjects = slices.Compact(subjects)
+	if len(subjects) == 0 {
+		// No ids and no narrowing branches would both read every user.
+		return map[string][]store.EntityHeader{}, nil
+	}
+	faces := store.AtFaces(entity.ImplicitFace)
+	bySubject := map[string][]store.EntityHeader{}
+	add := func(h store.EntityHeader) {
+		subject := h.ID
+		if prop != "" {
+			subject, _ = h.Properties[prop].(string)
+		}
+		if _, found := slices.BinarySearch(subjects, subject); found && subject != "" {
+			bySubject[subject] = append(bySubject[subject], h)
+		}
+	}
+	if prop == "" {
+		q := store.EntityQuery{Type: userType, IDs: subjects, Faces: faces}
+		for h, err := range store.ListEntityHeaders(ctx, r.st, q) {
+			if err != nil {
+				return nil, err
+			}
+			add(h)
+		}
+		return bySubject, nil
+	}
+	for chunk := range slices.Chunk(subjects, subjectChunk) {
+		for h, err := range r.usersWithProp(ctx, userType, prop, chunk, faces) {
+			if err != nil {
+				return nil, err
+			}
+			add(h)
+		}
+	}
+	return bySubject, nil
+}
+
+// subjectChunk is how many subjects one [roleHolders.usersWithProp] query
+// carries. Each subject is a narrowing branch with its own bind parameters,
+// so a role with many holders is split to stay well inside the backends'
+// parameter limits and keep the OR chain small for the planner.
+const subjectChunk = 500
+
+// usersWithProp reads the user rows whose prop holds one of subjects, as one
+// query with a narrowing branch per subject. The caller tests the value
+// again in Go.
+func (r roleHolders) usersWithProp(
+	ctx context.Context, userType, prop string, subjects []string, faces store.FaceSelection,
+) iter.Seq2[store.EntityHeader, error] {
+	q := store.GraphQuery{EntityType: userType, Faces: faces}
+	for _, s := range subjects {
+		q.Narrowing = append(q.Narrowing, store.NarrowBranch{Props: []store.PropPredicate{
+			{Property: prop, Op: store.PropEqual, Value: s, Scalar: true},
+		}})
+	}
+	return store.GraphQueryHeaders(ctx, r.st, q)
 }

@@ -23,8 +23,10 @@ const listExportBudget = 6
 // scales with the type, not with a page.
 func TestQueryBudget_ListExportIsSizeIndependent(t *testing.T) {
 	requireCp(t)
-	small, large, detail := readsFor(t, listExportOp)
-	assertBudget(t, "list export", small, large, listExportBudget, detail)
+	b, detail := readsFor(t, listExportOp)
+	// Calls only: an export serves every row of the list, so the rows it
+	// reads grow with the list by design.
+	assertCallBudget(t, "list export", b, listExportBudget, detail)
 }
 
 // featureCell matches a row whose Feature column resolved. The cell is

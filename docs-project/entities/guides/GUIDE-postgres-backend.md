@@ -679,9 +679,11 @@ derived from its verified `org_id` claim:
 
 A table records which tenants exist: `rela_control.tenants`. It has one row
 per tenant with the schema name, the org id and a status. The
-`rela-server tenant` commands write it. The server only reads it, unless
-`-tenant-provision` lets it create tenants (see "Provisioning tenants
-automatically").
+`rela-server tenant` commands write it. The server only reads it, with two
+exceptions: `-tenant-provision` lets it create tenants (see "Provisioning
+tenants automatically"), and `-tenant-idp-org-api` lets it suspend and resume
+tenants to follow the IdP. Either one may also upgrade the table on its first
+write.
 
 The table lives in a schema of its own, `rela_control`, for these reasons:
 

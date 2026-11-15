@@ -161,6 +161,7 @@ exclude:
     - ^cmd/rela                # main entry point
     - ^tools/seqtrace/[^/]+\.go$         # tracing runtime; only runs inside rewrite's TestDemo subprocess
     - ^tools/seqtrace/cmd      # diagnostic CLI entry point
+    - ^tools/scalerun/cmd      # CLI entry point; needs postgres and the built binaries
     - ^internal/testutil       # test helpers
     - ^third_party/            # forked third-party code; tested by its own upstream suite
     - ^internal/tracer/tracertest # test helper (tracer.New for fixtures)

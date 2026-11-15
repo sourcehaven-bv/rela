@@ -48,9 +48,14 @@ Two opt-ins by the operator are the exceptions. Both return 422 with one
 - `validation: strict` in `.rela/config.yaml` (DEC-OYV2AK) refuses a
   required-unset, mistyped or invalid-enum property instead of warning.
   The default stays advisory.
-- A `validations:` rule with `enforce: write` refuses a write whose new state
-  breaks it, in both modes (code `rule`, empty pointer). It is a pure
-  predicate on the entity being written (`internal/writerule`).
+- A `validations:` rule with `enforce: write` refuses a write in both modes
+  (code `rule`, empty pointer). A rule on properties alone refuses any write
+  whose new state breaks it. A rule that reads relations (one-hop
+  `related(...)`) refuses only a write that turns a satisfied rule into a
+  broken one, and also refuses relation creates, deletes and PATCH
+  `relations` (`internal/writerule`; "Rules that read relations" in
+  `docs/metamodel.md`). A PATCH writes its properties and the edges such a
+  rule reads in one transaction (`entitymanager.PatchWithRelations`).
 
 Do not add a third class without a decision.
 

@@ -423,36 +423,40 @@ func TestCopyReplace_KeepsEdgesToHiddenPeers(t *testing.T) {
 }
 
 // TestCopy_EdgeGateReadsDoNotGrowWithEdges pins the cost of gating a copy's
-// edges: the store reads are the same at 10 and 50 copied edges.
+// edges: the store reads are the same at 10 and 50 copied edges, and the
+// rows read are the same with 20 or 200 unlinked features in the store.
 func TestCopy_EdgeGateReadsDoNotGrowWithEdges(t *testing.T) {
 	for _, src := range copyEdgeSources {
 		t.Run(src.name, func(t *testing.T) {
-			reads := func(n int) int {
+			measure := func(n, pad int) (storetest.Cost, string) {
 				var rels []entity.RelationKey
 				for i := range n {
 					rels = append(rels, rel(src.from, src.fromFace, "cites", fmt.Sprintf("FEAT-X%d", i)))
 				}
 				rels = append(rels, rel(src.from, src.fromFace, "cites", "SEC-1"))
-				app, d, st := copyEdgesApp(t, copyEdgesPolicy{memoCreate: true, extraPeers: n, sourceRels: rels})
+				app, d, st := copyEdgesApp(t, copyEdgesPolicy{memoCreate: true, extraPeers: n + pad, sourceRels: rels})
 				if rec := copyAs(t, app, d, src.def, src.body); rec.Code != http.StatusOK {
 					t.Fatalf("copy = %d %s", rec.Code, rec.Body)
 				}
-				calls := st.Reads()
+				cost, detail := st.Cost(), st.String()
 				if got := len(edgesFrom(t, st, src.to, src.toFace)); got != n {
 					t.Fatalf("copied %d edges, want %d", got, n)
 				}
-				return calls
+				return cost, detail
 			}
-			if r10, r50 := reads(10), reads(50); r10 != r50 {
-				t.Errorf("copy reads grow with edges: %d at 10, %d at 50", r10, r50)
+			r10, _ := measure(10, 0)
+			r50, _ := measure(50, 0)
+			if r10.Calls != r50.Calls {
+				t.Errorf("copy reads grow with edges: %d at 10, %d at 50", r10.Calls, r50.Calls)
 			}
+			assertScaleFreeIndexed(t, func(pad int) (storetest.Cost, string) { return measure(10, pad) })
 		})
 	}
 	// `replace` adds the target edge read and the removal verdicts; those
 	// must not grow with the edges either.
 	for _, src := range copyReplaceSources {
 		t.Run(src.name+"/replace", func(t *testing.T) {
-			reads := func(n int) int {
+			measure := func(n, pad int) (storetest.Cost, string) {
 				var source, target []entity.RelationKey
 				for i := range n {
 					source = append(source, rel(src.from, src.fromFace, "cites", fmt.Sprintf("FEAT-X%d", i)))
@@ -460,20 +464,23 @@ func TestCopy_EdgeGateReadsDoNotGrowWithEdges(t *testing.T) {
 				}
 				target = append(target, rel(src.to, src.toFace, "cites", "SEC-1"))
 				app, d, st := copyEdgesApp(t, copyEdgesPolicy{memoCreate: true, memoDelete: true,
-					extraPeers: 2 * n, sourceRels: source, targetRels: target})
+					extraPeers: 2*n + pad, sourceRels: source, targetRels: target})
 				if rec := copyAs(t, app, d, src.def, src.body); rec.Code != http.StatusOK {
 					t.Fatalf("copy = %d %s", rec.Code, rec.Body)
 				}
-				calls := st.Reads()
+				cost, detail := st.Cost(), st.String()
 				// The n source edges, plus the hidden peer's edge, which stays.
 				if got := len(edgesFrom(t, st, src.to, src.toFace)); got != n+1 {
 					t.Fatalf("target has %d edges, want %d", got, n+1)
 				}
-				return calls
+				return cost, detail
 			}
-			if r10, r50 := reads(10), reads(50); r10 != r50 {
-				t.Errorf("replace reads grow with edges: %d at 10, %d at 50", r10, r50)
+			r10, _ := measure(10, 0)
+			r50, _ := measure(50, 0)
+			if r10.Calls != r50.Calls {
+				t.Errorf("replace reads grow with edges: %d at 10, %d at 50", r10.Calls, r50.Calls)
 			}
+			assertScaleFreeIndexed(t, func(pad int) (storetest.Cost, string) { return measure(10, pad) })
 		})
 	}
 }

@@ -163,6 +163,11 @@ func TestResolver_MentionedByBudget(t *testing.T) {
 	if n := counting.Calls()["MentionSources"]; n != 21 {
 		t.Errorf("MentionSources calls = %d, want 21", n)
 	}
+	// The scan is bounded in rows too: 21 pages of at most 500, plus the
+	// target's own row.
+	if n, limit := counting.Cost().Rows, 21*500+1; n > limit {
+		t.Errorf("rows read = %d, want at most %d (%s)", n, limit, counting)
+	}
 }
 
 // TestResolver_MentionedByPagesPastHiddenRun: readable sources on both sides

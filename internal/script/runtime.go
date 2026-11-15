@@ -37,20 +37,9 @@ func NewWriterRuntime(deps lua.WriteDeps, scriptPath string,
 	// already depends on both, so it is the natural place for the one-line
 	// adapter — and it keeps LoadContextOptions the single load point rather
 	// than adding a parallel mail-loading call site.
-	host := deps.Host
-	if host == nil {
-		// The .rela fallback serves a single-project process: the CLI, the
-		// desktop and tests, where that directory is the project's own. A
-		// tenant-mode process shares one .rela directory between tenants,
-		// so there a missing host config is a wiring bug that would hand a
-		// tenant the operator's secrets; it is refused instead. Every
-		// production caller sets Host (appbuild's Lua deps and the
-		// data-entry App through dataentry.SetLuaHost), so the refusal only
-		// catches a new surface that forgot it.
-		if hostConfigRequired.Load() {
-			return nil, errors.New("lua context: no host config in tenant mode")
-		}
-		host = hostconfig.Dir(cacheDirFor(deps.ProjectRoot))
+	host, err := hostFor(deps)
+	if err != nil {
+		return nil, err
 	}
 	mailLoader := lua.MailSenderLoader(loadMailSender)
 	if deps.Seams.Mail != nil {
@@ -73,12 +62,49 @@ func NewWriterRuntime(deps lua.WriteDeps, scriptPath string,
 // hostConfigRequired is set by [RequireHostConfig].
 var hostConfigRequired atomic.Bool
 
-// RequireHostConfig makes [NewWriterRuntime] refuse deps without a host
-// config for the rest of the process, instead of reading the project's
-// .rela directory. Tenant mode calls it at startup, through
+// RequireHostConfig makes [NewWriterRuntime] and [AIProvider] refuse deps
+// without a host config for the rest of the process, instead of reading the
+// project's .rela directory. Tenant mode calls it at startup, through
 // appbuild.TenantProfile.ApplyLuaPolicy, because there that directory is
 // the operator's and is shared by every tenant.
 func RequireHostConfig() { hostConfigRequired.Store(true) }
+
+// errNoHostConfig is returned in tenant mode for deps without a host config.
+var errNoHostConfig = errors.New("lua context: no host config in tenant mode")
+
+// hostFor is the host config deps use. The .rela fallback serves a
+// single-project process: the CLI, the desktop and tests, where that
+// directory is the project's own. A tenant-mode process shares one .rela
+// directory between tenants, so there a missing host config is a wiring bug
+// that would hand a tenant the operator's secrets; it is refused instead.
+// Every production caller sets Host (appbuild's Lua deps and the data-entry
+// App through dataentry.SetLuaHost), so the refusal only catches a new
+// surface that forgot it.
+func hostFor(deps lua.WriteDeps) (lua.HostConfig, error) {
+	if deps.Host != nil {
+		return deps.Host, nil
+	}
+	if hostConfigRequired.Load() {
+		return nil, errNoHostConfig
+	}
+	return hostconfig.Dir(cacheDirFor(deps.ProjectRoot)), nil
+}
+
+// AIProvider is the AI provider a writer runtime built from deps would use:
+// the injected seam when there is one, else the one ai.yaml configures. It
+// is the provider of a declarative llm action (TKT-4USH1HO), which calls the
+// model without running Lua, and keeps the same single load point as
+// [NewWriterRuntime]. ai.ErrConfigNotFound when neither is set.
+func AIProvider(deps lua.WriteDeps) (ai.Provider, error) {
+	if deps.Seams.AI != nil {
+		return deps.Seams.AI, nil
+	}
+	host, err := hostFor(deps)
+	if err != nil {
+		return nil, err
+	}
+	return lua.AIProvider(host)
+}
 
 // withoutAIConfig is a host config that reports ai.yaml as absent.
 type withoutAIConfig struct{ lua.HostConfig }

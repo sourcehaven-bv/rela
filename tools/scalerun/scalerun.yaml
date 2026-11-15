@@ -1,0 +1,175 @@
+# The postgres scale run (TKT-UHKZKOB): which endpoints `scalerun run`
+# measures, as whom, and the limits `scalerun check` holds them to.
+# See tools/scalerun/doc.go and docs/postgres-scale-run.md.
+#
+# The p95 limits were set from two local runs on 2026-11-13 (Apple
+# M-series laptop, Postgres.app, 20 iterations): about 3x the slower run's
+# p95, rounded up, and at least 100 ms, because a shared GitHub runner is
+# slower and noisier than a laptop. They
+# exist to catch an endpoint that becomes an order of magnitude slower, not a
+# 20% drift; the benchmarks and the scale ratio watch for drift. Recalibrate
+# them from a run's report when the runner or the seed changes, never just
+# to make a failing run pass.
+
+iterations: 20
+warmup: 2
+
+# Identities from prototypes/perf/project/acl.yaml, one per role. The server
+# reads them from the X-Forwarded-User header (rela-server
+# -principal-header), the way a reverse proxy asserts them.
+principals:
+  manager: alice@perf.example
+  editor: bob@perf.example
+  reader: carol@perf.example
+fixtures_as: manager
+
+# Scale 5 has five times the rows of scale 1. A read that is paged and
+# indexed should not get much slower; one that scans the data grows with it.
+# The ratio compares p50, which is steadier than p95 over 20 requests, and
+# skips an endpoint whose p50 at the larger scale is under floor_ms: below
+# that the ratio measures noise, and the endpoint is fast enough anyway.
+#
+# Endpoints that scan today set their own ratio_max, about 1.4x the ratio
+# measured on 2026-11-13, so the run catches them getting worse while the
+# follow-up tickets named next to them make them scale.
+ratio:
+  base_scale: 1
+  max: 2.0
+  floor_ms: 50
+
+bench:
+  max_regression: 0.20
+
+endpoints:
+  # The tasks list as the SPA asks for it: one page, configured sort,
+  # relation columns resolved through include=*.
+  - name: list-tasks
+    method: GET
+    path: /api/v1/tasks?per_page=25&sort=due&include=*&list_id=tasks
+    as: [manager, editor, reader]
+    expect: 200
+    p95_ms: {"1": 150, "5": 150}
+  - name: list-open-tasks
+    method: GET
+    path: /api/v1/tasks?per_page=25&sort=-priority,due&include=*&list_id=open_tasks
+    as: [manager, reader]
+    expect: 200
+    p95_ms: {"1": 200, "5": 200}
+    # p50 grew 3.7x for the reader (8.5 -> 31 ms): the status filter and
+    # priority sort read every matching task before the page is cut.
+    ratio_max: 5
+  - name: list-projects
+    method: GET
+    path: /api/v1/projects?per_page=25&sort=title&include=*&list_id=projects
+    as: [manager, reader]
+    expect: 200
+    p95_ms: {"1": 200, "5": 200}
+  # The people list carries a redacted column (salary) for the editor.
+  - name: list-people
+    method: GET
+    path: /api/v1/persons?per_page=25&sort=title&include=*&list_id=people
+    as: [manager, editor]
+    expect: 200
+    p95_ms: {"1": 100, "5": 100}
+  # One kanban column as the board reads it: a page of 100 per status.
+  - name: kanban-column
+    method: GET
+    path: /api/v1/tasks?per_page=100&filter%5Bstatus%5D=todo&sort=title
+    as: [manager, reader]
+    expect: 200
+    p95_ms: {"1": 150, "5": 250}
+    # p50 grew 3.5x (12.6 -> 44.6 ms): filter and sort before the page.
+    ratio_max: 5
+  - name: gantt
+    method: GET
+    path: /api/v1/_gantts/delivery
+    as: [manager, reader]
+    expect: 200
+    p95_ms: {"1": 1500, "5": 12000}
+    # p50 grew 11x (344 ms -> 3.8 s) and statements 50 -> 229: the chart
+    # reads the whole hierarchy. TKT-K7EM7Z5.
+    ratio_max: 16
+  - name: search
+    method: GET
+    path: /api/v1/_search?q={word}&limit=20
+    as: [manager, editor, reader]
+    expect: 200
+    p95_ms: {"1": 2000, "5": 9000}
+    # p50 grew 5.6x (520 ms -> 2.9 s): the text match scans every row.
+    # TKT-M58EQ1W.
+    ratio_max: 8
+  # Dashboard query cards: the SPA runs each card's query through _search.
+  - name: dashboard-count
+    method: GET
+    path: /api/v1/_search?q=type%3Atask+prop%3Astatus%21%3Ddone
+    as: [manager, reader]
+    expect: 200
+    p95_ms: {"1": 800, "5": 1600}
+    # Returns every match unpaged (11k tasks at scale 1); p50 grew 4.1x
+    # and statements 26 -> 114. TKT-AIEGHU (server-side count cards).
+    ratio_max: 6
+  - name: dashboard-table
+    method: GET
+    path: /api/v1/_search?q=type%3Atask+prop%3Apriority%3Dcritical+prop%3Astatus%21%3Ddone
+    as: [manager, reader]
+    expect: 200
+    p95_ms: {"1": 300, "5": 900}
+    # p50 grew 5.1x and statements 9 -> 31. TKT-8AUD1U (push limit and
+    # sort into the query).
+    ratio_max: 8
+  - name: next-action
+    method: GET
+    path: /api/v1/_next_action
+    as: [manager, reader]
+    expect: 200
+    p95_ms: {"1": 400, "5": 800}
+    # p50 grew 6.6x (33 -> 217 ms) and statements 12 -> 34.
+    # TKT-CKLZMWB.
+    ratio_max: 9
+  - name: entity-detail
+    method: GET
+    path: /api/v1/tasks/{task}
+    as: [manager, editor, reader]
+    expect: 200
+    p95_ms: {"1": 100, "5": 100}
+  # Views with table sections and recursive traversals.
+  - name: view-project
+    method: GET
+    path: /api/v1/_views/project/{project}
+    as: [manager, reader]
+    expect: 200
+    p95_ms: {"1": 400, "5": 400}
+  - name: view-task
+    method: GET
+    path: /api/v1/_views/task/{task}
+    as: [manager, reader]
+    expect: 200
+    p95_ms: {"1": 100, "5": 100}
+  - name: view-person
+    method: GET
+    path: /api/v1/_views/person/{person}
+    as: [manager, editor]
+    expect: 200
+    p95_ms: {"1": 200, "5": 200}
+  # Writes, as the editor. Each create mints a new task that the delete
+  # below removes again, so the data is the same after the run.
+  - name: create-task
+    method: POST
+    path: /api/v1/tasks
+    body: '{"id":"{new}","properties":{"title":"Scale run task","status":"todo","priority":"low"}}'
+    as: [editor]
+    expect: 201
+    p95_ms: {"1": 150, "5": 150}
+  - name: update-task
+    method: PATCH
+    path: /api/v1/tasks/{task}
+    body: '{"properties":{"priority":"{priority}"}}'
+    as: [editor]
+    expect: 200
+    p95_ms: {"1": 150, "5": 150}
+  - name: delete-task
+    method: DELETE
+    path: /api/v1/tasks/{created}
+    as: [editor]
+    expect: 204
+    p95_ms: {"1": 150, "5": 150}

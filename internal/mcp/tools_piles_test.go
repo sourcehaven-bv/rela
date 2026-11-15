@@ -277,4 +277,29 @@ func TestPiles_AddReadBudget(t *testing.T) {
 	if reads[0] != reads[1] {
 		t.Errorf("reads grew with the id count: %d at 10, %d at 50", reads[0], reads[1])
 	}
+	// Adding 10 ids reads the same rows however many the store holds.
+	storetest.AssertScaleFree(t, func(n int) (storetest.Cost, string) {
+		meta, st := makeTestFixture(t)
+		ids := make([]string, n)
+		for i := range ids {
+			ids[i] = fmt.Sprintf("REQ-%04d", 100+i)
+			e := &entity.Entity{ID: ids[i], Type: "requirement", Properties: map[string]any{"title": ids[i]}}
+			if err := st.CreateEntity(context.Background(), e); err != nil {
+				t.Fatal(err)
+			}
+		}
+		counting := storetest.NewCounting(st)
+		_, pf := newFakePiles(t)
+		srv, err := NewServer(newTestDeps(t, meta, counting), "test",
+			WithPrincipal(principal.Principal{User: "tester", Tool: principal.ToolMCP}), WithPiles(pf, pf))
+		if err != nil {
+			t.Fatalf("NewServer: %v", err)
+		}
+		body, _ := json.Marshal(map[string]any{"pile": "Inbox", "ids": ids[:10]})
+		counting.Reset()
+		if text, isErr := callTool(t, srv, "add_to_pile", string(body)); isErr {
+			t.Fatalf("add_to_pile: %s", text)
+		}
+		return counting.Cost(), counting.String()
+	})
 }

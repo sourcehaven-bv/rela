@@ -111,8 +111,10 @@ As implemented.
 - **Where.** Provisioning lives in the tenant host (`internal/tenanthost`),
 before `Acquire`, because no tenant app exists yet for a new org. The host takes
 a consumer-side `tenanthost.Provisioner` (`Provision(ctx, orgID)`). The wiring
-in `cmd/rela-server` adapts `tenant.Provisioner.Create` with `adopt=false`;
-`ErrTenantExists` counts as success. The CLI `rela-server tenant create` stays
+in `cmd/rela-server` adapts `tenant.Provisioner.Create` with `adopt=false`.
+Only an existing tenant with status `active` counts as success; an existing
+tenant in any other status is answered 200 without a create, because its state
+belongs to status sync and the operator (review RR-4LU5ZUD). The CLI `rela-server tenant create` stays
 as the operator fallback.
 - **Which refusals provision.** The resolver now marks a valid org with no
 control row with `tenant.ErrTenantAbsent`, and a provisioning row with
@@ -133,8 +135,8 @@ still running, or another process holds the tenant lock, 202 (the IdP does not
 retry; lazy or a later event finishes it); failure 502 so the IdP retries; over
 the cap 503 with `Retry-After`. `organization.created` for an active tenant is
 routed to the tenant as before and answers 200. Other events for unknown orgs
-keep today's behaviour. `organization.deleted` stays log only; erasure is
-operator only (TKT-TNERAS).
+keep today's behaviour. `organization.deleted` suspends the tenant for the IdP
+and never erases it; erasure is operator only (TKT-TNERAS).
 - **Lazy path.** A request with a verified but unknown org starts a run and
 gets 202 at once, with `Retry-After: 2` and `{"status":"provisioning"}`. No
 request is held open across a migration. With `webhook` or `lazy`, a tenant in
@@ -189,7 +191,8 @@ with `Retry-After`, because the SPA reads 202 as success and nothing was
 written.
 - **Refusals that need an operator (review RR-4LU5ZUD).** A create refusal
 that retrying cannot fix is marked `tenanthost.ErrNeedsOperator`. The host holds
-it for 1 hour, acknowledges the webhook with 200, and answers requests 503
+it for 1 hour, answers the webhook 503 with `Retry-After` so the IdP keeps
+retrying until an operator fixes it, and answers requests 503
 `provisioning_needs_operator`. During any hold, `Retry-After` is the time left.
 A tenant that stays in provisioning is logged with a rate-limited warning.
 - **Not changed.** The server still refuses to start without the control

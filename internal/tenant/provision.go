@@ -9,7 +9,7 @@ import (
 // suspend, resume and erase. It is a separate type from [ClusterResolver] so
 // that the request path, which receives only a [Resolver], cannot reach a
 // write. The CLI uses it, and so does the tenant host when
-// `-tenant-provision` is on (TKT-TNPRV8).
+// `-tenant-provision` is on or `-tenant-idp-org-api` is set (TKT-TNPRV8).
 //
 // Every status change is a compare-and-set on the current status, so two
 // operators cannot undo each other: a resume cannot turn an erasing tenant

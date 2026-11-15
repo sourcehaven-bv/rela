@@ -75,6 +75,15 @@ func writeReadsAppWith(
 	t *testing.T, neighbors int, role acl.RoleDef, managerACL *countingWriteACL,
 ) (*App, *acl.Declarative, *storetest.Counting, *audit.Memory) {
 	t.Helper()
+	return writeReadsAppPadded(t, neighbors, 0, role, managerACL)
+}
+
+// writeReadsAppPadded is [writeReadsAppWith] with pad more features that
+// TKT-1 is not linked to.
+func writeReadsAppPadded(
+	t *testing.T, neighbors, pad int, role acl.RoleDef, managerACL *countingWriteACL,
+) (*App, *acl.Declarative, *storetest.Counting, *audit.Memory) {
+	t.Helper()
 	meta, err := metamodel.Parse([]byte(writeReadsMeta))
 	if err != nil {
 		t.Fatalf("parse metamodel: %v", err)
@@ -95,8 +104,23 @@ func writeReadsAppWith(
 		seeds = append(seeds, &entity.Entity{ID: fmt.Sprintf("FEAT-%d", i+1), Type: "feature",
 			Properties: map[string]any{"title": "f"}})
 	}
+	for i := range pad {
+		seeds = append(seeds, &entity.Entity{ID: fmt.Sprintf("FEAT-P%d", i+1), Type: "feature",
+			Properties: map[string]any{"title": "f"}})
+	}
+	if pad > 0 {
+		seeds = append(seeds, &entity.Entity{ID: "TKT-PAD", Type: "ticket", Properties: map[string]any{"title": "pad"}})
+	}
 	for _, e := range seeds {
 		if err = st.CreateEntity(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The padding has implements edges of its own, so a scan of the
+	// relation type shows.
+	for i := range pad {
+		k := entity.RelationKey{From: "TKT-PAD", Type: "implements", To: fmt.Sprintf("FEAT-P%d", i+1)}
+		if _, err = st.CreateRelation(ctx, k, &store.RelationData{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -191,9 +215,8 @@ func TestUpdate_ReadBudget(t *testing.T) {
 		{name: "If-Match", ifMatch: true, wantRelations: 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var totals []int
-			for _, n := range []int{10, 50} {
-				app, d, st, _ := writeReadsApp(t, n, ticketRole(true))
+			patch := func(n, pad int) *storetest.Counting {
+				app, d, st, _ := writeReadsAppPadded(t, n, pad, ticketRole(true), nil)
 				etag := ""
 				if tc.ifMatch {
 					etag = getAsAlice(t, app, d).Header().Get("ETag")
@@ -203,6 +226,11 @@ func TestUpdate_ReadBudget(t *testing.T) {
 				if rec.Code != http.StatusOK {
 					t.Fatalf("n=%d: PATCH = %d %s", n, rec.Code, rec.Body)
 				}
+				return st
+			}
+			var totals []int
+			for _, n := range []int{10, 50} {
+				st := patch(n, 0)
 				got := st.Calls()
 				if got["GetEntity"] != 2 {
 					t.Errorf("n=%d: GetEntity = %d (%s), want 2: the resolver's gated read and the "+
@@ -222,6 +250,10 @@ func TestUpdate_ReadBudget(t *testing.T) {
 			if totals[0] != totals[1] {
 				t.Errorf("PATCH cost grows with neighbors: %d reads at 10, %d at 50", totals[0], totals[1])
 			}
+			assertScaleFreeIndexed(t, func(pad int) (storetest.Cost, string) {
+				st := patch(10, pad)
+				return st.Cost(), st.String()
+			})
 		})
 	}
 }

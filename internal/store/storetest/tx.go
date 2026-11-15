@@ -107,6 +107,36 @@ func RunTxTests(t *testing.T, f Factory) {
 		require.ErrorIs(t, err, sentinel)
 	})
 
+	// The reads a write-enforced relation rule makes in the Tx view of the
+	// write it judges (TKT-EBARYBI): the edges at either end, and the type of
+	// each far end.
+	t.Run("RelationRuleReadsInTx", func(t *testing.T) {
+		s := f(t)
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("A", "feature")))
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("B", "req")))
+		key := entity.RelationKey{From: "A", Type: "requires", To: "B"}
+		err := s.Tx(ctx(), func(tx store.Store) error {
+			if _, err := tx.CreateRelation(ctx(), key, nil); err != nil {
+				return err
+			}
+			require.Equal(t, []string{"B"}, farEnds(t, tx,
+				store.RelationQuery{From: "A", Type: "requires", Direction: store.DirectionOutgoing}, false))
+			require.Equal(t, []string{"A"}, farEnds(t, tx,
+				store.RelationQuery{To: "B", Type: "requires", Direction: store.DirectionIncoming}, true))
+			got, err := store.MatchingIDs(ctx(), tx,
+				store.GraphQuery{EntityType: "req", Faces: store.AllFaces()}, []string{"A", "B", "GONE"})
+			require.NoError(t, err)
+			require.Equal(t, map[string]bool{"A": false, "B": true, "GONE": false}, got)
+			if err := tx.DeleteRelation(ctx(), key); err != nil {
+				return err
+			}
+			require.Empty(t, farEnds(t, tx,
+				store.RelationQuery{From: "A", Type: "requires", Direction: store.DirectionOutgoing}, false))
+			return nil
+		})
+		require.NoError(t, err)
+	})
+
 	t.Run("NestedTxJoins", func(t *testing.T) {
 		s := f(t)
 		err := s.Tx(ctx(), func(tx store.Store) error {
@@ -345,4 +375,20 @@ func (o *recordingObserver) EntityRenamed(_ string, renamed *entity.Entity) erro
 	defer o.mu.Unlock()
 	o.puts = append(o.puts, renamed.ID)
 	return nil
+}
+
+// farEnds lists the ids at the far end of the relations q matches: the From
+// ends when incoming, else the To ends.
+func farEnds(t *testing.T, s store.Store, q store.RelationQuery, incoming bool) []string {
+	t.Helper()
+	var ids []string
+	for r, err := range s.ListRelations(ctx(), q) {
+		require.NoError(t, err)
+		if incoming {
+			ids = append(ids, r.From)
+		} else {
+			ids = append(ids, r.To)
+		}
+	}
+	return ids
 }

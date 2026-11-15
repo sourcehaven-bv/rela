@@ -307,6 +307,10 @@ components:
   affordances:      { in: internal/affordances }
   visibility:       { in: internal/visibility }
   ai:               { in: internal/ai }
+  # Declarative LLM actions (TKT-4USH1HO): request building and reply checks.
+  # Pure: no store, reader or provider.
+  llmtask:          { in: internal/llmtask }
+  actionproposal:   { in: internal/actionproposal }
   mail:             { in: internal/mail }
   audit:            { in: internal/audit }
   jwtauth:          { in: internal/jwtauth }
@@ -688,9 +692,13 @@ deps:
     # data-entry config types need listing. Critically: NO `dataentry` — the
     # contract must not depend on the server that serializes to it.
     mayDependOn:
+      - actionproposal
       - dataentryconfig
   dataentry:
     mayDependOn:
+      - actionproposal
+      - ai
+      - llmtask
       - ygows
       - mentions
       - rollup
@@ -848,6 +856,12 @@ deps:
   cmdGenIcons:
     mayDependOn:
       - icondefs
+  llmtask:
+    mayDependOn:
+      - actionproposal
+      - ai
+      - dataentryconfig
+      - metamodel
   conditionlint:
     mayDependOn:
       - dataentryconfig
@@ -868,6 +882,7 @@ deps:
   # as a plain string rather than a *project.Context.
   mcp:
     mayDependOn:
+      - actionproposal
       - rootfs
       # affordances: convert_entity names a field-gate refusal
       # (FieldWriteError) the way the conversion endpoint does.
@@ -2246,6 +2261,7 @@ deps:
       - uuid
   script:
     mayDependOn:
+      - actionproposal
       - ai
       - autocascade
       - lua
