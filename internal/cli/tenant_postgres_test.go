@@ -4,8 +4,12 @@ package cli
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +20,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/backendtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
@@ -56,9 +61,9 @@ func writeTwoTenantProject(t *testing.T) (root, schemaA, schemaB string) {
 	}
 	p, err := tenant.NewProvisioner(base, tenant.AuditRoot(filepath.Join(root, ".rela")))
 	require.NoError(t, err)
-	a, err := p.Create(t.Context(), "org-a", false)
+	a, err := p.Create(t.Context(), "org-a", tenant.CreateOptions{})
 	require.NoError(t, err)
-	b, err := p.Create(t.Context(), "org-b", false)
+	b, err := p.Create(t.Context(), "org-b", tenant.CreateOptions{})
 	require.NoError(t, err)
 	return root, a.Schema, b.Schema
 }
@@ -362,4 +367,58 @@ func TestTenantCLI_StopsWhenSuspended(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the process never learned that its tenant was suspended")
 	}
+}
+
+// TestTenantCLI_AppliesTheTenantProfile pins that `rela --tenant X
+// scheduler` runs under tenant mode's SaaS profile (TKT-3RWQ1PK): the
+// strict Lua HTTP policy refuses a loopback address, and the operator's
+// secrets.yaml is withheld.
+func TestTenantCLI_AppliesTheTenantProfile(t *testing.T) {
+	root, _, _ := writeTwoTenantProject(t)
+	t.Setenv(envLuaHTTPAllow, "")
+	t.Setenv(envTenantSharedHostConfig, "")
+	loopback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("reached"))
+	}))
+	t.Cleanup(loopback.Close)
+
+	script := fmt.Sprintf(`local _, v = pcall(function() return rela.secrets.token end)
+rela.create_entity("note", { title = "secret: " .. tostring(v) })
+local _, err = http.get(%q)
+rela.create_entity("note", { title = "http: " .. (err and err.kind or "reached") })
+`, loopback.URL)
+	for name, body := range map[string]string{
+		"schedules.yaml": "tasks:\n  - name: tick\n    script: tick.lua\n    every: 1h\n" +
+			"    capabilities: {http: true, secrets: [token]}\n",
+		"scripts/tick.lua":   script,
+		".rela/secrets.yaml": "token: operator-token\n",
+	} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(body), 0o600))
+	}
+
+	svc := openTenantForTest(t, root, "org-a")
+	policy, ok := lua.CurrentHTTPPolicy()
+	require.True(t, ok, "opening a tenant installs the Lua HTTP policy")
+	require.True(t, policy.Strict, "the CLI's Lua HTTP policy is strict in tenant mode")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	bind, err := appbuild.IdentityBinder(svc)
+	require.NoError(t, err)
+	done := make(chan error, 1)
+	go func() { done <- (&SchedulerCmd{}).Run(ctx, svc, bind) }()
+	require.Eventually(t, func() bool { return len(noteTitles(t, svc)) == 2 }, 10*time.Second,
+		20*time.Millisecond, "the task did not run")
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("scheduler did not stop")
+	}
+
+	titles := strings.Join(noteTitles(t, svc), "\n")
+	assert.Contains(t, titles, "http: blocked", "a loopback address is refused in tenant mode")
+	assert.Contains(t, titles, envTenantSharedHostConfig, "the secret read names the switch that shares it")
+	assert.NotContains(t, titles, "operator-token", "the operator's secret is withheld")
 }

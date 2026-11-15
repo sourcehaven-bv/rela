@@ -2,7 +2,10 @@ package lua
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/secrets"
@@ -67,5 +70,39 @@ func TestLoadContextOptions_Host(t *testing.T) {
 				t.Errorf("got %d options, want %d", len(opts), tc.wantOpts)
 			}
 		})
+	}
+}
+
+// withheldHost withholds ai.yaml and the secrets, as tenant mode does.
+type withheldHost struct{}
+
+var errTestWithheld = fmt.Errorf("withheld in this test: %w", ErrHostConfigWithheld)
+
+func (withheldHost) File(string) ([]byte, error)               { return nil, errTestWithheld }
+func (withheldHost) Secrets(string) (map[string]string, error) { return nil, errTestWithheld }
+func (withheldHost) Path() string                              { return "" }
+
+// TestLoadContextOptions_Withheld pins that a withheld ai.yaml and withheld
+// secrets do not stop the runtime, and that a script using them gets an
+// error naming why rather than empty values.
+func TestLoadContextOptions_Withheld(t *testing.T) {
+	opts, err := LoadContextOptions(withheldHost{}, "s.lua", nil)
+	if err != nil {
+		t.Fatalf("LoadContextOptions: %v", err)
+	}
+	opts = append(opts, WithCapabilities(Capabilities{AI: true, AllSecrets: true}))
+	rt := NewDetached(io.Discard, opts...)
+	defer rt.Close()
+
+	err = rt.RunString(`local r, e = ai.complete("hi")
+assert(r == nil and e.kind == "not_configured", "ai.complete did not refuse")
+error("ai: " .. e.message)`)
+	if err == nil || !strings.Contains(err.Error(), "ai: AI is not available: withheld in this test") {
+		t.Errorf("ai.complete error = %v; want not_configured naming why", err)
+	}
+
+	err = rt.RunString(`return rela.secrets.token`)
+	if err == nil || !strings.Contains(err.Error(), "withheld in this test") {
+		t.Fatalf("reading a withheld secret = %v; want an error naming why", err)
 	}
 }

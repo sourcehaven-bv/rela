@@ -12,8 +12,27 @@
 //   - no assertion, or one that does not verify: 401;
 //   - a verified assertion with no `org_id`, or an org that is not an active
 //     tenant (unknown, suspended or being erased): 403 `unknown_tenant`;
+//   - with provisioning on ([ProvisionConfig]), an org whose tenant is being
+//     created: 202 with a `{"status":"provisioning"}` body for GET and HEAD,
+//     and 503 `tenant_provisioning` for any other method. No tenant is
+//     opened for it;
 //   - the tenant lookup or the store open failed, or the org's derived
 //     schema is recorded for another org: 503.
+//
+// # Suspension follows the IdP
+//
+// A verified `organization.updated` or `organization.deleted` webhook is
+// handled here and not passed to the tenant. For an update the host asks
+// the IdP for the org's status and suspends or resumes the tenant to match
+// (see [StatusSync.SyncStatus]); an org the IdP no longer knows is
+// suspended. A deletion suspends the tenant (see [StatusSync.SyncDeleted]).
+// Neither erases: erasure stays an operator's action. The host answers 200
+// when it applied a change or had nothing to do, 503 with Retry-After for
+// a tenant still being created or when [Config.StatusSync] is not set, 500
+// for an org id the IdP cannot be asked about or a schema recorded for
+// another org, and 502 when the IdP or the control table could not answer,
+// so the IdP sends the event again. This works for a suspended tenant,
+// which every other webhook event finds refused with 503.
 //
 // The one exception is the embedded SPA shell and its static assets, which a
 // browser needs before it can authenticate. They are served by
@@ -48,6 +67,10 @@ import (
 // WebhookPath is the IdP webhook route. Its body is a signed JWT that names
 // the tenant, so the host routes it by the body rather than by a header.
 const WebhookPath = "/webhooks/idp"
+
+// StatusPath answers the caller's own tenant status, for a client to poll
+// while its tenant is being created. It never names another org.
+const StatusPath = "/api/v1/_tenant"
 
 // webhookMaxBody caps the webhook body read before verification, matching
 // the data-entry receiver's own cap.
@@ -84,11 +107,21 @@ type Config struct {
 	// Webhook verifies the IdP webhook body. Optional: nil leaves
 	// [WebhookPath] an ordinary path that needs an assertion.
 	Webhook WebhookVerifier
+	// Provision enables creating a tenant for a verified org that has none.
+	// The zero value is [ProvisionOff].
+	Provision ProvisionConfig
+	// StatusSync applies a verified `organization.updated` or
+	// `organization.deleted` webhook to the tenant's status. It needs
+	// Webhook. Without it those events are refused with 503, never passed
+	// to the tenant or acknowledged.
+	StatusSync StatusSyncer
 }
 
 // Host is the front http.Handler of a multi-tenant server.
 type Host struct {
 	cfg Config
+	// prov is nil when provisioning is off.
+	prov *provisioning
 }
 
 // New builds a Host.
@@ -106,7 +139,22 @@ func New(cfg Config) (*Host, error) {
 	case cfg.Static == nil:
 		return nil, errors.New("tenanthost: static handler is required")
 	}
-	return &Host{cfg: cfg}, nil
+	if cfg.StatusSync != nil && cfg.Webhook == nil {
+		return nil, errors.New("tenanthost: status sync needs the IdP webhook")
+	}
+	if err := validateProvision(cfg.Provision, cfg.Webhook != nil); err != nil {
+		return nil, err
+	}
+	return &Host{cfg: cfg, prov: newProvisioning(cfg.Provision)}, nil
+}
+
+// Close cancels the provisioning runs in progress and waits for them to
+// end. A cancelled create is finished by the next one. Safe to call when
+// provisioning is off.
+func (h *Host) Close() {
+	if h.prov != nil {
+		h.prov.close()
+	}
 }
 
 // ServeHTTP routes r to its tenant's application, or refuses it.
@@ -164,6 +212,11 @@ func (h *Host) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if clean == StatusPath && r.Method == http.MethodGet {
+		h.serveStatus(w, r, id.OrgID)
+		return
+	}
+
 	next, release, err := h.cfg.Acquire(r.Context(), id.OrgID)
 	if err != nil {
 		if !shell() {
@@ -205,7 +258,16 @@ func (h *Host) serveWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if claims.Event == eventOrgUpdated || claims.Event == eventOrgDeleted {
+		h.syncFromWebhook(w, r, claims)
+		return
+	}
+
 	next, release, err := h.cfg.Acquire(r.Context(), claims.OrgID)
+	if err != nil && h.prov != nil && claims.Event == eventOrgCreated && provisionable(err) {
+		h.provisionFromWebhook(w, r, claims)
+		return
+	}
 	switch {
 	case errors.Is(err, tenant.ErrTenantInactive):
 		// A suspended tenant keeps its data, and a role removal or user
@@ -217,19 +279,21 @@ func (h *Host) serveWebhook(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "300")
 		http.Error(w, "tenant not served now", http.StatusServiceUnavailable)
 		return
+	case errors.Is(err, tenant.ErrTenantErased):
+		// Acknowledged and never provisioned: only an operator recreates
+		// an erased tenant. Worth a look when the event is a create, since
+		// the IdP then has an org whose data this server erased.
+		slog.Warn("tenant host: idp webhook for an erased org; not provisioned "+
+			"(an operator recreates it with rela-server tenant create -recreate)",
+			"org_id", claims.OrgID, "event", claims.Event, "id", claims.ID)
+		w.WriteHeader(http.StatusOK)
+		return
 	case errors.Is(err, tenant.ErrUnknownTenant):
 		// Acknowledged so the IdP does not retry an event for an org this
-		// server does not host. Provisioning a tenant is TKT-TNPRV8.
-		if claims.Event == "organization.deleted" {
-			// An org being erased, or one this server never had: worth an
-			// operator's look, since an erasure may be in progress.
-			slog.Warn("tenant host: idp webhook organization deletion for an org this server does not "+
-				"serve; check that its erasure completed (PROCEDURE-u020, rela-server tenant erase)",
-				"org_id", claims.OrgID, "id", claims.ID)
-		} else {
-			slog.Info("tenant host: idp webhook for an org this server does not host",
-				"org_id", claims.OrgID, "event", claims.Event, "id", claims.ID)
-		}
+		// server does not host. Every org status event, and with
+		// provisioning on an `organization.created`, was handled above.
+		slog.Info("tenant host: idp webhook for an org this server does not host",
+			"org_id", claims.OrgID, "event", claims.Event, "id", claims.ID)
 		w.WriteHeader(http.StatusOK)
 		return
 	case err != nil:
@@ -245,6 +309,18 @@ func (h *Host) serveWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Host) acquireFailed(w http.ResponseWriter, r *http.Request, orgID string, err error) {
+	if h.prov != nil && provisionable(err) {
+		if h.prov.lazy {
+			h.provisionLazily(w, r, orgID, http.StatusAccepted)
+			return
+		}
+		if errors.Is(err, tenant.ErrTenantProvisioning) {
+			// Webhook mode does not finish a create that stopped.
+			h.prov.noteStuck(r.Context(), orgID)
+			writeProvisioning(w, r, http.StatusAccepted)
+			return
+		}
+	}
 	if errors.Is(err, tenant.ErrUnknownTenant) {
 		slog.InfoContext(r.Context(), "tenant host: org is not a tenant of this server",
 			"org_id", orgID, "path", r.URL.Path)

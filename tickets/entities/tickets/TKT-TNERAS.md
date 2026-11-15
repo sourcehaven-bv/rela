@@ -127,3 +127,14 @@ file (`internal/cli/classification.go`) as misplaced.
 Implemented in the TKT-D6MF3SW pull request (branch
 `tkt-d6mf3sw-multitenant-host`): `internal/tenant/erase.go`,
 `internal/tenant/erase_postgres.go`, `cmd/rela-server/tenanterase.go`.
+
+## Addendum (TKT-TNPRV8)
+
+Erasure now leaves a tombstone instead of deleting the control row. The
+last step sets the status to `erased` and records `erased_at`. The row holds
+the org id, schema name, status and timestamps, and no tenant data. The
+tombstone stops automatic provisioning from recreating an erased tenant: a
+deleted row looked like an org with no tenant, which provisioning creates.
+An operator recreates an erased org with `rela-server tenant create
+-recreate`, which makes a fresh, empty tenant. Erasing an erased org
+succeeds and changes nothing.

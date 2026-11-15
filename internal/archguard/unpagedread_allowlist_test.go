@@ -6,8 +6,8 @@ package archguard
 //
 // Each entry has a category (see readCategory) and a reason that says what
 // the read is for. requestPath entries are debt. The follow-ups of
-// TKT-FED6FMM remove them: TKT-D3RAB0E and TKT-I39Y7N4 (dataentry), TKT-D9UO9Y4 (mcp,
-// search), TKT-P9QMEVI (lua) and TKT-EBBHM55
+// TKT-FED6FMM remove them: TKT-D3RAB0E and TKT-I39Y7N4 (dataentry),
+// TKT-Z099FGY (mcp filters), TKT-P9QMEVI (lua) and TKT-EBBHM55
 // (desktopnotify).
 var unpagedReadAllowlist = map[string]unpagedRead{
 	// aclmap: the who-can report.
@@ -165,13 +165,21 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/mailtemplate/mailtemplate.go#buildSection": {1, batchJob,
 		"scheduled mail render: a section lists the entities of its declared type"},
 
+	// mapimport: rela import --mapping.
+	"internal/mapimport/plan.go#builder.index": {1, batchJob,
+		"mapped import: reads each mapped type once to match source records to stored rows and to report " +
+			"stored rows the source no longer has"},
+	"internal/mapimport/plan.go#builder.storedRels": {1, batchJob,
+		"mapped import: reads each mapped relation type once to diff the source edges against the stored ones"},
+
 	// mcp.
 	"internal/mcp/tools_analysis.go#Server.handleAnalyzeProperties": {1, batchJob,
 		"analyze properties tool: validates every face row"},
 	"internal/mcp/tools_analysis.go#Server.handleAnalyzeUnique": {1, batchJob,
 		"analyze unique tool: compares the unique values of every entity of each type"},
-	"internal/mcp/tools_entity.go#Server.handleListEntities": {1, requestPath,
-		"list_entities tool: reads the whole type (or every type), then filters and applies the limit in Go"},
+	"internal/mcp/tools_entity.go#listPage.filterInGo": {1, requestPath,
+		"list_entities tool with a filter that does not lower to store predicates (related(...), current_user, " +
+			"ordered comparisons): reads the whole readable type, then filters and pages in Go (TKT-Z099FGY)"},
 
 	// remotesync: a sync pass over the mapped types.
 	"internal/remotesync/push.go#pusher.localRows": {1, batchJob, "remote sync push: every local row of a mapped type"},
@@ -188,12 +196,6 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 		"property validation report: every entity"},
 	"internal/schema/validate_properties.go#ValidateRelationProperties": {1, batchJob,
 		"property validation report: every relation"},
-
-	// search.
-	"internal/search/index.go#Service.listAll": {1, requestPath,
-		"search with no text: reads every entity in the world, then filters by type and properties"},
-	"internal/search/index.go#Service.scanFaces": {1, requestPath,
-		"search with an admit gate and no text: reads every face of every entity, then filters by type"},
 
 	// tracer.
 	"internal/tracer/tracer.go#GenericTracer.FindOrphans": {2, batchJob,

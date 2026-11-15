@@ -236,6 +236,40 @@ func TestValidateWithFS_RemotesStandAlone(t *testing.T) {
 	}
 }
 
+// TestValidateWithFS_Imports pins that every mapping file in imports/ is
+// parsed against the schema, and that other files there are left alone.
+func TestValidateWithFS_Imports(t *testing.T) {
+	t.Parallel()
+	fs := storage.NewMemFS()
+	root := "/proj"
+	if _, err := projectsetup.InitializeWithFS(root, fs); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"imports/bad.yaml":  "entities:\n  x: {type: noimport, select: $, key: k}\n",
+		"imports/notes.txt": "not a mapping",
+		"imports/old.yml":   "entities: {}\n",
+	}
+	for name, body := range files {
+		if err := fs.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := fs.WriteFile(filepath.Join(root, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := projectsetup.ValidateWithFS(context.Background(), root, fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := result.ImportsError
+	if got == nil || !strings.Contains(got.Error(), "imports/bad.yaml") || !strings.Contains(got.Error(), "noimport") ||
+		!strings.Contains(got.Error(), "imports/old.yml: rename") || strings.Contains(got.Error(), "notes") {
+
+		t.Fatalf("ImportsError = %v", got)
+	}
+}
+
 func TestValidateResult_HasErrors(t *testing.T) {
 	cases := []struct {
 		name string
@@ -249,6 +283,7 @@ func TestValidateResult_HasErrors(t *testing.T) {
 		{"schedules err", projectsetup.ValidateResult{SchedulesError: errExample}, true},
 		{"connections err", projectsetup.ValidateResult{ConnectionsError: errExample}, true},
 		{"subscriptions err", projectsetup.ValidateResult{SubscriptionsError: errExample}, true},
+		{"imports err", projectsetup.ValidateResult{ImportsError: errExample}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

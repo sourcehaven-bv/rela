@@ -1,0 +1,35 @@
+# The same catalog in its XML form. Attributes are @name; an element's text
+# is its #text, which a path reaches by naming the element.
+description: OSCAL catalog (XML)
+format: xml
+entities:
+  groups:
+    type: control-group
+    select: $.catalog.group
+    key: oscal_id
+    scope:
+      catalog: example
+    properties:
+      oscal_id: "@id"
+      title: title
+  controls:
+    type: control
+    select: $.catalog..control
+    key: oscal_id
+    scope:
+      catalog: example
+    properties:
+      oscal_id: "@id"
+      title: title
+      label: prop[@name=label].@value
+    content: part[@name=statement].p
+    relations:
+      - type: part-of
+        target: groups
+        key: ^[@class=category].@id
+        optional: true
+      - type: refines
+        target: controls
+        key: ^[@class=control].@id
+        optional: true
+    hook: scripts/oscal.lua

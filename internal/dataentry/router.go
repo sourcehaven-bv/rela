@@ -97,6 +97,17 @@ func WithQueryCeiling(n int64) RouterOption {
 	return func(c *routerConfig) { c.queryCeiling = n }
 }
 
+// logGitSync logs that git sync is on. NewRouter calls it, after tenant
+// mode had its chance to turn git sync off.
+func (a *App) logGitSync() {
+	if a.gitOps == nil {
+		return
+	}
+	if g := a.Cfg().Git; g != nil {
+		slog.Info("git sync enabled", "mode", g.Mode)
+	}
+}
+
 // NewRouter returns an http.Handler with all data entry routes registered.
 // The Vue SPA serves as the primary UI at the root path.
 //
@@ -108,6 +119,7 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 		opt(&cfg)
 	}
 	mux := http.NewServeMux()
+	a.logGitSync()
 
 	// Legacy /static/ mount. The Vue bundle is also reachable here as
 	// /static/v2/*, but the SPA's built index.html references assets as
