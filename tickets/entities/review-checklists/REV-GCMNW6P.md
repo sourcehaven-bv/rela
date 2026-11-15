@@ -28,7 +28,7 @@ status: done
 **Review Responses:** RR-IRXJWNP (significant, addressed), RR-QAC4HXL (minor,
 deferred), RR-2FFUEDT (minor, wont-fix), RR-FYQUDNX (minor, wont-fix),
 RR-8ZIOVVZ (minor, addressed), RR-0BB54DA (minor, addressed), RR-JGCXRFL (nit,
-addressed).
+addressed), RR-UIDD3CD (significant, addressed: archplan types finding from CI).
 
 ## Acceptance Verification
 
