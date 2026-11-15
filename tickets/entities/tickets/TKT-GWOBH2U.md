@@ -50,3 +50,12 @@ predicate, which was `condition:`. `rela migrate` applies the rename.
 - There is no separate `renamed:` trigger. A rename keeps firing `updated`
 triggers, as it does today.
 - Effort is xl.
+
+## Architecture notes
+
+- `metamodel.ExpandTypeNames` is the one expansion of abstract type names.
+data-entry.yaml and flows.yaml triggers both use it.
+- The trigger load checks are split: `check.go` holds the rule-shape checks
+and `schemacheck.go` holds the checks against the schema.
+- `EntityToCreate.Properties` carries the interpolated strings as
+`map[string]string`. autocascade widens them where it writes the entity.
