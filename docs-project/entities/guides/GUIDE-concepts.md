@@ -235,7 +235,7 @@ constraints defined on relations.
 
 The maximums are also enforced on write. A write that would give an entity
 more edges than `max_outgoing` or `max_incoming` allows is refused. This holds
-for the CLI, MCP, Lua scripts, the API, the web UI, CalDAV, automations and
+for the CLI, MCP, Lua scripts, the API, the web UI, CalDAV, triggers and
 copies. The API answers 422 `cardinality_exceeded` on an entity PATCH, on a
 POST of one relation, and on a relation restore from history.
 

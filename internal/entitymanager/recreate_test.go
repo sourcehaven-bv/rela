@@ -9,9 +9,9 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -154,11 +154,11 @@ func TestRecreateEntity_SuppressesAutomation(t *testing.T) {
 	counting := &countingStore{Store: memstore.New()}
 	// An automation that, on requirement create, would create a checklist
 	// entity. If recreate ran automation, the cascade would write a second entity.
-	auto := automation.Automation{
+	auto := triggers.Rule{
 		Name: "make-checklist",
-		On:   automation.Trigger{Entity: []string{"requirement"}, Created: true},
-		Do: []automation.Action{{
-			CreateEntity: &automation.CreateEntityAction{
+		On:   triggers.Trigger{Entity: []string{"requirement"}, Created: true},
+		Do: []triggers.Action{{
+			CreateEntity: &triggers.CreateEntityAction{
 				Type:       "checklist",
 				Properties: map[string]string{"title": "auto"},
 			},
@@ -167,7 +167,7 @@ func TestRecreateEntity_SuppressesAutomation(t *testing.T) {
 
 	// Sanity: through CreateEntity the automation DOES fire (a checklist is
 	// created), so the suppression assertion below is meaningful.
-	withAuto := newManagerWithStoreAndAudit(t, &countingStore{Store: memstore.New()}, audit.Nop{}, []automation.Automation{auto})
+	withAuto := newManagerWithStoreAndAudit(t, &countingStore{Store: memstore.New()}, audit.Nop{}, []triggers.Rule{auto})
 	cres, err := withAuto.CreateEntity(context.Background(), &entity.Entity{
 		Type: "requirement", Properties: map[string]any{"title": "t"},
 	}, entity.CreateOptions{})
@@ -180,7 +180,7 @@ func TestRecreateEntity_SuppressesAutomation(t *testing.T) {
 
 	// Now the real assertion: RecreateEntity with the SAME automation wired
 	// must create exactly one entity (the recreated one) and run no cascade.
-	recreateMgr := newManagerWithStoreAndAudit(t, counting, audit.Nop{}, []automation.Automation{auto})
+	recreateMgr := newManagerWithStoreAndAudit(t, counting, audit.Nop{}, []triggers.Rule{auto})
 	if _, err := entitymanager.RecreateEntity(context.Background(), recreateMgr, &entity.Entity{
 		ID: "REQ-applied", Type: "requirement", Properties: map[string]any{"title": "t", "status": "draft"},
 	}); err != nil {

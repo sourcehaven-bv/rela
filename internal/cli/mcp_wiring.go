@@ -15,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -64,6 +65,9 @@ type mcpServices struct {
 	// stopACLWatch releases the acl.yaml subscription. Nil until
 	// [mcpServices.watchACL] runs.
 	stopACLWatch func()
+	// stopFlowsWatch releases the flows.yaml subscription. Nil until
+	// [mcpServices.watchFlows] runs.
+	stopFlowsWatch func()
 	// closed is set by Close. The watcher's Stop does NOT wait for an
 	// in-flight callback, so a change event can be mid-flight when shutdown
 	// begins; without this flag that callback would assemble a whole new
@@ -288,6 +292,26 @@ func (s *mcpServices) watchSchema(srv *relamcp.Server) {
 	}
 	s.watchRealtime(sub)
 	s.watchACL(sub, srv)
+	s.watchFlows(sub, srv)
+}
+
+// watchFlows subscribes to flows.yaml and rebuilds the bundle on every change,
+// so an edited `triggers:` block applies from the next write, as an edited
+// schema does. The triggers lived in schema.yaml until TKT-GWOBH2U and were
+// reloaded with it. A file that does not load keeps the previous bundle.
+func (s *mcpServices) watchFlows(sub config.Subscriber, srv *relamcp.Server) {
+	stop, err := sub.Subscribe(context.Background(), flowcfg.FileName, func() {
+		if err := s.reload(srv.ReloadDeps); err != nil {
+			slog.Warn("mcp: flows.yaml reload failed; keeping previous configuration", "error", err)
+			return
+		}
+		slog.Info("mcp: flows.yaml reloaded")
+	})
+	if err != nil {
+		slog.Warn("mcp: flows.yaml watcher not started; hot-reload disabled", "error", err)
+		return
+	}
+	s.keepWatch(stop, &s.stopFlowsWatch)
 }
 
 // watchACL subscribes to acl.yaml and republishes the bundle on every change,
@@ -508,8 +532,8 @@ func (s *mcpServices) Close() error {
 	// mu on the captured assemblies: stopping a version sweep waits, without
 	// a bound, for an in-flight tick.
 	s.closed = true
-	stops := []func(){s.stopSchemaWatch, s.stopRealtimeWatch, s.stopACLWatch}
-	s.stopSchemaWatch, s.stopRealtimeWatch, s.stopACLWatch = nil, nil, nil
+	stops := []func(){s.stopSchemaWatch, s.stopRealtimeWatch, s.stopACLWatch, s.stopFlowsWatch}
+	s.stopSchemaWatch, s.stopRealtimeWatch, s.stopACLWatch, s.stopFlowsWatch = nil, nil, nil, nil
 	watcher, current, origin, closeOrigin := s.watcher, s.svc, s.origin, s.closeOrigin
 	s.mu.Unlock()
 

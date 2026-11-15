@@ -123,12 +123,13 @@ entities:
         type: string
         unique: true
 relations: {}
-automations:
-  - name: assignee-inbox
+`)
+	writeProjectFile(t, root, "flows.yaml", `triggers:
+  assignee-inbox:
     on:
       entity: [ticket]
       property: assignee
-    do:
+    outputs:
       - add_to_pile: {pile: Inbox, owner: "{{new.assignee}}"}
 `)
 	writePolicy(t, root, pileLifecyclePolicy)

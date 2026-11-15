@@ -130,7 +130,7 @@ Every entity / relation create / update / delete is recorded as a
 JSONL row under `.rela/audit/YYYY-MM-DD.jsonl`. Records carry the
 operating user (`$USER`), the entry point that initiated the write
 (`cli`, `mcp`, `data-entry`, `scheduler`, `desktop`), and — for
-engine-initiated writes — the originating automation or schedule.
+engine-initiated writes — the originating trigger or schedule.
 
 The log is forensic, not authoritative: a process crash between the
 store write and the audit append can leave a write un-audited; see
@@ -264,7 +264,7 @@ config read in-process, inside the trust boundary, and may name any
 
 **`integration:` is reserved the same way.** Connector scripts run as
 `integration:<name>` (for example `integration:basecamp`), set as `run_as`
-on a scheduled task or a background automation action. A connector's role
+on a scheduled task or a background trigger script. A connector's role
 usually holds write grants and the `tag:sync` permission, so a request
 naming `integration:basecamp` is refused exactly like one naming
 `system:scheduler`, from every source in the table above. Only `run_as` in

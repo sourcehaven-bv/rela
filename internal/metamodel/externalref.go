@@ -319,8 +319,8 @@ func validSystemName(s string) bool {
 
 // validateExternalRefs checks the cross-property external-ref rules: one
 // property per system per type, `sync: true` only on a type without
-// faces, and no automation that triggers on a ref or writes one. The
-// display_property rule lives in validateDisplayPropertyRef.
+// faces. internal/flowcfg/triggers refuses a trigger that fires on a ref
+// or writes one. The display_property rule lives in validateDisplayPropertyRef.
 func validateExternalRefs(m *Metamodel) []string {
 	var errs []string
 	for _, typeName := range sortedKeys(m.Entities) {
@@ -343,51 +343,6 @@ func validateExternalRefs(m *Metamodel) []string {
 			if names := bySystem[system]; len(names) > 1 {
 				errs = append(errs, fmt.Sprintf("entity %q: properties %s all declare system %q; "+
 					"a type may declare each system once", typeName, strings.Join(names, ", "), system))
-			}
-		}
-	}
-	for _, auto := range m.Automations {
-		errs = append(errs, automationExternalRefErrors(m, auto)...)
-	}
-	return errs
-}
-
-// automationExternalRefErrors refuses an automation that triggers on an
-// external ref or writes one. A `set:` or a `create_entity` property is a
-// system write that no field gate sees, and its value is an interpolated
-// string, never an {id, url} object: a ref is written only by a script
-// granted ref writes.
-func automationExternalRefErrors(m *Metamodel, auto AutomationDef) []string {
-	types := []string(auto.On.Entity)
-	if len(types) == 0 {
-		types = sortedKeys(m.Entities)
-	}
-	var errs []string
-	for _, t := range types {
-		if auto.On.Property != "" {
-			if _, ok := ExternalRefSystem(m, t, auto.On.Property); ok {
-				errs = append(errs, fmt.Sprintf("automation %q: `on.property` %q is an external ref on %q; "+
-					"a ref changes only through sync, so it cannot trigger an automation", auto.Name, auto.On.Property, t))
-			}
-		}
-		for _, act := range auto.Do {
-			if act.Set == "" {
-				continue
-			}
-			if _, ok := ExternalRefSystem(m, t, act.Set); ok {
-				errs = append(errs, fmt.Sprintf("automation %q: `set` %q is an external ref on %q; "+
-					"only a script may write a ref", auto.Name, act.Set, t))
-			}
-		}
-	}
-	for _, act := range auto.Do {
-		if act.CreateEntity == nil {
-			continue
-		}
-		for _, name := range sortedKeys(act.CreateEntity.Properties) {
-			if _, ok := ExternalRefSystem(m, act.CreateEntity.Type, name); ok {
-				errs = append(errs, fmt.Sprintf("automation %q: `create_entity` property %q is an external ref on %q; "+
-					"only a script may write a ref", auto.Name, name, act.CreateEntity.Type))
 			}
 		}
 	}

@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlTag from 'rela-components/components/common/RlTag.vue'
+import RlCallout from 'rela-components/components/feedback/RlCallout.vue'
 import type { TableColumn } from 'rela-components/components/table/types'
 import ConfigurePage from '@/components/configure/ConfigurePage.vue'
 import ConfigIndex from '@/components/configure/ConfigIndex.vue'
@@ -14,6 +16,7 @@ import { listAt, newMap } from '@/configure/tree'
 /** Every rule: a check records must pass, or a warning they show. */
 const draft = useConfigDraftStore()
 const router = useRouter()
+const { t } = useI18n()
 
 const rows = computed(() =>
   rules(draft.currentSchema).map((r) => ({
@@ -69,5 +72,14 @@ function add() {
         <RlTag v-if="item.script" label="Runs a script" />
       </template>
     </ConfigIndex>
+    <RlCallout tone="info" class="automations-moved" data-testid="automations-moved">
+      {{ t('configure.automationsMoved') }}
+    </RlCallout>
   </ConfigurePage>
 </template>
+
+<style scoped>
+.automations-moved {
+  margin-top: var(--rl-space-4);
+}
+</style>

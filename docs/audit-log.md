@@ -68,7 +68,7 @@ Every record is one line of JSON:
 | `restore-entity`, `purge-deleted-entity` | Undo of a web-app delete, and the final removal once the undo window has passed. See "Undoable deletes" below |
 | `create-relation`, `update-relation`, `delete-relation` | Relation writes |
 | `denied-write` | A write the ACL refused, or an upload the attachment policy refused. Subject names the would-be target; the summary carries the rule that fired |
-| `acl-bypass`, `acl-bypass-read` | A write or read that skipped the ACL through an elevated automation handle. The principal is the REAL triggering identity |
+| `acl-bypass`, `acl-bypass-read` | A write or read that skipped the ACL through an elevated script handle (`rela.bypass_acl`). The principal is the REAL triggering identity |
 | `acl-query` | An effective-access query (`rela acl who-can`) — who asked, when, and about which entity. **The answer is deliberately not recorded**: it is a list of principals and their access routes, so logging it would duplicate the disclosure rather than record it |
 | `purge-version` | An operator hard-delete of version history for compliance redaction. Never contains the purged content |
 | `data-migration`, `data-gc` | Schema-driven data migration and garbage collection |
@@ -201,18 +201,18 @@ the operator who started the server is the right grain for forensics.
 
 ## `triggered_by` — engine-initiated writes
 
-When a write is caused by an automation cascade or scheduler task,
+When a write is caused by a trigger or a scheduler task,
 `triggered_by` distinguishes it from direct user actions:
 
-- `automation:<name>` — an automation action, named after the
-  automation that produced it. Scripted (`lua:`) and non-scripted
-  (relation create, cascaded entity create, and the delete half of an
-  `if_exists: replace`) actions alike.
-- `automation` — the fallback for an automation declared without a
-  `name:`. Note `name:` is an optional field on an `automations:` list
-  entry and nothing rejects an automation that omits it, so this label
-  means "the schema did not say which rule this was" — not that
-  something went wrong.
+- `automation:<name>` — an output of the `flows.yaml` trigger called
+  `<name>` (see [Triggers](flows.md#triggers)). This covers scripts
+  (`script:`) and the other outputs alike: a relation, a created entity,
+  and the delete half of an `if_exists: replace`. Triggers were called
+  automations before, and the label keeps that word, so queries on older
+  records still work.
+- `automation` — written by older releases for an automation declared
+  without a `name:`. Every trigger has a name, so new records always
+  carry `automation:<name>`.
 - `schedule:<task-name>` — a scheduler-driven Lua task.
 - `session:<channel>/<from>-><to>#<generation>/<index>` — output
   `<index>` (from 0) of a channel session's move from `<from>` to `<to>`,
@@ -226,10 +226,10 @@ When a write is caused by an automation cascade or scheduler task,
 - `restore-entity:<id>` — a relation brought back by `restore-entity`.
 
 **One label per record: the outermost cause wins.** A write can have
-more than one true cause — a scheduled task whose write trips an
-automation, for instance — but `triggered_by` is a single string, not a
+more than one true cause — a scheduled task whose write fires a
+trigger, for instance — but `triggered_by` is a single string, not a
 stack. The enclosing label is kept, so every row a scheduled task
-produced (including the ones an automation cascaded underneath it)
+produced (including the ones a trigger cascaded underneath it)
 answers `triggered_by == "schedule:<task>"`. Querying "what did last
 night's run do?" therefore returns the complete set.
 
@@ -250,8 +250,8 @@ order:
 3. Otherwise the principal's tool, such as `cli`, `mcp` or `data-entry`.
 
 A write a flow step makes also carries `flow` (the flow's name in
-flows.yaml), `run` (the run's id) and `step`. An automation that the
-step's write triggers runs in the same step, so its records carry the
+flows.yaml), `run` (the run's id) and `step`. A trigger that the
+step's write fires runs in the same step, so its records carry the
 same three fields and `source: flow`. A background job the step queues
 does not: the queue does not carry them. The principal stays the genuine
 identity, `system:flow` for the engine's own writes. A write made on a
@@ -346,7 +346,7 @@ jq 'select(.subject.id == "TKT-001")' .rela/audit/$(date -u +%Y-%m-%d).jsonl
 # All scheduler-driven writes in the last week
 cat .rela/audit/*.jsonl | jq 'select(.principal.tool == "scheduler")'
 
-# All automation cascades for entity TKT-007
+# All trigger cascades for entity TKT-007
 cat .rela/audit/*.jsonl | jq 'select(.triggered_by | startswith("automation")
   and (.subject.id == "TKT-007" or .before.id == "TKT-007"))'
 

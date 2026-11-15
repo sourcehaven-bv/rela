@@ -17,7 +17,6 @@ type partialMetamodel struct {
 	Entities    map[string]EntityDef   `yaml:"entities"`
 	Relations   map[string]RelationDef `yaml:"relations"`
 	Validations []ValidationRule       `yaml:"validations"`
-	Automations []AutomationDef        `yaml:"automations"`
 	Includes    []string               `yaml:"includes"`
 
 	// Namespace prefixes every name the file declares (see namespaces.go).
@@ -188,7 +187,7 @@ func resolveIncludes(
 
 	// Names that will be qualified are checked as written.
 	if errs := checkDeclaredNames(includePath, partial.Types, partial.Entities, partial.Relations,
-		partial.Validations, partial.Automations); len(errs) > 0 {
+		partial.Validations); len(errs) > 0 {
 		return nil, &SchemaValidationError{Errors: errs}
 	}
 	// The property order and source lines of the types this file declares,
@@ -238,23 +237,6 @@ func mergeValidations(root *Metamodel, p *partialMetamodel, owners map[string]st
 	return nil
 }
 
-// mergeAutomations appends a partial's automations, rejecting a name another
-// file already declares. Before namespaces an included file's automations
-// were silently dropped.
-func mergeAutomations(root *Metamodel, p *partialMetamodel, owners map[string]string) error {
-	for _, a := range p.Automations {
-		if owner, exists := owners[a.Name]; exists && a.Name != "" {
-			return &DuplicateDefinitionError{
-				Kind: "automation", Name: a.Name,
-				File1: owner, File2: p.sourcePath,
-			}
-		}
-		owners[a.Name] = p.sourcePath
-		root.Automations = append(root.Automations, a)
-	}
-	return nil
-}
-
 // mergeIncludes merges all partial metamodels into the root metamodel.
 // Returns an error if any duplicate definitions are found.
 func mergeIncludes(root *Metamodel, rootPath string, partials []*partialMetamodel) error {
@@ -263,7 +245,6 @@ func mergeIncludes(root *Metamodel, rootPath string, partials []*partialMetamode
 	entityOwner := make(map[string]string)
 	relationOwner := make(map[string]string)
 	validationOwner := make(map[string]string)
-	automationOwner := make(map[string]string)
 
 	// Register root's existing definitions
 	for name := range root.Types {
@@ -277,9 +258,6 @@ func mergeIncludes(root *Metamodel, rootPath string, partials []*partialMetamode
 	}
 	for _, v := range root.Validations {
 		validationOwner[v.Name] = rootPath
-	}
-	for _, a := range root.Automations {
-		automationOwner[a.Name] = rootPath
 	}
 
 	// Initialize maps if nil (root may not define any)
@@ -332,10 +310,6 @@ func mergeIncludes(root *Metamodel, rootPath string, partials []*partialMetamode
 		}
 
 		if err := mergeValidations(root, p, validationOwner); err != nil {
-			return err
-		}
-
-		if err := mergeAutomations(root, p, automationOwner); err != nil {
 			return err
 		}
 	}

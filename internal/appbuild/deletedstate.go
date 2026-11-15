@@ -18,7 +18,6 @@ import (
 	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 )
 
@@ -251,11 +250,16 @@ func (d *deletedStates) readIndex(ctx context.Context, id string) ([]string, err
 // for the entity id unreadable, so those jobs end without running. `rela
 // history-purge` calls it; the soft-delete purge reaches the same erase
 // through [entitymanager.PurgeNotifier].
-func PurgeDeletedJobStates(ctx context.Context, kv state.KV, meta *metamodel.Metamodel, id string) error {
-	if kv == nil || meta == nil {
-		return errors.New("appbuild: purge deleted job states: nil state store or metamodel")
+//
+// newGeneration is what [HasDeletedTriggers] reports for the project's
+// triggers. A caller that cannot read them passes true: an extra
+// generation costs one record, and a missing one leaves a job queued during
+// the purge able to read the purged state.
+func PurgeDeletedJobStates(ctx context.Context, kv state.KV, newGeneration bool, id string) error {
+	if kv == nil {
+		return errors.New("appbuild: purge deleted job states: nil state store")
 	}
-	return (&deletedStates{kv: kv}).purge(ctx, id, hasDeletedTriggers(meta))
+	return (&deletedStates{kv: kv}).purge(ctx, id, newGeneration)
 }
 
 // deletedStateDir is the KV directory, with a trailing slash, of id's keys.

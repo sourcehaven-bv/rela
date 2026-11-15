@@ -6,7 +6,7 @@ package metamodel
 //
 //   - An included file may declare `namespace: isms`. Every name it declares
 //     gets the prefix `isms.`: entity types, plurals, aliases, relation
-//     types, inverse names, custom types, validations and automations.
+//     types, inverse names, custom types and validations.
 //   - Inside that file a name resolves locally first, then in the root. A
 //     qualified name (`projects.task`) always means itself.
 //   - The dot is reserved for that prefix: no hand-written name contains one.
@@ -198,7 +198,6 @@ func checkDeclaredNames(
 	entities map[string]EntityDef,
 	relations map[string]RelationDef,
 	validations []ValidationRule,
-	automations []AutomationDef,
 ) []string {
 	var errs []string
 	where := ""
@@ -246,11 +245,6 @@ func checkDeclaredNames(
 			bad("validation", v.Name)
 		}
 	}
-	for _, a := range automations {
-		if dotted(a.Name) {
-			bad("automation", a.Name)
-		}
-	}
 	return errs
 }
 
@@ -277,9 +271,6 @@ func qualifyPartial(p *partialMetamodel) error {
 	p.Relations = q.relations(p.Relations)
 	for i := range p.Validations {
 		q.validation(&p.Validations[i])
-	}
-	for i := range p.Automations {
-		q.automation(&p.Automations[i])
 	}
 	if errs := *q.errs; len(errs) > 0 {
 		sort.Strings(errs)
@@ -332,14 +323,6 @@ func (q qualifier) ref(local map[string]bool, name string) string {
 
 func (q qualifier) entityRef(name string) string   { return q.ref(q.localEntities, name) }
 func (q qualifier) relationRef(name string) string { return q.ref(q.localRelations, name) }
-
-// optRelationRef resolves a relation reference that may be empty.
-func (q qualifier) optRelationRef(name string) string {
-	if name == "" {
-		return ""
-	}
-	return q.relationRef(name)
-}
 
 // checkExpr refuses a quoted local name inside an expression, such as
 // `related('assigned-to')` or `entity.type == 'task'`. The loader does not
@@ -434,41 +417,6 @@ func (q qualifier) validation(v *ValidationRule) {
 			rels[q.relationRef(name)] = c
 		}
 		v.Relations = rels
-	}
-}
-
-func (q qualifier) automation(a *AutomationDef) {
-	q.checkExpr(fmt.Sprintf("automation %q on.condition", a.Name), a.On.Condition)
-	a.Name = q.name(a.Name)
-	a.On.Entity = StringOrSlice(mapNames(a.On.Entity, q.entityRef))
-	a.On.RelationCreated = q.optRelationRef(a.On.RelationCreated)
-	a.On.RelationRemoved = q.optRelationRef(a.On.RelationRemoved)
-	for j := range a.Do {
-		qualifyAction(&a.Do[j], q.entityRef, q.relationRef)
-	}
-}
-
-func qualifyAction(act *AutomationAction, entityRef, relationRef func(string) string) {
-	if act.CreateRelation != nil {
-		c := *act.CreateRelation
-		c.Relation = relationRef(c.Relation)
-		act.CreateRelation = &c
-	}
-	if act.CreateEntity != nil {
-		c := *act.CreateEntity
-		c.Type = entityRef(c.Type)
-		if c.Relation != "" {
-			c.Relation = relationRef(c.Relation)
-		}
-		act.CreateEntity = &c
-	}
-	if act.Notify != nil {
-		n := *act.Notify
-		n.To.Via = StringOrSlice(mapNames(n.To.Via, relationRef))
-		if n.To.Type != "" {
-			n.To.Type = entityRef(n.To.Type)
-		}
-		act.Notify = &n
 	}
 }
 
@@ -763,10 +711,6 @@ func expandAbstractReferences(m *Metamodel) []string {
 			v.variantTypes = slices.Clone(a.Variants)
 		}
 	}
-	for i := range m.Automations {
-		a := &m.Automations[i]
-		a.On.Entity = StringOrSlice(expandNames(m, a.On.Entity))
-	}
 	if m.Comments != nil {
 		m.Comments.On = expandNames(m, m.Comments.On)
 	}
@@ -813,13 +757,6 @@ func singleTypeErrors(m *Metamodel) []string {
 			errs = append(errs, fmt.Sprintf(
 				"%s: %q is abstract and this setting takes one concrete type; name one of %s",
 				where, name, strings.Join(a.Variants, ", ")))
-		}
-	}
-	for _, a := range m.Automations {
-		for j, act := range a.Do {
-			if act.CreateEntity != nil {
-				single(fmt.Sprintf("automation %q: do[%d].create_entity.type", a.Name, j), act.CreateEntity.Type)
-			}
 		}
 	}
 	for _, name := range sortedKeys(m.Conversions) {

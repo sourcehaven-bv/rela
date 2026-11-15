@@ -1465,4 +1465,8 @@
       "busy": "Er loopt een synchronisatie op deze remote. Probeer het zo opnieuw."
     }
   }
+,
+  "configure": {
+    "automationsMoved": "Automatiseringen staan in flows.yaml onder triggers:. Pas dat bestand aan om ze te wijzigen."
+  }
 }

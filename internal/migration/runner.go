@@ -120,12 +120,20 @@ func ApplyWithMetamodel(path string, ft FileType, fs storage.FS, meta MetamodelP
 	// First detect what needs migration
 	result.Detections = DetectFromNodeWithMetamodel(&doc, ft, meta)
 
-	if len(result.Detections) == 0 {
+	// A project-level migration is detected here but applied elsewhere, so
+	// it is neither run nor counted, and alone it does not rewrite the file.
+	var toApply []DetectionResult
+	for _, d := range result.Detections {
+		if !IsProjectLevel(d.Migration) {
+			toApply = append(toApply, d)
+		}
+	}
+	if len(toApply) == 0 {
 		return result, nil
 	}
 
 	// Apply each detected migration (metamodel already set during detection)
-	for _, detection := range result.Detections {
+	for _, detection := range toApply {
 		mr := Result{Migration: detection.Migration}
 
 		if err := detection.Migration.Apply(&doc); err != nil {
@@ -215,10 +223,30 @@ type Error struct {
 	Detections []DetectionResult
 }
 
+// Error renders a project-level detection as one "<file>: <description>"
+// line, because its description already says what moved and to run
+// 'rela migrate'. Syntax detections follow under the usual header.
 func (e *Error) Error() string {
 	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "%s uses deprecated syntax:\n", e.FilePath)
+	var syntax []DetectionResult
 	for _, d := range e.Detections {
+		if d.Migration != nil && IsProjectLevel(d.Migration) {
+			if buf.Len() > 0 {
+				buf.WriteString("\n")
+			}
+			fmt.Fprintf(&buf, "%s: %s", e.FilePath, d.Description)
+			continue
+		}
+		syntax = append(syntax, d)
+	}
+	if len(syntax) == 0 {
+		return buf.String()
+	}
+	if buf.Len() > 0 {
+		buf.WriteString("\n")
+	}
+	fmt.Fprintf(&buf, "%s uses deprecated syntax:\n", e.FilePath)
+	for _, d := range syntax {
 		fmt.Fprintf(&buf, "  - %s\n", d.Description)
 	}
 	buf.WriteString("\nRun 'rela migrate' to update your project files.")

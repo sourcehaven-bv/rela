@@ -4,8 +4,10 @@ type: ticket
 title: 'Flows M5d: entity-change triggers in flows.yaml and delete internal/automation'
 kind: refactor
 priority: medium
-effort: l
-status: backlog
+effort: xl
+started: "2026-11-14"
+completed: "2026-11-15"
+status: done
 ---
 
 ## Description
@@ -36,3 +38,15 @@ fired outputs. Audit, `triggered_by`, cascade semantics and side effects on
 - The M5b goldens (tickets, docs-project, basecamp, dataentry fixture,
 synthetic) pass against the new path after the migration.
 - The migration converts every in-repo project and is idempotent.
+
+## Decisions
+
+Jeroen decided these after the planning review (PLAN-6GW3SVM), on 2026-11-14.
+
+- The Configure automations editor is removed in this ticket, with a note
+that points to flows.yaml. A follow-up ticket ports it to flows.yaml triggers.
+- A trigger takes `where:` for the filter-syntax list and `when:` for the
+predicate, which was `condition:`. `rela migrate` applies the rename.
+- There is no separate `renamed:` trigger. A rename keeps firing `updated`
+triggers, as it does today.
+- Effort is xl.

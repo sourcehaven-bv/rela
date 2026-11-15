@@ -111,10 +111,6 @@ export function problemRoute(problem: ConfigProblem): string {
       return b !== undefined && /^\d+$/.test(b)
         ? configureRoute.rule(Number(b))
         : configureRoute.rules()
-    case 'automations':
-      return b !== undefined && /^\d+$/.test(b)
-        ? configureRoute.automation(Number(b))
-        : configureRoute.automations()
   }
   if (problem.entity_type) return withProperty(problem.entity_type, problem.property)
   return configureRoute.entityTypes()

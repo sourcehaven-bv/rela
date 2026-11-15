@@ -1465,4 +1465,8 @@
       "busy": "A sync is running on this remote. Try again shortly."
     }
   }
+,
+  "configure": {
+    "automationsMoved": "Automations are declared in flows.yaml under triggers:. Edit that file to change them."
+  }
 }

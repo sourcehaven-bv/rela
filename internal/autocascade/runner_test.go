@@ -11,8 +11,8 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -140,10 +140,10 @@ func (h *stubHost) FindExistingRelationTarget(
 // newRunner constructs a Runner with a freshly built no-rules Engine
 // (or the engine supplied by the test). Tests that exercise script
 // execution pass a [autocascade.ScriptRunner] via Request.Scripts.
-func newRunner(t *testing.T, engine *automation.Engine) *autocascade.Runner {
+func newRunner(t *testing.T, engine *triggers.Engine) *autocascade.Runner {
 	t.Helper()
 	if engine == nil {
-		engine = automation.NewEngine(nil)
+		engine = triggers.NewEngine(nil)
 	}
 	r, err := autocascade.New(autocascade.Deps{Engine: engine})
 	if err != nil {
@@ -156,7 +156,7 @@ func newRunner(t *testing.T, engine *automation.Engine) *autocascade.Runner {
 func emptyRequest(trigger *entity.Entity) autocascade.Request {
 	return autocascade.Request{
 		Trigger: trigger,
-		Result:  &automation.Result{},
+		Result:  &triggers.Result{},
 	}
 }
 
@@ -186,28 +186,28 @@ func TestRunnerEmptyResult(t *testing.T) {
 // The format string lived in workspace.go:1082–1086 before the move.
 func TestRunnerDepthLimit(t *testing.T) {
 	t.Parallel()
-	auto := automation.Automation{
+	auto := triggers.Rule{
 		Name: "chain-recursion",
-		On: automation.Trigger{
+		On: triggers.Trigger{
 			Entity:  []string{"chain"},
 			Created: true,
 		},
-		Do: []automation.Action{
+		Do: []triggers.Action{
 			{
-				CreateEntity: &automation.CreateEntityAction{
+				CreateEntity: &triggers.CreateEntityAction{
 					Type: "chain",
 				},
 			},
 		},
 	}
-	r := newRunner(t, automation.NewEngine([]automation.Automation{auto}))
+	r := newRunner(t, triggers.NewEngine([]triggers.Rule{auto}))
 	host := &stubHost{t: t, store: memstore.New()}
 
 	starter := entity.New("CHAIN-000", "chain")
 	req := autocascade.Request{
 		Trigger: starter,
-		Result: &automation.Result{
-			EntitiesToCreate: []automation.EntityToCreate{
+		Result: &triggers.Result{
+			EntitiesToCreate: []triggers.EntityToCreate{
 				{Type: "chain"},
 			},
 		},
@@ -235,12 +235,12 @@ func TestRunnerIfExistsSkip(t *testing.T) {
 	trigger := entity.New("REQ-001", "requirement")
 	req := autocascade.Request{
 		Trigger: trigger,
-		Result: &automation.Result{
-			EntitiesToCreate: []automation.EntityToCreate{
+		Result: &triggers.Result{
+			EntitiesToCreate: []triggers.EntityToCreate{
 				{
 					Type:                "checklist",
 					RelationFromTrigger: "has-checklist",
-					IfExists:            automation.IfExistsSkip,
+					IfExists:            triggers.IfExistsSkip,
 				},
 			},
 		},
@@ -275,12 +275,12 @@ func TestRunnerIfExistsError(t *testing.T) {
 	trigger := entity.New("REQ-001", "requirement")
 	req := autocascade.Request{
 		Trigger: trigger,
-		Result: &automation.Result{
-			EntitiesToCreate: []automation.EntityToCreate{
+		Result: &triggers.Result{
+			EntitiesToCreate: []triggers.EntityToCreate{
 				{
 					Type:                "checklist",
 					RelationFromTrigger: "has-checklist",
-					IfExists:            automation.IfExistsError,
+					IfExists:            triggers.IfExistsError,
 				},
 			},
 		},
@@ -307,8 +307,8 @@ func TestRunnerEntityCreateError(t *testing.T) {
 	trigger := entity.New("REQ-001", "requirement")
 	req := autocascade.Request{
 		Trigger: trigger,
-		Result: &automation.Result{
-			EntitiesToCreate: []automation.EntityToCreate{
+		Result: &triggers.Result{
+			EntitiesToCreate: []triggers.EntityToCreate{
 				{Type: "checklist"},
 			},
 		},
@@ -375,8 +375,8 @@ relations:
 	trigger := entity.New("REQ-001", "requirement")
 	req := autocascade.Request{
 		Trigger: trigger,
-		Result: &automation.Result{
-			RelationsToCreate: []automation.RelationToCreate{
+		Result: &triggers.Result{
+			RelationsToCreate: []triggers.RelationToCreate{
 				{Relation: entity.NewRelation("", "references", "DEC-001")},
 			},
 		},
@@ -445,14 +445,14 @@ relations:
 	req := autocascade.Request{
 		Trigger: trigger,
 		Scripts: recordingScripts,
-		Result: &automation.Result{
-			LuaToExecute: []automation.LuaToExecute{
+		Result: &triggers.Result{
+			LuaToExecute: []triggers.LuaToExecute{
 				{Code: "print('hi')", AutomationName: "test-lua"},
 			},
-			RelationsToCreate: []automation.RelationToCreate{
+			RelationsToCreate: []triggers.RelationToCreate{
 				{Relation: entity.NewRelation("", "references", "DEC-001")},
 			},
-			EntitiesToCreate: []automation.EntityToCreate{
+			EntitiesToCreate: []triggers.EntityToCreate{
 				{Type: "checklist"},
 			},
 		},
@@ -493,8 +493,8 @@ func TestRunnerScriptError(t *testing.T) {
 	req := autocascade.Request{
 		Trigger: trigger,
 		Scripts: scripts,
-		Result: &automation.Result{
-			LuaToExecute: []automation.LuaToExecute{
+		Result: &triggers.Result{
+			LuaToExecute: []triggers.LuaToExecute{
 				{Code: "error('boom')", AutomationName: "my-automation"},
 			},
 		},
@@ -521,8 +521,8 @@ func TestRunnerMissingScriptRunner(t *testing.T) {
 	req := autocascade.Request{
 		Trigger: trigger,
 		// Scripts intentionally nil.
-		Result: &automation.Result{
-			LuaToExecute: []automation.LuaToExecute{
+		Result: &triggers.Result{
+			LuaToExecute: []triggers.LuaToExecute{
 				{Code: "noop()", AutomationName: "uncovered"},
 			},
 		},
@@ -632,8 +632,8 @@ entities:
 			outcome, err := r.Process(context.Background(), host, autocascade.Request{
 				Trigger: entity.New("REQ-001", "requirement"),
 				Scripts: scripts,
-				Result: &automation.Result{
-					LuaToExecute: []automation.LuaToExecute{
+				Result: &triggers.Result{
+					LuaToExecute: []triggers.LuaToExecute{
 						{Code: "print('hi')", AutomationName: tc.automation},
 					},
 				},

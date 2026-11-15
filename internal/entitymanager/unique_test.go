@@ -10,9 +10,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -67,13 +67,13 @@ func newUniqueManager(t *testing.T) *entitymanager.Manager {
 // newUniqueManagerWithAutomation is like newUniqueManager but wires an
 // automation engine so on-create actions (e.g. Set email=...) run and the
 // post-automation uniqueness re-check is exercised.
-func newUniqueManagerWithAutomation(t *testing.T, autos []automation.Automation) *entitymanager.Manager {
+func newUniqueManagerWithAutomation(t *testing.T, autos []triggers.Rule) *entitymanager.Manager {
 	t.Helper()
 	meta, err := metamodel.Parse([]byte(uniqueMetamodelYAML))
 	if err != nil {
 		t.Fatalf("metamodel.Parse: %v", err)
 	}
-	engine := automation.NewEngine(autos)
+	engine := triggers.NewEngine(autos)
 	runner, err := autocascade.New(autocascade.Deps{Engine: engine})
 	if err != nil {
 		t.Fatalf("autocascade.New: %v", err)
@@ -185,10 +185,10 @@ func TestUnique_UpdateSelfDoesNotCollide(t *testing.T) {
 // create path must not be weaker than the update path.
 func TestUnique_CreateRejectsAutomationSetDuplicate(t *testing.T) {
 	// Every persoon create gets email forced to the same value by automation.
-	autos := []automation.Automation{{
+	autos := []triggers.Rule{{
 		Name: "force-email",
-		On:   automation.Trigger{Entity: []string{"persoon"}, Created: true},
-		Do:   []automation.Action{{Set: "email", Value: "forced@example.com"}},
+		On:   triggers.Trigger{Entity: []string{"persoon"}, Created: true},
+		Do:   []triggers.Action{{Set: "email", Value: "forced@example.com"}},
 	}}
 	mgr := newUniqueManagerWithAutomation(t, autos)
 

@@ -622,8 +622,8 @@ Load-bearing details:
   else, so provisioning gives the principal a graph *identity* but **no
   group membership or local roles**. This is deliberate: the on-create
   cascade authorizes as `system:provisioner`, which cannot author
-  relations, so an on-create automation that adds a `member-of` edge would
-  fail. An on-create automation that only sets *properties* runs fine.
+  relations, so a `created` trigger that adds a `member-of` edge would
+  fail. A `created` trigger that only sets *properties* runs fine.
   Group/local-role assignment for a newly-provisioned user is your
   responsibility — via the IdP webhook, a reconciliation job, or an admin.
   The stub is not inert in the meantime: the principal's **asserted roles
@@ -1149,7 +1149,7 @@ which gates it the same way.
 
 The entity manager applies the same rule, so it also holds for writes
 that do not come through HTTP: the remote MCP, Lua scripts and actions,
-webhooks, scheduled tasks, automation jobs and CalDAV.
+webhooks, scheduled tasks, background trigger jobs and CalDAV.
 
 - An update, patch, delete, soft delete, rename or version tag of a row
   the caller cannot read fails as not found, before the write is
@@ -1172,7 +1172,7 @@ webhooks, scheduled tasks, automation jobs and CalDAV.
   allowed.
 
 Writes without a read policy are exempt: a project without `acl.yaml`,
-`rela.bypass_acl`, automation cascades, and the writers that go to the
+`rela.bypass_acl`, trigger cascades, and the writers that go to the
 store directly (data migrations, import, normalize).
 
 ### The `rela` CLI gates writes, not reads
@@ -1564,9 +1564,9 @@ A project with **no** `acl.yaml` is unaffected: that is a deliberate
 "no access control" configuration, not a fault, and scripts there read
 the full graph exactly as they always have.
 
-**When an automation legitimately needs more than its caller can see**,
-the sanctioned route is `rela.bypass_acl`, not widening the policy. In an
-automation, its `admin` handle carries `get_entity`, `list_entities` and
+**When a trigger script legitimately needs more than its caller can see**,
+the sanctioned route is `rela.bypass_acl`, not widening the policy. In a
+trigger script, its `admin` handle carries `get_entity`, `list_entities` and
 `get_relations` beside the write methods, and all of them read raw. That
 keeps the privilege scoped to a closure and visible at the call site, and
 it leaves an `acl-bypass-read` audit row. Relaxing a role in `acl.yaml`
@@ -1576,7 +1576,7 @@ to show for it.
 The operator opts in with `allow_acl_bypass:` on the script's config
 entry, and the value depends on where the script runs:
 
-- An automation action in `schema.yaml` takes `read`, `write` or
+- A trigger's `script:` output in `flows.yaml` takes `read`, `write` or
   `read+write`.
 - A `documents:` entry takes `read`.
 - A data-entry action takes only `write`. That gives `admin.update_entity`
@@ -1645,11 +1645,11 @@ which row is written:
   `update` do not restrict a data-entry action script, elevated or not.
   Elevation adds one thing: the write skips the row-level `update:`
   grant.
-- **Same-entity automations are part of the write.** An on-update
-  automation `set` on the same entity is stored with the elevated update
-  and is not checked against `elevated_updates:`. A cascade the write
-  triggers, such as `create_entity` or `run_script`, runs with the
-  caller's normal access.
+- **Same-entity triggers are part of the write.** A trigger's `set`
+  output on the same entity is stored with the elevated update and is not
+  checked against `elevated_updates:`. A cascade the write starts, such as
+  a trigger's `create` or `script` output, runs with the caller's normal
+  access.
 
 Elevation lifts only the role grants. Every other write check still
 applies, through the same code as a normal write, and a refusal is a 403
@@ -1818,8 +1818,8 @@ The check covers the properties the caller sends. Like the data-entry API,
 it refuses a property the schema does not declare, unless a grant names it.
 It does not cover:
 
-- template defaults and automation output, including automation `script:`
-  actions;
+- template defaults and trigger outputs, including trigger `script:`
+  outputs;
 - `_actions` scripts and other server-side writes, which act for the
   operator's configuration rather than for a caller's input;
 - the `rela` CLI and `rela mcp` over stdio, whose user can edit the data
@@ -1832,7 +1832,7 @@ Row grants apply on all of these.
 
 **Upgrading.** A scheduled task now fails to write a property its principal
 may not write. Grant the task's principal (`system:scheduler`, or its
-`run_as` user) the field, or move the write into an automation. A field is
+`run_as` user) the field, or move the write into a trigger. A field is
 writable when any role the principal holds allows it: a role with a
 `fields:` block for the type allows the fields it names, and a role without
 one allows every field if it may update the type. So either name the field

@@ -50,7 +50,7 @@ func TestStoreCounter_Analyze(t *testing.T) {
 	// Run Analyze with StoreCounter — same metamodel as newTestMetamodel()
 	meta := newTestMetamodel()
 	counter := mustCounter(t, s, store.TrivialScope())
-	result := Analyze(meta, counter, nil, 0)
+	result := Analyze(meta, counter, nil, nil, 0)
 
 	// unused-type has no instances
 	if len(result.UnusedEntityTypes) != 1 {
@@ -97,7 +97,7 @@ func TestStoreCounter_LowUsage(t *testing.T) {
 	}
 
 	counter := mustCounter(t, s, store.TrivialScope())
-	result := Analyze(meta, counter, nil, 1)
+	result := Analyze(meta, counter, nil, nil, 1)
 
 	// decision has 1 instance → low usage at threshold=1
 	var found bool

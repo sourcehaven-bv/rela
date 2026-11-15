@@ -8,8 +8,8 @@ import (
 	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 )
 
 // Runner executes the side effects of an automation cascade.
@@ -21,7 +21,7 @@ import (
 // the per-call passing is what dissolves the future constructor
 // cycle with EntityManager.
 type Runner struct {
-	engine     *automation.Engine
+	engine     *triggers.Engine
 	background BackgroundScripts
 	// piles runs add_to_pile actions (see Deps.Piles).
 	//
@@ -41,7 +41,7 @@ type Runner struct {
 type Deps struct {
 	// Engine is the rule-evaluation engine. Runner calls
 	// engine.Process on each newly created entity in a cascade.
-	Engine *automation.Engine
+	Engine *triggers.Engine
 
 	// Background schedules `background: true` script actions. Optional: a
 	// project without such actions never calls it, and one that has them
@@ -74,7 +74,7 @@ func New(d Deps) (*Runner, error) {
 // cascade. Internal — callers never construct these.
 type queueItem struct {
 	trigger    *entity.Entity
-	autoResult *automation.Result
+	autoResult *triggers.Result
 }
 
 // Process runs the BFS automation cascade. It interprets req.Result's
@@ -154,7 +154,7 @@ func (r *Runner) processEntityCreations(
 	ctx context.Context,
 	host Host,
 	trigger *entity.Entity,
-	toCreateList []automation.EntityToCreate,
+	toCreateList []triggers.EntityToCreate,
 	outcome *Outcome,
 ) []queueItem {
 	var newItems []queueItem
@@ -227,8 +227,8 @@ func (r *Runner) runCreatedEntityAutomation(
 	}
 	// coverage-ignore-end
 
-	newAutoResult := r.engine.Process(ctx, automation.Event{
-		Type:   automation.EventEntityCreated,
+	newAutoResult := r.engine.Process(ctx, triggers.Event{
+		Type:   triggers.EventEntityCreated,
 		Entity: created,
 	})
 
@@ -271,7 +271,7 @@ func (r *Runner) applyRelationCreations(
 	ctx context.Context,
 	host Host,
 	triggerEntity *entity.Entity,
-	relations []automation.RelationToCreate,
+	relations []triggers.RelationToCreate,
 	outcome *Outcome,
 ) {
 	for _, toCreate := range relations {
@@ -355,7 +355,7 @@ func (r *Runner) executeScriptActions(
 	mutator Mutator,
 	newEntity *entity.Entity,
 	oldEntity *entity.Entity,
-	luaActions []automation.LuaToExecute,
+	luaActions []triggers.LuaToExecute,
 	outcome *Outcome,
 ) {
 	if len(luaActions) == 0 {
@@ -415,7 +415,7 @@ func (r *Runner) executeScriptActions(
 // enqueueScriptAction hands a background action to the scheduler. A failure
 // is recorded like a failed inline script: the save stands either way.
 func (r *Runner) enqueueScriptAction(
-	ctx context.Context, action automation.LuaToExecute, trigger *entity.Entity, outcome *Outcome,
+	ctx context.Context, action triggers.LuaToExecute, trigger *entity.Entity, outcome *Outcome,
 ) {
 	if r.background == nil || trigger == nil {
 		outcome.Errors = append(outcome.Errors,
@@ -442,7 +442,7 @@ func (r *Runner) handleIfExists(
 	ctx context.Context,
 	host Host,
 	triggerEntity *entity.Entity,
-	toCreate automation.EntityToCreate,
+	toCreate triggers.EntityToCreate,
 	outcome *Outcome,
 ) bool {
 	if toCreate.RelationFromTrigger == "" {
@@ -457,15 +457,15 @@ func (r *Runner) handleIfExists(
 	}
 
 	switch toCreate.IfExists {
-	case automation.IfExistsSkip:
+	case triggers.IfExistsSkip:
 		outcome.EntitiesCreated = append(outcome.EntitiesCreated, existingTarget)
 		return true
-	case automation.IfExistsError:
+	case triggers.IfExistsError:
 		outcome.Errors = append(outcome.Errors,
 			fmt.Sprintf("entity already exists via %s relation: %s",
 				toCreate.RelationFromTrigger, existingTarget.ID))
 		return true
-	case automation.IfExistsReplace:
+	case triggers.IfExistsReplace:
 		if err := host.DeleteEntity(ctx, existingTarget.Type, existingTarget.ID, true); err != nil {
 			outcome.Errors = append(outcome.Errors,
 				fmt.Sprintf("failed to delete existing entity for replace: %v", err))
@@ -510,7 +510,7 @@ func (r *Runner) createTriggerRelation(
 // changes that signature and breaks the build HERE, rather than silently
 // dropping the grant on the automation surface only — the failure mode that
 // produced the scheduler defect (TKT-YH52OM).
-func scriptCapsFrom(a automation.LuaToExecute) ScriptCapabilities {
+func scriptCapsFrom(a triggers.LuaToExecute) ScriptCapabilities {
 	http, ai, mail, writeFile, secrets, tokens := a.CapabilityFields()
 	return ScriptCapabilities{
 		HTTP: http, AI: ai, Mail: mail, WriteFile: writeFile, Secrets: secrets, Tokens: tokens,

@@ -38,6 +38,9 @@ type MigrateResult struct {
 	// none. Reported rather than deleted: removing an operator's file is not
 	// migrate's call, but leaving it unmentioned makes it invisible.
 	OrphanedLegacySchema string
+	// AutomationsMoved is the number of schema automations moved to
+	// flows.yaml `triggers:` during this run (TKT-GWOBH2U).
+	AutomationsMoved int
 }
 
 // MigrateFileResult contains the result for a single file.
@@ -122,6 +125,9 @@ func detectMigrationsIn(ctx *project.Context, fs storage.FS) ([]MigrateDetection
 		}
 	}
 
+	// Includes are not in the per-file list; their automations still move.
+	detections = append(detections, pendingAutomationMoves(ctx, fs)...)
+
 	return detections, nil
 }
 
@@ -165,9 +171,9 @@ func MigrateWithFS(startDir string, fs storage.FS) (*MigrateResult, error) {
 			continue
 		}
 
-		fileResult, err := migration.ApplyWithMetamodel(f.Path, f.FileType, fs, mm)
-		if err != nil {
-			return result, fmt.Errorf("migrating %s: %w", f.Name, err)
+		fileResult, applyErr := migration.ApplyWithMetamodel(f.Path, f.FileType, fs, mm)
+		if applyErr != nil {
+			return result, fmt.Errorf("migrating %s: %w", f.Name, applyErr)
 		}
 
 		if fileResult.HasErrors() {
@@ -193,6 +199,14 @@ func MigrateWithFS(startDir string, fs storage.FS) (*MigrateResult, error) {
 			Results: migrationResults,
 		})
 	}
+
+	// After the per-file loop: per-file migrations such as acl-bypass-enum
+	// rewrite old automation syntax before it moves.
+	moved, err := moveAutomationsToFlows(ctx, fs)
+	if err != nil {
+		return result, fmt.Errorf("moving automations to %s: %w", flowsFile, err)
+	}
+	result.AutomationsMoved = moved
 
 	return result, nil
 }

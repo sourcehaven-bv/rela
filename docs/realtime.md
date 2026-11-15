@@ -586,7 +586,7 @@ A message type cannot have a `promote_to` of its own. Put it on an action,
 so the action's gate decides who may promote.
 
 The entity is created as the person who runs the action. The create ACL,
-the `fields:` grants in `acl.yaml`, validation and automations apply, as
+the `fields:` grants in `acl.yaml`, validation and `flows.yaml` triggers apply, as
 they do to a create through the entity API. The audit records of the
 create carry a `triggered_by` such as
 `channel:INC-7/incident-room#12/log`: the channel, the message sequence
@@ -605,14 +605,14 @@ What happens when a promote fails depends on the storage backend:
 
 - **PostgreSQL and SQLite.** The entity, its relation and the action
   commit in one transaction. If any of them fails, none is written, and the
-  message is free for another action. A failing automation after the
+  message is free for another action. A failing `flows.yaml` trigger after the
   commit does not undo the entity; the answer carries a
   `promote_followup_failed` warning instead.
 - **Files (the default).** The entity is written first, then the action.
   If the create is refused before anything is written, such as by the ACL
   or validation, the message is free again. If the relation fails, the
   entity stays and the answer carries a `promote_relate_failed` warning.
-  If an automation after the create fails, the entity stays and the
+  If a `flows.yaml` trigger after the create fails, the entity stays and the
   answer carries a `promote_followup_failed` warning. If marking the
   action fails after the entity exists, the answer carries a
   `promote_unconfirmed` warning. For any other failure the action stays
@@ -1698,7 +1698,7 @@ text it becomes the empty string. A
 value taken from a message is never read as a template again, so a message
 cannot inject a reference. `now` and `today` are the notice time in UTC,
 not the time the write runs, so a retry writes the same values.
-Automations format `now` in the server's time zone; outputs do not. A
+`flows.yaml` triggers format `now` in the server's time zone; outputs do not. A
 template can read the entity only through `channel.title`.
 
 **Who the outputs write as.** The person or agent whose message moved the
@@ -1753,7 +1753,7 @@ of one channel run one at a time, so a retry reads the later moves after
 their outputs ran, however many messages came between.
 
 **Exactly once and at least once.** A `set` runs at least once: a retry
-may write the same values again, and update automations see it. A `create`
+may write the same values again, and `flows.yaml` update triggers see it. A `create`
 runs exactly once when the channel store and the entity store share a
 database (sqlite, or postgres with both on the same database): the entity,
 its relation and the progress commit together. With the file store, or
@@ -1761,8 +1761,8 @@ stores on different databases, a create that may have written is never
 retried. It fails `unconfirmed`, so it is neither doubled nor silently
 dropped.
 
-**Automations and validation.** Outputs go through the same write path as
-a form, so automations and validation run. A validation error fails the
+**Entity triggers and validation.** Outputs go through the same write path as
+a form, so `flows.yaml` triggers and validation run. A validation error fails the
 output with the property names. Warnings complete it with the warning
 codes. An output that changes the anchor can fire an entity trigger that
 posts into the same session. The trigger cooldown (one post per rule and

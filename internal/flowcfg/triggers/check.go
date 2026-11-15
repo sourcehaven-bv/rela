@@ -1,0 +1,366 @@
+package triggers
+
+import (
+	"fmt"
+	"maps"
+	"path"
+	"slices"
+	"strings"
+
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
+)
+
+// Check reports every rule that the schema cannot honor as written. These
+// checks ran in the schema loader while the rules lived in schema.yaml
+// (TKT-GWOBH2U moved them here). Each is a load error, because a rule that
+// would never fire, or would write what no write path allows, does not mean
+// what its author wrote.
+//
+// [New] runs the checks that need the compiled engine (conditions, file
+// properties, notify paths); Check covers the rest.
+func Check(meta *metamodel.Metamodel, rules []Rule) []string {
+	errs := make([]string, 0, len(rules))
+	for _, r := range rules {
+		errs = append(errs, firingErrors(r)...)
+		errs = append(errs, managedReferenceErrors(r)...)
+		errs = append(errs, singleTypeErrors(meta, r)...)
+		errs = append(errs, faceErrors(meta, r)...)
+		errs = append(errs, copyErrors(meta, r)...)
+		errs = append(errs, updatedTriggerErrors(r)...)
+		errs = append(errs, deletedTriggerErrors(r)...)
+		errs = append(errs, backgroundErrors(r)...)
+		errs = append(errs, pileErrors(meta, r)...)
+		errs = append(errs, externalRefErrors(meta, r)...)
+	}
+	return errs
+}
+
+func ruleWhere(r Rule) string { return fmt.Sprintf("trigger %q", r.Name) }
+
+// firingErrors refuses a rule that can never do anything. A rule needs an
+// event key to fire on, and an output or a check to act with. A check
+// severity must be one the engine knows: any other value would quietly
+// count as a warning.
+func firingErrors(r Rule) []string {
+	var errs []string
+	on := r.On
+	if !on.Created && !on.Updated && !on.Deleted && on.Property == "" &&
+		on.RelationCreated == "" && on.RelationRemoved == "" && len(on.Copy) == 0 {
+
+		errs = append(errs, ruleWhere(r)+": `on` needs an event key (created, updated, deleted, property, "+
+			"relation_created, relation_removed or copy); the trigger would never fire")
+	}
+	// deletedTriggerErrors says what an `on.deleted` rule needs instead.
+	if len(r.Do) == 0 && len(r.Validate) == 0 && !on.Deleted {
+		errs = append(errs, ruleWhere(r)+": `outputs` is empty; the trigger would do nothing")
+	}
+	for i, v := range r.Validate {
+		switch v.Severity {
+		case "", SeverityWarning, SeverityError:
+		default:
+			errs = append(errs, fmt.Sprintf("%s: check %d: severity %q is not %s or %s",
+				ruleWhere(r), i+1, v.Severity, SeverityWarning, SeverityError))
+		}
+	}
+	return errs
+}
+
+// managedReferenceErrors refuses a rule that names a type or relation rela
+// manages (TKT-BC5G8RP): a trigger that fired on, created or linked one would
+// act on rela's own records with the operator's rules.
+func managedReferenceErrors(r Rule) []string {
+	var errs []string
+	where := ruleWhere(r)
+	ref := func(at, name string) {
+		if metamodel.IsReservedName(name) {
+			errs = append(errs, fmt.Sprintf("%s: %s: %q is managed by rela and cannot be named here", where, at, name))
+		}
+	}
+	for _, t := range r.On.Entity {
+		ref("on.entity", t)
+	}
+	ref("on.relation_created", r.On.RelationCreated)
+	ref("on.relation_removed", r.On.RelationRemoved)
+	for _, a := range r.Do {
+		if a.CreateRelation != nil {
+			ref("relate.type", a.CreateRelation.Relation)
+		}
+		if a.CreateEntity != nil {
+			ref("create.type", a.CreateEntity.Type)
+			ref("create.relate.type", a.CreateEntity.Relation)
+		}
+	}
+	return errs
+}
+
+// singleTypeErrors refuses a `create.type` that names an abstract type: a
+// create writes one concrete type.
+func singleTypeErrors(meta *metamodel.Metamodel, r Rule) []string {
+	var errs []string
+	for _, a := range r.Do {
+		if a.CreateEntity == nil {
+			continue
+		}
+		if variants, ok := metamodel.VariantsOf(meta, a.CreateEntity.Type); ok {
+			errs = append(errs, fmt.Sprintf(
+				"%s: create.type: %q is abstract and this setting takes one concrete type; name one of %s",
+				ruleWhere(r), a.CreateEntity.Type, strings.Join(variants, ", ")))
+		}
+	}
+	return errs
+}
+
+// faceErrors checks that every face in `on.faces:` is one the triggering
+// type declares (TKT-4Y6CMV). A scope that matches nothing narrows the rule
+// to nothing, so it is a load error rather than a silent no-match.
+func faceErrors(meta *metamodel.Metamodel, r Rule) []string {
+	var errs []string
+	types := r.On.Entity
+	for _, face := range r.On.Faces {
+		if len(types) == 0 {
+			if !slices.ContainsFunc(sortedKeys(meta.Entities), func(t string) bool {
+				return declaresFace(meta, t, face)
+			}) {
+
+				errs = append(errs, fmt.Sprintf("%s: `on.faces: [%s]` names a face no entity type declares; "+
+					"the trigger would never fire", ruleWhere(r), face))
+			}
+			continue
+		}
+		if slices.ContainsFunc(types, func(t string) bool { return declaresFace(meta, t, face) }) {
+			continue
+		}
+		hasFaces := slices.ContainsFunc(types, func(t string) bool {
+			def, ok := meta.Entities[t]
+			return ok && len(def.Faces) > 0
+		})
+		if !hasFaces {
+			errs = append(errs, fmt.Sprintf("%s: `on.faces: [%s]` but %s declares no `faces:`; a type with one "+
+				"content state needs no scope, so drop the key or declare the states on the type",
+				ruleWhere(r), face, strings.Join(types, ", ")))
+			continue
+		}
+		errs = append(errs, fmt.Sprintf("%s: `on.faces: [%s]` names no declared face of %s; "+
+			"the trigger would never fire", ruleWhere(r), face, strings.Join(types, ", ")))
+	}
+	return errs
+}
+
+func declaresFace(meta *metamodel.Metamodel, typ, face string) bool {
+	def, ok := meta.Entities[typ]
+	if !ok {
+		return false
+	}
+	_, declared := def.Faces[face]
+	return declared
+}
+
+// copyErrors checks an `on.copy:` scope against the declared copies.
+func copyErrors(meta *metamodel.Metamodel, r Rule) []string {
+	if len(r.On.Copy) == 0 {
+		return nil
+	}
+	var errs []string
+	bad := func(format string, args ...any) {
+		errs = append(errs, ruleWhere(r)+": "+fmt.Sprintf(format, args...))
+	}
+	if r.On.RelationCreated != "" || r.On.RelationRemoved != "" {
+		bad("`on.copy` cannot be combined with `relation_created` or `relation_removed`; " +
+			"a copy raises only entity events")
+	}
+	for _, name := range r.On.Copy {
+		def, ok := meta.Copies[name]
+		if !ok {
+			bad("`on.copy: [%s]` names no declared copy", name)
+			continue
+		}
+		to, err := metamodel.ParseCopyTarget(def.To)
+		if err != nil {
+			continue // the schema loader reports the target
+		}
+		if len(r.On.Entity) > 0 && !slices.Contains(r.On.Entity, to.Type) {
+			bad("`on.copy: [%s]` writes %q, which `on.entity` does not name; the trigger would never fire",
+				name, to.Type)
+		}
+		if len(r.On.Faces) > 0 && !slices.Contains(r.On.Faces, to.Face) {
+			bad("`on.copy: [%s]` writes face %q, which `on.faces` does not name; the trigger would never fire",
+				name, to.Face)
+		}
+	}
+	return errs
+}
+
+// updatedTriggerErrors checks an `on.updated` rule. It fires on any change,
+// so a property scope contradicts it, and a script that ran inline would
+// fire it again with its own write.
+func updatedTriggerErrors(r Rule) []string {
+	if !r.On.Updated {
+		return nil
+	}
+	var errs []string
+	if r.On.Property != "" || r.On.Becomes != "" || r.On.From != "" {
+		errs = append(errs, ruleWhere(r)+": `on.updated` fires on any change; drop it or `on.property`/`becomes`/`from`")
+	}
+	for i, a := range r.Do {
+		if !a.Background && (a.Lua != "" || a.LuaFile != "") {
+			errs = append(errs, fmt.Sprintf("%s action %d: a script under `on.updated` must be `background: true`; "+
+				"its own write would trigger it again", ruleWhere(r), i+1))
+		}
+	}
+	return errs
+}
+
+// deletedTriggerErrors checks an `on.deleted` rule. The delete has
+// committed when it fires, so only background scripts can act on it.
+func deletedTriggerErrors(r Rule) []string {
+	on := r.On
+	if !on.Deleted {
+		return nil
+	}
+	var errs []string
+	if on.Created || on.Updated || on.Property != "" || on.Becomes != "" || on.From != "" ||
+		on.RelationCreated != "" || on.RelationRemoved != "" {
+
+		errs = append(errs, ruleWhere(r)+": `on.deleted` cannot be combined with another trigger key")
+	}
+	if len(r.Validate) > 0 {
+		errs = append(errs, ruleWhere(r)+": a `check` output does not apply to `on.deleted`; there is no save to warn about")
+	}
+	if len(r.Do) == 0 {
+		errs = append(errs, ruleWhere(r)+": `on.deleted` needs a `background: true` script")
+	}
+	for i, a := range r.Do {
+		if !a.Background {
+			errs = append(errs, fmt.Sprintf("%s action %d: an `on.deleted` output must be a `background: true` script; "+
+				"the delete has committed when it fires", ruleWhere(r), i+1))
+		}
+	}
+	return errs
+}
+
+// backgroundErrors checks the background-only script keys. A queued job
+// finds its action again by (trigger name, file), so one rule may run a file
+// in the background only once.
+func backgroundErrors(r Rule) []string {
+	var errs []string
+	seen := map[string]bool{}
+	for i, a := range r.Do {
+		where := fmt.Sprintf("%s action %d", ruleWhere(r), i+1)
+		if !a.Background {
+			if a.RunAs != "" || a.Retry != metamodel.JobRetryDefault {
+				errs = append(errs, where+": `run_as` and `retry` apply only with `background: true`")
+			}
+			if len(a.Capabilities.Tokens) > 0 {
+				errs = append(errs, where+": `capabilities.tokens` applies only with `background: true`")
+			}
+			continue
+		}
+		if a.LuaFile == "" {
+			errs = append(errs, where+": `background: true` needs `file:`")
+		}
+		if a.AllowACLBypass.Enabled() {
+			errs = append(errs, where+": `allow_acl_bypass` is not supported on a background script")
+		}
+		if a.RunAs != "" {
+			if err := principal.ValidateRunAs(a.RunAs, isTriggerIdentity); err != nil {
+				errs = append(errs, where+": "+err.Error())
+			}
+		}
+		file := path.Clean(a.LuaFile)
+		if seen[file] {
+			errs = append(errs, fmt.Sprintf("%s: file %q runs in the background twice", where, a.LuaFile))
+		}
+		seen[file] = true
+	}
+	return errs
+}
+
+func isTriggerIdentity(s string) bool { return s == principal.UserAutomation }
+
+// pileErrors checks the add_to_pile and notify outputs against the declared
+// piles.
+func pileErrors(meta *metamodel.Metamodel, r Rule) []string {
+	var errs []string
+	for i, a := range r.Do {
+		at := fmt.Sprintf("%s action %d", ruleWhere(r), i+1)
+		if a.AddToPile != nil && strings.TrimSpace(a.AddToPile.Pile) == "" {
+			errs = append(errs, at+": add_to_pile requires `pile:` (the pile name)")
+		}
+		if n := a.Notify; n != nil {
+			errs = append(errs, notifyErrors(meta, n, at+": notify", len(r.On.Entity) > 0)...)
+		}
+	}
+	return errs
+}
+
+func notifyErrors(meta *metamodel.Metamodel, n *NotifyAction, at string, hasOnEntity bool) []string {
+	var errs []string
+	decl, ok := meta.Piles[n.Pile]
+	switch {
+	case strings.TrimSpace(n.Pile) == "":
+		errs = append(errs, at+" requires `pile:` (a key of the schema's top-level `piles:`)")
+	case !ok:
+		errs = append(errs, fmt.Sprintf("%s: pile %q is not declared under the schema's top-level `piles:`", at, n.Pile))
+	case !decl.ReadState:
+		errs = append(errs, fmt.Sprintf("%s: pile %q needs `read_state: true` to take notifications", at, n.Pile))
+	}
+	if ok && n.Reason != "" {
+		if _, known := decl.Reasons[n.Reason]; !known {
+			errs = append(errs, fmt.Sprintf("%s: reason %q is not one of pile %q's reasons", at, n.Reason, n.Pile))
+		}
+	}
+	if strings.TrimSpace(n.Property) == "" {
+		errs = append(errs, at+" requires `to.property:` (the property that holds the recipient)")
+	}
+	if len(n.Via) > 0 && !hasOnEntity {
+		errs = append(errs, at+": `to.via:` needs the trigger's `on.entity:` to resolve the path")
+	}
+	if n.Type != "" && len(n.Via) == 0 {
+		errs = append(errs, at+": `to.type:` applies only with `to.via:`")
+	}
+	return errs
+}
+
+// externalRefErrors refuses a rule that triggers on an external ref or
+// writes one. A `set` or a `create` property is a system write that no field
+// gate sees, and its value is an interpolated string, never an {id, url}
+// object: only a script granted ref writes may write a ref.
+func externalRefErrors(meta *metamodel.Metamodel, r Rule) []string {
+	types := r.On.Entity
+	if len(types) == 0 {
+		types = sortedKeys(meta.Entities)
+	}
+	var errs []string
+	for _, t := range types {
+		if r.On.Property != "" {
+			if _, ok := metamodel.ExternalRefSystem(meta, t, r.On.Property); ok {
+				errs = append(errs, fmt.Sprintf("%s: `on.property` %q is an external ref on %q; "+
+					"a ref changes only through sync, so it cannot fire a trigger", ruleWhere(r), r.On.Property, t))
+			}
+		}
+		for _, a := range r.Do {
+			if a.Set == "" {
+				continue
+			}
+			if _, ok := metamodel.ExternalRefSystem(meta, t, a.Set); ok {
+				errs = append(errs, fmt.Sprintf("%s: `set` %q is an external ref on %q; only a script may write a ref",
+					ruleWhere(r), a.Set, t))
+			}
+		}
+	}
+	for _, a := range r.Do {
+		if a.CreateEntity == nil {
+			continue
+		}
+		for _, name := range sortedKeys(a.CreateEntity.Properties) {
+			if _, ok := metamodel.ExternalRefSystem(meta, a.CreateEntity.Type, name); ok {
+				errs = append(errs, fmt.Sprintf("%s: `create` property %q is an external ref on %q; "+
+					"only a script may write a ref", ruleWhere(r), name, a.CreateEntity.Type))
+			}
+		}
+	}
+	return errs
+}
+
+func sortedKeys[V any](m map[string]V) []string { return slices.Sorted(maps.Keys(m)) }

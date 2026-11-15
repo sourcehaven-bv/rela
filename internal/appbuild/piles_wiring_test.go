@@ -27,20 +27,23 @@ entities:
       title:
         type: string
 relations: {}
-automations:
-  - name: to-inbox
+`
+
+const pileAutomationFlows = `triggers:
+  to-inbox:
     on:
       entity: [ticket]
       property: title
-    do:
+    outputs:
       - add_to_pile: {pile: Inbox}
-  - name: scripted
+  scripted:
     on:
       entity: [ticket]
       property: title
-    do:
-      - lua: |
-          rela.piles.add{pile = "Scripted", entities = {"TKT-1"}}
+    outputs:
+      - script:
+          lua: |
+            rela.piles.add{pile = "Scripted", entities = {"TKT-1"}}
 `
 
 // The assembled cascade reaches the piles service on both of its paths: the
@@ -49,6 +52,7 @@ automations:
 func TestPiles_CascadeWiring(t *testing.T) {
 	root := t.TempDir()
 	writeMetamodelBody(t, root, pileAutomationMetamodel)
+	writeProjectFile(t, root, "flows.yaml", pileAutomationFlows)
 	tickets := filepath.Join(root, "entities", "tickets")
 	require.NoError(t, os.MkdirAll(tickets, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(tickets, "TKT-1.md"),

@@ -4,7 +4,7 @@ package archguard
 // wallClockReads), per repo-relative file. It may only shrink. Each entry
 // says why that read stays on the wall clock rather than the world's clock.
 var wallClockAllowlist = map[string]allowed{
-	"internal/automation/template.go": {3, "the default clock: DefaultTemplateVars and the " +
+	"internal/flowcfg/triggers/template.go": {3, "the default clock: DefaultTemplateVars and the " +
 		"Interpolate fallback when a caller passes no TemplateVars.Now; the engine sets Now " +
 		"from its WithClock option"},
 	"internal/entitymanager/audithook.go": {4, "audit record stamps: audit records when a write " +

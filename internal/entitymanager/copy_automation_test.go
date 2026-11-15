@@ -12,17 +12,18 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
 // copyAutomationMetaYAML declares a promote copy, a second copy into the
-// same face, and automations on the target face: one per event key, one
-// scoped to a copy, and a background action scoped to a copy.
+// same face. copyAutomationFlowsYAML holds triggers on the target face: one
+// per event key, one scoped to a copy, and a background action scoped to a
+// copy.
 const copyAutomationMetaYAML = `
 version: "1"
 types:
@@ -67,22 +68,27 @@ copies:
     fields: all
     guard:
       permission: adopt
-automations:
-  - name: on-created
+`
+
+// copyAutomationFlowsYAML holds the triggers that go with
+// copyAutomationMetaYAML.
+const copyAutomationFlowsYAML = `
+triggers:
+  on-created:
     on: {entity: doc, faces: [adopted], created: true}
-    do: [{set: created_mark, value: "yes"}]
-  - name: on-updated
+    outputs: [{set: {properties: {created_mark: "yes"}}}]
+  on-updated:
     on: {entity: doc, faces: [adopted], updated: true}
-    do: [{set: updated_mark, value: "yes"}]
-  - name: on-adopt
+    outputs: [{set: {properties: {updated_mark: "yes"}}}]
+  on-adopt:
     on: {entity: doc, copy: adopt}
-    do: [{set: stamped_by, value: "adopt"}]
-  - name: push-adopted
+    outputs: [{set: {properties: {stamped_by: "adopt"}}}]
+  push-adopted:
     on: {entity: doc, copy: [adopt]}
-    do: [{lua_file: push.lua, background: true}]
-  - name: skip-to-final
+    outputs: [{script: {file: push.lua, background: true}}]
+  skip-to-final:
     on: {entity: doc, copy: finalize}
-    do: [{set: stage, value: final}]
+    outputs: [{set: {properties: {stage: final}}}]
 `
 
 type copyBackground struct {
@@ -292,7 +298,11 @@ func newCopyAutomationManagerWith(
 	if err != nil {
 		t.Fatalf("parse metamodel: %v", err)
 	}
-	engine, err := automation.NewEngineFromMetamodel(meta, meta.Automations)
+	rules, err := triggers.Parse([]byte(copyAutomationFlowsYAML), meta)
+	if err != nil {
+		t.Fatalf("parse triggers: %v", err)
+	}
+	engine, err := triggers.New(meta, rules)
 	if err != nil {
 		t.Fatalf("automation engine: %v", err)
 	}

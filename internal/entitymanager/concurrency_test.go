@@ -14,9 +14,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -339,10 +339,10 @@ func TestConcurrency_PostAutomationRewriteKeepsInterleavedWrite(t *testing.T) {
 
 	meta, err := metamodel.Parse([]byte(concurrencyMetamodelYAML))
 	require.NoError(t, err)
-	engine := automation.NewEngine([]automation.Automation{{
+	engine := triggers.NewEngine([]triggers.Rule{{
 		Name: "stamp-on-create",
-		On:   automation.Trigger{Entity: []string{"note"}, Created: true},
-		Do:   []automation.Action{{Set: "p7", Value: "automated"}},
+		On:   triggers.Trigger{Entity: []string{"note"}, Created: true},
+		Do:   []triggers.Action{{Set: "p7", Value: "automated"}},
 	}})
 	runner, err := autocascade.New(autocascade.Deps{Engine: engine})
 	require.NoError(t, err)

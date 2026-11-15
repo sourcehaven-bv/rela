@@ -459,19 +459,22 @@ func TestProjectTreeUnchanged(t *testing.T) { // AC6
 	require.NoError(t, err)
 	require.NotNil(t, mig)
 
+	flows, err := os.ReadFile(filepath.Join("testdata", "project", "flows.yaml"))
+	require.NoError(t, err)
 	sideEffects := `
-  - name: side-effects
+  side-effects:
     on: {entity: [ticket], created: true}
-    do:
-      - lua: |
-          if entity.properties.title == "side" then
-            rela.write_file("out.txt", "written")
-            rela.piles.add{pile = "Inbox", entities = {entity.id}, create = true}
-          end
-        capabilities: {write_file: true}
+    outputs:
+      - script:
+          lua: |
+            if entity.properties.title == "side" then
+              rela.write_file("out.txt", "written")
+              rela.piles.add{pile = "Inbox", entities = {entity.id}, create = true}
+            end
+          capabilities: {write_file: true}
 `
 	root := project(t, map[string]string{
-		"schema.yaml":                string(schema) + sideEffects,
+		"flows.yaml":                 string(flows) + sideEffects,
 		"migrations/" + mig.FileName: string(mig.Content),
 		"fixtures/one/.rela/comments/TKT-100.yaml": "comments:\n- id: c1\n  author: carol\n" +
 			"  created_at: 2026-01-01T09:00:00+01:00\n  anchor: {kind: property, ref: title}\n  body: hi\n",
