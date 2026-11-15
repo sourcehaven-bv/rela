@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"maps"
 	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -82,8 +83,11 @@ func NewVisible(inner Searcher, gq store.GraphQueryer) (*Visible, error) {
 // hidden property's value by returning its entity; the limit counts the hits
 // that survive.
 //
-// It first collects every hit the scope admits, uncapped (see [Visible] for
-// the backend's own candidate bound), so memory grows with that hit list. The
+// Without a field check (no text, or no type with [TypeScope.Fields]) the
+// hits stream: the search stops once q.Limit hits were yielded, so a limited
+// search with no text reads about a page (TKT-D9UO9Y4). With a field check it
+// first collects every hit the scope admits, uncapped (see [Visible] for the
+// backend's own candidate bound), so memory grows with that hit list. The
 // field check then runs on it in pages of 256 hits, and stops once q.Limit
 // hits survived. A page costs one entity read, and one
 // [store.GraphQueryer.MatchingFaces] per conditional grant per type in the
@@ -95,36 +99,82 @@ func (v *Visible) SearchVisible(
 	ctx context.Context, q Query, scope map[string]TypeScope,
 ) iter.Seq2[Hit, error] {
 	return func(yield func(Hit, error) bool) {
-		hits, err := v.visibleHits(ctx, q, scope)
-		if err != nil {
+		// Validate up front for parity with the pgstore-native impl: both
+		// implementations reject an unsupported filter with the same
+		// sentinel before any backend or scope work (conformance-pinned).
+		if err := ValidateQuery(q); err != nil {
 			yield(Hit{}, err)
 			return
 		}
-		gated := q.Text != "" && anyFieldScope(scope)
-		if gated && v.prov == nil {
+		if len(scope) == 0 {
+			return // nothing is visible; do not touch the backend
+		}
+		if err := ValidateScope(scope); err != nil {
+			yield(Hit{}, err)
+			return
+		}
+		if q.Text == "" || !anyFieldScope(scope) {
+			v.streamHits(ctx, q, scope, yield)
+			return
+		}
+		if v.prov == nil {
 			yield(Hit{}, fmt.Errorf(
 				"%w: field visibility requested but the searcher reports no match provenance", ErrScope))
 			return
 		}
-		emitted := 0
-		pageSize := v.page
-		for start := 0; start < len(hits); start += pageSize {
-			page := hits[start:min(start+pageSize, len(hits))]
-			if gated {
-				if page, err = v.fieldVisible(ctx, q, scope, page); err != nil {
-					yield(Hit{}, err)
-					return
-				}
+		v.fieldCheckedHits(ctx, q, scope, yield)
+	}
+}
+
+// fieldCheckedHits collects the admitted hits of a text search, then yields
+// those whose match the field check keeps, a page at a time, until q.Limit
+// of them were yielded.
+func (v *Visible) fieldCheckedHits(
+	ctx context.Context, q Query, scope map[string]TypeScope, yield func(Hit, error) bool,
+) {
+	var hits []Hit
+	for h, err := range v.admittedHits(ctx, q, scope) {
+		if err != nil {
+			yield(Hit{}, err)
+			return
+		}
+		hits = append(hits, h)
+	}
+	emitted := 0
+	pageSize := v.page
+	for start := 0; start < len(hits); start += pageSize {
+		page, err := v.fieldVisible(ctx, q, scope, hits[start:min(start+pageSize, len(hits))])
+		if err != nil {
+			yield(Hit{}, err)
+			return
+		}
+		for _, h := range page {
+			if q.Limit > 0 && emitted >= q.Limit {
+				return
 			}
-			for _, h := range page {
-				if q.Limit > 0 && emitted >= q.Limit {
-					return
-				}
-				if !yield(h, nil) {
-					return
-				}
-				emitted++
+			if !yield(h, nil) {
+				return
 			}
+			emitted++
+		}
+	}
+}
+
+// streamHits yields the admitted hits of q until q.Limit of them were
+// yielded, then stops the search.
+func (v *Visible) streamHits(ctx context.Context, q Query, scope map[string]TypeScope, yield func(Hit, error) bool) {
+	emitted := 0
+	for h, err := range v.admittedHits(ctx, q, scope) {
+		if err != nil {
+			yield(Hit{}, err)
+			return
+		}
+		if !yield(h, nil) {
+			return
+		}
+		emitted++
+		if q.Limit > 0 && emitted >= q.Limit {
+			return
 		}
 	}
 }
@@ -228,33 +278,29 @@ func (v *Visible) grantRows(
 	return holds, nil
 }
 
-// visibleHits runs the search with the scope as its admission step and keeps
-// the hits whose face was admitted, preserving backend order.
+// admittedHits runs the search with the scope as its admission step and
+// yields the hits whose face was admitted, in backend order. The query and
+// the scope must already be valid.
 //
 // The scope trims each entity's candidate faces BEFORE the world ranks them
 // ([Query.Admit]), as on lists and the single-entity read: a principal
 // whose grant denies the prime is served the next readable face rather than
 // losing the entity. The hit filter afterwards is the fail-closed half: a
 // hit whose face was never admitted (an inner searcher that ignores Admit)
-// is dropped, never served.
-func (v *Visible) visibleHits(ctx context.Context, q Query, scope map[string]TypeScope) ([]Hit, error) {
-	// Validate up front for parity with the pgstore-native impl: both
-	// implementations reject an unsupported filter with the same
-	// sentinel before any backend or scope work (conformance-pinned).
-	if err := ValidateQuery(q); err != nil {
-		return nil, err
-	}
-	if len(scope) == 0 {
-		return nil, nil // nothing is visible; do not touch the backend
-	}
-	if err := ValidateScope(scope); err != nil {
-		return nil, err
-	}
-
+// is dropped, never served. A searcher admits a face before it yields the
+// face's hit, so the filter can judge each hit as it arrives.
+func (v *Visible) admittedHits(ctx context.Context, q Query, scope map[string]TypeScope) iter.Seq2[Hit, error] {
 	adm := &admission{ctx: ctx, gq: v.gq, scope: scope, admitted: make(map[faceKey]struct{})}
 	inner := q
 	inner.Limit = 0
 	inner.Admit = adm.admit
+	if len(inner.Types) == 0 {
+		// Rows of a type the scope denies are never admitted, so a type-less
+		// search need not read them.
+		if _, wild := scope[WildcardType]; !wild {
+			inner.Types = slices.Sorted(maps.Keys(scope))
+		}
+	}
 	if callerAdmit := q.Admit; callerAdmit != nil {
 		// A caller's own admission narrows the scope's further; it never
 		// replaces it.
@@ -266,23 +312,22 @@ func (v *Visible) visibleHits(ctx context.Context, q Query, scope map[string]Typ
 			return callerAdmit(admitted)
 		}
 	}
-	var hits []Hit
-	for h, err := range v.inner.Search(ctx, inner) {
-		if err != nil {
-			// A plain search failure stays a plain failure; an admission
-			// failure arrives already wrapped in ErrScope.
-			return nil, err
+	return func(yield func(Hit, error) bool) {
+		for h, err := range v.inner.Search(ctx, inner) {
+			if err != nil {
+				// A plain search failure stays a plain failure; an admission
+				// failure arrives already wrapped in ErrScope.
+				yield(Hit{}, err)
+				return
+			}
+			if _, ok := adm.admitted[faceKey{id: h.ID, face: h.Face}]; !ok {
+				continue
+			}
+			if !yield(h, nil) {
+				return
+			}
 		}
-		hits = append(hits, h)
 	}
-
-	visible := hits[:0]
-	for _, h := range hits {
-		if _, ok := adm.admitted[faceKey{id: h.ID, face: h.Face}]; ok {
-			visible = append(visible, h)
-		}
-	}
-	return visible, nil
 }
 
 // admission is the [AdmitFunc] a [Visible] search runs with, and the record

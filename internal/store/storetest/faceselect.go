@@ -81,6 +81,10 @@ func RunFaceSelectionTests(t *testing.T, f Factory) {
 				"ListEntityHeaders, native where the backend has it")
 			assert.ErrorIs(t, firstErr(store.ListEntityHeaders(ctx(), listerOnly{s}, eq)), store.ErrInvalidQuery,
 				"ListEntityHeaders, generic fallback")
+			_, err = store.ListEntityHeadersPage(ctx(), s, eq)
+			assert.ErrorIs(t, err, store.ErrInvalidQuery, "ListEntityHeadersPage, native where the backend has it")
+			_, err = store.ListEntityHeadersPage(ctx(), pagerOnly{s}, eq)
+			assert.ErrorIs(t, err, store.ErrInvalidQuery, "ListEntityHeadersPage, generic fallback")
 
 			assert.ErrorIs(t, firstErr(s.GraphQuery(ctx(), gq)), store.ErrInvalidQuery, "GraphQuery")
 			assert.ErrorIs(t, firstErr(store.GraphQueryHeaders(ctx(), s, gq)), store.ErrInvalidQuery,
@@ -122,6 +126,9 @@ func RunFaceSelectionTests(t *testing.T, f Factory) {
 			heads = append(heads, h.ID+"@"+h.Face.String())
 		}
 		assert.Equal(t, list, heads, "ListEntityHeaders")
+		headPage, err := store.ListEntityHeadersPage(ctx(), s, eq)
+		require.NoError(t, err)
+		assert.Equal(t, list, headerKeys(headPage.Items), "ListEntityHeadersPage")
 
 		gq := store.GraphQuery{EntityType: "doc", Faces: sel, FaceIn: faceIn}
 		assert.Equal(t, list, keysOf(t, s.GraphQuery(ctx(), gq)), "GraphQuery")
@@ -308,6 +315,23 @@ func mustFace(t *testing.T, name string) entity.Face {
 	f, err := entity.ParseFace(name)
 	require.NoError(t, err)
 	return f
+}
+
+// pagerOnly hides every capability of s but ListEntitiesPage, so
+// store.ListEntityHeadersPage takes its generic fallback.
+type pagerOnly struct{ s store.EntityPager }
+
+func (p pagerOnly) ListEntitiesPage(c context.Context, q store.EntityQuery) (store.Page[*entity.Entity], error) {
+	return p.s.ListEntitiesPage(c, q)
+}
+
+// headerKeys is entityKeys for headers.
+func headerKeys(hs []store.EntityHeader) []string {
+	out := make([]string, len(hs))
+	for i, h := range hs {
+		out[i] = h.ID + "@" + h.Face.String()
+	}
+	return out
 }
 
 // listerOnly hides every optional capability of a store, so

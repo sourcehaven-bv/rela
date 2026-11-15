@@ -27,6 +27,13 @@ import (
 // Deliberately NOT a store.Store: it exposes read methods only, so it
 // cannot be passed where a full store is wanted (a write path, say) and
 // cannot silently widen back into one.
+//
+// Its exported methods are the gated read surface every reader family
+// implements (appbuild's scriptEntityReaderFamily), a required interface
+// rather than a ratchet target. ListEntityPage (TKT-D9UO9Y4) took it from
+// 20 to 21.
+//
+//plimsoll:max-exported-methods=21
 type UnrestrictedReader struct {
 	st    store.Store
 	res   *Resolver

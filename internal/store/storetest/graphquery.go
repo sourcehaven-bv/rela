@@ -285,6 +285,36 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 			"PropNotEqual keeps its filter-DSL meaning: empty is not in the population")
 	})
 
+	// A scalar `~=` is the negation of the scalar PropEqual: only a stored
+	// string equal to Value is excluded. A list or a number under a string
+	// declaration binds to nil in internal/predicate, so `~=` is true on it
+	// (TKT-I39Y7N4). The loose reading would drop T-list as a member.
+	t.Run("Props_scalar_not_equal_or_empty_keeps_off_type_values", func(t *testing.T) {
+		s := f(t)
+		seedEntityWithProps(t, s, "task", "T-doing", map[string]any{"status": "doing"})
+		seedEntityWithProps(t, s, "task", "T-todo", map[string]any{"status": "todo"})
+		seedEntityWithProps(t, s, "task", "T-list", map[string]any{"status": []string{"doing"}})
+		seedEntityWithProps(t, s, "task", "T-number", map[string]any{"status": 5})
+		seedEntityWithProps(t, s, "task", "T-unset", nil)
+
+		for _, tc := range []struct {
+			value string
+			want  []string
+		}{
+			{"doing", []string{"T-list", "T-number", "T-todo", "T-unset"}},
+			{"5", []string{"T-doing", "T-list", "T-number", "T-todo", "T-unset"}},
+		} {
+			got := runGraphQuery(t, s, store.GraphQuery{
+				EntityType: "task",
+				Props: []store.PropPredicate{
+					{Property: "status", Op: store.PropNotEqualOrEmpty, Value: tc.value, Scalar: true},
+				},
+				Faces: store.InWorld(store.TrivialScope()),
+			})
+			require.Equal(t, tc.want, got, "scalar status ~= %q", tc.value)
+		}
+	})
+
 	// Narrowing is the caller-supplied disjunction, and the assertion that
 	// matters is that it NARROWS: it is ANDed with everything else, never
 	// OR-ed into the authorization predicates. A caller branch that became

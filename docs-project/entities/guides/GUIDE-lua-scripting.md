@@ -1409,6 +1409,11 @@ timeout_seconds: 60                    # optional, default 30
 `api_key_env` may not name a `REMOTE_CREDENTIAL_` variable: that credential
 is only for `remotes.yaml`.
 
+To have a model propose changes to one entity, you may not need a script. A
+data-entry `llm:` action takes a prompt, the inputs to send and the outputs the
+model may propose, and lets the user review the proposal before it is saved.
+See "AI actions" in the data-entry guide.
+
 #### ai.chat
 
 Send a chat completion request with full control over messages, model, and parameters.
@@ -1637,7 +1642,7 @@ table with `status_code` populated):
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `kind` | string | One of `timeout`, `canceled`, `network`, `bad_response` |
+| `kind` | string | One of `timeout`, `canceled`, `network`, `bad_response`, `blocked` |
 | `message` | string | Human-readable summary |
 | `retry_after` | number | Always `0` on an error table. A rate limit is a response; see `resp.retry_after` above. |
 | `details` | string | Unwrapped transport error (TLS cert, DNS record, etc.) when present |
@@ -1648,6 +1653,7 @@ table with `status_code` populated):
 | `canceled` | Request was canceled (runtime shutting down) |
 | `network` | DNS failure, connection refused, TLS error, generic body read error |
 | `bad_response` | Response body exceeded the 10 MiB cap |
+| `blocked` | The destination address policy refused the address (see below) |
 
 Programming errors (missing URL, URL with userinfo, wrong argument types,
 invalid HTTP method, non-positive timeout) raise Lua errors.
@@ -1662,13 +1668,55 @@ HTTP redirects are **not** followed automatically. The 3xx response is
 returned directly so scripts can inspect the `Location` header and
 follow redirects explicitly if needed.
 
+#### Destination address policy
+
+rela checks every connection `http.*` opens. The check runs on the IP
+address the connection goes to, after DNS resolution. A host name is
+judged by the address it resolves to at that moment, so a name that
+later resolves to another address is judged again. A refused connection
+returns `(nil, err)` with `err.kind == "blocked"` and the message
+`http: destination address not allowed`. The message does not name the
+resolved address.
+
+Some addresses are always refused, in every mode:
+
+- link-local addresses (`169.254.0.0/16`, `fe80::/10`), which include
+  the cloud metadata service at `169.254.169.254`;
+- the AWS IPv6 metadata address `fd00:ec2::254`;
+- unspecified addresses (`0.0.0.0`, `::`), multicast and broadcast;
+- the same addresses written in IPv4-mapped, NAT64 (`64:ff9b::/96` and
+  the local-use `64:ff9b:1::/48`), IPv4-compatible (`::a.b.c.d`) or 6to4
+  form.
+
+No documented use of rela needs these. The metadata service hands out
+cloud credentials, so a script must not reach it.
+
+In tenant mode (`rela-server -tenant-mode`) the policy is strict. It
+also refuses every address that is not public: loopback (`127.0.0.0/8`,
+`::1`), private ranges (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`),
+carrier-grade NAT (`100.64/10`) and the other special-purpose ranges.
+In tenant mode many customers share one server, so a script must not
+reach the server itself or the operator's internal network. The
+operator can keep named destinations reachable with an allowlist of
+address ranges (`10.1.0.0/16`) or `host:port` entries
+(`idp.internal:8443`), given with `rela-server -lua-http-allow`. The allowlist never reopens an address that is
+always refused. In strict mode the `HTTP_PROXY` and `HTTPS_PROXY`
+environment variables are ignored, because a proxy would make the
+connection on the script's behalf.
+
+Outside tenant mode, localhost and private-network addresses stay
+reachable. Scripts in a single-team deployment call local services and
+internal APIs, and that is documented behaviour. If a proxy is set in
+the environment, rela connects to the proxy, and the check applies to
+the proxy's address only.
+
 #### Security
 
-`http.*` is a new threat surface: a Lua script can make arbitrary
-outbound requests using the user's machine. There is no SSRF protection
-(the localhost / private-IP range is reachable). URLs containing
-embedded credentials (`http://user:pass@host/`) are rejected — set the
-`Authorization` header explicitly. Treat Lua scripts as trusted code.
+`http.*` lets a Lua script make outbound requests from the machine rela
+runs on. Outside tenant mode the address policy above blocks only the
+link-local, metadata, multicast and similar addresses. URLs containing
+embedded credentials (`http://user:pass@host/`) are rejected. Set the
+`Authorization` header instead. Treat Lua scripts as trusted code.
 
 ### Crypto Functions
 
@@ -2085,6 +2133,13 @@ directory.
 A script only sees the keys its `capabilities.secrets` list names (see
 [Capabilities](#capabilities--http-ai-mail-secrets-tokens-write_file) above); everything
 below describes how the *values* are resolved once a key has been granted.
+
+In tenant mode the secrets are withheld unless the operator shares them
+(see [server-security.md](server-security.md#operator-secrets-and-ai)).
+Then every index of `rela.secrets` raises an error, so
+`rela.secrets.x or "default"` fails rather than taking the default, and
+`pairs(rela.secrets)` yields nothing. `ai.*` returns `nil` and an error
+of kind `not_configured` instead of raising.
 
 Two kinds of secret are never given to a script, not even one granted every
 secret: `token_key` (see [OAuth Tokens](#oauth-tokens)) and any name that starts with
@@ -2948,10 +3003,49 @@ When `.rela/ai.yaml` is configured, scripts can make HTTP requests to the config
 AI provider via `ai.chat`, `ai.complete`, and `ai.embed`. This means scripts can send
 entity content to an external service.
 
-The `http.*` module additionally lets scripts make arbitrary HTTP(S)
-requests to any reachable URL. There is no SSRF filter — localhost and
-private-network IPs are reachable. **Treat Lua scripts as trusted code** —
-don't run scripts from untrusted sources.
+The `http.*` module additionally lets scripts make HTTP(S) requests to
+any reachable URL, within the destination address policy described
+under [HTTP Functions](#destination-address-policy). Outside tenant mode
+localhost and private-network addresses are reachable. **Treat Lua
+scripts as trusted code.** Do not run scripts from untrusted sources.
+
+### Resource limits
+
+These limits apply to every script, in every mode:
+
+- A script stops after its timeout (30 seconds by default).
+- The call stack holds at most 1024 frames. Deeper recursion fails with
+  `stack overflow`.
+- The value stack holds at most 65,536 values. A call such as
+  `unpack()` on a larger table fails with `registry overflow`, and the
+  runtime cannot run another script afterwards.
+- `string.rep`, `string.format` and `table.concat` refuse to build a
+  string larger than 16 MiB. They fail before they allocate it.
+- `string.format` accepts the Lua 5.1 conversions: at most five flags
+  from `-+ #0`, a width and a precision of at most two digits each, and
+  one of `cdiouxXeEfgGqs`. It raises an error for a longer width or
+  precision, an unknown conversion (including the Go verbs `%v` and
+  `%t`), a missing argument, and the Go extensions `%[n]` (argument
+  index) and `*` (width from an argument). Each conversion uses its own
+  argument. It differs from Lua 5.1 in two ways: `%q` quotes with Go's
+  rules, and `%x`, `%o` and `%u` print a negative number with a minus
+  sign rather than as its two's complement.
+- `string.format` checks each argument as Lua 5.1 does. `%d`, `%i`, `%u`,
+  `%c`, `%o`, `%x`, `%X`, `%e`, `%E`, `%f`, `%g` and `%G` take a number; a
+  string that holds a number also works. `%c` prints one byte. `%s` takes
+  any value and prints what `tostring` returns, so a `__tostring`
+  metamethod applies. `%q` takes a string or a number. Any other argument
+  fails with `bad argument`. So `string.format("%x", "abc")` and
+  `string.format("%d", {})` are errors.
+
+There is no limit on the total memory a script uses. The embedded Lua
+engine cannot measure it. The `..` operator, `string.gsub` and table
+construction are limited only by the timeout. A loop that doubles a
+string with `s = s .. s` can use gigabytes of memory in under a second.
+Run rela with a memory limit (`GOMEMLIMIT`, a container limit) so a
+runaway script cannot exhaust the host. In tenant mode the memory is
+shared by every tenant, so one tenant's script can still exhaust it for
+all of them. This gap is tracked as BUG-88F0XLW.
 
 API keys are never logged or included in error messages.
 

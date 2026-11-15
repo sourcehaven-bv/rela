@@ -217,12 +217,12 @@ func (r typeResolver) validatePropertyNames(entityType string, properties map[st
 	return nil
 }
 
-// limitArg reads the `limit` argument. Zero or a negative value means the
-// default, never "no limit": an unbounded answer is the cost the default
-// exists to cap.
+// limitArg reads the `limit` argument, at most [maxPageLimit]. Zero or a
+// negative value means the default, never "no limit": an unbounded answer is
+// the cost the default exists to cap.
 func limitArg(args toolRequest, def int) int {
 	if limit := args.GetInt("limit", def); limit > 0 {
-		return limit
+		return min(limit, maxPageLimit)
 	}
 	return def
 }

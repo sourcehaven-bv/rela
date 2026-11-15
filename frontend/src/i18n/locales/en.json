@@ -190,6 +190,17 @@
       "denied": "Notifications are blocked for this site. Allow them in your browser's site settings, then turn this on again.",
       "signedOut": "Sign in to choose notifications.",
       "noStorage": "This browser does not let rela store data for this site, so it cannot tell new inbox entries from old ones. Allow site data and try again."
+    },
+    "relationDefault": {
+      "none": "None",
+      "notFound": "not found",
+      "choose": "Choose…",
+      "change": "Change…",
+      "clear": "Clear",
+      "chooseFor": "Choose the default target of {relation}",
+      "clearFor": "Clear the default target of {relation}",
+      "changeFor": "Change the default target of {relation}",
+      "loadFailed": "could not load"
     }
   },
   "errors": {
@@ -415,7 +426,8 @@
     "action": {
       "confirmTitle": "{label}?",
       "confirmRun": "Run {label} on this entity?",
-      "done": "{label}: done"
+      "done": "{label}: done",
+      "running": "Running…"
     },
     "loadFailed": "Failed to load entity",
     "noEditForm": "No edit form configured for this entity type",
@@ -543,6 +555,19 @@
       "movedUp": "{label} moved up",
       "movedDown": "{label} moved down",
       "failed": "Could not move the row"
+    },
+    "llmProposal": {
+      "title": "{label}: proposed changes",
+      "intro": "The AI proposed these changes. Nothing is saved until you apply them. Text values start unticked: read them before you tick them.",
+      "empty": "The AI proposed no changes.",
+      "properties": "Properties",
+      "relations": "Relations",
+      "apply": "Apply selected",
+      "applied": "{label}: changes applied",
+      "stale": "{property} changed since the proposal was made, so it was not saved.",
+      "saveFailed": "The changes could not be saved",
+      "linkFailed": "Could not add {relation} to {title}: {reason}",
+      "model": "Proposed by {model}"
     }
   },
   "document": {

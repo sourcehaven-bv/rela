@@ -72,10 +72,11 @@ var alwaysUnpaged = map[string]bool{
 // pageable are the read methods that page only when the query sets Limit;
 // Limit 0 returns every match in one go.
 var pageable = map[string]bool{
-	"ListEntitiesPage":  true,
-	"ListRelationsPage": true,
-	"GraphQuery":        true,
-	"GraphQueryHeaders": true,
+	"ListEntitiesPage":      true,
+	"ListEntityHeadersPage": true,
+	"ListRelationsPage":     true,
+	"GraphQuery":            true,
+	"GraphQueryHeaders":     true,
 }
 
 // keyFields are the query fields that bound a read by ids: EntityQuery.IDs,
@@ -511,13 +512,13 @@ func TestUnpagedReadAllowlist_HasReasons(t *testing.T) {
 }
 
 // The request-path scan TKT-A6A97WV's budget tests name stays on the list
-// as debt, not relabelled. TKT-F2EJQY8 deletes this test with the scan.
+// as debt, not relabelled. TKT-D3RAB0E deletes this test with the scan.
 func TestUnpagedReadAllowlist_ScopedHeadersIsDebt(t *testing.T) {
 	t.Parallel()
 	const key = "internal/dataentry/scopedread.go#scopedHeaders"
 	e, ok := unpagedReadAllowlist[key]
 	if !ok {
-		t.Fatalf("%s: not on the allowlist; if TKT-F2EJQY8 removed the scan, delete this test with it", key)
+		t.Fatalf("%s: not on the allowlist; if TKT-D3RAB0E removed the scan, delete this test with it", key)
 	}
 	if e.category != requestPath {
 		t.Errorf("%s: category %q, want %q", key, e.category, requestPath)
@@ -546,6 +547,10 @@ func TestUnpagedReads(t *testing.T) {
 		{"page without limit", `func f() { st.ListEntitiesPage(ctx, store.EntityQuery{Type: "t"}) }`,
 			map[string]int{"f": 1}},
 		{"page with limit", `func f() { st.ListEntitiesPage(ctx, store.EntityQuery{Type: "t", Limit: 50}) }`, nil},
+		{"header page without limit", `func f() { store.ListEntityHeadersPage(ctx, st, store.EntityQuery{Type: "t"}) }`,
+			map[string]int{"f": 1}},
+		{"header page with limit",
+			`func f() { store.ListEntityHeadersPage(ctx, st, store.EntityQuery{Type: "t", Limit: 5}) }`, nil},
 		{"graph query without limit", `func f() { store.GraphQueryHeaders(ctx, st, store.GraphQuery{EntityType: "t"}) }`,
 			map[string]int{"f": 1}},
 		{"graph query with limit", `func f() { q := store.GraphQuery{}; q.Limit = 10; st.GraphQuery(ctx, q) }`, nil},

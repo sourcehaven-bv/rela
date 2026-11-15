@@ -6,8 +6,8 @@ package archguard
 //
 // Each entry has a category (see readCategory) and a reason that says what
 // the read is for. requestPath entries are debt. The follow-ups of
-// TKT-FED6FMM remove them: TKT-F2EJQY8 (dataentry), TKT-D9UO9Y4 (mcp,
-// search), TKT-GIAGLQ3 (ingest, rename), TKT-P9QMEVI (lua) and TKT-EBBHM55
+// TKT-FED6FMM remove them: TKT-D3RAB0E and TKT-I39Y7N4 (dataentry),
+// TKT-Z099FGY (mcp filters), TKT-GIAGLQ3 (ingest, rename), TKT-P9QMEVI (lua) and TKT-I3MGCRT
 // (desktopnotify).
 var unpagedReadAllowlist = map[string]unpagedRead{
 	// aclmap: the who-can report.
@@ -90,19 +90,18 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/dataentry/gantt_handler.go#ganttHandler.collectGanttRound": {1, bounded,
 		"gantt closure round: a GraphQuery for the descendants of the frontier, so it reads the subtree " +
 			"the chart shows, not the type"},
-	"internal/dataentry/helpers.go#listAllFromStore": {1, requestPath,
-		"listFromStoreByTypes with no type: drains every entity in the world (unreached today, per its doc)"},
-	"internal/dataentry/helpers.go#listFromStoreByTypes": {1, requestPath,
-		"view and query helpers: loads every entity of each requested type"},
-	"internal/dataentry/helpers.go#visibleListByTypes": {1, requestPath,
-		"executeQuery without free text: loads every entity of the requested types, then gates"},
+	"internal/dataentry/searchplan.go#searchPlan.page": {1, requestPath,
+		"structured /_search without a limit returns every match, as visibleListByTypes did before it; " +
+			"the filter and the ACL gate run in the store, and with a limit the GraphQuery carries it (TKT-D3RAB0E)"},
 	"internal/dataentry/listpushdown.go#listPlan.run": {1, bounded,
 		"list pushdown page: the plan's GraphQuery carries Limit = perPage and Offset (planListPushdown); " +
 			"the matcher cannot see a field set in another function"},
-	"internal/dataentry/scopedread.go#scopedHeaders": {3, requestPath,
-		"the scoped collection read behind lists, kanban and views: every header of the type in the world, " +
-			"directly or as the ACL-scoped GraphQuery with no Limit through collectHeaders " +
-			"(the TODO(TKT-F2EJQY8) scan the budget tests name)"},
+	"internal/dataentry/scopedread.go#scopedHeaders": {2, requestPath,
+		"the scoped collection read behind the list Go path, executeQuery (search, dashboard, nav status, " +
+			"next action), kanban, export, feed, gantt and the command picker: every header " +
+			"of the type in the world, directly or as the ACL-scoped GraphQuery (built by scopedQuery) with " +
+			"no Limit through collectHeaders. A page scope or ?q= reads by ids instead (headersByIDs). The " +
+			"rest needs the whole filtered set in Go; TKT-D3RAB0E and TKT-I39Y7N4 page it"},
 
 	// datamigration: migrations rewrite whole types.
 	"internal/datamigration/adoptface.go#faceAdoption.plan": {1, batchJob, "face adoption: scans a type for zero-face rows to move"},
@@ -114,8 +113,10 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/datamigration/steps.go#collectRelations":      {1, batchJob, "relation steps: collect every edge of the step's type"},
 	"internal/datamigration/steps.go#renameFaceStep.Run":    {1, batchJob, "rename-face step: scans the type for rows at the old face"},
 
-	"internal/desktopnotify/evaluate.go#Config.Evaluate": {1, requestPath,
-		"desktop badge poll: reads every header of each type a notification rule names, on every poll"},
+	"internal/desktopnotify/evaluate.go#evaluation.scan": {1, requestPath,
+		"desktop notification poll, for a condition queryplan.LowerScope does not lower exactly: reads every " +
+			"header of the type that passes the condition's pushed equalities and judges the rest in Go. A " +
+			"condition that lowers reads a capped page and counts in the store instead; TKT-I3MGCRT lowers more"},
 
 	// docs: the documentation build's assertions over seeded projects.
 	"internal/docs/assert.go#docRuntime.entityIDs":              {1, batchJob, "docs build: lists the seeded ids of a type"},
@@ -174,13 +175,21 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/mailtemplate/mailtemplate.go#buildSection": {1, batchJob,
 		"scheduled mail render: a section lists the entities of its declared type"},
 
+	// mapimport: rela import --mapping.
+	"internal/mapimport/plan.go#builder.index": {1, batchJob,
+		"mapped import: reads each mapped type once to match source records to stored rows and to report " +
+			"stored rows the source no longer has"},
+	"internal/mapimport/plan.go#builder.storedRels": {1, batchJob,
+		"mapped import: reads each mapped relation type once to diff the source edges against the stored ones"},
+
 	// mcp.
 	"internal/mcp/tools_analysis.go#Server.handleAnalyzeProperties": {1, batchJob,
 		"analyze properties tool: validates every face row"},
 	"internal/mcp/tools_analysis.go#Server.handleAnalyzeUnique": {1, batchJob,
 		"analyze unique tool: compares the unique values of every entity of each type"},
-	"internal/mcp/tools_entity.go#Server.handleListEntities": {1, requestPath,
-		"list_entities tool: reads the whole type (or every type), then filters and applies the limit in Go"},
+	"internal/mcp/tools_entity.go#listPage.filterInGo": {1, requestPath,
+		"list_entities tool with a filter that does not lower to store predicates (related(...), current_user, " +
+			"ordered comparisons): reads the whole readable type, then filters and pages in Go (TKT-Z099FGY)"},
 
 	// remotesync: a sync pass over the mapped types.
 	"internal/remotesync/push.go#pusher.localRows": {1, batchJob, "remote sync push: every local row of a mapped type"},
@@ -197,12 +206,6 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 		"property validation report: every entity"},
 	"internal/schema/validate_properties.go#ValidateRelationProperties": {1, batchJob,
 		"property validation report: every relation"},
-
-	// search.
-	"internal/search/index.go#Service.listAll": {1, requestPath,
-		"search with no text: reads every entity in the world, then filters by type and properties"},
-	"internal/search/index.go#Service.scanFaces": {1, requestPath,
-		"search with an admit gate and no text: reads every face of every entity, then filters by type"},
 
 	// tracer.
 	"internal/tracer/tracer.go#GenericTracer.FindOrphans": {2, batchJob,

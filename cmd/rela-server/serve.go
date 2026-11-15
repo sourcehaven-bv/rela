@@ -90,6 +90,10 @@ type server struct {
 	// (tenanthost.ReuseAssertion).
 	assertion tenanthost.AssertionVerifier
 
+	// tenantNotice logs tenant mode's per-config restrictions once; see
+	// [server.noteTenantRestrictions].
+	tenantNotice sync.Once
+
 	cur atomic.Pointer[generation]
 	// retiring closes when the latest retirement has finished. Each
 	// retirement waits for the one before it, so they run in activation

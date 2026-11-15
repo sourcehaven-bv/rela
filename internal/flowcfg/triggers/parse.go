@@ -172,7 +172,10 @@ func Parse(data []byte, meta *metamodel.Metamodel) ([]Rule, error) {
 		rules = append(rules, rule)
 	}
 	if len(errs) == 0 {
-		expandAbstractTypes(meta, rules)
+		for i := range rules {
+			// An event always names a concrete type.
+			rules[i].On.Entity = metamodel.ExpandTypeNames(meta, rules[i].On.Entity)
+		}
 		errs = append(errs, Check(meta, rules)...)
 	}
 	if len(errs) > 0 {
@@ -446,34 +449,6 @@ func knownPlaceholder(ph string) bool {
 		}
 	}
 	return false
-}
-
-// expandAbstractTypes replaces each abstract type in a rule's `on.entity`
-// with its variants, keeping order and dropping duplicates, as the schema
-// loader did for automations: an event always names a concrete type.
-func expandAbstractTypes(meta *metamodel.Metamodel, rules []Rule) {
-	for i := range rules {
-		names := rules[i].On.Entity
-		if names == nil {
-			continue
-		}
-		out := make([]string, 0, len(names))
-		add := func(n string) {
-			if !slices.Contains(out, n) {
-				out = append(out, n)
-			}
-		}
-		for _, n := range names {
-			if variants, ok := metamodel.VariantsOf(meta, n); ok {
-				for _, v := range variants {
-					add(v)
-				}
-				continue
-			}
-			add(n)
-		}
-		rules[i].On.Entity = out
-	}
 }
 
 // hasAlias reports whether n or a node below it is an alias or an anchor.

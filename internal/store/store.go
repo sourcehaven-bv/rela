@@ -321,7 +321,9 @@ type EntityReader interface {
 	// (NextCursor is always empty). When q.Limit > 0, at most Limit
 	// entities are returned; NextCursor is non-empty iff more results
 	// exist. Callers resume by setting q.Cursor to the returned
-	// NextCursor on the next call, keeping other query fields identical.
+	// NextCursor on the next call, keeping other query fields identical
+	// except Limit: a cursor names the last row read, so the next page
+	// may be larger or smaller.
 	//
 	// Cursors are opaque — callers MUST NOT parse or construct them.
 	// A cursor is only valid for the same query on the same store;
@@ -716,6 +718,52 @@ type HeaderReader interface {
 	// entities matching the query. Ordering and error semantics match
 	// [EntityReader.ListEntities]; Cursor and Limit are likewise ignored.
 	ListEntityHeaders(ctx context.Context, q EntityQuery) iter.Seq2[EntityHeader, error]
+}
+
+// HeaderPager pages entity headers the way [EntityReader.ListEntitiesPage]
+// pages entities (TKT-Q918DFR).
+//
+// OPTIONAL capability, type-asserted by [ListEntityHeadersPage] like
+// [HeaderReader]. It is a separate interface rather than a second
+// HeaderReader method because a HeaderReader that lacked the new method would
+// stop satisfying the interface, and [ListEntityHeaders] would then send it
+// down the fallback without a compile error. The read decorators in
+// internal/visibility implement HeaderReader only.
+//
+// fsstore does not implement it, as it does not implement HeaderReader: it
+// parses each file whole, so a native page would read the same bytes as the
+// fallback while telling storetest.BodyWatch that no body was read.
+type HeaderPager interface {
+	// ListEntityHeadersPage returns the page [EntityReader.ListEntitiesPage]
+	// returns for q, projected onto headers: the same rows in the same
+	// order, and the same NextCursor. A cursor from either method resumes
+	// the other.
+	ListEntityHeadersPage(ctx context.Context, q EntityQuery) (Page[EntityHeader], error)
+}
+
+// EntityPager is the one read [ListEntityHeadersPage] needs. Every
+// [EntityReader] satisfies it.
+type EntityPager interface {
+	ListEntitiesPage(ctx context.Context, q EntityQuery) (Page[*entity.Entity], error)
+}
+
+// ListEntityHeadersPage reads one keyset page of content-free headers from
+// any reader. It uses the reader's native [HeaderPager] when it has one, so
+// no body leaves the backend. Otherwise it reads [EntityPager.ListEntitiesPage]
+// and projects the page, which still reads the bodies.
+func ListEntityHeadersPage(ctx context.Context, r EntityPager, q EntityQuery) (Page[EntityHeader], error) {
+	if hp, ok := r.(HeaderPager); ok {
+		return hp.ListEntityHeadersPage(ctx, q)
+	}
+	p, err := r.ListEntitiesPage(ctx, q)
+	if err != nil {
+		return Page[EntityHeader]{}, err
+	}
+	items := make([]EntityHeader, 0, len(p.Items))
+	for _, e := range p.Items {
+		items = append(items, HeaderOf(e))
+	}
+	return Page[EntityHeader]{Items: items, NextCursor: p.NextCursor}, nil
 }
 
 // HeaderOf projects an entity onto its content-free header.

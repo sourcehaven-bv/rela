@@ -513,9 +513,33 @@ func scopedSortedEntitiesScoped(
 	// scope all live in scopedHeaders (scopedread.go) — see its doc for why
 	// they must not be re-implemented per handler.
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
+	if readWithheld(ctx, rqr) {
+		// Return BEFORE the free-text search: a principal who may read
+		// nothing must not be able to probe the search backend's latency or
+		// induce load through ?q= (RR-X56H).
+		return []*entityPkg.Entity{}, nil, nil
+	}
+
+	// Free-text search: the hits narrow the read when ?q=... is present.
+	// Full-text scores are discarded — the list's configured sort wins over
+	// relevance ranking, same approach SearchView uses for filtering.
+	// Backend errors surface as HTTP 500 rather than rendering an empty list
+	// and pretending the search succeeded.
+	searchResult, err := a.queries.freeTextIDsForType(ctx, queryGet(params, "q"), typeName)
+	if err != nil {
+		return nil, nil, err
+	}
+	// The page scope and the hits each name the rows the list may hold, so
+	// the read asks for those ids only rather than scanning the type
+	// (TKT-F2EJQY8). Each id still passes the verdict, the world, the faces
+	// and the query scope in scopedHeaders, so neither can surface a row the
+	// full read would not admit.
+	ids, byIDs := narrowingIDs(pageScoped, pageIDs, searchResult)
 	entities, withheld, err := scopedEntities(ctx, a.Services(), rqr, scopeRequest{
 		Type:        typeName,
 		Faces:       rqr.Faces,
+		ByIDs:       byIDs,
+		IDs:         ids,
 		Scope:       scope.Scope,
 		ScopeProps:  scope.Props,
 		ScopeFilter: scope.Filter,
@@ -524,40 +548,9 @@ func scopedSortedEntitiesScoped(
 		return nil, nil, err
 	}
 	if withheld {
-		// Return BEFORE the free-text search: a principal who may read
-		// nothing must not be able to probe the search backend's latency or
-		// induce load through ?q= (RR-X56H).
+		// Unreachable after the readWithheld check above (same ctx and
+		// verdict); kept so the empty shape does not depend on that check.
 		return []*entityPkg.Entity{}, nil, nil
-	}
-	// An intersection with the ACL-scoped set: the page scope only removes
-	// rows, so it cannot surface one the load above did not admit.
-	if pageScoped {
-		kept := entities[:0]
-		for _, e := range entities {
-			if pageIDs[e.ID] {
-				kept = append(kept, e)
-			}
-		}
-		entities = kept
-	}
-
-	// Free-text search: intersect with hits from the searcher when ?q=... is
-	// present. Full-text scores are discarded — the list's configured sort wins
-	// over relevance ranking, same approach SearchView uses for filtering.
-	// Backend errors surface as HTTP 500 rather than rendering an empty list
-	// and pretending the search succeeded.
-	searchResult, err := a.queries.freeTextIDsForType(ctx, queryGet(params, "q"), typeName)
-	if err != nil {
-		return nil, nil, err
-	}
-	if searchResult.HasFilter {
-		filtered := entities[:0]
-		for _, e := range entities {
-			if _, hit := searchResult.IDs[e.ID]; hit {
-				filtered = append(filtered, e)
-			}
-		}
-		entities = filtered
 	}
 
 	// Each filter[<key>] param was classified as property vs relation ONCE,
@@ -2230,34 +2223,20 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		query = "type:" + typeFilter + " " + query
 	}
 
-	// executeQuery is read-gated (TKT-BA8BSX): only entities the
-	// request principal may read come back, and gate/load/search
-	// failures surface instead of silently truncating. The limit lowers
-	// the relevance cap where that cannot change which rows survive the
-	// filters below (TKT-T2I7P2, see freeTextLimit).
-	entities, err := a.queries.executeQueryWith(r.Context(), query,
+	// The read is gated (TKT-BA8BSX): only entities the request principal
+	// may read come back, and gate/load/search failures surface instead of
+	// silently truncating. The limit lowers the relevance cap where that
+	// cannot change which rows survive the filters (TKT-T2I7P2, see
+	// freeTextLimit), and a structured query reads only the rows it serves
+	// (TKT-D3RAB0E, see searchPage). total counts the matches before the
+	// cut.
+	entities, total, err := a.queries.searchPage(r.Context(), query,
 		queryOptions{limit: limit, exactType: typeFilter})
 	if err != nil {
 		writeListPipelineError(w, r, err)
 		return
 	}
 
-	// The exact filter stays: a `type:` clause already in `q` unions with
-	// the spliced one.
-	if typeFilter != "" {
-		filtered := make([]*entityPkg.Entity, 0)
-		for _, e := range entities {
-			if e.Type == typeFilter {
-				filtered = append(filtered, e)
-			}
-		}
-		entities = filtered
-	}
-	// Truncated after the read gate and the type filter, so the cap counts
-	// only rows this principal may see and a hidden row cannot take a slot.
-	if limit > 0 && len(entities) > limit {
-		entities = entities[:limit]
-	}
 	// Search rows are content-free (rowcontent.go); bodies are opt-in and
 	// bounded by the search result cap.
 	if wantContent(r.URL.Query()) {
@@ -2297,7 +2276,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 	resp := v1.LinkListResponse{
 		Data: linkRows(data, entities, linkable),
 		Meta: v1.ListMeta{
-			Total:   len(data),
+			Total:   total,
 			Page:    1,
 			PerPage: len(data),
 		},
@@ -2952,8 +2931,9 @@ func validateCreateIDOpts(def *metamodel.EntityDef, id, prefix string) string {
 			for _, p := range prefixes {
 				// Reject the bare prefix (id == p) — the entity needs a
 				// distinguishing suffix or it conflicts with the prefix
-				// concept itself. (RR-…)
-				if strings.HasPrefix(id, p) && len(id) > len(p) {
+				// concept itself. (RR-…) The prefix compares with case
+				// folded, like metamodel.EntityDef.MatchesID (BUG-4OPP525).
+				if len(id) > len(p) && strings.EqualFold(id[:len(p)], p) {
 					matched = true
 					break
 				}

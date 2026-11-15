@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/nextaction"
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
 	"github.com/Sourcehaven-BV/rela/internal/userstate/memuserstate"
 )
 
@@ -29,6 +30,40 @@ func (m *matchIDs) Match(_ context.Context, e *entity.Entity) (bool, error) {
 		return false, m.err
 	}
 	return m.ids[e.ID], nil
+}
+
+// The engine tells the candidate func how much of the list it keeps
+// (TKT-CKLZMWB): the first DefaultCandidateCap, no bound when a condition
+// drops candidates after the fetch, and the suggestion on screen for its own
+// source only.
+func TestEngine_TellsTheCandidateFuncWhatItKeeps(t *testing.T) {
+	cfg := &dataentryconfig.Config{
+		NextActionBands: []dataentryconfig.NextActionBand{{ID: "work"}},
+		NextActions: map[string]dataentryconfig.NextActionSource{
+			"plain":       {Band: "work", Query: "type:task", Suggest: "plain"},
+			"conditioned": {Band: "work", Query: "type:task", Condition: "entity.x == 'y'", Suggest: "conditioned"},
+		},
+	}
+	wants := map[string]nextaction.Want{}
+	fn := func(
+		_ context.Context, id string, _ dataentryconfig.NextActionSource, want nextaction.Want,
+	) ([]nextaction.Candidate, error) {
+		wants[id] = want
+		return nil, nil
+	}
+	st := memuserstate.New()
+	t.Cleanup(func() { _ = st.Close() })
+	eng, err := nextaction.New(cfg, st, fn,
+		nextaction.WithMatchers(func(string) (nextaction.Matcher, bool) { return &matchIDs{}, true }),
+		nextaction.WithCurrent(&userstate.Key{Source: "plain", EntityID: "T-9"}))
+	require.NoError(t, err)
+
+	_, _, err = eng.Resolve(context.Background(), "alice", time.Now())
+	require.NoError(t, err)
+	require.Equal(t, map[string]nextaction.Want{
+		"plain":       {First: nextaction.DefaultCandidateCap, Keep: "T-9"},
+		"conditioned": {},
+	}, wants)
 }
 
 func conditionConfig() *dataentryconfig.Config {
@@ -187,7 +222,7 @@ func TestCondition_IdentityRequiredSkipsOnlyThatSource(t *testing.T) {
 			"anything": {Band: "ambient", Query: "type:task", Suggest: "anything"},
 		},
 	}
-	fn := func(_ context.Context, _ string, _ dataentryconfig.NextActionSource) ([]nextaction.Candidate, error) {
+	fn := func(_ context.Context, _ string, _ dataentryconfig.NextActionSource, _ nextaction.Want) ([]nextaction.Candidate, error) {
 		return []nextaction.Candidate{{Entity: entity.New("T-1", "task")}}, nil
 	}
 	st := memuserstate.New()

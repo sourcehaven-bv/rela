@@ -221,22 +221,24 @@ func TestACLList_DenyAllSearchShortCircuit(t *testing.T) {
 	}
 }
 
-// TestACLList_SearchAfterACLOrdering pins TKT-VMD8 AC9 (RR-WX77 +
-// RR-3IO2): on the composed-Query path the ACL GraphQuery executes
-// BEFORE the free-text searcher, so search only ever intersects the
-// visible subset. Call order is recorded by wrapping both the store
-// and the searcher with the same log.
-func TestACLList_SearchAfterACLOrdering(t *testing.T) {
+// TestACLList_SearchHitsAreGatedByIDRead pins TKT-VMD8 AC9 (RR-WX77 +
+// RR-3IO2): on the composed-Query path the ACL query is authoritative
+// over the free-text hits. Since TKT-F2EJQY8 the hits name the rows to
+// read, so the ACL query runs as a MatchingFaces call over exactly those
+// ids, after the search. The searcher here ignores the scope and also
+// returns a ticket the ACL hides; the gated id read must drop it.
+func TestACLList_SearchHitsAreGatedByIDRead(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "alice", Type: "person", Properties: map[string]any{"title": "Alice"}})
 	seedEntity(app, &entity.Entity{ID: "PRJ-42", Type: "project", Properties: map[string]any{"title": "Granted"}})
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "alpha one"}})
 	seedRelation(app, entity.NewRelation("alice", "editor-of", "PRJ-42"))
 	seedRelation(app, entity.NewRelation("TKT-001", "belongs-to", "PRJ-42"))
+	seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]any{"title": "alpha two"}})
 
 	var calls []string
 	app.store = orderRecordingStore{Store: app.store, log: &calls}
-	app.searcher = recordingSearcher{log: &calls, hits: []string{"TKT-001"}}
+	app.searcher = recordingSearcher{log: &calls, hits: []string{"TKT-001", "TKT-002"}}
 	rebindVisibleSearcher(t, app)
 
 	d := mustNewACL(t, &acl.Policy{
@@ -259,7 +261,7 @@ func TestACLList_SearchAfterACLOrdering(t *testing.T) {
 	gqIdx, searchIdx := -1, -1
 	for i, c := range calls {
 		switch c {
-		case "graphquery":
+		case "matchingfaces:TKT-001,TKT-002":
 			if gqIdx == -1 {
 				gqIdx = i
 			}
@@ -270,10 +272,10 @@ func TestACLList_SearchAfterACLOrdering(t *testing.T) {
 		}
 	}
 	if gqIdx == -1 || searchIdx == -1 {
-		t.Fatalf("expected both graphquery and search calls, got %v", calls)
+		t.Fatalf("expected a search and a MatchingFaces call over its hits, got %v", calls)
 	}
-	if gqIdx > searchIdx {
-		t.Errorf("search ran before the ACL GraphQuery: %v", calls)
+	if gqIdx < searchIdx {
+		t.Errorf("the ACL id read ran before the search that names its ids: %v", calls)
 	}
 }
 
@@ -482,9 +484,9 @@ func (s recordingSearcher) Search(_ context.Context, q search.Query) iter.Seq2[s
 	}
 }
 
-// orderRecordingStore wraps a store.Store and logs GraphQuery calls
-// into the shared log so call ordering against the searcher can be
-// asserted.
+// orderRecordingStore wraps a store.Store and logs GraphQuery calls and
+// MatchingFaces calls with their ids into the shared log, so call ordering
+// against the searcher can be asserted.
 type orderRecordingStore struct {
 	store.Store
 	log *[]string
@@ -493,6 +495,13 @@ type orderRecordingStore struct {
 func (s orderRecordingStore) GraphQuery(ctx context.Context, q store.GraphQuery) iter.Seq2[*entity.Entity, error] {
 	*s.log = append(*s.log, "graphquery")
 	return s.Store.GraphQuery(ctx, q)
+}
+
+func (s orderRecordingStore) MatchingFaces(
+	ctx context.Context, q store.GraphQuery, ids []string,
+) (map[string][]entity.Face, error) {
+	*s.log = append(*s.log, "matchingfaces:"+strings.Join(ids, ","))
+	return s.Store.MatchingFaces(ctx, q, ids)
 }
 
 // failingGraphQueryStore wraps a store.Store with a GraphQuery that

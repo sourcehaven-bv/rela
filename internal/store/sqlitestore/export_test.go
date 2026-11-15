@@ -2,6 +2,7 @@ package sqlitestore
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -68,9 +69,23 @@ func RendersRangeNatively(scope store.ElementScope, r store.ElementRange) bool {
 // ExplainEntityPage is ExplainGraphQuery for the page ListEntitiesPage reads
 // for q, cursor and LIMIT included.
 func (s *Store) ExplainEntityPage(ctx context.Context, q store.EntityQuery) (string, error) {
-	sqlText, args, err := entityPageSQL(q)
+	sqlText, args, err := entityPageSQL(q, entityColumns)
 	if err != nil {
 		return "", err
+	}
+	return s.explain(ctx, sqlText, args)
+}
+
+// ExplainEntityHeaderPage is ExplainEntityPage for the page
+// ListEntityHeadersPage reads. It fails if that SQL selects the content
+// column.
+func (s *Store) ExplainEntityHeaderPage(ctx context.Context, q store.EntityQuery) (string, error) {
+	sqlText, args, err := entityPageSQL(q, entityHeaderColumns)
+	if err != nil {
+		return "", err
+	}
+	if strings.Contains(sqlText, "content") {
+		return "", fmt.Errorf("header page selects content: %s", sqlText)
 	}
 	return s.explain(ctx, sqlText, args)
 }
