@@ -147,6 +147,9 @@ func (o actionOps) run(
 			return nil, fail
 		}
 	}
+	if action.LLM != nil {
+		return o.runLLM(ctx, s, id, action, boundRaw, ent, deps)
+	}
 
 	// Reuse App's long-lived engine so rela.cache state persists
 	// across action invocations. Constructing a fresh engine per
