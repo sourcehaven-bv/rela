@@ -95,7 +95,7 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 			"the matcher cannot see a field set in another function"},
 	"internal/dataentry/scopedread.go#scopedHeaders": {2, requestPath,
 		"the scoped collection read behind the list Go path, executeQuery (search, dashboard, nav status, " +
-			"next action), kanban, export, feed, gantt and the settings and command pickers: every header " +
+			"next action), kanban, export, feed, gantt and the command picker: every header " +
 			"of the type in the world, directly or as the ACL-scoped GraphQuery with no Limit through " +
 			"collectHeaders. A page scope or ?q= reads by ids instead (headersByIDs). The rest needs " +
 			"the whole filtered set in Go; TKT-D3RAB0E and TKT-I39Y7N4 page it"},

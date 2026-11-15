@@ -4,7 +4,9 @@ type: ticket
 title: Next-action suggestion grows with the data on postgres
 kind: enhancement
 priority: medium
-status: backlog
+started: "2026-11-14"
+completed: "2026-11-14"
+status: done
 ---
 
 ## Description

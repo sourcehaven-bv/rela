@@ -2,6 +2,7 @@ package predicate
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -469,6 +470,93 @@ func TestConjunction(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestConditionConjunction(t *testing.T) {
+	type trav struct {
+		path    string
+		negated bool
+	}
+	tests := []struct {
+		name    string
+		src     string
+		wantOK  bool
+		wantCmp []Comparison
+		wantTr  []trav
+	}{
+		{
+			name:   "equality, inequality and both traversal forms",
+			src:    "entity.status ~= 'done' and entity.status == 'open' and not related(entity, 'x') and related(entity, 'y')",
+			wantOK: true,
+			wantCmp: []Comparison{
+				{ConstEquality: ConstEquality{Attribute: "status", Value: "done"}, NotEqual: true},
+				{ConstEquality: ConstEquality{Attribute: "status", Value: "open"}},
+			},
+			wantTr: []trav{{"x", true}, {"y", false}},
+		},
+		{
+			name:    "an inequality against current_user",
+			src:     "entity.assignee ~= current_user.id",
+			wantOK:  true,
+			wantCmp: []Comparison{{ConstEquality: ConstEquality{Attribute: "assignee", FromVar: "id"}, NotEqual: true}},
+		},
+		{name: "or is not exact", src: "entity.status ~= 'a' or related(entity, 'x')"},
+		{name: "not over a comparison is not exact", src: "not (entity.status == 'a')"},
+		{name: "not over a conjunction is not exact", src: "not (related(entity, 'x') and related(entity, 'y'))"},
+		{name: "an ordered comparison is not exact", src: "entity.status < 'a'"},
+		{name: "an empty literal inequality is not exact", src: "entity.status ~= ''"},
+		{name: "a nil inequality is not exact", src: "entity.status ~= nil"},
+		{name: "a typed inequality is not exact", src: "entity.count ~= 3"},
+		{name: "a negated host call is not exact", src: "not has_current_user(entity.watchers)"},
+		{name: "a negated traversal from current_user is not exact", src: "not related(current_user, 'x')"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := Compile(prefilterEnv(t), tc.src)
+			if err != nil {
+				t.Fatalf("compile %q: %v", tc.src, err)
+			}
+			cmps, travs, ok := prog.ConditionConjunction(fullSpec)
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if !reflect.DeepEqual(cmps, tc.wantCmp) {
+				t.Errorf("cmps = %#v, want %#v", cmps, tc.wantCmp)
+			}
+			var got []trav
+			for _, s := range travs {
+				got = append(got, trav{strings.Join(s.Spec.Path, "/"), s.Negated})
+			}
+			if !reflect.DeepEqual(got, tc.wantTr) {
+				t.Errorf("traversals = %v, want %v", got, tc.wantTr)
+			}
+			// The narrower contract stays narrow.
+			if _, _, exact := prog.Conjunction(fullSpec); exact && (hasNotEqual(cmps) || hasNegated(travs)) {
+				t.Error("Conjunction admitted a widened leaf")
+			}
+		})
+	}
+}
+
+func hasNotEqual(cmps []Comparison) bool {
+	for _, c := range cmps {
+		if c.NotEqual {
+			return true
+		}
+	}
+	return false
+}
+
+func hasNegated(travs []TraversalTerm) bool {
+	for _, tr := range travs {
+		if tr.Negated {
+			return true
+		}
+	}
+	return false
 }
 
 func TestConjunction_TraversalOnAnotherRecordIsNotExact(t *testing.T) {

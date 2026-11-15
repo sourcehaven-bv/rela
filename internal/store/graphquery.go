@@ -454,8 +454,10 @@ type PropPredicate struct {
 	Op       PropOp
 	Value    string
 	// Scalar restricts a non-empty equality predicate to a scalar string and
-	// lets SQL backends emit an indexable ->> comparison. It is ignored for
-	// empty values and other operators.
+	// lets SQL backends emit an indexable ->> comparison. On a non-empty
+	// [PropNotEqualOrEmpty] it is the negation of that: every row except a
+	// stored string equal to Value, so a list or a number matches. It is
+	// ignored for empty values and other operators.
 	Scalar bool
 	// Key names the object entry a [PropKeyEqual] compares. Empty for
 	// every other operator.

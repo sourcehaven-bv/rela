@@ -5,16 +5,18 @@ export interface SettingsPropertyDef {
   values: string[]
 }
 
-export interface SettingsRelationTarget {
-  id: string
-  title: string
-}
-
+/**
+ * A relation the Settings page can give a default target. It names the
+ * target types only: the page searches them for a target and reads the
+ * saved one by id (TKT-WJP6PBM).
+ */
 export interface SettingsRelationDef {
   name: string
   label: string
+  /** The first declared target type. */
   targetType: string
-  targets: SettingsRelationTarget[]
+  /** Every declared target type. */
+  targetTypes: string[]
 }
 
 export interface DefaultOverride {
