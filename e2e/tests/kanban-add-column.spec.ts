@@ -104,3 +104,27 @@ test.describe("Kanban add column", () => {
     await expect(kanban.addColumnButton).toHaveCount(0);
   });
 });
+
+// Without config:edit the board offers no "Add column". The server refuses
+// the save itself as well (TestConfigure_Gate in cmd/rela-server).
+const NO_CONFIG_ACL = ACL_YAML.replace("    permissions: [config:edit]\n", "");
+
+const testWithoutRight = base.extend({
+  testProject: async ({ testProject }, use) => {
+    fs.writeFileSync(path.join(testProject, "acl.yaml"), NO_CONFIG_ACL);
+    insertAfterKey(path.join(testProject, "schema.yaml"), "entities", CARD_TYPE);
+    insertAfterKey(path.join(testProject, "data-entry.yaml"), "kanbans", BOARD);
+    await use(testProject);
+  },
+});
+
+testWithoutRight.describe("Kanban add column without config:edit", () => {
+  testWithoutRight.use({ serverEnv: { RELA_CONFIG_EDITING: "1" } });
+
+  testWithoutRight("hides the control", async ({ appPage }) => {
+    const kanban = new KanbanPage(appPage);
+    await kanban.navigateToKanban("card-board");
+    await kanban.expectColumnCount(2);
+    await expect(kanban.addColumnButton).toHaveCount(0);
+  });
+});
