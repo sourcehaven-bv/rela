@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -136,7 +137,7 @@ func Run(ctx context.Context, r Reader, q store.GraphQuery) iter.Seq2[*entity.En
 		return func(yield func(*entity.Entity, error) bool) { yield(nil, err) }
 	}
 	return func(yield func(*entity.Entity, error) bool) {
-		candidates, err := collectByType(ctx, r, q)
+		candidates, err := collectByType(ctx, r, q, nil)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -275,7 +276,7 @@ func Count(ctx context.Context, r Reader, q store.GraphQuery) (matched, total in
 	if shapeErr := CheckEndpointShape(q); shapeErr != nil {
 		return 0, 0, shapeErr
 	}
-	candidates, err := collectByType(ctx, r, q)
+	candidates, err := collectByType(ctx, r, q, nil)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -309,8 +310,11 @@ func MatchingFaces(ctx context.Context, r Reader, q store.GraphQuery, ids []stri
 		return out, nil
 	}
 	// The same candidates Run ranks, so an Any branch's face set trims the
-	// faces BEFORE the world picks the prime here too (BUG-2SKLD3).
-	cands, err := collectByType(ctx, r, q)
+	// faces BEFORE the world picks the prime here too (BUG-2SKLD3). They are
+	// read for the candidate ids only: a world ranks each id's faces on
+	// their own, so leaving the other ids out changes no prime, and the read
+	// costs len(ids) rather than the whole type (TKT-F2EJQY8).
+	cands, err := collectByType(ctx, r, q, slices.Sorted(maps.Keys(want)))
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +337,8 @@ func MatchingFaces(ctx context.Context, r Reader, q store.GraphQuery, ids []stri
 }
 
 // collectByType seeds the candidate set: the entities the query may
-// RETURN, so it carries the selection (store.GraphQuery.Faces). The relation
+// RETURN, so it carries the selection (store.GraphQuery.Faces). A non-empty
+// ids restricts the candidates to those entities; nil reads the whole type. The relation
 // walks in matches() deliberately do NOT — who an entity is related to
 // must not depend on the reader's world.
 //
@@ -348,13 +353,13 @@ func MatchingFaces(ctx context.Context, r Reader, q store.GraphQuery, ids []stri
 // backend that drops it FAILS OPEN (store.EntityQuery.FaceIn) — a principal
 // granted `read: [page@published]` would match the draft face here while the
 // plain list beside it correctly hid it.
-func collectByType(ctx context.Context, r Reader, q store.GraphQuery) ([]*entity.Entity, error) {
+func collectByType(ctx context.Context, r Reader, q store.GraphQuery, ids []string) ([]*entity.Entity, error) {
 	if w, ok := q.Faces.World(); ok && len(q.Any) > 0 && !w.IsTrivial() {
-		return collectBranchPrimes(ctx, r, q, w)
+		return collectBranchPrimes(ctx, r, q, w, ids)
 	}
 	var out []*entity.Entity
 	for e, err := range r.ListEntities(ctx, store.EntityQuery{
-		Type: q.EntityType, Faces: q.Faces, FaceIn: q.FaceIn,
+		Type: q.EntityType, IDs: ids, Faces: q.Faces, FaceIn: q.FaceIn,
 	}) {
 		if skipUnreadable(q, err) {
 			continue
@@ -394,13 +399,13 @@ func skipUnreadable(q store.GraphQuery, err error) bool {
 // backends put it in the same WHERE clause the world's DISTINCT ON ranks
 // over, and this is the in-Go equivalent.
 func collectBranchPrimes(
-	ctx context.Context, r Reader, q store.GraphQuery, w store.WorldScope,
+	ctx context.Context, r Reader, q store.GraphQuery, w store.WorldScope, ids []string,
 ) ([]*entity.Entity, error) {
 	rows := map[string]*entity.Entity{}
 	var cands []store.WorldCandidate
 	branchHolds := map[string][]bool{} // per id, per branch: the relation half
 	for e, err := range r.ListEntities(ctx, store.EntityQuery{
-		Type: q.EntityType, Faces: store.AllFaces(), FaceIn: q.FaceIn,
+		Type: q.EntityType, IDs: ids, Faces: store.AllFaces(), FaceIn: q.FaceIn,
 	}) {
 		if skipUnreadable(q, err) {
 			continue

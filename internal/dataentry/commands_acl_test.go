@@ -129,3 +129,53 @@ func TestCommandExec_RedactsHiddenPropertyValue(t *testing.T) {
 		t.Errorf("expected the visible property in the payload, got: %s", body)
 	}
 }
+
+// A list-context command gets the rows the list would show its principal:
+// row-gated, with bodies, and redacted (TKT-F2EJQY8, BUG-2TPO2F).
+func TestCommandExec_ListContextIsGatedAndRedacted(t *testing.T) {
+	app := newHandlerTestApp(t)
+	bindRepo(app, t.TempDir())
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{
+		Visible: map[string]bool{"status": false},
+	}})
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-ACL1", Type: "ticket",
+		Properties: map[string]any{"title": "visible title", "status": "SECRET-STATUS"},
+		Content:    "listed body",
+	})
+	app.Cfg().Commands = map[string]CommandConfig{
+		"echo-list": {Label: "Echo list", Script: "cat", Context: "list", Permission: "command:allowed"},
+	}
+	d := mustNewACL(t, &acl.Policy{
+		Roles: map[string]acl.RoleDef{
+			"viewer":  {Read: []string{"ticket"}, Permissions: []string{"command:allowed"}},
+			"nothing": {Permissions: []string{"command:allowed"}},
+		},
+		Assignments: map[string]string{"alice": "viewer", "bob": "nothing"},
+	}, app.store)
+	setTestACL(t, app, d)
+
+	rec := execCommandAs(aliceCtx(), t, app, d, "/api/command/echo-list?list_id=tickets")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("alice: got %d, want 200; body=%s", rec.Code, rec.Body)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "SECRET-STATUS") {
+		t.Errorf("LEAK: hidden property value reached the list payload: %s", body)
+	}
+	for _, want := range []string{"visible title", "listed body"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected %q in the list payload, got: %s", want, body)
+		}
+	}
+
+	rec = execCommandAs(principalCtx("bob"), t, app, d, "/api/command/echo-list?list_id=tickets")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bob: got %d, want 200; body=%s", rec.Code, rec.Body)
+	}
+	for _, secret := range []string{"visible title", "listed body", "TKT-ACL1"} {
+		if strings.Contains(rec.Body.String(), secret) {
+			t.Errorf("LEAK: a row bob may not read reached the list payload (%q): %s", secret, rec.Body)
+		}
+	}
+}

@@ -280,3 +280,47 @@ func TestCompileViewConditions_NavStatusInSpace(t *testing.T) {
 	require.Len(t, problems, 1)
 	require.Contains(t, problems[0], `spaces[crm].navigation["Mijn taken"].status[0]: condition does not compile`)
 }
+
+// An llm action's relate candidates compile once per target type
+// (TKT-4USH1HO).
+func TestCompileViewConditions_LLMCandidates(t *testing.T) {
+	meta := vcMeta()
+	meta.Relations = map[string]metamodel.RelationDef{"links": {From: []string{"taak"}, To: []string{"taak"}}}
+	action := func(cand string) dataentryconfig.Action {
+		return dataentryconfig.Action{
+			AvailableOn: &dataentryconfig.ActionScope{EntityTypes: []string{"taak"}},
+			LLM: &dataentryconfig.LLMAction{Outputs: dataentryconfig.LLMOutputs{
+				Relate: []dataentryconfig.LLMRelateOutput{{Relation: "links", Candidates: cand}},
+			}},
+		}
+	}
+	key := ViewConditionKey{ViewConditionLLMCandidate, dataentryconfig.LLMCandidateConditionID("ai", 0, "taak")}
+	tests := []struct {
+		name     string
+		cand     string
+		wantProg bool
+		wantProb string
+	}{
+		{name: "compiles", cand: "entity.status ~= 'gereed'", wantProg: true},
+		{name: "empty is absent", cand: ""},
+		{name: "unknown property", cand: "entity.nope == 1", wantProb: "candidates does not compile"},
+		{name: "related refused", cand: "related(entity, 'links')", wantProb: "is not available in llm.outputs"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &dataentryconfig.Config{Actions: map[string]dataentryconfig.Action{"ai": action(tc.cand)}}
+			progs, problems := CompileViewConditions(cfg, meta)
+			if tc.wantProb != "" {
+				require.Len(t, problems, 1)
+				require.Contains(t, problems[0], tc.wantProb)
+				return
+			}
+			require.Empty(t, problems)
+			_, has := progs[key]
+			require.Equal(t, tc.wantProg, has)
+			if has {
+				require.Equal(t, "taak", entityTypeFor(cfg, key))
+			}
+		})
+	}
+}
