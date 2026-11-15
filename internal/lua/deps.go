@@ -442,6 +442,13 @@ type WriteDeps struct {
 	// renders and export_render leave it nil, because a render there would
 	// run inside another write or render.
 	AttachRender AttachRenderer
+
+	// AttachFile backs rela.attach_file (TKT-36DHKH8). It acts as the ctx
+	// principal, like AttachRender.
+	//
+	// Nil: accepted, and the binding is then absent. It is set where
+	// AttachRender is, for the same reason.
+	AttachFile AttachFiler
 }
 
 // ElevatedUpdater is the scoped elevated update handle behind
