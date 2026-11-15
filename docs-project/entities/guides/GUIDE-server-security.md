@@ -796,9 +796,9 @@ with an `acl.yaml` never need this flag.
 > pass `--allow-unauthenticated-commands`. This is deliberate — the old
 > default exposed unauthenticated shell execution to the network.
 
-### Remote MCP exposes every tool except Lua
+### Remote MCP serves every tool except Lua, unless limited
 
-`-mcp` (see [mcp-server.md](mcp-server.md#remote-mcp-over-http)) serves the
+Remote MCP (see [mcp-server.md](mcp-server.md#remote-mcp-over-http)) serves the
 MCP tool set over HTTP, except the Lua tools (`lua_eval`, `lua_run`,
 `lua_list`). A script is caller-supplied code that runs in the server process,
 so a remote caller could use it to exhaust server resources. Lua tools are
@@ -808,8 +808,21 @@ authorized by the same ACL as the web API, and audited as the requesting
 principal — so a remote caller can do exactly what that person could do
 through the UI, no more.
 
-Apart from Lua there is no per-transport allowlist: a new tool added for local
-stdio use becomes remotely reachable the moment `-mcp` is on.
+The endpoint is on when no source turns it off and at least one turns it on.
+The sources are the `-mcp` flag, `RELA_MCP`, and `remote_mcp.enabled` in
+`.rela/config.yaml`. An off from any of them wins, so on an instance that must
+never serve MCP, write `remote_mcp.enabled: false` in its config file. A flag
+or variable added to the environment later cannot turn it back on. See
+[Turning it on and off](mcp-server.md#turning-it-on-and-off).
+
+`remote_mcp.tools` limits the tools the endpoint serves, with an `allow` list,
+a `deny` list, or both (see
+[Limiting the tools](mcp-server.md#limiting-the-tools)). An unknown tool name
+stops startup, so a typo cannot leave a tool on. Without a list, every tool
+except Lua is served, and a new tool added in a later release becomes remotely
+reachable on upgrade. Use `allow` for an endpoint that must not write. The
+filter does not limit reads: MCP resources and prompts still read what the
+caller's ACL allows, so `acl.yaml` remains the read boundary.
 
 Two related gaps, both deliberate and tracked:
 

@@ -26,14 +26,17 @@ paths:
   per row). When the request's shape allows it, the list handler pushes paging,
   ordering and equality filters into `store.GraphQuery` (`listpushdown.go`) and
   takes the scoped count through `store.CountMatched`, never `GraphCount`'s
-  total. A query scope or a list `condition:` joins that pushdown only when
-  `queryplan.LowerCondition` lowers it EXACTLY (TKT-XKCNCL, TKT-I39Y7N4):
-  nothing re-checks a pushed predicate, so a superset pre-filter is not
-  enough, and one that does not lower keeps the Go path. A condition is judged
-  on the redacted row, so it is pushed only when every field it reads is
-  visible on every row to the principal. `queryplan.LowerScope` stays the
-  stricter lowering for `visible:`. Traversals ride in `GraphQuery.Related`,
-  never in `HasInbound`/`HasOutbound`, which belong to the ACL read gate. New read
+  total. A read whose rows are already named by ids (a page scope's rows, the
+  `?q=` hits) sets `scopeRequest.ByIDs`: one `MatchingFaces` call and a header
+  read per face, never a scan of the type (TKT-F2EJQY8). A query scope or a
+  list `condition:` joins that pushdown only when `queryplan.LowerCondition`
+  lowers it EXACTLY (TKT-XKCNCL, TKT-I39Y7N4): nothing re-checks a pushed
+  predicate, so a superset pre-filter is not enough, and one that does not
+  lower keeps the Go path. A condition is judged on the redacted row, so it is
+  pushed only when every field it reads is visible on every row to the
+  principal. `queryplan.LowerScope` stays the stricter lowering for
+  `visible:`. Traversals ride in `GraphQuery.Related`, never in
+  `HasInbound`/`HasOutbound`, which belong to the ACL read gate. New read
   paths pin their cost with a `storetest.Counting` budget test
   asserting the calls are the same at 10 and 50 rows, and the rows read are
   the same over a store of 100 and of 1,000 entities
