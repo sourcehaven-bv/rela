@@ -141,21 +141,30 @@ func (b *SharedBase) luaSeams() lua.Seams {
 		Clock:      s.clock,
 		HTTPClient: s.http,
 		AI:         s.ai,
-		Mail:       luaMailLoader(s.mail),
+		Mail:       luaMailLoader(s.mail, b.opts.withheld != ""),
 		OutputDir:  s.outputDir,
 	}
 }
 
 // luaMailLoader returns the mail.send loader over transport: mail.yaml is
 // parsed as usual, so the sender address, base URL and recipients policy
-// apply, and only the transport is replaced. Nil when transport is nil, so
-// mail.yaml's own transport is used.
-func luaMailLoader(transport mail.Sender) lua.MailSenderLoader {
+// apply, and only the transport is replaced. Nil when transport is nil and
+// nothing is withheld, so mail.yaml's own transport is used.
+//
+// withheld is whether the host config is a [withheldHost]. The loader then
+// reads mail through [mailHost], so mail.send keeps the host's transport
+// and its SMTP password.
+func luaMailLoader(transport mail.Sender, withheld bool) lua.MailSenderLoader {
 	if transport == nil {
-		return nil
+		if !withheld {
+			return nil
+		}
+		return func(host lua.HostConfig) (lua.MailSender, error) {
+			return mail.LoadLuaSender(mailHost(host))
+		}
 	}
 	return func(host lua.HostConfig) (lua.MailSender, error) {
-		cfg, err := mail.LoadConfigFrom(host)
+		cfg, err := mail.LoadConfigFrom(mailHost(host))
 		switch {
 		case errors.Is(err, mail.ErrConfigNotFound):
 			return nil, nil // mail is not configured; see lua.MailSenderLoader.

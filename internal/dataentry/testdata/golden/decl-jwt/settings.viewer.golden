@@ -1,9 +1,9 @@
 request: GET /api/v1/_settings
 identity: signed assertion for viewer@example.test
 status: 200
-reads: GraphQueryHeaders=3 ListEntityHeaders=1 ListRelations=4 MatchingFaces=4
-breadth: ListEntityHeaders=0/1 ListRelations=7/4 MatchingFaces=12/4
-bodies: GraphQuery=4/3 ListEntityHeaders=0/1
+reads: GraphQueryHeaders=1 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GraphQuery=0/1
 versions: 
 body (allProperties, allRelations, entityTypes sorted):
 {
@@ -81,49 +81,24 @@ body (allProperties, allRelations, entityTypes sorted):
       "name": "contains",
       "label": "",
       "targetType": "ticket",
-      "targets": [
-        {
-          "id": "TKT-1",
-          "title": "Alpha"
-        },
-        {
-          "id": "TKT-2",
-          "title": "Bravo"
-        },
-        {
-          "id": "TKT-3",
-          "title": "Charlie"
-        }
+      "targetTypes": [
+        "ticket"
       ]
     },
     {
       "name": "implements",
       "label": "",
       "targetType": "policy",
-      "targets": [
-        {
-          "id": "POL-1",
-          "title": "Access"
-        }
+      "targetTypes": [
+        "policy"
       ]
     },
     {
       "name": "watches",
       "label": "",
       "targetType": "ticket",
-      "targets": [
-        {
-          "id": "TKT-1",
-          "title": "Alpha"
-        },
-        {
-          "id": "TKT-2",
-          "title": "Bravo"
-        },
-        {
-          "id": "TKT-3",
-          "title": "Charlie"
-        }
+      "targetTypes": [
+        "ticket"
       ]
     }
   ],

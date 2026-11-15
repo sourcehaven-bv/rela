@@ -8104,8 +8104,9 @@ The Settings page is accessible from the sidebar (gear icon at the bottom). It h
 type (text input, dropdown, date picker, etc.) matches the property's type. For enum/custom types,
 a dropdown shows the allowed values.
 
-**Relation Defaults** — Set a default target entity for any relation type. When creating a new
-entity, the relation will be pre-filled with this target.
+**Relation Defaults** — Set a default target entity for any relation type. Choose the target
+by searching its title or ID among the relation's target types. When creating a new entity, the
+relation will be pre-filled with this target.
 
 **Overrides** — Scope defaults to specific entity types. For example, set `priority: critical`
 only when creating tickets, while leaving the global default as `medium`.

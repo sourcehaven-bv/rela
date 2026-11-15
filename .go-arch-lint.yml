@@ -86,6 +86,8 @@ components:
   backendtest:      { in: internal/appbuild/backendtest }
   tenant:           { in: internal/tenant }
   tenanthost:       { in: internal/tenanthost }
+  # Reads an org's status from the IdP operator API (TKT-TNPRV8).
+  idporg:           { in: internal/idporg }
 
   # Domain services
   analysis:         { in: internal/analysis }
@@ -121,6 +123,8 @@ components:
   # changed rows and writes them through entitymanager. The scheduler and
   # `rela remote pull` run it.
   remotesync:       { in: internal/remotesync }
+  # Mapping-file import (TKT-K7HR49Y): structured data to a write plan.
+  mapimport:        { in: internal/mapimport }
   # Which entity ids a markdown body mentions (TKT-Q6AKUN). A leaf: every store
   # backend indexes with it and the data-entry renderer links with it, so the
   # backlink index and the rendered links agree on what counts as a mention.
@@ -521,6 +525,8 @@ deps:
       # tenant, tenanthost: the multi-tenant host (TKT-D6MF3SW) is wired here.
       - tenant
       - tenanthost
+      # idporg: tenant mode reads org status from the IdP (TKT-TNPRV8).
+      - idporg
     canUse:
       - http2
   cmdDesktop:
@@ -614,6 +620,8 @@ deps:
       - flow
       - flowengine
       - importer
+      # `rela import --mapping` plans and applies a mapping-file import.
+      - mapimport
       # `rela lease` (TKT-B610IP) speaks its request, lease and error types;
       # the access checks stay in lease.Service.
       - lease
@@ -1165,11 +1173,14 @@ deps:
   # tenant registry and serves that tenant's data-entry router. It names
   # dataentry for the verified-identity types and the static shell, and
   # tenant for its sentinel error. The registry itself is reached through a
-  # consumer-side func, wired in cmd/rela-server.
+  # consumer-side func, wired in cmd/rela-server. It uses x/time/rate to cap
+  # how many tenant creations start per minute (TKT-TNPRV8).
   tenanthost:
     mayDependOn:
       - dataentry
       - tenant
+    canUse:
+      - xtimerate
   appbuildtest:
     mayDependOn:
       - acl
@@ -1220,6 +1231,8 @@ deps:
       - subscription
       # `rela validate` checks remotes.yaml.
       - remotesync
+      # `rela validate` checks imports/*.yaml.
+      - mapimport
       # The scheduler's loader reads through a config.Loader.
       - config
       # `rela validate` checks connections.yaml (TKT-01KZSO).
@@ -1325,6 +1338,18 @@ deps:
       - safexml
       - secrets
       - state
+  # Decodes a file, plans against raw rows gated per row, and applies the
+  # plan through a consumer-side Writer (entitymanager at the wiring site).
+  # The hook runs on a bare lua sandbox with no rela bindings.
+  mapimport:
+    mayDependOn:
+      - ingest
+      - lua
+      - metamodel
+      - safexml
+      - store
+    canUse:
+      - gopherlua
   # Mapping.Validate checks types and properties against the schema.
   ingestspec:
     mayDependOn:
