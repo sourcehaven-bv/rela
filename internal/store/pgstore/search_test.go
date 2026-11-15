@@ -58,15 +58,16 @@ func searchIDs(t *testing.T, b *pgstore.SearchBackend, text string) []string {
 	return ids
 }
 
-// Ranking looks at the identity/title prefix of search_text, not the body:
-// an entity whose TITLE carries the word outranks one that only mentions it
-// deep in a long body, and the body-only entity still matches (TKT-1U8XYN).
+// Ranking looks at the title, not the body: an entity whose TITLE carries the
+// word outranks one that only mentions it deep in a long body, and the
+// body-only entity still matches (TKT-1U8XYN).
 func TestSearch_RanksTitleMatchAboveBodyMention(t *testing.T) {
 	pool := newScopedPool(t)
 	backend := pgstore.NewSearchBackend(pool)
 	st, err := pgstore.New(pool, pgstore.WithObserver(backend))
 	require.NoError(t, err)
 	ctx := context.Background()
+	require.NoError(t, pgstore.SyncSearchTitles(ctx, pool, pgstore.SearchTitles{"note": "title"}))
 
 	body := entity.New("N-1", "note")
 	body.SetString("title", "Quarterly review")
@@ -92,10 +93,11 @@ func TestSearch_RanksTitleMatchAboveBodyMention(t *testing.T) {
 func TestSearch_RanksByConfiguredTitle(t *testing.T) {
 	pool := newScopedPool(t)
 	titles := pgstore.SearchTitles{"note": "title", "person": "name"}
-	backend := pgstore.NewSearchBackend(pool).RankByTitles(titles)
-	st, err := pgstore.New(pool, pgstore.WithObserver(backend), pgstore.WithSearchTitles(titles))
+	backend := pgstore.NewSearchBackend(pool)
+	st, err := pgstore.New(pool, pgstore.WithObserver(backend))
 	require.NoError(t, err)
 	ctx := context.Background()
+	require.NoError(t, pgstore.SyncSearchTitles(ctx, pool, titles))
 
 	mk := func(id, typ, prop, value, content string) {
 		e := entity.New(id, typ)

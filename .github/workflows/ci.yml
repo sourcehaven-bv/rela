@@ -723,7 +723,7 @@ jobs:
       RELA_E2E_DATABASE_URL: postgres://rela@127.0.0.1:5432/rela_e2e?sslmode=disable
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17
         env:
           POSTGRES_USER: rela
           POSTGRES_DB: rela_e2e
@@ -1107,7 +1107,7 @@ jobs:
       RELA_TEST_DATABASE_REQUIRED: "1"
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17
         env:
           POSTGRES_USER: rela
           POSTGRES_DB: rela_test

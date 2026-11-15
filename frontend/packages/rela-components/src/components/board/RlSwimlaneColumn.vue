@@ -51,6 +51,8 @@ const emit = defineEmits<{
 
 defineSlots<{
   card?: (props: { item: T; selected: boolean }) => unknown
+  /** Below the cards, such as a quick-add input. A collapsed cell has none. */
+  footer?: (props: { section: Section<T> }) => unknown
 }>()
 
 const element = ref<HTMLElement>()
@@ -133,6 +135,8 @@ const cellTitle = computed(() =>
       </RlBoardCard>
     </template>
 
+    <slot v-if="!collapsed" name="footer" :section="section" />
+
     <!--
       The label names the lane as well as the section, because a swimlane
       board repeats one add control per lane per column: "Add task" alone
@@ -143,7 +147,13 @@ const cellTitle = computed(() =>
       v-if="showAdd && !collapsed"
       class="rl-swimlane-column__add"
       :label="addLabel ?? messages.chromeText({ key: 'add' })"
-      :aria-label="messages.addToSection({ addLabel: addLabel ?? messages.chromeText({ key: 'add' }), section: section.title, lane: laneTitle })"
+      :aria-label="
+        messages.addToSection({
+          addLabel: addLabel ?? messages.chromeText({ key: 'add' }),
+          section: section.title,
+          lane: laneTitle,
+        })
+      "
       @click="emit('add', section)"
     />
   </div>
@@ -188,11 +198,15 @@ const cellTitle = computed(() =>
   visibility: hidden;
 }
 
-.rl-swimlane-column__add:focus-visible { visibility: visible; }
+.rl-swimlane-column__add:focus-visible {
+  visibility: visible;
+}
 
 @media (pointer: coarse) {
   /* No hover to reveal it with. */
-  .rl-swimlane-column__add { visibility: visible; }
+  .rl-swimlane-column__add {
+    visibility: visible;
+  }
 }
 
 /*
@@ -200,7 +214,9 @@ const cellTitle = computed(() =>
  * padding rather than a fixed width; `fit-content` on an empty box is zero,
  * so the width comes from the board instead.
  */
-.rl-swimlane-column--collapsed { width: var(--rl-swimlane-collapsed-width); }
+.rl-swimlane-column--collapsed {
+  width: var(--rl-swimlane-collapsed-width);
+}
 
 /* The cell a held card would land in. See `RlBoardColumn` for the reasoning. */
 .rl-swimlane-column::before {
@@ -211,7 +227,9 @@ const cellTitle = computed(() =>
   border: 1px dashed transparent;
   border-radius: var(--rl-radius-lg);
   opacity: 0;
-  transition: opacity var(--rl-duration-fast) var(--rl-ease), background-color var(--rl-duration-fast) var(--rl-ease);
+  transition:
+    opacity var(--rl-duration-fast) var(--rl-ease),
+    background-color var(--rl-duration-fast) var(--rl-ease);
   pointer-events: none;
 }
 
@@ -225,17 +243,23 @@ const cellTitle = computed(() =>
  * An empty cell has no height of its own, so a lane with nothing in one
  * column would light up a sliver. This gives the well something to be.
  */
-.rl-swimlane-column--target { min-height: var(--rl-space-10, 48px); }
+.rl-swimlane-column--target {
+  min-height: var(--rl-space-10, 48px);
+}
 
 /*
  * Hidden while the cell is a drop target. The control is revealed by the
  * lane's hover, and a card dragged over the cell counts as hovering it, so
  * without this an "Add task" appears under every held card.
  */
-.rl-swimlane-column--target .rl-swimlane-column__add { visibility: hidden; }
+.rl-swimlane-column--target .rl-swimlane-column__add {
+  visibility: hidden;
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .rl-swimlane-column::before { transition: none; }
+  .rl-swimlane-column::before {
+    transition: none;
+  }
 }
 
 /*
@@ -280,8 +304,12 @@ const cellTitle = computed(() =>
   border-radius: var(--rl-radius-lg);
   background: var(--rl-color-bg);
 }
-.rl-swimlane-column__card:hover { background: var(--rl-color-bg-hover); }
-.rl-swimlane-column__card--selected { border-color: var(--rl-color-accent); }
+.rl-swimlane-column__card:hover {
+  background: var(--rl-color-bg-hover);
+}
+.rl-swimlane-column__card--selected {
+  border-color: var(--rl-color-accent);
+}
 
 .rl-swimlane-column__card-button {
   padding: 0;

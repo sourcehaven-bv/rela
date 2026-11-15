@@ -25,3 +25,21 @@ func TestScriptReader_ListEntityPage_NoIdentityFailsClosed(t *testing.T) {
 		t.Errorf("err = %v, want acl.ErrNoIdentity", err)
 	}
 }
+
+// A traversal read without a bound identity fails with the identity error,
+// not ErrPropsNotPushable: a caller must not fall back to another path for
+// a read that has no caller.
+func TestScriptReader_ListEntityPage_TraversalNoIdentityFailsClosed(t *testing.T) {
+	t.Parallel()
+	f := newPageFixture(t, 5)
+	ctx := principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolMCP})
+	page, err := f.sr.ListEntityPage(ctx, visibility.PageQuery{
+		Type: "ticket", Faces: store.AllFaces(), Traversals: assigned(false), Limit: 5,
+	})
+	if len(page.Rows) != 0 || page.Total != 0 {
+		t.Fatalf("an unbound read served %d rows of %d", len(page.Rows), page.Total)
+	}
+	if !errors.Is(err, acl.ErrNoIdentity) || errors.Is(err, visibility.ErrPropsNotPushable) {
+		t.Errorf("err = %v, want acl.ErrNoIdentity alone", err)
+	}
+}

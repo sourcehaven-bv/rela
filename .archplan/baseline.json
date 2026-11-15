@@ -2774,7 +2774,7 @@
       "weight.types": 4203,
       "weight.concepts": 7276,
       "weight.boundaries": 1473,
-      "weight.data": 1297,
+      "weight.data": 1298,
       "weight.security": 2064,
       "largest_tangle": 14,
       "cycle_edges": 67,
@@ -3165,6 +3165,17 @@
           "propagation_cost": [
             9.3,
             9.4
+          ]
+        }
+      },
+      {
+        "at": "2026-11-14T17:00:00Z",
+        "change": "loosen",
+        "reason": "TKT-M58EQ1W: pgstore's search_title trigger and heal pass add write sites to the entities table, which pgstore already writes; the shared_table finding for entities weighs one more.",
+        "metrics": {
+          "weight.data": [
+            1297,
+            1298
           ]
         }
       }

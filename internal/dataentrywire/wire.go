@@ -100,8 +100,16 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 	if err != nil {
 		return fmt.Errorf("wire attach_render: %w", err)
 	}
-	if err := appbuild.SetAttachRenderer(svc, renderer); err != nil {
+	if err = appbuild.SetAttachRenderer(svc, renderer); err != nil {
 		return fmt.Errorf("wire attach_render: %w", err)
+	}
+	// rela.attach_file for the same scripts (TKT-36DHKH8).
+	filer, err := dataentry.AttachFiler(app)
+	if err != nil {
+		return fmt.Errorf("wire attach_file: %w", err)
+	}
+	if err = appbuild.SetAttachFiler(svc, filer); err != nil {
+		return fmt.Errorf("wire attach_file: %w", err)
 	}
 
 	// The reconcile endpoint (TKT-VP02WHG). A build failure is returned, not

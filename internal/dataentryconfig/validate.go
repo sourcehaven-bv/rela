@@ -2539,6 +2539,8 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 
 		errs = append(errs, validateKanbanColumnSummary(kanbanID, kanban, entDef)...)
 		errs = append(errs, validateKanbanCellColors(kanbanID, kanban, entDef, meta, cfg)...)
+		errs = append(errs, validateKanbanQuickAdd(kanbanID, kanban, entDef, meta)...)
+		errs = append(errs, validateKanbanAddColumn(kanbanID, kanban, entDef)...)
 
 		// `condition:` is accepted on the struct (shared with lists) but the
 		// board does not evaluate it yet — it still filters client-side. A
