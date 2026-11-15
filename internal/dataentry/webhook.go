@@ -80,8 +80,7 @@ type webhookReceiver struct {
 
 // webhookOrgHandler handles a verified `organization.*` event (TKT-2R2RW5H).
 // These events name a tenant and no user, so they do not go to the per-user
-// action. Tenant provisioning (TKT-TNPRV8) and erasure (TKT-TNERAS) implement
-// it. An error answers 502 so the IdP retries, as an action failure does.
+// action. An error answers 502 so the IdP retries, as an action failure does.
 //
 // ctx is the request context: it carries no principal, no ACL request and no
 // deadline beyond the request's own. An implementation that writes stamps its
@@ -92,9 +91,11 @@ type webhookOrgHandler interface {
 	HandleOrgEvent(ctx context.Context, claims WebhookClaims) error
 }
 
-// logOrgEvents is the organization handler until TKT-TNPRV8 replaces it.
-// It logs the event and acknowledges it, so the IdP does not retry an event
-// rela does not act on. The org id names a tenant, not a person, so it is
+// logOrgEvents is the organization handler. It logs the event and
+// acknowledges it, so the IdP does not retry an event the app does not act
+// on. Provisioning does not happen here: in tenant mode the tenant host
+// creates the tenant on `organization.created` before any tenant app exists
+// for it (TKT-TNPRV8, package tenanthost). The org id names a tenant, not a person, so it is
 // logged.
 type logOrgEvents struct{}
 

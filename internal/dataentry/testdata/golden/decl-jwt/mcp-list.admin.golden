@@ -1,9 +1,9 @@
 request: POST /api/v1/_mcp
 identity: signed assertion for admin@example.test
 status: 200
-reads: GraphQueryHeaders=1 ListEntities=1 ListRelations=2 MatchingFaces=1
-breadth: ListEntities=0/1 ListRelations=6/2 MatchingFaces=6/1
-bodies: GraphQuery=0/1 ListEntities=4/1
+reads: CountMatched=1 GraphQueryHeaders=2 ListRelations=2 MatchingFaces=1
+breadth: ListRelations=6/2 MatchingFaces=6/1
+bodies: GraphQuery=4/2
 versions: 
 body:
 event: message

@@ -50,6 +50,20 @@ func Retire(a *App) {
 	}
 }
 
+// DisableGitSync turns off git sync on an app whose config enabled it, so
+// /api/git/status reports git as unavailable and /api/git/sync answers as
+// when git is not configured. Tenant mode calls it: the project root is
+// shared by every tenant, so a sync would commit and push for all of them.
+// Call it before StartWatching, which starts the periodic fetch, and
+// before NewRouter. It reports whether git sync was on.
+//
+// A free function for the reason [SetConfigure] gives.
+func DisableGitSync(a *App) bool {
+	on := a.gitOps != nil
+	a.gitOps = nil
+	return on
+}
+
 // mayConfigure reports whether the request's principal may use the Configure
 // API. It needs a real acl.yaml: without one every principal holds every
 // permission, and editing the configuration must never be that open.

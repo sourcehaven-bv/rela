@@ -635,6 +635,7 @@ type scriptEntityReaderFamily interface {
 	CountEntities(ctx context.Context, q store.EntityQuery) (int, error)
 	CountRelations(ctx context.Context, q store.RelationQuery) (int, error)
 	MentionedBy(ctx context.Context, target, after string, limit int) (visibility.MentionPage, error)
+	ListEntityPage(ctx context.Context, q visibility.PageQuery) (visibility.EntityPage, error)
 }
 
 // scriptReads returns the principal-bound script reader and the traversal gate
@@ -1007,6 +1008,9 @@ type GatedGraphReader interface {
 	// MentionedBy pages the readable entities whose body mentions target
 	// ([visibility.Resolver.MentionedBy]).
 	MentionedBy(ctx context.Context, target, after string, limit int) (visibility.MentionPage, error)
+	// ListEntityPage reads one gated page of a type and its gated total
+	// ([visibility.ScriptReader.ListEntityPage]).
+	ListEntityPage(ctx context.Context, q visibility.PageQuery) (visibility.EntityPage, error)
 }
 
 // gatedGraphReader composes the ACL-gated row reader with the raw store for
@@ -1089,6 +1093,12 @@ func (g gatedGraphReader) MentionedBy(
 	ctx context.Context, target, after string, limit int,
 ) (visibility.MentionPage, error) {
 	return g.rows.MentionedBy(ctx, target, after, limit)
+}
+
+func (g gatedGraphReader) ListEntityPage(
+	ctx context.Context, q visibility.PageQuery,
+) (visibility.EntityPage, error) {
+	return g.rows.ListEntityPage(ctx, q)
 }
 
 func (g gatedGraphReader) ListRelationsStrict(
@@ -1580,6 +1590,10 @@ type options struct {
 	// directory.
 	hostConfig func(state.KV) (HostConfig, error)
 
+	// withheld, when non-empty, withholds ai.yaml and the secrets of the
+	// host config; see [WithWithheldHostConfig].
+	withheld string
+
 	// backgroundAutomationJobs runs `background: true` automation actions
 	// on the job queue instead of in the foreground.
 	backgroundAutomationJobs bool
@@ -1671,6 +1685,19 @@ func WithDatabaseURL(dsn string) Option {
 // The desktop uses it to read secrets from the OS keychain.
 func WithHostConfig(build func(state.KV) (HostConfig, error)) Option {
 	return func(o *options) { o.hostConfig = build }
+}
+
+// WithWithheldHostConfig withholds the host's ai.yaml and secrets from the
+// project, for a host that serves many projects with one .rela directory
+// (tenant mode). Lua runtimes, flows and the token broker built from these
+// services then see [lua.ErrHostConfigWithheld] with reason, so ai.* and
+// rela.secrets fail with that reason instead of reading the operator's
+// credentials. mail.yaml and the mail outbox stay served: mail is the
+// host's transport, and its SMTP password stays with it.
+//
+// Empty: ignored — the host config is shared as usual.
+func WithWithheldHostConfig(reason string) Option {
+	return func(o *options) { o.withheld = reason }
 }
 
 // resolveDatabaseURL decides which DSN [Discover] hands to [New]: an explicit
@@ -2287,6 +2314,9 @@ func (b *SharedBase) IsReassembly() bool { return b.reassembly }
 // It carries prev's store schema refresher too: the caller applies the new
 // schema to the store with [RefreshStoreSchema] once the successor is in
 // force.
+// It keeps prev's [WithWithheldHostConfig] too. A reload builds its base
+// from the config alone, and withholding must not end with it: stdio MCP
+// in tenant mode reloads on every schema edit.
 //
 // Nil: rejected by use — prev is dereferenced.
 func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
@@ -2301,6 +2331,9 @@ func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
 	next.dueWake = prev.dueWake
 	if prev.base != nil {
 		next.channelFiles = prev.base.channelFiles
+		if next.opts.withheld == "" {
+			next.opts.withheld = prev.base.opts.withheld
+		}
 	}
 	next.storeSchema = prev.storeSchema
 	return &next
@@ -2362,15 +2395,21 @@ func NewSharedBase(cfg Config, opts ...Option) (*SharedBase, error) {
 // point may render.
 // hostConfigFor returns the host config for one assembled store: the
 // [WithHostConfig] source, else the project's .rela directory.
+//
+// Under [WithWithheldHostConfig] the source is wrapped in a [withheldHost].
 func (b *SharedBase) hostConfigFor(stateKV state.KV) (lua.HostConfig, error) {
+	var host lua.HostConfig = hostconfig.Dir(b.cfg.Paths.CacheDir)
 	if b.opts.hostConfig != nil {
-		host, err := b.opts.hostConfig(stateKV)
+		h, err := b.opts.hostConfig(stateKV)
 		if err != nil {
 			return nil, fmt.Errorf("host config: %w", err)
 		}
-		return host, nil
+		host = h
 	}
-	return hostconfig.Dir(b.cfg.Paths.CacheDir), nil
+	if b.opts.withheld != "" {
+		host = withheldHost{inner: host, err: fmt.Errorf("%s: %w", b.opts.withheld, lua.ErrHostConfigWithheld)}
+	}
+	return host, nil
 }
 
 func prepare(cfg Config, opts []Option) (*SharedBase, error) {
@@ -2765,7 +2804,7 @@ func startBackgroundServices(
 	// here: nothing can enqueue until the declarative layer (TKT-U2R7GU)
 	// lands, and storing a handle no code reads would look wired when it is
 	// not. Only the stop function is retained, because Close genuinely uses it.
-	mailRuntime, mailStop := startMailRuntime(host, base.opts.seams.mail)
+	mailRuntime, mailStop := startMailRuntime(mailHost(host), base.opts.seams.mail)
 
 	return backgroundServices{
 		gcStop:         gcStop,

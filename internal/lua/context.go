@@ -1,6 +1,7 @@
 package lua
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -37,6 +38,15 @@ type HostConfig interface {
 // not_configured error rather than by being missing.
 type MailSenderLoader func(host HostConfig) (MailSender, error)
 
+// ErrHostConfigWithheld is what a [HostConfig] returns for ai.yaml or the
+// secrets when the host has them but does not share them with this
+// project. Tenant mode withholds the operator's own credentials from every
+// tenant unless the operator opts in. Unlike an absent file, the runtime
+// still starts: ai.* returns a typed not_configured error and an index of
+// rela.secrets raises, both with the wrapping error's text, so the script
+// author learns why.
+var ErrHostConfigWithheld = errors.New("not shared with this project")
+
 // LoadContextOptions loads the AI provider, secrets and the mail transport
 // from host and returns them as runtime options. This is the single entry
 // point for all Lua callers (CLI, MCP, automation, actions) to load
@@ -67,6 +77,8 @@ func LoadContextOptions(host HostConfig, scriptPath string, mailLoader MailSende
 	switch {
 	case errors.Is(err, ai.ErrConfigNotFound):
 		// no AI configured
+	case errors.Is(err, ErrHostConfigWithheld):
+		opts = append(opts, WithAIProvider(withheldAI{reason: err.Error()}))
 	case err != nil:
 		return nil, fmt.Errorf("ai: %w", err)
 	default:
@@ -78,6 +90,8 @@ func LoadContextOptions(host HostConfig, scriptPath string, mailLoader MailSende
 		switch {
 		case errors.Is(secErr, secrets.ErrNotFound):
 			// no secrets configured
+		case errors.Is(secErr, ErrHostConfigWithheld):
+			opts = append(opts, withSecretsWithheld(secErr.Error()))
 		case secErr != nil:
 			return nil, fmt.Errorf("secrets: %w", secErr)
 		default:
@@ -117,6 +131,9 @@ func loadAIProvider(host HostConfig) (ai.Provider, error) {
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, ai.ErrConfigNotFound
 	}
+	if errors.Is(err, ErrHostConfigWithheld) {
+		return nil, err
+	}
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", ai.ConfigFile, err)
 	}
@@ -126,4 +143,18 @@ func loadAIProvider(host HostConfig) (ai.Provider, error) {
 	}
 	cfg.WithSecrets(func() (map[string]string, error) { return host.Secrets("") })
 	return ai.NewOpenAICompatProvider(cfg)
+}
+
+// withheldAI is the provider of a runtime whose host withholds ai.yaml.
+// Every call fails with a not_configured [ai.Error] that says why.
+type withheldAI struct{ reason string }
+
+// Chat refuses the call.
+func (p withheldAI) Chat(context.Context, ai.ChatRequest) (*ai.ChatResponse, error) {
+	return nil, &ai.Error{Kind: ai.ErrNotConfigured, Message: "AI is not available: " + p.reason}
+}
+
+// Embed refuses the call.
+func (p withheldAI) Embed(context.Context, ai.EmbedRequest) (*ai.EmbedResponse, error) {
+	return nil, &ai.Error{Kind: ai.ErrNotConfigured, Message: "AI is not available: " + p.reason}
 }

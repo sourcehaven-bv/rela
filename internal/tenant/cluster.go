@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -36,12 +37,28 @@ const ControlSchema = "rela_control"
 type Status string
 
 // The statuses a tenant moves through. Provisioning is set while `tenant
-// create` builds the schema; erasing is one-way.
+// create` builds the schema; erasing is one-way. Erased is the tombstone an
+// erasure leaves: the row keeps the org id, schema name, status and
+// timestamps, and no tenant data. Only `tenant create -recreate` turns it
+// back into a tenant, so automatic provisioning cannot undo an erasure.
 const (
 	StatusProvisioning Status = "provisioning"
 	StatusActive       Status = "active"
 	StatusSuspended    Status = "suspended"
 	StatusErasing      Status = "erasing"
+	StatusErased       Status = "erased"
+)
+
+// SuspendCause records who suspended a tenant, in the control table's
+// `suspended_by` column. It is empty when the tenant is not suspended, and
+// for a suspension recorded before the column existed.
+type SuspendCause string
+
+// The suspension causes. An IdP suspension is undone when the IdP
+// reactivates the org; an operator suspension only by an operator.
+const (
+	SuspendedByOperator SuspendCause = "operator"
+	SuspendedByIDP      SuspendCause = "idp"
 )
 
 // schemaPrefix starts every derived schema name, so a derived name can never
@@ -100,9 +117,13 @@ func checkOrgID(orgID string) error {
 
 // Record is one row of the control table, plus whether its schema exists.
 type Record struct {
-	OrgID        string
-	Schema       string
-	Status       Status
+	OrgID       string
+	Schema      string
+	Status      Status
+	SuspendedBy SuspendCause
+	// ErasedAt is when the erasure finished. It is zero unless Status is
+	// [StatusErased].
+	ErasedAt     time.Time
 	SchemaExists bool
 }
 
@@ -143,13 +164,25 @@ func newClusterResolver(base string, control controlReader, closer io.Closer) *C
 // other than active, and with [ErrSchemaCollision] an org whose derived
 // schema is recorded for another org. An active row whose schema is missing
 // is an integrity failure, reported as neither, so it maps to 503.
+//
+// A missing row also carries [ErrTenantAbsent], and a provisioning one
+// [ErrTenantProvisioning], so a host that provisions can tell them apart.
+// An erased row carries [ErrTenantErased] and neither of those, so a host
+// never provisions it again.
 func (r *ClusterResolver) Resolve(ctx context.Context, orgID string) (Tenant, error) {
 	rec, err := r.Lookup(ctx, orgID)
 	if err != nil {
 		return Tenant{}, err
 	}
-	if rec.Status == StatusSuspended || rec.Status == StatusProvisioning {
+	if rec.Status == StatusProvisioning {
+		return Tenant{}, fmt.Errorf("%w: %w: %w: org_id %q is %s",
+			ErrUnknownTenant, ErrTenantInactive, ErrTenantProvisioning, orgID, rec.Status)
+	}
+	if rec.Status == StatusSuspended {
 		return Tenant{}, fmt.Errorf("%w: %w: org_id %q is %s", ErrUnknownTenant, ErrTenantInactive, orgID, rec.Status)
+	}
+	if rec.Status == StatusErased {
+		return Tenant{}, fmt.Errorf("%w: %w: %q", ErrUnknownTenant, ErrTenantErased, orgID)
 	}
 	if rec.Status != StatusActive {
 		return Tenant{}, fmt.Errorf("%w: org_id %q is %s", ErrUnknownTenant, orgID, rec.Status)
@@ -178,7 +211,7 @@ func (r *ClusterResolver) Lookup(ctx context.Context, orgID string) (Record, err
 		return Record{}, fmt.Errorf("tenant: look up org_id %q: %w", orgID, err)
 	}
 	if !found {
-		return Record{}, fmt.Errorf("%w: %q", ErrUnknownTenant, orgID)
+		return Record{}, fmt.Errorf("%w: %w: %q", ErrUnknownTenant, ErrTenantAbsent, orgID)
 	}
 	if rec.OrgID != orgID {
 		return Record{}, fmt.Errorf("%w: org_id %q derives schema %q, which is recorded for another org",
