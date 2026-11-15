@@ -435,3 +435,29 @@ func TestCountPushdown_DenyAndScopeError(t *testing.T) {
 		t.Errorf("scope error = (ok=%v, err=%v), want (true, boom)", ok, err)
 	}
 }
+
+// TestListPushdown_DeclinesQueryWithIDs pins that a list naming ids is not
+// pushed down. A GraphQuery has no id filter, so the graph branch would
+// drop the ids and read every row of the type the caller may read.
+func TestListPushdown_DeclinesQueryWithIDs(t *testing.T) {
+	t.Parallel()
+	spy := seededSpy()
+	p := stubProvider{res: acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket"}}}
+	q := store.EntityQuery{Type: "ticket", IDs: []string{"TKT-2"}, Faces: store.InWorld(store.TrivialScope())}
+
+	if _, ok := listPushdown(context.Background(), p, spy, perRow((&countingRedactor{}).redact), q); ok {
+		t.Error("listPushdown took a query with ids; its graph branch has no id filter")
+	}
+	if _, ok, _ := countPushdown(context.Background(), p, spy, q); ok {
+		t.Error("countPushdown took a query with ids; its graph branch has no id filter")
+	}
+	if spy.graphCalls != 0 {
+		t.Errorf("GraphQuery calls = %d, want 0", spy.graphCalls)
+	}
+
+	// The allow branch keeps the ids on its EntityQuery, so it still pushes down.
+	allow := stubProvider{res: acl.ReadQueryResult{AllowAll: true}}
+	if _, ok := listPushdown(context.Background(), allow, spy, perRow((&countingRedactor{}).redact), q); !ok {
+		t.Error("listPushdown declined an allow-all query with ids; that branch keeps the ids")
+	}
+}

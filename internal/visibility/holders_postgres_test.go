@@ -70,4 +70,5 @@ func TestHolderLookup_GatedLikeList_Postgres(t *testing.T) {
 		_ = closer.Close()
 	})
 	assertHoldersLikeList(t, st)
+	assertFirstEqual(t, st)
 }

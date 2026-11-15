@@ -65,6 +65,10 @@ func RunGraphPositionTests(t *testing.T, f Factory) {
 		"world":      {EntityType: "ticket", Faces: store.InWorld(draftWorld), OrderBy: []store.OrderSpec{{Property: "due"}}},
 		"world only": {EntityType: "ticket", Faces: store.InWorld(draftOnly)},
 		"single row": {EntityType: "note", Faces: store.InWorld(store.TrivialScope())},
+		// A declared value order: "open" ranks before "done", the reverse
+		// of byte order, so a position that sorts byte-wise disagrees.
+		"ranked":      {EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "status", Values: []string{"open", "done"}}}, Faces: store.InWorld(store.TrivialScope())},
+		"ranked desc": {EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "status", Values: []string{"open", "done"}, Descending: true}}, Faces: store.InWorld(store.TrivialScope())},
 	}
 
 	for name, q := range queries {

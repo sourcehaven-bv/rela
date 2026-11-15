@@ -39,10 +39,10 @@ import (
 //
 // Its exported methods are the gated read surface every reader family
 // implements (appbuild's scriptEntityReaderFamily), a required interface
-// rather than a ratchet target. ListEntityPage (TKT-D9UO9Y4) took it from
-// 20 to 21.
+// rather than a ratchet target. ListEntityPage (TKT-D9UO9Y4) and
+// ListRelationsPage (TKT-P9QMEVI) took it over the line.
 //
-//plimsoll:max-exported-methods=21
+//plimsoll:max-exported-methods=22
 type ScriptReader struct {
 	reader Reader
 	res    *Resolver

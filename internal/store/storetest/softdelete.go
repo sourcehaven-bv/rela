@@ -120,6 +120,13 @@ func assertMarkedHidden(t *testing.T, s store.Store, attachments bool) {
 	require.NoError(t, err)
 	assert.Equal(t, 9, high, "HighestID must still count a marked id, or the next id would reuse it")
 
+	taken, err := s.IDTakenFolded(c, "feat-009", "")
+	require.NoError(t, err)
+	assert.True(t, taken, "IDTakenFolded must report a marked id, which create and rename refuse")
+	taken, err = s.IDTakenFolded(c, "feat-009", "FEAT-009")
+	require.NoError(t, err)
+	assert.False(t, taken, "IDTakenFolded must skip the marked family named by except")
+
 	gq := store.GraphQuery{EntityType: "feature", Faces: store.InWorld(store.TrivialScope())}
 	assert.Equal(t, []string{"FEAT-002"}, entityIDs(t, s.GraphQuery(c, gq)), "GraphQuery")
 	matched, total, err := s.GraphCount(c, gq)

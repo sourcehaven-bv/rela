@@ -2424,8 +2424,7 @@ func (c *ctxRecorder) record(ctx context.Context, method string) {
 
 // ctxSpyStore captures the ctx supplied to the EntityReader /
 // RelationReader methods Lua read bindings invoke. It embeds store.Store
-// because the runtime requires the full Store surface, but only the three
-// methods listed below are recorded.
+// because the runtime requires the full Store surface, but only the methods listed below are recorded.
 //
 // IMPORTANT: if a new Lua read binding starts calling a different Store
 // method (e.g. CountEntities, GetRelation, HighestID), ADD AN OVERRIDE
@@ -2452,6 +2451,11 @@ func (s *ctxSpyStore) ListRelations(ctx context.Context, q store.RelationQuery) 
 	return s.Store.ListRelations(ctx, q)
 }
 
+func (s *ctxSpyStore) ListRelationsPage(ctx context.Context, q store.RelationQuery) (store.Page[*entity.Relation], error) {
+	s.rec.record(ctx, "Store.ListRelationsPage")
+	return s.Store.ListRelationsPage(ctx, q)
+}
+
 // readStore is the consumer-side narrowed Store surface Lua read bindings
 // actually invoke today. ctxSpyStore must satisfy this so the test
 // declares which Store methods are recorded and tooling can flag drift.
@@ -2459,6 +2463,7 @@ type readStore interface {
 	GetAddress(ctx context.Context, addr string) (*entity.Entity, error)
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
+	ListRelationsPage(ctx context.Context, q store.RelationQuery) (store.Page[*entity.Relation], error)
 }
 
 var _ readStore = (*ctxSpyStore)(nil)

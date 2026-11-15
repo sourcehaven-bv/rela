@@ -1,6 +1,7 @@
 package dataentryconfig
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -22,15 +23,51 @@ import (
 // proposal, through the ordinary write APIs.
 type LLMAction struct {
 	// Prompt is the operator's instruction. Required.
-	Prompt string `yaml:"prompt"`
+	Prompt string `yaml:"prompt" json:"-"`
 	// Model overrides the model of ai.yaml. Empty uses the configured one.
-	Model string `yaml:"model,omitempty"`
+	Model string `yaml:"model,omitempty" json:"-"`
 	// MaxTokens caps the reply. Zero leaves it to the provider.
-	MaxTokens int `yaml:"max_tokens,omitempty"`
+	MaxTokens int `yaml:"max_tokens,omitempty" json:"-"`
 	// Inputs names the data rela sends with the prompt.
-	Inputs LLMInputs `yaml:"inputs"`
+	Inputs LLMInputs `yaml:"inputs" json:"-"`
 	// Outputs names what the model may propose.
-	Outputs LLMOutputs `yaml:"outputs"`
+	Outputs LLMOutputs `yaml:"outputs" json:"-"`
+	// Batch lets one run take several entities (TKT-I2SRNWR): the rows a
+	// list selection or a kanban board shows. Nil: the action runs on one
+	// entity only.
+	Batch *LLMBatch `yaml:"batch,omitempty" json:"batch,omitempty"`
+}
+
+// LLMBatch is the `batch:` block of an LLM action. A batch run sends every
+// row in one request and gets one proposal per row back. It supports
+// property outputs only, so inputs.related and outputs.relate are refused.
+type LLMBatch struct {
+	// Max caps the rows of one run. Zero means DefaultLLMBatchMax.
+	Max int `yaml:"max,omitempty"`
+}
+
+// MarshalJSON serves the effective row cap, so the SPA never applies the
+// default itself.
+func (b LLMBatch) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Max int `json:"max"`
+	}{b.EffectiveMax()})
+}
+
+// EffectiveMax is the effective row cap.
+func (b LLMBatch) EffectiveMax() int {
+	if b.Max == 0 {
+		return DefaultLLMBatchMax
+	}
+	return b.Max
+}
+
+// BatchMax is the row cap of a batch action, or 0 when a is not one.
+func (a Action) BatchMax() int {
+	if a.LLM == nil || a.LLM.Batch == nil {
+		return 0
+	}
+	return a.LLM.Batch.EffectiveMax()
 }
 
 // LLMInputs names the data an LLM action sends. Every value is read as the
@@ -107,6 +144,12 @@ const (
 	MaxLLMRelateMax   = 20
 	MaxLLMPromptChars = 16000
 	MaxLLMMaxTokens   = 32000
+	// DefaultLLMBatchMax and MaxLLMBatchMax bound the rows of a batch run.
+	DefaultLLMBatchMax = 20
+	MaxLLMBatchMax     = 50
+	// MaxLLMBatchContentChars caps the content one batch run can send:
+	// batch.max times inputs.content.max_chars.
+	MaxLLMBatchContentChars = 200000
 
 	LLMDirectionOutgoing = "outgoing"
 	LLMDirectionIncoming = "incoming"
@@ -259,7 +302,50 @@ func validateLLMAction(id string, action Action, meta *metamodel.Metamodel) []st
 		seenRel[r.Relation] = true
 		errs = append(errs, validateLLMRelateOutput(fmt.Sprintf("%s: outputs.relate[%d]", where, i), subject, r, meta)...)
 	}
+	for _, msg := range validateLLMBatch(llm) {
+		add("batch: %s", msg)
+	}
 	return errs
+}
+
+// validateLLMBatch checks the `batch:` block. A batch run sends its rows in
+// one request, so the per-row inputs that fan out (related entities,
+// candidates) are refused and the content budget covers every row.
+func validateLLMBatch(llm *LLMAction) []string {
+	b := llm.Batch
+	if b == nil {
+		return nil
+	}
+	var errs []string
+	if b.Max < 0 || b.Max > MaxLLMBatchMax {
+		errs = append(errs, fmt.Sprintf("max must be between 0 (the default, %d) and %d", DefaultLLMBatchMax, MaxLLMBatchMax))
+	}
+	if len(llm.Inputs.Related) > 0 {
+		errs = append(errs, "a batch action cannot have inputs.related")
+	}
+	if len(llm.Outputs.Relate) > 0 {
+		errs = append(errs, "a batch action cannot have outputs.relate")
+	}
+	if c := llm.Inputs.Content; c != nil {
+		if total := b.EffectiveMax() * c.ContentChars(); total > MaxLLMBatchContentChars {
+			errs = append(errs, fmt.Sprintf(
+				"max %d times inputs.content.max_chars %d is %d; at most %d are allowed (lower one of them)",
+				b.EffectiveMax(), c.ContentChars(), total, MaxLLMBatchContentChars))
+		}
+	}
+	return errs
+}
+
+// batchActionRefError says why actionID cannot run from a surface that runs
+// actions on several rows of entityType, or "" when it can.
+func batchActionRefError(action Action, entityType string) string {
+	switch {
+	case action.BatchMax() == 0:
+		return "is entity-bound; only an llm action with a batch: block can run on several rows"
+	case action.Subject() != entityType:
+		return fmt.Sprintf("runs on %q, not on %q", action.Subject(), entityType)
+	}
+	return ""
 }
 
 // llmUnsettable says why a property cannot be an LLM output, or "".
@@ -370,7 +456,8 @@ func cmpOr(s, def string) string {
 // unknown keys are otherwise ignored by the decoder, so a typo such as
 // `output:` would silently drop every proposal; the block checks its own.
 var (
-	llmKeys        = []string{"inputs", "max_tokens", "model", "outputs", "prompt"}
+	llmKeys        = []string{"batch", "inputs", "max_tokens", "model", "outputs", "prompt"}
+	llmBatchKeys   = []string{"max"}
 	llmInputKeys   = []string{"content", "properties", "related"}
 	llmContentKeys = []string{"max_chars"}
 	llmRelatedKeys = []string{"direction", "fields", "limit", "relation"}
@@ -396,6 +483,9 @@ func llmUnknownKeys(data []byte) []string {
 		}
 		p := fmt.Sprintf("actions.%s.llm", id)
 		errs = append(errs, unknownKeysIn(p, a.LLM, llmKeys)...)
+		if b, ok := a.LLM["batch"].(map[string]any); ok {
+			errs = append(errs, unknownKeysIn(p+".batch", b, llmBatchKeys)...)
+		}
 		if in, ok := a.LLM["inputs"].(map[string]any); ok {
 			errs = append(errs, unknownKeysIn(p+".inputs", in, llmInputKeys)...)
 			if c, ok := in["content"].(map[string]any); ok {

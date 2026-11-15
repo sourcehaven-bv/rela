@@ -83,6 +83,17 @@ func TestFaceReadExplain(t *testing.T) {
 				Type: "policy", Faces: store.AllFaces(), FaceIn: []entity.Face{"published"}, Limit: 100,
 			})
 		}, pageIndex, nil},
+		{"default-face header page", func() (string, error) {
+			return s.ExplainEntityHeaderPage(ctx, store.EntityQuery{
+				Type: "task", Limit: 100, Faces: store.InWorld(store.TrivialScope()),
+			})
+		}, pageIndex, nil},
+		{"world header page after a cursor", func() (string, error) {
+			return s.ExplainEntityHeaderPage(ctx, store.EntityQuery{
+				Type: "policy", Faces: store.InWorld(published), Limit: 100,
+				Cursor: storeutil.EncodeCursor("POL-001200@published"),
+			})
+		}, pageIndex, worldSorts},
 		{"family read", func() (string, error) {
 			return s.ExplainEntityPage(ctx, store.EntityQuery{IDs: family, Faces: store.AllFaces()})
 		}, "USING INDEX sqlite_autoindex_entities_1", nil},

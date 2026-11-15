@@ -7,6 +7,7 @@ import { isInputFocused } from '@/utils/dom'
 import { getScriptError } from '@/api/errors'
 import { isAnyModalOpen } from './modalStack'
 import { t } from '@/i18n'
+import { isBatchAction } from './useBatchAction'
 import type { ActionConfig, Entity } from '@/types'
 
 /** Must match the CSS .row-leave-active transition duration in EntityList.vue. */
@@ -30,6 +31,17 @@ interface UseListActionsOptions {
     triggerEl: HTMLElement | null,
   ) => void
   onComplete: () => void
+  /**
+   * Starts a batch `llm:` action (TKT-I2SRNWR) on the selected rows. Such an
+   * action runs as one request and writes nothing, so it neither fans out
+   * nor clears the selection; the host confirms and shows the proposals.
+   */
+  onBatch?: (actionId: string, action: ActionConfig, addresses: string[]) => void
+  /**
+   * The list response's `_actions`. A batch action is offered only when it
+   * carries `action:<id>`, the server's verdict on its permission.
+   */
+  collectionActions?: Ref<Record<string, boolean> | undefined>
 }
 
 /** One entity an action runs on: its write address and its type. */
@@ -124,9 +136,9 @@ export function useListActions(options: UseListActionsOptions) {
     const result: { id: string; config: ActionConfig }[] = []
     for (const actionId of list.actions) {
       const config = schemaStore.getAction(actionId)
-      if (config) {
-        result.push({ id: actionId, config })
-      }
+      if (!config) continue
+      if (isBatchAction(config) && options.collectionActions?.value?.[`action:${actionId}`] !== true) continue
+      result.push({ id: actionId, config })
     }
     return result
   })
@@ -186,6 +198,11 @@ export function useListActions(options: UseListActionsOptions) {
     if (options.selectedIds.value.size === 0) return
     if (processing.value) return
 
+    if (isBatchAction(action) && options.onBatch) {
+      const ids = Array.from(options.selectedIds.value)
+      options.onBatch(actionId, action, ids.map((id) => options.addressOf?.(id) ?? id))
+      return
+    }
     const triggerEl = resolveTriggerEl(source)
     if (action.confirm) {
       options.onRequestConfirm(action, actionId, triggerEl)

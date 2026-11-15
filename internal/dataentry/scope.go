@@ -252,6 +252,12 @@ func (a *App) handleV1EntityPosition(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if pos, handled := searchStorePosition(a, w, r, scope, id); handled {
+		if pos != nil {
+			writeV1JSON(w, http.StatusOK, *pos)
+		}
+		return
+	}
 
 	entities, err := a.resolveScope(r.Context(), scope)
 	if err != nil {
@@ -332,6 +338,41 @@ func storePosition(
 		writeV1Error(w, r, http.StatusNotFound, "not_in_scope", "Entity not found in scope", "")
 		return nil, true
 	}
+	return positionFromStore(sp), true
+}
+
+// searchStorePosition answers a search-sourced position from the store when
+// the scope's query is a structured search over one type that the store can
+// answer exactly (searchPlan, TKT-D3RAB0E). handled=false means "take the Go
+// path", which reads the whole result; handled=true with a nil position
+// means the response, an error or a 404, has been written.
+//
+// The plan's query is the principal's read query with the search filters
+// and sort ANDed on, so Total, Prev and Next describe readable rows only,
+// exactly as the Go path's executeQuery result does.
+func searchStorePosition(
+	a *App, w http.ResponseWriter, r *http.Request, scope ScopeDescriptor, id string,
+) (*v1.Position, bool) {
+	if scope.Source != "search" {
+		return nil, false
+	}
+	sp, found, handled, err := a.queries.searchPosition(r.Context(), scope.Q, scope.Type, id)
+	switch {
+	case !handled:
+		return nil, false
+	case err != nil:
+		writeListPipelineError(w, r, err)
+		return nil, true
+	case !found:
+		writeV1Error(w, r, http.StatusNotFound, "not_in_scope", "Entity not found in scope", "")
+		return nil, true
+	}
+	return positionFromStore(sp), true
+}
+
+// positionFromStore is the wire form of a store position. A list or search
+// neighbor links to the bare id, as scopePositionRef does.
+func positionFromStore(sp store.Position) *v1.Position {
 	pos := &v1.Position{Current: sp.Index, Total: sp.Total}
 	if sp.Prev != nil {
 		pos.Prev = &v1.PositionRef{ID: sp.Prev.ID, Type: sp.Prev.Type, Address: sp.Prev.ID}
@@ -339,7 +380,7 @@ func storePosition(
 	if sp.Next != nil {
 		pos.Next = &v1.PositionRef{ID: sp.Next.ID, Type: sp.Next.Type, Address: sp.Next.ID}
 	}
-	return pos, true
+	return pos
 }
 
 // scopeIndex finds id in entities. A list or search scope matches the bare
