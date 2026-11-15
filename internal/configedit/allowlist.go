@@ -389,6 +389,8 @@ var locked = map[File][]string{
 		// card in Configure keeps the width it has.
 		"dashboard.cards.[].width", "dashboards.*.cards.[].width",
 		"lists.*.actions.**", "lists.*.toolbar_actions.**", "lists.*.export_render",
+		// A board's header actions (TKT-I2SRNWR), like a list's.
+		"kanbans.*.actions.**",
 		// The pile menu's actions and export transforms, like a list's.
 		"piles.actions.[]", "piles.export.[]",
 		// Not in the Configure space yet.
