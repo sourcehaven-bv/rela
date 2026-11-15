@@ -2766,7 +2766,7 @@
       "weight.layers": 0,
       "weight.vocabulary": 884,
       "weight.types": 3920,
-      "weight.concepts": 7248,
+      "weight.concepts": 7196,
       "weight.boundaries": 1471,
       "weight.data": 1297,
       "weight.security": 2064,
@@ -2776,23 +2776,8 @@
       "propagation_cost": 9.4
     },
     "min_weight": 0,
-    "at": "2026-11-15T12:21:53Z",
+    "at": "2026-11-15T13:43:03Z",
     "log": [
-      {
-        "at": "2026-11-07T12:21:44Z",
-        "change": "loosen",
-        "reason": "TKT-IQU106C: element range readers are one per backend (accepted concepts.missing_operation-d60f02f07da6)",
-        "metrics": {
-          "weight.concepts": [
-            7052,
-            7060
-          ],
-          "propagation_cost": [
-            9.5,
-            9.4
-          ]
-        }
-      },
       {
         "at": "2026-11-07T12:50:16Z",
         "change": "loosen",
@@ -3103,6 +3088,17 @@
           "weight.boundaries": [
             1473,
             1471
+          ]
+        }
+      },
+      {
+        "at": "2026-11-15T13:43:03Z",
+        "change": "tighten",
+        "reason": "TKT-GWOBH2U: EntityToCreate.Properties carries the interpolated strings, not map[string]any. weight.structure and weight.security keep the traced values.",
+        "metrics": {
+          "weight.concepts": [
+            7248,
+            7196
           ]
         }
       }

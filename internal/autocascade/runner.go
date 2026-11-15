@@ -186,7 +186,7 @@ func (r *Runner) processEntityCreations(
 		// must not fire automations itself (see Host doc).
 		created, createErr := host.CreateEntity(writeCtx, toCreate.Type, CreateEntityOptions{
 			TemplateVariant: toCreate.Template,
-			Properties:      toCreate.Properties,
+			Properties:      stringValues(toCreate.Properties),
 		})
 		if createErr != nil {
 			outcome.Errors = append(outcome.Errors,
@@ -515,4 +515,17 @@ func scriptCapsFrom(a triggers.LuaToExecute) ScriptCapabilities {
 	return ScriptCapabilities{
 		HTTP: http, AI: ai, Mail: mail, WriteFile: writeFile, Secrets: secrets, Tokens: tokens,
 	}
+}
+
+// stringValues widens a trigger's interpolated property values to the
+// map the entity write takes. Nil: accepted, returned as nil.
+func stringValues(in map[string]string) map[string]any {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }

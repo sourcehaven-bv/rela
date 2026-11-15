@@ -447,7 +447,7 @@ func (e *Engine) renderCreate(ce CreateEntityAction, name string, event Event, r
 			"create: the template name contains invalid characters (only alphanumeric, hyphen, underscore allowed)")
 		return false
 	}
-	props := make(map[string]any, len(ce.Properties))
+	props := make(map[string]string, len(ce.Properties))
 	for k, v := range ce.Properties {
 		props[k] = e.interpolate(v, event)
 	}

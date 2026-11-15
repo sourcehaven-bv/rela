@@ -216,12 +216,12 @@ const (
 // rationale as [LuaToExecute.AutomationName], applied to the non-scripted path
 // (TKT-JJRVX9).
 type EntityToCreate struct {
-	Type                string         // Entity type to create
-	Template            string         // Optional: template variant name
-	Properties          map[string]any // Properties for the new entity
-	RelationFromTrigger string         // Optional: relation type from triggering entity
-	IfExists            string         // Behavior when relation exists: skip (default), error, replace
-	AutomationName      string         // Name of the originating automation
+	Type                string            // Entity type to create
+	Template            string            // Optional: template variant name
+	Properties          map[string]string // Interpolated property values for the new entity
+	RelationFromTrigger string            // Optional: relation type from triggering entity
+	IfExists            string            // Behavior when relation exists: skip (default), error, replace
+	AutomationName      string            // Name of the originating automation
 }
 
 // RelationToCreate pairs a relation an automation wants created with the name of
