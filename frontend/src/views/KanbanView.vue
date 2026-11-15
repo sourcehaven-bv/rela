@@ -50,6 +50,7 @@ import { hasIcon, resolveIcon } from '@/utils/icons'
 import { formatCellValue } from '@/utils/format'
 import { formatSummary } from '@/utils/summary'
 import { styleStatusColor } from '@/utils/styleColors'
+import { cellTone } from '@/utils/kanbanCellTone'
 import { densePropertyRoutingHint } from '@/widgets/viewRouting'
 import CardFieldList, { type ResolvedCardField } from '@/components/common/CardFieldList.vue'
 import { useRelatedCardValues } from '@/composables/useRelatedCardValues'
@@ -613,10 +614,20 @@ const boardLanes = computed((): Swimlane<BoardCard>[] =>
     collapsed: collapsedLanes.value.has(lane.value),
     sections: boardSections.value.map((column) => ({
       ...column,
+      tone: cellTone(kanbanConfig.value?.cell_colors?.[column.id]?.[lane.value], toneLabels.value),
       items: (entitiesByCell.value[column.id]?.[lane.value] ?? []).map(toCard),
     })),
   }))
 )
+
+// The label a tone cell shows when the config gives none (TKT-83S9G0Z).
+const toneLabels = computed(() => ({
+  success: t('kanban.cellTone.success'),
+  warning: t('kanban.cellTone.warning'),
+  error: t('kanban.cellTone.error'),
+  info: t('kanban.cellTone.info'),
+  new: t('kanban.cellTone.new'),
+}))
 
 function toggleLane(lane: Swimlane<BoardCard>) {
   const next = new Set(collapsedLanes.value)

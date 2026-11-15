@@ -1247,7 +1247,14 @@
     "renameFailed": "Could not rename the group",
     "moveGroupFailed": "Could not move the group",
     "groupElsewhere": "This card is in a group this board does not show",
-    "groupForbidden": "You may not make a group of these cards"
+    "groupForbidden": "You may not make a group of these cards",
+    "cellTone": {
+      "success": "Good",
+      "warning": "Warning",
+      "error": "Critical",
+      "info": "Info",
+      "new": "New"
+    }
   },
   "calendar": {
     "month": "Month",

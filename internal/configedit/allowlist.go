@@ -240,6 +240,8 @@ var editable = map[File][]string{
 		"lists.*.title",
 
 		"kanbans.*.card.**",
+		// The heat-map colors of a swimlane board's cells (TKT-83S9G0Z).
+		"kanbans.*.cell_colors.**",
 		"kanbans.*.column_property",
 		// A relation-backed board picks its columns, their order and their
 		// colors by naming a relation and properties, like lists.*.group_by.

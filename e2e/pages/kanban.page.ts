@@ -294,4 +294,29 @@ export class KanbanPage extends BasePage {
     const column = this.getColumn(columnName);
     await expect(column.locator('.empty-column')).toBeVisible();
   }
+
+  /** The toned cells of a swimlane board, in lane then column order (TKT-83S9G0Z). */
+  get tonedCells(): Locator {
+    return this.page.locator('.rl-swimlane-column--toned');
+  }
+
+  /**
+   * A toned cell shows its label as text and is painted with a theme token,
+   * never a literal colour. The painted background is not transparent.
+   */
+  async expectTonedCell(index: number, label: string, token: string) {
+    const cell = this.tonedCells.nth(index);
+    await expect(cell.locator('.rl-swimlane-column__tone')).toHaveText(label);
+    await expect(cell).toHaveAttribute('style', new RegExp(`--rl-swimlane-cell-bg: var\\(${token}\\)`));
+    const bg = await cell.evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(bg).not.toBe('rgba(0, 0, 0, 0)');
+  }
+
+  async expectTonedCellCount(count: number) {
+    await expect(this.tonedCells).toHaveCount(count);
+  }
+
+  async expectCardInTonedCell(index: number, cardTitle: string) {
+    await expect(this.tonedCells.nth(index).locator('.kanban-card').filter({ hasText: cardTitle })).toBeVisible();
+  }
 }

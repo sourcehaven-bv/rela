@@ -1247,7 +1247,14 @@
     "renameFailed": "De groep kon niet worden hernoemd",
     "moveGroupFailed": "De groep kon niet worden verplaatst",
     "groupElsewhere": "Deze kaart zit in een groep die dit bord niet toont",
-    "groupForbidden": "Je mag van deze kaarten geen groep maken"
+    "groupForbidden": "Je mag van deze kaarten geen groep maken",
+    "cellTone": {
+      "success": "Goed",
+      "warning": "Let op",
+      "error": "Kritiek",
+      "info": "Info",
+      "new": "Nieuw"
+    }
   },
   "calendar": {
     "month": "Maand",

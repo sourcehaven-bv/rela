@@ -85,18 +85,36 @@ const NAMED_FILL: Record<string, string> = {
   'badge-teal': 'teal',
 }
 
+/** The two custom properties a style class fills with: a background and its text colour. */
+export interface StyleTokens {
+  background: `--rl-${string}`
+  foreground: `--rl-${string}`
+}
+
+/**
+ * The fill and text tokens of a style class: the tag pair for a bare hue, the
+ * shade or operator colour and its `-fg` otherwise. Undefined for a class the
+ * server cannot emit.
+ */
+export function styleTokens(cls: string | undefined): StyleTokens | undefined {
+  if (!cls) return undefined
+  if (Object.prototype.hasOwnProperty.call(NAMED_FILL, cls)) {
+    const tag = NAMED_FILL[cls]
+    return { background: `--rl-tag-${tag}-bg`, foreground: `--rl-tag-${tag}-fg` }
+  }
+  if (!FILLED_CLASS.test(cls)) return undefined
+  return { background: `--rl-${cls}`, foreground: `--rl-${cls}-fg` }
+}
+
 /**
  * An inline fill and text colour for a style class, for surfaces that are not
  * a Badge (a dashboard matrix cell). Undefined for a class the server cannot
  * emit, so a cell without one stays neutral.
  */
 export function styleFill(cls: string | undefined): Record<string, string> | undefined {
-  if (!cls) return undefined
-  if (Object.prototype.hasOwnProperty.call(NAMED_FILL, cls)) {
-    const tag = NAMED_FILL[cls]
-    return { background: `var(--rl-tag-${tag}-bg)`, color: `var(--rl-tag-${tag}-fg)` }
-  }
-  return styleSwatch(cls)?.badgeStyle
+  const tokens = styleTokens(cls)
+  if (!tokens) return undefined
+  return { background: `var(${tokens.background})`, color: `var(${tokens.foreground})` }
 }
 
 /**

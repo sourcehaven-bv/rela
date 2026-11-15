@@ -1859,6 +1859,33 @@ kanbans:
     card:
       title: title
 
+  # kanban-cell-colors.spec.ts (TKT-83S9G0Z): a heat map of status by
+  # severity. Not in the sidebar, so it changes no navigation count. BUG-001
+  # (draft, high) sits in the critical-toned cell.
+  bug-heatmap:
+    entity_type: bug
+    title: "Bug Heatmap"
+    column_property: status
+    columns:
+      - value: draft
+        label: New
+      - value: done
+        label: Fixed
+    swimlane_property: severity
+    swimlanes:
+      - value: high
+      - value: low
+    cell_colors:
+      draft:
+        high: error
+        low:
+          color: warning
+          label: Watch
+      done:
+        low: success
+    card:
+      title: title
+
   # kanban-summary.spec.ts (TKT-SVLQQ6): column colours from styles:, column
   # summaries and a currency card field. Not in the sidebar, so it changes no
   # navigation count. Swimlane-free: column_summary refuses swimlanes.
