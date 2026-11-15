@@ -544,7 +544,7 @@ func TestTenantMode_SaaSProfile(t *testing.T) {
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, string(out))
 	}
-	th := d.hostFlags(t, tenantFlags{}, func(f *serverFlags) { f.remoteMCP = true })
+	th := d.hostFlags(t, tenantFlags{}, func(f *serverFlags) { f.remoteMCP = toggleOn })
 
 	t.Run("commands are refused", func(t *testing.T) {
 		rec := tenantCall(t, th, "tok-org-a", http.MethodPost, "/api/command/touch", nil)
