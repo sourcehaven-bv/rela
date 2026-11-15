@@ -794,6 +794,79 @@ because attaching a file updates the entity. Guard it with a `when:` that
 the write does not keep true, such as a status change, or run it from an
 action or a schedule instead.
 
+### Attach bytes the script holds: `rela.attach_file`
+
+`rela.attach_file` stores bytes the script already holds as a file on a
+`file` property. Use it to keep a file you fetched with `http.request`, such
+as an invoice PDF from an accounting system, on the entity it belongs to.
+Readers then download it from rela under the ACL, instead of through a
+public link:
+
+```lua
+local resp = http.request({ method = "GET", url = pdf_url })
+local att, err = rela.attach_file{
+  entity   = invoice.id,         -- the entity that gets the file
+  property = "pdf",              -- a `file` property of that entity
+  content  = resp.body,          -- the bytes, as a Lua string
+  filename = "F001",             -- with `mime`, the extension is added when missing
+  mime     = "application/pdf",  -- optional: the type the bytes must be
+}
+if not att then
+  error("invoice PDF not stored: " .. err)
+end
+```
+
+On success it returns a table `{name, size, sha256, mime}`, as
+`rela.attach_render` does. `mime` there is the type a download of the file
+serves. On a refusal or a failure it returns `nil` and a message. A wrong
+argument, such as an unknown option, a missing `content` or a `content` that
+is not a string, raises an error.
+
+Lua strings hold bytes, so `content` can be binary. The bytes are stored
+unchanged, unless the property's attachment processing rewrites them, as it
+would for an upload.
+
+`mime` is optional:
+
+- Without it, the file is stored under `filename` exactly as an upload of
+  the same bytes with that name.
+- With it, the bytes must not contradict that type, judged by the same
+  detection the `accept:` check uses. A type the detection recognizes by its
+  bytes, such as `application/pdf`, `image/png` or `image/jpeg`, must match
+  exactly, so an error page returned in place of the PDF is refused rather
+  than stored as `F001.pdf`. For other types, such as `text/csv` or an
+  Office document, the bytes only need to sniff as a generic type
+  (`text/plain`, `application/zip` or `application/octet-stream`). The
+  upload policy's own extension check still applies after that. The
+  filename gets the type's extension when it has none, and an extension of
+  another type is refused, as for `rela.attach_render`.
+- The size limit is checked before anything else, so an oversized file is
+  refused without touching the entity.
+
+The call acts as the script's principal and runs the checks an upload runs:
+
+- The principal must be able to read the entity and the property, and needs
+  `update` on the entity and leave to change the property. A hidden or
+  missing entity gets the same `not found` message.
+- The size limit (`max_attachment_bytes` in `data-entry.yaml`), the
+  property's `accept:` and `max:`, and the attachment scanner apply. On a
+  property with `max: 1` the new file replaces the old one.
+- The write is audited like an upload. `rela.bypass_acl` does not widen it.
+
+The principal is the same as for `rela.attach_render`: the user in an
+action, the `run_as` identity in a background automation, and the task's
+identity in a schedule or a flow step. The file can be downloaded by
+everyone who can read the entity.
+
+`rela.attach_file` exists where `rela.attach_render` exists: in action
+scripts, and in `rela-server` and the desktop app also in scheduled scripts,
+flow steps and background automation actions, in single-project and tenant
+mode. In other runtimes it returns `nil` and `"attach_file is not available
+in this runtime"`. It is absent in a synchronous automation, in a document
+render and in a validation rule. A declarative webhook runs no Lua; to
+attach a file from one, let the webhook's write start a flow or a
+background automation.
+
 ### Pile Functions
 
 A pile is a personal, named stack of entities. The `rela.piles` functions

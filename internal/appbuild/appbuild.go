@@ -301,6 +301,10 @@ type Services struct {
 	// run (TKT-1TS55R), built in finishAssembly. See [SetAttachRenderer].
 	attachRender *attachRenderHolder
 
+	// attachFile backs rela.attach_file for the same scripts (TKT-36DHKH8),
+	// built where attachRender is. See [SetAttachFiler].
+	attachFile *attachFileHolder
+
 	// tokens is the connector token broker, or why there is none
 	// (TKT-01KZSO). See [Tokens].
 	tokens tokenSetup
@@ -761,6 +765,7 @@ func (s *Services) LuaWriteDeps() lua.WriteDeps {
 		VersionTags:   ScriptVersionTags(s),
 		OAuth:         ScriptOAuth(s),
 		AttachRender:  s.attachRender,
+		AttachFile:    s.attachFile,
 	}
 }
 
@@ -777,6 +782,7 @@ func (s *Services) luaWriteDepsFor(redactor visibility.FieldRedactor) lua.WriteD
 		VersionTags:   ScriptVersionTags(s),
 		OAuth:         ScriptOAuth(s),
 		AttachRender:  s.attachRender,
+		AttachFile:    s.attachFile,
 	}
 }
 
@@ -1360,6 +1366,7 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		realtimeLocal:  refs.realtimeLocal,
 		dueWake:        refs.dueWake,
 		attachRender:   &attachRenderHolder{},
+		attachFile:     &attachFileHolder{},
 	}, nil
 }
 
@@ -3252,6 +3259,7 @@ func finishAssembly(
 	}
 	s.versionTags = tags
 	s.attachRender = &attachRenderHolder{}
+	s.attachFile = &attachFileHolder{}
 	if bindErr := autoJobs.bind(servicesJobRunner{s}, engine); bindErr != nil {
 		return nil, bindErr
 	}

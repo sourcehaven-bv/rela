@@ -102,6 +102,9 @@ func (o actionOps) run(
 	if h.attachRender != nil {
 		deps.AttachRender = h.attachRender()
 	}
+	if h.attachFile != nil {
+		deps.AttachFile = h.attachFile()
+	}
 	// The elevation scope must be the one the current config declares, as
 	// for the available_on gate below.
 	if action.AllowACLBypass.Enabled() && h.schema() != s {
