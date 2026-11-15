@@ -70,6 +70,14 @@ type scopeRequest struct {
 	// Passing none is always correct, only slower.
 	ScopeProps []store.PropPredicate
 
+	// Limit and Offset read one window of the type's rows in id order, the
+	// order an unpaged read returns them in, so a caller that keeps only a
+	// prefix reads only that prefix (TKT-CKLZMWB). Limit 0 reads every row.
+	//
+	// A window is refused alongside Scope: Scope filters after the store
+	// read, so a window of the store's rows is not a window of the result.
+	Limit, Offset int
+
 	// ScopeFilter applies Scope to the rows the store returned. Supplied by
 	// the caller because this package may not import predicatefns (arch-lint
 	// keeps the condition engine above the data-entry app).
@@ -185,6 +193,10 @@ type QueryScopeLower func(
 func scopedHeaders(
 	ctx context.Context, svc Services, rqr acl.ReadQueryResult, req scopeRequest,
 ) (headers []store.EntityHeader, withheld bool, err error) {
+	if (req.Limit > 0 || req.Offset > 0) && (req.Scope != nil || req.ByIDs) {
+		return nil, false, fmt.Errorf("%w: a read window with a query scope or ids on %q", errListLoad, req.Type)
+	}
+
 	q, errClass, withheld, err := scopedQuery(ctx, rqr, req)
 	if withheld || err != nil {
 		return nil, withheld, err
@@ -194,11 +206,11 @@ func scopedHeaders(
 	switch {
 	case req.ByIDs:
 		out, err = headersByIDs(ctx, svc, q, req.IDs, errClass)
-	case rqr.AllowAll && len(q.Props) == 0:
-		// No extra conjuncts, so the cheaper type-scan serves it.
+	case rqr.AllowAll && len(q.Props) == 0 && req.Limit == 0 && req.Offset == 0:
+		// No extra conjuncts and no window, so the cheaper type-scan serves it.
 		out, err = typeHeaders(ctx, svc, store.EntityQuery{Type: q.EntityType, Faces: q.Faces, FaceIn: q.FaceIn})
 	default:
-		out, err = collectHeaders(ctx, svc, q, errClass)
+		out, err = collectHeaders(ctx, svc, windowed(q, req), errClass)
 	}
 	if err != nil {
 		return nil, false, err
@@ -231,10 +243,10 @@ func scopedQuery(
 
 	switch {
 	case rqr.AllowAll:
-		// Extra conjuncts must be carried HERE as well as on the ACL-gated
-		// branch below. Props on only one branch is the same fail-open
-		// shape as RR-GQWRLD: the AllowAll population would get an
-		// unnarrowed read while everyone else got a narrowed one.
+		// Extra conjuncts or a read window must be carried HERE as well as
+		// on the ACL-gated branch below. Props on only one branch is the
+		// same fail-open shape as RR-GQWRLD: the AllowAll population would
+		// get an unnarrowed read while everyone else got a narrowed one.
 		q = store.GraphQuery{EntityType: req.Type, Props: append([]store.PropPredicate(nil), allProps(req)...)}
 		errClass = errListLoad
 
@@ -416,6 +428,14 @@ func stampScope(ctx context.Context, q store.GraphQuery, req scopeRequest) store
 	if len(req.Faces) > 0 {
 		q.FaceIn = req.Faces
 	}
+	return q
+}
+
+// windowed applies req's read window to a stamped row query. Kept out of
+// stampScope, whose result also answers applyScope's traversal matches,
+// which a window must not cut.
+func windowed(q store.GraphQuery, req scopeRequest) store.GraphQuery {
+	q.Limit, q.Offset = req.Limit, req.Offset
 	return q
 }
 
