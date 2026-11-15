@@ -1,7 +1,10 @@
 package project
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -52,14 +55,20 @@ type RemoteMCPTools struct {
 	Deny  []string `yaml:"deny,omitempty"`
 }
 
-// UnmarshalYAML decodes the block and refuses an unknown key, a merge key
-// and an empty `allow` list. It checks the keys on the node itself, so an
-// alias resolves against the whole file and an error names the file's line.
+// UnmarshalYAML decodes the block and refuses an unknown key, a merge key,
+// an `enabled` with no value, and an `allow` that is empty or has no value.
+// It checks the keys on the node itself, so an alias resolves against the
+// whole file and an error names the file's line.
 func (c *RemoteMCPConfig) UnmarshalYAML(node *yaml.Node) error {
 	if err := checkKeys(node, "remote_mcp", map[string]func(*yaml.Node) error{
-		"enabled": nil,
+		// With no value, enabled would leave the decision to the flag and
+		// the environment, which may turn the endpoint on.
+		"enabled": func(n *yaml.Node) error { return refuseNull(n, "remote_mcp.enabled", "") },
 		"tools": func(n *yaml.Node) error {
-			return checkKeys(n, "remote_mcp.tools", map[string]func(*yaml.Node) error{"allow": nil, "deny": nil})
+			return checkKeys(n, "remote_mcp.tools", map[string]func(*yaml.Node) error{
+				"allow": refuseEmptyAllow,
+				"deny":  nil,
+			})
 		},
 	}); err != nil {
 		return err
@@ -69,12 +78,39 @@ func (c *RemoteMCPConfig) UnmarshalYAML(node *yaml.Node) error {
 	if err := node.Decode(&out); err != nil {
 		return fmt.Errorf("remote_mcp: %w", err)
 	}
-	if out.Tools.Allow != nil && len(out.Tools.Allow) == 0 {
-		return fmt.Errorf("line %d: remote_mcp.tools.allow is empty, which would serve "+
-			"every tool; leave it out to mean that, or name the tools", node.Line)
-	}
 	*c = RemoteMCPConfig(out)
 	return nil
+}
+
+const serveEveryTool = ", which would serve every tool; leave it out to mean that, or name the tools"
+
+// refuseEmptyAllow refuses `allow: []` and an `allow:` with no value, as when
+// every entry under it is commented out. Both decode to an empty list, which
+// would serve every tool.
+func refuseEmptyAllow(n *yaml.Node) error {
+	if err := refuseNull(n, "remote_mcp.tools.allow", serveEveryTool); err != nil {
+		return err
+	}
+	if v := resolveAlias(n); v.Kind == yaml.SequenceNode && len(v.Content) == 0 {
+		return fmt.Errorf("line %d: remote_mcp.tools.allow is empty%s", n.Line, serveEveryTool)
+	}
+	return nil
+}
+
+// refuseNull refuses a value node that is YAML null (`key:`, `~`, `null`).
+// The error names the line of n itself, also when n is an alias.
+func refuseNull(n *yaml.Node, where, consequence string) error {
+	if v := resolveAlias(n); v.Kind == yaml.ScalarNode && v.ShortTag() == "!!null" {
+		return fmt.Errorf("line %d: %s has no value%s", n.Line, where, consequence)
+	}
+	return nil
+}
+
+func resolveAlias(n *yaml.Node) *yaml.Node {
+	for n.Kind == yaml.AliasNode {
+		n = n.Alias
+	}
+	return n
 }
 
 // checkKeys refuses a key of the mapping node that keys does not name, and
@@ -104,16 +140,62 @@ func checkKeys(node *yaml.Node, where string, keys map[string]func(*yaml.Node) e
 // refuseMisspelledRemoteMCP refuses a top-level key that reads as
 // `remote_mcp` but is spelled differently, such as `remote-mcp` or
 // `remoteMCP`. The rest of the file is lenient, and such a key would drop
-// the operator's `enabled: false` without a word.
+// the operator's `enabled: false` without a word. For the same reason it
+// refuses a second YAML document, which the decode would skip.
+//
+// It reads the keys from the parsed node, not from a decode into a map, so a
+// duplicate key elsewhere cannot make the check skip. It follows key aliases
+// and `<<` merges, which the decode also follows.
 func refuseMisspelledRemoteMCP(data []byte) error {
-	var top map[string]any
-	if err := yaml.Unmarshal(data, &top); err != nil {
-		return nil //nolint:nilerr // the main decode reports it
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	var doc yaml.Node
+	if err := dec.Decode(&doc); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil // an empty file
+		}
+		return err
 	}
-	for key := range top {
-		folded := strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(key))
-		if folded == "remotemcp" && key != "remote_mcp" {
-			return fmt.Errorf("unknown key %q; the remote MCP block is spelled remote_mcp", key)
+	var next yaml.Node
+	if err := dec.Decode(&next); !errors.Is(err, io.EOF) {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("line %d: a second YAML document; .rela/config.yaml holds one", next.Line)
+	}
+	if len(doc.Content) == 0 {
+		return nil
+	}
+	return refuseMisspelledKeys(doc.Content[0])
+}
+
+var keyFolder = strings.NewReplacer("_", "", "-", "", " ", "", ".", "")
+
+func refuseMisspelledKeys(m *yaml.Node) error {
+	m = resolveAlias(m)
+	switch m.Kind {
+	case yaml.SequenceNode: // the value of `<<: [*a, *b]`
+		for _, item := range m.Content {
+			if err := refuseMisspelledKeys(item); err != nil {
+				return err
+			}
+		}
+		return nil
+	case yaml.MappingNode:
+	default:
+		return nil // the main decode reports the type error
+	}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		k := m.Content[i]
+		key := resolveAlias(k).Value
+		if k.Kind == yaml.ScalarNode && k.ShortTag() == "!!merge" {
+			if err := refuseMisspelledKeys(m.Content[i+1]); err != nil {
+				return err
+			}
+			continue
+		}
+		if keyFolder.Replace(strings.ToLower(key)) == "remotemcp" && key != "remote_mcp" {
+			return fmt.Errorf("line %d: unknown key %q; the remote MCP block is spelled remote_mcp",
+				k.Line, key)
 		}
 	}
 	return nil

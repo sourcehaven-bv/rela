@@ -868,10 +868,16 @@ process environment later. When an off overrules an on, rela-server logs a
 warning that names the source that turned the endpoint off.
 
 `RELA_MCP` accepts only `1`, `0` or no value. Any other value, such as
-`true`, stops startup. A misspelled key inside `remote_mcp:`, or a top-level
-key such as `remote-mcp` or `remoteMCP`, is refused too, because it could
-hide the operator's off. Every command that reads `.rela/config.yaml` fails
-on such a mistake, not only rela-server.
+`true`, stops startup. These mistakes are refused too, because each could
+hide the operator's off:
+
+- a misspelled key inside `remote_mcp:`;
+- a top-level key such as `remote-mcp`, `remoteMCP` or `remote.mcp`;
+- `enabled:` with no value;
+- a second YAML document after `---`.
+
+Every command that reads `.rela/config.yaml` fails on such a mistake, not
+only rela-server.
 
 rela-server reads `remote_mcp:` at startup, and again each time a Configure
 save rebuilds the server. An edit to the file takes effect at the next
@@ -910,7 +916,8 @@ remote_mcp:
   startup, so a typo cannot leave a tool on. A tool whose feature is off
   (comments, channels, piles, flows, actions), or a Lua tool, which this
   endpoint never serves, is accepted and filters nothing.
-- An empty `allow: []` is refused. Leave `allow` out to serve every tool.
+- An empty `allow: []`, or an `allow:` with no value, is refused. Leave
+  `allow` out to serve every tool.
 - Prefer `allow` when the goal is a read-only endpoint. An allow list stays
   closed when a later release adds a tool; a deny list does not.
 
