@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -51,7 +52,9 @@ func TestHiddenProperty_NotCompared(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(data), "9") || len(p.Updates)+p.Unchanged != 0 {
+	// The value as a standalone number: an entity id such as CTL-NN9I may
+	// hold the digit.
+	if regexp.MustCompile(`\b9\b`).Match(data) || len(p.Updates)+p.Unchanged != 0 {
 		t.Fatalf("plan shows or compares the hidden value: %s", data)
 	}
 
