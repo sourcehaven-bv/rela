@@ -32,6 +32,7 @@ entities:
       title: {type: string, required: true}
       status: {type: string}
       assignee: {type: string}
+      watchers: {type: string, list: true}
     query_scopes:
       impl-open: "related(entity, 'implements', { status = 'open' })"
       reported: "related(entity, 'reportedBy')"
@@ -42,6 +43,11 @@ entities:
       mine-reported: "related(entity, 'reportedBy', { id = current_user.id })"
       mine-owned-open: "entity.status == 'open' and related(entity, {'implements', 'ownedBy'}, { id = current_user.id })"
       not-mine-reported: "not related(entity, 'reportedBy', { id = current_user.id })"
+      not-done: "entity.status ~= 'done' and entity.status ~= 'blocked'"
+      not-mine: "entity.assignee ~= current_user.id and related(entity, 'implements')"
+      watching: "has_current_user(entity.watchers)"
+      unreported-open-impl: "not related(entity, 'reportedBy') and related(entity, 'implements', { status = 'open' })"
+      open-or-reported: "entity.status == 'open' or related(entity, 'reportedBy')"
   feature:
     label: Feature
     plural: features
@@ -64,10 +70,13 @@ relations:
   owns: {label: owns, from: [user], to: [feature], inverse: ownedBy}
 `
 
-// lowerableScopes are the fixture's scopes that queryplan.LowerScope accepts.
+// lowerableScopes are the fixture's scopes that queryplan.LowerCondition
+// accepts (TKT-I39Y7N4). open-or-reported is the one that must stay on the Go
+// path.
 var lowerableScopes = map[string]bool{
 	"impl-open": true, "reported": true, "open-reported-impl": true, "chain": true, "mine": true,
-	"mine-reported": true, "mine-owned-open": true,
+	"mine-reported": true, "mine-owned-open": true, "not-reported": true, "not-mine-reported": true,
+	"not-done": true, "not-mine": true, "watching": true, "unreported-open-impl": true,
 }
 
 // newScopePushdownApp seeds twelve tickets over a counting store. Every
@@ -119,8 +128,24 @@ func newScopePushdownAppOn(t *testing.T, base store.Store) (*App, *acl.Declarati
 			"title":  titles[i%len(titles)],
 			"status": []string{"open", "done", "open", "blocked"}[i%4],
 		}
-		if i%3 != 0 {
+		// Off-type and unset statuses: Go binds a list or a number under a
+		// string declaration to nil, so `~=` keeps them and `==` drops them.
+		switch i {
+		case 10:
+			delete(props, "status")
+		case 11:
+			props["status"] = []string{"done"}
+		case 12:
+			props["status"] = 5
+		}
+		switch {
+		case i == 6:
+			props["assignee"] = ""
+		case i%3 != 0:
 			props["assignee"] = []string{"alice", "bob"}[i%2]
+		}
+		if i%5 != 0 {
+			props["watchers"] = [][]string{{"alice"}, {"bob", "alice"}, {}, {"dave"}}[i%4]
 		}
 		seedEntity(app, &entity.Entity{ID: id, Type: "ticket", Properties: props})
 		if i%4 != 0 {
@@ -159,7 +184,8 @@ func assertScopeMatchesGoPath(t *testing.T, app *App, d *acl.Declarative, counti
 	t.Helper()
 	scopes := []string{
 		"impl-open", "reported", "open-reported-impl", "chain", "mine", "not-reported",
-		"mine-reported", "mine-owned-open", "not-mine-reported",
+		"mine-reported", "mine-owned-open", "not-mine-reported", "not-done", "not-mine", "watching",
+		"unreported-open-impl", "open-or-reported",
 	}
 	for _, user := range []string{"alice", "bob", "dave", "erin"} {
 		for _, scope := range scopes {
@@ -274,6 +300,10 @@ func mustScope(t *testing.T, app *App, name string) resolvedQueryScope {
 	return scope
 }
 
+// positiveReportedScopes are the fixture's scopes with a positive
+// reportedBy traversal.
+var positiveReportedScopes = map[string]bool{"reported": true, "open-reported-impl": true, "mine-reported": true}
+
 // The position endpoint shares the page's plan, so a lowered scope narrows
 // both: the store-answered position agrees with the Go path, and a denied
 // traversal is a 404 without a read.
@@ -300,8 +330,9 @@ func TestPosition_ScopeMatchesGoPath(t *testing.T) {
 					}
 				}
 				// dave may not read users, so a scope walking reportedBy is
-				// denied for him rather than merely empty.
-				if user != "dave" || !strings.Contains(scopeName, "reported") {
+				// denied for him rather than merely empty. A negated walk
+				// (not-reported) narrows nothing instead.
+				if user != "dave" || !positiveReportedScopes[scopeName] {
 					return
 				}
 				counting.Reset()
