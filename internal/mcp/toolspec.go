@@ -154,8 +154,12 @@ func enum(values ...string) propOption {
 // an unfiltered answer it takes for a filtered one. A free function, like [setDeps], to keep
 // Server under its plimsoll load line.
 //
-// It returns the wrapped handler, which the watch tool replays.
+// It returns the wrapped handler, which the watch tool replays, or nil when
+// the server's tool filter keeps the tool out (see [WithToolFilter]).
 func addTool(s *Server, tool *mcpgo.Tool, handler mcpgo.ToolHandler) mcpgo.ToolHandler {
+	if !s.tools.admits(tool.Name) {
+		return nil
+	}
 	known := declaredArguments(tool)
 	wrapped := func(ctx context.Context, req *mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 		var unknown []string

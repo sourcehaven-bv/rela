@@ -242,6 +242,11 @@ type Action struct {
 	Confirm     ActionConfirm     `yaml:"confirm,omitempty" json:"confirm,omitzero"`
 	Set         map[string]string `yaml:"set,omitempty" json:"set,omitempty"`
 
+	// LLM makes this a declarative LLM action (TKT-4USH1HO), the third mode
+	// next to Set and Script. It requires AvailableOn with one entity type
+	// and a Permission. See [LLMAction]. Not serialized: the server runs it.
+	LLM *LLMAction `yaml:"llm,omitempty" json:"-"`
+
 	// AvailableOn offers the action on entity detail pages (TKT-VVS16W). Nil
 	// means no detail page, which is the behavior before the key existed.
 	//

@@ -180,8 +180,10 @@ func TestQueryBudget_ListFreeTextUnderFieldHiding(t *testing.T) {
 		t.Errorf("field-check traversals grow with hits: %d at 10, %d at 50 (%s)",
 			got[0].traversals, got[1].traversals, detail)
 	}
-	// TODO(TKT-F2EJQY8): calls only. A `?q=` list takes the Go path, which
-	// reads every header of the type (scopedHeaders' type scan in
-	// scopedread.go) before it intersects the hits, so its rows grow with
-	// the store. Assert storetest.AssertScaleFree once that read is gone.
+	// A `?q=` list reads its hits by id, not the whole type (TKT-F2EJQY8),
+	// so the rows it reads do not grow with the store either.
+	assertScaleFreeIndexed(t, func(pad int) (storetest.Cost, string) {
+		counting := run(budgetRowsN, pad)
+		return counting.Cost(), counting.String()
+	})
 }
