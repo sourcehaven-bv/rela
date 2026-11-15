@@ -46,4 +46,5 @@ func TestHolderLookup_GatedLikeList_SQLite(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	assertHoldersLikeList(t, st)
+	assertFirstEqual(t, st)
 }
