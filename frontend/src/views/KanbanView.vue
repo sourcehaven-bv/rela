@@ -34,6 +34,9 @@ import { useListReorder } from '@/composables/useListReorder'
 import { useKanbanCollapse } from '@/composables/useKanbanCollapse'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import KanbanQuickAdd from '@/components/kanban/KanbanQuickAdd.vue'
+import KanbanAddColumn from '@/components/kanban/KanbanAddColumn.vue'
+import type { AddColumnTarget } from '@/configure/addEnumColumn'
+import { useMe } from '@/queries/me'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
 import { useWorld } from '@/composables/useWorld'
@@ -1175,6 +1178,18 @@ watch(createModal.open, (open) => {
 // create endpoint authorizes, validates, audits and applies the template.
 const quickAddEnabled = computed(() => !!kanbanConfig.value?.quick_add && canCreate())
 
+// "Add column" (TKT-1X5G3BP): a config write through the Configure API, so it
+// shows only to someone who may configure. `/_me` is asked only on a board
+// that offers it. The server refuses `add_column` on a board without an
+// inline-enum column_property, and the save checks config:edit again.
+const { data: me } = useMe(() => !!kanbanConfig.value?.add_column)
+const addColumnTarget = computed<AddColumnTarget | null>(() => {
+  const config = kanbanConfig.value
+  if (!config?.add_column || !config.column_property || config.columns_from) return null
+  if (!me.value?.can_configure) return null
+  return { kanbanId: props.id, entityType: config.entity, property: config.column_property }
+})
+
 // The property the typed title goes in: the card's title property, else the
 // type's primary one. The server's config check uses the same rule.
 const quickAddTitleProperty = computed(
@@ -1317,7 +1332,7 @@ async function quickAdd(
       :lanes="boardLanes"
       :columns="boardSections"
       :show-add="false"
-      :show-add-section="false"
+      :show-add-section="!!addColumnTarget"
       :can-move="canMoveCard"
       :selected-id="selectedEntityId ?? undefined"
       collapsible
@@ -1351,6 +1366,9 @@ async function quickAdd(
           />
         </RouterLink>
       </template>
+      <template v-if="addColumnTarget" #addSection>
+        <KanbanAddColumn :target="addColumnTarget" />
+      </template>
       <template v-if="quickAddEnabled" #footer="{ section, lane }">
         <KanbanQuickAdd
           :label="quickAddLabel(section, lane)"
@@ -1373,7 +1391,7 @@ async function quickAdd(
       :aria-label="boardLabel"
       :sections="boardSections"
       :show-add="showColumnAdd"
-      :show-add-section="false"
+      :show-add-section="!!addColumnTarget"
       :can-move="boardCanMove"
       :reorder="reorder.reorderable.value"
       :group="isGrouping"
@@ -1439,6 +1457,9 @@ async function quickAdd(
           :label="quickAddLabel(section)"
           :submit="(title: string) => quickAdd(title, section)"
         />
+      </template>
+      <template v-if="addColumnTarget" #addSection>
+        <KanbanAddColumn :target="addColumnTarget" />
       </template>
     </RlBoard>
 

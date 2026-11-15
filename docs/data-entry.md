@@ -4690,6 +4690,7 @@ kanbans:
 | `edit_form`        | string | Form name for editing cards (click to open)                |
 | `create_form`      | string | Form name for the "New" button                             |
 | `quick_add`        | bool   | A title input under every column and cell (see below)      |
+| `add_column`       | bool   | An "Add column" control at the end of the board (see below) |
 | `filters`          | list   | Static filters (same as lists)                             |
 | `filter_controls`  | list   | Interactive filter controls (same as lists)                |
 | `query_scope`      | string | Named query scope (same as lists)                          |
@@ -5139,6 +5140,39 @@ The board refuses to load when quick-add cannot make a valid card:
 
 Template defaults do not count for this check. Use a schema default for a
 required property.
+
+### Adding a column from the board
+
+With `add_column: true`, the board ends with an "Add column" control. Type a
+name and press Enter. The new column is a new value of the board's
+`column_property`, so this is a change to `schema.yaml`:
+
+- the value (the name in lower case, with `_` between words) is added to the
+  property's `values:`;
+- the name is added under `labels:` when it differs from the value;
+- when the board lists `columns:`, the column is added there too.
+
+```yaml
+kanbans:
+  workshop:
+    entity_type: risk
+    column_property: stage   # an inline enum: type: enum, values: [...]
+    add_column: true
+```
+
+The change is saved through the Configure space, the only part of rela that
+writes configuration. So it needs the same things as the Configure space:
+
+- the server runs with config editing on (`--config-editing`);
+- you hold the `config:edit` permission. Without it the control is hidden.
+
+Like any configuration save, it reloads every open page.
+
+The control only adds to an inline enum (`type: enum` with its own
+`values:`). A board whose column property uses a shared type from `types:`
+refuses `add_column` at startup, because a new value there would reach every
+property that uses the type. Change a shared type in the Configure space. A
+`columns_from` board or a wall adds columns as groups instead.
 
 ### Drag and Drop
 

@@ -5,7 +5,8 @@ title: Create a column from the board
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+started: "2026-11-15"
+status: in-progress
 ---
 
 ## Description

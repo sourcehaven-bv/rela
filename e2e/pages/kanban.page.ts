@@ -325,6 +325,27 @@ export class KanbanPage extends BasePage {
     await expect(this.swimlaneCell(column, lane).locator('.kanban-card').filter({ hasText: cardTitle })).toBeVisible();
   }
 
+  /** The "Add column" control at the end of the board (TKT-1X5G3BP). */
+  get addColumnControl(): Locator {
+    return this.page.locator('[data-testid="kanban-add-column"]');
+  }
+
+  get addColumnButton(): Locator {
+    return this.addColumnControl.getByRole('button', { name: 'Add column', exact: true });
+  }
+
+  /** Open the control, type a name and press Enter. A save reloads the page. */
+  async addColumn(name: string) {
+    await this.addColumnButton.click();
+    const input = this.addColumnControl.getByRole('textbox', { name: 'Name of the new column', exact: true });
+    await input.fill(name);
+    await input.press('Enter');
+  }
+
+  async expectAddColumnError(text: string) {
+    await expect(this.addColumnControl).toContainText(text);
+  }
+
   /** The input cleared after a create, ready for the next card. */
   async expectQuickAddReady(column: string, lane?: string) {
     const input = this.quickAddInput(column, lane);
