@@ -106,7 +106,7 @@ func TestFaceReadExplain(t *testing.T) {
 		}, false),
 		{"family read", familySQL, familyArgs, "entities_pkey", true},
 		{"single row", pgstore.GetEntitySQLForTest, []any{"POL-000007", "published"}, "entities_pkey", false},
-		{"highest id", highestSQL, highestArgs, "entities_pkey", true},
+		{"highest id", highestSQL, highestArgs, "entities_id_lower_key", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			plan := explainPreparedGeneric(t, pool, tc.sql, tc.args)
@@ -195,5 +195,10 @@ func sqlLiteral(t *testing.T, v any) string {
 
 func TestBuildHighestIDSQLBounds(t *testing.T) {
 	_, args := pgstore.BuildHighestIDSQLForTest("FEAT")
+	require.Equal(t, []any{"FEAT-", "FEAT."}, args)
+
+	// A prefix that already ends in the dash names the same series
+	// (BUG-RLBXTG5), as it does in [entity.SequentialNumber].
+	_, args = pgstore.BuildHighestIDSQLForTest("FEAT-")
 	require.Equal(t, []any{"FEAT-", "FEAT."}, args)
 }

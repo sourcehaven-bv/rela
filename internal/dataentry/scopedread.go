@@ -3,6 +3,9 @@ package dataentry
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -28,6 +31,18 @@ type scopeRequest struct {
 	// Faces limits the read to an allowlist of content states. Empty means
 	// no face narrowing.
 	Faces []entity.Face
+
+	// ByIDs limits the read to the ids in IDs: a page scope's rows, or the
+	// hits of a `?q=` search. The read then costs one MatchingFaces call
+	// and one header read per matched face, whatever the size of the type.
+	// ByIDs with no IDs reads nothing. A flag rather than "IDs non-nil",
+	// because a nil slice that means "every row" next to an empty one that
+	// means "no row" is a fail-open waiting to happen.
+	//
+	// The ids only narrow: each one still has to pass the verdict, the
+	// world, the faces and the scope, exactly as on a full read.
+	ByIDs bool
+	IDs   []string
 
 	// Scope is the resolved query scope, or nil for an unscoped read.
 	// Applied as a Go-side filter AFTER the store read, because the
@@ -135,6 +150,14 @@ type QueryScopeLower func(
 // principal, so stamping *rqr.Query in place would leak one request's
 // narrowing into the next caller's.
 //
+// # Reading by ids
+//
+// With ByIDs the stamped query is answered for those ids alone
+// ([headersByIDs]), so a page scope or a `?q=` search costs reads that follow
+// its own size, not the size of the type (TKT-F2EJQY8). Without it the read
+// scans the type, which is what a caller that needs the whole filtered set
+// (totals, a Go-side sort, a condition or scope that does not lower) pays.
+//
 // # Withheld vs empty
 //
 // withheld=true means the read was refused outright — a denied world or a
@@ -163,46 +186,22 @@ func scopedHeaders(
 ) (headers []store.EntityHeader, withheld bool, err error) {
 	// A denied world yields nothing, via the SAME empty-result path a
 	// genuinely-empty world takes — so the two are identical on the wire.
-	if worldFromContext(ctx).blocksAllReads() {
+	if readWithheld(ctx, rqr) {
 		return nil, true, nil
 	}
 
-	var out []store.EntityHeader
+	// The verdict decides the query and its error class; the narrowings are
+	// then stamped once, on whichever query the verdict produced.
+	var q store.GraphQuery
+	errClass := errACLListQuery
 	switch {
-	case rqr.DenyAll:
-		return nil, true, nil
-
-	case rqr.AllowAll && len(req.Props) == 0 && len(req.ScopeProps) == 0:
-		// No extra conjuncts, so the cheaper type-scan serves it. Stamping
-		// the world here as well as on the branches below is the RR-GQWRLD
-		// invariant; note store.TrivialScope() is the zero value, so a
-		// surface with no world in ctx pays nothing for this.
-		for h, err := range store.ListEntityHeaders(ctx, svc.Store, store.EntityQuery{
-			Type:   req.Type,
-			Faces:  store.InWorld(worldScopeFrom(ctx)),
-			FaceIn: req.Faces,
-		}) {
-			if err != nil {
-				return nil, false, fmt.Errorf("%w: %w", errListLoad, err)
-			}
-			out = append(out, h)
-		}
-		out, err = applyScope(ctx, svc, out, req)
-		return out, false, err
-
 	case rqr.AllowAll:
-		// Extra conjuncts need a GraphQuery even though the ACL permits
-		// everything — and they must be carried HERE as well as on the
-		// ACL-gated branch below. Props on only one branch is the same
-		// fail-open shape as RR-GQWRLD: the AllowAll population would get
-		// an unnarrowed read while everyone else got a narrowed one.
-		q := store.GraphQuery{EntityType: req.Type, Props: allProps(req)}
-		out, err := collectHeaders(ctx, svc, stampScope(ctx, q, req), errListLoad)
-		if err != nil {
-			return nil, false, err
-		}
-		out, err = applyScope(ctx, svc, out, req)
-		return out, false, err
+		// Extra conjuncts must be carried HERE as well as on the ACL-gated
+		// branch below. Props on only one branch is the same fail-open
+		// shape as RR-GQWRLD: the AllowAll population would get an
+		// unnarrowed read while everyone else got a narrowed one.
+		q = store.GraphQuery{EntityType: req.Type, Props: allProps(req)}
+		errClass = errListLoad
 
 	case rqr.Query == nil:
 		// Defensive: a zero ReadQueryResult would otherwise alias AllowAll.
@@ -211,15 +210,129 @@ func scopedHeaders(
 
 	default:
 		// COPY before stamping — see the doc comment.
-		q := *rqr.Query
+		q = *rqr.Query
 		q.Props = append(append([]store.PropPredicate(nil), q.Props...), allProps(req)...)
-		out, err := collectHeaders(ctx, svc, stampScope(ctx, q, req), errACLListQuery)
-		if err != nil {
-			return nil, false, err
-		}
-		out, err = applyScope(ctx, svc, out, req)
-		return out, false, err
 	}
+	// Stamping the world on every branch is the RR-GQWRLD invariant; note
+	// store.TrivialScope() is the zero value, so a surface with no world in
+	// ctx pays nothing for it.
+	q = stampScope(ctx, q, req)
+
+	var out []store.EntityHeader
+	switch {
+	case req.ByIDs:
+		out, err = headersByIDs(ctx, svc, q, req.IDs, errClass)
+	case rqr.AllowAll && len(q.Props) == 0:
+		// No extra conjuncts, so the cheaper type-scan serves it.
+		out, err = typeHeaders(ctx, svc, store.EntityQuery{Type: q.EntityType, Faces: q.Faces, FaceIn: q.FaceIn})
+	default:
+		out, err = collectHeaders(ctx, svc, q, errClass)
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	out, err = applyScope(ctx, svc, out, req)
+	return out, false, err
+}
+
+// typeHeaders drains a type scan, failing loud like [collectHeaders].
+func typeHeaders(ctx context.Context, svc Services, q store.EntityQuery) ([]store.EntityHeader, error) {
+	var out []store.EntityHeader
+	for h, err := range store.ListEntityHeaders(ctx, svc.Store, q) {
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", errListLoad, err)
+		}
+		out = append(out, h)
+	}
+	return out, nil
+}
+
+// headersByIDs answers q for the candidate ids only: one MatchingFaces call
+// decides which rows of those ids q admits, and one header read per matched
+// face loads them. Its cost follows len(ids), never the size of the type.
+//
+// q is the fully stamped query, so the verdict, the world, the face
+// allowlist and the props apply exactly as on the scanning branches. The
+// rows come back sorted by id, then face, so the order does not depend on
+// the backend.
+//
+// The verdict and the header read are two statements, the same two-step
+// [loadRowContent] takes for bodies. A write that lands between them can
+// serve a row's newer header; a read never waits for writes, so the scan
+// branches give no stronger guarantee across a request either.
+func headersByIDs(
+	ctx context.Context, svc Services, q store.GraphQuery, ids []string, errClass error,
+) ([]store.EntityHeader, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	faces, err := svc.Store.MatchingFaces(ctx, q, ids)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errClass, err)
+	}
+	byFace := make(map[entity.Face][]string)
+	for id, fs := range faces {
+		for _, f := range fs {
+			byFace[f] = append(byFace[f], id)
+		}
+	}
+	var out []store.EntityHeader
+	for _, face := range slices.Sorted(maps.Keys(byFace)) {
+		eq := store.EntityQuery{Type: q.EntityType, IDs: byFace[face], Faces: store.AtFaces(face)}
+		for h, err := range store.ListEntityHeaders(ctx, svc.Store, eq) {
+			if err != nil {
+				// A plain load, not the gate query: errListLoad on both branches.
+				return nil, fmt.Errorf("%w: %w", errListLoad, err)
+			}
+			out = append(out, h)
+		}
+	}
+	slices.SortFunc(out, func(a, b store.EntityHeader) int {
+		if c := strings.Compare(a.ID, b.ID); c != 0 {
+			return c
+		}
+		return strings.Compare(string(a.Face), string(b.Face))
+	})
+	return out, nil
+}
+
+// readWithheld reports whether [scopedHeaders] refuses the read outright: a
+// denied world or a DenyAll verdict. A caller that must do work BEFORE the
+// read, such as the `?q=` search whose hits narrow it, asks this first, so a
+// principal who may read nothing never reaches that work (RR-X56H).
+func readWithheld(ctx context.Context, rqr acl.ReadQueryResult) bool {
+	return worldFromContext(ctx).blocksAllReads() || rqr.DenyAll
+}
+
+// narrowingIDs is the id set a list read is narrowed to: the page scope's
+// rows, the `?q=` hits, or the rows in both when both apply. narrowed is
+// false when neither applies, and the read is then not narrowed at all.
+// Sorted, so the store sees the same query for the same request.
+func narrowingIDs(
+	pageScoped bool, pageIDs map[string]bool, hits freeTextIDsForTypeResult,
+) (ids []string, narrowed bool) {
+	switch {
+	case pageScoped && hits.HasFilter:
+		for id := range hits.IDs {
+			if pageIDs[id] {
+				ids = append(ids, id)
+			}
+		}
+	case pageScoped:
+		for id, ok := range pageIDs {
+			if ok {
+				ids = append(ids, id)
+			}
+		}
+	case hits.HasFilter:
+		for id := range hits.IDs {
+			ids = append(ids, id)
+		}
+	default:
+		return nil, false
+	}
+	slices.Sort(ids)
+	return ids, true
 }
 
 // allProps is the full conjunct set pushed to the store: the caller's own
@@ -273,9 +386,10 @@ func applyScope(
 
 // stampScope applies every ctx- and request-derived narrowing to q.
 //
-// Separated from [scopedHeaders] so the set of narrowings is readable in one
-// place: if this function does not mention a dimension, no data-entry
-// collection read applies it.
+// It stamps the ctx-derived dimensions, the world and the face allowlist.
+// The other narrowings are applied in [scopedHeaders] itself: the props
+// through allProps on both verdict branches, the ids through the ByIDs
+// read, and the query scope through applyScope.
 func stampScope(ctx context.Context, q store.GraphQuery, req scopeRequest) store.GraphQuery {
 	q.Faces = store.InWorld(worldScopeFrom(ctx))
 	if len(req.Faces) > 0 {
