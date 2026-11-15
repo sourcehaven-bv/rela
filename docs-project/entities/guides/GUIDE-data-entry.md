@@ -4695,6 +4695,7 @@ kanbans:
 | `column_summary`   | list   | Aggregate lines under each column heading (see below)      |
 | `edit_form`        | string | Form name for editing cards (click to open)                |
 | `create_form`      | string | Form name for the "New" button                             |
+| `quick_add`        | bool   | A title input under every column and cell (see below)      |
 | `filters`          | list   | Static filters (same as lists)                             |
 | `filter_controls`  | list   | Interactive filter controls (same as lists)                |
 | `query_scope`      | string | Named query scope (same as lists)                          |
@@ -5109,6 +5110,41 @@ The board checks the field when the configuration loads:
 This is kanban-only for now: on a calendar or gantt field it is a config error.
 It reads one relation step. Sorting or filtering by a related property is not
 supported.
+
+### Quick-add
+
+With `quick_add: true`, every column gets a title input at its foot. On a
+swimlane board, every cell gets one. Type a title and press Enter: the board
+creates a card in that column, and in that lane. The input clears and keeps
+focus, so you can type the next card. Escape clears the input.
+
+```yaml
+kanbans:
+  workshop:
+    entity_type: risk
+    column_property: stage
+    quick_add: true
+```
+
+Quick-add is off by default. The card is made through the normal create API,
+so access rules, validation and the audit log apply as for any other create.
+
+- The new card gets the title, the column value and the swimlane value. On a
+  `columns_from` board it is linked to the column's target. A card added to
+  the Other column gets no link.
+- The input is hidden when you may not create the type.
+- A refused create shows its error under the input. The text you typed stays.
+- The type's default template applies, as with any create.
+
+The board refuses to load when quick-add cannot make a valid card:
+
+- the type has `id_type: manual`, since a quick-add card has no id field;
+- the title property is computed, a rollup or missing;
+- a required property is not the title, the column or the swimlane property,
+  and has no default in the schema. Give it a default, or remove `quick_add`.
+
+Template defaults do not count for this check. Use a schema default for a
+required property.
 
 ### Drag and Drop
 

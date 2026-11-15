@@ -1247,7 +1247,21 @@
     "renameFailed": "Could not rename the group",
     "moveGroupFailed": "Could not move the group",
     "groupElsewhere": "This card is in a group this board does not show",
-    "groupForbidden": "You may not make a group of these cards"
+    "groupForbidden": "You may not make a group of these cards",
+    "quickAddPlaceholder": "Add a card…",
+    "quickAddLabel": "Add a card to {column}",
+    "quickAddLaneLabel": "Add a card to {column}, {lane}",
+    "quickAddFailed": "Could not add the card",
+    "quickAddWarnings": "Card added with warnings: {warnings}",
+    "addColumn": "Add column",
+    "addColumnLabel": "Name of the new column",
+    "addColumnPlaceholder": "Column name…",
+    "addColumnCancel": "Cancel",
+    "addColumnFailed": "Could not add the column",
+    "addColumnExists": "The board already has a column named {name}",
+    "addColumnNoName": "Use at least one letter or digit in the name",
+    "addColumnUnsupported": "This column's values are not declared on the property, so the board cannot add one",
+    "addColumnSaving": "Saving the column…"
   },
   "calendar": {
     "month": "Month",

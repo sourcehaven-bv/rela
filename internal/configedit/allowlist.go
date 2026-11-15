@@ -258,6 +258,10 @@ var editable = map[File][]string{
 		"kanbans.*.footer",
 		"kanbans.*.header",
 		"kanbans.*.query_scope",
+		// Board controls that write through the ordinary create API
+		// (TKT-IP4273S) or through Configure itself (TKT-1X5G3BP).
+		"kanbans.*.quick_add",
+		"kanbans.*.add_column",
 		"kanbans.*.swimlane_property",
 		"kanbans.*.swimlanes.[].**",
 		"kanbans.*.title",
