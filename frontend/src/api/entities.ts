@@ -5,6 +5,7 @@ import type {
   CreateEntity,
   ListResponse,
   ListParams,
+  ListQueryScope,
   AnalyzeResult,
   Template,
   RelationEntry,
@@ -360,8 +361,15 @@ export async function listRecentlyModified(
  * same flat bracket-format keys as filterStateToApiParams ("filter[status]")
  * so the wire format has one source of truth. See backend internal/dataentry/
  * scope.go and issue #844.
+ *
+ * The list fields (sort, q, query_scope, the page tab, list_id) come from
+ * ListQueryScope. `q` is required for a search scope and optional within a
+ * list scope. Omitting `query_scope` resolves the position against the entity
+ * type's DEFAULT scope: on a list showing `archief`, the open entity is then
+ * absent from its own scope and the endpoint answers 404. The page tab fields
+ * and `list_id` go only with source 'list'.
  */
-export interface ScopeDescriptor {
+export interface ScopeDescriptor extends ListQueryScope {
   // 'pile' walks one of the principal's piles (TKT-K3RJLH): it carries `pile`
   // and no other field, and the server refuses any other one.
   source: 'list' | 'search' | 'pile'
@@ -372,22 +380,6 @@ export interface ScopeDescriptor {
   // navigate across all matched types. The backend enforces this per-source.
   type?: string
   filters?: Record<string, string>
-  sort?: string
-  // Required for a search scope; optional free-text filter within a list scope.
-  q?: string
-  // The originating list's `query_scope:`, so prev/next walks the set the list
-  // actually showed. Omitting it resolves the position against the entity
-  // type's DEFAULT scope instead: on a list showing `archief`, the open entity
-  // is then absent from its own scope and the endpoint answers 404.
-  query_scope?: string
-  // The entity-page tab the list was shown in, so prev/next walks the tab's
-  // rows. All three or none, and only with source 'list'.
-  scope_page?: string
-  scope_tab?: string
-  anchor?: string
-  // The configured list the rows came from, so the list's `condition:`
-  // narrows the walk the same way it narrows the list. Only with source 'list'.
-  list_id?: string
 }
 
 /** A neighbouring entity in a scope. `type` is needed to build the target's

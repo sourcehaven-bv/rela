@@ -2762,97 +2762,22 @@
   "ratchet": {
     "metrics": {
       "weight.profile": 49,
-      "weight.structure": 859,
+      "weight.structure": 90,
       "weight.layers": 0,
       "weight.vocabulary": 884,
-      "weight.types": 4203,
-      "weight.concepts": 7276,
-      "weight.boundaries": 1473,
+      "weight.types": 4191,
+      "weight.concepts": 7243,
+      "weight.boundaries": 1467,
       "weight.data": 1297,
-      "weight.security": 2064,
+      "weight.security": 140,
       "largest_tangle": 14,
       "cycle_edges": 67,
       "upward_edges": 0,
-      "propagation_cost": 9.4
+      "propagation_cost": 9.3
     },
     "min_weight": 0,
-    "at": "2026-11-14T17:00:00Z",
+    "at": "2026-11-15T11:44:00Z",
     "log": [
-      {
-        "at": "2026-11-05T20:33:00Z",
-        "change": "tighten",
-        "reason": "static model; trace-based metrics left for just archplan-security",
-        "metrics": {
-          "weight.types": [
-            3981,
-            3952
-          ]
-        }
-      },
-      {
-        "at": "2026-11-06T09:00:00Z",
-        "change": "loosen",
-        "reason": "flowcfg.State mirrors realtimecfg.SessionState over the shared flow engine, TKT-XHANLJU",
-        "metrics": {
-          "weight.types": [
-            3952,
-            4002
-          ]
-        }
-      },
-      {
-        "at": "2026-11-06T18:45:56Z",
-        "change": "tighten",
-        "reason": null,
-        "metrics": {
-          "weight.profile": [
-            52,
-            49
-          ],
-          "weight.structure": [
-            936,
-            90
-          ],
-          "weight.types": [
-            4002,
-            3955
-          ],
-          "weight.boundaries": [
-            1478,
-            1438
-          ],
-          "weight.security": [
-            2300,
-            140
-          ]
-        }
-      },
-      {
-        "at": "2026-11-06T20:30:30Z",
-        "change": "tighten",
-        "reason": null,
-        "metrics": {
-          "propagation_cost": [
-            9.8,
-            9.6
-          ]
-        }
-      },
-      {
-        "at": "2026-11-07T06:37:19Z",
-        "change": "tighten",
-        "reason": null,
-        "metrics": {
-          "weight.boundaries": [
-            1438,
-            1387
-          ],
-          "propagation_cost": [
-            9.6,
-            9.5
-          ]
-        }
-      },
       {
         "at": "2026-11-07T12:21:44Z",
         "change": "loosen",
@@ -3159,6 +3084,37 @@
           "propagation_cost": [
             9.3,
             9.4
+          ]
+        }
+      },
+      {
+        "at": "2026-11-15T11:44:00Z",
+        "change": "tighten",
+        "reason": null,
+        "metrics": {
+          "weight.structure": [
+            859,
+            90
+          ],
+          "weight.types": [
+            4203,
+            4191
+          ],
+          "weight.concepts": [
+            7276,
+            7243
+          ],
+          "weight.boundaries": [
+            1473,
+            1467
+          ],
+          "weight.security": [
+            2064,
+            140
+          ],
+          "propagation_cost": [
+            9.4,
+            9.3
           ]
         }
       }

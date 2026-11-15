@@ -282,7 +282,7 @@ func TestPosition_ScopeMatchesGoPath(t *testing.T) {
 	for _, user := range []string{"alice", "bob", "dave"} {
 		for scopeName := range lowerableScopes {
 			t.Run(user+" "+scopeName, func(t *testing.T) {
-				scope := ScopeDescriptor{Source: "list", Type: "ticket", Sort: "title", QueryScope: scopeName}
+				scope := ScopeDescriptor{Source: "list", Type: "ticket", ListQuery: ListQuery{Sort: "title", QueryScope: scopeName}}
 				ctx, err := bindQueryIdentity(gateCtxFor(principalCtx(user), t, d), mustScope(t, app, scopeName))
 				if err != nil {
 					t.Fatal(err)

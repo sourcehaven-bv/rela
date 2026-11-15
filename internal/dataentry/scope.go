@@ -30,8 +30,23 @@ type ScopeDescriptor struct {
 	Source  string            `json:"source"`            // "list" | "search" | "pile"
 	Type    string            `json:"type"`              // entity type name (singular)
 	Filters map[string]string `json:"filters,omitempty"` // filter[...] bracket keys → value
-	Sort    string            `json:"sort,omitempty"`    // "-created,title" form
-	Q       string            `json:"q,omitempty"`       // free-text query
+
+	// ListQuery is the list part of the scope. Its fields are promoted and
+	// sit at the top level of the JSON.
+	ListQuery
+
+	// Pile is the pile a `source: pile` scope walks (TKT-K3RJLH). It is the
+	// only field such a scope carries.
+	Pile string `json:"pile,omitempty"`
+}
+
+// ListQuery is the part of a list read that a scope repeats, so prev/next
+// walks the rows the list showed: its sort, its text query and the
+// narrowing it applied. The SPA's ListParams and ScopeDescriptor carry the
+// same fields through ListQueryScope (frontend/src/types/entity.ts).
+type ListQuery struct {
+	Sort string `json:"sort,omitempty"` // "-created,title" form
+	Q    string `json:"q,omitempty"`    // free-text query
 
 	// QueryScope is the originating view's `query_scope:`, carried so
 	// prev/next walks the set the list actually showed.
@@ -57,10 +72,6 @@ type ScopeDescriptor struct {
 	// Only with source list. Empty means no list is named, and no condition
 	// applies.
 	ListID string `json:"list_id,omitempty"`
-
-	// Pile is the pile a `source: pile` scope walks (TKT-K3RJLH). It is the
-	// only field such a scope carries.
-	Pile string `json:"pile,omitempty"`
 }
 
 // knownScopeSources gates Source. Extending scope to a new origin is a

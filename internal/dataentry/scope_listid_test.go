@@ -39,7 +39,7 @@ func TestPosition_ListIDAppliesCondition(t *testing.T) {
 		"done": {EntityType: "ticket", Condition: "entity.status == 'done'"},
 	}, nil, nil)
 
-	scope := ScopeDescriptor{Source: "list", Type: "ticket", Sort: "title"}
+	scope := ScopeDescriptor{Source: "list", Type: "ticket", ListQuery: ListQuery{Sort: "title"}}
 	rec := positionFor(t, app, "TKT-3", scope)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var pos v1.Position
