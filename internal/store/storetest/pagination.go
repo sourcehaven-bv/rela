@@ -48,6 +48,28 @@ func RunPaginationTests(t *testing.T, f Factory) {
 			"walking with a cursor should yield every entity exactly once, in stable order")
 	})
 
+	t.Run("EntitiesWalkWithGrowingLimit", func(t *testing.T) {
+		s := f(t)
+		seedEntities(t, s)
+
+		var ids []string
+		q := store.EntityQuery{Limit: 1, Faces: store.InWorld(store.TrivialScope())}
+		for range 10 {
+			page, err := s.ListEntitiesPage(ctx(), q)
+			require.NoError(t, err)
+			for _, e := range page.Items {
+				ids = append(ids, e.ID)
+			}
+			if page.NextCursor == "" {
+				break
+			}
+			q.Cursor = page.NextCursor
+			q.Limit *= 2
+		}
+		assert.Equal(t, []string{"FEAT-001", "FEAT-002", "FEAT-013", "REQ-001"}, ids,
+			"a cursor resumes after the last row read, whatever the next limit")
+	})
+
 	t.Run("EntitiesNextCursorEmptyOnLastPage", func(t *testing.T) {
 		s := f(t)
 		seedEntities(t, s)
