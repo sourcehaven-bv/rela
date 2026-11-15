@@ -311,14 +311,6 @@ func TestSearchPlan_HidesUnreadableRows(t *testing.T) {
 	}
 }
 
-func entityIDs(es []*entity.Entity) []string {
-	out := make([]string, 0, len(es))
-	for _, e := range es {
-		out = append(out, e.ID)
-	}
-	return out
-}
-
 func neighborID(es []*entity.Entity, i int) string {
 	if i < 0 || i >= len(es) {
 		return ""
