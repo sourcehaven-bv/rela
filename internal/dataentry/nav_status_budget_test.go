@@ -129,7 +129,7 @@ func TestQueryBudget_NavStatusIsSizeIndependent(t *testing.T) {
 				t.Fatalf("no marker counted, so this budget proves nothing: %v", got)
 			}
 		})
-	// TODO(TKT-F2EJQY8): calls only. The marker counts in Go over a full
+	// TODO(TKT-D3RAB0E): calls only. The marker counts in Go over a full
 	// header scan of the type (navStatusRows in nav_status.go, through
 	// scopedSortedEntitiesScoped to scopedHeaders' type scan in
 	// scopedread.go).
@@ -145,7 +145,7 @@ func TestQueryBudget_NavStatusRuleOnlyIsSizeIndependent(t *testing.T) {
 				t.Fatalf("no marker counted, so this budget proves nothing: %v", got)
 			}
 		})
-	// TODO(TKT-F2EJQY8): calls only, for the scan named on the test above.
+	// TODO(TKT-D3RAB0E): calls only, for the scan named on the test above.
 	assertCallBudget(t, "nav status (rule only)", b, navStatusRuleOnlyFieldPolicyBudget, detail)
 }
 

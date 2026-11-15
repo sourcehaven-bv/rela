@@ -6,7 +6,7 @@ package archguard
 //
 // Each entry has a category (see readCategory) and a reason that says what
 // the read is for. requestPath entries are debt. The follow-ups of
-// TKT-FED6FMM remove them: TKT-F2EJQY8 (dataentry), TKT-D9UO9Y4 (mcp,
+// TKT-FED6FMM remove them: TKT-D3RAB0E and TKT-I39Y7N4 (dataentry), TKT-D9UO9Y4 (mcp,
 // search), TKT-GIAGLQ3 (ingest, rename), TKT-P9QMEVI (lua) and TKT-EBBHM55
 // (desktopnotify).
 var unpagedReadAllowlist = map[string]unpagedRead{
@@ -90,19 +90,15 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/dataentry/gantt_handler.go#ganttHandler.collectGanttRound": {1, bounded,
 		"gantt closure round: a GraphQuery for the descendants of the frontier, so it reads the subtree " +
 			"the chart shows, not the type"},
-	"internal/dataentry/helpers.go#listAllFromStore": {1, requestPath,
-		"listFromStoreByTypes with no type: drains every entity in the world (unreached today, per its doc)"},
-	"internal/dataentry/helpers.go#listFromStoreByTypes": {1, requestPath,
-		"view and query helpers: loads every entity of each requested type"},
-	"internal/dataentry/helpers.go#visibleListByTypes": {1, requestPath,
-		"executeQuery without free text: loads every entity of the requested types, then gates"},
 	"internal/dataentry/listpushdown.go#listPlan.run": {1, bounded,
 		"list pushdown page: the plan's GraphQuery carries Limit = perPage and Offset (planListPushdown); " +
 			"the matcher cannot see a field set in another function"},
-	"internal/dataentry/scopedread.go#scopedHeaders": {3, requestPath,
-		"the scoped collection read behind lists, kanban and views: every header of the type in the world, " +
-			"directly or as the ACL-scoped GraphQuery with no Limit through collectHeaders " +
-			"(the TODO(TKT-F2EJQY8) scan the budget tests name)"},
+	"internal/dataentry/scopedread.go#scopedHeaders": {2, requestPath,
+		"the scoped collection read behind the list Go path, executeQuery (search, dashboard, nav status, " +
+			"next action), kanban, export, feed, gantt and the settings and command pickers: every header " +
+			"of the type in the world, directly or as the ACL-scoped GraphQuery with no Limit through " +
+			"collectHeaders. A page scope or ?q= reads by ids instead (headersByIDs). The rest needs " +
+			"the whole filtered set in Go; TKT-D3RAB0E and TKT-I39Y7N4 page it"},
 
 	// datamigration: migrations rewrite whole types.
 	"internal/datamigration/adoptface.go#faceAdoption.plan": {1, batchJob, "face adoption: scans a type for zero-face rows to move"},

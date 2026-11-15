@@ -77,6 +77,9 @@ const (
 	// viewKindAction is a detail action's `when:` (TKT-VVS16W), keyed by
 	// dataentryconfig.ActionConditionID.
 	viewKindAction = "actions"
+	// viewKindLLMCandidates is an llm action's relate `candidates:`, keyed
+	// by dataentryconfig.LLMCandidateConditionID.
+	viewKindLLMCandidates = "llm_candidates"
 
 	// listIDParam names which configured list a generic collection read is
 	// serving, so the server can apply that list's condition. Absent means
