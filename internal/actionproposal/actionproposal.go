@@ -11,7 +11,10 @@ import "encoding/json"
 // caller applies the ones they accept through the ordinary write APIs.
 type Proposal struct {
 	// Entity is the address of the entity the changes are for.
-	Entity string     `json:"entity"`
+	Entity string `json:"entity"`
+	// Title is the entity's display title as the caller may see it. A batch
+	// run (TKT-I2SRNWR) sets it so the review dialog can name each entity.
+	Title  string     `json:"title,omitempty"`
 	Set    []Value    `json:"set"`
 	Relate []Relation `json:"relate"`
 	// Model is the model that answered, as the provider reports it.
@@ -37,4 +40,32 @@ type Relation struct {
 	To       string `json:"to"`
 	ToType   string `json:"to_type"`
 	ToTitle  string `json:"to_title"`
+}
+
+// Batch is the reply of a batch run of an `llm:` action (TKT-I2SRNWR): one
+// proposal per entity the model answered for, and the entities it could not.
+type Batch struct {
+	// Proposals is never nil, so a run with no usable row still encodes as
+	// a batch rather than as an empty response.
+	Proposals []*Proposal `json:"proposals"`
+	// Failed lists the entities whose part of the reply was unusable.
+	Failed []Failure `json:"failed"`
+	// Skipped counts the addresses the caller sent that were not run: not
+	// readable, not offered the action, or with no output the caller may
+	// change. They are counted, not named, so the count says nothing the
+	// caller did not already know.
+	Skipped int `json:"skipped"`
+}
+
+// NewBatch is an empty batch reply. Its lists encode as [].
+func NewBatch() *Batch {
+	return &Batch{Proposals: []*Proposal{}, Failed: []Failure{}}
+}
+
+// Failure is one entity of a batch run whose part of the reply could not
+// be used.
+type Failure struct {
+	Entity string `json:"entity"`
+	Title  string `json:"title,omitempty"`
+	Reason string `json:"reason"`
 }

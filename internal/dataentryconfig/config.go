@@ -244,8 +244,9 @@ type Action struct {
 
 	// LLM makes this a declarative LLM action (TKT-4USH1HO), the third mode
 	// next to Set and Script. It requires AvailableOn with one entity type
-	// and a Permission. See [LLMAction]. Not serialized: the server runs it.
-	LLM *LLMAction `yaml:"llm,omitempty" json:"-"`
+	// and a Permission. See [LLMAction]. Only `batch` is serialized, so the SPA
+	// knows to send all selected rows of a batch action in one request.
+	LLM *LLMAction `yaml:"llm,omitempty" json:"llm,omitempty"`
 
 	// AvailableOn offers the action on entity detail pages (TKT-VVS16W). Nil
 	// means no detail page, which is the behavior before the key existed.
@@ -1192,6 +1193,12 @@ func (c *Config) HasPropertyFilterControl(entityType, property string) bool {
 // list info regions. Unlike List there is no Description fallback: that alias
 // exists only because List.Description predated the feature and was already
 // present in configs, and a Kanban has no such legacy field to accommodate.
+//
+// The plimsoll directive is the format-mirror exception documented on
+// [Config]: each exported field is one key of a kanban in data-entry.yaml.
+// `add_column` (TKT-1X5G3BP) is the most recent.
+//
+//plimsoll:max-fields=22
 type Kanban struct {
 	EntityType     string `yaml:"entity_type" json:"entity"`
 	Title          string `yaml:"title" json:"title"`
@@ -1214,9 +1221,22 @@ type Kanban struct {
 	// ColumnSummary adds one line per entry under each column heading, such
 	// as a count of the cards or the sum of an amount (TKT-SVLQQ6). Computed
 	// by the SPA over the cards the reader can see.
-	ColumnSummary  []Summary       `yaml:"column_summary,omitempty" json:"column_summary,omitempty"`
-	EditForm       string          `yaml:"edit_form,omitempty" json:"edit_form,omitempty"`
-	CreateForm     string          `yaml:"create_form,omitempty" json:"create_form,omitempty"`
+	ColumnSummary []Summary `yaml:"column_summary,omitempty" json:"column_summary,omitempty"`
+	EditForm      string    `yaml:"edit_form,omitempty" json:"edit_form,omitempty"`
+	CreateForm    string    `yaml:"create_form,omitempty" json:"create_form,omitempty"`
+	// QuickAdd puts a title input at the foot of every column and swimlane
+	// cell (TKT-IP4273S). Enter creates a card with the title, the column
+	// value and the swimlane value set, through the ordinary create API.
+	// Config load refuses it when a create with only those values cannot
+	// fill a required property; see validateKanbanQuickAdd.
+	QuickAdd bool `yaml:"quick_add,omitempty" json:"quick_add,omitempty"`
+	// AddColumn offers a control after the last column that adds a column
+	// (TKT-1X5G3BP). A column of an enum board is a value of the column
+	// property, so a new one is a config write: the SPA saves it through
+	// the Configure API, and only shows the control to a principal who may
+	// configure. Config load allows it only on a column_property board
+	// whose property declares its own values; see validateKanbanAddColumn.
+	AddColumn      bool            `yaml:"add_column,omitempty" json:"add_column,omitempty"`
 	Filters        []FilterConfig  `yaml:"filters,omitempty" json:"filters,omitempty"`
 	FilterControls []FilterControl `yaml:"filter_controls,omitempty" json:"filter_controls,omitempty"`
 	// Condition mirrors [List.Condition], but is NOT YET SUPPORTED on a
@@ -1242,6 +1262,11 @@ type Kanban struct {
 	// overriding next_action_surfaces. Nil: accepted, means inherit. See
 	// [Config.NextActionsEnabled].
 	Suggestions *bool `yaml:"suggestions,omitempty" json:"suggestions,omitempty"`
+	// Actions are ids of batch llm actions (TKT-I2SRNWR) offered as buttons
+	// in the board's header. A button runs its action on the cards the board
+	// shows, so each must be an llm action with a `batch:` block on the
+	// board's entity type, with a label.
+	Actions []string `yaml:"actions,omitempty" json:"actions,omitempty"`
 }
 
 // Kanban layouts and card styles; "" is the default for both.

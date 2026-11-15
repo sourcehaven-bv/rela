@@ -128,6 +128,10 @@ func (it Item) doc() itemDoc {
 // provider, so a single huge value must not ride along on every run.
 const MaxValueChars = 2000
 
+// MaxListItems caps the items of one list value in the input document. A
+// longer list is cut and the field named in truncated_fields.
+const MaxListItems = 100
+
 // Candidates is the candidate list for one relate output.
 type Candidates struct {
 	Items []Item
@@ -230,29 +234,7 @@ func (t *Task) relatable(in Input) []int {
 
 // document is the JSON user message.
 func (t *Task) document(in Input) map[string]any {
-	s := in.Subject
-	props := map[string]any{}
-	for _, p := range t.inputProperties() {
-		if v, ok := s.Properties[p]; ok && v != nil {
-			props[p] = v
-		}
-	}
-	props, cutProps := capValues(props)
-	subject := map[string]any{
-		"id": s.ID, "type": s.Type, "title": capText(t.meta.DisplayTitle(s.ID, s.Type, s.Properties)),
-		"properties": props,
-	}
-	if len(cutProps) > 0 {
-		subject["truncated_fields"] = cutProps
-	}
-	if c := t.cfg.Inputs.Content; c != nil {
-		text, cut := truncate(s.Content, c.ContentChars())
-		subject["content"] = text
-		if cut {
-			subject["content_truncated"] = true
-		}
-	}
-	doc := map[string]any{"record": subject}
+	doc := map[string]any{"record": t.recordDoc(in.Subject)}
 
 	if len(t.cfg.Inputs.Related) > 0 {
 		related := make([]map[string]any, 0, len(t.cfg.Inputs.Related))
@@ -278,6 +260,34 @@ func (t *Task) document(in Input) map[string]any {
 		doc["candidates"] = cands
 	}
 	return doc
+}
+
+// recordDoc is one subject as the model reads it: its id, type, title, the
+// input and output properties that are set, and its content when the task
+// sends it, every text value capped.
+func (t *Task) recordDoc(s *entity.Entity) map[string]any {
+	props := map[string]any{}
+	for _, p := range t.inputProperties() {
+		if v, ok := s.Properties[p]; ok && v != nil {
+			props[p] = v
+		}
+	}
+	props, cutProps := capValues(props)
+	subject := map[string]any{
+		"id": s.ID, "type": s.Type, "title": capText(t.meta.DisplayTitle(s.ID, s.Type, s.Properties)),
+		"properties": props,
+	}
+	if len(cutProps) > 0 {
+		subject["truncated_fields"] = cutProps
+	}
+	if c := t.cfg.Inputs.Content; c != nil {
+		text, cut := truncate(s.Content, c.ContentChars())
+		subject["content"] = text
+		if cut {
+			subject["content_truncated"] = true
+		}
+	}
+	return subject
 }
 
 // inputProperties is inputs.properties plus the output properties, so the
@@ -326,18 +336,18 @@ func capValue(v any) (any, bool) {
 	case string:
 		return truncate(x, MaxValueChars)
 	case []any:
-		out := make([]any, len(x))
-		cut := false
-		for i, e := range x {
+		cut := len(x) > MaxListItems
+		out := make([]any, min(len(x), MaxListItems))
+		for i, e := range x[:len(out)] {
 			var c bool
 			out[i], c = capValue(e)
 			cut = cut || c
 		}
 		return out, cut
 	case []string:
-		out := make([]string, len(x))
-		cut := false
-		for i, e := range x {
+		cut := len(x) > MaxListItems
+		out := make([]string, min(len(x), MaxListItems))
+		for i, e := range x[:len(out)] {
 			var c bool
 			out[i], c = truncate(e, MaxValueChars)
 			cut = cut || c
@@ -378,17 +388,6 @@ func cmpOr(s, def string) string {
 // rules of OpenAI strict mode: every object lists all its properties as
 // required and allows no others, and "no change" is null.
 func (t *Task) Schema(in Input) map[string]any {
-	setProps := map[string]any{}
-	writable := t.writable(in)
-	for _, p := range writable {
-		pd := t.def.Properties[p]
-		v := t.valueSchema(pd)
-		entry := map[string]any{"anyOf": []any{v, map[string]any{"type": "null"}}}
-		if d := describe(pd); d != "" {
-			entry["description"] = d
-		}
-		setProps[p] = entry
-	}
 	relProps := map[string]any{}
 	relatable := t.relatable(in)
 	relNames := make([]string, 0, len(relatable))
@@ -416,15 +415,30 @@ func (t *Task) Schema(in Input) map[string]any {
 		"additionalProperties": false,
 		"required":             []string{"set", "relate"},
 		"properties": map[string]any{
-			"set": map[string]any{
-				"type": "object", "additionalProperties": false,
-				"required": nonNilStrings(writable), "properties": setProps,
-			},
+			"set": t.setSchema(t.writable(in)),
 			"relate": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"required": nonNilStrings(relNames), "properties": relProps,
 			},
 		},
+	}
+}
+
+// setSchema is the schema of a "set" object over the writable properties:
+// each one required, its value or null.
+func (t *Task) setSchema(writable []string) map[string]any {
+	props := map[string]any{}
+	for _, p := range writable {
+		pd := t.def.Properties[p]
+		entry := map[string]any{"anyOf": []any{t.valueSchema(pd), map[string]any{"type": "null"}}}
+		if d := describe(pd); d != "" {
+			entry["description"] = d
+		}
+		props[p] = entry
+	}
+	return map[string]any{
+		"type": "object", "additionalProperties": false,
+		"required": nonNilStrings(writable), "properties": props,
 	}
 }
 

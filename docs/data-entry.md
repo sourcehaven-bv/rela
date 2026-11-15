@@ -4689,6 +4689,8 @@ kanbans:
 | `column_summary`   | list   | Aggregate lines under each column heading (see below)      |
 | `edit_form`        | string | Form name for editing cards (click to open)                |
 | `create_form`      | string | Form name for the "New" button                             |
+| `quick_add`        | bool   | A title input under every column and cell (see below)      |
+| `add_column`       | bool   | An "Add column" control at the end of the board (see below) |
 | `filters`          | list   | Static filters (same as lists)                             |
 | `filter_controls`  | list   | Interactive filter controls (same as lists)                |
 | `query_scope`      | string | Named query scope (same as lists)                          |
@@ -5103,6 +5105,90 @@ The board checks the field when the configuration loads:
 This is kanban-only for now: on a calendar or gantt field it is a config error.
 It reads one relation step. Sorting or filtering by a related property is not
 supported.
+
+### Quick-add
+
+With `quick_add: true`, every column gets a title input at its foot. On a
+swimlane board, every cell gets one. Type a title and press Enter: the board
+creates a card in that column, and in that lane. The input clears and keeps
+focus, so you can type the next card. Escape clears the input.
+
+```yaml
+kanbans:
+  workshop:
+    entity_type: risk
+    column_property: stage
+    quick_add: true
+```
+
+Quick-add is off by default. The card is made through the normal create API,
+so access rules, validation and the audit log apply as for any other create.
+
+- The new card gets the title, the column value and the swimlane value. On a
+  `columns_from` board it is linked to the column's target. A card added to
+  the Other column gets no link.
+- The input is hidden when you may not create the type.
+- A refused create shows its error under the input. The text you typed stays.
+- The card gets no value for the board's `filters:` or `query_scope:`. When
+  those hide the new card, a message says it was added.
+- A column or lane with an empty value collects cards that have none. A card
+  added there leaves the property unset.
+- The type's default template applies, as with any create.
+
+The board refuses to load when quick-add cannot make a valid card:
+
+- the type has `id_type: manual`, since a quick-add card has no id field;
+- the title property is computed, a rollup or missing;
+- a required property is not the title, the column or the swimlane property,
+  and has no default in the schema. Give it a default, or remove `quick_add`.
+
+Template defaults do not count for this check. Use a schema default for a
+required property.
+
+### Adding a column from the board
+
+With `add_column: true`, the board ends with an "Add column" control. Type a
+name and press Enter. The new column is a new value of the board's
+`column_property`, so this is a change to `schema.yaml`:
+
+- the value (the name in lower case, with `_` between words) is added to the
+  property's `values:`;
+- the name is added under `labels:` when it differs from the value;
+- when the board lists `columns:`, the column is added there too.
+
+```yaml
+kanbans:
+  workshop:
+    entity_type: risk
+    column_property: stage   # an inline enum: type: enum, values: [...]
+    add_column: true
+```
+
+The change is saved through the Configure space, the only part of rela that
+writes configuration. So it needs the same things as the Configure space:
+
+- the server runs with config editing on (`--config-editing`);
+- you hold the `config:edit` permission. Without it the control is hidden.
+
+Like any configuration save, it reloads every open page.
+
+The control only adds to an inline enum (`type: enum` with its own
+`values:`). A board whose column property uses a shared type from `types:`
+refuses `add_column` at startup, because a new value there would reach every
+property that uses the type. Change a shared type in the Configure space. A
+`columns_from` board or a wall adds columns as groups instead.
+
+When the board lists `columns:`, it can leave out values the property has.
+Typing the name of such a value adds it to the board. The schema does not
+change.
+
+Some schemas cannot be edited this way:
+
+- A type from a namespace is declared in another file. The board refuses
+  `add_column` at startup.
+- The Configure space does not edit a `schema.yaml` that uses `includes:`,
+  and a property inherited through `extends:` is not on the type's own
+  entry. In both cases the control shows the reason when you press Enter.
 
 ### Drag and Drop
 
@@ -7206,6 +7292,87 @@ to another entity is dropped.
 
 Limits in this version: the action runs on one entity type without faces, and
 it cannot create entities or set relation properties.
+
+#### Running on several entities (`batch`)
+
+A `batch:` block lets the action run on several entities in one request: the
+rows selected in a list, or the cards on a kanban board. The model gets every
+entity in one call and proposes changes for each.
+
+```yaml
+actions:
+  triage:
+    label: "Suggest priorities"
+    permission: tickets:triage
+    available_on:
+      entity_types: [ticket]
+    when: "entity.status == 'new'"
+    llm:
+      prompt: Pick a priority for each ticket.
+      inputs:
+        properties: [title, kind]
+        content: { max_chars: 4000 }
+      outputs:
+        set: [priority]
+      batch:
+        max: 20
+
+lists:
+  open_tickets:
+    entity_type: ticket
+    columns:
+      - property: title
+    actions: [triage]
+
+kanbans:
+  board:
+    entity_type: ticket
+    column_property: status
+    actions: [triage]
+```
+
+| Field | Description |
+| ----- | ----------- |
+| `max` | How many entities one run takes (default 20, at most 50). `max` times `inputs.content.max_chars` may be at most 200000 |
+
+A batch action proposes property values only, so `inputs.related` and
+`outputs.relate` are refused.
+
+**Where it runs.** List it in a list's `actions:` to run it on the selected
+rows, or in a kanban board's `actions:` to show it as a button in the board's
+header. A board button runs on the cards in the columns that are open, after
+the board's filters. Collapse columns or filter the board to run on fewer
+cards. Both surfaces refuse to start when there are more entities than `max`.
+Every entry must be a labelled batch action on the list's or board's entity
+type; anything else is a config error. The button appears for users who hold
+the action's `permission:`.
+
+**Each entity is checked as on its detail page.** The server checks the
+permission once, then each entity: the user must be able to read it, and it
+must match `available_on` and `when`. An entity that fails, or on which the
+user may write none of the `set` properties, is not sent. The dialog says how
+many entities were not sent, but not which or why. When no entity is left,
+the model is not called.
+
+**Review.** The run writes nothing. The dialog lists the proposed changes per
+entity, and every change starts unticked: all entities go to the model in one
+request, so text in one entity can steer what the model proposes for another.
+The user ticks single changes, or a whole entity, and applies them. Each
+entity is saved with an ordinary edit, and a property that changed since the
+proposal is not saved. An entity whose part of the answer breaks a rule is
+listed with the reason; the other entities' proposals still stand.
+
+**Answer size.** `max_tokens` caps the whole answer, which covers every entity
+of the run. Set it for `max` entities, not for one; an answer that is cut off
+fails the whole run.
+
+**Time.** One batch call may take at most five minutes. A proxy in front of
+`rela-server` must allow a request that long.
+
+**On a detail page and over MCP**, a batch action still runs on one entity, as
+any `llm:` action does. Over the API, send `{"entity_ids": [...]}` to
+`POST /api/v1/_action/<id>`; the answer is
+`{batch: {proposals, failed, skipped}}`.
 
 ### Reserved Keyboard Shortcuts
 

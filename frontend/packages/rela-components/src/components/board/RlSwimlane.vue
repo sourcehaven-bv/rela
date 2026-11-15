@@ -47,7 +47,7 @@ const props = withDefaults(
     canMove: undefined,
     grabbedId: undefined,
     keyboardTargetId: undefined,
-  },
+  }
 )
 
 const emit = defineEmits<{
@@ -61,10 +61,12 @@ const emit = defineEmits<{
 
 defineSlots<{
   card?: (props: { item: T; selected: boolean; lane: Swimlane<T> }) => unknown
+  /** Forwarded to every open cell of the lane. See `RlSwimlaneColumn`. */
+  footer?: (props: { section: Section<T>; lane: Swimlane<T> }) => unknown
 }>()
 
 const total = computed(
-  () => props.lane.count ?? props.lane.sections.reduce((n, s) => n + s.items.length, 0),
+  () => props.lane.count ?? props.lane.sections.reduce((n, s) => n + s.items.length, 0)
 )
 
 /** One cell per board column, in the board's order, empty where the lane has none. */
@@ -87,11 +89,7 @@ const cells = computed<Section<T>[]>(() => {
       over a card. See the stylesheet.
     -->
     <header class="rl-swimlane__header">
-      <RlDisclosure
-        :open="!lane.collapsed"
-        :label="lane.title"
-        @toggle="emit('toggle', lane)"
-      />
+      <RlDisclosure :open="!lane.collapsed" :label="lane.title" @toggle="emit('toggle', lane)" />
       <component :is="lane.icon" v-if="lane.icon" class="rl-swimlane__icon" :size="16" />
       <RlStatusDot v-else-if="lane.color" :color="lane.color" />
       <RlHeading :level="3" size="md" line-height="normal">{{ lane.title }}</RlHeading>
@@ -121,6 +119,9 @@ const cells = computed<Section<T>[]>(() => {
         <template v-if="$slots.card" #card="cardProps">
           <slot name="card" v-bind="cardProps" :lane="lane" />
         </template>
+        <template v-if="$slots.footer" #footer="footerProps">
+          <slot name="footer" v-bind="footerProps" :lane="lane" />
+        </template>
       </RlSwimlaneColumn>
     </div>
   </section>
@@ -137,7 +138,9 @@ const cells = computed<Section<T>[]>(() => {
   border-bottom: 1px solid var(--rl-color-border);
 }
 
-.rl-swimlane--collapsed { padding-bottom: var(--rl-space-3); }
+.rl-swimlane--collapsed {
+  padding-bottom: var(--rl-space-3);
+}
 
 /*
  * The header stays put while the board scrolls sideways, so the lane a card
@@ -186,9 +189,13 @@ const cells = computed<Section<T>[]>(() => {
 }
 
 /* The lane's hover reveals every add control in it. See `RlSwimlaneColumn`. */
-.rl-swimlane:hover :deep(.rl-swimlane-column__add) { visibility: visible; }
+.rl-swimlane:hover :deep(.rl-swimlane-column__add) {
+  visibility: visible;
+}
 
 @media (max-width: 767px) {
-  .rl-swimlane__columns { gap: var(--rl-space-3); }
+  .rl-swimlane__columns {
+    gap: var(--rl-space-3);
+  }
 }
 </style>

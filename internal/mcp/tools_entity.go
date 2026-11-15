@@ -18,7 +18,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
-	"github.com/Sourcehaven-BV/rela/internal/queryplan"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -55,11 +54,19 @@ func (s *Server) handleListEntities(
 		if entityType == "" {
 			return errorResult("filter requires type"), nil
 		}
-		compiled, err := compileListFilter(d.Meta, entityType, filterExpr, d.Related.Traversals != nil)
+		compiled, err := compileListFilter(d.Meta, d.Related, entityType, filterExpr)
 		if err != nil {
 			return errorResult(err.Error()), nil
 		}
 		prog = compiled
+		if c := d.Related.Conditions; c != nil {
+			// current_user binds to the caller, in the store and in Go.
+			stamped, err := c.StampQueryIdentity(ctx)
+			if err != nil {
+				return errorResult(err.Error()), nil
+			}
+			ctx = stamped
+		}
 	}
 
 	page := listPage{faces: store.InWorld(world), offset: offset, limit: limit}
@@ -99,23 +106,31 @@ type listPage struct {
 }
 
 // ofType reads the page of entityType and its gated total (TKT-D9UO9Y4).
-// Without a filter, or with one that lowers exactly to equalities on
-// properties the caller sees on every row, the store pages and counts. Any
+// Without a filter, the store pages and counts. A filter that lowers
+// exactly ([ConditionLowerer]) joins the store read when every property it
+// reads is visible to the caller on every row: its comparisons as Props, its
+// traversals as Traversals, which the reader gates (TKT-Z099FGY). A filter
+// that requires a denied traversal matches nothing and reads nothing. Any
 // other filter is answered in Go over the whole type (listPage.filterInGo).
 func (p listPage) ofType(
 	ctx context.Context, d Deps, entityType string, prog *predicate.Program,
 ) ([]*entity.Entity, int, error) {
 	q := visibility.PageQuery{Type: entityType, Faces: p.faces, Limit: p.limit, Offset: p.offset}
 	if prog != nil {
-		// No identity: a filter that names current_user keeps the Go path.
-		lowered, ok := queryplan.LowerScope(prog, d.Meta, entityType, "")
-		if !ok || len(lowered.Traversals) > 0 {
+		if d.Related.Conditions == nil {
 			return p.filterInGo(ctx, d, entityType, prog)
 		}
-		q.Props = lowered.Props
+		props, traversals, ok := d.Related.Conditions.Lower(ctx, prog, entityType)
+		if !ok {
+			return p.filterInGo(ctx, d, entityType, prog)
+		}
+		q.Props, q.Traversals = props, traversals
 	}
 	page, err := d.Store.ListEntityPage(ctx, q)
 	if errors.Is(err, visibility.ErrPropsNotPushable) {
+		// A property the filter reads is hidden on some row, or the gate
+		// refuses a traversal: the Go path judges the redacted row, where
+		// the hidden value is nil, and reports the refusal.
 		return p.filterInGo(ctx, d, entityType, prog)
 	}
 	if err != nil {
@@ -148,8 +163,10 @@ func (p listPage) everyType(ctx context.Context, d Deps) ([]*entity.Entity, int,
 
 // filterInGo answers a filter the store cannot: it reads every readable row
 // of entityType, evaluates prog on the redacted rows, and cuts the page. Its
-// cost grows with the type. Moving `related(...)` and the other filters that
-// do not lower into the store is TKT-Z099FGY.
+// cost grows with the type. It serves an ordered comparison, an `or`, a
+// `not` over anything but a traversal, a filter over a property hidden on
+// some row, and a traversal the gate refuses. Reading it in pages would not
+// help: the response carries the exact total, so every row is judged.
 func (p listPage) filterInGo(
 	ctx context.Context, d Deps, entityType string, prog *predicate.Program,
 ) ([]*entity.Entity, int, error) {
@@ -177,13 +194,22 @@ func compareEntityKey(a, b *entity.Entity) int {
 // compileListFilter compiles a list_entities filter expression against
 // entityType. A related(...) traversal is refused when the wiring supplied no
 // [TraversalBinder]: answering it ungated would reveal hidden edges.
+// current_user compiles only when the wiring supplied a [ConditionLowerer],
+// which stamps the caller's query identity; without an identity on ctx such
+// a filter fails at evaluation rather than matching for nobody.
 func compileListFilter(
-	meta *metamodel.Metamodel, entityType, expr string, canTraverse bool,
+	meta *metamodel.Metamodel, related RelatedReads, entityType, expr string,
 ) (*predicate.Program, error) {
-	prog, err := predicatefns.NewEvaluator(meta).Compile(entityType, expr)
+	ev := predicatefns.NewEvaluator(meta)
+	compile := ev.Compile
+	if related.Conditions != nil {
+		compile = ev.CompileWithCurrentUser
+	}
+	prog, err := compile(entityType, expr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid filter: %w", err)
 	}
+	canTraverse := related.Traversals != nil
 	if !canTraverse && len(relresolve.Specs(prog)) > 0 {
 		return nil, errors.New("invalid filter: related(...) is not supported here; " +
 			"use trace or list_relations instead")

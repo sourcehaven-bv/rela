@@ -5,7 +5,9 @@ title: Store-side paging for list_entities filters that do not lower
 kind: enhancement
 priority: low
 effort: m
-status: backlog
+started: "2026-11-14"
+completed: "2026-11-14"
+status: done
 ---
 
 ## Description

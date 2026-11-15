@@ -107,6 +107,12 @@ func (b attachRenderBinding) call(ls *lua.LState) int {
 		return 0
 	}
 	att, err := b.renderer.AttachRender(ctx, req)
+	return pushAttached(ls, att, err)
+}
+
+// pushAttached pushes the result of rela.attach_render or rela.attach_file:
+// the {name, size, sha256, mime} table, or nil and the error's message.
+func pushAttached(ls *lua.LState, att AttachedFile, err error) int {
 	if err != nil {
 		ls.Push(lua.LNil)
 		ls.Push(lua.LString(err.Error()))

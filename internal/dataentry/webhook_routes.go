@@ -19,6 +19,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/ingest"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // DefaultWebhookMaxBodyBytes caps an inbound declarative-webhook body. The
@@ -275,6 +276,7 @@ func (h *webhookRouter) runPipeline(
 
 	deps := h.write.luaDeps()
 	res, err := ingest.Run(ctx, ingest.Deps{
+		Finder:      visibility.HolderLookupFor(deps.VisibleReader),
 		Reader:      deps.VisibleReader,
 		World:       deps.World,
 		Writer:      h.write.manager,
