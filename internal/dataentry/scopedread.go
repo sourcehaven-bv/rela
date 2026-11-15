@@ -70,6 +70,14 @@ type scopeRequest struct {
 	// Passing none is always correct, only slower.
 	ScopeProps []store.PropPredicate
 
+	// Limit and Offset read one window of the type's rows in id order, the
+	// order an unpaged read returns them in, so a caller that keeps only a
+	// prefix reads only that prefix (TKT-CKLZMWB). Limit 0 reads every row.
+	//
+	// A window is refused alongside Scope: Scope filters after the store
+	// read, so a window of the store's rows is not a window of the result.
+	Limit, Offset int
+
 	// ScopeFilter applies Scope to the rows the store returned. Supplied by
 	// the caller because this package may not import predicatefns (arch-lint
 	// keeps the condition engine above the data-entry app).
@@ -113,8 +121,9 @@ type QueryScopeFilter func(
 //
 // ok=false means the scope does not lower exactly, or a traversal cannot be
 // gated for this principal: take the [QueryScopeFilter] path, which gives the
-// same rows or the same error. empty=true means a traversal is denied and
-// none is refused, so no row matches. Otherwise frag's Props and Related are
+// same rows or the same error. empty=true means a positive traversal is
+// denied and none is refused, so no row matches; a denied negated traversal
+// narrows nothing and drops out. Otherwise frag's Props and Related are
 // ANDed onto the read query. gate is the request's traversal gate, the one
 // [QueryScopeFilter] receives.
 type QueryScopeLower func(
@@ -184,55 +193,79 @@ type QueryScopeLower func(
 func scopedHeaders(
 	ctx context.Context, svc Services, rqr acl.ReadQueryResult, req scopeRequest,
 ) (headers []store.EntityHeader, withheld bool, err error) {
-	// A denied world yields nothing, via the SAME empty-result path a
-	// genuinely-empty world takes — so the two are identical on the wire.
-	if readWithheld(ctx, rqr) {
-		return nil, true, nil
+	if (req.Limit > 0 || req.Offset > 0) && (req.Scope != nil || req.ByIDs) {
+		return nil, false, fmt.Errorf("%w: a read window with a query scope or ids on %q", errListLoad, req.Type)
 	}
 
-	// The verdict decides the query and its error class; the narrowings are
-	// then stamped once, on whichever query the verdict produced.
-	var q store.GraphQuery
-	errClass := errACLListQuery
-	switch {
-	case rqr.AllowAll:
-		// Extra conjuncts must be carried HERE as well as on the ACL-gated
-		// branch below. Props on only one branch is the same fail-open
-		// shape as RR-GQWRLD: the AllowAll population would get an
-		// unnarrowed read while everyone else got a narrowed one.
-		q = store.GraphQuery{EntityType: req.Type, Props: allProps(req)}
-		errClass = errListLoad
-
-	case rqr.Query == nil:
-		// Defensive: a zero ReadQueryResult would otherwise alias AllowAll.
-		// Fail loud instead of silently widening the read.
-		return nil, false, fmt.Errorf("%w: zero ReadQueryResult for type %q", errACLListQuery, req.Type)
-
-	default:
-		// COPY before stamping — see the doc comment.
-		q = *rqr.Query
-		q.Props = append(append([]store.PropPredicate(nil), q.Props...), allProps(req)...)
+	q, errClass, withheld, err := scopedQuery(ctx, rqr, req)
+	if withheld || err != nil {
+		return nil, withheld, err
 	}
-	// Stamping the world on every branch is the RR-GQWRLD invariant; note
-	// store.TrivialScope() is the zero value, so a surface with no world in
-	// ctx pays nothing for it.
-	q = stampScope(ctx, q, req)
 
 	var out []store.EntityHeader
 	switch {
 	case req.ByIDs:
 		out, err = headersByIDs(ctx, svc, q, req.IDs, errClass)
-	case rqr.AllowAll && len(q.Props) == 0:
-		// No extra conjuncts, so the cheaper type-scan serves it.
+	case rqr.AllowAll && len(q.Props) == 0 && req.Limit == 0 && req.Offset == 0:
+		// No extra conjuncts and no window, so the cheaper type-scan serves it.
 		out, err = typeHeaders(ctx, svc, store.EntityQuery{Type: q.EntityType, Faces: q.Faces, FaceIn: q.FaceIn})
 	default:
-		out, err = collectHeaders(ctx, svc, q, errClass)
+		out, err = collectHeaders(ctx, svc, windowed(q, req), errClass)
 	}
 	if err != nil {
 		return nil, false, err
 	}
 	out, err = applyScope(ctx, svc, out, req)
 	return out, false, err
+}
+
+// scopedQuery is the verdict half of [scopedHeaders]: the store query one
+// collection read of req.Type runs for this principal, with every narrowing
+// that lives in the query stamped on. errClass is the error a failure of that
+// query is reported as: errListLoad for an allow-all read, errACLListQuery for
+// the ACL's own query. withheld is as for scopedHeaders.
+//
+// req.Scope is NOT in the query: it runs in Go after the read
+// ([applyScope]). A caller that pages or counts the query itself, rather
+// than reading it whole through scopedHeaders, must therefore not pass a
+// Scope: a page of the store's rows is not a page of the scoped result.
+//
+// Props is always a fresh slice, so a caller may append to it without
+// writing into the ACL layer's cached verdict or into req.
+func scopedQuery(
+	ctx context.Context, rqr acl.ReadQueryResult, req scopeRequest,
+) (q store.GraphQuery, errClass error, withheld bool, err error) {
+	// A denied world yields nothing, via the SAME empty-result path a
+	// genuinely-empty world takes — so the two are identical on the wire.
+	if readWithheld(ctx, rqr) {
+		return q, nil, true, nil // q is the zero query: there is none to run
+	}
+
+	switch {
+	case rqr.AllowAll:
+		// Extra conjuncts or a read window must be carried HERE as well as
+		// on the ACL-gated branch below. Props on only one branch is the
+		// same fail-open shape as RR-GQWRLD: the AllowAll population would
+		// get an unnarrowed read while everyone else got a narrowed one.
+		q = store.GraphQuery{EntityType: req.Type, Props: append([]store.PropPredicate(nil), allProps(req)...)}
+		errClass = errListLoad
+
+	case rqr.Query == nil:
+		// Defensive: a zero ReadQueryResult would otherwise alias AllowAll.
+		// Fail loud instead of silently widening the read.
+		return q, nil, false,
+			fmt.Errorf("%w: zero ReadQueryResult for type %q", errACLListQuery, req.Type)
+
+	default:
+		// COPY before stamping — see the scopedHeaders doc comment.
+		q = *rqr.Query
+		q.Props = append(append([]store.PropPredicate(nil), q.Props...), allProps(req)...)
+		errClass = errACLListQuery
+	}
+	// Stamping the world on every branch is the RR-GQWRLD invariant; note
+	// store.TrivialScope() is the zero value, so a surface with no world in
+	// ctx pays nothing for it.
+	return stampScope(ctx, q, req), errClass, false, nil
 }
 
 // typeHeaders drains a type scan, failing loud like [collectHeaders].
@@ -395,6 +428,14 @@ func stampScope(ctx context.Context, q store.GraphQuery, req scopeRequest) store
 	if len(req.Faces) > 0 {
 		q.FaceIn = req.Faces
 	}
+	return q
+}
+
+// windowed applies req's read window to a stamped row query. Kept out of
+// stampScope, whose result also answers applyScope's traversal matches,
+// which a window must not cut.
+func windowed(q store.GraphQuery, req scopeRequest) store.GraphQuery {
+	q.Limit, q.Offset = req.Limit, req.Offset
 	return q
 }
 

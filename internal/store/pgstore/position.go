@@ -64,25 +64,25 @@ func buildGraphPositionSQL(q store.GraphQuery, id string) (sqlText string, args 
 		return "", nil, err
 	}
 
+	// The window orders by orderKeySQL, the list's own ORDER BY keys, so a
+	// declared value order (an enum's rank) numbers the rows as the page
+	// sorts them. The inner select is aliased e for those keys.
+	b := &sqlBuilder{args: args}
 	var window strings.Builder
 	for _, spec := range q.OrderBy {
-		args = append(args, spec.Property)
-		dir := " ASC"
-		if spec.Descending {
-			dir = " DESC"
-		}
-		window.WriteString("(s.properties ->> $" + strconv.Itoa(len(args)) + `) COLLATE "C"` + dir + ", ")
+		window.WriteString(orderKeySQL(b, spec) + ", ")
 	}
+	args = b.args
 	// Byte-wise, like every id ordering here: the id column is declared
 	// COLLATE "C" (guarded by TestListOrderIsByteWise), which the window
 	// inherits exactly as the list's own ORDER BY does.
-	window.WriteString("s.id ASC")
+	window.WriteString("e.id ASC")
 
 	args = append(args, id)
 	return "SELECT rn, total, prev_id, prev_type, next_id, next_type FROM (" +
-		"SELECT s.id, row_number() OVER w AS rn, count(*) OVER () AS total," +
-		" lag(s.id) OVER w AS prev_id, lag(s.type) OVER w AS prev_type," +
-		" lead(s.id) OVER w AS next_id, lead(s.type) OVER w AS next_type" +
-		" FROM (" + inner + ") s WINDOW w AS (ORDER BY " + window.String() + ")" +
+		"SELECT e.id, row_number() OVER w AS rn, count(*) OVER () AS total," +
+		" lag(e.id) OVER w AS prev_id, lag(e.type) OVER w AS prev_type," +
+		" lead(e.id) OVER w AS next_id, lead(e.type) OVER w AS next_type" +
+		" FROM (" + inner + ") e WINDOW w AS (ORDER BY " + window.String() + ")" +
 		") p WHERE p.id = $" + strconv.Itoa(len(args)), args, nil
 }

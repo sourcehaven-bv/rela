@@ -69,8 +69,10 @@ func handleV1NavStatus(a *App, w http.ResponseWriter, r *http.Request) {
 // navStatusFor evaluates one entry's rules in order and returns the first
 // whose count is above zero, or ok=false when none is.
 //
-// The list's rows are read ONCE and every rule counts over that slice, so a
-// second rule costs an evaluation per row, not another read.
+// When the store can answer the list and every rule, each rule is one
+// scoped count ([navStatusInStore]). Otherwise the list's rows are read ONCE
+// and every rule counts over that slice, so a second rule costs an
+// evaluation per row, not another read.
 func navStatusFor(
 	ctx context.Context, a *App, s *Schema, ns dataentryconfig.NavStatusEntry,
 ) (status v1.NavStatus, ok bool, err error) {
@@ -78,6 +80,17 @@ func navStatusFor(
 	if !found {
 		return v1.NavStatus{}, false, fmt.Errorf("unknown list %q", ns.List)
 	}
+	if status, ok, handled, err := navStatusInStore(ctx, a, s, ns, listCfg); handled {
+		return status, ok, err
+	}
+	return navStatusInGo(ctx, a, s, ns, listCfg)
+}
+
+// navStatusInGo is the Go path of [navStatusFor]: the list's rows read once,
+// every rule judged over them.
+func navStatusInGo(
+	ctx context.Context, a *App, s *Schema, ns dataentryconfig.NavStatusEntry, listCfg dataentryconfig.List,
+) (status v1.NavStatus, ok bool, err error) {
 	ctx, rows, err := navStatusRows(ctx, a, s, ns.List, listCfg)
 	if err != nil {
 		return v1.NavStatus{}, false, err
@@ -115,6 +128,92 @@ func navStatusFor(
 		}
 	}
 	return v1.NavStatus{}, false, nil
+}
+
+// navStatusInStore answers an entry's rules with one scoped count each, when
+// the store can (TKT-I39Y7N4): the list's own request takes the pushdown
+// (listNarrowing.pushdownPlan, with its scope and `condition:`), and every
+// rule's condition lowers under the same rules a list condition does
+// ([lowerViewCondition]). Each count is the list's ACL-scoped query narrowed
+// by the rule, so it counts the rows the list shows this principal, after
+// the row gate, as the Go path does.
+//
+// handled is false when any part does not lower; the caller then takes the
+// Go path, which gives the same counts, or the same error for a request that
+// fails. Nothing is counted before every rule has lowered, so a declined
+// entry costs no count.
+//
+// Each rule is its own count, so a write landing between two counts can
+// change which rule wins, where the Go path judged one read. A marker is
+// advisory and the next request corrects it, so this is accepted.
+func navStatusInStore(
+	ctx context.Context, a *App, s *Schema, ns dataentryconfig.NavStatusEntry, listCfg dataentryconfig.List,
+) (status v1.NavStatus, ok, handled bool, err error) {
+	typeName := listCfg.EntityType
+	scope, err := viewQueryScope(a.queryScopes, s.Cfg, s.Meta, typeName, listCfg.QueryScope)
+	if err != nil {
+		return v1.NavStatus{}, false, false, nil //nolint:nilerr // the Go path returns this error
+	}
+	if ctx, err = bindQueryIdentity(ctx, scope); err != nil {
+		return v1.NavStatus{}, false, false, nil //nolint:nilerr // the Go path returns this error
+	}
+	gated, err := gateAppListQuery(ctx, a, s, typeName, navStatusListQuery(listCfg))
+	if err != nil {
+		return v1.NavStatus{}, false, false, nil //nolint:nilerr // the Go path returns this error
+	}
+	n := listNarrowing{
+		cond:  viewCondition(a.viewConditions, s, viewKindList, ns.List),
+		scope: scope, state: s, fields: a.fieldResolver,
+	}
+	if listCfg.Condition != "" && n.cond == nil {
+		return v1.NavStatus{}, false, false, nil
+	}
+	plan, empty, planned := n.pushdownPlan(ctx, typeName, gated, 1, 1)
+	if !planned {
+		return v1.NavStatus{}, false, false, nil
+	}
+	if empty {
+		// The Go path judges no rule over no rows either.
+		return v1.NavStatus{}, false, true, nil
+	}
+	// counts[i] is the query rule i counts, or nil when a denied traversal
+	// leaves the rule no rows.
+	counts := make([]*listPlan, len(ns.Entry.Status))
+	for i, rule := range ns.Entry.Status {
+		ruled := plan
+		if rule.Condition != "" {
+			m := viewCondition(a.viewConditions, s, viewKindNavStatus, dataentryconfig.NavStatusConditionID(ns.Key, i))
+			if m == nil {
+				return v1.NavStatus{}, false, false, nil
+			}
+			frag, denied, lowered := lowerViewCondition(ctx, s.Meta, m, a.fieldResolver, typeName)
+			if !lowered {
+				return v1.NavStatus{}, false, false, nil
+			}
+			if denied {
+				continue
+			}
+			ruled = plan.narrowed(frag)
+		}
+		counts[i] = &ruled
+	}
+	for i, rule := range ns.Entry.Status {
+		if counts[i] == nil {
+			continue
+		}
+		count, err := scopedTotal(ctx, a.Services().Store, counts[i].query)
+		if err != nil {
+			return v1.NavStatus{}, false, true, fmt.Errorf("status[%d]: %w: %w", i, counts[i].errClass, err)
+		}
+		if count > 0 {
+			return v1.NavStatus{
+				Tone:  rule.Tone,
+				Label: strings.ReplaceAll(rule.Label, navStatusCountVar, strconv.Itoa(count)),
+				Count: count,
+			}, true, true, nil
+		}
+	}
+	return v1.NavStatus{}, false, true, nil
 }
 
 // navStatusRows returns exactly the rows the list shows this principal: its
