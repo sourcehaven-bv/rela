@@ -573,6 +573,18 @@ export interface KanbanConfig {
   column_summary?: Summary[]
   edit_form?: string
   create_form?: string
+  /**
+   * A title input at the foot of every column and swimlane cell; Enter
+   * creates the card (TKT-IP4273S). The server refuses it at load when a
+   * required property would be left unset.
+   */
+  quick_add?: boolean
+  /**
+   * A control after the last column that adds one, saved through the
+   * Configure API (TKT-1X5G3BP). Only offered to a principal who may
+   * configure, and only on an inline-enum `column_property` board.
+   */
+  add_column?: boolean
   filters?: Array<{ property: string; operator: string; value: string }>
   filter_controls?: FilterControl[]
   /** Named query scope; see the field of the same name on ListConfig. */

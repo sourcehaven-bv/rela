@@ -3,9 +3,10 @@ package pgstore
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
@@ -23,12 +24,11 @@ import (
 //
 // Search matches case-insensitive substrings over search_text, which the store
 // builds from entity ID + content + string-valued properties — exactly the
-// fields search.MatchText considers. The trgm GIN index accelerates the ILIKE.
+// fields search.MatchText considers. The trgm GIN index accelerates the LIKE.
 // The Service layer (search.New) applies type/property filters and the result
 // limit on top; this backend only maps text to candidate IDs.
 type SearchBackend struct {
-	db     DBTX
-	titles SearchTitles
+	db DBTX
 }
 
 // compile-time interface check.
@@ -37,14 +37,6 @@ var _ search.Backend = (*SearchBackend)(nil)
 // NewSearchBackend builds a search backend over the same handle as the store.
 func NewSearchBackend(db DBTX) *SearchBackend {
 	return &SearchBackend{db: db}
-}
-
-// RankByTitles makes the backend rank by display title; see [SearchTitles].
-// It must carry the same map as the store it is paired with ([Open] does
-// this), or the gated and ungated searches would order differently.
-func (b *SearchBackend) RankByTitles(t SearchTitles) *SearchBackend {
-	b.titles = t
-	return b
 }
 
 // EntityPut is a no-op: the store already persists search_text on write.
@@ -59,8 +51,9 @@ func (b *SearchBackend) EntityDelete(string) error { return nil }
 func (b *SearchBackend) EntityRenamed(string, *entity.Entity) error { return nil }
 
 // Search returns entity IDs whose search_text contains the query (case-
-// insensitive substring), ordered by trigram similarity to the query (best
-// first) then by ID for stable ties. limit <= 0 means no limit.
+// insensitive substring), ordered by trigram distance between the query and
+// the title (nearest first; see [SearchTitles]) then by ID for stable ties.
+// limit <= 0 means no limit.
 //
 // An empty query matches every entity — but in practice the Service never
 // calls Search with empty text (it uses listAll), so this just stays
@@ -70,13 +63,13 @@ func (b *SearchBackend) Search(text string, limit int, w store.WorldScope) ([]se
 		return nil, fmt.Errorf("%w: search with an unset world", store.ErrInvalidQuery)
 	}
 	needle := strings.ToLower(text)
-	sql, args := buildSearchSQL(needle, limit, w, b.titles)
+	sql, args := buildSearchSQL(needle, limit, w)
 
 	// context.Background(): the search.Backend.Search interface carries no
 	// context (see internal/search/types.go), so a search query can't inherit a
 	// request deadline/cancellation. Threading ctx through is a search-package
 	// interface change tracked separately.
-	rows, err := b.db.Query(context.Background(), sql, args...)
+	rows, err := b.db.Query(context.Background(), sql, append([]any{searchQueryMode}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -138,203 +131,134 @@ func faceFor(id, entityType string, p entity.Face, rank int, w store.WorldScope)
 
 // buildSearchSQL renders the text search, scoped to world w.
 //
+// # Ranking reads an index
+//
+// Hits are ordered by trigram distance between the needle and the row's
+// search_title (see [SearchTitles]), then by id. A GiST index on
+// search_title returns rows in that order, so for a word most rows contain
+// PostgreSQL reads the nearest rows first, tests each against the text and
+// world conditions, and stops at the LIMIT. Ranking every match and then
+// sorting grew with the data: the scale run's search word matched 85% of the
+// rows (TKT-M58EQ1W). For a rare word the planner keeps the trigram index on
+// search_text and sorts the few matches. Which plan wins depends on the
+// needle, so the statement is planned per execution ([searchQueryMode]).
+//
 // # Two shapes, chosen by world
 //
-// The DEFAULT world keeps the historical query verbatim — `face = ”`, no
-// join, no window — so a project that never declares a face pays nothing
-// for this feature. That is the [store.WorldScope.IsTrivial] fast-path
-// contract.
+// The DEFAULT world tests for the empty face, so a project that never declares a
+// face pays nothing for faces. That is the [store.WorldScope.IsTrivial]
+// fast-path contract.
 //
-// A non-default world resolves per FAMILY, not per row. `face IN (a, b)`
-// would return two rows for an entity holding both coordinates and break the
-// at-most-one-hit-per-entity invariant that makes `limit` count entities, so
-// the shape is `DISTINCT ON (id) ... ORDER BY id, rank` — the same shape the
-// entity listings use, via the same [worldSQL] builder. Sharing that builder
-// is what keeps search and listing from disagreeing about which face a world
-// serves.
-//
-// # Resolve first, filter second
-//
-// The text predicate is applied AFTER the prime is chosen, in the outer
-// query. Filtering first would let a non-prime face's text decide whether its
-// entity appears: a `published`-world search would hit on a term present only
-// in the draft while displaying published bytes that lack it. Selecting the
-// prime and then testing ITS text is the whole point of world-scoped search.
-//
-// # Matching faces first, as a prefilter only
-//
-// Testing the prime's text after DISTINCT ON means the LIKE cannot use the
-// trigram index: every family in the world is resolved and then scanned
-// (about 200 ms at 19k entities, whatever the needle). When the needle has
-// trigrams, a CTE first collects the candidate faces whose text matches,
-// through the index, and DISTINCT ON resolves only the entities among them
-// (textHitsJoin). That restricts by id, never by face: the prime is still
-// chosen among all candidate faces. It is a hit when its own face is among
-// the entity's matching faces, which is the outer LIKE without reading the
-// text a second time (search_text is usually TOASTed, so each read
-// decompresses it). The faces travel as an array on the joined row rather
-// than as a second `IN (SELECT ... FROM text_hits)`: under a generic plan
-// PostgreSQL estimates the CTE at a few rows and runs such a semi-join as a
-// nested loop, quadratic in the number of matches. The result is the same rows
-// in the same order (TKT-T2I7P2). A selective term drops from about 200 ms
-// to under 10 ms; a term most rows contain costs about the same as before.
-//
-// The index scan reads every face whose text contains the needle, before the
-// candidate and visibility conditions drop the ones this caller cannot read.
-// So the statement's time grows a little with matches on hidden faces. The
-// default-world shape has always behaved this way; a single hidden hit is
-// lost in the noise.
+// A non-default world resolves per FAMILY, not per row: the hit for an
+// entity is its prime, the candidate face the world ranks first, and the
+// prime's own text must match. Filtering on text first would let a non-prime
+// face's text decide whether the entity appears. See [worldPrimeSQL].
 //
 // # Lockstep
 //
 // visiblesearch.go's buildVisibleSearchSQL holds the gated and ungated
 // streams to an ordered-subsequence contract, so the ORDER BY here and there
-// must agree.
-func buildSearchSQL(needle string, limit int, w store.WorldScope, titles SearchTitles) (sqlText string, args []any) {
+// must agree. Both order by [searchDistanceSQL], then id.
+func buildSearchSQL(needle string, limit int, w store.WorldScope) (sqlText string, args []any) {
+	bind := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args))
+	}
 	// search_text is already lowercased by the store, so a plain LIKE with
 	// the lowercased needle is case-insensitive without per-row lower()
 	// calls. '%' and '_' in the needle are escaped so they match literally.
-	textPred := func(col string) string {
-		args = append(args, escapeLike(needle))
-		return col + ` LIKE '%' || $` + strconv.Itoa(len(args)) + ` || '%' ESCAPE '\'`
-	}
-
+	where := []string{likeSQL(bind(escapeLike(needle)))}
+	from, rank := "entities e", "0"
 	if w.IsTrivial() {
-		sqlText = `SELECT id, face, type, 0 FROM entities WHERE ` +
-			textPred("search_text") + ` AND face = ''`
+		where = append(where, "e.face = ''")
 	} else {
-		rank, candidate := worldSQL(w, "", &args)
-		var with, hits, hitFaces, outer string
-		if trigramIndexable(needle) {
-			// See textHitsCTE.
-			with = `WITH ` + textHitsCTE + ` AS MATERIALIZED (SELECT id, face FROM entities WHERE ` +
-				textPred("search_text") + ` AND ` + candidate + `) `
-			hits = textHitsJoin
-			hitFaces = `, hit_faces`
-			outer = `p.face = ANY(p.hit_faces)`
-		} else {
-			outer = textPred("p.search_text")
-		}
-		inner := `SELECT DISTINCT ON (id) id, face, type, search_text, properties, (` + rank + `) AS wrank` + hitFaces +
-			` FROM entities` + hits + ` WHERE ` + candidate +
-			` ORDER BY id ASC, (` + rank + `) ASC, face ASC`
-		sqlText = with + `SELECT id, face, type, wrank FROM (` + inner + `) p WHERE ` + outer
+		var prime []string
+		from, rank, prime = worldPrimeSQL(w, "", &args)
+		where = append(where, prime...)
 	}
-
+	sqlText = "SELECT e.id, e.face, e.type, " + rank + " FROM " + from + " WHERE " + strings.Join(where, " AND ")
 	if needle == "" {
-		// Avoid similarity() on an empty string; just order by id.
-		sqlText += ` ORDER BY id ASC`
+		sqlText += " ORDER BY e.id ASC"
 	} else {
-		bind := func(v any) string {
-			args = append(args, v)
-			return "$" + strconv.Itoa(len(args))
-		}
-		sqlText += ` ORDER BY ` + titles.rankSQL("", bind, needle) + ` DESC, id ASC`
+		sqlText += " ORDER BY " + searchDistanceSQL(bind(needle)) + ", e.id ASC"
 	}
 	if limit > 0 {
-		args = append(args, limit)
-		sqlText += ` LIMIT $` + strconv.Itoa(len(args))
+		sqlText += " LIMIT " + bind(limit)
 	}
 	return sqlText, args
 }
 
-// searchRankPrefix is how much of search_text similarity ranking looks at:
-// the id and the string properties (title first among them alphabetically
-// in most schemas) that lead the column, not the body behind them. A
-// trigram similarity over every candidate's whole body cost seconds on a
-// common word at 20k rows (TKT-1U8XYN); a reader searching "telemetry"
-// wants the entities ABOUT telemetry ranked first, which is what the
-// prefix says, and every row that mentions it still matches — matching
-// is the LIKE over the whole column, ranking is this prefix.
-const searchRankPrefix = 1024
+// likeSQL is the text match on alias e; needle is the placeholder of the
+// escaped, lowercased needle.
+func likeSQL(needle string) string {
+	return "e.search_text LIKE '%' || " + needle + ` || '%' ESCAPE '\'`
+}
+
+// searchDistanceSQL is the ranking expression both search builders order by,
+// ascending; they must agree (see buildVisibleSearchSQL's ordered-subsequence
+// contract), which is why one place writes it. needle is the placeholder of
+// the lowercased needle. It must stay in the form `column <-> value`, or the
+// GiST index cannot return rows in its order.
+func searchDistanceSQL(needle string) string {
+	return "(e.search_title <-> " + needle + ")"
+}
+
+// worldPrimeSQL renders the shape both search builders share for a
+// non-default world: the FROM clause, the row's world rank (its rule chain
+// position, see [faceFor]) and the WHERE conjuncts that keep a row only when
+// it is the prime of its entity.
+//
+// vis is an extra condition a candidate must meet, written against alias e:
+// the gated search's visibility clause, or "" for none. A face the caller may
+// not read is then not a candidate, and the next readable face is served
+// instead (TKT-7IZHP0).
+//
+// The prime test is an anti-join: a row is the prime when no candidate face
+// of its entity ranks before it, that is, has a lower world rank, or the same
+// rank and a smaller face. That is the DISTINCT ON order the entity listings
+// use. Unlike DISTINCT ON it is a test on each row, so the distance-ordered
+// scan can stop at the limit; DISTINCT ON had to resolve every matching
+// family first. Both sides are written against alias e, because the
+// visibility clause is: the inner query's e deliberately shadows the outer
+// one, so the clause tests the sibling face. Renaming either alias would
+// silently test the outer row instead. The row's own values reach the inner
+// query through the lateral alias k, which PostgreSQL folds away. A scalar `face = (SELECT
+// ...)` would say the same, but PostgreSQL estimates such a condition to
+// keep almost no rows and then never picks the ordered scan.
+func worldPrimeSQL(w store.WorldScope, vis string, args *[]any) (from, rank string, where []string) {
+	rank, candidate := worldSQL(w, "e", args)
+	cond := candidate
+	if vis != "" {
+		cond += " AND (" + vis + ")"
+	}
+	from = "entities e CROSS JOIN LATERAL (SELECT e.id AS id, e.face AS face, (" + rank + ") AS wrank) k"
+	where = []string{cond, "NOT EXISTS (SELECT 1 FROM entities e WHERE e.id = k.id AND " + cond +
+		" AND ((" + rank + ") < k.wrank OR ((" + rank + ") = k.wrank AND e.face < k.face)))"}
+	return from, "k.wrank", where
+}
+
+// searchQueryMode makes pgx run a search without a cached prepared
+// statement, so PostgreSQL plans it with the needle's value every time. A
+// generic plan cannot tell a word most rows contain from one that no row
+// does, and the two need opposite plans (see buildSearchSQL).
+const searchQueryMode = pgx.QueryExecModeExec
 
 // SearchTitles maps an entity type to the property holding its display
 // title. It is plain configuration handed in by the composition root, which
-// derives it from the metamodel — this package must not import that. Types
-// and property names reach SQL as bound parameters, never interpolated.
+// derives it from the metamodel; this package must not import that.
 //
-// With a map, free-text ranking is the trigram similarity between the needle
-// and the row's TITLE (TKT-U9DYW4). Matching is unchanged — the LIKE over all
-// of search_text — so every row that mentions the term is still found; what
-// changes is that ranking no longer computes trigrams over a kilobyte of
-// every matched row, which was 1.1 s of a 1.3 s search for a term most rows
-// contain. A row whose type has no entry, or whose title is unset, ranks by
-// its id. Nil keeps the prefix ranking, for callers with no metamodel.
+// Free-text ranking is the trigram distance between the needle and the row's
+// lowercased title (TKT-U9DYW4), kept in entities.search_title so an index
+// can serve the order (TKT-M58EQ1W). Matching is unchanged, the LIKE over
+// all of search_text, so every row that mentions the term is still found. A
+// row whose type has no entry, or whose title is unset, ranks by its id.
+// [Open] records the map in the database with [SyncSearchTitles]; types and
+// property names reach SQL as bound parameters, never interpolated.
 type SearchTitles map[string]string
-
-// rankSQL is the ranking expression BOTH search builders order by; they must
-// agree (see buildVisibleSearchSQL's ordered-subsequence contract), which is
-// why there is exactly one place that writes it. alias qualifies the columns
-// ("e" for the gated builder, empty for the ungated one); bind appends a
-// parameter and returns its placeholder.
-//
-// The title is lowercased here because the needle already is: search_text is
-// lowercased at write time, a raw property is not, and similarity() is case
-// sensitive.
-func (t SearchTitles) rankSQL(alias string, bind func(any) string, needle string) string {
-	col := func(name string) string {
-		if alias == "" {
-			return name
-		}
-		return alias + "." + name
-	}
-	if len(t) == 0 {
-		return `similarity(left(` + col("search_text") + `, ` + strconv.Itoa(searchRankPrefix) + `), ` + bind(needle) + `)`
-	}
-	byProp := map[string][]string{}
-	for typ, prop := range t {
-		byProp[prop] = append(byProp[prop], typ)
-	}
-	props := make([]string, 0, len(byProp))
-	for prop := range byProp {
-		props = append(props, prop)
-	}
-	sort.Strings(props) // deterministic SQL keeps the plan cache warm
-	var arms strings.Builder
-	for _, prop := range props {
-		types := byProp[prop]
-		sort.Strings(types)
-		arms.WriteString(` WHEN ` + col("type") + ` = ANY(` + bind(types) + `::text[]) THEN ` +
-			col("properties") + ` ->> ` + bind(prop))
-	}
-	return `similarity(lower(coalesce(CASE` + arms.String() + ` END, ` + col("id") + `)), ` + bind(needle) + `)`
-}
 
 // Close releases backend resources. The handle is owned by the wiring layer,
 // so there is nothing to close here.
 func (b *SearchBackend) Close() error { return nil }
-
-// textHitsCTE names the matched-ids CTE of a world-scoped search (see
-// buildSearchSQL). It cannot collide with the visibility and field-grant
-// CTEs, which are named v<i>_* and f<i>_<j>_*.
-const textHitsCTE = "text_hits"
-
-// textHitsJoin joins each candidate row to its entity's matching faces, as
-// the array hit_faces. JOIN ... USING (id) keeps a single id column, so the
-// builders' unqualified `id` and `SELECT *` stay unambiguous.
-const textHitsJoin = " JOIN (SELECT id, array_agg(face) AS hit_faces FROM " + textHitsCTE + " GROUP BY id) h USING (id)"
-
-// trigramIndexable reports whether a LIKE '%needle%' can use the trigram
-// index on search_text, which needs at least one trigram from the needle.
-// pg_trgm takes trigrams from runs of word characters; the safe, locale-free
-// rule is a run of at least 3 ASCII letters or digits. A needle that fails it
-// ("ab", "a b", "x-y") keeps the plain shape, where the index would not help
-// and the extra CTE would only add a second scan.
-func trigramIndexable(needle string) bool {
-	run := 0
-	for i := range len(needle) {
-		c := needle[i]
-		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
-			run++
-			if run >= 3 {
-				return true
-			}
-			continue
-		}
-		run = 0
-	}
-	return false
-}
 
 // escapeLike escapes LIKE wildcards so the needle matches literally. The query
 // uses ESCAPE '\'.

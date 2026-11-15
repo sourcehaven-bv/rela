@@ -4689,6 +4689,8 @@ kanbans:
 | `column_summary`   | list   | Aggregate lines under each column heading (see below)      |
 | `edit_form`        | string | Form name for editing cards (click to open)                |
 | `create_form`      | string | Form name for the "New" button                             |
+| `quick_add`        | bool   | A title input under every column and cell (see below)      |
+| `add_column`       | bool   | An "Add column" control at the end of the board (see below) |
 | `filters`          | list   | Static filters (same as lists)                             |
 | `filter_controls`  | list   | Interactive filter controls (same as lists)                |
 | `query_scope`      | string | Named query scope (same as lists)                          |
@@ -5103,6 +5105,90 @@ The board checks the field when the configuration loads:
 This is kanban-only for now: on a calendar or gantt field it is a config error.
 It reads one relation step. Sorting or filtering by a related property is not
 supported.
+
+### Quick-add
+
+With `quick_add: true`, every column gets a title input at its foot. On a
+swimlane board, every cell gets one. Type a title and press Enter: the board
+creates a card in that column, and in that lane. The input clears and keeps
+focus, so you can type the next card. Escape clears the input.
+
+```yaml
+kanbans:
+  workshop:
+    entity_type: risk
+    column_property: stage
+    quick_add: true
+```
+
+Quick-add is off by default. The card is made through the normal create API,
+so access rules, validation and the audit log apply as for any other create.
+
+- The new card gets the title, the column value and the swimlane value. On a
+  `columns_from` board it is linked to the column's target. A card added to
+  the Other column gets no link.
+- The input is hidden when you may not create the type.
+- A refused create shows its error under the input. The text you typed stays.
+- The card gets no value for the board's `filters:` or `query_scope:`. When
+  those hide the new card, a message says it was added.
+- A column or lane with an empty value collects cards that have none. A card
+  added there leaves the property unset.
+- The type's default template applies, as with any create.
+
+The board refuses to load when quick-add cannot make a valid card:
+
+- the type has `id_type: manual`, since a quick-add card has no id field;
+- the title property is computed, a rollup or missing;
+- a required property is not the title, the column or the swimlane property,
+  and has no default in the schema. Give it a default, or remove `quick_add`.
+
+Template defaults do not count for this check. Use a schema default for a
+required property.
+
+### Adding a column from the board
+
+With `add_column: true`, the board ends with an "Add column" control. Type a
+name and press Enter. The new column is a new value of the board's
+`column_property`, so this is a change to `schema.yaml`:
+
+- the value (the name in lower case, with `_` between words) is added to the
+  property's `values:`;
+- the name is added under `labels:` when it differs from the value;
+- when the board lists `columns:`, the column is added there too.
+
+```yaml
+kanbans:
+  workshop:
+    entity_type: risk
+    column_property: stage   # an inline enum: type: enum, values: [...]
+    add_column: true
+```
+
+The change is saved through the Configure space, the only part of rela that
+writes configuration. So it needs the same things as the Configure space:
+
+- the server runs with config editing on (`--config-editing`);
+- you hold the `config:edit` permission. Without it the control is hidden.
+
+Like any configuration save, it reloads every open page.
+
+The control only adds to an inline enum (`type: enum` with its own
+`values:`). A board whose column property uses a shared type from `types:`
+refuses `add_column` at startup, because a new value there would reach every
+property that uses the type. Change a shared type in the Configure space. A
+`columns_from` board or a wall adds columns as groups instead.
+
+When the board lists `columns:`, it can leave out values the property has.
+Typing the name of such a value adds it to the board. The schema does not
+change.
+
+Some schemas cannot be edited this way:
+
+- A type from a namespace is declared in another file. The board refuses
+  `add_column` at startup.
+- The Configure space does not edit a `schema.yaml` that uses `includes:`,
+  and a property inherited through `extends:` is not on the type's own
+  entry. In both cases the control shows the reason when you press Enter.
 
 ### Drag and Drop
 

@@ -444,7 +444,7 @@ CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);
 
 // recordsDDL holds the record store (sqlrecords, TKT-J7Q9C4K): typed rows
 // owned by an entity, and the ledger transaction ids claimed so far. Times
-// are integer microseconds since the epoch. pgstore migration 0047 has the
+// are integer microseconds since the epoch. pgstore migration 0048 has the
 // same shape. Shared between schemaSQL and the v38 to v39 rung.
 const recordsDDL = `
 CREATE TABLE IF NOT EXISTS records (

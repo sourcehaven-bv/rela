@@ -20,6 +20,11 @@ SQL-queryable) rather than a directory of markdown files — including
 deployments with **multiple server processes** sharing one database (see
 [Multiple writers](#multiple-writers)).
 
+rela needs **PostgreSQL 17 or later**, the version in Debian stable. CI and
+the weekly scale run test against PostgreSQL 17. Older servers may start, but
+some queries do not get the plans they rely on, so search and lists can slow
+down as the data grows.
+
 ## Headless server
 
 `rela-server-headless-postgres` is the same server with the web UI left out.

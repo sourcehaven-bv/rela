@@ -89,7 +89,7 @@ const props = withDefaults(
     canMove: undefined,
     emptyLabel: undefined,
     emptyDescription: undefined,
-  },
+  }
 )
 
 const emit = defineEmits<{
@@ -112,7 +112,7 @@ const element = ref<HTMLElement>()
 useBoardAutoScroll(element)
 
 const toggleFocus = useSectionToggleFocus(element, () =>
-  props.sections.map((section) => `${section.id}:${!!section.collapsed}`).join('|'),
+  props.sections.map((section) => `${section.id}:${!!section.collapsed}`).join('|')
 )
 
 function onExpand(section: Section<T>) {
@@ -134,7 +134,15 @@ function itemById(id: string) {
   return undefined
 }
 
-function onDrop({ drag, section, at }: { drag: BoardDragData; section: Section<T>; at?: BoardDropPosition }) {
+function onDrop({
+  drag,
+  section,
+  at,
+}: {
+  drag: BoardDragData
+  section: Section<T>
+  at?: BoardDropPosition
+}) {
   const item = itemById(drag.itemId)
   if (item) emit('move', { item, to: section, at })
 }
@@ -160,17 +168,17 @@ const {
 defineSlots<{
   card?: (props: { item: T; selected: boolean }) => unknown
   heading?: (props: { section: Section<T> }) => unknown
+  /** Forwarded to every open column. See `RlBoardColumn`. */
+  footer?: (props: { section: Section<T> }) => unknown
+  /** Takes the place of the add-section button when `showAddSection` is set. */
+  addSection?: () => unknown
 }>()
 </script>
 
 <template>
   <div ref="element" class="rl-board" @keydown="onKeydown">
     <template v-for="section in sections" :key="section.id">
-      <RlBoardColumnCollapsed
-        v-if="section.collapsed"
-        :section="section"
-        @expand="onExpand"
-      />
+      <RlBoardColumnCollapsed v-if="section.collapsed" :section="section" @expand="onExpand" />
       <RlBoardColumn
         v-else
         :section="section"
@@ -200,15 +208,21 @@ defineSlots<{
         <template v-if="$slots.heading" #heading="headingProps">
           <slot name="heading" v-bind="headingProps" />
         </template>
+        <template v-if="$slots.footer" #footer="footerProps">
+          <slot name="footer" v-bind="footerProps" />
+        </template>
       </RlBoardColumn>
     </template>
 
-    <RlAddButton
-      v-if="showAddSection"
-      class="rl-board__add-section"
-      :label="messages.chromeText({ key: 'addSection' })"
-      @click="emit('addSection')"
-    />
+    <template v-if="showAddSection">
+      <slot name="addSection">
+        <RlAddButton
+          class="rl-board__add-section"
+          :label="messages.chromeText({ key: 'addSection' })"
+          @click="emit('addSection')"
+        />
+      </slot>
+    </template>
 
     <!--
       What a keyboard move is doing, for someone who cannot see the column
@@ -226,7 +240,8 @@ defineSlots<{
   gap: var(--rl-space-6);
   flex: 1;
   min-height: 0;
-  padding: var(--rl-space-5) var(--rl-page-gutter-right) var(--rl-space-5) var(--rl-page-gutter-left);
+  padding: var(--rl-space-5) var(--rl-page-gutter-right) var(--rl-space-5)
+    var(--rl-page-gutter-left);
   /*
    * Horizontal only. The vertical scroll belongs to each column, so the board
    * never scrolls as one sheet and the column headings stay on screen however
@@ -240,7 +255,8 @@ defineSlots<{
 @media (max-width: 767px) {
   .rl-board {
     gap: var(--rl-space-3);
-    padding: var(--rl-space-4) var(--rl-page-gutter-right) var(--rl-space-4) var(--rl-page-gutter-left);
+    padding: var(--rl-space-4) var(--rl-page-gutter-right) var(--rl-space-4)
+      var(--rl-page-gutter-left);
     /* Swiping settles on one column at a time. */
     scroll-snap-type: x mandatory;
     scroll-padding-left: var(--rl-page-gutter-left);
