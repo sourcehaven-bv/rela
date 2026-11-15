@@ -50,6 +50,7 @@ import { useDetailPanelOutlet } from '@/composables/useDetailPanel'
 import { isAnyModalOpen } from '@/composables/modalStack'
 import PageSteps from '@/components/pages/PageSteps.vue'
 import PageWalk from '@/components/pages/PageWalk.vue'
+import EntityDetail from '@/components/entity/EntityDetail.vue'
 import { usePageStatus } from '@/composables/usePageStatus'
 import { useStepWalk } from '@/composables/useStepWalk'
 import { useEntityPageEditing } from '@/composables/useEntityPageEditing'
@@ -394,11 +395,19 @@ onBeforeUnmount(() => {
       v-else-if="activeTab?.walk"
       :key="`walk/${page}/${anchorId ?? ''}/${activeTab.id}`"
       :state="walk.state.value"
-      :entity-type="walk.entityType.value"
       :item="walkItem"
       :position="walk.position.value"
       :href="walkHref"
-    />
+    >
+      <!-- Keyed by row, so each row starts with its own detail state. -->
+      <EntityDetail
+        v-if="walkItem"
+        :key="`${walk.entityType.value}/${walkItem}`"
+        :entity-type="walk.entityType.value"
+        :entity-id="walkItem"
+        :follow-owner="false"
+      />
+    </PageWalk>
     <component
       :is="views[activeTab.view]"
       v-else-if="activeTab"

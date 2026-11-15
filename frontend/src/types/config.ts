@@ -1302,6 +1302,14 @@ export interface SidebarPageTab {
   links?: SidebarPageLink[]
 }
 
+/**
+ * Where a walking step stands (TKT-M07C97Y). `loading` until the first
+ * answer, `empty` for a list with no rows, `missing` for an `?item=` the
+ * list does not hold (removed, hidden, or never in it), `error` for a read
+ * that failed otherwise, `ready` with a position.
+ */
+export type StepWalkState = 'off' | 'loading' | 'empty' | 'missing' | 'error' | 'ready'
+
 /** A row of `type` is linked to the page's entity over `relation`, seen from the entity. */
 export interface SidebarPageLink {
   type: string

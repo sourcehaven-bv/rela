@@ -114,6 +114,17 @@ export class PageTabsPage extends BasePage {
     await expect(this.page.getByTestId("walk-position")).toHaveText(text);
   }
 
+  /** The walked row's detail view shows this exact text. */
+  async expectWalkShows(text: string) {
+    await expect(this.page.getByText(text, { exact: true })).toBeVisible();
+  }
+
+  /** The walk names a row that is not in the step's list; go to its first row. */
+  async followWalkMissingRow() {
+    await expect(this.page.getByText("Not in this list")).toBeVisible();
+    await this.page.getByRole("link", { name: "Go to the first row" }).click();
+  }
+
   /** Whether a step's number shows its done check (TKT-MWZF0UO). */
   async expectStepDone(label: string, done: boolean) {
     if (done) await expect(this.step(label)).toHaveAttribute("data-done", "true");

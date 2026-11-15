@@ -5,23 +5,32 @@
  * the previous and next row.
  *
  * The page owns the URLs and reads the rows; this component only draws
- * them. Each control is a real link, so a row can be opened in a new tab
+ * them. The page also passes the row's detail view in the default slot,
+ * which is shown only in the `ready` state. Each control is a real link, so a row can be opened in a new tab
  * and the browser's back button returns to the previous row.
  */
 import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
-import EntityDetail from '@/components/entity/EntityDetail.vue'
-import type { EntityPosition } from '@/api/entities'
-import type { StepWalkState } from '@/composables/useStepWalk'
+import type { StepWalkState } from '@/types'
+
+/**
+ * The part of an entity position this component reads. It is declared
+ * here, so drawing a walk does not depend on the API layer.
+ */
+interface WalkPosition {
+  prev: { id: string } | null
+  next: { id: string } | null
+  current: number
+  total: number
+}
 
 defineProps<{
   state: StepWalkState
-  entityType: string
   /** The row on screen, from `?item=`. */
   item?: string
-  position?: EntityPosition
+  position?: WalkPosition
   /** The URL of row `id` on this step, keeping present mode as it is; without an id, the first row. */
   href: (id?: string) => string
 }>()
@@ -100,18 +109,10 @@ const { t } = useI18n()
         </RlButton>
       </nav>
       <!--
-        Keyed by row, so each row starts with its own detail state. Shown
-        once the list has confirmed the row is one of its own, so a row
-        from elsewhere never flashes up.
+        Shown once the list has confirmed the row is one of its own, so a
+        row from elsewhere never flashes up.
       -->
-      <EntityDetail
-        v-if="state === 'ready'"
-        :key="`${entityType}/${item}`"
-        class="page-walk__detail"
-        :entity-type="entityType"
-        :entity-id="item"
-        :follow-owner="false"
-      />
+      <slot v-if="state === 'ready'" />
     </template>
   </div>
 </template>

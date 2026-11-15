@@ -234,13 +234,13 @@ test.describe("Pages", () => {
     await appPage.goto(`${serverUrl}/p/review/each`);
     await expect(appPage).toHaveURL(/\/p\/review\/each\?item=FEAT-001$/);
     await pages.expectWalkPosition("1 of 4");
-    await expect(appPage.getByText("User Authentication", { exact: true })).toBeVisible();
+    await pages.expectWalkShows("User Authentication");
     await expect(pages.walkLink("Previous row")).toHaveCount(0);
 
     await pages.walkLink("Next row").click();
     await expect(appPage).toHaveURL(/\?item=FEAT-002$/);
     await pages.expectWalkPosition("2 of 4");
-    await expect(appPage.getByText("Dashboard Analytics", { exact: true })).toBeVisible();
+    await pages.expectWalkShows("Dashboard Analytics");
 
     // Every bug is open, but only one feature is approved.
     await pages.expectStepDone("Bugs", true);
@@ -261,8 +261,7 @@ test.describe("Pages", () => {
   test("a walking step says when its row is not in the list", async ({ appPage, serverUrl }) => {
     const pages = new PageTabsPage(appPage);
     await appPage.goto(`${serverUrl}/p/review/each?item=BUG-001`);
-    await expect(appPage.getByText("Not in this list")).toBeVisible();
-    await appPage.getByRole("link", { name: "Go to the first row" }).click();
+    await pages.followWalkMissingRow();
     await expect(appPage).toHaveURL(/\?item=FEAT-001$/);
     await pages.expectWalkPosition("1 of 4");
   });

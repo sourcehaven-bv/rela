@@ -8,18 +8,10 @@ import { useSchemaStore } from '@/stores'
 import { usePageStore } from '@/stores/pages'
 import { listBaseParams, pageScopeParams } from '@/utils/listParams'
 import { tabIsRelationOrdered } from '@/utils/relationOrder'
-import type { ListParams, PageScope, SidebarPageTab } from '@/types'
+import type { ListParams, PageScope, SidebarPageTab, StepWalkState } from '@/types'
 
 /** How long a burst of entity changes is left to settle before reading again. */
 const EVENT_DEBOUNCE_MS = 500
-
-/**
- * Where a walk stands. `loading` until the first answer, `empty` for a list
- * with no rows, `missing` for an `?item=` the list does not hold (removed,
- * hidden, or never in it), `error` for a read that failed otherwise, `ready`
- * with a position.
- */
-export type StepWalkState = 'off' | 'loading' | 'empty' | 'missing' | 'error' | 'ready'
 
 /**
  * The scope descriptor of a list read: the same list, filters, sort and
