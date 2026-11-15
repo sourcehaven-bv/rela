@@ -361,14 +361,48 @@ func (e *EntityDef) HasPattern(pattern string) bool {
 	return slices.Contains(e.GetIDPrefixes(), pattern)
 }
 
-// MatchesID checks if an ID matches any of this entity type's prefixes
+// MatchesID reports whether id starts with one of this entity type's
+// prefixes, with case folded. Ids are case-insensitive identities, and a
+// sequential type mints its prefix in upper case whatever case the schema
+// declares, so "NT-001" matches the prefix "nt-" (BUG-4OPP525).
+// [ValidateIDPrefix] keeps a schema prefix ASCII, and a non-ASCII rune in
+// id cannot fold onto an ASCII prefix byte for byte, so this folds ASCII
+// letters only.
 func (e *EntityDef) MatchesID(id string) bool {
+	_, ok := e.idPrefixMatch(id)
+	return ok
+}
+
+// prefixMatch ranks how well an id matches a type's prefix for
+// [Metamodel.InferEntityType]: a match in the id's exact case beats a
+// folded one, then a longer prefix beats a shorter one.
+type prefixMatch struct {
+	exact  bool
+	length int
+}
+
+func (m prefixMatch) beats(o prefixMatch) bool {
+	if m.exact != o.exact {
+		return m.exact
+	}
+	return m.length > o.length
+}
+
+// idPrefixMatch returns the best of this type's prefixes that id starts
+// with, compared with case folded, and whether any does.
+func (e *EntityDef) idPrefixMatch(id string) (prefixMatch, bool) {
+	var best prefixMatch
+	found := false
 	for _, prefix := range e.GetIDPrefixes() {
-		if len(id) >= len(prefix) && id[:len(prefix)] == prefix {
-			return true
+		if len(id) < len(prefix) || !strings.EqualFold(id[:len(prefix)], prefix) {
+			continue
+		}
+		m := prefixMatch{exact: id[:len(prefix)] == prefix, length: len(prefix)}
+		if !found || m.beats(best) {
+			best, found = m, true
 		}
 	}
-	return false
+	return best, found
 }
 
 // GetPropertyOrder returns the property names in their definition order.
