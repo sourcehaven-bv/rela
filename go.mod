@@ -7,7 +7,7 @@ toolchain go1.26.11
 require (
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.2
 	github.com/MicahParks/jwkset v0.11.4
-	github.com/MicahParks/keyfunc/v3 v3.8.2
+	github.com/MicahParks/keyfunc/v3 v3.9.1
 	github.com/alecthomas/kong v1.16.1
 	github.com/aymerick/douceur v0.2.0
 	github.com/blevesearch/bleve/v2 v2.6.1
