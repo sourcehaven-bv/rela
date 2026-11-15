@@ -22,10 +22,13 @@ func TestMainWindowOptions(t *testing.T) {
 	}{
 		{"no saved state", desktop.WindowState{}, defaultWindowWidth, defaultWindowHeight, 0, 0},
 		{"degenerate state", desktop.WindowState{Width: 10, Height: 10, X: 5}, defaultWindowWidth, defaultWindowHeight, 0, 0},
-		{"saved state", desktop.WindowState{Width: 900, Height: 700, X: 40, Y: 50}, 900, 700, application.WindowXY, 0},
+		{
+			"saved state", desktop.WindowState{Width: 900, Height: 700, X: 40, Y: 50},
+			900 + restoreInset(), 700 + restoreInset(), application.WindowXY, 0,
+		},
 		{
 			"maximized", desktop.WindowState{Width: 900, Height: 700, Maximized: true},
-			900, 700, application.WindowXY, application.WindowStateMaximised,
+			900 + restoreInset(), 700 + restoreInset(), application.WindowXY, application.WindowStateMaximised,
 		},
 	}
 	for _, tc := range tests {

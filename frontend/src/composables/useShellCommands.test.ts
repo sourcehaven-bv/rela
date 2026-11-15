@@ -50,8 +50,9 @@ describe('useShellCommands', () => {
 
   it('focuses the page search box on find', () => {
     const w = host()
-    const list = document.createElement('div')
-    list.className = 'entity-list'
+    // A list's header, with its search box, is painted by the app shell,
+    // outside the list's own element.
+    const list = document.createElement('header')
     list.innerHTML = '<div class="search-box"><input type="search" value="abc"></div>'
     document.body.appendChild(list)
     send('find')

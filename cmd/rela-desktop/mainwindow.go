@@ -2,6 +2,7 @@ package main
 
 import (
 	"log/slog"
+	goruntime "runtime"
 	"sync"
 	"sync/atomic"
 
@@ -67,7 +68,7 @@ func mainWindowOptions(title string, ws desktop.WindowState) application.Webview
 	if ws.Valid() {
 		// X/Y are only honored with InitialPosition set; the default centers
 		// the window.
-		opts.Width, opts.Height = ws.Width, ws.Height
+		opts.Width, opts.Height = ws.Width+restoreInset(), ws.Height+restoreInset()
 		opts.X, opts.Y = ws.X, ws.Y
 		opts.InitialPosition = application.WindowXY
 		if ws.Maximized {
@@ -75,6 +76,18 @@ func mainWindowOptions(title string, ws desktop.WindowState) application.Webview
 		}
 	}
 	return opts
+}
+
+// restoreInset is added to a saved size on restore. On macOS Wails creates a
+// window 1pt smaller than asked (webview_window_darwin.go builds the content
+// rect as width-1, height-1), while Size reads the whole frame, so without it
+// every close and reopen shrinks the window by 1pt. Check it when Wails is
+// upgraded: if Wails drops the -1, this makes the window grow instead.
+func restoreInset() int {
+	if goruntime.GOOS == "darwin" {
+		return 1
+	}
+	return 0
 }
 
 // shouldOpenOnReopen reports whether a click on the Dock icon has to open a

@@ -466,8 +466,6 @@ onBeforeUnmount(() => {
     overflow: visible;
   }
 
-  .rl-app-shell__main :deep(*) { overflow: visible !important; }
-
   /*
    * Print the page, not an open side panel. On a narrow window the panel
    * hides the main area with a rule of two or three classes, so these

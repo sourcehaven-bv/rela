@@ -12,8 +12,12 @@ import { paletteOpen, shortcutsModalOpen } from './useKeyboardShortcuts'
  */
 export const SHELL_COMMAND_EVENT = 'rela:shell-command'
 
-/** The search boxes Edit > Find focuses, in order of preference. */
-const FIND_TARGETS = '.entity-list .search-box input, .search-form input'
+/**
+ * The search boxes Edit > Find focuses, in order of preference. A list's box
+ * is not inside `.entity-list`: the app shell paints the list's header
+ * (PageHeaderContent), so the box is matched by its own class.
+ */
+const FIND_TARGETS = '.search-box input, .search-form input'
 
 export interface ShellCommand {
   command: string
