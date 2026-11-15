@@ -212,11 +212,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc(batchPath, a.batch.handleV1Batch)
 	mux.HandleFunc(reconcilePath, a.reconcile.handleV1Reconcile)
 	mux.HandleFunc(leasesPath+"/", a.leases.handleV1Leases)
-	// The records handler is read at request time because [SetRecords]
-	// runs after the routes are registered.
-	serveRecords := func(w http.ResponseWriter, r *http.Request) { a.records.handleV1Records(w, r) }
-	mux.HandleFunc(recordsPath, serveRecords)
-	mux.HandleFunc(recordsPath+"/", serveRecords)
+	registerRecordsRoutes(mux, a)
 	mux.HandleFunc(flowsPath, a.flows.handleV1Flows)
 	mux.HandleFunc(flowsPath+"/", a.flows.handleV1Flows)
 	mux.HandleFunc(remotesPath, a.remotes.handleV1Remotes)
