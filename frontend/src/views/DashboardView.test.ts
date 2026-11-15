@@ -843,12 +843,11 @@ describe('DashboardView', () => {
     })
   })
 
-  // Entity dashboards: a dashboard with entity_type counts for the anchor an
-  // entity page tab passes in.
+  // Entity dashboards: a dashboard whose cards have a scope counts for the
+  // anchor an entity page tab passes in.
   describe('entity dashboard', () => {
     const entityDashboard: DashboardResponse = {
       title: 'DPIA',
-      entity_type: 'dpia',
       cards: [
         card({
           title: 'Risks',
@@ -906,7 +905,8 @@ describe('DashboardView', () => {
 
     it('never sends an anchor to a plain dashboard', async () => {
       seedDashboard([])
-      getDashboardMock.mockResolvedValue({ title: 'Plain', cards: entityDashboard.cards })
+      const unscoped = entityDashboard.cards.map(({ scope: _scope, ...rest }) => rest)
+      getDashboardMock.mockResolvedValue({ title: 'Plain', cards: unscoped })
       getDashboardCardMock.mockResolvedValue(value)
 
       mount(DashboardView, { props: { name: 'plain', anchor: 'DPIA-1' } })

@@ -878,8 +878,7 @@ export interface DashboardCard {
 export interface DashboardResponse {
   title?: string
   description?: string
-  /** Set on an entity dashboard, whose cards need an anchor. */
-  entity_type?: string
+  /** On an entity dashboard every card has a `scope` and needs an anchor. */
   cards: DashboardCardEntry[]
 }
 

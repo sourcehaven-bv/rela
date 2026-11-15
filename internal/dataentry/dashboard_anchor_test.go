@@ -241,9 +241,9 @@ func TestEntityDashboard_BadRequests(t *testing.T) {
 	}
 }
 
-// /_dashboard serves the dashboard's entity_type, so the SPA knows to pass
-// the anchor.
-func TestEntityDashboard_ServesEntityType(t *testing.T) {
+// /_dashboard serves each card's scope, which tells the SPA to pass the
+// anchor.
+func TestEntityDashboard_ServesCardScopes(t *testing.T) {
 	app := newTestAppV1(t)
 	installEntityDashboard(app,
 		dataentryconfig.DashboardCard{Title: "Tickets", List: "tickets", Display: "count", Scope: implementsScope})
@@ -253,6 +253,5 @@ func TestEntityDashboard_ServesEntityType(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var resp v1.DashboardResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	require.Equal(t, "feature", resp.EntityType)
 	require.Equal(t, "implements", resp.Cards[0].Scope.Relation)
 }

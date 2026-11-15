@@ -1302,10 +1302,10 @@ type NavItem struct {
 type DashboardResponse struct {
 	Title       string `json:"title,omitempty"`
 	Description string `json:"description,omitempty"`
-	// EntityType is set on an entity dashboard, whose cards count for the
-	// anchor named in `?anchor=` on /api/v1/_dashboard/card.
-	EntityType string               `json:"entity_type,omitempty"`
-	Cards      []DashboardCardEntry `json:"cards"`
+	// Cards of an entity dashboard each carry a `scope`; a client tells an
+	// entity dashboard by that, and passes `?anchor=` on
+	// /api/v1/_dashboard/card.
+	Cards []DashboardCardEntry `json:"cards"`
 }
 
 // DashboardCardEntry is one card of a DashboardResponse: its config plus its

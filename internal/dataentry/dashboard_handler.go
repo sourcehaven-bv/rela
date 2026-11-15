@@ -66,7 +66,6 @@ func (h *viewsHandler) handleV1Dashboard(w http.ResponseWriter, r *http.Request)
 
 	resp.Title = cfg.Title
 	resp.Description = cfg.Description
-	resp.EntityType = cfg.EntityType
 	resp.Cards = cards
 
 	writeV1JSON(w, http.StatusOK, resp)

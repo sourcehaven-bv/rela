@@ -112,7 +112,8 @@ const dashboardConfig = computed(() => (props.name ? named.value : schemaStore.d
 const title = computed(() => dashboardConfig.value?.title || t('dashboardView.title'))
 const description = computed(() => dashboardConfig.value?.description)
 const cards = computed(() => dashboardConfig.value?.cards || [])
-const entityDashboard = computed(() => !!dashboardConfig.value?.entity_type)
+// Every card of an entity dashboard has a scope, and no other card does.
+const entityDashboard = computed(() => cards.value.some((c) => !!c.scope))
 // An entity dashboard needs its anchor; without one no card is asked for.
 const anchorMissing = computed(() => entityDashboard.value && !props.anchor)
 
