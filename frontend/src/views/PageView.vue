@@ -22,6 +22,12 @@
  * `?present=1` presents it: the shell hides the sidebar and the next-action
  * card, and PageDown and PageUp move between steps. The flag is carried from
  * step to step and does nothing on a page with tabs.
+ *
+ * A list step with `walk: true` (TKT-M07C97Y) shows the list's rows one at
+ * a time, the row in `?item=`. Without one it opens the first row. While
+ * presenting, PageDown and PageUp move through the rows first, then on to
+ * the next or previous step. A step with `done_when` (TKT-MWZF0UO) shows a
+ * check on its number when its rule holds for this reader.
  */
 import {
   computed,
@@ -43,6 +49,9 @@ import { usePresentation } from '@/composables/usePresentation'
 import { useDetailPanelOutlet } from '@/composables/useDetailPanel'
 import { isAnyModalOpen } from '@/composables/modalStack'
 import PageSteps from '@/components/pages/PageSteps.vue'
+import PageWalk from '@/components/pages/PageWalk.vue'
+import { usePageStatus } from '@/composables/usePageStatus'
+import { useStepWalk } from '@/composables/useStepWalk'
 import { useEntityPageEditing } from '@/composables/useEntityPageEditing'
 import { getEntity } from '@/api/entities'
 import { shouldDropHeldContent } from '@/api/errors'
@@ -55,7 +64,7 @@ import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { entityRef } from '@/utils/entityRef'
 import { isInputFocused } from '@/utils/dom'
 import { pageTabPath, routeTabId } from '@/utils/pageContext'
-import type { PageTabView, SidebarPageTab } from '@/types'
+import type { PageScope, PageTabView, SidebarPageTab } from '@/types'
 
 const props = defineProps<{
   page: string
@@ -246,14 +255,16 @@ usePresentation(() => presenting.value)
 
 /*
  * A step link keeps present mode and the world, so the room goes on seeing
- * the same data. Like a tab, it drops the rest: sort, filters and selection
- * belong to the step they were made on.
+ * the same data. Like a tab, it drops the rest: sort, filters, selection and
+ * the walked row belong to the step they were made on. `item` names the row
+ * of a walking step.
  */
-function stepHref(id: string, present = presenting.value): string {
+function stepHref(id: string, present = presenting.value, item?: string): string {
   const query = new URLSearchParams()
   const world = route.query.world
   if (typeof world === 'string' && world) query.set('world', world)
   if (present) query.set('present', '1')
+  if (item) query.set('item', item)
   const qs = query.toString()
   return qs ? `${tabHref(id)}?${qs}` : tabHref(id)
 }
@@ -261,6 +272,36 @@ function stepHref(id: string, present = presenting.value): string {
 function goStep(id: string) {
   void router.push(stepHref(id))
 }
+
+/* The row a walking step shows, from the URL. */
+const walkItem = computed(() => {
+  const item = route.query.item
+  return typeof item === 'string' && item ? item : undefined
+})
+const walk = useStepWalk({
+  page: () => props.page,
+  tab: () => activeTab.value,
+  scope: () => viewProps.value.pageScope as PageScope | undefined,
+  item: () => walkItem.value,
+  enabled: () => steps.value && !anchorMissing.value,
+})
+
+/* The URL of row `id` on the step on screen; without an id, its first row. */
+function walkHref(id?: string): string {
+  return stepHref(activeTab.value?.id ?? '', presenting.value, id)
+}
+
+/* A walking step without a row opens its first one, as a replace. */
+watchEffect(() => {
+  const first = walk.first.value
+  if (first && activeTab.value) void router.replace(walkHref(first))
+})
+
+const pageStatus = usePageStatus({
+  page: () => props.page,
+  entity: () => anchorId.value,
+  enabled: () => steps.value && !anchorMissing.value && tabs.value.some((t) => t.done_check),
+})
 
 /* Entering or leaving present mode shows the same view, so the query stays. */
 function setPresenting(on: boolean) {
@@ -280,6 +321,20 @@ function onStepKey(event: KeyboardEvent) {
   if (!presenting.value || event.defaultPrevented) return
   if (event.key !== 'PageDown' && event.key !== 'PageUp') return
   if (isInputFocused() || isAnyModalOpen() || detailPanel.open.value) return
+  // A walking step moves through its rows before it moves to another step.
+  // While its position loads, where the next row is is not yet known, so
+  // the key does nothing rather than skip the rest of the rows.
+  if (walk.state.value === 'loading') {
+    event.preventDefault()
+    return
+  }
+  const pos = walk.position.value
+  const row = event.key === 'PageDown' ? pos?.next : pos?.prev
+  if (row) {
+    event.preventDefault()
+    void router.push(walkHref(row.id))
+    return
+  }
   const i = tabs.value.findIndex((t) => t.id === activeTab.value?.id)
   const target = tabs.value[event.key === 'PageDown' ? i + 1 : i - 1]
   event.preventDefault()
@@ -318,6 +373,7 @@ onBeforeUnmount(() => {
       :active="activeTab.id"
       :presenting="presenting"
       :href="stepHref"
+      :done="pageStatus.done"
       @go="goStep"
       @present="setPresenting"
     />
@@ -333,6 +389,15 @@ onBeforeUnmount(() => {
             })
           : t('page.anchorNone', { type: pageConfig.label.toLocaleLowerCase(intlLocale()) })
       "
+    />
+    <PageWalk
+      v-else-if="activeTab?.walk"
+      :key="`walk/${page}/${anchorId ?? ''}/${activeTab.id}`"
+      :state="walk.state.value"
+      :entity-type="walk.entityType.value"
+      :item="walkItem"
+      :position="walk.position.value"
+      :href="walkHref"
     />
     <component
       :is="views[activeTab.view]"

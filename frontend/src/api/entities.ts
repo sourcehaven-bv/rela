@@ -385,6 +385,9 @@ export interface ScopeDescriptor {
   scope_page?: string
   scope_tab?: string
   anchor?: string
+  // The configured list the rows came from, so the list's `condition:`
+  // narrows the walk the same way it narrows the list. Only with source 'list'.
+  list_id?: string
 }
 
 /** A neighbouring entity in a scope. `type` is needed to build the target's

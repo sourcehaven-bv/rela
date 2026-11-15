@@ -1288,6 +1288,13 @@ export interface SidebarPageTab {
   direction?: 'outgoing' | 'incoming'
   /** The question shown above the view on a steps page. */
   prompt?: string
+  /** On a steps page, the step shows the list's rows one at a time (TKT-M07C97Y). */
+  walk?: boolean
+  /**
+   * The step has a `done_when` check. The verdict is per principal and comes
+   * from `/_page_status`, never from the sidebar (TKT-MWZF0UO).
+   */
+  done_check?: boolean
   /**
    * Per entity type, the relation a row created while this tab is open is
    * linked to the page's entity over. The space's Create menu uses it.

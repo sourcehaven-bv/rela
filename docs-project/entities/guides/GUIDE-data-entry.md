@@ -6261,6 +6261,71 @@ in present mode, and moving between steps keeps it. On a page without
 Present mode changes only what the screen shows. Every view in it reads and
 writes with the user's own permissions, as it does outside present mode.
 
+#### One row at a time
+
+`walk: true` on a list step shows the list's rows one at a time instead of the
+whole list. Use it for a step such as "for each processing activity, answer
+these questions".
+
+```yaml
+      - id: each-risk
+        label: "Each risk"
+        list: risks
+        scope: { relation: has-risk }
+        walk: true
+        prompt: "Who owns this risk?"
+```
+
+The step shows the row's own detail view, where the user edits it as usual.
+Above it are the row's position, such as "3 of 8", and **Previous row** and
+**Next row** links to the neighbouring rows. The rows, their order and their count
+are those of the list: its `condition:`, `filters:`, `sort:`,
+`query_scope:` and the step's `scope:` all apply. A row the user may not see is
+not shown and not counted.
+
+The row on screen is part of the URL, as `?item=<id>`. A step opened without
+`?item=` opens its first row. A link to another step drops `?item=`. If the row
+in the URL is not in the list, for example because it was removed or changed,
+the step says so and links to the first row.
+
+In present mode, **PageDown** and **PageUp** move through the rows first. After
+the last row, PageDown opens the next step; before the first row, PageUp opens
+the previous step. A walking step opened that way starts at its first row.
+
+`walk` is only allowed on a list step of a steps page.
+
+#### Marking a step done
+
+`done_when` on a list step is a condition that marks the step done. When the
+condition holds for every row of the step's list, the step's number shows a
+check. It uses the same expression language as a list's `condition:`, with
+`entity` for the row.
+
+```yaml
+      - id: owners
+        label: "Owners"
+        list: risks
+        scope: { relation: has-risk }
+        done_when: "entity.owner ~= nil"
+```
+
+A step is done when its list has at least one row and every row matches. An
+empty list is not done. The check is advice only: **Next** works whether a
+step is done or not.
+
+The check is computed for each user over the rows that user can see, so it
+never reveals a row the user may not see. A property the user may not see
+counts as empty. On a page opened in a world (`?world=`), the rows judged are
+the faces the page shows in that world. The SPA reads it from
+`GET /api/v1/_page_status?page=<id>`, with `&entity=<id>` on an entity page
+and `&world=<name>` on a page opened in a world,
+which answers `{"steps": {"<tab>": {"done": true}}}`. A step without
+`done_when`, or one the user cannot see, is left out. The sidebar only says
+that a step has a check (`done_check`), never whether it holds.
+
+`done_when` is only allowed on a list step of a steps page. A condition that
+does not compile is a config error.
+
 ### Linking to a page
 
 `page: <id>` is a navigation destination like `list:` or `kanban:`. It works in

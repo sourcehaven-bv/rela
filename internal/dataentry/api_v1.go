@@ -186,6 +186,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_sidebar", a.views.handleV1Sidebar)
 	mux.HandleFunc("/api/v1/_nav_status", func(w http.ResponseWriter, r *http.Request) { handleV1NavStatus(a, w, r) })
 	mux.HandleFunc("/api/v1/_nav_items", func(w http.ResponseWriter, r *http.Request) { handleV1NavItems(a, w, r) })
+	mux.HandleFunc("/api/v1/_page_status", func(w http.ResponseWriter, r *http.Request) { handleV1PageStatus(a, w, r) })
 	mux.HandleFunc("/api/v1/_dashboard", a.views.handleV1Dashboard)
 	mux.HandleFunc("/api/v1/_dashboard/card", func(w http.ResponseWriter, r *http.Request) {
 		handleV1DashboardCard(a, w, r)

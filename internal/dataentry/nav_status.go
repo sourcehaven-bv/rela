@@ -133,6 +133,18 @@ func navStatusFor(
 func navStatusRows(
 	ctx context.Context, a *App, s *Schema, listID string, listCfg dataentryconfig.List,
 ) (context.Context, []*entityPkg.Entity, error) {
+	return configuredListRows(ctx, a, s, listID, listCfg, navStatusListQuery(listCfg))
+}
+
+// configuredListRows is [navStatusRows] over a prepared list query: the
+// list's static filters, plus any narrowing the caller adds, such as the
+// page scope of an entity page tab (pagescope.go). The query only narrows:
+// every row still passes the row gate, the world, the query scope and the
+// list's condition.
+func configuredListRows(
+	ctx context.Context, a *App, s *Schema, listID string, listCfg dataentryconfig.List,
+	query map[string][]string,
+) (context.Context, []*entityPkg.Entity, error) {
 	typeName := listCfg.EntityType
 	scope, err := viewQueryScope(a.queryScopes, s.Cfg, s.Meta, typeName, listCfg.QueryScope)
 	if err != nil {
@@ -145,7 +157,7 @@ func navStatusRows(
 	}
 	// A configured filter on a property hidden from this principal fails
 	// this one entry, as any other error here does; the caller degrades it.
-	gated, err := gateAppListQuery(ctx, a, s, typeName, navStatusListQuery(listCfg))
+	gated, err := gateAppListQuery(ctx, a, s, typeName, query)
 	if err != nil {
 		return ctx, nil, err
 	}

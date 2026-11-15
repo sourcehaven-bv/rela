@@ -1208,6 +1208,10 @@ type SidebarPage struct {
 //
 // Prompt is the question shown above the view on a steps page.
 //
+// Walk is true when the step shows the list's rows one at a time. DoneCheck
+// is true when the step declares `done_when:`; whether it is done is data,
+// so it comes per principal from /api/v1/_page_status, never from here.
+//
 // Links names, per entity type, the relation a row created while the tab is
 // open is linked to the anchor over. The space's Create menu uses it, so a
 // row created there lands on the page it was created from.
@@ -1221,7 +1225,22 @@ type SidebarPageTab struct {
 	Relation  string            `json:"relation,omitempty"`
 	Direction string            `json:"direction,omitempty"`
 	Prompt    string            `json:"prompt,omitempty"`
+	Walk      bool              `json:"walk,omitempty"`
+	DoneCheck bool              `json:"done_check,omitempty"`
 	Links     []SidebarPageLink `json:"links,omitempty"`
+}
+
+// PageStatusResponse is the body of GET /api/v1/_page_status: for each step
+// of a steps page that declares `done_when:` and that this principal sees,
+// whether the step is done. Keyed by tab id.
+type PageStatusResponse struct {
+	Steps map[string]PageStepStatus `json:"steps"`
+}
+
+// PageStepStatus says whether one step is done for this principal: the list
+// shows at least one row, and every row it shows satisfies `done_when:`.
+type PageStepStatus struct {
+	Done bool `json:"done"`
 }
 
 // SidebarPageLink is one entry of [SidebarPageTab.Links]: a row of Type is

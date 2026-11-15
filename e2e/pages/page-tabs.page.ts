@@ -103,6 +103,23 @@ export class PageTabsPage extends BasePage {
     await this.page.keyboard.press(key);
   }
 
+  // A step that walks its rows (TKT-M07C97Y).
+
+  /** The previous or next row link of a walking step. */
+  walkLink(name: "Previous row" | "Next row"): Locator {
+    return this.page.getByRole("navigation", { name: "Rows of this step" }).getByRole("link", { name, exact: true });
+  }
+
+  async expectWalkPosition(text: string) {
+    await expect(this.page.getByTestId("walk-position")).toHaveText(text);
+  }
+
+  /** Whether a step's number shows its done check (TKT-MWZF0UO). */
+  async expectStepDone(label: string, done: boolean) {
+    if (done) await expect(this.step(label)).toHaveAttribute("data-done", "true");
+    else await expect(this.step(label)).not.toHaveAttribute("data-done");
+  }
+
   async expectSidebarShown(shown: boolean) {
     await expect(this.page.locator("#main-sidebar")).toHaveCount(shown ? 1 : 0);
   }

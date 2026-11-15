@@ -415,6 +415,14 @@ func worldCapablePath(path string) bool {
 	if trimmed == "_search" || trimmed == "_position" {
 		return true
 	}
+	// `_page_status` (TKT-MWZF0UO) judges each step of a steps page over the
+	// rows the step's list shows. A world-bound page lists the world's faces,
+	// so the check must judge those faces too, or a step would be marked by
+	// rows the page does not show. Its reads are the list pipeline's
+	// (configuredListRows), which take the world on ctx.
+	if trimmed == "_page_status" {
+		return true
+	}
 	// The SIXTH, named by its read shapes: piles (TKT-K3RJLH). A pile's
 	// items are references, and every read of them (the list counts, one
 	// pile, the export, and the pile scope through `_position`) resolves
