@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -379,19 +380,38 @@ func lineageIDs(
 // (the file and memory stores would deadlock), and a Tx that fails must leave
 // no version behind.
 func (rp *relationReplace) write(ctx context.Context, view store.Store) ([]*entity.Relation, error) {
+	if err := rp.check(ctx, view, ""); err != nil {
+		return nil, err
+	}
+	return rp.apply(ctx, view)
+}
+
+// check runs the checks of write on view and writes nothing. The relation
+// rules of the entity skip names are not judged; an update joined to this
+// replace judges them on the entity's new state (see [PatchWithRelations]).
+func (rp *relationReplace) check(ctx context.Context, view store.Store, skip string) error {
 	pending := make([]entity.RelationKey, 0, len(rp.creates))
 	for _, c := range rp.creates {
 		if _, gErr := view.GetRelation(ctx, c.Key); gErr == nil {
-			return nil, &RelationCreateError{Key: c.Key, Err: fmt.Errorf("%w: %s --%s--> %s",
+			return &RelationCreateError{Key: c.Key, Err: fmt.Errorf("%w: %s --%s--> %s",
 				ErrRelationAlreadyExists, entity.FormatStateRef(c.Key.From, c.Key.FromFace), c.Key.Type, c.Key.To)}
 		} else if !errors.Is(gErr, store.ErrNotFound) {
-			return nil, gErr
+			return gErr
 		}
 		if err := checkRelationCapacity(ctx, view, rp.m.deps.Meta, c.Key, rp.leaving, pending); err != nil {
-			return nil, &RelationCreateError{Key: c.Key, Err: err}
+			return &RelationCreateError{Key: c.Key, Err: err}
 		}
 		pending = append(pending, c.Key)
 	}
+	if relationWritesChecked(rp.m.deps, slices.Concat(pending, rp.removes)...) {
+		return checkRelationRulesExcept(ctx, rp.m.deps, view, pending, rp.removes, skip)
+	}
+	return nil
+}
+
+// apply writes the creates and deletes of rp on view, after check passed.
+// It returns the edges it deleted, as they were.
+func (rp *relationReplace) apply(ctx context.Context, view store.Store) ([]*entity.Relation, error) {
 	for i, c := range rp.creates {
 		if err := writeRelationCreate(ctx, view, rp.m.deps.Meta, c.Key, rp.rels[i], rp.leaving); err != nil {
 			return nil, err

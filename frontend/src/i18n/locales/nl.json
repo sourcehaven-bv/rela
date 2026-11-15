@@ -415,7 +415,8 @@
     "action": {
       "confirmTitle": "{label}?",
       "confirmRun": "{label} uitvoeren op dit item?",
-      "done": "{label}: klaar"
+      "done": "{label}: klaar",
+      "running": "Bezig…"
     },
     "loadFailed": "Item laden mislukt",
     "noEditForm": "Er is geen bewerkformulier ingesteld voor dit type",
@@ -543,6 +544,19 @@
       "movedUp": "{label} omhoog verplaatst",
       "movedDown": "{label} omlaag verplaatst",
       "failed": "Kon de rij niet verplaatsen"
+    },
+    "llmProposal": {
+      "title": "{label}: voorgestelde wijzigingen",
+      "intro": "De AI stelt deze wijzigingen voor. Er wordt niets opgeslagen tot u ze toepast. Tekstwaarden staan uit: lees ze voordat u ze aanvinkt.",
+      "empty": "De AI stelt geen wijzigingen voor.",
+      "properties": "Eigenschappen",
+      "relations": "Relaties",
+      "apply": "Selectie toepassen",
+      "applied": "{label}: wijzigingen toegepast",
+      "stale": "{property} is gewijzigd sinds het voorstel en is niet opgeslagen.",
+      "saveFailed": "De wijzigingen konden niet worden opgeslagen",
+      "linkFailed": "Kon {relation} naar {title} niet toevoegen: {reason}",
+      "model": "Voorgesteld door {model}"
     }
   },
   "document": {

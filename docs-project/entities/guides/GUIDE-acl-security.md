@@ -733,6 +733,11 @@ names of a user, and the child then holds the rela roles they map to
   binds the roles again. Keep `principal_property` writable by
   administrators only all the same: the next webhook for that subject would
   bind to whoever holds it.
+- **Erased with the person.** Deleting the bound user entity, or renaming
+  it, removes its record. For an erasure request about a person,
+  `rela acl forget-idp-roles <entity-id>` removes the records bound to that
+  entity, also when the entity was already deleted. Both write an
+  `idp-roles-set` audit record with `roles=0`.
 - **Ordered per subject.** The receiver holds a per-subject lock from before
   its action fetches the roles until it stored them. Two deliveries for one
   user therefore store in fetch order, and a slow older fetch cannot undo a
@@ -2540,6 +2545,13 @@ the key; this section covers what it means for `acl.yaml`.
     hidden entity is refused with `owning_rule` (TKT-QO14GB). That shows some
     hidden owning edge exists. The message is the same for all three clashes,
     so it does not say which one;
+  - a write refused by an `enforce: write` validation that uses
+    `related(...)` (TKT-EBARYBI) counts edges to hidden entities too, so the
+    verdict is the same for every writer. The 422 names the rule and quotes
+    its description, never an entity. It shows whether an end the caller can
+    read has another edge the rule counts. On a relation create or delete
+    that end may be the far end, so the refusal can show that it has an edge
+    to an entity the caller cannot see;
   - deleting an owner that owns an entity the caller may not delete fails
     with a 403, on every write path. The denial names the owned entity's type
     but not its id. Nothing is deleted.
