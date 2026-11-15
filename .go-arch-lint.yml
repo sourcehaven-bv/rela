@@ -191,7 +191,7 @@ components:
   syncmerge:        { in: internal/syncmerge }
   relresolve:       { in: internal/relresolve }
   rollup:           { in: internal/rollup }
-  statemachine:     { in: internal/statemachine }
+  transitions:      { in: internal/flowcfg/transitions }
   writerule:        { in: internal/writerule }
   tracer:           { in: internal/tracer }
   validation:       { in: internal/validation }
@@ -604,6 +604,8 @@ deps:
       - entitymanager
       - filter
       - flowcfg
+      # `rela flow show` lists the headless flows of the schema.
+      - transitions
       # `rela flow start|runs|cancel` speaks the run id and the engine's
       # errors; the access checks stay in appbuild.FlowControl.
       - flow
@@ -777,7 +779,7 @@ deps:
       - search
       - searchparser
       - state
-      - statemachine
+      - transitions
       - storage
       - store
       - templating
@@ -830,6 +832,8 @@ deps:
       - metamodel
       # piles.Icons, the allowlist a `piles.toggles` icon is checked against.
       - piles
+      # texthazard.Find, the invisible-character check on a step prompt.
+      - texthazard
       - yamlscalar
     canUse:
       - rrulego
@@ -1083,7 +1087,7 @@ deps:
       # appbuild constructs the affordance resolver so the field write gate
       # and the two gated-read bundles can share ONE instance (TKT-0XL8MF).
       # Safe as a dependency edge: affordances is a near-leaf (acl, entity,
-      # metamodel, predicate*, principal, statemachine) and imports no
+      # metamodel, predicate*, principal, transitions) and imports no
       # wiring package, so this cannot close a cycle.
       - affordances
       - app
@@ -1110,7 +1114,7 @@ deps:
       - script
       - search
       - state
-      - statemachine
+      - transitions
       - storage
       - store
       - templating
@@ -1425,13 +1429,23 @@ deps:
       - attachment
       - entity
       - entitymanager
+      # t.flows runs job attempts and reads runs through the engine.
+      - flow
+      - flowengine
+      # t.expect_denied recognises the flow control's forbidden error.
+      - flowview
       - fsimport
+      # The case's host config: mail.yaml as the world reads it, fake secrets.
+      - hostconfig
       - lua
       - mail
       - memcomments
       - metamodel
       - principal
+      - project
       - rootfs
+      - secrets
+      - state
       - store
     canUse:
       - gofakeit
@@ -1446,7 +1460,7 @@ deps:
       - predicate
       - predicatefns
       - principal
-      - statemachine
+      - transitions
       # SearchFieldScope compiles `visible:` grants into store predicates:
       # queryplan decides exact lowering, relresolve resolves related() hops,
       # and the result is a search.FieldScope (search never imports
@@ -1489,6 +1503,7 @@ deps:
       - jwtlib
   renametype:
     mayDependOn:
+      - frontmatter
       - metamodel
       - project
       - storage
@@ -1501,6 +1516,8 @@ deps:
       # canonical.HashEntity decides whether an update changed anything for
       # `on.updated`, with the value normalization the stores use.
       - canonical
+      # cmdexec: Environ for the `git config` child that fills {{user.*}}.
+      - cmdexec
       - filter
       # Automations compile to flow triggers and fire through flow.Fire
       # (TKT-GS7THPA). flow is a leaf.
@@ -1579,6 +1596,8 @@ deps:
     mayDependOn:
       - acl
       - appbuild
+      # cmdexec: Environ for the `cp -r` fixture copy.
+      - cmdexec
       - dataentry
       - docs
       - principal
@@ -1684,7 +1703,7 @@ deps:
       - mentions
       - metamodel
       - principal
-      - statemachine
+      - transitions
       - store
       - templating
       - writerule
@@ -1770,12 +1789,18 @@ deps:
       - predicate
       - predicatefns
       - store
-  statemachine:
+  # Schema transitions compiled into headless flows and enforced on the
+  # write path (TKT-12RC7JT, TKT-ZRQSGCM). It sits under flowcfg but shares
+  # no code with the flows.yaml loader.
+  # GUARD: transitions takes no runtime component (store, lua, jobs,
+  # automation, flowengine, flowrun). The enforcer reads the graph only
+  # through the collaborators its caller injects.
+  transitions:
     mayDependOn:
       - entity
-      # Enum transitions compile to headless flows and decide through
-      # flow.Decide (TKT-12RC7JT). flow is a leaf.
+      # Enum transitions decide through flow.Decide. flow is a leaf.
       - flow
+      - mermaid
       - metamodel
       - predicate
       - predicatefns
@@ -1983,8 +2008,6 @@ deps:
       - flow
       # A leaf: the reply rule refuses rela's own identities and unknown.
       - principal
-      # A leaf: the batch cap the HTTP API and OpenAPI quote too.
-      - realtimelimits
   # The channel service (TKT-ZU7P13): authorization, validation, rate limits
   # and ephemeral signals over the channel store. Every gate comes in through
   # a consumer-side interface appbuild implements, so it lists neither acl,

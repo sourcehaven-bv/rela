@@ -216,9 +216,11 @@ type ValidationRule struct {
 	// write path refuse a write whose new state violates the rule, with the
 	// same 422 a structural error gets (TKT-5CESLHD).
 	//
-	// An enforced rule may only read the entity being written, so the load
-	// refuses one that uses Lua, `relations:`, `content:` or `related(...)`.
-	// See [ValidationRule.IsWriteEnforced].
+	// An enforced rule reads the entity being written and, through a
+	// one-hop `related(...)`, whether it has a relation (TKT-EBARYBI). The
+	// load refuses one that uses Lua, `relations:` or `content:`; the shapes
+	// of `related(...)` it allows are checked in internal/writerule. See
+	// [ValidationRule.IsWriteEnforced].
 	Enforce string `yaml:"enforce,omitempty"`
 
 	// Lua specifies inline Lua code for custom validation logic.
@@ -333,7 +335,7 @@ type CustomType struct {
 	// Transitions declares the legal value→value moves for this enum,
 	// making it a state machine (TKT-E4LW2). This is declarative source
 	// data only — the metamodel does not enforce it. At startup
-	// internal/statemachine.Compile reads these into an executable machine
+	// internal/transitions.CompileTransitions reads these into an executable machine
 	// that the entitymanager runs on the write path (legality 422, guard
 	// 403, precondition 422). Empty means "any value may change to any
 	// other" (the historical, unconstrained behavior). Only meaningful on a
@@ -342,14 +344,14 @@ type CustomType struct {
 
 	// Initial names the only legal entry value on entity create when this
 	// type is a state machine. Empty falls back to Default. Consumed by
-	// internal/statemachine at compile time.
+	// internal/flowcfg/transitions at compile time.
 	Initial string `yaml:"initial,omitempty"`
 }
 
 // TransitionDef is one edge in an enum state machine: a legal move from one
 // value to another, optionally gated by an ACL permission (Guard) and/or a
 // data precondition (When). This is declarative source data; the executable
-// machine is built from it by internal/statemachine.Compile.
+// machine is built from it by internal/transitions.CompileTransitions.
 type TransitionDef struct {
 	From string `yaml:"from"` // Source value; must be one of CustomType.Values
 	To   string `yaml:"to"`   // Target value; must be one of CustomType.Values
@@ -1280,7 +1282,7 @@ func (l *CopyLanding) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-// CopyGuard is a copy definition's authorization, sharing the statemachine's
+// CopyGuard is a copy definition's authorization, sharing the transition enforcer's
 // declaration vocabulary (§9.1: shared guard machinery, separate declaration
 // — a copy is not a property change).
 type CopyGuard struct {

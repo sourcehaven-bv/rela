@@ -37,8 +37,55 @@ const day = 24 * time.Hour
 //
 // Actor methods (colon syntax): create(type, props, opts), update(ref, props,
 // opts), transition(ref, value, prop), delete(ref, opts), link(from, type, to,
-// props), unlink(from, type, to), get(ref), list(type). A ref is an id, an
-// "ID@face" address or an entity table. A failed write raises an error.
+// props), unlink(from, type, to), get(ref), list(type), start_flow(name, ref).
+// A ref is an id, an "ID@face" address or an entity table. A failed write
+// raises an error.
+//
+// HTTP: every outbound call of the case's code (Lua http.* and flow
+// webhooks) is answered by a stub or fails the case. Nothing reaches the
+// network.
+//
+//	t.http.stub{...}           register a stub for the rest of the case and
+//	                           return it. The first registered stub that
+//	                           matches and is not spent answers. Keys:
+//	  name                     shown in failures and on recorded calls
+//	  method                   any method when absent
+//	  url | url_prefix |       exactly one: the full URL (query order, host
+//	  url_pattern              case and a default port do not matter), a
+//	                           plain string prefix (end it with "/", or
+//	                           "https://api.example.com" also matches
+//	                           "https://api.example.com.evil/"), or an RE2
+//	                           expression that must match the whole URL
+//	  headers                  {name = exact value}; names are case-insensitive;
+//	                           the first value of a repeated header counts,
+//	                           and Host and Content-Length cannot be matched
+//	  body | json | form       the exact body; a JSON subset (objects by key,
+//	                           arrays element by element at the same length;
+//	                           an empty table matches any object or array);
+//	                           form fields, urlencoded or multipart, where
+//	                           the first value of a repeated field counts
+//	  respond                  one response, given for every call
+//	  responses                a list, given once each in order; a further
+//	                           call that matches fails the case
+//	A response is {status=, headers=, body= | json= | file=} or
+//	{error = "timeout" | "network"}. file is a path under the project root,
+//	with no symlink, as t.fixtures takes, and not under .rela. json and a .json file set
+//	Content-Type unless headers do. No respond gives 200 with an empty body.
+//	stub.name                  the given or generated name
+//	stub:calls(), stub:count() the calls the stub answered, and how many
+//	t.http.calls()             every call in order, matched or not: method,
+//	                           url, headers (canonical names), body, json
+//	                           (the decoded body, when it is JSON) and stub
+//
+// Secrets: t.secrets{name = value} gives the case's scripts and webhook
+// signatures fake secrets. A case never reads .rela/secrets.yaml.
+//
+// Flows: job attempts wait until t.flows.work(), which runs them and the
+// engine's due rounds at the case's clock and returns how many attempts ran.
+// A retry is due after its backoff, so move the clock with t.advance first.
+// t.flows.run(id) returns {id, flow, state, status, job}, where job has
+// phase, attempts, failed, fail_kind and next_at while the step's job is
+// pending.
 //
 // Assertions: t.expect(v).to_be(x) / to_equal(x) / to_contain(x) / to_be_nil()
 // / not_to_be_nil(); t.expect_error(fn, pattern); t.expect_denied(fn);
@@ -72,11 +119,14 @@ func (fr *fileRun) module(ls *lua.LState) lua.LValue {
 		"hours":         durationFn(time.Hour),
 		"minutes":       durationFn(time.Minute),
 		"seconds":       durationFn(time.Second),
+		"secrets":       fr.luaSecrets,
 	}
 	for name, fn := range fns {
 		t.RawSetString(name, ls.NewFunction(fn))
 	}
 	t.RawSetString("fake", fr.fakeTable(ls))
+	t.RawSetString("http", httpModule{fr}.httpTable(ls))
+	t.RawSetString("flows", flowsModule{fr}.flowsTable(ls))
 	return t
 }
 

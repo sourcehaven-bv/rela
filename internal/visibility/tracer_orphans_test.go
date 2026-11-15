@@ -50,7 +50,8 @@ func seedFamilies(t *testing.T, n int) *memstore.MemStore {
 
 // FindOrphans reads the store a fixed number of times, however many
 // families it holds: one header scan, one relation scan and one batched
-// title read, never a read per family.
+// title read, never a read per family. It pins calls only: finding
+// orphans visits every family by design, so its rows grow with the store.
 func TestVisibleTracer_FindOrphansReadBudget(t *testing.T) {
 	reads := func(n int) int {
 		c := storetest.NewCounting(seedFamilies(t, n))

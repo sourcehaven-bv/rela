@@ -495,6 +495,16 @@ the [data-entry API reference](data-entry/api-reference.md)). `transitions` is
 optional and backwards compatible: an enum type without it keeps the historical
 "any value may change to any other" behavior.
 
+A property that is unset has no state. Every move from an unset value is
+refused, also the move to the `initial` value. To give existing entities a
+value, for example after adding `transitions:` to a type in use, set it with
+a [data migration](data-migration.md).
+
+rela runs a state machine as a *headless flow*: a flow whose state is the
+property itself, with no run. `rela flow show` lists it as
+`schema.<type name>`, and `rela flow show schema.ticket-status` prints it as a
+Mermaid state diagram. See [Flows](flows.md#checking-the-file).
+
 ### Regex Validations
 
 Define validation patterns with user-friendly error messages. Multiple patterns
@@ -1057,9 +1067,9 @@ entities:
 
 | Key         | Meaning                                                                                       |
 | ----------- | --------------------------------------------------------------------------------------------- |
-| `via`       | One relation. Its name walks from → to; its `inverse` walks to → from, as in `related()`      |
-| `type`      | The related type, when the relation's far side names several                                  |
-| `where`     | Keep only related entities whose properties equal these values (enum, string, boolean, integer) |
+| `via`       | One relation, or a list of up to three. A name walks from → to; an `inverse` walks to → from |
+| `type`      | The related type, when the last relation's far side names several                             |
+| `where`     | Keep only related entities whose properties equal these values (enum, string, boolean, integer). On a path, it filters the far end only |
 | `count`     | The number of related entities. The property must be `integer`                               |
 | `exists`    | Whether there is at least one. The property must be `boolean`                                 |
 | `min`/`max` | The lowest or highest value of an `integer` or `date` property; same type. Not yet `decimal`  |
@@ -1067,12 +1077,38 @@ entities:
 | `latest_by` | With `pick`: the `pick` value of the entity with the latest `date` here                       |
 
 Declare exactly one function. `pick` must have the roll-up's declared type.
-A roll-up follows one relation, and cannot read another roll-up. It cannot be
+A roll-up cannot read another roll-up. It cannot be
 `required`, `list`, `unique`, `computed`, have a `default`, or be a file. The
 schema fails to load when a roll-up names an unknown relation or property, or
 when a type does not match. `min`, `max` and `latest_by` take a `date` only in
 the default `YYYY-MM-DD` format, and no `datetime`: rela orders these values as
 text, and only that date format sorts as text in time order.
+
+**Paths.** `via` can name a list of relations. The roll-up then follows each
+relation in turn and summarizes the entities at the far end. A requirement
+that refers to ISO controls can ask whether any active measure implements one
+of them:
+
+```yaml
+entities:
+  nalevingseis:
+    properties:
+      gedekt:
+        type: boolean
+        rollup:
+          via: [verwijst_naar, wordt_geimplementeerd_door]
+          exists: true
+          where: { status: actief }
+```
+
+Each relation must start from the type where the previous one ended. Every
+relation except the last must have one far type; `type:` picks the far type of
+the last one. A far entity reached along several paths counts once. `where`
+filters the far entities only; the entities in between are filtered only by
+access. A path has at most three relations, because each relation adds a join
+and the number of rows to join grows with the fan-out of every step. The schema
+fails to load when a path is longer, names an unknown or content-scoped
+relation, or has a step that does not start where the previous one ended.
 
 **How a roll-up differs from a computed property.**
 
@@ -1088,8 +1124,10 @@ text, and only that date format sorts as text in time order.
 entity whose `where`, `latest_by`, `min`, `max` or `sum` property is hidden from
 the reader by a `visible:` grant is left out, as if it did not match. When the
 `pick` property of the latest entity is hidden, the roll-up has no value; rela
-does not fall back to an older entity. Two readers can therefore see different
-values for the same entity.
+does not fall back to an older entity. On a path, every entity in between is
+checked too: an entity the reader cannot read breaks the paths through it, so
+a far entity reached only through it is not counted. Two readers can therefore
+see different values for the same entity.
 
 **Where the value appears.** The entity API (`GET /api/v1/{type}/{id}`, and the
 responses of create and update), the entity detail page, view sections, list
@@ -3400,12 +3438,13 @@ and quotes the `description`, never a property value. The rule keeps running in
 `rela analyze validations`, which finds the rows stored before the rule was
 enforced.
 
-An enforced rule reads only the entity being written, so it may use
-`entity_type`, `faces`, `when`, `then`, `when_condition` and `then_condition`.
-The schema fails to load when an enforced rule also has:
+An enforced rule reads the entity being written, and may count its relations
+(see "Rules that read relations" below). It may use `entity_type`, `faces`,
+`when`, `then`, `when_condition` and `then_condition`. The schema fails to load
+when an enforced rule also has:
 
 - `lua`, `lua_file` or `lua_args`: Lua never runs on the write path.
-- `relations` or a `related(...)` condition: these read other entities.
+- `relations`: use a `related(...)` condition instead.
 - `content`: an enforced rule checks properties only.
 - a roll-up property: a roll-up is computed when it is read, so a write does
   not carry it.
@@ -3429,6 +3468,83 @@ that role learns something about the value from the refusal. The server logs a
 warning at startup for each such rule. Write the rule on properties every
 writer of the type may read.
 
+#### Rules that read relations
+
+An enforced rule may ask whether the entity has a relation, with
+`related(entity, '<relation>')` in `when_condition` or `then_condition`:
+
+```yaml
+validations:
+  - name: behandelplan-nodig
+    description: Een risico in behandeling heeft een behandelplan.
+    entity_type: risico
+    enforce: write
+    when: ["status=in_behandeling"]
+    then_condition: "related(entity, 'heeft_behandelplan')"
+  - name: toepasbaar-implementeert-control
+    description: Een toepasbare maatregel implementeert een control.
+    entity_type: maatregel
+    enforce: write
+    when_condition: "entity.toepasbaar == true"
+    then_condition: "related(entity, 'implementeert', {type = 'control'})"
+```
+
+The relation may be named by its inverse name to read incoming relations. The
+only constraint the third argument may have is `type`, and it is required when
+the relation reaches more than one type. The schema fails to load when the rule
+follows more than one relation, constrains properties or ids of the far end,
+uses a content-scoped or symmetric relation, or is on a type with `faces:`.
+
+A relation rule refuses a write only when the write turns a satisfied rule
+into a broken one. This has three effects:
+
+- A create is never refused. A new entity has no relations yet, and the client
+  links them after the create. Create the risk, link its plan, then set the
+  status; or create it in `in_behandeling` and link the plan next.
+- A row that already breaks the rule stays editable. `rela analyze validations`
+  finds it.
+- Leaving the rule's `when` is always allowed.
+
+These writes are checked:
+
+| Write                                                | Checked on                     |
+| ---------------------------------------------------- | ------------------------------ |
+| Update or patch of the entity                        | The entity                     |
+| Create of a relation the rule reads                  | Both ends                      |
+| Delete of a relation the rule reads (also If-Match)  | Both ends                      |
+| PATCH `relations` (`data`, `add`, `remove`)          | Both ends of each changed edge |
+
+A data-entry PATCH that changes properties and relations in one request is
+judged on the state it leaves: setting `status` to `in_behandeling` and adding
+the plan in one PATCH is accepted. The properties and the edges a rule reads
+are written in one transaction, after every check of both has passed. So when
+the access control, a bound or the rule of the far end refuses the plan, the
+status is not stored either. The edges of one relation that a PATCH writes are
+checked together, so removing two of three plans is judged once.
+
+These writes are not checked:
+
+- Creates, copies, conversions and restores.
+- The relations a batch or a create with `relations` writes, also when both
+  ends already existed.
+- Entity deletes, including the relations a cascade delete removes. A rule on a
+  neighbor the caller cannot see would otherwise refuse the delete, and so
+  reveal the neighbor.
+- Relations written by automations. They are written after the update that
+  triggers them, so an update is judged on the relations it finds, and an
+  automation that would link the required relation cannot satisfy the rule.
+
+The relations are counted without access control: a relation to an entity the
+caller cannot read counts. So the verdict is the same for every writer, and the
+same as in `rela analyze validations`. The refusal names the rule and quotes its
+description, never a related entity. It does show whether an end the caller
+can read has another relation the rule counts. On a relation create or delete
+that end may be the far end, so the refusal can show that it has a relation to
+an entity the caller cannot see. `docs/acl-security.md` records this channel.
+
+Each check reads the relations of the ends once and the type of each far end
+once, in the transaction of the write.
+
 Writes that bypass the write path do not check the rule: `rela import` and data
 migrations write to the store directly.
 
@@ -3440,7 +3556,9 @@ mode" in the CLI reference).
 
 1. **Start with warnings**: Begin with `severity: warning` and promote to `error` once your data is cleaned up
 2. **Use specific entity types**: Narrow rules to specific types when possible for clearer error messages
-3. **Combine with cardinality**: Use cardinality constraints for relation rules, validations for property rules
+3. **Combine with cardinality**: Use cardinality constraints for a fixed bound on
+   a relation, and a validation with `related(...)` when the relation is needed
+   only in some states
 4. **Check for empty values**: Use `property!=` to require that a property has any value
 
 ## Declared Piles

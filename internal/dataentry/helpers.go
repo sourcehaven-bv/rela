@@ -398,47 +398,38 @@ func addCheckboxIndices(s string) string {
 	})
 }
 
-// visibleListByTypes is executeQuery's no-free-text branch: load
-// entities by type under the per-type scope verdict. Unlike
-// listFromStoreByTypes (which other, ungated consumers still use and
-// which swallows iterator errors), this fails loud on both verdict
-// paths — same rationale as scopedSortedEntities.
-// visibleListByTypes loads the visible entities of the given types, applying
-// `props` in the STORE rather than after the fact.
+// visibleListByTypes is executeQuery's no-free-text branch: it loads the
+// visible entities of the given types under the per-type scope verdict,
+// applying `props` in the STORE rather than after the fact. It fails loud on
+// every verdict path.
 //
 // The predicates compose with the ACL scope rather than replacing it: an
 // AllowAll type gets a plain type+props query, and a scope-restricted type
 // gets its verdict query with the props appended. Both are ANDed by the
 // store, so narrowing by property can never widen what the gate allows.
+//
+// No type named means every type the scope grants. With no ACL the scope is
+// the wildcard, which grants every declared type, so the read is one
+// content-free header read per type through the same verdict switch
+// (TKT-F2EJQY8) rather than a drain of every entity with its body. A stored
+// row of a type the metamodel no longer declares is not read; every other
+// read path already treats such a row as unknown.
 func visibleListByTypes(
 	ctx context.Context, svc Services, types []string, scope map[string]search.TypeScope,
 	props []store.PropPredicate,
 ) ([]*entity.Entity, error) {
 	if len(types) == 0 {
 		if _, wildcard := scope[search.WildcardType]; wildcard {
-			// Wildcard-allow (no ACL): every entity, any type — the
-			// pre-ACL listAll shape, with iterator errors surfaced.
-			// No type named and no ACL: every entity, any type. The
-			// property predicates cannot be pushed here — GraphQuery is
-			// per-type — so this one path keeps the Go-side filter, which
-			// still runs over the result below.
-			out := make([]*entity.Entity, 0)
-			q := store.EntityQuery{Faces: store.InWorld(worldScopeFrom(ctx))}
-			for e, err := range svc.Store.ListEntities(ctx, q) {
-				if err != nil {
-					return nil, fmt.Errorf("%w: %w", errListLoad, err)
-				}
-				out = append(out, e)
+			types = svc.Meta.EntityTypes()
+		} else {
+			// Under ACL, "all types" means "all granted types".
+			types = make([]string, 0, len(scope))
+			for typ := range scope {
+				types = append(types, typ)
 			}
-			return out, nil
 		}
-		// Under ACL, "all types" means "all granted types":
-		// deterministic order over the scope's entries.
-		types = make([]string, 0, len(scope))
-		for typ := range scope {
-			types = append(types, typ)
-		}
-		slices.Sort(types)
+		// Deterministic order over the types.
+		types = slices.Sorted(slices.Values(types))
 	}
 
 	var out []*entity.Entity
@@ -553,51 +544,6 @@ func freeTextIDs(
 		ids[hit.ID] = struct{}{}
 	}
 	return ids, nil
-}
-
-// listFromStoreByTypes loads all entities matching the given types (or every
-// entity when types is empty) from the store.
-func listFromStoreByTypes(ctx context.Context, svc Services, types []string) []*entity.Entity {
-	if len(types) == 0 {
-		return listAllFromStore(ctx, svc)
-	}
-	var out []*entity.Entity
-	for _, t := range types {
-		for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{
-			Type: t, Faces: store.InWorld(worldScopeFrom(ctx)),
-		}) {
-			if err != nil {
-				return out
-			}
-			out = append(out, e)
-		}
-	}
-	return out
-}
-
-// listAllFromStore drains every entity from the store.
-//
-// UNBOUNDED, and the same shape that made GET /api/v1/_analyze an OOM
-// (TKT-1ESTYJ): whole entities, bodies included, retained in one slice. It
-// is currently safe only because nothing reaches it with an empty type
-// list — both listFromStoreByTypes callers pass exactly one type, and a
-// list's entity_type is required and validated at load.
-//
-// So this is left as-is rather than migrated: the analyze fix removed the
-// live O(store) retention, and rewriting a path with no reachable caller
-// would be churn. If a caller ever DOES pass an empty type list, this
-// becomes a live whole-store drain — at that point it wants
-// store.ListEntityHeaders (if the caller reads no bodies) or paging, not a
-// bigger slice.
-func listAllFromStore(ctx context.Context, svc Services) []*entity.Entity {
-	out := make([]*entity.Entity, 0)
-	for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(worldScopeFrom(ctx))}) {
-		if err != nil {
-			return out
-		}
-		out = append(out, e)
-	}
-	return out
 }
 
 // relationDirection maps the data-entry config direction type to the

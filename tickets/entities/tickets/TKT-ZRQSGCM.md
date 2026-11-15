@@ -5,7 +5,9 @@ title: 'Flows M5c: delete the old transition and automation paths and dogfood th
 kind: refactor
 priority: medium
 effort: m
-status: backlog
+started: "2026-11-13"
+completed: "2026-11-13"
+status: done
 ---
 
 ## Description
@@ -31,3 +33,10 @@ in `tickets/flows.yaml`, with a data migration where existing projects need one.
 and are removed.
 - The tickets project runs its checklist workflow from `flows.yaml`, and
 the three analyze gates stay clean.
+
+## Outcome
+
+The schema transitions now live in their own package,
+`internal/flowcfg/transitions`, beside the flows.yaml loader in `flowcfg`. The
+automation deletion and the tickets dogfood moved to TKT-GWOBH2U and
+TKT-XB4M29R.

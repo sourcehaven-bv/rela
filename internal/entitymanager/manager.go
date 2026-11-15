@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
@@ -17,7 +19,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/writerule"
@@ -315,7 +316,7 @@ type Deps struct {
 	// no write path can silently skip the machine — but a metamodel with no
 	// transitions compiles to an empty enforcer whose checks are no-ops, so
 	// "required" costs nothing when the feature is unused. Constructed once at
-	// startup by [statemachine.Compile] and injected; the Manager never
+	// startup by [transitions.CompileTransitions] and injected; the Manager never
 	// re-derives it from the metamodel.
 	Transitions TransitionEnforcer
 
@@ -330,12 +331,12 @@ type Deps struct {
 	// the safe default when no ACL-backed guard was wired. Production wiring
 	// supplies an adapter over the ACL; the direct-CLI/no-policy case is
 	// handled inside that adapter (it allows when there is no policy).
-	TransitionGuard statemachine.Guard
+	TransitionGuard transitions.PermissionGuard
 
 	// TransitionGraph answers has_relation/count_relations for a transition
 	// `when:` precondition. May be nil when no precondition needs the graph;
 	// a `when:` that queries the graph then evaluates against an empty graph.
-	TransitionGraph statemachine.GraphLookup
+	TransitionGraph transitions.GraphLookup
 
 	// FieldGate decides whether the ctx principal may author the specific
 	// property changes in a [Manager.PatchEntity] call. Required — pass
@@ -372,7 +373,7 @@ type Deps struct {
 	// CopyGuard evaluates a copy definition's `guard:` permission against the
 	// SOURCE entity, so "the owner of THIS doc may publish it" works without
 	// a global grant. Nil makes a GUARDED copy fail closed, matching the
-	// statemachine's nil-guard rule; an unguarded copy is unaffected.
+	// transition enforcer's nil-guard rule; an unguarded copy is unaffected.
 	CopyGuard CopyGuard
 
 	// CopyReadGate answers "may this principal READ the copy's source at
@@ -515,7 +516,7 @@ func (AllowAllFieldGate) CheckRelationMetaWrite(
 // TransitionEnforcer is the narrow contract the Manager needs from the
 // compiled state machines: enforce an update (old→new) and a create's entry
 // value. Defined at the call site (CLAUDE.md consumer-side interfaces);
-// [*statemachine.Set] satisfies it.
+// [*transitions.Transitions] satisfies it.
 // CopyReader is the caller-scoped read a CROSS-ENTITY copy sees. Narrow by
 // design: the copy needs one lookup, and taking the whole visibility.Reader
 // would bind this package to methods it never calls.
@@ -536,7 +537,7 @@ type CopyReader interface {
 
 // CopyGuard answers a copy definition's `guard:` permission for one subject.
 //
-// The same shape as statemachine.Guard, and satisfied by the same wiring —
+// The same shape as transitions.PermissionGuard, and satisfied by the same wiring —
 // the point of reusing the vocabulary is that the two cannot drift into
 // asking different questions. Subject is the bare entity id, matching the
 // conferral model: identity-scoped roles confer on the entity in every
@@ -619,7 +620,7 @@ type CopyGuard interface {
 type TransitionEnforcer interface {
 	EnforceUpdate(
 		ctx context.Context, old, updated *entity.Entity,
-		guard statemachine.Guard, lookup statemachine.GraphLookup,
+		guard transitions.PermissionGuard, lookup transitions.GraphLookup,
 	) error
 	EnforceCreate(ctx context.Context, e *entity.Entity) error
 }
@@ -643,7 +644,7 @@ func New(d Deps) (*Manager, error) {
 	}
 	if d.Transitions == nil {
 		return nil, errors.New(
-			"entitymanager: New: Transitions is required (use statemachine.Compile; an empty set is a no-op)")
+			"entitymanager: New: Transitions is required (use transitions.CompileTransitions; an empty set is a no-op)")
 	}
 	if d.Clock == nil {
 		d.Clock = time.Now
@@ -848,7 +849,7 @@ func (m *Manager) mapTransitionError(ctx context.Context, subject acl.Subject, e
 	if err == nil {
 		return nil
 	}
-	var ge *statemachine.GuardError
+	var ge *transitions.GuardError
 	if errors.As(err, &ge) {
 		decision := acl.Decision{
 			Allow:    false,
@@ -1756,12 +1757,21 @@ func (m *Manager) updateCore(
 	// that can compare-and-write atomically. Empty expectedVersion yields the
 	// zero condition: an unconditional write, for a caller that owns the
 	// whole entity (UpdateEntity).
-	if err := writeChecked(ctx, m.deps, e, e.ID, txCheck, func(st store.Store) error {
+	txCheck = chainTxChecks(txCheck, relationRuleCheck(m.deps, oldEntity, e))
+	write := func(st store.Store) error {
 		_, werr := st.UpdateEntityIf(ctx, e, store.UpdateCondition{
 			ExpectedVersion: store.EntityVersion(expectedVersion),
 		})
 		return werr
-	}); err != nil {
+	}
+	// A replace joined to this update (PatchWithRelations) is checked and
+	// written in the same transaction.
+	joined := joinedFor(ctx, e.ID)
+	if joined != nil {
+		txCheck = chainTxChecks(txCheck, joined.check)
+		write = joined.after(ctx, write)
+	}
+	if err := writeChecked(ctx, m.deps, e, e.ID, txCheck, write); err != nil {
 		var invalid *ValidationError
 		if errors.As(err, &invalid) {
 			return nil, err
@@ -1779,6 +1789,9 @@ func (m *Manager) updateCore(
 		// dropped the cause made a retry loop unreachable and turned 8 of 8
 		// concurrent losers into 500s, silently.
 		return nil, fmt.Errorf("write entity: %w", err)
+	}
+	if joined != nil {
+		joined.committed = true
 	}
 
 	// Audit the durable write now, before the cascade run. The entity
@@ -3252,14 +3265,21 @@ func (m *Manager) CreateRelation(
 	// The GetRelation pre-check above is advisory; the store's atomic
 	// create is the real guard, and a conflict surfaces as
 	// ErrRelationAlreadyExists (BUG-ZWTDH9).
+	ruled := relationWritesChecked(m.deps, key)
 	create := func(ctx context.Context, st store.Store) error {
+		if ruled {
+			if err := checkRelationRules(ctx, m.deps, st, []entity.RelationKey{key}, nil); err != nil {
+				return err
+			}
+		}
 		return writeRelationCreate(ctx, st, m.deps.Meta, key, rel, nil)
 	}
 	var createErr error
 	// An owning edge reads its neighbors' edges to decide whether it may
-	// exist, so the reads and the write share one Tx for the same reason.
+	// exist, and a relation rule reads the ends' edges, so the reads and the
+	// write share one Tx for the same reason.
 	inTx := relTypeIsOrdered(m.deps.Meta, key.Type) || relTypeHasMax(m.deps.Meta, key.Type) ||
-		metamodel.IsOwning(m.deps.Meta, key.Type)
+		metamodel.IsOwning(m.deps.Meta, key.Type) || ruled
 	if inTx {
 		createErr = m.deps.Store.Tx(ctx, func(st store.Store) error { return create(store.ContextInTx(ctx), st) })
 	} else {
@@ -3566,7 +3586,7 @@ func deleteRelation(ctx context.Context, m *Manager, key entity.RelationKey, exp
 		}
 		return fmt.Errorf("delete relation: %w", store.ErrNotFound)
 	}
-	if expect != "" {
+	if expect != "" || relationWritesChecked(m.deps, key) {
 		return deleteRelationIfVersion(ctx, m, key, expect)
 	}
 	// Fetch pre-delete AFTER authz (BUG-K6FEVB: a denied delete must return

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
@@ -12,7 +14,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -69,7 +70,7 @@ func newModeManager(t *testing.T, mode entitymanager.ValidationMode) modeFixture
 	if err != nil {
 		t.Fatal(err)
 	}
-	set, err := statemachine.Compile(meta)
+	set, err := transitions.CompileTransitions(meta)
 	if err != nil {
 		t.Fatal(err)
 	}
