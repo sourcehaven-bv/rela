@@ -170,6 +170,13 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/mailtemplate/mailtemplate.go#buildSection": {1, batchJob,
 		"scheduled mail render: a section lists the entities of its declared type"},
 
+	// mapimport: rela import --mapping.
+	"internal/mapimport/plan.go#builder.index": {1, batchJob,
+		"mapped import: reads each mapped type once to match source records to stored rows and to report " +
+			"stored rows the source no longer has"},
+	"internal/mapimport/plan.go#builder.storedRels": {1, batchJob,
+		"mapped import: reads each mapped relation type once to diff the source edges against the stored ones"},
+
 	// mcp.
 	"internal/mcp/tools_analysis.go#Server.handleAnalyzeProperties": {1, batchJob,
 		"analyze properties tool: validates every face row"},
