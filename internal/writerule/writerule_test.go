@@ -260,7 +260,7 @@ validations:
 			want: `validation "broken" on "verwerking"`,
 		},
 		{
-			name: "related traversal",
+			name: "related traversal on an unknown relation",
 			validations: `
 validations:
   - name: traverses
@@ -268,7 +268,7 @@ validations:
     enforce: write
     then_condition: "related(entity, 'x')"
 `,
-			want: "is not available on a write-enforced rule",
+			want: `related(...): related: unknown relation type "x"`,
 		},
 	}
 	for _, tc := range tests {

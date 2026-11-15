@@ -7,6 +7,7 @@ import (
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/Sourcehaven-BV/rela/internal/actionproposal"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
@@ -78,7 +79,9 @@ func toolRunAction() *mcpgo.Tool {
 		withDescription("Run a data-entry action, as its button in the web app does. An action that asks "+
 			"for confirmation runs only with confirm=true: call without it to read the question, ask the "+
 			"user, then call again. Result: {message, message_type, redirect}, or {status, content_type, "+
-			"body} for an action that answers with a body; a status of 400 or more is an error result."),
+			"body} for an action that answers with a body; a status of 400 or more is an error result. "+
+			"An AI action answers {proposal: {entity, set, relate}} and writes nothing: apply the changes "+
+			"you accept with update_entity and create_relation."),
 		withString("action", required(), description("Action ID, as returned by list_actions")),
 		withString("id", description(actionAddressDescription+
 			" Required for an entity-bound action; otherwise passed to the script as its entity.")),
@@ -180,6 +183,8 @@ type actionResult struct {
 	Status      int    `json:"status,omitempty"`
 	ContentType string `json:"content_type,omitempty"`
 	Body        string `json:"body,omitempty"`
+	// Proposal is an llm action's proposal; the action wrote nothing.
+	Proposal *actionproposal.Proposal `json:"proposal,omitempty"`
 }
 
 func actionResultView(resp *script.ActionResponse) actionResult {
@@ -189,7 +194,9 @@ func actionResultView(resp *script.ActionResponse) actionResult {
 	if resp.IsRich() {
 		return actionResult{Status: resp.Status, ContentType: resp.ContentType, Body: resp.Body}
 	}
-	return actionResult{Message: resp.Message, MessageType: resp.MessageType, Redirect: resp.Redirect}
+	return actionResult{
+		Message: resp.Message, MessageType: resp.MessageType, Redirect: resp.Redirect, Proposal: resp.Proposal,
+	}
 }
 
 // actionOpResult answers a refused or failed action operation.

@@ -2,7 +2,7 @@ request: POST /api/v1/tickets/TKT-1/_actions/clone
 identity: header editor@example.test
 status: 201
 header Location: /api/v1/tickets/TKT-008
-reads: GetRelation=7 GraphQueryHeaders=1 HighestID=2 ListEntities=1 ListEntityHeaders=1 ListRelations=1
+reads: GetRelation=7 GraphQueryHeaders=1 HighestID=1 ListEntities=1 ListEntityHeaders=1 ListRelations=1
 breadth: ListEntities=1/1 ListEntityHeaders=1/1 ListRelations=0/1
 bodies: GraphQuery=0/1 ListEntities=1/1 ListEntityHeaders=0/1
 versions: 
