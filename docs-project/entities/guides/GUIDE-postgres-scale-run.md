@@ -30,7 +30,9 @@ Measured on 2026-11-13 on a laptop (p50, scale 1 and scale 5):
 | Dashboard query card | 53-140 ms | 270-500 ms |
 | Next action | 33 ms | 210 ms |
 | Full-text search | 250-520 ms | 1.4-2.9 s |
-| Gantt chart | 340 ms | 3.8 s |
+| Gantt chart | 165 ms | 880 ms |
+
+The gantt row was measured on 2026-11-14.
 
 Paged reads and writes do not get slower as the data grows. Search, dashboard
 query cards, the next-action suggestion and the gantt chart still read data in
