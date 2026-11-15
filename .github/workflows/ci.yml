@@ -113,6 +113,14 @@ jobs:
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/restish" restish
           echo "$RUNNER_TEMP/restish" >> "$GITHUB_PATH"
 
+      # The race detector makes the slowest packages 6 to 11 times slower
+      # (internal/dataentry: 492 s with -race, 85 s without), and it set the
+      # length of every merge-queue run. So PRs and the merge queue run the
+      # suite without it, plus the concurrency tests under -race in the next
+      # step. A push to develop or main runs the whole suite under -race after
+      # the merge; post-merge-alert files an issue when that fails. The
+      # Postgres Backend job switches its suites the same way, through the
+      # same GOFLAGS expression.
       - name: Run tests
         # -shuffle=on randomizes test order to surface inter-test ordering
         # dependencies; the seed is printed on failure for reproduction.
@@ -121,7 +129,15 @@ jobs:
         # (TKT-A6A97WV), past go test's 10-minute default.
         env:
           RELA_TEST_RESTISH: '1'
-        run: go test -v -race -shuffle=on -timeout 20m -coverprofile=coverage.out -covermode=atomic ./...
+          GOFLAGS: ${{ github.event_name == 'push' && '-race' || '' }}
+        run: go test -v -shuffle=on -timeout 20m -coverprofile=coverage.out -covermode=atomic ./...
+
+      # The tests that race goroutines on purpose, selected by name; see the
+      # script for which names count. About 85 top-level tests plus the
+      # conformance suites' concurrency subtests, in a few minutes.
+      - name: Run concurrency tests under -race
+        if: ${{ !cancelled() && github.event_name != 'push' }}
+        run: scripts/ci-race-gate.sh
 
       - name: Check coverage thresholds
         uses: vladopajic/go-test-coverage@v2.21.0
@@ -1099,10 +1115,12 @@ jobs:
       # conformance case quietly excluded — which the env var alone would not
       # notice. Both are cheap; the failure they prevent (silent backend
       # divergence) is not.
-      - name: Run pgstore conformance + fuzz seeds (race) against PostgreSQL
+      - name: Run pgstore conformance + fuzz seeds against PostgreSQL
+        env:
+          GOFLAGS: ${{ github.event_name == 'push' && '-race' || '' }}
         run: |
           set -euo pipefail
-          go test -race -tags postgres -v ./internal/store/pgstore/... 2>&1 | tee pgstore-test.log
+          go test -tags postgres -v ./internal/store/pgstore/... 2>&1 | tee pgstore-test.log
           if grep -q -- '--- SKIP' pgstore-test.log; then
             echo "::error::pgstore tests SKIPPED in the Postgres Backend job."
             echo "This job exists to prove backend parity; a skipped suite is not a pass."
@@ -1117,10 +1135,12 @@ jobs:
       # that Go and the memory backend accept and PostgreSQL rejects outright).
       # `just test-postgres` has always included this package; CI did not, so
       # the durable tier was unpinned here despite the local recipe covering it.
-      - name: Run job-queue conformance (race) against PostgreSQL
+      - name: Run job-queue conformance against PostgreSQL
+        env:
+          GOFLAGS: ${{ github.event_name == 'push' && '-race' || '' }}
         run: |
           set -euo pipefail
-          go test -race -tags postgres -v ./internal/jobs/... 2>&1 | tee jobs-test.log
+          go test -tags postgres -v ./internal/jobs/... 2>&1 | tee jobs-test.log
           if grep -q -- '--- SKIP' jobs-test.log; then
             echo "::error::job-queue tests SKIPPED in the Postgres Backend job."
             echo "A skipped conformance suite is not a pass."
@@ -1134,10 +1154,12 @@ jobs:
       # an ordinary package, so `go test` compiles it in every build. Only the
       # DSN decides whether it runs, which is exactly why it needs this step —
       # the untagged CI job compiles it and skips every meaningful test.
-      - name: Run comment-backend conformance (race) against PostgreSQL
+      - name: Run comment-backend conformance against PostgreSQL
+        env:
+          GOFLAGS: ${{ github.event_name == 'push' && '-race' || '' }}
         run: |
           set -euo pipefail
-          go test -race -v ./internal/comments/... 2>&1 | tee comments-test.log
+          go test -v ./internal/comments/... 2>&1 | tee comments-test.log
           if grep -q -- '--- SKIP' comments-test.log; then
             echo "::error::comment-backend tests SKIPPED in the Postgres Backend job."
             echo "This suite is the file-vs-database parity gate; a skip is not a pass."
@@ -1148,10 +1170,12 @@ jobs:
 
       # Scheduler run-state conformance, DB-gated on the same terms and, like
       # pgcomments, untagged.
-      - name: Run scheduler run-state conformance (race) against PostgreSQL
+      - name: Run scheduler run-state conformance against PostgreSQL
+        env:
+          GOFLAGS: ${{ github.event_name == 'push' && '-race' || '' }}
         run: |
           set -euo pipefail
-          go test -race -v ./internal/schedulerstate/... 2>&1 | tee schedstate-test.log
+          go test -v ./internal/schedulerstate/... 2>&1 | tee schedstate-test.log
           if grep -q -- '--- SKIP' schedstate-test.log; then
             echo "::error::scheduler run-state tests SKIPPED in the Postgres Backend job."
             grep -- '--- SKIP' schedstate-test.log
@@ -1161,10 +1185,12 @@ jobs:
 
       # Flow run store conformance (TKT-PV9R0GK), DB-gated and untagged like
       # pgcomments. pgchannels shares its pgx adapter (internal/sqlexec).
-      - name: Run flow run store conformance (race) against PostgreSQL
+      - name: Run flow run store conformance against PostgreSQL
+        env:
+          GOFLAGS: ${{ github.event_name == 'push' && '-race' || '' }}
         run: |
           set -euo pipefail
-          go test -race -v ./internal/flowrun/... ./internal/channels/pgchannels/ 2>&1 | tee flowrun-test.log
+          go test -v ./internal/flowrun/... ./internal/channels/pgchannels/ 2>&1 | tee flowrun-test.log
           if grep -q -- '--- SKIP' flowrun-test.log; then
             echo "::error::flow run store tests SKIPPED in the Postgres Backend job."
             grep -- '--- SKIP' flowrun-test.log
@@ -1175,16 +1201,31 @@ jobs:
       # Lua migration graph reads (TKT-ZO6GRZ): the pre-step read rule,
       # checked against a real pgstore. Untagged, like pgcomments; only the
       # DSN decides whether the pgstore case runs, so a skip fails the step.
-      - name: Run migration graph-read tests (race) against PostgreSQL
+      - name: Run migration graph-read tests against PostgreSQL
+        env:
+          GOFLAGS: ${{ github.event_name == 'push' && '-race' || '' }}
         run: |
           set -euo pipefail
-          go test -race -v -run 'TestLuaReads_' ./internal/datamigration/ 2>&1 | tee migreads-test.log
+          go test -v -run 'TestLuaReads_' ./internal/datamigration/ 2>&1 | tee migreads-test.log
           if grep -q -- '--- SKIP' migreads-test.log; then
             echo "::error::migration graph-read tests SKIPPED in the Postgres Backend job."
             grep -- '--- SKIP' migreads-test.log
             exit 1
           fi
           echo "OK: migration graph reads ran against PostgreSQL with no skips."
+
+      # The steps above race only on push (see the Test job). On PRs and in
+      # the merge queue, this runs the concurrency tests of the packages this
+      # job owns under -race. internal/cli and internal/dataentry stay out for
+      # the sandbox reason given on the wiring step below.
+      - name: Run postgres concurrency tests under -race
+        if: ${{ !cancelled() && github.event_name != 'push' }}
+        run: |
+          scripts/ci-race-gate.sh -tags postgres \
+            internal/store/pgstore internal/jobs internal/comments internal/schedulerstate \
+            internal/flowrun internal/channels/pgchannels internal/datamigration \
+            internal/appbuild internal/docscli internal/tenant internal/lease internal/piles \
+            cmd/rela-server
 
       # The step above covers the STORE under -tags postgres. Nothing covered
       # the WIRING: `internal/appbuild` and `internal/cli` were compiled with
@@ -1228,15 +1269,17 @@ jobs:
       # TKT-WZYWM9's headline feature, and the path TKT-9TOEBH changed the wire
       # format of. Verified non-vacuous: with remote emission disabled it fails.
       - name: Run composition-root wiring tests against PostgreSQL
+        env:
+          GOFLAGS: ${{ github.event_name == 'push' && '-race' || '' }}
         run: |
           set -euo pipefail
-          go test -race -tags postgres ./internal/appbuild/...
-          go test -race -tags postgres -run 'TestNewMCPServices|TestMCPServices|TestMCPWatcher' \
+          go test -tags postgres ./internal/appbuild/...
+          go test -tags postgres -run 'TestNewMCPServices|TestMCPServices|TestMCPWatcher' \
             ./internal/cli/
-          go test -race -tags postgres -run 'TestStoreEventBridge' ./internal/dataentry/
-          go test -race -tags postgres ./internal/docscli/
+          go test -tags postgres -run 'TestStoreEventBridge' ./internal/dataentry/
+          go test -tags postgres ./internal/docscli/
           # Tenant isolation over one shared base (TKT-TNT9RS, TKT-5L5O0MZ).
-          go test -race -tags postgres ./internal/tenant/
+          go test -tags postgres ./internal/tenant/
           # Write concurrency without a process-wide lock (TKT-WE0S2K): the
           # manager's check-then-writes and webhook appends, raced within one
           # process and across two stores on one schema.
@@ -1963,3 +2006,54 @@ jobs:
              echo "Changed files:" && \
              git diff --name-only docs/ README.md && \
              exit 1)
+
+  # A push to develop or main is the only run with the full -race suites (see
+  # the Test job), and nothing blocks on it. A red run there is easy to miss,
+  # so this files one issue, comments on it while it stays open, and closes it
+  # when a later push passes both jobs.
+  post-merge-alert:
+    name: Post-merge alert
+    needs: [test, postgres]
+    if: ${{ always() && github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: File, update or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF_NAME: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TEST_RESULT: ${{ needs.test.result }}
+          POSTGRES_RESULT: ${{ needs.postgres.result }}
+        run: |
+          set -euo pipefail
+          TITLE="CI failed on ${REF_NAME} after merge"
+
+          # Only issues this workflow filed. TITLE goes to jq as --arg.
+          EXISTING=$(gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state open \
+            --search "\"$TITLE\" in:title" \
+            --json number,title,author \
+            | jq -r --arg title "$TITLE" '
+                [ .[]
+                  | select(.title == $title)
+                  | select(.author.login == "app/github-actions")
+                ][0].number // empty')
+
+          if [[ "$TEST_RESULT" == success && "$POSTGRES_RESULT" == success ]]; then
+            if [[ -n "$EXISTING" ]]; then
+              gh issue close "$EXISTING" --repo "$GITHUB_REPOSITORY" \
+                --comment "Commit $GITHUB_SHA passed the post-merge run: $RUN_URL"
+            fi
+            exit 0
+          fi
+
+          BODY=$(printf 'Commit %s did not pass the post-merge run, which includes the full -race suites.\n\n- Test: %s\n- Postgres Backend: %s\n\nRun: %s\n' \
+            "$GITHUB_SHA" "$TEST_RESULT" "$POSTGRES_RESULT" "$RUN_URL")
+          if [[ -n "$EXISTING" ]]; then
+            gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" --body "$BODY"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$BODY"
+          fi
