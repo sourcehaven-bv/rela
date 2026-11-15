@@ -39,7 +39,7 @@ func (g redactGate) GetAddress(ctx context.Context, addr string) (*entity.Entity
 // compares a property value the principal may not see.
 func TestHiddenProperty_NotCompared(t *testing.T) {
 	w := newWorld(t)
-	w.create("control", "", map[string]any{"oscal_id": "c1", "title": "Old", "weight": int64(9)})
+	w.create("control", "", map[string]any{"oscal_id": "c1", "title": "Old", "weight": int64(918273645)})
 	w.gate = redactGate{inner: w.gate, fields: map[string]bool{"weight": true}}
 
 	weighted := w.mapping(controlsMapping + "      weight: weight\n")
@@ -51,7 +51,7 @@ func TestHiddenProperty_NotCompared(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(data), "9") || len(p.Updates)+p.Unchanged != 0 {
+	if strings.Contains(string(data), "918273645") || len(p.Updates)+p.Unchanged != 0 {
 		t.Fatalf("plan shows or compares the hidden value: %s", data)
 	}
 
