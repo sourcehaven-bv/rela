@@ -5,7 +5,15 @@ title: Lower-case sequential id_prefix can never mint a valid id
 description: A sequential type with a lower-case id_prefix mints an upper-case id that the case-sensitive prefix check refuses.
 priority: low
 effort: s
-status: backlog
+why1: metamodel.Validator.ValidateEntity compared the id with the declared id_prefix byte for byte, so the minted NT-001 did not match nt-.
+why2: entity.SequentialID always writes the prefix in upper case, while the prefix check kept the declared case. The two halves of one rule disagreed.
+why3: Ids became case-insensitive identities in the stores, but the metamodel prefix check (and its copy in EntityDef.MatchesID) was never folded to match.
+why4: No test created an entity of a sequential type with a non-upper-case prefix; every fixture declares upper-case prefixes.
+why5: Id case rules are spread over the minter, the stores and the metamodel with no shared statement, so a change to one does not reach the others.
+prevention: MatchesID is the one prefix check and folds case; TestCreate_MintsForNonUpperCasePrefix creates entities for lower- and mixed-case prefixes, and the MatchesID and ValidateEntity tables pin the fold.
+started: "2026-11-14"
+completed: "2026-11-14"
+status: done
 severity: minor
 ---
 

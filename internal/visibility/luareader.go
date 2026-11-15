@@ -36,6 +36,13 @@ import (
 // The field redactor still runs PER ROW (one verdict resolution each), which
 // batching does not amortize (RR-3U1V80). Bounding these bindings is
 // TKT-YWDGZD; this type does not paper over it.
+//
+// Its exported methods are the gated read surface every reader family
+// implements (appbuild's scriptEntityReaderFamily), a required interface
+// rather than a ratchet target. ListEntityPage (TKT-D9UO9Y4) took it from
+// 20 to 21.
+//
+//plimsoll:max-exported-methods=21
 type ScriptReader struct {
 	reader Reader
 	res    *Resolver

@@ -60,7 +60,7 @@ func NewClusterResolver(context.Context, string) (*ClusterResolver, error) {
 // [NewProvisioner] refuses to build a Provisioner here, so none is reached.
 
 // Create refuses on a build with no PostgreSQL.
-func (*Provisioner) Create(context.Context, string, bool) (Tenant, error) {
+func (*Provisioner) Create(context.Context, string, CreateOptions) (Tenant, error) {
 	return Tenant{}, ErrUnsupportedBuild
 }
 
@@ -69,6 +69,16 @@ func (*Provisioner) Suspend(context.Context, string) error { return ErrUnsupport
 
 // Resume refuses on a build with no PostgreSQL.
 func (*Provisioner) Resume(context.Context, string) error { return ErrUnsupportedBuild }
+
+// SuspendForIDP refuses on a build with no PostgreSQL.
+func (*Provisioner) SuspendForIDP(context.Context, string) (bool, error) {
+	return false, ErrUnsupportedBuild
+}
+
+// ResumeForIDP refuses on a build with no PostgreSQL.
+func (*Provisioner) ResumeForIDP(context.Context, string) (bool, error) {
+	return false, ErrUnsupportedBuild
+}
 
 // Erase refuses on a build with no PostgreSQL.
 func (*Provisioner) Erase(context.Context, string) (Tenant, Erasure, error) {

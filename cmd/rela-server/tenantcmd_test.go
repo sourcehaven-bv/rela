@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
 )
@@ -18,8 +19,9 @@ type fakeLifecycle struct {
 	err   error
 }
 
-func (f *fakeLifecycle) Create(_ context.Context, org string, adopt bool) (tenant.Tenant, error) {
-	f.calls = append(f.calls, "create "+org+map[bool]string{true: " adopt"}[adopt])
+func (f *fakeLifecycle) Create(_ context.Context, org string, opts tenant.CreateOptions) (tenant.Tenant, error) {
+	f.calls = append(f.calls, "create "+org+map[bool]string{true: " adopt"}[opts.Adopt]+
+		map[bool]string{true: " recreate"}[opts.Recreate])
 	return tenant.Tenant{OrgID: org, Schema: "org_x"}, f.err
 }
 
@@ -121,6 +123,9 @@ func TestTenantCommand_Dispatch(t *testing.T) {
 		{args: []string{"create", "-project", dir, "-adopt", "org-a"}, wantCall: "create org-a adopt"},
 		{args: []string{"create", "-project", dir, "org-a"}, lcErr: tenant.ErrSchemaExists, wantCode: 1,
 			wantCall: "create org-a", wantOut: "-adopt"},
+		{args: []string{"create", "-project", dir, "-recreate", "org-a"}, wantCall: "create org-a recreate"},
+		{args: []string{"create", "-project", dir, "org-a"}, lcErr: tenant.ErrTenantErased, wantCode: 1,
+			wantCall: "create org-a", wantOut: "-recreate"},
 		{args: []string{"suspend", "-project", dir, "org-a"}, wantCall: "suspend org-a", wantOut: "suspended"},
 		{args: []string{"resume", "-project", dir, "org-a"}, wantCall: "resume org-a", wantOut: "resumed"},
 		{args: []string{"resume", "-project", dir, "org-a"}, lcErr: tenant.ErrWrongStatus, wantCode: 1,
@@ -205,7 +210,7 @@ func TestTenantCommand_LifecycleRecord(t *testing.T) {
 		t.Fatalf("lifecycle record has %d lines, want 3: %q", len(lines), rec)
 	}
 	for i, want := range [][]string{
-		{`"action":"create"`, `"schema":"org_x"`, `"adopt":false`, `"ok":true`},
+		{`"action":"create"`, `"schema":"org_x"`, `"adopt":false`, `"recreate":false`, `"ok":true`},
 		{`"action":"suspend"`, `"ok":true`},
 		{`"action":"resume"`, `"ok":false`, `"error":`},
 	} {
@@ -229,6 +234,24 @@ func TestTenantCommand_Show(t *testing.T) {
 	}, "", "show", "-project", dir, "org-a")
 	if code != 0 || !strings.Contains(out, "suspended") {
 		t.Errorf("show: exit %d, out %q", code, out)
+	}
+	for cause, want := range map[tenant.SuspendCause]string{
+		tenant.SuspendedByIDP: "suspended by the IdP", tenant.SuspendedByOperator: "suspended by an operator",
+		"": "cause not recorded",
+	} {
+		code, out, _ = runTenantFake(t, &fakeLifecycle{}, fakeReader{rec: tenant.Record{
+			OrgID: "org-a", Schema: "org_x", Status: tenant.StatusSuspended, SuspendedBy: cause, SchemaExists: true,
+		}}, "", "show", "-project", dir, "org-a")
+		if code != 0 || !strings.Contains(out, want) {
+			t.Errorf("show suspended by %q: exit %d, out %q; want %q", cause, code, out, want)
+		}
+	}
+	erased := time.Date(2026, 11, 14, 9, 30, 0, 0, time.UTC)
+	code, out, _ = runTenantFake(t, &fakeLifecycle{}, fakeReader{rec: tenant.Record{
+		OrgID: "org-a", Schema: "org_x", Status: tenant.StatusErased, ErasedAt: erased,
+	}}, "", "show", "-project", dir, "org-a")
+	if code != 0 || !strings.Contains(out, "erased at 2026-11-14T09:30:00Z") || strings.Contains(out, "does not exist") {
+		t.Errorf("show erased: exit %d, out %q; want the erasure time and no missing-schema warning", code, out)
 	}
 	code, out, _ = runTenantFake(t, &fakeLifecycle{}, fakeReader{err: tenant.ErrUnknownTenant}, "",
 		"show", "-project", dir, "org-z")
