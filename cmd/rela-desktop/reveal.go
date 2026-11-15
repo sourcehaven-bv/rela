@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 )
 
 // revealTimeout bounds the call to open(1), which returns as soon as Finder
@@ -35,7 +37,9 @@ func revealInFinder(path string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), revealTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "/usr/bin/open", revealArgs(path)...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, "/usr/bin/open", revealArgs(path)...)
+	cmd.Env = cmdexec.Environ()
+	out, err := cmd.CombinedOutput()
 	if err != nil && len(out) > 0 {
 		return errors.New(string(out))
 	}
