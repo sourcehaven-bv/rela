@@ -222,6 +222,7 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 	t.Run("DecimalText", func(t *testing.T) { RunDecimalTextTests(t, f) })
 	t.Run("CAS", func(t *testing.T) { RunCASTests(t, f) })
 	t.Run("Header", func(t *testing.T) { RunHeaderTests(t, f) })
+	t.Run("HeaderPage", func(t *testing.T) { RunHeaderPageTests(t, f) })
 	t.Run("BulkMigrate", func(t *testing.T) { RunBulkMigrateTests(t, f) })
 	t.Run("Relation", func(t *testing.T) { RunRelationTests(t, f) })
 	t.Run("Query", func(t *testing.T) { RunQueryTests(t, f) })

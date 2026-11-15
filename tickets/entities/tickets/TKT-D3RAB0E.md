@@ -5,7 +5,9 @@ title: Page executeQuery and the remaining scopedHeaders callers
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+started: "2026-11-14"
+completed: "2026-11-14"
+status: done
 ---
 
 ## Description
@@ -37,3 +39,39 @@ node load, the list-context command payload): give them their own read function
 with a `batchJob` or `bounded` allowlist entry and a reason, so `scopedHeaders`
 itself no longer carries a `requestPath` entry. Then delete
 `TestUnpagedReadAllowlist_ScopedHeadersIsDebt`.
+
+## Outcome (first part)
+
+Done in this ticket:
+
+- `/_search` without free text is planned for the store when the store can
+answer exactly (`planSearch`, `internal/dataentry/searchplan.go`): equality
+filters on scalar string or declared-enum properties, and a sort on one type
+over string-shaped keys. Each readable type's query is built by `scopedQuery`,
+so the row gate, world and face allowlist are inside it. The page reads at most
+`limit` rows; `store.CountMatched` runs only when the page is full.
+- The `_position` search scope over one type uses `store.GraphPosition`.
+- `scopedHeaders`' verdict switch moved into `scopedQuery`.
+- pgstore's `GraphPosition` ignored `OrderSpec.Values` (enum rank) and sorted
+byte-wise. It now orders its window with the page's own `orderKeySQL`.
+`storetest.RunGraphPositionTests` pins it on every backend.
+- The search budget tests check rows where the result does not grow with the
+matches (filtered, limited); the unfiltered search without a limit stays a
+calls-only pin by design.
+
+Behaviour changes:
+
+- `meta.total` of `/_search` counts every match, also when `limit` cuts the
+page. It was the number of rows served. For free text it stays the length before
+the cut, which the relevance cap bounds, so there it is a lower bound.
+- A query naming the same type twice (the `type` parameter plus the same
+`type:` clause in `q`) returns each row once. The Go path used to read the type
+twice.
+- On postgres, a list or search position with an enum sort now matches the
+page order.
+
+Left for follow-ups: nav status counts (TKT-3CHTKV7), the whole-set callers' own
+read functions and the `scopedHeaders` debt test (TKT-C5H506O), and the
+structured search shapes the plan declines, including the mention menu's
+`sort:modified:desc` (TKT-PSBGQLY). Next action and `pick_one` are TKT-CKLZMWB;
+dashboard cards are TKT-AIEGHU and TKT-8AUD1U.

@@ -5,7 +5,9 @@ title: Push desktop notification conditions into the store
 kind: enhancement
 priority: medium
 effort: s
-status: backlog
+started: "2026-11-14"
+completed: "2026-11-14"
+status: done
 ---
 
 ## Description
