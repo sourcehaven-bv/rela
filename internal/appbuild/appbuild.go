@@ -3091,9 +3091,7 @@ func assemble(
 	// Upstream's parameter order (readDeps after cascadeRunner) with the
 	// comment fanout wrapping the alias rewriter.
 	attachLocker := base.attachmentLocker(st)
-	fanout := newAliasFanout(aliases, refs.comments, refs.piles, refs.leases, autoJobs,
-		refs.channelAliases, refs.realtimeLocal, newFlowRunAliases(refs.flowRuns), recordAliases(st, refs.recordStore),
-		refs.idpEraser)
+	fanout := refs.aliasFanout(st, aliases, autoJobs)
 	mgr, err := buildEntityManager(base, st, fanout, templater,
 		resolvedACL, autoEngine, cascadeRunner, readDeps, pileWriterFor(refs.piles), versions, tw, computedSet,
 		attachLocker, fieldPol.gate, refs.guardInputs())

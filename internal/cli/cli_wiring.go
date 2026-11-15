@@ -153,6 +153,29 @@ type cliBundles struct {
 	reconcile  *reconcileServices
 }
 
+// newReadServices builds the read-only collaborators every CLI command
+// shares.
+func newReadServices(svc *appbuild.Services) readServices {
+	read := readServices{
+		Store:     svc.Store(),
+		Versions:  svc.Versions(),
+		Meta:      svc.Meta(),
+		Paths:     svc.Paths(),
+		Tracer:    svc.Tracer(),
+		Searcher:  svc.Searcher(),
+		Config:    svc.Config(),
+		Templater: svc.Templater(),
+		FS:        svc.FS(),
+		World:     appbuild.CompiledWorlds(svc).DefaultWorld(),
+		Families:  appbuild.CompiledWorlds(svc).Families(),
+	}
+	// Assigned only when present, so a missing store stays a nil interface.
+	if rs := appbuild.RecordStore(svc); rs != nil {
+		read.Records = rs
+	}
+	return read
+}
+
 // newCLIBundles wires the focused services around an already-constructed
 // appbuild.Services. Used by the kong wiring in production and by CLI
 // test fixtures.
@@ -197,23 +220,7 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		// valid appbuild.Services
 		return nil, fmt.Errorf("analysis service: %w", err)
 	}
-	read := readServices{
-		Store:     svc.Store(),
-		Versions:  svc.Versions(),
-		Meta:      svc.Meta(),
-		Paths:     svc.Paths(),
-		Tracer:    svc.Tracer(),
-		Searcher:  svc.Searcher(),
-		Config:    svc.Config(),
-		Templater: svc.Templater(),
-		FS:        svc.FS(),
-		World:     appbuild.CompiledWorlds(svc).DefaultWorld(),
-		Families:  appbuild.CompiledWorlds(svc).Families(),
-	}
-	// Assigned only when present, so a missing store stays a nil interface.
-	if rs := appbuild.RecordStore(svc); rs != nil {
-		read.Records = rs
-	}
+	read := newReadServices(svc)
 	write := writeServices{
 		readServices:  read,
 		EntityManager: svc.EntityManager(),

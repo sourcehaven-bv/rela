@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/flowrun"
 	"github.com/Sourcehaven-BV/rela/internal/idproles"
@@ -147,6 +149,17 @@ func buildRefHolders(
 func (h refHolders) guardInputs() guardInputs {
 	return guardInputs{store: h.channels, tombs: h.channelTombs, dueWake: h.dueWake, marker: h.realtimeLocal,
 		flowRuns: h.flowRuns}
+}
+
+// aliasFanout joins every subscriber that must follow an entity rename or
+// delete: the alias table and the job automations, plus the side stores
+// among h.
+func (h refHolders) aliasFanout(
+	st store.Store, aliases *caldavalias.Service, autoJobs *automationJobs,
+) entitymanager.AliasRewriter {
+	return newAliasFanout(aliases, h.comments, h.piles, h.leases, autoJobs,
+		h.channelAliases, h.realtimeLocal, newFlowRunAliases(h.flowRuns), recordAliases(st, h.recordStore),
+		h.idpEraser)
 }
 
 // sharedLocal returns the predecessor's process-local channel state and
