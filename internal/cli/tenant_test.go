@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -13,7 +14,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/backendtest"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
 )
 
@@ -278,4 +281,45 @@ func TestValidate_TenantModeWithoutTenant(t *testing.T) {
 	} else {
 		require.ErrorIs(t, err, tenant.ErrUnsupportedBuild)
 	}
+}
+
+// TestApplyTenantProfile pins that a CLI command opening a tenant applies
+// tenant mode's SaaS profile from the environment: the strict Lua HTTP
+// policy with RELA_LUA_HTTP_ALLOW, and the host config withheld unless
+// RELA_TENANT_SHARED_HOST_CONFIG=1. A bad allowlist and a failed install
+// fail the command.
+func TestApplyTenantProfile(t *testing.T) {
+	t.Parallel()
+	env := func(kv map[string]string) func(string) string {
+		return func(k string) string { return kv[k] }
+	}
+	var applied []appbuild.TenantProfile
+	record := func(p appbuild.TenantProfile) (lua.HTTPPolicy, error) {
+		applied = append(applied, p)
+		return p.LuaHTTPPolicy()
+	}
+
+	opts, err := applyTenantProfile(env(map[string]string{envLuaHTTPAllow: "10.1.0.0/16,idp.internal:8443"}), record)
+	require.NoError(t, err)
+	require.Len(t, applied, 1)
+	assert.Equal(t, "10.1.0.0/16,idp.internal:8443", applied[0].LuaHTTPAllow)
+	assert.False(t, applied[0].SharedHostConfig)
+	assert.Contains(t, applied[0].WithheldReason, envTenantSharedHostConfig)
+	assert.Len(t, opts, 1, "the host config is withheld by default")
+
+	applied = nil
+	opts, err = applyTenantProfile(env(map[string]string{envTenantSharedHostConfig: "1"}), record)
+	require.NoError(t, err)
+	require.Len(t, applied, 1, "the strict policy applies when the host config is shared")
+	assert.Empty(t, opts, "RELA_TENANT_SHARED_HOST_CONFIG=1 shares the host config")
+
+	applied = nil
+	_, err = applyTenantProfile(env(map[string]string{envLuaHTTPAllow: "not a destination"}), record)
+	require.ErrorContains(t, err, envLuaHTTPAllow)
+	assert.Empty(t, applied, "a bad allowlist installs nothing")
+
+	_, err = applyTenantProfile(env(nil), func(appbuild.TenantProfile) (lua.HTTPPolicy, error) {
+		return lua.HTTPPolicy{}, errors.New("the strict Lua HTTP policy is not installed")
+	})
+	require.ErrorContains(t, err, "not installed")
 }

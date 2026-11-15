@@ -5,7 +5,9 @@ title: 'Settings: search picker for relation defaults'
 kind: enhancement
 priority: low
 effort: s
-status: backlog
+started: "2026-11-14"
+completed: "2026-11-14"
+status: done
 ---
 
 ## Description

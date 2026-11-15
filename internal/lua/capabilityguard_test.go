@@ -97,16 +97,16 @@ func TestCapabilityRegistrationStaysGated(t *testing.T) {
 		})
 	}
 
-	// Secrets are filtered, never ranged over raw. `range r.secrets` is exactly
+	// Secrets are filtered, never ranged over raw. `range r.secrets.values` is exactly
 	// the mutation that reintroduces whole-file exposure.
 	t.Run("secrets are filtered", func(t *testing.T) {
 		t.Parallel()
-		if !strings.Contains(text, "r.caps.filterSecrets(r.secrets)") {
+		if !strings.Contains(text, "r.caps.filterSecrets(r.secrets.values)") {
 			t.Error("the secrets table is no longer built through filterSecrets — " +
 				"every script may now read the whole of .rela/secrets.yaml")
 		}
-		if strings.Contains(text, "range r.secrets {") {
-			t.Error("found `range r.secrets` — the secrets table must be built " +
+		if strings.Contains(text, "range r.secrets.values {") {
+			t.Error("found `range r.secrets.values` — the secrets table must be built " +
 				"from caps.filterSecrets, not from the raw map")
 		}
 	})

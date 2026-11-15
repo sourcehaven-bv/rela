@@ -16,8 +16,10 @@ type ScopeLowering struct {
 	Traversals []predicate.TraversalSpec
 }
 
-// LowerScope decides whether a query scope on entityType can be answered by
-// the store alone, and if so returns the predicates that answer it.
+// LowerScope decides whether a scope condition on entityType can be answered
+// by the store alone, and if so returns the predicates that answer it. The
+// `visible:` field scopes use it; list query scopes and list conditions use
+// the wider [LowerCondition] (TKT-I39Y7N4).
 //
 // It is the eligibility half only. The index columns a scope contributes are
 // still derived by [ConditionIndexProperties], deliberately: the Go path

@@ -1,7 +1,7 @@
 request: POST /api/v1/_mcp
 identity: signed assertion for viewer@example.test
 status: 200
-reads: GraphQuery=1 GraphQueryHeaders=1 ListRelations=2 MatchingFaces=1
+reads: CountMatched=1 GraphQueryHeaders=2 ListRelations=2 MatchingFaces=1
 breadth: ListRelations=3/2 MatchingFaces=3/1
 bodies: GraphQuery=2/2
 versions: 
