@@ -9,6 +9,10 @@ status: done
 
 <!-- @managed: claude-workflow v1 -->
 
+> Outcome: the code landed in its own package, `internal/flowcfg/transitions`
+> (arch-lint component `transitions`), not in `internal/flowcfg` as planned
+> below. The Outcome of TKT-ZRQSGCM names the location.
+
 ## Understanding
 
 - [x] Problem/requirements clearly understood
