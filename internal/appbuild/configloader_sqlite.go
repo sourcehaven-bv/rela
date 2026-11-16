@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/datamigration"
 	"github.com/Sourcehaven-BV/rela/internal/datamigration/sqlitemigstate"
 	"github.com/Sourcehaven-BV/rela/internal/flowrun/sqliteflowrun"
+	"github.com/Sourcehaven-BV/rela/internal/records/sqliterecords"
 	"github.com/Sourcehaven-BV/rela/internal/rootfs"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -40,8 +41,13 @@ func backendServices(db *sqlitedb.DB) (backendOverrides, error) {
 	if err != nil { // coverage-ignore: unreachable: db.DB() is non-nil
 		return backendOverrides{}, err
 	}
+	recordStore, err := sqliterecords.New(db.DB())
+	if err != nil { // coverage-ignore: unreachable: db.DB() is non-nil
+		return backendOverrides{}, err
+	}
 	return backendOverrides{
 		flowRuns:     runs,
+		recordStore:  recordStore,
 		stateKV:      data.kv,
 		migState:     data.migState,
 		commentStore: data.comments,

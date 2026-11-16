@@ -645,7 +645,7 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 	errs = append(errs, validateIconName(nav.Icon, fmt.Sprintf("navigation %q", label))...)
 	errs = append(errs, validateNavEntitiesShape(nav)...)
 
-	for _, e := range navTargetErrors(nav, cfg) {
+	for _, e := range navTargetErrors(nav, cfg, "") {
 		errs = append(errs, "navigation: "+e)
 	}
 
@@ -685,7 +685,12 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 // navTargetErrors checks that the view an entry opens exists. The messages
 // carry no prefix, so a navigation entry and a space home can each name
 // themselves.
-func navTargetErrors(nav NavigationEntry, cfg *Config) []string {
+//
+// anchorType is the entity_type of the page whose tab this is, and "" for a
+// navigation entry, a space home and a tab of a plain page. Only a tab of an
+// entity page has an anchor to give an entity-anchored document or an entity
+// dashboard; validateAnchoredScope checks that tab's view instead.
+func navTargetErrors(nav NavigationEntry, cfg *Config, anchorType string) []string {
 	var errs []string
 	if nav.List != "" {
 		if _, ok := cfg.Lists[nav.List]; !ok {
@@ -709,6 +714,11 @@ func navTargetErrors(nav NavigationEntry, cfg *Config) []string {
 	}
 	if e := dashboardRefError(nav.Dashboard, cfg); e != "" {
 		errs = append(errs, e)
+	} else if d, ok := cfg.Dashboards[string(nav.Dashboard)]; ok && d.IsEntityDashboard() && anchorType == "" {
+		errs = append(errs, fmt.Sprintf(
+			"dashboard %q has entity_type %q so it cannot be a navigation entry "+
+				"(it is shown as a scope: root tab of an entity page of that type)",
+			string(nav.Dashboard), d.EntityType))
 	}
 	if nav.Page != "" {
 		page, ok := cfg.Pages[nav.Page]
@@ -735,7 +745,7 @@ func navTargetErrors(nav NavigationEntry, cfg *Config) []string {
 		switch {
 		case !ok:
 			errs = append(errs, fmt.Sprintf("references unknown document %q", nav.Document))
-		case !doc.IsStandalone():
+		case !doc.IsStandalone() && anchorType == "":
 			// An entity-anchored document needs an entry id in its URL, and a
 			// sidebar entry has no entity to supply one. Rejecting at config
 			// load beats emitting a link that always 400s.
@@ -2654,8 +2664,58 @@ func validateDashboard(cfg *Config, meta *metamodel.Metamodel) []string {
 		for i, card := range d.Config.Cards {
 			errs = append(errs, validateDashboardCardSource(cfg, meta, prefix, i, card)...)
 		}
+		errs = append(errs, validateEntityDashboard(cfg, meta, prefix, d)...)
 	}
 
+	return errs
+}
+
+// validateEntityDashboard checks entity_type on a dashboard and the scope of
+// its cards. An entity dashboard is only under `dashboards:`, and every card
+// is a `list:` card scoped by a relation from the anchor type to the list's
+// type: a query card runs through search in the SPA, where nothing narrows it
+// to the anchor, and an unscoped card would count the whole type under one
+// entity's title. A plain dashboard has no anchor, so its cards take no
+// scope.
+func validateEntityDashboard(cfg *Config, meta *metamodel.Metamodel, prefix string, d NamedDashboard) []string {
+	anchorType := d.Config.EntityType
+	if anchorType == "" {
+		var errs []string
+		for i, card := range d.Config.Cards {
+			if card.Scope != nil {
+				errs = append(errs, fmt.Sprintf("%s: card[%d] %q: scope needs entity_type on the dashboard "+
+					"(only an entity dashboard has an anchor)", prefix, i, card.Title))
+			}
+		}
+		return errs
+	}
+	if d.Name == "" {
+		return []string{prefix + ": entity_type is only allowed on a dashboard under dashboards: " +
+			"(the default dashboard has no entity to count for)"}
+	}
+	if meta != nil {
+		if _, ok := meta.GetEntityDef(anchorType); !ok {
+			return []string{fmt.Sprintf("%s: unknown entity_type %q", prefix, anchorType)}
+		}
+	}
+	var errs []string
+	for i, card := range d.Config.Cards {
+		at := fmt.Sprintf("%s: card[%d] %q", prefix, i, card.Title)
+		switch sc := card.Scope; {
+		case card.List == "":
+			errs = append(errs, at+": a card of an entity dashboard needs list: "+
+				"(a query: card cannot be narrowed to the anchor)")
+		case sc == nil:
+			errs = append(errs, at+": scope is required on an entity dashboard (set scope: {relation, direction})")
+		case sc.Root:
+			errs = append(errs, at+": scope: root is not allowed on a card (a card needs a relation)")
+		case sc.Relation == "":
+			errs = append(errs, at+": scope.relation is required")
+		default:
+			rowType := cfg.Lists[card.List].EntityType
+			errs = append(errs, checkAnchorRelation(meta, at, anchorType, rowType, *sc)...)
+		}
+	}
 	return errs
 }
 

@@ -1,10 +1,13 @@
 package dataentry
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 // handleV1Dashboard returns the dashboard page config with the cards this
@@ -88,6 +91,14 @@ func (h *viewsHandler) handleV1Dashboard(w http.ResponseWriter, r *http.Request)
 // A `match:` scope decides membership on the stored row, as a list's own
 // scope does, so a ratio discloses no more than the list with that scope.
 //
+// On an entity dashboard, `?anchor=` names the entity to count for, exactly
+// once; it is read through the gate before any row is, so a hidden anchor
+// and a missing one give the same 404 (`not_found`) whatever the list holds.
+// The card then counts only the rows the anchor reaches over its scope
+// relation. A plain dashboard refuses `anchor`, and an entity dashboard
+// refuses a request without one: either would count a set the card does not
+// describe.
+//
 // A package function taking the App, like handleV1NavStatus: App is at its
 // plimsoll load line.
 //
@@ -123,10 +134,43 @@ func handleV1DashboardCard(a *App, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	value, err := dashboardCardValue(ctx, a, s, card)
+	anchor, ok := dashboardCardAnchor(ctx, a, w, r, dash)
+	if !ok {
+		return
+	}
+	value, err := dashboardCardValue(ctx, a, s, card, anchor)
 	if err != nil {
 		writeListPipelineError(w, r, err)
 		return
 	}
 	writeV1JSON(w, http.StatusOK, value)
+}
+
+// dashboardCardAnchor reads the `anchor` parameter of a card request and the
+// anchor it names. It writes the error response itself and reports false
+// when the request must stop. The anchor is nil on a plain dashboard.
+func dashboardCardAnchor(
+	ctx context.Context, a *App, w http.ResponseWriter, r *http.Request, dash *dataentryconfig.DashboardConfig,
+) (*entityPkg.Entity, bool) {
+	vals, given := r.URL.Query()[scopeAnchorParam]
+	if !dash.IsEntityDashboard() {
+		if given {
+			writeV1Error(w, r, http.StatusBadRequest, "anchor_not_allowed",
+				"Anchor not allowed", "this dashboard has no entity_type, so it counts for no entity")
+			return nil, false
+		}
+		return nil, true
+	}
+	if len(vals) != 1 || vals[0] == "" {
+		writeV1Error(w, r, http.StatusBadRequest, "anchor_required",
+			"Anchor required", "this dashboard has entity_type "+strconv.Quote(dash.EntityType)+
+				"; name the entity to count for exactly once in ?anchor=")
+		return nil, false
+	}
+	anchor, err := readPageAnchor(ctx, a, dash.EntityType, vals[0])
+	if err != nil {
+		writeListPipelineError(w, r, err)
+		return nil, false
+	}
+	return anchor, true
 }

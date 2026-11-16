@@ -3,6 +3,7 @@ package dataentryconfig
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -119,8 +120,13 @@ type PageTab struct {
 //     that relation. Direction is from the anchor's point of view, as in view
 //     sections: outgoing means anchor --relation--> row. Left out, it is
 //     inferred from the metamodel like every other relation binding.
-//   - Root (gantt tabs) draws the timeline from the anchor down, as a drill
-//     into the anchor does.
+//   - Root starts the tab at the anchor. A gantt tab draws the timeline from
+//     the anchor down, as a drill into the anchor does. A document tab
+//     renders an entity-anchored document with the anchor as its entry. A
+//     dashboard tab shows an entity dashboard counted for the anchor.
+//
+// A card of an entity dashboard takes the relation form too (see
+// [DashboardCard.Scope]).
 //
 // The scope is configuration only. A request names a page and a tab, never a
 // relation, so a caller cannot make a list narrow by something the operator
@@ -266,7 +272,7 @@ func validatePages(cfg *Config, meta *metamodel.Metamodel) []string {
 		}
 		seen := make(map[string]bool, len(page.Tabs))
 		for i, tab := range page.Tabs {
-			errs = append(errs, validatePageTab(cfg, name, i, tab, seen)...)
+			errs = append(errs, validatePageTab(cfg, name, page.EntityType, i, tab, seen)...)
 			errs = append(errs, validatePagePrompt(name, page, i, tab)...)
 			errs = append(errs, validatePageTabScope(cfg, meta, name, page, i, tab)...)
 		}
@@ -346,12 +352,46 @@ func validatePageTabScope(
 		return validateRelationScope(cfg, meta, name, page.EntityType, tab)
 	case tab.Gantt != "":
 		return validateRootScope(cfg, meta, name, page.EntityType, tab)
+	case tab.Document != "" || tab.Dashboard.IsSet():
+		return validateAnchoredScope(cfg, name, page.EntityType, tab)
 	case tab.destinationCount() == 0:
 		return nil // reported by validatePageTab
 	default:
-		return []string{name + ": an entity page can only show list, kanban and gantt tabs " +
-			"(a calendar, document or dashboard cannot be scoped to the page's entity)"}
+		return []string{name + ": an entity page can only show list, kanban, gantt, document and " +
+			"dashboard tabs (a calendar cannot be scoped to the page's entity)"}
 	}
+}
+
+// validateAnchoredScope checks a document or dashboard tab of an entity page.
+// It needs `scope: root`, and its view must be about one entity of the
+// page's type: an entity-anchored document or an entity dashboard. A
+// standalone document or a plain dashboard would show company-wide content
+// under one entity's title.
+func validateAnchoredScope(cfg *Config, name, anchorType string, tab PageTab) []string {
+	if tab.Scope == nil || !tab.Scope.Root {
+		return []string{name + ": a document or dashboard tab on an entity page needs scope: root"}
+	}
+	if tab.Document != "" {
+		doc, ok := cfg.Documents[tab.Document]
+		switch {
+		case !ok:
+			return nil // reported by validatePageTab
+		case doc.EntityType != anchorType:
+			return []string{fmt.Sprintf("%s: document %q must have entity_type %q to render for the page's entity",
+				name, tab.Document, anchorType)}
+		}
+		return nil
+	}
+	if tab.Dashboard.IsDefault() {
+		return []string{name + ": the default dashboard has no entity_type, so it cannot be scoped to the " +
+			"page's entity (name a dashboard under dashboards: with entity_type " + strconv.Quote(anchorType) + ")"}
+	}
+	d, ok := cfg.Dashboards[string(tab.Dashboard)]
+	if ok && d.EntityType != anchorType {
+		return []string{fmt.Sprintf("%s: dashboard %q must have entity_type %q to count for the page's entity",
+			name, string(tab.Dashboard), anchorType)}
+	}
+	return nil // an unknown dashboard is reported by validatePageTab
 }
 
 // validateRelationScope checks the relation scope of a list or kanban tab:
@@ -371,8 +411,16 @@ func validateRelationScope(cfg *Config, meta *metamodel.Metamodel, name, anchorT
 	if tab.Kanban != "" {
 		rowType = cfg.Kanbans[tab.Kanban].EntityType
 	}
+	return checkAnchorRelation(meta, name, anchorType, rowType, *sc)
+}
+
+// checkAnchorRelation checks that a relation scope connects the anchor type
+// to the row type in the scope's direction, so the narrowed rows are not
+// always empty. name prefixes each error. An empty rowType is an unknown
+// view, reported elsewhere.
+func checkAnchorRelation(meta *metamodel.Metamodel, name, anchorType, rowType string, sc PageTabScope) []string {
 	if meta == nil || rowType == "" {
-		return nil // an unknown view is reported by validatePageTab
+		return nil
 	}
 	def, ok := meta.GetRelationDef(sc.Relation)
 	if !ok {
@@ -422,7 +470,8 @@ func validateRootScope(cfg *Config, meta *metamodel.Metamodel, name, anchorType 
 }
 
 // validatePageTab checks one tab. seen collects the tab ids of the page.
-func validatePageTab(cfg *Config, page string, i int, tab PageTab, seen map[string]bool) []string {
+// anchorType is the page's entity_type, "" on a page without one.
+func validatePageTab(cfg *Config, page, anchorType string, i int, tab PageTab, seen map[string]bool) []string {
 	var errs []string
 	name := fmt.Sprintf("%s.tabs[%s]", page, tab.ID)
 	switch {
@@ -448,7 +497,7 @@ func validatePageTab(cfg *Config, page string, i int, tab PageTab, seen map[stri
 	default:
 		errs = append(errs, fmt.Sprintf("%s: names more than one view (set one of %s)", name, pageTabDestinations))
 	}
-	for _, e := range navTargetErrors(tab.Destination(), cfg) {
+	for _, e := range navTargetErrors(tab.Destination(), cfg, anchorType) {
 		errs = append(errs, name+": "+e)
 	}
 	return errs

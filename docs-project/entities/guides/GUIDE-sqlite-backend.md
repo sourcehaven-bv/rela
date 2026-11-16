@@ -252,8 +252,8 @@ rela db dump --data ./exported
 ```
 
 The result is a markdown project the filesystem build opens. The command
-refuses a directory that already has `entities/`, `relations/` or
-`attachments/`, with or without `--force`; `--force` only allows overwriting
+refuses a directory that already has `entities/`, `relations/`,
+`attachments/` or `records/`, with or without `--force`; `--force` only allows overwriting
 config files. The markdown is written in rela's own format, so it can differ in
 layout from hand-written files while holding the same content.
 

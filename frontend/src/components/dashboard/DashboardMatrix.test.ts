@@ -47,6 +47,18 @@ describe('DashboardMatrix', () => {
     expect(cells[1].attributes('aria-label')).toBe('Impact High, Likelihood 2: 4')
   })
 
+  it('draws plain counts, not links, when unlinked', () => {
+    const w = mount(DashboardMatrix, {
+      props: { matrix, list: 'risks', title: 'Heat map', toned: true, unlinked: true },
+      global: { stubs: { RouterLink: RouterLinkStub, 'router-link': RouterLinkStub } },
+    })
+    const cells = w.findAll('[data-testid="matrix-cell"]')
+    expect(cells).toHaveLength(2)
+    expect(cells.every((c) => c.element.tagName === 'SPAN')).toBe(true)
+    expect(cells[1].text()).toBe('4')
+    expect(cells[1].attributes('aria-label')).toBe('Impact High, Likelihood 2: 4')
+  })
+
   it('titles the column axis above its values and the row axis beside its values', () => {
     const w = mountMatrix(true)
     const columnTitle = w.get('[data-testid="matrix-column-title"]')

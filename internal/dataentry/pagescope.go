@@ -82,36 +82,14 @@ func resolvePageScope(
 			errBadFilter, tabID, pageID, rowType, typeName)
 	}
 
-	// The anchor goes through the same gated read an entity GET does, so a
-	// hidden anchor and a missing one cannot be told apart.
-	e, visible, err := a.visibleReader.address(ctx, page.EntityType, anchor)
+	e, err := readPageAnchor(ctx, a, page.EntityType, anchor)
 	if err != nil {
-		return nil, nil, false, fmt.Errorf("%w: %w", errACLListQuery, err)
+		return nil, nil, false, err
 	}
-	if !visible || e.Type != page.EntityType {
-		return nil, nil, false, errPageAnchorNotFound
-	}
-
 	dir := tab.Scope.ResolvedDirection(page.EntityType, state.Meta)
-	q := store.RelationQuery{EntityIDs: []string{e.ID}, Type: tab.Scope.Relation, Direction: relationDirection(dir)}
-	var rels []*entityPkg.Relation
-	for r, lerr := range a.store.ListRelations(ctx, q) {
-		if lerr != nil {
-			return nil, nil, false, fmt.Errorf("%w: page scope: %w", errListLoad, lerr)
-		}
-		rels = append(rels, r)
-	}
-	if !dir.IsIncoming() {
-		// Only the edges the anchor's face owns, as on the entity page.
-		rels = edgesOwnedBy(state.Meta, rels, e.Face)
-	}
-	ids = map[string]bool{}
-	for _, r := range rels {
-		if dir.IsIncoming() {
-			ids[r.From] = true
-		} else {
-			ids[r.To] = true
-		}
+	rels, ids, err := anchorReach(ctx, a, state.Meta, e, *tab.Scope)
+	if err != nil {
+		return nil, nil, false, err
 	}
 	if len(parseSortParam(query)) == 0 && orderPropertyOf(state.Meta, tab.Scope.Relation, dir.IsIncoming()) != "" {
 		if dir.IsIncoming() {
@@ -127,6 +105,54 @@ func resolvePageScope(
 		}
 	}
 	return ids, ordering, true, nil
+}
+
+// readPageAnchor reads the anchor of an entity page tab or an entity
+// dashboard. It goes through the same gated read an entity GET does, so a
+// hidden anchor, a missing one and one of another type are all
+// errPageAnchorNotFound, the uniform 404.
+func readPageAnchor(ctx context.Context, a *App, anchorType, anchor string) (*entityPkg.Entity, error) {
+	e, visible, err := a.visibleReader.address(ctx, anchorType, anchor)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
+	}
+	if !visible || e.Type != anchorType {
+		return nil, errPageAnchorNotFound
+	}
+	return e, nil
+}
+
+// anchorReach returns the edges of the scope's relation at the anchor and
+// the ids of the entities at their other end: the rows a relation-scoped
+// list tab or dashboard card keeps. An outgoing scope keeps only the edges
+// the anchor's face owns, as on the entity page.
+//
+// The ids are a narrowing, not a source of rows: a caller intersects them
+// with rows that already passed the read gate. Cost: ONE relation query.
+func anchorReach(
+	ctx context.Context, a *App, meta *metamodel.Metamodel, e *entityPkg.Entity, sc dataentryconfig.PageTabScope,
+) ([]*entityPkg.Relation, map[string]bool, error) {
+	dir := sc.ResolvedDirection(e.Type, meta)
+	q := store.RelationQuery{EntityIDs: []string{e.ID}, Type: sc.Relation, Direction: relationDirection(dir)}
+	var rels []*entityPkg.Relation
+	for r, lerr := range a.store.ListRelations(ctx, q) {
+		if lerr != nil {
+			return nil, nil, fmt.Errorf("%w: page scope: %w", errListLoad, lerr)
+		}
+		rels = append(rels, r)
+	}
+	if !dir.IsIncoming() {
+		rels = edgesOwnedBy(meta, rels, e.Face)
+	}
+	ids := make(map[string]bool, len(rels))
+	for _, r := range rels {
+		if dir.IsIncoming() {
+			ids[r.From] = true
+		} else {
+			ids[r.To] = true
+		}
+	}
+	return rels, ids, nil
 }
 
 // pageScopeParams reads the three parameters. All three are required once

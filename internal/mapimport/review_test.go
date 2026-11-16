@@ -6,6 +6,7 @@ import (
 	"errors"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -35,11 +36,28 @@ func (g redactGate) GetAddress(ctx context.Context, addr string) (*entity.Entity
 	return &out, nil
 }
 
+// hiddenWeight is the stored value of the hidden property. It has more digits
+// than a generated entity id can hold, so finding it in a plan means the plan
+// leaked it, not that an id happened to contain the same digits.
+const hiddenWeight = 48213977
+
+// assertHidden fails when the plan shows the hidden weight or compared it.
+func assertHidden(t *testing.T, p *Plan) {
+	t.Helper()
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), strconv.Itoa(hiddenWeight)) || len(p.Updates)+p.Unchanged != 0 {
+		t.Fatalf("plan shows or compares the hidden value: %s", data)
+	}
+}
+
 // TestHiddenProperty_NotCompared pins that the plan neither shows nor
 // compares a property value the principal may not see.
 func TestHiddenProperty_NotCompared(t *testing.T) {
 	w := newWorld(t)
-	w.create("control", "", map[string]any{"oscal_id": "c1", "title": "Old", "weight": int64(918273645)})
+	w.create("control", "", map[string]any{"oscal_id": "c1", "title": "Old", "weight": int64(hiddenWeight)})
 	w.gate = redactGate{inner: w.gate, fields: map[string]bool{"weight": true}}
 
 	weighted := w.mapping(controlsMapping + "      weight: weight\n")
@@ -47,13 +65,7 @@ func TestHiddenProperty_NotCompared(t *testing.T) {
 	if len(p.Errors) != 1 || !strings.Contains(p.Errors[0].Message, "property weight") {
 		t.Fatalf("errors = %+v", p.Errors)
 	}
-	data, err := json.Marshal(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), "918273645") || len(p.Updates)+p.Unchanged != 0 {
-		t.Fatalf("plan shows or compares the hidden value: %s", data)
-	}
+	assertHidden(t, p)
 
 	// A mapping that leaves the hidden property alone updates as usual.
 	p = w.plan(w.mapping(controlsMapping), FormatJSON, `{"controls": [{"id": "c1", "title": "New"}]}`)
@@ -96,7 +108,7 @@ assignments:
 	w := aclWorld(t, policy, "alice")
 	if err := w.st.CreateEntity(w.ctx, &entity.Entity{
 		ID: "CTL-1", Type: "control",
-		Properties: map[string]any{"oscal_id": "c1", "title": "Old", "weight": int64(987)},
+		Properties: map[string]any{"oscal_id": "c1", "title": "Old", "weight": int64(hiddenWeight)},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -106,18 +118,12 @@ assignments:
 	if len(p.Errors) != 1 || !strings.Contains(p.Errors[0].Message, "property weight") {
 		t.Fatalf("errors = %+v", p.Errors)
 	}
-	data, err := json.Marshal(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), "987") || len(p.Updates)+p.Unchanged != 0 {
-		t.Fatalf("plan shows or compares the hidden value: %s", data)
-	}
+	assertHidden(t, p)
 
 	// A mapping of visible fields only updates, and the hidden value stays.
 	w.run(w.mapping(controlsMapping), FormatJSON, `{"controls": [{"id": "c1", "title": "New"}]}`)
 	got := w.byKey("control", "c1")
-	if got == nil || got.Properties["title"] != "New" || normalize(got.Properties["weight"]) != "987" {
+	if got == nil || got.Properties["title"] != "New" || normalize(got.Properties["weight"]) != strconv.Itoa(hiddenWeight) {
 		t.Fatalf("stored = %+v", got)
 	}
 }

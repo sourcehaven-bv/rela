@@ -20,7 +20,12 @@ type ResolvedHeader struct {
 	// answers for the bare id only, never for a named face: for `ID@face`,
 	// [ResolvedHeader.Served] is the face-level answer.
 	Family bool
-	served bool
+	// ReadableFaces is how many stored faces of the entity the principal may
+	// read. Like Family it answers for the bare id only, and is zero for a
+	// named face. A caller that compares it with the stored face count can
+	// tell "every face is readable" from "some face is".
+	ReadableFaces int
+	served        bool
 }
 
 // Served reports whether a face was served for the address.
@@ -197,6 +202,9 @@ func (r *Resolver) resolved(
 			continue
 		}
 		res := ResolvedHeader{Family: true}
+		if ref.Face.IsImplicit() {
+			res.ReadableFaces = len(readable)
+		}
 		if h, ok := served[ref]; ok {
 			res.Header = RedactHeader(ctx, r.redact, h)
 			res.served = true

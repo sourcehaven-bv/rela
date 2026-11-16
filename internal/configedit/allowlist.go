@@ -301,6 +301,10 @@ var locked = map[File][]string{
 		// Abstract types and variants reshape the type set at load, and
 		// Configure parses one file without its includes.
 		"entities.*.abstract.**", "entities.*.extends",
+		// Record types (TKT-J7Q9C4K) decide which rows a write accepts, how
+		// long rows are kept and when a ledger period is closed. A retention
+		// edit deletes data on the next run, so the section stays on disk.
+		"records.**",
 		// External commands and upload policy.
 		"attachments.**", "transforms.**", "checkers.**",
 		"entities.*.properties.*.accept.**",
@@ -349,6 +353,10 @@ var locked = map[File][]string{
 		// Not in the Configure space yet: card width (TKT-H21TYS). Editing a
 		// card in Configure keeps the width it has.
 		"dashboard.cards.[].width", "dashboards.*.cards.[].width",
+		// Not in the Configure space yet: entity dashboards and their card
+		// scopes, which pair with pages: (also locked).
+		"dashboard.entity_type", "dashboards.*.entity_type",
+		"dashboard.cards.[].scope.*", "dashboards.*.cards.[].scope.*",
 		"lists.*.actions.**", "lists.*.toolbar_actions.**", "lists.*.export_render",
 		// A board's header actions (TKT-I2SRNWR), like a list's.
 		"kanbans.*.actions.**",
@@ -389,6 +397,10 @@ var protective = map[File][]string{
 		"relations.*.properties.*.scan_cmd.**",
 		"types.*.transitions.[].guard",
 		"validations.[].enforce",
+		// A record type's retention and a ledger's balance and lock rules
+		// limit what is kept and what may be posted.
+		"records.*.retention",
+		"records.*.ledger.**",
 	},
 	DataEntryFile: {
 		"app.disable_custom_injection", "app.max_attachment_bytes",

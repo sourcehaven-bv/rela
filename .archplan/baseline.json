@@ -2762,6 +2762,18 @@
       "reason": "Design: mapimport names the gated reader it gets at wiring, as validator and analysis do (accepted vocabulary.leak-edef7b6b6ea0).",
       "at": "2026-11-14T12:00:00Z",
       "title": "mapimport uses the term \"Gated reader\", owned by visibility."
+    },
+    "concepts.untyped_bag-d595e51fc887": {
+      "state": "accepted",
+      "reason": "By design: record fields are declared per record type in schema.yaml, like entity properties, so a row carries them as a map; the Service checks each value against the declared field type. TKT-J7Q9C4K.",
+      "at": "2026-11-14T12:00:00Z",
+      "title": "3 types of records that other components use carry untyped data: Record.Fields (map[string]any), Input.Fields (map[string]any), Owner.Faces ([]map[string]any)."
+    },
+    "types.synonyms-3bbe0078a563": {
+      "state": "accepted",
+      "reason": "By design: records.TypeInfo is the wire shape the records API serves for a record type. It adds the key, a default label and the field order to metamodel.RecordTypeDef and keeps the YAML-only parts out of the JSON. TKT-J7Q9C4K.",
+      "at": "2026-11-14T12:00:00Z",
+      "title": "RecordTypeDef (metamodel) and TypeInfo (records) share most of their fields."
     }
   },
   "labels": {},
@@ -2771,49 +2783,19 @@
       "weight.structure": 859,
       "weight.layers": 0,
       "weight.vocabulary": 872,
-      "weight.types": 3920,
-      "weight.concepts": 7198,
-      "weight.boundaries": 1422,
+      "weight.types": 3972,
+      "weight.concepts": 7205,
+      "weight.boundaries": 1428,
       "weight.data": 1298,
       "weight.security": 2064,
       "largest_tangle": 14,
       "cycle_edges": 67,
       "upward_edges": 0,
-      "propagation_cost": 9.4
+      "propagation_cost": 9.1
     },
     "min_weight": 0,
-    "at": "2026-11-16T06:19:44Z",
+    "at": "2026-11-16T09:07:58Z",
     "log": [
-      {
-        "at": "2026-11-07T15:10:00Z",
-        "change": "loosen",
-        "reason": "TKT-N1KNNZU: visibility.Elements makes visibility depend on reconcile and canonical; the gated element range read belongs next to the other read-side ACL wrappers",
-        "metrics": {
-          "propagation_cost": [
-            9.4,
-            9.5
-          ]
-        }
-      },
-      {
-        "at": "2026-11-07T20:02:09Z",
-        "change": "loosen",
-        "reason": "TKT-BC5G8RP: Metamodel gains the unexported flowRuns flag that proves WithFlowRuns added the managed declarations",
-        "metrics": {
-          "weight.types": [
-            3960,
-            4008
-          ],
-          "weight.concepts": [
-            7090,
-            7081
-          ],
-          "propagation_cost": [
-            9.5,
-            8.9
-          ]
-        }
-      },
       {
         "at": "2026-11-07T12:37:24Z",
         "change": "loosen",
@@ -3068,6 +3050,17 @@
         }
       },
       {
+        "at": "2026-11-14T12:00:00Z",
+        "change": "loosen",
+        "reason": "records.TypeInfo is the records API wire shape of metamodel.RecordTypeDef, TKT-J7Q9C4K",
+        "metrics": {
+          "weight.types": [
+            4203,
+            4255
+          ]
+        }
+      },
+      {
         "at": "2026-11-15T12:21:53Z",
         "change": "tighten",
         "reason": "TKT-GWOBH2U: metamodel.ExpandTypeNames replaces the two abstract-type expansions, and the trigger checks split into rule-shape and schema checks. weight.structure and weight.security keep the traced values.",
@@ -3113,6 +3106,25 @@
           "weight.boundaries": [
             1471,
             1422
+          ]
+        }
+      },
+      {
+        "at": "2026-11-16T09:07:58Z",
+        "change": "loosen",
+        "reason": "TKT-GWOBH2U merge with develop: the records types (TKT-J7Q9C4K) add the accepted concepts.untyped_bag-d595e51fc887 (57) and drop the RecordID raw_ids finding (47), TargetID raw_ids weighs 4 less, rela-desktop's Mac conventions (TKT-EIFFTLB) add a goos value (55 -> 56): concepts +7. The entity page tabs (TKT-OF4O8PZ) give the accepted boundaries.misplaced_file-f03fc91c99b4 six more (31 -> 37). weight.structure and weight.security keep the traced values.",
+        "metrics": {
+          "weight.concepts": [
+            7198,
+            7205
+          ],
+          "weight.boundaries": [
+            1422,
+            1428
+          ],
+          "propagation_cost": [
+            9.4,
+            9.1
           ]
         }
       }

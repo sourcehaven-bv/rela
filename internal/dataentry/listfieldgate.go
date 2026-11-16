@@ -87,6 +87,13 @@ type gatedListQuery struct {
 	// user is the caller's principal id that a `$user` filter value stands
 	// for; empty when the caller is not identified.
 	user string
+	// reach narrows the read to these ids, as a page scope does: an entity
+	// dashboard card sets it to the rows its anchor reaches, so the read
+	// asks the store for those ids only (TKT-OF4O8PZ). Each id still passes
+	// the read gate.
+	//
+	// Nil: accepted. The read is not narrowed.
+	reach map[string]bool
 }
 
 // fieldVisibility is the one capability gateListQuery needs from the field
