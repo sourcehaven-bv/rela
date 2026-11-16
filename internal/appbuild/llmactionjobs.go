@@ -159,7 +159,7 @@ func (j *LLMActionJobs) EnqueueLLMAction(
 		PrincipalType: who.PrincipalType(), Scopes: strings.Join(scopes, " "), Run: newRunToken(),
 		Unmatched: mark.Unmatched, UserEntity: mark.UserEntity}
 	// Before the job: a worker may pick it up before Enqueue returns.
-	if err := j.kv.Put(ctx, runKey(p.Run), nil); err != nil {
+	if err = j.kv.Put(ctx, runKey(p.Run), nil); err != nil {
 		return fmt.Errorf("llm actions: record run: %w", err)
 	}
 	err = j.q.Enqueue(ctx, jobs.Job{

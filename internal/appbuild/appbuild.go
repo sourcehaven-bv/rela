@@ -1351,7 +1351,7 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 	if err != nil {
 		return nil, fmt.Errorf("appbuild.NewFromCollaborators: %w", err)
 	}
-	return &Services{
+	s := &Services{
 		fs:              c.FS,
 		paths:           c.Paths,
 		meta:            c.Meta,
@@ -1386,10 +1386,18 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		channelService: refs.channelService,
 		realtimeLocal:  refs.realtimeLocal,
 		dueWake:        refs.dueWake,
-		attachRender:   &attachRenderHolder{},
-		llmActions:     &llmActionHolder{},
-		attachFile:     &attachFileHolder{},
-	}, nil
+	}
+	s.newScriptHolders()
+	return s, nil
+}
+
+// newScriptHolders installs the empty holders the data-entry host fills in
+// later: the rela.attach_render and rela.attach_file backends and the
+// background llm action runner.
+func (s *Services) newScriptHolders() {
+	s.attachRender = &attachRenderHolder{}
+	s.attachFile = &attachFileHolder{}
+	s.llmActions = &llmActionHolder{}
 }
 
 // collaboratorRefs are the services [NewFromCollaborators] builds itself.
@@ -3285,7 +3293,7 @@ func finishAssembly(
 	s.records, s.recordStore = refs.records, refs.recordStore
 	s.channels = refs.channels
 	// Before the flow engine, whose job runner runs llm actions through it.
-	s.llmActions = &llmActionHolder{}
+	s.newScriptHolders()
 	flowEngine, err := buildFlowEngine(s, refs.flowRuns)
 	if err != nil {
 		return nil, fmt.Errorf("flows: %w", err)
@@ -3312,8 +3320,6 @@ func finishAssembly(
 		return nil, err
 	}
 	s.versionTags = tags
-	s.attachRender = &attachRenderHolder{}
-	s.attachFile = &attachFileHolder{}
 	// The realtime outputs runner writes through the manager the channel
 	// service uses; background llm actions rebuild their user through it.
 	outputs, err := newManagerOutputs(

@@ -119,20 +119,8 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 		return fmt.Errorf("wire attach_file: %w", err)
 	}
 
-	// `llm:` actions with `apply: auto` (TKT-WQ925LL): the route queues runs
-	// where this process runs background jobs, and the job and flow steps run
-	// them through the app.
-	if q := appbuild.LLMActionQueue(svc); q != nil {
-		if qErr := dataentry.SetLLMActionQueue(app, q); qErr != nil {
-			return fmt.Errorf("wire llm actions: %w", qErr)
-		}
-	}
-	llm, llmErr := dataentry.NewLLMActionRunner(app)
-	if llmErr != nil {
-		return fmt.Errorf("wire llm actions: %w", llmErr)
-	}
-	if llmErr = appbuild.SetLLMActionRunner(svc, llm); llmErr != nil {
-		return fmt.Errorf("wire llm actions: %w", llmErr)
+	if err = llmActions(app, svc); err != nil {
+		return err
 	}
 
 	// The reconcile endpoint (TKT-VP02WHG). A build failure is returned, not
@@ -185,6 +173,25 @@ func wireChannels(app *dataentry.App, svc *appbuild.Services) error {
 	}
 	if err := dataentry.SetInboxGrid(app, grid); err != nil {
 		return fmt.Errorf("wire inbox grid: %w", err)
+	}
+	return nil
+}
+
+// llmActions wires `llm:` actions with `apply: auto` (TKT-WQ925LL): the
+// route queues runs where this process runs background jobs, and the job and
+// flow steps run them through the app.
+func llmActions(app *dataentry.App, svc *appbuild.Services) error {
+	if q := appbuild.LLMActionQueue(svc); q != nil {
+		if err := dataentry.SetLLMActionQueue(app, q); err != nil {
+			return fmt.Errorf("wire llm actions: %w", err)
+		}
+	}
+	llm, err := dataentry.NewLLMActionRunner(app)
+	if err != nil {
+		return fmt.Errorf("wire llm actions: %w", err)
+	}
+	if err = appbuild.SetLLMActionRunner(svc, llm); err != nil {
+		return fmt.Errorf("wire llm actions: %w", err)
 	}
 	return nil
 }

@@ -102,10 +102,10 @@ func TestHandleLLMActionJob(t *testing.T) {
 	require.Empty(t, kv.m)
 
 	for _, k := range []string{"user", "run"} {
-		bad, kv := queued(t, ident, alice)
+		bad, badKV := queued(t, ident, alice)
 		bad.Payload[k] = ""
 		r := &fakeLLMRunner{}
-		require.NoError(t, run(r, bad, kv))
+		require.NoError(t, run(r, bad, badKV))
 		require.Zero(t, r.runs, "a payload without %s does not run", k)
 	}
 

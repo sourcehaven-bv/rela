@@ -2875,19 +2875,7 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 				continue
 			}
 
-			// A batch llm action sends each selected row's address, and the
-			// server gates every row as the detail page would (TKT-I2SRNWR).
-			switch {
-			case action.LLM != nil && action.LLM.Batch != nil:
-				if msg := batchActionRefError(action, list.EntityType); msg != "" {
-					errs = append(errs, fmt.Sprintf("list %q: action %q %s", listID, actionID, msg))
-				}
-			case action.LLM != nil:
-				errs = append(errs, listLLMActionErrors(listID, list, actionID, action)...)
-			case action.AvailableOn != nil:
-				errs = append(errs, entityBoundActionRefError(
-					fmt.Sprintf("list %q", listID), actionID))
-			}
+			errs = append(errs, listActionKindErrors(listID, list, actionID, action)...)
 
 			// Actions referenced by lists must have label and key
 			if action.Label == "" {
@@ -2922,6 +2910,24 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 	}
 
 	return errs
+}
+
+// listActionKindErrors checks that a list may run the action at all. A batch
+// llm action sends each selected row's address, and the server gates every
+// row as the detail page would (TKT-I2SRNWR). Another llm action needs
+// apply: auto, and any other entity-bound action is refused.
+func listActionKindErrors(listID string, list List, actionID string, action Action) []string {
+	switch {
+	case action.LLM != nil && action.LLM.Batch != nil:
+		if msg := batchActionRefError(action, list.EntityType); msg != "" {
+			return []string{fmt.Sprintf("list %q: action %q %s", listID, actionID, msg)}
+		}
+	case action.LLM != nil:
+		return listLLMActionErrors(listID, list, actionID, action)
+	case action.AvailableOn != nil:
+		return []string{entityBoundActionRefError(fmt.Sprintf("list %q", listID), actionID)}
+	}
+	return nil
 }
 
 // listLLMActionErrors checks an `llm:` action in a list's `actions:`. A

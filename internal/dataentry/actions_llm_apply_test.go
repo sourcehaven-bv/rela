@@ -302,7 +302,7 @@ func TestLLMActionRunner_ClientCeiling(t *testing.T) {
 	}
 	// priority is not writable under the token, so it is not offered to
 	// the model, and a reply that proposes it anyway is refused.
-	if _, err := r.RunLLMAction(a.boundAs(t, client("read")), "triage", "TKT-1", ""); err == nil {
+	if _, runErr := r.RunLLMAction(a.boundAs(t, client("read")), "triage", "TKT-1", ""); runErr == nil {
 		t.Error("read-only token: applied")
 	}
 	a.unchanged(t)
@@ -311,8 +311,8 @@ func TestLLMActionRunner_ClientCeiling(t *testing.T) {
 	if r, err = NewLLMActionRunner(a.app); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.RunLLMAction(a.boundAs(t, client("read", "write")), "triage", "TKT-1", ""); err != nil {
-		t.Fatalf("token with the write scope: %v", err)
+	if _, runErr := r.RunLLMAction(a.boundAs(t, client("read", "write")), "triage", "TKT-1", ""); runErr != nil {
+		t.Fatalf("token with the write scope: %v", runErr)
 	}
 	e, err := a.store.GetEntity(context.Background(), entity.Ref{ID: "TKT-1"})
 	if err != nil {
