@@ -2204,8 +2204,8 @@ conflict list itself.
   `conflicts.{total, by_reason}`. `credential_kind` says where the credential
   is read from (`env`, `file` or `secret`). The credential's name and value are
   never sent. Durations are in seconds.
-- An entry has `reason` (`both_changed`, `refused`, `uncertain` or
-  `superseded`), and for a `latest` rule that held, a `fallback`
+- An entry has `reason` (`both_changed`, `refused`, `uncertain`,
+  `superseded` or `remote_deleted`), and for a `latest` rule that held, a `fallback`
   (`time_withheld`, `time_untrusted` or `same_time`). A refused or uncertain
   push has `cause` and `status` instead of the remote's error text.
 - A superseded entry has `superseded.lost_value_kept`. It is `false` when the
@@ -2235,6 +2235,9 @@ Every entry and count is gated by the caller's read access, after the
   to every field the entry names, because the next pull writes them. `link`
   needs the same rights, on every field the create tried to send, because
   the next sync merges the remote row into the local one.
+- On a `remote_deleted` entry, `resolve_remote` needs the delete right on
+  the local row or relation instead of update access, because the next pull
+  deletes it. It is refused for an entity of a faced type.
 
 ### Errors
 
@@ -2242,7 +2245,7 @@ Every entry and count is gated by the caller's read access, after the
 | --- | --- | --- |
 | 400 | `invalid_request` | The body is malformed or names the wrong keys |
 | 403 | `permission_required` | The caller lacks `remote:sync` |
-| 403 | `forbidden` | `take: remote` or a link without edit rights on the local fields |
+| 403 | `forbidden` | `take: remote` or a link without edit rights on the local fields, or `take: remote` on a `remote_deleted` entry without the delete right |
 | 404 | `not_found` | No such remote, or no entry the caller may read |
 | 409 | `invalid_state` | The entry's reason does not admit the action, or the link address is refused |
 | 409 | `remote_busy` | A sync or another change holds the remote; try again |
