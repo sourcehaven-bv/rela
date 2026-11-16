@@ -385,10 +385,7 @@ func matrixColorFor(
 ) func(string) string {
 	return func(value string) string {
 		if name, ok := card.Colors[value]; ok {
-			if c, isTone := dataentryconfig.ToneColor(name); isTone {
-				return c.StyleClass()
-			}
-			c, err := dataentryconfig.ParseColor(name, cfg.OperatorColors())
+			c, _, err := dataentryconfig.ParseToneOrColor(name, cfg.OperatorColors())
 			if err != nil {
 				return ""
 			}

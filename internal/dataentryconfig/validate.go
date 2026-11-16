@@ -2548,6 +2548,7 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 		}
 
 		errs = append(errs, validateKanbanColumnSummary(kanbanID, kanban, entDef)...)
+		errs = append(errs, validateKanbanCellColors(kanbanID, kanban, entDef, meta, cfg)...)
 		errs = append(errs, validateKanbanQuickAdd(kanbanID, kanban, entDef, meta)...)
 		errs = append(errs, validateKanbanAddColumn(kanbanID, kanban, entDef)...)
 

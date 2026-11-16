@@ -4739,6 +4739,7 @@ kanbans:
 | `columns`          | list   | Explicit column definitions (`value`, `label`, `icon`, `collapsed`) |
 | `swimlane_property`| string | Property to group by for swimlanes (optional)              |
 | `swimlanes`        | list   | Explicit swimlane definitions (`value`, `label`, `icon`)   |
+| `cell_colors`      | map    | A colour per cell of a swimlane board (see below)          |
 | `card`             | object | Card display configuration                                 |
 | `column_summary`   | list   | Aggregate lines under each column heading (see below)      |
 | `edit_form`        | string | Form name for editing cards (click to open)                |
@@ -5012,6 +5013,50 @@ kanbans:
 
 Without explicit swimlanes, values are inferred from the metamodel. Entities whose swimlane
 property value is not in the list are hidden.
+
+#### Cell colours
+
+A swimlane board is a matrix: columns by lanes. `cell_colors:` gives a cell a
+background colour, so the board reads as a heat map. A DPIA risk board with
+impact as columns and likelihood as lanes is an example:
+
+```yaml
+kanbans:
+  risks:
+    entity_type: risk
+    column_property: impact
+    swimlane_property: likelihood
+    cell_colors:
+      high:                 # a column value
+        likely: error       # a lane value, then its colour
+        possible:
+          color: warning
+          label: Medium
+      low:
+        rare: success
+    card:
+      title: title
+```
+
+- The first key is a column value and the second a lane value. Both must be a
+  column or lane the board shows: a declared `columns:` or `swimlanes:` entry,
+  or else a value of the property.
+- A colour is a tone (`success`, `warning`, `error`, `info`, `new`) or a
+  [colour name](#color-names) such as `red/700`. A tone or a bare hue such as
+  `red` paints a soft tint; a shade such as `red/700` paints a strong fill.
+- Each coloured cell shows a label as text, so colour is not the only cue. A
+  tone shows its own name by default, in the reader's language: Good,
+  Warning, Critical, Info or New in English. `label:` replaces it. Any other
+  colour needs a `label:`.
+- On a board with any coloured cell, every cell keeps the same padding, so
+  cards line up across coloured and plain cells.
+- Cards keep their own background, so they read the same in a coloured cell
+  as in a plain one, in light and dark mode.
+- A cell without a colour stays plain.
+- `cell_colors` needs `swimlane_property` and cannot be used with
+  `columns_from`. An unknown column, lane or colour, or a missing label, fails
+  when the configuration loads, with a message that names the board. A cell
+  with a key other than `color` and `label` fails too, with its line number.
 
 ### Card Configuration
 

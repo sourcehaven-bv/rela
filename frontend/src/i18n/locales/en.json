@@ -1275,7 +1275,14 @@
     "addColumnNoName": "Use at least one letter or digit in the name",
     "addColumnUnsupported": "This column's values are not declared on the property, so the board cannot add one",
     "addColumnSaving": "Saving the column…",
-    "batchTooMany": "This action runs on at most {max} cards at once; {n} are on the board. Filter the board or collapse columns."
+    "batchTooMany": "This action runs on at most {max} cards at once; {n} are on the board. Filter the board or collapse columns.",
+    "cellTone": {
+      "success": "Good",
+      "warning": "Warning",
+      "error": "Critical",
+      "info": "Info",
+      "new": "New"
+    }
   },
   "calendar": {
     "month": "Month",

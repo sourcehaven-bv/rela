@@ -1275,7 +1275,14 @@
     "addColumnNoName": "Gebruik minstens één letter of cijfer in de naam",
     "addColumnUnsupported": "De waarden van deze kolom staan niet bij de eigenschap zelf, dus het bord kan er geen toevoegen",
     "addColumnSaving": "Kolom opslaan…",
-    "batchTooMany": "Deze actie werkt op hoogstens {max} kaarten tegelijk; er staan er {n} op het bord. Filter het bord of klap kolommen in."
+    "batchTooMany": "Deze actie werkt op hoogstens {max} kaarten tegelijk; er staan er {n} op het bord. Filter het bord of klap kolommen in.",
+    "cellTone": {
+      "success": "Goed",
+      "warning": "Let op",
+      "error": "Kritiek",
+      "info": "Info",
+      "new": "Nieuw"
+    }
   },
   "calendar": {
     "month": "Maand",

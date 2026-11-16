@@ -2013,11 +2013,16 @@ func resolveFilterControlDirections(
 }
 
 // resolveKanbanDirections returns a copy of kanbans with card-field and
-// filter-control directions materialized.
+// filter-control directions materialized, and each cell color's style class.
 func resolveKanbanDirections(s *Schema, kanbans map[string]dataentryconfig.Kanban) map[string]dataentryconfig.Kanban {
+	var operator map[string]dataentryconfig.OperatorColor
+	if s.Cfg != nil {
+		operator = s.Cfg.OperatorColors()
+	}
 	out := make(map[string]dataentryconfig.Kanban, len(kanbans))
 	for id, kanban := range kanbans {
 		k := kanban
+		k.CellColors = dataentryconfig.ResolveKanbanCellClasses(k.CellColors, operator)
 		if len(k.Card.Fields) > 0 {
 			fields := make([]dataentryconfig.KanbanCardField, len(k.Card.Fields))
 			copy(fields, k.Card.Fields)
