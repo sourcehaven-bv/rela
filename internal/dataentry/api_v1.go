@@ -177,11 +177,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_next_action", a.handleV1NextAction)
 	mux.HandleFunc("/api/v1/_git/status", a.handleGitStatus)
 	mux.HandleFunc("/api/v1/_git/sync", a.handleGitSync)
-	mux.HandleFunc("/api/v1/_settings", a.appearance.handleAPISettingsCRUD)
-	mux.HandleFunc("/api/v1/_palette", a.appearance.handleAPIPaletteCRUD)
-	mux.HandleFunc("/api/v1/_theme/logo", a.appearance.handleAPIThemeLogo)
-	mux.HandleFunc("/api/v1/_theme/export", a.appearance.handleAPIThemeExport)
-	mux.HandleFunc("/api/v1/_theme/import", a.appearance.handleAPIThemeImport)
+	a.registerAppearanceRoutes(mux)
 	mux.HandleFunc("/api/v1/_sidepanel/", a.views.handleV1SidePanel)
 	mux.HandleFunc("/api/v1/_sidebar", a.views.handleV1Sidebar)
 	mux.HandleFunc("/api/v1/_nav_status", func(w http.ResponseWriter, r *http.Request) { handleV1NavStatus(a, w, r) })
@@ -233,6 +229,15 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 
 	// Dynamic entity routes are handled by a catch-all
 	mux.HandleFunc("/api/v1/", a.handleV1DynamicRoutes)
+}
+
+// registerAppearanceRoutes registers the settings, palette and theme routes.
+func (a *App) registerAppearanceRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/v1/_settings", a.appearance.handleAPISettingsCRUD)
+	mux.HandleFunc("/api/v1/_palette", a.appearance.handleAPIPaletteCRUD)
+	mux.HandleFunc("/api/v1/_theme/logo", a.appearance.handleAPIThemeLogo)
+	mux.HandleFunc("/api/v1/_theme/export", a.appearance.handleAPIThemeExport)
+	mux.HandleFunc("/api/v1/_theme/import", a.appearance.handleAPIThemeImport)
 }
 
 // Path-segment counts for the dynamic route dispatcher below. A
