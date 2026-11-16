@@ -2739,6 +2739,12 @@
       "at": "2026-11-13T10:30:00Z",
       "title": "5 functions in web/components/entity take boolean flags."
     },
+    "concepts.data_clump-bad832861811": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose. Kanban boards gained actions (TKT-I2SRNWR), as lists have.",
+      "at": "2026-11-14T12:00:00Z",
+      "title": "The fields actions, columns, create_form, edit_form, filter_controls, … and title appear together in 3 types across 2 components."
+    },
     "concepts.untyped_bag-620a9a73d156": {
       "state": "accepted",
       "reason": "Design: Value.Const holds a mapping constant and PropertyChange.Old/New hold property values, which take any scalar or list a schema property allows, like entity.Entity.Properties. The cli only prints them in the plan.",
@@ -2768,7 +2774,7 @@
       "weight.types": 4203,
       "weight.concepts": 7276,
       "weight.boundaries": 1473,
-      "weight.data": 1297,
+      "weight.data": 1298,
       "weight.security": 2064,
       "largest_tangle": 14,
       "cycle_edges": 67,
@@ -3159,6 +3165,17 @@
           "propagation_cost": [
             9.3,
             9.4
+          ]
+        }
+      },
+      {
+        "at": "2026-11-14T17:00:00Z",
+        "change": "loosen",
+        "reason": "TKT-M58EQ1W: pgstore's search_title trigger and heal pass add write sites to the entities table, which pgstore already writes; the shared_table finding for entities weighs one more.",
+        "metrics": {
+          "weight.data": [
+            1297,
+            1298
           ]
         }
       }

@@ -85,6 +85,12 @@ func (stubReader) ListRelations(
 ) iter.Seq2[*entity.Relation, error] {
 	return func(func(*entity.Relation, error) bool) {}
 }
+func (stubReader) ListRelationsPage(context.Context, store.RelationQuery) (store.Page[*entity.Relation], error) {
+	return store.Page[*entity.Relation]{}, errStubRead
+}
+func (stubReader) ListEntitiesPage(context.Context, store.EntityQuery) (store.Page[*entity.Entity], error) {
+	return store.Page[*entity.Entity]{}, errStubRead
+}
 
 // stubRecorder is a non-nil lua.ElevationRecorder. Like stubReader it is
 // never invoked; these tests assert what is handed over.

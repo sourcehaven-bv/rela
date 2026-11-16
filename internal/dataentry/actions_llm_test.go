@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/ai"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
@@ -162,6 +164,13 @@ type llmFixture struct {
 	// wrap, when set, wraps the seeded store; every read the app makes goes
 	// through the wrapper.
 	wrap func(store.Store) store.Store
+	// roles and assign add roles and assignments to the default triager
+	// (alice) and reader (bob).
+	roles  map[string]acl.RoleDef
+	assign map[string]string
+	// policyFields, when set, resolves field verdicts through the policy
+	// itself instead of the default stub.
+	policyFields bool
 }
 
 func buildLLMApp(t *testing.T, fx llmFixture) llmApp {
@@ -188,15 +197,23 @@ func buildLLMApp(t *testing.T, fx llmFixture) llmApp {
 	role := func(perms ...string) acl.RoleDef {
 		return acl.RoleDef{Read: fx.read, Update: []string{"ticket"}, Permissions: perms}
 	}
-	decl := mustNewACL(t, &acl.Policy{
-		Roles:       map[string]acl.RoleDef{"triager": role("ticket.triage"), "reader": role()},
-		Assignments: map[string]string{"alice": "triager", "bob": "reader"},
-	}, st)
+	roles := map[string]acl.RoleDef{"triager": role("ticket.triage"), "reader": role()}
+	assign := map[string]string{"alice": "triager", "bob": "reader"}
+	maps.Copy(roles, fx.roles)
+	maps.Copy(assign, fx.assign)
+	decl := mustNewACL(t, &acl.Policy{Roles: roles, Assignments: assign}, st)
 	svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, paths), appbuildtest.WithStore(st),
 		appbuildtest.WithDeclarative(decl))
 	app := newAppFromParts(&Config{}, nil, newFixture())
 	rebindApp(app, fs, paths, svc)
 	setTestACL(t, app, decl)
+	if fx.policyFields {
+		resolver, err := affordances.New(meta, storeRelationLookup{st: st}, decl)
+		if err != nil {
+			t.Fatalf("affordances.New: %v", err)
+		}
+		setTestResolver(t, app, &policyResolver{inner: resolver})
+	}
 	app.schema.Publish(&Schema{Cfg: &Config{Actions: map[string]dataentryconfig.Action{"triage": fx.action}}, Meta: meta})
 	if err := app.SetViewConditions(AdaptViewConditions(appbuild.ViewConditions)); err != nil {
 		t.Fatal(err)

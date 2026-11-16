@@ -52,7 +52,7 @@ jobs:
       rc: ${{ steps.run.outputs.rc }}
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17
         env:
           POSTGRES_USER: rela
           POSTGRES_DB: rela_scale
