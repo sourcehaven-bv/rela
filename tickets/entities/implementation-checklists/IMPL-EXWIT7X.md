@@ -11,8 +11,8 @@ status: done
 
 ## Development
 
-- [x] Unit tests written for new code (transitions_show_test.go: accessors, nil safety, Mermaid, prefix; cli TestFlowShow_Headless)
-- [x] Integration tests written (test full flow, not just units) (the moved statemachine suites run unchanged in flowcfg; entitymanager, affordances and dataentry suites exercise the enforcer through the wiring)
+- [x] Unit tests written for new code (show_test.go and headless_test.go in internal/flowcfg/transitions: accessors, nil safety, Mermaid, prefix; cli TestFlowShow_Headless)
+- [x] Integration tests written (test full flow, not just units) (the moved statemachine suites run unchanged in internal/flowcfg/transitions; entitymanager, affordances and dataentry suites exercise the enforcer through the wiring)
 - [x] Happy path implemented
 - [x] Edge cases from planning handled (nil Transitions, unknown headless name, bare type name, flows.yaml missing or broken, unset status refusal)
 - [x] Error handling in place (errors surfaced, not swallowed) (show returns the flows.yaml error after printing headless flows)
@@ -35,7 +35,7 @@ status: done
 
 - Scratch copy of tickets/ with the branch binary: a ticket walked backlog to done and a bug walked backlog to done. Every transition created the expected checklist and relation, and started and completed were set. A checklist moved to done got its completed date.
 - `rela flow show` and `rela flow validate` on a copy of the dataentry fixture list and render `schema.ticket_status` as text, JSON and a Mermaid diagram.
-- `go test -race` passes on flowcfg, cli, appbuild, entitymanager, affordances, dataentry, attachment, remotesync, comments, acl, metamodel, automation, autocascade and archguard. `go vet` passes on all build tags.
+- `go test -race` passes on flowcfg, flowcfg/transitions, cli, appbuild, entitymanager, affordances, dataentry, attachment, remotesync, comments, acl, metamodel, automation, autocascade and archguard. `go vet` passes on all build tags.
 - `just arch-lint`, lint, comment-lint, plimsoll and agentrules pass. archplan check has no new finding beyond the base; the baseline records the moved TransitionVerdict synonym and the flowcfg split with reasons.
 
 ## Quality
