@@ -127,7 +127,9 @@ func TestLoadConfig_RemoteMCP(t *testing.T) {
 		wantErr   bool
 	}{
 		{name: "absent", yaml: "validation: strict\n"},
-		{name: "empty block", yaml: "remote_mcp:\n"},
+		{name: "block with no value is refused", yaml: "remote_mcp:\n", wantErr: true},
+		{name: "block with dedented keys is refused", yaml: "remote_mcp:\nenabled: false\n", wantErr: true},
+		{name: "empty block mapping", yaml: "remote_mcp: {}\n"},
 		{name: "enabled true", yaml: "remote_mcp:\n  enabled: true\n", want: &on},
 		{name: "enabled false", yaml: "remote_mcp:\n  enabled: false\n", want: &off},
 		{
@@ -141,6 +143,46 @@ func TestLoadConfig_RemoteMCP(t *testing.T) {
 		{name: "misspelled top-level key is refused", yaml: "remote-mcp:\n  enabled: false\n", wantErr: true},
 		{name: "camel-case top-level key is refused", yaml: "remoteMCP:\n  enabled: false\n", wantErr: true},
 		{name: "empty allow is refused", yaml: "remote_mcp:\n  tools:\n    allow: []\n", wantErr: true},
+		{name: "allow with only commented entries is refused", yaml: "remote_mcp:\n  tools:\n    allow:\n    #  - show_entity\n", wantErr: true},
+		{name: "null allow is refused", yaml: "remote_mcp:\n  tools:\n    allow: ~\n", wantErr: true},
+		{name: "allow with a null item is refused", yaml: "remote_mcp:\n  tools:\n    allow: [~]\n", wantErr: true},
+		{name: "allow with a bare dash is refused", yaml: "remote_mcp:\n  tools:\n    allow:\n      -\n", wantErr: true},
+		{
+			name:    "allow with a comment-only item is refused",
+			yaml:    "remote_mcp:\n  tools:\n    allow:\n      - # show_entity\n",
+			wantErr: true,
+		},
+		{
+			name:    "allow with a null item next to a name is refused",
+			yaml:    "remote_mcp:\n  tools:\n    allow: [show_entity, ~]\n",
+			wantErr: true,
+		},
+		{
+			name:    "misspelled top-level key next to a duplicate key is refused",
+			yaml:    "other: {a: 1, a: 2}\nremote-mcp:\n  enabled: false\n",
+			wantErr: true,
+		},
+		{
+			name: "duplicate key in another section leaves remote_mcp read",
+			yaml: "other: {a: 1, a: 2}\nremote_mcp:\n  enabled: false\n",
+			want: &off,
+		},
+		{name: "enabled with no value is refused", yaml: "remote_mcp:\n  enabled: # false\n", wantErr: true},
+		{name: "alias to a null allow is refused", yaml: "n: &n ~\nremote_mcp:\n  tools:\n    allow: *n\n", wantErr: true},
+		{name: "top-level merge of a misspelled key is refused", yaml: "<<: {remote-mcp: {enabled: false}}\n", wantErr: true},
+		{
+			name:    "top-level merge of an aliased misspelled block is refused",
+			yaml:    "b: &b {remote-mcp: {enabled: false}}\n<<: [*b]\n",
+			wantErr: true,
+		},
+		{name: "misspelled key written as an alias is refused", yaml: "x: &k remote-mcp\n*k : {enabled: false}\n", wantErr: true},
+		{name: "dotted top-level key is refused", yaml: "remote.mcp:\n  enabled: false\n", wantErr: true},
+		{
+			name:    "second document is refused",
+			yaml:    "formatting: {line_width: 80}\n---\nremote_mcp: {enabled: false}\n",
+			wantErr: true,
+		},
+		{name: "empty file", yaml: ""},
 		{name: "merge key is refused", yaml: "x: &x {enabled: false}\nremote_mcp:\n  <<: *x\n", wantErr: true},
 		{
 			name:     "alias to a list elsewhere in the file",
