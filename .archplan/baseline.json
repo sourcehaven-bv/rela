@@ -2770,10 +2770,10 @@
       "weight.profile": 49,
       "weight.structure": 90,
       "weight.layers": 0,
-      "weight.vocabulary": 884,
+      "weight.vocabulary": 872,
       "weight.types": 4191,
-      "weight.concepts": 7243,
-      "weight.boundaries": 1467,
+      "weight.concepts": 7245,
+      "weight.boundaries": 1424,
       "weight.data": 1298,
       "weight.security": 140,
       "largest_tangle": 14,
@@ -2782,34 +2782,8 @@
       "propagation_cost": 9.3
     },
     "min_weight": 0,
-    "at": "2026-11-15T11:44:00Z",
+    "at": "2026-11-16T06:11:04Z",
     "log": [
-      {
-        "at": "2026-11-07T12:21:44Z",
-        "change": "loosen",
-        "reason": "TKT-IQU106C: element range readers are one per backend (accepted concepts.missing_operation-d60f02f07da6)",
-        "metrics": {
-          "weight.concepts": [
-            7052,
-            7060
-          ],
-          "propagation_cost": [
-            9.5,
-            9.4
-          ]
-        }
-      },
-      {
-        "at": "2026-11-07T12:50:16Z",
-        "change": "loosen",
-        "reason": "Schema wire World mirrors WorldDef's new label and hidden fields, like the other apiwire DTOs, TKT-H0TFDWU",
-        "metrics": {
-          "weight.types": [
-            3955,
-            3960
-          ]
-        }
-      },
       {
         "at": "2026-11-07T13:40:00Z",
         "change": "loosen",
@@ -3132,6 +3106,25 @@
           "propagation_cost": [
             9.4,
             9.3
+          ]
+        }
+      },
+      {
+        "at": "2026-11-16T06:11:04Z",
+        "change": "loosen",
+        "reason": "Develop alone scores weight.concepts 7247 (archplan ci base); this branch scores 7245, 2 lower. The 7243 tighten predates develop's newer findings. Also keeps vocabulary 872 and boundaries 1424.",
+        "metrics": {
+          "weight.vocabulary": [
+            884,
+            872
+          ],
+          "weight.concepts": [
+            7243,
+            7245
+          ],
+          "weight.boundaries": [
+            1467,
+            1424
           ]
         }
       }
