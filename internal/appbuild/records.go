@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filelock"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/records"
@@ -324,4 +325,44 @@ func (a *recordStoreAliases) EntityDeleted(ctx context.Context, id string) error
 // still exists.
 func (a *recordStoreAliases) EntityFaceDeleted(context.Context, string, entity.Face) error {
 	return nil
+}
+
+// LuaRecords is the rela.append_records capability over the record service
+// of s, for the scripts a principal deliberately runs.
+//
+// Nil: returned when s has no record service, so the binding is absent.
+func LuaRecords(s *Services) lua.RecordAppender {
+	return luaRecords(Records(s))
+}
+
+// luaRecords adapts svc to [lua.RecordAppender]. A nil svc is a nil
+// interface, not a typed nil, so the binding is absent rather than broken.
+func luaRecords(svc *records.Service) lua.RecordAppender {
+	if svc == nil {
+		return nil
+	}
+	return recordAppender{svc: svc}
+}
+
+// recordAppender is [lua.RecordAppender] over the record service. The
+// service runs the same owner check as POST /api/v1/_records/{type}.
+type recordAppender struct{ svc *records.Service }
+
+// AppendRecords appends rows of typ as the principal on ctx.
+func (a recordAppender) AppendRecords(
+	ctx context.Context, typ string, rows []lua.RecordRow,
+) ([]lua.AppendedRecord, error) {
+	in := make([]records.Input, len(rows))
+	for i, r := range rows {
+		in[i] = records.Input{Owner: r.Owner, TS: r.TS, Fields: r.Fields}
+	}
+	stored, err := a.svc.Append(ctx, typ, in)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]lua.AppendedRecord, len(stored))
+	for i, r := range stored {
+		out[i] = lua.AppendedRecord{ID: r.ID, Owner: r.Owner, TS: r.TS}
+	}
+	return out, nil
 }

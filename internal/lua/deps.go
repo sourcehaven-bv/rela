@@ -449,6 +449,14 @@ type WriteDeps struct {
 	// Nil: accepted, and the binding is then absent. It is set where
 	// AttachRender is, for the same reason.
 	AttachFile AttachFiler
+	// Records backs rela.append_records (TKT-RK810V7). It appends as the
+	// ctx principal through the record service, which checks update access
+	// on every face of each owner.
+	//
+	// Nil: accepted, and the binding is then absent. A project whose schema
+	// declares no record types has no record service, and the synchronous
+	// automation cascade and document renders never get one.
+	Records RecordAppender
 }
 
 // ElevatedUpdater is the scoped elevated update handle behind

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/records"
 )
 
@@ -26,16 +27,29 @@ const (
 // "feature absent" signal; its methods accept a nil receiver.
 type recordsHandler struct {
 	svc *records.Service
+	// appender backs rela.append_records in an action script. It appends
+	// through svc, so a script passes the same owner check as a POST.
+	appender lua.RecordAppender
 }
 
-// SetRecords installs the record service. Nil: rejected; a deployment
-// without record types never calls this.
-func SetRecords(a *App, svc *records.Service) error {
-	if svc == nil {
-		return errors.New("dataentry: SetRecords requires a record service")
+// SetRecords installs the record service and the rela.append_records
+// capability over it. Nil: both are rejected; a deployment without record
+// types never calls this.
+func SetRecords(a *App, svc *records.Service, appender lua.RecordAppender) error {
+	if svc == nil || appender == nil {
+		return errors.New("dataentry: SetRecords requires a record service and its script appender")
 	}
-	a.records = &recordsHandler{svc: svc}
+	a.records = &recordsHandler{svc: svc, appender: appender}
 	return nil
+}
+
+// scriptAppender returns the rela.append_records capability. Nil: returned
+// when no record service is installed, and then the binding is absent.
+func (h *recordsHandler) scriptAppender() lua.RecordAppender {
+	if h == nil {
+		return nil
+	}
+	return h.appender
 }
 
 // handleV1Records serves every route under /api/v1/_records:

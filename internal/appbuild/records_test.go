@@ -1,8 +1,10 @@
 package appbuild_test
 
 import (
+	"bytes"
 	"context"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/backendtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/records"
 	"github.com/Sourcehaven-BV/rela/internal/script"
@@ -368,4 +371,58 @@ func TestRecords_FailClosed(t *testing.T) {
 		_, err = rs.Reverse(alice, "posting", "T1")
 		require.ErrorIs(t, err, records.ErrForbidden)
 	})
+}
+
+// TestRecords_LuaAppendUsesOwnerGate runs rela.append_records on the
+// scheduled script runtime against a real acl.yaml. The binding appends
+// through the record service, so it passes exactly the check a POST to
+// /api/v1/_records/{type} passes: alice, who may update the meter, appends;
+// carol, who only reads it, is refused; bob, who cannot read it, gets the
+// same not-found as for a missing meter.
+func TestRecords_LuaAppendUsesOwnerGate(t *testing.T) {
+	svc := recordsServices(t)
+	m := createMeter(t, svc)
+	run := func(ctx context.Context) string {
+		t.Helper()
+		var out bytes.Buffer
+		rt := lua.NewWriter(svc.ScheduledLuaWriteDeps(), &out, lua.WithContext(ctx),
+			lua.WithPrincipal(principal.From(ctx)))
+		defer rt.Close()
+		require.NoError(t, rt.RunString(`
+local rows, err = rela.append_records("reading", {
+  {owner = "`+m+`", ts = "2026-01-05T10:00:00Z", fields = {kwh = "1.25"}},
+})
+if err then rela.output("err: " .. err) else rela.output("ok " .. rows[1].owner) end`))
+		return strings.Trim(strings.TrimSpace(out.String()), `"`)
+	}
+
+	require.Equal(t, "ok "+m, run(asAlice(t, svc)))
+	carol := boundAs(t, svc, principal.Principal{User: "carol", Tool: principal.ToolScheduler})
+	require.Contains(t, run(carol), records.ErrForbidden.Error())
+	bob := boundAs(t, svc, principal.Principal{User: "bob", Tool: principal.ToolScheduler})
+	require.Contains(t, run(bob), records.ErrNotFound.Error())
+
+	page, err := appbuild.Records(svc).List(asAlice(t, svc), "reading", m, records.ListQuery{})
+	require.NoError(t, err)
+	require.Len(t, page.Records, 1)
+	require.Equal(t, "alice", page.Records[0].RecordedBy)
+}
+
+// TestRecords_LuaAppendAbsentWithoutRecordTypes pins that a project without
+// record types gets no rela.append_records.
+func TestRecords_LuaAppendAbsentWithoutRecordTypes(t *testing.T) {
+	root := t.TempDir()
+	writeMetamodelBody(t, root, `version: "1.0"
+entities:
+  meter:
+    label: Meter
+    id_type: manual
+    properties:
+      title: {type: string}
+`)
+	svc, err := appbuild.Discover(root, script.NewEngine(), backendtest.Options(t)...)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Close() })
+	require.Nil(t, appbuild.LuaRecords(svc))
+	require.Nil(t, svc.ScheduledLuaWriteDeps().Records)
 }
