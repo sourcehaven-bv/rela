@@ -349,7 +349,7 @@ type CustomType struct {
 	// Transitions declares the legal value→value moves for this enum,
 	// making it a state machine (TKT-E4LW2). This is declarative source
 	// data only — the metamodel does not enforce it. At startup
-	// internal/transitions.CompileTransitions reads these into an executable machine
+	// internal/flowcfg/transitions.CompileTransitions reads these into an executable machine
 	// that the entitymanager runs on the write path (legality 422, guard
 	// 403, precondition 422). Empty means "any value may change to any
 	// other" (the historical, unconstrained behavior). Only meaningful on a
@@ -365,7 +365,7 @@ type CustomType struct {
 // TransitionDef is one edge in an enum state machine: a legal move from one
 // value to another, optionally gated by an ACL permission (Guard) and/or a
 // data precondition (When). This is declarative source data; the executable
-// machine is built from it by internal/transitions.CompileTransitions.
+// machine is built from it by internal/flowcfg/transitions.CompileTransitions.
 type TransitionDef struct {
 	From string `yaml:"from"` // Source value; must be one of CustomType.Values
 	To   string `yaml:"to"`   // Target value; must be one of CustomType.Values
