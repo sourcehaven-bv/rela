@@ -291,7 +291,10 @@ A few writes concern the whole entity rather than one face. Each is decided
 from grants and from the faces the caller can read, and never from the faces
 the entity happens to store. A decision that read the stored faces would
 answer differently when a face hidden from the caller existed, and so reveal
-it. The error text names no face for the same reason.
+it. The error text names no face for the same reason. Two exceptions are
+known: a whole-entity delete or rename still needs the grant on every face
+(TKT-Z47F27), and the records owner gate compares the stored faces with the
+readable ones (see "Records" and "What still leaks").
 
 **Renaming.** A rename changes the id of every face, hidden ones included. It
 is granted for the whole entity by a `rename:` grant on the type:
@@ -1962,6 +1965,11 @@ that rolls back (SQLite, PostgreSQL); other stores answer 501.
 - **Appending needs update on every face.** A face the caller cannot read
   refuses the append. A reversal needs update on every owner in the
   transaction.
+- **The owner gate reads the stored faces.** Both checks compare the number
+  of stored faces with the number the caller can read. So a caller who reads
+  only some faces of an owner learns that a hidden face exists: list and
+  aggregate answer 404 and append answers 403, where a fully readable owner
+  answers 200 or 201. This is listed under "What still leaks".
 - **Aggregates gate before they fold.** An aggregate or a ledger
   transaction counts only rows whose owners the caller can read. A
   transaction with a hidden leg answers 404.
@@ -2513,6 +2521,14 @@ the key; this section covers what it means for `acl.yaml`.
 
 ## What still leaks (deferred)
 
+- **The records owner gate shows that a hidden face exists.** A caller who
+  can read some faces of an owner, but not all, gets 404 on the owner's
+  records list and aggregate and 403 on append. A caller who reads every
+  face gets 200 or 201. The answer therefore tells the caller that the owner
+  has a face it cannot read. It shows nothing about that face's name or
+  content. Rows belong to the whole family, so the gate must refuse them
+  when a face is hidden (`TestRecords_HiddenFaceHidesRows`,
+  `TestRecords_HiddenFaceRefusesAppend`).
 - **Ledger group keys are unique per record type.** A posting whose key
   is already in use answers 409, even when the existing transaction belongs
   to owners the caller cannot read. A caller who may post can learn that a
