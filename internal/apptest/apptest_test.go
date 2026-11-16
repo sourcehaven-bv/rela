@@ -92,6 +92,81 @@ func runLua(t *testing.T, code string) *apptest.Report {
 	return run(t, project(t, map[string]string{"tests/a.test.lua": code}), apptest.Options{})
 }
 
+func TestRelatedReadsOutgoingTargets(t *testing.T) {
+	rep := runLua(t, `
+local t = require("rela.test")
+t.case("related", function()
+  local carol = t.as("carol")
+  local out = t.principal{name = "out", roles = {"outsider"}}
+  local a = carol:create("ticket", {title = "a"})
+  local b = carol:create("ticket", {title = "b"})
+  local c = carol:create("ticket", {title = "c"})
+  carol:link(a, "blocks", c)
+  carol:link(a, "blocks", b)
+  local got = carol:related(a, "blocks")
+  t.expect(#got).to_be(2)
+  local want = {b.id, c.id}
+  table.sort(want)
+  t.expect(got[1].id).to_be(want[1])
+  t.expect(got[2].id).to_be(want[2])
+  t.expect(#carol:related(b, "blocks")).to_be(0)
+  t.expect(out:related(a, "blocks")).to_be_nil()
+  t.expect(carol:related("TKT-999", "blocks")).to_be_nil()
+  t.expect_error(function() carol:related(a, "nope") end, "no relation type")
+end)
+`)
+	requireOK(t, rep)
+}
+
+// TestRelatedReadsOneTail pins that a faced ref lists the edges of its own
+// tail, and a bare id lists every tail with each target once.
+func TestRelatedReadsOneTail(t *testing.T) {
+	schema, err := os.ReadFile(filepath.Join("testdata", "project", "schema.yaml"))
+	require.NoError(t, err)
+	aclFile, err := os.ReadFile(filepath.Join("testdata", "project", "acl.yaml"))
+	require.NoError(t, err)
+	faced := strings.Replace(string(schema), "entities:\n", `entities:
+  page:
+    label: Page
+    plural: pages
+    id_prefix: "PAGE-"
+    id_type: manual
+    properties:
+      title: {type: string, required: true}
+    faces:
+      draft: {}
+      published: {}
+`, 1)
+	faced = strings.Replace(faced, "relations:\n", `relations:
+  cites:
+    from: [page]
+    to: [ticket]
+    scope: content
+`, 1)
+	acl := strings.Replace(string(aclFile), "read: [ticket, user, kinds]", "read: [ticket, user, kinds, page]", 1)
+	acl = strings.Replace(acl, "create: [ticket, kinds]", "create: [ticket, kinds, page@draft, page@published]", 1)
+	acl = strings.Replace(acl, "update: [ticket, kinds]", "update: [ticket, kinds, page@draft, page@published]", 1)
+	root := project(t, map[string]string{"schema.yaml": faced, "acl.yaml": acl, "tests/a.test.lua": `
+local t = require("rela.test")
+t.case("tails", function()
+  local carol = t.as("carol")
+  local x = carol:create("ticket", {title = "x"})
+  local y = carol:create("ticket", {title = "y"})
+  local draft = carol:create("page", {title = "p"}, {face = "draft", id = "PAGE-1"})
+  carol:create("page", {title = "p"}, {face = "published", id = draft.id})
+  carol:link(draft.id .. "@draft", "cites", x)
+  carol:link(draft.id .. "@published", "cites", y)
+  carol:link(draft.id .. "@published", "cites", x)
+  local d = carol:related(draft.id .. "@draft", "cites")
+  t.expect(#d).to_be(1)
+  t.expect(d[1].id).to_be(x.id)
+  t.expect(#carol:related(draft.id .. "@published", "cites")).to_be(2)
+  t.expect(#carol:related(draft.id, "cites")).to_be(2)
+end)
+`})
+	requireOK(t, run(t, root, apptest.Options{}))
+}
+
 func TestAutomationEffectsInSameCase(t *testing.T) { // AC1
 	rep := runLua(t, `
 local t = require("rela.test")
@@ -459,19 +534,22 @@ func TestProjectTreeUnchanged(t *testing.T) { // AC6
 	require.NoError(t, err)
 	require.NotNil(t, mig)
 
+	flows, err := os.ReadFile(filepath.Join("testdata", "project", "flows.yaml"))
+	require.NoError(t, err)
 	sideEffects := `
-  - name: side-effects
+  side-effects:
     on: {entity: [ticket], created: true}
-    do:
-      - lua: |
-          if entity.properties.title == "side" then
-            rela.write_file("out.txt", "written")
-            rela.piles.add{pile = "Inbox", entities = {entity.id}, create = true}
-          end
-        capabilities: {write_file: true}
+    outputs:
+      - script:
+          lua: |
+            if entity.properties.title == "side" then
+              rela.write_file("out.txt", "written")
+              rela.piles.add{pile = "Inbox", entities = {entity.id}, create = true}
+            end
+          capabilities: {write_file: true}
 `
 	root := project(t, map[string]string{
-		"schema.yaml":                string(schema) + sideEffects,
+		"flows.yaml":                 string(flows) + sideEffects,
 		"migrations/" + mig.FileName: string(mig.Content),
 		"fixtures/one/.rela/comments/TKT-100.yaml": "comments:\n- id: c1\n  author: carol\n" +
 			"  created_at: 2026-01-01T09:00:00+01:00\n  anchor: {kind: property, ref: title}\n  body: hi\n",

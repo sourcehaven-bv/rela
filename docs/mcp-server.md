@@ -63,11 +63,16 @@ or changing a validation rule: the next tool call sees the new schema, `create_e
 included.
 
 The reload rebuilds the whole metamodel-derived stack — the validator, the entity
-manager and its automations, transitions and computed properties — not just the
+manager and its triggers, transitions and computed properties — not just the
 schema the read tools report. Refreshing only the read surfaces would leave writes
 validating against the old schema, which is harder to diagnose than no reload at all.
 The store and the search index are reused, so a schema edit costs no reindex and
 loses none of the session's writes.
+
+**`flows.yaml`** — the server reloads the flows and the
+[triggers](flows.md#triggers) in place, so the next write fires the new rules.
+If the changed file does not load, the server keeps the previous
+configuration and logs a warning.
 
 If the new schema does not parse, the server logs a warning and keeps serving the
 last one that did. A save taken mid-edit is routinely unparseable and must not end
@@ -124,6 +129,20 @@ entity.status == 'open' and entity.priority ~= 'low'
 ```text
 related(entity, 'implements', { status = 'open' })
 ```
+
+A filter can name the caller. `current_user.id`, `is_current_user(...)` and
+`has_current_user(...)` compare against the identity the call runs as:
+
+```text
+is_current_user(entity.assignee)
+has_current_user(entity.watchers)
+```
+
+The store answers equalities, `~=`, `related(...)`, `not related(...)` and the
+`current_user` comparisons, so such a filter costs one page. A filter with an
+ordered comparison, an `or`, or a property the caller cannot see on every
+entity is checked against every readable entity of the type, which costs more
+on a large type.
 
 In `update_entity`, a `null` property value removes the property, and an empty
 string is ignored.
@@ -862,10 +881,17 @@ process environment later. When an off overrules an on, rela-server logs a
 warning that names the source that turned the endpoint off.
 
 `RELA_MCP` accepts only `1`, `0` or no value. Any other value, such as
-`true`, stops startup. A misspelled key inside `remote_mcp:`, or a top-level
-key such as `remote-mcp` or `remoteMCP`, is refused too, because it could
-hide the operator's off. Every command that reads `.rela/config.yaml` fails
-on such a mistake, not only rela-server.
+`true`, stops startup. These mistakes are refused too, because each could
+hide the operator's off:
+
+- a misspelled key inside `remote_mcp:`;
+- `remote_mcp:` with no value, which is what an indentation slip leaves;
+- a top-level key such as `remote-mcp`, `remoteMCP` or `remote.mcp`;
+- `enabled:` with no value;
+- a second YAML document after `---`.
+
+Every command that reads `.rela/config.yaml` fails on such a mistake, not
+only rela-server.
 
 rela-server reads `remote_mcp:` at startup, and again each time a Configure
 save rebuilds the server. An edit to the file takes effect at the next
@@ -904,7 +930,9 @@ remote_mcp:
   startup, so a typo cannot leave a tool on. A tool whose feature is off
   (comments, channels, piles, flows, actions), or a Lua tool, which this
   endpoint never serves, is accepted and filters nothing.
-- An empty `allow: []` is refused. Leave `allow` out to serve every tool.
+- An empty `allow: []`, an `allow:` with no value, and an `allow` item with
+  no value (`[~]`, a bare `-`, or an item that is only a comment) are
+  refused. Leave `allow` out to serve every tool.
 - Prefer `allow` when the goal is a read-only endpoint. An allow list stays
   closed when a later release adds a tool; a deny list does not.
 
@@ -944,9 +972,9 @@ gets through the web UI:
 - `search_entities` returns only entities you may read, and drops a hit that
   matched only on a property hidden from you.
 
-**The Lua tools are not available remotely.** `lua_eval`, `lua_run` and
-`lua_list` exist only over stdio. A script is caller-supplied code that runs in
-the server process, so offering it over HTTP would let any remote caller use
+**The Lua tools are not available remotely.** `lua_eval` and `lua_run`
+exist only over stdio. A script is caller-supplied code that runs in the server
+process, so offering it over HTTP would let any remote caller use
 server CPU and memory at will. Every other tool is exposed remotely, unless
 [`remote_mcp.tools`](#limiting-the-tools) limits them. The
 action tools exist only remotely: they run as the signed-in caller.

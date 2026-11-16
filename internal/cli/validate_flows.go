@@ -32,6 +32,13 @@ func reportFlowsValidation(ctx context.Context, result *projectsetup.ValidateRes
 	if !quiet {
 		fmt.Printf("Validating %s...\n", flowcfg.FileName)
 	}
+	loader := config.NewFSLoader(storage.NewSafeFS(storage.NewOsFS()), root)
+	// Triggers do not read acl.yaml, so they are checked whatever it holds.
+	triggersBad := false
+	if err := appbuild.CheckTriggers(ctx, loader, result.Metamodel, nil); err != nil {
+		fmt.Printf("  ✗ %v\n", err)
+		triggersBad = true
+	}
 	policy, err := acl.LoadPolicy(filepath.Join(root, "acl.yaml"))
 	if err != nil && !stderrors.Is(err, fs.ErrNotExist) {
 		fmt.Printf("  ✗ %s: acl.yaml: %v\n", flowcfg.FileName, err)
@@ -41,10 +48,9 @@ func reportFlowsValidation(ctx context.Context, result *projectsetup.ValidateRes
 	// expansion the visible: checks would miss grants, so a policy that
 	// does not validate skips this check; the acl.yaml check reports it.
 	if policy != nil && appbuild.ValidateACLPolicy(policy, result.Metamodel) != nil {
-		fmt.Printf("  ⚠ %s: skipped, acl.yaml does not validate\n", flowcfg.FileName)
-		return hasErrors
+		fmt.Printf("  ⚠ %s: flows skipped, acl.yaml does not validate\n", flowcfg.FileName)
+		return hasErrors || triggersBad
 	}
-	loader := config.NewFSLoader(storage.NewSafeFS(storage.NewOsFS()), root)
 	flows, err := appbuild.LoadFlows(ctx, loader, result.Metamodel, policy)
 	var loadErr *flowcfg.Error
 	switch {
@@ -59,6 +65,9 @@ func reportFlowsValidation(ctx context.Context, result *projectsetup.ValidateRes
 	}
 	for _, w := range flows.Warnings() {
 		fmt.Printf("  ⚠ %s: %s\n", flowcfg.FileName, w)
+	}
+	if triggersBad {
+		return true
 	}
 	if !quiet {
 		fmt.Printf("  ✓ %s is valid\n", flowcfg.FileName)

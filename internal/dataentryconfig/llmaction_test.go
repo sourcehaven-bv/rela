@@ -382,7 +382,7 @@ func TestValidateListActions_LLM(t *testing.T) {
 		{
 			name: "proposing", listType: "ticket",
 			mut:     func(a *Action) { a.LLM.Apply = "" },
-			wantErr: "a list runs an llm action only with apply: auto",
+			wantErr: "a list runs an llm action only with apply: auto or batch:",
 		},
 		{name: "other type", listType: "concept", wantErr: `runs on "ticket", not on the list's type "concept"`},
 	}

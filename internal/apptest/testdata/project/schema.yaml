@@ -56,37 +56,3 @@ validations:
     enforce: write
     when_condition: "entity.start > today()"
     then: ["title=never"]
-automations:
-  - name: stamp
-    on: {entity: [ticket], created: true}
-    do:
-      - set: stamp
-        value: "{{today}}"
-  - name: ready-note
-    on: {entity: [ticket], property: status, becomes: ready}
-    do:
-      - set: note
-        value: "made ready"
-  - name: done-mail
-    on: {entity: [ticket], property: status, becomes: done}
-    do:
-      - lua_file: done_mail.lua
-        capabilities: {mail: true}
-        background: true
-  - name: probe
-    on: {entity: [ticket], created: true}
-    do:
-      - lua: |
-          local t = entity.properties.title
-          if t == "http" then
-            local _, err = http.get("http://127.0.0.1:9/")
-            if err then error(err.message) end
-          elseif t == "ai" then
-            local _, err = ai.chat({messages = {{role = "user", content = "hi"}}})
-            if err then error(err.message) end
-          elseif t == "http-quiet" then
-            http.get("http://127.0.0.1:9/")
-          elseif t == "clock" then
-            rela.update_entity(entity.id, {note = rela.today})
-          end
-        capabilities: {http: true, ai: true}

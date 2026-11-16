@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"iter"
 	"reflect"
 	"strings"
 	"testing"
@@ -30,24 +29,49 @@ type world struct {
 	createOpts     []entity.CreateOptions
 	patches        []entity.Patch
 	patchedRefs    []string
-	queries        []store.EntityQuery
+	queries        []store.FaceSelection
 	nextID         int
 }
 
-func (w *world) GetAddress(context.Context, string) (*entity.Entity, error) {
+func (w *world) GetAddress(_ context.Context, addr string) (*entity.Entity, error) {
+	for _, e := range w.rows {
+		if e.Ref().String() == addr {
+			return e, nil
+		}
+	}
 	return nil, store.ErrNotFound
 }
 
-func (w *world) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
+// FirstEqual is the find over rows: type and every wanted value as a
+// string, lowest id first.
+func (w *world) FirstEqual(
+	_ context.Context, typ string, faces store.FaceSelection, want map[string]string,
+) (entity.Ref, bool, error) {
 	w.lists++
-	w.queries = append(w.queries, q)
-	return func(yield func(*entity.Entity, error) bool) {
-		for _, e := range w.rows {
-			if e.Type == q.Type && !yield(e, nil) {
-				return
+	w.queries = append(w.queries, faces)
+	return firstEqual(w.rows, typ, want)
+}
+
+func firstEqual(rows []*entity.Entity, typ string, want map[string]string) (entity.Ref, bool, error) {
+	var best *entity.Entity
+	for _, e := range rows {
+		if e.Type != typ {
+			continue
+		}
+		matches := true
+		for prop, value := range want {
+			if v, ok := e.Properties[prop]; !ok || fmt.Sprint(v) != value {
+				matches = false
 			}
 		}
+		if matches && (best == nil || e.ID < best.ID) {
+			best = e
+		}
 	}
+	if best == nil {
+		return entity.Ref{}, false, nil
+	}
+	return best.Ref(), true, nil
 }
 
 func (w *world) GetEntity(_ context.Context, ref entity.Ref) (*entity.Entity, error) {
@@ -97,7 +121,7 @@ func (w *world) PatchEntity(_ context.Context, ref string, p entity.Patch) (*ent
 }
 
 func (w *world) deps() Deps {
-	return Deps{Reader: w, Writer: w, WritePrep: w, MaxAttempts: 3, Label: "test"}
+	return Deps{Finder: w, Reader: w, Writer: w, WritePrep: w, MaxAttempts: 3, Label: "test"}
 }
 
 type mapSource map[string]string
@@ -339,7 +363,7 @@ func TestRun_StepsMakeOnePatchAtTheFace(t *testing.T) {
 	if p.ExpectedVersion != string(store.VersionOf(stored)) {
 		t.Errorf("ExpectedVersion = %q, want the re-read base's version", p.ExpectedVersion)
 	}
-	if got := w.queries[0].Faces.String(); got != store.AtFaces("published").String() {
+	if got := w.queries[0].String(); got != store.AtFaces("published").String() {
 		t.Errorf("find faces = %s, want the configured face", got)
 	}
 }
@@ -351,7 +375,7 @@ func TestRun_FacelessFindReadsTheWorld(t *testing.T) {
 	if _, err := Run(context.Background(), d, findOrCreate, mapSource{"body.host": "web1"}); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := w.queries[0].Faces.String(), store.InWorld(d.World).String(); got != want {
+	if got, want := w.queries[0].String(), store.InWorld(d.World).String(); got != want {
 		t.Errorf("find faces = %s, want %s", got, want)
 	}
 	if got := w.createOpts[0].Face; got != "" {
@@ -426,16 +450,18 @@ func TestRun_NonConflictIsNotRetried(t *testing.T) {
 	}
 }
 
-type failingReader struct{ world }
+type failingFinder struct{}
 
-func (*failingReader) ListEntities(context.Context, store.EntityQuery) iter.Seq2[*entity.Entity, error] {
-	return func(yield func(*entity.Entity, error) bool) { yield(nil, errors.New("store down")) }
+func (failingFinder) FirstEqual(
+	context.Context, string, store.FaceSelection, map[string]string,
+) (entity.Ref, bool, error) {
+	return entity.Ref{}, false, errors.New("store down")
 }
 
 func TestRun_Errors(t *testing.T) {
 	ok := (&world{}).deps()
 	failing := ok
-	failing.Reader = &failingReader{}
+	failing.Finder = failingFinder{}
 	without := func(edit func(*Deps)) Deps {
 		d := ok
 		edit(&d)
@@ -451,13 +477,15 @@ func TestRun_Errors(t *testing.T) {
 	}{
 		{"nil reader", false, without(func(d *Deps) { d.Reader = nil }), findOrCreate,
 			"no visible reader"},
+		{"nil finder", false, without(func(d *Deps) { d.Finder = nil }), findOrCreate,
+			"no finder"},
 		{"nil writer", false, without(func(d *Deps) { d.Writer = nil }), findOrCreate,
 			"no writer"},
 		{"nil write-prep", false, without(func(d *Deps) { d.WritePrep = nil }), findOrCreate,
 			"no write-prep"},
 		{"zero attempts", false, without(func(d *Deps) { d.MaxAttempts = 0 }), findOrCreate,
 			"MaxAttempts 0"},
-		{"list error", false, failing, findOrCreate, "store down"},
+		{"find error", false, failing, findOrCreate, "store down"},
 		{"cancelled", true, ok, findOrCreate, "context canceled"},
 		{"no create type", false, ok,
 			ingestspec.Mapping{CreateIfMissing: &ingestspec.Create{}}, "no resolvable entity type"},

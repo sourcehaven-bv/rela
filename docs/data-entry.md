@@ -512,8 +512,8 @@ apply to it:
 
 | Action | Applies to | Effect |
 | --- | --- | --- |
-| Keep local | `both_changed`, `refused`, `uncertain` | The next sync sends the local value. On an uncertain create it sends the row again. |
-| Take remote | `both_changed`, and a refused update | The next sync writes the remote value here. Needs edit rights on the field. |
+| Keep local | `both_changed`, `refused`, `uncertain`, `remote_deleted` | The next sync sends the local value. On an uncertain create it sends the row again. On `remote_deleted` the next sync creates the row on the remote again, as a new remote row. A relation is refused when one of its ends is no longer linked to the remote. |
+| Take remote | `both_changed`, a refused update, and `remote_deleted` | The next sync writes the remote value here. Needs edit rights on the field. On `remote_deleted` the next sync deletes the row here, so it needs the right to delete the row instead. |
 | Dismiss | `superseded` | Removes the entry; changes no data. |
 | Link | `uncertain` create | Links the local row to the remote row you name as `type/id`. Needs edit rights on the fields the create sent. |
 
@@ -2283,8 +2283,8 @@ notice than a server that refuses to start.
 
 #### It is a different language from `filters:`
 
-`condition:` is a Lua expression subset (the same language as automation
-`condition:` and next-action `condition:` — see
+`condition:` is a Lua expression subset (the same language as a trigger's
+`when:` and next-action `condition:` — see
 [metamodel.md](metamodel.md)). `filters:` is the filter DSL. They sit next to
 each other in the same block and **three differences will bite you**:
 
@@ -3735,6 +3735,7 @@ dashboard:
 | `title`       | string | Page heading                           |
 | `description` | string | Subtitle shown below the heading       |
 | `cards`       | list   | Card definitions                       |
+| `entity_type` | string | Named dashboards only: makes it an [entity dashboard](#entity-dashboards) |
 
 ### Card Options
 
@@ -3757,6 +3758,7 @@ dashboard:
 | `match`      | string | `ratio`: the query scope on the list's type that counts as matched          |
 | `width`      | string | `normal` (default), `wide` or `full`: how much of the row the card takes    |
 | `permission` | string | Hide this card from principals who do not hold the named ACL permission     |
+| `scope`      | map    | On an [entity dashboard](#entity-dashboards): `{ relation, direction }` from the entity to the card's rows |
 
 ### Cards from a list (`list:`)
 
@@ -4064,6 +4066,52 @@ In the Configure space, the Dashboard screen edits the default dashboard and
 every named one; pick a dashboard at the top of the screen. Adding or renaming
 a named dashboard is done in `data-entry.yaml`.
 
+#### Entity dashboards
+
+An entity dashboard counts for one entity, for example the risks and measures
+of one DPIA. Give a named dashboard an `entity_type:`, and give each card a
+`scope:` that says how the entity reaches the card's rows:
+
+```yaml
+dashboards:
+  dpia_figures:
+    title: "DPIA figures"
+    entity_type: dpia
+    cards:
+      - title: "Risks"
+        list: risks
+        display: breakdown
+        group_by: level
+        scope: { relation: has-risk, direction: outgoing }
+      - title: "Open measures"
+        list: open_measures
+        display: count
+        scope: { relation: mitigated-by, direction: outgoing }
+```
+
+The rules:
+
+- Every card needs `list:` and a `scope:` with a `relation`. `direction` works
+  as on an [entity page](#entity-pages) tab, and may be left out when the
+  relation connects the two types one way only. `scope: root` is not allowed
+  on a card.
+- The dashboard is shown only as a `scope: root` tab of an entity page of
+  that type. It cannot be a navigation entry or a space `home:`.
+- `entity_type:` is not allowed on the default `dashboard:`. A card `scope:`
+  is not allowed on a dashboard without `entity_type:`.
+- A card counts the rows of its list that the user may read, and then keeps
+  the ones the entity reaches. The count and the breakdown are computed from
+  those rows only, so a row the user may not read is never counted.
+- A card has no link to its list, because the list would show every row of
+  the type. The validation card is not shown.
+
+The API takes the entity as `anchor`:
+`/api/v1/_dashboard/card?name=<dashboard>&card=<index>&anchor=<id>`. A card
+of an entity dashboard without exactly one `anchor` returns 400 with the error
+type `anchor_required`. An `anchor` on another dashboard returns 400 with
+`anchor_not_allowed`. An entity the user may not read returns the same 404 as
+an entity that does not exist.
+
 ### Display Modes
 
 **`count`** shows a single large number — the count of entities matching the query. Use this for
@@ -4223,7 +4271,7 @@ Exactly one of `query`, `context` or `count` must be set.
 `query` selects; `condition` refines. The split exists because they are
 different languages: `query` is the search syntax, pushed toward the store,
 and `condition` is a predicate expression evaluated per candidate with the
-same host functions automations use.
+same host functions triggers use.
 
 ```yaml
 next_actions:
@@ -4268,7 +4316,7 @@ Rules worth knowing:
   matching only a hit past the cut would silently never fire. Select with
   `prop:` filters instead.
 
-The available functions are the ones automations use: `days_between`,
+The available functions are the ones triggers use: `days_between`,
 `date_add`, `rrule_next`, `today`, plus `match`, `regex`, `contains` and
 `len`. See [metamodel.md](metamodel.md) for their signatures.
 
@@ -4685,10 +4733,13 @@ kanbans:
 | `columns`          | list   | Explicit column definitions (`value`, `label`, `icon`, `collapsed`) |
 | `swimlane_property`| string | Property to group by for swimlanes (optional)              |
 | `swimlanes`        | list   | Explicit swimlane definitions (`value`, `label`, `icon`)   |
+| `cell_colors`      | map    | A colour per cell of a swimlane board (see below)          |
 | `card`             | object | Card display configuration                                 |
 | `column_summary`   | list   | Aggregate lines under each column heading (see below)      |
 | `edit_form`        | string | Form name for editing cards (click to open)                |
 | `create_form`      | string | Form name for the "New" button                             |
+| `quick_add`        | bool   | A title input under every column and cell (see below)      |
+| `add_column`       | bool   | An "Add column" control at the end of the board (see below) |
 | `filters`          | list   | Static filters (same as lists)                             |
 | `filter_controls`  | list   | Interactive filter controls (same as lists)                |
 | `query_scope`      | string | Named query scope (same as lists)                          |
@@ -4957,6 +5008,50 @@ kanbans:
 Without explicit swimlanes, values are inferred from the metamodel. Entities whose swimlane
 property value is not in the list are hidden.
 
+#### Cell colours
+
+A swimlane board is a matrix: columns by lanes. `cell_colors:` gives a cell a
+background colour, so the board reads as a heat map. A DPIA risk board with
+impact as columns and likelihood as lanes is an example:
+
+```yaml
+kanbans:
+  risks:
+    entity_type: risk
+    column_property: impact
+    swimlane_property: likelihood
+    cell_colors:
+      high:                 # a column value
+        likely: error       # a lane value, then its colour
+        possible:
+          color: warning
+          label: Medium
+      low:
+        rare: success
+    card:
+      title: title
+```
+
+- The first key is a column value and the second a lane value. Both must be a
+  column or lane the board shows: a declared `columns:` or `swimlanes:` entry,
+  or else a value of the property.
+- A colour is a tone (`success`, `warning`, `error`, `info`, `new`) or a
+  [colour name](#color-names) such as `red/700`. A tone or a bare hue such as
+  `red` paints a soft tint; a shade such as `red/700` paints a strong fill.
+- Each coloured cell shows a label as text, so colour is not the only cue. A
+  tone shows its own name by default, in the reader's language: Good,
+  Warning, Critical, Info or New in English. `label:` replaces it. Any other
+  colour needs a `label:`.
+- On a board with any coloured cell, every cell keeps the same padding, so
+  cards line up across coloured and plain cells.
+- Cards keep their own background, so they read the same in a coloured cell
+  as in a plain one, in light and dark mode.
+- A cell without a colour stays plain.
+- `cell_colors` needs `swimlane_property` and cannot be used with
+  `columns_from`. An unknown column, lane or colour, or a missing label, fails
+  when the configuration loads, with a message that names the board. A cell
+  with a key other than `color` and `label` fails too, with its line number.
+
 ### Card Configuration
 
 The `card` object controls what's displayed on each card:
@@ -5104,6 +5199,90 @@ This is kanban-only for now: on a calendar or gantt field it is a config error.
 It reads one relation step. Sorting or filtering by a related property is not
 supported.
 
+### Quick-add
+
+With `quick_add: true`, every column gets a title input at its foot. On a
+swimlane board, every cell gets one. Type a title and press Enter: the board
+creates a card in that column, and in that lane. The input clears and keeps
+focus, so you can type the next card. Escape clears the input.
+
+```yaml
+kanbans:
+  workshop:
+    entity_type: risk
+    column_property: stage
+    quick_add: true
+```
+
+Quick-add is off by default. The card is made through the normal create API,
+so access rules, validation and the audit log apply as for any other create.
+
+- The new card gets the title, the column value and the swimlane value. On a
+  `columns_from` board it is linked to the column's target. A card added to
+  the Other column gets no link.
+- The input is hidden when you may not create the type.
+- A refused create shows its error under the input. The text you typed stays.
+- The card gets no value for the board's `filters:` or `query_scope:`. When
+  those hide the new card, a message says it was added.
+- A column or lane with an empty value collects cards that have none. A card
+  added there leaves the property unset.
+- The type's default template applies, as with any create.
+
+The board refuses to load when quick-add cannot make a valid card:
+
+- the type has `id_type: manual`, since a quick-add card has no id field;
+- the title property is computed, a rollup or missing;
+- a required property is not the title, the column or the swimlane property,
+  and has no default in the schema. Give it a default, or remove `quick_add`.
+
+Template defaults do not count for this check. Use a schema default for a
+required property.
+
+### Adding a column from the board
+
+With `add_column: true`, the board ends with an "Add column" control. Type a
+name and press Enter. The new column is a new value of the board's
+`column_property`, so this is a change to `schema.yaml`:
+
+- the value (the name in lower case, with `_` between words) is added to the
+  property's `values:`;
+- the name is added under `labels:` when it differs from the value;
+- when the board lists `columns:`, the column is added there too.
+
+```yaml
+kanbans:
+  workshop:
+    entity_type: risk
+    column_property: stage   # an inline enum: type: enum, values: [...]
+    add_column: true
+```
+
+The change is saved through the Configure space, the only part of rela that
+writes configuration. So it needs the same things as the Configure space:
+
+- the server runs with config editing on (`--config-editing`);
+- you hold the `config:edit` permission. Without it the control is hidden.
+
+Like any configuration save, it reloads every open page.
+
+The control only adds to an inline enum (`type: enum` with its own
+`values:`). A board whose column property uses a shared type from `types:`
+refuses `add_column` at startup, because a new value there would reach every
+property that uses the type. Change a shared type in the Configure space. A
+`columns_from` board or a wall adds columns as groups instead.
+
+When the board lists `columns:`, it can leave out values the property has.
+Typing the name of such a value adds it to the board. The schema does not
+change.
+
+Some schemas cannot be edited this way:
+
+- A type from a namespace is declared in another file. The board refuses
+  `add_column` at startup.
+- The Configure space does not edit a `schema.yaml` that uses `includes:`,
+  and a property inherited through `extends:` is not on the type's own
+  entry. In both cases the control shows the reason when you press Enter.
+
 ### Drag and Drop
 
 Cards can be dragged between columns (and swimlanes if configured). Dropping a card updates
@@ -5225,7 +5404,7 @@ navigation:
 #### A pile in the sidebar
 
 `pile:` puts one of the user's own [piles](#piles) in the navigation, for
-example a Notifications pile that automations fill:
+example a Notifications pile that triggers fill:
 
 ```yaml
 navigation:
@@ -5236,7 +5415,7 @@ navigation:
 
 - The row opens the pile in the flyout and shows its item count.
 - Each user gets their own pile of that name. It is created the first time the
-  user opens the row, if no automation has made it already. Names ignore case.
+  user opens the row, if no trigger has made it already. Names ignore case.
 - The pile is no longer listed in the Piles group, so it does not appear twice.
 - Without `label`, the row shows the pile name. Without `icon`, it shows the
   `layers` glyph.
@@ -6123,7 +6302,25 @@ Every tab of an entity page needs a `scope:`:
 - A `gantt:` tab takes `scope: root`. The timeline starts at the entity. The
   entity's type must be one of the timeline's `sources:`, and one of its
   `hierarchy:` relations must start from that type.
-- An entity page cannot show a calendar, a document or the dashboard.
+- A `document:` tab takes `scope: root`. It renders the document for the
+  entity. The document's `entity_type:` must be the page's type.
+- A `dashboard:` tab takes `scope: root`. It names an
+  [entity dashboard](#entity-dashboards), whose `entity_type:` must be the
+  page's type. Each card counts only the rows the entity reaches.
+- An entity page cannot show a calendar or the default dashboard.
+
+A DPIA page, for example, can walk from the report to its figures:
+
+```yaml
+pages:
+  dpia:
+    entity_type: dpia
+    label: DPIA
+    mode: steps
+    tabs:
+      - { id: report, label: Report, document: dpia_report, scope: root }
+      - { id: figures, label: Figures, dashboard: dpia_figures, scope: root }
+```
 
 ### Rows in relation order
 
@@ -6983,10 +7180,11 @@ an action. It has these limits:
   before the elevated update makes the elevated update fail, so make the
   elevated update first.
 - Transition rules and validation apply as on any update.
-- An on-update automation of the same entity is part of the elevated
-  update: a `set` it makes is stored with the update and is not checked
-  against `elevated_updates:`. A cascade the update triggers, such as
-  `create_entity` or `run_script`, runs with the caller's normal access.
+- A trigger on the same entity is part of the elevated update: a value
+  its `set` output writes is stored with the update and is not checked
+  against `elevated_updates:`. A cascade the update starts, such as a
+  trigger's `create` or `script` output, runs with the caller's normal
+  access.
 - A transition guard still checks the caller's permission. To keep a field
   that only the action may change out of the form and the API, restrict it
   with `acl.yaml` field rules, not with a transition guard.
@@ -7237,6 +7435,87 @@ and user takes the place of a new one.
 Limits in this version: the action runs on one entity type without faces, and
 it cannot set relation properties.
 
+#### Running on several entities (`batch`)
+
+A `batch:` block lets the action run on several entities in one request: the
+rows selected in a list, or the cards on a kanban board. The model gets every
+entity in one call and proposes changes for each.
+
+```yaml
+actions:
+  triage:
+    label: "Suggest priorities"
+    permission: tickets:triage
+    available_on:
+      entity_types: [ticket]
+    when: "entity.status == 'new'"
+    llm:
+      prompt: Pick a priority for each ticket.
+      inputs:
+        properties: [title, kind]
+        content: { max_chars: 4000 }
+      outputs:
+        set: [priority]
+      batch:
+        max: 20
+
+lists:
+  open_tickets:
+    entity_type: ticket
+    columns:
+      - property: title
+    actions: [triage]
+
+kanbans:
+  board:
+    entity_type: ticket
+    column_property: status
+    actions: [triage]
+```
+
+| Field | Description |
+| ----- | ----------- |
+| `max` | How many entities one run takes (default 20, at most 50). `max` times `inputs.content.max_chars` may be at most 200000 |
+
+A batch action proposes property values only, so `inputs.related` and
+`outputs.relate` are refused.
+
+**Where it runs.** List it in a list's `actions:` to run it on the selected
+rows, or in a kanban board's `actions:` to show it as a button in the board's
+header. A board button runs on the cards in the columns that are open, after
+the board's filters. Collapse columns or filter the board to run on fewer
+cards. Both surfaces refuse to start when there are more entities than `max`.
+Every entry must be a labelled batch action on the list's or board's entity
+type; anything else is a config error. The button appears for users who hold
+the action's `permission:`.
+
+**Each entity is checked as on its detail page.** The server checks the
+permission once, then each entity: the user must be able to read it, and it
+must match `available_on` and `when`. An entity that fails, or on which the
+user may write none of the `set` properties, is not sent. The dialog says how
+many entities were not sent, but not which or why. When no entity is left,
+the model is not called.
+
+**Review.** The run writes nothing. The dialog lists the proposed changes per
+entity, and every change starts unticked: all entities go to the model in one
+request, so text in one entity can steer what the model proposes for another.
+The user ticks single changes, or a whole entity, and applies them. Each
+entity is saved with an ordinary edit, and a property that changed since the
+proposal is not saved. An entity whose part of the answer breaks a rule is
+listed with the reason; the other entities' proposals still stand.
+
+**Answer size.** `max_tokens` caps the whole answer, which covers every entity
+of the run. Set it for `max` entities, not for one; an answer that is cut off
+fails the whole run.
+
+**Time.** One batch call may take at most five minutes. A proxy in front of
+`rela-server` must allow a request that long.
+
+**On a detail page and over MCP**, a batch action still runs on one entity, as
+any `llm:` action does. Over the API, send `{"entity_ids": [...]}` to
+`POST /api/v1/_action/<id>`; the answer is
+`{batch: {proposals, failed, skipped}}`.
+
 ### Reserved Keyboard Shortcuts
 
 The following keys are reserved for built-in list navigation and cannot be used as action keys:
@@ -7349,8 +7628,8 @@ from the ones users make:
 - They appear in the sidebar in a group of their own, above the Piles group,
   unless a `pile:` navigation entry places them elsewhere.
 - They are locked. The pile menu has no rename or delete.
-- They are not offered in **Add to pile**. A toggle on the entity page, or an
-  automation, fills them instead.
+- They are not offered in **Add to pile**. A toggle on the entity page, or a
+  trigger, fills them instead.
 
 A pile with `read_state: true` works like an inbox:
 
@@ -7417,7 +7696,7 @@ the same answer whether the item is hidden, deleted, or was never on the pile.
 Piles need a user identity. When the server cannot tell who you are, the piles
 interface is hidden and the API answers with 403.
 
-Lua scripts, automations (the `add_to_pile` action) and MCP tools can put
+Lua scripts, [triggers](flows.md#add_to_pile) (the `add_to_pile` output) and MCP tools can put
 items on a pile. They may also put items on another user's pile, addressed by
 name. Such a push can only add. It cannot read the other user's piles, and
 the items are still checked against the owner's access when the owner reads
@@ -7430,7 +7709,7 @@ logs each such push with the pushing user, you as the target and the number of
 items. It does not log the pile name.
 
 Someone else cannot push to your declared piles, such as Favorites. The one
-exception is a `notify` automation, which adds to a declared pile with read
+exception is a trigger's [`notify`](flows.md#notify) output, which adds to a declared pile with read
 state. There, a full pile drops your read items first, then the oldest.
 
 One small signal remains. The 500-item limit counts every stored item,
@@ -8014,8 +8293,10 @@ Each command runs in one of four scopes, which determines the JSON it receives o
 **`entity`** — runs from entity detail and view pages. Receives the entity with all properties,
 content, and relations.
 
-**`list`** — runs from list pages. Receives all entities currently visible in the list (after
-filters).
+**`list`** — runs from list pages. Receives every entity of the list's type that the user may
+read, after the list's `filters:`. The list's query scope and page scope are not applied, so the
+script can receive more entities than the list shows. See
+[What a command permission actually confers](acl-security.md#what-a-command-permission-actually-confers).
 
 **`view`** — runs from view pages only. Receives the entry entity, all traversed collections,
 and relations between them.
@@ -8024,9 +8305,9 @@ and relations between them.
 
 #### Redacted and inaccessible properties
 
-Entities on stdin are the same ACL-filtered entities the page rendered, so a
-property hidden from the current user by a `visible:` rule is **absent from
-`properties`**. Absence alone is ambiguous — the property may simply never have
+Entities on stdin pass the same ACL filtering as the page: the row gate and
+field redaction. A property hidden from the current user by a `visible:` rule
+is **absent from `properties`**. Absence alone is ambiguous — the property may simply never have
 been set — so the payload names the withheld ones:
 
 ```json
@@ -8730,7 +9011,7 @@ the document is refused rather than served to everyone.
 **Only `read` is accepted.** A render is served on a `GET`, so `write` and
 `read+write` are a config error: elevated writes there would not be idempotent
 (browsers prefetch, users refresh, the SPA retries) and would foreclose caching
-an otherwise principal-independent render. Put them in an automation action or
+an otherwise principal-independent render. Put them in a trigger script or
 a schedule instead.
 
 Note what this rule does and does not do. A document script *can* already write
@@ -9799,11 +10080,11 @@ a `403` naming it. A source the caller may not read produces the same `404` as
 a source that does not exist. Any other refusal, such as an unknown definition
 or a cross-entity copy without a `target_id`, is a `422`.
 
-A copy also runs the automations of the face it writes (see
-[Automations on a copy](metamodel.md#automations-on-a-copy)). A value an
-automation sets must make a legal state change, or the copy is refused as an
+A copy also runs the triggers of the face it writes (see
+[Triggers on a copy](flows.md#triggers-on-a-copy)). A value a
+trigger sets must make a legal state change, or the copy is refused as an
 ordinary update with that change would be, and nothing is written. When an
-automation step after the write fails, the copy stays written and the response
+trigger step after the write fails, the copy stays written and the response
 carries a warning:
 
 ```json
@@ -9884,7 +10165,7 @@ and the body saves as an ordinary edit.
 
 `warnings` holds the create's soft validation findings, as on any create. It
 also holds `follow_up_failed` when the entity and relation were saved but a
-step after the save, such as an automation, failed. The entity exists in both
+step after the save, such as a trigger, failed. The entity exists in both
 cases, so the editor still updates the item.
 
 | Situation | Response |
@@ -9987,7 +10268,7 @@ The Configure space lets an operator change the configuration from the web
 app. It edits two files:
 
 - the **data model** in `schema.yaml`: entity types, properties, choice lists,
-  relations, query scopes, rules, automations and comments;
+  relations, query scopes, rules and comments;
 - the **screens** in `data-entry.yaml`: navigation, forms, lists, boards,
   detail views, calendars, timelines and the dashboard.
 
@@ -10000,9 +10281,13 @@ so it survives a page reload. The draft stays until you save or discard it.
 
 Review lists every change in the draft. It also checks the draft the way the
 server does at startup. Every expression and filter is compiled: conditions on
-rules, automations, transitions and query scopes, and list and view filters.
-Review shows each problem with its location, and a save with a problem is
-refused with 422 before any file is written.
+rules, transitions and query scopes, and list and view filters. Review also
+checks the [triggers](flows.md#triggers) in `flows.yaml` against the draft
+schema, because a schema change can break a trigger that names a type,
+property or relation. Review shows each problem with its location, and a
+save with a problem is refused with 422 before any file is written.
+
+The Configure space does not edit triggers. Edit `flows.yaml` directly.
 
 Saving then does four things:
 
@@ -10071,8 +10356,7 @@ Locked in `schema.yaml`:
 - external commands and upload policy: `attachments`, `transforms`, and a
   property's `accept`, `scan`, `scan_cmd` and `transform`;
 - Lua and what a script may reach: a validation's `lua`, `lua_file` and
-  `lua_args`, and an automation action's `lua`, `lua_file`,
-  `allow_acl_bypass`, `capabilities` and `create_entity.template`;
+  `lua_args`;
 - a transition's `guard`;
 - `version` and `includes`;
 - sections the Configure space does not cover yet, such as `copies`, `worlds`,
@@ -10087,14 +10371,13 @@ Locked in `data-entry.yaml`:
 - sections the Configure space does not cover yet, such as `documents`,
   `feeds`, `pages`, `next_actions`, `palette`, `commands` and `webhooks`.
 
-You may remove a whole item, such as a property, a form or an automation. The
+You may remove a whole item, such as a property or a form. The
 exception is an item that holds a setting that restricts access or uploads:
 `accept`, `scan`, a transition `guard`, a `permission:`,
 `app.disable_custom_injection` or `app.max_attachment_bytes`. Change such an
 item in the file directly. For the same reason, the `from` and `to` of a
 transition with a `guard` cannot change in the app. Nor can the records that
-Lua code applies to: the `on:` block of an automation that runs Lua or may
-bypass the ACL, and the `entity_type`, `when` and `when_condition` of a
+Lua code applies to: the `entity_type`, `when` and `when_condition` of a
 validation that runs Lua.
 
 Other limits:

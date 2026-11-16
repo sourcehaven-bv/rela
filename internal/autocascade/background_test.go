@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 )
 
 type recordingBackground struct {
@@ -25,7 +25,7 @@ func backgroundRequest() autocascade.Request {
 	trigger.Face = "draft"
 	return autocascade.Request{
 		Trigger: trigger,
-		Result: &automation.Result{LuaToExecute: []automation.LuaToExecute{
+		Result: &triggers.Result{LuaToExecute: []triggers.LuaToExecute{
 			{FilePath: "push.lua", AutomationName: "push", Background: true},
 		}},
 	}
@@ -36,7 +36,7 @@ func backgroundRequest() autocascade.Request {
 func TestRunnerEnqueuesBackgroundAction(t *testing.T) {
 	t.Parallel()
 	bg := &recordingBackground{}
-	r, err := autocascade.New(autocascade.Deps{Engine: automation.NewEngine(nil), Background: bg})
+	r, err := autocascade.New(autocascade.Deps{Engine: triggers.NewEngine(nil), Background: bg})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestRunnerBackgroundErrors(t *testing.T) {
 		"none":    nil,
 		"refused": &recordingBackground{err: errors.New("queue closed")},
 	} {
-		r, err := autocascade.New(autocascade.Deps{Engine: automation.NewEngine(nil), Background: bg})
+		r, err := autocascade.New(autocascade.Deps{Engine: triggers.NewEngine(nil), Background: bg})
 		if err != nil {
 			t.Fatal(err)
 		}

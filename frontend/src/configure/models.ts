@@ -274,7 +274,7 @@ export function relationSentence(
     : `A ${names(r.from)} ${r.label || '…'} a ${names(r.to)}`
 }
 
-// --- Rules and automations ---
+// --- Rules ---
 
 export interface RuleModel {
   index: number
@@ -317,107 +317,6 @@ export function rules(schema: TreeValue | undefined): RuleModel[] {
 
 export function ruleTitle(rule: Pick<RuleModel, 'name' | 'description' | 'index'>): string {
   return rule.description || (rule.name ? rule.name : `Rule ${rule.index + 1}`)
-}
-
-export interface ActionModel {
-  /** set, create_relation, create_entity, script or other. */
-  kind: string
-  summary: string
-  /** Runs a script or holds settings Configure does not edit. */
-  locked: boolean
-}
-
-export interface AutomationModel {
-  index: number
-  name: string
-  description: string
-  entityTypes: string[]
-  /** The trigger in words: `Status becomes Planning`. */
-  trigger: string
-  property: string
-  becomes: string
-  created: boolean
-  actions: ActionModel[]
-  /** Some action is locked, so the whole automation is shown read-only. */
-  readOnly: boolean
-}
-
-const LOCKED_ACTION_KEYS = ['lua', 'lua_file', 'capabilities', 'allow_acl_bypass']
-
-function actionModel(action: TreeValue): ActionModel {
-  const locked = LOCKED_ACTION_KEYS.some((k) => get(action, k) !== undefined)
-  if (locked) return { kind: 'script', summary: 'Run a script', locked: true }
-  const set = str(get(action, 'set'))
-  if (set !== undefined) {
-    return {
-      kind: 'set',
-      summary: `Set ${set} to ${str(get(action, 'value')) ?? '…'}`,
-      locked: false,
-    }
-  }
-  const rel = get(action, 'create_relation')
-  if (isMap(rel)) {
-    return {
-      kind: 'create_relation',
-      summary: `Link by ${str(get(rel, 'relation')) ?? '…'} to ${str(get(rel, 'to')) ?? '…'}`,
-      locked: false,
-    }
-  }
-  const ent = get(action, 'create_entity')
-  if (isMap(ent)) {
-    const template = get(ent, 'template') !== undefined
-    return {
-      kind: 'create_entity',
-      summary: `Create a ${str(get(ent, 'type')) ?? 'record'}${
-        str(get(ent, 'relation')) ? `, linked by ${str(get(ent, 'relation')) ?? ''}` : ''
-      }${str(get(ent, 'if_exists')) === 'skip' ? ', unless one exists' : ''}`,
-      locked: template,
-    }
-  }
-  return { kind: 'other', summary: keys(action)[0] ?? 'action', locked: true }
-}
-
-export function automations(schema: TreeValue | undefined): AutomationModel[] {
-  const list = get(schema, 'automations')
-  if (!isList(list)) return []
-  return list.flatMap((auto, index) => {
-    if (!isMap(auto)) return []
-    const on = get(auto, 'on')
-    const property = str(get(on, 'property')) ?? ''
-    const becomes = str(get(on, 'becomes')) ?? ''
-    const created = bool(get(on, 'created'))
-    const actions = mapItems(get(auto, 'do')).map(actionModel)
-    let trigger = 'A record changes'
-    if (created) trigger = 'A record is created'
-    else if (bool(get(on, 'deleted'))) trigger = 'A record is deleted'
-    else if (property && becomes) trigger = `${property} becomes ${becomes}`
-    else if (property) trigger = `${property} changes`
-    else if (get(on, 'relation_created') !== undefined) trigger = 'A link is added'
-    else if (get(on, 'relation_removed') !== undefined) trigger = 'A link is removed'
-    if (get(on, 'copy') !== undefined) {
-      trigger = trigger === 'A record changes' ? 'A copy runs' : `${trigger}, by a copy`
-    }
-    return [
-      {
-        index,
-        name: str(get(auto, 'name')) ?? '',
-        description: str(get(auto, 'description')) ?? '',
-        entityTypes: strList(get(on, 'entity')),
-        trigger,
-        property,
-        becomes,
-        created,
-        actions,
-        readOnly: actions.some((a) => a.locked) || get(on, 'faces') !== undefined,
-      },
-    ]
-  })
-}
-
-export function automationTitle(
-  a: Pick<AutomationModel, 'name' | 'description' | 'index'>
-): string {
-  return a.description || (a.name ? a.name : `Automation ${a.index + 1}`)
 }
 
 // --- Screens ---

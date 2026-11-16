@@ -21,12 +21,12 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -59,6 +59,7 @@ type testConfig struct {
 	comments    *comments.Service
 	channels    *appbuild.ChannelCollaborators
 	outputs     realtime.OutputWriter
+	triggers    []triggers.Rule
 }
 
 // auditOrNop is the configured audit sink, or [audit.Nop] when none was set.
@@ -105,6 +106,12 @@ func (c *testConfig) aclOrNop() acl.ACL {
 // (omit WithStore) which wires the observer automatically.
 func WithStore(s store.Store) Option {
 	return func(c *testConfig) { c.store = s }
+}
+
+// WithTriggers wires the trigger engine with rules, as a flows.yaml
+// `triggers:` block would. Without it the fixture runs no triggers.
+func WithTriggers(rules []triggers.Rule) Option {
+	return func(c *testConfig) { c.triggers = rules }
 }
 
 // WithFS overrides the default in-memory filesystem and project
@@ -233,7 +240,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 	searcher := resolveSearcher(st, searchBackend)
 	readDeps := buildReadDeps(st, tr, searcher, meta, cfg.paths, world)
 
-	autoEngine, cascadeRunner := buildAutomation(meta, st)
+	autoEngine, cascadeRunner := buildAutomation(meta, cfg.triggers, st)
 	templater := templating.NewFSTemplater(cfg.fs, cfg.paths)
 	cfgLoader := config.NewFSLoader(cfg.fs, cfg.paths.Root)
 	stateKV := mustBuildStateKV(cfg.fs, cfg.paths)
@@ -427,15 +434,17 @@ func buildReadDeps(st store.Store, tr tracer.Tracer, searcher search.Searcher,
 	}
 }
 
-func buildAutomation(meta *metamodel.Metamodel, st store.Store) (*automation.Engine, *autocascade.Runner) {
-	if len(meta.Automations) == 0 {
+func buildAutomation(
+	meta *metamodel.Metamodel, rules []triggers.Rule, st store.Store,
+) (*triggers.Engine, *autocascade.Runner) {
+	if len(rules) == 0 {
 		return nil, nil
 	}
 	traversals, err := relresolve.NewStoreBinder(meta, relresolve.Ungated, st)
 	if err != nil {
 		panic(fmt.Sprintf("appbuildtest.New: build traversal binder: %v", err))
 	}
-	autoEngine, err := automation.NewEngineFromMetamodel(meta, meta.Automations, automation.WithTraversals(traversals))
+	autoEngine, err := triggers.New(meta, rules, triggers.WithTraversals(traversals))
 	if err != nil {
 		panic(fmt.Sprintf("appbuildtest.New: build automation engine: %v", err))
 	}

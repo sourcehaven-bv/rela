@@ -13,6 +13,20 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
 
+// IDTakenFolded implements store.FoldedIDReader as one indexed probe of
+// the live, the marked and the retired rows. A retired row counts unless its
+// successor is the except family, which retireID lets reclaim its own id.
+func (s *Store) IDTakenFolded(ctx context.Context, id, except string) (bool, error) {
+	var taken bool
+	err := s.q().QueryRowContext(ctx, `SELECT
+		EXISTS (SELECT 1 FROM entities WHERE lower(id) = lower(?1) AND lower(id) <> lower(?2))
+		OR EXISTS (SELECT 1 FROM marked_entities WHERE lower(id) = lower(?1) AND lower(id) <> lower(?2))
+		OR EXISTS (SELECT 1 FROM retired_ids
+			WHERE (lower(id) = lower(?1) OR lower(successor) = lower(?1)) AND lower(successor) <> lower(?2))`,
+		id, except).Scan(&taken)
+	return taken, err
+}
+
 // HighestID returns the highest number among the ids in the series of
 // prefix, for sequential id generation.
 //

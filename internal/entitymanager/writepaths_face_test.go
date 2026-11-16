@@ -10,9 +10,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -61,14 +61,14 @@ func newCascadeFaceManager(t *testing.T, st store.Store) (*entitymanager.Manager
 	if err != nil {
 		t.Fatalf("metamodel.Parse: %v", err)
 	}
-	engine := automation.NewEngine([]automation.Automation{{
+	engine := triggers.NewEngine([]triggers.Rule{{
 		Name: "checklist-on-review",
-		On:   automation.Trigger{Entity: []string{"policy"}, Property: "status", Becomes: "review"},
-		Do: []automation.Action{
-			{CreateEntity: &automation.CreateEntityAction{
-				Type: "checklist", Relation: "has-checklist", IfExists: automation.IfExistsReplace,
+		On:   triggers.Trigger{Entity: []string{"policy"}, Property: "status", Becomes: "review"},
+		Do: []triggers.Action{
+			{CreateEntity: &triggers.CreateEntityAction{
+				Type: "checklist", Relation: "has-checklist", IfExists: triggers.IfExistsReplace,
 			}},
-			{CreateRelation: &automation.CreateRelationAction{Relation: "implements", To: "CTL-1"}},
+			{CreateRelation: &triggers.CreateRelationAction{Relation: "implements", To: "CTL-1"}},
 		},
 	}})
 	runner, err := autocascade.New(autocascade.Deps{Engine: engine})

@@ -145,7 +145,7 @@ func TestHandleListEntities_PushedFilterMatchesGoFilter(t *testing.T) {
 	t.Parallel()
 	srv, _ := newListBudgetServer(t, 9)
 	d := snapshotFor(context.Background(), srv).deps
-	prog, err := compileListFilter(d.Meta, "requirement", "entity.status == 'accepted'", true)
+	prog, err := compileListFilter(d.Meta, d.Related, "requirement", "entity.status == 'accepted'")
 	if err != nil {
 		t.Fatal(err)
 	}

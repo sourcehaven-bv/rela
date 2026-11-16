@@ -139,9 +139,6 @@ func TestShapeProjectionHash_CosmeticEditsDoNotMoveIt(t *testing.T) {
 		"validations": func(m *Metamodel) {
 			m.Validations = []ValidationRule{{}}
 		},
-		"automations": func(m *Metamodel) {
-			m.Automations = []AutomationDef{{}}
-		},
 	}
 
 	for name, mutate := range cosmetic {

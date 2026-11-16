@@ -291,7 +291,10 @@ A few writes concern the whole entity rather than one face. Each is decided
 from grants and from the faces the caller can read, and never from the faces
 the entity happens to store. A decision that read the stored faces would
 answer differently when a face hidden from the caller existed, and so reveal
-it. The error text names no face for the same reason.
+it. The error text names no face for the same reason. Two exceptions are
+known: a whole-entity delete still needs the grant on every face
+(TKT-Z47F27), and the records owner gate compares the stored faces with the
+readable ones (see "Records" and "What still leaks").
 
 **Renaming.** A rename changes the id of every face, hidden ones included. It
 is granted for the whole entity by a `rename:` grant on the type:
@@ -622,8 +625,8 @@ Load-bearing details:
   else, so provisioning gives the principal a graph *identity* but **no
   group membership or local roles**. This is deliberate: the on-create
   cascade authorizes as `system:provisioner`, which cannot author
-  relations, so an on-create automation that adds a `member-of` edge would
-  fail. An on-create automation that only sets *properties* runs fine.
+  relations, so a `created` trigger that adds a `member-of` edge would
+  fail. A `created` trigger that only sets *properties* runs fine.
   Group/local-role assignment for a newly-provisioned user is your
   responsibility — via the IdP webhook, a reconciliation job, or an admin.
   The stub is not inert in the meantime: the principal's **asserted roles
@@ -695,8 +698,10 @@ IdP webhook receiver (`POST /webhooks/idp`) can therefore store the IdP role
 names of a user, and the child then holds the rela roles they map to
 (TKT-IZL6NX8).
 
-- **Who writes.** Only the webhook receiver, after it verified the webhook
-  signature. Its action returns `asserted_roles = { ... }`, and the
+- **Who writes.** Only the webhook receiver can store roles, after it
+  verified the webhook signature. A delete or rename of the bound entity, and
+  `rela acl forget-idp-roles`, can only erase them (see "Erased with the
+  person" below). The receiver's action returns `asserted_roles = { ... }`, and the
   receiver stores that list for the subject (`user_id`) of the verified
   webhook. The script cannot name another subject. An empty list clears the
   subject. An action that reports an error (`message_type = "error"`, with or
@@ -711,7 +716,9 @@ names of a user, and the child then holds the rela roles they map to
   store, rewritten under a lock. On postgres that is the tenant's state table
   with an advisory lock, shared by every process. On sqlite it is the state
   table in `.rela/rela.db`. On the file store it is `idp-roles.json` in the
-  cache directory with lock files. No entity write reaches it. Without a
+  cache directory with lock files. No entity write stores roles in it; a
+  delete or rename of the bound entity through the entity manager only
+  erases its record. Without a
   cache directory the roles are kept in process memory and a warning is
   logged. Each store or clear writes an `idp-roles-set` audit record that
   names the bound entity and the role count, never the IdP subject or the
@@ -728,7 +735,12 @@ names of a user, and the child then holds the rela roles they map to
   administrators only all the same: the next webhook for that subject would
   bind to whoever holds it.
 - **Erased with the person.** Deleting the bound user entity, or renaming
-  it, removes its record. For an erasure request about a person,
+  it, through the entity manager removes its record. A writer that goes to
+  the store directly (see "Writes need read access to the row") does not,
+  and a failed erase is logged, not returned. A leftover record grants
+  nothing unless that entity id is issued again, and it stays until the
+  next webhook for the subject or `rela acl forget-idp-roles`. For an
+  erasure request about a person,
   `rela acl forget-idp-roles <entity-id>` removes the records bound to that
   entity, also when the entity was already deleted. Both write an
   `idp-roles-set` audit record with `roles=0`.
@@ -743,7 +755,9 @@ names of a user, and the child then holds the rela roles they map to
   requests do not use stored roles.
 
 **Revocation depends on webhook delivery.** A stored role lasts until the
-next webhook for that user replaces or clears it. If the IdP does not send a
+next webhook for that user replaces or clears it, or until the bound entity
+is deleted or renamed through the entity manager, or
+`rela acl forget-idp-roles` erases it. If the IdP does not send a
 webhook when a role is removed, or delivery fails for good, the role stays.
 Stored roles do not expire on their own. The store is keyed by subject, not
 by org, so with several orgs the last webhook wins, and the receiver does not
@@ -1154,13 +1168,15 @@ which gates it the same way.
 
 The entity manager applies the same rule, so it also holds for writes
 that do not come through HTTP: the remote MCP, Lua scripts and actions,
-webhooks, scheduled tasks, automation jobs and CalDAV.
+webhooks, scheduled tasks, background trigger jobs and CalDAV.
 
 - An update, patch, delete, soft delete, rename or version tag of a row
   the caller cannot read fails as not found, before the write is
   authorized. A whole-entity delete or rename passes this check when the
-  caller can read at least one face, and then needs the grant on every
-  face; a hidden face can therefore still change its answer (TKT-Z47F27).
+  caller can read at least one face. A delete then needs the grant on
+  every face, so a hidden face can still change its answer (TKT-Z47F27).
+  A rename is authorized once for the whole entity from the caller's
+  `rename:` grants, so a hidden face does not change its answer.
 - A relation create, update or delete fails as not found when the caller
   cannot see the edge. The head needs a readable face. The tail needs a
   readable face, or the named face when the edge is tailed at one. A
@@ -1177,8 +1193,8 @@ webhooks, scheduled tasks, automation jobs and CalDAV.
   allowed.
 
 Writes without a read policy are exempt: a project without `acl.yaml`,
-`rela.bypass_acl`, automation cascades, and the writers that go to the
-store directly (data migrations, import, normalize).
+`rela.bypass_acl`, trigger cascades, and the writers that go to the
+store directly (data migrations, import without `--mapping`, normalize).
 
 ### The `rela` CLI gates writes, not reads
 
@@ -1569,9 +1585,9 @@ A project with **no** `acl.yaml` is unaffected: that is a deliberate
 "no access control" configuration, not a fault, and scripts there read
 the full graph exactly as they always have.
 
-**When an automation legitimately needs more than its caller can see**,
-the sanctioned route is `rela.bypass_acl`, not widening the policy. In an
-automation, its `admin` handle carries `get_entity`, `list_entities` and
+**When a trigger script legitimately needs more than its caller can see**,
+the sanctioned route is `rela.bypass_acl`, not widening the policy. In a
+trigger script, its `admin` handle carries `get_entity`, `list_entities` and
 `get_relations` beside the write methods, and all of them read raw. That
 keeps the privilege scoped to a closure and visible at the call site, and
 it leaves an `acl-bypass-read` audit row. Relaxing a role in `acl.yaml`
@@ -1581,7 +1597,7 @@ to show for it.
 The operator opts in with `allow_acl_bypass:` on the script's config
 entry, and the value depends on where the script runs:
 
-- An automation action in `schema.yaml` takes `read`, `write` or
+- A trigger's `script:` output in `flows.yaml` takes `read`, `write` or
   `read+write`.
 - A `documents:` entry takes `read`.
 - A data-entry action takes only `write`. That gives `admin.update_entity`
@@ -1650,11 +1666,11 @@ which row is written:
   `update` do not restrict a data-entry action script, elevated or not.
   Elevation adds one thing: the write skips the row-level `update:`
   grant.
-- **Same-entity automations are part of the write.** An on-update
-  automation `set` on the same entity is stored with the elevated update
-  and is not checked against `elevated_updates:`. A cascade the write
-  triggers, such as `create_entity` or `run_script`, runs with the
-  caller's normal access.
+- **Same-entity triggers are part of the write.** A trigger's `set`
+  output on the same entity is stored with the elevated update and is not
+  checked against `elevated_updates:`. A cascade the write starts, such as
+  a trigger's `create` or `script` output, runs with the caller's normal
+  access.
 
 Elevation lifts only the role grants. Every other write check still
 applies, through the same code as a normal write, and a refusal is a 403
@@ -1823,8 +1839,8 @@ The check covers the properties the caller sends. Like the data-entry API,
 it refuses a property the schema does not declare, unless a grant names it.
 It does not cover:
 
-- template defaults and automation output, including automation `script:`
-  actions;
+- template defaults and trigger outputs, including trigger `script:`
+  outputs;
 - `_actions` scripts and other server-side writes, which act for the
   operator's configuration rather than for a caller's input;
 - the `rela` CLI and `rela mcp` over stdio, whose user can edit the data
@@ -1837,7 +1853,7 @@ Row grants apply on all of these.
 
 **Upgrading.** A scheduled task now fails to write a property its principal
 may not write. Grant the task's principal (`system:scheduler`, or its
-`run_as` user) the field, or move the write into an automation. A field is
+`run_as` user) the field, or move the write into a trigger. A field is
 writable when any role the principal holds allows it: a role with a
 `fields:` block for the type allows the fields it names, and a role without
 one allows every field if it may update the type. So either name the field
@@ -1946,6 +1962,36 @@ that rolls back (SQLite, PostgreSQL); other stores answer 501.
   `denied-write`, as on a single create.
 - **Scripts and agents may call it without a browser origin,** like the data
   routes. A request with a cookie keeps the same-origin check.
+
+## Records
+
+`/api/v1/_records` serves time-series and ledger rows owned by entities
+(TKT-J7Q9C4K, DEC-7B6DNZQ). Record types have no grants of their own.
+
+- **Rows follow their owner's row gate.** A caller reads an owner's rows
+  only when it can read every stored face of the owner. Otherwise the owner
+  is missing, and the request answers 404 like an id that does not exist.
+- **Appending needs update on every face.** A face the caller cannot read
+  refuses the append. A reversal needs update on every owner in the
+  transaction.
+- **The owner gate reads the stored faces.** Both checks compare the number
+  of stored faces with the number the caller can read. So a caller who reads
+  only some faces of an owner learns that a hidden face exists: list
+  answers 404, an aggregate that names the owner in its `Owners` filter
+  answers 404, and append answers 403, where a fully readable owner answers
+  200 or 201. An aggregate without an owner filter answers 200 and leaves
+  the owner's rows out. This is listed under "What still leaks".
+- **Aggregates gate before they fold.** An aggregate or a ledger
+  transaction counts only rows whose owners the caller can read. A
+  transaction with a hidden leg answers 404.
+- **Closing a period is ordered against postings** on SQLite and
+  PostgreSQL. The owner check, the lock-date read and the insert run under
+  the store's write lock.
+- **Rows leave with their owner.** A database trigger drops the rows when
+  the owner's last face is deleted, and moves them on rename, in the entity
+  write's own transaction. An id used again later starts with no rows.
+- **Scripts and agents may call it without a browser origin,** like the
+  batch route. A request with a cookie keeps the same-origin check.
 
 ## Reconcile
 
@@ -2486,6 +2532,20 @@ the key; this section covers what it means for `acl.yaml`.
 
 ## What still leaks (deferred)
 
+- **The records owner gate shows that a hidden face exists.** A caller who
+  can read some faces of an owner, but not all, gets 404 on the owner's
+  records list and aggregate and 403 on append. A caller who reads every
+  face gets 200 or 201. The answer therefore tells the caller that the owner
+  has a face it cannot read. It shows nothing about that face's name or
+  content. Rows belong to the whole family, so the gate must refuse them
+  when a face is hidden (`TestRecords_HiddenFaceHidesRows`,
+  `TestRecords_HiddenFaceRefusesAppend`).
+- **Ledger group keys are unique per record type.** A posting whose key
+  is already in use answers 409, even when the existing transaction belongs
+  to owners the caller cannot read. A caller who may post can learn that a
+  key exists. Use keys that reveal nothing on their own. The key is checked
+  before the closed period, so a reused key answers 409 whatever its date
+  and does not reveal a lock date the caller cannot see.
 - **`/api/v1/_position` per-id semantics** — `_position` is gated on
   both scope sources: list scopes share the gated list pipeline, and
   search scopes filter the search result through the read gate before
@@ -2828,7 +2888,7 @@ unknown one, so cancellation cannot be used to probe what else is running.
 
 ### What a command permission actually confers
 
-**Command payloads are read-gate scoped in the entity context only.** A
+**Command payloads are read-gate scoped in the entity and list contexts.** A
 command's stdin JSON leaves the process, so what it carries matters as much as
 who may run it. Granting `command:<something>` confers **read access to
 whatever that command's context assembles**, not merely the right to run a
@@ -2837,14 +2897,16 @@ script:
 | context | what the script receives | scoped by |
 | ------- | ------------------------ | --------- |
 | `entity` | the entity at the caller-supplied `entity_id`, plus its incident relations | the row gate, the face gate and field redaction on the entity; a relation travels only when both endpoints are readable (a content-scoped tail at its own face), and an outgoing content-scoped edge only with the face the entity is served at |
-| `list` | every entity in the caller-supplied `list_id`, post-filter | nothing — any configured list (TKT-2FDTJE) |
+| `list` | every readable entity of the type of the caller-supplied `list_id`, post-filter | the row gate, the face allowlist and field redaction; the list's own `filters:` run on the redacted rows; the list's query and page scope are not applied |
 | `global` | project paths only | n/a |
 | `view` | the entry entity plus the entire traversal closure | *not grantable — see below* |
 
 Note the `entity_id` and `list_id` come from the request, not from whatever
 page the user was on: `available_on` restricts where a **button appears**, not
-what a command may be pointed at. Treat a command grant as "may read every
-entity of this shape", and scope grants accordingly.
+what a command may be pointed at. A list-context script receives every row of
+the list's type that the principal may read, which can be more than the list
+shows. Treat a command grant as "may hand everything the principal can read of this
+shape to the script", and scope grants accordingly.
 
 **`context: view` cannot be granted per-command at all.** View commands are
 denied outright under any configured `acl.yaml`; `permission:` on a view
@@ -3079,7 +3141,11 @@ other read:
   value makes the next pull write the remote's value into the local row, so
   it needs `update` on the row and write access to every field the entry
   names, asked as the write path asks it (`fields:` and `visible:` for an
-  entity, the relation's field grants for a relation). A link makes the
+  entity, the relation's field grants for a relation). Taking the remote
+  side of a `remote_deleted` entry makes the next pull delete the row, so it
+  needs the right to delete the row instead, asked as the DELETE route asks
+  it. For an entity of a faced type it is refused, because the pull deletes
+  the whole family by bare id. A link makes the
   next sync merge the remote row into the local one and set its `ref`, so it
   needs the same rights on every field the create sent. Dismissing
   changes only the conflict list. Keeping the local value changes no local

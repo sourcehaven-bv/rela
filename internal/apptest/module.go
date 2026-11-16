@@ -37,7 +37,10 @@ const day = 24 * time.Hour
 //
 // Actor methods (colon syntax): create(type, props, opts), update(ref, props,
 // opts), transition(ref, value, prop), delete(ref, opts), link(from, type, to,
-// props), unlink(from, type, to), get(ref), list(type), start_flow(name, ref).
+// props), unlink(from, type, to), get(ref), list(type), related(ref, type),
+// start_flow(name, ref). related returns the targets of ref's outgoing
+// relations of type that the actor may read, each once, ordered by id, or
+// nil when the actor cannot read ref.
 // A ref is an id, an "ID@face" address or an entity table. A failed write
 // raises an error.
 //

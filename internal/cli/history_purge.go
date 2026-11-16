@@ -107,7 +107,15 @@ func (c *HistoryPurgeCmd) Run(ctx context.Context, svc *writeServices, ws schedu
 	// their keys makes it unreadable (TKT-RJS3KKJ). The version purge stands
 	// if this fails, so it is reported, not returned.
 	if svc.State != nil && final.Purged > 0 {
-		if err := appbuild.PurgeDeletedJobStates(ctx, svc.State, svc.Meta, ref.ID); err != nil {
+		// An unreadable flows.yaml still erases the keys already written. The
+		// guard against a job queued during the purge then fails closed: it
+		// writes a new generation as if an `on.deleted` trigger existed.
+		rules, rErr := appbuild.LoadTriggers(ctx, svc.Config, svc.Meta)
+		if rErr != nil {
+			out.WriteWarning("Could not read the flows.yaml triggers: %v", rErr)
+		}
+		guard := rErr != nil || appbuild.HasDeletedTriggers(rules)
+		if err := appbuild.PurgeDeletedJobStates(ctx, svc.State, guard, ref.ID); err != nil {
 			out.WriteWarning("Could not erase the deleted state of pending automation jobs for %s: %v", ref.ID, err)
 		}
 	}

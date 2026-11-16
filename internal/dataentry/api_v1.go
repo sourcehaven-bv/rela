@@ -212,6 +212,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc(batchPath, a.batch.handleV1Batch)
 	mux.HandleFunc(reconcilePath, a.reconcile.handleV1Reconcile)
 	mux.HandleFunc(leasesPath+"/", a.leases.handleV1Leases)
+	registerRecordsRoutes(mux, a)
 	mux.HandleFunc(flowsPath, a.flows.handleV1Flows)
 	mux.HandleFunc(flowsPath+"/", a.flows.handleV1Flows)
 	mux.HandleFunc(remotesPath, a.remotes.handleV1Remotes)
@@ -508,6 +509,9 @@ func scopedSortedEntitiesScoped(
 	pageIDs, ordering, pageScoped, err := resolvePageScope(ctx, a, params, typeName)
 	if err != nil {
 		return nil, nil, err
+	}
+	if query.reach != nil {
+		pageIDs, pageScoped = narrowToReach(pageIDs, pageScoped, query.reach), true
 	}
 	// The verdict switch, the world scope, the face allowlist and the query
 	// scope all live in scopedHeaders (scopedread.go) — see its doc for why
@@ -2009,11 +2013,16 @@ func resolveFilterControlDirections(
 }
 
 // resolveKanbanDirections returns a copy of kanbans with card-field and
-// filter-control directions materialized.
+// filter-control directions materialized, and each cell color's style class.
 func resolveKanbanDirections(s *Schema, kanbans map[string]dataentryconfig.Kanban) map[string]dataentryconfig.Kanban {
+	var operator map[string]dataentryconfig.OperatorColor
+	if s.Cfg != nil {
+		operator = s.Cfg.OperatorColors()
+	}
 	out := make(map[string]dataentryconfig.Kanban, len(kanbans))
 	for id, kanban := range kanbans {
 		k := kanban
+		k.CellColors = dataentryconfig.ResolveKanbanCellClasses(k.CellColors, operator)
 		if len(k.Card.Fields) > 0 {
 			fields := make([]dataentryconfig.KanbanCardField, len(k.Card.Fields))
 			copy(fields, k.Card.Fields)

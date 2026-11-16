@@ -50,6 +50,13 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 		}
 	}
 
+	// Without record types in the schema the record routes answer 404.
+	if rs := appbuild.Records(svc); rs != nil {
+		if err := dataentry.SetRecords(app, rs); err != nil {
+			return fmt.Errorf("wire records: %w", err)
+		}
+	}
+
 	// Without flows in flows.yaml the flow routes answer 404.
 	if ctl := appbuild.FlowControlFor(svc); ctl != nil {
 		if err := dataentry.SetFlows(app, ctl); err != nil {
@@ -100,8 +107,16 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 	if err != nil {
 		return fmt.Errorf("wire attach_render: %w", err)
 	}
-	if err := appbuild.SetAttachRenderer(svc, renderer); err != nil {
+	if err = appbuild.SetAttachRenderer(svc, renderer); err != nil {
 		return fmt.Errorf("wire attach_render: %w", err)
+	}
+	// rela.attach_file for the same scripts (TKT-36DHKH8).
+	filer, err := dataentry.AttachFiler(app)
+	if err != nil {
+		return fmt.Errorf("wire attach_file: %w", err)
+	}
+	if err = appbuild.SetAttachFiler(svc, filer); err != nil {
+		return fmt.Errorf("wire attach_file: %w", err)
 	}
 
 	// `llm:` actions with `apply: auto` (TKT-WQ925LL): the route queues runs

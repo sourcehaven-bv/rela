@@ -54,7 +54,13 @@ const props = withDefaults(
     /** Whether each column heading offers a collapse control. See `RlBoard`. */
     collapsible?: boolean
   }>(),
-  { showAddSection: true, addLabel: undefined, showAdd: true, canMove: undefined, collapsible: false },
+  {
+    showAddSection: true,
+    addLabel: undefined,
+    showAdd: true,
+    canMove: undefined,
+    collapsible: false,
+  }
 )
 
 const emit = defineEmits<{
@@ -75,6 +81,10 @@ const emit = defineEmits<{
 
 defineSlots<{
   card?: (props: { item: T; selected: boolean; lane: Swimlane<T> }) => unknown
+  /** Forwarded to every open cell. See `RlSwimlaneColumn`. */
+  footer?: (props: { section: Section<T>; lane: Swimlane<T> }) => unknown
+  /** Takes the place of the add-section button when `showAddSection` is set. */
+  addSection?: () => unknown
 }>()
 
 const columns = computed(() => props.columns ?? props.lanes[0]?.sections ?? [])
@@ -83,15 +93,24 @@ const columns = computed(() => props.columns ?? props.lanes[0]?.sections ?? [])
 function columnCount(id: string) {
   return props.lanes.reduce(
     (n, lane) => n + (lane.sections.find((s) => s.id === id)?.items.length ?? 0),
-    0,
+    0
   )
 }
+
+/**
+ * Whether any cell carries a tone. Then every cell keeps the toned cell's
+ * padding and label row, toned or not, so cards line up down a column and
+ * across a lane. See `RlSwimlaneColumn`.
+ */
+const toned = computed(() =>
+  props.lanes.some((lane) => lane.sections.some((section) => section.tone)),
+)
 
 const element = ref<HTMLElement>()
 useBoardAutoScroll(element)
 
 const toggleFocus = useSectionToggleFocus(element, () =>
-  columns.value.map((column) => `${column.id}:${!!column.collapsed}`).join('|'),
+  columns.value.map((column) => `${column.id}:${!!column.collapsed}`).join('|')
 )
 
 function onExpand(id: string) {
@@ -146,7 +165,12 @@ const {
 </script>
 
 <template>
-  <div ref="element" class="rl-swimlane-board" @keydown="onKeydown">
+  <div
+    ref="element"
+    class="rl-swimlane-board"
+    :class="{ 'rl-swimlane-board--toned': toned }"
+    @keydown="onKeydown"
+  >
     <!--
       One header row, sticky to the top of the board's scroll, so the columns
       are still named twenty lanes down. It sits outside the lanes so its
@@ -192,12 +216,15 @@ const {
         />
       </template>
 
-      <RlAddButton
-        v-if="showAddSection"
-        class="rl-swimlane-board__add-section"
-        :label="messages.chromeText({ key: 'addSection' })"
-        @click="emit('addSection')"
-      />
+      <template v-if="showAddSection">
+        <slot name="addSection">
+          <RlAddButton
+            class="rl-swimlane-board__add-section"
+            :label="messages.chromeText({ key: 'addSection' })"
+            @click="emit('addSection')"
+          />
+        </slot>
+      </template>
     </div>
 
     <RlSwimlane
@@ -220,6 +247,9 @@ const {
     >
       <template v-if="$slots.card" #card="cardProps">
         <slot name="card" v-bind="cardProps" />
+      </template>
+      <template v-if="$slots.footer" #footer="footerProps">
+        <slot name="footer" v-bind="footerProps" />
       </template>
     </RlSwimlane>
 
@@ -250,7 +280,8 @@ const {
   gap: var(--rl-space-5);
   flex: 1;
   min-height: 0;
-  padding: var(--rl-space-5) var(--rl-page-gutter-right) var(--rl-space-5) var(--rl-page-gutter-left);
+  padding: var(--rl-space-5) var(--rl-page-gutter-right) var(--rl-space-5)
+    var(--rl-page-gutter-left);
   overflow: auto;
 }
 
@@ -259,8 +290,18 @@ const {
     --rl-swimlane-column-width: 85vw;
 
     gap: var(--rl-space-4);
-    padding: var(--rl-space-4) var(--rl-page-gutter-right) var(--rl-space-4) var(--rl-page-gutter-left);
+    padding: var(--rl-space-4) var(--rl-page-gutter-right) var(--rl-space-4)
+      var(--rl-page-gutter-left);
   }
+}
+
+/*
+ * With any toned cell, every cell takes the toned padding, so a plain cell's
+ * cards line up with a toned neighbour's. Set on the cell itself, where
+ * `--rl-swimlane-toned-padding` is defined, so it resolves there.
+ */
+.rl-swimlane-board--toned :deep(.rl-swimlane-column) {
+  --rl-swimlane-cell-padding: var(--rl-swimlane-toned-padding);
 }
 
 .rl-swimlane-board__columns {
@@ -290,7 +331,9 @@ const {
 }
 
 @media (max-width: 767px) {
-  .rl-swimlane-board__columns { gap: var(--rl-space-3); }
+  .rl-swimlane-board__columns {
+    gap: var(--rl-space-3);
+  }
 }
 
 .rl-swimlane-board__column-heading {
@@ -299,7 +342,9 @@ const {
   padding: 0 var(--rl-space-1);
 }
 
-.rl-swimlane-board__add-section { flex: none; }
+.rl-swimlane-board__add-section {
+  flex: none;
+}
 
 /*
  * The collapsed column's rail. Horizontal here, because the header row is one
@@ -320,7 +365,9 @@ const {
   cursor: pointer;
 }
 
-.rl-swimlane-board__column-collapsed:hover { background: var(--rl-color-bg-hover); }
+.rl-swimlane-board__column-collapsed:hover {
+  background: var(--rl-color-bg-hover);
+}
 
 .rl-swimlane-board__column-collapsed:focus-visible {
   outline: 2px solid var(--rl-color-focus);

@@ -10,8 +10,8 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -239,7 +239,7 @@ func (ce *copyEngine) copyState(ctx context.Context, req CopyRequest) (*CopyResu
 // for the cascade.
 func (ce *copyEngine) writeCopy(
 	ctx context.Context, req CopyRequest,
-) (*copyPlan, *automation.Result, *CopyResult, error) {
+) (*copyPlan, *triggers.Result, *CopyResult, error) {
 	def, ok := ce.m.deps.Meta.Copies[req.Definition]
 	if !ok {
 		return nil, nil, nil, fmt.Errorf("%w: %q", ErrUnknownCopy, req.Definition)

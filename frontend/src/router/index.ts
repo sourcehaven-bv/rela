@@ -275,17 +275,6 @@ routes.push({
       props: (route) => ({ index: Number(route.params.index) }),
     },
     {
-      path: 'automations',
-      name: 'configure-automations',
-      component: () => import('@/views/configure/AutomationsView.vue'),
-    },
-    {
-      path: 'automations/:index',
-      name: 'configure-automation',
-      component: () => import('@/views/configure/AutomationView.vue'),
-      props: (route) => ({ index: Number(route.params.index) }),
-    },
-    {
       path: 'navigation',
       name: 'configure-navigation',
       component: () => import('@/views/configure/NavigationView.vue'),

@@ -10,7 +10,6 @@
 import type { ConfigRename, TreeMap, TreeValue } from '@/api/configure'
 import { entries, equal, get, getIn, isList, isMap, keys, str, strList } from './tree'
 import {
-  automationTitle,
   choiceListLabel,
   choiceListNames,
   columnModel,
@@ -416,7 +415,7 @@ function namedChanges(
   return groups
 }
 
-/** Items of a list section (rules, automations, dashboard cards), matched by origin. */
+/** Items of a list section (rules, dashboard cards), matched by origin. */
 function itemChanges(
   before: TreeValue | undefined,
   after: TreeValue | undefined,
@@ -551,7 +550,7 @@ function navChanges(b: DraftTrees, a: DraftTrees): ChangeGroup[] {
   return groups
 }
 
-const HANDLED_SCHEMA = ['entities', 'types', 'relations', 'validations', 'automations']
+const HANDLED_SCHEMA = ['entities', 'types', 'relations', 'validations']
 const HANDLED_SCREENS = [
   'styles',
   'forms',
@@ -627,21 +626,6 @@ export function describeChanges(
       configureRoute.rules()
     )
     if (rules.length) groups.push({ key: 'rules', title: 'Rules', items: rules })
-    const autos = itemChanges(
-      get(b.schema, 'automations'),
-      get(a.schema, 'automations'),
-      'Automation',
-      (item, i) =>
-        automationTitle({
-          name: str(get(item, 'name')) ?? '',
-          description: str(get(item, 'description')) ?? '',
-          index: i,
-        }),
-      configureRoute.automation,
-      'Order of automations',
-      configureRoute.automations()
-    )
-    if (autos.length) groups.push({ key: 'automations', title: 'Automations', items: autos })
     const other = settingChanges(b.schema, a.schema, configureRoute.entityTypes(), HANDLED_SCHEMA)
     if (other.length) groups.push({ key: 'schema-other', title: 'Data model', items: other })
   }

@@ -231,9 +231,11 @@ const (
 	OpTokenDelete = "token-delete"
 
 	// OpIDPRolesSet records the IdP webhook storing or clearing the asserted
-	// roles of one principal (TKT-IZL6NX8). The subject is the bound user
-	// entity, when there is one; the summary gives the role count, never the
-	// IdP subject or the role names.
+	// roles of one principal (TKT-IZL6NX8), or the stored roles being erased
+	// with the person: a delete, a rename, or `rela acl forget-idp-roles`
+	// (summary roles=0). The subject is the bound user entity, when there is
+	// one; the summary gives the role count, never the IdP subject or the
+	// role names.
 	OpIDPRolesSet = "idp-roles-set"
 
 	// OpRemoteResolve, OpRemoteDismiss and OpRemoteLink record a change to

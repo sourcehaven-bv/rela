@@ -337,6 +337,21 @@ func readWithheld(ctx context.Context, rqr acl.ReadQueryResult) bool {
 	return worldFromContext(ctx).blocksAllReads() || rqr.DenyAll
 }
 
+// narrowToReach narrows a page scope's ids to reach, or returns reach when
+// no page scope applies.
+func narrowToReach(pageIDs map[string]bool, pageScoped bool, reach map[string]bool) map[string]bool {
+	if !pageScoped {
+		return reach
+	}
+	out := make(map[string]bool, min(len(pageIDs), len(reach)))
+	for id, ok := range pageIDs {
+		if ok && reach[id] {
+			out[id] = true
+		}
+	}
+	return out
+}
+
 // narrowingIDs is the id set a list read is narrowed to: the page scope's
 // rows, the `?q=` hits, or the rows in both when both apply. narrowed is
 // false when neither applies, and the read is then not narrowed at all.

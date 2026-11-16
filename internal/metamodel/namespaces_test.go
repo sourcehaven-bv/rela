@@ -44,12 +44,6 @@ validations:
   - name: task-has-title
     entity_type: task
     then: ["title!="]
-automations:
-  - name: stamp-done
-    on: { entity: task, property: status, becomes: done }
-    do:
-      - set: due
-        value: "{{today}}"
 comments:
   enabled: true
   on: [task]
@@ -84,11 +78,6 @@ validations:
   - name: evidence-set
     entity_type: task
     then: ["evidence!="]
-automations:
-  - name: link-control
-    on: { entity: task, created: true }
-    do:
-      - create_entity: { type: control, relation: addresses }
 `
 
 const nsProjects = `
@@ -182,25 +171,6 @@ func TestNamespaces_BareAbstractNameExpands(t *testing.T) {
 			t.Errorf("unexpected validation %q", rule.Name)
 		}
 	}
-	for _, a := range m.Automations {
-		switch a.Name {
-		case "stamp-done":
-			if !slices.Equal([]string(a.On.Entity), variants) {
-				t.Errorf("stamp-done on %v", a.On.Entity)
-			}
-		case "isms.link-control":
-			if !slices.Equal([]string(a.On.Entity), []string{"isms.task"}) {
-				t.Errorf("isms.link-control on %v", a.On.Entity)
-			}
-			c := a.Do[0].CreateEntity
-			if c.Type != "isms.control" || c.Relation != "isms.addresses" {
-				t.Errorf("create_entity = %+v", *c)
-			}
-		default:
-			t.Errorf("unexpected automation %q (included automations must merge)", a.Name)
-		}
-	}
-
 	if got, ok := VariantsOf(m, "task"); !ok || !slices.Equal(got, variants) {
 		t.Errorf("VariantsOf(task) = %v, %v", got, ok)
 	}
@@ -384,7 +354,7 @@ relations:
 	}
 }
 
-func TestNamespaces_QualifiesConstraintAndNotifyTargets(t *testing.T) {
+func TestNamespaces_QualifiesConstraintTargets(t *testing.T) {
 	isms := strings.Replace(nsISMS, "validations:\n", `validations:
   - name: task-has-control
     entity_type: task
@@ -406,24 +376,6 @@ func TestNamespaces_QualifiesConstraintAndNotifyTargets(t *testing.T) {
 		return
 	}
 	t.Fatal("isms.task-has-control not loaded")
-}
-
-func TestQualifyAction_Notify(t *testing.T) {
-	q := qualifier{
-		ns: "isms", errs: new([]string),
-		localEntities:  map[string]bool{"control": true},
-		localRelations: map[string]bool{"addresses": true},
-	}
-	act := AutomationAction{Notify: &NotifyAction{To: NotifyTarget{
-		Via: StringOrSlice{"addresses", "owned-by"}, Type: "control", Property: "owner",
-	}}}
-	qualifyAction(&act, q.entityRef, q.relationRef)
-	if got := []string(act.Notify.To.Via); !slices.Equal(got, []string{"isms.addresses", "owned-by"}) {
-		t.Errorf("via = %v", got)
-	}
-	if act.Notify.To.Type != "isms.control" {
-		t.Errorf("type = %q", act.Notify.To.Type)
-	}
 }
 
 func TestNamespaces_RefusesLocalNameInExpression(t *testing.T) {

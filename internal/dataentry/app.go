@@ -303,6 +303,10 @@ type App struct {
 	// [SetLeases], which is the "feature absent" signal; its methods accept
 	// a nil receiver.
 	leases *leasesHandler
+	// records owns the record routes (TKT-J7Q9C4K). Nil until [SetRecords],
+	// which is the "feature absent" signal; its methods accept a nil
+	// receiver.
+	records *recordsHandler
 	// channels owns the channel routes (TKT-ZU7P13). Nil until
 	// [SetChannels], which is the "feature absent" signal; its methods
 	// accept a nil receiver.
@@ -783,6 +787,13 @@ func (r lateGatedReader) ListEntityHeaders(
 
 func (r lateGatedReader) ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
 	return r.reader().ListRelations(ctx, q)
+}
+
+// ListRelationsPage resolves the gated reader per call, like ListRelations.
+func (r lateGatedReader) ListRelationsPage(
+	ctx context.Context, q store.RelationQuery,
+) (store.Page[*entity.Relation], error) {
+	return r.reader().ListRelationsPage(ctx, q)
 }
 
 // errNoStrictRelations reports a gated reader without the strict relation
@@ -1620,6 +1631,7 @@ func NewApp(
 		versionTags:      func() lua.VersionTagWriter { return app.versionTags.writer },
 		oauth:            func() lua.OAuthTokens { return app.oauth },
 		attachRender:     func() lua.AttachRenderer { return actionAttachRenderer(app) },
+		attachFile:       func() lua.AttachFiler { return actionAttachFiler(app) },
 		elevatedUpdates:  elevatedUpdatesFor(em),
 		fullScriptDetail: app.allowFullScriptDetail,
 		paths:            paths,

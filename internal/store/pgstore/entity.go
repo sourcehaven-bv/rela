@@ -254,6 +254,20 @@ func buildHighestIDSQL(prefix string) (sql string, args []any) {
 		[]any{strings.TrimSuffix(prefix, "-") + "-", strings.TrimSuffix(prefix, "-") + "."}
 }
 
+// IDTakenFolded implements store.FoldedIDReader as one indexed probe of
+// the live, the marked and the retired rows. A retired row counts unless its
+// successor is the except family, which retireID lets reclaim its own id.
+func (s *Store) IDTakenFolded(ctx context.Context, id, except string) (bool, error) {
+	var taken bool
+	err := s.db.QueryRow(ctx, `SELECT
+		EXISTS (SELECT 1 FROM entities WHERE lower(id) = lower($1) AND lower(id) <> lower($2))
+		OR EXISTS (SELECT 1 FROM marked_entities WHERE lower(id) = lower($1) AND lower(id) <> lower($2))
+		OR EXISTS (SELECT 1 FROM retired_ids
+			WHERE (lower(id) = lower($1) OR lower(successor) = lower($1)) AND lower(successor) <> lower($2))`,
+		id, except).Scan(&taken)
+	return taken, err
+}
+
 // HighestID returns the highest number among the ids in the series of
 // prefix, or 0. The range in SQL selects the candidates; which of them count
 // is decided in Go by [entity.SequentialNumber], the rule every backend

@@ -31,8 +31,14 @@ import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
  * `name` is a dashboard under `dashboards:` (TKT-5LQNLY), from
  * `/dashboard/<name>` or a page tab. Without it this is the default
  * dashboard, which the schema store prefetches.
+ *
+ * `anchor` is set by a `scope: root` tab of an entity page: the entity an
+ * entity dashboard (`entity_type:`) counts for. The server narrows each card
+ * to what the anchor reaches. An entity dashboard opened without an anchor,
+ * such as from a stale `/dashboard/<name>` bookmark, has nothing to count and
+ * says so.
  */
-const props = defineProps<{ name?: string }>()
+const props = defineProps<{ name?: string; anchor?: string }>()
 const { t } = useI18n()
 
 const schemaStore = useSchemaStore()
@@ -106,6 +112,10 @@ const dashboardConfig = computed(() => (props.name ? named.value : schemaStore.d
 const title = computed(() => dashboardConfig.value?.title || t('dashboardView.title'))
 const description = computed(() => dashboardConfig.value?.description)
 const cards = computed(() => dashboardConfig.value?.cards || [])
+// Every card of an entity dashboard has a scope, and no other card does.
+const entityDashboard = computed(() => cards.value.some((c) => !!c.scope))
+// An entity dashboard needs its anchor; without one no card is asked for.
+const anchorMissing = computed(() => entityDashboard.value && !props.anchor)
 
 // Methods
 // Bumped on every load, so a slow load for a dashboard the user has already
@@ -138,12 +148,16 @@ async function loadData() {
         throw err
       }
     }
+    if (anchorMissing.value) return
+    // An entity dashboard counts for the anchor only; a plain one never
+    // sends it, which the server would refuse.
+    const anchor = entityDashboard.value ? props.anchor : undefined
     // Load card data in parallel
     const cardPromises = cards.value.map(async (card) => {
       if (card.list) {
         // A list card counts in the page's world, as its list would.
         try {
-          const value = await getDashboardCard(props.name, card.index, worldParam.value)
+          const value = await getDashboardCard(props.name, card.index, worldParam.value, anchor)
           if (stale()) return
           if (valueMatches(card, value)) cardValues.value.set(cardKey(card), value)
         } catch (err) {
@@ -164,10 +178,13 @@ async function loadData() {
       })
     })
 
-    // Load analysis
-    const analysisPromise = analyze()
+    // The validation card covers the whole project, so an entity dashboard,
+    // which is about one entity, does not show it.
+    const analysisPromise = entityDashboard.value
+      ? Promise.resolve()
+      : analyze().then((r) => (analysisResult.value = r))
 
-    await Promise.all([...cardPromises, analysisPromise.then((r) => (analysisResult.value = r))])
+    await Promise.all([...cardPromises, analysisPromise])
   } catch (err) {
     if (stale()) return
     console.error('Dashboard load error:', err)
@@ -190,8 +207,11 @@ interface CardView {
   value?: DashboardCardValue
   /** A sum, avg, min or max card's formatted value; absent when it has none. */
   summary?: string
-  /** Where the card's link goes: its list, or the search for its query. */
-  link: RouteLocationRaw
+  /**
+   * Where the card's link goes: its list, or the search for its query.
+   * Absent on an entity dashboard, where the list would show the whole type.
+   */
+  link?: RouteLocationRaw
   /** True when a list card's value failed to load. */
   failed: boolean
 }
@@ -259,7 +279,7 @@ function buildRows(card: DashboardCardEntry, entities: Entity[]): Entity[] {
 const cardViews = computed<CardView[]>(() =>
   cards.value.map((card) => {
     const key = cardKey(card)
-    const link = cardLink(card)
+    const link = entityDashboard.value ? undefined : cardLink(card)
     if (card.list) {
       const value = cardValues.value.get(key)
       return {
@@ -334,7 +354,7 @@ onMounted(async () => {
 
 // The router reuses this view between two named dashboards, and a world
 // change recounts the list cards.
-watch([() => props.name, worldParam], () => void loadData())
+watch([() => props.name, () => props.anchor, worldParam], () => void loadData())
 </script>
 
 <template>
@@ -351,6 +371,13 @@ watch([() => props.name, worldParam], () => void loadData())
       :title="t('dashboardView.notFound')"
       :description="t('dashboardView.notFoundDescription', { name })"
       data-testid="dashboard-not-found"
+    />
+
+    <RlEmptyState
+      v-else-if="anchorMissing"
+      :title="t('dashboardView.anchorMissing')"
+      :description="t('dashboardView.anchorMissingDescription')"
+      data-testid="dashboard-anchor-missing"
     />
 
     <template v-else>
@@ -375,6 +402,7 @@ watch([() => props.name, worldParam], () => void loadData())
           <div class="card-header">
             <h3 :id="`dashboard-card-${view.key}-title`">{{ view.card.title }}</h3>
             <router-link
+              v-if="view.link"
               :to="view.link"
               class="card-link"
               :title="view.card.list ? t('dashboard.openList') : t('dashboard.viewInSearch')"
@@ -484,6 +512,7 @@ watch([() => props.name, worldParam], () => void loadData())
               :title="view.card.title"
               :toned="!!view.card.tone_by"
               :world="worldParam"
+              :unlinked="entityDashboard"
             />
             <div v-else class="no-data">{{ t('dashboard.noData') }}</div>
           </template>
@@ -502,7 +531,7 @@ watch([() => props.name, worldParam], () => void loadData())
       </div>
 
       <!-- Validation card -->
-      <div class="validation-card">
+      <div v-if="!entityDashboard" class="validation-card">
         <div class="card-header">
           <h3>&#9888; {{ t('dashboardView.validation') }}</h3>
           <router-link to="/analyze" class="card-link" :title="t('dashboardView.viewAnalysis')">

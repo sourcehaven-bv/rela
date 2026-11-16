@@ -572,6 +572,18 @@
       "createFailed": "Could not create the new {type} for {relation}: {reason}",
       "createUnlinked": "Created {id}, but could not add it as {relation}: {reason}. Link or delete it yourself.",
       "model": "Proposed by {model}"
+    },
+    "llmBatch": {
+      "intro": "The AI proposed changes for several entities at once. Nothing is saved until you apply them. Every change starts unticked: text in one entity can steer what the AI proposed for another, so read each change before you tick it.",
+      "confirm": "Send 1 entity to the AI provider? | Send {n} entities to the AI provider?",
+      "running": "Asking the AI…",
+      "runFailed": "{label} failed",
+      "tooMany": "This action runs on at most {max} entities at once; {n} are selected.",
+      "stale": "{entity}: {property} changed since the proposal was made, so it was not saved.",
+      "saveFailed": "{entity}: the changes could not be saved: {reason}",
+      "unchanged": "1 entity has no proposed change. | {count} entities have no proposed change.",
+      "skipped": "1 entity was not sent: the action does not apply to it, or you may not change it. | {count} entities were not sent: the action does not apply to them, or you may not change them.",
+      "failed": "{entity}: {reason}"
     }
   },
   "document": {
@@ -1251,7 +1263,30 @@
     "renameFailed": "Could not rename the group",
     "moveGroupFailed": "Could not move the group",
     "groupElsewhere": "This card is in a group this board does not show",
-    "groupForbidden": "You may not make a group of these cards"
+    "groupForbidden": "You may not make a group of these cards",
+    "quickAddPlaceholder": "Add a card…",
+    "quickAddLabel": "Add a card to {column}",
+    "quickAddLaneLabel": "Add a card to {column}, {lane}",
+    "quickAddFailed": "Could not add the card",
+    "quickAddWarnings": "Card added with warnings: {warnings}",
+    "quickAddHidden": "Added \"{title}\". This board's filters hide it.",
+    "addColumn": "Add column",
+    "addColumnLabel": "Name of the new column",
+    "addColumnPlaceholder": "Column name…",
+    "addColumnCancel": "Cancel",
+    "addColumnFailed": "Could not add the column",
+    "addColumnExists": "The board already has a column named {name}",
+    "addColumnNoName": "Use at least one letter or digit in the name",
+    "addColumnUnsupported": "This column's values are not declared on the property, so the board cannot add one",
+    "addColumnSaving": "Saving the column…",
+    "batchTooMany": "This action runs on at most {max} cards at once; {n} are on the board. Filter the board or collapse columns.",
+    "cellTone": {
+      "success": "Good",
+      "warning": "Warning",
+      "error": "Critical",
+      "info": "Info",
+      "new": "New"
+    }
   },
   "calendar": {
     "month": "Month",
@@ -1283,6 +1318,8 @@
     "loading": "Loading dashboard...",
     "notFound": "Dashboard not found",
     "notFoundDescription": "No dashboard is named “{name}”.",
+    "anchorMissing": "Open this dashboard from an entity",
+    "anchorMissingDescription": "This dashboard counts for one entity. Open it as a tab of that entity's page.",
     "noCards": "No dashboard cards to show.",
     "noResults": "No results",
     "validation": "Validation",
@@ -1493,5 +1530,9 @@
       "actionFailed": "The action failed",
       "busy": "A sync is running on this remote. Try again shortly."
     }
+  }
+,
+  "configure": {
+    "automationsMoved": "Automations are declared in flows.yaml under triggers:. Edit that file to change them."
   }
 }

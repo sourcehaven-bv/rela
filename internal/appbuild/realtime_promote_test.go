@@ -74,12 +74,15 @@ relations:
     label: About
     from: [minute]
     to: [doc]
-automations:
-  - name: dup-code
-    on: {entity: minute, created: true, condition: "entity.title == 'dup'"}
-    do:
-      - set: code
-        value: "X1"
+`
+
+// promoteFlows gives a minute titled "dup" the code X1, so a promotion can
+// collide with an existing code.
+const promoteFlows = `triggers:
+  dup-code:
+    on: {entity: minute, created: true, when: "entity.title == 'dup'"}
+    outputs:
+      - set: {properties: {code: "X1"}}
 `
 
 // alice may create minutes but write only some of their fields; bob may
@@ -151,6 +154,7 @@ func promoteServicesWith(t *testing.T, meta string) (svc *appbuild.Services, roo
 	writeMetamodelBody(t, root, meta)
 	writePolicy(t, root, promotePolicy)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "realtime.yaml"), []byte(promoteRealtime), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "flows.yaml"), []byte(promoteFlows), 0o600))
 	svc, err := appbuild.Discover(root, script.NewEngine(), backendtest.Options(t)...)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })

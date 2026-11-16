@@ -338,13 +338,22 @@ async function loadSidebar() {
 // (TKT-603FQ), and so does the library sidebar's own filter, which appears
 // once the nav is long enough. Taking focus away from either would surprise
 // the user mid-typing. The fallback (push /search) still applies elsewhere.
+//
+// The list's search box is matched on its own classes, not under
+// `.entity-list`: the shell draws a list's header (PageHeaderContent) outside
+// that element. A box with no client rects is hidden and does not count.
 function handleKeydown(e: KeyboardEvent) {
   if (e.key !== '/') return
   if (isInputFocused()) return
-  if (document.querySelector('.entity-list .search-box')) return
+  if (hasVisibleSearchBox()) return
   if (document.querySelector('.rl-sidebar .rl-search-box input')) return
   e.preventDefault()
   router.push('/search')
+}
+
+function hasVisibleSearchBox(): boolean {
+  const boxes = document.querySelectorAll<HTMLElement>('.search-box input, .search-form input')
+  return Array.from(boxes).some((el) => el.getClientRects().length > 0)
 }
 
 // A different space has a different navigation and Create menu.

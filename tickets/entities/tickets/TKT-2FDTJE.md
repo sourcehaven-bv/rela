@@ -10,10 +10,11 @@ status: backlog
 
 ## Description
 
-Command stdin payloads are assembled straight from the store with **no
-per-entity read-gate scoping**, in every context. TKT-MJ02AO gated *who may run*
-a command; it did not scope *what the script receives*. So a `command:*` grant
-is closer to "may read every entity of this shape" than "may run this script".
+When filed, command stdin payloads were assembled straight from the store with
+**no per-entity read-gate scoping**, in every context. The entity and list
+contexts are now gated; see Progress below. TKT-MJ02AO gated *who may run* a
+command; it did not scope *what the script receives*. So a `command:*` grant was
+closer to "may read every entity of this shape" than "may run this script".
 
 Raised as RR-37AYC0 during TKT-MJ02AO's code review. Documented accurately there
 (`docs/acl-security.md` → "What a command permission actually confers"); this
@@ -139,5 +140,14 @@ gate, face gate, field redaction), BUG-G2BASF.
 with the served face. A read fault fails the command. BUG-BZQQDP.
 - `docs/acl-security.md` table updated for the entity context.
 
-Remaining: the list context (`listFromStoreByTypes` is still a raw read), the
-NopACL byte-identical regression test, and the view-deferral decision.
+## Progress (2026-11-16)
+
+- List context: the payload is row-gated through `ReadQuery`/`scopedEntities`,
+face-gated and field-redacted (`visibleListRows`), TKT-F2EJQY8 (#2247). A
+principal without read access gets an empty payload
+(`TestCommandExec_ListContextIsGatedAndRedacted`). The list's query and page
+scope are not applied.
+- `docs/acl-security.md` table updated for the list context (#2290).
+
+Remaining: the NopACL byte-identical regression test and the view-deferral
+decision.

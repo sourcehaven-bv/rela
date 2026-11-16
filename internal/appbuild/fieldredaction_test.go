@@ -14,12 +14,14 @@ package appbuild_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/search"
@@ -295,22 +297,26 @@ entities:
       leaked:
         type: string
 relations: {}
-automations:
-  - name: leak-salary
+`
+
+// cascadeLeakFlows is the flows.yaml trigger for cascadeLeakMetamodel.
+const cascadeLeakFlows = `triggers:
+  leak-salary:
     on:
       entity: [ticket]
       property: title
-    do:
-      - lua: |
-          local p = rela.get_entity("PERS-1")
-          local v = "NO_ENTITY"
-          if p ~= nil then
-            v = "NO_SALARY"
-            if p.properties ~= nil and p.properties.salary ~= nil and p.properties.salary ~= "" then
-              v = p.properties.salary
+    outputs:
+      - script:
+          lua: |
+            local p = rela.get_entity("PERS-1")
+            local v = "NO_ENTITY"
+            if p ~= nil then
+              v = "NO_SALARY"
+              if p.properties ~= nil and p.properties.salary ~= nil and p.properties.salary ~= "" then
+                v = p.properties.salary
+              end
             end
-          end
-          rela.update_entity("TKT-1", {leaked = v})
+            rela.update_entity("TKT-1", {leaked = v})
 `
 
 // TestCascadeReadDeps_RedactsHiddenField covers the THIRD read path that passed
@@ -329,6 +335,9 @@ automations:
 func TestCascadeReadDeps_RedactsHiddenField(t *testing.T) {
 	root := t.TempDir()
 	writeMetamodelBody(t, root, cascadeLeakMetamodel)
+	if err := os.WriteFile(filepath.Join(root, "flows.yaml"), []byte(cascadeLeakFlows), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	writePolicy(t, root, `roles:
   viewer:
     read: ["*"]
@@ -515,5 +524,26 @@ relations:
 	}
 	if matched, err := bind("related(entity, 'member', { salary = '99000' })"); err == nil {
 		t.Errorf("LEAK: traversal on a hidden field was answered: matched=%v", matched)
+	}
+}
+
+// TestScheduledLuaWriteDeps_CarriesAttachFile pins that schedules and flow
+// steps get rela.attach_file (TKT-36DHKH8): the deps carry the late-bound
+// holder, which answers "unavailable" until a data-entry host installs the
+// filer.
+func TestScheduledLuaWriteDeps_CarriesAttachFile(t *testing.T) {
+	root := writeRedactionProject(t)
+	svc, err := appbuildOnDisk(t, root)
+	if err != nil {
+		t.Fatalf("appbuild.New: %v", err)
+	}
+	defer svc.Close()
+
+	deps := svc.ScheduledLuaWriteDeps()
+	if deps.AttachFile == nil {
+		t.Fatal("ScheduledLuaWriteDeps has no AttachFile")
+	}
+	if _, err := deps.AttachFile.AttachFile(context.Background(), lua.AttachFileRequest{}); !errors.Is(err, lua.ErrAttachFileUnavailable) {
+		t.Errorf("before wiring: err = %v, want ErrAttachFileUnavailable", err)
 	}
 }

@@ -88,9 +88,9 @@ func (h configureHost) current() *generation { return h.s.cur.Load() }
 func (h configureHost) Record(rec audit.Record) { h.current().svc.Audit().Record(rec) }
 
 // Validate checks a schema and data-entry pair the way `rela validate` does,
-// the loaded acl.yaml and realtime.yaml against the new schema, and
-// data-entry.yaml's `channels:` section, kanban `busy:` card fields and
-// list `busy:` columns against realtime.yaml. Building the candidate
+// the loaded acl.yaml, realtime.yaml and flows.yaml triggers against the new
+// schema, and data-entry.yaml's `channels:` section, kanban `busy:` card
+// fields and list `busy:` columns against realtime.yaml. Building the candidate
 // server in Prepare is the complete check; this one runs on every preview.
 func (h configureHost) Validate(schema, dataEntry []byte) (*metamodel.Metamodel, error) {
 	meta, err := metamodel.Parse(schema)
@@ -123,6 +123,10 @@ func (h configureHost) Validate(schema, dataEntry []byte) (*metamodel.Metamodel,
 		if aclErr := appbuild.ValidateACLPolicy(policy, meta); aclErr != nil {
 			problems = append(problems, "acl.yaml: "+aclErr.Error())
 		}
+	}
+	// flows.yaml triggers name schema types, properties and relations too.
+	if tErr := appbuild.CheckTriggers(context.Background(), svc.Config(), meta, svc.Store()); tErr != nil {
+		problems = append(problems, tErr.Error())
 	}
 	// realtime.yaml names schema types, properties and enums, so a schema
 	// change can break it. Its own error text starts with the file name.

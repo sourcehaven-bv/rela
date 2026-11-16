@@ -17,10 +17,14 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/app"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/fsimport"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/records"
+	"github.com/Sourcehaven-BV/rela/internal/records/filerecords"
+	"github.com/Sourcehaven-BV/rela/internal/records/sqliterecords"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -29,17 +33,20 @@ import (
 
 // markdownDataDirs are the directories a markdown project keeps its data
 // in. [ExportMarkdownData] refuses a target that already has any of them.
-var markdownDataDirs = []string{"entities", "relations", "attachments"}
+// recordsDir is the file record backend's directory (see recordBackend).
+var markdownDataDirs = []string{"entities", "relations", "attachments", recordsDir}
 
 // DataSummary counts what an import or export copied.
 type DataSummary struct {
 	Entities    int
 	Relations   int
 	Attachments int
+	Records     int
 }
 
 func (s DataSummary) String() string {
-	return fmt.Sprintf("%d entities, %d relations, %d attachments", s.Entities, s.Relations, s.Attachments)
+	return fmt.Sprintf("%d entities, %d relations, %d attachments, %d records",
+		s.Entities, s.Relations, s.Attachments, s.Records)
 }
 
 // DataImportOptions tunes [ImportMarkdownData].
@@ -124,12 +131,18 @@ func ImportMarkdownData(
 		if svcErr != nil {
 			return svcErr
 		}
+		// Record rows commit or roll back with the rest of the import.
+		recordStore, svcErr := sqliterecords.NewInTx(conn)
+		if svcErr != nil {
+			return svcErr
+		}
 		var copyErr error
 		rep, copyErr = fsimport.Copy(txCtx, fsimport.CopyOptions{
 			Source: fromDir,
 			Meta:   meta,
 			Target: fsimport.Target{
 				Store: view, State: svc.kv, Comments: svc.comments, Migrations: svc.migState,
+				Records: recordStore,
 			},
 			Exclude:   databaseFilesBelow(fromDir, paths),
 			Principal: p,
@@ -160,8 +173,8 @@ func importCounts(rep *fsimport.Report) string {
 	if rep == nil {
 		return "nothing"
 	}
-	return fmt.Sprintf("%d entities, %d relations, %d attachments, %d comments, %d state keys",
-		rep.Entities, rep.Relations, rep.Attachments, rep.Comments, rep.StateKeys)
+	return fmt.Sprintf("%d entities, %d relations, %d attachments, %d comments, %d state keys, %d record rows",
+		rep.Entities, rep.Relations, rep.Attachments, rep.Comments, rep.StateKeys, rep.Records)
 }
 
 // databaseFilesBelow returns the database's path relative to dir when the
@@ -177,11 +190,17 @@ func databaseFilesBelow(dir string, paths *project.Context) []string {
 }
 
 // ExportMarkdownData writes every entity, relation and attachment in the
-// project's SQLite database as a markdown project into toDir. Together with
+// project's SQLite database as a markdown project into toDir, and every
+// record row into toDir/records in the file record backend's layout (one
+// JSON line per row). Together with
 // [DumpProjectConfig] the result is a project the filesystem build opens.
 //
+// Records are read raw, as the entities are: this is an operator copy of the
+// whole tenant, not a request. Rows of a record type the schema no longer
+// declares are exported too, as stored.
+//
 // It refuses before writing anything when toDir already has an entities,
-// relations or attachments directory: merging into existing data could
+// relations, attachments or records directory: merging into existing data could
 // collide with, or silently sit beside, what is there. A copy that fails
 // part way leaves those directories behind, and its error says to remove
 // them.
@@ -228,12 +247,39 @@ func ExportMarkdownData(
 	}
 	defer func() { _ = dst.Close() }()
 	sum, err := copyData(ctx, src, dst)
+	if err == nil {
+		sum.Records, err = exportRecords(ctx, fsys, db, meta, toDir)
+	}
 	if err != nil {
 		// The refusal above would block a plain retry, so say what to remove.
 		return sum, fmt.Errorf("%w; the export is incomplete: remove %s from %s before trying again",
 			err, strings.Join(markdownDataDirs, ", "), toDir)
 	}
 	return sum, nil
+}
+
+// exportRecords copies every record row from the database into the file
+// record backend under toDir: the rows of the declared types and of any
+// type the database still holds rows of.
+func exportRecords(
+	ctx context.Context, fsys storage.FS, db *sqlitedb.DB, meta *metamodel.Metamodel, toDir string,
+) (int, error) {
+	src, err := sqliterecords.New(db.DB())
+	if err != nil { // coverage-ignore: unreachable: db.DB() is non-nil
+		return 0, err
+	}
+	types, err := records.AllTypes(ctx, src, meta.RecordKeys())
+	if err != nil || len(types) == 0 {
+		return 0, err
+	}
+	// The target directory is new and no rela process has it open, so a
+	// process lock is enough.
+	dst, err := filerecords.New(fsys, filepath.Join(toDir, recordsDir), filelock.ProcessPrivate{})
+	if err != nil { // coverage-ignore: unreachable: every argument is set
+		return 0, err
+	}
+	// The file backend derives its group claims from the rows.
+	return records.Copy(ctx, src, dst, types, records.CopyOptions{})
 }
 
 // checkDeclaredTypes refuses an export whose source holds entities of a

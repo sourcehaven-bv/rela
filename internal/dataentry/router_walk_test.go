@@ -162,6 +162,17 @@ var routerWalkProbes = []routerWalkProbe{
 	{http.MethodGet, "/api/v1/_flows/runs/{id}", "/api/v1/_flows/runs/RUN-1", http.StatusNotFound, ""},
 	{http.MethodPost, "/api/v1/_flows/runs/{id}/_complete", "/api/v1/_flows/runs/RUN-1/_complete",
 		http.StatusNotFound, ""},
+	// Records: the fixture declares no record types, so the handler
+	// answers its own JSON 404.
+	{http.MethodGet, "/api/v1/_records", "/api/v1/_records", http.StatusNotFound, ""},
+	{http.MethodGet, "/api/v1/_records/{type}", "/api/v1/_records/reading?owner=TKT-001", http.StatusNotFound, ""},
+	{http.MethodPost, "/api/v1/_records/{type}", "/api/v1/_records/reading", http.StatusNotFound, ""},
+	{http.MethodGet, "/api/v1/_records/{type}/_aggregate", "/api/v1/_records/reading/_aggregate",
+		http.StatusNotFound, ""},
+	{http.MethodGet, "/api/v1/_records/{type}/_transaction", "/api/v1/_records/posting/_transaction?group=T1",
+		http.StatusNotFound, ""},
+	{http.MethodPost, "/api/v1/_records/{type}/_reverse", "/api/v1/_records/posting/_reverse",
+		http.StatusNotFound, ""},
 	// Batch: the fixture's markdown store does not roll back, so 501.
 	{http.MethodPost, "/api/v1/_batch", "/api/v1/_batch", http.StatusNotImplemented, ""},
 	// Reconcile: the fixture wires no element range read, so 501.

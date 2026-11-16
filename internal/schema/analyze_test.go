@@ -1,9 +1,11 @@
 package schema
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -83,7 +85,7 @@ func TestAnalyze_UnusedEntityTypes(t *testing.T) {
 	meta := newTestMetamodel()
 	c := newTestCounter()
 
-	result := Analyze(meta, c, nil, 0)
+	result := Analyze(meta, c, nil, nil, 0)
 
 	// unused-type has no instances
 	if len(result.UnusedEntityTypes) != 1 {
@@ -101,7 +103,7 @@ func TestAnalyze_UnusedRelationTypes(t *testing.T) {
 	meta := newTestMetamodel()
 	c := newTestCounter()
 
-	result := Analyze(meta, c, nil, 0)
+	result := Analyze(meta, c, nil, nil, 0)
 
 	// unused-relation has no instances
 	if len(result.UnusedRelationTypes) != 1 {
@@ -116,7 +118,7 @@ func TestAnalyze_UnusedCustomTypes(t *testing.T) {
 	meta := newTestMetamodel()
 	c := newTestCounter()
 
-	result := Analyze(meta, c, nil, 0)
+	result := Analyze(meta, c, nil, nil, 0)
 
 	// unused-enum is not referenced by any property
 	if len(result.UnusedCustomTypes) != 1 {
@@ -132,7 +134,7 @@ func TestAnalyze_LowUsageThreshold(t *testing.T) {
 	c := newTestCounter()
 
 	// With threshold=1, decision (1 instance) should be in low usage
-	result := Analyze(meta, c, nil, 1)
+	result := Analyze(meta, c, nil, nil, 1)
 
 	var found bool
 	for _, usage := range result.LowUsageEntityTypes {
@@ -172,7 +174,7 @@ func TestAnalyze_WithDataEntryConfig(t *testing.T) {
 		},
 	}
 
-	result := Analyze(meta, c, dataEntry, 0)
+	result := Analyze(meta, c, dataEntry, nil, 0)
 
 	// requirement should have references in data-entry.yaml
 	var reqUsage *TypeUsage
@@ -216,7 +218,7 @@ func TestAnalyze_MetamodelValidationReferences(t *testing.T) {
 	}
 	c := &mockCounter{}
 
-	result := Analyze(meta, c, nil, 0)
+	result := Analyze(meta, c, nil, nil, 0)
 
 	// requirement should have validation reference
 	var reqUsage *TypeUsage
@@ -244,44 +246,50 @@ func TestAnalyze_MetamodelValidationReferences(t *testing.T) {
 	}
 }
 
-func TestAnalyze_MetamodelAutomationReferences(t *testing.T) {
-	meta := newTestMetamodel()
-	meta.Automations = []metamodel.AutomationDef{
+func TestAnalyze_TriggerReferences(t *testing.T) {
+	rules := []triggers.Rule{
+		{Name: "auto-impl", On: triggers.Trigger{Entity: []string{"requirement"}}},
 		{
-			Name: "auto-impl",
-			On: metamodel.AutomationTrigger{
-				Entity: []string{"requirement"},
-			},
+			Name: "link",
+			On:   triggers.Trigger{Entity: []string{"decision"}, Created: true},
+			Do:   []triggers.Action{{CreateRelation: &triggers.CreateRelationAction{Relation: "implements"}}},
 		},
+		{Name: "on-trace", On: triggers.Trigger{RelationCreated: "depends-on"}},
 	}
-	c := &mockCounter{}
 
-	result := Analyze(meta, c, nil, 0)
+	result := Analyze(newTestMetamodel(), &mockCounter{}, nil, rules, 0)
 
-	// requirement should have automation reference
-	var reqUsage *TypeUsage
-	for i := range result.UnusedEntityTypes {
-		if result.UnusedEntityTypes[i].Name == "requirement" {
-			reqUsage = &result.UnusedEntityTypes[i]
-			break
+	tests := []struct {
+		name    string
+		usages  []TypeUsage
+		typ     string
+		section string
+	}{
+		{"entity type in on.entity", result.UnusedEntityTypes, "requirement", "triggers.auto-impl"},
+		{"relation in a relate output", result.UnusedRelationTypes, "implements", "triggers.link.outputs.relate"},
+		{"relation in on.relation_created", result.UnusedRelationTypes, "depends-on", "triggers.on-trace.on"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			usage := findUsage(t, tc.usages, tc.typ)
+			want := Reference{File: "flows.yaml", Section: tc.section, Kind: "trigger"}
+			if !slices.Contains(usage.References, want) {
+				t.Errorf("references of %s = %+v, want %+v", tc.typ, usage.References, want)
+			}
+		})
+	}
+}
+
+// findUsage returns the usage entry for typ, failing the test when it is absent.
+func findUsage(t *testing.T, usages []TypeUsage, typ string) TypeUsage {
+	t.Helper()
+	for _, u := range usages {
+		if u.Name == typ {
+			return u
 		}
 	}
-
-	if reqUsage == nil {
-		t.Fatal("expected requirement in unused types")
-	}
-
-	var hasAutomationRef bool
-	for _, ref := range reqUsage.References {
-		if ref.Kind == "automation" {
-			hasAutomationRef = true
-			break
-		}
-	}
-
-	if !hasAutomationRef {
-		t.Error("expected automation reference")
-	}
+	t.Fatalf("%s not in %+v", typ, usages)
+	return TypeUsage{}
 }
 
 func TestAnalysis_TotalUnused(t *testing.T) {
@@ -356,7 +364,7 @@ func TestAnalyze_SortsResults(t *testing.T) {
 	}
 	c := &mockCounter{}
 
-	result := Analyze(meta, c, nil, 0)
+	result := Analyze(meta, c, nil, nil, 0)
 
 	// Check alphabetical order
 	expected := []string{"apple", "banana", "mango", "zebra"}

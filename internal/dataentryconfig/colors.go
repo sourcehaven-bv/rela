@@ -101,6 +101,21 @@ func ToneColor(name string) (Color, bool) {
 	return c, err == nil
 }
 
+// ParseToneOrColor parses a name that may be a tone or a color name, the
+// values of a dashboard matrix's `colors:` and a board's `cell_colors:`. The
+// bool reports whether the name is a tone. operator may be nil.
+func ParseToneOrColor(name string, operator map[string]OperatorColor) (Color, bool, error) {
+	if c, ok := ToneColor(name); ok {
+		return c, true, nil
+	}
+	c, err := ParseColor(name, operator)
+	if err != nil {
+		return Color{}, false, fmt.Errorf("%q is neither a tone (%s) nor a color: %w",
+			name, joinMapKeys(SemanticTones), err)
+	}
+	return c, false, nil
+}
+
 // operatorColorNameRe is the grammar of a `palette.colors` name. The name
 // becomes part of a CSS custom property name and a style class, so it is an
 // allowlist of characters, not a blocklist.

@@ -14,6 +14,8 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/schema"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -479,7 +481,8 @@ func (s *Server) handleAnalyzeSchema(
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
-	analysis := schema.Analyze(snap.deps.Meta, counter, dataEntry, threshold)
+	rules := loadTriggerRules(ctx, snap.deps.Config, snap.deps.Meta)
+	analysis := schema.Analyze(snap.deps.Meta, counter, dataEntry, rules, threshold)
 	if err := counter.Err(); err != nil {
 		return errorResult(err.Error()), nil
 	}
@@ -489,6 +492,25 @@ func (s *Server) handleAnalyzeSchema(
 	}
 
 	return findingsResult(checkSchema, analysis.TotalUnused()+analysis.TotalLowUsage(), analysis), nil
+}
+
+// configLoader reads one project config file.
+type configLoader interface {
+	Load(ctx context.Context, name string) ([]byte, error)
+}
+
+// loadTriggerRules returns the flows.yaml triggers, or nil when the file is
+// absent or invalid; the reference report is best effort.
+func loadTriggerRules(ctx context.Context, cfg configLoader, meta *metamodel.Metamodel) []triggers.Rule {
+	data, err := cfg.Load(ctx, flowcfg.FileName)
+	if err != nil {
+		return nil
+	}
+	rules, err := triggers.Parse(data, meta)
+	if err != nil {
+		return nil
+	}
+	return rules
 }
 
 // loadDataEntryConfig loads data-entry.yaml if it exists.

@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/analysis"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
@@ -989,7 +990,16 @@ func (c *AnalyzeSchemaCmd) Run(svc *readServices) error {
 	if err != nil {
 		return err
 	}
-	analysisResult := schema.Analyze(svc.Meta, counter, dataEntry, c.Threshold)
+	// A report may go without the trigger references, but cleanup may not:
+	// a type only a trigger names would look unused and be removed.
+	rules, err := appbuild.LoadTriggers(context.Background(), svc.Config, svc.Meta)
+	if err != nil {
+		if c.Cleanup {
+			return fmt.Errorf("cannot clean up while the triggers do not load: %w", err)
+		}
+		out.WriteWarning("Trigger references are left out: %v", err)
+	}
+	analysisResult := schema.Analyze(svc.Meta, counter, dataEntry, rules, c.Threshold)
 	if err := counter.Err(); err != nil {
 		return err
 	}

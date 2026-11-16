@@ -1,0 +1,93 @@
+package triggers_test
+
+import (
+	"context"
+	"slices"
+	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
+)
+
+// TestUpdatedTrigger: `updated` fires on any change to a property or the
+// body; not on a create, nor on an update that changes nothing (a value
+// whose Go type differs counts as unchanged). A rename re-runs every
+// entity trigger.
+func TestUpdatedTrigger(t *testing.T) {
+	engine := triggers.NewEngine([]triggers.Rule{
+		{Name: "any", On: triggers.Trigger{Entity: []string{"note"}, Updated: true},
+			Do: []triggers.Action{{LuaFile: "any.lua", Background: true}}},
+		{Name: "status", On: triggers.Trigger{Entity: []string{"note"}, Property: "status"},
+			Do: []triggers.Action{{LuaFile: "status.lua"}}},
+	})
+	note := func(title, body string) *entity.Entity {
+		e := entity.New("NOTE-1", "note")
+		e.Properties["title"] = title
+		e.Content = body
+		return e
+	}
+	counted := func(n any) *entity.Entity {
+		e := note("a", "")
+		e.Properties["n"] = n
+		return e
+	}
+	fired := func(ev triggers.Event) []string {
+		var out []string
+		for _, l := range engine.Process(context.Background(), ev).LuaToExecute {
+			out = append(out, l.FilePath)
+		}
+		return out
+	}
+	tests := []struct {
+		name string
+		ev   triggers.Event
+		want []string
+	}{
+		{"property change", triggers.Event{Type: triggers.EventEntityUpdated,
+			Entity: note("b", ""), OldEntity: note("a", "")}, []string{"any.lua"}},
+		{"body change", triggers.Event{Type: triggers.EventEntityUpdated,
+			Entity: note("a", "new"), OldEntity: note("a", "old")}, []string{"any.lua"}},
+		{"no change", triggers.Event{Type: triggers.EventEntityUpdated,
+			Entity: note("a", ""), OldEntity: note("a", "")}, nil},
+		{"same value, other type", triggers.Event{Type: triggers.EventEntityUpdated,
+			Entity: counted(2.0), OldEntity: counted(int64(2))}, nil},
+		{"create", triggers.Event{Type: triggers.EventEntityCreated, Entity: note("a", "")}, nil},
+		{"rename", triggers.Event{Type: triggers.EventEntityRenamed, Entity: note("a", "")},
+			[]string{"any.lua", "status.lua"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := fired(tc.ev); !slices.Equal(got, tc.want) {
+				t.Errorf("fired %v, want %v", got, tc.want)
+			}
+		})
+	}
+	// The background flag survives the action → LuaToExecute hop.
+	res := engine.Process(context.Background(), triggers.Event{Type: triggers.EventEntityRenamed, Entity: note("a", "")})
+	if !res.LuaToExecute[0].Background {
+		t.Error("Background dropped on the way to LuaToExecute")
+	}
+}
+
+// TestConvertCarriesBackgroundAndUpdated: the field-by-field flows.yaml
+// decode keeps `on.updated` and `background`.
+func TestConvertCarriesBackgroundAndUpdated(t *testing.T) {
+	engine := newEngine(t, `
+entities:
+  note: {label: Note, id_prefix: "NOTE-", properties: {title: {type: string}}}
+`, `
+triggers:
+  push:
+    on: {entity: note, updated: true}
+    outputs:
+      - script:
+          file: push.lua
+          background: true
+`)
+	res := engine.Process(context.Background(), triggers.Event{
+		Type: triggers.EventEntityRenamed, Entity: entity.New("NOTE-1", "note"),
+	})
+	if len(res.LuaToExecute) != 1 || !res.LuaToExecute[0].Background {
+		t.Fatalf("LuaToExecute = %+v", res.LuaToExecute)
+	}
+}

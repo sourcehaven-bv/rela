@@ -89,7 +89,7 @@ func actionAttachRenderer(a *App) lua.AttachRenderer {
 // script author: a refusal says what was refused, an internal failure says
 // only that it failed, and its cause goes to the log.
 func (ar attachRenderer) AttachRender(ctx context.Context, req lua.AttachRenderRequest) (lua.AttachedFile, error) {
-	ctx, err := ar.bindRequestState(ctx)
+	ctx, err := bindScriptRequestState(ctx, ar.a, opAttachRender)
 	if err != nil {
 		return lua.AttachedFile{}, err
 	}
@@ -106,7 +106,7 @@ func (ar attachRenderer) AttachRender(ctx context.Context, req lua.AttachRenderR
 
 	// The write is checked before the render, so a principal who may not
 	// write the property cannot make the server run a render.
-	target, err := ar.writeTarget(ctx, s, req.Entity, req.Property)
+	target, err := scriptWriteTarget(ctx, ar.a, s, opAttachRender, req.Entity, req.Property)
 	if err != nil {
 		return lua.AttachedFile{}, err
 	}
@@ -129,7 +129,7 @@ func (ar attachRenderer) AttachRender(ctx context.Context, req lua.AttachRenderR
 		return lua.AttachedFile{}, err
 	}
 
-	written, err := ar.store(ctx, s, target, req.Property, fileName, data)
+	written, err := storeScriptFile(ctx, ar.a, s, opAttachRender, target, req.Property, fileName, data)
 	if err != nil {
 		return lua.AttachedFile{}, err
 	}
@@ -143,12 +143,16 @@ func (ar attachRenderer) AttachRender(ctx context.Context, req lua.AttachRenderR
 	}, nil
 }
 
-// bindRequestState gives ctx what an API request carries and a script
-// context may lack. See bindBackgroundRequest.
-func (ar attachRenderer) bindRequestState(ctx context.Context) (context.Context, error) {
-	ctx, err := bindBackgroundRequest(ctx, ar.a, "")
+// opAttachRender names rela.attach_render in its messages and log lines.
+const opAttachRender = "attach_render"
+
+// bindScriptRequestState gives ctx what an API request carries and a script
+// context may lack, reading in the default world. op names the binding in
+// messages; rela.attach_file shares it. See bindBackgroundRequest.
+func bindScriptRequestState(ctx context.Context, a *App, op string) (context.Context, error) {
+	ctx, err := bindBackgroundRequest(ctx, a, "")
 	if err != nil {
-		return ctx, fmt.Errorf("attach_render: %w", err)
+		return ctx, fmt.Errorf("%s: %w", op, err)
 	}
 	return ctx, nil
 }
@@ -183,22 +187,24 @@ func resolveRenderFormat(s *Schema, format string) (renderConversion, error) {
 // attachment service normalizes the name further, as for an upload.
 func renderFileName(name, format, produces string) (string, error) {
 	want := formatExtensions(format, produces)
-	ext := strings.ToLower(filepath.Ext(name))
-	if len(want) == 0 {
-		// The host knows no extension for the format, so no name the script
-		// picks can be checked against it. A neutral one keeps the download's
-		// Content-Type from following a script-chosen extension.
-		want = []string{".bin"}
-	}
-	// A suffix no type claims is part of the name, as in `audit-v1.2`.
-	if ext == "" || (!slices.Contains(want, ext) && mime.TypeByExtension(ext) == "") {
-		return name + want[0], nil
-	}
-	if slices.Contains(want, ext) {
-		return name, nil
+	if fixed, ok := fileNameWithExtension(name, want); ok {
+		return fixed, nil
 	}
 	return "", fmt.Errorf("attach_render: filename %q does not match format %q (want %s)",
 		name, format, strings.Join(want, " or "))
+}
+
+// fileNameWithExtension gives name an extension from want, preferring the
+// first. A name without one, or whose suffix names no known type, gets
+// want[0] appended. ok is false when the name's extension belongs to another
+// type. want is not empty.
+func fileNameWithExtension(name string, want []string) (string, bool) {
+	ext := strings.ToLower(filepath.Ext(name))
+	// A suffix no type claims is part of the name, as in `audit-v1.2`.
+	if ext == "" || (!slices.Contains(want, ext) && mime.TypeByExtension(ext) == "") {
+		return name + want[0], true
+	}
+	return name, slices.Contains(want, ext)
 }
 
 // formatExtensions lists the extensions of a format's output, first the
@@ -207,40 +213,69 @@ func formatExtensions(format, produces string) []string {
 	if format == markdownFormat && produces == markdownMIME {
 		return []string{".md", ".markdown"}
 	}
-	exts, err := mime.ExtensionsByType(produces)
-	if err != nil {
-		return nil
+	return mimeExtensions(produces)
+}
+
+// preferredExtensions is the extension a name gets for a common type.
+// [mime.ExtensionsByType] sorts alphabetically and reads the host's MIME
+// table, so its first entry would name a text file `.conf` and a JPEG
+// `.jfif`, and differently per host.
+var preferredExtensions = map[string]string{
+	"text/plain":       ".txt",
+	"text/csv":         ".csv",
+	"text/markdown":    ".md",
+	"application/json": ".json",
+	"application/pdf":  ".pdf",
+	"application/zip":  ".zip",
+	"image/jpeg":       ".jpg",
+	"image/png":        ".png",
+	"image/gif":        ".gif",
+	"image/webp":       ".webp",
+}
+
+// mimeExtensions lists the extensions of a MIME type, first the preferred
+// one, and never returns an empty list. A type with no known extension gets
+// `.bin`: no name the script picks can be checked against it, and a neutral
+// one keeps the download's Content-Type from following a script-chosen
+// extension.
+func mimeExtensions(mimeType string) []string {
+	exts, _ := mime.ExtensionsByType(mimeType)
+	if pref, ok := preferredExtensions[mimeType]; ok {
+		exts = append([]string{pref}, slices.DeleteFunc(exts, func(e string) bool { return e == pref })...)
+	}
+	if len(exts) == 0 {
+		return []string{".bin"}
 	}
 	return exts
 }
 
-// writeTarget resolves the entity and runs the upload preflight on it. The
+// scriptWriteTarget resolves the entity and runs the upload preflight on it. The
 // type is the stored one: the preflight then reads the row through the
 // gates, so a hidden entity is refused exactly like an absent one.
 //
 // An absent id still runs the preflight, against a type that declares the
 // property, so it answers the same message as a hidden id and costs at
 // least as much (RR-NGMI, as in anchoredDocumentGates).
-func (ar attachRenderer) writeTarget(
-	ctx context.Context, s *Schema, addr, property string,
+func scriptWriteTarget(
+	ctx context.Context, a *App, s *Schema, op, addr, property string,
 ) (*entity.Entity, error) {
-	notFound := describeWriteRefusal(addr, property, errWriteTargetNotFound)
+	notFound := describeWriteRefusal(op, addr, property, errWriteTargetNotFound)
 	parsed, err := entity.ParseAddress(addr)
 	if err != nil {
 		return nil, notFound
 	}
-	typ := ar.a.visibleReader.storedType(ctx, parsed.ID())
+	typ := a.visibleReader.storedType(ctx, parsed.ID())
 	if typ == "" {
 		typ = fallbackFileType(s, property)
 	}
 	if typ == "" {
 		return nil, notFound
 	}
-	target, err := ar.a.attachments.attachmentWriteCheck(ctx, s, typ, addr, property)
+	target, err := a.attachments.attachmentWriteCheck(ctx, s, typ, addr, property)
 	if err == nil {
 		return target, nil
 	}
-	return nil, describeWriteRefusal(addr, property, err)
+	return nil, describeWriteRefusal(op, addr, property, err)
 }
 
 // fallbackFileType is the first type, by name, that declares property as a
@@ -264,7 +299,7 @@ func fallbackFileType(s *Schema, property string) string {
 
 // describeWriteRefusal turns an [attachmentHandler.attachmentWriteCheck]
 // error into the script's message.
-func describeWriteRefusal(addr, property string, err error) error {
+func describeWriteRefusal(op, addr, property string, err error) error {
 	var (
 		amb    *visibility.AmbiguousAddressError
 		fe     *acl.ForbiddenError
@@ -274,28 +309,28 @@ func describeWriteRefusal(addr, property string, err error) error {
 	case errors.Is(err, errWriteTargetNotFound):
 		// One message for a missing entity, a hidden one and a property it
 		// does not have or the caller cannot see.
-		return fmt.Errorf("attach_render: entity %q or its file property %q not found", addr, property)
+		return fmt.Errorf("%s: entity %q or its file property %q not found", op, addr, property)
 	case errors.As(err, &amb):
-		return fmt.Errorf("attach_render: %w", amb)
+		return fmt.Errorf("%s: %w", op, amb)
 	case errors.Is(err, errEntityLocked):
-		return fmt.Errorf("attach_render: entity %q is encrypted and cannot be edited", addr)
+		return fmt.Errorf("%s: entity %q is encrypted and cannot be edited", op, addr)
 	case errors.As(err, &fe):
-		return fmt.Errorf("attach_render: permission denied to update %q: %s", addr, fe.Decision.Reason)
+		return fmt.Errorf("%s: permission denied to update %q: %s", op, addr, fe.Decision.Reason)
 	case errors.As(err, &denial):
-		return fmt.Errorf("attach_render: property %q of %q cannot be changed: %s", property, addr, denial.Reason)
+		return fmt.Errorf("%s: property %q of %q cannot be changed: %s", op, property, addr, denial.Reason)
 	default:
-		return readCheckFailed(err)
+		return readCheckFailed(op, err)
 	}
 }
 
 // readCheckFailed is the message for a gate that could not answer. The cause
 // may name internals, so it goes to the log.
-func readCheckFailed(err error) error {
+func readCheckFailed(op string, err error) error {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-		return fmt.Errorf("attach_render: %w", err)
+		return fmt.Errorf("%s: %w", op, err)
 	}
-	slog.Warn("attach_render: read check failed", "err", err)
-	return errors.New("attach_render: the read check failed; see the server log")
+	slog.Warn("script attach: read check failed", "binding", op, "err", err)
+	return errors.New(op + ": the read check failed; see the server log")
 }
 
 // renderer runs the gates of the document or list and returns its markdown
@@ -357,7 +392,7 @@ func (ar attachRenderer) listRenderer(
 		if errors.Is(err, errBadFilter) || errors.Is(err, errBadQueryScope) || errors.Is(err, errPropertyNotVisible) {
 			return nil, "", fmt.Errorf("attach_render: list %q: %w", listID, err)
 		}
-		return nil, "", readCheckFailed(err)
+		return nil, "", readCheckFailed(opAttachRender, err)
 	}
 	return render, fmt.Sprintf("list=%q", listID), nil
 }
@@ -368,7 +403,7 @@ func describeGateDenial(err error) error {
 	if errors.As(err, &d) {
 		return fmt.Errorf("attach_render: %s", d.Error())
 	}
-	return readCheckFailed(err)
+	return readCheckFailed(opAttachRender, err)
 }
 
 // convert renders the markdown and converts it. A render or transform
@@ -400,34 +435,35 @@ func conversionFailed(step string, err error) error {
 	return fmt.Errorf("attach_render: %s failed; see the server log", step)
 }
 
-// store writes data like an upload: the configured size cap, the attachment
-// policy and the entitymanager write. The caller holds the upload slot.
-func (ar attachRenderer) store(
-	ctx context.Context, s *Schema, target *entity.Entity, property, fileName string, data []byte,
+// storeScriptFile writes data like an upload: the configured size cap, the
+// attachment policy and the entitymanager write. The caller holds the upload
+// slot.
+func storeScriptFile(
+	ctx context.Context, a *App, s *Schema, op string, target *entity.Entity, property, fileName string, data []byte,
 ) (*attachment.Result, error) {
 	limit := maxAttachmentBytes(s)
-	written, err := ar.a.attachments.storeUpload(ctx, s, target, property, fileName, bytes.NewReader(data), limit)
+	written, err := a.attachments.storeUpload(ctx, s, target, property, fileName, bytes.NewReader(data), limit)
 	if err == nil {
 		return written, nil
 	}
 	var fe *acl.ForbiddenError
 	switch {
 	case isAttachmentTooLarge(err):
-		return nil, fmt.Errorf("attach_render: the rendered file exceeds the %d byte attachment limit", limit)
+		return nil, fmt.Errorf("%s: the file exceeds the %d byte attachment limit", op, limit)
 	case errors.Is(err, attachment.ErrBusy):
-		return nil, errors.New("attach_render: another write to this property is in progress; retry later")
+		return nil, errors.New(op + ": another write to this property is in progress; retry later")
 	case errors.Is(err, attachment.ErrAtCapacity):
-		return nil, fmt.Errorf("attach_render: property %q already holds the maximum number of files", property)
+		return nil, fmt.Errorf("%s: property %q already holds the maximum number of files", op, property)
 	case errors.Is(err, attachment.ErrRejected):
-		return nil, fmt.Errorf("attach_render: attachment rejected: %s", attachment.RejectionReason(err))
+		return nil, fmt.Errorf("%s: attachment rejected: %s", op, attachment.RejectionReason(err))
 	case errors.As(err, &fe):
-		return nil, fmt.Errorf("attach_render: permission denied to update %q: %s", target.ID, fe.Decision.Reason)
+		return nil, fmt.Errorf("%s: permission denied to update %q: %s", op, target.ID, fe.Decision.Reason)
 	case errors.Is(err, store.ErrNotFound):
 		// Deleted between the check and the write: the same message as any
 		// other missing target.
-		return nil, describeWriteRefusal(target.Ref().String(), property, errWriteTargetNotFound)
+		return nil, describeWriteRefusal(op, target.Ref().String(), property, errWriteTargetNotFound)
 	default:
-		slog.Warn("attach_render: write failed", "err", err)
-		return nil, errors.New("attach_render: writing the attachment failed; see the server log")
+		slog.Warn("script attach: write failed", "binding", op, "err", err)
+		return nil, errors.New(op + ": writing the attachment failed; see the server log")
 	}
 }

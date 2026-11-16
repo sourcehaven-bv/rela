@@ -184,15 +184,15 @@ describe('useConfigDraftStore', () => {
     expect(get(field, 'label')).toBe('Estimate')
     expect(field?.$i).toBe(2)
 
-    store.setAt('schema', ['automations', 0, 'on'], 'becomes', 'open')
-    expect(get(mapAt(store.currentSchema, ['automations', 0, 'on']), 'becomes')).toBe('open')
+    store.setAt('screens', ['navigation', 0], 'group', 'Doing')
+    expect(get(mapAt(store.currentDataEntry, ['navigation', 0]), 'group')).toBe('Doing')
 
-    store.appendAt('schema', ['automations', 0], 'do', newMap({ set: 'status', value: 'x' }))
-    expect(getIn(store.currentSchema, ['automations', 0, 'do', 1])).toBeDefined()
-    store.removeAt('schema', ['automations', 0, 'do'], 0)
-    const actions = getIn(store.currentSchema, ['automations', 0, 'do'])
-    expect(get(getIn(actions, [0]), 'set')).toBe('status')
-    expect(mapAt(store.currentSchema, ['automations', 0])?.$i).toBe(0)
+    store.appendAt('screens', ['navigation', 0], 'items', newMap({ label: 'All', list: 'tickets' }))
+    expect(getIn(store.currentDataEntry, ['navigation', 0, 'items', 2])).toBeDefined()
+    store.removeAt('screens', ['navigation', 0, 'items'], 0)
+    const items = getIn(store.currentDataEntry, ['navigation', 0, 'items'])
+    expect(get(getIn(items, [0]), 'label')).toBe('Board')
+    expect(mapAt(store.currentDataEntry, ['navigation', 0])?.$i).toBe(0)
 
     store.setAt('screens', ['forms', 'new_ticket', 'fields', 9], 'label', 'Ghost')
     expect(getIn(store.currentDataEntry, ['forms', 'new_ticket', 'fields', 9])).toBeUndefined()

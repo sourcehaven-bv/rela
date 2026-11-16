@@ -82,8 +82,10 @@ func ValidateWithFS(ctx context.Context, startDir string, fs storage.FS) (*Valid
 	result := &ValidateResult{}
 	result.ProjectRoot = proj.Root
 
-	// Validate metamodel
-	mm, _, err := metamodel.Load(proj.SchemaPath, fs)
+	// Validate metamodel. FSLoader runs the migration check the server boot
+	// runs, so a schema the server would refuse (for example one that still
+	// declares `automations:`, TKT-GWOBH2U) is not reported valid.
+	mm, _, err := metamodel.NewFSLoader(fs, proj.SchemaPath).Load(ctx)
 	switch {
 	case err != nil:
 		result.MetamodelError = err

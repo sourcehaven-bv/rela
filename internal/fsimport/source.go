@@ -17,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/flowrun"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/records"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -37,6 +38,8 @@ type source struct {
 	runs flowrun.Store
 	// flows is whether the source's flows.yaml declares flows.
 	flows bool
+	// records is the source's file record store.
+	records records.Reader
 }
 
 // openSource opens every reader the import needs over a read-only view of
@@ -88,6 +91,10 @@ func openSource(ctx context.Context, root string, meta *metamodel.Metamodel) (*s
 	src.state = state.NewFSKV(rooted)
 	src.flows = hasFlows
 	if src.runs, err = sourceRuns(src); err != nil { // coverage-ignore: unreachable: both arguments are non-nil
+		src.close()
+		return nil, err
+	}
+	if src.records, err = sourceRecords(src); err != nil { // coverage-ignore: unreachable: every argument is set
 		src.close()
 		return nil, err
 	}

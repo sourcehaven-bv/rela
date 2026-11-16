@@ -108,14 +108,3 @@ comments:
   enabled: true
   on: [ticket]
 
-automations:
-  # Links every new ticket to the draft-only POL-2, which editors may not
-  # read, so the create response shows whether it names a hidden neighbour.
-  - name: link-new-ticket
-    on:
-      entity: ticket
-      created: true
-    do:
-      - create_relation:
-          relation: implements
-          to: POL-2

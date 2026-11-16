@@ -1300,9 +1300,12 @@ type NavItem struct {
 // one with an empty `cards:`, and one where every card was filtered all
 // serialize as `[]`, so the SPA has a single "render what you got" path.
 type DashboardResponse struct {
-	Title       string               `json:"title,omitempty"`
-	Description string               `json:"description,omitempty"`
-	Cards       []DashboardCardEntry `json:"cards"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	// Cards of an entity dashboard each carry a `scope`; a client tells an
+	// entity dashboard by that, and passes `?anchor=` on
+	// /api/v1/_dashboard/card.
+	Cards []DashboardCardEntry `json:"cards"`
 }
 
 // DashboardCardEntry is one card of a DashboardResponse: its config plus its
@@ -1922,6 +1925,9 @@ type ActionResponse struct {
 	// Proposal is the reply of an `llm:` action. It is a proposal only:
 	// the action wrote nothing.
 	Proposal *actionproposal.Proposal `json:"proposal,omitempty"`
+	// Batch is the reply of a batch run of an `llm:` action. Like
+	// Proposal, it wrote nothing.
+	Batch *actionproposal.Batch `json:"batch,omitempty"`
 }
 
 // Mention is the resolved target of an entity-ID code span found in

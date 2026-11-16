@@ -6,7 +6,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -29,14 +29,14 @@ import (
 // the copy's own values are a copy boundary, not a transition.
 //
 // The returned result is empty when no automation engine is wired.
-func (ce *copyEngine) applyCopyAutomations(ctx context.Context, plan *copyPlan) (*automation.Result, error) {
+func (ce *copyEngine) applyCopyAutomations(ctx context.Context, plan *copyPlan) (*triggers.Result, error) {
 	m := ce.m
 	if m.deps.Automations == nil {
-		return &automation.Result{}, nil
+		return &triggers.Result{}, nil
 	}
-	ev := automation.Event{Type: automation.EventEntityCreated, Entity: plan.entity, Copy: plan.name}
+	ev := triggers.Event{Type: triggers.EventEntityCreated, Entity: plan.entity, Copy: plan.name}
 	if !plan.created {
-		ev.Type, ev.OldEntity = automation.EventEntityUpdated, plan.existing
+		ev.Type, ev.OldEntity = triggers.EventEntityUpdated, plan.existing
 	}
 	res := m.deps.Automations.Process(ctx, ev)
 	if len(res.PropertiesSet) == 0 {
@@ -82,7 +82,7 @@ func (ce *copyEngine) applyCopyAutomations(ctx context.Context, plan *copyPlan) 
 // reaches a nested write. On an error the copy stays written, and the caller
 // reports it as [CopyResult.FollowUpErr].
 func (ce *copyEngine) runCopyCascade(
-	ctx context.Context, plan *copyPlan, autoResult *automation.Result, res *CopyResult,
+	ctx context.Context, plan *copyPlan, autoResult *triggers.Result, res *CopyResult,
 ) error {
 	m := ce.m
 	if m.deps.Cascade == nil || autoResult == nil || res.Entity == nil {

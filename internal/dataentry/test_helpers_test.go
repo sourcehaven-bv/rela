@@ -340,6 +340,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		luaDeps:          app.luaWriteDeps,
 		versionTags:      func() lua.VersionTagWriter { return app.versionTags.writer },
 		attachRender:     func() lua.AttachRenderer { return actionAttachRenderer(app) },
+		attachFile:       func() lua.AttachFiler { return actionAttachFiler(app) },
 		elevatedUpdates:  elevatedUpdatesFor(svc.EntityManager()),
 		fullScriptDetail: app.allowFullScriptDetail,
 		paths:            paths,

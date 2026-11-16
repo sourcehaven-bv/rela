@@ -223,7 +223,7 @@ It imports every entity, relation, attachment and comment thread, the runtime
 state under `.rela/` and the applied-migration record, then stores the
 configuration as above. IDs, properties, bodies and relation properties are
 kept. Timestamps are not: each row gets the time of the import. The import
-writes the rows as they are, without running automations or validation, and
+writes the rows as they are, without running triggers or validation, and
 records one `fs-import` entry in the audit log. Every row is attributed to the
 `fs-import` tool.
 
@@ -246,8 +246,8 @@ rela db dump --data ./exported
 ```
 
 The result is a markdown project the filesystem build opens. The command
-refuses a directory that already has `entities/`, `relations/` or
-`attachments/`, with or without `--force`; `--force` only allows overwriting
+refuses a directory that already has `entities/`, `relations/`,
+`attachments/` or `records/`, with or without `--force`; `--force` only allows overwriting
 config files. The markdown is written in rela's own format, so it can differ in
 layout from hand-written files while holding the same content.
 

@@ -116,7 +116,10 @@ func TestACLBypass_ZeroValueGrantsNothing(t *testing.T) {
 func TestACLBypass_AbsentKeyLeavesNone(t *testing.T) {
 	t.Parallel()
 
-	var action AutomationAction
+	var action struct {
+		Lua            string    `yaml:"lua"`
+		AllowACLBypass ACLBypass `yaml:"allow_acl_bypass"`
+	}
 	if err := yaml.Unmarshal([]byte("lua: |\n  print('x')\n"), &action); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}

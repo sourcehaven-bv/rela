@@ -48,6 +48,46 @@ describe('useShellCommands', () => {
     w.unmount()
   })
 
+  it('focuses the page search box on find', () => {
+    const w = host()
+    // A list's header, with its search box, is painted by the app shell,
+    // outside the list's own element.
+    const list = document.createElement('header')
+    list.innerHTML = '<div class="search-box"><input type="search" value="abc"></div>'
+    document.body.appendChild(list)
+    send('find')
+    expect(document.activeElement).toBe(list.querySelector('input'))
+    expect(push).not.toHaveBeenCalled()
+    list.remove()
+    w.unmount()
+  })
+
+  it('skips a hidden search box on find', () => {
+    const w = host()
+    const hidden = document.createElement('div')
+    hidden.className = 'entity-list'
+    hidden.innerHTML = '<div class="search-box"><input type="search"></div>'
+    const shown = hidden.cloneNode(true) as HTMLElement
+    document.body.append(hidden, shown)
+    // happy-dom does no layout and gives every element one box, so the
+    // hidden box is emptied by hand.
+    vi.spyOn(hidden.querySelector('input')!, 'getClientRects').mockReturnValue(
+      [] as unknown as DOMRectList
+    )
+    send('find')
+    expect(document.activeElement).toBe(shown.querySelector('input'))
+    hidden.remove()
+    shown.remove()
+    w.unmount()
+  })
+
+  it('opens the search page on find when the page has no search box', () => {
+    const w = host()
+    send('find')
+    expect(push).toHaveBeenCalledWith('/search')
+    w.unmount()
+  })
+
   it('toggles the sidebar', () => {
     const w = host()
     const ui = useUIStore()

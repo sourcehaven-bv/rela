@@ -16,14 +16,16 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/apptest"
 )
 
-// callAutomation is added to the test schema: on create, call.lua sends
-// the request the ticket's title names and writes the outcome to note.
-const callAutomation = `
-  - name: call
+// callTrigger is added to the test project's flows.yaml triggers: on
+// create, call.lua sends the request the ticket's title names and writes
+// the outcome to note.
+const callTrigger = `
+  call:
     on: {entity: [ticket], created: true}
-    do:
-      - lua_file: call.lua
-        capabilities: {http: true, secrets: [api_key]}
+    outputs:
+      - script:
+          file: call.lua
+          capabilities: {http: true, secrets: [api_key]}
 `
 
 // callScript sends one request per title and records "<status_code> <body>"
@@ -60,10 +62,15 @@ end
 // never read.
 func httpProject(t *testing.T, files map[string]string) string {
 	t.Helper()
-	schema, err := os.ReadFile(filepath.Join("testdata", "project", "schema.yaml"))
+	base, err := os.ReadFile(filepath.Join("testdata", "project", "flows.yaml"))
 	require.NoError(t, err)
+	// A case's own flows.yaml declares `flows:`; it joins the triggers
+	// rather than replacing them.
+	files = maps.Clone(files)
+	flows := string(base) + callTrigger + files["flows.yaml"]
+	delete(files, "flows.yaml")
 	all := map[string]string{
-		"schema.yaml":        string(schema) + callAutomation,
+		"flows.yaml":         flows,
 		"scripts/call.lua":   callScript,
 		".rela/secrets.yaml": "api_key: real-secret-do-not-leak\nhook_key: real-hook-secret\n",
 	}

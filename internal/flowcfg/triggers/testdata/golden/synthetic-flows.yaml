@@ -1,0 +1,160 @@
+triggers:
+  when-int:
+    on: {entity: task, created: true, where: ["count>9"]}
+    outputs:
+      - set:
+          properties:
+            flag-int: "yes"
+  when-equal-and-undeclared:
+    on: {entity: task, created: true, where: ["status=open", "nickname=bob"]}
+    outputs:
+      - set:
+          properties:
+            flag-undeclared: "yes"
+  when-regex-on-int:
+    on: {entity: task, created: true, where: ["count~=1.*"]}
+    outputs:
+      - set:
+          properties:
+            flag-regex: "yes"
+  when-date:
+    on: {entity: task, created: true, where: ["due<2026-12-01"]}
+    outputs:
+      - set:
+          properties:
+            flag-date: "{{new.due}}"
+  typeless-updated:
+    on: {updated: true, where: ["status=open"]}
+    outputs:
+      - set:
+          properties:
+            touched: "{{old.status}}->{{new.status}} by {{user.name}} on {{today}}"
+  typeless-created-not-empty:
+    on: {created: true, where: ["owner!="]}
+    outputs:
+      - set:
+          properties:
+            owned: "{{new.owner}}"
+  condition-done:
+    on: {entity: task, property: status, becomes: done, when: "entity.count > 3"}
+    outputs:
+      - script:
+          lua: |
+            rela.log("{{new.title}} {{today}} {{user.name}}")
+  condition-related:
+    on: {entity: task, property: status, from: open, when: "related(entity, 'part-of')"}
+    outputs:
+      - set:
+          properties:
+            related: "yes"
+  when-before-condition:
+    on: {entity: task, updated: true, where: ["kind=gated"], when: "related(entity, 'part-of')"}
+    outputs:
+      - set:
+          properties:
+            gated: "yes"
+  face-scoped:
+    on: {entity: doc, created: true, faces: [nl]}
+    outputs:
+      - set:
+          properties:
+            nl: "yes"
+  copy-only:
+    on: {entity: doc, copy: adopt}
+    outputs:
+      - script:
+          file: adopt.lua
+  validate-checks:
+    on: {entity: task, updated: true}
+    outputs:
+      - check:
+          where: "count>5"
+          severity: error
+          message: "{{new.title}} count too small"
+      - check:
+          where: "status"
+          message: "bad check"
+      - check:
+          where: "nickname=bob"
+          message: "no nickname"
+      - check:
+          where: "status=open"
+          message: "not open: {{new.status}}"
+  piles:
+    on: {entity: task, property: owner}
+    outputs:
+      - add_to_pile: {pile: inbox, owner: "{{new.owner}}"}
+      - add_to_pile: {pile: "{{new.missing}}"}
+      - add_to_pile: {pile: inbox}
+  notify-direct:
+    on: {entity: task, property: status, becomes: done}
+    outputs:
+      - notify: {pile: inbox, reason: done, to: {property: watchers}}
+  notify-via:
+    on: {entity: task, property: status, becomes: done}
+    outputs:
+      - notify: {pile: inbox, to: {via: part-of, property: owner}}
+  create-checklist:
+    on: {entity: task, property: status, becomes: review}
+    outputs:
+      - create:
+          type: checklist
+          template: "{{new.kind}}"
+          properties: {title: "Review: {{new.title}}", status: in-progress, started: "{{today}}"}
+          relate:
+            type: has-checklist
+            from: subject
+      - relate: {type: part-of, to: "{{new.owner}}"}
+      - set:
+          properties:
+            status-note: "reviewing {{new.title}}"
+  create-replace:
+    on: {entity: task, property: status, becomes: review}
+    outputs:
+      - create:
+          type: checklist
+          properties: {title: "Again"}
+          relate:
+            type: has-checklist
+            from: subject
+          if_exists: replace
+  same-prop-first:
+    on: {entity: task, created: true}
+    outputs:
+      - set:
+          properties:
+            shared: first
+  same-prop-second:
+    on: {entity: task, created: true}
+    outputs:
+      - set:
+          properties:
+            shared: second
+  relations:
+    on: {entity: task, relation_created: part-of}
+    outputs:
+      - set:
+          properties:
+            linked: "{{new.title}}"
+  relations-removed:
+    on: {entity: task, relation_removed: part-of}
+    outputs:
+      - set:
+          properties:
+            unlinked: "yes"
+  deleted-job:
+    on: {entity: task, deleted: true}
+    outputs:
+      - script:
+          file: gone.lua
+          capabilities: {http: true}
+          background: true
+  background-on-update:
+    on: {entity: task, property: title}
+    outputs:
+      - script:
+          file: sync.lua
+          background: true
+      - script:
+          lua: "rela.log(1)"
+          allow_acl_bypass: read
