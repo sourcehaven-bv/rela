@@ -23,6 +23,15 @@ rela --project=tickets unlink TKT-XXXX affects some-concept
 - `-o json` on any command when you need to parse the output.
 - `--filter` takes a predicate expression; the older `--where key=value` is
   deprecated.
+- The checklists are created by the `triggers:` in `tickets/flows.yaml`. Use a
+  `rela` built from a recent develop: `rela --project=tickets flow validate`
+  must succeed and count the triggers.
+  An older binary either fails or ignores the file and creates no checklists.
+- Create a ticket or bug in `backlog` or `ready`, then move its status. A
+  status trigger fires on a change, not on create, so an item created straight
+  in `planning`, `analyzing` or `in-progress` gets no checklist.
+- `rela --project=tickets test` runs `tickets/tests/`, which proves every
+  trigger. Add a case named after any trigger you add.
 
 Before considering ticket work done, run the three gates and fix what they
 report:
