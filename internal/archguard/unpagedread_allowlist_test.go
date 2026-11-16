@@ -7,7 +7,7 @@ package archguard
 // Each entry has a category (see readCategory) and a reason that says what
 // the read is for. requestPath entries are debt. The follow-ups of
 // TKT-FED6FMM remove them: TKT-D3RAB0E and TKT-I39Y7N4 (dataentry),
-// TKT-Z099FGY (mcp filters), TKT-GIAGLQ3 (ingest, rename), TKT-P9QMEVI (lua) and TKT-I3MGCRT
+// TKT-9BKVQ9I (mcp filters) and TKT-I3MGCRT
 // (desktopnotify).
 var unpagedReadAllowlist = map[string]unpagedRead{
 	// aclmap: the who-can report.
@@ -135,8 +135,6 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 		"move: orderSiblingQuery sets From or To; the matcher cannot see into the helper"},
 	"internal/entitymanager/manager_order.go#readableOrderSiblings": {1, bounded,
 		"move: orderSiblingQuery sets From or To; the matcher cannot see into the helper"},
-	"internal/entitymanager/rename.go#idTakenByOther": {1, requestPath,
-		"rename dry run: scans every header for a case-folded id collision"},
 	"internal/entitymanager/unique.go#checkExternalRefUnique": {1, bounded,
 		"external ref uniqueness: one PropKeyEqual lookup per declaring (type, property)"},
 	"internal/entitymanager/unique.go#uniqueScan.lookup": {1, bounded,
@@ -153,19 +151,13 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/importer/importer.go#Importer.validateRelations": {1, batchJob,
 		"import: reads every header to check the imported relations' endpoints"},
 
-	"internal/ingest/ingest.go#findTarget": {1, requestPath,
-		"webhook and subscription delivery: scans the find type for the record's match values, per record"},
-
 	// lua: script bindings. Scripts run inside requests (automations on a
 	// write, actions), so a whole-type binding is request-path debt.
-	"internal/lua/elevation.go#elevatedGetRelations": {1, requestPath,
-		"admin.get_relations: the script's from/type/to, possibly none"},
-	"internal/lua/elevation.go#elevatedListEntities": {1, requestPath,
-		"admin.list_entities: every entity of a type"},
-	"internal/lua/markdown.go#mdEntityRefs.luaMdEntityRefs": {1, requestPath,
-		"rela.md.entity_refs: reads every entity of the named types to build a replacement map"},
-	"internal/lua/runtime.go#Runtime.luaGetRelations": {1, requestPath,
-		"rela.get_relations: the script's from/type/to, possibly none"},
+	"internal/lua/markdown.go#mdEntityRefs.refsByTypes": {1, bounded,
+		"legacy rela.md.entity_refs() without ids or content: stops one row past limit across the named types, " +
+			"at most maxReadLimit (2000) (TestEntityRefs_LegacyRaisesPastDefaultLimit). Bounded on the ACL " +
+			"pushdown path and on pgstore and sqlitestore, as for luaListEntities; ScriptReader's " +
+			"load-then-filter fallback and memstore still read the whole type before the stop"},
 	"internal/lua/runtime.go#Runtime.luaListEntities": {1, bounded,
 		"rela.list_entities: stops the iterator at the script's limit, at most maxReadLimit (2000) rows " +
 			"(TestListEntities_BoundedByDefault). Bounded on the ACL pushdown path, which every server " +
@@ -188,8 +180,9 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/mcp/tools_analysis.go#Server.handleAnalyzeUnique": {1, batchJob,
 		"analyze unique tool: compares the unique values of every entity of each type"},
 	"internal/mcp/tools_entity.go#listPage.filterInGo": {1, requestPath,
-		"list_entities tool with a filter that does not lower to store predicates (related(...), current_user, " +
-			"ordered comparisons): reads the whole readable type, then filters and pages in Go (TKT-Z099FGY)"},
+		"list_entities tool with a filter the store cannot answer (see its doc): reads the whole readable " +
+			"type, then filters and pages in Go. The exact total needs every row judged, so paging the read " +
+			"would not bound it (TKT-9BKVQ9I)"},
 
 	// remotesync: a sync pass over the mapped types.
 	"internal/remotesync/push.go#pusher.localRows": {1, batchJob, "remote sync push: every local row of a mapped type"},

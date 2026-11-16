@@ -78,9 +78,12 @@ func Open(ctx context.Context, db DBTX, dsn string, opts ...Option) (store.Store
 		return nil, nil, fmt.Errorf("open store: %w", err)
 	}
 
-	// The gated (Store.SearchVisible) and ungated (SearchBackend) searches must
-	// rank identically, so the backend takes the store's map rather than its own.
-	backend.RankByTitles(st.searchTitles)
+	// Search ranks by entities.search_title, which the database computes from
+	// the recorded title map; both searches read the column, so they rank
+	// identically (TKT-M58EQ1W).
+	if err = SyncSearchTitles(ctx, db, st.searchTitles); err != nil {
+		return nil, nil, fmt.Errorf("open store: record search titles: %w", err)
+	}
 
 	// Start the cross-process change-feed listener (TKT-WZYWM9). It holds its
 	// own dedicated connection (from the DSN, not the pool) so a slow LISTEN
@@ -107,6 +110,9 @@ func Open(ctx context.Context, db DBTX, dsn string, opts ...Option) (store.Store
 	// first pass over a large table must not delay startup, and until a row is
 	// indexed it is merely not listed as a backlink.
 	st.mentionReindex = startMentionReindexer(ctx, st)
+	// Likewise search_title: until a row is healed it still matches, and ranks
+	// as if untitled.
+	st.searchTitleHeal = startSearchTitleHealer(ctx, st.db)
 
 	return st, search.New(st, backend), nil
 }

@@ -203,6 +203,8 @@ var editable = map[File][]string{
 		"lists.*.sort.[].**",
 		"lists.*.title",
 
+		// "Add column" writes through Configure itself (TKT-1X5G3BP).
+		"kanbans.*.add_column",
 		"kanbans.*.card.**",
 		"kanbans.*.column_property",
 		// A relation-backed board picks its columns, their order and their
@@ -222,6 +224,8 @@ var editable = map[File][]string{
 		"kanbans.*.footer",
 		"kanbans.*.header",
 		"kanbans.*.query_scope",
+		// Quick-add writes through the ordinary create API (TKT-IP4273S).
+		"kanbans.*.quick_add",
 		"kanbans.*.swimlane_property",
 		"kanbans.*.swimlanes.[].**",
 		"kanbans.*.title",
@@ -346,6 +350,8 @@ var locked = map[File][]string{
 		// card in Configure keeps the width it has.
 		"dashboard.cards.[].width", "dashboards.*.cards.[].width",
 		"lists.*.actions.**", "lists.*.toolbar_actions.**", "lists.*.export_render",
+		// A board's header actions (TKT-I2SRNWR), like a list's.
+		"kanbans.*.actions.**",
 		// The pile menu's actions and export transforms, like a list's.
 		"piles.actions.[]", "piles.export.[]",
 		// Not in the Configure space yet.

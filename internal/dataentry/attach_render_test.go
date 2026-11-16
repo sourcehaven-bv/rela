@@ -172,11 +172,18 @@ func writeFile(t *testing.T, path, body string) {
 // message the script returned.
 func (a *attachApp) runAction(t *testing.T, user, body string) string {
 	t.Helper()
+	return a.runActionAs(t, user, dataentryconfig.Action{}, body)
+}
+
+// runActionAs is runAction for an action configured like action.
+func (a *attachApp) runActionAs(t *testing.T, user string, action dataentryconfig.Action, body string) string {
+	t.Helper()
 	id := fmt.Sprintf("attach-%d", a.seq.Add(1))
 	writeFile(t, filepath.Join(a.root, "actions", id+".lua"), body)
 	s := a.app.State()
 	cfg := *s.Cfg
-	cfg.Actions = map[string]dataentryconfig.Action{id: {Label: id, Script: id + ".lua"}}
+	action.Label, action.Script = id, id+".lua"
+	cfg.Actions = map[string]dataentryconfig.Action{id: action}
 	a.app.schema.Publish(&Schema{Cfg: &cfg, Meta: s.Meta})
 	rec := postAction(principalCtx(user), t, a.app, a.decl, id, "")
 	if rec.Code != http.StatusOK {

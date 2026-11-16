@@ -5,7 +5,6 @@ package lua
 import (
 	"context"
 	"errors"
-	"fmt"
 	"slices"
 
 	lua "github.com/yuin/gopher-lua"
@@ -22,7 +21,7 @@ import (
 // structural-absence guarantee documented there is unchanged.
 type elevationBindings struct {
 	em       Mutator                // nil: elevated writes withheld — admin write methods absent
-	er       EntityReader           // nil: admin read methods present but raising
+	er       ElevatedReader         // nil: admin read methods present but raising
 	eu       ElevatedUpdater        // nil: admin.update_entity absent
 	vr       EntityReader           // the caller's gated reader; resolves update_entity targets
 	recorder ElevationRecorder      // nil: no post-closure read audit record
@@ -347,7 +346,7 @@ func registerElevatedWrites(
 // edit away from letting a gated binding read raw. The duplication here is
 // small and it keeps the two read paths physically separate.
 func registerElevatedReads(
-	ls *lua.LState, t *lua.LTable, er EntityReader, readGuard func(string) bool,
+	ls *lua.LState, t *lua.LTable, er ElevatedReader, readGuard func(string) bool,
 	ctxFn func() context.Context, reads *readUsage, faces listFaces,
 ) {
 	ls.SetField(t, "get_entity", ls.NewFunction(elevatedGetEntity(er, readGuard, ctxFn, reads)))
@@ -398,15 +397,19 @@ func elevatedGetEntity(
 }
 
 // elevatedListEntities builds admin.list_entities(type, opts?) -> table.
-// The only option is `face`, as on rela.list_entities.
+// The options are `face`, as on rela.list_entities, and `limit`, with the
+// default and ceiling every read binding has (DEC-IYHLNF).
+//
+// It reads ONE store page of at most `limit` rows (TKT-P9QMEVI), so the
+// cost follows the limit, not the type. A type with more rows than the
+// limit returns its first `limit` rows in store order.
 //
 // No filter-expression argument: rela.list_entities' filter is a
 // convenience over an already-gated set, and adding an expression parser to
 // the elevated path widens it for no gain — a script can filter the
-// returned table in Lua. Unbounded, like its gated counterpart
-// (TKT-YWDGZD tracks paging for both).
+// returned table in Lua.
 func elevatedListEntities(
-	er EntityReader, readGuard func(string) bool, ctxFn func() context.Context,
+	er ElevatedReader, readGuard func(string) bool, ctxFn func() context.Context,
 	reads *readUsage, faces listFaces,
 ) func(*lua.LState) int {
 	return func(s *lua.LState) int {
@@ -418,7 +421,7 @@ func elevatedListEntities(
 			s.RaiseError("bypass_acl list_entities: entity type cannot be empty")
 			return 0
 		}
-		face, err := elevatedListFace(s)
+		face, opts, err := elevatedListOpts(s)
 		if err != nil {
 			s.RaiseError("bypass_acl list_entities: %s", err.Error())
 			return 0
@@ -429,40 +432,39 @@ func elevatedListEntities(
 			return 0
 		}
 		reads.mark("list_entities")
-		result := s.NewTable()
-		idx := 1
-		q := store.EntityQuery{Type: entityType, Faces: sel}
-		for e, err := range er.ListEntities(ctxFn(), q) {
-			if err != nil {
-				s.RaiseError("bypass_acl list_entities error: %s", err.Error())
-				return 0
-			}
-			result.RawSetInt(idx, EntityToTable(s, e))
-			idx++
+		q := store.EntityQuery{Type: entityType, Faces: sel, Limit: opts.limit}
+		page, err := er.ListEntitiesPage(ctxFn(), q)
+		if err != nil {
+			s.RaiseError("bypass_acl list_entities error: %s", err.Error())
+			return 0
+		}
+		result := s.CreateTable(len(page.Items), 0)
+		for i, e := range page.Items {
+			result.RawSetInt(i+1, EntityToTable(s, e))
 		}
 		s.Push(result)
 		return 1
 	}
 }
 
-// elevatedListFace reads admin.list_entities' optional options table, whose
-// only key is `face`. An unknown key raises, as on the gated read.
-func elevatedListFace(s *lua.LState) (entity.Face, error) {
-	if s.GetTop() < 2 || s.Get(2) == lua.LNil {
-		return "", nil
+// elevatedListOpts reads admin.list_entities' optional options table: `face`
+// and `limit`. An unknown key raises, as on the gated read.
+func elevatedListOpts(s *lua.LState) (entity.Face, readOpts, error) {
+	opts, err := parseReadOpts(s, 2, "face")
+	if err != nil {
+		return "", opts, err
 	}
 	tbl, ok := s.Get(2).(*lua.LTable)
 	if !ok {
-		return "", fmt.Errorf("options must be a table, got %s", s.Get(2).Type())
+		return "", opts, nil
 	}
-	if err := rejectUnknownKeys(tbl, "face"); err != nil {
-		return "", err
-	}
-	return faceOption(tbl)
+	face, err := faceOption(tbl)
+	return face, opts, err
 }
 
 // elevatedGetRelations builds admin.get_relations(opts?) -> table, with
-// opts.{from,type,to}.
+// opts.{from,type,to,limit}. It reads one store page of at most `limit`
+// edges (TKT-P9QMEVI); see [relationQuery] for the options.
 //
 // NOT peer-gated (unlike rela.get_relations): an edge is returned even when
 // neither endpoint would be visible to the caller. Re-adding the peer drop
@@ -476,23 +478,19 @@ func elevatedGetRelations(
 		if !readGuard("get_relations") {
 			return 0
 		}
-		q, err := relationQuery(s)
+		q, limit, err := relationQuery(s)
 		if err != nil {
 			s.RaiseError("bypass_acl get_relations: %s", err.Error())
 			return 0
 		}
 		reads.mark("get_relations")
-		result := s.NewTable()
-		idx := 1
-		for rel, err := range er.ListRelations(ctxFn(), q) {
-			if err != nil {
-				s.RaiseError("bypass_acl get_relations error: %s", err.Error())
-				return 0
-			}
-			result.RawSetInt(idx, relationToTable(s, rel))
-			idx++
+		q.Limit = limit
+		page, err := er.ListRelationsPage(ctxFn(), q)
+		if err != nil {
+			s.RaiseError("bypass_acl get_relations error: %s", err.Error())
+			return 0
 		}
-		s.Push(result)
+		s.Push(relationsToTable(s, page.Items))
 		return 1
 	}
 }

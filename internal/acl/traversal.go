@@ -90,6 +90,12 @@ func TraversalQuery(candidateType string, hop TraversalHop, p *store.RelationPre
 	return q
 }
 
+// UngatedGate is [UngatedTraversal] in the shape of a traversal gate, for
+// readers and binders that read everything.
+func UngatedGate(_ context.Context, _ string, hop TraversalHop) (*store.RelationPredicate, error) {
+	return UngatedTraversal(hop)
+}
+
 // UngatedTraversal lowers a traversal with NO authorization. It exists for
 // deployments that configure no ACL policy, where every read is already
 // unrestricted; anything with a policy goes through [Request.GateTraversal].

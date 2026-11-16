@@ -9,6 +9,8 @@ import { liveListPath } from '@/api/live'
 import { useLiveSubscription } from '@/composables/useLiveSubscription'
 import { beginOptimistic, rollbackOptimistic, settleOptimistic } from '@/queries/optimisticList'
 import type {
+  ActionConfig,
+  CreateEntity,
   Entity,
   KanbanConfig,
   KanbanCardField,
@@ -31,7 +33,13 @@ import { useBoardFlip } from '@/composables/useBoardFlip'
 import { useWallGrouping } from '@/composables/useWallGrouping'
 import { useListReorder } from '@/composables/useListReorder'
 import { useKanbanCollapse } from '@/composables/useKanbanCollapse'
+import { useBatchAction, isBatchAction } from '@/composables/useBatchAction'
+import LLMBatchProposalDialog from '@/components/entity/LLMBatchProposalDialog.vue'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
+import KanbanQuickAdd from '@/components/kanban/KanbanQuickAdd.vue'
+import KanbanAddColumn from '@/components/kanban/KanbanAddColumn.vue'
+import type { AddColumnTarget } from '@/configure/addEnumColumn'
+import { useMe } from '@/queries/me'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
 import { useWorld } from '@/composables/useWorld'
@@ -101,7 +109,7 @@ const { world, isWorldBound, worldParam } = useWorld()
 // The operator's announcement for the world on screen, or '' to announce
 // nothing — the same split the list and detail pages make. Config, not data.
 const worldBanner = computed<string>(
-  () => (world.value ? schemaStore.worlds.get(world.value)?.banner : '') || '',
+  () => (world.value ? schemaStore.worlds.get(world.value)?.banner : '') || ''
 )
 
 // Affordance gates: `_actions` map from the server. `false` → hide;
@@ -149,8 +157,7 @@ const kanbanConfig = computed(() => schemaStore.getKanban(props.id) as KanbanCon
 // cannot be overridden from the URL, as on a list. Declared after
 // kanbanConfig: useUrlFilterSync reads staticFilterProperties during setup.
 const { filters, writeToQuery } = useUrlFilterSync({
-  staticFilterProperties: () =>
-    new Set((kanbanConfig.value?.filters ?? []).map((f) => f.property)),
+  staticFilterProperties: () => new Set((kanbanConfig.value?.filters ?? []).map((f) => f.property)),
 })
 
 // Cards may render relation targets by ID; when any card field references a
@@ -327,9 +334,7 @@ const columns = computed(() => {
       value: c.value,
       label: c.label,
     }))
-    const hasOther = entities.value.some(
-      (e) => relationColumns.columnOf(e) === OTHER_COLUMN
-    )
+    const hasOther = entities.value.some((e) => relationColumns.columnOf(e) === OTHER_COLUMN)
     // On a wall, Other is the pile and always shows, as the place new cards
     // land and ungrouped cards go back to.
     if (hasOther || isWall.value) cols.push({ value: OTHER_COLUMN, label: t('kanban.otherColumn') })
@@ -337,7 +342,9 @@ const columns = computed(() => {
   }
 
   if (isPlainWall.value) {
-    return [{ value: WALL_COLUMN, label: kanbanConfig.value.title ?? t('kanban.boardLabelDefault') }]
+    return [
+      { value: WALL_COLUMN, label: kanbanConfig.value.title ?? t('kanban.boardLabelDefault') },
+    ]
   }
 
   // Use defined columns or generate from unique values
@@ -356,12 +363,10 @@ const columns = computed(() => {
   const property = kanbanConfig.value.column_property
   const declared = schemaStore.enumValuesForProperty(property, kanbanConfig.value.entity)
   if (declared?.length) {
-    return declared.map(
-      (v): KanbanColumn => ({
-        value: v,
-        label: schemaStore.getEnumLabel(v, property, kanbanConfig.value?.entity) ?? v,
-      }),
-    )
+    return declared.map((v): KanbanColumn => ({
+      value: v,
+      label: schemaStore.getEnumLabel(v, property, kanbanConfig.value?.entity) ?? v,
+    }))
   }
 
   // Last resort for a non-enum property. The server rejects that today, so
@@ -419,12 +424,10 @@ const swimlanes = computed(() => {
   const property = kanbanConfig.value.swimlane_property
   const declared = schemaStore.enumValuesForProperty(property, kanbanConfig.value.entity)
   if (declared?.length) {
-    return declared.map(
-      (v): KanbanSwimlane => ({
-        value: v,
-        label: schemaStore.getEnumLabel(v, property, kanbanConfig.value?.entity) ?? v,
-      }),
-    )
+    return declared.map((v): KanbanSwimlane => ({
+      value: v,
+      label: schemaStore.getEnumLabel(v, property, kanbanConfig.value?.entity) ?? v,
+    }))
   }
 
   // Unreachable for the same reason as the column fallback — swimlane_property
@@ -435,7 +438,9 @@ const swimlanes = computed(() => {
     const val = String(entity.properties[property] || '')
     if (val) values.add(val)
   }
-  return Array.from(values).sort().map((v): KanbanSwimlane => ({ value: v, label: v }))
+  return Array.from(values)
+    .sort()
+    .map((v): KanbanSwimlane => ({ value: v, label: v }))
 })
 
 const hasSwimmlanes = computed(() => swimlanes.value.length > 0)
@@ -459,9 +464,7 @@ function columnTitle(column: { value: string; label?: string }): string {
   const property = kanbanConfig.value?.column_property
   const entityTypeName = kanbanConfig.value?.entity
   return (
-    schemaStore.getEnumLabel(column.value, property, entityTypeName) ??
-    column.label ??
-    column.value
+    schemaStore.getEnumLabel(column.value, property, entityTypeName) ?? column.label ?? column.value
   )
 }
 
@@ -572,7 +575,10 @@ function columnSummary(items: Entity[]): string[] | undefined {
 // default; an inferred column starts open.
 const columnCollapse = useKanbanCollapse(
   () => props.id,
-  () => Object.fromEntries((kanbanConfig.value?.columns ?? []).map((c) => [c.value, c.collapsed ?? false]))
+  () =>
+    Object.fromEntries(
+      (kanbanConfig.value?.columns ?? []).map((c) => [c.value, c.collapsed ?? false])
+    )
 )
 
 const boardSections = computed((): Section<BoardCard>[] =>
@@ -589,6 +595,26 @@ const boardSections = computed((): Section<BoardCard>[] =>
     }
   })
 )
+
+// Batch `llm:` actions in the header (TKT-I2SRNWR). A button shows when the
+// list response offers `action:<id>`; it runs on the cards in the open
+// columns, after the board's filters.
+const batchAction = useBatchAction()
+const boardActions = computed(() =>
+  (kanbanConfig.value?.actions ?? []).flatMap((id) => {
+    const action = schemaStore.getAction(id)
+    if (!action || !isBatchAction(action) || collectionActions.value?.[`action:${id}`] !== true) return []
+    return [{ id, action }]
+  })
+)
+function runBoardAction(id: string, action: ActionConfig) {
+  const addresses = columns.value
+    .filter((c) => !columnCollapse.isCollapsed(c.value))
+    .flatMap((c) => (entitiesByColumn.value[c.value] ?? []).map((e) => entityRef(e)))
+  void batchAction.start(id, action, kanbanConfig.value?.entity ?? '', addresses, (n, max) =>
+    t('kanban.batchTooMany', { n, max })
+  )
+}
 
 function sectionId(section: string | Section<BoardCard>): string {
   return typeof section === 'string' ? section : section.id
@@ -817,9 +843,8 @@ function resolvedCardFields(entity: Entity): ResolvedCardField[] {
 
     // Relation fields have no PropertyDef and so no widget: they render as
     // joined target titles, the contract shared with list relation columns.
-    const entry = field.property && !field.relation
-      ? cardFieldWidgets.value.get(field.property)
-      : undefined
+    const entry =
+      field.property && !field.relation ? cardFieldWidgets.value.get(field.property) : undefined
 
     out.push({
       field,
@@ -954,7 +979,11 @@ async function onMove({
 // A drop beside a card as the reorder takes it. `onto` never gets here: it
 // groups instead.
 function rowMove(entity: Entity, at: BoardDropPosition) {
-  return { itemId: entity.id, targetId: at.targetId, placement: at.placement === 'before' ? 'before' : 'after' } as const
+  return {
+    itemId: entity.id,
+    targetId: at.targetId,
+    placement: at.placement === 'before' ? 'before' : 'after',
+  } as const
 }
 
 const wall = useWallGrouping({
@@ -1024,7 +1053,9 @@ const flip = useBoardFlip(
 // their own error state, and a refetch that overlaps another is cancelled by it.
 async function refreshBoard() {
   await relationColumns.refetch()
-  await queryCache.invalidateQueries({ key: entityKeys.list(kanbanConfig.value?.entity ?? '') }).catch(() => {})
+  await queryCache
+    .invalidateQueries({ key: entityKeys.list(kanbanConfig.value?.entity ?? '') })
+    .catch(() => {})
 }
 
 // cardTarget is the single source of truth for where a card goes, bound to each
@@ -1043,7 +1074,12 @@ function cardTarget(entity: Entity): RouteLocationRaw {
   // world-bound board edits the face the card showed and not its bare id, in
   // the board's world so the form loads the relations that world serves.
   if (kanbanConfig.value?.edit_form) {
-    return editFormRoute(kanbanConfig.value.edit_form, entityRef(entity), worldParam.value, fromPage)
+    return editFormRoute(
+      kanbanConfig.value.edit_form,
+      entityRef(entity),
+      worldParam.value,
+      fromPage
+    )
   }
   // The world rides along so the detail resolves the face the card showed.
   const path = `/entity/${entity.type}/${entity.id}`
@@ -1121,21 +1157,25 @@ function refreshAfterCreate() {
 }
 // In an entity-page tab a new card is linked to the anchor first, so the
 // refresh already shows it on the board.
-const createModal = useCreateModal(async (entity) => {
-  await tabScope.linkCreated(entity)
-  refreshAfterCreate()
-  void router.replace({ query: { ...route.query, selected: entity.id } })
-}, async (entity) => {
-  await tabScope.linkCreated(entity)
-  refreshAfterCreate()
-})
+const createModal = useCreateModal(
+  async (entity) => {
+    await tabScope.linkCreated(entity)
+    refreshAfterCreate()
+    void router.replace({ query: { ...route.query, selected: entity.id } })
+  },
+  async (entity) => {
+    await tabScope.linkCreated(entity)
+    refreshAfterCreate()
+  }
+)
 
 // A relation-backed board offers Add in each column. The new card starts with
 // an edge to the column's target, so it lands in the column it was added
 // from; on a page tab it is linked to the anchor as well (linkCreated above).
 // The Other column names no target, so its Add opens the plain form.
 const showColumnAdd = computed(
-  () => (!!columnsFrom.value || isPlainWall.value) && !!kanbanConfig.value?.create_form && canCreate()
+  () =>
+    (!!columnsFrom.value || isPlainWall.value) && !!kanbanConfig.value?.create_form && canCreate()
 )
 const createPrefill = ref<{
   properties: Record<string, unknown>
@@ -1155,6 +1195,101 @@ watch(createModal.open, (open) => {
   if (!open) createPrefill.value = undefined
 })
 
+// Quick-add (TKT-IP4273S): a title input at the foot of every column and
+// swimlane cell, when the board opts in with `quick_add: true` and the
+// reader may create the type. `_actions.create` only hides the input; the
+// create endpoint authorizes, validates, audits and applies the template.
+const quickAddEnabled = computed(() => !!kanbanConfig.value?.quick_add && canCreate())
+
+// "Add column" (TKT-1X5G3BP): a config write through the Configure API, so it
+// shows only to someone who may configure. `/_me` is asked only on a board
+// that offers it. The server refuses `add_column` on a board without an
+// inline-enum column_property, and the save checks config:edit again.
+const { data: me } = useMe(() => !!kanbanConfig.value?.add_column)
+const addColumnTarget = computed<AddColumnTarget | null>(() => {
+  const config = kanbanConfig.value
+  if (!config?.add_column || !config.column_property || config.columns_from) return null
+  if (!me.value?.can_configure) return null
+  return { kanbanId: props.id, entityType: config.entity, property: config.column_property }
+})
+
+// The property the typed title goes in: the card's title property, else the
+// type's primary one. The server's config check uses the same rule.
+const quickAddTitleProperty = computed(
+  () => kanbanConfig.value?.card.title || entityType.value?.primary || ''
+)
+
+function quickAddLabel(section: Section<BoardCard>, lane?: Swimlane<BoardCard>): string {
+  return lane
+    ? t('kanban.quickAddLaneLabel', { column: section.title, lane: lane.title })
+    : t('kanban.quickAddLabel', { column: section.title })
+}
+
+// The create a quick-add sends: the title, the column's value and the lane's
+// value. A relation-backed column is an edge to its target instead, and the
+// Other column, a wall's pile and a plain wall name no value at all.
+function quickAddBody(
+  title: string,
+  section: Section<BoardCard>,
+  lane?: Swimlane<BoardCard>
+): CreateEntity {
+  const config = kanbanConfig.value
+  const properties: Record<string, unknown> = { [quickAddTitleProperty.value]: title }
+  const body: CreateEntity = { properties }
+  if (worldParam.value) body.world = worldParam.value
+  if (!config || isPlainWall.value) return body
+  if (config.columns_from) {
+    const target = relationColumns.targetType.value
+    if (target && section.id !== OTHER_COLUMN) {
+      body.relations = {
+        [config.columns_from.relation]: { data: [{ type: target, id: section.id }] },
+      }
+    }
+    return body
+  }
+  // A column or lane with an empty value collects the cards that have none,
+  // so a card added there leaves the property unset.
+  if (section.id) properties[config.column_property] = section.id
+  if (lane?.id && config.swimlane_property) properties[config.swimlane_property] = lane.id
+  return body
+}
+
+// Creates one card. Resolves to the message to show under the input, or ''
+// when the card was made. A refused create keeps the typed text; a card that
+// was made but could not be linked to the page clears it, since retrying
+// would make a second card.
+async function quickAdd(
+  title: string,
+  section: Section<BoardCard>,
+  lane?: Swimlane<BoardCard>
+): Promise<string> {
+  const config = kanbanConfig.value
+  if (!config) return t('kanban.quickAddFailed')
+  let created: Entity
+  try {
+    created = await entitiesStore.create(config.entity, quickAddBody(title, section, lane))
+  } catch (err) {
+    return getErrorMessage(err, t('kanban.quickAddFailed'))
+  }
+  if (created.warnings?.length) {
+    const warnings = created.warnings.map((w) => w.detail || w.code).join('; ')
+    uiStore.warning(t('kanban.quickAddWarnings', { warnings }))
+  }
+  try {
+    await tabScope.linkCreated(created)
+  } catch (err) {
+    uiStore.error(getErrorMessage(err, t('kanban.quickAddFailed')))
+  }
+  flip.flash(created.id)
+  await queryCache.invalidateQueries({ key: entityKeys.list(config.entity) })
+  // The board's filters, query scope or filter controls can hide the new
+  // card. Say so, or the facilitator types it again.
+  if (!filteredEntities.value.some((e) => e.id === created.id)) {
+    uiStore.info(t('kanban.quickAddHidden', { title }))
+  }
+  return ''
+}
+
 // No lifecycle plumbing: the query fetches on mount, re-keys when
 // props.id switches boards, and refetches in the background when
 // useEvents invalidates ['entities', <type>] on SSE entity events.
@@ -1166,6 +1301,16 @@ watch(createModal.open, (open) => {
     <PageHeaderContent :title="kanbanConfig?.title || props.id">
       <template #actions>
         <BackButton v-if="backTarget" :target="backTarget" />
+        <RlButton
+          v-for="b in boardActions"
+          :key="b.id"
+          variant="secondary"
+          :loading="batchAction.pending.value"
+          :pending-label="t('entity.llmBatch.running')"
+          @click="runBoardAction(b.id, b.action)"
+        >
+          {{ b.action.label || b.id }}
+        </RlButton>
         <RlButton
           v-if="kanbanConfig?.create_form && canCreate()"
           variant="primary"
@@ -1207,7 +1352,7 @@ watch(createModal.open, (open) => {
     />
 
     <!-- eslint-disable-next-line vue/no-v-html -- sanitized by renderMarkdown -->
-    <div v-if="headerHtml" class="view-info view-info--top" v-html="headerHtml"/>
+    <div v-if="headerHtml" class="view-info view-info--top" v-html="headerHtml" />
 
     <div v-if="truncated" class="truncation-banner" role="alert">
       {{ t('kanban.truncated', { shown: entities.length, total: totalCount }) }}
@@ -1227,7 +1372,7 @@ watch(createModal.open, (open) => {
       :lanes="boardLanes"
       :columns="boardSections"
       :show-add="false"
-      :show-add-section="false"
+      :show-add-section="!!addColumnTarget"
       :can-move="canMoveCard"
       :selected-id="selectedEntityId ?? undefined"
       collapsible
@@ -1236,28 +1381,40 @@ watch(createModal.open, (open) => {
       @collapse-section="collapseColumn"
       @expand-section="expandColumn"
     >
-          <template #card="{ item }">
-            <RouterLink
-              class="kanban-card"
-              :to="cardTarget(item.entity)"
-              :aria-label="item.title"
-              @click.capture="onCardClick(item.entity, $event)"
-            >
-              <div class="card-id">{{ item.id }}</div>
-              <!--
+      <template #card="{ item }">
+        <RouterLink
+          class="kanban-card"
+          :to="cardTarget(item.entity)"
+          :aria-label="item.title"
+          @click.capture="onCardClick(item.entity, $event)"
+        >
+          <div class="card-id">{{ item.id }}</div>
+          <!--
                 Per-CARD face provenance (TKT-ILT1WD), beside the title, the same
                 place and the same component the list uses. WorldBadge renders
                 only for a substitute, so an ordinary board shows nothing.
               -->
-              <div class="card-title text-wrap-anywhere">
-                {{ item.title }}<WorldBadge :world="item.entity._world" :entity-type="item.entity.type" /><LeaseBadge :lease="item.entity._lease" />
-              </div>
-              <CardFieldList
-                :fields="resolvedCardFields(item.entity)"
-                :entity-type="kanbanConfig?.entity"
-              />
-            </RouterLink>
-          </template>
+          <div class="card-title text-wrap-anywhere">
+            {{ item.title
+            }}<WorldBadge :world="item.entity._world" :entity-type="item.entity.type" /><LeaseBadge
+              :lease="item.entity._lease"
+            />
+          </div>
+          <CardFieldList
+            :fields="resolvedCardFields(item.entity)"
+            :entity-type="kanbanConfig?.entity"
+          />
+        </RouterLink>
+      </template>
+      <template v-if="addColumnTarget" #addSection>
+        <KanbanAddColumn :target="addColumnTarget" />
+      </template>
+      <template v-if="quickAddEnabled" #footer="{ section, lane }">
+        <KanbanQuickAdd
+          :label="quickAddLabel(section, lane)"
+          :submit="(title: string) => quickAdd(title, section, lane)"
+        />
+      </template>
     </RlSwimlaneBoard>
 
     <RlBoard
@@ -1274,7 +1431,7 @@ watch(createModal.open, (open) => {
       :aria-label="boardLabel"
       :sections="boardSections"
       :show-add="showColumnAdd"
-      :show-add-section="false"
+      :show-add-section="!!addColumnTarget"
       :can-move="boardCanMove"
       :reorder="reorder.reorderable.value"
       :group="isGrouping"
@@ -1287,58 +1444,70 @@ watch(createModal.open, (open) => {
       @collapse-section="collapseColumn"
       @expand-section="expandColumn"
     >
-          <!--
+      <!--
             A plain wall is one grid and needs no heading. On a grouping wall
             the pile says what it is, and a group's name is edited in place.
           -->
-          <template v-if="isWall" #heading="{ section }">
-            <div v-if="!isPlainWall" class="wall-heading">
-              <span v-if="section.id === OTHER_COLUMN" class="wall-heading__pile">
-                {{ t('kanban.pile') }}
-              </span>
-              <input
-                v-else-if="wall.renamable(section.id)"
-                class="wall-heading__title"
-                :value="section.title"
-                :aria-label="t('kanban.groupName', { title: section.title })"
-                @change="onRenameGroup(section.id, $event)"
-                @keydown.enter="!$event.isComposing && ($event.target as HTMLInputElement).blur()"
-                @keydown.esc="onRenameCancel(section.title, $event)"
-              />
-              <span v-else class="wall-heading__title">{{ section.title }}</span>
-              <span class="wall-heading__count">{{ section.items.length }}</span>
-            </div>
-          </template>
-          <template #card="{ item }">
-            <RouterLink
-              class="kanban-card"
-              :style="noteStyle(item.entity)"
-              :to="cardTarget(item.entity)"
-              :aria-label="item.title"
-              @click.capture="onCardClick(item.entity, $event)"
-            >
-              <div v-if="!isNotes" class="card-id">{{ item.id }}</div>
-              <!--
+      <template v-if="isWall" #heading="{ section }">
+        <div v-if="!isPlainWall" class="wall-heading">
+          <span v-if="section.id === OTHER_COLUMN" class="wall-heading__pile">
+            {{ t('kanban.pile') }}
+          </span>
+          <input
+            v-else-if="wall.renamable(section.id)"
+            class="wall-heading__title"
+            :value="section.title"
+            :aria-label="t('kanban.groupName', { title: section.title })"
+            @change="onRenameGroup(section.id, $event)"
+            @keydown.enter="!$event.isComposing && ($event.target as HTMLInputElement).blur()"
+            @keydown.esc="onRenameCancel(section.title, $event)"
+          />
+          <span v-else class="wall-heading__title">{{ section.title }}</span>
+          <span class="wall-heading__count">{{ section.items.length }}</span>
+        </div>
+      </template>
+      <template #card="{ item }">
+        <RouterLink
+          class="kanban-card"
+          :style="noteStyle(item.entity)"
+          :to="cardTarget(item.entity)"
+          :aria-label="item.title"
+          @click.capture="onCardClick(item.entity, $event)"
+        >
+          <div v-if="!isNotes" class="card-id">{{ item.id }}</div>
+          <!--
                 Per-CARD face provenance (TKT-ILT1WD), beside the title, the same
                 place and the same component the list uses. WorldBadge renders
                 only for a substitute, so an ordinary board shows nothing.
               -->
-              <div class="card-title text-wrap-anywhere">
-                {{ item.title }}<WorldBadge :world="item.entity._world" :entity-type="item.entity.type" /><LeaseBadge :lease="item.entity._lease" />
-              </div>
-              <CardFieldList
-                :fields="resolvedCardFields(item.entity)"
-                :entity-type="kanbanConfig?.entity"
-              />
-            </RouterLink>
-          </template>
+          <div class="card-title text-wrap-anywhere">
+            {{ item.title
+            }}<WorldBadge :world="item.entity._world" :entity-type="item.entity.type" /><LeaseBadge
+              :lease="item.entity._lease"
+            />
+          </div>
+          <CardFieldList
+            :fields="resolvedCardFields(item.entity)"
+            :entity-type="kanbanConfig?.entity"
+          />
+        </RouterLink>
+      </template>
+      <template v-if="quickAddEnabled" #footer="{ section }">
+        <KanbanQuickAdd
+          :label="quickAddLabel(section)"
+          :submit="(title: string) => quickAdd(title, section)"
+        />
+      </template>
+      <template v-if="addColumnTarget" #addSection>
+        <KanbanAddColumn :target="addColumnTarget" />
+      </template>
     </RlBoard>
 
     <!-- Sits after every board branch (loading/error/simple/swimlane) so it
          renders once regardless of state, and outside the board's horizontal
          scroll container so it stays visible on a wide board. -->
     <!-- eslint-disable-next-line vue/no-v-html -- sanitized by renderMarkdown -->
-    <div v-if="footerHtml" class="view-info view-info--bottom" v-html="footerHtml"/>
+    <div v-if="footerHtml" class="view-info view-info--bottom" v-html="footerHtml" />
 
     <InlineCreateFormModal
       v-if="createModal.open.value && kanbanConfig?.create_form"
@@ -1352,11 +1521,19 @@ watch(createModal.open, (open) => {
       @created="createModal.created"
       @created-another="createModal.createdAnother"
     />
+
+    <LLMBatchProposalDialog
+      v-if="batchAction.result.value"
+      :batch="batchAction.result.value.batch"
+      :entity-type="batchAction.result.value.entityType"
+      :label="batchAction.result.value.label"
+      @close="batchAction.close"
+      @applied="void refreshBoard()"
+    />
   </div>
 </template>
 
 <style scoped>
-
 /* A wall wraps its columns instead of scrolling sideways, so every group
    stays in view. On a grouping wall Other is the pile across the top. */
 .kanban-board--wall {
@@ -1381,7 +1558,8 @@ watch(createModal.open, (open) => {
   border: 1px dashed var(--rl-color-border-strong);
   border-radius: var(--rl-radius-lg);
 }
-.kanban-board--grouping :deep(.rl-board-column[data-section-id='__other__'] .rl-board-column__cards) {
+.kanban-board--grouping
+  :deep(.rl-board-column[data-section-id='__other__'] .rl-board-column__cards) {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   align-content: start;
@@ -1426,7 +1604,9 @@ watch(createModal.open, (open) => {
   font-size: var(--font-size-base);
   font-weight: 700;
 }
-.wall-heading__title:hover { border-color: var(--rl-color-border); }
+.wall-heading__title:hover {
+  border-color: var(--rl-color-border);
+}
 .wall-heading__title:focus {
   border-color: var(--rl-color-focus);
   background: var(--rl-color-bg);
@@ -1460,7 +1640,10 @@ watch(createModal.open, (open) => {
 .kanban-board--grouping :deep(.rl-board-column:not([data-section-id='__other__'])) .kanban-card {
   min-height: 0;
 }
-.kanban-board--grouping :deep(.rl-board-column:not([data-section-id='__other__'])) .kanban-card .card-title {
+.kanban-board--grouping
+  :deep(.rl-board-column:not([data-section-id='__other__']))
+  .kanban-card
+  .card-title {
   font-size: var(--font-size-sm);
 }
 /* A board with one column uses the full width and wraps its cards. */
@@ -1505,8 +1688,6 @@ watch(createModal.open, (open) => {
   font-size: var(--font-size-base);
 }
 
-
-
 .world-banner {
   display: flex;
   flex-direction: column;
@@ -1549,7 +1730,9 @@ watch(createModal.open, (open) => {
   border: 1px solid var(--rl-color-border);
   border-radius: var(--rl-radius-lg);
   background: var(--rl-color-bg);
-  transition: box-shadow 120ms ease, border-color 120ms ease;
+  transition:
+    box-shadow 120ms ease,
+    border-color 120ms ease;
   /* A real link, so it must not pick up link colour or underline. */
   color: inherit;
   text-decoration: none;

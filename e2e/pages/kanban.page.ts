@@ -294,4 +294,62 @@ export class KanbanPage extends BasePage {
     const column = this.getColumn(columnName);
     await expect(column.locator('.empty-column')).toBeVisible();
   }
+
+  /**
+   * The quick-add input of a column, or of a swimlane cell (TKT-IP4273S).
+   * Its accessible name is "Add a card to <column>", with ", <lane>" in a
+   * swimlane cell.
+   */
+  quickAddInput(column: string, lane?: string): Locator {
+    const name = lane ? `Add a card to ${column}, ${lane}` : `Add a card to ${column}`;
+    return this.page.getByRole('textbox', { name, exact: true });
+  }
+
+  get quickAddInputs(): Locator {
+    return this.page.locator('[data-testid="kanban-quick-add"] input');
+  }
+
+  /** Type a title into a quick-add input and press Enter. */
+  async quickAdd(title: string, column: string, lane?: string) {
+    const input = this.quickAddInput(column, lane);
+    await input.fill(title);
+    await input.press('Enter');
+  }
+
+  /** The swimlane cell that holds the quick-add input for column and lane. */
+  swimlaneCell(column: string, lane: string): Locator {
+    return this.page.locator('.rl-swimlane-column', { has: this.quickAddInput(column, lane) });
+  }
+
+  async expectCardInCell(cardTitle: string, column: string, lane: string) {
+    await expect(this.swimlaneCell(column, lane).locator('.kanban-card').filter({ hasText: cardTitle })).toBeVisible();
+  }
+
+  /** The "Add column" control at the end of the board (TKT-1X5G3BP). */
+  get addColumnControl(): Locator {
+    return this.page.locator('[data-testid="kanban-add-column"]');
+  }
+
+  get addColumnButton(): Locator {
+    return this.addColumnControl.getByRole('button', { name: 'Add column', exact: true });
+  }
+
+  /** Open the control, type a name and press Enter. A save reloads the page. */
+  async addColumn(name: string) {
+    await this.addColumnButton.click();
+    const input = this.addColumnControl.getByRole('textbox', { name: 'Name of the new column', exact: true });
+    await input.fill(name);
+    await input.press('Enter');
+  }
+
+  async expectAddColumnError(text: string) {
+    await expect(this.addColumnControl).toContainText(text);
+  }
+
+  /** The input cleared after a create, ready for the next card. */
+  async expectQuickAddReady(column: string, lane?: string) {
+    const input = this.quickAddInput(column, lane);
+    await expect(input).toHaveValue('');
+    await expect(input).toBeFocused();
+  }
 }

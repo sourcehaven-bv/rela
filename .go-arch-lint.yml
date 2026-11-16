@@ -927,10 +927,6 @@ deps:
       - metamodel
       - predicate
       - predicatefns
-      # queryplan: list_entities lowers a filter to store predicates so the
-      # gated page read can push it down (TKT-D9UO9Y4), as the data-entry
-      # list does.
-      - queryplan
       # realtime + realtimecfg: the channel tools (TKT-76G6M7) speak the
       # channel service's request, view and error types, and the props
       # schema its views carry. They never touch the channel store.
@@ -2245,6 +2241,9 @@ deps:
       # rela.xml / rela.feed (TKT-6KN0AC); pure leaves, no cycle possible.
       - safexml
       - feed
+      # rela.md.entity_refs {content = ...} reads the ids a body mentions by
+      # the rule the mention index uses (TKT-P9QMEVI); a leaf, no cycle.
+      - mentions
       - metamodel
       - principal
       - search
