@@ -3,7 +3,7 @@ paths:
   - "internal/predicate/**"
   - "internal/predicatefns/**"
   - "internal/filter/**"
-  - "internal/automation/**"
+  - "internal/flowcfg/triggers/**"
   - "internal/validation/**"
   - "internal/flowcfg/transitions/*.go"
   - "internal/affordances/**"
@@ -34,7 +34,7 @@ These surfaces are on predicate: ACL affordance `when:`
 (`internal/affordances`), state-machine transition `When:`
 (`internal/flowcfg/transitions/*.go`), wizard-form condition lint
 (`internal/conditionlint`), automation `on.when:`/`validate:`
-(`internal/automation`), metamodel validation `When:`/`Then:`
+(`internal/flowcfg/triggers`), metamodel validation `When:`/`Then:`
 (`internal/validation`), and the CLI `--filter` flag (`internal/cli/list.go`).
 
 Automation `on.condition:` and validation `when_condition:`/`then_condition:`

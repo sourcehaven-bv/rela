@@ -151,7 +151,7 @@ property. A source row with a face is not pulled.
 - **A pull writes as whoever runs it.** A pull by hand runs as you (or
   `--run-as`); a scheduled pull runs as the remote's `run_as`, or as
   `system:scheduler`. Every write goes through the same validation,
-  automations and audit log as any other write by that principal. Give it a
+  triggers and audit log as any other write by that principal. Give it a
   role in this project's `acl.yaml` that lets it create and update the
   mapped types, and delete them if `on_gone: delete`. The audit log names
   that principal, with the triggered-by label `remote:<name>`; the `ref`

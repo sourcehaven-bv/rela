@@ -117,10 +117,10 @@ ID with the wrong prefix) refuses the write, and a rule declared
 
 Strict mode checks the state that is stored:
 
-- An update is checked after its on-update automations ran, so an automation
-  that fills a required property lets the update pass.
-- A create is checked before its on-create automations run, because the
-  create is stored first. A property that only an on-create automation sets
+- An update is checked after its update triggers ran, so a trigger that
+  fills a required property lets the update pass.
+- A create is checked before its `created` triggers run, because the
+  create is stored first. A property that only a `created` trigger sets
   cannot be required in strict mode. Give it a template default instead.
 - The create dry run (`?dry_run=true`, used by the create form) and the
   task-item conversion preview always report warnings, because they exist to
@@ -774,8 +774,8 @@ rela history-purge <address> (--vseq N | --content-hash H | --all) --reason "...
   tags too. The dry run lists the tags a purge would hit.
 
 A committed purge also erases the deleted state that waiting `on.deleted`
-automation jobs hold for the entity, so those jobs end without running (see
-the metamodel guide, "Running a script when an entity is deleted").
+trigger jobs hold for the entity, so those jobs end without running (see
+[Running a script when an entity is deleted](flows.md#running-a-script-when-an-entity-is-deleted)).
 
 Purge **refuses** while the live row still holds the content (unless
 `--force-live`), **refuses** a row a version tag points at (unless
@@ -1575,7 +1575,7 @@ An entity counts once, however many faces it stores.
 | `--dry-run`   | Preview cleanup changes without modifying files               |
 
 The cleanup operation only removes types that have no instances AND no references in
-configuration files (data-entry.yaml, validations, automations). Types referenced in
+configuration files (data-entry.yaml, validations, flows.yaml triggers). Types referenced in
 forms, lists, views, or validations will not be removed even if they have zero instances.
 
 #### rela analyze all
@@ -1788,7 +1788,12 @@ rela migrate [flags]
 This command detects deprecated syntax patterns in your project files (e.g., `schema.yaml`) and
 transforms them to the current format while preserving comments and formatting.
 
-It also renames a legacy `metamodel.yaml` to `schema.yaml`.
+It also renames a legacy `metamodel.yaml` to `schema.yaml`, and moves
+`automations:` from `schema.yaml` and its included files to `flows.yaml` under
+`triggers:`. A schema that still declares `automations:` does not load until
+you run it. The move keeps each automation's name and comments, and stops
+without writing anything when an automation cannot be moved as written. See
+[Moving from schema.yaml automations](flows.md#moving-from-schemayaml-automations).
 
 If a project contains **both** files, `schema.yaml` is the one rela reads and the
 `metamodel.yaml` is ignored. Nothing is renamed or deleted in that case — `migrate`
@@ -2081,7 +2086,7 @@ always produce the same graph, on every backend — on the default build it
 writes markdown files, on the postgres build it writes straight into the
 database named by `RELA_DATABASE_URL`.
 
-This is a raw store write: no automations, validations or ACL run, the writes
+This is a raw store write: no triggers, validations or ACL run, the writes
 are attributed to the operator with tool `perf-seed`, and the run leaves one
 `perf-seed` audit record. It refuses a store that already holds entities so a
 second run cannot sit beside real data.
@@ -2127,7 +2132,7 @@ every row is written, then reads it back to verify. On any problem it writes
 nothing and lists every problem it found. Files it does not copy are listed
 with a reason. See the SQLite backend guide for what is and is not copied.
 
-Like `rela dev seed`, this is a raw store write: no automations, validations or
+Like `rela dev seed`, this is a raw store write: no triggers, validations or
 ACL run. Writes are attributed to the operator with tool `fs-import`, and the
 new project's audit log gets one `fs-import` record.
 
@@ -2547,7 +2552,8 @@ Validate project configuration files.
 rela validate
 ```
 
-Checks `schema.yaml` and `data-entry.yaml` for:
+Checks `schema.yaml`, `data-entry.yaml` and, when the project has one,
+`flows.yaml` (its flows and its [triggers](flows.md#load-checks)) for:
 
 - Unknown/misspelled keys
 - Invalid cross-references (forms, lists, views)

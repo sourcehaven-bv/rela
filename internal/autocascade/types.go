@@ -1,8 +1,8 @@
 package autocascade
 
 import (
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 )
 
 // MaxDepth is the cascade depth limit. When [Runner.Process] reaches
@@ -33,9 +33,9 @@ type Request struct {
 	// workspace.applyAutomationSideEffects.
 	OldTrigger *entity.Entity
 
-	// Result is the automation.Result produced by
-	// [automation.Engine.Process] for the initiating event.
-	Result *automation.Result
+	// Result is the triggers.Result produced by
+	// [triggers.Engine.Process] for the initiating event.
+	Result *triggers.Result
 
 	// Scripts is the script execution adapter. Built once per
 	// wiring scope (no per-request state) — the per-request mutation

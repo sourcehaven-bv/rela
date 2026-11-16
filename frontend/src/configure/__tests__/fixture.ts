@@ -62,14 +62,6 @@ export const schemaFixture = {
     },
     { name: 'scripted', entity_type: 'ticket', lua_file: 'scripts/check.lua', severity: 'warning' },
   ],
-  automations: [
-    {
-      name: 'stamp_done',
-      on: { entity: ['ticket'], property: 'status', becomes: 'done' },
-      do: [{ set: 'effort', value: '0' }],
-    },
-    { name: 'scripted', on: { entity: ['ticket'], created: true }, do: [{ lua: 'print(1)' }] },
-  ],
 }
 
 export const dataEntryFixture = {

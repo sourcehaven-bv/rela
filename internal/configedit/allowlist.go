@@ -20,8 +20,8 @@ const (
 //
 // It is per key, not per section, because the keys that run code sit deep
 // inside sections that are otherwise safe to edit: a file property's
-// scan_cmd, a validation's lua, an automation action's capabilities. A
-// principal who may edit forms must not thereby gain a way to run commands.
+// scan_cmd, a validation's lua. A principal who may edit forms must not
+// thereby gain a way to run commands.
 //
 // A pattern is a dot-separated key path. "*" matches any one key, "[]" any
 // list item, and a trailing "**" anything below. Every key a configuration
@@ -30,7 +30,7 @@ const (
 // is not, so a new key added to the metamodel is locked until someone
 // decides otherwise. A key that matches no pattern at all is locked too.
 //
-// Removing a whole item (a property, a form, an automation) is allowed when
+// Removing a whole item (a property, a form, a validation) is allowed when
 // the item holds anything editable, even if it also holds locked keys:
 // removal takes code away, it never adds it. The exception is an item holding
 // a key listed in protective, and removing or changing one locked key on its
@@ -129,42 +129,6 @@ var editable = map[File][]string{
 		"validations.[].then_condition",
 		"validations.[].when.[]",
 		"validations.[].when_condition",
-
-		"automations.[].description",
-		"automations.[].name",
-		"automations.[].on.becomes",
-		"automations.[].on.condition",
-		"automations.[].on.created",
-		"automations.[].on.updated",
-		"automations.[].on.entity.[]",
-		"automations.[].on.from",
-		"automations.[].on.property",
-		"automations.[].on.relation_created",
-		"automations.[].on.relation_removed",
-		"automations.[].on.when.[]",
-		"automations.[].do.[].set",
-		"automations.[].do.[].value",
-		"automations.[].do.[].create_relation.relation",
-		"automations.[].do.[].create_relation.to",
-		"automations.[].do.[].create_entity.if_exists",
-		"automations.[].do.[].create_entity.properties.*",
-		"automations.[].do.[].create_entity.relation",
-		"automations.[].do.[].create_entity.type",
-		// add_to_pile only pushes the triggering entity's ref onto a pile; the
-		// pile service caps foreign pushes and the owner's reads stay gated.
-		"automations.[].do.[].add_to_pile.create",
-		"automations.[].do.[].add_to_pile.owner",
-		"automations.[].do.[].add_to_pile.pile",
-		// notify pushes the triggering entity's ref onto a declared read-state
-		// pile of the people a property names; the recipient reads it gated.
-		"automations.[].do.[].notify.pile",
-		"automations.[].do.[].notify.reason",
-		"automations.[].do.[].notify.to.property",
-		"automations.[].do.[].notify.to.type",
-		"automations.[].do.[].notify.to.via.[]",
-		"automations.[].validate.[].check",
-		"automations.[].validate.[].message",
-		"automations.[].validate.[].severity",
 
 		// Declared piles (TKT-EO2GCM) name, decorate and expire per-user lists
 		// of refs; they run no code and grant no read.
@@ -357,13 +321,6 @@ var locked = map[File][]string{
 		// privilege: it is a restriction, so it is changed in the repo, where
 		// review sees it. It is protective, and it pins what the rule checks.
 		"validations.[].enforce",
-		"automations.[].do.[].lua", "automations.[].do.[].lua_file",
-		"automations.[].do.[].allow_acl_bypass", "automations.[].do.[].capabilities.**",
-		"automations.[].do.[].create_entity.template",
-		// A background Lua job, and the principal it runs as.
-		"automations.[].do.[].background", "automations.[].do.[].run_as", "automations.[].do.[].retry",
-		// on.deleted only starts background Lua jobs (TKT-Q0AQ840).
-		"automations.[].on.deleted",
 		// Access control: a transition guard names an ACL permission.
 		"types.*.transitions.[].guard",
 		// External sync. A sync connector's Lua finds its records by system,
@@ -375,7 +332,7 @@ var locked = map[File][]string{
 		"entities.*.properties.*.computed", "relations.*.properties.*.computed",
 		"entities.*.properties.*.rollup.**", "relations.*.properties.*.rollup.**",
 		"relations.*.scope", "relations.*.owning",
-		"validations.[].faces.**", "automations.[].on.faces.**", "automations.[].on.copy.**",
+		"validations.[].faces.**",
 	},
 	DataEntryFile: {
 		"version",
@@ -483,14 +440,6 @@ var pinned = map[File][]pin{
 			item: "validations.[]",
 			keys: []string{"entity_type", "faces", "when", "when_condition", "then", "then_condition"},
 			by:   []string{"validations.[].enforce"},
-		},
-		{
-			item: "automations.[]",
-			keys: []string{"on"},
-			by: []string{
-				"automations.[].do.[].lua", "automations.[].do.[].lua_file",
-				"automations.[].do.[].allow_acl_bypass", "automations.[].do.[].capabilities.**",
-			},
 		},
 	},
 }

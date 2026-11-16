@@ -3,7 +3,7 @@ paths:
   - "internal/jobs/**"
   - "internal/scheduler/**"
   - "internal/schedulerstate/**"
-  - "internal/automation/**"
+  - "internal/flowcfg/triggers/**"
   - "internal/entitymanager/**"
   - "internal/lua/**"
   - "internal/dataentry/**"

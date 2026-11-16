@@ -1,0 +1,38 @@
+triggers:
+  stamp:
+    on: {entity: [ticket], created: true}
+    outputs:
+      - set:
+          properties:
+            stamp: "{{today}}"
+  ready-note:
+    on: {entity: [ticket], property: status, becomes: ready}
+    outputs:
+      - set:
+          properties:
+            note: "made ready"
+  done-mail:
+    on: {entity: [ticket], property: status, becomes: done}
+    outputs:
+      - script:
+          file: done_mail.lua
+          capabilities: {mail: true}
+          background: true
+  probe:
+    on: {entity: [ticket], created: true}
+    outputs:
+      - script:
+          lua: |
+            local t = entity.properties.title
+            if t == "http" then
+              local _, err = http.get("http://127.0.0.1:9/")
+              if err then error(err.message) end
+            elseif t == "ai" then
+              local _, err = ai.chat({messages = {{role = "user", content = "hi"}}})
+              if err then error(err.message) end
+            elseif t == "http-quiet" then
+              http.get("http://127.0.0.1:9/")
+            elseif t == "clock" then
+              rela.update_entity(entity.id, {note = rela.today})
+            end
+          capabilities: {http: true, ai: true}

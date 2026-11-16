@@ -11,9 +11,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -482,10 +482,10 @@ func TestAutomationCreateRelation_OwningRules(t *testing.T) {
 		t.Fatalf("parse metamodel: %v", err)
 	}
 	st := memstore.New()
-	engine := automation.NewEngine([]automation.Automation{{
+	engine := triggers.NewEngine([]triggers.Rule{{
 		Name: "adopt",
-		On:   automation.Trigger{Entity: []string{"task"}, Created: true},
-		Do:   []automation.Action{{CreateRelation: &automation.CreateRelationAction{Relation: "subtask", To: "TASK-CHILD"}}},
+		On:   triggers.Trigger{Entity: []string{"task"}, Created: true},
+		Do:   []triggers.Action{{CreateRelation: &triggers.CreateRelationAction{Relation: "subtask", To: "TASK-CHILD"}}},
 	}})
 	runner, err := autocascade.New(autocascade.Deps{Engine: engine})
 	if err != nil {

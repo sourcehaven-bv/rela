@@ -267,6 +267,22 @@ func TestFlowValidate_Run(t *testing.T) {
 		require.ErrorContains(t, err, "problem(s)")
 		require.NotContains(t, buf.String(), "headless flow(s)")
 	})
+	t.Run("valid trigger", func(t *testing.T) {
+		buf := withOutput(t, output.FormatTable)
+		flows := cliFlowsYAML + "triggers:\n  stamp:\n    on: {entity: item, created: true}\n" +
+			"    outputs:\n      - set: {properties: {title: stamped}}\n"
+		require.NoError(t, (&FlowValidateCmd{}).Run(ctx, flowReadServices(t, flows)))
+		require.Contains(t, buf.String(), "1 flow(s), 1 trigger(s)")
+	})
+	t.Run("broken trigger", func(t *testing.T) {
+		buf := withOutput(t, output.FormatTable)
+		flows := "triggers:\n  bad:\n    on: {entity: item, created: true, when: \"entity.nope == 1\"}\n" +
+			"    outputs:\n      - set: {properties: {title: stamped}}\n"
+		err := (&FlowValidateCmd{}).Run(ctx, flowReadServices(t, flows))
+		require.ErrorContains(t, err, "triggers do not load")
+		require.Contains(t, buf.String(), `trigger "bad"`)
+		require.NotContains(t, buf.String(), "is valid")
+	})
 }
 
 // TestValidate_Flows pins the `rela validate` check of flows.yaml: absent
@@ -285,4 +301,53 @@ func TestValidate_Flows(t *testing.T) {
 	require.False(t, check())
 	writeProjectFile(t, root, "flows.yaml", "flows:\n  review:\n    subject: nope\n")
 	require.True(t, check())
+}
+
+// TestValidate_FlowsTriggers pins that `rela validate` checks the flows.yaml
+// triggers: a valid rule passes and an invalid one is a ✗ line naming it.
+func TestValidate_FlowsTriggers(t *testing.T) {
+	tests := []struct {
+		name      string
+		flows     string
+		wantError bool
+		wantOut   string
+	}{
+		{
+			name: "valid trigger",
+			flows: "triggers:\n  stamp:\n    on: {entity: item, created: true}\n" +
+				"    outputs:\n      - set: {properties: {title: stamped}}\n",
+			wantOut: "flows.yaml is valid",
+		},
+		{
+			name:      "undeclared face",
+			flows:     "triggers:\n  bad:\n    on: {entity: item, faces: [draft]}\n",
+			wantError: true,
+			wantOut:   `trigger "bad"`,
+		},
+		{
+			name:      "managed type",
+			flows:     "triggers:\n  bad:\n    on: {entity: _flow-run, created: true}\n",
+			wantError: true,
+			wantOut:   "is managed by rela",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := seedProject(t)
+			writeProjectFile(t, root, "flows.yaml", tc.flows)
+			result, err := projectsetup.Validate(context.Background(), root)
+			require.NoError(t, err)
+			require.NotNil(t, result.Metamodel)
+			var failed bool
+			out, _ := captureStdout(t, func() error {
+				failed = reportFlowsValidation(context.Background(), result, false)
+				return nil
+			})
+			require.Equal(t, tc.wantError, failed, out)
+			require.Contains(t, out, tc.wantOut)
+			if tc.wantError {
+				require.Contains(t, out, "✗")
+			}
+		})
+	}
 }

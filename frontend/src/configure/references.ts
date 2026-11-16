@@ -113,10 +113,4 @@ export function renameSchemaReferences(
   if (!isMap(type)) return
   renameIn(type, 'display_property', from, to)
   renameEach(get(type, 'default_sort'), 'property', from, to)
-  for (const auto of mapItems(get(schema, 'automations'))) {
-    const on = get(auto, 'on')
-    if (!strList(get(on, 'entity')).includes(entityType)) continue
-    renameIn(on, 'property', from, to)
-    renameEach(get(auto, 'do'), 'set', from, to)
-  }
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
@@ -65,7 +67,54 @@ func (l *FSLoader) Load(_ context.Context) (*Metamodel, []string, error) {
 			Detections: blocking,
 		}
 	}
-	return Load(l.path, l.fs)
+	m, files, err := Load(l.path, l.fs)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := l.checkIncludesMoved(files); err != nil {
+		return nil, nil, err
+	}
+	return m, files, nil
+}
+
+// checkIncludesMoved refuses an included file that still declares
+// `automations:` (TKT-GWOBH2U). The include parser ignores the key, so
+// without this check a project whose automations live in an include would
+// load with them silently gone. Only this detection runs on includes: the
+// other migrations have never been checked there.
+func (l *FSLoader) checkIncludesMoved(files []string) error {
+	for _, f := range files { // the root is clean already; re-checking it is harmless
+		detections, err := migration.Detect(f, migration.FileTypeMetamodel, l.fs)
+		if err != nil {
+			return err
+		}
+		for _, d := range migration.Blocking(detections) {
+			if d.Migration != nil && d.Migration.Name() == migration.AutomationsToFlowsName {
+				return &migration.Error{FilePath: f, Detections: []migration.DetectionResult{d}}
+			}
+		}
+	}
+	return nil
+}
+
+// refuseAutomations refuses schema content that still declares
+// `automations:` (TKT-GWOBH2U), with the migration's message. [Parse] and
+// [Load] call it, so a caller that skips [FSLoader] cannot load a schema
+// with its automations silently gone. [LoadWithoutMigrationCheck] does not:
+// 'rela migrate' reads the schema with it before the move. The callers run
+// it after parseRaw, so data is valid YAML.
+func refuseAutomations(path string, data []byte) error {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil { // coverage-ignore: defensive: parseRaw parsed data already
+		return humanizeYAMLError(err)
+	}
+	m := &migration.AutomationsToFlowsMigration{}
+	if !m.Detect(&doc) {
+		return nil
+	}
+	return &migration.Error{FilePath: path, Detections: []migration.DetectionResult{
+		{Migration: m, Description: m.Description()},
+	}}
 }
 
 // Subscribe watches the metamodel file and its includes. Because includes

@@ -51,12 +51,6 @@ func TestCheckEdit(t *testing.T) {
 validations:
   - name: v1
     entity_type: ticket
-automations:
-  - name: a1
-    on: {entity: ticket, property: status, becomes: done}
-    do:
-      - set: done_at
-        value: "{{today}}"
 `
 	tests := []struct {
 		name string
@@ -73,11 +67,13 @@ automations:
 		{"add a transform command", strings.Replace(schema, "      title: {type: string}\n", "      title:\n        type: string\n        transform: [{cmd: [sh]}]\n", 1), []string{"entities.ticket.properties.title.transform.0.cmd added"}},
 		{"add lua to a validation", strings.Replace(schema, "    entity_type: ticket\n", "    entity_type: ticket\n    lua: os.exit()\n", 1), []string{"validations.0.lua added"}},
 		{"add lua_file to a validation", strings.Replace(schema, "    entity_type: ticket\n", "    entity_type: ticket\n    lua_file: x.lua\n", 1), []string{"validations.0.lua_file added"}},
-		{"new validation with lua", strings.Replace(schema, "automations:\n", "  - name: v2\n    lua: x\nautomations:\n", 1), []string{"validations.1.lua added"}},
-		{"new automation without code", schema + "  - name: a2\n    on: {created: true}\n    do: [{set: x, value: y}]\n", nil},
-		{"add lua to an automation action", strings.Replace(schema, "        value: \"{{today}}\"\n", "        value: \"{{today}}\"\n      - lua: x\n", 1), []string{"automations.0.do.1.lua added"}},
-		{"add acl bypass", strings.Replace(schema, "      - set: done_at\n", "      - allow_acl_bypass: read+write\n        set: done_at\n", 1), []string{"automations.0.do.0.allow_acl_bypass added"}},
-		{"add capabilities", strings.Replace(schema, "      - set: done_at\n", "      - capabilities: {http: true}\n        set: done_at\n", 1), []string{"automations.0.do.0.capabilities.http added"}},
+		{"new validation with lua", schema + "  - name: v2\n    lua: x\n", []string{"validations.1.lua added"}},
+		// Automations moved to flows.yaml triggers: (TKT-GWOBH2U).
+		{"add an automation", schema + "automations:\n  - name: a2\n    on: {created: true}\n    do: [{set: x, value: y}]\n",
+			[]string{
+				"automations.0.do.0.set added", "automations.0.do.0.value added",
+				"automations.0.name added", "automations.0.on.created added",
+			}},
 		{"add an attachments block", schema + "attachments:\n  scan_cmd: [sh]\n", []string{"attachments.scan_cmd added"}},
 		{"add a query scope", strings.Replace(schema, "    label: Ticket\n", "    label: Ticket\n    query_scopes:\n      open: \"entity.status ~= 'done'\"\n", 1), nil},
 		{"turn comments on", schema + "comments: {enabled: true, on: [ticket]}\n", nil},
@@ -180,13 +176,6 @@ navigation:
 			schema + "validations:\n  - {name: v, entity_type: ticket, enforce: write, then: [\"title!=\"]}\n",
 			schema + "validations:\n  - {name: v, description: d, entity_type: ticket, enforce: write, then: [\"title!=\"]}\n",
 			nil},
-		{"retarget an automation holding lua", SchemaFile,
-			schema + "automations:\n  - {name: a, on: {entity: ticket}, do: [{lua: x}]}\n",
-			schema + "automations:\n  - {name: a, on: {entity: person}, do: [{lua: x}]}\n",
-			[]string{"automations.0.on changed"}},
-		{"retarget an automation without code", SchemaFile,
-			schema + "automations:\n  - {name: a, on: {entity: ticket}, do: [{set: x, value: y}]}\n",
-			schema + "automations:\n  - {name: a, on: {entity: person}, do: [{set: x, value: y}]}\n", nil},
 		{"remove a nav entry holding a permission", DataEntryFile, de,
 			strings.Replace(de, "  - label: Admin\n    list: all\n    permission: admin:read\n", "", 1),
 			[]string{"navigation.0.permission removed"}},

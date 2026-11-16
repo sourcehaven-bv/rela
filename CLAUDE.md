@@ -414,21 +414,21 @@ Domain and storage:
 
 Subsystems (see each package's doc comment for details):
 
-| Package                | Purpose                                                                                                    |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `internal/cli`         | Cobra commands                                                                                             |
-| `internal/mcp`         | MCP server over stdio — tools, resources, prompts, watcher                                                 |
-| `internal/dataentry`   | Data entry web app (Go API + Vue 3 SPA in `frontend/`)                                                     |
-| `internal/scheduler`   | Sequential Lua script scheduler (`rela scheduler`)                                                         |
-| `internal/lua`         | Lua runtime + bindings (`ReadDeps`, `WriteDeps`)                                                           |
-| `internal/script`      | Script execution helpers that wrap `lua` with project context                                              |
-| `internal/automation`  | Automation engine invoked by `entitymanager`                                                               |
-| `internal/autocascade` | Cascade orchestration (runs automation side-effects)                                                       |
-| `internal/ai`          | OpenAI-compatible LLM provider (used from Lua)                                                             |
-| `internal/migration`   | Schema migrations for project YAML files                                                                   |
-| `internal/cmdexec`     | Safe external-command core (argv, no shell, `{in}`/`{out}`, timeout, cap) shared by attachment + transform |
-| `internal/transform`   | View-export engine: markdown `Renderer` → external-tool format conversion (the `transforms:` registry)     |
-| `internal/check`       | Prose-check engine: runs the `checkers:` registry over entity bodies, one finding shape for every tool     |
+| Package                     | Purpose                                                                                                    |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `internal/cli`              | Cobra commands                                                                                             |
+| `internal/mcp`              | MCP server over stdio — tools, resources, prompts, watcher                                                 |
+| `internal/dataentry`        | Data entry web app (Go API + Vue 3 SPA in `frontend/`)                                                     |
+| `internal/scheduler`        | Sequential Lua script scheduler (`rela scheduler`)                                                         |
+| `internal/lua`              | Lua runtime + bindings (`ReadDeps`, `WriteDeps`)                                                           |
+| `internal/script`           | Script execution helpers that wrap `lua` with project context                                              |
+| `internal/flowcfg/triggers` | flows.yaml `triggers:` engine invoked by `entitymanager`                                                   |
+| `internal/autocascade`      | Cascade orchestration (runs automation side-effects)                                                       |
+| `internal/ai`               | OpenAI-compatible LLM provider (used from Lua)                                                             |
+| `internal/migration`        | Schema migrations for project YAML files                                                                   |
+| `internal/cmdexec`          | Safe external-command core (argv, no shell, `{in}`/`{out}`, timeout, cap) shared by attachment + transform |
+| `internal/transform`        | View-export engine: markdown `Renderer` → external-tool format conversion (the `transforms:` registry)     |
+| `internal/check`            | Prose-check engine: runs the `checkers:` registry over entity bodies, one finding shape for every tool     |
 
 Other packages under `internal/` are self-descriptive — ls the tree.
 
@@ -772,8 +772,8 @@ backlog → ready → analyzing → in-progress → review → done
 **Agent Workflow for Tickets:**
 
 Checklists are **automatically created** when tickets/bugs transition to
-specific statuses. The `create_entity` automation with `if_exists: skip` ensures
-no duplicates.
+specific statuses. The `create` output of a flows.yaml trigger, with
+`if_exists: skip`, ensures no duplicates.
 
 1. **Start Planning** (status: `planning`)
    - Planning checklist is auto-created and linked via `has-planning`
@@ -877,14 +877,14 @@ Tickets/bugs cannot be marked `done` if they have:
 
 Minor/nit findings may remain open with warnings.
 
-### Automation Actions
+### Triggers
 
-Status transitions auto-create checklists (and similar side effects) via
-automations declared in the project's `schema.yaml`. Action types (`set`,
-`create_relation`, `create_entity` with `if_exists`) and interpolation patterns
+Status transitions auto-create checklists (and similar side effects) through
+the `triggers:` declared in the project's `flows.yaml`. Output types (`set`,
+`relate`, `create` with `if_exists`, `script`, `check`) and placeholders
 (`{{new.property}}`, `{{entity.id}}`, `{{today}}`) are documented in
-`docs/metamodel.md` and exemplified in the live `schema.yaml`. Read those rather
-than relying on a copy here — a stale copy is worse than a pointer.
+`docs/flows.md` and exemplified in the live `tickets/flows.yaml`. Read those
+rather than relying on a copy here; a stale copy is worse than a pointer.
 
 Common mistake: `{{entity.title}}` is wrong; use `{{new.title}}` for a property
 of the triggering entity.

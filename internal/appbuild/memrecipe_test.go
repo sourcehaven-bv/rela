@@ -34,9 +34,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
-// memWorldSchema has one required property (validation), two automations
-// (one writes a file through rela.write_file), and commenting switched on, so
-// a write through the world touches each of them.
+// memWorldSchema has one required property (validation) and commenting
+// switched on; memWorldFlows adds two triggers (one writes a file through
+// rela.write_file), so a write through the world touches each of them.
 const memWorldSchema = `version: "1.0"
 entities:
   ticket:
@@ -52,24 +52,27 @@ relations: {}
 comments:
   enabled: true
   on: [ticket]
-automations:
-  - name: close-note
+`
+
+// memWorldFlows holds the two triggers of memWorldSchema.
+const memWorldFlows = `triggers:
+  close-note:
     on:
       entity: [ticket]
       property: status
       becomes: closed
-    do:
-      - set: note
-        value: closed by automation
-  - name: close-report
+    outputs:
+      - set: {properties: {note: closed by automation}}
+  close-report:
     on:
       entity: [ticket]
       property: status
       becomes: closed
-    do:
-      - lua: |
-          rela.write_file("report.txt", "closed")
-        capabilities: {write_file: true}
+    outputs:
+      - script:
+          lua: |
+            rela.write_file("report.txt", "closed")
+          capabilities: {write_file: true}
 `
 
 // memWorldPolicy lets alice write tickets and bob only read them.
@@ -92,6 +95,7 @@ func writeMemWorldProject(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	writeFile(t, root, "schema.yaml", memWorldSchema)
+	writeFile(t, root, "flows.yaml", memWorldFlows)
 	writeFile(t, root, "acl.yaml", memWorldPolicy)
 	writeFile(t, root, "entities/tickets/TKT-1.md", "---\nid: TKT-1\ntype: ticket\ntitle: On disk\n---\n")
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "relations"), 0o755))

@@ -27,7 +27,7 @@ pull, the run pushes:
   again.
 - **The remote decides.** The push writes as the same principal the pull
   reads as, with the same credential. The remote's `acl.yaml`, validation,
-  automations and audit log apply as for any other write by that principal.
+  triggers and audit log apply as for any other write by that principal.
   Give it a role on the remote that may create and update the mapped types.
 - **A remote change is never overwritten.** Every update carries the
   version the run last saw (`If-Match`). When the remote row changed since,

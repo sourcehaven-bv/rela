@@ -14,9 +14,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/computed"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -38,7 +38,7 @@ type TemplateLoader interface {
 
 // Manager is the production entity-manager implementation — the whole of this
 // package's write API. It runs metamodel validation, automation rules (via
-// [automation.Engine]), and dispatches automation cascades through an
+// [triggers.Engine]), and dispatches automation cascades through an
 // [autocascade.Runner].
 //
 // Manager is constructed at each per-command wiring site (cmd/rela,
@@ -52,7 +52,7 @@ type TemplateLoader interface {
 // Pipeline shapes preserved from the pre-decomposition workspace
 // implementation (see PLAN-HQ5Y):
 //
-//   - Create: createCore (validate → write) → automation.Process →
+//   - Create: createCore (validate → write) → triggers.Process →
 //     apply property changes → re-write if changed → cascade.
 //     Engine.Process runs here (not inside Runner) because
 //     PropertiesSet must land on the entity and be persisted before
@@ -262,7 +262,7 @@ type Deps struct {
 	// Automations is the rule-evaluation engine. Manager calls it
 	// on EventEntityCreated / EventEntityUpdated to discover side
 	// effects. Optional: nil disables automation processing.
-	Automations *automation.Engine
+	Automations *triggers.Engine
 
 	// Cascade is the autocascade Runner that orchestrates automation
 	// side effects after a write. Required iff Automations is non-nil.
@@ -444,7 +444,7 @@ type Deps struct {
 // should carry whatever structured denial detail the surface needs.
 //
 // **Scope: caller-authored changes only.** Automation-derived properties
-// ([automation.Result.PropertiesSet]) are system writes and are
+// ([triggers.Result.PropertiesSet]) are system writes and are
 // deliberately NOT passed through this gate. The gate enforces parity with
 // what the affordance resolver would surface to this principal on a read —
 // and automation is the system acting, not the principal. Gating it would
@@ -1090,8 +1090,8 @@ func createFollowUps(
 		return result, nil
 	}
 
-	autoResult := m.deps.Automations.Process(ctx, automation.Event{
-		Type:   automation.EventEntityCreated,
+	autoResult := m.deps.Automations.Process(ctx, triggers.Event{
+		Type:   triggers.EventEntityCreated,
 		Entity: created,
 	})
 	if len(autoResult.PropertiesSet) > 0 {
@@ -1206,7 +1206,7 @@ func (m *Manager) ValidateCreate(
 // and dispatches the cascade.
 //
 // **Caller-entity mutation.** When automation sets properties via
-// [automation.Result.PropertiesSet], UpdateEntity mutates the supplied
+// [triggers.Result.PropertiesSet], UpdateEntity mutates the supplied
 // `*entity.Entity` in place before writing. Callers that need to
 // preserve the pre-call state should clone first.
 //
@@ -1823,12 +1823,12 @@ func (m *Manager) updateCore(
 
 func (m *Manager) processUpdateAutomation(
 	ctx context.Context, e, oldEntity *entity.Entity,
-) (*automation.Result, bool, error) {
+) (*triggers.Result, bool, error) {
 	if m.deps.Automations == nil {
 		return nil, false, nil
 	}
-	result := m.deps.Automations.Process(ctx, automation.Event{
-		Type:      automation.EventEntityUpdated,
+	result := m.deps.Automations.Process(ctx, triggers.Event{
+		Type:      triggers.EventEntityUpdated,
 		Entity:    e,
 		OldEntity: oldEntity,
 	})

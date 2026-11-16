@@ -38,7 +38,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
@@ -49,6 +48,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/flowengine"
 	"github.com/Sourcehaven-BV/rela/internal/flowrun"
 	"github.com/Sourcehaven-BV/rela/internal/hostconfig"
@@ -1552,33 +1552,33 @@ func buildFieldPolicy(
 	return fieldPolicy{redactor: redactor, gate: gate, flowEdits: ceiling}, nil
 }
 
-// buildAutomation wires the automation engine + cascade runner from
-// the metamodel. Returns (nil, nil, nil) when the metamodel declares
-// no automations — Manager treats that as "automation disabled".
+// buildAutomation wires the trigger engine + cascade runner from the
+// flows.yaml rules. Returns (nil, nil, nil) when there are no rules — Manager treats that as "automation disabled".
 //
 // A condition's `related(...)` is answered ungated from st: an automation is
 // system policy, so what it sees must not depend on who made the write.
 func buildAutomation(
-	meta *metamodel.Metamodel, st store.Store, bg autocascade.BackgroundScripts, pusher autocascade.PilePusher,
+	meta *metamodel.Metamodel, rules []triggers.Rule, st store.Store,
+	bg autocascade.BackgroundScripts, pusher autocascade.PilePusher,
 	now func() time.Time,
-) (*automation.Engine, *autocascade.Runner, error) {
-	if len(meta.Automations) == 0 {
+) (*triggers.Engine, *autocascade.Runner, error) {
+	if len(rules) == 0 {
 		return nil, nil, nil
 	}
 	traversals, err := relresolve.NewStoreBinder(meta, relresolve.Ungated, st)
 	if err != nil {
 		return nil, nil, fmt.Errorf("build automation engine: %w", err)
 	}
-	autoEngine, err := automation.NewEngineFromMetamodel(meta, meta.Automations,
-		automation.WithTraversals(traversals), automation.WithClock(now))
+	autoEngine, err := triggers.New(meta, rules,
+		triggers.WithTraversals(traversals), triggers.WithClock(now))
 	if err != nil {
-		return nil, nil, fmt.Errorf("build automation engine: %w", err)
+		return nil, nil, fmt.Errorf("flows.yaml: triggers: %w", err)
 	}
 	cascadeRunner, err := autocascade.New(autocascade.Deps{
 		Engine: autoEngine, Background: bg, Piles: pusher, Recipients: notifyRecipients{st: st},
 	})
 	// coverage-ignore-start: defensive: autocascade.New only errors on a nil Engine; autoEngine is freshly built by
-	// NewEngineFromMetamodel just
+	// triggers.New just
 	// above and is never nil
 	if err != nil {
 		return nil, nil, fmt.Errorf("build autocascade runner: %w", err)
@@ -2262,6 +2262,9 @@ type SharedBase struct {
 	// flows is the compiled flows.yaml, nil when it declares no flows.
 	// Compiled here so an invalid file fails the boot, like realtime.yaml.
 	flows *flowcfg.Compiled
+	// triggers are the flows.yaml `triggers:` rules, nil when it declares none.
+	// Decoded here so an invalid rule fails the boot.
+	triggers []triggers.Rule
 	// flowsPolicy is the acl.yaml policy flows compiled against (see
 	// [flowConfigPolicy]). The engine compiles older run versions against
 	// it too. Nil when the project has no acl.yaml.
@@ -2492,6 +2495,10 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 	if err != nil {
 		return nil, err
 	}
+	triggerRules, err := triggers.Parse(flowsData, meta)
+	if err != nil {
+		return nil, err
+	}
 
 	// Compile the declared worlds here, at assembly, so a bad face name is
 	// a startup failure rather than a lurking runtime one. The loader checks
@@ -2550,7 +2557,7 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 	return &SharedBase{
 		cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy,
 		meta: meta, worlds: compiledWorlds, conns: conns, realtime: rt, flows: flows, flowsPolicy: flowsPolicy,
-		validationMode: mode, channelFiles: &channelFileRunners{},
+		triggers: triggerRules, validationMode: mode, channelFiles: &channelFileRunners{},
 	}, nil
 }
 
@@ -2716,7 +2723,7 @@ func closeAuditSink(sink audit.Audit) {
 func buildEntityManager(
 	base *SharedBase, st store.Store, aliases entitymanager.AliasRewriter,
 	templater entitymanager.TemplateLoader, resolvedACL acl.ACL,
-	autoEngine *automation.Engine, cascadeRunner *autocascade.Runner,
+	autoEngine *triggers.Engine, cascadeRunner *autocascade.Runner,
 	readDeps lua.ReadDeps, pileWriter lua.PileWriter, versions store.VersionService, tw TransitionWiring,
 	computedSet *computed.Set, attachLocker lock.Locker, fieldGate entitymanager.FieldWriteGate,
 	guard guardInputs,
@@ -3248,7 +3255,7 @@ type versionSweep interface {
 //
 // Nil: sweep is accepted and means the store has no sweep.
 func finishAssembly(
-	s *Services, attachLocker lock.Locker, autoJobs *automationJobs, engine *automation.Engine, refs refHolders,
+	s *Services, attachLocker lock.Locker, autoJobs *automationJobs, engine *triggers.Engine, refs refHolders,
 	sweep versionSweep,
 ) (*Services, error) {
 	s.attachLocker = attachLocker
@@ -3314,13 +3321,14 @@ func finishAssembly(
 // buildRuntimeServices.
 func buildAutomationWithJobs(
 	base *SharedBase, st store.Store, kv state.KV, q jobs.Queue, pileSvc *piles.Service,
-) (*automationJobs, *automation.Engine, *autocascade.Runner, error) {
-	autoJobs, err := newAutomationJobs(base.meta, kv, st, automationJobQueue(base, q))
+) (*automationJobs, *triggers.Engine, *autocascade.Runner, error) {
+	autoJobs, err := newAutomationJobs(base.triggers, kv, st, automationJobQueue(base, q))
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	// Errors only on a nil Engine, which buildAutomation never produces.
-	autoEngine, cascadeRunner, err := buildAutomation(base.meta, st, autoJobs, cascadePiles(pileSvc), base.clock())
+	autoEngine, cascadeRunner, err := buildAutomation(
+		base.meta, base.triggers, st, autoJobs, cascadePiles(pileSvc), base.clock())
 	if err != nil { // coverage-ignore: defensive: see above
 		return nil, nil, nil, err
 	}

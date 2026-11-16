@@ -68,7 +68,7 @@ project/
 
 Put shared code in a module under the project's `lib/` directory, and load it
 with `require`. Any script can use it: actions, documents and export
-renders, automations (`lua:` and `lua_file:`), scheduled tasks, validation
+renders, trigger scripts in `flows.yaml` (`script:` with `lua:` or `file:`), scheduled tasks, validation
 rules, flows, `rela script` and the MCP `lua_run`/`lua_eval` tools.
 
 A module is a Lua file that returns a value, usually a table of functions:
@@ -531,9 +531,9 @@ missing one: `entity not found`. `allow_acl_bypass` does not cover tags:
 checked against the script's principal.
 
 `rela.tag_version` and `rela.untag_version` exist in action scripts,
-scheduled scripts, background automation actions and MCP scripts. They are
-absent in a synchronous automation, and a tag write inside a store
-transaction is refused (`ErrTagInTx`). Tag from a background action or a
+scheduled scripts, background trigger scripts and MCP scripts. They are
+absent in an inline trigger script, and a tag write inside a store
+transaction is refused (`ErrTagInTx`). Tag from a background script or a
 scheduled script.
 
 #### Baseline and compare
@@ -768,16 +768,16 @@ The call acts as the script's principal and has no elevated mode:
 - `rela.bypass_acl` does not widen it.
 
 Which principal that is depends on where the script runs. In an action it
-is the user who ran the action. In a background automation it is the
-action's `run_as` identity, and in a schedule the task's identity. The
-user whose save triggered an automation is not the principal. The audit
+is the user who ran the action. In a background trigger script it is the
+script's `run_as` identity, and in a schedule the task's identity. The
+user whose save fired the trigger is not the principal. The audit
 record names that user in `triggered_by`, as
 `automation-job:<name>;by=<user>`.
 
 The file can be downloaded by everyone who can read the target entity.
 That audience may be wider than the principal that rendered it. A broad
 `run_as` identity therefore renders rows the triggering user may not see
-and stores them where that user can read them. Give an automation that
+and stores them where that user can read them. Give a trigger script that
 calls `rela.attach_render` a `run_as` whose reads match the entity's
 readers.
 
@@ -787,15 +787,15 @@ cancelled, and nothing is stored. Conversions share one bounded pool with
 exports, so a busy server can make the call wait.
 
 `rela.attach_render` exists in action scripts. In `rela-server` and the
-desktop app it also exists in scheduled scripts and background automation
-actions. In other runtimes, such as `rela scheduler`, `rela script` or MCP over stdio, it
+desktop app it also exists in scheduled scripts and background trigger
+scripts. In other runtimes, such as `rela scheduler`, `rela script` or MCP over stdio, it
 returns `nil` and `"attach_render is not available in this runtime"`. It
-is absent in a synchronous automation, in a document render and in a
+is absent in an inline trigger script, in a document render and in a
 validation rule.
 
-An automation that attaches on update fires again for its own write,
-because attaching a file updates the entity. Guard it with a `when:` that
-the write does not keep true, such as a status change, or run it from an
+A trigger that attaches on update fires again for its own write,
+because attaching a file updates the entity. Guard it with a `where:` or
+`when:` condition that the write does not keep true, such as a status change, or run it from an
 action or a schedule instead.
 
 ### Attach bytes the script holds: `rela.attach_file`
@@ -937,9 +937,9 @@ sync system and `rela.sync.merge` raise `sync needs version history`.
 **Writing a ref.** Only operator-authored scripts, data migrations and
 imports may write an external ref: `rela.create_entity("ticket", {basecamp =
 {id = "7012345", url = "https://..."}})`. The scripts that may are action
-scripts, scheduled scripts, automation scripts (inline and background) and
+scripts, scheduled scripts, trigger scripts (inline and background) and
 `rela script`. The data-entry app, the REST API, the MCP tools (including
-`lua_eval` and `lua_run`) and an automation's `set:` or `create_entity`
+`lua_eval` and `lua_run`) and a trigger's `set` or `create` output
 refuse it. Run a connector as a scheduled task.
 
 **Finding the entity.** `rela.find_by_external_ref` reads through the
@@ -1013,7 +1013,7 @@ skip the tag and let the next run merge. `rela.update_entity(id, props,
 content, {expect = token})` writes only while the script's read of the
 entity still has that token, and otherwise returns nil and `"conflict"`
 with nothing written. Tokens and `expect` need a runtime that can tag
-versions (action, scheduled and background automation scripts).
+versions (action, scheduled and background trigger scripts).
 
 **The loop.** Run it as a scheduled task with its own `run_as` identity.
 The order is load-bearing:
@@ -1082,7 +1082,7 @@ local function sync_one(remote)
     if tok and rela.tag_version(created.id, "sync/basecamp", {expect = tok}) then
       return
     end
-    -- An automation rewrote the entity during the create. Merge it with no
+    -- A trigger rewrote the entity during the create. Merge it with no
     -- base below: a complete report that agrees retags with the read token.
     e = created
   end
@@ -1111,7 +1111,7 @@ Five rules keep the loop from losing an edit:
    wrote nothing. Never take a fresh token after the fact, which would
    absorb an edit the merge never saw.
 3. Write with `expect`. On `"conflict"`, read again and merge again, a fixed
-   number of times. An automation or background job can rewrite the entity
+   number of times. A trigger or background job can rewrite the entity
    right after the write, which makes the tag conflict too.
 4. Treat a nil from `rela.find_by_external_ref` as "not visible", not as
    "free". A `must be unique` error on the create ends that item.
@@ -1126,7 +1126,7 @@ as the connector's identity. The action writes or pushes the chosen value
 and moves the tag.
 
 **Access.** Run the connector as its own identity, `integration:<name>`,
-set as `run_as` on its scheduled task and its background automation. No
+set as `run_as` on its scheduled task and its background trigger script. No
 person or API client can claim an `integration:` name, so its role is
 reachable only from operator-authored config. Give that identity its own
 role. It needs `read`, `create` and `update` on the synced types,
@@ -1157,9 +1157,9 @@ snippets, and a consent script for the first token.
 
 ### Elevated access — `rela.bypass_acl`
 
-By default an automation script's reads **and** writes are **ACL-checked
-against the triggering principal** (the user whose action fired the
-automation). That is correct for most automations. But some scripts enforce a
+By default a trigger script's reads **and** writes are **ACL-checked
+against the triggering principal** (the user whose write fired the
+trigger). That is correct for most triggers. But some scripts enforce a
 *system invariant* on behalf of a user who isn't authorized to act directly —
 e.g. stamping `submitter --created-by--> ticket` on ticket create so the
 submitter (and only they) can later read their own ticket, without the
@@ -1200,7 +1200,7 @@ returns rows the gated `rela.list_entities` would drop; `get_relations` returns
 edges even when neither endpoint is visible to the caller. A half-elevated read
 would be a confusing contract — the closure is the boundary.
 
-Use them when an automation genuinely needs a whole-graph view, e.g. checking a
+Use them when a trigger script genuinely needs a whole-graph view, e.g. checking a
 uniqueness invariant across entities the submitter cannot see:
 
 ```lua
@@ -1229,16 +1229,18 @@ applies the same rule, from the same code — the two cannot drift on what a
 filter means.
 
 **Operator opt-in is required.** `rela.bypass_acl` only exists when the
-automation action sets `allow_acl_bypass:` in `schema.yaml` (an operator-only
-file). Without it the function is absent and a script cannot elevate:
+trigger's `script:` output sets `allow_acl_bypass:` in `flows.yaml` (an
+operator-only file). Without it the function is absent and a script cannot
+elevate:
 
 ```yaml
-automations:
-  - name: stamp-ticket-author
+triggers:
+  stamp-ticket-author:
     on: { entity: [ticket], created: true }
-    do:
-      - lua_file: stamp-author.lua
-        allow_acl_bypass: read+write
+    outputs:
+      - script:
+          file: stamp-author.lua
+          allow_acl_bypass: read+write
 ```
 
 The value selects which capabilities the `admin` handle carries:
@@ -1313,7 +1315,7 @@ Three rules, all enforced at config load:
 - **Only `read`.** A render is served on a `GET`; `write` and `read+write` are
   a config error. Elevated writes there would not be idempotent (browsers
   prefetch, users refresh, the SPA retries) and would foreclose caching a
-  principal-independent render, so they belong in an automation action or a
+  principal-independent render, so they belong in a trigger script or a
   schedule. This prevents a render mutating *beyond* the caller's permissions;
   the ordinary gated `rela.*` write bindings remain available to a document
   script.
@@ -1335,7 +1337,7 @@ block before deploying — that review *is* the mitigation.
   `acl_bypass=true`, so "who caused this elevated write" is always answerable.
 - **Elevated reads are audited too.** A closure that used any of the `admin`
   read methods emits one `acl-bypass-read` row naming the principal, the
-  automation, and which bindings were used. It is **one row per closure**, not
+  trigger, and which bindings were used. It is **one row per closure**, not
   per read — a single `admin.list_entities` can span the graph — and it
   deliberately records **no subject and no entity data**, since logging the
   read set would copy the very data the ACL protects into the audit log. The
@@ -2076,7 +2078,7 @@ is `nil` and only `published_raw` is set.
 | `rela.params` | Action script parameters (table, static string-valued map from data-entry config) |
 | `rela.secrets` | Per-script secrets (table, from `.rela/secrets.yaml`) |
 | `rela.request` | Present **only** for a request-scoped action (an action with a `request:` block). Read-only `{method, path, content_type, raw, body, query, headers}` — see [Request-scoped actions](data-entry.md#request-scoped-actions). `headers` holds only the names the action allowlisted; credentials and proxy-asserted identity headers are refused at config load. `nil` everywhere else, so `if rela.request then` is the test. |
-| `rela.principal` | Read-only `{user, tool}` — the identity this runtime runs as (the request principal, e.g. from `X-Rela-User`). Use it in write-path automations to attribute relations to the acting user, e.g. stamping a `created-by` edge from the submitter. Unstamped/CLI contexts read `{user="unknown", tool="unknown"}`. The table is frozen: assigning to it raises. It only *reads* identity — audit attribution is always derived from the request context inside the write bindings, never from this table, so it is not a spoofing vector. |
+| `rela.principal` | Read-only `{user, tool}` — the identity this runtime runs as (the request principal, e.g. from `X-Rela-User`). Use it in trigger scripts to attribute relations to the acting user, e.g. stamping a `created-by` edge from the submitter. Unstamped/CLI contexts read `{user="unknown", tool="unknown"}`. The table is frozen: assigning to it raises. It only *reads* identity — audit attribution is always derived from the request context inside the write bindings, never from this table, so it is not a spoofing vector. |
 | `rela.cache` | Process-wide memoization cache namespaced per script (see [Cache](#cache)) |
 | `rela.mode` | Set to `"document"` when rendering a data-entry document; `nil` otherwise (see [Document Mode](#document-mode)) |
 | `rela.document` | Present only in document mode; holds `{id, entry_id}` (see [Document Mode](#document-mode)) |
@@ -2169,8 +2171,8 @@ actions:
       secrets: [slack_webhook_url]
 ```
 
-The same block works on `documents:` entries, automation actions in
-`schema.yaml`, and tasks in `schedules.yaml`.
+The same block works on `documents:` entries, trigger `script:` outputs in
+`flows.yaml`, and tasks in `schedules.yaml`.
 
 **`secrets:` is a list of key names, not a boolean.** This is the point of the
 feature: an action that needs one Slack webhook does not also receive your
@@ -2385,7 +2387,7 @@ tasks:
 ```
 
 `tokens:` works on scheduled tasks, data-entry actions and background
-automation actions. It is refused on a synchronous automation action,
+trigger scripts. It is refused on an inline trigger script,
 because a refresh is slow network I/O inside the save, and on a document,
 because a render is a GET. Calling `rela.oauth` inside a store transaction
 raises for the same reason. `rela script` and `rela flow` reach every
@@ -3047,7 +3049,7 @@ resolve against whoever the script is running as:
 | Where the script runs | Reads as |
 |---|---|
 | Data-entry action, `export_render`, MCP-invoked | the requesting user |
-| Automation / cascade | the user whose write triggered it |
+| Trigger (`flows.yaml`) / cascade | the user whose write fired it |
 | Scheduled task | the task's identity (see `run_as` in [Scheduled Tasks](scheduled-tasks.md)) |
 | CLI, docs build | unrestricted (operator trust boundary) |
 

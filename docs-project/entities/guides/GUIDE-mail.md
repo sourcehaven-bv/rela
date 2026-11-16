@@ -296,7 +296,7 @@ channel, so it is gated like `http` and `ai`: a script that was not granted it
 gets `err.kind == "denied"` and nothing reaches the transport.
 
 ```yaml
-# data-entry.yaml (also schema.yaml automations, schedules.yaml tasks)
+# data-entry.yaml (also flows.yaml trigger scripts, schedules.yaml tasks)
 actions:
   send_digest:
     script: digest.lua

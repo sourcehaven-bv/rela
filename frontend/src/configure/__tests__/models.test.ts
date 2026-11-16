@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  automations,
   boardModel,
   canSortColumn,
   columnMoveAllowed,
@@ -64,9 +63,8 @@ describe('screen models', () => {
     expect(relationSentence(schema, r!, true)).toContain('implementedBy')
   })
 
-  it('locks rules and automations that run scripts', () => {
+  it('locks rules that run scripts', () => {
     expect(rules(schema).map((r) => r.usesScript)).toEqual([false, true])
-    expect(automations(schema).map((a) => a.readOnly)).toEqual([false, true])
   })
 
   it('reads forms, lists, boards and the dashboard', () => {

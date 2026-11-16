@@ -548,8 +548,8 @@ is audited (`version-tag`, `version-untag`). Lua scripts tag with
 `rela.tag_version` (see the [Lua scripting guide](lua-scripting.md)).
 
 A tag write is refused inside a store transaction (`ErrTagInTx`), because it
-writes history on its own connection. Tag from a background action or a
-scheduled script, not from a synchronous automation.
+writes history on its own connection. Tag from a background trigger script or a
+scheduled script, not from an inline trigger script.
 
 ### Purging history for compliance
 

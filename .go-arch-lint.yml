@@ -97,7 +97,7 @@ components:
   transform:        { in: internal/transform }
   check:            { in: internal/check }
   autocascade:      { in: internal/autocascade }
-  automation:       { in: internal/automation }
+  triggers:         { in: internal/flowcfg/triggers }
   calfeed:          { in: internal/calfeed }
   # Numbers store change events and answers "which types changed since this
   # resume token" (TKT-3A1200). An UNGATED base source like store: it holds no
@@ -609,7 +609,7 @@ deps:
       - attachment
       - audit
       - autocascade
-      - automation
+      - triggers
       - bleveindex
       - cmdexec
       # comments: stdio `rela mcp` backs list_comments (TKT-QIQO1W).
@@ -927,6 +927,10 @@ deps:
       # flowview: the flow tools (TKT-ZAXRXND) serve the run read model; the
       # gates stay in appbuild.FlowControl. flow is the leaf that names a
       # run id.
+      # flowcfg + triggers: analyze schema counts the flows.yaml triggers'
+      # references (TKT-GWOBH2U).
+      - flowcfg
+      - triggers
       - flowview
       - flow
       - principal
@@ -1126,7 +1130,7 @@ deps:
       - audit
       - caldavalias
       - autocascade
-      - automation
+      - triggers
       - bleveindex
       - config
       - entitymanager
@@ -1209,7 +1213,7 @@ deps:
       - appbuild
       - audit
       - autocascade
-      - automation
+      - triggers
       - bleveindex
       # comments: only for WithComments, the optional collaborator a
       # commenting-enabled test supplies (BUG-6OZBP9).
@@ -1559,8 +1563,8 @@ deps:
   autocascade:
     mayDependOn:
       - audit
-      - automation
-  automation:
+      - triggers
+  triggers:
     mayDependOn:
       # canonical.HashEntity decides whether an update changed anything for
       # `on.updated`, with the value normalization the stores use.
@@ -1568,12 +1572,14 @@ deps:
       # cmdexec: Environ for the `git config` child that fills {{user.*}}.
       - cmdexec
       - filter
-      # Automations compile to flow triggers and fire through flow.Fire
+      # Triggers compile to flow triggers and fire through flow.Fire
       # (TKT-GS7THPA). flow is a leaf.
       - flow
       - metamodel
       - predicate
       - predicatefns
+      # principal: ValidateRunAs checks a background script's `run_as`.
+      - principal
   conflict:
     mayDependOn:
       - markdown
@@ -1746,7 +1752,7 @@ deps:
       - acl
       - audit
       - autocascade
-      - automation
+      - triggers
       - computed
       # The rename's mention rewrite, carried into converted rows (TKT-J6GISC3).
       - mentions
@@ -1765,6 +1771,9 @@ deps:
   schema:
     mayDependOn:
       - dataentryconfig
+      # triggers: the flows.yaml rules count as references to the types they
+      # name (TKT-GWOBH2U).
+      - triggers
       - metamodel
       - migration
       - store

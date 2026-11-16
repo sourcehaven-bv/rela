@@ -84,32 +84,14 @@ func reservedRelationNames(m *Metamodel) []string {
 	return errs
 }
 
-// validateManagedReferences refuses an automation or validation rule that
-// names a rela-managed type or relation. Only the flow engine writes those
-// (TKT-BC5G8RP); an automation that fired on a run, created one, or linked
-// one would act on rela's records with the operator's rules.
+// validateManagedReferences refuses a validation rule that names a
+// rela-managed type. Only the flow engine writes those (TKT-BC5G8RP).
+// internal/flowcfg/triggers applies the same rule to triggers.
 func validateManagedReferences(m *Metamodel) []string {
 	var errs []string
 	ref := func(where, name string) {
 		if IsReservedName(name) {
 			errs = append(errs, fmt.Sprintf("%s: %q is managed by rela and cannot be named here", where, name))
-		}
-	}
-	for _, auto := range m.Automations {
-		where := fmt.Sprintf("automation %q", auto.Name)
-		for _, t := range auto.On.Entity {
-			ref(where+": on.entity", t)
-		}
-		ref(where+": on.relation_created", auto.On.RelationCreated)
-		ref(where+": on.relation_removed", auto.On.RelationRemoved)
-		for _, a := range auto.Do {
-			if a.CreateRelation != nil {
-				ref(where+": create_relation.relation", a.CreateRelation.Relation)
-			}
-			if a.CreateEntity != nil {
-				ref(where+": create_entity.type", a.CreateEntity.Type)
-				ref(where+": create_entity.relation", a.CreateEntity.Relation)
-			}
 		}
 	}
 	for _, v := range m.Validations {

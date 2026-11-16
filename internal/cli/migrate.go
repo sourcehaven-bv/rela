@@ -99,8 +99,13 @@ func runMigrate(startDir string) error {
 			project.LegacySchemaFile, project.SchemaFile)
 	}
 
+	if result.AutomationsMoved > 0 {
+		fmt.Printf("Moved %d automations from %s to flows.yaml (triggers:)\n",
+			result.AutomationsMoved, project.SchemaFile)
+	}
+
 	if result.FilesUpdated == 0 {
-		if result.SchemaRenamedFrom == "" && result.OrphanedLegacySchema == "" {
+		if result.SchemaRenamedFrom == "" && result.OrphanedLegacySchema == "" && result.AutomationsMoved == 0 {
 			fmt.Println("No migrations needed.")
 		}
 		return nil

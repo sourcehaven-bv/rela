@@ -1,0 +1,13 @@
+triggers:
+  basecamp-push:
+    on: {entity: todo, created: true, updated: true}
+    outputs:
+      - script:
+          file: basecamp.lua
+          capabilities:
+            http: true
+            tokens: [basecamp]
+            secrets: [basecamp_account_id, basecamp_todolist_id, basecamp_api_base]
+          background: true
+          run_as: integration:basecamp
+          retry: bounded

@@ -48,8 +48,6 @@
     "src/components/NextActionOffers.vue": 1,
     "src/views/AnalyzeView.vue": 1,
     "src/views/CalendarView.vue": 1,
-    "src/views/configure/AutomationsView.vue": 3,
-    "src/views/configure/AutomationView.vue": 18,
     "src/views/configure/BoardsView.vue": 2,
     "src/views/configure/BoardView.vue": 17,
     "src/views/configure/ChoiceListsView.vue": 4,

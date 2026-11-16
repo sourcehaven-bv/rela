@@ -13,9 +13,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -26,7 +26,7 @@ import (
 // backend (typically [audit.NewMemory] for assertion). Automations
 // are optional — pass nil to disable.
 func newManagerWithAudit(
-	t *testing.T, sink audit.Audit, automations []automation.Automation,
+	t *testing.T, sink audit.Audit, automations []triggers.Rule,
 ) *entitymanager.Manager {
 	t.Helper()
 	deps := entitymanager.Deps{
@@ -40,7 +40,7 @@ func newManagerWithAudit(
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	}
 	if automations != nil {
-		engine := automation.NewEngine(automations)
+		engine := triggers.NewEngine(automations)
 		runner, err := autocascade.New(autocascade.Deps{Engine: engine})
 		if err != nil {
 			t.Fatalf("autocascade.New: %v", err)
@@ -483,14 +483,14 @@ func TestAudit_AC5_TriggeredByOnAutomationCascade(t *testing.T) {
 
 	// Automation: when a requirement is created, auto-create a checklist
 	// related via has-checklist.
-	autos := []automation.Automation{{
+	autos := []triggers.Rule{{
 		Name: "create-checklist-for-req",
-		On: automation.Trigger{
+		On: triggers.Trigger{
 			Entity:  []string{"requirement"},
 			Created: true,
 		},
-		Do: []automation.Action{{
-			CreateEntity: &automation.CreateEntityAction{
+		Do: []triggers.Action{{
+			CreateEntity: &triggers.CreateEntityAction{
 				Type:     "checklist",
 				Relation: "has-checklist",
 			},
@@ -568,18 +568,18 @@ func TestAudit_IfExistsReplaceAttributesDeleteToTheAutomation(t *testing.T) {
 	mem := audit.NewMemory()
 
 	const autoName = "replace-checklist-on-active"
-	autos := []automation.Automation{{
+	autos := []triggers.Rule{{
 		Name: autoName,
-		On: automation.Trigger{
+		On: triggers.Trigger{
 			Entity:   []string{"requirement"},
 			Property: "status",
 			Becomes:  "accepted",
 		},
-		Do: []automation.Action{{
-			CreateEntity: &automation.CreateEntityAction{
+		Do: []triggers.Action{{
+			CreateEntity: &triggers.CreateEntityAction{
 				Type:     "checklist",
 				Relation: "has-checklist",
-				IfExists: automation.IfExistsReplace,
+				IfExists: triggers.IfExistsReplace,
 			},
 		}},
 	}}
@@ -636,18 +636,18 @@ func TestAudit_IfExistsReplaceUsesCascadeLabel(t *testing.T) {
 	// new checklist via has-checklist with if_exists: replace. The
 	// trigger is a status change so we can seed an existing checklist
 	// first, then drive the replace.
-	autos := []automation.Automation{{
+	autos := []triggers.Rule{{
 		Name: "replace-checklist-on-active",
-		On: automation.Trigger{
+		On: triggers.Trigger{
 			Entity:   []string{"requirement"},
 			Property: "status",
 			Becomes:  "accepted",
 		},
-		Do: []automation.Action{{
-			CreateEntity: &automation.CreateEntityAction{
+		Do: []triggers.Action{{
+			CreateEntity: &triggers.CreateEntityAction{
 				Type:     "checklist",
 				Relation: "has-checklist",
-				IfExists: automation.IfExistsReplace,
+				IfExists: triggers.IfExistsReplace,
 			},
 		}},
 	}}
@@ -711,15 +711,15 @@ func TestAudit_CascadeWriteEntityIsSilent(t *testing.T) {
 	t.Parallel()
 	mem := audit.NewMemory()
 
-	autos := []automation.Automation{
+	autos := []triggers.Rule{
 		{
 			Name: "create-checklist-for-req",
-			On: automation.Trigger{
+			On: triggers.Trigger{
 				Entity:  []string{"requirement"},
 				Created: true,
 			},
-			Do: []automation.Action{{
-				CreateEntity: &automation.CreateEntityAction{
+			Do: []triggers.Action{{
+				CreateEntity: &triggers.CreateEntityAction{
 					Type:     "checklist",
 					Relation: "has-checklist",
 				},
@@ -730,11 +730,11 @@ func TestAudit_CascadeWriteEntityIsSilent(t *testing.T) {
 			// created-event, set status — this is what makes the
 			// Runner call host.WriteEntity to persist the property.
 			Name: "stamp-status-on-checklist",
-			On: automation.Trigger{
+			On: triggers.Trigger{
 				Entity:  []string{"checklist"},
 				Created: true,
 			},
-			Do: []automation.Action{{
+			Do: []triggers.Action{{
 				Set:   "status",
 				Value: "draft",
 			}},
@@ -800,19 +800,19 @@ func TestAudit_PerAutomationAttribution(t *testing.T) {
 	// A per-entry ctx tag attributes each correctly; a tag hoisted out of the
 	// loop gives both whichever name came last. `spawn-checklist` also creates
 	// an entity, covering the create_entity path in the same run.
-	autos := []automation.Automation{
+	autos := []triggers.Rule{
 		{
 			Name: "spawn-checklist",
-			On:   automation.Trigger{Entity: []string{"requirement"}, Created: true},
-			Do: []automation.Action{
+			On:   triggers.Trigger{Entity: []string{"requirement"}, Created: true},
+			Do: []triggers.Action{
 				{
-					CreateEntity: &automation.CreateEntityAction{
+					CreateEntity: &triggers.CreateEntityAction{
 						Type:     "checklist",
 						Relation: "has-checklist",
 					},
 				},
 				{
-					CreateRelation: &automation.CreateRelationAction{
+					CreateRelation: &triggers.CreateRelationAction{
 						Relation: "informed-by",
 						To:       "DEC-001",
 					},
@@ -821,9 +821,9 @@ func TestAudit_PerAutomationAttribution(t *testing.T) {
 		},
 		{
 			Name: "link-decision",
-			On:   automation.Trigger{Entity: []string{"requirement"}, Created: true},
-			Do: []automation.Action{{
-				CreateRelation: &automation.CreateRelationAction{
+			On:   triggers.Trigger{Entity: []string{"requirement"}, Created: true},
+			Do: []triggers.Action{{
+				CreateRelation: &triggers.CreateRelationAction{
 					Relation: "supersedes",
 					To:       "DEC-001",
 				},
@@ -891,22 +891,21 @@ func TestAudit_PerAutomationAttribution(t *testing.T) {
 // a cascade entry carrying no automation name must record the generic
 // "automation" label, NOT a dangling "automation:".
 //
-// This is reachable from a user-authored schema, not hypothetical: `name:` is
-// an ordinary optional field on an `automations:` list entry, and no loader
-// validation rejects an automation that omits it. So the test drives the FULL
-// production path — Manager.CreateEntity through the engine, runner and audit
-// sink — with a nameless automation, rather than poking the runner directly.
+// flows.yaml requires every trigger to have a name, so no loaded rule reaches
+// this fallback; a rule built in code can. The test drives the full
+// production path (Manager.CreateEntity through the engine, runner and audit
+// sink) with a nameless rule, rather than poking the runner directly.
 func TestAudit_UnnamedAutomationKeepsGenericLabel(t *testing.T) {
 	t.Parallel()
 	mem := audit.NewMemory()
 
 	// An automation with an EMPTY name: the engine plumbs "" through, and the
 	// cascade must fall back rather than emit "automation:".
-	autos := []automation.Automation{{
+	autos := []triggers.Rule{{
 		Name: "",
-		On:   automation.Trigger{Entity: []string{"requirement"}, Created: true},
-		Do: []automation.Action{{
-			CreateEntity: &automation.CreateEntityAction{
+		On:   triggers.Trigger{Entity: []string{"requirement"}, Created: true},
+		Do: []triggers.Action{{
+			CreateEntity: &triggers.CreateEntityAction{
 				Type:     "checklist",
 				Relation: "has-checklist",
 			},
@@ -951,12 +950,12 @@ func TestAudit_NestedCascadeAttribution(t *testing.T) {
 	t.Parallel()
 	mem := audit.NewMemory()
 
-	autos := []automation.Automation{
+	autos := []triggers.Rule{
 		{
 			Name: "outer",
-			On:   automation.Trigger{Entity: []string{"requirement"}, Created: true},
-			Do: []automation.Action{{
-				CreateEntity: &automation.CreateEntityAction{
+			On:   triggers.Trigger{Entity: []string{"requirement"}, Created: true},
+			Do: []triggers.Action{{
+				CreateEntity: &triggers.CreateEntityAction{
 					Type:     "checklist",
 					Relation: "has-checklist",
 				},
@@ -964,9 +963,9 @@ func TestAudit_NestedCascadeAttribution(t *testing.T) {
 		},
 		{
 			Name: "inner",
-			On:   automation.Trigger{Entity: []string{"checklist"}, Created: true},
-			Do: []automation.Action{{
-				CreateRelation: &automation.CreateRelationAction{
+			On:   triggers.Trigger{Entity: []string{"checklist"}, Created: true},
+			Do: []triggers.Action{{
+				CreateRelation: &triggers.CreateRelationAction{
 					Relation: "covers",
 					To:       "DEC-001",
 				},
@@ -1034,11 +1033,11 @@ func TestAudit_OuterLabelSurvivesCascade(t *testing.T) {
 	t.Parallel()
 	mem := audit.NewMemory()
 
-	autos := []automation.Automation{{
+	autos := []triggers.Rule{{
 		Name: "spawn-checklist",
-		On:   automation.Trigger{Entity: []string{"requirement"}, Created: true},
-		Do: []automation.Action{{
-			CreateEntity: &automation.CreateEntityAction{
+		On:   triggers.Trigger{Entity: []string{"requirement"}, Created: true},
+		Do: []triggers.Action{{
+			CreateEntity: &triggers.CreateEntityAction{
 				Type:     "checklist",
 				Relation: "has-checklist",
 			},
@@ -1223,22 +1222,22 @@ func TestAudit_PartialCascadeDelete_ReplacePathAlsoAudits(t *testing.T) {
 		err:     errors.New("simulated I/O failure on the second relation"),
 	}
 
-	autos := []automation.Automation{{
+	autos := []triggers.Rule{{
 		Name: "replace-checklist",
-		On: automation.Trigger{
+		On: triggers.Trigger{
 			Entity:   []string{"requirement"},
 			Property: "status",
 			Becomes:  "accepted",
 		},
-		Do: []automation.Action{{
-			CreateEntity: &automation.CreateEntityAction{
+		Do: []triggers.Action{{
+			CreateEntity: &triggers.CreateEntityAction{
 				Type:     "checklist",
 				Relation: "has-checklist",
-				IfExists: automation.IfExistsReplace,
+				IfExists: triggers.IfExistsReplace,
 			},
 		}},
 	}}
-	engine := automation.NewEngine(autos)
+	engine := triggers.NewEngine(autos)
 	runner, rerr := autocascade.New(autocascade.Deps{Engine: engine})
 	if rerr != nil {
 		t.Fatalf("autocascade.New: %v", rerr)
@@ -1292,11 +1291,11 @@ func TestAudit_PartialCascadeDelete_ReplacePathAlsoAudits(t *testing.T) {
 // and that a write without one records no asserted_by.
 func TestAuditAssertedBy(t *testing.T) {
 	t.Parallel()
-	autos := []automation.Automation{{
+	autos := []triggers.Rule{{
 		Name: "spawn-checklist",
-		On:   automation.Trigger{Entity: []string{"requirement"}, Created: true},
-		Do: []automation.Action{{
-			CreateEntity: &automation.CreateEntityAction{Type: "checklist", Relation: "has-checklist"},
+		On:   triggers.Trigger{Entity: []string{"requirement"}, Created: true},
+		Do: []triggers.Action{{
+			CreateEntity: &triggers.CreateEntityAction{Type: "checklist", Relation: "has-checklist"},
 		}},
 	}}
 	for _, tc := range []struct {

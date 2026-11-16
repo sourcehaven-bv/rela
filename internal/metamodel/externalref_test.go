@@ -51,31 +51,6 @@ func TestParse_ExternalRef(t *testing.T) {
 			wantErr: "",
 		},
 		{
-			name:    "property trigger",
-			extra:   "      basecamp:\n        type: external_ref\n        system: basecamp\n",
-			tail:    "automations:\n  - name: on-ref\n    on:\n      entity: ticket\n      property: basecamp\n    do:\n      - set: \"title=x\"\n",
-			wantErr: "cannot trigger an automation",
-		},
-		{
-			name:    "automation set",
-			extra:   "      basecamp:\n        type: external_ref\n        system: basecamp\n",
-			tail:    "automations:\n  - name: set-ref\n    on:\n      entity: ticket\n      created: true\n    do:\n      - set: basecamp\n        value: \"x\"\n",
-			wantErr: "`set` \"basecamp\" is an external ref",
-		},
-		{
-			name:    "automation set on every type",
-			extra:   "      basecamp:\n        type: external_ref\n        system: basecamp\n",
-			tail:    "automations:\n  - name: set-ref\n    on:\n      created: true\n    do:\n      - set: basecamp\n        value: \"x\"\n",
-			wantErr: "only a script may write a ref",
-		},
-		{
-			name:  "automation create_entity property",
-			extra: "      basecamp:\n        type: external_ref\n        system: basecamp\n",
-			tail: "automations:\n  - name: spawn\n    on:\n      entity: ticket\n      created: true\n    do:\n" +
-				"      - create_entity:\n          type: ticket\n          properties:\n            title: x\n            basecamp: \"{{new.title}}\"\n",
-			wantErr: "`create_entity` property \"basecamp\" is an external ref",
-		},
-		{
 			name:    "relation property",
 			tail:    "relations:\n  links:\n    label: Links\n    from: [ticket]\n    to: [ticket]\n    properties:\n      ref:\n        type: external_ref\n        system: basecamp\n",
 			wantErr: "not supported on relation properties",

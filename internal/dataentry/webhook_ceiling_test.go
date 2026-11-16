@@ -24,10 +24,10 @@ import (
 // baseline with `applies_to: [webhook]` caps it, including the automations
 // its write fires (TKT-J3RDJ4).
 
-// hookCeilingMeta: every new incident gets a note from a declarative
-// create_entity action and a memo from an inline Lua action. Both run in the
-// delivery's request. The Lua action writes as the hook, through the ACL; the
-// declarative action is a system write that no caller's ACL gates.
+// hookCeilingMeta with hookCeilingFlows: every new incident gets a note from
+// a declarative create output and a memo from an inline Lua script. Both run
+// in the delivery's request. The Lua script writes as the hook, through the
+// ACL; the declarative output is a system write that no caller's ACL gates.
 const hookCeilingMeta = `
 entities:
   incident:
@@ -49,19 +49,24 @@ relations:
   has-note:
     from: [incident]
     to: [note]
-automations:
-  - name: note-on-incident
+`
+
+// hookCeilingFlows holds the trigger that goes with hookCeilingMeta.
+const hookCeilingFlows = `
+triggers:
+  note-on-incident:
     on:
       entity: incident
       created: true
-    do:
-      - create_entity:
+    outputs:
+      - create:
           type: note
           properties:
             title: "note for {{new.host}}"
-          relation: has-note
-      - lua: |
-          rela.create_entity("memo", {title = "memo for " .. entity.properties.host})
+          relate: {type: has-note, from: subject}
+      - script:
+          lua: |
+            rela.create_entity("memo", {title = "memo for " .. entity.properties.host})
 `
 
 // hookRole grants the hook incidents and notes.
@@ -107,7 +112,8 @@ func hookACLApp(t *testing.T, baselines map[string]acl.ClientBaseline) (*App, st
 	}, st)
 	sink := audit.NewMemory()
 	svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, paths), appbuildtest.WithStore(st),
-		appbuildtest.WithDeclarative(d), appbuildtest.WithAudit(sink))
+		appbuildtest.WithDeclarative(d), appbuildtest.WithAudit(sink),
+		appbuildtest.WithTriggers(mustParseTriggers(t, meta, hookCeilingFlows)))
 	cfg := &Config{Webhooks: alertHook}
 	app := newAppFromParts(cfg, nil, newFixture())
 	rebindApp(app, fs, paths, svc)

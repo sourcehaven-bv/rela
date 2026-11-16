@@ -7,6 +7,9 @@ import "gopkg.in/yaml.v3"
 // default.
 type rawFile struct {
 	Flows yaml.Node `yaml:"flows"`
+	// Triggers belongs to internal/flowcfg/triggers, which decodes and
+	// checks it; it is declared here so the strict decode admits the key.
+	Triggers yaml.Node `yaml:"triggers"`
 }
 
 // rawFlow is one entry of `flows:`.

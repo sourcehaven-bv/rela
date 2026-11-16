@@ -41,7 +41,6 @@ const groups: NavGroup[] = [
       item('choice-lists', 'Choice lists', 'list', configureRoute.choiceLists()),
       item('relations', 'Relations', 'network', configureRoute.relations()),
       item('rules', 'Rules', 'shield-check', configureRoute.rules()),
-      item('automations', 'Automations', 'zap', configureRoute.automations()),
     ],
   },
   {

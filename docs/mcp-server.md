@@ -63,11 +63,16 @@ or changing a validation rule: the next tool call sees the new schema, `create_e
 included.
 
 The reload rebuilds the whole metamodel-derived stack — the validator, the entity
-manager and its automations, transitions and computed properties — not just the
+manager and its triggers, transitions and computed properties — not just the
 schema the read tools report. Refreshing only the read surfaces would leave writes
 validating against the old schema, which is harder to diagnose than no reload at all.
 The store and the search index are reused, so a schema edit costs no reindex and
 loses none of the session's writes.
+
+**`flows.yaml`** — the server reloads the flows and the
+[triggers](flows.md#triggers) in place, so the next write fires the new rules.
+If the changed file does not load, the server keeps the previous
+configuration and logs a warning.
 
 If the new schema does not parse, the server logs a warning and keeps serving the
 last one that did. A save taken mid-edit is routinely unparseable and must not end
