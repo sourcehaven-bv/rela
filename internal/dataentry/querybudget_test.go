@@ -829,8 +829,8 @@ func TestQueryBudget_EdgeWarningsAreSizeIndependent(t *testing.T) {
 }
 
 // A list page inside an entity page's tab (pagescope.go). The scope costs one
-// gated anchor read and one relation query, whatever the number of rows it
-// keeps. It takes the list off the pushdown path, and the Go path reads the
+// gated anchor read, one relation query and, for an incoming scope, one
+// batched edge gate, whatever the number of rows it keeps. It takes the list off the pushdown path, and the Go path reads the
 // tab's rows by id rather than the whole type (TKT-F2EJQY8).
 func TestQueryBudget_PageScopedListIsSizeIndependent(t *testing.T) {
 	b, detail := readsFor(t, pageScopedListOp)
@@ -882,8 +882,8 @@ func TestQueryBudget_EntityDashboardCardIsSizeIndependent(t *testing.T) {
 }
 
 // The same tab over a relation orderable on its incoming side: the list is
-// shown in relation order, and its movable check adds one edge gate and one
-// batch of source reads, whatever the number of rows.
+// shown in relation order, and its movable check adds one batch of source
+// reads and their gate, whatever the number of rows.
 func TestQueryBudget_IncomingOrderedListIsSizeIndependent(t *testing.T) {
 	b, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
 		t.Helper()
@@ -948,16 +948,17 @@ const (
 	edgeWarningsBudget = 4
 
 	// page-scoped list: the anchor read, the scope's relation query, the
-	// rows read by id (one MatchingFaces and one header read), page edges,
-	// neighbor headers, membership walk.
-	pageScopedListBudget = 8
+	// incoming edge gate's header read, the rows read by id (one
+	// MatchingFaces and one header read), page edges, neighbor headers,
+	// membership walk.
+	pageScopedListBudget = 9
 	// entity dashboard card, count or table: the anchor read, the scope's
-	// relation query, the rows read by id (one MatchingFaces and one header
-	// read), and the membership walk. Measured, not derived.
-	entityDashboardCardBudget = 6
-	// incoming-ordered list: pageScopedListBudget plus the edge gate's
-	// header read and the movable check's batched source rows and gate.
-	// Measured, not derived.
+	// relation query, the incoming edge gate's header read, the rows read
+	// by id (one MatchingFaces and one header read), and the membership
+	// walk. Measured, not derived.
+	entityDashboardCardBudget = 7
+	// incoming-ordered list: pageScopedListBudget plus the movable check's
+	// batched source rows and gate. Measured, not derived.
 	incomingOrderedListBudget = 11
 	// nav items: scoped count + one bounded page read (listpushdown.go), the
 	// initials' relation query and neighbor headers, membership walk.
