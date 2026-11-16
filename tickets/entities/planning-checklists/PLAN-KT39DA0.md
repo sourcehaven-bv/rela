@@ -24,8 +24,11 @@ option on the library `Section` type that `RlSwimlaneColumn` paints; Dutch and
 English labels for the five tones; guide docs.
 
 Out of scope: `columns_from` boards (their columns are entity ids, unknown at
-load); rule expressions over the two values; editing `cell_colors` in Configure
-(the key stays default-locked); colouring plain boards without lanes.
+load); rule expressions over the two values; colouring plain boards without
+lanes.
+
+`cell_colors` is editable in Configure, like the column colours under
+`kanbans.*.columns.[].**` (RR-JB0VIHD); see Security Considerations.
 
 **Acceptance Criteria:**
 
@@ -124,8 +127,17 @@ i18n locales, tests
 
 **Input Sources & Validation:**
 
-The only input is operator config. Colours go through `ParseColor`, an
-allowlist; the style class grammar is re-checked by `FILLED_CLASS` in the SPA
+Two input sources write the same key: operator config files, and a user with
+`config:edit` saving through the Configure API, where `kanbans.*.cell_colors.**`
+is in the `editable` list (RR-JB0VIHD). Both pass the same load-time
+validation: Configure runs it on the proposed config before it writes
+(`Validator.Validate` in `internal/configedit/service.go`), so an unknown key or
+colour is refused and never served.
+Making the key editable is acceptable for these reasons: it adds no input path
+that column colours do not already have; it holds no code, guard or permission,
+so it is not `protective`; the save needs `config:edit` and is audited; and the
+worst a bad value can do is mislabel a cell. Colours go through `ParseColor`,
+an allowlist; the style class grammar is re-checked by `FILLED_CLASS` in the SPA
 before it becomes a CSS custom property name. Labels are rendered as text by Vue
 interpolation, never as HTML.
 
