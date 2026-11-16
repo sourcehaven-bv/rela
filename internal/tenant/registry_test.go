@@ -932,3 +932,103 @@ func TestRegistry_StatusChangeDuringOpen(t *testing.T) {
 		t.Fatalf("Resident() = %d, want 0", n)
 	}
 }
+
+// TestRegistry_RevokeAll pins the shutdown hook (TKT-N3X235N): an idle
+// resident closes, and a held one is told to end its streams and closes on
+// its last release.
+func TestRegistry_RevokeAll(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	opened := map[string]*revokeCounter{}
+	open := func(_ context.Context, tn tenant.Tenant) (*revokeCounter, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		c := &revokeCounter{}
+		opened[tn.OrgID] = c
+		return c, nil
+	}
+	reg, err := tenant.NewRegistry(mapResolver(t, "a", "b"), open, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reg.Close() })
+	held, err := reg.Acquire(t.Context(), "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idle, err := reg.Acquire(t.Context(), "b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idle.Release()
+
+	reg.RevokeAll()
+	reg.WaitClosing()
+	if opened["b"].count() != 1 || opened["b"].revoked() != 0 {
+		t.Errorf("idle resident: closes %d, revokes %d; want 1 and 0", opened["b"].count(), opened["b"].revoked())
+	}
+	if opened["a"].revoked() != 1 || opened["a"].count() != 0 {
+		t.Errorf("held resident: revokes %d, closes %d; want 1 and 0", opened["a"].revoked(), opened["a"].count())
+	}
+	held.Release()
+	reg.WaitClosing()
+	if opened["a"].count() != 1 {
+		t.Errorf("held resident closed %d times after its release, want 1", opened["a"].count())
+	}
+}
+
+// barrierCloser is a resident whose Close returns only once every resident
+// of its group is closing, so a serial close times out.
+type barrierCloser struct {
+	group *sync.WaitGroup
+	late  chan struct{}
+}
+
+func (b *barrierCloser) Close() error {
+	b.group.Done()
+	done := make(chan struct{})
+	go func() { b.group.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		close(b.late)
+	}
+	return nil
+}
+
+// TestRegistry_CloseIsParallel pins that Close closes residents at the same
+// time rather than one after another (TKT-N3X235N).
+func TestRegistry_CloseIsParallel(t *testing.T) {
+	t.Parallel()
+
+	orgs := []string{"a", "b", "c"}
+	var group sync.WaitGroup
+	group.Add(len(orgs))
+	open := func(context.Context, tenant.Tenant) (*barrierCloser, error) {
+		return &barrierCloser{group: &group, late: make(chan struct{})}, nil
+	}
+	reg, err := tenant.NewRegistry(mapResolver(t, orgs...), open, len(orgs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var closers []*barrierCloser
+	for _, org := range orgs {
+		l, err := reg.Acquire(t.Context(), org)
+		if err != nil {
+			t.Fatal(err)
+		}
+		closers = append(closers, l.Value())
+		l.Release()
+	}
+	if err := reg.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range closers {
+		select {
+		case <-c.late:
+			t.Fatal("a resident's close waited for the others: Close is serial")
+		default:
+		}
+	}
+}

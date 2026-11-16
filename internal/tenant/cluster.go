@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -42,6 +43,9 @@ const (
 	StatusActive       Status = "active"
 	StatusSuspended    Status = "suspended"
 	StatusErasing      Status = "erasing"
+	// StatusErased is never stored in the control table: a lookup reports
+	// it for an org with no row whose erasure finished ([ErrTenantErased]).
+	StatusErased Status = "erased"
 )
 
 // schemaPrefix starts every derived schema name, so a derived name can never
@@ -148,7 +152,11 @@ func (r *ClusterResolver) Resolve(ctx context.Context, orgID string) (Tenant, er
 	if err != nil {
 		return Tenant{}, err
 	}
-	if rec.Status == StatusSuspended || rec.Status == StatusProvisioning {
+	if rec.Status == StatusProvisioning {
+		return Tenant{}, fmt.Errorf("%w: %w: %w: org_id %q is %s",
+			ErrUnknownTenant, ErrTenantInactive, ErrTenantProvisioning, orgID, rec.Status)
+	}
+	if rec.Status == StatusSuspended {
 		return Tenant{}, fmt.Errorf("%w: %w: org_id %q is %s", ErrUnknownTenant, ErrTenantInactive, orgID, rec.Status)
 	}
 	if rec.Status != StatusActive {
@@ -177,8 +185,12 @@ func (r *ClusterResolver) Lookup(ctx context.Context, orgID string) (Record, err
 		// Never ErrUnknownTenant: a broken lookup is an outage.
 		return Record{}, fmt.Errorf("tenant: look up org_id %q: %w", orgID, err)
 	}
-	if !found {
-		return Record{}, fmt.Errorf("%w: %q", ErrUnknownTenant, orgID)
+	if !found || (rec.Status == StatusErased && rec.OrgID != orgID) {
+		// Another org's erasure frees the schema; it says nothing of this org.
+		return Record{}, fmt.Errorf("%w: %w: %q", ErrUnknownTenant, ErrTenantNotFound, orgID)
+	}
+	if rec.Status == StatusErased {
+		return Record{}, fmt.Errorf("%w: %w: %q", ErrUnknownTenant, ErrTenantErased, orgID)
 	}
 	if rec.OrgID != orgID {
 		return Record{}, fmt.Errorf("%w: org_id %q derives schema %q, which is recorded for another org",
@@ -191,6 +203,23 @@ func (r *ClusterResolver) Lookup(ctx context.Context, orgID string) (Record, err
 // to refuse to start rather than refuse every request.
 func (r *ClusterResolver) Check(ctx context.Context) error {
 	return r.control.ready(ctx)
+}
+
+// dueReader reads which tenants have background work due. The postgres
+// control reader implements it.
+type dueReader interface {
+	dueTenants(ctx context.Context, until time.Time) ([]DueTenant, error)
+}
+
+// DueTenants lists the active tenants whose earliest flow run, channel
+// session timer or queued job is due at or before until, for a [Sweeper].
+// It reads one row per tenant.
+func (r *ClusterResolver) DueTenants(ctx context.Context, until time.Time) ([]DueTenant, error) {
+	d, ok := r.control.(dueReader)
+	if !ok {
+		return nil, ErrUnsupportedBuild
+	}
+	return d.dueTenants(ctx, until)
 }
 
 // Close releases the resolver's connections. Safe on a nil resolver.

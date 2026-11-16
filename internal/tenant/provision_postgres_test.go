@@ -161,21 +161,47 @@ func TestProvisioner_Lifecycle(t *testing.T) {
 	if err = os.MkdirAll(auditDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if _, res, err := pv.p.Erase(ctx, "org-a"); err != nil || !res.SchemaDropped || !res.AuditRemoved {
-		t.Fatalf("Erase = %+v, %v", res, err)
+	if _, res, eraseErr := pv.p.Erase(ctx, "org-a"); eraseErr != nil || !res.SchemaDropped || !res.AuditRemoved {
+		t.Fatalf("Erase = %+v, %v", res, eraseErr)
 	}
 	if pv.schemaExists(t, a.Schema) {
 		t.Error("the erased tenant's schema survived")
 	}
-	if _, err := pv.r.Lookup(ctx, "org-a"); !errors.Is(err, tenant.ErrUnknownTenant) {
-		t.Errorf("Lookup(erased) = %v, want ErrUnknownTenant", err)
+	_, err = pv.r.Lookup(ctx, "org-a")
+	if !errors.Is(err, tenant.ErrUnknownTenant) || !errors.Is(err, tenant.ErrTenantErased) ||
+		errors.Is(err, tenant.ErrTenantNotFound) {
+
+		t.Errorf("Lookup(erased) = %v, want ErrTenantErased and not ErrTenantNotFound", err)
 	}
 	if _, err := pv.r.Resolve(ctx, "org-b"); err != nil || !pv.schemaExists(t, b.Schema) {
 		t.Errorf("erasing org-a disturbed org-b: %v", err)
 	}
-	// A recreated org starts empty.
+	// An automatic create never brings an erased org back.
+	if _, err := pv.p.Provision(ctx, "org-a"); !errors.Is(err, tenant.ErrTenantErased) {
+		t.Errorf("Provision after erase = %v, want ErrTenantErased", err)
+	}
+	if pv.schemaExists(t, a.Schema) {
+		t.Error("a refused Provision created the schema")
+	}
+	// An operator's create does, empty, and clears the erasure record.
 	if _, err := pv.p.Create(ctx, "org-a", false); err != nil {
-		t.Errorf("Create after erase: %v", err)
+		t.Fatalf("Create after erase: %v", err)
+	}
+	if _, err := pv.r.Resolve(ctx, "org-a"); err != nil {
+		t.Errorf("Resolve after re-create = %v", err)
+	}
+}
+
+// TestProvisioner_ProvisionCreates pins that an automatic create of an org
+// never seen creates it as Create does.
+func TestProvisioner_ProvisionCreates(t *testing.T) {
+	pv := newProvisioned(t)
+	ctx := t.Context()
+	if _, err := pv.p.Provision(ctx, "org-new"); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if _, err := pv.r.Resolve(ctx, "org-new"); err != nil {
+		t.Errorf("Resolve = %v", err)
 	}
 }
 

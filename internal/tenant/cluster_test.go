@@ -280,5 +280,10 @@ func TestClusterResolver_Inactive(t *testing.T) {
 		if errors.Is(err, ErrTenantInactive) != inactive {
 			t.Errorf("Resolve(%s) inactive = %v, want %v", org, !inactive, inactive)
 		}
+		// Only an unfinished create may be finished by provisioning; a
+		// suspended tenant must never be.
+		if errors.Is(err, ErrTenantProvisioning) != (org == "org-p") {
+			t.Errorf("Resolve(%s) provisioning = %v", org, errors.Is(err, ErrTenantProvisioning))
+		}
 	}
 }

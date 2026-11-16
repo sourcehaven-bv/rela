@@ -64,6 +64,14 @@ func (*Provisioner) Create(context.Context, string, bool) (Tenant, error) {
 	return Tenant{}, ErrUnsupportedBuild
 }
 
+// Provision refuses on a build with no PostgreSQL.
+func (*Provisioner) Provision(context.Context, string) (Tenant, error) {
+	return Tenant{}, ErrUnsupportedBuild
+}
+
+// EnsureControl refuses on a build with no PostgreSQL.
+func (*Provisioner) EnsureControl(context.Context) error { return ErrUnsupportedBuild }
+
 // Suspend refuses on a build with no PostgreSQL.
 func (*Provisioner) Suspend(context.Context, string) error { return ErrUnsupportedBuild }
 

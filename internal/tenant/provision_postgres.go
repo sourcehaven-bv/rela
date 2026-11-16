@@ -63,6 +63,22 @@ func ensureControl(ctx context.Context, conn *pgx.Conn) error {
 	return nil
 }
 
+// EnsureControl creates the control table if it does not exist, so a server
+// that provisions tenants itself can start on a database with none yet.
+func (p *Provisioner) EnsureControl(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, provisionTimeout)
+	defer cancel()
+	conn, err := p.connect(ctx)
+	if err != nil {
+		return fmt.Errorf("tenant: %w", err)
+	}
+	defer closeReleasing(ctx, conn)
+	if err := ensureControl(ctx, conn); err != nil {
+		return fmt.Errorf("tenant: %w", err)
+	}
+	return nil
+}
+
 // record reads orgID's row on conn and refuses a missing or colliding one,
 // as [ClusterResolver.Lookup] does.
 func (p *Provisioner) record(ctx context.Context, conn *pgx.Conn, orgID string) (Record, error) {
@@ -104,7 +120,21 @@ func (p *Provisioner) record(ctx context.Context, conn *pgx.Conn, orgID string) 
 // [ErrSchemaExists] unless adopt is set. Adopting is for a schema an
 // operator renamed to the derived name on purpose, such as a tenant from a
 // deployment that still used a tenant map file.
+//
+// An org whose tenant was erased is created again as a new, empty tenant,
+// and its erasure record is removed.
 func (p *Provisioner) Create(ctx context.Context, orgID string, adopt bool) (Tenant, error) {
+	return p.create(ctx, orgID, adopt, false)
+}
+
+// Provision is [Provisioner.Create] for an automatic create: it never
+// adopts a schema, and it refuses an org whose tenant was erased with
+// [ErrTenantErased], so only an operator brings one back.
+func (p *Provisioner) Provision(ctx context.Context, orgID string) (Tenant, error) {
+	return p.create(ctx, orgID, false, true)
+}
+
+func (p *Provisioner) create(ctx context.Context, orgID string, adopt, auto bool) (Tenant, error) {
 	// derive runs the same check, but reports an unknown organization;
 	// checking first makes create say what is wrong with the org id.
 	if err := checkOrgID(orgID); err != nil {
@@ -133,7 +163,7 @@ func (p *Provisioner) Create(ctx context.Context, orgID string, adopt bool) (Ten
 	if err := lockExclusive(ctx, conn, schema); err != nil {
 		return Tenant{}, fmt.Errorf("tenant: create org_id %q: %w", orgID, err)
 	}
-	if err := p.reserve(ctx, conn, t, adopt); err != nil {
+	if err := p.reserve(ctx, conn, t, adopt, auto); err != nil {
 		return Tenant{}, err
 	}
 	if _, err := conn.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+pgx.Identifier{schema}.Sanitize()); err != nil {
@@ -152,8 +182,10 @@ func (p *Provisioner) Create(ctx context.Context, orgID string, adopt bool) (Ten
 }
 
 // reserve records t as provisioning, or accepts an existing provisioning
-// row for the same org, which is a create that failed part way.
-func (p *Provisioner) reserve(ctx context.Context, conn *pgx.Conn, t Tenant, adopt bool) error {
+// row for the same org, which is a create that failed part way. An
+// automatic create refuses an erased org; an operator's create removes its
+// erasure record in the same transaction as the insert.
+func (p *Provisioner) reserve(ctx context.Context, conn *pgx.Conn, t Tenant, adopt, auto bool) error {
 	rec, found, err := queryRecord(ctx, conn, t.Schema)
 	if err != nil {
 		return fmt.Errorf("tenant: create org_id %q: look up: %w", t.OrgID, err)
@@ -168,16 +200,35 @@ func (p *Provisioner) reserve(ctx context.Context, conn *pgx.Conn, t Tenant, ado
 		return fmt.Errorf("%w: org_id %q is %s", ErrTenantExists, t.OrgID, rec.Status)
 	}
 	var exists bool
-	if err := conn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = $1)",
+	if err = conn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = $1)",
 		t.Schema).Scan(&exists); err != nil {
 		return fmt.Errorf("tenant: create org_id %q: look up schema: %w", t.OrgID, err)
 	}
 	if exists && !adopt {
 		return fmt.Errorf("%w: schema %q for org_id %q", ErrSchemaExists, t.Schema, t.OrgID)
 	}
+	erasedOrg, erased, err := queryErased(ctx, conn, t.Schema)
+	if err != nil {
+		return fmt.Errorf("tenant: create org_id %q: %w", t.OrgID, err)
+	}
+	erased = erased && erasedOrg == t.OrgID
+	if erased && auto {
+		return fmt.Errorf("%w: %w: org_id %q; an operator must create it", ErrUnknownTenant, ErrTenantErased, t.OrgID)
+	}
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("tenant: create org_id %q: record: %w", t.OrgID, err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	// No ON CONFLICT: a row inserted meanwhile is an error, never merged.
-	if _, err := conn.Exec(ctx, "INSERT INTO "+controlTable+" (schema_name, org_id, status) VALUES ($1, $2, $3)",
+	if _, err = tx.Exec(ctx, "INSERT INTO "+controlTable+" (schema_name, org_id, status) VALUES ($1, $2, $3)",
 		t.Schema, t.OrgID, string(StatusProvisioning)); err != nil {
+		return fmt.Errorf("tenant: create org_id %q: record: %w", t.OrgID, err)
+	}
+	if _, err = tx.Exec(ctx, "DELETE FROM "+erasedTable+" WHERE schema_name = $1", t.Schema); err != nil {
+		return fmt.Errorf("tenant: create org_id %q: clear erasure: %w", t.OrgID, err)
+	}
+	if err = tx.Commit(ctx); err != nil {
 		return fmt.Errorf("tenant: create org_id %q: record: %w", t.OrgID, err)
 	}
 	return nil
@@ -267,12 +318,34 @@ func (p *Provisioner) Erase(ctx context.Context, orgID string) (Tenant, Erasure,
 	if err != nil {
 		return t, res, err
 	}
-	if _, err := conn.Exec(ctx, "DELETE FROM "+controlTable+" WHERE schema_name = $1 AND org_id = $2 AND status = $3",
-		t.Schema, t.OrgID, string(StatusErasing)); err != nil {
+	if err := forget(ctx, conn, t); err != nil {
 		return t, res, fmt.Errorf("tenant: erase org_id %q: the data is gone, but the control row was not "+
 			"deleted: %w; run the command again", orgID, err)
 	}
 	return t, res, nil
+}
+
+// forget replaces t's control row with an erasure record, in one
+// transaction, so no moment shows the org as never seen.
+func forget(ctx context.Context, conn *pgx.Conn, t Tenant) error {
+	if err := ensureControl(ctx, conn); err != nil {
+		return err
+	}
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if _, err := tx.Exec(ctx, "INSERT INTO "+erasedTable+" (schema_name, org_id) VALUES ($1, $2) "+
+		"ON CONFLICT (schema_name) DO UPDATE SET org_id = EXCLUDED.org_id, erased_at = now()",
+		t.Schema, t.OrgID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, "DELETE FROM "+controlTable+" WHERE schema_name = $1 AND org_id = $2 AND status = $3",
+		t.Schema, t.OrgID, string(StatusErasing)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // closeReleasing releases every advisory lock conn holds and closes it. A

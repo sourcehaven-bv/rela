@@ -723,6 +723,30 @@ The server also holds a small pool of at most four connections to read the
 control table. It reads one row per request, by primary key, and keeps no
 cache, so a status change applies to the next request.
 
+A tenant's background work runs only while the tenant is open: its flow
+runs, channel session timers and queued jobs. Once a minute the server reads
+the earliest due time of each active tenant, one row per tenant, and opens a
+tenant that is not open but has work due. It keeps that tenant open for 30
+seconds, so its workers run, and then leaves it to be closed as usual. One
+pass opens at most two tenants, and a tenant it opened is left alone for ten
+minutes, so a run that keeps failing does not reopen it every minute. When
+the tenant's earliest due time is still the same after it was opened, the
+work did not clear, and the wait doubles each time, up to six hours. A
+tenant whose due work cannot be read, for example because its schema is
+damaged, is logged and skipped; the others are still swept. So a timer of a
+tenant nobody uses fires at most a few minutes late. Maintenance
+with no due time, such as the version sweep and removing soft-deleted rows,
+runs the next time the tenant opens.
+
+The IdP webhook's replay protection lives in the tenant's own state, so it
+survives the tenant being closed and reopened. When that state cannot be
+read or written, the webhook gets 503 with `Retry-After`, so the IdP
+delivers it again rather than a replay passing unnoticed.
+
+On shutdown, the server first ends every tenant's live-update and
+co-editing streams, so open browser tabs do not hold the shutdown for its
+whole grace period. It then closes the tenants in parallel.
+
 Every tenant shares the project configuration (`schema.yaml`,
 `data-entry.yaml`, `acl.yaml`, scripts). Each tenant has its own store,
 search, live updates, co-editing rooms, Lua cache and audit log
@@ -759,7 +783,9 @@ Pratique or a separate publishing service, not in rela.
 
 The IdP webhook (`POST /webhooks/idp`) is routed by the `org_id` in its
 signed body. An event for an org this server does not host, or for one
-being erased, is acknowledged and ignored. An event for a suspended or
+being erased, is acknowledged and ignored, with one exception: when
+automatic provisioning is on, an `organization.created` event for an
+unknown org creates its tenant (see "Automatic provisioning" below). An event for a suspended or
 provisioning tenant gets 503 with `Retry-After`, so the IdP delivers it
 again: a role removal sent during a suspension still applies after the
 resume. Declarative webhooks (`/hooks/<id>`) carry no assertion, so the
@@ -822,8 +848,53 @@ A `rela-postgres --tenant <org_id>` process, such as the scheduler or stdio
 MCP, checks the same status every 30 seconds. When the tenant is no longer
 served, it prints a message and exits.
 
-Automatic creation when the IdP reports a new organization is not built
-yet (TKT-TNPRV8).
+**Automatic provisioning.** A server can create a tenant by itself. Choose
+when with `-tenant-provision`, or with `$RELA_TENANT_PROVISION` when the
+flag is not given:
+
+| Mode | What it does |
+| --- | --- |
+| `off` (default) | Creates nothing. An operator runs `tenant create`, and a request for an unknown org gets 403. |
+| `webhook` | Creates the tenant when the IdP's signed `organization.created` webhook names an unknown org. Needs `-webhook-audience`. |
+| `lazy` | Does what `webhook` does. In addition, the first verified request of an unknown org creates its tenant, so a missed webhook heals itself. |
+
+With provisioning on, the server creates the control table at startup if it
+does not exist yet, so a fresh database needs no `tenant create` first.
+
+A create runs in the background. The `organization.created` webhook waits
+up to ten seconds for it, and gets 200 only once the tenant exists. A create
+still running, throttled or failed gets 503 with `Retry-After`, so the IdP
+delivers the event again and a failed create is never acknowledged. No
+other request waits. While a create runs, a request for the org gets `202 Accepted` with a `tenant_provisioning`
+problem, `Retry-After: 2` and a `Location` header naming
+`GET /api/v1/_tenant/status`. That endpoint answers
+`{"status":"provisioning"}` until the tenant is ready, then
+`{"status":"ready"}`. The web app shows a "setting up" screen, also on the two 503 answers below,
+polls the endpoint and reloads when the tenant is ready, or when the
+endpoint answers 401 or 403.
+
+Creating a schema is expensive, so the server bounds it: one create per org
+at a time, at most two at once, and at most ten started per minute after a
+burst of three. A request over the rate limit gets 503
+`tenant_provisioning_busy` with `Retry-After: 30`. A create that fails gets
+503 `tenant_provisioning_failed`, and the server waits one minute before it
+tries that org again. When the derived schema already exists or collides,
+the server logs an error: an operator must resolve it with `tenant create
+-adopt` or by removing the schema.
+
+Only an org with no control row, or one whose create never finished, is
+provisioned. A suspended or erasing tenant is never re-created, and neither
+is an erased one: `tenant erase` records the org in `rela_control.erased`,
+and a request for it gets 403. Only an operator's `tenant create` serves an
+erased org again, as a new, empty tenant, and that removes the record.
+When another server is creating the same tenant, this server waits ten
+seconds before it tries again.
+
+Automatic provisioning trusts the IdP to decide which orgs exist. That holds
+only while there is exactly one issuer with pinned audiences
+(`-jwt-issuer`, `-jwt-audience`, `-webhook-audience`), the IdP puts
+`org_id` on every verified assertion, and it stops issuing assertions for an
+org it deletes. Switch `lazy` off before you add a second issuer.
 
 **Upgrading from `tenants.yaml`.** Earlier versions listed tenants in
 `tenants.yaml` with schema names you chose. That file is no longer read.
@@ -921,7 +992,8 @@ The command first sets the status to `erasing`. From that moment the org
 is not served, and the status cannot be changed back: neither `resume` nor
 `suspend` accepts an erasing tenant. Servers close the tenant, and
 `rela-postgres --tenant` processes exit, within 30 seconds. The command then drops the schema under the tenant's lock,
-removes the audit directory and deletes the control row.
+removes the audit directory, and replaces the control row with a record in
+`rela_control.erased`, so automatic provisioning never re-creates the org.
 
 If a server or command still has the tenant open, the drop is refused with
 "open in a running server or being erased". The status stays `erasing`.
@@ -938,7 +1010,8 @@ What it removes:
   Each tenant has its own audit directory so that it can be deleted with
   the tenant. If that directory is a symlink, the command refuses, so that
   it never reports records removed that are still on disk.
-- The tenant's row in `rela_control.tenants`.
+- The tenant's row in `rela_control.tenants`. The org id and schema name
+  stay in `rela_control.erased`, so the org is not re-created by itself.
 
 What it does not remove:
 

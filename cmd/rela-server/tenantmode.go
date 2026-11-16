@@ -29,6 +29,8 @@ type tenantFlags struct {
 	// maxResident and maxOpen are the registry bounds; zero takes the
 	// registry's defaults.
 	maxResident, maxOpen int
+	// provision is the -tenant-provision value: off, webhook or lazy.
+	provision string
 }
 
 // coverage-ignore-start: main-or-wiring: registers flags on the global flag.CommandLine
@@ -42,6 +44,11 @@ func registerTenantFlags(t *tenantFlags) {
 	flag.IntVar(&t.maxOpen, "tenant-max-open", envInt("RELA_TENANT_MAX_OPEN"),
 		"Tenant mode: hard ceiling on open tenants (default twice -tenant-max-resident). "+
 			"Also RELA_TENANT_MAX_OPEN.")
+	flag.StringVar(&t.provision, "tenant-provision", os.Getenv(tenant.EnvProvision),
+		"Tenant mode: create tenants automatically. off (default): only `rela-server tenant create`; "+
+			"webhook: on the IdP's organization.created webhook; lazy: also on the first verified request "+
+			"of an org with no tenant. Lazy trusts every verified org_id; see docs/postgres-backend.md. "+
+			"Also "+tenant.EnvProvision+".")
 }
 
 // coverage-ignore-end
@@ -212,10 +219,15 @@ type tenantHost struct {
 	registry *tenant.Registry[*tenantResident]
 	// resolver is closed after the registry.
 	resolver io.Closer
+	// provision is closed first, so no create runs while the rest closes.
+	provision tenantProvision
+	// sweeper opens evicted tenants with due background work.
+	sweeper *tenant.Sweeper
 }
 
-// close closes the registry, then the resolver it reads.
+// close stops provisioning, closes the registry, then the resolver it reads.
 func (th *tenantHost) close() {
+	th.provision.close()
 	if err := th.registry.Close(); err != nil {
 		slog.Warn("closing tenants", "error", err)
 	}
@@ -257,42 +269,99 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 	if legacyErr := tenant.RefuseLegacyMap(root); legacyErr != nil {
 		return nil, legacyErr
 	}
-	ctx := context.Background()
-	resolver, err := tenant.NewClusterResolver(ctx, os.Getenv("RELA_DATABASE_URL"))
+	provMode, err := tenant.ParseProvisionMode(f.tenant.provision)
 	if err != nil {
+		return nil, err
+	}
+	ctx := context.Background()
+	dsn := os.Getenv("RELA_DATABASE_URL")
+	base, err := appbuild.DiscoverSharedBase(absDir, script.NewEngine(), discoverOptions(f)...)
+	if err != nil {
+		return nil, fmt.Errorf("load the shared configuration: %w", err)
+	}
+	prov, err := newTenantProvision(ctx, provMode, dsn, tenant.AuditRoot(base.CacheDir()))
+	if err != nil {
+		return nil, err
+	}
+	resolver, err := tenant.NewClusterResolver(ctx, dsn)
+	if err != nil {
+		prov.close()
 		return nil, err
 	}
 	if err = resolver.Check(ctx); err != nil {
+		prov.close()
 		_ = resolver.Close()
 		return nil, err
 	}
-	base, err := appbuild.DiscoverSharedBase(absDir, script.NewEngine(), discoverOptions(f)...)
-	if err != nil {
-		_ = resolver.Close()
-		return nil, fmt.Errorf("load the shared configuration: %w", err)
-	}
 
 	s := &server{f: f, addr: net.JoinHostPort(f.bind, f.port), mode: mode, accessLog: accessLog}
+	fail := func(err error) (*tenantHost, error) {
+		prov.close()
+		_ = resolver.Close()
+		return nil, err
+	}
 	s.idv = buildIdentityVerifier(ctx, f)
 	if s.idv == nil {
-		_ = resolver.Close()
-		return nil, errors.New("tenant mode: no identity verifier was built")
+		return fail(errors.New("tenant mode: no identity verifier was built"))
 	}
 	adapter := assertionVerifierAdapter{s.idv}
 	s.assertion = tenanthost.ReuseAssertion(adapter)
 	if s.webhook, err = buildWebhookVerifier(f, s.idv); err != nil {
-		_ = resolver.Close()
-		return nil, err
+		return fail(err)
+	}
+	if provMode == tenant.ProvisionWebhook && s.webhook == nil {
+		return fail(errors.New("-tenant-provision=webhook needs the IdP webhook (-webhook-audience, -webhook-action)"))
 	}
 
 	th, err := s.tenantHost(base, resolver, tenantLimits{resident: f.tenant.maxResident, open: f.tenant.maxOpen},
-		adapter)
+		adapter, prov)
 	if err != nil {
-		_ = resolver.Close()
-		return nil, err
+		return fail(err)
 	}
 	th.resolver = resolver
+	if th.sweeper, err = tenant.NewSweeper(resolver, th.registry); err != nil {
+		th.close()
+		return nil, err
+	}
 	return th, nil
+}
+
+// tenantProvision is the automatic provisioning a tenant host runs
+// (TKT-TNPRV8). The zero value provisions nothing.
+type tenantProvision struct {
+	auto *tenant.AutoProvisioner
+	lazy bool
+}
+
+// newTenantProvision builds provisioning for mode. With provisioning on it
+// creates the control table if needed, so a fresh database can start.
+func newTenantProvision(
+	ctx context.Context, mode tenant.ProvisionMode, dsn, auditRoot string,
+) (tenantProvision, error) {
+	if !mode.Eager() {
+		return tenantProvision{}, nil
+	}
+	p, err := tenant.NewProvisioner(dsn, auditRoot)
+	if err != nil {
+		return tenantProvision{}, err
+	}
+	err = p.EnsureControl(ctx)
+	if err != nil {
+		return tenantProvision{}, err
+	}
+	auto, err := tenant.NewAutoProvisioner(p, tenant.AutoProvisionOptions{})
+	if err != nil {
+		return tenantProvision{}, err
+	}
+	slog.Info("tenant mode: automatic provisioning", "mode", string(mode))
+	return tenantProvision{auto: auto, lazy: mode.Lazy()}, nil
+}
+
+// close stops starting creates and waits for the running ones.
+func (p tenantProvision) close() {
+	if p.auto != nil {
+		p.auto.Close()
+	}
 }
 
 // tenantHost wires the registry and the front handler over one shared base.
@@ -301,6 +370,7 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 // verified and nothing else.
 func (s *server) tenantHost(
 	base *appbuild.SharedBase, resolver tenant.Resolver, limits tenantLimits, verifier tenanthost.AssertionVerifier,
+	prov tenantProvision,
 ) (*tenantHost, error) {
 	openSvc, err := tenant.SharedBaseOpener(base, tenant.AuditRoot(base.CacheDir()))
 	if err != nil {
@@ -333,13 +403,17 @@ func (s *server) tenantHost(
 	if s.webhook != nil {
 		hcfg.Webhook = webhookVerifierAdapter{s.webhook}
 	}
+	if prov.auto != nil {
+		hcfg.Provision = prov.auto
+		hcfg.LazyProvision = prov.lazy
+	}
 	host, err := tenanthost.New(hcfg)
 	if err != nil {
 		_ = registry.Close()
 		return nil, err
 	}
 	slog.Info("tenant mode enabled", "max_resident", limits.resident, "max_open", limits.open)
-	return &tenantHost{addr: s.addr, handler: host, registry: registry}, nil
+	return &tenantHost{addr: s.addr, handler: host, registry: registry, provision: prov}, nil
 }
 
 // runTenantMode serves tenant mode until a signal and returns the exit code.
@@ -367,11 +441,23 @@ func runTenantMode(f *serverFlags, accessLog *slog.Logger) int {
 		defer close(revalidated)
 		th.revalidate(ctx, tenant.RevalidateInterval)
 	}()
-	serveErr := serveUntilSignal(newHTTPServer(th.addr, th.handler))
+	// Open evicted tenants whose timers or jobs are due, so they run without
+	// a request (TKT-ZOU5BCT).
+	swept := make(chan struct{})
+	go func() {
+		defer close(swept)
+		th.sweeper.Run(ctx, tenant.SweepInterval)
+	}()
+	httpSrv := newHTTPServer(th.addr, th.handler)
+	// End every tenant's streams when shutdown starts, so the drain does not
+	// wait out the grace for each open tab (TKT-N3X235N).
+	httpSrv.RegisterOnShutdown(th.registry.RevokeAll)
+	serveErr := serveUntilSignal(httpSrv)
 	stop()
 	// Wait for a revalidation pass in progress before the registry and
 	// the resolver it uses close.
 	<-revalidated
+	<-swept
 	th.close()
 	if serveErr != nil {
 		slog.Error("server stopped", "error", serveErr)

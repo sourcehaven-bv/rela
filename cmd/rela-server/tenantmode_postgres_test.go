@@ -118,7 +118,7 @@ func (d tenantDeployment) host(t *testing.T) *tenantHost {
 	require.NoError(t, resolver.Check(t.Context()))
 
 	s := &server{f: f, addr: "127.0.0.1:8080", mode: identityJWT, assertion: tenanthost.ReuseAssertion(orgVerifier{})}
-	th, err := s.tenantHost(shared, resolver, tenantLimits{resident: 4}, orgVerifier{})
+	th, err := s.tenantHost(shared, resolver, tenantLimits{resident: 4}, orgVerifier{}, tenantProvision{})
 	require.NoError(t, err)
 	th.resolver = resolver
 	t.Cleanup(th.close)
@@ -337,4 +337,73 @@ func TestTenantMode_RevokeRacesLastRelease(t *testing.T) {
 			return true
 		}, 5*time.Second, 20*time.Millisecond)
 	}
+}
+
+// provisioningHost is host with lazy provisioning on, over the real
+// provisioner.
+func (d tenantDeployment) provisioningHost(t *testing.T) *tenantHost {
+	t.Helper()
+	f := &serverFlags{projectDir: d.dir, bind: "127.0.0.1", port: "8080", jwtHeader: "X-Auth-Assertion"}
+	shared, err := appbuild.DiscoverSharedBase(d.dir, script.NewEngine(), discoverOptions(f)...)
+	require.NoError(t, err)
+	prov, err := newTenantProvision(t.Context(), tenant.ProvisionLazy, d.base, tenant.AuditRoot(shared.CacheDir()))
+	require.NoError(t, err)
+	resolver, err := tenant.NewClusterResolver(t.Context(), d.base)
+	require.NoError(t, err)
+
+	s := &server{f: f, addr: "127.0.0.1:8080", mode: identityJWT, assertion: tenanthost.ReuseAssertion(orgVerifier{})}
+	th, err := s.tenantHost(shared, resolver, tenantLimits{resident: 4}, orgVerifier{}, prov)
+	require.NoError(t, err)
+	th.resolver = resolver
+	t.Cleanup(th.close)
+	return th
+}
+
+// TestTenantMode_LazyProvision is the lazy-backstop acceptance test of
+// TKT-TNPRV8 over a real database: concurrent first requests of a new org
+// all get 202 without waiting for the create, exactly one tenant is created,
+// the status endpoint turns ready, and the org is then served.
+func TestTenantMode_LazyProvision(t *testing.T) {
+	d := newTenantDeployment(t)
+	th := d.provisioningHost(t)
+
+	var wg sync.WaitGroup
+	codes := make(chan int, 8)
+	for range 8 {
+		wg.Go(func() {
+			codes <- tenantCall(t, th, "tok-org-new", http.MethodGet, "/api/v1/tasks", nil).Code
+		})
+	}
+	wg.Wait()
+	close(codes)
+	for c := range codes {
+		require.Equal(t, http.StatusAccepted, c, "a first request of a new org must not wait for the create")
+	}
+
+	require.Eventually(t, func() bool {
+		rec := tenantCall(t, th, "tok-org-new", http.MethodGet, tenanthost.StatusPath, nil)
+		return rec.Code == http.StatusOK && strings.Contains(rec.Body.String(), `"ready"`)
+	}, 60*time.Second, 200*time.Millisecond)
+
+	rec := tenantCall(t, th, "tok-org-new", http.MethodPost, "/api/v1/tasks",
+		map[string]any{"properties": map[string]any{"title": "first"}})
+	require.Contains(t, []int{http.StatusOK, http.StatusCreated}, rec.Code, rec.Body.String())
+
+	// Exactly one control row for the new org, active.
+	conn, err := pgstore.ConnectDirect(t.Context(), d.base)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close(context.Background()) }()
+	var n int
+	var status string
+	require.NoError(t, conn.QueryRow(t.Context(),
+		"SELECT count(*), min(status) FROM "+tenant.ControlSchema+".tenants WHERE org_id = $1", "org-new").
+		Scan(&n, &status))
+	require.Equal(t, 1, n)
+	require.Equal(t, string(tenant.StatusActive), status)
+
+	// A suspended tenant is never provisioned again by a request.
+	code, _, stderr := d.run(t, "", "suspend", "-project", d.dir, "org-a")
+	require.Equal(t, 0, code, stderr)
+	require.Equal(t, http.StatusForbidden,
+		tenantCall(t, th, "tok-org-a", http.MethodGet, "/api/v1/tasks", nil).Code)
 }

@@ -48,9 +48,10 @@
 // Resolution ([ClusterResolver]), per-tenant store acquisition ([Registry])
 // and the lifecycle writes ([Provisioner]: create, suspend, resume, erase)
 // live here. The request path receives only a [Resolver], so it can never
-// create or erase a tenant. Automatic provisioning from the IdP webhook
-// (TKT-TNPRV8) is not built yet; until then an operator creates a tenant
-// with `rela-server tenant create`.
+// create or erase a tenant. [AutoProvisioner] creates a tenant on the IdP's
+// `organization.created` webhook and, if the operator allows it, on the first
+// verified request of an unknown org (TKT-TNPRV8); an operator can always
+// create one with `rela-server tenant create`.
 package tenant
 
 import (
@@ -77,6 +78,23 @@ var ErrUnknownTenant = errors.New("tenant: unknown organization")
 // An erasing tenant is not inactive: its data is being destroyed, so its
 // events have nothing to apply to.
 var ErrTenantInactive = errors.New("tenant: organization is not served now")
+
+// ErrTenantNotFound marks an [ErrUnknownTenant] for an org the control
+// table has no row for: an org nobody created. Only such an org, or one in
+// [ErrTenantProvisioning], may be provisioned automatically.
+var ErrTenantNotFound = errors.New("tenant: organization has no tenant")
+
+// ErrTenantErased marks an [ErrUnknownTenant] for an org whose tenant was
+// erased. It is never provisioned automatically: a replayed webhook or a
+// still-valid token must not bring an erased org back. Only an operator's
+// `tenant create` serves it again, as a new, empty tenant.
+var ErrTenantErased = errors.New("tenant: organization was erased")
+
+// ErrTenantProvisioning marks an [ErrTenantInactive] for an org whose
+// create has not finished: the control row says provisioning. Running
+// [Provisioner.Create] again finishes it, which a suspended tenant must
+// never get.
+var ErrTenantProvisioning = errors.New("tenant: organization is being provisioned")
 
 // ErrSchemaCollision reports that an org's derived schema is recorded for a
 // different org. Two org ids whose hashes share a prefix would otherwise share

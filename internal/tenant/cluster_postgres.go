@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -20,7 +21,11 @@ const controlPoolSize = 4
 // names it qualified: no connection's `search_path` includes [ControlSchema].
 const controlTable = ControlSchema + ".tenants"
 
-// controlDDL creates the control table. Only [Provisioner] runs it; a server
+// erasedTable records the orgs whose erasure finished, so an automatic
+// create can refuse them (TKT-TNPRV8). It is keyed like [controlTable].
+const erasedTable = ControlSchema + ".erased"
+
+// controlDDL creates the control tables. Only [Provisioner] runs it; a server
 // that finds the table missing refuses to start rather than create it.
 const controlDDL = `CREATE SCHEMA IF NOT EXISTS ` + ControlSchema + `;
 CREATE TABLE IF NOT EXISTS ` + controlTable + ` (
@@ -29,6 +34,11 @@ CREATE TABLE IF NOT EXISTS ` + controlTable + ` (
 	status      text NOT NULL CHECK (status IN ('provisioning', 'active', 'suspended', 'erasing')),
 	created_at  timestamptz NOT NULL DEFAULT now(),
 	updated_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS ` + erasedTable + ` (
+	schema_name text PRIMARY KEY,
+	org_id      text NOT NULL,
+	erased_at   timestamptz NOT NULL DEFAULT now()
 )`
 
 // recordQuery reads one control row and whether its schema exists.
@@ -64,10 +74,38 @@ type pgControl struct{ pool *pgxpool.Pool }
 // cannot stall a request or a revalidation pass indefinitely.
 const lookupTimeout = 5 * time.Second
 
+// lookup reads schema's control row. With no row, it reports an erased org
+// as a record in [StatusErased].
 func (c pgControl) lookup(ctx context.Context, schema string) (Record, bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, lookupTimeout)
 	defer cancel()
-	return queryRecord(ctx, c.pool, schema)
+	rec, found, err := queryRecord(ctx, c.pool, schema)
+	if err != nil || found {
+		return rec, found, err
+	}
+	org, erased, err := queryErased(ctx, c.pool, schema)
+	if err != nil || !erased {
+		return Record{}, false, err
+	}
+	return Record{Schema: schema, OrgID: org, Status: StatusErased}, true, nil
+}
+
+// undefinedTable is PostgreSQL's SQLSTATE for a missing table.
+const undefinedTable = "42P01"
+
+// queryErased reads schema's erasure record. A database whose control
+// schema predates [erasedTable] has erased nobody since, so a missing table
+// is no record.
+func queryErased(ctx context.Context, q rowQuerier, schema string) (org string, erased bool, err error) {
+	err = q.QueryRow(ctx, "SELECT org_id FROM "+erasedTable+" WHERE schema_name = $1", schema).Scan(&org)
+	var pgErr *pgconn.PgError
+	switch {
+	case errors.Is(err, pgx.ErrNoRows), errors.As(err, &pgErr) && pgErr.Code == undefinedTable:
+		return "", false, nil
+	case err != nil:
+		return "", false, fmt.Errorf("read erasures: %w", err)
+	}
+	return org, true, nil
 }
 
 func (c pgControl) ready(ctx context.Context) error {

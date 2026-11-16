@@ -1029,7 +1029,9 @@
       "noResults": "Geen resultaten",
       "searching": "Zoeken...",
       "selected": "{number} geselecteerd"
-    }
+    },
+    "provisioning": "Je organisatie wordt ingericht. Dit duurt even.",
+    "provisioningFailed": "Het inrichten van je organisatie is mislukt. rela probeert het zo opnieuw."
   },
   "switcher": {
     "projects": "Projecten",

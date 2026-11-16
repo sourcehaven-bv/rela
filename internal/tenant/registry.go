@@ -625,9 +625,13 @@ func (r *Registry[R]) Close() error {
 	r.recency.Init()
 	r.mu.Unlock()
 
+	// In parallel: each close drains its own workers and connections, so one
+	// at a time would make shutdown as slow as the sum of them.
+	var wg sync.WaitGroup
 	for _, res := range residents {
-		closeValue(res.tenant, res.value)
+		wg.Go(func() { closeValue(res.tenant, res.value) })
 	}
+	wg.Wait()
 	// An open in progress sees closed when it finishes and closes what it
 	// opened.
 	for _, p := range pending {
@@ -680,6 +684,27 @@ func (r *Registry[R]) revoke(orgID string) {
 	r.closeInBackground(closing)
 }
 
+// RevokeAll takes every resident out of service, as [Registry.Revalidate]
+// does for a refused one: idle residents close in the background, and those a
+// request holds end their streams through [Revoker] and close on their last
+// release.
+//
+// A server calls it when shutdown starts (http.Server.RegisterOnShutdown).
+// A live-update stream never ends by itself, so without this the server waits
+// out its whole shutdown grace for every open browser tab. A later acquire
+// still opens a tenant afresh; [Registry.Close] closes it.
+func (r *Registry[R]) RevokeAll() {
+	r.mu.Lock()
+	orgs := make([]string, 0, len(r.residents))
+	for org := range r.residents {
+		orgs = append(orgs, org)
+	}
+	r.mu.Unlock()
+	for _, org := range orgs {
+		r.revoke(org)
+	}
+}
+
 // Revalidate resolves every resident tenant again and revokes those the
 // resolver now refuses. A host runs it on a timer, so that a suspended or
 // erasing tenant that gets no more requests still closes and releases its
@@ -700,6 +725,14 @@ func (r *Registry[R]) Revalidate(ctx context.Context) {
 			r.revoke(org)
 		}
 	}
+}
+
+// IsResident reports whether orgID has a resident that is not being closed.
+func (r *Registry[R]) IsResident(orgID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	res, ok := r.residents[orgID]
+	return ok && !res.closed && !res.revoked
 }
 
 // Resident reports how many tenants are resident, counting those pinned past

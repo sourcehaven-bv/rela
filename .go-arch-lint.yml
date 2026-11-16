@@ -1141,6 +1141,9 @@ deps:
       - pgstore
     canUse:
       - pgx
+      # xtimerate: the auto-provisioner's bound on how many tenants it
+      # creates per minute (TKT-TNPRV8).
+      - xtimerate
   # tenanthost is the front handler of a multi-tenant rela-server
   # (TKT-D6MF3SW): it verifies the assertion, routes by org through the
   # tenant registry and serves that tenant's data-entry router. It names

@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/state"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // errStubReject stands in for a verification failure in the shim test — the
@@ -149,20 +152,90 @@ func TestWebhook_ActionFailureRetryable(t *testing.T) {
 
 // TestSeenSet_TTLExpiry: an id past the TTL is treated as new again.
 func TestSeenSet_TTLExpiry(t *testing.T) {
-	s := newSeenSet(time.Minute)
+	s := newSeenSet(time.Minute, nil)
 	base := time.Unix(1_700_000_000, 0)
 	s.now = func() time.Time { return base }
 
-	if !s.add("a") {
+	if !mustAdd(t, s, "a") {
 		t.Fatal("first add should be new")
 	}
-	if s.add("a") {
+	if mustAdd(t, s, "a") {
 		t.Fatal("immediate re-add should be a duplicate")
 	}
 	// Advance past the TTL.
 	s.now = func() time.Time { return base.Add(2 * time.Minute) }
-	if !s.add("a") {
+	if !mustAdd(t, s, "a") {
 		t.Fatal("re-add after TTL should be new again")
+	}
+}
+
+// TestSeenSet_SurvivesEviction pins that the set lives in state.KV: a new
+// set over the same kv, as a reopened tenant App builds, still dedups an id
+// the old one saw, and a forgotten id is forgotten for both (BUG-ZO33J9M).
+func TestSeenSet_SurvivesEviction(t *testing.T) {
+	ctx := context.Background()
+	root, err := storage.NewRootedFS(storage.NewMemFS(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	kv := state.NewFSKV(root)
+
+	before := newSeenSet(time.Minute, kv)
+	if !mustAdd(t, before, "a") || !mustAdd(t, before, "b") {
+		t.Fatal("first adds should be new")
+	}
+	before.forget(ctx, "b")
+
+	after := newSeenSet(time.Minute, kv)
+	if mustAdd(t, after, "a") {
+		t.Error("an id seen before eviction was accepted again")
+	}
+	if !mustAdd(t, after, "b") {
+		t.Error("a forgotten id was still deduped")
+	}
+	// The first set sees what the second recorded.
+	if mustAdd(t, before, "b") {
+		t.Error("an id another set recorded was accepted again")
+	}
+}
+
+func mustAdd(t *testing.T, s *seenSet, id string) bool {
+	t.Helper()
+	fresh, err := s.add(context.Background(), id)
+	if err != nil {
+		t.Fatalf("add(%q): %v", id, err)
+	}
+	return fresh
+}
+
+// brokenKV fails every read.
+type brokenKV struct{ state.KV }
+
+func (brokenKV) Get(context.Context, string) ([]byte, error) { return nil, errors.New("db down") }
+
+// TestSeenSet_FailsClosed pins that an unreadable stored set is an error,
+// never a fresh id: a replay could otherwise pass.
+func TestSeenSet_FailsClosed(t *testing.T) {
+	s := newSeenSet(time.Minute, brokenKV{})
+	if fresh, err := s.add(context.Background(), "a"); err == nil || fresh {
+		t.Fatalf("add over a failing kv = %v, %v; want an error", fresh, err)
+	}
+}
+
+// TestSeenSet_Bounded pins the ceiling on the persisted set.
+func TestSeenSet_Bounded(t *testing.T) {
+	s := newSeenSet(time.Hour, nil)
+	base := time.Unix(1_700_000_000, 0)
+	n := 0
+	s.now = func() time.Time { n++; return base.Add(time.Duration(n) * time.Millisecond) }
+	for i := range webhookSeenMax + 10 {
+		mustAdd(t, s, fmt.Sprintf("id-%d", i))
+	}
+	if len(s.at) > webhookSeenMax {
+		t.Fatalf("set holds %d ids, want at most %d", len(s.at), webhookSeenMax)
+	}
+	if _, ok := s.at["id-0"]; ok {
+		t.Error("the oldest id was kept over the ceiling")
 	}
 }
 

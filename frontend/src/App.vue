@@ -8,6 +8,7 @@ import { provideMessages } from 'rela-components/composables/useMessages'
 import { localeMessages } from 'rela-components/composables/localeMessages'
 import { resolvedLanguage, setProjectLanguage } from '@/i18n'
 import { getErrorMessage } from '@/api'
+import { tenantProvisioning } from '@/api/tenantProvisioning'
 import {
   useKeyboardShortcuts,
   useShellCommands,
@@ -230,7 +231,14 @@ watch(
     full-viewport wrapper: RlStatusRegion grows to fill its parent, and at boot
     there is no parent pane for it to fill.
   -->
-  <div v-if="loading" class="boot-screen">
+  <!-- A multi-tenant server is still creating this organization's tenant. -->
+  <div v-if="tenantProvisioning !== 'idle'" class="boot-screen">
+    <RlStatusRegion :tone="tenantProvisioning === 'failed' ? 'error' : undefined">
+      {{ tenantProvisioning === 'failed' ? t('shell.provisioningFailed') : t('shell.provisioning') }}
+    </RlStatusRegion>
+  </div>
+
+  <div v-else-if="loading" class="boot-screen">
     <RlStatusRegion>{{ t('shell.loading') }}</RlStatusRegion>
   </div>
 

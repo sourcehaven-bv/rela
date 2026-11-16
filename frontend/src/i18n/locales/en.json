@@ -1029,7 +1029,9 @@
       "noResults": "No Results",
       "searching": "Searching...",
       "selected": "{number} selected"
-    }
+    },
+    "provisioning": "Setting up your organization. This takes a moment.",
+    "provisioningFailed": "Setting up your organization failed. rela tries again shortly."
   },
   "switcher": {
     "projects": "Projects",

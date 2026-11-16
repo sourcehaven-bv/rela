@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
@@ -34,10 +35,14 @@ func (v *fakeVerifier) VerifyAssertion(_ context.Context, raw string) (dataentry
 	return dataentry.AssertedIdentity{}, errors.New("bad signature")
 }
 
-// fakeWebhook accepts "hook-<org>" bodies, with "hook-" meaning no org.
+// fakeWebhook accepts "hook-<org>" bodies, with "hook-" meaning no org, and
+// "created-<org>" as that org's organization.created event.
 type fakeWebhook struct{}
 
 func (fakeWebhook) VerifyWebhook(_ context.Context, raw string) (dataentry.WebhookClaims, error) {
+	if org, ok := strings.CutPrefix(raw, "created-"); ok {
+		return dataentry.WebhookClaims{Event: "organization.created", OrgID: org}, nil
+	}
 	if !strings.HasPrefix(raw, "hook-") {
 		return dataentry.WebhookClaims{}, errors.New("bad signature")
 	}
@@ -388,5 +393,212 @@ func TestHost_Webhook(t *testing.T) {
 				t.Errorf("acquired %d tenants, want %d", g.acquired.Load(), tc.acquired)
 			}
 		})
+	}
+}
+
+// fakeProvision records starts and answers with a fixed state.
+type fakeProvision struct {
+	mu     sync.Mutex
+	starts []string
+	start  tenant.ProvisionState
+	state  tenant.ProvisionState
+	waited tenant.ProvisionState
+}
+
+func (p *fakeProvision) Start(orgID string) tenant.ProvisionState {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.starts = append(p.starts, orgID)
+	return p.start
+}
+
+func (p *fakeProvision) State(string) tenant.ProvisionState { return p.state }
+
+func (p *fakeProvision) Wait(context.Context, string) tenant.ProvisionState { return p.waited }
+
+func (p *fakeProvision) RetryAfter() time.Duration { return time.Minute }
+
+func (p *fakeProvision) started() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.starts...)
+}
+
+func provisionHost(t *testing.T, g *registry, p *fakeProvision, lazy bool) *tenanthost.Host {
+	t.Helper()
+	h, err := tenanthost.New(tenanthost.Config{
+		Verifier: &fakeVerifier{}, HeaderName: header, Acquire: g.acquire, Static: static, Webhook: fakeWebhook{},
+		Provision: p, LazyProvision: lazy,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return h
+}
+
+var (
+	errNotFound   = fmt.Errorf("%w: %w", tenant.ErrUnknownTenant, tenant.ErrTenantNotFound)
+	errSuspended  = fmt.Errorf("%w: %w", tenant.ErrUnknownTenant, tenant.ErrTenantInactive)
+	errUnfinished = fmt.Errorf("%w: %w: %w", tenant.ErrUnknownTenant, tenant.ErrTenantInactive, tenant.ErrTenantProvisioning)
+	errErasing    = fmt.Errorf("%w: org is erasing", tenant.ErrUnknownTenant)
+)
+
+// TestHost_LazyProvision pins the lazy backstop: a verified request of an
+// org with no tenant starts provisioning and gets 202, never a held request;
+// a suspended or erasing tenant is never provisioned; and with lazy off an
+// unknown org stays a hard 403 (acceptance criteria 2 and 3).
+func TestHost_LazyProvision(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		lazy   bool
+		fail   error
+		start  tenant.ProvisionState
+		status int
+		code   string
+		starts int
+	}{
+		{"no tenant starts provisioning", true, errNotFound, tenant.ProvisionRunning,
+			http.StatusAccepted, "tenant_provisioning", 1},
+		{"unfinished create is finished", true, errUnfinished, tenant.ProvisionRunning,
+			http.StatusAccepted, "tenant_provisioning", 1},
+		{"throttled", true, errNotFound, tenant.ProvisionThrottled,
+			http.StatusServiceUnavailable, "tenant_provisioning_busy", 1},
+		{"failed", true, errNotFound, tenant.ProvisionFailed,
+			http.StatusServiceUnavailable, "tenant_provisioning_failed", 1},
+		{"suspended is refused", true, errSuspended, tenant.ProvisionRunning,
+			http.StatusForbidden, "unknown_tenant", 0},
+		{"erasing is refused", true, errErasing, tenant.ProvisionRunning,
+			http.StatusForbidden, "unknown_tenant", 0},
+		{"lazy off is a hard denial", false, errNotFound, tenant.ProvisionRunning,
+			http.StatusForbidden, "unknown_tenant", 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g := &registry{fail: tc.fail}
+			p := &fakeProvision{start: tc.start}
+			w := do(provisionHost(t, g, p, tc.lazy), http.MethodGet, "/api/v1/tasks", "tok-org-n", "")
+			if w.Code != tc.status {
+				t.Fatalf("status %d, want %d (body %q)", w.Code, tc.status, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), "/errors/"+tc.code+`"`) {
+				t.Errorf("body %q, want code %s", w.Body.String(), tc.code)
+			}
+			if got := len(p.started()); got != tc.starts {
+				t.Errorf("starts = %d, want %d", got, tc.starts)
+			}
+			if tc.status == http.StatusAccepted && w.Header().Get("Location") != tenanthost.StatusPath {
+				t.Errorf("Location = %q, want %s", w.Header().Get("Location"), tenanthost.StatusPath)
+			}
+		})
+	}
+}
+
+// TestHost_ProvisionStatus pins what the status endpoint reports.
+func TestHost_ProvisionStatus(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		known  bool
+		state  tenant.ProvisionState
+		status int
+		body   string
+	}{
+		{"running", false, tenant.ProvisionRunning, http.StatusAccepted, `{"status":"provisioning"}`},
+		{"ready", true, tenant.ProvisionNone, http.StatusOK, `{"status":"ready"}`},
+		{"failed", false, tenant.ProvisionFailed, http.StatusServiceUnavailable, "tenant_provisioning_failed"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g := &registry{known: map[string]bool{"org-n": tc.known}}
+			p := &fakeProvision{state: tc.state}
+			w := do(provisionHost(t, g, p, true), http.MethodGet, tenanthost.StatusPath, "tok-org-n", "")
+			if w.Code != tc.status {
+				t.Fatalf("status %d, want %d (body %q)", w.Code, tc.status, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), tc.body) {
+				t.Errorf("body %q, want %s", w.Body.String(), tc.body)
+			}
+			if g.held.Load() != 0 {
+				t.Error("the status endpoint kept a lease")
+			}
+		})
+	}
+	// Without an assertion the status endpoint is refused like any API path.
+	g := &registry{}
+	w := do(provisionHost(t, g, &fakeProvision{}, true), http.MethodGet, tenanthost.StatusPath, "", "")
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("anonymous status = %d, want 401", w.Code)
+	}
+}
+
+// TestHost_WebhookProvision pins the eager path: organization.created for an
+// org with no tenant provisions it and answers 200 only once the create
+// succeeded; a create that is still running or failed asks for a retry.
+// Other events and other refusals keep their old answers (acceptance
+// criterion 1).
+func TestHost_WebhookProvision(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		body   string
+		fail   error
+		prov   bool
+		start  tenant.ProvisionState
+		waited tenant.ProvisionState
+		status int
+		starts int
+	}{
+		{"created provisions", "created-org-n", errNotFound, true, tenant.ProvisionRunning,
+			tenant.ProvisionNone, http.StatusOK, 1},
+		{"created finishes an unfinished create", "created-org-n", errUnfinished, true, tenant.ProvisionRunning,
+			tenant.ProvisionNone, http.StatusOK, 1},
+		{"create still running asks for a retry", "created-org-n", errNotFound, true, tenant.ProvisionRunning,
+			tenant.ProvisionRunning, http.StatusServiceUnavailable, 1},
+		{"create that failed asks for a retry", "created-org-n", errNotFound, true, tenant.ProvisionRunning,
+			tenant.ProvisionFailed, http.StatusServiceUnavailable, 1},
+		{"throttled asks for a retry", "created-org-n", errNotFound, true, tenant.ProvisionThrottled,
+			tenant.ProvisionNone, http.StatusServiceUnavailable, 1},
+		{"failed asks for a retry", "created-org-n", errNotFound, true, tenant.ProvisionFailed,
+			tenant.ProvisionNone, http.StatusServiceUnavailable, 1},
+		{"created for a suspended tenant asks for a retry", "created-org-n", errSuspended, true,
+			tenant.ProvisionRunning, tenant.ProvisionNone, http.StatusServiceUnavailable, 0},
+		{"other event is acknowledged", "hook-org-n", errNotFound, true, tenant.ProvisionRunning,
+			tenant.ProvisionNone, http.StatusOK, 0},
+		{"provisioning off acknowledges", "created-org-n", errNotFound, false, tenant.ProvisionRunning,
+			tenant.ProvisionNone, http.StatusOK, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g := &registry{fail: tc.fail}
+			p := &fakeProvision{start: tc.start, waited: tc.waited}
+			var h *tenanthost.Host
+			if tc.prov {
+				h = provisionHost(t, g, p, false)
+			} else {
+				h = newHost(t, g, &fakeVerifier{})
+			}
+			w := do(h, http.MethodPost, tenanthost.WebhookPath, "", tc.body)
+			if w.Code != tc.status {
+				t.Fatalf("status %d, want %d (body %q)", w.Code, tc.status, w.Body.String())
+			}
+			if got := len(p.started()); got != tc.starts {
+				t.Errorf("starts = %d, want %d", got, tc.starts)
+			}
+		})
+	}
+}
+
+func TestNew_LazyNeedsProvision(t *testing.T) {
+	t.Parallel()
+	g := &registry{}
+	_, err := tenanthost.New(tenanthost.Config{
+		Verifier: &fakeVerifier{}, HeaderName: header, Acquire: g.acquire, Static: static, LazyProvision: true,
+	})
+	if err == nil {
+		t.Error("New accepted lazy provisioning without a provisioner")
 	}
 }
