@@ -866,6 +866,7 @@ warning that names the source that turned the endpoint off.
 hide the operator's off:
 
 - a misspelled key inside `remote_mcp:`;
+- `remote_mcp:` with no value, which is what an indentation slip leaves;
 - a top-level key such as `remote-mcp`, `remoteMCP` or `remote.mcp`;
 - `enabled:` with no value;
 - a second YAML document after `---`.
@@ -910,8 +911,9 @@ remote_mcp:
   startup, so a typo cannot leave a tool on. A tool whose feature is off
   (comments, channels, piles, flows, actions), or a Lua tool, which this
   endpoint never serves, is accepted and filters nothing.
-- An empty `allow: []`, or an `allow:` with no value, is refused. Leave
-  `allow` out to serve every tool.
+- An empty `allow: []`, an `allow:` with no value, and an `allow` item with
+  no value (`[~]`, a bare `-`, or an item that is only a comment) are
+  refused. Leave `allow` out to serve every tool.
 - Prefer `allow` when the goal is a read-only endpoint. An allow list stays
   closed when a later release adds a tool; a deny list does not.
 

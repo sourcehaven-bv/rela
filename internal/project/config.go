@@ -78,21 +78,36 @@ func (c *RemoteMCPConfig) UnmarshalYAML(node *yaml.Node) error {
 	if err := node.Decode(&out); err != nil {
 		return fmt.Errorf("remote_mcp: %w", err)
 	}
+	// The node check above cannot see every form that decodes to an empty
+	// list, so check the decoded value too.
+	if out.Tools.Allow != nil && len(out.Tools.Allow) == 0 {
+		return fmt.Errorf("line %d: remote_mcp.tools.allow is empty%s", node.Line, serveEveryTool)
+	}
 	*c = RemoteMCPConfig(out)
 	return nil
 }
 
 const serveEveryTool = ", which would serve every tool; leave it out to mean that, or name the tools"
 
-// refuseEmptyAllow refuses `allow: []` and an `allow:` with no value, as when
-// every entry under it is commented out. Both decode to an empty list, which
-// would serve every tool.
+// refuseEmptyAllow refuses `allow: []`, an `allow:` with no value, and an
+// item with no value (`[~]`, a bare `-`, an item that is only a comment).
+// Each decodes to a list with fewer names than the operator wrote, and an
+// empty list would serve every tool.
 func refuseEmptyAllow(n *yaml.Node) error {
 	if err := refuseNull(n, "remote_mcp.tools.allow", serveEveryTool); err != nil {
 		return err
 	}
-	if v := resolveAlias(n); v.Kind == yaml.SequenceNode && len(v.Content) == 0 {
+	v := resolveAlias(n)
+	if v.Kind != yaml.SequenceNode {
+		return nil // node.Decode reports the type error
+	}
+	if len(v.Content) == 0 {
 		return fmt.Errorf("line %d: remote_mcp.tools.allow is empty%s", n.Line, serveEveryTool)
+	}
+	for _, item := range v.Content {
+		if err := refuseNull(item, "an item of remote_mcp.tools.allow", "; name a tool or remove the item"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -193,7 +208,16 @@ func refuseMisspelledKeys(m *yaml.Node) error {
 			}
 			continue
 		}
-		if keyFolder.Replace(strings.ToLower(key)) == "remotemcp" && key != "remote_mcp" {
+		if key == "remote_mcp" {
+			// With no value the block counts as absent, and an indentation
+			// slip would make its keys unknown top-level keys, which the
+			// lenient decode drops.
+			if err := refuseNull(m.Content[i+1], "remote_mcp", "; leave it out, or indent its keys under it"); err != nil {
+				return err
+			}
+			continue
+		}
+		if keyFolder.Replace(strings.ToLower(key)) == "remotemcp" {
 			return fmt.Errorf("line %d: unknown key %q; the remote MCP block is spelled remote_mcp",
 				k.Line, key)
 		}
