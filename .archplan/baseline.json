@@ -2780,14 +2780,14 @@
   "ratchet": {
     "metrics": {
       "weight.profile": 49,
-      "weight.structure": 90,
+      "weight.structure": 859,
       "weight.layers": 0,
       "weight.vocabulary": 872,
       "weight.types": 3972,
       "weight.concepts": 7203,
       "weight.boundaries": 1422,
       "weight.data": 1298,
-      "weight.security": 140,
+      "weight.security": 2064,
       "largest_tangle": 14,
       "cycle_edges": 67,
       "upward_edges": 0,
@@ -3120,12 +3120,8 @@
       {
         "at": "2026-11-16T20:48:28Z",
         "change": "tighten",
-        "reason": null,
+        "reason": "static model; trace-based metrics left for just archplan-security",
         "metrics": {
-          "weight.structure": [
-            859,
-            90
-          ],
           "weight.concepts": [
             7205,
             7203
@@ -3133,10 +3129,6 @@
           "weight.boundaries": [
             1428,
             1422
-          ],
-          "weight.security": [
-            2064,
-            140
           ]
         }
       }
