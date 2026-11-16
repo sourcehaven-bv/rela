@@ -9,13 +9,13 @@ status: done
 
 ## Code Documentation
 
-- [x] Comments where logic isn't obvious (flowcfg doc.go covers both kinds of flows and the unset rule; flows.go Run explains the JSON and text behaviour on a broken flows.yaml)
+- [x] Comments where logic isn't obvious (internal/flowcfg/transitions/doc.go covers headless flows and the unset rule; flows.go Run explains the JSON and text behaviour on a broken flows.yaml)
 - [x] Function/type docs if public API (HeadlessFlow accessors, Transitions.Headless/HeadlessFlow/Uses, HeadlessPrefix, appbuild.CompileHeadlessFlows and BuildTransitionWiring)
 
 ## Project Documentation
 
 - [x] ~~README updated~~ (N/A: the README does not describe rela flow or transitions)
-- [x] CLAUDE.md updated (if new patterns) (.claude/rules/predicate.md now points at internal/flowcfg/transitions*.go; root CLAUDE.md has no statemachine mention)
+- [x] CLAUDE.md updated (if new patterns) (.claude/rules/predicate.md now points at internal/flowcfg/transitions/*.go; root CLAUDE.md has no statemachine mention)
 - [x] Help text accurate (if CLI changes) (rela flow validate and show help name the headless flows and the schema.<enum type> form)
 
 ## External Documentation

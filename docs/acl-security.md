@@ -695,8 +695,10 @@ IdP webhook receiver (`POST /webhooks/idp`) can therefore store the IdP role
 names of a user, and the child then holds the rela roles they map to
 (TKT-IZL6NX8).
 
-- **Who writes.** Only the webhook receiver, after it verified the webhook
-  signature. Its action returns `asserted_roles = { ... }`, and the
+- **Who writes.** Only the webhook receiver can store roles, after it
+  verified the webhook signature. A delete or rename of the bound entity, and
+  `rela acl forget-idp-roles`, can only erase them (see "Erased with the
+  person" below). The receiver's action returns `asserted_roles = { ... }`, and the
   receiver stores that list for the subject (`user_id`) of the verified
   webhook. The script cannot name another subject. An empty list clears the
   subject. An action that reports an error (`message_type = "error"`, with or
@@ -711,7 +713,8 @@ names of a user, and the child then holds the rela roles they map to
   store, rewritten under a lock. On postgres that is the tenant's state table
   with an advisory lock, shared by every process. On sqlite it is the state
   table in `.rela/rela.db`. On the file store it is `idp-roles.json` in the
-  cache directory with lock files. No entity write reaches it. Without a
+  cache directory with lock files. No entity write stores roles in it; a
+  delete or rename of the bound entity only erases its record. Without a
   cache directory the roles are kept in process memory and a warning is
   logged. Each store or clear writes an `idp-roles-set` audit record that
   names the bound entity and the role count, never the IdP subject or the
@@ -743,7 +746,8 @@ names of a user, and the child then holds the rela roles they map to
   requests do not use stored roles.
 
 **Revocation depends on webhook delivery.** A stored role lasts until the
-next webhook for that user replaces or clears it. If the IdP does not send a
+next webhook for that user replaces or clears it, or until the bound entity
+is deleted or renamed, or `rela acl forget-idp-roles` erases it. If the IdP does not send a
 webhook when a role is removed, or delivery fails for good, the role stays.
 Stored roles do not expire on their own. The store is keyed by subject, not
 by org, so with several orgs the last webhook wins, and the receiver does not
@@ -2855,7 +2859,7 @@ unknown one, so cancellation cannot be used to probe what else is running.
 
 ### What a command permission actually confers
 
-**Command payloads are read-gate scoped in the entity context only.** A
+**Command payloads are read-gate scoped in the entity and list contexts.** A
 command's stdin JSON leaves the process, so what it carries matters as much as
 who may run it. Granting `command:<something>` confers **read access to
 whatever that command's context assembles**, not merely the right to run a
@@ -2864,14 +2868,16 @@ script:
 | context | what the script receives | scoped by |
 | ------- | ------------------------ | --------- |
 | `entity` | the entity at the caller-supplied `entity_id`, plus its incident relations | the row gate, the face gate and field redaction on the entity; a relation travels only when both endpoints are readable (a content-scoped tail at its own face), and an outgoing content-scoped edge only with the face the entity is served at |
-| `list` | every entity in the caller-supplied `list_id`, post-filter | nothing — any configured list (TKT-2FDTJE) |
+| `list` | every readable entity of the type of the caller-supplied `list_id`, post-filter | the row gate, the face allowlist and field redaction; the list's own `filters:` run on the redacted rows; the list's query and page scope are not applied |
 | `global` | project paths only | n/a |
 | `view` | the entry entity plus the entire traversal closure | *not grantable — see below* |
 
 Note the `entity_id` and `list_id` come from the request, not from whatever
 page the user was on: `available_on` restricts where a **button appears**, not
-what a command may be pointed at. Treat a command grant as "may read every
-entity of this shape", and scope grants accordingly.
+what a command may be pointed at. A list-context script receives every row of
+the list's type that the principal may read, which can be more than the list
+shows. Treat a command grant as "may hand everything the principal can read of this
+shape to the script", and scope grants accordingly.
 
 **`context: view` cannot be granted per-command at all.** View commands are
 denied outright under any configured `acl.yaml`; `permission:` on a view
@@ -3106,7 +3112,11 @@ other read:
   value makes the next pull write the remote's value into the local row, so
   it needs `update` on the row and write access to every field the entry
   names, asked as the write path asks it (`fields:` and `visible:` for an
-  entity, the relation's field grants for a relation). A link makes the
+  entity, the relation's field grants for a relation). Taking the remote
+  side of a `remote_deleted` entry makes the next pull delete the row, so it
+  needs the right to delete the row instead, asked as the DELETE route asks
+  it. For an entity of a faced type it is refused, because the pull deletes
+  the whole family by bare id. A link makes the
   next sync merge the remote row into the local one and set its `ref`, so it
   needs the same rights on every field the create sent. Dismissing
   changes only the conflict list. Keeping the local value changes no local

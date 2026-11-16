@@ -60,8 +60,9 @@ records:
 | `retention` | How long rows are kept, such as `90d` or `24h`. Without it, rows are kept for ever. A ledger cannot have a retention. |
 | `ledger` | Makes the type a double-entry ledger. See below. |
 
-A record type cannot share its key with an entity type. The field names `id`,
-`owner`, `ts`, `recorded_at`, `recorded_by`, `group` and `reverses` are reserved.
+A record type cannot share its key with an entity type. The field names
+`id`, `type`, `owner`, `ts`, `recorded_at`, `recorded_by`, `group` and
+`reverses` are reserved.
 
 ## Ledgers
 
@@ -71,8 +72,8 @@ transaction must balance: its `amount` values add up to zero, per
 rela refuses a transaction that does not balance, and refuses a second
 transaction with a group key that is already used.
 
-`closed_before` names a date property on the owner. A posting dated before
-that date is refused, so a closed period stays closed. rela checks the
+`closed_before` names a date property on the owner. A posting dated on or
+before that date is refused, so a closed period stays closed. rela checks the
 balance first, so an unbalanced posting never tells you whether a period is
 closed.
 

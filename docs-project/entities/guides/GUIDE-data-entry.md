@@ -519,7 +519,7 @@ apply to it:
 | Action | Applies to | Effect |
 | --- | --- | --- |
 | Keep local | `both_changed`, `refused`, `uncertain` | The next sync sends the local value. On an uncertain create it sends the row again. |
-| Take remote | `both_changed`, and a refused update | The next sync writes the remote value here. Needs edit rights on the field. |
+| Take remote | `both_changed`, a refused update, and `remote_deleted` | The next sync writes the remote value here. Needs edit rights on the field. On `remote_deleted` the next sync deletes the row here, so it needs the right to delete the row instead. |
 | Dismiss | `superseded` | Removes the entry; changes no data. |
 | Link | `uncertain` create | Links the local row to the remote row you name as `type/id`. Needs edit rights on the fields the create sent. |
 

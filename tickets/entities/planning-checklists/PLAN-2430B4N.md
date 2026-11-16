@@ -16,7 +16,8 @@ this checklist still uses the old names. In the code, `peers.yaml` is
 `TestPeerPull_EndToEnd` is `TestRemotePull_EndToEnd`. There is no `system:peer:`
 principal. A scheduled pull writes as the remote's `run_as`, or as
 `system:scheduler` when `run_as` is not set. `rela remote pull` writes as the
-person who runs it.
+person who runs it. The scheduler task `peer:<name>` is `remote:<name>`
+(`RemoteTaskPrefix` in `internal/scheduler/remotes.go`).
 
 ## Understanding
 
