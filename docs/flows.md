@@ -1330,6 +1330,15 @@ triggers:
 Name each rule after what it does, keep each rule to one task, and add a
 `description:`.
 
+rela's own issue tracker runs its ticket workflow this way. Its triggers are
+in `tickets/flows.yaml` in the rela repository, and
+`tickets/tests/checklist-workflow.test.lua` tests each of them with
+`rela test`.
+
+A property trigger fires when the value changes, not when an entity is
+created with that value. A ticket created with `status: planning` gets no
+planning checklist. Create it in an earlier status and then move it.
+
 ### Moving from schema.yaml automations
 
 rela no longer reads `automations:` from `schema.yaml`. A schema that still
