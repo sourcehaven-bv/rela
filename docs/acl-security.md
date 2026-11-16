@@ -3108,7 +3108,11 @@ other read:
   value makes the next pull write the remote's value into the local row, so
   it needs `update` on the row and write access to every field the entry
   names, asked as the write path asks it (`fields:` and `visible:` for an
-  entity, the relation's field grants for a relation). A link makes the
+  entity, the relation's field grants for a relation). Taking the remote
+  side of a `remote_deleted` entry makes the next pull delete the row, so it
+  needs the right to delete the row instead, asked as the DELETE route asks
+  it. For an entity of a faced type it is refused, because the pull deletes
+  the whole family by bare id. A link makes the
   next sync merge the remote row into the local one and set its `ref`, so it
   needs the same rights on every field the create sent. Dismissing
   changes only the conflict list. Keeping the local value changes no local
