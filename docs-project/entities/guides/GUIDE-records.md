@@ -60,8 +60,9 @@ records:
 | `retention` | How long rows are kept, such as `90d` or `24h`. Without it, rows are kept for ever. A ledger cannot have a retention. |
 | `ledger` | Makes the type a double-entry ledger. See below. |
 
-A record type cannot share its key with an entity type. The field names `id`,
-`owner`, `ts`, `recorded_at`, `recorded_by`, `group` and `reverses` are reserved.
+A record type cannot share its key with an entity type. The field names
+`id`, `type`, `owner`, `ts`, `recorded_at`, `recorded_by`, `group` and
+`reverses` are reserved.
 
 ## Ledgers
 
