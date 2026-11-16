@@ -120,7 +120,8 @@ func buildRefHolders(
 			return refHolders{}, err
 		}
 	}
-	if h.records, err = newRecordsService(h.recordStore, base.meta, st, d, redactor, writes, base.worlds); err != nil {
+	if h.records, err = newRecordsService(h.recordStore, base.meta, st, d, redactor, writes, base.worlds,
+		base.cfg.Audit); err != nil {
 		return refHolders{}, err
 	}
 	if h.channelTombs, err = newTombstoneConfirmer(h.channels); err != nil {

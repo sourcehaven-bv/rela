@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/records"
@@ -162,5 +163,79 @@ func TestRecords_CrossOriginRefused(t *testing.T) {
 			t.Errorf("%s script request = %d %s, want 404", path, w.Code, w.Body)
 		}
 		require.True(t, isCSRFExempt(httptest.NewRequest(http.MethodPost, path, http.NoBody)))
+	}
+}
+
+func newMutableRecordsHandlerT(t *testing.T) *recordsHandler {
+	t.Helper()
+	meta, err := metamodel.Parse([]byte(`version: "1"
+entities:
+  account:
+    label: Account
+    id_prefix: "ACC-"
+    properties:
+      name: {type: string}
+records:
+  hours:
+    owner: account
+    mutable: true
+    fields:
+      hours: {type: decimal, scale: 2, required: true}
+`))
+	require.NoError(t, err)
+	st, err := filerecords.New(storage.NewMemFS(), "/records", filelock.ProcessPrivate{})
+	require.NoError(t, err)
+	svc, err := records.NewService(records.Deps{Store: st, Owners: recordOwnersStub{}, Meta: meta,
+		Audit: audit.NewMemory()})
+	require.NoError(t, err)
+	return &recordsHandler{svc: svc}
+}
+
+// appendHours appends one hours row for owner and returns its id.
+func appendHours(t *testing.T, h *recordsHandler, owner string) string {
+	t.Helper()
+	rec := serveRecords(h, http.MethodPost, recordsPath+"/hours",
+		`{"rows":[{"owner":"`+owner+`","fields":{"hours":"8"}}]}`)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var got struct {
+		Records []records.Record `json:"records"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Len(t, got.Records, 1)
+	return got.Records[0].ID
+}
+
+func TestRecordsHandler_ChangeRow(t *testing.T) {
+	h := newMutableRecordsHandlerT(t)
+	id := appendHours(t, h, "ACC-1")
+	row := recordsPath + "/hours/" + id
+
+	rec := serveRecords(h, http.MethodPatch, row, `{"revision":0,"fields":{"hours":"9"}}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var got records.Record
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Equal(t, int64(1), got.Revision)
+	require.Equal(t, "9", got.Fields["hours"])
+
+	cases := []struct {
+		name, method, target, body string
+		want                       int
+	}{
+		{"stale patch", http.MethodPatch, row, `{"revision":0,"fields":{"hours":"1"}}`, http.StatusConflict},
+		{"no revision", http.MethodPatch, row, `{"fields":{"hours":"1"}}`, http.StatusBadRequest},
+		{"bad value", http.MethodPatch, row, `{"revision":1,"fields":{"hours":"x"}}`, http.StatusBadRequest},
+		{"unknown row", http.MethodPatch, recordsPath + "/hours/nope", `{"revision":0}`, http.StatusNotFound},
+		{"stale delete", http.MethodDelete, row + "?revision=0", "", http.StatusConflict},
+		{"delete without revision", http.MethodDelete, row, "", http.StatusBadRequest},
+		{"method", http.MethodPut, row, "", http.StatusMethodNotAllowed},
+		{"append-only type", http.MethodDelete, recordsPath + "/nope/" + id + "?revision=0", "", http.StatusNotFound},
+		{"delete", http.MethodDelete, row + "?revision=1", "", http.StatusNoContent},
+		{"deleted", http.MethodDelete, row + "?revision=1", "", http.StatusNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := serveRecords(h, tc.method, tc.target, tc.body)
+			require.Equal(t, tc.want, rec.Code, rec.Body.String())
+		})
 	}
 }

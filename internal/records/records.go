@@ -1,17 +1,24 @@
-// Package records holds record types (TKT-J7Q9C4K): append-only, typed rows
+// Package records holds record types (TKT-J7Q9C4K): typed rows
 // attached to an owner entity and stored beside the graph rather than in it.
 // They serve the smaller time-series needs (readings, measurements,
 // bookings) and ledger-style needs (balanced postings) of an application
 // built on rela. They are not a time-series database or an accounting
 // package.
 //
+// Rows are append-only unless their type is mutable (TKT-ERO2X5G). A mutable
+// row can be replaced or deleted one at a time, through the optional
+// [Mutator] capability of the backend. Its last change is on the row
+// ([Record.UpdatedBy], [Record.Revision]) and every change has an audit line,
+// because the row no longer holds its own history.
+//
 // # Why this is not in the graph
 //
 // A row is cheap and numerous. An entity write pays for a file or row of
 // its own, an audit line, a search update, versioning, automations and
 // validation, none of which a reading needs. So rows stay out of the store,
-// the audit log, the version sweep and the search index, as comments and
-// channels do. A row is attributed on itself ([Record.RecordedBy]).
+// the version sweep and the search index, as comments and channels do. A
+// row is attributed on itself ([Record.RecordedBy]); only a change to a
+// mutable row is audited.
 //
 // # What this package holds
 //
@@ -37,8 +44,9 @@
 //   - List orders rows by (TS, ID) and pages with an opaque cursor that
 //     stays valid while rows are appended. A row appended during paging
 //     with a TS before the cursor is not returned by later pages.
-//   - Rows are never changed. Only [Store.Expire], [Store.DropOwner] and
-//     [Store.RekeyOwner] touch stored rows.
+//   - Rows are never changed through Store. Only [Store.Expire],
+//     [Store.DropOwner] and [Store.RekeyOwner] touch stored rows; a
+//     [Mutator] replaces or deletes one row.
 package records
 
 import (
@@ -80,6 +88,9 @@ var (
 	// ErrGroupExists is an append that claims a group already taken, such
 	// as a transaction id used before or a group reversed before.
 	ErrGroupExists = errors.New("records: group already exists")
+	// ErrStale is a change to a row that changed since the caller read it:
+	// the revision the caller named is not the stored one.
+	ErrStale = errors.New("records: row changed since it was read")
 )
 
 // Record is one stored row.
@@ -101,6 +112,13 @@ type Record struct {
 	Group string `json:"group,omitempty" yaml:"group,omitempty"`
 	// Reverses is the group this row reverses; empty otherwise.
 	Reverses string `json:"reverses,omitempty" yaml:"reverses,omitempty"`
+	// UpdatedAt is when a mutable row was last changed; zero if never.
+	UpdatedAt time.Time `json:"updated_at,omitzero" yaml:"updated_at,omitempty"`
+	// UpdatedBy is the user that last changed a mutable row.
+	UpdatedBy string `json:"updated_by,omitempty" yaml:"updated_by,omitempty"`
+	// Revision counts the changes to a mutable row; 0 for a row never
+	// changed. A change names the revision it read (see [ErrStale]).
+	Revision int64 `json:"revision,omitempty" yaml:"revision,omitempty"`
 	// Fields are the declared fields with a value. Values are string,
 	// int64 or bool; a decimal is its canonical text.
 	Fields map[string]any `json:"fields" yaml:"fields"`
@@ -161,6 +179,23 @@ type Store interface {
 	// Expire deletes the rows of type typ with TS before before, and
 	// returns how many it deleted.
 	Expire(ctx context.Context, typ string, before time.Time) (int64, error)
+}
+
+// Mutator is the optional [Store] capability a mutable record type needs
+// (TKT-ERO2X5G). The Service checks access and values; a Mutator only
+// stores. Both changes are conditional on the stored revision, so of two
+// changes that read the same revision, one fails with [ErrStale].
+type Mutator interface {
+	// Get returns row id of type typ, or [ErrNotFound].
+	Get(ctx context.Context, typ, id string) (Record, error)
+	// Replace stores rec in place of the row with its type and id. The
+	// stored row must have rec's owner and revision rec.Revision-1;
+	// otherwise it is [ErrNotFound] (no such row) or [ErrStale]. rec.TS may
+	// differ from the stored row's.
+	Replace(ctx context.Context, rec Record) error
+	// Delete removes row id of type typ when its stored revision is
+	// revision; otherwise it is [ErrNotFound] or [ErrStale].
+	Delete(ctx context.Context, typ, id string, revision int64) error
 }
 
 // Aggregator is an optional [Store] capability: a backend that folds rows

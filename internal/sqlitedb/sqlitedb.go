@@ -445,7 +445,9 @@ CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);
 // recordsDDL holds the record store (sqlrecords, TKT-J7Q9C4K): typed rows
 // owned by an entity, and the ledger transaction ids claimed so far. Times
 // are integer microseconds since the epoch. pgstore migration 0048 has the
-// same shape. Shared between schemaSQL and the v38 to v39 rung.
+// same shape. Shared between schemaSQL and the v38 to v39 rung. The last
+// three columns are the v41 rung's (recordsMutableColumns); a database that
+// takes the v39 rung gets them here and the v41 rung finds them present.
 const recordsDDL = `
 CREATE TABLE IF NOT EXISTS records (
 	id          TEXT NOT NULL PRIMARY KEY,
@@ -456,7 +458,10 @@ CREATE TABLE IF NOT EXISTS records (
 	recorded_by TEXT NOT NULL DEFAULT '',
 	grp         TEXT NOT NULL DEFAULT '',
 	reverses    TEXT NOT NULL DEFAULT '',
-	doc         TEXT NOT NULL
+	doc         TEXT NOT NULL,
+	updated_at  INTEGER NOT NULL DEFAULT 0,
+	updated_by  TEXT NOT NULL DEFAULT '',
+	revision    INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 CREATE INDEX IF NOT EXISTS records_owner_ts_idx ON records(type, owner, ts, id);
 CREATE INDEX IF NOT EXISTS records_ts_idx ON records(type, ts, id);

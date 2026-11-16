@@ -10,6 +10,9 @@
 //   - records: one row per record. The envelope (type, owner, ts,
 //     recorded_at, recorded_by, grp, reverses) is columns; the fields are
 //     the JSON doc column. Times are BIGINT microseconds since the epoch.
+//     updated_at (0 for never), updated_by and revision carry the last
+//     change of a mutable row; pgstore migration 0050 and the sqlitedb v41
+//     rung add them.
 //   - record_groups: the ledger groups claimed so far, keyed by (type,
 //     grp). An append claims its groups with INSERT ... ON CONFLICT DO
 //     NOTHING in the same transaction as its rows, so of two appends that
@@ -34,7 +37,10 @@ type Store struct {
 	name string
 }
 
-var _ records.Store = (*Store)(nil)
+var (
+	_ records.Store   = (*Store)(nil)
+	_ records.Mutator = (*Store)(nil)
+)
 
 // New returns a store over db. name prefixes error messages.
 //
@@ -47,7 +53,8 @@ func New(db sqlexec.DB, name string) (*Store, error) {
 }
 
 func (s *Store) wrap(op string, err error) error {
-	if err == nil || errors.Is(err, records.ErrGroupExists) || errors.Is(err, records.ErrInvalid) {
+	if err == nil || errors.Is(err, records.ErrGroupExists) || errors.Is(err, records.ErrInvalid) ||
+		errors.Is(err, records.ErrNotFound) || errors.Is(err, records.ErrStale) {
 		return err
 	}
 	return fmt.Errorf("%s: %s: %w", s.name, op, err)
@@ -76,10 +83,12 @@ func (s *Store) Append(ctx context.Context, r records.AppendRequest) error {
 		}
 		for i, rec := range r.Records {
 			if _, err := q.Exec(ctx, `INSERT INTO records
-				(id, type, owner, ts, recorded_at, recorded_by, grp, reverses, doc)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				(id, type, owner, ts, recorded_at, recorded_by, grp, reverses, doc,
+				 updated_at, updated_by, revision)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				rec.ID, rec.Type, rec.Owner, records.Micros(rec.TS), records.Micros(rec.RecordedAt),
-				rec.RecordedBy, rec.Group, rec.Reverses, docs[i]); err != nil {
+				rec.RecordedBy, rec.Group, rec.Reverses, docs[i],
+				updatedMicros(rec), rec.UpdatedBy, rec.Revision); err != nil {
 				return err
 			}
 		}
@@ -88,17 +97,29 @@ func (s *Store) Append(ctx context.Context, r records.AppendRequest) error {
 	return s.wrap("append", err)
 }
 
-const cols = `id, type, owner, ts, recorded_at, recorded_by, grp, reverses, doc`
+const cols = `id, type, owner, ts, recorded_at, recorded_by, grp, reverses, doc,
+	updated_at, updated_by, revision`
+
+// updatedMicros is rec's updated_at column: 0 for a row never changed.
+func updatedMicros(rec records.Record) int64 {
+	if rec.UpdatedAt.IsZero() {
+		return 0
+	}
+	return records.Micros(rec.UpdatedAt)
+}
 
 func scan(r sqlexec.Rows) (records.Record, error) {
 	var rec records.Record
-	var ts, at int64
+	var ts, at, upd int64
 	var doc string
 	if err := r.Scan(&rec.ID, &rec.Type, &rec.Owner, &ts, &at, &rec.RecordedBy,
-		&rec.Group, &rec.Reverses, &doc); err != nil {
+		&rec.Group, &rec.Reverses, &doc, &upd, &rec.UpdatedBy, &rec.Revision); err != nil {
 		return rec, err
 	}
 	rec.TS, rec.RecordedAt = records.FromMicros(ts), records.FromMicros(at)
+	if upd != 0 {
+		rec.UpdatedAt = records.FromMicros(upd)
+	}
 	f, err := records.DecodeFields([]byte(doc))
 	if err != nil {
 		return rec, err
@@ -233,4 +254,79 @@ func (s *Store) Expire(ctx context.Context, typ string, before time.Time) (int64
 		return err
 	})
 	return n, s.wrap("expire", err)
+}
+
+// Get implements [records.Mutator.Get].
+func (s *Store) Get(ctx context.Context, typ, id string) (records.Record, error) {
+	rows, err := s.db.Query(ctx, `SELECT `+cols+` FROM records WHERE type = ? AND id = ?`, typ, id)
+	if err != nil {
+		return records.Record{}, s.wrap("get", err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return records.Record{}, s.wrap("get", err)
+		}
+		return records.Record{}, fmt.Errorf("%w: record %s", records.ErrNotFound, id)
+	}
+	rec, err := scan(rows)
+	return rec, s.wrap("get", err)
+}
+
+// Replace implements [records.Mutator.Replace]. The revision is the
+// condition of the UPDATE itself, so of two replaces that read one
+// revision, the second matches no row.
+func (s *Store) Replace(ctx context.Context, rec records.Record) error {
+	doc, err := records.EncodeFields(rec.Fields)
+	if err != nil {
+		return err
+	}
+	err = s.db.Transact(ctx, func(q sqlexec.Querier) error {
+		n, err := q.Exec(ctx, `UPDATE records SET ts = ?, doc = ?, updated_at = ?, updated_by = ?, revision = ?
+			WHERE type = ? AND id = ? AND owner = ? AND revision = ?`,
+			records.Micros(rec.TS), doc, updatedMicros(rec), rec.UpdatedBy, rec.Revision,
+			rec.Type, rec.ID, rec.Owner, rec.Revision-1)
+		if err != nil || n == 1 {
+			return err
+		}
+		return s.missOrStale(ctx, q, rec.Type, rec.ID, rec.Owner)
+	})
+	return s.wrap("replace", err)
+}
+
+// Delete implements [records.Mutator.Delete].
+func (s *Store) Delete(ctx context.Context, typ, id string, revision int64) error {
+	err := s.db.Transact(ctx, func(q sqlexec.Querier) error {
+		n, err := q.Exec(ctx, `DELETE FROM records WHERE type = ? AND id = ? AND revision = ?`, typ, id, revision)
+		if err != nil || n == 1 {
+			return err
+		}
+		return s.missOrStale(ctx, q, typ, id, "")
+	})
+	return s.wrap("delete", err)
+}
+
+// missOrStale tells why a conditional change matched no row: the row is
+// gone or has another owner ([records.ErrNotFound]), or its revision moved
+// on ([records.ErrStale]). owner empty matches any owner.
+func (s *Store) missOrStale(ctx context.Context, q sqlexec.Querier, typ, id, owner string) error {
+	rows, err := q.Query(ctx, `SELECT owner FROM records WHERE type = ? AND id = ?`, typ, id)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return fmt.Errorf("%w: record %s", records.ErrNotFound, id)
+	}
+	var got string
+	if err := rows.Scan(&got); err != nil {
+		return err
+	}
+	if owner != "" && got != owner {
+		return fmt.Errorf("%w: record %s", records.ErrNotFound, id)
+	}
+	return fmt.Errorf("%w: record %s", records.ErrStale, id)
 }

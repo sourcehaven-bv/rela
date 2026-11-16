@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
@@ -69,6 +70,11 @@ type Deps struct {
 	// seen. The file backend of the fs and memory tiers has no transaction
 	// in common with the entity store and is wired this way.
 	Lock WriteLock
+	// Audit receives a line for every change to a mutable row.
+	//
+	// Nil: rejected when the schema declares a mutable record type, so no
+	// change goes unrecorded; accepted otherwise.
+	Audit audit.Audit
 	// Now is the clock. Nil means time.Now.
 	Now func() time.Time
 }
@@ -79,8 +85,9 @@ type Deps struct {
 // # Access
 //
 // A row is readable when its owner is: the owner's row gate decides, and a
-// hidden owner is indistinguishable from one without rows. Appending needs
-// update access on the owner. An aggregate gates its owner set first and
+// hidden owner is indistinguishable from one without rows. Appending, and
+// changing or deleting a row of a mutable type, need update access on the
+// owner. An aggregate gates its owner set first and
 // only then folds, so no hidden owner's value reaches a result; results are
 // per caller and never cached.
 type Service struct {
@@ -88,20 +95,33 @@ type Service struct {
 	owners Owners
 	meta   *metamodel.Metamodel
 	lock   WriteLock
+	audit  audit.Audit
 	now    func() time.Time
 }
 
-// NewService returns a service over d.
+// NewService returns a service over d. A schema with a mutable record type
+// needs a Store that is a [Mutator] and an Audit.
 //
 // Nil: Store, Owners and Meta are rejected.
 func NewService(d Deps) (*Service, error) {
 	if d.Store == nil || d.Owners == nil || d.Meta == nil {
 		return nil, errors.New("records: NewService requires Store, Owners and Meta")
 	}
+	for _, k := range d.Meta.RecordKeys() {
+		if !d.Meta.Records[k].Mutable {
+			continue
+		}
+		if _, ok := d.Store.(Mutator); !ok {
+			return nil, fmt.Errorf("records: record type %s is mutable, and the record store cannot change rows", k)
+		}
+		if d.Audit == nil {
+			return nil, fmt.Errorf("records: record type %s is mutable, and NewService has no Audit", k)
+		}
+	}
 	if d.Now == nil {
 		d.Now = time.Now
 	}
-	return &Service{store: d.Store, owners: d.Owners, meta: d.Meta, lock: d.Lock, now: d.Now}, nil
+	return &Service{store: d.Store, owners: d.Owners, meta: d.Meta, lock: d.Lock, audit: d.Audit, now: d.Now}, nil
 }
 
 // locked runs fn under the write lock, or on the store directly when none is
@@ -123,6 +143,7 @@ type TypeInfo struct {
 	FieldOrder  []string             `json:"field_order"`
 	Retention   string               `json:"retention,omitempty"`
 	Ledger      *metamodel.LedgerDef `json:"ledger,omitempty"`
+	Mutable     bool                 `json:"mutable,omitempty"`
 }
 
 // FieldInfo describes one field of a record type for a client.
@@ -167,7 +188,7 @@ func typeInfo(key string, d metamodel.RecordTypeDef) TypeInfo {
 			Required: p.Required, Scale: p.Scale, Values: p.Values}
 	}
 	return TypeInfo{Key: key, Label: label, Description: d.Description, Owner: d.Owner, Fields: fields,
-		FieldOrder: d.FieldNames(), Retention: d.Retention, Ledger: d.Ledger}
+		FieldOrder: d.FieldNames(), Retention: d.Retention, Ledger: d.Ledger, Mutable: d.Mutable}
 }
 
 func (s *Service) def(typ string) (metamodel.RecordTypeDef, error) {
