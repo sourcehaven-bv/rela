@@ -14,7 +14,9 @@ this checklist still uses the old names. In the code, `peers.yaml` is
 `TestPeerPull_EndToEnd` is `TestRemotePull_EndToEnd`. There is no `system:peer:`
 principal. A scheduled pull writes as the remote's `run_as`, or as
 `system:scheduler` when `run_as` is not set. `rela remote pull` writes as the
-person who runs it.
+person who runs it. The file `scheduler/peers.go` is
+`internal/scheduler/remotes.go`, and the guide `docs/peer-sync.md` is
+`docs/remote-sync.md`.
 
 GUIDE-cli-reference did not change in #2165. The `rela remote` section was added
 later, in #2214 (TKT-0FMYPEZ).
