@@ -25,7 +25,8 @@ dashboard: a named dashboard with `entity_type:` whose `list:` cards each carry
 `scope: {relation, direction}`.
 - `GET /api/v1/_dashboard/card?anchor=<id>` computes such a card over the
 rows the anchor reaches.
-- `GET /api/v1/_dashboard` serves the dashboard's `entity_type`.
+- The SPA tells an entity dashboard by its cards' `scope`. `GET /api/v1/_dashboard`
+serves no `entity_type` (RR-UIDD3CD).
 - Config validation, SPA wiring, Dutch and English strings, guide docs.
 
 Out of scope:
@@ -130,11 +131,12 @@ relation query, owned-edge filter, id set) from `resolvePageScope`; both the
 list tab and the card use it.
 3. `dashboard_handler.go`: read `anchor`; 400 when missing on an entity
 dashboard or given on a plain one; resolve the anchor once, before rows.
-4. `dashboard_card.go`: rows come from `navStatusRows` (gated, scoped,
-conditioned), are intersected with the anchor's reach, then folded. A scoped
-table card sorts in the same read and pages after the intersection. Nothing is
-cached; the value is per request.
-5. `apiwire`: `DashboardResponse.EntityType`.
+4. `dashboard_card.go`: the anchor's reach rides on `gatedListQuery.reach`
+and narrows the gated, scoped, conditioned list read by id (`listRowsFor`), as a
+page scope does; then the rows fold. A scoped table card sorts in the same
+narrowed read (RR-IRXJWNP). Nothing is cached; the value is per request.
+5. `apiwire`: no `DashboardResponse.EntityType`; the SPA reads the cards'
+`scope` instead (RR-UIDD3CD).
 
 SPA:
 1. `PageView.vue`: `scope: root` on a document tab passes `entityId`, on a
@@ -142,7 +144,7 @@ dashboard tab passes `anchor`.
 2. `DashboardView.vue`: `anchor` prop, passed to `getDashboardCard`; an
 entity dashboard without anchor shows an empty state; hides the validation card
 and unscoped links when anchored.
-3. `DashboardMatrix.vue`: `linked` prop to render plain cells.
+3. `DashboardMatrix.vue`: `unlinked` prop to render plain cells.
 4. Types and i18n (en, nl).
 
 **Files to modify:**
@@ -173,11 +175,11 @@ and unscoped links when anchored.
 - `name`, `card`: unchanged handling.
 
 **Security-Sensitive Operations:**
-- Aggregates: rows are gated by `navStatusRows` (row gate, world, faces,
-query scope, condition) before the intersection, and redacted once per row
-before a group or matrix fold reads a value. The intersection only removes rows.
-A pre-filter count is never served: `total` is the post-intersection length. No
-server cache; the SPA keeps values in component state only.
+- Aggregates: rows are read by `listRowsFor` (row gate, world, faces,
+query scope, condition) narrowed to the anchor's reach, and redacted once per
+row before a group or matrix fold reads a value. The reach only removes rows. A
+pre-filter count is never served: `total` is the narrowed length. No server
+cache; the SPA keeps values in component state only.
 - The anchor is read before the rows, so the 404 does not depend on the
 list's contents (no existence oracle).
 
@@ -215,8 +217,9 @@ steps entity page with a document step and a dashboard step.
 **Risks:**
 - Diverging from the list tab's notion of "related": mitigated by sharing
 `anchorReach`.
-- A scoped card reads the whole list population before intersecting, as an
-unscoped card already does. Same cost class; no per-row lookups.
+- A scoped card could cost a full list read per card: mitigated by
+narrowing the read by id to the anchor's reach (`gatedListQuery.reach`), so it
+reads only the reached rows; no per-row lookups (RR-IRXJWNP).
 - `DashboardCard` passes the plimsoll field line: pinned with the
 format-mirror exception, as `List` is.
 
