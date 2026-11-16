@@ -608,6 +608,104 @@ rela.update_entity("REPORT-traceability", {
 }, body)
 ```
 
+### Capturing a Metric for Trend Charts
+
+rela computes roll-ups when they are read and never stores them, so it has
+no history of a value such as "control coverage". To chart a trend, let a
+scheduled task compute the value and store it as a [record](records.md),
+one row per run. A line card on the dashboard then reads the stored series
+(see "Trend charts" in [Records](records.md)).
+
+The pattern has three parts:
+
+- a `metric` entity per series, which owns the rows;
+- a record type `measurement` on `metric`;
+- a scheduled task with its own `run_as` identity that computes the value
+  and appends one row.
+
+```yaml
+# schema.yaml
+entities:
+  metric:
+    label: Metric
+    id_type: manual
+    properties:
+      title: {type: string}
+records:
+  measurement:
+    owner: metric
+    fields:
+      value: {type: decimal, scale: 1, required: true}
+```
+
+```yaml
+# schedules.yaml
+tasks:
+  - name: control-coverage
+    script: metrics/control_coverage.lua
+    every: monday
+    run_as: system:metrics
+```
+
+```lua
+-- scripts/metrics/control_coverage.lua
+local controls = rela.list_entities("control")
+local covered = 0
+for _, c in ipairs(controls) do
+  if c.properties.status == "implemented" then
+    covered = covered + 1
+  end
+end
+local pct = 0
+if #controls > 0 then
+  pct = covered * 100 / #controls
+end
+local _, err = rela.append_records("measurement", {
+  { owner = "MET-control-coverage", fields = { value = string.format("%.1f", pct) } },
+})
+if err then
+  error("control coverage not stored: " .. err)
+end
+```
+
+`rela.list_entities` returns at most 2000 rows (see "Reads are bounded" in
+the Lua scripting guide). For a larger type, count with a narrower filter
+per run, or split the metric.
+
+**The value is computed with what `run_as` can read, and stored where
+anyone who reads the metric entity can read it.** A row's read access
+follows its owner, not the task that wrote it. If `system:metrics` reads
+every control, but a reader of `MET-control-coverage` may see only some of
+them, that reader learns a figure about controls they cannot see. The task
+folds before the reader's gate applies, which is the disclosure the
+"aggregates gate before they fold" rule exists to prevent. rela does not
+check this for you. So give the metric entity a read rule no wider than
+what `run_as` can see, as you would for an elevated document or a digest
+that a task sends:
+
+```yaml
+# acl.yaml
+roles:
+  metrics-capture:          # the task: reads controls, appends to metrics
+    read: [control, metric]
+    update: [metric]
+  management:               # may see every control, so may see the metric
+    read: [control, metric]
+assignments:
+  system:metrics: metrics-capture
+```
+
+A role that reads only some controls, for example through a row rule, gets
+no `read` on `metric`.
+
+The task needs `update` on the metric entity, because appending a record
+needs update access on every face of its owner. It does not need `create`:
+create the metric entities once, by hand or in a migration.
+
+Give each metric its own `run_as` identity when the metrics read different
+data. One wide identity for every metric makes every stored value as
+sensitive as the widest of them.
+
 ## Audit log
 
 Every write a scheduled task performs (via `rela.create_entity`,

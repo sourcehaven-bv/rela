@@ -3909,6 +3909,50 @@ dashboard:
 - A row without a value is left out. A row whose value is hidden from the
   viewer is left out too, and the card says that some values are hidden.
 
+### Line cards (`display: line`)
+
+A line card draws a trend over [records](records.md): one line per owner
+entity, one point per time bucket. It reads
+`/api/v1/_records/{type}/_aggregate`, so it takes `records:` instead of
+`list:` or `query:`.
+
+```yaml
+dashboard:
+  cards:
+    - title: "Control coverage"
+      display: line
+      width: wide
+      records:
+        type: measurement
+        field: value
+        owners: [MET-control-coverage]
+        bucket: month
+        range: 2y
+        stat: latest
+```
+
+| Key | Meaning |
+| --- | --- |
+| `type` | The record type. Required. |
+| `owners` | The owner entities, one line each, at most 8. Required. |
+| `field` | The `integer` or `decimal` field to plot. Required unless `stat` is `count`. |
+| `bucket` | `hour`, `day`, `week` or `month`. Default `month`. |
+| `range` | How far back to plot, such as `90d`, `12w` or `2y`. Default: every stored row. |
+| `stat` | `latest`, `avg`, `sum`, `min`, `max` or `count` per bucket. Default `latest`. |
+
+- A line card takes only `title`, `display`, `width`, `permission` and
+  `records`. It is not allowed on an entity dashboard.
+- The aggregate folds only the owners the viewer can read. An owner the
+  viewer cannot read gets no line and no legend entry. When the viewer can
+  read none of the owners, the card shows no data.
+- Each owner keeps the colour of its place in `owners:`, so a hidden owner
+  does not change the colours of the others.
+- Hover the chart, or focus it and use the arrow keys, to read every line's
+  value in a bucket. "Show as a table" lists all values.
+
+[Records](records.md#trend-charts) describes how a scheduled task captures
+the values, and how to set the read rule on the owner.
+
 ### Card width (`width`)
 
 Every card takes one cell of the dashboard grid. A matrix, a table with

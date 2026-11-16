@@ -136,6 +136,33 @@ Send decimals as strings, such as `"1.25"`, so no precision is lost.
 An aggregate folds at most 1,000,000 rows. Narrow `from`, `to` or `owner`
 when a query needs more.
 
+## Trend charts
+
+A trend such as "control coverage per quarter" is a value computed over the
+graph at a point in time. rela does not store such values on its own. To
+chart one over time, capture it as a record:
+
+1. Declare an owner type with one entity per series, such as a `metric`
+   entity `MET-control-coverage`.
+2. Declare a record type on it, such as `measurement` with a decimal
+   `value` field.
+3. Add a [scheduled task](scheduled-tasks.md#capturing-a-metric-for-trend-charts)
+   with `run_as:` that computes the value and appends one row with
+   `rela.append_records`.
+4. Add a [line card](data-entry.md#line-cards-display-line) to a dashboard.
+
+**The value is computed under `run_as`, but anyone who can read the metric
+entity can read it.** A record follows its owner, not the data that went
+into it. A count over controls that only an auditor can read becomes, once
+stored, readable by everyone who can read the metric. So give the metric
+entity a read rule no wider than what the `run_as` identity can see. This is
+the same rule as for elevated documents and digests: decide who may see the
+result before you fold the data into it.
+
+A capture task appends through the same check as `POST /api/v1/_records/{type}`:
+its `run_as` identity needs `update` on the metric entity. `create` on the
+owner type is not needed.
+
 ## Storage
 
 Each backend stores records in its own way:

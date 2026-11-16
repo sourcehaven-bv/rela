@@ -228,7 +228,10 @@
     "matrixTruncated": "Niet elke waarde wordt getoond.",
     "previewOf": "{display} van {source}",
     "previewList": "lijst {name}",
-    "noData": "Geen gegevens"
+    "noData": "Geen gegevens",
+    "lineChartLabel": "Lijngrafiek: {title}",
+    "showTable": "Toon als tabel",
+    "period": "Periode"
   },
   "comments": {
     "commentOn": "Reageren op {ref}",

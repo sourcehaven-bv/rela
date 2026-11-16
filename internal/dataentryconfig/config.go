@@ -2074,7 +2074,7 @@ type DashboardConfig struct {
 // The plimsoll directive is the format-mirror exception documented on
 // [Config]: each exported field is one key of a card in data-entry.yaml.
 //
-//plimsoll:max-fields=21
+//plimsoll:max-fields=22
 type DashboardCard struct {
 	Title string `yaml:"title" json:"title"`
 	// List names a `lists:` entry. The card shows exactly the rows that list
@@ -2083,7 +2083,7 @@ type DashboardCard struct {
 	List string `yaml:"list,omitempty" json:"list,omitempty"`
 	// Query is a search query the SPA runs through /api/v1/_search.
 	Query   string `yaml:"query,omitempty" json:"query,omitempty"`
-	Display string `yaml:"display" json:"display"` // count, table, breakdown, matrix, ratio, sum, avg, min, max
+	Display string `yaml:"display" json:"display"` // count, table, breakdown, matrix, ratio, sum, avg, min, max, line
 	GroupBy string `yaml:"group_by,omitempty" json:"group_by,omitempty"`
 	// Property is the property a sum, avg, min or max card folds over the
 	// list's rows. sum and avg need an integer or decimal property; min and
@@ -2152,6 +2152,34 @@ type DashboardCard struct {
 	// Nil: accepted on a dashboard without entity_type, where it means
 	// "unscoped".
 	Scope *PageTabScope `yaml:"scope,omitempty" json:"scope,omitempty"`
+
+	// Records makes the card a trend chart over stored records
+	// (TKT-RK810V7): `display: line` with no list: or query:. The SPA reads
+	// /api/v1/_records/{type}/_aggregate, which folds only the owners the
+	// reader may read.
+	//
+	// Nil: accepted; the card then reads a list: or a query:.
+	Records *DashboardRecords `yaml:"records,omitempty" json:"records,omitempty"`
+}
+
+// DashboardRecords is the source of a `display: line` card: one series per
+// owner, folded per time bucket.
+type DashboardRecords struct {
+	// Type is a record type declared under records: in the schema.
+	Type string `yaml:"type" json:"type"`
+	// Owners are the entity ids whose rows the chart shows, one line each.
+	Owners []string `yaml:"owners" json:"owners"`
+	// Field is the integer or decimal field to fold. Required unless Stat is
+	// count.
+	Field string `yaml:"field,omitempty" json:"field,omitempty"`
+	// Bucket is hour, day, week or month. Empty means month.
+	Bucket string `yaml:"bucket,omitempty" json:"bucket,omitempty"`
+	// Range is how far back the chart reaches, such as 365d or 48h. Empty
+	// means every stored row.
+	Range string `yaml:"range,omitempty" json:"range,omitempty"`
+	// Stat is the value each point shows: avg, sum, min, max, latest or
+	// count. Empty means latest.
+	Stat string `yaml:"stat,omitempty" json:"stat,omitempty"`
 }
 
 // ViewConfig defines a detailed entity view with traversal and sections.

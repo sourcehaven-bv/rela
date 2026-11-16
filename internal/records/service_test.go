@@ -333,6 +333,15 @@ func TestRecords_AggregateExcludesHiddenOwner(t *testing.T) {
 	}
 	_, err = s.Aggregate(ctx, records.AggregateQuery{Type: "reading", Owners: []string{"SITE-2"}})
 	require.ErrorIs(t, err, records.ErrNotFound)
+
+	// Kept apart, as a dashboard line card asks (TKT-RK810V7): the hidden
+	// owner gets no point at all, so the chart draws and names nothing for it.
+	pts, err := s.Aggregate(ctx, records.AggregateQuery{Type: "reading", Field: "kwh",
+		Owners: []string{"SITE-1", "SITE-2"}, Bucket: records.BucketMonth, PerOwner: true})
+	require.NoError(t, err)
+	require.Len(t, pts, 1)
+	require.Equal(t, "SITE-1", pts[0].Owner)
+	require.Equal(t, "1.0", pts[0].Latest)
 }
 
 func TestAggregate_Buckets(t *testing.T) {
