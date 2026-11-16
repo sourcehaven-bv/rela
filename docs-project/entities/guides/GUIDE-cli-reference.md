@@ -1797,8 +1797,10 @@ transforms them to the current format while preserving comments and formatting.
 It also renames a legacy `metamodel.yaml` to `schema.yaml`, and moves
 `automations:` from `schema.yaml` and its included files to `flows.yaml` under
 `triggers:`. A schema that still declares `automations:` does not load until
-you run it. The move keeps each automation's name and comments, and stops
-without writing anything when an automation cannot be moved as written. See
+you run it. The move keeps each automation's name and comments. When an
+automation cannot be moved as written, it stops before it writes `flows.yaml`
+or cuts the schema; syntax migrations from the same run may already be
+written. See
 [Moving from schema.yaml automations](flows.md#moving-from-schemayaml-automations).
 
 If a project contains **both** files, `schema.yaml` is the one rela reads and the

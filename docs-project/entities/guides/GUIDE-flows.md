@@ -1369,7 +1369,10 @@ needed. It keeps comments and removes the automations from the schema files.
 Because names are kept, audit records and waiting background jobs still
 match their rule.
 
-The move stops and writes nothing when:
+The move stops when one of the cases below applies. It then writes nothing
+to `flows.yaml` and cuts nothing from the schema. Syntax migrations that
+the same run applies to `schema.yaml` and to included files that declare
+automations may already be written. The move stops when:
 
 - an entry has a key the old loader did not know;
 - an entry uses a YAML anchor or alias;
