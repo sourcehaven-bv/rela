@@ -109,6 +109,7 @@ go build -o rela ./cmd/rela
 | [Syncing with a remote](docs/remote-sync.md) | Pull entities and relations from another rela with remotes.yaml: credentials, mapping, schedules, rows the source drops, and the status page |
 | [Two-way sync with a remote](docs/remote-sync-two-way.md) | Push local changes to a remote: share, conflict rules and clock bounds, retention, the conflict list and how to act on it, and why approval is a workflow |
 | [PostgreSQL Scale Check](docs/postgres-scale-run.md) | The PostgreSQL scale that rela checks every week, and how to run the check yourself |
+| [Records (time series and ledgers)](docs/records.md) | Declare record types in schema.yaml to store meter readings, events and ledger postings owned by an entity, outside the graph |
 
 ### Tutorials
 

@@ -34,6 +34,7 @@ var validTopLevelKeys = map[string]bool{
 	"task_item_conversions": true,
 	"comments":              true,
 	"piles":                 true,
+	"records":               true,
 	// default_world names the world a request uses when it names none
 	// (TKT-7IZHP0).
 	"default_world": true,
@@ -334,6 +335,7 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateExternalRefs(m)...)
 	validationErrors = append(validationErrors, validateComments(m)...)
 	validationErrors = append(validationErrors, validatePiles(m)...)
+	validationErrors = append(validationErrors, validateRecords(m)...)
 
 	if len(validationErrors) > 0 {
 		return &SchemaValidationError{Errors: validationErrors}

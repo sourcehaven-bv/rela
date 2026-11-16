@@ -141,6 +141,9 @@ Output structure:
 }
 ```
 
+When the schema declares record types, `--all` also writes a `records` list
+with every row of every declared record type, ordered by type, owner and time.
+
 Note: `--all` with `--format csv` is not supported (use JSON or YAML).
 
 ## Practical Examples
