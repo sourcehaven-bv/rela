@@ -243,8 +243,8 @@ Only new edges are refused. Data that is already over a bound stays readable
 and editable, for example from a hand-edited file or a bound added later.
 `analyze cardinality` reports it.
 
-Some bulk paths do not check the bounds: `rela import`, data migrations, and
-restoring a soft-deleted entity with its edges. Run `analyze cardinality`
+Some bulk paths do not check the bounds: `rela import` without `--mapping`,
+data migrations, and restoring a soft-deleted entity with its edges. Run `analyze cardinality`
 after them.
 
 To re-point a bounded relation, change it in one PATCH. Send the new edges as

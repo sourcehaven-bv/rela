@@ -901,12 +901,14 @@ func writeWriteRefused(w http.ResponseWriter, r *http.Request, err error) {
 // writeRuleRefusal answers a relation write that a write-enforced relation
 // rule refused (TKT-EBARYBI) with the 422 an entity write gets, and reports
 // whether it did. The problem names the rule and quotes its description,
-// never an entity.
+// never an entity: it answers with the unwrapped [entitymanager.ValidationError],
+// because a wrapping relation error names the request's first create target.
 func writeRuleRefusal(w http.ResponseWriter, r *http.Request, err error) bool {
-	if _, ok := errors.AsType[*entitymanager.ValidationError](err); !ok {
+	invalid, ok := errors.AsType[*entitymanager.ValidationError](err)
+	if !ok {
 		return false
 	}
-	writeWriteRefused(w, r, err)
+	writeWriteRefused(w, r, invalid)
 	return true
 }
 

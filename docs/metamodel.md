@@ -3498,9 +3498,12 @@ uses a content-scoped or symmetric relation, or is on a type with `faces:`.
 A relation rule refuses a write only when the write turns a satisfied rule
 into a broken one. This has three effects:
 
-- A create is never refused. A new entity has no relations yet, and the client
-  links them after the create. Create the risk, link its plan, then set the
-  status; or create it in `in_behandeling` and link the plan next.
+- A create of the entity itself is never refused. A new entity has no
+  relations yet, and the client links them after the create. Create the risk,
+  link its plan, then set the status; or create it in `in_behandeling` and link
+  the plan next. The `relations` of a data-entry POST are written after the
+  create and checked as relation creates: a refused edge returns a 422, and
+  the new entity stays stored without that edge.
 - A row that already breaks the rule stays editable. `rela analyze validations`
   finds it.
 - Leaving the rule's `when` is always allowed.
@@ -3524,9 +3527,9 @@ checked together, so removing two of three plans is judged once.
 
 These writes are not checked:
 
-- Creates, copies, conversions and restores.
-- The relations a batch or a create with `relations` writes, also when both
-  ends already existed.
+- Entity creates, copies, conversions and restores.
+- The relations a batch or a linked create writes (flow and realtime outputs,
+  conversions), also when both ends already existed.
 - Entity deletes, including the relations a cascade delete removes. A rule on a
   neighbor the caller cannot see would otherwise refuse the delete, and so
   reveal the neighbor.
@@ -3545,8 +3548,9 @@ an entity the caller cannot see. `docs/acl-security.md` records this channel.
 Each check reads the relations of the ends once and the type of each far end
 once, in the transaction of the write.
 
-Writes that bypass the write path do not check the rule: `rela import` and data
-migrations write to the store directly.
+Writes that bypass the write path do not check the rule: `rela import` without
+`--mapping` and data migrations write to the store directly. `rela import
+--mapping` writes through the entity manager, so it checks the rule.
 
 The deployment's validation mode is a separate setting: it decides whether a
 missing required property or an invalid value refuses a write (see "Validation
