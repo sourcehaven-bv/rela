@@ -76,7 +76,7 @@ parameters (RFC 3339 times, whole-number limit), schema field types. Invalid
 input is a 400 naming the field.
 
 **Security-Sensitive Operations:**
-Reads gate on owner readability; writes need update on every readable face
+Reads gate on owner readability; writes need update on every stored face
 of the owner; aggregates gate owners before folding; file paths escape every
 byte outside `[A-Za-z0-9_-]`; SQL is parameterised.
 

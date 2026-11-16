@@ -478,7 +478,7 @@ CREATE TABLE IF NOT EXISTS record_groups (
 // A soft delete copies the faces to marked_entities before it deletes them
 // from entities, so the rows stay for a restore; the purge drops them. A
 // ledger group claim goes with the last row of its group, as sqlrecords'
-// DropOwner does. pgstore migration 0048 has the same triggers. Shared
+// DropOwner does. pgstore migration 0049 has the same triggers. Shared
 // between schemaSQL and the v39 to v40 rung.
 //
 // A rung that rebuilds entities or marked_entities (create, copy, drop,
