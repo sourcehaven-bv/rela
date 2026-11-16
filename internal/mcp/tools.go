@@ -128,7 +128,7 @@ func toolSearchEntities() *mcpgo.Tool {
 		withDescription("Full-text search across entity titles and properties"),
 		withString("query", required(), description("Search text")),
 		withString("type", description("Restrict to entity type")),
-		withNumber("limit", description("Max results (default 20)")),
+		withNumber("limit", description("Max results (default 20, at most 1000)")),
 		withString("world", description(worldArgDescription)),
 	)
 }
@@ -179,7 +179,7 @@ func toolListRelations() *mcpgo.Tool {
 		withString("type", description("Relation type")),
 		withString("from", description("Source entity ID")),
 		withString("to", description("Target entity ID")),
-		withNumber("limit", description("Max results (default 50)")),
+		withNumber("limit", description("Max results (default 50, at most 1000)")),
 		withNumber("offset", description("Results to skip")),
 	)
 }

@@ -1494,8 +1494,11 @@ A `status:` rule on a nav entry puts a count next to it. A count is about
 data, so it is served by `/api/v1/_nav_status` and never by `_sidebar`,
 which keeps the sidebar identical for every principal; the sidebar only
 carries each entry's `status_key`. The count is taken over the rows the
-list shows that principal: rows are gated and redacted before they are
-counted, and the response is `no-store`, never cached across principals.
+list shows that principal. Rows are gated before they are counted. A rule's
+condition is judged on the redacted row, or in the store when every field
+it reads is visible to the principal on every row, so a count never depends
+on a hidden value. The response is `no-store`, never cached across
+principals.
 An entry hidden by `permission:` gets no count.
 
 **Generated nav entries are per principal too.** A group with `items_from:`
