@@ -2538,7 +2538,9 @@ the key; this section covers what it means for `acl.yaml`.
 - **Ledger group keys are unique per record type.** A posting whose key
   is already in use answers 409, even when the existing transaction belongs
   to owners the caller cannot read. A caller who may post can learn that a
-  key exists. Use keys that reveal nothing on their own.
+  key exists. Use keys that reveal nothing on their own. The key is checked
+  before the closed period, so a reused key answers 409 whatever its date
+  and does not reveal a lock date the caller cannot see.
 - **`/api/v1/_position` per-id semantics** — `_position` is gated on
   both scope sources: list scopes share the gated list pipeline, and
   search scopes filter the search result through the read gate before

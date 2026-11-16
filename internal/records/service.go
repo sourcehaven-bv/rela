@@ -240,8 +240,14 @@ func (s *Service) appendLocked(
 	}
 	req := AppendRequest{Records: recs}
 	if d.Ledger != nil {
-		groups, err := ledgerGroups(typ, d, recs, owners)
+		groups, err := ledgerGroups(typ, d, recs)
 		if err != nil {
+			return nil, err
+		}
+		if err := groupsFree(ctx, st, groups); err != nil {
+			return nil, err
+		}
+		if err := checkOpenRows(d.Ledger, recs, owners); err != nil {
 			return nil, err
 		}
 		req.Groups = groups
@@ -276,11 +282,18 @@ func (s *Service) writableOwners(ctx context.Context, d metamodel.RecordTypeDef,
 	return out, nil
 }
 
-// ledgerGroups sets each row's group, checks the balance and then the closed
-// periods, and returns the groups the append claims. The legs of one
-// transaction share one ts, so no row of it can expire or close apart from
-// the others.
-func ledgerGroups(typ string, d metamodel.RecordTypeDef, recs []Record, owners map[string]Owner) ([]GroupKey, error) {
+// ledgerGroups sets each row's group, checks the balance, and returns the
+// groups the append claims. The legs of one transaction share one ts, so no
+// row of it can expire or close apart from the others.
+//
+// The caller then checks the claims with [groupsFree] and only then the
+// closed periods with [checkOpenRows]. Every earlier answer depends only on
+// what the caller sent or on whether a key is taken, so a caller who cannot
+// see the lock date can only learn it by committing a real, balanced
+// posting under a new key. Checked earlier, an unbalanced probe or a reused
+// key would answer "closed" or not and reveal the date without writing
+// anything.
+func ledgerGroups(typ string, d metamodel.RecordTypeDef, recs []Record) ([]GroupKey, error) {
 	l := d.Ledger
 	dated := map[string]time.Time{}
 	for i := range recs {
@@ -295,18 +308,8 @@ func ledgerGroups(typ string, d metamodel.RecordTypeDef, recs []Record, owners m
 		}
 		dated[g] = recs[i].TS
 	}
-	// The closed period is checked last. Every earlier answer depends only on
-	// what the caller sent, so a caller who cannot see the lock date can
-	// only learn it by committing a real, balanced posting. Checked first, an
-	// unbalanced probe would answer "closed" or "unbalanced" and reveal the
-	// date without writing anything.
 	if err := checkBalance(l, recs); err != nil {
 		return nil, err
-	}
-	for i := range recs {
-		if err := checkOpen(l, recs[i], owners[recs[i].Owner]); err != nil {
-			return nil, fmt.Errorf("row %d: %w", i+1, err)
-		}
 	}
 	groups := make([]GroupKey, 0, len(dated))
 	for g := range dated {
@@ -314,6 +317,34 @@ func ledgerGroups(typ string, d metamodel.RecordTypeDef, recs []Record, owners m
 	}
 	sort.Slice(groups, func(i, j int) bool { return groups[i].Group < groups[j].Group })
 	return groups, nil
+}
+
+// groupsFree returns [ErrGroupExists] when a row on st already holds one of
+// groups. Every backend keeps a group claimed for as long as a row of it is
+// stored, so this reads the state the claim in [Store.Append] checks. It
+// only decides which error a reused key gets: the claim stays the guard,
+// and an append that races this check still fails there.
+func groupsFree(ctx context.Context, st Store, groups []GroupKey) error {
+	for _, g := range groups {
+		page, err := st.List(ctx, ListQuery{Type: g.Type, Group: g.Group, Limit: 1})
+		if err != nil {
+			return err
+		}
+		if len(page.Records) > 0 {
+			return fmt.Errorf("%w: %s", ErrGroupExists, g.Group)
+		}
+	}
+	return nil
+}
+
+// checkOpenRows checks every row of recs with [checkOpen].
+func checkOpenRows(l *metamodel.LedgerDef, recs []Record, owners map[string]Owner) error {
+	for i := range recs {
+		if err := checkOpen(l, recs[i], owners[recs[i].Owner]); err != nil {
+			return fmt.Errorf("row %d: %w", i+1, err)
+		}
+	}
+	return nil
 }
 
 // checkBalance refuses rows whose amounts do not sum to zero per group and
@@ -448,6 +479,12 @@ func (s *Service) reverseLocked(
 	now := s.now().UTC()
 	who := principal.From(ctx).User
 	rev := group + ReversalSuffix
+	// A transaction reversed before answers 409 whatever the closed period,
+	// as a reused key does on append.
+	revKey := GroupKey{Type: typ, Group: rev}
+	if err := groupsFree(ctx, st, []GroupKey{revKey}); err != nil {
+		return nil, err
+	}
 	recs := make([]Record, len(orig))
 	for i, r := range orig {
 		fields := maps.Clone(r.Fields)
@@ -476,7 +513,7 @@ func (s *Service) reverseLocked(
 	if err := checkBalance(d.Ledger, recs); err != nil {
 		return nil, err
 	}
-	req := AppendRequest{Records: recs, Groups: []GroupKey{{Type: typ, Group: rev}}}
+	req := AppendRequest{Records: recs, Groups: []GroupKey{revKey}}
 	if err := st.Append(ctx, req); err != nil {
 		return nil, err
 	}

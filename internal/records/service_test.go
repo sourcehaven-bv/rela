@@ -228,6 +228,26 @@ func TestLedger_UnbalancedBeforeClosed(t *testing.T) {
 	require.NotErrorIs(t, err, records.ErrClosed, "the answer must not depend on the lock date")
 }
 
+// A reused group key answers "exists" whatever its date, so a caller who
+// cannot see the lock date cannot find it with postings that never commit
+// (issue #2367). The same holds for a second reversal.
+func TestLedger_ReusedKeyBeforeClosed(t *testing.T) {
+	s, o := newService(t)
+	ctx := context.Background()
+	_, err := s.Append(ctx, "posting", []records.Input{posting("ACC-1", "T1", "1"), posting("ACC-2", "T1", "-1")})
+	require.NoError(t, err)
+	_, err = s.Reverse(ctx, "posting", "T1")
+	require.NoError(t, err)
+	o.props["ACC-1"] = map[string]any{"locked_until": "2026-03-30"}
+
+	_, err = s.Append(ctx, "posting", []records.Input{posting("ACC-1", "T1", "1"), posting("ACC-2", "T1", "-1")})
+	require.ErrorIs(t, err, records.ErrGroupExists)
+	require.NotErrorIs(t, err, records.ErrClosed, "the answer must not depend on the lock date")
+	_, err = s.Reverse(ctx, "posting", "T1")
+	require.ErrorIs(t, err, records.ErrGroupExists)
+	require.NotErrorIs(t, err, records.ErrClosed, "the answer must not depend on the lock date")
+}
+
 // A transaction with one hidden leg is not found: the visible legs would
 // otherwise reveal the hidden leg's amount as what they are off by.
 func TestTransaction_HiddenLegHidesTransaction(t *testing.T) {
