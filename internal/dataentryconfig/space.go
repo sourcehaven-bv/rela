@@ -162,7 +162,7 @@ func validateSpaceHome(home NavigationEntry, name string, cfg *Config) []string 
 	if home.Permission != "" {
 		errs = append(errs, name+": permission is not supported (set permission on the space instead)")
 	}
-	for _, e := range navTargetErrors(home, cfg) {
+	for _, e := range navTargetErrors(home, cfg, "") {
 		errs = append(errs, name+": "+e)
 	}
 	return errs

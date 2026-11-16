@@ -2047,10 +2047,20 @@ func (ud *UserDefaults) ResolveRelationDefault(entityType, relation string) stri
 }
 
 // DashboardConfig defines a dashboard page with query-driven cards.
+//
+// A dashboard with EntityType is an entity dashboard: it counts over what one
+// entity, the anchor, is related to. It is shown only as a `scope: root` tab
+// of an entity page of that type, which supplies the anchor, and each of its
+// cards names the relation it narrows by (see [DashboardCard.Scope]). Like an
+// entity-anchored document, it cannot be a navigation entry: a sidebar entry
+// has no anchor to give it.
 type DashboardConfig struct {
 	Title       string          `yaml:"title" json:"title"`
 	Description string          `yaml:"description" json:"description,omitempty"`
 	Cards       []DashboardCard `yaml:"cards" json:"cards"`
+	// EntityType makes this an entity dashboard for entities of that type.
+	// Only under `dashboards:`; the default dashboard has no anchor.
+	EntityType string `yaml:"entity_type,omitempty" json:"entity_type,omitempty"`
 	// Suggestions switches next-action suggestions on or off for this view,
 	// overriding next_action_surfaces. Nil: accepted, means inherit. See
 	// [Config.NextActionsEnabled].
@@ -2060,6 +2070,11 @@ type DashboardConfig struct {
 // DashboardCard defines a single card on the dashboard. Its rows come from a
 // configured list (`list:`) or from a search query (`query:`); exactly one is
 // set.
+//
+// The plimsoll directive is the format-mirror exception documented on
+// [Config]: each exported field is one key of a card in data-entry.yaml.
+//
+//plimsoll:max-fields=21
 type DashboardCard struct {
 	Title string `yaml:"title" json:"title"`
 	// List names a `lists:` entry. The card shows exactly the rows that list
@@ -2128,6 +2143,15 @@ type DashboardCard struct {
 	// surfaces an observe-only principal can use, and would hide them from
 	// everyone rather than from non-holders.
 	Permission string `yaml:"permission,omitempty" json:"permission,omitempty"`
+
+	// Scope narrows the card to the rows the dashboard's anchor reaches over
+	// a relation, written `scope: {relation, direction}` as on a list tab of
+	// an entity page. Required on every card of an entity dashboard, and
+	// refused on any other dashboard.
+	//
+	// Nil: accepted on a dashboard without entity_type, where it means
+	// "unscoped".
+	Scope *PageTabScope `yaml:"scope,omitempty" json:"scope,omitempty"`
 }
 
 // ViewConfig defines a detailed entity view with traversal and sections.

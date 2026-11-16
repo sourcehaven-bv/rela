@@ -23,16 +23,20 @@ export async function getDashboard(name?: string): Promise<DashboardResponse> {
  * Fetches the server-computed value of one `list:` card (TKT-2SGPJZ).
  *
  * `index` is the card's `index` from {@link getDashboard}. `world` is the
- * page's world, as the card's list would be read in it. Rejects with a 404
- * for an unknown or hidden card.
+ * page's world, as the card's list would be read in it. `anchor` is the
+ * entity an entity dashboard counts for; the server requires it there and
+ * refuses it elsewhere. Rejects with a 404 for an unknown or hidden card, and
+ * for an anchor this reader cannot see.
  */
 export async function getDashboardCard(
   name: string | undefined,
   index: number,
-  world?: string
+  world?: string,
+  anchor?: string
 ): Promise<DashboardCardValue> {
   const params: Record<string, string> = { card: String(index) }
   if (name) params.name = name
   if (world) params.world = world
+  if (anchor) params.anchor = anchor
   return api.get<DashboardCardValue>('/_dashboard/card', params)
 }

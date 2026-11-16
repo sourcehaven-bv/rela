@@ -56,6 +56,8 @@ const topicPage: SidebarPage = {
   tabs: [
     { id: 'board', label: 'Board', view: 'kanban', target: 'taken_bord', scope: 'relation', relation: 'bestaat_uit', direction: 'outgoing' },
     { id: 'tijdlijn', label: 'Tijdlijn', view: 'gantt', target: 'portfolio', scope: 'root' },
+    { id: 'rapport', label: 'Rapport', view: 'document', target: 'topic_rapport', scope: 'root' },
+    { id: 'stand', label: 'Stand', view: 'dashboard', target: 'topic_stand', scope: 'root' },
   ],
 }
 
@@ -128,6 +130,14 @@ describe('PageView on an entity page', () => {
     })
     const gantt = await mountPage({ page: 'topic', entity: 'TOP-1', tab: 'tijdlijn' })
     expect(viewProps(gantt, 'GanttView')).toEqual({ id: 'portfolio', root: 'TOP-1' })
+  })
+
+  it('hands a document tab the anchor as its entry and a dashboard tab the anchor to count for', async () => {
+    getEntityMock.mockResolvedValue({ id: 'TOP-1', type: 'topic', properties: {} })
+    const doc = await mountPage({ page: 'topic', entity: 'TOP-1', tab: 'rapport' })
+    expect(viewProps(doc, 'DocumentView')).toEqual({ name: 'topic_rapport', entityId: 'TOP-1' })
+    const dash = await mountPage({ page: 'topic', entity: 'TOP-1', tab: 'stand' })
+    expect(viewProps(dash, 'DashboardView')).toEqual({ name: 'topic_stand', anchor: 'TOP-1' })
   })
 
   it('publishes the tab on screen for the Create menu, and clears it on leave', async () => {

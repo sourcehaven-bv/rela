@@ -1307,6 +1307,8 @@
     "loading": "Dashboard laden…",
     "notFound": "Dashboard niet gevonden",
     "notFoundDescription": "Er is geen dashboard met de naam “{name}”.",
+    "anchorMissing": "Open dit dashboard vanuit een entiteit",
+    "anchorMissingDescription": "Dit dashboard telt voor één entiteit. Open het als tabblad op de pagina van die entiteit.",
     "noCards": "Geen dashboardkaarten om te tonen.",
     "noResults": "Geen resultaten",
     "validation": "Validatie",

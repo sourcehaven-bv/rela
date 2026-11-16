@@ -204,9 +204,21 @@ func TestValidateEntityPages(t *testing.T) {
 				Title: "Plan", Hierarchy: []string{"blocks"},
 				Sources: map[string]GanttSource{"ticket": {Label: "title"}},
 			}},
-			Documents: map[string]DocumentConfig{"report": {Script: "report.lua"}},
+			Documents: map[string]DocumentConfig{
+				"report":        {Script: "report.lua"},
+				"cat_report":    {Script: "report.lua", EntityType: "category"},
+				"ticket_report": {Script: "report.lua", EntityType: "ticket"},
+			},
+			Dashboards: map[string]DashboardConfig{
+				"plain": {Title: "Plain"},
+				"cat_home": {Title: "Category", EntityType: "category", Cards: []DashboardCard{{
+					Title: "Tickets", List: "tickets", Display: "count",
+					Scope: &PageTabScope{Relation: "belongs-to", Direction: DirectionIncoming},
+				}}},
+			},
 		}
 	}
+	root := &PageTabScope{Root: true}
 	page := func(mut func(*Page)) map[string]Page {
 		p := Page{PageHeader: PageHeader{Label: "Category", EntityType: "category", Badge: "name"}, Tabs: []PageTab{
 			{ID: "table", Label: "Table", List: "tickets",
@@ -254,12 +266,48 @@ func TestValidateEntityPages(t *testing.T) {
 		{"ambiguous direction", map[string]Page{"tk": {PageHeader: PageHeader{Label: "T", EntityType: "ticket"}, Tabs: []PageTab{
 			{ID: "a", Label: "A", List: "tickets", Scope: &PageTabScope{Relation: "blocks"}},
 		}}}, nil, "pages[tk].tabs[a]: scope needs an explicit `direction:`"},
-		{"dashboard tab", page(func(p *Page) {
-			p.Tabs = append(p.Tabs, PageTab{ID: "home", Label: "Home", Dashboard: DefaultDashboard})
-		}), nil, "pages[cat].tabs[home]: an entity page can only show list, kanban and gantt tabs"},
-		{"document tab", page(func(p *Page) {
-			p.Tabs = append(p.Tabs, PageTab{ID: "doc", Label: "Doc", Document: "report"})
-		}), nil, "pages[cat].tabs[doc]: an entity page can only show list, kanban and gantt tabs"},
+		{"entity document tab", page(func(p *Page) {
+			p.Tabs = append(p.Tabs, PageTab{ID: "doc", Label: "Doc", Document: "cat_report", Scope: root})
+		}), nil, ""},
+		{"entity dashboard tab", page(func(p *Page) {
+			p.Tabs = append(p.Tabs, PageTab{ID: "home", Label: "Home", Dashboard: "cat_home", Scope: root})
+		}), nil, ""},
+		{"document tab without root", page(func(p *Page) {
+			p.Tabs = append(p.Tabs, PageTab{ID: "doc", Label: "Doc", Document: "cat_report"})
+		}), nil, "pages[cat].tabs[doc]: a document or dashboard tab on an entity page needs scope: root"},
+		{"document tab with a relation scope", page(func(p *Page) {
+			p.Tabs = append(p.Tabs, PageTab{ID: "doc", Label: "Doc", Document: "cat_report",
+				Scope: &PageTabScope{Relation: "belongs-to"}})
+		}), nil, "pages[cat].tabs[doc]: a document or dashboard tab on an entity page needs scope: root"},
+		{"standalone document tab", page(func(p *Page) {
+			p.Tabs = append(p.Tabs, PageTab{ID: "doc", Label: "Doc", Document: "report", Scope: root})
+		}), nil, `pages[cat].tabs[doc]: document "report" must have entity_type "category"`},
+		{"document of another type", page(func(p *Page) {
+			p.Tabs = append(p.Tabs, PageTab{ID: "doc", Label: "Doc", Document: "ticket_report", Scope: root})
+		}), nil, `pages[cat].tabs[doc]: document "ticket_report" must have entity_type "category"`},
+		{"entity document on a plain page", map[string]Page{"t": {PageHeader: PageHeader{Label: "T"}, Tabs: []PageTab{
+			{ID: "doc", Label: "Doc", Document: "cat_report"},
+		}}}, nil, `pages[t].tabs[doc]: document "cat_report" has entity_type "category" so it cannot be a navigation entry`},
+		{"default dashboard tab", page(func(p *Page) {
+			p.Tabs = append(p.Tabs, PageTab{ID: "home", Label: "Home", Dashboard: DefaultDashboard, Scope: root})
+		}), nil, "pages[cat].tabs[home]: the default dashboard has no entity_type"},
+		{"plain dashboard tab", page(func(p *Page) {
+			p.Tabs = append(p.Tabs, PageTab{ID: "home", Label: "Home", Dashboard: "plain", Scope: root})
+		}), nil, `pages[cat].tabs[home]: dashboard "plain" must have entity_type "category"`},
+		{"dashboard tab without root", page(func(p *Page) {
+			p.Tabs = append(p.Tabs, PageTab{ID: "home", Label: "Home", Dashboard: "cat_home"})
+		}), nil, "pages[cat].tabs[home]: a document or dashboard tab on an entity page needs scope: root"},
+		{"entity dashboard on a plain page", map[string]Page{"t": {PageHeader: PageHeader{Label: "T"}, Tabs: []PageTab{
+			{ID: "home", Label: "Home", Dashboard: "cat_home"},
+		}}}, nil, `pages[t].tabs[home]: dashboard "cat_home" has entity_type "category" so it cannot be a navigation entry`},
+		{"calendar tab", page(func(p *Page) {
+			p.Tabs = append(p.Tabs, PageTab{ID: "cal", Label: "Cal", Calendar: "due", Scope: root})
+		}), func(c *Config) {
+			c.Calendars = map[string]Calendar{"due": {}}
+		}, "pages[cat].tabs[cal]: an entity page can only show list, kanban, gantt, document and dashboard tabs"},
+		{"nav entry names an entity dashboard", page(nil), func(c *Config) {
+			c.Navigation = []NavigationEntry{{Label: "H", Dashboard: "cat_home"}}
+		}, `dashboard "cat_home" has entity_type "category" so it cannot be a navigation entry`},
 		{"gantt without root", ganttPage(&PageTabScope{Relation: "blocks"}), nil,
 			"pages[tk].tabs[plan]: a gantt tab on an entity page needs scope: root"},
 		{"gantt without a source for the anchor", ganttPage(&PageTabScope{Root: true}), func(c *Config) {

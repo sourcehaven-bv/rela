@@ -25,8 +25,18 @@ const (
 // dashboardCardValue computes one `list:` card. Config load has checked the
 // list, the properties and the scope, so a miss here is a config that skipped
 // validation and answers an error.
+//
+// anchor is the entity an entity dashboard counts for, already read through
+// the gate (readPageAnchor), and nil on any other dashboard. With an anchor,
+// the card keeps only the list rows the anchor reaches over the card's scope
+// relation. The order is the one an aggregate needs: the rows pass the read
+// gate first, then the narrowing, and only then does anything count or fold
+// them. The value is computed per request and never cached, since it differs
+// per principal.
+//
+// Nil anchor: accepted, means an unscoped card.
 func dashboardCardValue(
-	ctx context.Context, a *App, s *Schema, card dataentryconfig.DashboardCard,
+	ctx context.Context, a *App, s *Schema, card dataentryconfig.DashboardCard, anchor *entityPkg.Entity,
 ) (v1.DashboardCardValue, error) {
 	out := v1.DashboardCardValue{Title: card.Title, Display: card.Display, List: card.List}
 	listCfg, ok := s.Cfg.Lists[card.List]
@@ -37,12 +47,18 @@ func dashboardCardValue(
 	if !ok {
 		return out, fmt.Errorf("%w: unknown entity type %q", errListLoad, listCfg.EntityType)
 	}
-
-	if card.Display == "table" {
-		return dashboardTable(ctx, a, s, card, listCfg, out)
+	reach, err := cardReach(ctx, a, s, card, anchor)
+	if err != nil {
+		return out, err
 	}
 
-	ctx, raw, err := navStatusRows(ctx, a, s, card.List, listCfg)
+	if card.Display == "table" {
+		return dashboardTable(ctx, a, s, card, listCfg, reach, out)
+	}
+
+	// The reach narrows the gated read itself, so the rows are the ones the
+	// reader may read AND the anchor reaches, before anything folds.
+	ctx, raw, err := listRowsFor(ctx, a, s, card.List, listCfg, "", reach)
 	if err != nil {
 		return out, err
 	}
@@ -86,6 +102,23 @@ func dashboardCardValue(
 		}
 	}
 	return out, nil
+}
+
+// cardReach returns the ids the anchor reaches over the card's scope
+// relation, or nil for a card without an anchor. A card that has an anchor
+// but no scope is a config that skipped validation; it answers an error
+// rather than counting the whole list under the anchor.
+func cardReach(
+	ctx context.Context, a *App, s *Schema, card dataentryconfig.DashboardCard, anchor *entityPkg.Entity,
+) (map[string]bool, error) {
+	if anchor == nil {
+		return nil, nil //nolint:nilnil // a nil reach means the card is not narrowed
+	}
+	if card.Scope == nil || card.Scope.Root || card.Scope.Relation == "" {
+		return nil, fmt.Errorf("%w: card %q of an entity dashboard has no relation scope", errListLoad, card.Title)
+	}
+	_, ids, err := anchorReach(ctx, a, s.Meta, anchor, *card.Scope)
+	return ids, err
 }
 
 // redactRows primes the redactor for the batch and redacts each row once.
@@ -139,9 +172,13 @@ func dashboardMatches(
 // dashboardTable reads a table card's first rows through the list endpoint's
 // own pipeline, as navItemsFor does, sorted by the card's sort when it has
 // one and by the list's otherwise.
+//
+// With a reach (an entity dashboard card), the read is narrowed to the reach
+// and sorted, and only then counted and cut to the limit, so the total
+// describes the narrowed set.
 func dashboardTable(
 	ctx context.Context, a *App, s *Schema, card dataentryconfig.DashboardCard,
-	listCfg dataentryconfig.List, out v1.DashboardCardValue,
+	listCfg dataentryconfig.List, reach map[string]bool, out v1.DashboardCardValue,
 ) (v1.DashboardCardValue, error) {
 	limit := card.Limit
 	if limit <= 0 {
@@ -150,26 +187,34 @@ func dashboardTable(
 	// Config load rejects a larger limit; the clamp covers a config that
 	// skipped validation.
 	limit = min(limit, maxDashboardTableLimit)
-	query := navItemsListQuery(card.List, listCfg)
-	if len(card.Sort) > 0 {
-		var sort []string
-		for _, spec := range card.Sort {
-			if spec.IsDescending() {
-				sort = append(sort, "-"+spec.Property)
-			} else {
-				sort = append(sort, spec.Property)
+	sort := tableSort(card, listCfg)
+	read := func(sorted bool) ([]*entityPkg.Entity, int, error) {
+		if reach != nil {
+			by := ""
+			if sorted {
+				by = sort
 			}
+			_, rows, err := listRowsFor(ctx, a, s, card.List, listCfg, by, reach)
+			if err != nil {
+				return nil, 0, err
+			}
+			return rows[:min(limit, len(rows))], len(rows), nil
 		}
-		query["sort"] = []string{strings.Join(sort, ",")}
+		query := navItemsListQuery(card.List, listCfg)
+		delete(query, "sort")
+		if sorted && sort != "" {
+			query["sort"] = []string{sort}
+		}
+		rows, total, _, err := a.listPage(ctx, listCfg.EntityType, query, 1, limit)
+		return rows, total, err
 	}
-	raw, total, _, err := a.listPage(ctx, listCfg.EntityType, query, 1, limit)
+	raw, total, err := read(true)
 	if refusal, ok := errors.AsType[*propertyNotVisibleError](err); ok && refusal.use == "sort" {
 		// The sort property is hidden from this reader on some row. The rows
 		// are still the list's, so drop the order and read again, as
 		// navItemsFor does. A refused filter stands: dropping it would widen
 		// the card.
-		delete(query, "sort")
-		raw, total, _, err = a.listPage(ctx, listCfg.EntityType, query, 1, limit)
+		raw, total, err = read(false)
 	}
 	if err != nil {
 		return out, err
@@ -204,4 +249,25 @@ func dashboardTable(
 		out.Rows = append(out.Rows, row)
 	}
 	return out, nil
+}
+
+// tableSort is the sort a table card reads its rows in, as the list
+// endpoint's `sort` parameter: the card's own sort when it has one, else the
+// list's (navItemsListQuery). Empty when neither sorts.
+func tableSort(card dataentryconfig.DashboardCard, listCfg dataentryconfig.List) string {
+	if len(card.Sort) == 0 {
+		if v := navItemsListQuery(card.List, listCfg)["sort"]; len(v) > 0 {
+			return v[0]
+		}
+		return ""
+	}
+	sort := make([]string, 0, len(card.Sort))
+	for _, spec := range card.Sort {
+		if spec.IsDescending() {
+			sort = append(sort, "-"+spec.Property)
+		} else {
+			sort = append(sort, spec.Property)
+		}
+	}
+	return strings.Join(sort, ",")
 }

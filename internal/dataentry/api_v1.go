@@ -509,6 +509,9 @@ func scopedSortedEntitiesScoped(
 	if err != nil {
 		return nil, nil, err
 	}
+	if query.reach != nil {
+		pageIDs, pageScoped = narrowToReach(pageIDs, pageScoped, query.reach), true
+	}
 	// The verdict switch, the world scope, the face allowlist and the query
 	// scope all live in scopedHeaders (scopedread.go) — see its doc for why
 	// they must not be re-implemented per handler.
