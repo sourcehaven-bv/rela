@@ -292,7 +292,7 @@ from grants and from the faces the caller can read, and never from the faces
 the entity happens to store. A decision that read the stored faces would
 answer differently when a face hidden from the caller existed, and so reveal
 it. The error text names no face for the same reason. Two exceptions are
-known: a whole-entity delete or rename still needs the grant on every face
+known: a whole-entity delete still needs the grant on every face
 (TKT-Z47F27), and the records owner gate compares the stored faces with the
 readable ones (see "Records" and "What still leaks").
 
@@ -1166,8 +1166,10 @@ webhooks, scheduled tasks, background trigger jobs and CalDAV.
 - An update, patch, delete, soft delete, rename or version tag of a row
   the caller cannot read fails as not found, before the write is
   authorized. A whole-entity delete or rename passes this check when the
-  caller can read at least one face, and then needs the grant on every
-  face; a hidden face can therefore still change its answer (TKT-Z47F27).
+  caller can read at least one face. A delete then needs the grant on
+  every face, so a hidden face can still change its answer (TKT-Z47F27).
+  A rename is authorized once for the whole entity from the caller's
+  `rename:` grants, so a hidden face does not change its answer.
 - A relation create, update or delete fails as not found when the caller
   cannot see the edge. The head needs a readable face. The tail needs a
   readable face, or the named face when the edge is tailed at one. A
@@ -1967,9 +1969,11 @@ that rolls back (SQLite, PostgreSQL); other stores answer 501.
   transaction.
 - **The owner gate reads the stored faces.** Both checks compare the number
   of stored faces with the number the caller can read. So a caller who reads
-  only some faces of an owner learns that a hidden face exists: list and
-  aggregate answer 404 and append answers 403, where a fully readable owner
-  answers 200 or 201. This is listed under "What still leaks".
+  only some faces of an owner learns that a hidden face exists: list
+  answers 404, an aggregate that names the owner in its `Owners` filter
+  answers 404, and append answers 403, where a fully readable owner answers
+  200 or 201. An aggregate without an owner filter answers 200 and leaves
+  the owner's rows out. This is listed under "What still leaks".
 - **Aggregates gate before they fold.** An aggregate or a ledger
   transaction counts only rows whose owners the caller can read. A
   transaction with a hidden leg answers 404.
