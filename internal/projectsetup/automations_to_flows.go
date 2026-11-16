@@ -21,7 +21,11 @@ import (
 // The move of schema `automations:` into flows.yaml `triggers:`
 // (TKT-GWOBH2U). The conversion works on yaml.Node so comments travel with
 // the moved entries; the strict decode into the legacy structs below only
-// validates. Every refusal happens before the first write.
+// validates. Every refusal happens before flows.yaml is written or a
+// schema file is cut. Syntax migrations may already be written: the
+// per-file loop in MigrateWithFS rewrites schema.yaml, and prepareIncludes
+// rewrites the includes that declare automations, before the strict decode
+// and conversion can refuse.
 
 // flowsFile is flows.yaml. flowcfg owns the name, but projectsetup may not
 // import flowcfg (.go-arch-lint.yml).
