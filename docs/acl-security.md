@@ -2855,7 +2855,7 @@ unknown one, so cancellation cannot be used to probe what else is running.
 
 ### What a command permission actually confers
 
-**Command payloads are read-gate scoped in the entity context only.** A
+**Command payloads are read-gate scoped in the entity and list contexts.** A
 command's stdin JSON leaves the process, so what it carries matters as much as
 who may run it. Granting `command:<something>` confers **read access to
 whatever that command's context assembles**, not merely the right to run a
@@ -2864,14 +2864,16 @@ script:
 | context | what the script receives | scoped by |
 | ------- | ------------------------ | --------- |
 | `entity` | the entity at the caller-supplied `entity_id`, plus its incident relations | the row gate, the face gate and field redaction on the entity; a relation travels only when both endpoints are readable (a content-scoped tail at its own face), and an outgoing content-scoped edge only with the face the entity is served at |
-| `list` | every entity in the caller-supplied `list_id`, post-filter | nothing — any configured list (TKT-2FDTJE) |
+| `list` | every readable entity of the type of the caller-supplied `list_id`, post-filter | the row gate, the face allowlist and field redaction; the list's own `filters:` run on the redacted rows; the list's query and page scope are not applied |
 | `global` | project paths only | n/a |
 | `view` | the entry entity plus the entire traversal closure | *not grantable — see below* |
 
 Note the `entity_id` and `list_id` come from the request, not from whatever
 page the user was on: `available_on` restricts where a **button appears**, not
-what a command may be pointed at. Treat a command grant as "may read every
-entity of this shape", and scope grants accordingly.
+what a command may be pointed at. A list-context script receives every row of
+the list's type that the principal may read, which can be more than the list
+shows. Treat a command grant as "may hand everything the principal can read of this
+shape to the script", and scope grants accordingly.
 
 **`context: view` cannot be granted per-command at all.** View commands are
 denied outright under any configured `acl.yaml`; `permission:` on a view
