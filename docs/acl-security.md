@@ -714,7 +714,8 @@ names of a user, and the child then holds the rela roles they map to
   with an advisory lock, shared by every process. On sqlite it is the state
   table in `.rela/rela.db`. On the file store it is `idp-roles.json` in the
   cache directory with lock files. No entity write stores roles in it; a
-  delete or rename of the bound entity only erases its record. Without a
+  delete or rename of the bound entity through the entity manager only
+  erases its record. Without a
   cache directory the roles are kept in process memory and a warning is
   logged. Each store or clear writes an `idp-roles-set` audit record that
   names the bound entity and the role count, never the IdP subject or the
@@ -731,7 +732,12 @@ names of a user, and the child then holds the rela roles they map to
   administrators only all the same: the next webhook for that subject would
   bind to whoever holds it.
 - **Erased with the person.** Deleting the bound user entity, or renaming
-  it, removes its record. For an erasure request about a person,
+  it, through the entity manager removes its record. A writer that goes to
+  the store directly (see "Writes need read access to the row") does not,
+  and a failed erase is logged, not returned. A leftover record grants
+  nothing unless that entity id is issued again, and it stays until the
+  next webhook for the subject or `rela acl forget-idp-roles`. For an
+  erasure request about a person,
   `rela acl forget-idp-roles <entity-id>` removes the records bound to that
   entity, also when the entity was already deleted. Both write an
   `idp-roles-set` audit record with `roles=0`.
@@ -747,7 +753,8 @@ names of a user, and the child then holds the rela roles they map to
 
 **Revocation depends on webhook delivery.** A stored role lasts until the
 next webhook for that user replaces or clears it, or until the bound entity
-is deleted or renamed, or `rela acl forget-idp-roles` erases it. If the IdP does not send a
+is deleted or renamed through the entity manager, or
+`rela acl forget-idp-roles` erases it. If the IdP does not send a
 webhook when a role is removed, or delivery fails for good, the role stays.
 Stored roles do not expire on their own. The store is keyed by subject, not
 by org, so with several orgs the last webhook wins, and the receiver does not
