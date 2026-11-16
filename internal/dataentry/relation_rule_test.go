@@ -174,6 +174,10 @@ func TestRelationRule_PatchJudgesTheStateItLeaves(t *testing.T) {
 			if rec.Code != want {
 				t.Fatalf("got %d %s, want %d", rec.Code, rec.Body, want)
 			}
+			// The refusal names the rule, never an entity (#2301).
+			if tc.refused && strings.Contains(rec.Body.String(), "C-") {
+				t.Errorf("refusal names an entity: %s", rec.Body)
+			}
 			if got := outgoingByType(app, tc.id, "belongs-to"); len(got) != tc.wantEdges {
 				t.Errorf("edges = %v, want %d", got, tc.wantEdges)
 			}
