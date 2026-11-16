@@ -804,7 +804,7 @@ transport even when the secrets are withheld from scripts.
 
 ### Remote MCP, webhooks and the scheduler
 
-- Remote MCP (`-mcp`) never serves `lua_eval`, `lua_run` or `lua_list`. Tenant
+- Remote MCP (`-mcp`) never serves `lua_eval` or `lua_run`. Tenant
   mode does not change that; the test pins it for a tenant's MCP endpoint.
 - Webhooks need a verified assertion in tenant mode, like every other route
   that reaches a tenant. An unauthenticated `POST /hooks/<name>` gets 401.
@@ -937,8 +937,8 @@ with an `acl.yaml` never need this flag.
 ### Remote MCP serves every tool except Lua, unless limited
 
 Remote MCP (see [mcp-server.md](mcp-server.md#remote-mcp-over-http)) serves the
-MCP tool set over HTTP, except the Lua tools (`lua_eval`, `lua_run`,
-`lua_list`). A script is caller-supplied code that runs in the server process,
+MCP tool set over HTTP, except the Lua tools (`lua_eval`, `lua_run`).
+A script is caller-supplied code that runs in the server process,
 so a remote caller could use it to exhaust server resources. Lua tools are
 opt-in per server (`WithLuaTools`), and only local stdio opts in. Every call is
 authenticated (the flag refuses to start without verified JWT identity),
