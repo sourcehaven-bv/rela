@@ -624,7 +624,21 @@
       "present": "Present",
       "exitPresent": "Exit",
       "fullscreen": "Full screen",
-      "exitFullscreen": "Exit full screen"
+      "exitFullscreen": "Exit full screen",
+      "done": "done",
+      "walk": {
+        "label": "Rows of this step",
+        "position": "{current} of {total}",
+        "prev": "Previous row",
+        "next": "Next row",
+        "empty": "Nothing to go through",
+        "emptyDescription": "This step's list has no rows.",
+        "missing": "Not in this list",
+        "missingDescription": "{id} is not one of the rows of this step. It may have been removed or changed.",
+        "first": "Go to the first row",
+        "error": "Could not read the rows of this step",
+        "errorDescription": "Reload the page to try again."
+      }
     }
   },
   "editor": {

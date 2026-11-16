@@ -232,7 +232,7 @@ func navStatusInStore(
 func navStatusRows(
 	ctx context.Context, a *App, s *Schema, listID string, listCfg dataentryconfig.List,
 ) (context.Context, []*entityPkg.Entity, error) {
-	return listRowsFor(ctx, a, s, listID, listCfg, "", nil)
+	return configuredListRows(ctx, a, s, listID, listCfg, navStatusListQuery(listCfg), nil)
 }
 
 // listRowsFor is navStatusRows with an optional sort and an optional reach.
@@ -247,6 +247,18 @@ func listRowsFor(
 	if sort != "" {
 		query["sort"] = []string{sort}
 	}
+	return configuredListRows(ctx, a, s, listID, listCfg, query, reach)
+}
+
+// configuredListRows is [navStatusRows] over a prepared list query: the
+// list's static filters, plus any narrowing the caller adds, such as the
+// page scope of an entity page tab (pagescope.go) or a reach. The query
+// only narrows: every row still passes the row gate, the world, the query
+// scope and the list's condition.
+func configuredListRows(
+	ctx context.Context, a *App, s *Schema, listID string, listCfg dataentryconfig.List,
+	query map[string][]string, reach map[string]bool,
+) (context.Context, []*entityPkg.Entity, error) {
 	typeName := listCfg.EntityType
 	scope, err := viewQueryScope(a.queryScopes, s.Cfg, s.Meta, typeName, listCfg.QueryScope)
 	if err != nil {

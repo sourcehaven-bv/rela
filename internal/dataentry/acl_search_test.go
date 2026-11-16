@@ -298,7 +298,7 @@ func TestACLSearch_CanceledScopeStaysSilent(t *testing.T) {
 	app.visibleSearcher = v
 
 	req := httptest.NewRequest(http.MethodGet,
-		positionURL(t, "TKT-001", ScopeDescriptor{Source: "search", Q: "alpha"}), http.NoBody)
+		positionURL(t, "TKT-001", ScopeDescriptor{Source: "search", ListQuery: ListQuery{Q: "alpha"}}), http.NoBody)
 	ctx, cancel := context.WithCancel(gateCtxFor(aliceCtx(), t, d))
 	cancel()
 	req = req.WithContext(ctx)
