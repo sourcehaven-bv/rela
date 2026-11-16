@@ -14,7 +14,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
-	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -145,34 +144,11 @@ func (ar attachRenderer) AttachRender(ctx context.Context, req lua.AttachRenderR
 }
 
 // bindRequestState gives ctx what an API request carries and a script
-// context may lack.
-//
-// The read gate first, and it fails closed. Outside an HTTP request nothing
-// attached one, and without it [readGateFromContext] would hand back the
-// allow-all gate and every read below would be ungated. Under a declarative
-// policy the gate is built from the Request bound on ctx; with none bound the
-// call is refused. Re-attaching on the action path, where the middleware
-// already attached one, builds the same gate from the same Request.
-//
-// Then the world: a context with none reads in the declared default world, as
-// a source with no world does on the dashboard (see nextActionSourceWorld).
+// context may lack. See bindBackgroundRequest.
 func (ar attachRenderer) bindRequestState(ctx context.Context) (context.Context, error) {
-	if _, declarative := ar.a.acl.(*acl.Declarative); declarative {
-		bound, err := attachBoundReadGate(withACLEnforced(ctx), ar.a.acl)
-		if err != nil {
-			slog.Warn("attach_render: no identity to read as", "err", err)
-			return ctx, errors.New("attach_render: no identity is bound to this script")
-		}
-		ctx = bound
-	}
-	if _, bound := ctx.Value(worldCtxKey{}).(worldHandle); bound {
-		return ctx, nil
-	}
-	ctx, ok, err := nextActionSourceWorld(ctx, ar.a.worlds, effectiveDefaultWorld(ar.a),
-		dataentryconfig.NextActionSource{})
-	if err != nil || !ok {
-		slog.Warn("attach_render: default world unavailable", "err", err)
-		return ctx, errors.New("attach_render: the default world is not available")
+	ctx, err := bindBackgroundRequest(ctx, ar.a, "")
+	if err != nil {
+		return ctx, fmt.Errorf("attach_render: %w", err)
 	}
 	return ctx, nil
 }

@@ -236,6 +236,9 @@ type writeHandler struct {
 	// allow_acl_bypass: write (TKT-JA5SABG), kept out of luaDeps for the same
 	// reason as versionTags. Nil: such an action fails with 500.
 	elevatedUpdates elevatedUpdaterFactory
+	// llmJobs queues `apply: auto` runs of `llm:` actions (TKT-WQ925LL).
+	// Nil: such a run answers 503.
+	llmJobs LLMActionQueue
 
 	// visible is the read path's resolver. Every addressed write resolves its
 	// row through it first, so a row the caller may not read, at any face, is

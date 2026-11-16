@@ -15,7 +15,7 @@ func TestProposal_JSON(t *testing.T) {
 		{
 			name: "empty lists encode as []",
 			p:    Empty("TKT-1"),
-			want: `{"entity":"TKT-1","set":[],"relate":[]}`,
+			want: `{"entity":"TKT-1","set":[],"relate":[],"create":[]}`,
 		},
 		{
 			name: "unset current encodes as null",
@@ -23,10 +23,14 @@ func TestProposal_JSON(t *testing.T) {
 				Entity: "TKT-1",
 				Set:    []Value{{Property: "priority", Proposed: json.RawMessage(`"high"`)}},
 				Relate: []Relation{{Relation: "affects", To: "CON-1", ToType: "concept", ToTitle: "Sessions"}},
-				Model:  "m",
+				Create: []NewEntity{{Type: "task", Relation: "has-task", Outgoing: true,
+					Properties: []Value{{Property: "title", Proposed: json.RawMessage(`"Fix"`)}}}},
+				Model: "m",
 			},
 			want: `{"entity":"TKT-1","set":[{"property":"priority","current":null,"proposed":"high"}],` +
-				`"relate":[{"relation":"affects","to":"CON-1","to_type":"concept","to_title":"Sessions"}],"model":"m"}`,
+				`"relate":[{"relation":"affects","to":"CON-1","to_type":"concept","to_title":"Sessions"}],` +
+				`"create":[{"type":"task","relation":"has-task","outgoing":true,` +
+				`"properties":[{"property":"title","current":null,"proposed":"Fix"}]}],"model":"m"}`,
 		},
 	}
 	for _, tc := range tests {

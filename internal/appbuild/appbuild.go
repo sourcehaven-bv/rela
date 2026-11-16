@@ -301,6 +301,12 @@ type Services struct {
 	// run (TKT-1TS55R), built in finishAssembly. See [SetAttachRenderer].
 	attachRender *attachRenderHolder
 
+	// llmActions carries the runner of background llm actions, installed by
+	// the data-entry host; llmActionQueue is the queue they run on, nil when
+	// these services run no background jobs. See [SetLLMActionRunner].
+	llmActions     *llmActionHolder
+	llmActionQueue jobs.Enqueuer
+
 	// tokens is the connector token broker, or why there is none
 	// (TKT-01KZSO). See [Tokens].
 	tokens tokenSetup
@@ -1360,6 +1366,7 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		realtimeLocal:  refs.realtimeLocal,
 		dueWake:        refs.dueWake,
 		attachRender:   &attachRenderHolder{},
+		llmActions:     &llmActionHolder{},
 	}, nil
 }
 
@@ -1593,6 +1600,10 @@ type options struct {
 	// withheld, when non-empty, withholds ai.yaml and the secrets of the
 	// host config; see [WithWithheldHostConfig].
 	withheld string
+
+	// serverAI is the server-wide ai.yaml read when the project has none;
+	// see [WithServerAIConfig].
+	serverAI serverAIConfig
 
 	// backgroundAutomationJobs runs `background: true` automation actions
 	// on the job queue instead of in the foreground.
@@ -2314,7 +2325,7 @@ func (b *SharedBase) IsReassembly() bool { return b.reassembly }
 // It carries prev's store schema refresher too: the caller applies the new
 // schema to the store with [RefreshStoreSchema] once the successor is in
 // force.
-// It keeps prev's [WithWithheldHostConfig] too. A reload builds its base
+// It keeps prev's [WithWithheldHostConfig] and [WithServerAIConfig] too. A reload builds its base
 // from the config alone, and withholding must not end with it: stdio MCP
 // in tenant mode reloads on every schema edit.
 //
@@ -2333,6 +2344,9 @@ func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
 		next.channelFiles = prev.base.channelFiles
 		if next.opts.withheld == "" {
 			next.opts.withheld = prev.base.opts.withheld
+		}
+		if next.opts.serverAI.data == nil {
+			next.opts.serverAI = prev.base.opts.serverAI
 		}
 	}
 	next.storeSchema = prev.storeSchema
@@ -2406,6 +2420,9 @@ func (b *SharedBase) hostConfigFor(stateKV state.KV) (lua.HostConfig, error) {
 		}
 		host = h
 	}
+	if b.opts.serverAI.data != nil {
+		host = serverAIHost{inner: host, data: b.opts.serverAI.data}
+	}
 	if b.opts.withheld != "" {
 		host = withheldHost{inner: host, err: fmt.Errorf("%s: %w", b.opts.withheld, lua.ErrHostConfigWithheld)}
 	}
@@ -2420,6 +2437,9 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 	var o options
 	for _, opt := range opts {
 		opt(&o)
+	}
+	if err := o.serverAI.load(); err != nil {
+		return nil, err
 	}
 	resolvedACL := o.acl
 	var aclPolicy *acl.Policy
@@ -3225,6 +3245,8 @@ func finishAssembly(
 	s.piles, s.pileStore = refs.piles, refs.pileStore
 	s.leases, s.leaseShared = refs.leases, refs.leaseShared
 	s.channels = refs.channels
+	// Before the flow engine, whose job runner runs llm actions through it.
+	s.llmActions = &llmActionHolder{}
 	flowEngine, err := buildFlowEngine(s, refs.flowRuns)
 	if err != nil {
 		return nil, fmt.Errorf("flows: %w", err)
@@ -3252,6 +3274,12 @@ func finishAssembly(
 	}
 	s.versionTags = tags
 	s.attachRender = &attachRenderHolder{}
+	if q := automationJobQueue(s.base, s.jobQueue); q != nil {
+		if regErr := registerLLMActionJobs(q, s.llmActions, rebindFor(s.aclDeclarative), s.stateKV); regErr != nil {
+			return nil, regErr
+		}
+		s.llmActionQueue = q
+	}
 	if bindErr := autoJobs.bind(servicesJobRunner{s}, engine); bindErr != nil {
 		return nil, bindErr
 	}

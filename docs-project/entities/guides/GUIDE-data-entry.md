@@ -7033,11 +7033,12 @@ An `llm:` action asks an AI model to propose changes to one entity. You
 configure what the model reads, what it is asked, and what it may propose. You
 do not write a script.
 
-The action proposes and the user decides. It writes nothing. The detail page
-shows the proposal in a dialog with a checkbox per change. The user applies
-the changes they check, and those writes go through the ordinary edit APIs.
-So the user's own ACL, validation and audit apply to them, as if they had made
-the edit by hand.
+By default the action proposes and the user decides. It writes nothing. The
+detail page shows the proposal in a dialog with a checkbox per change. The
+user applies the changes they check, and those writes go through the ordinary
+edit APIs. So the user's own ACL, validation and audit apply to them, as if
+they had made the edit by hand. With `apply: auto` the action writes the
+proposal itself, in the background; see [Applying without review](#applying-without-review-apply-auto).
 
 ```yaml
 actions:
@@ -7086,6 +7087,7 @@ never sent.
 | ----- | ----------- |
 | `set` | Properties of the entity the model may propose a value for. Computed, rollup, file and external-reference properties are refused |
 | `relate` | Outgoing relations the model may propose. The model can only pick from the `candidates` list rela sends, never invent an id |
+| `create` | New entities the model may propose, each related to the entity. See below |
 
 Each `relate` entry takes these fields:
 
@@ -7099,7 +7101,32 @@ Each `relate` entry takes these fields:
 
 A candidate the entity already points at is sent, marked as already related,
 and left out of the proposal. A candidate whose condition reads a property the
-user cannot see is left out.
+user cannot see is left out. When the relation has a `max_outgoing`, the
+relations the entity already has count against it, so the model is never
+asked for more than still fit.
+
+Each `create` entry lets the model propose new entities of one type:
+
+```yaml
+      outputs:
+        create:
+          - type: task
+            relation: has-task
+            properties: [title, estimate]
+            max: 5
+```
+
+| Field | Description |
+| ----- | ----------- |
+| `type` | The entity type to create. A type with faces is refused |
+| `relation` | The relation that links each new entity to the entity the action runs on. A relation with a required property is refused |
+| `direction` | `outgoing` (the default: from the entity to the new one) or `incoming` (from the new one to the entity) |
+| `properties` | The properties the model fills on each new entity. At least one |
+| `max` | How many entities the model may propose (default 1, at most 20, and not more than the relation's `max_outgoing` or `max_incoming`) |
+
+The dialog lists each proposed entity with its values. An entity with a
+free-text value starts unticked. Applying one creates the entity and then the
+relation, as the user, so the user needs the create grant for the type.
 
 **What the model must answer.** rela derives a JSON schema from the outputs and
 the metamodel and asks the provider for an answer in that shape. An enum
@@ -7123,8 +7150,15 @@ Without an `acl.yaml`, every user holds every permission, so `permission:`
 admits everyone.
 
 **Provider.** The action uses the AI provider in `.rela/ai.yaml`, the same one
-`ai.chat` uses in a [Lua action script](#lua-action-scripts). Without it the
-action answers 503 `ai_not_configured`. `model` and `max_tokens` override the
+`ai.chat` uses in a [Lua action script](#lua-action-scripts). A server can
+set one provider for every project that has no `ai.yaml` of its own, with
+`rela-server -ai-config /path/to/ai.yaml` (or `RELA_AI_CONFIG`). The file
+is read once at startup, and the server refuses to start when it is missing
+or invalid. Name the API key with `api_key_env`, or set `ai_api_key` in a
+project's secrets. In tenant mode the server-wide file is withheld from
+tenants, like the operator's own `.rela/ai.yaml`, unless
+`-tenant-shared-host-config` is set. Without a provider the action answers
+503 `ai_not_configured`. `model` and `max_tokens` override the
 provider's defaults for this action. One call may take at most two minutes.
 
 **Text from other people.** The model reads entity data that other users wrote.
@@ -7142,11 +7176,65 @@ saved, and the dialog says so. A proposal that arrives after the user has moved
 to another entity is dropped.
 
 **From an MCP client.** `run_action` returns the proposal as
-`{proposal: {entity, set, relate}}`. Apply the changes you accept with
-`update_entity` and `create_relation`.
+`{proposal: {entity, set, relate, create}}`. Apply the changes you accept with
+`update_entity`, `create_entity` and `create_relation`.
+
+#### Applying without review (`apply: auto`)
+
+With `apply: auto`, a run writes the proposal itself:
+
+```yaml
+    llm:
+      apply: auto
+      prompt: "Pick a priority for this ticket."
+      outputs:
+        set: [priority]
+```
+
+The run happens in the background. The button answers at once with a message
+that the changes are being made; reload the entity to see them. The
+background run uses the same gates and the same model call as a proposing
+run, as the user who started it. It then writes every proposed change
+through the ordinary write path, so that user's ACL, validation and audit
+apply. A property that changed while the model was answering is skipped, as
+in the dialog. A run on the same entity by the same user that is still
+queued absorbs a second click.
+
+A background run needs a server that runs background jobs: `rela-server` or
+the desktop app. Elsewhere the action answers 503 `background_unavailable`.
+A request with no user to run as answers 403 `identity_required`.
+A failed run is logged. A run that may succeed later, such as one that met a
+provider outage, is retried a few times; a refused run is not.
+
+Only an `apply: auto` action can run where no user reviews it:
+
+- **On a list.** Name it in a list's `actions:` and it runs on every
+  selected row, one background run per row. The action's `available_on` type
+  must be the list's type.
+- **In a flow.** A job step with `action:` runs it on the flow's subject, as
+  the flow's `run_as`. The step succeeds when the run applied its changes,
+  and a refused run fails the step without a retry.
+
+**Risk.** Nobody reads an auto-applied value before it is saved. Text in the
+entity or its neighbours that was written by someone else can steer the
+model (prompt injection). The schema still bounds the answer: an enum takes
+a declared value, a relation names a candidate. A free-text property or a
+created entity's text can hold anything the model writes. Use `apply: auto`
+for outputs whose values are bounded, such as enums and candidate relations,
+or where the input is written by people you trust. Give `permission:` only to
+users who may change those fields anyway.
+
+In a flow the risk is larger. The run writes as `run_as`, which is often a
+job identity with wider grants than the people who write the subject. Anyone
+who can edit the text the prompt reads can then steer writes made with
+`run_as`'s grants. Grant `run_as` only the writes the action's outputs make.
+
+A background run that fails is logged on the server. It does not notify the
+user who started it. A run that is still queued for the same action, entity
+and user takes the place of a new one.
 
 Limits in this version: the action runs on one entity type without faces, and
-it cannot create entities or set relation properties.
+it cannot set relation properties.
 
 ### Reserved Keyboard Shortcuts
 

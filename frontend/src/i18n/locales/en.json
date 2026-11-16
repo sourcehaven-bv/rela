@@ -567,6 +567,10 @@
       "stale": "{property} changed since the proposal was made, so it was not saved.",
       "saveFailed": "The changes could not be saved",
       "linkFailed": "Could not add {relation} to {title}: {reason}",
+      "records": "New records",
+      "newRecord": "{relation}: new {type}",
+      "createFailed": "Could not create the new {type} for {relation}: {reason}",
+      "createUnlinked": "Created {id}, but could not add it as {relation}: {reason}. Link or delete it yourself.",
       "model": "Proposed by {model}"
     }
   },

@@ -2811,7 +2811,10 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 				continue
 			}
 
-			if action.AvailableOn != nil {
+			switch {
+			case action.LLM != nil:
+				errs = append(errs, listLLMActionErrors(listID, list, actionID, action)...)
+			case action.AvailableOn != nil:
 				errs = append(errs, entityBoundActionRefError(
 					fmt.Sprintf("list %q", listID), actionID))
 			}
@@ -2848,6 +2851,24 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 		errs = append(errs, validateToolbarActions(listID, list, cfg)...)
 	}
 
+	return errs
+}
+
+// listLLMActionErrors checks an `llm:` action in a list's `actions:`. A
+// list runs it on each selected row, which is the entity it is bound to, so
+// it must run on the list's type. It must apply its own proposal: a list has
+// no dialog to review one proposal per row (TKT-WQ925LL).
+func listLLMActionErrors(listID string, list List, actionID string, action Action) []string {
+	var errs []string
+	if !action.LLM.Auto() {
+		errs = append(errs, fmt.Sprintf(
+			"list %q: action %q only proposes changes; a list runs an llm action only with apply: auto",
+			listID, actionID))
+	}
+	if subject := action.Subject(); subject != list.EntityType {
+		errs = append(errs, fmt.Sprintf(
+			"list %q: action %q runs on %q, not on the list's type %q", listID, actionID, subject, list.EntityType))
+	}
 	return errs
 }
 

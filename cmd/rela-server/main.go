@@ -89,6 +89,8 @@ type serverFlags struct {
 	configEditing bool
 	// tenant holds the tenant-mode switch and limits (TKT-HF5KE12).
 	tenant tenantFlags
+	// aiConfig is the server-wide ai.yaml for projects without their own.
+	aiConfig string
 }
 
 // coverage-ignore-func: flag wiring — exercised at startup, not in tests
@@ -201,6 +203,7 @@ func parseFlags() *serverFlags {
 			"RELA_ALLOW_UNAUTHENTICATED_COMMANDS=1.")
 	registerIdentityFlags(f)
 	registerTenantFlags(&f.tenant)
+	registerAIFlags(f)
 	flag.BoolVar(&f.configEditing, "config-editing", os.Getenv("RELA_CONFIG_EDITING") == "1",
 		"Let principals holding the config:edit permission change the data model and "+
 			"screens (schema.yaml, data-entry.yaml) from the browser. A save rewrites the "+
@@ -227,6 +230,14 @@ func parseFlags() *serverFlags {
 	return f
 }
 
+// registerAIFlags registers the server-wide AI provider flag on f.
+func registerAIFlags(f *serverFlags) {
+	flag.StringVar(&f.aiConfig, "ai-config", os.Getenv("RELA_AI_CONFIG"),
+		"Path to an ai.yaml used by projects that have no .rela/ai.yaml of their own. "+
+			"Name the API key with api_key_env. In tenant mode it is withheld from tenants "+
+			"unless -tenant-shared-host-config is set. Also RELA_AI_CONFIG.")
+}
+
 // coverage-ignore-end
 
 // discoverOptions maps server flags to appbuild options. --read-only injects a
@@ -237,6 +248,9 @@ func discoverOptions(f *serverFlags) []appbuild.Option {
 	opts := []appbuild.Option{appbuild.WithBackgroundAutomationJobs()}
 	if f.readOnly {
 		opts = append(opts, appbuild.WithACL(acl.ReadOnlyACL{}))
+	}
+	if f.aiConfig != "" {
+		opts = append(opts, appbuild.WithServerAIConfig(f.aiConfig))
 	}
 	// Tenant mode withholds the one .rela directory's secrets and ai.yaml
 	// from every tenant unless the operator shares them (TKT-3RWQ1PK).

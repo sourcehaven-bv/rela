@@ -447,6 +447,10 @@ const (
 	// ToolFlow attributes the writes the flow engine makes as [UserFlow]:
 	// the run header and its managed edges (FEAT-J0O10QI).
 	ToolFlow = "flow"
+	// ToolLLMAction attributes the writes of an `llm:` action with
+	// `apply: auto`, made in the background as the user who ran it
+	// (TKT-WQ925LL).
+	ToolLLMAction = "llm-action"
 	// ToolRelaTest attributes the writes of a `rela test` case. Its
 	// principals exist only in the case's in-memory world.
 	ToolRelaTest = "rela-test"

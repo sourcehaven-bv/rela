@@ -278,8 +278,15 @@ A job names exactly one target:
 | Key | Runs |
 | --- | ---- |
 | `script` | A Lua script under `scripts/`. `capabilities` grants it http, ai, mail, write_file, tokens and named secrets, as for an automation; without it the script gets none. |
-| `action` | An action from `data-entry.yaml`. It must be a plain script action: rela refuses an action with `set`, `request`, `available_on`, `allow_acl_bypass` or `elevated_updates`. `run_as` must hold the action's `permission`. The action's own `capabilities` apply. |
+| `action` | An action from `data-entry.yaml`. It must be a plain script action or an `llm:` action with `apply: auto`. rela refuses a script action with `set`, `request`, `available_on`, `allow_acl_bypass` or `elevated_updates`, an `llm:` action that only proposes, and an `llm:` action whose `available_on` type is not the flow's subject type. `run_as` must hold the action's `permission`. The action's own `capabilities` apply. An `llm:` action writes its proposal as `run_as`; a refused run fails the step without a retry. |
 | `kind: webhook` | A `POST` to `url` (http or https). `flows.yaml` is usually public, so keep tokens out of the URL and sign with `secret:` instead. |
+
+An `llm:` action in a step reads text that people other than `run_as` may
+have written, and that text can steer what the model proposes (prompt
+injection). The proposal is then written with `run_as`'s grants. Grant
+`run_as` only the writes the action's outputs make, and prefer outputs whose
+values the schema bounds, such as enums and candidate relations. See
+"Applying without review" in the data-entry guide.
 
 The work runs as the flow's `run_as`, through the job queue. A script or
 action sees the subject as `entity`, as `run_as` reads it, and

@@ -64,7 +64,7 @@ func TestScriptOutcome(t *testing.T) {
 
 func TestFlowActionUsable(t *testing.T) {
 	ok := dataentryconfig.Action{Script: "notify.lua", Permission: "p"}
-	require.NoError(t, flowActionUsable("a", ok))
+	require.NoError(t, flowActionUsable("a", ok, ""))
 	tests := map[string]dataentryconfig.Action{
 		"no script":    {},
 		"set":          {Script: "x.lua", Set: map[string]string{"status": "done"}},
@@ -75,7 +75,7 @@ func TestFlowActionUsable(t *testing.T) {
 	}
 	for name, a := range tests {
 		t.Run(name, func(t *testing.T) {
-			require.Error(t, flowActionUsable("a", a))
+			require.Error(t, flowActionUsable("a", a, ""))
 		})
 	}
 }
