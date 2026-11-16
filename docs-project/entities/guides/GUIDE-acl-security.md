@@ -701,8 +701,10 @@ IdP webhook receiver (`POST /webhooks/idp`) can therefore store the IdP role
 names of a user, and the child then holds the rela roles they map to
 (TKT-IZL6NX8).
 
-- **Who writes.** Only the webhook receiver, after it verified the webhook
-  signature. Its action returns `asserted_roles = { ... }`, and the
+- **Who writes.** Only the webhook receiver can store roles, after it
+  verified the webhook signature. A delete or rename of the bound entity, and
+  `rela acl forget-idp-roles`, can only erase them (see "Erased with the
+  person" below). The receiver's action returns `asserted_roles = { ... }`, and the
   receiver stores that list for the subject (`user_id`) of the verified
   webhook. The script cannot name another subject. An empty list clears the
   subject. An action that reports an error (`message_type = "error"`, with or
@@ -717,7 +719,8 @@ names of a user, and the child then holds the rela roles they map to
   store, rewritten under a lock. On postgres that is the tenant's state table
   with an advisory lock, shared by every process. On sqlite it is the state
   table in `.rela/rela.db`. On the file store it is `idp-roles.json` in the
-  cache directory with lock files. No entity write reaches it. Without a
+  cache directory with lock files. No entity write stores roles in it; a
+  delete or rename of the bound entity only erases its record. Without a
   cache directory the roles are kept in process memory and a warning is
   logged. Each store or clear writes an `idp-roles-set` audit record that
   names the bound entity and the role count, never the IdP subject or the
@@ -749,7 +752,8 @@ names of a user, and the child then holds the rela roles they map to
   requests do not use stored roles.
 
 **Revocation depends on webhook delivery.** A stored role lasts until the
-next webhook for that user replaces or clears it. If the IdP does not send a
+next webhook for that user replaces or clears it, or until the bound entity
+is deleted or renamed, or `rela acl forget-idp-roles` erases it. If the IdP does not send a
 webhook when a role is removed, or delivery fails for good, the role stays.
 Stored roles do not expire on their own. The store is keyed by subject, not
 by org, so with several orgs the last webhook wins, and the receiver does not
