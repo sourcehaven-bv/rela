@@ -209,8 +209,11 @@ type Store interface {
 type FoldedIDReader interface {
 	// IDTakenFolded reports whether a live or a soft-deleted (marked)
 	// entity, at any face, has an id equal to id under ASCII case folding,
-	// other than the family whose id folds to except. These are the ids
-	// create and rename refuse. An empty except excludes nothing.
+	// other than the family whose id folds to except. A store that
+	// implements [RetiredIDs] also counts a retired id and the successor a
+	// retired id points to, unless that successor folds to except. These
+	// are the ids create and rename refuse. An empty except excludes
+	// nothing.
 	IDTakenFolded(ctx context.Context, id, except string) (bool, error)
 }
 
