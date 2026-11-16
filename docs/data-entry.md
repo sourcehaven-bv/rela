@@ -8153,8 +8153,10 @@ Each command runs in one of four scopes, which determines the JSON it receives o
 **`entity`** — runs from entity detail and view pages. Receives the entity with all properties,
 content, and relations.
 
-**`list`** — runs from list pages. Receives all entities currently visible in the list (after
-filters).
+**`list`** — runs from list pages. Receives every entity of the list's type that the user may
+read, after the list's `filters:`. The list's query scope and page scope are not applied, so the
+script can receive more entities than the list shows. See
+[What a command permission actually confers](acl-security.md#what-a-command-permission-actually-confers).
 
 **`view`** — runs from view pages only. Receives the entry entity, all traversed collections,
 and relations between them.
@@ -8163,9 +8165,9 @@ and relations between them.
 
 #### Redacted and inaccessible properties
 
-Entities on stdin are the same ACL-filtered entities the page rendered, so a
-property hidden from the current user by a `visible:` rule is **absent from
-`properties`**. Absence alone is ambiguous — the property may simply never have
+Entities on stdin pass the same ACL filtering as the page: the row gate and
+field redaction. A property hidden from the current user by a `visible:` rule
+is **absent from `properties`**. Absence alone is ambiguous — the property may simply never have
 been set — so the payload names the withheld ones:
 
 ```json
