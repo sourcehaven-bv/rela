@@ -14,7 +14,7 @@ status: done
 - [x] ~~All tests pass (`just test`)~~ (N/A locally: `go test -race` passes on every changed package: flowcfg, flowcfg/transitions, cli, appbuild, entitymanager, affordances, dataentry, attachment, remotesync, comments, acl, metamodel, automation, autocascade and archguard; CI runs the full suite)
 - [x] Lint clean (`just lint`) (golangci-lint on the changed packages: 0 issues)
 - [x] Comment lint gate clean (`just comment-lint`)
-- [x] ~~Coverage maintained (`just coverage-check`)~~ (N/A locally: CI enforces the floors; no package was added, and .testcoverage.yml had no statemachine entry)
+- [x] ~~Coverage maintained (`just coverage-check`)~~ (N/A locally: CI enforces the floors; the code moved to the new package internal/flowcfg/transitions, and .testcoverage.yml has no entry for it)
 
 ## Code Review
 
