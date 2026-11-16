@@ -67,8 +67,8 @@ transaction with a group key that is already used.
 
 `closed_before` names a date property on the owner. A posting dated on or
 before that date is refused, so a closed period stays closed. rela checks the
-balance first, so an unbalanced posting never tells you whether a period is
-closed.
+balance and the group key first, so an unbalanced posting or a reused key never
+tells you whether a period is closed.
 
 To correct a transaction, reverse it. A reversal appends the same rows with
 the amounts negated. Each transaction can be reversed once.
