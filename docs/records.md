@@ -65,8 +65,8 @@ transaction must balance: its `amount` values add up to zero, per
 rela refuses a transaction that does not balance, and refuses a second
 transaction with a group key that is already used.
 
-`closed_before` names a date property on the owner. A posting dated before
-that date is refused, so a closed period stays closed. rela checks the
+`closed_before` names a date property on the owner. A posting dated on or
+before that date is refused, so a closed period stays closed. rela checks the
 balance first, so an unbalanced posting never tells you whether a period is
 closed.
 
