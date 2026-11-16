@@ -411,7 +411,7 @@ Two things make that safe and deterministic:
 ### `edit()` — a real write, so there is a history to show
 
 The seed verbs `create()`, `face()` and `link()` write **raw**, bypassing the
-entitymanager, so an automation cannot mutate a fixture into something the
+entitymanager, so a trigger cannot mutate a fixture into something the
 manual does not describe.
 
 `edit(id, {props}, body?)` is the deliberate exception. It replays through the

@@ -19,11 +19,11 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// loopMetamodel has automations that rewrite the entity after a save: mark
-// runs inline on a create and on a title change, inside the connector's
-// write, so the connector's tag after that write always conflicts and the
-// loop must re-read and re-merge (D4); stamp runs as a background job,
-// whenever the queue gets to it.
+// loopMetamodel, with the triggers in loopFlows, has automations that
+// rewrite the entity after a save: mark runs inline on a create and on a
+// title change, inside the connector's write, so the connector's tag after
+// that write always conflicts and the loop must re-read and re-merge (D4);
+// stamp runs as a background job, whenever the queue gets to it.
 const loopMetamodel = `version: "1.0"
 entities:
   ticket:
@@ -41,27 +41,33 @@ entities:
         type: external_ref
         system: basecamp
         sync: true
-automations:
-  - name: stamp
+`
+
+// loopFlows holds the triggers of loopMetamodel.
+const loopFlows = `triggers:
+  stamp:
     on:
       entity: ticket
       created: true
       updated: true
-    do:
-      - lua_file: stamp.lua
-        background: true
-  - name: mark-new
+    outputs:
+      - script:
+          file: stamp.lua
+          background: true
+  mark-new:
     on:
       entity: ticket
       created: true
-    do:
-      - lua_file: mark.lua
-  - name: mark
+    outputs:
+      - script:
+          file: mark.lua
+  mark:
     on:
       entity: ticket
       property: title
-    do:
-      - lua_file: mark.lua
+    outputs:
+      - script:
+          file: mark.lua
 `
 
 const stampScript = `
@@ -293,6 +299,7 @@ func (w *loopWorld) local(id string) *entity.Entity {
 func TestSyncLoop_ReachesFixedPoint(t *testing.T) {
 	root := t.TempDir()
 	writeMetamodelBody(t, root, loopMetamodel)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "flows.yaml"), []byte(loopFlows), 0o600))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "scripts"), 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "scripts", "stamp.lua"), []byte(stampScript), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "scripts", "mark.lua"), []byte(markScript), 0o600))

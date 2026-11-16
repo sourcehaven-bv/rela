@@ -23,6 +23,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentrywire"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filelock"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/piles"
 	"github.com/Sourcehaven-BV/rela/internal/piles/kvpiles"
@@ -118,6 +119,14 @@ func newGoldenApp(t *testing.T, v goldenVariant) *goldenApp {
 	if err != nil {
 		t.Fatalf("parse schema.yaml: %v", err)
 	}
+	flowsYAML, err := fs.ReadFile(os.DirFS(goldenFixtureDir), "flows.yaml")
+	if err != nil {
+		t.Fatalf("read flows.yaml: %v", err)
+	}
+	rules, err := triggers.Parse(flowsYAML, meta)
+	if err != nil {
+		t.Fatalf("parse flows.yaml triggers: %v", err)
+	}
 
 	base := memstore.New()
 	seedGoldenStore(ctx, t, base)
@@ -133,6 +142,7 @@ func newGoldenApp(t *testing.T, v goldenVariant) *goldenApp {
 		appbuildtest.WithFS(fsys, paths),
 		appbuildtest.WithStore(calls),
 		appbuildtest.WithComments(commentSvc),
+		appbuildtest.WithTriggers(rules),
 	}
 	switch v.mode {
 	case goldenDeclarative:

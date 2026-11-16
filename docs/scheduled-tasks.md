@@ -209,7 +209,7 @@ tasks:
 Like `system:`, the `integration:` namespace is reserved: no web, MCP or API
 caller can claim it, so the connector's role (which usually holds write
 grants and `tag:sync`) is reachable only from this file and from
-`schema.yaml` automations. `tokens: [basecamp]` lets the script fetch the
+`flows.yaml` trigger scripts. `tokens: [basecamp]` lets the script fetch the
 connection's access token with `rela.oauth.access_token`. See the Lua
 scripting guide, "OAuth Tokens" and "Sync connectors", and
 `examples/basecamp/` in the rela repository for a complete connector.

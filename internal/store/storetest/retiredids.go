@@ -114,6 +114,31 @@ func RunRetiredIDTests(t *testing.T, f Factory, declared bool) {
 		assert.Equal(t, 2, n, "the generator must not mint a successor id")
 	})
 
+	// The rename dry run asks IDTakenFolded, so it must refuse the ids
+	// RenameFamily refuses (#2294).
+	t.Run("IDTakenFoldedCountsRetiredIDs", func(t *testing.T) {
+		s := f(t)
+		require.NoError(t, s.CreateEntity(ctx(), newEntity("FEAT-001")))
+		require.NoError(t, s.CreateEntity(ctx(), newEntity("FEAT-003")))
+		rename(t, s, "FEAT-001", "FEAT-002")
+		taken := func(id, except string) bool {
+			t.Helper()
+			got, err := s.IDTakenFolded(ctx(), id, except)
+			require.NoError(t, err)
+			return got
+		}
+		assert.True(t, taken("feat-001", ""), "a retired id is reserved for create")
+		assert.True(t, taken("feat-001", "FEAT-003"), "another family cannot rename onto a retired id")
+		assert.False(t, taken("feat-001", "FEAT-002"), "the successor may rename back onto its own retired id")
+		_, err := s.DeleteFamily(ctx(), "FEAT-002", true)
+		require.NoError(t, err)
+		assert.True(t, taken("feat-002", "FEAT-003"), "a deleted successor stays reserved")
+		_, err = s.RenameFamily(ctx(), "FEAT-003", "FEAT-001")
+		require.ErrorIs(t, err, store.ErrConflict)
+		_, err = s.RenameFamily(ctx(), "FEAT-003", "FEAT-002")
+		require.ErrorIs(t, err, store.ErrConflict)
+	})
+
 	t.Run("HighestIDCountsRetiredIDs", func(t *testing.T) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), newEntity("FEAT-009")))

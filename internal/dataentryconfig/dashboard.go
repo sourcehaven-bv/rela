@@ -170,6 +170,12 @@ func (c *Config) DashboardByName(name string) (cfg *DashboardConfig, ok bool) {
 	return &d, true
 }
 
+// IsEntityDashboard reports whether the dashboard counts over one anchor
+// entity (see [DashboardConfig]).
+func (d DashboardConfig) IsEntityDashboard() bool {
+	return d.EntityType != ""
+}
+
 // NamedDashboard is one configured dashboard, with the name it is reached
 // by ("" for the default dashboard).
 type NamedDashboard struct {

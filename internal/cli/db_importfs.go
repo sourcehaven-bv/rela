@@ -43,8 +43,9 @@ func printImportReport(w io.Writer, rep *fsimport.Report, runErr error) {
 
 // importedCounts is the one-line count of what an import copied.
 func importedCounts(rep *fsimport.Report) string {
-	return fmt.Sprintf("%d entities, %d relations, %d attachments, %d comments, %d state keys, %d flow runs",
-		rep.Entities, rep.Relations, rep.Attachments, rep.Comments, rep.StateKeys, rep.FlowRuns)
+	return fmt.Sprintf("%d entities, %d relations, %d attachments, %d comments, %d state keys, %d flow runs, "+
+		"%d record rows",
+		rep.Entities, rep.Relations, rep.Attachments, rep.Comments, rep.StateKeys, rep.FlowRuns, rep.Records)
 }
 
 // reportPrinter prints one report line. Paths and reasons name source files,

@@ -32,12 +32,16 @@ entities:
     id_prefix: "LOG-"
     properties:
       title: {type: string, required: true}
-automations:
-  - name: gone
+`
+
+const deletedFlows = `
+triggers:
+  gone:
     on: {entity: note, deleted: true}
-    do:
-      - lua_file: gone.lua
-        background: true
+    outputs:
+      - script:
+          file: gone.lua
+          background: true
 `
 
 // goneScript logs the deleted note as the job saw it.
@@ -58,6 +62,7 @@ func writeDeletedProject(t *testing.T, policy string) string {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "scripts"), 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "schema.yaml"), []byte(deletedSchema), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "flows.yaml"), []byte(deletedFlows), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "scripts", "gone.lua"), []byte(goneScript), 0o600))
 	if policy != "" {
 		require.NoError(t, os.WriteFile(filepath.Join(root, "acl.yaml"), []byte(policy), 0o600))

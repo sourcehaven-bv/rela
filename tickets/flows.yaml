@@ -1,0 +1,186 @@
+triggers:
+  # --- Ticket Workflow ---
+  ticket-planning-checklist:
+    description: Create planning checklist when ticket enters planning
+    on:
+      entity: [ticket]
+      property: status
+      becomes: planning
+    outputs:
+      - create:
+          type: planning-checklist
+          properties:
+            title: "Planning: {{new.title}}"
+            status: in-progress
+            started: "{{today}}"
+          relate:
+            type: has-planning
+            from: subject
+          if_exists: skip
+  ticket-implementation-checklist:
+    description: Create implementation checklist when ticket enters in-progress
+    on:
+      entity: [ticket]
+      property: status
+      becomes: in-progress
+    outputs:
+      - create:
+          type: implementation-checklist
+          properties:
+            title: "Implementation: {{new.title}}"
+            status: in-progress
+            started: "{{today}}"
+          relate:
+            type: has-implementation
+            from: subject
+          if_exists: skip
+  ticket-review-checklist:
+    description: Create review checklist when ticket enters review
+    on:
+      entity: [ticket]
+      property: status
+      becomes: review
+    outputs:
+      - create:
+          type: review-checklist
+          properties:
+            title: "Review: {{new.title}}"
+            status: in-progress
+            started: "{{today}}"
+          relate:
+            type: has-review
+            from: subject
+          if_exists: skip
+  # --- Bug Workflow ---
+  bug-analysis-checklist:
+    description: Create bug analysis checklist when bug enters analyzing
+    on:
+      entity: [bug]
+      property: status
+      becomes: analyzing
+    outputs:
+      - create:
+          type: bug-analysis-checklist
+          properties:
+            title: "Analysis: {{new.title}}"
+            status: in-progress
+            started: "{{today}}"
+          relate:
+            type: has-bug-analysis
+            from: subject
+          if_exists: skip
+  bug-implementation-checklist:
+    description: Create implementation checklist when bug enters in-progress
+    on:
+      entity: [bug]
+      property: status
+      becomes: in-progress
+    outputs:
+      - create:
+          type: implementation-checklist
+          properties:
+            title: "Implementation: {{new.title}}"
+            status: in-progress
+            started: "{{today}}"
+          relate:
+            type: has-implementation
+            from: subject
+          if_exists: skip
+  bug-review-checklist:
+    description: Create review checklist when bug enters review
+    on:
+      entity: [bug]
+      property: status
+      becomes: review
+    outputs:
+      - create:
+          type: review-checklist
+          properties:
+            title: "Review: {{new.title}}"
+            status: in-progress
+            started: "{{today}}"
+          relate:
+            type: has-review
+            from: subject
+          if_exists: skip
+  # --- Lifecycle dates (calendar and gantt views) ---
+  ticket-started-planning:
+    description: Record when work on a ticket starts
+    on:
+      entity: [ticket]
+      property: status
+      becomes: planning
+      where:
+        - "started="
+    outputs:
+      - set:
+          properties:
+            started: "{{today}}"
+  ticket-started-in-progress:
+    description: Record when work starts on a ticket that skipped planning
+    on:
+      entity: [ticket]
+      property: status
+      becomes: in-progress
+      where:
+        - "started="
+    outputs:
+      - set:
+          properties:
+            started: "{{today}}"
+  bug-started-analyzing:
+    description: Record when work on a bug starts
+    on:
+      entity: [bug]
+      property: status
+      becomes: analyzing
+      where:
+        - "started="
+    outputs:
+      - set:
+          properties:
+            started: "{{today}}"
+  bug-started-in-progress:
+    description: Record when work starts on a bug that skipped analysis
+    on:
+      entity: [bug]
+      property: status
+      becomes: in-progress
+      where:
+        - "started="
+    outputs:
+      - set:
+          properties:
+            started: "{{today}}"
+  work-completed:
+    description: Record when a ticket or bug is done
+    on:
+      entity: [ticket, bug]
+      property: status
+      becomes: done
+    outputs:
+      - set:
+          properties:
+            completed: "{{today}}"
+  docs-checklist-started:
+    description: Record when a manually created docs checklist starts
+    on:
+      entity: [docs-checklist]
+      property: status
+      becomes: in-progress
+      where:
+        - "started="
+    outputs:
+      - set:
+          properties:
+            started: "{{today}}"
+  checklist-completed:
+    description: Record when a checklist is done
+    on:
+      entity: [planning-checklist, bug-analysis-checklist, implementation-checklist, review-checklist, docs-checklist]
+      property: status
+      becomes: done
+    outputs:
+      - set:
+          properties:
+            completed: "{{today}}"

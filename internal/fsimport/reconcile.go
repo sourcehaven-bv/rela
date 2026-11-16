@@ -36,7 +36,7 @@ func reconcileFiles(src *source, imported importedSet, rep *Report) error {
 	rep.PendingDeletes = sortedKeys(pending)
 
 	w := &fileWalk{src: src, root: root, imported: imported, pending: pending, rep: rep}
-	for _, step := range []func() error{w.entities, w.relations, w.attachments} {
+	for _, step := range []func() error{w.entities, w.relations, w.attachments, w.records} {
 		if err := step(); err != nil {
 			return err
 		}

@@ -9,8 +9,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -184,7 +184,7 @@ var singleFieldRef = regexp.MustCompile(`^\{\{\s*new\.([A-Za-z0-9_-]+)\s*\}\}$`)
 //
 // A template that is exactly `{{new.<prop>}}` copies the property's VALUE as
 // stored — an integer stays an integer, a list stays a list. Everything else
-// is rendered as text through automation.Interpolate (the EXISTING {{...}}
+// is rendered as text through triggers.Interpolate (the EXISTING {{...}}
 // grammar, not a second one: literal name lookup only, and the source face
 // binds as `new`). The distinction matters because Interpolate stringifies
 // through entity.GetString, which renders every non-string as "" — so the
@@ -199,5 +199,5 @@ func copyFieldValue(tmpl string, src *entity.Entity, now func() time.Time) (any,
 		v, ok := src.Properties[m[1]]
 		return v, ok
 	}
-	return automation.Interpolate(tmpl, automation.TemplateVars{Now: now}, src, nil), true
+	return triggers.Interpolate(tmpl, triggers.TemplateVars{Now: now}, src, nil), true
 }

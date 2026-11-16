@@ -11,10 +11,10 @@ status: done
 
 ## Automated Checks
 
-- [x] ~~All tests pass (`just test`)~~ (N/A locally: `go test -race` passes on every changed package: flowcfg, cli, appbuild, entitymanager, affordances, dataentry, attachment, remotesync, comments, acl, metamodel, automation, autocascade and archguard; CI runs the full suite)
+- [x] ~~All tests pass (`just test`)~~ (N/A locally: `go test -race` passes on every changed package: flowcfg, flowcfg/transitions, cli, appbuild, entitymanager, affordances, dataentry, attachment, remotesync, comments, acl, metamodel, automation, autocascade and archguard; CI runs the full suite)
 - [x] Lint clean (`just lint`) (golangci-lint on the changed packages: 0 issues)
 - [x] Comment lint gate clean (`just comment-lint`)
-- [x] ~~Coverage maintained (`just coverage-check`)~~ (N/A locally: CI enforces the floors; no package was added, and .testcoverage.yml had no statemachine entry)
+- [x] ~~Coverage maintained (`just coverage-check`)~~ (N/A locally: CI enforces the floors; the code moved to the new package internal/flowcfg/transitions, and .testcoverage.yml has no entry for it)
 
 ## Code Review
 
@@ -36,7 +36,7 @@ RR-LNAV79T, RR-3FUM5QZ, RR-U5V89VY, RR-0TLEFA1, RR-N9UEIVX, RR-NIBXSM1.
 
 **Acceptance Status:**
 
-1. PASS: internal/statemachine is gone; no Go file, arch-lint rule or coverage entry names it, and its tests pass in internal/flowcfg.
+1. PASS: internal/statemachine is gone; no Go file, arch-lint rule or coverage entry names it, and its tests pass in internal/flowcfg/transitions.
 2. PASS: entitymanager, affordances, dataentry, appbuild, remotesync, automation and autocascade pass with -race; the scratch tickets walk created every checklist as before.
 3. PASS: TestFlowShow_Headless and TestFlowShow_Run list and render headless flows with no flows.yaml; JSON carries kind.
 4. PASS: DEC-EJ00DNZ records the unset decision; TestEnforceUpdate_UnsetIsNotInitial covers the entry value.

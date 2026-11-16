@@ -38,7 +38,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
@@ -49,6 +48,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/flowengine"
 	"github.com/Sourcehaven-BV/rela/internal/flowrun"
 	"github.com/Sourcehaven-BV/rela/internal/hostconfig"
@@ -61,6 +61,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/piles"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
+	"github.com/Sourcehaven-BV/rela/internal/records"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/rollup"
 	"github.com/Sourcehaven-BV/rela/internal/rootfs"
@@ -202,6 +203,11 @@ type Services struct {
 	// leaseShared is the backend and hub under leases, which a re-assembly
 	// shares. The backend is closed by Close, not by CloseAssembly.
 	leaseShared leaseShared
+	// records is the record service (see [Records]), nil when the schema
+	// declares no record types. recordStore is its backend, which a
+	// re-assembly shares.
+	records     *records.Service
+	recordStore records.Store
 	// flowEngine runs flows.yaml (see [FlowEngine]). Nil when it declares
 	// no flows.
 	flowEngine *flowengine.Engine
@@ -276,6 +282,8 @@ type Services struct {
 	// softDeleteStop stops the soft-delete GC ticker. It runs before the job
 	// queue closes, so no tick enqueues into a closed queue.
 	softDeleteStop func()
+	// recordRetentionStop stops the record retention ticker.
+	recordRetentionStop func()
 	// versionSweep is the store's version-reconciliation sweep, nil on a
 	// build or store without one. Per-assembled: started by finishAssembly,
 	// stopped in stopBackgroundServices, so Close and CloseAssembly stop the
@@ -1544,33 +1552,33 @@ func buildFieldPolicy(
 	return fieldPolicy{redactor: redactor, gate: gate, flowEdits: ceiling}, nil
 }
 
-// buildAutomation wires the automation engine + cascade runner from
-// the metamodel. Returns (nil, nil, nil) when the metamodel declares
-// no automations — Manager treats that as "automation disabled".
+// buildAutomation wires the trigger engine + cascade runner from the
+// flows.yaml rules. Returns (nil, nil, nil) when there are no rules — Manager treats that as "automation disabled".
 //
 // A condition's `related(...)` is answered ungated from st: an automation is
 // system policy, so what it sees must not depend on who made the write.
 func buildAutomation(
-	meta *metamodel.Metamodel, st store.Store, bg autocascade.BackgroundScripts, pusher autocascade.PilePusher,
+	meta *metamodel.Metamodel, rules []triggers.Rule, st store.Store,
+	bg autocascade.BackgroundScripts, pusher autocascade.PilePusher,
 	now func() time.Time,
-) (*automation.Engine, *autocascade.Runner, error) {
-	if len(meta.Automations) == 0 {
+) (*triggers.Engine, *autocascade.Runner, error) {
+	if len(rules) == 0 {
 		return nil, nil, nil
 	}
 	traversals, err := relresolve.NewStoreBinder(meta, relresolve.Ungated, st)
 	if err != nil {
 		return nil, nil, fmt.Errorf("build automation engine: %w", err)
 	}
-	autoEngine, err := automation.NewEngineFromMetamodel(meta, meta.Automations,
-		automation.WithTraversals(traversals), automation.WithClock(now))
+	autoEngine, err := triggers.New(meta, rules,
+		triggers.WithTraversals(traversals), triggers.WithClock(now))
 	if err != nil {
-		return nil, nil, fmt.Errorf("build automation engine: %w", err)
+		return nil, nil, fmt.Errorf("flows.yaml: triggers: %w", err)
 	}
 	cascadeRunner, err := autocascade.New(autocascade.Deps{
 		Engine: autoEngine, Background: bg, Piles: pusher, Recipients: notifyRecipients{st: st},
 	})
 	// coverage-ignore-start: defensive: autocascade.New only errors on a nil Engine; autoEngine is freshly built by
-	// NewEngineFromMetamodel just
+	// triggers.New just
 	// above and is never nil
 	if err != nil {
 		return nil, nil, fmt.Errorf("build autocascade runner: %w", err)
@@ -2254,6 +2262,9 @@ type SharedBase struct {
 	// flows is the compiled flows.yaml, nil when it declares no flows.
 	// Compiled here so an invalid file fails the boot, like realtime.yaml.
 	flows *flowcfg.Compiled
+	// triggers are the flows.yaml `triggers:` rules, nil when it declares none.
+	// Decoded here so an invalid rule fails the boot.
+	triggers []triggers.Rule
 	// flowsPolicy is the acl.yaml policy flows compiled against (see
 	// [flowConfigPolicy]). The engine compiles older run versions against
 	// it too. Nil when the project has no acl.yaml.
@@ -2271,6 +2282,10 @@ type SharedBase struct {
 	// leaseShared is the predecessor's lease backend and hub, reused for the
 	// same reason. Empty for a first assembly.
 	leaseShared leaseShared
+	// recordStore is the predecessor's record backend, reused for the same
+	// reason: the file backend serializes writers with an in-process mutex.
+	// Nil for a first assembly.
+	recordStore records.Store
 	// idpRoles is the predecessor's IdP role store, reused so the in-memory
 	// fallback survives a schema reload. Nil for a first assembly.
 	idpRoles *idproles.Store
@@ -2338,6 +2353,7 @@ func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
 	next.attachLocker = prev.attachLocker
 	next.pileStore = prev.pileStore
 	next.leaseShared = prev.leaseShared
+	next.recordStore = prev.recordStore
 	next.idpRoles = prev.idpRoles
 	next.realtimeLocal = prev.realtimeLocal
 	next.channelHints = prev.channelHints
@@ -2479,6 +2495,10 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 	if err != nil {
 		return nil, err
 	}
+	triggerRules, err := triggers.Parse(flowsData, meta)
+	if err != nil {
+		return nil, err
+	}
 
 	// Compile the declared worlds here, at assembly, so a bad face name is
 	// a startup failure rather than a lurking runtime one. The loader checks
@@ -2537,7 +2557,7 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 	return &SharedBase{
 		cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy,
 		meta: meta, worlds: compiledWorlds, conns: conns, realtime: rt, flows: flows, flowsPolicy: flowsPolicy,
-		validationMode: mode, channelFiles: &channelFileRunners{},
+		triggers: triggerRules, validationMode: mode, channelFiles: &channelFileRunners{},
 	}, nil
 }
 
@@ -2703,7 +2723,7 @@ func closeAuditSink(sink audit.Audit) {
 func buildEntityManager(
 	base *SharedBase, st store.Store, aliases entitymanager.AliasRewriter,
 	templater entitymanager.TemplateLoader, resolvedACL acl.ACL,
-	autoEngine *automation.Engine, cascadeRunner *autocascade.Runner,
+	autoEngine *triggers.Engine, cascadeRunner *autocascade.Runner,
 	readDeps lua.ReadDeps, pileWriter lua.PileWriter, versions store.VersionService, tw TransitionWiring,
 	computedSet *computed.Set, attachLocker lock.Locker, fieldGate entitymanager.FieldWriteGate,
 	guard guardInputs,
@@ -2990,6 +3010,11 @@ type backendOverrides struct {
 	// runs travel with rela.db; postgres finds its pool through the store.
 	flowRuns flowrun.Store
 
+	// recordStore replaces the file record store. Supplied by the sqlite
+	// recipe so records travel with rela.db; postgres finds its pool through
+	// the store.
+	recordStore records.Store
+
 	// schedulerState replaces the state.KV-backed scheduler run-state
 	// (BUG-TKL08E). Supplied by the postgres recipe, whose job queue is
 	// durable and shared: a run queued by one process may execute on
@@ -3125,8 +3150,7 @@ func assemble(
 	// Upstream's parameter order (readDeps after cascadeRunner) with the
 	// comment fanout wrapping the alias rewriter.
 	attachLocker := base.attachmentLocker(st)
-	fanout := newAliasFanout(aliases, refs.comments, refs.piles, refs.leases, autoJobs,
-		refs.channelAliases, refs.realtimeLocal, newFlowRunAliases(refs.flowRuns), refs.idpEraser)
+	fanout := refs.aliasFanout(st, aliases, autoJobs)
 	mgr, err := buildEntityManager(base, st, fanout, templater,
 		resolvedACL, autoEngine, cascadeRunner, readDeps, pileWriterFor(refs.piles), versions, tw, computedSet,
 		attachLocker, fieldPol.gate, refs.guardInputs())
@@ -3231,12 +3255,13 @@ type versionSweep interface {
 //
 // Nil: sweep is accepted and means the store has no sweep.
 func finishAssembly(
-	s *Services, attachLocker lock.Locker, autoJobs *automationJobs, engine *automation.Engine, refs refHolders,
+	s *Services, attachLocker lock.Locker, autoJobs *automationJobs, engine *triggers.Engine, refs refHolders,
 	sweep versionSweep,
 ) (*Services, error) {
 	s.attachLocker = attachLocker
 	s.piles, s.pileStore = refs.piles, refs.pileStore
 	s.leases, s.leaseShared = refs.leases, refs.leaseShared
+	s.records, s.recordStore = refs.records, refs.recordStore
 	s.channels = refs.channels
 	flowEngine, err := buildFlowEngine(s, refs.flowRuns)
 	if err != nil {
@@ -3279,7 +3304,9 @@ func finishAssembly(
 	if s.realtimeWorker, err = buildRealtimeWorker(s.base, s.store, s.stateKV, refs, outputs); err != nil {
 		return nil, err
 	}
-	// Last, so a failed assembly never leaves a sweep goroutine running.
+	// Last, so a failed assembly never leaves a ticker or sweep running.
+	s.recordRetentionStop = startRecordRetention(s.records, s.jobQueue,
+		envDuration("RELA_RECORD_RETENTION_INTERVAL", defaultRecordRetentionInterval))
 	if sweep != nil {
 		s.versionSweep = sweep
 		sweep.Start()
@@ -3294,13 +3321,14 @@ func finishAssembly(
 // buildRuntimeServices.
 func buildAutomationWithJobs(
 	base *SharedBase, st store.Store, kv state.KV, q jobs.Queue, pileSvc *piles.Service,
-) (*automationJobs, *automation.Engine, *autocascade.Runner, error) {
-	autoJobs, err := newAutomationJobs(base.meta, kv, st, automationJobQueue(base, q))
+) (*automationJobs, *triggers.Engine, *autocascade.Runner, error) {
+	autoJobs, err := newAutomationJobs(base.triggers, kv, st, automationJobQueue(base, q))
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	// Errors only on a nil Engine, which buildAutomation never produces.
-	autoEngine, cascadeRunner, err := buildAutomation(base.meta, st, autoJobs, cascadePiles(pileSvc), base.clock())
+	autoEngine, cascadeRunner, err := buildAutomation(
+		base.meta, base.triggers, st, autoJobs, cascadePiles(pileSvc), base.clock())
 	if err != nil { // coverage-ignore: defensive: see above
 		return nil, nil, nil, err
 	}
@@ -3541,6 +3569,10 @@ func (s *Services) stopBackgroundServices() {
 	if s.softDeleteStop != nil {
 		s.softDeleteStop()
 		s.softDeleteStop = nil
+	}
+	if s.recordRetentionStop != nil {
+		s.recordRetentionStop()
+		s.recordRetentionStop = nil
 	}
 	if s.versionSweep != nil {
 		s.versionSweep.Stop()

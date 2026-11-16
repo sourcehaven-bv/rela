@@ -39,6 +39,7 @@ const (
 	FileTypeMetamodel FileType = "metamodel"  // metamodel.yaml
 	FileTypeDataEntry FileType = "data-entry" // data-entry.yaml
 	FileTypeACL       FileType = "acl"        // acl.yaml
+	FileTypeFlows     FileType = "flows"      // flows.yaml
 )
 
 // Migration defines the interface for schema migrations.
@@ -107,6 +108,21 @@ func ForFileType(ft FileType) []Migration {
 type Advisory interface {
 	Migration
 	Advisory() bool
+}
+
+// ProjectLevelMigration is implemented by a migration that spans more than
+// one file, such as moving a schema block into another file. Detection works
+// per file as usual, but the per-file runner never applies it: the project
+// migration in projectsetup does.
+type ProjectLevelMigration interface {
+	Migration
+	ProjectLevel() bool
+}
+
+// IsProjectLevel reports whether m is a [ProjectLevelMigration].
+func IsProjectLevel(m Migration) bool {
+	p, ok := m.(ProjectLevelMigration)
+	return ok && p.ProjectLevel()
 }
 
 // Blocking returns the detections a loader must refuse: every one whose

@@ -92,24 +92,6 @@ func TestValidateManagedReferences(t *testing.T) {
 		m    Metamodel
 		want string
 	}{
-		{"on.entity", Metamodel{Automations: []AutomationDef{{
-			Name: "a", On: AutomationTrigger{Entity: StringOrSlice{"_flow-run"}},
-		}}}, "on.entity"},
-		{"on.relation_created", Metamodel{Automations: []AutomationDef{{
-			Name: "a", On: AutomationTrigger{RelationCreated: "_carries"},
-		}}}, "on.relation_created"},
-		{"on.relation_removed", Metamodel{Automations: []AutomationDef{{
-			Name: "a", On: AutomationTrigger{RelationRemoved: "_produced"},
-		}}}, "on.relation_removed"},
-		{"create_relation", Metamodel{Automations: []AutomationDef{{
-			Name: "a", Do: []AutomationAction{{CreateRelation: &CreateRelationAction{Relation: "_carries"}}},
-		}}}, "create_relation.relation"},
-		{"create_entity type", Metamodel{Automations: []AutomationDef{{
-			Name: "a", Do: []AutomationAction{{CreateEntity: &CreateEntityAction{Type: "_flow-run"}}},
-		}}}, "create_entity.type"},
-		{"create_entity relation", Metamodel{Automations: []AutomationDef{{
-			Name: "a", Do: []AutomationAction{{CreateEntity: &CreateEntityAction{Type: "task", Relation: "_carries"}}},
-		}}}, "create_entity.relation"},
 		{"validation entity_type", Metamodel{Validations: []ValidationRule{{
 			Name: "v", EntityType: "_flow-run",
 		}}}, "entity_type"},
@@ -124,11 +106,6 @@ func TestValidateManagedReferences(t *testing.T) {
 	}
 	t.Run("plain names pass", func(t *testing.T) {
 		m := Metamodel{
-			Automations: []AutomationDef{{
-				Name: "a",
-				On:   AutomationTrigger{Entity: StringOrSlice{"task"}, RelationCreated: "blocks"},
-				Do:   []AutomationAction{{CreateEntity: &CreateEntityAction{Type: "task", Relation: "blocks"}}},
-			}},
 			Validations: []ValidationRule{{Name: "v", EntityType: "task"}},
 		}
 		if errs := validateManagedReferences(&m); len(errs) != 0 {

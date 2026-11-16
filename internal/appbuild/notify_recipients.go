@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -20,7 +20,7 @@ const maxNotifyFanout = 1000
 type notifyRecipients struct{ st store.Store }
 
 func (n notifyRecipients) Recipients(
-	ctx context.Context, from entity.Ref, hops []automation.NotifyHop, property string,
+	ctx context.Context, from entity.Ref, hops []triggers.NotifyHop, property string,
 ) ([]string, error) {
 	ids := []string{from.ID}
 	for _, h := range hops {
@@ -59,7 +59,7 @@ func (n notifyRecipients) Recipients(
 		if err != nil {
 			return nil, fmt.Errorf("notify: reading recipients: %w", err)
 		}
-		for _, o := range automation.PropertyOwners(h.Properties[property]) {
+		for _, o := range triggers.PropertyOwners(h.Properties[property]) {
 			if !seen[o] {
 				seen[o] = true
 				owners = append(owners, o)
@@ -71,7 +71,7 @@ func (n notifyRecipients) Recipients(
 
 // holderType is the type the last hop lands on: a relation that may reach
 // several types reaches recipients only on the one the path resolved to.
-func holderType(hops []automation.NotifyHop) string {
+func holderType(hops []triggers.NotifyHop) string {
 	if len(hops) == 0 {
 		return ""
 	}

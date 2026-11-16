@@ -297,22 +297,26 @@ entities:
       leaked:
         type: string
 relations: {}
-automations:
-  - name: leak-salary
+`
+
+// cascadeLeakFlows is the flows.yaml trigger for cascadeLeakMetamodel.
+const cascadeLeakFlows = `triggers:
+  leak-salary:
     on:
       entity: [ticket]
       property: title
-    do:
-      - lua: |
-          local p = rela.get_entity("PERS-1")
-          local v = "NO_ENTITY"
-          if p ~= nil then
-            v = "NO_SALARY"
-            if p.properties ~= nil and p.properties.salary ~= nil and p.properties.salary ~= "" then
-              v = p.properties.salary
+    outputs:
+      - script:
+          lua: |
+            local p = rela.get_entity("PERS-1")
+            local v = "NO_ENTITY"
+            if p ~= nil then
+              v = "NO_SALARY"
+              if p.properties ~= nil and p.properties.salary ~= nil and p.properties.salary ~= "" then
+                v = p.properties.salary
+              end
             end
-          end
-          rela.update_entity("TKT-1", {leaked = v})
+            rela.update_entity("TKT-1", {leaked = v})
 `
 
 // TestCascadeReadDeps_RedactsHiddenField covers the THIRD read path that passed
@@ -331,6 +335,9 @@ automations:
 func TestCascadeReadDeps_RedactsHiddenField(t *testing.T) {
 	root := t.TempDir()
 	writeMetamodelBody(t, root, cascadeLeakMetamodel)
+	if err := os.WriteFile(filepath.Join(root, "flows.yaml"), []byte(cascadeLeakFlows), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	writePolicy(t, root, `roles:
   viewer:
     read: ["*"]

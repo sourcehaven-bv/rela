@@ -25,7 +25,7 @@ func expandAbstractTypes(cfg *Config, meta *metamodel.Metamodel) {
 	if meta == nil || len(metamodel.AbstractTypes(meta)) == 0 {
 		return
 	}
-	names := func(in []string) []string { return expandTypeList(meta, in) }
+	names := func(in []string) []string { return metamodel.ExpandTypeNames(meta, in) }
 	for id, a := range cfg.Actions {
 		if a.AvailableOn != nil {
 			scope := *a.AvailableOn
@@ -74,31 +74,6 @@ func expandSections(meta *metamodel.Metamodel, sections []ViewSection) []ViewSec
 		s.ChildColumns = expandTypeKeys(meta, s.ChildColumns)
 	}
 	return sections
-}
-
-// expandTypeList replaces each abstract name by its variants, dropping
-// duplicates and keeping nil as nil.
-func expandTypeList(meta *metamodel.Metamodel, in []string) []string {
-	if in == nil {
-		return nil
-	}
-	out := make([]string, 0, len(in))
-	add := func(name string) {
-		if !slices.Contains(out, name) {
-			out = append(out, name)
-		}
-	}
-	for _, name := range in {
-		variants, ok := metamodel.VariantsOf(meta, name)
-		if !ok {
-			add(name)
-			continue
-		}
-		for _, v := range variants {
-			add(v)
-		}
-	}
-	return out
 }
 
 // expandTypeKeys copies each abstract key's value to every variant without

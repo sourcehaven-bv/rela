@@ -200,6 +200,8 @@ func TestDBImportFS_SQLiteTablesAreAccounted(t *testing.T) {
 		"retired_ids":        "nothing to copy: an fs rename rewrites mentions and retires no id",
 		"flow_runs":          "copied: unfinished runs, with their headers",
 		"flow_definitions":   "copied: the definition of each copied run's version",
+		"records":            "copied: every row of a declared record type",
+		"record_groups":      "copied: the ledger group claims of the copied rows",
 	}
 	// The full-text index, FTS5's shadow tables and the backlink fan-out are
 	// filled by triggers on entities, so the entity copy fills them.

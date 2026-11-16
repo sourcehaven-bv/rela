@@ -213,6 +213,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc(batchPath, a.batch.handleV1Batch)
 	mux.HandleFunc(reconcilePath, a.reconcile.handleV1Reconcile)
 	mux.HandleFunc(leasesPath+"/", a.leases.handleV1Leases)
+	registerRecordsRoutes(mux, a)
 	mux.HandleFunc(flowsPath, a.flows.handleV1Flows)
 	mux.HandleFunc(flowsPath+"/", a.flows.handleV1Flows)
 	mux.HandleFunc(remotesPath, a.remotes.handleV1Remotes)
@@ -509,6 +510,9 @@ func scopedSortedEntitiesScoped(
 	pageIDs, ordering, pageScoped, err := resolvePageScope(ctx, a, params, typeName)
 	if err != nil {
 		return nil, nil, err
+	}
+	if query.reach != nil {
+		pageIDs, pageScoped = narrowToReach(pageIDs, pageScoped, query.reach), true
 	}
 	// The verdict switch, the world scope, the face allowlist and the query
 	// scope all live in scopedHeaders (scopedread.go) — see its doc for why

@@ -14,8 +14,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
-// withheldSchema runs one automation that reports what a script sees of
-// the host config: a secret, ai.* and mail.send.
+// withheldSchema is the probe type. withheldFlows runs one trigger on it
+// that reports what a script sees of the host config: a secret, ai.* and
+// mail.send.
 const withheldSchema = `version: "1.0"
 entities:
   probe:
@@ -27,12 +28,15 @@ entities:
       title: {type: string}
       note: {type: string}
 relations: {}
-automations:
-  - name: probe
+`
+
+const withheldFlows = `triggers:
+  probe:
     on: {entity: [probe], created: true}
-    do:
-      - lua_file: probe.lua
-        capabilities: {ai: true, mail: true, secrets: [token]}
+    outputs:
+      - script:
+          file: probe.lua
+          capabilities: {ai: true, mail: true, secrets: [token]}
 `
 
 // withheldScript is the probe. It is a file because only a script file is
@@ -59,6 +63,7 @@ func writeWithheldProject(t *testing.T) string {
 	root := t.TempDir()
 	files := map[string]string{
 		"schema.yaml":        withheldSchema,
+		"flows.yaml":         withheldFlows,
 		"scripts/probe.lua":  withheldScript,
 		".rela/secrets.yaml": "token: operator-token\n",
 		".rela/ai.yaml":      "base_url: http://127.0.0.1:9/v1\nmodel: m\n",

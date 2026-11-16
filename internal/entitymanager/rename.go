@@ -77,8 +77,8 @@ func planRename(ctx context.Context, st store.Store, oldID, newID string) (*enti
 	return &entity.RenameResult{OldID: oldID, NewID: newID, RelationsUpdated: updated}, nil
 }
 
-// idTakenByOther reports whether a live or soft-deleted entity has an id
-// equal to id under case folding, other than the family except (the entity
+// idTakenByOther reports whether id is taken under case folding by a live,
+// soft-deleted or retired id, other than the family except (the entity
 // being renamed, so abc -> ABC is allowed). It is the stores' own conflict
 // rule, so a dry run refuses the renames the store refuses. The store
 // answers it ([store.FoldedIDReader]).

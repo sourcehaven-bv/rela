@@ -19,8 +19,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// seamSchema reads the clock on every path WithClock reaches, and runs one
-// Lua automation that probes the clock, HTTP, AI, mail and write_file by
+// seamSchema reads the clock on every path WithClock reaches; seamFlows runs
+// one Lua trigger that probes the clock, HTTP, AI, mail and write_file by
 // title. The probe writes what it saw into note.
 const seamSchema = `version: "1.0"
 entities:
@@ -44,37 +44,41 @@ validations:
     enforce: write
     when_condition: "entity.start > today()"
     then: ["title=never"]
-automations:
-  - name: stamp
+`
+
+// seamFlows holds the triggers of seamSchema: one stamps the date, one is the
+// Lua probe.
+const seamFlows = `triggers:
+  stamp:
     on: {entity: [ticket], created: true}
-    do:
-      - set: stamp
-        value: "{{today}}"
-  - name: probe
+    outputs:
+      - set: {properties: {stamp: "{{today}}"}}
+  probe:
     on: {entity: [ticket], created: true}
-    do:
-      - lua: |
-          local t = entity.properties.title
-          local out = "none"
-          if t == "clock" then
-            out = rela.today
-          elseif t == "http" then
-            local _, err = http.get("http://127.0.0.1:9/")
-            out = err and err.message or "sent"
-          elseif t == "ai" then
-            local _, err = ai.chat({messages = {{role = "user", content = "hi"}}})
-            out = err and err.message or "answered"
-          elseif t == "mail-allowed" or t == "mail-blocked" then
-            local to = "ok@example.com"
-            if t == "mail-blocked" then to = "out@elsewhere.test" end
-            local _, err = mail.send{to = to, subject = "s", text = "b"}
-            out = err and err.kind or "sent"
-          elseif t == "file" then
-            rela.write_file("probe.txt", rela.today)
-            out = "written"
-          end
-          rela.update_entity(entity.id, {note = out})
-        capabilities: {http: true, ai: true, mail: true, write_file: true}
+    outputs:
+      - script:
+          lua: |
+            local t = entity.properties.title
+            local out = "none"
+            if t == "clock" then
+              out = rela.today
+            elseif t == "http" then
+              local _, err = http.get("http://127.0.0.1:9/")
+              out = err and err.message or "sent"
+            elseif t == "ai" then
+              local _, err = ai.chat({messages = {{role = "user", content = "hi"}}})
+              out = err and err.message or "answered"
+            elseif t == "mail-allowed" or t == "mail-blocked" then
+              local to = "ok@example.com"
+              if t == "mail-blocked" then to = "out@elsewhere.test" end
+              local _, err = mail.send{to = to, subject = "s", text = "b"}
+              out = err and err.kind or "sent"
+            elseif t == "file" then
+              rela.write_file("probe.txt", rela.today)
+              out = "written"
+            end
+            rela.update_entity(entity.id, {note = out})
+          capabilities: {http: true, ai: true, mail: true, write_file: true}
 `
 
 // seamPinned is the fixed time the clock tests run at: far enough from the
@@ -85,6 +89,7 @@ func writeSeamProject(t *testing.T, mailYAML string) string {
 	t.Helper()
 	root := t.TempDir()
 	writeFile(t, root, "schema.yaml", seamSchema)
+	writeFile(t, root, "flows.yaml", seamFlows)
 	writeFile(t, root, "acl.yaml", "roles:\n  editor:\n    read: [ticket]\n    create: [ticket]\n"+
 		"    update: [ticket]\nassignments:\n  alice: editor\n")
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "relations"), 0o755))

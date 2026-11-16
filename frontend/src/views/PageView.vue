@@ -15,7 +15,9 @@
  * `/p/<page>/<entity>/<tab>`. Its header shows the anchor's title and badge,
  * and each tab narrows its view to the anchor: a list or board to the rows
  * the anchor reaches over the tab's relation, a timeline to the anchor's
- * subtree. The two-segment form `/p/<page>/<entity>` opens the first tab.
+ * subtree, a document to the one rendered for the anchor, and an entity
+ * dashboard to the counts for the anchor. The two-segment form
+ * `/p/<page>/<entity>` opens the first tab.
  *
  * A page with `mode: steps` (TKT-35BY3PE) draws its tabs as numbered steps
  * with Back and Next instead of a tab bar, and shows each step's prompt.
@@ -104,6 +106,12 @@ const panelModes: Record<PageTabView, 'inline' | 'overlay'> = {
   gantt: 'overlay',
   document: 'overlay',
   dashboard: 'overlay',
+}
+
+/* The prop a `scope: root` tab passes the anchor in; a timeline takes `root`. */
+const rootProps: Partial<Record<PageTabView, string>> = {
+  document: 'entityId',
+  dashboard: 'anchor',
 }
 
 const pageConfig = computed(() => pageStore.pages[props.page])
@@ -236,7 +244,10 @@ const viewProps = computed((): Record<string, unknown> => {
       ...(anchor.value ? { ref: entityRef(anchor.value) } : {}),
     }
   } else if (anchorId.value && tab.scope === 'root') {
-    out.root = anchorId.value
+    // A root tab starts at the anchor: a timeline's root, a document's
+    // entry entity, or the entity a dashboard counts for.
+    const rootProp = rootProps[tab.view] ?? 'root'
+    out[rootProp] = anchorId.value
   }
   return out
 })

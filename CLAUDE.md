@@ -23,6 +23,15 @@ rela --project=tickets unlink TKT-XXXX affects some-concept
 - `-o json` on any command when you need to parse the output.
 - `--filter` takes a predicate expression; the older `--where key=value` is
   deprecated.
+- The checklists are created by the `triggers:` in `tickets/flows.yaml`. Use a
+  `rela` built from a recent develop: `rela --project=tickets flow validate`
+  must succeed and count the triggers.
+  An older binary either fails or ignores the file and creates no checklists.
+- Create a ticket or bug in `backlog` or `ready`, then move its status. A
+  status trigger fires on a change, not on create, so an item created straight
+  in `planning`, `analyzing` or `in-progress` gets no checklist.
+- `rela --project=tickets test` runs `tickets/tests/`, which proves every
+  trigger. Add a case named after any trigger you add.
 
 Before considering ticket work done, run the three gates and fix what they
 report:
@@ -405,6 +414,7 @@ Domain and storage:
 | `internal/jobs`          | Background-job seam: ephemeral (fs/desktop) or durable (postgres)                                |
 | `internal/piles`         | Per-user piles of entity refs, outside the graph; kvpiles (file-locked KV) or pgpiles (tenant schema) |
 | `internal/lease`         | Advisory entity leases, outside the graph; kvlease (file-locked KV) or pglease (tenant schema)  |
+| `internal/records`       | Append-only time series and ledger rows owned by entities; file, sqlite or postgres backend      |
 | `internal/principal`     | Identity attribution (`Principal{User, Tool}`) on ctx                                            |
 | `internal/validator`     | Validation engine invoked by entitymanager                                                       |
 | `internal/markdown`      | Parse/write entity and relation markdown                                                         |
@@ -413,21 +423,21 @@ Domain and storage:
 
 Subsystems (see each package's doc comment for details):
 
-| Package                | Purpose                                                                                                    |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `internal/cli`         | Cobra commands                                                                                             |
-| `internal/mcp`         | MCP server over stdio — tools, resources, prompts, watcher                                                 |
-| `internal/dataentry`   | Data entry web app (Go API + Vue 3 SPA in `frontend/`)                                                     |
-| `internal/scheduler`   | Sequential Lua script scheduler (`rela scheduler`)                                                         |
-| `internal/lua`         | Lua runtime + bindings (`ReadDeps`, `WriteDeps`)                                                           |
-| `internal/script`      | Script execution helpers that wrap `lua` with project context                                              |
-| `internal/automation`  | Automation engine invoked by `entitymanager`                                                               |
-| `internal/autocascade` | Cascade orchestration (runs automation side-effects)                                                       |
-| `internal/ai`          | OpenAI-compatible LLM provider (used from Lua)                                                             |
-| `internal/migration`   | Schema migrations for project YAML files                                                                   |
-| `internal/cmdexec`     | Safe external-command core (argv, no shell, `{in}`/`{out}`, timeout, cap) shared by attachment + transform |
-| `internal/transform`   | View-export engine: markdown `Renderer` → external-tool format conversion (the `transforms:` registry)     |
-| `internal/check`       | Prose-check engine: runs the `checkers:` registry over entity bodies, one finding shape for every tool     |
+| Package                     | Purpose                                                                                                    |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `internal/cli`              | Cobra commands                                                                                             |
+| `internal/mcp`              | MCP server over stdio — tools, resources, prompts, watcher                                                 |
+| `internal/dataentry`        | Data entry web app (Go API + Vue 3 SPA in `frontend/`)                                                     |
+| `internal/scheduler`        | Sequential Lua script scheduler (`rela scheduler`)                                                         |
+| `internal/lua`              | Lua runtime + bindings (`ReadDeps`, `WriteDeps`)                                                           |
+| `internal/script`           | Script execution helpers that wrap `lua` with project context                                              |
+| `internal/flowcfg/triggers` | flows.yaml `triggers:` engine invoked by `entitymanager`                                                   |
+| `internal/autocascade`      | Cascade orchestration (runs automation side-effects)                                                       |
+| `internal/ai`               | OpenAI-compatible LLM provider (used from Lua)                                                             |
+| `internal/migration`        | Schema migrations for project YAML files                                                                   |
+| `internal/cmdexec`          | Safe external-command core (argv, no shell, `{in}`/`{out}`, timeout, cap) shared by attachment + transform |
+| `internal/transform`        | View-export engine: markdown `Renderer` → external-tool format conversion (the `transforms:` registry)     |
+| `internal/check`            | Prose-check engine: runs the `checkers:` registry over entity bodies, one finding shape for every tool     |
 
 Other packages under `internal/` are self-descriptive — ls the tree.
 
@@ -471,6 +481,18 @@ compares the two on randomized queries for both database backends, and a name
 the builder cannot render as a literal JSON path falls back to the naive
 path. It also refuses to open on a filesystem where WAL cannot be
 enabled (iCloud/Dropbox/SMB), because SQLite is unsafe there.
+
+**Design for postgres; the fs tier only has to work.** `fsstore` is local use:
+one person, with git as the history and the backup. Networked, multi-user
+deployments run on postgres. So in design discussions, research and reviews:
+
+- Judge security, performance, scale and concurrent-write consistency against
+  postgres, not fs.
+- Do not raise fs limits (single writer, file-per-row cost, git history size,
+  no transactions) as objections to a design, or as reasons to shrink it. An fs
+  backend that is simple and correct for one local user is enough.
+- The shared code paths still apply the same ACL and validation on every
+  backend. This rule is about what drives a design, not about removing checks.
 
 The rules for touching storage, comments, versioning and data migration are in
 `.claude/rules/` (`storage.md`, `comments.md`, `versioning.md`,
@@ -759,8 +781,8 @@ backlog → ready → analyzing → in-progress → review → done
 **Agent Workflow for Tickets:**
 
 Checklists are **automatically created** when tickets/bugs transition to
-specific statuses. The `create_entity` automation with `if_exists: skip` ensures
-no duplicates.
+specific statuses. The `create` output of a flows.yaml trigger, with
+`if_exists: skip`, ensures no duplicates.
 
 1. **Start Planning** (status: `planning`)
    - Planning checklist is auto-created and linked via `has-planning`
@@ -864,14 +886,14 @@ Tickets/bugs cannot be marked `done` if they have:
 
 Minor/nit findings may remain open with warnings.
 
-### Automation Actions
+### Triggers
 
-Status transitions auto-create checklists (and similar side effects) via
-automations declared in the project's `schema.yaml`. Action types (`set`,
-`create_relation`, `create_entity` with `if_exists`) and interpolation patterns
+Status transitions auto-create checklists (and similar side effects) through
+the `triggers:` declared in the project's `flows.yaml`. Output types (`set`,
+`relate`, `create` with `if_exists`, `script`, `check`) and placeholders
 (`{{new.property}}`, `{{entity.id}}`, `{{today}}`) are documented in
-`docs/metamodel.md` and exemplified in the live `schema.yaml`. Read those rather
-than relying on a copy here — a stale copy is worse than a pointer.
+`docs/flows.md` and exemplified in the live `tickets/flows.yaml`. Read those
+rather than relying on a copy here; a stale copy is worse than a pointer.
 
 Common mistake: `{{entity.title}}` is wrong; use `{{new.title}}` for a property
 of the triggering entity.

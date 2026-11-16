@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
@@ -24,14 +24,14 @@ func TestRunner_PushesTriggerOntoPiles(t *testing.T) {
 		}
 		return nil
 	})
-	r, err := autocascade.New(autocascade.Deps{Engine: automation.NewEngine(nil), Piles: pusher})
+	r, err := autocascade.New(autocascade.Deps{Engine: triggers.NewEngine(nil), Piles: pusher})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	trigger := &entity.Entity{ID: "POL-1", Type: "policy", Face: "draft"}
 	outcome, err := r.Process(context.Background(), &stubHost{t: t}, autocascade.Request{
 		Trigger: trigger,
-		Result: &automation.Result{PilesToPush: []automation.PileToPush{
+		Result: &triggers.Result{PilesToPush: []triggers.PileToPush{
 			{Pile: "Broken", Owner: "PER-X", Create: true, AutomationName: "a"},
 			{Pile: "Inbox", Owner: "PER-1", Create: true, AutomationName: "b"},
 		}},
@@ -59,7 +59,7 @@ func TestRunner_NoPusherSkipsPiles(t *testing.T) {
 	r := newRunner(t, nil)
 	outcome, err := r.Process(context.Background(), &stubHost{t: t}, autocascade.Request{
 		Trigger: entity.New("TKT-1", "ticket"),
-		Result:  &automation.Result{PilesToPush: []automation.PileToPush{{Pile: "Inbox", AutomationName: "a"}}},
+		Result:  &triggers.Result{PilesToPush: []triggers.PileToPush{{Pile: "Inbox", AutomationName: "a"}}},
 	})
 	if err != nil {
 		t.Fatalf("Process: %v", err)
@@ -78,13 +78,13 @@ func TestRunner_FailedPushLogOmitsPileAndOwner(t *testing.T) {
 	pusher := autocascade.PilePushFunc(func(context.Context, autocascade.PileRequest) error {
 		return errors.New("push failed")
 	})
-	r, err := autocascade.New(autocascade.Deps{Engine: automation.NewEngine(nil), Piles: pusher})
+	r, err := autocascade.New(autocascade.Deps{Engine: triggers.NewEngine(nil), Piles: pusher})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	_, err = r.Process(context.Background(), &stubHost{t: t}, autocascade.Request{
 		Trigger: entity.New("TKT-1", "ticket"),
-		Result: &automation.Result{PilesToPush: []automation.PileToPush{
+		Result: &triggers.Result{PilesToPush: []triggers.PileToPush{
 			{Pile: "Secret salary 90k", Owner: "alice@example.com", AutomationName: "notify"},
 		}},
 	})

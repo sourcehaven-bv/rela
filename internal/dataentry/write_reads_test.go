@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -24,8 +25,8 @@ import (
 )
 
 // writeReadsMeta: alice's role reads tickets and features but not secrets.
-// An on-create automation links every new ticket to SEC-1, a neighbor the
-// creator cannot read.
+// writeReadsFlows adds an on-create trigger that links every new ticket to
+// SEC-1, a neighbor the creator cannot read.
 const writeReadsMeta = `
 entities:
   ticket:
@@ -48,14 +49,18 @@ relations:
   implements:
     from: [ticket]
     to: [feature, secret]
-automations:
-  - name: link-secret
+`
+
+// writeReadsFlows holds the trigger that goes with writeReadsMeta.
+const writeReadsFlows = `
+triggers:
+  link-secret:
     on:
       entity: ticket
       created: true
-    do:
-      - create_relation:
-          relation: implements
+    outputs:
+      - relate:
+          type: implements
           to: SEC-1
 `
 
@@ -136,15 +141,16 @@ func writeReadsAppPadded(
 		Assignments: map[string]string{"alice": "r"},
 	}, st)
 	sink := &audit.Memory{}
+	rules := mustParseTriggers(t, meta, writeReadsFlows)
 	opts := []appbuildtest.Option{appbuildtest.WithFS(fs, paths), appbuildtest.WithStore(st),
-		appbuildtest.WithDeclarative(d), appbuildtest.WithAudit(sink)}
+		appbuildtest.WithDeclarative(d), appbuildtest.WithAudit(sink), appbuildtest.WithTriggers(rules)}
 	if managerACL != nil {
 		// The fixture requires its ACL to be the Declarative itself, so the
 		// counting manager is wired without one. The handler still uses d
 		// for reads and affordances (app.acl, app.fieldResolver below).
 		managerACL.inner = d
 		opts = []appbuildtest.Option{appbuildtest.WithFS(fs, paths), appbuildtest.WithStore(st),
-			appbuildtest.WithACL(managerACL), appbuildtest.WithAudit(sink)}
+			appbuildtest.WithACL(managerACL), appbuildtest.WithAudit(sink), appbuildtest.WithTriggers(rules)}
 	}
 	svc := appbuildtest.New(meta, opts...)
 	app := newAppFromParts(&Config{}, nil, newFixture())
@@ -440,4 +446,14 @@ func TestUpdate_EarlyCheckHiddenRowIs404(t *testing.T) {
 			t.Errorf("hidden row was audited as a denied write: %+v", r)
 		}
 	}
+}
+
+// mustParseTriggers parses the triggers: block of a flows.yaml against meta.
+func mustParseTriggers(t *testing.T, meta *metamodel.Metamodel, flows string) []triggers.Rule {
+	t.Helper()
+	rules, err := triggers.Parse([]byte(flows), meta)
+	if err != nil {
+		t.Fatalf("parse triggers: %v", err)
+	}
+	return rules
 }

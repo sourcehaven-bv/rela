@@ -13,9 +13,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -179,7 +179,7 @@ func parseMeta(t *testing.T) *metamodel.Metamodel {
 
 // newManager builds a Manager with the supplied automations. Passing
 // nil disables the automation engine.
-func newManager(t *testing.T, automations []automation.Automation) (*entitymanager.Manager, *countingStore) {
+func newManager(t *testing.T, automations []triggers.Rule) (*entitymanager.Manager, *countingStore) {
 	t.Helper()
 	cs := &countingStore{Store: memstore.New()}
 	meta := parseMeta(t)
@@ -198,7 +198,7 @@ func newManager(t *testing.T, automations []automation.Automation) (*entitymanag
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	}
 	if automations != nil {
-		engine := automation.NewEngine(automations)
+		engine := triggers.NewEngine(automations)
 		runner, rerr := autocascade.New(autocascade.Deps{Engine: engine})
 		if rerr != nil {
 			t.Fatalf("autocascade.New: %v", rerr)
@@ -338,7 +338,7 @@ func TestNew_RejectsNilTransitions(t *testing.T) {
 
 func TestNew_RejectsAutomationsWithoutCascade(t *testing.T) {
 	t.Parallel()
-	engine := automation.NewEngine(nil)
+	engine := triggers.NewEngine(nil)
 	_, err := entitymanager.New(entitymanager.Deps{
 		Store:       memstore.New(),
 		Meta:        parseMeta(t),
@@ -503,12 +503,12 @@ func TestValidateCreate_SkipsIDGeneration(t *testing.T) {
 func TestCreate_WritesTwiceWithAutomationProperty(t *testing.T) {
 	t.Parallel()
 	const wantStatus = "proposed"
-	auto := automation.Automation{
+	auto := triggers.Rule{
 		Name: "set-status-on-create",
-		On:   automation.Trigger{Entity: []string{"requirement"}, Created: true},
-		Do:   []automation.Action{{Set: "status", Value: wantStatus}},
+		On:   triggers.Trigger{Entity: []string{"requirement"}, Created: true},
+		Do:   []triggers.Action{{Set: "status", Value: wantStatus}},
 	}
-	mgr, cs := newManager(t, []automation.Automation{auto})
+	mgr, cs := newManager(t, []triggers.Rule{auto})
 
 	e := entity.New("", "requirement")
 	e.SetString("title", "Automated")
@@ -533,12 +533,12 @@ func TestCreate_WritesTwiceWithAutomationProperty(t *testing.T) {
 
 func TestCreate_SkipAutomation(t *testing.T) {
 	t.Parallel()
-	auto := automation.Automation{
+	auto := triggers.Rule{
 		Name: "set-status",
-		On:   automation.Trigger{Entity: []string{"requirement"}, Created: true},
-		Do:   []automation.Action{{Set: "status", Value: "proposed"}},
+		On:   triggers.Trigger{Entity: []string{"requirement"}, Created: true},
+		Do:   []triggers.Action{{Set: "status", Value: "proposed"}},
 	}
-	mgr, cs := newManager(t, []automation.Automation{auto})
+	mgr, cs := newManager(t, []triggers.Rule{auto})
 
 	e := entity.New("", "requirement")
 	e.SetString("title", "No Automation")
@@ -561,19 +561,19 @@ func TestCreate_AutomationCreatesRelatedEntity(t *testing.T) {
 	t.Parallel()
 	// Single automation: when a requirement is created, create a
 	// checklist linked back to it.
-	auto := automation.Automation{
+	auto := triggers.Rule{
 		Name: "create-checklist-on-requirement",
-		On:   automation.Trigger{Entity: []string{"requirement"}, Created: true},
-		Do: []automation.Action{
+		On:   triggers.Trigger{Entity: []string{"requirement"}, Created: true},
+		Do: []triggers.Action{
 			{
-				CreateEntity: &automation.CreateEntityAction{
+				CreateEntity: &triggers.CreateEntityAction{
 					Type:     "checklist",
 					Relation: "has-checklist",
 				},
 			},
 		},
 	}
-	mgr, _ := newManager(t, []automation.Automation{auto})
+	mgr, _ := newManager(t, []triggers.Rule{auto})
 
 	e := entity.New("", "requirement")
 	e.SetString("title", "Trigger Cascade")
@@ -599,12 +599,12 @@ func TestCreate_AutomationCreatesRelatedEntity(t *testing.T) {
 func TestCreate_CascadeNoRecursion(t *testing.T) {
 	t.Parallel()
 	const onRequirementMarker = "proposed"
-	parentAuto := automation.Automation{
+	parentAuto := triggers.Rule{
 		Name: "create-checklist",
-		On:   automation.Trigger{Entity: []string{"requirement"}, Created: true},
-		Do: []automation.Action{
+		On:   triggers.Trigger{Entity: []string{"requirement"}, Created: true},
+		Do: []triggers.Action{
 			{
-				CreateEntity: &automation.CreateEntityAction{
+				CreateEntity: &triggers.CreateEntityAction{
 					Type:     "checklist",
 					Relation: "has-checklist",
 				},
@@ -613,12 +613,12 @@ func TestCreate_CascadeNoRecursion(t *testing.T) {
 	}
 	// If this automation EVER fires, the test fails — proves cascade
 	// did not invoke the engine for cascade-created entities.
-	childAuto := automation.Automation{
+	childAuto := triggers.Rule{
 		Name: "should-never-fire-on-cascade-create",
-		On:   automation.Trigger{Entity: []string{"checklist"}, Created: true},
-		Do:   []automation.Action{{Set: "status", Value: onRequirementMarker}},
+		On:   triggers.Trigger{Entity: []string{"checklist"}, Created: true},
+		Do:   []triggers.Action{{Set: "status", Value: onRequirementMarker}},
 	}
-	mgr, cs := newManager(t, []automation.Automation{parentAuto, childAuto})
+	mgr, cs := newManager(t, []triggers.Rule{parentAuto, childAuto})
 
 	// NOTE: childAuto WILL fire here, because the cascade's own
 	// Runner.Process re-evaluates the engine for cascade-created
@@ -674,12 +674,12 @@ func TestCreate_PassesManagerAsMutator(t *testing.T) {
 	t.Parallel()
 	scripts := &recordingScripts{}
 	cs := &countingStore{Store: memstore.New()}
-	auto := automation.Automation{
+	auto := triggers.Rule{
 		Name: "fires-script",
-		On:   automation.Trigger{Entity: []string{"requirement"}, Created: true},
-		Do:   []automation.Action{{Lua: "-- noop"}},
+		On:   triggers.Trigger{Entity: []string{"requirement"}, Created: true},
+		Do:   []triggers.Action{{Lua: "-- noop"}},
 	}
-	engine := automation.NewEngine([]automation.Automation{auto})
+	engine := triggers.NewEngine([]triggers.Rule{auto})
 	runner, err := autocascade.New(autocascade.Deps{Engine: engine})
 	if err != nil {
 		t.Fatalf("autocascade.New: %v", err)
@@ -723,12 +723,12 @@ func TestCreate_PassesManagerAsMutator(t *testing.T) {
 
 func TestUpdate_NotFoundReturnsTypedError(t *testing.T) {
 	t.Parallel()
-	auto := automation.Automation{
+	auto := triggers.Rule{
 		Name: "should-not-fire",
-		On:   automation.Trigger{Entity: []string{"requirement"}, Property: "title"},
-		Do:   []automation.Action{{Set: "status", Value: "accepted"}},
+		On:   triggers.Trigger{Entity: []string{"requirement"}, Property: "title"},
+		Do:   []triggers.Action{{Set: "status", Value: "accepted"}},
 	}
-	mgr, cs := newManager(t, []automation.Automation{auto})
+	mgr, cs := newManager(t, []triggers.Rule{auto})
 
 	e := entity.New("REQ-999", "requirement")
 	e.SetString("title", "Nonexistent")

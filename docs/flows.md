@@ -7,8 +7,12 @@ follows one entity, its subject, through a series of states. An
 onboarding flow, for example, follows a person from "collect documents"
 to "finished", and creates a task on the way.
 
-The file is optional. Without it, a project has no flows and nothing else
-changes. `schema.yaml` never refers to it.
+The same file declares the project's [triggers](#triggers): rules that set
+values, create entities, notify people or run scripts when an entity
+changes.
+
+The file is optional. Without it, a project has no flows and no triggers.
+`schema.yaml` never refers to it.
 
 > **Status.** This release runs flows that a person starts by hand, from
 > the web app, over MCP or with `rela flow start`. A run writes its
@@ -186,7 +190,7 @@ output may not write a computed or roll-up property.
 
 A `create` output copies what its templates read into a new entity. Who
 can read that entity follows acl.yaml for its own type, not for the
-subject. Like an automation that creates an entity, this is a choice the
+subject. Like a trigger that creates an entity, this is a choice the
 author of `flows.yaml` makes: do not copy subject values into a type that
 more people can read than the subject.
 
@@ -271,7 +275,7 @@ A job names exactly one target:
 
 | Key | Runs |
 | --- | ---- |
-| `script` | A Lua script under `scripts/`. `capabilities` grants it http, ai, mail, write_file, tokens and named secrets, as for an automation; without it the script gets none. |
+| `script` | A Lua script under `scripts/`. `capabilities` grants it http, ai, mail, write_file, tokens and named secrets, as for a trigger script; without it the script gets none. |
 | `action` | An action from `data-entry.yaml`. It must be a plain script action: rela refuses an action with `set`, `request`, `available_on`, `allow_acl_bypass` or `elevated_updates`. `run_as` must hold the action's `permission`. The action's own `capabilities` apply. |
 | `kind: webhook` | A `POST` to `url` (http or https). `flows.yaml` is usually public, so keep tokens out of the URL and sign with `secret:` instead. |
 
@@ -381,7 +385,7 @@ may not name `_flow-run`, `_carries`, `_produced`, a role starting with
 `_`, or `system:flow`, and `"*"` in a grant does not cover them. The rule
 also holds for `rela.bypass_acl(...)`, for a project without acl.yaml,
 and for `--run-as`, which refuses `system:flow`. Nobody renames or
-converts a run. Automations and validation rules do not fire on runs;
+converts a run. Triggers and validation rules do not fire on runs;
 one that names a run type or relation fails to load. `rela import` and
 data migrations refuse them too. `comments: on: ["*"]` does not make
 runs commentable. Deleting a subject removes its runs' `_carries`
@@ -610,7 +614,7 @@ a write:
 - the steps and outputs of other flows.
 
 They do not apply to the CLI, MCP over stdio, `_actions` declared by the
-operator, automations, `rela.bypass_acl`, declarative webhooks, or
+operator, triggers, `rela.bypass_acl`, declarative webhooks, or
 CalDAV clients. These act for the operator or the system and do not
 check field rules. The rules also do not cover the entity body,
 relations or deletes, and do not limit creating a new entity. The
@@ -658,6 +662,734 @@ A merge conflict on a locked property cannot be resolved through the API
 while the run holds it. Resolve it after the run moves on, or cancel the
 run.
 
+## Triggers
+
+A trigger is a rule that runs when an entity or relation changes. It can set
+a property, link or create an entity, put the entity on a pile, notify
+people, run a script, or check the entity and warn. Triggers live in
+`flows.yaml` under the top-level `triggers:` key, beside `flows:`. A file may
+hold only triggers, only flows, or both.
+
+Before this release, triggers were declared in `schema.yaml` under
+`automations:`. Other guides and the audit log still call them automations.
+See [Moving from schema.yaml automations](#moving-from-schemayaml-automations).
+
+```yaml
+triggers:
+  ticket-planning-checklist:
+    description: Create a planning checklist when a ticket enters planning
+    on:
+      entity: ticket
+      property: status
+      becomes: planning
+    outputs:
+      - create:
+          type: planning-checklist
+          properties:
+            title: "Planning: {{new.title}}"
+            status: in-progress
+          relate: { type: has-planning, from: subject }
+          if_exists: skip
+```
+
+`triggers:` maps a name to a rule. A rule has three keys:
+
+| Key | Meaning |
+| --- | ------- |
+| `description` | Optional text that says what the rule is for. |
+| `on` | When the rule fires. See [Trigger events](#trigger-events). |
+| `outputs` | What the rule does, in order. See [Trigger outputs](#trigger-outputs). |
+
+A name may not be empty and may not contain `.` or `:`. Each name is used
+once. The audit log records every write a rule makes as
+`triggered_by: automation:<name>`, and a waiting background job finds its
+rule by name. So renaming a rule changes its audit label, and a job that
+waits under the old name ends without running.
+
+### Trigger events
+
+The keys under `on:` decide which changes fire the rule.
+
+| Key | Meaning | Example |
+| --- | ------- | ------- |
+| `entity` | The entity types to watch: a name or a list. An abstract type stands for all its variants. Without it, the rule watches every type. | `[ticket, bug]` |
+| `property` | Fires on an update that changes this property. Does not fire on a create. | `status` |
+| `becomes` | With `property`: only when the new value is this value. | `in-progress` |
+| `from` | With `property`: only when the old value was this value. | `backlog` |
+| `created` | Fires when an entity is created. | `true` |
+| `updated` | Fires on an update that changes a property or the body. Does not fire on a create. Not with `property`, `becomes` or `from`. A script under it must be a background script. | `true` |
+| `deleted` | Fires once for each face a delete removes. Stands alone, and every output must be a background script. See [Running a script when an entity is deleted](#running-a-script-when-an-entity-is-deleted). | `true` |
+| `relation_created` | Fires when a relation of this type is created. | `implements` |
+| `relation_removed` | Fires when a relation of this type is removed. | `implements` |
+| `faces` | The content states to watch: a name or a list. Without it, the rule watches every state. See [Scoping a trigger to content states](#scoping-a-trigger-to-content-states). | `[published]` |
+| `copy` | The copy definitions to watch: a name or a list. See [Triggers on a copy](#triggers-on-a-copy). | `adopt` |
+| `where` | A list of filter clauses that must all hold. See [Trigger conditions](#trigger-conditions). | `["kind=enhancement"]` |
+| `when` | A predicate expression that must hold. See [Trigger conditions](#trigger-conditions). | `"entity.priority == 'high'"` |
+
+The event keys are `created`, `updated`, `property`, `deleted`,
+`relation_created`, `relation_removed` and `copy`. They are alternatives: a
+rule with `created: true` and `updated: true` fires on both. The other keys
+narrow the rule. A rule without an event key never fires.
+
+### Scoping a trigger to content states
+
+A type that declares `faces:` stores each content state as a separate row
+(see [Content states](content-states.md)). A rule fires on every one of them
+by default. A ticket in translation is still a ticket, so "when a ticket's
+status becomes done" applies to each state.
+
+This can multiply side effects. A rule that creates a checklist creates one
+for each state, which is rarely what you want. Use `faces:` when the rule is
+about particular states:
+
+```yaml
+triggers:
+  announce-publication:
+    on:
+      entity: policy
+      property: status
+      becomes: approved
+      faces: [published]
+    outputs:
+      - set: { properties: { announced_at: "{{today}}" } }
+```
+
+Name the faces as the type declares them. A face that the watched types do
+not declare is a load error, because the rule would never fire.
+
+Outputs write back to the state that fired the rule. A rule that fires on a
+translation updates that translation, not its sibling.
+
+### Triggers on a copy
+
+A [copy](metamodel.md#declaring-copies) runs the triggers of the face it
+writes. When the copy creates the face, the `created` rules run. When it
+overwrites an existing face, the `updated` rules run, with the face as it was
+before the copy as the old state.
+
+The `set` outputs are part of the copy's own write, as on an ordinary
+update. The copy stays one write with one audit record. A value a rule sets
+must make a legal state-machine move from the value the copy wrote, or the
+copy is refused and nothing is written. The other outputs, such as `create`
+and scripts, run after the copy is written. If one of them fails, the copy
+stays written and the response carries a `follow_up_failed` warning.
+
+This applies to every `created` and `updated` rule on the target type, not
+only to rules that name a copy. Use `faces:` to keep a rule off the face a
+copy writes.
+
+Use `copy:` to run a rule only when a particular copy writes the face. On its
+own, `copy:` fires on every run of the copy, also when the copy changes no
+value:
+
+```yaml
+triggers:
+  stamp-adoption:
+    on:
+      entity: policy
+      copy: adopt
+    outputs:
+      - set: { properties: { review_on: "{{today}}" } }
+      - script:
+          file: publish-site.lua
+          background: true
+```
+
+Beside `created`, `updated` or `property`, `copy:` limits that key to writes
+by the named copies. Without `copy:`, a rule fires on a copy's write like on
+any other write.
+
+rela refuses a `copy:` that names no declared copy, that writes a type or
+face which `entity:` or `faces:` leaves out, or that is combined with
+`relation_created` or `relation_removed`. Each of these would never fire.
+
+A rename re-runs a copy rule's background scripts only on a face that one of
+its copies writes.
+
+To stamp a value on every run of one copy, the copy's own `set:` key is
+simpler than a trigger.
+
+### Trigger conditions
+
+Two keys add conditions. Both are optional. When both are set, both must
+hold. rela checks them against the entity's new state, after the change. To
+test the old value of the changed property, use `from`.
+
+`where:` takes a list of filter clauses, in the same syntax as validation
+rules. All clauses must match:
+
+```yaml
+triggers:
+  mark-enhancement-for-docs:
+    on:
+      entity: ticket
+      property: status
+      becomes: review
+      where:
+        - "kind=enhancement"
+        - "priority=high"
+    outputs:
+      - set: { properties: { needs_docs: "true" } }
+```
+
+The operators are `=`, `!=`, `<`, `<=`, `>`, `>=` and `=~` (regular
+expression).
+
+`when:` takes a predicate expression, the language of the CLI's `--filter`
+flag and of ACL rules. It adds `and`, `or`, `not` and functions, such as
+date arithmetic:
+
+```yaml
+triggers:
+  flag-due-soon:
+    on:
+      entity: taak
+      created: true
+      where: ["status=todo"]
+      when: "days_between(entity.due, today()) <= 7"
+    outputs:
+      - set: { properties: { flag: due-soon } }
+```
+
+The functions include `today()`, `days_between(a, b)`,
+`date_add(d, n, unit)`, `rrule_next(rule, after)`, and the string matchers
+`match`, `regex`, `fuzzy` and `contains`. An expression can choose a value
+with `c and x or y`; see
+[Choosing a value](metamodel.md#choosing-a-value-with-andor). A date literal
+in an expression is a string: `entity.due <= '2026-08-25'`.
+
+`when:` needs `entity:`, because rela compiles the expression against the
+properties of each named type. `related(...)` (see
+[Filtering on related entities](metamodel.md#filtering-on-related-entities))
+works in `when:`, but not on a `created` or `deleted` rule. On a create the
+relations are written after the entity, and on a delete they are gone. It
+counts every related entity, whoever made the write. If rela cannot answer a
+`related(...)`, the rule does not fire.
+
+The keys are separate because the two syntaxes overlap without an error.
+The filter parser would read `days_between(entity.due, today()) <= 7` as a
+filter on a property named `days_between(entity.due, today())`. That filter
+matches nothing and reports nothing.
+
+A `where:` clause that does not parse, or a `when:` that does not compile, is
+a load error that names the rule. A dropped condition would make the rule
+fire on more entities than you wrote.
+
+#### Guard optional date properties
+
+A date function on a property the entity does not have is an evaluation
+error, not `false`. The rule does not fire, and the write result carries a
+warning:
+
+```yaml
+when: "days_between(entity.due, today()) <= 7" # skips tasks without a due date
+```
+
+A task without a due date may be the one you want to flag. Guard the
+property when it is optional:
+
+```yaml
+when: "entity.due ~= nil and days_between(entity.due, today()) <= 7"
+```
+
+Or test for the missing value:
+
+```yaml
+when: "entity.due == nil or days_between(entity.due, today()) <= 7"
+```
+
+### Trigger outputs
+
+`outputs:` is a list. Each entry holds exactly one of these keys:
+
+| Output | What it does |
+| ------ | ------------ |
+| `set` | Sets properties on the entity that fired the rule. |
+| `relate` | Creates a relation from that entity. |
+| `create` | Creates a new entity, and optionally links it. |
+| `add_to_pile` | Puts the entity on a user's pile. |
+| `notify` | Puts the entity on a declared pile of other users. |
+| `script` | Runs a Lua script, inline or in the background. |
+| `check` | Checks the entity and reports a warning or an error. |
+
+Values under `properties:` are YAML scalars. rela keeps their text, and they
+may hold [placeholders](#template-placeholders).
+
+#### set
+
+```yaml
+outputs:
+  - set:
+      properties:
+        started_at: "{{today}}"
+        reviewed: "false"
+```
+
+`set` changes the entity that fired the rule. The values are part of the
+same write, so the save stores them with one audit record. `set` needs
+`properties:`.
+
+#### relate
+
+```yaml
+outputs:
+  - relate: { type: implements, to: "{{new.parent}}" }
+```
+
+`relate` creates a relation of `type` from the entity to the id in `to`. When
+`to` is empty after the placeholders are filled in, nothing happens.
+
+#### create
+
+```yaml
+outputs:
+  - create:
+      type: checklist
+      template: "{{new.kind}}"
+      properties:
+        title: "Planning: {{new.title}}"
+        status: in-progress
+      relate: { type: has-planning, from: subject }
+      if_exists: skip
+```
+
+| Field | Required | Meaning |
+| ----- | -------- | ------- |
+| `type` | yes | The type to create. One concrete type, not an abstract one. |
+| `template` | no | A template variant: `bug` loads `templates/entities/<type>--bug.md`. It may hold placeholders. After they are filled in, it may hold only letters, digits, `-` and `_`. |
+| `properties` | no | The properties of the new entity. |
+| `relate` | no | Links the subject to the new entity. `type` names the relation. `from: subject` is required: the relation goes from the entity that fired the rule to the new one. |
+| `if_exists` | no | What to do when the subject already has that relation: `skip` (the default) creates nothing, `error` reports an error, `replace` deletes the existing entity and creates a new one. |
+
+`if_exists: skip` keeps a rule from creating a second checklist when a ticket
+enters the same state again.
+
+#### add_to_pile
+
+```yaml
+outputs:
+  - add_to_pile: { pile: Inbox, owner: "{{new.assignee}}" }
+```
+
+A pile is a personal, named stack of entities that one user collects and
+works through. This output puts the entity on a pile. The face is kept, so
+`POL-1@draft` lands on the pile as that face.
+
+| Field | Required | Meaning |
+| ----- | -------- | ------- |
+| `pile` | yes | The pile name, or the key of a declared pile. May hold placeholders. |
+| `owner` | no | The user whose pile receives the entity. May hold placeholders. |
+| `create` | no | Create the pile when it does not exist. Defaults to `true`. |
+
+- Without `owner`, the entity goes on a pile of the user who made the write.
+- `owner` must be that user or an existing entity of the ACL's
+  `user_entity_type` (a person). rela refuses anything else.
+- When `owner` is set but is empty after the placeholders are filled in, for
+  example on an unassigned ticket, nothing happens.
+- A push to another user's pile is write-only. It never reveals whether that
+  pile exists or how full it is.
+- A push to another user's pile never removes their items. On a full pile
+  the entity is not added. The push creates a pile only while that user has
+  fewer than 25 piles, so 25 of the 50 are always left for the user. Each
+  such push is logged with the pushing user, the target user and the number
+  of entities, but not the pile name.
+- The output is best-effort. A failed push is logged with the rule name and
+  never fails the write. A pile is a place for notices, not a system of
+  record.
+- On PostgreSQL the push runs outside the entity's transaction. If the write
+  then rolls back, the pile holds a reference to an entity that does not
+  exist. Readers skip it, so it is harmless.
+
+#### notify
+
+```yaml
+triggers:
+  tell-project-owner:
+    on:
+      entity: task
+      property: status
+      becomes: done
+    outputs:
+      - notify:
+          pile: inbox
+          reason: done
+          to: { via: part-of, property: owner }
+```
+
+This output puts the entity on a [declared pile](metamodel.md#declared-piles)
+of other users. The common case is to tell the owner of a project that
+someone completed one of its tasks.
+
+| Field | Required | Meaning |
+| ----- | -------- | ------- |
+| `pile` | yes | The key of a declared pile with `read_state: true`. |
+| `reason` | no | One of the pile's `reasons`. Users see its text next to the item. |
+| `to.property` | yes | The property that holds the recipients: a person id, or a list of them. |
+| `to.via` | no | A relation path from the entity to the entity that holds `to.property`: a name or a list. Without it, rela reads the property from the entity itself. |
+| `to.type` | no | Limits the last step of `to.via` to one entity type. Needs `to.via`. |
+
+A notification goes to another user, so `notify` needs person mapping:
+`user_entity_type` and `principal_property` in `acl.yaml`. Without it, rela
+sends no notification and logs a warning for each one.
+
+- `to.via` is written like a traversal in `related(...)`: relation names,
+  outgoing or by their inverse name. It needs `on.entity:`. rela resolves the
+  path for each of those types at load. A path that does not resolve, or that
+  ends on a type without `to.property`, is a load error.
+- The user who made the write is never notified. A notification is about what
+  others do.
+- Each item records who made the write and the reason. The pile shows both,
+  for example "Bob completed a task".
+- rela finds the recipients in the stored graph, whatever the writing user
+  may read. When a recipient opens the pile, each item is checked against
+  that recipient's own access.
+- A path reaches at most 1000 entities. rela skips further recipients.
+- Like `add_to_pile`, the output is best-effort. A failure is logged with the
+  rule name and the entity, never the recipient, and the write succeeds.
+
+#### script
+
+```yaml
+outputs:
+  - script:
+      file: notify.lua
+```
+
+`script` runs Lua. It holds exactly one of `lua:` (inline code) and `file:`
+(a path under `scripts/`). The script gets the saved entity as `entity` and
+its previous state as `old_entity`. It runs in the request that saved the
+entity, as the user who saved it. In inline code, rela fills in only the safe
+placeholders, such as `{{today}}` and `{{user.name}}`. Entity values reach
+the script as `entity`, never as source code.
+
+| Field | Meaning |
+| ----- | ------- |
+| `lua` | Inline Lua code. |
+| `file` | A script file under `scripts/`. |
+| `capabilities` | What the script may reach: `http`, `ai`, `mail`, `write_file`, `secrets` and, for a background script, `tokens`. Without it the script gets none. See the [Lua scripting guide](lua-scripting.md). |
+| `allow_acl_bypass` | `read`, `write` or `read+write`: unlocks `rela.bypass_acl`. Not on a background script. See [Elevated access](lua-scripting.md#elevated-access--relabypass_acl). |
+| `background` | `true` runs the file as a background job. Needs `file:`. See [Background scripts](#background-scripts). |
+| `run_as` | The identity a background job runs as. The default is `system:automation`. |
+| `retry` | For a background job: `never`, `bounded` (the default) or `persistent`. |
+
+#### check
+
+```yaml
+outputs:
+  - check:
+      where: "estimate>0"
+      severity: warning
+      message: "{{entity.id}} has no estimate"
+```
+
+`check` tests the entity against the filter clause in `where`. When the
+entity does not match, rela adds `message` to the write result: as a warning,
+or as an error with `severity: error`. The default is `warning`. A check
+reports; it does not refuse or undo the write. `message` is required and may
+hold placeholders. A clause that does not parse becomes a warning when the
+rule fires. To refuse a write, use a validation rule with `enforce: write`
+(see [Metamodel](metamodel.md#enforcing-a-rule-on-write-enforce-write)).
+
+### Background scripts
+
+`background: true` runs a script file as a background job, so a save does not
+wait on it. Use it for a script that calls an outside system.
+
+```yaml
+triggers:
+  push-to-tracker:
+    on: { entity: ticket, created: true, updated: true }
+    outputs:
+      - script:
+          file: tracker/push.lua
+          background: true
+          run_as: tracker-sync      # default: system:automation
+          retry: bounded            # never | bounded (default) | persistent
+          capabilities: { http: true, secrets: [tracker_token] }
+```
+
+A background script differs from an inline one in these ways:
+
+- **Identity.** The job runs as `run_as`, or as `system:automation`, never as
+  the user who saved. Reads, writes and transition guards are checked against
+  that identity's grants in `acl.yaml`, field grants included. Give it a role
+  there. Without one, the job cannot read the entity and ends with a warning
+  in the server log. `run_as` lets any user who can save a matching entity
+  start a script with that identity's access. Treat it as an elevation you
+  grant, and treat the entity's values as untrusted input. `run_as` may not
+  name another `system:` identity. The audit log records the job as
+  `automation-job:<name>;by=<user who saved>`.
+- **What the script sees.** The job reads the entity again when it runs, so
+  `entity` is the current state, not the saved one, and `old_entity` is nil.
+  rela does not check `where:` and `when:` again.
+- **Coalescing.** Saves of one entity while its job waits make one run. A
+  save while the job runs makes it run once more afterwards. A save that
+  arrives just as a job finishes is queued again shortly after. A job stops
+  rerunning after 5 runs and fails, so `retry:` decides whether it runs
+  again.
+- **Renames.** A job that waits for the old id finds nothing. So a rename
+  checks the rule again for the new id, and starts its background scripts if
+  it matches. Only background scripts run on a rename.
+- **Failures.** A script error is retried as `retry:` says. A job can run a
+  script more than once, so write it so that a second run does no harm. A
+  job whose output was removed from `flows.yaml`, or whose entity was
+  deleted, ends without running.
+- **Loops.** The job's own writes do not start it again for the same entity.
+  A chain of background jobs that start each other stops after 8 steps.
+- **Where it runs.** `rela-server` and the desktop app run jobs on the job
+  queue. Every other command, including `rela mcp` and `rela scheduler`, runs
+  the script in the foreground, right after the save, because a one-shot
+  command would exit before the queue ran the job. There `retry:` does not
+  apply, and a failed script makes the save report only that the background
+  script failed; the error goes to the log. On the file and SQLite backends
+  the queue is in memory, so jobs that still wait when the process stops are
+  lost.
+- **State.** In queue mode each (rule, script, entity) keeps two small
+  records in the project's state store (`.rela/automation-jobs/` on the file
+  backend). They are not removed when the entity is deleted.
+
+One rule may run a given file in the background only once, because a waiting
+job finds its output by rule name and file.
+
+### Running a script when an entity is deleted
+
+`deleted: true` starts background scripts when an entity is deleted. Use it
+to tell an outside system, such as a published site, that a record is gone.
+
+```yaml
+triggers:
+  unpublish-page:
+    on: { entity: pagina, deleted: true, faces: [published] }
+    outputs:
+      - script:
+          file: site/unpublish.lua
+          background: true
+          capabilities: { http: true }
+```
+
+- **When it fires.** Once for each face the delete removed, after the delete
+  is saved. A delete from the web app, the CLI, MCP, a script or another rule
+  fires it. So does a soft delete, the kind the web app can undo. An owned
+  entity deleted with its owner fires its own rules. Purging a soft-deleted
+  entity later does not fire again, and neither does an undo or a restore.
+  If the face is restored, or created again under the same id, before the
+  job runs, the job does nothing.
+- **What the script sees.** `entity` is the face as it was just before the
+  delete. `where:` and `when:` decide on that state too. `when:` may not use
+  `related(...)`, because the relations are deleted with the entity.
+- **Identity.** The job runs as `run_as` or `system:automation`, as other
+  background scripts do. It sees the deleted face only as far as that
+  identity may read it. Fields its `visible:` grants hide are removed. A read
+  grant that depends on the stored entity, such as a role given through a
+  relation, cannot be checked once the entity is gone, so the job does not
+  run. Give the job's identity a plain read grant on the type.
+- **No coalescing.** Each delete is its own job. Deleting, recreating and
+  deleting an entity again runs the script twice.
+- **Retention of the deleted state.** In queue mode the job stores the
+  deleted face encrypted, with hidden fields included. The key that decrypts
+  it is a separate record in the state store, never in the job table. The
+  job erases the key when it ends: after it succeeds, after it decides not
+  to run, and after its last allowed attempt fails. A failure that will be
+  retried keeps the key for the retry. Purging the entity makes the state of
+  all its waiting jobs unreadable, and those jobs end without running. The
+  purge of a soft-deleted entity does this, and so does
+  `rela history-purge --commit`. A job the queue itself gives up on, for
+  example one past the time limit of `retry: persistent`, keeps its key. On
+  PostgreSQL the queue deletes finished and failed job rows after 24 hours,
+  and the encrypted copy goes with them. On the file and SQLite backends the
+  queue is in memory, so the encrypted copy is gone when the process stops.
+  In foreground mode the state is not stored at all. This erases the state
+  from the live database. Backups taken while a job waited keep both the key
+  and the encrypted copy.
+- **Allowed keys.** `deleted` cannot be combined with `created`, `updated`,
+  `property`, `becomes`, `from`, `relation_created` or `relation_removed`.
+  Every output must be a background script, and `check` is refused. The
+  delete has already happened when the rule runs, so there is no save to
+  change or warn about.
+
+### Template placeholders
+
+Output values may hold placeholders in `{{...}}`. rela fills them in when the
+rule fires.
+
+| Placeholder | Value |
+| ----------- | ----- |
+| `{{new.<property>}}` | A property of the entity after the change, such as `{{new.title}}`. |
+| `{{old.<property>}}` | A property of the entity before the change. |
+| `{{entity.id}}` | The entity's id. |
+| `{{entity.type}}` | The entity's type. |
+| `{{user.name}}` | The git `user.name` of the machine that runs rela, or `$USER` without one. |
+| `{{user.email}}` | The git `user.email` of the machine that runs rela. |
+| `{{today}}` | The current date, such as `2026-11-15`. |
+| `{{now}}` | The current time in ISO 8601 format. |
+
+Placeholders work in `set` values, `relate.to`, `create.template`,
+`create.properties`, `add_to_pile.pile`, `add_to_pile.owner` and
+`check.message`. Any other placeholder is a load error. Earlier releases
+wrote an unknown placeholder into the data as literal text. The state outputs
+of a flow use `{{subject.<property>}}`; a trigger does not.
+
+### Order of evaluation
+
+rela checks the rules in the order they appear in `flows.yaml`. Each rule
+that fires adds its outputs in the order they are written.
+
+The outputs do not all write at the same moment:
+
+- `set` values are part of the save itself. When two rules set the same
+  property, the later rule wins.
+- Inline scripts, relations, pile pushes and notifications run after the
+  save.
+- New entities are created last. A created entity fires its own `created`
+  rules. A chain of such writes stops after 50 steps with a warning.
+- `check` outputs are judged after the other outputs of the rule.
+
+If a `create` fails, for example because its template name is not allowed,
+the write result carries an error. The other outputs still run.
+
+### Load checks
+
+rela checks the triggers when it loads the project, in `rela validate`, and
+in the review step of the [Configure space](data-entry.md#configure-space).
+A rule with a problem stops the load, and the error names the rule. rela
+refuses:
+
+- a name that is empty, holds `.` or `:`, or is used twice;
+- a rule without an event key under `on:`, and a rule with neither outputs
+  nor checks;
+- YAML anchors and aliases anywhere under `triggers:`;
+- an unknown key, or an output entry with more or fewer than one key;
+- a `where:` clause that does not parse, or a `when:` that does not compile;
+- a `when:` without `entity:`, and `related(...)` on a `created` or
+  `deleted` rule;
+- a face or copy the rule can never match;
+- an entity type or relation that rela manages itself (names that start with
+  `_`), and an abstract type as `create.type`;
+- `updated` together with `property`, `becomes` or `from`, and an inline
+  script under `updated`;
+- `deleted` together with another event key, a `check` under it, or an
+  output that is not a background script;
+- `background: true` without `file:` or with `allow_acl_bypass`; `run_as`,
+  `retry` or `capabilities.tokens` without `background: true`; a `run_as`
+  that names another `system:` identity; one file run twice in the
+  background by one rule;
+- `script` without exactly one of `lua:` and `file:`, `set` without
+  `properties:`, `create` without `type:`, `create.relate.from` other than
+  `subject`, an unknown `if_exists`, and `check` without `message:` or with a
+  `severity` other than `warning` or `error`;
+- `add_to_pile` without `pile:`, and a `notify` whose pile is not declared,
+  lacks `read_state: true` or does not know the `reason`, or whose path does
+  not resolve;
+- an unknown placeholder, including one with spaces inside the braces;
+- a `set` or `create` that writes a file property or an external ref, and a
+  `property` key that names an external ref. Only the attachments API changes
+  a file, and only a script changes a ref.
+
+A schema change can break a rule, for example by removing a property it
+names. `rela validate` and the Configure review catch this before the change
+is saved, and `rela flow validate` checks them too. `rela mcp` reloads `flows.yaml` when the file changes. If the new
+file does not load, it keeps the previous configuration and logs a warning.
+
+### Examples
+
+Create a checklist each time a ticket moves to a new stage:
+
+```yaml
+triggers:
+  ticket-planning-checklist:
+    on: { entity: ticket, property: status, becomes: planning }
+    outputs:
+      - create:
+          type: planning-checklist
+          properties: { title: "Planning: {{new.title}}", status: in-progress }
+          relate: { type: has-planning, from: subject }
+          if_exists: skip
+  ticket-review-checklist:
+    on: { entity: [ticket, bug], property: status, becomes: review }
+    outputs:
+      - create:
+          type: review-checklist
+          properties: { title: "Review: {{new.title}}", status: in-progress }
+          relate: { type: has-review, from: subject }
+          if_exists: skip
+```
+
+Record when work started:
+
+```yaml
+triggers:
+  track-started:
+    on: { entity: [ticket, bug], property: status, becomes: in-progress }
+    outputs:
+      - set:
+          properties:
+            started_at: "{{today}}"
+            started_by: "{{user.name}}"
+```
+
+Name each rule after what it does, keep each rule to one task, and add a
+`description:`.
+
+rela's own issue tracker runs its ticket workflow this way. Its triggers are
+in `tickets/flows.yaml` in the rela repository, and
+`tickets/tests/checklist-workflow.test.lua` tests each of them with
+`rela test`.
+
+A property trigger fires when the value changes, not when an entity is
+created with that value. A ticket created with `status: planning` gets no
+planning checklist. Create it in an earlier status and then move it.
+
+### Moving from schema.yaml automations
+
+rela no longer reads `automations:` from `schema.yaml`. A schema that still
+declares them, in the root file or in an included file, does not load:
+
+```text
+automations: are declared in flows.yaml under triggers: since this release
+(TKT-GWOBH2U); run 'rela migrate' to move them
+```
+
+Run `rela migrate` (short for `rela migrate config`) to move them. It adds
+each automation to `flows.yaml` under `triggers:` and creates the file when
+needed. It keeps comments and removes the automations from the schema files.
+`rela migrate --check` reports a pending move without writing.
+
+| `automations:` entry | `triggers:` rule |
+| -------------------- | ---------------- |
+| `name: x` | The key `x`, byte for byte. An entry without a name gets `automation-<n>`, with `n` its position. |
+| `on.when: [...]` | `on.where: [...]` |
+| `on.condition: x` | `on.when: x` |
+| Other `on:` keys | The same key under `on:` |
+| `do:` | `outputs:`. A `do:` item with several keys becomes several outputs, in the order `set`, `create_relation`, `add_to_pile`, `notify`, `create_entity`, `lua`, `lua_file`. |
+| `set: p` and `value: v` | `set: { properties: { p: v } }` |
+| `create_relation: { relation: r, to: t }` | `relate: { type: r, to: t }` |
+| `create_entity: { ..., relation: r }` | `create: { ..., relate: { type: r, from: subject } }` |
+| `lua: src` | `script: { lua: src }`, with the same `capabilities` and `allow_acl_bypass` |
+| `lua_file: f` | `script: { file: f }`, with the same `capabilities`, `allow_acl_bypass`, `background`, `run_as` and `retry` |
+| `add_to_pile`, `notify` | Unchanged |
+| `validate: [{ check, severity, message }]` | A `check: { where: <check>, severity, message }` output at the end |
+
+Because names are kept, audit records and waiting background jobs still
+match their rule.
+
+The move stops when one of the cases below applies. It then writes nothing
+to `flows.yaml` and cuts nothing from the schema. Syntax migrations that
+the same run applies to `schema.yaml` and to included files that declare
+automations may already be written. The move stops when:
+
+- an entry has a key the old loader did not know;
+- an entry uses a YAML anchor or alias;
+- one `do:` item holds `create_entity` together with `lua` or `lua_file`
+  (split it into two items first);
+- a name holds `.` or `:`, or is used twice;
+- the automations are in an included file outside the project directory, or
+  in an included file with `namespace:`;
+- `flows.yaml` already has a trigger of the same name with different content.
+
+The error names the file, the automation and the key.
+
+The Configure space no longer edits these rules. Edit `flows.yaml` directly.
+
 ## Checking the file
 
 ```bash
@@ -669,7 +1401,8 @@ rela flow show onboarding
 `rela flow validate` loads `flows.yaml` against the schema and acl.yaml
 and prints each problem with its key, such as
 `flows.onboarding.states.review.on.done.to: names "finish", which states
-does not declare`. `rela validate` runs the same check. `rela flow show`
+does not declare`. `rela validate` runs the same check, and also checks the
+[triggers](#load-checks). `rela flow show`
 lists the flows, and with a name prints that flow as a Mermaid state
 diagram.
 

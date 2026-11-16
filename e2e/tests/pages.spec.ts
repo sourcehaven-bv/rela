@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { test as base, expect, SEED } from "./fixtures";
-import { KanbanPage, ListPage, PageTabsPage } from "../pages";
+import { DashboardPage, DocumentPage, KanbanPage, ListPage, PageTabsPage } from "../pages";
 
 /**
  * Pages (TKT-ITQ0HL): several views of one subject as tabs, addressed as
@@ -67,6 +67,28 @@ pages:
         label: "Triage"
         list: bugs_triage
         permission: work:triage
+  feature-review:
+    label: "Feature review"
+    entity_type: feature
+    mode: steps
+    tabs:
+      - id: report
+        label: "Report"
+        document: feature_readonly
+        scope: root
+      - id: stand
+        label: "Stand"
+        dashboard: feature-stand
+        scope: root
+dashboards:
+  feature-stand:
+    title: "Feature stand"
+    entity_type: feature
+    cards:
+      - title: "Tasks"
+        list: tasks
+        display: count
+        scope: { relation: implements, direction: incoming }
 `;
 
 const PAGE_NAV = `navigation:
@@ -264,5 +286,26 @@ test.describe("Pages", () => {
     await pages.followWalkMissingRow();
     await expect(appPage).toHaveURL(/\?item=FEAT-001$/);
     await pages.expectWalkPosition("1 of 4");
+  });
+
+  test("an entity page renders a document and counts a dashboard for its entity", async ({ appPage, serverUrl }) => {
+    const pages = new PageTabsPage(appPage);
+    const doc = new DocumentPage(appPage);
+    const dashboard = new DashboardPage(appPage);
+
+    await appPage.goto(`${serverUrl}/p/feature-review/${SEED.features.authentication}/report`);
+    await pages.expectCurrentStep("Report");
+    await expect(doc.body).toContainText(SEED.features.authentication);
+
+    await pages.clickStepButton("Next");
+    await expect(appPage).toHaveURL(new RegExp(`/p/feature-review/${SEED.features.authentication}/stand$`));
+    // TASK-001 implements FEAT-001; the other tasks implement nothing.
+    expect(await dashboard.getStatValue("Tasks")).toBe("1");
+    await dashboard.expectNoValidationCard();
+    await dashboard.expectNoCardLink("Tasks");
+
+    // Another feature with no tasks counts zero on the same step.
+    await appPage.goto(`${serverUrl}/p/feature-review/${SEED.features.exportData}/stand`);
+    expect(await dashboard.getStatValue("Tasks")).toBe("0");
   });
 });

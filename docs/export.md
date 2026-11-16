@@ -141,6 +141,10 @@ Output structure:
 }
 ```
 
+`--all` also writes a `records` list with every stored record row, including
+rows of a type the schema no longer declares, ordered by type, owner and time.
+The list is left out when there are no rows.
+
 Note: `--all` with `--format csv` is not supported (use JSON or YAML).
 
 ## Practical Examples

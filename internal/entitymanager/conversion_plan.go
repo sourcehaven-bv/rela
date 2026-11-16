@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -418,7 +418,7 @@ func conversionContentValue(template string, source *entity.Entity, now func() t
 	if match := singleFieldRef.FindStringSubmatch(template); len(match) > 1 && match[1] == "content" {
 		return source.Content
 	}
-	return automation.Interpolate(template, automation.TemplateVars{Now: now}, source, nil)
+	return triggers.Interpolate(template, triggers.TemplateVars{Now: now}, source, nil)
 }
 
 var conversionSourceRef = regexp.MustCompile(`\{\{\s*source\.([A-Za-z0-9_-]+)\s*\}\}`)

@@ -22,19 +22,23 @@
 // # Where it is stored
 //
 // One JSON document in the state KV, rewritten under a lock. That is runtime
-// state outside the graph: no entity write path reaches it, so a user who may
-// edit a person entity cannot grant that person a role. On postgres the KV is
-// the tenant schema's `state_kv` table and the lock is a schema-scoped
-// advisory lock, so several rela-server processes share one record set and
-// never lose each other's writes. On the single-process tiers both are local.
+// state outside the graph: no entity write path can store roles in it, so a
+// user who may edit a person entity cannot grant that person a role. A delete
+// or rename of that entity erases its records (see [Store.ForgetEntity]). On
+// postgres the KV is the tenant schema's `state_kv` table and the lock is a
+// schema-scoped advisory lock, so several rela-server processes share one
+// record set and never lose each other's writes. On the single-process tiers
+// both are local.
 //
 // # Who may write
 //
-// Only the webhook receiver, after it verified the webhook signature, for the
-// subject the webhook names. This package does not check that; it trusts its
-// caller the way internal/acl trusts a Principal. The receiver holds the
-// subject ([Store.Hold]) from before its action fetches the roles until it
-// stored them, so an older fetch cannot overwrite a newer one.
+// Only the webhook receiver stores roles, after it verified the webhook
+// signature, for the subject the webhook names. A delete or rename of the user
+// entity, or `rela acl forget-idp-roles`, can only erase them. This package
+// does not check who calls it; it trusts its caller the way internal/acl
+// trusts a Principal. The receiver holds the subject ([Store.Hold]) from
+// before its action fetches the roles until it stored them, so an older fetch
+// cannot overwrite a newer one.
 package idproles
 
 import (

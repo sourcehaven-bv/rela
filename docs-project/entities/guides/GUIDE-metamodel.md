@@ -85,8 +85,9 @@ project root (where `schema.yaml` lives).
 ### Included File Format
 
 Each included file is a partial metamodel. It can contain any combination of
-`types:`, `entities:`, `relations:`, `validations:` and `automations:`, and an
-optional `namespace:`. It **must not** contain `version:`, `iri:` or
+`types:`, `entities:`, `relations:` and `validations:`, and an optional
+`namespace:`. An included file may not declare `automations:`; rules that run
+on a change belong in [`flows.yaml`](flows.md#triggers). It **must not** contain `version:`, `iri:` or
 `description:`. Those are deployment-wide, and allowed only in the root
 `schema.yaml`.
 
@@ -200,7 +201,7 @@ entities:
 
 Every name the file declares gets the namespace and a dot as a prefix: the
 type above is `isms.control`. This applies to entity types, custom types,
-relations, inverse relations, validations and automations.
+relations, inverse relations and validations.
 
 - The dot is reserved as the namespace separator. A name you declare cannot
   contain one.
@@ -270,9 +271,10 @@ of its variants. This holds in every configuration file:
 
 | File              | Settings                                                                                                                                                     |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `schema.yaml`     | relation `from:` and `to:`, validation `entity_type:`, automation `on.entity:`, `comments.on:`, world overrides                                               |
+| `schema.yaml`     | relation `from:` and `to:`, validation `entity_type:`, `comments.on:`, world overrides                                                                         |
 | `acl.yaml`        | a role's `create:`, `update:`, `delete:`, `convert:`, `rename:`, `read:`, `fields:`, `visible:`, `options:` and `relations:`; ceiling lists, `visible:` and `redact:` |
 | `data-entry.yaml` | `available_on.entity_types` on actions and commands, a space's `create:`, pile toggles, `entity_views:`, and a section's per-type field and column maps   |
+| `flows.yaml`      | a trigger's `on.entity:`                                                                                                                                       |
 
 When a type-keyed setting names both the abstract type and one of its
 variants, the variant's entry wins. This also holds for a role's `fields:`,
@@ -290,7 +292,7 @@ A grant on the abstract type covers every variant, including one that a
 later include adds. Review `acl.yaml` when you add a variant.
 
 A setting that names a single type, such as a form's or a list's
-`entity_type`, a `create_entity` action or a conversion's `from:`, cannot
+`entity_type`, a trigger's `create.type` or a conversion's `from:`, cannot
 name an abstract type. Loading fails, and the error lists the variants.
 
 At runtime only the variants exist. Asking for the abstract type, for
@@ -913,11 +915,11 @@ Rules:
   `http` or `https`.
 - An empty object `{}` is refused. To clear a ref, remove the property.
 - An external ref cannot be `list`, `unique`, `required`, `computed`, have a
-  `default`, `values` or `format`, be the type's display property, trigger
-  an automation on change, or appear on a relation. An automation whose
-  `set:` or `create_entity` properties name a ref is refused at load.
+  `default`, `values` or `format`, be the type's display property, be a
+  trigger's `on.property`, or appear on a relation. A trigger whose `set` or
+  `create` properties name a ref is refused at load.
 - `sync: true` is refused on a type with `faces:`.
-- Only operator-authored Lua scripts (actions, schedules, automation
+- Only operator-authored Lua scripts (actions, schedules, trigger
   scripts and `rela script`), data migrations and imports write a ref. MCP
   `lua_eval` and `lua_run` cannot. The data-entry app shows it as a link and
   never edits it, a restore of a deleted entity from the data-entry app
@@ -959,7 +961,7 @@ store/relations, network or filesystem access. Supported value constructs are
 scalar literals, `entity.<property>` reads, checked integer arithmetic, string
 concatenation (`..`), value selection with `and`/`or` (below), and the pure
 expression functions documented under
-[automation conditions](#expression-conditions-condition), including `today`, `date_add`,
+[trigger conditions](flows.md#trigger-conditions), including `today`, `date_add`,
 `days_between`, and `rrule_next`.
 
 #### Choosing a value with `and`/`or`
@@ -1124,7 +1126,7 @@ relation, or has a step that does not start where the previous one ended.
 | When | On every write, then stored | On every read, never stored |
 | Access | One value for every reader | Per reader: it counts only what the reader may read |
 | Filter, sort, group | Yes, like any stored property | In a list, yes; on a board, no |
-| Conditions and automations | Yes | No: a condition that names one fails to load |
+| Conditions and triggers | Yes | No: a condition that names one fails to load |
 
 **Access.** A related entity the reader cannot read is never counted. A related
 entity whose `where`, `latest_by`, `min`, `max` or `sum` property is hidden from
@@ -1695,8 +1697,8 @@ The data-entry app shows and edits relation order on both sides. See
 An entity type can declare **query scopes**: named boolean expressions that
 decide which rows a screen shows. A list or kanban selects one by name, and a
 scope called `default` applies to every screen of that type unless the view
-names another. The expression language is the same one
-[`condition:`](#expression-conditions-condition) uses.
+names another. The expression language is the same one a trigger's
+[`when:`](flows.md#trigger-conditions) uses.
 
 ```yaml
 entities:
@@ -1878,7 +1880,7 @@ entities count depends on the surface:
 | Validation `when_condition:` / `then_condition:` in the web app and over MCP | Those the caller may see |
 | MCP `list_entities` `filter` | Those the caller may see |
 | Validation in `rela validate` and `rela analyze validations` | All |
-| Automation `on.condition:` | All |
+| Trigger `on.when:` in `flows.yaml` | All |
 | State-machine transition `when:` | All |
 | ACL `when:` in `acl.yaml` | All |
 
@@ -1893,8 +1895,8 @@ evaluates it.
 
 A surface refuses rather than guesses when it cannot answer a traversal:
 
-- An automation's condition, a transition's `when:` and an ACL grant fail
-  closed. The automation does not run, the transition is refused, and the
+- A trigger's `when:`, a transition's `when:` and an ACL grant fail
+  closed. The trigger does not fire, the transition is refused, and the
   grant does not apply.
 - A validation rule reports a load error for the rule and checks no entity
   against it.
@@ -2388,7 +2390,7 @@ A conversion has these limits and effects:
   preview or the error. Each removed or created relation gets an audit record.
 - **Validation first.** Field validation, `unique:` properties and relation
   cardinality are checked before the first write.
-- **No target automations.** Automations on the destination type do not run
+- **No target triggers.** Triggers on the destination type do not fire
   for a conversion. The conversion writes exactly the mapped values.
 - **Atomicity.** On postgres and SQLite the conversion is one transaction, and
   a failure rolls everything back. The filesystem and memory stores cannot roll
@@ -2478,8 +2480,8 @@ A task-item conversion has these checks and effects:
 - **Validation first.** Field validation, `unique:` properties and relation
   cardinality are checked before the first write. On every backend, a failed
   check leaves nothing behind.
-- **Automations run.** Unlike a type conversion, this is an ordinary create,
-  so the target type's `on: create` automations run.
+- **Triggers fire.** Unlike a type conversion, this is an ordinary create,
+  so the target type's `created` triggers fire.
 - **The body is the editor's job.** The server creates the entity and the
   relation in one request and does not change the source body. The editor
   rewrites the item, and the body saves like any other edit. If the item
@@ -3429,13 +3431,12 @@ a `rechtsgrond` is refused. Setting both in one write is accepted.
 
 The rule is checked against the state the write stores:
 
-- An update or patch is checked after its on-update automations ran.
+- An update or patch is checked after its update triggers ran.
 - A create is checked as the caller sent it, with template defaults applied,
-  and again when its on-create automations write. The create is stored before
-  those automations run, so if an automation breaks the rule, the create
-  reports that the entity was created but the rest of the create failed. The
-  entity stays stored without the automation's values; do not retry the
-  create.
+  and again when its `created` triggers write. The create is stored before
+  those triggers run, so if a trigger breaks the rule, the create reports
+  that the entity was created but the rest of the create failed. The entity
+  stays stored without the trigger's values; do not retry the create.
 - Copies, conversions and restores are checked on the row they write.
 
 The refusal lists the rule in `errors[]` with code `rule` and an empty JSON
@@ -3504,9 +3505,12 @@ uses a content-scoped or symmetric relation, or is on a type with `faces:`.
 A relation rule refuses a write only when the write turns a satisfied rule
 into a broken one. This has three effects:
 
-- A create is never refused. A new entity has no relations yet, and the client
-  links them after the create. Create the risk, link its plan, then set the
-  status; or create it in `in_behandeling` and link the plan next.
+- A create of the entity itself is never refused. A new entity has no
+  relations yet, and the client links them after the create. Create the risk,
+  link its plan, then set the status; or create it in `in_behandeling` and link
+  the plan next. The `relations` of a data-entry POST are written after the
+  create and checked as relation creates: a refused edge returns a 422, and
+  the new entity stays stored without that edge.
 - A row that already breaks the rule stays editable. `rela analyze validations`
   finds it.
 - Leaving the rule's `when` is always allowed.
@@ -3530,15 +3534,15 @@ checked together, so removing two of three plans is judged once.
 
 These writes are not checked:
 
-- Creates, copies, conversions and restores.
-- The relations a batch or a create with `relations` writes, also when both
-  ends already existed.
+- Entity creates, copies, conversions and restores.
+- The relations a batch or a linked create writes (flow and realtime outputs,
+  conversions), also when both ends already existed.
 - Entity deletes, including the relations a cascade delete removes. A rule on a
   neighbor the caller cannot see would otherwise refuse the delete, and so
   reveal the neighbor.
-- Relations written by automations. They are written after the update that
-  triggers them, so an update is judged on the relations it finds, and an
-  automation that would link the required relation cannot satisfy the rule.
+- Relations written by triggers. They are written after the update that
+  fires them, so an update is judged on the relations it finds, and a
+  trigger that would link the required relation cannot satisfy the rule.
 
 The relations are counted without access control: a relation to an entity the
 caller cannot read counts. So the verdict is the same for every writer, and the
@@ -3551,8 +3555,9 @@ an entity the caller cannot see. `docs/acl-security.md` records this channel.
 Each check reads the relations of the ends once and the type of each far end
 once, in the transaction of the write.
 
-Writes that bypass the write path do not check the rule: `rela import` and data
-migrations write to the store directly.
+Writes that bypass the write path do not check the rule: `rela import` without
+`--mapping` and data migrations write to the store directly. `rela import
+--mapping` writes through the entity manager, so it checks the rule.
 
 The deployment's validation mode is a separate setting: it decides whether a
 missing required property or an invalid value refuses a write (see "Validation
@@ -3591,7 +3596,7 @@ piles:
       assigned: assigned you
 ```
 
-The key (`favorites`, `inbox`) names the pile in `notify` actions, `pile:`
+The key (`favorites`, `inbox`) names the pile in trigger `notify` outputs, `pile:`
 navigation entries and toggles. A key starts with a lowercase letter and holds
 lowercase letters, digits, `-` and `_`.
 
@@ -3604,7 +3609,7 @@ lowercase letters, digits, `-` and `_`.
 | `auto_read`        | no       | `off` (default) or `on_open`: an item becomes read when its owner opens the entity. Needs `read_state`. |
 | `clear_read_after` | no       | Drop an item this long after it was read. Needs `read_state`.                                    |
 | `expire_after`     | no       | Drop an item this long after it was added, read or not.                                          |
-| `reasons`          | no       | Reason keys a `notify` action may record, each with the text users see.                          |
+| `reasons`          | no       | Reason keys a `notify` output may record, each with the text users see.                          |
 
 A duration is a Go duration such as `12h` or `90m`, or a whole number of days
 or weeks such as `7d` or `2w`. It must be positive.
@@ -3627,594 +3632,11 @@ ordinary pile they can rename or delete.
 
 ## Automations
 
-Automations are trigger-action rules that execute when entities change. They enable
-workflow automation, automatic property updates, and entity creation based on state
-transitions.
-
-### Automation Structure
-
-```yaml
-automations:
-  - name: automation-name
-    description: "Human-readable description"
-    on:
-      # Trigger conditions
-    do:
-      # Actions to perform
-```
-
-### Triggers
-
-Automations fire based on entity changes:
-
-| Trigger Field      | Description                               | Example                |
-| ------------------ | ----------------------------------------- | ---------------------- |
-| `entity`           | Entity types to watch (string or list)    | `[ticket, bug]`        |
-| `property`         | Property name to monitor                  | `status`               |
-| `becomes`          | Value the property changed to             | `in-progress`          |
-| `from`             | Value the property changed from           | `backlog`              |
-| `created`          | Fires when entity is created              | `true`                 |
-| `updated`          | Fires on an update that changes a property or the body, not on a create. Not with `property`, `becomes` or `from`; a script under it must be `background: true` | `true` |
-| `relation_created` | Fires when this relation type is created  | `implements`           |
-| `relation_removed` | Fires when this relation type is removed  | `implements`           |
-| `deleted`          | Fires once per face a delete removes. Stands alone, and every action must be `background: true` (see [Running a script when an entity is deleted](#running-a-script-when-an-entity-is-deleted)) | `true` |
-| `faces`            | Content states to watch (default: all)    | `[published]`          |
-| `copy`             | Copy definitions to watch (string or list). Alone, fires on every run of a named copy; beside `created`, `updated` or `property`, limits that key to the copy's write. See [Automations on a copy](#automations-on-a-copy) | `adopt` |
-| `when`             | Property conditions that must match (AND) | `["kind=enhancement"]` |
-| `condition`        | Predicate expression that must hold (AND) | `"days_between(entity.due, today()) <= 7"` |
-
-### Scoping an automation to content states
-
-If a type declares `faces:`, each state is a separate row and an automation
-fires on **every one of them** by default. That is the existing behaviour and
-the honest reading of an unscoped rule — "when a ticket's status becomes done"
-is a statement about tickets, and a translated ticket is still a ticket.
-
-What it costs is multiplied side effects. An automation that creates a checklist
-entity will create one per state, which is rarely what an operator means. Use
-`faces:` when the automation is about particular states:
-
-```yaml
-automations:
-  - name: announce-publication
-    on:
-      entity: policy
-      property: status
-      becomes: approved
-      faces: [published]
-    do:
-      - set: announced_at
-        value: "{{today}}"
-```
-
-Name faces as you declared them. A face the triggering type does not declare
-is a **load error**:
-the trigger would never fire, silently disabling the automation it was meant to
-narrow.
-
-An action writes back to the state that triggered it, so an automation firing on
-a translation updates that translation and not its sibling.
-
-### Automations on a copy
-
-A [copy](#declaring-copies) runs the automations of the face it writes. When
-the copy creates the target face, the `created` automations run. When it
-overwrites an existing face, the `updated` automations run, with the face as it
-was before the copy as the old state.
-
-The properties the automations `set` are part of the copy's own write, as on
-an ordinary update: the copy stays one write with one audit record. A value an
-automation sets must make a legal state-machine move from the value the copy
-wrote, or the copy is refused and nothing is written. The other actions, such
-as `create_entity`, scripts and background actions, run after the copy is
-written. If one of them fails, the copy stays written and the response carries
-a `follow_up_failed` warning.
-
-This applies to every `created` and `updated` automation on the target type,
-not only to the ones that name a copy. Use `faces:` to keep an automation off
-the face a copy writes.
-
-Use `copy:` to run an automation only when a particular copy writes the face.
-On its own, `copy:` fires on every run of the copy, also when the copy changes
-no value:
-
-```yaml
-automations:
-  - name: stamp-adoption
-    on:
-      entity: policy
-      copy: adopt
-    do:
-      - set: review_on
-        value: "{{today}}"
-      - lua_file: publish-site.lua
-        background: true
-```
-
-Beside `created`, `updated` or `property`, `copy:` narrows that key to writes
-by the named copies. Without `copy:`, an automation fires on a copy's write
-like on any other write.
-
-The loader refuses a `copy:` that names no declared copy, that writes a type
-or face the trigger's `entity:` or `faces:` excludes, or that is combined with
-`relation_created` or `relation_removed`. Each of these would never fire.
-
-A rename re-runs a copy trigger's background actions only on a face that one
-of its copies writes.
-
-To stamp a value on every run of one copy, the copy's own `set:` key is
-simpler than an automation.
-
-### Conditional Triggers
-
-Use `when` to add property conditions that must be satisfied for the automation to fire.
-This uses the same filter syntax as validation rules.
-
-```yaml
-automations:
-  - name: mark-enhancement-for-docs
-    description: Mark enhancement tickets for documentation review
-    on:
-      entity: ticket
-      property: status
-      becomes: review
-      when:
-        - "kind=enhancement"
-    do:
-      - set: needs_docs
-        value: "true"
-```
-
-Multiple conditions use AND logic (all must match):
-
-```yaml
-on:
-  entity: ticket
-  property: status
-  becomes: review
-  when:
-    - "kind=enhancement"
-    - "priority=high"
-```
-
-Supported operators: `=`, `!=`, `<`, `<=`, `>`, `>=`, `=~` (regex).
-
-**Note:** Conditions are evaluated against the entity's NEW state (after the change).
-For property change triggers, use `from` to filter on the old value of the changed property.
-
-### Actions
-
-Actions execute when triggers match:
-
-**Set Property**:
-
-```yaml
-do:
-  - set: started_at
-    value: "{{today}}"
-```
-
-**Create Relation**:
-
-```yaml
-do:
-  - create_relation:
-      relation: implements
-      to: "{{entity.parent}}"
-```
-
-**Create Entity** (with optional relation):
-
-```yaml
-do:
-  - create_entity:
-      type: checklist
-      properties:
-        title: "Planning: {{new.title}}"
-        status: in-progress
-      relation: has-planning
-      if_exists: skip
-```
-
-**Run a Lua script**: `lua:` holds inline code and `lua_file:` names a
-file under `scripts/`. The script gets the saved entity as `entity` and its
-previous state as `old_entity`, and runs in the request that saved it, as
-the user who saved. `capabilities:` and `allow_acl_bypass` are described in
-the [Lua scripting guide](lua-scripting.md).
-
-```yaml
-do:
-  - lua_file: notify.lua
-```
-
-**Run a Lua script in the background**: `background: true` runs a
-`lua_file:` action as a background job instead (TKT-2Q4UFI). Use it for a
-script that calls an external system, so a save does not wait on that
-system.
-
-```yaml
-automations:
-  - name: push-to-tracker
-    on: {entity: ticket, created: true, updated: true}
-    do:
-      - lua_file: tracker/push.lua
-        background: true
-        run_as: tracker-sync      # default: system:automation
-        retry: bounded            # never | bounded (default) | persistent
-        capabilities: {http: true, secrets: [tracker_token]}
-```
-
-A background action differs from an inline one in these ways:
-
-- **Identity.** The job runs as `run_as`, or as `system:automation`, never as
-  the user who saved. Reads, writes and transition guards are checked against
-  that identity's grants in `acl.yaml`, field grants included. Give it a role
-  there. Without one, the job cannot read the entity and ends with a warning
-  in the server log. `run_as` lets any user who can save a matching entity
-  start a script with that identity's access, so treat it as an elevation
-  you grant, and treat the entity's values as untrusted input. `run_as` may
-  not name another `system:` identity. The audit log records the job as
-  `automation-job:<name>;by=<user who saved>`.
-- **What the script sees.** The job reads the entity again when it runs, so
-  `entity` is the current state, not the saved one, and `old_entity` is nil.
-  The trigger's `when:` and `condition:` are not checked again.
-- **Coalescing.** Saves of one entity while its job is waiting make one run.
-  A save while the job runs makes the job run once more afterwards. A save
-  that arrives just as a job finishes is queued again shortly after. A job
-  stops rerunning after 5 runs and fails, so `retry:` decides whether it
-  runs again.
-- **Renames.** A job still waiting for the old id finds nothing. So a rename
-  checks the automation's trigger again for the new id, and starts its
-  background actions if it matches. Only background actions run on a
-  rename.
-- **Failures.** A script error is retried as `retry:` says. A job can
-  therefore run a script more than once, so write it so that a second run
-  does no harm. A job whose action was removed from the schema, or whose
-  entity was deleted, ends without running.
-- **Loops.** The job's own writes do not start it again for the same entity.
-  A chain of background jobs that start each other stops after 8 steps.
-- **Where it runs.** `rela-server` and the desktop app run jobs on the job
-  queue. Every other command, including `rela mcp` and `rela scheduler`, runs
-  the script in the foreground, right after the save, because a one-shot
-  command would exit before the queue ran the job. There `retry:` does not
-  apply, and a failed script makes the save report only that the background
-  action failed; the error itself goes to the log. On the file and SQLite
-  backends the queue is in memory, so jobs still waiting when the process
-  stops are lost.
-- **State.** In queue mode each (automation, script, entity) keeps two small
-  records in the project's state store (`.rela/automation-jobs/` on the
-  file backend). They are not removed when the entity is deleted.
-
-A background action holds only `lua_file:`, cannot use `allow_acl_bypass`,
-and must belong to an automation with a unique, non-empty `name:`. The
-schema refuses to load otherwise.
-
-#### Running a script when an entity is deleted
-
-`deleted: true` starts background actions when an entity is deleted. Use it
-to tell an outside system, such as a published site, that a record is gone.
-
-```yaml
-automations:
-  - name: unpublish-page
-    on: {entity: pagina, deleted: true, faces: [published]}
-    do:
-      - lua_file: site/unpublish.lua
-        background: true
-        capabilities: {http: true}
-```
-
-- **When it fires.** Once for each face the delete removed, after the delete
-  is saved. A delete from the web app, the CLI, MCP, a script or an
-  automation fires it. So does a soft delete, the kind the web app can undo.
-  An owned entity deleted with its owner fires its own automations. Purging a
-  soft-deleted entity later does not fire again, and neither does an undo or
-  a restore. If the face is restored, or created again under the same id,
-  before the job runs, the job does nothing.
-- **What the script sees.** `entity` is the face as it was just before the
-  delete. `when:` and `condition:` decide on that state too. A
-  `condition:` may not use `related(...)`, because the relations are deleted
-  with the entity.
-- **Identity.** The job runs as `run_as` or `system:automation`, as other
-  background actions do, and sees the deleted face only as far as that
-  identity may read it. Fields its `visible:` grants hide are removed. A read
-  grant that depends on the stored entity, such as a role conferred through a
-  relation, cannot be checked once the entity is gone, so the job does not
-  run. Give the job's identity a plain read grant on the type.
-- **No coalescing.** Each delete is its own job. Deleting, recreating and
-  deleting an entity again runs the script twice.
-- **Retention of the deleted state.** In queue mode the job stores the
-  deleted face encrypted, with hidden fields included. The key that decrypts
-  it is a separate record in the state store, never in the job table. The
-  job erases the key when it ends: after it succeeds, after it decides not
-  to run, and after its last allowed attempt fails. A failure that will be
-  retried keeps the key for the retry. Purging the entity makes the state of
-  all its waiting jobs unreadable, and those jobs end without running: the
-  purge of a soft-deleted entity does this, and so does
-  `rela history-purge --commit`. A job the queue itself gives up on, for
-  example one past the time limit of `retry: persistent`, keeps its key, but
-  on PostgreSQL the queue deletes finished and failed job rows after 24
-  hours, and the encrypted copy goes with them. On the file and SQLite
-  backends the queue is in memory, so the encrypted copy is gone when the
-  process stops. In foreground mode the state is not stored at all. This
-  erases the state from the live database; backups taken while a job waited
-  keep both the key and the encrypted copy.
-- **Allowed keys.** `deleted` cannot be combined with `created`, `updated`,
-  `property`, `becomes`, `from`, `relation_created` or `relation_removed`.
-  Every action must be `background: true`, and `validate:` is refused: the
-  delete has already happened when the automation runs, so there is no save
-  to change or warn about.
-
-**Add to Pile**:
-
-```yaml
-do:
-  - add_to_pile: {pile: Inbox, owner: "{{new.assignee}}"}
-```
-
-A pile is a personal, named stack of entities that one user collects and
-works through. This action puts the triggering entity on a pile. The face
-of the entity is kept, so `POL-1@draft` lands on the pile as that face.
-
-| Field    | Required | Description                                                         |
-| -------- | -------- | ------------------------------------------------------------------- |
-| `pile`   | yes      | The pile name, or the key of a declared pile. Supports interpolation. |
-| `owner`  | no       | The user whose pile receives the entity. Supports interpolation.    |
-| `create` | no       | Create the pile when it does not exist. Defaults to `true`.         |
-
-- Without `owner`, the entity goes on a pile of the user who made the
-  write.
-- `owner` must be that user or an existing entity of the ACL's
-  `user_entity_type` (a person). Anything else is refused.
-- When `owner` is set but interpolates to nothing, for example an
-  unassigned ticket, the action does nothing.
-- A push to another user's pile is write-only. It never reveals whether
-  that pile exists or how full it is.
-- A push to another user's pile never removes their items. On a full pile
-  the entity is not added. The push creates a pile only while that user has
-  fewer than 25 piles, so the other 25 of the 50 are always left for the
-  user. Each such push is logged with the pushing user, the target user and
-  the number of entities, but not the pile name.
-- The action is best-effort. A failed push is logged with the automation
-  name and never fails the entity write. A pile is a notification surface,
-  not a system of record.
-- `add_to_pile` must be the only action in its list entry.
-- On PostgreSQL the push runs outside the entity's transaction. If the
-  write then rolls back, the pile holds a reference to an entity that does
-  not exist. Readers skip it, so it is harmless.
-
-**Notify**:
-
-```yaml
-automations:
-  - name: tell-project-owner
-    on:
-      entity: [task]
-      property: status
-      becomes: done
-    do:
-      - notify:
-          pile: inbox
-          reason: done
-          to: {via: part-of, property: owner}
-```
-
-This action puts the triggering entity on a declared pile of other users. The
-common case is to tell the owner of a project that someone completed one of
-its tasks.
-
-| Field         | Required | Description                                                                                      |
-| ------------- | -------- | ------------------------------------------------------------------------------------------------ |
-| `pile`        | yes      | The key of a declared pile with `read_state: true`.                                              |
-| `reason`      | no       | One of the pile's `reasons`. Users see its text next to the item.                                |
-| `to.property` | yes      | The property that holds the recipients: a person id, or a list of them.                           |
-| `to.via`      | no       | A relation path from the triggering entity to the entity that holds `to.property`. Without it, the property is read from the triggering entity. |
-| `to.type`     | no       | Limits the last step of `to.via` to one entity type.                                             |
-
-A notification goes to another user, so `notify` needs person mapping:
-`user_entity_type` and `principal_property` in `acl.yaml`. Without it no
-notification is sent, and the server logs a warning for each one.
-
-- `to.via` is written like a traversal in `related(...)` (see
-  [Filtering on related entities](#filtering-on-related-entities)): relation
-  names, outgoing or by their inverse name. It needs `on.entity:`, and it is
-  resolved for each of those types when the schema loads. A path that does not
-  resolve, or that ends on a type without `to.property`, stops the load.
-- The user who made the write is never notified. A notification is about what
-  others do.
-- Each item records who made the write and the reason. The pile shows both,
-  for example "Bob completed a task".
-- Recipients are found from the stored graph, whatever the writing user may
-  read. When the recipient opens the pile, each item is checked against the
-  recipient's own access.
-- A path reaches at most 1000 entities. Further recipients are skipped.
-- Like `add_to_pile`, the action is best-effort: a failure is logged with the
-  automation name and the entity, never the recipient, and the write
-  succeeds. It must be the only action in its list entry.
-
-### Template Variables
-
-Automation values support template substitution:
-
-| Variable         | Description                            |
-| ---------------- | -------------------------------------- |
-| `{{today}}`      | Current date in ISO 8601 format        |
-| `{{new.title}}`  | Property value from the changed entity |
-| `{{new.status}}` | Any property from the changed entity   |
-| `{{entity.id}}`  | Entity ID                              |
-| `{{user.name}}`  | Current user's name                    |
-
-### Example: Workflow Checklists
-
-Automatically create workflow checklists when tickets transition through stages:
-
-```yaml
-automations:
-  # Create planning checklist when ticket enters planning
-  - name: ticket-planning-checklist
-    description: Create planning checklist when ticket enters planning
-    on:
-      entity: [ticket]
-      property: status
-      becomes: planning
-    do:
-      - create_entity:
-          type: planning-checklist
-          properties:
-            title: "Planning: {{new.title}}"
-            status: in-progress
-          relation: has-planning
-          if_exists: skip
-
-  # Create implementation checklist when ticket enters in-progress
-  - name: ticket-implementation-checklist
-    description: Create implementation checklist when ticket starts
-    on:
-      entity: [ticket, bug]
-      property: status
-      becomes: in-progress
-    do:
-      - create_entity:
-          type: implementation-checklist
-          properties:
-            title: "Implementation: {{new.title}}"
-            status: in-progress
-          relation: has-implementation
-          if_exists: skip
-
-  # Create review checklist when ticket enters review
-  - name: ticket-review-checklist
-    description: Create review checklist when ticket enters review
-    on:
-      entity: [ticket, bug]
-      property: status
-      becomes: review
-    do:
-      - create_entity:
-          type: review-checklist
-          properties:
-            title: "Review: {{new.title}}"
-            status: in-progress
-          relation: has-review
-          if_exists: skip
-```
-
-### Example: Status Tracking
-
-Track when work started and by whom:
-
-```yaml
-automations:
-  - name: track-started
-    description: Record when work started
-    on:
-      entity: [ticket, bug]
-      property: status
-      becomes: in-progress
-    do:
-      - set: started_at
-        value: "{{today}}"
-      - set: started_by
-        value: "{{user.name}}"
-```
-
-### Expression Conditions (`condition:`)
-
-`when:` takes filter clauses. `condition:` takes a **predicate expression** —
-the same language as the CLI's `--filter` flag and ACL rules — which adds
-boolean composition and host functions, including date arithmetic:
-
-```yaml
-automations:
-  - name: flag-due-soon
-    description: Flag tasks coming due within a week
-    on:
-      entity: taak
-      created: true
-      when:
-        - "status=todo" # filter clause
-      condition: "days_between(entity.due, today()) <= 7" # expression
-    do:
-      - set: flag
-        value: "due-soon"
-```
-
-Both keys are optional and AND together. An expression can choose a value with
-`c and x or y`; see
-[choosing a value](#choosing-a-value-with-andor). Available functions include
-`today()`, `days_between(a, b)`, `date_add(d, n, unit)`,
-`rrule_next(rule, after)`, plus the string matchers `match`, `regex`,
-`fuzzy`, and `contains`.
-
-`condition:` requires `entity:` naming the type(s) it applies to — the
-expression is compiled against that type's properties.
-
-**A broken `condition:` fails at load**, naming the automation. That is
-deliberate: a dropped constraint would make the automation fire on *more*
-entities than you wrote, which is invisible in production. The same now
-applies to an unparseable `when:` clause, which earlier versions skipped
-silently.
-
-> **Upgrade note.** Making an unparseable `when:` clause fatal is a
-> behaviour change on the load path. It can only affect a clause that was
-> *already* broken — one that parsed to nothing and was silently dropped,
-> so the automation had been firing more widely than intended. The filter
-> parser rejects only three shapes: an empty string, a clause with no
-> operator (`status`), and one with no property (`=todo`). A plausible
-> way to hit this is a YAML-confusion typo like `- "status: todo"` inside
-> a `when:` list. If your project starts failing to load after upgrading,
-> the error names the automation and the offending clause — the fix is to
-> write the clause you meant, e.g. `status=todo`.
-
-Why not one key that accepts either dialect? The syntaxes overlap without
-erroring — the filter parser reads
-`days_between(entity.due, today()) <= 7` as a filter on a property literally
-named `days_between(entity.due, today())`, which matches nothing and reports
-nothing. Choosing the key states which you meant.
-
-Date literals inside an expression are **strings**:
-`entity.due <= '2026-08-25'`.
-
-#### Guard optional date properties
-
-A date function applied to a property the entity does not carry is an
-**eval error**, not `false`. The automation does not fire and a warning is
-attached to the result:
-
-```yaml
-condition: "days_between(entity.due, today()) <= 7" # skips tasks with no due date
-```
-
-An entity with no `due` is skipped — which is often the opposite of what you
-want, since a task with no due date may be exactly the one to flag. Guard the
-property when it is optional:
-
-```yaml
-condition: "entity.due ~= nil and days_between(entity.due, today()) <= 7"
-```
-
-Or invert the test to catch the missing case:
-
-```yaml
-condition: "entity.due == nil or days_between(entity.due, today()) <= 7"
-```
-
-The same applies to validation rules, where the two keys fail in opposite
-directions from this identical cause: a `when_condition:` that errors means
-"entity not selected" (the rule skips it), while a `then_condition:` that
-errors means "assertion not shown to hold" (a violation). Both fail toward
-not-silently-passing, but one ignores the entity and the other flags it — so
-guard optional properties rather than relying on either.
-
-### Automation Options
-
-| Field       | Description                                         |
-| ----------- | --------------------------------------------------- |
-| `if_exists` | Behavior when `create_entity` target exists: `skip` |
-
-### Best Practices
-
-1. **Use descriptive names**: Name automations after what they accomplish
-2. **Keep actions focused**: Each automation should do one logical thing
-3. **Use `if_exists: skip`**: Prevent duplicate entities when re-entering states
-4. **Document with description**: Explain the workflow the automation supports
+Rules that run when an entity changes are now declared in `flows.yaml`
+under `triggers:`, not in `schema.yaml`. See
+[Triggers](flows.md#triggers) in the flows guide for every key, output and
+load check.
+
+A schema that still declares `automations:`, in the root file or in an
+included file, does not load. Run `rela migrate` to move them. See
+[Moving from schema.yaml automations](flows.md#moving-from-schemayaml-automations).

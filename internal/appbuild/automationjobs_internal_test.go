@@ -17,8 +17,8 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -129,15 +129,15 @@ func (f *fakeJobRunner) count() int {
 	return len(f.runs)
 }
 
-func jobsMeta(runAs string, files ...string) *metamodel.Metamodel {
+func jobsRules(runAs string, files ...string) []triggers.Rule {
 	if len(files) == 0 {
 		files = []string{"push.lua"}
 	}
-	var do []metamodel.AutomationAction
+	var do []triggers.Action
 	for _, f := range files {
-		do = append(do, metamodel.AutomationAction{LuaFile: f, Background: true, RunAs: runAs})
+		do = append(do, triggers.Action{LuaFile: f, Background: true, RunAs: runAs})
 	}
-	return &metamodel.Metamodel{Automations: []metamodel.AutomationDef{{Name: "push", Do: do}}}
+	return []triggers.Rule{{Name: "push", Do: do}}
 }
 
 var note1 = autocascade.BackgroundScript{Automation: "push", LuaFile: "push.lua", Ref: entity.Ref{ID: "NOTE-1"}}
@@ -148,9 +148,9 @@ func scriptFor(file string) autocascade.BackgroundScript {
 	return s
 }
 
-func newTestJobs(t *testing.T, meta *metamodel.Metamodel, q jobs.Client, r *fakeJobRunner) *automationJobs {
+func newTestJobs(t *testing.T, rules []triggers.Rule, q jobs.Client, r *fakeJobRunner) *automationJobs {
 	t.Helper()
-	a, err := newAutomationJobs(meta, &mapKV{m: map[string][]byte{}}, noEntities{}, q)
+	a, err := newAutomationJobs(rules, &mapKV{m: map[string][]byte{}}, noEntities{}, q)
 	require.NoError(t, err)
 	a.followUpDelay = time.Millisecond
 	require.NoError(t, a.bind(r, nil))
@@ -187,7 +187,7 @@ func TestAutomationJobs_ForegroundIdentity(t *testing.T) {
 			r := &fakeJobRunner{during: func(ctx context.Context, _ string) {
 				require.Nil(t, ctx.Value(probeKey{}), "the saver's context reached the job")
 			}}
-			a := newTestJobs(t, jobsMeta(tc.runAs), nil, r)
+			a := newTestJobs(t, jobsRules(tc.runAs), nil, r)
 			ctx := principal.With(context.Background(), principal.Principal{User: "alice"})
 			ctx = context.WithValue(ctx, probeKey{}, "request state")
 			require.NoError(t, a.EnqueueScript(ctx, note1))
@@ -200,7 +200,7 @@ func TestAutomationJobs_ForegroundIdentity(t *testing.T) {
 // TestAutomationJobs_ForegroundErrorIsGeneric: the saver learns that the
 // action failed, not what the script said.
 func TestAutomationJobs_ForegroundErrorIsGeneric(t *testing.T) {
-	a := newTestJobs(t, jobsMeta(""), nil, &fakeJobRunner{})
+	a := newTestJobs(t, jobsRules(""), nil, &fakeJobRunner{})
 	a.runner = failingRunner{&fakeJobRunner{}}
 	err := a.EnqueueScript(context.Background(), note1)
 	require.EqualError(t, err, `automation "push": background action failed`)
@@ -216,7 +216,7 @@ func (failingRunner) ExecuteFile(context.Context, string, lua.WriteDeps, *entity
 // collapses into the running job and makes it run once more (C1).
 func TestAutomationJobs_SaveDuringRunRunsAgain(t *testing.T) {
 	r := &fakeJobRunner{started: make(chan struct{}), gate: make(chan struct{})}
-	a := newTestJobs(t, jobsMeta(""), startedQueue(t), r)
+	a := newTestJobs(t, jobsRules(""), startedQueue(t), r)
 
 	require.NoError(t, a.EnqueueScript(context.Background(), note1))
 	<-r.started
@@ -272,13 +272,13 @@ func (q *dupQueue) enqueued() int {
 func TestAutomationJobs_CollapsedSaveIsFollowedUp(t *testing.T) {
 	t.Run("unhandled", func(t *testing.T) {
 		q := &dupQueue{dups: 2}
-		a := newTestJobs(t, jobsMeta(""), q, &fakeJobRunner{})
+		a := newTestJobs(t, jobsRules(""), q, &fakeJobRunner{})
 		require.NoError(t, a.EnqueueScript(context.Background(), note1))
 		require.Eventually(t, func() bool { return q.enqueued() == 1 }, 5*time.Second, time.Millisecond)
 	})
 	t.Run("handled", func(t *testing.T) {
 		q := &dupQueue{dups: 1}
-		a := newTestJobs(t, jobsMeta(""), q, &fakeJobRunner{})
+		a := newTestJobs(t, jobsRules(""), q, &fakeJobRunner{})
 		a.followUpDelay = 20 * time.Millisecond
 		require.NoError(t, a.EnqueueScript(context.Background(), note1))
 		tok, err := a.token(context.Background(), note1Key())
@@ -296,7 +296,7 @@ func TestAutomationJobs_OwnWriteDoesNotReschedule(t *testing.T) {
 	r := &fakeJobRunner{during: func(ctx context.Context, _ string) {
 		require.NoError(t, a.EnqueueScript(ctx, note1))
 	}}
-	a = newTestJobs(t, jobsMeta(""), nil, r)
+	a = newTestJobs(t, jobsRules(""), nil, r)
 	require.NoError(t, a.EnqueueScript(context.Background(), note1))
 	require.Equal(t, 1, r.count())
 }
@@ -310,7 +310,7 @@ func TestAutomationJobs_ForegroundJobsTriggeringEachOther(t *testing.T) {
 		other := map[string]string{"a.lua": "b.lua", "b.lua": "a.lua"}[path]
 		require.NoError(t, a.EnqueueScript(ctx, scriptFor(other)))
 	}}
-	a = newTestJobs(t, jobsMeta("", "a.lua", "b.lua"), nil, r)
+	a = newTestJobs(t, jobsRules("", "a.lua", "b.lua"), nil, r)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -333,7 +333,7 @@ func TestAutomationJobs_QueuedChainStops(t *testing.T) {
 		other := map[string]string{"a.lua": "b.lua", "b.lua": "a.lua"}[path]
 		_ = a.EnqueueScript(ctx, scriptFor(other)) // refused at the limit
 	}}
-	a = newTestJobs(t, jobsMeta("", "a.lua", "b.lua"), startedQueue(t), r)
+	a = newTestJobs(t, jobsRules("", "a.lua", "b.lua"), startedQueue(t), r)
 	require.NoError(t, a.EnqueueScript(context.Background(), scriptFor("a.lua")))
 	require.Eventually(t, func() bool { return r.count() == maxAutomationJobHops }, 5*time.Second, 5*time.Millisecond)
 	// Outlast every follow-up, which could still queue one more run.
@@ -351,7 +351,7 @@ func TestAutomationJobs_QueuedChainStops(t *testing.T) {
 // lower the hop count of a trigger no run has handled yet (BUG-WKL0M2).
 func TestAutomationJobs_UnhandledTriggerKeepsHops(t *testing.T) {
 	ctx := context.Background()
-	a := newTestJobs(t, jobsMeta(""), startedQueue(t), &fakeJobRunner{})
+	a := newTestJobs(t, jobsRules(""), startedQueue(t), &fakeJobRunner{})
 	key := note1Key()
 	_, err := a.recordTrigger(ctx, key, 7)
 	require.NoError(t, err)
@@ -383,14 +383,14 @@ func TestTokenHops(t *testing.T) {
 
 // TestAutomationJobs_HopLimit: a chain of jobs triggering jobs stops.
 func TestAutomationJobs_HopLimit(t *testing.T) {
-	a := newTestJobs(t, jobsMeta(""), nil, &fakeJobRunner{})
+	a := newTestJobs(t, jobsRules(""), nil, &fakeJobRunner{})
 	ctx := context.WithValue(context.Background(), jobHopsKey{}, maxAutomationJobHops)
 	require.ErrorContains(t, a.EnqueueScript(ctx, note1), "triggered each other")
 }
 
 // TestAutomationJobs_LocksAreReleased: the per-key lock map does not grow.
 func TestAutomationJobs_LocksAreReleased(t *testing.T) {
-	a := newTestJobs(t, jobsMeta(""), nil, &fakeJobRunner{})
+	a := newTestJobs(t, jobsRules(""), nil, &fakeJobRunner{})
 	unlock := a.lock("k")
 	require.Len(t, a.locks, 1)
 	unlock()
@@ -402,7 +402,7 @@ func TestAutomationJobs_LocksAreReleased(t *testing.T) {
 // running and without an error to retry.
 func TestAutomationJobs_PayloadSelectsOnly(t *testing.T) {
 	r := &fakeJobRunner{}
-	a := newTestJobs(t, jobsMeta(""), nil, r)
+	a := newTestJobs(t, jobsRules(""), nil, r)
 	for name, payload := range map[string]map[string]any{
 		"unknown automation": {"automation": "other", "lua_file": "push.lua", "id": "NOTE-1"},
 		"other file":         {"automation": "push", "lua_file": "evil.lua", "id": "NOTE-1"},
@@ -433,34 +433,38 @@ func TestAutomationJobs_Retry(t *testing.T) {
 
 // TestAutomationJobs_UnboundRefuses: a trigger before bind fails loudly.
 func TestAutomationJobs_UnboundRefuses(t *testing.T) {
-	a, err := newAutomationJobs(jobsMeta(""), &mapKV{m: map[string][]byte{}}, noEntities{}, nil)
+	a, err := newAutomationJobs(jobsRules(""), &mapKV{m: map[string][]byte{}}, noEntities{}, nil)
 	require.NoError(t, err)
 	require.Error(t, a.EnqueueScript(context.Background(), note1))
 	_, err = newAutomationJobs(nil, nil, nil, nil)
 	require.Error(t, err)
 }
 
-// deletedMeta declares one `on.deleted` automation on notes.
+// deletedMeta declares the note and secret types.
 func deletedMeta() *metamodel.Metamodel {
 	return &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{"note": {}, "secret": {}},
-		Automations: []metamodel.AutomationDef{{
-			Name: "gone",
-			On:   metamodel.AutomationTrigger{Deleted: true},
-			Do:   []metamodel.AutomationAction{{LuaFile: "gone.lua", Background: true}},
-		}},
 	}
+}
+
+// deletedRules declares one `on.deleted` trigger.
+func deletedRules() []triggers.Rule {
+	return []triggers.Rule{{
+		Name: "gone",
+		On:   triggers.Trigger{Deleted: true},
+		Do:   []triggers.Action{{LuaFile: "gone.lua", Background: true}},
+	}}
 }
 
 func newDeletedJobs(t *testing.T, q jobs.Client, r *fakeJobRunner, raw rawEntityLister) *automationJobs {
 	t.Helper()
-	meta := deletedMeta()
-	engine, err := automation.NewEngineFromMetamodel(meta, meta.Automations)
+	rules := deletedRules()
+	engine, err := triggers.New(deletedMeta(), rules)
 	require.NoError(t, err)
 	if raw == nil {
 		raw = noEntities{}
 	}
-	a, err := newAutomationJobs(meta, &mapKV{m: map[string][]byte{}}, raw, q)
+	a, err := newAutomationJobs(rules, &mapKV{m: map[string][]byte{}}, raw, q)
 	require.NoError(t, err)
 	a.gateDeleted = fakeGateDeleted
 	require.NoError(t, a.bind(r, engine))
@@ -534,7 +538,7 @@ func TestAutomationJobs_DeletedForeground(t *testing.T) {
 // delete.
 func TestAutomationJobs_DeletedNotOnOtherEvents(t *testing.T) {
 	r := &fakeJobRunner{}
-	a := newTestJobs(t, jobsMeta(""), nil, r)
+	a := newTestJobs(t, jobsRules(""), nil, r)
 	require.NoError(t, a.EntityStateDeleted(context.Background(), deletedNote("note")))
 	require.Zero(t, r.count())
 }

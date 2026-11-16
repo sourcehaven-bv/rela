@@ -538,6 +538,13 @@ func TestRemotes_RemoteDeletedNeedsDelete(t *testing.T) {
 			require.Len(t, page.Data, 1)
 			require.True(t, page.Data[0].Actions["resolve_local"])
 			require.Equal(t, tc.delete, page.Data[0].Actions["resolve_remote"])
+			if !tc.delete {
+				// The 403 names the missing right: delete, not edit (#2298).
+				rec = e.do(t, http.MethodPost, remotesPath+"/upstream/conflicts/_resolve",
+					`{"local":"TKT-001","take":"remote"}`)
+				require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+				require.Contains(t, rec.Body.String(), "right to delete")
+			}
 		})
 	}
 }

@@ -39,15 +39,26 @@ const searchEntitiesMock = vi.fn<(query: string) => Promise<ListResponse<Entity>
 const analyzeMock = vi.fn<() => Promise<AnalyzeResult>>()
 const getDashboardMock = vi.fn<(name?: string) => Promise<DashboardResponse>>()
 const getDashboardCardMock =
-  vi.fn<(name: string | undefined, index: number, world?: string) => Promise<DashboardCardValue>>()
+  vi.fn<
+    (
+      name: string | undefined,
+      index: number,
+      world?: string,
+      anchor?: string
+    ) => Promise<DashboardCardValue>
+  >()
 vi.mock('@/api', async () => {
   const { ApiError } = await import('@/api/errors')
   return {
     searchEntities: (query: string) => searchEntitiesMock(query),
     analyze: () => analyzeMock(),
     getDashboard: (name?: string) => getDashboardMock(name),
-    getDashboardCard: (name: string | undefined, index: number, world?: string) =>
-      getDashboardCardMock(name, index, world),
+    // The anchor is passed on only when set, so the assertions written for
+    // plain dashboards keep their three arguments.
+    getDashboardCard: (name: string | undefined, index: number, world?: string, anchor?: string) =>
+      anchor === undefined
+        ? getDashboardCardMock(name, index, world)
+        : getDashboardCardMock(name, index, world, anchor),
     ApiError,
   }
 })
@@ -829,6 +840,79 @@ describe('DashboardView', () => {
     it('never packs the grid densely', () => {
       const source = readFileSync(resolve(__dirname, 'DashboardView.vue'), 'utf8')
       expect(source).not.toMatch(/(grid-auto-flow|grid):[^;]*\bdense\b[^;`]*;/)
+    })
+  })
+
+  // Entity dashboards: a dashboard whose cards have a scope counts for the
+  // anchor an entity page tab passes in.
+  describe('entity dashboard', () => {
+    const entityDashboard: DashboardResponse = {
+      title: 'DPIA',
+      cards: [
+        card({
+          title: 'Risks',
+          query: undefined,
+          list: 'risks',
+          index: 0,
+          scope: { relation: 'has-risk', direction: 'outgoing' },
+        }),
+      ],
+    }
+    const value: DashboardCardValue = { title: 'Risks', display: 'count', list: 'risks', total: 3 }
+
+    it('passes the anchor to every card and hides the project-wide parts', async () => {
+      seedDashboard([])
+      getDashboardMock.mockResolvedValue(entityDashboard)
+      getDashboardCardMock.mockResolvedValue(value)
+
+      const wrapper = mount(DashboardView, {
+        props: { name: 'dpia', anchor: 'DPIA-1' },
+        global: { stubs: { RouterLink: RouterLinkStub, 'router-link': RouterLinkStub } },
+      })
+      await flushPromises()
+
+      expect(getDashboardCardMock).toHaveBeenCalledWith('dpia', 0, undefined, 'DPIA-1')
+      expect(wrapper.find('.count-number').text()).toBe('3')
+      expect(analyzeMock).not.toHaveBeenCalled()
+      expect(wrapper.find('.validation-card').exists()).toBe(false)
+      // The card's list would show the whole type, so the card has no link.
+      expect(wrapper.find('.card-link').exists()).toBe(false)
+    })
+
+    it('recounts when the anchor changes', async () => {
+      seedDashboard([])
+      getDashboardMock.mockResolvedValue(entityDashboard)
+      getDashboardCardMock.mockResolvedValue(value)
+
+      const wrapper = mount(DashboardView, { props: { name: 'dpia', anchor: 'DPIA-1' } })
+      await flushPromises()
+      await wrapper.setProps({ anchor: 'DPIA-2' })
+      await flushPromises()
+
+      expect(getDashboardCardMock).toHaveBeenLastCalledWith('dpia', 0, undefined, 'DPIA-2')
+    })
+
+    it('asks for no card without an anchor and says why', async () => {
+      seedDashboard([])
+      getDashboardMock.mockResolvedValue(entityDashboard)
+
+      const wrapper = mount(DashboardView, { props: { name: 'dpia' } })
+      await flushPromises()
+
+      expect(getDashboardCardMock).not.toHaveBeenCalled()
+      expect(wrapper.find('[data-testid="dashboard-anchor-missing"]').exists()).toBe(true)
+    })
+
+    it('never sends an anchor to a plain dashboard', async () => {
+      seedDashboard([])
+      const unscoped = entityDashboard.cards.map(({ scope: _scope, ...rest }) => rest)
+      getDashboardMock.mockResolvedValue({ title: 'Plain', cards: unscoped })
+      getDashboardCardMock.mockResolvedValue(value)
+
+      mount(DashboardView, { props: { name: 'plain', anchor: 'DPIA-1' } })
+      await flushPromises()
+
+      expect(getDashboardCardMock).toHaveBeenCalledWith('plain', 0, undefined)
     })
   })
 })

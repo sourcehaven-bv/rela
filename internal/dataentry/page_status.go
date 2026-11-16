@@ -126,7 +126,7 @@ func pageStepDone(
 		query[scopeTabParam] = []string{tab.ID}
 		query[scopeAnchorParam] = []string{anchor}
 	}
-	ctx, rows, err := configuredListRows(ctx, a, s, tab.List, listCfg, query)
+	ctx, rows, err := configuredListRows(ctx, a, s, tab.List, listCfg, query, nil)
 	if err != nil || len(rows) == 0 {
 		return false, err
 	}

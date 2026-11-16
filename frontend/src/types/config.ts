@@ -828,6 +828,11 @@ export interface DashboardConfig {
   title?: string
   description?: string
   cards: DashboardCard[]
+  /**
+   * Set on an entity dashboard: it counts for one entity of this type, the
+   * anchor, and is shown as a `scope: root` tab of an entity page.
+   */
+  entity_type?: string
 }
 
 export interface DashboardCard {
@@ -878,6 +883,11 @@ export interface DashboardCard {
    * booleans the server computed, it does not evaluate ACL.
    */
   permission?: string
+  /**
+   * On an entity dashboard, the relation from the anchor to the card's rows.
+   * The server narrows the card's value by it; the SPA only passes the anchor.
+   */
+  scope?: { relation?: string; direction?: 'outgoing' | 'incoming' }
 }
 
 /**
@@ -890,6 +900,7 @@ export interface DashboardCard {
 export interface DashboardResponse {
   title?: string
   description?: string
+  /** On an entity dashboard every card has a `scope` and needs an anchor. */
   cards: DashboardCardEntry[]
 }
 

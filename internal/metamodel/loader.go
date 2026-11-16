@@ -34,6 +34,7 @@ var validTopLevelKeys = map[string]bool{
 	"task_item_conversions": true,
 	"comments":              true,
 	"piles":                 true,
+	"records":               true,
 	// default_world names the world a request uses when it names none
 	// (TKT-7IZHP0).
 	"default_world": true,
@@ -94,6 +95,9 @@ func Load(path string, fs storage.FS) (*Metamodel, []string, error) {
 	m, err := parseRaw(data)
 	if err != nil {
 		return nil, nil, err
+	}
+	if refuseErr := refuseAutomations(path, data); refuseErr != nil {
+		return nil, nil, refuseErr
 	}
 
 	setSourceFile(m, filepath.Base(path))
@@ -171,11 +175,15 @@ func LoadWithoutMigrationCheck(path string, fs storage.FS) (*Metamodel, []string
 	return m, []string{absPath}, nil
 }
 
-// Parse parses and validates metamodel YAML content.
+// Parse parses and validates metamodel YAML content. Content that still
+// declares `automations:` is refused, like [Load] does.
 func Parse(data []byte) (*Metamodel, error) {
 	m, err := parseRaw(data)
 	if err != nil {
 		return nil, err
+	}
+	if refuseErr := refuseAutomations("schema", data); refuseErr != nil {
+		return nil, refuseErr
 	}
 	if err := expandSchema(m); err != nil {
 		return nil, err
@@ -219,7 +227,7 @@ func parseRaw(data []byte) (*Metamodel, error) {
 	}
 
 	// The dot is reserved for namespace prefixes (namespaces.go).
-	if errs := checkDeclaredNames("", m.Types, m.Entities, m.Relations, m.Validations, m.Automations); len(errs) > 0 {
+	if errs := checkDeclaredNames("", m.Types, m.Entities, m.Relations, m.Validations); len(errs) > 0 {
 		return nil, &SchemaValidationError{Errors: errs}
 	}
 
@@ -326,14 +334,10 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateValidationFaces(m)...)
 	validationErrors = append(validationErrors, validateValidationRelations(m)...)
 	validationErrors = append(validationErrors, validateValidationEnforce(m)...)
-	validationErrors = append(validationErrors, validateAutomationFaces(m)...)
-	validationErrors = append(validationErrors, validateAutomationCopies(m)...)
-	validationErrors = append(validationErrors, validateBackgroundActions(m)...)
-	validationErrors = append(validationErrors, validateAddToPile(m)...)
-	validationErrors = append(validationErrors, validateNotify(m)...)
 	validationErrors = append(validationErrors, validateExternalRefs(m)...)
 	validationErrors = append(validationErrors, validateComments(m)...)
 	validationErrors = append(validationErrors, validatePiles(m)...)
+	validationErrors = append(validationErrors, validateRecords(m)...)
 
 	if len(validationErrors) > 0 {
 		return &SchemaValidationError{Errors: validationErrors}
@@ -2164,78 +2168,6 @@ func validateRuleFaceOnType(m *Metamodel, ruleName, face, typ string) []string {
 		"validation %q: `faces: [%s]` names no declared face of entity %q "+
 			"(declares: %s) — the rule would match nothing and pass forever",
 		ruleName, face, typ, strings.Join(sortedKeys(def.Faces), ", "))}
-}
-
-// validateAutomationFaces checks that every face named in an automation's
-// `on.faces:` scope is one the triggering type declares (TKT-4Y6CMV).
-//
-// A load error rather than a silent no-match, matching the rest of the
-// automation loader: an unparseable `when:` and an uncompilable `condition:`
-// are both load errors, because dropping a constraint widens the automation and
-// a scope that matches nothing narrows it to nothing. Either way the operator
-// wrote something that does not mean what it says.
-func validateAutomationFaces(m *Metamodel) []string {
-	var errs []string
-	for _, auto := range m.Automations {
-		if len(auto.On.Faces) == 0 {
-			continue
-		}
-		for _, face := range auto.On.Faces {
-			// `entity:` may name several types; the scope is satisfied if any
-			// of them declares the face, for the same reason a validation
-			// rule's is.
-			if len(auto.On.Entity) > 0 {
-				if !anyNamedTypeDeclaresFace(m, []string(auto.On.Entity), face) {
-					// Distinguish "wrong name" from "this type has no states",
-					// which need different fixes: correct the spelling versus
-					// drop the key.
-					if !anyNamedTypeHasFaces(m, []string(auto.On.Entity)) {
-						errs = append(errs, fmt.Sprintf(
-							"automation %q: `on.faces: [%s]` but %s declares no `faces:` — "+
-								"a type with one content state needs no scope; drop the key, "+
-								"or declare the states on the type",
-							auto.Name, face, strings.Join([]string(auto.On.Entity), ", ")))
-						continue
-					}
-					errs = append(errs, fmt.Sprintf(
-						"automation %q: `on.faces: [%s]` names no declared face of %s — "+
-							"the trigger would never fire",
-						auto.Name, face, strings.Join([]string(auto.On.Entity), ", ")))
-				}
-				continue
-			}
-			if !anyTypeDeclaresFace(m, face) {
-				errs = append(errs, fmt.Sprintf(
-					"automation %q: `on.faces: [%s]` names a face no entity type declares — "+
-						"the trigger would never fire", auto.Name, face))
-			}
-		}
-	}
-	return errs
-}
-
-// anyNamedTypeDeclaresFace reports whether any of the named types declares face.
-func anyNamedTypeDeclaresFace(m *Metamodel, types []string, face string) bool {
-	for _, t := range types {
-		if def, ok := m.Entities[t]; ok {
-			if _, declared := def.Faces[face]; declared {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// anyNamedTypeHasFaces reports whether any of the named types declares content
-// states at all — the difference between a misspelled face and a scope on a
-// type that has none.
-func anyNamedTypeHasFaces(m *Metamodel, types []string) bool {
-	for _, t := range types {
-		if def, ok := m.Entities[t]; ok && len(def.Faces) > 0 {
-			return true
-		}
-	}
-	return false
 }
 
 // queryScopeName is the grammar for a `query_scopes:` key: an ASCII

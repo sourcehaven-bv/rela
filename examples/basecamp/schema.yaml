@@ -48,15 +48,3 @@ relations:
     from: [todolist]
     to: [project]
     max_outgoing: 1
-automations:
-  - name: basecamp-push
-    on: {entity: todo, created: true, updated: true}
-    do:
-      - lua_file: basecamp.lua
-        background: true
-        run_as: integration:basecamp
-        retry: bounded
-        capabilities:
-          http: true
-          tokens: [basecamp]
-          secrets: [basecamp_account_id, basecamp_todolist_id, basecamp_api_base]

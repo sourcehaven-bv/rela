@@ -1,14 +1,17 @@
 package appbuild
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"sort"
 
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/computed"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
+	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/rollup"
 	"github.com/Sourcehaven-BV/rela/internal/scopes"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -18,12 +21,14 @@ import (
 
 // CheckSchemaCompiles compiles every expression in meta and returns one
 // message per failure. It runs the compilers a server build runs (worlds,
-// computed properties, query scopes, transitions, automations, rules enforced
-// on write) and also the validation rules' conditions and filters, which
+// computed properties, query scopes, transitions, rules enforced on write).
+// It also compiles the validation rules' conditions and filters, which
 // otherwise compile only when validation runs and would then fail per rule
 // rather than on save.
 //
-// st answers nothing here: the transition and automation compilers accept
+// The flows.yaml triggers are checked by [CheckTriggers].
+//
+// st answers nothing here: the transition compiler accepts
 // related(...) only when a binder is wired, and a binder needs a store.
 func CheckSchemaCompiles(meta *metamodel.Metamodel, st store.Store) []string {
 	var problems []string
@@ -42,14 +47,48 @@ func CheckSchemaCompiles(meta *metamodel.Metamodel, st store.Store) []string {
 	add("query scopes", err)
 	_, err = CompileHeadlessFlows(meta, st)
 	add("transitions", err)
-	if len(meta.Automations) > 0 {
-		_, err = automation.NewEngineFromMetamodel(meta, meta.Automations,
-			automation.WithTraversals(ungatedBinder(meta, st)))
-		add("automations", err)
-	}
 	_, err = writerule.NewSet(meta)
 	add("validations enforced on write", err)
 	return append(problems, checkValidationRules(meta)...)
+}
+
+// LoadTriggers reads flows.yaml through r and decodes its `triggers:` against
+// meta. It returns nil when the file is absent or declares no triggers.
+func LoadTriggers(ctx context.Context, r configReader, meta *metamodel.Metamodel) ([]triggers.Rule, error) {
+	data, err := readFlowsFile(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	return triggers.Parse(data, meta)
+}
+
+// CheckTriggers decodes and compiles the flows.yaml triggers against meta,
+// as a server build does. A schema change can break a trigger that names a
+// type, property or relation the change removes. The error text starts with
+// the file name.
+//
+// Compiling a `related(...)` condition checks it against the schema and
+// queries nothing, so `rela validate`, which opens no store, passes nil.
+func CheckTriggers(ctx context.Context, r configReader, meta *metamodel.Metamodel, st store.Store) error {
+	rules, err := LoadTriggers(ctx, r, meta)
+	if err != nil || len(rules) == 0 {
+		return err
+	}
+	match := func(context.Context, store.GraphQuery, []string) (map[string]bool, error) {
+		return nil, errors.New("appbuild: CheckTriggers answers no traversal")
+	}
+	if st != nil {
+		match = store.IDMatcher(st)
+	}
+	binder, err := relresolve.NewBinder(meta, relresolve.Ungated, match)
+	if err != nil { // coverage-ignore: defensive: meta, gate and match are all non-nil here
+		return err
+	}
+	//nolint:contextcheck // New takes no ctx; its git user lookup has its own timeout, as before the move
+	if _, err := triggers.New(meta, rules, triggers.WithTraversals(binder)); err != nil {
+		return fmt.Errorf("flows.yaml: triggers: %w", err)
+	}
+	return nil
 }
 
 // checkValidationRules compiles each rule's conditions against every entity

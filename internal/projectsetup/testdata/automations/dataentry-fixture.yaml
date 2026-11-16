@@ -1,0 +1,121 @@
+version: "1.0"
+
+description: >
+  Fixture for the golden wire-parity corpus (golden_parity_test.go). Small on
+  purpose: every type, relation and grant here exists so that some case can
+  show a principal-dependent difference on the wire.
+
+entities:
+  person:
+    label: Person
+    id_prefix: PERS
+    id_type: manual
+    display_property: title
+    properties:
+      title: { type: string, required: true }
+      email: { type: string, required: true, unique: true }
+
+  ticket:
+    label: Ticket
+    id_prefix: TKT
+    id_type: sequential
+    display_property: title
+    properties:
+      title:      { type: string, required: true }
+      status:     { type: ticket_status }
+      secret:     { type: string }
+      note:       { type: string }
+      start:      { type: date }
+      due:        { type: date }
+      screenshot: { type: file }
+      # CalDAV's completion time. Without one, a completed to-do whose due
+      # date is hidden is stamped with the current time, which would make the
+      # recording vary.
+      closed_on:  { type: datetime }
+      # The watcher's visible: list leaves budget out, so the closed-world
+      # default hides it from a watcher.
+      budget:     { type: string }
+
+  policy:
+    label: Policy
+    label_plural: Policies
+    plural: policies
+    id_prefix: POL
+    id_type: manual
+    display_property: title
+    faces:
+      draft:     { label: "Draft" }
+      published: { label: "Published" }
+    properties:
+      title: { type: string, required: true }
+      # Not `status`: /_settings merges a property name shared by two types
+      # and keeps the type of whichever it reaches first in map order, which
+      # would make that recording vary between runs.
+      stage: { type: policy_stage }
+
+types:
+  ticket_status:
+    values: [open, closed, archived]
+    initial: open
+    transitions:
+      - { from: open, to: closed, label: Close, guard: close-ticket }
+      - { from: closed, to: open, label: Reopen }
+      - { from: closed, to: archived, label: Archive }
+  policy_stage:
+    values: [to-do, done]
+
+relations:
+  watches:
+    description: A person watches a ticket. Confers the watcher role on it.
+    from: [person]
+    to: [ticket]
+  contains:
+    description: Work breakdown, walked by the gantt.
+    from: [ticket]
+    to: [ticket]
+  implements:
+    description: A ticket implements a policy.
+    from: [ticket]
+    to: [policy]
+
+default_world: published
+
+# cp is enough: the corpus records who may export what, not the format.
+transforms:
+  copy:
+    from: markdown
+    command: ["cp", "{in}", "{out}"]
+    produces: text/plain
+
+worlds:
+  published:
+    select: published
+    otherwise: default
+  editorial:
+    select: [draft, published]
+    otherwise: default
+
+copies:
+  publish:
+    from: policy@draft
+    to: policy@published
+    label: Publish
+    fields: all
+    guard:
+      permission: publish-policy
+
+comments:
+  enabled: true
+  on: [ticket]
+
+automations:
+  # Links every new ticket to the draft-only POL-2, which editors may not
+  # read, so the create response shows whether it names a hidden neighbour.
+  - name: link-new-ticket
+    on:
+      entity: ticket
+      created: true
+    do:
+      - create_relation:
+          relation: implements
+          to: POL-2

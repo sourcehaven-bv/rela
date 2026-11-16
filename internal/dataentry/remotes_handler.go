@@ -443,8 +443,11 @@ func (h *remotesHandler) act(w http.ResponseWriter, r *http.Request, name, op st
 			"the entry's reason is "+e.Reason)
 		return
 	case remoteForbidden:
-		writeV1Error(w, r, http.StatusForbidden, "forbidden", "Permission denied",
-			"taking the remote value or linking needs edit rights on the local fields")
+		detail := "taking the remote value or linking needs edit rights on the local fields"
+		if e.Reason == remoteReasonRemoteDel {
+			detail = "taking the remote side of a remote_deleted entry needs the right to delete the local row or relation"
+		}
+		writeV1Error(w, r, http.StatusForbidden, "forbidden", "Permission denied", detail)
 		return
 	case remoteAllowed:
 	}

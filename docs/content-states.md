@@ -592,11 +592,11 @@ A `set:` value uses the same grammar as a field map, so `{{today}}` and
 map. A set property must be declared on the target type, and may not be under
 `keep:`, a file property, an external ref, or a computed or rollup property.
 
-A copy also runs the automations of the face it writes: the `created`
-automations when it creates the face, and the `updated` automations when it
-overwrites one. An automation with `on.copy: adopt` runs only when that copy
+A copy also runs the triggers of the face it writes: the `created`
+triggers when it creates the face, and the `updated` triggers when it
+overwrites one. A trigger with `on.copy: adopt` runs only when that copy
 writes the face. See
-[Automations on a copy](metamodel.md#automations-on-a-copy).
+[Triggers on a copy](flows.md#triggers-on-a-copy).
 
 The following table lists the keys a copy accepts:
 
@@ -1025,8 +1025,8 @@ Only the attachment surfaces, copies, sync and data migrations change a file
 property. An ordinary update that changes or clears a file value is refused
 with `422`, because the value decides which files a face may serve. Restoring
 a version keeps the face's current file values, and duplicating an entity
-leaves them out. An automation cannot write a file property either: a
-schema whose automation names one in `set:` or `create_entity` fails to
+leaves them out. A trigger cannot write a file property either: a
+`flows.yaml` trigger whose `set` or `create` output names one fails to
 load.
 
 Export takes an address as well: `GET /api/v1/policies/POL-1@draft/_export`
@@ -1182,7 +1182,7 @@ drafts, and publishing is one authorized action with its own audit record.
 
 From here, you can add a `review` face and a world that prefers it to preview
 pending changes, add translation copies between language faces, or scope
-validation rules and automations to particular faces. The
+validation rules and [triggers](flows.md#scoping-a-trigger-to-content-states) to particular faces. The
 [Metamodel Reference](metamodel.md#content-states-and-worlds) lists every key
 these declarations accept, and the [ACL: Security Hardening](acl-security.md)
 guide covers the security reasoning behind world and face grants in depth.

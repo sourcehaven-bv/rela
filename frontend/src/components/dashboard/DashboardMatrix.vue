@@ -19,6 +19,12 @@ const props = defineProps<{
   toned: boolean
   /** The world the card was counted in, if not the default. */
   world?: string
+  /**
+   * True on a card of an entity dashboard. Its cells count only what the
+   * anchor reaches, and the list a cell would open shows the whole type, so
+   * the cells are plain counts instead of links.
+   */
+  unlinked?: boolean
 }>()
 
 const { t } = useI18n()
@@ -93,7 +99,7 @@ function cellLink(row: string, column: string) {
           <th scope="row">{{ row.label }}</th>
           <td v-for="col in matrix.columns" :key="col.value">
             <router-link
-              v-if="cellAt(row.value, col.value)"
+              v-if="cellAt(row.value, col.value) && !unlinked"
               :to="cellLink(row.value, col.value)"
               class="matrix-cell"
               :class="{ 'matrix-cell--shaded': !toned }"
@@ -103,6 +109,16 @@ function cellLink(row: string, column: string) {
             >
               {{ cellAt(row.value, col.value)!.count }}
             </router-link>
+            <span
+              v-else-if="cellAt(row.value, col.value)"
+              class="matrix-cell"
+              :class="{ 'matrix-cell--shaded': !toned }"
+              :style="cellStyle(cellAt(row.value, col.value)!)"
+              :aria-label="`${matrix.row_title} ${row.label}, ${matrix.column_title} ${col.label}: ${cellAt(row.value, col.value)!.count}`"
+              data-testid="matrix-cell"
+            >
+              {{ cellAt(row.value, col.value)!.count }}
+            </span>
             <span v-else class="matrix-cell matrix-cell--empty" aria-hidden="true" />
           </td>
         </tr>

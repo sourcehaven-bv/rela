@@ -50,6 +50,13 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 		}
 	}
 
+	// Without record types in the schema the record routes answer 404.
+	if rs := appbuild.Records(svc); rs != nil {
+		if err := dataentry.SetRecords(app, rs); err != nil {
+			return fmt.Errorf("wire records: %w", err)
+		}
+	}
+
 	// Without flows in flows.yaml the flow routes answer 404.
 	if ctl := appbuild.FlowControlFor(svc); ctl != nil {
 		if err := dataentry.SetFlows(app, ctl); err != nil {

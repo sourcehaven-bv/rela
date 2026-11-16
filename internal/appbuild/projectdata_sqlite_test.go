@@ -284,7 +284,7 @@ func TestExportMarkdownData_RoundTrip(t *testing.T) {
 }
 
 func TestExportMarkdownData_RefusesExistingDataDirs(t *testing.T) {
-	for _, dir := range []string{"entities", "relations", "attachments"} {
+	for _, dir := range []string{"entities", "relations", "attachments", "records"} {
 		t.Run(dir, func(t *testing.T) {
 			root := writeDataProject(t)
 			if _, err := importData(t, root, false, audit.NewMemory()); err != nil {

@@ -125,7 +125,7 @@ func TestFindEntityTypeReferences_Calendar(t *testing.T) {
 	}
 	meta := &metamodel.Metamodel{}
 
-	refs := findEntityTypeReferences("task", meta, cfg)
+	refs := findEntityTypeReferences("task", meta, cfg, nil)
 
 	var calRefs int
 	for _, r := range refs {

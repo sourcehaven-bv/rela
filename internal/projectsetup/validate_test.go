@@ -73,6 +73,7 @@ entities:
   item:
     label: Item
     id_prefix: ITEM-
+    id_type: sequential
     properties:
       a: {type: integer, computed: "entity.b + 1"}
       b: {type: integer, computed: "entity.a + 1"}

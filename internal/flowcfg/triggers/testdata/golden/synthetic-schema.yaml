@@ -1,0 +1,48 @@
+version: "1"
+piles:
+  inbox: {name: Inbox, read_state: true, reasons: {done: done}}
+entities:
+  task:
+    label: Task
+    id_prefix: TASK
+    aliases: [todo]
+    properties:
+      title: {type: string}
+      status: {type: string}
+      count: {type: integer}
+      due: {type: date}
+      kind: {type: string}
+      owner: {type: string}
+      watchers: {type: string, list: true}
+  project:
+    label: Project
+    id_prefix: PROJ
+    properties:
+      title: {type: string}
+      owner: {type: string}
+  checklist:
+    label: Checklist
+    id_prefix: CHK
+    properties:
+      title: {type: string}
+      status: {type: string}
+      started: {type: date}
+  doc:
+    label: Doc
+    id_prefix: DOC
+    faces: {draft: {}, adopted: {}, nl: {}}
+    properties: {title: {type: string}}
+relations:
+  part-of:
+    from: [task]
+    to: [project]
+    inverse: has-task
+  has-checklist:
+    from: [task]
+    to: [checklist]
+copies:
+  adopt:
+    from: doc@draft
+    to: doc@adopted
+    fields: all
+    guard: {permission: adopt}

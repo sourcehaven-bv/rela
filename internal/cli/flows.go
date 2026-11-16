@@ -99,7 +99,17 @@ func (c *FlowValidateCmd) validateFile(ctx context.Context, svc *readServices) e
 	for _, w := range flows.Warnings() {
 		out.WriteWarning("%s", w)
 	}
-	out.WriteSuccess("%s is valid: %d flow(s).", flowcfg.FileName, len(flows.Flows()))
+	// The server boot refuses a trigger that does not compile, so the
+	// command that answers "is flows.yaml valid?" checks them too.
+	if checkErr := appbuild.CheckTriggers(ctx, svc.Config, svc.Meta, svc.Store); checkErr != nil {
+		out.WriteError("%s", checkErr)
+		return fmt.Errorf("%s: triggers do not load", flowcfg.FileName)
+	}
+	rules, err := appbuild.LoadTriggers(ctx, svc.Config, svc.Meta)
+	if err != nil { // coverage-ignore: defensive: CheckTriggers just loaded the same file
+		return err
+	}
+	out.WriteSuccess("%s is valid: %d flow(s), %d trigger(s).", flowcfg.FileName, len(flows.Flows()), len(rules))
 	return nil
 }
 

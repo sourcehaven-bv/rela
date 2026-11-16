@@ -1849,6 +1849,17 @@ jobs:
           echo ""
           echo "All rela checks passed!"
 
+      # The checklist triggers of tickets/flows.yaml are the workflow every
+      # agent relies on; prove them on an in-memory copy (TKT-XB4M29R).
+      # --require-tests fails when tickets/tests/ is gone.
+      - name: Ticket workflow triggers
+        if: steps.gate.outputs.applies == 'true'
+        run: |
+          set -euo pipefail
+          cd tickets
+          ../bin/rela flow validate
+          ../bin/rela test --require-tests
+
       # PR-only: it diffs against the PR base to find what THIS PR touched.
       # On push that base does not exist, and the question is meaningless
       # anyway — the merge already happened.

@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -42,16 +43,18 @@ type TypeUsage struct {
 type Reference struct {
 	File    string `json:"file"`    // "metamodel.yaml", "data-entry.yaml"
 	Section string `json:"section"` // e.g., "forms.ticket", "entities.ticket.properties.status"
-	Kind    string `json:"kind"`    // "form", "list", "view", "kanban", "calendar", "validation", "automation", "property", "relation_from", "relation_to"
+	Kind    string `json:"kind"`    // "form", "list", "view", "kanban", "calendar", "validation", "trigger", "property", "relation_from", "relation_to"
 }
 
-// Analyze examines metamodel usage and returns analysis results.
+// Analyze examines metamodel usage and returns analysis results. rules are
+// the flows.yaml triggers, whose references count like the schema's own.
 // threshold controls what counts as "low usage" - types with 0 < count <= threshold
 // are reported in LowUsage* fields. Use threshold=0 to only report unused types.
 func Analyze(
 	meta *metamodel.Metamodel,
 	g TypeCounter,
 	dataEntry *dataentryconfig.Config,
+	rules []triggers.Rule,
 	threshold int,
 ) *Analysis {
 	result := &Analysis{}
@@ -59,7 +62,7 @@ func Analyze(
 	// Analyze entity types
 	for _, entityType := range meta.EntityTypes() {
 		count := g.CountByEntityType(entityType)
-		refs := findEntityTypeReferences(entityType, meta, dataEntry)
+		refs := findEntityTypeReferences(entityType, meta, dataEntry, rules)
 
 		usage := TypeUsage{
 			Name:       entityType,
@@ -77,7 +80,7 @@ func Analyze(
 	// Analyze relation types
 	for _, relationType := range meta.RelationTypes() {
 		count := g.CountByRelationType(relationType)
-		refs := findRelationTypeReferences(relationType, meta, dataEntry)
+		refs := findRelationTypeReferences(relationType, dataEntry, rules)
 
 		usage := TypeUsage{
 			Name:       relationType,
@@ -136,6 +139,7 @@ func findEntityTypeReferences(
 	entityType string,
 	meta *metamodel.Metamodel,
 	dataEntry *dataentryconfig.Config,
+	rules []triggers.Rule,
 ) []Reference {
 	var refs []Reference
 
@@ -168,13 +172,13 @@ func findEntityTypeReferences(
 		}
 	}
 
-	// Check metamodel automations
-	for _, a := range meta.Automations {
+	// Check flows.yaml triggers
+	for _, a := range rules {
 		if slices.Contains(a.On.Entity, entityType) {
 			refs = append(refs, Reference{
-				File:    "metamodel.yaml",
-				Section: "automations." + a.Name,
-				Kind:    "automation",
+				File:    "flows.yaml",
+				Section: "triggers." + a.Name,
+				Kind:    "trigger",
 			})
 		}
 	}
@@ -255,28 +259,28 @@ func findEntityTypeInDataEntry(entityType string, cfg *dataentryconfig.Config) [
 
 func findRelationTypeReferences(
 	relationType string,
-	meta *metamodel.Metamodel,
 	dataEntry *dataentryconfig.Config,
+	rules []triggers.Rule,
 ) []Reference {
 	var refs []Reference
 
-	// Check metamodel automations for create_relation actions
-	for _, a := range meta.Automations {
+	// Check flows.yaml triggers for relate outputs and relation triggers
+	for _, a := range rules {
 		for _, action := range a.Do {
 			if action.CreateRelation != nil && action.CreateRelation.Relation == relationType {
 				refs = append(refs, Reference{
-					File:    "metamodel.yaml",
-					Section: "automations." + a.Name + ".do.create_relation",
-					Kind:    "automation",
+					File:    "flows.yaml",
+					Section: "triggers." + a.Name + ".outputs.relate",
+					Kind:    "trigger",
 				})
 			}
 		}
 		// Check relation_created/relation_removed triggers
 		if a.On.RelationCreated == relationType || a.On.RelationRemoved == relationType {
 			refs = append(refs, Reference{
-				File:    "metamodel.yaml",
-				Section: "automations." + a.Name + ".on",
-				Kind:    "automation",
+				File:    "flows.yaml",
+				Section: "triggers." + a.Name + ".on",
+				Kind:    "trigger",
 			})
 		}
 	}

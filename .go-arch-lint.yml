@@ -22,6 +22,7 @@ exclude:
   - internal/lease/leasetest
   - internal/channels/channelstest
   - internal/flowrun/flowruntest
+  - internal/records/recordstest
   - internal/schedulerstate/schedulerstatetest
   - frontend
   - e2e
@@ -96,7 +97,7 @@ components:
   transform:        { in: internal/transform }
   check:            { in: internal/check }
   autocascade:      { in: internal/autocascade }
-  automation:       { in: internal/automation }
+  triggers:         { in: internal/flowcfg/triggers }
   calfeed:          { in: internal/calfeed }
   # Numbers store change events and answers "which types changed since this
   # resume token" (TKT-3A1200). An UNGATED base source like store: it holds no
@@ -258,6 +259,12 @@ components:
   sqlchannels:      { in: internal/channels/sqlchannels }
   sqlitechannels:   { in: internal/channels/sqlitechannels }
   pgchannels:       { in: internal/channels/pgchannels }
+  # Records (TKT-J7Q9C4K): typed rows owned by an entity, outside the graph.
+  records:          { in: internal/records }
+  filerecords:      { in: internal/records/filerecords }
+  sqlrecords:       { in: internal/records/sqlrecords }
+  sqliterecords:    { in: internal/records/sqliterecords }
+  pgrecords:        { in: internal/records/pgrecords }
   # In-memory presence tracker (TKT-MHXH87). A leaf: it reads no clock and
   # imports nothing of rela; the live hub keys and drives it.
   presence:         { in: internal/presence }
@@ -602,7 +609,7 @@ deps:
       - attachment
       - audit
       - autocascade
-      - automation
+      - triggers
       - bleveindex
       - cmdexec
       # comments: stdio `rela mcp` backs list_comments (TKT-QIQO1W).
@@ -610,6 +617,8 @@ deps:
       - config
       - configsql
       - dataentryconfig
+      # records: `rela export --all` writes every record row (records.Each).
+      - records
       - sqlitedb
       - datamigration
       - entitymanager
@@ -709,6 +718,8 @@ deps:
       - ai
       - llmtask
       - ygows
+      # The records REST surface (TKT-J7Q9C4K).
+      - records
       - mentions
       - rollup
       - rootfs
@@ -916,6 +927,10 @@ deps:
       # flowview: the flow tools (TKT-ZAXRXND) serve the run read model; the
       # gates stay in appbuild.FlowControl. flow is the leaf that names a
       # run id.
+      # flowcfg + triggers: analyze schema counts the flows.yaml triggers'
+      # references (TKT-GWOBH2U).
+      - flowcfg
+      - triggers
       - flowview
       - flow
       - principal
@@ -1056,6 +1071,14 @@ deps:
       - filechannels
       - pgchannels
       - sqlitechannels
+      # Records: the backend is picked like the channel store's, and the
+      # service is built over the gated reader and the write ACL.
+      - records
+      - filerecords
+      - pgrecords
+      - sqliterecords
+      # sqlrecords: record writes join a store transaction (joinRecordsFor).
+      - sqlrecords
       # The cross-process lock for kvpiles and kvlease over the on-disk cache KV.
       - filelock
       - datamigration
@@ -1107,7 +1130,7 @@ deps:
       - audit
       - caldavalias
       - autocascade
-      - automation
+      - triggers
       - bleveindex
       - config
       - entitymanager
@@ -1190,7 +1213,7 @@ deps:
       - appbuild
       - audit
       - autocascade
-      - automation
+      - triggers
       - bleveindex
       # comments: only for WithComments, the optional collaborator a
       # commenting-enabled test supplies (BUG-6OZBP9).
@@ -1540,8 +1563,8 @@ deps:
   autocascade:
     mayDependOn:
       - audit
-      - automation
-  automation:
+      - triggers
+  triggers:
     mayDependOn:
       # canonical.HashEntity decides whether an update changed anything for
       # `on.updated`, with the value normalization the stores use.
@@ -1549,12 +1572,14 @@ deps:
       # cmdexec: Environ for the `git config` child that fills {{user.*}}.
       - cmdexec
       - filter
-      # Automations compile to flow triggers and fire through flow.Fire
+      # Triggers compile to flow triggers and fire through flow.Fire
       # (TKT-GS7THPA). flow is a leaf.
       - flow
       - metamodel
       - predicate
       - predicatefns
+      # principal: ValidateRunAs checks a background script's `run_as`.
+      - principal
   conflict:
     mayDependOn:
       - markdown
@@ -1727,7 +1752,7 @@ deps:
       - acl
       - audit
       - autocascade
-      - automation
+      - triggers
       - computed
       # The rename's mention rewrite, carried into converted rows (TKT-J6GISC3).
       - mentions
@@ -1746,6 +1771,9 @@ deps:
   schema:
     mayDependOn:
       - dataentryconfig
+      # triggers: the flows.yaml rules count as references to the types they
+      # name (TKT-GWOBH2U).
+      - triggers
       - metamodel
       - migration
       - store
@@ -2085,6 +2113,34 @@ deps:
   pgchannels:
     mayDependOn:
       - sqlchannels
+      - pgexec
+  # Records (TKT-J7Q9C4K). The domain package holds the Store contract, the
+  # service and the aggregate fold. Every gate comes in through the
+  # consumer-side Owners interface appbuild implements, so it lists neither
+  # acl, store nor visibility: a record is not graph content.
+  records:
+    mayDependOn:
+      - entity
+      - metamodel
+      - principal
+  # The file backend: JSON lines per owner per month, through the storage
+  # seam.
+  filerecords:
+    mayDependOn:
+      - records
+      - storage
+  # The SQL implementation shared by both database backends.
+  sqlrecords:
+    mayDependOn:
+      - records
+      - sqlexec
+  sqliterecords:
+    mayDependOn:
+      - sqlrecords
+      - sqliteexec
+  pgrecords:
+    mayDependOn:
+      - sqlrecords
       - pgexec
   # The run store's domain package: value types, limits, checks and the
   # Store contract. It knows no backend and no graph store. It authorizes
@@ -2502,6 +2558,9 @@ deps:
       - metamodel
       - principal
       - project
+      # The source's record rows, read through the file record backend.
+      - records
+      - filerecords
       - state
       - storage
       - store
