@@ -972,9 +972,9 @@ gets through the web UI:
 - `search_entities` returns only entities you may read, and drops a hit that
   matched only on a property hidden from you.
 
-**The Lua tools are not available remotely.** `lua_eval`, `lua_run` and
-`lua_list` exist only over stdio. A script is caller-supplied code that runs in
-the server process, so offering it over HTTP would let any remote caller use
+**The Lua tools are not available remotely.** `lua_eval` and `lua_run`
+exist only over stdio. A script is caller-supplied code that runs in the server
+process, so offering it over HTTP would let any remote caller use
 server CPU and memory at will. Every other tool is exposed remotely, unless
 [`remote_mcp.tools`](#limiting-the-tools) limits them. The
 action tools exist only remotely: they run as the signed-in caller.
