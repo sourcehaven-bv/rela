@@ -3,7 +3,6 @@ package appbuild
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 )
 
@@ -74,8 +74,22 @@ func SetLLMActionRunner(s *Services, r LLMActionRunner) error {
 	return nil
 }
 
+// llmIdentity records who queues a run and rebuilds them when it runs.
+// [managerOutputs] implements it, as it does the same for a session output.
+type llmIdentity interface {
+	// Poster reports whether the caller on ctx names a user entity and is
+	// a verified principal that matched none.
+	Poster(ctx context.Context) (realtime.OutputPoster, error)
+	// rebuild binds p as [managerOutputs.rebuild] does.
+	rebuild(ctx context.Context, p principal.Principal, mark realtime.OutputPoster) (context.Context, error)
+}
+
 // LLMActionJobs queues background llm action runs. A nil value has no queue.
-type LLMActionJobs struct{ q jobs.Enqueuer }
+type LLMActionJobs struct {
+	q     jobs.Enqueuer
+	ident llmIdentity
+	kv    state.KV
+}
 
 // LLMActionQueue returns the queue background llm actions run on, or nil
 // when s runs no background jobs (a one-shot process would exit before the
@@ -84,13 +98,16 @@ func LLMActionQueue(s *Services) *LLMActionJobs {
 	if s.llmActionQueue == nil {
 		return nil
 	}
-	return &LLMActionJobs{q: s.llmActionQueue}
+	return &LLMActionJobs{q: s.llmActionQueue, ident: s.llmIdentity, kv: s.stateKV}
 }
 
 // llmActionPayload is the job's payload. Run identifies one queued run, so
-// a redelivered job can tell that it already applied.
+// a redelivered job can tell that it already finished (see [runKey]).
 type llmActionPayload struct {
 	Action, Entity, World, User, PrincipalType, Scopes, Run string
+	// Unmatched and UserEntity are the queuing request's identity mark
+	// (see [llmIdentity]).
+	Unmatched, UserEntity bool
 }
 
 // key is the job's idempotency key: everything but Run, JSON-encoded so no
@@ -100,11 +117,14 @@ func (p llmActionPayload) key() string {
 	return "llm:" + string(b)
 }
 
-// handledKey is the state key recording the last run applied for p's key.
-func (p llmActionPayload) handledKey() string {
-	sum := sha256.Sum256([]byte(p.key()))
-	return "llm-action-jobs/" + hex.EncodeToString(sum[:])
-}
+// runKey is the state key that marks run as pending. It is written when
+// the run is queued and deleted when the run finishes, so a redelivery of a
+// finished run finds none and ends. The key is the random token alone and
+// the value is empty: the marker names no user or entity, and it lives only
+// as long as its job. A job the fs tier drops at exit leaves its marker
+// behind; the marker is an empty file under .rela/state that links to
+// nothing.
+func runKey(run string) string { return "llm-action-jobs/runs/" + run }
 
 func newRunToken() string {
 	b := make([]byte, 16)
@@ -126,24 +146,41 @@ func newRunToken() string {
 func (j *LLMActionJobs) EnqueueLLMAction(
 	ctx context.Context, action, address, world string, who principal.Principal,
 ) error {
-	if j == nil || j.q == nil {
+	if j == nil || j.q == nil || j.ident == nil || j.kv == nil {
 		return errors.New("llm actions: no job queue")
+	}
+	mark, err := j.ident.Poster(ctx)
+	if err != nil {
+		return fmt.Errorf("llm actions: identity: %w", err)
 	}
 	scopes := who.Scopes()
 	slices.Sort(scopes)
 	p := llmActionPayload{Action: action, Entity: address, World: world, User: who.User,
-		PrincipalType: who.PrincipalType(), Scopes: strings.Join(scopes, " "), Run: newRunToken()}
-	err := j.q.Enqueue(ctx, jobs.Job{
+		PrincipalType: who.PrincipalType(), Scopes: strings.Join(scopes, " "), Run: newRunToken(),
+		Unmatched: mark.Unmatched, UserEntity: mark.UserEntity}
+	// Before the job: a worker may pick it up before Enqueue returns.
+	if err := j.kv.Put(ctx, runKey(p.Run), nil); err != nil {
+		return fmt.Errorf("llm actions: record run: %w", err)
+	}
+	err = j.q.Enqueue(ctx, jobs.Job{
 		Kind: llmActionJobKind,
 		Payload: map[string]any{
 			"action": p.Action, "entity": p.Entity, "world": p.World, "user": p.User,
 			"principal_type": p.PrincipalType, "scopes": p.Scopes, "run": p.Run,
+			"unmatched": p.Unmatched, "user_entity": p.UserEntity,
 		},
 		// A few attempts ride out a rate limit or a provider blip; a refusal
 		// is not retried (see handleLLMActionJob).
 		Retry:          jobs.RetryBounded,
 		IdempotencyKey: p.key(),
 	})
+	if err != nil {
+		// Nothing was queued under this run: a duplicate rides on the
+		// pending run's own marker.
+		if delErr := j.kv.Delete(ctx, runKey(p.Run)); delErr != nil {
+			slog.Warn("llm actions: drop unqueued run", "err", delErr)
+		}
+	}
 	if errors.Is(err, jobs.ErrDuplicateJob) {
 		return nil
 	}
@@ -154,13 +191,13 @@ func (j *LLMActionJobs) EnqueueLLMAction(
 // when no action applies itself, because data-entry.yaml is reloaded while
 // the process runs.
 func registerLLMActionJobs(
-	q jobs.Registrar, h *llmActionHolder, bind func(context.Context) (context.Context, error), kv state.KV,
+	q jobs.Registrar, h *llmActionHolder, ident llmIdentity, kv state.KV,
 ) error {
-	if kv == nil {
-		return errors.New("appbuild: register llm action jobs: state is required")
+	if kv == nil || ident == nil {
+		return errors.New("appbuild: register llm action jobs: state and identity are required")
 	}
 	err := q.Register(llmActionJobKind, func(ctx context.Context, job jobs.Job) error {
-		return handleLLMActionJob(ctx, job, h, bind, kv)
+		return handleLLMActionJob(ctx, job, h, ident, kv)
 	})
 	if err != nil {
 		return fmt.Errorf("appbuild: register llm action jobs: %w", err)
@@ -173,45 +210,51 @@ func registerLLMActionJobs(
 // refused run does not ask the model again.
 //
 // The queue delivers at least once: a job whose completion was not recorded
-// runs again. A run that applied records its token in kv first, so the
-// redelivery ends without asking the model again or creating its records a
-// second time. A failed apply is never retried (see
-// [dataentry.LLMActionRunner.RunLLMAction]), so only a run that wrote nothing is.
+// runs again. A run deletes its marker (see [runKey]) when it finishes, so
+// the redelivery finds none and ends without asking the model again or
+// creating its records a second time. A failed apply is never retried (see
+// [dataentry.LLMActionRunner.RunLLMAction]), so only a run that wrote
+// nothing keeps its marker for the next attempt.
 func handleLLMActionJob(
-	ctx context.Context, job jobs.Job, h *llmActionHolder,
-	bind func(context.Context) (context.Context, error), kv state.KV,
+	ctx context.Context, job jobs.Job, h *llmActionHolder, ident llmIdentity, kv state.KV,
 ) error {
 	str := func(k string) string { v, _ := job.Payload[k].(string); return v }
+	flag := func(k string) bool { v, _ := job.Payload[k].(bool); return v }
 	p := llmActionPayload{Action: str("action"), Entity: str("entity"), World: str("world"), User: str("user"),
-		PrincipalType: str("principal_type"), Scopes: str("scopes"), Run: str("run")}
-	if p.Action == "" || p.Entity == "" || p.User == "" || principal.IsRelaIdentity(p.User) {
+		PrincipalType: str("principal_type"), Scopes: str("scopes"), Run: str("run"),
+		Unmatched: flag("unmatched"), UserEntity: flag("user_entity")}
+	if p.Action == "" || p.Entity == "" || p.User == "" || p.Run == "" || principal.IsRelaIdentity(p.User) {
 		slog.Error("llm action job: unusable payload", "action", p.Action, "entity", p.Entity)
 		return nil
 	}
-	if done, err := kv.Get(ctx, p.handledKey()); err == nil && p.Run != "" && string(done) == p.Run {
-		return nil
-	} else if err != nil && !os.IsNotExist(err) && !errors.Is(err, fs.ErrNotExist) {
+	if _, err := kv.Get(ctx, runKey(p.Run)); os.IsNotExist(err) || errors.Is(err, fs.ErrNotExist) {
+		return nil // finished on an earlier delivery
+	} else if err != nil {
 		return fmt.Errorf("llm action %q: read run state: %w", p.Action, err)
 	}
-	ctx = principal.With(ctx, principal.VerifiedFrom(p.User, principal.ToolLLMAction,
-		principal.Claims{PrincipalType: p.PrincipalType, Scopes: strings.Fields(p.Scopes)}))
-	ctx, err := bind(ctx)
+	finish := func() {
+		if err := kv.Delete(ctx, runKey(p.Run)); err != nil {
+			slog.Warn("llm action job: clear finished run", "action", p.Action, "entity", p.Entity, "err", err)
+		}
+	}
+	who := principal.VerifiedFrom(p.User, principal.ToolLLMAction,
+		principal.Claims{PrincipalType: p.PrincipalType, Scopes: strings.Fields(p.Scopes)})
+	runCtx, err := ident.rebuild(ctx, who, realtime.OutputPoster{Unmatched: p.Unmatched, UserEntity: p.UserEntity})
+	if errors.Is(err, errOutputsNoPoster) {
+		slog.Warn("llm action job: the user no longer resolves", "action", p.Action, "entity", p.Entity)
+		finish()
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("llm action %q: identity %q: %w", p.Action, p.User, err)
 	}
-	action, address, user := p.Action, p.Entity, p.User
-	retry, err := h.run(ctx, action, address, p.World)
-	if err == nil {
-		if p.Run != "" {
-			if putErr := kv.Put(ctx, p.handledKey(), []byte(p.Run)); putErr != nil {
-				slog.Warn("llm action job: record applied run", "action", action, "entity", address, "err", putErr)
-			}
-		}
-		return nil
-	}
-	if retry && !job.FinalAttempt() {
+	retry, err := h.run(runCtx, p.Action, p.Entity, p.World)
+	if err != nil && retry && !job.FinalAttempt() {
 		return err
 	}
-	slog.Warn("llm action job failed", "action", action, "entity", address, "user", user, "err", err)
+	finish()
+	if err != nil {
+		slog.Warn("llm action job failed", "action", p.Action, "entity", p.Entity, "user", p.User, "err", err)
+	}
 	return nil
 }

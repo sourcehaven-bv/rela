@@ -10,6 +10,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/actionproposal"
+	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -39,6 +40,14 @@ func autoTriage() dataentryconfig.Action {
 
 func newAutoLLMApp(t *testing.T, reply string, create []string, action dataentryconfig.Action) llmApp {
 	t.Helper()
+	return newAutoLLMAppWith(t, reply, create, action, nil)
+}
+
+// newAutoLLMAppWith is newAutoLLMApp with policy editing the ACL policy.
+func newAutoLLMAppWith(
+	t *testing.T, reply string, create []string, action dataentryconfig.Action, policy func(*acl.Policy),
+) llmApp {
+	t.Helper()
 	// A relation create needs the create grant on its source type.
 	create = append([]string{"ticket"}, create...)
 	return buildLLMApp(t, llmFixture{
@@ -50,7 +59,7 @@ func newAutoLLMApp(t *testing.T, reply string, create []string, action dataentry
 			{ID: "CON-3", Type: "concept", Properties: map[string]any{"title": "Billing", "area": "billing"}},
 		},
 		edges: []entity.RelationKey{{From: "TKT-1", Type: "affects", To: "CON-3"}},
-		read:  []string{"ticket", "concept"}, action: action, reply: reply, create: create,
+		read:  []string{"ticket", "concept"}, action: action, reply: reply, create: create, policy: policy,
 	})
 }
 
@@ -255,4 +264,103 @@ func TestApplyProposal_ExistingRelationSkipped(t *testing.T) {
 	if got.related != 1 {
 		t.Errorf("related = %d, want 1 (CON-3 already there)", got.related)
 	}
+}
+
+// boundAs is ctx for p with its ACL request bound, as the job handler binds
+// it.
+func (a llmApp) boundAs(t *testing.T, p principal.Principal) context.Context {
+	t.Helper()
+	ctx, err := acl.BindRequest(principal.With(context.Background(), p), a.decl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ctx
+}
+
+// A background run keeps the queuing client's ceiling: a token without the
+// write scope cannot apply, through the real ACL, and one with it can.
+func TestLLMActionRunner_ClientCeiling(t *testing.T) {
+	ceiling := func(p *acl.Policy) {
+		p.ClientBaselines = map[string]acl.ClientBaseline{"apps": {
+			AppliesTo: []string{"app"},
+			Restriction: acl.Restriction{
+				Read: []string{"ticket", "concept"}, Update: []string{}, Permissions: []string{"ticket.triage"},
+			},
+		}}
+		p.ScopeGrants = map[string]acl.ScopeGrant{"write": {Restriction: acl.Restriction{Update: []string{"ticket"}}}}
+	}
+	client := func(scopes ...string) principal.Principal {
+		return principal.VerifiedFrom("alice", principal.ToolLLMAction,
+			principal.Claims{PrincipalType: "app", Scopes: scopes})
+	}
+	reply := `{"set":{"priority":"high"},"relate":{"affects":[]}}`
+
+	a := newAutoLLMAppWith(t, reply, nil, autoTriage(), ceiling)
+	r, err := NewLLMActionRunner(a.app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// priority is not writable under the token, so it is not offered to
+	// the model, and a reply that proposes it anyway is refused.
+	if _, err := r.RunLLMAction(a.boundAs(t, client("read")), "triage", "TKT-1", ""); err == nil {
+		t.Error("read-only token: applied")
+	}
+	a.unchanged(t)
+
+	a = newAutoLLMAppWith(t, reply, nil, autoTriage(), ceiling)
+	if r, err = NewLLMActionRunner(a.app); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.RunLLMAction(a.boundAs(t, client("read", "write")), "triage", "TKT-1", ""); err != nil {
+		t.Fatalf("token with the write scope: %v", err)
+	}
+	e, err := a.store.GetEntity(context.Background(), entity.Ref{ID: "TKT-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Properties["priority"] != "high" {
+		t.Errorf("priority = %v", e.Properties["priority"])
+	}
+}
+
+// A user who holds the action but may not write the proposed field writes
+// nothing.
+func TestLLMActionRunner_FieldDenied(t *testing.T) {
+	titleOnly := func(p *acl.Policy) {
+		role := p.Roles["triager"]
+		role.Fields = map[string][]acl.FieldGrant{"ticket": {{Field: "title"}}}
+		p.Roles["triager"] = role
+	}
+	a := newAutoLLMAppWith(t, `{"set":{"priority":"high"},"relate":{"affects":[]}}`, nil, autoTriage(), titleOnly)
+	resolver, err := affordances.New(llmMeta(t), storeRelationLookup{st: a.store}, a.decl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setTestResolver(t, a.app, &policyResolver{inner: resolver})
+	r, err := NewLLMActionRunner(a.app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.RunLLMAction(a.bound(t, "alice"), "triage", "TKT-1", ""); err == nil {
+		t.Error("applied a field the user may not write")
+	}
+	a.unchanged(t)
+}
+
+// A declared world the user holds no grant on is refused, not read in the
+// default world instead.
+func TestLLMActionRunner_WorldWithoutGrant(t *testing.T) {
+	a := newAutoLLMApp(t, `{"set":{"priority":"high"},"relate":{"affects":[]}}`, nil, autoTriage())
+	a.app.worlds = stubWorlds{names: map[string]bool{"review": true}, resolveDefault: true}
+	r, err := NewLLMActionRunner(a.app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry, err := r.RunLLMAction(a.bound(t, "alice"), "triage", "TKT-1", "review"); err == nil || retry {
+		t.Errorf("retry %v err %v, want a refusal that is not retried", retry, err)
+	}
+	if n := a.chat.calls(); n != 0 {
+		t.Errorf("the model was asked %d times", n)
+	}
+	a.unchanged(t)
 }

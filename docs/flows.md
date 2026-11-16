@@ -279,7 +279,9 @@ An `llm:` action in a step reads text that people other than `run_as` may
 have written, and that text can steer what the model proposes (prompt
 injection). The proposal is then written with `run_as`'s grants. Grant
 `run_as` only the writes the action's outputs make, and prefer outputs whose
-values the schema bounds, such as enums and candidate relations. See
+values the schema bounds, such as enums and candidate relations. The model
+can also copy anything `run_as` reads into what it writes, so `run_as` should
+read no more than the people who can read the action's outputs. See
 "Applying without review" in the data-entry guide.
 
 The work runs as the flow's `run_as`, through the job queue. A script or

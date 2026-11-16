@@ -7223,6 +7223,13 @@ job identity with wider grants than the people who write the subject. Anyone
 who can edit the text the prompt reads can then steer writes made with
 `run_as`'s grants. Grant `run_as` only the writes the action's outputs make.
 
+**Data that moves.** The model sees everything the action's inputs read, and
+it can copy any of it into a property it sets or a record it creates. That
+target may be readable by more people than the input was. Make each output
+property and each created type no more widely readable than the action's
+inputs. In a flow, the inputs are read with `run_as`'s grants, so `run_as`
+should read no more than the people who can read the outputs.
+
 A background run that fails is logged on the server. It does not notify the
 user who started it. A run that is still queued for the same action, entity
 and user takes the place of a new one.

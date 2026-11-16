@@ -164,6 +164,8 @@ type llmFixture struct {
 	wrap func(store.Store) store.Store
 	// create is the types alice and bob may create.
 	create []string
+	// policy, when set, edits the policy before it is built.
+	policy func(*acl.Policy)
 }
 
 func buildLLMApp(t *testing.T, fx llmFixture) llmApp {
@@ -190,10 +192,14 @@ func buildLLMApp(t *testing.T, fx llmFixture) llmApp {
 	role := func(perms ...string) acl.RoleDef {
 		return acl.RoleDef{Read: fx.read, Update: []string{"ticket"}, Create: fx.create, Permissions: perms}
 	}
-	decl := mustNewACL(t, &acl.Policy{
+	pol := &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"triager": role("ticket.triage"), "reader": role()},
 		Assignments: map[string]string{"alice": "triager", "bob": "reader"},
-	}, st)
+	}
+	if fx.policy != nil {
+		fx.policy(pol)
+	}
+	decl := mustNewACL(t, pol, st)
 	svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, paths), appbuildtest.WithStore(st),
 		appbuildtest.WithDeclarative(decl))
 	app := newAppFromParts(&Config{}, nil, newFixture())

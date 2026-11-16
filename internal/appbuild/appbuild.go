@@ -306,6 +306,8 @@ type Services struct {
 	// these services run no background jobs. See [SetLLMActionRunner].
 	llmActions     *llmActionHolder
 	llmActionQueue jobs.Enqueuer
+	// llmIdentity records and rebuilds who queued a background llm action.
+	llmIdentity llmIdentity
 
 	// tokens is the connector token broker, or why there is none
 	// (TKT-01KZSO). See [Tokens].
@@ -3274,8 +3276,16 @@ func finishAssembly(
 	}
 	s.versionTags = tags
 	s.attachRender = &attachRenderHolder{}
+	// The realtime outputs runner writes through the manager the channel
+	// service uses; background llm actions rebuild their user through it.
+	outputs, err := newManagerOutputs(
+		s.entityManager, s.store, s.meta, txChannelsFor(s.store, refs.channels), s.aclDeclarative)
+	if err != nil {
+		return nil, err
+	}
+	s.llmIdentity = outputs
 	if q := automationJobQueue(s.base, s.jobQueue); q != nil {
-		if regErr := registerLLMActionJobs(q, s.llmActions, rebindFor(s.aclDeclarative), s.stateKV); regErr != nil {
+		if regErr := registerLLMActionJobs(q, s.llmActions, outputs, s.stateKV); regErr != nil {
 			return nil, regErr
 		}
 		s.llmActionQueue = q
@@ -3283,13 +3293,7 @@ func finishAssembly(
 	if bindErr := autoJobs.bind(servicesJobRunner{s}, engine); bindErr != nil {
 		return nil, bindErr
 	}
-	// Built, not started: the host starts it (see RunRealtimeWorker). Its
-	// outputs runner writes through the manager the channel service uses.
-	outputs, err := newManagerOutputs(
-		s.entityManager, s.store, s.meta, txChannelsFor(s.store, refs.channels), s.aclDeclarative)
-	if err != nil {
-		return nil, err
-	}
+	// Built, not started: the host starts it (see RunRealtimeWorker).
 	if s.realtimeWorker, err = buildRealtimeWorker(s.base, s.store, s.stateKV, refs, outputs); err != nil {
 		return nil, err
 	}

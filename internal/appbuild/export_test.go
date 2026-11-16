@@ -8,6 +8,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/flowrun"
 	"github.com/Sourcehaven-BV/rela/internal/flowrun/sqlflowrun"
+	"github.com/Sourcehaven-BV/rela/internal/jobs"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -103,4 +105,31 @@ func TryFlowWorkerLock(ctx context.Context, s *Services) (release func(), ok boo
 		return nil, ok, err
 	}
 	return held.release, true, nil
+}
+
+// LLMActionJobRun queues a background run of action on address as the
+// caller bound on queueCtx, then lets its handler run it with r, through
+// s's real identity wiring. The returned run executes the handler; call it
+// after changing the graph to see what the job does then. Test-only.
+func LLMActionJobRun(
+	queueCtx context.Context, s *Services, r LLMActionRunner, action, address string,
+) (run func(context.Context) error, err error) {
+	q := &captureQueue{}
+	kv := &mapKV{m: map[string][]byte{}}
+	j := &LLMActionJobs{q: q, ident: s.llmIdentity, kv: kv}
+	if err := j.EnqueueLLMAction(queueCtx, action, address, "", principal.From(queueCtx)); err != nil {
+		return nil, err
+	}
+	h := &llmActionHolder{}
+	h.r.Store(&llmActionRunnerBox{r})
+	job := q.jobs[0]
+	job.Retry, job.Attempt = jobs.RetryBounded, 1
+	return func(ctx context.Context) error { return handleLLMActionJob(ctx, job, h, s.llmIdentity, kv) }, nil
+}
+
+type captureQueue struct{ jobs []jobs.Job }
+
+func (q *captureQueue) Enqueue(_ context.Context, j jobs.Job) error {
+	q.jobs = append(q.jobs, j)
+	return nil
 }
