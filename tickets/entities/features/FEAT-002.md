@@ -2,15 +2,16 @@
 id: FEAT-002
 type: feature
 title: Sticky Headers in Data Entry UI
-summary: Page headers, filter bars, and jump bars stay visible while scrolling
-description: |
-  Sticky positioning for key UI elements in the data-entry web app:
-  - Page header: sticky at top (z-index 50)
-  - Filter bar: sticky below header (z-index 40), with border/shadow appearing only when stuck
-  - Jump bar: sticky below header (z-index 40) with subtle shadow
+summary: Page headers and filter bars stay visible while scrolling
+description: |-
+    Sticky positioning for key UI elements in the data-entry web app:
+    - Page header: sticky at top (z-index 50)
+    - Filter bar: sticky below header (z-index 40), with border/shadow appearing only when stuck
 
-  Uses IntersectionObserver to detect when filter bar becomes stuck and applies
-  visual feedback (border + shadow) only in that state.
+    Uses IntersectionObserver to detect when filter bar becomes stuck and applies
+    visual feedback (border + shadow) only in that state.
+
+    The entity detail page no longer has a jump bar; TKT-UYC758H removed it.
 priority: medium
 status: in-progress
 ---
@@ -22,7 +23,6 @@ status: in-progress
 - `.page-header`: `position: sticky; top: 0`
 - `.filter-bar`: `position: sticky; top: 57px`
 - `.filter-bar.is-stuck`: border + shadow styles
-- `.jump-bar`: `position: sticky; top: 57px`
 
 ### JavaScript
 
