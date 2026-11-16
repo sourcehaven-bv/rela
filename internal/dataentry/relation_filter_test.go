@@ -237,10 +237,10 @@ func TestV1PositionRelationFilter(t *testing.T) {
 	// The list, sorted by title, of tasks Jeroen is responsible for:
 	// TAAK-001 (A task), TAAK-003 (C task).
 	scope := ScopeDescriptor{
-		Source:  "list",
-		Type:    "taak",
-		Filters: map[string]string{"filter[verantwoordelijk_voor]": "Jeroen Vloothuis"},
-		Sort:    "title",
+		Source:    "list",
+		Type:      "taak",
+		Filters:   map[string]string{"filter[verantwoordelijk_voor]": "Jeroen Vloothuis"},
+		ListQuery: ListQuery{Sort: "title"},
 	}
 
 	// Sanity: the list handler returns exactly these two, in this order.

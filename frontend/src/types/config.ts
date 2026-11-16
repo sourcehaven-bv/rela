@@ -1334,12 +1334,27 @@ export interface SidebarPageTab {
   direction?: 'outgoing' | 'incoming'
   /** The question shown above the view on a steps page. */
   prompt?: string
+  /** On a steps page, the step shows the list's rows one at a time (TKT-M07C97Y). */
+  walk?: boolean
+  /**
+   * The step has a `done_when` check. The verdict is per principal and comes
+   * from `/_page_status`, never from the sidebar (TKT-MWZF0UO).
+   */
+  done_check?: boolean
   /**
    * Per entity type, the relation a row created while this tab is open is
    * linked to the page's entity over. The space's Create menu uses it.
    */
   links?: SidebarPageLink[]
 }
+
+/**
+ * Where a walking step stands (TKT-M07C97Y). `loading` until the first
+ * answer, `empty` for a list with no rows, `missing` for an `?item=` the
+ * list does not hold (removed, hidden, or never in it), `error` for a read
+ * that failed otherwise, `ready` with a position.
+ */
+export type StepWalkState = 'off' | 'loading' | 'empty' | 'missing' | 'error' | 'ready'
 
 /** A row of `type` is linked to the page's entity over `relation`, seen from the entity. */
 export interface SidebarPageLink {

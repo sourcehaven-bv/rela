@@ -252,6 +252,37 @@ func TestCompileViewConditions_NavStatus(t *testing.T) {
 	require.Contains(t, problems[0], `navigation["Mijn taken"].status[1]: condition does not compile`)
 }
 
+// A steps-page tab's done_when compiles against its list's entity type, is
+// keyed by page and tab, and a bad one names both.
+func TestCompileViewConditions_PageDone(t *testing.T) {
+	cfg := &dataentryconfig.Config{
+		Lists: map[string]dataentryconfig.List{"taken": {EntityType: "taak"}},
+		Pages: map[string]dataentryconfig.Page{"sessie": {
+			Mode: dataentryconfig.PageModeSteps,
+			Tabs: []dataentryconfig.PageTab{
+				{ID: "risicos", List: "taken", DoneWhen: "entity.status == 'klaar'"},
+				{ID: "rest", List: "taken"},
+			},
+		}},
+	}
+	key := ViewConditionKey{ViewConditionPageDone, dataentryconfig.PageDoneConditionID("sessie", "risicos")}
+	progs, problems := CompileViewConditions(cfg, vcMeta())
+	require.Empty(t, problems)
+	require.Len(t, progs, 1)
+	require.Contains(t, progs, key)
+
+	lookup, problems := ViewConditionMatchers(cfg, vcMeta())
+	require.Empty(t, problems)
+	m, ok := lookup(string(ViewConditionPageDone), key.ID)
+	require.True(t, ok)
+	require.Equal(t, "taak", m.entityType)
+
+	cfg.Pages["sessie"].Tabs[0].DoneWhen = "entity.staus == 'x'"
+	_, problems = CompileViewConditions(cfg, vcMeta())
+	require.Len(t, problems, 1)
+	require.Contains(t, problems[0], "pages[sessie].tabs[risicos].done_when: condition does not compile")
+}
+
 // A status rule inside a space compiles like a top-level one, under a key
 // prefixed with the space id, and a bad one names the space.
 func TestCompileViewConditions_NavStatusInSpace(t *testing.T) {

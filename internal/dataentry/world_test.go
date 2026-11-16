@@ -96,6 +96,7 @@ func TestWorldCapablePath(t *testing.T) {
 			"the side panel shares executeView but was never scoped; it passes defaultViewWorld()"},
 		{"/api/v1/_documents/report", false, "document render and its cache key are world-blind"},
 		{"/api/v1/_position", true, "position recomputes a search or list page's set in its world (BUG-SMPOZB)"},
+		{"/api/v1/_page_status", true, "a step is judged over the rows its list shows in the world (TKT-MWZF0UO)"},
 		{"/api/v1/_analyze", false, "whole-graph, tracer-backed"},
 		{"/api/v1/_piles", true, "pile counts resolve items in the request's world (TKT-K3RJLH)"},
 		{"/api/v1/_piles/PIL-ABCD", true, "one pile's items resolve in the request's world"},
@@ -470,6 +471,14 @@ func TestWorldCapableRoutesDoNotUseUngatedReader(t *testing.T) {
 		// `_position` (BUG-SMPOZB). Reads through resolveScope and the list
 		// pushdown, both world-scoped.
 		"handleV1EntityPosition": true,
+		// `_page_status` (TKT-MWZF0UO). Reads each step's rows through
+		// configuredListRows, the list pipeline, which is world-scoped.
+		"handleV1PageStatus": true,
+		// Registered through a func literal that passes the App, so the
+		// route derivation did not name them until it learned to read one
+		// (TKT-MWZF0UO). Both were world-capable before that.
+		"handleV1DashboardCard": true,
+		"handleV1History":       true,
 		// `_piles` (TKT-K3RJLH). Reads items through the pile resolver in
 		// the request's world, never through the entity reader.
 		"handleV1Piles": true,
@@ -697,6 +706,17 @@ func handlerName(arg ast.Expr) string {
 		}
 	case *ast.Ident:
 		return fn.Name
+	case *ast.FuncLit:
+		// `func(w, r) { handleV1PageStatus(a, w, r) }`: a package-function
+		// handler wrapped to pass the App. Named by the one call it makes,
+		// so the guard sees it rather than skipping the route.
+		if len(fn.Body.List) == 1 {
+			if stmt, ok := fn.Body.List[0].(*ast.ExprStmt); ok {
+				if call, ok := stmt.X.(*ast.CallExpr); ok {
+					return handlerName(call.Fun)
+				}
+			}
+		}
 	}
 	return ""
 }
