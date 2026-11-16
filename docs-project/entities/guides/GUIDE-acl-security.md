@@ -1184,7 +1184,7 @@ webhooks, scheduled tasks, background trigger jobs and CalDAV.
 
 Writes without a read policy are exempt: a project without `acl.yaml`,
 `rela.bypass_acl`, trigger cascades, and the writers that go to the
-store directly (data migrations, import, normalize).
+store directly (data migrations, import without `--mapping`, normalize).
 
 ### The `rela` CLI gates writes, not reads
 
