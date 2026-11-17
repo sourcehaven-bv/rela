@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { test as base, expect, SEED } from "./fixtures";
-import { KanbanPage, ListPage, PageTabsPage } from "../pages";
+import { DashboardPage, DocumentPage, KanbanPage, ListPage, PageTabsPage } from "../pages";
 
 /**
  * Pages (TKT-ITQ0HL): several views of one subject as tabs, addressed as
@@ -36,6 +36,30 @@ pages:
         label: "Triage"
         list: bugs_triage
         permission: work:triage
+  workshop:
+    label: "Workshop"
+    mode: steps
+    tabs:
+      - id: features
+        label: "Features"
+        list: features
+        prompt: "Which features are in scope?"
+      - id: board
+        label: "Board"
+        kanban: feature-board
+  review:
+    label: "Review"
+    mode: steps
+    tabs:
+      - id: each
+        label: "Each feature"
+        list: features
+        walk: true
+        done_when: "entity.status == 'approved'"
+      - id: bugs
+        label: "Bugs"
+        list: bugs
+        done_when: "entity.status ~= 'done'"
   gated:
     label: "Gated"
     tabs:
@@ -43,12 +67,35 @@ pages:
         label: "Triage"
         list: bugs_triage
         permission: work:triage
+  feature-review:
+    label: "Feature review"
+    entity_type: feature
+    mode: steps
+    tabs:
+      - id: report
+        label: "Report"
+        document: feature_readonly
+        scope: root
+      - id: stand
+        label: "Stand"
+        dashboard: feature-stand
+        scope: root
+dashboards:
+  feature-stand:
+    title: "Feature stand"
+    entity_type: feature
+    cards:
+      - title: "Tasks"
+        list: tasks
+        display: count
+        scope: { relation: implements, direction: incoming }
 `;
 
 const PAGE_NAV = `navigation:
   - page: work
   - page: solo
   - page: gated
+  - page: workshop
 `;
 
 const ACL_YAML = `roles:
@@ -169,5 +216,96 @@ test.describe("Pages", () => {
     await appPage.goto(`${serverUrl}/list/features`);
     await pages.expectTitle("Features");
     await pages.expectNoTabBar();
+  });
+
+  test("a steps page walks its steps, and presents without the sidebar", async ({ appPage, serverUrl }) => {
+    const pages = new PageTabsPage(appPage);
+    await appPage.goto(`${serverUrl}/p/workshop/features`);
+    await pages.expectNoTabBar();
+    await pages.expectSteps([/1\s*Features/, /2\s*Board/]);
+    await pages.expectCurrentStep("Features");
+    await pages.expectPrompt("Which features are in scope?");
+    await expect(pages.stepButton("Back")).toBeDisabled();
+
+    await pages.clickStepButton("Next");
+    await expect(appPage).toHaveURL(/\/p\/workshop\/board$/);
+    await pages.expectCurrentStep("Board");
+    await expect(pages.stepButton("Next")).toBeDisabled();
+    await pages.goBack();
+    await pages.expectCurrentStep("Features");
+
+    await pages.clickStepButton("Present");
+    await expect(appPage).toHaveURL(/\/p\/workshop\/features\?present=1$/);
+    await pages.expectSidebarShown(false);
+    await pages.pressKey("PageDown");
+    await expect(appPage).toHaveURL(/\/p\/workshop\/board\?present=1$/);
+    await pages.expectCurrentStep("Board");
+
+    await pages.clickStepButton("Exit");
+    await expect(appPage).toHaveURL(/\/p\/workshop\/board$/);
+    await pages.expectSidebarShown(true);
+  });
+
+  // TKT-M07C97Y and TKT-MWZF0UO. The features list has no sort of its own,
+  // so its rows come in id order: FEAT-001 to FEAT-004.
+  test("a walking step shows one row at a time, and a step shows its done check", async ({
+    appPage,
+    serverUrl,
+  }) => {
+    const pages = new PageTabsPage(appPage);
+    await appPage.goto(`${serverUrl}/p/review/each`);
+    await expect(appPage).toHaveURL(/\/p\/review\/each\?item=FEAT-001$/);
+    await pages.expectWalkPosition("1 of 4");
+    await pages.expectWalkShows("User Authentication");
+    await expect(pages.walkLink("Previous row")).toHaveCount(0);
+
+    await pages.walkLink("Next row").click();
+    await expect(appPage).toHaveURL(/\?item=FEAT-002$/);
+    await pages.expectWalkPosition("2 of 4");
+    await pages.expectWalkShows("Dashboard Analytics");
+
+    // Every bug is open, but only one feature is approved.
+    await pages.expectStepDone("Bugs", true);
+    await pages.expectStepDone("Each feature", false);
+    await expect(pages.stepButton("Next")).toBeEnabled();
+
+    // Presenting, PageDown walks the rows, then the steps.
+    await appPage.goto(`${serverUrl}/p/review/each?present=1&item=FEAT-003`);
+    await pages.expectWalkPosition("3 of 4");
+    await pages.pressKey("PageDown");
+    await expect(appPage).toHaveURL(/\?present=1&item=FEAT-004$/);
+    await pages.expectWalkPosition("4 of 4");
+    await pages.pressKey("PageDown");
+    await expect(appPage).toHaveURL(/\/p\/review\/bugs\?present=1$/);
+    await pages.expectCurrentStep("Bugs");
+  });
+
+  test("a walking step says when its row is not in the list", async ({ appPage, serverUrl }) => {
+    const pages = new PageTabsPage(appPage);
+    await appPage.goto(`${serverUrl}/p/review/each?item=BUG-001`);
+    await pages.followWalkMissingRow();
+    await expect(appPage).toHaveURL(/\?item=FEAT-001$/);
+    await pages.expectWalkPosition("1 of 4");
+  });
+
+  test("an entity page renders a document and counts a dashboard for its entity", async ({ appPage, serverUrl }) => {
+    const pages = new PageTabsPage(appPage);
+    const doc = new DocumentPage(appPage);
+    const dashboard = new DashboardPage(appPage);
+
+    await appPage.goto(`${serverUrl}/p/feature-review/${SEED.features.authentication}/report`);
+    await pages.expectCurrentStep("Report");
+    await expect(doc.body).toContainText(SEED.features.authentication);
+
+    await pages.clickStepButton("Next");
+    await expect(appPage).toHaveURL(new RegExp(`/p/feature-review/${SEED.features.authentication}/stand$`));
+    // TASK-001 implements FEAT-001; the other tasks implement nothing.
+    expect(await dashboard.getStatValue("Tasks")).toBe("1");
+    await dashboard.expectNoValidationCard();
+    await dashboard.expectNoCardLink("Tasks");
+
+    // Another feature with no tasks counts zero on the same step.
+    await appPage.goto(`${serverUrl}/p/feature-review/${SEED.features.exportData}/stand`);
+    expect(await dashboard.getStatValue("Tasks")).toBe("0");
   });
 });

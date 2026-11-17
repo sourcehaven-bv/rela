@@ -198,6 +198,23 @@ type Store interface {
 	Lifecycle
 	Freshness
 	Transactor
+	FoldedIDReader
+}
+
+// FoldedIDReader answers whether an id is taken under case folding, the
+// identity rule every backend enforces on create and rename
+// (storeutil.FoldID). It is a store query so a caller does not read every
+// header to ask it: pgstore and sqlitestore probe their lower(id) indexes,
+// memstore and fsstore scan their in-memory index.
+type FoldedIDReader interface {
+	// IDTakenFolded reports whether a live or a soft-deleted (marked)
+	// entity, at any face, has an id equal to id under ASCII case folding,
+	// other than the family whose id folds to except. A store that
+	// implements [RetiredIDs] also counts a retired id and the successor a
+	// retired id points to, unless that successor folds to except. These
+	// are the ids create and rename refuse. An empty except excludes
+	// nothing.
+	IDTakenFolded(ctx context.Context, id, except string) (bool, error)
 }
 
 // FamilyReplacer is the optional store capability used by an entity
@@ -321,7 +338,9 @@ type EntityReader interface {
 	// (NextCursor is always empty). When q.Limit > 0, at most Limit
 	// entities are returned; NextCursor is non-empty iff more results
 	// exist. Callers resume by setting q.Cursor to the returned
-	// NextCursor on the next call, keeping other query fields identical.
+	// NextCursor on the next call, keeping other query fields identical
+	// except Limit: a cursor names the last row read, so the next page
+	// may be larger or smaller.
 	//
 	// Cursors are opaque — callers MUST NOT parse or construct them.
 	// A cursor is only valid for the same query on the same store;
@@ -335,6 +354,12 @@ type EntityReader interface {
 	// given prefix (e.g. "FEAT" → 42 if FEAT-042 is the highest), over
 	// every face of every family: an id stored only at named faces is
 	// taken. Returns 0 if no entities with the prefix exist.
+	//
+	// Which ids count, and for what number, is [entity.SequentialNumber]:
+	// the prefix and dash compare with ASCII case folded ("Req-7" counts
+	// for "REQ"), and the rest must be digits only. Every backend applies
+	// it, so they agree (BUG-RLBXTG5). Soft-deleted and retired ids count
+	// too, where the backend keeps them.
 	HighestID(ctx context.Context, prefix string) (int, error)
 }
 
@@ -710,6 +735,52 @@ type HeaderReader interface {
 	// entities matching the query. Ordering and error semantics match
 	// [EntityReader.ListEntities]; Cursor and Limit are likewise ignored.
 	ListEntityHeaders(ctx context.Context, q EntityQuery) iter.Seq2[EntityHeader, error]
+}
+
+// HeaderPager pages entity headers the way [EntityReader.ListEntitiesPage]
+// pages entities (TKT-Q918DFR).
+//
+// OPTIONAL capability, type-asserted by [ListEntityHeadersPage] like
+// [HeaderReader]. It is a separate interface rather than a second
+// HeaderReader method because a HeaderReader that lacked the new method would
+// stop satisfying the interface, and [ListEntityHeaders] would then send it
+// down the fallback without a compile error. The read decorators in
+// internal/visibility implement HeaderReader only.
+//
+// fsstore does not implement it, as it does not implement HeaderReader: it
+// parses each file whole, so a native page would read the same bytes as the
+// fallback while telling storetest.BodyWatch that no body was read.
+type HeaderPager interface {
+	// ListEntityHeadersPage returns the page [EntityReader.ListEntitiesPage]
+	// returns for q, projected onto headers: the same rows in the same
+	// order, and the same NextCursor. A cursor from either method resumes
+	// the other.
+	ListEntityHeadersPage(ctx context.Context, q EntityQuery) (Page[EntityHeader], error)
+}
+
+// EntityPager is the one read [ListEntityHeadersPage] needs. Every
+// [EntityReader] satisfies it.
+type EntityPager interface {
+	ListEntitiesPage(ctx context.Context, q EntityQuery) (Page[*entity.Entity], error)
+}
+
+// ListEntityHeadersPage reads one keyset page of content-free headers from
+// any reader. It uses the reader's native [HeaderPager] when it has one, so
+// no body leaves the backend. Otherwise it reads [EntityPager.ListEntitiesPage]
+// and projects the page, which still reads the bodies.
+func ListEntityHeadersPage(ctx context.Context, r EntityPager, q EntityQuery) (Page[EntityHeader], error) {
+	if hp, ok := r.(HeaderPager); ok {
+		return hp.ListEntityHeadersPage(ctx, q)
+	}
+	p, err := r.ListEntitiesPage(ctx, q)
+	if err != nil {
+		return Page[EntityHeader]{}, err
+	}
+	items := make([]EntityHeader, 0, len(p.Items))
+	for _, e := range p.Items {
+		items = append(items, HeaderOf(e))
+	}
+	return Page[EntityHeader]{Items: items, NextCursor: p.NextCursor}, nil
 }
 
 // HeaderOf projects an entity onto its content-free header.

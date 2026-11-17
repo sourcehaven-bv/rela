@@ -9,16 +9,20 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/flowrun"
+	"github.com/Sourcehaven-BV/rela/internal/idproles"
 	"github.com/Sourcehaven-BV/rela/internal/lease"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/piles"
 	"github.com/Sourcehaven-BV/rela/internal/piles/kvpiles"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
+	"github.com/Sourcehaven-BV/rela/internal/records"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -38,6 +42,11 @@ type refHolders struct {
 	// flowRuns is the flow run store, nil when flows.yaml declares no
 	// flows.
 	flowRuns flowrun.Store
+	// records is the record service, nil when the schema declares no
+	// record types; recordStore is the backend under it, which a
+	// re-assembly shares.
+	records     *records.Service
+	recordStore records.Store
 	// realtimeLocal is the process-local state of the channel service,
 	// which finishAssembly builds once the entity manager exists; see
 	// buildRealtimeService.
@@ -56,22 +65,32 @@ type refHolders struct {
 	// is this assembly's endpoint on it, which finishAssembly attaches.
 	channelHints *hintRelay
 	hintEndpoint hintEndpoint
+	// idpRoles is the stored IdP role set. It is built here so the alias
+	// fanout can erase a deleted person's record (GH-2118).
+	idpRoles  *idproles.Store
+	idpEraser *idpRoleEraser
 }
 
 // buildRefHolders builds the services that hold references by entity id:
-// comments, piles, leases and channels. All ride the AliasRewriter hook rather than
-// store.EntityObserver for the reason that hook documents: stores fire the
-// observer with the error discarded, which is fine for a rebuildable search
-// index but not for records that exist only in these services' own stores.
+// comments, piles, leases, channels and the stored IdP roles. All ride the
+// AliasRewriter hook rather than store.EntityObserver for the reason that hook
+// documents: stores fire the observer with the error discarded, which is fine
+// for a rebuildable search index but not for records that exist only in these
+// services' own stores.
 //
 // The piles service is built per assembly, so its owner check follows the
 // current ACL; its backend comes from the predecessor on a re-assembly.
 func buildRefHolders(
 	base *SharedBase, st store.Store, overrides backendOverrides,
 	d *acl.Declarative, redactor visibility.FieldRedactor, writes acl.ACL,
+	stateKV state.KV,
 ) (refHolders, error) {
 	var h refHolders
 	var err error
+	if h.idpRoles, err = buildIDPRoles(base, st, stateKV); err != nil {
+		return refHolders{}, err
+	}
+	h.idpEraser = newIDPRoleEraser(h.idpRoles, base.aclPolicy, st, base.cfg.Audit)
 	if h.comments, err = buildComments(base.cfg.FS, base.cfg.Paths, base.meta, overrides.commentStore); err != nil {
 		return refHolders{}, err
 	}
@@ -95,6 +114,15 @@ func buildRefHolders(
 		if h.flowRuns, err = flowRunBackend(base.cfg.FS, base.cfg.Paths, st, overrides.flowRuns); err != nil {
 			return refHolders{}, fmt.Errorf("flows: %w", err)
 		}
+	}
+	if h.recordStore = base.recordStore; h.recordStore == nil {
+		if h.recordStore, err = recordBackend(base.cfg.FS, base.cfg.Paths, st, overrides.recordStore); err != nil {
+			return refHolders{}, err
+		}
+	}
+	if h.records, err = newRecordsService(h.recordStore, base.meta, st, d, redactor, writes, base.worlds,
+		base.cfg.Audit); err != nil {
+		return refHolders{}, err
 	}
 	if h.channelTombs, err = newTombstoneConfirmer(h.channels); err != nil {
 		return refHolders{}, err
@@ -122,6 +150,17 @@ func buildRefHolders(
 func (h refHolders) guardInputs() guardInputs {
 	return guardInputs{store: h.channels, tombs: h.channelTombs, dueWake: h.dueWake, marker: h.realtimeLocal,
 		flowRuns: h.flowRuns}
+}
+
+// aliasFanout joins every subscriber that must follow an entity rename or
+// delete: the alias table and the job automations, plus the side stores
+// among h.
+func (h refHolders) aliasFanout(
+	st store.Store, aliases *caldavalias.Service, autoJobs *automationJobs,
+) entitymanager.AliasRewriter {
+	return newAliasFanout(aliases, h.comments, h.piles, h.leases, autoJobs,
+		h.channelAliases, h.realtimeLocal, newFlowRunAliases(h.flowRuns), recordAliases(st, h.recordStore),
+		h.idpEraser)
 }
 
 // sharedLocal returns the predecessor's process-local channel state and

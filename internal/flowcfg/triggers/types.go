@@ -1,0 +1,334 @@
+// Package triggers runs the entity-change rules declared under flows.yaml
+// `triggers:` (TKT-GWOBH2U; they were schema.yaml `automations:` before).
+//
+// [Parse] decodes and checks the rules against the schema, and [New]
+// compiles them. Each rule compiles onto a flow trigger (TKT-GS7THPA): the
+// event keys and scope that select it, a guard of `where:` filter clauses
+// and a `when:` predicate compiled through internal/predicate, and outputs.
+// An event selects its triggers, [flow.Fire] decides which fire, and the
+// fired triggers render their outputs into a [Result], which
+// internal/autocascade executes. The outputs set, create and relate are flow
+// output kinds; add_to_pile, notify, script and check are named exceptions.
+//
+// A rule's name is its identity outside this package: audit records carry
+// `automation:<name>` and a queued background job finds its script again by
+// (name, file), so names are kept byte for byte by `rela migrate`.
+package triggers
+
+import (
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/filter"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+)
+
+// Rule is one entry under flows.yaml `triggers:`, decoded by [Parse].
+type Rule struct {
+	Name        string
+	Description string
+	On          Trigger
+	Do          []Action
+	Validate    []Validation
+}
+
+// Trigger specifies conditions that activate an automation.
+type Trigger struct {
+	Entity   []string
+	Property string
+	Becomes  string
+	From     string
+	Created  bool
+	// Updated fires on an update that changes a property or the body. A
+	// rename re-runs only background actions (see [EventEntityRenamed]).
+	Updated         bool
+	RelationCreated string
+	RelationRemoved string
+	// Deleted fires on [EventEntityDeleted]. Load validation allows only
+	// background actions under it.
+	Deleted bool
+	// Faces limits the trigger to specific content states, named as declared
+	// in `faces:`. Empty means EVERY state, including the bare one.
+	//
+	// # Why the default is every state
+	//
+	// It is the behavior that already exists — an automation fires on a face
+	// row today exactly as it does on a bare one — so any other default would
+	// silently change what every existing automation does.
+	//
+	// It is also the honest reading of an unscoped rule: "when a ticket's
+	// status becomes done" is a statement about tickets, and a translated
+	// ticket is still a ticket.
+	//
+	// The risk it carries is multiplied SIDE EFFECTS. An automation that
+	// creates a checklist entity now creates one per state, which is rarely
+	// what an operator means. That is what this key is for, and why the
+	// `create_entity` action's `if_exists: skip` matters more in a faced
+	// project than an unfaced one.
+	Faces []string
+
+	When []*filter.Filter // Property conditions that must all match
+
+	// Condition is a predicate expression ANDed with every When clause.
+	// Kept as SOURCE, not a parsed filter: routing it through
+	// filter.Parse is exactly the bug this field exists to fix — that
+	// parser accepts an expression and silently reinterprets it as a
+	// filter on a nonexistent property, so the condition never matches
+	// and nothing reports why.
+	//
+	// Compiled once when the engine is built (the metamodel is needed for
+	// the typed env); a compile failure is a load error, never a skip.
+	Condition string
+
+	// Copy limits the trigger to writes made by the named copy definitions
+	// (`on.copy:`). With no other event key it fires on every run of a named
+	// copy, whether the copy created the target face or overwrote it. Beside
+	// `created`, `updated` or `property`, it narrows that key to the copy's
+	// write. Empty means the trigger ignores where a write came from.
+	Copy []string
+}
+
+// Action specifies an operation to perform.
+type Action struct {
+	Set            string
+	Value          string
+	CreateRelation *CreateRelationAction
+	CreateEntity   *CreateEntityAction
+	AddToPile      *AddToPileAction
+	Notify         *NotifyAction
+	Lua            string // Inline Lua code to execute
+	LuaFile        string // Path to Lua script file in scripts/ directory
+	// AllowACLBypass: which rela.bypass_acl capabilities this Lua action
+	// unlocks (TKT-D8T148, TKT-Y3JVFK).
+	AllowACLBypass metamodel.ACLBypass
+	// Capabilities is the action's `capabilities:` block (TKT-YH52OM): which
+	// ambient capabilities (http/ai/mail/write_file/named secrets) the script
+	// may reach. Zero value grants none.
+	Capabilities metamodel.Capabilities
+	// Background runs the LuaFile as a background job (TKT-2Q4UFI).
+	Background bool
+	// RunAs and Retry shape the background job; both need Background.
+	RunAs string
+	Retry metamodel.JobRetry
+}
+
+// CreateRelationAction specifies parameters for creating a relation.
+type CreateRelationAction struct {
+	Relation string
+	To       string
+}
+
+// CreateEntityAction specifies parameters for creating a new entity.
+type CreateEntityAction struct {
+	Type       string            // Entity type to create (e.g., "planning-checklist")
+	Template   string            // Optional: template variant name, supports interpolation (e.g., "{{new.kind}}" loads <type>--<kind>.md)
+	Properties map[string]string // Properties to set (values support interpolation)
+	Relation   string            // Optional: relation type FROM triggering entity TO created entity
+	IfExists   string            // Behavior when relation exists: skip (default), error, replace
+}
+
+// AddToPileAction puts the triggering entity on a user's pile. Pile and
+// Owner support interpolation; an empty Owner means the acting user.
+type AddToPileAction struct {
+	Pile   string
+	Owner  string
+	Create bool
+}
+
+// IfExists constants for CreateEntityAction behavior.
+const (
+	IfExistsSkip    = "skip"    // Skip creation if relation already exists (default)
+	IfExistsError   = "error"   // Return error if relation already exists
+	IfExistsReplace = "replace" // Delete existing and create new
+)
+
+// Validation specifies a condition to check.
+type Validation struct {
+	Check    string
+	Severity string
+	Message  string
+}
+
+// The check severities. An empty severity means [SeverityWarning].
+const (
+	SeverityWarning = "warning"
+	SeverityError   = "error"
+)
+
+// GetSeverity returns the severity, defaulting to [SeverityWarning].
+func (v *Validation) GetSeverity() string {
+	if v.Severity == "" {
+		return SeverityWarning
+	}
+	return v.Severity
+}
+
+// Event represents a change that occurred to an entity or relation.
+type Event struct {
+	// Type is the type of event.
+	Type EventType
+
+	// Entity is the affected entity.
+	Entity *entity.Entity
+
+	// OldEntity is the previous state (nil for Created events).
+	OldEntity *entity.Entity
+
+	// Relation is the affected relation (for RelationCreated/RelationRemoved events).
+	Relation *entity.Relation
+
+	// Copy names the copy definition whose write raised the event, or is
+	// empty for any other write. Only Created and Updated events carry it.
+	Copy string
+}
+
+// EventType identifies the kind of change.
+type EventType int
+
+const (
+	// EventEntityCreated fires when a new entity is created.
+	EventEntityCreated EventType = iota
+
+	// EventEntityUpdated fires when an entity's properties change.
+	EventEntityUpdated
+
+	// EventRelationCreated fires when a new relation is created.
+	EventRelationCreated
+
+	// EventRelationRemoved fires when a relation is removed.
+	EventRelationRemoved
+
+	// EventEntityRenamed fires when an entity's id changes. Only the
+	// background job service raises it, and only background actions act on
+	// it: a pending job names the old id, so every created, updated or
+	// property trigger re-runs for the new one.
+	EventEntityRenamed
+
+	// EventEntityDeleted fires once per face a delete removed, after the
+	// delete commits. Entity is the face's last stored state. Only the
+	// background job service raises it, and only `deleted` triggers match.
+	EventEntityDeleted
+)
+
+// EntityToCreate specifies an entity to be created by automation.
+//
+// AutomationName carries the name of the automation that produced this action,
+// so the cascade can attribute the resulting audit record to it
+// (`automation:<name>`) instead of the generic `automation` label — same
+// rationale as [LuaToExecute.AutomationName], applied to the non-scripted path
+// (TKT-JJRVX9).
+type EntityToCreate struct {
+	Type                string            // Entity type to create
+	Template            string            // Optional: template variant name
+	Properties          map[string]string // Interpolated property values for the new entity
+	RelationFromTrigger string            // Optional: relation type from triggering entity
+	IfExists            string            // Behavior when relation exists: skip (default), error, replace
+	AutomationName      string            // Name of the originating automation
+}
+
+// RelationToCreate pairs a relation an automation wants created with the name of
+// the automation that asked for it.
+//
+// The name travels in a struct rather than a parallel []string indexed
+// alongside RelationsToCreate: a parallel slice can drift in length or order
+// with no compile-time signal, and this value crosses a package boundary into
+// autocascade, where a misattributed audit record would be silently wrong
+// (TKT-JJRVX9).
+type RelationToCreate struct {
+	Relation *entity.Relation
+	// AutomationName is the originating automation. Empty when the producer
+	// did not supply one, in which case the cascade keeps the generic
+	// `automation` audit label rather than emitting a dangling `automation:`.
+	AutomationName string
+}
+
+// PileToPush is one interpolated add_to_pile action. The cascade pushes the
+// triggering entity's ref; nothing is written while planning.
+type PileToPush struct {
+	// Pile is the interpolated pile name.
+	Pile string
+	// Owner is the interpolated owner; empty means the acting user.
+	Owner string
+	// Create makes the pile when it does not exist.
+	Create bool
+	// AutomationName is the originating automation, for the log line.
+	AutomationName string
+}
+
+// LuaToExecute specifies Lua code to be executed by the workspace layer.
+// Either Code or FilePath is set, not both.
+//
+// AutomationName carries the name of the automation that produced this
+// action so that error envelopes can identify *which* inline `lua: |`
+// block failed (`automation:<name>`) when there is no FilePath to use
+// as the identity.
+type LuaToExecute struct {
+	Code           string // Inline Lua code (safe values already interpolated)
+	FilePath       string // Path to script file in scripts/ directory
+	AutomationName string // Name of the originating automation
+	// AllowACLBypass is the action's allow_acl_bypass (TKT-D8T148): which
+	// bypass_acl capabilities are unlocked.
+	AllowACLBypass metamodel.ACLBypass
+	// Capabilities is the action's `capabilities:` block (TKT-YH52OM): which
+	// ambient capabilities (http/ai/mail/write_file/named secrets) the script
+	// may reach. Zero value grants none.
+	Capabilities metamodel.Capabilities
+	// Background asks the cascade to enqueue the script rather than run it
+	// (TKT-2Q4UFI). Set only with FilePath.
+	Background bool
+}
+
+// CapabilityFields exposes the grant as plain values so consumers that may not
+// import metamodel (autocascade) still read it through the single translation
+// seam rather than copying fields by hand. See metamodel.Capabilities.Fields.
+//
+//nolint:gocritic // tooManyResultsChecker: mirrors metamodel.Capabilities.Fields, one result per capability
+func (l LuaToExecute) CapabilityFields() (http, ai, mail, writeFile bool, secrets, tokens []string) {
+	return l.Capabilities.Fields()
+}
+
+// Result represents the outcome of running automations.
+type Result struct {
+	// PropertiesSet contains properties that were automatically set.
+	PropertiesSet map[string]string
+
+	// RelationsToCreate contains relations that should be created, each
+	// tagged with the automation that produced it.
+	RelationsToCreate []RelationToCreate
+
+	// EntitiesToCreate contains entities that should be created.
+	EntitiesToCreate []EntityToCreate
+
+	// LuaToExecute contains Lua scripts to be executed by the workspace layer.
+	LuaToExecute []LuaToExecute
+
+	// PilesToPush contains pile pushes of the triggering entity. They are
+	// best-effort: the cascade logs a failed push and never fails the write.
+	PilesToPush []PileToPush
+
+	// Notifications are the planned `notify` actions. Like PilesToPush they
+	// are best-effort.
+	Notifications []NotificationToSend
+
+	// Warnings contains validation warnings (allow save, show message).
+	Warnings []string
+
+	// Errors contains validation errors (should block save in strict mode).
+	Errors []string
+}
+
+// HasWarnings returns true if there are any warnings.
+func (r *Result) HasWarnings() bool {
+	return len(r.Warnings) > 0
+}
+
+// HasErrors returns true if there are any errors.
+func (r *Result) HasErrors() bool {
+	return len(r.Errors) > 0
+}
+
+// AllMessages returns all warnings and errors combined.
+func (r *Result) AllMessages() []string {
+	msgs := make([]string, 0, len(r.Warnings)+len(r.Errors))
+	msgs = append(msgs, r.Errors...)
+	msgs = append(msgs, r.Warnings...)
+	return msgs
+}

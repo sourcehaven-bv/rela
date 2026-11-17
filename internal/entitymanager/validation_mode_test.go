@@ -5,20 +5,22 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
-// validationModeYAML has a required property, an enum, an automation that
-// fills the required property on update, and a write-enforced rule.
+// validationModeYAML has a required property, an enum and a write-enforced
+// rule. validationModeFlowsYAML adds a trigger that fills the required
+// property on update.
 const validationModeYAML = `
 version: "1.0"
 types:
@@ -35,17 +37,6 @@ entities:
       rechtsgrond: {type: string}
       autofill: {type: string}
 relations: {}
-automations:
-  - name: fill-naam
-    on: {entity: verwerking, updated: true, when: ["autofill=yes"]}
-    do:
-      - set: naam
-        value: "filled"
-  - name: submit-on-create
-    on: {entity: verwerking, created: true, when: ["autofill=submit"]}
-    do:
-      - set: versiestatus
-        value: ter_beoordeling
 validations:
   - name: rechtsgrond-bij-beoordeling
     description: Een verwerking ter beoordeling heeft een rechtsgrond.
@@ -56,6 +47,19 @@ validations:
   - name: advisory-only
     entity_type: verwerking
     then: ["rechtsgrond!=never"]
+`
+
+// validationModeFlowsYAML holds the triggers that go with validationModeYAML.
+const validationModeFlowsYAML = `
+triggers:
+  fill-naam:
+    on: {entity: verwerking, updated: true, where: ["autofill=yes"]}
+    outputs:
+      - set: {properties: {naam: "filled"}}
+  submit-on-create:
+    on: {entity: verwerking, created: true, where: ["autofill=submit"]}
+    outputs:
+      - set: {properties: {versiestatus: ter_beoordeling}}
 `
 
 type modeFixture struct {
@@ -69,11 +73,15 @@ func newModeManager(t *testing.T, mode entitymanager.ValidationMode) modeFixture
 	if err != nil {
 		t.Fatal(err)
 	}
-	set, err := statemachine.Compile(meta)
+	set, err := transitions.CompileTransitions(meta)
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine, err := automation.NewEngineFromMetamodel(meta, meta.Automations)
+	rules, err := triggers.Parse([]byte(validationModeFlowsYAML), meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine, err := triggers.New(meta, rules)
 	if err != nil {
 		t.Fatal(err)
 	}

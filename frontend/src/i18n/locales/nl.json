@@ -190,6 +190,17 @@
       "denied": "Meldingen zijn voor deze site geblokkeerd. Sta ze toe in de site-instellingen van je browser en zet dit daarna opnieuw aan.",
       "signedOut": "Log in om meldingen te kiezen.",
       "noStorage": "Deze browser laat rela geen gegevens voor deze site bewaren, dus nieuwe items in je inbox zijn niet van oude te onderscheiden. Sta sitegegevens toe en probeer het opnieuw."
+    },
+    "relationDefault": {
+      "none": "Geen",
+      "notFound": "niet gevonden",
+      "choose": "Kiezen…",
+      "change": "Wijzigen…",
+      "clear": "Wissen",
+      "chooseFor": "Kies het standaarddoel van {relation}",
+      "clearFor": "Wis het standaarddoel van {relation}",
+      "changeFor": "Wijzig het standaarddoel van {relation}",
+      "loadFailed": "kon niet laden"
     }
   },
   "errors": {
@@ -415,7 +426,8 @@
     "action": {
       "confirmTitle": "{label}?",
       "confirmRun": "{label} uitvoeren op dit item?",
-      "done": "{label}: klaar"
+      "done": "{label}: klaar",
+      "running": "Bezig…"
     },
     "loadFailed": "Item laden mislukt",
     "noEditForm": "Er is geen bewerkformulier ingesteld voor dit type",
@@ -438,7 +450,7 @@
     "duplicateAction": "Dupliceren",
     "permissionChangedDiscarded": "Je rechten zijn gewijzigd. Je niet-opgeslagen wijziging in '{label}' is weggegooid",
     "retry": "Opnieuw proberen",
-    "prev": "Vorige",
+    "prev": "Vorige rij",
     "removeFromPile": "Weghalen uit stapel",
     "partOf": "Onderdeel van {title}",
     "addToNewPile": "Toevoegen aan nieuwe stapel…",
@@ -543,6 +555,35 @@
       "movedUp": "{label} omhoog verplaatst",
       "movedDown": "{label} omlaag verplaatst",
       "failed": "Kon de rij niet verplaatsen"
+    },
+    "llmProposal": {
+      "title": "{label}: voorgestelde wijzigingen",
+      "intro": "De AI stelt deze wijzigingen voor. Er wordt niets opgeslagen tot u ze toepast. Tekstwaarden staan uit: lees ze voordat u ze aanvinkt.",
+      "empty": "De AI stelt geen wijzigingen voor.",
+      "properties": "Eigenschappen",
+      "relations": "Relaties",
+      "apply": "Selectie toepassen",
+      "applied": "{label}: wijzigingen toegepast",
+      "stale": "{property} is gewijzigd sinds het voorstel en is niet opgeslagen.",
+      "saveFailed": "De wijzigingen konden niet worden opgeslagen",
+      "linkFailed": "Kon {relation} naar {title} niet toevoegen: {reason}",
+      "records": "Nieuwe records",
+      "newRecord": "{relation}: nieuw {type}",
+      "createFailed": "Kon het nieuwe {type} voor {relation} niet aanmaken: {reason}",
+      "createUnlinked": "{id} is aangemaakt, maar kon niet als {relation} worden gekoppeld: {reason}. Koppel of verwijder het zelf.",
+      "model": "Voorgesteld door {model}"
+    },
+    "llmBatch": {
+      "intro": "De AI stelt wijzigingen voor meerdere items tegelijk voor. Er wordt niets opgeslagen tot u ze toepast. Elke wijziging staat uit: tekst in het ene item kan sturen wat de AI voor een ander voorstelt, dus lees elke wijziging voordat u ze aanvinkt.",
+      "confirm": "1 item naar de AI-aanbieder sturen? | {n} items naar de AI-aanbieder sturen?",
+      "running": "AI wordt gevraagd…",
+      "runFailed": "{label} is mislukt",
+      "tooMany": "Deze actie werkt op hoogstens {max} items tegelijk; er zijn er {n} geselecteerd.",
+      "stale": "{entity}: {property} is gewijzigd sinds het voorstel en is niet opgeslagen.",
+      "saveFailed": "{entity}: de wijzigingen konden niet worden opgeslagen: {reason}",
+      "unchanged": "1 item heeft geen voorgestelde wijziging. | {count} items hebben geen voorgestelde wijziging.",
+      "skipped": "1 item is niet verstuurd: de actie geldt er niet voor, of u mag het niet wijzigen. | {count} items zijn niet verstuurd: de actie geldt er niet voor, of u mag ze niet wijzigen.",
+      "failed": "{entity}: {reason}"
     }
   },
   "document": {
@@ -575,7 +616,30 @@
     "deleteTitle": "{type} verwijderen?",
     "deleteFailed": "Verwijderen mislukt",
     "deleted": "Verwijderd",
-    "confirmRun": "{label} uitvoeren?"
+    "confirmRun": "{label} uitvoeren?",
+    "steps": {
+      "label": "Stappen",
+      "back": "Terug",
+      "next": "Volgende",
+      "present": "Presenteren",
+      "exitPresent": "Stoppen",
+      "fullscreen": "Volledig scherm",
+      "exitFullscreen": "Volledig scherm sluiten",
+      "done": "klaar",
+      "walk": {
+        "label": "Rijen van deze stap",
+        "position": "{current} van {total}",
+        "prev": "Vorige rij",
+        "next": "Volgende rij",
+        "empty": "Niets om door te lopen",
+        "emptyDescription": "De lijst van deze stap heeft geen rijen.",
+        "missing": "Niet in deze lijst",
+        "missingDescription": "{id} is geen rij van deze stap. Misschien is het verwijderd of gewijzigd.",
+        "first": "Naar de eerste rij",
+        "error": "De rijen van deze stap konden niet worden gelezen",
+        "errorDescription": "Laad de pagina opnieuw om het nog eens te proberen."
+      }
+    }
   },
   "editor": {
     "command": {
@@ -1215,7 +1279,30 @@
     "renameFailed": "De groep kon niet worden hernoemd",
     "moveGroupFailed": "De groep kon niet worden verplaatst",
     "groupElsewhere": "Deze kaart zit in een groep die dit bord niet toont",
-    "groupForbidden": "Je mag van deze kaarten geen groep maken"
+    "groupForbidden": "Je mag van deze kaarten geen groep maken",
+    "quickAddPlaceholder": "Kaart toevoegen…",
+    "quickAddLabel": "Kaart toevoegen aan {column}",
+    "quickAddLaneLabel": "Kaart toevoegen aan {column}, {lane}",
+    "quickAddFailed": "De kaart kon niet worden toegevoegd",
+    "quickAddWarnings": "Kaart toegevoegd met waarschuwingen: {warnings}",
+    "quickAddHidden": "\"{title}\" is toegevoegd. De filters van dit bord verbergen de kaart.",
+    "addColumn": "Kolom toevoegen",
+    "addColumnLabel": "Naam van de nieuwe kolom",
+    "addColumnPlaceholder": "Naam van de kolom…",
+    "addColumnCancel": "Annuleren",
+    "addColumnFailed": "De kolom kon niet worden toegevoegd",
+    "addColumnExists": "Het bord heeft al een kolom met de naam {name}",
+    "addColumnNoName": "Gebruik minstens één letter of cijfer in de naam",
+    "addColumnUnsupported": "De waarden van deze kolom staan niet bij de eigenschap zelf, dus het bord kan er geen toevoegen",
+    "addColumnSaving": "Kolom opslaan…",
+    "batchTooMany": "Deze actie werkt op hoogstens {max} kaarten tegelijk; er staan er {n} op het bord. Filter het bord of klap kolommen in.",
+    "cellTone": {
+      "success": "Goed",
+      "warning": "Let op",
+      "error": "Kritiek",
+      "info": "Info",
+      "new": "Nieuw"
+    }
   },
   "calendar": {
     "month": "Maand",
@@ -1247,6 +1334,8 @@
     "loading": "Dashboard laden…",
     "notFound": "Dashboard niet gevonden",
     "notFoundDescription": "Er is geen dashboard met de naam “{name}”.",
+    "anchorMissing": "Open dit dashboard vanuit een entiteit",
+    "anchorMissingDescription": "Dit dashboard telt voor één entiteit. Open het als tabblad op de pagina van die entiteit.",
     "noCards": "Geen dashboardkaarten om te tonen.",
     "noResults": "Geen resultaten",
     "validation": "Validatie",
@@ -1457,5 +1546,36 @@
       "actionFailed": "De actie is mislukt",
       "busy": "Er loopt een synchronisatie op deze remote. Probeer het zo opnieuw."
     }
+  },
+  "configureAutomations": {
+    "title": "Automatiseringen",
+    "one": "Automatisering",
+    "new": "Nieuwe automatisering",
+    "intro": "Een automatisering doet vanzelf iets als een record wordt aangemaakt of verandert, zoals een checklist aanmaken. Automatiseringen lopen in de getoonde volgorde.",
+    "empty": "Nog geen automatiseringen.",
+    "nothingYet": "Nog niets",
+    "readOnly": "Alleen lezen",
+    "remove": "Verwijderen",
+    "notFound": "Deze automatisering bestaat niet",
+    "locked": "Deze automatisering voert een script uit of gebruikt een instelling die in flows.yaml wordt gewijzigd. Ze staat hier zodat je kunt zien wat ze doet.",
+    "name": "Naam",
+    "description": "Beschrijving",
+    "when": "Wanneer",
+    "recordOfType": "Een record van het type",
+    "changes": "Verandert",
+    "anyProperty": "Elke eigenschap",
+    "to": "Naar",
+    "anyChange": "Laat leeg voor elke wijziging.",
+    "onCreated": "Als een record wordt aangemaakt",
+    "onUpdated": "Als een record wordt gewijzigd",
+    "then": "Dan",
+    "thenHelp": "De uitvoer loopt in de getoonde volgorde.",
+    "outputs": "Uitvoer, in de volgorde waarin die loopt",
+    "setProperty": "Een eigenschap instellen",
+    "chooseProperty": "Kies een eigenschap",
+    "setHint": "Tekst, of {placeholder} voor de datum.",
+    "addOutput": "Uitvoer toevoegen",
+    "removeOutput": "{name} verwijderen",
+    "usedBy": "Deze automatiseringen gebruiken haar: {names}."
   }
 }

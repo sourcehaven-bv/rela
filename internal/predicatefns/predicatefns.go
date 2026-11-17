@@ -4,7 +4,8 @@
 // reach into internal/filter for the RE2 pattern/trigram machinery.
 //
 // The functions are string matchers (glob/regex/fuzzy), a list
-// membership test (contains), and a today() date builder. Register them
+// membership test (contains), and the read-time builders today() and
+// now(). Register them
 // on a predicate.Env with Declare and on a predicate.Bindings with
 // Bind; the two must agree, so use the paired helpers here rather than
 // wiring names by hand.
@@ -49,6 +50,7 @@ const (
 	FuncContains = "contains" // contains(list, elem) bool
 	FuncLen      = "len"      // len(list) number
 	FuncToday    = "today"    // today() date
+	FuncNow      = "now"      // now() datetime
 	// FuncSHA256 hashes a string to lowercase hex. See sha256Hex for why
 	// the encoding is hex and why that choice is effectively permanent.
 	FuncSHA256 = "sha256" // sha256(s) string
@@ -82,6 +84,10 @@ func Declare(env *predicate.Env) error {
 		// down.
 		{FuncSHA256, predicate.FuncSig{Params: []predicate.Type{str}, Return: predicate.StringType}},
 		{FuncToday, predicate.FuncSig{Return: predicate.DateType, SQLPortable: true}},
+		// SQLPortable as a request constant: a lowering must bind the
+		// operation's read time as a parameter, never SQL now(), which is
+		// the transaction start with microseconds.
+		{FuncNow, predicate.FuncSig{Return: predicate.DateType, SQLPortable: true}},
 		{FuncDaysBetween, predicate.FuncSig{
 			Params: []predicate.Type{predicate.DateType, predicate.DateType},
 			Return: predicate.IntType, SQLPortable: true,
@@ -104,9 +110,11 @@ func Declare(env *predicate.Env) error {
 }
 
 // Bind registers the implementations on b, matching Declare. `now` is
-// the instant today() returns, truncated to UTC midnight; passing it in
-// keeps the functions pure and testable (predicate scripts must not
-// read the wall clock during Eval — the caller decides "now").
+// the read time: now() returns it in UTC, and today() returns it truncated
+// to UTC midnight. Passing it in keeps the functions pure and testable
+// (predicate scripts must not read the wall clock during Eval — the caller
+// decides "now"), and binding both from one value means today() and now()
+// can never straddle midnight within one evaluation.
 //
 // today() is truncated in UTC, not now.Location(), to match how date
 // literals are parsed (parseDateLiteral / time.Parse yield UTC when the
@@ -128,6 +136,9 @@ func Bind(b *predicate.Bindings, now time.Time) error {
 		{FuncSHA256, sha256Hex},
 		{FuncToday, func(context.Context, []predicate.Value) (predicate.Value, error) {
 			return predicate.NewDate(day), nil
+		}},
+		{FuncNow, func(context.Context, []predicate.Value) (predicate.Value, error) {
+			return predicate.NewDate(utc), nil
 		}},
 		{FuncDaysBetween, daysBetween},
 		{FuncDateAdd, dateAdd},

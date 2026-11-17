@@ -12,18 +12,27 @@
 //   - no assertion, or one that does not verify: 401;
 //   - a verified assertion with no `org_id`, or an org that is not an active
 //     tenant (unknown, suspended or being erased): 403 `unknown_tenant`;
+//   - with provisioning on ([ProvisionConfig]), an org whose tenant is being
+//     created: 202 with a `{"status":"provisioning"}` body for GET and HEAD,
+//     and 503 `tenant_provisioning` for any other method. No tenant is
+//     opened for it;
 //   - the tenant lookup or the store open failed, or the org's derived
 //     schema is recorded for another org: 503.
 //
-// # Provisioning
+// # Suspension follows the IdP
 //
-// With [Config.Provision] set, an org that has no tenant yet can become one
-// (TKT-TNPRV8). The IdP's verified `organization.created` webhook starts it,
-// and with [Config.LazyProvision] so does the first verified request of
-// such an org. Neither holds the request open across the create: the answer
-// is `202` with a `tenant_provisioning` problem whose Location is
-// [StatusPath], which the SPA polls until it reports `ready`. The trust
-// assumption this rests on is on [tenant.AutoProvisioner].
+// A verified `organization.updated` or `organization.deleted` webhook is
+// handled here and not passed to the tenant. For an update the host asks
+// the IdP for the org's status and suspends or resumes the tenant to match
+// (see [StatusSync.SyncStatus]); an org the IdP no longer knows is
+// suspended. A deletion suspends the tenant (see [StatusSync.SyncDeleted]).
+// Neither erases: erasure stays an operator's action. The host answers 200
+// when it applied a change or had nothing to do, 503 with Retry-After for
+// a tenant still being created or when [Config.StatusSync] is not set, 500
+// for an org id the IdP cannot be asked about or a schema recorded for
+// another org, and 502 when the IdP or the control table could not answer,
+// so the IdP sends the event again. This works for a suspended tenant,
+// which every other webhook event finds refused with 503.
 //
 // The one exception is the embedded SPA shell and its static assets, which a
 // browser needs before it can authenticate. They are served by
@@ -49,9 +58,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
@@ -61,18 +68,9 @@ import (
 // the tenant, so the host routes it by the body rather than by a header.
 const WebhookPath = "/webhooks/idp"
 
-// StatusPath reports where the caller's tenant stands: `ready`,
-// `provisioning`, `failed` or `throttled`. The SPA polls it after a `202`.
-const StatusPath = "/api/v1/_tenant/status"
-
-// provisionPollAfter is the Retry-After a `202` asks the SPA to wait before
-// it polls [StatusPath] again.
-const provisionPollAfter = "2"
-
-// webhookProvisionWait bounds how long an `organization.created` webhook
-// waits for its create. The IdP is told 200 only once the tenant exists, so
-// a create that fails later is delivered again rather than lost.
-const webhookProvisionWait = 10 * time.Second
+// StatusPath answers the caller's own tenant status, for a client to poll
+// while its tenant is being created. It never names another org.
+const StatusPath = "/api/v1/_tenant"
 
 // webhookMaxBody caps the webhook body read before verification, matching
 // the data-entry receiver's own cap.
@@ -87,15 +85,6 @@ type AssertionVerifier interface {
 // WebhookVerifier verifies a signed IdP webhook body.
 type WebhookVerifier interface {
 	VerifyWebhook(ctx context.Context, raw string) (dataentry.WebhookClaims, error)
-}
-
-// Provisioning creates tenants in the background. [tenant.AutoProvisioner]
-// implements it.
-type Provisioning interface {
-	Start(orgID string) tenant.ProvisionState
-	State(orgID string) tenant.ProvisionState
-	Wait(ctx context.Context, orgID string) tenant.ProvisionState
-	RetryAfter() time.Duration
 }
 
 // Acquire leases the resident application of the tenant orgID names. It
@@ -118,17 +107,21 @@ type Config struct {
 	// Webhook verifies the IdP webhook body. Optional: nil leaves
 	// [WebhookPath] an ordinary path that needs an assertion.
 	Webhook WebhookVerifier
-	// Provision creates the tenant of an `organization.created` webhook for
-	// an org that has none. Optional: nil provisions nothing.
-	Provision Provisioning
-	// LazyProvision also creates a tenant for a verified request of an org
-	// that has none. It needs Provision.
-	LazyProvision bool
+	// Provision enables creating a tenant for a verified org that has none.
+	// The zero value is [ProvisionOff].
+	Provision ProvisionConfig
+	// StatusSync applies a verified `organization.updated` or
+	// `organization.deleted` webhook to the tenant's status. It needs
+	// Webhook. Without it those events are refused with 503, never passed
+	// to the tenant or acknowledged.
+	StatusSync StatusSyncer
 }
 
 // Host is the front http.Handler of a multi-tenant server.
 type Host struct {
 	cfg Config
+	// prov is nil when provisioning is off.
+	prov *provisioning
 }
 
 // New builds a Host.
@@ -145,10 +138,23 @@ func New(cfg Config) (*Host, error) {
 		return nil, errors.New("tenanthost: acquire is required")
 	case cfg.Static == nil:
 		return nil, errors.New("tenanthost: static handler is required")
-	case cfg.LazyProvision && cfg.Provision == nil:
-		return nil, errors.New("tenanthost: lazy provisioning needs a provisioner")
 	}
-	return &Host{cfg: cfg}, nil
+	if cfg.StatusSync != nil && cfg.Webhook == nil {
+		return nil, errors.New("tenanthost: status sync needs the IdP webhook")
+	}
+	if err := validateProvision(cfg.Provision, cfg.Webhook != nil); err != nil {
+		return nil, err
+	}
+	return &Host{cfg: cfg, prov: newProvisioning(cfg.Provision)}, nil
+}
+
+// Close cancels the provisioning runs in progress and waits for them to
+// end. A cancelled create is finished by the next one. Safe to call when
+// provisioning is off.
+func (h *Host) Close() {
+	if h.prov != nil {
+		h.prov.close()
+	}
 }
 
 // ServeHTTP routes r to its tenant's application, or refuses it.
@@ -206,13 +212,11 @@ func (h *Host) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status := r.Method == http.MethodGet && clean == StatusPath
-	if status && h.cfg.Provision != nil {
-		if st := h.cfg.Provision.State(id.OrgID); st != tenant.ProvisionNone {
-			h.provisioning(w, r, st)
-			return
-		}
+	if clean == StatusPath && r.Method == http.MethodGet {
+		h.serveStatus(w, r, id.OrgID)
+		return
 	}
+
 	next, release, err := h.cfg.Acquire(r.Context(), id.OrgID)
 	if err != nil {
 		if !shell() {
@@ -221,41 +225,7 @@ func (h *Host) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
-	if status {
-		writeStatus(w, http.StatusOK, "ready")
-		return
-	}
 	next.ServeHTTP(w, r.WithContext(withVerified(r.Context(), raw, id)))
-}
-
-// provisionable reports whether err from Acquire names an org that may be
-// provisioned: one with no tenant, or one whose create did not finish. A
-// suspended or erasing tenant never is.
-func provisionable(err error) bool {
-	return errors.Is(err, tenant.ErrTenantNotFound) || errors.Is(err, tenant.ErrTenantProvisioning)
-}
-
-// provisioning answers a request whose tenant is being provisioned, or
-// whose provisioning could not start.
-func (h *Host) provisioning(w http.ResponseWriter, r *http.Request, st tenant.ProvisionState) {
-	switch st {
-	case tenant.ProvisionRunning:
-		w.Header().Set("Location", StatusPath)
-		w.Header().Set("Retry-After", provisionPollAfter)
-		if r.URL.Path == StatusPath {
-			writeStatus(w, http.StatusAccepted, string(st))
-			return
-		}
-		writeError(w, r, http.StatusAccepted, "tenant_provisioning", "Your organization is being set up")
-	case tenant.ProvisionThrottled:
-		w.Header().Set("Retry-After", "30")
-		writeError(w, r, http.StatusServiceUnavailable, "tenant_provisioning_busy",
-			"Too many organizations are being set up; try again shortly")
-	default:
-		w.Header().Set("Retry-After", h.retryAfter())
-		writeError(w, r, http.StatusServiceUnavailable, "tenant_provisioning_failed",
-			"Setting up your organization failed; try again later")
-	}
 }
 
 // serveWebhook routes an IdP webhook by the org its verified body names.
@@ -288,11 +258,17 @@ func (h *Host) serveWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if claims.Event == eventOrgUpdated || claims.Event == eventOrgDeleted {
+		h.syncFromWebhook(w, r, claims)
+		return
+	}
+
 	next, release, err := h.cfg.Acquire(r.Context(), claims.OrgID)
-	switch {
-	case h.cfg.Provision != nil && claims.Event == "organization.created" && provisionable(err):
+	if err != nil && h.prov != nil && claims.Event == eventOrgCreated && provisionable(err) {
 		h.provisionFromWebhook(w, r, claims)
 		return
+	}
+	switch {
 	case errors.Is(err, tenant.ErrTenantInactive):
 		// A suspended tenant keeps its data, and a role removal or user
 		// deletion sent now must still apply when it is resumed. Refused
@@ -303,20 +279,21 @@ func (h *Host) serveWebhook(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "300")
 		http.Error(w, "tenant not served now", http.StatusServiceUnavailable)
 		return
+	case errors.Is(err, tenant.ErrTenantErased):
+		// Acknowledged and never provisioned: only an operator recreates
+		// an erased tenant. Worth a look when the event is a create, since
+		// the IdP then has an org whose data this server erased.
+		slog.Warn("tenant host: idp webhook for an erased org; not provisioned "+
+			"(an operator recreates it with rela-server tenant create -recreate)",
+			"org_id", claims.OrgID, "event", claims.Event, "id", claims.ID)
+		w.WriteHeader(http.StatusOK)
+		return
 	case errors.Is(err, tenant.ErrUnknownTenant):
 		// Acknowledged so the IdP does not retry an event for an org this
-		// server does not host. With provisioning on, organization.created
-		// was handled above.
-		if claims.Event == "organization.deleted" {
-			// An org being erased, or one this server never had: worth an
-			// operator's look, since an erasure may be in progress.
-			slog.Warn("tenant host: idp webhook organization deletion for an org this server does not "+
-				"serve; check that its erasure completed (PROCEDURE-u020, rela-server tenant erase)",
-				"org_id", claims.OrgID, "id", claims.ID)
-		} else {
-			slog.Info("tenant host: idp webhook for an org this server does not host",
-				"org_id", claims.OrgID, "event", claims.Event, "id", claims.ID)
-		}
+		// server does not host. Every org status event, and with
+		// provisioning on an `organization.created`, was handled above.
+		slog.Info("tenant host: idp webhook for an org this server does not host",
+			"org_id", claims.OrgID, "event", claims.Event, "id", claims.ID)
 		w.WriteHeader(http.StatusOK)
 		return
 	case err != nil:
@@ -331,50 +308,18 @@ func (h *Host) serveWebhook(w http.ResponseWriter, r *http.Request) {
 	next.ServeHTTP(w, r)
 }
 
-// provisionFromWebhook provisions the org of a verified
-// `organization.created` webhook. It waits up to [webhookProvisionWait] for
-// the create and answers `200` once the tenant exists. A create still
-// running, throttled or failed is `503` with Retry-After, so the IdP
-// delivers the event again and a failed create is never acknowledged.
-func (h *Host) provisionFromWebhook(w http.ResponseWriter, r *http.Request, claims dataentry.WebhookClaims) {
-	st := h.cfg.Provision.Start(claims.OrgID)
-	slog.InfoContext(r.Context(), "tenant host: organization.created webhook; provisioning",
-		"org_id", claims.OrgID, "trigger", "webhook", "webhook_id", claims.ID, "state", string(st))
-	if st == tenant.ProvisionRunning {
-		ctx, cancel := context.WithTimeout(r.Context(), webhookProvisionWait)
-		st = h.cfg.Provision.Wait(ctx, claims.OrgID)
-		cancel()
-	}
-	//nolint:gosec // G706: constant message; the verified org and webhook ids are escaped attributes
-	slog.Info("tenant host: idp webhook organization.created; provisioning",
-		"org_id", claims.OrgID, "id", claims.ID, "state", string(st))
-	switch st {
-	case tenant.ProvisionNone:
-		w.WriteHeader(http.StatusOK)
-	case tenant.ProvisionRunning:
-		w.Header().Set("Retry-After", provisionPollAfter)
-		http.Error(w, "provisioning", http.StatusServiceUnavailable)
-	case tenant.ProvisionThrottled:
-		w.Header().Set("Retry-After", "60")
-		http.Error(w, "provisioning busy", http.StatusServiceUnavailable)
-	default:
-		w.Header().Set("Retry-After", h.retryAfter())
-		http.Error(w, "provisioning failed", http.StatusServiceUnavailable)
-	}
-}
-
-// retryAfter is the Retry-After for a failed create, at least one second.
-func (h *Host) retryAfter() string {
-	return strconv.Itoa(max(1, int(h.cfg.Provision.RetryAfter().Seconds())))
-}
-
 func (h *Host) acquireFailed(w http.ResponseWriter, r *http.Request, orgID string, err error) {
-	if h.cfg.LazyProvision && provisionable(err) {
-		st := h.cfg.Provision.Start(orgID)
-		slog.InfoContext(r.Context(), "tenant host: verified org has no tenant; provisioning",
-			"org_id", orgID, "trigger", "lazy", "path", r.URL.Path, "state", string(st))
-		h.provisioning(w, r, st)
-		return
+	if h.prov != nil && provisionable(err) {
+		if h.prov.lazy {
+			h.provisionLazily(w, r, orgID, http.StatusAccepted)
+			return
+		}
+		if errors.Is(err, tenant.ErrTenantProvisioning) {
+			// Webhook mode does not finish a create that stopped.
+			h.prov.noteStuck(r.Context(), orgID)
+			writeProvisioning(w, r, http.StatusAccepted)
+			return
+		}
 	}
 	if errors.Is(err, tenant.ErrUnknownTenant) {
 		slog.InfoContext(r.Context(), "tenant host: org is not a tenant of this server",
@@ -450,18 +395,6 @@ type problem struct {
 	Title    string `json:"title"`
 	Status   int    `json:"status"`
 	Instance string `json:"instance,omitempty"`
-}
-
-// tenantStatus is the body of [StatusPath].
-type tenantStatus struct {
-	Status string `json:"status"`
-}
-
-func writeStatus(w http.ResponseWriter, code int, status string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(tenantStatus{Status: status})
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, status int, code, title string) {

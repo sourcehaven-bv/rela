@@ -18,6 +18,8 @@ var directReadAllowlist = map[string]allowed{
 	"internal/dataentry/queryservice.go": {1, "loadHitHeaders: id-batch header load for search hits, " +
 		"gated afterwards"},
 	"internal/dataentry/rowcontent.go": {1, "loadRows: id-batch raw row load; every caller gates or redacts before serving"},
+	"internal/dataentry/scopedread.go": {1, "headersByIDs: id-batch header load at the faces the gated " +
+		"MatchingFaces verdict already admitted (TKT-F2EJQY8); gated before the load, not after"},
 	"internal/dataentry/views.go": {3, "view collections: id-batch body and header loads, " +
 		"gated afterwards"},
 	"internal/dataentry/views_handler.go": {2, "visibleTitles: id-batch header load for relation " +
@@ -26,6 +28,8 @@ var directReadAllowlist = map[string]allowed{
 		"gated afterwards"},
 	"internal/dataentry/visiblereader.go": {1, "storedFacesOf: type and face lookup that decides " +
 		"liveness and the gate's type, never what is served"},
+	"internal/lua/markdown.go": {1, "refsByIDs: id-batch read of the ids rela.md.entity_refs names " +
+		"(TKT-P9QMEVI), through the script's gated EntityReader in the runtime's world"},
 	"internal/mcp/tools_entity.go": {1, "hydrateHits: id-batch body load for search hits " +
 		"through the gated GraphReader, keyed by the hit's face"},
 }

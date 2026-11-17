@@ -109,6 +109,11 @@ export interface ActionConfig {
   script?: string
   description?: string
   params?: Record<string, string>
+  /**
+   * Present on an `llm:` action that runs on several entities in one request
+   * (TKT-I2SRNWR). Only `batch` is served; the prompt and outputs are not.
+   */
+  llm?: { batch?: { max: number } }
 }
 
 export interface AppConfig {
@@ -563,15 +568,34 @@ export interface KanbanConfig {
   columns_from?: KanbanColumnsFrom
   swimlane_property?: string
   swimlanes?: KanbanSwimlane[]
+  /** Cell colours by column value, then lane value (TKT-83S9G0Z). */
+  cell_colors?: Record<string, Record<string, KanbanCellColor>>
   card: KanbanCard
   /** Lines under each column heading, such as a count or a sum (TKT-SVLQQ6). */
   column_summary?: Summary[]
   edit_form?: string
   create_form?: string
+  /**
+   * A title input at the foot of every column and swimlane cell; Enter
+   * creates the card (TKT-IP4273S). The server refuses it at load when a
+   * required property would be left unset.
+   */
+  quick_add?: boolean
+  /**
+   * A control after the last column that adds one, saved through the
+   * Configure API (TKT-1X5G3BP). Only offered to a principal who may
+   * configure, and only on an inline-enum `column_property` board.
+   */
+  add_column?: boolean
   filters?: Array<{ property: string; operator: string; value: string }>
   filter_controls?: FilterControl[]
   /** Named query scope; see the field of the same name on ListConfig. */
   query_scope?: string
+  /**
+   * Batch `llm:` actions offered in the board header (TKT-I2SRNWR). Each runs
+   * on the cards the board shows in its expanded columns.
+   */
+  actions?: string[]
 }
 
 /** The aggregate a {@link Summary} computes. */
@@ -620,6 +644,17 @@ export interface KanbanSwimlane {
   label?: string
   /** Icon name; see KanbanColumn.icon. */
   icon?: string
+}
+
+/**
+ * One cell's colour on a swimlane board. `color` is a tone or a colour name
+ * as configured; `class` is the style class the server resolved from it.
+ * Without a label, a tone shows its translated name.
+ */
+export interface KanbanCellColor {
+  color: string
+  label?: string
+  class?: string
 }
 
 /**
@@ -806,6 +841,11 @@ export interface DashboardConfig {
   title?: string
   description?: string
   cards: DashboardCard[]
+  /**
+   * Set on an entity dashboard: it counts for one entity of this type, the
+   * anchor, and is shown as a `scope: root` tab of an entity page.
+   */
+  entity_type?: string
 }
 
 export interface DashboardCard {
@@ -856,6 +896,11 @@ export interface DashboardCard {
    * booleans the server computed, it does not evaluate ACL.
    */
   permission?: string
+  /**
+   * On an entity dashboard, the relation from the anchor to the card's rows.
+   * The server narrows the card's value by it; the SPA only passes the anchor.
+   */
+  scope?: { relation?: string; direction?: 'outgoing' | 'incoming' }
 }
 
 /**
@@ -868,6 +913,7 @@ export interface DashboardCard {
 export interface DashboardResponse {
   title?: string
   description?: string
+  /** On an entity dashboard every card has a `scope` and needs an anchor. */
   cards: DashboardCardEntry[]
 }
 
@@ -1243,11 +1289,15 @@ export interface PageConfig {
   icon?: string
   entity_type?: string
   badge?: string
+  /** `steps` draws the tabs as numbered steps; absent or `tabs` is a tab bar. */
+  mode?: PageMode
   tabs: Array<{
     id: string
     label: string
     icon?: string
     permission?: string
+    /** The question a step shows above its view. Only on a steps page. */
+    prompt?: string
     list?: string
     kanban?: string
     calendar?: string
@@ -1258,6 +1308,9 @@ export interface PageConfig {
     scope?: { root?: boolean; relation?: string; direction?: 'outgoing' | 'incoming' }
   }>
 }
+
+/** How a page shows its tabs (TKT-35BY3PE). */
+export type PageMode = 'tabs' | 'steps'
 
 /** The kind of view a page tab shows; the route name of its standalone view. */
 export type PageTabView = 'list' | 'kanban' | 'calendar' | 'gantt' | 'document' | 'dashboard'
@@ -1279,12 +1332,29 @@ export interface SidebarPageTab {
   scope?: 'relation' | 'root'
   relation?: string
   direction?: 'outgoing' | 'incoming'
+  /** The question shown above the view on a steps page. */
+  prompt?: string
+  /** On a steps page, the step shows the list's rows one at a time (TKT-M07C97Y). */
+  walk?: boolean
+  /**
+   * The step has a `done_when` check. The verdict is per principal and comes
+   * from `/_page_status`, never from the sidebar (TKT-MWZF0UO).
+   */
+  done_check?: boolean
   /**
    * Per entity type, the relation a row created while this tab is open is
    * linked to the page's entity over. The space's Create menu uses it.
    */
   links?: SidebarPageLink[]
 }
+
+/**
+ * Where a walking step stands (TKT-M07C97Y). `loading` until the first
+ * answer, `empty` for a list with no rows, `missing` for an `?item=` the
+ * list does not hold (removed, hidden, or never in it), `error` for a read
+ * that failed otherwise, `ready` with a position.
+ */
+export type StepWalkState = 'off' | 'loading' | 'empty' | 'missing' | 'error' | 'ready'
 
 /** A row of `type` is linked to the page's entity over `relation`, seen from the entity. */
 export interface SidebarPageLink {
@@ -1304,6 +1374,8 @@ export interface SidebarPage {
   entity_type?: string
   /** The entity's property the header shows as a pill beside its title. */
   badge?: string
+  /** `steps` on a page that draws its tabs as numbered steps; absent for a tab bar. */
+  mode?: 'steps'
   tabs: SidebarPageTab[]
 }
 

@@ -4,8 +4,8 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 )
 
 // PileRequest is one add_to_pile push of a cascade's trigger entity.
@@ -47,7 +47,7 @@ func (f PilePushFunc) PushPile(ctx context.Context, req PileRequest) error { ret
 // The log line names the automation and the entity, never the pile or the
 // owner: both are interpolated, so they can carry entity field values or a
 // login.
-func (r *Runner) pushPiles(ctx context.Context, trigger *entity.Entity, pushes []automation.PileToPush) {
+func (r *Runner) pushPiles(ctx context.Context, trigger *entity.Entity, pushes []triggers.PileToPush) {
 	if len(pushes) == 0 {
 		return
 	}
@@ -74,7 +74,7 @@ func (r *Runner) pushPiles(ctx context.Context, trigger *entity.Entity, pushes [
 // The wiring site answers it from the raw store, since an automation is
 // system policy and who it notifies must not depend on who made the write.
 type RecipientFinder interface {
-	Recipients(ctx context.Context, from entity.Ref, hops []automation.NotifyHop, property string) ([]string, error)
+	Recipients(ctx context.Context, from entity.Ref, hops []triggers.NotifyHop, property string) ([]string, error)
 }
 
 // maxNotifyRecipients bounds the users one notify action reaches for one
@@ -86,7 +86,7 @@ const maxNotifyRecipients = 200
 // recipients and pushes trigger onto their declared pile, skipping the
 // acting user. Like pushPiles it is best-effort and logs what fails, naming
 // the automation and the entity but never a recipient.
-func (r *Runner) notify(ctx context.Context, trigger *entity.Entity, notes []automation.NotificationToSend) {
+func (r *Runner) notify(ctx context.Context, trigger *entity.Entity, notes []triggers.NotificationToSend) {
 	if len(notes) == 0 {
 		return
 	}

@@ -32,8 +32,8 @@ status: done
 - [x] Edge cases manually verified
 
 **Verification Evidence:** End to end through each transport against a real
-project: `rela channel read --thread 1` and `--top` (TestChannelCLI_RoundTrip),
-HTTP `?thread=1`, `?top=1`, `top=0` and the 400s (TestChannels_ThreadPages), MCP
+project: `rela channel read --thread 1` and `--top` (TestChannelCLI_Loop), HTTP
+`?thread=1`, `?top=1`, `top=0` and the 400s (TestChannels_ThreadPages), MCP
 read_channel thread/top (TestChannelTools_RoundTrip,
 TestChannelTools_Arguments). Store behaviour on file, sqlite and postgres via
 channelstest ThreadPages, ThreadRemoval and ThreadPageRefusals. Migrations:

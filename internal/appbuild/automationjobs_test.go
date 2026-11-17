@@ -29,15 +29,19 @@ entities:
     properties:
       title: {type: string, required: true}
       pushed: {type: string}
-automations:
-  - name: push
+`
+
+const backgroundFlows = `
+triggers:
+  push:
     on:
       entity: note
       created: true
       updated: true
-    do:
-      - lua_file: push.lua
-        background: true
+    outputs:
+      - script:
+          file: push.lua
+          background: true
 `
 
 // pushScript records who ran it and what title it saw.
@@ -47,14 +51,15 @@ rela.update_entity(entity.id, {pushed = rela.principal.user .. ":" .. entity.pro
 
 func writeBackgroundProject(t *testing.T) string {
 	t.Helper()
-	return writeBackgroundSchema(t, backgroundSchema)
+	return writeBackgroundSchema(t, backgroundSchema, backgroundFlows)
 }
 
-func writeBackgroundSchema(t *testing.T, schema string) string {
+func writeBackgroundSchema(t *testing.T, schema, flows string) string {
 	t.Helper()
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "scripts"), 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "schema.yaml"), []byte(schema), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "flows.yaml"), []byte(flows), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "scripts", "push.lua"), []byte(pushScript), 0o600))
 	return root
 }
@@ -146,7 +151,7 @@ func clearPushed(t *testing.T, svc *appbuild.Services, e *entity.Entity) {
 // rename schedules a created-only trigger's action for the new id, since a
 // job still pending for the old id finds nothing (code review S3).
 func TestBackgroundAction_RenameReschedulesPendingCreate(t *testing.T) {
-	root := writeBackgroundSchema(t, strings.Replace(backgroundSchema, "      updated: true\n", "", 1))
+	root := writeBackgroundSchema(t, backgroundSchema, strings.Replace(backgroundFlows, "      updated: true\n", "", 1))
 	opts := append(backendtest.Options(t), appbuild.WithBackgroundAutomationJobs())
 	svc, err := appbuild.Discover(root, script.NewEngine(), opts...)
 	require.NoError(t, err)
@@ -169,9 +174,9 @@ func TestBackgroundAction_RenameReschedulesPendingCreate(t *testing.T) {
 func TestBackgroundAction_RenameDecidesOnStoredValues(t *testing.T) {
 	schema := strings.Replace(backgroundSchema, "      pushed: {type: string}\n",
 		"      pushed: {type: string}\n      secret: {type: string}\n", 1)
-	schema = strings.Replace(schema, "      updated: true\n",
-		"      updated: true\n      condition: \"entity.secret ~= 'hold'\"\n", 1)
-	root := writeBackgroundSchema(t, schema)
+	flows := strings.Replace(backgroundFlows, "      updated: true\n",
+		"      updated: true\n      when: \"entity.secret ~= 'hold'\"\n", 1)
+	root := writeBackgroundSchema(t, schema, flows)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "acl.yaml"), []byte(`roles:
   editor:
     read: [note]

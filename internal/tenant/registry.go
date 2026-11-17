@@ -727,6 +727,23 @@ func (r *Registry[R]) Revalidate(ctx context.Context) {
 	}
 }
 
+// RevalidateOrg resolves orgID again and revokes its resident when the
+// resolver now refuses it, as [Registry.Revalidate] does for every
+// resident. A host calls it right after it changes orgID's status itself,
+// so the change takes effect at once rather than at the next pass. A failed
+// lookup revokes nothing, and an org that is not resident opens nothing.
+func (r *Registry[R]) RevalidateOrg(ctx context.Context, orgID string) {
+	r.mu.Lock()
+	_, ok := r.residents[orgID]
+	r.mu.Unlock()
+	if !ok {
+		return
+	}
+	if _, err := r.resolver.Resolve(ctx, orgID); err != nil && refused(err) {
+		r.revoke(orgID)
+	}
+}
+
 // IsResident reports whether orgID has a resident that is not being closed.
 func (r *Registry[R]) IsResident(orgID string) bool {
 	r.mu.Lock()

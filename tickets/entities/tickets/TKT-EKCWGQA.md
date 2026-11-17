@@ -5,8 +5,13 @@ title: Channels entry in the entity page jump bar
 kind: enhancement
 priority: medium
 effort: s
-status: backlog
+status: wont-fix
 ---
+
+## Resolution
+
+Obsolete. #2283 (TKT-UYC758H) removed the jump bar from the entity detail page,
+so there is no jump bar to add a "Channels" entry to. Closed as wont-fix.
 
 ## Description
 

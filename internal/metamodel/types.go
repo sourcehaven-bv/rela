@@ -33,7 +33,6 @@ type Metamodel struct {
 	Entities    map[string]EntityDef   `yaml:"entities"`
 	Relations   map[string]RelationDef `yaml:"relations"`
 	Validations []ValidationRule       `yaml:"validations,omitempty"`
-	Automations []AutomationDef        `yaml:"automations,omitempty"`
 
 	// Attachments holds the global attachment safety floor (MIME allowlist,
 	// scan policy) applied to every `file` property unless overridden.
@@ -45,10 +44,11 @@ type Metamodel struct {
 	// internal/comments.
 	Comments *CommentsConfig `yaml:"comments,omitempty"`
 
-	// Piles declares the piles every user holds, keyed by pile key (see
-	// [PileDecl]). Policy only: pile items are per-user state outside the
-	// graph. See internal/piles.
-	Piles map[string]PileDecl `yaml:"piles,omitempty"`
+	// SideStores declares the data kept outside the graph: piles and
+	// record types. Its fields are promoted and inlined, so they read as
+	// Metamodel.Piles and Metamodel.Records and sit at the top level of
+	// schema.yaml.
+	SideStores `yaml:",inline"`
 
 	// Transforms is the view-export registry: named markdown -> format
 	// conversions run via an external command (e.g. pandoc). Registering a
@@ -103,6 +103,20 @@ type Metamodel struct {
 	worldOrder    []string                // world names in YAML order; see [WorldOrderOf]
 	abstracts     map[string]AbstractType // abstract types removed at load; see [AbstractTypes]
 	flowRuns      bool                    // set only by [WithFlowRuns]; see [Metamodel.HasFlowRuns]
+}
+
+// SideStores holds the schema sections that declare data kept outside the
+// graph.
+type SideStores struct {
+	// Piles declares the piles every user holds, keyed by pile key (see
+	// [PileDecl]). Policy only: pile items are per-user state outside the
+	// graph. See internal/piles.
+	Piles map[string]PileDecl `yaml:"piles,omitempty"`
+
+	// Records declares the record types: append-only typed rows attached to
+	// an owner entity and stored outside the graph (see [RecordTypeDef]).
+	// Policy only. See internal/records.
+	Records map[string]RecordTypeDef `yaml:"records,omitempty"`
 }
 
 // ConversionDef is an operator-declared transformation from one entity type
@@ -216,9 +230,11 @@ type ValidationRule struct {
 	// write path refuse a write whose new state violates the rule, with the
 	// same 422 a structural error gets (TKT-5CESLHD).
 	//
-	// An enforced rule may only read the entity being written, so the load
-	// refuses one that uses Lua, `relations:`, `content:` or `related(...)`.
-	// See [ValidationRule.IsWriteEnforced].
+	// An enforced rule reads the entity being written and, through a
+	// one-hop `related(...)`, whether it has a relation (TKT-EBARYBI). The
+	// load refuses one that uses Lua, `relations:` or `content:`; the shapes
+	// of `related(...)` it allows are checked in internal/writerule. See
+	// [ValidationRule.IsWriteEnforced].
 	Enforce string `yaml:"enforce,omitempty"`
 
 	// Lua specifies inline Lua code for custom validation logic.
@@ -333,7 +349,7 @@ type CustomType struct {
 	// Transitions declares the legal value→value moves for this enum,
 	// making it a state machine (TKT-E4LW2). This is declarative source
 	// data only — the metamodel does not enforce it. At startup
-	// internal/statemachine.Compile reads these into an executable machine
+	// internal/flowcfg/transitions.CompileTransitions reads these into an executable machine
 	// that the entitymanager runs on the write path (legality 422, guard
 	// 403, precondition 422). Empty means "any value may change to any
 	// other" (the historical, unconstrained behavior). Only meaningful on a
@@ -342,14 +358,14 @@ type CustomType struct {
 
 	// Initial names the only legal entry value on entity create when this
 	// type is a state machine. Empty falls back to Default. Consumed by
-	// internal/statemachine at compile time.
+	// internal/flowcfg/transitions at compile time.
 	Initial string `yaml:"initial,omitempty"`
 }
 
 // TransitionDef is one edge in an enum state machine: a legal move from one
 // value to another, optionally gated by an ACL permission (Guard) and/or a
 // data precondition (When). This is declarative source data; the executable
-// machine is built from it by internal/statemachine.Compile.
+// machine is built from it by internal/flowcfg/transitions.CompileTransitions.
 type TransitionDef struct {
 	From string `yaml:"from"` // Source value; must be one of CustomType.Values
 	To   string `yaml:"to"`   // Target value; must be one of CustomType.Values
@@ -1280,7 +1296,7 @@ func (l *CopyLanding) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-// CopyGuard is a copy definition's authorization, sharing the statemachine's
+// CopyGuard is a copy definition's authorization, sharing the transition enforcer's
 // declaration vocabulary (§9.1: shared guard machinery, separate declaration
 // — a copy is not a property change).
 type CopyGuard struct {
@@ -1666,173 +1682,6 @@ func (i *InverseDef) UnmarshalYAML(unmarshal func(any) error) error {
 
 	*i = InverseDef(objectForm)
 	return nil
-}
-
-// AutomationDef defines a trigger-action automation rule.
-type AutomationDef struct {
-	Name        string             `yaml:"name"`
-	Description string             `yaml:"description,omitempty"`
-	On          AutomationTrigger  `yaml:"on"`
-	Do          []AutomationAction `yaml:"do,omitempty"`
-	Validate    []AutomationCheck  `yaml:"validate,omitempty"`
-}
-
-// AutomationTrigger specifies conditions that activate an automation.
-type AutomationTrigger struct {
-	Entity   StringOrSlice `yaml:"entity,omitempty"`
-	Property string        `yaml:"property,omitempty"`
-	Becomes  string        `yaml:"becomes,omitempty"`
-	From     string        `yaml:"from,omitempty"`
-	Created  bool          `yaml:"created,omitempty"`
-	// Updated fires on any update that changes a property or the body, and
-	// on a rename (TKT-2Q4UFI). It cannot be combined with Property.
-	Updated         bool   `yaml:"updated,omitempty"`
-	RelationCreated string `yaml:"relation_created,omitempty"`
-	RelationRemoved string `yaml:"relation_removed,omitempty"`
-	// Deleted fires once per face a delete removes, after the delete
-	// commits (TKT-Q0AQ840). It runs background actions only, and stands
-	// alone: no other trigger key may accompany it.
-	Deleted bool `yaml:"deleted,omitempty"`
-
-	// Faces limits the trigger to specific content states, named as declared
-	// in `faces:`. Empty means every state — see automation.Trigger.Faces for
-	// why that is the default and when to narrow it.
-	Faces StringOrSlice `yaml:"faces,omitempty"`
-
-	When []string `yaml:"when,omitempty"` // Property conditions that must match (AND logic)
-
-	// Condition is a predicate EXPRESSION that must hold for the
-	// automation to fire, ANDed with every When clause.
-	//
-	// When and Condition are separate keys because their syntaxes
-	// overlap without erroring: filter.Parse accepts
-	// "days_between(entity.due, today()) <= 7" as a filter on a property
-	// literally named "days_between(entity.due, today())", which then
-	// matches nothing, silently. Sniffing which dialect a string is
-	// written in would guess, and guess quietly — so the operator says
-	// which one they meant by choosing the key.
-	//
-	// `when:` is filter syntax (`status=todo`) transpiled to predicate on
-	// load; `condition:` is predicate source evaluated as written, so it
-	// gets boolean composition and the host-function stdlib — notably the
-	// date arithmetic (today/days_between/date_add/rrule_next) that a
-	// property filter cannot express.
-	Condition string `yaml:"condition,omitempty"`
-
-	// Copy limits the trigger to writes made by the named `copies:`
-	// definitions. On its own it fires on every run of a named copy; beside
-	// `created`, `updated` or `property` it narrows that key to the copy's
-	// write. See automation.Trigger.Copy.
-	Copy StringOrSlice `yaml:"copy,omitempty"`
-}
-
-// AutomationAction specifies an operation to perform.
-type AutomationAction struct {
-	Set            string                `yaml:"set,omitempty"`
-	Value          string                `yaml:"value,omitempty"`
-	CreateRelation *CreateRelationAction `yaml:"create_relation,omitempty"`
-	CreateEntity   *CreateEntityAction   `yaml:"create_entity,omitempty"`
-	AddToPile      *AddToPileAction      `yaml:"add_to_pile,omitempty"`
-	Notify         *NotifyAction         `yaml:"notify,omitempty"`
-	Lua            string                `yaml:"lua,omitempty"`      // Inline Lua code to execute
-	LuaFile        string                `yaml:"lua_file,omitempty"` // Path to Lua script in scripts/ directory
-
-	// AllowACLBypass unlocks rela.bypass_acl in this Lua action (TKT-D8T148).
-	// Operator-only (lives in the schema file). When set, the script may call
-	// rela.bypass_acl(fn) to obtain a closure-scoped elevated handle whose
-	// access skips the ACL deny (still audited, real principal preserved).
-	// Ignored for non-Lua actions.
-	//
-	// Since TKT-Y3JVFK this is an enum, not a bool: `read`, `write` or
-	// `read+write` select which methods the handle carries. The legacy
-	// `true` is refused at parse time with a message naming `read+write`;
-	// `rela migrate` rewrites it.
-	AllowACLBypass ACLBypass `yaml:"allow_acl_bypass,omitempty"`
-
-	// Capabilities declares which ambient capabilities this Lua action may
-	// reach: http, ai, write_file and named secrets (TKT-YH52OM). Omitting it
-	// grants NONE of them — automations run on the write path of any HTTP
-	// request, so they are not an operator-shell surface and do not get the
-	// trusted default. Ignored for non-Lua actions.
-	Capabilities Capabilities `yaml:"capabilities,omitempty"`
-
-	// Background runs the lua_file action as a background job instead of on
-	// the write path (TKT-2Q4UFI). Saves of one entity coalesce into one run,
-	// and a save during a run is followed by one more. The job runs as RunAs
-	// with this action's capabilities, never as the user who saved.
-	Background bool `yaml:"background,omitempty"`
-
-	// RunAs is the principal a background job runs as. Empty means
-	// system:automation. Valid only with Background.
-	RunAs string `yaml:"run_as,omitempty"`
-
-	// Retry is the background job's retry intent. Empty means bounded.
-	// Valid only with Background.
-	Retry JobRetry `yaml:"retry,omitempty"`
-}
-
-// CreateRelationAction specifies parameters for creating a relation.
-type CreateRelationAction struct {
-	Relation string `yaml:"relation"`
-	To       string `yaml:"to"`
-}
-
-// CreateEntityAction specifies parameters for creating a new entity.
-type CreateEntityAction struct {
-	Type       string            `yaml:"type"`                 // Entity type to create
-	Template   string            `yaml:"template,omitempty"`   // Optional: template variant, supports interpolation (e.g., "{{new.kind}}")
-	Properties map[string]string `yaml:"properties,omitempty"` // Properties (values support interpolation)
-	Relation   string            `yaml:"relation,omitempty"`   // Optional: relation FROM trigger TO created entity
-	IfExists   string            `yaml:"if_exists,omitempty"`  // Behavior when relation already exists: skip (default), error, replace
-}
-
-// AddToPileAction puts the triggering entity on a user's pile (TKT-K3RJLH).
-// Pile and Owner support interpolation (e.g. "{{new.assignee}}").
-type AddToPileAction struct {
-	// Pile is the pile name. Required.
-	Pile string `yaml:"pile"`
-	// Owner is the user whose pile receives the entity: the acting user or
-	// an existing person entity. Empty means the acting user.
-	Owner string `yaml:"owner,omitempty"`
-	// Create makes the pile when it does not exist. Nil means true; read it
-	// through [AddToPileAction.CreatePile].
-	Create *bool `yaml:"create,omitempty"`
-}
-
-// CreatePile reports whether a missing pile is created. It defaults to true.
-func (a *AddToPileAction) CreatePile() bool { return a.Create == nil || *a.Create }
-
-// NotifyAction puts the triggering entity on the declared pile Pile of every
-// user the To path reaches, except the user who made the write.
-type NotifyAction struct {
-	// Pile is a key of the schema's `piles:` block. Required.
-	Pile string `yaml:"pile"`
-	// To names the recipients.
-	To NotifyTarget `yaml:"to"`
-	// Reason is a key of the pile's reasons, recorded on the item.
-	Reason string `yaml:"reason,omitempty"`
-}
-
-// NotifyTarget is the path from the triggering entity to its recipients:
-// follow the Via relations, then read Property on every entity reached. The
-// property holds a person: an entity id under person mapping, else a login.
-type NotifyTarget struct {
-	// Via are the relations to follow, as in `related()`: a canonical name
-	// walks the relation forwards, an inverse id walks it backwards. Empty
-	// reads Property on the triggering entity itself.
-	Via StringOrSlice `yaml:"via,omitempty"`
-	// Type picks the entity type the last relation lands on when it may land
-	// on several.
-	Type string `yaml:"type,omitempty"`
-	// Property holds the recipient. Required.
-	Property string `yaml:"property"`
-}
-
-// AutomationCheck specifies a validation condition.
-type AutomationCheck struct {
-	Check    string `yaml:"check"`
-	Severity string `yaml:"severity,omitempty"`
-	Message  string `yaml:"message"`
 }
 
 // ContentRule defines validation rules for markdown body content.

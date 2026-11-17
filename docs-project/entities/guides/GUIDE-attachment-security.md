@@ -586,8 +586,8 @@ keys.
   and transforms are write-time gates. Tightening policy does not re-scan or
   re-strip attachments already stored. (A bulk rescan tool may come later.)
 - **Every ingress gets the same policy.** The web upload form, the CLI
-  (`rela attach`), the MCP `attach_file` tool and the Lua binding
-  `rela.attach_render` all run the same processor.
+  (`rela attach`), the MCP `attach_file` tool and the Lua bindings
+  `rela.attach_render` and `rela.attach_file` all run the same processor.
   The remote MCP endpoint reads the live schema, so a policy change reaches it
   when it reaches the web form. Over stdio, `rela mcp` has no command runner, so
   a property with a `scan_cmd` or command transform rejects MCP uploads.

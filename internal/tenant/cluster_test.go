@@ -280,10 +280,42 @@ func TestClusterResolver_Inactive(t *testing.T) {
 		if errors.Is(err, ErrTenantInactive) != inactive {
 			t.Errorf("Resolve(%s) inactive = %v, want %v", org, !inactive, inactive)
 		}
-		// Only an unfinished create may be finished by provisioning; a
-		// suspended tenant must never be.
-		if errors.Is(err, ErrTenantProvisioning) != (org == "org-p") {
-			t.Errorf("Resolve(%s) provisioning = %v", org, errors.Is(err, ErrTenantProvisioning))
+	}
+}
+
+// TestClusterResolver_Provisionable pins the two refusals a provisioning
+// host may answer by creating the tenant: a valid org with no row, and a
+// create that has not finished. An invalid org id, an erasing tenant and a
+// suspended one carry neither.
+func TestClusterResolver_Provisionable(t *testing.T) {
+	t.Parallel()
+
+	r := newClusterResolver(clusterBase, controlWith(t,
+		Record{OrgID: "org-s", Status: StatusSuspended, SchemaExists: true},
+		Record{OrgID: "org-p", Status: StatusProvisioning},
+		Record{OrgID: "org-e", Status: StatusErasing, SchemaExists: true},
+	), nil)
+	tests := []struct {
+		org                  string
+		absent, provisioning bool
+	}{
+		{org: "org-z", absent: true},
+		{org: "org-p", provisioning: true},
+		{org: "org-s"},
+		{org: "org-e"},
+		{org: ""},
+		{org: "bad\x00org"},
+	}
+	for _, tc := range tests {
+		_, err := r.Resolve(t.Context(), tc.org)
+		if !errors.Is(err, ErrUnknownTenant) {
+			t.Errorf("Resolve(%q) = %v, want ErrUnknownTenant", tc.org, err)
+		}
+		if got := errors.Is(err, ErrTenantAbsent); got != tc.absent {
+			t.Errorf("Resolve(%q) absent = %v, want %v", tc.org, got, tc.absent)
+		}
+		if got := errors.Is(err, ErrTenantProvisioning); got != tc.provisioning {
+			t.Errorf("Resolve(%q) provisioning = %v, want %v", tc.org, got, tc.provisioning)
 		}
 	}
 }

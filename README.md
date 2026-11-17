@@ -82,6 +82,7 @@ go build -o rela ./cmd/rela
 | [How To Publish Content with Faces and Worlds](docs/content-states.md) | Give an entity type several content states (draft, published, translations), declare worlds that pick one face per reader, and publish through a guarded copy |
 | [Export Guide](docs/export.md) | Export, import, and data integration |
 | [Best Practices](docs/best-practices.md) | Maintenance tips and team workflows |
+| [Importing structured data with a mapping](docs/mapped-import.md) | Map JSON, YAML, XML or CSV onto entities and relations with a file in imports/, and see the plan first |
 | [MCP Server](docs/mcp-server.md) | AI assistant integration via MCP |
 | [Data Entry Web App](docs/data-entry.md) | Config-driven web UI for entity management |
 | [Lua Scripting](docs/lua-scripting.md) | Programmable automation with embedded Lua |
@@ -104,9 +105,11 @@ go build -o rela ./cmd/rela
 | [Rela Desktop: Documents, Menus and Notifications](docs/desktop.md) | Open projects and single-file .rela documents in the desktop app, and send notifications with desktop.yaml |
 | [Driving rela-server from the command line with restish](docs/restish.md) | Call a remote rela-server from the command line, including file uploads, through its OpenAPI spec |
 | [Realtime Channels (realtime.yaml)](docs/realtime.md) | Declare channel types, message types, roles, lifecycle, sessions and triggers in realtime.yaml, and how rela checks the file |
-| [Flows (flows.yaml)](docs/flows.md) | Declare multi-step processes over an entity in flows.yaml: states, events, timers and outputs, and how rela checks the file |
+| [Flows (flows.yaml)](docs/flows.md) | Declare multi-step processes and entity-change triggers in flows.yaml: states, events, timers, outputs, triggers, and how rela checks the file |
 | [Syncing with a remote](docs/remote-sync.md) | Pull entities and relations from another rela with remotes.yaml: credentials, mapping, schedules, rows the source drops, and the status page |
 | [Two-way sync with a remote](docs/remote-sync-two-way.md) | Push local changes to a remote: share, conflict rules and clock bounds, retention, the conflict list and how to act on it, and why approval is a workflow |
+| [PostgreSQL Scale Check](docs/postgres-scale-run.md) | The PostgreSQL scale that rela checks every week, and how to run the check yourself |
+| [Records (time series and ledgers)](docs/records.md) | Declare record types in schema.yaml to store meter readings, events and ledger postings owned by an entity, outside the graph |
 
 ### Tutorials
 

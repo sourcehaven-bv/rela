@@ -166,6 +166,8 @@ spaces have shortcuts ⌘1 to ⌘9.
 | ⌘O       | Open project or document   |
 | ⌘⇧O      | Clone from Git             |
 | ⌘W       | Close window               |
+| ⌘F       | Find                       |
+| ⌘P       | Print                      |
 | ⌘,       | Settings                   |
 | ⌘[ / ⌘]  | Back / forward             |
 | ⌘K       | Command palette            |
@@ -173,6 +175,15 @@ spaces have shortcuts ⌘1 to ⌘9.
 | ⌘/       | Keyboard shortcuts         |
 
 On Windows and Linux, use Ctrl instead of ⌘.
+
+Find puts the cursor in the search box of the current list. On a page without
+one, it opens the search page. Print leaves out the sidebar and the page's
+buttons. On macOS, **File > Show in Finder** shows the project's folder, and
+**Help > Rela Help** opens this documentation.
+
+On macOS, closing the last window does not quit the app. Click the Dock icon,
+use **File > Open Recent**, or open a `.rela` document to get a window back. The
+app remembers the size and position of the main window.
 
 Right-click a link to an entity or a page to open it in a new window, or to copy
 its title. For an entity you can also copy its ID.
@@ -228,6 +239,11 @@ The first time a rule runs, it shows nothing. This applies when you first open a
 project and when you add a rule. Without it, opening a project with fifty
 overdue tasks would show fifty notifications. From then on, only changes notify.
 
+A rule that matches more than 1,000 entities shows no notifications, and Rela
+logs a warning that names it. When it matches 1,000 or fewer again, its next
+check is silent, like a first run, and later changes notify as usual. The
+badge has no such limit; it counts every match.
+
 Clicking a notification opens the entity.
 
 ### The badge
@@ -243,6 +259,12 @@ Conditions use the same expression language as list `condition:` in
 
 - `current_user`: the desktop app has no person record for its user.
 - `related(...)`: conditions see the entity's own properties only.
+
+A condition made only of `==` comparisons of text properties joined by `and`,
+such as `entity.status == 'open'`, is answered by the database, so a check
+costs the same however many entities the type has. Any other condition reads
+every entity of the type that passes its `==` comparisons, and checks the rest
+in the app.
 
 ### When rules run
 

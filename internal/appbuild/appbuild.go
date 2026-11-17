@@ -38,7 +38,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
@@ -49,6 +48,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/flowengine"
 	"github.com/Sourcehaven-BV/rela/internal/flowrun"
 	"github.com/Sourcehaven-BV/rela/internal/hostconfig"
@@ -60,7 +60,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/piles"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
+	"github.com/Sourcehaven-BV/rela/internal/records"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/rollup"
 	"github.com/Sourcehaven-BV/rela/internal/rootfs"
@@ -70,7 +72,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/state"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
@@ -203,6 +204,11 @@ type Services struct {
 	// leaseShared is the backend and hub under leases, which a re-assembly
 	// shares. The backend is closed by Close, not by CloseAssembly.
 	leaseShared leaseShared
+	// records is the record service (see [Records]), nil when the schema
+	// declares no record types. recordStore is its backend, which a
+	// re-assembly shares.
+	records     *records.Service
+	recordStore records.Store
 	// flowEngine runs flows.yaml (see [FlowEngine]). Nil when it declares
 	// no flows.
 	flowEngine *flowengine.Engine
@@ -277,6 +283,8 @@ type Services struct {
 	// softDeleteStop stops the soft-delete GC ticker. It runs before the job
 	// queue closes, so no tick enqueues into a closed queue.
 	softDeleteStop func()
+	// recordRetentionStop stops the record retention ticker.
+	recordRetentionStop func()
 	// versionSweep is the store's version-reconciliation sweep, nil on a
 	// build or store without one. Per-assembled: started by finishAssembly,
 	// stopped in stopBackgroundServices, so Close and CloseAssembly stop the
@@ -301,6 +309,17 @@ type Services struct {
 	// attachRender backs rela.attach_render for the scripts these services
 	// run (TKT-1TS55R), built in finishAssembly. See [SetAttachRenderer].
 	attachRender *attachRenderHolder
+
+	// llmActions carries the runner of background llm actions, installed by
+	// the data-entry host; llmActionQueue is the queue they run on, nil when
+	// these services run no background jobs. See [SetLLMActionRunner].
+	llmActions     *llmActionHolder
+	llmActionQueue jobs.Enqueuer
+	// llmIdentity records and rebuilds who queued a background llm action.
+	llmIdentity llmIdentity
+	// attachFile backs rela.attach_file for the same scripts (TKT-36DHKH8),
+	// built where attachRender is. See [SetAttachFiler].
+	attachFile *attachFileHolder
 
 	// tokens is the connector token broker, or why there is none
 	// (TKT-01KZSO). See [Tokens].
@@ -636,6 +655,7 @@ type scriptEntityReaderFamily interface {
 	CountEntities(ctx context.Context, q store.EntityQuery) (int, error)
 	CountRelations(ctx context.Context, q store.RelationQuery) (int, error)
 	MentionedBy(ctx context.Context, target, after string, limit int) (visibility.MentionPage, error)
+	ListEntityPage(ctx context.Context, q visibility.PageQuery) (visibility.EntityPage, error)
 }
 
 // scriptReads returns the principal-bound script reader and the traversal gate
@@ -761,6 +781,7 @@ func (s *Services) LuaWriteDeps() lua.WriteDeps {
 		VersionTags:   ScriptVersionTags(s),
 		OAuth:         ScriptOAuth(s),
 		AttachRender:  s.attachRender,
+		AttachFile:    s.attachFile,
 	}
 }
 
@@ -777,6 +798,7 @@ func (s *Services) luaWriteDepsFor(redactor visibility.FieldRedactor) lua.WriteD
 		VersionTags:   ScriptVersionTags(s),
 		OAuth:         ScriptOAuth(s),
 		AttachRender:  s.attachRender,
+		AttachFile:    s.attachFile,
 	}
 }
 
@@ -859,8 +881,9 @@ func (s *Services) GatedReads() GatedReadBundle {
 		Validator:  newValidator(reader, s.meta, deps, gate, s.store),
 		Searcher:   deps.Searcher,
 		Traversals: b,
+		Conditions: QueryConditions{meta: s.meta},
 		LuaReads:   deps,
-		Rebind:     rebindFor(s.aclDeclarative),
+		Rebind:     rebindFor(s.aclDeclarative, servicesClock(s)),
 		Rollups:    gatedRollups(s),
 	}
 }
@@ -912,12 +935,18 @@ func compileDerived(meta *metamodel.Metamodel, now func() time.Time) (*computed.
 }
 
 // rebindFor returns the [GatedReadBundle.Rebind] for policy d: without a
-// policy it returns ctx unchanged, with one it replaces any attached
+// policy it binds no Request, with one it replaces any attached
 // [acl.Request] by a fresh one for the ctx principal.
 //
-// Nil: accepted — a nil d means no policy is configured.
-func rebindFor(d *acl.Declarative) func(context.Context) (context.Context, error) {
-	return identityBinderFor(d)
+// Each call starts a new operation (an MCP tool call, a watch round), so it
+// REPLACES the read time with clock() rather than keeping one already on
+// ctx: a long-lived ctx must see the date advance.
+//
+// Nil: d accepted — a nil d means no policy is configured. clock rejected.
+func rebindFor(d *acl.Declarative, clock func() time.Time) func(context.Context) (context.Context, error) {
+	return func(ctx context.Context) (context.Context, error) {
+		return acl.BindRequest(readtime.With(ctx, clock()), d)
+	}
 }
 
 // GatedReadBundle is the result of [Services.GatedReads]: the read handles an
@@ -930,6 +959,11 @@ type GatedReadBundle struct {
 
 	// Traversals answers `related(...)` under the same gate as Reader.
 	Traversals *relresolve.Binder
+
+	// Conditions lowers a query condition to a page filter for Reader,
+	// which gates its traversals with the same gate as Traversals
+	// (TKT-Z099FGY).
+	Conditions QueryConditions
 
 	// Searcher gates hits by the principal's read scope, drops hits that
 	// matched only hidden properties, and clears the indexed title (see
@@ -1008,6 +1042,9 @@ type GatedGraphReader interface {
 	// MentionedBy pages the readable entities whose body mentions target
 	// ([visibility.Resolver.MentionedBy]).
 	MentionedBy(ctx context.Context, target, after string, limit int) (visibility.MentionPage, error)
+	// ListEntityPage reads one gated page of a type and its gated total
+	// ([visibility.ScriptReader.ListEntityPage]).
+	ListEntityPage(ctx context.Context, q visibility.PageQuery) (visibility.EntityPage, error)
 }
 
 // gatedGraphReader composes the ACL-gated row reader with the raw store for
@@ -1090,6 +1127,12 @@ func (g gatedGraphReader) MentionedBy(
 	ctx context.Context, target, after string, limit int,
 ) (visibility.MentionPage, error) {
 	return g.rows.MentionedBy(ctx, target, after, limit)
+}
+
+func (g gatedGraphReader) ListEntityPage(
+	ctx context.Context, q visibility.PageQuery,
+) (visibility.EntityPage, error) {
+	return g.rows.ListEntityPage(ctx, q)
 }
 
 func (g gatedGraphReader) ListRelationsStrict(
@@ -1315,7 +1358,7 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 	if err != nil {
 		return nil, fmt.Errorf("appbuild.NewFromCollaborators: %w", err)
 	}
-	return &Services{
+	s := &Services{
 		fs:              c.FS,
 		paths:           c.Paths,
 		meta:            c.Meta,
@@ -1350,8 +1393,18 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		channelService: refs.channelService,
 		realtimeLocal:  refs.realtimeLocal,
 		dueWake:        refs.dueWake,
-		attachRender:   &attachRenderHolder{},
-	}, nil
+	}
+	newScriptHolders(s)
+	return s, nil
+}
+
+// newScriptHolders installs the empty holders the data-entry host fills in
+// later: the rela.attach_render and rela.attach_file backends and the
+// background llm action runner.
+func newScriptHolders(s *Services) {
+	s.attachRender = &attachRenderHolder{}
+	s.attachFile = &attachFileHolder{}
+	s.llmActions = &llmActionHolder{}
 }
 
 // collaboratorRefs are the services [NewFromCollaborators] builds itself.
@@ -1503,7 +1556,7 @@ func buildFieldPolicy(
 	if err != nil {
 		return fieldPolicy{}, fmt.Errorf("appbuild: compiling acl.yaml affordance predicates: %w", err)
 	}
-	machines, err := statemachine.Compile(meta, statemachine.WithTraversals(ungatedBinder(meta, st)))
+	machines, err := CompileHeadlessFlows(meta, st)
 	if err != nil {
 		return fieldPolicy{}, fmt.Errorf("appbuild: compiling state machines: %w", err)
 	}
@@ -1522,33 +1575,33 @@ func buildFieldPolicy(
 	return fieldPolicy{redactor: redactor, gate: gate, flowEdits: ceiling}, nil
 }
 
-// buildAutomation wires the automation engine + cascade runner from
-// the metamodel. Returns (nil, nil, nil) when the metamodel declares
-// no automations — Manager treats that as "automation disabled".
+// buildAutomation wires the trigger engine + cascade runner from the
+// flows.yaml rules. Returns (nil, nil, nil) when there are no rules — Manager treats that as "automation disabled".
 //
 // A condition's `related(...)` is answered ungated from st: an automation is
 // system policy, so what it sees must not depend on who made the write.
 func buildAutomation(
-	meta *metamodel.Metamodel, st store.Store, bg autocascade.BackgroundScripts, pusher autocascade.PilePusher,
+	meta *metamodel.Metamodel, rules []triggers.Rule, st store.Store,
+	bg autocascade.BackgroundScripts, pusher autocascade.PilePusher,
 	now func() time.Time,
-) (*automation.Engine, *autocascade.Runner, error) {
-	if len(meta.Automations) == 0 {
+) (*triggers.Engine, *autocascade.Runner, error) {
+	if len(rules) == 0 {
 		return nil, nil, nil
 	}
 	traversals, err := relresolve.NewStoreBinder(meta, relresolve.Ungated, st)
 	if err != nil {
 		return nil, nil, fmt.Errorf("build automation engine: %w", err)
 	}
-	autoEngine, err := automation.NewEngineFromMetamodel(meta, meta.Automations,
-		automation.WithTraversals(traversals), automation.WithClock(now))
+	autoEngine, err := triggers.New(meta, rules,
+		triggers.WithTraversals(traversals), triggers.WithClock(now))
 	if err != nil {
-		return nil, nil, fmt.Errorf("build automation engine: %w", err)
+		return nil, nil, fmt.Errorf("flows.yaml: triggers: %w", err)
 	}
 	cascadeRunner, err := autocascade.New(autocascade.Deps{
 		Engine: autoEngine, Background: bg, Piles: pusher, Recipients: notifyRecipients{st: st},
 	})
 	// coverage-ignore-start: defensive: autocascade.New only errors on a nil Engine; autoEngine is freshly built by
-	// NewEngineFromMetamodel just
+	// triggers.New just
 	// above and is never nil
 	if err != nil {
 		return nil, nil, fmt.Errorf("build autocascade runner: %w", err)
@@ -1580,6 +1633,14 @@ type options struct {
 	// from, given the assembled store's state. Nil means the project's .rela
 	// directory.
 	hostConfig func(state.KV) (HostConfig, error)
+
+	// withheld, when non-empty, withholds ai.yaml and the secrets of the
+	// host config; see [WithWithheldHostConfig].
+	withheld string
+
+	// serverAI is the server-wide ai.yaml read when the project has none;
+	// see [WithServerAIConfig].
+	serverAI serverAIConfig
 
 	// backgroundAutomationJobs runs `background: true` automation actions
 	// on the job queue instead of in the foreground.
@@ -1674,6 +1735,19 @@ func WithHostConfig(build func(state.KV) (HostConfig, error)) Option {
 	return func(o *options) { o.hostConfig = build }
 }
 
+// WithWithheldHostConfig withholds the host's ai.yaml and secrets from the
+// project, for a host that serves many projects with one .rela directory
+// (tenant mode). Lua runtimes, flows and the token broker built from these
+// services then see [lua.ErrHostConfigWithheld] with reason, so ai.* and
+// rela.secrets fail with that reason instead of reading the operator's
+// credentials. mail.yaml and the mail outbox stay served: mail is the
+// host's transport, and its SMTP password stays with it.
+//
+// Empty: ignored — the host config is shared as usual.
+func WithWithheldHostConfig(reason string) Option {
+	return func(o *options) { o.withheld = reason }
+}
+
 // resolveDatabaseURL decides which DSN [Discover] hands to [New]: an explicit
 // [WithDatabaseURL] wins, otherwise $RELA_DATABASE_URL. getenv is injected so
 // the precedence is testable without mutating process environment — which is
@@ -1742,7 +1816,13 @@ func ValidateACLPolicy(policy *acl.Policy, meta *metamodel.Metamodel) error {
 	if policy == nil || meta == nil {
 		return errors.New("appbuild: ValidateACLPolicy: policy and metamodel are required")
 	}
-	return policy.ValidateAgainstMetamodel(metamodelView{meta})
+	if err := policy.ValidateAgainstMetamodel(metamodelView{meta}); err != nil {
+		return err
+	}
+	// Conditional grants (TKT-TKSCSBT) compile here, with the schema, so
+	// every loader that validates gets them, and NewDeclarative refuses a
+	// `when:` that skipped this.
+	return acl.CompileGrantConditions(policy, grantConditionCompiler(meta))
 }
 
 // metamodelView adapts *metamodel.Metamodel to acl.MetamodelView. The acl
@@ -2193,7 +2273,7 @@ func loadMetamodel(ctx context.Context, cfg Config) (*metamodel.Metamodel, error
 // mutation through either during assembly would be visible to every other
 // consumer of the same base — a cross-tenant defect in a multi-tenant host, and
 // a cross-project one on the desktop. Assembly only reads them (the metamodel
-// consumers derive new values: `statemachine.Compile`, `NewEngineFromMetamodel`),
+// consumers derive new values: `transitions.CompileTransitions`, `NewEngineFromMetamodel`),
 // and TestSharedBase_AssemblyDoesNotMutateSharedValues pins it.
 type SharedBase struct {
 	// channelFiles holds the runner of channel file scans; the data-entry
@@ -2215,6 +2295,9 @@ type SharedBase struct {
 	// flows is the compiled flows.yaml, nil when it declares no flows.
 	// Compiled here so an invalid file fails the boot, like realtime.yaml.
 	flows *flowcfg.Compiled
+	// triggers are the flows.yaml `triggers:` rules, nil when it declares none.
+	// Decoded here so an invalid rule fails the boot.
+	triggers []triggers.Rule
 	// flowsPolicy is the acl.yaml policy flows compiled against (see
 	// [flowConfigPolicy]). The engine compiles older run versions against
 	// it too. Nil when the project has no acl.yaml.
@@ -2232,6 +2315,10 @@ type SharedBase struct {
 	// leaseShared is the predecessor's lease backend and hub, reused for the
 	// same reason. Empty for a first assembly.
 	leaseShared leaseShared
+	// recordStore is the predecessor's record backend, reused for the same
+	// reason: the file backend serializes writers with an in-process mutex.
+	// Nil for a first assembly.
+	recordStore records.Store
 	// idpRoles is the predecessor's IdP role store, reused so the in-memory
 	// fallback survives a schema reload. Nil for a first assembly.
 	idpRoles *idproles.Store
@@ -2288,6 +2375,9 @@ func (b *SharedBase) IsReassembly() bool { return b.reassembly }
 // It carries prev's store schema refresher too: the caller applies the new
 // schema to the store with [RefreshStoreSchema] once the successor is in
 // force.
+// It keeps prev's [WithWithheldHostConfig] and [WithServerAIConfig] too. A reload builds its base
+// from the config alone, and withholding must not end with it: stdio MCP
+// in tenant mode reloads on every schema edit.
 //
 // Nil: rejected by use — prev is dereferenced.
 func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
@@ -2296,12 +2386,19 @@ func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
 	next.attachLocker = prev.attachLocker
 	next.pileStore = prev.pileStore
 	next.leaseShared = prev.leaseShared
+	next.recordStore = prev.recordStore
 	next.idpRoles = prev.idpRoles
 	next.realtimeLocal = prev.realtimeLocal
 	next.channelHints = prev.channelHints
 	next.dueWake = prev.dueWake
 	if prev.base != nil {
 		next.channelFiles = prev.base.channelFiles
+		if next.opts.withheld == "" {
+			next.opts.withheld = prev.base.opts.withheld
+		}
+		if next.opts.serverAI.data == nil {
+			next.opts.serverAI = prev.base.opts.serverAI
+		}
 	}
 	next.storeSchema = prev.storeSchema
 	return &next
@@ -2363,15 +2460,24 @@ func NewSharedBase(cfg Config, opts ...Option) (*SharedBase, error) {
 // point may render.
 // hostConfigFor returns the host config for one assembled store: the
 // [WithHostConfig] source, else the project's .rela directory.
+//
+// Under [WithWithheldHostConfig] the source is wrapped in a [withheldHost].
 func (b *SharedBase) hostConfigFor(stateKV state.KV) (lua.HostConfig, error) {
+	var host lua.HostConfig = hostconfig.Dir(b.cfg.Paths.CacheDir)
 	if b.opts.hostConfig != nil {
-		host, err := b.opts.hostConfig(stateKV)
+		h, err := b.opts.hostConfig(stateKV)
 		if err != nil {
 			return nil, fmt.Errorf("host config: %w", err)
 		}
-		return host, nil
+		host = h
 	}
-	return hostconfig.Dir(b.cfg.Paths.CacheDir), nil
+	if b.opts.serverAI.data != nil {
+		host = serverAIHost{inner: host, data: b.opts.serverAI.data}
+	}
+	if b.opts.withheld != "" {
+		host = withheldHost{inner: host, err: fmt.Errorf("%s: %w", b.opts.withheld, lua.ErrHostConfigWithheld)}
+	}
+	return host, nil
 }
 
 func prepare(cfg Config, opts []Option) (*SharedBase, error) {
@@ -2382,6 +2488,9 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 	var o options
 	for _, opt := range opts {
 		opt(&o)
+	}
+	if err := o.serverAI.load(); err != nil {
+		return nil, err
 	}
 	resolvedACL := o.acl
 	var aclPolicy *acl.Policy
@@ -2425,6 +2534,10 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 		return nil, err
 	}
 	flows, err := compileFlows(flowsData, meta, flowsPolicy)
+	if err != nil {
+		return nil, err
+	}
+	triggerRules, err := triggers.Parse(flowsData, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -2486,7 +2599,7 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 	return &SharedBase{
 		cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy,
 		meta: meta, worlds: compiledWorlds, conns: conns, realtime: rt, flows: flows, flowsPolicy: flowsPolicy,
-		validationMode: mode, channelFiles: &channelFileRunners{},
+		triggers: triggerRules, validationMode: mode, channelFiles: &channelFileRunners{},
 	}, nil
 }
 
@@ -2652,7 +2765,7 @@ func closeAuditSink(sink audit.Audit) {
 func buildEntityManager(
 	base *SharedBase, st store.Store, aliases entitymanager.AliasRewriter,
 	templater entitymanager.TemplateLoader, resolvedACL acl.ACL,
-	autoEngine *automation.Engine, cascadeRunner *autocascade.Runner,
+	autoEngine *triggers.Engine, cascadeRunner *autocascade.Runner,
 	readDeps lua.ReadDeps, pileWriter lua.PileWriter, versions store.VersionService, tw TransitionWiring,
 	computedSet *computed.Set, attachLocker lock.Locker, fieldGate entitymanager.FieldWriteGate,
 	guard guardInputs,
@@ -2687,7 +2800,7 @@ func buildEntityManager(
 		// happen on a deployment that has a policy.
 		//
 		// CopyGuard reuses tw.Guard: entitymanager.CopyGuard and
-		// statemachine.Guard are the same shape ON PURPOSE, so a copy's
+		// transitions.PermissionGuard are the same shape ON PURPOSE, so a copy's
 		// `guard:` and a transition's ask the identical question of the
 		// identical implementation and cannot drift into asking different
 		// ones.
@@ -2766,7 +2879,7 @@ func startBackgroundServices(
 	// here: nothing can enqueue until the declarative layer (TKT-U2R7GU)
 	// lands, and storing a handle no code reads would look wired when it is
 	// not. Only the stop function is retained, because Close genuinely uses it.
-	mailRuntime, mailStop := startMailRuntime(host, base.opts.seams.mail)
+	mailRuntime, mailStop := startMailRuntime(mailHost(host), base.opts.seams.mail)
 
 	return backgroundServices{
 		gcStop:         gcStop,
@@ -2939,6 +3052,11 @@ type backendOverrides struct {
 	// runs travel with rela.db; postgres finds its pool through the store.
 	flowRuns flowrun.Store
 
+	// recordStore replaces the file record store. Supplied by the sqlite
+	// recipe so records travel with rela.db; postgres finds its pool through
+	// the store.
+	recordStore records.Store
+
 	// schedulerState replaces the state.KV-backed scheduler run-state
 	// (BUG-TKL08E). Supplied by the postgres recipe, whose job queue is
 	// durable and shared: a run queued by one process may execute on
@@ -3007,7 +3125,7 @@ func assemble(
 		return nil, err
 	}
 	cfgLoader := cfg.configLoader()
-	tw, err := CompileTransitions(base.meta, st, resolvedACL)
+	tw, err := BuildTransitionWiring(base.meta, st, resolvedACL)
 	if err != nil {
 		return nil, fmt.Errorf("compile transitions: %w", err)
 	}
@@ -3046,7 +3164,7 @@ func assemble(
 	// holds for a new realtime Local, whose hint sender runs from the start.
 	//
 	// Before automation: add_to_pile actions push through refs.piles.
-	refs, err := buildRefHolders(base, st, overrides, aclDeclarative, fieldPol.redactor, resolvedACL)
+	refs, err := buildRefHolders(base, st, overrides, aclDeclarative, fieldPol.redactor, resolvedACL, stateKV)
 	defer func() { abandonFailedAssembly(base, jobQueue, refs.realtimeLocal, retErr) }()
 	if err != nil {
 		return nil, err
@@ -3074,8 +3192,7 @@ func assemble(
 	// Upstream's parameter order (readDeps after cascadeRunner) with the
 	// comment fanout wrapping the alias rewriter.
 	attachLocker := base.attachmentLocker(st)
-	fanout := newAliasFanout(aliases, refs.comments, refs.piles, refs.leases, autoJobs,
-		refs.channelAliases, refs.realtimeLocal, newFlowRunAliases(refs.flowRuns))
+	fanout := refs.aliasFanout(st, aliases, autoJobs)
 	mgr, err := buildEntityManager(base, st, fanout, templater,
 		resolvedACL, autoEngine, cascadeRunner, readDeps, pileWriterFor(refs.piles), versions, tw, computedSet,
 		attachLocker, fieldPol.gate, refs.guardInputs())
@@ -3180,13 +3297,16 @@ type versionSweep interface {
 //
 // Nil: sweep is accepted and means the store has no sweep.
 func finishAssembly(
-	s *Services, attachLocker lock.Locker, autoJobs *automationJobs, engine *automation.Engine, refs refHolders,
+	s *Services, attachLocker lock.Locker, autoJobs *automationJobs, engine *triggers.Engine, refs refHolders,
 	sweep versionSweep,
 ) (*Services, error) {
 	s.attachLocker = attachLocker
 	s.piles, s.pileStore = refs.piles, refs.pileStore
 	s.leases, s.leaseShared = refs.leases, refs.leaseShared
+	s.records, s.recordStore = refs.records, refs.recordStore
 	s.channels = refs.channels
+	// Before the flow engine, whose job runner runs llm actions through it.
+	newScriptHolders(s)
 	flowEngine, err := buildFlowEngine(s, refs.flowRuns)
 	if err != nil {
 		return nil, fmt.Errorf("flows: %w", err)
@@ -3196,11 +3316,7 @@ func finishAssembly(
 	if s.flowWorker, err = buildFlowWorker(s.base, s.store, flowEngine); err != nil {
 		return nil, fmt.Errorf("flows: %w", err)
 	}
-	idpRoles, err := buildIDPRoles(s.base, s.store, s.stateKV)
-	if err != nil {
-		return nil, err
-	}
-	s.idpRoles = idpRoles
+	s.idpRoles = refs.idpRoles
 	// The channel service promotes through the entity manager, so it is
 	// built once the manager exists.
 	svc, err := buildRealtimeService(
@@ -3217,21 +3333,30 @@ func finishAssembly(
 		return nil, err
 	}
 	s.versionTags = tags
-	s.attachRender = &attachRenderHolder{}
-	if bindErr := autoJobs.bind(servicesJobRunner{s}, engine); bindErr != nil {
-		return nil, bindErr
-	}
-	// Built, not started: the host starts it (see RunRealtimeWorker). Its
-	// outputs runner writes through the manager the channel service uses.
+	// The realtime outputs runner writes through the manager the channel
+	// service uses; background llm actions rebuild their user through it.
 	outputs, err := newManagerOutputs(
-		s.entityManager, s.store, s.meta, txChannelsFor(s.store, refs.channels), s.aclDeclarative)
+		s.entityManager, s.store, s.meta, txChannelsFor(s.store, refs.channels), s.aclDeclarative, servicesClock(s))
 	if err != nil {
 		return nil, err
 	}
+	s.llmIdentity = outputs
+	if q := automationJobQueue(s.base, s.jobQueue); q != nil {
+		if regErr := registerLLMActionJobs(q, s.llmActions, outputs, s.stateKV); regErr != nil {
+			return nil, regErr
+		}
+		s.llmActionQueue = q
+	}
+	if bindErr := autoJobs.bind(servicesJobRunner{s}, engine); bindErr != nil {
+		return nil, bindErr
+	}
+	// Built, not started: the host starts it (see RunRealtimeWorker).
 	if s.realtimeWorker, err = buildRealtimeWorker(s.base, s.store, s.stateKV, refs, outputs); err != nil {
 		return nil, err
 	}
-	// Last, so a failed assembly never leaves a sweep goroutine running.
+	// Last, so a failed assembly never leaves a ticker or sweep running.
+	s.recordRetentionStop = startRecordRetention(s.records, s.jobQueue,
+		envDuration("RELA_RECORD_RETENTION_INTERVAL", defaultRecordRetentionInterval))
 	if sweep != nil {
 		s.versionSweep = sweep
 		sweep.Start()
@@ -3246,13 +3371,14 @@ func finishAssembly(
 // buildRuntimeServices.
 func buildAutomationWithJobs(
 	base *SharedBase, st store.Store, kv state.KV, q jobs.Queue, pileSvc *piles.Service,
-) (*automationJobs, *automation.Engine, *autocascade.Runner, error) {
-	autoJobs, err := newAutomationJobs(base.meta, kv, st, automationJobQueue(base, q))
+) (*automationJobs, *triggers.Engine, *autocascade.Runner, error) {
+	autoJobs, err := newAutomationJobs(base.triggers, kv, st, automationJobQueue(base, q))
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	// Errors only on a nil Engine, which buildAutomation never produces.
-	autoEngine, cascadeRunner, err := buildAutomation(base.meta, st, autoJobs, cascadePiles(pileSvc), base.clock())
+	autoEngine, cascadeRunner, err := buildAutomation(
+		base.meta, base.triggers, st, autoJobs, cascadePiles(pileSvc), base.clock())
 	if err != nil { // coverage-ignore: defensive: see above
 		return nil, nil, nil, err
 	}
@@ -3493,6 +3619,10 @@ func (s *Services) stopBackgroundServices() {
 	if s.softDeleteStop != nil {
 		s.softDeleteStop()
 		s.softDeleteStop = nil
+	}
+	if s.recordRetentionStop != nil {
+		s.recordRetentionStop()
+		s.recordRetentionStop = nil
 	}
 	if s.versionSweep != nil {
 		s.versionSweep.Stop()

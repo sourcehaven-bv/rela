@@ -25,54 +25,68 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/htmlutil"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/queryplan"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
-// nowFunc is the clock used for filter variable substitution. Tests can
-// override this to pin a deterministic "now". Default returns UTC time
-// to keep $today consistent regardless of server timezone.
+// nowFunc is the data-entry clock: the router stamps it on every request
+// as the read time (see [attachReadTime]), and a path that runs outside a
+// request reads it through [requestReadTime]. Tests override it to pin
+// "now".
 var nowFunc = func() time.Time { return time.Now().UTC() }
 
+// requestReadTime is the operation's read time on ctx, else nowFunc().
+func requestReadTime(ctx context.Context) time.Time {
+	return readtime.Or(ctx, nowFunc)
+}
+
+// parseWhereAt parses where clauses and resolves their date variables at the
+// read time now (see [filter.BindDateVariables]).
+func parseWhereAt(where []string, now time.Time) ([]*filter.Filter, error) {
+	filters, err := filter.ParseAll(where)
+	if err != nil {
+		return nil, err
+	}
+	return filter.BindDateVariables(filters, now), nil
+}
+
 // resolveFilterVariable substitutes special variable references in filter
-// values. Currently supports:
+// values:
 //
-//	$today          today's date in YYYY-MM-DD format (UTC)
-//	$tomorrow       tomorrow's date (UTC)
-//	$yesterday      yesterday's date (UTC)
 //	$user           the caller's principal id, passed as user
+//	$today          the read day, with an optional day or week offset
+//	                ($today+7d, $today-2w); see [filter.ResolveDateVariable]
+//	$now            the read time
+//	$tomorrow       $today+1d
+//	$yesterday      $today-1d
 //
-// Times are evaluated in UTC for predictability across server timezones.
-// Other values are returned unchanged, and so is $user when user is empty:
-// with no identified caller it stays literal rather than matching rows with
-// an empty property.
-func resolveFilterVariable(value, user string) string {
-	switch value {
-	case "$user":
+// Dates are in UTC, so the day boundary does not depend on the server's
+// zone. Other values are returned unchanged, and so is $user when user is
+// empty: with no identified caller it stays literal rather than matching
+// rows with an empty property.
+func resolveFilterVariable(value, user string, now time.Time) string {
+	if value == "$user" {
 		if user != "" {
 			return user
 		}
-	case "$today":
-		return nowFunc().Format("2006-01-02")
-	case "$tomorrow":
-		return nowFunc().AddDate(0, 0, 1).Format("2006-01-02")
-	case "$yesterday":
-		return nowFunc().AddDate(0, 0, -1).Format("2006-01-02")
+		return value
 	}
-	return value
+	resolved, _ := filter.ResolveDateVariable(value, now)
+	return resolved
 }
 
 // resolveFilterVariablesInList applies resolveFilterVariable to each
 // comma-separated token in value. Used by the in/ne operators.
-func resolveFilterVariablesInList(value, user string) string {
+func resolveFilterVariablesInList(value, user string, now time.Time) string {
 	if !strings.Contains(value, ",") {
-		return resolveFilterVariable(value, user)
+		return resolveFilterVariable(value, user, now)
 	}
 	parts := strings.Split(value, ",")
 	for i, p := range parts {
-		parts[i] = resolveFilterVariable(strings.TrimSpace(p), user)
+		parts[i] = resolveFilterVariable(strings.TrimSpace(p), user, now)
 	}
 	return strings.Join(parts, ",")
 }
@@ -398,51 +412,47 @@ func addCheckboxIndices(s string) string {
 	})
 }
 
-// visibleListByTypes is executeQuery's no-free-text branch: load
-// entities by type under the per-type scope verdict. Unlike
-// listFromStoreByTypes (which other, ungated consumers still use and
-// which swallows iterator errors), this fails loud on both verdict
-// paths — same rationale as scopedSortedEntities.
-// visibleListByTypes loads the visible entities of the given types, applying
-// `props` in the STORE rather than after the fact.
+// visibleListByTypes is executeQuery's no-free-text branch: it loads the
+// visible entities of the given types under the per-type scope verdict,
+// applying `props` in the STORE rather than after the fact. It fails loud on
+// every verdict path.
 //
 // The predicates compose with the ACL scope rather than replacing it: an
 // AllowAll type gets a plain type+props query, and a scope-restricted type
 // gets its verdict query with the props appended. Both are ANDed by the
 // store, so narrowing by property can never widen what the gate allows.
+//
+// No type named means every type the scope grants. With no ACL the scope is
+// the wildcard, which grants every declared type, so the read is one
+// content-free header read per type through the same verdict switch
+// (TKT-F2EJQY8) rather than a drain of every entity with its body. A stored
+// row of a type the metamodel no longer declares is not read; every other
+// read path already treats such a row as unknown.
 func visibleListByTypes(
 	ctx context.Context, svc Services, types []string, scope map[string]search.TypeScope,
 	props []store.PropPredicate,
 ) ([]*entity.Entity, error) {
 	if len(types) == 0 {
 		if _, wildcard := scope[search.WildcardType]; wildcard {
-			// Wildcard-allow (no ACL): every entity, any type — the
-			// pre-ACL listAll shape, with iterator errors surfaced.
-			// No type named and no ACL: every entity, any type. The
-			// property predicates cannot be pushed here — GraphQuery is
-			// per-type — so this one path keeps the Go-side filter, which
-			// still runs over the result below.
-			out := make([]*entity.Entity, 0)
-			q := store.EntityQuery{Faces: store.InWorld(worldScopeFrom(ctx))}
-			for e, err := range svc.Store.ListEntities(ctx, q) {
-				if err != nil {
-					return nil, fmt.Errorf("%w: %w", errListLoad, err)
-				}
-				out = append(out, e)
+			types = svc.Meta.EntityTypes()
+		} else {
+			// Under ACL, "all types" means "all granted types".
+			types = make([]string, 0, len(scope))
+			for typ := range scope {
+				types = append(types, typ)
 			}
-			return out, nil
 		}
-		// Under ACL, "all types" means "all granted types":
-		// deterministic order over the scope's entries.
-		types = make([]string, 0, len(scope))
-		for typ := range scope {
-			types = append(types, typ)
-		}
-		slices.Sort(types)
+		// Deterministic order over the types.
+		types = slices.Sorted(slices.Values(types))
 	}
 
 	var out []*entity.Entity
-	for _, typ := range types {
+	for i, typ := range types {
+		if slices.Contains(types[:i], typ) {
+			// A repeated type (`type:task` from /_search's `type`
+			// parameter plus the same clause in q) is read once.
+			continue
+		}
 		ts, ok := search.ResolveTypeScope(scope, typ)
 		if !ok {
 			continue // denied type
@@ -481,8 +491,20 @@ func visibleEntitiesOfType(
 	// and the world ranks withheld faces too, serving their titles
 	// (BUG-SMPOZB review). It narrows the candidates before the world ranks
 	// them, as on the list path.
+	return visibleEntitiesOfTypeWindow(ctx, svc, typ, ts, props, 0, 0)
+}
+
+// visibleEntitiesOfTypeWindow is visibleEntitiesOfType reading one window of
+// the type's visible rows in id order: limit rows after offset, or every row
+// when limit is 0. The window is cut after the row gate, in the store query.
+func visibleEntitiesOfTypeWindow(
+	ctx context.Context, svc Services, typ string,
+	ts search.TypeScope, props []store.PropPredicate, limit, offset int,
+) ([]*entity.Entity, error) {
 	rqr := acl.ReadQueryResult{AllowAll: ts.AllowAll, Query: ts.Query, Faces: ts.Faces}
-	entities, _, err := scopedEntities(ctx, svc, rqr, scopeRequest{Type: typ, Props: props, Faces: ts.Faces})
+	entities, _, err := scopedEntities(ctx, svc, rqr, scopeRequest{
+		Type: typ, Props: props, Faces: ts.Faces, Limit: limit, Offset: offset,
+	})
 	return entities, err
 }
 
@@ -553,51 +575,6 @@ func freeTextIDs(
 		ids[hit.ID] = struct{}{}
 	}
 	return ids, nil
-}
-
-// listFromStoreByTypes loads all entities matching the given types (or every
-// entity when types is empty) from the store.
-func listFromStoreByTypes(ctx context.Context, svc Services, types []string) []*entity.Entity {
-	if len(types) == 0 {
-		return listAllFromStore(ctx, svc)
-	}
-	var out []*entity.Entity
-	for _, t := range types {
-		for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{
-			Type: t, Faces: store.InWorld(worldScopeFrom(ctx)),
-		}) {
-			if err != nil {
-				return out
-			}
-			out = append(out, e)
-		}
-	}
-	return out
-}
-
-// listAllFromStore drains every entity from the store.
-//
-// UNBOUNDED, and the same shape that made GET /api/v1/_analyze an OOM
-// (TKT-1ESTYJ): whole entities, bodies included, retained in one slice. It
-// is currently safe only because nothing reaches it with an empty type
-// list — both listFromStoreByTypes callers pass exactly one type, and a
-// list's entity_type is required and validated at load.
-//
-// So this is left as-is rather than migrated: the analyze fix removed the
-// live O(store) retention, and rewriting a path with no reachable caller
-// would be churn. If a caller ever DOES pass an empty type list, this
-// becomes a live whole-store drain — at that point it wants
-// store.ListEntityHeaders (if the caller reads no bodies) or paging, not a
-// bigger slice.
-func listAllFromStore(ctx context.Context, svc Services) []*entity.Entity {
-	out := make([]*entity.Entity, 0)
-	for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(worldScopeFrom(ctx))}) {
-		if err != nil {
-			return out
-		}
-		out = append(out, e)
-	}
-	return out
 }
 
 // relationDirection maps the data-entry config direction type to the
@@ -722,15 +699,15 @@ func anyElement(prop any, match func(string) bool) bool {
 //
 // Each member is trimmed and variable-resolved ($today and friends) exactly as
 // the joined form is, so both representations of a filter agree.
-func filterSetValues(values []string, isArrayForm bool, user string) []string {
+func filterSetValues(values []string, isArrayForm bool, user string, now time.Time) []string {
 	out := make([]string, 0, len(values))
 	for _, v := range values {
 		if isArrayForm {
-			out = append(out, resolveFilterVariable(strings.TrimSpace(v), user))
+			out = append(out, resolveFilterVariable(strings.TrimSpace(v), user, now))
 			continue
 		}
 		for part := range strings.SplitSeq(v, ",") {
-			out = append(out, resolveFilterVariable(strings.TrimSpace(part), user))
+			out = append(out, resolveFilterVariable(strings.TrimSpace(part), user, now))
 		}
 	}
 	return out

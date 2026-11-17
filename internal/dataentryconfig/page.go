@@ -3,11 +3,14 @@ package dataentryconfig
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/texthazard"
 )
 
 // Page is a named screen that shows several views of one subject as tabs, such
@@ -25,11 +28,36 @@ type Page struct {
 	PageHeader `yaml:",inline"`
 	// Tabs are the views of the page, in tab-bar order. At least one.
 	Tabs []PageTab `yaml:"tabs" json:"tabs"`
+	// Mode is how the tabs are shown: [PageModeTabs] (the default when
+	// empty) or [PageModeSteps].
+	Mode PageMode `yaml:"mode,omitempty" json:"mode,omitempty"`
 	// Suggestions switches next-action suggestions on or off for this view,
 	// overriding next_action_surfaces. Nil: accepted, means inherit. See
 	// [Config.NextActionsEnabled].
 	Suggestions *bool `yaml:"suggestions,omitempty" json:"suggestions,omitempty"`
 }
+
+// PageMode says how a [Page] shows its tabs.
+type PageMode string
+
+const (
+	// PageModeTabs shows the tabs as a tab bar. The default.
+	PageModeTabs PageMode = "tabs"
+	// PageModeSteps shows the tabs as numbered steps with Back and Next, for
+	// a session that walks through the views in order, such as a workshop.
+	// The page can then be presented: the SPA hides the sidebar and enlarges
+	// the view.
+	PageModeSteps PageMode = "steps"
+)
+
+// IsSteps reports whether the page shows its tabs as steps.
+func (p Page) IsSteps() bool {
+	return p.Mode == PageModeSteps
+}
+
+// maxPagePromptLen is the longest [PageTab.Prompt], in characters. A prompt is
+// one question on screen, not a text.
+const maxPagePromptLen = 280
 
 // PageHeader is what the header of a [Page] shows. The sidebar payload
 // (apiwire's SidebarPage) embeds it too, so the two cannot drift.
@@ -73,6 +101,26 @@ type PageTab struct {
 	// Document names a standalone document, as on a navigation entry.
 	Document string `yaml:"document,omitempty" json:"document,omitempty"`
 
+	// Prompt is the question a step puts to the room, shown large above the
+	// view. Only on a page with mode: steps. Plain text, at most
+	// [maxPagePromptLen] characters.
+	Prompt string `yaml:"prompt,omitempty" json:"prompt,omitempty"`
+
+	// Walk shows the rows of the tab's list one at a time, each in its own
+	// detail view, with its position and controls for the previous and next
+	// row (TKT-M07C97Y). Only on a list tab of a page with mode: steps. The
+	// rows are the ones the list shows the principal, in the list's order.
+	Walk bool `yaml:"walk,omitempty" json:"walk,omitempty"`
+
+	// DoneWhen is a predicate expression over the tab's list entity type, in
+	// the language of a list `condition:` (TKT-MWZF0UO). The step is done
+	// when the list shows the principal at least one row and every row it
+	// shows satisfies the expression. Only on a list tab of a page with
+	// mode: steps. Advisory: the step bar shows a check and nothing is
+	// blocked. Compiled at config load (conditionlint.CompileViewConditions)
+	// and evaluated per principal by `/api/v1/_page_status`.
+	DoneWhen string `yaml:"done_when,omitempty" json:"done_when,omitempty"`
+
 	// Scope narrows the tab to the page's anchor entity. Required on every
 	// tab of an entity page, and refused on any other page.
 	//
@@ -87,8 +135,13 @@ type PageTab struct {
 //     that relation. Direction is from the anchor's point of view, as in view
 //     sections: outgoing means anchor --relation--> row. Left out, it is
 //     inferred from the metamodel like every other relation binding.
-//   - Root (gantt tabs) draws the timeline from the anchor down, as a drill
-//     into the anchor does.
+//   - Root starts the tab at the anchor. A gantt tab draws the timeline from
+//     the anchor down, as a drill into the anchor does. A document tab
+//     renders an entity-anchored document with the anchor as its entry. A
+//     dashboard tab shows an entity dashboard counted for the anchor.
+//
+// A card of an entity dashboard takes the relation form too (see
+// [DashboardCard.Scope]).
 //
 // The scope is configuration only. A request names a page and a tab, never a
 // relation, so a caller cannot make a list narrow by something the operator
@@ -228,13 +281,113 @@ func validatePages(cfg *Config, meta *metamodel.Metamodel) []string {
 			errs = append(errs, name+": tabs is required (at least one tab)")
 		}
 		errs = append(errs, validateEntityPage(name, page, meta)...)
+		if page.Mode != "" && page.Mode != PageModeTabs && page.Mode != PageModeSteps {
+			errs = append(errs, fmt.Sprintf("%s: unknown mode %q (valid: %s, %s)",
+				name, page.Mode, PageModeTabs, PageModeSteps))
+		}
 		seen := make(map[string]bool, len(page.Tabs))
 		for i, tab := range page.Tabs {
-			errs = append(errs, validatePageTab(cfg, name, i, tab, seen)...)
+			errs = append(errs, validatePageTab(cfg, name, page.EntityType, i, tab, seen)...)
+			errs = append(errs, validatePagePrompt(name, page, i, tab)...)
+			errs = append(errs, validateStepListOptions(name, page, i, tab)...)
 			errs = append(errs, validatePageTabScope(cfg, meta, name, page, i, tab)...)
 		}
 	}
 	return errs
+}
+
+// validatePagePrompt checks a tab's prompt: only on a steps page, short, and
+// free of display hazards (see [texthazard.Find]), which could hide or
+// reorder text on a screen the whole room reads. A line break is one too: a
+// prompt is one line.
+func validatePagePrompt(pageName string, page Page, i int, tab PageTab) []string {
+	if tab.Prompt == "" {
+		return nil
+	}
+	name := pageTabName(pageName, i, tab)
+	switch {
+	case !page.IsSteps():
+		return []string{name + ": prompt needs mode: steps on the page"}
+	case utf8.RuneCountInString(tab.Prompt) > maxPagePromptLen:
+		return []string{fmt.Sprintf("%s: prompt is longer than %d characters", name, maxPagePromptLen)}
+	}
+	if r, bad := texthazard.Find(tab.Prompt); bad {
+		return []string{fmt.Sprintf("%s: prompt contains the invisible or control character %U", name, r)}
+	}
+	return nil
+}
+
+// validateStepListOptions checks a tab's walk and done_when. Both work on the
+// rows of a list, and both belong to a session that moves through steps, so
+// both need a list tab on a steps page. conditionlint.CompileViewConditions
+// compiles the done_when expression itself, since that needs the metamodel.
+func validateStepListOptions(pageName string, page Page, i int, tab PageTab) []string {
+	var errs []string
+	name := pageTabName(pageName, i, tab)
+	for _, opt := range []struct {
+		key string
+		set bool
+	}{{"walk", tab.Walk}, {"done_when", tab.DoneWhen != ""}} {
+		switch {
+		case !opt.set:
+		case !page.IsSteps():
+			errs = append(errs, fmt.Sprintf("%s: %s needs mode: steps on the page", name, opt.key))
+		case tab.List == "" && tab.destinationCount() > 0:
+			errs = append(errs, fmt.Sprintf("%s: %s needs a list tab (it works on the rows of a list)",
+				name, opt.key))
+		}
+	}
+	if tab.DoneWhen != "" && strings.TrimSpace(tab.DoneWhen) == "" {
+		errs = append(errs, name+": done_when is blank")
+	}
+	return errs
+}
+
+// PageDoneConditionID names a tab's compiled done_when in the view condition
+// lookup: the page id and the tab id. Neither may contain a slash (see
+// urlSegmentPattern), so the pair is unambiguous.
+func PageDoneConditionID(page, tab string) string {
+	return page + "/" + tab
+}
+
+// PageDoneEntry is a tab that declares done_when, with the id of its page
+// and the entity type of its list.
+type PageDoneEntry struct {
+	Page       string
+	Tab        PageTab
+	EntityType string
+}
+
+// PageDoneEntries returns every list tab that declares done_when, in page id
+// order and then tab order. A tab whose list is unknown is left out, since
+// validatePages reports it.
+func PageDoneEntries(cfg *Config) []PageDoneEntry {
+	if cfg == nil {
+		return nil
+	}
+	var out []PageDoneEntry
+	for _, id := range sortedMapKeys(cfg.Pages) {
+		for _, tab := range cfg.Pages[id].Tabs {
+			if tab.DoneWhen == "" || tab.List == "" {
+				continue
+			}
+			list, ok := cfg.Lists[tab.List]
+			if !ok {
+				continue
+			}
+			out = append(out, PageDoneEntry{Page: id, Tab: tab, EntityType: list.EntityType})
+		}
+	}
+	return out
+}
+
+// pageTabName names a tab in an error: by id when the id is usable, by
+// position otherwise.
+func pageTabName(pageName string, i int, tab PageTab) string {
+	if tab.ID == "" || !urlSegmentPattern.MatchString(tab.ID) {
+		return fmt.Sprintf("%s.tabs[%d]", pageName, i)
+	}
+	return fmt.Sprintf("%s.tabs[%s]", pageName, tab.ID)
 }
 
 // validateEntityPage checks a page's entity_type and badge.
@@ -267,10 +420,7 @@ func validateEntityPage(name string, page Page, meta *metamodel.Metamodel) []str
 func validatePageTabScope(
 	cfg *Config, meta *metamodel.Metamodel, pageName string, page Page, i int, tab PageTab,
 ) []string {
-	name := fmt.Sprintf("%s.tabs[%s]", pageName, tab.ID)
-	if tab.ID == "" || !urlSegmentPattern.MatchString(tab.ID) {
-		name = fmt.Sprintf("%s.tabs[%d]", pageName, i)
-	}
+	name := pageTabName(pageName, i, tab)
 	if !page.IsEntityPage() {
 		if tab.Scope != nil {
 			return []string{name + ": scope needs entity_type on the page (only an entity page has an anchor)"}
@@ -282,12 +432,46 @@ func validatePageTabScope(
 		return validateRelationScope(cfg, meta, name, page.EntityType, tab)
 	case tab.Gantt != "":
 		return validateRootScope(cfg, meta, name, page.EntityType, tab)
+	case tab.Document != "" || tab.Dashboard.IsSet():
+		return validateAnchoredScope(cfg, name, page.EntityType, tab)
 	case tab.destinationCount() == 0:
 		return nil // reported by validatePageTab
 	default:
-		return []string{name + ": an entity page can only show list, kanban and gantt tabs " +
-			"(a calendar, document or dashboard cannot be scoped to the page's entity)"}
+		return []string{name + ": an entity page can only show list, kanban, gantt, document and " +
+			"dashboard tabs (a calendar cannot be scoped to the page's entity)"}
 	}
+}
+
+// validateAnchoredScope checks a document or dashboard tab of an entity page.
+// It needs `scope: root`, and its view must be about one entity of the
+// page's type: an entity-anchored document or an entity dashboard. A
+// standalone document or a plain dashboard would show company-wide content
+// under one entity's title.
+func validateAnchoredScope(cfg *Config, name, anchorType string, tab PageTab) []string {
+	if tab.Scope == nil || !tab.Scope.Root {
+		return []string{name + ": a document or dashboard tab on an entity page needs scope: root"}
+	}
+	if tab.Document != "" {
+		doc, ok := cfg.Documents[tab.Document]
+		switch {
+		case !ok:
+			return nil // reported by validatePageTab
+		case doc.EntityType != anchorType:
+			return []string{fmt.Sprintf("%s: document %q must have entity_type %q to render for the page's entity",
+				name, tab.Document, anchorType)}
+		}
+		return nil
+	}
+	if tab.Dashboard.IsDefault() {
+		return []string{name + ": the default dashboard has no entity_type, so it cannot be scoped to the " +
+			"page's entity (name a dashboard under dashboards: with entity_type " + strconv.Quote(anchorType) + ")"}
+	}
+	d, ok := cfg.Dashboards[string(tab.Dashboard)]
+	if ok && d.EntityType != anchorType {
+		return []string{fmt.Sprintf("%s: dashboard %q must have entity_type %q to count for the page's entity",
+			name, string(tab.Dashboard), anchorType)}
+	}
+	return nil // an unknown dashboard is reported by validatePageTab
 }
 
 // validateRelationScope checks the relation scope of a list or kanban tab:
@@ -307,8 +491,16 @@ func validateRelationScope(cfg *Config, meta *metamodel.Metamodel, name, anchorT
 	if tab.Kanban != "" {
 		rowType = cfg.Kanbans[tab.Kanban].EntityType
 	}
+	return checkAnchorRelation(meta, name, anchorType, rowType, *sc)
+}
+
+// checkAnchorRelation checks that a relation scope connects the anchor type
+// to the row type in the scope's direction, so the narrowed rows are not
+// always empty. name prefixes each error. An empty rowType is an unknown
+// view, reported elsewhere.
+func checkAnchorRelation(meta *metamodel.Metamodel, name, anchorType, rowType string, sc PageTabScope) []string {
 	if meta == nil || rowType == "" {
-		return nil // an unknown view is reported by validatePageTab
+		return nil
 	}
 	def, ok := meta.GetRelationDef(sc.Relation)
 	if !ok {
@@ -358,7 +550,8 @@ func validateRootScope(cfg *Config, meta *metamodel.Metamodel, name, anchorType 
 }
 
 // validatePageTab checks one tab. seen collects the tab ids of the page.
-func validatePageTab(cfg *Config, page string, i int, tab PageTab, seen map[string]bool) []string {
+// anchorType is the page's entity_type, "" on a page without one.
+func validatePageTab(cfg *Config, page, anchorType string, i int, tab PageTab, seen map[string]bool) []string {
 	var errs []string
 	name := fmt.Sprintf("%s.tabs[%s]", page, tab.ID)
 	switch {
@@ -384,7 +577,7 @@ func validatePageTab(cfg *Config, page string, i int, tab PageTab, seen map[stri
 	default:
 		errs = append(errs, fmt.Sprintf("%s: names more than one view (set one of %s)", name, pageTabDestinations))
 	}
-	for _, e := range navTargetErrors(tab.Destination(), cfg) {
+	for _, e := range navTargetErrors(tab.Destination(), cfg, anchorType) {
 		errs = append(errs, name+": "+e)
 	}
 	return errs

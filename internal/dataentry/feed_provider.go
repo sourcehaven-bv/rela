@@ -130,7 +130,7 @@ func (d *declarativeFeed) List(ctx context.Context, opts feedListOpts) ([]calfee
 		if err != nil {
 			return nil, "", err
 		}
-		filters, err := filter.ParseAll(s.Where)
+		filters, err := parseWhereAt(s.Where, requestReadTime(ctx))
 		if err != nil {
 			return nil, "", err
 		}
@@ -184,7 +184,7 @@ func (d *declarativeFeed) Get(ctx context.Context, uid string) (calfeed.Event, b
 		if !found || e.Type != entityType || e.Ref().String() != addr {
 			return calfeed.Event{}, false, nil
 		}
-		filters, err := filter.ParseAll(s.Where)
+		filters, err := parseWhereAt(s.Where, requestReadTime(ctx))
 		if err != nil {
 			return calfeed.Event{}, false, err
 		}

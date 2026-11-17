@@ -171,6 +171,11 @@ func composeReadScope(
 		// acl.Request.ReadableFacesMany, which errors here.
 		return pushdownScope{}, false, nil
 	}
+	if len(q.IDs) > 0 {
+		// A GraphQuery has no id filter, so the graph branch would drop the
+		// ids and read the whole type. The fallback reads only those ids.
+		return pushdownScope{}, false, nil
+	}
 	// Carry the WORLD from the EntityQuery onto the composed GraphQuery
 	// (TKT-WAV8XP PR-D). This is the seam the whole two-mechanism design
 	// turns on: pushdown reaches PAST every decorator to the raw store,

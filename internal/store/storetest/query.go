@@ -113,4 +113,62 @@ func RunQueryTests(t *testing.T, f Factory) {
 		require.NoError(t, err)
 		assert.Equal(t, 4, n, "_ in the prefix is a literal, not a wildcard")
 	})
+
+	// IDTakenFolded is the case-folded identity probe the rename dry run asks
+	// (TKT-GIAGLQ3): every face counts, and except skips its whole family
+	// under folding.
+	t.Run("IDTakenFolded", func(t *testing.T) {
+		s := f(t)
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("Feat-1", "feature")))
+		draft := entity.New("Draft-2", "feature")
+		draft.Face = "draft"
+		require.NoError(t, s.CreateEntity(ctx(), draft))
+
+		for _, tc := range []struct {
+			name, id, except string
+			want             bool
+		}{
+			{"exact", "Feat-1", "", true},
+			{"folded", "FEAT-1", "", true},
+			{"named face", "draft-2", "", true},
+			{"absent", "FEAT-2", "", false},
+			{"prefix is not a match", "Feat", "", false},
+			{"except skips the family", "FEAT-1", "feat-1", false},
+			{"except elsewhere", "feat-1", "Draft-2", true},
+			{"no LIKE wildcard", "Feat_1", "", false},
+		} {
+			got, err := s.IDTakenFolded(ctx(), tc.id, tc.except)
+			require.NoError(t, err, tc.name)
+			assert.Equal(t, tc.want, got, tc.name)
+		}
+	})
+
+	// Ids are case-insensitive identities, so a hand-written id in any case
+	// holds its number (BUG-RLBXTG5). A backend that compared the prefix
+	// bytewise missed "Req-9", and the next mint could collide with it.
+	t.Run("HighestIDFoldsPrefixCase", func(t *testing.T) {
+		s := f(t)
+		for _, id := range []string{"REQ-4", "Req-9", "rEQ-7"} {
+			require.NoError(t, s.CreateEntity(ctx(), entity.New(id, "requirement")), id)
+		}
+		for _, prefix := range []string{"REQ", "req", "Req", "REQ-"} {
+			n, err := s.HighestID(ctx(), prefix)
+			require.NoError(t, err)
+			assert.Equal(t, 9, n, "prefix %q", prefix)
+		}
+	})
+
+	// Every backend parses the suffix the same way: digits only. Three of
+	// them used to read it with Sscanf("%d"), which stops at the first
+	// non-digit, so "FEAT-50x" counted as 50 on them and not on sqlite
+	// (BUG-RLBXTG5).
+	t.Run("HighestIDCountsDigitsOnly", func(t *testing.T) {
+		s := f(t)
+		for _, id := range []string{"FEAT-007", "FEAT-50x", "FEAT-60-1", "FEAT-SUB-70", "FEAT80"} {
+			require.NoError(t, s.CreateEntity(ctx(), entity.New(id, "feature")), id)
+		}
+		n, err := s.HighestID(ctx(), "FEAT")
+		require.NoError(t, err)
+		assert.Equal(t, 7, n)
+	})
 }

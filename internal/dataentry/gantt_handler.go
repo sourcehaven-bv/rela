@@ -325,7 +325,7 @@ func (h *ganttHandler) loadGanttNodes(
 		if gerr != nil {
 			return nil, gerr
 		}
-		if gerr := h.addGanttNodes(s, g, typeName, ents, nodes); gerr != nil {
+		if gerr := h.addGanttNodes(requestReadTime(ctx), s, g, typeName, ents, nodes); gerr != nil {
 			return nil, gerr
 		}
 	}
@@ -437,7 +437,7 @@ func (h *ganttHandler) loadGanttType(
 // design: membership must not reflect a predicate over a value the principal
 // cannot read.
 func (h *ganttHandler) addGanttNodes(
-	s *Schema, g dataentryconfig.Gantt,
+	now time.Time, s *Schema, g dataentryconfig.Gantt,
 	typeName string, ents []*entity.Entity, nodes map[string]*ganttNode,
 ) *ganttError {
 	src := g.Sources[typeName]
@@ -453,7 +453,7 @@ func (h *ganttHandler) addGanttNodes(
 			}
 		}
 	}
-	filters, ferr := filter.ParseAll(src.Where)
+	filters, ferr := parseWhereAt(src.Where, now)
 	if ferr != nil {
 		// Load validation makes this unreachable; refusing (rather than
 		// proceeding unfiltered) keeps the failure direction closed.
@@ -622,7 +622,7 @@ func (h *ganttHandler) buildGanttSubtree(
 		return empty, nil
 	}
 	red := visibility.Redact(ctx, h.redactor(), rootEnt)
-	if gerr := h.addGanttNodes(s, g, red.Type, []*entity.Entity{red}, nodes); gerr != nil {
+	if gerr := h.addGanttNodes(requestReadTime(ctx), s, g, red.Type, []*entity.Entity{red}, nodes); gerr != nil {
 		return nil, gerr
 	}
 	if nodes[rootID] == nil {
@@ -697,7 +697,7 @@ func (h *ganttHandler) collectGanttRound(
 			})
 			next = append(next, hdr.ID)
 		}
-		if gerr := h.addGanttNodes(s, g, typeName, fresh, nodes); gerr != nil {
+		if gerr := h.addGanttNodes(requestReadTime(ctx), s, g, typeName, fresh, nodes); gerr != nil {
 			return nil, gerr
 		}
 		for _, e := range fresh {
@@ -844,7 +844,7 @@ func (h *ganttHandler) addOutsideParents(
 			red := visibility.RedactHeader(ctx, h.redactor(), hdr)
 			ents = append(ents, &entity.Entity{ID: red.ID, Type: red.Type, Properties: red.Properties})
 		}
-		if gerr := h.addGanttNodes(s, g, typeName, ents, nodes); gerr != nil {
+		if gerr := h.addGanttNodes(requestReadTime(ctx), s, g, typeName, ents, nodes); gerr != nil {
 			return gerr
 		}
 	}
@@ -1013,8 +1013,9 @@ func (b *ganttBudget) take() bool {
 	return true
 }
 
-// ganttEdges lists every hierarchy edge (one bulk query per relation type)
-// and keeps those whose endpoints are both in the gated node set.
+// ganttEdges lists the hierarchy edges between nodes of the gated node set:
+// one query per relation type, outgoing from a node to a node, so it reads
+// no edge that leaves the set (TKT-FED6FMM).
 //
 // A content-scoped edge is kept only when its tail is the face its parent
 // node was loaded at ([ownedByFace], BUG-BZQQDP). Another face's edge would
@@ -1026,8 +1027,14 @@ func (h *ganttHandler) ganttEdges(
 	ctx context.Context, meta *metamodel.Metamodel, g dataentryconfig.Gantt, nodes map[string]*ganttNode,
 ) (map[string][][2]string, *ganttError) {
 	out := map[string][][2]string{}
+	ids := make([]string, 0, len(nodes))
+	for id := range nodes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
 	for _, relType := range g.Hierarchy {
-		for rel, err := range h.store.ListRelations(ctx, store.RelationQuery{Type: relType}) {
+		q := store.RelationQuery{Type: relType, Direction: store.DirectionOutgoing, EntityIDs: ids, PeerIDs: ids}
+		for rel, err := range h.store.ListRelations(ctx, q) {
 			if err != nil {
 				slog.Error("gantt: relation list failed", "relation", relType, "error", err)
 				return nil, &ganttError{http.StatusInternalServerError, "internal", "Failed to list relations", ""}

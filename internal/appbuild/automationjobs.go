@@ -20,8 +20,8 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -69,12 +69,12 @@ const (
 // # Authority
 //
 // The payload only selects a configured action. Identity, capabilities and
-// the script come from the live metamodel, so a stale or redelivered job
+// the script come from the live flows.yaml rules, so a stale or redelivered job
 // cannot run anything the configuration no longer declares. Every run starts
 // from a fresh context: nothing of the saver's request reaches the job except
 // the saver's name, which the audit label records as data.
 type automationJobs struct {
-	meta  *metamodel.Metamodel
+	rules []triggers.Rule
 	kv    state.KV
 	raw   rawEntityLister
 	queue jobs.Client // nil: foreground delivery
@@ -101,7 +101,7 @@ type automationJobs struct {
 	// handler needs the scheduled Lua deps, which are built after the entity
 	// manager that triggers it.
 	runner automationJobRunner
-	engine *automation.Engine
+	engine *triggers.Engine
 }
 
 // automationJobRunner is what a job needs from the assembled services.
@@ -130,13 +130,13 @@ const (
 )
 
 func newAutomationJobs(
-	meta *metamodel.Metamodel, kv state.KV, raw rawEntityLister, queue jobs.Client,
+	rules []triggers.Rule, kv state.KV, raw rawEntityLister, queue jobs.Client,
 ) (*automationJobs, error) {
-	if meta == nil || kv == nil || raw == nil {
-		return nil, errors.New("appbuild: automation jobs need a metamodel, a state store and a store")
+	if kv == nil || raw == nil {
+		return nil, errors.New("appbuild: automation jobs need a state store and a store")
 	}
 	return &automationJobs{
-		meta: meta, kv: kv, raw: raw, queue: queue,
+		rules: rules, kv: kv, raw: raw, queue: queue,
 		locks: map[string]*keyLock{}, followUpDelay: defaultFollowUpDelay,
 		deleted: &deletedStates{kv: kv}, gateDeleted: visibility.GateDeleted,
 	}, nil
@@ -145,10 +145,10 @@ func newAutomationJobs(
 // bind connects the runner and, in queue mode, registers the job kind.
 // A registration failure fails assembly: without the handler every
 // matching save would be refused at enqueue.
-func (a *automationJobs) bind(r automationJobRunner, engine *automation.Engine) error {
+func (a *automationJobs) bind(r automationJobRunner, engine *triggers.Engine) error {
 	a.runner = r
 	a.engine = engine
-	if a.queue == nil || !hasBackgroundActions(a.meta) {
+	if a.queue == nil || !hasBackgroundActions(a.rules) {
 		return nil
 	}
 	if err := a.queue.Register(automationJobKind, a.handle); err != nil {
@@ -276,7 +276,7 @@ func (a *automationJobs) schedule(ctx context.Context, p automationJobPayload) e
 		return fmt.Errorf("automation %q: background jobs triggered each other %d times; not scheduling %s again",
 			p.Automation, maxAutomationJobHops, p.LuaFile)
 	}
-	act, ok := findBackgroundAction(a.meta, p.Automation, p.LuaFile)
+	act, ok := findBackgroundAction(a.rules, p.Automation, p.LuaFile)
 	if !ok {
 		return fmt.Errorf("automation %q: no background action for %s", p.Automation, p.LuaFile)
 	}
@@ -304,7 +304,7 @@ func (a *automationJobs) schedule(ctx context.Context, p automationJobPayload) e
 	return err
 }
 
-func (a *automationJobs) enqueue(ctx context.Context, p automationJobPayload, act metamodel.AutomationAction) error {
+func (a *automationJobs) enqueue(ctx context.Context, p automationJobPayload, act triggers.Action) error {
 	key := p.key()
 	if p.Last != nil {
 		key = "" // see schedule
@@ -345,7 +345,7 @@ func (a *automationJobs) runForeground(ctx context.Context, p automationJobPaylo
 // have made its last token check. It re-enqueues until a run has handled
 // the token, a later save has taken over, or a new job is queued. A job
 // that is still pending or running sees the token itself.
-func (a *automationJobs) followUp(p automationJobPayload, act metamodel.AutomationAction, token string) {
+func (a *automationJobs) followUp(p automationJobPayload, act triggers.Action, token string) {
 	ctx := context.Background()
 	key := p.key()
 	for i := range followUpAttempts {
@@ -375,7 +375,7 @@ func (a *automationJobs) followUp(p automationJobPayload, act metamodel.Automati
 // logged here and never returned: the rename stands, and the hook that
 // calls this reports its errors as alias-rewrite failures.
 func (a *automationJobs) EntityRenamed(ctx context.Context, _, newID string) error {
-	if a.engine == nil || !hasBackgroundActions(a.meta) {
+	if a.engine == nil || !hasBackgroundActions(a.rules) {
 		return nil
 	}
 	q := store.EntityQuery{IDs: []string{newID}, Faces: store.AllFaces()}
@@ -384,7 +384,7 @@ func (a *automationJobs) EntityRenamed(ctx context.Context, _, newID string) err
 			slog.Warn("automation background actions not scheduled after rename", "entity", newID, "error", err)
 			return nil
 		}
-		res := a.engine.Process(ctx, automation.Event{Type: automation.EventEntityRenamed, Entity: e})
+		res := a.engine.Process(ctx, triggers.Event{Type: triggers.EventEntityRenamed, Entity: e})
 		for _, l := range res.LuaToExecute {
 			if !l.Background {
 				continue
@@ -406,10 +406,10 @@ func (a *automationJobs) EntityRenamed(ctx context.Context, _, newID string) err
 // carrying its last state (TKT-Q0AQ840). The engine decides on the raw state,
 // as a save's cascade does, so the trigger fires the same whoever deleted it.
 func (a *automationJobs) EntityStateDeleted(ctx context.Context, last *entity.Entity) error {
-	if a.engine == nil || last == nil || !hasDeletedTriggers(a.meta) {
+	if a.engine == nil || last == nil || !HasDeletedTriggers(a.rules) {
 		return nil
 	}
-	res := a.engine.Process(ctx, automation.Event{Type: automation.EventEntityDeleted, Entity: last})
+	res := a.engine.Process(ctx, triggers.Event{Type: triggers.EventEntityDeleted, Entity: last})
 	var errs []error
 	for _, l := range res.LuaToExecute {
 		if !l.Background {
@@ -437,7 +437,7 @@ func (a *automationJobs) EntityFaceDeleted(context.Context, string, entity.Face)
 // last states that pending `on.deleted` jobs hold for id, so those jobs end
 // without reading them.
 func (a *automationJobs) EntityPurged(ctx context.Context, id string) error {
-	return a.deleted.purge(ctx, id, hasDeletedTriggers(a.meta))
+	return a.deleted.purge(ctx, id, HasDeletedTriggers(a.rules))
 }
 
 // handle is the queue handler. The queue's ctx carries no request.
@@ -508,7 +508,7 @@ func (a *automationJobs) run(ctx context.Context, p automationJobPayload) error 
 	if a.runner == nil {
 		return errors.New("automation job: services not bound")
 	}
-	act, ok := findBackgroundAction(a.meta, p.Automation, p.LuaFile)
+	act, ok := findBackgroundAction(a.rules, p.Automation, p.LuaFile)
 	if !ok {
 		slog.Warn("automation job dropped: the action is no longer configured",
 			"automation", p.Automation, "lua_file", p.LuaFile, "entity", p.ID)
@@ -583,7 +583,7 @@ func (a *automationJobs) run(ctx context.Context, p automationJobPayload) error 
 
 // runOnce reads the entity as the job's identity and runs the script on it.
 func (a *automationJobs) runOnce(
-	ctx context.Context, p automationJobPayload, act metamodel.AutomationAction, user string,
+	ctx context.Context, p automationJobPayload, act triggers.Action, user string,
 ) error {
 	deps := a.runner.ScheduledLuaWriteDeps()
 	http, ai, mail, writeFile, secrets, tokens := act.Capabilities.Fields()
@@ -795,8 +795,8 @@ func jobRetry(r metamodel.JobRetry) jobs.Retry {
 // findBackgroundAction resolves a job to its configured action. Load
 // validation makes (automation name, lua_file) unique among background
 // actions, so at most one matches.
-func findBackgroundAction(meta *metamodel.Metamodel, name, file string) (metamodel.AutomationAction, bool) {
-	for _, auto := range meta.Automations {
+func findBackgroundAction(rules []triggers.Rule, name, file string) (triggers.Action, bool) {
+	for _, auto := range rules {
 		if auto.Name != name {
 			continue
 		}
@@ -806,11 +806,12 @@ func findBackgroundAction(meta *metamodel.Metamodel, name, file string) (metamod
 			}
 		}
 	}
-	return metamodel.AutomationAction{}, false
+	return triggers.Action{}, false
 }
 
-func hasDeletedTriggers(meta *metamodel.Metamodel) bool {
-	for _, auto := range meta.Automations {
+// HasDeletedTriggers reports whether a rule in rules fires on `on.deleted`.
+func HasDeletedTriggers(rules []triggers.Rule) bool {
+	for _, auto := range rules {
 		if auto.On.Deleted {
 			return true
 		}
@@ -818,8 +819,8 @@ func hasDeletedTriggers(meta *metamodel.Metamodel) bool {
 	return false
 }
 
-func hasBackgroundActions(meta *metamodel.Metamodel) bool {
-	for _, auto := range meta.Automations {
+func hasBackgroundActions(rules []triggers.Rule) bool {
+	for _, auto := range rules {
 		for _, act := range auto.Do {
 			if act.Background {
 				return true
@@ -836,7 +837,7 @@ type servicesJobRunner struct{ s *Services }
 func (r servicesJobRunner) ScheduledLuaWriteDeps() lua.WriteDeps { return r.s.ScheduledLuaWriteDeps() }
 
 func (r servicesJobRunner) BindIdentity(ctx context.Context) (context.Context, error) {
-	return identityBinderFor(r.s.aclDeclarative)(ctx)
+	return identityBinderFor(r.s.aclDeclarative, servicesClock(r.s))(ctx)
 }
 
 func (r servicesJobRunner) ExecuteFile(ctx context.Context, path string, deps lua.WriteDeps, e *entity.Entity) error {

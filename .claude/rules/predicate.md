@@ -3,9 +3,9 @@ paths:
   - "internal/predicate/**"
   - "internal/predicatefns/**"
   - "internal/filter/**"
-  - "internal/automation/**"
+  - "internal/flowcfg/triggers/**"
   - "internal/validation/**"
-  - "internal/statemachine/**"
+  - "internal/flowcfg/transitions/*.go"
   - "internal/affordances/**"
   - "internal/conditionlint/**"
   - "internal/metamodel/**"
@@ -26,15 +26,15 @@ dependencies and conservative SQL-portability metadata. Context profiles may
 enable or refuse language features, but an accepted IR node must keep identical
 semantics across evaluators and future targets. `internal/predicatefns` is its
 metamodel-aware glue: the `ScalarType`/`EntityRecordType` type adapter, the
-host-fn stdlib (`match`/`regex`/`fuzzy`/`contains`/`len`/`today`), the
+host-fn stdlib (`match`/`regex`/`fuzzy`/`contains`/`len`/`today`/`now`), the
 `FromFilter` transpiler, and the `Evaluator` (compile-once, metamodel-scoped
 Program cache). New condition/`when:`-style code evaluates through `predicate`.
 
 These surfaces are on predicate: ACL affordance `when:`
 (`internal/affordances`), state-machine transition `When:`
-(`internal/statemachine`), wizard-form condition lint
+(`internal/flowcfg/transitions/*.go`), wizard-form condition lint
 (`internal/conditionlint`), automation `on.when:`/`validate:`
-(`internal/automation`), metamodel validation `When:`/`Then:`
+(`internal/flowcfg/triggers`), metamodel validation `When:`/`Then:`
 (`internal/validation`), and the CLI `--filter` flag (`internal/cli/list.go`).
 
 Automation `on.condition:` and validation `when_condition:`/`then_condition:`

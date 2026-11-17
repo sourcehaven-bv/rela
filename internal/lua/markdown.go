@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -19,6 +20,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/htmlmd"
+	"github.com/Sourcehaven-BV/rela/internal/mentions"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -2426,9 +2428,14 @@ func (m *mdHelpers) deepCopyAST(astTable *lua.LTable) *lua.LTable {
 
 // luaMdEntityRefs implements rela.md.entity_refs(opts?) -> {[id] = string}.
 //
-// Builds a replacement map covering some or all entities in the project
-// for use with resolve_refs. Iterates the store per entity type because
-// store.ListEntities requires a non-empty Type.
+// Builds a replacement map for resolve_refs. With `ids` or `content` it
+// reads only those ids, in one query bounded by the ids (TKT-P9QMEVI):
+// `content` is a markdown body, and its ids are the code spans resolve_refs
+// would match. Without either it lists the entities of `types` (every type
+// by default), one query per type, bounded by `limit` rows across all of
+// them (default and ceiling maxReadLimit, DEC-IYHLNF). Past an explicit
+// limit it stops; past the default it raises, since the script did not ask
+// for a partial map.
 func (er *mdEntityRefs) luaMdEntityRefs(ls *lua.LState) int {
 	if er.meta == nil {
 		ls.RaiseError("rela.md.entity_refs: requires a runtime with a metamodel")
@@ -2439,10 +2446,6 @@ func (er *mdEntityRefs) luaMdEntityRefs(ls *lua.LState) int {
 		ls.RaiseError("%s", err.Error())
 		return 0
 	}
-	typeNames := opts.types
-	if len(typeNames) == 0 && opts.useAllTypes {
-		typeNames = er.meta.EntityTypes()
-	}
 
 	rd := er.reader
 	if rd == nil {
@@ -2450,28 +2453,98 @@ func (er *mdEntityRefs) luaMdEntityRefs(ls *lua.LState) int {
 		return 0
 	}
 	out := ls.NewTable()
+	n := 0
+	add := func(e *entity.Entity) error {
+		value, buildErr := er.buildEntityRefValue(ls, e, opts)
+		if buildErr != nil {
+			return buildErr
+		}
+		out.RawSetString(e.ID, lua.LString(value))
+		n++
+		return nil
+	}
 	// callerCtx, NOT context.Background(): the reader resolves the acting
 	// identity from ctx, so a background ctx has no principal and the gate
 	// fails closed on EVERY type — the binding would silently return an
 	// empty map for every user (RR-ZA452J).
 	ctx := er.ctx()
-	for _, t := range typeNames {
-		for e, listErr := range rd.ListEntities(ctx, store.EntityQuery{Type: t, Faces: store.InWorld(er.world)}) {
-			if listErr != nil {
-				ls.RaiseError(
-					"rela.md.entity_refs: list entities of type %q: %s", t, listErr.Error())
-				return 0
+	if opts.byIDs {
+		err = er.refsByIDs(ctx, rd, opts, add)
+	} else {
+		err = er.refsByTypes(ctx, rd, opts, func(e *entity.Entity) (bool, error) {
+			if n == opts.limit {
+				// One row past the limit. A script that set limit asked for
+				// the cut; without one, a cut map would silently leave
+				// references unlinked.
+				if opts.limitSet {
+					return false, nil
+				}
+				return false, fmt.Errorf(
+					"rela.md.entity_refs: more than %d entities; pass ids or content, or set limit", opts.limit)
 			}
-			value, valErr := er.buildEntityRefValue(ls, e, opts)
-			if valErr != nil {
-				ls.RaiseError("%s", valErr.Error())
-				return 0
+			if addErr := add(e); addErr != nil {
+				return false, addErr
 			}
-			out.RawSetString(e.ID, lua.LString(value))
-		}
+			return true, nil
+		})
+	}
+	if err != nil {
+		ls.RaiseError("%s", err.Error())
+		return 0
 	}
 	ls.Push(out)
 	return 1
+}
+
+// refsByIDs adds the entities of opts.ids the caller may read, in the
+// runtime's world. The query names no type: the gated reader pushes a typed
+// list down as a graph query, which has no id filter. opts.types, when
+// given, filters the rows here.
+func (er *mdEntityRefs) refsByIDs(
+	ctx context.Context, rd EntityReader, opts entityRefsOpts, add func(*entity.Entity) error,
+) error {
+	if len(opts.ids) == 0 {
+		return nil
+	}
+	q := store.EntityQuery{IDs: opts.ids, Faces: store.InWorld(er.world)}
+	for e, err := range rd.ListEntities(ctx, q) {
+		if err != nil {
+			return fmt.Errorf("rela.md.entity_refs: list entities: %w", err)
+		}
+		if !opts.useAllTypes && !slices.Contains(opts.types, e.Type) {
+			continue
+		}
+		if err := add(e); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// refsByTypes adds the entities of opts.types (every type when none were
+// named) until add reports it wants no more.
+func (er *mdEntityRefs) refsByTypes(
+	ctx context.Context, rd EntityReader, opts entityRefsOpts, add func(*entity.Entity) (bool, error),
+) error {
+	typeNames := opts.types
+	if opts.useAllTypes {
+		typeNames = er.meta.EntityTypes()
+	}
+	for _, t := range typeNames {
+		for e, err := range rd.ListEntities(ctx, store.EntityQuery{Type: t, Faces: store.InWorld(er.world)}) {
+			if err != nil {
+				return fmt.Errorf("rela.md.entity_refs: list entities of type %q: %w", t, err)
+			}
+			more, err := add(e)
+			if err != nil {
+				return err
+			}
+			if !more {
+				return nil
+			}
+		}
+	}
+	return nil
 }
 
 type entityRefsOpts struct {
@@ -2479,14 +2552,34 @@ type entityRefsOpts struct {
 	useAllTypes bool
 	style       string
 	formatFn    *lua.LFunction
+	// byIDs: the script named `ids` or `content`; ids are the ids to read.
+	byIDs bool
+	ids   []string
+	// limit bounds the rows read when byIDs is false. limitSet: the script
+	// passed it, so reaching it is what the script asked for.
+	limit    int
+	limitSet bool
 }
 
 func (er *mdEntityRefs) parseEntityRefsOpts(ls *lua.LState) (entityRefsOpts, error) {
-	opts := entityRefsOpts{style: "title-slug", useAllTypes: true}
+	opts := entityRefsOpts{style: "title-slug", useAllTypes: true, limit: maxReadLimit}
 	if ls.GetTop() < 1 || ls.Get(1) == lua.LNil {
 		return opts, nil
 	}
 	t := ls.CheckTable(1)
+
+	if err := rejectUnknownKeys(t, "types", "style", "format", "limit", "ids", "content"); err != nil {
+		return opts, fmt.Errorf("rela.md.entity_refs: %w", err)
+	}
+	limit, err := limitOption(t)
+	if err != nil {
+		return opts, fmt.Errorf("rela.md.entity_refs: %w", err)
+	}
+	opts.limit = limit
+	opts.limitSet = t.RawGetString("limit") != lua.LNil
+	if err := entityRefsIDs(t, &opts); err != nil {
+		return opts, fmt.Errorf("rela.md.entity_refs: %w", err)
+	}
 
 	if v := t.RawGetString("types"); v != lua.LNil {
 		tbl, ok := v.(*lua.LTable)
@@ -2527,6 +2620,54 @@ func (er *mdEntityRefs) parseEntityRefsOpts(ls *lua.LState) (entityRefsOpts, err
 	}
 
 	return opts, nil
+}
+
+// entityRefsIDs reads the `ids` and `content` options into opts. They are
+// exclusive, since a script that passes both cannot mean either alone.
+// `content` contributes the ids [mentions.All] finds in it: code spans whose
+// whole text is a well-formed id, the spans resolve_refs rewrites. More ids
+// than opts.limit raise rather than being cut, because a cut map silently
+// leaves some references unlinked.
+func entityRefsIDs(t *lua.LTable, opts *entityRefsOpts) error {
+	idsV, contentV := t.RawGetString("ids"), t.RawGetString("content")
+	switch {
+	case idsV != lua.LNil && contentV != lua.LNil:
+		return errors.New("opts.ids and opts.content are exclusive")
+	case idsV != lua.LNil:
+		tbl, ok := idsV.(*lua.LTable)
+		if !ok {
+			return fmt.Errorf("opts.ids must be a table, got %s", idsV.Type())
+		}
+		seen := make(map[string]bool, tbl.Len())
+		for i := 1; i <= tbl.Len(); i++ {
+			id, ok := tbl.RawGetInt(i).(lua.LString)
+			if !ok {
+				return errors.New("opts.ids must contain only strings")
+			}
+			// The rule content ids pass through mentions.All, so an address
+			// such as "TKT-1@draft" raises instead of silently matching nothing.
+			if err := entity.ValidateID(string(id)); err != nil {
+				return fmt.Errorf("opts.ids[%d]: %w", i, err)
+			}
+			if !seen[string(id)] {
+				seen[string(id)] = true
+				opts.ids = append(opts.ids, string(id))
+			}
+		}
+	case contentV != lua.LNil:
+		body, ok := contentV.(lua.LString)
+		if !ok {
+			return fmt.Errorf("opts.content must be a string, got %s", contentV.Type())
+		}
+		opts.ids = mentions.All(string(body))
+	default:
+		return nil
+	}
+	opts.byIDs = true
+	if len(opts.ids) > opts.limit {
+		return fmt.Errorf("%d ids exceed the limit of %d", len(opts.ids), opts.limit)
+	}
+	return nil
 }
 
 func (er *mdEntityRefs) buildEntityRefValue(ls *lua.LState, e *entity.Entity, opts entityRefsOpts) (string, error) {

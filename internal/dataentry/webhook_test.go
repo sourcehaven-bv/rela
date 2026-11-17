@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -151,61 +152,119 @@ func TestWebhook_ActionFailureRetryable(t *testing.T) {
 	}
 }
 
-// TestSeenSet_TTLExpiry: an id past the TTL is treated as new again.
+// TestSeenSet_TTLExpiry: a done id past the TTL is treated as new again.
 func TestSeenSet_TTLExpiry(t *testing.T) {
 	s := newSeenSet(time.Minute, nil)
 	base := time.Unix(1_700_000_000, 0)
 	s.now = func() time.Time { return base }
 
-	if !mustAdd(t, s, "a") {
-		t.Fatal("first add should be new")
+	if !mustHandle(t, s, "a") {
+		t.Fatal("first delivery should be new")
 	}
-	if mustAdd(t, s, "a") {
-		t.Fatal("immediate re-add should be a duplicate")
+	if mustHandle(t, s, "a") {
+		t.Fatal("an immediate redelivery should be a duplicate")
 	}
 	// Advance past the TTL.
 	s.now = func() time.Time { return base.Add(2 * time.Minute) }
-	if !mustAdd(t, s, "a") {
-		t.Fatal("re-add after TTL should be new again")
+	if !mustHandle(t, s, "a") {
+		t.Fatal("a redelivery after the TTL should be new again")
 	}
+}
+
+// TestSeenSet_ClaimStates pins the claim: a claimed id is in flight to
+// every other caller until it is finished (done) or released (new again).
+func TestSeenSet_ClaimStates(t *testing.T) {
+	ctx := context.Background()
+	s := newSeenSet(time.Minute, nil)
+	mustClaim(t, s, "a", seenNew)
+	mustClaim(t, s, "a", seenInFlight)
+	if err := s.release(ctx, "a"); err != nil {
+		t.Fatal(err)
+	}
+	mustClaim(t, s, "a", seenNew)
+	if err := s.finish(ctx, "a"); err != nil {
+		t.Fatal(err)
+	}
+	mustClaim(t, s, "a", seenDone)
+	// A release never undoes a finished id.
+	if err := s.release(ctx, "a"); err != nil {
+		t.Fatal(err)
+	}
+	mustClaim(t, s, "a", seenDone)
+}
+
+// TestSeenSet_ClaimLapses pins that a claim whose release was never saved
+// lapses after the claim TTL, well before a done id would, so the IdP's
+// later retry runs and the event is not lost.
+func TestSeenSet_ClaimLapses(t *testing.T) {
+	s := newSeenSet(time.Hour, nil)
+	base := time.Unix(1_700_000_000, 0)
+	s.now = func() time.Time { return base }
+	mustClaim(t, s, "a", seenNew)
+
+	s.now = func() time.Time { return base.Add(webhookClaimTTL - time.Second) }
+	mustClaim(t, s, "a", seenInFlight)
+	s.now = func() time.Time { return base.Add(webhookClaimTTL + time.Second) }
+	mustClaim(t, s, "a", seenNew)
 }
 
 // TestSeenSet_SurvivesEviction pins that the set lives in state.KV: a new
 // set over the same kv, as a reopened tenant App builds, still dedups an id
-// the old one saw (BUG-ZO33J9M).
+// the old one handled, and sees its claims (BUG-ZO33J9M).
 func TestSeenSet_SurvivesEviction(t *testing.T) {
-	ctx := context.Background()
+	kv := newMemKV(t)
+
+	before := newSeenSet(time.Minute, kv)
+	if !mustHandle(t, before, "a") {
+		t.Fatal("first delivery should be new")
+	}
+	mustClaim(t, before, "b", seenNew)
+
+	after := newSeenSet(time.Minute, kv)
+	mustClaim(t, after, "a", seenDone)
+	mustClaim(t, after, "b", seenInFlight)
+	if !mustHandle(t, after, "c") {
+		t.Error("a new id was deduped")
+	}
+	// The first set sees what the second recorded.
+	mustClaim(t, before, "c", seenDone)
+}
+
+func newMemKV(t *testing.T) state.KV {
+	t.Helper()
 	root, err := storage.NewRootedFS(storage.NewMemFS(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	kv := state.NewFSKV(root)
+	return state.NewFSKV(root)
+}
 
-	before := newSeenSet(time.Minute, kv)
-	if !mustAdd(t, before, "a") || !mustAdd(t, before, "b") {
-		t.Fatal("first adds should be new")
+func mustClaim(t *testing.T, s *seenSet, id string, want seenState) {
+	t.Helper()
+	got, err := s.claim(context.Background(), id)
+	if err != nil {
+		t.Fatalf("claim(%q): %v", id, err)
 	}
-
-	after := newSeenSet(time.Minute, kv)
-	if dup, err := after.has(ctx, "a"); err != nil || !dup {
-		t.Errorf("has(a) after eviction = %v, %v; want a duplicate", dup, err)
-	}
-	if !mustAdd(t, after, "c") {
-		t.Error("a new id was deduped")
-	}
-	// The first set sees what the second recorded.
-	if mustAdd(t, before, "c") {
-		t.Error("an id another set recorded was accepted again")
+	if got != want {
+		t.Fatalf("claim(%q) = %d, want %d", id, got, want)
 	}
 }
 
-func mustAdd(t *testing.T, s *seenSet, id string) bool {
+// mustHandle claims id and, when the claim is new, finishes it, as a
+// successful delivery does. It reports whether the delivery was new.
+func mustHandle(t *testing.T, s *seenSet, id string) bool {
 	t.Helper()
-	fresh, err := s.add(context.Background(), id)
+	got, err := s.claim(context.Background(), id)
 	if err != nil {
-		t.Fatalf("add(%q): %v", id, err)
+		t.Fatalf("claim(%q): %v", id, err)
 	}
-	return fresh
+	if got != seenNew {
+		return false
+	}
+	if err := s.finish(context.Background(), id); err != nil {
+		t.Fatalf("finish(%q): %v", id, err)
+	}
+	return true
 }
 
 // brokenKV fails every read.
@@ -219,24 +278,42 @@ type putFailKV struct{ state.KV }
 func (putFailKV) Get(context.Context, string) ([]byte, error) { return nil, os.ErrNotExist }
 func (putFailKV) Put(context.Context, string, []byte) error   { return errors.New("db down") }
 
+// failAfterKV passes the first n writes to the wrapped kv and fails the
+// rest, so a claim saves and the finish or release after it does not.
+type failAfterKV struct {
+	state.KV
+	n int
+}
+
+func (k *failAfterKV) Put(ctx context.Context, key string, data []byte) error {
+	if k.n == 0 {
+		return errors.New("db down")
+	}
+	k.n--
+	return k.KV.Put(ctx, key, data)
+}
+
 // TestWebhook_DedupUnavailable pins that the receiver answers 503 with
-// Retry-After when the stored id set cannot be read (the handler does not
-// run) or the handled id cannot be stored (the IdP retries; the handler is
-// idempotent), so no webhook is accepted without replay protection.
+// Retry-After when the stored id set cannot be read or the claim cannot be
+// saved (the handler does not run), or the handled id cannot be marked done
+// (the IdP retries; the handler is idempotent), so no webhook is accepted
+// without replay protection.
 func TestWebhook_DedupUnavailable(t *testing.T) {
 	claims := WebhookClaims{Event: "organization.created", OrgID: "org_1", ID: "evt_kv"}
 	for _, tc := range []struct {
-		name  string
-		kv    state.KV
+		name string
+		// kv wraps a working in-memory kv.
+		kv    func(mem state.KV) state.KV
 		calls int
 	}{
-		{"read fails", brokenKV{}, 0},
-		{"write fails", putFailKV{}, 1},
+		{"read fails", func(state.KV) state.KV { return brokenKV{} }, 0},
+		{"claim write fails", func(state.KV) state.KV { return putFailKV{} }, 0},
+		{"done write fails", func(mem state.KV) state.KV { return &failAfterKV{KV: mem, n: 1} }, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := &recordingOrgHandler{}
 			app := newOrgWebhookTestApp(t, claims, h)
-			app.webhook.seen = newSeenSet(time.Minute, tc.kv)
+			app.webhook.seen = newSeenSet(time.Minute, tc.kv(newMemKV(t)))
 			rec := postWebhook(app, "b")
 			if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" {
 				t.Fatalf("status = %d, Retry-After = %q; want 503 with Retry-After",
@@ -249,12 +326,88 @@ func TestWebhook_DedupUnavailable(t *testing.T) {
 	}
 }
 
+// blockingOrgHandler blocks each event until release is closed, after
+// sending on entered.
+type blockingOrgHandler struct {
+	entered chan struct{}
+	release chan struct{}
+	calls   atomic.Int32
+}
+
+func (h *blockingOrgHandler) HandleOrgEvent(context.Context, WebhookClaims) error {
+	h.calls.Add(1)
+	h.entered <- struct{}{}
+	<-h.release
+	return nil
+}
+
+// TestWebhook_ConcurrentDuplicateInFlight pins the race the claim closes: a
+// copy of an id that arrives while the first delivery still runs does not
+// run; it gets 503 with Retry-After so it is not lost. Once the first
+// finishes, the redelivery is deduped with 200.
+func TestWebhook_ConcurrentDuplicateInFlight(t *testing.T) {
+	claims := WebhookClaims{Event: "organization.created", OrgID: "org_1", ID: "evt_race"}
+	h := &blockingOrgHandler{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	app := newOrgWebhookTestApp(t, claims, h)
+
+	first := make(chan *httptest.ResponseRecorder, 1)
+	go func() { first <- postWebhook(app, "b") }()
+	<-h.entered
+
+	rec := postWebhook(app, "b")
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" {
+		t.Fatalf("in-flight copy: status = %d, Retry-After = %q; want 503 with Retry-After",
+			rec.Code, rec.Header().Get("Retry-After"))
+	}
+	close(h.release)
+	if got := (<-first).Code; got != http.StatusOK {
+		t.Fatalf("first delivery status = %d, want 200", got)
+	}
+	if rec := postWebhook(app, "b"); rec.Code != http.StatusOK {
+		t.Fatalf("redelivery after success: status = %d, want 200", rec.Code)
+	}
+	if n := h.calls.Load(); n != 1 {
+		t.Errorf("org handler calls = %d, want 1", n)
+	}
+}
+
+// TestWebhook_FailedReleaseLapses pins that a failure whose release cannot
+// be saved still lets a later retry run: the claim lapses after the claim
+// TTL.
+func TestWebhook_FailedReleaseLapses(t *testing.T) {
+	claims := WebhookClaims{Event: "organization.created", OrgID: "org_1", ID: "evt_rel"}
+	h := &recordingOrgHandler{err: errors.New("boom")}
+	app := newOrgWebhookTestApp(t, claims, h)
+	kv := &failAfterKV{KV: newMemKV(t), n: 1}
+	seen := newSeenSet(time.Hour, kv)
+	base := time.Unix(1_700_000_000, 0)
+	seen.now = func() time.Time { return base }
+	app.webhook.seen = seen
+
+	if rec := postWebhook(app, "b"); rec.Code != http.StatusBadGateway {
+		t.Fatalf("failing delivery status = %d, want 502", rec.Code)
+	}
+	// The claim stayed: a retry right away is in flight.
+	kv.n = 100
+	if rec := postWebhook(app, "b"); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("retry within the claim TTL: status = %d, want 503", rec.Code)
+	}
+	seen.now = func() time.Time { return base.Add(webhookClaimTTL + time.Second) }
+	h.err = nil
+	if rec := postWebhook(app, "b"); rec.Code != http.StatusOK {
+		t.Fatalf("retry after the claim TTL: status = %d, want 200", rec.Code)
+	}
+	if len(h.got) != 2 {
+		t.Errorf("org handler calls = %d, want 2", len(h.got))
+	}
+}
+
 // TestSeenSet_FailsClosed pins that an unreadable stored set is an error,
 // never a fresh id: a replay could otherwise pass.
 func TestSeenSet_FailsClosed(t *testing.T) {
 	s := newSeenSet(time.Minute, brokenKV{})
-	if fresh, err := s.add(context.Background(), "a"); err == nil || fresh {
-		t.Fatalf("add over a failing kv = %v, %v; want an error", fresh, err)
+	if _, err := s.claim(context.Background(), "a"); err == nil {
+		t.Fatal("claim over a failing kv succeeded; want an error")
 	}
 }
 
@@ -265,7 +418,7 @@ func TestSeenSet_Bounded(t *testing.T) {
 	n := 0
 	s.now = func() time.Time { n++; return base.Add(time.Duration(n) * time.Millisecond) }
 	for i := range webhookSeenMax + 10 {
-		mustAdd(t, s, fmt.Sprintf("id-%d", i))
+		mustHandle(t, s, fmt.Sprintf("id-%d", i))
 	}
 	if len(s.at) > webhookSeenMax {
 		t.Fatalf("set holds %d ids, want at most %d", len(s.at), webhookSeenMax)

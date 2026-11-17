@@ -1,7 +1,7 @@
 ---
 id: TKT-KFP4JVR
 type: ticket
-title: Run E2E and Frontend CI jobs in the Playwright image
+title: Run Frontend CI in the Playwright image and retry apt steps
 kind: chore
 priority: high
 effort: xs

@@ -23,9 +23,9 @@ class ApiClient {
     // instead of branching on the rejection shape.
     this.client.interceptors.response.use(
       (response) => {
-        // A 202 tenant_provisioning carries a problem, not the data the
-        // caller asked for (TKT-TNPRV8): show the setting-up screen and
-        // fail the call rather than hand the problem on as data.
+        // A 202 with status "provisioning" carries no data the caller asked
+        // for (TKT-TNPRV8): show the setting-up screen and fail the call
+        // rather than hand the status on as data.
         if (isProvisioningResponse(response.status, response.data)) {
           void startProvisioningPoll()
           return Promise.reject(toApiError(new Error('tenant_provisioning')))
@@ -33,8 +33,9 @@ class ApiClient {
         return response
       },
       (error: unknown) => {
-        // A create that is throttled or failed is a 503 provisioning
-        // problem: show the same screen, which keeps polling.
+        // A write during the create, and a create that is throttled, failed
+        // or needs an operator, is a 503 provisioning problem: show the
+        // same screen, which keeps polling.
         if (
           axios.isAxiosError(error) &&
           error.response &&

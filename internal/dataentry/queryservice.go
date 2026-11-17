@@ -120,6 +120,11 @@ type queryOptions struct {
 	// exactType is the one type the caller keeps afterwards (the
 	// `type` parameter of /_search), or "" for none.
 	exactType string
+	// firstN is how many leading results the caller keeps, or 0 for all.
+	// Unlike limit it bounds the branch WITHOUT free text: that branch then
+	// reads the store in windows until it has firstN results (see
+	// firstNByTypes). Results past firstN may or may not be returned.
+	firstN int
 }
 
 // freeTextLimit is the relevance cap for a free-text search. It is
@@ -180,15 +185,24 @@ func freeTextLimit(sq *searchparser.SearchQuery, opts queryOptions) int {
 func (q *queryService) executeQueryWith(
 	ctx context.Context, query string, opts queryOptions,
 ) ([]*entity.Entity, error) {
-	sq := searchparser.ParseQuery(query)
+	results, _, err := q.executeQueryCut(ctx, query, opts)
+	return results, err
+}
+
+// executeQueryCut is executeQueryWith that also reports whether opts.firstN
+// cut the read short, so rows past the results were not read.
+func (q *queryService) executeQueryCut(
+	ctx context.Context, query string, opts queryOptions,
+) (results []*entity.Entity, cut bool, err error) {
+	sq := parseSearchQuery(ctx, query)
 	if sq.IsEmpty() {
-		return nil, nil
+		return nil, false, nil
 	}
 	// A denied handle carries the ZERO scope, which IS the default world, so
 	// both branches below would otherwise search everything under a world the
 	// principal may not read. Same guard as freeTextIDsForType.
 	if worldFromContext(ctx).blocksAllReads() {
-		return []*entity.Entity{}, nil
+		return []*entity.Entity{}, false, nil
 	}
 
 	svc := q.services()
@@ -199,11 +213,10 @@ func (q *queryService) executeQueryWith(
 	slices.Sort(typeNames)
 	scope := readGateFromContext(ctx).SearchScope(ctx, typeNames)
 	if len(scope) == 0 {
-		return []*entity.Entity{}, nil
+		return []*entity.Entity{}, false, nil
 	}
 
 	var candidates []*entity.Entity
-	var err error
 	if sq.HasFreeText() {
 		// Hits arrive in relevance order. Scores are dropped because
 		// executeQuery never sorted by them.
@@ -228,13 +241,16 @@ func (q *queryService) executeQueryWith(
 		// pass would also have removed — while still winning the I/O.
 		pushed := pushdownPrefilters(sq.PropertyFilters, svc.Meta, sq.EntityTypes)
 		pushed = append(pushed, opts.prefilters...)
+		if opts.firstN > 0 && !sq.HasSort() && len(sq.EntityTypes) > 0 {
+			return q.firstNByTypes(ctx, svc, sq, scope, pushed, opts.firstN)
+		}
 		candidates, err = visibleListByTypes(ctx, svc, sq.EntityTypes, scope, pushed)
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
-	results := make([]*entity.Entity, 0, len(candidates))
+	results = make([]*entity.Entity, 0, len(candidates))
 	for _, e := range candidates {
 		if !q.matchesPropertyFilters(e, sq.PropertyFilters) {
 			continue
@@ -250,8 +266,70 @@ func (q *queryService) executeQueryWith(
 		q.sortEntitiesMulti(results, sq.SortClauses)
 	}
 
-	return results, nil
+	return results, false, nil
 }
+
+// firstNByTypes is the branch of executeQueryWith without free text for a
+// caller that keeps only the first n results (TKT-CKLZMWB). It returns the
+// same leading rows as visibleListByTypes followed by the property-filter
+// pass, in the same order, but reads the store in windows and stops once it
+// has n. Each type is read in id order, which is the order an unpaged read
+// returns too, and the types in the order visibleListByTypes takes them. cut
+// reports that it stopped early, so rows past the first n were not read.
+//
+// The windows exist because the property filters run in Go after the read:
+// pushdownPrefilters pushes only some of them, so a window of n rows can hold
+// fewer than n results. Each window is four times the last, and after
+// maxQueryWindows windows the rest of the type is read in one go, so a sparse
+// match costs at most one read more than an unpaged one. The row gate and the
+// world are applied in the store query of every window, so the kept rows are
+// counted after the gate. A row that moves between two windows because of a
+// concurrent write is kept once.
+//
+// Not for a query with a `sort:` clause: that sorts the whole result, so no
+// prefix of the store order is a prefix of it.
+func (q *queryService) firstNByTypes(
+	ctx context.Context, svc Services, sq *searchparser.SearchQuery, scope map[string]search.TypeScope,
+	pushed []store.PropPredicate, n int,
+) (results []*entity.Entity, cut bool, err error) {
+	results = make([]*entity.Entity, 0, n)
+	seen := make(map[string]struct{}, n)
+	for _, typ := range sq.EntityTypes {
+		ts, ok := search.ResolveTypeScope(scope, typ)
+		if !ok {
+			continue // denied type
+		}
+		offset, window := 0, n-len(results)
+		for reads := 1; ; reads++ {
+			if reads > maxQueryWindows {
+				window = 0 // the rest of the type
+			}
+			rows, err := visibleEntitiesOfTypeWindow(ctx, svc, typ, ts, pushed, window, offset)
+			if err != nil {
+				return nil, false, err
+			}
+			for _, e := range rows {
+				if _, dup := seen[e.ID]; dup || !q.matchesPropertyFilters(e, sq.PropertyFilters) {
+					continue
+				}
+				seen[e.ID] = struct{}{}
+				results = append(results, e)
+				if len(results) == n {
+					return results, true, nil
+				}
+			}
+			if window == 0 || len(rows) < window {
+				break // the type is exhausted
+			}
+			offset, window = offset+window, 4*window
+		}
+	}
+	return results, false, nil
+}
+
+// maxQueryWindows is how many growing windows firstNByTypes reads of one
+// type before it reads the rest of the type at once.
+const maxQueryWindows = 3
 
 // runVisibleFreeTextSearch is executeQuery's free-text branch: the
 // same phrase re-quoting as runFreeTextSearchE, routed through the
@@ -346,7 +424,7 @@ func (q *queryService) freeTextIDsForType(
 	if query == "" {
 		return freeTextIDsForTypeResult{}, nil
 	}
-	sq := searchparser.ParseQuery(query)
+	sq := parseSearchQuery(ctx, query)
 	if sq.IsEmpty() || !sq.HasFreeText() {
 		return freeTextIDsForTypeResult{}, nil
 	}
@@ -442,4 +520,95 @@ func loadHitHeaders(ctx context.Context, st store.Store, hits []search.Hit) (map
 		}
 	}
 	return out, nil
+}
+
+// searchPage is the read behind /_search: the query's result, of
+// opts.exactType only when it is set, cut to opts.limit when it is set, and
+// the number of rows the query matched before the cut.
+//
+// A structured query the store can answer ([planSearch]) reads only the
+// rows it returns and counts the rest in the store (TKT-D3RAB0E), so its
+// total is every match. Every other query takes executeQueryWith and is cut
+// here. Its total is the length before the cut, and for free text that
+// length is already bounded by the relevance cap (freeTextLimit), so there
+// it is a lower bound.
+func (q *queryService) searchPage(
+	ctx context.Context, query string, opts queryOptions,
+) (rows []*entity.Entity, total int, err error) {
+	svc := q.services()
+	if plan, scope, ok := structuredPlan(ctx, svc, query, opts.exactType); ok {
+		if len(scope) == 0 {
+			return []*entity.Entity{}, 0, nil
+		}
+		return plan.page(ctx, svc, scope, opts.limit)
+	}
+
+	rows, err = q.executeQueryWith(ctx, query, opts)
+	if err != nil {
+		return nil, 0, err
+	}
+	// The exact filter stays: a `type:` clause already in the query unions
+	// with the caller's type.
+	if opts.exactType != "" {
+		rows = slices.DeleteFunc(rows, func(e *entity.Entity) bool { return e.Type != opts.exactType })
+	}
+	// Cut after the read gate and the type filter, so the cap counts only
+	// rows this principal may see and a hidden row cannot take a slot.
+	total = len(rows)
+	if opts.limit > 0 && len(rows) > opts.limit {
+		rows = rows[:opts.limit]
+	}
+	return rows, total, nil
+}
+
+// searchPosition answers where id sits in a search scope's result (the
+// query, then exactType when set) from the store, when the query is a
+// structured one over a single type that [planSearch] accepts. handled=false
+// means "take the Go path" (resolveScope).
+func (q *queryService) searchPosition(
+	ctx context.Context, query, exactType, id string,
+) (pos store.Position, found, handled bool, err error) {
+	svc := q.services()
+	plan, scope, ok := structuredPlan(ctx, svc, query, exactType)
+	if !ok || len(plan.types) > 1 {
+		// Several types concatenate per-type results, which is not one
+		// store query.
+		return store.Position{}, false, false, nil
+	}
+	if len(scope) == 0 {
+		return store.Position{}, false, true, nil
+	}
+	return plan.position(ctx, svc, scope, id)
+}
+
+// structuredPlan parses query and plans it for the store, with the read
+// scope the plan runs under. ok=false means the query is free text, empty,
+// or one the store cannot answer exactly. A denied world, or a plan that
+// matches nothing, is ok with an empty scope: nothing is read, which is what
+// executeQueryWith answers too.
+func structuredPlan(
+	ctx context.Context, svc Services, query, exactType string,
+) (plan searchPlan, scope map[string]search.TypeScope, ok bool) {
+	sq := parseSearchQuery(ctx, query)
+	if sq.IsEmpty() {
+		return searchPlan{}, nil, false
+	}
+	if plan, ok = planSearch(svc.Meta, sq, exactType); !ok {
+		return searchPlan{}, nil, false
+	}
+	if worldFromContext(ctx).blocksAllReads() || len(plan.types) == 0 {
+		return plan, nil, true
+	}
+	return plan, readGateFromContext(ctx).SearchScope(ctx, plan.types), true
+}
+
+// parseSearchQuery parses a search query and resolves the date variables of
+// its property filters (`prop:due<$today`, `$now`, offsets) at the
+// request's read time. Every search path parses through here, so `/_search`,
+// a dashboard `query:` card, a nav search scope and a next-action query all
+// read one `$today` per request.
+func parseSearchQuery(ctx context.Context, query string) *searchparser.SearchQuery {
+	sq := searchparser.ParseQuery(query)
+	sq.PropertyFilters = filter.BindDateVariables(sq.PropertyFilters, requestReadTime(ctx))
+	return sq
 }

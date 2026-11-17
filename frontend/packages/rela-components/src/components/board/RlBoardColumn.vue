@@ -80,7 +80,7 @@ const props = withDefaults(
     keyboardTarget: false,
     emptyLabel: undefined,
     emptyDescription: undefined,
-  },
+  }
 )
 
 const emit = defineEmits<{
@@ -96,6 +96,8 @@ const emit = defineEmits<{
 const slots = defineSlots<{
   card?: (props: { item: T; selected: boolean }) => unknown
   heading?: (props: { section: Section<T> }) => unknown
+  /** Below the cards and above the add control, such as a quick-add input. */
+  footer?: (props: { section: Section<T> }) => unknown
 }>()
 
 const element = ref<HTMLElement>()
@@ -238,6 +240,8 @@ function onRelease() {
       />
     </div>
 
+    <slot name="footer" :section="section" />
+
     <RlAddButton
       v-if="showAdd"
       class="rl-board-column__add"
@@ -276,7 +280,9 @@ function onRelease() {
   }
 }
 
-.rl-board-column__heading { padding: 0 var(--rl-space-1) var(--rl-space-3); }
+.rl-board-column__heading {
+  padding: 0 var(--rl-space-1) var(--rl-space-3);
+}
 
 /* Pulls up under the heading, so the heading's gap sits below the line. */
 .rl-board-column__summary {
@@ -287,7 +293,9 @@ function onRelease() {
   font-variant-numeric: tabular-nums;
 }
 
-.rl-board-column__summary p { margin: 0; }
+.rl-board-column__summary p {
+  margin: 0;
+}
 
 /*
  * The column a held card would land in. Drawn as a tinted, outlined well
@@ -303,7 +311,9 @@ function onRelease() {
   border: 1px dashed transparent;
   border-radius: var(--rl-radius-lg);
   opacity: 0;
-  transition: opacity var(--rl-duration-fast) var(--rl-ease), background-color var(--rl-duration-fast) var(--rl-ease);
+  transition:
+    opacity var(--rl-duration-fast) var(--rl-ease),
+    background-color var(--rl-duration-fast) var(--rl-ease);
   pointer-events: none;
 }
 
@@ -323,7 +333,9 @@ function onRelease() {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .rl-board-column::before { transition: none; }
+  .rl-board-column::before {
+    transition: none;
+  }
 }
 
 /* The handle a movable column is dragged by, in the heading's top corner. */
@@ -341,10 +353,17 @@ function onRelease() {
   line-height: 1;
   cursor: grab;
 }
-.rl-board-column__handle:hover { background: var(--rl-color-bg-hover); color: var(--rl-color-text); }
-.rl-board-column__handle:focus-visible { outline: 2px solid var(--rl-color-focus); }
+.rl-board-column__handle:hover {
+  background: var(--rl-color-bg-hover);
+  color: var(--rl-color-text);
+}
+.rl-board-column__handle:focus-visible {
+  outline: 2px solid var(--rl-color-focus);
+}
 
-.rl-board-column--dragging { opacity: 0.4; }
+.rl-board-column--dragging {
+  opacity: 0.4;
+}
 
 /* Where a held column will land: a line beside this column. */
 .rl-board-column--drop-before::after,
@@ -357,8 +376,12 @@ function onRelease() {
   background: var(--rl-color-accent);
   pointer-events: none;
 }
-.rl-board-column--drop-before::after { left: calc(var(--rl-space-3) * -1); }
-.rl-board-column--drop-after::after { right: calc(var(--rl-space-3) * -1); }
+.rl-board-column--drop-before::after {
+  left: calc(var(--rl-space-3) * -1);
+}
+.rl-board-column--drop-after::after {
+  right: calc(var(--rl-space-3) * -1);
+}
 
 /* The title-only fallback card, used when no `card` slot is given. */
 .rl-board-column__card {
@@ -368,8 +391,12 @@ function onRelease() {
   border-radius: var(--rl-radius-lg);
   background: var(--rl-color-bg);
 }
-.rl-board-column__card:hover { background: var(--rl-color-bg-hover); }
-.rl-board-column__card--selected { border-color: var(--rl-color-accent); }
+.rl-board-column__card:hover {
+  background: var(--rl-color-bg-hover);
+}
+.rl-board-column__card--selected {
+  border-color: var(--rl-color-accent);
+}
 
 .rl-board-column__card-button {
   padding: 0;

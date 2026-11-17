@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"maps"
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -33,6 +34,8 @@ func (s *Server) registerTools() {
 	// Comment tools, when the project enables commenting; list_comments
 	// joins reads.
 	s.registerCommentTools(reads)
+	// A read the tool filter kept out must not be reachable through watch.
+	maps.DeleteFunc(reads, func(_ string, h mcpgo.ToolHandler) bool { return h == nil })
 	s.watch = newWatchHandler(s, reads)
 	addTool(s, toolWatch(s.watch.names), s.watch.handle)
 	addTool(s, toolCreateRelation(), s.handleCreateRelation)
@@ -84,20 +87,26 @@ func (s *Server) registerTools() {
 // Default page sizes. A list without an explicit limit must not dump a whole
 // graph into the caller's context; `total` and `has_more` in the result tell
 // the caller when to page.
+//
+// maxPageLimit caps a caller's limit. A list is read a page at a time, and
+// the page is sized by the limit, so an unbounded limit would let one call
+// allocate without bound; has_more tells the caller to page on.
 const (
 	defaultListLimit   = 50
 	defaultSearchLimit = 20
+	maxPageLimit       = 1000
 )
 
 func toolListEntities() *mcpgo.Tool {
 	return newTool("list_entities",
-		withDescription("List entities as {id,type,title,status} summaries, sorted by ID. "+
+		withDescription("List entities as {id,type,title,status} summaries, sorted by ID and then face, "+
+			"byte-wise (REQ-10 sorts before REQ-2). "+
 			"Result: {total,has_more,entities}."),
 		withString("type", description("Entity type (required with filter)")),
 		withString("filter", description(
 			"Predicate expression, e.g. entity.status == 'open' and entity.priority ~= 'low', "+
 				"or related(entity, 'implements', { status = 'open' })")),
-		withNumber("limit", description("Max results (default 50)")),
+		withNumber("limit", description("Max results (default 50, at most 1000)")),
 		withNumber("offset", description("Results to skip")),
 		withString("world", description(worldArgDescription)),
 	)
@@ -119,7 +128,7 @@ func toolSearchEntities() *mcpgo.Tool {
 		withDescription("Full-text search across entity titles and properties"),
 		withString("query", required(), description("Search text")),
 		withString("type", description("Restrict to entity type")),
-		withNumber("limit", description("Max results (default 20)")),
+		withNumber("limit", description("Max results (default 20, at most 1000)")),
 		withString("world", description(worldArgDescription)),
 	)
 }
@@ -170,7 +179,7 @@ func toolListRelations() *mcpgo.Tool {
 		withString("type", description("Relation type")),
 		withString("from", description("Source entity ID")),
 		withString("to", description("Target entity ID")),
-		withNumber("limit", description("Max results (default 50)")),
+		withNumber("limit", description("Max results (default 50, at most 1000)")),
 		withNumber("offset", description("Results to skip")),
 	)
 }

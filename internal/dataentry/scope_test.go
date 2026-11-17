@@ -48,7 +48,7 @@ func seedTickets(app *App) {
 
 func TestV1Position(t *testing.T) {
 	listScope := func() ScopeDescriptor {
-		return ScopeDescriptor{Source: "list", Type: "ticket", Sort: "title"}
+		return ScopeDescriptor{Source: "list", Type: "ticket", ListQuery: ListQuery{Sort: "title"}}
 	}
 
 	t.Run("middle entity has prev and next", func(t *testing.T) {
@@ -109,10 +109,10 @@ func TestV1Position(t *testing.T) {
 
 		// Filter to status=open → [TKT-001, TKT-002]; TKT-003 drops out.
 		scope := ScopeDescriptor{
-			Source:  "list",
-			Type:    "ticket",
-			Sort:    "title",
-			Filters: map[string]string{"filter[status]": "open"},
+			Source:    "list",
+			Type:      "ticket",
+			Filters:   map[string]string{"filter[status]": "open"},
+			ListQuery: ListQuery{Sort: "title"},
 		}
 		_, pos := getPosition(t, app, "TKT-002", scope)
 		if pos.Total != 2 {
@@ -138,7 +138,7 @@ func TestV1Position(t *testing.T) {
 		}}
 		rebindVisibleSearcher(t, app)
 
-		scope := ScopeDescriptor{Source: "search", Q: "ticket"}
+		scope := ScopeDescriptor{Source: "search", ListQuery: ListQuery{Q: "ticket"}}
 		_, pos := getPosition(t, app, "TKT-001", scope)
 		if pos.Total != 2 {
 			t.Errorf("total: got %d, want 2 (search-narrowed)", pos.Total)
@@ -165,7 +165,7 @@ func TestV1Position(t *testing.T) {
 		}}
 		rebindVisibleSearcher(t, app)
 
-		scope := ScopeDescriptor{Source: "search", Q: "anything"}
+		scope := ScopeDescriptor{Source: "search", ListQuery: ListQuery{Q: "anything"}}
 		_, pos := getPosition(t, app, "FEAT-001", scope)
 		if pos.Total != 3 {
 			t.Errorf("total: got %d, want 3 (mixed-type set)", pos.Total)
@@ -198,7 +198,7 @@ func TestV1Position(t *testing.T) {
 		rebindVisibleSearcher(t, app)
 
 		// type=ticket drops FEAT-001, leaving [TKT-001, TKT-003].
-		scope := ScopeDescriptor{Source: "search", Type: "ticket", Q: "anything"}
+		scope := ScopeDescriptor{Source: "search", Type: "ticket", ListQuery: ListQuery{Q: "anything"}}
 		_, pos := getPosition(t, app, "TKT-001", scope)
 		if pos.Total != 2 {
 			t.Errorf("total: got %d, want 2 (type-narrowed)", pos.Total)
@@ -255,7 +255,7 @@ func TestV1PositionBadRequest(t *testing.T) {
 		{name: "list missing type", id: "TKT-001", scope: &ScopeDescriptor{Source: "list"}, want: http.StatusBadRequest},
 		{name: "list unknown type", id: "TKT-001", scope: &ScopeDescriptor{Source: "list", Type: "nope"}, want: http.StatusBadRequest},
 		{name: "search missing q", id: "TKT-001", scope: &ScopeDescriptor{Source: "search"}, want: http.StatusBadRequest},
-		{name: "search unknown type", id: "TKT-001", scope: &ScopeDescriptor{Source: "search", Q: "x", Type: "nope"}, want: http.StatusBadRequest},
+		{name: "search unknown type", id: "TKT-001", scope: &ScopeDescriptor{Source: "search", Type: "nope", ListQuery: ListQuery{Q: "x"}}, want: http.StatusBadRequest},
 		{name: "bad filter key", id: "TKT-001", scope: &ScopeDescriptor{Source: "list", Type: "ticket", Filters: map[string]string{"status": "open"}}, want: http.StatusBadRequest},
 	}
 
@@ -301,7 +301,7 @@ func TestV1PositionMatchesListOrdering(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	scope := ScopeDescriptor{Source: "list", Type: "ticket", Sort: "title"}
+	scope := ScopeDescriptor{Source: "list", Type: "ticket", ListQuery: ListQuery{Sort: "title"}}
 	for i, e := range list.Data {
 		_, pos := getPosition(t, app, e.ID, scope)
 		if pos.Current != i+1 {

@@ -143,7 +143,11 @@ func TestPostgresQueue_NeoqCutoverWaitsForLockedJobs(t *testing.T) {
 	seedNeoq(t, dsn)
 
 	// A neoq worker holds its job's row lock while the handler runs.
-	holder, err := pgx.Connect(ctx, dsn)
+	// A pool DSN may carry pool-only keys, which pgx.Connect would send to
+	// the server (BUG-A8GG1CD).
+	holderCfg, err := pgxpool.ParseConfig(dsn)
+	require.NoError(t, err)
+	holder, err := pgx.ConnectConfig(ctx, holderCfg.ConnConfig)
 	require.NoError(t, err)
 	defer func() { _ = holder.Close(ctx) }()
 	tx, err := holder.Begin(ctx)

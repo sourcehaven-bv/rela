@@ -15,10 +15,31 @@
  * `/p/<page>/<entity>/<tab>`. Its header shows the anchor's title and badge,
  * and each tab narrows its view to the anchor: a list or board to the rows
  * the anchor reaches over the tab's relation, a timeline to the anchor's
- * subtree. The two-segment form `/p/<page>/<entity>` opens the first tab.
+ * subtree, a document to the one rendered for the anchor, and an entity
+ * dashboard to the counts for the anchor. The two-segment form
+ * `/p/<page>/<entity>` opens the first tab.
+ *
+ * A page with `mode: steps` (TKT-35BY3PE) draws its tabs as numbered steps
+ * with Back and Next instead of a tab bar, and shows each step's prompt.
+ * `?present=1` presents it: the shell hides the sidebar and the next-action
+ * card, and PageDown and PageUp move between steps. The flag is carried from
+ * step to step and does nothing on a page with tabs.
+ *
+ * A list step with `walk: true` (TKT-M07C97Y) shows the list's rows one at
+ * a time, the row in `?item=`. Without one it opens the first row. While
+ * presenting, PageDown and PageUp move through the rows first, then on to
+ * the next or previous step. A step with `done_when` (TKT-MWZF0UO) shows a
+ * check on its number when its rule holds for this reader.
  */
-import { computed, defineAsyncComponent, onBeforeUnmount, watchEffect, type Component } from 'vue'
-import { RouterLink, useRouter } from 'vue-router'
+import {
+  computed,
+  defineAsyncComponent,
+  onBeforeUnmount,
+  onMounted,
+  watchEffect,
+  type Component,
+} from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { intlLocale } from '@/i18n/locale'
 import { useQuery, useQueryCache } from '@pinia/colada'
@@ -26,6 +47,14 @@ import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
 import { isIconName } from 'rela-components/components/common/icons'
 import type { ViewTab } from 'rela-components/components/layout/RlViewTabs.vue'
 import { usePageFrame } from '@/composables/usePageHeader'
+import { usePresentation } from '@/composables/usePresentation'
+import { useDetailPanelOutlet } from '@/composables/useDetailPanel'
+import { isAnyModalOpen } from '@/composables/modalStack'
+import PageSteps from '@/components/pages/PageSteps.vue'
+import PageWalk from '@/components/pages/PageWalk.vue'
+import EntityDetail from '@/components/entity/EntityDetail.vue'
+import { usePageStatus } from '@/composables/usePageStatus'
+import { useStepWalk } from '@/composables/useStepWalk'
 import { useEntityPageEditing } from '@/composables/useEntityPageEditing'
 import { getEntity } from '@/api/entities'
 import { shouldDropHeldContent } from '@/api/errors'
@@ -36,8 +65,9 @@ import { usePageStore } from '@/stores/pages'
 import { useSpaceStore } from '@/stores/space'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { entityRef } from '@/utils/entityRef'
+import { isInputFocused } from '@/utils/dom'
 import { pageTabPath, routeTabId } from '@/utils/pageContext'
-import type { PageTabView, SidebarPageTab } from '@/types'
+import type { PageScope, PageTabView, SidebarPageTab } from '@/types'
 
 const props = defineProps<{
   page: string
@@ -47,10 +77,12 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
+const route = useRoute()
 const { t } = useI18n()
 const pageStore = usePageStore()
 const spaceStore = useSpaceStore()
 const frame = usePageFrame()
+const detailPanel = useDetailPanelOutlet()
 
 /* The standalone views, loaded on demand as their own routes load them. */
 const views: Record<PageTabView, Component> = {
@@ -76,6 +108,12 @@ const panelModes: Record<PageTabView, 'inline' | 'overlay'> = {
   dashboard: 'overlay',
 }
 
+/* The prop a `scope: root` tab passes the anchor in; a timeline takes `root`. */
+const rootProps: Partial<Record<PageTabView, string>> = {
+  document: 'entityId',
+  dashboard: 'anchor',
+}
+
 const pageConfig = computed(() => pageStore.pages[props.page])
 const tabs = computed(() => pageConfig.value?.tabs ?? [])
 const anchorType = computed(() => pageConfig.value?.entity_type)
@@ -87,6 +125,7 @@ const anchorType = computed(() => pageConfig.value?.entity_type)
 const anchorId = computed(() => (anchorType.value ? (props.entity ?? props.tab) : undefined))
 const tabId = computed(() => routeTabId(pageConfig.value, props))
 const activeTab = computed(() => tabs.value.find((t) => t.id === tabId.value))
+const steps = computed(() => pageConfig.value?.mode === 'steps')
 
 function tabHref(id: string): string {
   return spaceStore.href(pageTabPath({ page: props.page, tab: id, entity: anchorId.value }))
@@ -102,7 +141,11 @@ watchEffect(() => {
   const first = tabs.value[0]
   if (!pageStore.loaded || !first || activeTab.value) return
   if (anchorType.value && !anchorId.value) return
-  void router.replace(tabHref(first.id))
+  // A steps page keeps `?present=1` and the world, so a link that presents
+  // the bare page opens its first step presented.
+  void router.replace(
+    steps.value ? stepHref(first.id, route.query.present === '1') : tabHref(first.id)
+  )
 })
 
 /*
@@ -177,7 +220,8 @@ watchEffect(() => {
     title,
     badge: editing.badge.value,
     menu: editing.menu.value,
-    tabs: tabs.value.map(toViewTab),
+    // A steps page draws its own step bar instead of the tab bar.
+    tabs: steps.value ? [] : tabs.value.map(toViewTab),
     active: active.id,
     select,
   })
@@ -200,13 +244,116 @@ const viewProps = computed((): Record<string, unknown> => {
       ...(anchor.value ? { ref: entityRef(anchor.value) } : {}),
     }
   } else if (anchorId.value && tab.scope === 'root') {
-    out.root = anchorId.value
+    // A root tab starts at the anchor: a timeline's root, a document's
+    // entry entity, or the entity a dashboard counts for.
+    const rootProp = rootProps[tab.view] ?? 'root'
+    out[rootProp] = anchorId.value
   }
   return out
 })
 
 /* An entity page with no entity to show: none named, or none this reader can see. */
 const anchorMissing = computed(() => !!anchorType.value && (!anchorId.value || anchorGone.value))
+
+/*
+ * Steps and present mode. Presenting is read from the route on every
+ * change, never stored, so leaving `?present=1` by any route (Exit, the
+ * browser's back button, a link) gives the shell back.
+ */
+const presenting = computed(
+  () => steps.value && route.query.present === '1' && !!activeTab.value && !anchorMissing.value
+)
+usePresentation(() => presenting.value)
+
+/*
+ * A step link keeps present mode and the world, so the room goes on seeing
+ * the same data. Like a tab, it drops the rest: sort, filters, selection and
+ * the walked row belong to the step they were made on. `item` names the row
+ * of a walking step.
+ */
+function stepHref(id: string, present = presenting.value, item?: string): string {
+  const query = new URLSearchParams()
+  const world = route.query.world
+  if (typeof world === 'string' && world) query.set('world', world)
+  if (present) query.set('present', '1')
+  if (item) query.set('item', item)
+  const qs = query.toString()
+  return qs ? `${tabHref(id)}?${qs}` : tabHref(id)
+}
+
+function goStep(id: string) {
+  void router.push(stepHref(id))
+}
+
+/* The row a walking step shows, from the URL. */
+const walkItem = computed(() => {
+  const item = route.query.item
+  return typeof item === 'string' && item ? item : undefined
+})
+const walk = useStepWalk({
+  page: () => props.page,
+  tab: () => activeTab.value,
+  scope: () => viewProps.value.pageScope as PageScope | undefined,
+  item: () => walkItem.value,
+  enabled: () => steps.value && !anchorMissing.value,
+})
+
+/* The URL of row `id` on the step on screen; without an id, its first row. */
+function walkHref(id?: string): string {
+  return stepHref(activeTab.value?.id ?? '', presenting.value, id)
+}
+
+/* A walking step without a row opens its first one, as a replace. */
+watchEffect(() => {
+  const first = walk.first.value
+  if (first && activeTab.value) void router.replace(walkHref(first))
+})
+
+const pageStatus = usePageStatus({
+  page: () => props.page,
+  entity: () => anchorId.value,
+  enabled: () => steps.value && !anchorMissing.value && tabs.value.some((t) => t.done_check),
+})
+
+/* Entering or leaving present mode shows the same view, so the query stays. */
+function setPresenting(on: boolean) {
+  const query = { ...route.query }
+  if (on) query.present = '1'
+  else delete query.present
+  void router.push({ path: route.path, query })
+}
+
+/*
+ * PageDown and PageUp step through a presented page, as a presentation
+ * clicker sends them. Only while presenting: elsewhere the keys scroll a
+ * long list as they always do. Not while typing, in a dialog, or with the
+ * detail panel open, where the keys scroll what the panel shows.
+ */
+function onStepKey(event: KeyboardEvent) {
+  if (!presenting.value || event.defaultPrevented) return
+  if (event.key !== 'PageDown' && event.key !== 'PageUp') return
+  if (isInputFocused() || isAnyModalOpen() || detailPanel.open.value) return
+  // A walking step moves through its rows before it moves to another step.
+  // While its position loads, where the next row is is not yet known, so
+  // the key does nothing rather than skip the rest of the rows.
+  if (walk.state.value === 'loading') {
+    event.preventDefault()
+    return
+  }
+  const pos = walk.position.value
+  const row = event.key === 'PageDown' ? pos?.next : pos?.prev
+  if (row) {
+    event.preventDefault()
+    void router.push(walkHref(row.id))
+    return
+  }
+  const i = tabs.value.findIndex((t) => t.id === activeTab.value?.id)
+  const target = tabs.value[event.key === 'PageDown' ? i + 1 : i - 1]
+  event.preventDefault()
+  if (i >= 0 && target) goStep(target.id)
+}
+onMounted(() => window.addEventListener('keydown', onStepKey))
+onBeforeUnmount(() => window.removeEventListener('keydown', onStepKey))
 
 /*
  * The tab on screen, published for the space's Create menu, which sits
@@ -231,6 +378,17 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page-view">
+    <PageSteps
+      v-if="steps && activeTab && !anchorMissing"
+      class="page-view__steps"
+      :steps="tabs"
+      :active="activeTab.id"
+      :presenting="presenting"
+      :href="stepHref"
+      :done="pageStatus.done"
+      @go="goStep"
+      @present="setPresenting"
+    />
     <RlEmptyState
       v-if="pageStore.loaded && pageConfig && anchorMissing"
       icon="warning"
@@ -244,6 +402,23 @@ onBeforeUnmount(() => {
           : t('page.anchorNone', { type: pageConfig.label.toLocaleLowerCase(intlLocale()) })
       "
     />
+    <PageWalk
+      v-else-if="activeTab?.walk"
+      :key="`walk/${page}/${anchorId ?? ''}/${activeTab.id}`"
+      :state="walk.state.value"
+      :item="walkItem"
+      :position="walk.position.value"
+      :href="walkHref"
+    >
+      <!-- Keyed by row, so each row starts with its own detail state. -->
+      <EntityDetail
+        v-if="walkItem"
+        :key="`${walk.entityType.value}/${walkItem}`"
+        :entity-type="walk.entityType.value"
+        :entity-id="walkItem"
+        :follow-owner="false"
+      />
+    </PageWalk>
     <component
       :is="views[activeTab.view]"
       v-else-if="activeTab"
@@ -267,5 +442,9 @@ onBeforeUnmount(() => {
 <style scoped>
 .page-view {
   display: contents;
+}
+
+.page-view__steps {
+  flex: none;
 }
 </style>

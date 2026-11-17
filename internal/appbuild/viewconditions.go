@@ -3,12 +3,14 @@ package appbuild
 import (
 	"context"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/conditionlint"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // ViewConditionMatcher restates the method set internal/dataentry
@@ -18,7 +20,10 @@ import (
 // package both sides see — but view conditions have no such package, so the
 // structural type is restated. Go's structural interfaces make the two
 // identical at the call site; a drift would be a compile error at the
-// SetViewConditions call in cmd/, which is where they meet.
+// SetViewConditions call in cmd/, which is where they meet. The optional
+// EntityType and Lower methods are not part of it: dataentry type-asserts
+// them, so a drift there only turns the store pushdown off. The pushdown
+// differential and budget tests in internal/dataentry catch that.
 type ViewConditionMatcher interface {
 	MatchPage(ctx context.Context, rows []*entity.Entity, gate relresolve.Gate, match relresolve.Match) ([]bool, error)
 }
@@ -64,6 +69,20 @@ type viewConditionMatcher struct {
 // EntityAttributes returns the entity fields the condition reads, so a
 // caller can refuse a condition over a field the principal cannot see.
 func (v viewConditionMatcher) EntityAttributes() []string { return v.m.EntityAttributes() }
+
+// EntityType returns the entity type the condition was compiled against.
+func (v viewConditionMatcher) EntityType() string { return v.m.EntityType() }
+
+// Lower rewrites the condition as a store query fragment for the principal
+// gate authorizes, so a list or a nav status count can stay in the store
+// (TKT-I39Y7N4). See [lowerQueryCondition] for the outcomes. The fragment
+// matches STORED rows: a caller whose Go path judges redacted rows checks
+// [viewConditionMatcher.EntityAttributes] first.
+func (v viewConditionMatcher) Lower(
+	ctx context.Context, gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
+) (frag store.GraphQuery, empty, ok bool) {
+	return lowerQueryCondition(ctx, v.meta, v.m.Program(), v.m.EntityType(), gate)
+}
 
 // MatchPage returns one verdict per row, in order. An evaluation error is
 // returned, never read as "no match".

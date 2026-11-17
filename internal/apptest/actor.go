@@ -42,6 +42,8 @@ func (fr *fileRun) actor(ls *lua.LState, user string) *lua.LTable {
 		"unlink":     fr.unlink,
 		"get":        fr.get,
 		"list":       fr.list,
+		"related":    fr.related,
+		"start_flow": fr.startFlow,
 	}
 	for name, m := range methods {
 		a.RawSetString(name, ls.NewFunction(func(ls *lua.LState) int {
@@ -254,6 +256,54 @@ func (fr *fileRun) list(ctx context.Context, ls *lua.LState, w *world) int {
 	q := store.EntityQuery{Type: typ, Faces: store.InWorld(w.svc.LuaReadDeps().World)}
 	var got []*entity.Entity
 	for e, err := range w.svc.GatedReads().Reader.ListEntities(ctx, q) {
+		fr.check(ls, err)
+		got = append(got, e)
+	}
+	slices.SortFunc(got, func(a, b *entity.Entity) int { return strings.Compare(a.ID, b.ID) })
+	out := ls.NewTable()
+	for _, e := range got {
+		out.Append(relalua.EntityToTable(ls, e))
+	}
+	ls.Push(out)
+	return 1
+}
+
+// related is actor:related(ref, type): the targets of ref's outgoing
+// relations of type, each once, ordered by id. A ref with a face lists the
+// edges of that tail only. Everything is read through the actor's gated
+// reader: a source the actor may not read returns nil, as get does, and a
+// target it may not read is left out, as it is from list. The strict
+// listing raises a gate fault instead of dropping the edge, so an empty
+// result means there are no such edges.
+func (fr *fileRun) related(ctx context.Context, ls *lua.LState, w *world) int {
+	addr, id, face := address(ls, 2)
+	typ := ls.CheckString(3)
+	if _, ok := w.svc.Meta().GetRelationDef(typ); !ok {
+		ls.ArgError(3, fmt.Sprintf("the schema declares no relation type %q", typ))
+	}
+	reader := w.svc.GatedReads().Reader
+	_, err := reader.Resolve(ctx, addr)
+	if errors.Is(err, store.ErrNotFound) {
+		ls.Push(lua.LNil)
+		return 1
+	}
+	fr.check(ls, err)
+	q := store.RelationQuery{From: id, Type: typ, Direction: store.DirectionOutgoing}
+	if face != "" {
+		q.FromFace = &face
+	}
+	var got []*entity.Entity
+	seen := map[string]bool{}
+	for r, err := range reader.ListRelationsStrict(ctx, q) {
+		fr.check(ls, err)
+		if seen[r.To] {
+			continue
+		}
+		seen[r.To] = true
+		e, err := reader.Resolve(ctx, r.To)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
 		fr.check(ls, err)
 		got = append(got, e)
 	}

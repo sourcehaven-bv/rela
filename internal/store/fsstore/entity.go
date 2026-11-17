@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -194,18 +193,21 @@ func keepPrimes(w store.WorldScope, metas []entityMeta) []entityMeta {
 	return kept
 }
 
+// IDTakenFolded implements store.FoldedIDReader with the same scans create
+// and rename use (idTaken, markedTaken). It scans the in-memory index.
+func (s *FSStore) IDTakenFolded(_ context.Context, id, except string) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return idTaken(s.entities, id, except) || markedTaken(s, id, except), nil
+}
+
 func (s *FSStore) HighestID(_ context.Context, prefix string) (int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	highest := 0
-	pfx := prefix + "-"
 	consider := func(id string) {
-		if !strings.HasPrefix(id, pfx) {
-			return
-		}
-		var n int
-		if _, err := fmt.Sscanf(id[len(pfx):], "%d", &n); err == nil && n > highest {
+		if n, ok := entity.SequentialNumber(id, prefix); ok && n > highest {
 			highest = n
 		}
 	}
@@ -221,27 +223,6 @@ func (s *FSStore) HighestID(_ context.Context, prefix string) (int, error) {
 		consider(id)
 	}
 	return highest, nil
-}
-
-// EntityIDs returns the bare id of every entity in the store, once per
-// family, in index order. It reads only the in-memory index, so it costs no
-// file reads; entitymanager mints ids from it instead of loading every
-// entity on each create. Soft-deleted ids are not included; the soft-delete
-// capability lists those.
-func (s *FSStore) EntityIDs(_ context.Context) ([]string, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	seen := make(map[string]struct{}, len(s.entityOrder))
-	ids := make([]string, 0, len(s.entityOrder))
-	for _, key := range s.entityOrder {
-		id := s.entities[key].ID
-		if _, dup := seen[id]; dup {
-			continue
-		}
-		seen[id] = struct{}{}
-		ids = append(ids, id)
-	}
-	return ids, nil
 }
 
 // --- EntityWriter ---

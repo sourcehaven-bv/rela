@@ -160,12 +160,30 @@ actions:
     permission: publish-policy
     set:
       priority: low
+  seqtrace-triage:
+    label: "Triage"
+    permission: publish-policy
+    available_on:
+      entity_types: [task]
+    llm:
+      prompt: Pick a priority for each task.
+      inputs:
+        properties: [title]
+      outputs:
+        set: [priority]
+      batch:
+        max: 5
 YAML
     cat >>"$WORK/project/schema.yaml" <<'YAML'
 transforms:
   txt:
     command: ["cp", "{in}", "{out}"]
     produces: text/plain
+records:
+  seqtrace-hours:
+    owner: task
+    fields:
+      hours: {type: decimal, scale: 2, required: true}
 YAML
     # Realtime is off without a realtime.yaml, and the inbox routes then
     # answer 404 before any access check. One channel type turns it on.
@@ -203,11 +221,12 @@ flows:
       closed:
         final: true
 YAML
-    # Viewing and resolving a merge conflict needs git:sync, which no perf
-    # role holds. The manager gets it, so the conflict gates let it through.
+    # Viewing and resolving a merge conflict needs git:sync, and the remote
+    # routes need remote:sync; no perf role holds either. The manager gets
+    # both, so those gates let it through.
     # A role of its own, held by a principal outside the graph, gets it too
     # but reads only tasks, so the row gate refuses it a risk's conflict.
-    granted='permissions: [manage-roles, publish-policy, "git:sync"]'
+    granted='permissions: [manage-roles, publish-policy, "git:sync", "remote:sync"]'
     awk -v granted="$granted" '
         /^    permissions: \[manage-roles, publish-policy\]$/ { print "    " granted; next }
         { print }
@@ -389,6 +408,22 @@ if [[ ${SEQTRACE_SUITE:-} == routes ]]; then
     req "route POST command as manager" "$ALICE" POST "/api/command/seqtrace-echo" '{}'
     req "route POST command cancel as reader" "$CAROL" POST "/api/command-cancel/x" '{}'
     req "route GET command file as reader" "$CAROL" GET "/api/command-file/x"
+    # The batch llm action gate runs before the AI provider is loaded. The
+    # demo has none, so the manager's run ends there with 503.
+    EXPECT=403 req "route POST batch action as reader, denied" "$CAROL" POST "/api/v1/_action/seqtrace-triage" \
+        "{\"entity_ids\":[\"$TASK\"]}"
+    EXPECT=503 req "route POST batch action as manager" "$ALICE" POST "/api/v1/_action/seqtrace-triage" \
+        "{\"entity_ids\":[\"$TASK\"]}"
+    EXPECT=403 req "route GET /api/v1/_remotes as reader, denied" "$CAROL" GET "/api/v1/_remotes"
+    EXPECT=200 req "route GET /api/v1/_remotes as manager" "$ALICE" GET "/api/v1/_remotes"
+    hours="/api/v1/_records/seqtrace-hours"
+    EXPECT=200 req "route GET /api/v1/_records as reader" "$CAROL" GET "/api/v1/_records"
+    EXPECT=403 req "route POST record as reader, denied" "$CAROL" POST "$hours" \
+        "{\"rows\":[{\"owner\":\"$TASK\",\"ts\":\"2026-01-05T10:00:00Z\",\"fields\":{\"hours\":\"1.25\"}}]}"
+    EXPECT=201 req "route POST record as editor" "$BOB" POST "$hours" \
+        "{\"rows\":[{\"owner\":\"$TASK\",\"ts\":\"2026-01-05T10:00:00Z\",\"fields\":{\"hours\":\"1.25\"}}]}"
+    EXPECT=200 req "route GET records as reader" "$CAROL" GET "$hours?owner=$TASK"
+    EXPECT=200 req "route GET record aggregate as reader" "$CAROL" GET "$hours/_aggregate?owner=$TASK&field=hours&bucket=day"
     REQ_MAX_TIME=1 req "route GET /api/v1/_events as reader" "$CAROL" GET "/api/v1/_events"
     # Project-wide appearance: the reader should be refused.
     req "route PUT /api/v1/_palette as reader, denied" "$CAROL" PUT "/api/v1/_palette" '{}'

@@ -22,19 +22,23 @@
 // # Where it is stored
 //
 // One JSON document in the state KV, rewritten under a lock. That is runtime
-// state outside the graph: no entity write path reaches it, so a user who may
-// edit a person entity cannot grant that person a role. On postgres the KV is
-// the tenant schema's `state_kv` table and the lock is a schema-scoped
-// advisory lock, so several rela-server processes share one record set and
-// never lose each other's writes. On the single-process tiers both are local.
+// state outside the graph: no entity write path can store roles in it, so a
+// user who may edit a person entity cannot grant that person a role. A delete
+// or rename of that entity erases its records (see [Store.ForgetEntity]). On
+// postgres the KV is the tenant schema's `state_kv` table and the lock is a
+// schema-scoped advisory lock, so several rela-server processes share one
+// record set and never lose each other's writes. On the single-process tiers
+// both are local.
 //
 // # Who may write
 //
-// Only the webhook receiver, after it verified the webhook signature, for the
-// subject the webhook names. This package does not check that; it trusts its
-// caller the way internal/acl trusts a Principal. The receiver holds the
-// subject ([Store.Hold]) from before its action fetches the roles until it
-// stored them, so an older fetch cannot overwrite a newer one.
+// Only the webhook receiver stores roles, after it verified the webhook
+// signature, for the subject the webhook names. A delete or rename of the user
+// entity, or `rela acl forget-idp-roles`, can only erase them. This package
+// does not check who calls it; it trusts its caller the way internal/acl
+// trusts a Principal. The receiver holds the subject ([Store.Hold]) from
+// before its action fetches the roles until it stored them, so an older fetch
+// cannot overwrite a newer one.
 package idproles
 
 import (
@@ -174,6 +178,36 @@ func (s *Store) Set(ctx context.Context, subject, orgID, entityID string, roles 
 		doc.Subjects[subject] = Record{EntityID: entityID, OrgID: orgID, Roles: clean, UpdatedAt: s.now().UTC()}
 	}
 	return s.flush(ctx, doc)
+}
+
+// ForgetEntity removes every record bound to the user entity entityID and
+// returns how many it removed. It runs when that entity is deleted or
+// renamed, and on an operator's erasure request, so a record does not outlive
+// the person it describes.
+func (s *Store) ForgetEntity(ctx context.Context, entityID string) (int, error) {
+	if err := validName("entity id", entityID); err != nil {
+		return 0, err
+	}
+	release, err := s.locker.Acquire(ctx, LockKey)
+	if err != nil {
+		return 0, fmt.Errorf("idproles: lock: %w", err)
+	}
+	defer release()
+	doc, err := s.load(ctx)
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for subject, rec := range doc.Subjects {
+		if rec.EntityID == entityID {
+			delete(doc.Subjects, subject)
+			removed++
+		}
+	}
+	if removed == 0 {
+		return 0, nil
+	}
+	return removed, s.flush(ctx, doc)
 }
 
 // RolesFor returns the stored roles of subject when they were stored for the

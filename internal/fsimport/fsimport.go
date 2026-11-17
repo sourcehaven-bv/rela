@@ -66,6 +66,11 @@ type Target struct {
 	// Nil: accepted; a source with unfinished runs is then refused, so no
 	// run header is copied without the state that moves it.
 	FlowRuns flowrun.Store
+	// Records takes the source's record rows.
+	//
+	// Nil: accepted; a source with rows of a declared record type is then
+	// refused, so no row is dropped without a word.
+	Records RecordTarget
 }
 
 // Opened is a target database opened by a [Backend].

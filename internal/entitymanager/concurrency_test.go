@@ -6,17 +6,18 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
@@ -119,7 +120,7 @@ func concurrencyManager(t *testing.T, st store.Store) *entitymanager.Manager {
 		Templater:   nopTemplater{},
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
-		Transitions: statemachine.EmptySet(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -338,10 +339,10 @@ func TestConcurrency_PostAutomationRewriteKeepsInterleavedWrite(t *testing.T) {
 
 	meta, err := metamodel.Parse([]byte(concurrencyMetamodelYAML))
 	require.NoError(t, err)
-	engine := automation.NewEngine([]automation.Automation{{
+	engine := triggers.NewEngine([]triggers.Rule{{
 		Name: "stamp-on-create",
-		On:   automation.Trigger{Entity: []string{"note"}, Created: true},
-		Do:   []automation.Action{{Set: "p7", Value: "automated"}},
+		On:   triggers.Trigger{Entity: []string{"note"}, Created: true},
+		Do:   []triggers.Action{{Set: "p7", Value: "automated"}},
 	}})
 	runner, err := autocascade.New(autocascade.Deps{Engine: engine})
 	require.NoError(t, err)
@@ -351,7 +352,7 @@ func TestConcurrency_PostAutomationRewriteKeepsInterleavedWrite(t *testing.T) {
 		Templater:   nopTemplater{},
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
-		Transitions: statemachine.EmptySet(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		Automations: engine,
 		Cascade:     runner,

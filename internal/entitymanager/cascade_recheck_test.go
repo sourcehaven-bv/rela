@@ -5,14 +5,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -43,17 +44,17 @@ entities:
 
 // duplicateEmailAutomation sets the unique `email` to an
 // already-taken value whenever a persoon is created.
-func duplicateEmailAutomation() automation.Automation {
-	return automation.Automation{
+func duplicateEmailAutomation() triggers.Rule {
+	return triggers.Rule{
 		Name: "person-gets-duplicate-email",
-		On:   automation.Trigger{Entity: []string{"persoon"}, Created: true},
-		Do:   []automation.Action{{Set: "email", Value: "taken@example.com"}},
+		On:   triggers.Trigger{Entity: []string{"persoon"}, Created: true},
+		Do:   []triggers.Action{{Set: "email", Value: "taken@example.com"}},
 	}
 }
 
 // newRecheckManager wires a manager with the supplied automations and
 // seeds one persoon already holding "taken@example.com".
-func newRecheckManager(t *testing.T, autos []automation.Automation) (*entitymanager.Manager, store.Store) {
+func newRecheckManager(t *testing.T, autos []triggers.Rule) (*entitymanager.Manager, store.Store) {
 	t.Helper()
 	meta, err := metamodel.Parse([]byte(cascadeRecheckMeta))
 	if err != nil {
@@ -67,7 +68,7 @@ func newRecheckManager(t *testing.T, autos []automation.Automation) (*entitymana
 		t.Fatalf("seed: %v", seedErr)
 	}
 
-	engine := automation.NewEngine(autos)
+	engine := triggers.NewEngine(autos)
 	runner, err := autocascade.New(autocascade.Deps{Engine: engine})
 	if err != nil {
 		t.Fatalf("autocascade.New: %v", err)
@@ -80,7 +81,7 @@ func newRecheckManager(t *testing.T, autos []automation.Automation) (*entitymana
 		ACL:         acl.NopACL{},
 		Automations: engine,
 		Cascade:     runner,
-		Transitions: statemachine.EmptySet(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -119,12 +120,12 @@ func countHolders(t *testing.T, st store.Store) int {
 // weaker either.
 func TestCascadeWrite_UniqueRecheckedAfterAutomation(t *testing.T) {
 	t.Parallel()
-	mgr, st := newRecheckManager(t, []automation.Automation{
+	mgr, st := newRecheckManager(t, []triggers.Rule{
 		{
 			Name: "ticket-creates-person",
-			On:   automation.Trigger{Entity: []string{"ticket"}, Created: true},
-			Do: []automation.Action{{
-				CreateEntity: &automation.CreateEntityAction{
+			On:   triggers.Trigger{Entity: []string{"ticket"}, Created: true},
+			Do: []triggers.Action{{
+				CreateEntity: &triggers.CreateEntityAction{
 					Type:       "persoon",
 					Properties: map[string]string{"naam": "New Person"},
 				},
@@ -161,7 +162,7 @@ func TestCascadeWrite_UniqueRecheckedAfterAutomation(t *testing.T) {
 // top-level path stays strict.
 func TestTopLevelCreate_UniqueRecheckedAfterAutomation(t *testing.T) {
 	t.Parallel()
-	mgr, st := newRecheckManager(t, []automation.Automation{duplicateEmailAutomation()})
+	mgr, st := newRecheckManager(t, []triggers.Rule{duplicateEmailAutomation()})
 
 	p := entity.New("", "persoon")
 	p.SetString("naam", "Direct")
@@ -180,12 +181,12 @@ func TestTopLevelCreate_UniqueRecheckedAfterAutomation(t *testing.T) {
 // automation setting an unconstrained property must still work.
 func TestCascadeWrite_ValidAutomationValueStillLands(t *testing.T) {
 	t.Parallel()
-	mgr, st := newRecheckManager(t, []automation.Automation{
+	mgr, st := newRecheckManager(t, []triggers.Rule{
 		{
 			Name: "ticket-creates-person",
-			On:   automation.Trigger{Entity: []string{"ticket"}, Created: true},
-			Do: []automation.Action{{
-				CreateEntity: &automation.CreateEntityAction{
+			On:   triggers.Trigger{Entity: []string{"ticket"}, Created: true},
+			Do: []triggers.Action{{
+				CreateEntity: &triggers.CreateEntityAction{
 					Type:       "persoon",
 					Properties: map[string]string{"naam": "New Person"},
 				},
@@ -193,8 +194,8 @@ func TestCascadeWrite_ValidAutomationValueStillLands(t *testing.T) {
 		},
 		{
 			Name: "person-gets-unique-email",
-			On:   automation.Trigger{Entity: []string{"persoon"}, Created: true},
-			Do:   []automation.Action{{Set: "email", Value: "fresh@example.com"}},
+			On:   triggers.Trigger{Entity: []string{"persoon"}, Created: true},
+			Do:   []triggers.Action{{Set: "email", Value: "fresh@example.com"}},
 		},
 	})
 
@@ -259,29 +260,29 @@ func TestCascadeWrite_TransitionRecheckedAfterAutomation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("metamodel.Parse: %v", err)
 	}
-	machines, err := statemachine.Compile(meta)
+	machines, err := transitions.CompileTransitions(meta)
 	if err != nil {
-		t.Fatalf("statemachine.Compile: %v", err)
+		t.Fatalf("transitions.CompileTransitions: %v", err)
 	}
 	st := memstore.New()
 
-	autos := []automation.Automation{
+	autos := []triggers.Rule{
 		{
 			Name: "ticket-creates-taak",
-			On:   automation.Trigger{Entity: []string{"ticket"}, Created: true},
-			Do: []automation.Action{{
-				CreateEntity: &automation.CreateEntityAction{Type: "taak"},
+			On:   triggers.Trigger{Entity: []string{"ticket"}, Created: true},
+			Do: []triggers.Action{{
+				CreateEntity: &triggers.CreateEntityAction{Type: "taak"},
 			}},
 		},
 		{
 			// "done" is neither the entry value nor reachable from todo in
 			// one legal move.
 			Name: "taak-jumps-to-done",
-			On:   automation.Trigger{Entity: []string{"taak"}, Created: true},
-			Do:   []automation.Action{{Set: "status", Value: "done"}},
+			On:   triggers.Trigger{Entity: []string{"taak"}, Created: true},
+			Do:   []triggers.Action{{Set: "status", Value: "done"}},
 		},
 	}
-	engine := automation.NewEngine(autos)
+	engine := triggers.NewEngine(autos)
 	runner, err := autocascade.New(autocascade.Deps{Engine: engine})
 	if err != nil {
 		t.Fatalf("autocascade.New: %v", err)
@@ -337,18 +338,18 @@ relations: {}`, 1)
 		t.Fatal(err)
 	}
 	st := memstore.New()
-	engine := automation.NewEngine([]automation.Automation{
+	engine := triggers.NewEngine([]triggers.Rule{
 		{
 			Name: "spawn-item",
-			On:   automation.Trigger{Entity: []string{"order"}, Created: true},
-			Do: []automation.Action{{CreateEntity: &automation.CreateEntityAction{
+			On:   triggers.Trigger{Entity: []string{"order"}, Created: true},
+			Do: []triggers.Action{{CreateEntity: &triggers.CreateEntityAction{
 				Type: "item", Properties: map[string]string{"source": "2"},
 			}}},
 		},
 		{
 			Name: "item-source",
-			On:   automation.Trigger{Entity: []string{"item"}, Created: true},
-			Do:   []automation.Action{{Set: "source", Value: "4"}},
+			On:   triggers.Trigger{Entity: []string{"item"}, Created: true},
+			Do:   []triggers.Action{{Set: "source", Value: "4"}},
 		},
 	})
 	runner, err := autocascade.New(autocascade.Deps{Engine: engine})
@@ -358,7 +359,7 @@ relations: {}`, 1)
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{},
 		ACL: acl.NopACL{}, Automations: engine, Cascade: runner,
-		Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		Transitions: transitions.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {

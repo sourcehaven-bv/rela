@@ -18,10 +18,13 @@ func TestPosition_StoreMatchesGoPath(t *testing.T) {
 
 	scopes := []ScopeDescriptor{
 		{Source: "list", Type: "ticket"},
-		{Source: "list", Type: "ticket", Sort: "due"},
-		{Source: "list", Type: "ticket", Sort: "-due"},
-		{Source: "list", Type: "ticket", Sort: "due,title"},
-		{Source: "list", Type: "ticket", Sort: "-due", Filters: map[string]string{"filter[status]": "open"}},
+		{Source: "list", Type: "ticket", ListQuery: ListQuery{Sort: "due"}},
+		{Source: "list", Type: "ticket", ListQuery: ListQuery{Sort: "-due"}},
+		{Source: "list", Type: "ticket", ListQuery: ListQuery{Sort: "due,title"}},
+		{
+			Source: "list", Type: "ticket", Filters: map[string]string{"filter[status]": "open"},
+			ListQuery: ListQuery{Sort: "-due"},
+		},
 		{Source: "list", Type: "ticket", Filters: map[string]string{"filter[status][ne]": "open"}},
 	}
 	for _, scope := range scopes {
@@ -96,8 +99,8 @@ func TestPosition_StoreDeclines(t *testing.T) {
 	app, d := pushdownApp(t)
 	ctx := gateCtxFor(aliceCtx(), t, d)
 	for name, scope := range map[string]ScopeDescriptor{
-		"search source": {Source: "search", Type: "ticket", Q: "type:ticket"},
-		"free text":     {Source: "list", Type: "ticket", Q: "ticket"},
+		"search source": {Source: "search", Type: "ticket", ListQuery: ListQuery{Q: "type:ticket"}},
+		"free text":     {Source: "list", Type: "ticket", ListQuery: ListQuery{Q: "ticket"}},
 		"ordered op":    {Source: "list", Type: "ticket", Filters: map[string]string{"filter[title][gt]": "A"}},
 	} {
 		t.Run(name, func(t *testing.T) {

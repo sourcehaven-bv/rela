@@ -190,6 +190,17 @@
       "denied": "Notifications are blocked for this site. Allow them in your browser's site settings, then turn this on again.",
       "signedOut": "Sign in to choose notifications.",
       "noStorage": "This browser does not let rela store data for this site, so it cannot tell new inbox entries from old ones. Allow site data and try again."
+    },
+    "relationDefault": {
+      "none": "None",
+      "notFound": "not found",
+      "choose": "Choose…",
+      "change": "Change…",
+      "clear": "Clear",
+      "chooseFor": "Choose the default target of {relation}",
+      "clearFor": "Clear the default target of {relation}",
+      "changeFor": "Change the default target of {relation}",
+      "loadFailed": "could not load"
     }
   },
   "errors": {
@@ -415,7 +426,8 @@
     "action": {
       "confirmTitle": "{label}?",
       "confirmRun": "Run {label} on this entity?",
-      "done": "{label}: done"
+      "done": "{label}: done",
+      "running": "Running…"
     },
     "loadFailed": "Failed to load entity",
     "noEditForm": "No edit form configured for this entity type",
@@ -543,6 +555,35 @@
       "movedUp": "{label} moved up",
       "movedDown": "{label} moved down",
       "failed": "Could not move the row"
+    },
+    "llmProposal": {
+      "title": "{label}: proposed changes",
+      "intro": "The AI proposed these changes. Nothing is saved until you apply them. Text values start unticked: read them before you tick them.",
+      "empty": "The AI proposed no changes.",
+      "properties": "Properties",
+      "relations": "Relations",
+      "apply": "Apply selected",
+      "applied": "{label}: changes applied",
+      "stale": "{property} changed since the proposal was made, so it was not saved.",
+      "saveFailed": "The changes could not be saved",
+      "linkFailed": "Could not add {relation} to {title}: {reason}",
+      "records": "New records",
+      "newRecord": "{relation}: new {type}",
+      "createFailed": "Could not create the new {type} for {relation}: {reason}",
+      "createUnlinked": "Created {id}, but could not add it as {relation}: {reason}. Link or delete it yourself.",
+      "model": "Proposed by {model}"
+    },
+    "llmBatch": {
+      "intro": "The AI proposed changes for several entities at once. Nothing is saved until you apply them. Every change starts unticked: text in one entity can steer what the AI proposed for another, so read each change before you tick it.",
+      "confirm": "Send 1 entity to the AI provider? | Send {n} entities to the AI provider?",
+      "running": "Asking the AI…",
+      "runFailed": "{label} failed",
+      "tooMany": "This action runs on at most {max} entities at once; {n} are selected.",
+      "stale": "{entity}: {property} changed since the proposal was made, so it was not saved.",
+      "saveFailed": "{entity}: the changes could not be saved: {reason}",
+      "unchanged": "1 entity has no proposed change. | {count} entities have no proposed change.",
+      "skipped": "1 entity was not sent: the action does not apply to it, or you may not change it. | {count} entities were not sent: the action does not apply to them, or you may not change them.",
+      "failed": "{entity}: {reason}"
     }
   },
   "document": {
@@ -575,7 +616,30 @@
     "deleteTitle": "Delete {type}?",
     "deleteFailed": "Failed to delete",
     "deleted": "Deleted",
-    "confirmRun": "Run {label}?"
+    "confirmRun": "Run {label}?",
+    "steps": {
+      "label": "Steps",
+      "back": "Back",
+      "next": "Next",
+      "present": "Present",
+      "exitPresent": "Exit",
+      "fullscreen": "Full screen",
+      "exitFullscreen": "Exit full screen",
+      "done": "done",
+      "walk": {
+        "label": "Rows of this step",
+        "position": "{current} of {total}",
+        "prev": "Previous row",
+        "next": "Next row",
+        "empty": "Nothing to go through",
+        "emptyDescription": "This step's list has no rows.",
+        "missing": "Not in this list",
+        "missingDescription": "{id} is not one of the rows of this step. It may have been removed or changed.",
+        "first": "Go to the first row",
+        "error": "Could not read the rows of this step",
+        "errorDescription": "Reload the page to try again."
+      }
+    }
   },
   "editor": {
     "command": {
@@ -1215,7 +1279,30 @@
     "renameFailed": "Could not rename the group",
     "moveGroupFailed": "Could not move the group",
     "groupElsewhere": "This card is in a group this board does not show",
-    "groupForbidden": "You may not make a group of these cards"
+    "groupForbidden": "You may not make a group of these cards",
+    "quickAddPlaceholder": "Add a card…",
+    "quickAddLabel": "Add a card to {column}",
+    "quickAddLaneLabel": "Add a card to {column}, {lane}",
+    "quickAddFailed": "Could not add the card",
+    "quickAddWarnings": "Card added with warnings: {warnings}",
+    "quickAddHidden": "Added \"{title}\". This board's filters hide it.",
+    "addColumn": "Add column",
+    "addColumnLabel": "Name of the new column",
+    "addColumnPlaceholder": "Column name…",
+    "addColumnCancel": "Cancel",
+    "addColumnFailed": "Could not add the column",
+    "addColumnExists": "The board already has a column named {name}",
+    "addColumnNoName": "Use at least one letter or digit in the name",
+    "addColumnUnsupported": "This column's values are not declared on the property, so the board cannot add one",
+    "addColumnSaving": "Saving the column…",
+    "batchTooMany": "This action runs on at most {max} cards at once; {n} are on the board. Filter the board or collapse columns.",
+    "cellTone": {
+      "success": "Good",
+      "warning": "Warning",
+      "error": "Critical",
+      "info": "Info",
+      "new": "New"
+    }
   },
   "calendar": {
     "month": "Month",
@@ -1247,6 +1334,8 @@
     "loading": "Loading dashboard...",
     "notFound": "Dashboard not found",
     "notFoundDescription": "No dashboard is named “{name}”.",
+    "anchorMissing": "Open this dashboard from an entity",
+    "anchorMissingDescription": "This dashboard counts for one entity. Open it as a tab of that entity's page.",
     "noCards": "No dashboard cards to show.",
     "noResults": "No results",
     "validation": "Validation",
@@ -1457,5 +1546,36 @@
       "actionFailed": "The action failed",
       "busy": "A sync is running on this remote. Try again shortly."
     }
+  },
+  "configureAutomations": {
+    "title": "Automations",
+    "one": "Automation",
+    "new": "New automation",
+    "intro": "An automation does something by itself when a record is created or changes, such as creating a checklist. Automations run in the order listed.",
+    "empty": "No automations yet.",
+    "nothingYet": "Nothing yet",
+    "readOnly": "Read only",
+    "remove": "Remove",
+    "notFound": "No such automation",
+    "locked": "This automation runs a script or uses a setting that is changed in flows.yaml. It is shown here so you can see what it does.",
+    "name": "Name",
+    "description": "Description",
+    "when": "When",
+    "recordOfType": "A record of type",
+    "changes": "Changes",
+    "anyProperty": "Any property",
+    "to": "To",
+    "anyChange": "Leave empty for any change.",
+    "onCreated": "When a record is created",
+    "onUpdated": "When a record is updated",
+    "then": "Then",
+    "thenHelp": "The outputs run in the order shown.",
+    "outputs": "Outputs, in the order they run",
+    "setProperty": "Set a property",
+    "chooseProperty": "Choose a property",
+    "setHint": "Text, or {placeholder} for the date.",
+    "addOutput": "Add output",
+    "removeOutput": "Remove {name}",
+    "usedBy": "These automations use it: {names}."
   }
 }

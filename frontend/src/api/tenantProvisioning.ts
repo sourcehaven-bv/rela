@@ -1,13 +1,14 @@
 /**
  * Tenant provisioning (TKT-TNPRV8).
  *
- * In a multi-tenant rela-server, the first request of an organization that
- * has no tenant yet may start creating one. The server does not hold that
- * request open: it answers `202` with a `tenant_provisioning` problem and a
- * Location naming the status endpoint. A create that is throttled or failed
- * is a `503` with `tenant_provisioning_busy` or `tenant_provisioning_failed`.
- * On any of these the SPA shows a "setting up" screen, polls the endpoint,
- * and reloads once it reports `ready`.
+ * In a multi-tenant rela-server, a request of an organization whose tenant
+ * is still being created does not reach the tenant. A read is answered `202`
+ * with `{"status": "provisioning"}`; a write is a `503` `tenant_provisioning`
+ * problem. A create that is throttled, failed or needs an operator is a `503`
+ * `provisioning_busy`, `provisioning_failed` or `provisioning_needs_operator`
+ * problem. On any of these the SPA shows a "setting up" screen, polls the
+ * status endpoint, and reloads once it reports `active`, or `suspended`, which
+ * the reloaded app then reports as a refused organization.
  */
 import { ref } from 'vue'
 import { apiUrl } from './base'
@@ -20,29 +21,32 @@ export type ProvisioningState = 'idle' | 'provisioning' | 'failed'
 export const tenantProvisioning = ref<ProvisioningState>('idle')
 
 /** The status endpoint's path, as the server serves it. */
-export const TENANT_STATUS_PATH = '/api/v1/_tenant/status'
+export const TENANT_STATUS_PATH = '/api/v1/_tenant'
 
 const POLL_MS = 2000
 const FAILED_POLL_MS = 30000
 
-const PROBLEMS: Record<number, string[]> = {
-  202: ['tenant_provisioning'],
-  503: ['tenant_provisioning_busy', 'tenant_provisioning_failed'],
-}
+const UNAVAILABLE_PROBLEMS = [
+  'tenant_provisioning',
+  'provisioning_busy',
+  'provisioning_failed',
+  'provisioning_needs_operator',
+]
 
 /** Whether a response is the server's "your organization is being set up". */
 export function isProvisioningResponse(status: number, data: unknown): boolean {
-  const codes = PROBLEMS[status]
-  if (!codes || typeof data !== 'object' || data === null) return false
+  if (typeof data !== 'object' || data === null) return false
+  if (status === 202) return (data as { status?: unknown }).status === 'provisioning'
+  if (status !== 503) return false
   const code = problemCode((data as { type?: string }).type)
-  return code !== undefined && codes.includes(code)
+  return code !== undefined && UNAVAILABLE_PROBLEMS.includes(code)
 }
 
 let polling = false
 
 /**
  * Starts polling the status endpoint once, however many requests saw the
- * `202`. Reloads the page when the tenant is ready. Exported hooks make it
+ * `202`. Reloads the page when the tenant is active. Exported hooks make it
  * testable: `fetchFn`, `wait` and `reload` default to the browser's.
  */
 export function startProvisioningPoll(
@@ -67,14 +71,16 @@ export function startProvisioningPoll(
           cache: 'no-store',
         })
         const body = (await res.json().catch(() => ({}))) as { status?: string; type?: string }
-        // Ready, or a refusal polling cannot fix (a session that ended, an
-        // org the server does not serve): reload, so the app handles it.
-        if ((res.ok && body.status === 'ready') || res.status === 401 || res.status === 403) {
+        // Active, or a state polling cannot fix (a suspended org, a session
+        // that ended, an org the server does not serve): reload, so the app
+        // handles it.
+        const settled = body.status === 'active' || body.status === 'suspended'
+        if ((res.ok && settled) || res.status === 401 || res.status === 403) {
           polling = false
           reload()
           return
         }
-        if (res.status === 202 || body.status === 'provisioning') {
+        if (body.status === 'provisioning') {
           tenantProvisioning.value = 'provisioning'
         } else {
           tenantProvisioning.value = 'failed'

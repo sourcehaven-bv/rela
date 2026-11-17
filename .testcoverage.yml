@@ -144,6 +144,8 @@ override:
     threshold: 70
   - path: ^internal/ingest$
     threshold: 90 # the webhook and feed write path, including the per-value flattening guard
+  - path: ^internal/mapimport$
+    threshold: 80 # mapping-file import: decode caps, plan diff, read gate and apply
   - path: ^internal/subscription$
     threshold: 85 # feed polling: untrusted content, redirects and dedupe state
   - path: ^internal/reconclient$
@@ -161,6 +163,7 @@ exclude:
     - ^cmd/rela                # main entry point
     - ^tools/seqtrace/[^/]+\.go$         # tracing runtime; only runs inside rewrite's TestDemo subprocess
     - ^tools/seqtrace/cmd      # diagnostic CLI entry point
+    - ^tools/scalerun/cmd      # CLI entry point; needs postgres and the built binaries
     - ^internal/testutil       # test helpers
     - ^third_party/            # forked third-party code; tested by its own upstream suite
     - ^internal/tracer/tracertest # test helper (tracer.New for fixtures)
@@ -178,6 +181,7 @@ exclude:
     - ^internal/lease/leasetest # shared conformance test kit (exercised via the kv + pg backends)
     - ^internal/channels/channelstest # shared conformance test kit (exercised via the file, sqlite and pg backends)
     - ^internal/flowrun/flowruntest # shared conformance test kit (exercised via the kv, sqlite and pg backends)
+    - ^internal/records/recordstest # shared conformance test kit (exercised via the file, sqlite and pg backends)
     - ^internal/datamigration/migstatetest # shared conformance test kit (exercised via the file/memory/sqlite/pg backends)
     - ^internal/tokenstore/tokenstoretest # shared conformance test kit (exercised via Sealed over FSKV, sqlite and pg state stores, and the desktop keychain store)
     - ^internal/appbuild/backendtest # build-tagged test backend supplier; the postgres half only compiles under -tags postgres
@@ -187,6 +191,7 @@ exclude:
     - ^internal/lease/pglease # same live-DB gate as pgstore: reads ~0% when the suite skips
     - ^internal/channels/pgchannels # same live-DB gate as pgstore: reads ~10% when the suite skips; the SQL itself is sqlchannels, covered via SQLite
     - ^internal/flowrun/pgflowrun # same live-DB gate as pgstore; the SQL itself is sqlflowrun, covered via SQLite
+    - ^internal/records/sqlrecords # the shared SQL behind pgrecords and sqliterecords; exercised through their suites, so without -coverpkg its own number reads 0
     - ^internal/sqlexec/pgexec # the pgx adapter; its statements run only in the live-DB pgflowrun and pgchannels suites
     - ^internal/datamigration/pgmigstate # same live-DB gate as pgstore: reads 8% when the suite skips, ~77% in the postgres CI job
     - ^internal/schedulerstate/pgschedstate # same live-DB gate as pgstore: reads 1% when the suite skips, ~83% with a live DB

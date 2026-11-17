@@ -7,14 +7,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -87,7 +88,7 @@ func newUngatedPatchManager(t *testing.T, gate entitymanager.FieldWriteGate, st 
 		Templater:   nopTemplater{},
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
-		Transitions: statemachine.EmptySet(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   gate,
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -639,12 +640,12 @@ func TestPatchEntity_RunsFullPipeline(t *testing.T) {
 	}
 	st := memstore.New()
 	sink := audit.NewMemory()
-	auto := automation.Automation{
+	auto := triggers.Rule{
 		Name: "stamp-notes-on-status-change",
-		On:   automation.Trigger{Entity: []string{"task"}, Property: "status"},
-		Do:   []automation.Action{{Set: "notes", Value: "touched-by-automation"}},
+		On:   triggers.Trigger{Entity: []string{"task"}, Property: "status"},
+		Do:   []triggers.Action{{Set: "notes", Value: "touched-by-automation"}},
 	}
-	engine := automation.NewEngine([]automation.Automation{auto})
+	engine := triggers.NewEngine([]triggers.Rule{auto})
 	runner, err := autocascade.New(autocascade.Deps{Engine: engine})
 	if err != nil {
 		t.Fatalf("autocascade.New: %v", err)
@@ -657,7 +658,7 @@ func TestPatchEntity_RunsFullPipeline(t *testing.T) {
 		ACL:         acl.NopACL{},
 		Automations: engine,
 		Cascade:     runner,
-		Transitions: statemachine.EmptySet(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -699,12 +700,12 @@ func TestPatchEntity_AutomationNotFieldGated(t *testing.T) {
 	// The caller may NOT author `notes` …
 	gate := &recordingGate{denied: map[string]bool{"notes": true}}
 	// … but an automation sets exactly that property.
-	auto := automation.Automation{
+	auto := triggers.Rule{
 		Name: "stamp-notes-on-status-change",
-		On:   automation.Trigger{Entity: []string{"task"}, Property: "status"},
-		Do:   []automation.Action{{Set: "notes", Value: "set-by-automation"}},
+		On:   triggers.Trigger{Entity: []string{"task"}, Property: "status"},
+		Do:   []triggers.Action{{Set: "notes", Value: "set-by-automation"}},
 	}
-	engine := automation.NewEngine([]automation.Automation{auto})
+	engine := triggers.NewEngine([]triggers.Rule{auto})
 	runner, err := autocascade.New(autocascade.Deps{Engine: engine})
 	if err != nil {
 		t.Fatalf("autocascade.New: %v", err)
@@ -717,7 +718,7 @@ func TestPatchEntity_AutomationNotFieldGated(t *testing.T) {
 		ACL:         acl.NopACL{},
 		Automations: engine,
 		Cascade:     runner,
-		Transitions: statemachine.EmptySet(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   gate,
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -785,7 +786,7 @@ func TestPatchEntity_GateRunsAfterAuthorize(t *testing.T) {
 				Templater:   nopTemplater{},
 				Audit:       audit.Nop{},
 				ACL:         denyWritesACL{},
-				Transitions: statemachine.EmptySet(),
+				Transitions: transitions.NoTransitions(),
 				FieldGate:   gate,
 				AnchorGuard: entitymanager.NopAnchorGuard{},
 			})

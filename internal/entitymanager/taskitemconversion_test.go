@@ -9,17 +9,18 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
@@ -150,7 +151,7 @@ type taskItemOptions struct {
 	fieldGate  entitymanager.FieldWriteGate
 	visibility func(store.Store) entitymanager.CopyReader
 	edges      entitymanager.TaskItemEdgeGate
-	autos      []automation.Automation
+	autos      []triggers.Rule
 	mode       entitymanager.ValidationMode
 }
 
@@ -198,7 +199,7 @@ func newTaskItemFixture(t *testing.T, opts taskItemOptions) taskItemFixture {
 	t.Helper()
 	meta, err := metamodel.Parse([]byte(taskItemSchema))
 	require.NoError(t, err)
-	transitions, err := statemachine.Compile(meta)
+	transitions, err := transitions.CompileTransitions(meta)
 	require.NoError(t, err)
 	st := opts.st
 	if st == nil {
@@ -228,7 +229,7 @@ func newTaskItemFixture(t *testing.T, opts taskItemOptions) taskItemFixture {
 	}
 	auditor := deps.Audit.(*audit.Memory)
 	if len(opts.autos) > 0 {
-		engine := automation.NewEngine(opts.autos)
+		engine := triggers.NewEngine(opts.autos)
 		runner, rErr := autocascade.New(autocascade.Deps{Engine: engine})
 		require.NoError(t, rErr)
 		deps.Automations, deps.Cascade = engine, runner
@@ -284,7 +285,7 @@ func newBareManager(t *testing.T) *entitymanager.Manager {
 	require.NoError(t, err)
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: memstore.New(), Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{},
-		Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		Transitions: transitions.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	require.NoError(t, err)
@@ -672,7 +673,7 @@ task_item_conversions:
 	st := memstore.New()
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{},
-		Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		Transitions: transitions.NoTransitions(), FieldGate: entitymanager.AllowAllFieldGate{},
 		CopyReadGate: entitymanager.AllowAllCopyReadGate{}, CopyVisibility: allowAllCopyVisibility(t, st),
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
@@ -814,10 +815,10 @@ func (r *patchingTicketReader) Get(ctx context.Context, _, id string, face entit
 
 func TestTaskItemConvert_RunsOnCreateAutomations(t *testing.T) {
 	t.Parallel()
-	f := newTaskItemFixture(t, taskItemOptions{autos: []automation.Automation{{
+	f := newTaskItemFixture(t, taskItemOptions{autos: []triggers.Rule{{
 		Name: "stage-new-tasks",
-		On:   automation.Trigger{Entity: []string{"task"}, Created: true},
-		Do:   []automation.Action{{Set: "stage", Value: "triage"}},
+		On:   triggers.Trigger{Entity: []string{"task"}, Created: true},
+		Do:   []triggers.Action{{Set: "stage", Value: "triage"}},
 	}}})
 	res, err := f.conv.Convert(context.Background(), entitymanager.TaskItemRequest{
 		Definition: "subtask", SourceID: "TKT-1", Text: "x",

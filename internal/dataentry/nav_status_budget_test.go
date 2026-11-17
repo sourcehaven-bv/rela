@@ -24,12 +24,16 @@ import (
 const (
 	navStatusFieldPolicyBudget         = 8
 	navStatusRuleOnlyFieldPolicyBudget = 7
+	// nav status answered in the store: one scoped count per rule and the
+	// membership walk. Measured.
+	navStatusInStoreBudget = 4
 	// navItemsBudget (querybudget_test.go) measures the same endpoint with
 	// the default resolver, which redacts nothing; these redact through the
-	// field policy. With a list condition listPage primes the whole
-	// population and navItemsFor primes the page again, a fixed cost.
+	// field policy. A list condition that lowers is a store traversal on
+	// the page query, so it adds no read (TKT-I39Y7N4); it cost 12 on the
+	// Go path, which primed the whole population and then the page again.
 	navItemsFieldPolicyBudget          = 8
-	navItemsConditionFieldPolicyBudget = 12
+	navItemsConditionFieldPolicyBudget = 8
 )
 
 // fieldPolicy is [realisticBudgetPolicy] with `visible:` blocks on ticket:
@@ -70,20 +74,18 @@ func useFieldPolicy(t *testing.T, app *App, counting *storetest.Counting) *acl.D
 	return d
 }
 
-// fieldPolicyReads runs op at 10 and 50 tickets under [useFieldPolicy] and
-// returns the store reads of each run. Setup reads are not counted.
-func fieldPolicyReads(t *testing.T, install func(*App), op func(*App, context.Context)) (small, large int, detail string) {
+// fieldPolicyReads measures op under [useFieldPolicy] as [readsFor] does.
+// Setup reads are not counted.
+func fieldPolicyReads(t *testing.T, install func(*App), op func(*App, context.Context)) (cost budgetCost, detail string) {
 	t.Helper()
-	counts := make([]int, 0, 2)
-	for _, n := range []int{10, 50} {
-		app, counting, _, ctx := newBudgetAppOn(t, n, memstore.New())
+	measure := func(n, pad int) (storetest.Cost, string) {
+		app, counting, _, ctx := newBudgetAppPadded(t, n, pad, memstore.New(), budgetMeta())
 		install(app)
 		d := useFieldPolicy(t, app, counting)
 		op(app, gateCtxFor(ctx, t, d))
-		counts = append(counts, counting.Reads())
-		detail = counting.String()
+		return counting.Cost(), counting.String()
 	}
-	return counts[0], counts[1], detail
+	return measureBudget(measure)
 }
 
 // leadDoneCount is how many of the fixture's done tickets lie in EP1, the
@@ -115,7 +117,7 @@ func installDoneStatus(app *App, list dataentryconfig.List) {
 // principal's local roles per row: 867 statements per request on Atlas
 // (TKT-YLG695).
 func TestQueryBudget_NavStatusIsSizeIndependent(t *testing.T) {
-	small, large, detail := fieldPolicyReads(t,
+	b, detail := fieldPolicyReads(t,
 		func(app *App) {
 			installDoneStatus(app, dataentryconfig.List{
 				EntityType: "ticket",
@@ -127,19 +129,48 @@ func TestQueryBudget_NavStatusIsSizeIndependent(t *testing.T) {
 				t.Fatalf("no marker counted, so this budget proves nothing: %v", got)
 			}
 		})
-	assertBudget(t, "nav status", small, large, navStatusFieldPolicyBudget, detail)
+	// TODO(TKT-D3RAB0E): calls only. The marker counts in Go over a full
+	// header scan of the type (navStatusRows in nav_status.go, through
+	// scopedSortedEntitiesScoped to scopedHeaders' type scan in
+	// scopedread.go).
+	assertCallBudget(t, "nav status", b, navStatusFieldPolicyBudget, detail)
 }
 
 // Without a list condition, only the rules redact, and they are primed too.
 func TestQueryBudget_NavStatusRuleOnlyIsSizeIndependent(t *testing.T) {
-	small, large, detail := fieldPolicyReads(t,
+	b, detail := fieldPolicyReads(t,
 		func(app *App) { installDoneStatus(app, dataentryconfig.List{EntityType: "ticket"}) },
 		func(app *App, ctx context.Context) {
 			if got := navStatusAs(ctx, t, app); got["0"].Count == 0 {
 				t.Fatalf("no marker counted, so this budget proves nothing: %v", got)
 			}
 		})
-	assertBudget(t, "nav status (rule only)", small, large, navStatusRuleOnlyFieldPolicyBudget, detail)
+	// TODO(TKT-D3RAB0E): calls only, for the scan named on the test above.
+	assertCallBudget(t, "nav status (rule only)", b, navStatusRuleOnlyFieldPolicyBudget, detail)
+}
+
+// A rule and a list condition that read no field hidden from the principal
+// lower, so each rule is one scoped count in the store (TKT-I39Y7N4): no row
+// is read, whatever the size of the store.
+func TestQueryBudget_NavStatusInStoreIsSizeIndependent(t *testing.T) {
+	b, detail := fieldPolicyReads(t,
+		func(app *App) {
+			installNavStatusConfig(app,
+				map[string]dataentryconfig.List{"tickets": {
+					EntityType: "ticket", Condition: "related(entity, 'implements')",
+				}},
+				[]dataentryconfig.NavigationEntry{{Label: "Tickets", List: "tickets", Status: []dataentryconfig.NavStatusRule{
+					rule("warning", "{count} for nobody", "related(entity, 'assigned-to', { title = 'Nobody' })"),
+					rule("error", "{count} mine", "related(entity, 'assigned-to', { id = current_user.id })"),
+				}}})
+		},
+		func(app *App, ctx context.Context) {
+			got := navStatusAs(ctx, t, app)
+			if got["0"].Count == 0 || got["0"].Tone != "error" {
+				t.Fatalf("the second rule did not count, so this budget proves nothing: %v", got)
+			}
+		})
+	assertBudget(t, "nav status (in store)", b, navStatusInStoreBudget, detail)
 }
 
 // A generated sidebar group redacts each of its rows before taking the title.
@@ -150,12 +181,14 @@ func TestQueryBudget_NavItemsRedactionIsSizeIndependent(t *testing.T) {
 		pinned int
 	}{
 		{"nav items", dataentryconfig.List{EntityType: "ticket"}, navItemsFieldPolicyBudget},
+		// The condition lowers to a store traversal (TKT-I39Y7N4), so the
+		// group is paged in the store like a list without one.
 		{"nav items (condition)", dataentryconfig.List{
 			EntityType: "ticket", Condition: "related(entity, 'assigned-to', { id = current_user.id })",
 		}, navItemsConditionFieldPolicyBudget},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			small, large, detail := fieldPolicyReads(t,
+			b, detail := fieldPolicyReads(t,
 				func(app *App) {
 					installNavItemsGroup(app, tc.list, dataentryconfig.NavItemsFrom{Limit: 100})
 				},
@@ -167,7 +200,7 @@ func TestQueryBudget_NavItemsRedactionIsSizeIndependent(t *testing.T) {
 						t.Fatalf("nav items: %d %s", rec.Code, rec.Body)
 					}
 				})
-			assertBudget(t, tc.name, small, large, tc.pinned, detail)
+			assertBudget(t, tc.name, b, tc.pinned, detail)
 		})
 	}
 }

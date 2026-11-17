@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import RlDrawer from 'rela-components/components/overlay/RlDrawer.vue'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlButtonGroup from 'rela-components/components/common/RlButtonGroup.vue'
@@ -12,6 +13,8 @@ import RlText from 'rela-components/components/common/RlText.vue'
 import LockedNote from './LockedNote.vue'
 import { useConfigDraftStore } from '@/configure/configDraft'
 import {
+  automationsUsing,
+  automationTitle,
   choiceListNames,
   defaultText,
   entityTypeLabel,
@@ -47,6 +50,7 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [] }>()
 
 const draft = useConfigDraftStore()
+const { t } = useI18n()
 
 const name = ref('')
 const type = ref('string')
@@ -66,6 +70,14 @@ const current = computed<PropertyModel | undefined>(() =>
     : undefined
 )
 const locked = computed(() => current.value?.managed === true)
+/** The automations that read or write this property; removing it breaks them. */
+const usingAutomations = computed(() =>
+  current.value
+    ? automationsUsing(draft.currentFlows, props.entityType, current.value.name).map(
+        automationTitle
+      )
+    : []
+)
 
 watch(
   () => [props.property, open.value] as const,
@@ -225,6 +237,14 @@ function removeProperty() {
           Remove property
         </RlButton>
         <RlText size="sm" tone="muted">Values records hold for it are no longer shown.</RlText>
+        <RlText
+          v-if="usingAutomations.length"
+          size="sm"
+          tone="muted"
+          data-testid="property-automations"
+        >
+          {{ t('configureAutomations.usedBy', { names: usingAutomations.join(', ') }) }}
+        </RlText>
       </div>
     </form>
     <template #actions>

@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"github.com/Sourcehaven-BV/rela/internal/actionproposal"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
@@ -313,7 +314,7 @@ type RelationAffordance struct {
 
 // Transition is one resolved outgoing move of a state-machine-typed property
 // on a per-entity response (TKT-3G93B8). It is the wire projection of
-// statemachine.TransitionVerdict.
+// transitions.TransitionVerdict.
 //
 // To is the target value. Label is optional display text for the MOVE (the
 // action, e.g. "Start progress"); when empty the SPA falls back to the target
@@ -1186,9 +1187,13 @@ type SidebarSpace struct {
 // EntityType is set on an entity page, which shows one entity of that type
 // (the anchor) and is addressed as `/p/<page>/<entity>/<tab>`. Badge names
 // the anchor's property the header shows beside its title.
+//
+// Mode is "steps" when the SPA shows the tabs as numbered steps, and empty
+// for a tab bar.
 type SidebarPage struct {
 	dataentryconfig.PageHeader
-	Tabs []SidebarPageTab `json:"tabs"`
+	Mode dataentryconfig.PageMode `json:"mode,omitempty"`
+	Tabs []SidebarPageTab         `json:"tabs"`
 }
 
 // SidebarPageTab is one tab of a [SidebarPage]. View is the kind of view the
@@ -1200,6 +1205,12 @@ type SidebarPage struct {
 // "incoming", from the anchor's side), "root" when a gantt starts at the
 // anchor. The SPA uses Relation and Direction to link a new row to the
 // anchor; the server narrows the rows from its own config, never from these.
+//
+// Prompt is the question shown above the view on a steps page.
+//
+// Walk is true when the step shows the list's rows one at a time. DoneCheck
+// is true when the step declares `done_when:`; whether it is done is data,
+// so it comes per principal from /api/v1/_page_status, never from here.
 //
 // Links names, per entity type, the relation a row created while the tab is
 // open is linked to the anchor over. The space's Create menu uses it, so a
@@ -1213,7 +1224,23 @@ type SidebarPageTab struct {
 	Scope     string            `json:"scope,omitempty"`
 	Relation  string            `json:"relation,omitempty"`
 	Direction string            `json:"direction,omitempty"`
+	Prompt    string            `json:"prompt,omitempty"`
+	Walk      bool              `json:"walk,omitempty"`
+	DoneCheck bool              `json:"done_check,omitempty"`
 	Links     []SidebarPageLink `json:"links,omitempty"`
+}
+
+// PageStatusResponse is the body of GET /api/v1/_page_status: for each step
+// of a steps page that declares `done_when:` and that this principal sees,
+// whether the step is done. Keyed by tab id.
+type PageStatusResponse struct {
+	Steps map[string]PageStepStatus `json:"steps"`
+}
+
+// PageStepStatus says whether one step is done for this principal: the list
+// shows at least one row, and every row it shows satisfies `done_when:`.
+type PageStepStatus struct {
+	Done bool `json:"done"`
 }
 
 // SidebarPageLink is one entry of [SidebarPageTab.Links]: a row of Type is
@@ -1292,9 +1319,12 @@ type NavItem struct {
 // one with an empty `cards:`, and one where every card was filtered all
 // serialize as `[]`, so the SPA has a single "render what you got" path.
 type DashboardResponse struct {
-	Title       string               `json:"title,omitempty"`
-	Description string               `json:"description,omitempty"`
-	Cards       []DashboardCardEntry `json:"cards"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	// Cards of an entity dashboard each carry a `scope`; a client tells an
+	// entity dashboard by that, and passes `?anchor=` on
+	// /api/v1/_dashboard/card.
+	Cards []DashboardCardEntry `json:"cards"`
 }
 
 // DashboardCardEntry is one card of a DashboardResponse: its config plus its
@@ -1911,6 +1941,12 @@ type ActionResponse struct {
 	MessageType   string `json:"message_type,omitempty"`
 	Error         string `json:"error,omitempty"`
 	CorrelationID string `json:"correlation_id,omitempty"`
+	// Proposal is the reply of an `llm:` action. It is a proposal only:
+	// the action wrote nothing.
+	Proposal *actionproposal.Proposal `json:"proposal,omitempty"`
+	// Batch is the reply of a batch run of an `llm:` action. Like
+	// Proposal, it wrote nothing.
+	Batch *actionproposal.Batch `json:"batch,omitempty"`
 }
 
 // Mention is the resolved target of an entity-ID code span found in

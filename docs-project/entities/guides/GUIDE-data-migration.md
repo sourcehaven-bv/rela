@@ -37,7 +37,7 @@ data-shape-relevant slice of the metamodel — entity properties (type,
 required, list, format, values, default, computed expression), named enum value lists, and
 relation types (endpoints, cardinality, symmetry, content flag, scope, relation
 properties). Everything else — labels, descriptions, colors, views, forms,
-automations, validations, id prefixes — is excluded, so cosmetic edits never
+validations, id prefixes — is excluded, so cosmetic edits never
 demand a migration.
 
 Each store records both answers — the applied migration names and the
@@ -439,7 +439,7 @@ end
 The script never writes anything itself — the migration runner applies the
 returned patch with raw store access. That is deliberate: migration input is
 by definition invalid under the new schema, so the normal write path
-(validation, automations, state machines) must not run. The sandbox has no
+(validation, triggers, state machines) must not run. The sandbox has no
 `io`, `os`, or file access, and no `require`: a migration must transform the
 same way when it is re-run later, and a shared module in `lib/` may have
 changed since. Use `entity: "*"` (quoted) to transform every
@@ -577,7 +577,7 @@ declarative steps are idempotent by construction; a `lua:` step is idempotent
 only if you wrote it that way.
 
 Execution writes raw batches to the store (bypassing per-entity validation,
-automations, and ACL — the trust boundary is your shell, exactly like
+triggers, and ACL — the trust boundary is your shell, exactly like
 `rela db migrate`). Each applied file emits one audit record with names and
 counts, never content. On PostgreSQL, migrated content appears in
 the version history attributed to the operator with the `data-migration`

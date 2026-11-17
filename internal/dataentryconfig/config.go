@@ -242,6 +242,12 @@ type Action struct {
 	Confirm     ActionConfirm     `yaml:"confirm,omitempty" json:"confirm,omitzero"`
 	Set         map[string]string `yaml:"set,omitempty" json:"set,omitempty"`
 
+	// LLM makes this a declarative LLM action (TKT-4USH1HO), the third mode
+	// next to Set and Script. It requires AvailableOn with one entity type
+	// and a Permission. See [LLMAction]. Only `batch` is serialized, so the SPA
+	// knows to send all selected rows of a batch action in one request.
+	LLM *LLMAction `yaml:"llm,omitempty" json:"llm,omitempty"`
+
 	// AvailableOn offers the action on entity detail pages (TKT-VVS16W). Nil
 	// means no detail page, which is the behavior before the key existed.
 	//
@@ -1187,6 +1193,12 @@ func (c *Config) HasPropertyFilterControl(entityType, property string) bool {
 // list info regions. Unlike List there is no Description fallback: that alias
 // exists only because List.Description predated the feature and was already
 // present in configs, and a Kanban has no such legacy field to accommodate.
+//
+// The plimsoll directive is the format-mirror exception documented on
+// [Config]: each exported field is one key of a kanban in data-entry.yaml.
+// `cell_colors` (TKT-83S9G0Z) is the most recent.
+//
+//plimsoll:max-fields=23
 type Kanban struct {
 	EntityType     string `yaml:"entity_type" json:"entity"`
 	Title          string `yaml:"title" json:"title"`
@@ -1199,7 +1211,11 @@ type Kanban struct {
 	Columns          []KanbanColumn     `yaml:"columns,omitempty" json:"columns,omitempty"`
 	SwimlaneProperty string             `yaml:"swimlane_property,omitempty" json:"swimlane_property,omitempty"`
 	Swimlanes        []KanbanSwimlane   `yaml:"swimlanes,omitempty" json:"swimlanes,omitempty"`
-	Card             KanbanCard         `yaml:"card" json:"card"`
+	// CellColors gives a cell of a swimlane board a background color, keyed
+	// by column value and then by lane value, so the board reads as a heat
+	// map (TKT-83S9G0Z). See [KanbanCellColor].
+	CellColors map[string]map[string]KanbanCellColor `yaml:"cell_colors,omitempty" json:"cell_colors,omitempty"`
+	Card       KanbanCard                            `yaml:"card" json:"card"`
 	// Layout is "" (columns side by side) or [LayoutWall]. A wall shows the
 	// cards as a wrapping grid. Without columns it is one grid of all cards;
 	// with ColumnsFrom the cards without a target form a pile on top, the
@@ -1209,9 +1225,22 @@ type Kanban struct {
 	// ColumnSummary adds one line per entry under each column heading, such
 	// as a count of the cards or the sum of an amount (TKT-SVLQQ6). Computed
 	// by the SPA over the cards the reader can see.
-	ColumnSummary  []Summary       `yaml:"column_summary,omitempty" json:"column_summary,omitempty"`
-	EditForm       string          `yaml:"edit_form,omitempty" json:"edit_form,omitempty"`
-	CreateForm     string          `yaml:"create_form,omitempty" json:"create_form,omitempty"`
+	ColumnSummary []Summary `yaml:"column_summary,omitempty" json:"column_summary,omitempty"`
+	EditForm      string    `yaml:"edit_form,omitempty" json:"edit_form,omitempty"`
+	CreateForm    string    `yaml:"create_form,omitempty" json:"create_form,omitempty"`
+	// QuickAdd puts a title input at the foot of every column and swimlane
+	// cell (TKT-IP4273S). Enter creates a card with the title, the column
+	// value and the swimlane value set, through the ordinary create API.
+	// Config load refuses it when a create with only those values cannot
+	// fill a required property; see validateKanbanQuickAdd.
+	QuickAdd bool `yaml:"quick_add,omitempty" json:"quick_add,omitempty"`
+	// AddColumn offers a control after the last column that adds a column
+	// (TKT-1X5G3BP). A column of an enum board is a value of the column
+	// property, so a new one is a config write: the SPA saves it through
+	// the Configure API, and only shows the control to a principal who may
+	// configure. Config load allows it only on a column_property board
+	// whose property declares its own values; see validateKanbanAddColumn.
+	AddColumn      bool            `yaml:"add_column,omitempty" json:"add_column,omitempty"`
 	Filters        []FilterConfig  `yaml:"filters,omitempty" json:"filters,omitempty"`
 	FilterControls []FilterControl `yaml:"filter_controls,omitempty" json:"filter_controls,omitempty"`
 	// Condition mirrors [List.Condition], but is NOT YET SUPPORTED on a
@@ -1237,6 +1266,11 @@ type Kanban struct {
 	// overriding next_action_surfaces. Nil: accepted, means inherit. See
 	// [Config.NextActionsEnabled].
 	Suggestions *bool `yaml:"suggestions,omitempty" json:"suggestions,omitempty"`
+	// Actions are ids of batch llm actions (TKT-I2SRNWR) offered as buttons
+	// in the board's header. A button runs its action on the cards the board
+	// shows, so each must be an llm action with a `batch:` block on the
+	// board's entity type, with a label.
+	Actions []string `yaml:"actions,omitempty" json:"actions,omitempty"`
 }
 
 // Kanban layouts and card styles; "" is the default for both.
@@ -1287,6 +1321,48 @@ type KanbanSwimlane struct {
 	Value string `yaml:"value" json:"value"`
 	Label string `yaml:"label,omitempty" json:"label,omitempty"`
 	Icon  string `yaml:"icon,omitempty" json:"icon,omitempty"`
+}
+
+// KanbanCellColor is one cell's color on a swimlane board. Color is a tone
+// (success, warning, error, info, new) or a color name: the vocabulary of a
+// dashboard matrix's `colors:`. Label names the color in text, so color is not
+// the only cue. A tone without a label shows the tone's translated name; any
+// other color requires a label.
+//
+// In YAML a cell is the color alone (`error`) or a mapping with color and
+// label. Class is the style class the server resolves when it serves the
+// config; the SPA paints the cell from it.
+type KanbanCellColor struct {
+	Color string `yaml:"color" json:"color"`
+	Label string `yaml:"label,omitempty" json:"label,omitempty"`
+	Class string `yaml:"-" json:"class,omitempty"`
+}
+
+// UnmarshalYAML reads a cell's color as a scalar or as a mapping with only
+// `color` and `label`. Any other key is an error rather than dropped, so a
+// typo such as `lable:` cannot leave a cell silently unlabeled.
+func (c *KanbanCellColor) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		*c = KanbanCellColor{Color: value.Value}
+		return nil
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(value.Content); i += 2 {
+			if key := value.Content[i].Value; key != "color" && key != "label" {
+				return fmt.Errorf("line %d: cell_colors: unknown key %q in a cell (valid: color, label)",
+					value.Content[i].Line, key)
+			}
+		}
+		type plain KanbanCellColor
+		var p plain
+		if err := value.Decode(&p); err != nil {
+			return err
+		}
+		*c = KanbanCellColor(p)
+		return nil
+	default:
+		return fmt.Errorf("line %d: cell_colors: a cell is a color or a mapping with color and label", value.Line)
+	}
 }
 
 // KanbanCard defines how cards are displayed on the board.
@@ -2017,10 +2093,20 @@ func (ud *UserDefaults) ResolveRelationDefault(entityType, relation string) stri
 }
 
 // DashboardConfig defines a dashboard page with query-driven cards.
+//
+// A dashboard with EntityType is an entity dashboard: it counts over what one
+// entity, the anchor, is related to. It is shown only as a `scope: root` tab
+// of an entity page of that type, which supplies the anchor, and each of its
+// cards names the relation it narrows by (see [DashboardCard.Scope]). Like an
+// entity-anchored document, it cannot be a navigation entry: a sidebar entry
+// has no anchor to give it.
 type DashboardConfig struct {
 	Title       string          `yaml:"title" json:"title"`
 	Description string          `yaml:"description" json:"description,omitempty"`
 	Cards       []DashboardCard `yaml:"cards" json:"cards"`
+	// EntityType makes this an entity dashboard for entities of that type.
+	// Only under `dashboards:`; the default dashboard has no anchor.
+	EntityType string `yaml:"entity_type,omitempty" json:"entity_type,omitempty"`
 	// Suggestions switches next-action suggestions on or off for this view,
 	// overriding next_action_surfaces. Nil: accepted, means inherit. See
 	// [Config.NextActionsEnabled].
@@ -2030,6 +2116,11 @@ type DashboardConfig struct {
 // DashboardCard defines a single card on the dashboard. Its rows come from a
 // configured list (`list:`) or from a search query (`query:`); exactly one is
 // set.
+//
+// The plimsoll directive is the format-mirror exception documented on
+// [Config]: each exported field is one key of a card in data-entry.yaml.
+//
+//plimsoll:max-fields=21
 type DashboardCard struct {
 	Title string `yaml:"title" json:"title"`
 	// List names a `lists:` entry. The card shows exactly the rows that list
@@ -2098,6 +2189,15 @@ type DashboardCard struct {
 	// surfaces an observe-only principal can use, and would hide them from
 	// everyone rather than from non-holders.
 	Permission string `yaml:"permission,omitempty" json:"permission,omitempty"`
+
+	// Scope narrows the card to the rows the dashboard's anchor reaches over
+	// a relation, written `scope: {relation, direction}` as on a list tab of
+	// an entity page. Required on every card of an entity dashboard, and
+	// refused on any other dashboard.
+	//
+	// Nil: accepted on a dashboard without entity_type, where it means
+	// "unscoped".
+	Scope *PageTabScope `yaml:"scope,omitempty" json:"scope,omitempty"`
 }
 
 // ViewConfig defines a detailed entity view with traversal and sections.

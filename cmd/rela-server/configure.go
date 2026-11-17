@@ -8,8 +8,10 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/config"
@@ -69,12 +71,13 @@ func newConfigure(s *server, svc *appbuild.Services) (http.Handler, error) {
 		Migrations: h,
 		Activator:  h,
 		Audit:      h,
+		Triggers:   h,
 	})
 	if err != nil {
 		return nil, err
 	}
 	slog.Warn("configuration editing is on: principals holding config:edit can change " +
-		"schema.yaml and data-entry.yaml and run data migrations from the browser")
+		"schema.yaml, data-entry.yaml and the flows.yaml triggers, and run data migrations from the browser")
 	return cs.Handler(dataentry.ConfigurePath), nil
 }
 
@@ -87,12 +90,12 @@ func (h configureHost) current() *generation { return h.s.cur.Load() }
 // Record writes to the serving generation's audit log.
 func (h configureHost) Record(rec audit.Record) { h.current().svc.Audit().Record(rec) }
 
-// Validate checks a schema and data-entry pair the way `rela validate` does,
-// the loaded acl.yaml and realtime.yaml against the new schema, and
-// data-entry.yaml's `channels:` section, kanban `busy:` card fields and
-// list `busy:` columns against realtime.yaml. Building the candidate
+// Validate checks a schema, data-entry and flows.yaml draft the way `rela
+// validate` does: the loaded acl.yaml and realtime.yaml and the draft's
+// flows.yaml triggers and flows against the new schema, and data-entry.yaml's `channels:` section, kanban `busy:` card
+// fields and list `busy:` columns against realtime.yaml. Building the candidate
 // server in Prepare is the complete check; this one runs on every preview.
-func (h configureHost) Validate(schema, dataEntry []byte) (*metamodel.Metamodel, error) {
+func (h configureHost) Validate(schema, dataEntry, flows []byte) (*metamodel.Metamodel, error) {
 	meta, err := metamodel.Parse(schema)
 	if err != nil {
 		return nil, &configedit.ValidationError{Problems: []string{"schema.yaml: " + err.Error()}}
@@ -119,10 +122,24 @@ func (h configureHost) Validate(schema, dataEntry []byte) (*metamodel.Metamodel,
 		}
 	}
 	svc := h.current().svc
-	if policy := svc.ACLPolicy(); policy != nil {
-		if aclErr := appbuild.ValidateACLPolicy(policy, meta); aclErr != nil {
-			problems = append(problems, "acl.yaml: "+aclErr.Error())
-		}
+	// A copy of the policy is checked against the draft: the check expands
+	// abstract types and sets the default world in place, so checking the
+	// serving policy would change it.
+	policy, aclErr := h.policyFor(meta)
+	if aclErr != nil {
+		problems = append(problems, "acl.yaml: "+aclErr.Error())
+		policy = nil // the flows check below would report the same mismatch again
+	}
+	// flows.yaml triggers name schema types, properties and relations too.
+	// Their error text starts with the file name.
+	if tErr := appbuild.CheckTriggerData(flows, meta, svc.Store()); tErr != nil {
+		problems = append(problems, tErr.Error())
+	}
+	// Flows name types, properties, roles and permissions. The editor cannot
+	// change them, but a schema change can break them. The error text starts
+	// with the file name.
+	if fErr := appbuild.CheckFlowsData(flows, meta, policy); fErr != nil {
+		problems = append(problems, fErr.Error())
 	}
 	// realtime.yaml names schema types, properties and enums, so a schema
 	// change can break it. Its own error text starts with the file name.
@@ -141,6 +158,48 @@ func (h configureHost) Validate(schema, dataEntry []byte) (*metamodel.Metamodel,
 		return nil, &configedit.ValidationError{Problems: problems}
 	}
 	return meta, nil
+}
+
+// policyFor parses the served acl.yaml afresh and checks it against meta. It
+// returns nil when the server runs without acl.yaml.
+func (h configureHost) policyFor(meta *metamodel.Metamodel) (*acl.Policy, error) {
+	svc := h.current().svc
+	if svc.ACLPolicy() == nil {
+		return nil, nil //nolint:nilnil // no acl.yaml: there is no policy to check
+	}
+	data, err := svc.FS().ReadFile(filepath.Join(svc.Paths().Root, "acl.yaml"))
+	if err != nil {
+		return nil, err
+	}
+	policy, err := acl.ParsePolicy(data, "acl.yaml")
+	if err != nil {
+		return nil, err
+	}
+	if err := appbuild.ValidateACLPolicy(policy, meta); err != nil {
+		return nil, err
+	}
+	return policy, nil
+}
+
+// CheckTriggers judges a trigger edit against acl.yaml for the principal
+// bound to ctx. It fails without a bound request: there is no editor whose
+// rights the edit could be held to.
+func (h configureHost) CheckTriggers(
+	ctx context.Context, edit configedit.TriggerEdit,
+) ([]configedit.TriggerProblem, error) {
+	d := h.current().svc.ACLDeclarative()
+	if d == nil {
+		return nil, errors.New("no acl.yaml is loaded")
+	}
+	req, err := d.RequestFrom(ctx)
+	if err != nil {
+		return nil, err
+	}
+	editor, err := appbuild.RequestEditor(req)
+	if err != nil {
+		return nil, err
+	}
+	return appbuild.CheckTriggerACL(edit, editor)
 }
 
 // Count counts the records of entityType whose property holds value, or any

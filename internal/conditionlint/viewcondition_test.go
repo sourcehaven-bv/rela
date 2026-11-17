@@ -252,6 +252,37 @@ func TestCompileViewConditions_NavStatus(t *testing.T) {
 	require.Contains(t, problems[0], `navigation["Mijn taken"].status[1]: condition does not compile`)
 }
 
+// A steps-page tab's done_when compiles against its list's entity type, is
+// keyed by page and tab, and a bad one names both.
+func TestCompileViewConditions_PageDone(t *testing.T) {
+	cfg := &dataentryconfig.Config{
+		Lists: map[string]dataentryconfig.List{"taken": {EntityType: "taak"}},
+		Pages: map[string]dataentryconfig.Page{"sessie": {
+			Mode: dataentryconfig.PageModeSteps,
+			Tabs: []dataentryconfig.PageTab{
+				{ID: "risicos", List: "taken", DoneWhen: "entity.status == 'klaar'"},
+				{ID: "rest", List: "taken"},
+			},
+		}},
+	}
+	key := ViewConditionKey{ViewConditionPageDone, dataentryconfig.PageDoneConditionID("sessie", "risicos")}
+	progs, problems := CompileViewConditions(cfg, vcMeta())
+	require.Empty(t, problems)
+	require.Len(t, progs, 1)
+	require.Contains(t, progs, key)
+
+	lookup, problems := ViewConditionMatchers(cfg, vcMeta())
+	require.Empty(t, problems)
+	m, ok := lookup(string(ViewConditionPageDone), key.ID)
+	require.True(t, ok)
+	require.Equal(t, "taak", m.entityType)
+
+	cfg.Pages["sessie"].Tabs[0].DoneWhen = "entity.staus == 'x'"
+	_, problems = CompileViewConditions(cfg, vcMeta())
+	require.Len(t, problems, 1)
+	require.Contains(t, problems[0], "pages[sessie].tabs[risicos].done_when: condition does not compile")
+}
+
 // A status rule inside a space compiles like a top-level one, under a key
 // prefixed with the space id, and a bad one names the space.
 func TestCompileViewConditions_NavStatusInSpace(t *testing.T) {
@@ -279,4 +310,48 @@ func TestCompileViewConditions_NavStatusInSpace(t *testing.T) {
 	_, problems = CompileViewConditions(cfg, vcMeta())
 	require.Len(t, problems, 1)
 	require.Contains(t, problems[0], `spaces[crm].navigation["Mijn taken"].status[0]: condition does not compile`)
+}
+
+// An llm action's relate candidates compile once per target type
+// (TKT-4USH1HO).
+func TestCompileViewConditions_LLMCandidates(t *testing.T) {
+	meta := vcMeta()
+	meta.Relations = map[string]metamodel.RelationDef{"links": {From: []string{"taak"}, To: []string{"taak"}}}
+	action := func(cand string) dataentryconfig.Action {
+		return dataentryconfig.Action{
+			AvailableOn: &dataentryconfig.ActionScope{EntityTypes: []string{"taak"}},
+			LLM: &dataentryconfig.LLMAction{Outputs: dataentryconfig.LLMOutputs{
+				Relate: []dataentryconfig.LLMRelateOutput{{Relation: "links", Candidates: cand}},
+			}},
+		}
+	}
+	key := ViewConditionKey{ViewConditionLLMCandidate, dataentryconfig.LLMCandidateConditionID("ai", 0, "taak")}
+	tests := []struct {
+		name     string
+		cand     string
+		wantProg bool
+		wantProb string
+	}{
+		{name: "compiles", cand: "entity.status ~= 'gereed'", wantProg: true},
+		{name: "empty is absent", cand: ""},
+		{name: "unknown property", cand: "entity.nope == 1", wantProb: "candidates does not compile"},
+		{name: "related refused", cand: "related(entity, 'links')", wantProb: "is not available in llm.outputs"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &dataentryconfig.Config{Actions: map[string]dataentryconfig.Action{"ai": action(tc.cand)}}
+			progs, problems := CompileViewConditions(cfg, meta)
+			if tc.wantProb != "" {
+				require.Len(t, problems, 1)
+				require.Contains(t, problems[0], tc.wantProb)
+				return
+			}
+			require.Empty(t, problems)
+			_, has := progs[key]
+			require.Equal(t, tc.wantProg, has)
+			if has {
+				require.Equal(t, "taak", entityTypeFor(cfg, key))
+			}
+		})
+	}
 }

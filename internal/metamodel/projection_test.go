@@ -4,7 +4,7 @@ import "testing"
 
 // baseMetamodel builds a small metamodel with two entity types, an enum custom
 // type, and the render-relevant fields populated, plus churny non-render fields
-// (automations, validations, colors) that must NOT affect the projection hash.
+// (validations, colors) that must NOT affect the projection hash.
 func baseMetamodel() *Metamodel {
 	return &Metamodel{
 		Version:   "1.0",
@@ -57,9 +57,6 @@ func TestRenderProjectionHash_StableAcrossChurnyEdits(t *testing.T) {
 		name   string
 		mutate func(*Metamodel)
 	}{
-		{"add automation", func(m *Metamodel) {
-			m.Automations = append(m.Automations, AutomationDef{})
-		}},
 		{"add validation rule", func(m *Metamodel) {
 			m.Validations = append(m.Validations, ValidationRule{})
 		}},

@@ -164,6 +164,11 @@ func propCondOn(b *sqlBuilder, alias string, p store.PropPredicate) string {
 	if p.Scalar && p.Op == store.PropEqual && p.Value != "" {
 		return scalarEqualCond(alias, path, b.arg(p.Value))
 	}
+	if p.Scalar && p.Op == store.PropNotEqualOrEmpty && p.Value != "" {
+		// The negation of the arm above. COALESCE because json_type of an
+		// absent key is NULL, and NOT NULL would drop the unset row.
+		return "(NOT COALESCE(" + scalarEqualCond(alias, path, b.arg(p.Value)) + ", 0))"
+	}
 	raw := rawExpr(alias, path)
 	isEmpty := "(" + raw + " IS NULL OR " + raw + " = '' OR (" + typeExpr(alias, path) +
 		" = 'array' AND json_array_length(" + propsCol(alias) + ", " + path + ") = 0))"
@@ -184,8 +189,27 @@ func propCondOn(b *sqlBuilder, alias string, p store.PropPredicate) string {
 			return "1"
 		}
 		return "(" + isEmpty + " OR NOT " + equalsCond(b, alias, path, p.Value) + ")"
-	case store.PropGreaterEqual, store.PropLessEqual:
-		return orderedCond(b, alias, path, p.Op, p.Value)
+	case store.PropGreaterEqual, store.PropLessEqual, store.PropGreater, store.PropLess:
+		switch p.Kind {
+		case store.OrderText:
+			return orderedCond(b, alias, path, p.Op, p.Value)
+		case store.OrderString:
+			// SQLite's default collation is BINARY, which compares the
+			// UTF-8 bytes as Go does.
+			return "(" + typeExpr(alias, path) + " = 'text' AND " + rawExpr(alias, path) + " " +
+				orderedSQLOp(p.Op) + " " + b.arg(p.Value) + ")"
+		default:
+			// OrderInteger (and anything unknown) runs on graphquerynaive.
+			// Reading an integer the way propmatch.Integer does needs a
+			// text-to-int64 parse SQLite has no exact spelling for, and
+			// sqlite performance does not drive the design (TKT-8HY05WB).
+			b.unsafe = true
+			return "0"
+		}
+	case store.PropIsDate:
+		// GLOB is anchored and compares bytes, so this is the exact shape.
+		return "(" + typeExpr(alias, path) + " = 'text' AND " + raw +
+			" GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')"
 	default:
 		// PropKeyEqual returned above; anything else is unknown. The
 		// statement must not run: the store falls back to graphquerynaive,
@@ -198,13 +222,24 @@ func propCondOn(b *sqlBuilder, alias string, p store.PropPredicate) string {
 // orderedCond is a byte-wise range test on the text form. Lists never match,
 // because Go and SQL render a list differently (see pgstore's orderedCond).
 func orderedCond(b *sqlBuilder, alias, path string, op store.PropOp, value string) string {
-	cmp := ">="
-	if op == store.PropLessEqual {
-		cmp = "<="
-	}
 	txt := txtExpr(alias, path)
 	return "(" + typeExpr(alias, path) + " <> 'array' AND " + txt + " <> '' AND " +
-		txt + " " + cmp + " " + b.arg(value) + ")"
+		txt + " " + orderedSQLOp(op) + " " + b.arg(value) + ")"
+}
+
+// orderedSQLOp is the SQL operator of an ordered [store.PropOp]. Callers
+// pass only the four ordered operators.
+func orderedSQLOp(op store.PropOp) string {
+	switch op {
+	case store.PropLess:
+		return "<"
+	case store.PropLessEqual:
+		return "<="
+	case store.PropGreater:
+		return ">"
+	default:
+		return ">="
+	}
 }
 
 // equalsCond is value equality: a scalar by its text form, a list when a
@@ -218,17 +253,13 @@ func equalsCond(b *sqlBuilder, alias, path, value string) string {
 		" ELSE " + txtExpr(alias, path) + " = " + valArg + " END)"
 }
 
-// buildPredicateParts emits the CTE definitions and the conjuncts shared by
-// every graph statement, in pgstore's two groups: pre trims the candidate
-// faces before a world ranks them, post tests the prime (BUG-2SKLD3). seed
-// selects the ids an entity-inheritance closure starts from.
-func buildPredicateParts(b *sqlBuilder, q store.GraphQuery, seed string) (with, pre, post []string) {
-	return buildPredicatePartsPrefixed(b, "", q, seed)
-}
-
-// buildPredicatePartsPrefixed is [buildPredicateParts] with every CTE name
-// prefixed, so several queries' predicates can share one statement (the
-// row conditions of a roll-up), as pgstore's does.
+// buildPredicatePartsPrefixed emits the CTE definitions and the conjuncts
+// shared by every graph statement, in pgstore's two groups: pre trims the
+// candidate faces before a world ranks them, post tests the prime
+// (BUG-2SKLD3). seed selects the ids an entity-inheritance closure starts
+// from. Every CTE name is prefixed, so several queries' predicates can
+// share one statement (the row conditions and path steps of a roll-up), as
+// pgstore's does; a lone query passes "".
 func buildPredicatePartsPrefixed(
 	b *sqlBuilder, prefix string, q store.GraphQuery, seed string,
 ) (with, pre, post []string) {
@@ -262,7 +293,69 @@ func buildPredicatePartsPrefixed(
 	if len(q.Narrowing) > 0 {
 		post = append(post, buildNarrowingSQL(b, q.Narrowing))
 	}
+	if q.Where != nil {
+		cb := condBuilder{b: b, prefix: prefix + "wh", seed: seed, sel: q.Faces}
+		post = append(post, cb.render(*q.Where))
+		with = append(with, cb.with...)
+	}
 	return with, pre, post
+}
+
+// condBuilder renders a [store.GraphQuery.Where] tree, as pgstore's does:
+// with the post conjuncts, one CTE prefix per relation leaf, and the
+// operand of every NOT wrapped in COALESCE(..., 0) so a NULL leaf over an
+// absent key cannot drop a row the two-valued reading keeps. A malformed
+// node marks the builder unsafe, so graphquerynaive answers the query and
+// reports the [store.ErrInvalidQuery].
+type condBuilder struct {
+	b      *sqlBuilder
+	prefix string
+	seed   string
+	sel    store.FaceSelection
+	with   []string
+	n      int
+}
+
+func (cb *condBuilder) render(c store.Cond) string {
+	switch c.Op {
+	case store.CondProp:
+		return propCond(cb.b, c.Prop)
+	case store.CondRelated:
+		dir := store.DirectionOutgoing
+		if c.Rel.Incoming {
+			dir = store.DirectionIncoming
+		}
+		prefix := cb.prefix + strconv.Itoa(cb.n) + "_"
+		cb.n++
+		w, ex := buildPredicateSQL(cb.b, prefix, c.Rel.Pred, cb.seed, dir, cb.sel)
+		cb.with = append(cb.with, w...)
+		return existsCond(ex, c.Rel.Pred.Negate)
+	case store.CondNot:
+		if len(c.Args) != 1 {
+			cb.b.unsafe = true
+			return "0"
+		}
+		return "(NOT COALESCE(" + cb.render(c.Args[0]) + ", 0))"
+	case store.CondAnd, store.CondOr:
+		if len(c.Args) == 0 {
+			if c.Op == store.CondAnd {
+				return "1"
+			}
+			return "0"
+		}
+		join := " AND "
+		if c.Op == store.CondOr {
+			join = " OR "
+		}
+		parts := make([]string, len(c.Args))
+		for i, a := range c.Args {
+			parts[i] = cb.render(a)
+		}
+		return "(" + strings.Join(parts, join) + ")"
+	default:
+		cb.b.unsafe = true
+		return "0"
+	}
 }
 
 // graphSource renders what follows `SELECT <list> FROM ` in every graph
@@ -271,6 +364,15 @@ func buildPredicatePartsPrefixed(
 // about; it restricts the candidates and the closure seeds alike, so a page's
 // statement costs the page, not the type.
 func graphSource(b *sqlBuilder, q store.GraphQuery, typeArg, ids string) (with []string, source string) {
+	return graphSourcePrefixed(b, "", q, typeArg, ids)
+}
+
+// graphSourcePrefixed is [graphSource] with every CTE name prefixed, so
+// several graph sources can share one statement (the path steps of a
+// roll-up).
+func graphSourcePrefixed(
+	b *sqlBuilder, prefix string, q store.GraphQuery, typeArg, ids string,
+) (with []string, source string) {
 	if q.EntityType == "" {
 		// graphquerynaive reads every type for an empty EntityType, which
 		// `e.type = ''` would silently turn into no rows.
@@ -281,7 +383,7 @@ func graphSource(b *sqlBuilder, q store.GraphQuery, typeArg, ids string) (with [
 		// Unary + as for the candidates below: the id list must drive.
 		seed = "SELECT e0.id FROM entities e0 WHERE e0.id IN (" + ids + ") AND +e0.type = " + typeArg
 	}
-	with, pre, post := buildPredicateParts(b, q, seed)
+	with, pre, post := buildPredicatePartsPrefixed(b, prefix, q, seed)
 	scope, rank := graphScope(b, q)
 	where := []string{scope}
 	if len(q.FaceIn) > 0 {
@@ -618,6 +720,10 @@ func buildPredicateSQL(
 	} else {
 		sb.WriteString(entityCol + " IN (" + entityJoin + ")")
 	}
+	// The edge's own properties, on the edge row this EXISTS names (see pgstore).
+	for _, pp := range p.EdgeProps {
+		sb.WriteString(" AND " + propCondOn(b, "r", pp))
+	}
 	with = append(with, endpointMatchSQL(b, &sb, alias, p.EndpointMatch, epSel)...)
 	return with, sb.String()
 }
@@ -694,6 +800,9 @@ func nestedPredicateSQL(
 		sb.WriteString(endpointCol + " IN (" + b.jsonList(p.Endpoints) + ") AND ")
 	}
 	sb.WriteString(entityCol + " = " + candidate + ".id")
+	for _, pp := range p.EdgeProps {
+		sb.WriteString(" AND " + propCondOn(b, "r", pp))
+	}
 	with = endpointMatchSQL(b, &sb, alias, p.EndpointMatch, epSel)
 	return with, sb.String()
 }

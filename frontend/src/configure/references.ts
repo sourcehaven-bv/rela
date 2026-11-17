@@ -1,13 +1,14 @@
 /**
  * Keeps references to a property pointing at it when it is renamed.
  *
- * Forms, lists and boards name properties of their entity type. Renaming a
+ * Forms, lists, boards and automations name properties of their entity type. Renaming a
  * property in the data model without following those would break every
  * screen that shows it, and the server would refuse the save. So the draft
  * renames the references along with the property.
  */
 import type { TreeMap, TreeValue } from '@/api/configure'
-import { entries, get, getIn, isMap, mapItems, set, str, strList } from './tree'
+import { filterProperty, triggerLocked } from './models'
+import { entries, get, getIn, has, isMap, mapItems, renameKey, set, str, strList } from './tree'
 
 function renameIn(item: TreeValue | undefined, key: string, from: string, to: string): void {
   if (isMap(item) && str(get(item, key)) === from) set(item, key, to)
@@ -102,6 +103,84 @@ export function renameScreenReferences(
   }
 }
 
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * Renames `entity.<from>`, `new.<from>` and `old.<from>` in a text: a
+ * `{{new.x}}` placeholder, a `where:` clause or a `when:` expression.
+ */
+function renameInText(text: string, from: string, to: string): string {
+  const re = new RegExp(`\\b(entity|new|old)\\.${escapeRegExp(from)}(?![A-Za-z0-9_-])`, 'g')
+  return text.replace(re, `$1.${to}`)
+}
+
+/** Renames the property a `where:` filter clause tests (`effort>0`). */
+function renameFilter(clause: TreeValue, from: string, to: string): TreeValue {
+  if (typeof clause !== 'string' || filterProperty(clause) !== from) return clause
+  return clause.replace(new RegExp(`^(\\s*)${escapeRegExp(from)}`), `$1${to}`)
+}
+
+/** Applies renameInText to every text in a tree, in place. */
+function renameTexts(value: TreeValue | undefined, from: string, to: string): void {
+  if (isMap(value)) {
+    for (const entry of value.$m) {
+      const v = entry[1]
+      if (typeof v === 'string') entry[1] = renameInText(v, from, to)
+      else renameTexts(v, from, to)
+    }
+  } else if (Array.isArray(value)) {
+    value.forEach((v, i) => {
+      if (typeof v === 'string') value[i] = renameInText(v, from, to)
+      else renameTexts(v, from, to)
+    })
+  }
+}
+
+/**
+ * Renames a property's references in the flows.yaml triggers, in place. On
+ * a trigger of its entity type: `on.property`, the keys `set` writes,
+ * `notify.to.property`, and the property in every placeholder, `where:`
+ * clause and `when:` expression. On any trigger: the keys a `create` of
+ * that type writes. A trigger the Configure space does not edit is left
+ * alone; the save then reports it.
+ */
+export function renameTriggerReferences(
+  flows: TreeMap,
+  entityType: string,
+  from: string,
+  to: string
+): void {
+  for (const [, rule] of entries(get(flows, 'triggers'))) {
+    if (!isMap(rule) || triggerLocked(rule)) continue
+    for (const output of mapItems(get(rule, 'outputs'))) {
+      const create = get(output, 'create')
+      const props = get(create, 'properties')
+      if (str(get(create, 'type')) === entityType && isMap(props) && has(props, from))
+        renameKey(props, from, to)
+    }
+    const on = get(rule, 'on')
+    if (!strList(get(on, 'entity')).includes(entityType)) continue
+    renameIn(on, 'property', from, to)
+    renameTexts(on, from, to)
+    const where = get(on, 'where')
+    if (Array.isArray(where)) where.forEach((c, i) => (where[i] = renameFilter(c, from, to)))
+    for (const output of mapItems(get(rule, 'outputs'))) {
+      const props = getIn(output, ['set', 'properties'])
+      if (isMap(props) && has(props, from)) renameKey(props, from, to)
+      const notifyTo = getIn(output, ['notify', 'to'])
+      if (isMap(notifyTo)) renameIn(notifyTo, 'property', from, to)
+      renameTexts(output, from, to)
+      const check = get(output, 'check')
+      if (isMap(check)) {
+        const clause = get(check, 'where')
+        if (typeof clause === 'string') set(check, 'where', renameFilter(clause, from, to))
+      }
+    }
+  }
+}
+
 /** Renames a property's references inside its own entity type, in place. */
 export function renameSchemaReferences(
   schema: TreeMap,
@@ -113,10 +192,4 @@ export function renameSchemaReferences(
   if (!isMap(type)) return
   renameIn(type, 'display_property', from, to)
   renameEach(get(type, 'default_sort'), 'property', from, to)
-  for (const auto of mapItems(get(schema, 'automations'))) {
-    const on = get(auto, 'on')
-    if (!strList(get(on, 'entity')).includes(entityType)) continue
-    renameIn(on, 'property', from, to)
-    renameEach(get(auto, 'do'), 'set', from, to)
-  }
 }

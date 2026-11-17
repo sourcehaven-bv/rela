@@ -104,9 +104,20 @@ func BuildGraphQuerySQLForTest(q store.GraphQuery, countOnly bool) (sqlText stri
 // each face selection. Test-only.
 func BuildEntityListSQLForTest(t *testing.T, q store.EntityQuery) (sqlText string, args []any) {
 	t.Helper()
-	sqlText, args, err := entityPageSQL(q)
+	sqlText, args, err := entityPageSQL(q, entityListColumns)
 	if err != nil {
 		t.Fatalf("entity page sql: %v", err)
+	}
+	return sqlText, args
+}
+
+// BuildEntityHeaderPageSQLForTest exposes the SQL
+// [Store.ListEntityHeadersPage] issues for q. Test-only.
+func BuildEntityHeaderPageSQLForTest(t *testing.T, q store.EntityQuery) (sqlText string, args []any) {
+	t.Helper()
+	sqlText, args, err := entityPageSQL(q, entityHeaderColumns)
+	if err != nil {
+		t.Fatalf("entity header page sql: %v", err)
 	}
 	return sqlText, args
 }
@@ -185,16 +196,22 @@ func SetIteratorPageSizeForTest(t *testing.T, n int) {
 	t.Cleanup(func() { iteratorPageSize.Store(prev) })
 }
 
+// HealSearchTitlesForTest runs one search_title heal pass synchronously; full
+// checks every row, as the first pass after open does.
+func HealSearchTitlesForTest(ctx context.Context, db DBTX, full bool) error {
+	return healSearchTitles(ctx, db, full)
+}
+
 // ReindexMentionsForTest runs one mention reindex pass synchronously.
 func ReindexMentionsForTest(ctx context.Context, s *Store) error { return reindexMentions(ctx, s) }
 
 // BuildVisibleSearchSQLForTest exposes buildVisibleSearchSQL for the
 // search EXPLAIN test (first page, no keyset).
 func BuildVisibleSearchSQLForTest(
-	t *testing.T, q search.Query, scope map[string]search.TypeScope, titles SearchTitles, pageLimit int,
+	t *testing.T, q search.Query, scope map[string]search.TypeScope, pageLimit int,
 ) (sqlText string, args []any) {
 	t.Helper()
-	sqlText, args, anyVisible, err := buildVisibleSearchSQL(q, scope, titles, nil, pageLimit)
+	sqlText, args, anyVisible, err := buildVisibleSearchSQL(q, scope, nil, pageLimit)
 	if err != nil || !anyVisible {
 		t.Fatalf("buildVisibleSearchSQL: visible=%v err=%v", anyVisible, err)
 	}
@@ -202,6 +219,13 @@ func BuildVisibleSearchSQLForTest(
 }
 
 // BuildSearchSQLForTest exposes buildSearchSQL for the search EXPLAIN test.
-func BuildSearchSQLForTest(needle string, limit int, w store.WorldScope, titles SearchTitles) (sqlText string, args []any) {
-	return buildSearchSQL(needle, limit, w, titles)
+func BuildSearchSQLForTest(needle string, limit int, w store.WorldScope) (sqlText string, args []any) {
+	return buildSearchSQL(needle, limit, w)
 }
+
+// IntegerExprForTest exposes integerExpr, so a test can run it on raw JSON
+// texts no Go encoder writes.
+func IntegerExprForTest(txt, jsn string) string { return integerExpr(txt, jsn) }
+
+// UnmarshalPropsForTest exposes unmarshalProps, the decode every read uses.
+func UnmarshalPropsForTest(raw []byte) (map[string]any, error) { return unmarshalProps(raw) }

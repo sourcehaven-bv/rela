@@ -7,9 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -17,11 +19,13 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/backendtest"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
@@ -73,13 +77,24 @@ type tenantDeployment struct {
 // through the tenant command.
 func newTenantDeployment(t *testing.T) tenantDeployment {
 	t.Helper()
+	return newTenantDeploymentWith(t, nil)
+}
+
+// newTenantDeploymentWith is newTenantDeployment with extra project files,
+// which replace the defaults of the same name.
+func newTenantDeploymentWith(t *testing.T, extra map[string]string) tenantDeployment {
+	t.Helper()
 	dir := t.TempDir()
-	for name, body := range map[string]string{
+	files := map[string]string{
 		"schema.yaml":     tenantSchema,
 		"data-entry.yaml": "app:\n  name: Tasks\n",
 		"acl.yaml":        tenantACL,
-	} {
-		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600))
+	}
+	maps.Copy(files, extra)
+	for name, body := range files {
+		path := filepath.Join(dir, name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 	}
 	base := backendtest.Database(t)
 	d := tenantDeployment{dir: dir, base: base, env: func(k string) string {
@@ -110,7 +125,23 @@ func (d tenantDeployment) run(t *testing.T, stdin string, args ...string) (code 
 // except for the JWKS-backed verifier.
 func (d tenantDeployment) host(t *testing.T) *tenantHost {
 	t.Helper()
-	f := &serverFlags{projectDir: d.dir, bind: "127.0.0.1", port: "8080", jwtHeader: "X-Auth-Assertion"}
+	return d.hostWith(t, tenantFlags{})
+}
+
+// hostWith is host with the tenant flags of tf. Tenant mode is on.
+func (d tenantDeployment) hostWith(t *testing.T, tf tenantFlags) *tenantHost {
+	t.Helper()
+	return d.hostFlags(t, tf, nil)
+}
+
+// hostFlags is hostWith with edit applied to the server flags.
+func (d tenantDeployment) hostFlags(t *testing.T, tf tenantFlags, edit func(*serverFlags)) *tenantHost {
+	t.Helper()
+	f := &serverFlags{projectDir: d.dir, bind: "127.0.0.1", port: "8080", jwtHeader: "X-Auth-Assertion", tenant: tf}
+	f.tenant.enabled = true
+	if edit != nil {
+		edit(f)
+	}
 	shared, err := appbuild.DiscoverSharedBase(d.dir, script.NewEngine(), discoverOptions(f)...)
 	require.NoError(t, err)
 	resolver, err := tenant.NewClusterResolver(t.Context(), d.base)
@@ -118,7 +149,11 @@ func (d tenantDeployment) host(t *testing.T) *tenantHost {
 	require.NoError(t, resolver.Check(t.Context()))
 
 	s := &server{f: f, addr: "127.0.0.1:8080", mode: identityJWT, assertion: tenanthost.ReuseAssertion(orgVerifier{})}
-	th, err := s.tenantHost(shared, resolver, tenantLimits{resident: 4}, orgVerifier{}, tenantProvision{})
+	writer, err := tenant.NewProvisioner(d.base, tenant.AuditRoot(shared.CacheDir()))
+	require.NoError(t, err)
+	prov, err := provisionConfig(tf, writer, lifecycleRecorder{cacheDir: shared.CacheDir()})
+	require.NoError(t, err)
+	th, err := s.tenantHost(shared, resolver, tenantOptions{resident: 4, provision: prov}, orgVerifier{})
 	require.NoError(t, err)
 	th.resolver = resolver
 	t.Cleanup(th.close)
@@ -259,7 +294,16 @@ func TestTenantMode_CreateServeSuspendErase(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 	code, out, _ = d.run(t, "", "show", "-project", d.dir, "org-a")
 	require.Equal(t, 0, code)
-	require.Contains(t, out, "no tenant")
+	require.Contains(t, out, "erased at ")
+	require.NotContains(t, out, "does not exist")
+	// Erasing again, as on another server host, removes that host's audit
+	// directory and leaves the tombstone.
+	require.NoError(t, os.MkdirAll(auditA, 0o750))
+	code, out, stderr = d.run(t, "", "erase", "-project", d.dir, "-force", "org-a")
+	require.Equal(t, 0, code, stderr)
+	require.Contains(t, out, "audit directory removed")
+	_, err = os.Stat(auditA)
+	require.ErrorIs(t, err, os.ErrNotExist)
 	require.Equal(t, http.StatusForbidden, tenantCall(t, th, "tok-org-a", http.MethodGet, "/api/v1/tasks", nil).Code)
 
 	rec, err := os.ReadFile(filepath.Join(d.dir, ".rela", "audit", erasureLog))
@@ -339,71 +383,249 @@ func TestTenantMode_RevokeRacesLastRelease(t *testing.T) {
 	}
 }
 
-// provisioningHost is host with lazy provisioning on, over the real
-// provisioner.
-func (d tenantDeployment) provisioningHost(t *testing.T) *tenantHost {
-	t.Helper()
-	f := &serverFlags{projectDir: d.dir, bind: "127.0.0.1", port: "8080", jwtHeader: "X-Auth-Assertion"}
-	shared, err := appbuild.DiscoverSharedBase(d.dir, script.NewEngine(), discoverOptions(f)...)
-	require.NoError(t, err)
-	prov, err := newTenantProvision(t.Context(), tenant.ProvisionLazy, d.base, tenant.AuditRoot(shared.CacheDir()))
-	require.NoError(t, err)
-	resolver, err := tenant.NewClusterResolver(t.Context(), d.base)
-	require.NoError(t, err)
+// TestTenantMode_LazyProvisioning is the acceptance test of TKT-TNPRV8 over
+// a real database: a verified org with no tenant is answered 202, its
+// tenant is created in the background, and it is served afterwards without
+// a restart. With provisioning off the same org stays a 403.
+func TestTenantMode_LazyProvisioning(t *testing.T) {
+	d := newTenantDeployment(t)
 
-	s := &server{f: f, addr: "127.0.0.1:8080", mode: identityJWT, assertion: tenanthost.ReuseAssertion(orgVerifier{})}
-	th, err := s.tenantHost(shared, resolver, tenantLimits{resident: 4}, orgVerifier{}, prov)
-	require.NoError(t, err)
-	th.resolver = resolver
-	t.Cleanup(th.close)
-	return th
+	off := d.host(t)
+	require.Equal(t, http.StatusForbidden,
+		tenantCall(t, off, "tok-org-new", http.MethodGet, "/api/v1/tasks", nil).Code)
+
+	th := d.hostWith(t, tenantFlags{provision: "lazy"})
+	first := tenantCall(t, th, "tok-org-new", http.MethodGet, "/api/v1/tasks", nil)
+	require.Equal(t, http.StatusAccepted, first.Code, first.Body.String())
+	require.JSONEq(t, `{"status":"provisioning"}`, first.Body.String())
+
+	deadline := time.Now().Add(time.Minute)
+	for {
+		rec := tenantCall(t, th, "tok-org-new", http.MethodGet, tenanthost.StatusPath, nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		if strings.Contains(rec.Body.String(), "active") {
+			break
+		}
+		require.True(t, time.Now().Before(deadline), "tenant not provisioned in time: %s", rec.Body.String())
+		time.Sleep(50 * time.Millisecond)
+	}
+	requireLifecycleLine(t, d.dir, `"operator":"system:provision"`, `"action":"create"`, `"org_id":"org-new"`,
+		`"schema":"`+mustSchema(t, "org-new")+`"`, `"ok":true`)
+	rec := tenantCall(t, th, "tok-org-new", http.MethodPost, "/api/v1/tasks",
+		map[string]any{"properties": map[string]any{"title": "fresh"}})
+	require.Contains(t, []int{http.StatusOK, http.StatusCreated}, rec.Code, rec.Body.String())
+	list := tenantCall(t, th, "tok-org-a", http.MethodGet, "/api/v1/tasks", nil)
+	require.NotContains(t, list.Body.String(), "fresh", "CROSS-TENANT LEAK after provisioning")
+
+	// Erased, the org is never provisioned again on its own: the next
+	// request is a plain 403, not a 202 that recreates it.
+	code, _, _ := d.run(t, "", "erase", "-project", d.dir, "-force", "org-new")
+	require.Equal(t, 1, code, "the erase ran while the host held the tenant")
+	th.registry.Revalidate(t.Context())
+	code, _, stderr := d.run(t, "", "erase", "-project", d.dir, "-force", "org-new")
+	require.Equal(t, 0, code, stderr)
+	after := tenantCall(t, th, "tok-org-new", http.MethodGet, "/api/v1/tasks", nil)
+	require.Equal(t, http.StatusForbidden, after.Code, after.Body.String())
+	after = tenantCall(t, th, "tok-org-new", http.MethodGet, tenanthost.StatusPath, nil)
+	require.Equal(t, http.StatusForbidden, after.Code, after.Body.String())
+
+	// Only the operator's explicit recreate brings it back, empty.
+	code, _, stderr = d.run(t, "", "create", "-project", d.dir, "org-new")
+	require.Equal(t, 1, code)
+	require.Contains(t, stderr, "-recreate")
+	code, _, stderr = d.run(t, "", "create", "-project", d.dir, "-recreate", "org-new")
+	require.Equal(t, 0, code, stderr)
+	list = tenantCall(t, th, "tok-org-new", http.MethodGet, "/api/v1/tasks", nil)
+	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+	require.NotContains(t, list.Body.String(), "fresh", "the recreated tenant kept data from before the erasure")
 }
 
-// TestTenantMode_LazyProvision is the lazy-backstop acceptance test of
-// TKT-TNPRV8 over a real database: concurrent first requests of a new org
-// all get 202 without waiting for the create, exactly one tenant is created,
-// the status endpoint turns ready, and the org is then served.
-func TestTenantMode_LazyProvision(t *testing.T) {
-	d := newTenantDeployment(t)
-	th := d.provisioningHost(t)
-
-	var wg sync.WaitGroup
-	codes := make(chan int, 8)
-	for range 8 {
-		wg.Go(func() {
-			codes <- tenantCall(t, th, "tok-org-new", http.MethodGet, "/api/v1/tasks", nil).Code
-		})
-	}
-	wg.Wait()
-	close(codes)
-	for c := range codes {
-		require.Equal(t, http.StatusAccepted, c, "a first request of a new org must not wait for the create")
-	}
-
-	require.Eventually(t, func() bool {
-		rec := tenantCall(t, th, "tok-org-new", http.MethodGet, tenanthost.StatusPath, nil)
-		return rec.Code == http.StatusOK && strings.Contains(rec.Body.String(), `"ready"`)
-	}, 60*time.Second, 200*time.Millisecond)
-
-	rec := tenantCall(t, th, "tok-org-new", http.MethodPost, "/api/v1/tasks",
-		map[string]any{"properties": map[string]any{"title": "first"}})
-	require.Contains(t, []int{http.StatusOK, http.StatusCreated}, rec.Code, rec.Body.String())
-
-	// Exactly one control row for the new org, active.
-	conn, err := pgstore.ConnectDirect(t.Context(), d.base)
+// requireLifecycleLine fails unless a line of the project's lifecycle log
+// contains every one of want.
+func requireLifecycleLine(t *testing.T, dir string, want ...string) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(dir, ".rela", "audit", lifecycleLog))
 	require.NoError(t, err)
-	defer func() { _ = conn.Close(context.Background()) }()
-	var n int
-	var status string
-	require.NoError(t, conn.QueryRow(t.Context(),
-		"SELECT count(*), min(status) FROM "+tenant.ControlSchema+".tenants WHERE org_id = $1", "org-new").
-		Scan(&n, &status))
-	require.Equal(t, 1, n)
-	require.Equal(t, string(tenant.StatusActive), status)
+	for line := range strings.SplitSeq(strings.TrimSpace(string(raw)), "\n") {
+		if containsAll(line, want) {
+			return
+		}
+	}
+	t.Fatalf("no lifecycle record with %v in:\n%s", want, raw)
+}
 
-	// A suspended tenant is never provisioned again by a request.
-	code, _, stderr := d.run(t, "", "suspend", "-project", d.dir, "org-a")
-	require.Equal(t, 0, code, stderr)
-	require.Equal(t, http.StatusForbidden,
-		tenantCall(t, th, "tok-org-a", http.MethodGet, "/api/v1/tasks", nil).Code)
+func mustSchema(t *testing.T, orgID string) string {
+	t.Helper()
+	schema, err := tenant.SchemaFor(orgID)
+	require.NoError(t, err)
+	return schema
+}
+
+func containsAll(s string, subs []string) bool {
+	for _, sub := range subs {
+		if !strings.Contains(s, sub) {
+			return false
+		}
+	}
+	return true
+}
+
+// TestTenantMode_IDPChangesAreRecorded pins that a suspension and a resume
+// the IdP causes are written to the lifecycle log under the system actor,
+// as an operator's are under the operator's name, and that a call that
+// changes nothing writes nothing.
+func TestTenantMode_IDPChangesAreRecorded(t *testing.T) {
+	d := newTenantDeployment(t)
+	writer, err := tenant.NewProvisioner(d.base, tenant.AuditRoot(filepath.Join(d.dir, ".rela")))
+	require.NoError(t, err)
+	a := idpSuspensionAdapter{w: writer, log: lifecycleRecorder{cacheDir: filepath.Join(d.dir, ".rela")}}
+
+	changed, err := a.SuspendForIDP(t.Context(), "org-a")
+	require.NoError(t, err)
+	require.True(t, changed)
+	requireLifecycleLine(t, d.dir, `"operator":"system:idp"`, `"action":"suspend"`, `"org_id":"org-a"`, `"ok":true`)
+	before, err := os.ReadFile(filepath.Join(d.dir, ".rela", "audit", lifecycleLog))
+	require.NoError(t, err)
+
+	changed, err = a.SuspendForIDP(t.Context(), "org-a")
+	require.NoError(t, err)
+	require.False(t, changed)
+	after, err := os.ReadFile(filepath.Join(d.dir, ".rela", "audit", lifecycleLog))
+	require.NoError(t, err)
+	require.Equal(t, string(before), string(after), "a suspension that changed nothing was recorded")
+
+	changed, err = a.ResumeForIDP(t.Context(), "org-a")
+	require.NoError(t, err)
+	require.True(t, changed)
+	requireLifecycleLine(t, d.dir, `"operator":"system:idp"`, `"action":"resume"`, `"org_id":"org-a"`, `"ok":true`)
+}
+
+// saasDataEntry configures a shell command and git sync, which tenant mode
+// must not serve.
+const saasDataEntry = `app:
+  name: Tasks
+git:
+  enabled: true
+  branch: main
+commands:
+  touch:
+    label: Touch
+    script: touch command-ran
+    context: global
+    permission: command:touch
+actions:
+  probe:
+    label: Probe
+    script: probe.lua
+    capabilities: {secrets: [token]}
+`
+
+// saasProbeAction reports what an action script sees of the host's secret.
+const saasProbeAction = `local _, v = pcall(function() return rela.secrets.token end)
+return {message = "saw: " .. tostring(v)}
+`
+
+// TestTenantMode_SaaSProfile is the acceptance test of TKT-3RWQ1PK over
+// real tenants: commands are refused and not offered, git sync answers as
+// not configured, declarative hooks need an assertion, the host's secrets
+// and ai.yaml are withheld unless shared, and the remote MCP server has no
+// Lua tools.
+func TestTenantMode_SaaSProfile(t *testing.T) {
+	d := newTenantDeploymentWith(t, map[string]string{
+		"data-entry.yaml":    saasDataEntry,
+		".rela/secrets.yaml": "token: operator-token\n",
+		"actions/probe.lua":  saasProbeAction,
+		// ada may sync and run the command, so only tenant mode refuses them.
+		"acl.yaml": strings.Replace(tenantACL, "    update: [task]\n",
+			"    update: [task]\n    permissions: [git:sync, command:touch]\n", 1),
+	})
+	for _, args := range [][]string{{"init", "-q"}, {"remote", "add", "origin", filepath.Join(t.TempDir(), "none")}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = d.dir
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+	th := d.hostFlags(t, tenantFlags{}, func(f *serverFlags) { f.remoteMCP = toggleOn })
+
+	t.Run("commands are refused", func(t *testing.T) {
+		rec := tenantCall(t, th, "tok-org-a", http.MethodPost, "/api/command/touch", nil)
+		require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), "/errors/commands_disabled_in_tenant_mode")
+		_, err := os.Stat(filepath.Join(d.dir, "command-ran"))
+		require.ErrorIs(t, err, os.ErrNotExist, "the command ran")
+
+		list := tenantCall(t, th, "tok-org-a", http.MethodGet, "/api/v1/_commands?page_type=dashboard", nil)
+		require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+		require.NotContains(t, list.Body.String(), "touch", "tenant mode offers a command")
+	})
+
+	t.Run("git sync is off", func(t *testing.T) {
+		rec := tenantCall(t, th, "tok-org-a", http.MethodPost, "/api/git/sync", nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), "git not configured")
+		status := tenantCall(t, th, "tok-org-a", http.MethodGet, "/api/git/status", nil)
+		require.Contains(t, status.Body.String(), `"available":false`)
+	})
+
+	t.Run("declarative hooks need an assertion", func(t *testing.T) {
+		rec := tenantCall(t, th, "", http.MethodPost, "/hooks/deploy", map[string]any{})
+		require.Equal(t, http.StatusUnauthorized, rec.Code, rec.Body.String())
+	})
+
+	t.Run("host config", func(t *testing.T) {
+		secretsOf := func(th *tenantHost) error {
+			lease, err := th.registry.Acquire(t.Context(), "org-a")
+			require.NoError(t, err)
+			defer lease.Release()
+			sec, err := lease.Value().opened.Services.LuaReadDeps().Host.Secrets("")
+			if err == nil {
+				require.Equal(t, "operator-token", sec["token"])
+			}
+			return err
+		}
+		err := secretsOf(th)
+		require.ErrorIs(t, err, lua.ErrHostConfigWithheld)
+		require.Contains(t, err.Error(), "-tenant-shared-host-config")
+
+		shared := d.hostWith(t, tenantFlags{sharedHostConfig: true})
+		require.NoError(t, secretsOf(shared), "-tenant-shared-host-config shares the secrets")
+	})
+
+	t.Run("an action script sees the host config withheld", func(t *testing.T) {
+		rec := tenantCall(t, th, "tok-org-a", http.MethodPost, "/api/v1/_action/probe", map[string]any{})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), "-tenant-shared-host-config")
+		require.NotContains(t, rec.Body.String(), "operator-token")
+	})
+
+	t.Run("remote MCP has no Lua tools", func(t *testing.T) {
+		ts := httptest.NewServer(th.handler)
+		t.Cleanup(ts.Close)
+		client := mcpgo.NewClient(&mcpgo.Implementation{Name: "test", Version: "0"}, nil)
+		cs, err := client.Connect(t.Context(), &mcpgo.StreamableClientTransport{
+			Endpoint: ts.URL + dataentry.MCPPath, DisableStandaloneSSE: true,
+			HTTPClient: &http.Client{Transport: assertionTransport{token: "tok-org-a", host: th.addr}},
+		}, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = cs.Close() })
+		tools, err := cs.ListTools(t.Context(), nil)
+		require.NoError(t, err)
+		require.NotEmpty(t, tools.Tools)
+		for _, tool := range tools.Tools {
+			require.False(t, strings.HasPrefix(tool.Name, "lua_"), "tenant mode's remote MCP lists %s", tool.Name)
+		}
+	})
+}
+
+// assertionTransport sends every request as the tenant's caller: with its
+// assertion, and with the Host and Origin the server's security config
+// accepts.
+type assertionTransport struct{ token, host string }
+
+func (a assertionTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Host = a.host
+	r.Header.Set("Origin", "http://"+a.host)
+	r.Header.Set("X-Auth-Assertion", a.token)
+	return http.DefaultTransport.RoundTrip(r)
 }

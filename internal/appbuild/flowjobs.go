@@ -119,6 +119,7 @@ type flowJobRunner struct {
 	acl     *acl.Declarative
 	as      asIdentity
 	client  *http.Client
+	llm     *llmActionHolder
 }
 
 // newFlowJobRunner returns the runner over s. Webhooks post through the
@@ -134,7 +135,7 @@ func newFlowJobRunner(s *Services, as asIdentity) *flowJobRunner {
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &flowJobRunner{
 		svc: s, scripts: s.scriptEngine, cfg: s.cfgLoader, host: s.host, acl: s.aclDeclarative, as: as,
-		client: client,
+		client: client, llm: s.llmActions,
 	}
 }
 
@@ -219,8 +220,17 @@ func (r *flowJobRunner) runAction(ctx context.Context, call flowengine.JobCall) 
 	if !ok {
 		return flowengine.Permanent(fmt.Errorf("flows: data-entry.yaml declares no action %q", call.Job.Action))
 	}
-	if uerr := flowActionUsable(call.Job.Action, a); uerr != nil {
+	if uerr := flowActionUsable(call.Job.Action, a, ""); uerr != nil {
 		return flowengine.Permanent(uerr)
+	}
+	if a.LLM != nil {
+		// The runner checks the permission and the action's when:, as the
+		// action route does.
+		retry, lerr := r.llm.run(ctx, call.Job.Action, call.Subject.String(), "")
+		if lerr != nil && !retry {
+			return flowengine.Permanent(lerr)
+		}
+		return lerr
 	}
 	if !r.holdsPermission(ctx, a.Permission) {
 		return flowengine.Permanent(fmt.Errorf("flows: run_as %q lacks the %q permission of action %q",
@@ -373,7 +383,15 @@ func loadActions(ctx context.Context, cfg config.Loader) (map[string]dataentryco
 // flowActionUsable refuses an action a job step cannot run: one that is not
 // a plain script, or one whose meaning depends on an HTTP request or a
 // detail page.
-func flowActionUsable(id string, a dataentryconfig.Action) error {
+//
+// An `llm:` action with `apply: auto` is the one entity-bound action a step
+// may run (TKT-WQ925LL), on the flow's subject: the step's subject is the
+// entity it runs on, and it applies its own proposal. subject is the flow's
+// subject type, or empty to skip that check.
+func flowActionUsable(id string, a dataentryconfig.Action, subject string) error {
+	if a.LLM != nil {
+		return flowLLMActionUsable(id, a, subject)
+	}
 	switch {
 	case a.Script == "":
 		return fmt.Errorf("flows: action %q has no script", id)
@@ -385,6 +403,17 @@ func flowActionUsable(id string, a dataentryconfig.Action) error {
 		return fmt.Errorf("flows: action %q is bound to a detail page", id)
 	case a.AllowACLBypass.Enabled() || len(a.ElevatedUpdates) > 0:
 		return fmt.Errorf("flows: action %q bypasses the ACL, which a job step may not", id)
+	}
+	return nil
+}
+
+// flowLLMActionUsable is [flowActionUsable] for an `llm:` action.
+func flowLLMActionUsable(id string, a dataentryconfig.Action, subject string) error {
+	switch {
+	case !a.LLM.Auto():
+		return fmt.Errorf("flows: action %q only proposes changes; a job step runs it only with apply: auto", id)
+	case subject != "" && a.Subject() != subject:
+		return fmt.Errorf("flows: action %q runs on %q, not on the flow's subject %q", id, a.Subject(), subject)
 	}
 	return nil
 }
@@ -412,7 +441,7 @@ func checkFlowActions(ctx context.Context, flows *flowcfg.Compiled, cfg config.L
 				return fmt.Errorf("flow %q state %q: data-entry.yaml declares no action %q", f.Name(), st.Name,
 					job.Action)
 			}
-			if err := flowActionUsable(job.Action, a); err != nil {
+			if err := flowActionUsable(job.Action, a, f.Subject()); err != nil {
 				return fmt.Errorf("flow %q state %q: %w", f.Name(), st.Name, err)
 			}
 		}

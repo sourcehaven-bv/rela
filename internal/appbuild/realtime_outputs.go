@@ -5,6 +5,9 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
@@ -16,7 +19,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -55,12 +57,14 @@ var errOutputsNoPoster = errors.New("appbuild: outputs: the poster no longer res
 // is not atomic. d is accepted and means no policy is configured.
 func newManagerOutputs(
 	mgr *entitymanager.Manager, st store.Store, meta *metamodel.Metamodel, join joinChannels, d *acl.Declarative,
+	clock func() time.Time,
 ) (managerOutputs, error) {
 	if mgr == nil || st == nil || meta == nil {
 		return managerOutputs{}, errors.New("appbuild: outputs: entity manager, store and metamodel are required")
 	}
 	return managerOutputs{
-		gated: entitymanager.FieldGated(mgr), st: st, meta: meta, join: join, policy: d, bind: identityBinderFor(d),
+		gated: entitymanager.FieldGated(mgr), st: st, meta: meta, join: join, policy: d,
+		bind: identityBinderFor(d, clock),
 	}, nil
 }
 
@@ -130,11 +134,22 @@ func (o managerOutputs) asRetry(ctx context.Context, id *realtime.OutputIdentity
 	p := principal.VerifiedFrom(id.Writer.User, principal.ToolRealtime, principal.Claims{
 		PrincipalType: id.Writer.PrincipalType, OrgID: id.Writer.OrgID, Roles: id.Roles,
 	})
+	return o.rebuild(ctx, p, id.OutputPoster)
+}
+
+// rebuild binds p, a principal recorded earlier and rebuilt from its mark,
+// as the edge bound it then: it fails with [errOutputsNoPoster] when p
+// named a user entity that is gone, and resolves an unmatched p again,
+// marked verified, so `unmatched_principal` judges it as it judged the
+// original request. The background llm action jobs use it too.
+func (o managerOutputs) rebuild(
+	ctx context.Context, p principal.Principal, mark realtime.OutputPoster,
+) (context.Context, error) {
 	ctx = principal.With(ctx, p)
 	if o.policy == nil {
 		return ctx, nil
 	}
-	if id.UserEntity {
+	if mark.UserEntity {
 		exists, err := o.userExists(ctx, p.User)
 		if err != nil {
 			return ctx, err
@@ -143,7 +158,7 @@ func (o managerOutputs) asRetry(ctx context.Context, id *realtime.OutputIdentity
 			return ctx, errOutputsNoPoster
 		}
 	}
-	if !id.Unmatched {
+	if !mark.Unmatched {
 		return o.bind(ctx)
 	}
 	ident, err := o.policy.IdentityResolver().Resolve(ctx, p)
@@ -432,7 +447,7 @@ func patchDenial(err error) error {
 		return &realtime.OutputError{Code: realtime.OutputCodeConflict, WroteNothing: true}
 	case errors.As(err, &conflict):
 		return &realtime.OutputError{Code: realtime.OutputCodeConflict, Retryable: true, WroteNothing: true}
-	case errors.Is(err, statemachine.ErrIllegalTransition):
+	case errors.Is(err, transitions.ErrIllegalTransition):
 		// Only an update moves a state property, so the create classifier
 		// does not know this refusal.
 		return &realtime.OutputError{Code: realtime.OutputCodeInvalid, WroteNothing: true}

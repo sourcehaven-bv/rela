@@ -17,6 +17,8 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/idporg"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
 	"github.com/Sourcehaven-BV/rela/internal/tenanthost"
@@ -29,9 +31,33 @@ type tenantFlags struct {
 	// maxResident and maxOpen are the registry bounds; zero takes the
 	// registry's defaults.
 	maxResident, maxOpen int
-	// provision is the -tenant-provision value: off, webhook or lazy.
-	provision string
+	// provision is the -tenant-provision mode: off, webhook or lazy
+	// (TKT-TNPRV8). provisionRate caps provisioning starts per minute; zero
+	// takes the host's default.
+	provision     string
+	provisionRate int
+	// idpOrgAPI is the IdP operator API address that org status is read
+	// from, so a tenant's suspension follows its org's. Required with the
+	// IdP webhook (validateStatusSync). Its secret is
+	// $RELA_IDP_OPERATOR_SECRET, never a flag.
+	idpOrgAPI string
+	// luaHTTPAllow is the -lua-http-allow list: CIDRs, IPs and host:port
+	// destinations that tenant mode's strict Lua HTTP policy reopens.
+	luaHTTPAllow string
+	// sharedHostConfig is -tenant-shared-host-config: share the .rela
+	// directory's secrets and ai.yaml with every tenant.
+	sharedHostConfig bool
 }
+
+// withheldHostConfigReason is what a tenant's script sees when it reads a
+// secret or calls ai.* while the host config is withheld.
+const withheldHostConfigReason = "the operator's secrets and AI settings are not shared in tenant mode " +
+	"(rela-server -tenant-shared-host-config)"
+
+// envIDPOperatorSecret holds the HMAC secret of the IdP operator API. It is
+// read from the environment only, so it never shows in `ps` or shell
+// history.
+const envIDPOperatorSecret = "RELA_IDP_OPERATOR_SECRET" //nolint:gosec // G101: the name of the variable, not a secret
 
 // coverage-ignore-start: main-or-wiring: registers flags on the global flag.CommandLine
 func registerTenantFlags(t *tenantFlags) {
@@ -44,11 +70,29 @@ func registerTenantFlags(t *tenantFlags) {
 	flag.IntVar(&t.maxOpen, "tenant-max-open", envInt("RELA_TENANT_MAX_OPEN"),
 		"Tenant mode: hard ceiling on open tenants (default twice -tenant-max-resident). "+
 			"Also RELA_TENANT_MAX_OPEN.")
-	flag.StringVar(&t.provision, "tenant-provision", os.Getenv(tenant.EnvProvision),
-		"Tenant mode: create tenants automatically. off (default): only `rela-server tenant create`; "+
-			"webhook: on the IdP's organization.created webhook; lazy: also on the first verified request "+
-			"of an org with no tenant. Lazy trusts every verified org_id; see docs/postgres-backend.md. "+
-			"Also "+tenant.EnvProvision+".")
+	flag.StringVar(&t.provision, "tenant-provision", envOr("RELA_TENANT_PROVISION", string(tenanthost.ProvisionOff)),
+		"Tenant mode: create a tenant for a verified org that has none. off (default): an unknown org is "+
+			"refused. webhook: on a verified organization.created IdP webhook (needs -webhook-*). lazy: also "+
+			"on the org's first request, which is answered 202 while the tenant is created. Trusts every "+
+			"assertion the one configured issuer signs. Also RELA_TENANT_PROVISION.")
+	flag.IntVar(&t.provisionRate, "tenant-provision-rate", envInt("RELA_TENANT_PROVISION_RATE"),
+		"Tenant mode: most tenant creations started per minute (default 10; at most 2 run at once). "+
+			"Also RELA_TENANT_PROVISION_RATE.")
+	flag.StringVar(&t.idpOrgAPI, "tenant-idp-org-api", envOr("RELA_TENANT_IDP_ORG_API", ""),
+		"Tenant mode: the IdP operator API (https://host:port, unix:///path/to/socket, or http://host:port "+
+			"for localhost or a loopback IP only). A verified organization.updated webhook suspends or "+
+			"resumes the org's tenant to match the IdP, and organization.deleted suspends it. Needs -webhook-* "+
+			"and the secret in "+envIDPOperatorSecret+"; required when -webhook-* is set in tenant mode. "+
+			"Also RELA_TENANT_IDP_ORG_API.")
+	flag.StringVar(&t.luaHTTPAllow, "lua-http-allow", envOr("RELA_LUA_HTTP_ALLOW", ""),
+		"Tenant mode: comma-separated CIDRs, IPs and host:port destinations that Lua http.* may reach "+
+			"although they are not public addresses, such as an internal IdP. Tenant mode refuses every "+
+			"loopback, private and other non-public address otherwise. Also RELA_LUA_HTTP_ALLOW.")
+	flag.BoolVar(&t.sharedHostConfig, "tenant-shared-host-config", os.Getenv("RELA_TENANT_SHARED_HOST_CONFIG") == "1",
+		"Tenant mode: let every tenant's scripts, flows and connections use .rela/secrets.yaml and "+
+			".rela/ai.yaml. These are the operator's own credentials, the same for every tenant, used by "+
+			"operator-authored scripts on tenant data. Off by default: secrets and ai.* then fail with an "+
+			"error. Mail is always shared. Also RELA_TENANT_SHARED_HOST_CONFIG=1.")
 }
 
 // coverage-ignore-end
@@ -107,16 +151,274 @@ func validateTenantMode(f *serverFlags, envUser string, supported bool) (identit
 	if f.configEditing {
 		return mode, errors.New("--config-editing is not supported in tenant mode")
 	}
-	provMode, err := tenant.ParseProvisionMode(f.tenant.provision)
-	if err != nil {
+	// The provisioning flags are checked by tenanthost.New.
+	if _, err := luaHTTPPolicy(f.tenant); err != nil {
 		return mode, err
 	}
-	// Webhook mode creates tenants only from the IdP's organization.created
-	// webhook; without the receiver no tenant would ever be created.
-	if provMode == tenant.ProvisionWebhook && (f.webhookAudience == "" || f.webhookAction == "") {
-		return mode, errors.New("-tenant-provision=webhook needs the IdP webhook (-webhook-audience, -webhook-action)")
-	}
 	return mode, nil
+}
+
+// tenantProfile is the shared part of tenant mode's SaaS profile, from the
+// -lua-http-allow and -tenant-shared-host-config flags.
+func tenantProfile(t tenantFlags) appbuild.TenantProfile {
+	return appbuild.TenantProfile{
+		LuaHTTPAllow:     t.luaHTTPAllow,
+		SharedHostConfig: t.sharedHostConfig,
+		WithheldReason:   withheldHostConfigReason,
+	}
+}
+
+// luaHTTPPolicy is tenant mode's Lua HTTP destination policy: strict, with
+// the -lua-http-allow destinations reopened.
+func luaHTTPPolicy(t tenantFlags) (lua.HTTPPolicy, error) {
+	p, err := tenantProfile(t).LuaHTTPPolicy()
+	if err != nil {
+		return lua.HTTPPolicy{}, fmt.Errorf("-lua-http-allow: %w", err)
+	}
+	return p, nil
+}
+
+// logTenantProfile logs once at startup what tenant mode turns off or
+// scopes (TKT-3RWQ1PK), so an operator sees it before the first tenant
+// opens. Each tenant logs what it would have served on its first open.
+func logTenantProfile(t tenantFlags, p lua.HTTPPolicy) {
+	hostConfig := "withheld"
+	if t.sharedHostConfig {
+		hostConfig = "shared"
+	}
+	slog.Info("tenant mode: shell commands, git sync and the scheduler are off; "+
+		"Lua http.* reaches public addresses only",
+		"lua_http_allow", len(p.Allow)+len(p.AllowHosts), "secrets_and_ai", hostConfig, "mail", "shared")
+}
+
+// noteTenantRestrictions turns off git sync on a tenant's app and logs,
+// once per process, how many configured commands and whether git sync
+// tenant mode turned off. Every tenant shares one configuration, so one
+// line describes them all.
+func (s *server) noteTenantRestrictions(app *dataentry.App) {
+	gitWasOn := dataentry.DisableGitSync(app)
+	s.tenantNotice.Do(func() {
+		if n := len(app.Cfg().Commands); n > 0 || gitWasOn {
+			slog.Warn("tenant mode: data-entry.yaml features are turned off",
+				"commands", n, "git_sync", gitWasOn)
+		}
+	})
+}
+
+// refuseTenantOnlyFlags refuses, outside tenant mode, a flag that only
+// tenant mode acts on, so a server never runs without a behavior its
+// operator asked for.
+//
+// -lua-http-allow is refused too: outside tenant mode Lua http.* is not
+// strict, so an allowlist would suggest a restriction that is not there.
+func refuseTenantOnlyFlags(t tenantFlags) error {
+	if t.enabled {
+		return nil
+	}
+	switch {
+	case t.idpOrgAPI != "":
+		return errors.New("-tenant-idp-org-api needs tenant mode (-tenant-mode)")
+	case t.luaHTTPAllow != "":
+		return errors.New("-lua-http-allow needs tenant mode (-tenant-mode): " +
+			"outside it Lua http.* may reach every address but link-local and metadata ones")
+	case t.sharedHostConfig:
+		return errors.New("-tenant-shared-host-config needs tenant mode (-tenant-mode)")
+	case t.provision != "" && t.provision != string(tenanthost.ProvisionOff):
+		return errors.New("-tenant-provision needs tenant mode (-tenant-mode)")
+	case t.provisionRate != 0:
+		return errors.New("-tenant-provision-rate needs tenant mode (-tenant-mode)")
+	}
+	return nil
+}
+
+// validateStatusSync refuses a status-sync configuration the host cannot
+// act on. secret is $RELA_IDP_OPERATOR_SECRET.
+//
+// With the IdP webhook on, status sync is required: an
+// `organization.updated` or `organization.deleted` the host cannot apply
+// would leave a deactivated org's users their access, and the host refuses
+// such events with 503 rather than acknowledge them. Starting without it
+// would turn every deactivation into a retry loop.
+func validateStatusSync(f *serverFlags, secret string) error {
+	if f.tenant.idpOrgAPI == "" {
+		if f.webhookAudience != "" || f.webhookAction != "" {
+			return errors.New("tenant mode with the IdP webhook (-webhook-audience, -webhook-action) needs " +
+				"-tenant-idp-org-api: an organization suspension or deletion must revoke the tenant's access")
+		}
+		return nil
+	}
+	if f.webhookAudience == "" || f.webhookAction == "" {
+		return errors.New("-tenant-idp-org-api needs the IdP webhook (-webhook-audience, -webhook-action)")
+	}
+	if secret == "" {
+		return errors.New("-tenant-idp-org-api needs the operator API secret in $" + envIDPOperatorSecret)
+	}
+	if _, err := idporg.New(f.tenant.idpOrgAPI, []byte(secret)); err != nil {
+		return fmt.Errorf("-tenant-idp-org-api: %w", err)
+	}
+	return nil
+}
+
+// idpOrgAdapter is the host's [tenanthost.OrgStatusSource] over the IdP
+// operator API client.
+type idpOrgAdapter struct{ c *idporg.Client }
+
+// OrgSuspended reports whether orgID is suspended at the IdP.
+func (a idpOrgAdapter) OrgSuspended(ctx context.Context, orgID string) (bool, error) {
+	st, err := a.c.OrgStatus(ctx, orgID)
+	switch {
+	case errors.Is(err, idporg.ErrNotFound):
+		return false, fmt.Errorf("%w: %w", tenanthost.ErrOrgNotFound, err)
+	case errors.Is(err, idporg.ErrInvalidOrgID):
+		return false, fmt.Errorf("%w: %w", tenanthost.ErrInvalidOrgID, err)
+	}
+	if err != nil {
+		return false, err
+	}
+	return st == idporg.StatusSuspended, nil
+}
+
+// statusSyncSource builds the IdP side of status sync from the flags, which
+// validateStatusSync checked. The caller checked that -tenant-idp-org-api
+// is set.
+func statusSyncSource(t tenantFlags, secret string) (tenanthost.OrgStatusSource, error) {
+	c, err := idporg.New(t.idpOrgAPI, []byte(secret))
+	if err != nil {
+		return nil, err
+	}
+	return idpOrgAdapter{c}, nil
+}
+
+// provisionAdapter is the host's [tenanthost.Provisioner] over the control
+// table's writer. It never adopts an existing schema: a schema without a
+// control row may hold another org's data, so only an operator adopts it.
+// It never recreates an erased tenant either: an erasure is undone only by
+// an operator's `tenant create -recreate`.
+//
+// A create that made the tenant active is written to the lifecycle log
+// with actor [actorProvision].
+type provisionAdapter struct {
+	p   tenantCreator
+	log lifecycleRecorder
+}
+
+// tenantCreator is what provisionAdapter needs from [tenant.Provisioner].
+type tenantCreator interface {
+	Create(ctx context.Context, orgID string, opts tenant.CreateOptions) (tenant.Tenant, error)
+}
+
+// Provision creates orgID's tenant. An active tenant that already exists
+// is success: two servers may race the same create. One in another status
+// is returned as the [tenant.ExistsError]. A refusal only an operator can
+// resolve is wrapped in [tenanthost.ErrNeedsOperator].
+func (a provisionAdapter) Provision(ctx context.Context, orgID string) error {
+	t, err := a.p.Create(ctx, orgID, tenant.CreateOptions{})
+	var exists *tenant.ExistsError
+	switch {
+	case err == nil:
+		a.log.recordSystem(actorProvision, "create", orgID, t.Schema)
+		return nil
+	case errors.As(err, &exists) && exists.Status == tenant.StatusActive:
+		// Another server created it and recorded that.
+		return nil
+	case errors.Is(err, tenant.ErrSchemaExists), errors.Is(err, tenant.ErrSchemaCollision),
+		errors.Is(err, tenant.ErrTenantErased), errors.Is(err, tenant.ErrWrongStatus):
+		return fmt.Errorf("%w: %w", tenanthost.ErrNeedsOperator, err)
+	}
+	return err
+}
+
+// provisionConfig builds the host's provisioning config from the flags.
+// tenanthost.New validates it. p is the server's one provisioner, nil when
+// provisioning is off. log records the creates.
+func provisionConfig(t tenantFlags, p tenantCreator, log lifecycleRecorder) (tenanthost.ProvisionConfig, error) {
+	mode, err := tenanthost.ParseProvisionMode(t.provision)
+	if err != nil {
+		return tenanthost.ProvisionConfig{}, fmt.Errorf("-tenant-provision: %w", err)
+	}
+	if mode == tenanthost.ProvisionOff {
+		return tenanthost.ProvisionConfig{Mode: tenanthost.ProvisionOff}, nil
+	}
+	cfg := tenanthost.ProvisionConfig{Mode: mode, PerMinute: t.provisionRate}
+	if p != nil {
+		cfg.Provisioner = provisionAdapter{p: p, log: log}
+	}
+	return cfg, nil
+}
+
+// tenantWriter builds the server's one [tenant.Provisioner], which serves
+// both provisioning and status sync, and the provisioning config over it.
+// The provisioner is nil when neither is on. log records the creates.
+func tenantWriter(t tenantFlags, baseDSN, auditRoot string, log lifecycleRecorder,
+) (tenanthost.ProvisionConfig, *tenant.Provisioner, error) {
+	var writer *tenant.Provisioner
+	var creator tenantCreator // stays a nil interface without a writer
+	if (t.provision != "" && t.provision != string(tenanthost.ProvisionOff)) || t.idpOrgAPI != "" {
+		p, err := tenant.NewProvisioner(baseDSN, auditRoot)
+		if err != nil {
+			return tenanthost.ProvisionConfig{}, nil, err
+		}
+		writer, creator = p, p
+	}
+	prov, err := provisionConfig(t, creator, log)
+	return prov, writer, err
+}
+
+// The actors the server's own lifecycle changes are recorded under. They
+// take the place of the operator name the tenant command records.
+const (
+	actorProvision = "system:provision"
+	actorIDP       = "system:idp"
+)
+
+// lifecycleRecorder writes the server's own lifecycle changes to the
+// lifecycle log, the record `rela-server tenant create/suspend/resume`
+// writes. The zero value records nothing; tests that do not read the log
+// use it.
+type lifecycleRecorder struct {
+	// cacheDir is the project's .rela directory; the log is in its audit
+	// directory, beside the per-tenant ones.
+	cacheDir string
+}
+
+// recordSystem appends one applied change. It is called after the change
+// is committed, so a failure to write the record is logged as an error and
+// does not undo or fail the change.
+func (l lifecycleRecorder) recordSystem(actor, action, orgID, schema string) {
+	if l.cacheDir == "" {
+		return
+	}
+	rec := lifecycleEntry(actor, "rela-server", action, orgID, schema, nil)
+	if err := writeLifecycle(l.cacheDir, rec); err != nil {
+		slog.Error("tenant lifecycle change not recorded", "file", lifecycleLog, "actor", actor,
+			"action", action, "org_id", orgID, "error", err)
+	}
+}
+
+// idpSuspensionAdapter is the host's [tenanthost.IDPSuspension] over the
+// control table's writer. Each change it applies is written to the
+// lifecycle log with actor [actorIDP].
+type idpSuspensionAdapter struct {
+	w   tenanthost.IDPSuspension
+	log lifecycleRecorder
+}
+
+// SuspendForIDP suspends orgID's tenant and records the change.
+func (a idpSuspensionAdapter) SuspendForIDP(ctx context.Context, orgID string) (bool, error) {
+	changed, err := a.w.SuspendForIDP(ctx, orgID)
+	if err == nil && changed {
+		a.log.recordSystem(actorIDP, "suspend", orgID, "")
+	}
+	return changed, err
+}
+
+// ResumeForIDP resumes orgID's tenant and records the change.
+func (a idpSuspensionAdapter) ResumeForIDP(ctx context.Context, orgID string) (bool, error) {
+	changed, err := a.w.ResumeForIDP(ctx, orgID)
+	if err == nil && changed {
+		a.log.recordSystem(actorIDP, "resume", orgID, "")
+	}
+	return changed, err
 }
 
 // tenantResident is one open tenant: its services, the data-entry app over
@@ -186,6 +488,8 @@ func (s *server) openTenant(t tenant.Tenant, opened *tenant.Opened) (*tenantResi
 		slog.Warn("tenant mode: declarative webhooks need a verified assertion and are refused without one",
 			"org_id", t.OrgID, "schema", t.Schema, "hooks", len(app.Cfg().Webhooks))
 	}
+	// Before StartWatching, which would start git sync's periodic fetch.
+	s.noteTenantRestrictions(app)
 	if err := app.StartWatching(); err != nil {
 		slog.Warn("tenant: file watcher not started", "org_id", t.OrgID, "schema", t.Schema, "error", err)
 	}
@@ -215,9 +519,14 @@ func (s *server) openTenant(t tenant.Tenant, opened *tenant.Opened) (*tenantResi
 	}, nil
 }
 
-// tenantLimits are the registry bounds; zero takes the registry's defaults.
-type tenantLimits struct {
+// tenantOptions are the registry bounds, where zero takes the registry's
+// defaults, the host's provisioning config, and the two sides of status
+// sync. Status sync is on when both orgStatus and idpWriter are set.
+type tenantOptions struct {
 	resident, open int
+	provision      tenanthost.ProvisionConfig
+	orgStatus      tenanthost.OrgStatusSource
+	idpWriter      tenanthost.IDPSuspension
 }
 
 // tenantHost is a running multi-tenant server: the front handler and the
@@ -225,18 +534,18 @@ type tenantLimits struct {
 type tenantHost struct {
 	addr     string
 	handler  http.Handler
+	host     *tenanthost.Host
 	registry *tenant.Registry[*tenantResident]
 	// resolver is closed after the registry.
 	resolver io.Closer
-	// provision is closed first, so no create runs while the rest closes.
-	provision tenantProvision
 	// sweeper opens evicted tenants with due background work.
 	sweeper *tenant.Sweeper
 }
 
-// close stops provisioning, closes the registry, then the resolver it reads.
+// close ends the host's provisioning runs, then closes the registry and
+// the resolver it reads.
 func (th *tenantHost) close() {
-	th.provision.close()
+	th.host.Close()
 	if err := th.registry.Close(); err != nil {
 		slog.Warn("closing tenants", "error", err)
 	}
@@ -267,6 +576,10 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 	if err != nil {
 		return nil, err
 	}
+	secret := os.Getenv(envIDPOperatorSecret)
+	if verr := validateStatusSync(f, secret); verr != nil {
+		return nil, verr
+	}
 	absDir, err := filepath.Abs(f.projectDir)
 	if err != nil {
 		return nil, fmt.Errorf("invalid project dir: %w", err)
@@ -278,51 +591,61 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 	if legacyErr := tenant.RefuseLegacyMap(root); legacyErr != nil {
 		return nil, legacyErr
 	}
-	provMode, err := tenant.ParseProvisionMode(f.tenant.provision)
+	// The strict Lua HTTP policy is set before anything can build a Lua
+	// runtime; validateTenantMode has parsed the allowlist. Startup fails
+	// unless the strict policy is installed afterwards.
+	policy, err := tenantProfile(f.tenant).ApplyLuaPolicy()
 	if err != nil {
 		return nil, err
 	}
+	logTenantProfile(f.tenant, policy)
 	ctx := context.Background()
-	dsn := os.Getenv("RELA_DATABASE_URL")
-	base, err := appbuild.DiscoverSharedBase(absDir, script.NewEngine(), discoverOptions(f)...)
+	resolver, err := tenant.NewClusterResolver(ctx, os.Getenv("RELA_DATABASE_URL"))
 	if err != nil {
-		return nil, fmt.Errorf("load the shared configuration: %w", err)
-	}
-	prov, err := newTenantProvision(ctx, provMode, dsn, tenant.AuditRoot(base.CacheDir()))
-	if err != nil {
-		return nil, err
-	}
-	resolver, err := tenant.NewClusterResolver(ctx, dsn)
-	if err != nil {
-		prov.close()
 		return nil, err
 	}
 	if err = resolver.Check(ctx); err != nil {
-		prov.close()
 		_ = resolver.Close()
 		return nil, err
+	}
+	base, err := appbuild.DiscoverSharedBase(absDir, script.NewEngine(), discoverOptions(f)...)
+	if err != nil {
+		_ = resolver.Close()
+		return nil, fmt.Errorf("load the shared configuration: %w", err)
 	}
 
 	s := &server{f: f, addr: net.JoinHostPort(f.bind, f.port), mode: mode, accessLog: accessLog}
-	fail := func(err error) (*tenantHost, error) {
-		prov.close()
-		_ = resolver.Close()
-		return nil, err
-	}
 	s.idv = buildIdentityVerifier(ctx, f)
 	if s.idv == nil {
-		return fail(errors.New("tenant mode: no identity verifier was built"))
+		_ = resolver.Close()
+		return nil, errors.New("tenant mode: no identity verifier was built")
 	}
 	adapter := assertionVerifierAdapter{s.idv}
 	s.assertion = tenanthost.ReuseAssertion(adapter)
 	if s.webhook, err = buildWebhookVerifier(f, s.idv); err != nil {
-		return fail(err)
+		_ = resolver.Close()
+		return nil, err
 	}
 
-	th, err := s.tenantHost(base, resolver, tenantLimits{resident: f.tenant.maxResident, open: f.tenant.maxOpen},
-		adapter, prov)
+	lifecycle := lifecycleRecorder{cacheDir: base.CacheDir()}
+	prov, writer, err := tenantWriter(f.tenant, os.Getenv("RELA_DATABASE_URL"), tenant.AuditRoot(base.CacheDir()),
+		lifecycle)
 	if err != nil {
-		return fail(err)
+		_ = resolver.Close()
+		return nil, err
+	}
+	opts := tenantOptions{resident: f.tenant.maxResident, open: f.tenant.maxOpen, provision: prov}
+	if f.tenant.idpOrgAPI != "" {
+		if opts.orgStatus, err = statusSyncSource(f.tenant, secret); err != nil {
+			_ = resolver.Close()
+			return nil, err
+		}
+		opts.idpWriter = idpSuspensionAdapter{w: writer, log: lifecycle}
+	}
+	th, err := s.tenantHost(base, resolver, opts, adapter)
+	if err != nil {
+		_ = resolver.Close()
+		return nil, err
 	}
 	th.resolver = resolver
 	if th.sweeper, err = tenant.NewSweeper(resolver, th.registry); err != nil {
@@ -332,51 +655,12 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 	return th, nil
 }
 
-// tenantProvision is the automatic provisioning a tenant host runs
-// (TKT-TNPRV8). The zero value provisions nothing.
-type tenantProvision struct {
-	auto *tenant.AutoProvisioner
-	lazy bool
-}
-
-// newTenantProvision builds provisioning for mode. With provisioning on it
-// creates the control table if needed, so a fresh database can start.
-func newTenantProvision(
-	ctx context.Context, mode tenant.ProvisionMode, dsn, auditRoot string,
-) (tenantProvision, error) {
-	if !mode.Eager() {
-		return tenantProvision{}, nil
-	}
-	p, err := tenant.NewProvisioner(dsn, auditRoot)
-	if err != nil {
-		return tenantProvision{}, err
-	}
-	err = p.EnsureControl(ctx)
-	if err != nil {
-		return tenantProvision{}, err
-	}
-	auto, err := tenant.NewAutoProvisioner(p, tenant.AutoProvisionOptions{})
-	if err != nil {
-		return tenantProvision{}, err
-	}
-	slog.Info("tenant mode: automatic provisioning", "mode", string(mode))
-	return tenantProvision{auto: auto, lazy: mode.Lazy()}, nil
-}
-
-// close stops starting creates and waits for the running ones.
-func (p tenantProvision) close() {
-	if p.auto != nil {
-		p.auto.Close()
-	}
-}
-
 // tenantHost wires the registry and the front handler over one shared base.
 // verifier is the host's own; s.assertion must already be the reuse wrapper
 // around the same verifier, so every tenant's gate trusts what the host
 // verified and nothing else.
 func (s *server) tenantHost(
-	base *appbuild.SharedBase, resolver tenant.Resolver, limits tenantLimits, verifier tenanthost.AssertionVerifier,
-	prov tenantProvision,
+	base *appbuild.SharedBase, resolver tenant.Resolver, limits tenantOptions, verifier tenanthost.AssertionVerifier,
 ) (*tenantHost, error) {
 	openSvc, err := tenant.SharedBaseOpener(base, tenant.AuditRoot(base.CacheDir()))
 	if err != nil {
@@ -398,6 +682,7 @@ func (s *server) tenantHost(
 		Verifier:   verifier,
 		HeaderName: s.f.jwtHeader,
 		Static:     dataentry.StaticShell(),
+		Provision:  limits.provision,
 		Acquire: func(ctx context.Context, orgID string) (http.Handler, func(), error) {
 			lease, aerr := registry.Acquire(ctx, orgID)
 			if aerr != nil {
@@ -409,17 +694,25 @@ func (s *server) tenantHost(
 	if s.webhook != nil {
 		hcfg.Webhook = webhookVerifierAdapter{s.webhook}
 	}
-	if prov.auto != nil {
-		hcfg.Provision = prov.auto
-		hcfg.LazyProvision = prov.lazy
+	if limits.orgStatus != nil && limits.idpWriter != nil {
+		if hcfg.StatusSync, err = tenanthost.NewStatusSync(limits.orgStatus, limits.idpWriter,
+			registry.RevalidateOrg); err != nil {
+			_ = registry.Close()
+			return nil, err
+		}
 	}
 	host, err := tenanthost.New(hcfg)
 	if err != nil {
 		_ = registry.Close()
 		return nil, err
 	}
-	slog.Info("tenant mode enabled", "max_resident", limits.resident, "max_open", limits.open)
-	return &tenantHost{addr: s.addr, handler: host, registry: registry, provision: prov}, nil
+	mode := limits.provision.Mode
+	if mode == "" {
+		mode = tenanthost.ProvisionOff
+	}
+	slog.Info("tenant mode enabled", "max_resident", limits.resident, "max_open", limits.open,
+		"provision", string(mode), "idp_status_sync", hcfg.StatusSync != nil)
+	return &tenantHost{addr: s.addr, handler: host, host: host, registry: registry}, nil
 }
 
 // runTenantMode serves tenant mode until a signal and returns the exit code.
@@ -460,8 +753,8 @@ func runTenantMode(f *serverFlags, accessLog *slog.Logger) int {
 	httpSrv.RegisterOnShutdown(th.registry.RevokeAll)
 	serveErr := serveUntilSignal(httpSrv)
 	stop()
-	// Wait for a revalidation pass in progress before the registry and
-	// the resolver it uses close.
+	// Wait for a revalidation or sweep pass in progress before the registry
+	// and the resolver it uses close.
 	<-revalidated
 	<-swept
 	th.close()

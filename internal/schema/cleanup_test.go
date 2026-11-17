@@ -105,6 +105,28 @@ func TestPlanCleanup_CascadesReferencedTypes(t *testing.T) {
 	}
 }
 
+// A trigger that names an unused entity type is planned for removal with it.
+func TestPlanCleanup_CascadesTriggerReference(t *testing.T) {
+	analysis := &Analysis{
+		UnusedEntityTypes: []TypeUsage{{
+			Name: "watched-type",
+			References: []Reference{
+				{File: "flows.yaml", Section: "triggers.stamp", Kind: "trigger"},
+			},
+		}},
+	}
+
+	plan := PlanCleanup(analysis, "schema.yaml")
+
+	want := Change{File: "flows.yaml", Action: "remove_trigger", Target: "stamp"}
+	for _, change := range plan.MetamodelChanges {
+		if change.Action == want.Action && change.Target == want.Target && change.File == want.File {
+			return
+		}
+	}
+	t.Errorf("changes = %+v, want %+v", plan.MetamodelChanges, want)
+}
+
 func TestPlanCleanup_CascadeMultipleReferences(t *testing.T) {
 	// Type with multiple references - all should be cascade-removed
 	analysis := &Analysis{

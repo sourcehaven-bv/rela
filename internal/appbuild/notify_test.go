@@ -57,13 +57,15 @@ relations:
   part-of:
     from: [task]
     to: [project, team]
-automations:
-  - name: tell-owner
+`
+
+const notifyFlows = `triggers:
+  tell-owner:
     on:
       entity: [task]
       property: status
       becomes: done
-    do:
+    outputs:
       - notify: {pile: inbox, reason: done, to: {via: part-of, type: project, property: owner}}
 `
 
@@ -73,6 +75,7 @@ automations:
 func TestNotify_ProjectOwnerLearnsOfCompletedTask(t *testing.T) {
 	root := t.TempDir()
 	writeMetamodelBody(t, root, notifyMetamodel)
+	writeProjectFile(t, root, "flows.yaml", notifyFlows)
 	writePolicy(t, root, pileLifecyclePolicy+`  P-1: admin
   P-2: admin
   P-3: admin

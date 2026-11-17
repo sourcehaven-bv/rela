@@ -142,6 +142,54 @@ func TestRecorders_UnwrapToBackend(t *testing.T) {
 	assert.Same(t, backend, store.Innermost(s))
 }
 
+// Every recorder forwards the header pager, so a store under a recorder
+// still pages headers natively.
+func TestRecorders_ForwardHeaderPager(t *testing.T) {
+	for _, r := range recorders() {
+		t.Run(r.name, func(t *testing.T) {
+			_, ok := r.wrap(memstore.New()).(store.HeaderPager)
+			assert.True(t, ok, "%s hides store.HeaderPager", r.name)
+		})
+	}
+}
+
+// plainStore hides every optional capability of the store it embeds.
+type plainStore struct{ store.Store }
+
+// BodyWatch counts the bodies a header page reads when the backend under
+// every decorator has no header pager, and none when it has one
+// (TKT-Q918DFR).
+func TestBodyWatch_HeaderPageCountsFallbackBodies(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		wrap func(store.Store) store.Store
+		want int
+	}{
+		{"native", func(s store.Store) store.Store { return s }, 0},
+		{"native under counting", func(s store.Store) store.Store { return storetest.NewCounting(s) }, 0},
+		{"fallback", func(s store.Store) store.Store { return plainStore{s} }, 2},
+		{"fallback under counting", func(s store.Store) store.Store {
+			return storetest.NewCounting(plainStore{s})
+		}, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			base := memstore.New()
+			for _, id := range []string{"A-1", "A-2"} {
+				e := entity.New(id, "a")
+				e.Content = "body"
+				require.NoError(t, base.CreateEntity(ctx, e))
+			}
+			watch := storetest.NewBodyWatch(tc.wrap(base))
+			page, err := store.ListEntityHeadersPage(ctx, watch,
+				store.EntityQuery{Limit: 5, Faces: store.InWorld(store.TrivialScope())})
+			require.NoError(t, err)
+			require.Len(t, page.Items, 2)
+			assert.Equal(t, tc.want, watch.Bodies(), watch.String())
+		})
+	}
+}
+
 // TestCounting_TxSharesCounters pins that reads inside a transaction land in
 // the parent's counters under the parent's lock. Run under -race: a view with
 // its own mutex over the parent's map is a data race against a concurrent

@@ -26,6 +26,10 @@ import (
 // method load line.
 type actionOps struct {
 	h *writeHandler
+	// background is set on a run of an `apply: auto` action from the job
+	// queue or a flow step, which applies the proposal itself. Unset, such
+	// an action is queued instead.
+	background bool
 }
 
 // run executes action id for the ctx principal: the permission gate, the
@@ -53,6 +57,10 @@ func (o actionOps) run(
 	if !holdsActionPermission(ctx, action) {
 		return nil, failV1(http.StatusForbidden, "permission_required",
 			fmt.Sprintf("action %q requires the %q permission", id, action.Permission))
+	}
+
+	if fail := checkBatchPayload(id, action, payload); fail != nil {
+		return nil, fail
 	}
 
 	correlationID := newCorrelationID()
@@ -102,6 +110,9 @@ func (o actionOps) run(
 	if h.attachRender != nil {
 		deps.AttachRender = h.attachRender()
 	}
+	if h.attachFile != nil {
+		deps.AttachFile = h.attachFile()
+	}
 	// The elevation scope must be the one the current config declares, as
 	// for the available_on gate below.
 	if action.AllowACLBypass.Enabled() && h.schema() != s {
@@ -120,6 +131,10 @@ func (o actionOps) run(
 	// like CRUD.
 	if h.provision != nil {
 		ctx = h.provision(ctx)
+	}
+
+	if payload.Batch {
+		return o.runLLMBatch(ctx, s, id, action, payload.EntityIDs, deps)
 	}
 
 	if action.AvailableOn != nil {
@@ -146,6 +161,9 @@ func (o actionOps) run(
 		if fail := beforeScript(); fail != nil {
 			return nil, fail
 		}
+	}
+	if action.LLM != nil {
+		return o.llm(ctx, s, id, action, boundRaw, ent, deps)
 	}
 
 	// Reuse App's long-lived engine so rela.cache state persists

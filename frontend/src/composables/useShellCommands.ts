@@ -12,6 +12,13 @@ import { paletteOpen, shortcutsModalOpen } from './useKeyboardShortcuts'
  */
 export const SHELL_COMMAND_EVENT = 'rela:shell-command'
 
+/**
+ * The search boxes Edit > Find focuses, in order of preference. A list's box
+ * is not inside `.entity-list`: the app shell paints the list's header
+ * (PageHeaderContent), so the box is matched by its own class.
+ */
+const FIND_TARGETS = '.search-box input, .search-form input'
+
 export interface ShellCommand {
   command: string
   arg?: string
@@ -47,6 +54,22 @@ export function useShellCommands() {
       case 'toggle-sidebar':
         ui.toggleSidebar()
         break
+      case 'find': {
+        // A webview has no find bar. ⌘F focuses the search box on the page
+        // (a list's, or the search page's), as `/` does, else opens search.
+        // The first box on screen: a list hidden with v-show or in an
+        // inactive panel is still in the DOM but has no layout boxes.
+        const box = Array.from(document.querySelectorAll<HTMLInputElement>(FIND_TARGETS)).find(
+          (el) => el.getClientRects().length > 0
+        )
+        if (box) {
+          box.focus()
+          box.select()
+        } else {
+          void router.push('/search')
+        }
+        break
+      }
       case 'settings':
         void router.push('/settings')
         break

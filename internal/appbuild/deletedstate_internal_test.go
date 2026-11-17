@@ -110,7 +110,11 @@ func TestDeletedState_ErasedOnPurge(t *testing.T) {
 			return a.EntityPurged(ctx, id)
 		}},
 		{"history-purge", func(ctx context.Context, a *automationJobs, id string) error {
-			return PurgeDeletedJobStates(ctx, a.kv, a.meta, id)
+			return PurgeDeletedJobStates(ctx, a.kv, HasDeletedTriggers(a.rules), id)
+		}},
+		// `rela history-purge` passes true when it cannot read flows.yaml.
+		{"history-purge with unreadable triggers", func(ctx context.Context, a *automationJobs, id string) error {
+			return PurgeDeletedJobStates(ctx, a.kv, true, id)
 		}},
 	}
 	for _, tc := range tests {

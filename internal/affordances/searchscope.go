@@ -70,7 +70,7 @@ func requireLowerable(
 //   - A role that declares `visible:` shows what its grants allow, each with
 //     its own condition. Held globally, it applies on every row; held only
 //     through a role relation, on the rows where it is held. Where it is held
-//     is [acl.Request.LocalRolePredicate], the same predicate the row gate
+//     is [acl.Request.LocalRolePredicates], the same predicates the row gate
 //     uses.
 //   - A role that declares no `visible:` block shows every field on the rows
 //     it applies to whose face it reads ([acl.Request.RoleGrantsVerbOnFace]).
@@ -148,7 +148,8 @@ type fieldScopeCompiler struct {
 // through a role relation: held matches those rows.
 type localRole struct {
 	name string
-	held store.RelationPredicate
+	// held matches the rows on which the role is held: any one of them.
+	held []store.RelationPredicate
 }
 
 // globalRoleSet returns the names of the roles req holds globally.
@@ -169,8 +170,8 @@ func (c *fieldScopeCompiler) heldVisibleRoles() (global []string, locals []local
 			global = append(global, role)
 			continue
 		}
-		if pred, ok := c.req.LocalRolePredicate(role); ok {
-			locals = append(locals, localRole{name: role, held: pred})
+		if preds, ok := c.req.LocalRolePredicates(role); ok {
+			locals = append(locals, localRole{name: role, held: preds})
 		}
 	}
 	return global, locals
@@ -206,27 +207,32 @@ func (c *fieldScopeCompiler) globalFieldGrants(roles []string) []search.FieldGra
 func (c *fieldScopeCompiler) localFieldGrants(locals []localRole) []search.FieldGrant {
 	var out []search.FieldGrant
 	for _, lr := range locals {
-		held := store.DirectedRelation{Incoming: true, Pred: lr.held}
-		var unconditional []string
-		for _, fg := range c.grants[grantKey{role: lr.name, entityType: c.entityType}].visible {
-			if fg.program == nil {
-				unconditional = append(unconditional, fg.field)
-				continue
+		// A role held through several predicates (a conditional role
+		// relation has its own) gets one grant per predicate: grants are a
+		// union, so the field shows where any of them holds.
+		for _, pred := range lr.held {
+			held := store.DirectedRelation{Incoming: true, Pred: pred}
+			var unconditional []string
+			for _, fg := range c.grants[grantKey{role: lr.name, entityType: c.entityType}].visible {
+				if fg.program == nil {
+					unconditional = append(unconditional, fg.field)
+					continue
+				}
+				when, ok := c.lowerWhen(fg.program)
+				if !ok {
+					continue
+				}
+				when.Related = append(when.Related, held)
+				out = append(out, search.FieldGrant{Fields: []string{fg.field}, When: when})
 			}
-			when, ok := c.lowerWhen(fg.program)
-			if !ok {
-				continue
+			if len(unconditional) > 0 {
+				out = append(out, search.FieldGrant{
+					Fields: dedupe(unconditional),
+					When: &store.GraphQuery{
+						EntityType: c.entityType, Faces: store.AllFaces(), Related: []store.DirectedRelation{held},
+					},
+				})
 			}
-			when.Related = append(when.Related, held)
-			out = append(out, search.FieldGrant{Fields: []string{fg.field}, When: when})
-		}
-		if len(unconditional) > 0 {
-			out = append(out, search.FieldGrant{
-				Fields: dedupe(unconditional),
-				When: &store.GraphQuery{
-					EntityType: c.entityType, Faces: store.AllFaces(), Related: []store.DirectedRelation{held},
-				},
-			})
 		}
 	}
 	return out
@@ -268,14 +274,16 @@ func (c *fieldScopeCompiler) blocklessFieldGrants(
 			}})
 			continue
 		}
-		held, ok := c.req.LocalRolePredicate(role)
+		preds, ok := c.req.LocalRolePredicates(role)
 		if !ok {
 			continue
 		}
-		grants = append(grants, search.FieldGrant{Fields: universe, When: &store.GraphQuery{
-			EntityType: entityType, Faces: store.AllFaces(), FaceIn: faceIn,
-			Related: []store.DirectedRelation{{Incoming: true, Pred: held}},
-		}})
+		for _, held := range preds {
+			grants = append(grants, search.FieldGrant{Fields: universe, When: &store.GraphQuery{
+				EntityType: entityType, Faces: store.AllFaces(), FaceIn: faceIn,
+				Related: []store.DirectedRelation{{Incoming: true, Pred: held}},
+			}})
+		}
 	}
 	return grants, openEverywhere
 }
@@ -299,9 +307,11 @@ func openFieldGrant(entityType string, universe []string, locals []localRole) se
 		if g.When == nil {
 			g.When = &store.GraphQuery{EntityType: entityType, Faces: store.AllFaces()}
 		}
-		notHeld := lr.held
-		notHeld.Negate = true
-		g.When.Related = append(g.When.Related, store.DirectedRelation{Incoming: true, Pred: notHeld})
+		// Held nowhere: none of the role's predicates matches.
+		for _, notHeld := range lr.held {
+			notHeld.Negate = true
+			g.When.Related = append(g.When.Related, store.DirectedRelation{Incoming: true, Pred: notHeld})
+		}
 	}
 	return g
 }

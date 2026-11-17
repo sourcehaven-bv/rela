@@ -30,6 +30,12 @@ const (
 	OpCreateRelation = "create-relation"
 	OpUpdateRelation = "update-relation"
 	OpDeleteRelation = "delete-relation"
+	// OpUpdateRecord and OpDeleteRecord are changes to a row of a mutable
+	// record type (TKT-ERO2X5G). Subject has Kind "record", the record type
+	// and the row id. Appends are not audited: an append-only row keeps its
+	// own attribution.
+	OpUpdateRecord = "update-record"
+	OpDeleteRecord = "delete-record"
 
 	// OpDeniedWrite records a write attempt that the ACL refused.
 	// Subject names the would-be target (entity type or relation type);
@@ -231,9 +237,11 @@ const (
 	OpTokenDelete = "token-delete"
 
 	// OpIDPRolesSet records the IdP webhook storing or clearing the asserted
-	// roles of one principal (TKT-IZL6NX8). The subject is the bound user
-	// entity, when there is one; the summary gives the role count, never the
-	// IdP subject or the role names.
+	// roles of one principal (TKT-IZL6NX8), or the stored roles being erased
+	// with the person: a delete, a rename, or `rela acl forget-idp-roles`
+	// (summary roles=0). The subject is the bound user entity, when there is
+	// one; the summary gives the role count, never the IdP subject or the
+	// role names.
 	OpIDPRolesSet = "idp-roles-set"
 
 	// OpRemoteResolve, OpRemoteDismiss and OpRemoteLink record a change to

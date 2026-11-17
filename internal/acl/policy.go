@@ -952,9 +952,21 @@ func roleHasAffordanceGrants(role RoleDef) bool {
 // permissions exist for relation types that do NOT confer roles — see
 // [RelationWriteGrant] (`relation_grants:`), which is refused on any
 // type carrying this gate precisely so the two cannot disagree.
+//
+// # Conditional grants
+//
+// [RoleRelationDef.When] makes an edge count only while a condition on its
+// own properties holds, such as `edge.valid_until >= today()` (TKT-TKSCSBT).
+// On the membership relation's entry it filters the member walk. A `when:`
+// requires [RoleRelationDef.RequiresPermission], so the grantee cannot
+// extend their own expiry. See [GrantCondition].
 type RoleRelationDef struct {
 	Confers            string `yaml:"confers"`
 	RequiresPermission string `yaml:"requires_permission"`
+	// When is the `when:` source text. Condition is its compiled form, set
+	// by [CompileGrantConditions] at the wiring site.
+	When      string          `yaml:"when"`
+	Condition *GrantCondition `yaml:"-"`
 }
 
 // UnmarshalYAML rejects unknown keys rather than silently dropping them.
@@ -974,7 +986,7 @@ func (d *RoleRelationDef) UnmarshalYAML(unmarshal func(any) error) error {
 	}
 	for _, k := range slices.Sorted(maps.Keys(raw)) {
 		switch k {
-		case "confers", "requires_permission":
+		case "confers", "requires_permission", "when":
 		case "create", "update", "delete", "read":
 			return fmt.Errorf(
 				"role_relations: %q is not supported — `requires_permission:` gates ALL "+
@@ -983,11 +995,18 @@ func (d *RoleRelationDef) UnmarshalYAML(unmarshal func(any) error) error {
 					"confers a role", k)
 		default:
 			return fmt.Errorf(
-				"role_relations: unknown key %q (want confers, requires_permission)", k)
+				"role_relations: unknown key %q (want confers, requires_permission, when)", k)
 		}
 	}
 	d.Confers = raw["confers"]
 	d.RequiresPermission = raw["requires_permission"]
+	d.When = strings.TrimSpace(raw["when"])
+	if d.When != "" && d.RequiresPermission == "" {
+		// The edge's own properties decide the grant, so whoever may write
+		// the edge may extend it. Ungated, that is the grantee.
+		return errors.New("role_relations: `when:` needs `requires_permission:`, " +
+			"or the grantee could extend their own access by editing the edge")
+	}
 	return nil
 }
 

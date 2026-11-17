@@ -456,27 +456,6 @@ func (b *MetamodelBuilder) WithCustomTypeDefault(name string, values []string, d
 	return b
 }
 
-// WithAutomation adds an automation rule to the metamodel.
-func (b *MetamodelBuilder) WithAutomation(auto metamodel.AutomationDef) *MetamodelBuilder {
-	b.meta.Automations = append(b.meta.Automations, auto)
-	return b
-}
-
-// WithSetOnCreate adds an automation that sets a property when an entity is created.
-func (b *MetamodelBuilder) WithSetOnCreate(entityTypes []string, propName, value string) *MetamodelBuilder {
-	b.meta.Automations = append(b.meta.Automations, metamodel.AutomationDef{
-		Name: "auto-set-" + propName,
-		On: metamodel.AutomationTrigger{
-			Entity:  entityTypes,
-			Created: true,
-		},
-		Do: []metamodel.AutomationAction{
-			{Set: propName, Value: value},
-		},
-	})
-	return b
-}
-
 // Build returns the built metamodel, initializing the alias map.
 func (b *MetamodelBuilder) Build() *metamodel.Metamodel {
 	b.meta.InitAliases()
@@ -540,7 +519,6 @@ func WorkspaceMetamodel() *metamodel.Metamodel {
 		WithRelation("addresses", "Addresses", []string{"decision"}, []string{"requirement"}).
 		WithRelation("depends-on", "Depends On", []string{"requirement"}, []string{"requirement"}).
 		WithRelation("has-checklist", "has checklist", []string{"requirement"}, []string{"checklist"}).
-		WithSetOnCreate([]string{"requirement"}, "status", "draft").
 		Build()
 }
 
@@ -616,75 +594,6 @@ relations:
 types:
   status:
     values: [draft, proposed, accepted, rejected, deprecated, retired]
-`
-}
-
-// WorkspaceMetamodelYAML returns the YAML for WorkspaceMetamodel().
-func WorkspaceMetamodelYAML() string {
-	return `version: "1.0"
-entities:
-  requirement:
-    label: Requirement
-    plural: requirements
-    id_prefix: "REQ-"
-    id_type: sequential
-    properties:
-      title:
-        type: string
-        required: true
-      status:
-        type: string
-  decision:
-    label: Decision
-    plural: decisions
-    id_prefix: "DEC-"
-    id_type: sequential
-    properties:
-      title:
-        type: string
-        required: true
-      status:
-        type: string
-  stakeholder:
-    label: Stakeholder
-    plural: stakeholders
-    id_type: manual
-    properties:
-      name:
-        type: string
-        required: true
-  checklist:
-    label: Checklist
-    plural: checklists
-    id_prefix: "CHK-"
-    id_type: sequential
-    properties:
-      title:
-        type: string
-        required: true
-      status:
-        type: string
-relations:
-  addresses:
-    label: Addresses
-    from: [decision]
-    to: [requirement]
-  depends-on:
-    label: Depends On
-    from: [requirement]
-    to: [requirement]
-  has-checklist:
-    label: has checklist
-    from: [requirement]
-    to: [checklist]
-automations:
-  - name: auto-draft
-    on:
-      entity: [requirement]
-      created: true
-    do:
-      - set: status
-        value: draft
 `
 }
 

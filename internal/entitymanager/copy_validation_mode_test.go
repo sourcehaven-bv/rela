@@ -5,14 +5,15 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -50,19 +51,24 @@ copies:
     fields: all
     guard:
       permission: adopt
-automations:
-  - name: set-bad-enum
-    on: {entity: doc, copy: bad-enum}
-    do: [{set: niveau, value: middel}]
-  - name: set-status
-    on: {entity: doc, copy: breaks-rule}
-    do: [{set: status, value: vastgesteld}]
 validations:
   - name: rechtsgrond-bij-vaststelling
     entity_type: doc
     enforce: write
     when: ["status=vastgesteld"]
     then: ["rechtsgrond!="]
+`
+
+// copyValidationModeFlowsYAML holds the triggers that go with
+// copyValidationModeYAML.
+const copyValidationModeFlowsYAML = `
+triggers:
+  set-bad-enum:
+    on: {entity: doc, copy: bad-enum}
+    outputs: [{set: {properties: {niveau: middel}}}]
+  set-status:
+    on: {entity: doc, copy: breaks-rule}
+    outputs: [{set: {properties: {status: vastgesteld}}}]
 `
 
 // TestCopyAutomations_ValidationMode pins that a copy checks the state its
@@ -123,7 +129,11 @@ func newCopyModeManager(t *testing.T, mode entitymanager.ValidationMode) (*entit
 	if err != nil {
 		t.Fatalf("parse metamodel: %v", err)
 	}
-	engine, err := automation.NewEngineFromMetamodel(meta, meta.Automations)
+	rules, err := triggers.Parse([]byte(copyValidationModeFlowsYAML), meta)
+	if err != nil {
+		t.Fatalf("parse triggers: %v", err)
+	}
+	engine, err := triggers.New(meta, rules)
 	if err != nil {
 		t.Fatalf("automation engine: %v", err)
 	}
@@ -131,9 +141,9 @@ func newCopyModeManager(t *testing.T, mode entitymanager.ValidationMode) (*entit
 	if err != nil {
 		t.Fatalf("autocascade.New: %v", err)
 	}
-	machines, err := statemachine.Compile(meta)
+	machines, err := transitions.CompileTransitions(meta)
 	if err != nil {
-		t.Fatalf("statemachine.Compile: %v", err)
+		t.Fatalf("transitions.CompileTransitions: %v", err)
 	}
 	st := memstore.New()
 	mgr, err := entitymanager.New(entitymanager.Deps{

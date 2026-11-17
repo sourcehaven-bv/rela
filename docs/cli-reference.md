@@ -85,6 +85,11 @@ validation: advisory # advisory (default) or strict
 | ----------------------- | ------------------------------------------------------------- | ---------- |
 | `formatting.line_width` | Maximum line width for paragraph wrapping                     | 80         |
 | `validation`            | Validation mode of this deployment: `advisory` or `strict`    | `advisory` |
+| `remote_mcp.enabled`    | Serve rela-server's HTTP MCP endpoint: `true` or `false`      | unset      |
+| `remote_mcp.tools`      | `allow` and `deny` lists of tools the HTTP MCP endpoint serves | every tool |
+
+The `remote_mcp` settings are described in
+[mcp-server.md](mcp-server.md#turning-it-on-and-off).
 
 ### Validation mode
 
@@ -112,10 +117,10 @@ ID with the wrong prefix) refuses the write, and a rule declared
 
 Strict mode checks the state that is stored:
 
-- An update is checked after its on-update automations ran, so an automation
-  that fills a required property lets the update pass.
-- A create is checked before its on-create automations run, because the
-  create is stored first. A property that only an on-create automation sets
+- An update is checked after its update triggers ran, so a trigger that
+  fills a required property lets the update pass.
+- A create is checked before its `created` triggers run, because the
+  create is stored first. A property that only a `created` trigger sets
   cannot be required in strict mode. Give it a template default instead.
 - The create dry run (`?dry_run=true`, used by the create form) and the
   task-item conversion preview always report warnings, because they exist to
@@ -315,6 +320,7 @@ current day rather than to a hard-coded date:
 | Function | Returns | Meaning |
 | -------- | ------- | ------- |
 | `today()` | date | The current day, at UTC midnight |
+| `now()` | datetime | The current time in UTC, in whole seconds |
 | `days_between(a, b)` | number | Whole days from `b` to `a`; positive when `a` is later |
 | `date_add(d, n, unit)` | date | `d` shifted by `n` (may be negative); `unit` is `day`, `week`, `month` or `year` |
 | `rrule_next(rule, after)` | date | The first occurrence of an RRULE strictly after `after` |
@@ -328,11 +334,21 @@ rela list taak --filter "days_between(entity.due, today()) < 0"
 
 # a three-day grace period has lapsed
 rela list taak --filter "date_add(entity.due, 3, 'day') < today()"
+
+# a datetime that has passed
+rela list toegang --filter "entity.valid_until ~= nil and entity.valid_until < now()"
 ```
 
-Every date value is normalized to UTC midnight, so results are whole days
-and compare equal to bare `YYYY-MM-DD` literals regardless of any time
-component or timezone on the stored value.
+A date-only value compares as 00:00:00 UTC of its day, so it can be compared with a
+`datetime` and with `now()`. An ordered comparison on an unset property is an
+error; guard it with `entity.due ~= nil and …`. The deprecated `--where` flag
+accepts `$today`, `$today+7d`, `$today-2w`, `$tomorrow`, `$yesterday` and
+`$now` as values on a date or datetime property. Quote them with single
+quotes so the shell does not expand them: `--where 'due<$today'`.
+
+`days_between` and `date_add` use the UTC day of each value, so their results
+are whole days, whatever time component or timezone the stored value has. A
+plain comparison such as `entity.valid_until < now()` compares instants.
 
 `date_add` accepts `day`, `week`, `month` and `year`. Month and year
 arithmetic **clamps to the last valid day** of the target month rather than
@@ -769,8 +785,8 @@ rela history-purge <address> (--vseq N | --content-hash H | --all) --reason "...
   tags too. The dry run lists the tags a purge would hit.
 
 A committed purge also erases the deleted state that waiting `on.deleted`
-automation jobs hold for the entity, so those jobs end without running (see
-the metamodel guide, "Running a script when an entity is deleted").
+trigger jobs hold for the entity, so those jobs end without running (see
+[Running a script when an entity is deleted](flows.md#running-a-script-when-an-entity-is-deleted)).
 
 Purge **refuses** while the live row still holds the content (unless
 `--force-live`), **refuses** a row a version tag points at (unless
@@ -1245,13 +1261,20 @@ rela import <file> [flags]
 
 **Flags:**
 
-| Flag              | Description                                                                           |
-| ----------------- | ------------------------------------------------------------------------------------- |
-| `-f, --format`    | Input format: `json`, `yaml`, or `csv`. Auto-detected from extension if not specified |
-| `-n, --dry-run`   | Validate without creating files                                                       |
-| `-u, --update`    | Replace existing entities instead of failing on duplicates                            |
-| `--skip-errors`   | Continue importing on validation errors                                               |
-| `-r, --relations` | Path to relations CSV file (for CSV imports)                                          |
+| Flag              | Description                                                                                 |
+| ----------------- | ------------------------------------------------------------------------------------------- |
+| `-f, --format`    | Input format: `json`, `yaml`, `csv`, or `xml` with `--mapping`. Default: from the extension |
+| `-m, --mapping`   | Import through the mapping file `imports/<name>.yaml`                                       |
+| `-n, --dry-run`   | Validate, or with `--mapping` show the plan, without writing                                |
+| `-u, --update`    | Replace existing entities instead of failing on duplicates                                  |
+| `--skip-errors`   | Continue importing on validation errors                                                     |
+| `-r, --relations` | Path to relations CSV file (for CSV imports)                                                |
+
+With `--mapping`, any JSON, YAML, XML or CSV file is mapped onto the schema
+by an operator-written mapping file. The import plans creates, updates and
+relations by key, shows the plan, and writes through the entity manager.
+A second run of the same file plans nothing. See
+[Importing structured data with a mapping](mapped-import.md).
 
 **Input Formats:**
 
@@ -1322,6 +1345,9 @@ rela import entities.csv --relations relations.csv
 
 # Dry-run to validate without creating files
 rela import --dry-run data.json
+
+# Show what the mapping imports/oscal.yaml would change, as JSON
+rela import catalog.xml --mapping oscal --dry-run -o json
 
 # Update existing entities instead of failing
 rela import --update data.json
@@ -1560,7 +1586,7 @@ An entity counts once, however many faces it stores.
 | `--dry-run`   | Preview cleanup changes without modifying files               |
 
 The cleanup operation only removes types that have no instances AND no references in
-configuration files (data-entry.yaml, validations, automations). Types referenced in
+configuration files (data-entry.yaml, validations, flows.yaml triggers). Types referenced in
 forms, lists, views, or validations will not be removed even if they have zero instances.
 
 #### rela analyze all
@@ -1773,7 +1799,14 @@ rela migrate [flags]
 This command detects deprecated syntax patterns in your project files (e.g., `schema.yaml`) and
 transforms them to the current format while preserving comments and formatting.
 
-It also renames a legacy `metamodel.yaml` to `schema.yaml`.
+It also renames a legacy `metamodel.yaml` to `schema.yaml`, and moves
+`automations:` from `schema.yaml` and its included files to `flows.yaml` under
+`triggers:`. A schema that still declares `automations:` does not load until
+you run it. The move keeps each automation's name and comments. When an
+automation cannot be moved as written, it stops before it writes `flows.yaml`
+or cuts the schema; syntax migrations from the same run may already be
+written. See
+[Moving from schema.yaml automations](flows.md#moving-from-schemayaml-automations).
 
 If a project contains **both** files, `schema.yaml` is the one rela reads and the
 `metamodel.yaml` is ignored. Nothing is renamed or deleted in that case — `migrate`
@@ -2066,7 +2099,7 @@ always produce the same graph, on every backend — on the default build it
 writes markdown files, on the postgres build it writes straight into the
 database named by `RELA_DATABASE_URL`.
 
-This is a raw store write: no automations, validations or ACL run, the writes
+This is a raw store write: no triggers, validations or ACL run, the writes
 are attributed to the operator with tool `perf-seed`, and the run leaves one
 `perf-seed` audit record. It refuses a store that already holds entities so a
 second run cannot sit beside real data.
@@ -2112,7 +2145,7 @@ every row is written, then reads it back to verify. On any problem it writes
 nothing and lists every problem it found. Files it does not copy are listed
 with a reason. See the SQLite backend guide for what is and is not copied.
 
-Like `rela dev seed`, this is a raw store write: no automations, validations or
+Like `rela dev seed`, this is a raw store write: no triggers, validations or
 ACL run. Writes are attributed to the operator with tool `fs-import`, and the
 new project's audit log gets one `fs-import` record.
 
@@ -2532,7 +2565,8 @@ Validate project configuration files.
 rela validate
 ```
 
-Checks `schema.yaml` and `data-entry.yaml` for:
+Checks `schema.yaml`, `data-entry.yaml` and, when the project has one,
+`flows.yaml` (its flows and its [triggers](flows.md#load-checks)) for:
 
 - Unknown/misspelled keys
 - Invalid cross-references (forms, lists, views)
@@ -2594,9 +2628,10 @@ does. See [Flows](flows.md).
 Work with the flows in `flows.yaml`, or run a Lua flow script.
 
 ```bash
-rela flow validate        # check flows.yaml against the schema and acl.yaml
-rela flow show            # list the flows with their version
+rela flow validate        # check flows.yaml and the schema transitions
+rela flow show            # list the flows, also the headless ones
 rela flow show onboarding # print one flow as a Mermaid state diagram
+rela flow show schema.ticket-status # print a headless flow
 rela flow start onboarding PER-12   # start a run by hand
 rela flow runs [--flow onboarding]  # list the runs you can read
 rela flow cancel RUN-4OSX           # cancel an unfinished run
@@ -2605,7 +2640,9 @@ rela flow scripts/create-ticket.lua   # run a Lua flow script
 
 `rela flow validate` exits `1` and prints one line per problem, each with
 the key it is about, when `flows.yaml` does not load. `rela flow show`
-accepts `-o json`. A bare `rela flow <script.lua>` runs the script, as
+accepts `-o json`. It also lists the headless flows: the state machines
+that `transitions:` declares on an enum type in `schema.yaml`, named
+`schema.<type>`; see [Flows](flows.md#checking-the-file). A bare `rela flow <script.lua>` runs the script, as
 before. A script file named after a subcommand (`validate`, `show`,
 `start`, `runs` or `cancel`) needs a path, such as `rela flow ./show`.
 `rela flow start`, `runs` and `cancel` work on runs; see
@@ -2653,7 +2690,7 @@ section covers the flags documented in this reference.
 
 | Flag | Description |
 | ---- | ----------- |
-| `--config-editing` | Turn on the in-app [Configure space](data-entry.md#configure-space). Principals holding `config:edit` can then change `schema.yaml` and `data-entry.yaml` from the browser. Off by default. Env: `RELA_CONFIG_EDITING=1`. |
+| `--config-editing` | Turn on the in-app [Configure space](data-entry.md#configure-space). Principals holding `config:edit` can then change `schema.yaml`, `data-entry.yaml` and the `flows.yaml` triggers from the browser. Off by default. Env: `RELA_CONFIG_EDITING=1`. |
 
 The server refuses to start with `--config-editing` when any of these is true:
 

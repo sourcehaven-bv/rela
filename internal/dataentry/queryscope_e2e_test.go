@@ -244,7 +244,7 @@ func TestQueryScopes_PositionMatchesTheScopedList(t *testing.T) {
 
 	// TAAK-3 is the archived row: present in `archief`, absent from the
 	// default. Navigating it is only coherent under the scope that showed it.
-	scope := ScopeDescriptor{Source: "list", Type: "taak", QueryScope: "archief"}
+	scope := ScopeDescriptor{Source: "list", Type: "taak", ListQuery: ListQuery{QueryScope: "archief"}}
 	rec, pos := getPosition(t, app, "TAAK-3", scope)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("position within the archief scope: %d %s\n"+

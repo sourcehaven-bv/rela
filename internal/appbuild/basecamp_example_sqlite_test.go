@@ -443,6 +443,8 @@ func newBCWorld(t *testing.T) *bcWorld {
 		require.NoError(t, os.WriteFile(filepath.Join(root, name), data, 0o600))
 	}
 	write(filepath.Join("scripts", "basecamp.lua"), exampleFile(t, "basecamp.lua"))
+	// The push trigger lives in flows.yaml (TKT-GWOBH2U).
+	write("flows.yaml", exampleFile(t, "flows.yaml"))
 	write("schedules.yaml", exampleFile(t, "schedules.yaml"))
 	write("connections.yaml", []byte(strings.Replace(string(exampleFile(t, "connections.yaml")),
 		"https://launchpad.37signals.com", stub.srv.URL, 1)))

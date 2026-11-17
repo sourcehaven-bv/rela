@@ -135,7 +135,7 @@ func buildFlowEngine(s *Services, runs flowrun.Store) (*flowengine.Engine, error
 	}
 	d := s.aclDeclarative
 	reader, _, _ := scriptReads(s.store, d, s.fieldReads, s.worlds)
-	bind := identityBinderFor(d)
+	bind := identityBinderFor(d, s.base.clock())
 	as := func(ctx context.Context, user string) (context.Context, error) {
 		ctx = principal.With(ctx, principal.Principal{User: user, Tool: principal.ToolFlow})
 		if d == nil {
@@ -156,6 +156,10 @@ func buildFlowEngine(s *Services, runs flowrun.Store) (*flowengine.Engine, error
 	q := automationJobQueue(s.base, s.jobQueue)
 	if q != nil {
 		queue = flowJobQueue{q: q}
+	}
+	if fq := s.base.opts.seams.flowJobs; fq != nil {
+		// The caller runs the attempts; see [WithFlowJobQueue].
+		queue, q = fq, nil
 	}
 	eng, err := flowengine.New(flowengine.Deps{
 		Flows: flows, Meta: meta, Runs: lockFlowRuns(s.store, runs),

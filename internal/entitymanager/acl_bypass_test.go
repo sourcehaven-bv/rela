@@ -6,14 +6,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
@@ -117,12 +118,12 @@ func TestManager_Elevated_DoesNotLeakIntoNestedCascade(t *testing.T) {
 	t.Parallel()
 	scripts := &recordingScripts{}
 	cs := &countingStore{Store: memstore.New()}
-	auto := automation.Automation{
+	auto := triggers.Rule{
 		Name: "fires-on-create",
-		On:   automation.Trigger{Entity: []string{"requirement"}, Created: true},
-		Do:   []automation.Action{{Lua: "-- noop"}},
+		On:   triggers.Trigger{Entity: []string{"requirement"}, Created: true},
+		Do:   []triggers.Action{{Lua: "-- noop"}},
 	}
-	engine := automation.NewEngine([]automation.Automation{auto})
+	engine := triggers.NewEngine([]triggers.Rule{auto})
 	runner, err := autocascade.New(autocascade.Deps{Engine: engine})
 	if err != nil {
 		t.Fatalf("autocascade.New: %v", err)
@@ -133,7 +134,7 @@ func TestManager_Elevated_DoesNotLeakIntoNestedCascade(t *testing.T) {
 		Templater:    nopTemplater{},
 		Audit:        audit.Nop{},
 		ACL:          acl.ReadOnlyACL{}, // deny-all, so a gated write is refused
-		Transitions:  statemachine.EmptySet(),
+		Transitions:  transitions.NoTransitions(),
 		FieldGate:    entitymanager.AllowAllFieldGate{},
 		Automations:  engine,
 		Cascade:      runner,

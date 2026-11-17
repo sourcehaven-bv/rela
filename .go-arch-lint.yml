@@ -22,6 +22,7 @@ exclude:
   - internal/lease/leasetest
   - internal/channels/channelstest
   - internal/flowrun/flowruntest
+  - internal/records/recordstest
   - internal/schedulerstate/schedulerstatetest
   - frontend
   - e2e
@@ -86,6 +87,8 @@ components:
   backendtest:      { in: internal/appbuild/backendtest }
   tenant:           { in: internal/tenant }
   tenanthost:       { in: internal/tenanthost }
+  # Reads an org's status from the IdP operator API (TKT-TNPRV8).
+  idporg:           { in: internal/idporg }
 
   # Domain services
   analysis:         { in: internal/analysis }
@@ -94,7 +97,7 @@ components:
   transform:        { in: internal/transform }
   check:            { in: internal/check }
   autocascade:      { in: internal/autocascade }
-  automation:       { in: internal/automation }
+  triggers:         { in: internal/flowcfg/triggers }
   calfeed:          { in: internal/calfeed }
   # Numbers store change events and answers "which types changed since this
   # resume token" (TKT-3A1200). An UNGATED base source like store: it holds no
@@ -121,6 +124,8 @@ components:
   # changed rows and writes them through entitymanager. The scheduler and
   # `rela remote pull` run it.
   remotesync:       { in: internal/remotesync }
+  # Mapping-file import (TKT-K7HR49Y): structured data to a write plan.
+  mapimport:        { in: internal/mapimport }
   # Which entity ids a markdown body mentions (TKT-Q6AKUN). A leaf: every store
   # backend indexes with it and the data-entry renderer links with it, so the
   # backlink index and the rendered links agree on what counts as a mention.
@@ -191,7 +196,7 @@ components:
   syncmerge:        { in: internal/syncmerge }
   relresolve:       { in: internal/relresolve }
   rollup:           { in: internal/rollup }
-  statemachine:     { in: internal/statemachine }
+  transitions:      { in: internal/flowcfg/transitions }
   writerule:        { in: internal/writerule }
   tracer:           { in: internal/tracer }
   validation:       { in: internal/validation }
@@ -254,6 +259,12 @@ components:
   sqlchannels:      { in: internal/channels/sqlchannels }
   sqlitechannels:   { in: internal/channels/sqlitechannels }
   pgchannels:       { in: internal/channels/pgchannels }
+  # Records (TKT-J7Q9C4K): typed rows owned by an entity, outside the graph.
+  records:          { in: internal/records }
+  filerecords:      { in: internal/records/filerecords }
+  sqlrecords:       { in: internal/records/sqlrecords }
+  sqliterecords:    { in: internal/records/sqliterecords }
+  pgrecords:        { in: internal/records/pgrecords }
   # In-memory presence tracker (TKT-MHXH87). A leaf: it reads no clock and
   # imports nothing of rela; the live hub keys and drives it.
   presence:         { in: internal/presence }
@@ -305,6 +316,10 @@ components:
   affordances:      { in: internal/affordances }
   visibility:       { in: internal/visibility }
   ai:               { in: internal/ai }
+  # Declarative LLM actions (TKT-4USH1HO): request building and reply checks.
+  # Pure: no store, reader or provider.
+  llmtask:          { in: internal/llmtask }
+  actionproposal:   { in: internal/actionproposal }
   mail:             { in: internal/mail }
   audit:            { in: internal/audit }
   jwtauth:          { in: internal/jwtauth }
@@ -338,6 +353,8 @@ components:
   errors:           { in: internal/errors }
   htmlutil:         { in: internal/htmlutil }
   natsort:          { in: internal/natsort }
+  # The read time of one operation, on ctx (conditional grants judge it).
+  readtime:         { in: internal/readtime }
 
 # -- Vendors --------------------------------------------------------------
 vendors:
@@ -459,6 +476,7 @@ commonComponents:
   - entity
   - errors
   - natsort
+  - readtime
 
 commonVendors:
   - yaml
@@ -506,6 +524,9 @@ deps:
       - mcpwire
       - metamodel
       - principal
+      # project: reads `remote_mcp:` from .rela/config.yaml to decide whether
+      # to mount the remote MCP endpoint and which tools it serves.
+      - project
       - projectsetup
       - scheduler
       - script
@@ -514,6 +535,8 @@ deps:
       # tenant, tenanthost: the multi-tenant host (TKT-D6MF3SW) is wired here.
       - tenant
       - tenanthost
+      # idporg: tenant mode reads org status from the IdP (TKT-TNPRV8).
+      - idporg
     canUse:
       - http2
   cmdDesktop:
@@ -562,6 +585,8 @@ deps:
       - metamodel
       - predicate
       - predicatefns
+      # queryplan: lowers a rule's condition to store predicates.
+      - queryplan
       - store
 
   # CLI layer — orchestrates everything. memstore is here because
@@ -587,7 +612,7 @@ deps:
       - attachment
       - audit
       - autocascade
-      - automation
+      - triggers
       - bleveindex
       - cmdexec
       # comments: stdio `rela mcp` backs list_comments (TKT-QIQO1W).
@@ -595,16 +620,22 @@ deps:
       - config
       - configsql
       - dataentryconfig
+      # records: `rela export --all` writes every record row (records.Each).
+      - records
       - sqlitedb
       - datamigration
       - entitymanager
       - filter
       - flowcfg
+      # `rela flow show` lists the headless flows of the schema.
+      - transitions
       # `rela flow start|runs|cancel` speaks the run id and the engine's
       # errors; the access checks stay in appbuild.FlowControl.
       - flow
       - flowengine
       - importer
+      # `rela import --mapping` plans and applies a mapping-file import.
+      - mapimport
       # `rela lease` (TKT-B610IP) speaks its request, lease and error types;
       # the access checks stay in lease.Service.
       - lease
@@ -682,10 +713,16 @@ deps:
     # data-entry config types need listing. Critically: NO `dataentry` — the
     # contract must not depend on the server that serializes to it.
     mayDependOn:
+      - actionproposal
       - dataentryconfig
   dataentry:
     mayDependOn:
+      - actionproposal
+      - ai
+      - llmtask
       - ygows
+      # The records REST surface (TKT-J7Q9C4K).
+      - records
       - mentions
       - rollup
       - rootfs
@@ -769,7 +806,7 @@ deps:
       - search
       - searchparser
       - state
-      - statemachine
+      - transitions
       - storage
       - store
       - templating
@@ -822,6 +859,8 @@ deps:
       - metamodel
       # piles.Icons, the allowlist a `piles.toggles` icon is checked against.
       - piles
+      # texthazard.Find, the invisible-character check on a step prompt.
+      - texthazard
       - yamlscalar
     canUse:
       - rrulego
@@ -840,6 +879,12 @@ deps:
   cmdGenIcons:
     mayDependOn:
       - icondefs
+  llmtask:
+    mayDependOn:
+      - actionproposal
+      - ai
+      - dataentryconfig
+      - metamodel
   conditionlint:
     mayDependOn:
       - dataentryconfig
@@ -860,6 +905,7 @@ deps:
   # as a plain string rather than a *project.Context.
   mcp:
     mayDependOn:
+      - actionproposal
       - rootfs
       # affordances: convert_entity names a field-gate refusal
       # (FieldWriteError) the way the conversion endpoint does.
@@ -884,6 +930,10 @@ deps:
       # flowview: the flow tools (TKT-ZAXRXND) serve the run read model; the
       # gates stay in appbuild.FlowControl. flow is the leaf that names a
       # run id.
+      # flowcfg + triggers: analyze schema counts the flows.yaml triggers'
+      # references (TKT-GWOBH2U).
+      - flowcfg
+      - triggers
       - flowview
       - flow
       - principal
@@ -951,6 +1001,9 @@ deps:
       - elementnaive
       # writerule: CheckSchemaCompiles compiles the rules enforced on write.
       - writerule
+      # configedit: CheckTriggerACL answers configedit.TriggerChecker in its
+      # own types.
+      - configedit
       # aclstore: the store adapters handed to acl.NewDeclarative.
       - aclstore
       # The stored IdP roles, over the state KV and the Services-wide lock.
@@ -1024,6 +1077,14 @@ deps:
       - filechannels
       - pgchannels
       - sqlitechannels
+      # Records: the backend is picked like the channel store's, and the
+      # service is built over the gated reader and the write ACL.
+      - records
+      - filerecords
+      - pgrecords
+      - sqliterecords
+      # sqlrecords: record writes join a store transaction (joinRecordsFor).
+      - sqlrecords
       # The cross-process lock for kvpiles and kvlease over the on-disk cache KV.
       - filelock
       - datamigration
@@ -1068,14 +1129,14 @@ deps:
       # appbuild constructs the affordance resolver so the field write gate
       # and the two gated-read bundles can share ONE instance (TKT-0XL8MF).
       # Safe as a dependency edge: affordances is a near-leaf (acl, entity,
-      # metamodel, predicate*, principal, statemachine) and imports no
+      # metamodel, predicate*, principal, transitions) and imports no
       # wiring package, so this cannot close a cycle.
       - affordances
       - app
       - audit
       - caldavalias
       - autocascade
-      - automation
+      - triggers
       - bleveindex
       - config
       - entitymanager
@@ -1095,7 +1156,7 @@ deps:
       - script
       - search
       - state
-      - statemachine
+      - transitions
       - storage
       - store
       - templating
@@ -1141,19 +1202,19 @@ deps:
       - pgstore
     canUse:
       - pgx
-      # xtimerate: the auto-provisioner's bound on how many tenants it
-      # creates per minute (TKT-TNPRV8).
-      - xtimerate
   # tenanthost is the front handler of a multi-tenant rela-server
   # (TKT-D6MF3SW): it verifies the assertion, routes by org through the
   # tenant registry and serves that tenant's data-entry router. It names
   # dataentry for the verified-identity types and the static shell, and
   # tenant for its sentinel error. The registry itself is reached through a
-  # consumer-side func, wired in cmd/rela-server.
+  # consumer-side func, wired in cmd/rela-server. It uses x/time/rate to cap
+  # how many tenant creations start per minute (TKT-TNPRV8).
   tenanthost:
     mayDependOn:
       - dataentry
       - tenant
+    canUse:
+      - xtimerate
   appbuildtest:
     mayDependOn:
       - acl
@@ -1161,7 +1222,7 @@ deps:
       - appbuild
       - audit
       - autocascade
-      - automation
+      - triggers
       - bleveindex
       # comments: only for WithComments, the optional collaborator a
       # commenting-enabled test supplies (BUG-6OZBP9).
@@ -1204,6 +1265,8 @@ deps:
       - subscription
       # `rela validate` checks remotes.yaml.
       - remotesync
+      # `rela validate` checks imports/*.yaml.
+      - mapimport
       # The scheduler's loader reads through a config.Loader.
       - config
       # `rela validate` checks connections.yaml (TKT-01KZSO).
@@ -1309,6 +1372,18 @@ deps:
       - safexml
       - secrets
       - state
+  # Decodes a file, plans against raw rows gated per row, and applies the
+  # plan through a consumer-side Writer (entitymanager at the wiring site).
+  # The hook runs on a bare lua sandbox with no rela bindings.
+  mapimport:
+    mayDependOn:
+      - ingest
+      - lua
+      - metamodel
+      - safexml
+      - store
+    canUse:
+      - gopherlua
   # Mapping.Validate checks types and properties against the schema.
   ingestspec:
     mayDependOn:
@@ -1392,6 +1467,8 @@ deps:
   aclstore:
     mayDependOn:
       - entity
+      # MatchProps: the edge condition of a conditional grant (TKT-TKSCSBT).
+      - graphquerynaive
       - store
   aclaudit:
     mayDependOn:
@@ -1416,13 +1493,23 @@ deps:
       - attachment
       - entity
       - entitymanager
+      # t.flows runs job attempts and reads runs through the engine.
+      - flow
+      - flowengine
+      # t.expect_denied recognises the flow control's forbidden error.
+      - flowview
       - fsimport
+      # The case's host config: mail.yaml as the world reads it, fake secrets.
+      - hostconfig
       - lua
       - mail
       - memcomments
       - metamodel
       - principal
+      - project
       - rootfs
+      - secrets
+      - state
       - store
     canUse:
       - gofakeit
@@ -1437,7 +1524,9 @@ deps:
       - predicate
       - predicatefns
       - principal
-      - statemachine
+      # propmatch.Integer is the one integer binding rule (TKT-8HY05WB).
+      - propmatch
+      - transitions
       # SearchFieldScope compiles `visible:` grants into store predicates:
       # queryplan decides exact lowering, relresolve resolves related() hops,
       # and the result is a search.FieldScope (search never imports
@@ -1480,25 +1569,30 @@ deps:
       - jwtlib
   renametype:
     mayDependOn:
+      - frontmatter
       - metamodel
       - project
       - storage
   autocascade:
     mayDependOn:
       - audit
-      - automation
-  automation:
+      - triggers
+  triggers:
     mayDependOn:
       # canonical.HashEntity decides whether an update changed anything for
       # `on.updated`, with the value normalization the stores use.
       - canonical
+      # cmdexec: Environ for the `git config` child that fills {{user.*}}.
+      - cmdexec
       - filter
-      # Automations compile to flow triggers and fire through flow.Fire
+      # Triggers compile to flow triggers and fire through flow.Fire
       # (TKT-GS7THPA). flow is a leaf.
       - flow
       - metamodel
       - predicate
       - predicatefns
+      # principal: ValidateRunAs checks a background script's `run_as`.
+      - principal
   conflict:
     mayDependOn:
       - markdown
@@ -1570,6 +1664,8 @@ deps:
     mayDependOn:
       - acl
       - appbuild
+      # cmdexec: Environ for the `cp -r` fixture copy.
+      - cmdexec
       - dataentry
       - docs
       - principal
@@ -1669,13 +1765,13 @@ deps:
       - acl
       - audit
       - autocascade
-      - automation
+      - triggers
       - computed
       # The rename's mention rewrite, carried into converted rows (TKT-J6GISC3).
       - mentions
       - metamodel
       - principal
-      - statemachine
+      - transitions
       - store
       - templating
       - writerule
@@ -1688,6 +1784,9 @@ deps:
   schema:
     mayDependOn:
       - dataentryconfig
+      # triggers: the flows.yaml rules count as references to the types they
+      # name (TKT-GWOBH2U).
+      - triggers
       - metamodel
       - migration
       - store
@@ -1708,6 +1807,9 @@ deps:
       - predicate
       - filter
       - metamodel
+      # propmatch.Integer is the integer binding rule the store's integer
+      # range predicate shares (TKT-8HY05WB). propmatch is a stdlib leaf.
+      - propmatch
   # flows.yaml consumes the schema and acl.yaml; neither knows it exists.
   flowcfg:
     mayDependOn:
@@ -1761,12 +1863,18 @@ deps:
       - predicate
       - predicatefns
       - store
-  statemachine:
+  # Schema transitions compiled into headless flows and enforced on the
+  # write path (TKT-12RC7JT, TKT-ZRQSGCM). It sits under flowcfg but shares
+  # no code with the flows.yaml loader.
+  # GUARD: transitions takes no runtime component (store, lua, jobs,
+  # automation, flowengine, flowrun). The enforcer reads the graph only
+  # through the collaborators its caller injects.
+  transitions:
     mayDependOn:
       - entity
-      # Enum transitions compile to headless flows and decide through
-      # flow.Decide (TKT-12RC7JT). flow is a leaf.
+      # Enum transitions decide through flow.Decide. flow is a leaf.
       - flow
+      - mermaid
       - metamodel
       - predicate
       - predicatefns
@@ -1974,8 +2082,6 @@ deps:
       - flow
       # A leaf: the reply rule refuses rela's own identities and unknown.
       - principal
-      # A leaf: the batch cap the HTTP API and OpenAPI quote too.
-      - realtimelimits
   # The channel service (TKT-ZU7P13): authorization, validation, rate limits
   # and ephemeral signals over the channel store. Every gate comes in through
   # a consumer-side interface appbuild implements, so it lists neither acl,
@@ -2023,6 +2129,35 @@ deps:
   pgchannels:
     mayDependOn:
       - sqlchannels
+      - pgexec
+  # Records (TKT-J7Q9C4K). The domain package holds the Store contract, the
+  # service and the aggregate fold. Every gate comes in through the
+  # consumer-side Owners interface appbuild implements, so it lists neither
+  # acl, store nor visibility: a record is not graph content.
+  records:
+    mayDependOn:
+      - audit
+      - entity
+      - metamodel
+      - principal
+  # The file backend: JSON lines per owner per month, through the storage
+  # seam.
+  filerecords:
+    mayDependOn:
+      - records
+      - storage
+  # The SQL implementation shared by both database backends.
+  sqlrecords:
+    mayDependOn:
+      - records
+      - sqlexec
+  sqliterecords:
+    mayDependOn:
+      - sqlrecords
+      - sqliteexec
+  pgrecords:
+    mayDependOn:
+      - sqlrecords
       - pgexec
   # The run store's domain package: value types, limits, checks and the
   # Store contract. It knows no backend and no graph store. It authorizes
@@ -2170,6 +2305,9 @@ deps:
       # rela.xml / rela.feed (TKT-6KN0AC); pure leaves, no cycle possible.
       - safexml
       - feed
+      # rela.md.entity_refs {content = ...} reads the ids a body mentions by
+      # the rule the mention index uses (TKT-P9QMEVI); a leaf, no cycle.
+      - mentions
       - metamodel
       - principal
       - search
@@ -2222,6 +2360,7 @@ deps:
       - uuid
   script:
     mayDependOn:
+      - actionproposal
       - ai
       - autocascade
       - lua
@@ -2436,6 +2575,9 @@ deps:
       - metamodel
       - principal
       - project
+      # The source's record rows, read through the file record backend.
+      - records
+      - filerecords
       - state
       - storage
       - store

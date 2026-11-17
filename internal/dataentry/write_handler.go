@@ -68,6 +68,9 @@ type entityMutator interface {
 	ReplaceRelations(
 		ctx context.Context, creates []entitymanager.RelationCreate, removes []entityPkg.RelationKey,
 	) ([]*entityPkg.Relation, error)
+	// ChecksRelation reports whether a write-enforced relation rule reads
+	// relType. See entitymanager.ChecksRelation.
+	ChecksRelation(relType string) bool
 
 	// PatchEntity is how the webhook pipeline writes: it names only the
 	// properties a hook actually sets, so a property the hook does not mention
@@ -87,6 +90,13 @@ type entityMutator interface {
 	PatchGranted(
 		ctx context.Context, grant entitymanager.UpdateGrant, id string, patch entityPkg.Patch,
 	) (*entityPkg.UpdateResult, error)
+	// PatchGrantedWithRelations is PatchGranted with a replace of edges at
+	// the row, written in the same transaction. See
+	// entitymanager.PatchWithRelations.
+	PatchGrantedWithRelations(
+		ctx context.Context, grant entitymanager.UpdateGrant, id string, patch entityPkg.Patch,
+		creates []entitymanager.RelationCreate, removes []entityPkg.RelationKey,
+	) (*entityPkg.UpdateResult, error)
 }
 
 // grantedManager is the production [entityMutator]: the manager, plus the
@@ -99,6 +109,63 @@ func (grantedManager) PatchGranted(
 	ctx context.Context, grant entitymanager.UpdateGrant, id string, patch entityPkg.Patch,
 ) (*entityPkg.UpdateResult, error) {
 	return grant.PatchEntity(ctx, id, patch)
+}
+
+// PatchGrantedWithRelations writes through the grant with
+// entitymanager.PatchWithRelations.
+func (grantedManager) PatchGrantedWithRelations(
+	ctx context.Context, grant entitymanager.UpdateGrant, id string, patch entityPkg.Patch,
+	creates []entitymanager.RelationCreate, removes []entityPkg.RelationKey,
+) (*entityPkg.UpdateResult, error) {
+	res, _, err := entitymanager.PatchWithRelations(ctx, grant, id, patch, creates, removes)
+	return res, err
+}
+
+// patchJoined writes patch through grant, with the relation writes of joined
+// in the same transaction when joined is not nil, and adds joined's warnings
+// to the result.
+//
+// A function, not a method, to keep writeHandler under its plimsoll line.
+func patchJoined(
+	ctx context.Context, h *writeHandler, grant entitymanager.UpdateGrant, id string, patch entityPkg.Patch,
+	joined *joinedRelations,
+) (*entityPkg.UpdateResult, error) {
+	if joined == nil {
+		return h.manager.PatchGranted(ctx, grant, id, patch)
+	}
+	res, err := h.manager.PatchGrantedWithRelations(ctx, grant, id, patch, joined.creates, joined.removes)
+	if err != nil {
+		return nil, err
+	}
+	if res != nil {
+		res.Warnings = append(res.Warnings, joined.warnings...)
+	}
+	return res, nil
+}
+
+// writeUpdateError answers a failed entity patch of a PATCH: a refusal of
+// the joined relation writes as a relation error, a lost precondition race
+// as that, and anything else as a patch error.
+//
+// A function, not a method, to keep writeHandler under its plimsoll line.
+func writeUpdateError(
+	w http.ResponseWriter, r *http.Request, h *writeHandler, err error, joined *joinedRelations,
+	pre *v1.Preconditions, typeName string, ref entityPkg.Ref, plural string,
+) {
+	if relErr := joined.relationError(err); relErr != nil {
+		h.writeRelationsApplyError(w, r, relErr)
+		return
+	}
+	if pre != nil && h.writeLostRace(w, r, err, pre, typeName, ref, plural) {
+		return
+	}
+	writePatchError(w, r, err)
+}
+
+// ChecksRelation reports whether a write-enforced relation rule reads
+// relType.
+func (g grantedManager) ChecksRelation(relType string) bool {
+	return entitymanager.ChecksRelation(g.Manager, relType)
 }
 
 // writeHandler owns the data-entry write nucleus: the entity/relation CRUD
@@ -165,10 +232,17 @@ type writeHandler struct {
 	// a document render must not render and attach another. Nil, or
 	// returning nil: the binding is absent.
 	attachRender func() lua.AttachRenderer
+	// attachFile backs rela.attach_file in an action script (TKT-36DHKH8),
+	// kept out of luaDeps for the same reason as attachRender. Nil, or
+	// returning nil: the binding is absent.
+	attachFile func() lua.AttachFiler
 	// elevatedUpdates backs admin.update_entity for an action that declares
 	// allow_acl_bypass: write (TKT-JA5SABG), kept out of luaDeps for the same
 	// reason as versionTags. Nil: such an action fails with 500.
 	elevatedUpdates elevatedUpdaterFactory
+	// llmJobs queues `apply: auto` runs of `llm:` actions (TKT-WQ925LL).
+	// Nil: such a run answers 503.
+	llmJobs LLMActionQueue
 
 	// visible is the read path's resolver. Every addressed write resolves its
 	// row through it first, so a row the caller may not read, at any face, is
@@ -454,7 +528,7 @@ func (h *writeHandler) writeCreateRelations(
 	// content-scoped edges (BUG-64MU2Q). The address comes from the row the
 	// manager returned, not from the request: a create mints its id during
 	// the write, so the row it produced is what names the face.
-	ws, err = h.applyRelationsModern(r.Context(), created.Ref(), desired)
+	ws, err = h.applyRelationsModern(r.Context(), created.Ref(), desired, nil)
 	warnings = append(warnings, ws...)
 	if err != nil {
 		h.writeRelationsApplyError(w, r, err)
@@ -827,6 +901,20 @@ func writeWriteRefused(w http.ResponseWriter, r *http.Request, err error) {
 	_ = json.NewEncoder(w).Encode(problem)
 }
 
+// writeRuleRefusal answers a relation write that a write-enforced relation
+// rule refused (TKT-EBARYBI) with the 422 an entity write gets, and reports
+// whether it did. The problem names the rule and quotes its description,
+// never an entity: it answers with the unwrapped [entitymanager.ValidationError],
+// because a wrapping relation error names the request's first create target.
+func writeRuleRefusal(w http.ResponseWriter, r *http.Request, err error) bool {
+	invalid, ok := errors.AsType[*entitymanager.ValidationError](err)
+	if !ok {
+		return false
+	}
+	writeWriteRefused(w, r, invalid)
+	return true
+}
+
 // validationFieldErrors maps each failure of a refused write to a
 // [v1.FieldError]. The detail is the failure's own message, which never
 // quotes a property value (see [metamodel.ValidationError]).
@@ -1141,6 +1229,13 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 			}
 		}
 	}
+	// The edges a relation rule reads are written with the update, which is
+	// judged on the edges they leave (TKT-EBARYBI).
+	joined, planErr := planJoinedRelations(r.Context(), h, ref, entityChanged, req.Relations.Modern)
+	if planErr != nil {
+		h.writeRelationsApplyError(w, r, planErr)
+		return
+	}
 	if entityChanged {
 		// PatchEntity + ExpectedVersion, NOT a read-modify-write into
 		// UpdateEntity (TKT-34XS2R). Two things change:
@@ -1168,12 +1263,9 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		// default face — so a write to POL-1@published would be authorized
 		// (and applied) against POL-1's default state instead.
 		stateRef := entityPkg.FormatStateRef(entity.ID, entity.Face)
-		updateResult, err := h.manager.PatchGranted(r.Context(), grant, stateRef, patch)
+		updateResult, err := patchJoined(r.Context(), h, grant, stateRef, patch, joined)
 		if err != nil {
-			if req.Preconditions != nil && h.writeLostRace(w, r, err, req.Preconditions, typeName, ref, plural) {
-				return
-			}
-			writePatchError(w, r, err)
+			writeUpdateError(w, r, h, err, joined, req.Preconditions, typeName, ref, plural)
 			return
 		}
 		// PatchEntity merged against the raw stored entity; refresh the
@@ -1193,7 +1285,7 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 	// Phase C: relation writes. Produces warnings on soft conditions
 	// and structured errors on hard failures.
 	if req.Relations.Modern != nil {
-		ws, err := h.applyRelationsModern(r.Context(), ref, req.Relations.Modern)
+		ws, err := h.applyRelationsModern(r.Context(), ref, req.Relations.Modern, joined)
 		warnings = append(warnings, ws...)
 		if err != nil {
 			h.writeRelationsApplyError(w, r, err)
@@ -1479,7 +1571,7 @@ func (h *writeHandler) writeRelationsValidationError(w http.ResponseWriter, r *h
 // under this one maps to 409; everything else is a 500 whose detail names
 // the relation, op and target, with the cause in the server log.
 func (h *writeHandler) writeRelationsApplyError(w http.ResponseWriter, r *http.Request, err error) {
-	if writeForbiddenIfACLDenied(w, r, err) {
+	if writeForbiddenIfACLDenied(w, r, err) || writeRuleRefusal(w, r, err) {
 		return
 	}
 	detail := reconcileDetail(err)
@@ -1599,7 +1691,9 @@ func (h *writeHandler) handleV1CreateRelation(
 		entityPkg.RelationOptions{Properties: req.Meta},
 	)
 	if err != nil {
-		if writeForbiddenIfACLDenied(w, r, err) || writeCardinalityIfExceeded(w, r, err) {
+		if writeForbiddenIfACLDenied(w, r, err) || writeCardinalityIfExceeded(w, r, err) ||
+			writeRuleRefusal(w, r, err) {
+
 			return
 		}
 		if te := endpointTypeRefusal(err, relType); te != nil {
@@ -1860,7 +1954,7 @@ func (h *writeHandler) handleV1DeleteRelation(
 		err = h.manager.DeleteRelation(r.Context(), key)
 	}
 	if err != nil {
-		if writeForbiddenIfACLDenied(w, r, err) {
+		if writeForbiddenIfACLDenied(w, r, err) || writeRuleRefusal(w, r, err) {
 			return
 		}
 		if _, ok := errors.AsType[*store.VersionConflictError](err); ok {

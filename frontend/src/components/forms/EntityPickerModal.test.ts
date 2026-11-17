@@ -185,17 +185,26 @@ describe('EntityPickerModal', () => {
       )
       factory({ types: ['person', 'group'] })
       await typeQuery('any')
-      // No limit: the hits are filtered here, so a limit could leave none.
-      expect(searchSpy).toHaveBeenCalledWith('any', {
+      // The types join the query, so the server scopes before its limit.
+      expect(searchSpy).toHaveBeenCalledWith('type:person,group any', {
         type: undefined,
         signal: expect.any(AbortSignal),
         world: undefined,
-        limit: undefined,
+        limit: 50,
       })
       expect(options().map((o) => o.id)).toEqual([
         'entity-picker-option-P-1',
         'entity-picker-option-G-1',
       ])
+    })
+
+    it('caps the search at maxResults', async () => {
+      mount(EntityPickerModal, {
+        props: { open: true, types: ['person'], maxResults: 20 },
+        attachTo: document.body,
+      })
+      await typeQuery('ann')
+      expect(searchSpy).toHaveBeenCalledWith('ann', expect.objectContaining({ limit: 20 }))
     })
   })
 

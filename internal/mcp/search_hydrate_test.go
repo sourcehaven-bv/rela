@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -77,4 +78,13 @@ func TestHydrateHits_ReadBudget(t *testing.T) {
 	if at10, at50 := reads(10), reads(50); at10 != at50 {
 		t.Errorf("reads grow with hits: %d at 10, %d at 50", at10, at50)
 	}
+	// 10 hits read the same rows however many tickets the store holds.
+	storetest.AssertScaleFree(t, func(n int) (storetest.Cost, string) {
+		st, hits := seedHits(t, n)
+		st.Reset()
+		if _, err := hydrateHits(context.Background(), graphOf(st), hydrateMeta, slices.Concat(hits[:10], hits[len(hits)-1:])); err != nil {
+			t.Fatalf("hydrateHits: %v", err)
+		}
+		return st.Cost(), st.String()
+	})
 }

@@ -58,7 +58,7 @@ func (s *Store) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2
 	}
 	return pagedSeq(func(after *entity.Ref) ([]*entity.Entity, *entity.Ref, error) {
 		sql, args := buildEntityListSQL(q, after, 0)
-		return queryPage(ctx, s.db, sql, args, scanEntity, func(e *entity.Entity) entity.Ref {
+		return queryPage(ctx, s.db, sql, args, bodyPage(len(q.IDs)), scanEntity, func(e *entity.Entity) entity.Ref {
 			return entity.Ref{ID: e.ID, Face: e.Face}
 		})
 	})
@@ -78,9 +78,10 @@ func (s *Store) ListEntityHeaders(
 	if err := checkQueryScope(q); err != nil {
 		return func(yield func(store.EntityHeader, error) bool) { yield(store.EntityHeader{}, err) }
 	}
+	plan := idBatchPage(len(q.IDs), len(q.IDs))
 	return pagedSeq(func(after *entity.Ref) ([]store.EntityHeader, *entity.Ref, error) {
 		sql, args := buildEntityHeaderListSQL(q, after)
-		return queryPage(ctx, s.db, sql, args, scanEntityHeader, func(h store.EntityHeader) entity.Ref {
+		return queryPage(ctx, s.db, sql, args, plan, scanEntityHeader, func(h store.EntityHeader) entity.Ref {
 			return entity.Ref{ID: h.ID, Face: h.Face}
 		})
 	})
@@ -107,42 +108,65 @@ func parseStateCursor(cursor string) *entity.Ref {
 // ListEntitiesPage returns a page of entities. A keyset cursor on id keeps
 // pages stable; see store.ListEntitiesPage for the contract.
 func (s *Store) ListEntitiesPage(ctx context.Context, q store.EntityQuery) (store.Page[*entity.Entity], error) {
+	return queryEntityPage(ctx, s.db, q, entityListColumns, scanEntity, func(e *entity.Entity) entity.Ref {
+		return entity.Ref{ID: e.ID, Face: e.Face}
+	})
+}
+
+var _ store.HeaderPager = (*Store)(nil)
+
+// ListEntityHeadersPage implements store.HeaderPager: the page
+// ListEntitiesPage reads, with the content column left out of the SELECT.
+func (s *Store) ListEntityHeadersPage(
+	ctx context.Context, q store.EntityQuery,
+) (store.Page[store.EntityHeader], error) {
+	return queryEntityPage(ctx, s.db, q, entityHeaderColumns, scanEntityHeader, func(h store.EntityHeader) entity.Ref {
+		return entity.Ref{ID: h.ID, Face: h.Face}
+	})
+}
+
+// queryEntityPage reads q's keyset page of columns, scanning each row with
+// scan. key names a row's state, from which the next cursor is made.
+func queryEntityPage[T any](
+	ctx context.Context, db DBTX, q store.EntityQuery, columns string,
+	scan func(scanner) (T, error), key func(T) entity.Ref,
+) (store.Page[T], error) {
 	if err := checkQueryScope(q); err != nil {
-		return store.Page[*entity.Entity]{}, err
+		return store.Page[T]{}, err
 	}
-	sql, args, err := entityPageSQL(q)
+	sql, args, err := entityPageSQL(q, columns)
 	if err != nil {
-		return store.Page[*entity.Entity]{}, err
+		return store.Page[T]{}, err
 	}
 
-	rows, err := s.db.Query(ctx, sql, args...)
+	rows, err := db.Query(ctx, sql, args...)
 	if err != nil {
-		return store.Page[*entity.Entity]{}, err
+		return store.Page[T]{}, err
 	}
 	defer rows.Close()
 
-	items := make([]*entity.Entity, 0)
+	items := make([]T, 0)
 	for rows.Next() {
-		e, err := scanEntity(rows)
+		item, err := scan(rows)
 		if err != nil {
-			return store.Page[*entity.Entity]{}, err
+			return store.Page[T]{}, err
 		}
-		items = append(items, e)
+		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return store.Page[*entity.Entity]{}, err
+		return store.Page[T]{}, err
 	}
 
 	var next string
 	if q.Limit > 0 && len(items) > q.Limit {
-		last := items[q.Limit-1]
+		last := key(items[q.Limit-1])
 		items = items[:q.Limit]
 		// The cursor is the STATE key so AllFaces pagination resumes
 		// mid-family; for default-only queries it degenerates to the
 		// historical bare id.
 		next = storeutil.EncodeCursor(entity.FormatStateRef(last.ID, last.Face))
 	}
-	return store.Page[*entity.Entity]{Items: items, NextCursor: next}, nil
+	return store.Page[T]{Items: items, NextCursor: next}, nil
 }
 
 // CountEntities counts entities matching q.
@@ -182,10 +206,11 @@ func buildEntityCountSQL(q store.EntityQuery) (sql string, args []any) {
 	return "SELECT count(DISTINCT id) FROM entities" + scope, args
 }
 
-// entityPageSQL is the query [Store.ListEntitiesPage] sends for q: the
-// cursor decoded and limit+1 rows fetched, the extra row telling whether a
-// further page exists.
-func entityPageSQL(q store.EntityQuery) (sql string, args []any, err error) {
+// entityPageSQL is the query [Store.ListEntitiesPage] and
+// [Store.ListEntityHeadersPage] send for q, selecting columns: the cursor
+// decoded and limit+1 rows fetched, the extra row telling whether a further
+// page exists.
+func entityPageSQL(q store.EntityQuery, columns string) (sql string, args []any, err error) {
 	cursorKey, err := storeutil.DecodeCursor(q.Cursor)
 	if err != nil {
 		return "", nil, err
@@ -194,39 +219,60 @@ func entityPageSQL(q store.EntityQuery) (sql string, args []any, err error) {
 	if fetch > 0 {
 		fetch++
 	}
-	sql, args = buildEntityListSQL(q, parseStateCursor(cursorKey), fetch)
+	sql, args = buildEntitySelectSQL(q, parseStateCursor(cursorKey), columns, fetch)
 	return sql, args, nil
 }
 
-// buildHighestIDSQL selects the ids that start with prefix + "-", as a range the
-// primary key serves (migration 0019).
+// buildHighestIDSQL selects the ids that start with prefix + "-", ASCII case
+// folded, as a range on lower(id) that the lower(id) index of each table
+// serves: entities_id_lower_key, marked_entities_id_lower_idx,
+// retired_ids_id_lower_key and retired_ids_successor_lower_idx.
 //
-// A range, not `id LIKE $1`: the planner turns LIKE into an index range only
-// when it sees the pattern, and pgx prepares statements, so after five
+// A range, not `lower(id) LIKE $1`: the planner turns LIKE into an index range
+// only when it sees the pattern, and pgx prepares statements, so after five
 // executions PostgreSQL plans them generically with the pattern unknown and
-// scans the table. entities.id is COLLATE "C", so >= and < compare bytes, the
-// primary key (id, face) is in that order, and the rows are exactly the ids
-// with prefix + "-" as a byte prefix. The exclusive upper bound is prefix +
-// ".", "." being the byte after "-".
+// scans the table. The id columns are COLLATE "C", so lower(id) is too: it
+// folds ASCII letters only, >= and < compare bytes, and the rows are exactly
+// the ids with prefix + "-" as a case-folded byte prefix. Both bounds go
+// through lower() in SQL, so the query and the index fold with one function.
+// The exclusive upper bound is prefix + ".", "." being the byte after "-".
+//
+// The fold is the point (BUG-RLBXTG5): ids are case-insensitive identities,
+// so a hand-written "Req-7" holds 7 for the prefix "REQ", and a bytewise range
+// that missed it let the next mint collide with it.
 //
 // marked_entities is read too: a soft-deleted id may yet come back, so it
 // must not be minted again. So is retired_ids: both the ids renamed away
 // from and their successors are reserved, even after the successor is
 // deleted.
 func buildHighestIDSQL(prefix string) (sql string, args []any) {
-	return `SELECT id FROM entities WHERE id >= $1 AND id < $2
-	        UNION SELECT id FROM marked_entities WHERE id >= $1 AND id < $2
-	        UNION SELECT id FROM retired_ids WHERE id >= $1 AND id < $2
-	        UNION SELECT successor FROM retired_ids WHERE successor >= $1 AND successor < $2`,
-		[]any{prefix + "-", prefix + "."}
+	return `SELECT id FROM entities WHERE lower(id) >= lower($1) AND lower(id) < lower($2)
+	        UNION SELECT id FROM marked_entities WHERE lower(id) >= lower($1) AND lower(id) < lower($2)
+	        UNION SELECT id FROM retired_ids WHERE lower(id) >= lower($1) AND lower(id) < lower($2)
+	        UNION SELECT successor FROM retired_ids
+	              WHERE lower(successor) >= lower($1) AND lower(successor) < lower($2)`,
+		[]any{strings.TrimSuffix(prefix, "-") + "-", strings.TrimSuffix(prefix, "-") + "."}
 }
 
-// HighestID returns the highest numeric suffix among IDs of the form
-// "<prefix>-<n>", or 0. Matching memstore/fsstore: non-numeric suffixes are
-// skipped and gaps are ignored. The parse is done in Go (not SQL) to keep the
-// Sscanf("%d") semantics identical across backends.
+// IDTakenFolded implements store.FoldedIDReader as one indexed probe of
+// the live, the marked and the retired rows. A retired row counts unless its
+// successor is the except family, which retireID lets reclaim its own id.
+func (s *Store) IDTakenFolded(ctx context.Context, id, except string) (bool, error) {
+	var taken bool
+	err := s.db.QueryRow(ctx, `SELECT
+		EXISTS (SELECT 1 FROM entities WHERE lower(id) = lower($1) AND lower(id) <> lower($2))
+		OR EXISTS (SELECT 1 FROM marked_entities WHERE lower(id) = lower($1) AND lower(id) <> lower($2))
+		OR EXISTS (SELECT 1 FROM retired_ids
+			WHERE (lower(id) = lower($1) OR lower(successor) = lower($1)) AND lower(successor) <> lower($2))`,
+		id, except).Scan(&taken)
+	return taken, err
+}
+
+// HighestID returns the highest number among the ids in the series of
+// prefix, or 0. The range in SQL selects the candidates; which of them count
+// is decided in Go by [entity.SequentialNumber], the rule every backend
+// shares.
 func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
-	pfx := prefix + "-"
 	// Every face, DISTINCT by id: states share their family's number
 	// (TKT-DOFYR1), so a family must be seen at least once and counting it
 	// twice is harmless. The old `face = ''` predicate saw a faced type not
@@ -245,11 +291,7 @@ func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
 		if err := rows.Scan(&id); err != nil {
 			return 0, err
 		}
-		if !strings.HasPrefix(id, pfx) {
-			continue
-		}
-		var n int
-		if _, err := fmt.Sscanf(id[len(pfx):], "%d", &n); err == nil && n > highest {
+		if n, ok := entity.SequentialNumber(id, prefix); ok && n > highest {
 			highest = n
 		}
 	}
@@ -1136,13 +1178,20 @@ func scanEntityHeader(row scanner) (store.EntityHeader, error) {
 // the digits (0x30-0x39), so plain string order puts PAGE-10's family
 // inside PAGE-1's. Changing either side's ordering breaks the other.
 func buildEntityListSQL(q store.EntityQuery, after *entity.Ref, limit int) (sql string, args []any) {
-	return buildEntitySelectSQL(q, after, "id, type, face, properties, content, updated_at", limit)
+	return buildEntitySelectSQL(q, after, entityListColumns, limit)
 }
 
+// entityListColumns are the columns scanEntity reads, in its order.
+const entityListColumns = "id, type, face, properties, content, updated_at"
+
+// entityHeaderColumns are entityListColumns WITHOUT content, in the order
+// scanEntityHeader reads them.
+const entityHeaderColumns = "id, type, face, properties, updated_at"
+
 // buildEntityHeaderListSQL mirrors buildEntityListSQL WITHOUT the content
-// column. Column order must stay in sync with scanEntityHeader.
+// column.
 func buildEntityHeaderListSQL(q store.EntityQuery, after *entity.Ref) (sql string, args []any) {
-	return buildEntitySelectSQL(q, after, "id, type, face, properties, updated_at", 0)
+	return buildEntitySelectSQL(q, after, entityHeaderColumns, 0)
 }
 
 // buildEntitySelectSQL is the shared body of the two list builders: the

@@ -1,0 +1,79 @@
+package actionproposal
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+// The JSON shape is what the SPA dialog and MCP callers read.
+func TestProposal_JSON(t *testing.T) {
+	tests := []struct {
+		name string
+		p    *Proposal
+		want string
+	}{
+		{
+			name: "empty lists encode as []",
+			p:    Empty("TKT-1"),
+			want: `{"entity":"TKT-1","set":[],"relate":[],"create":[]}`,
+		},
+		{
+			name: "unset current encodes as null",
+			p: &Proposal{
+				Entity: "TKT-1",
+				Set:    []Value{{Property: "priority", Proposed: json.RawMessage(`"high"`)}},
+				Relate: []Relation{{Relation: "affects", To: "CON-1", ToType: "concept", ToTitle: "Sessions"}},
+				Create: []NewEntity{{Type: "task", Relation: "has-task", Outgoing: true,
+					Properties: []Value{{Property: "title", Proposed: json.RawMessage(`"Fix"`)}}}},
+				Model: "m",
+			},
+			want: `{"entity":"TKT-1","set":[{"property":"priority","current":null,"proposed":"high"}],` +
+				`"relate":[{"relation":"affects","to":"CON-1","to_type":"concept","to_title":"Sessions"}],` +
+				`"create":[{"type":"task","relation":"has-task","outgoing":true,` +
+				`"properties":[{"property":"title","current":null,"proposed":"Fix"}]}],"model":"m"}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := json.Marshal(tc.p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("got  %s\nwant %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestProposal_IsEmpty(t *testing.T) {
+	tests := []struct {
+		name string
+		p    *Proposal
+		want bool
+	}{
+		{name: "nil", p: nil, want: true},
+		{name: "no change", p: Empty("TKT-1"), want: true},
+		{name: "set", p: &Proposal{Set: []Value{{Property: "priority"}}}},
+		{name: "relate", p: &Proposal{Relate: []Relation{{Relation: "affects"}}}},
+		{name: "create", p: &Proposal{Create: []NewEntity{{Type: "task"}}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.p.IsEmpty(); got != tc.want {
+				t.Fatalf("IsEmpty() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// An empty batch encodes its lists as [], so the SPA reads a batch reply.
+func TestNewBatch_JSON(t *testing.T) {
+	got, err := json.Marshal(NewBatch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"proposals":[],"failed":[],"skipped":0}`; string(got) != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}

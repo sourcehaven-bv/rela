@@ -505,11 +505,13 @@ step: all of them are stored or none is. Post a batch with `POST
 …/_batch` (see [HTTP API](#http-api)), the MCP tool `post_messages`, or
 `rela channel post-batch`. The messages get consecutive sequence numbers
 and share a batch id, the sequence number of the first; a message posted
-alone has none. Each message passes the checks of a single post. Once
-every message passes, the batch costs one post per message from the rate
-limit of its type, taken in one step, so a refused batch costs nothing. A
-batch with more messages of one type than that type's `rate` allows at
-all is refused with 400. The mentions of the whole batch count
+alone has none. Each message passes the checks of a single post, and the
+batch is charged where a single post is: after the session checks and
+before the properties are validated. It costs one post per message from
+the rate limit of its type, taken in one step. A batch refused before
+that point costs nothing; a batch with an invalid message costs its
+posts, like an invalid single post. A batch with more messages of one
+type than that type's `rate` allows at all is refused with 400. The mentions of the whole batch count
 toward the limit of one message. A batch holds no replies. A refusal about
 one message names its index, starting at 0, such as "message 1: …".
 
@@ -584,7 +586,7 @@ A message type cannot have a `promote_to` of its own. Put it on an action,
 so the action's gate decides who may promote.
 
 The entity is created as the person who runs the action. The create ACL,
-the `fields:` grants in `acl.yaml`, validation and automations apply, as
+the `fields:` grants in `acl.yaml`, validation and `flows.yaml` triggers apply, as
 they do to a create through the entity API. The audit records of the
 create carry a `triggered_by` such as
 `channel:INC-7/incident-room#12/log`: the channel, the message sequence
@@ -603,14 +605,14 @@ What happens when a promote fails depends on the storage backend:
 
 - **PostgreSQL and SQLite.** The entity, its relation and the action
   commit in one transaction. If any of them fails, none is written, and the
-  message is free for another action. A failing automation after the
+  message is free for another action. A failing `flows.yaml` trigger after the
   commit does not undo the entity; the answer carries a
   `promote_followup_failed` warning instead.
 - **Files (the default).** The entity is written first, then the action.
   If the create is refused before anything is written, such as by the ACL
   or validation, the message is free again. If the relation fails, the
   entity stays and the answer carries a `promote_relate_failed` warning.
-  If an automation after the create fails, the entity stays and the
+  If a `flows.yaml` trigger after the create fails, the entity stays and the
   answer carries a `promote_followup_failed` warning. If marking the
   action fails after the entity exists, the answer carries a
   `promote_unconfirmed` warning. For any other failure the action stays
@@ -1696,7 +1698,7 @@ text it becomes the empty string. A
 value taken from a message is never read as a template again, so a message
 cannot inject a reference. `now` and `today` are the notice time in UTC,
 not the time the write runs, so a retry writes the same values.
-Automations format `now` in the server's time zone; outputs do not. A
+`flows.yaml` triggers format `now` in the server's time zone; outputs do not. A
 template can read the entity only through `channel.title`.
 
 **Who the outputs write as.** The person or agent whose message moved the
@@ -1751,7 +1753,7 @@ of one channel run one at a time, so a retry reads the later moves after
 their outputs ran, however many messages came between.
 
 **Exactly once and at least once.** A `set` runs at least once: a retry
-may write the same values again, and update automations see it. A `create`
+may write the same values again, and `flows.yaml` update triggers see it. A `create`
 runs exactly once when the channel store and the entity store share a
 database (sqlite, or postgres with both on the same database): the entity,
 its relation and the progress commit together. With the file store, or
@@ -1759,8 +1761,8 @@ stores on different databases, a create that may have written is never
 retried. It fails `unconfirmed`, so it is neither doubled nor silently
 dropped.
 
-**Automations and validation.** Outputs go through the same write path as
-a form, so automations and validation run. A validation error fails the
+**Entity triggers and validation.** Outputs go through the same write path as
+a form, so `flows.yaml` triggers and validation run. A validation error fails the
 output with the property names. Warnings complete it with the warning
 codes. An output that changes the anchor can fire an entity trigger that
 posts into the same session. The trigger cooldown (one post per rule and

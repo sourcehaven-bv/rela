@@ -1903,6 +1903,16 @@ body:
         "tags": [
           "Person"
         ],
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "ETag for optimistic locking",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "204": {
             "description": "Entity deleted"
@@ -1929,6 +1939,16 @@ body:
           },
           "409": {
             "description": "Cannot delete: the entity has incoming relations, a channel whose type sets on_entity_delete: block is attached (code channel_blocks_delete), or the entity changed during the delete (code conflict; retry)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition failed (ETag mismatch)",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3015,6 +3035,16 @@ body:
           "Person",
           "Relations"
         ],
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Relation ETag for optimistic locking",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "204": {
             "description": "Relation deleted"
@@ -3031,6 +3061,16 @@ body:
           },
           "404": {
             "description": "Relation not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition failed (ETag mismatch)",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -4114,6 +4154,16 @@ body:
         "tags": [
           "Policy"
         ],
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "ETag for optimistic locking",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "204": {
             "description": "Entity deleted"
@@ -4140,6 +4190,16 @@ body:
           },
           "409": {
             "description": "Cannot delete: the entity has incoming relations, a channel whose type sets on_entity_delete: block is attached (code channel_blocks_delete), or the entity changed during the delete (code conflict; retry)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition failed (ETag mismatch)",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -6081,6 +6141,16 @@ body:
         "tags": [
           "Ticket"
         ],
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "ETag for optimistic locking",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "204": {
             "description": "Entity deleted"
@@ -6107,6 +6177,16 @@ body:
           },
           "409": {
             "description": "Cannot delete: the entity has incoming relations, a channel whose type sets on_entity_delete: block is attached (code channel_blocks_delete), or the entity changed during the delete (code conflict; retry)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition failed (ETag mismatch)",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -7747,6 +7827,16 @@ body:
           "Ticket",
           "Relations"
         ],
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Relation ETag for optimistic locking",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "204": {
             "description": "Relation deleted"
@@ -7763,6 +7853,16 @@ body:
           },
           "404": {
             "description": "Relation not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition failed (ETag mismatch)",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -8124,6 +8224,16 @@ body:
           "Ticket",
           "Relations"
         ],
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Relation ETag for optimistic locking",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "204": {
             "description": "Relation deleted"
@@ -8140,6 +8250,16 @@ body:
           },
           "404": {
             "description": "Relation not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition failed (ETag mismatch)",
             "content": {
               "application/problem+json": {
                 "schema": {

@@ -10,8 +10,8 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -101,8 +101,8 @@ func (ungatedCopyEdges) RelationRemovable(context.Context, *entity.Entity, strin
 }
 
 // Copy errors. ErrUnknownCopy is caller input (4xx); the guard errors map to
-// 403/422 exactly as the statemachine's do, because they ARE the
-// statemachine's vocabulary (design doc §9.1: shared guard machinery,
+// 403/422 exactly as the transition enforcer's do, because they ARE the
+// transition enforcer's vocabulary (design doc §9.1: shared guard machinery,
 // separate declaration).
 var (
 	// ErrUnknownCopy names a definition the metamodel does not declare. A
@@ -239,7 +239,7 @@ func (ce *copyEngine) copyState(ctx context.Context, req CopyRequest) (*CopyResu
 // for the cascade.
 func (ce *copyEngine) writeCopy(
 	ctx context.Context, req CopyRequest,
-) (*copyPlan, *automation.Result, *CopyResult, error) {
+) (*copyPlan, *triggers.Result, *CopyResult, error) {
 	def, ok := ce.m.deps.Meta.Copies[req.Definition]
 	if !ok {
 		return nil, nil, nil, fmt.Errorf("%w: %q", ErrUnknownCopy, req.Definition)
@@ -644,7 +644,7 @@ func (ce *copyEngine) authorizeCopy(ctx context.Context, plan *copyPlan) error {
 	if guarded {
 		if ce.m.deps.CopyGuard == nil {
 			// A guarded copy with no guard implementation fails CLOSED,
-			// matching the statemachine's nil-guard rule: a guarded edge with
+			// matching the transition enforcer's nil-guard rule: a guarded edge with
 			// no guard is denied, never waved through.
 			return &acl.ForbiddenError{Decision: acl.Decision{
 				RuleKind: "copy-guard", RuleID: perm,

@@ -2,12 +2,15 @@ package dataentry
 
 import (
 	"context"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
 
 // A content-scoped hierarchy edge belongs to one face of its parent
@@ -120,14 +123,14 @@ func TestGanttNodes_KeepTheirFace(t *testing.T) {
 	}
 
 	nodes := map[string]*ganttNode{}
-	if gerr := app.gantt.addGanttNodes(s, g, "project", []*entity.Entity{row("published")}, nodes); gerr != nil {
+	if gerr := app.gantt.addGanttNodes(time.Now(), s, g, "project", []*entity.Entity{row("published")}, nodes); gerr != nil {
 		t.Fatalf("addGanttNodes: %+v", gerr)
 	}
 	if got := nodes["PRJ-A"].face; got != "published" {
 		t.Fatalf("node face = %q, want published", got)
 	}
 
-	if gerr := app.gantt.addGanttNodes(s, g, "project", []*entity.Entity{row("draft")}, nodes); gerr == nil {
+	if gerr := app.gantt.addGanttNodes(time.Now(), s, g, "project", []*entity.Entity{row("draft")}, nodes); gerr == nil {
 		t.Error("a second face of PRJ-A was accepted; want a refusal")
 	}
 	if got := nodes["PRJ-A"].face; got != "published" {
@@ -159,4 +162,45 @@ func TestGanttSubtree_DeclinesForFacedSources(t *testing.T) {
 	if f != nil || gerr != nil {
 		t.Fatalf("buildGanttSubtree = %v, %+v; want a decline (nil, nil)", f, gerr)
 	}
+}
+
+// TestGanttEdges_CostIsScaleFree pins TKT-FED6FMM: the edge read is bounded
+// by the node set, so a hierarchy edge with an endpoint outside the chart is
+// never read.
+func TestGanttEdges_CostIsScaleFree(t *testing.T) {
+	storetest.AssertScaleFree(t, func(n int) (storetest.Cost, string) {
+		app := facedGanttApp(t)
+		ctx := context.Background()
+		for i := range n {
+			prj, epic := fmt.Sprintf("PRJ-PAD%04d", i), fmt.Sprintf("EPIC-PAD%04d", i)
+			seedEntity(app, &entity.Entity{ID: prj, Type: "project", Face: "published"})
+			seedEntity(app, &entity.Entity{ID: epic, Type: "epic"})
+			// An edge between two entities outside the chart, and one from a
+			// chart node to a child outside it: neither is read.
+			for _, key := range []entity.RelationKey{
+				{From: prj, FromFace: "published", Type: "has-epic", To: epic},
+				{From: "PRJ-A", FromFace: "published", Type: "has-epic", To: epic},
+			} {
+				if _, err := app.store.CreateRelation(ctx, key, &store.RelationData{}); err != nil {
+					t.Fatalf("seed %s -> %s: %v", key.From, key.To, err)
+				}
+			}
+		}
+		counting := storetest.NewCounting(app.gantt.store)
+		app.gantt.store = counting
+		nodes := map[string]*ganttNode{
+			"PRJ-A":  {id: "PRJ-A", entType: "project", face: "published"},
+			"EPIC-D": {id: "EPIC-D", entType: "epic"},
+			"EPIC-P": {id: "EPIC-P", entType: "epic"},
+		}
+		g := dataentryconfig.Gantt{Hierarchy: []string{"has-epic"}}
+		edges, gerr := app.gantt.ganttEdges(ctx, app.schema.Current().Meta, g, nodes)
+		if gerr != nil {
+			t.Fatalf("ganttEdges: %+v", gerr)
+		}
+		if got := edges["has-epic"]; len(got) != 1 {
+			t.Fatalf("edges = %v, want only PRJ-A -> EPIC-P", got)
+		}
+		return counting.Cost(), counting.String()
+	})
 }

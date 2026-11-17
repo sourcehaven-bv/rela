@@ -5,13 +5,14 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -37,7 +38,7 @@ func (s *failingUpdateStore) UpdateEntityIf(
 }
 
 func newManagerWithStoreAndAudit(
-	t *testing.T, st store.Store, sink audit.Audit, automations []automation.Automation,
+	t *testing.T, st store.Store, sink audit.Audit, automations []triggers.Rule,
 ) *entitymanager.Manager {
 	t.Helper()
 	deps := entitymanager.Deps{
@@ -46,12 +47,12 @@ func newManagerWithStoreAndAudit(
 		Templater:   nopTemplater{},
 		Audit:       sink,
 		ACL:         acl.NopACL{},
-		Transitions: statemachine.EmptySet(),
+		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
 	}
 	if automations != nil {
-		engine := automation.NewEngine(automations)
+		engine := triggers.NewEngine(automations)
 		runner, err := autocascade.New(autocascade.Deps{Engine: engine})
 		if err != nil {
 			t.Fatalf("autocascade.New: %v", err)
@@ -78,12 +79,12 @@ func TestCreate_AuditsDurableWriteWhenPostAutomationUpsertFails(t *testing.T) {
 
 	// An automation that sets a property forces the second persist
 	// (Create→conflict→Update), which this store fails.
-	auto := automation.Automation{
+	auto := triggers.Rule{
 		Name: "set-status-on-create",
-		On:   automation.Trigger{Entity: []string{"requirement"}, Created: true},
-		Do:   []automation.Action{{Set: "status", Value: "proposed"}},
+		On:   triggers.Trigger{Entity: []string{"requirement"}, Created: true},
+		Do:   []triggers.Action{{Set: "status", Value: "proposed"}},
 	}
-	mgr := newManagerWithStoreAndAudit(t, st, mem, []automation.Automation{auto})
+	mgr := newManagerWithStoreAndAudit(t, st, mem, []triggers.Rule{auto})
 
 	e := entity.New("", "requirement")
 	e.SetString("title", "durable but second-write fails")
@@ -109,12 +110,12 @@ func TestCreate_AuditsDurableWriteWhenPostAutomationUpsertFails(t *testing.T) {
 // the record must not be gated on cascade success.
 func TestUpdate_AuditsBeforeCascade(t *testing.T) {
 	mem := audit.NewMemory()
-	auto := automation.Automation{
+	auto := triggers.Rule{
 		Name: "noop-on-title-change",
-		On:   automation.Trigger{Entity: []string{"requirement"}, Property: "title"},
-		Do:   []automation.Action{{Set: "status", Value: "accepted"}},
+		On:   triggers.Trigger{Entity: []string{"requirement"}, Property: "title"},
+		Do:   []triggers.Action{{Set: "status", Value: "accepted"}},
 	}
-	mgr := newManagerWithAudit(t, mem, []automation.Automation{auto})
+	mgr := newManagerWithAudit(t, mem, []triggers.Rule{auto})
 
 	e := entity.New("", "requirement")
 	e.SetString("title", "to be updated")

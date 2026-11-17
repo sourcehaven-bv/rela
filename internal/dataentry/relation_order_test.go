@@ -138,7 +138,9 @@ func TestRelationOrder_HiddenOrderFieldIsNotApplied(t *testing.T) {
 func TestRelationOrder_PositionWalksRelationOrder(t *testing.T) {
 	app := newOrderedTabApp(t, metamodel.OrderableOutgoing)
 	scope, err := json.Marshal(ScopeDescriptor{
-		Source: "list", Type: "step", ScopePage: "rec", ScopeTab: "steps", Anchor: "REC-001",
+		Source:    "list",
+		Type:      "step",
+		ListQuery: ListQuery{ScopePage: "rec", ScopeTab: "steps", Anchor: "REC-001"},
 	})
 	require.NoError(t, err)
 	q := url.Values{"id": {"STP-X"}, "scope": {string(scope)}}

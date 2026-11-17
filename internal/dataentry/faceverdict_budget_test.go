@@ -8,6 +8,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
 
 // TestQueryBudget_ScopedVerdictListPageIsSizeIndependent is the list page
@@ -20,11 +21,8 @@ import (
 // conferred role with one GetRelation per row (TKT-0ZXW0Z). That cost
 // predates the per-face gate and is not a read-gate cost.
 func TestQueryBudget_ScopedVerdictListPageIsSizeIndependent(t *testing.T) {
-	reads := make([]int, 0, 2)
-	matching := make([]int, 0, 2)
-	var detail string
-	for _, n := range []int{10, 50} {
-		app, counting, _, ctx := newBudgetAppOn(t, n, memstore.New())
+	run := func(n, pad int) *storetest.Counting {
+		app, counting, _, ctx := newBudgetAppPadded(t, n, pad, memstore.New(), budgetMeta())
 		for i := 1; i <= n; i++ {
 			if _, err := app.store.CreateRelation(ctx,
 				entity.RelationKey{From: "P1", Type: "watches", To: fmt.Sprintf("TKT-%04d", i)}, nil); err != nil {
@@ -49,6 +47,13 @@ func TestQueryBudget_ScopedVerdictListPageIsSizeIndependent(t *testing.T) {
 		if len(resp.Data) != n {
 			t.Fatalf("list returned %d rows, want %d", len(resp.Data), n)
 		}
+		return counting
+	}
+	reads := make([]int, 0, 2)
+	matching := make([]int, 0, 2)
+	var detail string
+	for _, n := range []int{10, 50} {
+		counting := run(n, 0)
 		reads = append(reads, counting.Reads()-counting.Calls()["GetRelation"])
 		matching = append(matching, counting.Calls()["MatchingFaces"])
 		detail = counting.String()
@@ -59,4 +64,8 @@ func TestQueryBudget_ScopedVerdictListPageIsSizeIndependent(t *testing.T) {
 	if matching[0] != matching[1] || matching[1] == 0 {
 		t.Errorf("MatchingFaces calls = %v, want equal and non-zero (%s)", matching, detail)
 	}
+	storetest.AssertScaleFree(t, func(pad int) (storetest.Cost, string) {
+		counting := run(10, pad)
+		return counting.Cost(), counting.String()
+	})
 }

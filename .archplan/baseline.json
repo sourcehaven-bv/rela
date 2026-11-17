@@ -302,11 +302,11 @@
       "at": "2026-10-28T13:29:06Z",
       "title": "EphemeralMessage (apiwire) and EphemeralView (realtime) share most of their fields."
     },
-    "types.synonyms-b1ec2e815eed": {
+    "types.synonyms-ad7ee9b84d12": {
       "state": "accepted",
       "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
       "at": "2026-10-28T13:29:06Z",
-      "title": "Transition (apiwire) and TransitionVerdict (statemachine) share most of their fields."
+      "title": "Transition (apiwire) and TransitionVerdict (transitions) share most of their fields."
     },
     "concepts.data_clump-b87dc3e520e1": {
       "state": "accepted",
@@ -2420,23 +2420,23 @@
       "at": "2026-10-28T13:29:07Z",
       "title": "sqlitedb uses the term \"Face selection\", owned by store."
     },
-    "vocabulary.leak-354a82c99d5f": {
+    "vocabulary.leak-3c6ed0f8c202": {
       "state": "accepted",
       "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
       "at": "2026-10-28T13:29:07Z",
-      "title": "statemachine uses the term \"ACL policy\", owned by acl."
+      "title": "transitions uses the term \"ACL policy\", owned by acl."
     },
-    "vocabulary.leak-7d7347d8df1f": {
+    "vocabulary.leak-fb2075ba33dd": {
       "state": "accepted",
       "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
       "at": "2026-10-28T13:29:07Z",
-      "title": "statemachine uses the term \"Graph query\", owned by store."
+      "title": "transitions uses the term \"Graph query\", owned by store."
     },
-    "vocabulary.leak-697bcc35de3f": {
+    "vocabulary.leak-ecd348974b76": {
       "state": "accepted",
       "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
       "at": "2026-10-28T13:29:07Z",
-      "title": "statemachine uses the term \"Local role\", owned by acl."
+      "title": "transitions uses the term \"Local role\", owned by acl."
     },
     "vocabulary.leak-ace19766e40a": {
       "state": "accepted",
@@ -2738,6 +2738,42 @@
       "reason": "Debt: low value per finding.",
       "at": "2026-11-13T10:30:00Z",
       "title": "5 functions in web/components/entity take boolean flags."
+    },
+    "concepts.data_clump-bad832861811": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose. Kanban boards gained actions (TKT-I2SRNWR), as lists have.",
+      "at": "2026-11-14T12:00:00Z",
+      "title": "The fields actions, columns, create_form, edit_form, filter_controls, … and title appear together in 3 types across 2 components."
+    },
+    "concepts.untyped_bag-620a9a73d156": {
+      "state": "accepted",
+      "reason": "Design: Value.Const holds a mapping constant and PropertyChange.Old/New hold property values, which take any scalar or list a schema property allows, like entity.Entity.Properties. The cli only prints them in the plan.",
+      "at": "2026-11-14T12:00:00Z",
+      "title": "2 types of mapimport that other components use carry untyped data: Value.Const (any), PropertyChange.Old (any), PropertyChange.New (any)."
+    },
+    "boundaries.misplaced_file-c6583b1f519e": {
+      "state": "accepted",
+      "reason": "Design: import_mapped.go is the cobra adapter for mapimport, as every cli command file is for its package; the command stays in cli with the other commands.",
+      "at": "2026-11-14T12:00:00Z",
+      "title": "cli/import_mapped.go in cli has most of its links to mapimport (weighted links: 3.2 to mapimport, 1.6 to cli)."
+    },
+    "vocabulary.leak-222b575ff897": {
+      "state": "accepted",
+      "reason": "Design: mapimport names the gated reader it gets at wiring, as validator and analysis do (accepted vocabulary.leak-edef7b6b6ea0).",
+      "at": "2026-11-14T12:00:00Z",
+      "title": "mapimport uses the term \"Gated reader\", owned by visibility."
+    },
+    "concepts.untyped_bag-d595e51fc887": {
+      "state": "accepted",
+      "reason": "By design: record fields are declared per record type in schema.yaml, like entity properties, so a row carries them as a map; the Service checks each value against the declared field type. TKT-J7Q9C4K.",
+      "at": "2026-11-14T12:00:00Z",
+      "title": "3 types of records that other components use carry untyped data: Record.Fields (map[string]any), Input.Fields (map[string]any), Owner.Faces ([]map[string]any)."
+    },
+    "types.synonyms-3bbe0078a563": {
+      "state": "accepted",
+      "reason": "By design: records.TypeInfo is the wire shape the records API serves for a record type. It adds the key, a default label and the field order to metamodel.RecordTypeDef and keeps the YAML-only parts out of the JSON. TKT-J7Q9C4K.",
+      "at": "2026-11-14T12:00:00Z",
+      "title": "RecordTypeDef (metamodel) and TypeInfo (records) share most of their fields."
     }
   },
   "labels": {},
@@ -2746,170 +2782,28 @@
       "weight.profile": 49,
       "weight.structure": 859,
       "weight.layers": 0,
-      "weight.vocabulary": 870,
-      "weight.types": 4203,
-      "weight.concepts": 7233,
-      "weight.boundaries": 1471,
-      "weight.data": 1297,
+      "weight.vocabulary": 872,
+      "weight.types": 3975,
+      "weight.concepts": 7205,
+      "weight.boundaries": 1429,
+      "weight.data": 1298,
       "weight.security": 2064,
       "largest_tangle": 14,
       "cycle_edges": 67,
       "upward_edges": 0,
-      "propagation_cost": 9.3
+      "propagation_cost": 9.2
     },
     "min_weight": 0,
-    "at": "2026-11-13T09:30:00Z",
+    "at": "2026-11-17T01:30:00Z",
     "log": [
       {
-        "at": "2026-11-05T20:33:00Z",
-        "change": "tighten",
-        "reason": "static model; trace-based metrics left for just archplan-security",
-        "metrics": {
-          "weight.types": [
-            3981,
-            3952
-          ]
-        }
-      },
-      {
-        "at": "2026-11-06T09:00:00Z",
+        "at": "2026-11-17T00:00:00Z",
         "change": "loosen",
-        "reason": "flowcfg.State mirrors realtimecfg.SessionState over the shared flow engine, TKT-XHANLJU",
-        "metrics": {
-          "weight.types": [
-            3952,
-            4002
-          ]
-        }
-      },
-      {
-        "at": "2026-11-06T18:45:56Z",
-        "change": "tighten",
-        "reason": null,
-        "metrics": {
-          "weight.profile": [
-            52,
-            49
-          ],
-          "weight.structure": [
-            936,
-            90
-          ],
-          "weight.types": [
-            4002,
-            3955
-          ],
-          "weight.boundaries": [
-            1478,
-            1438
-          ],
-          "weight.security": [
-            2300,
-            140
-          ]
-        }
-      },
-      {
-        "at": "2026-11-06T20:30:30Z",
-        "change": "tighten",
-        "reason": null,
-        "metrics": {
-          "propagation_cost": [
-            9.8,
-            9.6
-          ]
-        }
-      },
-      {
-        "at": "2026-11-07T06:37:19Z",
-        "change": "tighten",
-        "reason": null,
-        "metrics": {
-          "weight.boundaries": [
-            1438,
-            1387
-          ],
-          "propagation_cost": [
-            9.6,
-            9.5
-          ]
-        }
-      },
-      {
-        "at": "2026-11-07T12:21:44Z",
-        "change": "loosen",
-        "reason": "TKT-IQU106C: element range readers are one per backend (accepted concepts.missing_operation-d60f02f07da6)",
+        "reason": "TKT-WQ925LL: ProposedRecord.properties carries proposed property values, like ActionProposal.set, raising the accepted api untyped-bag finding by 1",
         "metrics": {
           "weight.concepts": [
-            7052,
-            7060
-          ],
-          "propagation_cost": [
-            9.5,
-            9.4
-          ]
-        }
-      },
-      {
-        "at": "2026-11-07T12:50:16Z",
-        "change": "loosen",
-        "reason": "Schema wire World mirrors WorldDef's new label and hidden fields, like the other apiwire DTOs, TKT-H0TFDWU",
-        "metrics": {
-          "weight.types": [
-            3955,
-            3960
-          ]
-        }
-      },
-      {
-        "at": "2026-11-07T13:40:00Z",
-        "change": "loosen",
-        "reason": "flowrun.Query.SubjectID is an entity id, a plain string as everywhere in rela (accepted raw_ids finding, weight 30), TKT-PV9R0GK",
-        "metrics": {
-          "weight.concepts": [
-            7060,
-            7090
-          ]
-        }
-      },
-      {
-        "at": "2026-11-07T15:10:00Z",
-        "change": "loosen",
-        "reason": "TKT-N1KNNZU: visibility.Elements makes visibility depend on reconcile and canonical; the gated element range read belongs next to the other read-side ACL wrappers",
-        "metrics": {
-          "propagation_cost": [
-            9.4,
-            9.5
-          ]
-        }
-      },
-      {
-        "at": "2026-11-07T20:02:09Z",
-        "change": "loosen",
-        "reason": "TKT-BC5G8RP: Metamodel gains the unexported flowRuns flag that proves WithFlowRuns added the managed declarations",
-        "metrics": {
-          "weight.types": [
-            3960,
-            4008
-          ],
-          "weight.concepts": [
-            7090,
-            7081
-          ],
-          "propagation_cost": [
-            9.5,
-            8.9
-          ]
-        }
-      },
-      {
-        "at": "2026-11-07T12:37:24Z",
-        "change": "loosen",
-        "reason": "TKT-J4HMZ2B: untagged appbuild.NewInMemory imports memstore, raising the existing memstore data-clump weight by 1",
-        "metrics": {
-          "weight.concepts": [
-            7081,
-            7082
+            7203,
+            7204
           ]
         }
       },
@@ -3107,6 +3001,186 @@
           "propagation_cost": [
             9.1,
             9.3
+          ]
+        }
+      },
+      {
+        "at": "2026-11-14T16:30:00Z",
+        "change": "loosen",
+        "reason": "TKT-35BY3PE: dataentryconfig imports the leaf texthazard to check step prompts, so every component that reaches dataentryconfig reaches texthazard; renametype imports frontmatter (BUG-EXFOEI3). Both edges are intended. Only propagation_cost changes; the traced weights keep their values.",
+        "metrics": {
+          "propagation_cost": [
+            9.3,
+            9.4
+          ]
+        }
+      },
+      {
+        "at": "2026-11-14T17:00:00Z",
+        "change": "loosen",
+        "reason": "TKT-K7HR49Y: the new mapimport package (rela import --mapping) adds three accepted findings (vocabulary.leak-222b575ff897, concepts.untyped_bag-620a9a73d156, boundaries.misplaced_file-c6583b1f519e), and cli now reaches it, raising propagation cost to 9.4. After the merge with TKT-EBARYBI one shared field set adds one more concepts point. weight.structure and weight.security keep the traced values.",
+        "metrics": {
+          "weight.vocabulary": [
+            870,
+            884
+          ],
+          "weight.concepts": [
+            7233,
+            7276
+          ],
+          "weight.boundaries": [
+            1471,
+            1473
+          ],
+          "propagation_cost": [
+            9.3,
+            9.4
+          ]
+        }
+      },
+      {
+        "at": "2026-11-14T17:00:00Z",
+        "change": "loosen",
+        "reason": "TKT-M58EQ1W: pgstore's search_title trigger and heal pass add write sites to the entities table, which pgstore already writes; the shared_table finding for entities weighs one more.",
+        "metrics": {
+          "weight.data": [
+            1297,
+            1298
+          ]
+        }
+      },
+      {
+        "at": "2026-11-14T12:00:00Z",
+        "change": "loosen",
+        "reason": "records.TypeInfo is the records API wire shape of metamodel.RecordTypeDef, TKT-J7Q9C4K",
+        "metrics": {
+          "weight.types": [
+            4203,
+            4255
+          ]
+        }
+      },
+      {
+        "at": "2026-11-15T12:21:53Z",
+        "change": "tighten",
+        "reason": "TKT-GWOBH2U: metamodel.ExpandTypeNames replaces the two abstract-type expansions, and the trigger checks split into rule-shape and schema checks. weight.structure and weight.security keep the traced values.",
+        "metrics": {
+          "weight.types": [
+            4203,
+            3920
+          ],
+          "weight.concepts": [
+            7276,
+            7248
+          ],
+          "weight.boundaries": [
+            1473,
+            1471
+          ]
+        }
+      },
+      {
+        "at": "2026-11-15T13:43:03Z",
+        "change": "tighten",
+        "reason": "TKT-GWOBH2U: EntityToCreate.Properties carries the interpolated strings, not map[string]any. weight.structure and weight.security keep the traced values.",
+        "metrics": {
+          "weight.concepts": [
+            7248,
+            7196
+          ]
+        }
+      },
+      {
+        "at": "2026-11-16T06:19:44Z",
+        "change": "loosen",
+        "reason": "TKT-GWOBH2U merge with develop: develop's kanban quick-add and add-column code (TKT-IP4273S, TKT-1X5G3BP) gives the reason string enum two more points (concepts.string_enum-7c767b60b922, 54 -> 56). vocabulary and boundaries keep develop's improvements. weight.structure and weight.security keep the traced values.",
+        "metrics": {
+          "weight.vocabulary": [
+            884,
+            872
+          ],
+          "weight.concepts": [
+            7196,
+            7198
+          ],
+          "weight.boundaries": [
+            1471,
+            1422
+          ]
+        }
+      },
+      {
+        "at": "2026-11-16T09:07:58Z",
+        "change": "loosen",
+        "reason": "TKT-GWOBH2U merge with develop: the records types (TKT-J7Q9C4K) add the accepted concepts.untyped_bag-d595e51fc887 (57) and drop the RecordID raw_ids finding (47), TargetID raw_ids weighs 4 less, rela-desktop's Mac conventions (TKT-EIFFTLB) add a goos value (55 -> 56): concepts +7. The entity page tabs (TKT-OF4O8PZ) give the accepted boundaries.misplaced_file-f03fc91c99b4 six more (31 -> 37). weight.structure and weight.security keep the traced values.",
+        "metrics": {
+          "weight.concepts": [
+            7198,
+            7205
+          ],
+          "weight.boundaries": [
+            1422,
+            1428
+          ],
+          "propagation_cost": [
+            9.4,
+            9.1
+          ]
+        }
+      },
+      {
+        "at": "2026-11-16T20:48:28Z",
+        "change": "tighten",
+        "reason": "static model; trace-based metrics left for just archplan-security",
+        "metrics": {
+          "weight.concepts": [
+            7205,
+            7203
+          ],
+          "weight.boundaries": [
+            1428,
+            1422
+          ]
+        }
+      },
+      {
+        "at": "2026-11-17T01:14:24Z",
+        "change": "loosen",
+        "reason": "TKT-ERO2X5G: mutable records add revision and update fields and a records.Change type, so accepted findings (metamodel stability, record field clumps and synonyms) weigh slightly more; no new findings",
+        "metrics": {
+          "weight.types": [
+            3972,
+            3975
+          ],
+          "weight.concepts": [
+            7204,
+            7205
+          ],
+          "weight.boundaries": [
+            1428,
+            1429
+          ]
+        }
+      },
+      {
+        "at": "2026-11-17T01:30:00Z",
+        "change": "loosen",
+        "reason": "TKT-08ZI5XN: the new leaf readtime carries the request read time for today() and now(); the request edges (dataentry, appbuild, scheduler) and the readers (filter, predicatefns, lua, validation) import it, so most components now reach it. The edge is intended. Only propagation_cost changes; the traced weights keep their values.",
+        "metrics": {
+          "propagation_cost": [
+            9.1,
+            9.2
+          ]
+        }
+      },
+      {
+        "at": "2026-11-17T10:00:00Z",
+        "change": "loosen",
+        "reason": "TKT-TKSCSBT: SearchFieldScope compiles conditional role_relations grants, so affordances/searchscope.go shares more words with dataentry/affordances_policy.go and that accepted finding gains the words factor (31 to 37)",
+        "metrics": {
+          "weight.boundaries": [
+            1422,
+            1428
           ]
         }
       }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/mailtemplate"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -45,6 +46,7 @@ func (s *Services) ValidateScheduledMailRecipients(ctx context.Context) error {
 		} // Named by structural validation before this pass.
 		def, _ := s.meta.GetEntityDef(task.ForEach.EntityType)
 		filters, _ := filter.ParseAll(task.ForEach.Where)
+		filters = filter.BindDateVariables(filters, readtime.Or(ctx, servicesClock(s)))
 		var invalid []string
 		for ent, listErr := range s.store.ListEntities(ctx, store.EntityQuery{
 			Type: task.ForEach.EntityType, Faces: store.InWorld(s.worlds.DefaultWorld()),

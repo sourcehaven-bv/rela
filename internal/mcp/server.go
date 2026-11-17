@@ -175,6 +175,13 @@ type RelatedReads struct {
 	//
 	// Nil: accepted. A filter that traverses a relation is then refused.
 	Traversals TraversalBinder
+	// Conditions lets the store answer a list_entities filter (TKT-Z099FGY).
+	// The wiring site supplies one whose traversal gate is the gate behind
+	// Traversals, so the store and the Go path judge a filter alike.
+	//
+	// Nil: accepted. Every filter is then answered in Go over the whole
+	// readable type, and a filter naming current_user does not compile.
+	Conditions ConditionLowerer
 	// Rollups computes the roll-up properties (TKT-6I2OPG) show_entity
 	// serves.
 	//
@@ -262,6 +269,12 @@ type GraphReader interface {
 	// MentionedBy pages the readable entities whose body mentions target
 	// as an `id` code span ([visibility.Resolver.MentionedBy]).
 	MentionedBy(ctx context.Context, target, after string, limit int) (visibility.MentionPage, error)
+
+	// ListEntityPage reads one page of a type's readable rows, without
+	// bodies, and the number of rows the query matches for the caller
+	// ([visibility.ScriptReader.ListEntityPage]). Both run in the store, so
+	// list_entities costs a page, not the type.
+	ListEntityPage(ctx context.Context, q visibility.PageQuery) (visibility.EntityPage, error)
 }
 
 // TraversalBinder answers the `related(...)` calls of a list_entities filter
@@ -273,6 +286,23 @@ type TraversalBinder interface {
 	Bind(
 		ctx context.Context, entityType string, ids []string, progs ...*predicate.Program,
 	) (func(rowID string) predicate.TraversalFunc, error)
+}
+
+// ConditionLowerer rewrites a list_entities filter as a page filter,
+// declared here at the call site. It also stamps the query identity, so
+// `current_user` binds to the same caller in the store and in Go.
+type ConditionLowerer interface {
+	// StampQueryIdentity returns ctx with the caller's query identity
+	// stamped. An error fails the call.
+	StampQueryIdentity(ctx context.Context) (context.Context, error)
+	// Lower rewrites prog, compiled against entityType, as a page filter:
+	// Props, Traversals and Where of a [visibility.PageQuery], whose
+	// predicates name every entity field prog reads and whose traversals
+	// the page reader gates for the caller. The filter is the AND of the
+	// three. ok=false means the filter does not lower exactly; the caller
+	// answers it in Go.
+	Lower(ctx context.Context, prog *predicate.Program, entityType string) (
+		filter visibility.PageQuery, ok bool)
 }
 
 // GraphCounter is the structural half of [GraphReader]: type-level tallies
@@ -435,6 +465,10 @@ type Server struct {
 	// luaTools registers lua_eval / lua_run. Off unless the wiring
 	// asks for it with [WithLuaTools]; see that option for why.
 	luaTools bool
+
+	// tools limits which tools register; see [WithToolFilter]. Nil
+	// registers every tool.
+	tools *toolFilter
 
 	// channelTools records that the channel tools are registered: realtime
 	// was on when [NewServer] ran. A reload must then keep Deps.Channels.
@@ -704,6 +738,9 @@ func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 	s.mcp.AddReceivingMiddleware(s.principalMiddleware)
 
 	s.registerTools()
+	if err := s.tools.check(); err != nil {
+		return nil, err
+	}
 	s.registerResources()
 	s.registerPrompts()
 

@@ -7,6 +7,50 @@ export interface ActionResponse {
   // Error fields (returned with non-2xx status)
   error?: string
   correlation_id?: string
+  // What an `llm:` action proposes. The action wrote nothing; the user
+  // applies the changes they accept through the ordinary write APIs.
+  proposal?: ActionProposal
+  // What a batch run of an `llm:` action proposes (TKT-I2SRNWR). Like
+  // `proposal`, nothing was written.
+  batch?: ActionBatch
+}
+
+export interface ActionProposal {
+  entity: string
+  /** Display title; set on the proposals of a batch run. */
+  title?: string
+  set: { property: string; current: unknown; proposed: unknown }[]
+  relate: { relation: string; to: string; to_type: string; to_title: string }[]
+  /** New records to create, each related to `entity`. Absent from older servers. */
+  create?: ProposedRecord[]
+  model?: string
+}
+
+/** A new record an `llm:` action proposes, related to the proposal's entity. */
+export interface ProposedRecord {
+  type: string
+  relation: string
+  /** The relation runs from the proposal's entity to the new record. */
+  outgoing: boolean
+  properties: { property: string; current: unknown; proposed: unknown }[]
+}
+
+export interface ActionBatch {
+  proposals: ActionProposal[]
+  /** Entities whose part of the AI reply could not be used. */
+  failed: { entity: string; title?: string; reason: string }[]
+  /** Addresses sent that were not run: not readable or not eligible. */
+  skipped: number
+}
+
+/**
+ * Run a batch `llm:` action over several entities in one request
+ * (TKT-I2SRNWR). The server gates each address and returns one proposal per
+ * entity it ran on. Nothing is written.
+ */
+export async function runBatchAction(id: string, addresses: string[]): Promise<ActionBatch> {
+  const resp = await api.post<ActionResponse | null>(`/_action/${id}`, { entity_ids: addresses })
+  return resp?.batch ?? { proposals: [], failed: [], skipped: addresses.length }
 }
 
 /**
@@ -20,7 +64,7 @@ export interface ActionResponse {
 export async function runAction(
   id: string,
   entityId?: string,
-  entityType?: string,
+  entityType?: string
 ): Promise<ActionResponse | null> {
   const body = entityId ? { entity_id: entityId, entity_type: entityType } : undefined
   return api.post<ActionResponse | null>(`/_action/${id}`, body)

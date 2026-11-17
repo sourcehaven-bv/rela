@@ -30,10 +30,21 @@ const (
 	// list's rows.
 	ViewConditionNavStatus ViewConditionKind = "nav_status"
 
+	// ViewConditionPageDone is the `done_when:` of a tab on a steps page
+	// (TKT-MWZF0UO), keyed by dataentryconfig.PageDoneConditionID. It is
+	// compiled against the entity type of the tab's list, since it judges
+	// that list's rows.
+	ViewConditionPageDone ViewConditionKind = "page_done"
+
 	// ViewConditionTraverse is the `condition:` of a view's traverse step,
 	// keyed by dataentryconfig.TraverseConditionID: one program per entity
 	// type the step can collect.
 	ViewConditionTraverse ViewConditionKind = "traverse"
+
+	// ViewConditionLLMCandidate is the `candidates:` of an llm action's relate
+	// output (TKT-4USH1HO), keyed by dataentryconfig.LLMCandidateConditionID:
+	// one program per target type of the relation.
+	ViewConditionLLMCandidate ViewConditionKind = "llm_candidates"
 )
 
 // ViewConditionKey identifies one compiled view condition.
@@ -47,7 +58,7 @@ func (k ViewConditionKey) String() string { return fmt.Sprintf("%s[%q]", k.Kind,
 
 // CompileViewConditions compiles the `condition:` of every list, kanban and
 // view traverse step, the `when:` of every detail-page action, and every rule
-// of a navigation entry's `status:`.
+// of a navigation entry's `status:` and the `done_when:` of every page tab.
 //
 // Like [CompileNextActions] and unlike [Lint], this is AUTHORITATIVE: the
 // programs returned here are the ones evaluated on the read path, so an
@@ -96,7 +107,13 @@ func CompileViewConditions(
 			compileOne(ev, meta, key, name, entityType, rule.Condition, programs, &problems)
 		}
 	}
+	for _, pd := range dataentryconfig.PageDoneEntries(cfg) {
+		key := ViewConditionKey{ViewConditionPageDone, dataentryconfig.PageDoneConditionID(pd.Page, pd.Tab.ID)}
+		name := fmt.Sprintf("pages[%s].tabs[%s].done_when", pd.Page, pd.Tab.ID)
+		compileOne(ev, meta, key, name, pd.EntityType, pd.Tab.DoneWhen, programs, &problems)
+	}
 	compileActionConditions(ev, meta, cfg, programs, &problems)
+	compileLLMCandidateConditions(ev, meta, cfg, programs, &problems)
 	compileTraverseConditions(ev, meta, cfg, programs, &problems)
 
 	sort.Strings(problems)
@@ -142,6 +159,52 @@ func compileActionConditions(
 				continue
 			}
 			programs[key] = prog
+		}
+	}
+}
+
+// compileLLMCandidateConditions compiles the `candidates:` of each llm
+// action's relate output once per target type of its relation.
+//
+// `related(...)` is refused, as for an action's when: the candidate list is
+// read once per run, and a traversal per candidate would multiply its cost.
+// Every target type must compile, so a candidate of any type is judged.
+func compileLLMCandidateConditions(
+	ev *predicatefns.Evaluator, meta *metamodel.Metamodel, cfg *dataentryconfig.Config,
+	programs map[ViewConditionKey]*predicate.Program, problems *[]string,
+) {
+	for id, a := range cfg.Actions {
+		if a.LLM == nil {
+			continue
+		}
+		for i, r := range a.LLM.Outputs.Relate {
+			if r.Candidates == "" {
+				continue
+			}
+			rd, ok := meta.GetRelationDef(r.Relation)
+			if !ok {
+				continue // reported by validateActions
+			}
+			for _, et := range rd.To {
+				if _, ok := meta.GetEntityDef(et); !ok {
+					continue
+				}
+				key := ViewConditionKey{ViewConditionLLMCandidate, dataentryconfig.LLMCandidateConditionID(id, i, et)}
+				prog, err := ev.CompileWithCurrentUser(et, r.Candidates)
+				if err != nil {
+					*problems = append(*problems, fmt.Sprintf(
+						"actions[%q]: llm.outputs.relate[%d].candidates does not compile against entity type %q: %v",
+						id, i, et, err))
+					continue
+				}
+				if len(prog.Traversals()) > 0 {
+					*problems = append(*problems, fmt.Sprintf(
+						"actions[%q]: %s(...) is not available in llm.outputs.relate[%d].candidates; it may only "+
+							"test the candidate's own properties", id, predicate.FuncRelated, i))
+					continue
+				}
+				programs[key] = prog
+			}
 		}
 	}
 }
@@ -208,10 +271,13 @@ type ViewConditionMatcher struct {
 
 // Matches evaluates the condition against the identity on ctx.
 //
-// An evaluation error is SURFACED, not swallowed as a non-match. A missing
-// date property is an eval error, and treating it as "does not match" would
-// silently narrow the view with no diagnostic — the inverse of BUG-WHEREWIDE
-// and exactly the silent-wrong-answer class this feature exists to remove.
+// The matcher evaluates with [predicatefns.Evaluator.LoweringSemantics], so
+// an integer or string ordered comparison on an unset value is false, as it
+// is in the store query the condition may be lowered into (TKT-8HY05WB).
+// Any other evaluation error, a missing date property among them, is
+// SURFACED, not swallowed as a non-match: treating it as "does not match"
+// would silently narrow the view with no diagnostic (the inverse of
+// BUG-WHEREWIDE).
 func (m *ViewConditionMatcher) Matches(ctx context.Context, e *entity.Entity) (bool, error) {
 	if m == nil || e == nil {
 		return false, nil
@@ -268,7 +334,7 @@ func ViewConditionMatchers(
 	if len(programs) == 0 {
 		return nil, nil
 	}
-	ev := predicatefns.NewEvaluator(meta)
+	ev := predicatefns.NewEvaluator(meta).LoweringSemantics()
 	matchers := make(map[ViewConditionKey]*ViewConditionMatcher, len(programs))
 	for key, prog := range programs {
 		matchers[key] = &ViewConditionMatcher{ev: ev, prog: prog, entityType: entityTypeFor(cfg, key)}
@@ -294,6 +360,14 @@ func entityTypeFor(cfg *dataentryconfig.Config, key ViewConditionKey) string {
 	case ViewConditionTraverse:
 		et, _ := dataentryconfig.SplitTraverseConditionID(key.ID)
 		return et
+	case ViewConditionLLMCandidate:
+		return dataentryconfig.LLMCandidateConditionType(key.ID)
+	case ViewConditionPageDone:
+		for _, pd := range dataentryconfig.PageDoneEntries(cfg) {
+			if dataentryconfig.PageDoneConditionID(pd.Page, pd.Tab.ID) == key.ID {
+				return pd.EntityType
+			}
+		}
 	case ViewConditionNavStatus:
 		for _, ns := range dataentryconfig.NavStatusEntries(cfg) {
 			for i := range ns.Entry.Status {

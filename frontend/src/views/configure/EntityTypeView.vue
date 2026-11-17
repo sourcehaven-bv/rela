@@ -7,12 +7,14 @@ import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlTag from 'rela-components/components/common/RlTag.vue'
 import RlText from 'rela-components/components/common/RlText.vue'
 import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
-import ConfigurePage from '@/components/configure/ConfigurePage.vue'
+import ConfigurePage from './ConfigurePage.vue'
 import PropertyDrawer from '@/components/configure/PropertyDrawer.vue'
 import EntityTypeSettings from '@/components/configure/EntityTypeSettings.vue'
 import { useConfigDraftStore } from '@/configure/configDraft'
 import { useConfirm } from '@/composables/useConfirm'
 import {
+  automationsUsing,
+  automationTitle,
   entityTypeModel,
   relations,
   relationSentence,
@@ -87,10 +89,12 @@ function move(item: Row, toIndex: number) {
 
 async function removeType() {
   const label = model.value?.label ?? props.name
+  const autos = automationsUsing(draft.currentFlows, props.name).map(automationTitle)
   const ok = await confirm({
     title: `Remove ${label}?`,
     message:
-      'Forms, lists, boards and relations that use it must be changed too, or saving is refused.',
+      'Forms, lists, boards and relations that use it must be changed too, or saving is refused.' +
+      (autos.length ? ` These automations fire on it: ${autos.join(', ')}.` : ''),
     confirmLabel: 'Remove',
     danger: true,
   })

@@ -8,6 +8,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/ai"
+	"github.com/Sourcehaven-BV/rela/internal/flowengine"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/mail"
 )
@@ -21,6 +22,7 @@ type seams struct {
 	http      *http.Client
 	ai        ai.Provider
 	outputDir string
+	flowJobs  flowengine.JobQueue
 }
 
 // WithClock sets the clock of the world. It reaches:
@@ -108,6 +110,21 @@ func WithOutputDir(dir string) Option {
 	}
 }
 
+// WithFlowJobQueue makes the flow engine put job step attempts on q instead
+// of the job queue, in every process, long-running or not. The caller runs
+// each attempt with [flowengine.AttemptHandler.HandleAttempt] over
+// [FlowEngine], when it chooses. `rela test` uses it to run attempts in the
+// case, one by one, on the case's clock.
+//
+// Nil: ignored — the job queue of a long-running process, else none.
+func WithFlowJobQueue(q flowengine.JobQueue) Option {
+	return func(o *options) {
+		if q != nil {
+			o.seams.flowJobs = q
+		}
+	}
+}
+
 // clock returns the world's clock: the [WithClock] one, else the wall clock.
 func (b *SharedBase) clock() func() time.Time {
 	if b.opts.seams.clock != nil {
@@ -124,21 +141,30 @@ func (b *SharedBase) luaSeams() lua.Seams {
 		Clock:      s.clock,
 		HTTPClient: s.http,
 		AI:         s.ai,
-		Mail:       luaMailLoader(s.mail),
+		Mail:       luaMailLoader(s.mail, b.opts.withheld != ""),
 		OutputDir:  s.outputDir,
 	}
 }
 
 // luaMailLoader returns the mail.send loader over transport: mail.yaml is
 // parsed as usual, so the sender address, base URL and recipients policy
-// apply, and only the transport is replaced. Nil when transport is nil, so
-// mail.yaml's own transport is used.
-func luaMailLoader(transport mail.Sender) lua.MailSenderLoader {
+// apply, and only the transport is replaced. Nil when transport is nil and
+// nothing is withheld, so mail.yaml's own transport is used.
+//
+// withheld is whether the host config is a [withheldHost]. The loader then
+// reads mail through [mailHost], so mail.send keeps the host's transport
+// and its SMTP password.
+func luaMailLoader(transport mail.Sender, withheld bool) lua.MailSenderLoader {
 	if transport == nil {
-		return nil
+		if !withheld {
+			return nil
+		}
+		return func(host lua.HostConfig) (lua.MailSender, error) {
+			return mail.LoadLuaSender(mailHost(host))
+		}
 	}
 	return func(host lua.HostConfig) (lua.MailSender, error) {
-		cfg, err := mail.LoadConfigFrom(host)
+		cfg, err := mail.LoadConfigFrom(mailHost(host))
 		switch {
 		case errors.Is(err, mail.ErrConfigNotFound):
 			return nil, nil // mail is not configured; see lua.MailSenderLoader.

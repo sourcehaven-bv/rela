@@ -22,7 +22,7 @@ func TestClusterResolver_DueTenants(t *testing.T) {
 
 	tenants := map[string]tenant.Tenant{}
 	for _, org := range []string{"org-flow", "org-chan", "org-later", "org-idle", "org-off", "org-old", "org-broken"} {
-		tn, err := pv.p.Create(ctx, org, false)
+		tn, err := pv.p.Create(ctx, org, tenant.CreateOptions{})
 		if err != nil {
 			t.Fatalf("Create(%s): %v", org, err)
 		}

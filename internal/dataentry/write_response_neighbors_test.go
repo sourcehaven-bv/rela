@@ -24,8 +24,9 @@ import (
 // through the same neighbor gate as the GET, so a response never names a
 // neighbor the caller cannot read (BUG-J01V0Q).
 
-// hiddenNeighborMeta: alice reads tickets and features but not secrets. An
-// on-create automation links every new ticket to SEC-1.
+// hiddenNeighborMeta: alice reads tickets and features but not secrets.
+// hiddenNeighborFlows adds an on-create trigger that links every new ticket
+// to SEC-1.
 const hiddenNeighborMeta = `
 entities:
   ticket:
@@ -50,14 +51,18 @@ relations:
     to: [feature, secret]
 attachments:
   allow: [text/plain]
-automations:
-  - name: link-secret
+`
+
+// hiddenNeighborFlows holds the trigger that goes with hiddenNeighborMeta.
+const hiddenNeighborFlows = `
+triggers:
+  link-secret:
     on:
       entity: ticket
       created: true
-    do:
-      - create_relation:
-          relation: implements
+    outputs:
+      - relate:
+          type: implements
           to: SEC-1
 `
 
@@ -102,7 +107,7 @@ func hiddenNeighborApp(t *testing.T) (*App, *acl.Declarative, store.Store) {
 		Assignments: map[string]string{"alice": "r"},
 	}, st)
 	svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, paths), appbuildtest.WithStore(st),
-		appbuildtest.WithDeclarative(d))
+		appbuildtest.WithDeclarative(d), appbuildtest.WithTriggers(mustParseTriggers(t, meta, hiddenNeighborFlows)))
 	app := newAppFromParts(&Config{}, nil, newFixture())
 	rebindApp(app, fs, paths, svc)
 	setTestACL(t, app, d)

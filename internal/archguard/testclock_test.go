@@ -21,7 +21,7 @@ var wallClockGuard = guard{
 // wallClockRoots are the write-path packages whose time must follow
 // appbuild.WithClock.
 var wallClockRoots = []string{
-	"internal/automation",
+	"internal/flowcfg/triggers",
 	"internal/entitymanager",
 	"internal/validation",
 	"internal/writerule",

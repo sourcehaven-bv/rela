@@ -104,20 +104,45 @@ describe('Sidebar / search shortcut', () => {
     expect(push).not.toHaveBeenCalled()
   })
 
-  it('still defers to a list view that owns its own search box (TKT-603FQ)', async () => {
-    await mountSidebar()
-
-    const list = document.createElement('div')
-    list.className = 'entity-list'
+  /**
+   * Builds a list page the way the shell does: PageHeaderContent draws the
+   * header, with the search box, as a sibling of `.entity-list`, not inside
+   * it. Returns the search input.
+   */
+  function shellListPage(): HTMLInputElement {
+    const header = document.createElement('header')
+    header.className = 'page-header'
     const box = document.createElement('div')
     box.className = 'search-box'
-    list.appendChild(box)
-    document.body.appendChild(list)
+    const input = document.createElement('input')
+    box.appendChild(input)
+    header.appendChild(box)
+    const list = document.createElement('div')
+    list.className = 'entity-list'
+    document.body.append(header, list)
+    return input
+  }
+
+  it('defers to a list search box drawn outside .entity-list (TKT-603FQ)', async () => {
+    await mountSidebar()
+    shellListPage()
 
     const push = vi.spyOn(router, 'push')
     pressSlash()
 
     expect(push).not.toHaveBeenCalled()
+  })
+
+  it('navigates when the list search box is hidden', async () => {
+    await mountSidebar()
+    const input = shellListPage()
+    // happy-dom always reports one client rect; a hidden element has none.
+    vi.spyOn(input, 'getClientRects').mockReturnValue([] as unknown as DOMRectList)
+
+    const push = vi.spyOn(router, 'push')
+    pressSlash()
+
+    expect(push).toHaveBeenCalledWith('/search')
   })
 
   it('unregisters its handler on unmount', async () => {

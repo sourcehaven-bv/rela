@@ -124,11 +124,11 @@ func planEntityTypeCascade(plan *CleanupPlan, usage TypeUsage) {
 				Action: "remove_validation",
 				Target: extractName(ref.Section, "validations."),
 			})
-		case "automation":
+		case "trigger":
 			plan.MetamodelChanges = append(plan.MetamodelChanges, Change{
 				File:   ref.File,
-				Action: "remove_automation",
-				Target: extractName(ref.Section, "automations."),
+				Action: "remove_trigger",
+				Target: extractName(ref.Section, "triggers."),
 			})
 		case "relation_from", "relation_to":
 			// These will be handled when the relation type itself is cleaned up
@@ -138,14 +138,14 @@ func planEntityTypeCascade(plan *CleanupPlan, usage TypeUsage) {
 }
 
 // planRelationTypeCascade adds cascade changes for a relation type's references.
-// Currently a no-op: relation type references in forms/automations require
+// Currently a no-op: relation type references in forms/triggers require
 // surgical removal (just the relation field, not the whole config) which is complex.
 // TODO: Implement surgical removal of relation references.
 func planRelationTypeCascade(_ *CleanupPlan, _ TypeUsage) {
 	// Relation references are more complex to cascade:
 	// - form.relations[].relation - remove just that relation entry
 	// - view.traverse[].follow - remove just that traverse rule
-	// - automation triggers/actions - remove just the relation reference
+	// - flows.yaml triggers - remove just the relation reference
 	// For now, unused relation types are removed but their config references remain
 	// (which may cause validation errors until manually cleaned up)
 }

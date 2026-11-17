@@ -107,7 +107,8 @@ func (r *Request) computeForEntity(ctx context.Context, entityID string) []RoleA
 	}
 	chain := r.ancestors(ctx, entityID)
 	local := r.localRoles(entityID, chain, globals.Members, func(member, relType, target string) bool {
-		return r.d.graph.HasEdge(ctx, member, relType, target)
+		cond, _ := r.conds.edge(relType) // conferringRelations drops a dead type
+		return r.d.graph.HasEdge(ctx, member, relType, target, cond)
 	})
 	return mergeAttributions(globals.Attributions, local)
 }
@@ -159,6 +160,10 @@ func (r *Request) conferringRelations() []string {
 			continue
 		}
 		if _, defined := policy.Roles[def.Confers]; !defined {
+			continue
+		}
+		if _, live := r.conds.edge(relType); !live {
+			// A conditional type no edge can satisfy at this read time.
 			continue
 		}
 		relTypes = append(relTypes, relType)
@@ -216,7 +221,7 @@ func (r *Request) ancestors(ctx context.Context, entityID string) []string {
 		var next []string
 		for _, n := range frontier {
 			for _, relType := range r.d.policy.InheritRolesThrough {
-				tos, err := r.d.graph.OutgoingRelations(ctx, n, relType)
+				tos, err := r.d.graph.OutgoingRelations(ctx, n, relType, nil)
 				if err != nil {
 					return order
 				}
@@ -254,7 +259,7 @@ func (r *Request) HoldsPermission(_ context.Context, perm string) bool {
 // X on their own entity" where the assignee role is conferred by an ownership
 // relation, not a global assignment.
 //
-// It is the entry point the statemachine transition guard uses (TKT-E4LW2):
+// It is the entry point the transition guard uses (TKT-E4LW2):
 // the guard permission is a coarse capability noun (e.g. "establish"), and the
 // per-subject scope comes from whether a role-relation confers the granting
 // role for this entity — resolved here, not baked into the permission.

@@ -44,6 +44,8 @@ export interface ChangeGroup {
 export interface DraftTrees {
   schema: TreeValue | undefined
   dataEntry: TreeValue | undefined
+  /** flows.yaml; left out where a caller has no automations. */
+  flows?: TreeValue | undefined
 }
 
 /** A scalar or a list of scalars as text, for a before/after pair. */
@@ -416,7 +418,7 @@ function namedChanges(
   return groups
 }
 
-/** Items of a list section (rules, automations, dashboard cards), matched by origin. */
+/** Items of a list section (rules, dashboard cards), matched by origin. */
 function itemChanges(
   before: TreeValue | undefined,
   after: TreeValue | undefined,
@@ -551,7 +553,7 @@ function navChanges(b: DraftTrees, a: DraftTrees): ChangeGroup[] {
   return groups
 }
 
-const HANDLED_SCHEMA = ['entities', 'types', 'relations', 'validations', 'automations']
+const HANDLED_SCHEMA = ['entities', 'types', 'relations', 'validations']
 const HANDLED_SCREENS = [
   'styles',
   'forms',
@@ -627,21 +629,6 @@ export function describeChanges(
       configureRoute.rules()
     )
     if (rules.length) groups.push({ key: 'rules', title: 'Rules', items: rules })
-    const autos = itemChanges(
-      get(b.schema, 'automations'),
-      get(a.schema, 'automations'),
-      'Automation',
-      (item, i) =>
-        automationTitle({
-          name: str(get(item, 'name')) ?? '',
-          description: str(get(item, 'description')) ?? '',
-          index: i,
-        }),
-      configureRoute.automation,
-      'Order of automations',
-      configureRoute.automations()
-    )
-    if (autos.length) groups.push({ key: 'automations', title: 'Automations', items: autos })
     const other = settingChanges(b.schema, a.schema, configureRoute.entityTypes(), HANDLED_SCHEMA)
     if (other.length) groups.push({ key: 'schema-other', title: 'Data model', items: other })
   }
@@ -730,7 +717,49 @@ export function describeChanges(
     ])
     if (other.length) groups.push({ key: 'screens-other', title: 'Screens', items: other })
   }
+  if (!equal(b.flows, a.flows)) {
+    const autos = automationChanges(get(b.flows, 'triggers'), get(a.flows, 'triggers'))
+    if (autos.length) groups.push({ key: 'automations', title: 'Automations', items: autos })
+  }
   return groups
+}
+
+/**
+ * The flows.yaml triggers that were added, changed or removed, and whether
+ * their order changed. Triggers fire in document order, so order is a change.
+ */
+function automationChanges(
+  before: TreeValue | undefined,
+  after: TreeValue | undefined
+): ChangeItem[] {
+  const title = (name: string, def: TreeValue | undefined) =>
+    automationTitle({ name, description: str(get(def, 'description')) ?? '' })
+  const items = namedChanges(
+    before,
+    after,
+    'Automation',
+    title,
+    configureRoute.automation,
+    configureRoute.automations(),
+    (name, old, now, to) => {
+      if (equal(old, now)) return []
+      const changed = settingChanges(old, now, to).map((c) => c.label)
+      return [
+        {
+          kind: 'changed',
+          label: `Automation ${title(name, now)}`,
+          detail: changed.length ? changed.join(', ') : undefined,
+          to,
+        },
+      ]
+    }
+  ).flatMap((g) => g.items)
+  const kept = keys(after).filter((k) => get(before, k) !== undefined)
+  const was = keys(before).filter((k) => get(after, k) !== undefined)
+  if (kept.join('\n') !== was.join('\n')) {
+    items.push({ kind: 'changed', label: 'Order of automations', to: configureRoute.automations() })
+  }
+  return items
 }
 
 export function changeCount(groups: ChangeGroup[]): number {

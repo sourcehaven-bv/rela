@@ -125,6 +125,34 @@ func TestResolver_ResolveHeaders(t *testing.T) {
 	}
 }
 
+// TestResolver_ResolveHeadersReadableFaces checks the readable face count:
+// every readable face of a bare id, and zero for a named face.
+func TestResolver_ResolveHeadersReadableFaces(t *testing.T) {
+	pol := entity.Ref{ID: "POL-1"}
+	polPub := entity.Ref{ID: "POL-1", Face: facePublished}
+	for _, tc := range []struct {
+		name     string
+		gate     resolverGate
+		wantBare int
+	}{
+		{"every face readable", resolverGate{}, 2},
+		{"one face hidden", resolverGate{faces: map[string]visibility.FaceSet{
+			"policy": visibility.SomeFaces(facePublished)}}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := mustResolver(t, tc.gate, visibility.NopRedactor{}, resolverStore(t))
+			got := r.ResolveHeaders(context.Background(), visibility.WorldOf(store.TrivialScope()),
+				[]entity.Ref{pol, polPub})
+			if n := got[pol].ReadableFaces; n != tc.wantBare {
+				t.Errorf("bare ReadableFaces = %d, want %d", n, tc.wantBare)
+			}
+			if n := got[polPub].ReadableFaces; n != 0 {
+				t.Errorf("named ReadableFaces = %d, want 0", n)
+			}
+		})
+	}
+}
+
 // TestResolver_ResolveHeadersTypeAndRedaction checks that a family stored
 // under two types is a miss, and that a served header is redacted once for
 // the whole batch without touching the stored row.
@@ -221,14 +249,16 @@ func TestResolver_ResolveHeadersBudget(t *testing.T) {
 				}
 				refs = append(refs, entity.Ref{ID: id})
 			}
+			// Rows the batch does not name, so a scan would read them.
+			padStore(t, base, "ticket", "")
 			st := storetest.NewCounting(base)
 			gate := &countingGate{}
 			r := mustResolver(t, gate, visibility.NopRedactor{}, st)
 			if got := r.ResolveHeaders(ctx, visibility.WorldOf(store.TrivialScope()), refs); len(got) != n {
 				t.Fatalf("got %d hits, want %d", len(got), n)
 			}
-			if calls := st.Calls(); st.Reads() != 1 || calls["ListEntityHeaders"] != 1 {
-				t.Errorf("reads = %s, want exactly one ListEntityHeaders", st)
+			if calls := st.Calls(); st.Reads() != 1 || calls["ListEntityHeaders"] != 1 || st.Cost().Rows != n {
+				t.Errorf("reads = %s, want exactly one ListEntityHeaders of %d rows", st, n)
 			}
 			if gate.many != 1 || gate.single != 0 {
 				t.Errorf("gate calls = %d many, %d single; want 1 and 0", gate.many, gate.single)
@@ -376,6 +406,8 @@ func TestResolver_ReadableTypesBudget(t *testing.T) {
 				}
 				ids = append(ids, id)
 			}
+			// Rows the batch does not name, so a scan would read them.
+			padStore(t, base, "ticket", "")
 			st := storetest.NewCounting(base)
 			gate := &countingGate{}
 			r := mustResolver(t, gate, visibility.NopRedactor{}, st)
@@ -383,8 +415,8 @@ func TestResolver_ReadableTypesBudget(t *testing.T) {
 			if err != nil || len(got) != n {
 				t.Fatalf("got %d types, %v; want %d", len(got), err, n)
 			}
-			if calls := st.Calls(); st.Reads() != 1 || calls["ListEntityHeaders"] != 1 {
-				t.Errorf("reads = %s, want exactly one ListEntityHeaders", st)
+			if calls := st.Calls(); st.Reads() != 1 || calls["ListEntityHeaders"] != 1 || st.Cost().Rows != n {
+				t.Errorf("reads = %s, want exactly one ListEntityHeaders of %d rows", st, n)
 			}
 			if gate.many != 1 || gate.single != 0 {
 				t.Errorf("gate calls = %d many, %d single; want 1 and 0", gate.many, gate.single)
@@ -473,6 +505,8 @@ func TestScriptReader_ResolveHeadersBudget(t *testing.T) {
 					refs = append(refs, entity.Ref{ID: id})
 				}
 			}
+			// Rows the batch does not name, so a scan would read them.
+			padStore(t, base, "ticket", "")
 			st := storetest.NewCounting(base)
 			gate := &countingGate{}
 			pr, err := visibility.NewPolicyReader(gate, visibility.NopRedactor{}, st)
@@ -487,12 +521,25 @@ func TestScriptReader_ResolveHeadersBudget(t *testing.T) {
 			if got := sr.ResolveHeaders(ctx, refs); len(got) != 2*n {
 				t.Fatalf("got %d hits, want %d", len(got), 2*n)
 			}
-			if calls := st.Calls(); st.Reads() != 1 || calls["ListEntityHeaders"] != 1 {
-				t.Errorf("reads = %s, want exactly one ListEntityHeaders", st)
+			if calls := st.Calls(); st.Reads() != 1 || calls["ListEntityHeaders"] != 1 || st.Cost().Rows != 2*n {
+				t.Errorf("reads = %s, want exactly one ListEntityHeaders of %d rows", st, 2*n)
 			}
 			if gate.many != 2 || gate.single != 0 {
 				t.Errorf("gate calls = %d many, %d single; want 2 and 0", gate.many, gate.single)
 			}
 		})
+	}
+}
+
+// padStore stores storetest.ScaleLarge entities of typ on face that no
+// budget test names, with ids that no fixture uses, so a read that scans
+// the type reads them too.
+func padStore(t *testing.T, st store.Store, typ string, face entity.Face) {
+	t.Helper()
+	for i := range storetest.ScaleLarge {
+		e := &entity.Entity{ID: fmt.Sprintf("PAD-%s-%d", typ, i), Type: typ, Face: face}
+		if err := st.CreateEntity(context.Background(), e); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

@@ -66,6 +66,61 @@ func TestValidatePages(t *testing.T) {
 			`pages[tickets].tabs[table]: references unknown calendar "nope"`},
 		{"unknown document", pages(tab(func(t *PageTab) { t.List, t.Document = "", "nope" })), nil, nil,
 			`pages[tickets].tabs[table]: references unknown document "nope"`},
+		{"steps page with prompts", pages(func(p *Page) {
+			p.Mode = PageModeSteps
+			p.Tabs[0].Prompt = "Wat kan er misgaan?"
+			p.Tabs[1].Prompt = strings.Repeat("é", maxPagePromptLen)
+		}), nil, nil, ""},
+		{"explicit tabs mode", pages(func(p *Page) { p.Mode = PageModeTabs }), nil, nil, ""},
+		{"unknown mode", pages(func(p *Page) { p.Mode = "slides" }), nil, nil,
+			`pages[tickets]: unknown mode "slides" (valid: tabs, steps)`},
+		{"prompt on a tabs page", pages(tab(func(t *PageTab) { t.Prompt = "Why?" })), nil, nil,
+			"pages[tickets].tabs[table]: prompt needs mode: steps on the page"},
+		{"prompt too long", pages(func(p *Page) {
+			p.Mode = PageModeSteps
+			p.Tabs[0].Prompt = strings.Repeat("a", maxPagePromptLen+1)
+		}), nil, nil, "pages[tickets].tabs[table]: prompt is longer than 280 characters"},
+		{"prompt with a newline", pages(func(p *Page) {
+			p.Mode = PageModeSteps
+			p.Tabs[0].Prompt = "one\ntwo"
+		}), nil, nil, "pages[tickets].tabs[table]: prompt contains the invisible or control character U+000A"},
+		{"prompt with a direction override", pages(func(p *Page) {
+			p.Mode = PageModeSteps
+			p.Tabs[0].Prompt = "abc\u202edef"
+		}), nil, nil, "prompt contains the invisible or control character U+202E"},
+		{"prompt with a line separator", pages(func(p *Page) {
+			p.Mode = PageModeSteps
+			p.Tabs[0].Prompt = "one\u2028two"
+		}), nil, nil, "prompt contains the invisible or control character U+2028"},
+		{"prompt with an emoji sequence", pages(func(p *Page) {
+			p.Mode = PageModeSteps
+			p.Tabs[0].Prompt = "\U0001F469\u200D\U0001F4BB Who owns this?"
+		}), nil, nil, ""},
+		{"prompt on a tab without id", pages(func(p *Page) {
+			p.Tabs[0].ID = ""
+			p.Tabs[0].Prompt = "Why?"
+		}), nil, nil, "pages[tickets].tabs[0]: prompt needs mode: steps"},
+		{"walk and done_when on a steps list tab", pages(func(p *Page) {
+			p.Mode = PageModeSteps
+			p.Tabs[0].Walk = true
+			p.Tabs[0].DoneWhen = "entity.status == 'done'"
+		}), nil, nil, ""},
+		{"walk on a tabs page", pages(tab(func(t *PageTab) { t.Walk = true })), nil, nil,
+			"pages[tickets].tabs[table]: walk needs mode: steps on the page"},
+		{"done_when on a tabs page", pages(tab(func(t *PageTab) { t.DoneWhen = "true" })), nil, nil,
+			"pages[tickets].tabs[table]: done_when needs mode: steps on the page"},
+		{"walk on a dashboard tab", pages(func(p *Page) {
+			p.Mode = PageModeSteps
+			p.Tabs[1].Walk = true
+		}), nil, nil, "pages[tickets].tabs[home]: walk needs a list tab"},
+		{"done_when on a dashboard tab", pages(func(p *Page) {
+			p.Mode = PageModeSteps
+			p.Tabs[1].DoneWhen = "true"
+		}), nil, nil, "pages[tickets].tabs[home]: done_when needs a list tab"},
+		{"blank done_when", pages(func(p *Page) {
+			p.Mode = PageModeSteps
+			p.Tabs[0].DoneWhen = "  "
+		}), nil, nil, "pages[tickets].tabs[table]: done_when is blank"},
 		{"nav entry names an unknown page", pages(nil), []NavigationEntry{{Label: "X", Page: "nope"}}, nil,
 			`navigation: references unknown page "nope"`},
 		{"nav status counts the first tab", pages(nil), []NavigationEntry{{Page: "tickets",
@@ -115,8 +170,9 @@ pages:
     label: Tickets
     icon: folder
     tabs:
-      - { id: table, list: tickets, label: Table }
-      - { id: home, dashboard: true, label: Home, permission: admin:read }
+      - { id: table, list: tickets, label: Table, walk: true, done_when: "entity.status == 'done'" }
+      - { id: home, dashboard: true, label: Home, permission: admin:read, prompt: "Where are we?" }
+    mode: steps
 navigation:
   - page: tickets
 `)
@@ -131,8 +187,40 @@ navigation:
 	if len(page.Tabs) != 2 || page.Tabs[0].ID != "table" || page.Tabs[1].Permission != "admin:read" {
 		t.Fatalf("tabs = %+v", page.Tabs)
 	}
+	if !page.IsSteps() || page.Tabs[1].Prompt != "Where are we?" {
+		t.Errorf("mode = %q, prompt = %q", page.Mode, page.Tabs[1].Prompt)
+	}
+	if !page.Tabs[0].Walk || page.Tabs[0].DoneWhen != "entity.status == 'done'" {
+		t.Errorf("walk = %v, done_when = %q", page.Tabs[0].Walk, page.Tabs[0].DoneWhen)
+	}
 	if cfg.Navigation[0].Page != "tickets" {
 		t.Errorf("navigation = %+v", cfg.Navigation)
+	}
+}
+
+// Only list tabs with done_when are entries, each with its list's type; a tab
+// with an unknown list is left to validatePages.
+func TestPageDoneEntries(t *testing.T) {
+	cfg := &Config{
+		Lists: map[string]List{"tickets": {EntityType: "ticket"}},
+		Pages: map[string]Page{
+			"b": {Tabs: []PageTab{
+				{ID: "one", List: "tickets", DoneWhen: "true"},
+				{ID: "two", List: "tickets"},
+				{ID: "three", List: "nope", DoneWhen: "true"},
+			}},
+			"a": {Tabs: []PageTab{{ID: "x", List: "tickets", DoneWhen: "false"}}},
+		},
+	}
+	got := PageDoneEntries(cfg)
+	if len(got) != 2 || got[0].Page != "a" || got[1].Tab.ID != "one" || got[1].EntityType != "ticket" {
+		t.Fatalf("entries = %+v", got)
+	}
+	if PageDoneConditionID("a", "x") != "a/x" {
+		t.Errorf("id = %q", PageDoneConditionID("a", "x"))
+	}
+	if PageDoneEntries(nil) != nil {
+		t.Error("nil config has entries")
 	}
 }
 
@@ -166,9 +254,21 @@ func TestValidateEntityPages(t *testing.T) {
 				Title: "Plan", Hierarchy: []string{"blocks"},
 				Sources: map[string]GanttSource{"ticket": {Label: "title"}},
 			}},
-			Documents: map[string]DocumentConfig{"report": {Script: "report.lua"}},
+			Documents: map[string]DocumentConfig{
+				"report":        {Script: "report.lua"},
+				"cat_report":    {Script: "report.lua", EntityType: "category"},
+				"ticket_report": {Script: "report.lua", EntityType: "ticket"},
+			},
+			Dashboards: map[string]DashboardConfig{
+				"plain": {Title: "Plain"},
+				"cat_home": {Title: "Category", EntityType: "category", Cards: []DashboardCard{{
+					Title: "Tickets", List: "tickets", Display: "count",
+					Scope: &PageTabScope{Relation: "belongs-to", Direction: DirectionIncoming},
+				}}},
+			},
 		}
 	}
+	root := &PageTabScope{Root: true}
 	page := func(mut func(*Page)) map[string]Page {
 		p := Page{PageHeader: PageHeader{Label: "Category", EntityType: "category", Badge: "name"}, Tabs: []PageTab{
 			{ID: "table", Label: "Table", List: "tickets",
@@ -216,12 +316,48 @@ func TestValidateEntityPages(t *testing.T) {
 		{"ambiguous direction", map[string]Page{"tk": {PageHeader: PageHeader{Label: "T", EntityType: "ticket"}, Tabs: []PageTab{
 			{ID: "a", Label: "A", List: "tickets", Scope: &PageTabScope{Relation: "blocks"}},
 		}}}, nil, "pages[tk].tabs[a]: scope needs an explicit `direction:`"},
-		{"dashboard tab", page(func(p *Page) {
-			p.Tabs = append(p.Tabs, PageTab{ID: "home", Label: "Home", Dashboard: DefaultDashboard})
-		}), nil, "pages[cat].tabs[home]: an entity page can only show list, kanban and gantt tabs"},
-		{"document tab", page(func(p *Page) {
-			p.Tabs = append(p.Tabs, PageTab{ID: "doc", Label: "Doc", Document: "report"})
-		}), nil, "pages[cat].tabs[doc]: an entity page can only show list, kanban and gantt tabs"},
+		{"entity document tab", page(func(p *Page) {
+			p.Tabs = append(p.Tabs, PageTab{ID: "doc", Label: "Doc", Document: "cat_report", Scope: root})
+		}), nil, ""},
+		{"entity dashboard tab", page(func(p *Page) {
+			p.Tabs = append(p.Tabs, PageTab{ID: "home", Label: "Home", Dashboard: "cat_home", Scope: root})
+		}), nil, ""},
+		{"document tab without root", page(func(p *Page) {
+			p.Tabs = append(p.Tabs, PageTab{ID: "doc", Label: "Doc", Document: "cat_report"})
+		}), nil, "pages[cat].tabs[doc]: a document or dashboard tab on an entity page needs scope: root"},
+		{"document tab with a relation scope", page(func(p *Page) {
+			p.Tabs = append(p.Tabs, PageTab{ID: "doc", Label: "Doc", Document: "cat_report",
+				Scope: &PageTabScope{Relation: "belongs-to"}})
+		}), nil, "pages[cat].tabs[doc]: a document or dashboard tab on an entity page needs scope: root"},
+		{"standalone document tab", page(func(p *Page) {
+			p.Tabs = append(p.Tabs, PageTab{ID: "doc", Label: "Doc", Document: "report", Scope: root})
+		}), nil, `pages[cat].tabs[doc]: document "report" must have entity_type "category"`},
+		{"document of another type", page(func(p *Page) {
+			p.Tabs = append(p.Tabs, PageTab{ID: "doc", Label: "Doc", Document: "ticket_report", Scope: root})
+		}), nil, `pages[cat].tabs[doc]: document "ticket_report" must have entity_type "category"`},
+		{"entity document on a plain page", map[string]Page{"t": {PageHeader: PageHeader{Label: "T"}, Tabs: []PageTab{
+			{ID: "doc", Label: "Doc", Document: "cat_report"},
+		}}}, nil, `pages[t].tabs[doc]: document "cat_report" has entity_type "category" so it cannot be a navigation entry`},
+		{"default dashboard tab", page(func(p *Page) {
+			p.Tabs = append(p.Tabs, PageTab{ID: "home", Label: "Home", Dashboard: DefaultDashboard, Scope: root})
+		}), nil, "pages[cat].tabs[home]: the default dashboard has no entity_type"},
+		{"plain dashboard tab", page(func(p *Page) {
+			p.Tabs = append(p.Tabs, PageTab{ID: "home", Label: "Home", Dashboard: "plain", Scope: root})
+		}), nil, `pages[cat].tabs[home]: dashboard "plain" must have entity_type "category"`},
+		{"dashboard tab without root", page(func(p *Page) {
+			p.Tabs = append(p.Tabs, PageTab{ID: "home", Label: "Home", Dashboard: "cat_home"})
+		}), nil, "pages[cat].tabs[home]: a document or dashboard tab on an entity page needs scope: root"},
+		{"entity dashboard on a plain page", map[string]Page{"t": {PageHeader: PageHeader{Label: "T"}, Tabs: []PageTab{
+			{ID: "home", Label: "Home", Dashboard: "cat_home"},
+		}}}, nil, `pages[t].tabs[home]: dashboard "cat_home" has entity_type "category" so it cannot be a navigation entry`},
+		{"calendar tab", page(func(p *Page) {
+			p.Tabs = append(p.Tabs, PageTab{ID: "cal", Label: "Cal", Calendar: "due", Scope: root})
+		}), func(c *Config) {
+			c.Calendars = map[string]Calendar{"due": {}}
+		}, "pages[cat].tabs[cal]: an entity page can only show list, kanban, gantt, document and dashboard tabs"},
+		{"nav entry names an entity dashboard", page(nil), func(c *Config) {
+			c.Navigation = []NavigationEntry{{Label: "H", Dashboard: "cat_home"}}
+		}, `dashboard "cat_home" has entity_type "category" so it cannot be a navigation entry`},
 		{"gantt without root", ganttPage(&PageTabScope{Relation: "blocks"}), nil,
 			"pages[tk].tabs[plan]: a gantt tab on an entity page needs scope: root"},
 		{"gantt without a source for the anchor", ganttPage(&PageTabScope{Root: true}), func(c *Config) {

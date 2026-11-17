@@ -38,6 +38,7 @@ import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.v
 import RlSelect from 'rela-components/components/form/RlSelect.vue'
 import LanguageSetting from '@/components/settings/LanguageSetting.vue'
 import NotificationSetting from '@/components/settings/NotificationSetting.vue'
+import RelationDefaultPicker from '@/components/settings/RelationDefaultPicker.vue'
 import type { SelectOption } from 'rela-components/components/form/types'
 
 // Per-role color text inputs accept hex with optional `#` and 3 or 6
@@ -440,9 +441,8 @@ function enumOptions(values: readonly string[] | undefined): SelectOption[] {
   return [NONE_OPTION, ...(values ?? []).map((v) => ({ value: v, label: v }))]
 }
 
-function relationTargetOptions(relName: string): SelectOption[] {
-  const targets = getRelationDef(relName)?.targets ?? []
-  return [NONE_OPTION, ...targets.map((t) => ({ value: t.id, label: t.title }))]
+function relationTargetTypes(relName: string): string[] {
+  return getRelationDef(relName)?.targetTypes ?? []
 }
 
 function propertyChoices(props: { name: string; type: string }[]): SelectOption[] {
@@ -864,12 +864,10 @@ onMounted(() => {
             <span class="row-label">{{ relName }}</span>
             <div class="row-value">
               <template v-if="getRelationDef(relName as string)">
-                <RlSelect
+                <RelationDefaultPicker
                   v-model="relationDefaults[relName as string]"
                   :label="relName as string"
-                  label-hidden
-                  size="sm"
-                  :options="relationTargetOptions(relName as string)"
+                  :types="relationTargetTypes(relName as string)"
                 />
               </template>
               <template v-else>
@@ -1005,12 +1003,10 @@ onMounted(() => {
                   <span class="row-label">{{ relName }}</span>
                   <div class="row-value">
                     <template v-if="getRelationDef(relName as string)">
-                      <RlSelect
+                      <RelationDefaultPicker
                         v-model="override.relationDefaults[relName as string]"
                         :label="relName as string"
-                        label-hidden
-                        size="sm"
-                        :options="relationTargetOptions(relName as string)"
+                        :types="relationTargetTypes(relName as string)"
                       />
                     </template>
                     <template v-else>

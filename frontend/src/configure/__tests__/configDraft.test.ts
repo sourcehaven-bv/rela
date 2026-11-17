@@ -146,6 +146,55 @@ describe('useConfigDraftStore', () => {
     expect(get(fieldAt(n - 1), 'property')).toBe('heading')
   })
 
+  it('renames a property in the automations on its type', () => {
+    const store = fresh()
+    store.renameProperty('ticket', 'effort', 'estimate')
+    const trigger = (name: string) => getIn(store.currentFlows, ['triggers', name])
+    expect(keys(getIn(trigger('stamp_done'), ['outputs', 0, 'set', 'properties']))).toEqual([
+      'estimate',
+    ])
+    const copy = trigger('copy_effort')
+    expect(getIn(copy, ['on', 'when'])).toBe('entity.estimate > 1')
+    expect(getIn(copy, ['on', 'where', 0])).toBe('estimate>0')
+    expect(getIn(copy, ['outputs', 1, 'check', 'where'])).toBe('estimate>0')
+    const props = getIn(copy, ['outputs', 0, 'set', 'properties'])
+    expect(keys(props)).toEqual(['estimate', 'title'])
+    expect(get(props, 'estimate')).toBe('{{new.estimate}}')
+    // A longer name that starts with the old one is another property.
+    expect(get(props, 'title')).toBe('{{old.effortless}}')
+    expect(getIn(copy, ['outputs', 1, 'check', 'message'])).toBe('Effort is {{new.estimate}}')
+    // A create of the type writes it too, from a trigger on another type.
+    expect(keys(getIn(trigger('spawn'), ['outputs', 0, 'create', 'properties']))).toEqual([
+      'estimate',
+    ])
+    // notify.to names a property of the feature, not of the ticket.
+    expect(getIn(trigger('spawn'), ['outputs', 1, 'notify', 'to', 'property'])).toBe('effort')
+    expect(store.body().flows).toBeDefined()
+
+    store.renameProperty('ticket', 'status', 'state')
+    expect(getIn(trigger('stamp_done'), ['on', 'property'])).toBe('state')
+    // A trigger that runs a script is left for the save to report.
+    store.renameProperty('ticket', 'title', 'name')
+    expect(getIn(trigger('scripted'), ['outputs', 0, 'script', 'lua'])).toBe('print(1)')
+  })
+
+  it('edits flows.yaml triggers and drops an edit made back', () => {
+    const store = fresh()
+    store.setAt('flows', ['triggers', 'stamp_done'], 'description', 'Stamp')
+    expect(getIn(store.currentFlows, ['triggers', 'stamp_done', 'description'])).toBe('Stamp')
+    expect(store.body().flows).toBeDefined()
+    expect(store.body().schema).toBeUndefined()
+    expect(store.changes.map((g) => g.key)).toEqual(['automations'])
+    store.setAt(
+      'flows',
+      ['triggers', 'stamp_done'],
+      'description',
+      'Clear the effort of done tickets'
+    )
+    expect(store.hasDraft).toBe(false)
+    expect(store.body().flows).toBeUndefined()
+  })
+
   it('sends only what changed', () => {
     const store = fresh()
     renameFeature(store, 'Epic')
@@ -184,15 +233,15 @@ describe('useConfigDraftStore', () => {
     expect(get(field, 'label')).toBe('Estimate')
     expect(field?.$i).toBe(2)
 
-    store.setAt('schema', ['automations', 0, 'on'], 'becomes', 'open')
-    expect(get(mapAt(store.currentSchema, ['automations', 0, 'on']), 'becomes')).toBe('open')
+    store.setAt('screens', ['navigation', 0], 'group', 'Doing')
+    expect(get(mapAt(store.currentDataEntry, ['navigation', 0]), 'group')).toBe('Doing')
 
-    store.appendAt('schema', ['automations', 0], 'do', newMap({ set: 'status', value: 'x' }))
-    expect(getIn(store.currentSchema, ['automations', 0, 'do', 1])).toBeDefined()
-    store.removeAt('schema', ['automations', 0, 'do'], 0)
-    const actions = getIn(store.currentSchema, ['automations', 0, 'do'])
-    expect(get(getIn(actions, [0]), 'set')).toBe('status')
-    expect(mapAt(store.currentSchema, ['automations', 0])?.$i).toBe(0)
+    store.appendAt('screens', ['navigation', 0], 'items', newMap({ label: 'All', list: 'tickets' }))
+    expect(getIn(store.currentDataEntry, ['navigation', 0, 'items', 2])).toBeDefined()
+    store.removeAt('screens', ['navigation', 0, 'items'], 0)
+    const items = getIn(store.currentDataEntry, ['navigation', 0, 'items'])
+    expect(get(getIn(items, [0]), 'label')).toBe('Board')
+    expect(mapAt(store.currentDataEntry, ['navigation', 0])?.$i).toBe(0)
 
     store.setAt('screens', ['forms', 'new_ticket', 'fields', 9], 'label', 'Ghost')
     expect(getIn(store.currentDataEntry, ['forms', 'new_ticket', 'fields', 9])).toBeUndefined()

@@ -68,7 +68,7 @@ project/
 
 Put shared code in a module under the project's `lib/` directory, and load it
 with `require`. Any script can use it: actions, documents and export
-renders, automations (`lua:` and `lua_file:`), scheduled tasks, validation
+renders, trigger scripts in `flows.yaml` (`script:` with `lua:` or `file:`), scheduled tasks, validation
 rules, flows, `rela script` and the MCP `lua_run`/`lua_eval` tools.
 
 A module is a Lua file that returns a value, usually a table of functions:
@@ -440,6 +440,16 @@ rela.get_relations(e.id)               -- NOT a filter: a bare id is not a
                                        -- table, so this returns EVERY relation
 ```
 
+`get_relations` is bounded like `list_entities`. It returns at most 2000
+relations, and a `limit` option lowers that bound by the same rules
+(`limit = 0` is an error, a larger value clamps). Hidden edges do not count
+toward the limit. Unknown option keys are still ignored here, for older
+scripts. A store failure raises an error instead of returning a short list.
+
+```lua
+local first = rela.get_relations({ type = "implements", limit = 100 })
+```
+
 ### History Functions
 
 | Function | Description | Returns |
@@ -521,9 +531,9 @@ missing one: `entity not found`. `allow_acl_bypass` does not cover tags:
 checked against the script's principal.
 
 `rela.tag_version` and `rela.untag_version` exist in action scripts,
-scheduled scripts, background automation actions and MCP scripts. They are
-absent in a synchronous automation, and a tag write inside a store
-transaction is refused (`ErrTagInTx`). Tag from a background action or a
+scheduled scripts, background trigger scripts and MCP scripts. They are
+absent in an inline trigger script, and a tag write inside a store
+transaction is refused (`ErrTagInTx`). Tag from a background script or a
 scheduled script.
 
 #### Baseline and compare
@@ -758,16 +768,16 @@ The call acts as the script's principal and has no elevated mode:
 - `rela.bypass_acl` does not widen it.
 
 Which principal that is depends on where the script runs. In an action it
-is the user who ran the action. In a background automation it is the
-action's `run_as` identity, and in a schedule the task's identity. The
-user whose save triggered an automation is not the principal. The audit
+is the user who ran the action. In a background trigger script it is the
+script's `run_as` identity, and in a schedule the task's identity. The
+user whose save fired the trigger is not the principal. The audit
 record names that user in `triggered_by`, as
 `automation-job:<name>;by=<user>`.
 
 The file can be downloaded by everyone who can read the target entity.
 That audience may be wider than the principal that rendered it. A broad
 `run_as` identity therefore renders rows the triggering user may not see
-and stores them where that user can read them. Give an automation that
+and stores them where that user can read them. Give a trigger script that
 calls `rela.attach_render` a `run_as` whose reads match the entity's
 readers.
 
@@ -777,16 +787,89 @@ cancelled, and nothing is stored. Conversions share one bounded pool with
 exports, so a busy server can make the call wait.
 
 `rela.attach_render` exists in action scripts. In `rela-server` and the
-desktop app it also exists in scheduled scripts and background automation
-actions. In other runtimes, such as `rela scheduler`, `rela script` or MCP over stdio, it
+desktop app it also exists in scheduled scripts and background trigger
+scripts. In other runtimes, such as `rela scheduler`, `rela script` or MCP over stdio, it
 returns `nil` and `"attach_render is not available in this runtime"`. It
-is absent in a synchronous automation, in a document render and in a
+is absent in an inline trigger script, in a document render and in a
 validation rule.
 
-An automation that attaches on update fires again for its own write,
-because attaching a file updates the entity. Guard it with a `when:` that
-the write does not keep true, such as a status change, or run it from an
+A trigger that attaches on update fires again for its own write,
+because attaching a file updates the entity. Guard it with a `where:` or
+`when:` condition that the write does not keep true, such as a status change, or run it from an
 action or a schedule instead.
+
+### Attach bytes the script holds: `rela.attach_file`
+
+`rela.attach_file` stores bytes the script already holds as a file on a
+`file` property. Use it to keep a file you fetched with `http.request`, such
+as an invoice PDF from an accounting system, on the entity it belongs to.
+Readers then download it from rela under the ACL, instead of through a
+public link:
+
+```lua
+local resp = http.request({ method = "GET", url = pdf_url })
+local att, err = rela.attach_file{
+  entity   = invoice.id,         -- the entity that gets the file
+  property = "pdf",              -- a `file` property of that entity
+  content  = resp.body,          -- the bytes, as a Lua string
+  filename = "F001",             -- with `mime`, the extension is added when missing
+  mime     = "application/pdf",  -- optional: the type the bytes must be
+}
+if not att then
+  error("invoice PDF not stored: " .. err)
+end
+```
+
+On success it returns a table `{name, size, sha256, mime}`, as
+`rela.attach_render` does. `mime` there is the type a download of the file
+serves. On a refusal or a failure it returns `nil` and a message. A wrong
+argument, such as an unknown option, a missing `content` or a `content` that
+is not a string, raises an error.
+
+Lua strings hold bytes, so `content` can be binary. The bytes are stored
+unchanged, unless the property's attachment processing rewrites them, as it
+would for an upload.
+
+`mime` is optional:
+
+- Without it, the file is stored under `filename` exactly as an upload of
+  the same bytes with that name.
+- With it, the bytes must not contradict that type, judged by the same
+  detection the `accept:` check uses. A type the detection recognizes by its
+  bytes, such as `application/pdf`, `image/png` or `image/jpeg`, must match
+  exactly, so an error page returned in place of the PDF is refused rather
+  than stored as `F001.pdf`. For other types, such as `text/csv` or an
+  Office document, the bytes only need to sniff as a generic type
+  (`text/plain`, `application/zip` or `application/octet-stream`). The
+  upload policy's own extension check still applies after that. The
+  filename gets the type's extension when it has none, and an extension of
+  another type is refused, as for `rela.attach_render`.
+- The size limit is checked before anything else, so an oversized file is
+  refused without touching the entity.
+
+The call acts as the script's principal and runs the checks an upload runs:
+
+- The principal must be able to read the entity and the property, and needs
+  `update` on the entity and leave to change the property. A hidden or
+  missing entity gets the same `not found` message.
+- The size limit (`max_attachment_bytes` in `data-entry.yaml`), the
+  property's `accept:` and `max:`, and the attachment scanner apply. On a
+  property with `max: 1` the new file replaces the old one.
+- The write is audited like an upload. `rela.bypass_acl` does not widen it.
+
+The principal is the same as for `rela.attach_render`: the user in an
+action, the `run_as` identity in a background automation, and the task's
+identity in a schedule or a flow step. The file can be downloaded by
+everyone who can read the entity.
+
+`rela.attach_file` exists where `rela.attach_render` exists: in action
+scripts, and in `rela-server` and the desktop app also in scheduled scripts,
+flow steps and background automation actions, in single-project and tenant
+mode. In other runtimes it returns `nil` and `"attach_file is not available
+in this runtime"`. It is absent in a synchronous automation, in a document
+render and in a validation rule. A declarative webhook runs no Lua; to
+attach a file from one, let the webhook's write start a flow or a
+background automation.
 
 ### Pile Functions
 
@@ -854,9 +937,9 @@ sync system and `rela.sync.merge` raise `sync needs version history`.
 **Writing a ref.** Only operator-authored scripts, data migrations and
 imports may write an external ref: `rela.create_entity("ticket", {basecamp =
 {id = "7012345", url = "https://..."}})`. The scripts that may are action
-scripts, scheduled scripts, automation scripts (inline and background) and
+scripts, scheduled scripts, trigger scripts (inline and background) and
 `rela script`. The data-entry app, the REST API, the MCP tools (including
-`lua_eval` and `lua_run`) and an automation's `set:` or `create_entity`
+`lua_eval` and `lua_run`) and a trigger's `set` or `create` output
 refuse it. Run a connector as a scheduled task.
 
 **Finding the entity.** `rela.find_by_external_ref` reads through the
@@ -930,7 +1013,7 @@ skip the tag and let the next run merge. `rela.update_entity(id, props,
 content, {expect = token})` writes only while the script's read of the
 entity still has that token, and otherwise returns nil and `"conflict"`
 with nothing written. Tokens and `expect` need a runtime that can tag
-versions (action, scheduled and background automation scripts).
+versions (action, scheduled and background trigger scripts).
 
 **The loop.** Run it as a scheduled task with its own `run_as` identity.
 The order is load-bearing:
@@ -999,7 +1082,7 @@ local function sync_one(remote)
     if tok and rela.tag_version(created.id, "sync/basecamp", {expect = tok}) then
       return
     end
-    -- An automation rewrote the entity during the create. Merge it with no
+    -- A trigger rewrote the entity during the create. Merge it with no
     -- base below: a complete report that agrees retags with the read token.
     e = created
   end
@@ -1028,7 +1111,7 @@ Five rules keep the loop from losing an edit:
    wrote nothing. Never take a fresh token after the fact, which would
    absorb an edit the merge never saw.
 3. Write with `expect`. On `"conflict"`, read again and merge again, a fixed
-   number of times. An automation or background job can rewrite the entity
+   number of times. A trigger or background job can rewrite the entity
    right after the write, which makes the tag conflict too.
 4. Treat a nil from `rela.find_by_external_ref` as "not visible", not as
    "free". A `must be unique` error on the create ends that item.
@@ -1043,7 +1126,7 @@ as the connector's identity. The action writes or pushes the chosen value
 and moves the tag.
 
 **Access.** Run the connector as its own identity, `integration:<name>`,
-set as `run_as` on its scheduled task and its background automation. No
+set as `run_as` on its scheduled task and its background trigger script. No
 person or API client can claim an `integration:` name, so its role is
 reachable only from operator-authored config. Give that identity its own
 role. It needs `read`, `create` and `update` on the synced types,
@@ -1074,9 +1157,9 @@ snippets, and a consent script for the first token.
 
 ### Elevated access — `rela.bypass_acl`
 
-By default an automation script's reads **and** writes are **ACL-checked
-against the triggering principal** (the user whose action fired the
-automation). That is correct for most automations. But some scripts enforce a
+By default a trigger script's reads **and** writes are **ACL-checked
+against the triggering principal** (the user whose write fired the
+trigger). That is correct for most triggers. But some scripts enforce a
 *system invariant* on behalf of a user who isn't authorized to act directly —
 e.g. stamping `submitter --created-by--> ticket` on ticket create so the
 submitter (and only they) can later read their own ticket, without the
@@ -1104,8 +1187,12 @@ end)
 | `admin.delete_relation(from, type, to, opts?)` | Unlink, skipping the ACL deny |
 | `admin.delete_entity(id, cascade?)` | Remove, skipping the ACL deny |
 | `admin.get_entity(id)` | Read **raw** — full properties, no redaction |
-| `admin.list_entities(type, opts?)` | Every entity of `type`, ungated; `opts.face` lists one face |
-| `admin.get_relations(opts?)` | Every matching edge, not peer-gated |
+| `admin.list_entities(type, opts?)` | Up to `opts.limit` (at most 2000) entities of `type`, ungated; `opts.face` lists one face |
+| `admin.get_relations(opts?)` | Up to `opts.limit` (at most 2000) matching edges, not peer-gated |
+
+Both list reads take the same `limit` option as their gated counterparts.
+`admin.list_entities` rejects unknown option keys, as `rela.list_entities`
+does.
 
 **Elevated reads return raw data.** `admin.get_entity` returns the entity with
 all properties, including ones the triggering user cannot see; `list_entities`
@@ -1113,7 +1200,7 @@ returns rows the gated `rela.list_entities` would drop; `get_relations` returns
 edges even when neither endpoint is visible to the caller. A half-elevated read
 would be a confusing contract — the closure is the boundary.
 
-Use them when an automation genuinely needs a whole-graph view, e.g. checking a
+Use them when a trigger script genuinely needs a whole-graph view, e.g. checking a
 uniqueness invariant across entities the submitter cannot see:
 
 ```lua
@@ -1142,16 +1229,18 @@ applies the same rule, from the same code — the two cannot drift on what a
 filter means.
 
 **Operator opt-in is required.** `rela.bypass_acl` only exists when the
-automation action sets `allow_acl_bypass:` in `schema.yaml` (an operator-only
-file). Without it the function is absent and a script cannot elevate:
+trigger's `script:` output sets `allow_acl_bypass:` in `flows.yaml` (an
+operator-only file). Without it the function is absent and a script cannot
+elevate:
 
 ```yaml
-automations:
-  - name: stamp-ticket-author
+triggers:
+  stamp-ticket-author:
     on: { entity: [ticket], created: true }
-    do:
-      - lua_file: stamp-author.lua
-        allow_acl_bypass: read+write
+    outputs:
+      - script:
+          file: stamp-author.lua
+          allow_acl_bypass: read+write
 ```
 
 The value selects which capabilities the `admin` handle carries:
@@ -1226,7 +1315,7 @@ Three rules, all enforced at config load:
 - **Only `read`.** A render is served on a `GET`; `write` and `read+write` are
   a config error. Elevated writes there would not be idempotent (browsers
   prefetch, users refresh, the SPA retries) and would foreclose caching a
-  principal-independent render, so they belong in an automation action or a
+  principal-independent render, so they belong in a trigger script or a
   schedule. This prevents a render mutating *beyond* the caller's permissions;
   the ordinary gated `rela.*` write bindings remain available to a document
   script.
@@ -1248,7 +1337,7 @@ block before deploying — that review *is* the mitigation.
   `acl_bypass=true`, so "who caused this elevated write" is always answerable.
 - **Elevated reads are audited too.** A closure that used any of the `admin`
   read methods emits one `acl-bypass-read` row naming the principal, the
-  automation, and which bindings were used. It is **one row per closure**, not
+  trigger, and which bindings were used. It is **one row per closure**, not
   per read — a single `admin.list_entities` can span the graph — and it
   deliberately records **no subject and no entity data**, since logging the
   read set would copy the very data the ACL protects into the audit log. The
@@ -1400,6 +1489,11 @@ timeout_seconds: 60                    # optional, default 30
 
 `api_key_env` may not name a `REMOTE_CREDENTIAL_` variable: that credential
 is only for `remotes.yaml`.
+
+To have a model propose changes to one entity, you may not need a script. A
+data-entry `llm:` action takes a prompt, the inputs to send and the outputs the
+model may propose, and lets the user review the proposal before it is saved.
+See "AI actions" in the data-entry guide.
 
 #### ai.chat
 
@@ -1629,7 +1723,7 @@ table with `status_code` populated):
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `kind` | string | One of `timeout`, `canceled`, `network`, `bad_response` |
+| `kind` | string | One of `timeout`, `canceled`, `network`, `bad_response`, `blocked` |
 | `message` | string | Human-readable summary |
 | `retry_after` | number | Always `0` on an error table. A rate limit is a response; see `resp.retry_after` above. |
 | `details` | string | Unwrapped transport error (TLS cert, DNS record, etc.) when present |
@@ -1640,6 +1734,7 @@ table with `status_code` populated):
 | `canceled` | Request was canceled (runtime shutting down) |
 | `network` | DNS failure, connection refused, TLS error, generic body read error |
 | `bad_response` | Response body exceeded the 10 MiB cap |
+| `blocked` | The destination address policy refused the address (see below) |
 
 Programming errors (missing URL, URL with userinfo, wrong argument types,
 invalid HTTP method, non-positive timeout) raise Lua errors.
@@ -1654,13 +1749,55 @@ HTTP redirects are **not** followed automatically. The 3xx response is
 returned directly so scripts can inspect the `Location` header and
 follow redirects explicitly if needed.
 
+#### Destination address policy
+
+rela checks every connection `http.*` opens. The check runs on the IP
+address the connection goes to, after DNS resolution. A host name is
+judged by the address it resolves to at that moment, so a name that
+later resolves to another address is judged again. A refused connection
+returns `(nil, err)` with `err.kind == "blocked"` and the message
+`http: destination address not allowed`. The message does not name the
+resolved address.
+
+Some addresses are always refused, in every mode:
+
+- link-local addresses (`169.254.0.0/16`, `fe80::/10`), which include
+  the cloud metadata service at `169.254.169.254`;
+- the AWS IPv6 metadata address `fd00:ec2::254`;
+- unspecified addresses (`0.0.0.0`, `::`), multicast and broadcast;
+- the same addresses written in IPv4-mapped, NAT64 (`64:ff9b::/96` and
+  the local-use `64:ff9b:1::/48`), IPv4-compatible (`::a.b.c.d`) or 6to4
+  form.
+
+No documented use of rela needs these. The metadata service hands out
+cloud credentials, so a script must not reach it.
+
+In tenant mode (`rela-server -tenant-mode`) the policy is strict. It
+also refuses every address that is not public: loopback (`127.0.0.0/8`,
+`::1`), private ranges (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`),
+carrier-grade NAT (`100.64/10`) and the other special-purpose ranges.
+In tenant mode many customers share one server, so a script must not
+reach the server itself or the operator's internal network. The
+operator can keep named destinations reachable with an allowlist of
+address ranges (`10.1.0.0/16`) or `host:port` entries
+(`idp.internal:8443`), given with `rela-server -lua-http-allow`. The allowlist never reopens an address that is
+always refused. In strict mode the `HTTP_PROXY` and `HTTPS_PROXY`
+environment variables are ignored, because a proxy would make the
+connection on the script's behalf.
+
+Outside tenant mode, localhost and private-network addresses stay
+reachable. Scripts in a single-team deployment call local services and
+internal APIs, and that is documented behaviour. If a proxy is set in
+the environment, rela connects to the proxy, and the check applies to
+the proxy's address only.
+
 #### Security
 
-`http.*` is a new threat surface: a Lua script can make arbitrary
-outbound requests using the user's machine. There is no SSRF protection
-(the localhost / private-IP range is reachable). URLs containing
-embedded credentials (`http://user:pass@host/`) are rejected — set the
-`Authorization` header explicitly. Treat Lua scripts as trusted code.
+`http.*` lets a Lua script make outbound requests from the machine rela
+runs on. Outside tenant mode the address policy above blocks only the
+link-local, metadata, multicast and similar addresses. URLs containing
+embedded credentials (`http://user:pass@host/`) are rejected. Set the
+`Authorization` header instead. Treat Lua scripts as trusted code.
 
 ### Crypto Functions
 
@@ -1941,7 +2078,7 @@ is `nil` and only `published_raw` is set.
 | `rela.params` | Action script parameters (table, static string-valued map from data-entry config) |
 | `rela.secrets` | Per-script secrets (table, from `.rela/secrets.yaml`) |
 | `rela.request` | Present **only** for a request-scoped action (an action with a `request:` block). Read-only `{method, path, content_type, raw, body, query, headers}` — see [Request-scoped actions](data-entry.md#request-scoped-actions). `headers` holds only the names the action allowlisted; credentials and proxy-asserted identity headers are refused at config load. `nil` everywhere else, so `if rela.request then` is the test. |
-| `rela.principal` | Read-only `{user, tool}` — the identity this runtime runs as (the request principal, e.g. from `X-Rela-User`). Use it in write-path automations to attribute relations to the acting user, e.g. stamping a `created-by` edge from the submitter. Unstamped/CLI contexts read `{user="unknown", tool="unknown"}`. The table is frozen: assigning to it raises. It only *reads* identity — audit attribution is always derived from the request context inside the write bindings, never from this table, so it is not a spoofing vector. |
+| `rela.principal` | Read-only `{user, tool}` — the identity this runtime runs as (the request principal, e.g. from `X-Rela-User`). Use it in trigger scripts to attribute relations to the acting user, e.g. stamping a `created-by` edge from the submitter. Unstamped/CLI contexts read `{user="unknown", tool="unknown"}`. The table is frozen: assigning to it raises. It only *reads* identity — audit attribution is always derived from the request context inside the write bindings, never from this table, so it is not a spoofing vector. |
 | `rela.cache` | Process-wide memoization cache namespaced per script (see [Cache](#cache)) |
 | `rela.mode` | Set to `"document"` when rendering a data-entry document; `nil` otherwise (see [Document Mode](#document-mode)) |
 | `rela.document` | Present only in document mode; holds `{id, entry_id}` (see [Document Mode](#document-mode)) |
@@ -2034,8 +2171,8 @@ actions:
       secrets: [slack_webhook_url]
 ```
 
-The same block works on `documents:` entries, automation actions in
-`schema.yaml`, and tasks in `schedules.yaml`.
+The same block works on `documents:` entries, trigger `script:` outputs in
+`flows.yaml`, and tasks in `schedules.yaml`.
 
 **`secrets:` is a list of key names, not a boolean.** This is the point of the
 feature: an action that needs one Slack webhook does not also receive your
@@ -2077,6 +2214,13 @@ directory.
 A script only sees the keys its `capabilities.secrets` list names (see
 [Capabilities](#capabilities--http-ai-mail-secrets-tokens-write_file) above); everything
 below describes how the *values* are resolved once a key has been granted.
+
+In tenant mode the secrets are withheld unless the operator shares them
+(see [server-security.md](server-security.md#operator-secrets-and-ai)).
+Then every index of `rela.secrets` raises an error, so
+`rela.secrets.x or "default"` fails rather than taking the default, and
+`pairs(rela.secrets)` yields nothing. `ai.*` returns `nil` and an error
+of kind `not_configured` instead of raising.
 
 Two kinds of secret are never given to a script, not even one granted every
 secret: `token_key` (see [OAuth Tokens](#oauth-tokens)) and any name that starts with
@@ -2243,7 +2387,7 @@ tasks:
 ```
 
 `tokens:` works on scheduled tasks, data-entry actions and background
-automation actions. It is refused on a synchronous automation action,
+trigger scripts. It is refused on an inline trigger script,
 because a refresh is slow network I/O inside the save, and on a document,
 because a render is a GET. Calling `rela.oauth` inside a store transaction
 raises for the same reason. `rela script` and `rela flow` reach every
@@ -2584,8 +2728,21 @@ in the project. Pass the result to `resolve_refs`.
 
 Options (all optional):
 
+- `content`: a markdown string. Only the ids it mentions in code
+  spans are read, by the rule `resolve_refs` uses. This is the cheap
+  form: pass the body you are about to resolve.
+- `ids`: a list of entity ids to read. Use `ids` or `content`, not
+  both. An id that is not well formed, such as an address with `@`,
+  raises an error.
 - `types`: list of entity-type names to include. Unknown names raise
-  an error. Default: every entity type in the metamodel.
+  an error. Default: every entity type in the metamodel. With `ids`
+  or `content`, it filters the ids read.
+- `limit`: the most entities to read, at most 2000 (the default).
+  Without `ids` or `content`, more readable entities than the limit
+  raise an error, so a large project never gets a partial map by
+  accident. Set `limit` yourself to accept the first `limit`
+  entities instead. With `ids` or `content`, more ids than `limit`
+  is an error.
 - `style`: `"title-slug"` (default) or `"id"`. Controls the anchor in
   the default replacement value.
   - `"title-slug"` produces `[Title](#title-slug)` where the slug is
@@ -2600,6 +2757,8 @@ Options (all optional):
   newlines. The entity table has the usual fields plus a top-level
   `title` convenience.
 
+Unknown option keys raise an error.
+
 Default-form replacement values escape `[`, `]`, and `\` in entity
 titles so a malicious or unusual title cannot break out of the
 link-text slot. Custom format callbacks remain responsible for their
@@ -2607,7 +2766,7 @@ own escaping.
 
 ```lua
 -- Common case: link every entity-ID code span to its title-slug anchor.
-local refs = rela.md.entity_refs()
+local refs = rela.md.entity_refs({ content = entity.content })
 local ast  = rela.md.parse(entity.content)
 ast = rela.md.resolve_refs(ast, refs)
 print(rela.md.render(ast))
@@ -2890,7 +3049,7 @@ resolve against whoever the script is running as:
 | Where the script runs | Reads as |
 |---|---|
 | Data-entry action, `export_render`, MCP-invoked | the requesting user |
-| Automation / cascade | the user whose write triggered it |
+| Trigger (`flows.yaml`) / cascade | the user whose write fired it |
 | Scheduled task | the task's identity (see `run_as` in [Scheduled Tasks](scheduled-tasks.md)) |
 | CLI, docs build | unrestricted (operator trust boundary) |
 
@@ -2940,10 +3099,49 @@ When `.rela/ai.yaml` is configured, scripts can make HTTP requests to the config
 AI provider via `ai.chat`, `ai.complete`, and `ai.embed`. This means scripts can send
 entity content to an external service.
 
-The `http.*` module additionally lets scripts make arbitrary HTTP(S)
-requests to any reachable URL. There is no SSRF filter — localhost and
-private-network IPs are reachable. **Treat Lua scripts as trusted code** —
-don't run scripts from untrusted sources.
+The `http.*` module additionally lets scripts make HTTP(S) requests to
+any reachable URL, within the destination address policy described
+under [HTTP Functions](#destination-address-policy). Outside tenant mode
+localhost and private-network addresses are reachable. **Treat Lua
+scripts as trusted code.** Do not run scripts from untrusted sources.
+
+### Resource limits
+
+These limits apply to every script, in every mode:
+
+- A script stops after its timeout (30 seconds by default).
+- The call stack holds at most 1024 frames. Deeper recursion fails with
+  `stack overflow`.
+- The value stack holds at most 65,536 values. A call such as
+  `unpack()` on a larger table fails with `registry overflow`, and the
+  runtime cannot run another script afterwards.
+- `string.rep`, `string.format` and `table.concat` refuse to build a
+  string larger than 16 MiB. They fail before they allocate it.
+- `string.format` accepts the Lua 5.1 conversions: at most five flags
+  from `-+ #0`, a width and a precision of at most two digits each, and
+  one of `cdiouxXeEfgGqs`. It raises an error for a longer width or
+  precision, an unknown conversion (including the Go verbs `%v` and
+  `%t`), a missing argument, and the Go extensions `%[n]` (argument
+  index) and `*` (width from an argument). Each conversion uses its own
+  argument. It differs from Lua 5.1 in two ways: `%q` quotes with Go's
+  rules, and `%x`, `%o` and `%u` print a negative number with a minus
+  sign rather than as its two's complement.
+- `string.format` checks each argument as Lua 5.1 does. `%d`, `%i`, `%u`,
+  `%c`, `%o`, `%x`, `%X`, `%e`, `%E`, `%f`, `%g` and `%G` take a number; a
+  string that holds a number also works. `%c` prints one byte. `%s` takes
+  any value and prints what `tostring` returns, so a `__tostring`
+  metamethod applies. `%q` takes a string or a number. Any other argument
+  fails with `bad argument`. So `string.format("%x", "abc")` and
+  `string.format("%d", {})` are errors.
+
+There is no limit on the total memory a script uses. The embedded Lua
+engine cannot measure it. The `..` operator, `string.gsub` and table
+construction are limited only by the timeout. A loop that doubles a
+string with `s = s .. s` can use gigabytes of memory in under a second.
+Run rela with a memory limit (`GOMEMLIMIT`, a container limit) so a
+runaway script cannot exhaust the host. In tenant mode the memory is
+shared by every tenant, so one tenant's script can still exhaust it for
+all of them. This gap is tracked as BUG-88F0XLW.
 
 API keys are never logged or included in error messages.
 

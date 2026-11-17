@@ -63,11 +63,16 @@ or changing a validation rule: the next tool call sees the new schema, `create_e
 included.
 
 The reload rebuilds the whole metamodel-derived stack — the validator, the entity
-manager and its automations, transitions and computed properties — not just the
+manager and its triggers, transitions and computed properties — not just the
 schema the read tools report. Refreshing only the read surfaces would leave writes
 validating against the old schema, which is harder to diagnose than no reload at all.
 The store and the search index are reused, so a schema edit costs no reindex and
 loses none of the session's writes.
+
+**`flows.yaml`** — the server reloads the flows and the
+[triggers](flows.md#triggers) in place, so the next write fires the new rules.
+If the changed file does not load, the server keeps the previous
+configuration and logs a warning.
 
 If the new schema does not parse, the server logs a warning and keeps serving the
 last one that did. A save taken mid-edit is routinely unparseable and must not end
@@ -99,10 +104,10 @@ results leave `url` out.
 
 | Tool | Description | Parameters |
 |------|-------------|------------|
-| `list_entities` | List entity summaries, sorted by ID | `type?`, `filter?`, `limit?` (default 50), `offset?`, `world?` |
+| `list_entities` | List entity summaries, sorted by ID and then face, byte-wise (`REQ-10` before `REQ-2`) | `type?`, `filter?`, `limit?` (default 50, max 1000), `offset?`, `world?` |
 | `list_worlds` | List the worlds the read tools accept, and which you may select | none |
 | `show_entity` | Get one entity with its relations, and `other_faces` for a faced entity | `id`, `content?` (default true), `world?` |
-| `search_entities` | Full-text search across entities | `query`, `type?`, `limit?` (default 20), `world?` |
+| `search_entities` | Full-text search across entities | `query`, `type?`, `limit?` (default 20, max 1000), `world?` |
 | `create_entity` | Create an entity; a faced type needs `face` | `type`, `properties`, `content?`, `id?`, `face?` |
 | `update_entity` | Update named properties or the body of one face | `id`, `properties?`, `content?` |
 | `delete_entity` | Delete an entity, or one face of it as `ID@face` | `id`, `cascade?` |
@@ -124,6 +129,22 @@ entity.status == 'open' and entity.priority ~= 'low'
 ```text
 related(entity, 'implements', { status = 'open' })
 ```
+
+A filter can name the caller. `current_user.id`, `is_current_user(...)` and
+`has_current_user(...)` compare against the identity the call runs as:
+
+```text
+is_current_user(entity.assignee)
+has_current_user(entity.watchers)
+```
+
+The store answers equalities, `~=`, `related(...)`, the `current_user`
+comparisons, `and`, `or` and `not`, and `<`, `<=`, `>`, `>=` on a string or
+integer property, so such a filter costs one page. An ordered comparison on a
+string or integer property that is not set is false. A filter with a date or
+decimal comparison, a comparison of two properties, or a property the caller
+cannot see on every entity is checked against every readable entity of the
+type, which costs more on a large type.
 
 In `update_entity`, a `null` property value removes the property, and an empty
 string is ignored.
@@ -155,7 +176,7 @@ there are several, the error lists them, for example
 
 | Tool | Description | Parameters |
 |------|-------------|------------|
-| `list_relations` | List relations | `type?`, `from?`, `to?`, `limit?` (default 50), `offset?` |
+| `list_relations` | List relations | `type?`, `from?`, `to?`, `limit?` (default 50, max 1000), `offset?` |
 | `create_relation` | Create a relation between entities | `from`, `type`, `to`, `content?`, `properties?` |
 | `delete_relation` | Delete a relation | `from`, `type`, `to` |
 
@@ -408,7 +429,9 @@ names the same code, for example `[permission_required]` or
 question to ask the user. `request` is the request body and is accepted only by
 an action whose `request` block sets `body: true`. The result is
 `{message, message_type, redirect}`, or `{status, content_type, body}` for an
-action that answers with a body. A script error gives the script path, line,
+action that answers with a body. An AI action (`llm:`) returns
+`{proposal: {entity, set, relate}}` and writes nothing; apply the changes you
+accept with `update_entity` and `create_relation`. A script error gives the script path, line,
 message and a correlation id that matches the server log.
 
 The action set follows `data-entry.yaml` reloads; the tools exist even when no
@@ -829,7 +852,9 @@ Everything above describes `rela mcp`, the **local stdio** transport. A
 deployed `rela-server` can serve the same tools over HTTP so a hosted
 assistant reaches your project without a local checkout.
 
-It is **off by default**. Enable it with `-mcp` (or `RELA_MCP=1`):
+It is **off by default**. Enable it with `-mcp`, `RELA_MCP=1`, or
+`remote_mcp.enabled: true` in `.rela/config.yaml` (see
+[Turning it on and off](#turning-it-on-and-off)):
 
 ```bash
 rela-server -mcp \
@@ -839,6 +864,85 @@ rela-server -mcp \
 ```
 
 The endpoint is `POST /api/v1/_mcp`.
+
+### Turning it on and off
+
+Three sources control the endpoint. Each one can say on, say off, or say
+nothing:
+
+| Source                           | On                  | Off                  |
+| -------------------------------- | ------------------- | -------------------- |
+| `remote_mcp.enabled` in `.rela/config.yaml` | `true`   | `false`              |
+| `RELA_MCP` environment variable  | `1`                 | `0`                  |
+| `-mcp` flag                      | `-mcp`, `-mcp=true` | `-mcp=false`         |
+
+The endpoint is served only when **no source says off and at least one says
+on**. An off always wins. An operator who writes `enabled: false` in the
+config file cannot be overruled by a flag or variable someone adds to the
+process environment later. When an off overrules an on, rela-server logs a
+warning that names the source that turned the endpoint off.
+
+`RELA_MCP` accepts only `1`, `0` or no value. Any other value, such as
+`true`, stops startup. These mistakes are refused too, because each could
+hide the operator's off:
+
+- a misspelled key inside `remote_mcp:`;
+- `remote_mcp:` with no value, which is what an indentation slip leaves;
+- a top-level key such as `remote-mcp`, `remoteMCP` or `remote.mcp`;
+- `enabled:` with no value;
+- a second YAML document after `---`.
+
+Every command that reads `.rela/config.yaml` fails on such a mistake, not
+only rela-server.
+
+rela-server reads `remote_mcp:` at startup, and again each time a Configure
+save rebuilds the server. An edit to the file takes effect at the next
+restart or Configure save.
+
+```yaml
+# .rela/config.yaml
+remote_mcp:
+  enabled: false
+```
+
+`.rela/config.yaml` holds deployment settings, such as `validation:`. It is
+not committed, so two deployments of one project can differ: a back office
+can turn remote MCP off while a team instance of the same schema turns it on.
+
+### Limiting the tools
+
+`remote_mcp.tools` limits which tools the endpoint serves:
+
+```yaml
+remote_mcp:
+  enabled: true
+  tools:
+    # Serve only these tools. Leave out to serve every tool.
+    allow: [schema, list_entities, show_entity, search_entities, trace, watch]
+    # Remove these tools. Deny wins over allow.
+    deny: [attach_file]
+```
+
+- With a non-empty `allow`, only the tools it names are served. `deny` then
+  removes tools from what is left.
+- A tool that is filtered out is not registered at all. It is missing from
+  `tools/list`, and a call to it fails as an unknown tool. `watch` cannot
+  replay it either.
+- Every name must be a rela MCP tool. A misspelled or unknown name stops
+  startup, so a typo cannot leave a tool on. A tool whose feature is off
+  (comments, channels, piles, flows, actions), or a Lua tool, which this
+  endpoint never serves, is accepted and filters nothing.
+- An empty `allow: []`, an `allow:` with no value, and an `allow` item with
+  no value (`[~]`, a bare `-`, or an item that is only a comment) are
+  refused. Leave `allow` out to serve every tool.
+- Prefer `allow` when the goal is a read-only endpoint. An allow list stays
+  closed when a later release adds a tool; a deny list does not.
+
+The filter narrows the **tools**, not read access. The `rela://entity/...`
+and `rela://relation/...` resources and the prompts still read whatever the
+caller's ACL lets them read, whichever tools are filtered. The ACL in
+`acl.yaml` stays the only read boundary; use the filter to take write and
+execute tools away.
 
 ### The JWT flags are mandatory
 
@@ -870,10 +974,11 @@ gets through the web UI:
 - `search_entities` returns only entities you may read, and drops a hit that
   matched only on a property hidden from you.
 
-**The Lua tools are not available remotely.** `lua_eval`, `lua_run` and
-`lua_list` exist only over stdio. A script is caller-supplied code that runs in
-the server process, so offering it over HTTP would let any remote caller use
-server CPU and memory at will. Every other tool is exposed remotely. The
+**The Lua tools are not available remotely.** `lua_eval` and `lua_run`
+exist only over stdio. A script is caller-supplied code that runs in the server
+process, so offering it over HTTP would let any remote caller use
+server CPU and memory at will. Every other tool is exposed remotely, unless
+[`remote_mcp.tools`](#limiting-the-tools) limits them. The
 action tools exist only remotely: they run as the signed-in caller.
 
 ### Differences from stdio

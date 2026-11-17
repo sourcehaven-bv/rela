@@ -27,7 +27,6 @@ import (
 	"maps"
 	"slices"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -90,8 +89,14 @@ import (
 // store.FamilyReplacer so a type change can replace all rows of one entity
 // family under the same store transaction.
 //
-//plimsoll:max-methods=51
-//plimsoll:max-exported-methods=33
+// +1 exported / +1 method (TKT-GIAGLQ3): IDTakenFolded, required by
+// store.FoldedIDReader in store.Store.
+// +1 exported / +1 method (TKT-Q918DFR): ListEntityHeadersPage, the optional
+// store.HeaderPager capability. It shares the free function pageOf with
+// ListEntitiesPage.
+//
+//plimsoll:max-methods=53
+//plimsoll:max-exported-methods=35
 type MemStore struct {
 	// txMu serializes an open Tx against ordinary writers: Tx holds it
 	// for the whole callback, every exported write method takes it
@@ -390,17 +395,7 @@ func (m *MemStore) ListEntityHeaders(
 
 	snapshot := make([]store.EntityHeader, 0, len(matched))
 	for _, e := range matched {
-		snapshot = append(snapshot, store.EntityHeader{
-			ID:         e.ID,
-			Type:       e.Type,
-			Face:       e.Face,
-			Properties: maps.Clone(e.Properties),
-			UpdatedAt:  e.UpdatedAt,
-			// Carried like every backend's header: a header must never look
-			// more complete than the entity it projects.
-			Redacted:     slices.Clone(e.Redacted),
-			Inaccessible: slices.Clone(e.Inaccessible),
-		})
+		snapshot = append(snapshot, headerCopy(e))
 	}
 	m.mu.RUnlock()
 
@@ -414,12 +409,45 @@ func (m *MemStore) ListEntityHeaders(
 }
 
 func (m *MemStore) ListEntitiesPage(_ context.Context, q store.EntityQuery) (store.Page[*entity.Entity], error) {
+	return pageOf(m, q, (*entity.Entity).Clone)
+}
+
+var _ store.HeaderPager = (*MemStore)(nil)
+
+// ListEntityHeadersPage implements store.HeaderPager: the page
+// ListEntitiesPage returns, with each row copied as a header so no body is
+// cloned.
+func (m *MemStore) ListEntityHeadersPage(
+	_ context.Context, q store.EntityQuery,
+) (store.Page[store.EntityHeader], error) {
+	return pageOf(m, q, headerCopy)
+}
+
+// headerCopy is the header of a stored row, with Properties and the slices
+// cloned so a caller cannot mutate stored state through it.
+func headerCopy(e *entity.Entity) store.EntityHeader {
+	return store.EntityHeader{
+		ID:         e.ID,
+		Type:       e.Type,
+		Face:       e.Face,
+		Properties: maps.Clone(e.Properties),
+		UpdatedAt:  e.UpdatedAt,
+		// Carried like every backend's header: a header must never look
+		// more complete than the entity it projects.
+		Redacted:     slices.Clone(e.Redacted),
+		Inaccessible: slices.Clone(e.Inaccessible),
+	}
+}
+
+// pageOf reads q's keyset page under the read lock and copies each stored
+// row with conv, which must not return the stored row itself.
+func pageOf[T any](m *MemStore, q store.EntityQuery, conv func(*entity.Entity) T) (store.Page[T], error) {
 	if err := storeutil.ValidateEntityQuery(q); err != nil {
-		return store.Page[*entity.Entity]{}, err
+		return store.Page[T]{}, err
 	}
 	cursorKey, err := storeutil.DecodeCursor(q.Cursor)
 	if err != nil {
-		return store.Page[*entity.Entity]{}, err
+		return store.Page[T]{}, err
 	}
 
 	m.mu.RLock()
@@ -446,13 +474,13 @@ func (m *MemStore) ListEntitiesPage(_ context.Context, q store.EntityQuery) (sto
 			})
 	}
 
-	items := make([]*entity.Entity, 0, len(keys.Keys))
+	items := make([]T, 0, len(keys.Keys))
 	for _, id := range keys.Keys {
 		if e, ok := m.entities[id]; ok {
-			items = append(items, e.Clone())
+			items = append(items, conv(e))
 		}
 	}
-	return store.Page[*entity.Entity]{Items: items, NextCursor: keys.NextCursor}, nil
+	return store.Page[T]{Items: items, NextCursor: keys.NextCursor}, nil
 }
 
 // entityIDSet builds the ID-lookup set used by ListEntities and its page
@@ -517,12 +545,19 @@ func (m *MemStore) CountEntities(_ context.Context, q store.EntityQuery) (int, e
 	return len(worldKeep(storeutil.RankingWorld(q), matched)), nil
 }
 
+// IDTakenFolded implements store.FoldedIDReader with the same scans create
+// and rename use (idTaken, markedTaken). It scans the in-memory index.
+func (m *MemStore) IDTakenFolded(_ context.Context, id, except string) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return idTaken(m.entities, id, except) || markedTaken(m.marked, id, except), nil
+}
+
 func (m *MemStore) HighestID(_ context.Context, prefix string) (int, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	highest := 0
-	pfx := prefix + "-"
 	// A soft-deleted id still holds its number, so the generator does not
 	// hand out an id that CreateEntity would refuse.
 	ids := make([]string, 0, len(m.entities)+len(m.marked))
@@ -537,12 +572,7 @@ func (m *MemStore) HighestID(_ context.Context, prefix string) (int, error) {
 		// seeing a family more than once is harmless — max is idempotent —
 		// while skipping non-default faces made a faced type invisible to
 		// the generator entirely (BUG-HC6I2T).
-		if !strings.HasPrefix(id, pfx) {
-			continue
-		}
-		suffix := id[len(pfx):]
-		var n int
-		if _, err := fmt.Sscanf(suffix, "%d", &n); err == nil && n > highest {
+		if n, ok := entity.SequentialNumber(id, prefix); ok && n > highest {
 			highest = n
 		}
 	}
