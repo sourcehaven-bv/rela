@@ -339,6 +339,105 @@ func TestProvision_LazySingleFlight(t *testing.T) {
 	}
 }
 
+// newRacingHost builds a lazy host whose Acquire, once armed, lets p's run
+// finish after reading the tenant as absent and before the request reaches
+// the runner.
+func newRacingHost(t *testing.T, c *controlTable, p *stubProvisioner) (*tenanthost.Host, *atomic.Bool) {
+	t.Helper()
+	var h *tenanthost.Host
+	armed := &atomic.Bool{}
+	acquire := func(ctx context.Context, orgID string) (http.Handler, func(), error) {
+		next, release, err := c.acquire(ctx, orgID)
+		if err != nil && armed.CompareAndSwap(true, false) {
+			close(p.gate)
+			waitFor(t, func() bool { return !tenanthost.ProvisionRunning(h, orgID) })
+		}
+		return next, release, err
+	}
+	h, err := tenanthost.New(tenanthost.Config{
+		Verifier: &fakeVerifier{}, HeaderName: header, Acquire: acquire, Static: static,
+		Webhook: eventWebhook{}, Provision: tenanthost.ProvisionConfig{Mode: tenanthost.ProvisionLazy, Provisioner: p},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(h.Close)
+	return h, armed
+}
+
+// TestProvision_NoRerunAfterSuccess pins that a request or webhook which
+// read the tenant as absent while a run was going, and reaches the runner
+// only after that run succeeded, starts no second run (BUG-CZFPMSX). The
+// lazy answer is the same 202 as during the run, so the call count carries
+// the test.
+func TestProvision_NoRerunAfterSuccess(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                string
+		method, path, token string
+		body                string
+		want                int
+	}{
+		{name: "lazy request", method: http.MethodGet, path: "/api/v1/tickets", token: "tok-org-new",
+			want: http.StatusAccepted},
+		{name: "webhook", method: http.MethodPost, path: tenanthost.WebhookPath,
+			body: "organization.created|org-new", want: http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := newControl(nil)
+			p := &stubProvisioner{control: c, gate: make(chan struct{})}
+			h, armed := newRacingHost(t, c, p)
+
+			if w := do(h, http.MethodGet, "/api/v1/tickets", "tok-org-new", ""); w.Code != http.StatusAccepted {
+				t.Fatalf("first request: status = %d, want 202", w.Code)
+			}
+			armed.Store(true)
+			if w := do(h, tc.method, tc.path, tc.token, tc.body); w.Code != tc.want {
+				t.Fatalf("racing the run's end: status = %d, want %d", w.Code, tc.want)
+			}
+			h.Close() // waits for any run the racing call started
+			if got := p.calls.Load(); got != 1 {
+				t.Errorf("provisioner calls = %d, want 1", got)
+			}
+			if w := do(h, http.MethodGet, "/api/v1/tickets", "tok-org-new", ""); w.Code != http.StatusOK {
+				t.Errorf("request after the run: status = %d, want 200", w.Code)
+			}
+		})
+	}
+}
+
+// TestProvision_SuccessHoldEnds pins that the hold after a successful run
+// ends: once it has passed, a request for an org whose tenant is absent
+// again starts a new run.
+func TestProvision_SuccessHoldEnds(t *testing.T) {
+	t.Parallel()
+	c := newControl(nil)
+	p := &stubProvisioner{control: c}
+	h := newProvHost(t, c, tenanthost.ProvisionConfig{Mode: tenanthost.ProvisionLazy, Provisioner: p})
+	var mu sync.Mutex
+	now := time.Now()
+	tenanthost.SetProvisionClock(h, func() time.Time { mu.Lock(); defer mu.Unlock(); return now })
+
+	do(h, http.MethodGet, "/api/v1/tickets", "tok-org-new", "")
+	waitFor(t, func() bool { return !tenanthost.ProvisionRunning(h, "org-new") && p.calls.Load() == 1 })
+	c.mu.Lock()
+	delete(c.status, "org-new") // an operator removed the control row
+	c.mu.Unlock()
+
+	if w := do(h, http.MethodGet, "/api/v1/tickets", "tok-org-new", ""); w.Code != http.StatusAccepted {
+		t.Fatalf("request in the hold: status = %d, want 202", w.Code)
+	}
+	if tenanthost.ProvisionRunning(h, "org-new") || p.calls.Load() != 1 {
+		t.Fatalf("a request in the hold started a run (calls = %d)", p.calls.Load())
+	}
+	mu.Lock()
+	now = now.Add(tenanthost.SuccessHold)
+	mu.Unlock()
+	do(h, http.MethodGet, "/api/v1/tickets", "tok-org-new", "")
+	waitFor(t, func() bool { return p.calls.Load() == 2 })
+}
+
 // TestProvision_RunOutlivesRequest pins that a run is not cancelled with the
 // request that started it.
 func TestProvision_RunOutlivesRequest(t *testing.T) {
