@@ -5,7 +5,9 @@ title: Rename dataentrywire remotes adapter to remotes_wiring.go
 kind: chore
 priority: low
 effort: xs
-status: ready
+started: "2026-11-17"
+completed: "2026-11-17"
+status: done
 ---
 
 ## Description
