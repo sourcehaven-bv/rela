@@ -229,11 +229,15 @@ func holdsGlobalRead(r *Request, entityType string) bool {
 //
 // Each subject type the principal may read contributes one branch whose
 // endpoint carries that type's row gate, the fold `related(...)` already
-// uses (gateHop). A subject type whose gate cannot fold into an
-// endpoint (a read through inheritance or a face-split role relation)
-// drops its branch: the answer is an allowlist, so dropping fails closed
-// (RR-YHDXSPL, TKT-9N9Z17R). A run with no `_carries` edge, or whose
-// subject was deleted, matches no branch and is hidden.
+// uses (gateHop). A role relation counts through its edge on the subject
+// itself: the inherit_roles_through expansion cannot nest in an endpoint,
+// so directOnly drops it and a subject read only through an ancestor hides
+// its runs. A subject type whose gate still cannot fold into an endpoint
+// (a face-split role relation, or several conferring relations of which
+// one has `when:`) drops its branch: the answer is an allowlist, so
+// dropping fails closed (RR-YHDXSPL, TKT-9N9Z17R). A run with no
+// `_carries` edge, or whose subject was deleted, matches no branch and is
+// hidden.
 //
 // The type-level client ceiling is not consulted for the run type itself:
 // each branch's subject read query applies the ceiling, so an attenuated
@@ -249,7 +253,7 @@ func flowRunReadQuery(ctx context.Context, r *Request) ReadQueryResult {
 	}
 	var branches []store.GraphBranch
 	for _, t := range r.d.policy.flowRunTargets {
-		m, err := r.gateHop(ctx, TraversalHop{EntityType: t})
+		m, err := runSubjectHop(ctx, r, t)
 		if err != nil {
 			continue
 		}
@@ -267,12 +271,49 @@ func flowRunReadQuery(ctx context.Context, r *Request) ReadQueryResult {
 	return ReadQueryResult{Query: q}
 }
 
+// runSubjectHop is the `_carries` endpoint of the run gate for subject
+// type t, or an error when the type's read cannot fold into one.
+func runSubjectHop(ctx context.Context, r *Request, t string) (*store.EndpointPredicate, error) {
+	return foldHop(TraversalHop{EntityType: t}, directOnly(r.ReadQuery(ctx, t)))
+}
+
+// directOnly narrows a conferred read query to the role-relation edges on
+// the entity itself, dropping the inherit_roles_through expansion that a
+// nested endpoint cannot carry. A policy with inherit_roles_through puts
+// the expansion on every conferred read (conferredEdge), so without this a
+// subject read through a direct edge would drop its branch along with the
+// inherited reads (BUG-A7QDXU1). The result only narrows the gate, so
+// it fails closed: a subject read only through an ancestor still hides its
+// runs.
+//
+// Only the top-level HasInbound is narrowed. Any branches keep their
+// expansion, which is safe because foldHop refuses a query with Any. A
+// negated predicate is returned unchanged: without the expansion it would
+// match more rows, and foldHop refuses it as it is.
+func directOnly(rq ReadQueryResult) ReadQueryResult {
+	if rq.Query == nil || rq.Query.HasInbound == nil {
+		return rq
+	}
+	inb := *rq.Query.HasInbound
+	if inb.Negate || (len(inb.InheritThrough) == 0 && len(inb.EntityInheritThrough) == 0) {
+		return rq
+	}
+	q := *rq.Query
+	inb.InheritThrough, inb.Depth = nil, 0
+	inb.EntityInheritThrough, inb.EntityDepth = nil, 0
+	q.HasInbound = &inb
+	rq.Query = &q
+	return rq
+}
+
 // flowRunReadRoutes reports why a reader may read a flow run: a run is read
 // through its subject (flowRunReadQuery), so its routes are the routes by
 // which the reader reads each subject its `_carries` edge points at. No role
 // grants read on the run type itself except the engine's, so crediting the
 // run type's own grants would report no route for a reader the runtime
-// admits.
+// admits. A subject type is credited only when the run gate keeps its
+// branch (runSubjectHop), and never through an ancestor, so who-can names
+// the routes the gate honors.
 func flowRunReadRoutes(ctx context.Context, r *Request, runID string) ([]RoleAttribution, error) {
 	subjects, err := r.d.graph.OutgoingRelations(ctx, runID, entity.CarriesRelation, nil)
 	if err != nil {
@@ -290,6 +331,9 @@ func flowRunReadRoutes(ctx context.Context, r *Request, runID string) ([]RoleAtt
 			if len(faces[id]) == 0 {
 				continue
 			}
+			if _, herr := runSubjectHop(ctx, r, t); herr != nil {
+				continue
+			}
 			ok, err := r.PermitsRead(ctx, t, id)
 			if err != nil {
 				return nil, err
@@ -298,6 +342,10 @@ func flowRunReadRoutes(ctx context.Context, r *Request, runID string) ([]RoleAtt
 				continue
 			}
 			for _, a := range r.grantingAttributions(ctx, VerbRead, t, id) {
+				if a.Source.Ancestor != "" {
+					// The run gate reads direct edges only (directOnly).
+					continue
+				}
 				if k := attrKey(a); !seen[k] {
 					seen[k] = true
 					out = append(out, a)

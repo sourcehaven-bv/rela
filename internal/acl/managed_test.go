@@ -23,7 +23,7 @@ func flowMeta() fakeMeta {
 		types: map[string]map[string]acl.PropertyInfo{
 			"person": {}, "project": {}, "ticket": {}, entity.FlowRunType: {},
 		},
-		relations: []string{"owns"},
+		relations: []string{"owns", "part-of"},
 		relInfo: map[string]acl.RelationInfo{
 			entity.CarriesRelation:  {From: []string{entity.FlowRunType}, To: targets},
 			entity.ProducedRelation: {From: []string{entity.FlowRunType}, To: targets},
@@ -385,5 +385,60 @@ func TestFlowRunReadQuery_EdgeOutsideTargets(t *testing.T) {
 	}
 	if got := f.visibleRuns(t, "carol"); !slices.Equal(got, []string{"RUN-1", "RUN-2", "RUN-3"}) {
 		t.Fatalf("visible runs = %v, want RUN-1..3", got)
+	}
+}
+
+// A role held through a role relation reads the runs of the subject it
+// holds the role on directly, also when the policy declares
+// inherit_roles_through (BUG-A7QDXU1). A subject read only through
+// inheritance still hides its runs: a nested endpoint cannot expand
+// inheritance, and the run gate is an allowlist.
+func TestFlowRunReadQuery_RoleRelationWithInheritance(t *testing.T) {
+	f := newFlowFixture(t, flowPolicy+`
+inherit_roles_through: [part-of]
+`)
+	// TKT-2 inherits alice's owner role from TKT-1.
+	if err := f.store.CreateEntity(t.Context(), entity.New("TKT-3", "ticket")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.CreateRelation(t.Context(),
+		entity.RelationKey{From: "TKT-2", Type: "part-of", To: "TKT-1"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := f.request(t, "alice").PermitsRead(t.Context(), "ticket", "TKT-2")
+	if err != nil || !ok {
+		t.Fatalf("PermitsRead(TKT-2) = %v, %v; want true through inheritance", ok, err)
+	}
+	if got := f.visibleRuns(t, "alice"); !slices.Equal(got, []string{"RUN-1"}) {
+		t.Fatalf("visible runs = %v, want [RUN-1]", got)
+	}
+	ok, err = f.request(t, "alice").PermitsRead(t.Context(), entity.FlowRunType, "RUN-1")
+	if err != nil || !ok {
+		t.Fatalf("PermitsRead(RUN-1) = %v, %v; want true", ok, err)
+	}
+	// TKT-1 also inherits alice's owner role from TKT-3. who-can on RUN-1
+	// credits the direct edge only, the one the run gate honors.
+	for _, k := range []entity.RelationKey{
+		{From: "TKT-1", Type: "part-of", To: "TKT-3"}, {From: "alice", Type: "owns", To: "TKT-3"},
+	} {
+		if _, err = f.store.CreateRelation(t.Context(), k, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for run, want := range map[string][]string{"RUN-1": {"owner"}, "RUN-2": nil} {
+		attrs, err := f.request(t, "alice").AccessRoutes(t.Context(), acl.VerbRead, entity.FlowRunType, run)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var roles []string
+		for _, a := range attrs {
+			if a.Source.Ancestor != "" {
+				t.Errorf("%s route %+v credits an ancestor the run gate ignores", run, a.Source)
+			}
+			roles = append(roles, a.Role)
+		}
+		if !slices.Equal(roles, want) {
+			t.Errorf("%s routes = %v, want %v", run, roles, want)
+		}
 	}
 }

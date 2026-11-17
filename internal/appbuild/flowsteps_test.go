@@ -21,6 +21,12 @@ import (
 // a buddy role relation that confers hr on one person.
 func stepProject(t *testing.T) (*appbuild.Services, *appbuild.FlowControl) {
 	t.Helper()
+	return stepProjectWith(t, "")
+}
+
+// stepProjectWith is stepProject with extra appended to acl.yaml.
+func stepProjectWith(t *testing.T, extra string) (*appbuild.Services, *appbuild.FlowControl) {
+	t.Helper()
 	root := writeFlowProject(t)
 	schema, err := os.ReadFile(filepath.Join("..", "flowcfg", "testdata", "schema.yaml"))
 	require.NoError(t, err)
@@ -28,7 +34,7 @@ func stepProject(t *testing.T) (*appbuild.Services, *appbuild.FlowControl) {
 	policy, err := os.ReadFile(filepath.Join(root, "acl.yaml"))
 	require.NoError(t, err)
 	p := strings.Replace(string(policy), "assignments:\n", "assignments:\n  alice: hr\n  bob: manager\n  carol: manager\n", 1)
-	p += "role_relations:\n  buddy:\n    confers: hr\n"
+	p += "role_relations:\n  buddy:\n    confers: hr\n" + extra
 	writePolicy(t, root, p)
 	svc, err := appbuildOnDisk(t, root)
 	require.NoError(t, err)
@@ -210,6 +216,38 @@ func TestFlowControl_Tasks(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks.Tasks, 1)
 	require.Equal(t, string(r2), tasks.Tasks[0].Run)
+}
+
+// TestFlowControl_RoleRelationWithInheritance pins that a role held
+// through a role relation on the subject reads the run, lists its task and
+// completes its step when acl.yaml declares inherit_roles_through
+// (BUG-A7QDXU1). dan holds no global role, so the role relation is the
+// only route to the subject.
+func TestFlowControl_RoleRelationWithInheritance(t *testing.T) {
+	svc, ctl := stepProjectWith(t, "inherit_roles_through: [mentions]\n")
+	addFlowPerson(t, svc, "PER-1", map[string]any{"name": "Ada"})
+	addFlowPerson(t, svc, "dan", map[string]any{"name": "Dan"})
+	_, err := svc.Store().CreateRelation(context.Background(), entity.RelationKey{
+		From: "dan", Type: "buddy", To: "PER-1",
+	}, &store.RelationData{})
+	require.NoError(t, err)
+	id, err := ctl.Start(flowUser(t, svc, "alice"), "onboarding", "PER-1")
+	require.NoError(t, err)
+
+	dan := flowUser(t, svc, "dan")
+	run, err := ctl.Run(dan, id)
+	require.NoError(t, err)
+	require.True(t, run.Waiting.YouHold)
+	runs, err := ctl.SubjectRuns(dan, "PER-1")
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	tasks, err := ctl.Tasks(dan, "", 1, 50)
+	require.NoError(t, err)
+	require.Len(t, tasks.Tasks, 1)
+	require.Equal(t, string(id), tasks.Tasks[0].Run)
+	got, err := ctl.Complete(dan, id, run.Generation, map[string]any{"documents": true})
+	require.NoError(t, err)
+	require.True(t, got.Moved)
 }
 
 // TestFlowControl_RunList pins the run list: the runs whose headers the
