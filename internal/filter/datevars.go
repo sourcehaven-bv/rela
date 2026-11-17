@@ -21,7 +21,7 @@ import (
 // here. Write `$today+1d` for a day boundary instead.
 //
 // A date variable is not a pattern: `$today*` or `$todayx` is a literal.
-var dateVarRe = regexp.MustCompile(`^\$(?:now|today(?:([+-])(\d{1,6})([dw]))?)$`)
+var dateVarRe = regexp.MustCompile(`^\$today(?:([+-])(\d{1,6})([dw]))?$`)
 
 // DateLayout is the layout $today resolves to and a `date` property stores.
 const DateLayout = "2006-01-02"
@@ -37,53 +37,59 @@ const maxOffsetDays = 1_000_000
 // ResolveDateVariable returns the value a date variable denotes at the read
 // time now, and true; any other value is returned unchanged with false.
 func ResolveDateVariable(value string, now time.Time) (string, bool) {
-	base, days, ok := DateVariable(value)
+	v, ok := DateVariable(value)
 	if !ok {
 		return value, false
 	}
-	t := now.UTC().Truncate(time.Second).AddDate(0, 0, days)
-	if base == "now" {
+	t := now.UTC().Truncate(time.Second).AddDate(0, 0, v.Days)
+	if v.Now {
 		return t.Format(time.RFC3339), true
 	}
 	return t.Format(DateLayout), true
 }
 
-// DateVariable parses value as a date variable, reporting its base ("today"
-// or "now") and its offset in days. ok is false for any other value. A
-// caller that turns the variable into an expression evaluated later
-// (predicatefns.FromFilter) uses it rather than [ResolveDateVariable].
-func DateVariable(value string) (base string, days int, ok bool) {
+// DateVar is a parsed date variable: the read time ($now) or the read day
+// ($today) moved by Days days. Days is always 0 when Now is set.
+type DateVar struct {
+	Now  bool
+	Days int
+}
+
+// DateVariable parses value as a date variable. ok is false for any other
+// value. A caller that turns the variable into an expression evaluated
+// later (predicatefns.FromFilter) uses it rather than [ResolveDateVariable].
+func DateVariable(value string) (DateVar, bool) {
 	switch value {
 	case "$tomorrow":
-		return "today", 1, true
+		return DateVar{Days: 1}, true
 	case "$yesterday":
-		return "today", -1, true
+		return DateVar{Days: -1}, true
+	case "$now":
+		return DateVar{Now: true}, true
 	}
 	m := dateVarRe.FindStringSubmatch(value)
 	if m == nil {
-		return "", 0, false
+		return DateVar{}, false
 	}
-	if value == "$now" {
-		return "now", 0, true
-	}
+	var days int
 	if m[1] != "" {
 		n, err := strconv.Atoi(m[2])
 		if err != nil {
 			// coverage-ignore: the pattern admits at most six digits, which always parse
-			return "", 0, false
+			return DateVar{}, false
 		}
 		if m[3] == "w" {
 			n *= daysPerWeek
 		}
 		if n > maxOffsetDays {
-			return "", 0, false
+			return DateVar{}, false
 		}
 		if m[1] == "-" {
 			n = -n
 		}
 		days = n
 	}
-	return "today", days, true
+	return DateVar{Days: days}, true
 }
 
 // BindDateVariables returns filters with every date variable resolved at

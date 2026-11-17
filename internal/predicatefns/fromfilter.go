@@ -224,18 +224,18 @@ func typedLiteral(prop metamodel.PropertyDef, value string) (string, error) {
 // predicate's compile-time coercion then parses it as a date literal
 // against the field layout.
 func dateVariableExpr(value string) (string, bool) {
-	base, days, ok := filter.DateVariable(value)
+	v, ok := filter.DateVariable(value)
 	if !ok {
 		return "", false
 	}
-	call := FuncToday + "()"
-	if base == "now" {
-		call = FuncNow + "()"
+	if v.Now {
+		return FuncNow + "()", true
 	}
-	if days == 0 {
+	call := FuncToday + "()"
+	if v.Days == 0 {
 		return call, true
 	}
-	return fmt.Sprintf("%s(%s, %d, 'day')", FuncDateAdd, call, days), true
+	return fmt.Sprintf("%s(%s, %d, 'day')", FuncDateAdd, call, v.Days), true
 }
 
 func orderedOp(op filter.Operator) string {
