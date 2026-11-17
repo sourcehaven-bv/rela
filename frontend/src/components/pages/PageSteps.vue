@@ -12,6 +12,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlIcon from 'rela-components/components/common/RlIcon.vue'
 import type { SidebarPageTab } from '@/types'
 
 const props = defineProps<{
@@ -20,6 +21,11 @@ const props = defineProps<{
   presenting: boolean
   /** The URL of a step, keeping present mode as it is. */
   href: (id: string) => string
+  /**
+   * Whether a step's `done_when` holds (TKT-MWZF0UO). Drawn as a check on
+   * the step's number. Advisory: Next stays enabled either way.
+   */
+  done?: (id: string) => boolean
 }>()
 
 const emit = defineEmits<{
@@ -81,11 +87,19 @@ async function toggleFullscreen() {
               :class="{
                 'page-steps__step--active': step.id === active,
                 'page-steps__step--done': i < index,
+                'page-steps__step--checked': done?.(step.id),
               }"
               :aria-current="step.id === active ? 'step' : undefined"
+              :data-done="done?.(step.id) ? 'true' : undefined"
             >
-              <span class="page-steps__number">{{ i + 1 }}</span>
+              <span class="page-steps__number">
+                <RlIcon v-if="done?.(step.id)" name="check" :size="12" />
+                <template v-else>{{ i + 1 }}</template>
+              </span>
               <span class="page-steps__label">{{ step.label }}</span>
+              <span v-if="done?.(step.id)" class="rl-visually-hidden"
+                >({{ t('page.steps.done') }})</span
+              >
             </RouterLink>
           </li>
         </ol>
@@ -190,6 +204,13 @@ async function toggleFullscreen() {
 .page-steps__step--done .page-steps__number {
   border-color: var(--rl-color-accent);
   color: var(--rl-color-accent);
+}
+
+/* A step whose done_when holds: a filled check, active or not. */
+.page-steps__step--checked .page-steps__number {
+  background: var(--rl-color-success-fg);
+  border-color: var(--rl-color-success-fg);
+  color: var(--rl-color-text-inverse);
 }
 
 .page-steps__step--active {

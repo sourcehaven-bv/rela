@@ -70,7 +70,25 @@ export interface Section<T extends CollectionItem = CollectionItem> {
    * same choice `NavItem.as` makes, for the same reason.
    */
   icon?: Component
+  /**
+   * A background for the section's cell on a swimlane board, such as one
+   * step of a risk heat map. Set on a lane's section, so each cell of the
+   * matrix can differ. See `SectionTone`.
+   */
+  tone?: SectionTone
   items: T[]
+}
+
+/**
+ * How a swimlane cell is painted: two custom property names, never literal
+ * colours, so the cell follows the theme. `background` fills the cell and
+ * `foreground` is a text colour that reads on it. The label is shown as text
+ * in the cell, so the colour is never the only cue.
+ */
+export interface SectionTone {
+  background: `--rl-${string}`
+  foreground: `--rl-${string}`
+  label: string
 }
 
 /**

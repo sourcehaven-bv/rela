@@ -104,7 +104,7 @@ better-face check, so a hidden face cannot shadow a visible one.
 the heal pass (changed map, removed type, rows left empty by the migration,
 more rows than one batch).
 
-**Edge Cases:** types without a title rank by id; an empty title stays empty;
+**Edge Cases:** types without a title rank by id; an empty title ranks as the id;
 an empty needle orders by id.
 
 **Negative Tests:** an unchanged map queues nothing.

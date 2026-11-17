@@ -620,7 +620,21 @@
       "present": "Present",
       "exitPresent": "Exit",
       "fullscreen": "Full screen",
-      "exitFullscreen": "Exit full screen"
+      "exitFullscreen": "Exit full screen",
+      "done": "done",
+      "walk": {
+        "label": "Rows of this step",
+        "position": "{current} of {total}",
+        "prev": "Previous row",
+        "next": "Next row",
+        "empty": "Nothing to go through",
+        "emptyDescription": "This step's list has no rows.",
+        "missing": "Not in this list",
+        "missingDescription": "{id} is not one of the rows of this step. It may have been removed or changed.",
+        "first": "Go to the first row",
+        "error": "Could not read the rows of this step",
+        "errorDescription": "Reload the page to try again."
+      }
     }
   },
   "editor": {
@@ -1275,7 +1289,14 @@
     "addColumnNoName": "Use at least one letter or digit in the name",
     "addColumnUnsupported": "This column's values are not declared on the property, so the board cannot add one",
     "addColumnSaving": "Saving the column…",
-    "batchTooMany": "This action runs on at most {max} cards at once; {n} are on the board. Filter the board or collapse columns."
+    "batchTooMany": "This action runs on at most {max} cards at once; {n} are on the board. Filter the board or collapse columns.",
+    "cellTone": {
+      "success": "Good",
+      "warning": "Warning",
+      "error": "Critical",
+      "info": "Info",
+      "new": "New"
+    }
   },
   "calendar": {
     "month": "Month",

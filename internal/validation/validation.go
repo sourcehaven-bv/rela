@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
@@ -144,6 +145,11 @@ func (s *Service) evaluator() *predicatefns.Evaluator {
 		s.ev = predicatefns.NewEvaluator(s.deps.Meta)
 	})
 	return s.ev
+}
+
+// readTime is the operation's read time, the one today() in a rule sees.
+func (s *Service) readTime(ctx context.Context) time.Time {
+	return s.evaluator().ReadTime(ctx)
 }
 
 // compileRuleConditions compiles the rule's condition expressions against
@@ -322,7 +328,7 @@ func (s *Service) matchFilters(ctx context.Context, e *entity.Entity, filters []
 			return false, nil
 		}
 		rec := filter.Record{ID: e.ID, Type: e.Type, Properties: e.Properties}
-		return filter.MatchAll(rec, filters, entityDef, s.deps.Meta)
+		return filter.MatchAll(rec, filter.BindDateVariables(filters, s.readTime(ctx)), entityDef, s.deps.Meta)
 	}
 	return s.evaluator().Matches(ctx, prog, e.Type, e.ID, e.Properties)
 }
@@ -710,6 +716,7 @@ func (s *Service) checkRelationConstraint(
 	if err != nil {
 		return "", false, fmt.Errorf("invalid where filter: %w", err)
 	}
+	whereFilters = filter.BindDateVariables(whereFilters, s.readTime(ctx))
 
 	dir := DirectionOutgoing
 	if c.IsIncoming() {

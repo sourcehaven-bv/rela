@@ -60,6 +60,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/piles"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/records"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
@@ -875,7 +876,7 @@ func (s *Services) GatedReads() GatedReadBundle {
 		Traversals: b,
 		Conditions: QueryConditions{meta: s.meta},
 		LuaReads:   deps,
-		Rebind:     rebindFor(s.aclDeclarative),
+		Rebind:     rebindFor(s.aclDeclarative, servicesClock(s)),
 		Rollups:    gatedRollups(s),
 	}
 }
@@ -927,12 +928,18 @@ func compileDerived(meta *metamodel.Metamodel, now func() time.Time) (*computed.
 }
 
 // rebindFor returns the [GatedReadBundle.Rebind] for policy d: without a
-// policy it returns ctx unchanged, with one it replaces any attached
+// policy it binds no Request, with one it replaces any attached
 // [acl.Request] by a fresh one for the ctx principal.
 //
-// Nil: accepted — a nil d means no policy is configured.
-func rebindFor(d *acl.Declarative) func(context.Context) (context.Context, error) {
-	return identityBinderFor(d)
+// Each call starts a new operation (an MCP tool call, a watch round), so it
+// REPLACES the read time with clock() rather than keeping one already on
+// ctx: a long-lived ctx must see the date advance.
+//
+// Nil: d accepted — a nil d means no policy is configured. clock rejected.
+func rebindFor(d *acl.Declarative, clock func() time.Time) func(context.Context) (context.Context, error) {
+	return func(ctx context.Context) (context.Context, error) {
+		return acl.BindRequest(readtime.With(ctx, clock()), d)
+	}
 }
 
 // GatedReadBundle is the result of [Services.GatedReads]: the read handles an
@@ -3297,7 +3304,7 @@ func finishAssembly(
 	// Built, not started: the host starts it (see RunRealtimeWorker). Its
 	// outputs runner writes through the manager the channel service uses.
 	outputs, err := newManagerOutputs(
-		s.entityManager, s.store, s.meta, txChannelsFor(s.store, refs.channels), s.aclDeclarative)
+		s.entityManager, s.store, s.meta, txChannelsFor(s.store, refs.channels), s.aclDeclarative, servicesClock(s))
 	if err != nil {
 		return nil, err
 	}

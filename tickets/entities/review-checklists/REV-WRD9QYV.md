@@ -51,7 +51,7 @@ RR-63L9SOA, RR-S1RROIE, RR-NIY92UB, RR-DEEC72H, RR-EV38III
 **Acceptance Status:**
 1. PASS: TestHandleListEntities_ConditionScaleFree, 9 lowered filters; fails with the lowering disabled.
 2. PASS: TestListEntities_ConditionMatchesGoPath on memstore, sqlite and postgres.
-3. PASS: dave on reported filters reads nothing (differential path assertion); TestQueryConditions_LowerDeniedTraversal.
+3. PASS: dave on reported filters reads nothing (differential path assertion); TestGatedReads_ConditionTraversalsGatedByReader.
 4. PASS: frank on status filters stays on the Go path (differential path assertion).
 5. PASS: TestHandleListEntities_CurrentUserFilterAnswersForCaller.
 

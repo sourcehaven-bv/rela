@@ -54,7 +54,7 @@ RR-JR5CKO5, RR-FBANTJ0, RR-DM4HZR8, RR-B97R7TQ, RR-9HRL7YF, RR-NWKEJM6
 ratio 1.9-3.1 (scale run, IMPL-S5WVD39).
 - Visibility contract kept: PASS, RunFieldScopeSearchTests and
 RunVisibleSearchTests in the pgstore suite.
-- EXPLAIN with actual arguments and generic plans: PASS, TestSearchExplain.
+- EXPLAIN with actual arguments: PASS, TestSearchExplain.
 - ratio_max tightened: PASS, 8 to 5.
 
 ## Documentation (enhancements only)

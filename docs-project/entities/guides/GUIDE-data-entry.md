@@ -2201,15 +2201,24 @@ silent lexicographic fallback.
 Filter values starting with `$` are reserved for variables. The following
 variables are supported:
 
-| Variable     | Resolves to                                    |
-| ------------ | ---------------------------------------------- |
-| `$today`     | Today's date in `YYYY-MM-DD` (UTC)             |
-| `$tomorrow`  | Tomorrow's date                                |
-| `$yesterday` | Yesterday's date                               |
-| `$user`      | The id of the user who requests the list       |
+| Variable                  | Resolves to                                         |
+| ------------------------- | --------------------------------------------------- |
+| `$today`                  | Today's date in `YYYY-MM-DD` (UTC)                  |
+| `$today+7d`, `$today-2w`  | Today's date moved by whole days (`d`) or weeks (`w`) |
+| `$tomorrow`               | `$today+1d`                                         |
+| `$yesterday`              | `$today-1d`                                         |
+| `$now`                    | The current time, such as `2026-11-16T10:00:00Z`    |
+| `$user`                   | The id of the user who requests the list            |
 
 Date variables are evaluated in **UTC** for predictability across server
-timezones. `$user` is resolved for each user, so one list or board shows each
+timezones. One request reads the clock once, so every `$today` and `$now` in
+it, and every `today()` and `now()` in a `condition:`, has the same value. The
+variables work everywhere a filter string is read: list and kanban `filters:`,
+the `?q=` search syntax (`prop:due<$today`, also in dashboard `query:` cards
+and nav scopes), view and traverse `where:`, feeds, the gantt, CalDAV, mail
+templates and Lua `rela.list_entities`. `$now` takes no offset; use
+`$today+1d` for a day boundary. In a URL, write `+` as `%2B`
+(`$today%2B7d`), because a bare `+` decodes to a space. `$user` is resolved for each user, so one list or board shows each
 user their own rows. This holds for its sidebar counts and for the rows a
 command on the list receives. When the user cannot be identified, `$user`
 matches no user's rows. `$user` works in property filters; a relation
@@ -2220,10 +2229,15 @@ Variables work in single-value operators and in comma-separated lists (`in`,
 
 ```yaml
 filters:
-  # Show overdue tasks
+  # Show overdue tasks: due before today
+  - property: due_date
+    operator: "<"
+    value: $today
+
+  # Due within the next week
   - property: due_date
     operator: "<="
-    value: $today
+    value: $today+7d
 
   # Multiple variable tokens in a list
   - property: due_date
@@ -2346,9 +2360,40 @@ The `and` short-circuits, so the guard is enough. Note the shorthand
 `entity.afgerond_op and …` does **not** compile — the language requires a
 boolean on the left of `and`.
 
+The same holds for a plain comparison. `entity.due < today()` on a row with
+no `due` is an error, so write:
+
+```lua
+entity.due ~= nil and entity.due < today()
+```
+
+#### Dates, times and the current day
+
+`today()` is the current day in UTC, at 00:00:00. `now()` is the current
+time in UTC, in whole seconds. One request reads the clock once, so every
+`today()` and `now()` in it agrees, also across the rows of a page.
+
+A date-only value compares as 00:00:00 UTC of its day, so a `date` and a
+`datetime` can be compared directly:
+
+| Condition | Meaning |
+| --- | --- |
+| `entity.due < today()` | `due` (a date) is before today: overdue |
+| `entity.valid_until < now()` | `valid_until` (a datetime) has passed |
+| `entity.valid_until >= today()` | `valid_until` is today or later, at any time of day |
+| `entity.due < now()` | true from the start of the due day |
+| `days_between(today(), entity.seen_at) == 0` | `seen_at` (a datetime) is on today's UTC date |
+| `entity.due <= date_add(today(), 7, 'day')` | due within the next seven days, or overdue |
+
+Day boundaries are UTC, whatever the server's own time zone. The same rule
+holds in every place that filters at read time: list `condition:` and
+`where:`, query scopes, dashboard `query:` cards, search filters, feeds,
+scheduler `for_each`, validation `where:`, and the CLI `--filter` and
+`--where` flags.
+
 #### Available functions
 
-`today()`, `days_between()`, `date_add()`, `rrule_next()`, `match()`,
+`today()`, `now()`, `days_between()`, `date_add()`, `rrule_next()`, `match()`,
 `regex()`, `contains()`, `len()`. Signatures are in
 [metamodel.md](metamodel.md).
 
@@ -4284,7 +4329,7 @@ next_actions:
   chase-proposal:
     band: blocking
     query: "type:proposal prop:status=sent"
-    condition: "days_between(entity.sent_on, today()) >= 11"
+    condition: "entity.sent_on ~= nil and days_between(today(), entity.sent_on) >= 11"
     suggest: "{title} was sent on {sent_on} and has had no reply. Chase it?"
 ```
 
@@ -4336,7 +4381,7 @@ next_actions:
   my-stale-tickets:
     band: attention
     query: "type:ticket prop:status=open"
-    condition: "is_current_user(entity.assignee) and days_between(entity.updated, today()) > 14"
+    condition: "is_current_user(entity.assignee) and days_between(today(), entity.updated) > 14"
     suggest: "{title} has been yours for two weeks without movement."
   watching:
     band: ambient
@@ -4739,6 +4784,7 @@ kanbans:
 | `columns`          | list   | Explicit column definitions (`value`, `label`, `icon`, `collapsed`) |
 | `swimlane_property`| string | Property to group by for swimlanes (optional)              |
 | `swimlanes`        | list   | Explicit swimlane definitions (`value`, `label`, `icon`)   |
+| `cell_colors`      | map    | A colour per cell of a swimlane board (see below)          |
 | `card`             | object | Card display configuration                                 |
 | `column_summary`   | list   | Aggregate lines under each column heading (see below)      |
 | `edit_form`        | string | Form name for editing cards (click to open)                |
@@ -5012,6 +5058,50 @@ kanbans:
 
 Without explicit swimlanes, values are inferred from the metamodel. Entities whose swimlane
 property value is not in the list are hidden.
+
+#### Cell colours
+
+A swimlane board is a matrix: columns by lanes. `cell_colors:` gives a cell a
+background colour, so the board reads as a heat map. A DPIA risk board with
+impact as columns and likelihood as lanes is an example:
+
+```yaml
+kanbans:
+  risks:
+    entity_type: risk
+    column_property: impact
+    swimlane_property: likelihood
+    cell_colors:
+      high:                 # a column value
+        likely: error       # a lane value, then its colour
+        possible:
+          color: warning
+          label: Medium
+      low:
+        rare: success
+    card:
+      title: title
+```
+
+- The first key is a column value and the second a lane value. Both must be a
+  column or lane the board shows: a declared `columns:` or `swimlanes:` entry,
+  or else a value of the property.
+- A colour is a tone (`success`, `warning`, `error`, `info`, `new`) or a
+  [colour name](#color-names) such as `red/700`. A tone or a bare hue such as
+  `red` paints a soft tint; a shade such as `red/700` paints a strong fill.
+- Each coloured cell shows a label as text, so colour is not the only cue. A
+  tone shows its own name by default, in the reader's language: Good,
+  Warning, Critical, Info or New in English. `label:` replaces it. Any other
+  colour needs a `label:`.
+- On a board with any coloured cell, every cell keeps the same padding, so
+  cards line up across coloured and plain cells.
+- Cards keep their own background, so they read the same in a coloured cell
+  as in a plain one, in light and dark mode.
+- A cell without a colour stays plain.
+- `cell_colors` needs `swimlane_property` and cannot be used with
+  `columns_from`. An unknown column, lane or colour, or a missing label, fails
+  when the configuration loads, with a message that names the board. A cell
+  with a key other than `color` and `label` fails too, with its line number.
 
 ### Card Configuration
 
@@ -6412,6 +6502,71 @@ in present mode, and moving between steps keeps it. On a page without
 
 Present mode changes only what the screen shows. Every view in it reads and
 writes with the user's own permissions, as it does outside present mode.
+
+#### One row at a time
+
+`walk: true` on a list step shows the list's rows one at a time instead of the
+whole list. Use it for a step such as "for each processing activity, answer
+these questions".
+
+```yaml
+      - id: each-risk
+        label: "Each risk"
+        list: risks
+        scope: { relation: has-risk }
+        walk: true
+        prompt: "Who owns this risk?"
+```
+
+The step shows the row's own detail view, where the user edits it as usual.
+Above it are the row's position, such as "3 of 8", and **Previous row** and
+**Next row** links to the neighbouring rows. The rows, their order and their count
+are those of the list: its `condition:`, `filters:`, `sort:`,
+`query_scope:` and the step's `scope:` all apply. A row the user may not see is
+not shown and not counted.
+
+The row on screen is part of the URL, as `?item=<id>`. A step opened without
+`?item=` opens its first row. A link to another step drops `?item=`. If the row
+in the URL is not in the list, for example because it was removed or changed,
+the step says so and links to the first row.
+
+In present mode, **PageDown** and **PageUp** move through the rows first. After
+the last row, PageDown opens the next step; before the first row, PageUp opens
+the previous step. A walking step opened that way starts at its first row.
+
+`walk` is only allowed on a list step of a steps page.
+
+#### Marking a step done
+
+`done_when` on a list step is a condition that marks the step done. When the
+condition holds for every row of the step's list, the step's number shows a
+check. It uses the same expression language as a list's `condition:`, with
+`entity` for the row.
+
+```yaml
+      - id: owners
+        label: "Owners"
+        list: risks
+        scope: { relation: has-risk }
+        done_when: "entity.owner ~= nil"
+```
+
+A step is done when its list has at least one row and every row matches. An
+empty list is not done. The check is advice only: **Next** works whether a
+step is done or not.
+
+The check is computed for each user over the rows that user can see, so it
+never reveals a row the user may not see. A property the user may not see
+counts as empty. On a page opened in a world (`?world=`), the rows judged are
+the faces the page shows in that world. The SPA reads it from
+`GET /api/v1/_page_status?page=<id>`, with `&entity=<id>` on an entity page
+and `&world=<name>` on a page opened in a world,
+which answers `{"steps": {"<tab>": {"done": true}}}`. A step without
+`done_when`, or one the user cannot see, is left out. The sidebar only says
+that a step has a check (`done_check`), never whether it holds.
+
+`done_when` is only allowed on a list step of a steps page. A condition that
+does not compile is a config error.
 
 ### Linking to a page
 

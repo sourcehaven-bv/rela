@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
 )
 
 // downGraph fails every graph read, so resolving any identity fails.
@@ -57,5 +59,33 @@ func TestTaskContext_ResolveFailureFailsTheRun(t *testing.T) {
 
 	if _, err := s.taskContext(context.Background(), "nightly", "alice"); err == nil {
 		t.Fatal("taskContext with a failing membership walk: want an error, got nil")
+	}
+}
+
+// TestTaskContext_FreshReadTime: each run is a new operation, so it replaces
+// a read time already on ctx (TKT-08ZI5XN). A `rela scheduler` process whose
+// root ctx was stamped at start must not judge `$today` by its start day.
+func TestTaskContext_FreshReadTime(t *testing.T) {
+	m := newMockWorkspace(t)
+	m.acl = newTaskContextDecl(t, acl.NullGraph{})
+	run := time.Date(2026, 11, 19, 6, 0, 0, 0, time.UTC)
+	s := &Scheduler{ws: m, bind: m.bind, now: func() time.Time { return run }}
+	started := readtime.With(context.Background(), time.Date(2026, 11, 16, 6, 0, 0, 0, time.UTC))
+
+	for name, mk := range map[string]func() (context.Context, error){
+		"taskContext": func() (context.Context, error) { return s.taskContext(started, "nightly", "") },
+		"taskContextAs": func() (context.Context, error) {
+			return s.taskContextAs(started, "nightly", principal.Principal{User: "alice"})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx, err := mk()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := readtime.From(ctx); !got.Equal(run) {
+				t.Errorf("read time = %v, want %v", got, run)
+			}
+		})
 	}
 }

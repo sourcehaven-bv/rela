@@ -72,7 +72,7 @@ func (f *traverseFilter) narrow(
 	ctx context.Context, rule ViewTraverse, found []*entity.Entity,
 ) ([]*entity.Entity, error) {
 	if rule.Where != "" {
-		filtered, err := filterEntities(f.schema, found, rule.Where)
+		filtered, err := filterEntities(f.schema, found, rule.Where, requestReadTime(ctx))
 		if err != nil {
 			return nil, err // refused at load (BUG-WHEREWIDE); reaching here is a config bug
 		}

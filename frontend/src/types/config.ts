@@ -568,6 +568,8 @@ export interface KanbanConfig {
   columns_from?: KanbanColumnsFrom
   swimlane_property?: string
   swimlanes?: KanbanSwimlane[]
+  /** Cell colours by column value, then lane value (TKT-83S9G0Z). */
+  cell_colors?: Record<string, Record<string, KanbanCellColor>>
   card: KanbanCard
   /** Lines under each column heading, such as a count or a sum (TKT-SVLQQ6). */
   column_summary?: Summary[]
@@ -642,6 +644,17 @@ export interface KanbanSwimlane {
   label?: string
   /** Icon name; see KanbanColumn.icon. */
   icon?: string
+}
+
+/**
+ * One cell's colour on a swimlane board. `color` is a tone or a colour name
+ * as configured; `class` is the style class the server resolved from it.
+ * Without a label, a tone shows its translated name.
+ */
+export interface KanbanCellColor {
+  color: string
+  label?: string
+  class?: string
 }
 
 /**
@@ -1321,12 +1334,27 @@ export interface SidebarPageTab {
   direction?: 'outgoing' | 'incoming'
   /** The question shown above the view on a steps page. */
   prompt?: string
+  /** On a steps page, the step shows the list's rows one at a time (TKT-M07C97Y). */
+  walk?: boolean
+  /**
+   * The step has a `done_when` check. The verdict is per principal and comes
+   * from `/_page_status`, never from the sidebar (TKT-MWZF0UO).
+   */
+  done_check?: boolean
   /**
    * Per entity type, the relation a row created while this tab is open is
    * linked to the page's entity over. The space's Create menu uses it.
    */
   links?: SidebarPageLink[]
 }
+
+/**
+ * Where a walking step stands (TKT-M07C97Y). `loading` until the first
+ * answer, `empty` for a list with no rows, `missing` for an `?item=` the
+ * list does not hold (removed, hidden, or never in it), `error` for a read
+ * that failed otherwise, `ready` with a position.
+ */
+export type StepWalkState = 'off' | 'loading' | 'empty' | 'missing' | 'error' | 'ready'
 
 /** A row of `type` is linked to the page's entity over `relation`, seen from the entity. */
 export interface SidebarPageLink {

@@ -30,6 +30,12 @@ const (
 	// list's rows.
 	ViewConditionNavStatus ViewConditionKind = "nav_status"
 
+	// ViewConditionPageDone is the `done_when:` of a tab on a steps page
+	// (TKT-MWZF0UO), keyed by dataentryconfig.PageDoneConditionID. It is
+	// compiled against the entity type of the tab's list, since it judges
+	// that list's rows.
+	ViewConditionPageDone ViewConditionKind = "page_done"
+
 	// ViewConditionTraverse is the `condition:` of a view's traverse step,
 	// keyed by dataentryconfig.TraverseConditionID: one program per entity
 	// type the step can collect.
@@ -52,7 +58,7 @@ func (k ViewConditionKey) String() string { return fmt.Sprintf("%s[%q]", k.Kind,
 
 // CompileViewConditions compiles the `condition:` of every list, kanban and
 // view traverse step, the `when:` of every detail-page action, and every rule
-// of a navigation entry's `status:`.
+// of a navigation entry's `status:` and the `done_when:` of every page tab.
 //
 // Like [CompileNextActions] and unlike [Lint], this is AUTHORITATIVE: the
 // programs returned here are the ones evaluated on the read path, so an
@@ -100,6 +106,11 @@ func CompileViewConditions(
 			}
 			compileOne(ev, meta, key, name, entityType, rule.Condition, programs, &problems)
 		}
+	}
+	for _, pd := range dataentryconfig.PageDoneEntries(cfg) {
+		key := ViewConditionKey{ViewConditionPageDone, dataentryconfig.PageDoneConditionID(pd.Page, pd.Tab.ID)}
+		name := fmt.Sprintf("pages[%s].tabs[%s].done_when", pd.Page, pd.Tab.ID)
+		compileOne(ev, meta, key, name, pd.EntityType, pd.Tab.DoneWhen, programs, &problems)
 	}
 	compileActionConditions(ev, meta, cfg, programs, &problems)
 	compileLLMCandidateConditions(ev, meta, cfg, programs, &problems)
@@ -348,6 +359,12 @@ func entityTypeFor(cfg *dataentryconfig.Config, key ViewConditionKey) string {
 		return et
 	case ViewConditionLLMCandidate:
 		return dataentryconfig.LLMCandidateConditionType(key.ID)
+	case ViewConditionPageDone:
+		for _, pd := range dataentryconfig.PageDoneEntries(cfg) {
+			if dataentryconfig.PageDoneConditionID(pd.Page, pd.Tab.ID) == key.ID {
+				return pd.EntityType
+			}
+		}
 	case ViewConditionNavStatus:
 		for _, ns := range dataentryconfig.NavStatusEntries(cfg) {
 			for i := range ns.Entry.Status {

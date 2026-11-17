@@ -2784,29 +2784,18 @@
       "weight.layers": 0,
       "weight.vocabulary": 872,
       "weight.types": 3972,
-      "weight.concepts": 7205,
-      "weight.boundaries": 1428,
+      "weight.concepts": 7203,
+      "weight.boundaries": 1422,
       "weight.data": 1298,
       "weight.security": 2064,
       "largest_tangle": 14,
       "cycle_edges": 67,
       "upward_edges": 0,
-      "propagation_cost": 9.1
+      "propagation_cost": 9.2
     },
     "min_weight": 0,
-    "at": "2026-11-16T09:07:58Z",
+    "at": "2026-11-17T01:30:00Z",
     "log": [
-      {
-        "at": "2026-11-07T12:37:24Z",
-        "change": "loosen",
-        "reason": "TKT-J4HMZ2B: untagged appbuild.NewInMemory imports memstore, raising the existing memstore data-clump weight by 1",
-        "metrics": {
-          "weight.concepts": [
-            7081,
-            7082
-          ]
-        }
-      },
       {
         "at": "2026-11-08T09:00:00Z",
         "change": "loosen",
@@ -3125,6 +3114,32 @@
           "propagation_cost": [
             9.4,
             9.1
+          ]
+        }
+      },
+      {
+        "at": "2026-11-16T20:48:28Z",
+        "change": "tighten",
+        "reason": "static model; trace-based metrics left for just archplan-security",
+        "metrics": {
+          "weight.concepts": [
+            7205,
+            7203
+          ],
+          "weight.boundaries": [
+            1428,
+            1422
+          ]
+        }
+      },
+      {
+        "at": "2026-11-17T01:30:00Z",
+        "change": "loosen",
+        "reason": "TKT-08ZI5XN: the new leaf readtime carries the request read time for today() and now(); the request edges (dataentry, appbuild, scheduler) and the readers (filter, predicatefns, lua, validation) import it, so most components now reach it. The edge is intended. Only propagation_cost changes; the traced weights keep their values.",
+        "metrics": {
+          "propagation_cost": [
+            9.1,
+            9.2
           ]
         }
       }

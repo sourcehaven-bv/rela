@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
@@ -33,6 +35,8 @@ entities:
       status: {type: string}
       assignee: {type: string}
       watchers: {type: string, list: true}
+      due: {type: date}
+      valid_until: {type: datetime}
     query_scopes:
       impl-open: "related(entity, 'implements', { status = 'open' })"
       reported: "related(entity, 'reportedBy')"
@@ -146,6 +150,18 @@ func newScopePushdownAppOn(t *testing.T, base store.Store) (*App, *acl.Declarati
 		}
 		if i%5 != 0 {
 			props["watchers"] = [][]string{{"alice"}, {"bob", "alice"}, {}, {"dave"}}[i%4]
+		}
+		// Dates far from any test run's read time, in the shapes a store
+		// holds: a string, a decoded YAML time.Time, garbage, and unset.
+		switch i % 4 {
+		case 0:
+			props["due"] = "2020-01-0" + strconv.Itoa(i%9+1)
+			props["valid_until"] = "2099-01-01T10:00:00Z"
+		case 1:
+			props["due"] = time.Date(2099, 1, i, 0, 0, 0, 0, time.UTC)
+			props["valid_until"] = "2020-03-01T23:59:59+02:00"
+		case 2:
+			props["due"] = "TBD"
 		}
 		seedEntity(app, &entity.Entity{ID: id, Type: "ticket", Properties: props})
 		if i%4 != 0 {
@@ -312,7 +328,7 @@ func TestPosition_ScopeMatchesGoPath(t *testing.T) {
 	for _, user := range []string{"alice", "bob", "dave"} {
 		for scopeName := range lowerableScopes {
 			t.Run(user+" "+scopeName, func(t *testing.T) {
-				scope := ScopeDescriptor{Source: "list", Type: "ticket", Sort: "title", QueryScope: scopeName}
+				scope := ScopeDescriptor{Source: "list", Type: "ticket", ListQuery: ListQuery{Sort: "title", QueryScope: scopeName}}
 				ctx, err := bindQueryIdentity(gateCtxFor(principalCtx(user), t, d), mustScope(t, app, scopeName))
 				if err != nil {
 					t.Fatal(err)

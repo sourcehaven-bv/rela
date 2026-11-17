@@ -97,6 +97,15 @@ function columnCount(id: string) {
   )
 }
 
+/**
+ * Whether any cell carries a tone. Then every cell keeps the toned cell's
+ * padding and label row, toned or not, so cards line up down a column and
+ * across a lane. See `RlSwimlaneColumn`.
+ */
+const toned = computed(() =>
+  props.lanes.some((lane) => lane.sections.some((section) => section.tone)),
+)
+
 const element = ref<HTMLElement>()
 useBoardAutoScroll(element)
 
@@ -156,7 +165,12 @@ const {
 </script>
 
 <template>
-  <div ref="element" class="rl-swimlane-board" @keydown="onKeydown">
+  <div
+    ref="element"
+    class="rl-swimlane-board"
+    :class="{ 'rl-swimlane-board--toned': toned }"
+    @keydown="onKeydown"
+  >
     <!--
       One header row, sticky to the top of the board's scroll, so the columns
       are still named twenty lanes down. It sits outside the lanes so its
@@ -279,6 +293,15 @@ const {
     padding: var(--rl-space-4) var(--rl-page-gutter-right) var(--rl-space-4)
       var(--rl-page-gutter-left);
   }
+}
+
+/*
+ * With any toned cell, every cell takes the toned padding, so a plain cell's
+ * cards line up with a toned neighbour's. Set on the cell itself, where
+ * `--rl-swimlane-toned-padding` is defined, so it resolves there.
+ */
+.rl-swimlane-board--toned :deep(.rl-swimlane-column) {
+  --rl-swimlane-cell-padding: var(--rl-swimlane-toned-padding);
 }
 
 .rl-swimlane-board__columns {
