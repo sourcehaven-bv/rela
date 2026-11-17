@@ -656,7 +656,7 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 func (s *server) tenantHost(
 	base *appbuild.SharedBase, resolver tenant.Resolver, limits tenantOptions, verifier tenanthost.AssertionVerifier,
 ) (*tenantHost, error) {
-	openSvc, err := tenant.SharedBaseOpener(base, tenant.AuditRoot(base.CacheDir()))
+	openSvc, err := tenant.SharedBaseOpener(base)
 	if err != nil {
 		return nil, err
 	}

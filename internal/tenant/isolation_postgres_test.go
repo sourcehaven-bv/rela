@@ -384,7 +384,7 @@ func isolationOpener(t *testing.T, root string) tenant.Opener[*tenant.Opened] {
 	if err != nil {
 		t.Fatalf("NewSharedBase: %v", err)
 	}
-	open, err := tenant.SharedBaseOpener(base, tenant.AuditRoot(paths.CacheDir))
+	open, err := tenant.SharedBaseOpener(base)
 	if err != nil {
 		t.Fatalf("SharedBaseOpener: %v", err)
 	}

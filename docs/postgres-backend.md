@@ -1040,7 +1040,8 @@ still run, so you can do the upgrade. For each tenant in the old file:
    id twice.
 2. Stop the servers. Rename the schema:
    `ALTER SCHEMA tenant_acme RENAME TO org_822b33ad87c148a0;`
-3. Rename its audit directory the same way:
+3. If the tenant has an audit directory from before the database audit log,
+   rename it the same way:
    `.rela/audit/tenants/tenant_acme` to `.rela/audit/tenants/org_822b33ad87c148a0`.
 4. Run `rela-server-postgres tenant create -adopt ORG_ID`. Then
    `rela-server-postgres tenant show ORG_ID` prints the schema, so you can
@@ -1114,7 +1115,8 @@ log for it:
 
 3. On each other server host, run the same `tenant erase` command. The org
    is already erased, so it changes nothing in the database and removes
-   that host's audit directory, `.rela/audit/tenants/<schema>/`. You can
+   that host's audit directory, `.rela/audit/tenants/<schema>/`, if there
+   is one. You can
    also remove that directory by hand; the command printed the schema name,
    and `tenant show` prints it too.
 
@@ -1145,11 +1147,10 @@ What it removes:
 
 - The tenant's schema, with `DROP SCHEMA ... CASCADE`. The schema holds
   everything the store keeps for the tenant: entities, relations,
-  attachment bytes, search, version history, comments, jobs, leases, piles
-  and runtime state.
-- The tenant's audit log on this host, `.rela/audit/tenants/<schema>/`.
-  Each tenant has its own audit directory so that it can be deleted with
-  the tenant. If that directory is a symlink, the command refuses, so that
+  attachment bytes, search, version history, comments, jobs, leases, piles,
+  runtime state and the audit log.
+- Audit records from before the database audit log, in
+  `.rela/audit/tenants/<schema>/` on this host. If that directory is a symlink, the command refuses, so that
   it never reports records removed that are still on disk.
 What it does not remove:
 

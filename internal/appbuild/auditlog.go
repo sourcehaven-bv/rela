@@ -20,7 +20,7 @@ import (
 // The configured sink is replaced rather than joined: on a database tier the
 // SQL log is the one place a record is kept, so every process of a
 // deployment appends to one chain. base itself is not changed; a copy
-// carries the new sink, as [SharedBase.OpenAndAssemble] carries a tenant's.
+// carries the new sink.
 func withSQLAudit(
 	base *SharedBase, st store.Store, o backendOverrides,
 ) (next *SharedBase, abandon func(assemblyErr error), err error) {

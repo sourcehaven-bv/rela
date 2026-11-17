@@ -21,9 +21,9 @@ var ErrPublicHasTables = errors.New("tenant: the public schema holds tables, whi
 	"had the tenant open would fall back to")
 
 // AuditRoot returns the directory under a project's cache directory that
-// holds one audit sink per tenant, each named after its schema
-// (TKT-SNVR8UV). The server writes there and [Erase] removes from there, so
-// both take the path from here.
+// held one JSONL audit sink per tenant, each named after its schema
+// (TKT-SNVR8UV). Tenants now write to the database audit log in their schema
+// (TKT-USQBMG6); [Erase] still removes what a tenant left here.
 func AuditRoot(cacheDir string) string {
 	return filepath.Join(cacheDir, "audit", "tenants")
 }

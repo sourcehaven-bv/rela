@@ -453,21 +453,8 @@ func TestRegistry_DefaultBoundApplied(t *testing.T) {
 // TestSharedBaseOpener_RejectsNilBase pins the constructor rule: a nil base
 // fails at wiring, not on the first request.
 func TestSharedBaseOpener_RejectsNilBase(t *testing.T) {
-	if _, err := tenant.SharedBaseOpener(nil, t.TempDir()); err == nil {
+	if _, err := tenant.SharedBaseOpener(nil); err == nil {
 		t.Fatal("SharedBaseOpener(nil) must return an error")
-	}
-}
-
-// TestSharedBaseOpener_RejectsEmptyAuditRoot pins that every tenant gets its
-// own audit directory: an opener with no root to put them under fails at
-// wiring.
-func TestSharedBaseOpener_RejectsEmptyAuditRoot(t *testing.T) {
-	t.Parallel()
-
-	// A zero base is enough: the opener checks its arguments before it ever
-	// uses the base.
-	if _, err := tenant.SharedBaseOpener(&appbuild.SharedBase{}, ""); err == nil {
-		t.Fatal("SharedBaseOpener accepted an empty audit root")
 	}
 }
 
