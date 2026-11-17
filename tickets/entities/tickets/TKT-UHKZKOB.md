@@ -24,5 +24,6 @@ never blocked. fs and sqlite are out of scope (single-process, small scale).
 
 ## Done when
 
-- The workflow runs green.
+- The workflow is merged and its steps run green locally with `just scale-run`
+  at scale 1 and 5. The first scheduled run on GitHub happens after merge.
 - A guide page states the supported postgres scale that the job defends.

@@ -320,6 +320,7 @@ current day rather than to a hard-coded date:
 | Function | Returns | Meaning |
 | -------- | ------- | ------- |
 | `today()` | date | The current day, at UTC midnight |
+| `now()` | datetime | The current time in UTC, in whole seconds |
 | `days_between(a, b)` | number | Whole days from `b` to `a`; positive when `a` is later |
 | `date_add(d, n, unit)` | date | `d` shifted by `n` (may be negative); `unit` is `day`, `week`, `month` or `year` |
 | `rrule_next(rule, after)` | date | The first occurrence of an RRULE strictly after `after` |
@@ -333,11 +334,21 @@ rela list taak --filter "days_between(entity.due, today()) < 0"
 
 # a three-day grace period has lapsed
 rela list taak --filter "date_add(entity.due, 3, 'day') < today()"
+
+# a datetime that has passed
+rela list toegang --filter "entity.valid_until ~= nil and entity.valid_until < now()"
 ```
 
-Every date value is normalized to UTC midnight, so results are whole days
-and compare equal to bare `YYYY-MM-DD` literals regardless of any time
-component or timezone on the stored value.
+A date-only value compares as 00:00:00 UTC of its day, so it can be compared with a
+`datetime` and with `now()`. An ordered comparison on an unset property is an
+error; guard it with `entity.due ~= nil and …`. The deprecated `--where` flag
+accepts `$today`, `$today+7d`, `$today-2w`, `$tomorrow`, `$yesterday` and
+`$now` as values on a date or datetime property. Quote them with single
+quotes so the shell does not expand them: `--where 'due<$today'`.
+
+`days_between` and `date_add` use the UTC day of each value, so their results
+are whole days, whatever time component or timezone the stored value has. A
+plain comparison such as `entity.valid_until < now()` compares instants.
 
 `date_add` accepts `day`, `week`, `month` and `year`. Month and year
 arithmetic **clamps to the last valid day** of the target month rather than
@@ -2708,7 +2719,7 @@ section covers the flags documented in this reference.
 
 | Flag | Description |
 | ---- | ----------- |
-| `--config-editing` | Turn on the in-app [Configure space](data-entry.md#configure-space). Principals holding `config:edit` can then change `schema.yaml` and `data-entry.yaml` from the browser. Off by default. Env: `RELA_CONFIG_EDITING=1`. |
+| `--config-editing` | Turn on the in-app [Configure space](data-entry.md#configure-space). Principals holding `config:edit` can then change `schema.yaml`, `data-entry.yaml` and the `flows.yaml` triggers from the browser. Off by default. Env: `RELA_CONFIG_EDITING=1`. |
 
 The server refuses to start with `--config-editing` when any of these is true:
 

@@ -22,17 +22,28 @@ var conditionLists = map[string]string{
 	// Denied for dave, who reads no users: an empty page in the store.
 	"reported": "related(entity, 'reportedBy')",
 	// The sign-aware dedup must keep both terms: no row matches.
-	"contradiction":    "related(entity, 'reportedBy') and not related(entity, 'reportedBy')",
-	"mine":             "is_current_user(entity.assignee)",
-	"watching":         "has_current_user(entity.watchers)",
-	"unassigned-open":  "entity.assignee ~= current_user.id and entity.status == 'open'",
-	"open-or-reported": "entity.status == 'open' or related(entity, 'reportedBy')",
+	"contradiction":   "related(entity, 'reportedBy') and not related(entity, 'reportedBy')",
+	"mine":            "is_current_user(entity.assignee)",
+	"watching":        "has_current_user(entity.watchers)",
+	"unassigned-open": "entity.assignee ~= current_user.id and entity.status == 'open'",
+	// or, not and ordered comparisons lower into GraphQuery.Where
+	// (TKT-8HY05WB). dave's denied traversal under the or is false.
+	"open-or-reported":   "entity.status == 'open' or related(entity, 'reportedBy')",
+	"not-open-or-from-b": "not (entity.status == 'open' or entity.title < 'b')",
+	// Date comparisons against the read time stay on the Go path
+	// (TKT-08ZI5XN): a stored date has no canonical shape to compare in SQL.
+	"overdue": "entity.due ~= nil and entity.due < today()",
+	"expired": "entity.valid_until ~= nil and entity.valid_until < now()",
 }
+
+// goPathConditions never push down, for any principal.
+var goPathConditions = map[string]bool{"overdue": true, "expired": true}
 
 // statusConditions are the conditions that read status, which frank may not
 // see on every row; they must stay on the Go path for him.
 var statusConditions = map[string]bool{
 	"open": true, "not-done": true, "unassigned-open": true, "open-or-reported": true,
+	"not-open-or-from-b": true,
 }
 
 // deniedForDave are the conditions with a positive traversal into users,
@@ -125,7 +136,7 @@ func assertConditionMatchesGoPath(t *testing.T, app *App, counting *storetest.Co
 						if user == "erin" {
 							return
 						}
-						pushed := list != "open-or-reported" && (user != "frank" || !statusConditions[list])
+						pushed := !goPathConditions[list] && (user != "frank" || !statusConditions[list])
 						if user == "dave" && deniedForDave[list] {
 							// A denied positive traversal is an empty page:
 							// nothing to count, and no row is read.
@@ -177,4 +188,30 @@ func conditionGoPath(
 		ids = append(ids, e.ID)
 	}
 	return ids, len(kept)
+}
+
+// TestListCondition_DateRows pins the rows the date conditions keep, so the
+// comparison above cannot pass by both paths returning nothing.
+func TestListCondition_DateRows(t *testing.T) {
+	app, _, _ := newScopePushdownAppOn(t, memstore.New())
+	d := withConditionLists(t, app)
+	for list, want := range map[string]string{
+		"overdue": "TKT-04,TKT-08,TKT-12",
+		"expired": "TKT-01,TKT-05,TKT-09",
+	} {
+		t.Run(list, func(t *testing.T) {
+			resp, rec := listEntitiesAs(principalCtx("alice"), t, app, d, "ticket", "tickets",
+				"list_id="+list+"&sort=id&per_page=50")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status %d: %s", rec.Code, rec.Body)
+			}
+			ids := make([]string, 0, len(resp.Data))
+			for _, e := range resp.Data {
+				ids = append(ids, e.ID)
+			}
+			if got := strings.Join(ids, ","); got != want {
+				t.Errorf("rows = %s, want %s", got, want)
+			}
+		})
+	}
 }

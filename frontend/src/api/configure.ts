@@ -31,14 +31,16 @@ export interface TreeMap {
  */
 export type TreeValue = TreeScalar | TreeMap | TreeValue[]
 
-/** The two files the Configure space edits, as the server names them. */
-export type ConfigFile = 'schema.yaml' | 'data-entry.yaml'
+/** The files the Configure space edits, as the server names them. */
+export type ConfigFile = 'schema.yaml' | 'data-entry.yaml' | 'flows.yaml'
 
 /** `GET /_configure`: the files as trees, with their version. */
 export interface ConfigSnapshot {
   version: string
   schema: TreeValue
   data_entry: TreeValue
+  /** flows.yaml, an empty mapping when the file is absent. Only `triggers:` is editable. */
+  flows: TreeValue
   /** The key patterns the Configure space may change, per file. */
   editable: Partial<Record<ConfigFile, string[]>>
 }
@@ -63,6 +65,7 @@ export interface ConfigDraftBody {
   base_version: string
   schema?: TreeValue
   data_entry?: TreeValue
+  flows?: TreeValue
   renames?: ConfigRename[]
   value_mappings?: ConfigValueMapping[]
   migration_title?: string

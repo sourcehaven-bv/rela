@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
@@ -33,6 +35,8 @@ entities:
       status: {type: string}
       assignee: {type: string}
       watchers: {type: string, list: true}
+      due: {type: date}
+      valid_until: {type: datetime}
     query_scopes:
       impl-open: "related(entity, 'implements', { status = 'open' })"
       reported: "related(entity, 'reportedBy')"
@@ -48,6 +52,7 @@ entities:
       watching: "has_current_user(entity.watchers)"
       unreported-open-impl: "not related(entity, 'reportedBy') and related(entity, 'implements', { status = 'open' })"
       open-or-reported: "entity.status == 'open' or related(entity, 'reportedBy')"
+      title-is-assignee: "entity.title == entity.assignee"
   feature:
     label: Feature
     plural: features
@@ -71,12 +76,14 @@ relations:
 `
 
 // lowerableScopes are the fixture's scopes that queryplan.LowerCondition
-// accepts (TKT-I39Y7N4). open-or-reported is the one that must stay on the Go
-// path.
+// accepts (TKT-I39Y7N4). open-or-reported lowers into GraphQuery.Where
+// (TKT-8HY05WB); title-is-assignee compares two attributes and must stay on
+// the Go path.
 var lowerableScopes = map[string]bool{
 	"impl-open": true, "reported": true, "open-reported-impl": true, "chain": true, "mine": true,
 	"mine-reported": true, "mine-owned-open": true, "not-reported": true, "not-mine-reported": true,
 	"not-done": true, "not-mine": true, "watching": true, "unreported-open-impl": true,
+	"open-or-reported": true,
 }
 
 // newScopePushdownApp seeds twelve tickets over a counting store. Every
@@ -147,6 +154,18 @@ func newScopePushdownAppOn(t *testing.T, base store.Store) (*App, *acl.Declarati
 		if i%5 != 0 {
 			props["watchers"] = [][]string{{"alice"}, {"bob", "alice"}, {}, {"dave"}}[i%4]
 		}
+		// Dates far from any test run's read time, in the shapes a store
+		// holds: a string, a decoded YAML time.Time, garbage, and unset.
+		switch i % 4 {
+		case 0:
+			props["due"] = "2020-01-0" + strconv.Itoa(i%9+1)
+			props["valid_until"] = "2099-01-01T10:00:00Z"
+		case 1:
+			props["due"] = time.Date(2099, 1, i, 0, 0, 0, 0, time.UTC)
+			props["valid_until"] = "2020-03-01T23:59:59+02:00"
+		case 2:
+			props["due"] = "TBD"
+		}
 		seedEntity(app, &entity.Entity{ID: id, Type: "ticket", Properties: props})
 		if i%4 != 0 {
 			seedRelation(app, &entity.Relation{From: id, Type: "implements", To: fmt.Sprintf("FEAT-%d", i%3+1)})
@@ -185,7 +204,7 @@ func assertScopeMatchesGoPath(t *testing.T, app *App, d *acl.Declarative, counti
 	scopes := []string{
 		"impl-open", "reported", "open-reported-impl", "chain", "mine", "not-reported",
 		"mine-reported", "mine-owned-open", "not-mine-reported", "not-done", "not-mine", "watching",
-		"unreported-open-impl", "open-or-reported",
+		"unreported-open-impl", "open-or-reported", "title-is-assignee",
 	}
 	for _, user := range []string{"alice", "bob", "dave", "erin"} {
 		for _, scope := range scopes {

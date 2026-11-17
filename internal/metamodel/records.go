@@ -9,9 +9,9 @@ import (
 	"time"
 )
 
-// RecordTypeDef is one entry of the top-level `records:` block: an
-// append-only stream of typed rows attached to an owner entity and stored
-// outside the graph (TKT-J7Q9C4K). Policy only: the rows live in the record
+// RecordTypeDef is one entry of the top-level `records:` block: a stream of
+// typed rows attached to an owner entity and stored outside the graph
+// (TKT-J7Q9C4K). Rows are append-only unless [RecordTypeDef.Mutable] is set. Policy only: the rows live in the record
 // store, see internal/records.
 type RecordTypeDef struct {
 	// Label is the display name. Empty means the key.
@@ -29,6 +29,9 @@ type RecordTypeDef struct {
 	// Ledger makes the type a ledger: rows are appended in balanced
 	// transactions and corrected only by reversal.
 	Ledger *LedgerDef `yaml:"ledger,omitempty"`
+	// Mutable lets a row be updated or deleted one at a time (TKT-ERO2X5G).
+	// A ledger cannot be mutable: it is corrected by reversal.
+	Mutable bool `yaml:"mutable,omitempty"`
 }
 
 // LedgerDef is the `ledger:` block of a record type.
@@ -48,7 +51,8 @@ type LedgerDef struct {
 
 // recordReservedFields are the names a record row carries itself, so no
 // declared field may take them.
-var recordReservedFields = []string{"id", "type", "owner", "ts", "recorded_at", "recorded_by", "group", "reverses"}
+var recordReservedFields = []string{"id", "type", "owner", "ts", "recorded_at", "recorded_by", "group", "reverses",
+	"updated_at", "updated_by", "revision"}
 
 // RecordKeys returns the declared record type keys, sorted.
 func (m *Metamodel) RecordKeys() []string {
@@ -143,6 +147,9 @@ func validateRecords(m *Metamodel) []string {
 		}
 		if d.Ledger != nil {
 			errs = append(errs, validateLedger(m, at+".ledger", d)...)
+			if d.Mutable {
+				errs = append(errs, at+": a ledger cannot be mutable; correct a posting by reversing it")
+			}
 		}
 	}
 	return errs

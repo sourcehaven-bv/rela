@@ -64,7 +64,7 @@ func TestScriptOutcome(t *testing.T) {
 
 func TestFlowActionUsable(t *testing.T) {
 	ok := dataentryconfig.Action{Script: "notify.lua", Permission: "p"}
-	require.NoError(t, flowActionUsable("a", ok))
+	require.NoError(t, flowActionUsable("a", ok, ""))
 	tests := map[string]dataentryconfig.Action{
 		"no script":    {},
 		"set":          {Script: "x.lua", Set: map[string]string{"status": "done"}},
@@ -75,7 +75,7 @@ func TestFlowActionUsable(t *testing.T) {
 	}
 	for name, a := range tests {
 		t.Run(name, func(t *testing.T) {
-			require.Error(t, flowActionUsable("a", a))
+			require.Error(t, flowActionUsable("a", a, ""))
 		})
 	}
 }
@@ -175,5 +175,35 @@ func TestRunJob_RefusesRelaIdentity(t *testing.T) {
 	for _, as := range []string{"", principal.UserFlow} {
 		err := r.RunJob(context.Background(), flowengine.JobCall{RunAs: as})
 		require.ErrorIs(t, err, flowengine.ErrPermanent, "run_as %q", as)
+	}
+}
+
+// An llm step hands the permission check to the runner: a refusal there
+// fails the step for good, and a provider failure is retried.
+func TestRunAction_LLMStep(t *testing.T) {
+	cfg := mapLoader{dataentryconfig.ConfigFile: `actions:
+  triage:
+    permission: ticket.triage
+    available_on: { entity_types: [ticket] }
+    llm: { prompt: p, apply: auto, outputs: { set: [priority] } }
+`}
+	call := flowengine.JobCall{RunAs: "bot", Subject: entity.Ref{ID: "TKT-1"},
+		Job: flowcfg.Job{Target: flowcfg.JobAction, Action: "triage"}}
+	for _, tc := range []struct {
+		name      string
+		runner    *fakeLLMRunner
+		permanent bool
+	}{
+		{"refused", &fakeLLMRunner{err: errors.New("run_as lacks ticket.triage")}, true},
+		{"provider down", &fakeLLMRunner{retry: true, err: errors.New("503")}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &llmActionHolder{}
+			h.r.Store(&llmActionRunnerBox{tc.runner})
+			err := (&flowJobRunner{cfg: cfg, llm: h}).runAction(context.Background(), call)
+			require.Error(t, err)
+			require.Equal(t, tc.permanent, errors.Is(err, flowengine.ErrPermanent))
+			require.Equal(t, 1, tc.runner.runs)
+		})
 	}
 }

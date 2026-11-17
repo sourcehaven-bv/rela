@@ -16,7 +16,7 @@ status: done
 PR 1 of FEAT-0BH46JQ.
 
 - `audit.Audit` stays the write seam. The read side comes in TKT-X1ZFO04 as a separate capability.
-- `sqlaudit`: one SQL implementation over `sqlexec`, adapted for PostgreSQL (`pgaudit`, tenant schema, pg migration 0050) and SQLite (`sqliteaudit`, schema v41).
+- `sqlaudit`: one SQL implementation over `sqlexec`, adapted for PostgreSQL (`pgaudit`, tenant schema, pg migration 0051) and SQLite (`sqliteaudit`, schema v42).
 - Each row carries the hash of the previous row. `rela audit verify` walks the chain and prints the head.
 - `rela audit prune --keep-days N` keeps the chain verifiable from an anchor; below 1095 days needs `--allow-short-retention`.
 - `rela audit import` appends existing JSONL files.

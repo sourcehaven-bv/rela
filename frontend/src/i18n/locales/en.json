@@ -567,6 +567,10 @@
       "stale": "{property} changed since the proposal was made, so it was not saved.",
       "saveFailed": "The changes could not be saved",
       "linkFailed": "Could not add {relation} to {title}: {reason}",
+      "records": "New records",
+      "newRecord": "{relation}: new {type}",
+      "createFailed": "Could not create the new {type} for {relation}: {reason}",
+      "createUnlinked": "Created {id}, but could not add it as {relation}: {reason}. Link or delete it yourself.",
       "model": "Proposed by {model}"
     },
     "llmBatch": {
@@ -1540,9 +1544,36 @@
       "actionFailed": "The action failed",
       "busy": "A sync is running on this remote. Try again shortly."
     }
-  }
-,
-  "configure": {
-    "automationsMoved": "Automations are declared in flows.yaml under triggers:. Edit that file to change them."
+  },
+  "configureAutomations": {
+    "title": "Automations",
+    "one": "Automation",
+    "new": "New automation",
+    "intro": "An automation does something by itself when a record is created or changes, such as creating a checklist. Automations run in the order listed.",
+    "empty": "No automations yet.",
+    "nothingYet": "Nothing yet",
+    "readOnly": "Read only",
+    "remove": "Remove",
+    "notFound": "No such automation",
+    "locked": "This automation runs a script or uses a setting that is changed in flows.yaml. It is shown here so you can see what it does.",
+    "name": "Name",
+    "description": "Description",
+    "when": "When",
+    "recordOfType": "A record of type",
+    "changes": "Changes",
+    "anyProperty": "Any property",
+    "to": "To",
+    "anyChange": "Leave empty for any change.",
+    "onCreated": "When a record is created",
+    "onUpdated": "When a record is updated",
+    "then": "Then",
+    "thenHelp": "The outputs run in the order shown.",
+    "outputs": "Outputs, in the order they run",
+    "setProperty": "Set a property",
+    "chooseProperty": "Choose a property",
+    "setHint": "Text, or {placeholder} for the date.",
+    "addOutput": "Add output",
+    "removeOutput": "Remove {name}",
+    "usedBy": "These automations use it: {names}."
   }
 }

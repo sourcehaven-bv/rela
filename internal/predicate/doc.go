@@ -59,7 +59,9 @@
 //	string   string   byte-equal (incl. null bytes)
 //
 // Ordered comparisons (<, <=, >, >=) require two numbers or two strings;
-// strings compare lexicographically (byte-wise).
+// strings compare lexicographically (byte-wise). A nil operand fails with
+// [ErrNilOperand], unless the caller evaluates with [NilOrderedIsFalse],
+// which makes the comparison false instead.
 //
 // # Numeric model
 //

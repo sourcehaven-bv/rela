@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 41
+const schemaVersion = 42
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -393,11 +393,27 @@ var migrations = []migration{
 			SELECT 1 FROM records r WHERE r.type = record_groups.type AND r.grp = record_groups.grp)`),
 	},
 	{
-		// v40 → v41: the audit log (TKT-USQBMG6). New tables; nothing to
+		// v40 → v41: the last change of a mutable record row (TKT-ERO2X5G).
+		// A row from before reads 0, never changed.
+		to: 41,
+		apply: func(ctx context.Context, conn *sql.Conn) error {
+			return addTableColumns(ctx, conn, "records", recordsMutableColumns)
+		},
+	},
+	{
+		// v41 → v42: the audit log (TKT-USQBMG6). New tables; nothing to
 		// backfill. `rela audit import` brings in an existing JSONL log.
-		to:    41,
+		to:    42,
 		apply: sqlSteps(auditLogDDL),
 	},
+}
+
+// recordsMutableColumns are the change columns of records, matching
+// recordsDDL and pgstore migration 0050.
+var recordsMutableColumns = []struct{ name, def string }{
+	{"updated_at", "INTEGER NOT NULL DEFAULT 0"},
+	{"updated_by", "TEXT NOT NULL DEFAULT ''"},
+	{"revision", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 // messageThreadColumns are the thread columns of channel_messages.

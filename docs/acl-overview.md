@@ -174,6 +174,88 @@ exist — or one your data doesn't populate — the walk finds no edges and grou
 roles silently never resolve. There's no separate "is this a real relation"
 check; the relation simply has to be there.
 
+## A grant that expires
+
+A `role_relations:` entry can carry a `when:` condition on the edge's own
+properties. The edge grants its role only while the condition holds. Use it
+for access that should end on a date, such as an external auditor who may
+read for six weeks.
+
+Declare the date on the relation type in the schema:
+
+```yaml
+relations:
+  auditor-of:
+    label: auditor of
+    from: [person]
+    to: [project]
+    properties:
+      valid_until: {type: date}
+```
+
+Then name the condition in `acl.yaml`:
+
+```yaml
+role_relations:
+  auditor-of:
+    confers: auditor
+    requires_permission: delegate-access
+    when: "edge.valid_until >= today()"
+```
+
+An auditor with an `auditor-of` edge to a project, with `valid_until:
+2026-12-31`, reads the project and everything that inherits from it up to
+and including 31 December. From 1 January the edge grants nothing.
+
+The same `when:` works on the membership relation. An expired membership
+edge is not walked, so the user loses the group's roles:
+
+```yaml
+membership_relation: heeft_rol
+role_relations:
+  heeft_rol:
+    requires_permission: delegate-membership
+    when: "edge.valid_until >= today()"
+```
+
+### What a condition may say
+
+The condition must translate exactly into a store query, because the same
+rule decides list reads, search and single reads. So the policy only loads
+when the condition is:
+
+- one comparison, or several joined with `and`;
+- each comparison of the form `edge.<property> <op> <value>`, in either
+  order;
+- on a `date` property with the default `YYYY-MM-DD` format: `==`, `<`,
+  `<=`, `>` or `>=` against `today()` or a date such as `'2026-12-31'`;
+- on a string or enum property: `==` against a non-empty text.
+
+The policy load fails on anything else, such as `or`, `not`, `~=`, a
+`datetime` property, a list property or a property the relation does not
+declare. A `when:` also needs `requires_permission:` on the same entry,
+because whoever can edit the edge can extend the date.
+
+`until` is a reserved word in the condition language, so `edge.until`
+cannot be written. Name the property `valid_until` or similar.
+
+### When access ends
+
+rela judges the condition on every request, at the request's read time, by
+calendar day in UTC. Access ends at the first request after the condition
+stops holding. No scheduled job runs, and nothing needs to be removed. An
+open live-update stream re-checks its access on the first change after
+midnight UTC.
+
+An edge without the property, or with a value that is not a valid date,
+grants nothing.
+
+The condition applies only to the edge that grants the role. The
+`inherit_roles_through:` edges below it are walked as before.
+
+`rela acl audit` lists every conditional grant as an `info` finding, so a
+reviewer sees which access expires.
+
 ## How field blocks combine across roles
 
 A role's `fields:`, `visible:` and `options:` blocks narrow what that role

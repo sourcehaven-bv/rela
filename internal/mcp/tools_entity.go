@@ -109,7 +109,8 @@ type listPage struct {
 // Without a filter, the store pages and counts. A filter that lowers
 // exactly ([ConditionLowerer]) joins the store read when every property it
 // reads is visible to the caller on every row: its comparisons as Props, its
-// traversals as Traversals, which the reader gates (TKT-Z099FGY). A filter
+// traversals as Traversals, which the reader gates (TKT-Z099FGY), and an
+// `or`, a `not` or a nested condition as Where (TKT-8HY05WB). A filter
 // that requires a denied traversal matches nothing and reads nothing. Any
 // other filter is answered in Go over the whole type (listPage.filterInGo).
 func (p listPage) ofType(
@@ -120,11 +121,11 @@ func (p listPage) ofType(
 		if d.Related.Conditions == nil {
 			return p.filterInGo(ctx, d, entityType, prog)
 		}
-		props, traversals, ok := d.Related.Conditions.Lower(ctx, prog, entityType)
+		filter, ok := d.Related.Conditions.Lower(ctx, prog, entityType)
 		if !ok {
 			return p.filterInGo(ctx, d, entityType, prog)
 		}
-		q.Props, q.Traversals = props, traversals
+		q.Props, q.Traversals, q.Where = filter.Props, filter.Traversals, filter.Where
 	}
 	page, err := d.Store.ListEntityPage(ctx, q)
 	if errors.Is(err, visibility.ErrPropsNotPushable) {
@@ -163,9 +164,9 @@ func (p listPage) everyType(ctx context.Context, d Deps) ([]*entity.Entity, int,
 
 // filterInGo answers a filter the store cannot: it reads every readable row
 // of entityType, evaluates prog on the redacted rows, and cuts the page. Its
-// cost grows with the type. It serves an ordered comparison, an `or`, a
-// `not` over anything but a traversal, a filter over a property hidden on
-// some row, and a traversal the gate refuses. Reading it in pages would not
+// cost grows with the type. It serves a filter queryplan.LowerCondition
+// declines (a date or decimal comparison, a function call), a filter over a
+// property hidden on some row, and a traversal the gate refuses. Reading it in pages would not
 // help: the response carries the exact total, so every row is judged.
 func (p listPage) filterInGo(
 	ctx context.Context, d Deps, entityType string, prog *predicate.Program,
@@ -240,7 +241,7 @@ func filterEntities(
 		traversalFor = bound
 	}
 
-	ev := predicatefns.NewEvaluator(d.Meta)
+	ev := predicatefns.NewEvaluator(d.Meta).LoweringSemantics()
 	out := make([]*entity.Entity, 0, len(entities))
 	for _, e := range entities {
 		ok, err := ev.MatchesWithTraversals(ctx, prog, e.Type, e.ID, e.Properties, traversalFor(e.ID))

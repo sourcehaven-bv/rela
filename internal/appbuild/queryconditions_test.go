@@ -37,30 +37,41 @@ func TestQueryConditions_Lower(t *testing.T) {
 		"entity.title == current_user.id and not related(entity, 'implementedBy')")
 	require.NoError(t, err)
 
-	props, traversals, ok := conds.Lower(context.Background(), prog, "feature")
+	filter, ok := conds.Lower(context.Background(), prog, "feature")
 	require.False(t, ok, "current_user lowers only with a stamped identity")
-	require.Empty(t, props)
-	require.Empty(t, traversals)
+	require.Empty(t, filter.Props)
+	require.Empty(t, filter.Traversals)
 
 	ctx := principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolMCP})
 	ctx, err = conds.StampQueryIdentity(ctx)
 	require.NoError(t, err)
-	props, traversals, ok = conds.Lower(ctx, prog, "feature")
+	filter, ok = conds.Lower(ctx, prog, "feature")
 	require.True(t, ok)
 	require.Equal(t, []store.PropPredicate{
 		{Property: "title", Op: store.PropEqual, Value: "alice", Scalar: true},
-	}, props)
+	}, filter.Props)
+	require.Nil(t, filter.Where, "a plain conjunction needs no tree")
 	require.Equal(t, []visibility.PageTraversal{{
 		Hop: acl.TraversalHop{
 			RelationTypes: []string{"implements"}, Incoming: true, EntityType: "ticket", Props: []store.PropPredicate{},
 		},
 		Negate: true,
-	}}, traversals)
+	}}, filter.Traversals)
 
-	props, traversals, ok = appbuild.QueryConditions{}.Lower(ctx, prog, "feature")
+	// An `or` rides in Where, and every field it reads is one of its props.
+	orProg, err := ev.CompileWithCurrentUser("feature", "entity.title == 'a' or entity.title < 'c'")
+	require.NoError(t, err)
+	filter, ok = conds.Lower(ctx, orProg, "feature")
+	require.True(t, ok)
+	require.Empty(t, filter.Props)
+	require.NotNil(t, filter.Where)
+	require.Equal(t, store.CondOr, filter.Where.Op)
+	require.Len(t, filter.Where.Props(), 2)
+
+	filter, ok = appbuild.QueryConditions{}.Lower(ctx, prog, "feature")
 	require.False(t, ok, "the zero value lowers nothing")
-	require.Empty(t, props)
-	require.Empty(t, traversals)
+	require.Empty(t, filter.Props)
+	require.Empty(t, filter.Traversals)
 }
 
 // The bundle's Reader gates the traversals Conditions returns with the
@@ -108,6 +119,11 @@ assignments:
 		{"bob", "not related(entity, 'implementedBy')", []string{"FEAT-2"}},
 		{"alice", "related(entity, 'implementedBy')", nil},
 		{"alice", "not related(entity, 'implementedBy')", []string{"FEAT-1", "FEAT-2"}},
+		// Inside a Where tree a denied traversal is false (TKT-8HY05WB).
+		{"bob", "related(entity, 'implementedBy') or entity.title == 'b'", []string{"FEAT-1", "FEAT-2"}},
+		{"alice", "related(entity, 'implementedBy') or entity.title == 'b'", []string{"FEAT-2"}},
+		{"bob", "not (related(entity, 'implementedBy') and entity.title == 'a')", []string{"FEAT-2"}},
+		{"alice", "not (related(entity, 'implementedBy') and entity.title == 'a')", []string{"FEAT-1", "FEAT-2"}},
 	} {
 		t.Run(tc.user+" "+tc.filter, func(t *testing.T) {
 			t.Parallel()
@@ -116,11 +132,10 @@ assignments:
 			require.NoError(t, err)
 			prog, err := ev.Compile("feature", tc.filter)
 			require.NoError(t, err)
-			props, traversals, ok := reads.Conditions.Lower(callCtx, prog, "feature")
+			filter, ok := reads.Conditions.Lower(callCtx, prog, "feature")
 			require.True(t, ok)
-			page, err := reads.Reader.ListEntityPage(callCtx, visibility.PageQuery{
-				Type: "feature", Faces: store.AllFaces(), Props: props, Traversals: traversals, Limit: 10,
-			})
+			filter.Type, filter.Faces, filter.Limit = "feature", store.AllFaces(), 10
+			page, err := reads.Reader.ListEntityPage(callCtx, filter)
 			require.NoError(t, err)
 			var ids []string
 			for _, e := range page.Rows {

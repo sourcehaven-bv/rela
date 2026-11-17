@@ -369,7 +369,7 @@
           "type": "string"
         },
         "limit": {
-          "description": "Max results (default 50)",
+          "description": "Max results (default 50, at most 1000)",
           "type": "number"
         },
         "offset": {
@@ -564,7 +564,7 @@
     "inputSchema": {
       "properties": {
         "limit": {
-          "description": "Max results (default 20)",
+          "description": "Max results (default 20, at most 1000)",
           "type": "number"
         },
         "query": {

@@ -28,6 +28,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
@@ -174,7 +175,12 @@ type Runtime struct {
 	principal principal.Principal
 
 	// clock is read once at construction for rela.today, rela.now and
-	// rela.now_unix. Nil: accepted — the wall clock.
+	// rela.now_unix, and then replaced by that one reading. list_entities
+	// resolves $today and $now in its filter against the caller's read time
+	// (internal/readtime), so a script run inside a request agrees with that
+	// request's conditions, and against the reading when the caller has
+	// none. Like every filter, $today is the UTC day; rela.today keeps the
+	// clock's own zone (TKT-8ZO3W07). Nil: accepted — the wall clock.
 	clock func() time.Time
 
 	// pcall is the state of protected calls; see pcallWithCapture.
@@ -1042,6 +1048,7 @@ func (r *Runtime) registerReadBindings(rela *lua.LTable) {
 		clock = time.Now
 	}
 	now := clock()
+	r.clock = func() time.Time { return now }
 	r.L.SetField(rela, "today", lua.LString(now.Format(time.DateOnly)))
 	r.L.SetField(rela, "now", lua.LString(now.UTC().Format(time.RFC3339)))
 	r.L.SetField(rela, "now_unix", lua.LNumber(now.Unix()))
@@ -1404,6 +1411,8 @@ func (r *Runtime) luaListEntities(ls *lua.LState) int {
 			ls.RaiseError("invalid filter: %s", err.Error())
 			return 0
 		}
+		readAt := readtime.Or(r.callerCtx(), r.clock)
+		f = filter.BindDateVariables([]*filter.Filter{f}, readAt)[0]
 
 		entityDef, found := r.deps.Meta.GetEntityDef(entityType)
 		if !found {

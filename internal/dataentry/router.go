@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
 )
 
 // EnvDataEntryUserVar is the local-dev escape hatch: if this env var is
@@ -1091,7 +1092,17 @@ func responseGates(h http.Handler, a *App) http.Handler {
 	if d, ok := a.acl.(*acl.Declarative); ok && d != nil {
 		h = attachACLRequest(h, d, a.jwtGate != nil)
 	}
-	return h
+	return attachReadTime(h)
+}
+
+// attachReadTime stamps the request's read time on its context (see
+// internal/readtime), outermost, so every conditional grant (TKT-TKSCSBT)
+// the request evaluates is judged at one instant. It replaces a time already on ctx: each request, and each live-view replay,
+// is its own operation.
+func attachReadTime(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r.WithContext(readtime.With(r.Context(), nowFunc())))
+	})
 }
 
 // liveReplayChain is the handler a live-view replay runs through

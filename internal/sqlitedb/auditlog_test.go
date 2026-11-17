@@ -10,10 +10,10 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 )
 
-// TestMigrate_v40ToV41AuditLog pins the v40 to v41 rung (TKT-USQBMG6): a
-// version-40 file gains the audit tables and indexes with the shape of a
+// TestMigrate_v41ToV42AuditLog pins the v41 to v42 rung (TKT-USQBMG6): a
+// version-41 file gains the audit tables and indexes with the shape of a
 // fresh database, and opening a second time changes nothing.
-func TestMigrate_v40ToV41AuditLog(t *testing.T) {
+func TestMigrate_v41ToV42AuditLog(t *testing.T) {
 	fresh := openChannelDB(t, filepath.Join(t.TempDir(), "fresh.db"))
 	tables := []string{"audit_log", "audit_subjects", "audit_anchor"}
 	indexes := []string{"audit_log_at_idx", "audit_subjects_seq_idx"}
@@ -27,13 +27,13 @@ func TestMigrate_v40ToV41AuditLog(t *testing.T) {
 		require.NotEmpty(t, want[name], name)
 	}
 
-	path := filepath.Join(t.TempDir(), "v40.db")
+	path := filepath.Join(t.TempDir(), "v41.db")
 	raw := openChannelDB(t, path)
 	for _, stmt := range []string{
 		`DROP TABLE audit_subjects`,
 		`DROP TABLE audit_log`,
 		`DROP TABLE audit_anchor`,
-		`PRAGMA user_version = 40`,
+		`PRAGMA user_version = 41`,
 	} {
 		_, err := raw.Exec(stmt)
 		require.NoError(t, err, stmt)

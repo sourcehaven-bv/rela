@@ -70,7 +70,18 @@ func LoadTriggers(ctx context.Context, r configReader, meta *metamodel.Metamodel
 // Compiling a `related(...)` condition checks it against the schema and
 // queries nothing, so `rela validate`, which opens no store, passes nil.
 func CheckTriggers(ctx context.Context, r configReader, meta *metamodel.Metamodel, st store.Store) error {
-	rules, err := LoadTriggers(ctx, r, meta)
+	data, err := readFlowsFile(ctx, r)
+	if err != nil {
+		return err
+	}
+	return CheckTriggerData(data, meta, st) //nolint:contextcheck // New takes no ctx; git lookup has a timeout
+}
+
+// CheckTriggerData is [CheckTriggers] over flows.yaml content that need not
+// be on disk yet, such as a Configure draft. data is nil when the file is
+// absent.
+func CheckTriggerData(data []byte, meta *metamodel.Metamodel, st store.Store) error {
+	rules, err := triggers.Parse(data, meta)
 	if err != nil || len(rules) == 0 {
 		return err
 	}
@@ -84,7 +95,6 @@ func CheckTriggers(ctx context.Context, r configReader, meta *metamodel.Metamode
 	if err != nil { // coverage-ignore: defensive: meta, gate and match are all non-nil here
 		return err
 	}
-	//nolint:contextcheck // New takes no ctx; its git user lookup has its own timeout, as before the move
 	if _, err := triggers.New(meta, rules, triggers.WithTraversals(binder)); err != nil {
 		return fmt.Errorf("flows.yaml: triggers: %w", err)
 	}

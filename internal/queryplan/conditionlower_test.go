@@ -2,6 +2,7 @@ package queryplan_test
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
@@ -59,11 +60,15 @@ func TestLowerCondition(t *testing.T) {
 		},
 		{name: "no identity declines an identity inequality", src: "entity.assignee ~= current_user.id"},
 		{name: "no identity declines a membership", src: "has_current_user(entity.watchers)"},
-		{name: "a typed property declines", src: "entity.count ~= 3"},
 		{name: "current_user.tool declines", src: "entity.assignee ~= current_user.tool", identity: identity},
-		{name: "or declines", src: "entity.status ~= 'a' or related(entity, 'implements')"},
-		{name: "an ordered comparison declines", src: "entity.status < 'b'"},
-		{name: "not over a comparison declines", src: "not (entity.status == 'a')"},
+		{
+			name: "an ordered string comparison is a prop", src: "entity.status < 'b' and 3 <= entity.count",
+			wantOK: true,
+			wantProps: []store.PropPredicate{
+				{Property: "status", Op: store.PropLess, Value: "b", Kind: store.OrderString},
+				{Property: "count", Op: store.PropGreaterEqual, Value: "3", Kind: store.OrderInteger},
+			},
+		},
 		{
 			name: "no identity declines a negated current_user traversal",
 			src:  "not related(entity, 'ownedBy', { id = current_user.id })",
@@ -145,6 +150,118 @@ func TestLowerCondition_EqualitiesAreIndexColumns(t *testing.T) {
 		if p.Op == store.PropEqual && p.Scalar && !slices.Contains(indexed, p.Property) {
 			t.Errorf("pushes %q, which no derived index covers (%v)", p.Property, indexed)
 		}
+	}
+}
+
+// A condition that is not a plain conjunction keeps its plain conjuncts in
+// Props and Traversals and puts the rest in Where (TKT-8HY05WB).
+func TestLowerCondition_Trees(t *testing.T) {
+	meta := conditionMeta()
+	tests := []struct {
+		src, props, where string
+	}{
+		{src: "entity.status ~= 'a' or related(entity, 'implements')",
+			where: "or(status~=a, rel(implements))"},
+		{src: "not (entity.status == 'a')", where: "not(status=a)"},
+		{src: "entity.count ~= 3", where: "not(and(count>=3#int, count<=3#int))"},
+		{src: "entity.count == 3", props: "count>=3#int count<=3#int"},
+		{src: "entity.status == 'x' and (entity.count > 1 or not related(entity, 'implements'))",
+			props: "status=x", where: "or(count>1#int, not(rel(implements)))"},
+		{src: "true and entity.status == 'x'", props: "status=x"},
+		{src: "false or entity.status == 'x'", where: "or(or(), status=x)"},
+		{src: "entity.status >= ''", props: "status>=#str"},
+	}
+	ev := predicatefns.NewEvaluator(meta)
+	for _, tc := range tests {
+		t.Run(tc.src, func(t *testing.T) {
+			prog, err := ev.CompileWithCurrentUser("task", tc.src)
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			got, ok := queryplan.LowerCondition(prog, meta, "task", "")
+			if !ok {
+				t.Fatal("did not lower")
+			}
+			var props []string
+			for _, p := range got.Props {
+				props = append(props, renderProp(p))
+			}
+			if g := strings.Join(props, " "); g != tc.props {
+				t.Errorf("props = %q, want %q", g, tc.props)
+			}
+			where := ""
+			if got.Where != nil {
+				where = renderLowered(*got.Where)
+			}
+			if where != tc.where {
+				t.Errorf("where = %q, want %q", where, tc.where)
+			}
+		})
+	}
+}
+
+// Shapes the store cannot read as Go does decline.
+func TestLowerCondition_TreeDeclines(t *testing.T) {
+	meta := conditionMeta()
+	ev := predicatefns.NewEvaluator(meta)
+	deep := "entity.status == 'a'"
+	for range store.MaxCondDepth {
+		deep = "not (" + deep + ")"
+	}
+	// Balanced, so the compiler's own nesting limit does not refuse it
+	// first.
+	var balanced func(n int) string
+	balanced = func(n int) string {
+		if n == 1 {
+			return "entity.status == 'a'"
+		}
+		return "(" + balanced(n/2) + " or " + balanced(n-n/2) + ")"
+	}
+	for _, src := range []string{
+		"entity.due < '2026-01-01'",
+		"entity.price > 3",
+		"entity.status == entity.assignee",
+		"entity.count > entity.count",
+		deep,
+		balanced(store.MaxCondLeaves + 1),
+	} {
+		t.Run(src[:min(len(src), 40)], func(t *testing.T) {
+			prog, err := ev.CompileWithCurrentUser("task", src)
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			if _, ok := queryplan.LowerCondition(prog, meta, "task", ""); ok {
+				t.Error("lowered")
+			}
+		})
+	}
+}
+
+func renderProp(p store.PropPredicate) string {
+	op := map[store.PropOp]string{
+		store.PropEqual: "=", store.PropNotEqualOrEmpty: "~=", store.PropLess: "<", store.PropLessEqual: "<=",
+		store.PropGreater: ">", store.PropGreaterEqual: ">=",
+	}[p.Op]
+	kind := map[store.OrderKind]string{store.OrderText: "", store.OrderString: "#str", store.OrderInteger: "#int"}[p.Kind]
+	return p.Property + op + p.Value + kind
+}
+
+func renderLowered(c queryplan.LoweredCond) string {
+	var args []string
+	for _, a := range c.Args {
+		args = append(args, renderLowered(a))
+	}
+	switch c.Op {
+	case store.CondProp:
+		return renderProp(c.Prop)
+	case store.CondRelated:
+		return "rel(" + strings.Join(c.Traversal.Path, ".") + ")"
+	case store.CondAnd:
+		return "and(" + strings.Join(args, ", ") + ")"
+	case store.CondOr:
+		return "or(" + strings.Join(args, ", ") + ")"
+	default:
+		return "not(" + strings.Join(args, ", ") + ")"
 	}
 }
 

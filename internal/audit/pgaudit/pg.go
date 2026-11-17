@@ -1,6 +1,6 @@
 // Package pgaudit is the PostgreSQL audit log: the sqlaudit implementation
 // over the pgx pool the composition root shares with pgstore. The tables
-// live in the store's schema (pgstore migration 0050), so each tenant has
+// live in the store's schema (pgstore migration 0051), so each tenant has
 // its own chain.
 //
 // Several rela-server processes may append at once. The chain lock is a

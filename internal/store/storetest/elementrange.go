@@ -390,7 +390,7 @@ func entryAddresses(es []store.RangeEntry) []string {
 
 // elementDiffCases is how many generated requests
 // [RunElementRangeDifferential] checks.
-const elementDiffCases = 300
+const elementDiffCases = 400
 
 // RunElementRangeDifferential compares a backend's element range reader with
 // elementnaive over the SAME store, on scopes and ranges generated from

@@ -127,6 +127,28 @@ going to be shown anyway is a visibility decision, not an escalation
 path. Both the warning and the linter evaluate the same predicate, so
 they never disagree.
 
+### A grant with a `when:` condition
+
+A `role_relations:` entry may carry `when:`, a condition on the edge's own
+properties such as `edge.valid_until >= today()` (see [GUIDE-acl-overview]).
+The policy refuses a `when:` without `requires_permission:`. The gate covers
+the condition properties too: anyone who can edit the edge can move its date,
+so extending access needs the same permission as granting it.
+
+The condition fails closed. An edge without the property, or with a value
+that is not a `YYYY-MM-DD` date, grants nothing. The policy refuses any
+condition the store cannot answer exactly, so list reads, search, single
+reads and the Go checks all apply the same rule. Nothing evaluates it per
+row in Go.
+
+rela judges the condition at each request's read time, by calendar day in
+UTC. Access ends at the first request after the condition stops holding.
+There is no expiry job and no cached grant: the identity is resolved again on
+every request. A request without a read time grants nothing through a
+conditional edge. An open event stream re-derives its gate on the first
+change after midnight UTC, so it stops sending change notices for types the
+principal can no longer read.
+
 ### This is a hard requirement with content states
 
 The tolerance above holds only while the worst case is over-granting inside a
@@ -448,7 +470,7 @@ exits zero. For CI, gate the exit code on a severity threshold with
 ```bash
 rela acl audit --fail-on=high     # non-zero if any critical/high finding
 rela acl audit --fail-on=medium   # also fail on medium
-rela acl audit --fail-on=any      # fail on any finding at all
+rela acl audit --fail-on=any      # fail on any problem finding
 rela acl audit --exit-code        # alias for --fail-on=high
 ```
 
@@ -464,6 +486,10 @@ the policy clean — the medium/low findings (wildcard sprawl, dead
 permissions, drift) are exactly the slow rot you want to catch before
 it hides a real hole. Loosen to `--fail-on=high` only if you have a
 deliberate, reviewed reason to tolerate the lower-severity findings.
+
+An `info` finding is a fact, not a problem, and no `--fail-on` threshold
+counts it. The audit reports one for each `role_relations:` entry with a
+`when:` condition, so a reviewer sees which access expires.
 
 Use `-o json` for machine-readable output. A clean, well-gated policy
 reports no findings and exits zero.
@@ -1510,8 +1536,11 @@ A `status:` rule on a nav entry puts a count next to it. A count is about
 data, so it is served by `/api/v1/_nav_status` and never by `_sidebar`,
 which keeps the sidebar identical for every principal; the sidebar only
 carries each entry's `status_key`. The count is taken over the rows the
-list shows that principal: rows are gated and redacted before they are
-counted, and the response is `no-store`, never cached across principals.
+list shows that principal. Rows are gated before they are counted. A rule's
+condition is judged on the redacted row, or in the store when every field
+it reads is visible to the principal on every row, so a count never depends
+on a hidden value. The response is `no-store`, never cached across
+principals.
 An entry hidden by `permission:` gets no count.
 
 **Step done marks follow the same rule.** A `done_when:` on a page tab
@@ -1995,6 +2024,12 @@ that rolls back (SQLite, PostgreSQL); other stores answer 501.
   answers 404, and append answers 403, where a fully readable owner answers
   200 or 201. An aggregate without an owner filter answers 200 and leaves
   the owner's rows out. This is listed under "What still leaks".
+- **Changing a row of a mutable type needs update on every face** of its
+  owner, the same as appending (TKT-ERO2X5G). A row whose owner the caller
+  cannot read answers 404 like a row that does not exist. The stored
+  revision is compared only after both checks, so a 409 never confirms a
+  hidden row. A change refused on a readable owner writes a `denied-write`
+  audit line; a request on a hidden owner writes nothing.
 - **Aggregates gate before they fold.** An aggregate or a ledger
   transaction counts only rows whose owners the caller can read. A
   transaction with a hidden leg answers 404.
@@ -2990,8 +3025,8 @@ bounds *which meta fields* within a reachable one.
 
 `config:edit` is a built-in global permission. It lets a principal use the
 in-app [Configure space](data-entry.md#configure-space), which edits
-`schema.yaml` and `data-entry.yaml`. The space exists only when `rela-server`
-runs with `--config-editing`.
+`schema.yaml`, `data-entry.yaml` and the triggers in `flows.yaml`. The space
+exists only when `rela-server` runs with `--config-editing`.
 
 Treat `config:edit` as administrator access. A holder reshapes the data model
 that every other grant is written against. A save can also run a data
@@ -3026,9 +3061,34 @@ data is.
 
 The Configure space cannot change `acl.yaml`. It also refuses to rename or
 remove an entity type, property, relation or choice option that `acl.yaml`
-mentions. Settings that control access stay locked: a transition `guard`, and
-`permission:` on navigation entries, spaces and dashboard cards. Change those
-in the files directly.
+mentions. Settings that control access stay locked: a transition `guard`,
+`permission:` on navigation entries, spaces and dashboard cards, and the
+stateful `flows:` section of `flows.yaml`. Change those in the files directly.
+
+A trigger output reads and writes without per-record ACL checks. So the
+Configure space judges every trigger it adds or changes against the parsed
+`acl.yaml` and the editor's own grants. It refuses a trigger that:
+
+- runs a script, applies a template variant, replaces records or links to
+  a fixed record;
+- reads a field that a `visible:` grant, client baseline or scope grant
+  hides, or follows relations in its condition;
+- creates a record read more widely than the record that fired it. A role
+  or ceiling with a world grant counts as a wider reader;
+- writes what a grant decides access by;
+- writes what the editor may not write, or what a flow's `outside_edits:`
+  locks.
+
+The write rules also apply to the old version of a trigger that is changed
+or removed. They apply to the triggers that a created record fires too,
+together with the reader rule against the edited trigger's subject. When
+the check cannot judge an edit, for example because `acl.yaml` does not
+parse, the save is refused. Trigger `script` outputs and
+`create.if_exists` stay locked.
+
+A trigger fires on writes the editor cannot see, so whether it fired, and
+when, can show through the records it writes. That is the same one-bit
+signal the rest of the ACL accepts.
 
 ## Git sync (`git:sync`)
 

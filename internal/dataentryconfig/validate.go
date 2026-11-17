@@ -2875,17 +2875,7 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 				continue
 			}
 
-			// An entity-bound action runs from a list only as a batch llm
-			// action (TKT-I2SRNWR): the selection sends each row's address,
-			// and the server gates every row as the detail page would.
-			if action.LLM != nil && action.LLM.Batch != nil {
-				if msg := batchActionRefError(action, list.EntityType); msg != "" {
-					errs = append(errs, fmt.Sprintf("list %q: action %q %s", listID, actionID, msg))
-				}
-			} else if action.AvailableOn != nil {
-				errs = append(errs, entityBoundActionRefError(
-					fmt.Sprintf("list %q", listID), actionID))
-			}
+			errs = append(errs, listActionKindErrors(listID, list, actionID, action)...)
 
 			// Actions referenced by lists must have label and key
 			if action.Label == "" {
@@ -2919,6 +2909,42 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 		errs = append(errs, validateToolbarActions(listID, list, cfg)...)
 	}
 
+	return errs
+}
+
+// listActionKindErrors checks that a list may run the action at all. A batch
+// llm action sends each selected row's address, and the server gates every
+// row as the detail page would (TKT-I2SRNWR). Another llm action needs
+// apply: auto, and any other entity-bound action is refused.
+func listActionKindErrors(listID string, list List, actionID string, action Action) []string {
+	switch {
+	case action.LLM != nil && action.LLM.Batch != nil:
+		if msg := batchActionRefError(action, list.EntityType); msg != "" {
+			return []string{fmt.Sprintf("list %q: action %q %s", listID, actionID, msg)}
+		}
+	case action.LLM != nil:
+		return listLLMActionErrors(listID, list, actionID, action)
+	case action.AvailableOn != nil:
+		return []string{entityBoundActionRefError(fmt.Sprintf("list %q", listID), actionID)}
+	}
+	return nil
+}
+
+// listLLMActionErrors checks an `llm:` action in a list's `actions:`. A
+// list runs it on each selected row, which is the entity it is bound to, so
+// it must run on the list's type. It must apply its own proposal: a list has
+// no dialog to review one proposal per row (TKT-WQ925LL).
+func listLLMActionErrors(listID string, list List, actionID string, action Action) []string {
+	var errs []string
+	if !action.LLM.Auto() {
+		errs = append(errs, fmt.Sprintf(
+			"list %q: action %q only proposes changes; a list runs an llm action only with apply: auto or batch:",
+			listID, actionID))
+	}
+	if subject := action.Subject(); subject != list.EntityType {
+		errs = append(errs, fmt.Sprintf(
+			"list %q: action %q runs on %q, not on the list's type %q", listID, actionID, subject, list.EntityType))
+	}
 	return errs
 }
 

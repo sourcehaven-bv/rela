@@ -23,7 +23,7 @@ import (
 
 // Services wires app to the services in svc: CalDAV aliases, comments, piles, leases,
 // the element range read behind /api/v1/_reconcile,
-// the realtime.yaml holder,
+// the realtime.yaml holder, background `apply: auto` llm actions,
 // the worlds' relation scopes, version tags, the Lua host config, next-action user state, and the
 // predicate compilers behind next-action sources, list and kanban
 // `condition:`, and `query_scopes:`.
@@ -119,6 +119,10 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 		return fmt.Errorf("wire attach_file: %w", err)
 	}
 
+	if llmErr := llmActions(app, svc); llmErr != nil {
+		return llmErr
+	}
+
 	// The reconcile endpoint (TKT-VP02WHG). A build failure is returned, not
 	// degraded: an ungated element read would sum rows the caller may not read.
 	elements, elErr := appbuild.Elements(svc)
@@ -169,6 +173,25 @@ func wireChannels(app *dataentry.App, svc *appbuild.Services) error {
 	}
 	if err := dataentry.SetInboxGrid(app, grid); err != nil {
 		return fmt.Errorf("wire inbox grid: %w", err)
+	}
+	return nil
+}
+
+// llmActions wires `llm:` actions with `apply: auto` (TKT-WQ925LL): the
+// route queues runs where this process runs background jobs, and the job and
+// flow steps run them through the app.
+func llmActions(app *dataentry.App, svc *appbuild.Services) error {
+	if q := appbuild.LLMActionQueue(svc); q != nil {
+		if err := dataentry.SetLLMActionQueue(app, q); err != nil {
+			return fmt.Errorf("wire llm actions: %w", err)
+		}
+	}
+	llm, err := dataentry.NewLLMActionRunner(app)
+	if err != nil {
+		return fmt.Errorf("wire llm actions: %w", err)
+	}
+	if err = appbuild.SetLLMActionRunner(svc, llm); err != nil {
+		return fmt.Errorf("wire llm actions: %w", err)
 	}
 	return nil
 }

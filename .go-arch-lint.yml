@@ -357,6 +357,8 @@ components:
   errors:           { in: internal/errors }
   htmlutil:         { in: internal/htmlutil }
   natsort:          { in: internal/natsort }
+  # The read time of one operation, on ctx (conditional grants judge it).
+  readtime:         { in: internal/readtime }
 
 # -- Vendors --------------------------------------------------------------
 vendors:
@@ -478,6 +480,7 @@ commonComponents:
   - entity
   - errors
   - natsort
+  - readtime
 
 commonVendors:
   - yaml
@@ -1008,6 +1011,9 @@ deps:
       - elementnaive
       # writerule: CheckSchemaCompiles compiles the rules enforced on write.
       - writerule
+      # configedit: CheckTriggerACL answers configedit.TriggerChecker in its
+      # own types.
+      - configedit
       # aclstore: the store adapters handed to acl.NewDeclarative.
       - aclstore
       # The stored IdP roles, over the state KV and the Services-wide lock.
@@ -1468,6 +1474,8 @@ deps:
   aclstore:
     mayDependOn:
       - entity
+      # MatchProps: the edge condition of a conditional grant (TKT-TKSCSBT).
+      - graphquerynaive
       - store
   aclaudit:
     mayDependOn:
@@ -1523,6 +1531,8 @@ deps:
       - predicate
       - predicatefns
       - principal
+      # propmatch.Integer is the one integer binding rule (TKT-8HY05WB).
+      - propmatch
       - transitions
       # SearchFieldScope compiles `visible:` grants into store predicates:
       # queryplan decides exact lowering, relresolve resolves related() hops,
@@ -1817,6 +1827,9 @@ deps:
       - predicate
       - filter
       - metamodel
+      # propmatch.Integer is the integer binding rule the store's integer
+      # range predicate shares (TKT-8HY05WB). propmatch is a stdlib leaf.
+      - propmatch
   # flows.yaml consumes the schema and acl.yaml; neither knows it exists.
   flowcfg:
     mayDependOn:
@@ -2143,6 +2156,7 @@ deps:
   # acl, store nor visibility: a record is not graph content.
   records:
     mayDependOn:
+      - audit
       - entity
       - metamodel
       - principal

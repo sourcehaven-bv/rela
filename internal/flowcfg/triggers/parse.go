@@ -117,6 +117,15 @@ type rawCheck struct {
 	Message  string `yaml:"message"`
 }
 
+// DecodeTypes returns the types one `triggers:` rule and one of its outputs
+// decode into. The Configure allowlist test walks them, so a key added here
+// is classified there before the browser may touch it. A field of type
+// yaml.Node is a mapping of scalars, except `outputs`, whose items are the
+// output type.
+func DecodeTypes() (rule, output reflect.Type) {
+	return reflect.TypeFor[rawRule](), reflect.TypeFor[rawOutput]()
+}
+
 // FromSubject is the only `create.relate.from` a trigger takes.
 const FromSubject = "subject"
 

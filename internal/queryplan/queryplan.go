@@ -84,7 +84,9 @@ func PushdownPrefilters(filters []*filter.Filter, meta *metamodel.Metamodel, typ
 	}
 	var pushed []store.PropPredicate
 	for _, f := range filters {
-		if f.IsGlob || f.Operator != filter.OpEqual || !stringComparableOnEveryType(meta, types, f.Property) {
+		if f.IsGlob || f.Operator != filter.OpEqual || !stringComparableOnEveryType(meta, types, f.Property) ||
+			dateOnAnyType(meta, types, f.Property) {
+
 			continue
 		}
 		pushed = append(pushed, store.PropPredicate{
@@ -92,6 +94,26 @@ func PushdownPrefilters(filters []*filter.Filter, meta *metamodel.Metamodel, typ
 		})
 	}
 	return pushed
+}
+
+// dateOnAnyType reports whether prop is a date or datetime on any listed
+// type. The Go pass compares those as instants: "2026-11-16" equals a stored
+// time.Time or "2026-11-16T00:00:00Z", and a custom `format:` parses too. The
+// store compares the stored text, so an equality pre-filter would drop rows
+// the Go pass keeps (TKT-08ZI5XN). Exact date pushdown waits for canonical
+// date storage (TKT-4Z2BIRG).
+func dateOnAnyType(meta *metamodel.Metamodel, types []string, prop string) bool {
+	for _, typ := range types {
+		def, ok := meta.GetEntityDef(typ)
+		if !ok {
+			continue
+		}
+		switch def.Properties[prop].Type {
+		case metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime:
+			return true
+		}
+	}
+	return false
 }
 
 // stringComparableOnEveryType reports whether prop is, on every listed type,

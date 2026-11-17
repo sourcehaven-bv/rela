@@ -54,6 +54,18 @@ func TestValidateActions_LLMBatch(t *testing.T) {
 			wantErr: "a batch action cannot have outputs.relate",
 		},
 		{
+			name:    "apply auto",
+			action:  batchLLMAction(func(a *Action) { a.LLM.Apply = LLMApplyAuto }),
+			wantErr: "cannot be combined with apply: auto",
+		},
+		{
+			name: "create output",
+			action: batchLLMAction(func(a *Action) {
+				a.LLM.Outputs.Create = []LLMCreateOutput{{Type: "ticket", Relation: "affects"}}
+			}),
+			wantErr: "a batch action cannot have outputs.create",
+		},
+		{
 			name: "content budget",
 			action: batchLLMAction(func(a *Action) {
 				a.LLM.Batch.Max = MaxLLMBatchMax

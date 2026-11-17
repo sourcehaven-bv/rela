@@ -44,7 +44,10 @@ type Store struct {
 	mu     sync.Mutex
 }
 
-var _ records.Store = (*Store)(nil)
+var (
+	_ records.Store   = (*Store)(nil)
+	_ records.Mutator = (*Store)(nil)
+)
 
 // New returns a store over the directory root of fsys.
 //
@@ -500,4 +503,110 @@ func (s *Store) Expire(ctx context.Context, typ string, before time.Time) (int64
 		}
 	}
 	return n, nil
+}
+
+// find returns the month file holding row id of type typ and the rows of
+// that file. It reads every owner of the type: the fs tier is one local
+// user, so a scan is fine.
+func (s *Store) find(typ, id string) (file string, rows []records.Record, at int, err error) {
+	owners, err := s.owners(typ)
+	if err != nil {
+		return "", nil, -1, err
+	}
+	for _, o := range owners {
+		dir := s.ownerDir(typ, o)
+		var ents []os.DirEntry
+		if ents, err = s.readDir(dir); err != nil {
+			return "", nil, -1, err
+		}
+		for _, e := range ents {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+				continue
+			}
+			file = path.Join(dir, e.Name())
+			if rows, err = s.readFile(file); err != nil {
+				return "", nil, -1, err
+			}
+			for i, r := range rows {
+				if r.ID == id && r.Owner == o {
+					return file, rows, i, nil
+				}
+			}
+		}
+	}
+	return "", nil, -1, fmt.Errorf("%w: record %s", records.ErrNotFound, id)
+}
+
+// Get implements [records.Mutator.Get].
+func (s *Store) Get(ctx context.Context, typ, id string) (records.Record, error) {
+	unlock, err := s.lock(ctx)
+	if err != nil {
+		return records.Record{}, err
+	}
+	defer unlock()
+	_, rows, i, err := s.find(typ, id)
+	if err != nil {
+		return records.Record{}, err
+	}
+	return rows[i], nil
+}
+
+// Replace implements [records.Mutator.Replace]. A new TS may move the row
+// to another month file.
+func (s *Store) Replace(ctx context.Context, rec records.Record) error {
+	unlock, err := s.lock(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	p, rows, i, err := s.find(rec.Type, rec.ID)
+	if err != nil {
+		return err
+	}
+	if rows[i].Owner != rec.Owner {
+		return fmt.Errorf("%w: record %s", records.ErrNotFound, rec.ID)
+	}
+	if rows[i].Revision != rec.Revision-1 {
+		return fmt.Errorf("%w: record %s", records.ErrStale, rec.ID)
+	}
+	target := path.Join(s.ownerDir(rec.Type, rec.Owner), monthFile(rec.TS))
+	if target == p {
+		rows[i] = rec
+		return s.writeFile(p, rows)
+	}
+	moved, err := s.readFile(target)
+	if err != nil {
+		return err
+	}
+	// Write the row's new place first: a failure between the two writes
+	// leaves the row twice, never lost. A copy left there by such a failure
+	// is replaced, so a retry heals it rather than adding a third.
+	moved = slices.DeleteFunc(moved, func(r records.Record) bool { return r.ID == rec.ID })
+	if err := s.writeFile(target, append(moved, rec)); err != nil {
+		return err
+	}
+	return s.writeFile(p, slices.Delete(rows, i, i+1))
+}
+
+// Delete implements [records.Mutator.Delete].
+func (s *Store) Delete(ctx context.Context, typ, id string, revision int64) error {
+	unlock, err := s.lock(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	p, rows, i, err := s.find(typ, id)
+	if err != nil {
+		return err
+	}
+	if rows[i].Revision != revision {
+		return fmt.Errorf("%w: record %s", records.ErrStale, id)
+	}
+	if err := s.writeFile(p, slices.Delete(rows, i, i+1)); err != nil {
+		return err
+	}
+	if rest, err := s.readDir(path.Dir(p)); err == nil && len(rest) == 0 {
+		_ = s.fs.Remove(path.Dir(p))
+	}
+	return nil
 }

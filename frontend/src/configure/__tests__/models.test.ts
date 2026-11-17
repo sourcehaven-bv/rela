@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  automations,
+  automationsUsing,
+  automationTitle,
   boardModel,
   canSortColumn,
   columnMoveAllowed,
@@ -21,10 +24,11 @@ import {
   spaces,
 } from '../models'
 import { isEditable } from '../paths'
-import { dataEntryFixture, schemaFixture, snapshot, toTree } from './fixture'
+import { dataEntryFixture, flowsFixture, schemaFixture, snapshot, toTree } from './fixture'
 
 const schema = toTree(schemaFixture)
 const dataEntry = toTree(dataEntryFixture)
+const flows = toTree(flowsFixture)
 
 describe('screen models', () => {
   it('reads an entity type with its authored labels', () => {
@@ -65,6 +69,67 @@ describe('screen models', () => {
 
   it('locks rules that run scripts', () => {
     expect(rules(schema).map((r) => r.usesScript)).toEqual([false, true])
+  })
+
+  it('reads the flows.yaml triggers in firing order, locking scripted ones', () => {
+    const autos = automations(flows)
+    expect(autos.map((a) => a.name)).toEqual(['stamp_done', 'copy_effort', 'scripted', 'spawn'])
+    expect(autos.map((a) => a.readOnly)).toEqual([false, false, true, false])
+    expect(autos[0]).toMatchObject({
+      entityTypes: ['ticket'],
+      trigger: 'status becomes done',
+      outputs: [{ kind: 'set', summary: 'Set effort to 0', locked: false }],
+    })
+    expect(automationTitle(autos[0]!)).toBe('Clear the effort of done tickets')
+    expect(automationTitle(autos[1]!)).toBe('copy_effort')
+    expect(autos[2]!.outputs[0]).toMatchObject({ kind: 'script', locked: true })
+    // A template, `on.deleted` or `on.faces` is not edited here either.
+    const other = automations(
+      toTree({
+        triggers: {
+          t: {
+            on: { entity: 'ticket', created: true },
+            outputs: [{ create: { type: 'ticket', template: 'x.md' } }],
+          },
+          d: {
+            on: { entity: 'ticket', deleted: true },
+            outputs: [{ set: { properties: { a: 'b' } } }],
+          },
+          f: { on: { entity: 'ticket', created: true, faces: ['en'] }, outputs: [] },
+          // `relate` and `create.if_exists` are locked too (#2423).
+          r: {
+            on: { entity: 'ticket', created: true },
+            outputs: [{ relate: { type: 'implements', to: 'FEAT-1' } }],
+          },
+          i: {
+            on: { entity: 'ticket', created: true },
+            outputs: [{ create: { type: 'ticket', if_exists: 'replace' } }],
+          },
+        },
+      })
+    )
+    expect(other.map((a) => a.readOnly)).toEqual([true, true, true, true, true])
+    expect(other[3]!.outputs[0]).toMatchObject({ kind: 'relate', locked: true })
+    expect(other[4]!.outputs[0]).toMatchObject({ kind: 'create', locked: true })
+    expect(automations(toTree({}))).toEqual([])
+  })
+
+  it('finds the automations a removal would break', () => {
+    expect(automationsUsing(flows, 'ticket').map((a) => a.name)).toEqual([
+      'stamp_done',
+      'copy_effort',
+      'scripted',
+    ])
+    expect(automationsUsing(flows, 'ticket', 'status').map((a) => a.name)).toEqual(['stamp_done'])
+    expect(automationsUsing(flows, 'ticket', 'effort').map((a) => a.name)).toEqual([
+      'stamp_done',
+      'copy_effort',
+    ])
+    expect(automationsUsing(flows, 'ticket', 'effortless').map((a) => a.name)).toEqual([
+      'copy_effort',
+    ])
+    expect(automationsUsing(flows, 'ticket', 'eff')).toEqual([])
+    expect(automationsUsing(flows, 'feature').map((a) => a.name)).toEqual(['spawn'])
   })
 
   it('reads forms, lists, boards and the dashboard', () => {
@@ -108,7 +173,10 @@ describe('screen models', () => {
       ...dataEntryFixture,
       dashboards: {
         ops: { title: 'Operations', cards: [] },
-        crm: { title: 'Pipeline', cards: [{ title: 'Open deals', query: 'type:deal', display: 'count' }] },
+        crm: {
+          title: 'Pipeline',
+          cards: [{ title: 'Open deals', query: 'type:deal', display: 'count' }],
+        },
       },
     })
     expect(dashboards(withNamed)).toEqual([
@@ -175,7 +243,9 @@ describe('busy columns', () => {
 
   it('busy column cannot become first', () => {
     const rows = listModel(
-      toTree({ lists: { t: { columns: [{ property: 'title' }, { busy: 'run' }, { property: 'status' }] } } }),
+      toTree({
+        lists: { t: { columns: [{ property: 'title' }, { busy: 'run' }, { property: 'status' }] } },
+      }),
       't'
     )!.columns
     expect(columnMoveAllowed(rows, 1, 0)).toBe(false)

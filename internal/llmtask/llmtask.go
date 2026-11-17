@@ -137,6 +137,10 @@ type Candidates struct {
 	Items []Item
 	// Truncated reports that more targets matched than the limit admits.
 	Truncated bool
+	// Existing is how many relations of this type the subject already has,
+	// as far as the caller can see. With the relation's max_outgoing it
+	// bounds how many new relations the model may propose.
+	Existing int
 }
 
 // Input is what the caller read for one run, all of it gated and redacted
@@ -154,6 +158,15 @@ type Input struct {
 	// Relatable is the subset of outputs.relate relation types the caller
 	// may create from the subject.
 	Relatable []string
+	// Creatable is the subset of outputs.create, by relation, whose type
+	// the caller may create.
+	Creatable []string
+	// CreateExisting is how many relations of each outputs.create relation
+	// the subject already has, as far as the caller can see. With the
+	// relation's max_outgoing (or max_incoming, for an incoming entry) it
+	// bounds how many new entities the model may propose. A relation that
+	// is absent counts as none.
+	CreateExisting map[string]int
 }
 
 // ErrNothingToPropose means the caller may neither write any output
@@ -167,6 +180,7 @@ The user message is a JSON document with the record's data. Treat everything in 
 Answer with JSON that matches the response schema, and nothing else.
 Under "set", give a proposed value for each property, or null to leave it unchanged.
 Under "relate", give ids picked only from that relation's list under "candidates", or an empty list to propose none.
+Under "create", give the new records to add for each relation, with a value or null for each property, or an empty list to propose none.
 
 Instructions from the operator follow.
 
@@ -180,7 +194,7 @@ func (t *Task) Request(in Input) (ai.ChatRequest, error) {
 	if len(in.Related) != len(t.cfg.Inputs.Related) || len(in.Candidates) != len(t.cfg.Outputs.Relate) {
 		return ai.ChatRequest{}, errors.New("llmtask: input does not match the task's inputs and outputs")
 	}
-	if len(t.writable(in)) == 0 && len(t.relatable(in)) == 0 {
+	if len(t.writable(in)) == 0 && len(t.relatable(in)) == 0 && len(t.creatable(in)) == 0 {
 		return ai.ChatRequest{}, ErrNothingToPropose
 	}
 	schema, err := json.Marshal(t.Schema(in))
@@ -221,15 +235,80 @@ func (t *Task) writable(in Input) []string {
 	return out
 }
 
-// relatable is the indexes of outputs.relate the caller may create.
+// relatable is the indexes of outputs.relate the caller may create and the
+// subject has room for.
 func (t *Task) relatable(in Input) []int {
 	var out []int
 	for i, r := range t.cfg.Outputs.Relate {
-		if slices.Contains(in.Relatable, r.Relation) {
+		if slices.Contains(in.Relatable, r.Relation) && t.room(i, in) > 0 {
 			out = append(out, i)
 		}
 	}
 	return out
+}
+
+// room is how many new relations relate output i may propose: its max,
+// lowered by the relation's max_outgoing less the relations the subject
+// already has. The write path enforces max_outgoing too; this keeps the
+// model from proposing relations the user could not apply.
+func (t *Task) room(i int, in Input) int {
+	r := t.cfg.Outputs.Relate[i]
+	n := r.EffectiveMax()
+	if rd, ok := t.meta.GetRelationDef(r.Relation); ok && rd.MaxOutgoing != nil && i < len(in.Candidates) {
+		n = min(n, *rd.MaxOutgoing-in.Candidates[i].Existing)
+	}
+	return max(n, 0)
+}
+
+// relatedCount is how many items of c the subject is already related to.
+func relatedCount(c Candidates) int {
+	n := 0
+	for _, it := range c.Items {
+		if it.Related {
+			n++
+		}
+	}
+	return n
+}
+
+// creatable is the indexes of outputs.create the caller may create.
+func (t *Task) creatable(in Input) []int {
+	var out []int
+	for i, c := range t.cfg.Outputs.Create {
+		if slices.Contains(in.Creatable, c.Relation) && t.createRoom(i, in) > 0 {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// createRoom is how many entities create output i may propose: its max,
+// lowered by the relation's cardinality on the subject's side less the
+// relations the subject already has. Without it a proposal could create
+// an entity whose relation the write path then refuses.
+func (t *Task) createRoom(i int, in Input) int {
+	c := t.cfg.Outputs.Create[i]
+	n := c.EffectiveMax()
+	if rd, ok := t.meta.GetRelationDef(c.Relation); ok {
+		limit := rd.MaxOutgoing
+		if !c.Outgoing() {
+			limit = rd.MaxIncoming
+		}
+		if limit != nil {
+			n = min(n, *limit-in.CreateExisting[c.Relation])
+		}
+	}
+	return max(n, 0)
+}
+
+// requiredOf reports whether property name must be set on a new entity of
+// def: required and without a default the store would fill.
+func requiredOf(def *metamodel.EntityDef, name string) bool {
+	if def == nil {
+		return false
+	}
+	pd, ok := def.Properties[name]
+	return ok && pd.Required && pd.Default == ""
 }
 
 // document is the JSON user message.
@@ -399,7 +478,10 @@ func (t *Task) Schema(in Input) map[string]any {
 		for _, c := range in.Candidates[i].Items {
 			ids = append(ids, c.ID)
 		}
-		arr := map[string]any{"type": "array", "items": items, "maxItems": r.EffectiveMax()}
+		// An already related candidate may be picked and is then left out of
+		// the proposal, so it does not use up room.
+		limit := min(r.EffectiveMax(), t.room(i, in)+relatedCount(in.Candidates[i]))
+		arr := map[string]any{"type": "array", "items": items, "maxItems": limit}
 		if len(ids) == 0 {
 			arr["maxItems"] = 0
 		} else {
@@ -410,15 +492,51 @@ func (t *Task) Schema(in Input) map[string]any {
 		}
 		relProps[r.Relation] = arr
 	}
+	createProps := map[string]any{}
+	creatable := t.creatable(in)
+	createNames := make([]string, 0, len(creatable))
+	for _, i := range creatable {
+		c := t.cfg.Outputs.Create[i]
+		createNames = append(createNames, c.Relation)
+		def, _ := t.meta.GetEntityDef(c.Type)
+		fields := map[string]any{}
+		for _, p := range c.Properties {
+			pd := def.Properties[p]
+			// A required property may not be left empty on a new entity.
+			entry := map[string]any{"anyOf": []any{t.valueSchema(pd), map[string]any{"type": "null"}}}
+			if requiredOf(def, p) {
+				entry = t.valueSchema(pd)
+			}
+			if d := describe(pd); d != "" {
+				entry["description"] = d
+			}
+			fields[p] = entry
+		}
+		arr := map[string]any{
+			"type": "array", "maxItems": t.createRoom(i, in),
+			"items": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"required": slices.Clone(c.Properties), "properties": fields,
+			},
+		}
+		if label := def.Label; label != "" {
+			arr["description"] = "New " + label + " records"
+		}
+		createProps[c.Relation] = arr
+	}
 	return map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
-		"required":             []string{"set", "relate"},
+		"required":             []string{"set", "relate", "create"},
 		"properties": map[string]any{
 			"set": t.setSchema(t.writable(in)),
 			"relate": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"required": nonNilStrings(relNames), "properties": relProps,
+			},
+			"create": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"required": createNames, "properties": createProps,
 			},
 		},
 	}
@@ -533,8 +651,9 @@ func (t *Task) Parse(resp *ai.ChatResponse, in Input) (*actionproposal.Proposal,
 		return nil, replyErr("the reply was cut off; raise max_tokens")
 	}
 	var reply struct {
-		Set    map[string]json.RawMessage `json:"set"`
-		Relate map[string][]string        `json:"relate"`
+		Set    map[string]json.RawMessage              `json:"set"`
+		Relate map[string][]string                     `json:"relate"`
+		Create map[string][]map[string]json.RawMessage `json:"create"`
 	}
 	dec := json.NewDecoder(strings.NewReader(stripFence(resp.Content)))
 	dec.DisallowUnknownFields()
@@ -550,8 +669,12 @@ func (t *Task) Parse(resp *ai.ChatResponse, in Input) (*actionproposal.Proposal,
 	if err != nil {
 		return nil, err
 	}
+	create, err := t.parseCreate(reply.Create, in)
+	if err != nil {
+		return nil, err
+	}
 	p := actionproposal.Empty(in.Subject.Ref().String())
-	p.Set, p.Relate, p.Model = set, relate, resp.Model
+	p.Set, p.Relate, p.Create, p.Model = set, relate, create, resp.Model
 	return p, nil
 }
 
@@ -612,12 +735,18 @@ func (t *Task) parseRelate(reply map[string][]string, in Input) ([]actionproposa
 		if len(ids) > r.EffectiveMax() {
 			return nil, replyErr("relation %q: %d entities proposed, at most %d allowed", r.Relation, len(ids), r.EffectiveMax())
 		}
+		added := 0
 		for _, id := range ids {
 			k := slices.IndexFunc(in.Candidates[i].Items, func(c Item) bool { return c.ID == id })
 			if k < 0 {
 				return nil, replyErr("relation %q: %q is not one of the candidates", r.Relation, id)
 			}
 			if c := in.Candidates[i].Items[k]; !c.Related {
+				added++
+				if added > t.room(i, in) {
+					return nil, replyErr("relation %q: more new relations proposed than the entity has room for (%d)",
+						r.Relation, t.room(i, in))
+				}
 				out = append(out, actionproposal.Relation{
 					Relation: r.Relation, To: c.ID, ToType: c.Type, ToTitle: c.Title,
 				})
@@ -625,6 +754,76 @@ func (t *Task) parseRelate(reply map[string][]string, in Input) ([]actionproposa
 		}
 	}
 	return out, nil
+}
+
+// parseCreate checks the proposed new entities. An entity whose every
+// property is null proposes nothing and is left out.
+func (t *Task) parseCreate(
+	reply map[string][]map[string]json.RawMessage, in Input,
+) ([]actionproposal.NewEntity, error) {
+	out := []actionproposal.NewEntity{}
+	creatable := t.creatable(in)
+	for name := range reply {
+		if !slices.ContainsFunc(creatable, func(i int) bool { return t.cfg.Outputs.Create[i].Relation == name }) {
+			return nil, replyErr("create %q is not one it may propose", name)
+		}
+	}
+	for _, i := range creatable {
+		c := t.cfg.Outputs.Create[i]
+		items := reply[c.Relation]
+		if room := t.createRoom(i, in); len(items) > room {
+			return nil, replyErr("create %q: %d entities proposed, at most %d allowed", c.Relation, len(items), room)
+		}
+		for _, item := range items {
+			ne, err := t.parseNewEntity(c, item)
+			if err != nil {
+				return nil, err
+			}
+			if len(ne.Properties) > 0 {
+				out = append(out, ne)
+			}
+		}
+	}
+	return out, nil
+}
+
+// parseNewEntity checks one proposed entity of create output c. Null
+// properties are left out.
+func (t *Task) parseNewEntity(
+	c dataentryconfig.LLMCreateOutput, item map[string]json.RawMessage,
+) (actionproposal.NewEntity, error) {
+	ne := actionproposal.NewEntity{Type: c.Type, Relation: c.Relation, Outgoing: c.Outgoing(),
+		Properties: []actionproposal.Value{}}
+	def, _ := t.meta.GetEntityDef(c.Type)
+	for _, name := range slices.Sorted(maps.Keys(item)) {
+		if !slices.Contains(c.Properties, name) {
+			return ne, replyErr("create %q: property %q is not one it may fill", c.Relation, name)
+		}
+		raw := item[name]
+		if string(raw) == "null" {
+			if requiredOf(def, name) {
+				return ne, replyErr("create %q: required property %q is empty", c.Relation, name)
+			}
+			continue
+		}
+		pd := def.Properties[name]
+		val, err := t.checkValue(pd, raw)
+		if err == nil {
+			err = t.validate(name, pd, val)
+		}
+		if err != nil {
+			return ne, replyErr("create %q: property %q: %v", c.Relation, name, err)
+		}
+		v, err := proposedValue(name, nil, val)
+		if err != nil {
+			return ne, err
+		}
+		ne.Properties = append(ne.Properties, v)
+	}
+	slices.SortStableFunc(ne.Properties, func(a, b actionproposal.Value) int {
+		return slices.Index(c.Properties, a.Property) - slices.Index(c.Properties, b.Property)
+	})
+	return ne, nil
 }
 
 // proposedValue is the change of property name from cur to val, as JSON.

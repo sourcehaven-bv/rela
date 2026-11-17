@@ -5,7 +5,9 @@ title: 'Configure: edit flows.yaml triggers'
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-11-16"
+completed: "2026-11-17"
+status: done
 ---
 
 ## Description
@@ -29,3 +31,12 @@ SPA on top of the triggers model.
 - A `config:edit` holder can edit the same trigger keys in the browser as
 before TKT-GWOBH2U, and locked keys stay read-only.
 - A save that breaks a trigger is refused at preview.
+
+## Notes
+
+- CI Archplan: `CheckTriggerACL` takes `configedit.TriggerEdit`, the Snapshot
+files are a named `configedit.Tree`, and problem paths use named flows.yaml
+keys (RR-CNCGY15).
+- CI Archplan: the restored Automations views grew the accepted
+`ConfigurePage.vue` move-candidate finding, so `ConfigurePage.vue` moves to
+`views/configure/`, beside the views that use it.

@@ -274,7 +274,7 @@ func flowRunReadQuery(ctx context.Context, r *Request) ReadQueryResult {
 // run type's own grants would report no route for a reader the runtime
 // admits.
 func flowRunReadRoutes(ctx context.Context, r *Request, runID string) ([]RoleAttribution, error) {
-	subjects, err := r.d.graph.OutgoingRelations(ctx, runID, entity.CarriesRelation)
+	subjects, err := r.d.graph.OutgoingRelations(ctx, runID, entity.CarriesRelation, nil)
 	if err != nil {
 		return nil, fmt.Errorf("acl: flow run %q subjects: %w", runID, err)
 	}

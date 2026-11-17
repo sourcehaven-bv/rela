@@ -61,7 +61,7 @@ transaction in TKT-TU0VZ4Y.
 
 **Files to modify:** internal/audit/{audit,prepare,jsonl}.go,
 internal/audit/{sqlaudit,pgaudit,sqliteaudit}/,
-internal/store/pgstore/migrations/0050_audit_log.sql,
+internal/store/pgstore/migrations/0051_audit_log.sql,
 internal/sqlitedb/{sqlitedb,migrate}.go,
 internal/appbuild/{appbuild,auditlog*,configloader_sqlite}.go,
 internal/cli/{audit,kong}.go, .go-arch-lint.yml, .testcoverage.yml, docs-project

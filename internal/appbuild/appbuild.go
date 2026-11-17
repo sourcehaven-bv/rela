@@ -61,6 +61,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/piles"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/records"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
@@ -314,6 +315,13 @@ type Services struct {
 	// run (TKT-1TS55R), built in finishAssembly. See [SetAttachRenderer].
 	attachRender *attachRenderHolder
 
+	// llmActions carries the runner of background llm actions, installed by
+	// the data-entry host; llmActionQueue is the queue they run on, nil when
+	// these services run no background jobs. See [SetLLMActionRunner].
+	llmActions     *llmActionHolder
+	llmActionQueue jobs.Enqueuer
+	// llmIdentity records and rebuilds who queued a background llm action.
+	llmIdentity llmIdentity
 	// attachFile backs rela.attach_file for the same scripts (TKT-36DHKH8),
 	// built where attachRender is. See [SetAttachFiler].
 	attachFile *attachFileHolder
@@ -890,7 +898,7 @@ func (s *Services) GatedReads() GatedReadBundle {
 		Traversals: b,
 		Conditions: QueryConditions{meta: s.meta},
 		LuaReads:   deps,
-		Rebind:     rebindFor(s.aclDeclarative),
+		Rebind:     rebindFor(s.aclDeclarative, servicesClock(s)),
 		Rollups:    gatedRollups(s),
 	}
 }
@@ -942,12 +950,18 @@ func compileDerived(meta *metamodel.Metamodel, now func() time.Time) (*computed.
 }
 
 // rebindFor returns the [GatedReadBundle.Rebind] for policy d: without a
-// policy it returns ctx unchanged, with one it replaces any attached
+// policy it binds no Request, with one it replaces any attached
 // [acl.Request] by a fresh one for the ctx principal.
 //
-// Nil: accepted — a nil d means no policy is configured.
-func rebindFor(d *acl.Declarative) func(context.Context) (context.Context, error) {
-	return identityBinderFor(d)
+// Each call starts a new operation (an MCP tool call, a watch round), so it
+// REPLACES the read time with clock() rather than keeping one already on
+// ctx: a long-lived ctx must see the date advance.
+//
+// Nil: d accepted — a nil d means no policy is configured. clock rejected.
+func rebindFor(d *acl.Declarative, clock func() time.Time) func(context.Context) (context.Context, error) {
+	return func(ctx context.Context) (context.Context, error) {
+		return acl.BindRequest(readtime.With(ctx, clock()), d)
+	}
 }
 
 // GatedReadBundle is the result of [Services.GatedReads]: the read handles an
@@ -1359,7 +1373,7 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 	if err != nil {
 		return nil, fmt.Errorf("appbuild.NewFromCollaborators: %w", err)
 	}
-	return &Services{
+	s := &Services{
 		fs:              c.FS,
 		paths:           c.Paths,
 		meta:            c.Meta,
@@ -1394,9 +1408,18 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		channelService: refs.channelService,
 		realtimeLocal:  refs.realtimeLocal,
 		dueWake:        refs.dueWake,
-		attachRender:   &attachRenderHolder{},
-		attachFile:     &attachFileHolder{},
-	}, nil
+	}
+	newScriptHolders(s)
+	return s, nil
+}
+
+// newScriptHolders installs the empty holders the data-entry host fills in
+// later: the rela.attach_render and rela.attach_file backends and the
+// background llm action runner.
+func newScriptHolders(s *Services) {
+	s.attachRender = &attachRenderHolder{}
+	s.attachFile = &attachFileHolder{}
+	s.llmActions = &llmActionHolder{}
 }
 
 // collaboratorRefs are the services [NewFromCollaborators] builds itself.
@@ -1630,6 +1653,10 @@ type options struct {
 	// host config; see [WithWithheldHostConfig].
 	withheld string
 
+	// serverAI is the server-wide ai.yaml read when the project has none;
+	// see [WithServerAIConfig].
+	serverAI serverAIConfig
+
 	// backgroundAutomationJobs runs `background: true` automation actions
 	// on the job queue instead of in the foreground.
 	backgroundAutomationJobs bool
@@ -1804,7 +1831,13 @@ func ValidateACLPolicy(policy *acl.Policy, meta *metamodel.Metamodel) error {
 	if policy == nil || meta == nil {
 		return errors.New("appbuild: ValidateACLPolicy: policy and metamodel are required")
 	}
-	return policy.ValidateAgainstMetamodel(metamodelView{meta})
+	if err := policy.ValidateAgainstMetamodel(metamodelView{meta}); err != nil {
+		return err
+	}
+	// Conditional grants (TKT-TKSCSBT) compile here, with the schema, so
+	// every loader that validates gets them, and NewDeclarative refuses a
+	// `when:` that skipped this.
+	return acl.CompileGrantConditions(policy, grantConditionCompiler(meta))
 }
 
 // metamodelView adapts *metamodel.Metamodel to acl.MetamodelView. The acl
@@ -2361,7 +2394,7 @@ func (b *SharedBase) IsReassembly() bool { return b.reassembly }
 // It carries prev's store schema refresher too: the caller applies the new
 // schema to the store with [RefreshStoreSchema] once the successor is in
 // force.
-// It keeps prev's [WithWithheldHostConfig] too. A reload builds its base
+// It keeps prev's [WithWithheldHostConfig] and [WithServerAIConfig] too. A reload builds its base
 // from the config alone, and withholding must not end with it: stdio MCP
 // in tenant mode reloads on every schema edit.
 //
@@ -2381,6 +2414,9 @@ func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
 		next.channelFiles = prev.base.channelFiles
 		if next.opts.withheld == "" {
 			next.opts.withheld = prev.base.opts.withheld
+		}
+		if next.opts.serverAI.data == nil {
+			next.opts.serverAI = prev.base.opts.serverAI
 		}
 	}
 	next.storeSchema = prev.storeSchema
@@ -2455,6 +2491,9 @@ func (b *SharedBase) hostConfigFor(stateKV state.KV) (lua.HostConfig, error) {
 		}
 		host = h
 	}
+	if b.opts.serverAI.data != nil {
+		host = serverAIHost{inner: host, data: b.opts.serverAI.data}
+	}
 	if b.opts.withheld != "" {
 		host = withheldHost{inner: host, err: fmt.Errorf("%s: %w", b.opts.withheld, lua.ErrHostConfigWithheld)}
 	}
@@ -2469,6 +2508,9 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 	var o options
 	for _, opt := range opts {
 		opt(&o)
+	}
+	if err := o.serverAI.load(); err != nil {
+		return nil, err
 	}
 	resolvedACL := o.acl
 	var aclPolicy *acl.Policy
@@ -3290,6 +3332,8 @@ func finishAssembly(
 	s.leases, s.leaseShared = refs.leases, refs.leaseShared
 	s.records, s.recordStore = refs.records, refs.recordStore
 	s.channels = refs.channels
+	// Before the flow engine, whose job runner runs llm actions through it.
+	newScriptHolders(s)
 	flowEngine, err := buildFlowEngine(s, refs.flowRuns)
 	if err != nil {
 		return nil, fmt.Errorf("flows: %w", err)
@@ -3316,18 +3360,24 @@ func finishAssembly(
 		return nil, err
 	}
 	s.versionTags = tags
-	s.attachRender = &attachRenderHolder{}
-	s.attachFile = &attachFileHolder{}
-	if bindErr := autoJobs.bind(servicesJobRunner{s}, engine); bindErr != nil {
-		return nil, bindErr
-	}
-	// Built, not started: the host starts it (see RunRealtimeWorker). Its
-	// outputs runner writes through the manager the channel service uses.
+	// The realtime outputs runner writes through the manager the channel
+	// service uses; background llm actions rebuild their user through it.
 	outputs, err := newManagerOutputs(
-		s.entityManager, s.store, s.meta, txChannelsFor(s.store, refs.channels), s.aclDeclarative)
+		s.entityManager, s.store, s.meta, txChannelsFor(s.store, refs.channels), s.aclDeclarative, servicesClock(s))
 	if err != nil {
 		return nil, err
 	}
+	s.llmIdentity = outputs
+	if q := automationJobQueue(s.base, s.jobQueue); q != nil {
+		if regErr := registerLLMActionJobs(q, s.llmActions, outputs, s.stateKV); regErr != nil {
+			return nil, regErr
+		}
+		s.llmActionQueue = q
+	}
+	if bindErr := autoJobs.bind(servicesJobRunner{s}, engine); bindErr != nil {
+		return nil, bindErr
+	}
+	// Built, not started: the host starts it (see RunRealtimeWorker).
 	if s.realtimeWorker, err = buildRealtimeWorker(s.base, s.store, s.stateKV, refs, outputs); err != nil {
 		return nil, err
 	}

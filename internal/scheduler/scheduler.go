@@ -48,6 +48,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
 	"github.com/Sourcehaven-BV/rela/internal/schedulerstate"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -364,13 +365,25 @@ type Scheduler struct {
 
 // taskContext is the scheduler's request edge: it stamps the task's
 // principal (see stampTaskAuditContext) and resolves it once into the ACL
-// request scope every read and write of the run evaluates against.
+// request scope every read and write of the run evaluates against. Each run
+// is a new operation, so it also replaces the read time: a scheduler that
+// has run for days must not judge `$today` by the day it started.
 func (s *Scheduler) taskContext(ctx context.Context, taskName, runAs string) (context.Context, error) {
+	ctx = readtime.With(ctx, s.readTime())
 	out, err := s.bind(stampTaskAuditContext(ctx, taskName, runAs))
 	if err != nil {
 		return ctx, fmt.Errorf("scheduler: resolve identity for task %q: %w", taskName, err)
 	}
 	return out, nil
+}
+
+// readTime is the clock reading a run starts with. A Scheduler built
+// without New (a test literal) has no clock and reads the wall clock.
+func (s *Scheduler) readTime() time.Time {
+	if s.now == nil {
+		return time.Now()
+	}
+	return s.now()
 }
 
 // taskContextAs is taskContext for a principal the wiring built, such as a
@@ -381,6 +394,7 @@ func (s *Scheduler) taskContextAs(
 ) (context.Context, error) {
 	p = p.Clone()
 	p.Tool = principal.ToolScheduler
+	ctx = readtime.With(ctx, s.readTime())
 	stamped := audit.WithTriggeredBy(principal.With(ctx, p), "schedule:"+taskName)
 	out, err := s.bind(stamped)
 	if err != nil {

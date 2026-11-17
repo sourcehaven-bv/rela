@@ -193,7 +193,9 @@ func navStatusInStore(
 			if denied {
 				continue
 			}
-			ruled = plan.narrowed(frag)
+			if ruled, lowered = plan.narrowed(frag); !lowered {
+				return v1.NavStatus{}, false, false, nil
+			}
 		}
 		counts[i] = &ruled
 	}

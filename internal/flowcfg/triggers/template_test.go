@@ -1,6 +1,8 @@
 package triggers
 
 import (
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -222,5 +224,77 @@ func TestInterpolateSafeOnly_NowFormat(t *testing.T) {
 	// RFC3339 format
 	if result != "2025-06-15T14:30:45Z" {
 		t.Errorf("InterpolateSafeOnly({{now}}) = %q, want RFC3339 format", result)
+	}
+}
+
+// TestInterpolate_SubstitutedTextIsNotExpanded pins the one-pass rule: a
+// value that holds a placeholder is written as that text.
+func TestInterpolate_SubstitutedTextIsNotExpanded(t *testing.T) {
+	t.Parallel()
+	vars := TemplateVars{
+		Now:  func() time.Time { return time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC) },
+		User: UserVars{Name: "{{new.salary}}"},
+	}
+	oldEntity := buildEntity(testutil.NewEntity("T-1", "ticket").With("note", "{{new.salary}}"))
+	newEntity := buildEntity(testutil.NewEntity("T-1", "ticket").
+		With("note", "{{entity.id}}").With("salary", "90000"))
+
+	tests := []struct {
+		name, template, want string
+	}{
+		{"old value holding a new placeholder", "{{old.note}}", "{{new.salary}}"},
+		{"new value holding a placeholder", "{{new.note}}", "{{entity.id}}"},
+		{"user name holding a placeholder", "{{user.name}}", "{{new.salary}}"},
+		{"unknown placeholder kept", "{{ new.salary }}", "{{ new.salary }}"},
+		{"unclosed braces kept", "a {{new.salary", "a {{new.salary"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := Interpolate(tc.template, vars, newEntity, oldEntity); got != tc.want {
+				t.Errorf("Interpolate(%q) = %q, want %q", tc.template, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestPropertyReads_AgreesWithInterpolate pins that PropertyReads names
+// exactly the properties Interpolate copies: the Configure trigger check
+// judges reads by it, so a property it missed would be read unchecked.
+func TestPropertyReads_AgreesWithInterpolate(t *testing.T) {
+	t.Parallel()
+	props := []string{"a", "b", "x", "salary"}
+	e := testutil.NewEntity("T-1", "ticket")
+	for _, p := range props {
+		e = e.With(p, "<"+p+">")
+	}
+	ent := buildEntity(e)
+	tests := []struct {
+		template string
+		want     []string
+	}{
+		{"{{new.a}} and {{old.b}}", []string{"a", "b"}},
+		{"{{a {{new.x}}", nil},
+		{"{{new.a}}{{new.b}}", []string{"a", "b"}},
+		{"{{ new.salary }}", nil},
+		{"{{new.salary", nil},
+		{"{{}}{{new.x}}", []string{"x"}},
+		{"}}{{new.x}}{{", []string{"x"}},
+		{"{{entity.id}} {{today}}", nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.template, func(t *testing.T) {
+			t.Parallel()
+			got := PropertyReads(tc.template)
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("PropertyReads(%q) = %v, want %v", tc.template, got, tc.want)
+			}
+			out := Interpolate(tc.template, TemplateVars{}, ent, ent)
+			for _, p := range props {
+				if strings.Contains(out, "<"+p+">") != slices.Contains(got, p) {
+					t.Errorf("Interpolate(%q) = %q disagrees with PropertyReads on %s", tc.template, out, p)
+				}
+			}
+		})
 	}
 }

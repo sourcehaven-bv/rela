@@ -195,7 +195,22 @@ func (p *Program) inspect() {
 type EvalOption func(*evalOptions)
 
 type evalOptions struct {
-	stepBudget int
+	stepBudget      int
+	nilOrderedFalse bool
+}
+
+// NilOrderedIsFalse makes an ordered comparison (<, <=, >, >=) of a nil
+// operand with an Int or a String FALSE instead of an [ErrNilOperand]
+// error. An unset, off-type or unparseable value is then in no ordered
+// range, so `not (x < v)` is true for it. That is the reading a store query
+// gives the same comparison, so a surface whose condition internal/queryplan
+// lowers into a store query evaluates with this option and gets the same
+// rows on either path (TKT-8HY05WB). Only Int and String comparisons lower,
+// so the option stops there: a nil against a date, datetime or decimal, or
+// two nils, stays an error. Other surfaces (ACL, write rules, flow guards,
+// triggers) keep the error, which fails them closed.
+func NilOrderedIsFalse() EvalOption {
+	return func(o *evalOptions) { o.nilOrderedFalse = true }
 }
 
 // defaultStepBudget is the per-Eval node-visit cap. Tuned generous

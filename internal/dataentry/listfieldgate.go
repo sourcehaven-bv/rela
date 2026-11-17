@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -87,6 +88,9 @@ type gatedListQuery struct {
 	// user is the caller's principal id that a `$user` filter value stands
 	// for; empty when the caller is not identified.
 	user string
+	// now is the operation's read time (see internal/readtime), which
+	// `$today`, `$now` and their offsets resolve against.
+	now time.Time
 	// reach narrows the read to these ids, as a page scope does: an entity
 	// dashboard card sets it to the rows its anchor reaches, so the read
 	// asks the store for those ids only (TKT-OF4O8PZ). Each id still passes
@@ -119,7 +123,9 @@ func gateListQuery(
 			}
 		}
 	}
-	return gatedListQuery{params: query, isRelationKey: isRelationKey, user: filterUser(ctx)}, nil
+	return gatedListQuery{
+		params: query, isRelationKey: isRelationKey, user: filterUser(ctx), now: requestReadTime(ctx),
+	}, nil
 }
 
 // filterUser is the principal id a `$user` filter value resolves to, or ""

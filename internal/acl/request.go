@@ -61,6 +61,9 @@ type Request struct {
 	// Identity was unmatched and came from a verified assertion; see
 	// [Request.UnmatchedVerified].
 	unmatchedVerified bool
+	// conds is the role relations' `when:` conditions bound to the
+	// identity's read time, once. See [GrantCondition].
+	conds grantConds
 }
 
 // ForIdentity opens a Request scope for a resolved [Identity]. The global
@@ -83,6 +86,7 @@ func (d *Declarative) ForIdentity(id Identity) (*Request, error) {
 		globals:           d.globalRoles(p, id.members),
 		ceiling:           d.policy.ceilingFor(p.PrincipalType(), p.Scopes()),
 		unmatchedVerified: id.unmatched && id.verified,
+		conds:             bindGrantConds(d.policy, id.at),
 	}, nil
 }
 
@@ -223,6 +227,7 @@ func RetoolRequest(r *Request, tool string) *Request {
 		globals:           r.d.globalRoles(p, r.globals.Members),
 		ceiling:           r.d.policy.ceilingFor(p.PrincipalType(), p.Scopes()),
 		unmatchedVerified: r.unmatchedVerified,
+		conds:             r.conds,
 	}
 }
 
@@ -369,8 +374,12 @@ func (r *Request) permitsWorldThroughRelations(ctx context.Context, members []st
 		if !ok || !roleGrantsWorldRead(role, world, r.d.policy.DefaultWorld()) {
 			continue
 		}
+		cond, live := r.conds.edge(rel)
+		if !live {
+			continue
+		}
 		for _, m := range members {
-			targets, err := r.d.graph.OutgoingRelations(ctx, m, rel)
+			targets, err := r.d.graph.OutgoingRelations(ctx, m, rel, cond)
 			if err != nil {
 				return false, err
 			}

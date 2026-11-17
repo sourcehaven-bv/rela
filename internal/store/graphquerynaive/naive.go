@@ -21,7 +21,9 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/propmatch"
@@ -42,6 +44,10 @@ type Reader interface {
 // not exceed [DepthCap], and a NESTED hop must not carry an inheritance
 // expansion. Exported so every backend enforces the identical bound — see the
 // contract note on [store.RelationPredicate.EndpointMatch].
+// utcDay is the length of a UTC calendar day; a date-shaped time.Time is
+// a UTC midnight.
+const utcDay = 24 * time.Hour
+
 func CheckEndpointShape(q store.GraphQuery) error {
 	if err := q.Faces.Validate(); err != nil {
 		return err
@@ -71,11 +77,32 @@ func CheckEndpointShape(q store.GraphQuery) error {
 			return err
 		}
 	}
+	if q.Where != nil {
+		if err := store.ValidateCond(*q.Where); err != nil {
+			return err
+		}
+		var relErr error
+		q.Where.Walk(func(c store.Cond) bool {
+			if c.Op == store.CondRelated {
+				relErr = checkEndpointShape(&c.Rel.Pred, 0)
+			}
+			return relErr == nil
+		})
+		if relErr != nil {
+			return relErr
+		}
+	}
 	return nil
 }
 
 func checkEndpointShape(p *store.RelationPredicate, nesting int) error {
-	if p == nil || p.EndpointMatch == nil {
+	if p == nil {
+		return nil
+	}
+	if err := store.ValidatePropPredicates(p.EdgeProps); err != nil {
+		return err
+	}
+	if p.EndpointMatch == nil {
 		return nil
 	}
 	if nesting >= depthCap {
@@ -505,11 +532,13 @@ func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery
 		}
 	}
 	for _, rel := range q.Related {
-		dir := store.DirectionOutgoing
-		if rel.Incoming {
-			dir = store.DirectionIncoming
+		ok, err := matchesRelated(ctx, r, e, rel, q.Faces)
+		if err != nil || !ok {
+			return ok, err
 		}
-		ok, err := matchesPredicate(ctx, r, e, rel.Pred, dir, q.Faces)
+	}
+	if q.Where != nil {
+		ok, err := matchesCond(ctx, r, e, *q.Where, q.Faces)
 		if err != nil || !ok {
 			return ok, err
 		}
@@ -521,6 +550,54 @@ func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery
 		return matchesAny(ctx, r, e, q.Any, q.Faces)
 	}
 	return true, nil
+}
+
+// matchesRelated decides one [store.DirectedRelation] for e.
+func matchesRelated(
+	ctx context.Context, r Reader, e *entity.Entity, rel store.DirectedRelation, sel store.FaceSelection,
+) (bool, error) {
+	dir := store.DirectionOutgoing
+	if rel.Incoming {
+		dir = store.DirectionIncoming
+	}
+	return matchesPredicate(ctx, r, e, rel.Pred, dir, sel)
+}
+
+// matchesCond decides a [store.Cond] for e, two-valued: every leaf is true
+// or false. And and Or short-circuit, so a property leaf ahead of a
+// relation leaf can spare the relation walk. The shape was validated by
+// [CheckEndpointShape]; an unknown op here is still refused.
+func matchesCond(
+	ctx context.Context, r Reader, e *entity.Entity, c store.Cond, sel store.FaceSelection,
+) (bool, error) {
+	switch c.Op {
+	case store.CondProp:
+		return matchesProp(e.Properties, c.Prop)
+	case store.CondRelated:
+		return matchesRelated(ctx, r, e, c.Rel, sel)
+	case store.CondNot:
+		if len(c.Args) != 1 {
+			return false, store.ValidateCond(c)
+		}
+		ok, err := matchesCond(ctx, r, e, c.Args[0], sel)
+		return !ok && err == nil, err
+	case store.CondAnd:
+		for _, a := range c.Args {
+			if ok, err := matchesCond(ctx, r, e, a, sel); err != nil || !ok {
+				return false, err
+			}
+		}
+		return true, nil
+	case store.CondOr:
+		for _, a := range c.Args {
+			if ok, err := matchesCond(ctx, r, e, a, sel); err != nil || ok {
+				return ok && err == nil, err
+			}
+		}
+		return false, nil
+	default:
+		return false, store.ValidateCond(c)
+	}
 }
 
 // matchesNarrowing reports whether at least one caller-supplied branch holds
@@ -564,8 +641,17 @@ func matchesAny(
 // and equality are delegated to internal/propmatch so this agrees
 // exactly with internal/filter and with the pgstore pushdown.
 func matchesProps(e *entity.Entity, props []store.PropPredicate) (bool, error) {
-	for _, p := range props {
-		ok, err := matchesProp(e, p)
+	return MatchProps(e.Properties, props)
+}
+
+// MatchProps reports whether a property map satisfies every predicate (AND),
+// with the [store.PropPredicate] semantics every backend shares. It is the
+// Go form of the store's property test, exported for a caller that holds a
+// row the store already returned (an edge's properties in aclstore) and must
+// answer exactly as a [store.RelationPredicate.EdgeProps] query would.
+func MatchProps(props map[string]any, preds []store.PropPredicate) (bool, error) {
+	for _, p := range preds {
+		ok, err := matchesProp(props, p)
 		if err != nil || !ok {
 			return false, err
 		}
@@ -576,8 +662,8 @@ func matchesProps(e *entity.Entity, props []store.PropPredicate) (bool, error) {
 // matchesProp decides one predicate of [matchesProps]. Every operator has
 // its own arm; an unknown one is [store.ErrInvalidQuery] rather than a
 // guess.
-func matchesProp(e *entity.Entity, p store.PropPredicate) (bool, error) {
-	raw := e.Properties[p.Property]
+func matchesProp(props map[string]any, p store.PropPredicate) (bool, error) {
+	raw := props[p.Property]
 	switch p.Op {
 	case store.PropKeyEqual:
 		return matchesKey(raw, p.Key, p.Value), nil
@@ -602,10 +688,78 @@ func matchesProp(e *entity.Entity, p store.PropPredicate) (bool, error) {
 		// so the empty case is decided here rather than by adding a second
 		// meaning to propmatch.Decide, which internal/filter also depends on.
 		return propmatch.IsEmpty(raw) || propmatch.Decide(raw, propmatch.OpNotEqual, p.Value) == propmatch.Match, nil
-	case store.PropGreaterEqual, store.PropLessEqual:
-		return matchesOrdered(raw, p.Op, p.Value), nil
+	case store.PropGreaterEqual, store.PropLessEqual, store.PropGreater, store.PropLess:
+		return matchesOrderedKind(raw, p)
+	case store.PropIsDate:
+		return isDateShape(raw), nil
 	default:
 		return false, store.UnknownPropOpError(p)
+	}
+}
+
+// matchesOrderedKind decides an ordered predicate under its
+// [store.OrderKind]. A value the kind cannot read never matches.
+func matchesOrderedKind(raw any, p store.PropPredicate) (bool, error) {
+	switch p.Kind {
+	case store.OrderText:
+		return matchesOrdered(raw, p.Op, p.Value), nil
+	case store.OrderString:
+		s, ok := raw.(string)
+		return ok && orderHolds(p.Op, strings.Compare(s, p.Value)), nil
+	case store.OrderInteger:
+		want, err := strconv.ParseInt(p.Value, 10, 64)
+		if err != nil {
+			return false, store.ValidatePropPredicates([]store.PropPredicate{p})
+		}
+		n, ok := propmatch.Integer(raw)
+		return ok && orderHolds(p.Op, cmp.Compare(n, want)), nil
+	default:
+		return false, store.ValidatePropPredicates([]store.PropPredicate{p})
+	}
+}
+
+// orderHolds reports whether an ordered operator holds for a comparison
+// result c (negative, zero or positive, as from cmp.Compare).
+func orderHolds(op store.PropOp, c int) bool {
+	switch op {
+	case store.PropLess:
+		return c < 0
+	case store.PropLessEqual:
+		return c <= 0
+	case store.PropGreater:
+		return c > 0
+	case store.PropGreaterEqual:
+		return c >= 0
+	default:
+		return false
+	}
+}
+
+// isDateShape decides [store.PropIsDate]: a YYYY-MM-DD string of ASCII
+// digits, or a time.Time at UTC midnight (an unquoted YAML date).
+func isDateShape(raw any) bool {
+	switch v := raw.(type) {
+	case string:
+		if len(v) != len("2006-01-02") {
+			return false
+		}
+		for i := range len(v) {
+			c := v[i]
+			if i == 4 || i == 7 {
+				if c != '-' {
+					return false
+				}
+				continue
+			}
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+		return true
+	case time.Time:
+		return v.Location() == time.UTC && v.Equal(v.Truncate(utcDay))
+	default:
+		return false
 	}
 }
 
@@ -639,15 +793,26 @@ func matchesOrdered(raw any, op store.PropOp, value string) bool {
 	if propmatch.IsEmpty(raw) {
 		return false
 	}
-	switch raw.(type) {
+	var s string
+	switch v := raw.(type) {
 	case []string, []any:
 		return false
+	case time.Time:
+		// yaml.v3 decodes an unquoted timestamp into a time.Time, which the
+		// file backends keep as is. The SQL backends hold the same value as
+		// its JSON encoding, so compare that form rather than fmt.Sprint's
+		// `2026-12-01 00:00:00 +0000 UTC`, which orders differently.
+		s = v.Format(time.RFC3339Nano)
+		if isDateShape(v) && isDateShape(value) {
+			// An unquoted YAML date compared with a date compares as a
+			// date, the way [isDateShape] already reads it, so `<=` holds
+			// on the day itself (TKT-TKSCSBT).
+			s = v.Format(time.DateOnly)
+		}
+	default:
+		s = fmt.Sprint(raw)
 	}
-	s := fmt.Sprint(raw)
-	if op == store.PropGreaterEqual {
-		return s >= value
-	}
-	return s <= value
+	return orderHolds(op, strings.Compare(s, value))
 }
 
 // matchesPredicate evaluates one relation predicate for e. sel is the
@@ -693,7 +858,9 @@ func matchesPredicateAt(
 	anyEndpoint := len(p.Endpoints) == 0
 
 	found, err := hasMatchingRelation(
-		ctx, r, candidates, dir, typeSet, endpointSet, anyEndpoint, p.EndpointMatch, sel, nesting)
+		ctx, r, candidates, dir, edgeMatch{
+			types: typeSet, endpoints: endpointSet, anyEndpoint: anyEndpoint, props: p.EdgeProps,
+		}, p.EndpointMatch, sel, nesting)
 	if err != nil {
 		return false, err
 	}
@@ -701,6 +868,29 @@ func matchesPredicateAt(
 		return !found, nil
 	}
 	return found, nil
+}
+
+// edgeMatch is what one edge must satisfy on its own: its type, the entity
+// on its far side, and its own properties ([store.RelationPredicate.EdgeProps]).
+type edgeMatch struct {
+	types, endpoints map[string]bool
+	anyEndpoint      bool
+	props            []store.PropPredicate
+}
+
+// admits reports whether rel, whose far endpoint is other, passes the type,
+// endpoint and edge-property tests.
+func (e edgeMatch) admits(rel *entity.Relation, other string) (bool, error) {
+	if len(e.types) > 0 && !e.types[rel.Type] {
+		return false, nil
+	}
+	if !e.anyEndpoint && !e.endpoints[other] {
+		return false, nil
+	}
+	if len(e.props) == 0 {
+		return true, nil
+	}
+	return MatchProps(rel.Properties, e.props)
 }
 
 // hasMatchingRelation reports whether any candidate has an edge in dir
@@ -711,7 +901,7 @@ func matchesPredicateAt(
 // because it is the only one that loads another entity.
 func hasMatchingRelation(
 	ctx context.Context, r Reader, candidates []string, dir store.Direction,
-	typeSet, endpointSet map[string]bool, anyEndpoint bool, match *store.EndpointPredicate,
+	edge edgeMatch, match *store.EndpointPredicate,
 	sel store.FaceSelection, nesting int,
 ) (bool, error) {
 	q := store.RelationQuery{Direction: dir}
@@ -728,20 +918,21 @@ func hasMatchingRelation(
 			if err != nil {
 				return false, err
 			}
-			if len(typeSet) > 0 && !typeSet[rel.Type] {
-				continue
-			}
 			other := rel.To
 			if dir == store.DirectionIncoming {
 				other = rel.From
 			}
-			if !anyEndpoint && !endpointSet[other] {
+			ok, err := edge.admits(rel, other)
+			if err != nil {
+				return false, err
+			}
+			if !ok {
 				continue
 			}
 			if match == nil {
 				return true, nil
 			}
-			ok, err := matchesEndpoint(ctx, r, other, match, sel, nesting)
+			ok, err = matchesEndpoint(ctx, r, other, match, sel, nesting)
 			if err != nil {
 				return false, err
 			}
