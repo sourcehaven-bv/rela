@@ -41,5 +41,6 @@ grants and the subject type.
 
 Done inside TKT-ZT2KREN, on the decision to fix it in that PR.
 `appbuild.CheckTriggerACL` replaces `aclWriteReferences` and judges trigger
-edits against the parsed `acl.yaml` and the editor's own grants. The review
-responses are recorded on TKT-ZT2KREN.
+edits against the parsed `acl.yaml` and the editor's own grants. It takes
+`configedit.TriggerEdit`, so one type crosses the seam. The review responses
+are recorded on TKT-ZT2KREN.
