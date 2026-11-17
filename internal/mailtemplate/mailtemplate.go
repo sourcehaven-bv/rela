@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/mailrender"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -157,6 +158,7 @@ func buildSection(
 ) (mailrender.Section, sectionTally, error) {
 	def, _ := meta.GetEntityDef(declared.EntityType)
 	filters, _ := filter.ParseAll(declared.Where)
+	filters = filter.BindDateVariables(filters, readtime.Or(ctx, time.Now))
 	section := mailrender.Section{Title: declared.Title}
 	if declared.Style == "table" || declared.Style == "" {
 		section.Columns = append([]string(nil), declared.Columns...)

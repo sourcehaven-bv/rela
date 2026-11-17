@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
@@ -728,13 +729,17 @@ func countViewEntities(collections map[string][]*entity.Entity) int {
 	return len(seen)
 }
 
-// filterEntities filters entities based on a where expression.
-// Supports the "type" pseudo-property to filter by entity type.
-func filterEntities(s *Schema, entities []*entity.Entity, whereExpr string) ([]*entity.Entity, error) {
+// filterEntities filters entities based on a where expression, with its
+// date variables resolved at the read time now. Supports the "type"
+// pseudo-property to filter by entity type.
+func filterEntities(
+	s *Schema, entities []*entity.Entity, whereExpr string, now time.Time,
+) ([]*entity.Entity, error) {
 	f, err := filter.Parse(whereExpr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid where expression: %w", err)
 	}
+	f = filter.BindDateVariables([]*filter.Filter{f}, now)[0]
 
 	var result []*entity.Entity
 	for _, e := range entities {

@@ -2201,15 +2201,24 @@ silent lexicographic fallback.
 Filter values starting with `$` are reserved for variables. The following
 variables are supported:
 
-| Variable     | Resolves to                                    |
-| ------------ | ---------------------------------------------- |
-| `$today`     | Today's date in `YYYY-MM-DD` (UTC)             |
-| `$tomorrow`  | Tomorrow's date                                |
-| `$yesterday` | Yesterday's date                               |
-| `$user`      | The id of the user who requests the list       |
+| Variable                  | Resolves to                                         |
+| ------------------------- | --------------------------------------------------- |
+| `$today`                  | Today's date in `YYYY-MM-DD` (UTC)                  |
+| `$today+7d`, `$today-2w`  | Today's date moved by whole days (`d`) or weeks (`w`) |
+| `$tomorrow`               | `$today+1d`                                         |
+| `$yesterday`              | `$today-1d`                                         |
+| `$now`                    | The current time, such as `2026-11-16T10:00:00Z`    |
+| `$user`                   | The id of the user who requests the list            |
 
 Date variables are evaluated in **UTC** for predictability across server
-timezones. `$user` is resolved for each user, so one list or board shows each
+timezones. One request reads the clock once, so every `$today` and `$now` in
+it, and every `today()` and `now()` in a `condition:`, has the same value. The
+variables work everywhere a filter string is read: list and kanban `filters:`,
+the `?q=` search syntax (`prop:due<$today`, also in dashboard `query:` cards
+and nav scopes), view and traverse `where:`, feeds, the gantt, CalDAV, mail
+templates and Lua `rela.list_entities`. `$now` takes no offset; use
+`$today+1d` for a day boundary. In a URL, write `+` as `%2B`
+(`$today%2B7d`), because a bare `+` decodes to a space. `$user` is resolved for each user, so one list or board shows each
 user their own rows. This holds for its sidebar counts and for the rows a
 command on the list receives. When the user cannot be identified, `$user`
 matches no user's rows. `$user` works in property filters; a relation
@@ -2220,10 +2229,15 @@ Variables work in single-value operators and in comma-separated lists (`in`,
 
 ```yaml
 filters:
-  # Show overdue tasks
+  # Show overdue tasks: due before today
+  - property: due_date
+    operator: "<"
+    value: $today
+
+  # Due within the next week
   - property: due_date
     operator: "<="
-    value: $today
+    value: $today+7d
 
   # Multiple variable tokens in a list
   - property: due_date
@@ -2346,9 +2360,40 @@ The `and` short-circuits, so the guard is enough. Note the shorthand
 `entity.afgerond_op and …` does **not** compile — the language requires a
 boolean on the left of `and`.
 
+The same holds for a plain comparison. `entity.due < today()` on a row with
+no `due` is an error, so write:
+
+```lua
+entity.due ~= nil and entity.due < today()
+```
+
+#### Dates, times and the current day
+
+`today()` is the current day in UTC, at 00:00:00. `now()` is the current
+time in UTC, in whole seconds. One request reads the clock once, so every
+`today()` and `now()` in it agrees, also across the rows of a page.
+
+A date-only value compares as 00:00:00 UTC of its day, so a `date` and a
+`datetime` can be compared directly:
+
+| Condition | Meaning |
+| --- | --- |
+| `entity.due < today()` | `due` (a date) is before today: overdue |
+| `entity.valid_until < now()` | `valid_until` (a datetime) has passed |
+| `entity.valid_until >= today()` | `valid_until` is today or later, at any time of day |
+| `entity.due < now()` | true from the start of the due day |
+| `days_between(today(), entity.seen_at) == 0` | `seen_at` (a datetime) is on today's UTC date |
+| `entity.due <= date_add(today(), 7, 'day')` | due within the next seven days, or overdue |
+
+Day boundaries are UTC, whatever the server's own time zone. The same rule
+holds in every place that filters at read time: list `condition:` and
+`where:`, query scopes, dashboard `query:` cards, search filters, feeds,
+scheduler `for_each`, validation `where:`, and the CLI `--filter` and
+`--where` flags.
+
 #### Available functions
 
-`today()`, `days_between()`, `date_add()`, `rrule_next()`, `match()`,
+`today()`, `now()`, `days_between()`, `date_add()`, `rrule_next()`, `match()`,
 `regex()`, `contains()`, `len()`. Signatures are in
 [metamodel.md](metamodel.md).
 
@@ -4284,7 +4329,7 @@ next_actions:
   chase-proposal:
     band: blocking
     query: "type:proposal prop:status=sent"
-    condition: "days_between(entity.sent_on, today()) >= 11"
+    condition: "entity.sent_on ~= nil and days_between(today(), entity.sent_on) >= 11"
     suggest: "{title} was sent on {sent_on} and has had no reply. Chase it?"
 ```
 
@@ -4336,7 +4381,7 @@ next_actions:
   my-stale-tickets:
     band: attention
     query: "type:ticket prop:status=open"
-    condition: "is_current_user(entity.assignee) and days_between(entity.updated, today()) > 14"
+    condition: "is_current_user(entity.assignee) and days_between(today(), entity.updated) > 14"
     suggest: "{title} has been yours for two weeks without movement."
   watching:
     band: ambient
