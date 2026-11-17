@@ -96,10 +96,21 @@ describe('screen models', () => {
             outputs: [{ set: { properties: { a: 'b' } } }],
           },
           f: { on: { entity: 'ticket', created: true, faces: ['en'] }, outputs: [] },
+          // `relate` and `create.if_exists` are locked too (#2423).
+          r: {
+            on: { entity: 'ticket', created: true },
+            outputs: [{ relate: { type: 'implements', to: 'FEAT-1' } }],
+          },
+          i: {
+            on: { entity: 'ticket', created: true },
+            outputs: [{ create: { type: 'ticket', if_exists: 'replace' } }],
+          },
         },
       })
     )
-    expect(other.map((a) => a.readOnly)).toEqual([true, true, true])
+    expect(other.map((a) => a.readOnly)).toEqual([true, true, true, true, true])
+    expect(other[3]!.outputs[0]).toMatchObject({ kind: 'relate', locked: true })
+    expect(other[4]!.outputs[0]).toMatchObject({ kind: 'create', locked: true })
     expect(automations(toTree({}))).toEqual([])
   })
 

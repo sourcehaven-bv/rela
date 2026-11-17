@@ -94,7 +94,7 @@ bypass. Actor: a principal holding `config:edit` (trusted to shape the model,
 not to run code), or an attacker who hijacks such a session.
 - T1 Elevation: add or change a `script:` output (Lua, capabilities, allow_acl_bypass, background, run_as). Mitigation: `outputs.[].script.**` locked; refused with 422 on preview and save.
 - T2 Elevation by repointing reviewed code: change the `on` of a trigger holding a script, so reviewed Lua runs on other records. Mitigation: `on` pinned by `script.**`.
-- T3 Two-step loosening: remove a scripted trigger and add it back changed. The removal is allowed (it takes code away); the re-add carries `script` and is refused.
+- T3 Two-step loosening: remove a scripted trigger and add it back changed. Mitigation: the removal is refused, because `script.**` is protective for flows.yaml (`protective[FlowsFile]`), so a trigger, output or order around a script cannot be taken away (RR-89LM371); re-adding a script is refused because `script.**` is locked. Pinned by `TestCheckEdit_Flows` ("remove a scripted trigger", "add a script").
 - T4 Template file reads: `create.template` loads a template file; locked as before.
 - T5 Background jobs: `on.deleted` only starts background Lua; locked.
 - T6 Tampering through YAML: anchors, aliases or `<<` in the draft. FromYAML refuses them, Apply refuses bytes that do not read back as the checked tree, and triggers.Parse refuses aliases.
@@ -103,11 +103,11 @@ not to run code), or an attacker who hijacks such a session.
 - T9 Information disclosure: the configuration is not a secret (CLAUDE.md). flows.yaml holds no secrets; those live in `.rela/secrets.yaml`.
 - T10 Denial of service: the draft size is bounded by maxDraftBytes and the tree limits. A broken trigger is refused at preview, and Prepare builds a full candidate before the swap, so the server is never replaced by one that fails to start.
 - T11 Spoofing: the gate is unchanged (`config:edit`, interactive principal type, verified identity beyond loopback).
-Residual: a `config:edit` holder can write data through set, create,
-add_to_pile and notify outputs, which run as cascades without per-record ACL
-checks. TKT-CB1YV7D, done in this ticket, judges every such edit against the
-parsed acl.yaml and the editor's own grants (`appbuild.CheckTriggerACL`) and
-refuses it when it cannot judge.
+- T12 Information disclosure through trigger reads (RR-1E63BRL): trigger outputs run as cascades without the row ACL or the field gate, so a trigger could copy a field acl.yaml hides into a record its reader can see, through a `{{new.x}}`/`{{old.x}}` placeholder, an `on`, `where` or `when` condition, or a created record read more widely than its source. Mitigation: `appbuild.CheckTriggerACL` refuses a read of a field any `visible:`, client or scope rule hides, a `when` that follows relations, and a created record whose readers are not all readers of the source, also through cascades; it refuses when it cannot judge. Placeholders expand in one pass. Pinned by `TestCheckTriggerACL` ("a placeholder reads a hidden field", "a client baseline hides the field", "a when condition reads a hidden field", "a when condition follows relations", "a created record more widely read than its source", "a second hop creates a record read more widely"), `TestInterpolate_SubstitutedTextIsNotExpanded` and `TestConfigure_FlowsTriggerACL`.
+- T13 Elevation through trigger writes (RR-6KYGN2F): a set, create, add_to_pile or notify output could write what acl.yaml decides access by (the principal property, a property or relation a grant's `when:` reads, an `options:` field, the membership relation, a principal record) or what the editor could not write directly or a flow locks. Mitigation: `appbuild.CheckTriggerACL` judges each changed trigger against the parsed acl.yaml and the editor's own grants per face, follows cascades, refuses fixed relation targets and template variants (`relate.**` locked too), and fails closed. Pinned by `TestCheckTriggerACL` ("a property a grant condition reads", "an options field", "the membership relation", "a principal record", "a field the editor's role does not grant", "a property a flow locks", "a fixed relation target", "removing a stamp the policy reads"), `TestCheckTriggerACL_FailsClosed` and `TestConfigure_FlowsTriggerACL`.
+Residual: a `config:edit` holder can still write ordinary data through
+trigger outputs, within the editor's own grants; that is the purpose of the
+Automations editor.
 
 **Input Sources & Validation:** Draft JSON from the browser: strict JSON decode,
 tree limits, per-key allowlist, read-back check, then the full trigger parse and
@@ -124,10 +124,11 @@ only), compare-and-swap against the content read, restore on failure.
 - [x] Integration test approach defined (not just unit tests)
 
 **Test Scenarios:**
-- Go table test `TestCheckEdit_Flows`: each open key editable, each locked key refused, pinned `on`, scripted trigger removal allowed, re-add refused.
+- Go table test `TestCheckEdit_Flows`: each open key editable, each locked key refused, pinned `on`, scripted trigger removal refused (protective), re-adding a script refused.
+- Go table tests `TestCheckTriggerACL` and `TestCheckTriggerACL_FailsClosed`: hidden-field reads (T12) and access-deciding or ungranted writes (T13) refused, cascades followed, refusal when acl.yaml, the editor or the parse is missing.
 - `TestAllowlist_ClassifiesEveryKey` covers flows.yaml.
 - Service tests: a flows-only save writes flows.yaml and audits it; an absent flows.yaml is created; restore after a Prepare failure includes flows.yaml.
-- rela-server integration: preview of a draft trigger naming a missing property returns an `invalid` problem; a valid trigger edit saves and the new server fires it.
+- rela-server integration: preview of a draft trigger naming a missing property returns an `invalid` problem; a valid trigger edit saves and the new server fires it; `TestConfigure_FlowsTriggerACL` saves against a real acl.yaml and refuses a hidden-field read and a write the editor may not make.
 - Frontend vitest: models `automations()`, configDraft flows edits, changes group, reference rename.
 - e2e: the old editor had none; none added.
 
@@ -135,7 +136,7 @@ only), compare-and-swap against the content read, restore on failure.
 - flows.yaml absent; flows.yaml with only `flows:`; empty `triggers:`; a trigger with both script and set outputs (read-only).
 
 **Negative Tests:**
-- Adding `script:`, `create.template`, `on.deleted`, `on.faces`, changing the `on` of a scripted trigger, editing `flows:`: refused with locked problems.
+- Adding `script:`, `create.template`, `create.if_exists`, `relate`, `on.deleted`, `on.faces`, changing the `on` of a scripted trigger, removing a scripted trigger, editing `flows:`: refused with locked or protected problems.
 
 ## Risk Assessment
 

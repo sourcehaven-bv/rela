@@ -371,7 +371,8 @@ function outputModel(output: TreeValue): OutputModel {
     return {
       kind: 'relate',
       summary: `Link by ${str(get(relate, 'type')) ?? '…'} to ${str(get(relate, 'to')) ?? '…'}`,
-      locked: false,
+      // relate.** is locked in flows.yaml: relate.to names a fixed record.
+      locked: true,
     }
   }
   const create = get(output, 'create')
@@ -382,7 +383,8 @@ function outputModel(output: TreeValue): OutputModel {
       summary: `Create a ${str(get(create, 'type')) ?? 'record'}${rel ? `, linked by ${rel}` : ''}${
         str(get(create, 'if_exists')) === 'skip' ? ', unless one exists' : ''
       }`,
-      locked: get(create, 'template') !== undefined,
+      // template and if_exists are locked in flows.yaml.
+      locked: get(create, 'template') !== undefined || get(create, 'if_exists') !== undefined,
     }
   }
   const pile = get(output, 'add_to_pile')

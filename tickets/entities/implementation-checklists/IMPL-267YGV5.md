@@ -36,8 +36,11 @@ status: done
 - `go test ./internal/configedit/ ./internal/appbuild/ ./cmd/rela-server/` passes.
 TestCheckEdit_Flows covers allowed and locked trigger edits and reorders.
 TestSave_FlowsOnly, TestSave_CreatesFlowsFile, TestSave_FlowsRefusals,
-TestSave_UnchangedTriggerKeepsACLReference and
-TestSave_PrepareFailureRestoresFlows cover save, audit, refusals and restore.
+TestPreview_TriggerCheckInput and TestSave_PrepareFailureRestoresFlows cover
+save, audit, refusals and restore. TestCheckTriggerACL and
+TestCheckTriggerACL_FailsClosed cover the trigger policy check
+(`appbuild.CheckTriggerACL`), and TestConfigure_FlowsTriggerACL covers it
+against a real acl.yaml.
 TestConfigure_FlowsTrigger shows a broken trigger is reported at preview and
 refused at save with the file unchanged, and a valid edit serves a new
 generation.

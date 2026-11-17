@@ -18,9 +18,10 @@ status: done
 - [x] CLAUDE.md updated (if new patterns)
 - [x] Help text accurate (if CLI changes)
 
-Updated `.claude/rules/configedit.md` (flows.yaml triggers, ordering, ACL name
-check and its limits). Updated docs-project guides data-entry (Configure space:
-three files, flows.yaml locked keys, ordering, ACL checks, read-all caveat),
+Updated `.claude/rules/configedit.md` (flows.yaml triggers, ordering, the
+trigger policy check `appbuild.CheckTriggerACL`). Updated docs-project guides
+data-entry (Configure space: three files, flows.yaml locked keys, ordering, the
+trigger policy check),
 acl-security (config:edit section), cli-reference (`--config-editing`) and flows
 (moved triggers are edited in Configure), and regenerated `docs/`.
 

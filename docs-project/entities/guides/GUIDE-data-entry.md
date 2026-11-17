@@ -10399,8 +10399,9 @@ Locked in `flows.yaml`:
 
 - the stateful `flows:` section, which names permissions, roles and a
   `run_as` principal;
-- a trigger's `script` output, and a `create` output's `template` and
-  `if_exists` (`if_exists: replace` deletes the existing record);
+- a trigger's `script` and `relate` outputs (`relate.to` names a fixed
+  record), and a `create` output's `template` and `if_exists`
+  (`if_exists: replace` deletes the existing record);
 - `on.deleted`, `on.faces` and `on.copy`.
 
 An automation that holds a locked setting is shown read-only. An automation
