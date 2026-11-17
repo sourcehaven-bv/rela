@@ -97,7 +97,7 @@ func (o actionOps) run(
 	// reachable by anyone who may POST an action, so it is not an
 	// operator-shell surface and must not inherit a trusted default.
 	deps.Capabilities = luaCapabilities(action.Capabilities)
-	h.addOptionalScriptDeps(&deps)
+	addOptionalScriptDeps(h, &deps)
 	// The elevation scope must be the one the current config declares, as
 	// for the available_on gate below.
 	if action.AllowACLBypass.Enabled() && h.schema() != s {
@@ -354,7 +354,7 @@ func (f *opFailure) actionError(ctx context.Context) error {
 
 // addOptionalScriptDeps fills the action script's optional collaborators:
 // each is set only when the server wired it.
-func (h *writeHandler) addOptionalScriptDeps(deps *lua.WriteDeps) {
+func addOptionalScriptDeps(h *writeHandler, deps *lua.WriteDeps) {
 	if h.versionTags != nil {
 		deps.VersionTags = h.versionTags()
 	}
