@@ -118,6 +118,29 @@ describe('DashboardRecordsChart', () => {
     expect(w.find('[data-testid="records-empty"]').exists()).toBe(true)
   })
 
+  it('keeps a drawn line when a refetch fails for another reason', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    aggregateMock.mockResolvedValueOnce([pt('MET-A', '2026-01-01T00:00:00Z', '1')])
+    const w = await mountChart()
+    aggregateMock.mockRejectedValueOnce(new Error('network'))
+    await w.setProps({ records: { ...records, bucket: 'week' } })
+    await flushPromises()
+    expect(w.findAll('[data-testid="records-line"]')).toHaveLength(1)
+    expect(w.find('[data-testid="card-failed"]').exists()).toBe(false)
+    spy.mockRestore()
+  })
+
+  it('breaks a line where a bucket has no value', async () => {
+    aggregateMock.mockResolvedValue([
+      pt('MET-A', '2026-01-01T00:00:00Z', '1'),
+      pt('MET-A', '2026-02-01T00:00:00Z', '2'),
+      pt('MET-A', '2026-04-01T00:00:00Z', '3'),
+    ])
+    const w = await mountChart()
+    const d = w.get('.records-chart__line').attributes('d') ?? ''
+    expect(d.match(/M/g)).toHaveLength(2)
+  })
+
   it('says the card failed on any other error', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     aggregateMock.mockRejectedValue(new Error('network'))
@@ -141,6 +164,7 @@ describe('DashboardRecordsChart', () => {
     await svg.trigger('keydown', { key: 'ArrowLeft' })
     expect(tip()).toContain('0.5')
     expect(tip()).not.toContain('Title MET-B')
+    expect(w.get('[data-testid="records-live"]').text()).toContain('Title MET-A: 0.5')
     await svg.trigger('keydown', { key: 'Escape' })
     expect(w.find('[data-testid="records-tooltip"]').exists()).toBe(false)
   })

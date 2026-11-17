@@ -163,7 +163,9 @@ into it. A count over controls that only an auditor can read becomes, once
 stored, readable by everyone who can read the metric. So give the metric
 entity a read rule no wider than what the `run_as` identity can see. This is
 the same rule as for elevated documents and digests: decide who may see the
-result before you fold the data into it.
+result before you fold the data into it. A role with `read: ["*"]` reads the
+metric too. Past rows stay readable to every reader of the metric, even after
+you narrow access to the source data.
 
 A capture task appends through the same check as `POST /api/v1/_records/{type}`:
 its `run_as` identity needs `update` on the metric entity. `create` on the

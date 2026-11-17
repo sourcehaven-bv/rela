@@ -43,13 +43,75 @@ const DURATION_UNITS: Record<string, number> = {
  * The start of a card's `range:` before `now`, as RFC 3339, or undefined for
  * no range. The units are those of a record retention (48h, 90d, 2w, 5y),
  * which the server validated at config load; anything else is no range.
+ *
+ * The start is moved back to the start of its bucket, so the first bucket
+ * holds a whole period. Otherwise a sum or a count would dip in the first
+ * bucket for no reason in the data.
  */
-export function rangeStart(range: string | undefined, now: Date): string | undefined {
+export function rangeStart(
+  range: string | undefined,
+  now: Date,
+  bucket: DashboardRecords['bucket'] = DEFAULT_BUCKET
+): string | undefined {
   const m = /^(\d+)([hdwy])$/.exec((range ?? '').trim())
   if (!m) return undefined
   const n = Number(m[1])
   if (n <= 0) return undefined
-  return new Date(now.getTime() - n * DURATION_UNITS[m[2]]).toISOString()
+  return new Date(bucketStart(now.getTime() - n * DURATION_UNITS[m[2]], bucket)).toISOString()
+}
+
+/**
+ * The start of the bucket holding t, in UTC, as the server cuts buckets:
+ * whole hours, days, ISO weeks from Monday, and calendar months.
+ */
+export function bucketStart(t: number, bucket: DashboardRecords['bucket']): number {
+  const d = new Date(t)
+  switch (bucket ?? DEFAULT_BUCKET) {
+    case 'hour':
+      return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours())
+    case 'day':
+      return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
+    case 'week': {
+      const back = (d.getUTCDay() + 6) % 7
+      return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - back)
+    }
+    default:
+      return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)
+  }
+}
+
+/** The start of the bucket after the one starting at t. */
+export function nextBucket(t: number, bucket: DashboardRecords['bucket']): number {
+  const d = new Date(t)
+  switch (bucket ?? DEFAULT_BUCKET) {
+    case 'hour':
+      return t + HOUR
+    case 'day':
+      return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1)
+    case 'week':
+      return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 7)
+    default:
+      return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1)
+  }
+}
+
+/**
+ * Splits a series' points into runs of consecutive buckets. A line is drawn
+ * through each run only: a bucket without rows has no value, and a straight
+ * line across it would show one.
+ */
+export function segments(
+  points: SeriesPoint[],
+  bucket: DashboardRecords['bucket']
+): SeriesPoint[][] {
+  const out: SeriesPoint[][] = []
+  for (const p of points) {
+    const run = out[out.length - 1]
+    const prev = run?.[run.length - 1]
+    if (prev && nextBucket(prev.t, bucket) === p.t) run.push(p)
+    else out.push([p])
+  }
+  return out
 }
 
 /** The value of point p for the card's statistic, or undefined when absent. */
@@ -84,7 +146,11 @@ export function buildSeries(cfg: DashboardRecords, points: RecordPoint[]): Serie
   const out: Series[] = []
   cfg.owners.forEach((owner, slot) => {
     const pts = byOwner.get(owner)
-    if (pts?.length) out.push({ owner, slot, points: pts.sort((a, b) => a.t - b.t) })
+    // An owner named twice keeps its first slot; the server refuses such a
+    // card at load, so this only guards a hand-crafted response.
+    if (pts?.length && !out.some((s) => s.owner === owner)) {
+      out.push({ owner, slot, points: pts.sort((a, b) => a.t - b.t) })
+    }
   })
   return out
 }
@@ -96,9 +162,18 @@ export function bucketStarts(series: Series[]): number[] {
   return [...set].sort((a, b) => a - b)
 }
 
+/** The decimal places needed to write x exactly, up to 10. */
+export function decimalsOf(x: number): number {
+  let d = 0
+  while (d < 10 && Math.abs(Math.round(x * 10 ** d) - x * 10 ** d) > 1e-6) d++
+  return d
+}
+
 /**
  * Round y-axis ticks covering [min, max]. The axis includes zero when every
  * value is on one side of it, so a line does not exaggerate a small change.
+ * Each tick is computed from its index and rounded to the step's decimals,
+ * so zero is exactly 0 and not a float residue.
  */
 export function niceTicks(min: number, max: number, count = 4): number[] {
   let lo = Math.min(0, min)
@@ -107,14 +182,37 @@ export function niceTicks(min: number, max: number, count = 4): number[] {
   const raw = (hi - lo) / count
   const mag = 10 ** Math.floor(Math.log10(raw))
   const step = [1, 2, 2.5, 5, 10].map((f) => f * mag).find((s) => s >= raw) ?? 10 * mag
+  const places = decimalsOf(step)
   lo = Math.floor(lo / step) * step
   hi = Math.ceil(hi / step) * step
-  const ticks: number[] = []
-  for (let v = lo; v <= hi + step / 2; v += step) ticks.push(Number(v.toPrecision(12)))
-  return ticks
+  const n = Math.round((hi - lo) / step)
+  return Array.from({ length: n + 1 }, (_, i) => Number((lo + i * step).toFixed(places)) || 0)
 }
 
-/** Formats a bucket start for its bucket, in UTC: buckets are UTC periods. */
+/**
+ * A formatter for the y-axis ticks that writes every tick exactly. Large
+ * values use compact notation (12k) with as many decimals as the step needs
+ * in that unit, so 12500 reads 12.5k and not 13k.
+ */
+export function tickFormatter(ticks: number[], locale: string): (v: number) => string {
+  const step = ticks.length > 1 ? ticks[1] - ticks[0] : 1
+  const maxAbs = Math.max(0, ...ticks.map(Math.abs))
+  if (maxAbs < 10_000) {
+    const f = new Intl.NumberFormat(locale, { maximumFractionDigits: decimalsOf(step) })
+    return (v) => f.format(v)
+  }
+  const unit = 10 ** (3 * Math.floor(Math.log10(maxAbs) / 3))
+  const f = new Intl.NumberFormat(locale, {
+    notation: 'compact',
+    maximumFractionDigits: decimalsOf(step / unit),
+  })
+  return (v) => f.format(v)
+}
+
+/**
+ * Formats a bucket start for its bucket, in UTC: buckets are UTC periods, so
+ * an hour bucket reads as a UTC hour.
+ */
 export function formatBucket(
   t: number,
   bucket: DashboardRecords['bucket'],

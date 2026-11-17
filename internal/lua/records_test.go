@@ -145,6 +145,9 @@ rela.append_records("m", rows)`
 		{"fields not a table", `rela.append_records("m", {{owner = "M", fields = 3}})`, "fields must be a table"},
 		{"nested field", `rela.append_records("m", {{owner = "M", fields = {v = {}}}})`, "field v must be"},
 		{"positional field", `rela.append_records("m", {{owner = "M", fields = {1}}})`, "fields must be a table with string keys"},
+		{"function field", `rela.append_records("m", {{owner = "M", fields = {v = print}}})`, "field v must be"},
+		{"named key in rows", `local rows = {{owner = "M"}} rows.extra = {owner = "N"}
+rela.append_records("m", rows)`, "without named keys"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := &fakeAppender{}

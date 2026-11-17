@@ -907,8 +907,9 @@ argument, such as a row without `owner` or an unknown key, raises an error.
 The call acts as the script's principal and runs the check of
 `POST /api/v1/_records/{type}`: every owner must be of the type's owner
 type, and the principal must be able to update every face of it. An owner
-the principal cannot read gets the same `not found` message as a missing
-one. `rela.bypass_acl` does not widen it. Record writes are not in the
+none of whose faces the principal can read gets the same `not found` message
+as a missing one. An owner with some readable faces and some it may not
+update gets `forbidden`. `rela.bypass_acl` does not widen it. Record writes are not in the
 audit log; each row stores who appended it.
 
 `rela.append_records` exists in writer runtimes when the schema declares a

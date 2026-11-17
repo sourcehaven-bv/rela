@@ -23,6 +23,8 @@ import {
   formatBucket,
   niceTicks,
   rangeStart,
+  segments,
+  tickFormatter,
   type Series,
 } from '@/utils/recordsChart'
 
@@ -47,27 +49,31 @@ let observer: ResizeObserver | undefined
 async function load() {
   const gen = ++generation
   const cfg = props.records
-  failed.value = false
   try {
     const points = await aggregateRecords(cfg.type, {
       owners: cfg.owners,
       field: cfg.field,
       bucket: cfg.bucket ?? DEFAULT_BUCKET,
-      from: rangeStart(cfg.range, new Date()),
+      from: rangeStart(cfg.range, new Date(), cfg.bucket),
       perOwner: true,
     })
     if (gen !== generation) return
     series.value = buildSeries(cfg, points)
+    failed.value = false
     void loadTitles(gen, series.value)
   } catch (err) {
     if (gen !== generation) return
-    // A denial drops what the card held: a reader who lost access must not
-    // keep seeing the line.
-    series.value = []
-    if (!shouldDropHeldContent(err)) {
-      console.error('Records card load error:', err)
-      failed.value = true
+    if (shouldDropHeldContent(err)) {
+      // A denial drops what the card held: a reader who lost access must
+      // not keep seeing the line.
+      series.value = []
+      failed.value = false
+      return
     }
+    // Any other failure is transient: keep the lines on screen, and say the
+    // card failed only when there is nothing to show.
+    console.error('Records card load error:', err)
+    failed.value = series.value.length === 0
   } finally {
     if (gen === generation) loaded.value = true
   }
@@ -103,15 +109,13 @@ const locale = computed(() => intlLocale())
 const numberFormat = computed(
   () => new Intl.NumberFormat(locale.value, { maximumFractionDigits: 2 })
 )
-const tickFormat = computed(
-  () => new Intl.NumberFormat(locale.value, { notation: 'compact', maximumFractionDigits: 1 })
-)
 
 const starts = computed(() => bucketStarts(series.value))
 const ticks = computed(() => {
   const values = series.value.flatMap((s) => s.points.map((p) => p.v))
   return values.length ? niceTicks(Math.min(...values), Math.max(...values)) : []
 })
+const tickFormat = computed(() => tickFormatter(ticks.value, locale.value))
 const plotWidth = computed(() => Math.max(width.value - PAD.left - PAD.right, 40))
 const plotHeight = HEIGHT - PAD.top - PAD.bottom
 
@@ -128,13 +132,23 @@ function y(v: number): number {
   return PAD.top + plotHeight - ((v - lo) / (hi - lo)) * plotHeight
 }
 
+/** The line of a series, broken where a bucket has no value. */
 function path(s: Series): string {
-  return s.points
-    .map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`)
+  return segments(s.points, props.records.bucket)
+    .map((run) =>
+      run.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join('')
+    )
     .join('')
 }
 
-/** At most five x labels, evenly spread and always including the last. */
+/** Points with no neighbour in their line, which get a dot to be seen. */
+function lonePoints(s: Series) {
+  return segments(s.points.slice(0, -1), props.records.bucket)
+    .filter((run) => run.length === 1)
+    .map((run) => run[0])
+}
+
+/** About one x label per 110px, evenly spread and always including the last. */
 const xLabels = computed(() => {
   const s = starts.value
   const n = Math.min(s.length, Math.max(2, Math.floor(plotWidth.value / 110)))
@@ -150,19 +164,17 @@ function fmtBucket(tms: number): string {
 /** Value labels at the line ends, for up to four lines, skipping collisions. */
 const endLabels = computed(() => {
   if (series.value.length > 4) return []
-  const placed: { owner: string; text: string; y: number }[] = []
+  const placed: { owner: string; text: string; x: number; y: number }[] = []
   const ends = series.value
     .map((s) => ({ s, last: s.points[s.points.length - 1] }))
     .sort((a, b) => y(a.last.v) - y(b.last.v))
   for (const { s, last } of ends) {
     const ly = y(last.v)
     if (placed.some((p) => Math.abs(p.y - ly) < END_LABEL_GAP)) continue
-    placed.push({ owner: s.owner, text: numberFormat.value.format(last.v), y: ly })
+    placed.push({ owner: s.owner, text: numberFormat.value.format(last.v), x: x(last.t), y: ly })
   }
   return placed
 })
-
-const lastX = computed(() => (starts.value.length ? x(starts.value[starts.value.length - 1]) : 0))
 
 /** Every line's value at the active bucket, for the tooltip. */
 const readout = computed(() => {
@@ -174,6 +186,13 @@ const readout = computed(() => {
     return p ? [{ owner: s.owner, slot: s.slot, value: numberFormat.value.format(p.v) }] : []
   })
   return { tms, x: x(tms), when: fmtBucket(tms), rows }
+})
+
+/** The readout as one sentence, for the live region screen readers hear. */
+const readoutText = computed(() => {
+  const r = readout.value
+  if (!r) return ''
+  return [r.when, ...r.rows.map((row) => `${label(row.owner)}: ${row.value}`)].join(', ')
 })
 
 function onPointer(ev: PointerEvent) {
@@ -234,6 +253,9 @@ watch(
 
 <template>
   <div ref="root" class="records-chart">
+    <p class="rl-visually-hidden" aria-live="polite" data-testid="records-live">
+      {{ readoutText }}
+    </p>
     <p v-if="failed" class="records-chart__note" data-testid="card-failed">
       {{ t('dashboard.cardFailed') }}
     </p>
@@ -264,6 +286,7 @@ watch(
           :aria-label="t('dashboard.lineChartLabel', { title })"
           tabindex="0"
           data-testid="records-svg"
+          @pointerdown="onPointer"
           @pointermove="onPointer"
           @pointerleave="active = null"
           @focus="active = starts.length - 1"
@@ -290,7 +313,7 @@ watch(
               text-anchor="end"
               dy="0.32em"
             >
-              {{ tickFormat.format(tk) }}
+              {{ tickFormat(tk) }}
             </text>
             <text
               v-for="tms in xLabels"
@@ -324,6 +347,14 @@ watch(
           >
             <path v-if="s.points.length > 1" class="records-chart__line" :d="path(s)" />
             <circle
+              v-for="p in lonePoints(s)"
+              :key="p.t"
+              class="records-chart__dot"
+              :cx="x(p.t)"
+              :cy="y(p.v)"
+              r="3"
+            />
+            <circle
               class="records-chart__dot"
               :cx="x(s.points[s.points.length - 1].t)"
               :cy="y(s.points[s.points.length - 1].v)"
@@ -334,9 +365,9 @@ watch(
             v-for="l in endLabels"
             :key="l.owner"
             class="records-chart__end"
-            :x="Math.min(lastX + 8, width - 2)"
+            :x="l.x + 48 > width ? Math.min(l.x, width - 2) : l.x + 8"
             :y="l.y"
-            :text-anchor="lastX + 48 > width ? 'end' : 'start'"
+            :text-anchor="l.x + 48 > width ? 'end' : 'start'"
             dy="-0.6em"
           >
             {{ l.text }}
@@ -347,7 +378,7 @@ watch(
           class="records-chart__tip"
           :class="{ 'records-chart__tip--left': readout.x > width / 2 }"
           :style="{ left: `${readout.x}px` }"
-          role="status"
+          aria-hidden="true"
           data-testid="records-tooltip"
         >
           <div class="records-chart__tip-when">{{ readout.when }}</div>

@@ -9,7 +9,8 @@
 // same check as POST /api/v1/_records/{type}: every owner must be of the
 // type's owner type, and the principal must be allowed to update every face
 // of it. The rows are stored together or not at all. Refusals and failures
-// return nil and a message; only a misuse of the arguments raises.
+// return nil and a message. A misuse of the arguments raises, and so does a
+// call inside a store transaction.
 //
 // Only writer runtimes carry it. A free function rather than a Runtime
 // method: Runtime is at its plimsoll method cap.
@@ -25,10 +26,10 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// maxAppendRecordRows bounds the rows one rela.append_records call takes. It
+// MaxAppendRecordRows bounds the rows one rela.append_records call takes. It
 // matches the record service's batch limit, so a script hits the binding's
 // clear message before the service's.
-const maxAppendRecordRows = 1000
+const MaxAppendRecordRows = 1000
 
 // RecordRow is one row of rela.append_records. TS is zero when the script
 // names no time; the service then stamps the time of the append.
@@ -109,8 +110,13 @@ func parseRecordRows(list *lua.LTable) (rows []RecordRow, bad string) {
 	if n == 0 {
 		return nil, "rows must be a non-empty list"
 	}
-	if n > maxAppendRecordRows {
-		return nil, fmt.Sprintf("at most %d rows per call", maxAppendRecordRows)
+	keys := 0
+	list.ForEach(func(lua.LValue, lua.LValue) { keys++ })
+	if keys != n {
+		return nil, "rows must be a list, without named keys"
+	}
+	if n > MaxAppendRecordRows {
+		return nil, fmt.Sprintf("at most %d rows per call", MaxAppendRecordRows)
 	}
 	rows = make([]RecordRow, 0, n)
 	for i := 1; i <= n; i++ {
@@ -175,8 +181,8 @@ func parseRecordRow(t *lua.LTable) (row RecordRow, bad string) {
 }
 
 // recordFields converts a fields table to Go values. A field value is a
-// scalar: the service refuses anything else, so a nested table is refused
-// here with a clearer message.
+// scalar: anything else (a table, a function) is refused here, rather than
+// becoming nil and failing later as a missing field.
 func recordFields(t *lua.LTable) (map[string]any, string) {
 	out := map[string]any{}
 	bad := ""
@@ -189,7 +195,9 @@ func recordFields(t *lua.LTable) (map[string]any, string) {
 			bad = "fields must be a table with string keys"
 			return
 		}
-		if _, isTable := v.(*lua.LTable); isTable {
+		switch v.(type) {
+		case lua.LString, lua.LNumber, lua.LBool:
+		default:
 			bad = "field " + string(key) + " must be a string, number or boolean"
 			return
 		}

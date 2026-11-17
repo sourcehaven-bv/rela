@@ -2,6 +2,8 @@ package dataentryconfig
 
 import (
 	"fmt"
+	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -22,6 +24,11 @@ var (
 	recordsCardStats   = []string{"latest", "avg", "sum", "min", "max", "count"}
 )
 
+// recordsCardRange is the grammar the SPA reads a card's `range:` with:
+// digits and one unit. It is stricter than [metamodel.ParseRetention], which
+// also takes a sign, so a range the chart cannot read fails at load.
+var recordsCardRange = regexp.MustCompile(`^[0-9]+[hdwy]$`)
+
 // validateRecordsCard checks a `display: line` card: it reads records, never
 // a list or a query, and its type, owners, field, bucket, range and stat
 // must make an aggregate request the API accepts.
@@ -37,8 +44,7 @@ func validateRecordsCard(meta *metamodel.Metamodel, at string, card DashboardCar
 	if card.List != "" || card.Query != "" {
 		errs = append(errs, at+": a records card takes no list: or query:")
 	}
-	if card.GroupBy != "" || card.Property != "" || len(card.Columns) > 0 || len(card.Sort) > 0 ||
-		card.Limit != 0 || card.Match != "" || card.setsMatrixOption() {
+	if !onlyRecordsCardFields(card) {
 		errs = append(errs, at+": a records card takes only title, display, width, permission and records")
 	}
 	if card.Scope != nil {
@@ -51,11 +57,15 @@ func validateRecordsCard(meta *metamodel.Metamodel, at string, card DashboardCar
 		errs = append(errs, fmt.Sprintf("%s: records.owners has %d ids; a chart shows at most %d lines",
 			at, n, MaxRecordsCardOwners))
 	}
+	seen := make(map[string]bool, len(r.Owners))
 	for _, o := range r.Owners {
-		if strings.TrimSpace(o) == "" {
+		switch {
+		case strings.TrimSpace(o) == "":
 			errs = append(errs, at+": records.owners has an empty id")
-			break
+		case seen[o]:
+			errs = append(errs, fmt.Sprintf("%s: records.owners names %q twice", at, o))
 		}
+		seen[o] = true
 	}
 	if r.Bucket != "" && !slices.Contains(recordsCardBuckets, r.Bucket) {
 		errs = append(errs, fmt.Sprintf("%s: records.bucket %q is not one of %s",
@@ -66,12 +76,24 @@ func validateRecordsCard(meta *metamodel.Metamodel, at string, card DashboardCar
 			at, r.Stat, strings.Join(recordsCardStats, ", ")))
 	}
 	if r.Range != "" {
-		if d, err := metamodel.ParseRetention(r.Range); err != nil || d <= 0 {
+		d, err := metamodel.ParseRetention(r.Range)
+		if err != nil || d <= 0 || !recordsCardRange.MatchString(strings.TrimSpace(r.Range)) {
 			errs = append(errs, fmt.Sprintf("%s: records.range %q is not a duration such as 48h, 90d, 2w or 5y",
 				at, r.Range))
 		}
 	}
 	return append(errs, validateRecordsCardField(meta, at, r)...)
+}
+
+// onlyRecordsCardFields reports whether the card sets no field besides the
+// ones a records card takes. It lists what is allowed rather than what is
+// not, so a field added to [DashboardCard] later is refused here until a
+// records card learns to use it. List, query and scope have their own errors.
+func onlyRecordsCardFields(card DashboardCard) bool {
+	rest := card
+	rest.Title, rest.Display, rest.Width, rest.Permission, rest.Records = "", "", "", "", nil
+	rest.List, rest.Query, rest.Scope = "", "", nil
+	return reflect.ValueOf(rest).IsZero()
 }
 
 // validateRecordsCardField checks the record type and the field it folds.

@@ -702,7 +702,13 @@ assignments:
 ```
 
 A role that reads only some controls, for example through a row rule, gets
-no `read` on `metric`.
+no `read` on `metric`. Check broad grants too: a role with `read: ["*"]`
+reads `metric` as well, even though no rule names it.
+
+Stored rows keep the access of their owner, not the access the source data
+had when they were written. If you later narrow who may read the controls,
+readers of the metric still see every past value. Only a narrower read rule
+on the metric entity takes them away, and it then hides the whole history.
 
 The task needs `update` on the metric entity, because appending a record
 needs update access on every face of its owner. It does not need `create`:

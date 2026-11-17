@@ -426,3 +426,9 @@ entities:
 	require.Nil(t, appbuild.LuaRecords(svc))
 	require.Nil(t, svc.ScheduledLuaWriteDeps().Records)
 }
+
+// The binding's row limit is the service's batch limit, so a script meets the
+// binding's message first and never a second, different one.
+func TestRecords_LuaRowLimitIsServiceBatch(t *testing.T) {
+	require.Equal(t, records.MaxBatch, lua.MaxAppendRecordRows)
+}

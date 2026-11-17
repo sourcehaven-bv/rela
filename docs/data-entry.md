@@ -3928,10 +3928,10 @@ dashboard:
 | Key | Meaning |
 | --- | --- |
 | `type` | The record type. Required. |
-| `owners` | The owner entities, one line each, at most 8. Required. |
+| `owners` | The owner entities, one line each, at most 8, each named once. Required. |
 | `field` | The `integer` or `decimal` field to plot. Required unless `stat` is `count`. |
 | `bucket` | `hour`, `day`, `week` or `month`. Default `month`. |
-| `range` | How far back to plot, such as `90d`, `12w` or `2y`. Default: every stored row. |
+| `range` | How far back to plot, such as `90d`, `12w` or `2y`. The start moves back to the start of its bucket, so the first bucket is a whole period. Default: every stored row. |
 | `stat` | `latest`, `avg`, `sum`, `min`, `max` or `count` per bucket. Default `latest`. |
 
 - A line card takes only `title`, `display`, `width`, `permission` and
@@ -3941,6 +3941,10 @@ dashboard:
   read none of the owners, the card shows no data.
 - Each owner keeps the colour of its place in `owners:`, so a hidden owner
   does not change the colours of the others.
+- Buckets are UTC periods, and the labels show them in UTC. A week starts
+  on Monday.
+- A bucket without rows has no value, so the line breaks there rather than
+  joining its neighbours.
 - Hover the chart, or focus it and use the arrow keys, to read every line's
   value in a bucket. "Show as a table" lists all values.
 

@@ -83,6 +83,12 @@ func TestValidateRecordsCard(t *testing.T) {
 			`records.stat "median" is not one of`},
 		{"bad range", `{title: X, display: line, records: {` + ok + `, range: forever}}`,
 			`records.range "forever" is not a duration`},
+		{"signed range", `{title: X, display: line, records: {` + ok + `, range: "+5d"}}`,
+			`records.range "+5d" is not a duration`},
+		{"duplicate owner", `{title: X, display: line, records: {type: measurement, field: value,
+			owners: [MET-1, MET-1]}}`, `records.owners names "MET-1" twice`},
+		{"records with tone_by", `{title: X, display: line, tone_by: status, records: {` + ok + `}}`,
+			"takes only title, display, width, permission and records"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
