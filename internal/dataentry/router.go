@@ -1096,9 +1096,8 @@ func responseGates(h http.Handler, a *App) http.Handler {
 }
 
 // attachReadTime stamps the request's read time on its context (see
-// internal/readtime), outermost, so every condition, filter and pushdown the
-// request runs reads one `today()`, `now()`, `$today` and `$now`. It
-// replaces a time already on ctx: each request, and each live-view replay,
+// internal/readtime), outermost, so every conditional grant (TKT-TKSCSBT)
+// the request evaluates is judged at one instant. It replaces a time already on ctx: each request, and each live-view replay,
 // is its own operation.
 func attachReadTime(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
