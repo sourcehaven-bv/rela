@@ -22,8 +22,9 @@ const provisionTimeout = 5 * time.Minute
 // equal the control schema's.
 const controlLockClass int32 = 0x72656c63 // "relc"
 
-// connect opens a connection on the base DSN. Only Create makes the control
-// table ([ensureControl]); every other command finds no tenant without it.
+// connect opens a connection on the base DSN. Create, EnsureControl and the
+// last step of Erase make the control tables (ensureControl); every other
+// command finds no tenant without them.
 func (p *Provisioner) connect(ctx context.Context) (*pgx.Conn, error) {
 	conn, err := pgstore.ConnectDirect(ctx, p.base)
 	if err != nil {

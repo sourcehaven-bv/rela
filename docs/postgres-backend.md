@@ -733,9 +733,11 @@ with no due time, such as the version sweep and removing soft-deleted rows,
 runs the next time the tenant opens.
 
 The IdP webhook's replay protection lives in the tenant's own state, so it
-survives the tenant being closed and reopened. When that state cannot be
-read or written, the webhook gets 503 with `Retry-After`, so the IdP
-delivers it again rather than a replay passing unnoticed.
+survives the tenant being closed and reopened. A webhook's id is stored only
+after it was handled, so a webhook that failed runs again when the IdP
+retries it. When that state cannot be read or written, the webhook gets 503
+with `Retry-After`, so the IdP delivers it again rather than a replay passing
+unnoticed.
 
 On shutdown, the server first ends every tenant's live-update and
 co-editing streams, so open browser tabs do not hold the shutdown for its

@@ -107,6 +107,15 @@ func validateTenantMode(f *serverFlags, envUser string, supported bool) (identit
 	if f.configEditing {
 		return mode, errors.New("--config-editing is not supported in tenant mode")
 	}
+	provMode, err := tenant.ParseProvisionMode(f.tenant.provision)
+	if err != nil {
+		return mode, err
+	}
+	// Webhook mode creates tenants only from the IdP's organization.created
+	// webhook; without the receiver no tenant would ever be created.
+	if provMode == tenant.ProvisionWebhook && (f.webhookAudience == "" || f.webhookAction == "") {
+		return mode, errors.New("-tenant-provision=webhook needs the IdP webhook (-webhook-audience, -webhook-action)")
+	}
 	return mode, nil
 }
 
@@ -308,9 +317,6 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 	s.assertion = tenanthost.ReuseAssertion(adapter)
 	if s.webhook, err = buildWebhookVerifier(f, s.idv); err != nil {
 		return fail(err)
-	}
-	if provMode == tenant.ProvisionWebhook && s.webhook == nil {
-		return fail(errors.New("-tenant-provision=webhook needs the IdP webhook (-webhook-audience, -webhook-action)"))
 	}
 
 	th, err := s.tenantHost(base, resolver, tenantLimits{resident: f.tenant.maxResident, open: f.tenant.maxOpen},

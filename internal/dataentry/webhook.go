@@ -287,11 +287,13 @@ func (rec *webhookReceiver) handle(
 		return
 	}
 
-	// Dedup on the webhook id (jti). An id-less webhook can't be deduped, so it is
-	// always processed — at-least-once is acceptable because the action is
-	// idempotent (it upserts by sub).
+	// Dedup on the webhook id (jti). The id is recorded only after the
+	// handler succeeds, so a failed webhook is never deduped on its retry. Two
+	// deliveries of one id that arrive together can both run; the handlers
+	// are idempotent (the action upserts by sub), so that is acceptable. An
+	// id-less webhook can't be deduped, so it is always processed.
 	if claims.ID != "" {
-		fresh, seenErr := rec.seen.add(r.Context(), claims.ID)
+		dup, seenErr := rec.seen.has(r.Context(), claims.ID)
 		if seenErr != nil {
 			// Without the stored set a replay cannot be told apart, so the
 			// webhook is refused and the IdP delivers it again.
@@ -300,7 +302,7 @@ func (rec *webhookReceiver) handle(
 			http.Error(w, "dedup unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		if !fresh {
+		if dup {
 			slog.Info("idp webhook deduped", "id", claims.ID, "event", claims.Event)
 			w.WriteHeader(http.StatusOK)
 			return
@@ -313,11 +315,8 @@ func (rec *webhookReceiver) handle(
 		err = dispatch(r.Context(), claims)
 	}
 	if err != nil {
-		// The handler failed (IdP fetch error, script error, ...). Return 502 so the
-		// IdP retries; drop the id from the seen-set so the retry isn't deduped.
-		if claims.ID != "" {
-			rec.seen.forget(r.Context(), claims.ID)
-		}
+		// The handler failed (IdP fetch error, script error, ...). Return 502 so
+		// the IdP retries; the id was not recorded, so the retry runs.
 		if family == familyOrganization {
 			slog.Warn("idp webhook organization handler failed", "event", claims.Event, "error", err)
 		} else {
@@ -325,6 +324,17 @@ func (rec *webhookReceiver) handle(
 		}
 		http.Error(w, "handler failed", http.StatusBadGateway)
 		return
+	}
+	if claims.ID != "" {
+		if _, err = rec.seen.add(r.Context(), claims.ID); err != nil {
+			// The webhook was handled but its id could not be stored. Ask for
+			// a retry rather than leave a replay open; the retry is harmless
+			// because the handlers are idempotent.
+			slog.Error("idp webhook: recording the id failed; asking the IdP to retry", "id", claims.ID, "error", err)
+			w.Header().Set("Retry-After", "30")
+			http.Error(w, "dedup unavailable", http.StatusServiceUnavailable)
+			return
+		}
 	}
 	w.WriteHeader(http.StatusOK)
 }
@@ -455,9 +465,8 @@ const webhookSeenMax = 4096
 // The in-memory map serializes this process. The kv copy carries the set
 // across eviction and across processes. Two processes can still race between
 // load and save and both accept one id; that leaves the at-least-once
-// delivery the action already tolerates (it upserts by sub). A kv failure is
-// logged and the in-memory set is used alone, so a database hiccup does not
-// make the IdP retry a webhook that was handled.
+// delivery the action already tolerates (it upserts by sub). A kv read or
+// write failure fails the call, and the webhook gets 503 so the IdP retries.
 type seenSet struct {
 	mu  sync.Mutex
 	ttl time.Duration
@@ -501,17 +510,18 @@ func (s *seenSet) add(ctx context.Context, id string) (bool, error) {
 	return true, nil
 }
 
-// forget drops id so a retried-after-failure webhook isn't deduped.
-func (s *seenSet) forget(ctx context.Context, id string) {
+// has reports whether id was recorded within the TTL. It fails when the
+// stored set cannot be read.
+func (s *seenSet) has(ctx context.Context, id string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.loadLocked(ctx); err != nil {
-		slog.Warn("idp webhook: reading the dedup set failed; the retry may be deduped", "error", err)
+		return false, err
 	}
-	delete(s.at, id)
-	if err := s.saveLocked(ctx); err != nil {
-		slog.Warn("idp webhook: saving the dedup set failed; the retry may be deduped", "error", err)
-	}
+	now := s.clock()
+	s.sweepLocked(now)
+	t, ok := s.at[id]
+	return ok && now.Sub(t) <= s.ttl, nil
 }
 
 func (s *seenSet) sweepLocked(now time.Time) {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -130,7 +131,7 @@ func TestWebhook_MissingUserID(t *testing.T) {
 }
 
 // TestWebhook_ActionFailureRetryable: when the action fails, the receiver answers
-// 502 AND forgets the id, so a retry (same id) is NOT deduped and runs again.
+// 502 and does not record the id, so a retry (same id) is NOT deduped and runs again.
 func TestWebhook_ActionFailureRetryable(t *testing.T) {
 	// The action always fails. Both deliveries (same id) must reach it and 502 —
 	// proving a failed id is not remembered, so the IdP's retry runs again.
@@ -146,7 +147,7 @@ func TestWebhook_ActionFailureRetryable(t *testing.T) {
 	// If the failed id had been remembered, this would 200 (deduped). It must 502
 	// again — the retry reaches the action.
 	if rec := postWebhook(app, "b2"); rec.Code != http.StatusBadGateway {
-		t.Fatalf("retry after failure status = %d, want 502 (id must be forgotten on failure)", rec.Code)
+		t.Fatalf("retry after failure status = %d, want 502 (a failed id must not be recorded)", rec.Code)
 	}
 }
 
@@ -171,7 +172,7 @@ func TestSeenSet_TTLExpiry(t *testing.T) {
 
 // TestSeenSet_SurvivesEviction pins that the set lives in state.KV: a new
 // set over the same kv, as a reopened tenant App builds, still dedups an id
-// the old one saw, and a forgotten id is forgotten for both (BUG-ZO33J9M).
+// the old one saw (BUG-ZO33J9M).
 func TestSeenSet_SurvivesEviction(t *testing.T) {
 	ctx := context.Background()
 	root, err := storage.NewRootedFS(storage.NewMemFS(), t.TempDir())
@@ -184,17 +185,16 @@ func TestSeenSet_SurvivesEviction(t *testing.T) {
 	if !mustAdd(t, before, "a") || !mustAdd(t, before, "b") {
 		t.Fatal("first adds should be new")
 	}
-	before.forget(ctx, "b")
 
 	after := newSeenSet(time.Minute, kv)
-	if mustAdd(t, after, "a") {
-		t.Error("an id seen before eviction was accepted again")
+	if dup, err := after.has(ctx, "a"); err != nil || !dup {
+		t.Errorf("has(a) after eviction = %v, %v; want a duplicate", dup, err)
 	}
-	if !mustAdd(t, after, "b") {
-		t.Error("a forgotten id was still deduped")
+	if !mustAdd(t, after, "c") {
+		t.Error("a new id was deduped")
 	}
 	// The first set sees what the second recorded.
-	if mustAdd(t, before, "b") {
+	if mustAdd(t, before, "c") {
 		t.Error("an id another set recorded was accepted again")
 	}
 }
@@ -212,6 +212,42 @@ func mustAdd(t *testing.T, s *seenSet, id string) bool {
 type brokenKV struct{ state.KV }
 
 func (brokenKV) Get(context.Context, string) ([]byte, error) { return nil, errors.New("db down") }
+
+// putFailKV reads as empty and fails every write.
+type putFailKV struct{ state.KV }
+
+func (putFailKV) Get(context.Context, string) ([]byte, error) { return nil, os.ErrNotExist }
+func (putFailKV) Put(context.Context, string, []byte) error   { return errors.New("db down") }
+
+// TestWebhook_DedupUnavailable pins that the receiver answers 503 with
+// Retry-After when the stored id set cannot be read (the handler does not
+// run) or the handled id cannot be stored (the IdP retries; the handler is
+// idempotent), so no webhook is accepted without replay protection.
+func TestWebhook_DedupUnavailable(t *testing.T) {
+	claims := WebhookClaims{Event: "organization.created", OrgID: "org_1", ID: "evt_kv"}
+	for _, tc := range []struct {
+		name  string
+		kv    state.KV
+		calls int
+	}{
+		{"read fails", brokenKV{}, 0},
+		{"write fails", putFailKV{}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &recordingOrgHandler{}
+			app := newOrgWebhookTestApp(t, claims, h)
+			app.webhook.seen = newSeenSet(time.Minute, tc.kv)
+			rec := postWebhook(app, "b")
+			if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" {
+				t.Fatalf("status = %d, Retry-After = %q; want 503 with Retry-After",
+					rec.Code, rec.Header().Get("Retry-After"))
+			}
+			if len(h.got) != tc.calls {
+				t.Errorf("org handler calls = %d, want %d", len(h.got), tc.calls)
+			}
+		})
+	}
+}
 
 // TestSeenSet_FailsClosed pins that an unreadable stored set is an error,
 // never a fresh id: a replay could otherwise pass.
@@ -495,7 +531,7 @@ func TestWebhook_OtherEventsReachAction(t *testing.T) {
 }
 
 // TestWebhook_OrganizationEventDedupAndRetry: organization events share the
-// jti dedup, and a handler failure answers 502 and forgets the id so the
+// jti dedup, and a handler failure answers 502 and records no id, so the
 // retry runs again.
 func TestWebhook_OrganizationEventDedupAndRetry(t *testing.T) {
 	claims := WebhookClaims{Event: "organization.created", OrgID: "org_1", ID: "evt_od"}
@@ -522,7 +558,7 @@ func TestWebhook_OrganizationEventDedupAndRetry(t *testing.T) {
 			}
 		}
 		if len(h.got) != 2 {
-			t.Fatalf("org handler calls = %d, want 2 (failed id must be forgotten)", len(h.got))
+			t.Fatalf("org handler calls = %d, want 2 (a failed id must not be recorded)", len(h.got))
 		}
 	})
 }

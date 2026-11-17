@@ -30,6 +30,16 @@ func TestValidateTenantMode(t *testing.T) {
 		{name: "jwt with env user", flags: jwtFlags, envUser: "jeroen", supported: true, wantErr: "cannot be set"},
 		{name: "config editing", supported: true, wantErr: "--config-editing",
 			flags: func() *serverFlags { f := jwtFlags(); f.configEditing = true; return f }},
+		{name: "unknown provision mode", supported: true, wantErr: "always",
+			flags: func() *serverFlags { f := jwtFlags(); f.tenant.provision = "always"; return f }},
+		{name: "webhook provisioning without the webhook", supported: true, wantErr: "needs the IdP webhook",
+			flags: func() *serverFlags { f := jwtFlags(); f.tenant.provision = "webhook"; return f }},
+		{name: "webhook provisioning with the webhook", supported: true,
+			flags: func() *serverFlags {
+				f := jwtFlags()
+				f.tenant.provision, f.webhookAudience, f.webhookAction = "webhook", "rela-webhooks", "idp-sync"
+				return f
+			}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

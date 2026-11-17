@@ -25,8 +25,10 @@ const controlTable = ControlSchema + ".tenants"
 // create can refuse them (TKT-TNPRV8). It is keyed like [controlTable].
 const erasedTable = ControlSchema + ".erased"
 
-// controlDDL creates the control tables. Only [Provisioner] runs it; a server
-// that finds the table missing refuses to start rather than create it.
+// controlDDL creates the control tables. Only [Provisioner] runs it: the
+// operator commands, and a server with automatic provisioning on at startup.
+// A server with provisioning off that finds the table missing refuses to
+// start rather than create it.
 const controlDDL = `CREATE SCHEMA IF NOT EXISTS ` + ControlSchema + `;
 CREATE TABLE IF NOT EXISTS ` + controlTable + ` (
 	schema_name text PRIMARY KEY,

@@ -338,6 +338,8 @@ func (h *Host) serveWebhook(w http.ResponseWriter, r *http.Request) {
 // delivers the event again and a failed create is never acknowledged.
 func (h *Host) provisionFromWebhook(w http.ResponseWriter, r *http.Request, claims dataentry.WebhookClaims) {
 	st := h.cfg.Provision.Start(claims.OrgID)
+	slog.InfoContext(r.Context(), "tenant host: organization.created webhook; provisioning",
+		"org_id", claims.OrgID, "trigger", "webhook", "webhook_id", claims.ID, "state", string(st))
 	if st == tenant.ProvisionRunning {
 		ctx, cancel := context.WithTimeout(r.Context(), webhookProvisionWait)
 		st = h.cfg.Provision.Wait(ctx, claims.OrgID)
@@ -370,7 +372,7 @@ func (h *Host) acquireFailed(w http.ResponseWriter, r *http.Request, orgID strin
 	if h.cfg.LazyProvision && provisionable(err) {
 		st := h.cfg.Provision.Start(orgID)
 		slog.InfoContext(r.Context(), "tenant host: verified org has no tenant; provisioning",
-			"org_id", orgID, "path", r.URL.Path, "state", string(st))
+			"org_id", orgID, "trigger", "lazy", "path", r.URL.Path, "state", string(st))
 		h.provisioning(w, r, st)
 		return
 	}
