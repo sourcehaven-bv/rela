@@ -9,12 +9,13 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/readtime"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // downGraph fails every graph read, so resolving any identity fails.
 type downGraph struct{ acl.NullGraph }
 
-func (downGraph) OutgoingRelations(context.Context, string, string) ([]string, error) {
+func (downGraph) OutgoingRelations(context.Context, string, string, []store.PropPredicate) ([]string, error) {
 	return nil, errors.New("graph down")
 }
 

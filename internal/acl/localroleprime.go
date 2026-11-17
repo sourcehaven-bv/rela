@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // edgeBatcher is the batch read a [Graph] may offer so [PrimeLocalRoles] can
@@ -16,7 +18,10 @@ type edgeBatcher interface {
 	// EdgesBetween returns the zero-tail relType edges from one of fromIDs
 	// to one of toIDs, as from → set of to. Zero-tail is what
 	// [Graph.HasEdge] reads.
-	EdgesBetween(ctx context.Context, relType string, fromIDs, toIDs []string) (map[string]map[string]bool, error)
+	// cond restricts the edges as in [Graph.HasEdge].
+	EdgesBetween(
+		ctx context.Context, relType string, cond []store.PropPredicate, fromIDs, toIDs []string,
+	) (map[string]map[string]bool, error)
 	// OutgoingFrom returns, per id in fromIDs, the targets of its relType
 	// edges in the order [Graph.OutgoingRelations] returns them.
 	OutgoingFrom(ctx context.Context, relType string, fromIDs []string) (map[string][]string, error)
@@ -152,7 +157,8 @@ func batchLocalRoles(
 	targets := slices.Sorted(maps.Keys(targetSet))
 	edges := make(map[string]map[string]map[string]bool, len(relTypes))
 	for _, relType := range relTypes {
-		into, err := b.EdgesBetween(ctx, relType, globals.Members, targets)
+		cond, _ := r.conds.edge(relType) // conferringRelations drops a dead type
+		into, err := b.EdgesBetween(ctx, relType, cond, globals.Members, targets)
 		if err != nil {
 			return nil, err
 		}

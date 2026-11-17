@@ -44,7 +44,13 @@ type Graph interface {
 	// exists. Returns false on backend error rather than propagating —
 	// a missing edge and an error look the same to authz (deny by
 	// absence). Operators see backend errors in the store's own logs.
-	HasEdge(ctx context.Context, from, relType, to string) bool
+	//
+	// cond restricts the edge by its own properties ([store.PropPredicate],
+	// matched as the store matches them); nil is unconstrained. A grant
+	// probe passes the bound condition of a conditional role relation
+	// (TKT-TKSCSBT); an implementation that ignored it would count an
+	// expired grant.
+	HasEdge(ctx context.Context, from, relType, to string, cond []store.PropPredicate) bool
 
 	// OutgoingRelations returns the toIDs reachable from `fromID` via
 	// `relType`, or an error if the backend lookup failed. Resolvers
@@ -52,7 +58,9 @@ type Graph interface {
 	// under-counting members is safer than over-granting, but a
 	// principal-resolution that proceeds with partial data is worse
 	// than failing the request loud.
-	OutgoingRelations(ctx context.Context, from, relType string) ([]string, error)
+	//
+	// cond restricts the edges as in [Graph.HasEdge].
+	OutgoingRelations(ctx context.Context, from, relType string, cond []store.PropPredicate) ([]string, error)
 }
 
 // PrincipalLookup resolves a raw principal string to entity ids by a
@@ -74,10 +82,12 @@ type PrincipalLookup interface {
 type NullGraph struct{}
 
 // HasEdge always returns false.
-func (NullGraph) HasEdge(context.Context, string, string, string) bool { return false }
+func (NullGraph) HasEdge(context.Context, string, string, string, []store.PropPredicate) bool {
+	return false
+}
 
 // OutgoingRelations always returns nil, nil.
-func (NullGraph) OutgoingRelations(context.Context, string, string) ([]string, error) {
+func (NullGraph) OutgoingRelations(context.Context, string, string, []store.PropPredicate) ([]string, error) {
 	return nil, nil
 }
 

@@ -17,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
 	"github.com/Sourcehaven-BV/rela/internal/remotesync"
 	"github.com/Sourcehaven-BV/rela/internal/schedulerstate"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -140,7 +141,7 @@ func (s *Scheduler) pullRemoteTask(ctx context.Context, taskName, runID string) 
 	if user == "" {
 		user = principal.UserScheduler
 	}
-	ctx = stampContext(ctx, user, task.Name)
+	ctx = readtime.With(stampContext(ctx, user, task.Name), s.readTime())
 	_, err := pull(ctx, s.ws, s.bind, task.Remote, runID, remotesync.Options{}, s.remoteTransport, s.logger)
 	return err
 }

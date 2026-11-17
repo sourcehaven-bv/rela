@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // ErrPrincipalLookup wraps every failure of the `principal_property` lookup in
@@ -38,7 +41,7 @@ var ErrIdentityMismatch = errors.New("acl: attached request is bound to another 
 // targets of a relation from a node. The member-of walk is built on it.
 // aclstore.Graph satisfies it.
 type MembershipReader interface {
-	OutgoingRelations(ctx context.Context, from, relType string) ([]string, error)
+	OutgoingRelations(ctx context.Context, from, relType string, cond []store.PropPredicate) ([]string, error)
 }
 
 // Identity is a resolved principal: the full [principal.Principal] plus the
@@ -57,6 +60,10 @@ type Identity struct {
 	members   []string
 	unmatched bool
 	verified  bool
+	// at is the read time the identity was resolved at (internal/readtime),
+	// zero when the context carried none. The member walk and every
+	// conditional grant of the Request opened on it use this one instant.
+	at time.Time
 	// origin is the resolver that built this Identity. Each [Declarative]
 	// owns exactly one resolver, so [Declarative.ForIdentity] compares
 	// pointers to refuse an identity resolved elsewhere.
@@ -176,11 +183,14 @@ func (r *IdentityResolver) ResolveDirect(ctx context.Context, p principal.Princi
 	if isUnstamped(p) {
 		return Identity{}, fmt.Errorf("%w: User=%q Tool=%q", ErrUnstampedPrincipal, p.User, p.Tool)
 	}
-	members, err := r.walkMembers(ctx, p.User)
+	// The read time comes from the edge (readtime.With or Ensure). Without
+	// one, at is zero and every conditional grant fails closed.
+	at, _ := readtime.From(ctx)
+	members, err := r.walkMembers(ctx, p.User, at)
 	if err != nil {
 		return Identity{}, fmt.Errorf("acl: resolve membership of %q: %w", p.User, err)
 	}
-	return Identity{principal: p.Clone(), members: members, origin: r}, nil
+	return Identity{principal: p.Clone(), members: members, at: at, origin: r}, nil
 }
 
 // ResolvePrincipal maps a raw principal identifier to a user entity id via the
@@ -228,18 +238,29 @@ func (r *IdentityResolver) ResolvePrincipal(ctx context.Context, rawUser string)
 // [Policy.EffectiveMembershipRelation]). A visited set terminates cycles;
 // depthCap is the backstop. A graph error aborts the walk and is returned:
 // a partial closure would silently drop group grants.
-func (r *IdentityResolver) walkMembers(ctx context.Context, user string) ([]string, error) {
+//
+// A `when:` on the membership relation's entry filters every hop by the
+// edge's own properties, bound at at.
+func (r *IdentityResolver) walkMembers(ctx context.Context, user string, at time.Time) ([]string, error) {
 	if user == "" {
 		return nil, nil
 	}
 	rel := r.policy.EffectiveMembershipRelation()
+	var cond []store.PropPredicate
+	if c := r.policy.RoleRelations[rel].Condition; c != nil {
+		preds, ok := c.Bind(at)
+		if !ok {
+			return []string{user}, nil
+		}
+		cond = preds
+	}
 	visited := map[string]bool{user: true}
 	order := []string{user}
 	frontier := []string{user}
 	for depth := 0; depth < depthCap && len(frontier) > 0; depth++ {
 		var next []string
 		for _, n := range frontier {
-			tos, err := r.members.OutgoingRelations(ctx, n, rel)
+			tos, err := r.members.OutgoingRelations(ctx, n, rel, cond)
 			if err != nil {
 				return nil, err
 			}

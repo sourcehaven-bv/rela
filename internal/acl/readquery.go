@@ -87,42 +87,10 @@ func (r *Request) readQuery(ctx context.Context, entityType string) ReadQueryRes
 		return ReadQueryResult{AllowAll: true, Faces: dedupeFaces(faceUnion)}
 	}
 
-	var conferring []string
-	// Per conferring relation: the faces ITS role grants (nil = every face).
-	// The union over all conferring roles is what the type-level Faces and
-	// FaceIn carry; the per-relation sets become GraphQuery.Any branches
-	// below, because a principal who reaches an entity through ONE relation
-	// holds that relation's role and no other — a union would launder the
-	// owner's draft grant through the reviewer's edge.
-	facesByRel := map[string][]entity.Face{}
-	allByRel := map[string]bool{}
-	// The face union is recomputed over the CONFERRING roles, not inherited
-	// from the global loop above: a role conferred by a relation grants what
-	// IT declares, and the global loop found nothing (we are past its
-	// early return). Reusing the global union here would grant faces from
-	// roles the principal does not hold on this path.
-	faceUnion, allFaces = nil, false
-	for relType, def := range r.d.policy.RoleRelations {
-		role, ok := r.roleFor(def.Confers)
-		if !ok {
-			continue
-		}
-		if !roleGrantsRead(role, entityType) {
-			continue
-		}
-		conferring = append(conferring, relType)
-		fs, all := roleReadFaces(role, entityType)
-		if all {
-			allFaces = true
-		}
-		faceUnion = append(faceUnion, fs...)
-		facesByRel[relType] = dedupeFaces(fs)
-		allByRel[relType] = all
-	}
+	conferring, facesByRel, allByRel, faceUnion, allFaces := readConferring(r, entityType)
 	if len(conferring) == 0 {
 		return ReadQueryResult{DenyAll: true}
 	}
-	sort.Strings(conferring)
 
 	// Faces is deliberately left ZERO here, and that is CORRECT rather
 	// than a gap: the executor stamps a face selection onto a copy of this
@@ -163,8 +131,16 @@ func (r *Request) readQuery(ctx context.Context, entityType string) ReadQueryRes
 	// SkipUnreadable: the answer is an allowlist, so a row whose file has
 	// merge conflicts is hidden rather than failing every list of the type
 	// (BUG-HTSW37Q).
+	// A conditional relation type (TKT-TKSCSBT) restricts its edges by
+	// their own properties. With one conferring type the condition goes on
+	// the predicate itself. With several, the union stays unconditioned (a
+	// superset) and each type gets a branch carrying its own condition.
+	if len(conferring) == 1 {
+		inbound.EdgeProps, _ = r.conds.edge(conferring[0])
+	}
+	conditional := len(conferring) > 1 && slices.ContainsFunc(conferring, r.conds.conditional)
 	q := &store.GraphQuery{EntityType: entityType, HasInbound: inbound, SkipUnreadable: true}
-	if allFaces && sameFacesEverywhere(conferring, facesByRel, allByRel) {
+	if allFaces && sameFacesEverywhere(conferring, facesByRel, allByRel) && !conditional {
 		// Every conferring role reads every face: the union IS each role's
 		// grant, so the single predicate is exact and no branches are needed.
 		return ReadQueryResult{Query: q}
@@ -177,6 +153,7 @@ func (r *Request) readQuery(ctx context.Context, entityType string) ReadQueryRes
 	for _, relType := range conferring {
 		// Members is non-empty here, checked above, so ok always holds.
 		edge, _ := conferredEdge(r.d.policy, globals.Members, []string{relType})
+		edge.EdgeProps, _ = r.conds.edge(relType)
 		br := store.GraphBranch{HasInbound: edge}
 		if !allByRel[relType] {
 			br.FaceIn = facesByRel[relType]
@@ -187,6 +164,51 @@ func (r *Request) readQuery(ctx context.Context, entityType string) ReadQueryRes
 		return ReadQueryResult{Query: q}
 	}
 	return ReadQueryResult{Query: q, Faces: dedupeFaces(faceUnion)}
+}
+
+// readConferring returns the role relations whose conferred role reads
+// entityType and whose edges can count at this request's read time, sorted,
+// with the faces each one grants and their union.
+func readConferring(r *Request, entityType string) (
+	conferring []string, facesByRel map[string][]entity.Face, allByRel map[string]bool,
+	faceUnion []entity.Face, allFaces bool,
+) {
+	// Per conferring relation: the faces ITS role grants (nil = every face).
+	// The union over all conferring roles is what the type-level Faces and
+	// FaceIn carry; the per-relation sets become GraphQuery.Any branches in
+	// readQuery, because a principal who reaches an entity through ONE relation
+	// holds that relation's role and no other — a union would launder the
+	// owner's draft grant through the reviewer's edge.
+	facesByRel = map[string][]entity.Face{}
+	allByRel = map[string]bool{}
+	// The face union is recomputed over the CONFERRING roles, not inherited
+	// from the global grants: a role conferred by a relation grants what
+	// IT declares, and the caller found no global read. Reusing a global
+	// union here would grant faces from roles the principal does not hold on
+	// this path.
+	for relType, def := range r.d.policy.RoleRelations {
+		role, ok := r.roleFor(def.Confers)
+		if !ok {
+			continue
+		}
+		if !roleGrantsRead(role, entityType) {
+			continue
+		}
+		if _, live := r.conds.edge(relType); !live {
+			// Conditional, and no edge can satisfy it at this read time.
+			continue
+		}
+		conferring = append(conferring, relType)
+		fs, all := roleReadFaces(role, entityType)
+		if all {
+			allFaces = true
+		}
+		faceUnion = append(faceUnion, fs...)
+		facesByRel[relType] = dedupeFaces(fs)
+		allByRel[relType] = all
+	}
+	sort.Strings(conferring)
+	return conferring, facesByRel, allByRel, faceUnion, allFaces
 }
 
 // sameFacesEverywhere reports whether every conferring relation grants every
