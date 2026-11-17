@@ -2784,8 +2784,8 @@
       "weight.layers": 0,
       "weight.vocabulary": 872,
       "weight.types": 3972,
-      "weight.concepts": 7203,
-      "weight.boundaries": 1422,
+      "weight.concepts": 7204,
+      "weight.boundaries": 1428,
       "weight.data": 1298,
       "weight.security": 2064,
       "largest_tangle": 14,
@@ -2794,23 +2794,8 @@
       "propagation_cost": 9.1
     },
     "min_weight": 0,
-    "at": "2026-11-16T20:48:28Z",
+    "at": "2026-11-17T00:40:00Z",
     "log": [
-      {
-        "at": "2026-11-08T09:00:00Z",
-        "change": "loosen",
-        "reason": "TKT-NRNDGZR: appbuild imports ai for WithAIProvider, so the existing 'message' unit-naming finding (realtimecfg vs ai) weighs 1 more and appbuild reaches the ai package",
-        "metrics": {
-          "weight.concepts": [
-            7082,
-            7083
-          ],
-          "propagation_cost": [
-            8.9,
-            9.0
-          ]
-        }
-      },
       {
         "at": "2026-11-08T09:45:36Z",
         "change": "loosen",
@@ -3129,6 +3114,21 @@
           "weight.boundaries": [
             1428,
             1422
+          ]
+        }
+      },
+      {
+        "at": "2026-11-17T00:40:00Z",
+        "change": "loosen",
+        "reason": "TKT-RK810V7: RecordRow.Fields adds 1 to accepted untyped_bag-5de1e6eb61d7; dataentry records wiring tips the words factor of accepted misplaced_file-f03fc91c99b4 (+6)",
+        "metrics": {
+          "weight.concepts": [
+            7203,
+            7204
+          ],
+          "weight.boundaries": [
+            1422,
+            1428
           ]
         }
       }
