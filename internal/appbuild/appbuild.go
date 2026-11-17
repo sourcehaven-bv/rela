@@ -1796,7 +1796,13 @@ func ValidateACLPolicy(policy *acl.Policy, meta *metamodel.Metamodel) error {
 	if policy == nil || meta == nil {
 		return errors.New("appbuild: ValidateACLPolicy: policy and metamodel are required")
 	}
-	return policy.ValidateAgainstMetamodel(metamodelView{meta})
+	if err := policy.ValidateAgainstMetamodel(metamodelView{meta}); err != nil {
+		return err
+	}
+	// Conditional grants (TKT-TKSCSBT) compile here, with the schema, so
+	// every loader that validates gets them, and NewDeclarative refuses a
+	// `when:` that skipped this.
+	return acl.CompileGrantConditions(policy, grantConditionCompiler(meta))
 }
 
 // metamodelView adapts *metamodel.Metamodel to acl.MetamodelView. The acl

@@ -128,7 +128,7 @@ your session id or `"$(hostname)-$$"`:
   type's `visible:` grants for the bound request into a `search.FieldScope`: the
   gated properties, and per grant the fields it shows plus a `store.GraphQuery`
   for the rows it applies to. A role held through `role_relations` becomes
-  `acl.Request.LocalRolePredicate`, the same predicate the row gate uses.
+  `acl.Request.LocalRolePredicates`, the same predicates the row gate uses.
   Grants follow the role union (BUG-Y5UF3K): a role without a `visible:`
   block for the type shows every property on the rows it applies to and
   reads. The

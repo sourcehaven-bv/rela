@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
@@ -683,12 +684,12 @@ type countingGraph struct {
 	hasEdgeCalls  int
 }
 
-func (g *countingGraph) HasEdge(_ context.Context, _, _, _ string) bool {
+func (g *countingGraph) HasEdge(_ context.Context, _, _, _ string, _ []store.PropPredicate) bool {
 	g.hasEdgeCalls++
 	return false
 }
 
-func (g *countingGraph) OutgoingRelations(_ context.Context, _, _ string) ([]string, error) {
+func (g *countingGraph) OutgoingRelations(_ context.Context, _, _ string, _ []store.PropPredicate) ([]string, error) {
 	g.outgoingCalls++
 	return nil, nil
 }

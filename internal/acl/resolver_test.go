@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -71,12 +72,12 @@ func (g *fakeGraph) add(from, relType, to string) {
 	g.edges[k] = append(g.edges[k], to)
 }
 
-func (g *fakeGraph) HasEdge(_ context.Context, from, relType, to string) bool {
+func (g *fakeGraph) HasEdge(_ context.Context, from, relType, to string, _ []store.PropPredicate) bool {
 	g.hasEdgeCalls++
 	return slices.Contains(g.edges[edgeKey{from, relType}], to)
 }
 
-func (g *fakeGraph) OutgoingRelations(_ context.Context, from, relType string) ([]string, error) {
+func (g *fakeGraph) OutgoingRelations(_ context.Context, from, relType string, _ []store.PropPredicate) ([]string, error) {
 	g.outgoingCalls++
 	g.outgoingByRel[relType]++
 	if g.err != nil {
@@ -182,7 +183,7 @@ func TestWalkMembers_SelfLoop(t *testing.T) {
 	g.add("alice", "member-of", "alice")
 
 	d := newTestDeclarative(t, &Policy{}, g)
-	members, err := d.IdentityResolver().walkMembers(context.Background(), "alice")
+	members, err := d.IdentityResolver().walkMembers(context.Background(), "alice", time.Time{})
 	if err != nil {
 		t.Fatalf("walkMembers: %v", err)
 	}
@@ -202,7 +203,7 @@ func TestWalkMembers_Cycle(t *testing.T) {
 	g.add("C", "member-of", "A")
 
 	d := newTestDeclarative(t, &Policy{}, g)
-	members, err := d.IdentityResolver().walkMembers(context.Background(), "A")
+	members, err := d.IdentityResolver().walkMembers(context.Background(), "A", time.Time{})
 	if err != nil {
 		t.Fatalf("walkMembers: %v", err)
 	}
@@ -227,7 +228,7 @@ func TestWalkMembers_DepthCap_ReachableAtCap(t *testing.T) {
 	}
 
 	d := newTestDeclarative(t, &Policy{}, g)
-	members, err := d.IdentityResolver().walkMembers(context.Background(), "alice")
+	members, err := d.IdentityResolver().walkMembers(context.Background(), "alice", time.Time{})
 	if err != nil {
 		t.Fatalf("walkMembers: %v", err)
 	}
@@ -252,7 +253,7 @@ func TestWalkMembers_DepthCap_TruncatedBeyondCap(t *testing.T) {
 	}
 
 	d := newTestDeclarative(t, &Policy{}, g)
-	members, err := d.IdentityResolver().walkMembers(context.Background(), "alice")
+	members, err := d.IdentityResolver().walkMembers(context.Background(), "alice", time.Time{})
 	if err != nil {
 		t.Fatalf("walkMembers: %v", err)
 	}
@@ -272,7 +273,7 @@ func TestWalkMembers_GraphError_AbortsWalk(t *testing.T) {
 	g.err = errors.New("backend failure")
 
 	d := newTestDeclarative(t, &Policy{}, g)
-	members, err := d.IdentityResolver().walkMembers(context.Background(), "alice")
+	members, err := d.IdentityResolver().walkMembers(context.Background(), "alice", time.Time{})
 	if err == nil {
 		t.Fatalf("walkMembers under error = %v, nil; want an error", members)
 	}

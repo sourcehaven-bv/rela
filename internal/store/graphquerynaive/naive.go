@@ -22,6 +22,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/propmatch"
@@ -42,6 +43,10 @@ type Reader interface {
 // not exceed [DepthCap], and a NESTED hop must not carry an inheritance
 // expansion. Exported so every backend enforces the identical bound — see the
 // contract note on [store.RelationPredicate.EndpointMatch].
+// utcDay is the length of a UTC calendar day; a date-shaped time.Time is
+// a UTC midnight.
+const utcDay = 24 * time.Hour
+
 func CheckEndpointShape(q store.GraphQuery) error {
 	if err := q.Faces.Validate(); err != nil {
 		return err
@@ -75,7 +80,13 @@ func CheckEndpointShape(q store.GraphQuery) error {
 }
 
 func checkEndpointShape(p *store.RelationPredicate, nesting int) error {
-	if p == nil || p.EndpointMatch == nil {
+	if p == nil {
+		return nil
+	}
+	if err := store.ValidatePropPredicates(p.EdgeProps); err != nil {
+		return err
+	}
+	if p.EndpointMatch == nil {
 		return nil
 	}
 	if nesting >= depthCap {
@@ -564,8 +575,17 @@ func matchesAny(
 // and equality are delegated to internal/propmatch so this agrees
 // exactly with internal/filter and with the pgstore pushdown.
 func matchesProps(e *entity.Entity, props []store.PropPredicate) (bool, error) {
-	for _, p := range props {
-		ok, err := matchesProp(e, p)
+	return MatchProps(e.Properties, props)
+}
+
+// MatchProps reports whether a property map satisfies every predicate (AND),
+// with the [store.PropPredicate] semantics every backend shares. It is the
+// Go form of the store's property test, exported for a caller that holds a
+// row the store already returned (an edge's properties in aclstore) and must
+// answer exactly as a [store.RelationPredicate.EdgeProps] query would.
+func MatchProps(props map[string]any, preds []store.PropPredicate) (bool, error) {
+	for _, p := range preds {
+		ok, err := matchesProp(props, p)
 		if err != nil || !ok {
 			return false, err
 		}
@@ -576,8 +596,8 @@ func matchesProps(e *entity.Entity, props []store.PropPredicate) (bool, error) {
 // matchesProp decides one predicate of [matchesProps]. Every operator has
 // its own arm; an unknown one is [store.ErrInvalidQuery] rather than a
 // guess.
-func matchesProp(e *entity.Entity, p store.PropPredicate) (bool, error) {
-	raw := e.Properties[p.Property]
+func matchesProp(props map[string]any, p store.PropPredicate) (bool, error) {
+	raw := props[p.Property]
 	switch p.Op {
 	case store.PropKeyEqual:
 		return matchesKey(raw, p.Key, p.Value), nil
@@ -604,8 +624,38 @@ func matchesProp(e *entity.Entity, p store.PropPredicate) (bool, error) {
 		return propmatch.IsEmpty(raw) || propmatch.Decide(raw, propmatch.OpNotEqual, p.Value) == propmatch.Match, nil
 	case store.PropGreaterEqual, store.PropLessEqual:
 		return matchesOrdered(raw, p.Op, p.Value), nil
+	case store.PropIsDate:
+		return isDateShape(raw), nil
 	default:
 		return false, store.UnknownPropOpError(p)
+	}
+}
+
+// isDateShape decides [store.PropIsDate]: a YYYY-MM-DD string of ASCII
+// digits, or a time.Time at UTC midnight (an unquoted YAML date).
+func isDateShape(raw any) bool {
+	switch v := raw.(type) {
+	case string:
+		if len(v) != len("2006-01-02") {
+			return false
+		}
+		for i := range len(v) {
+			c := v[i]
+			if i == 4 || i == 7 {
+				if c != '-' {
+					return false
+				}
+				continue
+			}
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+		return true
+	case time.Time:
+		return v.Location() == time.UTC && v.Equal(v.Truncate(utcDay))
+	default:
+		return false
 	}
 }
 
@@ -639,11 +689,25 @@ func matchesOrdered(raw any, op store.PropOp, value string) bool {
 	if propmatch.IsEmpty(raw) {
 		return false
 	}
-	switch raw.(type) {
+	var s string
+	switch v := raw.(type) {
 	case []string, []any:
 		return false
+	case time.Time:
+		// yaml.v3 decodes an unquoted timestamp into a time.Time, which the
+		// file backends keep as is. The SQL backends hold the same value as
+		// its JSON encoding, so compare that form rather than fmt.Sprint's
+		// `2026-12-01 00:00:00 +0000 UTC`, which orders differently.
+		s = v.Format(time.RFC3339Nano)
+		if isDateShape(v) && isDateShape(value) {
+			// An unquoted YAML date compared with a date compares as a
+			// date, the way [isDateShape] already reads it, so `<=` holds
+			// on the day itself (TKT-TKSCSBT).
+			s = v.Format(time.DateOnly)
+		}
+	default:
+		s = fmt.Sprint(raw)
 	}
-	s := fmt.Sprint(raw)
 	if op == store.PropGreaterEqual {
 		return s >= value
 	}
@@ -693,7 +757,9 @@ func matchesPredicateAt(
 	anyEndpoint := len(p.Endpoints) == 0
 
 	found, err := hasMatchingRelation(
-		ctx, r, candidates, dir, typeSet, endpointSet, anyEndpoint, p.EndpointMatch, sel, nesting)
+		ctx, r, candidates, dir, edgeMatch{
+			types: typeSet, endpoints: endpointSet, anyEndpoint: anyEndpoint, props: p.EdgeProps,
+		}, p.EndpointMatch, sel, nesting)
 	if err != nil {
 		return false, err
 	}
@@ -701,6 +767,29 @@ func matchesPredicateAt(
 		return !found, nil
 	}
 	return found, nil
+}
+
+// edgeMatch is what one edge must satisfy on its own: its type, the entity
+// on its far side, and its own properties ([store.RelationPredicate.EdgeProps]).
+type edgeMatch struct {
+	types, endpoints map[string]bool
+	anyEndpoint      bool
+	props            []store.PropPredicate
+}
+
+// admits reports whether rel, whose far endpoint is other, passes the type,
+// endpoint and edge-property tests.
+func (e edgeMatch) admits(rel *entity.Relation, other string) (bool, error) {
+	if len(e.types) > 0 && !e.types[rel.Type] {
+		return false, nil
+	}
+	if !e.anyEndpoint && !e.endpoints[other] {
+		return false, nil
+	}
+	if len(e.props) == 0 {
+		return true, nil
+	}
+	return MatchProps(rel.Properties, e.props)
 }
 
 // hasMatchingRelation reports whether any candidate has an edge in dir
@@ -711,7 +800,7 @@ func matchesPredicateAt(
 // because it is the only one that loads another entity.
 func hasMatchingRelation(
 	ctx context.Context, r Reader, candidates []string, dir store.Direction,
-	typeSet, endpointSet map[string]bool, anyEndpoint bool, match *store.EndpointPredicate,
+	edge edgeMatch, match *store.EndpointPredicate,
 	sel store.FaceSelection, nesting int,
 ) (bool, error) {
 	q := store.RelationQuery{Direction: dir}
@@ -728,20 +817,21 @@ func hasMatchingRelation(
 			if err != nil {
 				return false, err
 			}
-			if len(typeSet) > 0 && !typeSet[rel.Type] {
-				continue
-			}
 			other := rel.To
 			if dir == store.DirectionIncoming {
 				other = rel.From
 			}
-			if !anyEndpoint && !endpointSet[other] {
+			ok, err := edge.admits(rel, other)
+			if err != nil {
+				return false, err
+			}
+			if !ok {
 				continue
 			}
 			if match == nil {
 				return true, nil
 			}
-			ok, err := matchesEndpoint(ctx, r, other, match, sel, nesting)
+			ok, err = matchesEndpoint(ctx, r, other, match, sel, nesting)
 			if err != nil {
 				return false, err
 			}

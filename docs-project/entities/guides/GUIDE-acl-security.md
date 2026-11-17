@@ -127,6 +127,28 @@ going to be shown anyway is a visibility decision, not an escalation
 path. Both the warning and the linter evaluate the same predicate, so
 they never disagree.
 
+### A grant with a `when:` condition
+
+A `role_relations:` entry may carry `when:`, a condition on the edge's own
+properties such as `edge.valid_until >= today()` (see [GUIDE-acl-overview]).
+The policy refuses a `when:` without `requires_permission:`. The gate covers
+the condition properties too: anyone who can edit the edge can move its date,
+so extending access needs the same permission as granting it.
+
+The condition fails closed. An edge without the property, or with a value
+that is not a `YYYY-MM-DD` date, grants nothing. The policy refuses any
+condition the store cannot answer exactly, so list reads, search, single
+reads and the Go checks all apply the same rule. Nothing evaluates it per
+row in Go.
+
+rela judges the condition at each request's read time, by calendar day in
+UTC. Access ends at the first request after the condition stops holding.
+There is no expiry job and no cached grant: the identity is resolved again on
+every request. A request without a read time grants nothing through a
+conditional edge. An open event stream re-derives its gate on the first
+change after midnight UTC, so it stops sending change notices for types the
+principal can no longer read.
+
 ### This is a hard requirement with content states
 
 The tolerance above holds only while the worst case is over-granting inside a
@@ -448,7 +470,7 @@ exits zero. For CI, gate the exit code on a severity threshold with
 ```bash
 rela acl audit --fail-on=high     # non-zero if any critical/high finding
 rela acl audit --fail-on=medium   # also fail on medium
-rela acl audit --fail-on=any      # fail on any finding at all
+rela acl audit --fail-on=any      # fail on any problem finding
 rela acl audit --exit-code        # alias for --fail-on=high
 ```
 
@@ -464,6 +486,10 @@ the policy clean — the medium/low findings (wildcard sprawl, dead
 permissions, drift) are exactly the slow rot you want to catch before
 it hides a real hole. Loosen to `--fail-on=high` only if you have a
 deliberate, reviewed reason to tolerate the lower-severity findings.
+
+An `info` finding is a fact, not a problem, and no `--fail-on` threshold
+counts it. The audit reports one for each `role_relations:` entry with a
+`when:` condition, so a reviewer sees which access expires.
 
 Use `-o json` for machine-readable output. A clean, well-gated policy
 reports no findings and exits zero.
