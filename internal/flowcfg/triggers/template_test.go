@@ -228,8 +228,7 @@ func TestInterpolateSafeOnly_NowFormat(t *testing.T) {
 }
 
 // TestInterpolate_SubstitutedTextIsNotExpanded pins the one-pass rule: a
-// value that holds a placeholder is written as that text. A second pass
-// would let whoever writes a property make a trigger copy another one.
+// value that holds a placeholder is written as that text.
 func TestInterpolate_SubstitutedTextIsNotExpanded(t *testing.T) {
 	t.Parallel()
 	vars := TemplateVars{

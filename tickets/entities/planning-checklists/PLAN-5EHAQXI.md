@@ -103,9 +103,11 @@ not to run code), or an attacker who hijacks such a session.
 - T9 Information disclosure: the configuration is not a secret (CLAUDE.md). flows.yaml holds no secrets; those live in `.rela/secrets.yaml`.
 - T10 Denial of service: the draft size is bounded by maxDraftBytes and the tree limits. A broken trigger is refused at preview, and Prepare builds a full candidate before the swap, so the server is never replaced by one that fails to start.
 - T11 Spoofing: the gate is unchanged (`config:edit`, interactive principal type, verified identity beyond loopback).
-Residual: a `config:edit` holder can write data through set, create, relate,
-add_to_pile and notify outputs that run as the acting user. This matches the
-allowlist before TKT-GWOBH2U, and the ACL still gates every write.
+Residual: a `config:edit` holder can write data through set, create,
+add_to_pile and notify outputs, which run as cascades without per-record ACL
+checks. TKT-CB1YV7D, done in this ticket, judges every such edit against the
+parsed acl.yaml and the editor's own grants (`appbuild.CheckTriggerACL`) and
+refuses it when it cannot judge.
 
 **Input Sources & Validation:** Draft JSON from the browser: strict JSON decode,
 tree limits, per-key allowlist, read-back check, then the full trigger parse and

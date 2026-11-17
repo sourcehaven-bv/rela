@@ -80,10 +80,8 @@ func gitConfig(ctx context.Context, key string) (string, error) {
 //   - {{new.<prop>}}  - New value of a property
 //
 // Every placeholder is replaced in one pass, and substituted text is never
-// scanned again. A stored value that holds `{{new.salary}}` is therefore
-// written as that literal text, not as the salary: a second pass would let
-// whoever writes a property make a trigger copy any other property of the
-// record. An unknown placeholder is kept as written.
+// scanned again: a stored value that holds `{{new.x}}` is written as that
+// literal text. An unknown placeholder is kept as written.
 func Interpolate(template string, vars TemplateVars, entity, oldEntity *entity.Entity) string {
 	if !strings.Contains(template, "{{") {
 		return template
