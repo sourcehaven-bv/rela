@@ -52,6 +52,7 @@ entities:
       watching: "has_current_user(entity.watchers)"
       unreported-open-impl: "not related(entity, 'reportedBy') and related(entity, 'implements', { status = 'open' })"
       open-or-reported: "entity.status == 'open' or related(entity, 'reportedBy')"
+      title-is-assignee: "entity.title == entity.assignee"
   feature:
     label: Feature
     plural: features
@@ -75,12 +76,14 @@ relations:
 `
 
 // lowerableScopes are the fixture's scopes that queryplan.LowerCondition
-// accepts (TKT-I39Y7N4). open-or-reported is the one that must stay on the Go
-// path.
+// accepts (TKT-I39Y7N4). open-or-reported lowers into GraphQuery.Where
+// (TKT-8HY05WB); title-is-assignee compares two attributes and must stay on
+// the Go path.
 var lowerableScopes = map[string]bool{
 	"impl-open": true, "reported": true, "open-reported-impl": true, "chain": true, "mine": true,
 	"mine-reported": true, "mine-owned-open": true, "not-reported": true, "not-mine-reported": true,
 	"not-done": true, "not-mine": true, "watching": true, "unreported-open-impl": true,
+	"open-or-reported": true,
 }
 
 // newScopePushdownApp seeds twelve tickets over a counting store. Every
@@ -201,7 +204,7 @@ func assertScopeMatchesGoPath(t *testing.T, app *App, d *acl.Declarative, counti
 	scopes := []string{
 		"impl-open", "reported", "open-reported-impl", "chain", "mine", "not-reported",
 		"mine-reported", "mine-owned-open", "not-mine-reported", "not-done", "not-mine", "watching",
-		"unreported-open-impl", "open-or-reported",
+		"unreported-open-impl", "open-or-reported", "title-is-assignee",
 	}
 	for _, user := range []string{"alice", "bob", "dave", "erin"} {
 		for _, scope := range scopes {

@@ -3,6 +3,7 @@ package appbuild
 import (
 	"context"
 	"errors"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -26,7 +27,9 @@ import (
 //   - ok=true, empty=true: a positive traversal is denied outright and none
 //     is refused, so no row can match. The Go path gives that answer too,
 //     after reading the type.
-//   - ok=true: frag carries Props and Related to AND onto the read query.
+//   - ok=true: frag carries Props, Related and Where to AND onto the read
+//     query. A traversal inside Where that is denied reads as false there,
+//     and a Where those denials make false on every row is empty=true.
 //
 // A denied NEGATED traversal drops out: `related(...)` is false on every row
 // for a principal who may not read the far type, so `not related(...)` is
@@ -40,12 +43,27 @@ func lowerQueryCondition(
 	if gate == nil {
 		return store.GraphQuery{}, false, false
 	}
-	props, terms, ok := lowerConditionTerms(ctx, meta, prog, entityType)
+	lowered, ok := lowerConditionTerms(ctx, meta, prog, entityType)
 	if !ok {
 		return store.GraphQuery{}, false, false
 	}
-	frag.Props = props
-	for _, term := range terms {
+	frag.Props = lowered.props
+	if lowered.where != nil {
+		// Gated first, so a refused hop in it wins over a denied term below.
+		w, err := visibility.GateCond(ctx, gate, entityType, *lowered.where)
+		if err != nil {
+			return store.GraphQuery{}, false, false
+		}
+		// A tree its denied hops made constant needs no query: false
+		// matches no row, true narrows nothing.
+		switch v, known := w.Constant(); {
+		case !known:
+			frag.Where = &w
+		case !v:
+			empty = true
+		}
+	}
+	for _, term := range lowered.terms {
 		hop := term.Hop
 		pred, err := gate(ctx, entityType, hop)
 		switch {
@@ -77,6 +95,14 @@ func lowerQueryCondition(
 	return frag, false, true
 }
 
+// conditionTerms is a lowered condition whose traversals are hops, not yet
+// gated: the AND of props, terms and where.
+type conditionTerms struct {
+	props []store.PropPredicate
+	terms []visibility.PageTraversal
+	where *visibility.PageCond
+}
+
 // lowerConditionTerms lowers prog exactly ([queryplan.LowerCondition]) with
 // the query identity stamped on ctx, and resolves each distinct traversal
 // to the hop it walks. It gates nothing: a caller gates the terms, or hands
@@ -84,9 +110,9 @@ func lowerQueryCondition(
 // or a traversal has no hop.
 func lowerConditionTerms(
 	ctx context.Context, meta *metamodel.Metamodel, prog *predicate.Program, entityType string,
-) (props []store.PropPredicate, terms []visibility.PageTraversal, ok bool) {
+) (out conditionTerms, ok bool) {
 	if prog == nil || meta == nil {
-		return nil, nil, false
+		return conditionTerms{}, false
 	}
 	var identity string
 	if id, bound := predicatefns.QueryIdentityFrom(ctx); bound {
@@ -94,7 +120,14 @@ func lowerConditionTerms(
 	}
 	lowered, ok := queryplan.LowerCondition(prog, meta, entityType, identity)
 	if !ok {
-		return nil, nil, false
+		return conditionTerms{}, false
+	}
+	if lowered.Where != nil {
+		w, ok := pageCond(meta, entityType, *lowered.Where)
+		if !ok {
+			return conditionTerms{}, false
+		}
+		out.where = &w
 	}
 	seen := make(map[string]bool, len(lowered.Traversals))
 	for _, term := range lowered.Traversals {
@@ -112,11 +145,33 @@ func lowerConditionTerms(
 		seen[key] = true
 		hop, err := relresolve.Hop(meta, entityType, term.Spec)
 		if err != nil {
-			return nil, nil, false
+			return conditionTerms{}, false
 		}
-		terms = append(terms, visibility.PageTraversal{Hop: hop, Negate: term.Negated})
+		out.terms = append(out.terms, visibility.PageTraversal{Hop: hop, Negate: term.Negated})
 	}
-	return lowered.Props, terms, true
+	out.props = lowered.Props
+	return out, true
+}
+
+// pageCond resolves the traversals of c to the hops they walk.
+func pageCond(meta *metamodel.Metamodel, entityType string, c queryplan.LoweredCond) (visibility.PageCond, bool) {
+	out := visibility.PageCond{Op: c.Op, Prop: c.Prop}
+	if c.Op == store.CondRelated {
+		hop, err := relresolve.Hop(meta, entityType, c.Traversal)
+		if err != nil {
+			return visibility.PageCond{}, false
+		}
+		out.Hop = hop
+		return out, true
+	}
+	for _, a := range c.Args {
+		pa, ok := pageCond(meta, entityType, a)
+		if !ok {
+			return visibility.PageCond{}, false
+		}
+		out.Args = append(out.Args, pa)
+	}
+	return out, true
 }
 
 // QueryConditions lowers a caller's query condition for a page read, for an
@@ -142,30 +197,42 @@ func (q QueryConditions) StampQueryIdentity(ctx context.Context) (context.Contex
 }
 
 // Lower rewrites prog, compiled against entityType, as a page filter: props
-// on the STORED row, and the traversals for the reader to gate.
-// ok=false: prog does not lower exactly, and the caller answers it in Go.
+// on the STORED row, the traversals for the reader to gate, and a Where tree
+// for the rest. The filter is the AND of all three; a caller that drops one
+// widens it. ok=false: prog does not lower exactly, and the caller answers
+// it in Go.
 //
-// Every entity field prog reads is the property of one of props: a
-// condition that reads a field no prop names, or uses the entity record
-// whole other than as a traversal subject, does not lower. So a caller
-// whose Go path judges REDACTED rows decides whether the store may answer by
-// checking the visibility of the props' properties alone. The zero value
-// lowers nothing.
+// Every entity field prog reads is the property of a predicate in props or
+// in where: a condition that reads a field none names, or uses the entity
+// record whole other than as a traversal subject, does not lower. So a
+// caller whose Go path judges REDACTED rows decides whether the store may
+// answer by checking the visibility of those properties alone, which
+// [visibility.ScriptReader.ListEntityPage] does. The zero value lowers
+// nothing.
 func (q QueryConditions) Lower(
 	ctx context.Context, prog *predicate.Program, entityType string,
-) (props []store.PropPredicate, traversals []visibility.PageTraversal, ok bool) {
-	props, traversals, ok = lowerConditionTerms(ctx, q.meta, prog, entityType)
+) (filter visibility.PageQuery, ok bool) {
+	lowered, ok := lowerConditionTerms(ctx, q.meta, prog, entityType)
 	if !ok {
-		return nil, nil, false
+		return visibility.PageQuery{}, false
 	}
-	named := make(map[string]bool, len(props))
-	for _, p := range props {
+	filter = visibility.PageQuery{Props: lowered.props, Traversals: lowered.terms, Where: lowered.where}
+	named := map[string]bool{}
+	for _, p := range visibilityProps(filter) {
 		named[p.Property] = true
 	}
 	for _, attr := range prog.Attributes("entity") {
 		if !named[attr] {
-			return nil, nil, false
+			return visibility.PageQuery{}, false
 		}
 	}
-	return props, traversals, true
+	return filter, true
+}
+
+// visibilityProps returns every property predicate of a page filter.
+func visibilityProps(f visibility.PageQuery) []store.PropPredicate {
+	if f.Where == nil {
+		return f.Props
+	}
+	return append(slices.Clone(f.Props), f.Where.Props()...)
 }

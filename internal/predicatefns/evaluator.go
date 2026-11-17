@@ -39,6 +39,9 @@ type Evaluator struct {
 	// today() at construction (RR-FUD017). A request carries its read time
 	// on ctx, so every row of one request sees the same value.
 	now func() time.Time
+	// nilOrderedFalse evaluates with [predicate.NilOrderedIsFalse]; see
+	// [Evaluator.LoweringSemantics].
+	nilOrderedFalse bool
 
 	mu    sync.Mutex
 	cache map[string]*predicate.Program // key: type + "\x00" + source
@@ -55,6 +58,16 @@ func NewEvaluator(meta *metamodel.Metamodel) *Evaluator {
 // on each Matches call. `now` must be non-nil.
 func NewEvaluatorWithClock(meta *metamodel.Metamodel, now func() time.Time) *Evaluator {
 	return &Evaluator{meta: meta, now: now, cache: map[string]*predicate.Program{}}
+}
+
+// LoweringSemantics returns an evaluator like e whose ordered comparisons
+// are false, not an error, on an unset or off-type value
+// ([predicate.NilOrderedIsFalse]). A surface whose condition
+// internal/queryplan may answer as a store query (a list or kanban
+// `condition:`, a query scope, an MCP list condition) evaluates with it,
+// so the Go path and the store return the same rows (TKT-8HY05WB).
+func (e *Evaluator) LoweringSemantics() *Evaluator {
+	return &Evaluator{meta: e.meta, now: e.now, nilOrderedFalse: true, cache: map[string]*predicate.Program{}}
 }
 
 // ReadTime is the read time a condition evaluated under ctx sees: the one
@@ -270,7 +283,11 @@ func (e *Evaluator) matches(
 	if traversal != nil {
 		b.SetTraversal(traversal)
 	}
-	v, err := prog.Eval(ctx, b)
+	var opts []predicate.EvalOption
+	if e.nilOrderedFalse {
+		opts = append(opts, predicate.NilOrderedIsFalse())
+	}
+	v, err := prog.Eval(ctx, b, opts...)
 	if err != nil {
 		return false, err
 	}

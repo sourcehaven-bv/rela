@@ -29,6 +29,8 @@ entities:
       idle: "not related(entity, 'implementedBy')"
       twice: "related(entity, 'implementedBy') and related(entity, 'implementedBy')"
       either: "related(entity, 'implementedBy') or related(entity, 'ownedBy')"
+      neither: "not (related(entity, 'implementedBy') or related(entity, 'ownedBy'))"
+      sameTitle: "entity.title == entity.title or related(entity, 'ownedBy')"
       idleOwned: "not related(entity, 'implementedBy') and related(entity, 'ownedBy')"
   ticket:
     label: Ticket
@@ -125,9 +127,38 @@ func TestQueryScopeLower(t *testing.T) {
 		require.False(t, ok)
 	})
 
+	t.Run("an or lowers into Where with each traversal gated", func(t *testing.T) {
+		frag, empty, ok := lowerScope(t, "either", gateBy(nil))
+		require.True(t, ok)
+		require.False(t, empty)
+		require.Empty(t, frag.Related)
+		require.NotNil(t, frag.Where)
+		require.Equal(t, store.CondOr, frag.Where.Op)
+		require.Len(t, frag.Where.Args, 2)
+	})
+
+	t.Run("a denied traversal under an or is false", func(t *testing.T) {
+		frag, empty, ok := lowerScope(t, "either", gateBy(map[string]error{"user": denied}))
+		require.True(t, ok)
+		require.False(t, empty)
+		require.NotNil(t, frag.Where)
+	})
+
+	t.Run("an or whose every traversal is denied matches no row", func(t *testing.T) {
+		gate := gateBy(map[string]error{"user": denied, "ticket": denied})
+		_, empty, ok := lowerScope(t, "either", gate)
+		require.True(t, ok)
+		require.True(t, empty)
+
+		frag, empty, ok := lowerScope(t, "neither", gate)
+		require.True(t, ok)
+		require.False(t, empty)
+		require.Nil(t, frag.Where, "a tree true on every row narrows nothing")
+	})
+
 	t.Run("a scope that does not lower falls back without gating", func(t *testing.T) {
 		gated := false
-		_, _, ok := lowerScope(t, "either", func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error) {
+		_, _, ok := lowerScope(t, "sameTitle", func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error) {
 			gated = true
 			return &store.RelationPredicate{}, nil
 		})

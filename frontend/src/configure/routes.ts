@@ -19,6 +19,9 @@ export const configureRoute = {
   relation: (name: string) => `${CONFIGURE_PREFIX}/relations/${seg(name)}`,
   rules: () => `${CONFIGURE_PREFIX}/rules`,
   rule: (index: number) => `${CONFIGURE_PREFIX}/rules/${index}`,
+  /** flows.yaml triggers, by name (TKT-ZT2KREN). */
+  automations: () => `${CONFIGURE_PREFIX}/automations`,
+  automation: (name: string) => `${CONFIGURE_PREFIX}/automations/${seg(name)}`,
   navigation: (space?: string) =>
     space ? `${CONFIGURE_PREFIX}/navigation?space=${seg(space)}` : `${CONFIGURE_PREFIX}/navigation`,
   forms: () => `${CONFIGURE_PREFIX}/forms`,

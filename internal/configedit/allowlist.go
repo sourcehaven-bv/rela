@@ -10,10 +10,12 @@ import (
 // File names the configuration file a tree belongs to.
 type File string
 
-// The two files the Configure space edits.
+// The files the Configure space edits. flows.yaml is open for its
+// `triggers:` only (TKT-ZT2KREN).
 const (
 	SchemaFile    File = "schema.yaml"
 	DataEntryFile File = "data-entry.yaml"
+	FlowsFile     File = "flows.yaml"
 )
 
 // The allowlist says which keys the Configure space may create or change.
@@ -133,6 +135,43 @@ var editable = map[File][]string{
 		// Declared piles (TKT-EO2GCM) name, decorate and expire per-user lists
 		// of refs; they run no code and grant no read.
 		"piles.**",
+	},
+	FlowsFile: {
+		// Entity-change triggers (TKT-ZT2KREN): the keys the schema.yaml
+		// automations allowlist opened before TKT-GWOBH2U moved them here.
+		// An output writes as a cascade, without a per-record ACL check, so
+		// every edit is also judged against acl.yaml (see TriggerChecker).
+		"triggers.*.description",
+		"triggers.*.on.becomes",
+		"triggers.*.on.created",
+		"triggers.*.on.entity.[]",
+		"triggers.*.on.from",
+		"triggers.*.on.property",
+		"triggers.*.on.relation_created",
+		"triggers.*.on.relation_removed",
+		"triggers.*.on.updated",
+		"triggers.*.on.when",
+		"triggers.*.on.where.[]",
+		"triggers.*.outputs.[].set.properties.*",
+		"triggers.*.outputs.[].create.properties.*",
+		"triggers.*.outputs.[].create.relate.from",
+		"triggers.*.outputs.[].create.relate.type",
+		"triggers.*.outputs.[].create.type",
+		// add_to_pile only pushes the triggering entity's ref onto a pile; the
+		// pile service caps foreign pushes and the owner's reads stay gated.
+		"triggers.*.outputs.[].add_to_pile.create",
+		"triggers.*.outputs.[].add_to_pile.owner",
+		"triggers.*.outputs.[].add_to_pile.pile",
+		// notify pushes the triggering entity's ref onto a declared read-state
+		// pile of the people a property names; the recipient reads it gated.
+		"triggers.*.outputs.[].notify.pile",
+		"triggers.*.outputs.[].notify.reason",
+		"triggers.*.outputs.[].notify.to.property",
+		"triggers.*.outputs.[].notify.to.type",
+		"triggers.*.outputs.[].notify.to.via.[]",
+		"triggers.*.outputs.[].check.message",
+		"triggers.*.outputs.[].check.severity",
+		"triggers.*.outputs.[].check.where",
 	},
 	DataEntryFile: {
 		// Detail views, calendars and timelines choose which properties and
@@ -336,6 +375,23 @@ var locked = map[File][]string{
 		"relations.*.scope", "relations.*.owning",
 		"validations.[].faces.**",
 	},
+	FlowsFile: {
+		// Stateful flows name permissions, roles and a run_as principal.
+		"flows.**",
+		// Lua, what a script may reach, and the background job it starts.
+		"triggers.*.outputs.[].script.**",
+		// A template is a file the project's reviewers wrote.
+		"triggers.*.outputs.[].create.template",
+		// if_exists: replace deletes the existing target, with no ACL check.
+		"triggers.*.outputs.[].create.if_exists",
+		// relate.to names a fixed record, which the editor may not be able
+		// to read; TriggerChecker refuses it too.
+		"triggers.*.outputs.[].relate.**",
+		// on.deleted only starts background Lua jobs (TKT-Q0AQ840).
+		"triggers.*.on.deleted",
+		// Not in the Configure space yet.
+		"triggers.*.on.faces.**", "triggers.*.on.copy.**",
+	},
 	DataEntryFile: {
 		"version",
 		"app.default_world", "app.disable_custom_injection", "app.max_attachment_bytes", "app.plantuml_server_url",
@@ -411,6 +467,9 @@ var protective = map[File][]string{
 		"nav.permission", "spaces.[].permission", "dashboard.cards.[].permission",
 		"dashboards.*.cards.[].permission",
 	},
+	// A script may stamp what acl.yaml decides access by; removing it
+	// would drop that stamp from every record written afterwards.
+	FlowsFile: {"triggers.*.outputs.[].script.**"},
 }
 
 // A pin keeps the editable keys of an item that say what its locked keys
@@ -419,6 +478,20 @@ type pin struct {
 	item string   // pattern of the item
 	keys []string // its keys that cannot change
 	by   []string // patterns of the locked keys that pin them
+	// order lists keys of the item holding a list whose items stay as they
+	// were read: edited in place, never added, removed or moved, because
+	// the order is what runs first.
+	order []string
+}
+
+// ordered lists the mappings whose key order is behavior: flows.yaml
+// triggers fire in document order, so moving one changes what a later
+// trigger, or a script, sees. The kept keys of such a mapping keep their
+// relative order, and a new key goes after all of them, so a new trigger
+// never runs before one that was there. The browser has no control that
+// reorders them.
+var ordered = map[File][]string{
+	FlowsFile: {"triggers"},
 }
 
 // pinned lists the pins. Moving a guarded transition elsewhere would free
@@ -444,6 +517,14 @@ var pinned = map[File][]pin{
 			item: "validations.[]",
 			keys: []string{"entity_type", "faces", "when", "when_condition", "then", "then_condition"},
 			by:   []string{"validations.[].enforce"},
+		},
+	},
+	FlowsFile: {
+		// A trigger holding a script keeps what fires it, and the place of
+		// the script among its outputs.
+		{
+			item: "triggers.*", keys: []string{"on"}, order: []string{"outputs"},
+			by: []string{"triggers.*.outputs.[].script.**"},
 		},
 	},
 }
@@ -587,7 +668,7 @@ func holdsEditable(file File, path []string) bool {
 type Violation struct {
 	File File   `json:"file"`
 	Path string `json:"path"`
-	// Change is "added", "changed" or "removed".
+	// Change is "added", "changed", "removed" or "reordered".
 	Change string `json:"change"`
 }
 
@@ -623,7 +704,85 @@ func (c *checker) checkPinned(path, display []string, before, after *Map) {
 				c.refuse(with(display, k), "changed")
 			}
 		}
+		for _, k := range p.order {
+			old, _ := before.Get(k)
+			now, _ := after.Get(k)
+			was, _ := old.([]any)
+			items, _ := now.([]any)
+			switch {
+			case !originsInOrder(items):
+				c.refuse(with(display, k), "reordered")
+			case !originsIntact(items, len(was)):
+				c.refuse(with(display, k), "changed")
+			}
+		}
 	}
+}
+
+// originsInOrder reports whether the items read from the file are still in
+// the order they were read in. New items have no origin and are skipped.
+func originsInOrder(items []any) bool {
+	last := -1
+	for _, item := range items {
+		m, ok := item.(*Map)
+		if !ok || !m.HasOrigin {
+			continue
+		}
+		if m.Origin < last {
+			return false
+		}
+		last = m.Origin
+	}
+	return true
+}
+
+// originsIntact reports whether items are exactly the n items read from
+// the file, in the order they were read in.
+func originsIntact(items []any, n int) bool {
+	if len(items) != n {
+		return false
+	}
+	for i, item := range items {
+		if m, ok := item.(*Map); !ok || !m.HasOrigin || m.Origin != i {
+			return false
+		}
+	}
+	return true
+}
+
+// newKeysLast reports whether every key after adds to before comes after
+// all the keys it keeps.
+func newKeysLast(before, after *Map) bool {
+	added := false
+	for _, k := range after.Keys {
+		if _, ok := before.Get(k); !ok {
+			added = true
+		} else if added {
+			return false
+		}
+	}
+	return true
+}
+
+// keysInOrder reports whether the keys after keeps from before are in the
+// same relative order.
+func keysInOrder(before, after *Map) bool {
+	pos := make(map[string]int, len(before.Keys))
+	for i, k := range before.Keys {
+		pos[k] = i
+	}
+	last := -1
+	for _, k := range after.Keys {
+		i, ok := pos[k]
+		if !ok {
+			continue
+		}
+		if i < last {
+			return false
+		}
+		last = i
+	}
+	return true
 }
 
 // diff walks both trees together. path is the pattern form (list items as
@@ -632,6 +791,11 @@ func (c *checker) diff(path, display []string, before, after any) {
 	bm, bIsMap := before.(*Map)
 	am, aIsMap := after.(*Map)
 	if bIsMap && aIsMap {
+		if anyMatch(ordered[c.file], normalize(c.file, path), match) &&
+			(!keysInOrder(bm, am) || !newKeysLast(bm, am)) {
+
+			c.refuse(display, "reordered")
+		}
 		c.checkPinned(path, display, bm, am)
 		for i, k := range am.Keys {
 			old, ok := bm.Get(k)
@@ -780,6 +944,11 @@ func changedPaths(before, after any, path []string) []string {
 			}
 			out = append(out, p)
 		}
+	}
+	if !keysInOrder(bm, am) {
+		// Key order is behavior in places (trigger firing order), and
+		// layout everywhere else; either way the record says it moved.
+		add([]string{strings.TrimPrefix(strings.Join(path, ".")+" (order)", " ")})
 	}
 	for i, k := range am.Keys {
 		old, _ := bm.Get(k)

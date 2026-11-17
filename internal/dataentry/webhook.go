@@ -13,6 +13,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
@@ -354,7 +355,7 @@ func dispatchWebhookAction(ctx context.Context, h *writeHandler, rec *webhookRec
 	// The webhook route is outside /api/, so attachACLRequest did not run:
 	// resolve the receiver's identity here, once, as every request edge does,
 	// and attach its read gate.
-	ctx, err := acl.BindRequest(ctx, h.acl())
+	ctx, err := acl.BindRequest(readtime.Ensure(ctx, nowFunc), h.acl())
 	if err != nil {
 		return fmt.Errorf("idp webhook: resolve identity: %w", err)
 	}

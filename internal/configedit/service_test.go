@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/datamigration"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -53,10 +55,35 @@ func (m memFiles) MkdirAll(string, os.FileMode) error                   { return
 
 type parseValidator struct{}
 
-func (parseValidator) Validate(schema, _ []byte) (*metamodel.Metamodel, error) {
+// Validate parses the schema, and refuses a flows.yaml trigger whose
+// on.property is not a property of its entity, the way the server's trigger
+// check refuses a trigger the schema breaks.
+func (parseValidator) Validate(schema, _, flows []byte) (*metamodel.Metamodel, error) {
 	m, err := metamodel.Parse(schema)
 	if err != nil {
 		return nil, &ValidationError{Problems: []string{err.Error()}}
+	}
+	var doc struct {
+		Triggers map[string]struct {
+			On struct {
+				Entity   string `yaml:"entity"`
+				Property string `yaml:"property"`
+			} `yaml:"on"`
+		} `yaml:"triggers"`
+	}
+	if err := yaml.Unmarshal(flows, &doc); err != nil {
+		return nil, &ValidationError{Problems: []string{"flows.yaml: " + err.Error()}}
+	}
+	for name, tr := range doc.Triggers {
+		def, known := m.Entities[tr.On.Entity]
+		if tr.On.Property == "" || !known {
+			continue
+		}
+		if _, ok := def.Properties[tr.On.Property]; !ok {
+			return nil, &ValidationError{Problems: []string{
+				fmt.Sprintf("flows.yaml: triggers: trigger %q: unknown property %q", name, tr.On.Property),
+			}}
+		}
 	}
 	return m, nil
 }
@@ -121,10 +148,24 @@ func (c *fakeCandidate) Activate() {
 func (c *fakeCandidate) Discard() {}
 
 type harness struct {
-	svc   *Service
-	files memFiles
-	act   *fakeActivator
-	audit *audit.Memory
+	svc      *Service
+	files    memFiles
+	act      *fakeActivator
+	audit    *audit.Memory
+	triggers *fakeTriggers
+}
+
+// fakeTriggers is a TriggerChecker that records each edit and answers
+// with problems or err.
+type fakeTriggers struct {
+	edits    []TriggerEdit
+	problems []TriggerProblem
+	err      error
+}
+
+func (f *fakeTriggers) CheckTriggers(_ context.Context, edit TriggerEdit) ([]TriggerProblem, error) {
+	f.edits = append(f.edits, edit)
+	return f.problems, f.err
 }
 
 func newHarness(t *testing.T, c counts, ready error) *harness {
@@ -132,15 +173,16 @@ func newHarness(t *testing.T, c counts, ready error) *harness {
 	files := memFiles{"schema.yaml": []byte(testSchema), "data-entry.yaml": []byte(testDataEntry)}
 	act := &fakeActivator{files: files}
 	mem := audit.NewMemory()
+	trig := &fakeTriggers{}
 	svc, err := NewService(Deps{
 		Files: files, Validator: parseValidator{}, Counter: c,
-		Migrations: readyState{err: ready}, Activator: act, Audit: mem,
+		Migrations: readyState{err: ready}, Activator: act, Audit: mem, Triggers: trig,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	svc.now = func() time.Time { return time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC) }
-	return &harness{svc: svc, files: files, act: act, audit: mem}
+	return &harness{svc: svc, files: files, act: act, audit: mem, triggers: trig}
 }
 
 // draft edits the schema tree with fn and wraps it in a Draft.
@@ -418,5 +460,13 @@ func TestSave_BusyWritesRefuse(t *testing.T) {
 func TestNewService_RejectsNil(t *testing.T) {
 	if _, err := NewService(Deps{}); err == nil {
 		t.Fatal("want error")
+	}
+	files := memFiles{}
+	_, err := NewService(Deps{
+		Files: files, Validator: parseValidator{}, Counter: counts{},
+		Migrations: readyState{}, Activator: &fakeActivator{files: files}, Audit: audit.NewMemory(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "Triggers") {
+		t.Fatalf("a nil trigger checker: err = %v", err)
 	}
 }

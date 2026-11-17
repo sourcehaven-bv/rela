@@ -16,8 +16,9 @@ under `visible:`. Free-text search already searches only visible text
 the structured terms and `sort:` of `/_search` are not.
 
 The same raw evaluation reaches `_position?scope=search`. It resolves the scope
-through `executeQuery`, so its prev/next neighbours and its total are computed
-from a search filtered and sorted on raw values. A guess at a hidden value can
+through `searchPosition` or, when the store cannot answer the query, through
+`executeQueryWith`, so its prev/next neighbours and its total are computed from
+a search filtered and sorted on raw values. A guess at a hidden value can
 be confirmed by whether an entity is in scope, and the order of prev/next
 discloses the hidden sort key.
 
@@ -25,6 +26,12 @@ discloses the hidden sort key.
 
 Apply the same field gate as the list path (`FieldVisibleOnEveryRow`) to every
 structured term and every `sort:` key before the searcher runs, answering 400
-`property_not_visible`. The gate must sit where `executeQuery` parses the query,
-so `/_search` and `_position?scope=search` both pass through it. Pin with corpus
-cases for `/_search` and for `_position?scope=search`.
+`property_not_visible`. Since #2284, `searchPage` and `searchPosition` in
+`internal/dataentry/queryservice.go` first parse the query through
+`structuredPlan`. A query the plan accepts (equality filters and sorts on
+declared properties) never reaches `executeQueryWith`, and its page,
+`meta.total` and position come from the store path. So the gate must sit before
+`structuredPlan`, or at one parse point shared by `searchPage`,
+`searchPosition` and `executeQueryWith`. It must cover the page, the count and
+the position (RR-ZWWATR9). Pin with corpus cases for `/_search` and for
+`_position?scope=search`, on both the store path and the Go path.

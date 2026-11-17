@@ -54,19 +54,40 @@ func TestEvaluator_Compile_And_Matches(t *testing.T) {
 		{10, true}, {int64(3), false}, {"7", true},
 	}
 	for _, tc := range cases {
-		got, err := ev.Matches(context.Background(), prog1, "item", "I-1", map[string]any{"count": tc.count})
-		if err != nil {
-			t.Fatalf("matches count=%v: %v", tc.count, err)
+		got, mErr := ev.Matches(context.Background(), prog1, "item", "I-1", map[string]any{"count": tc.count})
+		if mErr != nil {
+			t.Fatalf("matches count=%v: %v", tc.count, mErr)
 		}
 		if got != tc.want {
 			t.Errorf("count=%v: got %v want %v", tc.count, got, tc.want)
 		}
 	}
 
-	// A value that binds Nil (non-numeric string on an int field) makes
-	// the ordered comparison an eval error — surfaced, not swallowed.
-	if _, err := ev.Matches(context.Background(), prog1, "item", "I-2", map[string]any{"count": "x"}); err == nil {
-		t.Error("expected eval error for a nil-bound int compared with >")
+	// A value that binds Nil (a non-numeric string, an out-of-range float
+	// on an int field) makes the ordered comparison an eval error, surfaced
+	// rather than swallowed. Under LoweringSemantics it is in no ordered
+	// range: false, as a store query answers it (TKT-8HY05WB).
+	lowering := ev.LoweringSemantics()
+	for _, raw := range []any{"x", 1e19, 2.5} {
+		props := map[string]any{"count": raw}
+		if _, mErr := ev.Matches(context.Background(), prog1, "item", "I-2", props); mErr == nil {
+			t.Errorf("count=%v: expected eval error for a nil-bound int compared with >", raw)
+		}
+		got, mErr := lowering.Matches(context.Background(), prog1, "item", "I-2", props)
+		if mErr != nil || got {
+			t.Errorf("count=%v under LoweringSemantics: got %v, %v; want false, nil", raw, got, mErr)
+		}
+	}
+
+	// A date comparison never lowers, so an unset date stays an error
+	// under LoweringSemantics too: a list condition fails loudly rather
+	// than silently dropping the row.
+	due, err := lowering.Compile("item", "entity.due < today()")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if _, err := lowering.Matches(context.Background(), due, "item", "I-3", map[string]any{}); err == nil {
+		t.Error("unset due under LoweringSemantics: expected an eval error")
 	}
 }
 

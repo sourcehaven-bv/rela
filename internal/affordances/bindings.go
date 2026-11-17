@@ -2,8 +2,6 @@ package affordances
 
 import (
 	"context"
-	"math"
-	"strconv"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -12,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/propmatch"
 )
 
 // RelationLookup is the narrow contract the resolver needs from the
@@ -288,21 +287,11 @@ func coerceScalar(prop *metamodel.PropertyDef, raw any) predicate.Value {
 // an integral float64, and a string that parses as an integer all bind;
 // a fractional float or non-numeric string binds Nil. Fractional inputs
 // bind Nil rather than truncating — silent truncation would corrupt the
-// comparison, and IntType has no fractional value to hold.
+// comparison, and IntType has no fractional value to hold. The rule is
+// [propmatch.Integer], which the store's integer predicates share.
 func coerceInt(raw any) predicate.Value {
-	switch v := raw.(type) {
-	case int:
-		return predicate.NewInt(int64(v))
-	case int64:
-		return predicate.NewInt(v)
-	case float64:
-		if v == math.Trunc(v) {
-			return predicate.NewInt(int64(v))
-		}
-	case string:
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-			return predicate.NewInt(n)
-		}
+	if n, ok := propmatch.Integer(raw); ok {
+		return predicate.NewInt(n)
 	}
 	return predicate.NewNil()
 }

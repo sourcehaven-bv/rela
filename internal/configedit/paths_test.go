@@ -7,13 +7,16 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // yamlPaths lists every key path a configuration struct can hold, with "*"
 // for a map key and "[]" for a list item. A path that stops at a type with
-// its own YAML decoding ends there.
+// its own YAML decoding ends there. A yaml.Node field is a mapping of
+// scalars, listed as "<field>.*".
 func yamlPaths(t reflect.Type) []string {
 	seen := map[reflect.Type]bool{}
 	var out []string
@@ -21,6 +24,10 @@ func yamlPaths(t reflect.Type) []string {
 	walk = func(t reflect.Type, prefix string) {
 		for t.Kind() == reflect.Pointer {
 			t = t.Elem()
+		}
+		if t == reflect.TypeFor[yaml.Node]() {
+			out = append(out, prefix+".*")
+			return
 		}
 		switch t.Kind() {
 		case reflect.Map:

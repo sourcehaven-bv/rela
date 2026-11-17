@@ -16,6 +16,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/graphquerynaive"
 )
 
 // EdgeReader is the store capability [Graph] needs.
@@ -65,12 +66,20 @@ func MustNewGraph(s EdgeReader) *Graph {
 // called O(|RoleRelations| × |Members| × |ancestors|) times per
 // request, and scanning the full outgoing-by-relType list per call
 // is a quadratic foot-cannon on densely-connected nodes.
-func (g *Graph) HasEdge(ctx context.Context, from, relType, to string) bool {
+//
+// cond restricts the edge by its own properties (a conditional grant,
+// TKT-TKSCSBT). An edge that does not match reports false.
+func (g *Graph) HasEdge(ctx context.Context, from, relType, to string, cond []store.PropPredicate) bool {
 	// The zero tail on purpose: membership edges are identity-scoped, and
 	// this is the default-world seam (TKT-7IZHP0).
-	_, err := g.s.GetRelation(ctx, entity.RelationKey{From: from, Type: relType, To: to})
+	rel, err := g.s.GetRelation(ctx, entity.RelationKey{From: from, Type: relType, To: to})
 	if err == nil {
-		return true
+		ok, mErr := matchEdge(rel, cond)
+		if mErr != nil {
+			slog.WarnContext(ctx, "aclstore: Graph.HasEdge: edge condition refused, treated as no-edge",
+				"from", from, "rel_type", relType, "to", to, "error", mErr)
+		}
+		return ok
 	}
 	if !errors.Is(err, store.ErrNotFound) {
 		// A cancelled request context is routine: the caller hung up and
@@ -93,7 +102,10 @@ func (g *Graph) HasEdge(ctx context.Context, from, relType, to string) bool {
 // OutgoingRelations returns the toIDs reachable from `from` via
 // `relType`. Errors propagate; callers (the resolver) abort the
 // surrounding walk rather than silently undercount.
-func (g *Graph) OutgoingRelations(ctx context.Context, from, relType string) ([]string, error) {
+// cond restricts the edges as in [Graph.HasEdge].
+func (g *Graph) OutgoingRelations(
+	ctx context.Context, from, relType string, cond []store.PropPredicate,
+) ([]string, error) {
 	var out []string
 	for r, err := range g.s.ListRelations(ctx, store.RelationQuery{
 		EntityID:  from,
@@ -103,6 +115,11 @@ func (g *Graph) OutgoingRelations(ctx context.Context, from, relType string) ([]
 		if err != nil {
 			return out, err
 		}
+		if ok, err := matchEdge(r, cond); err != nil {
+			return out, err
+		} else if !ok {
+			continue
+		}
 		out = append(out, r.To)
 	}
 	return out, nil
@@ -111,8 +128,10 @@ func (g *Graph) OutgoingRelations(ctx context.Context, from, relType string) ([]
 // EdgesBetween implements the acl edge batcher with ONE store query. Both ends are
 // filtered: a shared ancestor (a project every task is in) may hold edges
 // from thousands of non-members, and those must not be read.
+//
+// cond restricts the edges as in [Graph.HasEdge].
 func (g *Graph) EdgesBetween(
-	ctx context.Context, relType string, fromIDs, toIDs []string,
+	ctx context.Context, relType string, cond []store.PropPredicate, fromIDs, toIDs []string,
 ) (map[string]map[string]bool, error) {
 	out := map[string]map[string]bool{}
 	if len(fromIDs) == 0 || len(toIDs) == 0 {
@@ -129,6 +148,11 @@ func (g *Graph) EdgesBetween(
 	}) {
 		if err != nil {
 			return nil, err
+		}
+		if ok, err := matchEdge(rel, cond); err != nil {
+			return nil, err
+		} else if !ok {
+			continue
 		}
 		if out[rel.From] == nil {
 			out[rel.From] = map[string]bool{}
@@ -158,4 +182,15 @@ func (g *Graph) OutgoingFrom(
 		out[rel.From] = append(out[rel.From], rel.To)
 	}
 	return out, nil
+}
+
+// matchEdge reports whether rel's own properties satisfy cond, with the
+// semantics a [store.RelationPredicate.EdgeProps] query has. nil cond
+// matches every edge. It is the store's own matcher, so the Go probes and
+// the row gate agree on every value, an unquoted YAML date included.
+func matchEdge(rel *entity.Relation, cond []store.PropPredicate) (bool, error) {
+	if len(cond) == 0 {
+		return true, nil
+	}
+	return graphquerynaive.MatchProps(rel.Properties, cond)
 }

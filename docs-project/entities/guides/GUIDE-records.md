@@ -13,8 +13,10 @@ data that does not fit the graph: meter readings, measurements, events and
 ledger postings. A meter can hold thousands of readings without each one
 becoming an entity with relations.
 
-Records are append-only. You cannot edit or delete a single row. A ledger
-corrects a posting by appending its reversal.
+Records are append-only by default. A record type with `mutable: true`
+lets you change or delete one row at a time, which suits data such as hour
+registration. A ledger is never mutable: it corrects a posting by appending
+its reversal.
 
 ## Declaring record types
 
@@ -59,10 +61,11 @@ records:
 | `fields` | The row's fields. The types are `string`, `integer`, `decimal`, `boolean`, `date`, `datetime` and enums. Lists, computed, rollup and unique fields are not allowed. |
 | `retention` | How long rows are kept, such as `90d` or `24h`. Without it, rows are kept for ever. A ledger cannot have a retention. |
 | `ledger` | Makes the type a double-entry ledger. See below. |
+| `mutable` | Lets a row be changed or deleted. See "Changing rows" below. A ledger cannot be mutable. |
 
 A record type cannot share its key with an entity type. The field names
-`id`, `type`, `owner`, `ts`, `recorded_at`, `recorded_by`, `group` and
-`reverses` are reserved.
+`id`, `type`, `owner`, `ts`, `recorded_at`, `recorded_by`, `group`,
+`reverses`, `updated_at`, `updated_by` and `revision` are reserved.
 
 ## Ledgers
 
@@ -79,6 +82,34 @@ tells you whether a period is closed.
 
 To correct a transaction, reverse it. A reversal appends the same rows with
 the amounts negated. Each transaction can be reversed once.
+
+## Changing rows
+
+A row of a mutable type can be changed or deleted. You need the same right
+as for appending: you may update every face of the owner. A row has no
+owner of its own beyond its entity, so anyone who may append to an owner may
+also change any of its rows. When rows need per-person rights, give each
+person their own owner entity.
+
+A change can set new field values and a new `ts`. The owner of a row never
+changes. A field you do not name keeps its value; `null` clears an optional
+field.
+
+Each row carries a `revision`, which starts at 0 and goes up by one on every
+change. A change or delete names the revision it read. When the row changed
+in the meantime, rela refuses the request with 409, so two people editing
+the same row cannot overwrite each other unnoticed.
+
+A changed row records who changed it (`updated_by`) and when
+(`updated_at`). Every change and delete also writes a line to the audit log
+(`update-record` and `delete-record`). The line names who changed which
+fields, but not the values: earlier values are not kept. A change refused
+because you may read the owner but not update it writes a `denied-write`
+line.
+
+When a field is removed from the schema, a change drops it from the row.
+
+Reads, aggregates and retention work the same on mutable types.
 
 ## Access control
 
@@ -103,8 +134,9 @@ existing transaction belongs to owners you cannot read. So a caller who
 may post can learn that a key is in use. Use keys that reveal nothing on
 their own, or keys the posting application generates.
 
-Record writes are not in the audit log. Each row stores who appended it
-(`recorded_by`) and when (`recorded_at`).
+Appends are not in the audit log. Each row stores who appended it
+(`recorded_by`) and when (`recorded_at`). Changes and deletes of mutable
+rows are audited, as described above.
 
 When an owner is renamed, its rows move with it. When an owner is deleted,
 its rows are deleted too. A soft-deleted owner keeps its rows until it is
@@ -136,8 +168,14 @@ in it.
 | `GET /api/v1/_records/{type}/_aggregate?owner=ID&field=kwh&bucket=day` | Count, sum, minimum, maximum, average and latest value per time bucket. `bucket` is `hour`, `day`, `week` or `month`. Repeat `owner` to fold several owners, or leave it out to fold every owner you can read. `per_owner=true` keeps owners apart. |
 | `GET /api/v1/_records/{type}/_transaction?group=KEY` | The rows of one ledger transaction. |
 | `POST /api/v1/_records/{type}/_reverse` | Reverse a transaction: `{"group": "KEY"}`. |
+| `PATCH /api/v1/_records/{type}/{id}` | Change a row of a mutable type: `{"revision": 0, "ts": "2026-01-05T00:00:00Z", "fields": {"hours": "7.5"}}`. `revision` is required; `ts` is optional. Answers the changed row. |
+| `DELETE /api/v1/_records/{type}/{id}?revision=N` | Delete a row of a mutable type. Answers 204. |
 
 Send decimals as strings, such as `"1.25"`, so no precision is lost.
+
+A change or delete with a stale `revision` answers 409 with the code
+`stale_revision`. A row whose owner you cannot read answers 404, the same as
+a row that does not exist.
 
 An aggregate folds at most 1,000,000 rows. Narrow `from`, `to` or `owner`
 when a query needs more.

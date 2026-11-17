@@ -363,6 +363,7 @@ func TestPageQuery_CarriesNoEdgeTest(t *testing.T) {
 		reflect.TypeFor[store.GraphQuery]():        true,
 	}
 	pkg := reflect.TypeFor[visibility.PageQuery]().PkgPath()
+	seen := map[reflect.Type]bool{}
 	var walk func(path string, typ reflect.Type)
 	walk = func(path string, typ reflect.Type) {
 		for typ.Kind() == reflect.Pointer || typ.Kind() == reflect.Slice || typ.Kind() == reflect.Array {
@@ -372,9 +373,11 @@ func TestPageQuery_CarriesNoEdgeTest(t *testing.T) {
 			t.Errorf("%s holds a %s", path, typ)
 			return
 		}
-		if typ.Kind() != reflect.Struct || typ.PkgPath() != pkg {
+		// PageCond nests itself; visit each type once.
+		if typ.Kind() != reflect.Struct || typ.PkgPath() != pkg || seen[typ] {
 			return
 		}
+		seen[typ] = true
 		for f := range typ.Fields() {
 			walk(path+"."+f.Name, f.Type)
 		}

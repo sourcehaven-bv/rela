@@ -2783,9 +2783,9 @@
       "weight.structure": 859,
       "weight.layers": 0,
       "weight.vocabulary": 872,
-      "weight.types": 3972,
-      "weight.concepts": 7204,
-      "weight.boundaries": 1428,
+      "weight.types": 3975,
+      "weight.concepts": 7206,
+      "weight.boundaries": 1435,
       "weight.data": 1298,
       "weight.security": 2064,
       "largest_tangle": 14,
@@ -2794,8 +2794,19 @@
       "propagation_cost": 9.2
     },
     "min_weight": 0,
-    "at": "2026-11-17T02:00:00Z",
+    "at": "2026-11-17T03:00:00Z",
     "log": [
+      {
+        "at": "2026-11-17T00:00:00Z",
+        "change": "loosen",
+        "reason": "TKT-WQ925LL: ProposedRecord.properties carries proposed property values, like ActionProposal.set, raising the accepted api untyped-bag finding by 1",
+        "metrics": {
+          "weight.concepts": [
+            7203,
+            7204
+          ]
+        }
+      },
       {
         "at": "2026-11-08T09:00:00Z",
         "change": "loosen",
@@ -3133,6 +3144,25 @@
         }
       },
       {
+        "at": "2026-11-17T01:14:24Z",
+        "change": "loosen",
+        "reason": "TKT-ERO2X5G: mutable records add revision and update fields and a records.Change type, so accepted findings (metamodel stability, record field clumps and synonyms) weigh slightly more; no new findings",
+        "metrics": {
+          "weight.types": [
+            3972,
+            3975
+          ],
+          "weight.concepts": [
+            7204,
+            7205
+          ],
+          "weight.boundaries": [
+            1428,
+            1429
+          ]
+        }
+      },
+      {
         "at": "2026-11-17T01:30:00Z",
         "change": "loosen",
         "reason": "TKT-08ZI5XN: the new leaf readtime carries the request read time for today() and now(); the request edges (dataentry, appbuild, scheduler) and the readers (filter, predicatefns, lua, validation) import it, so most components now reach it. The edge is intended. Only propagation_cost changes; the traced weights keep their values.",
@@ -3144,17 +3174,28 @@
         }
       },
       {
-        "at": "2026-11-17T02:00:00Z",
+        "at": "2026-11-17T10:00:00Z",
+        "change": "loosen",
+        "reason": "TKT-TKSCSBT: SearchFieldScope compiles conditional role_relations grants, so affordances/searchscope.go shares more words with dataentry/affordances_policy.go and that accepted finding gains the words factor (31 to 37)",
+        "metrics": {
+          "weight.boundaries": [
+            1422,
+            1428
+          ]
+        }
+      },
+      {
+        "at": "2026-11-17T03:00:00Z",
         "change": "loosen",
         "reason": "TKT-RK810V7: RecordRow.Fields adds 1 to accepted untyped_bag-5de1e6eb61d7; dataentry records wiring tips the words factor of accepted misplaced_file-f03fc91c99b4 (+6)",
         "metrics": {
           "weight.concepts": [
-            7203,
-            7204
+            7205,
+            7206
           ],
           "weight.boundaries": [
-            1422,
-            1428
+            1429,
+            1435
           ]
         }
       }

@@ -863,7 +863,7 @@ func (cl *caller) mayHold(role string) bool {
 	if cl.req == nil || cl.holdsGlobally(role) {
 		return true
 	}
-	_, ok := cl.req.LocalRolePredicate(role)
+	_, ok := cl.req.LocalRolePredicates(role)
 	return ok
 }
 
@@ -921,16 +921,22 @@ func (c *FlowControl) localHolders(ctx context.Context, cl *caller, hdrs []store
 		return out, nil // coverage-ignore: every backend answers graph queries
 	}
 	for key := range need {
-		pred, ok := cl.req.LocalRolePredicate(key[1])
+		preds, ok := cl.req.LocalRolePredicates(key[1])
 		if !ok {
 			continue
 		}
-		q := store.GraphQuery{EntityType: key[0], HasInbound: &pred, Faces: store.AllFaces(), Limit: maxRoleHolders}
-		for h, err := range store.GraphQueryHeaders(ctx, gq, q) {
-			if err != nil {
-				return nil, err
+		// One query per predicate: a conditional role relation has its own
+		// (TKT-TKSCSBT), and the role is held where any of them matches.
+		for i := range preds {
+			q := store.GraphQuery{
+				EntityType: key[0], HasInbound: &preds[i], Faces: store.AllFaces(), Limit: maxRoleHolders,
 			}
-			out[[2]string{key[1], h.ID}] = true
+			for h, err := range store.GraphQueryHeaders(ctx, gq, q) {
+				if err != nil {
+					return nil, err
+				}
+				out[[2]string{key[1], h.ID}] = true
+			}
 		}
 	}
 	return out, nil

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -77,6 +78,7 @@ func memoryRecords() records.Store {
 func newRecordsService(
 	backend records.Store, meta *metamodel.Metamodel, st store.Store,
 	d *acl.Declarative, redactor visibility.FieldRedactor, writes acl.ACL, w worlds.Compiled,
+	sink audit.Audit,
 ) (*records.Service, error) {
 	if meta == nil || len(meta.Records) == 0 {
 		return nil, nil //nolint:nilnil // no record types: the alias fanout drops a nil subscriber
@@ -94,6 +96,7 @@ func newRecordsService(
 		Owners: owners,
 		Meta:   meta,
 		Lock:   recordLock(st, backend),
+		Audit:  sink,
 	})
 }
 

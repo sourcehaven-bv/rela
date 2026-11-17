@@ -364,3 +364,212 @@ func TestSameValue(t *testing.T) {
 		t.Error("nil vs x")
 	}
 }
+
+// A relation's max_outgoing, less the relations the subject already has,
+// bounds the new relations a proposal may hold (RR-ZXPYDQJ).
+func TestRoom_MaxOutgoing(t *testing.T) {
+	three := 3
+	meta := testMeta()
+	rd := meta.Relations["affects"]
+	rd.MaxOutgoing = &three
+	meta.Relations["affects"] = rd
+	action := dataentryconfig.Action{
+		Permission:  "p",
+		AvailableOn: &dataentryconfig.ActionScope{EntityTypes: []string{"ticket"}},
+		LLM: &dataentryconfig.LLMAction{Prompt: "x", Outputs: dataentryconfig.LLMOutputs{
+			Set: []string{"priority"}, Relate: []dataentryconfig.LLMRelateOutput{{Relation: "affects", Max: 2}},
+		}},
+	}
+	task, err := New("triage", action, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	maxItems := func(in Input) any {
+		rel := task.Schema(in)["properties"].(map[string]any)["relate"].(map[string]any)["properties"].(map[string]any)
+		a, ok := rel["affects"].(map[string]any)
+		if !ok {
+			return nil
+		}
+		return a["maxItems"]
+	}
+	reply := func(ids string) *ai.ChatResponse {
+		return &ai.ChatResponse{Content: `{"set":{"priority":null},"relate":{"affects":[` + ids + `]}}`}
+	}
+	tests := []struct {
+		name     string
+		existing int
+		wantMax  any // nil: the relation is not offered
+		reply    string
+		wantErr  bool
+	}{
+		{name: "room for max", existing: 1, wantMax: 2, reply: `"C-2","C-3"`},
+		{name: "room for one plus the related candidate", existing: 2, wantMax: 2, reply: `"C-1","C-2"`},
+		{name: "two new refused with room for one", existing: 2, wantMax: 2, reply: `"C-2","C-3"`, wantErr: true},
+		{name: "full", existing: 3, wantMax: nil, reply: ``, wantErr: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			in := testInput()
+			in.Writable = []string{"priority"}
+			in.Candidates[0].Existing = tc.existing
+			if got := maxItems(in); got != tc.wantMax {
+				t.Errorf("maxItems = %v, want %v", got, tc.wantMax)
+			}
+			_, err := task.Parse(reply(tc.reply), in)
+			if tc.wantMax == nil && tc.reply == "" {
+				// A full relation is not in the schema; naming it is refused.
+				if _, fullErr := task.Parse(reply(`"C-2"`), in); fullErr == nil {
+					t.Error("a relation with no room accepted a proposal")
+				}
+				return
+			}
+			if (err != nil) != tc.wantErr {
+				t.Errorf("parse err = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func createTask(t *testing.T) (*Task, Input) {
+	t.Helper()
+	meta := testMeta()
+	meta.Entities["task"] = metamodel.EntityDef{Label: "Task", Properties: map[string]metamodel.PropertyDef{
+		"title":    {Type: metamodel.PropertyTypeString},
+		"priority": {Type: metamodel.PropertyTypeEnum, Values: []string{"low", "high"}},
+	}}
+	meta.Relations["has-task"] = metamodel.RelationDef{From: []string{"ticket"}, To: []string{"task"}}
+	action := dataentryconfig.Action{
+		Permission:  "p",
+		AvailableOn: &dataentryconfig.ActionScope{EntityTypes: []string{"ticket"}},
+		LLM: &dataentryconfig.LLMAction{Prompt: "Split it.", Outputs: dataentryconfig.LLMOutputs{
+			Create: []dataentryconfig.LLMCreateOutput{{
+				Type: "task", Relation: "has-task", Properties: []string{"title", "priority"}, Max: 2,
+			}},
+		}},
+	}
+	task, err := New("split", action, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := Input{
+		Subject:    &entity.Entity{ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "Big"}},
+		Related:    [][]Item{},
+		Candidates: []Candidates{},
+		Creatable:  []string{"has-task"},
+	}
+	return task, in
+}
+
+func TestCreate_Schema(t *testing.T) {
+	task, in := createTask(t)
+	create := task.Schema(in)["properties"].(map[string]any)["create"].(map[string]any)
+	arr, ok := create["properties"].(map[string]any)["has-task"].(map[string]any)
+	if !ok {
+		t.Fatalf("no has-task create schema: %v", create)
+	}
+	if arr["maxItems"] != 2 {
+		t.Errorf("maxItems = %v, want 2", arr["maxItems"])
+	}
+	item := arr["items"].(map[string]any)
+	if req := item["required"].([]string); !slices.Equal(req, []string{"title", "priority"}) {
+		t.Errorf("required = %v", req)
+	}
+
+	in.Creatable = nil
+	if _, err := task.Request(in); !errors.Is(err, ErrNothingToPropose) {
+		t.Errorf("err = %v, want ErrNothingToPropose when the type may not be created", err)
+	}
+}
+
+func TestCreate_Parse(t *testing.T) {
+	tests := []struct {
+		name    string
+		reply   string
+		want    int
+		wantErr string
+	}{
+		{name: "two entities", want: 2,
+			reply: `{"set":{},"relate":{},"create":{"has-task":[{"title":"A","priority":"high"},{"title":"B","priority":null}]}}`},
+		{name: "all-null entity dropped", want: 1,
+			reply: `{"set":{},"relate":{},"create":{"has-task":[{"title":"A","priority":null},{"title":null,"priority":null}]}}`},
+		{name: "too many", wantErr: "at most 2",
+			reply: `{"set":{},"relate":{},"create":{"has-task":[{"title":"A"},{"title":"B"},{"title":"C"}]}}`},
+		{name: "invalid enum", wantErr: "not an allowed value",
+			reply: `{"set":{},"relate":{},"create":{"has-task":[{"title":"A","priority":"urgent"}]}}`},
+		{name: "unknown property", wantErr: "not one it may fill",
+			reply: `{"set":{},"relate":{},"create":{"has-task":[{"title":"A","secret":"x"}]}}`},
+		{name: "unknown create", wantErr: "not one it may propose",
+			reply: `{"set":{},"relate":{},"create":{"has-bug":[{"title":"A"}]}}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			task, in := createTask(t)
+			p, err := task.Parse(&ai.ChatResponse{Content: tc.reply}, in)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(p.Create) != tc.want {
+				t.Fatalf("create = %+v, want %d", p.Create, tc.want)
+			}
+			first := p.Create[0]
+			if first.Type != "task" || first.Relation != "has-task" || !first.Outgoing ||
+				first.Properties[0].Property != "title" || string(first.Properties[0].Current) != "null" {
+
+				t.Errorf("first = %+v", first)
+			}
+		})
+	}
+}
+
+// The room a create output has is its max, lowered by the cardinality the
+// subject's existing relations leave. With no room it is not offered.
+func TestCreate_Room(t *testing.T) {
+	task, in := createTask(t)
+	three := 3
+	rd := task.meta.Relations["has-task"]
+	rd.MaxOutgoing = &three
+	task.meta.Relations["has-task"] = rd
+
+	in.CreateExisting = map[string]int{"has-task": 2}
+	create := task.Schema(in)["properties"].(map[string]any)["create"].(map[string]any)
+	arr := create["properties"].(map[string]any)["has-task"].(map[string]any)
+	if arr["maxItems"] != 1 {
+		t.Errorf("maxItems = %v, want 1 (max_outgoing 3 less 2 existing)", arr["maxItems"])
+	}
+	reply := `{"set":{},"relate":{},"create":{"has-task":[{"title":"A"},{"title":"B"}]}}`
+	if _, err := task.Parse(&ai.ChatResponse{Content: reply}, in); err == nil || !strings.Contains(err.Error(), "at most 1") {
+		t.Errorf("err = %v, want a refusal past the room", err)
+	}
+
+	in.CreateExisting = map[string]int{"has-task": 3}
+	if _, err := task.Request(in); !errors.Is(err, ErrNothingToPropose) {
+		t.Errorf("err = %v, want ErrNothingToPropose with no room left", err)
+	}
+}
+
+// A required property without a default may not be null on a new entity.
+func TestCreate_RequiredProperty(t *testing.T) {
+	task, in := createTask(t)
+	def := task.meta.Entities["task"]
+	pd := def.Properties["title"]
+	pd.Required = true
+	def.Properties["title"] = pd
+	task.meta.Entities["task"] = def
+
+	create := task.Schema(in)["properties"].(map[string]any)["create"].(map[string]any)
+	item := create["properties"].(map[string]any)["has-task"].(map[string]any)["items"].(map[string]any)
+	title := item["properties"].(map[string]any)["title"].(map[string]any)
+	if _, nullable := title["anyOf"]; nullable {
+		t.Errorf("title schema = %v, want it not nullable", title)
+	}
+	reply := `{"set":{},"relate":{},"create":{"has-task":[{"title":null,"priority":"high"}]}}`
+	if _, err := task.Parse(&ai.ChatResponse{Content: reply}, in); err == nil || !strings.Contains(err.Error(), "required property") {
+		t.Errorf("err = %v, want a refusal of the empty required property", err)
+	}
+}

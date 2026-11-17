@@ -9,7 +9,11 @@ import { createPinia, setActivePinia } from 'pinia'
 const getEntity = vi.fn()
 const updateEntity = vi.fn()
 const createRelation = vi.fn()
+const createEntity = vi.fn()
+const deleteEntity = vi.fn()
 vi.mock('@/api/entities', () => ({
+  createEntity: (...a: unknown[]) => createEntity(...a),
+  deleteEntity: (...a: unknown[]) => deleteEntity(...a),
   getEntity: (...a: unknown[]) => getEntity(...a),
   updateEntity: (...a: unknown[]) => updateEntity(...a),
   createRelation: (...a: unknown[]) => createRelation(...a),
@@ -69,6 +73,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   updateEntity.mockResolvedValue({})
   createRelation.mockResolvedValue(undefined)
+  createEntity.mockResolvedValue({ id: 'TSK-9' })
+  deleteEntity.mockResolvedValue(undefined)
 })
 
 describe('LLMProposalDialog', () => {
@@ -178,5 +184,94 @@ describe('LLMProposalDialog', () => {
     expect(createRelation).toHaveBeenCalledTimes(1)
     expect(createRelation).toHaveBeenCalledWith('ticket', 'TKT-1', 'affects', 'CON-1')
     expect(w.emitted('close')).toBeTruthy()
+  })
+
+  it('creates a proposed record and relates it in its direction', async () => {
+    getEntity.mockResolvedValue({ properties: {} })
+    const w = mount(LLMProposalDialog, {
+      props: {
+        proposal: {
+          entity: 'TKT-1',
+          set: [],
+          relate: [],
+          create: [
+            {
+              type: 'task',
+              relation: 'has-task',
+              outgoing: true,
+              properties: [{ property: 'points', current: null, proposed: 3 }],
+            },
+            {
+              type: 'note',
+              relation: 'describes',
+              outgoing: false,
+              properties: [{ property: 'summary', current: null, proposed: 'free text' }],
+            },
+          ],
+        },
+        entityType: 'ticket',
+        label: 'Triage',
+      },
+      global: { stubs: { Teleport: true } },
+    })
+    // The record with a free-text value starts unticked.
+    const boxes = w.findAll('input[type="checkbox"]')
+    expect(boxes.map((b) => (b.element as HTMLInputElement).checked)).toEqual([true, false])
+    await boxes[1].setValue(true)
+    await clickApply(w)
+
+    expect(createEntity).toHaveBeenCalledWith('task', { properties: { points: 3 } })
+    expect(createEntity).toHaveBeenCalledWith('note', { properties: { summary: 'free text' } })
+    expect(createRelation).toHaveBeenCalledWith('ticket', 'TKT-1', 'has-task', 'TSK-9')
+    expect(createRelation).toHaveBeenCalledWith('note', 'TSK-9', 'describes', 'TKT-1')
+    expect(w.emitted('close')).toBeTruthy()
+  })
+
+  function mountRecord() {
+    return mount(LLMProposalDialog, {
+      props: {
+        proposal: {
+          entity: 'TKT-1',
+          set: [],
+          relate: [],
+          create: [
+            {
+              type: 'task',
+              relation: 'has-task',
+              outgoing: true,
+              properties: [{ property: 'points', current: null, proposed: 3 }],
+            },
+          ],
+        },
+        entityType: 'ticket',
+        label: 'Triage',
+      },
+      global: { stubs: { Teleport: true } },
+    })
+  }
+
+  it('removes a new record whose link fails, so a retry makes one', async () => {
+    getEntity.mockResolvedValue({ properties: {} })
+    createRelation.mockRejectedValueOnce(new Error('nope'))
+    const w = mountRecord()
+    await clickApply(w)
+    expect(deleteEntity).toHaveBeenCalledWith('task', 'TSK-9')
+    expect(w.emitted('close')).toBeFalsy()
+    // The row stays ticked, so applying again retries it.
+    await clickApply(w)
+    expect(createEntity).toHaveBeenCalledTimes(2)
+    expect(w.emitted('close')).toBeTruthy()
+  })
+
+  it('settles a new record it could neither link nor remove', async () => {
+    getEntity.mockResolvedValue({ properties: {} })
+    createRelation.mockRejectedValueOnce(new Error('nope'))
+    deleteEntity.mockRejectedValueOnce(new Error('gone'))
+    const w = mountRecord()
+    await clickApply(w)
+    expect(w.text()).toContain('TSK-9')
+    const box = w.find('input[type="checkbox"]')
+    expect((box.element as HTMLInputElement).disabled).toBe(true)
+    expect(createEntity).toHaveBeenCalledTimes(1)
   })
 })

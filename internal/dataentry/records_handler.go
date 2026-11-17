@@ -60,6 +60,8 @@ func (h *recordsHandler) scriptAppender() lua.RecordAppender {
 //	GET  /_records/{type}/_aggregate        fold rows into points
 //	GET  /_records/{type}/_transaction?group=  one ledger transaction
 //	POST /_records/{type}/_reverse          reverse one: {"group": "..."}
+//	PATCH /_records/{type}/{id}             change a row of a mutable type
+//	DELETE /_records/{type}/{id}?revision=  delete a row of a mutable type
 //
 // A row is readable when its owner is. A hidden owner is the same 404 as a
 // missing one, and an aggregate folds readable owners only.
@@ -103,6 +105,8 @@ func (h *recordsHandler) handleV1Records(w http.ResponseWriter, r *http.Request)
 		if allowMethod(w, r, http.MethodPost) {
 			h.reverse(w, r, parts[0])
 		}
+	case len(parts) == 2 && !strings.HasPrefix(parts[1], "_"):
+		h.row(w, r, parts[0], parts[1])
 	default:
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Not found", "")
 	}
@@ -168,6 +172,52 @@ func (h *recordsHandler) reverse(w http.ResponseWriter, r *http.Request, typ str
 	}
 	rows, err := h.svc.Reverse(r.Context(), typ, body.Group)
 	h.writeRows(w, r, http.StatusCreated, rows, err)
+}
+
+// row serves the changes to one row of a mutable type (TKT-ERO2X5G). Both
+// name the revision the caller read, so a change made in between is a 409
+// rather than lost.
+func (h *recordsHandler) row(w http.ResponseWriter, r *http.Request, typ, id string) {
+	switch r.Method {
+	case http.MethodPatch:
+		var body struct {
+			Revision *int64         `json:"revision"`
+			TS       *time.Time     `json:"ts,omitempty"`
+			Fields   map[string]any `json:"fields"`
+		}
+		if err := decodeRecordsBody(w, r, &body); err != nil {
+			writeRecordsError(w, r, err)
+			return
+		}
+		if body.Revision == nil {
+			writeRecordsError(w, r, fmt.Errorf("%w: revision is required", records.ErrInvalid))
+			return
+		}
+		c := records.Change{Revision: *body.Revision, Fields: body.Fields}
+		if body.TS != nil {
+			c.TS = *body.TS
+		}
+		rec, err := h.svc.Update(r.Context(), typ, id, c)
+		if err != nil {
+			writeRecordsError(w, r, err)
+			return
+		}
+		writeV1JSON(w, http.StatusOK, rec)
+	case http.MethodDelete:
+		rev, err := strconv.ParseInt(r.URL.Query().Get("revision"), 10, 64)
+		if err != nil {
+			writeRecordsError(w, r, fmt.Errorf("%w: revision is required", records.ErrInvalid))
+			return
+		}
+		if err := h.svc.Delete(r.Context(), typ, id, rev); err != nil {
+			writeRecordsError(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		w.Header().Set("Allow", "PATCH, DELETE")
+		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+	}
 }
 
 func (h *recordsHandler) aggregate(w http.ResponseWriter, r *http.Request, typ string) {
@@ -246,7 +296,10 @@ func writeRecordsError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, records.ErrNotFound):
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Not found", "")
 	case errors.Is(err, records.ErrForbidden):
-		writeV1Error(w, r, http.StatusForbidden, "forbidden", "You may not add records to this entity", "")
+		writeV1Error(w, r, http.StatusForbidden, "forbidden", "You may not change the records of this entity", "")
+	case errors.Is(err, records.ErrStale):
+		writeV1Error(w, r, http.StatusConflict, "stale_revision",
+			"The record changed since you read it", "read it again and retry")
 	case errors.Is(err, records.ErrGroupExists):
 		writeV1Error(w, r, http.StatusConflict, "transaction_exists", "This transaction id is already used", "")
 	case errors.Is(err, records.ErrUnbalanced):

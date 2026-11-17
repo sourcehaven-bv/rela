@@ -30,6 +30,12 @@ const (
 	OpCreateRelation = "create-relation"
 	OpUpdateRelation = "update-relation"
 	OpDeleteRelation = "delete-relation"
+	// OpUpdateRecord and OpDeleteRecord are changes to a row of a mutable
+	// record type (TKT-ERO2X5G). Subject has Kind "record", the record type
+	// and the row id. Appends are not audited: an append-only row keeps its
+	// own attribution.
+	OpUpdateRecord = "update-record"
+	OpDeleteRecord = "delete-record"
 
 	// OpDeniedWrite records a write attempt that the ACL refused.
 	// Subject names the would-be target (entity type or relation type);

@@ -21,7 +21,18 @@ export interface ActionProposal {
   title?: string
   set: { property: string; current: unknown; proposed: unknown }[]
   relate: { relation: string; to: string; to_type: string; to_title: string }[]
+  /** New records to create, each related to `entity`. Absent from older servers. */
+  create?: ProposedRecord[]
   model?: string
+}
+
+/** A new record an `llm:` action proposes, related to the proposal's entity. */
+export interface ProposedRecord {
+  type: string
+  relation: string
+  /** The relation runs from the proposal's entity to the new record. */
+  outgoing: boolean
+  properties: { property: string; current: unknown; proposed: unknown }[]
 }
 
 export interface ActionBatch {
@@ -53,7 +64,7 @@ export async function runBatchAction(id: string, addresses: string[]): Promise<A
 export async function runAction(
   id: string,
   entityId?: string,
-  entityType?: string,
+  entityType?: string
 ): Promise<ActionResponse | null> {
   const body = entityId ? { entity_id: entityId, entity_type: entityType } : undefined
   return api.post<ActionResponse | null>(`/_action/${id}`, body)

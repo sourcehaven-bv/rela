@@ -1,4 +1,4 @@
-import type { ActionProposal } from '@/api/actions'
+import type { ActionProposal, ProposedRecord } from '@/api/actions'
 
 /** Writes the proposal dialog makes, after the user's choice. */
 export interface ProposalPlan {
@@ -8,6 +8,8 @@ export interface ProposalPlan {
   stale: string[]
   /** Relations to create. */
   relations: { relation: string; to: string; title: string }[]
+  /** New records to create, by their index in `proposal.create`. */
+  records: { index: number; record: ProposedRecord; properties: Record<string, unknown> }[]
 }
 
 /** Key of a proposed relation in the dialog's selection. */
@@ -29,9 +31,10 @@ export function planApply(
   proposal: ActionProposal,
   selectedSet: ReadonlySet<string>,
   selectedRelate: ReadonlySet<string>,
-  freshProperties: Record<string, unknown>
+  freshProperties: Record<string, unknown>,
+  selectedCreate: ReadonlySet<number> = new Set()
 ): ProposalPlan {
-  const plan: ProposalPlan = { properties: {}, stale: [], relations: [] }
+  const plan: ProposalPlan = { properties: {}, stale: [], relations: [], records: [] }
   for (const c of proposal.set) {
     if (!selectedSet.has(c.property)) continue
     if (!same(freshProperties[c.property], c.current)) {
@@ -45,6 +48,12 @@ export function planApply(
       plan.relations.push({ relation: r.relation, to: r.to, title: r.to_title })
     }
   }
+  ;(proposal.create ?? []).forEach((record, index) => {
+    if (!selectedCreate.has(index)) return
+    const properties: Record<string, unknown> = {}
+    for (const v of record.properties) properties[v.property] = v.proposed
+    plan.records.push({ index, record, properties })
+  })
   return plan
 }
 

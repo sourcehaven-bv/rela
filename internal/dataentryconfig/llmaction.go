@@ -3,6 +3,7 @@ package dataentryconfig
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -28,6 +29,12 @@ type LLMAction struct {
 	Model string `yaml:"model,omitempty" json:"-"`
 	// MaxTokens caps the reply. Zero leaves it to the provider.
 	MaxTokens int `yaml:"max_tokens,omitempty" json:"-"`
+	// Apply is LLMApplyPropose (the default, also spelled empty) or
+	// LLMApplyAuto. With auto, a run is a background job that applies the
+	// proposal as the person who started it, with no dialog; it is also what
+	// lets a list run the action over selected rows and a flow run it as a
+	// job step.
+	Apply string `yaml:"apply,omitempty" json:"-"`
 	// Inputs names the data rela sends with the prompt.
 	Inputs LLMInputs `yaml:"inputs" json:"-"`
 	// Outputs names what the model may propose.
@@ -108,7 +115,41 @@ type LLMOutputs struct {
 	// Relate are outgoing relations the model may propose, each to an
 	// entity picked from a candidate list.
 	Relate []LLMRelateOutput `yaml:"relate,omitempty"`
+	// Create are new entities the model may propose, each related to the
+	// subject.
+	Create []LLMCreateOutput `yaml:"create,omitempty"`
 }
+
+// LLMCreateOutput lets the model propose new entities of one type, each
+// related to the subject through Relation.
+type LLMCreateOutput struct {
+	// Type is the entity type to create. Required.
+	Type string `yaml:"type"`
+	// Relation links each new entity to the subject. Required.
+	Relation string `yaml:"relation"`
+	// Direction is "outgoing" (the default: subject to new entity) or
+	// "incoming" (new entity to subject).
+	Direction string `yaml:"direction,omitempty"`
+	// Properties are the properties the model fills on each new entity.
+	// At least one is required.
+	Properties []string `yaml:"properties"`
+	// Max caps how many entities the model may propose. Zero means 1.
+	Max int `yaml:"max,omitempty"`
+}
+
+// Outgoing reports whether the subject is the relation's from side.
+func (c LLMCreateOutput) Outgoing() bool { return c.Direction != LLMDirectionIncoming }
+
+// EffectiveMax is the effective number of entities the model may propose.
+func (c LLMCreateOutput) EffectiveMax() int {
+	if c.Max == 0 {
+		return 1
+	}
+	return c.Max
+}
+
+// Auto reports whether the action applies its proposal in the background.
+func (l *LLMAction) Auto() bool { return l != nil && l.Apply == LLMApplyAuto }
 
 // LLMRelateOutput lets the model propose relations of one type from the
 // subject to entities picked from a candidate list.
@@ -151,8 +192,13 @@ const (
 	// batch.max times inputs.content.max_chars.
 	MaxLLMBatchContentChars = 200000
 
+	MaxLLMCreateMax = 20
+
 	LLMDirectionOutgoing = "outgoing"
 	LLMDirectionIncoming = "incoming"
+
+	LLMApplyPropose = "propose"
+	LLMApplyAuto    = "auto"
 )
 
 // ContentChars is the effective body cap.
@@ -212,11 +258,34 @@ func (a Action) Subject() string {
 	return a.AvailableOn.EntityTypes[0]
 }
 
+// llmScriptKeyErrors reports the keys of action that apply only to a
+// script action.
+func llmScriptKeyErrors(action Action) []string {
+	var msgs []string
+	if action.Script != "" || len(action.Set) > 0 {
+		msgs = append(msgs, "an llm action has no script or set")
+	}
+	if action.Request != nil {
+		msgs = append(msgs, "request: applies only to a script action")
+	}
+	if len(action.Params) > 0 {
+		msgs = append(msgs, "params: applies only to a script action")
+	}
+	if action.Capabilities.Any() {
+		msgs = append(msgs, "capabilities: applies only to a script action; an llm action uses the AI provider by itself")
+	}
+	// Changes are applied as the user, by the dialog or by the background
+	// run, so there is nothing for an elevation to apply to.
+	if action.AllowACLBypass != "" || len(action.ElevatedUpdates) > 0 {
+		msgs = append(msgs, "allow_acl_bypass and elevated_updates apply only to a script action; "+
+			"an llm action's changes are applied as the user")
+	}
+	return msgs
+}
+
 // validateLLMAction checks the structure of one action's `llm:` block
 // against the metamodel. The candidates predicates are compiled by
 // conditionlint, which knows the predicate language.
-//
-//nolint:gocognit // linear checklist over the block's keys; each branch is one rule.
 func validateLLMAction(id string, action Action, meta *metamodel.Metamodel) []string {
 	llm := action.LLM
 	if llm == nil {
@@ -228,23 +297,8 @@ func validateLLMAction(id string, action Action, meta *metamodel.Metamodel) []st
 		errs = append(errs, where+": "+fmt.Sprintf(format, args...))
 	}
 
-	if action.Script != "" || len(action.Set) > 0 {
-		add("an llm action has no script or set")
-	}
-	if action.Request != nil {
-		add("request: applies only to a script action")
-	}
-	if len(action.Params) > 0 {
-		add("params: applies only to a script action")
-	}
-	if action.Capabilities.Any() {
-		add("capabilities: applies only to a script action; an llm action uses the AI provider by itself")
-	}
-	// The proposal is applied by the user through the ordinary write APIs,
-	// so there is nothing for an elevation to apply to.
-	if action.AllowACLBypass != "" || len(action.ElevatedUpdates) > 0 {
-		add("allow_acl_bypass and elevated_updates apply only to a script action; " +
-			"an llm action's changes are applied as the user")
+	for _, msg := range llmScriptKeyErrors(action) {
+		add("%s", msg)
 	}
 	// Every run sends data to an external provider and costs money, so the
 	// operator has to name who may run it.
@@ -255,6 +309,9 @@ func validateLLMAction(id string, action Action, meta *metamodel.Metamodel) []st
 		add("prompt is required")
 	} else if len(llm.Prompt) > MaxLLMPromptChars {
 		add("prompt is longer than %d characters", MaxLLMPromptChars)
+	}
+	if llm.Apply != "" && llm.Apply != LLMApplyPropose && llm.Apply != LLMApplyAuto {
+		add("apply must be %q (the default) or %q", LLMApplyPropose, LLMApplyAuto)
 	}
 	if llm.MaxTokens < 0 || llm.MaxTokens > MaxLLMMaxTokens {
 		add("max_tokens must be between 0 and %d", MaxLLMMaxTokens)
@@ -285,8 +342,8 @@ func validateLLMAction(id string, action Action, meta *metamodel.Metamodel) []st
 		errs = append(errs, validateLLMRelatedInput(fmt.Sprintf("%s: inputs.related[%d]", where, i), subject, r, meta)...)
 	}
 
-	if len(llm.Outputs.Set) == 0 && len(llm.Outputs.Relate) == 0 {
-		add("outputs needs at least one set property or relate entry")
+	if len(llm.Outputs.Set) == 0 && len(llm.Outputs.Relate) == 0 && len(llm.Outputs.Create) == 0 {
+		add("outputs needs at least one set property, relate entry or create entry")
 	}
 	for _, msg := range validateLLMSet(llm.Outputs.Set, subject, def) {
 		add("outputs.set: %s", msg)
@@ -294,16 +351,106 @@ func validateLLMAction(id string, action Action, meta *metamodel.Metamodel) []st
 	if total := llmTotalItems(llm); total > MaxLLMTotalItems {
 		add("the limits of inputs.related and outputs.relate add up to %d; at most %d are allowed", total, MaxLLMTotalItems)
 	}
+	for _, msg := range validateLLMBatch(llm) {
+		add("batch: %s", msg)
+	}
+	// A batch run returns proposals for review and sends no new records; it
+	// never applies them.
+	if llm.Batch != nil && llm.Apply == LLMApplyAuto {
+		add("batch: a batch run only proposes changes; it cannot be combined with apply: auto")
+	}
+	if llm.Batch != nil && len(llm.Outputs.Create) > 0 {
+		add("batch: a batch action cannot have outputs.create")
+	}
+	return append(errs, validateLLMEdgeOutputs(where, subject, llm.Outputs, meta)...)
+}
+
+// validateLLMEdgeOutputs checks outputs.relate and outputs.create: each
+// entry, and that no relation is listed twice across the two.
+func validateLLMEdgeOutputs(where, subject string, out LLMOutputs, meta *metamodel.Metamodel) []string {
+	var errs []string
+	add := func(format string, args ...any) {
+		errs = append(errs, where+": "+fmt.Sprintf(format, args...))
+	}
 	seenRel := map[string]bool{}
-	for i, r := range llm.Outputs.Relate {
+	for i, r := range out.Relate {
 		if seenRel[r.Relation] {
 			add("outputs.relate: relation %q is listed twice", r.Relation)
 		}
 		seenRel[r.Relation] = true
 		errs = append(errs, validateLLMRelateOutput(fmt.Sprintf("%s: outputs.relate[%d]", where, i), subject, r, meta)...)
 	}
-	for _, msg := range validateLLMBatch(llm) {
-		add("batch: %s", msg)
+	seenCreate := map[string]bool{}
+	for i, c := range out.Create {
+		if seenCreate[c.Relation] {
+			add("outputs.create: relation %q is listed twice", c.Relation)
+		}
+		// One relation in both lists would let the two proposals together
+		// pass the relation's max_outgoing.
+		if seenRel[c.Relation] {
+			add("outputs.create: relation %q is also in outputs.relate", c.Relation)
+		}
+		seenCreate[c.Relation] = true
+		errs = append(errs, validateLLMCreateOutput(fmt.Sprintf("%s: outputs.create[%d]", where, i), subject, c, meta)...)
+	}
+	return errs
+}
+
+func validateLLMCreateOutput(where, subject string, c LLMCreateOutput, meta *metamodel.Metamodel) []string {
+	var errs []string
+	add := func(format string, args ...any) {
+		errs = append(errs, where+": "+fmt.Sprintf(format, args...))
+	}
+	if c.Direction != "" && c.Direction != LLMDirectionOutgoing && c.Direction != LLMDirectionIncoming {
+		add("direction must be %q or %q", LLMDirectionOutgoing, LLMDirectionIncoming)
+	}
+	if c.Max < 0 || c.Max > MaxLLMCreateMax {
+		add("max must be between 1 and %d", MaxLLMCreateMax)
+	}
+	def, ok := meta.GetEntityDef(c.Type)
+	if !ok {
+		add("unknown entity type %q", c.Type)
+	} else {
+		if len(def.Faces) > 0 {
+			add("entity type %q has content states (faces), which llm actions do not support yet", c.Type)
+		}
+		if len(c.Properties) == 0 {
+			add("properties needs at least one property to fill")
+		}
+		for _, msg := range validateLLMSet(c.Properties, c.Type, def) {
+			add("properties: %s", msg)
+		}
+		for _, name := range slices.Sorted(maps.Keys(def.Properties)) {
+			if pd := def.Properties[name]; pd.Required && pd.Default == "" && !slices.Contains(c.Properties, name) {
+				add("properties must include %q, which a new %s requires", name, c.Type)
+			}
+		}
+	}
+	rd, ok := meta.GetRelationDef(c.Relation)
+	if !ok {
+		add("unknown relation %q", c.Relation)
+		return errs
+	}
+	from, to := subject, c.Type
+	if !c.Outgoing() {
+		from, to = c.Type, subject
+	}
+	if !slices.Contains(rd.From, from) || !slices.Contains(rd.To, to) {
+		add("relation %q does not run from %q to %q", c.Relation, from, to)
+	}
+	if rd.Scope != metamodel.ScopeIdentity && rd.Scope != metamodel.ScopeIdentityExplicit {
+		add("relation %q is content-scoped, which llm actions do not support", c.Relation)
+	}
+	for name, pd := range rd.Properties {
+		if pd.Required {
+			add("relation %q has required property %q, which an llm proposal cannot fill", c.Relation, name)
+		}
+	}
+	if limit := rd.MaxOutgoing; c.Outgoing() && limit != nil && c.EffectiveMax() > *limit {
+		add("max %d exceeds max_outgoing %d of relation %q", c.EffectiveMax(), *limit, c.Relation)
+	}
+	if limit := rd.MaxIncoming; !c.Outgoing() && limit != nil && c.EffectiveMax() > *limit {
+		add("max %d exceeds max_incoming %d of relation %q", c.EffectiveMax(), *limit, c.Relation)
 	}
 	return errs
 }
@@ -456,12 +603,13 @@ func cmpOr(s, def string) string {
 // unknown keys are otherwise ignored by the decoder, so a typo such as
 // `output:` would silently drop every proposal; the block checks its own.
 var (
-	llmKeys        = []string{"batch", "inputs", "max_tokens", "model", "outputs", "prompt"}
+	llmKeys        = []string{"apply", "batch", "inputs", "max_tokens", "model", "outputs", "prompt"}
 	llmBatchKeys   = []string{"max"}
 	llmInputKeys   = []string{"content", "properties", "related"}
 	llmContentKeys = []string{"max_chars"}
 	llmRelatedKeys = []string{"direction", "fields", "limit", "relation"}
-	llmOutputKeys  = []string{"relate", "set"}
+	llmOutputKeys  = []string{"create", "relate", "set"}
+	llmCreateKeys  = []string{"direction", "max", "properties", "relation", "type"}
 	llmRelateKeys  = []string{"candidates", "fields", "limit", "max", "relation"}
 )
 
@@ -496,6 +644,7 @@ func llmUnknownKeys(data []byte) []string {
 		if out, ok := a.LLM["outputs"].(map[string]any); ok {
 			errs = append(errs, unknownKeysIn(p+".outputs", out, llmOutputKeys)...)
 			errs = append(errs, unknownKeysInList(p+".outputs.relate", out["relate"], llmRelateKeys)...)
+			errs = append(errs, unknownKeysInList(p+".outputs.create", out["create"], llmCreateKeys)...)
 		}
 	}
 	return errs

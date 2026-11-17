@@ -1,4 +1,4 @@
--- pgstore schema, version 47: the record store (TKT-J7Q9C4K).
+-- pgstore schema, version 48: the record store (TKT-J7Q9C4K).
 --
 -- records holds typed rows owned by an entity: time series samples and
 -- ledger postings. The row's fields are the doc column. record_groups holds

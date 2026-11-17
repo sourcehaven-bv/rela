@@ -18,6 +18,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/ingest"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -200,7 +201,7 @@ func (h *webhookRouter) handle(w http.ResponseWriter, r *http.Request, hookID st
 	// the hook's identity here, once, as every request edge does, and attach
 	// its read gate (a request under a policy with no gate is denied every
 	// read). Binding replaces any Request already on ctx.
-	ctx, err = acl.BindRequest(ctx, h.write.acl())
+	ctx, err = acl.BindRequest(readtime.Ensure(ctx, nowFunc), h.write.acl())
 	if err != nil {
 		writeWebhookError(w, hookID, err)
 		return

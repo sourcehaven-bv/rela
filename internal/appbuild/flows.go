@@ -34,3 +34,22 @@ func LoadFlows(ctx context.Context, r configReader, meta *metamodel.Metamodel,
 	}
 	return flowcfg.Parse(data, meta, policy)
 }
+
+// CheckFlowsData compiles the `flows:` section of flows.yaml content against
+// meta and policy, as a server build does, and returns the compile error.
+// The error text starts with the file name.
+// data need not be on disk yet, such as a Configure draft; nil, or a file
+// without `flows:`, passes.
+//
+// Nil: meta is rejected; policy is accepted (no acl.yaml).
+func CheckFlowsData(data []byte, meta *metamodel.Metamodel, policy *acl.Policy) error {
+	if meta == nil {
+		return errors.New("flows: CheckFlowsData requires a metamodel")
+	}
+	m, err := withFlowRuns(data, meta)
+	if err != nil {
+		return fmt.Errorf("%s: %w", flowcfg.FileName, err)
+	}
+	_, err = compileFlows(data, m, policy)
+	return err
+}

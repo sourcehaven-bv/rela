@@ -4,7 +4,10 @@ type: ticket
 title: 'LLM actions: follow-ups (auto-apply, create outputs, batch runs)'
 kind: enhancement
 priority: low
-status: backlog
+effort: l
+started: "2026-11-15"
+completed: "2026-11-15"
+status: done
 ---
 
 ## Description

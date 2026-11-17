@@ -22,11 +22,14 @@ var conditionLists = map[string]string{
 	// Denied for dave, who reads no users: an empty page in the store.
 	"reported": "related(entity, 'reportedBy')",
 	// The sign-aware dedup must keep both terms: no row matches.
-	"contradiction":    "related(entity, 'reportedBy') and not related(entity, 'reportedBy')",
-	"mine":             "is_current_user(entity.assignee)",
-	"watching":         "has_current_user(entity.watchers)",
-	"unassigned-open":  "entity.assignee ~= current_user.id and entity.status == 'open'",
-	"open-or-reported": "entity.status == 'open' or related(entity, 'reportedBy')",
+	"contradiction":   "related(entity, 'reportedBy') and not related(entity, 'reportedBy')",
+	"mine":            "is_current_user(entity.assignee)",
+	"watching":        "has_current_user(entity.watchers)",
+	"unassigned-open": "entity.assignee ~= current_user.id and entity.status == 'open'",
+	// or, not and ordered comparisons lower into GraphQuery.Where
+	// (TKT-8HY05WB). dave's denied traversal under the or is false.
+	"open-or-reported":   "entity.status == 'open' or related(entity, 'reportedBy')",
+	"not-open-or-from-b": "not (entity.status == 'open' or entity.title < 'b')",
 	// Date comparisons against the read time stay on the Go path
 	// (TKT-08ZI5XN): a stored date has no canonical shape to compare in SQL.
 	"overdue": "entity.due ~= nil and entity.due < today()",
@@ -34,12 +37,13 @@ var conditionLists = map[string]string{
 }
 
 // goPathConditions never push down, for any principal.
-var goPathConditions = map[string]bool{"open-or-reported": true, "overdue": true, "expired": true}
+var goPathConditions = map[string]bool{"overdue": true, "expired": true}
 
 // statusConditions are the conditions that read status, which frank may not
 // see on every row; they must stay on the Go path for him.
 var statusConditions = map[string]bool{
 	"open": true, "not-done": true, "unassigned-open": true, "open-or-reported": true,
+	"not-open-or-from-b": true,
 }
 
 // deniedForDave are the conditions with a positive traversal into users,

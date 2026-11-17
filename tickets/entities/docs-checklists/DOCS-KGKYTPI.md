@@ -9,8 +9,8 @@ status: done
 
 ## Code Documentation
 
-- [x] Comments where logic isn't obvious: QueryConditions and its Lower invariant, ConditionLowerer, PageQuery.Related trust contract, listPage.filterInGo residual shapes
-- [x] Function/type docs if public API: appbuild.QueryConditions, GatedReadBundle.Conditions, mcp.ConditionLowerer, RelatedReads.Conditions, visibility.PageQuery.Related, ErrPropsNotPushable
+- [x] Comments where logic isn't obvious: QueryConditions and its Lower invariant, ConditionLowerer, PageQuery.Traversals gate contract, listPage.filterInGo residual shapes
+- [x] Function/type docs if public API: appbuild.QueryConditions, GatedReadBundle.Conditions, mcp.ConditionLowerer, RelatedReads.Conditions, visibility.PageQuery.Traversals, visibility.PageTraversal, ErrPropsNotPushable
 
 ## Project Documentation
 

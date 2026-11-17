@@ -25,6 +25,36 @@ func tierA(p *acl.Policy, perms PermissionConsumer) []Finding {
 	f = append(f, checkWildcardWriteSprawl(p)...)     // A9
 	f = append(f, checkNameWhitespace(p)...)          // A10
 	f = append(f, checkCeilings(p)...)                // A11 / A12 / A13
+	f = append(f, reportConditionalGrants(p)...)      // A16
+	return f
+}
+
+// A16 — a role relation (or the membership relation) with a `when:`. Not a
+// problem: the report lists every grant that ends on its own, with its
+// condition, so a reviewer sees which access expires and when it is judged.
+// The ungated case cannot reach here: the policy load refuses a `when:`
+// without requires_permission.
+func reportConditionalGrants(p *acl.Policy) []Finding {
+	var f []Finding
+	for _, rel := range slices.Sorted(maps.Keys(p.RoleRelations)) {
+		def := p.RoleRelations[rel]
+		if def.When == "" {
+			continue
+		}
+		what := "confers " + def.Confers
+		if rel == p.EffectiveMembershipRelation() {
+			what = "is the membership relation"
+		}
+		f = append(f, Finding{
+			Rule: "A16-conditional-grant", Severity: Info, Subject: rel,
+			Detail: fmt.Sprintf("%q %s only while `%s` holds on the edge. The condition is judged "+
+				"on every request at its read time (UTC); access ends at the first request after "+
+				"it stops holding, and no job runs. An edge without a valid value grants nothing.",
+				rel, what, def.When),
+			Fix: "None needed. Writes to the edge, including its condition properties, need " +
+				def.RequiresPermission + ".",
+		})
+	}
 	return f
 }
 

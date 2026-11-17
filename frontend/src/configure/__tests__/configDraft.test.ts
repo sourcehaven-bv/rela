@@ -146,6 +146,55 @@ describe('useConfigDraftStore', () => {
     expect(get(fieldAt(n - 1), 'property')).toBe('heading')
   })
 
+  it('renames a property in the automations on its type', () => {
+    const store = fresh()
+    store.renameProperty('ticket', 'effort', 'estimate')
+    const trigger = (name: string) => getIn(store.currentFlows, ['triggers', name])
+    expect(keys(getIn(trigger('stamp_done'), ['outputs', 0, 'set', 'properties']))).toEqual([
+      'estimate',
+    ])
+    const copy = trigger('copy_effort')
+    expect(getIn(copy, ['on', 'when'])).toBe('entity.estimate > 1')
+    expect(getIn(copy, ['on', 'where', 0])).toBe('estimate>0')
+    expect(getIn(copy, ['outputs', 1, 'check', 'where'])).toBe('estimate>0')
+    const props = getIn(copy, ['outputs', 0, 'set', 'properties'])
+    expect(keys(props)).toEqual(['estimate', 'title'])
+    expect(get(props, 'estimate')).toBe('{{new.estimate}}')
+    // A longer name that starts with the old one is another property.
+    expect(get(props, 'title')).toBe('{{old.effortless}}')
+    expect(getIn(copy, ['outputs', 1, 'check', 'message'])).toBe('Effort is {{new.estimate}}')
+    // A create of the type writes it too, from a trigger on another type.
+    expect(keys(getIn(trigger('spawn'), ['outputs', 0, 'create', 'properties']))).toEqual([
+      'estimate',
+    ])
+    // notify.to names a property of the feature, not of the ticket.
+    expect(getIn(trigger('spawn'), ['outputs', 1, 'notify', 'to', 'property'])).toBe('effort')
+    expect(store.body().flows).toBeDefined()
+
+    store.renameProperty('ticket', 'status', 'state')
+    expect(getIn(trigger('stamp_done'), ['on', 'property'])).toBe('state')
+    // A trigger that runs a script is left for the save to report.
+    store.renameProperty('ticket', 'title', 'name')
+    expect(getIn(trigger('scripted'), ['outputs', 0, 'script', 'lua'])).toBe('print(1)')
+  })
+
+  it('edits flows.yaml triggers and drops an edit made back', () => {
+    const store = fresh()
+    store.setAt('flows', ['triggers', 'stamp_done'], 'description', 'Stamp')
+    expect(getIn(store.currentFlows, ['triggers', 'stamp_done', 'description'])).toBe('Stamp')
+    expect(store.body().flows).toBeDefined()
+    expect(store.body().schema).toBeUndefined()
+    expect(store.changes.map((g) => g.key)).toEqual(['automations'])
+    store.setAt(
+      'flows',
+      ['triggers', 'stamp_done'],
+      'description',
+      'Clear the effort of done tickets'
+    )
+    expect(store.hasDraft).toBe(false)
+    expect(store.body().flows).toBeUndefined()
+  })
+
   it('sends only what changed', () => {
     const store = fresh()
     renameFeature(store, 'Epic')

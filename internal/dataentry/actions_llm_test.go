@@ -164,6 +164,10 @@ type llmFixture struct {
 	// wrap, when set, wraps the seeded store; every read the app makes goes
 	// through the wrapper.
 	wrap func(store.Store) store.Store
+	// create is the types alice and bob may create.
+	create []string
+	// policy, when set, edits the policy before it is built.
+	policy func(*acl.Policy)
 	// roles and assign add roles and assignments to the default triager
 	// (alice) and reader (bob).
 	roles  map[string]acl.RoleDef
@@ -195,13 +199,17 @@ func buildLLMApp(t *testing.T, fx llmFixture) llmApp {
 		st = fx.wrap(st)
 	}
 	role := func(perms ...string) acl.RoleDef {
-		return acl.RoleDef{Read: fx.read, Update: []string{"ticket"}, Permissions: perms}
+		return acl.RoleDef{Read: fx.read, Update: []string{"ticket"}, Create: fx.create, Permissions: perms}
 	}
 	roles := map[string]acl.RoleDef{"triager": role("ticket.triage"), "reader": role()}
 	assign := map[string]string{"alice": "triager", "bob": "reader"}
 	maps.Copy(roles, fx.roles)
 	maps.Copy(assign, fx.assign)
-	decl := mustNewACL(t, &acl.Policy{Roles: roles, Assignments: assign}, st)
+	pol := &acl.Policy{Roles: roles, Assignments: assign}
+	if fx.policy != nil {
+		fx.policy(pol)
+	}
+	decl := mustNewACL(t, pol, st)
 	svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, paths), appbuildtest.WithStore(st),
 		appbuildtest.WithDeclarative(decl))
 	app := newAppFromParts(&Config{}, nil, newFixture())
@@ -822,4 +830,46 @@ func TestLLMAction_ReplyInvalid(t *testing.T) {
 			a.unchanged(t)
 		})
 	}
+}
+
+// TestLLMAction_LoweredCandidatesScaleFree pins that a `candidates:`
+// condition the store can answer is pushed into the store query and paged:
+// padding the store with rows the condition excludes changes neither the
+// calls nor the rows read (TKT-WQ925LL).
+func TestLLMAction_LoweredCandidatesScaleFree(t *testing.T) {
+	storetest.AssertScaleFree(t, func(n int) (storetest.Cost, string) {
+		ents := []*entity.Entity{
+			{ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "Login broken", "priority": "low"}},
+		}
+		for i := range 5 {
+			ents = append(ents, &entity.Entity{ID: fmt.Sprintf("CON-A%d", i), Type: "concept",
+				Properties: map[string]any{"title": fmt.Sprintf("Auth %d", i), "area": "auth"}})
+		}
+		for i := range n {
+			ents = append(ents, &entity.Entity{ID: fmt.Sprintf("CON-P%04d", i), Type: "concept",
+				Properties: map[string]any{"title": fmt.Sprintf("Pad %d", i), "area": "billing"}})
+		}
+		var counting *storetest.Counting
+		a := buildLLMApp(t, llmFixture{
+			meta: llmGraphMeta(t), seed: ents, read: []string{"ticket", "concept", "component"},
+			action: llmAction(nil, []string{"priority"}, []dataentryconfig.LLMRelateOutput{{
+				Relation: "affects", Candidates: "entity.area == 'auth'", Limit: 3,
+			}}),
+			reply: `{"set":{"priority":null},"relate":{"affects":[]}}`,
+			wrap: func(s store.Store) store.Store {
+				counting = storetest.NewCounting(s)
+				return counting
+			},
+		})
+		counting.Reset()
+		code, _, body := a.run(t, "alice")
+		if code != http.StatusOK {
+			t.Fatalf("status %d: %s", code, body)
+		}
+		c := a.chat.doc(t).Candidates["affects"]
+		if got := itemIDs(c.Entities); !slices.Equal(got, []string{"CON-A0", "CON-A1", "CON-A2"}) || !c.Truncated {
+			t.Fatalf("candidates = %v truncated=%v, want the first 3 auth concepts, truncated", got, c.Truncated)
+		}
+		return counting.Cost(), counting.String()
+	})
 }
