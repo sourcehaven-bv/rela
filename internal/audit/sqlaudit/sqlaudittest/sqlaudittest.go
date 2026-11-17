@@ -71,11 +71,12 @@ var t0 = time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
 
 func rec(i int) audit.Record {
 	return audit.Record{
-		Time:      t0.Add(time.Duration(i) * time.Second),
-		Op:        audit.OpUpdateEntity,
-		Subject:   &audit.Subject{Kind: "entity", Type: "control", ID: fmt.Sprintf("CTL-%d", i)},
-		Principal: principal.Principal{User: "alice", Tool: principal.ToolCLI},
-		Summary:   "updated: status",
+		Time:       t0.Add(time.Duration(i) * time.Second),
+		Op:         audit.OpUpdateEntity,
+		Subject:    &audit.Subject{Kind: "entity", Type: "control", ID: fmt.Sprintf("CTL-%d", i)},
+		Principal:  principal.Principal{User: "alice", Tool: principal.ToolCLI},
+		AssertedBy: "ci-runner",
+		Summary:    "updated: status",
 	}
 }
 
