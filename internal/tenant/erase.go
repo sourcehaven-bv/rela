@@ -33,7 +33,9 @@ type Erasure struct {
 	// SchemaDropped is false when the schema did not exist, for example on
 	// a second run after an erasure that already dropped it.
 	SchemaDropped bool
-	// AuditRemoved is false when the tenant had no audit directory.
+	// AuditRemoved is false when the tenant had no audit directory. The
+	// database audit log is a table in the schema and goes with it
+	// (TKT-USQBMG6); the directory only holds JSONL written before that.
 	AuditRemoved bool
 }
 

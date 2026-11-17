@@ -73,8 +73,10 @@ func TestErase_RemovesOnlyThatTenant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Erase: %v", err)
 	}
-	if !res.SchemaDropped || !res.AuditRemoved {
-		t.Errorf("Erase = %+v, want the schema dropped and the audit directory removed", res)
+	// The audit log is a table in the schema (TKT-USQBMG6), so dropping the
+	// schema erases it; the directory only holds JSONL from before that.
+	if !res.SchemaDropped {
+		t.Errorf("Erase = %+v, want the schema dropped", res)
 	}
 	if schemaExists(t, dsnB, schemaA) {
 		t.Error("tenant A's schema survived its erasure")
@@ -87,15 +89,14 @@ func TestErase_RemovesOnlyThatTenant(t *testing.T) {
 	if !schemaExists(t, dsnB, schemaB) {
 		t.Fatal("erasing tenant A dropped tenant B's schema")
 	}
-	files, err := filepath.Glob(filepath.Join(auditRoot, schemaB, "*.jsonl"))
-	if err != nil || len(files) != 1 {
-		t.Errorf("tenant B's audit files = %v (%v), want one", files, err)
-	}
 	optB, err := open(ctx, b)
 	if err != nil {
 		t.Fatalf("reopen tenant B: %v", err)
 	}
 	assertVisible(t, optB.Services, "TKT-org-b", "org-b")
+	if got := tenantAuditRecords(t, optB.Services, 1); len(got) != 1 {
+		t.Errorf("tenant B's audit records = %d, want one", len(got))
+	}
 	if err = optB.Close(); err != nil {
 		t.Errorf("close tenant B: %v", err)
 	}
