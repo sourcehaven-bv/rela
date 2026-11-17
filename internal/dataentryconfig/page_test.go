@@ -100,6 +100,27 @@ func TestValidatePages(t *testing.T) {
 			p.Tabs[0].ID = ""
 			p.Tabs[0].Prompt = "Why?"
 		}), nil, nil, "pages[tickets].tabs[0]: prompt needs mode: steps"},
+		{"walk and done_when on a steps list tab", pages(func(p *Page) {
+			p.Mode = PageModeSteps
+			p.Tabs[0].Walk = true
+			p.Tabs[0].DoneWhen = "entity.status == 'done'"
+		}), nil, nil, ""},
+		{"walk on a tabs page", pages(tab(func(t *PageTab) { t.Walk = true })), nil, nil,
+			"pages[tickets].tabs[table]: walk needs mode: steps on the page"},
+		{"done_when on a tabs page", pages(tab(func(t *PageTab) { t.DoneWhen = "true" })), nil, nil,
+			"pages[tickets].tabs[table]: done_when needs mode: steps on the page"},
+		{"walk on a dashboard tab", pages(func(p *Page) {
+			p.Mode = PageModeSteps
+			p.Tabs[1].Walk = true
+		}), nil, nil, "pages[tickets].tabs[home]: walk needs a list tab"},
+		{"done_when on a dashboard tab", pages(func(p *Page) {
+			p.Mode = PageModeSteps
+			p.Tabs[1].DoneWhen = "true"
+		}), nil, nil, "pages[tickets].tabs[home]: done_when needs a list tab"},
+		{"blank done_when", pages(func(p *Page) {
+			p.Mode = PageModeSteps
+			p.Tabs[0].DoneWhen = "  "
+		}), nil, nil, "pages[tickets].tabs[table]: done_when is blank"},
 		{"nav entry names an unknown page", pages(nil), []NavigationEntry{{Label: "X", Page: "nope"}}, nil,
 			`navigation: references unknown page "nope"`},
 		{"nav status counts the first tab", pages(nil), []NavigationEntry{{Page: "tickets",
@@ -149,7 +170,7 @@ pages:
     label: Tickets
     icon: folder
     tabs:
-      - { id: table, list: tickets, label: Table }
+      - { id: table, list: tickets, label: Table, walk: true, done_when: "entity.status == 'done'" }
       - { id: home, dashboard: true, label: Home, permission: admin:read, prompt: "Where are we?" }
     mode: steps
 navigation:
@@ -169,8 +190,37 @@ navigation:
 	if !page.IsSteps() || page.Tabs[1].Prompt != "Where are we?" {
 		t.Errorf("mode = %q, prompt = %q", page.Mode, page.Tabs[1].Prompt)
 	}
+	if !page.Tabs[0].Walk || page.Tabs[0].DoneWhen != "entity.status == 'done'" {
+		t.Errorf("walk = %v, done_when = %q", page.Tabs[0].Walk, page.Tabs[0].DoneWhen)
+	}
 	if cfg.Navigation[0].Page != "tickets" {
 		t.Errorf("navigation = %+v", cfg.Navigation)
+	}
+}
+
+// Only list tabs with done_when are entries, each with its list's type; a tab
+// with an unknown list is left to validatePages.
+func TestPageDoneEntries(t *testing.T) {
+	cfg := &Config{
+		Lists: map[string]List{"tickets": {EntityType: "ticket"}},
+		Pages: map[string]Page{
+			"b": {Tabs: []PageTab{
+				{ID: "one", List: "tickets", DoneWhen: "true"},
+				{ID: "two", List: "tickets"},
+				{ID: "three", List: "nope", DoneWhen: "true"},
+			}},
+			"a": {Tabs: []PageTab{{ID: "x", List: "tickets", DoneWhen: "false"}}},
+		},
+	}
+	got := PageDoneEntries(cfg)
+	if len(got) != 2 || got[0].Page != "a" || got[1].Tab.ID != "one" || got[1].EntityType != "ticket" {
+		t.Fatalf("entries = %+v", got)
+	}
+	if PageDoneConditionID("a", "x") != "a/x" {
+		t.Errorf("id = %q", PageDoneConditionID("a", "x"))
+	}
+	if PageDoneEntries(nil) != nil {
+		t.Error("nil config has entries")
 	}
 }
 

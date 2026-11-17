@@ -525,6 +525,7 @@ func sidebarPages(
 			kind, target := pageTabView(tab)
 			wire := v1.SidebarPageTab{
 				ID: tab.ID, Label: tab.Label, Icon: tab.Icon, View: kind, Target: target, Prompt: tab.Prompt,
+				Walk: tab.Walk, DoneCheck: tab.DoneWhen != "",
 			}
 			switch sc := tab.Scope; {
 			case sc == nil:

@@ -516,28 +516,16 @@ export interface BusyChannel {
   since: string
 }
 
-export interface ListParams {
-  page?: number
-  per_page?: number
-  cursor?: string
+/**
+ * The part of a list read that names which rows it shows and in what order.
+ * A position scope (`ScopeDescriptor` in api/entities.ts) repeats it, so
+ * prev/next walks the rows the list showed. The backend's `ListQuery` in
+ * internal/dataentry/scope.go holds the same fields.
+ */
+export interface ListQueryScope {
   sort?: string
-  fields?: string
-  include?: string
-  // Asks each row to carry `_comment_count`. Off unless a kanban card shows
-  // a comment count.
-  comment_counts?: boolean
-  // Asks each row to carry `_busy` for this channel type. Set when a kanban
-  // card has a `busy:` field or a list has a busy column.
-  busy?: string
-  // world selects which FACE of each entity is served, and which entities
-  // appear at all — an entity with no face in the requested world is omitted
-  // entirely, because existence in a world IS the publication bit.
-  //
-  // Absent means the default world. Note the backend refuses `world` combined
-  // with `q` (422), and honors it only on `/{plural}`, `/{plural}/{id}`,
-  // `/_views/{type}/{id}` and `/_history/{type}/{id}` — see
-  // internal/dataentry/world.go's worldCapablePath.
-  world?: string
+  /** The search box's free-text query. A live subscription cannot carry it. */
+  q?: string
   // list_id names which configured list this read is serving, so the server
   // can apply that list's `condition:` — the predicate expression that states
   // membership rules `filters:` cannot (`or`, grouping, date arithmetic).
@@ -567,6 +555,29 @@ export interface ListParams {
   scope_page?: string
   scope_tab?: string
   anchor?: string
+}
+
+export interface ListParams extends ListQueryScope {
+  page?: number
+  per_page?: number
+  cursor?: string
+  fields?: string
+  include?: string
+  // Asks each row to carry `_comment_count`. Off unless a kanban card shows
+  // a comment count.
+  comment_counts?: boolean
+  // Asks each row to carry `_busy` for this channel type. Set when a kanban
+  // card has a `busy:` field or a list has a busy column.
+  busy?: string
+  // world selects which FACE of each entity is served, and which entities
+  // appear at all — an entity with no face in the requested world is omitted
+  // entirely, because existence in a world IS the publication bit.
+  //
+  // Absent means the default world. Note the backend refuses `world` combined
+  // with `q` (422), and honors it only on `/{plural}`, `/{plural}/{id}`,
+  // `/_views/{type}/{id}` and `/_history/{type}/{id}` — see
+  // internal/dataentry/world.go's worldCapablePath.
+  world?: string
   /**
    * The relation context of the read: the rows are candidate SOURCES of an
    * incoming `relation` edge, and each carries `linkable`. Both or neither;
@@ -574,8 +585,6 @@ export interface ListParams {
    */
   relation?: string
   direction?: 'incoming'
-  /** The search box's free-text query. A live subscription cannot carry it. */
-  q?: string
   [key: `filter[${string}]`]: string | undefined
 }
 

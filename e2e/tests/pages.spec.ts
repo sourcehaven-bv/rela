@@ -47,6 +47,19 @@ pages:
       - id: board
         label: "Board"
         kanban: feature-board
+  review:
+    label: "Review"
+    mode: steps
+    tabs:
+      - id: each
+        label: "Each feature"
+        list: features
+        walk: true
+        done_when: "entity.status == 'approved'"
+      - id: bugs
+        label: "Bugs"
+        list: bugs
+        done_when: "entity.status ~= 'done'"
   gated:
     label: "Gated"
     tabs:
@@ -231,6 +244,48 @@ test.describe("Pages", () => {
     await pages.clickStepButton("Exit");
     await expect(appPage).toHaveURL(/\/p\/workshop\/board$/);
     await pages.expectSidebarShown(true);
+  });
+
+  // TKT-M07C97Y and TKT-MWZF0UO. The features list has no sort of its own,
+  // so its rows come in id order: FEAT-001 to FEAT-004.
+  test("a walking step shows one row at a time, and a step shows its done check", async ({
+    appPage,
+    serverUrl,
+  }) => {
+    const pages = new PageTabsPage(appPage);
+    await appPage.goto(`${serverUrl}/p/review/each`);
+    await expect(appPage).toHaveURL(/\/p\/review\/each\?item=FEAT-001$/);
+    await pages.expectWalkPosition("1 of 4");
+    await pages.expectWalkShows("User Authentication");
+    await expect(pages.walkLink("Previous row")).toHaveCount(0);
+
+    await pages.walkLink("Next row").click();
+    await expect(appPage).toHaveURL(/\?item=FEAT-002$/);
+    await pages.expectWalkPosition("2 of 4");
+    await pages.expectWalkShows("Dashboard Analytics");
+
+    // Every bug is open, but only one feature is approved.
+    await pages.expectStepDone("Bugs", true);
+    await pages.expectStepDone("Each feature", false);
+    await expect(pages.stepButton("Next")).toBeEnabled();
+
+    // Presenting, PageDown walks the rows, then the steps.
+    await appPage.goto(`${serverUrl}/p/review/each?present=1&item=FEAT-003`);
+    await pages.expectWalkPosition("3 of 4");
+    await pages.pressKey("PageDown");
+    await expect(appPage).toHaveURL(/\?present=1&item=FEAT-004$/);
+    await pages.expectWalkPosition("4 of 4");
+    await pages.pressKey("PageDown");
+    await expect(appPage).toHaveURL(/\/p\/review\/bugs\?present=1$/);
+    await pages.expectCurrentStep("Bugs");
+  });
+
+  test("a walking step says when its row is not in the list", async ({ appPage, serverUrl }) => {
+    const pages = new PageTabsPage(appPage);
+    await appPage.goto(`${serverUrl}/p/review/each?item=BUG-001`);
+    await pages.followWalkMissingRow();
+    await expect(appPage).toHaveURL(/\?item=FEAT-001$/);
+    await pages.expectWalkPosition("1 of 4");
   });
 
   test("an entity page renders a document and counts a dashboard for its entity", async ({ appPage, serverUrl }) => {
