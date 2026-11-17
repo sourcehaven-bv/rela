@@ -236,7 +236,7 @@ func newRunAsLoop(t *testing.T, env runAsEnv) *runAsLoop {
 	})
 	require.NoError(t, err)
 	w, err := newManagerOutputs(env.svc.entityManager, env.svc.store, env.svc.meta,
-		txChannelsFor(env.svc.store, env.svc.channels), env.svc.aclDeclarative)
+		txChannelsFor(env.svc.store, env.svc.channels), env.svc.aclDeclarative, time.Now)
 	require.NoError(t, err)
 	outputs, err := realtime.NewOutputs(realtime.OutputsDeps{
 		Store: env.svc.channels, Config: cfg, Writer: w, Local: env.svc.realtimeLocal, Clock: clock.Now,
@@ -409,7 +409,7 @@ func TestOutputs_RunAsWriteReauthorized(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			e := tc.env
-			w, err := newManagerOutputs(e.svc.entityManager, e.svc.store, e.svc.meta, nil, e.svc.aclDeclarative)
+			w, err := newManagerOutputs(e.svc.entityManager, e.svc.store, e.svc.meta, nil, e.svc.aclDeclarative, time.Now)
 			require.NoError(t, err)
 			_, err = w.Write(leaderCtx(), realtime.OutputRequest{
 				Target: realtime.OutputTarget{Kind: realtimecfg.OutputSet, AnchorID: "DOC-001", AnchorType: "doc"},
@@ -430,7 +430,7 @@ func TestOutputs_UntypedAnchorRow(t *testing.T) {
 	env := runAsServices(t, nil)
 	env.createDoc(t, map[string]any{"title": "Leak"})
 	docOnly := []string{"doc"}
-	w, err := newManagerOutputs(env.svc.entityManager, env.svc.store, env.svc.meta, nil, env.svc.aclDeclarative)
+	w, err := newManagerOutputs(env.svc.entityManager, env.svc.store, env.svc.meta, nil, env.svc.aclDeclarative, time.Now)
 	require.NoError(t, err)
 	_, err = w.Write(leaderCtx(), realtime.OutputRequest{
 		Target: realtime.OutputTarget{Kind: realtimecfg.OutputSet, AnchorID: "DOC-001", AttachTo: docOnly},
@@ -562,7 +562,7 @@ func TestOutputs_TriggerFinalCloseOnly(t *testing.T) {
 func TestOutputs_WriterFailsClosed(t *testing.T) {
 	env := runAsServices(t, nil)
 	env.createDoc(t, map[string]any{"title": "Leak"})
-	w, err := newManagerOutputs(env.svc.entityManager, env.svc.store, env.svc.meta, nil, env.svc.aclDeclarative)
+	w, err := newManagerOutputs(env.svc.entityManager, env.svc.store, env.svc.meta, nil, env.svc.aclDeclarative, time.Now)
 	require.NoError(t, err)
 	target := realtime.OutputTarget{Kind: realtimecfg.OutputSet, AnchorID: "DOC-001", AnchorType: "doc"}
 	for name, r := range map[string]realtime.OutputRequest{

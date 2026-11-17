@@ -179,9 +179,10 @@ func fromFilterGlob(acc, guard string, f *filter.Filter) (string, error) {
 //   - Decimal -> a Lua string literal, validated here; predicate
 //     coerces it to an exact Decimal at compile.
 //   - Bool   -> true / false keyword (non-bool value is a transpile error).
-//   - Date   -> a Lua string literal; predicate coerces it to a Date at
-//     compile against the field layout. An unparseable date is caught
-//     at Compile, not here (the layout lives in pt).
+//   - Date   -> a date variable ($today, $now, ...) becomes the
+//     expression that computes it (dateVariableExpr); anything else a Lua
+//     string literal, which predicate coerces to a Date at compile against
+//     the field layout. An unparseable date is caught at Compile.
 //   - String / everything else -> a Lua string literal.
 func typedLiteral(prop metamodel.PropertyDef, value string) (string, error) {
 	switch prop.Type {
@@ -198,6 +199,11 @@ func typedLiteral(prop metamodel.PropertyDef, value string) (string, error) {
 			return "", fmt.Errorf("predicatefns: %q is not a decimal for a decimal property", value)
 		}
 		return luaStringLiteral(value), nil
+	case metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime:
+		if expr, ok := dateVariableExpr(value); ok {
+			return expr, nil
+		}
+		return luaStringLiteral(value), nil
 	case metamodel.PropertyTypeBoolean:
 		switch value {
 		case "true", "false":
@@ -205,11 +211,31 @@ func typedLiteral(prop metamodel.PropertyDef, value string) (string, error) {
 		}
 		return "", fmt.Errorf("predicatefns: %q is not a boolean (true/false)", value)
 	default:
-		// String, enum, and date all take a Lua string literal here; for
-		// a date, predicate's compile-time coercion parses it against the
-		// field layout (the field is declared DateTypeWithLayout).
+		// String and enum take a Lua string literal.
 		return luaStringLiteral(value), nil
 	}
+}
+
+// dateVariableExpr turns a filter date variable ($today, $now, $today+7d,
+// ...) into the predicate expression that computes it: today(), now() or
+// date_add(...). The variable is evaluated at each Matches call with the
+// evaluator's read time, so a compiled program cached across requests
+// never keeps the day it was compiled on. Any other value reports false;
+// predicate's compile-time coercion then parses it as a date literal
+// against the field layout.
+func dateVariableExpr(value string) (string, bool) {
+	base, days, ok := filter.DateVariable(value)
+	if !ok {
+		return "", false
+	}
+	call := FuncToday + "()"
+	if base == "now" {
+		call = FuncNow + "()"
+	}
+	if days == 0 {
+		return call, true
+	}
+	return fmt.Sprintf("%s(%s, %d, 'day')", FuncDateAdd, call, days), true
 }
 
 func orderedOp(op filter.Operator) string {

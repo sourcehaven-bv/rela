@@ -2577,10 +2577,10 @@ func applyV1Filters(entities []*entityPkg.Entity, query gatedListQuery) ([]*enti
 		var value string
 		var setValues []string
 		if operator == "in" || operator == "ne" {
-			value = resolveFilterVariablesInList(strings.Join(values, ","), query.user)
-			setValues = filterSetValues(values, isArrayForm, query.user)
+			value = resolveFilterVariablesInList(strings.Join(values, ","), query.user, query.now)
+			setValues = filterSetValues(values, isArrayForm, query.user, query.now)
 		} else {
-			value = resolveFilterVariable(values[len(values)-1], query.user)
+			value = resolveFilterVariable(values[len(values)-1], query.user, query.now)
 		}
 
 		var newFiltered []*entityPkg.Entity

@@ -25,54 +25,68 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/htmlutil"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/queryplan"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
-// nowFunc is the clock used for filter variable substitution. Tests can
-// override this to pin a deterministic "now". Default returns UTC time
-// to keep $today consistent regardless of server timezone.
+// nowFunc is the data-entry clock: the router stamps it on every request
+// as the read time (see [attachReadTime]), and a path that runs outside a
+// request reads it through [requestReadTime]. Tests override it to pin
+// "now".
 var nowFunc = func() time.Time { return time.Now().UTC() }
 
+// requestReadTime is the operation's read time on ctx, else nowFunc().
+func requestReadTime(ctx context.Context) time.Time {
+	return readtime.Or(ctx, nowFunc)
+}
+
+// parseWhereAt parses where clauses and resolves their date variables at the
+// read time now (see [filter.BindDateVariables]).
+func parseWhereAt(where []string, now time.Time) ([]*filter.Filter, error) {
+	filters, err := filter.ParseAll(where)
+	if err != nil {
+		return nil, err
+	}
+	return filter.BindDateVariables(filters, now), nil
+}
+
 // resolveFilterVariable substitutes special variable references in filter
-// values. Currently supports:
+// values:
 //
-//	$today          today's date in YYYY-MM-DD format (UTC)
-//	$tomorrow       tomorrow's date (UTC)
-//	$yesterday      yesterday's date (UTC)
 //	$user           the caller's principal id, passed as user
+//	$today          the read day, with an optional day or week offset
+//	                ($today+7d, $today-2w); see [filter.ResolveDateVariable]
+//	$now            the read time
+//	$tomorrow       $today+1d
+//	$yesterday      $today-1d
 //
-// Times are evaluated in UTC for predictability across server timezones.
-// Other values are returned unchanged, and so is $user when user is empty:
-// with no identified caller it stays literal rather than matching rows with
-// an empty property.
-func resolveFilterVariable(value, user string) string {
-	switch value {
-	case "$user":
+// Dates are in UTC, so the day boundary does not depend on the server's
+// zone. Other values are returned unchanged, and so is $user when user is
+// empty: with no identified caller it stays literal rather than matching
+// rows with an empty property.
+func resolveFilterVariable(value, user string, now time.Time) string {
+	if value == "$user" {
 		if user != "" {
 			return user
 		}
-	case "$today":
-		return nowFunc().Format("2006-01-02")
-	case "$tomorrow":
-		return nowFunc().AddDate(0, 0, 1).Format("2006-01-02")
-	case "$yesterday":
-		return nowFunc().AddDate(0, 0, -1).Format("2006-01-02")
+		return value
 	}
-	return value
+	resolved, _ := filter.ResolveDateVariable(value, now)
+	return resolved
 }
 
 // resolveFilterVariablesInList applies resolveFilterVariable to each
 // comma-separated token in value. Used by the in/ne operators.
-func resolveFilterVariablesInList(value, user string) string {
+func resolveFilterVariablesInList(value, user string, now time.Time) string {
 	if !strings.Contains(value, ",") {
-		return resolveFilterVariable(value, user)
+		return resolveFilterVariable(value, user, now)
 	}
 	parts := strings.Split(value, ",")
 	for i, p := range parts {
-		parts[i] = resolveFilterVariable(strings.TrimSpace(p), user)
+		parts[i] = resolveFilterVariable(strings.TrimSpace(p), user, now)
 	}
 	return strings.Join(parts, ",")
 }
@@ -685,15 +699,15 @@ func anyElement(prop any, match func(string) bool) bool {
 //
 // Each member is trimmed and variable-resolved ($today and friends) exactly as
 // the joined form is, so both representations of a filter agree.
-func filterSetValues(values []string, isArrayForm bool, user string) []string {
+func filterSetValues(values []string, isArrayForm bool, user string, now time.Time) []string {
 	out := make([]string, 0, len(values))
 	for _, v := range values {
 		if isArrayForm {
-			out = append(out, resolveFilterVariable(strings.TrimSpace(v), user))
+			out = append(out, resolveFilterVariable(strings.TrimSpace(v), user, now))
 			continue
 		}
 		for part := range strings.SplitSeq(v, ",") {
-			out = append(out, resolveFilterVariable(strings.TrimSpace(part), user))
+			out = append(out, resolveFilterVariable(strings.TrimSpace(part), user, now))
 		}
 	}
 	return out

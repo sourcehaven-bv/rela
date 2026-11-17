@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -122,14 +123,14 @@ func TestGanttNodes_KeepTheirFace(t *testing.T) {
 	}
 
 	nodes := map[string]*ganttNode{}
-	if gerr := app.gantt.addGanttNodes(s, g, "project", []*entity.Entity{row("published")}, nodes); gerr != nil {
+	if gerr := app.gantt.addGanttNodes(time.Now(), s, g, "project", []*entity.Entity{row("published")}, nodes); gerr != nil {
 		t.Fatalf("addGanttNodes: %+v", gerr)
 	}
 	if got := nodes["PRJ-A"].face; got != "published" {
 		t.Fatalf("node face = %q, want published", got)
 	}
 
-	if gerr := app.gantt.addGanttNodes(s, g, "project", []*entity.Entity{row("draft")}, nodes); gerr == nil {
+	if gerr := app.gantt.addGanttNodes(time.Now(), s, g, "project", []*entity.Entity{row("draft")}, nodes); gerr == nil {
 		t.Error("a second face of PRJ-A was accepted; want a refusal")
 	}
 	if got := nodes["PRJ-A"].face; got != "published" {

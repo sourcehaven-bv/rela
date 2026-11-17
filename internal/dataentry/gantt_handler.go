@@ -325,7 +325,7 @@ func (h *ganttHandler) loadGanttNodes(
 		if gerr != nil {
 			return nil, gerr
 		}
-		if gerr := h.addGanttNodes(s, g, typeName, ents, nodes); gerr != nil {
+		if gerr := h.addGanttNodes(requestReadTime(ctx), s, g, typeName, ents, nodes); gerr != nil {
 			return nil, gerr
 		}
 	}
@@ -437,7 +437,7 @@ func (h *ganttHandler) loadGanttType(
 // design: membership must not reflect a predicate over a value the principal
 // cannot read.
 func (h *ganttHandler) addGanttNodes(
-	s *Schema, g dataentryconfig.Gantt,
+	now time.Time, s *Schema, g dataentryconfig.Gantt,
 	typeName string, ents []*entity.Entity, nodes map[string]*ganttNode,
 ) *ganttError {
 	src := g.Sources[typeName]
@@ -453,7 +453,7 @@ func (h *ganttHandler) addGanttNodes(
 			}
 		}
 	}
-	filters, ferr := filter.ParseAll(src.Where)
+	filters, ferr := parseWhereAt(src.Where, now)
 	if ferr != nil {
 		// Load validation makes this unreachable; refusing (rather than
 		// proceeding unfiltered) keeps the failure direction closed.
@@ -622,7 +622,7 @@ func (h *ganttHandler) buildGanttSubtree(
 		return empty, nil
 	}
 	red := visibility.Redact(ctx, h.redactor(), rootEnt)
-	if gerr := h.addGanttNodes(s, g, red.Type, []*entity.Entity{red}, nodes); gerr != nil {
+	if gerr := h.addGanttNodes(requestReadTime(ctx), s, g, red.Type, []*entity.Entity{red}, nodes); gerr != nil {
 		return nil, gerr
 	}
 	if nodes[rootID] == nil {
@@ -697,7 +697,7 @@ func (h *ganttHandler) collectGanttRound(
 			})
 			next = append(next, hdr.ID)
 		}
-		if gerr := h.addGanttNodes(s, g, typeName, fresh, nodes); gerr != nil {
+		if gerr := h.addGanttNodes(requestReadTime(ctx), s, g, typeName, fresh, nodes); gerr != nil {
 			return nil, gerr
 		}
 		for _, e := range fresh {
@@ -844,7 +844,7 @@ func (h *ganttHandler) addOutsideParents(
 			red := visibility.RedactHeader(ctx, h.redactor(), hdr)
 			ents = append(ents, &entity.Entity{ID: red.ID, Type: red.Type, Properties: red.Properties})
 		}
-		if gerr := h.addGanttNodes(s, g, typeName, ents, nodes); gerr != nil {
+		if gerr := h.addGanttNodes(requestReadTime(ctx), s, g, typeName, ents, nodes); gerr != nil {
 			return gerr
 		}
 	}

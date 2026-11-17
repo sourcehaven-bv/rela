@@ -7,6 +7,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -26,6 +27,7 @@ func (s *Services) ScheduledForEachEntities(
 	if err != nil {
 		return nil, 0, fmt.Errorf("parse filters: %w", err)
 	}
+	filters = filter.BindDateVariables(filters, readtime.Or(ctx, servicesClock(s)))
 	deps := s.ScheduledLuaWriteDeps()
 	if deps.VisibleReader == nil {
 		return nil, 0, errors.New("appbuild: scheduled for_each has no visible reader")

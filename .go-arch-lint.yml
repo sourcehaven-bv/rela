@@ -353,6 +353,8 @@ components:
   errors:           { in: internal/errors }
   htmlutil:         { in: internal/htmlutil }
   natsort:          { in: internal/natsort }
+  # The read time of one operation, on ctx (today()/now()/$today/$now).
+  readtime:         { in: internal/readtime }
 
 # -- Vendors --------------------------------------------------------------
 vendors:
@@ -474,6 +476,7 @@ commonComponents:
   - entity
   - errors
   - natsort
+  - readtime
 
 commonVendors:
   - yaml

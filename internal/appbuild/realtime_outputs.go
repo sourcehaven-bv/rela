@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
 
@@ -56,12 +57,14 @@ var errOutputsNoPoster = errors.New("appbuild: outputs: the poster no longer res
 // is not atomic. d is accepted and means no policy is configured.
 func newManagerOutputs(
 	mgr *entitymanager.Manager, st store.Store, meta *metamodel.Metamodel, join joinChannels, d *acl.Declarative,
+	clock func() time.Time,
 ) (managerOutputs, error) {
 	if mgr == nil || st == nil || meta == nil {
 		return managerOutputs{}, errors.New("appbuild: outputs: entity manager, store and metamodel are required")
 	}
 	return managerOutputs{
-		gated: entitymanager.FieldGated(mgr), st: st, meta: meta, join: join, policy: d, bind: identityBinderFor(d),
+		gated: entitymanager.FieldGated(mgr), st: st, meta: meta, join: join, policy: d,
+		bind: identityBinderFor(d, clock),
 	}, nil
 }
 

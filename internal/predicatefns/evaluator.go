@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
 )
 
 // Evaluator compiles predicate expressions against one metamodel and
@@ -30,11 +31,13 @@ import (
 // Both return a *Program the caller evaluates per entity with Matches.
 type Evaluator struct {
 	meta *metamodel.Metamodel
-	// now supplies the instant `today()` returns, evaluated per Matches
-	// call. It is a func (not a captured time.Time) so a long-lived
-	// Evaluator — the automation Engine and validation Service each hold
-	// one for the process lifetime — sees the date advance rather than
-	// freezing today() at construction (RR-FUD017).
+	// now supplies the read time `today()` and `now()` return when ctx
+	// carries none (see [readtime]). It is read per Matches call, and is a
+	// func (not a captured time.Time) so a long-lived Evaluator — the
+	// automation Engine and validation Service each hold one for the
+	// process lifetime — sees the date advance rather than freezing
+	// today() at construction (RR-FUD017). A request carries its read time
+	// on ctx, so every row of one request sees the same value.
 	now func() time.Time
 
 	mu    sync.Mutex
@@ -52,6 +55,13 @@ func NewEvaluator(meta *metamodel.Metamodel) *Evaluator {
 // on each Matches call. `now` must be non-nil.
 func NewEvaluatorWithClock(meta *metamodel.Metamodel, now func() time.Time) *Evaluator {
 	return &Evaluator{meta: meta, now: now, cache: map[string]*predicate.Program{}}
+}
+
+// ReadTime is the read time a condition evaluated under ctx sees: the one
+// on ctx, else the evaluator's clock. A caller that binds date variables
+// beside an evaluation uses it so both see the same instant.
+func (e *Evaluator) ReadTime(ctx context.Context) time.Time {
+	return readtime.Or(ctx, e.now)
 }
 
 // Compile compiles a raw predicate expression for entityType, caching the
@@ -249,7 +259,7 @@ func (e *Evaluator) matches(
 	if err := b.SetVar("entity", EntityRecord(e.meta, def, id, entityType, props)); err != nil {
 		return false, err
 	}
-	if err := Bind(b, e.now()); err != nil {
+	if err := Bind(b, e.ReadTime(ctx)); err != nil {
 		return false, err
 	}
 	if withUser && RequiresCurrentUser(prog) {
