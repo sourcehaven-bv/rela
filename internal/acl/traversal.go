@@ -419,11 +419,13 @@ func (p *Policy) FieldRestricted(entityType, property string) bool {
 	return false
 }
 
-// grantKeyApplies reports whether an acl.yaml grant key names entityType:
+// GrantKeyApplies reports whether an acl.yaml grant key names entityType:
 // the type itself, one of its faces (type@face), or every type.
-func grantKeyApplies(key, entityType string) bool {
+func GrantKeyApplies(key, entityType string) bool {
 	return key == entityType || key == "*" || strings.HasPrefix(key, entityType+"@")
 }
+
+func grantKeyApplies(key, entityType string) bool { return GrantKeyApplies(key, entityType) }
 
 // ceilingHidesField reports whether a compiled field ceiling withholds
 // property. Visible is a CLOSED WORLD when non-nil (anything unlisted is

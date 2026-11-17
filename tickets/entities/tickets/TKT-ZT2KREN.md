@@ -5,7 +5,9 @@ title: 'Configure: edit flows.yaml triggers'
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-11-16"
+completed: "2026-11-17"
+status: done
 ---
 
 ## Description

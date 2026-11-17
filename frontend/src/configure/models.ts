@@ -319,6 +319,208 @@ export function ruleTitle(rule: Pick<RuleModel, 'name' | 'description' | 'index'
   return rule.description || (rule.name ? rule.name : `Rule ${rule.index + 1}`)
 }
 
+// --- Automations (flows.yaml `triggers:`) ---
+
+export interface OutputModel {
+  /** set, relate, create, add_to_pile, notify, check, script or other. */
+  kind: string
+  summary: string
+  /** Runs a script or holds settings Configure does not edit. */
+  locked: boolean
+}
+
+export interface AutomationModel {
+  /** The trigger's key under `triggers:`. */
+  name: string
+  /** Its place among the triggers, which is the order they fire in. */
+  index: number
+  description: string
+  entityTypes: string[]
+  /** What fires it, in words: `status becomes done`. */
+  trigger: string
+  property: string
+  becomes: string
+  from: string
+  created: boolean
+  updated: boolean
+  outputs: OutputModel[]
+  /** Some part is locked, so the whole automation is shown read-only. */
+  readOnly: boolean
+}
+
+/** `on:` keys the Configure space does not edit. */
+const LOCKED_ON_KEYS = ['deleted', 'faces', 'copy']
+
+function outputModel(output: TreeValue): OutputModel {
+  if (get(output, 'script') !== undefined) {
+    return { kind: 'script', summary: 'Run a script', locked: true }
+  }
+  const set = get(output, 'set')
+  if (isMap(set)) {
+    const props = entries(get(set, 'properties'))
+    return {
+      kind: 'set',
+      summary: props.length
+        ? props.map(([k, v]) => `Set ${k} to ${str(v) ?? '…'}`).join(', ')
+        : 'Set …',
+      locked: false,
+    }
+  }
+  const relate = get(output, 'relate')
+  if (isMap(relate)) {
+    return {
+      kind: 'relate',
+      summary: `Link by ${str(get(relate, 'type')) ?? '…'} to ${str(get(relate, 'to')) ?? '…'}`,
+      locked: false,
+    }
+  }
+  const create = get(output, 'create')
+  if (isMap(create)) {
+    const rel = str(getIn(create, ['relate', 'type']))
+    return {
+      kind: 'create',
+      summary: `Create a ${str(get(create, 'type')) ?? 'record'}${rel ? `, linked by ${rel}` : ''}${
+        str(get(create, 'if_exists')) === 'skip' ? ', unless one exists' : ''
+      }`,
+      locked: get(create, 'template') !== undefined,
+    }
+  }
+  const pile = get(output, 'add_to_pile')
+  if (isMap(pile)) {
+    return {
+      kind: 'add_to_pile',
+      summary: `Add to the pile ${str(get(pile, 'pile')) ?? '…'}`,
+      locked: false,
+    }
+  }
+  const notify = get(output, 'notify')
+  if (isMap(notify)) {
+    return {
+      kind: 'notify',
+      summary: `Notify on ${str(get(notify, 'pile')) ?? '…'}`,
+      locked: false,
+    }
+  }
+  const check = get(output, 'check')
+  if (isMap(check)) {
+    return {
+      kind: 'check',
+      summary: `Check: ${str(get(check, 'message')) || str(get(check, 'where')) || '…'}`,
+      locked: false,
+    }
+  }
+  return { kind: 'other', summary: keys(output)[0] ?? 'output', locked: true }
+}
+
+/**
+ * Whether a trigger holds something the Configure space does not edit: a
+ * script, a template, or an `on:` key it has no control for.
+ */
+export function triggerLocked(rule: TreeValue | undefined): boolean {
+  const on = get(rule, 'on')
+  const outputs = get(rule, 'outputs')
+  return (
+    LOCKED_ON_KEYS.some((k) => get(on, k) !== undefined) ||
+    (isList(outputs) && outputs.some((o) => outputModel(o).locked))
+  )
+}
+
+function triggerText(on: TreeValue | undefined, property: string, becomes: string): string {
+  if (bool(get(on, 'created'))) return 'A record is created'
+  if (bool(get(on, 'deleted'))) return 'A record is deleted'
+  if (property && becomes) return `${property} becomes ${becomes}`
+  if (property) return `${property} changes`
+  if (get(on, 'relation_created') !== undefined) return 'A link is added'
+  if (get(on, 'relation_removed') !== undefined) return 'A link is removed'
+  if (bool(get(on, 'updated'))) return 'A record is updated'
+  return 'A record changes'
+}
+
+/** The triggers of flows.yaml, in the order they fire. */
+export function automations(flows: TreeValue | undefined): AutomationModel[] {
+  return entries(get(flows, 'triggers')).flatMap(([name, rule], index) => {
+    if (!isMap(rule)) return []
+    const on = get(rule, 'on')
+    const property = str(get(on, 'property')) ?? ''
+    const becomes = str(get(on, 'becomes')) ?? ''
+    return [
+      {
+        name,
+        index,
+        description: str(get(rule, 'description')) ?? '',
+        entityTypes: strList(get(on, 'entity')),
+        trigger: triggerText(on, property, becomes),
+        property,
+        becomes,
+        from: str(get(on, 'from')) ?? '',
+        created: bool(get(on, 'created')),
+        updated: bool(get(on, 'updated')),
+        outputs: mapItems(get(rule, 'outputs')).map(outputModel),
+        readOnly: triggerLocked(rule),
+      },
+    ]
+  })
+}
+
+export function automationTitle(a: Pick<AutomationModel, 'name' | 'description'>): string {
+  return a.description || a.name
+}
+
+/** Whether a tree holds `entity.<property>`, `new.<property>` or `old.<property>` in a text. */
+function mentions(value: TreeValue | undefined, property: string): boolean {
+  if (typeof value === 'string') {
+    return value
+      .split(/\b(?:entity|new|old)\./)
+      .slice(1)
+      .some(
+        (rest) => rest.startsWith(property) && !/^[A-Za-z0-9_-]/.test(rest.slice(property.length))
+      )
+  }
+  if (isMap(value)) return value.$m.some(([, v]) => mentions(v, property))
+  if (isList(value)) return value.some((v) => mentions(v, property))
+  return false
+}
+
+/**
+ * The property a `where:` filter clause tests: the text before its operator,
+ * as `status=done` names `status` (internal/filter).
+ */
+export function filterProperty(clause: string): string | undefined {
+  const m = /^\s*([^<>!=~]+?)\s*(?=[<>!=~])/.exec(clause)
+  return m ? m[1] : undefined
+}
+
+/** The `where:` clauses of a trigger: its `on.where` and each check's `where`. */
+export function triggerWhereClauses(rule: TreeValue | undefined): string[] {
+  return [
+    ...strList(getIn(rule, ['on', 'where'])),
+    ...mapItems(get(rule, 'outputs')).flatMap((o) => strList(getIn(o, ['check', 'where']))),
+  ]
+}
+
+/**
+ * The automations that fire on an entity type, or, with a property, that
+ * read or write that property of it. The screens name them before a removal,
+ * so the operator can change them first.
+ */
+export function automationsUsing(
+  flows: TreeValue | undefined,
+  entityType: string,
+  property?: string
+): AutomationModel[] {
+  const all = automations(flows)
+  return all.filter((a) => {
+    if (!a.entityTypes.includes(entityType)) return false
+    if (property === undefined) return true
+    const rule = get(get(flows, 'triggers'), a.name)
+    const writes = mapItems(get(rule, 'outputs')).some(
+      (o) => get(getIn(o, ['set', 'properties']), property) !== undefined
+    )
+    const filters = triggerWhereClauses(rule).some((c) => filterProperty(c) === property)
+    return a.property === property || writes || filters || mentions(rule, property)
+  })
+}
+
 // --- Screens ---
 
 export interface FieldModel {

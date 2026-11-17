@@ -23,6 +23,37 @@ describe('describeChanges', () => {
     expect(changeCount(groups)).toBe(0)
   })
 
+  it('lists automations added, changed, removed and reordered', () => {
+    const flows = clone(base.flows)
+    const triggers = at(flows, ['triggers'])
+    set(at(flows, ['triggers', 'stamp_done']), 'description', 'Stamp')
+    remove(triggers, 'scripted')
+    set(triggers, 'fresh', toTree({ on: { entity: 'ticket', created: true }, outputs: [] }))
+    const groups = describeChanges(
+      { schema: base.schema, dataEntry: base.data_entry, flows: base.flows },
+      { schema: base.schema, dataEntry: base.data_entry, flows },
+      []
+    )
+    expect(groups.map((g) => g.key)).toEqual(['automations'])
+    const labels = groups[0]!.items.map((i) => `${i.kind} ${i.label}`)
+    expect(labels).toEqual([
+      'changed Automation Stamp',
+      'added Automation fresh',
+      'removed Automation scripted',
+    ])
+    expect(groups[0]!.items[0]!.to).toBe('/configure/automations/stamp_done')
+
+    const swapped = clone(base.flows)
+    const t = at(swapped, ['triggers'])
+    t.$m = [t.$m[1]!, t.$m[0]!, ...t.$m.slice(2)]
+    const order = describeChanges(
+      { schema: base.schema, dataEntry: base.data_entry, flows: base.flows },
+      { schema: base.schema, dataEntry: base.data_entry, flows: swapped },
+      []
+    )
+    expect(order[0]!.items.map((i) => i.label)).toEqual(['Order of automations'])
+  })
+
   it('words each kind of change, grouped by what it belongs to', () => {
     const schema = clone(base.schema)
     const dataEntry = clone(base.data_entry)
@@ -96,14 +127,18 @@ describe('busy column title in the review', () => {
       { schema: base.schema, dataEntry: withBusy },
       []
     )
-    expect(added.flatMap((g) => g.items.map((i) => `${i.kind} ${i.label}`))).toEqual(['added Column run'])
+    expect(added.flatMap((g) => g.items.map((i) => `${i.kind} ${i.label}`))).toEqual([
+      'added Column run',
+    ])
 
     const removed = describeChanges(
       { schema: base.schema, dataEntry: withBusy },
       { schema: base.schema, dataEntry: base.data_entry },
       []
     )
-    expect(removed.flatMap((g) => g.items.map((i) => `${i.kind} ${i.label}`))).toEqual(['removed Column run'])
+    expect(removed.flatMap((g) => g.items.map((i) => `${i.kind} ${i.label}`))).toEqual([
+      'removed Column run',
+    ])
   })
 })
 

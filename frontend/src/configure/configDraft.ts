@@ -12,7 +12,11 @@ import type {
 } from '@/api/configure'
 import { relaBase } from '@/api/base'
 import { changeCount, describeChanges, type ChangeGroup } from './changes'
-import { renameSchemaReferences, renameScreenReferences } from './references'
+import {
+  renameSchemaReferences,
+  renameScreenReferences,
+  renameTriggerReferences,
+} from './references'
 import {
   clone,
   ensureList,
@@ -57,6 +61,7 @@ interface StoredDraft {
   base_version: string
   schema?: TreeValue
   data_entry?: TreeValue
+  flows?: TreeValue
   renames?: ConfigRename[]
   value_mappings?: ConfigValueMapping[]
   migration_title?: string
@@ -138,11 +143,18 @@ function baseAt(
   return baseNode
 }
 
+/**
+ * A file the screens edit: the data model (`schema`), the screens (`screens`)
+ * or the automations (`flows`, the `triggers:` of flows.yaml).
+ */
+export type DraftFile = 'schema' | 'screens' | 'flows'
+
 export const useConfigDraftStore = defineStore('configDraft', () => {
   const base = shallowRef<ConfigSnapshot | null>(null)
   /** The edited copy of each file, or null while it is unedited. */
   const schema = shallowRef<TreeValue | null>(null)
   const dataEntry = shallowRef<TreeValue | null>(null)
+  const flows = shallowRef<TreeValue | null>(null)
   const renames = ref<ConfigRename[]>([])
   const valueMappings = ref<ConfigValueMapping[]>([])
   const migrationTitle = ref('')
@@ -167,12 +179,14 @@ export const useConfigDraftStore = defineStore('configDraft', () => {
   const currentDataEntry = computed<TreeValue | undefined>(
     () => dataEntry.value ?? base.value?.data_entry
   )
+  const currentFlows = computed<TreeValue | undefined>(() => flows.value ?? base.value?.flows)
   const editable = computed(() => base.value?.editable)
 
   const hasDraft = computed(
     () =>
       schema.value !== null ||
       dataEntry.value !== null ||
+      flows.value !== null ||
       renames.value.length > 0 ||
       valueMappings.value.length > 0
   )
@@ -183,10 +197,11 @@ export const useConfigDraftStore = defineStore('configDraft', () => {
   )
 
   const changes = computed<ChangeGroup[]>(() => {
-    if (!base.value || (schema.value === null && dataEntry.value === null)) return []
+    if (!base.value || (schema.value === null && dataEntry.value === null && flows.value === null))
+      return []
     return describeChanges(
-      { schema: base.value.schema, dataEntry: base.value.data_entry },
-      { schema: currentSchema.value, dataEntry: currentDataEntry.value },
+      { schema: base.value.schema, dataEntry: base.value.data_entry, flows: base.value.flows },
+      { schema: currentSchema.value, dataEntry: currentDataEntry.value, flows: currentFlows.value },
       renames.value
     )
   })
@@ -202,6 +217,7 @@ export const useConfigDraftStore = defineStore('configDraft', () => {
     const stored: StoredDraft = { base_version: draftVersion.value ?? base.value.version }
     if (schema.value !== null) stored.schema = schema.value
     if (dataEntry.value !== null) stored.data_entry = dataEntry.value
+    if (flows.value !== null) stored.flows = flows.value
     if (renames.value.length) stored.renames = renames.value
     if (valueMappings.value.length) stored.value_mappings = valueMappings.value
     if (migrationTitle.value) stored.migration_title = migrationTitle.value
@@ -212,6 +228,7 @@ export const useConfigDraftStore = defineStore('configDraft', () => {
   function applyStored(stored: StoredDraft | null, snapshot: ConfigSnapshot): void {
     schema.value = stored?.schema ?? null
     dataEntry.value = stored?.data_entry ?? null
+    flows.value = stored?.flows ?? null
     renames.value = stored?.renames ?? []
     valueMappings.value = stored?.value_mappings ?? []
     migrationTitle.value = stored?.migration_title ?? ''
@@ -225,6 +242,7 @@ export const useConfigDraftStore = defineStore('configDraft', () => {
     if (schema.value !== null && equal(schema.value, snapshot.schema)) schema.value = null
     if (dataEntry.value !== null && equal(dataEntry.value, snapshot.data_entry))
       dataEntry.value = null
+    if (flows.value !== null && equal(flows.value, snapshot.flows)) flows.value = null
     if (!hasDraft.value) draftVersion.value = snapshot.version
   }
 
@@ -272,13 +290,17 @@ export const useConfigDraftStore = defineStore('configDraft', () => {
     return equal(working, baseTree) ? null : working
   }
 
-  /**
-   * Changes one file, the data model (`schema`) or the screens (`screens`).
-   * `fn` edits a copy in place.
-   */
-  function edit(file: 'schema' | 'screens', fn: (tree: TreeMap) => void): void {
+  function baseOf(file: DraftFile): TreeValue | undefined {
+    if (file === 'schema') return base.value?.schema
+    if (file === 'flows') return base.value?.flows
+    return base.value?.data_entry
+  }
+
+  /** Changes one file. `fn` edits a copy in place. */
+  function edit(file: DraftFile, fn: (tree: TreeMap) => void): void {
     if (!base.value) return
     if (file === 'schema') schema.value = editTree(schema.value, base.value.schema, fn)
+    else if (file === 'flows') flows.value = editTree(flows.value, base.value.flows, fn)
     else dataEntry.value = editTree(dataEntry.value, base.value.data_entry, fn)
     touched()
   }
@@ -291,13 +313,8 @@ export const useConfigDraftStore = defineStore('configDraft', () => {
    * Removing the last setting of a mapping the configuration did not have
    * removes that mapping too, so undoing an edit leaves nothing behind.
    */
-  function setAt(
-    file: 'schema' | 'screens',
-    path: TreePath,
-    key: string,
-    value: TreeValue | undefined
-  ): void {
-    const baseTree = file === 'schema' ? base.value?.schema : base.value?.data_entry
+  function setAt(file: DraftFile, path: TreePath, key: string, value: TreeValue | undefined): void {
+    const baseTree = baseOf(file)
     edit(file, (tree) => {
       const original = get(baseAt(tree, baseTree, path), key)
       const removing =
@@ -324,7 +341,7 @@ export const useConfigDraftStore = defineStore('configDraft', () => {
   }
 
   /** Moves an item of the list at `path`. */
-  function moveAt(file: 'schema' | 'screens', path: TreePath, from: number, to: number): void {
+  function moveAt(file: DraftFile, path: TreePath, from: number, to: number): void {
     edit(file, (tree) => {
       const list = listAt(tree, path)
       if (list && from >= 0 && from < list.length) moveItem(list, list[from], to)
@@ -332,7 +349,7 @@ export const useConfigDraftStore = defineStore('configDraft', () => {
   }
 
   /** Removes an item of the list at `path`. */
-  function removeAt(file: 'schema' | 'screens', path: TreePath, index: number): void {
+  function removeAt(file: DraftFile, path: TreePath, index: number): void {
     edit(file, (tree) => {
       const list = listAt(tree, path)
       if (list && index >= 0 && index < list.length) list.splice(index, 1)
@@ -343,12 +360,7 @@ export const useConfigDraftStore = defineStore('configDraft', () => {
    * Removes an item of the list under `key` of the mapping at `path`, and the
    * key itself once the list is empty, so no `key: []` is left behind.
    */
-  function removeItemAt(
-    file: 'schema' | 'screens',
-    path: TreePath,
-    key: string,
-    index: number
-  ): void {
+  function removeItemAt(file: DraftFile, path: TreePath, key: string, index: number): void {
     edit(file, (tree) => {
       const map = mapAt(tree, path)
       const list = listAt(map, [key])
@@ -359,12 +371,7 @@ export const useConfigDraftStore = defineStore('configDraft', () => {
   }
 
   /** Appends an item to the list under `key` of the mapping at `path`. */
-  function appendAt(
-    file: 'schema' | 'screens',
-    path: TreePath,
-    key: string,
-    item: TreeValue
-  ): void {
+  function appendAt(file: DraftFile, path: TreePath, key: string, item: TreeValue): void {
     edit(file, (tree) => {
       const map = ensurePath(tree, path)
       if (map) ensureList(map, key).push(item)
@@ -397,6 +404,7 @@ export const useConfigDraftStore = defineStore('configDraft', () => {
     edit('screens', (tree) =>
       renameScreenReferences(tree, entityType, from, to, currentSchema.value)
     )
+    edit('flows', (tree) => renameTriggerReferences(tree, entityType, from, to))
     const rest = renames.value.filter((r) => !(r.entity_type === entityType && r.to === from))
     if (original !== undefined && original !== to)
       rest.push({ entity_type: entityType, from: original, to })
@@ -451,6 +459,7 @@ export const useConfigDraftStore = defineStore('configDraft', () => {
   function discardAll(): void {
     schema.value = null
     dataEntry.value = null
+    flows.value = null
     renames.value = []
     valueMappings.value = []
     migrationTitle.value = ''
@@ -466,6 +475,7 @@ export const useConfigDraftStore = defineStore('configDraft', () => {
     const out: ConfigDraftBody = { base_version: draftVersion.value ?? base.value?.version ?? '' }
     if (schema.value !== null) out.schema = schema.value
     if (dataEntry.value !== null) out.data_entry = dataEntry.value
+    if (flows.value !== null) out.flows = flows.value
     if (renames.value.length) out.renames = renames.value
     if (valueMappings.value.length) out.value_mappings = valueMappings.value
     const title = migrationTitle.value.trim()
@@ -482,6 +492,7 @@ export const useConfigDraftStore = defineStore('configDraft', () => {
     base,
     schema,
     dataEntry,
+    flows,
     renames,
     valueMappings,
     migrationTitle,
@@ -492,6 +503,7 @@ export const useConfigDraftStore = defineStore('configDraft', () => {
     loaded,
     currentSchema,
     currentDataEntry,
+    currentFlows,
     editable,
     hasDraft,
     stale,

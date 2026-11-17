@@ -48,10 +48,10 @@ type Files interface {
 	MkdirAll(path string, perm os.FileMode) error
 }
 
-// Validator checks a pair of files the way the server checks them at start,
-// returning the parsed schema.
+// Validator checks the files the way the server checks them at start,
+// returning the parsed schema. flows is nil when flows.yaml is absent.
 type Validator interface {
-	Validate(schema, dataEntry []byte) (*metamodel.Metamodel, error)
+	Validate(schema, dataEntry, flows []byte) (*metamodel.Metamodel, error)
 }
 
 // ValidationError lists what a Validator found wrong. Any other error from
@@ -77,7 +77,7 @@ type MigrationState interface {
 type Activator interface {
 	// Pause holds the running server still until resume is called: it stops
 	// reacting to the configuration files and refuses writes to records.
-	// A save writes schema.yaml and data-entry.yaml one after the other, and
+	// A save writes the configuration files one after the other, and
 	// a reload in between would check one against the other half-written.
 	// A write to a record while the candidate migrates the same records
 	// would put back a value the migration moved. A save that activates a
@@ -111,9 +111,11 @@ type Deps struct {
 	Migrations MigrationState
 	Activator  Activator
 	Audit      audit.Audit
+	Triggers   TriggerChecker
 }
 
-// Service edits schema.yaml and data-entry.yaml for the Configure space.
+// Service edits schema.yaml, data-entry.yaml and the flows.yaml triggers for
+// the Configure space.
 //
 // One Service lives for the whole process, across rebuilds of the server, so
 // its mutex serializes every save however many times the app is rebuilt.
@@ -141,6 +143,8 @@ func NewService(deps Deps) (*Service, error) {
 		return nil, errors.New("configedit: NewService: Activator is required")
 	case deps.Audit == nil:
 		return nil, errors.New("configedit: NewService: Audit is required")
+	case deps.Triggers == nil:
+		return nil, errors.New("configedit: NewService: Triggers is required")
 	}
 	return &Service{deps: deps, now: time.Now}, nil
 }
@@ -157,6 +161,8 @@ type Snapshot struct {
 	Version   string `json:"version"`
 	Schema    any    `json:"schema"`
 	DataEntry any    `json:"data_entry"`
+	// Flows is flows.yaml, an empty mapping when the file is absent.
+	Flows any `json:"flows"`
 	// Editable lists the key patterns the Configure space may change, so the
 	// browser can show what it can edit (see the allowlist).
 	Editable map[File][]string `json:"editable"`
@@ -167,6 +173,7 @@ type Draft struct {
 	BaseVersion string          `json:"base_version"`
 	Schema      json.RawMessage `json:"schema,omitempty"`
 	DataEntry   json.RawMessage `json:"data_entry,omitempty"`
+	Flows       json.RawMessage `json:"flows,omitempty"`
 	Renames     []Rename        `json:"renames,omitempty"`
 	Values      []ValueMapping  `json:"value_mappings,omitempty"`
 	// MigrationTitle names the migration in the history, when one is needed.
@@ -192,14 +199,15 @@ type Migration struct {
 	Steps []Step `json:"steps"`
 }
 
-// Snapshot reads the two files.
+// Snapshot reads the files.
 func (s *Service) Snapshot() (*Snapshot, error) {
 	cur, err := s.read()
 	if err != nil {
 		return nil, err
 	}
 	return &Snapshot{
-		Version: cur.version(), Schema: cur.schemaTree, DataEntry: cur.dataEntryTree, Editable: editable,
+		Version: cur.version(), Schema: cur.schemaTree, DataEntry: cur.dataEntryTree, Flows: cur.flowsTree,
+		Editable: editable,
 	}, nil
 }
 
@@ -247,7 +255,7 @@ func (s *Service) Save(ctx context.Context, d *Draft) (*Result, error) {
 		s.audit(ctx, cur, nil, pl, fmt.Sprintf("refused: %d problems", len(res.Problems)))
 		return res, nil
 	}
-	if bytes.Equal(pl.schema, cur.schema) && bytes.Equal(pl.dataEntry, cur.dataEntry) {
+	if !pl.changesFiles(cur) {
 		res.Saved = true
 		return res, nil
 	}
@@ -297,7 +305,7 @@ func (s *Service) Save(ctx context.Context, d *Draft) (*Result, error) {
 	cand.Activate()
 
 	res.Saved = true
-	res.Version = versionOf(pl.schema, pl.dataEntry)
+	res.Version = pl.version(cur)
 	summary := "saved"
 	if res.Incomplete {
 		summary = "saved; migration incomplete"
@@ -362,7 +370,7 @@ func (s *Service) Retry(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if meta, vErr := s.deps.Validator.Validate(cur.schema, cur.dataEntry); vErr == nil &&
+	if meta, vErr := s.deps.Validator.Validate(cur.schema, cur.dataEntry, cur.flowsBytes()); vErr == nil &&
 		s.deps.Migrations.Ready(ctx, meta) == nil {
 
 		return nil
@@ -385,20 +393,40 @@ func (s *Service) Retry(ctx context.Context) error {
 	return nil
 }
 
-// current is the two files as read, and their trees.
+// current is the files as read, and their trees.
 type current struct {
-	schema, dataEntry, acl    []byte
-	schemaTree, dataEntryTree any
+	schema, dataEntry, flows, acl        []byte
+	schemaTree, dataEntryTree, flowsTree any
+	// flowsExists tells an absent flows.yaml from an empty one: a save
+	// creates the first and replaces the second.
+	flowsExists bool
 }
 
-func (c *current) version() string { return versionOf(c.schema, c.dataEntry) }
+// flowsBytes is flows.yaml as read: nil when absent, never nil when present.
+func (c *current) flowsBytes() []byte {
+	if !c.flowsExists {
+		return nil
+	}
+	if c.flows == nil {
+		return []byte{}
+	}
+	return c.flows
+}
 
-// versionOf identifies a pair of file contents.
-func versionOf(schema, dataEntry []byte) string {
+func (c *current) version() string { return versionOf(c.schema, c.dataEntry, c.flowsBytes()) }
+
+// versionOf identifies the files' contents. flows is nil when flows.yaml is
+// absent, which is a different version from an empty flows.yaml.
+func versionOf(schema, dataEntry, flows []byte) string {
 	h := sha256.New()
 	h.Write(schema)
 	h.Write([]byte{0})
 	h.Write(dataEntry)
+	h.Write([]byte{0})
+	if flows != nil {
+		h.Write([]byte{1})
+		h.Write(flows)
+	}
 	return hex.EncodeToString(h.Sum(nil))[:32]
 }
 
@@ -413,6 +441,21 @@ func (s *Service) read() (*current, error) {
 	}
 	if c.acl, err = s.deps.Files.ReadFile(aclFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
+	}
+	switch c.flows, err = s.deps.Files.ReadFile(string(FlowsFile)); {
+	case err == nil:
+		c.flowsExists = true
+	case errors.Is(err, fs.ErrNotExist):
+		c.flows = nil
+	default:
+		return nil, err
+	}
+	if c.flowsTree, err = treeOfFile(FlowsFile, c.flows); err != nil {
+		return nil, err
+	}
+	if c.flowsTree == nil {
+		// An absent or empty flows.yaml is an empty mapping to edit.
+		c.flowsTree = &Map{}
 	}
 	if c.schemaTree, err = treeOfFile(SchemaFile, c.schema); err != nil {
 		return nil, err
@@ -433,6 +476,9 @@ func treeOfFile(file File, src []byte) (any, error) {
 	if err := yaml.Unmarshal(src, &doc); err != nil {
 		return nil, fmt.Errorf("%w: %s: %v", ErrUnsupported, file, err) //nolint:errorlint // one %w is the category
 	}
+	if doc.Kind == 0 {
+		return nil, nil //nolint:nilnil // an empty file is the null tree
+	}
 	tree, err := FromYAML(&doc)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s: %v", ErrUnsupported, file, err) //nolint:errorlint // one %w is the category
@@ -443,13 +489,15 @@ func treeOfFile(file File, src []byte) (any, error) {
 // prepared is a checked draft, ready to write.
 type prepared struct {
 	schema, dataEntry []byte
-	problems          []Problem
-	steps             []Step
-	migration         *datamigration.Draft
-	before            *metamodel.Metamodel // the schema the migration starts from
-	title             string
-	refused           []string // locked paths the draft touched, "file:path"
-	changed           []string // paths the draft changed, "file:path"
+	// flows is nil while flows.yaml is absent and the draft leaves it so.
+	flows     []byte
+	problems  []Problem
+	steps     []Step
+	migration *datamigration.Draft
+	before    *metamodel.Metamodel // the schema the migration starts from
+	title     string
+	refused   []string // locked paths the draft touched, "file:path"
+	changed   []string // paths the draft changed, "file:path"
 }
 
 func (p *prepared) result(version string) *Result {
@@ -463,24 +511,42 @@ func (p *prepared) result(version string) *Result {
 	return r
 }
 
-// prepare runs every check a save needs, in the order a user can act on:
-// what may not be edited, then what the server would reject, then what the
-// records need.
-func (s *Service) prepare(ctx context.Context, cur *current, d *Draft) (*prepared, error) {
-	if d.BaseVersion != cur.version() {
-		return nil, ErrConflict
-	}
-	p := &prepared{schema: cur.schema, dataEntry: cur.dataEntry}
+// flowsChanged reports whether the draft writes flows.yaml: it edits it, or
+// it creates it.
+func (p *prepared) flowsChanged(cur *current) bool {
+	return p.flows != nil && (!cur.flowsExists || !bytes.Equal(p.flows, cur.flows))
+}
 
+// changesFiles reports whether saving p writes any configuration file.
+func (p *prepared) changesFiles(cur *current) bool {
+	return !bytes.Equal(p.schema, cur.schema) || !bytes.Equal(p.dataEntry, cur.dataEntry) || p.flowsChanged(cur)
+}
+
+// version is the files' version once p is saved.
+func (p *prepared) version(cur *current) string {
+	flows := cur.flowsBytes()
+	if p.flowsChanged(cur) {
+		flows = p.flows
+	}
+	return versionOf(p.schema, p.dataEntry, flows)
+}
+
+// applyDraft applies each edited file of d to p, and records what changed
+// and what may not be edited. It returns the edited flows.yaml tree, or nil
+// when flows.yaml is not edited.
+func (p *prepared) applyDraft(cur *current, d *Draft) (any, error) {
+	var flowsAfter any
 	for _, f := range []struct {
 		file   File
 		raw    json.RawMessage
 		before any
 		src    []byte
 		out    *[]byte
+		tree   *any
 	}{
-		{SchemaFile, d.Schema, cur.schemaTree, cur.schema, &p.schema},
-		{DataEntryFile, d.DataEntry, cur.dataEntryTree, cur.dataEntry, &p.dataEntry},
+		{SchemaFile, d.Schema, cur.schemaTree, cur.schema, &p.schema, nil},
+		{DataEntryFile, d.DataEntry, cur.dataEntryTree, cur.dataEntry, &p.dataEntry, nil},
+		{FlowsFile, d.Flows, cur.flowsTree, cur.flows, &p.flows, &flowsAfter},
 	} {
 		after, err := UnmarshalTree(f.raw)
 		if err != nil {
@@ -489,8 +555,14 @@ func (s *Service) prepare(ctx context.Context, cur *current, d *Draft) (*prepare
 		if after == nil {
 			continue // not edited
 		}
+		if f.file == FlowsFile && !cur.flowsExists && holdsNoValue(after) {
+			continue // an empty draft does not create flows.yaml
+		}
 		if _, ok := after.(*Map); !ok {
 			return nil, fmt.Errorf("%w: %s must be a mapping", ErrBadDraft, f.file)
+		}
+		if f.tree != nil {
+			*f.tree = after
 		}
 		for _, path := range changedPaths(f.before, after, nil) {
 			p.changed = append(p.changed, string(f.file)+":"+path)
@@ -506,15 +578,34 @@ func (s *Service) prepare(ctx context.Context, cur *current, d *Draft) (*prepare
 			return nil, fmt.Errorf("%w: %s: %v", ErrBadDraft, f.file, err) //nolint:errorlint // category
 		}
 	}
+	return flowsAfter, nil
+}
+
+// prepare runs every check a save needs, in the order a user can act on:
+// what may not be edited, then what the server would reject, then what the
+// records need.
+func (s *Service) prepare(ctx context.Context, cur *current, d *Draft) (*prepared, error) {
+	if d.BaseVersion != cur.version() {
+		return nil, ErrConflict
+	}
+	p := &prepared{schema: cur.schema, dataEntry: cur.dataEntry, flows: cur.flowsBytes()}
+
+	flowsAfter, err := p.applyDraft(cur, d)
+	if err != nil {
+		return nil, err
+	}
+	if flowsAfter != nil {
+		p.problems = append(p.problems, flowsProblems(cur, p.flows)...)
+	}
 	if len(p.problems) > 0 {
 		return p, nil
 	}
 
-	before, err := s.deps.Validator.Validate(cur.schema, cur.dataEntry)
+	before, err := s.deps.Validator.Validate(cur.schema, cur.dataEntry, cur.flowsBytes())
 	if err != nil {
 		return nil, fmt.Errorf("%w: the current configuration does not validate: %v", ErrUnsupported, err) //nolint:errorlint // category
 	}
-	after, err := s.deps.Validator.Validate(p.schema, p.dataEntry)
+	after, err := s.deps.Validator.Validate(p.schema, p.dataEntry, p.flows)
 	if err != nil {
 		var verr *ValidationError
 		if !errors.As(err, &verr) {
@@ -523,6 +614,9 @@ func (s *Service) prepare(ctx context.Context, cur *current, d *Draft) (*prepare
 		for _, msg := range verr.Problems {
 			p.problems = append(p.problems, Problem{Code: "invalid", Message: msg})
 		}
+		return p, nil
+	}
+	if p.problems = s.triggerProblems(ctx, cur, p); len(p.problems) > 0 {
 		return p, nil
 	}
 	if bytes.Equal(p.schema, cur.schema) {
@@ -587,6 +681,12 @@ func (s *Service) write(w *writer, cur *current, p *prepared) error {
 			return err
 		}
 	}
+	if p.flowsChanged(cur) {
+		// Absent when read: nil expects it to be absent still.
+		if err := w.write(string(FlowsFile), cur.flowsBytes(), p.flows); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -607,9 +707,12 @@ func (w *writer) write(name string, expected, data []byte) error {
 	now, err := w.files.ReadFile(name)
 	switch {
 	case expected == nil && err == nil:
-		return fmt.Errorf("configedit: %s already exists", name)
+		// It appeared since it was read: a flows.yaml created on disk, say.
+		return fmt.Errorf("%w: %s now exists", ErrConflict, name)
 	case expected == nil && !errors.Is(err, fs.ErrNotExist):
 		return err
+	case expected != nil && errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("%w: %s was removed", ErrConflict, name)
 	case expected != nil && err != nil:
 		return err
 	case expected != nil && !bytes.Equal(now, expected):
@@ -648,9 +751,15 @@ func (w *writer) restore() {
 // path, never content.
 func (s *Service) audit(ctx context.Context, cur *current, saved, p *prepared, outcome string) {
 	var b strings.Builder
-	fmt.Fprintf(&b, "configuration %s; schema.yaml %s, data-entry.yaml %s", outcome, short(cur.schema), short(cur.dataEntry))
+	fmt.Fprintf(&b, "configuration %s; schema.yaml %s, data-entry.yaml %s, flows.yaml %s",
+		outcome, short(cur.schema), short(cur.dataEntry), shortOrAbsent(cur.flowsBytes()))
 	if saved != nil {
-		fmt.Fprintf(&b, " → schema.yaml %s, data-entry.yaml %s", short(saved.schema), short(saved.dataEntry))
+		flows := cur.flowsBytes()
+		if saved.flowsChanged(cur) {
+			flows = saved.flows
+		}
+		fmt.Fprintf(&b, " → schema.yaml %s, data-entry.yaml %s, flows.yaml %s",
+			short(saved.schema), short(saved.dataEntry), shortOrAbsent(flows))
 		if saved.migration != nil {
 			fmt.Fprintf(&b, "; migration %s", saved.migration.FileName)
 		}
@@ -673,4 +782,12 @@ func (s *Service) audit(ctx context.Context, cur *current, saved, p *prepared, o
 func short(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])[:12]
+}
+
+// shortOrAbsent is short for a file that may not exist (nil).
+func shortOrAbsent(data []byte) string {
+	if data == nil {
+		return "absent"
+	}
+	return short(data)
 }

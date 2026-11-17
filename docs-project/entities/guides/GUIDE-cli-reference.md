@@ -2685,7 +2685,7 @@ section covers the flags documented in this reference.
 
 | Flag | Description |
 | ---- | ----------- |
-| `--config-editing` | Turn on the in-app [Configure space](data-entry.md#configure-space). Principals holding `config:edit` can then change `schema.yaml` and `data-entry.yaml` from the browser. Off by default. Env: `RELA_CONFIG_EDITING=1`. |
+| `--config-editing` | Turn on the in-app [Configure space](data-entry.md#configure-space). Principals holding `config:edit` can then change `schema.yaml`, `data-entry.yaml` and the `flows.yaml` triggers from the browser. Off by default. Env: `RELA_CONFIG_EDITING=1`. |
 
 The server refuses to start with `--config-editing` when any of these is true:
 

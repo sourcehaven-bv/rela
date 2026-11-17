@@ -10125,12 +10125,14 @@ restores that face's history, including a face that was deleted.
 ## Configure space
 
 The Configure space lets an operator change the configuration from the web
-app. It edits two files:
+app. It edits three files:
 
 - the **data model** in `schema.yaml`: entity types, properties, choice lists,
   relations, query scopes, rules and comments;
 - the **screens** in `data-entry.yaml`: navigation, forms, lists, boards,
-  detail views, calendars, timelines and the dashboard.
+  detail views, calendars, timelines and the dashboard;
+- the **automations** in `flows.yaml`: its [triggers](flows.md#triggers),
+  which act when a record is created or changes.
 
 YAML never appears in the UI.
 
@@ -10147,18 +10149,19 @@ schema, because a schema change can break a trigger that names a type,
 property or relation. Review shows each problem with its location, and a
 save with a problem is refused with 422 before any file is written.
 
-The Configure space does not edit triggers. Edit `flows.yaml` directly.
+Removing a property warns when an automation reads or writes it. Renaming a
+property also renames it in the automations that use it.
 
 Saving then does four things:
 
-1. It writes `schema.yaml` and `data-entry.yaml`.
+1. It writes the files the draft changed.
 2. It generates and runs a data migration when existing records need one. See
    [Saves that migrate data](#saves-that-migrate-data).
 3. It switches the running server to the new configuration. No restart is
    needed.
 4. It writes an audit record.
 
-A save keeps the comments in both files. Lines you did not change stay
+A save keeps the comments in every file. Lines you did not change stay
 byte-identical. The save merges your changes line by line into the file as it
 is on disk (a three-way merge).
 
@@ -10230,6 +10233,44 @@ Locked in `data-entry.yaml`:
 - `version`;
 - sections the Configure space does not cover yet, such as `documents`,
   `feeds`, `pages`, `next_actions`, `palette`, `commands` and `webhooks`.
+
+Locked in `flows.yaml`:
+
+- the stateful `flows:` section, which names permissions, roles and a
+  `run_as` principal;
+- a trigger's `script` output, and a `create` output's `template` and
+  `if_exists` (`if_exists: replace` deletes the existing record);
+- `on.deleted`, `on.faces` and `on.copy`.
+
+An automation that holds a locked setting is shown read-only. An automation
+that runs a script cannot be removed in the app, and what fires it and its
+outputs stay as they are. Automations run in the order of the file. The app
+does not reorder them, and a new automation goes after all existing ones.
+
+An automation reads and writes without per-record access checks. So the
+app checks every automation you add or change against `acl.yaml` and your
+own access, and refuses one that:
+
+- runs a script, applies a template variant, or replaces existing records;
+- reads a property that `acl.yaml` hides from some readers, in what fires
+  it, a condition or a `{{new.x}}` placeholder, or follows relations in a
+  condition;
+- links to a fixed record, or names its relation target or pile with a
+  placeholder;
+- creates a record that someone may read who may not read the record that
+  fired it;
+- writes what `acl.yaml` decides access by: a property or relation a grant
+  condition names, a field with option grants, the membership relation, a
+  relation that confers or passes on a role, or a user record;
+- writes something you may not write yourself, or a property a flow locks
+  against outside edits;
+- creates a record that fires another automation which writes one of
+  these, or creates a record read more widely than the first record.
+
+Removing or changing an automation that writes what `acl.yaml` decides
+access by is refused too. A schema change is refused when it makes an
+existing automation break one of these rules. Edit such an automation in
+`flows.yaml` directly.
 
 You may remove a whole item, such as a property or a form. The
 exception is an item that holds a setting that restricts access or uploads:

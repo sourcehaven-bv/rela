@@ -81,6 +81,9 @@ export function problemRoute(problem: ConfigProblem): string {
     property
       ? `${configureRoute.entityType(type)}?property=${encodeURIComponent(property)}`
       : configureRoute.entityType(type)
+  if (problem.file === 'flows.yaml') {
+    return a === 'triggers' && b ? configureRoute.automation(b) : configureRoute.automations()
+  }
   if (problem.file === 'data-entry.yaml') {
     switch (a) {
       case 'forms':

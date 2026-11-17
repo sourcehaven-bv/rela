@@ -1519,9 +1519,36 @@
       "actionFailed": "De actie is mislukt",
       "busy": "Er loopt een synchronisatie op deze remote. Probeer het zo opnieuw."
     }
-  }
-,
-  "configure": {
-    "automationsMoved": "Automatiseringen staan in flows.yaml onder triggers:. Pas dat bestand aan om ze te wijzigen."
+  },
+  "configureAutomations": {
+    "title": "Automatiseringen",
+    "one": "Automatisering",
+    "new": "Nieuwe automatisering",
+    "intro": "Een automatisering doet vanzelf iets als een record wordt aangemaakt of verandert, zoals een checklist aanmaken. Automatiseringen lopen in de getoonde volgorde.",
+    "empty": "Nog geen automatiseringen.",
+    "nothingYet": "Nog niets",
+    "readOnly": "Alleen lezen",
+    "remove": "Verwijderen",
+    "notFound": "Deze automatisering bestaat niet",
+    "locked": "Deze automatisering voert een script uit of gebruikt een instelling die in flows.yaml wordt gewijzigd. Ze staat hier zodat je kunt zien wat ze doet.",
+    "name": "Naam",
+    "description": "Beschrijving",
+    "when": "Wanneer",
+    "recordOfType": "Een record van het type",
+    "changes": "Verandert",
+    "anyProperty": "Elke eigenschap",
+    "to": "Naar",
+    "anyChange": "Laat leeg voor elke wijziging.",
+    "onCreated": "Als een record wordt aangemaakt",
+    "onUpdated": "Als een record wordt gewijzigd",
+    "then": "Dan",
+    "thenHelp": "De uitvoer loopt in de getoonde volgorde.",
+    "outputs": "Uitvoer, in de volgorde waarin die loopt",
+    "setProperty": "Een eigenschap instellen",
+    "chooseProperty": "Kies een eigenschap",
+    "setHint": "Tekst, of {placeholder} voor de datum.",
+    "addOutput": "Uitvoer toevoegen",
+    "removeOutput": "{name} verwijderen",
+    "usedBy": "Deze automatiseringen gebruiken haar: {names}."
   }
 }
