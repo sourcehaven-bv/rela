@@ -650,6 +650,9 @@ tasks:
 ```lua
 -- scripts/metrics/control_coverage.lua
 local controls = rela.list_entities("control")
+if #controls >= 2000 then
+  error("control coverage: the list stopped at 2000 rows; narrow the filter")
+end
 local covered = 0
 for _, c in ipairs(controls) do
   if c.properties.status == "implemented" then
@@ -669,8 +672,9 @@ end
 ```
 
 `rela.list_entities` returns at most 2000 rows (see "Reads are bounded" in
-the Lua scripting guide). For a larger type, count with a narrower filter
-per run, or split the metric.
+the Lua scripting guide). The script stops with an error at that limit, so a
+cut-off list never stores a wrong figure. For a larger type, count with a
+narrower filter per run, or split the metric.
 
 **The value is computed with what `run_as` can read, and stored where
 anyone who reads the metric entity can read it.** A row's read access
@@ -718,7 +722,9 @@ Every write a scheduled task performs (via `rela.create_entity`,
 `rela.update_entity`, etc.) is recorded in
 `.rela/audit/YYYY-MM-DD.jsonl` with `principal.tool: "scheduler"` and
 `triggered_by: "schedule:<task-name>"`. This makes it easy to filter
-the audit log for scheduler-driven changes:
+the audit log for scheduler-driven changes. Record appends through
+`rela.append_records` are not in the audit log; each row stores who
+appended it (see [Records](records.md)). To list the scheduler's writes:
 
 ```bash
 cat .rela/audit/*.jsonl | jq 'select(.triggered_by == "schedule:traceability-report")'
