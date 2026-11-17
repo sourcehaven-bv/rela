@@ -271,10 +271,13 @@ type ViewConditionMatcher struct {
 
 // Matches evaluates the condition against the identity on ctx.
 //
-// An evaluation error is SURFACED, not swallowed as a non-match. A missing
-// date property is an eval error, and treating it as "does not match" would
-// silently narrow the view with no diagnostic — the inverse of BUG-WHEREWIDE
-// and exactly the silent-wrong-answer class this feature exists to remove.
+// The matcher evaluates with [predicatefns.Evaluator.LoweringSemantics], so
+// an integer or string ordered comparison on an unset value is false, as it
+// is in the store query the condition may be lowered into (TKT-8HY05WB).
+// Any other evaluation error, a missing date property among them, is
+// SURFACED, not swallowed as a non-match: treating it as "does not match"
+// would silently narrow the view with no diagnostic (the inverse of
+// BUG-WHEREWIDE).
 func (m *ViewConditionMatcher) Matches(ctx context.Context, e *entity.Entity) (bool, error) {
 	if m == nil || e == nil {
 		return false, nil
@@ -331,7 +334,7 @@ func ViewConditionMatchers(
 	if len(programs) == 0 {
 		return nil, nil
 	}
-	ev := predicatefns.NewEvaluator(meta)
+	ev := predicatefns.NewEvaluator(meta).LoweringSemantics()
 	matchers := make(map[ViewConditionKey]*ViewConditionMatcher, len(programs))
 	for key, prog := range programs {
 		matchers[key] = &ViewConditionMatcher{ev: ev, prog: prog, entityType: entityTypeFor(cfg, key)}

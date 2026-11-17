@@ -38,7 +38,11 @@ var navStatusPushdownEntries = []struct {
 		rule("warning", "{count} not done", "entity.status ~= 'done'"),
 	}}, reads: true},
 	{entry: dataentryconfig.NavigationEntry{Label: "Either", List: "all", Status: []dataentryconfig.NavStatusRule{
+		// An or lowers into GraphQuery.Where (TKT-8HY05WB).
 		rule("info", "{count}", "entity.status == 'open' or related(entity, 'reportedBy')"),
+	}}, reads: true},
+	{entry: dataentryconfig.NavigationEntry{Label: "Same", List: "all", Status: []dataentryconfig.NavStatusRule{
+		rule("info", "{count}", "entity.title == entity.assignee"),
 	}}, goOnly: true},
 }
 

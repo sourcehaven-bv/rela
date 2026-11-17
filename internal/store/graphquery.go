@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iter"
 	"slices"
+	"strconv"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
@@ -139,6 +140,18 @@ type GraphQuery struct {
 	// would either be refused or overwrite the row gate; here it can only
 	// narrow. Like [GraphQuery.Narrowing], the ACL never writes this field.
 	Related []DirectedRelation
+
+	// Where is a caller-supplied boolean condition over the entity's own
+	// properties and its relations, ANDed with everything else (TKT-8HY05WB).
+	// A lowered query condition with `or`, `not` or an ordered comparison
+	// rides here; a plain conjunction may still use Props and Related. Nil
+	// constrains nothing.
+	//
+	// Like [GraphQuery.Narrowing] it only narrows, and the ACL never writes
+	// it. It is tested on the row a world picks (the prime), as Props is;
+	// its relation leaves depend on the id alone, so that placement is exact
+	// for them too. See [Cond] for its semantics.
+	Where *Cond
 
 	// OrderBy, Limit and Offset page a ROW query (GraphQuery,
 	// GraphQueryHeaders) inside the backend (TKT-1U8XYN), so a list page
@@ -287,12 +300,208 @@ type NarrowBranch struct {
 	Props []PropPredicate
 }
 
-// PropOp is the comparison a [PropPredicate] applies. Deliberately only
-// equality and its negation: ordered comparison (`due < 2026-01-01`)
-// needs the property's declared type from the metamodel to avoid
-// comparing dates lexicographically, and the store layer does not
-// consult the metamodel. Typed comparison stays above the store in
-// [internal/filter].
+// CondOp is the node kind of a [Cond].
+type CondOp int
+
+const (
+	// CondProp is a leaf: [Cond.Prop] holds.
+	CondProp CondOp = iota
+	// CondRelated is a leaf: [Cond.Rel] holds, with the meaning one entry
+	// of [GraphQuery.Related] has, its Negate included.
+	CondRelated
+	// CondAnd holds when every argument holds. With no arguments it holds.
+	CondAnd
+	// CondOr holds when at least one argument holds. With no arguments it
+	// does not hold.
+	CondOr
+	// CondNot holds when its one argument does not.
+	CondNot
+)
+
+// MaxCondDepth bounds the nesting of a [Cond]. A deeper tree is
+// [ErrInvalidQuery] on every backend, so a recursive renderer or matcher
+// cannot be driven arbitrarily deep.
+const MaxCondDepth = 32
+
+// MaxCondLeaves bounds the leaves of a [Cond], and MaxCondRelations its
+// relation leaves, each of which a SQL backend renders as its own
+// subquery. Depth alone does not bound a wide OR built from a caller's
+// filter.
+const (
+	MaxCondLeaves    = 256
+	MaxCondRelations = 16
+)
+
+// Cond is a boolean expression over an entity's own properties and its
+// relations: the predicate of [GraphQuery.Where].
+//
+// Every leaf is TWO-valued. A property predicate on an absent key does not
+// hold, and its negation does; there is no "unknown". SQL backends must
+// therefore keep a NULL from leaking through a NOT (`NOT NULL` is NULL,
+// which drops the row a two-valued reading keeps).
+//
+// Exactly the field of the node's Op is meaningful: Prop for CondProp, Rel
+// for CondRelated, Args for the others. Build nodes with [PropCond],
+// [RelatedCond], [AndCond], [OrCond] and [NotCond].
+type Cond struct {
+	Op   CondOp
+	Prop PropPredicate
+	Rel  DirectedRelation
+	Args []Cond
+}
+
+// PropCond is a [CondProp] leaf.
+func PropCond(p PropPredicate) Cond { return Cond{Op: CondProp, Prop: p} }
+
+// RelatedCond is a [CondRelated] leaf.
+func RelatedCond(r DirectedRelation) Cond { return Cond{Op: CondRelated, Rel: r} }
+
+// AndCond is a [CondAnd] node.
+func AndCond(args ...Cond) Cond { return Cond{Op: CondAnd, Args: args} }
+
+// OrCond is a [CondOr] node.
+func OrCond(args ...Cond) Cond { return Cond{Op: CondOr, Args: args} }
+
+// NotCond is a [CondNot] node.
+func NotCond(arg Cond) Cond { return Cond{Op: CondNot, Args: []Cond{arg}} }
+
+// AndWhere returns a [GraphQuery.Where] that holds when both a and b do. A
+// nil argument is no constraint. The result is a new root node, so a caller
+// can AND a narrowing onto a query it copied from another owner; the copy is
+// shallow, and the subtrees below the root stay shared with a and b.
+func AndWhere(a, b *Cond) *Cond {
+	switch {
+	case a == nil && b == nil:
+		return nil
+	case a == nil:
+		c := *b
+		return &c
+	case b == nil:
+		c := *a
+		return &c
+	}
+	c := AndCond(*a, *b)
+	return &c
+}
+
+// Constant reports whether c holds on every row or on none, judged from its
+// shape alone: an [OrCond] without arguments is false, an [AndCond] without
+// arguments is true, and CondAnd, CondOr and CondNot fold them. known=false
+// means c reads a row. A denied traversal gated to false makes a whole tree
+// constant this way, so a caller can answer "no row" without a query.
+func (c Cond) Constant() (value, known bool) {
+	switch c.Op {
+	case CondNot:
+		if len(c.Args) != 1 {
+			return false, false
+		}
+		v, k := c.Args[0].Constant()
+		return !v, k
+	case CondAnd, CondOr:
+		// An AND is decided by a false argument, an OR by a true one.
+		decider := c.Op == CondOr
+		all := true
+		for _, a := range c.Args {
+			v, k := a.Constant()
+			switch {
+			case k && v == decider:
+				return decider, true
+			case !k:
+				all = false
+			}
+		}
+		if all {
+			return !decider, true
+		}
+		return false, false
+	default:
+		return false, false
+	}
+}
+
+// Walk calls visit on c and on every node below it, depth first. It stops
+// and returns false as soon as visit does.
+func (c Cond) Walk(visit func(Cond) bool) bool {
+	if !visit(c) {
+		return false
+	}
+	for _, a := range c.Args {
+		if !a.Walk(visit) {
+			return false
+		}
+	}
+	return true
+}
+
+// ValidateCond refuses a malformed [Cond]: an unknown Op, a CondNot without
+// exactly one argument, a leaf with arguments, nesting beyond
+// [MaxCondDepth], more leaves than [MaxCondLeaves] or relation leaves than
+// [MaxCondRelations], a relation leaf that sets Pred.Negate (a tree negates
+// with CondNot, so there is one way to say it), or a leaf predicate
+// [ValidatePropPredicates] refuses. A relation leaf's own shape is checked
+// with the other relation predicates (graphquerynaive.CheckEndpointShape).
+// Every backend runs it, so they refuse the same trees.
+func ValidateCond(c Cond) error {
+	if err := validateCond(c, 1); err != nil {
+		return err
+	}
+	leaves, rels := 0, 0
+	c.Walk(func(n Cond) bool {
+		switch n.Op {
+		case CondProp:
+			leaves++
+		case CondRelated:
+			leaves++
+			rels++
+		default:
+		}
+		return true
+	})
+	if leaves > MaxCondLeaves || rels > MaxCondRelations {
+		return fmt.Errorf("%w: condition has %d leaves (%d relation leaves); the limits are %d and %d",
+			ErrInvalidQuery, leaves, rels, MaxCondLeaves, MaxCondRelations)
+	}
+	return nil
+}
+
+func validateCond(c Cond, depth int) error {
+	if depth > MaxCondDepth {
+		return fmt.Errorf("%w: condition nested deeper than %d", ErrInvalidQuery, MaxCondDepth)
+	}
+	switch c.Op {
+	case CondProp:
+		if len(c.Args) > 0 {
+			return fmt.Errorf("%w: a property leaf takes no arguments", ErrInvalidQuery)
+		}
+		return ValidatePropPredicates([]PropPredicate{c.Prop})
+	case CondRelated:
+		if len(c.Args) > 0 {
+			return fmt.Errorf("%w: a relation leaf takes no arguments", ErrInvalidQuery)
+		}
+		if c.Rel.Pred.Negate {
+			return fmt.Errorf("%w: a relation leaf negates with a not node, not Pred.Negate", ErrInvalidQuery)
+		}
+		return nil
+	case CondNot:
+		if len(c.Args) != 1 {
+			return fmt.Errorf("%w: not takes exactly one argument, got %d", ErrInvalidQuery, len(c.Args))
+		}
+	case CondAnd, CondOr:
+	default:
+		return fmt.Errorf("%w: unknown condition op %d", ErrInvalidQuery, c.Op)
+	}
+	for _, a := range c.Args {
+		if err := validateCond(a, depth+1); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// PropOp is the comparison a [PropPredicate] applies. The ordered operators
+// carry an [OrderKind] saying what the stored value must be to compare; the
+// store does not consult the metamodel, so the caller picks the kind from
+// the property's declared type.
 type PropOp int
 
 const (
@@ -330,8 +539,11 @@ const (
 	// matches everything; callers lowering `p ~= ''` should emit nothing
 	// instead of relying on that.
 	PropNotEqualOrEmpty
-	// PropGreaterEqual and PropLessEqual compare the property's string form
-	// byte-wise against Value: `>=` and `<=` respectively.
+	// PropGreaterEqual and PropLessEqual compare against Value: `>=` and
+	// `<=` respectively. What follows is their [OrderText] reading, the
+	// zero [PropPredicate.Kind]: the property's string form, byte-wise.
+	// [OrderString] and [OrderInteger] are the typed readings a lowered
+	// condition uses.
 	//
 	// # Byte order, and why that is enough
 	//
@@ -387,7 +599,51 @@ const (
 	// [ValidatePropPredicates]). A non-object value, a missing entry and a
 	// non-string entry never match.
 	PropKeyEqual
+	// PropLess and PropGreater are the strict ordered operators: `<` and
+	// `>`. They follow the [PropPredicate.Kind] rules exactly as
+	// [PropLessEqual] and [PropGreaterEqual] do (TKT-8HY05WB).
+	PropLess
+	PropGreater
 )
+
+// OrderKind says how an ordered [PropPredicate] reads the stored value. It
+// is meaningful only on PropLess, PropLessEqual, PropGreater and
+// PropGreaterEqual; on any other operator a non-zero kind is
+// [ErrInvalidQuery].
+//
+// Under every kind a value the kind cannot read matches NO ordered
+// operator. That is the reading the condition engine gives the same
+// comparison on an unset or off-type value (internal/predicate: a nil
+// operand makes an ordered comparison false), so a store answer can
+// replace the Go evaluation.
+type OrderKind int
+
+const (
+	// OrderText compares the property's text form byte-wise, and an empty
+	// or list value never matches. It is the original contract of the
+	// ordered operators; see [PropGreaterEqual].
+	OrderText OrderKind = iota
+	// OrderString compares a stored STRING byte-wise, the empty string
+	// included; any other stored value (absent, null, a number, a list)
+	// never matches. It is the condition engine's reading of a
+	// string-typed property, which binds a non-string value as nil.
+	OrderString
+	// OrderInteger compares the stored value numerically as an int64, when
+	// internal/propmatch.Integer reads one from it: a whole number in int64 range,
+	// or a string strconv.ParseInt accepts. Any other value never matches.
+	// Value must parse as an int64 in base 10.
+	OrderInteger
+)
+
+// isOrdered reports whether op is one of the four ordered operators.
+func isOrdered(op PropOp) bool {
+	switch op {
+	case PropLess, PropLessEqual, PropGreater, PropGreaterEqual:
+		return true
+	default:
+		return false
+	}
+}
 
 // UnknownPropOpError is the [ErrInvalidQuery] for an operator a backend
 // does not know.
@@ -395,16 +651,22 @@ func UnknownPropOpError(p PropPredicate) error {
 	return fmt.Errorf("%w: property %q: unknown operator %d", ErrInvalidQuery, p.Property, p.Op)
 }
 
-// ValidatePropPredicates refuses an unknown operator and a malformed
-// [PropKeyEqual] use: a Key on another operator, or a PropKeyEqual with an
-// empty Key or Value, or a Key outside [a-z0-9_]. Every backend runs it
+// ValidatePropPredicates refuses an unknown operator, a malformed
+// [PropKeyEqual] use (a Key on another operator, or a PropKeyEqual with an
+// empty Key or Value, or a Key outside [a-z0-9_]), and a malformed
+// [OrderKind] use (a kind on a non-ordered operator, an unknown kind, or an
+// [OrderInteger] Value that is not an int64). Every backend runs it
 // (through the naive shape check) so they refuse the same shapes.
 func ValidatePropPredicates(props []PropPredicate) error {
 	for _, p := range props {
 		switch p.Op {
-		case PropEqual, PropNotEqual, PropNotEqualOrEmpty, PropGreaterEqual, PropLessEqual, PropKeyEqual:
+		case PropEqual, PropNotEqual, PropNotEqualOrEmpty, PropGreaterEqual, PropLessEqual, PropKeyEqual,
+			PropLess, PropGreater:
 		default:
 			return UnknownPropOpError(p)
+		}
+		if err := validateOrderKind(p); err != nil {
+			return err
 		}
 		if p.Op != PropKeyEqual {
 			if p.Key != "" {
@@ -421,6 +683,25 @@ func ValidatePropPredicates(props []PropPredicate) error {
 				return fmt.Errorf("%w: property %q: Key %q must match [a-z0-9_]+", ErrInvalidQuery, p.Property, p.Key)
 			}
 		}
+	}
+	return nil
+}
+
+// validateOrderKind checks p's [OrderKind] against its operator and value.
+func validateOrderKind(p PropPredicate) error {
+	switch p.Kind {
+	case OrderText, OrderString:
+	case OrderInteger:
+		if _, err := strconv.ParseInt(p.Value, 10, 64); err != nil {
+			return fmt.Errorf("%w: property %q: OrderInteger needs an int64 Value, got %q",
+				ErrInvalidQuery, p.Property, p.Value)
+		}
+	default:
+		return fmt.Errorf("%w: property %q: unknown order kind %d", ErrInvalidQuery, p.Property, p.Kind)
+	}
+	if p.Kind != OrderText && !isOrdered(p.Op) {
+		return fmt.Errorf("%w: property %q: an order kind is only valid on an ordered operator",
+			ErrInvalidQuery, p.Property)
 	}
 	return nil
 }
@@ -462,6 +743,9 @@ type PropPredicate struct {
 	// Key names the object entry a [PropKeyEqual] compares. Empty for
 	// every other operator.
 	Key string
+	// Kind says how an ordered operator reads the stored value; see
+	// [OrderKind]. Zero ([OrderText]) for every other operator.
+	Kind OrderKind
 }
 
 // RelationPredicate restricts which relations the surrounding

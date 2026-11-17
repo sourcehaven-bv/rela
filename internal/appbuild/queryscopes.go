@@ -40,7 +40,7 @@ import (
 func QueryScopes(
 	_ *dataentryconfig.Config, meta *metamodel.Metamodel,
 ) (resolver *QueryScopeResolver, problems []string) {
-	return queryScopes(meta, predicatefns.NewEvaluator(meta))
+	return queryScopes(meta, predicatefns.NewEvaluator(meta).LoweringSemantics())
 }
 
 // QueryScopes is the package-level [QueryScopes] with today() on the base's
@@ -49,7 +49,7 @@ func QueryScopes(
 func (b *SharedBase) QueryScopes(
 	_ *dataentryconfig.Config, meta *metamodel.Metamodel,
 ) (resolver *QueryScopeResolver, problems []string) {
-	return queryScopes(meta, predicatefns.NewEvaluatorWithClock(meta, b.clock()))
+	return queryScopes(meta, predicatefns.NewEvaluatorWithClock(meta, b.clock()).LoweringSemantics())
 }
 
 func queryScopes(

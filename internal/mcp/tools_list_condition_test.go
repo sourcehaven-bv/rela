@@ -61,21 +61,27 @@ var listConditionFilters = map[string]string{
 	"watching":      "has_current_user(entity.watchers)",
 	"mine-reported": "related(entity, 'reportedBy', { id = current_user.id })",
 	"others-open":   "entity.assignee ~= current_user.id and entity.status == 'open'",
-	// These do not lower: they keep the Go path for everyone.
+	// or, not and ordered comparisons lower into GraphQuery.Where
+	// (TKT-8HY05WB).
 	"open-or-reported": "entity.status == 'open' or related(entity, 'reportedBy')",
 	"title-from-b":     "entity.title >= 'b'",
 	"mine-from-b":      "is_current_user(entity.assignee) and entity.title >= 'b'",
+	"not-b-or-mine":    "not (entity.title < 'b' or entity.title > 'b') or is_current_user(entity.assignee)",
+	// This does not lower: it keeps the Go path for everyone.
+	"title-is-assignee": "entity.title == entity.assignee",
 }
 
 // goOnlyFilters are the filters that never lower.
-var goOnlyFilters = map[string]bool{"open-or-reported": true, "title-from-b": true, "mine-from-b": true}
+var goOnlyFilters = map[string]bool{"title-is-assignee": true}
 
 // statusFilters read status, which frank does not see on any ticket; they
 // keep the Go path for him.
-var statusFilters = map[string]bool{"open": true, "not-done": true, "others-open": true}
+var statusFilters = map[string]bool{"open": true, "not-done": true, "others-open": true, "open-or-reported": true}
 
 // reportedFilters require a traversal into users, which dave may not read:
-// the store answers them with an empty page and no read.
+// the store answers them with an empty page and no read. A denied
+// traversal under an `or` is false instead, so open-or-reported is pushed
+// for dave as `status == 'open'`.
 var reportedFilters = map[string]bool{"reported": true, "contradiction": true, "mine-reported": true}
 
 // conditionFixture is a gated list_entities server over a counting store.
@@ -298,6 +304,7 @@ func TestHandleListEntities_ConditionScaleFree(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{
 		"open", "not-done", "impl-open", "unreported", "reported", "mine", "watching", "mine-reported", "others-open",
+		"open-or-reported", "title-from-b", "not-b-or-mine",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

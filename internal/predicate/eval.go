@@ -23,9 +23,10 @@ func (p *Program) Eval(ctx context.Context, b *Bindings, opts ...EvalOption) (Va
 		o(&cfg)
 	}
 	state := &evalState{
-		bindings:    b,
-		stepBudget:  cfg.stepBudget,
-		stepCounter: 0,
+		bindings:        b,
+		stepBudget:      cfg.stepBudget,
+		stepCounter:     0,
+		nilOrderedFalse: cfg.nilOrderedFalse,
 	}
 	return state.eval(ctx, p.root)
 }
@@ -35,9 +36,10 @@ func (p *Program) Eval(ctx context.Context, b *Bindings, opts ...EvalOption) (Va
 // threaded through the eval methods rather than stored on the struct
 // (golangci-lint containedctx).
 type evalState struct {
-	bindings    *Bindings
-	stepBudget  int
-	stepCounter int
+	bindings        *Bindings
+	stepBudget      int
+	stepCounter     int
+	nilOrderedFalse bool
 }
 
 func (s *evalState) tick() error {
@@ -344,7 +346,7 @@ func (s *evalState) evalRelational(ctx context.Context, n *relationalNode) (Valu
 	case "~=":
 		return NewBool(!valuesEqual(lhs, rhs)), nil
 	case "<", "<=", ">", ">=":
-		return evalOrdered(n.op, lhs, rhs)
+		return evalOrdered(n.op, lhs, rhs, s.nilOrderedFalse)
 	default:
 		return nil, &EvalError{Reason: fmt.Sprintf("internal: unknown relational op %q", n.op)}
 	}
@@ -388,8 +390,25 @@ func valuesEqual(a, b Value) bool {
 	return false
 }
 
-func evalOrdered(op string, a, b Value) (Value, error) {
+// evalOrdered decides <, <=, > and >=. A nil operand is an error, or
+// false under [NilOrderedIsFalse].
+// lowerableOrdered reports whether v is a value a store query compares in
+// order: an Int or a String. [NilOrderedIsFalse] applies only against one,
+// so a date or decimal comparison on an unset value stays an error.
+func lowerableOrdered(v Value) bool {
+	switch v.(type) {
+	case Int, String:
+		return true
+	default:
+		return false
+	}
+}
+
+func evalOrdered(op string, a, b Value, nilFalse bool) (Value, error) {
 	if isNilValue(a) || isNilValue(b) {
+		if nilFalse && (lowerableOrdered(a) || lowerableOrdered(b)) {
+			return NewBool(false), nil
+		}
 		return nil, nilOperand(fmt.Sprintf("ordered comparison %q on unsupported type nil", op))
 	}
 	// Both sides were already type-checked at compile to be the same

@@ -241,7 +241,9 @@ func (n listNarrowing) pushdownPlan(
 		case denied:
 			return listPlan{}, true, true
 		}
-		plan = plan.narrowed(frag)
+		if plan, lowered = plan.narrowed(frag); !lowered {
+			return listPlan{}, false, false
+		}
 	}
 	if n.cond != nil {
 		frag, denied, lowered := lowerViewCondition(ctx, n.state.Meta, n.cond, n.fields, typeName)
@@ -251,7 +253,9 @@ func (n listNarrowing) pushdownPlan(
 		case denied:
 			return listPlan{}, true, true
 		}
-		plan = plan.narrowed(frag)
+		if plan, lowered = plan.narrowed(frag); !lowered {
+			return listPlan{}, false, false
+		}
 	}
 	return plan, false, true
 }
@@ -315,13 +319,23 @@ func (p listPlan) position(ctx context.Context, st store.Store, id string) (stor
 	return pos, found, nil
 }
 
-// narrowed ANDs a lowered query scope onto the plan (TKT-XKCNCL). Both
-// slices are copied: the base query may share its backing arrays with the
-// ACL layer's per-principal ReadQueryResult.
-func (p listPlan) narrowed(frag store.GraphQuery) listPlan {
+// narrowed ANDs a lowered query scope onto the plan (TKT-XKCNCL), its Where
+// tree included (TKT-8HY05WB). Nothing is shared: the base query may share
+// its backing arrays with the ACL layer's per-principal ReadQueryResult, and
+// a plan is narrowed more than once.
+//
+// ok=false means the combined Where is over the store's limits
+// ([store.ValidateCond]) though each part is within them: take the Go path,
+// which answers the same rows.
+func (p listPlan) narrowed(frag store.GraphQuery) (listPlan, bool) {
+	where := store.AndWhere(p.query.Where, frag.Where)
+	if where != nil && store.ValidateCond(*where) != nil {
+		return listPlan{}, false
+	}
 	p.query.Props = append(append([]store.PropPredicate(nil), p.query.Props...), frag.Props...)
 	p.query.Related = append(append([]store.DirectedRelation(nil), p.query.Related...), frag.Related...)
-	return p
+	p.query.Where = where
+	return p, true
 }
 
 // run executes the plan: the scoped total in one count and the page in one

@@ -189,8 +189,23 @@ func propCondOn(b *sqlBuilder, alias string, p store.PropPredicate) string {
 			return "1"
 		}
 		return "(" + isEmpty + " OR NOT " + equalsCond(b, alias, path, p.Value) + ")"
-	case store.PropGreaterEqual, store.PropLessEqual:
-		return orderedCond(b, alias, path, p.Op, p.Value)
+	case store.PropGreaterEqual, store.PropLessEqual, store.PropGreater, store.PropLess:
+		switch p.Kind {
+		case store.OrderText:
+			return orderedCond(b, alias, path, p.Op, p.Value)
+		case store.OrderString:
+			// SQLite's default collation is BINARY, which compares the
+			// UTF-8 bytes as Go does.
+			return "(" + typeExpr(alias, path) + " = 'text' AND " + rawExpr(alias, path) + " " +
+				orderedSQLOp(p.Op) + " " + b.arg(p.Value) + ")"
+		default:
+			// OrderInteger (and anything unknown) runs on graphquerynaive.
+			// Reading an integer the way propmatch.Integer does needs a
+			// text-to-int64 parse SQLite has no exact spelling for, and
+			// sqlite performance does not drive the design (TKT-8HY05WB).
+			b.unsafe = true
+			return "0"
+		}
 	default:
 		// PropKeyEqual returned above; anything else is unknown. The
 		// statement must not run: the store falls back to graphquerynaive,
@@ -203,13 +218,24 @@ func propCondOn(b *sqlBuilder, alias string, p store.PropPredicate) string {
 // orderedCond is a byte-wise range test on the text form. Lists never match,
 // because Go and SQL render a list differently (see pgstore's orderedCond).
 func orderedCond(b *sqlBuilder, alias, path string, op store.PropOp, value string) string {
-	cmp := ">="
-	if op == store.PropLessEqual {
-		cmp = "<="
-	}
 	txt := txtExpr(alias, path)
 	return "(" + typeExpr(alias, path) + " <> 'array' AND " + txt + " <> '' AND " +
-		txt + " " + cmp + " " + b.arg(value) + ")"
+		txt + " " + orderedSQLOp(op) + " " + b.arg(value) + ")"
+}
+
+// orderedSQLOp is the SQL operator of an ordered [store.PropOp]. Callers
+// pass only the four ordered operators.
+func orderedSQLOp(op store.PropOp) string {
+	switch op {
+	case store.PropLess:
+		return "<"
+	case store.PropLessEqual:
+		return "<="
+	case store.PropGreater:
+		return ">"
+	default:
+		return ">="
+	}
 }
 
 // equalsCond is value equality: a scalar by its text form, a list when a
@@ -263,7 +289,69 @@ func buildPredicatePartsPrefixed(
 	if len(q.Narrowing) > 0 {
 		post = append(post, buildNarrowingSQL(b, q.Narrowing))
 	}
+	if q.Where != nil {
+		cb := condBuilder{b: b, prefix: prefix + "wh", seed: seed, sel: q.Faces}
+		post = append(post, cb.render(*q.Where))
+		with = append(with, cb.with...)
+	}
 	return with, pre, post
+}
+
+// condBuilder renders a [store.GraphQuery.Where] tree, as pgstore's does:
+// with the post conjuncts, one CTE prefix per relation leaf, and the
+// operand of every NOT wrapped in COALESCE(..., 0) so a NULL leaf over an
+// absent key cannot drop a row the two-valued reading keeps. A malformed
+// node marks the builder unsafe, so graphquerynaive answers the query and
+// reports the [store.ErrInvalidQuery].
+type condBuilder struct {
+	b      *sqlBuilder
+	prefix string
+	seed   string
+	sel    store.FaceSelection
+	with   []string
+	n      int
+}
+
+func (cb *condBuilder) render(c store.Cond) string {
+	switch c.Op {
+	case store.CondProp:
+		return propCond(cb.b, c.Prop)
+	case store.CondRelated:
+		dir := store.DirectionOutgoing
+		if c.Rel.Incoming {
+			dir = store.DirectionIncoming
+		}
+		prefix := cb.prefix + strconv.Itoa(cb.n) + "_"
+		cb.n++
+		w, ex := buildPredicateSQL(cb.b, prefix, c.Rel.Pred, cb.seed, dir, cb.sel)
+		cb.with = append(cb.with, w...)
+		return existsCond(ex, c.Rel.Pred.Negate)
+	case store.CondNot:
+		if len(c.Args) != 1 {
+			cb.b.unsafe = true
+			return "0"
+		}
+		return "(NOT COALESCE(" + cb.render(c.Args[0]) + ", 0))"
+	case store.CondAnd, store.CondOr:
+		if len(c.Args) == 0 {
+			if c.Op == store.CondAnd {
+				return "1"
+			}
+			return "0"
+		}
+		join := " AND "
+		if c.Op == store.CondOr {
+			join = " OR "
+		}
+		parts := make([]string, len(c.Args))
+		for i, a := range c.Args {
+			parts[i] = cb.render(a)
+		}
+		return "(" + strings.Join(parts, join) + ")"
+	default:
+		cb.b.unsafe = true
+		return "0"
+	}
 }
 
 // graphSource renders what follows `SELECT <list> FROM ` in every graph

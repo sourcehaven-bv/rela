@@ -123,7 +123,7 @@ type QueryScopeFilter func(
 // gated for this principal: take the [QueryScopeFilter] path, which gives the
 // same rows or the same error. empty=true means a positive traversal is
 // denied and none is refused, so no row matches; a denied negated traversal
-// narrows nothing and drops out. Otherwise frag's Props and Related are
+// narrows nothing and drops out. Otherwise frag's Props, Related and Where are
 // ANDed onto the read query. gate is the request's traversal gate, the one
 // [QueryScopeFilter] receives.
 type QueryScopeLower func(

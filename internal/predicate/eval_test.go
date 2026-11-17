@@ -218,7 +218,7 @@ func TestProgram_Eval_StepBudget(t *testing.T) {
 func TestEval_NilOperand(t *testing.T) {
 	env := predicate.NewEnv()
 	if err := env.DeclareVar("v", predicate.RecordType{
-		"n": predicate.IntType, "s": predicate.StringType, "b": predicate.BoolType,
+		"n": predicate.IntType, "s": predicate.StringType, "b": predicate.BoolType, "f": predicate.NumberType,
 	}); err != nil {
 		t.Fatalf("declare: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestEval_NilOperand(t *testing.T) {
 			return nil, errors.New("strict fails on every argument")
 		})}
 	absent := map[string]predicate.Value{"v": predicate.NewRecord(map[string]predicate.Value{
-		"n": predicate.NewNil(), "s": predicate.NewNil(), "b": predicate.NewNil(),
+		"n": predicate.NewNil(), "s": predicate.NewNil(), "b": predicate.NewNil(), "f": predicate.NewNil(),
 	})}
 	for _, src := range []string{
 		"v.n > 2", "2 < v.n", "v.s >= 'a'", "v.b and true", "true and v.b", "not v.b", "strict(v.s)",
@@ -243,6 +243,32 @@ func TestEval_NilOperand(t *testing.T) {
 				t.Fatalf("err = %v; want ErrNilOperand", err)
 			}
 		})
+	}
+	// Under NilOrderedIsFalse a nil operand is in no ordered range, so the
+	// comparison is false and its negation true (TKT-8HY05WB). The option
+	// changes nothing else: a nil boolean operand still fails.
+	for src, want := range map[string]bool{
+		"v.n > 2": false, "2 < v.n": false, "v.s >= 'a'": false, "v.n <= 2": false,
+		"not (v.n < 2)": true, "v.n < 2 or v.n >= 2": false,
+	} {
+		t.Run(src, func(t *testing.T) {
+			got, err := compile(t, env, src).Eval(context.Background(), stubBindings(t, absent, strict),
+				predicate.NilOrderedIsFalse())
+			if err != nil {
+				t.Fatalf("err = %v; want %v", err, want)
+			}
+			if got != predicate.NewBool(want) {
+				t.Fatalf("got %v; want %v", got, want)
+			}
+		})
+	}
+	// Only Int and String comparisons lower, so the option stops there: a
+	// nil against a Number, or two nils, still fails.
+	for _, src := range []string{"not v.b", "v.f > 2.5", "v.n < v.n"} {
+		if _, err := compile(t, env, src).Eval(context.Background(), stubBindings(t, absent, strict),
+			predicate.NilOrderedIsFalse()); !errors.Is(err, predicate.ErrNilOperand) {
+			t.Fatalf("%s under NilOrderedIsFalse: err = %v; want ErrNilOperand", src, err)
+		}
 	}
 	_, err := compile(t, env, "v.n > 2").Eval(context.Background(), predicate.NewBindings())
 	if err == nil || errors.Is(err, predicate.ErrNilOperand) {

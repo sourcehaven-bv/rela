@@ -1,12 +1,11 @@
 package predicatefns
 
 import (
-	"math"
-	"strconv"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
+	"github.com/Sourcehaven-BV/rela/internal/propmatch"
 )
 
 // EntityRecord coerces an entity's stored property map into a
@@ -101,23 +100,13 @@ func coerceScalar(meta *metamodel.Metamodel, prop *metamodel.PropertyDef, raw an
 	}
 }
 
-// coerceInt binds an integer field, preserving the permissive coercion
-// (int/int64/integral-float64/parseable-string). A fractional float or
-// non-numeric string binds Nil (no silent truncation).
+// coerceInt binds an integer field by [propmatch.Integer], the rule the
+// store's integer range predicate shares. A fractional float, an
+// out-of-range value or a non-numeric string binds Nil (no silent
+// truncation).
 func coerceInt(raw any) predicate.Value {
-	switch v := raw.(type) {
-	case int:
-		return predicate.NewInt(int64(v))
-	case int64:
-		return predicate.NewInt(v)
-	case float64:
-		if v == math.Trunc(v) {
-			return predicate.NewInt(int64(v))
-		}
-	case string:
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-			return predicate.NewInt(n)
-		}
+	if n, ok := propmatch.Integer(raw); ok {
+		return predicate.NewInt(n)
 	}
 	return predicate.NewNil()
 }

@@ -222,3 +222,10 @@ func BuildVisibleSearchSQLForTest(
 func BuildSearchSQLForTest(needle string, limit int, w store.WorldScope) (sqlText string, args []any) {
 	return buildSearchSQL(needle, limit, w)
 }
+
+// IntegerExprForTest exposes integerExpr, so a test can run it on raw JSON
+// texts no Go encoder writes.
+func IntegerExprForTest(txt, jsn string) string { return integerExpr(txt, jsn) }
+
+// UnmarshalPropsForTest exposes unmarshalProps, the decode every read uses.
+func UnmarshalPropsForTest(raw []byte) (map[string]any, error) { return unmarshalProps(raw) }

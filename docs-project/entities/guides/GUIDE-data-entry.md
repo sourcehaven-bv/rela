@@ -2367,6 +2367,11 @@ no `due` is an error, so write:
 entity.due ~= nil and entity.due < today()
 ```
 
+An ordered comparison on a string or integer property is the exception: on a
+row where the property is not set, or does not hold a string or an integer, it
+is `false`, and `not (...)` around it is `true`. The store answers such a
+condition in its query and reads the property the same way.
+
 #### Dates, times and the current day
 
 `today()` is the current day in UTC, at 00:00:00. `now()` is the current

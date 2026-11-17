@@ -13,7 +13,7 @@ var unselectedGraphQueryAllowlist = map[string]allowed{
 		"readquery.go's; each executor stamps a selection onto a copy"},
 	"internal/acl/readquery.go": {1, "the ACL read query is a template; each executor stamps a " +
 		"selection onto a copy"},
-	"internal/appbuild/conditionlower.go": {5, "a lowered condition is a fragment (all five are \"no query\" " +
+	"internal/appbuild/conditionlower.go": {6, "a lowered condition is a fragment (all six are \"no query\" " +
 		"returns); the caller merges it into a selected query"},
 	"internal/appbuild/queryscopes.go":    {1, "a \"no query\" return of the scope lowering"},
 	"internal/dataentry/gantt_handler.go": {1, "completed by stampScope before it runs"},
