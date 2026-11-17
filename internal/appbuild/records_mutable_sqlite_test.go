@@ -100,7 +100,7 @@ func TestRecords_MutableUpdateDeleteSQLite(t *testing.T) {
 	require.Empty(t, page.Records)
 
 	var ops []string
-	for _, r := range sink.Records() {
+	for _, r := range auditOf(t, svc, sink) {
 		if r.Subject != nil && r.Subject.Kind == "record" && r.Subject.ID == id {
 			ops = append(ops, r.Op)
 		}

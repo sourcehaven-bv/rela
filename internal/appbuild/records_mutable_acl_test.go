@@ -119,10 +119,21 @@ func mutableACLCaller(t *testing.T, svc *appbuild.Services, user string) context
 	return boundAs(t, svc, principal.Principal{User: user, Tool: principal.ToolMCP})
 }
 
+// auditOf returns the audit records: from the database log on a database
+// tier, where it replaces the configured sink, else from sink.
+func auditOf(t *testing.T, svc *appbuild.Services, sink *audit.Memory) []audit.Record {
+	t.Helper()
+	if log := svc.AuditLog(); log != nil {
+		return settledSQLAudit(t, log)
+	}
+	return sink.Records()
+}
+
 // recordAuditLines returns the audit lines about record id.
-func recordAuditLines(sink *audit.Memory, id string) []audit.Record {
+func recordAuditLines(t *testing.T, svc *appbuild.Services, sink *audit.Memory, id string) []audit.Record {
+	t.Helper()
 	var out []audit.Record
-	for _, r := range sink.Records() {
+	for _, r := range auditOf(t, svc, sink) {
 		if r.Subject != nil && r.Subject.Kind == "record" && r.Subject.ID == id {
 			out = append(out, r)
 		}
@@ -150,13 +161,13 @@ func TestRecords_MutableChangeGatedThroughPolicy(t *testing.T) {
 	t.Run("read without update is forbidden and audited", func(t *testing.T) {
 		svc, rs, sink, id, _ := mutableACLServices(t)
 		rita := mutableACLCaller(t, svc, "rita")
-		before := len(recordAuditLines(sink, id))
+		before := len(recordAuditLines(t, svc, sink, id))
 
 		_, err := rs.Update(rita, "note", id, change)
 		require.ErrorIs(t, err, records.ErrForbidden)
 		require.ErrorIs(t, rs.Delete(rita, "note", id, 0), records.ErrForbidden)
 
-		lines := recordAuditLines(sink, id)[before:]
+		lines := recordAuditLines(t, svc, sink, id)[before:]
 		require.Len(t, lines, 2, "one denied-write line per refusal")
 		for _, l := range lines {
 			require.Equal(t, audit.OpDeniedWrite, l.Op)
@@ -172,7 +183,7 @@ func TestRecords_MutableChangeGatedThroughPolicy(t *testing.T) {
 	t.Run("hidden owner is not found and not audited", func(t *testing.T) {
 		svc, rs, sink, id, _ := mutableACLServices(t)
 		olly := mutableACLCaller(t, svc, "olly")
-		before := len(sink.Records())
+		before := len(auditOf(t, svc, sink))
 
 		_, err := rs.Update(olly, "note", id, change)
 		require.ErrorIs(t, err, records.ErrNotFound)
@@ -181,20 +192,20 @@ func TestRecords_MutableChangeGatedThroughPolicy(t *testing.T) {
 		// A stale revision tells nothing about a hidden row.
 		require.ErrorIs(t, rs.Delete(olly, "note", id, 7), records.ErrNotFound)
 
-		require.Len(t, sink.Records(), before, "no audit line shows that a hidden row exists")
+		require.Len(t, auditOf(t, svc, sink), before, "no audit line shows that a hidden row exists")
 		requireRowUnchanged(t, svc, rs, "note", "DEV-1", id)
 	})
 
 	t.Run("update on only some faces is forbidden", func(t *testing.T) {
 		svc, rs, sink, _, gid := mutableACLServices(t)
 		dave := mutableACLCaller(t, svc, "dave")
-		before := len(recordAuditLines(sink, gid))
+		before := len(recordAuditLines(t, svc, sink, gid))
 
 		_, err := rs.Update(dave, "gnote", gid, change)
 		require.ErrorIs(t, err, records.ErrForbidden)
 		require.ErrorIs(t, rs.Delete(dave, "gnote", gid, 0), records.ErrForbidden)
 
-		lines := recordAuditLines(sink, gid)[before:]
+		lines := recordAuditLines(t, svc, sink, gid)[before:]
 		require.Len(t, lines, 2)
 		for _, l := range lines {
 			require.Equal(t, audit.OpDeniedWrite, l.Op)
@@ -208,7 +219,7 @@ func TestRecords_MutableChangeGatedThroughPolicy(t *testing.T) {
 
 	t.Run("no bound identity fails closed", func(t *testing.T) {
 		svc, rs, sink, id, _ := mutableACLServices(t)
-		before := len(sink.Records())
+		before := len(auditOf(t, svc, sink))
 		for name, ctx := range map[string]context.Context{
 			"bare":         context.Background(),
 			"stamped only": principal.With(context.Background(), principal.Principal{User: "kim"}),
@@ -219,7 +230,7 @@ func TestRecords_MutableChangeGatedThroughPolicy(t *testing.T) {
 				require.ErrorIs(t, rs.Delete(ctx, "note", id, 0), acl.ErrNoIdentity)
 			})
 		}
-		require.Len(t, sink.Records(), before)
+		require.Len(t, auditOf(t, svc, sink), before)
 		requireRowUnchanged(t, svc, rs, "note", "DEV-1", id)
 	})
 }
