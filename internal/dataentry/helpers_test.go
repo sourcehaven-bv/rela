@@ -792,7 +792,7 @@ func TestResolveFilterVariable(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := resolveFilterVariable(tt.input, tt.user)
+			got := resolveFilterVariable(tt.input, tt.user, nowFunc())
 			if got != tt.want {
 				t.Errorf("resolveFilterVariable(%q) = %q, want %q", tt.input, got, tt.want)
 			}
@@ -820,7 +820,7 @@ func TestResolveFilterVariablesInList(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := resolveFilterVariablesInList(tt.input, "alice")
+			got := resolveFilterVariablesInList(tt.input, "alice", nowFunc())
 			if got != tt.want {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}

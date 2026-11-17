@@ -461,7 +461,7 @@ mail_templates:
     sections:
       - title: "Overdue"
         entity_type: task
-        where: ["status != done", "due < today"]
+        where: ["status != done", "due < $today"]
         columns: [title, due, owner]
 ```
 
@@ -509,7 +509,7 @@ mail_templates:
     require_visible_content: true
     sections:
       - entity_type: task
-        where: ["status != done", "due < today"]
+        where: ["status != done", "due < $today"]
         columns: [title, due]
 ```
 

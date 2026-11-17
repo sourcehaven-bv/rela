@@ -408,7 +408,7 @@ func (b *caldavBackend) listTodos(ctx context.Context, name string) ([]caldav.Ca
 	if err != nil {
 		return nil, err
 	}
-	filters, err := filter.ParseAll(cfg.Where)
+	filters, err := parseWhereAt(cfg.Where, requestReadTime(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("caldav %q: %w", name, err)
 	}
@@ -673,6 +673,12 @@ func (b *caldavBackend) watermarkCTag(
 	// between them must not see a matching tag. The seq alone would collide.
 	h := sha256.New()
 	fmt.Fprintf(h, "wm:%d:%s:%d", len(name), name, seq)
+	// A `where:` with a date variable selects by the read time too: at
+	// midnight a `due>=$today` entry leaves the collection with no entity
+	// write. Fold each resolved value in, so the tag moves when it does.
+	for _, v := range resolvedDateVariables(cfg.Where, requestReadTime(ctx)) {
+		fmt.Fprintf(h, ":%d:%s", len(v), v)
+	}
 	sum := h.Sum(nil)
 	return `"` + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sum[:10]) + `"`, true, nil
 }
@@ -701,4 +707,21 @@ func (b *caldavBackend) collectionCTag(ctx context.Context, name string) (string
 	}
 	sum := h.Sum(nil)
 	return `"` + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sum[:10]) + `"`, nil
+}
+
+// resolvedDateVariables returns the value of each date variable in where at
+// the read time now, in clause order. A clause that does not parse is
+// skipped: listing the collection reports it.
+func resolvedDateVariables(where []string, now time.Time) []string {
+	var out []string
+	for _, clause := range where {
+		f, err := filter.Parse(clause)
+		if err != nil {
+			continue
+		}
+		if v, ok := filter.ResolveDateVariable(f.Value, now); ok {
+			out = append(out, v)
+		}
+	}
+	return out
 }

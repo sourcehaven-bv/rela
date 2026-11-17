@@ -14,8 +14,8 @@ var identityEdgeAllowlist = map[string]allowed{
 		"via the principal_property lookup"},
 	"internal/aclmap/whocan.go": {2, "maps a raw principal to its user entity for the report, " +
 		"via the principal_property lookup"},
-	"internal/appbuild/appbuild.go": {1, "rebindFor: the gated-read bundle's Rebind, built on " +
-		"identityBinderFor so a long-lived reader re-resolves through the same edge step"},
+	"internal/appbuild/appbuild.go": {1, "rebindFor: the gated-read bundle's Rebind; a long-lived " +
+		"reader (MCP watch, stdio MCP) re-resolves per call and starts a new read time each time"},
 	"internal/appbuild/automationjobs.go": {1, "servicesJobRunner.BindIdentity: a background job is its " +
 		"own edge; it binds through identityBinderFor"},
 	"internal/appbuild/flowruntime.go": {1, "buildFlowEngine: a flow step is its own edge; it writes " +
