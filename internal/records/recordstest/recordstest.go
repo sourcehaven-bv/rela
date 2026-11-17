@@ -54,6 +54,25 @@ func RunAll(t *testing.T, newStore Factory) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) { tc.fn(t, newStore(t)) })
 	}
+	mutators := []struct {
+		name string
+		fn   func(t *testing.T, s records.Store, m records.Mutator)
+	}{
+		{"Replace", testReplace},
+		{"ReplaceMovesTS", testReplaceMovesTS},
+		{"Delete", testDelete},
+		{"ConcurrentReplace", testConcurrentReplace},
+	}
+	for _, tc := range mutators {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newStore(t)
+			m, ok := s.(records.Mutator)
+			if !ok {
+				t.Skip("the store is not a records.Mutator")
+			}
+			tc.fn(t, s, m)
+		})
+	}
 }
 
 func appendRows(t *testing.T, s records.Store, rows ...records.Record) {
@@ -299,4 +318,91 @@ func testBadCursor(t *testing.T, s records.Store) {
 	t.Helper()
 	_, err := s.List(context.Background(), records.ListQuery{Type: "m", After: "nonsense"})
 	require.ErrorIs(t, err, records.ErrInvalid)
+}
+
+// changed returns rec with fields, the next revision and an update stamp.
+func changed(rec records.Record, fields map[string]any) records.Record {
+	rec.Fields = fields
+	rec.Revision++
+	rec.UpdatedAt = T0.Add(time.Minute)
+	rec.UpdatedBy = "bob"
+	return rec
+}
+
+func testReplace(t *testing.T, s records.Store, m records.Mutator) {
+	t.Helper()
+	ctx := context.Background()
+	appendRows(t, s, Row("a", "m", "O", 0, map[string]any{"v": int64(1)}), Row("b", "m", "O", time.Hour, nil))
+	got, err := m.Get(ctx, "m", "a")
+	require.NoError(t, err)
+	require.Equal(t, int64(0), got.Revision)
+	require.True(t, got.UpdatedAt.IsZero())
+
+	next := changed(got, map[string]any{"v": int64(2), "note": "x"})
+	require.NoError(t, m.Replace(ctx, next))
+	got, err = m.Get(ctx, "m", "a")
+	require.NoError(t, err)
+	require.Equal(t, next, got)
+	require.Equal(t, []string{"a", "b"}, ids(listAll(t, s, records.ListQuery{Type: "m", Owner: "O"})))
+
+	require.ErrorIs(t, m.Replace(ctx, next), records.ErrStale, "the revision moved on")
+	other := changed(got, nil)
+	other.Owner = "P"
+	require.ErrorIs(t, m.Replace(ctx, other), records.ErrNotFound, "the owner of a row does not change")
+	missing := changed(Row("zz", "m", "O", 0, nil), nil)
+	require.ErrorIs(t, m.Replace(ctx, missing), records.ErrNotFound)
+	_, err = m.Get(ctx, "n", "a")
+	require.ErrorIs(t, err, records.ErrNotFound, "a row is found under its own type only")
+}
+
+func testReplaceMovesTS(t *testing.T, s records.Store, m records.Mutator) {
+	t.Helper()
+	ctx := context.Background()
+	appendRows(t, s, Row("a", "m", "O", 0, nil), Row("b", "m", "O", time.Hour, nil))
+	next := changed(Row("a", "m", "O", 0, nil), map[string]any{})
+	next.TS = T0.Add(24 * 40 * time.Hour)
+	require.NoError(t, m.Replace(ctx, next))
+	got := listAll(t, s, records.ListQuery{Type: "m", Owner: "O"})
+	require.Equal(t, []string{"b", "a"}, ids(got), "the row sorts by its new ts")
+	require.True(t, got[1].TS.Equal(next.TS))
+	require.Empty(t, listAll(t, s, records.ListQuery{Type: "m", To: T0.Add(time.Minute)}))
+}
+
+func testDelete(t *testing.T, s records.Store, m records.Mutator) {
+	t.Helper()
+	ctx := context.Background()
+	appendRows(t, s, Row("a", "m", "O", 0, nil), Row("b", "m", "O", time.Hour, nil))
+	require.ErrorIs(t, m.Delete(ctx, "m", "a", 1), records.ErrStale)
+	require.ErrorIs(t, m.Delete(ctx, "m", "zz", 0), records.ErrNotFound)
+	require.NoError(t, m.Delete(ctx, "m", "a", 0))
+	require.Equal(t, []string{"b"}, ids(listAll(t, s, records.ListQuery{Type: "m"})))
+	require.ErrorIs(t, m.Delete(ctx, "m", "a", 0), records.ErrNotFound)
+	require.NoError(t, m.Delete(ctx, "m", "b", 0))
+	owners, err := s.Owners(ctx, "m")
+	require.NoError(t, err)
+	require.Empty(t, owners, "an owner with no rows left is not listed")
+}
+
+func testConcurrentReplace(t *testing.T, s records.Store, m records.Mutator) {
+	t.Helper()
+	appendRows(t, s, Row("a", "m", "O", 0, nil))
+	const n = 8
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := range n {
+		wg.Go(func() {
+			errs[i] = m.Replace(context.Background(),
+				changed(Row("a", "m", "O", 0, nil), map[string]any{"v": int64(i)}))
+		})
+	}
+	wg.Wait()
+	won := 0
+	for _, err := range errs {
+		if err == nil {
+			won++
+			continue
+		}
+		require.ErrorIs(t, err, records.ErrStale)
+	}
+	require.Equal(t, 1, won, "of changes that read one revision, one lands")
 }

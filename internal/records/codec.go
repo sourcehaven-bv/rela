@@ -73,5 +73,8 @@ func DecodeRecord(line []byte) (Record, error) {
 	rec.Fields = f
 	rec.TS = rec.TS.UTC()
 	rec.RecordedAt = rec.RecordedAt.UTC()
+	if !rec.UpdatedAt.IsZero() {
+		rec.UpdatedAt = rec.UpdatedAt.UTC()
+	}
 	return rec, nil
 }

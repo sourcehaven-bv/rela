@@ -1,4 +1,4 @@
--- pgstore schema, version 48: records follow their owner (TKT-J7Q9C4K).
+-- pgstore schema, version 49: records follow their owner (TKT-J7Q9C4K).
 --
 -- A record row belongs to an owner entity, the whole face family. When the
 -- family leaves the database for good its rows go with it; when it is

@@ -2133,6 +2133,7 @@ deps:
   # acl, store nor visibility: a record is not graph content.
   records:
     mayDependOn:
+      - audit
       - entity
       - metamodel
       - principal
