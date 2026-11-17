@@ -205,10 +205,10 @@ func resolveListNarrowing(
 //
 // Every narrowing must be one the store applies. A scope and a condition are
 // only when they lower exactly (queryplan.LowerCondition: TKT-XKCNCL,
-// TKT-I39Y7N4); one using an ordered comparison or a disjunction has a
-// Go-side remainder, and a store-side page computed without it would
-// paginate over rows it excludes: wrong counts and wrong page boundaries, not
-// merely extra rows. A condition also needs every field it reads visible on
+// TKT-I39Y7N4, TKT-8HY05WB); one that does not, such as a comparison of
+// two attributes, has a Go-side remainder, and a store-side page computed
+// without it would paginate over rows it excludes: wrong counts and wrong
+// page boundaries, not merely extra rows. A condition also needs every field it reads visible on
 // every row ([lowerViewCondition]). Declining is always correct, only slower.
 // The plan's own checks run before the narrowings are lowered, because
 // lowering gates every traversal and that work is wasted on a request the
