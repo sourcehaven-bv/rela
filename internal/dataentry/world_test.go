@@ -97,6 +97,8 @@ func TestWorldCapablePath(t *testing.T) {
 		{"/api/v1/_documents/report", false, "document render and its cache key are world-blind"},
 		{"/api/v1/_position", true, "position recomputes a search or list page's set in its world (BUG-SMPOZB)"},
 		{"/api/v1/_page_status", true, "a step is judged over the rows its list shows in the world (TKT-MWZF0UO)"},
+		{"/api/v1/_dashboard/card", true, "a list card counts the list's rows in the world (TKT-2SGPJZ)"},
+		{"/api/v1/_dashboard", false, "only the card value is named"},
 		{"/api/v1/_analyze", false, "whole-graph, tracer-backed"},
 		{"/api/v1/_piles", true, "pile counts resolve items in the request's world (TKT-K3RJLH)"},
 		{"/api/v1/_piles/PIL-ABCD", true, "one pile's items resolve in the request's world"},

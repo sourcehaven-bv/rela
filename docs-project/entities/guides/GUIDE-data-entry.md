@@ -10363,9 +10363,14 @@ default-world data under it.
 | `/api/v1/_views/{type}/{id}` | Yes. A view's `where:` clauses evaluate against the resolved face |
 | `/api/v1/_history/{type}/{id}` | Yes. Versioning is per face on the database backends, so the history is the served face's own. `{id}` may be `ID@face` |
 | `/api/v1/_next_action` | Yes, as the display world for `visible_worlds` |
-| `/api/v1/_search` | Yes. The command palette, search page and entity picker send the page's world. Dashboard cards count in the default world |
+| `/api/v1/_search` | Yes. The command palette, search page and entity picker send the page's world. A dashboard card with `query:` is counted through this route in the default world |
 | `/api/v1/_position` | Yes. Prev/next within a search or list runs in the same world as the results it steps through |
-| Documents, feeds, analysis, sync, attachments, export, relation sub-resources, standalone views by name | No. An explicit `?world=` is refused with `422 world_unsupported` |
+| `/api/v1/_page_status` | Yes. A step is judged over the rows its list shows in the page's world |
+| `/api/v1/_dashboard/card` | Yes. A card with `list:` counts the list's rows in the page's world, the world its click-through list opens in |
+| `/api/v1/_piles`, `/api/v1/_piles/{id}` and `/api/v1/_piles/{id}/_export` | Yes. A pile's items resolve in the request's world. Adding or removing items is a write and is refused |
+| `/api/v1/{plural}/{id}/_export` | Yes. The export of one entity reads the entity and its neighbours in the same world as the detail page |
+| `/api/v1/{plural}/{id}/mentioned-by` | Yes. Backlinks are read in the same world as the entity |
+| Documents, feeds, analysis, sync, attachments, list export (`/api/v1/{plural}/_export`), relation sub-resources, standalone views by name | No. An explicit `?world=` is refused with `422 world_unsupported` |
 
 Search under a world matches the text of the face the world resolves, and an
 entity the world excludes has nothing to match. Neighbours reached through
