@@ -58,7 +58,7 @@ func PolicyChannelService(s *Services) (*realtime.Service, func(context.Context)
 	if err != nil {
 		return nil, nil, err
 	}
-	return svc, identityBinderFor(d), nil
+	return svc, identityBinderFor(d, servicesClock(s)), nil
 }
 
 // policyChannelService is [PolicyChannelService] without the binder: it
@@ -86,7 +86,8 @@ func policyChannelService(s *Services) (*realtime.Service, *acl.Declarative, err
 		return nil, nil, err
 	}
 	// Outputs, like a promote, write through s's manager under s's policy.
-	outputs, err := newManagerOutputs(s.entityManager, s.Store(), s.base.meta, join, s.ACLDeclarative())
+	outputs, err := newManagerOutputs(
+		s.entityManager, s.Store(), s.base.meta, join, s.ACLDeclarative(), servicesClock(s))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -137,7 +138,7 @@ func buildRealtimeService(
 	if err != nil {
 		return nil, err
 	}
-	outputs, err := newManagerOutputs(mgr, st, base.meta, join, d)
+	outputs, err := newManagerOutputs(mgr, st, base.meta, join, d, base.clock())
 	if err != nil {
 		return nil, err
 	}

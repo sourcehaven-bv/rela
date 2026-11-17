@@ -837,7 +837,7 @@ type servicesJobRunner struct{ s *Services }
 func (r servicesJobRunner) ScheduledLuaWriteDeps() lua.WriteDeps { return r.s.ScheduledLuaWriteDeps() }
 
 func (r servicesJobRunner) BindIdentity(ctx context.Context) (context.Context, error) {
-	return identityBinderFor(r.s.aclDeclarative)(ctx)
+	return identityBinderFor(r.s.aclDeclarative, servicesClock(r.s))(ctx)
 }
 
 func (r servicesJobRunner) ExecuteFile(ctx context.Context, path string, deps lua.WriteDeps, e *entity.Entity) error {

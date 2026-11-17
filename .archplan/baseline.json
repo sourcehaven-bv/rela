@@ -2791,30 +2791,11 @@
       "largest_tangle": 14,
       "cycle_edges": 67,
       "upward_edges": 0,
-      "propagation_cost": 9.1
+      "propagation_cost": 9.2
     },
     "min_weight": 0,
-    "at": "2026-11-17T00:40:00Z",
+    "at": "2026-11-17T02:00:00Z",
     "log": [
-      {
-        "at": "2026-11-08T09:45:36Z",
-        "change": "loosen",
-        "reason": "Multi-tenant host and tenant erasure (TKT-D6MF3SW, TKT-TNERAS): cmdServer now wires tenant and tenanthost, and the erase command edge links mostly to tenant",
-        "metrics": {
-          "weight.concepts": [
-            7083,
-            7081
-          ],
-          "weight.boundaries": [
-            1387,
-            1417
-          ],
-          "propagation_cost": [
-            9.0,
-            9.1
-          ]
-        }
-      },
       {
         "at": "2026-11-08T11:46:31Z",
         "change": "tighten",
@@ -3118,7 +3099,18 @@
         }
       },
       {
-        "at": "2026-11-17T00:40:00Z",
+        "at": "2026-11-17T01:30:00Z",
+        "change": "loosen",
+        "reason": "TKT-08ZI5XN: the new leaf readtime carries the request read time for today() and now(); the request edges (dataentry, appbuild, scheduler) and the readers (filter, predicatefns, lua, validation) import it, so most components now reach it. The edge is intended. Only propagation_cost changes; the traced weights keep their values.",
+        "metrics": {
+          "propagation_cost": [
+            9.1,
+            9.2
+          ]
+        }
+      },
+      {
+        "at": "2026-11-17T02:00:00Z",
         "change": "loosen",
         "reason": "TKT-RK810V7: RecordRow.Fields adds 1 to accepted untyped_bag-5de1e6eb61d7; dataentry records wiring tips the words factor of accepted misplaced_file-f03fc91c99b4 (+6)",
         "metrics": {

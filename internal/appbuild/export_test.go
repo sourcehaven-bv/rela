@@ -46,7 +46,7 @@ func OutputsFor(s *Services, join bool) (realtime.OutputWriter, error) {
 	if !join {
 		j = nil
 	}
-	return newManagerOutputs(s.entityManager, s.store, s.meta, j, s.aclDeclarative)
+	return newManagerOutputs(s.entityManager, s.store, s.meta, j, s.aclDeclarative, time.Now)
 }
 
 // DetachChannelHintsForTest detaches s's hint endpoint, so its sends fail

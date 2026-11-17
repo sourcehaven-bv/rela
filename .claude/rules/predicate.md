@@ -26,7 +26,7 @@ dependencies and conservative SQL-portability metadata. Context profiles may
 enable or refuse language features, but an accepted IR node must keep identical
 semantics across evaluators and future targets. `internal/predicatefns` is its
 metamodel-aware glue: the `ScalarType`/`EntityRecordType` type adapter, the
-host-fn stdlib (`match`/`regex`/`fuzzy`/`contains`/`len`/`today`), the
+host-fn stdlib (`match`/`regex`/`fuzzy`/`contains`/`len`/`today`/`now`), the
 `FromFilter` transpiler, and the `Evaluator` (compile-once, metamodel-scoped
 Program cache). New condition/`when:`-style code evaluates through `predicate`.
 
