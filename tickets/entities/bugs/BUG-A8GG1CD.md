@@ -4,7 +4,15 @@ type: bug
 title: Server fails to start when RELA_DATABASE_URL sets pool_max_conns
 description: tenant.RefuseTenantDatabase and other tenant pgx.Connect calls forward pool_max_conns to Postgres, which rejects the startup.
 priority: high
-status: backlog
+why1: tenant.RefuseTenantDatabase and the other tenant direct-connect sites passed the full RELA_DATABASE_URL to pgx.Connect, which forwards unknown pool_* keys such as pool_max_conns to Postgres as runtime parameters.
+why2: Each call site opened its own connection with pgx.Connect(ctx, dsn) instead of going through one helper that strips pool-only settings.
+why3: The same defect was fixed locally in the pgstore listener (BUG-JQO2PH); the fix was not generalized and nothing stopped new pgx.Connect calls.
+why4: No test ran the tenant startup guard or provisioning with a pool_* key in the DSN.
+why5: The operator DSN is a pool DSN by contract, but no code owned the conversion to a direct-connect config.
+prevention: pgstore.ConnectDirect parses with pgxpool.ParseConfig and connects with its ConnConfig; every direct connection uses it. internal/archguard TestNoDirectPgxConnect forbids pgx.Connect in non-test code with an empty allowlist.
+started: "2026-11-16"
+completed: "2026-11-16"
+status: done
 ---
 
 ## Summary

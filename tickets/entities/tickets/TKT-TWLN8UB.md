@@ -5,7 +5,9 @@ title: 'Flows M1j: db load copies unfinished runs into sqlite'
 kind: enhancement
 priority: medium
 effort: s
-status: backlog
+started: "2026-11-16"
+completed: "2026-11-16"
+status: done
 ---
 
 ## Description
