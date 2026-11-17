@@ -227,3 +227,45 @@ func TestTitleSkipsHandlerClosures(t *testing.T) {
 		})
 	}
 }
+
+func TestStepIn(t *testing.T) {
+	roots, err := Read(strings.NewReader(trace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	collapse := regexp.MustCompile(`^internal/entity$`)
+	tests := []struct {
+		name string
+		opt  Options
+		want map[string]string
+	}{
+		{
+			name: "a helper's call lists the helper, the handler's own call lists nothing",
+			opt:  Options{Collapse: collapse},
+			want: map[string]string{"handle": "", "Get": "helper", "Record": "Clone", "run": ""},
+		},
+		{
+			name: "a relabelled root lists the real root first",
+			opt:  Options{Collapse: collapse, RootLabel: "named"},
+			want: map[string]string{"named": "", "Get": "handle,helper", "Record": "handle,Clone", "run": "handle"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := map[string]string{}
+			var walk func(s Step)
+			walk = func(s Step) {
+				if !s.IsLoop() {
+					got[s.Fn] = strings.Join(s.In, ",")
+				}
+				for _, c := range s.Children {
+					walk(c)
+				}
+			}
+			walk(Build(roots[0], tc.opt).Root)
+			if fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Errorf("In per step = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

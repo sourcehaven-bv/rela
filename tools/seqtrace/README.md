@@ -45,6 +45,12 @@ returned false, and `status:<code>` on the root when the response was a 4xx.
 The archplan exporter reads these, and the archplan security detectors use
 them to see which requests were refused.
 
+The diagram leaves out calls inside one package, so a call made by a helper
+is drawn as a call of the function above it. A step in `steps.json` has `in`
+for that case: the functions between the call drawn above and the call
+itself, outermost first. A reader uses it to tell one shared helper from
+steps that several handlers each make themselves. `seqtrace diff` ignores it.
+
 ## Postgres and ACL demo
 
 ```bash
