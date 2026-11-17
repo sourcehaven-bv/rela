@@ -1387,14 +1387,14 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		realtimeLocal:  refs.realtimeLocal,
 		dueWake:        refs.dueWake,
 	}
-	s.newScriptHolders()
+	newScriptHolders(s)
 	return s, nil
 }
 
 // newScriptHolders installs the empty holders the data-entry host fills in
 // later: the rela.attach_render and rela.attach_file backends and the
 // background llm action runner.
-func (s *Services) newScriptHolders() {
+func newScriptHolders(s *Services) {
 	s.attachRender = &attachRenderHolder{}
 	s.attachFile = &attachFileHolder{}
 	s.llmActions = &llmActionHolder{}
@@ -3293,7 +3293,7 @@ func finishAssembly(
 	s.records, s.recordStore = refs.records, refs.recordStore
 	s.channels = refs.channels
 	// Before the flow engine, whose job runner runs llm actions through it.
-	s.newScriptHolders()
+	newScriptHolders(s)
 	flowEngine, err := buildFlowEngine(s, refs.flowRuns)
 	if err != nil {
 		return nil, fmt.Errorf("flows: %w", err)

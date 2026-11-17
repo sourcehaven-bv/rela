@@ -7548,8 +7548,8 @@ kanbans:
 | ----- | ----------- |
 | `max` | How many entities one run takes (default 20, at most 50). `max` times `inputs.content.max_chars` may be at most 200000 |
 
-A batch action proposes property values only, so `inputs.related` and
-`outputs.relate` are refused.
+A batch action proposes property values only, so `inputs.related`,
+`outputs.relate`, `outputs.create` and `apply: auto` are refused.
 
 **Where it runs.** List it in a list's `actions:` to run it on the selected
 rows, or in a kanban board's `actions:` to show it as a button in the board's

@@ -119,8 +119,8 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 		return fmt.Errorf("wire attach_file: %w", err)
 	}
 
-	if err = llmActions(app, svc); err != nil {
-		return err
+	if llmErr := llmActions(app, svc); llmErr != nil {
+		return llmErr
 	}
 
 	// The reconcile endpoint (TKT-VP02WHG). A build failure is returned, not
