@@ -9,6 +9,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/actionproposal"
 	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -27,6 +28,32 @@ const llmChatTimeout = 2 * time.Minute
 // llmCandidatePage is how many candidate rows one condition evaluation
 // judges at once.
 const llmCandidatePage = 64
+
+// llm runs an `llm:` action: it proposes, or for `apply: auto` queues a
+// background run, or in that background run applies what it proposed.
+func (o actionOps) llm(
+	ctx context.Context, s *Schema, id string, action dataentryconfig.Action,
+	raw, subject *entityPkg.Entity, deps lua.WriteDeps,
+) (*script.ActionResponse, *opFailure) {
+	if !autoLLM(action) {
+		return o.runLLM(ctx, s, id, action, raw, subject, deps)
+	}
+	if !o.background {
+		return o.enqueueLLM(ctx, id, raw)
+	}
+	resp, fail := o.runLLM(ctx, s, id, action, raw, subject, deps)
+	if fail != nil {
+		return nil, fail
+	}
+	applied, err := o.applyProposal(ctx, resp.Proposal)
+	if err != nil {
+		// Not retryable: another attempt would ask the model again.
+		f := failV1(http.StatusUnprocessableEntity, "apply_failed", "The proposed changes could not be applied")
+		f.detail = err.Error()
+		return nil, f
+	}
+	return &script.ActionResponse{Message: applied.message(), MessageType: "success"}, nil
+}
 
 // runLLM runs an `llm:` action on the bound entity and returns its proposal.
 // It writes nothing: the caller applies what it accepts through the ordinary
@@ -51,13 +78,18 @@ func (o actionOps) runLLM(
 		Subject:   subject,
 		Writable:  o.llmWritable(ctx, raw, task.Config().Outputs.Set),
 		Relatable: o.llmRelatable(ctx, raw, task.Config().Outputs.Relate),
+		Creatable: o.llmCreatable(ctx, raw, task.Config().Outputs.Create),
 	}
-	if len(in.Writable) == 0 && len(in.Relatable) == 0 {
+	if len(in.Writable) == 0 && len(in.Relatable) == 0 && len(in.Creatable) == 0 {
 		return nil, failV1(http.StatusForbidden, "nothing_to_propose",
 			fmt.Sprintf("action %q has no output you may change on this entity", id))
 	}
 
 	in.Related, err = llmRelated(ctx, deps, s, subject, task.Config().Inputs.Related)
+	if err != nil {
+		return nil, failLLMInternal(err)
+	}
+	in.CreateExisting, err = llmCreateExisting(ctx, deps, s, subject.ID, task.Config().Outputs.Create, in.Creatable)
 	if err != nil {
 		return nil, failLLMInternal(err)
 	}
@@ -69,7 +101,7 @@ func (o actionOps) runLLM(
 	// Every output the caller may change is a relation with no readable
 	// target: the model could only answer "nothing", so it is not asked.
 	hasCandidate := slices.ContainsFunc(in.Candidates, func(c llmtask.Candidates) bool { return len(c.Items) > 0 })
-	if len(in.Writable) == 0 && !hasCandidate {
+	if len(in.Writable) == 0 && len(in.Creatable) == 0 && !hasCandidate {
 		return &script.ActionResponse{Proposal: actionproposal.Empty(subject.Ref().String())}, nil
 	}
 
@@ -187,6 +219,35 @@ func (o actionOps) llmRelatable(
 	return out
 }
 
+// llmCreatable is the relations of outputs.create whose entity type the
+// caller may create. For an outgoing relation the caller must also be able
+// to create it from raw; an incoming one starts at the new entity, which
+// does not exist yet, so its create is authorized when the user applies it.
+func (o actionOps) llmCreatable(
+	ctx context.Context, raw *entityPkg.Entity, create []dataentryconfig.LLMCreateOutput,
+) []string {
+	if len(create) == 0 {
+		return nil
+	}
+	var rv RelationVerdicts
+	var out []string
+	for _, c := range create {
+		if !o.h.affordances.computeCollectionActions(ctx, c.Type)["create"] {
+			continue
+		}
+		if c.Outgoing() {
+			if rv.Types == nil {
+				rv = o.h.affordances.outgoingRelationVerdicts(ctx, raw)
+			}
+			if v, ok := rv.Types[c.Relation]; ok && !v.Creatable {
+				continue
+			}
+		}
+		out = append(out, c.Relation)
+	}
+	return out
+}
+
 // llmRelated reads inputs.related through the caller's reader: the edges
 // whose both ends they may read, then the peers, capped per input.
 func llmRelated(
@@ -260,6 +321,10 @@ func (o actionOps) llmCandidates(
 			return nil, err
 		}
 		cands := &out[i]
+		cands.Existing = len(existing)
+		if rd := s.Meta.Relations[r.Relation]; rd.MaxOutgoing != nil && len(existing) >= *rd.MaxOutgoing {
+			continue // no room for another; the model is not offered any
+		}
 		for _, target := range s.Meta.Relations[r.Relation].To {
 			var m ViewConditionMatcher
 			if r.Candidates != "" {
@@ -307,10 +372,19 @@ func (o actionOps) collectCandidates(
 		}
 		return false, nil
 	}
+	rqr := readGateFromContext(ctx).ReadQuery(ctx, target)
+	if m != nil {
+		frag, empty, lowered := lowerViewCondition(ctx, s.Meta, m, o.h.affordances.resolver(), target)
+		switch {
+		case lowered && empty:
+			return false, nil
+		case lowered:
+			return o.collectLoweredCandidates(ctx, s, subjectID, target, rqr, frag, r, existing, cands)
+		}
+	}
 	// The list path's gated header read: row-gated in the store query, in
 	// the request's world, with no bodies. Each page is redacted once
 	// before the condition sees it.
-	rqr := readGateFromContext(ctx).ReadQuery(ctx, target)
 	headers, _, err := scopedHeaders(ctx, Services{Store: o.h.store}, rqr, scopeRequest{Type: target, Faces: rqr.Faces})
 	if err != nil {
 		return false, fmt.Errorf("llm action: read %s candidates: %w", target, err)
@@ -330,6 +404,47 @@ func (o actionOps) collectCandidates(
 		if full, err := flush(); err != nil || full {
 			return full, err
 		}
+	}
+	return false, nil
+}
+
+// collectLoweredCandidates is collectCandidates for a `candidates:`
+// condition that lowers exactly (lowerViewCondition): the store applies it,
+// so the read is one bounded page of the rows still needed, plus one to
+// skip the subject and one to tell a full list from a truncated one. Every
+// field the condition reads is visible to the caller on every row, so the
+// store judges the same value the Go path would judge on the redacted row.
+func (o actionOps) collectLoweredCandidates(
+	ctx context.Context, s *Schema, subjectID, target string, rqr acl.ReadQueryResult, frag store.GraphQuery,
+	r dataentryconfig.LLMRelateOutput, existing map[string]bool, cands *llmtask.Candidates,
+) (bool, error) {
+	q, errClass, withheld, err := scopedQuery(ctx, rqr, scopeRequest{Type: target, Faces: rqr.Faces})
+	if withheld || err != nil {
+		return false, err
+	}
+	q.Props = append(q.Props, frag.Props...)
+	q.Related = append(append([]store.DirectedRelation(nil), q.Related...), frag.Related...)
+	q.Limit = r.EffectiveLimit() - len(cands.Items) + 2
+	headers, err := collectHeaders(ctx, Services{Store: o.h.store}, q, errClass)
+	if err != nil {
+		return false, fmt.Errorf("llm action: read %s candidates: %w", q.EntityType, err)
+	}
+	raw := make([]*entityPkg.Entity, 0, len(headers))
+	for _, h := range headers {
+		if h.ID != subjectID {
+			raw = append(raw, headerEntity(h))
+		}
+	}
+	red := affRedactor{aff: func() affordanceService { return o.h.affordances }}
+	pctx := visibility.PrimeTraversals(ctx, red, raw)
+	for _, e := range raw {
+		if len(cands.Items) == r.EffectiveLimit() {
+			cands.Truncated = true
+			return true, nil
+		}
+		item := llmtask.NewItem(s.Meta, visibility.Redact(pctx, red, e), r.Fields)
+		item.Related = existing[e.ID]
+		cands.Items = append(cands.Items, item)
 	}
 	return false, nil
 }
@@ -384,6 +499,35 @@ func (o actionOps) llmConditions(s *Schema) (ViewConditionLookup, error) {
 		return nil, fmt.Errorf("llm action: conditions did not compile: %v", problems)
 	}
 	return lookup, nil
+}
+
+// llmCreateExisting counts, for each creatable outputs.create relation that
+// has a cardinality on the subject's side, the relations of that type the
+// subject already has as the caller sees them.
+func llmCreateExisting(
+	ctx context.Context, deps lua.WriteDeps, s *Schema, subjectID string,
+	create []dataentryconfig.LLMCreateOutput, creatable []string,
+) (map[string]int, error) {
+	out := map[string]int{}
+	for _, c := range create {
+		rd := s.Meta.Relations[c.Relation]
+		dir, limit := store.DirectionOutgoing, rd.MaxOutgoing
+		if !c.Outgoing() {
+			dir, limit = store.DirectionIncoming, rd.MaxIncoming
+		}
+		if limit == nil || !slices.Contains(creatable, c.Relation) {
+			continue
+		}
+		for _, err := range deps.VisibleReader.ListRelations(ctx, store.RelationQuery{
+			EntityID: subjectID, Type: c.Relation, Direction: dir,
+		}) {
+			if err != nil {
+				return nil, fmt.Errorf("llm action: read %s relations: %w", c.Relation, err)
+			}
+			out[c.Relation]++
+		}
+	}
+	return out, nil
 }
 
 // llmExistingTargets is the set of entities the subject already points at

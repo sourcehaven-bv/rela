@@ -29,7 +29,7 @@ type MCPActions struct {
 // ListActions returns the actions the ctx principal may run; see
 // [actionOps.list].
 func (a MCPActions) ListActions(ctx context.Context, address string) ([]script.ActionInfo, error) {
-	list, fail := actionOps(a).list(ctx, address)
+	list, fail := actionOps{h: a.h}.list(ctx, address)
 	if fail != nil {
 		return nil, fail.actionError(ctx)
 	}
@@ -69,7 +69,7 @@ func (a MCPActions) RunAction(
 				"Ask the user, then run again with confirm=true: "+question)
 		}
 	}
-	resp, fail := actionOps(a).run(ctx, s, id, action, payload, confirm)
+	resp, fail := actionOps{h: a.h}.run(ctx, s, id, action, payload, confirm)
 	if fail != nil {
 		return nil, fail.actionError(ctx)
 	}

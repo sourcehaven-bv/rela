@@ -567,6 +567,10 @@
       "stale": "{property} is gewijzigd sinds het voorstel en is niet opgeslagen.",
       "saveFailed": "De wijzigingen konden niet worden opgeslagen",
       "linkFailed": "Kon {relation} naar {title} niet toevoegen: {reason}",
+      "records": "Nieuwe records",
+      "newRecord": "{relation}: nieuw {type}",
+      "createFailed": "Kon het nieuwe {type} voor {relation} niet aanmaken: {reason}",
+      "createUnlinked": "{id} is aangemaakt, maar kon niet als {relation} worden gekoppeld: {reason}. Koppel of verwijder het zelf.",
       "model": "Voorgesteld door {model}"
     },
     "llmBatch": {

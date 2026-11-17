@@ -2784,7 +2784,7 @@
       "weight.layers": 0,
       "weight.vocabulary": 872,
       "weight.types": 3972,
-      "weight.concepts": 7203,
+      "weight.concepts": 7204,
       "weight.boundaries": 1428,
       "weight.data": 1298,
       "weight.security": 2064,
@@ -2796,6 +2796,17 @@
     "min_weight": 0,
     "at": "2026-11-17T01:30:00Z",
     "log": [
+      {
+        "at": "2026-11-17T00:00:00Z",
+        "change": "loosen",
+        "reason": "TKT-WQ925LL: ProposedRecord.properties carries proposed property values, like ActionProposal.set, raising the accepted api untyped-bag finding by 1",
+        "metrics": {
+          "weight.concepts": [
+            7203,
+            7204
+          ]
+        }
+      },
       {
         "at": "2026-11-08T09:00:00Z",
         "change": "loosen",

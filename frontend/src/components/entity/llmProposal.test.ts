@@ -37,6 +37,32 @@ describe('planApply', () => {
   })
 })
 
+describe('planApply create', () => {
+  it('plans only the selected new records', () => {
+    const withCreate: ActionProposal = {
+      ...proposal,
+      create: [
+        {
+          type: 'task',
+          relation: 'has-task',
+          outgoing: true,
+          properties: [{ property: 'title', current: null, proposed: 'A' }],
+        },
+        {
+          type: 'task',
+          relation: 'has-task',
+          outgoing: true,
+          properties: [{ property: 'title', current: null, proposed: 'B' }],
+        },
+      ],
+    }
+    const plan = planApply(withCreate, new Set(), new Set(), {}, new Set([1]))
+    expect(plan.records).toEqual([
+      { index: 1, record: withCreate.create![1], properties: { title: 'B' } },
+    ])
+  })
+})
+
 describe('formatProposalValue', () => {
   it('renders empty, lists and scalars', () => {
     expect(formatProposalValue(null)).toBe('—')

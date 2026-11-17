@@ -13,9 +13,9 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useModalStack } from '@/composables/modalStack'
 import { useSchemaStore, useUIStore } from '@/stores'
-import { createRelation, getEntity, updateEntity } from '@/api/entities'
+import { createEntity, createRelation, deleteEntity, getEntity, updateEntity } from '@/api/entities'
 import { getErrorMessage } from '@/api/errors'
-import type { ActionProposal } from '@/api/actions'
+import type { ActionProposal, ProposedRecord } from '@/api/actions'
 import { formatProposalValue, planApply, relationKey } from './llmProposal'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlButtonGroup from 'rela-components/components/common/RlButtonGroup.vue'
@@ -53,37 +53,97 @@ const selectedSet = ref(
   new Set(props.proposal.set.filter((c) => !isFreeText(c.property)).map((c) => c.property))
 )
 const selectedRelate = ref(new Set(props.proposal.relate.map(relationKey)))
+const records = computed(() => props.proposal.create ?? [])
+// A new record starts unticked when any of its values is free text, for the
+// same reason as a property.
+const selectedCreate = ref(
+  new Set(
+    records.value.flatMap((r, i) =>
+      r.properties.some((v) => isFreeText(v.property, r.type)) ? [] : [i]
+    )
+  )
+)
 // Items already written, or skipped as stale, by an earlier apply. They are
 // unchecked and locked, so applying again never sends them twice.
 const settledSet = ref(new Set<string>())
 const settledRelate = ref(new Set<string>())
+const settledCreate = ref(new Set<number>())
 const busy = ref(false)
 const failures = ref<string[]>([])
 
-const empty = computed(() => props.proposal.set.length === 0 && props.proposal.relate.length === 0)
+const empty = computed(
+  () =>
+    props.proposal.set.length === 0 &&
+    props.proposal.relate.length === 0 &&
+    records.value.length === 0
+)
 const nothingChecked = computed(
-  () => selectedSet.value.size === 0 && selectedRelate.value.size === 0
+  () =>
+    selectedSet.value.size === 0 &&
+    selectedRelate.value.size === 0 &&
+    selectedCreate.value.size === 0
 )
 
-function isFreeText(name: string): boolean {
-  const def = schemaStore.getEntityType(props.entityType)?.properties?.[name]
+function isFreeText(name: string, type = props.entityType): boolean {
+  const def = schemaStore.getEntityType(type)?.properties?.[name]
   if (!def) return true
   return !def.values?.length && !CONSTRAINED_TYPES.has(def.type)
 }
 
-function propertyLabel(name: string): string {
-  return schemaStore.getEntityType(props.entityType)?.properties?.[name]?.label || name
+function propertyLabel(name: string, type = props.entityType): string {
+  return schemaStore.getEntityType(type)?.properties?.[name]?.label || name
+}
+
+function typeLabel(type: string): string {
+  return schemaStore.getEntityType(type)?.label || type
+}
+
+function recordSummary(r: ProposedRecord): string {
+  return r.properties
+    .map((v) => `${propertyLabel(v.property, r.type)}: ${formatProposalValue(v.proposed)}`)
+    .join(' · ')
+}
+
+/** The new record was made, but neither linked nor removed again. */
+class KeptRecord extends Error {
+  constructor(
+    readonly id: string,
+    readonly cause: unknown
+  ) {
+    super(id)
+  }
+}
+
+// createRecord makes the record and links it. When the link fails it removes
+// the record again, so a retry does not make a second one. When that also
+// fails it throws KeptRecord, and the caller settles the row instead.
+async function createRecord(r: ProposedRecord, properties: Record<string, unknown>) {
+  const created = await createEntity(r.type, { properties })
+  try {
+    if (r.outgoing) {
+      await createRelation(props.entityType, props.proposal.entity, r.relation, created.id)
+    } else {
+      await createRelation(r.type, created.id, r.relation, props.proposal.entity)
+    }
+  } catch (err) {
+    try {
+      await deleteEntity(r.type, created.id)
+    } catch {
+      throw new KeptRecord(created.id, err)
+    }
+    throw err
+  }
 }
 
 function relationLabel(name: string): string {
   return schemaStore.getRelationType(name)?.label || name
 }
 
-function toggle(set: Set<string>, key: string) {
+function toggle<K>(set: Set<K>, key: K) {
   if (!set.delete(key)) set.add(key)
 }
 
-function settle(selected: Set<string>, settled: Set<string>, key: string) {
+function settle<K>(selected: Set<K>, settled: Set<K>, key: K) {
   selected.delete(key)
   settled.add(key)
 }
@@ -98,7 +158,8 @@ async function apply() {
       props.proposal,
       selectedSet.value,
       selectedRelate.value,
-      fresh.properties ?? {}
+      fresh.properties ?? {},
+      selectedCreate.value
     )
     const failed: string[] = []
     for (const p of plan.stale) {
@@ -122,6 +183,31 @@ async function apply() {
           t('entity.llmProposal.linkFailed', {
             relation: relationLabel(r.relation),
             title: r.title,
+            reason: getErrorMessage(err),
+          })
+        )
+      }
+    }
+    for (const r of plan.records) {
+      try {
+        await createRecord(r.record, r.properties)
+        settle(selectedCreate.value, settledCreate.value, r.index)
+      } catch (err) {
+        if (err instanceof KeptRecord) {
+          settle(selectedCreate.value, settledCreate.value, r.index)
+          failed.push(
+            t('entity.llmProposal.createUnlinked', {
+              id: err.id,
+              relation: relationLabel(r.record.relation),
+              reason: getErrorMessage(err.cause),
+            })
+          )
+          continue
+        }
+        failed.push(
+          t('entity.llmProposal.createFailed', {
+            relation: relationLabel(r.record.relation),
+            type: typeLabel(r.record.type),
             reason: getErrorMessage(err),
           })
         )
@@ -182,6 +268,24 @@ async function apply() {
           :label="`${relationLabel(r.relation)}: ${r.to_title} (${r.to})`"
           @update:model-value="toggle(selectedRelate, relationKey(r))"
         />
+      </fieldset>
+
+      <fieldset v-if="records.length" class="llm-proposal-group">
+        <legend>{{ t('entity.llmProposal.records') }}</legend>
+        <div v-for="(r, i) in records" :key="i" class="llm-proposal-row">
+          <RlCheckbox
+            :model-value="selectedCreate.has(i)"
+            :disabled="settledCreate.has(i)"
+            :label="
+              t('entity.llmProposal.newRecord', {
+                relation: relationLabel(r.relation),
+                type: typeLabel(r.type),
+              })
+            "
+            @update:model-value="toggle(selectedCreate, i)"
+          />
+          <span class="llm-proposal-change">{{ recordSummary(r) }}</span>
+        </div>
       </fieldset>
 
       <ul v-if="failures.length" class="llm-proposal-failures" role="alert">
