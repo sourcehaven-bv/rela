@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/configedit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/flowcfg"
@@ -57,24 +58,8 @@ func (e requestEditor) Grants(role string, verb acl.Verb, entityType string, fac
 	return e.req.RoleGrantsVerbOnFace(role, verb, entityType, face)
 }
 
-// TriggerACLInput is a change to the flows.yaml triggers, or to the schema
-// they fire on, and the editor who makes it. Flows fields are nil when
-// flows.yaml is absent.
-type TriggerACLInput struct {
-	ACL                       []byte
-	SchemaBefore, SchemaAfter []byte
-	FlowsBefore, FlowsAfter   []byte
-	Editor                    TriggerEditor
-}
-
-// TriggerACLProblem is why one trigger is refused.
-type TriggerACLProblem struct {
-	Trigger string
-	Message string
-}
-
 // CheckTriggerACL judges an edit of the flows.yaml triggers made in the
-// Configure space against acl.yaml. A trigger output runs as a cascade of
+// Configure space by editor against acl.yaml. A trigger output runs as a cascade of
 // the write that fired it, without the row ACL or the field gate, so a
 // trigger edited there:
 //
@@ -101,18 +86,18 @@ type TriggerACLProblem struct {
 // abstract or wildcard grant covers the types the draft adds.
 //
 // An error means the edit could not be judged; the caller refuses it.
-func CheckTriggerACL(in TriggerACLInput) ([]TriggerACLProblem, error) {
-	if in.Editor == nil {
+func CheckTriggerACL(in configedit.TriggerEdit, editor TriggerEditor) ([]configedit.TriggerProblem, error) {
+	if editor == nil {
 		return nil, errors.New("no editor to judge the change for")
 	}
 	if len(bytes.TrimSpace(in.ACL)) == 0 {
 		return nil, errors.New("acl.yaml is absent or empty")
 	}
-	before, err := newTriggerJudge(in.ACL, in.SchemaBefore, in.FlowsBefore, in.Editor)
+	before, err := newTriggerJudge(in.ACL, in.SchemaBefore, in.FlowsBefore, editor)
 	if err != nil {
 		return nil, fmt.Errorf("the configuration as read: %w", err)
 	}
-	after, err := newTriggerJudge(in.ACL, in.SchemaAfter, in.FlowsAfter, in.Editor)
+	after, err := newTriggerJudge(in.ACL, in.SchemaAfter, in.FlowsAfter, editor)
 	if err != nil {
 		return nil, fmt.Errorf("the configuration as saved: %w", err)
 	}
@@ -151,10 +136,10 @@ func CheckTriggerACL(in TriggerACLInput) ([]TriggerACLProblem, error) {
 }
 
 // triggerProblems collects problems once each, in the order found.
-type triggerProblems struct{ list []TriggerACLProblem }
+type triggerProblems struct{ list []configedit.TriggerProblem }
 
 func (p *triggerProblems) add(trigger, msg string) {
-	got := TriggerACLProblem{Trigger: trigger, Message: fmt.Sprintf("Automation %q %s", trigger, msg)}
+	got := configedit.TriggerProblem{Trigger: trigger, Message: fmt.Sprintf("Automation %q %s", trigger, msg)}
 	if !slices.Contains(p.list, got) {
 		p.list = append(p.list, got)
 	}

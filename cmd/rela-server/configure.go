@@ -199,20 +199,7 @@ func (h configureHost) CheckTriggers(
 	if err != nil {
 		return nil, err
 	}
-	found, err := appbuild.CheckTriggerACL(appbuild.TriggerACLInput{
-		ACL:          edit.ACL,
-		SchemaBefore: edit.SchemaBefore, SchemaAfter: edit.SchemaAfter,
-		FlowsBefore: edit.FlowsBefore, FlowsAfter: edit.FlowsAfter,
-		Editor: editor,
-	})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]configedit.TriggerProblem, 0, len(found))
-	for _, f := range found {
-		out = append(out, configedit.TriggerProblem{Trigger: f.Trigger, Message: f.Message})
-	}
-	return out, nil
+	return appbuild.CheckTriggerACL(edit, editor)
 }
 
 // Count counts the records of entityType whose property holds value, or any

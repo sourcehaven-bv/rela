@@ -1001,6 +1001,9 @@ deps:
       - elementnaive
       # writerule: CheckSchemaCompiles compiles the rules enforced on write.
       - writerule
+      # configedit: CheckTriggerACL answers configedit.TriggerChecker in its
+      # own types.
+      - configedit
       # aclstore: the store adapters handed to acl.NewDeclarative.
       - aclstore
       # The stored IdP roles, over the state KV and the Services-wide lock.

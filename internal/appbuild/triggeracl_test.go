@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/configedit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
@@ -261,12 +262,11 @@ func TestCheckTriggerACL(t *testing.T) {
 				aclText = strings.Replace(aclText, "    permissions: [config:edit]\n",
 					"    permissions: [config:edit]\n"+tc.acl, 1)
 			}
-			got, err := CheckTriggerACL(TriggerACLInput{
+			got, err := CheckTriggerACL(configedit.TriggerEdit{
 				ACL:          []byte(aclText),
 				SchemaBefore: []byte(triggerACLSchema), SchemaAfter: []byte(schemaAfter),
 				FlowsBefore: []byte(before), FlowsAfter: []byte(tc.after),
-				Editor: tc.editor,
-			})
+			}, tc.editor)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -288,33 +288,39 @@ func TestCheckTriggerACL(t *testing.T) {
 }
 
 func TestCheckTriggerACL_FailsClosed(t *testing.T) {
-	good := TriggerACLInput{
-		ACL:          []byte(triggerACLBase),
-		SchemaBefore: []byte(triggerACLSchema), SchemaAfter: []byte(triggerACLSchema),
-		FlowsBefore: []byte(triggerACLFlows), FlowsAfter: []byte(triggerACLFlows),
+	type input struct {
+		configedit.TriggerEdit
+		Editor TriggerEditor
+	}
+	good := input{
+		TriggerEdit: configedit.TriggerEdit{
+			ACL:          []byte(triggerACLBase),
+			SchemaBefore: []byte(triggerACLSchema), SchemaAfter: []byte(triggerACLSchema),
+			FlowsBefore: []byte(triggerACLFlows), FlowsAfter: []byte(triggerACLFlows),
+		},
 		Editor: fakeEditor{},
 	}
 	tests := []struct {
 		name string
-		edit func(*TriggerACLInput)
+		edit func(*input)
 		want string
 	}{
-		{"no editor", func(in *TriggerACLInput) { in.Editor = nil }, "no editor"},
-		{"no acl.yaml", func(in *TriggerACLInput) { in.ACL = nil }, "acl.yaml is absent"},
-		{"a broken acl.yaml", func(in *TriggerACLInput) { in.ACL = []byte("roles: [") }, "acl"},
-		{"acl.yaml names an unknown user type", func(in *TriggerACLInput) {
+		{"no editor", func(in *input) { in.Editor = nil }, "no editor"},
+		{"no acl.yaml", func(in *input) { in.ACL = nil }, "acl.yaml is absent"},
+		{"a broken acl.yaml", func(in *input) { in.ACL = []byte("roles: [") }, "acl"},
+		{"acl.yaml names an unknown user type", func(in *input) {
 			in.ACL = []byte(strings.Replace(triggerACLBase, "user_entity_type: person", "user_entity_type: ghost", 1))
 		}, "ghost"},
-		{"a broken trigger", func(in *TriggerACLInput) {
+		{"a broken trigger", func(in *input) {
 			in.FlowsAfter = []byte("triggers:\n  x:\n    on: {entity: ghost, created: true}\n")
 		}, "as saved"},
-		{"a broken schema", func(in *TriggerACLInput) { in.SchemaBefore = []byte("entities: [") }, "as read"},
+		{"a broken schema", func(in *input) { in.SchemaBefore = []byte("entities: [") }, "as read"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			in := good
 			tc.edit(&in)
-			_, err := CheckTriggerACL(in)
+			_, err := CheckTriggerACL(in.TriggerEdit, in.Editor)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want one containing %q", err, tc.want)
 			}
