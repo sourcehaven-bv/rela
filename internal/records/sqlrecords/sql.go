@@ -55,6 +55,7 @@ func New(db sqlexec.DB, name string) (*Store, error) {
 func (s *Store) wrap(op string, err error) error {
 	if err == nil || errors.Is(err, records.ErrGroupExists) || errors.Is(err, records.ErrInvalid) ||
 		errors.Is(err, records.ErrNotFound) || errors.Is(err, records.ErrStale) {
+
 		return err
 	}
 	return fmt.Errorf("%s: %s: %w", s.name, op, err)
@@ -264,8 +265,8 @@ func (s *Store) Get(ctx context.Context, typ, id string) (records.Record, error)
 	}
 	defer rows.Close()
 	if !rows.Next() {
-		if err := rows.Err(); err != nil {
-			return records.Record{}, s.wrap("get", err)
+		if rerr := rows.Err(); rerr != nil {
+			return records.Record{}, s.wrap("get", rerr)
 		}
 		return records.Record{}, fmt.Errorf("%w: record %s", records.ErrNotFound, id)
 	}
@@ -282,12 +283,12 @@ func (s *Store) Replace(ctx context.Context, rec records.Record) error {
 		return err
 	}
 	err = s.db.Transact(ctx, func(q sqlexec.Querier) error {
-		n, err := q.Exec(ctx, `UPDATE records SET ts = ?, doc = ?, updated_at = ?, updated_by = ?, revision = ?
+		n, uerr := q.Exec(ctx, `UPDATE records SET ts = ?, doc = ?, updated_at = ?, updated_by = ?, revision = ?
 			WHERE type = ? AND id = ? AND owner = ? AND revision = ?`,
 			records.Micros(rec.TS), doc, updatedMicros(rec), rec.UpdatedBy, rec.Revision,
 			rec.Type, rec.ID, rec.Owner, rec.Revision-1)
-		if err != nil || n == 1 {
-			return err
+		if uerr != nil || n == 1 {
+			return uerr
 		}
 		return s.missOrStale(ctx, q, rec.Type, rec.ID, rec.Owner)
 	})

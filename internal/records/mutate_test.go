@@ -2,6 +2,7 @@ package records_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,6 +79,7 @@ func TestUpdate_ChangesRowAndAudits(t *testing.T) {
 	require.Equal(t, audit.OpUpdateRecord, lines[0].Op)
 	require.Equal(t, &audit.Subject{Kind: "record", Type: "hours", ID: id}, lines[0].Subject)
 	require.Equal(t, "bob", lines[0].Principal.User)
+	require.Contains(t, lines[0].Summary, "fields: hours, note")
 
 	_, err = s.Update(ctx, "hours", id, records.Change{Revision: 0, Fields: map[string]any{"hours": "9"}})
 	require.ErrorIs(t, err, records.ErrStale)
@@ -132,14 +134,14 @@ func TestChange_Refuses(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			_, err := s.Update(ctx, tc.typ, tc.id, records.Change{Fields: map[string]any{"hours": "2"}})
-			require.ErrorIs(t, err, tc.want)
+			_, uerr := s.Update(ctx, tc.typ, tc.id, records.Change{Fields: map[string]any{"hours": "2"}})
+			require.ErrorIs(t, uerr, tc.want)
 			require.ErrorIs(t, s.Delete(ctx, tc.typ, tc.id, 0), tc.want)
 		})
 	}
 	// A stale revision on a hidden row is still not found: the revision is
 	// compared only after access.
-	_, err = s.Update(ctx, "hours", rows[0].ID, records.Change{Revision: 9})
+	_, err = s.Update(ctx, "hours", rows[0].ID, records.Change{Revision: 9, Fields: map[string]any{"hours": "2"}})
 	require.ErrorIs(t, err, records.ErrNotFound)
 }
 
@@ -172,4 +174,65 @@ records:
       txn: {type: string, required: true}
 `))
 	require.ErrorContains(t, err, "a ledger cannot be mutable")
+}
+
+// A field the schema no longer declares does not lock old rows: a change
+// drops it.
+func TestUpdate_DropsUndeclaredStoredField(t *testing.T) {
+	st, err := filerecords.New(storage.NewMemFS(), "/records", filelock.ProcessPrivate{})
+	require.NoError(t, err)
+	o := &owners{types: map[string]string{"SITE-1": "site"}, props: map[string]map[string]any{},
+		hidden: map[string]bool{}, readOnly: map[string]bool{}}
+	service := func(schemaText string) *records.Service {
+		meta, perr := metamodel.Parse([]byte(schemaText))
+		require.NoError(t, perr)
+		s, serr := records.NewService(records.Deps{Store: st, Owners: o, Meta: meta, Audit: audit.NewMemory()})
+		require.NoError(t, serr)
+		return s
+	}
+	ctx := withUser("alice")
+	rows, err := service(mutableSchema).Append(ctx, "hours", []records.Input{
+		{Owner: "SITE-1", Fields: map[string]any{"hours": "1", "note": "old"}},
+	})
+	require.NoError(t, err)
+
+	withoutNote := strings.Replace(mutableSchema, "      note: {type: string}\n", "", 1)
+	got, err := service(withoutNote).Update(ctx, "hours", rows[0].ID,
+		records.Change{Revision: rows[0].Revision, Fields: map[string]any{"hours": "2"}})
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{"hours": "2"}, got.Fields)
+}
+
+func TestUpdate_RefusesEmptyChange(t *testing.T) {
+	s, _, sink := newMutableService(t)
+	ctx := withUser("alice")
+	rows, err := s.Append(ctx, "hours", []records.Input{{Owner: "SITE-1", Fields: map[string]any{"hours": "1"}}})
+	require.NoError(t, err)
+	_, err = s.Update(ctx, "hours", rows[0].ID, records.Change{Revision: rows[0].Revision})
+	require.ErrorIs(t, err, records.ErrInvalid)
+	require.Empty(t, sink.Records())
+}
+
+// A change refused on a readable owner is audited as denied; one on a hidden
+// owner is not, so the log never shows that a hidden row exists.
+func TestChange_AuditsDenial(t *testing.T) {
+	s, o, sink := newMutableService(t)
+	ctx := withUser("alice")
+	rows, err := s.Append(ctx, "hours", []records.Input{
+		{Owner: "SITE-2", Fields: map[string]any{"hours": "1"}},
+		{Owner: "SITE-3", Fields: map[string]any{"hours": "1"}},
+	})
+	require.NoError(t, err)
+	o.hidden["SITE-2"] = true
+	o.readOnly["SITE-3"] = true
+
+	require.ErrorIs(t, s.Delete(ctx, "hours", rows[0].ID, 0), records.ErrNotFound)
+	require.Empty(t, sink.Records())
+
+	require.ErrorIs(t, s.Delete(ctx, "hours", rows[1].ID, 0), records.ErrForbidden)
+	lines := sink.Records()
+	require.Len(t, lines, 1)
+	require.Equal(t, audit.OpDeniedWrite, lines[0].Op)
+	require.Equal(t, &audit.Subject{Kind: "record", Type: "hours", ID: rows[1].ID}, lines[0].Subject)
+	require.Equal(t, "alice", lines[0].Principal.User)
 }

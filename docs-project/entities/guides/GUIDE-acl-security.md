@@ -1987,6 +1987,12 @@ that rolls back (SQLite, PostgreSQL); other stores answer 501.
   answers 404, and append answers 403, where a fully readable owner answers
   200 or 201. An aggregate without an owner filter answers 200 and leaves
   the owner's rows out. This is listed under "What still leaks".
+- **Changing a row of a mutable type needs update on every face** of its
+  owner, the same as appending (TKT-ERO2X5G). A row whose owner the caller
+  cannot read answers 404 like a row that does not exist. The stored
+  revision is compared only after both checks, so a 409 never confirms a
+  hidden row. A change refused on a readable owner writes a `denied-write`
+  audit line; a request on a hidden owner writes nothing.
 - **Aggregates gate before they fold.** An aggregate or a ledger
   transaction counts only rows whose owners the caller can read. A
   transaction with a hidden leg answers 404.

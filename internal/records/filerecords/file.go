@@ -508,29 +508,28 @@ func (s *Store) Expire(ctx context.Context, typ string, before time.Time) (int64
 // find returns the month file holding row id of type typ and the rows of
 // that file. It reads every owner of the type: the fs tier is one local
 // user, so a scan is fine.
-func (s *Store) find(typ, id string) (string, []records.Record, int, error) {
+func (s *Store) find(typ, id string) (file string, rows []records.Record, at int, err error) {
 	owners, err := s.owners(typ)
 	if err != nil {
 		return "", nil, -1, err
 	}
 	for _, o := range owners {
 		dir := s.ownerDir(typ, o)
-		ents, err := s.readDir(dir)
-		if err != nil {
+		var ents []os.DirEntry
+		if ents, err = s.readDir(dir); err != nil {
 			return "", nil, -1, err
 		}
 		for _, e := range ents {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 				continue
 			}
-			p := path.Join(dir, e.Name())
-			rows, err := s.readFile(p)
-			if err != nil {
+			file = path.Join(dir, e.Name())
+			if rows, err = s.readFile(file); err != nil {
 				return "", nil, -1, err
 			}
 			for i, r := range rows {
 				if r.ID == id && r.Owner == o {
-					return p, rows, i, nil
+					return file, rows, i, nil
 				}
 			}
 		}
@@ -580,7 +579,9 @@ func (s *Store) Replace(ctx context.Context, rec records.Record) error {
 		return err
 	}
 	// Write the row's new place first: a failure between the two writes
-	// leaves the row twice, never lost.
+	// leaves the row twice, never lost. A copy left there by such a failure
+	// is replaced, so a retry heals it rather than adding a third.
+	moved = slices.DeleteFunc(moved, func(r records.Record) bool { return r.ID == rec.ID })
 	if err := s.writeFile(target, append(moved, rec)); err != nil {
 		return err
 	}

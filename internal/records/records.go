@@ -8,8 +8,8 @@
 // Rows are append-only unless their type is mutable (TKT-ERO2X5G). A mutable
 // row can be replaced or deleted one at a time, through the optional
 // [Mutator] capability of the backend. Its last change is on the row
-// ([Record.UpdatedBy], [Record.Revision]) and every change has an audit line,
-// because the row no longer holds its own history.
+// ([Record.UpdatedBy], [Record.Revision]) and every change has an audit line
+// that names who changed which fields. Earlier values are not kept.
 //
 // # Why this is not in the graph
 //
@@ -43,7 +43,9 @@
 //     stores nothing.
 //   - List orders rows by (TS, ID) and pages with an opaque cursor that
 //     stays valid while rows are appended. A row appended during paging
-//     with a TS before the cursor is not returned by later pages.
+//     with a TS before the cursor is not returned by later pages. A mutable
+//     row whose TS changes during paging may be returned twice or not at
+//     all.
 //   - Rows are never changed through Store. Only [Store.Expire],
 //     [Store.DropOwner] and [Store.RekeyOwner] touch stored rows; a
 //     [Mutator] replaces or deletes one row.
@@ -118,7 +120,8 @@ type Record struct {
 	UpdatedBy string `json:"updated_by,omitempty" yaml:"updated_by,omitempty"`
 	// Revision counts the changes to a mutable row; 0 for a row never
 	// changed. A change names the revision it read (see [ErrStale]).
-	Revision int64 `json:"revision,omitempty" yaml:"revision,omitempty"`
+	// Always on the wire, so a client can send back the 0 it read.
+	Revision int64 `json:"revision" yaml:"revision,omitempty"`
 	// Fields are the declared fields with a value. Values are string,
 	// int64 or bool; a decimal is its canonical text.
 	Fields map[string]any `json:"fields" yaml:"fields"`

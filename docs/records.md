@@ -96,8 +96,12 @@ the same row cannot overwrite each other unnoticed.
 
 A changed row records who changed it (`updated_by`) and when
 (`updated_at`). Every change and delete also writes a line to the audit log
-(`update-record` and `delete-record`), because the row no longer holds its
-earlier values.
+(`update-record` and `delete-record`). The line names who changed which
+fields, but not the values: earlier values are not kept. A change refused
+because you may read the owner but not update it writes a `denied-write`
+line.
+
+When a field is removed from the schema, a change drops it from the row.
 
 Reads, aggregates and retention work the same on mutable types.
 
