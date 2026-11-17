@@ -27,7 +27,7 @@ var (
 // recordsCardRange is the grammar the SPA reads a card's `range:` with:
 // digits and one unit. It is stricter than [metamodel.ParseRetention], which
 // also takes a sign, so a range the chart cannot read fails at load.
-var recordsCardRange = regexp.MustCompile(`^[0-9]+[hdwy]$`)
+var recordsCardRange = regexp.MustCompile(`^\d+[hdwy]$`)
 
 // validateRecordsCard checks a `display: line` card: it reads records, never
 // a list or a query, and its type, owners, field, bucket, range and stat

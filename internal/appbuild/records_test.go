@@ -388,6 +388,7 @@ func TestRecords_LuaAppendUsesOwnerGate(t *testing.T) {
 		rt := lua.NewWriter(svc.ScheduledLuaWriteDeps(), &out, lua.WithContext(ctx),
 			lua.WithPrincipal(principal.From(ctx)))
 		defer rt.Close()
+		//nolint:contextcheck // the runtime carries ctx via lua.WithContext
 		require.NoError(t, rt.RunString(`
 local rows, err = rela.append_records("reading", {
   {owner = "`+m+`", ts = "2026-01-05T10:00:00Z", fields = {kwh = "1.25"}},

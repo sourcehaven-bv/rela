@@ -67,6 +67,7 @@ rela.output(#rows .. " " .. rows[1].id .. " " .. rows[2].owner .. " " .. rows[1]
 	// A row without ts leaves it zero: the service stamps the append time.
 	if second.Owner != "MET-2" || !second.TS.IsZero() || second.Fields["value"] != int64(17) ||
 		second.Fields["ok"] != true {
+
 		t.Errorf("row 2 %+v", second)
 	}
 	if f.tag != "script" {

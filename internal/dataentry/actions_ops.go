@@ -97,21 +97,7 @@ func (o actionOps) run(
 	// reachable by anyone who may POST an action, so it is not an
 	// operator-shell surface and must not inherit a trusted default.
 	deps.Capabilities = luaCapabilities(action.Capabilities)
-	if h.versionTags != nil {
-		deps.VersionTags = h.versionTags()
-	}
-	if h.oauth != nil {
-		deps.OAuth = h.oauth()
-	}
-	if h.attachRender != nil {
-		deps.AttachRender = h.attachRender()
-	}
-	if h.attachFile != nil {
-		deps.AttachFile = h.attachFile()
-	}
-	if h.records != nil {
-		deps.Records = h.records()
-	}
+	h.addOptionalScriptDeps(&deps)
 	// The elevation scope must be the one the current config declares, as
 	// for the available_on gate below.
 	if action.AllowACLBypass.Enabled() && h.schema() != s {
@@ -364,4 +350,24 @@ func (f *opFailure) actionError(ctx context.Context) error {
 	}
 	f.logInternal(ctx, "actions: operation failed")
 	return &script.ActionError{Code: f.code, Title: f.title, Detail: f.detail, CorrelationID: f.correlationID}
+}
+
+// addOptionalScriptDeps fills the action script's optional collaborators:
+// each is set only when the server wired it.
+func (h *writeHandler) addOptionalScriptDeps(deps *lua.WriteDeps) {
+	if h.versionTags != nil {
+		deps.VersionTags = h.versionTags()
+	}
+	if h.oauth != nil {
+		deps.OAuth = h.oauth()
+	}
+	if h.attachRender != nil {
+		deps.AttachRender = h.attachRender()
+	}
+	if h.attachFile != nil {
+		deps.AttachFile = h.attachFile()
+	}
+	if h.records != nil {
+		deps.Records = h.records()
+	}
 }

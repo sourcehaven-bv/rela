@@ -183,7 +183,7 @@ func parseRecordRow(t *lua.LTable) (row RecordRow, bad string) {
 // recordFields converts a fields table to Go values. A field value is a
 // scalar: anything else (a table, a function) is refused here, rather than
 // becoming nil and failing later as a missing field.
-func recordFields(t *lua.LTable) (map[string]any, string) {
+func recordFields(t *lua.LTable) (fields map[string]any, problem string) {
 	out := map[string]any{}
 	bad := ""
 	t.ForEach(func(k, v lua.LValue) {
