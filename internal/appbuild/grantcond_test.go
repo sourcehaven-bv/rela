@@ -52,6 +52,7 @@ func TestValidateACLPolicy_GrantConditions(t *testing.T) {
 		{"valid_until today", "edge.valid_until >= today()", "", 1},
 		{"window", "edge.starts <= today() and edge.valid_until >= today()", "", 2},
 		{"flipped operands", "today() <= edge.valid_until", "", 1},
+		{"now", "edge.valid_until >= now()", "AND of comparisons", 0},
 		{"date literal", "edge.valid_until >= '2026-12-31'", "", 1},
 		{"datetime literal", "edge.valid_until >= '2026-12-31T10:00:00Z'", "time of day", 0},
 		{"string equality", "edge.kind == 'audit' and edge.valid_until >= today()", "", 2},

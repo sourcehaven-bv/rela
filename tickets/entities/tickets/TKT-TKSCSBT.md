@@ -48,3 +48,9 @@ batch, world grant, `ReadQuery`, `LocalRolePredicate`.
 ## Research
 
 See `.ignored/gap10-research.md` (summarised in the linked research entity).
+
+## Follow-up
+
+Issue #2417: the load accepted `now()` although the guide says it does not.
+A grant condition reads only date properties, so `now()` is refused at load
+and `today()` is the only read-time operand.

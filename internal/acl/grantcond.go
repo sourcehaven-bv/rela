@@ -50,8 +50,6 @@ const (
 	OperandLiteral GrantOperand = iota
 	// OperandToday compares with the UTC day of the request's read time.
 	OperandToday
-	// OperandNow compares with the request's read time.
-	OperandNow
 )
 
 // GrantTerm is one comparison `edge.<Property> <Op> <operand>`.
@@ -86,13 +84,13 @@ func (t GrantTerm) CheckShape() error {
 			return fmt.Errorf("grant condition: %s: literal %q is not a date", t.Property, t.Literal)
 		}
 	case t.Date:
-		if t.Operand != OperandToday && t.Operand != OperandNow {
+		if t.Operand != OperandToday {
 			return fmt.Errorf("grant condition: %s: unknown operand %d", t.Property, t.Operand)
 		}
 	default:
 		if t.Op != GrantEq || t.Operand != OperandLiteral || t.Literal == "" {
 			return fmt.Errorf("grant condition: %s: only a date may be ordered or compared "+
-				"with today() or now(); a string compares with == and a non-empty literal", t.Property)
+				"with today(); a string compares with == and a non-empty literal", t.Property)
 		}
 	}
 	return nil
@@ -100,22 +98,16 @@ func (t GrantTerm) CheckShape() error {
 
 // Bind lowers the condition at the read time at into the store predicates an
 // edge's properties must match. ok is false when no edge can match: a term
-// reads today() or now() and at is zero (no read time was captured, so the
-// grant fails closed), or `== now()` at an instant that is not a midnight.
+// reads today() and at is zero (no read time was captured, so the grant fails
+// closed).
 //
 // The predicates compare byte-wise, which is time order only for a
 // YYYY-MM-DD value. So every property a Date term reads also gets a
 // [store.PropIsDate] guard: an absent, empty, list or malformed value never
 // matches, in any direction.
 //
-// A date d stands for the instant d 00:00 UTC. Against an instant T with UTC
-// day D:
-//
-//	d >= T   d >= D, or d >= D+1 when T is not a midnight
-//	d >  T   d >= D+1
-//	d <= T   d <= D
-//	d <  T   d <= D-1, or d <= D when T is not a midnight
-//	d == T   d == D when T is a midnight, else never
+// today() is the UTC day of at. Against a day D, d > D lowers to d >= D+1 and
+// d < D to d <= D-1.
 func (c *GrantCondition) Bind(at time.Time) (preds []store.PropPredicate, ok bool) {
 	if c == nil {
 		return nil, true
@@ -131,21 +123,16 @@ func (c *GrantCondition) Bind(at time.Time) (preds []store.PropPredicate, ok boo
 			})
 			continue
 		}
-		var instant time.Time
+		var day time.Time
 		switch t.Operand {
 		case OperandLiteral:
-			instant, _ = time.Parse(dateLayout, t.Literal)
-		case OperandToday, OperandNow:
+			day, _ = time.Parse(dateLayout, t.Literal)
+		case OperandToday:
 			if at.IsZero() {
 				return nil, false
 			}
-			instant = at.UTC()
-			if t.Operand == OperandToday {
-				instant = instant.Truncate(utcDay)
-			}
+			day = at.UTC().Truncate(utcDay)
 		}
-		day := instant.Truncate(utcDay)
-		midnight := day.Equal(instant)
 		next := day.AddDate(0, 0, 1).Format(dateLayout)
 		prev := day.AddDate(0, 0, -1).Format(dateLayout)
 		base := day.Format(dateLayout)
@@ -158,17 +145,14 @@ func (c *GrantCondition) Bind(at time.Time) (preds []store.PropPredicate, ok boo
 		}
 		switch t.Op {
 		case GrantGE:
-			cmp = []store.PropPredicate{ge(pick(midnight, base, next))}
+			cmp = []store.PropPredicate{ge(base)}
 		case GrantGT:
 			cmp = []store.PropPredicate{ge(next)}
 		case GrantLE:
 			cmp = []store.PropPredicate{le(base)}
 		case GrantLT:
-			cmp = []store.PropPredicate{le(pick(midnight, prev, base))}
+			cmp = []store.PropPredicate{le(prev)}
 		case GrantEq:
-			if !midnight {
-				return nil, false
-			}
 			cmp = []store.PropPredicate{ge(base), le(base)}
 		}
 		if !guarded[t.Property] {
@@ -178,13 +162,6 @@ func (c *GrantCondition) Bind(at time.Time) (preds []store.PropPredicate, ok boo
 		preds = append(preds, cmp...)
 	}
 	return preds, true
-}
-
-func pick(cond bool, a, b string) string {
-	if cond {
-		return a
-	}
-	return b
 }
 
 // Properties returns the edge properties the condition reads, sorted.
