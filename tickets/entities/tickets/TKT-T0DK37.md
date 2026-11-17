@@ -46,3 +46,11 @@ Related: `rela-query-paging` (TKT-JU3S5N) may supply the bounding primitive.
 than a second independent constant.
 - Truncation is visible to the caller (not a silent drop) — mirror whatever the
 free-text path reports.
+
+## Allowlist entry
+
+The structured branch now runs through `searchPlan.page`
+(`internal/dataentry/searchplan.go`), which keeps a `requestPath` entry in
+`internal/archguard/unpagedread_allowlist_test.go` because a search without a
+limit reads every match. This ticket removes that entry. TKT-PSBGQLY lowers the
+query shapes the plan still declines.
