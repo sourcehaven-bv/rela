@@ -5,7 +5,7 @@ title: Refuse conditions that do not lower into a store query
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+status: backlog
 ---
 
 ## Description
