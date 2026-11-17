@@ -85,7 +85,7 @@ func mutableACLServices(t *testing.T) (svc *appbuild.Services, rs *records.Servi
 	require.NoError(t, err)
 	sink = audit.NewMemory()
 	svc, err = appbuild.New(appbuild.Config{
-		FS: fs, Paths: paths, ScriptEngine: script.NewEngine(), Audit: sink,
+		FS: fs, Paths: paths, ScriptEngine: script.NewEngine(), Audit: sink, DatabaseURL: backendtest.DSN(t),
 	}, backendtest.Options(t)...)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })

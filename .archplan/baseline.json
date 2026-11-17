@@ -2783,9 +2783,9 @@
       "weight.structure": 859,
       "weight.layers": 0,
       "weight.vocabulary": 872,
-      "weight.types": 3972,
-      "weight.concepts": 7203,
-      "weight.boundaries": 1422,
+      "weight.types": 3975,
+      "weight.concepts": 7204,
+      "weight.boundaries": 1423,
       "weight.data": 1298,
       "weight.security": 2064,
       "largest_tangle": 14,
@@ -3129,6 +3129,25 @@
           "weight.boundaries": [
             1428,
             1422
+          ]
+        }
+      },
+      {
+        "at": "2026-11-17T01:14:24Z",
+        "change": "loosen",
+        "reason": "TKT-ERO2X5G: mutable records add revision and update fields and a records.Change type, so accepted findings (metamodel stability, record field clumps and synonyms) weigh slightly more; no new findings",
+        "metrics": {
+          "weight.types": [
+            3972,
+            3975
+          ],
+          "weight.concepts": [
+            7203,
+            7204
+          ],
+          "weight.boundaries": [
+            1422,
+            1423
           ]
         }
       }
