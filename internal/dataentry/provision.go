@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
 )
 
 // maybeProvision implements `unmatched_principal: provision` (TKT-ANUJDS): when
@@ -65,6 +66,8 @@ func maybeProvision(
 		return ctx
 	}
 
+	// Both binds below judge conditional grants at this request's read time.
+	ctx = readtime.Ensure(ctx, nowFunc)
 	p := principal.From(ctx)
 	sub := p.User // the verified subject; the lookup found no entity for it
 

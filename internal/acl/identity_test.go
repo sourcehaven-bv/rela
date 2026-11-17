@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // TestResolve_SubstitutesAndKeepsClaims: a matched natural key replaces User
@@ -79,7 +80,7 @@ func TestResolve_LookupFailureIsAnError(t *testing.T) {
 // failingGraph fails every membership read.
 type failingGraph struct{ NullGraph }
 
-func (failingGraph) OutgoingRelations(context.Context, string, string) ([]string, error) {
+func (failingGraph) OutgoingRelations(context.Context, string, string, []store.PropPredicate) ([]string, error) {
 	return nil, errors.New("graph down")
 }
 

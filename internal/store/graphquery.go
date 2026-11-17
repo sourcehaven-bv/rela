@@ -387,6 +387,23 @@ const (
 	// [ValidatePropPredicates]). A non-object value, a missing entry and a
 	// non-string entry never match.
 	PropKeyEqual
+	// PropIsDate matches when the property is a string of the form
+	// YYYY-MM-DD, ASCII digits only (TKT-TKSCSBT). Value must be empty.
+	//
+	// It is the shape guard an ordered comparison on a `date` needs to
+	// fail closed: byte order equals time order only for that shape, so
+	// `valid_until >= 2026-11-16` alone admits a stored `3` or `TBD`. The
+	// ACL pairs the two for a conditional grant edge, where admitting a
+	// malformed value would be a grant nobody wrote.
+	//
+	// The shape is checked, not the calendar: `2026-02-30` matches and
+	// orders between the 28th and March 1st. Writes validate dates against
+	// the schema, so such a value comes only from outside the API.
+	//
+	// The graphquerynaive reading also accepts a time.Time at UTC midnight,
+	// which is how yaml.v3 decodes an unquoted date in a file backend. The
+	// SQL backends hold JSON, where that type cannot occur.
+	PropIsDate
 )
 
 // UnknownPropOpError is the [ErrInvalidQuery] for an operator a backend
@@ -403,6 +420,11 @@ func ValidatePropPredicates(props []PropPredicate) error {
 	for _, p := range props {
 		switch p.Op {
 		case PropEqual, PropNotEqual, PropNotEqualOrEmpty, PropGreaterEqual, PropLessEqual, PropKeyEqual:
+		case PropIsDate:
+			if p.Value != "" || p.Key != "" || p.Scalar {
+				return fmt.Errorf("%w: property %q: PropIsDate takes no Value, Key or Scalar", ErrInvalidQuery, p.Property)
+			}
+			continue
 		default:
 			return UnknownPropOpError(p)
 		}
@@ -554,6 +576,17 @@ type RelationPredicate struct {
 	// input MUST gate the traversed type with its own read query and MUST
 	// refuse properties whose visibility is conditional. See TKT-RELTRV.
 	EndpointMatch *EndpointPredicate
+
+	// EdgeProps restricts the matching edge by its OWN properties, ANDed,
+	// with the [PropPredicate] contract. Nil means no edge constraint.
+	//
+	// It applies to the edge this predicate names (the one of OfTypes
+	// between the candidate, or an EntityInheritThrough ancestor, and an
+	// endpoint), never to the edges an InheritThrough or
+	// EntityInheritThrough closure walks. The ACL uses it for a grant edge
+	// that counts only while a condition holds (TKT-TKSCSBT), so the
+	// condition must not leak onto containment hops.
+	EdgeProps []PropPredicate
 }
 
 // EndpointPredicate constrains the entity on the far side of a relation: its

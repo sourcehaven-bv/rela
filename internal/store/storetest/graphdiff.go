@@ -248,8 +248,17 @@ func seedGraphDiff(t *testing.T, s store.Store) {
 		}
 	}
 
+	// Every edge carries an "until" value from graphDiffEdgeValues in turn,
+	// so EdgeProps meet dates, empties, lists, numbers and non-dates.
+	relN := 0
 	rel := func(from, typ, to string, face entity.Face) {
-		_, err := s.CreateRelation(c, entity.RelationKey{From: from, FromFace: face, Type: typ, To: to}, &store.RelationData{})
+		props := map[string]any{}
+		if v := graphDiffEdgeValues[relN%len(graphDiffEdgeValues)]; v != "absent" {
+			props[graphDiffEdgeProp] = v
+		}
+		relN++
+		_, err := s.CreateRelation(c, entity.RelationKey{From: from, FromFace: face, Type: typ, To: to},
+			&store.RelationData{Properties: props})
 		require.NoError(t, err)
 	}
 	// Groups form a chain with a cycle, for the endpoint closure.
@@ -287,6 +296,31 @@ func seedGraphDiff(t *testing.T, s store.Store) {
 	rel(graphDiffFacedOnly, "childOf", "ITM-02", "")
 	rel(graphDiffFacedOnly, "implements", "GRP-1", "")
 	rel("ITM-03", "childOf", "ITM-10", draft)
+}
+
+// graphDiffEdgeProp is the edge property EdgeProps predicates test, and
+// graphDiffEdgeValues the values the seeded edges hold in turn ("absent"
+// leaves it unset).
+const graphDiffEdgeProp = "until"
+
+var graphDiffEdgeValues = []any{
+	"2026-12-31", "absent", "2026-01-01", "", []any{"2026-12-31"}, "garbage", 5, "2026-06-15", "3",
+	"2026-6-15", "２０２６-01-01",
+}
+
+// genEdgeProp draws an EdgeProps predicate on [graphDiffEdgeProp].
+func genEdgeProp(rng *rand.Rand) store.PropPredicate {
+	if rng.IntN(4) == 0 {
+		return store.PropPredicate{Property: graphDiffEdgeProp, Op: store.PropIsDate}
+	}
+	ops := []store.PropOp{store.PropEqual, store.PropNotEqual, store.PropNotEqualOrEmpty,
+		store.PropGreaterEqual, store.PropLessEqual}
+	p := store.PropPredicate{
+		Property: graphDiffEdgeProp, Op: pick(rng, ops),
+		Value: pick(rng, []string{"2026-06-15", "2026-12-31", "2027-01-01", "", "5", "9999-12-31"}),
+	}
+	p.Scalar = (p.Op == store.PropEqual || p.Op == store.PropNotEqualOrEmpty) && rng.IntN(2) == 0
+	return p
 }
 
 // graphDiffFacedOnly is the seeded item that exists only at a named face.
@@ -333,6 +367,11 @@ func genRelation(rng *rand.Rand, nested bool) store.RelationPredicate {
 	}
 	if !nested && rng.IntN(4) == 0 {
 		p.EntityInheritThrough, p.EntityDepth = []string{"childOf"}, rng.IntN(8)
+	}
+	if rng.IntN(3) == 0 {
+		for range rng.IntN(2) + 1 {
+			p.EdgeProps = append(p.EdgeProps, genEdgeProp(rng))
+		}
 	}
 	if rng.IntN(3) == 0 {
 		m := &store.EndpointPredicate{EntityType: pick(rng, []string{"", "group", "item"})}

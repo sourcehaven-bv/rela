@@ -1461,6 +1461,8 @@ deps:
   aclstore:
     mayDependOn:
       - entity
+      # MatchProps: the edge condition of a conditional grant (TKT-TKSCSBT).
+      - graphquerynaive
       - store
   aclaudit:
     mayDependOn:
