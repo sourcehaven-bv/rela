@@ -341,7 +341,7 @@ const (
 // which drops the row a two-valued reading keeps).
 //
 // Exactly the field of the node's Op is meaningful: Prop for CondProp, Rel
-// for CondRelated, Args for the others. Build nodes with [PropCond],
+// for CondRelated, Args for the others. Build nodes with [PropLeaf],
 // [RelatedCond], [AndCond], [OrCond] and [NotCond].
 type Cond struct {
 	Op   CondOp
@@ -350,8 +350,8 @@ type Cond struct {
 	Args []Cond
 }
 
-// PropCond is a [CondProp] leaf.
-func PropCond(p PropPredicate) Cond { return Cond{Op: CondProp, Prop: p} }
+// PropLeaf is a [CondProp] leaf.
+func PropLeaf(p PropPredicate) Cond { return Cond{Op: CondProp, Prop: p} }
 
 // RelatedCond is a [CondRelated] leaf.
 func RelatedCond(r DirectedRelation) Cond { return Cond{Op: CondRelated, Rel: r} }

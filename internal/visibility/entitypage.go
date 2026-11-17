@@ -106,7 +106,7 @@ func GateCond(
 		}
 		return store.RelatedCond(rels[0]), nil
 	case store.CondProp:
-		return store.PropCond(c.Prop), nil
+		return store.PropLeaf(c.Prop), nil
 	default:
 	}
 	out := store.Cond{Op: c.Op, Args: make([]store.Cond, 0, len(c.Args))}

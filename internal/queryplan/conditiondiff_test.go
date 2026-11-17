@@ -131,7 +131,7 @@ func toCond(t *testing.T, c queryplan.LoweredCond) store.Cond {
 	t.Helper()
 	switch c.Op {
 	case store.CondProp:
-		return store.PropCond(c.Prop)
+		return store.PropLeaf(c.Prop)
 	case store.CondRelated:
 		t.Fatal("the differential generates no traversals")
 	default:

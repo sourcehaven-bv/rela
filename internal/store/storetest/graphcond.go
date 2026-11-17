@@ -20,10 +20,10 @@ func RunGraphCondTests(t *testing.T, f Factory) {
 	t.Helper()
 	trivial := store.InWorld(store.TrivialScope())
 	prop := func(name string, op store.PropOp, kind store.OrderKind, v string) store.Cond {
-		return store.PropCond(store.PropPredicate{Property: name, Op: op, Value: v, Kind: kind})
+		return store.PropLeaf(store.PropPredicate{Property: name, Op: op, Value: v, Kind: kind})
 	}
 	eq := func(name, v string) store.Cond {
-		return store.PropCond(store.PropPredicate{Property: name, Op: store.PropEqual, Value: v, Scalar: true})
+		return store.PropLeaf(store.PropPredicate{Property: name, Op: store.PropEqual, Value: v, Scalar: true})
 	}
 	where := func(t *testing.T, s store.Store, typ string, c store.Cond) []string {
 		t.Helper()
@@ -175,7 +175,7 @@ func RunGraphCondTests(t *testing.T, f Factory) {
 			cond store.Cond
 		}{
 			{"integer kind needs an integer value", prop("prio", store.PropGreater, store.OrderInteger, "2.5")},
-			{"kind needs an ordered operator", store.PropCond(store.PropPredicate{
+			{"kind needs an ordered operator", store.PropLeaf(store.PropPredicate{
 				Property: "prio", Op: store.PropEqual, Value: "1", Kind: store.OrderInteger})},
 			{"not takes one argument", store.Cond{Op: store.CondNot}},
 			{"too deep", deep},

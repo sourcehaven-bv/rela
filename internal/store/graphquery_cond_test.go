@@ -9,7 +9,7 @@ import (
 )
 
 func TestCondConstant(t *testing.T) {
-	leaf := store.PropCond(store.PropPredicate{Property: "s", Op: store.PropEqual, Value: "x"})
+	leaf := store.PropLeaf(store.PropPredicate{Property: "s", Op: store.PropEqual, Value: "x"})
 	f, tr := store.OrCond(), store.AndCond()
 	for _, tc := range []struct {
 		name         string

@@ -500,7 +500,7 @@ func genCond(rng *rand.Rand, depth int) store.Cond {
 	}
 	switch n {
 	case 0:
-		return store.PropCond(genProp(rng))
+		return store.PropLeaf(genProp(rng))
 	case 1:
 		pred := genRelation(rng, depth > 0)
 		pred.Negate = false // a tree negates with NotCond
