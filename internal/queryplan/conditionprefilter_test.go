@@ -17,6 +17,8 @@ func conditionMeta() *metamodel.Metamodel {
 				"status":   {Type: metamodel.PropertyTypeString},
 				"count":    {Type: metamodel.PropertyTypeInteger},
 				"watchers": {Type: metamodel.PropertyTypeString, List: true},
+				"due":      {Type: metamodel.PropertyTypeDate},
+				"price":    {Type: metamodel.PropertyTypeDecimal},
 			}},
 			"bug": {Properties: map[string]metamodel.PropertyDef{
 				"assignee": {Type: metamodel.PropertyTypeString},

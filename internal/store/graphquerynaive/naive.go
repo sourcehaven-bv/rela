@@ -21,6 +21,7 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -74,6 +75,21 @@ func CheckEndpointShape(q store.GraphQuery) error {
 	for i := range q.Related {
 		if err := checkEndpointShape(&q.Related[i].Pred, 0); err != nil {
 			return err
+		}
+	}
+	if q.Where != nil {
+		if err := store.ValidateCond(*q.Where); err != nil {
+			return err
+		}
+		var relErr error
+		q.Where.Walk(func(c store.Cond) bool {
+			if c.Op == store.CondRelated {
+				relErr = checkEndpointShape(&c.Rel.Pred, 0)
+			}
+			return relErr == nil
+		})
+		if relErr != nil {
+			return relErr
 		}
 	}
 	return nil
@@ -516,11 +532,13 @@ func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery
 		}
 	}
 	for _, rel := range q.Related {
-		dir := store.DirectionOutgoing
-		if rel.Incoming {
-			dir = store.DirectionIncoming
+		ok, err := matchesRelated(ctx, r, e, rel, q.Faces)
+		if err != nil || !ok {
+			return ok, err
 		}
-		ok, err := matchesPredicate(ctx, r, e, rel.Pred, dir, q.Faces)
+	}
+	if q.Where != nil {
+		ok, err := matchesCond(ctx, r, e, *q.Where, q.Faces)
 		if err != nil || !ok {
 			return ok, err
 		}
@@ -532,6 +550,54 @@ func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery
 		return matchesAny(ctx, r, e, q.Any, q.Faces)
 	}
 	return true, nil
+}
+
+// matchesRelated decides one [store.DirectedRelation] for e.
+func matchesRelated(
+	ctx context.Context, r Reader, e *entity.Entity, rel store.DirectedRelation, sel store.FaceSelection,
+) (bool, error) {
+	dir := store.DirectionOutgoing
+	if rel.Incoming {
+		dir = store.DirectionIncoming
+	}
+	return matchesPredicate(ctx, r, e, rel.Pred, dir, sel)
+}
+
+// matchesCond decides a [store.Cond] for e, two-valued: every leaf is true
+// or false. And and Or short-circuit, so a property leaf ahead of a
+// relation leaf can spare the relation walk. The shape was validated by
+// [CheckEndpointShape]; an unknown op here is still refused.
+func matchesCond(
+	ctx context.Context, r Reader, e *entity.Entity, c store.Cond, sel store.FaceSelection,
+) (bool, error) {
+	switch c.Op {
+	case store.CondProp:
+		return matchesProp(e.Properties, c.Prop)
+	case store.CondRelated:
+		return matchesRelated(ctx, r, e, c.Rel, sel)
+	case store.CondNot:
+		if len(c.Args) != 1 {
+			return false, store.ValidateCond(c)
+		}
+		ok, err := matchesCond(ctx, r, e, c.Args[0], sel)
+		return !ok && err == nil, err
+	case store.CondAnd:
+		for _, a := range c.Args {
+			if ok, err := matchesCond(ctx, r, e, a, sel); err != nil || !ok {
+				return false, err
+			}
+		}
+		return true, nil
+	case store.CondOr:
+		for _, a := range c.Args {
+			if ok, err := matchesCond(ctx, r, e, a, sel); err != nil || ok {
+				return ok && err == nil, err
+			}
+		}
+		return false, nil
+	default:
+		return false, store.ValidateCond(c)
+	}
 }
 
 // matchesNarrowing reports whether at least one caller-supplied branch holds
@@ -622,12 +688,50 @@ func matchesProp(props map[string]any, p store.PropPredicate) (bool, error) {
 		// so the empty case is decided here rather than by adding a second
 		// meaning to propmatch.Decide, which internal/filter also depends on.
 		return propmatch.IsEmpty(raw) || propmatch.Decide(raw, propmatch.OpNotEqual, p.Value) == propmatch.Match, nil
-	case store.PropGreaterEqual, store.PropLessEqual:
-		return matchesOrdered(raw, p.Op, p.Value), nil
+	case store.PropGreaterEqual, store.PropLessEqual, store.PropGreater, store.PropLess:
+		return matchesOrderedKind(raw, p)
 	case store.PropIsDate:
 		return isDateShape(raw), nil
 	default:
 		return false, store.UnknownPropOpError(p)
+	}
+}
+
+// matchesOrderedKind decides an ordered predicate under its
+// [store.OrderKind]. A value the kind cannot read never matches.
+func matchesOrderedKind(raw any, p store.PropPredicate) (bool, error) {
+	switch p.Kind {
+	case store.OrderText:
+		return matchesOrdered(raw, p.Op, p.Value), nil
+	case store.OrderString:
+		s, ok := raw.(string)
+		return ok && orderHolds(p.Op, strings.Compare(s, p.Value)), nil
+	case store.OrderInteger:
+		want, err := strconv.ParseInt(p.Value, 10, 64)
+		if err != nil {
+			return false, store.ValidatePropPredicates([]store.PropPredicate{p})
+		}
+		n, ok := propmatch.Integer(raw)
+		return ok && orderHolds(p.Op, cmp.Compare(n, want)), nil
+	default:
+		return false, store.ValidatePropPredicates([]store.PropPredicate{p})
+	}
+}
+
+// orderHolds reports whether an ordered operator holds for a comparison
+// result c (negative, zero or positive, as from cmp.Compare).
+func orderHolds(op store.PropOp, c int) bool {
+	switch op {
+	case store.PropLess:
+		return c < 0
+	case store.PropLessEqual:
+		return c <= 0
+	case store.PropGreater:
+		return c > 0
+	case store.PropGreaterEqual:
+		return c >= 0
+	default:
+		return false
 	}
 }
 
@@ -708,10 +812,7 @@ func matchesOrdered(raw any, op store.PropOp, value string) bool {
 	default:
 		s = fmt.Sprint(raw)
 	}
-	if op == store.PropGreaterEqual {
-		return s >= value
-	}
-	return s <= value
+	return orderHolds(op, strings.Compare(s, value))
 }
 
 // matchesPredicate evaluates one relation predicate for e. sel is the

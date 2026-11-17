@@ -296,11 +296,13 @@ type ConditionLowerer interface {
 	// stamped. An error fails the call.
 	StampQueryIdentity(ctx context.Context) (context.Context, error)
 	// Lower rewrites prog, compiled against entityType, as a page filter:
-	// props on the stored row, naming every entity field prog reads, and
-	// traversals the page reader gates for the caller. ok=false means the
-	// filter does not lower exactly; the caller answers it in Go.
+	// Props, Traversals and Where of a [visibility.PageQuery], whose
+	// predicates name every entity field prog reads and whose traversals
+	// the page reader gates for the caller. The filter is the AND of the
+	// three. ok=false means the filter does not lower exactly; the caller
+	// answers it in Go.
 	Lower(ctx context.Context, prog *predicate.Program, entityType string) (
-		props []store.PropPredicate, traversals []visibility.PageTraversal, ok bool)
+		filter visibility.PageQuery, ok bool)
 }
 
 // GraphCounter is the structural half of [GraphReader]: type-level tallies

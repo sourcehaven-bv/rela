@@ -31,6 +31,10 @@ type PageQuery struct {
 	// set never depends on an edge the caller cannot see. See
 	// [PageTraversal].
 	Traversals []PageTraversal
+	// Where narrows the rows by a boolean condition ANDed with Props and
+	// Traversals (TKT-8HY05WB). Its properties follow the rule of Props and
+	// its relation leaves the rule of Traversals. See [PageCond].
+	Where *PageCond
 	// Limit is the page size. It must be positive: a page read never
 	// returns the whole type.
 	Limit int
@@ -47,6 +51,73 @@ type PageQuery struct {
 type PageTraversal struct {
 	Hop    acl.TraversalHop
 	Negate bool
+}
+
+// PageCond is a boolean page filter: a [store.Cond] whose relation leaves
+// are hops rather than store predicates. Op is a [store.CondOp]; Prop is
+// meaningful for CondProp, Hop for CondRelated, Args for the others. As with
+// [PageTraversal], the reader builds each edge test from the gate's answer,
+// so a caller cannot pass an ungated one; a hop onto a type the caller may
+// not read is false.
+type PageCond struct {
+	Op   store.CondOp
+	Prop store.PropPredicate
+	Hop  acl.TraversalHop
+	Args []PageCond
+}
+
+// Props returns the property predicates of c's leaves.
+func (c PageCond) Props() []store.PropPredicate {
+	var out []store.PropPredicate
+	c.walk(func(n PageCond) {
+		if n.Op == store.CondProp {
+			out = append(out, n.Prop)
+		}
+	})
+	return out
+}
+
+func (c PageCond) walk(visit func(PageCond)) {
+	visit(c)
+	for _, a := range c.Args {
+		a.walk(visit)
+	}
+}
+
+// GateCond turns c into a [store.Cond] through gate, the caller's traversal
+// gate. A denied hop becomes false (an OR without arguments), as
+// `related(...)` is false in Go for a principal who may not read the far
+// type. Every hop is gated before the result is built, so a refusal wins
+// over a denial: a missing or mismatched identity is returned as is, and
+// any other gate error, a nil predicate or one the gate already negated is
+// [ErrPropsNotPushable].
+func GateCond(
+	ctx context.Context, gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
+	entityType string, c PageCond,
+) (store.Cond, error) {
+	switch c.Op {
+	case store.CondRelated:
+		rels, denied, err := gateTraversals(ctx, gate, entityType, []PageTraversal{{Hop: c.Hop}})
+		switch {
+		case err != nil:
+			return store.Cond{}, err
+		case denied:
+			return store.OrCond(), nil
+		}
+		return store.RelatedCond(rels[0]), nil
+	case store.CondProp:
+		return store.PropLeaf(c.Prop), nil
+	default:
+	}
+	out := store.Cond{Op: c.Op, Args: make([]store.Cond, 0, len(c.Args))}
+	for _, a := range c.Args {
+		ga, err := GateCond(ctx, gate, entityType, a)
+		if err != nil {
+			return store.Cond{}, err
+		}
+		out.Args = append(out.Args, ga)
+	}
+	return out, nil
 }
 
 // traversalGate answers one hop for the caller: the store edge test, or
@@ -191,25 +262,29 @@ func (s *ScriptReader) ListEntityPage(ctx context.Context, q PageQuery) (EntityP
 		return EntityPage{}, err
 	}
 	bound := s.bind(ctx)
-	if len(q.Props) > 0 {
-		if pf, ok := s.reader.(propsFilterer); !ok || !pf.propsFilterable(bound, q.Type, q.Props) {
+	if props := pageProps(q); len(props) > 0 {
+		if pf, ok := s.reader.(propsFilterer); !ok || !pf.propsFilterable(bound, q.Type, props) {
 			return EntityPage{}, ErrPropsNotPushable
 		}
 	}
-	var related []store.DirectedRelation
-	if len(q.Traversals) > 0 {
+	var (
+		related []store.DirectedRelation
+		where   *store.Cond
+	)
+	if len(q.Traversals) > 0 || q.Where != nil {
 		g, ok := s.binder.(traversalGater)
 		if !ok {
 			return EntityPage{}, ErrPropsNotPushable
 		}
-		rels, empty, err := gateTraversals(bound, g.GateTraversal, q.Type, q.Traversals)
+		var empty bool
+		var err error
+		related, where, empty, err = gatePageFilter(bound, g.GateTraversal, q)
 		switch {
 		case err != nil:
 			return EntityPage{}, err
 		case empty:
 			return EntityPage{}, nil
 		}
-		related = rels
 	}
 	red, ok := s.reader.(pushdownRedactor)
 	if !ok {
@@ -237,18 +312,52 @@ func (s *ScriptReader) ListEntityPage(ctx context.Context, q PageQuery) (EntityP
 	if !ok { // coverage-ignore: composeReadScope returned ok, so raw is a GraphQueryer
 		return EntityPage{}, errEmptyScope
 	}
-	return readPage(bound, raw, gq, q, related, red.redactPage)
+	return readPage(bound, raw, gq, q, related, where, red.redactPage)
+}
+
+// pageProps returns every property predicate of q, Where's included.
+func pageProps(q PageQuery) []store.PropPredicate {
+	if q.Where == nil {
+		return q.Props
+	}
+	return slices.Concat(q.Props, q.Where.Props())
+}
+
+// gatePageFilter gates q's Traversals and Where through gate. Where is
+// gated even when a traversal is denied, so a refusal in it still wins. A
+// Where its denied hops make constant is folded: false is empty, true is
+// no Where.
+func gatePageFilter(ctx context.Context, gate traversalGate, q PageQuery) (
+	related []store.DirectedRelation, where *store.Cond, empty bool, err error) {
+	related, empty, err = gateTraversals(ctx, gate, q.Type, q.Traversals)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if q.Where != nil {
+		w, werr := GateCond(ctx, gate, q.Type, *q.Where)
+		if werr != nil {
+			return nil, nil, false, werr
+		}
+		switch v, known := w.Constant(); {
+		case !known:
+			where = &w
+		case !v:
+			empty = true
+		}
+	}
+	return related, where, empty, nil
 }
 
 // readPage runs the page and the count of q on gq, a copy of the caller's
 // read scope, narrowed by related, the gated edge tests of q.Traversals,
-// and redacts the page with redact.
+// and where, the gated q.Where, and redacts the page with redact.
 func readPage(
 	ctx context.Context, raw store.GraphQueryer, gq store.GraphQuery, q PageQuery,
-	related []store.DirectedRelation, redact pageRedactor,
+	related []store.DirectedRelation, where *store.Cond, redact pageRedactor,
 ) (EntityPage, error) {
 	gq.Props = slices.Concat(gq.Props, q.Props)
 	gq.Related = slices.Concat(gq.Related, related)
+	gq.Where = store.AndWhere(gq.Where, where)
 	total, err := store.CountMatched(ctx, raw, gq)
 	if err != nil {
 		return EntityPage{}, err
@@ -281,7 +390,7 @@ func headerRow(h store.EntityHeader) *entity.Entity {
 // type, so it only serves a reader that cannot push the gate down; no
 // production wiring builds one.
 func (s *ScriptReader) pageViaFilter(ctx context.Context, q PageQuery) (EntityPage, error) {
-	if len(q.Props) > 0 || len(q.Traversals) > 0 {
+	if len(q.Props) > 0 || len(q.Traversals) > 0 || q.Where != nil {
 		return EntityPage{}, ErrPropsNotPushable
 	}
 	rows, err := s.listGatedThenRanked(ctx, store.EntityQuery{Type: q.Type, Faces: q.Faces})
@@ -317,7 +426,7 @@ func (r *UnrestrictedReader) ListEntityPage(ctx context.Context, q PageQuery) (E
 	if !ok { // coverage-ignore: store.Store embeds GraphQueryer
 		return EntityPage{}, fmt.Errorf("visibility: store %T cannot run a graph query", r.st)
 	}
-	related, empty, err := gateTraversals(ctx, acl.UngatedGate, q.Type, q.Traversals)
+	related, where, empty, err := gatePageFilter(ctx, acl.UngatedGate, q)
 	switch {
 	case err != nil:
 		return EntityPage{}, err
@@ -325,7 +434,7 @@ func (r *UnrestrictedReader) ListEntityPage(ctx context.Context, q PageQuery) (E
 		return EntityPage{}, nil
 	}
 	keep := func(_ context.Context, rows []*entity.Entity) []*entity.Entity { return rows }
-	return readPage(ctx, gq, store.GraphQuery{EntityType: q.Type, Faces: q.Faces}, q, related, keep)
+	return readPage(ctx, gq, store.GraphQuery{EntityType: q.Type, Faces: q.Faces}, q, related, where, keep)
 }
 
 // ListEntityPage implements the page read: always refuses.

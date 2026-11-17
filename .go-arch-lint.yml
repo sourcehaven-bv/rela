@@ -1518,6 +1518,8 @@ deps:
       - predicate
       - predicatefns
       - principal
+      # propmatch.Integer is the one integer binding rule (TKT-8HY05WB).
+      - propmatch
       - transitions
       # SearchFieldScope compiles `visible:` grants into store predicates:
       # queryplan decides exact lowering, relresolve resolves related() hops,
@@ -1799,6 +1801,9 @@ deps:
       - predicate
       - filter
       - metamodel
+      # propmatch.Integer is the integer binding rule the store's integer
+      # range predicate shares (TKT-8HY05WB). propmatch is a stdlib leaf.
+      - propmatch
   # flows.yaml consumes the schema and acl.yaml; neither knows it exists.
   flowcfg:
     mayDependOn:

@@ -253,7 +253,67 @@ func buildPredicatePartsPrefixed(
 	if len(q.Narrowing) > 0 {
 		post = append(post, buildNarrowingSQL(b, q.Narrowing))
 	}
+	if q.Where != nil {
+		cb := condBuilder{b: b, prefix: prefix + "wh", typeArg: typeArg, sel: q.Faces}
+		post = append(post, cb.render(*q.Where))
+		with = append(with, cb.with...)
+	}
 	return with, pre, post
+}
+
+// condBuilder renders a [store.GraphQuery.Where] tree. It sits with the
+// post conjuncts because Where is tested on the prime, like Props; its
+// relation leaves depend on the id alone, so they are exact there too.
+// Each relation leaf gets its own CTE prefix (prefix + a counter), so any
+// number of them share one WITH clause.
+type condBuilder struct {
+	b       *sqlBuilder
+	prefix  string
+	typeArg string
+	sel     store.FaceSelection
+	with    []string
+	n       int
+}
+
+// render returns c as one SQL boolean that is never NULL where it matters:
+// the operand of a NOT is wrapped in COALESCE(..., FALSE), because a leaf
+// over an absent key may be NULL and `NOT NULL` would drop a row the
+// two-valued reading keeps (see [store.Cond]). Under AND and OR a NULL
+// already behaves as false in WHERE.
+func (cb *condBuilder) render(c store.Cond) string {
+	switch c.Op {
+	case store.CondProp:
+		return propCond(cb.b, c.Prop)
+	case store.CondRelated:
+		prefix := cb.prefix + strconv.Itoa(cb.n) + "_"
+		cb.n++
+		w, ex := buildPredicateSQL(cb.b, prefix, c.Rel.Pred, cb.typeArg, relatedDirection(c.Rel), cb.sel)
+		cb.with = append(cb.with, w...)
+		return existsCond(ex, c.Rel.Pred.Negate)
+	case store.CondNot:
+		if len(c.Args) != 1 {
+			return cb.b.fail(store.ValidateCond(c))
+		}
+		return "(NOT COALESCE(" + cb.render(c.Args[0]) + ", FALSE))"
+	case store.CondAnd, store.CondOr:
+		if len(c.Args) == 0 {
+			if c.Op == store.CondAnd {
+				return "TRUE"
+			}
+			return "FALSE"
+		}
+		join := " AND "
+		if c.Op == store.CondOr {
+			join = " OR "
+		}
+		parts := make([]string, len(c.Args))
+		for i, a := range c.Args {
+			parts[i] = cb.render(a)
+		}
+		return "(" + strings.Join(parts, join) + ")"
+	default:
+		return cb.b.fail(store.ValidateCond(c))
+	}
 }
 
 // graphSource renders what follows `SELECT <list> FROM ` in every graph
@@ -456,8 +516,22 @@ func propCondOn(b *sqlBuilder, alias string, p store.PropPredicate) string {
 		return fmt.Sprintf("(NOT %s AND NOT %s)", isEmpty, equalsCond(b, txt, jsn, p.Value))
 	case store.PropNotEqualOrEmpty:
 		return fmt.Sprintf("(%s OR NOT %s)", isEmpty, equalsCond(b, txt, jsn, p.Value))
-	case store.PropGreaterEqual, store.PropLessEqual:
-		return orderedCond(b, txt, jsn, p.Op, p.Value)
+	case store.PropGreaterEqual, store.PropLessEqual, store.PropGreater, store.PropLess:
+		switch p.Kind {
+		case store.OrderText:
+			return orderedCond(b, txt, jsn, p.Op, p.Value)
+		case store.OrderString:
+			return fmt.Sprintf(`(jsonb_typeof(%s) = 'string' AND %s COLLATE "C" %s %s)`,
+				jsn, txt, orderedSQLOp(p.Op), b.arg(p.Value))
+		case store.OrderInteger:
+			n, err := strconv.ParseInt(p.Value, 10, 64)
+			if err != nil {
+				return b.fail(store.ValidatePropPredicates([]store.PropPredicate{p}))
+			}
+			return fmt.Sprintf("(%s %s %s)", integerExpr(txt, jsn), orderedSQLOp(p.Op), b.arg(n))
+		default:
+			return b.fail(store.ValidatePropPredicates([]store.PropPredicate{p}))
+		}
 	case store.PropIsDate:
 		// A literal pattern, C-collated so [0-9] is ASCII digits only.
 		return fmt.Sprintf("(jsonb_typeof(%s) = 'string' AND (%s COLLATE \"C\") ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$')",
@@ -492,12 +566,59 @@ func keyEqualCond(b *sqlBuilder, alias, propArg string, p store.PropPredicate) s
 // answer both can give. A missing key yields SQL NULL, so the comparison
 // is already not-true for an absent property with no extra guard.
 func orderedCond(b *sqlBuilder, txt, jsn string, op store.PropOp, value string) string {
-	cmp := ">="
-	if op == store.PropLessEqual {
-		cmp = "<="
-	}
 	return fmt.Sprintf(`(jsonb_typeof(%s) <> 'array' AND %s <> '' AND %s COLLATE "C" %s %s)`,
-		jsn, txt, txt, cmp, b.arg(value))
+		jsn, txt, txt, orderedSQLOp(op), b.arg(value))
+}
+
+// orderedSQLOp is the SQL operator of an ordered [store.PropOp]. Callers
+// pass only the four ordered operators.
+func orderedSQLOp(op store.PropOp) string {
+	switch op {
+	case store.PropLess:
+		return "<"
+	case store.PropLessEqual:
+		return "<="
+	case store.PropGreater:
+		return ">"
+	default:
+		return ">="
+	}
+}
+
+// integerExpr is the stored integer of a property as a numeric, or NULL
+// when the value holds none: [store.OrderInteger], which must agree with
+// propmatch.Integer on the row pgstore decodes. normalizeJSONNumbers decodes
+// a JSON number as an int when its text is an int64 literal, else as the
+// nearest float64, so the number arm follows the same two steps:
+//
+//   - text that is an optional minus and digits, in int64 range: that
+//     integer, exactly;
+//   - otherwise the nearest float8 (the float64 Go decodes), when it is
+//     integral and in [-2^63, 2^63). It is converted through int8, which is
+//     exact for such a value; a cast through numeric would round it. A
+//     value at most 2^-1075 is 0, as Go rounds it. The cast to float8 runs
+//     only when the magnitude is in [1, 1e19), so it cannot overflow or
+//     underflow; any other value under 1 is never integral.
+//
+// A JSON string holds an integer when strconv.ParseInt accepts it: an
+// optional sign, then digits, in int64 range.
+//
+// Every guard sits in its own nested CASE. PostgreSQL does not promise the
+// order of AND operands, and a cast must never run on a value it cannot
+// read: the error would depend on a row the read gate may later hide.
+func integerExpr(txt, jsn string) string {
+	const lo, hi = "-9223372036854775808", "9223372036854775807"
+	return fmt.Sprintf("(CASE jsonb_typeof(%[2]s)"+
+		" WHEN 'number' THEN (CASE WHEN %[1]s ~ '^-?[0-9]+$'"+
+		" THEN (CASE WHEN %[1]s::numeric BETWEEN %[3]s AND %[4]s THEN %[1]s::numeric END)"+
+		" ELSE (CASE WHEN abs(%[1]s::numeric) <= 2.4703282292062327208828439643411068618252990130716238221279284125e-324 THEN 0"+
+		" WHEN abs(%[1]s::numeric) >= 1 AND abs(%[1]s::numeric) < 1e19"+
+		" THEN (CASE WHEN %[1]s::float8 = trunc(%[1]s::float8)"+
+		" AND %[1]s::float8 >= '-9223372036854775808'::float8 AND %[1]s::float8 < '9223372036854775808'::float8"+
+		" THEN %[1]s::float8::int8::numeric END) END) END)"+
+		" WHEN 'string' THEN (CASE WHEN %[1]s ~ '^[+-]?[0-9]+$'"+
+		" THEN (CASE WHEN %[1]s::numeric BETWEEN %[3]s AND %[4]s THEN %[1]s::numeric END) END)"+
+		" END)", txt, jsn, lo, hi)
 }
 
 // equalsCond renders value equality, matching [propmatch] semantics: a

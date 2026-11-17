@@ -190,6 +190,8 @@ func validateRollupGate(what string, q GraphQuery) error {
 		return fmt.Errorf("%w: rollup: %s entity type is required", ErrInvalidQuery, what)
 	case q.Limit != 0 || q.Offset != 0 || len(q.OrderBy) > 0:
 		return fmt.Errorf("%w: rollup: the %s query must not page or sort", ErrInvalidQuery, what)
+	case q.Where != nil:
+		return fmt.Errorf("%w: rollup: the %s query must not carry a Where tree", ErrInvalidQuery, what)
 	}
 	if _, ok := q.Faces.World(); !ok {
 		return fmt.Errorf("%w: rollup: the %s query must select a world", ErrInvalidQuery, what)

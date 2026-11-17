@@ -279,6 +279,15 @@ type Comparison struct {
 	// `nil ~= 'x'` true, so a store must read it as "not this value, or
 	// unset". Never set together with List: `~=` has no membership form.
 	NotEqual bool
+
+	// Order is the ordered operator (<, <=, > or >=) of an ordered leaf,
+	// with Attribute on its left; empty for an equality. Only
+	// [Program.ConditionTree] reports one.
+	Order string
+
+	// Int reports that Attribute is an int and Value the decimal form of
+	// an int literal. Only [Program.ConditionTree] reports one.
+	Int bool
 }
 
 // TraversalTerm is one `related(...)` leaf of

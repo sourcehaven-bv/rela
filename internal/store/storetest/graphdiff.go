@@ -180,6 +180,12 @@ var graphDiffOrderProps = []string{"title", "prio", "flag", "it's"}
 var graphDiffValues = []any{
 	"open", "closed", "", nil, "absent", []any{"open", "x"}, []any{}, 5, true, 1.5,
 	"alpha", "Zed", "ñandú", false, 10, 9, []any{"closed"}, "x",
+	// Integer-shaped strings and integers at the int64 edge, for
+	// [store.OrderInteger]. A real beyond int64 is left out: under
+	// [store.OrderText] sqlite writes 1e19 as "1.0e+19" and Go as "1e+19".
+	// pgstore's TestIntegerExprAgreesWithGo covers such values.
+	"7", "+3", "007", " 7", "9223372036854775807", "9223372036854775808", "-9223372036854775808",
+	"1e19", float64(4), -2.5,
 }
 
 // graphDiffScalars is the value mix for the sort properties: no lists and no
@@ -197,6 +203,9 @@ var graphDiffRefs = []any{
 
 // graphDiffRefProp is the object-valued property; see graphDiffRefs.
 const graphDiffRefProp = "ref"
+
+// graphDiffIntTargets are the OrderInteger comparison values.
+var graphDiffIntTargets = []string{"0", "1", "5", "7", "9", "10", "-3", "9223372036854775807", "-9223372036854775808"}
 
 // graphDiffTargets are the comparison values the generator picks from.
 var graphDiffTargets = []string{"open", "closed", "", "5", "true", "1.5", "x", "alpha", "Zed", "10", "9", "false", "m"}
@@ -344,14 +353,22 @@ func genProp(rng *rand.Rand) store.PropPredicate {
 			Value: pick(rng, []string{"42", "43", "x", "https://x.test"}),
 		}
 	}
-	ops := []store.PropOp{store.PropEqual, store.PropNotEqual, store.PropNotEqualOrEmpty,
-		store.PropGreaterEqual, store.PropLessEqual}
+	ordered := []store.PropOp{store.PropGreaterEqual, store.PropLessEqual, store.PropGreater, store.PropLess}
+	ops := append([]store.PropOp{store.PropEqual, store.PropNotEqual, store.PropNotEqualOrEmpty}, ordered...)
 	prop := pick(rng, graphDiffProps)
 	if rng.IntN(40) == 0 {
 		prop = graphDiffUnsafeProp
 	}
 	p := store.PropPredicate{Property: prop, Op: pick(rng, ops), Value: pick(rng, graphDiffTargets)}
 	p.Scalar = (p.Op == store.PropEqual || p.Op == store.PropNotEqualOrEmpty) && rng.IntN(2) == 0
+	if slices.Contains(ordered, p.Op) {
+		switch rng.IntN(3) {
+		case 1:
+			p.Kind = store.OrderString
+		case 2:
+			p.Kind, p.Value = store.OrderInteger, pick(rng, graphDiffIntTargets)
+		}
+	}
 	return p
 }
 
@@ -450,6 +467,10 @@ func genGraphQuery(rng *rand.Rand) store.GraphQuery {
 			q.Narrowing = append(q.Narrowing, store.NarrowBranch{Props: []store.PropPredicate{genProp(rng)}})
 		}
 	}
+	if rng.IntN(3) == 0 {
+		c := genCond(rng, 0)
+		q.Where = &c
+	}
 	q.Faces = genSelection(rng, faces)
 	if rng.IntN(5) == 0 {
 		q.FaceIn = pickSome(rng, faces, 2)
@@ -468,4 +489,32 @@ func genGraphQuery(rng *rand.Rand) store.GraphQuery {
 		q.Offset = rng.IntN(8)
 	}
 	return q
+}
+
+// genCond draws a [store.Cond] tree up to three levels deep, over property
+// predicates (ordered ones of every kind included) and relation checks.
+func genCond(rng *rand.Rand, depth int) store.Cond {
+	n := rng.IntN(6)
+	if depth >= 3 {
+		n = rng.IntN(2)
+	}
+	switch n {
+	case 0:
+		return store.PropLeaf(genProp(rng))
+	case 1:
+		pred := genRelation(rng, depth > 0)
+		pred.Negate = false // a tree negates with NotCond
+		return store.RelatedCond(store.DirectedRelation{Pred: pred, Incoming: rng.IntN(2) == 0})
+	case 2, 3:
+		args := make([]store.Cond, rng.IntN(4))
+		for i := range args {
+			args[i] = genCond(rng, depth+1)
+		}
+		if n == 2 {
+			return store.AndCond(args...)
+		}
+		return store.OrCond(args...)
+	default:
+		return store.NotCond(genCond(rng, depth+1))
+	}
 }

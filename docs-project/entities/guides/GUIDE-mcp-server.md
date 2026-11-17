@@ -144,11 +144,13 @@ is_current_user(entity.assignee)
 has_current_user(entity.watchers)
 ```
 
-The store answers equalities, `~=`, `related(...)`, `not related(...)` and the
-`current_user` comparisons, so such a filter costs one page. A filter with an
-ordered comparison, an `or`, or a property the caller cannot see on every
-entity is checked against every readable entity of the type, which costs more
-on a large type.
+The store answers equalities, `~=`, `related(...)`, the `current_user`
+comparisons, `and`, `or` and `not`, and `<`, `<=`, `>`, `>=` on a string or
+integer property, so such a filter costs one page. An ordered comparison on a
+string or integer property that is not set is false. A filter with a date or
+decimal comparison, a comparison of two properties, or a property the caller
+cannot see on every entity is checked against every readable entity of the
+type, which costs more on a large type.
 
 In `update_entity`, a `null` property value removes the property, and an empty
 string is ignored.
