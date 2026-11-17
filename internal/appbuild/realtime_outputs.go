@@ -134,11 +134,22 @@ func (o managerOutputs) asRetry(ctx context.Context, id *realtime.OutputIdentity
 	p := principal.VerifiedFrom(id.Writer.User, principal.ToolRealtime, principal.Claims{
 		PrincipalType: id.Writer.PrincipalType, OrgID: id.Writer.OrgID, Roles: id.Roles,
 	})
+	return o.rebuild(ctx, p, id.OutputPoster)
+}
+
+// rebuild binds p, a principal recorded earlier and rebuilt from its mark,
+// as the edge bound it then: it fails with [errOutputsNoPoster] when p
+// named a user entity that is gone, and resolves an unmatched p again,
+// marked verified, so `unmatched_principal` judges it as it judged the
+// original request. The background llm action jobs use it too.
+func (o managerOutputs) rebuild(
+	ctx context.Context, p principal.Principal, mark realtime.OutputPoster,
+) (context.Context, error) {
 	ctx = principal.With(ctx, p)
 	if o.policy == nil {
 		return ctx, nil
 	}
-	if id.UserEntity {
+	if mark.UserEntity {
 		exists, err := o.userExists(ctx, p.User)
 		if err != nil {
 			return ctx, err
@@ -147,7 +158,7 @@ func (o managerOutputs) asRetry(ctx context.Context, id *realtime.OutputIdentity
 			return ctx, errOutputsNoPoster
 		}
 	}
-	if !id.Unmatched {
+	if !mark.Unmatched {
 		return o.bind(ctx)
 	}
 	ident, err := o.policy.IdentityResolver().Resolve(ctx, p)

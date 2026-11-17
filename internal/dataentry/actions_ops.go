@@ -26,6 +26,10 @@ import (
 // method load line.
 type actionOps struct {
 	h *writeHandler
+	// background is set on a run of an `apply: auto` action from the job
+	// queue or a flow step, which applies the proposal itself. Unset, such
+	// an action is queued instead.
+	background bool
 }
 
 // run executes action id for the ctx principal: the permission gate, the
@@ -159,7 +163,7 @@ func (o actionOps) run(
 		}
 	}
 	if action.LLM != nil {
-		return o.runLLM(ctx, s, id, action, boundRaw, ent, deps)
+		return o.llm(ctx, s, id, action, boundRaw, ent, deps)
 	}
 
 	// Reuse App's long-lived engine so rela.cache state persists

@@ -17,13 +17,15 @@ type Proposal struct {
 	Title  string     `json:"title,omitempty"`
 	Set    []Value    `json:"set"`
 	Relate []Relation `json:"relate"`
+	// Create is new entities to create, each related to Entity.
+	Create []NewEntity `json:"create"`
 	// Model is the model that answered, as the provider reports it.
 	Model string `json:"model,omitempty"`
 }
 
 // Empty is a proposal of no changes for entity. Its lists encode as [].
 func Empty(entity string) *Proposal {
-	return &Proposal{Entity: entity, Set: []Value{}, Relate: []Relation{}}
+	return &Proposal{Entity: entity, Set: []Value{}, Relate: []Relation{}, Create: []NewEntity{}}
 }
 
 // Value is one proposed property value, as JSON. Current is the value the
@@ -40,6 +42,21 @@ type Relation struct {
 	To       string `json:"to"`
 	ToType   string `json:"to_type"`
 	ToTitle  string `json:"to_title"`
+}
+
+// NewEntity is one proposed new entity of Type, related to the proposal's
+// entity through Relation: from the entity to the new one when Outgoing,
+// else from the new one to the entity. Its Properties have a null Current.
+type NewEntity struct {
+	Type       string  `json:"type"`
+	Relation   string  `json:"relation"`
+	Outgoing   bool    `json:"outgoing"`
+	Properties []Value `json:"properties"`
+}
+
+// IsEmpty reports whether p proposes no change.
+func (p *Proposal) IsEmpty() bool {
+	return p == nil || len(p.Set) == 0 && len(p.Relate) == 0 && len(p.Create) == 0
 }
 
 // Batch is the reply of a batch run of an `llm:` action (TKT-I2SRNWR): one
