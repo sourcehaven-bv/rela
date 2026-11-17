@@ -57,9 +57,9 @@ entry stays with an honest reason.
 - [x] Dependencies identified (packages, APIs, types)
 
 **Technical Approach:**
-- `visibility.PageQuery` gains `Related []store.DirectedRelation` (already gated by the caller), ANDed onto the read scope in `readPage`; `pageViaFilter` refuses it.
-- appbuild: `GatedReadBundle.Conditions` (`QueryConditions{meta, gate}`) with `StampQueryIdentity` (nextActionRequestScope) and `Lower` (lowerQueryCondition with the bundle's traversal gate, the same gate as `Traversals`).
-- mcp: consumer-side `ConditionLowerer` on `RelatedReads.Conditions` (nil accepted: every filter in Go). `handleListEntities` stamps the identity when a filter is present; `listPage.ofType` lowers, returns an empty page for a denied positive traversal, pushes Props and Related, and falls back to `filterInGo` on `ok=false` or `ErrPropsNotPushable`.
+- `visibility.PageQuery` gains `Traversals []PageTraversal` (hop and sign only). The page reader (`ScriptReader.ListEntityPage`) gates each hop with the caller's traversal gate and ANDs the edge tests onto the read scope; `pageViaFilter` refuses it (RR-CY6WIFE).
+- appbuild: `GatedReadBundle.Conditions` (`QueryConditions{meta}`) with `StampQueryIdentity` (nextActionRequestScope) and `Lower`, which returns `props, traversals, ok` and gates nothing.
+- mcp: consumer-side `ConditionLowerer` on `RelatedReads.Conditions` (nil accepted: every filter in Go). `handleListEntities` stamps the identity when a filter is present; `listPage.ofType` lowers, pushes Props and Traversals (the reader returns an empty page for a denied positive traversal), and falls back to `filterInGo` on `ok=false` or `ErrPropsNotPushable`.
 - Wiring: `internal/cli/mcp_wiring.go`, `internal/dataentrywire/mcp.go`.
 - Alternative rejected: chunked header pages for the Go path. The total still needs every row, so rows read would still grow with the type, and offset paging adds an O(n^2) cost on postgres.
 - Alternative rejected: moving lowerQueryCondition into relresolve. A consumer-side interface keeps MCP off queryplan/identity details and reuses the function as-is.

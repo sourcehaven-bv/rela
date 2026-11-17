@@ -19,8 +19,9 @@ types through `visibleListByTypes`:
 - filters on dates, numbers, booleans, globs, legacy `status`/`priority` types, and `!=` with no value;
 - a query that names no type.
 
-Also: a structured search without a limit and without a filter reads up to the
-1000-row cap, so `TestQueryBudget_SearchIsSizeIndependent` uses a status filter.
+Also: a structured search without a limit reads every match, so
+`TestQueryBudget_SearchIsSizeIndependent` pins only the number of store calls.
+`TestQueryBudget_SearchFilteredIsSizeIndependent` pins rows for a filtered search.
 The `_position` gain is postgres-only, since `storetest.Counting` does not
 forward `store.PositionQueryer`; a postgres budget test would pin it.
 
