@@ -18,6 +18,7 @@ function snapshot(
     version: 'v1',
     schema: newMap({ entities: newMap({ risk: newMap({ properties: newMap({ stage }) }) }) }),
     data_entry: newMap({ kanbans: newMap({ board }) }),
+    flows: newMap(),
     editable: {},
   }
 }

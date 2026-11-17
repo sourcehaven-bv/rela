@@ -113,11 +113,42 @@ export const dataEntryFixture = {
   ],
 }
 
+/** flows.yaml: four triggers, one of which runs a script. */
+export const flowsFixture = {
+  triggers: {
+    stamp_done: {
+      description: 'Clear the effort of done tickets',
+      on: { entity: 'ticket', property: 'status', becomes: 'done' },
+      outputs: [{ set: { properties: { effort: '0' } } }],
+    },
+    copy_effort: {
+      on: { entity: ['ticket'], updated: true, where: ['effort>0'], when: 'entity.effort > 1' },
+      outputs: [
+        { set: { properties: { effort: '{{new.effort}}', title: '{{old.effortless}}' } } },
+        { check: { where: 'effort>0', message: 'Effort is {{new.effort}}' } },
+      ],
+    },
+    scripted: {
+      on: { entity: ['ticket'], created: true },
+      outputs: [{ script: { lua: 'print(1)' } }],
+    },
+    spawn: {
+      on: { entity: 'feature', created: true },
+      outputs: [
+        { create: { type: 'ticket', properties: { effort: '1' } } },
+        { notify: { pile: 'inbox', to: { property: 'effort' } } },
+      ],
+    },
+  },
+  flows: { review: { steps: ['a'] } },
+}
+
 export function snapshot(version = 'v1'): ConfigSnapshot {
   return {
     version,
     schema: toTree(schemaFixture),
     data_entry: toTree(dataEntryFixture),
+    flows: toTree(flowsFixture),
     editable: {
       'schema.yaml': [
         'entities.*.label',

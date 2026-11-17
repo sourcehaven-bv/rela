@@ -1403,7 +1403,8 @@ automations may already be written. The move stops when:
 
 The error names the file, the automation and the key.
 
-The Configure space no longer edits these rules. Edit `flows.yaml` directly.
+The Configure space edits the moved triggers in `flows.yaml`. See
+[Configure space](data-entry.md#configure-space).
 
 ## Checking the file
 

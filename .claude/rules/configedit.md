@@ -23,6 +23,22 @@ paths:
   bytes that do not parse back to exactly that tree (a `<<` merge key was
   the bypass that rule closes).
 
+  `flows.yaml` is open for `triggers:` only (TKT-ZT2KREN). Triggers fire in
+  document order, so `ordered` refuses moving a kept trigger and puts a new
+  one last, and a pin's `order` keeps a scripted trigger's outputs exactly as
+  read. A trigger output reads and writes as a cascade without per-record
+  ACL checks, so every save that changes `flows.yaml` or `schema.yaml` asks
+  the `TriggerChecker` (`appbuild.CheckTriggerACL`, wired in
+  `cmd/rela-server/configure.go`) to judge the triggers against the parsed
+  `acl.yaml` and the editor's own rights. It refuses scripts, template
+  variants, `if_exists: replace`, fixed `relate.to` targets, reads of fields the policy hides, created records
+  read more widely than their source, writes the policy decides access by
+  (before and after), writes the editor could not make or a flow locks,
+  and the same through the triggers a created record fires. When it cannot judge an
+  edit, the save is refused. configedit may not import `acl`, so the
+  interface lives in configedit and the server supplies it. The `flows:`
+  section must parse the same after a save, or flow versions would change.
+
   Only an interactive principal configures: `mayConfigure` refuses a
   `principal_type` other than empty or `user`, because a client type no
   baseline matches is unrestricted by the ceiling.

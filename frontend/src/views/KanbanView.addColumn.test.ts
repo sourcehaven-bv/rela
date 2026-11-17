@@ -45,6 +45,7 @@ function snapshot(): ConfigSnapshot {
     data_entry: newMap({
       kanbans: newMap({ board: newMap({ entity_type: TYPE, column_property: 'stage' }) }),
     }),
+    flows: newMap(),
     editable: {},
   }
 }

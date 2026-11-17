@@ -87,7 +87,14 @@ func newConfigProject(t *testing.T) string {
 // configServer starts a server over a fresh project with --config-editing.
 func configServer(t *testing.T) (srv *server, dir string) {
 	t.Helper()
+	return configServerACL(t, cfgACL)
+}
+
+// configServerACL is configServer with acl as the project's acl.yaml.
+func configServerACL(t *testing.T, acl string) (srv *server, dir string) {
+	t.Helper()
 	dir = newConfigProject(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "acl.yaml"), []byte(acl), 0o644))
 	f := &serverFlags{
 		projectDir: dir, bind: "127.0.0.1", port: "8080",
 		principalHeader: "X-User", jwtHeader: "X-Auth-Assertion", configEditing: true,
@@ -535,13 +542,13 @@ func TestConfigure_RealtimeAgainstCandidateSchema(t *testing.T) {
 	broken = strings.Replace(broken, "      state:\n        type: status\n", "", 1)
 	require.NotEqual(t, cfgSchema, broken)
 
-	_, err := configureHost{s: srv}.Validate([]byte(broken), []byte(cfgDataEntry))
+	_, err := configureHost{s: srv}.Validate([]byte(broken), []byte(cfgDataEntry), nil)
 	var verr *configedit.ValidationError
 	require.ErrorAs(t, err, &verr)
 	require.Len(t, verr.Problems, 1)
 	require.Contains(t, verr.Problems[0], "realtime.yaml: channel_types.room.message_types.note.properties.state.type")
 
-	_, err = configureHost{s: srv}.Validate([]byte(cfgSchema), []byte(cfgDataEntry))
+	_, err = configureHost{s: srv}.Validate([]byte(cfgSchema), []byte(cfgDataEntry), nil)
 	require.NoError(t, err)
 
 	first := srv.cur.Load()
@@ -561,11 +568,11 @@ func TestConfigure_ChannelsAgainstRealtime(t *testing.T) {
 	host := configureHost{s: srv}
 
 	ok := cfgDataEntry + "channels:\n  room:\n    messages:\n      note:\n        fields: [{ property: state }]\n"
-	_, err := host.Validate([]byte(cfgSchema), []byte(ok))
+	_, err := host.Validate([]byte(cfgSchema), []byte(ok), nil)
 	require.NoError(t, err)
 
 	bad := cfgDataEntry + "channels:\n  room:\n    messages:\n      note:\n        fields: [{ property: nope }]\n"
-	_, err = host.Validate([]byte(cfgSchema), []byte(bad))
+	_, err = host.Validate([]byte(cfgSchema), []byte(bad), nil)
 	var verr *configedit.ValidationError
 	require.ErrorAs(t, err, &verr)
 	require.Len(t, verr.Problems, 1)
@@ -582,7 +589,7 @@ func TestConfigure_BusyFieldAgainstRealtime(t *testing.T) {
 
 	bad := cfgDataEntry + "kanbans:\n  board:\n    entity_type: task\n    column_property: state\n" +
 		"    card:\n      fields: [{ busy: nope }]\n"
-	_, err := host.Validate([]byte(cfgSchema), []byte(bad))
+	_, err := host.Validate([]byte(cfgSchema), []byte(bad), nil)
 	var verr *configedit.ValidationError
 	require.ErrorAs(t, err, &verr)
 	require.Len(t, verr.Problems, 1)
@@ -591,7 +598,7 @@ func TestConfigure_BusyFieldAgainstRealtime(t *testing.T) {
 
 	list := cfgDataEntry + "lists:\n  tasks:\n    entity_type: task\n" +
 		"    columns: [{ property: title }, { busy: nope }]\n"
-	_, err = host.Validate([]byte(cfgSchema), []byte(list))
+	_, err = host.Validate([]byte(cfgSchema), []byte(list), nil)
 	require.ErrorAs(t, err, &verr)
 	require.Len(t, verr.Problems, 1)
 	require.Contains(t, verr.Problems[0],
@@ -605,7 +612,7 @@ func TestConfigure_BusyFieldAgainstRealtime(t *testing.T) {
 func TestConfigure_DeprecatedDataEntry(t *testing.T) {
 	srv, _ := configServer(t)
 	bad := cfgDataEntry + "lists:\n  tasks:\n    entity_type: task\n    columns:\n      - property: title\n        link: true\n"
-	_, err := configureHost{s: srv}.Validate([]byte(cfgSchema), []byte(bad))
+	_, err := configureHost{s: srv}.Validate([]byte(cfgSchema), []byte(bad), nil)
 	var verr *configedit.ValidationError
 	require.ErrorAs(t, err, &verr)
 	require.Len(t, verr.Problems, 1)

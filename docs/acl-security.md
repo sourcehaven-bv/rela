@@ -3013,8 +3013,8 @@ bounds *which meta fields* within a reachable one.
 
 `config:edit` is a built-in global permission. It lets a principal use the
 in-app [Configure space](data-entry.md#configure-space), which edits
-`schema.yaml` and `data-entry.yaml`. The space exists only when `rela-server`
-runs with `--config-editing`.
+`schema.yaml`, `data-entry.yaml` and the triggers in `flows.yaml`. The space
+exists only when `rela-server` runs with `--config-editing`.
 
 Treat `config:edit` as administrator access. A holder reshapes the data model
 that every other grant is written against. A save can also run a data
@@ -3049,9 +3049,34 @@ data is.
 
 The Configure space cannot change `acl.yaml`. It also refuses to rename or
 remove an entity type, property, relation or choice option that `acl.yaml`
-mentions. Settings that control access stay locked: a transition `guard`, and
-`permission:` on navigation entries, spaces and dashboard cards. Change those
-in the files directly.
+mentions. Settings that control access stay locked: a transition `guard`,
+`permission:` on navigation entries, spaces and dashboard cards, and the
+stateful `flows:` section of `flows.yaml`. Change those in the files directly.
+
+A trigger output reads and writes without per-record ACL checks. So the
+Configure space judges every trigger it adds or changes against the parsed
+`acl.yaml` and the editor's own grants. It refuses a trigger that:
+
+- runs a script, applies a template variant, replaces records or links to
+  a fixed record;
+- reads a field that a `visible:` grant, client baseline or scope grant
+  hides, or follows relations in its condition;
+- creates a record read more widely than the record that fired it. A role
+  or ceiling with a world grant counts as a wider reader;
+- writes what a grant decides access by;
+- writes what the editor may not write, or what a flow's `outside_edits:`
+  locks.
+
+The write rules also apply to the old version of a trigger that is changed
+or removed. They apply to the triggers that a created record fires too,
+together with the reader rule against the edited trigger's subject. When
+the check cannot judge an edit, for example because `acl.yaml` does not
+parse, the save is refused. Trigger `script` outputs and
+`create.if_exists` stay locked.
+
+A trigger fires on writes the editor cannot see, so whether it fired, and
+when, can show through the records it writes. That is the same one-bit
+signal the rest of the ACL accepts.
 
 ## Git sync (`git:sync`)
 
