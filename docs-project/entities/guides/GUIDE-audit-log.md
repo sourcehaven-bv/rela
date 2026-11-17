@@ -464,8 +464,10 @@ there is no automatic pruning or expiry. Retaining the directory is an
 operational responsibility of the deployment.
 
 **Minimum retention.** Where a security-log retention requirement
-applies (e.g. POLICY-017 §4 / PROCEDURE-f4cu: **≥ 12 months**), keep
-everything under `.rela/audit/` for at least that window. The directory
+applies, keep everything under `.rela/audit/` for at least that
+window. Security logs need **≥ 12 months** (e.g. POLICY-017 §4 /
+PROCEDURE-f4cu); audit logs need **three years**, longer while an open
+incident or nonconformity needs them. The directory
 is gitignored and per-machine, so back it up or ship it off-box if the
 host is ephemeral. See the [security model](server-security.md#retention).
 
@@ -474,10 +476,10 @@ naming makes the granularity exact — delete only files older than your
 window, never on a shorter interval:
 
 ```bash
-# Delete audit logs older than 12 months (365 days). Do NOT prune
+# Delete audit logs older than three years (1095 days). Do NOT prune
 # below your required retention window — a shorter -mtime would drop
 # records you are required to keep.
-find .rela/audit -name '*.jsonl' -mtime +365 -delete
+find .rela/audit -name '*.jsonl' -mtime +1095 -delete
 ```
 
 ## Reading the log

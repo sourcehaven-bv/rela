@@ -25,7 +25,7 @@ API and Changes tab (TKT-X1ZFO04), SIEM forwarding (TKT-AB4XKWT).
 1. On sqlite and postgres, entity writes produce rows in `audit_log` (TestSQLiteAuditGoesToTheDatabase).
 2. The chain verifies, and an edit, deletion or relink of any row or column is reported at the right seq (sqlaudittest EditedRowBreaks, ColumnEditsBreak, DeletedRowBreaks, RelinkedRowBreaks).
 3. Concurrent appends from several processes form one gapless chain (ConcurrentAppends with a second pool on pg).
-4. Prune keeps the rest verifiable via an anchor and records itself; below 365 days needs a flag (PruneKeepsChainVerifiable, TestAuditPrune_RetentionFloor).
+4. Prune keeps the rest verifiable via an anchor and records itself; below 1095 days needs a flag (PruneKeepsChainVerifiable, TestAuditPrune_RetentionFloor).
 5. Import appends JSONL files in name order and records itself (Import, TestAuditCmds_SQLite).
 6. Each tenant schema has its own chain (pgaudit TestSchemaIsolation).
 
@@ -79,7 +79,7 @@ guides.
 audit import` reads operator-named files; lines over 1 MiB or invalid JSON stop
 the import with the file and line number.
 
-**Security-Sensitive Operations:** Prune deletes audit rows: 365-day floor
+**Security-Sensitive Operations:** Prune deletes audit rows: 1095-day (three-year) floor
 unless `--allow-short-retention`, recorded as `audit-prune`. The chain detects
 edits but not a full rewrite by a database writer; the head from `rela audit
 verify` must be kept elsewhere (documented).
@@ -100,7 +100,7 @@ verify across pages, control characters in a record, concurrent appends, sink
 Close twice and Record after Close.
 
 **Negative Tests:** Tampered rows and columns, import with a bad line, keep-days
-0 and below 365, commands on the fs build.
+0 and below 1095, commands on the fs build.
 
 ## Risk Assessment
 

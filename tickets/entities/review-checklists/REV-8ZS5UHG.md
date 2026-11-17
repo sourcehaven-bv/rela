@@ -50,7 +50,7 @@ review: RR-Z3BLF6H, RR-WOJL98T (addressed), RR-YIE211P (deferred), RR-YYFYRZ5
 (`sqlaudittest.RunAll` on both).
 - Verify command detects edits, deletions, relinks and forged anchors:
 PASS (conformance and CLI sqlite tests).
-- Retention with a 365-day floor that refuses a broken chain: PASS.
+- Retention with a 1095-day (three-year) floor that refuses a broken chain: PASS.
 - JSONL migration via `rela audit import`: PASS.
 - In-transaction fail-closed append: deferred to TKT-TU0VZ4Y by
 DEC-U78WD7Y.
