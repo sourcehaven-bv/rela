@@ -37,3 +37,6 @@ before TKT-GWOBH2U, and locked keys stay read-only.
 - CI Archplan: `CheckTriggerACL` takes `configedit.TriggerEdit`, the Snapshot
 files are a named `configedit.Tree`, and problem paths use named flows.yaml
 keys (RR-CNCGY15).
+- CI Archplan: the restored Automations views grew the accepted
+`ConfigurePage.vue` move-candidate finding, so `ConfigurePage.vue` moves to
+`views/configure/`, beside the views that use it.
