@@ -3,6 +3,7 @@ package pgstore_test
 import (
 	"context"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -24,10 +25,16 @@ func TestIntegerExprAgreesWithGo(t *testing.T) {
 		`9223372036854775808`, `9223372036854775807.0`, `9.223372036854775807e18`, `1e19`, `-1e19`,
 		`1e400`, `123456789012345678`, `1.5e15`,
 		`"7"`, `"+3"`, `"-3"`, `"007"`, `" 7"`, `"7 "`, `"x"`, `""`, `"2.5"`, `"9223372036854775807"`,
-		`"9223372036854775808"`, `"-9223372036854775809"`,
+		`"9223372036854775808"`, `"-9223372036854775809"`, `"-000"`, `"+0"`, `"00000000000000000000000000042"`,
+		`"-00000000000009223372036854775808"`, `"10000000000000000000"`,
+		`"` + strings.Repeat("0", 200000) + `7"`, `"` + strings.Repeat("9", 200000) + `"`,
 		`true`, `null`, `[]`, `[1]`, `{"a": 1}`,
 	} {
-		t.Run(text, func(t *testing.T) {
+		name := text
+		if len(name) > 40 {
+			name = name[:20] + "...(" + strconv.Itoa(len(text)) + " bytes)"
+		}
+		t.Run(name, func(t *testing.T) {
 			// jsonb keeps a number as numeric, not as its text, so Go
 			// decodes what PostgreSQL gives back.
 			var stored string
