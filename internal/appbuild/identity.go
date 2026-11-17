@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
 )
 
 // IdentityBinder returns the request-edge step for svc. Every transport whose
@@ -16,14 +18,18 @@ import (
 // its acl.Request (see [acl.BindRequest]). It binds against
 // [Services.ACLDeclarative], read once here, so the Request belongs to the
 // same evaluator as svc's gated readers and manager. With no declarative
-// policy it returns ctx unchanged.
+// policy it binds no Request.
+//
+// It also stamps the operation's read time (see [readtime.Ensure]) from
+// svc's clock ([WithClock]) when ctx carries none, so every `today()`,
+// `now()`, `$today` and `$now` the operation reads is one value.
 //
 // Nil: rejected with an error; there are no Services to bind against.
 func IdentityBinder(svc *Services) (func(context.Context) (context.Context, error), error) {
 	if svc == nil {
 		return nil, errors.New("appbuild: IdentityBinder: services are nil")
 	}
-	return identityBinderFor(svc.ACLDeclarative()), nil
+	return identityBinderFor(svc.ACLDeclarative(), servicesClock(svc)), nil
 }
 
 // MustIdentityBinder is [IdentityBinder] for tests: it panics on nil.
@@ -42,12 +48,23 @@ func MustIdentityBinder(svc *Services) func(context.Context) (context.Context, e
 // Request with a fresh one, which is what a long-lived reader needs to see
 // role changes.
 //
-// Nil: accepted — a nil d means no policy is configured; the binder then
-// returns ctx unchanged.
-func identityBinderFor(d *acl.Declarative) func(context.Context) (context.Context, error) {
+// It keeps a read time already on ctx ([readtime.Ensure]): a binder may run
+// below the edge of an operation (a job rebinding identity), and must not
+// move the time within it. [rebindFor] is the variant that starts a new
+// operation.
+//
+// Nil: d accepted — a nil d means no policy is configured; the binder then
+// binds no Request. clock rejected — it is read when ctx has no read time.
+func identityBinderFor(d *acl.Declarative, clock func() time.Time) func(context.Context) (context.Context, error) {
 	return func(ctx context.Context) (context.Context, error) {
-		return acl.BindRequest(ctx, d)
+		return acl.BindRequest(readtime.Ensure(ctx, clock), d)
 	}
+}
+
+// servicesClock is the clock of the base s was assembled from, as a func
+// (see [servicesNow]).
+func servicesClock(s *Services) func() time.Time {
+	return func() time.Time { return servicesNow(s) }
 }
 
 // BindOrWarn runs bind on ctx for a command-line entry point. A failure (for

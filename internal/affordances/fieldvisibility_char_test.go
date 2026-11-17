@@ -100,7 +100,9 @@ inherit_roles_through:
   - belongs-to
 `
 
-func newFieldWorld(t *testing.T, policyYAML string) fieldWorld {
+func newFieldWorld(
+	t *testing.T, policyYAML string, extend ...func(*metamodel.Metamodel, *acl.Policy, *memstore.MemStore),
+) fieldWorld {
 	t.Helper()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -191,6 +193,9 @@ func newFieldWorld(t *testing.T, policyYAML string) fieldWorld {
 	mustCreateRelation(t, ms, "pia", "owner-of", "P-1")
 	mustCreateRelation(t, ms, "P-2", "belongs-to", "PRJ-1")
 
+	for _, x := range extend {
+		x(meta, policy, ms)
+	}
 	decl, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(ms), ms)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)

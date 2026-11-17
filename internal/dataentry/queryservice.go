@@ -194,7 +194,7 @@ func (q *queryService) executeQueryWith(
 func (q *queryService) executeQueryCut(
 	ctx context.Context, query string, opts queryOptions,
 ) (results []*entity.Entity, cut bool, err error) {
-	sq := searchparser.ParseQuery(query)
+	sq := parseSearchQuery(ctx, query)
 	if sq.IsEmpty() {
 		return nil, false, nil
 	}
@@ -424,7 +424,7 @@ func (q *queryService) freeTextIDsForType(
 	if query == "" {
 		return freeTextIDsForTypeResult{}, nil
 	}
-	sq := searchparser.ParseQuery(query)
+	sq := parseSearchQuery(ctx, query)
 	if sq.IsEmpty() || !sq.HasFreeText() {
 		return freeTextIDsForTypeResult{}, nil
 	}
@@ -589,7 +589,7 @@ func (q *queryService) searchPosition(
 func structuredPlan(
 	ctx context.Context, svc Services, query, exactType string,
 ) (plan searchPlan, scope map[string]search.TypeScope, ok bool) {
-	sq := searchparser.ParseQuery(query)
+	sq := parseSearchQuery(ctx, query)
 	if sq.IsEmpty() {
 		return searchPlan{}, nil, false
 	}
@@ -600,4 +600,15 @@ func structuredPlan(
 		return plan, nil, true
 	}
 	return plan, readGateFromContext(ctx).SearchScope(ctx, plan.types), true
+}
+
+// parseSearchQuery parses a search query and resolves the date variables of
+// its property filters (`prop:due<$today`, `$now`, offsets) at the
+// request's read time. Every search path parses through here, so `/_search`,
+// a dashboard `query:` card, a nav search scope and a next-action query all
+// read one `$today` per request.
+func parseSearchQuery(ctx context.Context, query string) *searchparser.SearchQuery {
+	sq := searchparser.ParseQuery(query)
+	sq.PropertyFilters = filter.BindDateVariables(sq.PropertyFilters, requestReadTime(ctx))
+	return sq
 }

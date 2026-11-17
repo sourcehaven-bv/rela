@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -132,7 +134,7 @@ func applyListFilters(
 					return nil, fmt.Errorf("unknown property %q for entity type %q", f.Property, entityTypeName)
 				}
 			}
-			legacyWhere = filters
+			legacyWhere = filter.BindDateVariables(filters, readtime.Or(ctx, time.Now))
 		} else {
 			progs = append(progs, prog)
 		}

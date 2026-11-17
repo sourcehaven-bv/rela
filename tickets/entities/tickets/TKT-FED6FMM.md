@@ -37,4 +37,8 @@ function. At creation it held 21 `request-path` entries (23 calls):
 
 ## Done when
 
-- No `request-path` entries remain in the allowlist.
+- Every `request-path` entry that an existing store query can bound is gone
+  from the allowlist. The rest moved to follow-up tickets (scope in
+  PLAN-X84HBKW): TKT-D9UO9Y4, TKT-EBBHM55, TKT-F2EJQY8, TKT-GIAGLQ3 and
+  TKT-P9QMEVI. The entries still in the allowlist name their own follow-up
+  ticket in their reason.

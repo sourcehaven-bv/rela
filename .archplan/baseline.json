@@ -2785,16 +2785,16 @@
       "weight.vocabulary": 872,
       "weight.types": 3972,
       "weight.concepts": 7204,
-      "weight.boundaries": 1422,
+      "weight.boundaries": 1428,
       "weight.data": 1298,
       "weight.security": 2064,
       "largest_tangle": 14,
       "cycle_edges": 67,
       "upward_edges": 0,
-      "propagation_cost": 9.1
+      "propagation_cost": 9.2
     },
     "min_weight": 0,
-    "at": "2026-11-16T20:48:28Z",
+    "at": "2026-11-17T01:30:00Z",
     "log": [
       {
         "at": "2026-11-17T00:00:00Z",
@@ -3140,6 +3140,28 @@
           "weight.boundaries": [
             1428,
             1422
+          ]
+        }
+      },
+      {
+        "at": "2026-11-17T01:30:00Z",
+        "change": "loosen",
+        "reason": "TKT-08ZI5XN: the new leaf readtime carries the request read time for today() and now(); the request edges (dataentry, appbuild, scheduler) and the readers (filter, predicatefns, lua, validation) import it, so most components now reach it. The edge is intended. Only propagation_cost changes; the traced weights keep their values.",
+        "metrics": {
+          "propagation_cost": [
+            9.1,
+            9.2
+          ]
+        }
+      },
+      {
+        "at": "2026-11-17T10:00:00Z",
+        "change": "loosen",
+        "reason": "TKT-TKSCSBT: SearchFieldScope compiles conditional role_relations grants, so affordances/searchscope.go shares more words with dataentry/affordances_policy.go and that accepted finding gains the words factor (31 to 37)",
+        "metrics": {
+          "weight.boundaries": [
+            1422,
+            1428
           ]
         }
       }

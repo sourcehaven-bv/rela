@@ -353,6 +353,8 @@ components:
   errors:           { in: internal/errors }
   htmlutil:         { in: internal/htmlutil }
   natsort:          { in: internal/natsort }
+  # The read time of one operation, on ctx (conditional grants judge it).
+  readtime:         { in: internal/readtime }
 
 # -- Vendors --------------------------------------------------------------
 vendors:
@@ -474,6 +476,7 @@ commonComponents:
   - entity
   - errors
   - natsort
+  - readtime
 
 commonVendors:
   - yaml
@@ -1458,6 +1461,8 @@ deps:
   aclstore:
     mayDependOn:
       - entity
+      # MatchProps: the edge condition of a conditional grant (TKT-TKSCSBT).
+      - graphquerynaive
       - store
   aclaudit:
     mayDependOn:

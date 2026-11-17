@@ -60,6 +60,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/piles"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/records"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
@@ -882,7 +883,7 @@ func (s *Services) GatedReads() GatedReadBundle {
 		Traversals: b,
 		Conditions: QueryConditions{meta: s.meta},
 		LuaReads:   deps,
-		Rebind:     rebindFor(s.aclDeclarative),
+		Rebind:     rebindFor(s.aclDeclarative, servicesClock(s)),
 		Rollups:    gatedRollups(s),
 	}
 }
@@ -934,12 +935,18 @@ func compileDerived(meta *metamodel.Metamodel, now func() time.Time) (*computed.
 }
 
 // rebindFor returns the [GatedReadBundle.Rebind] for policy d: without a
-// policy it returns ctx unchanged, with one it replaces any attached
+// policy it binds no Request, with one it replaces any attached
 // [acl.Request] by a fresh one for the ctx principal.
 //
-// Nil: accepted — a nil d means no policy is configured.
-func rebindFor(d *acl.Declarative) func(context.Context) (context.Context, error) {
-	return identityBinderFor(d)
+// Each call starts a new operation (an MCP tool call, a watch round), so it
+// REPLACES the read time with clock() rather than keeping one already on
+// ctx: a long-lived ctx must see the date advance.
+//
+// Nil: d accepted — a nil d means no policy is configured. clock rejected.
+func rebindFor(d *acl.Declarative, clock func() time.Time) func(context.Context) (context.Context, error) {
+	return func(ctx context.Context) (context.Context, error) {
+		return acl.BindRequest(readtime.With(ctx, clock()), d)
+	}
 }
 
 // GatedReadBundle is the result of [Services.GatedReads]: the read handles an
@@ -1809,7 +1816,13 @@ func ValidateACLPolicy(policy *acl.Policy, meta *metamodel.Metamodel) error {
 	if policy == nil || meta == nil {
 		return errors.New("appbuild: ValidateACLPolicy: policy and metamodel are required")
 	}
-	return policy.ValidateAgainstMetamodel(metamodelView{meta})
+	if err := policy.ValidateAgainstMetamodel(metamodelView{meta}); err != nil {
+		return err
+	}
+	// Conditional grants (TKT-TKSCSBT) compile here, with the schema, so
+	// every loader that validates gets them, and NewDeclarative refuses a
+	// `when:` that skipped this.
+	return acl.CompileGrantConditions(policy, grantConditionCompiler(meta))
 }
 
 // metamodelView adapts *metamodel.Metamodel to acl.MetamodelView. The acl
@@ -3323,7 +3336,7 @@ func finishAssembly(
 	// The realtime outputs runner writes through the manager the channel
 	// service uses; background llm actions rebuild their user through it.
 	outputs, err := newManagerOutputs(
-		s.entityManager, s.store, s.meta, txChannelsFor(s.store, refs.channels), s.aclDeclarative)
+		s.entityManager, s.store, s.meta, txChannelsFor(s.store, refs.channels), s.aclDeclarative, servicesClock(s))
 	if err != nil {
 		return nil, err
 	}

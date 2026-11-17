@@ -50,6 +50,10 @@ const (
 	Low
 	// Nit: stylistic.
 	Nit
+	// Info: not a problem; a fact about the policy a reviewer should know,
+	// such as a grant that expires (TKT-TKSCSBT). No threshold reaches it,
+	// so it never fails `--fail-on`.
+	Info
 )
 
 // String renders the severity as a lowercase label.
@@ -65,6 +69,8 @@ func (s Severity) String() string {
 		return "low"
 	case Nit:
 		return "nit"
+	case Info:
+		return "info"
 	default:
 		return "unknown"
 	}
@@ -72,8 +78,8 @@ func (s Severity) String() string {
 
 // ParseSeverity maps a lowercase label to a Severity. The special label
 // "any" maps to [Nit] — the least-severe level — so a threshold of "any"
-// matches every finding (used by `--fail-on=any`). Returns false for an
-// unknown label.
+// matches every problem finding (used by `--fail-on=any`); [Info] facts
+// are never reached. Returns false for an unknown label.
 func ParseSeverity(s string) (Severity, bool) {
 	switch s {
 	case "critical":

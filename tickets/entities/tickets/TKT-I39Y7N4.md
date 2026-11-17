@@ -37,8 +37,8 @@ request's traversal gate, as scopes do (TKT-XKCNCL).
 ## Outcome
 
 - `queryplan.LowerCondition` is a separate, wider lowering for query
-conditions: AND of `==`, `~=`, memberships (`has_current_user`, `'x' in
-entity.list`), `current_user.id`, `related(...)` and `not related(...)`.
+conditions: AND of `==`, `~=`, memberships
+(`has_current_user(entity.list)`), `current_user.id`, `related(...)` and `not related(...)`.
 `queryplan.LowerScope` is unchanged and stays the lowering for `visible:`.
 TKT-I3MGCRT (desktop notifications) can reuse `LowerCondition` instead of
 `LowerScope` plus `ConditionPrefilters`.

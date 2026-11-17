@@ -1,7 +1,9 @@
 package lua
 
 import (
+	"context"
 	"encoding/json"
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -123,6 +128,47 @@ func TestDateHelpersUseRuntimeClock(t *testing.T) {
 			var got any
 			require.NoError(t, json.Unmarshal([]byte(sb.String()), &got))
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// TestListEntities_DateVariableReadsCallerReadTime pins that a filter's
+// `$today` in rela.list_entities is the caller's read time when it has one,
+// and the runtime's clock otherwise (TKT-08ZI5XN).
+func TestListEntities_DateVariableReadsCallerReadTime(t *testing.T) {
+	t.Parallel()
+	meta := testMeta()
+	ticket := meta.Entities["ticket"]
+	props := maps.Clone(ticket.Properties)
+	props["due"] = metamodel.PropertyDef{Type: metamodel.PropertyTypeDate}
+	ticket.Properties = props
+	meta.Entities["ticket"] = ticket
+	ws := newMockWorkspaceWith(meta)
+	ws.seedEntity(&entity.Entity{ID: "TKT-1", Type: "ticket", Properties: map[string]any{"due": "2026-11-15"}})
+	ws.seedEntity(&entity.Entity{ID: "TKT-2", Type: "ticket", Properties: map[string]any{"due": "2026-11-18"}})
+	clock := func() time.Time { return time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC) }
+
+	for _, tc := range []struct {
+		name string
+		at   time.Time // zero: no caller read time
+		want float64
+	}{
+		{"runtime clock", time.Time{}, 2},
+		{"caller read time", time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC), 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			if !tc.at.IsZero() {
+				ctx = readtime.With(ctx, tc.at)
+			}
+			var sb strings.Builder
+			rt := NewReader(ws.services("/tmp").ReadDeps, &sb, WithClock(clock), WithContext(ctx))
+			defer rt.Close()
+			require.NoError(t, rt.RunString(`rela.output({n = #rela.list_entities("ticket", "due<$today")})`))
+			var out map[string]any
+			require.NoError(t, json.Unmarshal([]byte(sb.String()), &out))
+			assert.InDelta(t, tc.want, out["n"], 0)
 		})
 	}
 }

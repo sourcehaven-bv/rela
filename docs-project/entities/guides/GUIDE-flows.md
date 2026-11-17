@@ -866,7 +866,7 @@ triggers:
       - set: { properties: { flag: due-soon } }
 ```
 
-The functions include `today()`, `days_between(a, b)`,
+The functions include `today()`, `now()`, `days_between(a, b)`,
 `date_add(d, n, unit)`, `rrule_next(rule, after)`, and the string matchers
 `match`, `regex`, `fuzzy` and `contains`. An expression can choose a value
 with `c and x or y`; see

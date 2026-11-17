@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
 
@@ -106,7 +107,7 @@ func TestOutputCheckError(t *testing.T) {
 }
 
 func TestNewManagerOutputs_RejectsNil(t *testing.T) {
-	_, err := newManagerOutputs(nil, nil, nil, nil, nil)
+	_, err := newManagerOutputs(nil, nil, nil, nil, nil, time.Now)
 	require.Error(t, err)
 }
 
