@@ -6,7 +6,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-
 )
 
 // TestOpenAndAssemble_RefusedWithoutDSNStore pins the fail-closed choice on
