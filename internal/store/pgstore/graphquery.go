@@ -611,7 +611,7 @@ func orderedSQLOp(op store.PropOp) string {
 // read: the error would depend on a row the read gate may later hide.
 func integerExpr(txt, jsn string) string {
 	const lo, hi = "-9223372036854775808", "9223372036854775807"
-	digits := fmt.Sprintf(`regexp_replace(%s, '^([+-]?)0*([0-9]{1,19})$', '\1\2')`, txt)
+	digits := fmt.Sprintf(`regexp_replace(%s, '^([+-]?)0*([0-9]{1,19})$', E'\\1\\2')`, txt)
 	return fmt.Sprintf("(CASE jsonb_typeof(%[2]s)"+
 		" WHEN 'number' THEN (CASE WHEN %[1]s ~ '^-?[0-9]+$'"+
 		" THEN (CASE WHEN %[1]s::numeric BETWEEN %[3]s AND %[4]s THEN %[1]s::numeric END)"+
