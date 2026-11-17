@@ -1,6 +1,7 @@
 package acl
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -116,5 +117,20 @@ func TestBindGrantConds_UncompiledWhenFailsClosed(t *testing.T) {
 	}
 	if preds, ok := conds.edge("owns"); !ok || preds != nil {
 		t.Errorf("an unconditional relation counts every edge: preds=%v ok=%v", preds, ok)
+	}
+}
+
+func TestLoadPolicy_WhenNeedsRequiresPermission(t *testing.T) {
+	_, err := LoadPolicyBytes([]byte(`
+roles:
+  auditor:
+    read: [ticket]
+role_relations:
+  grants:
+    confers: auditor
+    when: "edge.valid_until >= today()"
+`))
+	if err == nil || !strings.Contains(err.Error(), "needs `requires_permission:`") {
+		t.Fatalf("err = %v, want the requires_permission refusal", err)
 	}
 }

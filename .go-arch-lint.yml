@@ -353,7 +353,7 @@ components:
   errors:           { in: internal/errors }
   htmlutil:         { in: internal/htmlutil }
   natsort:          { in: internal/natsort }
-  # The read time of one operation, on ctx (today()/now()/$today/$now).
+  # The read time of one operation, on ctx (conditional grants judge it).
   readtime:         { in: internal/readtime }
 
 # -- Vendors --------------------------------------------------------------
