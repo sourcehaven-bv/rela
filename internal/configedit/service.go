@@ -156,13 +156,18 @@ const (
 	maxTitleLen   = 120
 )
 
+// Tree is a YAML document decoded to JSON values: map[string]any for a
+// mapping, []any for a sequence, and scalars. The browser edits it as its
+// TreeValue, and the allowlist judges the keys it changes.
+type Tree any
+
 // Snapshot is what the Configure space starts from.
 type Snapshot struct {
 	Version   string `json:"version"`
-	Schema    any    `json:"schema"`
-	DataEntry any    `json:"data_entry"`
+	Schema    Tree   `json:"schema"`
+	DataEntry Tree   `json:"data_entry"`
 	// Flows is flows.yaml, an empty mapping when the file is absent.
-	Flows any `json:"flows"`
+	Flows Tree `json:"flows"`
 	// Editable lists the key patterns the Configure space may change, so the
 	// browser can show what it can edit (see the allowlist).
 	Editable map[File][]string `json:"editable"`

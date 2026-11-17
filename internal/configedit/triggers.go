@@ -51,7 +51,7 @@ func (s *Service) triggerProblems(ctx context.Context, cur *current, p *prepared
 	})
 	if err != nil {
 		return []Problem{{
-			Code: "acl_trigger", File: FlowsFile, Path: "triggers",
+			Code: "acl_trigger", File: FlowsFile, Path: triggersKey,
 			Message: fmt.Sprintf("The automations could not be checked against acl.yaml (%v), "+
 				"so this change is made in flows.yaml directly.", err),
 		}}
@@ -59,7 +59,7 @@ func (s *Service) triggerProblems(ctx context.Context, cur *current, p *prepared
 	out := make([]Problem, 0, len(found))
 	for _, f := range found {
 		out = append(out, Problem{
-			Code: "acl_trigger", File: FlowsFile, Path: "triggers." + f.Trigger, Value: f.Trigger,
+			Code: "acl_trigger", File: FlowsFile, Path: triggersKey + "." + f.Trigger, Value: f.Trigger,
 			Message: f.Message,
 		})
 	}

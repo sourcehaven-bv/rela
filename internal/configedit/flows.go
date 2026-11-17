@@ -4,6 +4,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// The top-level keys of flows.yaml that a problem can point at.
+const (
+	flowsKey    = "flows"
+	triggersKey = "triggers"
+)
+
 // flowsProblems checks an edited flows.yaml beyond the allowlist: written
 // is the file the save would write. The `flows:` section must come out as it
 // went in, or the save would change the version of flows the editor cannot
@@ -14,7 +20,7 @@ func flowsProblems(cur *current, written []byte) []Problem {
 	now, errNow := flowsSection(written)
 	if errWas != nil || errNow != nil || was != now {
 		return []Problem{{
-			Code: "unsupported_change", File: FlowsFile, Path: "flows",
+			Code: "unsupported_change", File: FlowsFile, Path: flowsKey,
 			Message: "Saving this would rewrite the flows: section of flows.yaml. Edit flows.yaml directly.",
 		}}
 	}

@@ -31,3 +31,9 @@ SPA on top of the triggers model.
 - A `config:edit` holder can edit the same trigger keys in the browser as
 before TKT-GWOBH2U, and locked keys stay read-only.
 - A save that breaks a trigger is refused at preview.
+
+## Notes
+
+- CI Archplan: `CheckTriggerACL` takes `configedit.TriggerEdit`, the Snapshot
+files are a named `configedit.Tree`, and problem paths use named flows.yaml
+keys (RR-CNCGY15).
