@@ -4,9 +4,11 @@ import (
 	"context"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
@@ -53,7 +55,7 @@ func TestGraph_HasEdge(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := g.HasEdge(ctx, tc.from, tc.rel, tc.to); got != tc.want {
+			if got := g.HasEdge(ctx, tc.from, tc.rel, tc.to, nil); got != tc.want {
 				t.Errorf("HasEdge(%s, %s, %s) = %v, want %v", tc.from, tc.rel, tc.to, got, tc.want)
 			}
 		})
@@ -74,7 +76,7 @@ func TestGraph_OutgoingRelations(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := g.OutgoingRelations(ctx, tc.from, tc.rel)
+			got, err := g.OutgoingRelations(ctx, tc.from, tc.rel, nil)
 			if err != nil {
 				t.Fatalf("OutgoingRelations: %v", err)
 			}
@@ -119,5 +121,79 @@ func TestConstructors_RejectNil(t *testing.T) {
 	}
 	if l, err := aclstore.NewPrincipalLookup(nil); err == nil || l != nil {
 		t.Errorf("NewPrincipalLookup(nil) = %v, %v; want an error", l, err)
+	}
+}
+
+// TestGraph_EdgeCondition pins that every lookup acl uses for a conferring
+// edge applies the edge condition (TKT-TKSCSBT). A lookup that ignored it
+// would keep an expired grant alive on that path.
+func TestGraph_EdgeCondition(t *testing.T) {
+	ctx := context.Background()
+	ms := memstore.New()
+	for _, id := range []string{"P", "LIVE", "PARSED", "EXPIRED", "BAD", "NONE"} {
+		if err := ms.CreateEntity(ctx, entity.New(id, "x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for to, until := range map[string]any{
+		"LIVE":    "2026-12-31",
+		"PARSED":  time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC), // a date the fs parser decoded
+		"EXPIRED": "2026-01-01",
+		"BAD":     "next year",
+		"NONE":    nil,
+	} {
+		var data *store.RelationData
+		if until != nil {
+			data = &store.RelationData{Properties: map[string]any{"until": until}}
+		}
+		if _, err := ms.CreateRelation(ctx, entity.RelationKey{From: "P", Type: "grants", To: to}, data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cond := []store.PropPredicate{
+		{Property: "until", Op: store.PropIsDate},
+		{Property: "until", Op: store.PropGreaterEqual, Value: "2026-11-16"},
+		// `<=` on the day itself: a decoded date must compare as a date.
+		{Property: "until", Op: store.PropLessEqual, Value: "2026-12-31"},
+	}
+	g := aclstore.MustNewGraph(ms)
+	want := []string{"LIVE", "PARSED"}
+	all := []string{"BAD", "EXPIRED", "LIVE", "NONE", "PARSED"}
+
+	var probed []string
+	for _, to := range all {
+		if g.HasEdge(ctx, "P", "grants", to, cond) {
+			probed = append(probed, to)
+		}
+	}
+	if !slices.Equal(probed, want) {
+		t.Errorf("HasEdge admits %v, want %v", probed, want)
+	}
+
+	out, err := g.OutgoingRelations(ctx, "P", "grants", cond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(out)
+	if !slices.Equal(out, want) {
+		t.Errorf("OutgoingRelations = %v, want %v", out, want)
+	}
+
+	batch, err := g.EdgesBetween(ctx, "grants", cond, []string{"P"}, all)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var batched []string
+	for _, to := range all {
+		if batch["P"][to] {
+			batched = append(batched, to)
+		}
+	}
+	if !slices.Equal(batched, want) {
+		t.Errorf("EdgesBetween admits %v, want %v", batched, want)
+	}
+
+	if !g.HasEdge(ctx, "P", "grants", "NONE", nil) {
+		t.Error("no condition must admit every edge")
 	}
 }

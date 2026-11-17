@@ -132,6 +132,9 @@ func NewDeclarative(p *Policy, g Graph, fm FaceMatcher, opts ...DeclarativeOptio
 	// failure mode: GrantsVerbOnState treats an unparseable entry as
 	// granting nothing, so the policy is already fail-closed and Validate
 	// remains the place that says so with a useful message.
+	if err := checkGrantConditions(p); err != nil {
+		return nil, fmt.Errorf("acl: NewDeclarative: %w", err)
+	}
 	d := &Declarative{policy: p, graph: g, faceMatcher: fm}
 	for _, opt := range opts {
 		opt(d)

@@ -19,6 +19,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/readtime"
 )
 
 // storeWatcher is the optional capability dataentry needs from a
@@ -600,6 +601,7 @@ func (a *App) runSSELoop(
 		conn:     conn,
 		feed:     feed,
 		gate:     readGateFromContext(r.Context()),
+		gateDay:  readDay(readtime.Or(r.Context(), nowFunc)),
 		verdicts: make(map[string]bool),
 		pending:  make(map[string]struct{}),
 		cursor:   start,
@@ -681,6 +683,7 @@ type sseStream struct {
 	verdicts map[string]bool     // entityType -> visible; cached per connection
 	pending  map[string]struct{} // types to write at the next flush
 	regate   bool                // a coalesced relation change is pending → re-derive on flush
+	gateDay  string              // UTC day of the gate's read time; a new day re-derives it
 	cursor   uint64              // feed position taken so far
 	flushed  uint64              // feed position whose changes are all gated and written
 }
@@ -709,6 +712,10 @@ func (st *sseStream) take(ctx context.Context) bool {
 	// Coalesce: re-derive the gate at most once per flush window (a bulk
 	// relation import otherwise walks member-of per edge per connection).
 	st.regate = st.regate || batch.Relation
+	// A conditional grant (role_relations `when:`, TKT-TKSCSBT) is judged
+	// at the gate's read time, by UTC day. On a new day the gate may admit
+	// less, so re-derive it before nudging.
+	st.regate = st.regate || readDay(nowFunc()) != st.gateDay
 	// An edge is also part of how both ends are shown: a board column or
 	// list section taken from a relation, a detail panel's relation fields.
 	// Mark both ends' types stale so those views re-fetch; the read gate
@@ -742,7 +749,19 @@ func (st *sseStream) take(ctx context.Context) bool {
 // last one carrying the resume token for the cursor.
 func (st *sseStream) flush(ctx context.Context) error {
 	if st.regate {
-		st.gate = st.app.freshReadGate(ctx, st.gate)
+		// A re-derived gate is a new operation with its own read time.
+		now := nowFunc()
+		gate, ok := st.app.freshReadGate(readtime.With(ctx, now), st.gate)
+		if !ok && readDay(now) != st.gateDay {
+			// The prior gate was judged on an earlier day, so it may still
+			// count an expired grant. Send nothing until a re-derive works;
+			// the client's reconnect re-fetch reconciles.
+			clear(st.pending)
+			st.flushed = st.cursor
+			return nil
+		}
+		st.gate = gate
+		st.gateDay = readDay(now)
 		clear(st.verdicts)
 		st.regate = false
 	}
@@ -768,20 +787,23 @@ func (st *sseStream) flush(ctx context.Context) error {
 	return nil
 }
 
+// readDay is the UTC calendar day of t, the unit a conditional grant is
+// judged in.
+func readDay(t time.Time) string { return t.UTC().Format(time.DateOnly) }
+
 // freshReadGate returns a read gate whose member-of closure is resolved
 // against the CURRENT graph, for use after a role-conferring relation
-// change invalidates the connection's cached membership. When ACL is a
+// change invalidates the connection's cached membership, or after a new
+// UTC day may have ended a conditional grant. When ACL is a
 // *acl.Declarative it re-resolves the principal's identity (a fresh
-// member-of walk) and opens a new acl.Request on it; otherwise (NopACL, or a
-// resolution failure) it keeps
-// the existing gate — for NopACL the verdict is constant-true so there
-// is nothing to refresh, and on a transient resolve error keeping the
-// prior gate is fail-safe (it can only be equal-or-narrower than a stale
-// allow, and the next relation change retries).
-func (a *App) freshReadGate(ctx context.Context, current readGate) readGate {
+// member-of walk) and opens a new acl.Request on it. For NopACL the verdict
+// is constant-true, so it returns current with ok true. On a resolution
+// failure it returns current with ok false; the caller decides whether the
+// prior gate is still safe to use.
+func (a *App) freshReadGate(ctx context.Context, current readGate) (readGate, bool) {
 	d, ok := a.acl.(*acl.Declarative)
 	if !ok || d == nil {
-		return current
+		return current, true
 	}
 	// The ctx principal was already resolved by attachACLRequest (its User is
 	// the entity id when principal_property matched), so this refresh walks
@@ -789,15 +811,15 @@ func (a *App) freshReadGate(ctx context.Context, current readGate) readGate {
 	// for a long-lived stream, not a lazy evaluation fallback.
 	req, err := acl.OpenRequest(ctx, d, principal.From(ctx))
 	if err != nil {
-		slog.Warn("sse: re-deriving read gate failed; keeping prior gate", "err", err)
-		return current
+		slog.Warn("sse: re-deriving read gate failed", "err", err)
+		return current, false
 	}
 	gate, err := newACLReadGate(req)
 	if err != nil {
-		slog.Warn("sse: re-deriving read gate failed; keeping prior gate", "err", err)
-		return current
+		slog.Warn("sse: re-deriving read gate failed", "err", err)
+		return current, false
 	}
-	return gate
+	return gate, true
 }
 
 // entityTypeVisible returns whether the connection's principal may read

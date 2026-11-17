@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // TestACLMiddleware_FailLoudOnApi pins AC7 + RR-875A: with ACL
@@ -247,7 +248,7 @@ func TestACLMiddleware_StampedPrincipalAttachesGate(t *testing.T) {
 // downMembership fails every graph read, so the member-of walk fails.
 type downMembership struct{ acl.NullGraph }
 
-func (downMembership) OutgoingRelations(context.Context, string, string) ([]string, error) {
+func (downMembership) OutgoingRelations(context.Context, string, string, []store.PropPredicate) ([]string, error) {
 	return nil, errors.New("graph down: secret backend detail")
 }
 

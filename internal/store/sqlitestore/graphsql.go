@@ -206,6 +206,10 @@ func propCondOn(b *sqlBuilder, alias string, p store.PropPredicate) string {
 			b.unsafe = true
 			return "0"
 		}
+	case store.PropIsDate:
+		// GLOB is anchored and compares bytes, so this is the exact shape.
+		return "(" + typeExpr(alias, path) + " = 'text' AND " + raw +
+			" GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')"
 	default:
 		// PropKeyEqual returned above; anything else is unknown. The
 		// statement must not run: the store falls back to graphquerynaive,
@@ -716,6 +720,10 @@ func buildPredicateSQL(
 	} else {
 		sb.WriteString(entityCol + " IN (" + entityJoin + ")")
 	}
+	// The edge's own properties, on the edge row this EXISTS names (see pgstore).
+	for _, pp := range p.EdgeProps {
+		sb.WriteString(" AND " + propCondOn(b, "r", pp))
+	}
 	with = append(with, endpointMatchSQL(b, &sb, alias, p.EndpointMatch, epSel)...)
 	return with, sb.String()
 }
@@ -792,6 +800,9 @@ func nestedPredicateSQL(
 		sb.WriteString(endpointCol + " IN (" + b.jsonList(p.Endpoints) + ") AND ")
 	}
 	sb.WriteString(entityCol + " = " + candidate + ".id")
+	for _, pp := range p.EdgeProps {
+		sb.WriteString(" AND " + propCondOn(b, "r", pp))
+	}
 	with = endpointMatchSQL(b, &sb, alias, p.EndpointMatch, epSel)
 	return with, sb.String()
 }

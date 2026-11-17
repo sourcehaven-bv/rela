@@ -229,6 +229,7 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 	t.Run("GraphQuery", func(t *testing.T) { RunGraphQueryTests(t, f) })
 	t.Run("GraphCond", func(t *testing.T) { RunGraphCondTests(t, f) })
 	t.Run("EndpointMatch", func(t *testing.T) { RunEndpointMatchTests(t, f) })
+	t.Run("EdgeProps", func(t *testing.T) { RunEdgePropsTests(t, f) })
 	t.Run("Related", func(t *testing.T) { RunRelatedTests(t, f) })
 	t.Run("Rollup", func(t *testing.T) { RunRollupTests(t, f) })
 	t.Run("ElementRange", func(t *testing.T) {

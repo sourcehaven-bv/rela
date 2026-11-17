@@ -532,6 +532,10 @@ func propCondOn(b *sqlBuilder, alias string, p store.PropPredicate) string {
 		default:
 			return b.fail(store.ValidatePropPredicates([]store.PropPredicate{p}))
 		}
+	case store.PropIsDate:
+		// A literal pattern, C-collated so [0-9] is ASCII digits only.
+		return fmt.Sprintf("(jsonb_typeof(%s) = 'string' AND (%s COLLATE \"C\") ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$')",
+			jsn, txt)
 	default:
 		// PropKeyEqual returned above; anything else is unknown.
 		return b.fail(store.UnknownPropOpError(p))
@@ -903,6 +907,11 @@ func buildPredicateSQL(
 		fmt.Fprintf(&existsSB, "%s IN (%s) AND ", endpointCol, endpointSrc)
 	}
 	fmt.Fprintf(&existsSB, "%s IN (%s)", entityCol, entityJoin)
+	// The edge's own properties, on the edge row this EXISTS names. The
+	// closure CTEs walk their own `relations r` and never see these.
+	for _, pp := range p.EdgeProps {
+		existsSB.WriteString(" AND " + propCondOn(b, "r", pp))
+	}
 
 	if m := p.EndpointMatch; m != nil {
 		alias := prefix + "_ep"
@@ -1047,6 +1056,9 @@ func nestedPredicateSQL(
 		fmt.Fprintf(&sb, "%s = ANY(%s::text[]) AND ", endpointCol, b.arg(p.Endpoints))
 	}
 	fmt.Fprintf(&sb, "%s = %s.id", entityCol, candidateAlias)
+	for _, pp := range p.EdgeProps {
+		sb.WriteString(" AND " + propCondOn(b, "r", pp))
+	}
 
 	if m := p.EndpointMatch; m != nil {
 		if m.EntityType != "" {

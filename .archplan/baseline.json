@@ -2785,7 +2785,7 @@
       "weight.vocabulary": 872,
       "weight.types": 3972,
       "weight.concepts": 7203,
-      "weight.boundaries": 1422,
+      "weight.boundaries": 1428,
       "weight.data": 1298,
       "weight.security": 2064,
       "largest_tangle": 14,
@@ -3140,6 +3140,17 @@
           "propagation_cost": [
             9.1,
             9.2
+          ]
+        }
+      },
+      {
+        "at": "2026-11-17T10:00:00Z",
+        "change": "loosen",
+        "reason": "TKT-TKSCSBT: SearchFieldScope compiles conditional role_relations grants, so affordances/searchscope.go shares more words with dataentry/affordances_policy.go and that accepted finding gains the words factor (31 to 37)",
+        "metrics": {
+          "weight.boundaries": [
+            1422,
+            1428
           ]
         }
       }
