@@ -177,15 +177,12 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_next_action", a.handleV1NextAction)
 	mux.HandleFunc("/api/v1/_git/status", a.handleGitStatus)
 	mux.HandleFunc("/api/v1/_git/sync", a.handleGitSync)
-	mux.HandleFunc("/api/v1/_settings", a.appearance.handleAPISettingsCRUD)
-	mux.HandleFunc("/api/v1/_palette", a.appearance.handleAPIPaletteCRUD)
-	mux.HandleFunc("/api/v1/_theme/logo", a.appearance.handleAPIThemeLogo)
-	mux.HandleFunc("/api/v1/_theme/export", a.appearance.handleAPIThemeExport)
-	mux.HandleFunc("/api/v1/_theme/import", a.appearance.handleAPIThemeImport)
+	registerAppearanceRoutes(mux, a)
 	mux.HandleFunc("/api/v1/_sidepanel/", a.views.handleV1SidePanel)
 	mux.HandleFunc("/api/v1/_sidebar", a.views.handleV1Sidebar)
 	mux.HandleFunc("/api/v1/_nav_status", func(w http.ResponseWriter, r *http.Request) { handleV1NavStatus(a, w, r) })
 	mux.HandleFunc("/api/v1/_nav_items", func(w http.ResponseWriter, r *http.Request) { handleV1NavItems(a, w, r) })
+	mux.HandleFunc("/api/v1/_page_status", func(w http.ResponseWriter, r *http.Request) { handleV1PageStatus(a, w, r) })
 	mux.HandleFunc("/api/v1/_dashboard", a.views.handleV1Dashboard)
 	mux.HandleFunc("/api/v1/_dashboard/card", func(w http.ResponseWriter, r *http.Request) {
 		handleV1DashboardCard(a, w, r)
@@ -232,6 +229,15 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 
 	// Dynamic entity routes are handled by a catch-all
 	mux.HandleFunc("/api/v1/", a.handleV1DynamicRoutes)
+}
+
+// registerAppearanceRoutes registers the settings, palette and theme routes.
+func registerAppearanceRoutes(mux *http.ServeMux, a *App) {
+	mux.HandleFunc("/api/v1/_settings", a.appearance.handleAPISettingsCRUD)
+	mux.HandleFunc("/api/v1/_palette", a.appearance.handleAPIPaletteCRUD)
+	mux.HandleFunc("/api/v1/_theme/logo", a.appearance.handleAPIThemeLogo)
+	mux.HandleFunc("/api/v1/_theme/export", a.appearance.handleAPIThemeExport)
+	mux.HandleFunc("/api/v1/_theme/import", a.appearance.handleAPIThemeImport)
 }
 
 // Path-segment counts for the dynamic route dispatcher below. A
@@ -2013,11 +2019,16 @@ func resolveFilterControlDirections(
 }
 
 // resolveKanbanDirections returns a copy of kanbans with card-field and
-// filter-control directions materialized.
+// filter-control directions materialized, and each cell color's style class.
 func resolveKanbanDirections(s *Schema, kanbans map[string]dataentryconfig.Kanban) map[string]dataentryconfig.Kanban {
+	var operator map[string]dataentryconfig.OperatorColor
+	if s.Cfg != nil {
+		operator = s.Cfg.OperatorColors()
+	}
 	out := make(map[string]dataentryconfig.Kanban, len(kanbans))
 	for id, kanban := range kanbans {
 		k := kanban
+		k.CellColors = dataentryconfig.ResolveKanbanCellClasses(k.CellColors, operator)
 		if len(k.Card.Fields) > 0 {
 			fields := make([]dataentryconfig.KanbanCardField, len(k.Card.Fields))
 			copy(fields, k.Card.Fields)

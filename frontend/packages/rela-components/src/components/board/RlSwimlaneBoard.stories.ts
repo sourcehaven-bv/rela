@@ -176,6 +176,52 @@ export const Icons: StoryObj = {
 }
 
 /**
+ * Toned cells make the board a heat map, such as impact by likelihood. Each
+ * lane's section carries its own tone, so every cell can differ. The label is
+ * text in the cell, so the colour is never the only cue, and the cards keep
+ * their own background.
+ */
+export const TonedCells: StoryObj = {
+  render: () => ({
+    components: { RlSwimlaneBoard: storyComponent(RlSwimlaneBoard), RlTaskCard },
+    setup() {
+      const tones = ['green', 'amber', 'red'] as const
+      const labels = { green: 'Low', amber: 'Medium', red: 'High' }
+      const lanes = swimlanes.map((lane, row) => ({
+        ...lane,
+        sections: lane.sections.map((section, column) => {
+          /* Some cells stay plain; their cards still line up with the rest. */
+          if (row === column) return section
+          const tone = tones[Math.min(2, Math.floor((row + column) / 2))]
+          return {
+            ...section,
+            tone: {
+              background: `--rl-tag-${tone}-bg` as const,
+              foreground: `--rl-tag-${tone}-fg` as const,
+              label: labels[tone],
+            },
+          }
+        }),
+      }))
+      return { lanes }
+    },
+    template: `
+      <RlSwimlaneBoard :lanes="lanes" :show-add="false">
+        <template #card="{ item, selected }">
+          <RlTaskCard :task="item" :selected="selected" />
+        </template>
+      </RlSwimlaneBoard>
+    `,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect((await canvas.findAllByText('Low')).length).toBeGreaterThan(0)
+    const cell = canvasElement.querySelector<HTMLElement>('.rl-swimlane-column--toned')
+    await expect(cell?.style.getPropertyValue('--rl-swimlane-cell-bg')).toMatch(/^var\(--rl-tag-/)
+  },
+}
+
+/**
  * Columns collapse across every lane. As on `RlBoard`, the board reports the
  * toggle and keeps focus on the column's control; the story holds the state.
  */

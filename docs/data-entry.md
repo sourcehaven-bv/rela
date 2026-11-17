@@ -4781,6 +4781,7 @@ kanbans:
 | `columns`          | list   | Explicit column definitions (`value`, `label`, `icon`, `collapsed`) |
 | `swimlane_property`| string | Property to group by for swimlanes (optional)              |
 | `swimlanes`        | list   | Explicit swimlane definitions (`value`, `label`, `icon`)   |
+| `cell_colors`      | map    | A colour per cell of a swimlane board (see below)          |
 | `card`             | object | Card display configuration                                 |
 | `column_summary`   | list   | Aggregate lines under each column heading (see below)      |
 | `edit_form`        | string | Form name for editing cards (click to open)                |
@@ -5054,6 +5055,50 @@ kanbans:
 
 Without explicit swimlanes, values are inferred from the metamodel. Entities whose swimlane
 property value is not in the list are hidden.
+
+#### Cell colours
+
+A swimlane board is a matrix: columns by lanes. `cell_colors:` gives a cell a
+background colour, so the board reads as a heat map. A DPIA risk board with
+impact as columns and likelihood as lanes is an example:
+
+```yaml
+kanbans:
+  risks:
+    entity_type: risk
+    column_property: impact
+    swimlane_property: likelihood
+    cell_colors:
+      high:                 # a column value
+        likely: error       # a lane value, then its colour
+        possible:
+          color: warning
+          label: Medium
+      low:
+        rare: success
+    card:
+      title: title
+```
+
+- The first key is a column value and the second a lane value. Both must be a
+  column or lane the board shows: a declared `columns:` or `swimlanes:` entry,
+  or else a value of the property.
+- A colour is a tone (`success`, `warning`, `error`, `info`, `new`) or a
+  [colour name](#color-names) such as `red/700`. A tone or a bare hue such as
+  `red` paints a soft tint; a shade such as `red/700` paints a strong fill.
+- Each coloured cell shows a label as text, so colour is not the only cue. A
+  tone shows its own name by default, in the reader's language: Good,
+  Warning, Critical, Info or New in English. `label:` replaces it. Any other
+  colour needs a `label:`.
+- On a board with any coloured cell, every cell keeps the same padding, so
+  cards line up across coloured and plain cells.
+- Cards keep their own background, so they read the same in a coloured cell
+  as in a plain one, in light and dark mode.
+- A cell without a colour stays plain.
+- `cell_colors` needs `swimlane_property` and cannot be used with
+  `columns_from`. An unknown column, lane or colour, or a missing label, fails
+  when the configuration loads, with a message that names the board. A cell
+  with a key other than `color` and `label` fails too, with its line number.
 
 ### Card Configuration
 
@@ -6454,6 +6499,71 @@ in present mode, and moving between steps keeps it. On a page without
 
 Present mode changes only what the screen shows. Every view in it reads and
 writes with the user's own permissions, as it does outside present mode.
+
+#### One row at a time
+
+`walk: true` on a list step shows the list's rows one at a time instead of the
+whole list. Use it for a step such as "for each processing activity, answer
+these questions".
+
+```yaml
+      - id: each-risk
+        label: "Each risk"
+        list: risks
+        scope: { relation: has-risk }
+        walk: true
+        prompt: "Who owns this risk?"
+```
+
+The step shows the row's own detail view, where the user edits it as usual.
+Above it are the row's position, such as "3 of 8", and **Previous row** and
+**Next row** links to the neighbouring rows. The rows, their order and their count
+are those of the list: its `condition:`, `filters:`, `sort:`,
+`query_scope:` and the step's `scope:` all apply. A row the user may not see is
+not shown and not counted.
+
+The row on screen is part of the URL, as `?item=<id>`. A step opened without
+`?item=` opens its first row. A link to another step drops `?item=`. If the row
+in the URL is not in the list, for example because it was removed or changed,
+the step says so and links to the first row.
+
+In present mode, **PageDown** and **PageUp** move through the rows first. After
+the last row, PageDown opens the next step; before the first row, PageUp opens
+the previous step. A walking step opened that way starts at its first row.
+
+`walk` is only allowed on a list step of a steps page.
+
+#### Marking a step done
+
+`done_when` on a list step is a condition that marks the step done. When the
+condition holds for every row of the step's list, the step's number shows a
+check. It uses the same expression language as a list's `condition:`, with
+`entity` for the row.
+
+```yaml
+      - id: owners
+        label: "Owners"
+        list: risks
+        scope: { relation: has-risk }
+        done_when: "entity.owner ~= nil"
+```
+
+A step is done when its list has at least one row and every row matches. An
+empty list is not done. The check is advice only: **Next** works whether a
+step is done or not.
+
+The check is computed for each user over the rows that user can see, so it
+never reveals a row the user may not see. A property the user may not see
+counts as empty. On a page opened in a world (`?world=`), the rows judged are
+the faces the page shows in that world. The SPA reads it from
+`GET /api/v1/_page_status?page=<id>`, with `&entity=<id>` on an entity page
+and `&world=<name>` on a page opened in a world,
+which answers `{"steps": {"<tab>": {"done": true}}}`. A step without
+`done_when`, or one the user cannot see, is left out. The sidebar only says
+that a step has a check (`done_check`), never whether it holds.
+
+`done_when` is only allowed on a list step of a steps page. A condition that
+does not compile is a config error.
 
 ### Linking to a page
 

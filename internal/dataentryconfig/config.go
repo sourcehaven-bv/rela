@@ -1196,9 +1196,9 @@ func (c *Config) HasPropertyFilterControl(entityType, property string) bool {
 //
 // The plimsoll directive is the format-mirror exception documented on
 // [Config]: each exported field is one key of a kanban in data-entry.yaml.
-// `add_column` (TKT-1X5G3BP) is the most recent.
+// `cell_colors` (TKT-83S9G0Z) is the most recent.
 //
-//plimsoll:max-fields=22
+//plimsoll:max-fields=23
 type Kanban struct {
 	EntityType     string `yaml:"entity_type" json:"entity"`
 	Title          string `yaml:"title" json:"title"`
@@ -1211,7 +1211,11 @@ type Kanban struct {
 	Columns          []KanbanColumn     `yaml:"columns,omitempty" json:"columns,omitempty"`
 	SwimlaneProperty string             `yaml:"swimlane_property,omitempty" json:"swimlane_property,omitempty"`
 	Swimlanes        []KanbanSwimlane   `yaml:"swimlanes,omitempty" json:"swimlanes,omitempty"`
-	Card             KanbanCard         `yaml:"card" json:"card"`
+	// CellColors gives a cell of a swimlane board a background color, keyed
+	// by column value and then by lane value, so the board reads as a heat
+	// map (TKT-83S9G0Z). See [KanbanCellColor].
+	CellColors map[string]map[string]KanbanCellColor `yaml:"cell_colors,omitempty" json:"cell_colors,omitempty"`
+	Card       KanbanCard                            `yaml:"card" json:"card"`
 	// Layout is "" (columns side by side) or [LayoutWall]. A wall shows the
 	// cards as a wrapping grid. Without columns it is one grid of all cards;
 	// with ColumnsFrom the cards without a target form a pile on top, the
@@ -1317,6 +1321,48 @@ type KanbanSwimlane struct {
 	Value string `yaml:"value" json:"value"`
 	Label string `yaml:"label,omitempty" json:"label,omitempty"`
 	Icon  string `yaml:"icon,omitempty" json:"icon,omitempty"`
+}
+
+// KanbanCellColor is one cell's color on a swimlane board. Color is a tone
+// (success, warning, error, info, new) or a color name: the vocabulary of a
+// dashboard matrix's `colors:`. Label names the color in text, so color is not
+// the only cue. A tone without a label shows the tone's translated name; any
+// other color requires a label.
+//
+// In YAML a cell is the color alone (`error`) or a mapping with color and
+// label. Class is the style class the server resolves when it serves the
+// config; the SPA paints the cell from it.
+type KanbanCellColor struct {
+	Color string `yaml:"color" json:"color"`
+	Label string `yaml:"label,omitempty" json:"label,omitempty"`
+	Class string `yaml:"-" json:"class,omitempty"`
+}
+
+// UnmarshalYAML reads a cell's color as a scalar or as a mapping with only
+// `color` and `label`. Any other key is an error rather than dropped, so a
+// typo such as `lable:` cannot leave a cell silently unlabeled.
+func (c *KanbanCellColor) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		*c = KanbanCellColor{Color: value.Value}
+		return nil
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(value.Content); i += 2 {
+			if key := value.Content[i].Value; key != "color" && key != "label" {
+				return fmt.Errorf("line %d: cell_colors: unknown key %q in a cell (valid: color, label)",
+					value.Content[i].Line, key)
+			}
+		}
+		type plain KanbanCellColor
+		var p plain
+		if err := value.Decode(&p); err != nil {
+			return err
+		}
+		*c = KanbanCellColor(p)
+		return nil
+	default:
+		return fmt.Errorf("line %d: cell_colors: a cell is a color or a mapping with color and label", value.Line)
+	}
 }
 
 // KanbanCard defines how cards are displayed on the board.

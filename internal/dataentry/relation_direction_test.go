@@ -152,6 +152,32 @@ relations:
 		}
 	})
 
+	t.Run("kanban cell colors get their style class", func(t *testing.T) {
+		kanbans := map[string]dec.Kanban{
+			"board": {
+				EntityType: "project",
+				CellColors: map[string]map[string]dec.KanbanCellColor{
+					"high": {
+						"likely":   {Color: "error"},
+						"possible": {Color: "yellow/300", Label: "Medium"},
+					},
+				},
+			},
+		}
+		got := resolveKanbanDirections(s, kanbans)
+
+		cells := got["board"].CellColors["high"]
+		if c := cells["likely"]; c.Class != "badge-red" || c.Color != "error" {
+			t.Errorf("tone cell = %+v, want class badge-red", c)
+		}
+		if c := cells["possible"]; c.Class != "kit-yellow-300" || c.Label != "Medium" {
+			t.Errorf("shade cell = %+v, want class kit-yellow-300 and its label", c)
+		}
+		if c := kanbans["board"].CellColors["high"]["likely"].Class; c != "" {
+			t.Errorf("source config was mutated: class = %q, want empty", c)
+		}
+	})
+
 	t.Run("calendar event fields and filter controls", func(t *testing.T) {
 		calendars := map[string]dec.Calendar{
 			"schedule": {

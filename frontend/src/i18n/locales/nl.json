@@ -453,7 +453,7 @@
     "duplicateAction": "Dupliceren",
     "permissionChangedDiscarded": "Je rechten zijn gewijzigd. Je niet-opgeslagen wijziging in '{label}' is weggegooid",
     "retry": "Opnieuw proberen",
-    "prev": "Vorige",
+    "prev": "Vorige rij",
     "removeFromPile": "Weghalen uit stapel",
     "partOf": "Onderdeel van {title}",
     "addToNewPile": "Toevoegen aan nieuwe stapel…",
@@ -623,7 +623,21 @@
       "present": "Presenteren",
       "exitPresent": "Stoppen",
       "fullscreen": "Volledig scherm",
-      "exitFullscreen": "Volledig scherm sluiten"
+      "exitFullscreen": "Volledig scherm sluiten",
+      "done": "klaar",
+      "walk": {
+        "label": "Rijen van deze stap",
+        "position": "{current} van {total}",
+        "prev": "Vorige rij",
+        "next": "Volgende rij",
+        "empty": "Niets om door te lopen",
+        "emptyDescription": "De lijst van deze stap heeft geen rijen.",
+        "missing": "Niet in deze lijst",
+        "missingDescription": "{id} is geen rij van deze stap. Misschien is het verwijderd of gewijzigd.",
+        "first": "Naar de eerste rij",
+        "error": "De rijen van deze stap konden niet worden gelezen",
+        "errorDescription": "Laad de pagina opnieuw om het nog eens te proberen."
+      }
     }
   },
   "editor": {
@@ -1278,7 +1292,14 @@
     "addColumnNoName": "Gebruik minstens één letter of cijfer in de naam",
     "addColumnUnsupported": "De waarden van deze kolom staan niet bij de eigenschap zelf, dus het bord kan er geen toevoegen",
     "addColumnSaving": "Kolom opslaan…",
-    "batchTooMany": "Deze actie werkt op hoogstens {max} kaarten tegelijk; er staan er {n} op het bord. Filter het bord of klap kolommen in."
+    "batchTooMany": "Deze actie werkt op hoogstens {max} kaarten tegelijk; er staan er {n} op het bord. Filter het bord of klap kolommen in.",
+    "cellTone": {
+      "success": "Goed",
+      "warning": "Let op",
+      "error": "Kritiek",
+      "info": "Info",
+      "new": "Nieuw"
+    }
   },
   "calendar": {
     "month": "Maand",

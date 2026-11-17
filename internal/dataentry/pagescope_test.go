@@ -213,7 +213,9 @@ func TestPageScope_Position(t *testing.T) {
 	seedPageScopeGraph(app)
 
 	scope, err := json.Marshal(ScopeDescriptor{
-		Source: "list", Type: "ticket", Sort: "title", ScopePage: "feat", ScopeTab: "tickets", Anchor: "FEAT-2",
+		Source:    "list",
+		Type:      "ticket",
+		ListQuery: ListQuery{Sort: "title", ScopePage: "feat", ScopeTab: "tickets", Anchor: "FEAT-2"},
 	})
 	require.NoError(t, err)
 	q := url.Values{"id": {"TKT-004"}, "scope": {string(scope)}}

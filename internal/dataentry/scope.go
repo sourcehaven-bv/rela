@@ -30,8 +30,23 @@ type ScopeDescriptor struct {
 	Source  string            `json:"source"`            // "list" | "search" | "pile"
 	Type    string            `json:"type"`              // entity type name (singular)
 	Filters map[string]string `json:"filters,omitempty"` // filter[...] bracket keys → value
-	Sort    string            `json:"sort,omitempty"`    // "-created,title" form
-	Q       string            `json:"q,omitempty"`       // free-text query
+
+	// ListQuery is the list part of the scope. Its fields are promoted and
+	// sit at the top level of the JSON.
+	ListQuery
+
+	// Pile is the pile a `source: pile` scope walks (TKT-K3RJLH). It is the
+	// only field such a scope carries.
+	Pile string `json:"pile,omitempty"`
+}
+
+// ListQuery is the part of a list read that a scope repeats, so prev/next
+// walks the rows the list showed: its sort, its text query and the
+// narrowing it applied. The SPA's ListParams and ScopeDescriptor carry the
+// same fields through ListQueryScope (frontend/src/types/entity.ts).
+type ListQuery struct {
+	Sort string `json:"sort,omitempty"` // "-created,title" form
+	Q    string `json:"q,omitempty"`    // free-text query
 
 	// QueryScope is the originating view's `query_scope:`, carried so
 	// prev/next walks the set the list actually showed.
@@ -51,9 +66,12 @@ type ScopeDescriptor struct {
 	ScopeTab  string `json:"scope_tab,omitempty"`
 	Anchor    string `json:"anchor,omitempty"`
 
-	// Pile is the pile a `source: pile` scope walks (TKT-K3RJLH). It is the
-	// only field such a scope carries.
-	Pile string `json:"pile,omitempty"`
+	// ListID names the configured list the scope walks, so its `condition:`
+	// narrows the set as it does on the list's own page (TKT-M07C97Y). Like
+	// the list endpoint's `list_id`, it is an id and never an expression.
+	// Only with source list. Empty means no list is named, and no condition
+	// applies.
+	ListID string `json:"list_id,omitempty"`
 }
 
 // knownScopeSources gates Source. Extending scope to a new origin is a
@@ -97,7 +115,7 @@ func scopeFromParam(raw string, meta entityTypeChecker) (scope ScopeDescriptor, 
 			return ScopeDescriptor{}, false, "scope pile is required for source pile"
 		}
 		if d.Type != "" || len(d.Filters) > 0 || d.Sort != "" || d.Q != "" || d.QueryScope != "" ||
-			d.ScopePage != "" || d.ScopeTab != "" || d.Anchor != "" {
+			d.ScopePage != "" || d.ScopeTab != "" || d.Anchor != "" || d.ListID != "" {
 
 			return ScopeDescriptor{}, false, "a pile scope takes only pile"
 		}
@@ -120,6 +138,10 @@ func scopeFromParam(raw string, meta entityTypeChecker) (scope ScopeDescriptor, 
 		// walk more rows than the tab showed. A tab sends source "list".
 		if d.ScopePage != "" || d.ScopeTab != "" || d.Anchor != "" {
 			return ScopeDescriptor{}, false, "a page scope needs source list"
+		}
+		// The search pipeline does not apply a list's condition either.
+		if d.ListID != "" {
+			return ScopeDescriptor{}, false, "list_id needs source list"
 		}
 	}
 	if d.Type != "" && !meta.HasEntityType(d.Type) {
@@ -175,8 +197,29 @@ func (a *App) resolveScope(ctx context.Context, scope ScopeDescriptor) ([]*entit
 		}
 		return entities, nil
 	default:
-		return a.scopedSortedEntities(ctx, scope.Type, scope.toQuery())
+		query := scope.toQuery()
+		rows, err := a.scopedSortedEntities(ctx, scope.Type, query)
+		if err != nil {
+			return nil, err
+		}
+		return scopeListCondition(ctx, a, scope.Type, query, rows)
 	}
+}
+
+// scopeListCondition narrows a list scope's rows by the `condition:` of the
+// list its `list_id` names, as listPage does for the list's own page: after
+// the row gate and every filter, so the position and total describe the rows
+// the list shows. Rows pass unchanged when no list is named or the list has
+// no condition.
+func scopeListCondition(
+	ctx context.Context, a *App, typeName string, query url.Values, rows []*entityPkg.Entity,
+) ([]*entityPkg.Entity, error) {
+	ctx, n, err := resolveListNarrowing(ctx, a, a.State(), typeName, query)
+	if err != nil || n.cond == nil {
+		return rows, err
+	}
+	ctx = primeVerdicts(ctx, a.fieldResolver, rows)
+	return applyViewCondition(ctx, rows, n.cond, a.redactedForSuggestion, a.Services().Store)
 }
 
 // entityTypeChecker is the narrow capability scopeFromParam needs: confirm a
@@ -202,6 +245,9 @@ func (d ScopeDescriptor) toQuery() url.Values {
 	}
 	if d.QueryScope != "" {
 		q.Set(QueryScopeParam, d.QueryScope)
+	}
+	if d.ListID != "" {
+		q.Set(listIDParam, d.ListID)
 	}
 	// Set when any is present, so a half-named page scope reaches
 	// resolvePageScope and is refused there instead of widening the set.

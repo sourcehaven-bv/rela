@@ -106,6 +106,21 @@ type PageTab struct {
 	// [maxPagePromptLen] characters.
 	Prompt string `yaml:"prompt,omitempty" json:"prompt,omitempty"`
 
+	// Walk shows the rows of the tab's list one at a time, each in its own
+	// detail view, with its position and controls for the previous and next
+	// row (TKT-M07C97Y). Only on a list tab of a page with mode: steps. The
+	// rows are the ones the list shows the principal, in the list's order.
+	Walk bool `yaml:"walk,omitempty" json:"walk,omitempty"`
+
+	// DoneWhen is a predicate expression over the tab's list entity type, in
+	// the language of a list `condition:` (TKT-MWZF0UO). The step is done
+	// when the list shows the principal at least one row and every row it
+	// shows satisfies the expression. Only on a list tab of a page with
+	// mode: steps. Advisory: the step bar shows a check and nothing is
+	// blocked. Compiled at config load (conditionlint.CompileViewConditions)
+	// and evaluated per principal by `/api/v1/_page_status`.
+	DoneWhen string `yaml:"done_when,omitempty" json:"done_when,omitempty"`
+
 	// Scope narrows the tab to the page's anchor entity. Required on every
 	// tab of an entity page, and refused on any other page.
 	//
@@ -274,6 +289,7 @@ func validatePages(cfg *Config, meta *metamodel.Metamodel) []string {
 		for i, tab := range page.Tabs {
 			errs = append(errs, validatePageTab(cfg, name, page.EntityType, i, tab, seen)...)
 			errs = append(errs, validatePagePrompt(name, page, i, tab)...)
+			errs = append(errs, validateStepListOptions(name, page, i, tab)...)
 			errs = append(errs, validatePageTabScope(cfg, meta, name, page, i, tab)...)
 		}
 	}
@@ -299,6 +315,70 @@ func validatePagePrompt(pageName string, page Page, i int, tab PageTab) []string
 		return []string{fmt.Sprintf("%s: prompt contains the invisible or control character %U", name, r)}
 	}
 	return nil
+}
+
+// validateStepListOptions checks a tab's walk and done_when. Both work on the
+// rows of a list, and both belong to a session that moves through steps, so
+// both need a list tab on a steps page. conditionlint.CompileViewConditions
+// compiles the done_when expression itself, since that needs the metamodel.
+func validateStepListOptions(pageName string, page Page, i int, tab PageTab) []string {
+	var errs []string
+	name := pageTabName(pageName, i, tab)
+	for _, opt := range []struct {
+		key string
+		set bool
+	}{{"walk", tab.Walk}, {"done_when", tab.DoneWhen != ""}} {
+		switch {
+		case !opt.set:
+		case !page.IsSteps():
+			errs = append(errs, fmt.Sprintf("%s: %s needs mode: steps on the page", name, opt.key))
+		case tab.List == "" && tab.destinationCount() > 0:
+			errs = append(errs, fmt.Sprintf("%s: %s needs a list tab (it works on the rows of a list)",
+				name, opt.key))
+		}
+	}
+	if tab.DoneWhen != "" && strings.TrimSpace(tab.DoneWhen) == "" {
+		errs = append(errs, name+": done_when is blank")
+	}
+	return errs
+}
+
+// PageDoneConditionID names a tab's compiled done_when in the view condition
+// lookup: the page id and the tab id. Neither may contain a slash (see
+// urlSegmentPattern), so the pair is unambiguous.
+func PageDoneConditionID(page, tab string) string {
+	return page + "/" + tab
+}
+
+// PageDoneEntry is a tab that declares done_when, with the id of its page
+// and the entity type of its list.
+type PageDoneEntry struct {
+	Page       string
+	Tab        PageTab
+	EntityType string
+}
+
+// PageDoneEntries returns every list tab that declares done_when, in page id
+// order and then tab order. A tab whose list is unknown is left out, since
+// validatePages reports it.
+func PageDoneEntries(cfg *Config) []PageDoneEntry {
+	if cfg == nil {
+		return nil
+	}
+	var out []PageDoneEntry
+	for _, id := range sortedMapKeys(cfg.Pages) {
+		for _, tab := range cfg.Pages[id].Tabs {
+			if tab.DoneWhen == "" || tab.List == "" {
+				continue
+			}
+			list, ok := cfg.Lists[tab.List]
+			if !ok {
+				continue
+			}
+			out = append(out, PageDoneEntry{Page: id, Tab: tab, EntityType: list.EntityType})
+		}
+	}
+	return out
 }
 
 // pageTabName names a tab in an error: by id when the id is usable, by

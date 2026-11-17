@@ -213,13 +213,8 @@ func validateMatrixCard(
 			errs = append(errs, fmt.Sprintf("%s: colors key %q is not a value of %q (values: %s)",
 				at, value, card.ToneBy, strings.Join(values, ", ")))
 		}
-		color := card.Colors[value]
-		if SemanticTones[color] {
-			continue
-		}
-		if _, err := ParseColor(color, cfg.OperatorColors()); err != nil {
-			errs = append(errs, fmt.Sprintf("%s: colors[%s] %q is neither a tone (%s) nor a color: %v",
-				at, value, color, joinMapKeys(SemanticTones), err))
+		if _, _, err := ParseToneOrColor(card.Colors[value], cfg.OperatorColors()); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: colors[%s] %v", at, value, err))
 		}
 	}
 	return errs

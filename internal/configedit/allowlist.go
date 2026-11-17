@@ -206,6 +206,8 @@ var editable = map[File][]string{
 		// "Add column" writes through Configure itself (TKT-1X5G3BP).
 		"kanbans.*.add_column",
 		"kanbans.*.card.**",
+		// The heat-map colors of a swimlane board's cells (TKT-83S9G0Z).
+		"kanbans.*.cell_colors.**",
 		"kanbans.*.column_property",
 		// A relation-backed board picks its columns, their order and their
 		// colors by naming a relation and properties, like lists.*.group_by.
