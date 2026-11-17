@@ -2177,6 +2177,35 @@ On SQLite, `rela-server-sqlite` holds the database open. Stop it, run
 
 ---
 
+### rela audit
+
+Check and maintain the audit log on the SQLite and PostgreSQL builds,
+where it is a hash-chained table (see the Audit Log guide). The
+filesystem build keeps JSONL files and refuses these commands.
+
+```bash
+rela audit verify                    # walk the hash chain, print its head
+rela audit prune --keep-days 400     # delete rows older than 400 days
+rela audit import .rela/audit/       # append JSONL files to the table
+```
+
+`verify` exits non-zero and names the first bad row when the chain does
+not check out. Keep the head it prints outside the database, and pass it
+back later as `--expect-head SEQ:HASH`: that is how a rewrite of the
+whole chain is detected.
+
+`prune` refuses fewer than 1095 days (three years) unless `--allow-short-retention` is
+given, and refuses when a row it would delete does not verify. It
+records an `audit-prune` row. `import` takes files or directories
+(their `*.jsonl` files in name order), appends them in one transaction
+and records an `audit-import` row. Importing a file twice appends its
+records twice.
+
+On SQLite, `rela-server-sqlite` holds the database open. Stop it before
+running these commands.
+
+---
+
 ### rela lease
 
 Claim an advisory lease on an entity. A lease tells people and other agents

@@ -3,6 +3,7 @@
 package appbuild
 
 import (
+	"github.com/Sourcehaven-BV/rela/internal/audit/sqliteaudit"
 	"github.com/Sourcehaven-BV/rela/internal/channels/sqlitechannels"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/comments/sqlitecomments"
@@ -45,7 +46,12 @@ func backendServices(db *sqlitedb.DB) (backendOverrides, error) {
 	if err != nil { // coverage-ignore: unreachable: db.DB() is non-nil
 		return backendOverrides{}, err
 	}
+	auditLog, err := sqliteaudit.New(db.DB())
+	if err != nil { // coverage-ignore: unreachable: db.DB() is non-nil
+		return backendOverrides{}, err
+	}
 	return backendOverrides{
+		auditLog:     auditLog,
 		flowRuns:     runs,
 		recordStore:  recordStore,
 		stateKV:      data.kv,

@@ -2,10 +2,19 @@
 
 # Audit Log
 
-rela writes one append-only JSONL record per entity / relation
-create / update / delete to `.rela/audit/YYYY-MM-DD.jsonl`. The log
-exists to answer **what changed, when, and on whose behalf** —
-forensic, not authoritative.
+rela writes one append-only record per entity / relation create /
+update / delete. The log exists to answer **what changed, when, and on
+whose behalf**.
+
+Where the records go depends on the build:
+
+- The default (filesystem) build writes JSONL files to
+  `.rela/audit/YYYY-MM-DD.jsonl`.
+- The SQLite and PostgreSQL builds write to the `audit_log` table in
+  the project's database, as a hash chain. See "Database audit log"
+  below.
+
+Both write the same record shape.
 
 ## Where records land
 
@@ -17,6 +26,120 @@ forensic, not authoritative.
   writes still succeed; audit retries when the cool-down expires.
 - **`.rela/audit/` is gitignored** by convention; the audit log is
   per-machine state, not part of the repository.
+
+## Database audit log
+
+On the SQLite and PostgreSQL builds the records go to the database
+instead of `.rela/audit/`. On PostgreSQL the tables live in the store's
+schema, so each tenant has its own log.
+
+| Table | Contents |
+|-------|----------|
+| `audit_log` | One row per record: `seq`, append time `at` (microseconds since the epoch), `op`, `principal_user`, the record as JSON in `doc`, `prev_hash` and `hash` |
+| `audit_subjects` | The entity IDs each row names (subject, before, after, relation endpoints), for lookup by entity |
+| `audit_anchor` | The last pruned row's `seq` and `hash`, after a prune |
+
+### Hash chain
+
+`seq` has no gaps. Each row's hash covers the previous row's hash and
+every other column of the row:
+
+```text
+hash = sha256_hex(prev_hash "\n" seq "\n" at "\n"
+                  len(op) ":" op len(principal_user) ":" principal_user doc)
+```
+
+Numbers are written in decimal; the lengths are byte counts.
+
+The first row links to the empty string, or to the anchor after a
+prune. Appends take a lock on the chain (a transaction-scoped advisory
+lock per schema on PostgreSQL; SQLite has one writer), so several
+`rela-server` processes on one database still form one chain.
+
+A prune sets the anchor and appends an `audit-prune` row that names it.
+The anchor is only valid when the newest `audit-prune` row names it.
+
+`rela audit verify` walks the chain and reports the first row that
+does not check out: a missing row, a changed row, a broken link, or an
+anchor that no prune set. It prints the head (`seq` and `hash`) when the
+chain verifies. `--expect-head` also checks that the chain still passes
+through a head you recorded earlier:
+
+```bash
+rela audit verify
+rela -o json audit verify   # ok, rows, anchor_seq, head_seq, head_hash
+rela audit verify --expect-head 1042:9f86d08...
+```
+
+### What the chain does and does not protect
+
+- It detects an edit, deletion or insertion of a row, including deleting
+  the oldest rows and setting the anchor by hand, by anyone who does not
+  also recompute every later hash.
+- It does **not** stop someone with write access to the database from
+  rewriting the whole chain from some row onward, or from deleting the
+  newest rows. To detect that, record the head that `rela audit verify`
+  prints somewhere the database user cannot write, for example a
+  scheduled job that sends it to a separate system. Later, run
+  `rela audit verify --expect-head SEQ:HASH` with the recorded head; it
+  fails when the chain no longer contains that row with that hash. A
+  prune past the recorded `seq` makes the check impossible, so record a
+  new head after each prune.
+- `rela audit prune` verifies the rows it would delete and refuses when
+  one does not check out, so a prune cannot erase evidence of an edit.
+- Database roles are the first line of defence, but only when
+  `rela-server` connects as a role that does **not** own the tables. The
+  owner, normally the role that ran `rela db migrate`, can always delete
+  or rewrite rows. Give the server role `SELECT, INSERT` on `audit_log`
+  and `audit_subjects` and `SELECT` on `audit_anchor`. Run
+  `rela audit prune` as a separate role that also has `DELETE` on
+  `audit_log` and `audit_subjects` and `INSERT, UPDATE` on
+  `audit_anchor`. For example, with `rela_app` as the server role:
+
+  ```sql
+  REVOKE ALL ON audit_log, audit_subjects, audit_anchor FROM rela_app;
+  GRANT SELECT, INSERT ON audit_log, audit_subjects TO rela_app;
+  GRANT SELECT ON audit_anchor TO rela_app;
+  ```
+
+### Delivery
+
+In this release the record is appended after the entity write commits,
+by a background writer that appends the queued records in batches. A
+failed batch is retried for about 20 seconds and then logged as
+`audit.write_failed` and dropped, as on the filesystem build. The queue
+holds at most 100,000 records; records that arrive when it is full are
+dropped and counted. On shutdown the writer drains its queue for up to
+ten seconds and logs how many records it could not write.
+
+So on these builds, a crash loses the records still in the queue, not
+only the one being written. Appending inside the write's own
+transaction, so that a write and its record commit together, is planned.
+
+### Moving JSONL files into the database
+
+When a project moves from the filesystem build to SQLite or PostgreSQL,
+append its old files to the database log:
+
+```bash
+rela audit import .rela/audit/
+```
+
+A directory is read in file name order, which is date order. Records
+keep their original `time`, and their rows are appended at that time,
+so retention counts from when the record was written. The rows get new
+`seq` numbers. The import runs in one transaction: if a line fails to
+decode, nothing is appended and you can run it again. It ends with an
+`audit-import` record that names how many records it appended.
+
+- Importing the same files twice appends them twice, so import each
+  file once.
+- An imported row is only as trustworthy as the file it came from. The
+  JSONL files have no integrity protection, so anyone who could write
+  to them could have changed a record before the import. The chain
+  protects the rows from the import on.
+- Records of `audit-prune` and `audit-import` operations are refused:
+  only the database log itself may write those.
 
 ## Record shape
 
@@ -72,6 +195,7 @@ Every record is one line of JSON:
 | `acl-query` | An effective-access query (`rela acl who-can`) — who asked, when, and about which entity. **The answer is deliberately not recorded**: it is a list of principals and their access routes, so logging it would duplicate the disclosure rather than record it |
 | `purge-version` | An operator hard-delete of version history for compliance redaction. Never contains the purged content |
 | `data-migration`, `data-gc` | Schema-driven data migration and garbage collection |
+| `audit-prune`, `audit-import` | Maintenance of the database audit log: `rela audit prune` and `rela audit import`. The summary carries the counts and, for a prune, the last deleted `seq` and the cutoff |
 | `idp-roles-set` | The IdP webhook stored or cleared the asserted roles of one principal, for background jobs (see [ACL security](acl-security.md) "Stored asserted roles"), or the stored roles were erased with the person (delete, rename, `rela acl forget-idp-roles`); an erasure records `roles=0`. Subject is the bound user entity, absent when the subject resolved to none; the summary is `roles=<count>`. The IdP subject and the role names are not recorded |
 
 ### Conversion records
@@ -277,7 +401,8 @@ entry guide). It is logged as an ordinary `delete-entity`, with
 
 ### Crash window
 
-There's a window between a successful store write and the audit
+On the database builds, see "Delivery" above: the window is the
+background writer's queue. On the filesystem build, there's a window between a successful store write and the audit
 record append. A process crash in between leaves the mutation on disk
 with no audit row. The trade-off: closing the window by writing the
 audit record *before* the store mutation introduces false-positive
@@ -314,7 +439,21 @@ cannot persist there and the question does not arise.
 
 ### Retention
 
-`rela` rotates to a new daily file but **never deletes audit logs** —
+**Database builds.** `rela audit prune --keep-days N` deletes the rows
+appended more than `N` days ago. The hash of the last deleted row
+becomes the anchor, so the rows that remain still verify, and the prune
+itself is recorded as an `audit-prune` row. Values below 1095 (three
+years, the retention period for audit logs) are refused unless you pass
+`--allow-short-retention`. Nothing prunes automatically; schedule the
+command if you need it. Prune deletes by age only: before you run it,
+check that no open incident or nonconformity, or one still in its
+evaluation period, needs older rows, and raise `--keep-days` if one does.
+
+```bash
+rela audit prune --keep-days 1100
+```
+
+**Filesystem build.** `rela` rotates to a new daily file but **never deletes audit logs** —
 there is no automatic pruning or expiry. Retaining the directory is an
 operational responsibility of the deployment.
 
@@ -337,7 +476,16 @@ find .rela/audit -name '*.jsonl' -mtime +365 -delete
 
 ## Reading the log
 
-`jq` is the easiest tool for reading JSONL streams. Common queries:
+On the database builds, query the tables directly. For example, every
+record that names `TKT-001`:
+
+```sql
+SELECT l.seq, l.doc FROM audit_log l
+JOIN audit_subjects s ON s.seq = l.seq
+WHERE s.entity_id = 'TKT-001' ORDER BY l.seq;
+```
+
+On the filesystem build, `jq` is the easiest tool for reading JSONL streams. Common queries:
 
 ```bash
 # Who changed entity TKT-001 today?
@@ -360,8 +508,8 @@ cat .rela/audit/2026-05-*.jsonl | jq -r '.principal.user' | sort | uniq -c | sor
   Property names are not secrets in rela's model — entities are
   markdown files in the project tree, names are visible to anyone
   with repo read access.
-- Audit failures (disk full, permission errors, symlinked dir) never
-  block a legitimate entity write. The backend logs
+- On the filesystem build, audit failures (disk full, permission
+  errors, symlinked dir) never block a legitimate entity write. The backend logs
   `audit.write_failed` via slog, enters a 60-second cool-down, and
   retries on the next record.
 - `.rela/audit/` should remain on the same filesystem as the project

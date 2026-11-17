@@ -22,6 +22,7 @@ exclude:
   - internal/lease/leasetest
   - internal/channels/channelstest
   - internal/flowrun/flowruntest
+  - internal/audit/sqlaudit/sqlaudittest
   - internal/records/recordstest
   - internal/schedulerstate/schedulerstatetest
   - frontend
@@ -322,6 +323,9 @@ components:
   actionproposal:   { in: internal/actionproposal }
   mail:             { in: internal/mail }
   audit:            { in: internal/audit }
+  sqlaudit:         { in: internal/audit/sqlaudit }
+  pgaudit:          { in: internal/audit/pgaudit }
+  sqliteaudit:      { in: internal/audit/sqliteaudit }
   jwtauth:          { in: internal/jwtauth }
   principal:        { in: internal/principal }
   secrets:          { in: internal/secrets }
@@ -594,6 +598,8 @@ deps:
     mayDependOn:
       - acl
       - aclstore
+      # rela audit verify/prune/import on the database log (TKT-USQBMG6).
+      - sqlaudit
       - aclaudit
       - aclmap
       - apptest
@@ -993,6 +999,10 @@ deps:
       # sqlflowrun: run writes join the store Tx only for the database run
       # store (TKT-XI7IDBS).
       - sqlflowrun
+      # The database audit log on the sqlite and postgres builds (TKT-USQBMG6).
+      - sqlaudit
+      - pgaudit
+      - sqliteaudit
       # The reference element range reader, for stores without element
       # columns, handed to visibility.NewElements (TKT-VP02WHG).
       - elementnaive
@@ -1549,6 +1559,19 @@ deps:
   audit:
     mayDependOn:
       - principal
+  # The hash-chained SQL audit log shared by pg and sqlite (TKT-USQBMG6).
+  sqlaudit:
+    mayDependOn:
+      - audit
+      - sqlexec
+  pgaudit:
+    mayDependOn:
+      - sqlaudit
+      - pgexec
+  sqliteaudit:
+    mayDependOn:
+      - sqlaudit
+      - sqliteexec
   jwtauth:
     # Leaf: verifies signed JWTs against a JWKS. No internal deps; only the JWT
     # vendor libs. The dataentry resolver consumes it via a local interface.

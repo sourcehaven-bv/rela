@@ -440,6 +440,7 @@ CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);
 ` + flowRunsDDL + `
 ` + recordsDDL + `
 ` + recordsOwnerDDL + `
+` + auditLogDDL + `
 ` + searchKeyDDL
 
 // recordsDDL holds the record store (sqlrecords, TKT-J7Q9C4K): typed rows
@@ -515,6 +516,35 @@ WHEN OLD.id IS NOT NEW.id
 BEGIN
 	UPDATE records SET owner = NEW.id WHERE owner = OLD.id;
 END;`
+
+// auditLogDDL holds the audit log (sqlaudit, TKT-USQBMG6): one
+// hash-chained row per audit record, the entity ids each row names, and the
+// anchor a prune leaves. Times are integer microseconds since the epoch.
+// pgstore migration 0050 has the same shape. Shared between schemaSQL and
+// the v40 to v41 rung.
+const auditLogDDL = `
+CREATE TABLE IF NOT EXISTS audit_log (
+	seq            INTEGER NOT NULL PRIMARY KEY,
+	at             INTEGER NOT NULL,
+	op             TEXT NOT NULL,
+	principal_user TEXT NOT NULL,
+	doc            TEXT NOT NULL,
+	prev_hash      TEXT NOT NULL,
+	hash           TEXT NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS audit_log_at_idx ON audit_log(at, seq);
+CREATE TABLE IF NOT EXISTS audit_subjects (
+	entity_id TEXT NOT NULL,
+	seq       INTEGER NOT NULL,
+	PRIMARY KEY (entity_id, seq)
+) STRICT;
+CREATE INDEX IF NOT EXISTS audit_subjects_seq_idx ON audit_subjects(seq);
+CREATE TABLE IF NOT EXISTS audit_anchor (
+	id        INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
+	seq       INTEGER NOT NULL,
+	hash      TEXT NOT NULL,
+	pruned_at INTEGER NOT NULL
+) STRICT;`
 
 // flowRunsDDL holds the flow run store (sqlflowrun, TKT-PV9R0GK): the
 // execution state of each running flow, deleted when the run completes,

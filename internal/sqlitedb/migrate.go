@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 40
+const schemaVersion = 41
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -391,6 +391,12 @@ var migrations = []migration{
 			WHERE owner NOT IN (SELECT id FROM entities UNION SELECT id FROM marked_entities)`,
 			`DELETE FROM record_groups WHERE NOT EXISTS (
 			SELECT 1 FROM records r WHERE r.type = record_groups.type AND r.grp = record_groups.grp)`),
+	},
+	{
+		// v40 → v41: the audit log (TKT-USQBMG6). New tables; nothing to
+		// backfill. `rela audit import` brings in an existing JSONL log.
+		to:    41,
+		apply: sqlSteps(auditLogDDL),
 	},
 }
 

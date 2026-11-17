@@ -76,9 +76,12 @@ type writeServices struct {
 	// Recreator brings a deleted face back at its own id on `rela restore`,
 	// create-only: it never falls through to a whole-record update when the
 	// face was recreated in the meantime.
-	Recreator    entityRecreator
-	Validator    validator.Validator
-	Audit        audit.Audit
+	Recreator entityRecreator
+	Validator validator.Validator
+	Audit     audit.Audit
+	// AuditLog is the database audit log for `rela audit`. Nil on the fs
+	// and memory tiers.
+	AuditLog     auditLog
 	LuaCache     *lua.Cache
 	LuaWriteDeps lua.WriteDeps
 	State        state.KV
@@ -229,6 +232,7 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		Recreator:    entitymanager.Recreator{M: svc.EntityManager(), WriteExternalRefs: true},
 		Validator:    svc.Validator(),
 		Audit:        svc.Audit(),
+		AuditLog:     auditLogOf(svc),
 		LuaCache:     svc.ScriptEngine().LuaCache(),
 		LuaWriteDeps: svc.LuaWriteDeps(),
 		State:        svc.State(),
