@@ -491,6 +491,7 @@ func branchRelationHolds(ctx context.Context, r Reader, e *entity.Entity, q stor
 func branchEdgesHold(
 	ctx context.Context, r Reader, e *entity.Entity, br store.GraphBranch, sel store.FaceSelection,
 ) (bool, error) {
+	ctx = store.ReadToday(ctx) // an Any branch is an ACL gate (DEC-TDEF3GD)
 	if br.HasInbound != nil {
 		ok, err := matchesPredicate(ctx, r, e, *br.HasInbound, store.DirectionIncoming, sel)
 		if err != nil || !ok {
@@ -519,14 +520,17 @@ func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery
 	if ok, err := matchesNarrowing(e, q.Narrowing); err != nil || !ok {
 		return false, err
 	}
+	// HasInbound and HasOutbound are the ACL read gate: under a read instant
+	// they read today's edges, as the SQL backends' gate does (DEC-TDEF3GD).
+	gateCtx := store.ReadToday(ctx)
 	if q.HasInbound != nil {
-		ok, err := matchesPredicate(ctx, r, e, *q.HasInbound, store.DirectionIncoming, q.Faces)
+		ok, err := matchesPredicate(gateCtx, r, e, *q.HasInbound, store.DirectionIncoming, q.Faces)
 		if err != nil || !ok {
 			return ok, err
 		}
 	}
 	if q.HasOutbound != nil {
-		ok, err := matchesPredicate(ctx, r, e, *q.HasOutbound, store.DirectionOutgoing, q.Faces)
+		ok, err := matchesPredicate(gateCtx, r, e, *q.HasOutbound, store.DirectionOutgoing, q.Faces)
 		if err != nil || !ok {
 			return ok, err
 		}
@@ -833,6 +837,9 @@ func matchesPredicateAt(
 	ctx context.Context, r Reader, e *entity.Entity,
 	p store.RelationPredicate, dir store.Direction, sel store.FaceSelection, nesting int,
 ) (bool, error) {
+	if p.Gate {
+		ctx = store.ReadToday(ctx)
+	}
 	endpoints, err := expandSet(ctx, r, p.Endpoints, p.InheritThrough, p.Depth)
 	if err != nil {
 		return false, err

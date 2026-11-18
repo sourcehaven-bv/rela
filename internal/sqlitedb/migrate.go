@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 42
+const schemaVersion = 43
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -405,6 +405,13 @@ var migrations = []migration{
 		// backfill. `rela audit import` brings in an existing JSONL log.
 		to:    42,
 		apply: sqlSteps(auditLogDDL),
+	},
+	{
+		// v42 → v43: content_at is when a version's content became current, which
+		// point-in-time reads order by (TKT-6KLUT3U). Older rows keep NULL
+		// and fall back to created_at.
+		to:    43,
+		apply: addColumns([]addedColumn{{"entity_versions", "content_at"}, {"relation_versions", "content_at"}}),
 	},
 }
 

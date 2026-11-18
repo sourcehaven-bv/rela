@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
 
 // worldSQL builds the two expressions a world-scoped query needs: the per-row
@@ -127,6 +128,28 @@ type sqlBuilder struct {
 	// unsafe records that a name or value could not be rendered as a literal
 	// (see jsonPath); the statement must not run.
 	unsafe bool
+	// live is set while the builder renders an ACL gate predicate (see
+	// [buildGatePredicateSQL]): its relation and endpoint reads name the
+	// live tables, so a read instant does not move them into the past.
+	live bool
+}
+
+// relationsTable is the relations table the predicate being rendered reads.
+func (b *sqlBuilder) relationsTable() string {
+	if b.live {
+		return storeutil.LiveTable("relations")
+	}
+	return "relations"
+}
+
+// entitiesTable is the entities table the predicate being rendered reads
+// for an endpoint row. The candidate rows and a closure's seed stay on
+// `entities`: they enumerate the rows the query returns.
+func (b *sqlBuilder) entitiesTable() string {
+	if b.live {
+		return storeutil.LiveTable("entities")
+	}
+	return "entities"
 }
 
 func (b *sqlBuilder) arg(v any) string {

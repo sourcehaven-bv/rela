@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/graphquerynaive"
+	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
 
 // GraphQuery is the SQL-native implementation of [store.GraphQueryer].
@@ -228,12 +229,12 @@ func buildPredicatePartsPrefixed(
 	b *sqlBuilder, prefix string, q store.GraphQuery, typeArg string,
 ) (with, pre, post []string) {
 	if q.HasInbound != nil {
-		w, ex := buildPredicateSQL(b, prefix+"in", *q.HasInbound, typeArg, store.DirectionIncoming, q.Faces)
+		w, ex := buildGatePredicateSQL(b, prefix+"in", *q.HasInbound, typeArg, store.DirectionIncoming, q.Faces)
 		with = append(with, w...)
 		pre = append(pre, existsCond(ex, q.HasInbound.Negate))
 	}
 	if q.HasOutbound != nil {
-		w, ex := buildPredicateSQL(b, prefix+"out", *q.HasOutbound, typeArg, store.DirectionOutgoing, q.Faces)
+		w, ex := buildGatePredicateSQL(b, prefix+"out", *q.HasOutbound, typeArg, store.DirectionOutgoing, q.Faces)
 		with = append(with, w...)
 		pre = append(pre, existsCond(ex, q.HasOutbound.Negate))
 	}
@@ -403,13 +404,13 @@ func buildAnySQL(
 	for i, br := range branches {
 		var conj []string
 		if br.HasInbound != nil {
-			w, ex := buildPredicateSQL(b, fmt.Sprintf("%s%d_in", prefix, i), *br.HasInbound,
+			w, ex := buildGatePredicateSQL(b, fmt.Sprintf("%s%d_in", prefix, i), *br.HasInbound,
 				typeArg, store.DirectionIncoming, sel)
 			with = append(with, w...)
 			conj = append(conj, existsCond(ex, br.HasInbound.Negate))
 		}
 		if br.HasOutbound != nil {
-			w, ex := buildPredicateSQL(b, fmt.Sprintf("%s%d_out", prefix, i), *br.HasOutbound,
+			w, ex := buildGatePredicateSQL(b, fmt.Sprintf("%s%d_out", prefix, i), *br.HasOutbound,
 				typeArg, store.DirectionOutgoing, sel)
 			with = append(with, w...)
 			conj = append(conj, existsCond(ex, br.HasOutbound.Negate))
@@ -858,11 +859,11 @@ func buildPredicateSQL(
     SELECT unnest(%s::text[]) COLLATE "C", 0
     UNION
     SELECT r.to_id, c.depth + 1
-    FROM relations r
+    FROM %s r
     JOIN %s c ON r.from_id = c.id
     WHERE r.from_face = '' AND r.rel_type = ANY(%s)
       AND c.depth < %s
-)`, cteName, endpointsArg, cteName, throughArg, depthArg))
+)`, cteName, endpointsArg, b.relationsTable(), cteName, throughArg, depthArg))
 		endpointSrc = "SELECT id FROM " + cteName
 	}
 
@@ -886,9 +887,9 @@ func buildPredicateSQL(
 	// match) without a separate existence test.
 	epSel := endpointSelection(p.EndpointMatch, sel)
 	var existsSB strings.Builder
-	existsSB.WriteString("SELECT 1 FROM relations r ")
+	existsSB.WriteString("SELECT 1 FROM " + b.relationsTable() + " r ")
 	if p.EndpointMatch != nil {
-		fmt.Fprintf(&existsSB, "JOIN entities %s ON %s.id = %s ", prefix+"_ep", prefix+"_ep", endpointCol)
+		fmt.Fprintf(&existsSB, "JOIN %s %s ON %s.id = %s ", b.entitiesTable(), prefix+"_ep", prefix+"_ep", endpointCol)
 	}
 	existsSB.WriteString("WHERE ")
 	if p.EndpointMatch != nil {
@@ -943,6 +944,20 @@ func buildPredicateSQL(
 	return with, existsSB.String()
 }
 
+// buildGatePredicateSQL is [buildPredicateSQL] for an ACL read gate: a
+// HasInbound / HasOutbound predicate or an Any branch, never a Related
+// traversal. Its edges and endpoint rows read the live tables under a read
+// instant, so the past is read with today's ACL (DEC-TDEF3GD; see instant.go).
+func buildGatePredicateSQL(
+	b *sqlBuilder, prefix string,
+	p store.RelationPredicate, typeArg string, dir store.Direction, sel store.FaceSelection,
+) (with []string, exists string) {
+	prev := b.live
+	b.live = true
+	defer func() { b.live = prev }()
+	return buildPredicateSQL(b, prefix, p, typeArg, dir, sel)
+}
+
 // entityClosureSQL returns the candidate-entity expansion of p: a recursive
 // CTE yielding (id, root) pairs and the expression the EXISTS clause joins
 // the candidate through. Both are empty when p does not climb.
@@ -966,11 +981,11 @@ func entityClosureSQL(b *sqlBuilder, prefix string, p store.RelationPredicate, t
     SELECT DISTINCT e0.id, e0.id, 0 FROM entities e0 WHERE e0.type = %s%s
     UNION
     SELECT r.to_id, c.root, c.depth + 1
-    FROM relations r
+    FROM %s r
     JOIN %s c ON r.from_id = c.id
     WHERE r.from_face = '' AND r.rel_type = ANY(%s)
       AND c.depth < %s
-)`, cteName, typeArg, seedAfter, cteName, entityThroughArg, entityDepthArg)
+)`, cteName, typeArg, seedAfter, b.relationsTable(), cteName, entityThroughArg, entityDepthArg)
 		join = fmt.Sprintf("(SELECT id FROM %s WHERE root = e.id)", cteName)
 	}
 	return cte, join
@@ -997,7 +1012,7 @@ func endpointFaceCond(b *sqlBuilder, alias string, sel store.FaceSelection) stri
 		rival := alias + "_w"
 		rank, cand := worldSQL(w, alias, &b.args)
 		rivalRank, rivalCand := worldSQL(w, rival, &b.args)
-		return "(" + cand + " AND NOT EXISTS (SELECT 1 FROM entities " + rival + " WHERE " + rival + ".id = " +
+		return "(" + cand + " AND NOT EXISTS (SELECT 1 FROM " + b.entitiesTable() + " " + rival + " WHERE " + rival + ".id = " +
 			alias + ".id AND " + rivalCand + " AND (" + rivalRank + ") < (" + rank + ")))"
 	}
 	return faceSelectionCond(sel, alias, &b.args)
@@ -1033,6 +1048,11 @@ func nestedPredicateSQL(
 	b *sqlBuilder, prefix string, p store.RelationPredicate, candidateAlias string, dir store.Direction,
 	sel store.FaceSelection,
 ) (with []string, exists string) {
+	if p.Gate {
+		prev := b.live
+		b.live = true
+		defer func() { b.live = prev }()
+	}
 	endpointCol, entityCol := "r.from_id", "r.to_id"
 	if dir == store.DirectionOutgoing {
 		endpointCol, entityCol = "r.to_id", "r.from_id"
@@ -1040,10 +1060,10 @@ func nestedPredicateSQL(
 
 	epSel := endpointSelection(p.EndpointMatch, sel)
 	var sb strings.Builder
-	sb.WriteString("SELECT 1 FROM relations r ")
+	sb.WriteString("SELECT 1 FROM " + b.relationsTable() + " r ")
 	alias := prefix + "_ep"
 	if p.EndpointMatch != nil {
-		fmt.Fprintf(&sb, "JOIN entities %s ON %s.id = %s ", alias, alias, endpointCol)
+		fmt.Fprintf(&sb, "JOIN %s %s ON %s.id = %s ", b.entitiesTable(), alias, alias, endpointCol)
 	}
 	sb.WriteString("WHERE ")
 	if p.EndpointMatch != nil {
@@ -1165,6 +1185,28 @@ type sqlBuilder struct {
 	// err is the first predicate the builder could not render. A builder
 	// that sees it set must not run the statement.
 	err error
+	// live is set while the builder renders an ACL gate predicate (see
+	// [buildGatePredicateSQL]): its relation and endpoint reads name the
+	// live tables, so a read instant does not move them into the past.
+	live bool
+}
+
+// relationsTable is the relations table the predicate being rendered reads.
+func (b *sqlBuilder) relationsTable() string {
+	if b.live {
+		return storeutil.LiveTable("relations")
+	}
+	return "relations"
+}
+
+// entitiesTable is the entities table the predicate being rendered reads
+// for an endpoint row. The candidate rows and a closure's seed stay on
+// `entities`: they enumerate the rows the query returns.
+func (b *sqlBuilder) entitiesTable() string {
+	if b.live {
+		return storeutil.LiveTable("entities")
+	}
+	return "entities"
 }
 
 // fail records err, keeping the first, and renders a condition that holds

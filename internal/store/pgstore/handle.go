@@ -18,5 +18,5 @@ func HandleFor(st store.Store) DBTX {
 	if !ok {
 		return nil
 	}
-	return s.db
+	return unwrapDB(s.db)
 }

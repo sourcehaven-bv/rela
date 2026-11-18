@@ -41,6 +41,15 @@ func ensureSchemaVersion(ctx context.Context, q DBTX, hash string, projection []
 	return err
 }
 
+// contentAtArg is the content_at argument of a version insert: NULL for a zero
+// time, which the insert replaces with the capture time.
+func contentAtArg(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return &t
+}
+
 // insertVersion writes one entity_versions row within q (a pool conn or tx)
 // and returns its vseq. The caller supplies the content hash; vseq/created_at
 // default in SQL.
@@ -67,15 +76,16 @@ func insertVersion(ctx context.Context, q DBTX, in store.VersionInput, contentHa
 		    (entity_id, face, op, prev_id, prev_face, type, content, properties, content_hash,
 		     schema_hash, principal_user, principal_tool, triggered_by,
 		     origin_kind, origin_source, origin_source_face, origin_source_type,
-		     origin_definition)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+		     origin_definition, content_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
+		        COALESCE($19::timestamptz, now()))
 		RETURNING vseq`
 	var vseq int64
 	err = q.QueryRow(ctx, ins,
 		in.EntityID, string(in.Face), string(in.Op), prev, prevFace, in.Type, in.Content,
 		props, contentHash,
 		in.SchemaHash, in.PrincipalUser, in.PrincipalTool, in.TriggeredBy,
-		o.kind, o.source, o.sourceFace, o.sourceType, o.definition).Scan(&vseq)
+		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, contentAtArg(in.ContentAt)).Scan(&vseq)
 	return vseq, err
 }
 

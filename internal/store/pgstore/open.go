@@ -94,7 +94,7 @@ func Open(ctx context.Context, db DBTX, dsn string, opts ...Option) (store.Store
 	// The schema is resolved on the store's own pool, apart from the
 	// listener connection: the producer writes through the pool, so the
 	// schema stamped into payloads must be the pool's.
-	schema, err := resolveSchema(ctx, st.db)
+	schema, err := resolveSchema(ctx, unwrapDB(st.db))
 	var l *listener
 	if err == nil {
 		l, err = startListener(ctx, st, dsn, schema)
@@ -112,7 +112,7 @@ func Open(ctx context.Context, db DBTX, dsn string, opts ...Option) (store.Store
 	st.mentionReindex = startMentionReindexer(ctx, st)
 	// Likewise search_title: until a row is healed it still matches, and ranks
 	// as if untitled.
-	st.searchTitleHeal = startSearchTitleHealer(ctx, st.db)
+	st.searchTitleHeal = startSearchTitleHealer(ctx, unwrapDB(st.db))
 
 	return st, search.New(st, backend), nil
 }

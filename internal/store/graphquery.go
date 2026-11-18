@@ -875,6 +875,14 @@ type RelationPredicate struct {
 	// that counts only while a condition holds (TKT-TKSCSBT), so the
 	// condition must not leak onto containment hops.
 	EdgeProps []PropPredicate
+
+	// Gate marks a predicate that is an ACL read gate folded onto a
+	// traversal's endpoint ([EndpointPredicate.HasInbound], set by
+	// acl.Request.GateTraversal). Under a read instant ([BindReadInstant]) a
+	// gate reads today's edges and rows, like a top-level HasInbound or Any
+	// branch, while the traversal around it reads the instant (DEC-TDEF3GD).
+	// Outside an instant it changes nothing.
+	Gate bool
 }
 
 // EndpointPredicate constrains the entity on the far side of a relation: its

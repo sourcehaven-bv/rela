@@ -89,7 +89,7 @@ func NewVersionSweep(st *Store, provider ProjectionProvider, cfg SweepConfig) (*
 	if provider == nil {
 		return nil, errors.New("pgstore: version sweep needs a projection provider")
 	}
-	pool, ok := st.db.(*pgxpool.Pool)
+	pool, ok := unwrapDB(st.db).(*pgxpool.Pool)
 	if !ok {
 		return nil, errors.New("pgstore: version sweep needs a store built over a *pgxpool.Pool")
 	}
@@ -335,6 +335,9 @@ type sweepCandidate struct {
 	// tick runs — which is exactly why the write boundary stamps the row
 	// (see migration 0013).
 	origin originCols
+	// updatedAt is the live row's updated_at: when the captured content
+	// became current, recorded as the version's content_at.
+	updatedAt time.Time
 }
 
 // selectCandidates returns up to Batch entities whose current content differs
@@ -430,7 +433,7 @@ const candidateSelect = `
 		       e.origin_source_type, e.origin_definition,
 		       lvc.content_hash, lvc.vseq, lvc.op,
 		       (lv.vseq IS NOT NULL AND lv.op <> 'delete') AS live_lineage,
-		       e.xmin::text
+		       e.xmin::text, e.updated_at
 		FROM entities e
 		LEFT JOIN LATERAL (
 		    SELECT vseq, op, created_at FROM entity_versions ev
@@ -459,7 +462,7 @@ func scanCandidate(row scanner) (sweepCandidate, error) {
 	scanArgs = append(scanArgs, &c.id, &c.face, &c.typ, &c.content, &c.props,
 		&c.editorUser, &c.editorTool)
 	scanArgs = append(scanArgs, c.origin.scanTargets()...)
-	scanArgs = append(scanArgs, &latestHash, &latestVseq, &latestOp, &c.hasVersion, &c.xmin)
+	scanArgs = append(scanArgs, &latestHash, &latestVseq, &latestOp, &c.hasVersion, &c.xmin, &c.updatedAt)
 	if err := row.Scan(scanArgs...); err != nil {
 		return sweepCandidate{}, err
 	}
@@ -547,8 +550,9 @@ func (c sweepCandidate) versionInput(schemaHash string, projJSON []byte) (store.
 		// Copied verbatim off the live row, never guessed: all-NULL columns
 		// mean the last write was a direct edit, and that stays the zero
 		// Origin rather than becoming a literal "manual".
-		Origin: scanOrigin(c.origin),
-		Op:     store.VersionOpCreate,
+		Origin:    scanOrigin(c.origin),
+		Op:        store.VersionOpCreate,
+		ContentAt: c.updatedAt,
 	}
 	if c.hasVersion {
 		in.Op = store.VersionOpUpdate
@@ -602,6 +606,8 @@ type relationSweepCandidate struct {
 	xmin       string
 	editorUser *string
 	editorTool *string
+	// updatedAt mirrors sweepCandidate's.
+	updatedAt time.Time
 }
 
 // selectRelationCandidates returns up to Batch relations that have settled (or
@@ -633,7 +639,7 @@ func (s *sweep) selectRelationCandidates(
 		       r.last_edited_by_user, r.last_edited_by_tool,
 		       lv.content_hash,
 		       (lv.vseq IS NOT NULL) AS has_version,
-		       r.xmin::text
+		       r.xmin::text, r.updated_at
 		FROM relations r
 		LEFT JOIN LATERAL (
 		    SELECT vseq, content_hash, created_at FROM relation_versions rv
@@ -659,7 +665,7 @@ func (s *sweep) selectRelationCandidates(
 		)
 		if err := rows.Scan(&c.recordID, &c.from, &c.fromFace, &c.relType, &c.to,
 			&c.content, &c.props, &c.editorUser, &c.editorTool,
-			&latestHash, &c.hasVersion, &c.xmin); err != nil {
+			&latestHash, &c.hasVersion, &c.xmin, &c.updatedAt); err != nil {
 			return nil, err
 		}
 		if latestHash != nil {
@@ -690,6 +696,7 @@ func (s *sweep) captureRelation(
 		Projection:    projJSON,
 		PrincipalUser: principalUser,
 		PrincipalTool: principalTool,
+		ContentAt:     c.updatedAt,
 	}
 	contentHash := contentHashOfRelation(in)
 	if c.latestHash == "" || contentHash != c.latestHash {

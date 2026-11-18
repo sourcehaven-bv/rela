@@ -113,12 +113,12 @@ func insertRelationVersion(
 		INSERT INTO relation_versions
 		    (rel_record_id, op, from_id, from_face, rel_type, to_id, prev_from, prev_to,
 		     content, properties, content_hash, schema_hash,
-		     principal_user, principal_tool, triggered_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		     principal_user, principal_tool, triggered_by, created_at, content_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err = q.ExecContext(ctx, ins,
 		in.RecordID, string(in.Op), in.Key.From, string(in.Key.FromFace), in.Key.Type, in.Key.To,
 		prevFrom, prevTo, in.Content, props, contentHash, in.SchemaHash,
-		in.PrincipalUser, in.PrincipalTool, in.TriggeredBy, now)
+		in.PrincipalUser, in.PrincipalTool, in.TriggeredBy, now, contentAt(in.ContentAt, now))
 	if err != nil {
 		return fmt.Errorf("sqlitestore: insert relation version: %w", err)
 	}

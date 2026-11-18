@@ -274,8 +274,10 @@ func TestAnswer_BindsCurrentUserFromTheRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if seen.HasOutbound == nil || len(seen.HasOutbound.Endpoints) != 1 || seen.HasOutbound.Endpoints[0] != "alice" {
-		t.Fatalf("the store query must name alice as the endpoint: %+v", seen.HasOutbound)
+	if len(seen.Related) != 1 || seen.Related[0].Incoming || len(seen.Related[0].Pred.Endpoints) != 1 ||
+		seen.Related[0].Pred.Endpoints[0] != "alice" {
+
+		t.Fatalf("the store query must name alice as the endpoint: %+v", seen.Related)
 	}
 
 	// The row is evaluated with the spec bound to the same identity...
