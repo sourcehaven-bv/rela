@@ -130,9 +130,10 @@ in `LocalRolePredicate`). `EdgeProps` applies only to the conferring edge in its
 `Negate` and inherit compositions.
 4. **One comparison.** The Go probes use the store's byte semantics through
 one shared function in `internal/store` (also used by graphquerynaive), which
-renders a `time.Time` as `YYYY-MM-DD` for `date`. Writes to a relation type
-whose `when:` names a property validate that property as a hard error (422), so
-malformed dates cannot be stored through the API.
+renders a `time.Time` as `YYYY-MM-DD` for `date`. Relation writes do not
+validate the property a `when:` names, so a malformed date can be stored. The
+`PropIsDate` shape guard makes such a value grant nothing. A write-time 422 is
+a deferred usability follow-up (RR-IX05LQY).
 5. **Load refusal.** A `when:` on a relation type without
 `requires_permission` fails the policy load, so a grantee cannot extend their
 own expiry. Docs note that sync and data migrations write under operator trust.

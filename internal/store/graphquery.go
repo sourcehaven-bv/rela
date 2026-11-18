@@ -614,8 +614,12 @@ const (
 	// malformed value would be a grant nobody wrote.
 	//
 	// The shape is checked, not the calendar: `2026-02-30` matches and
-	// orders between the 28th and March 1st. Writes validate dates against
-	// the schema, so such a value comes only from outside the API.
+	// orders between the 28th and March 1st. Relation writes do not check
+	// property values against the schema: the data-entry API stores a
+	// mistyped value with a warning, and the other write paths store it
+	// as is. Entity writes refuse a malformed date only under
+	// `validation: strict`. So a value of any shape can come through the
+	// API.
 	//
 	// The graphquerynaive reading also accepts a time.Time at UTC midnight,
 	// which is how yaml.v3 decodes an unquoted date in a file backend. The
