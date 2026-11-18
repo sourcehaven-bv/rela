@@ -148,3 +148,9 @@ conditions that still do not lower; their allowlist entries stay. MCP now pushes
 `or`, `not` and ordered comparisons, so its Go path shrinks to hidden fields,
 dates, decimals and refused traversals. Removing the paths is TKT-9BKVQ9I and
 TKT-I3MGCRT; refusing unlowerable conditions outright is TKT-W0DYCEC.
+
+### Follow-up: docs
+
+The MCP server and data-entry guides said the store answers every ordered
+comparison in its query. On sqlite an integer comparison runs on
+graphquerynaive, so both guides now name that exception (#2426).

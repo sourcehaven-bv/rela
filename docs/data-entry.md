@@ -2364,7 +2364,9 @@ entity.due ~= nil and entity.due < today()
 An ordered comparison on a string or integer property is the exception: on a
 row where the property is not set, or does not hold a string or an integer, it
 is `false`, and `not (...)` around it is `true`. The store answers such a
-condition in its query and reads the property the same way.
+condition in its query and reads the property the same way. The sqlite backend
+does not answer an ordered comparison on an integer property in its query. It
+checks the condition against every entity of the type, with the same result.
 
 #### Dates, times and the current day
 

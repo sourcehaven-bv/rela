@@ -140,8 +140,10 @@ has_current_user(entity.watchers)
 
 The store answers equalities, `~=`, `related(...)`, the `current_user`
 comparisons, `and`, `or` and `not`, and `<`, `<=`, `>`, `>=` on a string or
-integer property, so such a filter costs one page. An ordered comparison on a
-string or integer property that is not set is false. A filter with a date or
+integer property, so such a filter costs one page. The sqlite backend is the
+exception for integers: it checks an ordered comparison on an integer property
+against every readable entity of the type. An ordered comparison on a string or
+integer property that is not set is false. A filter with a date or
 decimal comparison, a comparison of two properties, or a property the caller
 cannot see on every entity is checked against every readable entity of the
 type, which costs more on a large type.
