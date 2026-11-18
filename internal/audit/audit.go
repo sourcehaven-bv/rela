@@ -319,6 +319,13 @@ type Record struct {
 	Source string `json:"source,omitempty"`
 }
 
+// Entry is one stored record and its seq, the position a database log gave
+// it. A reader pages by seq.
+type Entry struct {
+	Seq    int64
+	Record Record
+}
+
 // Audit is the package's published sink shape — not a consumer-side
 // abstraction. Three sibling backends ([Nop], [Memory], [Filesystem])
 // implement it; consumers (today: entitymanager.Deps.Audit) take it

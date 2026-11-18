@@ -43,6 +43,8 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 		{"AppendThenVerify", testAppendThenVerify},
 		{"StoresPreparedRecord", testStoresPreparedRecord},
 		{"IndexesSubjects", testIndexesSubjects},
+		{"NewestPages", testNewestPages},
+		{"ForEntityPages", testForEntityPages},
 		{"EditedRowBreaks", testEditedRowBreaks},
 		{"ColumnEditsBreak", testColumnEditsBreak},
 		{"DeletedRowBreaks", testDeletedRowBreaks},
@@ -185,6 +187,63 @@ func testIndexesSubjects(t *testing.T, h Harness) {
 	require.Equal(t, int64(1), count(t, h.Raw, `SELECT COUNT(*) FROM audit_subjects WHERE entity_id = ?`, "RSK-1"))
 	require.Equal(t, int64(1), count(t, h.Raw, `SELECT COUNT(*) FROM audit_subjects WHERE entity_id = ?`, "CTL-9"))
 	require.Equal(t, int64(0), count(t, h.Raw, `SELECT COUNT(*) FROM audit_subjects WHERE seq = 3`))
+}
+
+// testNewestPages: Newest walks the log newest first, and a page's last
+// seq is the cursor of the next.
+func testNewestPages(t *testing.T, h Harness) {
+	ctx := context.Background()
+	appendN(t, h.Log, 1, 5)
+	var seqs []int64
+	for before := int64(0); ; {
+		page, err := h.Log.Newest(ctx, before, 2)
+		require.NoError(t, err)
+		if len(page) == 0 {
+			break
+		}
+		for _, e := range page {
+			seqs = append(seqs, e.Seq)
+		}
+		before = page[len(page)-1].Seq
+	}
+	require.Equal(t, []int64{5, 4, 3, 2, 1}, seqs)
+	page, err := h.Log.Newest(ctx, 3, 10)
+	require.NoError(t, err)
+	require.Len(t, page, 2)
+	require.Equal(t, "CTL-2", page[0].Record.Subject.ID)
+}
+
+// testForEntityPages: ForEntity returns the records that name an id in any
+// position, newest first, and nothing for another id.
+func testForEntityPages(t *testing.T, h Harness) {
+	ctx := context.Background()
+	appendN(t, h.Log, 1, 3) // CTL-1, CTL-2, CTL-3
+	require.NoError(t, h.Log.Append(ctx, audit.Record{
+		Op: audit.OpCreateRelation, Time: t0,
+		Subject: &audit.Subject{Kind: "relation", RelationType: "mitigates", FromID: "CTL-2", ToID: "RSK-1"},
+	}))
+	require.NoError(t, h.Log.Append(ctx, audit.Record{
+		Op: audit.OpRenameEntity, Time: t0,
+		Before: &audit.Subject{Kind: "entity", Type: "control", ID: "CTL-2"},
+		After:  &audit.Subject{Kind: "entity", Type: "control", ID: "CTL-7"},
+	}))
+
+	got, err := h.Log.ForEntity(ctx, "CTL-2", 0, 10)
+	require.NoError(t, err)
+	seqs := make([]int64, len(got))
+	for i, e := range got {
+		seqs[i] = e.Seq
+	}
+	require.Equal(t, []int64{5, 4, 2}, seqs)
+
+	got, err = h.Log.ForEntity(ctx, "CTL-2", 5, 1)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, int64(4), got[0].Seq)
+
+	got, err = h.Log.ForEntity(ctx, "CTL-404", 0, 10)
+	require.NoError(t, err)
+	require.Empty(t, got)
 }
 
 func testEditedRowBreaks(t *testing.T, h Harness) {
