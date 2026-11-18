@@ -27,6 +27,7 @@ import type {
   DocumentConfig,
   ActionConfig,
   PilesConfig,
+  SidebarAudit,
 } from '@/types'
 
 export const useSchemaStore = defineStore('schema', () => {
@@ -102,6 +103,10 @@ export const useSchemaStore = defineStore('schema', () => {
   // availability depends on who is asking, which `/_config` cannot know.
   const pilesAvailable = ref(false)
   const pilesConfig = ref<PilesConfig | null>(null)
+  // The audit views (TKT-X1ZFO04), from the principal-scoped `/_sidebar`.
+  // Both default to off, so an older server shows neither.
+  const auditChanges = ref(false)
+  const auditGlobal = ref(false)
   const loaded = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -531,6 +536,12 @@ export const useSchemaStore = defineStore('schema', () => {
     if (data.piles !== undefined) pilesConfig.value = data.piles ?? null
   }
 
+  /** Takes the audit flags from `/_sidebar`; absent means both off. */
+  function setAudit(audit: SidebarAudit | undefined) {
+    auditChanges.value = audit?.changes === true
+    auditGlobal.value = audit?.global === true
+  }
+
   function setInlineCreate(map: Record<string, string>) {
     inlineCreate.value = map
   }
@@ -580,6 +591,8 @@ export const useSchemaStore = defineStore('schema', () => {
     logoUrl,
     inlineCreate,
     pilesAvailable,
+    auditChanges,
+    auditGlobal,
     pilesConfig,
     loaded,
     loading,
@@ -621,5 +634,6 @@ export const useSchemaStore = defineStore('schema', () => {
     setLogoUrl,
     setInlineCreate,
     setPiles,
+    setAudit,
   }
 })

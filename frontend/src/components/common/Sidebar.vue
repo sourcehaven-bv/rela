@@ -263,6 +263,9 @@ const pinnedGroups = computed(() =>
               ]
             : []),
           { label: t('nav.analysis'), href: '/analyze', icon: 'warning' },
+          ...(schemaStore.auditGlobal
+            ? [{ label: t('nav.audit'), href: '/audit', icon: 'history' }]
+            : []),
         ],
       },
     ]),
@@ -323,6 +326,7 @@ async function loadSidebar() {
     schemaStore.setInlineCreate(data.inline_create ?? {})
     // So is whether this principal may use piles (TKT-K3RJLH).
     schemaStore.setPiles(data)
+    schemaStore.setAudit(data.audit)
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
     // (see BUG-6C3V and src/composables/usePageData.ts).
