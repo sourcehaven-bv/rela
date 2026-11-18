@@ -405,6 +405,10 @@ client_baselines:
 			ctxCase{u, func(t *testing.T) context.Context { t.Helper(); return w.ctxFor(t, u) }},
 			ctxCase{u + "@app", func(t *testing.T) context.Context { t.Helper(); return w.ctxVia(t, u, "app") }},
 			ctxCase{u + "@bot", func(t *testing.T) context.Context { t.Helper(); return w.ctxVia(t, u, "bot") }},
+			ctxCase{u + "@history", func(t *testing.T) context.Context {
+				t.Helper()
+				return affordances.WithHistoricalSubject(w.ctxFor(t, u))
+			}},
 		)
 	}
 	for _, c := range ctxs {

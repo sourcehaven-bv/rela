@@ -12,6 +12,8 @@ import (
 	"time"
 
 	glua "github.com/yuin/gopher-lua"
+
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // Constants bounding the cache's resource use. See ticket TKT-V8UQC.
@@ -305,6 +307,14 @@ func (c *cacheBindings) requireCacheContext(ls *glua.LState, userKey string) str
 		ls.RaiseError("cache: key length %d exceeds limit %d",
 			len(userKey), maxCacheKeyBytes)
 		return ""
+	}
+	// A read at an instant (TKT-6KLUT3U) gets a namespace of its own, so a
+	// value memoized from today's state is never served for a past one, and
+	// the reverse.
+	if ctx := ls.Context(); ctx != nil {
+		if at, ok := store.ReadInstant(ctx); ok {
+			path += "\x00as_of=" + at.UTC().Format(time.RFC3339Nano)
+		}
 	}
 	return hashKey(path) + userKey
 }

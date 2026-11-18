@@ -78,7 +78,7 @@ func buildAppWithACL(t *testing.T, a acl.ACL) *App {
 
 // buildAppWithACLAndAudit is buildAppWithACL plus a custom audit sink
 // for tests that need to assert on the audit-record stream.
-func buildAppWithACLAndAudit(t *testing.T, a acl.ACL, auditSink audit.Audit) *App {
+func buildAppWithACLAndAudit(t *testing.T, a acl.ACL, auditSink audit.Audit, extra ...appbuildtest.Option) *App {
 	t.Helper()
 	meta := testMeta()
 	cfg := testConfig()
@@ -94,7 +94,7 @@ func buildAppWithACLAndAudit(t *testing.T, a acl.ACL, auditSink audit.Audit) *Ap
 	if auditSink != nil {
 		opts = append(opts, appbuildtest.WithAudit(auditSink))
 	}
-	svc := appbuildtest.New(meta, opts...)
+	svc := appbuildtest.New(meta, append(opts, extra...)...)
 	rebindApp(app, fs, ctx, svc)
 	app.broker = newEventBroker()
 	return app

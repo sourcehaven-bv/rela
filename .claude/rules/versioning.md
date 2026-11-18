@@ -130,7 +130,22 @@ paths:
   (DEC-TDEF3GD: history is read with today's ACL). `HasInbound`/`HasOutbound`
   and `Any` branches render through `buildGatePredicateSQL`, whose tables are
   `storeutil.LiveTable` names the seam schema-qualifies past the CTEs. The
-  whole gate reads live: the role edge, its endpoint rows and the
-  inherit-through containment edges, so access lost since fails closed.
-  `Related` traversals and the candidate row's own properties stay at the
-  instant. A new gate path must use the gate builder.
+  gate's relation reads are live: the role edge, its endpoint rows and the
+  inherit-through containment edges, so access lost since fails closed. The
+  gate reads no value of the candidate row, so a row that still exists passes
+  only as today's gate admits it; an entity deleted since has no edges and
+  shows only through a global read role (`ACLGateJudgesTheRowToday`). A new
+  gate path must use the gate builder. Field visibility follows the history
+  endpoint (`affordances.WithHistoricalSubject`, set by the `?as_of=`
+  middleware): only global roles show fields, and a `visible:` grant whose
+  `when:` reads a relation hides its field. `SearchFieldScope` compiles the
+  same rules, pinned by the `@history` cases of
+  `TestSearchFieldScope_AgreesWithFieldVerdicts`. A caller's `Related`
+  traversals and the row's own properties stay at the instant; a `related(...)`
+  traversal rides in `Related` (`acl.TraversalQuery`), and the read gate
+  `GateTraversal` folds onto its endpoint is marked `RelationPredicate.Gate`,
+  which renders live too. A backend that evaluates a gate with separate store
+  reads (graphquerynaive) runs them under `store.ReadToday`, which the seam
+  answers from the live tables while still refusing writes
+  (`GateFoldedIntoATraversalReadsToday`). An `?as_of=` read needs
+  `history:read`.
