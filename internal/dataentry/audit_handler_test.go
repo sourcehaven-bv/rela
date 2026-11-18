@@ -301,3 +301,77 @@ func TestHandleV1Audit(t *testing.T) {
 		}
 	})
 }
+
+// TestAuditRoutes_RealPolicy runs both routes under a declarative policy
+// built from acl.Policy, with the request bound as production binds it:
+//   - a hidden entity's change list is the same 404 as a missing one;
+//   - a record naming a hidden far end is left out;
+//   - audit:read grants the global view, its absence and read-only refuse it.
+func TestAuditRoutes_RealPolicy(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
+	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]any{"title": "F1"}})
+	d := mustNewACL(t, &acl.Policy{
+		Roles: map[string]acl.RoleDef{
+			"viewer":  {Read: []string{"ticket"}},
+			"auditor": {Read: []string{"ticket"}, Permissions: []string{acl.PermAuditRead}},
+		},
+		Assignments: map[string]string{"alice": "viewer", "bob": "auditor"},
+	}, app.store)
+	setTestACL(t, app, d)
+	app.auditSink = &capturingAudit{}
+	created := entityEntry(1, audit.OpCreateEntity, "ticket", "TKT-001")
+	featCreated := entityEntry(2, audit.OpCreateEntity, "feature", "FEAT-001")
+	if err := SetAuditLog(app, &fakeAuditLog{entries: []audit.Entry{
+		relationEntry(3, "TKT-001", "FEAT-001"), featCreated, created,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	as := func(user, path string) *httptest.ResponseRecorder {
+		t.Helper()
+		return doAuditGet(gateCtxFor(principalCtx(user), t, d), app, path)
+	}
+
+	t.Run("a record naming a hidden entity is left out", func(t *testing.T) {
+		rec := as("alice", "/api/v1/_changes/ticket/TKT-001")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("got %d; body=%s", rec.Code, rec.Body.String())
+		}
+		var body changesResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if len(body.Changes) != 1 || body.Changes[0].Seq != 1 || bodyMentions(rec, "FEAT-001") {
+			t.Errorf("changes = %s, want only the create", rec.Body.String())
+		}
+	})
+
+	t.Run("a hidden entity is the uniform 404", func(t *testing.T) {
+		hidden := as("alice", "/api/v1/_changes/feature/FEAT-001")
+		missing := as("alice", "/api/v1/_changes/feature/FEAT-404")
+		if hidden.Code != http.StatusNotFound || missing.Code != http.StatusNotFound {
+			t.Fatalf("hidden %d, missing %d; want 404 for both", hidden.Code, missing.Code)
+		}
+		if stripInstance(t, hidden.Body.String()) != stripInstance(t, missing.Body.String()) {
+			t.Errorf("hidden and missing bodies differ:\n%s\n%s", hidden.Body, missing.Body)
+		}
+	})
+
+	t.Run("audit:read grants the global view", func(t *testing.T) {
+		if rec := as("bob", "/api/v1/_audit"); rec.Code != http.StatusOK {
+			t.Errorf("holder got %d; body=%s", rec.Code, rec.Body.String())
+		}
+		if rec := as("alice", "/api/v1/_audit"); rec.Code != http.StatusForbidden {
+			t.Errorf("non-holder got %d, want 403", rec.Code)
+		}
+	})
+
+	t.Run("read-only refuses the global view to a holder", func(t *testing.T) {
+		ctx := gateCtxFor(principalCtx("bob"), t, d)
+		app.acl = acl.ReadOnlyACL{}
+		t.Cleanup(func() { app.acl = d })
+		if rec := doAuditGet(ctx, app, "/api/v1/_audit"); rec.Code != http.StatusForbidden {
+			t.Errorf("read-only holder got %d, want 403", rec.Code)
+		}
+	})
+}

@@ -2758,6 +2758,13 @@ Limits of the Changes tab, accepted on purpose:
   a fixed number of reads and returns a cursor. That cursor is the
   position of a record the caller was not shown, so it tells that such a
   record exists, but nothing about it.
+- A relation record written before faces were recorded names no face,
+  so it shows on every face of the entity it leaves from.
+- The `face` and `starts` columns of `audit_subjects` index the stored
+  record but are not part of its hash. Someone who can write to the
+  database could change them to hide records from a Changes tab, and
+  `rela audit verify` would not notice. The records themselves stay
+  intact and verifiable, and the global view does not use those columns.
 - The `audit-read` record of a global view page is written best-effort,
   like other audit records outside a write transaction: if the write
   fails, the page is still served and the failure is logged.
