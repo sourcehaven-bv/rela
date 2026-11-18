@@ -6,7 +6,8 @@ kind: enhancement
 priority: high
 effort: l
 tags: security
-status: backlog
+started: "2026-11-18"
+status: in-progress
 ---
 
 ## Description
