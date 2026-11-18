@@ -15,11 +15,12 @@ The file is optional. Without it, a project has no flows and no triggers.
 `schema.yaml` never refers to it.
 
 > **Status.** This release runs flows that a person starts by hand, from
-> the web app, over MCP or with `rela flow start`. A run writes its
+> the web app, over MCP or with `rela flow start`, and flows that start
+> when their subject is created (`on: create`). A run writes its
 > outputs, follows `done` branches and ends in a final state. People do
 > their steps in the web app or over MCP, and a completed step takes the
 > `change` branches. Timers fire and failed steps are tried again while
-> `rela-server` or the desktop app runs. The `create`, `predicate` and
+> `rela-server` or the desktop app runs. The `predicate` and
 > `schedule` triggers, `change` events from ordinary edits, retention and
 > the inbox are checked but not acted on yet; they follow in a later
 > release. See [Running flows](#running-flows) and
@@ -108,6 +109,34 @@ grants it, because then nobody can start the flow by hand. rela also warns
 about a flow without start triggers. A schedule start needs
 `per_subject: one`; with `many`, every tick would start another run on
 every matching subject.
+
+### Starting on create
+
+A flow with an `on: create` start gets a run each time an entity of its
+subject type is created and the `when:` condition, if any, holds for the
+new entity. Several `on: create` starts on one flow still give one run.
+It works for every create that goes through rela's write path: the web
+app and the API, MCP, `rela create`, a Lua script (an action, a webhook
+action, a scheduled script) and a trigger's `create` output.
+
+- The run is started by the flow's `run_as`, the identity that writes
+  its outputs. The person or script that created the entity needs no
+  permission on the flow.
+- On SQLite and PostgreSQL the run is stored in the same transaction as
+  the entity. If the create fails or rolls back, no run exists. Because
+  the run is part of the create, a retried request that creates nothing
+  new starts nothing new either.
+- Right after the create commits, rela enters the initial state and
+  writes its outputs. If that fails, the run waits with its step pending,
+  and the flow worker tries again as for any failed step.
+- With `per_subject: one`, a subject that already carries an unfinished
+  run gets no second one. rela logs this and the create still succeeds.
+- A `when:` that cannot be evaluated starts no run. rela logs it and the
+  create still succeeds.
+
+Some ways of adding entities are not creates and start no run:
+`rela import`, `rela db load`, a conversion, a copy to another face and a
+restore from history.
 
 ## States
 
@@ -419,6 +448,9 @@ rela flow runs                      # list the runs you can read
 rela flow runs --flow onboarding
 rela flow cancel RUN-4OSX           # cancel an unfinished run
 ```
+
+A flow with an `on: create` start also starts by itself; see
+[Starting on create](#starting-on-create).
 
 `rela flow start` needs an `on: manual` trigger on the flow, and the
 caller must hold its `permission` for the subject. A role held through a

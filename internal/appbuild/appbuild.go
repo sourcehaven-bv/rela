@@ -2819,6 +2819,7 @@ func buildEntityManager(
 		AttachmentLocker: attachLocker,
 		AnchorGuard:      anchorGuard,
 		RenameGuard:      flowRenameGuardFor(st, guard.flowRuns),
+		CreateHook:       guard.flowStarts.hook(),
 		ValidationMode:   base.validationMode,
 		Clock:            base.clock(),
 	})
@@ -3341,6 +3342,7 @@ func finishAssembly(
 		return nil, fmt.Errorf("flows: %w", err)
 	}
 	s.flowEngine = flowEngine
+	refs.flowStarts.setEngine(flowEngine)
 	// Built, not started: the host starts it (see RunFlowWorker).
 	if s.flowWorker, err = buildFlowWorker(s.base, s.store, flowEngine); err != nil {
 		return nil, fmt.Errorf("flows: %w", err)

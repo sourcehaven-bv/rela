@@ -46,7 +46,7 @@ func auditsInTx(deps Deps) bool {
 func emitWrite(ctx context.Context, deps Deps, st store.Store, rec audit.Record) error {
 	tx, ok := deps.Audit.(TxAudit)
 	if !ok {
-		if p, held := ctx.Value(heldAuditKey{}).(*heldAudit); held {
+		if p, held := ctx.Value(heldAuditKey{}).(*heldAudit); held && p != nil {
 			p.recs = append(p.recs, rec)
 			return nil
 		}
@@ -71,6 +71,10 @@ func emitWrite(ctx context.Context, deps Deps, st store.Store, rec audit.Record)
 // context carries the view ([store.ContextWithTxView]). A ctx that already
 // carries a view joins that transaction rather than open a second one, which
 // on postgres would wait for the lock its own caller holds.
+//
+// The functions queued with onCommit inside the transaction run after it,
+// on ctx: once it has committed, or after a failure on a store that does
+// not roll back, whose writes stayed.
 func auditTx(ctx context.Context, deps Deps, need bool, fn func(context.Context, store.Store) error) error {
 	if view := store.TxView(ctx); view != nil {
 		return fn(ctx, view)
@@ -78,10 +82,11 @@ func auditTx(ctx context.Context, deps Deps, need bool, fn func(context.Context,
 	if !need && !auditsInTx(deps) {
 		return fn(ctx, deps.Store)
 	}
+	txCtx, commits := withCommitList(ctx)
 	if tx, ok := deps.Audit.(TxAudit); ok {
 		b := &txBatch{}
-		batchCtx := context.WithValue(ctx, txBatchKey{}, b)
-		return deps.Store.Tx(ctx, func(view store.Store) error {
+		batchCtx := context.WithValue(txCtx, txBatchKey{}, b)
+		err := deps.Store.Tx(ctx, func(view store.Store) error {
 			b.view = view
 			if err := fn(store.ContextWithTxView(batchCtx, view), view); err != nil {
 				return err
@@ -91,9 +96,13 @@ func auditTx(ctx context.Context, deps Deps, need bool, fn func(context.Context,
 			}
 			return tx.RecordTx(ctx, view, b.recs)
 		})
+		if err == nil || !store.TxRollsBack(deps.Store) {
+			commits.run(ctx)
+		}
+		return err
 	}
 	held := &heldAudit{}
-	heldCtx := context.WithValue(ctx, heldAuditKey{}, held)
+	heldCtx := context.WithValue(txCtx, heldAuditKey{}, held)
 	err := deps.Store.Tx(heldCtx, func(view store.Store) error {
 		return fn(store.ContextWithTxView(heldCtx, view), view)
 	})
@@ -103,6 +112,7 @@ func auditTx(ctx context.Context, deps Deps, need bool, fn func(context.Context,
 	for _, rec := range held.recs {
 		deps.Audit.Record(rec)
 	}
+	commits.run(ctx)
 	return err
 }
 

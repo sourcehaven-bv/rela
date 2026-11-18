@@ -244,7 +244,12 @@ var _ autocascade.Mutator = (*Manager)(nil)
 // rename's transaction, which no post-commit hook can do. The optional-hook
 // sub-struct named above would take it along.
 //
-//plimsoll:max-fields=24
+// 24 -> 25 (FEAT-J0O10QI `on: create`): [Deps.CreateHook], so a flow that
+// starts on create stores its run in the create's transaction. Like
+// RenameGuard it must run inside that transaction; the same sub-struct
+// would take it along.
+//
+//plimsoll:max-fields=25
 type Deps struct {
 	// Store is the authoritative persistence layer. Required.
 	Store store.Store
@@ -409,6 +414,13 @@ type Deps struct {
 	//
 	// Nil: accepted — no such state, as a build without flows has.
 	RenameGuard RenameGuard
+
+	// CreateHook is told of each new entity inside the create's store
+	// transaction (see [CreateHook]).
+	//
+	// Nil: accepted — nothing watches creates, as a build without a flow
+	// that starts on create has.
+	CreateHook CreateHook
 
 	// ValidationMode is the deployment's validation policy (DEC-OYV2AK).
 	// The zero value is [ValidationAdvisory].
@@ -2482,7 +2494,7 @@ func (g *endpointGate) endpointVisible(ctx context.Context, id string, face enti
 // family is zero, whose empty type matches no grant, so a gate error can never
 // make the source count as readable.
 func lookupSource(ctx context.Context, m *Manager, from string, tail entity.Face) (entityFamily, error) {
-	source, err := lookupFamily(ctx, m.deps.Store, from)
+	source, err := lookupFamily(ctx, endpointReader(ctx, m), from)
 	if err != nil {
 		return entityFamily{}, err
 	}
@@ -2496,10 +2508,21 @@ func lookupSource(ctx context.Context, m *Manager, from string, tail entity.Face
 	return source, nil
 }
 
+// endpointReader is the store a relation write reads its endpoints from:
+// the open transaction's view when ctx carries one, so a write nested in a
+// transaction sees an entity that transaction created, and m's store
+// otherwise.
+func endpointReader(ctx context.Context, m *Manager) store.EntityLister {
+	if view := store.TxView(ctx); view != nil {
+		return view
+	}
+	return m.deps.Store
+}
+
 // requireVisibleTarget reports store.ErrNotFound when the caller cannot see
 // the head to of a relation write, so it is refused like a missing one.
 func requireVisibleTarget(ctx context.Context, m *Manager, to string) (entityFamily, error) {
-	target, err := lookupFamily(ctx, m.deps.Store, to)
+	target, err := lookupFamily(ctx, endpointReader(ctx, m), to)
 	if err != nil {
 		return entityFamily{}, err
 	}

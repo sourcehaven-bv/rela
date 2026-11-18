@@ -96,6 +96,7 @@ func CreateLinked(ctx context.Context, m *Manager, lc LinkedCreate) (*LinkedResu
 		return nil, beforeWriteError{err}
 	}
 	opts := lc.Options
+	nested := store.TxView(ctx) != nil
 	err = auditTx(ctx, m.deps, true, func(txCtx context.Context, view store.Store) error {
 		return t.run(txCtx, view)
 	})
@@ -110,9 +111,31 @@ func CreateLinked(ctx context.Context, m *Manager, lc LinkedCreate) (*LinkedResu
 		return nil, err
 	}
 	out := t.out
+	if nested && deferFinishCreate(ctx, m, t, opts.SkipAutomation) {
+		out.Create = &entity.CreateResult{Entity: t.created, Warnings: t.warnings}
+		out.Relation = t.written
+		return out, nil
+	}
 	out.Create, out.FollowUpErr = finishCreate(ctx, m, t.created, t.warnings, opts.SkipAutomation)
 	out.Relation = t.written
 	return out, nil
+}
+
+// deferFinishCreate queues the follow-ups of a create made inside a
+// transaction CreateLinked joined, to run once that transaction commits.
+// Run at once, they would act on a create that is not committed yet, and
+// on sqlite a follow-up that opens its own transaction would wait for the
+// write lock the joined one holds. A follow-up error is logged: the caller
+// has its result by then. It reports false when the transaction keeps no
+// list of follow-ups, and the caller runs them at once.
+func deferFinishCreate(ctx context.Context, m *Manager, t *linkedCreate, skipAutomation bool) bool {
+	after := afterCommitCtx(ctx)
+	return onCommit(ctx, func(context.Context) {
+		if _, err := finishCreate(after, m, t.created, t.warnings, skipAutomation); err != nil {
+			slog.WarnContext(after, "entitymanager: follow-up of a create failed", "entity", t.created.ID,
+				"error", err)
+		}
+	})
 }
 
 // linkedCreate is one [CreateLinked] call: what it prepared before the
