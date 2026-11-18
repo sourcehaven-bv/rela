@@ -300,6 +300,12 @@ type Subject struct {
 	ToID         string `json:"to_id,omitempty"`
 }
 
+// IsEntity reports whether s names an entity.
+func (s *Subject) IsEntity() bool { return s.Kind == "entity" }
+
+// IsRelation reports whether s names a relation.
+func (s *Subject) IsRelation() bool { return s.Kind == "relation" }
+
 // Record is one audit row in the JSONL stream.
 //
 // Subject / Before / After are pointers so encoding/json can honor

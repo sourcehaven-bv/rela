@@ -178,15 +178,15 @@ func aboutEntity(rec audit.Record, q ChangesQuery) bool {
 		if s == nil {
 			continue
 		}
-		switch s.Kind {
-		case "entity":
+		switch {
+		case s.IsEntity():
 			if s.ID == q.Ref.ID {
 				if s.Type != q.Type && !isConversionBefore(rec, s) {
 					return false
 				}
 				named = true
 			}
-		case "relation":
+		case s.IsRelation():
 			if s.FromID == q.Ref.ID || s.ToID == q.Ref.ID {
 				named = true
 			}
@@ -257,7 +257,7 @@ const updatedPrefix = "updated: "
 // A relation's properties are never named: their visibility is judged per
 // relation, which this list does not do.
 func visibleUpdate(ctx context.Context, fields FieldVisibility, subject *audit.Subject, props string) string {
-	if subject == nil || subject.Kind != "entity" {
+	if subject == nil || !subject.IsEntity() {
 		return "updated"
 	}
 	var shown []string
