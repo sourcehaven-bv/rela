@@ -81,7 +81,7 @@ func StateStoreFor(st store.Store) *StateKV {
 	if !ok {
 		return nil
 	}
-	return &StateKV{db: s.db}
+	return &StateKV{db: unwrapDB(s.db)}
 }
 
 // Get returns the value at key, or an error satisfying os.IsNotExist when the

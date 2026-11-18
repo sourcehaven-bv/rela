@@ -264,12 +264,12 @@ func buildPredicatePartsPrefixed(
 	b *sqlBuilder, prefix string, q store.GraphQuery, seed string,
 ) (with, pre, post []string) {
 	if q.HasInbound != nil {
-		w, ex := buildPredicateSQL(b, prefix+"in", *q.HasInbound, seed, store.DirectionIncoming, q.Faces)
+		w, ex := buildGatePredicateSQL(b, prefix+"in", *q.HasInbound, seed, store.DirectionIncoming, q.Faces)
 		with = append(with, w...)
 		pre = append(pre, existsCond(ex, q.HasInbound.Negate))
 	}
 	if q.HasOutbound != nil {
-		w, ex := buildPredicateSQL(b, prefix+"out", *q.HasOutbound, seed, store.DirectionOutgoing, q.Faces)
+		w, ex := buildGatePredicateSQL(b, prefix+"out", *q.HasOutbound, seed, store.DirectionOutgoing, q.Faces)
 		with = append(with, w...)
 		pre = append(pre, existsCond(ex, q.HasOutbound.Negate))
 	}
@@ -440,7 +440,7 @@ func endpointFaceCond(b *sqlBuilder, alias string, sel store.FaceSelection) stri
 		rival := alias + "_w"
 		rank, cand := worldSQL(b, w, alias)
 		rivalRank, rivalCand := worldSQL(b, w, rival)
-		return "(" + cand + " AND NOT EXISTS (SELECT 1 FROM entities " + rival + " WHERE " + rival + ".id = " +
+		return "(" + cand + " AND NOT EXISTS (SELECT 1 FROM " + b.entitiesTable() + " " + rival + " WHERE " + rival + ".id = " +
 			alias + ".id AND " + rivalCand + " AND (" + rivalRank + ") < (" + rank + ")))"
 	}
 	return faceSelectionCond(b, sel, alias)
@@ -491,13 +491,13 @@ func buildAnySQL(
 	for i, br := range branches {
 		var conj []string
 		if br.HasInbound != nil {
-			w, ex := buildPredicateSQL(b, fmt.Sprintf("%s%d_in", prefix, i), *br.HasInbound,
+			w, ex := buildGatePredicateSQL(b, fmt.Sprintf("%s%d_in", prefix, i), *br.HasInbound,
 				seed, store.DirectionIncoming, sel)
 			with = append(with, w...)
 			conj = append(conj, existsCond(ex, br.HasInbound.Negate))
 		}
 		if br.HasOutbound != nil {
-			w, ex := buildPredicateSQL(b, fmt.Sprintf("%s%d_out", prefix, i), *br.HasOutbound,
+			w, ex := buildGatePredicateSQL(b, fmt.Sprintf("%s%d_out", prefix, i), *br.HasOutbound,
 				seed, store.DirectionOutgoing, sel)
 			with = append(with, w...)
 			conj = append(conj, existsCond(ex, br.HasOutbound.Negate))
@@ -643,6 +643,20 @@ func buildMatchingFacesSQL(q store.GraphQuery, ids []string) (sqlText string, ar
 	return withClause(with) + "SELECT e.id, e.face FROM " + source, b.args, !b.unsafe
 }
 
+// buildGatePredicateSQL is [buildPredicateSQL] for an ACL read gate: a
+// HasInbound / HasOutbound predicate or an Any branch, never a Related
+// traversal. Its edges and endpoint rows read the live tables under a read
+// instant, as pgstore's do (DEC-TDEF3GD; see instant.go).
+func buildGatePredicateSQL(
+	b *sqlBuilder, prefix string,
+	p store.RelationPredicate, seed string, dir store.Direction, sel store.FaceSelection,
+) (with []string, exists string) {
+	prev := b.live
+	b.live = true
+	defer func() { b.live = prev }()
+	return buildPredicateSQL(b, prefix, p, seed, dir, sel)
+}
+
 // buildPredicateSQL emits (CTE definitions, EXISTS body) for one relation
 // predicate, as pgstore's does. The closures are bounded by
 // graphquerynaive.DepthCap through [cappedDepth].
@@ -668,7 +682,7 @@ func buildPredicateSQL(
     SELECT value, 0 FROM json_each(`+endpointsArg+`)
     UNION
     SELECT r.to_id, c.depth + 1
-    FROM relations r
+    FROM `+b.relationsTable()+` r
     JOIN `+cteName+` c ON r.from_id = c.id
     WHERE r.from_face = '' AND r.rel_type IN (`+b.jsonList(p.InheritThrough)+`)
       AND c.depth < `+b.arg(cappedDepth(p.Depth))+`
@@ -684,7 +698,7 @@ func buildPredicateSQL(
     SELECT DISTINCT s.id, s.id, 0 FROM (`+seed+`) s
     UNION
     SELECT r.to_id, c.root, c.depth + 1
-    FROM relations r
+    FROM `+b.relationsTable()+` r
     JOIN `+cteName+` c ON r.from_id = c.id
     WHERE r.from_face = '' AND r.rel_type IN (`+b.jsonList(p.EntityInheritThrough)+`)
       AND c.depth < `+b.arg(cappedDepth(p.EntityDepth))+`
@@ -700,9 +714,9 @@ func buildPredicateSQL(
 	alias := prefix + "_ep"
 	epSel := endpointSelection(p.EndpointMatch, sel)
 	var sb strings.Builder
-	sb.WriteString("SELECT 1 FROM relations r ")
+	sb.WriteString("SELECT 1 FROM " + b.relationsTable() + " r ")
 	if p.EndpointMatch != nil {
-		sb.WriteString("JOIN entities " + alias + " ON " + alias + ".id = " + endpointCol + " ")
+		sb.WriteString("JOIN " + b.entitiesTable() + " " + alias + " ON " + alias + ".id = " + endpointCol + " ")
 	}
 	sb.WriteString("WHERE ")
 	if p.EndpointMatch != nil {
@@ -778,6 +792,11 @@ func endpointHopCond(b *sqlBuilder, endpointAlias string, sel store.FaceSelectio
 func nestedPredicateSQL(
 	b *sqlBuilder, candidate string, p store.RelationPredicate, dir store.Direction, sel store.FaceSelection,
 ) (with []string, exists string) {
+	if p.Gate {
+		prev := b.live
+		b.live = true
+		defer func() { b.live = prev }()
+	}
 	endpointCol, entityCol := "r.from_id", "r.to_id"
 	if dir == store.DirectionOutgoing {
 		endpointCol, entityCol = "r.to_id", "r.from_id"
@@ -785,9 +804,9 @@ func nestedPredicateSQL(
 	alias := candidate + "_ep"
 	epSel := endpointSelection(p.EndpointMatch, sel)
 	var sb strings.Builder
-	sb.WriteString("SELECT 1 FROM relations r ")
+	sb.WriteString("SELECT 1 FROM " + b.relationsTable() + " r ")
 	if p.EndpointMatch != nil {
-		sb.WriteString("JOIN entities " + alias + " ON " + alias + ".id = " + endpointCol + " ")
+		sb.WriteString("JOIN " + b.entitiesTable() + " " + alias + " ON " + alias + ".id = " + endpointCol + " ")
 	}
 	sb.WriteString("WHERE ")
 	if p.EndpointMatch != nil {

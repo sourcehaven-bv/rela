@@ -107,7 +107,8 @@ CREATE TABLE IF NOT EXISTS entity_versions (
 	origin_source_face TEXT,
 	origin_source_type TEXT,
 	origin_definition  TEXT,
-	created_at         TEXT NOT NULL
+	created_at         TEXT NOT NULL,
+	content_at         TEXT
 ) STRICT;
 
 -- Latest-version-per-face probe: the sweep asks "does this face's newest
@@ -168,7 +169,8 @@ CREATE TABLE IF NOT EXISTS relation_versions (
 	origin_source_face TEXT,
 	origin_source_type TEXT,
 	origin_definition  TEXT,
-	created_at         TEXT NOT NULL
+	created_at         TEXT NOT NULL,
+	content_at         TEXT
 ) STRICT;
 
 -- Latest-version-per-lineage probe, and the ordering for a lineage read.

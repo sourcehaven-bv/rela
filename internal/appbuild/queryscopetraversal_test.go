@@ -122,8 +122,10 @@ func TestQueryScopeFilter_AnswersAnIncomingTraversal(t *testing.T) {
 	q := calls.queries[0]
 	require.Equal(t, "feature", q.EntityType)
 	require.Nil(t, q.HasOutbound)
-	require.NotNil(t, q.HasInbound)
-	require.Equal(t, "ticket", q.HasInbound.EndpointMatch.EntityType)
+	require.Nil(t, q.HasInbound, "a traversal is not the read gate's slot")
+	require.Len(t, q.Related, 1)
+	require.True(t, q.Related[0].Incoming)
+	require.Equal(t, "ticket", q.Related[0].Pred.EndpointMatch.EntityType)
 }
 
 func TestQueryScopeFilter_OneQueryPerDistinctTraversal(t *testing.T) {

@@ -69,13 +69,14 @@ func insertRelationVersion(ctx context.Context, q DBTX, in store.RelationVersion
 		    (rel_record_id, op, from_id, from_face, rel_type, to_id,
 		     prev_from, prev_to,
 		     content, properties, content_hash, schema_hash,
-		     principal_user, principal_tool, triggered_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
+		     principal_user, principal_tool, triggered_by, content_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+		        COALESCE($16::timestamptz, now()))`
 	_, err = q.Exec(ctx, ins,
 		in.RecordID, string(in.Op), in.Key.From, string(in.Key.FromFace), in.Key.Type, in.Key.To,
 		prevFrom, prevTo,
 		in.Content, props, contentHash, in.SchemaHash,
-		in.PrincipalUser, in.PrincipalTool, in.TriggeredBy)
+		in.PrincipalUser, in.PrincipalTool, in.TriggeredBy, contentAtArg(in.ContentAt))
 	return err
 }
 

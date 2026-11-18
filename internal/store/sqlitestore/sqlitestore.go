@@ -157,8 +157,8 @@ func parseTime(s string) (time.Time, error) { return time.Parse(time.RFC3339Nano
 // store.HeaderPager capability. It shares the free function queryEntityPage
 // with ListEntitiesPage.
 //
-//plimsoll:max-methods=60
-//plimsoll:max-exported-methods=42
+//plimsoll:max-methods=61
+//plimsoll:max-exported-methods=43
 type Store struct {
 	db *sql.DB
 
@@ -258,11 +258,14 @@ type querier interface {
 
 // q returns the execution target: the pinned transaction connection inside a
 // Tx, the pool otherwise. One seam means one set of method bodies serves both.
+//
+// Both pass through [instantQuerier], which answers reads under a read
+// instant from the version history and refuses writes.
 func (s *Store) q() querier {
 	if s.conn != nil {
-		return s.conn
+		return instantQuerier{inner: s.conn}
 	}
-	return s.db
+	return instantQuerier{inner: s.db}
 }
 
 // write executes a mutating statement against the current target.

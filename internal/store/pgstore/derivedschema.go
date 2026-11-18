@@ -231,7 +231,7 @@ func queryIndexName(entityType string, properties []string) string {
 func (s *Store) Reconcile(
 	ctx context.Context, desired []store.DerivedObjectSpec, opts store.ReconcileOptions,
 ) ([]store.DerivedObjectOutcome, error) {
-	pool, ok := s.db.(*pgxpool.Pool)
+	pool, ok := unwrapDB(s.db).(*pgxpool.Pool)
 	if !ok {
 		return nil, nil
 	}

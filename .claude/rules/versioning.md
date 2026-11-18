@@ -111,3 +111,26 @@ paths:
   echoing purged content. `schema_versions` is projection-only + FK-shared, so
   purge never deletes it. Purge is necessary-not-sufficient for erasure (live
   row / PITR backups survive) — see the postgres-backend guide.
+- **Point-in-time reads** (TKT-6KLUT3U; both database backends, declared via
+  `Capabilities{ReadInstant}` and pinned by `storetest.RunInstantTests`). A ctx
+  bound by `store.BindReadInstant` makes every read answer from the state at
+  the instant and every write fail with `store.ErrReadOnlyInstant`; fsstore and
+  memstore refuse the bind with `store.ErrInstantUnsupported`. The mechanism is
+  the execution seam (pgstore `instantDB`, sqlitestore `instantQuerier`): it
+  prefixes each read with CTEs named `entities` and `relations` that shadow the
+  live tables, so read SQL is never duplicated. Keep every read on that seam:
+  a read that bypasses it (a raw pool handle, the search backend) serves live
+  rows under an instant. Versions order by `content_at` (when the content
+  became current: the live row's `updated_at` for a swept version), falling
+  back to `created_at` for rows from before the column; a new capture path must
+  set `ContentAt` or accept the capture time. A new column on `entities` or
+  `relations` that reads need must join both snapshot column lists, with the
+  value the live write path would store (pgstore recomputes `search_title`,
+  which search ranks on). The ACL read gate is the one read of the present
+  (DEC-TDEF3GD: history is read with today's ACL). `HasInbound`/`HasOutbound`
+  and `Any` branches render through `buildGatePredicateSQL`, whose tables are
+  `storeutil.LiveTable` names the seam schema-qualifies past the CTEs. The
+  whole gate reads live: the role edge, its endpoint rows and the
+  inherit-through containment edges, so access lost since fails closed.
+  `Related` traversals and the candidate row's own properties stay at the
+  instant. A new gate path must use the gate builder.

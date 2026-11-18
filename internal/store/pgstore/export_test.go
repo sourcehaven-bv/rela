@@ -158,7 +158,7 @@ func BuildMatchingFacesSQLForTest(q store.GraphQuery, ids []string) (sqlText str
 func (s *Store) SweepNowWithWrite(
 	ctx context.Context, p store.ProjectionProvider, cfg store.SweepConfig, write func(),
 ) error {
-	pool, ok := s.db.(*pgxpool.Pool)
+	pool, ok := unwrapDB(s.db).(*pgxpool.Pool)
 	if !ok {
 		return errors.New("pgstore: SweepNowWithWrite needs a store built over a *pgxpool.Pool")
 	}
@@ -170,7 +170,7 @@ func (s *Store) SweepNowWithWrite(
 // capture versions without waiting out a ticker interval. Test-only; the
 // sqlitestore counterpart has the same signature.
 func (s *Store) SweepNow(ctx context.Context, p store.ProjectionProvider, cfg store.SweepConfig) error {
-	pool, ok := s.db.(*pgxpool.Pool)
+	pool, ok := unwrapDB(s.db).(*pgxpool.Pool)
 	if !ok {
 		return errors.New("pgstore: SweepNow needs a store built over a *pgxpool.Pool")
 	}

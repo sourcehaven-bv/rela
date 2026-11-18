@@ -47,6 +47,15 @@ func (s *Store) VersionStore() store.VersionService {
 // entities.updated_at.
 func timestampNow() string { return sqlitedb.FormatTime(time.Now()) }
 
+// contentAt is the content_at value for a version: t when the caller knows
+// when the content became current, the capture time now otherwise.
+func contentAt(t time.Time, now string) string {
+	if t.IsZero() {
+		return now
+	}
+	return sqlitedb.FormatTime(t)
+}
+
 // --- Write ----------------------------------------------------------------
 
 // WriteVersion implements [store.VersionWriter]: it persists one synchronously
@@ -145,14 +154,14 @@ func insertVersion(ctx context.Context, q querier, in store.VersionInput, conten
 		    (entity_id, face, op, prev_id, prev_face, type, content, properties, content_hash,
 		     schema_hash, principal_user, principal_tool, triggered_by,
 		     origin_kind, origin_source, origin_source_face, origin_source_type,
-		     origin_definition, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		     origin_definition, created_at, content_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	res, err := q.ExecContext(ctx, ins,
 		in.EntityID, string(in.Face), string(in.Op), prev, prevFace, in.Type, in.Content,
 		props, contentHash, in.SchemaHash,
 		in.PrincipalUser, in.PrincipalTool, in.TriggeredBy,
 		o.kind, o.source, o.sourceFace, o.sourceType, o.definition,
-		now)
+		now, contentAt(in.ContentAt, now))
 	if err != nil {
 		return 0, fmt.Errorf("sqlitestore: insert entity version: %w", err)
 	}

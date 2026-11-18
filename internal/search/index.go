@@ -37,6 +37,7 @@ package search
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 	"slices"
@@ -89,6 +90,12 @@ func (s *Service) Search(ctx context.Context, q Query) iter.Seq2[Hit, error] {
 	}
 
 	if q.Text == "" {
+		return s.listAll(ctx, q)
+	}
+	if _, ok := store.ReadInstant(ctx); ok {
+		// The backend indexes the current text, so it can neither find a
+		// row by text it held at the instant nor drop one by text added
+		// since. The scan reads the state at the instant and matches there.
 		return s.listAll(ctx, q)
 	}
 
@@ -220,12 +227,12 @@ func (s *Service) listAll(ctx context.Context, q Query) iter.Seq2[Hit, error] {
 	}
 	return func(yield func(Hit, error) bool) {
 		emitted := 0
-		for e, err := range s.pagedRows(ctx, q.Types, store.InWorld(q.World), listPageSize(q)) {
+		for e, err := range s.pagedRows(ctx, q.Types, store.InWorld(q.World), listPageSize(q), q.Text != "") {
 			if err != nil {
 				yield(Hit{}, err)
 				return
 			}
-			if !MatchFilters(e, q.Filters) {
+			if !MatchFilters(e, q.Filters) || !matchesText(e, q.Text) {
 				continue
 			}
 			if !yield(Hit{ID: e.ID, Type: e.Type, Title: e.Title(), Face: e.Face}, nil) {
@@ -248,7 +255,7 @@ const firstListPage = 32
 // read: the limit when every row read becomes a hit, so a limited search
 // reads one page, and [firstListPage] otherwise.
 func listPageSize(q Query) int {
-	if q.Limit > 0 && q.Limit < searchLoadPage && len(q.Filters) == 0 && q.Admit == nil {
+	if q.Limit > 0 && q.Limit < searchLoadPage && len(q.Filters) == 0 && q.Admit == nil && q.Text == "" {
 		return q.Limit
 	}
 	return firstListPage
@@ -269,7 +276,7 @@ func (s *Service) listAdmitted(ctx context.Context, q Query) iter.Seq2[Hit, erro
 		out := &batchEmitter{q: q, yield: yield}
 		flush := out.flush
 		var batch []*entity.Entity
-		for e, err := range s.pagedRows(ctx, q.Types, store.AllFaces(), size) {
+		for e, err := range s.pagedRows(ctx, q.Types, store.AllFaces(), size, q.Text != "") {
 			if err != nil {
 				yield(Hit{}, err)
 				return
@@ -362,7 +369,7 @@ func admitBatch(q Query, rows []*entity.Entity) ([]Hit, error) {
 			continue
 		}
 		e := byCand[Candidate{ID: id, Type: typeOf[id], Face: res.Face}]
-		if e == nil || !MatchFilters(e, q.Filters) {
+		if e == nil || !MatchFilters(e, q.Filters) || !matchesText(e, q.Text) {
 			continue
 		}
 		hits = append(hits, Hit{ID: e.ID, Type: e.Type, Title: e.Title(), Face: e.Face, Via: res.Via,
@@ -377,15 +384,15 @@ func admitBatch(q Query, rows []*entity.Entity) ([]Hit, error) {
 // is its own keyset-paged read; several types are merged by key, so the
 // order does not depend on how many types are asked for.
 func (s *Service) pagedRows(
-	ctx context.Context, types []string, faces store.FaceSelection, size int,
+	ctx context.Context, types []string, faces store.FaceSelection, size int, bodies bool,
 ) iter.Seq2[*entity.Entity, error] {
 	types = slices.Compact(slices.Sorted(slices.Values(types)))
 	if len(types) == 0 {
-		return s.typePages(ctx, "", faces, size)
+		return s.typePages(ctx, "", faces, size, bodies)
 	}
 	streams := make([]iter.Seq2[*entity.Entity, error], len(types))
 	for i, t := range types {
-		streams[i] = s.typePages(ctx, t, faces, size)
+		streams[i] = s.typePages(ctx, t, faces, size, bodies)
 	}
 	if len(streams) == 1 {
 		return streams[0]
@@ -401,9 +408,13 @@ func (s *Service) pagedRows(
 // properties, so no body is read (collection-reads rule, TKT-Q918DFR). A
 // header page holds the rows and cursor of the entity page.
 func (s *Service) typePages(
-	ctx context.Context, typ string, faces store.FaceSelection, size int,
+	ctx context.Context, typ string, faces store.FaceSelection, size int, bodies bool,
 ) iter.Seq2[*entity.Entity, error] {
 	return func(yield func(*entity.Entity, error) bool) {
+		if bodies {
+			s.entityPages(ctx, typ, faces, size, yield)
+			return
+		}
 		q := store.EntityQuery{Type: typ, Faces: faces, Limit: size}
 		for {
 			page, err := store.ListEntityHeadersPage(ctx, s.reader, q)
@@ -423,6 +434,43 @@ func (s *Service) typePages(
 			q.Limit = nextPageSize(q.Limit)
 		}
 	}
+}
+
+// entityPages is the body-reading form of Service.typePages, for a text
+// match at a read instant: the text may be in the body, so the rows are read
+// whole, a keyset page at a time.
+func (s *Service) entityPages(
+	ctx context.Context, typ string, faces store.FaceSelection, size int, yield func(*entity.Entity, error) bool,
+) {
+	q := store.EntityQuery{Type: typ, Faces: faces, Limit: size}
+	pager, ok := s.reader.(store.EntityPager)
+	if !ok {
+		yield(nil, errors.New("search: a text search at an instant needs a paged reader"))
+		return
+	}
+	for {
+		page, err := pager.ListEntitiesPage(ctx, q)
+		if err != nil {
+			yield(nil, fmt.Errorf("search: list: %w", err))
+			return
+		}
+		for _, e := range page.Items {
+			if !yield(e, nil) {
+				return
+			}
+		}
+		if page.NextCursor == "" {
+			return
+		}
+		q.Cursor = page.NextCursor
+		q.Limit = nextPageSize(q.Limit)
+	}
+}
+
+// matchesText reports whether e matches text, as [MatchTextFields] judges
+// it. An empty text matches every row.
+func matchesText(e *entity.Entity, text string) bool {
+	return text == "" || len(MatchTextFields(e, text)) > 0
 }
 
 // nextPageSize is the page read after one of size rows: twice as large, up

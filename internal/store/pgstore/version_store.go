@@ -40,7 +40,7 @@ type VersionStore struct {
 // construct — but callers must still nil-check, because the interface admits
 // implementations that can.
 func (s *Store) VersionStore() store.VersionService {
-	return &VersionStore{db: s.db}
+	return &VersionStore{db: unwrapDB(s.db)}
 }
 
 // Compile-time checks that VersionStore provides the full version surface.

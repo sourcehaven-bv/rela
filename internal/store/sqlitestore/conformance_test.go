@@ -101,6 +101,7 @@ func TestConformance(t *testing.T) {
 		RetiredIDs:  true,
 		Versioning:  true,
 		VersionTags: true,
+		ReadInstant: true,
 		SweepNow: func(t *testing.T, s store.Store) {
 			t.Helper()
 			require.NoError(t, s.(*sqlitestore.Store).SweepNow(t.Context(), fixedProjection{}, immediateSweep(100)))

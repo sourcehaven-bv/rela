@@ -254,7 +254,7 @@ func SchemaOf(ctx context.Context, st any) (schema string, ok bool, err error) {
 	if !isPG {
 		return "", false, nil
 	}
-	schema, err = resolveSchema(ctx, s.db)
+	schema, err = resolveSchema(ctx, unwrapDB(s.db))
 	if err != nil {
 		return "", true, err
 	}

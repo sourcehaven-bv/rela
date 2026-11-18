@@ -34,7 +34,7 @@ const migrationAdvisoryLockKey int64 = 0x52_45_4c_4d // "RELM"
 // (internal/datamigration's consumer-side interface), like Formatter and the
 // version capabilities — not part of store.Store.
 func (s *Store) TryMigrationLock(ctx context.Context) (release func(), ok bool, err error) {
-	pool, isPool := s.db.(*pgxpool.Pool)
+	pool, isPool := unwrapDB(s.db).(*pgxpool.Pool)
 	if !isPool {
 		// A bare handle (unit-test store) has no pool to pin a session lock
 		// to. Error rather than pretend: a caller that got this far chose
