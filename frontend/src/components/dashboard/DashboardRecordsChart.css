@@ -1,0 +1,214 @@
+/*
+ * The categorical slots of the dataviz reference palette, validated for
+ * the card surface in each mode (scripts/validate_palette.js): light against
+ * #ffffff, dark against #161619. Slots 3 to 5 sit below 3:1 on light, so
+ * the card always offers the table view.
+ */
+.records-chart {
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #6250d6;
+  --series-8: #e34948;
+  position: relative;
+  min-width: 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :global(:root:not(.light)) .records-chart {
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
+  }
+}
+
+:global(.dark) .records-chart {
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+}
+
+.records-chart__s1 {
+  --series: var(--series-1);
+}
+.records-chart__s2 {
+  --series: var(--series-2);
+}
+.records-chart__s3 {
+  --series: var(--series-3);
+}
+.records-chart__s4 {
+  --series: var(--series-4);
+}
+.records-chart__s5 {
+  --series: var(--series-5);
+}
+.records-chart__s6 {
+  --series: var(--series-6);
+}
+.records-chart__s7 {
+  --series: var(--series-7);
+}
+.records-chart__s8 {
+  --series: var(--series-8);
+}
+
+.records-chart__note {
+  color: var(--rl-color-text-muted);
+  margin: 0;
+}
+
+.records-chart__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs) var(--space-md);
+  list-style: none;
+  margin: 0 0 var(--space-sm);
+  padding: 0;
+  color: var(--rl-color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.records-chart__legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.records-chart__key,
+.records-chart__tip-key {
+  display: inline-block;
+  width: 12px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--series);
+}
+
+.records-chart__plot {
+  position: relative;
+}
+
+.records-chart__plot svg {
+  display: block;
+  overflow: visible;
+}
+
+.records-chart__plot svg:focus-visible {
+  outline: 2px solid var(--rl-color-accent);
+  outline-offset: 2px;
+}
+
+.records-chart__grid line {
+  stroke: var(--rl-color-border);
+  stroke-width: 1;
+}
+
+.records-chart__grid line.records-chart__baseline {
+  stroke: var(--rl-color-border-strong);
+}
+
+.records-chart__axis text {
+  fill: var(--rl-color-text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.records-chart__crosshair {
+  stroke: var(--rl-color-border-strong);
+  stroke-width: 1;
+}
+
+.records-chart__line {
+  fill: none;
+  stroke: var(--series);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.records-chart__dot {
+  fill: var(--series);
+  stroke: var(--rl-color-bg-raised);
+  stroke-width: 2;
+}
+
+.records-chart__end {
+  fill: var(--rl-color-text-muted);
+  font-size: 11px;
+}
+
+.records-chart__tip {
+  position: absolute;
+  top: 0;
+  transform: translateX(12px);
+  pointer-events: none;
+  min-width: 120px;
+  padding: var(--space-sm);
+  border: 1px solid var(--rl-color-border);
+  border-radius: var(--radius-sm);
+  background: var(--rl-color-bg-raised);
+  box-shadow: var(--shadow-sm);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+.records-chart__tip--left {
+  transform: translateX(calc(-100% - 12px));
+}
+
+.records-chart__tip-when {
+  color: var(--rl-color-text-muted);
+  margin-bottom: var(--space-xs);
+}
+
+.records-chart__tip-row {
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.records-chart__tip-name {
+  color: var(--rl-color-text-muted);
+}
+
+.records-chart__table {
+  margin-top: var(--space-sm);
+  font-size: var(--font-size-sm);
+}
+
+.records-chart__table summary {
+  cursor: pointer;
+  color: var(--rl-color-text-muted);
+}
+
+.records-chart__table table {
+  margin-top: var(--space-sm);
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.records-chart__table th,
+.records-chart__table td {
+  padding: var(--space-xs) var(--space-sm);
+  text-align: right;
+  border-bottom: 1px solid var(--rl-color-border);
+}
+
+.records-chart__table th[scope='row'],
+.records-chart__table thead th:first-child {
+  text-align: left;
+}

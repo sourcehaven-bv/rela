@@ -7,6 +7,7 @@ import { useWorld } from '@/composables/useWorld'
 import type { RouteLocationRaw } from 'vue-router'
 import DashboardMatrix from '@/components/dashboard/DashboardMatrix.vue'
 import DashboardRatio from '@/components/dashboard/DashboardRatio.vue'
+import DashboardRecordsChart from '@/components/dashboard/DashboardRecordsChart.vue'
 import Badge from '@/components/ui/Badge.vue'
 import {
   listBreakdown,
@@ -90,6 +91,7 @@ function cardKey(card: DashboardCardEntry): string {
   // A list card is addressed by its config index, so the index is part of
   // its identity; a query card keeps the key it always had.
   if (card.list) return JSON.stringify(['list', card.index, card.title, card.display, card.list])
+  if (card.records) return JSON.stringify(['records', card.index, card.title])
   return JSON.stringify([card.title, card.query, card.display])
 }
 
@@ -154,6 +156,8 @@ async function loadData() {
     const anchor = entityDashboard.value ? props.anchor : undefined
     // Load card data in parallel
     const cardPromises = cards.value.map(async (card) => {
+      // A line card loads its own series from the records API.
+      if (card.records) return
       if (card.list) {
         // A list card counts in the page's world, as its list would.
         try {
@@ -279,7 +283,7 @@ function buildRows(card: DashboardCardEntry, entities: Entity[]): Entity[] {
 const cardViews = computed<CardView[]>(() =>
   cards.value.map((card) => {
     const key = cardKey(card)
-    const link = entityDashboard.value ? undefined : cardLink(card)
+    const link = entityDashboard.value || card.records ? undefined : cardLink(card)
     if (card.list) {
       const value = cardValues.value.get(key)
       return {
@@ -516,6 +520,13 @@ watch([() => props.name, () => props.anchor, worldParam], () => void loadData())
             />
             <div v-else class="no-data">{{ t('dashboard.noData') }}</div>
           </template>
+
+          <!-- Line display: a trend over records (TKT-RK810V7) -->
+          <DashboardRecordsChart
+            v-else-if="view.card.display === 'line' && view.card.records"
+            :records="view.card.records"
+            :title="view.card.title"
+          />
 
           <!-- Ratio display (list cards only) -->
           <template v-else-if="view.card.display === 'ratio'">

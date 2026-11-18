@@ -228,7 +228,10 @@
     "matrixTruncated": "Not every value is shown.",
     "previewOf": "{display} of {source}",
     "previewList": "list {name}",
-    "noData": "No data"
+    "noData": "No data",
+    "lineChartLabel": "Line chart: {title}",
+    "showTable": "Show as a table",
+    "period": "Period"
   },
   "comments": {
     "commentOn": "Comment on {ref}",

@@ -797,6 +797,7 @@ func (s *Services) LuaWriteDeps() lua.WriteDeps {
 		OAuth:         ScriptOAuth(s),
 		AttachRender:  s.attachRender,
 		AttachFile:    s.attachFile,
+		Records:       luaRecords(s.records),
 	}
 }
 
@@ -814,6 +815,7 @@ func (s *Services) luaWriteDepsFor(redactor visibility.FieldRedactor) lua.WriteD
 		OAuth:         ScriptOAuth(s),
 		AttachRender:  s.attachRender,
 		AttachFile:    s.attachFile,
+		Records:       luaRecords(s.records),
 	}
 }
 

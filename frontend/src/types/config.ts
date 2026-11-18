@@ -848,6 +848,21 @@ export interface DashboardConfig {
   entity_type?: string
 }
 
+/** The `records:` block of a `display: line` dashboard card. */
+export interface DashboardRecords {
+  type: string
+  /** One line per owner, in this order; at most 8. */
+  owners: string[]
+  /** The numeric field folded; absent when `stat` is count. */
+  field?: string
+  /** Unset means month. */
+  bucket?: 'hour' | 'day' | 'week' | 'month'
+  /** How far back, such as 90d or 2y; unset means every stored row. */
+  range?: string
+  /** The statistic per bucket; unset means latest. */
+  stat?: 'latest' | 'avg' | 'sum' | 'min' | 'max' | 'count'
+}
+
 export interface DashboardCard {
   title: string
   /**
@@ -858,7 +873,14 @@ export interface DashboardCard {
   list?: string
   /** A search query the SPA runs through `/_search`. */
   query?: string
-  display: 'count' | 'breakdown' | 'table' | 'matrix' | 'ratio' | 'sum' | 'avg' | 'min' | 'max'
+  display:
+    'count' | 'breakdown' | 'table' | 'matrix' | 'ratio' | 'sum' | 'avg' | 'min' | 'max' | 'line'
+  /**
+   * A `display: line` card's series (TKT-RK810V7): records of one type for
+   * named owners, read from `/_records/{type}/_aggregate`. Set only on a line
+   * card, which has no list or query.
+   */
+  records?: DashboardRecords
   /** The property a sum, avg, min or max card folds over its list's rows. */
   property?: string
   group_by?: string

@@ -915,4 +915,30 @@ describe('DashboardView', () => {
       expect(getDashboardCardMock).toHaveBeenCalledWith('plain', 0, undefined)
     })
   })
+
+  // A line card (TKT-RK810V7) reads records, not a list or a query: the view
+  // hands it to the chart, which loads its own series, and links nowhere.
+  it('hands a line card to the records chart without loading it itself', async () => {
+    const records = { type: 'measurement', field: 'value', owners: ['MET-1'] }
+    seedDashboard([{ title: 'Coverage', display: 'line', index: 0, records }])
+
+    const wrapper = mount(DashboardView, {
+      global: {
+        stubs: {
+          RouterLink: RouterLinkStub,
+          'router-link': RouterLinkStub,
+          DashboardRecordsChart: {
+            props: ['records', 'title'],
+            template: '<div data-testid="chart-stub">{{ title }} {{ records.type }}</div>',
+          },
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="chart-stub"]').text()).toBe('Coverage measurement')
+    expect(searchEntitiesMock).not.toHaveBeenCalled()
+    expect(getDashboardCardMock).not.toHaveBeenCalled()
+    expect(wrapper.find('.dashboard-card .card-link').exists()).toBe(false)
+  })
 })

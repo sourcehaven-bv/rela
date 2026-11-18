@@ -871,6 +871,47 @@ render and in a validation rule. A declarative webhook runs no Lua; to
 attach a file from one, let the webhook's write start a flow or a
 background automation.
 
+### Append records: `rela.append_records`
+
+`rela.append_records` appends rows to a record type (see [Records](records.md)).
+Use it to store a measurement, such as a metric a scheduled task computes
+each month:
+
+```lua
+local rows, err = rela.append_records("measurement", {
+  { owner = "MET-1", fields = { value = "0.82" } },
+  { owner = "MET-2", ts = "2026-11-01T00:00:00Z", fields = { value = 17 } },
+})
+if not rows then
+  error("measurement not stored: " .. err)
+end
+```
+
+Each row has an `owner`, the id of the entity that owns it, and `fields`.
+`ts` is optional and is an RFC 3339 time; without it the row gets the time
+of the append. Send a decimal as a string, such as `"0.82"`, so no precision
+is lost. One call takes at most 1,000 rows, and they are stored together or
+not at all.
+
+On success it returns a list of `{id, owner, ts}`, one per row. On a
+refusal or a failure, such as an owner the principal may not update or a
+field the type does not declare, it returns `nil` and a message. A wrong
+argument, such as a row without `owner` or an unknown key, raises an error.
+
+The call acts as the script's principal and runs the check of
+`POST /api/v1/_records/{type}`: every owner must be of the type's owner
+type, and the principal must be able to update every face of it. An owner
+none of whose faces the principal can read gets the same `not found` message
+as a missing one. An owner with some readable faces and some it may not
+update gets `forbidden`. `rela.bypass_acl` does not widen it. Record writes are not in the
+audit log; each row stores who appended it.
+
+`rela.append_records` exists in writer runtimes when the schema declares a
+record type: in action scripts, scheduled scripts, flow steps, background
+automation actions, `rela script` and MCP script runs. It is absent in a
+synchronous automation, in a document render and in a validation rule, and
+it raises an error when called inside a store transaction.
+
 ### Pile Functions
 
 A pile is a personal, named stack of entities. The `rela.piles` functions

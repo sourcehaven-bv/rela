@@ -1632,6 +1632,7 @@ func NewApp(
 		oauth:            func() lua.OAuthTokens { return app.oauth },
 		attachRender:     func() lua.AttachRenderer { return actionAttachRenderer(app) },
 		attachFile:       func() lua.AttachFiler { return actionAttachFiler(app) },
+		records:          func() lua.RecordAppender { return app.records.scriptAppender() },
 		elevatedUpdates:  elevatedUpdatesFor(em),
 		fullScriptDetail: app.allowFullScriptDetail,
 		paths:            paths,

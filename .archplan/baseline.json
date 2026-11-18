@@ -2784,8 +2784,8 @@
       "weight.layers": 0,
       "weight.vocabulary": 872,
       "weight.types": 3975,
-      "weight.concepts": 7205,
-      "weight.boundaries": 1429,
+      "weight.concepts": 7206,
+      "weight.boundaries": 1435,
       "weight.data": 1298,
       "weight.security": 2064,
       "largest_tangle": 14,
@@ -2794,7 +2794,7 @@
       "propagation_cost": 9.2
     },
     "min_weight": 0,
-    "at": "2026-11-17T01:30:00Z",
+    "at": "2026-11-17T03:00:00Z",
     "log": [
       {
         "at": "2026-11-17T00:00:00Z",
@@ -3181,6 +3181,21 @@
           "weight.boundaries": [
             1422,
             1428
+          ]
+        }
+      },
+      {
+        "at": "2026-11-17T03:00:00Z",
+        "change": "loosen",
+        "reason": "TKT-RK810V7: RecordRow.Fields adds 1 to accepted untyped_bag-5de1e6eb61d7; dataentry records wiring tips the words factor of accepted misplaced_file-f03fc91c99b4 (+6)",
+        "metrics": {
+          "weight.concepts": [
+            7205,
+            7206
+          ],
+          "weight.boundaries": [
+            1429,
+            1435
           ]
         }
       }

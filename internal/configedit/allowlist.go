@@ -408,6 +408,8 @@ var locked = map[File][]string{
 		"dashboards.*.cards.[].colors.*", "dashboards.*.cards.[].match",
 		"dashboards.*.cards.[].rows_label", "dashboards.*.cards.[].columns_label",
 		"dashboards.*.cards.[].rows_order", "dashboards.*.cards.[].columns_order",
+		// Not in the Configure space yet: records line cards (TKT-RK810V7).
+		"dashboard.cards.[].records.**", "dashboards.*.cards.[].records.**",
 		// Not in the Configure space yet: card width (TKT-H21TYS). Editing a
 		// card in Configure keeps the width it has.
 		"dashboard.cards.[].width", "dashboards.*.cards.[].width",

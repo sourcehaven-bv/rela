@@ -236,6 +236,10 @@ type writeHandler struct {
 	// kept out of luaDeps for the same reason as attachRender. Nil, or
 	// returning nil: the binding is absent.
 	attachFile func() lua.AttachFiler
+	// records backs rela.append_records in an action script (TKT-RK810V7),
+	// kept out of luaDeps for the same reason as attachRender. Nil, or
+	// returning nil: the binding is absent.
+	records func() lua.RecordAppender
 	// elevatedUpdates backs admin.update_entity for an action that declares
 	// allow_acl_bypass: write (TKT-JA5SABG), kept out of luaDeps for the same
 	// reason as versionTags. Nil: such an action fails with 500.

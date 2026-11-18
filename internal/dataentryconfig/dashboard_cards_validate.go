@@ -17,6 +17,9 @@ func validateDashboardCardSource(
 	cfg *Config, meta *metamodel.Metamodel, prefix string, i int, card DashboardCard,
 ) []string {
 	at := fmt.Sprintf("%s: card[%d] %q", prefix, i, card.Title)
+	if card.Records != nil || card.Display == DisplayLine {
+		return validateRecordsCard(meta, at, card)
+	}
 	switch {
 	case card.List != "" && card.Query != "":
 		return []string{at + " sets both list: and query:; set exactly one"}

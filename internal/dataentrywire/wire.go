@@ -52,7 +52,7 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 
 	// Without record types in the schema the record routes answer 404.
 	if rs := appbuild.Records(svc); rs != nil {
-		if err := dataentry.SetRecords(app, rs); err != nil {
+		if err := dataentry.SetRecords(app, rs, appbuild.LuaRecords(svc)); err != nil {
 			return fmt.Errorf("wire records: %w", err)
 		}
 	}

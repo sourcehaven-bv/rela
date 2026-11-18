@@ -476,6 +476,7 @@ var validDashboardDisplayModes = map[string]bool{
 	"avg":       true,
 	"min":       true,
 	"max":       true,
+	"line":      true,
 }
 
 var validCommandContexts = map[string]bool{

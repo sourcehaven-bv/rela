@@ -1082,6 +1082,7 @@ func (r *Runtime) registerWriteBindings(rela *lua.LTable) {
 	registerVersionTagWriteBindings(r, rela)
 	registerAttachRender(r, rela)
 	registerAttachFile(r, rela)
+	registerAppendRecords(r, rela)
 	registerOAuthModule(r, rela)
 	// write_file is additionally capability-gated (TKT-YH52OM): a writer
 	// runtime may mutate the graph without being entitled to touch the disk.

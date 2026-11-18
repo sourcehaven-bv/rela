@@ -130,7 +130,7 @@ func handleV1DashboardCard(a *App, w http.ResponseWriter, r *http.Request) {
 	card := dash.Cards[index]
 	if card.List == "" {
 		writeV1Error(w, r, http.StatusBadRequest, "card_not_computed",
-			"Card is not computed", "only a card with list: has a computed value; this one uses query:")
+			"Card is not computed", "only a card with list: has a computed value")
 		return
 	}
 
