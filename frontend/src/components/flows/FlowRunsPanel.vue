@@ -8,7 +8,8 @@
  * project without flows (where `/_flows` answers 404) sees the page it
  * always saw. A refused read drops the runs on screen (BUG-E8XE7I).
  */
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import { listSubjectRuns, startFlowRun, type Flow, type FlowRun } from '@/api/flows'
@@ -18,6 +19,7 @@ import { useEvents } from '@/composables/useEvents'
 import { useFlowList } from '@/composables/useFlowList'
 import { useUIStore } from '@/stores'
 import FlowRunCard from './FlowRunCard.vue'
+import { focusRunCard, requestedRun } from './focusRun'
 
 /** The entity type of a run header; a run's moves change it. */
 const FLOW_RUN_TYPE = '_flow-run'
@@ -53,6 +55,7 @@ async function load() {
   try {
     runs.value = await listSubjectRuns(props.entityId, ctl.signal)
     error.value = ''
+    void focusRequestedRun()
   } catch (err) {
     if (isCancelledFetch(err)) return
     if (shouldDropHeldContent(err)) {
@@ -64,14 +67,32 @@ async function load() {
   }
 }
 
+/** The run `?run=` already focused on this entity, see focusRequestedRun. */
+let focusedRun = ''
 watch(
   () => [props.entityType, props.entityId, typeFlows.value.length],
   () => {
     runs.value = []
     error.value = ''
+    focusedRun = ''
     void load()
   },
   { immediate: true }
+)
+
+// `?run=<id>` (a flow task hint links here with it) brings that run's card
+// into view once per entity, after the runs first load.
+const route = useRoute()
+const panel = ref<HTMLElement | null>(null)
+async function focusRequestedRun() {
+  const id = requestedRun(route?.query ?? {})
+  if (!id || id === focusedRun) return
+  await nextTick()
+  if (focusRunCard(panel.value, id)) focusedRun = id
+}
+watch(
+  () => requestedRun(route?.query ?? {}),
+  () => void focusRequestedRun()
 )
 
 // A step, a timer or another reader moves a run; its header and the subject
@@ -121,6 +142,7 @@ const visible = computed(
 <template>
   <section
     v-if="visible"
+    ref="panel"
     class="flow-runs-panel"
     aria-labelledby="flow-runs-heading"
     data-testid="flow-runs-panel"

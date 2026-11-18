@@ -56,11 +56,11 @@ let inFlight: AbortController | null = null
  */
 let requestSeq = 0
 /**
- * The entity type whose changes can change the current answer, from the
- * server's `context_type`. Empty when no context source applies to the page,
- * so a graph change triggers no refresh there.
+ * The entity types whose changes can change the current answer, from the
+ * server's `refresh_types` (or its older `context_type`). Empty when no
+ * source on the page depends on graph changes, so none triggers a refresh.
  */
-let refreshType = ''
+let refreshTypes: string[] = []
 /** Pending debounced refresh, see refreshForChange. */
 let refreshTimer: ReturnType<typeof setTimeout> | null = null
 /** How long refreshForChange waits for more changes before it resolves. */
@@ -130,7 +130,7 @@ export function __resetNextActionForTest() {
   inFlight?.abort()
   inFlight = null
   requestSeq = 0
-  refreshType = ''
+  refreshTypes = []
   if (refreshTimer) clearTimeout(refreshTimer)
   refreshTimer = null
   lastByPage.clear()
@@ -209,7 +209,7 @@ export function useNextAction() {
       )
       if (seq !== requestSeq) return
       suggestion.value = res.suggestion
-      refreshType = res.context_type ?? ''
+      refreshTypes = res.refresh_types ?? (res.context_type ? [res.context_type] : [])
       if (res.suggestion) rememberForPage(key, res.suggestion)
       // The impression is NOT reported here. `load()` also runs after
       // feedback, so reporting from it would mark the REPLACEMENT suggestion
@@ -221,7 +221,7 @@ export function useNextAction() {
       // An advisory surface must never break the page it sits on.
       console.error('next-action load failed:', err)
       suggestion.value = null
-      refreshType = ''
+      refreshTypes = []
       // Not latched: the page has not been answered, so the next loadOnce
       // for it tries again.
       if (loadedKey === key) loadedKey = null
@@ -280,17 +280,19 @@ export function useNextAction() {
   }
 
   /**
-   * Re-resolve after an entity of `type` changed, when a context source can
-   * apply to the page and is about that type (the server's `context_type`).
-   * An edit may have settled the suggestion about the viewed entity, or made
-   * one owed. Every other page keeps its answer until the next navigation.
+   * Re-resolve after an entity of `type` changed, when the server named that
+   * type in `refresh_types`: the type of a context source that can apply to
+   * the page, or the flow run type when a flow_tasks source can. An edit may
+   * have settled the suggestion about the viewed entity, a step may have
+   * finished a task, or a change may have made a suggestion owed. Every other
+   * page keeps its answer until the next navigation.
    *
    * Debounced: a bulk import sends one change per entity, and every open
    * page would otherwise resolve once per change.
    */
   function refreshForChange(type: string) {
-    if (!refreshType) return
-    if (type && type !== refreshType) return
+    if (refreshTypes.length === 0) return
+    if (type && !refreshTypes.includes(type)) return
     if (refreshTimer) clearTimeout(refreshTimer)
     refreshTimer = setTimeout(() => {
       refreshTimer = null

@@ -4355,6 +4355,8 @@ next_actions:
 | `condition` | Refines `query`'s candidates with a predicate expression — the only place date arithmetic works. See below. |
 | `context` | Instead of `query`: an entity type. The candidate is the entity the page shows, on pages about an entity of that type. See [Where suggestions appear](#where-suggestions-appear). |
 | `count` | Instead of `query`: fires on `"<entity_type> == 0"` — the first-run case. |
+| `source` | Instead of `query`: a built-in candidate list. `flow_tasks` offers your waiting flow steps. See [`source: flow_tasks`](#waiting-flow-steps-source-flow_tasks). |
+| `flows` | With `source: flow_tasks`: the flows whose steps count. Unset counts every flow. |
 | `suggest` | **Required.** The message. `{property}` inserts a stored property of the candidate, and `{id}` its id. Only stored properties exist, so a computed value such as a day count cannot be inserted. An enum value reads as its label. A date reads in the property's `format:`, otherwise as `2026-11-03`, or `2026-11-03 14:05` when it has a time of day. A placeholder that names no value stays as written. |
 | `actions` | The affordances offered. See below. |
 | `cooldown` | How long after being *shown* to stay quiet. Defaults to 24h. On a `context` source: how long "Seen it" hides the suggestion. |
@@ -4364,7 +4366,7 @@ next_actions:
 | `defer_scope` | What "not now" covers: `entity` (default) or `source` — see below. |
 | `visible_on` | Pages the suggestion may appear on. Unset matches every page. See [Where suggestions appear](#where-suggestions-appear). |
 
-Exactly one of `query`, `context` or `count` must be set.
+Exactly one of `query`, `context`, `count` or `source` must be set.
 
 #### `condition` — dwell time and other typed comparisons
 
@@ -4518,6 +4520,63 @@ genuinely operator-level check ("has this deployment been set up at all?") —
 it discloses that entities of a type exist to someone permitted to read none
 of them.
 
+#### Waiting flow steps (`source: flow_tasks`)
+
+A `flow_tasks` source suggests the flow steps that wait for you. Its
+candidates are exactly the tasks of the **Flow tasks** page: the same read
+gate and the same roles, globally or through a role relation. See
+[Doing a step](flows.md#doing-a-step). It adds no rule of its own.
+
+```yaml
+next_action_bands:
+  - id: todo
+    label: To do
+    prominence: banner
+
+next_actions:
+  signup-step:
+    band: todo
+    source: flow_tasks
+    flows: [signup]
+    suggest: "Complete {step} for {subject}"
+    actions:
+      - label: Open step
+        navigate: "/entity/{type}/{id}?run={run}"
+      - snooze: ["1d"]
+```
+
+This is the shape for a customer portal: a customer whose `signup` run
+waits in its `details` state sees a banner such as "Complete Company
+details for Northwind Demo B.V." on every page. The button opens the
+company's page with the step form of that run in view.
+
+- **The message.** `{flow}` is the flow's label, `{step}` the label of the
+  state the run waits in, and `{subject}` the title of the subject. Any
+  other `{property}` inserts a property of the subject, as on a `query`
+  source. A subject you cannot read is named by its id.
+- **The button.** A `navigate` offer fills `{type}` and `{id}` with the
+  subject and `{run}` with the run. Without a `navigate` offer, rela adds
+  an "Open" button to `/entity/<type>/<id>?run=<run>`. On the entity page,
+  `?run=` scrolls to that run in the Flows panel and focuses it.
+- **Which task.** The source offers its oldest waiting task, by start of
+  the run. A snoozed or dismissed task gives way to the next oldest.
+  Other sources in the same band still compete with it as usual.
+- **Snooze and dismiss** hide the hint only. The task stays on the Flow
+  tasks page and in the Flows panel. Each step of a run is its own
+  suggestion, so when the run moves on to another waiting state, the hint
+  comes back for the new step.
+- **Done is gone.** A completed step leaves the task list, so the hint is
+  gone on the next resolve. The page asks again after any change to a
+  flow run.
+- **No cooldown by default.** A waiting step is work you have to do, so
+  being shown does not hide it. Set `cooldown:` to make it rest after it
+  was shown.
+
+`condition`, `key_props`, `source_world`, `pick` and `pick_one` offers do
+not apply to this source and fail the load. `flows:` names are checked
+when the suggestion is resolved, because `flows.yaml` reloads on its own:
+a name it does not declare is logged and skipped.
+
 ### Where suggestions appear
 
 The suggestion slot sits at the top of every page: the dashboard, lists,
@@ -4662,8 +4721,10 @@ The GET takes these query parameters, all optional:
 | `current_source`, `current_entity`, `current_variant` | The suggestion the reader has on screen, so it can stay. See [Navigating keeps the suggestion](#navigating-keeps-the-suggestion). |
 
 The answer is `{"suggestion": …}`, with `null` when nothing is owed. When a
-context source can apply to the page, `context_type` names its entity type;
-the SPA asks again when an entity of that type changes.
+context source can apply to the page, `context_type` names its entity type.
+`refresh_types` lists every type whose changes can change the answer: that
+context type, and `_flow-run` when a `flow_tasks` source can apply. The SPA
+asks again when an entity of one of those types changes.
 
 The POST body names the suggestion (`source`, `entity_id`, `variant`) and a
 `kind`: `snooze` (with `duration`), `dismiss`, `mute`, `unmute`, `shown` or
