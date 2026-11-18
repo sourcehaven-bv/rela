@@ -1763,7 +1763,7 @@ func (m *Manager) updateCore(
 	// whole entity (UpdateEntity).
 	txCheck = chainTxChecks(txCheck, relationRuleCheck(m.deps, oldEntity, e))
 	summary := updateEntitySummary(oldEntity, e)
-	write := func(st store.Store) error {
+	write := func(ctx context.Context, st store.Store) error {
 		if _, werr := st.UpdateEntityIf(ctx, e, store.UpdateCondition{
 			ExpectedVersion: store.EntityVersion(expectedVersion),
 		}); werr != nil {
@@ -1778,7 +1778,7 @@ func (m *Manager) updateCore(
 	joined := joinedFor(ctx, e.ID)
 	if joined != nil {
 		txCheck = chainTxChecks(txCheck, joined.check)
-		write = joined.after(ctx, write)
+		write = joined.after(write)
 	}
 	if err := writeChecked(ctx, m.deps, e, e.ID, txCheck, write); err != nil {
 		var invalid *ValidationError
@@ -2647,12 +2647,11 @@ func facesStillStored(ctx context.Context, st store.Store, deleted []*entity.Ent
 //
 // Nil-safe throughout: a transactional backend returns nil on error, and a
 // failure on the first relation removes nothing. Either way this is a no-op.
-// A sink that records in the transaction is only wired on a backend that
-// rolls back, so with one this records nothing.
+// On a backend that rolls back nothing stayed, so this records nothing.
 func (m *Manager) recordPartialCascade(
 	ctx context.Context, cascadeTB string, res *store.DeleteResult, captured *cascadeCapture,
 ) {
-	if res == nil || auditsInTx(m.deps) {
+	if res == nil || store.TxRollsBack(m.deps.Store) {
 		return
 	}
 	// A face-authorization denial after the store delete returns the full
@@ -3069,7 +3068,7 @@ func (m *Manager) RenameEntity(
 		// A transactional backend rolled the rename back. fs and memstore
 		// cannot, so a denial after the store rename leaves it standing, and
 		// the logs must say so (the same reasoning as recordPartialCascade).
-		if res != nil && !familyStillStored(ctx, m.deps.Store, oldID) {
+		if res != nil && !store.TxRollsBack(m.deps.Store) && !familyStillStored(ctx, m.deps.Store, oldID) {
 			// Only the best-effort sink is wired on a store that keeps a
 			// failed rename, and it never fails.
 			_ = r.audit(ctx, m.deps.Store, renamed)
@@ -3172,13 +3171,22 @@ func familyStillStored(ctx context.Context, st store.Store, id string) bool {
 	return len(family) > 0
 }
 
+// errRenameUnaudited is a rename whose renamed rows could not be read for
+// its audit records. It rolls the rename back.
+var errRenameUnaudited = errors.New("entitymanager: rename: no renamed rows to audit")
+
 // audit writes the audit records of a rename on st, the transaction view
 // it ran on: one rename (or convert) record per moved face, then one record
 // per other body the store rewrote.
 func (r *familyRename) audit(ctx context.Context, st store.Store, renamed []*entity.Entity) error {
 	// No rows means the post-rename read failed (its error is what the
-	// caller returns). The per-face records need those rows.
+	// caller returns). The per-face records need those rows. Inside a
+	// transaction that would commit a rename without its records, so it
+	// fails the rename instead.
 	if len(renamed) == 0 {
+		if auditsInTx(r.m.deps) {
+			return errRenameUnaudited
+		}
 		slog.Error("audit.write_failed",
 			"stage", "rename-postfetch",
 			"new_id", r.newID,

@@ -264,7 +264,7 @@ func (c *Converter) Convert(ctx context.Context, req ConversionRequest) (*Conver
 		// A transactional backend rolled everything back. fs and memstore
 		// cannot, so a conversion that got as far as the rename is recorded,
 		// on the best-effort sink, which is the only one wired there.
-		if run.renamed && !familyStillStored(ctx, m.deps.Store, req.SourceID) {
+		if run.renamed && !store.TxRollsBack(m.deps.Store) && !familyStillStored(ctx, m.deps.Store, req.SourceID) {
 			_ = run.audit(ctx, m.deps.Store)
 			_, _ = run.record(ctx, lineage)
 		}

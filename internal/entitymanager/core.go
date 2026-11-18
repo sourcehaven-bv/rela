@@ -180,7 +180,7 @@ func createCoreOnce(
 	// `unique: true` natural keys are enforced atomically with the write.
 	// excludeSelfID is empty: on create there is no prior version of this
 	// entity to exclude.
-	err = writeWithUniqueCheck(ctx, deps, e, "", func(st store.Store) error {
+	err = writeWithUniqueCheck(ctx, deps, e, "", func(ctx context.Context, st store.Store) error {
 		if cErr := st.CreateEntity(ctx, e); cErr != nil {
 			return cErr
 		}

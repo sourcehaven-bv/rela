@@ -52,4 +52,9 @@ func TestAuditFailureRollsTheWriteBack(t *testing.T) {
 	got, err := svc.Store().GetEntity(ctx, created.Entity.Ref())
 	require.NoError(t, err)
 	require.Equal(t, "before", got.GetString("title"), "the update whose record failed was rolled back")
+
+	_, err = svc.EntityManager().DeleteEntity(ctx, created.Entity.ID, false)
+	require.ErrorContains(t, err, "audit refused")
+	_, err = svc.Store().GetEntity(ctx, created.Entity.Ref())
+	require.NoError(t, err, "the delete whose record failed was rolled back")
 }

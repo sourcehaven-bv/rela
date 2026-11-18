@@ -73,13 +73,13 @@ type txAuditSink struct {
 	join joinAudit
 }
 
-// RecordTx appends rec in the transaction of view.
-func (s txAuditSink) RecordTx(ctx context.Context, view store.Store, rec audit.Record) error {
+// RecordTx appends recs in the transaction of view.
+func (s txAuditSink) RecordTx(ctx context.Context, view store.Store, recs []audit.Record) error {
 	log, err := s.join(view)
 	if err != nil {
 		return err
 	}
-	return log.Append(ctx, rec)
+	return log.AppendAll(ctx, recs)
 }
 
 var _ entitymanager.TxAudit = txAuditSink{}

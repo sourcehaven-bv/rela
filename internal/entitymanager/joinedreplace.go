@@ -127,12 +127,13 @@ func (j *joinedReplace) check(ctx context.Context) error {
 }
 
 // after returns write followed by the replace's writes, on the same view.
-func (j *joinedReplace) after(ctx context.Context, write func(store.Store) error) func(store.Store) error {
-	return func(view store.Store) error {
-		if err := write(view); err != nil {
+func (j *joinedReplace) after(
+	write func(context.Context, store.Store) error,
+) func(context.Context, store.Store) error {
+	return func(txCtx context.Context, view store.Store) error {
+		if err := write(txCtx, view); err != nil {
 			return err
 		}
-		txCtx := store.ContextWithTxView(ctx, view)
 		deleted, err := j.rp.apply(txCtx, view)
 		if err != nil {
 			return &JoinedRelationError{Err: err}

@@ -108,8 +108,18 @@ The record of an entity or relation write is appended inside the write's
 own database transaction. The write and its record commit together. If
 the append fails, the write fails and is rolled back, so a committed
 write always has its record. This covers creates, updates, deletes
-(soft and permanent), restores, purges, renames, conversions, moves, copies
-and the writes of automations.
+(soft and permanent), restores, purges, renames, conversions, moves and
+copies, and the entities and relations that automations and cascades
+write. A copy writes one `copy-state` record for the new entity; the
+edges it copies have no records of their own.
+
+The properties an on-create automation sets on the entity it was
+triggered by are written after the create and have no record of their
+own. The create's record shows the entity as the caller sent it.
+
+On PostgreSQL every audited write takes the project's write lock, as
+transactional writes already did, so writes to one project are
+serialized.
 
 Other records describe an event that is not a stored write, such as a
 refused write (`denied-write`) or the use of elevated access

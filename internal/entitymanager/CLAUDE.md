@@ -85,9 +85,11 @@ read (raw) → read gate → IsLocked guard → authorize → field gate → mer
 
 ## Audit log
 
-Every successful entity/relation create/update/delete/rename is audited as
-a JSONL record under `.rela/audit/YYYY-MM-DD.jsonl`. See `docs/audit-log.md`
-for the user-facing reference. Rules for new code:
+Every successful entity/relation create/update/delete/rename is audited. On
+the filesystem build the record is a JSONL line under
+`.rela/audit/YYYY-MM-DD.jsonl`; on postgres and sqlite it is a row in the
+database log. See `docs/audit-log.md` for the user-facing reference. Rules
+for new code:
 
 - **New write paths inherit audit automatically.** Any code calling
   `Manager.{Create,Update,Patch,Delete,Rename}{Entity,Relation}` produces a

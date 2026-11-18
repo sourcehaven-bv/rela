@@ -129,7 +129,7 @@ func recreateEntity(ctx context.Context, m *Manager, e *entity.Entity, allowRefs
 	}
 
 	// `unique: true` natural keys are enforced atomically with the write.
-	if err := writeWithUniqueCheck(ctx, m.deps, e, e.ID, func(st store.Store) error {
+	if err := writeWithUniqueCheck(ctx, m.deps, e, e.ID, func(ctx context.Context, st store.Store) error {
 		if err := persistRecreate(ctx, st, e); err != nil {
 			return err
 		}

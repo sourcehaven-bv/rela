@@ -9,16 +9,17 @@ import (
 )
 
 // TxAudit is the capability of a [Deps.Audit] whose log is kept in the
-// store's database (postgres, sqlite). RecordTx appends rec in the store
-// transaction that view belongs to, so the record commits or rolls back with
-// the write it describes. An error rolls the write back (DEC-U78WD7Y).
+// store's database (postgres, sqlite). RecordTx appends recs, in order, in
+// the store transaction that view belongs to, so the records commit or roll
+// back with the write they describe. An error rolls the write back
+// (DEC-U78WD7Y).
 //
 // The manager type-asserts [Deps.Audit] to it. A sink without it (the JSONL
 // sink of the fs tier, the memory sink in tests) receives the record
 // through [audit.Audit.Record] instead, best effort, and the write stands
 // whatever happens to the record.
 type TxAudit interface {
-	RecordTx(ctx context.Context, view store.Store, rec audit.Record) error
+	RecordTx(ctx context.Context, view store.Store, recs []audit.Record) error
 }
 
 // errAuditOutsideTx is the record of a write that was not handed the store
@@ -55,7 +56,11 @@ func emitWrite(ctx context.Context, deps Deps, st store.Store, rec audit.Record)
 	if st == nil {
 		return errAuditOutsideTx
 	}
-	return tx.RecordTx(ctx, st, rec)
+	if b, ok := ctx.Value(txBatchKey{}).(*txBatch); ok && b.view == st {
+		b.recs = append(b.recs, rec)
+		return nil
+	}
+	return tx.RecordTx(ctx, st, []audit.Record{rec})
 }
 
 // auditTx runs fn in a store transaction when deps audits writes in one or
@@ -73,9 +78,18 @@ func auditTx(ctx context.Context, deps Deps, need bool, fn func(context.Context,
 	if !need && !auditsInTx(deps) {
 		return fn(ctx, deps.Store)
 	}
-	if auditsInTx(deps) {
+	if tx, ok := deps.Audit.(TxAudit); ok {
+		b := &txBatch{}
+		batchCtx := context.WithValue(ctx, txBatchKey{}, b)
 		return deps.Store.Tx(ctx, func(view store.Store) error {
-			return fn(store.ContextWithTxView(ctx, view), view)
+			b.view = view
+			if err := fn(store.ContextWithTxView(batchCtx, view), view); err != nil {
+				return err
+			}
+			if len(b.recs) == 0 {
+				return nil
+			}
+			return tx.RecordTx(ctx, view, b.recs)
 		})
 	}
 	held := &heldAudit{}
@@ -101,3 +115,16 @@ func auditTx(ctx context.Context, deps Deps, need bool, fn func(context.Context,
 type heldAudit struct{ recs []audit.Record }
 
 type heldAuditKey struct{}
+
+// txBatch collects the records a [TxAudit] sink receives inside a
+// transaction [auditTx] opened, and appends them in one call before the
+// transaction commits. A write that records many rows (a cascade delete, a
+// renumber, a batch) then reads the chain head and takes the chain lock
+// once, not once per row, while it holds the store's write lock. A record
+// for another store than the batch's view is appended at once.
+type txBatch struct {
+	view store.Store
+	recs []audit.Record
+}
+
+type txBatchKey struct{}

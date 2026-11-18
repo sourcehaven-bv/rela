@@ -180,7 +180,7 @@ func (s *Sink) append(ctx context.Context, batch []audit.Record) bool {
 			backoff = min(2*backoff, maxBackoff)
 		}
 		attemptCtx, cancel := context.WithTimeout(ctx, attemptTimeout)
-		err = s.log.appendAll(attemptCtx, batch)
+		err = s.log.AppendAll(attemptCtx, batch)
 		cancel()
 		if err == nil {
 			return true

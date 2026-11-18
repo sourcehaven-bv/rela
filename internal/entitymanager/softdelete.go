@@ -113,7 +113,7 @@ func softDeleteFamily(ctx context.Context, m *Manager, id string, pre deleteExpe
 		// partial cascade (issue #929); a mark that was rolled back left its
 		// faces live and is recorded as nothing. Only the best-effort sink is
 		// wired on such a store, and it never fails.
-		if !auditsInTx(m.deps) {
+		if !store.TxRollsBack(m.deps.Store) {
 			marked.keep(func(r *store.DeleteResult) bool {
 				return !facesStillStored(ctx, m.deps.Store, r.DeletedEntities)
 			})
@@ -334,7 +334,7 @@ func RestoreEntity(ctx context.Context, m *Manager, id string) (*entity.DeleteRe
 		// failure did not undo, so record what is really back. A unique
 		// conflict needs no pre-check for this: a mark holds its unique
 		// values, so only a backend that rolls back reports one.
-		if !auditsInTx(m.deps) {
+		if !store.TxRollsBack(m.deps.Store) {
 			restored.keep(func(r *store.DeleteResult) bool {
 				return facesStored(ctx, m.deps.Store, r.DeletedEntities)
 			})

@@ -249,7 +249,8 @@ func uniqueValues(meta *metamodel.Metamodel, e *entity.Entity) []uniqueProp {
 // same view ([emitWrite]) when the sink is a [TxAudit]; a transaction is
 // then always opened.
 func writeWithUniqueCheck(
-	ctx context.Context, deps Deps, e *entity.Entity, excludeSelfID string, write func(st store.Store) error,
+	ctx context.Context, deps Deps, e *entity.Entity, excludeSelfID string,
+	write func(ctx context.Context, st store.Store) error,
 ) error {
 	return writeChecked(ctx, deps, e, excludeSelfID, nil, write)
 }
@@ -265,7 +266,7 @@ func writeWithUniqueCheck(
 // write capture need one).
 func writeChecked(
 	ctx context.Context, deps Deps, e *entity.Entity, excludeSelfID string,
-	txCheck func(context.Context) error, write func(st store.Store) error,
+	txCheck func(context.Context) error, write func(ctx context.Context, st store.Store) error,
 ) error {
 	// The write-enforced rules go first: they read only e, the exact value
 	// written below, so no transaction is needed to make them atomic with
@@ -275,7 +276,7 @@ func writeChecked(
 	}
 	capture := writeCaptureFor(ctx, e)
 	if txCheck == nil && capture == nil && len(uniqueValues(deps.Meta, e)) == 0 && !auditsInTx(deps) {
-		return write(deps.Store)
+		return write(ctx, deps.Store)
 	}
 	return auditTx(ctx, deps, true, func(txCtx context.Context, view store.Store) error {
 		if txCheck != nil {
@@ -286,7 +287,7 @@ func writeChecked(
 		if err := checkUniqueProperties(txCtx, deps.Meta, view, e, excludeSelfID); err != nil {
 			return err
 		}
-		if err := write(view); err != nil {
+		if err := write(txCtx, view); err != nil {
 			return err
 		}
 		if capture == nil {
