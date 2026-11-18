@@ -394,8 +394,8 @@ func recordConversionAudit(
 	return emitWrite(ctx, m.deps, st, audit.Stamp(ctx, audit.Record{
 		Time:        time.Now().UTC(),
 		Op:          audit.OpConvertEntity,
-		Before:      &audit.Subject{Kind: "entity", Type: oldType, ID: oldID},
-		After:       &audit.Subject{Kind: "entity", Type: after.Type, ID: after.ID},
+		Before:      &audit.Subject{Kind: "entity", Type: oldType, ID: oldID, Face: after.Face.String()},
+		After:       &audit.Subject{Kind: "entity", Type: after.Type, ID: after.ID, Face: after.Face.String()},
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
 		AssertedBy:  audit.AssertedByFrom(ctx),

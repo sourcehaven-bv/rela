@@ -998,7 +998,7 @@ func (ce *copyEngine) recordCopyAudit(ctx context.Context, st store.Store, plan 
 	return emitWrite(ctx, ce.m.deps, st, audit.Stamp(ctx, audit.Record{
 		Op: audit.OpCopyState,
 		Subject: &audit.Subject{
-			Kind: "entity", Type: plan.to.Type, ID: plan.targetID,
+			Kind: "entity", Type: plan.to.Type, ID: plan.targetID, Face: plan.to.Face,
 		},
 		Principal:   p,
 		TriggeredBy: audit.TriggeredByFrom(ctx),

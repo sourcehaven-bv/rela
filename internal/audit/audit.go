@@ -271,8 +271,13 @@ const (
 // or {RelationType, FromID, ToID} is populated per record; readers
 // switch on Kind.
 //
-//   - entity:   Kind="entity",   Type and ID populated.
-//   - relation: Kind="relation", RelationType, FromID, ToID populated.
+//   - entity:   Kind="entity",   Type and ID populated, and Face for a
+//     faced row.
+//   - relation: Kind="relation", RelationType, FromID, ToID populated, and
+//     FromFace for an edge whose tail is one face.
+//
+// Face and FromFace let a per-entity read show one face its own records:
+// a record without them belongs to every face of the id.
 //
 // Rename ops leave Subject zero and populate [Record.Before] /
 // [Record.After] instead — the schema needs to carry both identities
@@ -281,8 +286,10 @@ type Subject struct {
 	Kind         string `json:"kind"`
 	Type         string `json:"type,omitempty"`
 	ID           string `json:"id,omitempty"`
+	Face         string `json:"face,omitempty"`
 	RelationType string `json:"relation_type,omitempty"`
 	FromID       string `json:"from_id,omitempty"`
+	FromFace     string `json:"from_face,omitempty"`
 	ToID         string `json:"to_id,omitempty"`
 }
 

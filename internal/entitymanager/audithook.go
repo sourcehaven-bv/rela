@@ -33,6 +33,7 @@ func (m *Manager) recordEntityAudit(
 			Kind: "entity",
 			Type: e.Type,
 			ID:   e.ID,
+			Face: e.Face.String(),
 		},
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
@@ -57,6 +58,7 @@ func (m *Manager) recordRelationAudit(
 			Kind:         "relation",
 			RelationType: rel.Type,
 			FromID:       rel.From,
+			FromFace:     rel.FromFace.String(),
 			ToID:         rel.To,
 		},
 		Principal:   principal.From(ctx),
@@ -76,9 +78,8 @@ func (m *Manager) recordRelationAudit(
 // after.ID + after.Type for After). Callers that lose the
 // post-rename fetch log via slog and skip the audit — never silently.
 //
-// A rename moves every face, and each face gets its own record. The audit
-// subject has no face field, so a faced row names its face in the summary,
-// as a family delete does.
+// A rename moves every face, and each face gets its own record, naming its
+// face in the subjects and in the summary.
 func (m *Manager) recordRenameAudit(ctx context.Context, st store.Store, oldID string, after *entity.Entity) error {
 	if after == nil { // coverage-ignore: defensive: only caller is familyRename.record, which passes the rows a
 		// post-rename family read returned
@@ -95,11 +96,13 @@ func (m *Manager) recordRenameAudit(ctx context.Context, st store.Store, oldID s
 			Kind: "entity",
 			Type: after.Type,
 			ID:   oldID,
+			Face: after.Face.String(),
 		},
 		After: &audit.Subject{
 			Kind: "entity",
 			Type: after.Type,
 			ID:   after.ID,
+			Face: after.Face.String(),
 		},
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
@@ -123,7 +126,7 @@ func recordMentionRewriteAudit(
 	return emitWrite(ctx, m.deps, st, audit.Stamp(ctx, audit.Record{
 		Time:        time.Now().UTC(),
 		Op:          audit.OpUpdateEntity,
-		Subject:     &audit.Subject{Kind: "entity", Type: rw.Type, ID: rw.ID},
+		Subject:     &audit.Subject{Kind: "entity", Type: rw.Type, ID: rw.ID, Face: rw.Face.String()},
 		Principal:   principal.From(ctx),
 		TriggeredBy: "rename:" + oldID + "->" + newID,
 		AssertedBy:  audit.AssertedByFrom(ctx),

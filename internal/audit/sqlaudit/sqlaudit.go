@@ -49,6 +49,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -185,8 +186,9 @@ func (c *chain) append(ctx context.Context, rec audit.Record, at int64) error {
 		row.Seq, row.At, row.Op, row.User, string(row.Doc), c.hash, hash); err != nil {
 		return c.l.errf("append: %w", err)
 	}
-	for _, id := range subjectIDs(rec) {
-		_, err := c.q.Exec(ctx, `INSERT INTO audit_subjects (entity_id, seq) VALUES (?, ?)`, id, row.Seq)
+	for _, sr := range subjectRows(rec) {
+		_, err := c.q.Exec(ctx, `INSERT INTO audit_subjects (entity_id, seq, face, starts) VALUES (?, ?, ?, ?)`,
+			sr.id, row.Seq, sr.face, sr.starts)
 		if err != nil {
 			return c.l.errf("append subject: %w", err)
 		}
@@ -232,19 +234,47 @@ func (l *Log) anchor(ctx context.Context, q sqlexec.Querier) (seq int64, hash st
 	}
 }
 
-// subjectIDs returns the distinct entity ids rec names, sorted.
-func subjectIDs(rec audit.Record) []string {
-	var ids []string
-	for _, s := range []*audit.Subject{rec.Subject, rec.Before, rec.After} {
-		if s == nil {
-			continue
-		}
-		for _, id := range []string{s.ID, s.FromID, s.ToID} {
-			if id != "" {
-				ids = append(ids, id)
-			}
+// subjectRow is one audit_subjects row of a record: an entity id it names,
+// the face it names it at ('' for every face), and whether the record begins
+// a lifecycle of that id and face.
+type subjectRow struct {
+	id     string
+	face   string
+	starts bool
+}
+
+// subjectRows returns the distinct entity ids rec names, sorted by id. An id
+// named at two different faces is stored at '' (every face). A create starts
+// its subject's lifecycle; a rename or conversion starts its After's.
+func subjectRows(rec audit.Record) []subjectRow {
+	var rows []subjectRow
+	add := func(id, face string, starts bool) {
+		if id != "" {
+			rows = append(rows, subjectRow{id: id, face: face, starts: starts})
 		}
 	}
-	slices.Sort(ids)
-	return slices.Compact(ids)
+	if s := rec.Subject; s != nil {
+		add(s.ID, s.Face, rec.Op == audit.OpCreateEntity)
+		add(s.FromID, s.FromFace, false)
+		add(s.ToID, "", false)
+	}
+	if s := rec.Before; s != nil {
+		add(s.ID, s.Face, false)
+	}
+	if s := rec.After; s != nil {
+		add(s.ID, s.Face, rec.Op == audit.OpRenameEntity || rec.Op == audit.OpConvertEntity)
+	}
+	slices.SortStableFunc(rows, func(a, b subjectRow) int { return strings.Compare(a.id, b.id) })
+	out := rows[:0]
+	for _, r := range rows {
+		if n := len(out); n > 0 && out[n-1].id == r.id {
+			if out[n-1].face != r.face {
+				out[n-1].face = ""
+			}
+			out[n-1].starts = out[n-1].starts || r.starts
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
 }

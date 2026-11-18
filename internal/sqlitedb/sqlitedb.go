@@ -150,6 +150,9 @@ func (c *DB) init(ctx context.Context) error {
 	if err := c.migrate(ctx, fresh); err != nil {
 		return err
 	}
+	if _, err := c.db.ExecContext(ctx, auditSubjectStartsDDL); err != nil {
+		return fmt.Errorf("sqlitedb: create audit subject index: %w", err)
+	}
 	if _, err := c.db.ExecContext(ctx, contentHashDDL); err != nil {
 		return fmt.Errorf("sqlitedb: create content_hash triggers and indexes: %w", err)
 	}
@@ -526,7 +529,9 @@ END;`
 // hash-chained row per audit record, the entity ids each row names, and the
 // anchor a prune leaves. Times are integer microseconds since the epoch.
 // pgstore migration 0051 has the same shape. Shared between schemaSQL and
-// the v41 to v42 rung.
+// the v41 to v42 rung. The face and starts columns of audit_subjects are the
+// v43 rung's (auditSubjectColumns); a database that takes the v42 rung gets
+// them here and the v43 rung finds them present.
 const auditLogDDL = `
 CREATE TABLE IF NOT EXISTS audit_log (
 	seq            INTEGER NOT NULL PRIMARY KEY,
@@ -541,6 +546,8 @@ CREATE INDEX IF NOT EXISTS audit_log_at_idx ON audit_log(at, seq);
 CREATE TABLE IF NOT EXISTS audit_subjects (
 	entity_id TEXT NOT NULL,
 	seq       INTEGER NOT NULL,
+	face      TEXT NOT NULL DEFAULT '',
+	starts    INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (entity_id, seq)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS audit_subjects_seq_idx ON audit_subjects(seq);
@@ -550,6 +557,13 @@ CREATE TABLE IF NOT EXISTS audit_anchor (
 	hash      TEXT NOT NULL,
 	pruned_at INTEGER NOT NULL
 ) STRICT;`
+
+// auditSubjectStartsDDL indexes the audit subject rows that begin a
+// lifecycle, which a per-entity read starts from (TKT-X1ZFO04). pgstore
+// migration 0052 has the same index. It runs after the ladder, not in
+// schemaSQL, because a pre-v43 audit_subjects gains starts in the v43 rung.
+const auditSubjectStartsDDL = `
+CREATE INDEX IF NOT EXISTS audit_subjects_starts_idx ON audit_subjects(entity_id, face, seq) WHERE starts;`
 
 // flowRunsDDL holds the flow run store (sqlflowrun, TKT-PV9R0GK): the
 // execution state of each running flow, deleted when the run completes,
