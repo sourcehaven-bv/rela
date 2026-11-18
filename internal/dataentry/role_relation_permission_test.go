@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // A permission granted by a role a role relation confers counts for the
@@ -17,8 +18,8 @@ import (
 // `watcher` on TKT-1 through `watches`, and watcher grants admin:read. She
 // sees the gated nav entries, space and dashboard card, as alice (a global
 // holder) does. bob, who holds no such edge, still does not. A command gated
-// on the same permission, and the built-in history:read the role also grants,
-// stay global-only.
+// on the same permission, a document (elevated or not), and the built-in
+// history:read the role also grants, stay global-only.
 func TestRoleRelationPermission_ShowsGatedUI(t *testing.T) {
 	cmd := CommandConfig{Script: "x.lua", Context: "entity", Permission: "admin:read"}
 	for _, tc := range []struct {
@@ -71,6 +72,12 @@ func TestRoleRelationPermission_ShowsGatedUI(t *testing.T) {
 			require.Equal(t, wantCode, rec.Code, "dashboard card value: %s", rec.Body.String())
 
 			require.Equal(t, tc.command, authz.Authorize(ctx, cmd), "a command counts global roles only")
+			doc := dataentryconfig.DocumentConfig{Permission: "admin:read"}
+			require.Equal(t, tc.command, gateDocumentPermission(ctx, "audit", doc) == nil,
+				"a document counts global roles only")
+			doc.AllowACLBypass = metamodel.ACLBypassRead
+			require.Equal(t, tc.command, authorizeElevatedDocument(ctx, d, doc),
+				"an elevated document counts global roles only")
 			gate := readGateFromContext(ctx)
 			require.Equal(t, tc.global, gate.HoldsPermission(ctx, "admin:read"),
 				"the global-only check is unchanged")
