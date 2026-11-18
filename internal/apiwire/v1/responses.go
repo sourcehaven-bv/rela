@@ -1484,6 +1484,19 @@ type SidebarResponse struct {
 	// both piles fields from this one boot payload. Null when the block is
 	// absent.
 	Piles *dataentryconfig.PilesConfig `json:"piles"`
+	// Audit says which audit views the SPA offers (TKT-X1ZFO04). A UI hint,
+	// never authorization: the audit endpoints check again.
+	Audit SidebarAudit `json:"audit"`
+}
+
+// SidebarAudit is [SidebarResponse.Audit].
+type SidebarAudit struct {
+	// Changes reports that a database audit log is wired, so an entity
+	// page offers its Changes tab.
+	Changes bool `json:"changes"`
+	// Global reports that the log is wired and this principal may read the
+	// global audit view (the audit:read permission).
+	Global bool `json:"global"`
 }
 
 // ConflictItem represents a conflicted file.

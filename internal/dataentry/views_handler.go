@@ -36,6 +36,9 @@ type viewsHandler struct {
 	// owner identity. Nil: accepted, answers false (a test handler without
 	// piles).
 	pilesAvailable func(ctx context.Context) bool
+	// audit answers [v1.SidebarResponse.Audit]. Nil: accepted, answers
+	// false for both (a test handler without the audit log).
+	audit func(ctx context.Context) (changes, global bool)
 
 	schema      func() *Schema
 	store       store.Store
@@ -277,6 +280,9 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 	resp.InlineCreate = h.inlineCreateForms(ctx)
 	resp.PilesAvailable = h.pilesAvailable != nil && h.pilesAvailable(ctx)
 	resp.Piles = pilesWire(s.Cfg.Piles)
+	if h.audit != nil {
+		resp.Audit.Changes, resp.Audit.Global = h.audit(ctx)
+	}
 
 	writeV1JSON(w, http.StatusOK, resp)
 }

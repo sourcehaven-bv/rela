@@ -57,6 +57,14 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 		}
 	}
 
+	// Without a database audit log (the fs and memory tiers) the audit
+	// routes answer 404 and the sidebar offers neither audit view.
+	if l := svc.AuditLog(); l != nil {
+		if err := dataentry.SetAuditLog(app, l); err != nil {
+			return fmt.Errorf("wire audit log: %w", err)
+		}
+	}
+
 	// Without flows in flows.yaml the flow routes answer 404.
 	if ctl := appbuild.FlowControlFor(svc); ctl != nil {
 		if err := dataentry.SetFlows(app, ctl); err != nil {
