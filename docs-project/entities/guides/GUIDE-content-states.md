@@ -638,7 +638,8 @@ edge stays. A copy between two faces of one entity with a `guard.permission`
 skips the ACL check on its edges, as it does on the face itself. A skipped edge
 leaves no `denied-write` record in the audit log.
 
-A copy runs as one store transaction and is audited after the commit. On the
+A copy runs as one store transaction, and its audit record is written in that
+transaction on the SQLite and PostgreSQL backends. On the
 PostgreSQL backend a failed copy rolls back completely. On the filesystem and
 in-memory backends the transaction is a write lock only, so a copy that fails
 part-way can leave a partially written target face.
