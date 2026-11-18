@@ -148,7 +148,9 @@ func handleV1Changes(a *App, w http.ResponseWriter, r *http.Request) {
 	}
 	readable := readableIDs(a.visibleReader.readableTypes)
 	page, next, err := visibility.EntityChanges(r.Context(), h.log, readable, a.fieldResolver,
-		visibility.ChangesQuery{Ref: subject.ref, Type: typeName, Before: before, Limit: limit, Live: subject.live != nil})
+		visibility.ChangesQuery{
+			Ref: subject.ref, Type: typeName, Before: before, Limit: limit, Live: subject.live != nil,
+		})
 	if err != nil {
 		writeGateError(w, r, err)
 		return

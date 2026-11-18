@@ -69,7 +69,7 @@ func (l *Log) ForEntity(ctx context.Context, q SubjectQuery, before int64, limit
 // caller checks that it started the entity it asked about.
 //
 // It is ungated; see [Log.Newest].
-func (l *Log) LifecycleStart(ctx context.Context, q SubjectQuery) (Entry, bool, error) {
+func (l *Log) LifecycleStart(ctx context.Context, q SubjectQuery) (start Entry, found bool, err error) {
 	entries, err := l.scanEntries(ctx, "lifecycle start",
 		`SELECT l.seq, l.doc FROM audit_subjects f JOIN audit_log l ON l.seq = f.seq
 		 WHERE f.entity_id = ? AND f.face = ? AND f.starts

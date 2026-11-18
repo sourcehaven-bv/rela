@@ -389,13 +389,14 @@ func CopyStateSummary(name, from, to string, created bool) string {
 // subject s it names: a create of it, a copy that created that face, or a
 // rename or conversion into it (s is the After).
 func StartsLifecycle(rec Record, s *Subject) bool {
-	switch {
-	case s == nil:
+	if s == nil {
 		return false
-	case s == rec.Subject:
+	}
+	switch s {
+	case rec.Subject:
 		return rec.Op == OpCreateEntity ||
 			(rec.Op == OpCopyState && strings.HasSuffix(rec.Summary, copyCreatedSuffix))
-	case s == rec.After:
+	case rec.After:
 		return rec.Op == OpRenameEntity || rec.Op == OpConvertEntity
 	}
 	return false
