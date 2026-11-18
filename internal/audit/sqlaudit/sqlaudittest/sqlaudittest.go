@@ -50,6 +50,7 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 		{"ForEntityFaces", testForEntityFaces},
 		{"ForEntityFacelessStart", testForEntityFacelessStart},
 		{"ForEntityCopyCreatesFace", testForEntityCopyCreatesFace},
+		{"ForEntityConversionKeepsID", testForEntityConversionKeepsID},
 		{"EditedRowBreaks", testEditedRowBreaks},
 		{"ColumnEditsBreak", testColumnEditsBreak},
 		{"DeletedRowBreaks", testDeletedRowBreaks},
@@ -225,7 +226,7 @@ func testNewestPages(t *testing.T, h Harness) {
 // changeOps are the ops the per-entity tests read.
 var changeOps = []string{
 	audit.OpCreateEntity, audit.OpUpdateEntity, audit.OpDeleteEntity, audit.OpRenameEntity,
-	audit.OpCreateRelation, audit.OpCopyState,
+	audit.OpCreateRelation, audit.OpCopyState, audit.OpConvertEntity,
 }
 
 func entityQuery(id, face string) sqlaudit.SubjectQuery {
@@ -418,6 +419,33 @@ func testForEntityCopyCreatesFace(t *testing.T, h Harness) {
 	_, ok, err = h.Log.LifecycleStart(ctx, entityQuery("DOC-9", ""))
 	require.NoError(t, err)
 	require.False(t, ok)
+}
+
+// testForEntityConversionKeepsID: a conversion that keeps the id and maps
+// one face onto another starts the face it lands on, so a deleted earlier
+// entity at that face stays behind the fence.
+func testForEntityConversionKeepsID(t *testing.T, h Harness) {
+	ctx := context.Background()
+	appendAll(t, h.Log,
+		entityRec(audit.OpCreateEntity, "DOC-1", "done"),  // 1: an earlier family
+		entityRec(audit.OpUpdateEntity, "DOC-1", "done"),  // 2
+		entityRec(audit.OpDeleteEntity, "DOC-1", "done"),  // 3
+		entityRec(audit.OpCreateEntity, "DOC-1", "draft"), // 4
+		audit.Record{ // 5
+			Op:     audit.OpConvertEntity,
+			Before: &audit.Subject{Kind: "entity", Type: "doc", ID: "DOC-1", Face: "draft"},
+			After:  &audit.Subject{Kind: "entity", Type: "task", ID: "DOC-1", Face: "done"},
+		},
+		entityRec(audit.OpUpdateEntity, "DOC-1", "done"), // 6
+	)
+	got, err := h.Log.ForEntity(ctx, entityQuery("DOC-1", "done"), 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, []int64{6, 5}, seqsOf(got))
+
+	start, ok, err := h.Log.LifecycleStart(ctx, entityQuery("DOC-1", "done"))
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, int64(5), start.Seq)
 }
 
 func testEditedRowBreaks(t *testing.T, h Harness) {

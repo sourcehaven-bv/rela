@@ -243,9 +243,13 @@ type subjectRow struct {
 	starts bool
 }
 
-// subjectRows returns the distinct entity ids rec names, sorted by id. An id
-// named at two different faces is stored with an empty face (every face). A create starts
-// its subject's lifecycle; a rename or conversion starts its After's.
+// subjectRows returns the distinct entity ids rec names, sorted by id. A
+// create starts its subject's lifecycle; a rename or conversion starts its
+// After's. An id named at two different faces is stored with an empty face
+// (every face), unless the record starts one of them: then it keeps the
+// face it starts, so the fence of that face moves. A conversion that keeps
+// the id across a face map is the case: its record is then not listed on
+// the face it left.
 func subjectRows(rec audit.Record) []subjectRow {
 	var rows []subjectRow
 	add := func(id, face string, starts bool) {
@@ -268,10 +272,15 @@ func subjectRows(rec audit.Record) []subjectRow {
 	out := rows[:0]
 	for _, r := range rows {
 		if n := len(out); n > 0 && out[n-1].id == r.id {
-			if out[n-1].face != r.face {
-				out[n-1].face = ""
+			prev := &out[n-1]
+			switch {
+			case r.starts && !prev.starts:
+				prev.face = r.face
+			case prev.starts && !r.starts:
+			case prev.face != r.face:
+				prev.face = ""
 			}
-			out[n-1].starts = out[n-1].starts || r.starts
+			prev.starts = prev.starts || r.starts
 			continue
 		}
 		out = append(out, r)
