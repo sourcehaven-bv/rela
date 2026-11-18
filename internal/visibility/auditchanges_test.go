@@ -6,7 +6,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -60,7 +60,7 @@ func TestChangeOpsClassifyEveryOp(t *testing.T) {
 	for _, op := range ops {
 		shown := slices.Contains(visibility.ChangeOps, op)
 		_, excluded := excludedFromChanges[op]
-		require.Truef(t, shown != excluded, "audit op %q must be in exactly one of ChangeOps and excludedFromChanges", op)
+		require.NotEqualf(t, shown, excluded, "audit op %q must be in exactly one of ChangeOps and excludedFromChanges", op)
 	}
 }
 
@@ -68,30 +68,42 @@ func TestChangeOpsClassifyEveryOp(t *testing.T) {
 // string constants.
 func auditOpConstants(t *testing.T) []string {
 	t.Helper()
-	pkgs, err := parser.ParseDir(token.NewFileSet(), "../audit", func(fi fs.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
+	files, err := filepath.Glob("../audit/*.go")
 	require.NoError(t, err)
 	var ops []string
-	for _, pkg := range pkgs {
-		for _, f := range pkg.Files {
-			for _, decl := range f.Decls {
-				gd, ok := decl.(*ast.GenDecl)
-				if !ok || gd.Tok != token.CONST {
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
+		require.NoError(t, err)
+		ops = append(ops, opConstants(t, f)...)
+	}
+	return ops
+}
+
+// opConstants returns the values of the Op* string constants f declares.
+func opConstants(t *testing.T, f *ast.File) []string {
+	t.Helper()
+	var ops []string
+	for _, decl := range f.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gd.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for i, n := range vs.Names {
+				if !strings.HasPrefix(n.Name, "Op") || i >= len(vs.Values) {
 					continue
 				}
-				for _, spec := range gd.Specs {
-					vs := spec.(*ast.ValueSpec)
-					for i, n := range vs.Names {
-						if !strings.HasPrefix(n.Name, "Op") || i >= len(vs.Values) {
-							continue
-						}
-						if lit, ok := vs.Values[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-							v, err := strconv.Unquote(lit.Value)
-							require.NoError(t, err)
-							ops = append(ops, v)
-						}
-					}
+				if lit, ok := vs.Values[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+					v, err := strconv.Unquote(lit.Value)
+					require.NoError(t, err)
+					ops = append(ops, v)
 				}
 			}
 		}
@@ -181,9 +193,9 @@ func (r readableSet) ReadableTypes(_ context.Context, ids []string) (map[string]
 	return out, nil
 }
 
-func entityEntry(seq int64, op, typ, id string) audit.Entry {
+func entityEntry(seq int64, op, typ string) audit.Entry {
 	return audit.Entry{Seq: seq, Record: audit.Record{
-		Op: op, Subject: &audit.Subject{Kind: "entity", Type: typ, ID: id},
+		Op: op, Subject: &audit.Subject{Kind: "entity", Type: typ, ID: "DOC-1"},
 		Principal: principal.Principal{User: "alice", Tool: principal.ToolDataEntry},
 	}}
 }
@@ -216,15 +228,15 @@ func TestEntityChanges_HidesRecordsNamingHiddenEntities(t *testing.T) {
 		relationEntry(8, "DOC-1", "", "PUB-1"),
 		relationEntry(7, "SECRET-2", "", "DOC-1"),
 		relationEntry(6, "PUB-2", "draft", "DOC-1"),
-		entityEntry(5, audit.OpUpdateEntity, "other", "DOC-1"),
+		entityEntry(5, audit.OpUpdateEntity, "other"),
 		{Seq: 4, Record: audit.Record{
 			Op:     audit.OpRenameEntity,
 			Before: &audit.Subject{Kind: "entity", Type: "doc", ID: "SECRET-3"},
 			After:  &audit.Subject{Kind: "entity", Type: "doc", ID: "DOC-1"},
 		}},
-		entityEntry(3, audit.OpUpdateEntity, "doc", "DOC-1"),
-		entityEntry(2, audit.OpDeniedWrite, "doc", "DOC-1"),
-		entityEntry(1, audit.OpCreateEntity, "doc", "DOC-1"),
+		entityEntry(3, audit.OpUpdateEntity, "doc"),
+		entityEntry(2, audit.OpDeniedWrite, "doc"),
+		entityEntry(1, audit.OpCreateEntity, "doc"),
 	}}
 	readable := readableSet{"DOC-1": "doc", "PUB-1": "doc", "PUB-2": "doc"}
 	q := visibility.ChangesQuery{Ref: entity.Ref{ID: "DOC-1"}, Type: "doc", Limit: 2}
@@ -283,7 +295,7 @@ func TestEntityChanges_ScanCap(t *testing.T) {
 	for seq := int64(100); seq >= 2; seq-- {
 		src.entries = append(src.entries, relationEntry(seq, "DOC-1", "", "SECRET-1"))
 	}
-	src.entries = append(src.entries, entityEntry(1, audit.OpCreateEntity, "doc", "DOC-1"))
+	src.entries = append(src.entries, entityEntry(1, audit.OpCreateEntity, "doc"))
 	q := visibility.ChangesQuery{Ref: entity.Ref{ID: "DOC-1"}, Type: "doc", Limit: 5}
 	page, next, err := visibility.EntityChanges(ctx, src, readableSet{"DOC-1": "doc"}, allFields{}, q)
 	require.NoError(t, err)
@@ -310,7 +322,7 @@ func (h hiddenFields) FieldVisibleOnEveryRow(_ context.Context, _, property stri
 func TestEntityChanges_SummaryNamesNoHiddenProperty(t *testing.T) {
 	ctx := context.Background()
 	update := func(seq int64, summary string) audit.Entry {
-		e := entityEntry(seq, audit.OpUpdateEntity, "doc", "DOC-1")
+		e := entityEntry(seq, audit.OpUpdateEntity, "doc")
 		e.Record.Summary = summary
 		return e
 	}

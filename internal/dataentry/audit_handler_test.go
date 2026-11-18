@@ -60,7 +60,7 @@ func relationEntry(seq int64, from, to string) audit.Entry {
 	}}
 }
 
-func doAuditGet(app *App, ctx context.Context, path string) *httptest.ResponseRecorder {
+func doAuditGet(ctx context.Context, app *App, path string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodGet, path, http.NoBody).WithContext(ctx)
 	rec := httptest.NewRecorder()
 	if strings.HasPrefix(path, "/api/v1/_changes/") {
@@ -83,7 +83,7 @@ func TestSetAuditLog_RejectsNil(t *testing.T) {
 func TestAuditRoutes_AbsentWithoutLog(t *testing.T) {
 	app := newAppFromParts(nil, testMeta(), &fixture{})
 	for _, path := range []string{"/api/v1/_changes/ticket/TKT-1", "/api/v1/_audit"} {
-		if rec := doAuditGet(app, t.Context(), path); rec.Code != http.StatusNotFound {
+		if rec := doAuditGet(t.Context(), app, path); rec.Code != http.StatusNotFound {
 			t.Errorf("%s without a log = %d, want 404", path, rec.Code)
 		}
 	}
@@ -109,7 +109,7 @@ func TestHandleV1Changes(t *testing.T) {
 	}
 
 	t.Run("shows only what the reader may see", func(t *testing.T) {
-		rec := doAuditGet(app, t.Context(), "/api/v1/_changes/ticket/TKT-1")
+		rec := doAuditGet(t.Context(), app, "/api/v1/_changes/ticket/TKT-1")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("got %d; body=%s", rec.Code, rec.Body.String())
 		}
@@ -130,7 +130,7 @@ func TestHandleV1Changes(t *testing.T) {
 	})
 
 	t.Run("pages with a cursor", func(t *testing.T) {
-		rec := doAuditGet(app, t.Context(), "/api/v1/_changes/ticket/TKT-1?limit=1")
+		rec := doAuditGet(t.Context(), app, "/api/v1/_changes/ticket/TKT-1?limit=1")
 		var body changesResponse
 		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 			t.Fatal(err)
@@ -141,7 +141,7 @@ func TestHandleV1Changes(t *testing.T) {
 	})
 
 	t.Run("cross-type is the uniform 404", func(t *testing.T) {
-		rec := doAuditGet(app, t.Context(), "/api/v1/_changes/component/TKT-1")
+		rec := doAuditGet(t.Context(), app, "/api/v1/_changes/component/TKT-1")
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("got %d, want 404", rec.Code)
 		}
@@ -149,7 +149,7 @@ func TestHandleV1Changes(t *testing.T) {
 
 	t.Run("deleted entity without history:read is the uniform 404", func(t *testing.T) {
 		ctx := withReadGate(t.Context(), fakeGate{holdsPermission: false})
-		rec := doAuditGet(app, ctx, "/api/v1/_changes/ticket/GONE-1")
+		rec := doAuditGet(ctx, app, "/api/v1/_changes/ticket/GONE-1")
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("got %d, want 404", rec.Code)
 		}
@@ -157,7 +157,7 @@ func TestHandleV1Changes(t *testing.T) {
 
 	for _, q := range []string{"limit=0", "limit=201", "limit=x", "before=0", "before=-3", "before=x"} {
 		t.Run("bad query "+q, func(t *testing.T) {
-			rec := doAuditGet(app, t.Context(), "/api/v1/_changes/ticket/TKT-1?"+q)
+			rec := doAuditGet(t.Context(), app, "/api/v1/_changes/ticket/TKT-1?"+q)
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("got %d, want 400", rec.Code)
 			}
@@ -224,7 +224,7 @@ func TestHandleV1Audit(t *testing.T) {
 	t.Run("refused without a policy, nothing recorded", func(t *testing.T) {
 		app, sink := newApp(t)
 		ctx := withReadGate(t.Context(), permGate{perms: map[string]bool{acl.PermAuditRead: true}})
-		rec := doAuditGet(app, ctx, "/api/v1/_audit")
+		rec := doAuditGet(ctx, app, "/api/v1/_audit")
 		if rec.Code != http.StatusForbidden || !bodyMentions(rec, acl.PermAuditRead) {
 			t.Fatalf("got %d %s, want 403 naming %s", rec.Code, rec.Body.String(), acl.PermAuditRead)
 		}
@@ -237,7 +237,7 @@ func TestHandleV1Audit(t *testing.T) {
 		app, sink := newApp(t)
 		app.acl = &acl.Declarative{}
 		ctx := withReadGate(t.Context(), permGate{perms: map[string]bool{acl.PermAuditRead: true}})
-		rec := doAuditGet(app, ctx, "/api/v1/_audit?limit=1")
+		rec := doAuditGet(ctx, app, "/api/v1/_audit?limit=1")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("got %d; body=%s", rec.Code, rec.Body.String())
 		}
@@ -248,7 +248,7 @@ func TestHandleV1Audit(t *testing.T) {
 		if len(body.Records) != 1 || body.Records[0].Record.Subject.ID != "TKT-GONE" || body.NextBefore != 2 {
 			t.Fatalf("first page = %+v", body)
 		}
-		rec = doAuditGet(app, ctx, "/api/v1/_audit?before=2")
+		rec = doAuditGet(ctx, app, "/api/v1/_audit?before=2")
 		body = auditResponse{}
 		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 			t.Fatal(err)

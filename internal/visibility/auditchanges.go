@@ -97,7 +97,7 @@ const changeScanRounds = 4
 // [ReadableIDs] batch per source read. An entity record must be of q.Type,
 // so a record of another type that held the id is never shown. A record of
 // a hidden or deleted far end is left out entirely, as the live relation
-// list leaves out a hidden neighbour. So is an edge into q.Ref from one face
+// list leaves out a hidden neighbor. So is an edge into q.Ref from one face
 // of another entity, because readability is answered per id, not per face.
 //
 // Records left out do not shorten a page while the source has more: the
@@ -135,7 +135,7 @@ func EntityChanges(
 
 // showable returns the entries of page the principal may see.
 func showable(ctx context.Context, readable ReadableIDs, q ChangesQuery, page []audit.Entry) ([]audit.Entry, error) {
-	var others []string
+	others := make([]string, 0, len(page))
 	for _, e := range page {
 		others = append(others, otherIDs(e.Record, q.Ref.ID)...)
 	}
@@ -261,7 +261,7 @@ func visibleUpdate(ctx context.Context, fields FieldVisibility, subject *audit.S
 		return "updated"
 	}
 	var shown []string
-	for _, p := range strings.Split(props, ",") {
+	for p := range strings.SplitSeq(props, ",") {
 		if fields.FieldVisibleOnEveryRow(ctx, subject.Type, p) {
 			shown = append(shown, p)
 		}
