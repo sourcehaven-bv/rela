@@ -391,9 +391,12 @@ rela follows the run's `_carries` edge and applies the subject's read
 rules, including role relations and client ceilings. A run whose subject
 you cannot read answers like a missing entity. A run with no subject,
 or whose subject was deleted, is hidden from everyone but the engine. A
-subject you read only through `inherit_roles_through` or a face-split
-role relation does not show its runs yet. `rela acl who-can read` on a
-run lists the routes by which each reader reads the subject.
+role relation edge on the subject itself counts, also when acl.yaml
+declares `inherit_roles_through`. Some subjects do not show their runs
+yet: a subject you read only through `inherit_roles_through`, through a
+face-split role relation, or through one of several role relations when
+one of them has `when:`. `rela acl who-can read` on a run lists only the
+routes that show the run.
 
 **Who can write a run.** Only the flow engine, as `system:flow`. acl.yaml
 may not name `_flow-run`, `_carries`, `_produced`, a role starting with

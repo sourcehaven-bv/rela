@@ -251,7 +251,12 @@ func (r *Request) gateHop(ctx context.Context, hop TraversalHop) (*store.Endpoin
 		}
 	}
 
-	rq := r.ReadQuery(ctx, hop.EntityType)
+	return foldHop(hop, r.ReadQuery(ctx, hop.EntityType))
+}
+
+// foldHop folds rq, the read query of hop.EntityType, into hop's endpoint
+// filter, or refuses a read query an endpoint cannot carry.
+func foldHop(hop TraversalHop, rq ReadQueryResult) (*store.EndpointPredicate, error) {
 	if rq.DenyAll {
 		return nil, ErrTraversalDenied
 	}
