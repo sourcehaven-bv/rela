@@ -81,9 +81,11 @@ func (h *cascadeHost) CreateEntity(
 		TemplateVariant: opts.TemplateVariant,
 		Properties:      opts.Properties,
 		Content:         opts.Content,
+		record: func(ctx context.Context, st store.Store, e *entity.Entity) error {
+			return h.recordCascade(ctx, st, audit.OpCreateEntity, entitySubject(e), "created")
+		},
 	})
 	if err == nil {
-		h.recordCascade(ctx, audit.OpCreateEntity, entitySubject(e), "created")
 		notifyAliasesOfCreate(ctx, h.deps.AliasRewriter, e.ID, e.Face)
 	}
 	return e, err
@@ -204,25 +206,21 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 		if err := CheckOwningEdge(ctx, h.deps.Meta, st, r.Identity()); err != nil {
 			return err
 		}
-		_, err := st.CreateRelation(ctx, r.Identity(), &store.RelationData{
+		if _, err := st.CreateRelation(ctx, r.Identity(), &store.RelationData{
 			Properties: r.Properties,
 			Content:    r.Content,
-		})
-		return err
+		}); err != nil {
+			return err
+		}
+		return h.recordCascade(ctx, st, audit.OpCreateRelation, relationSubject(r), "created")
 	}
-	var err error
-	if bounded || metamodel.IsOwning(h.deps.Meta, r.Type) {
-		err = h.deps.Store.Tx(ctx, func(st store.Store) error { return write(store.ContextInTx(ctx), st) })
-	} else {
-		err = write(ctx, h.deps.Store)
-	}
+	err := auditTx(ctx, h.deps, bounded || metamodel.IsOwning(h.deps.Meta, r.Type), write)
 	if err != nil {
 		if errors.Is(err, store.ErrConflict) {
 			return nil
 		}
 		return err
 	}
-	h.recordCascade(ctx, audit.OpCreateRelation, relationSubject(r), "created")
 	return nil
 }
 
@@ -300,16 +298,16 @@ func relationSubject(r *entity.Relation) *audit.Subject {
 // face carries the shape; the rest of the Record envelope is
 // identical.
 func (h *cascadeHost) recordCascade(
-	ctx context.Context, op string, subject *audit.Subject, summary string,
-) {
+	ctx context.Context, st store.Store, op string, subject *audit.Subject, summary string,
+) error {
 	if subject == nil { // coverage-ignore: defensive: all callers pass entitySubject()/relationSubject() results, which
 		// are never nil
-		return
+		return nil
 	}
 	if audit.TriggeredByFrom(ctx) == "" {
 		ctx = audit.WithTriggeredBy(ctx, "automation")
 	}
-	h.deps.Audit.Record(audit.Stamp(ctx, audit.Record{
+	return emitWrite(ctx, h.deps, st, audit.Stamp(ctx, audit.Record{
 		Time:        time.Now().UTC(),
 		Op:          op,
 		Subject:     subject,

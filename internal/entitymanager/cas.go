@@ -84,7 +84,7 @@ func writeAutomationProperties(
 		}
 		// excludeSelfID is next.ID: the row is already persisted, so the
 		// unique scan must not match the entity against itself.
-		err = writeWithUniqueCheck(ctx, deps, next, next.ID, func(st store.Store) error {
+		err = writeWithUniqueCheck(ctx, deps, next, next.ID, func(ctx context.Context, st store.Store) error {
 			_, werr := st.UpdateEntityIf(ctx, next, store.UpdateCondition{
 				ExpectedVersion: store.VersionOf(stored),
 			})

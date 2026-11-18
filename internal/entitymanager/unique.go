@@ -243,10 +243,14 @@ func uniqueValues(meta *metamodel.Metamodel, e *entity.Entity) []uniqueProp {
 //
 // The callback holds a schema-wide lock on the multi-process database backend
 // and the write mutex on single-process backends, so write must be a plain
-// store write — never a public Manager call (automations, audit, cascades and
-// version capture stay outside), and never slow external I/O.
+// store write — never a public Manager call (automations, cascades and
+// version capture stay outside), and never slow external I/O. The one
+// exception is the audit record of the write, which write appends on the
+// same view ([emitWrite]) when the sink is a [TxAudit]; a transaction is
+// then always opened.
 func writeWithUniqueCheck(
-	ctx context.Context, deps Deps, e *entity.Entity, excludeSelfID string, write func(st store.Store) error,
+	ctx context.Context, deps Deps, e *entity.Entity, excludeSelfID string,
+	write func(ctx context.Context, st store.Store) error,
 ) error {
 	return writeChecked(ctx, deps, e, excludeSelfID, nil, write)
 }
@@ -262,7 +266,7 @@ func writeWithUniqueCheck(
 // write capture need one).
 func writeChecked(
 	ctx context.Context, deps Deps, e *entity.Entity, excludeSelfID string,
-	txCheck func(context.Context) error, write func(st store.Store) error,
+	txCheck func(context.Context) error, write func(ctx context.Context, st store.Store) error,
 ) error {
 	// The write-enforced rules go first: they read only e, the exact value
 	// written below, so no transaction is needed to make them atomic with
@@ -271,11 +275,10 @@ func writeChecked(
 		return err
 	}
 	capture := writeCaptureFor(ctx, e)
-	if txCheck == nil && capture == nil && len(uniqueValues(deps.Meta, e)) == 0 {
-		return write(deps.Store)
+	if txCheck == nil && capture == nil && len(uniqueValues(deps.Meta, e)) == 0 && !auditsInTx(deps) {
+		return write(ctx, deps.Store)
 	}
-	return deps.Store.Tx(ctx, func(view store.Store) error {
-		txCtx := store.ContextWithTxView(ctx, view)
+	return auditTx(ctx, deps, true, func(txCtx context.Context, view store.Store) error {
 		if txCheck != nil {
 			if err := txCheck(txCtx); err != nil {
 				return err
@@ -284,7 +287,7 @@ func writeChecked(
 		if err := checkUniqueProperties(txCtx, deps.Meta, view, e, excludeSelfID); err != nil {
 			return err
 		}
-		if err := write(view); err != nil {
+		if err := write(txCtx, view); err != nil {
 			return err
 		}
 		if capture == nil {

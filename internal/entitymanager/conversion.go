@@ -252,15 +252,20 @@ func (c *Converter) Convert(ctx context.Context, req ConversionRequest) (*Conver
 	run := &conversionRun{c: c, req: req, checked: pre}
 	// The view rides on ctx so the rename guard reads on the Tx's own
 	// handle, not a second pool connection while the lock is held.
-	txErr := m.deps.Store.Tx(ctx, func(view store.Store) error {
-		return run.apply(store.ContextWithTxView(ctx, view), view)
+	txErr := auditTx(ctx, m.deps, true, func(txCtx context.Context, view store.Store) error {
+		if aErr := run.apply(txCtx, view); aErr != nil {
+			return aErr
+		}
+		return run.audit(txCtx, view)
 	})
 	if txErr != nil {
 		recordRenameRefusal(ctx, m, req.SourceID, txErr)
 		undoFailedRename(ctx, m, renameUndo)
 		// A transactional backend rolled everything back. fs and memstore
-		// cannot, so a conversion that got as far as the rename is recorded.
-		if run.renamed && !familyStillStored(ctx, m.deps.Store, req.SourceID) {
+		// cannot, so a conversion that got as far as the rename is recorded,
+		// on the best-effort sink, which is the only one wired there.
+		if run.renamed && !store.TxRollsBack(m.deps.Store) && !familyStillStored(ctx, m.deps.Store, req.SourceID) {
+			_ = run.audit(ctx, m.deps.Store)
 			_, _ = run.record(ctx, lineage)
 		}
 		return nil, txErr

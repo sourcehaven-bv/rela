@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // recordEntityAudit emits one audit record for an entity create /
@@ -18,12 +19,14 @@ import (
 //
 // Property *names* may appear in the summary; property *values* never
 // do — defense against secrets accidentally stored in properties.
-func (m *Manager) recordEntityAudit(ctx context.Context, op string, e *entity.Entity, summary string) {
+func (m *Manager) recordEntityAudit(
+	ctx context.Context, st store.Store, op string, e *entity.Entity, summary string,
+) error {
 	if e == nil { // coverage-ignore: defensive: every in-package caller (Create/Update/Delete/Apply) passes a non-nil
 		// entity; unreachable via any write op
-		return
+		return nil
 	}
-	m.deps.Audit.Record(audit.Stamp(ctx, audit.Record{
+	return emitWrite(ctx, m.deps, st, audit.Stamp(ctx, audit.Record{
 		Time: time.Now().UTC(),
 		Op:   op,
 		Subject: &audit.Subject{
@@ -40,12 +43,14 @@ func (m *Manager) recordEntityAudit(ctx context.Context, op string, e *entity.En
 
 // recordRelationAudit emits one audit record for a relation create /
 // update / delete success.
-func (m *Manager) recordRelationAudit(ctx context.Context, op string, rel *entity.Relation, summary string) {
+func (m *Manager) recordRelationAudit(
+	ctx context.Context, st store.Store, op string, rel *entity.Relation, summary string,
+) error {
 	if rel == nil { // coverage-ignore: defensive: every in-package caller passes a non-nil relation; unreachable via
 		// any write op
-		return
+		return nil
 	}
-	m.deps.Audit.Record(audit.Stamp(ctx, audit.Record{
+	return emitWrite(ctx, m.deps, st, audit.Stamp(ctx, audit.Record{
 		Time: time.Now().UTC(),
 		Op:   op,
 		Subject: &audit.Subject{
@@ -74,16 +79,16 @@ func (m *Manager) recordRelationAudit(ctx context.Context, op string, rel *entit
 // A rename moves every face, and each face gets its own record. The audit
 // subject has no face field, so a faced row names its face in the summary,
 // as a family delete does.
-func (m *Manager) recordRenameAudit(ctx context.Context, oldID string, after *entity.Entity) {
+func (m *Manager) recordRenameAudit(ctx context.Context, st store.Store, oldID string, after *entity.Entity) error {
 	if after == nil { // coverage-ignore: defensive: only caller is familyRename.record, which passes the rows a
 		// post-rename family read returned
-		return
+		return nil
 	}
 	summary := "renamed"
 	if !after.Face.IsImplicit() {
 		summary = "renamed face " + string(after.Face)
 	}
-	m.deps.Audit.Record(audit.Stamp(ctx, audit.Record{
+	return emitWrite(ctx, m.deps, st, audit.Stamp(ctx, audit.Record{
 		Time: time.Now().UTC(),
 		Op:   audit.OpRenameEntity,
 		Before: &audit.Subject{
@@ -108,12 +113,14 @@ func (m *Manager) recordRenameAudit(ctx context.Context, oldID string, after *en
 // the body below the ACL, so this record is the trail of that edit: it names
 // the rewritten row, carries the renamer as principal, and says which rename
 // caused it in TriggeredBy.
-func recordMentionRewriteAudit(ctx context.Context, m *Manager, oldID, newID string, rw entity.MentionRewrite) {
+func recordMentionRewriteAudit(
+	ctx context.Context, m *Manager, st store.Store, oldID, newID string, rw entity.MentionRewrite,
+) error {
 	summary := "rewrote mentions of " + oldID + " to " + newID
 	if !rw.Face.IsImplicit() {
 		summary += " in face " + string(rw.Face)
 	}
-	m.deps.Audit.Record(audit.Stamp(ctx, audit.Record{
+	return emitWrite(ctx, m.deps, st, audit.Stamp(ctx, audit.Record{
 		Time:        time.Now().UTC(),
 		Op:          audit.OpUpdateEntity,
 		Subject:     &audit.Subject{Kind: "entity", Type: rw.Type, ID: rw.ID},

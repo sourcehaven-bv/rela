@@ -199,12 +199,14 @@ type CopyResult struct {
 //     is the accepted best-effort stance for fsstore (§6.1); pgstore gives
 //     real atomicity.
 //
-// # Audit lands AFTER the commit
+// # Audit lands with the commit
 //
 // A rollback that left an audit record would make the log claim a write that
-// never happened, which is worse than a missing record — the log's whole
-// value is that it does not lie. This matches the existing "audit the
-// durable write" rule, extended past a transaction boundary.
+// never happened, which is worse than a missing record: the log's whole
+// value is that it does not lie. With a database sink ([TxAudit]) the record
+// is appended in the copy's own transaction, so the two commit or roll back
+// together (DEC-U78WD7Y). The best-effort sink of the fs tier receives it
+// from inside the closure too.
 //
 // # Automations
 //
@@ -284,20 +286,17 @@ func (ce *copyEngine) writeCopy(
 		ctx, plan.name, plan.sourceID, plan.from.Type, string(plan.sourceTail))
 
 	var result CopyResult
-	if err := ce.m.deps.Store.Tx(writeCtx, func(view store.Store) error {
-		txCtx := store.ContextInTx(writeCtx)
+	if err := auditTx(writeCtx, ce.m.deps, true, func(txCtx context.Context, view store.Store) error {
 		res, cerr := applyCopy(txCtx, ce.m.deps.Meta, view, plan)
 		if cerr != nil {
 			return cerr
 		}
 		result = *res
-		return nil
+		return ce.recordCopyAudit(txCtx, view, plan, result)
 	}); err != nil {
 		return nil, nil, nil, err
 	}
 
-	// AFTER the commit — see the godoc.
-	ce.recordCopyAudit(ctx, plan, result)
 	if result.Created && result.Entity != nil {
 		notifyAliasesOfCreate(ctx, ce.m.deps.AliasRewriter, result.Entity.ID, result.Entity.Face)
 	}
@@ -991,9 +990,12 @@ func (ce *copyEngine) edgeTypeAllowed(ctx context.Context, plan *copyPlan, relTy
 // It does NOT reuse purge's Manager bypass: purge is a store-level
 // destructive op with no entity write, whereas a copy IS an entity write and
 // must not have weaker authorization or attribution than a property edit.
-func (ce *copyEngine) recordCopyAudit(ctx context.Context, plan *copyPlan, res CopyResult) {
+//
+// It is written on st, the view of the copy's transaction, so the record
+// commits with the copy ([emitWrite]).
+func (ce *copyEngine) recordCopyAudit(ctx context.Context, st store.Store, plan *copyPlan, res CopyResult) error {
 	p := principal.From(ctx)
-	ce.m.deps.Audit.Record(audit.Stamp(ctx, audit.Record{
+	return emitWrite(ctx, ce.m.deps, st, audit.Stamp(ctx, audit.Record{
 		Op: audit.OpCopyState,
 		Subject: &audit.Subject{
 			Kind: "entity", Type: plan.to.Type, ID: plan.targetID,

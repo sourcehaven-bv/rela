@@ -98,25 +98,31 @@ func softDeleteFamily(ctx context.Context, m *Manager, id string, pre deleteExpe
 	// DeleteEntity gives: an edge added between an outside check and the mark
 	// would go without authorization.
 	var marked familyChange
-	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
-		txCtx := store.ContextInTx(ctx)
+	txErr := auditTx(ctx, m.deps, true, func(txCtx context.Context, tx store.Store) error {
 		if pErr := pre.check(txCtx, tx); pErr != nil {
 			return pErr
 		}
-		return softDeleteInTx(txCtx, m, tx, id, authorized, &marked)
+		if sErr := softDeleteInTx(txCtx, m, tx, id, authorized, &marked); sErr != nil {
+			return sErr
+		}
+		return auditSoftDelete(txCtx, m, tx, id, family[0], marked)
 	})
 	if txErr != nil {
 		// fs and mem cannot roll back, so a failure on a later mark leaves
 		// the earlier ones in place. Record those, as DeleteEntity records a
 		// partial cascade (issue #929); a mark that was rolled back left its
-		// faces live and is recorded as nothing.
-		marked.keep(func(r *store.DeleteResult) bool {
-			return !facesStillStored(ctx, m.deps.Store, r.DeletedEntities)
-		})
-		recordSoftDelete(ctx, m, id, family[0], marked)
+		// faces live and is recorded as nothing. Only the best-effort sink is
+		// wired on such a store, and it never fails.
+		if !store.TxRollsBack(m.deps.Store) {
+			marked.keep(func(r *store.DeleteResult) bool {
+				return !facesStillStored(ctx, m.deps.Store, r.DeletedEntities)
+			})
+			_ = auditSoftDelete(ctx, m, m.deps.Store, id, family[0], marked)
+			recordSoftDelete(ctx, m, family[0], marked)
+		}
 		return nil, txErr
 	}
-	return recordSoftDelete(ctx, m, id, family[0], marked), nil
+	return recordSoftDelete(ctx, m, family[0], marked), nil
 }
 
 // familyChange is what one soft delete or restore changed: the entity named
@@ -193,22 +199,51 @@ func softDeleteInTx(
 	return nil
 }
 
-// recordSoftDelete writes the audit records for what a soft delete marked
-// and returns the result the caller reports. current is the face read before
-// the transaction, which the entity's own record names.
-func recordSoftDelete(
-	ctx context.Context, m *Manager, id string, current *entity.Entity, marked familyChange,
-) *entity.DeleteResult {
-	out := &entity.DeleteResult{}
+// auditSoftDelete writes the audit records of what a soft delete marked, on
+// st. current is the face read before the transaction, which the entity's
+// own record names.
+func auditSoftDelete(
+	ctx context.Context, m *Manager, st store.Store, id string, current *entity.Entity, marked familyChange,
+) error {
 	if res := marked.main; res != nil {
 		cascadeCtx := ctx
 		if len(res.DeletedRelations) > 0 {
 			cascadeCtx = audit.WithTriggeredBy(ctx, "cascade:delete-entity:"+id)
 		}
 		for _, rel := range res.DeletedRelations {
-			m.recordRelationAudit(cascadeCtx, audit.OpDeleteRelation, rel, "deleted (undoable)")
+			if err := m.recordRelationAudit(cascadeCtx, st, audit.OpDeleteRelation, rel, "deleted (undoable)"); err != nil {
+				return err
+			}
 		}
-		m.recordEntityAudit(ctx, audit.OpDeleteEntity, current, "deleted (undoable)")
+		if err := m.recordEntityAudit(ctx, st, audit.OpDeleteEntity, current, "deleted (undoable)"); err != nil {
+			return err
+		}
+	}
+	ownedCtx := audit.WithTriggeredBy(ctx, ownerDeleteTrigger(id))
+	for _, r := range marked.owned {
+		for _, rel := range r.DeletedRelations {
+			if err := m.recordRelationAudit(ownedCtx, st, audit.OpDeleteRelation, rel, "deleted (undoable)"); err != nil {
+				return err
+			}
+		}
+		if len(r.DeletedEntities) > 0 {
+			if err := m.recordEntityAudit(ownedCtx, st, audit.OpDeleteEntity, r.DeletedEntities[0],
+				"deleted (undoable)"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// recordSoftDelete notifies the aliases of what a soft delete marked and
+// returns the result the caller reports. current is the face read before
+// the transaction.
+func recordSoftDelete(
+	ctx context.Context, m *Manager, current *entity.Entity, marked familyChange,
+) *entity.DeleteResult {
+	out := &entity.DeleteResult{}
+	if res := marked.main; res != nil {
 		out.DeletedEntities = append(out.DeletedEntities, current)
 		marks := res.DeletedEntities
 		if len(marks) == 0 {
@@ -217,13 +252,8 @@ func recordSoftDelete(
 		notifyDeletedStates(ctx, m.deps.AliasRewriter, marks)
 		out.DeletedRelations = append(out.DeletedRelations, res.DeletedRelations...)
 	}
-	ownedCtx := audit.WithTriggeredBy(ctx, ownerDeleteTrigger(id))
 	for _, r := range marked.owned {
-		for _, rel := range r.DeletedRelations {
-			m.recordRelationAudit(ownedCtx, audit.OpDeleteRelation, rel, "deleted (undoable)")
-		}
 		if len(r.DeletedEntities) > 0 {
-			m.recordEntityAudit(ownedCtx, audit.OpDeleteEntity, r.DeletedEntities[0], "deleted (undoable)")
 			out.DeletedEntities = append(out.DeletedEntities, r.DeletedEntities[0])
 		}
 		notifyDeletedStates(ctx, m.deps.AliasRewriter, r.DeletedEntities)
@@ -293,25 +323,29 @@ func RestoreEntity(ctx context.Context, m *Manager, id string) (*entity.DeleteRe
 		return nil, ErrSoftDeleteUnsupported
 	}
 	var restored familyChange
-	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
-		txCtx := store.ContextInTx(ctx)
-		return restoreInTx(txCtx, m, tx, id, &restored)
+	txErr := auditTx(ctx, m.deps, true, func(txCtx context.Context, tx store.Store) error {
+		if rErr := restoreInTx(txCtx, m, tx, id, &restored); rErr != nil {
+			return rErr
+		}
+		return auditRestore(txCtx, m, tx, id, restored)
 	})
 	if txErr != nil {
 		// As in SoftDeleteEntity: fs and mem keep an unmark that a later
 		// failure did not undo, so record what is really back. A unique
 		// conflict needs no pre-check for this: a mark holds its unique
 		// values, so only a backend that rolls back reports one.
-		restored.keep(func(r *store.DeleteResult) bool {
-			return facesStored(ctx, m.deps.Store, r.DeletedEntities)
-		})
-		recordRestore(ctx, m, id, restored)
+		if !store.TxRollsBack(m.deps.Store) {
+			restored.keep(func(r *store.DeleteResult) bool {
+				return facesStored(ctx, m.deps.Store, r.DeletedEntities)
+			})
+			_ = auditRestore(ctx, m, m.deps.Store, id, restored)
+		}
 		if ok, mapped := mapUniquePropertyConflict(txErr); ok {
 			return nil, mapped
 		}
 		return nil, txErr
 	}
-	return recordRestore(ctx, m, id, restored), nil
+	return restoreResult(restored), nil
 }
 
 // restoreInTx is RestoreEntity's critical section. It fills done as it
@@ -388,32 +422,47 @@ func restoreInTx(ctx context.Context, m *Manager, tx store.Store, id string, don
 	return nil
 }
 
-// recordRestore writes the audit records for what a restore brought back and
-// returns the result the caller reports.
-func recordRestore(ctx context.Context, m *Manager, id string, restored familyChange) *entity.DeleteResult {
+// auditRestore writes the audit records of what a restore brought back, on
+// st: the owned entities first, then the entity named in the call.
+func auditRestore(ctx context.Context, m *Manager, st store.Store, id string, restored familyChange) error {
 	restoreCtx := audit.WithTriggeredBy(ctx, "restore-entity:"+id)
+	for _, r := range restored.owned {
+		for _, rel := range r.DeletedRelations {
+			if err := m.recordRelationAudit(restoreCtx, st, audit.OpCreateRelation, rel, "restored"); err != nil {
+				return err
+			}
+		}
+		for _, e := range r.DeletedEntities {
+			if err := m.recordEntityAudit(restoreCtx, st, audit.OpRestoreEntity, e, "restored"); err != nil {
+				return err
+			}
+		}
+	}
+	if res := restored.main; res != nil {
+		for _, rel := range res.DeletedRelations {
+			if err := m.recordRelationAudit(restoreCtx, st, audit.OpCreateRelation, rel, "restored"); err != nil {
+				return err
+			}
+		}
+		for _, e := range res.DeletedEntities {
+			if err := m.recordEntityAudit(ctx, st, audit.OpRestoreEntity, e, "restored"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// restoreResult is the result a restore reports: what came back.
+func restoreResult(restored familyChange) *entity.DeleteResult {
 	out := &entity.DeleteResult{}
 	if res := restored.main; res != nil {
 		out.DeletedEntities = append(out.DeletedEntities, res.DeletedEntities...)
 		out.DeletedRelations = append(out.DeletedRelations, res.DeletedRelations...)
 	}
 	for _, r := range restored.owned {
-		for _, rel := range r.DeletedRelations {
-			m.recordRelationAudit(restoreCtx, audit.OpCreateRelation, rel, "restored")
-		}
-		for _, e := range r.DeletedEntities {
-			m.recordEntityAudit(restoreCtx, audit.OpRestoreEntity, e, "restored")
-		}
 		out.DeletedEntities = append(out.DeletedEntities, r.DeletedEntities...)
 		out.DeletedRelations = append(out.DeletedRelations, r.DeletedRelations...)
-	}
-	if res := restored.main; res != nil {
-		for _, rel := range res.DeletedRelations {
-			m.recordRelationAudit(restoreCtx, audit.OpCreateRelation, rel, "restored")
-		}
-		for _, e := range res.DeletedEntities {
-			m.recordEntityAudit(ctx, audit.OpRestoreEntity, e, "restored")
-		}
 	}
 	return out
 }
@@ -525,7 +574,19 @@ func PurgeSoftDeleted(ctx context.Context, m *Manager, cutoff time.Time) (int, e
 			errs = append(errs, fmt.Errorf("purge %s: %w", me.ID, gErr))
 			continue
 		}
-		res, pErr := sd.SoftDelete().PurgeMarked(ctx, me.ID)
+		var res *store.DeleteResult
+		pErr := auditTx(ctx, m.deps, false, func(txCtx context.Context, st store.Store) error {
+			view, ok := st.(store.SoftDeleteProvider)
+			if !ok { // unreachable: every in-tree Tx view carries the capability of its store
+				return ErrSoftDeleteUnsupported
+			}
+			r, err := view.SoftDelete().PurgeMarked(txCtx, me.ID)
+			if err != nil {
+				return err
+			}
+			res = r
+			return auditPurge(purgeContext(txCtx, me.DeletedBy), m, st, res)
+		})
 		if pErr != nil {
 			// The entity is still marked, or was restored meanwhile: either
 			// way its channels belong with it. One another purge removed
@@ -547,14 +608,22 @@ func PurgeSoftDeleted(ctx context.Context, m *Manager, cutoff time.Time) (int, e
 	return purged, errors.Join(errs...)
 }
 
-// recordPurge writes the delete versions, alias notice and audit record for
-// one purged family.
+// auditPurge writes the audit record of one purged family on st.
+func auditPurge(ctx context.Context, m *Manager, st store.Store, res *store.DeleteResult) error {
+	if len(res.DeletedEntities) == 0 {
+		return nil
+	}
+	return m.recordEntityAudit(ctx, st, audit.OpPurgeDeletedEntity, res.DeletedEntities[0],
+		fmt.Sprintf("purged after soft delete (%d relations)", len(res.DeletedRelations)))
+}
+
+// recordPurge writes the delete versions and alias notice for one purged
+// family. Its audit record was written with the purge ([auditPurge]).
 func recordPurge(ctx context.Context, m *Manager, id string, res *store.DeleteResult) {
 	if len(res.DeletedEntities) == 0 {
 		return
 	}
 	// One delete version per face, as DeleteEntity records.
-	head := res.DeletedEntities[0]
 	for _, e := range res.DeletedEntities {
 		m.recordDeleteVersion(ctx, e)
 	}
@@ -564,8 +633,6 @@ func recordPurge(ctx context.Context, m *Manager, id string, res *store.DeleteRe
 	for _, rel := range res.DeletedRelations {
 		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, 0, "", "", cascadeTB)
 	}
-	m.recordEntityAudit(ctx, audit.OpPurgeDeletedEntity, head,
-		fmt.Sprintf("purged after soft delete (%d relations)", len(res.DeletedRelations)))
 }
 
 // purgeContext attributes a purge to the principal who deleted the entity.

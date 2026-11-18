@@ -133,7 +133,7 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/entitymanager/manager_order.go#Manager.runRenumberAfterUpdate": {3, bounded,
 		"renumber after update: the renumber closure gets a From or To query of one relation type; the " +
 			"matcher does not follow closure parameters"},
-	"internal/entitymanager/manager_order.go#moveRelation": {1, bounded,
+	"internal/entitymanager/manager_order.go#listOrderSiblings": {1, bounded,
 		"move: orderSiblingQuery sets From or To; the matcher cannot see into the helper"},
 	"internal/entitymanager/manager_order.go#readableOrderSiblings": {1, bounded,
 		"move: orderSiblingQuery sets From or To; the matcher cannot see into the helper"},

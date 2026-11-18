@@ -315,18 +315,11 @@ func conversionReplacements(
 	return replacements, nil
 }
 
-// record writes the audit trail of what apply put in the store: per row a
-// convert-entity record and a rename version, the alias rewrite and face
-// moves, and per relation an audit record and a version. It returns the
-// converted rows, read back from the store.
-//
-// lineage holds the lineage ids of the removed relations, read before the Tx.
-func (r *conversionRun) record(ctx context.Context, lineage map[entity.RelationKey]int64) ([]*entity.Entity, error) {
+// rename is the rename half of the conversion, as [familyRename] records it.
+func (r *conversionRun) rename() *familyRename {
 	m, p := r.c.m, r.plan
-	oldID, newID := r.req.SourceID, r.newID
-	rows, readErr := familyRows(ctx, m.deps.Store, newID)
-	rn := familyRename{
-		m: m, oldID: oldID, newID: newID,
+	rn := &familyRename{
+		m: m, oldID: r.req.SourceID, newID: r.newID,
 		conversionName: r.req.Definition, conversionFrom: p.def.From,
 		prevFaces: make(map[entity.Face]entity.Face, len(p.faceMap)),
 	}
@@ -337,30 +330,68 @@ func (r *conversionRun) record(ctx context.Context, lineage map[entity.RelationK
 		rn.preRenameRels = p.kept
 	}
 	rn.rewritten = r.rewritten
-	rn.record(ctx, rows)
+	return rn
+}
+
+// audit writes the audit records of what apply put in st: per row a
+// convert-entity record, then per relation removed or created a record. On a
+// sink that records in the transaction, st is its view.
+func (r *conversionRun) audit(ctx context.Context, st store.Store) error {
+	m := r.c.m
+	rows, err := familyRows(ctx, st, r.newID)
+	if err != nil {
+		return fmt.Errorf("conversion: read converted rows: %w", err)
+	}
+	if err := r.rename().audit(ctx, st, rows); err != nil {
+		return err
+	}
+	for _, rel := range r.removed {
+		if err := m.recordRelationAudit(ctx, st, audit.OpDeleteRelation, rel,
+			"removed by conversion to "+r.plan.def.To); err != nil {
+			return err
+		}
+	}
+	for _, rel := range r.created {
+		if err := m.recordRelationAudit(ctx, st, audit.OpCreateRelation, rel,
+			"created by conversion to "+r.plan.def.To); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// record writes the versions of what apply put in the store: per row a
+// rename version, the alias rewrite and face moves, and per removed relation
+// a version. It returns the converted rows, read back from the store. The
+// audit records were written by [conversionRun.audit].
+//
+// lineage holds the lineage ids of the removed relations, read before the Tx.
+func (r *conversionRun) record(ctx context.Context, lineage map[entity.RelationKey]int64) ([]*entity.Entity, error) {
+	m, p := r.c.m, r.plan
+	oldID, newID := r.req.SourceID, r.newID
+	rows, readErr := familyRows(ctx, m.deps.Store, newID)
+	r.rename().record(ctx, rows)
 	for src, dst := range p.faceMap {
 		notifyAliasesOfFaceMove(ctx, m.deps.AliasRewriter, p.def.To, newID, src, dst)
 	}
 
 	trigger := "convert-entity:" + oldID + "->" + newID
 	for _, rel := range r.removed {
-		m.recordRelationAudit(ctx, audit.OpDeleteRelation, rel, "removed by conversion to "+p.def.To)
 		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, lineage[rel.Identity()], "", "", trigger)
-	}
-	for _, rel := range r.created {
-		m.recordRelationAudit(ctx, audit.OpCreateRelation, rel, "created by conversion to "+p.def.To)
 	}
 	return rows, readErr
 }
 
 // recordConversionAudit records the conversion of one face row: after is the
 // converted row, oldID and oldType what it was.
-func recordConversionAudit(ctx context.Context, m *Manager, name, oldID, oldType string, after *entity.Entity) {
+func recordConversionAudit(
+	ctx context.Context, m *Manager, st store.Store, name, oldID, oldType string, after *entity.Entity,
+) error {
 	summary := "converted from " + oldType + " by " + name
 	if !after.Face.IsImplicit() {
 		summary += " face " + after.Face.String()
 	}
-	m.deps.Audit.Record(audit.Stamp(ctx, audit.Record{
+	return emitWrite(ctx, m.deps, st, audit.Stamp(ctx, audit.Record{
 		Time:        time.Now().UTC(),
 		Op:          audit.OpConvertEntity,
 		Before:      &audit.Subject{Kind: "entity", Type: oldType, ID: oldID},

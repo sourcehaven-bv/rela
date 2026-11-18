@@ -270,9 +270,31 @@ func ownerDeleteTrigger(owner string) string {
 	return "cascade:owner-delete:" + owner
 }
 
-// recordOwnedDeletes writes the versions and audit records for owned
-// entities deleted with owner, after the transaction committed. They carry
-// the owner-delete label, so the log shows why they went.
+// auditOwnedDeletes writes the audit records of the owned entities deleted
+// with owner on tx, in the delete's transaction. They carry the owner-delete
+// label, so the log shows why they went.
+func auditOwnedDeletes(ctx context.Context, m *Manager, tx store.Store, owner string, owned []ownedDeletion) error {
+	ownedCtx := audit.WithTriggeredBy(ctx, ownerDeleteTrigger(owner))
+	for _, o := range owned {
+		if o.res == nil {
+			continue
+		}
+		for _, rel := range o.res.DeletedRelations {
+			if err := m.recordRelationAudit(ownedCtx, tx, audit.OpDeleteRelation, rel, "deleted"); err != nil {
+				return err
+			}
+		}
+		err := m.recordFamilyDeleteAudit(ownedCtx, tx, o.res.DeletedEntities, len(o.res.DeletedRelations))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// recordOwnedDeletes writes the versions of owned entities deleted with
+// owner and notifies the aliases, after the transaction committed. The
+// versions carry the owner-delete label, as the audit records do.
 func recordOwnedDeletes(ctx context.Context, m *Manager, owner string, owned []ownedDeletion) {
 	tb := ownerDeleteTrigger(owner)
 	ownedCtx := audit.WithTriggeredBy(ctx, tb)
@@ -291,10 +313,6 @@ func recordOwnedDeletes(ctx context.Context, m *Manager, owner string, owned []o
 				m.recordRelationVersion(ownedCtx, store.VersionOpDelete, rel, 0, "", "", tb)
 			}
 		}
-		for _, rel := range o.res.DeletedRelations {
-			m.recordRelationAudit(ownedCtx, audit.OpDeleteRelation, rel, "deleted")
-		}
-		m.recordFamilyDeleteAudit(ownedCtx, o.res.DeletedEntities, len(o.res.DeletedRelations))
 		m.notifyAliasesOfDelete(ctx, o.id)
 		notifyDeletedStates(ctx, m.deps.AliasRewriter, o.res.DeletedEntities)
 	}

@@ -128,8 +128,10 @@ func (l *Log) Append(ctx context.Context, rec audit.Record) error {
 	})
 }
 
-// appendAll writes recs as the next rows, in one transaction.
-func (l *Log) appendAll(ctx context.Context, recs []audit.Record) error {
+// AppendAll writes recs as the next rows, in one transaction. It reads the
+// chain head once, so a write that records many rows pays for one lock and
+// one head read.
+func (l *Log) AppendAll(ctx context.Context, recs []audit.Record) error {
 	return l.db.Transact(ctx, func(q sqlexec.Querier) error {
 		c, err := l.begin(ctx, q)
 		if err != nil {

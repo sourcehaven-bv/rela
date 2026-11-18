@@ -9,9 +9,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/audit/sqlaudit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/sqlitestore"
 )
 
 // TestSQLiteAuditGoesToTheDatabase pins the wiring of TKT-USQBMG6: on the
@@ -48,7 +51,7 @@ func TestSQLiteAuditSurvivesReassembly(t *testing.T) {
 		origin.Store(), origin.Searcher(), origin.VisibleSearcher(), nil)
 	require.NoError(t, err)
 	origin.CloseAssembly()
-	require.Same(t, origin.Audit(), successor.Audit(), "the sink is shared, not rebuilt or swapped for JSONL")
+	require.Same(t, origin.AuditLog(), successor.AuditLog(), "the sink is shared, not rebuilt or swapped for JSONL")
 
 	ctx := principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolCLI})
 	e := entity.New("", "doc")
@@ -70,4 +73,17 @@ func requireRows(t *testing.T, log *sqlaudit.Log, rows int64) {
 	}, 5*time.Second, 10*time.Millisecond, "the audit rows never reached the database")
 	require.Nil(t, v.Break)
 	require.Equal(t, rows, v.Rows)
+}
+
+// refuseAuditAppends makes every later append to the audit log fail.
+func refuseAuditAppends(t *testing.T, svc *appbuild.Services) {
+	t.Helper()
+	ctx := context.Background()
+	require.NoError(t, svc.Store().Tx(ctx, func(view store.Store) error {
+		conn, ok := sqlitestore.TxConn(store.Innermost(view))
+		require.True(t, ok)
+		_, err := conn.ExecContext(ctx, `CREATE TRIGGER refuse_audit BEFORE INSERT ON audit_log
+			BEGIN SELECT RAISE(ABORT, 'audit refused'); END`)
+		return err
+	}))
 }

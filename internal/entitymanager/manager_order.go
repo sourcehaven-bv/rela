@@ -226,8 +226,8 @@ func maybeRenumberSide(
 //
 // Each side runs in its own [store.Transactor.Tx], separate from the
 // caller's update: a renumber failure must not roll back a write that
-// already succeeded. The rewrites are audited after commit, one record per
-// write, the same approach cascadeHost uses for cascade deletes. The
+// already succeeded. Each rewrite is audited inside its side's transaction,
+// one record per write, as cascadeHost does for cascade deletes. The
 // triggered-by marker distinguishes them from the user-initiated
 // UpdateRelation that spawned them (issue #886).
 //
@@ -265,21 +265,13 @@ func (m *Manager) runRenumberAfterUpdate(ctx context.Context, key entity.Relatio
 				return nil
 			}
 		}
-		var updated []*entity.Relation
-		err := m.deps.Store.Tx(ctx, func(view store.Store) error {
-			txCtx := store.ContextInTx(ctx)
-			var rErr error
-			updated, rErr = maybeRenumberSide(txCtx, view, q, prop, judged)
-			return rErr
+		return auditTx(ctx, m.deps, true, func(txCtx context.Context, view store.Store) error {
+			updated, rErr := maybeRenumberSide(txCtx, view, q, prop, judged)
+			if rErr != nil {
+				return rErr
+			}
+			return auditRenumbered(txCtx, m, view, prop, updated)
 		})
-		if err != nil {
-			return err
-		}
-		renumberCtx := audit.WithTriggeredBy(ctx, "renumber:"+prop)
-		for _, u := range updated {
-			m.recordRelationAudit(renumberCtx, audit.OpUpdateRelation, u, "renumbered "+prop)
-		}
-		return nil
 	}
 	if touchedOut {
 		// The outgoing list spans every tail of the source: renumbering is
@@ -301,8 +293,8 @@ func (m *Manager) runRenumberAfterUpdate(ctx context.Context, key entity.Relatio
 // with a Position, after its authorization. The sibling read, the
 // placement and every write share one [store.Store.Tx], so a concurrent
 // move or renumber cannot slip between the values read and the values
-// written. Audit records follow the commit: one for the moved edge, one
-// per sibling the densify rewrote, marked as a renumber.
+// written. The audit records are written in it too: one per sibling the
+// densify rewrote, marked as a renumber, and one for the moved edge.
 //
 // A package function rather than a Manager method: the Manager is at its
 // plimsoll method line.
@@ -331,44 +323,84 @@ func moveRelation(
 	keep := func(r *entity.Relation) bool { return readable[r.Identity()] }
 	var moved *entity.Relation
 	var densified []*entity.Relation
-	err := m.deps.Store.Tx(ctx, func(view store.Store) error {
-		txCtx := store.ContextInTx(ctx)
+	err := auditTx(ctx, m.deps, true, func(txCtx context.Context, view store.Store) error {
 		if _, gErr := view.GetRelation(txCtx, key); gErr != nil {
 			return fmt.Errorf("%w: %s", ErrRelationNotFound, key)
 		}
-		var siblings []entity.Relation
-		for r, lErr := range view.ListRelations(txCtx, orderSiblingQuery(key, opts.Position.Incoming)) {
-			if lErr != nil {
-				return lErr
-			}
-			if keep(r) {
-				siblings = append(siblings, *r)
-			}
+		siblings, lErr := listOrderSiblings(txCtx, view, key, opts.Position.Incoming, keep)
+		if lErr != nil {
+			return lErr
 		}
 		plan, pErr := PlaceOrder(siblings, key, *opts.Position, prop)
 		if pErr != nil {
 			return pErr
 		}
 		var wErr error
-		moved, densified, wErr = writeOrderPlan(txCtx, view, siblings, plan, key, prop)
-		return wErr
+		if moved, densified, wErr = writeOrderPlan(txCtx, view, siblings, plan, key, prop); wErr != nil {
+			return wErr
+		}
+		var aErr error
+		moved, aErr = auditMove(txCtx, m, view, key, prop, moved, densified)
+		return aErr
 	})
 	if err != nil {
 		return nil, err
 	}
-	renumberCtx := audit.WithTriggeredBy(ctx, "renumber:"+prop)
-	for _, u := range densified {
-		m.recordRelationAudit(renumberCtx, audit.OpUpdateRelation, u, "renumbered "+prop)
-	}
-	if moved == nil {
-		// A densify can keep the moved edge's value and renumber the
-		// siblings around it; a no-op move rewrites nothing at all.
-		if moved, err = m.deps.Store.GetRelation(ctx, key); err != nil || len(densified) == 0 {
-			return moved, err
+	return moved, nil
+}
+
+// listOrderSiblings reads the siblings of key that a move reorders, on
+// view, keeping those keep accepts.
+func listOrderSiblings(
+	ctx context.Context, view store.Store, key entity.RelationKey, incoming bool, keep func(*entity.Relation) bool,
+) ([]entity.Relation, error) {
+	var siblings []entity.Relation
+	for r, err := range view.ListRelations(ctx, orderSiblingQuery(key, incoming)) {
+		if err != nil {
+			return nil, err
+		}
+		if keep(r) {
+			siblings = append(siblings, *r)
 		}
 	}
-	m.recordRelationAudit(ctx, audit.OpUpdateRelation, moved, "moved "+prop)
-	return moved, nil
+	return siblings, nil
+}
+
+// auditMove writes the records of a move on view: one per densified
+// sibling, then one for the moved edge. It returns the moved edge, read
+// back when the move kept its value. A densify can keep the moved edge's
+// value and renumber the siblings around it; a no-op move rewrites nothing
+// at all and records nothing.
+func auditMove(
+	ctx context.Context, m *Manager, view store.Store, key entity.RelationKey, prop string,
+	moved *entity.Relation, densified []*entity.Relation,
+) (*entity.Relation, error) {
+	if err := auditRenumbered(ctx, m, view, prop, densified); err != nil {
+		return nil, err
+	}
+	if moved == nil {
+		got, err := view.GetRelation(ctx, key)
+		if err != nil {
+			return nil, err
+		}
+		if len(densified) == 0 {
+			return got, nil
+		}
+		moved = got
+	}
+	return moved, m.recordRelationAudit(ctx, view, audit.OpUpdateRelation, moved, "moved "+prop)
+}
+
+// auditRenumbered writes a renumber record on view for each sibling a
+// renumber or densify rewrote.
+func auditRenumbered(ctx context.Context, m *Manager, view store.Store, prop string, updated []*entity.Relation) error {
+	renumberCtx := audit.WithTriggeredBy(ctx, "renumber:"+prop)
+	for _, u := range updated {
+		if err := m.recordRelationAudit(renumberCtx, view, audit.OpUpdateRelation, u, "renumbered "+prop); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // orderSiblingQuery lists the edges on key's order side: the source's

@@ -211,10 +211,12 @@ func (m *Manager) ReplaceRelations(
 		return nil, err
 	}
 	var deleted []*entity.Relation
-	err = m.deps.Store.Tx(ctx, func(view store.Store) error {
+	err = auditTx(ctx, m.deps, true, func(txCtx context.Context, view store.Store) error {
 		var txErr error
-		deleted, txErr = rp.write(store.ContextInTx(ctx), view)
-		return txErr
+		if deleted, txErr = rp.write(txCtx, view); txErr != nil {
+			return txErr
+		}
+		return rp.audit(txCtx, view, deleted)
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrConflict) {
@@ -224,10 +226,6 @@ func (m *Manager) ReplaceRelations(
 	}
 	for _, r := range deleted {
 		m.recordRelationVersion(ctx, store.VersionOpDelete, r, ids[r.Identity()], "", "", "")
-		m.recordRelationAudit(ctx, audit.OpDeleteRelation, r, "deleted")
-	}
-	for _, rel := range rp.rels {
-		m.recordRelationAudit(ctx, audit.OpCreateRelation, rel, "created")
 	}
 	return rp.rels, nil
 }
@@ -240,6 +238,22 @@ type relationReplace struct {
 	removes []entity.RelationKey
 	leaving map[entity.RelationKey]bool // the set of removes
 	rels    []*entity.Relation          // one per create, set by prepare
+}
+
+// audit writes the records of the replace on view: deleted, the edges it
+// removed, then the edges it created.
+func (rp *relationReplace) audit(ctx context.Context, view store.Store, deleted []*entity.Relation) error {
+	for _, r := range deleted {
+		if err := rp.m.recordRelationAudit(ctx, view, audit.OpDeleteRelation, r, "deleted"); err != nil {
+			return err
+		}
+	}
+	for _, rel := range rp.rels {
+		if err := rp.m.recordRelationAudit(ctx, view, audit.OpCreateRelation, rel, "created"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // uniqueRemoves checks the tails of removes and drops repeats, keeping the

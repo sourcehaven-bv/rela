@@ -173,8 +173,8 @@ func CreateBatch(ctx context.Context, m *Manager, b Batch) (*BatchResult, error)
 	if err != nil {
 		return nil, err
 	}
-	err = m.deps.Store.Tx(ctx, func(view store.Store) error {
-		return t.run(store.ContextInTx(ctx), view)
+	err = auditTx(ctx, m.deps, true, func(txCtx context.Context, view store.Store) error {
+		return t.run(txCtx, view)
 	})
 	if err != nil {
 		return nil, t.failed(ctx, err)
@@ -316,7 +316,7 @@ func prepareBatchRelation(
 }
 
 // run is the transaction: the entities, then the relations, all on view.
-// txCtx is marked with [store.ContextInTx].
+// txCtx carries view ([store.ContextWithTxView]).
 func (t *batchCreate) run(txCtx context.Context, view store.Store) error {
 	if err := t.recheckEnds(txCtx, view); err != nil {
 		return err
@@ -324,7 +324,7 @@ func (t *batchCreate) run(txCtx context.Context, view store.Store) error {
 	deps := t.m.deps
 	deps.Store = view
 	for i, be := range t.b.Entities {
-		c, w, err := createCore(txCtx, deps, be.Entity.Type, createCoreArgs(be.Entity, be.Options))
+		c, w, err := createCore(txCtx, deps, be.Entity.Type, createCoreArgs(t.m, be.Entity, be.Options))
 		if err != nil {
 			return &BatchOpError{Kind: BatchOpEntity, Index: i, Err: err}
 		}
@@ -339,6 +339,9 @@ func (t *batchCreate) run(txCtx context.Context, view store.Store) error {
 			key.To, rel.To = t.created[br.To.Index].ID, t.created[br.To.Index].ID
 		}
 		if err := writeLinkedRelation(txCtx, view, t.m, key, rel); err != nil {
+			return &BatchOpError{Kind: BatchOpRelation, Index: j, Err: err}
+		}
+		if err := t.m.recordRelationAudit(txCtx, view, audit.OpCreateRelation, rel, "created"); err != nil {
 			return &BatchOpError{Kind: BatchOpRelation, Index: j, Err: err}
 		}
 		t.written[j] = rel
@@ -406,15 +409,12 @@ func (t *batchCreate) endType(ctx context.Context, view store.Store, end BatchEn
 	return fam.typ, nil
 }
 
-// finish runs the steps after the commit: every audit record and alias
-// notification first, so the committed batch is recorded whole before any
-// automation runs, then the follow-ups per entity.
+// finish runs the steps after the commit: every alias notification first,
+// then the follow-ups per entity. The audit records were written in the
+// transaction, each right after its row.
 func (t *batchCreate) finish(ctx context.Context) *BatchResult {
 	for _, c := range t.created {
 		recordCreate(ctx, t.m, c)
-	}
-	for _, r := range t.written {
-		t.m.recordRelationAudit(ctx, audit.OpCreateRelation, r, "created")
 	}
 	out := &BatchResult{
 		Entities:     make([]*entity.CreateResult, len(t.created)),
@@ -430,8 +430,8 @@ func (t *batchCreate) finish(ctx context.Context) *BatchResult {
 
 // failed handles a failed transaction. On a store that rolled back nothing
 // stays and err is returned. On a store that cannot roll back, the rows
-// that stayed are audited and their follow-ups run, so no row exists
-// without its audit record, and the error is a *[BatchKeptError].
+// that stayed were audited as they were written, and their follow-ups run
+// here; the error is a *[BatchKeptError].
 //
 // Which store rolls back is asked of the store, never read back from it: a
 // rolled-back generated id is free again, and a create racing the read-back
@@ -467,7 +467,6 @@ func (t *batchCreate) failed(ctx context.Context, err error) error {
 			continue
 		}
 		if _, gErr := t.m.deps.Store.GetRelation(ctx, r.Identity()); gErr == nil {
-			t.m.recordRelationAudit(ctx, audit.OpCreateRelation, r, "created")
 			kept.Relations = append(kept.Relations, r)
 		}
 	}
