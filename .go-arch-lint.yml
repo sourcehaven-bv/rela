@@ -610,6 +610,8 @@ deps:
       # classification findings (TKT-8UCV32) through the resolver a request
       # uses. Cycle-free: affordances is a near-leaf importing no wiring.
       - affordances
+      # visibility.EntityChanges gates the per-entity audit read (TKT-X1ZFO04).
+      - audit
       - ai
       - classification
       - analysis
@@ -740,6 +742,8 @@ deps:
       - access
       - acl
       - affordances
+      # visibility.EntityChanges gates the per-entity audit read (TKT-X1ZFO04).
+      - audit
       - apiwire
       - reconwire
       - attachment
@@ -916,6 +920,8 @@ deps:
       # affordances: convert_entity names a field-gate refusal
       # (FieldWriteError) the way the conversion endpoint does.
       - affordances
+      # visibility.EntityChanges gates the per-entity audit read (TKT-X1ZFO04).
+      - audit
       # acl + attachment: the attachment tools (TKT-R6U15C) authorize an
       # `update` before any bytes are stored, and drive attachment.Service,
       # the write policy the CLI and web upload paths share.
@@ -1142,6 +1148,8 @@ deps:
       # metamodel, predicate*, principal, transitions) and imports no
       # wiring package, so this cannot close a cycle.
       - affordances
+      # visibility.EntityChanges gates the per-entity audit read (TKT-X1ZFO04).
+      - audit
       - app
       - audit
       - caldavalias
@@ -1556,6 +1564,8 @@ deps:
     mayDependOn:
       - acl
       - affordances
+      # visibility.EntityChanges gates the per-entity audit read (TKT-X1ZFO04).
+      - audit
       # visibility.Elements hashes the reader's view of a row (the ETag's
       # canonical digest) into a reconciliation element (FEAT-CMVZQFI).
       - canonical

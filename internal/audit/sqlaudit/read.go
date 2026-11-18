@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"math"
 	"strings"
+
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 )
 
 // Newest returns up to limit records with a seq below before, newest
@@ -20,16 +22,8 @@ func (l *Log) Newest(ctx context.Context, before int64, limit int) ([]Entry, err
 		upperBound(before), limit)
 }
 
-// EntityQuery names the records [Log.ForEntity] reads: those of one face
-// of an entity, with one of the listed ops.
-type EntityQuery struct {
-	ID string
-	// Face is the face to read; '' for an unfaced type. Records stored
-	// without a face belong to every face and are read too.
-	Face string
-	// Ops lists the ops to read. Empty reads nothing.
-	Ops []string
-}
+// EntityQuery is [audit.EntityQuery].
+type EntityQuery = audit.EntityQuery
 
 // ForEntity returns up to limit records that name q.ID at q.Face, with an op
 // in q.Ops and a seq below before, newest first. A record names an id when

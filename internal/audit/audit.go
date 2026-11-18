@@ -262,6 +262,13 @@ const (
 	// principal; they enter the chain at the time of the import.
 	OpAuditImport = "audit-import"
 
+	// OpAuditRead records a read of the global audit view, the
+	// data-entry /api/v1/_audit endpoint behind the audit:read permission.
+	// Summary carries the cursor and the number of records served, never
+	// their content. A holder of audit:read sees every entity's records, so
+	// each such read is itself on the record.
+	OpAuditRead = "audit-read"
+
 	OpRemoteResolve = "remote-resolve"
 	OpRemoteDismiss = "remote-dismiss"
 	OpRemoteLink    = "remote-link"
@@ -324,6 +331,17 @@ type Record struct {
 	// Source is the kind of actor that produced the record ([SourceOf]).
 	// The sinks fill it in when it is empty.
 	Source string `json:"source,omitempty"`
+}
+
+// EntityQuery names the records a database log's ForEntity reads: those of one face
+// of an entity, with one of the listed ops.
+type EntityQuery struct {
+	ID string
+	// Face is the face to read; '' for an unfaced type. Records stored
+	// without a face belong to every face and are read too.
+	Face string
+	// Ops lists the ops to read. Empty reads nothing.
+	Ops []string
 }
 
 // Entry is one stored record and its seq, the position a database log gave
