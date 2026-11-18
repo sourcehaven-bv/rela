@@ -601,6 +601,8 @@ func (worldGate) SearchScope(ctx context.Context, types []string) map[string]sea
 
 func (worldGate) HoldsPermission(context.Context, string) bool { return true }
 
+func (worldGate) HoldsPermissionOnAnyEntity(context.Context, string) bool { return true }
+
 // fixedWorlds resolves EVERY name to one scope, so a test may name its world
 // freely without the name having to match a compiled map.
 type fixedWorlds struct{ scope store.WorldScope }

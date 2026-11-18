@@ -47,6 +47,9 @@ func (g permGate) SearchScope(context.Context, []string) map[string]search.TypeS
 }
 
 func (g permGate) HoldsPermission(_ context.Context, perm string) bool { return g.perms[perm] }
+func (g permGate) HoldsPermissionOnAnyEntity(_ context.Context, perm string) bool {
+	return g.perms[perm]
+}
 
 func (permGate) PermitsWorld(context.Context, string) (bool, error) { return true, nil }
 

@@ -47,8 +47,9 @@ func (originGate) ReadQuery(context.Context, string) acl.ReadQueryResult {
 func (originGate) SearchScope(context.Context, []string) map[string]search.TypeScope {
 	return nil
 }
-func (originGate) HoldsPermission(context.Context, string) bool       { return true }
-func (originGate) PermitsWorld(context.Context, string) (bool, error) { return true, nil }
+func (originGate) HoldsPermission(context.Context, string) bool            { return true }
+func (originGate) HoldsPermissionOnAnyEntity(context.Context, string) bool { return true }
+func (originGate) PermitsWorld(context.Context, string) (bool, error)      { return true, nil }
 
 // TestGateOriginSources_HidesUnreadableSources is the security assertion for
 // this feature.
