@@ -7,7 +7,8 @@ priority: high
 effort: l
 tags: security
 started: "2026-11-18"
-status: in-progress
+completed: "2026-11-18"
+status: done
 ---
 
 ## Description
