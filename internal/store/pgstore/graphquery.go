@@ -601,13 +601,17 @@ func orderedSQLOp(op store.PropOp) string {
 //     underflow; any other value under 1 is never integral.
 //
 // A JSON string holds an integer when strconv.ParseInt accepts it: an
-// optional sign, then digits, in int64 range.
+// optional sign, then digits, in int64 range. ParseInt takes any number of
+// leading zeros, so they are stripped before the cast, and a string with
+// more than 19 other digits is out of range before it reaches the cast.
+// numeric cannot read a string of more than 131072 digits (issue 2427).
 //
 // Every guard sits in its own nested CASE. PostgreSQL does not promise the
 // order of AND operands, and a cast must never run on a value it cannot
 // read: the error would depend on a row the read gate may later hide.
 func integerExpr(txt, jsn string) string {
 	const lo, hi = "-9223372036854775808", "9223372036854775807"
+	digits := fmt.Sprintf(`regexp_replace(%s, '^([+-]?)0*([0-9]{1,19})$', E'\\1\\2')`, txt)
 	return fmt.Sprintf("(CASE jsonb_typeof(%[2]s)"+
 		" WHEN 'number' THEN (CASE WHEN %[1]s ~ '^-?[0-9]+$'"+
 		" THEN (CASE WHEN %[1]s::numeric BETWEEN %[3]s AND %[4]s THEN %[1]s::numeric END)"+
@@ -616,9 +620,9 @@ func integerExpr(txt, jsn string) string {
 		" THEN (CASE WHEN %[1]s::float8 = trunc(%[1]s::float8)"+
 		" AND %[1]s::float8 >= '-9223372036854775808'::float8 AND %[1]s::float8 < '9223372036854775808'::float8"+
 		" THEN %[1]s::float8::int8::numeric END) END) END)"+
-		" WHEN 'string' THEN (CASE WHEN %[1]s ~ '^[+-]?[0-9]+$'"+
-		" THEN (CASE WHEN %[1]s::numeric BETWEEN %[3]s AND %[4]s THEN %[1]s::numeric END) END)"+
-		" END)", txt, jsn, lo, hi)
+		" WHEN 'string' THEN (CASE WHEN %[1]s ~ '^[+-]?0*[0-9]{1,19}$'"+
+		" THEN (CASE WHEN %[5]s::numeric BETWEEN %[3]s AND %[4]s THEN %[5]s::numeric END) END)"+
+		" END)", txt, jsn, lo, hi, digits)
 }
 
 // equalsCond renders value equality, matching [propmatch] semantics: a
