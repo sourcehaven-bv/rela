@@ -97,15 +97,24 @@ func CreateLinked(ctx context.Context, m *Manager, lc LinkedCreate) (*LinkedResu
 	}
 	opts := lc.Options
 	nested := store.TxView(ctx) != nil
-	err = auditTx(ctx, m.deps, true, func(txCtx context.Context, view store.Store) error {
+	opCtx, op, err := beginCreate(ctx, m.deps, lc.Entity.Type)
+	if err != nil {
+		return nil, beforeWriteError{err}
+	}
+	err = auditTx(opCtx, m.deps, true, func(txCtx context.Context, view store.Store) error {
 		return t.run(txCtx, view)
 	})
 	if err != nil {
 		// On a store that rolls back nothing stayed, and a read-back could
-		// find another caller's create that took the freed id.
-		if t.created != nil && !store.TxRollsBack(m.deps.Store) &&
-			finishKept(ctx, m, t.created, t.warnings, opts.SkipAutomation) {
-
+		// find another caller's create that took the freed id. Inside a
+		// joined transaction the follow-ups wait for its end, as on success.
+		stayed := t.created != nil && !store.TxRollsBack(m.deps.Store)
+		kept := stayed && nested && deferFinishCreate(ctx, m, t, opts.SkipAutomation)
+		if stayed && !kept {
+			kept = finishKept(ctx, m, t.created, t.warnings, opts.SkipAutomation)
+		}
+		op.finish(ctx, m.deps, err)
+		if kept {
 			return nil, &KeptEntityError{Entity: t.created, Err: err}
 		}
 		return nil, err
@@ -117,24 +126,23 @@ func CreateLinked(ctx context.Context, m *Manager, lc LinkedCreate) (*LinkedResu
 		return out, nil
 	}
 	out.Create, out.FollowUpErr = finishCreate(ctx, m, t.created, t.warnings, opts.SkipAutomation)
+	op.finish(ctx, m.deps, nil)
 	out.Relation = t.written
 	return out, nil
 }
 
 // deferFinishCreate queues the follow-ups of a create made inside a
-// transaction CreateLinked joined, to run once that transaction commits.
-// Run at once, they would act on a create that is not committed yet, and
-// on sqlite a follow-up that opens its own transaction would wait for the
-// write lock the joined one holds. A follow-up error is logged: the caller
-// has its result by then. It reports false when the transaction keeps no
-// list of follow-ups, and the caller runs them at once.
+// transaction CreateLinked joined, to run once that transaction ends with
+// the entity written. Run at once, they would act on a create that is not
+// committed yet, and on sqlite a follow-up that opens its own transaction
+// would wait for the write lock the joined one holds. A follow-up error is
+// logged: the caller has its result by then. It reports false when the
+// transaction keeps no list of follow-ups, and the caller runs them at
+// once.
 func deferFinishCreate(ctx context.Context, m *Manager, t *linkedCreate, skipAutomation bool) bool {
 	after := afterCommitCtx(ctx)
 	return onCommit(ctx, func(context.Context) {
-		if _, err := finishCreate(after, m, t.created, t.warnings, skipAutomation); err != nil {
-			slog.WarnContext(after, "entitymanager: follow-up of a create failed", "entity", t.created.ID,
-				"error", err)
-		}
+		finishKept(after, m, t.created, t.warnings, skipAutomation)
 	})
 }
 
@@ -194,6 +202,11 @@ func (t *linkedCreate) run(txCtx context.Context, view store.Store) error {
 	deps.Store = view
 	c, w, err := createCore(txCtx, deps, t.lc.Entity.Type, createCoreArgs(t.m, t.lc.Entity, t.lc.Options))
 	if err != nil {
+		if isCreateHookError(err) {
+			// The row is written: on a store that cannot roll back it stays.
+			t.created, t.warnings = c, w
+			return err
+		}
 		if isEntityStoreWriteError(err) {
 			return err
 		}
@@ -264,8 +277,10 @@ func finishKept(
 		return false
 	}
 	if _, err := finishCreate(ctx, m, created, warnings, skipAutomation); err != nil {
-		slog.WarnContext(ctx, "entitymanager: CreateLinked: a step after the kept create failed",
-			"entity", created.ID, "error", err)
+		// An automation or validation error can quote a property value,
+		// so the error itself stays at debug level.
+		slog.WarnContext(ctx, "entitymanager: a step after a create failed", "entity", created.ID)
+		slog.DebugContext(ctx, "entitymanager: create follow-up error", "entity", created.ID, "error", err)
 	}
 	return true
 }
@@ -275,7 +290,8 @@ func finishKept(
 // entity write, on a store that cannot roll back; the entity's audit record
 // and automations ran. [Manager.CreateEntity] returns it when the write of
 // the on-create automation's values was refused; the entity stays as the
-// caller sent it.
+// caller sent it. Both return it when a [CreateHook] failed after the
+// entity write on a store that cannot roll back.
 type KeptEntityError struct {
 	// Entity is the entity that stayed. Nil: never.
 	Entity *entity.Entity

@@ -2,14 +2,17 @@ package appbuild_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -105,7 +108,7 @@ func TestFlowCreateStart_Lua(t *testing.T) {
 	rt := lua.NewWriter(svc.ScheduledLuaWriteDeps(), &out, lua.WithContext(ctx),
 		lua.WithPrincipal(principal.From(ctx)))
 	defer rt.Close()
-	require.NoError(t, rt.RunString( //nolint:contextcheck // the runtime carries ctx via lua.WithContext
+	require.NoError(t, rt.RunString(
 		`rela.create_entity("person", {name = "Ada", status = "hired"})`))
 	var id string
 	for e, lErr := range svc.Store().ListEntities(context.Background(),
@@ -177,8 +180,21 @@ const createChainFlows = `flows:
         final: true
 `
 
+// headerDepth is the stored depth of a run header; absent is 0.
+func headerDepth(hdr *entity.Entity) int {
+	v, ok := hdr.Properties[metamodel.FlowRunPropDepth]
+	if !ok {
+		return 0
+	}
+	var d int
+	_, _ = fmt.Sscan(fmt.Sprint(v), &d)
+	return d
+}
+
 // TestFlowCreateStart_ChainIsBounded: a chain of create starts stops at
-// the hop bound instead of running without end.
+// the depth bound instead of running without end. The depth is stored on
+// each header, so the bound holds whoever settles the run that makes the
+// next create.
 func TestFlowCreateStart_ChainIsBounded(t *testing.T) {
 	root := writeFlowProject(t)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "flows.yaml"), []byte(createChainFlows), 0o600))
@@ -197,17 +213,39 @@ func TestFlowCreateStart_ChainIsBounded(t *testing.T) {
 	_, err = svc.EntityManager().CreateEntity(flowUser(t, svc, "clerk"), task, entity.CreateOptions{})
 	require.NoError(t, err)
 
-	count := func(typ string) int {
-		n := 0
-		for _, lErr := range svc.Store().ListEntities(context.Background(),
-			store.EntityQuery{Type: typ, Faces: store.AllFaces()}) {
-			require.NoError(t, lErr)
-			n++
-		}
-		return n
+	var depths []int
+	tasks := 0
+	for e, lErr := range svc.Store().ListEntities(context.Background(),
+		store.EntityQuery{Type: entity.FlowRunType, Faces: store.AllFaces()}) {
+		require.NoError(t, lErr)
+		depths = append(depths, headerDepth(e))
 	}
-	require.Equal(t, 8, count(entity.FlowRunType), "a chain starts at most maxCreateStartHops runs")
-	require.Equal(t, 9, count("task"), "the last run's copy starts nothing")
+	for _, lErr := range svc.Store().ListEntities(context.Background(),
+		store.EntityQuery{Type: "task", Faces: store.AllFaces()}) {
+		require.NoError(t, lErr)
+		tasks++
+	}
+	slices.Sort(depths)
+	require.Equal(t, []int{0, 1, 2, 3, 4, 5, 6, 7}, depths, "a chain starts runs up to the depth bound")
+	require.Equal(t, 9, tasks, "the last run's copy starts nothing")
+
+	// A create made under the deepest run, as a flow worker settling it
+	// later would make it, starts nothing either.
+	var deepest string
+	for e, lErr := range svc.Store().ListEntities(context.Background(),
+		store.EntityQuery{Type: entity.FlowRunType, Faces: store.AllFaces()}) {
+		require.NoError(t, lErr)
+		if headerDepth(e) == 7 {
+			deepest = e.ID
+		}
+	}
+	require.NotEmpty(t, deepest)
+	late := entity.New("", "task")
+	late.SetString("title", "late")
+	ctx := audit.WithFlowStep(flowUser(t, svc, "clerk"), audit.FlowStep{Flow: "echo", Run: deepest})
+	res, err := svc.EntityManager().CreateEntity(ctx, late, entity.CreateOptions{})
+	require.NoError(t, err)
+	require.Empty(t, flowHeadersFor(t, svc, res.Entity.ID), "a create under the deepest run starts no run")
 }
 
 // TestFlowCreateStart_ACL pins the access checks around a create start,

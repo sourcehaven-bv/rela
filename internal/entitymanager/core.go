@@ -195,6 +195,9 @@ func createCoreOnce(
 		}
 		return runCreateHook(ctx, deps, st, e)
 	})
+	if isCreateHookError(err) {
+		return e, warnings, err
+	}
 	if err != nil {
 		// A derived unique-property index (pgstore, TKT-3Q0GP1) rejects a
 		// duplicate PROPERTY value; surface it as the same 422 the pre-write

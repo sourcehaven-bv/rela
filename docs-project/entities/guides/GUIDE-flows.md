@@ -133,22 +133,30 @@ script (an action, a webhook action, a scheduled script) and a trigger's
   the entity. If the create fails or rolls back, no run exists. Because
   the run is part of the create, a retried request that creates nothing
   new starts nothing new either.
-- Right after the create commits, rela enters the initial state and
-  writes its outputs. If that fails, the run waits with its step pending,
-  and the flow worker tries again as for any failed step.
+- On the file store nothing rolls back. A create that fails after the
+  entity was written keeps the entity, and keeps its run too.
+- Right after the create commits, and after the entity's own on-create
+  automations, rela enters the initial state and writes its outputs. The
+  request that made the create waits for this, for at most 30 seconds.
+  If it fails or takes longer, the run waits with its step pending, and
+  the flow worker tries again as for any failed step.
 - With `per_subject: one`, a subject that already carries an unfinished
   run gets no second one. rela logs this and the create still succeeds.
-- A `when:` that cannot be evaluated starts no run. rela logs it and the
-  create still succeeds.
+- A `when:` reads only the new entity's own properties. A `when:` that
+  cannot be evaluated starts no run. rela logs it and the create still
+  succeeds.
 
 Some ways of adding entities are not creates and start no run:
 `rela import` of an export without a mapping, `rela db load`, a
 conversion, a copy to another face and a restore from history.
 
-A run's outputs can create entities that start further runs. rela stops
-such a chain after 8 starts in a row. The count is kept only while the
-runs settle right after their create; a run the flow worker settles later
-counts from zero again.
+A run's outputs can create entities that start further runs. Each run
+started this way stores its `depth` on the run: one more than the run
+whose output made the create. rela starts no run at depth 8 or deeper,
+and logs it. The bound holds whether a run settles right after its
+create or later through the flow worker. It limits the length of a
+chain, not its width: one run that creates several subjects starts a run
+for each.
 
 ## States
 
@@ -417,7 +425,8 @@ A run is recorded as an entity of the type `_flow-run`, with id prefix
 `RUN-`. rela adds the type when a project declares flows; `schema.yaml`
 cannot declare it. A run holds the flow's name, its version, its status
 (`working`, `input_required`, `completed`, `cancelled` or `failed`), its
-active state and its start, completion and deadline times. Two relations
+active state, its start, completion and deadline times and, for a run
+started on create, its depth (see [Starting on create](#starting-on-create)). Two relations
 link it to the graph: `_carries` points at the subject, and `_produced`
 points at each entity a step created.
 

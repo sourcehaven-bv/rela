@@ -35,11 +35,14 @@ func NewOnCreate(e *Engine) *OnCreate { return &OnCreate{e: e} }
 // Because the start is part of the create, a retried or repeated delivery
 // of anything cannot start a second run: the create itself happens once.
 //
-// Each run is started by the flow's run_as: it is the By of the start. A
+// depth is the depth of the runs (the header's depth property); the
+// caller bounds it. Each run is started by the flow's run_as: it is the By
+// of the start. A
 // `when:` that fails to evaluate, and a subject that already carries a run
 // of a per_subject: one flow, skip that flow with a log line rather than
 // fail the create. Any other error fails the create.
-func (o *OnCreate) StartCreated(ctx context.Context, runs flowrun.Store, subj *entity.Entity) ([]flow.RunID, error) {
+func (o *OnCreate) StartCreated(ctx context.Context, runs flowrun.Store, subj *entity.Entity,
+	depth int) ([]flow.RunID, error) {
 	e := o.e
 	var ids []flow.RunID
 	for _, f := range e.d.Flows.Flows() {
@@ -51,7 +54,7 @@ func (o *OnCreate) StartCreated(ctx context.Context, runs flowrun.Store, subj *e
 			continue
 		}
 		fctx := audit.WithFlowStep(ctx, audit.FlowStep{By: f.RunAs()})
-		run, err := begin(fctx, e, runs, f, subj)
+		run, err := begin(fctx, e, runs, f, subj, depth)
 		if errors.Is(err, ErrSubjectBusy) {
 			slog.WarnContext(ctx, "flowengine: no run started on create: the subject already carries one",
 				"flow", f.Name(), "subject", subj.ID)

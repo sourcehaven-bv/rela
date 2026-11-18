@@ -3337,12 +3337,12 @@ func finishAssembly(
 	s.channels = refs.channels
 	// Before the flow engine, whose job runner runs llm actions through it.
 	newScriptHolders(s)
-	flowEngine, err := buildFlowEngine(s, refs.flowRuns)
+	flowEngine, flowAs, err := buildFlowEngine(s, refs.flowRuns)
 	if err != nil {
 		return nil, fmt.Errorf("flows: %w", err)
 	}
 	s.flowEngine = flowEngine
-	refs.flowStarts.setEngine(flowEngine)
+	refs.flowStarts.setEngine(flowEngine, s.aclDeclarative, flowAs)
 	// Built, not started: the host starts it (see RunFlowWorker).
 	if s.flowWorker, err = buildFlowWorker(s.base, s.store, flowEngine); err != nil {
 		return nil, fmt.Errorf("flows: %w", err)

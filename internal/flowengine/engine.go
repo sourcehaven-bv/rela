@@ -174,7 +174,7 @@ func (e *Engine) Start(ctx context.Context, name string, subject entity.Ref) (fl
 		return "", fmt.Errorf("%w: %s is a %s, flow %s carries a %s", ErrSubjectNotFound, subj.ID, subj.Type,
 			f.Name(), f.Subject())
 	}
-	run, err := begin(ctx, e, e.d.Runs, f, subj)
+	run, err := begin(ctx, e, e.d.Runs, f, subj, 0)
 	if err != nil {
 		return "", err
 	}
@@ -196,10 +196,11 @@ func (e *Engine) Start(ctx context.Context, name string, subject entity.Ref) (fl
 }
 
 // begin writes the header and stores the run of f on subj, in its initial
-// state with a pending mark, on runs. It settles nothing. A function rather
-// than a method: Engine is at its method cap.
+// state with a pending mark, on runs. It settles nothing. depth, when not
+// zero, is stored on the header ([metamodel.FlowRunPropDepth]). A function
+// rather than a method: Engine is at its method cap.
 func begin(ctx context.Context, e *Engine, runs flowrun.Store, f *flowcfg.Flow, subj *entity.Entity,
-) (flowrun.Run, error) {
+	depth int) (flowrun.Run, error) {
 	singleton := f.PerSubject() != flowcfg.PerSubjectMany
 	if singleton {
 		// A cheap refusal before anything is written. The store's create
@@ -227,6 +228,9 @@ func begin(ctx context.Context, e *Engine, runs flowrun.Store, f *flowcfg.Flow, 
 	}
 	if !f.Deadline().IsZero() {
 		props[metamodel.FlowRunPropDeadline] = f.Deadline().AddTo(now)
+	}
+	if depth > 0 {
+		props[metamodel.FlowRunPropDepth] = depth
 	}
 	id, err := e.d.Headers.CreateHeader(ctx, subj.Ref(), props)
 	if err != nil {

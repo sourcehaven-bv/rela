@@ -173,13 +173,25 @@ func CreateBatch(ctx context.Context, m *Manager, b Batch) (*BatchResult, error)
 	if err != nil {
 		return nil, err
 	}
-	err = auditTx(ctx, m.deps, true, func(txCtx context.Context, view store.Store) error {
+	types := make([]string, len(b.Entities))
+	for i, be := range b.Entities {
+		types[i] = be.Entity.Type
+	}
+	opCtx, op, err := beginCreate(ctx, m.deps, types...)
+	if err != nil {
+		return nil, err
+	}
+	err = auditTx(opCtx, m.deps, true, func(txCtx context.Context, view store.Store) error {
 		return t.run(txCtx, view)
 	})
 	if err != nil {
-		return nil, t.failed(ctx, err)
+		failed := t.failed(ctx, err)
+		op.finish(ctx, m.deps, err)
+		return nil, failed
 	}
-	return t.finish(ctx), nil
+	res := t.finish(ctx)
+	op.finish(ctx, m.deps, nil)
+	return res, nil
 }
 
 // batchCreate is one [CreateBatch] call: what it prepared before the
@@ -326,6 +338,11 @@ func (t *batchCreate) run(txCtx context.Context, view store.Store) error {
 	for i, be := range t.b.Entities {
 		c, w, err := createCore(txCtx, deps, be.Entity.Type, createCoreArgs(t.m, be.Entity, be.Options))
 		if err != nil {
+			if isCreateHookError(err) {
+				// The row is written: on a store that cannot roll back it
+				// stays, and failed reports it.
+				t.created[i], t.warnings[i] = c, w
+			}
 			return &BatchOpError{Kind: BatchOpEntity, Index: i, Err: err}
 		}
 		t.created[i], t.warnings[i] = c, w

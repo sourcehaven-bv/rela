@@ -983,8 +983,18 @@ func (m *Manager) CreateEntity(
 	if err := prepareCreate(ctx, m, e, opts, e.Properties); err != nil {
 		return nil, err
 	}
-	created, warnings, err := createCore(ctx, m.deps, e.Type, createCoreArgs(m, e, opts))
+	opCtx, op, err := beginCreate(ctx, m.deps, e.Type)
 	if err != nil {
+		return nil, err
+	}
+	created, warnings, err := createCore(opCtx, m.deps, e.Type, createCoreArgs(m, e, opts))
+	if err != nil {
+		kept := created != nil && !store.TxRollsBack(m.deps.Store) &&
+			finishKept(ctx, m, created, warnings, opts.SkipAutomation)
+		op.finish(ctx, m.deps, err)
+		if kept {
+			return nil, &KeptEntityError{Entity: created, Err: err}
+		}
 		return nil, err
 	}
 	// State-machine entry is enforced INSIDE createCore, before the durable
@@ -992,6 +1002,7 @@ func (m *Manager) CreateEntity(
 	// create-entry today; if a future change adds one, route its ErrGuardDenied
 	// through mapTransitionError so it surfaces as 403, not 422 (RR-F30CZ/N2).
 	result, err := finishCreate(ctx, m, created, warnings, opts.SkipAutomation)
+	op.finish(ctx, m.deps, nil)
 	if err != nil {
 		return nil, err
 	}

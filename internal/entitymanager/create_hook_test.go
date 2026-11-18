@@ -17,20 +17,34 @@ import (
 
 // fakeCreateHook records what the manager told it.
 type fakeCreateHook struct {
-	typ    string
-	err    error
-	seen   []string
-	inTx   bool
-	viewOK bool
-	after  int
+	typ      string
+	err      error
+	seen     []string
+	inTx     bool
+	viewOK   bool
+	after    int
+	prepared int
+	// prepInTx is whether PrepareCreate ran inside a transaction.
+	prepInTx bool
+	// prepSeen is whether EntityCreated saw PrepareCreate's ctx.
+	prepSeen bool
 }
 
+type preparedKey struct{}
+
 func (h *fakeCreateHook) Watches(typ string) bool { return typ == h.typ }
+
+func (h *fakeCreateHook) PrepareCreate(ctx context.Context) (context.Context, error) {
+	h.prepared++
+	h.prepInTx = store.InTx(ctx)
+	return context.WithValue(ctx, preparedKey{}, true), nil
+}
 
 func (h *fakeCreateHook) EntityCreated(ctx context.Context, view store.Store, e *entity.Entity,
 ) (func(context.Context), error) {
 	h.seen = append(h.seen, e.ID)
 	h.inTx = store.InTx(ctx)
+	h.prepSeen = ctx.Value(preparedKey{}) != nil
 	_, gErr := view.GetEntity(ctx, e.Ref())
 	h.viewOK = gErr == nil
 	if h.err != nil {
@@ -59,9 +73,10 @@ func newManagerWithHook(t *testing.T, hook entitymanager.CreateHook) *entitymana
 }
 
 // TestCreateHook pins the manager's side of FEAT-J0O10QI: a watched create
-// runs the hook in a transaction that already holds the row, the follow-up
-// runs once after the commit, an unwatched type is left alone, and a hook
-// error fails the create.
+// prepares the hook outside the transaction, runs it in a transaction that
+// already holds the row, and runs the follow-up once after the commit; an
+// unwatched type is left alone; a hook error fails the create, and on a
+// store that cannot roll back (memstore) reports the row that stayed.
 func TestCreateHook(t *testing.T) {
 	errHook := errors.New("hook failed")
 	tests := []struct {
@@ -124,6 +139,8 @@ type linkingHook struct {
 
 func (h *linkingHook) Watches(typ string) bool { return typ == "requirement" }
 
+func (h *linkingHook) PrepareCreate(ctx context.Context) (context.Context, error) { return ctx, nil }
+
 func (h *linkingHook) EntityCreated(ctx context.Context, _ store.Store, e *entity.Entity,
 ) (func(context.Context), error) {
 	d := entity.New("", "decision")
@@ -135,7 +152,7 @@ func (h *linkingHook) EntityCreated(ctx context.Context, _ store.Store, e *entit
 		return nil, err
 	}
 	h.created = res.Create.Entity.ID
-	return nil, nil
+	return nil, nil //nolint:nilnil // no follow-up and no error
 }
 
 // TestCreateHook_NestedCreateFollowsUpAfterCommit: a linked create made
@@ -212,5 +229,83 @@ func TestCreateLinked_InTxEndpointKeepsReadGate(t *testing.T) {
 	}
 	if got, want := strings.ReplaceAll(hidden.Error(), "REQ-9", "REQ-404"), missing.Error(); got != want {
 		t.Fatalf("hidden row answers %q, missing row %q", got, want)
+	}
+}
+
+// orderLog records the order of a create's follow-up and the hook's.
+type orderLog struct{ steps []string }
+
+func (o *orderLog) EntityRenamed(context.Context, string, string) error { return nil }
+func (o *orderLog) EntityDeleted(context.Context, string) error         { return nil }
+func (o *orderLog) EntityFaceDeleted(context.Context, string, entity.Face) error {
+	return nil
+}
+
+func (o *orderLog) EntityCreated(context.Context, string, entity.Face) error {
+	o.steps = append(o.steps, "follow-up")
+	return nil
+}
+
+// orderHook appends to the log once its create has committed.
+type orderHook struct{ log *orderLog }
+
+func (h orderHook) Watches(typ string) bool { return typ == "requirement" }
+
+func (h orderHook) PrepareCreate(ctx context.Context) (context.Context, error) { return ctx, nil }
+
+func (h orderHook) EntityCreated(context.Context, store.Store, *entity.Entity) (func(context.Context), error) {
+	return func(context.Context) { h.log.steps = append(h.log.steps, "hook") }, nil
+}
+
+// TestCreateHook_RunsAfterTheCreatesFollowUps: on every create entry
+// point, the hook's follow-up runs after the entity's own follow-ups, so a
+// run settles on the entity as its automations left it.
+func TestCreateHook_RunsAfterTheCreatesFollowUps(t *testing.T) {
+	creates := []struct {
+		name   string
+		create func(context.Context, *entitymanager.Manager, *entity.Entity) error
+	}{
+		{name: "direct", create: func(ctx context.Context, m *entitymanager.Manager, e *entity.Entity) error {
+			_, err := m.CreateEntity(ctx, e, entity.CreateOptions{})
+			return err
+		}},
+		{name: "linked", create: func(ctx context.Context, m *entitymanager.Manager, e *entity.Entity) error {
+			_, err := entitymanager.CreateLinked(ctx, m, entitymanager.LinkedCreate{Entity: e})
+			return err
+		}},
+		{name: "batch", create: func(ctx context.Context, m *entitymanager.Manager, e *entity.Entity) error {
+			_, err := entitymanager.CreateBatch(ctx, m, entitymanager.Batch{
+				Entities: []entitymanager.BatchEntity{{Entity: e}},
+			})
+			return err
+		}},
+	}
+	for _, tc := range creates {
+		t.Run(tc.name, func(t *testing.T) {
+			log := &orderLog{}
+			mgr, err := entitymanager.New(entitymanager.Deps{
+				Store:         memstore.New(),
+				Meta:          parseMeta(t),
+				Templater:     nopTemplater{},
+				Audit:         audit.Nop{},
+				ACL:           acl.NopACL{},
+				Transitions:   transitions.NoTransitions(),
+				FieldGate:     entitymanager.AllowAllFieldGate{},
+				AnchorGuard:   entitymanager.NopAnchorGuard{},
+				AliasRewriter: log,
+				CreateHook:    orderHook{log: log},
+			})
+			if err != nil {
+				t.Fatalf("entitymanager.New: %v", err)
+			}
+			r := entity.New("", "requirement")
+			r.SetString("title", "r")
+			if err := tc.create(context.Background(), mgr, r); err != nil {
+				t.Fatalf("create: %v", err)
+			}
+			if got := strings.Join(log.steps, ","); got != "follow-up,hook" {
+				t.Fatalf("order = %q, want the create's follow-up, then the hook's", got)
+			}
+		})
 	}
 }

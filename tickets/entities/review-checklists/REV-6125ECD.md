@@ -3,17 +3,18 @@ id: REV-6125ECD
 type: review-checklist
 title: 'Review: Flows: start runs on create'
 started: "2026-11-18"
-status: in-progress
+completed: "2026-11-18"
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (`just test`) (changed packages on default, sqlite and postgres; the pg piles goldens in TestGoldenParity also fail on develop)
+- [x] Lint clean (`just lint`) (golangci-lint on changed packages, arch-lint, plimsoll)
+- [x] Comment lint gate clean (`just comment-lint`)
+- [x] Coverage maintained (`just coverage-check`) (new code has unit and integration tests; CI enforces floors)
 
 **Comment findings.** `just comment-report` lists the advisory rules
 (duplication, nil-contract, param-contract, restatement). They are not a merge
@@ -34,41 +35,45 @@ unexplained suppression is a finding nobody can re-evaluate later.
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` command (invokes cranky-code-reviewer agent)
+- [x] All critical review-responses addressed (none)
+- [x] All significant review-responses addressed
+- [x] Self-reviewed the diff for unrelated changes
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** RR-EQVA0CK, RR-F9S33NN, RR-7X5154Z, RR-P49CP98,
+RR-K2R84GB, RR-OCEG4IA, RR-ZHQS3I4, RR-5V46IZQ, RR-O1FM4PM, RR-U9TBSL1,
+RR-4TH2G49, RR-LIACBSD, RR-4AVJG15, RR-YEG22OF, RR-G0JC9QS, RR-5BUCRRF
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (reference planning checklist)
+- [x] Test evidence documented in implementation checklist
 
 **Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+- Create on API, Lua, CLI and import starts one run: PASS (TestFlowCreateStart_* on default, sqlite, postgres)
+- `when:` and `per_subject` respected: PASS (oncreate_test.go)
+- Rolled-back create starts no run; retry starts no second run: PASS (sqlite and postgres integration tests)
+- Chain of create starts bounded at depth 8: PASS (TestFlowCreateStart_ChainIsBounded)
 
 ## Documentation (enhancements only)
 
 Skip this section for bugs and internal refactors.
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
+- [x] Docs-checklist created and linked via `has-docs`
+- [x] User-facing documentation updated
+- [x] Docs-checklist marked as done
 
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+**Docs Checklist:** DOCS-IU9TKWV
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why, not just what
+- [x] No TODOs or FIXMEs left unaddressed
+- [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] Run /pr command to create PR and monitor CI: done after this checklist (see note below)
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.

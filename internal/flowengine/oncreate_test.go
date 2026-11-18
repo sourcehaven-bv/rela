@@ -77,7 +77,7 @@ func TestStartCreated(t *testing.T) {
 			subj, err := h.f.Subject(ctx, entity.Ref{ID: "PER-1"})
 			require.NoError(t, err)
 
-			ids, err := NewOnCreate(h.eng).StartCreated(ctx, h.runs, subj)
+			ids, err := NewOnCreate(h.eng).StartCreated(ctx, h.runs, subj, 0)
 			require.NoError(t, err)
 			require.Len(t, ids, len(tc.want))
 			var got []string
@@ -102,7 +102,7 @@ func TestStartCreated_ByRunAs(t *testing.T) {
 	h.f.addPerson("PER-1", map[string]any{"status": "hired"})
 	subj, err := h.f.Subject(ctx, entity.Ref{ID: "PER-1"})
 	require.NoError(t, err)
-	ids, err := NewOnCreate(h.eng).StartCreated(ctx, h.runs, subj)
+	ids, err := NewOnCreate(h.eng).StartCreated(ctx, h.runs, subj, 0)
 	require.NoError(t, err)
 	byFlow := map[string]string{}
 	for _, id := range ids {
@@ -122,11 +122,11 @@ func TestStartCreated_SubjectBusySkips(t *testing.T) {
 	h.f.addPerson("PER-1", map[string]any{"status": "hired"})
 	subj, err := h.f.Subject(ctx, entity.Ref{ID: "PER-1"})
 	require.NoError(t, err)
-	first, err := NewOnCreate(h.eng).StartCreated(ctx, h.runs, subj)
+	first, err := NewOnCreate(h.eng).StartCreated(ctx, h.runs, subj, 0)
 	require.NoError(t, err)
 	require.Len(t, first, 2)
 
-	again, err := NewOnCreate(h.eng).StartCreated(ctx, h.runs, subj)
+	again, err := NewOnCreate(h.eng).StartCreated(ctx, h.runs, subj, 0)
 	require.NoError(t, err)
 	require.Len(t, again, 1, "once is per_subject: one and busy; twice is per_subject: many")
 	run, err := h.runs.Get(ctx, again[0])
@@ -155,11 +155,10 @@ flows:
 	h.f.addPerson("PER-1", map[string]any{"started": "not a date"})
 	subj, err := h.f.Subject(ctx, entity.Ref{ID: "PER-1"})
 	require.NoError(t, err)
-	ids, err := NewOnCreate(h.eng).StartCreated(ctx, h.runs, subj)
+	ids, err := NewOnCreate(h.eng).StartCreated(ctx, h.runs, subj, 0)
 	require.NoError(t, err)
 	require.Empty(t, ids)
 }
-
 
 // TestSettle pins that Settle writes the initial outputs of a run started
 // on create, and is a no-op for a settled or a missing run.
@@ -169,7 +168,7 @@ func TestSettle(t *testing.T) {
 	h.f.addPerson("PER-1", map[string]any{"status": "hired"})
 	subj, err := h.f.Subject(ctx, entity.Ref{ID: "PER-1"})
 	require.NoError(t, err)
-	ids, err := NewOnCreate(h.eng).StartCreated(ctx, h.runs, subj)
+	ids, err := NewOnCreate(h.eng).StartCreated(ctx, h.runs, subj, 0)
 	require.NoError(t, err)
 
 	for _, id := range ids {
@@ -196,13 +195,13 @@ func TestSettle_FailureBacksOff(t *testing.T) {
 	h.f.addPerson("PER-1", map[string]any{"status": "hired"})
 	subj, err := h.f.Subject(ctx, entity.Ref{ID: "PER-1"})
 	require.NoError(t, err)
-	ids, err := NewOnCreate(h.eng).StartCreated(ctx, h.runs, subj)
+	ids, err := NewOnCreate(h.eng).StartCreated(ctx, h.runs, subj, 0)
 	require.NoError(t, err)
 	h.f.failSet = errTest
 	var once flow.RunID
 	for _, id := range ids {
-		run, err := h.runs.Get(ctx, id)
-		require.NoError(t, err)
+		run, getErr := h.runs.Get(ctx, id)
+		require.NoError(t, getErr)
 		if run.Flow == "once" {
 			once = id
 		}
