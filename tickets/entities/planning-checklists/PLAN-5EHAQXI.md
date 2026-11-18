@@ -22,12 +22,12 @@ cover it. A per-key allowlist for `triggers.*` opens the keys the old
 Automations index and detail views back, with routes, sidebar entry, change
 review, problem routing, property-rename follow-up and delete warnings. Out: the
 `flows:` section (locked whole), script outputs, `on.deleted`, `on.faces`,
-`on.copy`, `create.template`. Postgres and sqlite builds (Configure stays
+`on.copy`, `create.template`, `create.if_exists`, `relate` outputs. Postgres and sqlite builds (Configure stays
 fs-only).
 
 **Acceptance Criteria:**
-1. A `config:edit` holder edits trigger description, `on` keys (entity, property, becomes, from, created, updated, relation_created, relation_removed, where, when) and set/relate/create/add_to_pile/notify/check outputs. Test: `TestCheckEdit_Flows` open-key rows return no violation.
-2. Locked keys stay read-only: script.**, on.deleted, on.faces, on.copy, create.template, flows.**. The `on` of a trigger with a script output is pinned. Test: `TestCheckEdit_Flows` locked rows; SPA models test for `readOnly`.
+1. A `config:edit` holder edits trigger description, `on` keys (entity, property, becomes, from, created, updated, relation_created, relation_removed, where, when) and set/create/add_to_pile/notify/check outputs. Test: `TestCheckEdit_Flows` open-key rows return no violation.
+2. Locked keys stay read-only: script.**, relate.**, on.deleted, on.faces, on.copy, create.template, create.if_exists, flows.**. The `on` of a trigger with a script output is pinned. Test: `TestCheckEdit_Flows` locked rows; SPA models test for `readOnly`.
 3. A save that breaks a trigger is refused at preview. Test: rela-server test where the draft trigger names a missing property and preview returns an `invalid` problem.
 4. A save of flows.yaml writes a `config-edit` audit record naming flows.yaml by hash and the changed paths. Test: service test inspects the recorded audit summary.
 5. Gate unchanged: `--config-editing`, `config:edit`, fs build only. Existing `TestConfigure_Gate` and `TestValidateConfigEditing` keep passing; no new mount.
@@ -58,13 +58,13 @@ fs-only).
 **Technical Approach:** Backend:
 - `configedit`: `FlowsFile = "flows.yaml"`. `current` reads it; an absent file reads as an empty mapping and is written with "must not exist" semantics. `versionOf` hashes all three files. `Snapshot.Flows`, `Draft.Flows`. `prepare` handles it like the other two (CheckEdit, Apply). `write`, `restore` and `audit` include it.
 - `Validator.Validate(schema, dataEntry, flows []byte)`; rela-server checks the draft bytes with `appbuild.CheckTriggerData(flows, meta, store)` instead of reading flows.yaml from disk, so preview judges the draft.
-- Allowlist mapping old to new: `on.condition` to `on.when`, `on.when.[]` to `on.where.[]`, `do.[].set/value` to `outputs.[].set.properties.*`, `create_relation.*` to `outputs.[].relate.{type,to}`, `create_entity.*` to `outputs.[].create.{type,properties.*,relate.type,relate.from,if_exists}`, `add_to_pile.*`, `notify.*`, `validate.[].*` to `outputs.[].check.{where,message,severity}`. Locked: `outputs.[].script.**`, `create.template`, `on.deleted`, `on.faces.**`, `on.copy.**`, `flows.**`. Pin `triggers.*` key `on` by `outputs.[].script.**`.
+- Allowlist mapping old to new: `on.condition` to `on.when`, `on.when.[]` to `on.where.[]`, `do.[].set/value` to `outputs.[].set.properties.*`, `create_entity.*` to `outputs.[].create.{type,properties.*,relate.type,relate.from}`, `add_to_pile.*`, `notify.*`, `validate.[].*` to `outputs.[].check.{where,message,severity}`. Locked: `outputs.[].script.**`, `outputs.[].relate.**` (the old `create_relation.*`; `relate.to` names a fixed record), `create.template`, `create.if_exists` (`replace` deletes without an ACL check), `on.deleted`, `on.faces.**`, `on.copy.**`, `flows.**`. Pin `triggers.*` key `on` by `outputs.[].script.**`.
 - `triggers.DecodeTypes()` exposes the rule and output reflect types so `TestAllowlist_ClassifiesEveryKey` walks flows.yaml too.
 
 Frontend:
 - `api/configure.ts`: `ConfigFile` gains flows.yaml; snapshot and draft carry `flows`.
 - `configDraft`: third file `flows`, persisted, sent in the body, included in describeChanges.
-- `models.ts`: `automations(flows)` keyed by trigger name; `readOnly` when a script output, template, deleted, faces or copy is present.
+- `models.ts`: `automations(flows)` keyed by trigger name; `readOnly` when a script or relate output, `create.template`, `create.if_exists`, deleted, faces or copy is present.
 - Views `AutomationsView.vue`, `AutomationView.vue`; routes `/configure/automations` and `/configure/automations/:name`; sidebar entry; `changes.ts` group; `paths.ts` problem route for flows.yaml; `references.ts` renames `on.property` and `set.properties` keys on a property rename; delete confirmations mention automations. The "automations moved" callout goes.
 
 **Alternatives rejected:**
