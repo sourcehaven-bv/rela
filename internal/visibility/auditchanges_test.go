@@ -181,6 +181,17 @@ func (f *fakeEntries) ForEntity(_ context.Context, q audit.SubjectQuery, before 
 	return out, nil
 }
 
+func (f *fakeEntries) LifecycleStart(_ context.Context, q audit.SubjectQuery) (audit.Entry, bool, error) {
+	for _, e := range f.entries {
+		for _, s := range []*audit.Subject{e.Record.Subject, e.Record.After} {
+			if audit.StartsLifecycle(e.Record, s) && s.ID == q.ID && s.Face == q.Face {
+				return e, true, nil
+			}
+		}
+	}
+	return audit.Entry{}, false, nil
+}
+
 type readableSet map[string]string
 
 func (r readableSet) ReadableTypes(_ context.Context, ids []string) (map[string]string, error) {
@@ -218,9 +229,10 @@ func changeSeqs(recs []visibility.ChangeRecord) []int64 {
 	return out
 }
 
-// TestEntityChanges_HidesRecordsNamingHiddenEntities: a relation record or a
-// rename whose other id the reader cannot read is left out; an entity record
-// of another type is left out; a page reads past left-out records.
+// TestEntityChanges_HidesRecordsNamingHiddenEntities: a relation record
+// whose far end the reader cannot read is left out, a rename from this
+// entity's old id is shown, an entity record of another type is left out,
+// and a page reads past left-out records.
 func TestEntityChanges_HidesRecordsNamingHiddenEntities(t *testing.T) {
 	ctx := context.Background()
 	src := &fakeEntries{entries: []audit.Entry{
@@ -231,7 +243,7 @@ func TestEntityChanges_HidesRecordsNamingHiddenEntities(t *testing.T) {
 		entityEntry(5, audit.OpUpdateEntity, "other"),
 		{Seq: 4, Record: audit.Record{
 			Op:     audit.OpRenameEntity,
-			Before: &audit.Subject{Kind: "entity", Type: "doc", ID: "SECRET-3"},
+			Before: &audit.Subject{Kind: "entity", Type: "doc", ID: "OLD-1"},
 			After:  &audit.Subject{Kind: "entity", Type: "doc", ID: "DOC-1"},
 		}},
 		entityEntry(3, audit.OpUpdateEntity, "doc"),
@@ -243,13 +255,13 @@ func TestEntityChanges_HidesRecordsNamingHiddenEntities(t *testing.T) {
 
 	page, next, err := visibility.EntityChanges(ctx, src, readable, allFields{}, q)
 	require.NoError(t, err)
-	require.Equal(t, []int64{8, 3}, changeSeqs(page))
-	require.Equal(t, int64(3), next)
+	require.Equal(t, []int64{8, 4}, changeSeqs(page))
+	require.Equal(t, int64(4), next)
 
 	q.Before = next
 	page, next, err = visibility.EntityChanges(ctx, src, readable, allFields{}, q)
 	require.NoError(t, err)
-	require.Equal(t, []int64{1}, changeSeqs(page))
+	require.Equal(t, []int64{3, 1}, changeSeqs(page))
 	require.Zero(t, next)
 }
 
@@ -326,20 +338,105 @@ func TestEntityChanges_SummaryNamesNoHiddenProperty(t *testing.T) {
 		e.Record.Summary = summary
 		return e
 	}
-	rel := relationEntry(1, "DOC-1", "", "PUB-1")
+	rel := relationEntry(0, "DOC-1", "", "PUB-1")
 	rel.Record.Op, rel.Record.Summary = audit.OpUpdateRelation, "updated: note"
 	src := &fakeEntries{entries: []audit.Entry{
 		update(4, "updated: title,salary"),
 		update(3, "updated: salary"),
 		update(2, "updated"),
+		update(1, "updated something unexpected"),
 		rel,
 	}}
 	page, _, err := visibility.EntityChanges(ctx, src, readableSet{"DOC-1": "doc", "PUB-1": "doc"},
-		hiddenFields{"salary": true}, visibility.ChangesQuery{Ref: entity.Ref{ID: "DOC-1"}, Type: "doc", Limit: 10})
+		hiddenFields{"salary": true},
+		visibility.ChangesQuery{Ref: entity.Ref{ID: "DOC-1"}, Type: "doc", Limit: 10, Live: true})
 	require.NoError(t, err)
 	var got []string
 	for _, c := range page {
 		got = append(got, c.Summary)
 	}
-	require.Equal(t, []string{"updated: title", "updated", "updated", "updated"}, got)
+	require.Equal(t, []string{"updated: title", "updated", "updated", "updated", "updated"}, got)
+}
+
+// TestEntityChanges_StartFence: the change list of an id is served under a
+// type only when the record that started its lifecycle started it as that
+// type, or, with no such record, when the entity is live.
+func TestEntityChanges_StartFence(t *testing.T) {
+	ctx := context.Background()
+	rel := relationEntry(3, "PUB-1", "", "GONE-1")
+	created := func(typ string) audit.Entry {
+		e := entityEntry(1, audit.OpCreateEntity, typ)
+		e.Record.Subject.ID = "GONE-1"
+		return e
+	}
+	readable := readableSet{"PUB-1": "doc"}
+	for _, tc := range []struct {
+		name    string
+		entries []audit.Entry
+		live    bool
+		want    []int64
+	}{
+		{name: "started as another type", entries: []audit.Entry{rel, created("secret")}},
+		{name: "started as the type", entries: []audit.Entry{rel, created("doc")}, want: []int64{3, 1}},
+		{name: "no start, deleted", entries: []audit.Entry{rel}},
+		{name: "no start, live", entries: []audit.Entry{rel}, live: true, want: []int64{3}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			q := visibility.ChangesQuery{Ref: entity.Ref{ID: "GONE-1"}, Type: "doc", Limit: 10, Live: tc.live}
+			page, _, err := visibility.EntityChanges(ctx, &fakeEntries{entries: tc.entries}, readable, allFields{}, q)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, nilIfEmpty(changeSeqs(page)))
+		})
+	}
+}
+
+func nilIfEmpty(s []int64) []int64 {
+	if len(s) == 0 {
+		return nil
+	}
+	return s
+}
+
+// TestEntityChanges_OtherFaceLeftOut: a record of the id at another face, or
+// a relation that leaves it from another face, is not on this face's list.
+func TestEntityChanges_OtherFaceLeftOut(t *testing.T) {
+	ctx := context.Background()
+	atFace := func(seq int64, op, face string) audit.Entry {
+		e := entityEntry(seq, op, "doc")
+		e.Record.Subject.Face = face
+		return e
+	}
+	src := &fakeEntries{entries: []audit.Entry{
+		relationEntry(6, "DOC-1", "draft", "PUB-1"),
+		relationEntry(5, "DOC-1", "final", "PUB-1"),
+		atFace(4, audit.OpUpdateEntity, ""),
+		atFace(3, audit.OpUpdateEntity, "draft"),
+		atFace(2, audit.OpUpdateEntity, "final"),
+		atFace(1, audit.OpCreateEntity, "final"),
+	}}
+	q := visibility.ChangesQuery{Ref: entity.Ref{ID: "DOC-1", Face: "final"}, Type: "doc", Limit: 10}
+	page, _, err := visibility.EntityChanges(ctx, src, readableSet{"PUB-1": "doc"}, allFields{}, q)
+	require.NoError(t, err)
+	require.Equal(t, []int64{5, 2, 1}, changeSeqs(page))
+}
+
+// TestEntityChanges_FullPageStopsReading: a page filled from the first read
+// returns its cursor without reading on, and a limit below 1 is refused.
+func TestEntityChanges_FullPageStopsReading(t *testing.T) {
+	ctx := context.Background()
+	src := &fakeEntries{entries: []audit.Entry{
+		entityEntry(3, audit.OpUpdateEntity, "doc"),
+		relationEntry(2, "DOC-1", "", "SECRET-1"),
+		entityEntry(1, audit.OpCreateEntity, "doc"),
+	}}
+	q := visibility.ChangesQuery{Ref: entity.Ref{ID: "DOC-1"}, Type: "doc", Limit: 1}
+	page, next, err := visibility.EntityChanges(ctx, src, readableSet{}, allFields{}, q)
+	require.NoError(t, err)
+	require.Equal(t, []int64{3}, changeSeqs(page))
+	require.Equal(t, int64(3), next)
+	require.Equal(t, 1, src.calls)
+
+	q.Limit = 0
+	_, _, err = visibility.EntityChanges(ctx, src, readableSet{}, allFields{}, q)
+	require.Error(t, err)
 }

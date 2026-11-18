@@ -28,6 +28,17 @@ func (f *fakeAuditLog) ForEntity(
 	return f.page(before, limit), nil
 }
 
+func (f *fakeAuditLog) LifecycleStart(_ context.Context, q audit.SubjectQuery) (audit.Entry, bool, error) {
+	for _, e := range f.entries {
+		for _, s := range []*audit.Subject{e.Record.Subject, e.Record.After} {
+			if audit.StartsLifecycle(e.Record, s) && s.ID == q.ID && s.Face == q.Face {
+				return e, true, nil
+			}
+		}
+	}
+	return audit.Entry{}, false, nil
+}
+
 func (f *fakeAuditLog) Newest(_ context.Context, before int64, limit int) ([]audit.Entry, error) {
 	return f.page(before, limit), nil
 }
@@ -162,6 +173,35 @@ func TestHandleV1Changes(t *testing.T) {
 				t.Fatalf("got %d, want 400", rec.Code)
 			}
 		})
+	}
+}
+
+// TestHandleV1Changes_DeletedIDOfAnotherType: a holder of history:read who
+// asks for a deleted id under a type it never had gets an empty list, even
+// when relation records of a readable entity name the id.
+func TestHandleV1Changes_DeletedIDOfAnotherType(t *testing.T) {
+	f := newFixture()
+	f.AddNode(entity.New("TKT-2", "ticket"))
+	app := newAppFromParts(nil, testMeta(), f)
+	log := &fakeAuditLog{entries: []audit.Entry{
+		relationEntry(3, "TKT-2", "GONE-1"),
+		entityEntry(2, audit.OpDeleteEntity, "secret", "GONE-1"),
+		entityEntry(1, audit.OpCreateEntity, "secret", "GONE-1"),
+	}}
+	if err := SetAuditLog(app, log); err != nil {
+		t.Fatal(err)
+	}
+	ctx := withReadGate(t.Context(), fakeGate{holdsPermission: true})
+	rec := doAuditGet(ctx, app, "/api/v1/_changes/ticket/GONE-1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var body changesResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Changes) != 0 {
+		t.Errorf("served %d records of another type's deleted id", len(body.Changes))
 	}
 }
 
