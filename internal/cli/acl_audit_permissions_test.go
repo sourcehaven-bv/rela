@@ -73,6 +73,25 @@ spaces:
 `,
 		},
 		{
+			name: "built-in sidebar row",
+			yaml: `
+builtins:
+  analysis:
+    permission: report:sales
+`,
+		},
+		{
+			name: "built-in sidebar row inside a space",
+			yaml: `
+spaces:
+  - id: sales
+    label: Sales
+    builtins:
+      analysis:
+        permission: report:sales
+`,
+		},
+		{
 			name: "navigation entry inside a space",
 			yaml: `
 spaces:

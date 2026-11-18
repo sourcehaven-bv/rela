@@ -99,7 +99,7 @@ func (d Direction) IsIncoming() bool {
 // (TKT-MJTD12), `pages` (TKT-ITQ0HL), `piles` (TKT-K3RJLH) and `channels`
 // (TKT-91BK6F) are the most recent.
 //
-//plimsoll:max-fields=29
+//plimsoll:max-fields=30
 type Config struct {
 	Version     string                       `yaml:"version"`
 	App         AppConfig                    `yaml:"app"`
@@ -130,6 +130,12 @@ type Config struct {
 	// Create menu; list order is switcher order. Mutually exclusive with a
 	// non-empty Navigation. See [Space].
 	Spaces []Space `yaml:"spaces,omitempty" json:"spaces,omitempty"`
+
+	// Builtins hides or gates the built-in sidebar rows (Search, Inbox, Flow
+	// tasks, Flow runs, Analysis) of the top-level sidebar. Mutually
+	// exclusive with Spaces, which set [Space.Builtins]. Nil: accepted,
+	// means every row is shown. See [BuiltinConfig].
+	Builtins Builtins `yaml:"builtins,omitempty" json:"builtins,omitempty"`
 
 	// Pages are tabbed screens, keyed by page id, that a `page:` navigation
 	// entry links to. See [Page].

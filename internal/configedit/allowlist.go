@@ -427,6 +427,8 @@ var locked = map[File][]string{
 		"git.**", "palette.**",
 		"documents.**", "feeds.**", "caldav.**", "commands.**", "actions.**", "webhooks.**",
 		"pages.**", "next_action_bands.**", "next_actions.**", "account.**", "lists.*.create_world",
+		// Built-in sidebar rows (TKT-JEAR2UA): not in the Configure space yet.
+		"builtins.**", "spaces.[].builtins.**",
 		// Where suggestions appear (TKT-6EEXXE), locked like next_actions.
 		// Calendars and gantts carry the key too, but those trees are
 		// editable whole (calendars.**, gantts.**).

@@ -44,6 +44,10 @@ type Space struct {
 	// Navigation is the space's sidebar, with the same shape and validation
 	// as the top-level `navigation:`.
 	Navigation []NavigationEntry `yaml:"navigation,omitempty" json:"navigation,omitempty"`
+
+	// Builtins hides or gates the built-in sidebar rows in this space. Nil:
+	// accepted, means every row is shown. See [BuiltinConfig].
+	Builtins Builtins `yaml:"builtins,omitempty" json:"builtins,omitempty"`
 }
 
 // spaceIDPattern is the shape of [Space.ID]: short, lowercase and safe as a
