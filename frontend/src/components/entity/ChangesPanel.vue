@@ -103,7 +103,9 @@ onBeforeUnmount(() => controller?.abort())
   >
     <h2 id="changes-heading" class="panel-heading">{{ t('audit.changes.title') }}</h2>
     <p v-if="error" class="panel-error" role="alert">{{ error }}</p>
-    <p v-else-if="changes.length === 0" class="panel-note">{{ t('audit.changes.empty') }}</p>
+    <p v-else-if="changes.length === 0 && !nextBefore" class="panel-note">
+      {{ t('audit.changes.empty') }}
+    </p>
     <ol v-if="changes.length > 0" class="change-list">
       <li v-for="c in changes" :key="c.seq" class="change-item" data-testid="change-row">
         <div class="change-line">

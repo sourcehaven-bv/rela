@@ -119,4 +119,48 @@ describe('ChangesPanel', () => {
     await flushPromises()
     expect(wrapper.find('.changes-panel').exists()).toBe(false)
   })
+
+  it('offers Load more, not "no changes", for an empty page with a cursor', async () => {
+    useSchemaStore().setAudit({ changes: true, global: false })
+    getChangesMock.mockResolvedValue({ changes: [], next_before: 40 })
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(wrapper.find('.panel-note').exists()).toBe(false)
+    expect(wrapper.find('.panel-more button').exists()).toBe(true)
+  })
+
+  describe('a failed Load more', () => {
+    async function mountWithFirstPage() {
+      useSchemaStore().setAudit({ changes: true, global: false })
+      getChangesMock.mockResolvedValueOnce({
+        changes: [{ seq: 50, time: '2026-01-02T10:00:00Z', op: 'update', user: 'a' }],
+        next_before: 50,
+      })
+      const wrapper = mountPanel()
+      await flushPromises()
+      expect(wrapper.findAll('[data-testid="change-row"]')).toHaveLength(1)
+      return wrapper
+    }
+
+    it('drops the held list when the read is refused', async () => {
+      const wrapper = await mountWithFirstPage()
+      getChangesMock.mockRejectedValueOnce(
+        new ApiError('Not found', { kind: 'http', status: 404, original: null })
+      )
+      await wrapper.find('.panel-more button').trigger('click')
+      await flushPromises()
+      expect(wrapper.findAll('[data-testid="change-row"]')).toHaveLength(0)
+    })
+
+    it('keeps the held list and shows the error on a transient failure', async () => {
+      const wrapper = await mountWithFirstPage()
+      getChangesMock.mockRejectedValueOnce(
+        new ApiError('Unavailable', { kind: 'http', status: 503, original: null })
+      )
+      await wrapper.find('.panel-more button').trigger('click')
+      await flushPromises()
+      expect(wrapper.findAll('[data-testid="change-row"]')).toHaveLength(1)
+      expect(wrapper.find('.panel-error').exists()).toBe(true)
+    })
+  })
 })
