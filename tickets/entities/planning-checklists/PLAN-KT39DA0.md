@@ -90,13 +90,15 @@ A cell value is a scalar colour or a mapping with `color` and `label`
 needs `swimlane_property`, refuses `columns_from`; column keys must be the
 board's shown columns (declared `columns:` or else the enum values); lane keys
 likewise; the colour is a tone or `ParseColor` with the operator colours; a
-non-tone colour needs a label. A shared `resolveToneOrColor` helper in colors.go
+non-tone colour needs a label. A shared `ParseToneOrColor` helper in colors.go
 is used by both the dashboard matrix and the kanban, so both accept the same
 names.
 
-Serving: `resolveKanbanDirections` also fills `CellStyles`
-(`json:"cell_styles"`, `yaml:"-"`): column, lane to `{class, label, tone}`. The
-SPA resolves the class to two tokens with a new `styleTokens` helper and passes
+Serving: `resolveKanbanDirections` calls `ResolveKanbanCellClasses`, which sets
+`Class` (`yaml:"-"`, `json:"class,omitempty"`) on each cell of the existing
+`CellColors` map, so the SPA reads `cell_colors[column][lane].class` next to
+the cell's `color` and `label`. The SPA resolves the class to two tokens with
+a new `styleTokens` helper and passes
 `tone: {background, foreground, label}` on the lane's section. The library
 paints the cell background with `var(background)` and shows the label as text in
 `var(foreground)`. Both are `--rl-*` token names, so no literal colour reaches
@@ -109,7 +111,7 @@ colouring client-side from the raw names (would duplicate `ParseColor` in TS).
 **Files to modify:**
 
 - internal/dataentryconfig/config.go, colors.go, validate.go,
-dashboard_cards_validate.go, new kanban_cells.go + test
+dashboard_cards_validate.go, new validate_kanban_cells.go + test
 - internal/dataentry/api_v1.go, dashboard_fold.go + test
 - frontend/packages/rela-components/src/types/index.ts,
 components/board/RlSwimlaneColumn.vue + test
@@ -143,8 +145,8 @@ interpolation, never as HTML.
 
 **Security-Sensitive Operations:**
 
-None. The config is not secret (CLAUDE.md), so serving `cell_styles` to every
-reader of the board is fine. No entity data is involved.
+None. The config is not secret (CLAUDE.md), so serving
+`cell_colors[..][..].class` to every reader of the board is fine. No entity data is involved.
 
 ## Test Plan
 
@@ -158,7 +160,8 @@ reader of the board is fine. No entity data is involved.
 - Go table test for every validation error and the valid shapes (scalar,
 mapping, tone, kit shade with label, operator colour with label).
 - Go test that the YAML scalar and mapping forms both decode.
-- Go test that the served config has `cell_styles` with the class and label.
+- Go test that the served config has `cell_colors[..][..].class` set, next to
+the label.
 - Vitest: `styleTokens` per class form; RlSwimlaneColumn paints a toned cell
 and shows the label; KanbanView passes the tone to the right cell.
 - e2e: a fixture board with cell colours; the spec checks the label text and
