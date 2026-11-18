@@ -335,10 +335,11 @@ func resolveNamedWorld(ctx context.Context, lookup WorldLookup, name, defaultNam
 // Deliberately conservative, and the list has grown deliberately: the
 // collection list (`/{plural}`), the single-entity GET (`/{plural}/{id}`) and
 // the underscore routes named one at a time below — `_views`, `_history`,
-// `_next_action`, `_search`, `_position` and the `_piles` reads. Every other
-// underscore endpoint (analyze, documents, feeds) is refused, along
-// with every sub-resource of an entity except its export (relations,
-// attachments, the list export), because each reaches content through a path
+// `_next_action`, `_search`, `_position`, `_page_status`, the `_piles` reads
+// and `_dashboard/card`. Every other underscore endpoint (analyze, documents,
+// feeds) is refused. Of an entity's sub-resources only its export and its
+// `mentioned-by` backlinks are admitted; the rest (relations, attachments) and
+// the list export are refused, because each reaches content through a path
 // that is still world-blind.
 //
 // Each admission carries its own justification at the call site rather than a
@@ -356,10 +357,10 @@ func worldCapablePath(path string) bool {
 	if trimmed == "" {
 		return false
 	}
-	// The ONE underscore route that is world-capable: the entity view
+	// The FIRST underscore route that is world-capable: the entity view
 	// (TKT-WRLDAPI item 4b). It is named exactly rather than admitted by a
 	// prefix rule, so widening the underscore family stays a deliberate act —
-	// every other `_`-prefixed endpoint remains refused by the clause below.
+	// every `_`-prefixed endpoint not named here is refused by the clause below.
 	if isWorldCapableViewPath(trimmed) {
 		return true
 	}
@@ -415,15 +416,15 @@ func worldCapablePath(path string) bool {
 	if trimmed == "_search" || trimmed == "_position" {
 		return true
 	}
-	// `_page_status` (TKT-MWZF0UO) judges each step of a steps page over the
-	// rows the step's list shows. A world-bound page lists the world's faces,
+	// The SIXTH, named exactly: `_page_status` (TKT-MWZF0UO). It judges each
+	// step of a steps page over the rows the step's list shows. A world-bound page lists the world's faces,
 	// so the check must judge those faces too, or a step would be marked by
 	// rows the page does not show. Its reads are the list pipeline's
 	// (configuredListRows), which take the world on ctx.
 	if trimmed == "_page_status" {
 		return true
 	}
-	// The SIXTH, named by its read shapes: piles (TKT-K3RJLH). A pile's
+	// The SEVENTH, named by its read shapes: piles (TKT-K3RJLH). A pile's
 	// items are references, and every read of them (the list counts, one
 	// pile, the export, and the pile scope through `_position`) resolves
 	// them in ONE batch through the visibility resolver in the request's
@@ -435,7 +436,7 @@ func worldCapablePath(path string) bool {
 	if isWorldCapablePilesPath(trimmed) {
 		return true
 	}
-	// The SEVENTH, named exactly: one dashboard card's value (TKT-2SGPJZ).
+	// The EIGHTH, named exactly: one dashboard card's value (TKT-2SGPJZ).
 	// A `list:` card is the list's rows, read through the list pipeline,
 	// which takes the world from ctx like the list endpoint itself. Refusing
 	// the world would count a card in the default world while its click-
