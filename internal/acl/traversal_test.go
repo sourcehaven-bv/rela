@@ -237,6 +237,18 @@ func TestFieldRestricted(t *testing.T) {
 	p := &Policy{
 		Roles: map[string]RoleDef{
 			"a": {Visible: map[string][]FieldGrant{"page@draft": {{Field: "title"}}}},
+			"b": {Visible: map[string][]FieldGrant{"account": {
+				{Field: "terms_accepted"}, {Field: "name"}, {Field: "status", When: "entity.owner == 'x'"},
+			}}},
+			"c": {Visible: map[string][]FieldGrant{"account": {{Field: "terms_accepted"}, {Field: "status"}}}},
+			"d": {Read: []string{"account"}},
+			"e": {Visible: map[string][]FieldGrant{"item": {
+				{Field: "code", When: "entity.owner == 'x'"}, {Field: "code"},
+			}}},
+			"f": {Visible: map[string][]FieldGrant{
+				"page":       {{Field: "title"}},
+				"page@draft": {{Field: "title"}},
+			}},
 		},
 		ClientBaselines: map[string]ClientBaseline{
 			"apps": {AppliesTo: []string{"app"}, Restriction: Restriction{
@@ -256,6 +268,11 @@ func TestFieldRestricted(t *testing.T) {
 		{"named by a baseline's redact:", "datalek", "notes", true},
 		{"not named by a baseline's redact:", "datalek", "owner", false},
 		{"a type nothing gates", "risico", "owner", false},
+		{"listed without a when by every role's visible:", "account", "terms_accepted", false},
+		{"listed by one role's visible: and left out by another's", "account", "name", true},
+		{"listed by one role and shown only under a when by another", "account", "status", true},
+		{"left out of every role's visible:", "account", "org_id", true},
+		{"listed both with and without a when", "item", "code", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := p.FieldRestricted(tc.typ, tc.prop); got != tc.want {
@@ -265,7 +282,7 @@ func TestFieldRestricted(t *testing.T) {
 	}
 	wild := &Policy{Roles: map[string]RoleDef{"w": {Visible: map[string][]FieldGrant{"*": {{Field: "title"}}}}}}
 	if !wild.FieldRestricted("risico", "title") {
-		t.Error(`a role's visible: on "*" restricts every type`)
+		t.Error(`a role's visible: on "*" restricts every type, listed or not`)
 	}
 }
 
