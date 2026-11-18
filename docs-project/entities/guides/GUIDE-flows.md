@@ -128,7 +128,9 @@ script (an action, a webhook action, a scheduled script) and a trigger's
 
 - The run is started by the flow's `run_as`, the identity that writes
   its outputs. The person or script that created the entity needs no
-  permission on the flow.
+  permission on the flow. So anyone who may create the subject makes
+  `run_as` write. Grant `run_as` only the writes the outputs make, and
+  use `when:` to narrow which creates start a run.
 - On SQLite and PostgreSQL the run is stored in the same transaction as
   the entity. If the create fails or rolls back, no run exists. Because
   the run is part of the create, a retried request that creates nothing
