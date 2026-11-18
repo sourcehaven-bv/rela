@@ -20,9 +20,14 @@ import (
 type taskFlows struct {
 	fakeFlows
 	tasks []flowview.Task
+	// flows replaces the default flows when set.
+	flows []flowview.Flow
 }
 
 func (f *taskFlows) Flows() []flowview.Flow {
+	if f.flows != nil {
+		return f.flows
+	}
 	return []flowview.Flow{
 		{Name: "signup", Label: "Signup", Subject: "ticket"},
 		{Name: "review", Subject: "ticket"},
@@ -219,6 +224,85 @@ func TestNextActionPage_RefreshTypes(t *testing.T) {
 			t.Parallel()
 			cfg := &dataentryconfig.Config{NextActions: tc.sources}
 			require.Equal(t, tc.want, tc.page.refreshTypes(cfg))
+		})
+	}
+}
+
+// flowTaskACL is a real policy: alice reads tickets but sees only their
+// title, and reads no features; bob reads tickets with every field.
+const flowTaskACL = `
+roles:
+  viewer:
+    read: [ticket]
+    visible:
+      ticket:
+        - field: title
+  editor:
+    read: [ticket]
+assignments:
+  alice: viewer
+  bob: editor
+`
+
+// flowTaskACLApp wires flowTaskACL as the read gate and field resolver, with
+// one task on a feature alice cannot read (the oldest) and one on a ticket
+// whose status she cannot see.
+func flowTaskACLApp(t *testing.T, src dataentryconfig.NextActionSource) (*App, *acl.Declarative) {
+	t.Helper()
+	app, d := buildFieldPolicyApp(t, flowTaskACL)
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket",
+		Properties: map[string]any{"title": "alpha rocket", "status": "zeta777status"}})
+	seedEntity(app, &entity.Entity{ID: "FEAT-SECRET", Type: "feature",
+		Properties: map[string]any{"title": "hidden feature title"}})
+	intake := waiting("RUN-1", "intake", "FEAT-SECRET", t0)
+	signup := waiting("RUN-2", "signup", "TKT-001", t0.Add(time.Hour))
+	require.NoError(t, SetFlows(app, &taskFlows{
+		tasks: []flowview.Task{intake, signup},
+		flows: []flowview.Flow{
+			{Name: "signup", Label: "Signup", Subject: "ticket"},
+			{Name: "intake", Subject: "feature"},
+		},
+	}))
+	src.Band = "banner"
+	src.Source = dataentryconfig.NextActionSourceFlowTasks
+	src.Suggest = "{step} for {subject} ({status}, {title})"
+	withNextActions(t, app,
+		[]dataentryconfig.NextActionBand{{ID: "banner", Prominence: dataentryconfig.ProminenceBanner}},
+		map[string]dataentryconfig.NextActionSource{"flow-tasks": src})
+	return app, d
+}
+
+// A task whose subject the reader may not read names the subject by its
+// address only, as the Flow tasks list does: no title, no property.
+func TestNextAction_FlowTasksACLUnreadableSubject(t *testing.T) {
+	app, d := flowTaskACLApp(t, dataentryconfig.NextActionSource{})
+	got, code := getNextAction(gateCtxFor(aliceCtx(), t, d), t, app)
+	require.Equal(t, http.StatusOK, code)
+	require.NotNil(t, got.Suggestion)
+	require.Equal(t, "FEAT-SECRET", got.Suggestion.EntityID)
+	require.Equal(t, "Company details for FEAT-SECRET ({status}, {title})", got.Suggestion.Message)
+}
+
+// A property the reader's role hides stays a literal placeholder; a visible
+// one is filled. A role without a visible: block sees both.
+func TestNextAction_FlowTasksACLHiddenField(t *testing.T) {
+	src := dataentryconfig.NextActionSource{Flows: []string{"signup"}}
+	tests := []struct {
+		name string
+		ctx  context.Context
+		want string
+	}{
+		{"hidden status stays a placeholder", aliceCtx(), "Company details for alpha rocket ({status}, alpha rocket)"},
+		{"no visible block shows every field", bobCtx(),
+			"Company details for alpha rocket (zeta777status, alpha rocket)"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			app, d := flowTaskACLApp(t, src)
+			got, code := getNextAction(gateCtxFor(tc.ctx, t, d), t, app)
+			require.Equal(t, http.StatusOK, code)
+			require.NotNil(t, got.Suggestion)
+			require.Equal(t, tc.want, got.Suggestion.Message)
 		})
 	}
 }
