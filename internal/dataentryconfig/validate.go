@@ -177,6 +177,7 @@ var sectionFieldWidgetTypes = map[string][]string{
 	WidgetRrule:       {metamodel.PropertyTypeRrule},
 	WidgetFile:        {metamodel.PropertyTypeFile},
 	WidgetExternalRef: {metamodel.PropertyTypeExternalRef},
+	WidgetURL:         {metamodel.PropertyTypeString},
 }
 
 // widgetAcceptsProperty reports whether a widget can render a property, and if

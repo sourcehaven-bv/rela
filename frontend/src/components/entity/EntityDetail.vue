@@ -61,7 +61,7 @@ import type { AutoSaveOwner } from '@/composables/useSectionAutoSave'
 import type { PropertyItem } from '@/components/common/PropertyDisplay.vue'
 import { ChevronRight } from 'lucide-vue-next'
 import { defaultRegistry } from '@/widgets/registry'
-import { isDenseEmpty, viewFieldRoutingHint } from '@/widgets/viewRouting'
+import { isDenseEmpty, viewFieldRoutingHintFor } from '@/widgets/viewRouting'
 import { formatDisplayNumber } from '@/utils/format'
 import type { WidgetRoutingHint } from '@/widgets/types'
 import type { PropertyDef } from '@/types'
@@ -2044,9 +2044,9 @@ interface NestedCell {
 // fieldRowsFor returns the precomputed FieldRow array for one entity's
 // fields. Cards/list templates iterate this instead of calling helper
 // functions inline per cell.
-function fieldRowsFor(ent: { fields?: ViewSectionField[] }): FieldRow[] {
+function fieldRowsFor(ent: { type: string; fields?: ViewSectionField[] }): FieldRow[] {
   return (ent.fields ?? []).map((field) => {
-    const hint = viewFieldRoutingHint(field)
+    const hint = viewFieldRoutingHintFor(field, ent.type, getPropertyDef)
     return {
       field,
       hint,

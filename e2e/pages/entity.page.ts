@@ -108,6 +108,11 @@ export class EntityPage extends BasePage {
     await expect(this.page.locator('main').getByText(matcher).first()).toBeVisible();
   }
 
+  /** A url-widget property on the detail page; `href` null means plain text. */
+  async expectUrlProperty(text: string, href: string | null) {
+    await this.expectUrlValue(this.page.locator("main"), text, href);
+  }
+
   /** Click the Edit action on the entity view to navigate to the edit form. */
   async clickEdit() {
     await expect(this.editButton).toBeVisible();

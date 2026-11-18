@@ -298,6 +298,11 @@ export class ListPage extends BasePage {
     ).toBeVisible();
   }
 
+  /** A url-widget cell in the row; `href` null means plain text. */
+  async expectUrlCellInRow(id: string, text: string, href: string | null) {
+    await this.expectUrlValue(this.rowById(id).locator('.rl-table-row__cell'), text, href);
+  }
+
   /** Count of cells in the row marked as inaccessible (rendered with
    *  the lock indicator). Used by git-crypt.spec.ts to assert that
    *  encrypted entities lock every visible column. */
