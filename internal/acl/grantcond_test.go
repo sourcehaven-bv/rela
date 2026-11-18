@@ -11,7 +11,6 @@ import (
 )
 
 func TestGrantConditionBind(t *testing.T) {
-	midnight := time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)
 	afternoon := time.Date(2026, 11, 16, 15, 4, 5, 0, time.UTC)
 	isDate := store.PropPredicate{Property: "until", Op: store.PropIsDate}
 	ge := func(v string) store.PropPredicate {
@@ -36,12 +35,6 @@ func TestGrantConditionBind(t *testing.T) {
 		{"lt today", term(GrantLT, OperandToday), afternoon, []store.PropPredicate{isDate, le("2026-11-15")}, true},
 		{"eq today", term(GrantEq, OperandToday), afternoon,
 			[]store.PropPredicate{isDate, ge("2026-11-16"), le("2026-11-16")}, true},
-		{"ge now afternoon", term(GrantGE, OperandNow), afternoon, []store.PropPredicate{isDate, ge("2026-11-17")}, true},
-		{"ge now midnight", term(GrantGE, OperandNow), midnight, []store.PropPredicate{isDate, ge("2026-11-16")}, true},
-		{"lt now afternoon", term(GrantLT, OperandNow), afternoon, []store.PropPredicate{isDate, le("2026-11-16")}, true},
-		{"lt now midnight", term(GrantLT, OperandNow), midnight, []store.PropPredicate{isDate, le("2026-11-15")}, true},
-		{"le now afternoon", term(GrantLE, OperandNow), afternoon, []store.PropPredicate{isDate, le("2026-11-16")}, true},
-		{"eq now afternoon never matches", term(GrantEq, OperandNow), afternoon, nil, false},
 		{"zone is UTC", term(GrantGE, OperandToday),
 			time.Date(2026, 11, 17, 0, 30, 0, 0, time.FixedZone("CET", 3600)),
 			[]store.PropPredicate{isDate, ge("2026-11-16")}, true},

@@ -231,8 +231,8 @@ when the condition is:
   `<=`, `>` or `>=` against `today()` or a date such as `'2026-12-31'`;
 - on a string or enum property: `==` against a non-empty text.
 
-The policy load fails on anything else, such as `or`, `not`, `~=`, a
-`datetime` property, a list property or a property the relation does not
+The policy load fails on anything else, such as `or`, `not`, `~=`, `now()`,
+a `datetime` property, a list property or a property the relation does not
 declare. A `when:` also needs `requires_permission:` on the same entry,
 because whoever can edit the edge can extend the date.
 

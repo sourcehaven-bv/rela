@@ -21,7 +21,7 @@ const grantEdgeVar = "edge"
 //
 //   - an AND of comparisons `edge.<prop> <op> <operand>`
 //   - on a `date` property with the default format: ==, <, <=, >, >= against
-//     today() or a date literal at UTC midnight (now() once TKT-08ZI5XN adds it)
+//     today() or a date literal at UTC midnight
 //   - on a string or enum property: == against a non-empty literal
 //
 // Anything else fails the policy load. A datetime property is refused
@@ -48,7 +48,7 @@ func grantConditionCompiler(meta *metamodel.Metamodel) acl.GrantConditionCompile
 			}
 			return nil, err
 		}
-		cmps, ok := prog.OrderedConjunction(grantEdgeVar, map[string]bool{"today": true, "now": true})
+		cmps, ok := prog.OrderedConjunction(grantEdgeVar, map[string]bool{"today": true})
 		if !ok {
 			return nil, errors.New("must be an AND of comparisons `edge.<property> <op> <value>`, " +
 				"with today() or a literal as the value")
@@ -86,8 +86,6 @@ func grantTerm(def *metamodel.RelationDef, c predicate.OrderedComparison) (acl.G
 		switch c.Func {
 		case "today":
 			term.Operand = acl.OperandToday
-		case "now":
-			term.Operand = acl.OperandNow
 		default:
 			d, isDate := c.Literal.(predicate.Date)
 			if !isDate {
@@ -107,7 +105,7 @@ func grantTerm(def *metamodel.RelationDef, c predicate.OrderedComparison) (acl.G
 		s, isString := c.Literal.(predicate.String)
 		if c.Op != "==" || !isString || s.String() == "" {
 			return acl.GrantTerm{}, fmt.Errorf("edge.%s: only a date property may be ordered or "+
-				"compared with today() or now(); others compare with == and a non-empty text", c.Attribute)
+				"compared with today(); others compare with == and a non-empty text", c.Attribute)
 		}
 		term.Literal = s.String()
 	}
