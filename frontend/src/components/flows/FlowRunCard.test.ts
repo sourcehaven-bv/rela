@@ -303,7 +303,7 @@ describe('FlowRunCard for a reader who does not manage the flow', () => {
     await flushPromises()
     const fields = wrapper.find('.flow-step-form__fields')
     expect(fields.classes()).not.toContain('properties-list')
-    const labels = fields.findAll('label').map((l) => l.text().replaceAll('*', '').trim())
+    const labels = fields.findAll('label').map((l) => l.text().replace(/\*/g, '').trim())
     expect(labels).toEqual(['Company', 'Vat number'])
   })
 
