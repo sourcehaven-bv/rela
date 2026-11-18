@@ -2728,6 +2728,24 @@ is read-gated on the same principles as everything else:
   that fails is left out, so the list does not reveal that a hidden entity
   was tagged.
 
+### Reading the audit log (`audit:read`)
+
+The data-entry app reads the database audit log in two ways (see
+[Audit log](audit-log.md#in-the-web-app)):
+
+- **The Changes tab** of an entity follows the history rules above: the
+  same 404 for an entity the caller cannot read, and `history:read` for a
+  deleted one. A record that names another entity the caller cannot read now
+  is left out, and a record's text keeps only the property names the caller
+  sees on every row of the type.
+- **The global view** needs **`audit:read`**. It serves every record whole,
+  for every entity, deleted ones and refused writes included, so it is a
+  super-permission like `history:read`. It is an elevated read: without a
+  policy, and under `--read-only`, it is refused even though those modes
+  otherwise allow every read. A caller without it gets a 403 that names the
+  permission; the route is configuration, not an entity. Each page served
+  writes an `audit-read` record.
+
 ### Historical field redaction fails closed (`history:read-redacted`)
 
 Field-level `visible:` redaction of a *historical* snapshot **fails closed**.
