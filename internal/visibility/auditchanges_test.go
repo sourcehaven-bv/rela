@@ -440,3 +440,25 @@ func TestEntityChanges_FullPageStopsReading(t *testing.T) {
 	_, _, err = visibility.EntityChanges(ctx, src, readableSet{}, allFields{}, q)
 	require.Error(t, err)
 }
+
+// TestEntityChanges_RenameAwayChecksNewID: on the old id's list, a rename to
+// a new id the reader cannot read is left out; one it can read is shown.
+func TestEntityChanges_RenameAwayChecksNewID(t *testing.T) {
+	ctx := context.Background()
+	src := &fakeEntries{entries: []audit.Entry{
+		{Seq: 2, Record: audit.Record{
+			Op:     audit.OpRenameEntity,
+			Before: &audit.Subject{Kind: "entity", Type: "doc", ID: "DOC-1"},
+			After:  &audit.Subject{Kind: "entity", Type: "doc", ID: "NEW-1"},
+		}},
+		entityEntry(1, audit.OpCreateEntity, "doc"),
+	}}
+	q := visibility.ChangesQuery{Ref: entity.Ref{ID: "DOC-1"}, Type: "doc", Limit: 10}
+	page, _, err := visibility.EntityChanges(ctx, src, readableSet{}, allFields{}, q)
+	require.NoError(t, err)
+	require.Equal(t, []int64{1}, changeSeqs(page))
+
+	page, _, err = visibility.EntityChanges(ctx, src, readableSet{"NEW-1": "doc"}, allFields{}, q)
+	require.NoError(t, err)
+	require.Equal(t, []int64{2, 1}, changeSeqs(page))
+}

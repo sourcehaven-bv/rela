@@ -2746,6 +2746,22 @@ The data-entry app reads the database audit log in two ways (see
   permission; the route is configuration, not an entity. Each page served
   writes an `audit-read` record.
 
+Limits of the Changes tab, accepted on purpose:
+
+- A deleted entity's list is served under a type only when the log holds
+  the record that created it as that type (or renamed or converted it
+  into that type). Without that record, only a live entity has a list.
+- A record is left out when another entity it names is unreadable *now*.
+  If that other id is later reused by an entity the caller can read, the
+  old record shows again, naming the new entity's id.
+- When a page reads many records the caller may not see, it stops after
+  a fixed number of reads and returns a cursor. That cursor is the
+  position of a record the caller was not shown, so it tells that such a
+  record exists, but nothing about it.
+- The `audit-read` record of a global view page is written best-effort,
+  like other audit records outside a write transaction: if the write
+  fails, the page is still served and the failure is logged.
+
 ### Historical field redaction fails closed (`history:read-redacted`)
 
 Field-level `visible:` redaction of a *historical* snapshot **fails closed**.

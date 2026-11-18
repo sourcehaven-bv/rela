@@ -106,8 +106,9 @@ const changeScanRounds = 4
 //
 // A record is shown only when every other entity it names (a relation's far
 // end) is readable to the principal now, by one [ReadableIDs] batch per
-// source read. The other id of a rename or conversion is this entity's own
-// earlier id, so it needs no check. An entity record must be of q.Type and
+// source read. The earlier id of a rename or conversion into q.Ref is this
+// entity's own earlier name, so it needs no check; the later id of a rename
+// away from q.Ref is checked. An entity record must be of q.Type and
 // at q.Ref's face, and a relation must leave q.Ref from q.Ref's face, so a
 // record of another type or face that held the id is never shown. A record
 // of a hidden or deleted far end is left out entirely, as the live relation
@@ -274,9 +275,10 @@ func isConversionBefore(rec audit.Record, s *audit.Subject) bool {
 	return rec.Op == audit.OpConvertEntity && s == rec.Before && rec.After != nil && rec.After.ID == s.ID
 }
 
-// otherIDs returns the ids rec names besides id, leaving out the other id
-// of a rename or conversion of id: that is id's own earlier or later name,
-// not another entity.
+// otherIDs returns the ids rec names besides id, leaving out the earlier id
+// of a rename or conversion into id: that is id's own earlier name, not
+// another entity. The later id of a rename away from id is kept, so it is
+// checked like any other: the entity may now be hidden under its new id.
 func otherIDs(rec audit.Record, id string) []string {
 	var out []string
 	for _, s := range []*audit.Subject{rec.Subject, rec.Before, rec.After} {
@@ -292,22 +294,13 @@ func otherIDs(rec audit.Record, id string) []string {
 	return out
 }
 
-// isLineage reports whether s is the Before or After of a rename or
-// conversion whose other side is id.
+// isLineage reports whether s is the Before of a rename or conversion into
+// id.
 func isLineage(rec audit.Record, s *audit.Subject, id string) bool {
 	if rec.Op != audit.OpRenameEntity && rec.Op != audit.OpConvertEntity {
 		return false
 	}
-	if rec.Before == nil || rec.After == nil {
-		return false
-	}
-	switch s {
-	case rec.Before:
-		return rec.After.ID == id
-	case rec.After:
-		return rec.Before.ID == id
-	}
-	return false
+	return s == rec.Before && rec.After != nil && rec.After.ID == id
 }
 
 func changeRecord(ctx context.Context, fields FieldVisibility, e audit.Entry) ChangeRecord {

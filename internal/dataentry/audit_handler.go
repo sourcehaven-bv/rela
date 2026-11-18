@@ -187,7 +187,9 @@ type auditResponse struct {
 // log, and the permission is the boundary. A caller without it gets a 403
 // naming the permission, since the route is configuration, not an entity.
 // Every page served is itself recorded as an audit-read record, with the
-// cursor and count but none of the content.
+// cursor and count but none of the content. That record is best-effort: it
+// goes on the audit sink's queue, and the page is served even when the sink
+// later drops it (which the sink logs).
 //
 //archplan:auth=required
 func handleV1Audit(a *App, w http.ResponseWriter, r *http.Request) {
