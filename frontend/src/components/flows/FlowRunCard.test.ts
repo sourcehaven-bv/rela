@@ -84,7 +84,7 @@ describe('FlowRunCard', () => {
     await flushPromises()
     expect(wrapper.find('[data-testid="flow-waiting-roles"]').text()).toContain('hr')
     const branch = wrapper.find('[data-testid="flow-branch"]')
-    expect(branch.text()).toContain('to Review')
+    expect(branch.text()).toContain('review')
     expect(branch.text()).toContain('entity.documents == true')
     expect(wrapper.findAll('[data-testid="flow-timer"]')).toHaveLength(1)
   })
@@ -296,7 +296,7 @@ describe('FlowRunCard for a reader who does not manage the flow', () => {
     expect(wrapper.find('details').exists()).toBe(false)
   })
 
-  it('labels each field from the schema, or as words, one per row', async () => {
+  it('labels each field from the schema, or with its name, one per row', async () => {
     const wrapper = mountDoer(
       run({ _actions: doer, waiting: { you_hold: true, writes: ['company_name', 'vat_number'] } })
     )
@@ -304,7 +304,7 @@ describe('FlowRunCard for a reader who does not manage the flow', () => {
     const fields = wrapper.find('.flow-step-form__fields')
     expect(fields.classes()).not.toContain('properties-list')
     const labels = fields.findAll('label').map((l) => l.text().replace(/\*/g, '').trim())
-    expect(labels).toEqual(['Company', 'Vat number'])
+    expect(labels).toEqual(['Company', 'vat_number'])
   })
 
   it('says in one line whom the step waits for, or that it is processed or stuck', async () => {
@@ -339,18 +339,5 @@ describe('FlowRunCard for a reader who does not manage the flow', () => {
       expect(wrapper.find('[data-testid="flow-waiting-job"]').exists()).toBe(false)
       expect(wrapper.find('[data-testid="flow-timer"]').exists()).toBe(false)
     }
-  })
-
-  it('names a state without a label in words', async () => {
-    const wrapper = mountDoer(
-      run({
-        _actions: doer,
-        state: 'check_vat',
-        state_label: 'check_vat',
-        waiting: { you_hold: false },
-      })
-    )
-    await flushPromises()
-    expect(wrapper.find('[data-testid="flow-run-state"]').text()).toBe('Check vat')
   })
 })

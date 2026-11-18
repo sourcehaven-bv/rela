@@ -20,7 +20,6 @@ import { getEntity } from '@/api/entities'
 import { ApiError, getErrorMessage } from '@/api/errors'
 import { useSchemaStore, useUIStore } from '@/stores'
 import type { FormFieldOrRelation, PropertyDef } from '@/types'
-import { humanize } from './flowView'
 
 const props = defineProps<{
   run: FlowRun
@@ -61,7 +60,7 @@ const fields = computed<StepField[]>(() => {
   return writes.value.map((name) => ({
     name,
     def: props_[name],
-    field: { property: name, label: props_[name]?.label || humanize(name) },
+    field: { property: name, label: props_[name]?.label || name },
   }))
 })
 

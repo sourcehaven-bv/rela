@@ -19,8 +19,8 @@ signup.
 - The step form shows one labelled, full-width field per row. It used the
 12-column property grid without grid items, so every field took one column and
 the labels overlapped.
-- Fields, states, flows, branches and timers without a label show their
-name in words (`check_vat` reads as "Check vat").
+- Step form fields take the schema `label`. Without one they show the
+name, as everywhere else (DEC-6C1NAA): the project adds labels.
 - A flow may set `manage: { permission: P }`. P then cancels and retries a
 run instead of the start permission. `_actions.manage` reports it, and the card
 shows roles, guards, timers, job attempts, the diagram and the timeline only

@@ -13,7 +13,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { FlowJob, FlowWaiting } from '@/api/flows'
-import { formatInstant, humanize, labelOf } from './flowView'
+import { formatInstant, labelOf } from './flowView'
 
 const props = defineProps<{
   waiting: FlowWaiting
@@ -118,11 +118,9 @@ function branchVerdict(b: { holds: boolean; failed?: boolean }): string {
       <ul class="flow-waiting__list">
         <li v-for="(b, i) in waiting.branches" :key="i" data-testid="flow-branch">
           <span v-if="b.fork?.length">
-            {{ t('flows.waiting.branchFork', { states: b.fork.map(humanize).join(', ') }) }}
+            {{ t('flows.waiting.branchFork', { states: b.fork.join(', ') }) }}
           </span>
-          <span v-else>{{
-            t('flows.waiting.branchTo', { state: b.label || humanize(b.to) })
-          }}</span>
+          <span v-else>{{ t('flows.waiting.branchTo', { state: b.label || b.to }) }}</span>
           <code v-if="b.guard" class="flow-waiting__guard">{{ b.guard }}</code>
           <span
             class="flow-waiting__verdict"
@@ -145,8 +143,8 @@ function branchVerdict(b: { holds: boolean; failed?: boolean }): string {
           <span class="flow-waiting__muted">
             {{
               tm.due
-                ? t('flows.waiting.timerDue', { state: humanize(tm.to), at: formatInstant(tm.due) })
-                : t('flows.waiting.timerTo', { state: humanize(tm.to) })
+                ? t('flows.waiting.timerDue', { state: tm.to, at: formatInstant(tm.due) })
+                : t('flows.waiting.timerTo', { state: tm.to })
             }}
           </span>
         </li>

@@ -39,7 +39,6 @@ import FlowStepForm from './FlowStepForm.vue'
 import FlowDiagram from './FlowDiagram.vue'
 import {
   formatInstant,
-  humanize,
   labelOf,
   runHref,
   statusLabel,
@@ -235,7 +234,7 @@ async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: str
       >
         <header class="flow-run-card__header">
           <span class="flow-run-card__muted">
-            {{ t('flows.run.branch', { branch: humanize(b.place.branch) }) }}
+            {{ t('flows.run.branch', { branch: b.place.branch }) }}
           </span>
           <span class="flow-run-card__state">{{
             labelOf(b.place.state_label, b.place.state)

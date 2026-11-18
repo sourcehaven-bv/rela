@@ -47,8 +47,8 @@ describe('flowView', () => {
       t
     )
     expect(entries.map((e) => e.summary)).toEqual([
-      'flows.log.timer {"state":"Escalated","timer":"Stalled"}',
-      'flows.log.start {"state":"Collect"}',
+      'flows.log.timer {"state":"escalated","timer":"stalled"}',
+      'flows.log.start {"state":"collect"}',
     ])
     expect(entries[0].current).toBe(true)
     expect(entries[0].tone).toBe('amber')
@@ -96,7 +96,7 @@ describe('flowView', () => {
     )
     expect(entries.map((e) => e.current)).toEqual([false, true, false, false])
     expect(entries[1].summary).toBe(
-      'flows.log.inBranch {"summary":"flows.log.done {\\"state\\":\\"Legal\\"}","branch":"Legal"}'
+      'flows.log.inBranch {"summary":"flows.log.done {\\"state\\":\\"legal\\"}","branch":"legal"}'
     )
   })
 
@@ -105,7 +105,7 @@ describe('flowView', () => {
       run({ log: [{ at: '2026-01-01T10:00:00Z', state: 'joined', via: 'join' }] }),
       t
     )
-    expect(entries[0].summary).toBe('flows.log.join {"state":"Joined"}')
+    expect(entries[0].summary).toBe('flows.log.join {"state":"joined"}')
   })
 
   it('marks no entry current once the run has finished', () => {
@@ -127,9 +127,8 @@ describe('flowView', () => {
 describe('labelOf', () => {
   it.each([
     ['Company details', 'details', 'Company details'],
-    ['check_vat', 'check_vat', 'Check vat'],
-    ['', 'billing-email', 'Billing email'],
-    [undefined, 'ready', 'Ready'],
+    ['', 'check_vat', 'check_vat'],
+    [undefined, 'ready', 'ready'],
   ])('labelOf(%j, %j) is %j', (label, name, want) => {
     expect(labelOf(label, name)).toBe(want)
   })

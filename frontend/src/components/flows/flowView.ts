@@ -28,20 +28,11 @@ const STATUS_TONES: Record<string, StatusColor> = {
 }
 
 /**
- * A configuration name as words, for a name without a label:
- * `company_name` and `check-vat` become `Company name` and `Check vat`.
- */
-export function humanize(name: string): string {
-  const words = name.replace(/[_-]+/g, ' ').trim()
-  return words ? words.charAt(0).toUpperCase() + words.slice(1) : name
-}
-
-/**
- * The label of a flow or state. The server sends the name as the label when
- * the flow declares none; that name reads as words instead.
+ * The label of a flow, state or timer, or its name when it has none. A name
+ * is never turned into a label (DEC-6C1NAA): the author writes `label:`.
  */
 export function labelOf(label: string | undefined, name: string): string {
-  return label && label !== name ? label : humanize(name)
+  return label || name
 }
 
 /** The status in the interface language; an unknown status as it came. */
@@ -63,7 +54,7 @@ export function formatInstant(value: string | undefined): string {
 /** What one timeline entry says, without the actor. */
 function eventSummary(e: FlowEvent, t: Translate): string {
   const summary = moveSummary(e, t)
-  return e.branch ? t('flows.log.inBranch', { summary, branch: humanize(e.branch) }) : summary
+  return e.branch ? t('flows.log.inBranch', { summary, branch: e.branch }) : summary
 }
 
 function moveSummary(e: FlowEvent, t: Translate): string {
@@ -77,7 +68,7 @@ function moveSummary(e: FlowEvent, t: Translate): string {
     case 'timer':
       return t('flows.log.timer', {
         state: labelOf(e.label, e.state),
-        timer: humanize(e.timer ?? ''),
+        timer: e.timer ?? '',
       })
     case 'join':
       return t('flows.log.join', { state: labelOf(e.label, e.state) })

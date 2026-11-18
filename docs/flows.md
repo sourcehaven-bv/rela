@@ -503,10 +503,10 @@ through a role relation.
 
 **In the web app.** The entity page of a subject shows a Flows panel with
 its runs. For each run it shows the state, why the run waits, and the
-step form. A state or flow without a `label` shows its name in words:
-`check_vat` reads as "Check vat". The step form shows one field per row,
-labelled with the property's `label` from the schema, or with its name in
-words.
+step form. A state or flow without a `label` shows its name. The step
+form shows one field per row, labelled with the property's `label` from
+the schema, or with its name. Give each a `label` in the project's
+language: rela does not turn a name into a label.
 
 Someone who manages the flow sees how the run works:
 

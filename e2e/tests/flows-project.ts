@@ -31,8 +31,8 @@ export const FLOW_SEED = {
   role: "hr",
   /** The label of the property the collect step writes. */
   writes: "Documents",
-  /** The step's fields as labelled: from the schema, or the name in words. */
-  stepFields: ["Documents", "Start date"],
+  /** The step's fields as labelled: from the schema, or the property name. */
+  stepFields: ["Documents", "start_date"],
   /** The collect step's guard, which only a manager sees. */
   guard: "entity.documents == true",
 } as const;
