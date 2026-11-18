@@ -5,9 +5,9 @@ package archguard
 // "repo/relative/file.go#Func" or "...#Recv.Method". It may only shrink.
 //
 // Each entry has a category (see readCategory) and a reason that says what
-// the read is for. requestPath entries are debt. The follow-ups of
-// TKT-FED6FMM remove them: TKT-D3RAB0E and TKT-I39Y7N4 (dataentry),
-// TKT-9BKVQ9I (mcp filters) and TKT-I3MGCRT
+// the read is for. requestPath entries are debt. Each names the open ticket
+// that removes it: TKT-T0DK37 and TKT-PSBGQLY (structured search),
+// TKT-C5H506O (scopedHeaders), TKT-9BKVQ9I (mcp filters) and TKT-I3MGCRT
 // (desktopnotify).
 var unpagedReadAllowlist = map[string]unpagedRead{
 	// aclmap: the who-can report.
@@ -92,7 +92,8 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 			"the chart shows, not the type"},
 	"internal/dataentry/searchplan.go#searchPlan.page": {1, requestPath,
 		"structured /_search without a limit returns every match, as visibleListByTypes did before it; " +
-			"the filter and the ACL gate run in the store, and with a limit the GraphQuery carries it (TKT-D3RAB0E)"},
+			"the filter and the ACL gate run in the store, and with a limit the GraphQuery carries it. " +
+			"TKT-T0DK37 bounds the unlimited case; TKT-PSBGQLY lowers the shapes the plan still declines"},
 	"internal/dataentry/listpushdown.go#listPlan.run": {1, bounded,
 		"list pushdown page: the plan's GraphQuery carries Limit = perPage and Offset (planListPushdown); " +
 			"the matcher cannot see a field set in another function"},
@@ -101,7 +102,8 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 			"next action), kanban, export, feed, gantt and the command picker: every header " +
 			"of the type in the world, directly or as the ACL-scoped GraphQuery (built by scopedQuery) with " +
 			"no Limit through collectHeaders. A page scope or ?q= reads by ids instead (headersByIDs). The " +
-			"rest needs the whole filtered set in Go; TKT-D3RAB0E and TKT-I39Y7N4 page it"},
+			"rest needs the whole filtered set in Go; TKT-C5H506O moves the whole-set callers to their own read " +
+			"and pages the rest"},
 
 	// datamigration: migrations rewrite whole types.
 	"internal/datamigration/adoptface.go#faceAdoption.plan": {1, batchJob, "face adoption: scans a type for zero-face rows to move"},
