@@ -5,7 +5,8 @@ title: 'Flows: start runs on create'
 kind: enhancement
 priority: high
 effort: m
-status: ready
+started: "2026-11-18"
+status: review
 ---
 
 ## Description

@@ -85,8 +85,12 @@ func (o *OnCreate) anyHolds(ctx context.Context, f *flowcfg.Flow, starts []flowc
 		}
 		ok, err := o.e.g.holds(ctx, s.When, subj)
 		if err != nil {
+			// The error can quote a property value of the subject, so it
+			// stays at debug level.
 			slog.WarnContext(ctx, "flowengine: a create start condition failed", "flow", f.Name(),
-				"subject", subj.ID, "when", s.When.Source(), "error", err)
+				"subject", subj.ID, "when", s.When.Source())
+			slog.DebugContext(ctx, "flowengine: create start condition error", "flow", f.Name(),
+				"subject", subj.ID, "error", err)
 			continue
 		}
 		if ok {

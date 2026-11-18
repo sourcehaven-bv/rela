@@ -116,8 +116,9 @@ A flow with an `on: create` start gets a run each time an entity of its
 subject type is created and the `when:` condition, if any, holds for the
 new entity. Several `on: create` starts on one flow still give one run.
 It works for every create that goes through rela's write path: the web
-app and the API, MCP, `rela create`, a Lua script (an action, a webhook
-action, a scheduled script) and a trigger's `create` output.
+app and the API, MCP, `rela create`, `rela import --mapping`, a Lua
+script (an action, a webhook action, a scheduled script) and a trigger's
+`create` output.
 
 - The run is started by the flow's `run_as`, the identity that writes
   its outputs. The person or script that created the entity needs no
@@ -135,8 +136,13 @@ action, a scheduled script) and a trigger's `create` output.
   create still succeeds.
 
 Some ways of adding entities are not creates and start no run:
-`rela import`, `rela db load`, a conversion, a copy to another face and a
-restore from history.
+`rela import` of an export without a mapping, `rela db load`, a
+conversion, a copy to another face and a restore from history.
+
+A run's outputs can create entities that start further runs. rela stops
+such a chain after 8 starts in a row. The count is kept only while the
+runs settle right after their create; a run the flow worker settles later
+counts from zero again.
 
 ## States
 

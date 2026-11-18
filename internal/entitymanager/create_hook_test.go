@@ -3,6 +3,7 @@ package entitymanager_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -170,5 +171,46 @@ func TestCreateHook_NestedCreateFollowsUpAfterCommit(t *testing.T) {
 	}
 	if inTx {
 		t.Fatalf("the nested create was followed up inside the transaction")
+	}
+}
+
+// TestCreateLinked_InTxEndpointKeepsReadGate: a linked create nested in a
+// transaction reads its endpoint on that transaction's view, so it sees a
+// row the transaction created, and the read gate still refuses one the
+// caller cannot read, as it refuses a missing one.
+func TestCreateLinked_InTxEndpointKeepsReadGate(t *testing.T) {
+	mgr, st := writeBlindManager(t, func(store.Store) acl.ACL { return hideOneACL{hidden: "REQ-9"} })
+	link := func(ctx context.Context, to string) error {
+		d := entity.New("", "decision")
+		d.SetString("title", "d")
+		_, err := entitymanager.CreateLinked(ctx, mgr, entitymanager.LinkedCreate{
+			Entity: d, RelateType: "addresses", RelateTo: to,
+		})
+		return err
+	}
+	var visible, hidden, missing error
+	err := st.Tx(writer(), func(view store.Store) error {
+		ctx := store.ContextWithTxView(writer(), view)
+		for _, id := range []string{"REQ-8", "REQ-9"} {
+			r := entity.New(id, "requirement")
+			r.SetString("title", id)
+			if err := view.CreateEntity(ctx, r); err != nil {
+				return err
+			}
+		}
+		visible, hidden, missing = link(ctx, "REQ-8"), link(ctx, "REQ-9"), link(ctx, "REQ-404")
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Tx: %v", err)
+	}
+	if visible != nil {
+		t.Fatalf("link to a readable row created in the transaction: %v", visible)
+	}
+	if hidden == nil {
+		t.Fatal("link to a hidden row created in the transaction succeeded")
+	}
+	if got, want := strings.ReplaceAll(hidden.Error(), "REQ-9", "REQ-404"), missing.Error(); got != want {
+		t.Fatalf("hidden row answers %q, missing row %q", got, want)
 	}
 }

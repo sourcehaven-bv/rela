@@ -14,9 +14,10 @@ import (
 // entity.
 //
 // It covers every create that goes through createCore: a direct create, a
-// linked create, a batch, an import through the manager and a cascade. It
-// does not cover a copy's new face, a conversion or a history restore,
-// which bring an existing entity to a new place rather than create one.
+// linked create, a batch, a mapped import and a cascade. It does not cover
+// a copy's new face, a conversion or a history restore, which bring an
+// existing entity to a new place rather than create one, nor `rela import`
+// of an export and `rela db load`, which write to the store directly.
 type CreateHook interface {
 	// Watches reports whether a create of an entity of type typ concerns
 	// the hook. A create the hook watches always runs in a store

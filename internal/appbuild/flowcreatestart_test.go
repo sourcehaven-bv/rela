@@ -209,3 +209,36 @@ func TestFlowCreateStart_ChainIsBounded(t *testing.T) {
 	require.Equal(t, 8, count(entity.FlowRunType), "a chain starts at most maxCreateStartHops runs")
 	require.Equal(t, 9, count("task"), "the last run's copy starts nothing")
 }
+
+// TestFlowCreateStart_ACL pins the access checks around a create start,
+// with the declarative ACL: a caller who may not create the subject starts
+// nothing, and a run_as that may not write an output is refused when
+// flows.yaml loads, so a create never starts a run that writes as it.
+func TestFlowCreateStart_ACL(t *testing.T) {
+	t.Run("caller may not create the subject", func(t *testing.T) {
+		svc := createStartServices(t)
+		p := entity.New("", "person")
+		p.Properties = map[string]any{"name": "Ada", "status": "hired"}
+		_, err := svc.EntityManager().CreateEntity(flowUser(t, svc, "nobody"), p, entity.CreateOptions{})
+		require.Error(t, err)
+		for e, lErr := range svc.Store().ListEntities(context.Background(),
+			store.EntityQuery{Type: entity.FlowRunType, Faces: store.AllFaces()}) {
+			require.NoError(t, lErr)
+			t.Fatalf("a refused create started run %s", e.ID)
+		}
+	})
+
+	t.Run("run_as may not write an output", func(t *testing.T) {
+		root := writeFlowProject(t)
+		policy, err := os.ReadFile(filepath.Join(root, "acl.yaml"))
+		require.NoError(t, err)
+		extra := strings.Replace(string(policy), "    create: [task]\n", "", 1)
+		extra = strings.Replace(extra, "roles:\n",
+			"roles:\n  clerk:\n    read: [person]\n    create: [person]\n", 1)
+		extra = strings.Replace(extra, "assignments:\n", "assignments:\n  clerk: clerk\n", 1)
+		require.NoError(t, os.WriteFile(filepath.Join(root, "acl.yaml"), []byte(extra), 0o600))
+		_, err = appbuildOnDiskNoBackend(t, root)
+		require.ErrorContains(t, err, "system:onboarding-bot cannot create task",
+			"a run_as that may not write an output refuses the boot, so no create can start its run")
+	})
+}
