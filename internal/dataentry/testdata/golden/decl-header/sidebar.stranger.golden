@@ -60,5 +60,9 @@ body:
     }
   ],
   "piles_available": false,
-  "piles": null
+  "piles": null,
+  "entity_header": {
+    "history": true,
+    "add_to_pile": true
+  }
 }

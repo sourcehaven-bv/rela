@@ -1331,6 +1331,12 @@ type DashboardResponse struct {
 	// entity dashboard by that, and passes `?anchor=` on
 	// /api/v1/_dashboard/card.
 	Cards []DashboardCardEntry `json:"cards"`
+	// Validation reports whether this principal is shown the validation
+	// card: the dashboard's `validation:` toggle, resolved for the caller
+	// (TKT-31822PN). Always false on an entity dashboard, which never shows
+	// the card. A UX filter, not access control: `/api/v1/_analyze` keeps
+	// its own gate.
+	Validation bool `json:"validation"`
 }
 
 // DashboardCardEntry is one card of a DashboardResponse: its config plus its
@@ -1496,6 +1502,21 @@ type SidebarResponse struct {
 	// both piles fields from this one boot payload. Null when the block is
 	// absent.
 	Piles *dataentryconfig.PilesConfig `json:"piles"`
+	// EntityHeader says which built-in buttons the entity page header shows
+	// this principal: `entity_header:` of data-entry.yaml, resolved for the
+	// caller (TKT-31822PN). It rides here for the reason PilesAvailable
+	// does. A UX filter, not access control: the history and pile APIs keep
+	// their own ACL.
+	EntityHeader SidebarEntityHeader `json:"entity_header"`
+}
+
+// SidebarEntityHeader is [SidebarResponse.EntityHeader]. Each field is true
+// when the button may show. The SPA still applies its own preconditions: the
+// History button needs a deployment with version history, and "Add to pile"
+// needs piles to be available.
+type SidebarEntityHeader struct {
+	History   bool `json:"history"`
+	AddToPile bool `json:"add_to_pile"`
 }
 
 // ConflictItem represents a conflicted file.

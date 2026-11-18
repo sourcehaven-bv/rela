@@ -52,6 +52,7 @@ var validTopLevelKeys = map[string]bool{
 	"account":              true,
 	"piles":                true,
 	"channels":             true,
+	"entity_header":        true,
 }
 
 // Known typos with suggestions
@@ -544,6 +545,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateAccount(data, cfg, meta)...)
 	errs = append(errs, llmUnknownKeys(data)...)
 	errs = append(errs, validatePiles(data, cfg, meta)...)
+	errs = append(errs, entityHeaderUnknownKeys(data)...)
 	errs = append(errs, validateChannelsShape(data, cfg)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
 
@@ -2670,6 +2672,7 @@ func validateDashboard(cfg *Config, meta *metamodel.Metamodel) []string {
 			errs = append(errs, validateDashboardCardSource(cfg, meta, prefix, i, card)...)
 		}
 		errs = append(errs, validateEntityDashboard(cfg, meta, prefix, d)...)
+		errs = append(errs, validateDashboardValidation(prefix, d.Config)...)
 	}
 
 	return errs

@@ -136,6 +136,41 @@ actions:
     permission: report:sales
 `,
 		},
+		{
+			name: "dashboard validation card",
+			yaml: `
+dashboard:
+  title: Overview
+  validation:
+    permission: report:sales
+`,
+		},
+		{
+			name: "named dashboard validation card",
+			yaml: `
+dashboards:
+  sales:
+    title: Sales
+    validation:
+      permission: report:sales
+`,
+		},
+		{
+			name: "entity header history",
+			yaml: `
+entity_header:
+  history:
+    permission: report:sales
+`,
+		},
+		{
+			name: "entity header add to pile",
+			yaml: `
+entity_header:
+  add_to_pile:
+    permission: report:sales
+`,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

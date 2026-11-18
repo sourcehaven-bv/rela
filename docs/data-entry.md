@@ -321,6 +321,10 @@ dashboards:                # Optional named dashboards, same shape
     title: "Pipeline"
     cards: [...]
 
+entity_header:             # Optional: hide built-in entity header buttons
+  history: true
+  add_to_pile: false
+
 kanbans:                   # Kanban board views
   board_name:
     entity_type: task
@@ -3723,6 +3727,46 @@ and history move with the entity, so everyone who can read the new type and
 face can read those comments. The history timeline of the new entity lists only
 versions of its new type and face; the conversion version names the old id.
 
+### Entity header buttons (`entity_header`)
+
+The header of an entity page shows built-in buttons next to Edit and Delete.
+The `entity_header:` block hides two of them:
+
+| Key           | Button                                                         |
+| ------------- | -------------------------------------------------------------- |
+| `history`     | **History**: the entity's version history.                     |
+| `add_to_pile` | **Add to pile**: the menu that adds the entity to a [pile](#piles). |
+
+Each key takes the same values as a dashboard's
+[`validation:`](#hiding-the-validation-card-validation): `true` (the
+default), `false`, or `{permission: <name>}`.
+
+```yaml
+entity_header:
+  history:
+    permission: staff.manage   # only staff see History
+  add_to_pile: false           # nobody sees Add to pile
+```
+
+The setting applies to the desktop header row and to the overflow menu on a
+phone. It does not affect:
+
+- the pile buttons of [`piles.toggles`](#configuring-piles), which you
+  configure separately;
+- **Remove from pile**, shown while you step through a pile;
+- "Add to pile" on lists and search results.
+
+A key can only hide a button. History still needs a deployment with version
+history (PostgreSQL or SQLite), and Add to pile still needs piles to be
+available to the reader.
+
+**This is a UX filter, not an access control.** A hidden History button does
+not stop anyone from opening `/history/...` or calling `/api/v1/_history`.
+Those keep their own ACL, as the pile endpoints do. `/api/v1/_config` serves
+the block to every principal, and `/api/v1/_sidebar` serves the result for the
+current principal as `entity_header: {history, add_to_pile}`. With no
+`acl.yaml`, and under `--read-only`, a gated button shows.
+
 ### How navigation resolves
 
 For each clickable entity reference, the SPA picks the destination URL using
@@ -3795,6 +3839,7 @@ dashboard:
 | `description` | string | Subtitle shown below the heading       |
 | `cards`       | list   | Card definitions                       |
 | `entity_type` | string | Named dashboards only: makes it an [entity dashboard](#entity-dashboards) |
+| `validation`  | toggle | Shows or hides the [validation card](#hiding-the-validation-card-validation). Default: shown |
 
 ### Card Options
 
@@ -4104,6 +4149,51 @@ same one shown when no cards are configured at all.
 > If a card has vanished, check it against the `permissions:` list on your
 > roles in `acl.yaml` first. This applies equally to `permission:` on
 > commands, documents, and navigation entries.
+
+### Hiding the validation card (`validation`)
+
+Below its cards, the dashboard shows a validation card. It counts the errors
+and warnings of the project-wide analysis and links to the Analysis page.
+That suits a team that maintains the data. It does not suit a customer
+portal, where the reader cannot act on those findings.
+
+Set `validation:` on a dashboard to change this. It takes one of three values:
+
+| Value                     | Effect                                                 |
+| ------------------------- | ------------------------------------------------------ |
+| `true`                    | The card shows. This is the default.                   |
+| `false`                   | The card never shows.                                  |
+| `{permission: <name>}`    | The card shows only to holders of that permission.     |
+
+```yaml
+dashboard:
+  title: "Overview"
+  validation:
+    permission: staff.manage   # only staff see the validation card
+  cards: [...]
+
+dashboards:
+  portal:
+    title: "My account"
+    validation: false          # customers never see it here
+    cards: [...]
+```
+
+Each dashboard has its own setting, so a space whose `home:` opens a named
+dashboard can show or hide the card for that space alone.
+
+A hidden card also skips its call to the analysis endpoint.
+
+**This is a UX filter, not an access control.** The permission gate works like
+a card's [`permission:`](#hiding-cards-a-user-cannot-use-permission): it keeps
+an element that a reader cannot use out of the way. It does not protect the
+analysis. The Analysis page and `/api/v1/_analyze` keep their own gate, and
+`/api/v1/_config` serves the `validation:` value to every principal. With no
+`acl.yaml`, and under `--read-only`, a gated card shows.
+
+An entity dashboard never shows the validation card, because the card covers
+the whole project. Setting `validation: false` or a permission on an entity
+dashboard is a configuration error.
 
 ### Named dashboards (`dashboards`)
 

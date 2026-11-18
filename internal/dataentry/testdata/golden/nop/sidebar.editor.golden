@@ -63,5 +63,9 @@ body:
     "ticket": "ticket_form"
   },
   "piles_available": true,
-  "piles": null
+  "piles": null,
+  "entity_header": {
+    "history": true,
+    "add_to_pile": true
+  }
 }

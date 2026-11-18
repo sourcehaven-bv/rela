@@ -345,6 +345,8 @@ async function loadSidebar() {
     schemaStore.setInlineCreate(data.inline_create ?? {})
     // So is whether this principal may use piles (TKT-K3RJLH).
     schemaStore.setPiles(data)
+    // And which entity header buttons it is shown (TKT-31822PN).
+    schemaStore.setEntityHeader(data.entity_header)
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
     // (see BUG-6C3V and src/composables/usePageData.ts).

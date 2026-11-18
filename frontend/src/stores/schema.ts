@@ -27,6 +27,7 @@ import type {
   DocumentConfig,
   ActionConfig,
   PilesConfig,
+  SidebarEntityHeader,
 } from '@/types'
 
 export const useSchemaStore = defineStore('schema', () => {
@@ -102,6 +103,11 @@ export const useSchemaStore = defineStore('schema', () => {
   // availability depends on who is asking, which `/_config` cannot know.
   const pilesAvailable = ref(false)
   const pilesConfig = ref<PilesConfig | null>(null)
+  // Which built-in entity header buttons this principal is shown
+  // (`entity_header:`, TKT-31822PN), fed by the principal-scoped `/_sidebar`.
+  // Shown until it says otherwise, as before the block existed. A UX filter:
+  // the history and pile APIs keep their own ACL.
+  const entityHeader = ref<SidebarEntityHeader>({ history: true, add_to_pile: true })
   const loaded = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -531,6 +537,11 @@ export const useSchemaStore = defineStore('schema', () => {
     if (data.piles !== undefined) pilesConfig.value = data.piles ?? null
   }
 
+  /** Takes `entity_header` from `/_sidebar`; an older server sends none. */
+  function setEntityHeader(header: SidebarEntityHeader | undefined) {
+    if (header) entityHeader.value = header
+  }
+
   function setInlineCreate(map: Record<string, string>) {
     inlineCreate.value = map
   }
@@ -594,6 +605,7 @@ export const useSchemaStore = defineStore('schema', () => {
     worldLabel,
     faceLabel,
     historyEnabled,
+    entityHeader,
     collabEnabled,
     collabEpoch,
     getInverseName,
@@ -621,5 +633,6 @@ export const useSchemaStore = defineStore('schema', () => {
     setLogoUrl,
     setInlineCreate,
     setPiles,
+    setEntityHeader,
   }
 })
