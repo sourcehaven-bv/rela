@@ -8,6 +8,8 @@ effort: xs
 why1: The writer goroutine took 500 records off the queue after the test filled it and before Record ran. The queue was then not full and nothing was dropped.
 why2: newSink starts the writer goroutine and the test filled the queue without first making sure that goroutine was parked. If it had not yet reached cond.Wait it saw a non-empty queue and took a batch.
 why3: The test relied on goroutine scheduling order. Locally the goroutine almost always parks first so the race only shows on a loaded CI runner.
+why4: The test was written to check the bound and its author verified it locally where the goroutine always parked first.
+why5: Tests that touch a sink's internal state while its goroutine runs have no shared helper or rule that pins the goroutine first. The -race post-merge run is the only place such timing races surface.
 prevention: The test now holds the writer inside its first append before it fills the queue. Tests that inspect the sink queue must first pin the writer in a known state.
-status: ready
+status: done
 ---
