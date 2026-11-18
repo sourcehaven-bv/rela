@@ -3077,8 +3077,8 @@ The write rules also apply to the old version of a trigger that is changed
 or removed. They apply to the triggers that a created record fires too,
 together with the reader rule against the edited trigger's subject. When
 the check cannot judge an edit, for example because `acl.yaml` does not
-parse, the save is refused. Trigger `script` outputs and
-`create.if_exists` stay locked.
+parse, the save is refused. Trigger `script` and `relate` outputs,
+`create.template` and `create.if_exists` stay locked.
 
 A trigger fires on writes the editor cannot see, so whether it fired, and
 when, can show through the records it writes. That is the same one-bit
