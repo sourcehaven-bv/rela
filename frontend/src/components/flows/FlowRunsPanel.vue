@@ -55,7 +55,6 @@ async function load() {
   try {
     runs.value = await listSubjectRuns(props.entityId, ctl.signal)
     error.value = ''
-    void focusRequestedRun()
   } catch (err) {
     if (isCancelledFetch(err)) return
     if (shouldDropHeldContent(err)) {
@@ -67,32 +66,30 @@ async function load() {
   }
 }
 
-/** The run `?run=` already focused on this entity, see focusRequestedRun. */
-let focusedRun = ''
 watch(
   () => [props.entityType, props.entityId, typeFlows.value.length],
   () => {
     runs.value = []
     error.value = ''
-    focusedRun = ''
     void load()
   },
   { immediate: true }
 )
 
 // `?run=<id>` (a flow task hint links here with it) brings that run's card
-// into view once per entity, after the runs first load.
+// into view once per entity and run, as soon as the card is on screen.
 const route = useRoute()
 const panel = ref<HTMLElement | null>(null)
-async function focusRequestedRun() {
-  const id = requestedRun(route?.query ?? {})
-  if (!id || id === focusedRun) return
-  await nextTick()
-  if (focusRunCard(panel.value, id)) focusedRun = id
-}
+/** The entity and run `?run=` already focused, so a reload does not steal focus. */
+let focusedRun = ''
 watch(
-  () => requestedRun(route?.query ?? {}),
-  () => void focusRequestedRun()
+  () => [runs.value, props.entityId, requestedRun(route?.query ?? {})] as const,
+  async ([, entityId, id]) => {
+    const key = `${entityId}|${id}`
+    if (!id || key === focusedRun) return
+    await nextTick()
+    if (focusRunCard(panel.value, id)) focusedRun = key
+  }
 )
 
 // A step, a timer or another reader moves a run; its header and the subject
