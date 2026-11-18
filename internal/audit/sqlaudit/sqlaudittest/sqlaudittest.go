@@ -48,6 +48,8 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 		{"ForEntityOpFilter", testForEntityOpFilter},
 		{"ForEntityLifecycle", testForEntityLifecycle},
 		{"ForEntityFaces", testForEntityFaces},
+		{"ForEntityFacelessStart", testForEntityFacelessStart},
+		{"ForEntityCopyCreatesFace", testForEntityCopyCreatesFace},
 		{"EditedRowBreaks", testEditedRowBreaks},
 		{"ColumnEditsBreak", testColumnEditsBreak},
 		{"DeletedRowBreaks", testDeletedRowBreaks},
@@ -223,7 +225,7 @@ func testNewestPages(t *testing.T, h Harness) {
 // changeOps are the ops the per-entity tests read.
 var changeOps = []string{
 	audit.OpCreateEntity, audit.OpUpdateEntity, audit.OpDeleteEntity, audit.OpRenameEntity,
-	audit.OpCreateRelation,
+	audit.OpCreateRelation, audit.OpCopyState,
 }
 
 func entityQuery(id, face string) sqlaudit.SubjectQuery {
@@ -368,6 +370,54 @@ func testForEntityFaces(t *testing.T, h Harness) {
 	got, err = h.Log.ForEntity(ctx, entityQuery("DOC-2", ""), 0, 10)
 	require.NoError(t, err)
 	require.Equal(t, []int64{5, 4}, seqsOf(got))
+}
+
+// testForEntityFacelessStart: a start stored without a face (a record from
+// before faces were recorded) is shown on every face but fences none, so it
+// cannot hide a face's earlier records.
+func testForEntityFacelessStart(t *testing.T, h Harness) {
+	ctx := context.Background()
+	appendAll(t, h.Log,
+		entityRec(audit.OpCreateEntity, "DOC-1", "draft"), // 1
+		entityRec(audit.OpUpdateEntity, "DOC-1", "draft"), // 2
+		entityRec(audit.OpCreateEntity, "DOC-1", ""),      // 3
+	)
+	got, err := h.Log.ForEntity(ctx, entityQuery("DOC-1", "draft"), 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, []int64{3, 2, 1}, seqsOf(got))
+}
+
+// testForEntityCopyCreatesFace: a copy that created a face starts that
+// face's lifecycle, and LifecycleStart returns it; a copy onto an existing
+// face does not.
+func testForEntityCopyCreatesFace(t *testing.T, h Harness) {
+	ctx := context.Background()
+	copyRec := func(created bool) audit.Record {
+		return audit.Record{
+			Op:      audit.OpCopyState,
+			Subject: &audit.Subject{Kind: "entity", Type: "doc", ID: "DOC-1", Face: "published"},
+			Summary: audit.CopyStateSummary("promote", "DOC-1@draft", "DOC-1@published", created),
+		}
+	}
+	appendAll(t, h.Log,
+		entityRec(audit.OpCreateEntity, "DOC-1", "published"), // 1: an earlier family
+		entityRec(audit.OpDeleteEntity, "DOC-1", "published"), // 2
+		entityRec(audit.OpCreateEntity, "DOC-1", "draft"),     // 3
+		copyRec(true),  // 4
+		copyRec(false), // 5
+	)
+	got, err := h.Log.ForEntity(ctx, entityQuery("DOC-1", "published"), 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, []int64{5, 4}, seqsOf(got))
+
+	start, ok, err := h.Log.LifecycleStart(ctx, entityQuery("DOC-1", "published"))
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, int64(4), start.Seq)
+
+	_, ok, err = h.Log.LifecycleStart(ctx, entityQuery("DOC-9", ""))
+	require.NoError(t, err)
+	require.False(t, ok)
 }
 
 func testEditedRowBreaks(t *testing.T, h Harness) {

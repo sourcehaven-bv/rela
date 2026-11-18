@@ -383,9 +383,11 @@ func (r *conversionRun) record(ctx context.Context, lineage map[entity.RelationK
 }
 
 // recordConversionAudit records the conversion of one face row: after is the
-// converted row, oldID and oldType what it was.
+// converted row, oldID, oldType and oldFace what it was. A face map may
+// convert a row to another face, so the two faces can differ.
 func recordConversionAudit(
-	ctx context.Context, m *Manager, st store.Store, name, oldID, oldType string, after *entity.Entity,
+	ctx context.Context, m *Manager, st store.Store, name, oldID, oldType string, oldFace entity.Face,
+	after *entity.Entity,
 ) error {
 	summary := "converted from " + oldType + " by " + name
 	if !after.Face.IsImplicit() {
@@ -394,7 +396,7 @@ func recordConversionAudit(
 	return emitWrite(ctx, m.deps, st, audit.Stamp(ctx, audit.Record{
 		Time:        time.Now().UTC(),
 		Op:          audit.OpConvertEntity,
-		Before:      &audit.Subject{Kind: "entity", Type: oldType, ID: oldID, Face: after.Face.String()},
+		Before:      &audit.Subject{Kind: "entity", Type: oldType, ID: oldID, Face: oldFace.String()},
 		After:       &audit.Subject{Kind: "entity", Type: after.Type, ID: after.ID, Face: after.Face.String()},
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),

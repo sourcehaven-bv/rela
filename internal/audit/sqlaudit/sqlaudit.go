@@ -254,7 +254,7 @@ func subjectRows(rec audit.Record) []subjectRow {
 		}
 	}
 	if s := rec.Subject; s != nil {
-		add(s.ID, s.Face, rec.Op == audit.OpCreateEntity)
+		add(s.ID, s.Face, audit.StartsLifecycle(rec, s))
 		add(s.FromID, s.FromFace, false)
 		add(s.ToID, "", false)
 	}
@@ -262,7 +262,7 @@ func subjectRows(rec audit.Record) []subjectRow {
 		add(s.ID, s.Face, false)
 	}
 	if s := rec.After; s != nil {
-		add(s.ID, s.Face, rec.Op == audit.OpRenameEntity || rec.Op == audit.OpConvertEntity)
+		add(s.ID, s.Face, audit.StartsLifecycle(rec, s))
 	}
 	slices.SortStableFunc(rows, func(a, b subjectRow) int { return strings.Compare(a.id, b.id) })
 	out := rows[:0]

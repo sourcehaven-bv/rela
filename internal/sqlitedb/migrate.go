@@ -428,10 +428,13 @@ var auditSubjectColumns = []struct{ name, def string }{
 }
 
 // auditSubjectStartsBackfill marks the subject rows whose record begins a
-// lifecycle of that id: a create of it, or a rename or conversion into it.
+// lifecycle of that id: a create of it, a copy that created its face, or a
+// rename or conversion into it.
 const auditSubjectStartsBackfill = `UPDATE audit_subjects SET starts = 1
 WHERE starts = 0 AND EXISTS (SELECT 1 FROM audit_log l WHERE l.seq = audit_subjects.seq AND (
 	(l.op = 'create-entity' AND json_extract(l.doc, '$.subject.id') = audit_subjects.entity_id)
+	OR (l.op = 'copy-state' AND json_extract(l.doc, '$.subject.id') = audit_subjects.entity_id
+		AND json_extract(l.doc, '$.summary') LIKE '% (created=true)')
 	OR (l.op IN ('rename-entity', 'convert-entity') AND json_extract(l.doc, '$.after.id') = audit_subjects.entity_id)))`
 
 // recordsMutableColumns are the change columns of records, matching

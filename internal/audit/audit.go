@@ -14,6 +14,8 @@
 package audit
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -370,4 +372,31 @@ type Entry struct {
 // self-log via slog.Error when a record cannot be persisted.
 type Audit interface {
 	Record(rec Record)
+}
+
+// copyCreatedSuffix ends the summary of a copy-state record whose copy
+// created its target face.
+const copyCreatedSuffix = " (created=true)"
+
+// CopyStateSummary is the summary of a copy-state record: the copy's name,
+// its source and target labels, and whether it created the target face.
+// [StartsLifecycle] reads the last part back.
+func CopyStateSummary(name, from, to string, created bool) string {
+	return fmt.Sprintf("copy %q: %s -> %s (created=%t)", name, from, to, created)
+}
+
+// StartsLifecycle reports whether rec begins a lifecycle of the entity
+// subject s it names: a create of it, a copy that created that face, or a
+// rename or conversion into it (s is the After).
+func StartsLifecycle(rec Record, s *Subject) bool {
+	switch {
+	case s == nil:
+		return false
+	case s == rec.Subject:
+		return rec.Op == OpCreateEntity ||
+			(rec.Op == OpCopyState && strings.HasSuffix(rec.Summary, copyCreatedSuffix))
+	case s == rec.After:
+		return rec.Op == OpRenameEntity || rec.Op == OpConvertEntity
+	}
+	return false
 }

@@ -32,9 +32,15 @@ type SubjectQuery = audit.SubjectQuery
 // The records start at the latest one that began a lifecycle of that id and
 // face: its create, or a rename or conversion into it. So an id that was
 // deleted and created again, or renamed away and reused, does not show the
-// earlier entity's records. The op filter and the page cut run in SQL, so a
-// flood of other ops cannot empty a page, and the cost of a page does not
-// grow with the log.
+// earlier entity's records. Only a record that names the id at q.Face
+// itself marks a start: a row stored with an empty face (one written before
+// faces were recorded, or naming the id at two faces) is shown on every face
+// but begins no face's lifecycle, so an old record cannot hide another
+// face's history.
+//
+// The op filter and the page cut run in SQL, so a flood of other ops cannot
+// empty a page. A page reads the index range of this id, so its cost grows
+// with the records of this id, not with the log.
 //
 // It is ungated; see [Log.Newest].
 func (l *Log) ForEntity(ctx context.Context, q SubjectQuery, before int64, limit int) ([]Entry, error) {
@@ -52,9 +58,27 @@ func (l *Log) ForEntity(ctx context.Context, q SubjectQuery, before int64, limit
 		`SELECT l.seq, l.doc FROM audit_subjects s JOIN audit_log l ON l.seq = s.seq
 		 WHERE s.entity_id = ? AND s.face IN (?, '') AND s.seq < ? AND l.op IN (`+marks+`)
 		   AND s.seq >= COALESCE((SELECT MAX(f.seq) FROM audit_subjects f
-		       WHERE f.entity_id = ? AND f.face IN (?, '') AND f.starts), 0)
+		       WHERE f.entity_id = ? AND f.face = ? AND f.starts), 0)
 		 ORDER BY s.seq DESC LIMIT ?`,
 		args...)
+}
+
+// LifecycleStart returns the record that began the latest lifecycle of q.ID
+// at q.Face, the one [Log.ForEntity] reads from, and false when there is
+// none (the id never started at that face, or the record was pruned). The
+// caller checks that it started the entity it asked about.
+//
+// It is ungated; see [Log.Newest].
+func (l *Log) LifecycleStart(ctx context.Context, q SubjectQuery) (Entry, bool, error) {
+	entries, err := l.scanEntries(ctx, "lifecycle start",
+		`SELECT l.seq, l.doc FROM audit_subjects f JOIN audit_log l ON l.seq = f.seq
+		 WHERE f.entity_id = ? AND f.face = ? AND f.starts
+		 ORDER BY f.seq DESC LIMIT 1`,
+		q.ID, q.Face)
+	if err != nil || len(entries) == 0 {
+		return Entry{}, false, err
+	}
+	return entries[0], true, nil
 }
 
 // upperBound turns a page cursor into an exclusive seq bound.
