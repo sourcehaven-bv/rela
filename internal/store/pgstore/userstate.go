@@ -312,5 +312,5 @@ func (s *UserStateStore) Close() error {
 // Returns a fresh lightweight wrapper each call. The returned store does not
 // own the pool — see [UserStateStore.Close].
 func (s *Store) UserState() (userstate.Store, error) {
-	return NewUserStateStore(s.db)
+	return NewUserStateStore(unwrapDB(s.db))
 }

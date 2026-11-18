@@ -68,9 +68,10 @@ var ErrTraversalDenied = errors.New("acl: traversal denied")
 var ErrTraversalUnsupported = errors.New("acl: traversal cannot be gated")
 
 // TraversalQuery builds the query that answers a lowered traversal for rows
-// of candidateType: the predicate goes in the slot matching the first hop's
-// direction. Built fresh rather than folded into an existing query, whose
-// ACL predicate may already occupy that slot.
+// of candidateType: the predicate is a [store.GraphQuery.Related] traversal
+// in the first hop's direction, never HasInbound/HasOutbound, which are the
+// ACL read gate and read today's edges under a read instant. Built fresh
+// rather than folded into an existing query.
 //
 // It selects the candidates at every face (TKT-7IZHP0 A12). The callers ask
 // about rows they already read, at whatever face they read them, and a
@@ -81,13 +82,10 @@ var ErrTraversalUnsupported = errors.New("acl: traversal cannot be gated")
 // into "no match", which `not related(...)` reads as a pass. The endpoint
 // side carries its own world (see [Request.GateTraversal]).
 func TraversalQuery(candidateType string, hop TraversalHop, p *store.RelationPredicate) store.GraphQuery {
-	q := store.GraphQuery{EntityType: candidateType, Faces: store.AllFaces()}
-	if hop.Incoming {
-		q.HasInbound = p
-	} else {
-		q.HasOutbound = p
+	return store.GraphQuery{
+		EntityType: candidateType, Faces: store.AllFaces(),
+		Related: []store.DirectedRelation{{Incoming: hop.Incoming, Pred: *p}},
 	}
-	return q
 }
 
 // UngatedGate is [UngatedTraversal] in the shape of a traversal gate, for
@@ -299,7 +297,11 @@ func foldHop(hop TraversalHop, rq ReadQueryResult) (*store.EndpointPredicate, er
 				return nil, fmt.Errorf("%w: read of %q is granted through inheritance",
 					ErrTraversalUnsupported, hop.EntityType)
 			}
-			match.HasInbound = inb
+			// A copy marked as a gate: under a read instant it reads
+			// today's edges while the hop reads the instant (DEC-TDEF3GD).
+			gate := *inb
+			gate.Gate = true
+			match.HasInbound = &gate
 		}
 	}
 	return match, nil

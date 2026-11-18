@@ -1,4 +1,4 @@
--- pgstore schema, version 52: the face and lifecycle of each audit subject
+-- pgstore schema, version 53: the face and lifecycle of each audit subject
 -- (TKT-X1ZFO04).
 --
 -- face is the face of the entity the row names: the entity's own face, or a

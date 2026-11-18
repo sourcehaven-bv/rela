@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 43
+const schemaVersion = 44
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -407,10 +407,17 @@ var migrations = []migration{
 		apply: sqlSteps(auditLogDDL),
 	},
 	{
-		// v42 → v43: the face and lifecycle of each audit subject
+		// v42 → v43: content_at is when a version's content became current, which
+		// point-in-time reads order by (TKT-6KLUT3U). Older rows keep NULL
+		// and fall back to created_at.
+		to:    43,
+		apply: addColumns([]addedColumn{{"entity_versions", "content_at"}, {"relation_versions", "content_at"}}),
+	},
+	{
+		// v43 → v44: the face and lifecycle of each audit subject
 		// (TKT-X1ZFO04). Rows from before get face '' (every face); starts
 		// is backfilled from the record each row belongs to.
-		to: 43,
+		to: 44,
 		apply: func(ctx context.Context, conn *sql.Conn) error {
 			if err := addTableColumns(ctx, conn, "audit_subjects", auditSubjectColumns); err != nil {
 				return err
@@ -421,7 +428,7 @@ var migrations = []migration{
 }
 
 // auditSubjectColumns are the face and lifecycle columns of audit_subjects,
-// matching auditLogDDL and pgstore migration 0052.
+// matching auditLogDDL and pgstore migration 0053.
 var auditSubjectColumns = []struct{ name, def string }{
 	{"face", "TEXT NOT NULL DEFAULT ''"},
 	{"starts", "INTEGER NOT NULL DEFAULT 0"},

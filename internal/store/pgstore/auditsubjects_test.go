@@ -9,17 +9,17 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 )
 
-// TestMigration0052_AuditSubjectLifecycle pins migration 0052 (TKT-X1ZFO04):
+// TestMigration0053_AuditSubjectLifecycle pins migration 0053 (TKT-X1ZFO04):
 // a schema at version 51 gains face and starts on audit_subjects and the
 // starts index; starts is backfilled from each row's record (a create of the
 // id, or a rename into it), and a second run changes nothing.
-func TestMigration0052_AuditSubjectLifecycle(t *testing.T) {
+func TestMigration0053_AuditSubjectLifecycle(t *testing.T) {
 	pool := newScopedPool(t) // migrated to the latest version
 	ctx := context.Background()
 	for _, stmt := range []string{
 		`DROP INDEX audit_subjects_starts_idx`,
 		`ALTER TABLE audit_subjects DROP COLUMN face, DROP COLUMN starts`,
-		`UPDATE schema_version SET version = 51`,
+		`UPDATE schema_version SET version = 52`,
 		`INSERT INTO audit_log (seq, at, op, principal_user, doc, prev_hash, hash) VALUES
 			(1, 0, 'create-entity', 'u', '{"op":"create-entity","subject":{"kind":"entity","id":"A"}}', '', 'h1'),
 			(2, 0, 'update-entity', 'u', '{"op":"update-entity","subject":{"kind":"entity","id":"A"}}', 'h1', 'h2'),

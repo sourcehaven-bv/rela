@@ -3,6 +3,7 @@ package acl
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
@@ -375,23 +376,25 @@ func relationGrantedConcepts(inherit bool) *Policy {
 	return p
 }
 
-// An incoming first hop lands in the query's inbound slot, an outgoing one in
-// the outbound slot. TraversalQuery decides it so no caller can put a hop in
-// the wrong direction.
+// A traversal is a Related entry in the first hop's direction, never the
+// HasInbound/HasOutbound slots: those are the ACL read gate, which reads
+// today's edges under a read instant while a traversal reads the instant
+// (DEC-TDEF3GD). TraversalQuery decides it so no caller can put a hop in the
+// wrong direction or the gate's slot.
 func TestTraversalQuery_PlacesByDirection(t *testing.T) {
 	hop := TraversalHop{RelationTypes: []string{"implements"}, Incoming: true, EntityType: "ticket"}
 	p, err := UngatedTraversal(hop)
 	if err != nil {
 		t.Fatal(err)
 	}
-	q := TraversalQuery("feature", hop, p)
-	if q.EntityType != "feature" || q.HasInbound != p || q.HasOutbound != nil {
-		t.Fatalf("incoming hop misplaced: %+v", q)
-	}
-	hop.Incoming = false
-	q = TraversalQuery("ticket", hop, p)
-	if q.HasOutbound != p || q.HasInbound != nil {
-		t.Fatalf("outgoing hop misplaced: %+v", q)
+	for _, incoming := range []bool{true, false} {
+		hop.Incoming = incoming
+		q := TraversalQuery("feature", hop, p)
+		if q.EntityType != "feature" || q.HasInbound != nil || q.HasOutbound != nil || len(q.Related) != 1 ||
+			q.Related[0].Incoming != incoming || !reflect.DeepEqual(q.Related[0].Pred, *p) {
+
+			t.Fatalf("incoming=%v hop misplaced: %+v", incoming, q)
+		}
 	}
 }
 
@@ -469,6 +472,10 @@ func TestGateTraversal_ChainedIncomingHopCollidingWithTheReadGateIsRefused(t *te
 	inb := got.EndpointMatch.HasInbound
 	if inb == nil || len(inb.OfTypes) != 1 || inb.OfTypes[0] != "editor-of" {
 		t.Fatalf("the concept read gate must ride on the endpoint, got %+v", got.EndpointMatch)
+	}
+	if !inb.Gate || got.Gate {
+		t.Fatalf("only the folded read gate is marked Gate (it reads today under an instant): hop %v, gate %v",
+			got.Gate, inb.Gate)
 	}
 }
 

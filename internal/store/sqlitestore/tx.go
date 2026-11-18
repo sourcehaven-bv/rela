@@ -24,6 +24,9 @@ import (
 // the conformance stress test's watchdog would report it as a driver locking
 // failure — the shape is copied from pgstore/tx.go.
 func (s *Store) Tx(ctx context.Context, fn func(store.Store) error) error {
+	if _, ok := store.ReadInstant(ctx); ok {
+		return store.ErrReadOnlyInstant
+	}
 	if s.txPending != nil {
 		return fn(s) // nested: join, do not open a second transaction
 	}

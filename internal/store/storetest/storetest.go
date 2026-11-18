@@ -80,6 +80,13 @@ type Capabilities struct {
 	// which needs Versioning and SweepNow too.
 	VersionTags bool
 
+	// ReadInstant declares that the backend answers point-in-time reads
+	// ([store.InstantReader]). Setting it runs [RunInstantTests], which needs
+	// Versioning and SweepNow too. Leaving it unset runs
+	// [RunInstantUnsupportedTests], so a backend without the capability is
+	// held to refusing an instant.
+	ReadInstant bool
+
 	// SoftDelete declares that the backend implements
 	// [store.SoftDeleteProvider]. Setting it runs [RunSoftDeleteTests], which
 	// fails rather than skips when the capability is missing.
@@ -297,6 +304,15 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 			RunSweepOriginTests(t, f, caps.SweepNow)
 		})
 	}
+	t.Run("ReadInstant", func(t *testing.T) {
+		if !caps.ReadInstant {
+			RunInstantUnsupportedTests(t, f)
+			return
+		}
+		require.True(t, caps.Versioning, "store declared Capabilities.ReadInstant without Versioning")
+		require.NotNil(t, caps.SweepNow, "store declared Capabilities.ReadInstant but no SweepNow driver")
+		RunInstantTests(t, f, caps.SweepNow)
+	})
 	if caps.VersionTags {
 		t.Run("VersionTags", func(t *testing.T) {
 			require.True(t, caps.Versioning, "store declared Capabilities.VersionTags without Versioning")

@@ -1155,6 +1155,12 @@ type VersionInput struct {
 	// this input for a synchronous capture; the sweep reads its own copy off
 	// the live row's columns.
 	Origin Origin
+	// ContentAt is when the captured content became current: the live row's
+	// updated_at for a swept or captured-now version. Zero means the capture
+	// time, which is right for a synchronous rename or delete because it
+	// happens now. Point-in-time reads order versions by it (see
+	// [BindReadInstant]).
+	ContentAt time.Time
 }
 
 // VersionWriter persists a captured entity version. Like HistoryReader it is an
@@ -1399,6 +1405,10 @@ type RelationVersionInput struct {
 	PrincipalUser string
 	PrincipalTool string
 	TriggeredBy   string
+
+	// ContentAt is when the captured content became current; see
+	// [VersionInput.ContentAt].
+	ContentAt time.Time
 }
 
 // RelationVersionWriter persists a captured relation version. An optional,

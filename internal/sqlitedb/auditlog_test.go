@@ -56,17 +56,17 @@ func TestMigrate_v41ToV42AuditLog(t *testing.T) {
 	require.Equal(t, sqlitedb.SchemaVersion(), version)
 }
 
-// TestMigrate_v42ToV43AuditSubjectLifecycle pins the v42 to v43 rung
+// TestMigrate_v43ToV44AuditSubjectLifecycle pins the v43 to v44 rung
 // (TKT-X1ZFO04): audit_subjects gains face and starts with the shape of a
 // fresh database, starts is backfilled from each row's record, and opening a
 // second time changes nothing.
-func TestMigrate_v42ToV43AuditSubjectLifecycle(t *testing.T) {
+func TestMigrate_v43ToV44AuditSubjectLifecycle(t *testing.T) {
 	fresh := openChannelDB(t, filepath.Join(t.TempDir(), "fresh.db"))
 	wantShape := tableShape(t, fresh, "audit_subjects")
 	wantIndex := indexSQL(t, fresh, "audit_subjects_starts_idx")
 	require.NotEmpty(t, wantIndex)
 
-	path := filepath.Join(t.TempDir(), "v42.db")
+	path := filepath.Join(t.TempDir(), "v43.db")
 	raw := openChannelDB(t, path)
 	for _, stmt := range []string{
 		`DROP TABLE audit_subjects`,
@@ -82,7 +82,7 @@ func TestMigrate_v42ToV43AuditSubjectLifecycle(t *testing.T) {
 			(3, 0, 'rename-entity', 'u',
 			 '{"op":"rename-entity","before":{"kind":"entity","id":"A"},"after":{"kind":"entity","id":"B"}}', 'h2', 'h3')`,
 		`INSERT INTO audit_subjects (entity_id, seq) VALUES ('A', 1), ('A', 2), ('A', 3), ('B', 3)`,
-		`PRAGMA user_version = 42`,
+		`PRAGMA user_version = 43`,
 	} {
 		_, err := raw.Exec(stmt)
 		require.NoError(t, err, stmt)

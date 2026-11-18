@@ -175,8 +175,11 @@ type DBTX interface {
 // store.HeaderPager capability. It shares the free function queryEntityPage
 // with ListEntitiesPage.
 //
-//plimsoll:max-exported-methods=50
-//plimsoll:max-methods=60
+// +1 exported / +1 method (TKT-6KLUT3U): ReadsAtInstant, the
+// store.InstantReader marker of point-in-time reads (instant.go).
+//
+//plimsoll:max-exported-methods=51
+//plimsoll:max-methods=61
 type Store struct {
 	db           DBTX
 	searchTitles SearchTitles
@@ -273,7 +276,7 @@ func New(db DBTX, opts ...Option) (*Store, error) {
 		return nil, errors.New("pgstore: nil DBTX")
 	}
 	s := &Store{
-		db:          db,
+		db:          newInstantDB(db),
 		originID:    newOriginID(),
 		subscribers: make(map[int]chan store.Event),
 		keyedSlots:  keyedLockSlots(db),

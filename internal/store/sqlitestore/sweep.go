@@ -282,6 +282,9 @@ type sweepCandidate struct {
 	// origin is the row's origin_* columns; all nil means the last write was
 	// a direct edit.
 	origin originCols
+	// updatedAt is the row's updated_at, the time its content became
+	// current; it becomes the version's content_at.
+	updatedAt string
 }
 
 // selectCandidates returns up to Batch entities whose stored content_hash is
@@ -380,7 +383,7 @@ const candidateSelect = `
 		       c.origin_kind, c.origin_source, c.origin_source_face,
 		       c.origin_source_type, c.origin_definition,
 		       lc.content_hash, c.latest_vseq, lc.op,
-		       c.lv_vseq, c.lv_op
+		       c.lv_vseq, c.lv_op, c.updated_at
 		FROM (
 		    SELECT e.id, e.face, e.type, e.content, e.properties, e.updated_at,
 		           e.last_edited_by_user, e.last_edited_by_tool,
@@ -415,10 +418,10 @@ func scanCandidate(row scanner) (sweepCandidate, error) {
 		lvVseq     *int64
 		lvOp       *string
 	)
-	dest := make([]any, 0, 12+originColumnCount)
+	dest := make([]any, 0, 13+originColumnCount)
 	dest = append(dest, &c.id, &c.face, &c.typ, &c.content, &c.props, &c.editorUser, &c.editorTool)
 	dest = append(dest, c.origin.scanTargets()...)
-	dest = append(dest, &latestHash, &latestVseq, &latestOp, &lvVseq, &lvOp)
+	dest = append(dest, &latestHash, &latestVseq, &latestOp, &lvVseq, &lvOp, &c.updatedAt)
 	if err := row.Scan(dest...); err != nil {
 		return sweepCandidate{}, err
 	}
@@ -529,8 +532,9 @@ func (c sweepCandidate) versionInput(schemaHash string, projJSON []byte) (store.
 		PrincipalTool: tool,
 		// Copied off the live row, never guessed; not part of the content
 		// hash, as in pgstore's sweep.
-		Origin: scanOrigin(c.origin),
-		Op:     store.VersionOpCreate,
+		Origin:    scanOrigin(c.origin),
+		Op:        store.VersionOpCreate,
+		ContentAt: parseUpdatedAt(c.updatedAt),
 	}
 	if c.hasVersion {
 		in.Op = store.VersionOpUpdate
@@ -555,6 +559,8 @@ type relationSweepCandidate struct {
 	// editorUser and editorTool mirror sweepCandidate's.
 	editorUser *string
 	editorTool *string
+	// updatedAt is sweepCandidate.updatedAt for the relation row.
+	updatedAt string
 }
 
 // selectRelationCandidates is [sweep.selectCandidates] for relations.
@@ -566,7 +572,7 @@ type relationSweepCandidate struct {
 func (s *sweep) selectRelationCandidates(ctx context.Context) ([]relationSweepCandidate, error) {
 	const q = `
 		SELECT r.rel_record_id, r.from_id, r.from_face, r.rel_type, r.to_id,
-		       r.content, r.properties, r.last_edited_by_user, r.last_edited_by_tool,
+		       r.content, r.properties, r.last_edited_by_user, r.last_edited_by_tool, r.updated_at,
 		       (SELECT rv.content_hash FROM relation_versions rv
 		         WHERE rv.rel_record_id = r.rel_record_id
 		         ORDER BY rv.vseq DESC LIMIT 1) AS latest_hash,
@@ -595,7 +601,7 @@ func (s *sweep) selectRelationCandidates(ctx context.Context) ([]relationSweepCa
 			lvCreated  *string
 		)
 		if err := rows.Scan(&c.recordID, &c.from, &c.fromFace, &c.relType, &c.to,
-			&c.content, &c.props, &c.editorUser, &c.editorTool, &latestHash, &lvCreated); err != nil {
+			&c.content, &c.props, &c.editorUser, &c.editorTool, &c.updatedAt, &latestHash, &lvCreated); err != nil {
 			return nil, err
 		}
 		if latestHash != nil {
@@ -625,6 +631,7 @@ func (s *sweep) captureRelation(
 		Projection:    projJSON,
 		PrincipalUser: user,
 		PrincipalTool: tool,
+		ContentAt:     parseUpdatedAt(c.updatedAt),
 	}
 	contentHash := contentHashOfRelation(in)
 	if c.latestHash == "" || contentHash != c.latestHash {
@@ -656,4 +663,15 @@ func (s *sweep) captureRelation(
 func sweepNow(ctx context.Context, s *Store, provider store.ProjectionProvider, cfg store.SweepConfig) error {
 	sw := &sweep{store: s, provider: provider, cfg: sweepDefaults(cfg)}
 	return sw.tick(ctx)
+}
+
+// parseUpdatedAt reads a stored updated_at for a version's content_at. A value
+// that does not parse yields zero, so the version falls back to its capture
+// time rather than failing the capture.
+func parseUpdatedAt(v string) time.Time {
+	t, err := parseTime(v)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }

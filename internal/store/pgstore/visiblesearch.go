@@ -538,13 +538,13 @@ func buildVisibilityDisjunction(
 			var part strings.Builder
 			part.WriteString("(e.type = " + typeArg + faceCond)
 			if ts.Query.HasInbound != nil {
-				w, ex := buildPredicateSQL(b, fmt.Sprintf("v%d_in", i), *ts.Query.HasInbound, typeArg,
+				w, ex := buildGatePredicateSQL(b, fmt.Sprintf("v%d_in", i), *ts.Query.HasInbound, typeArg,
 					store.DirectionIncoming, sel)
 				withParts = append(withParts, w...)
 				part.WriteString(" AND EXISTS (" + ex + ")")
 			}
 			if ts.Query.HasOutbound != nil {
-				w, ex := buildPredicateSQL(b, fmt.Sprintf("v%d_out", i), *ts.Query.HasOutbound, typeArg,
+				w, ex := buildGatePredicateSQL(b, fmt.Sprintf("v%d_out", i), *ts.Query.HasOutbound, typeArg,
 					store.DirectionOutgoing, sel)
 				withParts = append(withParts, w...)
 				part.WriteString(" AND EXISTS (" + ex + ")")

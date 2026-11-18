@@ -530,8 +530,8 @@ END;`
 // anchor a prune leaves. Times are integer microseconds since the epoch.
 // pgstore migration 0051 has the same shape. Shared between schemaSQL and
 // the v41 to v42 rung. The face and starts columns of audit_subjects are the
-// v43 rung's (auditSubjectColumns); a database that takes the v42 rung gets
-// them here and the v43 rung finds them present.
+// v44 rung's (auditSubjectColumns); a database that takes the v42 rung gets
+// them here and the v44 rung finds them present.
 const auditLogDDL = `
 CREATE TABLE IF NOT EXISTS audit_log (
 	seq            INTEGER NOT NULL PRIMARY KEY,
@@ -560,8 +560,8 @@ CREATE TABLE IF NOT EXISTS audit_anchor (
 
 // auditSubjectStartsDDL indexes the audit subject rows that begin a
 // lifecycle, which a per-entity read starts from (TKT-X1ZFO04). pgstore
-// migration 0052 has the same index. It runs after the ladder, not in
-// schemaSQL, because a pre-v43 audit_subjects gains starts in the v43 rung.
+// migration 0053 has the same index. It runs after the ladder, not in
+// schemaSQL, because a pre-v44 audit_subjects gains starts in the v44 rung.
 const auditSubjectStartsDDL = `
 CREATE INDEX IF NOT EXISTS audit_subjects_starts_idx ON audit_subjects(entity_id, face, seq) WHERE starts;`
 
