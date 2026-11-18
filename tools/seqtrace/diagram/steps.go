@@ -16,10 +16,17 @@ type Diagram struct {
 // Step is one drawn call, or a loop when Repeat is set. A loop has no
 // endpoints; its Children are one iteration.
 type Step struct {
-	From    string   `json:"from,omitempty"`
-	To      string   `json:"to,omitempty"`
-	Fn      string   `json:"fn,omitempty"`
-	Via     string   `json:"via,omitempty"` // set for a call on another goroutine
+	From string `json:"from,omitempty"`
+	To   string `json:"to,omitempty"`
+	Fn   string `json:"fn,omitempty"`
+	Via  string `json:"via,omitempty"` // set for a call on another goroutine
+	// In lists the functions between the call drawn above this step and
+	// the call itself, outermost first: same-package helpers whose own
+	// calls were removed. It is empty when the function drawn above made
+	// the call. With it, requests that reach a step through one helper can
+	// be told from requests that each make the call themselves.
+	// Comparisons ignore it.
+	In      []string `json:"in,omitempty"`
 	Args    []string `json:"args,omitempty"`
 	Results []string `json:"results,omitempty"`
 	Repeat  int      `json:"repeat,omitempty"`
@@ -59,7 +66,13 @@ func Build(root *Call, opt Options) *Diagram {
 	if code := refusedStatus(root); code != "" {
 		top.Outcome = "status:" + code
 	}
-	top.Children = b.children(root, rootPart, 1)
+	// A relabelled root is drawn under another function's name, so its own
+	// calls are not that function's.
+	var chain []string
+	if fn != root.Fn {
+		chain = []string{root.Fn}
+	}
+	top.Children = b.children(root, rootPart, 1, chain)
 	return &Diagram{Participants: b.partOrder, Root: top}
 }
 
@@ -181,7 +194,8 @@ func refusedStatus(root *Call) string {
 // same-package call). Back-to-back groups of the same shape fold into a loop
 // first, whatever their size, so a helper called once per entity folds even
 // when it makes many calls. fold then catches repeats that span calls.
-func (b *builder) children(c *Call, from string, depth int) []Step {
+// chain is the In of the steps c makes.
+func (b *builder) children(c *Call, from string, depth int, chain []string) []Step {
 	var out, prev []Step
 	count, same := 0, true
 	flush := func() {
@@ -193,7 +207,7 @@ func (b *builder) children(c *Call, from string, depth int) []Step {
 		}
 	}
 	for _, ch := range c.Children {
-		group := b.call(ch, from, depth)
+		group := b.call(ch, from, depth, chain)
 		if len(group) == 0 {
 			continue
 		}
@@ -267,20 +281,22 @@ func equalSteps(a, b []Step) bool {
 }
 
 // call returns the steps c contributes: one step, or, for a call inside the
-// same participant, the steps of its children.
-func (b *builder) call(c *Call, from string, depth int) []Step {
+// same participant, the steps of its children. chain is the In of a step
+// for c.
+func (b *builder) call(c *Call, from string, depth int, chain []string) []Step {
 	to := from
 	if b.opt.Collapse == nil || !b.opt.Collapse.MatchString(c.Pkg) {
 		to = b.part(c.Pkg)
 	}
 	if to == from && c.Via == "" && (b.opt.Keep == nil || !b.opt.Keep.MatchString(c.Fn)) {
-		return b.children(c, from, depth)
+		return b.children(c, from, depth, append(slices.Clone(chain), c.Fn))
 	}
 	if b.opt.MaxDepth > 0 && depth >= b.opt.MaxDepth {
 		return nil
 	}
 	s := b.step(from, to, c.Fn, c)
-	s.Children = b.children(c, to, depth+1)
+	s.In = chain
+	s.Children = b.children(c, to, depth+1, nil)
 	return []Step{s}
 }
 
