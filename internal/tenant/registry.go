@@ -7,13 +7,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"reflect"
 	"sync"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
-	"github.com/Sourcehaven-BV/rela/internal/audit"
 )
 
 // DefaultMaxResident is the resident-set bound applied when an operator sets
@@ -103,26 +101,18 @@ func (o *Opened) Close() error {
 // shared and checks that the connection lands in the tenant's own schema
 // (see pinSchema). It holds the lock until the tenant closes.
 //
-// Each tenant also gets its own audit sink, a directory named after its
-// schema under auditRoot (TKT-SNVR8UV, see [AuditRoot]). The schema is the
-// name to use because it is derived by [SchemaFor], checked against a strict
-// pattern and unique per tenant, while an org id is an arbitrary string from
-// the identity provider. One sink for every tenant would interleave all their
-// audit records, and [Erase] could then not remove one tenant's records
-// without touching the others'.
+// Each tenant's audit records go to the database audit log in its own
+// schema (TKT-USQBMG6), so they never mix with another tenant's (TKT-SNVR8UV)
+// and [Erase] removes them with the schema.
 //
 // The build-tag split stays in appbuild: [appbuild.SharedBase.OpenAndAssemble]
 // is where the build chooses its backend, and it refuses on a build whose store
 // is not addressed by a DSN.
 //
-// Nil: rejected — an opener with no base would fail on the first request. An
-// empty auditRoot is rejected for the same reason.
-func SharedBaseOpener(base *appbuild.SharedBase, auditRoot string) (Opener[*Opened], error) {
+// Nil: rejected — an opener with no base would fail on the first request.
+func SharedBaseOpener(base *appbuild.SharedBase) (Opener[*Opened], error) {
 	if base == nil {
 		return nil, errors.New("tenant.SharedBaseOpener: base is required")
-	}
-	if auditRoot == "" {
-		return nil, errors.New("tenant.SharedBaseOpener: audit root is required")
 	}
 	return func(ctx context.Context, t Tenant) (*Opened, error) {
 		// Opening a tenant's store must outlive the request that triggered
@@ -133,12 +123,7 @@ func SharedBaseOpener(base *appbuild.SharedBase, auditRoot string) (Opener[*Open
 		if err != nil {
 			return nil, err
 		}
-		sink, err := audit.NewFilesystem(filepath.Join(auditRoot, t.Schema))
-		if err != nil {
-			_ = pin.Close()
-			return nil, fmt.Errorf("audit sink: %w", err)
-		}
-		svc, err := base.OpenAndAssemble(ctx, t.DSN, sink)
+		svc, err := base.OpenAndAssemble(ctx, t.DSN)
 		if err != nil {
 			_ = pin.Close()
 			return nil, err

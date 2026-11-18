@@ -195,7 +195,7 @@ func TestOutputWriter_SetAndCreate(t *testing.T) {
 
 	origin := "session:INC-001/response/new->assessed#1/"
 	var ops []string
-	for _, rec := range auditRecords(t, root) {
+	for _, rec := range auditRecords(t, svc, root) {
 		if strings.HasPrefix(rec.TriggeredBy, origin) {
 			require.Equal(t, "alice", rec.Principal.User)
 			require.Equal(t, principal.ToolRealtime, rec.Principal.Tool)
@@ -314,7 +314,7 @@ func TestOutputWriter_RetryAsPoster(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "retried", incident(t, svc).Properties["status"])
 	found := false
-	for _, rec := range auditRecords(t, root) {
+	for _, rec := range auditRecords(t, svc, root) {
 		if rec.TriggeredBy == "session:retry" {
 			found = true
 			require.Equal(t, "alice", rec.Principal.User)

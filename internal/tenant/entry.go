@@ -104,9 +104,8 @@ func RefuseLegacyMap(root string) error {
 }
 
 // OpenOne opens exactly one tenant over base, as the server's registry
-// opens each tenant: its schema checked and locked shared, its own audit
-// sink under [AuditRoot] of the project's cache directory, and its own
-// store. The caller closes the result with [Opened.Close], never by closing
+// opens each tenant: its schema checked and locked shared, and its own
+// store with the audit log in its schema. The caller closes the result with [Opened.Close], never by closing
 // its Services alone, so the schema lock is released after the store.
 //
 // Nil: rejected — a nil base has no configuration to open the tenant with.
@@ -114,7 +113,7 @@ func OpenOne(ctx context.Context, base *appbuild.SharedBase, t Tenant) (*Opened,
 	if base == nil {
 		return nil, errors.New("tenant.OpenOne: base is required")
 	}
-	open, err := SharedBaseOpener(base, AuditRoot(base.CacheDir()))
+	open, err := SharedBaseOpener(base)
 	if err != nil {
 		return nil, err
 	}

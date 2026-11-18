@@ -17,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/backendtest"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/audit/sqlaudit"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -211,8 +212,11 @@ func minutes(t *testing.T, svc *appbuild.Services) int {
 }
 
 // auditRecords reads the audit log of the project at root.
-func auditRecords(t *testing.T, root string) []audit.Record {
+func auditRecords(t *testing.T, svc *appbuild.Services, root string) []audit.Record {
 	t.Helper()
+	if log := svc.AuditLog(); log != nil {
+		return settledSQLAudit(t, log)
+	}
 	var out []audit.Record
 	files, err := filepath.Glob(filepath.Join(root, ".rela", "audit", "*"))
 	require.NoError(t, err)
@@ -228,6 +232,31 @@ func auditRecords(t *testing.T, root string) []audit.Record {
 		require.NoError(t, f.Close())
 	}
 	return out
+}
+
+// settledSQLAudit reads every record of log once the async sink has
+// stopped appending: two reads 100ms apart that agree.
+func settledSQLAudit(t *testing.T, log *sqlaudit.Log) []audit.Record {
+	t.Helper()
+	read := func() []audit.Record {
+		entries, err := log.Records(context.Background(), 0, 100_000)
+		require.NoError(t, err)
+		recs := make([]audit.Record, 0, len(entries))
+		for _, e := range entries {
+			recs = append(recs, e.Record)
+		}
+		return recs
+	}
+	prev := read()
+	for range 50 {
+		time.Sleep(100 * time.Millisecond)
+		cur := read()
+		if len(cur) == len(prev) && len(cur) > 0 {
+			return cur
+		}
+		prev = cur
+	}
+	return prev
 }
 
 // TestPromote_RealWiring pins a promote through the assembled services: the
@@ -258,7 +287,7 @@ func TestPromote_RealWiring(t *testing.T) {
 
 	origin := "channel:" + promoteRoom.Anchor + "/room#1/accept"
 	var ops []string
-	for _, rec := range auditRecords(t, root) {
+	for _, rec := range auditRecords(t, svc, root) {
 		if rec.TriggeredBy == origin {
 			require.Equal(t, "alice", rec.Principal.User)
 			ops = append(ops, rec.Op)

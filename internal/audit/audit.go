@@ -250,6 +250,18 @@ const (
 	// uncertain create to a remote row. The subject is the local row; the
 	// summary names the remote, the field, the side or the remote address,
 	// and never a value.
+	// OpAuditPrune records a `rela audit prune` run on a SQL audit log: the
+	// rows older than the retention cutoff were deleted. Summary carries the
+	// cutoff, the count and the last pruned sequence number. The log keeps
+	// that row's hash as its anchor, so the chain still verifies from there.
+	OpAuditPrune = "audit-prune"
+
+	// OpAuditImport records a `rela audit import` run: records from JSONL
+	// files were appended to a SQL audit log. Summary carries the file and
+	// record counts. The imported records keep their own time, op and
+	// principal; they enter the chain at the time of the import.
+	OpAuditImport = "audit-import"
+
 	OpRemoteResolve = "remote-resolve"
 	OpRemoteDismiss = "remote-dismiss"
 	OpRemoteLink    = "remote-link"

@@ -115,7 +115,10 @@ type GlobalFlags struct {
 // Raised 51 → 52 for `test` (TKT-UO8UIGO), which runs the project's Lua
 // tests on in-memory worlds; it is a top-level verb like `validate`.
 //
-//plimsoll:max-fields=52
+// Raised 52 → 53 for `audit` (TKT-USQBMG6), which verifies, prunes and
+// imports the database audit log; a top-level verb like `history-purge`.
+//
+//plimsoll:max-fields=53
 type CLI struct {
 	GlobalFlags `embed:""`
 
@@ -176,6 +179,7 @@ type CLI struct {
 	RelationRestore RelationRestoreCmd `cmd:"" name:"relation-restore" help:"Restore a relation to a past version (postgres build)."`
 
 	Token                TokenCmd                `cmd:"" help:"Manage the OAuth tokens connector scripts use (sqlite or postgres build)."`
+	Audit                AuditCmd                `cmd:"" help:"Verify, prune or import the database audit log (sqlite or postgres build)."`
 	HistoryTag           HistoryTagCmd           `cmd:"" name:"history-tag" help:"Set, move or delete a version tag on an entity (postgres or sqlite build)."`
 	HistoryPurge         HistoryPurgeCmd         `cmd:"" name:"history-purge" help:"Hard-delete an entity's version history for compliance (postgres build; irreversible)."`
 	RelationHistoryPurge RelationHistoryPurgeCmd `cmd:"" name:"relation-history-purge" help:"Hard-delete a relation's version history for compliance (postgres build; irreversible)."`
@@ -354,7 +358,7 @@ func requiresProject(cmd string) bool {
 		"rename", "analyze", "acl", "attach", "attachments", "gc", "renumber",
 		"sync", "history", "restore", "secrets",
 		"relation-history", "relation-restore", "history-tag", "history-purge", "relation-history-purge",
-		"dev", "token", "lease", "channel", "reconcile", "remote":
+		"dev", "token", "audit", "lease", "channel", "reconcile", "remote":
 		return true
 	case "migrate":
 		// Bare `rela migrate` (config-file migration) deliberately gets NO

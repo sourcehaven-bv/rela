@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 41
+const schemaVersion = 42
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -399,6 +399,12 @@ var migrations = []migration{
 		apply: func(ctx context.Context, conn *sql.Conn) error {
 			return addTableColumns(ctx, conn, "records", recordsMutableColumns)
 		},
+	},
+	{
+		// v41 → v42: the audit log (TKT-USQBMG6). New tables; nothing to
+		// backfill. `rela audit import` brings in an existing JSONL log.
+		to:    42,
+		apply: sqlSteps(auditLogDDL),
 	},
 }
 

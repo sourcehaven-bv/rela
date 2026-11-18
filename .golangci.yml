@@ -420,6 +420,13 @@ linters:
       - linters:
           - mnd
         path: internal/flowrun/flowruntest/
+      # The audit log conformance kit counts rows and seqs in its assertions,
+      # and its test functions take (t, Harness) the way storetest's do, so
+      # thelper mistakes them for helpers.
+      - linters:
+          - mnd
+          - thelper
+        path: internal/audit/sqlaudit/sqlaudittest/
       - linters:
           - lll
         source: ^//|`.*`|".*"

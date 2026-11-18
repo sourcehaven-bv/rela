@@ -17,10 +17,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/backendtest"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/audit/sqlaudit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
@@ -298,22 +300,21 @@ func TestTenantIsolation_OwnAuditAndScriptEngine(t *testing.T) {
 		Op: audit.OpCreateEntity, Subject: &audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-B1"},
 	})
 
-	tenantsDir := filepath.Join(root, ".rela", "audit", "tenants")
-	for schema, want := range map[string]string{schemaA: "TKT-A1", schemaB: "TKT-B1"} {
-		files, err := filepath.Glob(filepath.Join(tenantsDir, schema, "*.jsonl"))
-		if err != nil || len(files) != 1 {
-			t.Fatalf("%s: audit files %v (%v), want exactly one", schema, files, err)
+	// Each tenant's audit log is a table in its own schema (TKT-USQBMG6), so
+	// a record can only reach the tenant whose services wrote it.
+	for name, c := range map[string]struct {
+		svc  *appbuild.Services
+		want string
+	}{
+		schemaA: {leaseA.Value().Services, "TKT-A1"},
+		schemaB: {leaseB.Value().Services, "TKT-B1"},
+	} {
+		got := tenantAuditRecords(t, c.svc, 1)
+		if len(got) != 1 {
+			t.Fatalf("CROSS-TENANT AUDIT: %s holds %d records, want 1: %+v", name, len(got), got)
 		}
-		data, err := os.ReadFile(files[0])
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := string(data)
-		if !strings.Contains(got, want) {
-			t.Errorf("%s audit lacks its own record %s: %s", schema, want, got)
-		}
-		if strings.Count(got, "\n") != 1 {
-			t.Errorf("CROSS-TENANT AUDIT: %s holds %d records, want 1: %s", schema, strings.Count(got, "\n"), got)
+		if s := got[0].Record.Subject; s == nil || s.ID != c.want {
+			t.Errorf("%s audit lacks its own record %s: %+v", name, c.want, got[0].Record)
 		}
 	}
 }
@@ -383,7 +384,7 @@ func isolationOpener(t *testing.T, root string) tenant.Opener[*tenant.Opened] {
 	if err != nil {
 		t.Fatalf("NewSharedBase: %v", err)
 	}
-	open, err := tenant.SharedBaseOpener(base, tenant.AuditRoot(paths.CacheDir))
+	open, err := tenant.SharedBaseOpener(base)
 	if err != nil {
 		t.Fatalf("SharedBaseOpener: %v", err)
 	}
@@ -441,4 +442,32 @@ func TestTenantIsolation_MissingSchemaRefused(t *testing.T) {
 	if _, statErr := os.Stat(filepath.Join(root, ".rela", "audit", "tenants", "tenant_never_created")); statErr == nil {
 		t.Error("a refused tenant got an audit directory")
 	}
+}
+
+// tenantAuditRecords reads a tenant's database audit log. The writer is
+// asynchronous, so it waits until want records have landed, then reads once
+// more after a pause so a stray extra record would show.
+func tenantAuditRecords(t *testing.T, svc *appbuild.Services, want int) []sqlaudit.Entry {
+	t.Helper()
+	log := svc.AuditLog()
+	if log == nil {
+		t.Fatal("postgres services have no database audit log")
+	}
+	var got []sqlaudit.Entry
+	for range 50 {
+		var err error
+		if got, err = log.Records(t.Context(), 0, 100); err != nil {
+			t.Fatalf("Records: %v", err)
+		}
+		if len(got) >= want {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	time.Sleep(200 * time.Millisecond)
+	got, err := log.Records(t.Context(), 0, 100)
+	if err != nil {
+		t.Fatalf("Records: %v", err)
+	}
+	return got
 }

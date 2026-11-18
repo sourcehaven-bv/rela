@@ -37,6 +37,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/audit/sqlaudit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
@@ -150,8 +151,12 @@ import (
 // method takes the total from 40 to 41. Still a ratchet target under
 // TKT-N0IKN9.
 //
-//plimsoll:max-exported-methods=37
-//plimsoll:max-methods=41
+// 37 → 38 (TKT-USQBMG6): [Services.AuditLog], the database audit log for
+// `rela audit`. It is typed so the CLI does not reach it through a type
+// assertion on Config.Audit. Total 41 → 42. Still a ratchet target.
+//
+//plimsoll:max-exported-methods=38
+//plimsoll:max-methods=42
 type Services struct {
 	fs    storage.FS
 	paths *project.Context
@@ -336,10 +341,10 @@ type Services struct {
 	// Nil: accepted — nothing to remove.
 	onClose func()
 
-	// ownedAudit is the audit sink [SharedBase.OpenAndAssemble] handed this
-	// Services, closed last by [Services.Close]. Nil on every other path, where
-	// the caller that built the sink owns it.
-	ownedAudit io.Closer
+	// sqlAudit is the audit sink over the store's database, which replaces
+	// Config.Audit on the database tiers. Shared along a reassembly chain and
+	// closed by [Services.Close]. Nil on the fs and memory tiers.
+	sqlAudit *sqlaudit.Sink
 
 	closeOnce sync.Once
 	closeErr  error
@@ -472,6 +477,16 @@ func (s *Services) ACLDeclarative() *acl.Declarative { return s.aclDeclarative }
 // dataentry handlers can emit `denied-write` rows for short-circuit
 // rejections (affordance gates) that never reach the manager.
 func (s *Services) Audit() audit.Audit { return s.audit }
+
+// AuditLog returns the database audit log, for `rela audit`.
+//
+// Nil: returned on the fs and memory tiers, which keep JSONL files.
+func (s *Services) AuditLog() *sqlaudit.Log {
+	if s.sqlAudit == nil {
+		return nil
+	}
+	return s.sqlAudit.Log()
+}
 
 // Tracer returns the graph-traversal service.
 func (s *Services) Tracer() tracer.Tracer { return s.tracer }
@@ -2141,7 +2156,7 @@ func At(dir string, scriptEngine *script.Engine, opts ...Option) (*Services, err
 // DiscoverSharedBase is [Discover] for a multi-tenant host: it finds the
 // project from startDir and builds the tenant-independent [SharedBase] over
 // it, opening no store. Each tenant is then opened with
-// [SharedBase.OpenAndAssemble], which takes the tenant's DSN and audit sink.
+// [SharedBase.OpenAndAssemble], which takes the tenant's DSN.
 //
 // The base itself has no DSN and a [audit.Nop] sink. Neither is ever used to
 // serve data: OpenAndAssemble replaces both on its copy of the base, so a
@@ -2332,6 +2347,10 @@ type SharedBase struct {
 	// dueWake is the predecessor's session due-time wake, reused with
 	// realtimeLocal. Nil for a first assembly.
 	dueWake *realtime.DueWake
+	// sqlAudit is the database audit sink: the predecessor's on a
+	// re-assembly, so one sink serves the whole reassembly chain. Nil
+	// otherwise; [withSQLAudit] then builds one on a database tier.
+	sqlAudit *sqlaudit.Sink
 	// storeSchema is the predecessor's store schema refresher, reused
 	// because a re-assembly runs against the same store. Nil for a first
 	// assembly, and for a store that needs none.
@@ -2401,6 +2420,7 @@ func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
 		}
 	}
 	next.storeSchema = prev.storeSchema
+	next.sqlAudit = prev.sqlAudit
 	return &next
 }
 
@@ -2702,12 +2722,11 @@ func (b *SharedBase) Assemble(
 // Two more inputs are replaced on that copy, because they hold data rather
 // than config:
 //
-//   - sink is the tenant's audit sink, required. The entity manager, the
-//     cascade runner and data migration all read the base's Config.Audit, so
-//     one shared sink would interleave every tenant's audit records
-//     (TKT-SNVR8UV). The returned Services owns it: when sink is an
-//     io.Closer, [Services.Close] closes it after everything that writes to
-//     it has stopped.
+//   - the audit sink. Assembly writes the tenant's audit records to the
+//     database log in the tenant's own schema (TKT-USQBMG6), so no tenant
+//     shares the base's Config.Audit (TKT-SNVR8UV) and erasing the schema
+//     erases them. A build that assembles no database log is refused, so a
+//     tenant never runs without an audit trail.
 //   - the script engine is a new one, because an engine owns the process-wide
 //     Lua cache behind `rela.cache`, keyed by script path. A shared engine
 //     would hand a value one tenant's script stored to the same script
@@ -2720,43 +2739,28 @@ func (b *SharedBase) Assemble(
 //
 // A base marked by [SharedBase.ForReassembly] is refused: it assembles over a
 // store that is already open, and this opens a new one.
-//
-// Nil: sink is rejected — a nil sink would fail on the first write.
-func (b *SharedBase) OpenAndAssemble(ctx context.Context, dsn string, sink audit.Audit) (*Services, error) {
+func (b *SharedBase) OpenAndAssemble(ctx context.Context, dsn string) (*Services, error) {
 	if b.reassembly {
 		return nil, errors.New("appbuild: OpenAndAssemble needs a base that opens its own store, not a reassembly base")
 	}
 	if dsn == "" {
 		return nil, errors.New("appbuild: OpenAndAssemble needs the tenant's DSN; it was empty")
 	}
-	if sink == nil {
-		return nil, errors.New("appbuild: OpenAndAssemble needs the tenant's audit sink; it was nil")
-	}
 	tenantBase := *b
 	tenantBase.cfg.DatabaseURL = dsn
-	tenantBase.cfg.Audit = sink
+	// The database log replaces this during assembly; the check below
+	// refuses a tenant whose build assembled none.
+	tenantBase.cfg.Audit = audit.Nop{}
 	tenantBase.cfg.ScriptEngine = script.NewEngine()
 	svc, err := openAndAssemble(ctx, &tenantBase)
 	if err != nil {
-		closeAuditSink(sink)
 		return nil, err
 	}
-	if c, ok := sink.(io.Closer); ok {
-		svc.ownedAudit = c
+	if svc.sqlAudit == nil {
+		_ = svc.Close()
+		return nil, errors.New("appbuild: OpenAndAssemble assembled no database audit log for the tenant")
 	}
 	return svc, nil
-}
-
-// closeAuditSink closes sink when it holds a resource, logging a failure: it
-// runs on a path that is already returning an error or shutting down.
-func closeAuditSink(sink audit.Audit) {
-	c, ok := sink.(io.Closer)
-	if !ok {
-		return
-	}
-	if err := c.Close(); err != nil {
-		slog.Warn("appbuild: closing the audit sink failed", "error", err)
-	}
 }
 
 // buildEntityManager assembles the write-path manager from the collaborators
@@ -3052,6 +3056,11 @@ type backendOverrides struct {
 	// runs travel with rela.db; postgres finds its pool through the store.
 	flowRuns flowrun.Store
 
+	// auditLog is the audit log in the recipe's database. Supplied by the
+	// sqlite recipe so the log travels with rela.db; postgres finds its pool
+	// through the store.
+	auditLog *sqlaudit.Log
+
 	// recordStore replaces the file record store. Supplied by the sqlite
 	// recipe so records travel with rela.db; postgres finds its pool through
 	// the store.
@@ -3102,7 +3111,25 @@ func tracerAndTemplater(
 // Overrides are passed in rather than derived here because they come from a
 // database handle that belongs to the recipe that opened it, and assemble is
 // deliberately build-agnostic.
+//
+// assemble first gives base the database audit sink (see [withSQLAudit]),
+// and closes a sink it created when assembly fails.
 func assemble(
+	base *SharedBase, st store.Store, searcher search.Searcher,
+	visible search.VisibleSearcher, searchCloser io.Closer,
+	overrides backendOverrides,
+) (*Services, error) {
+	base, abandonSink, err := withSQLAudit(base, st, overrides)
+	if err != nil {
+		return nil, err
+	}
+	svc, err := assembleServices(base, st, searcher, visible, searchCloser, overrides)
+	abandonSink(err)
+	return svc, err
+}
+
+// assembleServices is [assemble] once base carries its audit sink.
+func assembleServices(
 	base *SharedBase, st store.Store, searcher search.Searcher,
 	visible search.VisibleSearcher, searchCloser io.Closer,
 	overrides backendOverrides,
@@ -3410,6 +3437,7 @@ func newServices(
 	cfg := base.cfg
 	return &Services{
 		base:               base,
+		sqlAudit:           base.sqlAudit,
 		gcStop:             background.gcStop,
 		reevaluateDataGate: background.reevaluateGate,
 		softDeleteStop:     background.softDeleteStop,
@@ -3720,12 +3748,13 @@ func (s *Services) Close() error {
 		if s.realtimeLocal != nil {
 			s.realtimeLocal.Stop()
 		}
-		// Last: every writer of audit records has stopped above.
-		if s.ownedAudit != nil {
-			if err := s.ownedAudit.Close(); err != nil {
+		// Last: every writer of audit records has stopped above. The SQL
+		// sink is shared along a reassembly chain, like realtimeLocal, so it
+		// closes here and not in CloseAssembly.
+		if s.sqlAudit != nil {
+			if err := s.sqlAudit.Close(); err != nil {
 				slog.Warn("appbuild: closing the audit sink failed", "error", err)
 			}
-			s.ownedAudit = nil
 		}
 		if s.onClose != nil {
 			s.onClose()

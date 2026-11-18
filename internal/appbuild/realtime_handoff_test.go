@@ -134,7 +134,7 @@ func TestSession_HandoffAndClaim(t *testing.T) {
 	toHandedOver(t, svc)
 	require.Equal(t, "USR-2", dlOwner(t, svc))
 	require.Eventually(t, func() bool {
-		for _, rec := range auditRecords(t, root) {
+		for _, rec := range auditRecords(t, svc, root) {
 			if rec.Op == audit.OpUpdateEntity && rec.Subject != nil && rec.Subject.ID == "DL-1" &&
 				strings.HasPrefix(rec.TriggeredBy, "session:DL-1/breach-response/contained->handed-over") {
 

@@ -336,24 +336,12 @@ func TestRunAs_AssertedRecorded(t *testing.T) {
 	require.Equal(t, 0, code, stderr)
 	assert.Contains(t, stderr, "acting as system:ci (asserted by "+osUser+")\n")
 
-	files, err := filepath.Glob(filepath.Join(root, ".rela", "audit", "*.jsonl"))
-	require.NoError(t, err)
-	require.NotEmpty(t, files)
 	var found bool
-	for _, f := range files {
-		data, err := os.ReadFile(f)
-		require.NoError(t, err)
-		for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
-			var rec audit.Record
-			require.NoError(t, json.Unmarshal([]byte(line), &rec), line)
-			if rec.Op != audit.OpCreateEntity {
-				continue
-			}
-			if rec.Principal.User == "system:ci" {
-				found = true
-				assert.Equal(t, osUser, rec.AssertedBy)
-				assert.Equal(t, principal.ToolCLI, rec.Principal.Tool)
-			}
+	for _, rec := range projectAuditRecords(t, root) {
+		if rec.Op == audit.OpCreateEntity && rec.Principal.User == "system:ci" {
+			found = true
+			assert.Equal(t, osUser, rec.AssertedBy)
+			assert.Equal(t, principal.ToolCLI, rec.Principal.Tool)
 		}
 	}
 	assert.True(t, found, "no create record by system:ci")
@@ -446,4 +434,34 @@ func TestRequiresProject_CoversEveryServiceTaker(t *testing.T) {
 		}
 	}
 	walk(parser.Model.Node, nil)
+}
+
+// projectAuditRecords returns the audit records of the project at root:
+// from the database log on a backend that has one, else from the JSONL
+// files.
+func projectAuditRecords(t *testing.T, root string) []audit.Record {
+	t.Helper()
+	if log := openLeaseServices(t, root).AuditLog(); log != nil {
+		entries, err := log.Records(context.Background(), 0, 10_000)
+		require.NoError(t, err)
+		recs := make([]audit.Record, 0, len(entries))
+		for _, e := range entries {
+			recs = append(recs, e.Record)
+		}
+		return recs
+	}
+	files, err := filepath.Glob(filepath.Join(root, ".rela", "audit", "*.jsonl"))
+	require.NoError(t, err)
+	require.NotEmpty(t, files)
+	var recs []audit.Record
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		require.NoError(t, err)
+		for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
+			var rec audit.Record
+			require.NoError(t, json.Unmarshal([]byte(line), &rec), line)
+			recs = append(recs, rec)
+		}
+	}
+	return recs
 }

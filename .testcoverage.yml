@@ -181,6 +181,7 @@ exclude:
     - ^internal/lease/leasetest # shared conformance test kit (exercised via the kv + pg backends)
     - ^internal/channels/channelstest # shared conformance test kit (exercised via the file, sqlite and pg backends)
     - ^internal/flowrun/flowruntest # shared conformance test kit (exercised via the kv, sqlite and pg backends)
+    - ^internal/audit/sqlaudit/sqlaudittest # shared conformance test kit (exercised via the sqlite and pg backends)
     - ^internal/records/recordstest # shared conformance test kit (exercised via the file, sqlite and pg backends)
     - ^internal/datamigration/migstatetest # shared conformance test kit (exercised via the file/memory/sqlite/pg backends)
     - ^internal/tokenstore/tokenstoretest # shared conformance test kit (exercised via Sealed over FSKV, sqlite and pg state stores, and the desktop keychain store)
@@ -191,6 +192,8 @@ exclude:
     - ^internal/lease/pglease # same live-DB gate as pgstore: reads ~0% when the suite skips
     - ^internal/channels/pgchannels # same live-DB gate as pgstore: reads ~10% when the suite skips; the SQL itself is sqlchannels, covered via SQLite
     - ^internal/flowrun/pgflowrun # same live-DB gate as pgstore; the SQL itself is sqlflowrun, covered via SQLite
+    - ^internal/audit/pgaudit # same live-DB gate as pgstore; the SQL itself is sqlaudit, covered via SQLite
+    - ^internal/audit/sqlaudit$ # the shared SQL behind pgaudit and sqliteaudit; exercised through their suites, so without -coverpkg its own number reads 0
     - ^internal/records/sqlrecords # the shared SQL behind pgrecords and sqliterecords; exercised through their suites, so without -coverpkg its own number reads 0
     - ^internal/sqlexec/pgexec # the pgx adapter; its statements run only in the live-DB pgflowrun and pgchannels suites
     - ^internal/datamigration/pgmigstate # same live-DB gate as pgstore: reads 8% when the suite skips, ~77% in the postgres CI job
