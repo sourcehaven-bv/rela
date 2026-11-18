@@ -36,6 +36,7 @@ const onboarding: Flow = {
   subject: 'person',
   version: 'v1',
   manual: true,
+  per_subject: 'one',
   diagram: '',
 }
 
@@ -53,7 +54,7 @@ function run(over: Partial<FlowRun> = {}): FlowRun {
     active: true,
     waiting: { roles: ['hr'], you_hold: true, writes: [] },
     log: [{ at: '2026-01-01T10:00:00Z', state: 'collect', via: 'start' }],
-    _actions: { complete: false, cancel: false, retry: false },
+    _actions: { complete: false, manage: true, cancel: false, retry: false },
     ...over,
   }
 }
@@ -133,5 +134,43 @@ describe('FlowRunsPanel', () => {
 
     expect(startFlowRunMock).toHaveBeenCalledWith('onboarding', 'PER-1')
     expect(listSubjectRunsMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('offers no Start for a per_subject: one flow while a run of it is unfinished', async () => {
+    const cases: [string, Flow, FlowRun[], boolean][] = [
+      ['unfinished run, one', onboarding, [run()], false],
+      ['finished run, one', onboarding, [run({ active: false, status: 'completed' })], true],
+      ['unfinished run, many', { ...onboarding, per_subject: 'many' }, [run()], true],
+      ['unfinished run of another flow', onboarding, [run({ flow: 'other' })], true],
+    ]
+    for (const [name, flow, runs, want] of cases) {
+      resetFlowList()
+      listFlowsMock.mockResolvedValue([flow])
+      listSubjectRunsMock.mockResolvedValue(runs)
+      const wrapper = mountPanel()
+      await flushPromises()
+      expect(wrapper.find('[data-testid="flow-start-onboarding"]').exists(), name).toBe(want)
+      wrapper.unmount()
+    }
+  })
+
+  it('offers no Start before the runs have loaded', async () => {
+    listFlowsMock.mockResolvedValue([onboarding])
+    let resolve: (r: FlowRun[]) => void = () => {}
+    listSubjectRunsMock.mockReturnValue(new Promise((r) => (resolve = r)))
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="flow-start-onboarding"]').exists()).toBe(false)
+    resolve([])
+    await flushPromises()
+    expect(wrapper.find('[data-testid="flow-start-onboarding"]').exists()).toBe(true)
+  })
+
+  it('still offers Start when the runs fail to load', async () => {
+    listFlowsMock.mockResolvedValue([onboarding])
+    listSubjectRunsMock.mockRejectedValue(new Error('boom'))
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="flow-start-onboarding"]').exists()).toBe(true)
   })
 })

@@ -27,6 +27,23 @@ const STATUS_TONES: Record<string, StatusColor> = {
   failed: 'red',
 }
 
+/**
+ * A configuration name as words, for a name without a label:
+ * `company_name` and `check-vat` become `Company name` and `Check vat`.
+ */
+export function humanize(name: string): string {
+  const words = name.replace(/[_-]+/g, ' ').trim()
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : name
+}
+
+/**
+ * The label of a flow or state. The server sends the name as the label when
+ * the flow declares none; that name reads as words instead.
+ */
+export function labelOf(label: string | undefined, name: string): string {
+  return label && label !== name ? label : humanize(name)
+}
+
 /** The status in the interface language; an unknown status as it came. */
 export function statusLabel(status: string, t: Translate): string {
   const key = STATUS_KEYS[status]
@@ -46,23 +63,26 @@ export function formatInstant(value: string | undefined): string {
 /** What one timeline entry says, without the actor. */
 function eventSummary(e: FlowEvent, t: Translate): string {
   const summary = moveSummary(e, t)
-  return e.branch ? t('flows.log.inBranch', { summary, branch: e.branch }) : summary
+  return e.branch ? t('flows.log.inBranch', { summary, branch: humanize(e.branch) }) : summary
 }
 
 function moveSummary(e: FlowEvent, t: Translate): string {
   switch (e.via) {
     case 'start':
-      return t('flows.log.start', { state: e.label || e.state })
+      return t('flows.log.start', { state: labelOf(e.label, e.state) })
     case 'done':
-      return t('flows.log.done', { state: e.label || e.state })
+      return t('flows.log.done', { state: labelOf(e.label, e.state) })
     case 'change':
-      return t('flows.log.change', { state: e.label || e.state })
+      return t('flows.log.change', { state: labelOf(e.label, e.state) })
     case 'timer':
-      return t('flows.log.timer', { state: e.label || e.state, timer: e.timer ?? '' })
+      return t('flows.log.timer', {
+        state: labelOf(e.label, e.state),
+        timer: humanize(e.timer ?? ''),
+      })
     case 'join':
-      return t('flows.log.join', { state: e.label || e.state })
+      return t('flows.log.join', { state: labelOf(e.label, e.state) })
     default:
-      return t('flows.log.moved', { state: e.label || e.state })
+      return t('flows.log.moved', { state: labelOf(e.label, e.state) })
   }
 }
 

@@ -141,7 +141,7 @@ func TestFlowControl_RunViewAndActions(t *testing.T) {
 	require.Len(t, run.Log, 1)
 	require.Equal(t, "alice", run.Log[0].By)
 	require.Contains(t, run.Diagram, "class ")
-	require.Equal(t, flowview.Actions{Complete: true, Cancel: true}, run.Actions)
+	require.Equal(t, flowview.Actions{Complete: true, Manage: true, Cancel: true}, run.Actions)
 
 	run, err = ctl.Run(bob, id)
 	require.NoError(t, err)
@@ -164,6 +164,7 @@ func TestFlowControl_RunViewAndActions(t *testing.T) {
 	flows := ctl.Flows()
 	require.Len(t, flows, 1)
 	require.True(t, flows[0].Manual)
+	require.Equal(t, "one", flows[0].PerSubject)
 }
 
 // TestFlowControl_Tasks pins the task list: runs waiting for a role the

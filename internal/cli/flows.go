@@ -143,7 +143,7 @@ func summarize(f *flowcfg.Flow, withDiagram bool) flowSummary {
 		s.States = append(s.States, st.Name)
 	}
 	if withDiagram {
-		s.Mermaid = f.Mermaid()
+		s.Mermaid = f.MermaidAt()
 	}
 	return s
 }

@@ -21,6 +21,7 @@ type rawFlow struct {
 	Deadline   string        `yaml:"deadline"`
 	Retention  *rawRetention `yaml:"retention"`
 	Start      []rawStart    `yaml:"start"`
+	Manage     *rawManage    `yaml:"manage"`
 	Initial    string        `yaml:"initial"`
 	States     yaml.Node     `yaml:"states"`
 	// OutsideEdits is `outside_edits:`, compiled by [loader.outsideEdits].
@@ -31,6 +32,11 @@ type rawFlow struct {
 type rawRetention struct {
 	After  string `yaml:"after"`
 	Action string `yaml:"action"`
+}
+
+// rawManage is `manage:`.
+type rawManage struct {
+	Permission string `yaml:"permission"`
 }
 
 // rawStart is one entry of `start:`.

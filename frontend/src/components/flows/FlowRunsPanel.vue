@@ -4,6 +4,10 @@
  * the reader can see, newest first, and a Start button per manual flow on
  * this type.
  *
+ * A flow with `per_subject: one` offers no Start while a run of it on this
+ * entity is unfinished, and no flow offers Start before the runs have
+ * loaded, so the button does not flash up and vanish.
+ *
  * Self-gating: it renders nothing unless a flow runs on this type, so a
  * project without flows (where `/_flows` answers 404) sees the page it
  * always saw. A refused read drops the runs on screen (BUG-E8XE7I).
@@ -34,13 +38,22 @@ const { flows } = useFlowList()
 const { on } = useEvents()
 
 const runs = ref<FlowRun[]>([])
+// The runs of the entity on screen have loaded at least once.
+const loaded = ref(false)
 const error = ref('')
 const starting = ref('')
 let controller: AbortController | null = null
 
 /** The flows that run on this type. */
 const typeFlows = computed<Flow[]>(() => flows.value.filter((f) => f.subject === props.entityType))
-const startable = computed(() => typeFlows.value.filter((f) => f.manual))
+const startable = computed(() =>
+  loaded.value ? typeFlows.value.filter((f) => f.manual && !blocked(f)) : []
+)
+
+/** A `per_subject: one` flow with an unfinished run here cannot start another. */
+function blocked(f: Flow): boolean {
+  return f.per_subject === 'one' && runs.value.some((r) => r.flow === f.name && r.active)
+}
 
 async function load() {
   if (typeFlows.value.length === 0 || !props.entityId) {
@@ -53,14 +66,18 @@ async function load() {
   try {
     runs.value = await listSubjectRuns(props.entityId, ctl.signal)
     error.value = ''
+    loaded.value = true
   } catch (err) {
     if (isCancelledFetch(err)) return
     if (shouldDropHeldContent(err)) {
       runs.value = []
       error.value = ''
+      loaded.value = true
       return
     }
     error.value = getErrorMessage(err, t('flows.panel.loadFailed'))
+    // Offer Start anyway: the server refuses a second run itself.
+    loaded.value = true
   }
 }
 
@@ -68,6 +85,7 @@ watch(
   () => [props.entityType, props.entityId, typeFlows.value.length],
   () => {
     runs.value = []
+    loaded.value = false
     error.value = ''
     void load()
   },

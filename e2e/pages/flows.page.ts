@@ -7,8 +7,8 @@ import { BasePage } from './base.page';
  * Selectors mirror the components that render them: `FlowRunsPanel.vue`
  * (`flow-runs-panel`, `flow-start-<name>`), `FlowRunCard.vue` (`flow-run`,
  * `flow-run-state`, `flow-run-status`), `FlowWaiting.vue`
- * (`flow-waiting-roles`) and `FlowStepForm.vue` (`flow-step-form`,
- * `flow-complete`).
+ * (`flow-waiting-roles`, `flow-branch`) and `FlowStepForm.vue`
+ * (`flow-step-form`, `flow-complete`).
  */
 export class FlowsPage extends BasePage {
   panel(): Locator {
@@ -30,6 +30,10 @@ export class FlowsPage extends BasePage {
   /** Click the Start button of `flow` in the runs panel. */
   async start(flow: string) {
     await this.panel().getByTestId(`flow-start-${flow}`).click();
+  }
+
+  async expectStartNotOffered(flow: string) {
+    await expect(this.panel().getByTestId(`flow-start-${flow}`)).toHaveCount(0, { timeout: 15_000 });
   }
 
   async expectStartOffered(flow: string, label: string) {
@@ -69,6 +73,45 @@ export class FlowsPage extends BasePage {
     await expect(box).toBeVisible({ timeout: 15_000 });
     await box.check();
     await this.stepForm().getByTestId('flow-complete').click();
+  }
+
+  /**
+   * Waits for the step form to show `labels` in order, each field below the
+   * previous one and as wide as the form.
+   */
+  async expectStepFieldsStacked(labels: readonly string[]) {
+    const fields = this.stepForm().locator('.form-field');
+    await expect(fields).toHaveCount(labels.length, { timeout: 15_000 });
+    const form = await this.stepForm().boundingBox();
+    let bottom = 0;
+    for (const [i, label] of labels.entries()) {
+      await expect(fields.nth(i).locator('label').first()).toContainText(label);
+      const box = await fields.nth(i).boundingBox();
+      expect(box && form, `field ${label} has a box`).toBeTruthy();
+      expect(box!.y, `${label} sits below the field before it`).toBeGreaterThanOrEqual(bottom);
+      expect(box!.width, `${label} spans the form`).toBeGreaterThan(form!.width * 0.9);
+      bottom = box!.y + box!.height;
+    }
+  }
+
+  /** Checks that the run shows none of the flow's workings: roles, guard, diagram, timeline or cancel. */
+  async expectNoManagerDetails(guard: string) {
+    const run = this.runs().first();
+    await expect(run.getByTestId('flow-waiting-roles')).toHaveCount(0);
+    await expect(run.getByTestId('flow-branch')).toHaveCount(0);
+    await expect(run).not.toContainText(guard);
+    await expect(run.locator('details')).toHaveCount(0);
+    await expect(run.getByTestId('flow-cancel')).toHaveCount(0);
+  }
+
+  async expectCancelOffered() {
+    await expect(this.runs().first().getByTestId('flow-cancel')).toBeVisible();
+  }
+
+  /** Ticks the checkbox labelled `field`, fills `text` into the field labelled `textField`, and completes the step. */
+  async completeStep(field: string, textField: string, text: string) {
+    await this.stepForm().getByLabel(textField).fill(text);
+    await this.completeStepWithCheckbox(field);
   }
 
   async expectNoStepForm() {

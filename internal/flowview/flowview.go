@@ -22,6 +22,8 @@ type Flow struct {
 	Version string `json:"version"`
 	// Manual reports an `on: manual` start.
 	Manual bool `json:"manual"`
+	// PerSubject is `per_subject:`: one or many unfinished runs per subject.
+	PerSubject string `json:"per_subject"`
 	// Diagram is the flow as a Mermaid state diagram.
 	Diagram string `json:"diagram"`
 }
@@ -151,8 +153,14 @@ type Event struct {
 // the check its POST runs.
 type Actions struct {
 	Complete bool `json:"complete"`
-	Cancel   bool `json:"cancel"`
-	Retry    bool `json:"retry"`
+	// Manage reports that the caller holds the flow's manage permission:
+	// a client shows how the run works (roles, guards, timers, branches,
+	// job attempts, the diagram and the timeline) to such a caller and
+	// keeps it from one who only does a step. Every reader
+	// of the run may still read them over the API.
+	Manage bool `json:"manage"`
+	Cancel bool `json:"cancel"`
+	Retry  bool `json:"retry"`
 }
 
 // Task is a run that waits for a role the caller holds on its subject.

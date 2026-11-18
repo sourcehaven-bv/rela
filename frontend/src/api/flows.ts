@@ -32,6 +32,8 @@ export interface Flow {
   version: string
   /** The flow has an `on: manual` start. */
   manual: boolean
+  /** `per_subject:`: how many unfinished runs one subject may carry. */
+  per_subject: 'one' | 'many'
   /** The flow as a Mermaid state diagram. */
   diagram: string
 }
@@ -106,6 +108,11 @@ export interface FlowEvent {
 
 export interface FlowActions {
   complete: boolean
+  /**
+   * The caller holds the flow's manage permission. The card shows how the
+   * run works (guards, roles, diagram, timeline) only to such a caller.
+   */
+  manage?: boolean
   cancel: boolean
   retry: boolean
 }

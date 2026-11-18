@@ -64,7 +64,12 @@
       "timers": "Timers",
       "timerDue": "to {state} at {at}",
       "timerTo": "to {state}",
-      "branchFork": "to {states} at the same time"
+      "branchFork": "to {states} at the same time",
+      "forYou": "This step is waiting for you.",
+      "forOthers": "This step is waiting for someone else.",
+      "waiting": "This step is waiting.",
+      "processing": "This step is being processed.",
+      "failedPlain": "This step could not be completed. Someone who manages this flow has to retry it."
     },
     "step": {
       "title": "Step",

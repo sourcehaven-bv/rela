@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/flowengine"
+	"github.com/Sourcehaven-BV/rela/internal/flowview"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -283,4 +284,58 @@ func TestFlowControl_GatesStartCancelAndRuns(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "cancelled", hdr.Properties[metamodel.FlowRunPropStatus])
 	require.ErrorIs(t, ctl.Cancel(alice, old), flowengine.ErrRunNotFound)
+}
+
+// TestFlowControl_ManagePermission pins `manage:`: when a flow sets it,
+// cancel, retry and `_actions.manage` need that permission, and the start
+// permission no longer grants them. The starter still does the step.
+func TestFlowControl_ManagePermission(t *testing.T) {
+	root := writeFlowProject(t)
+	edit := func(name, old, repl string) {
+		path := filepath.Join(root, name)
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.Contains(t, string(data), old)
+		require.NoError(t, os.WriteFile(path, []byte(strings.Replace(string(data), old, repl, 1)), 0o600))
+	}
+	edit("acl.yaml", "  manager:\n    read: [person, task]\n",
+		"  manager:\n    read: [person, task]\n    permissions: [onboarding.manage]\n")
+	edit("acl.yaml", "assignments:\n", "assignments:\n  alice: hr\n  bob: manager\n")
+	edit("flows.yaml", "    per_subject: one\n", "    per_subject: one\n    manage: { permission: onboarding.manage }\n")
+
+	svc, err := appbuildOnDisk(t, root)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Close() })
+	ctl := appbuild.FlowControlFor(svc)
+	require.NotNil(t, ctl)
+
+	person := entity.New("PER-1", "person")
+	person.Properties = map[string]any{"name": "Ada", "status": "new"}
+	require.NoError(t, svc.Store().CreateEntity(context.Background(), person))
+	as := func(user string) context.Context {
+		ctx, berr := appbuild.MustIdentityBinder(svc)(principal.With(context.Background(),
+			principal.Principal{User: user, Tool: principal.ToolCLI}))
+		require.NoError(t, berr)
+		return ctx
+	}
+	alice, bob := as("alice"), as("bob")
+
+	id, err := ctl.Start(alice, "onboarding", "PER-1")
+	require.NoError(t, err)
+
+	run, err := ctl.Run(alice, id)
+	require.NoError(t, err)
+	require.True(t, run.Actions.Complete, "alice holds hr, which the state waits for")
+	require.False(t, run.Actions.Manage, "onboarding.start does not manage the run")
+	require.False(t, run.Actions.Cancel)
+	run, err = ctl.Run(bob, id)
+	require.NoError(t, err)
+	require.True(t, run.Actions.Manage)
+	require.True(t, run.Actions.Cancel)
+	require.False(t, run.Actions.Complete, "bob does not hold hr")
+
+	require.ErrorIs(t, ctl.Retry(alice, id), flowview.ErrForbidden)
+	require.ErrorIs(t, ctl.Retry(bob, id), flowview.ErrConflict, "bob may retry; nothing has failed")
+	require.ErrorIs(t, ctl.Cancel(alice, id), appbuild.ErrFlowPermission)
+	require.NoError(t, ctl.Cancel(bob, id))
 }

@@ -18,6 +18,8 @@ import * as path from "path";
 export const FLOW_USERS = {
   /** Holds `hr`: reads and updates persons and may start onboarding. */
   hr: "hr@example.com",
+  /** Holds `applicant`: may start onboarding and do its step, not manage it. */
+  applicant: "applicant@example.com",
 } as const;
 
 /** Seed rows and flow names, in the words the spec asserts on. */
@@ -29,6 +31,10 @@ export const FLOW_SEED = {
   role: "hr",
   /** The label of the property the collect step writes. */
   writes: "Documents",
+  /** The step's fields as labelled: from the schema, or the name in words. */
+  stepFields: ["Documents", "Start date"],
+  /** The collect step's guard, which only a manager sees. */
+  guard: "entity.documents == true",
 } as const;
 
 export const FLOW_SCHEMA_YAML = `
@@ -48,6 +54,8 @@ entities:
       documents:
         label: ${FLOW_SEED.writes}
         type: boolean
+      start_date:
+        type: string
 `;
 
 export const FLOW_DATA_ENTRY_YAML = `
@@ -81,12 +89,17 @@ roles:
     read: [person]
     create: [person]
     update: [person]
+    permissions: [onboarding.start, onboarding.manage]
+  applicant:
+    read: [person]
+    update: [person]
     permissions: [onboarding.start]
   onboarding-bot:
     read: [person]
     update: [person]
 assignments:
   ${FLOW_USERS.hr}: hr
+  ${FLOW_USERS.applicant}: applicant
   system:onboarding-bot: onboarding-bot
 `;
 
@@ -97,6 +110,7 @@ flows:
     subject: person
     run_as: system:onboarding-bot
     per_subject: one
+    manage: { permission: onboarding.manage }
     start:
       - on: manual
         permission: onboarding.start
@@ -104,13 +118,13 @@ flows:
     states:
       collect:
         label: ${FLOW_SEED.states.collect}
-        waiting_for: [${FLOW_SEED.role}]
-        writes: [documents]
+        waiting_for: [${FLOW_SEED.role}, applicant]
+        writes: [documents, start_date]
         on:
           change:
             - to: finished
-              roles: [${FLOW_SEED.role}]
-              when: "entity.documents == true"
+              roles: [${FLOW_SEED.role}, applicant]
+              when: "${FLOW_SEED.guard}"
       finished:
         label: ${FLOW_SEED.states.finished}
         final: true

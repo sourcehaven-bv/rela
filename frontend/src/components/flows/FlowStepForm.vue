@@ -20,6 +20,7 @@ import { getEntity } from '@/api/entities'
 import { ApiError, getErrorMessage } from '@/api/errors'
 import { useSchemaStore, useUIStore } from '@/stores'
 import type { FormFieldOrRelation, PropertyDef } from '@/types'
+import { humanize } from './flowView'
 
 const props = defineProps<{
   run: FlowRun
@@ -60,7 +61,7 @@ const fields = computed<StepField[]>(() => {
   return writes.value.map((name) => ({
     name,
     def: props_[name],
-    field: { property: name, label: props_[name]?.label || name },
+    field: { property: name, label: props_[name]?.label || humanize(name) },
   }))
 })
 
@@ -122,7 +123,8 @@ async function submit() {
     const properties: Record<string, unknown> = {}
     for (const name of writes.value) {
       const v = values.value[name]
-      if (v !== undefined && JSON.stringify(v) !== JSON.stringify(loaded[name])) properties[name] = v
+      if (v !== undefined && JSON.stringify(v) !== JSON.stringify(loaded[name]))
+        properties[name] = v
     }
     emit('completed', await completeFlowStep(props.run.id, props.run.generation, properties))
   } catch (err) {
@@ -150,7 +152,7 @@ async function submit() {
 <template>
   <form class="flow-step-form" data-testid="flow-step-form" @submit.prevent="submit">
     <p v-if="loadError" class="flow-step-form__error" role="alert">{{ loadError }}</p>
-    <div v-if="fields.length > 0 && !loading" class="properties-list flow-step-form__fields">
+    <div v-if="fields.length > 0 && !loading" class="flow-step-form__fields">
       <FieldRenderer
         v-for="f in fields"
         :key="f.name"
@@ -184,6 +186,17 @@ async function submit() {
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
+}
+
+/* One labelled field per row, as on the entity form. */
+.flow-step-form__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.flow-step-form__fields > * {
+  min-width: 0;
 }
 
 .flow-step-form__error {

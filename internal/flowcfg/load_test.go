@@ -176,6 +176,8 @@ func TestParse_Problems(t *testing.T) {
 		{"predicate without when", [2]string{"      - on: predicate\n        when: \"entity.status == 'hired'\"", "      - on: predicate"},
 			"flows.onboarding.start[1].when", "required"},
 		{"manual without permission", [2]string{"permission: onboarding.start", ""}, "flows.onboarding.start[2].permission", "required"},
+		{"manage without permission", [2]string{"per_subject: one", "per_subject: one\n    manage: {}"},
+			"flows.onboarding.manage.permission", "required"},
 		{"schedule with permission", [2]string{"every: 1d", "every: 1d\n        permission: x"}, "flows.onboarding.start[3].permission", "does not apply"},
 		{"guard does not compile", [2]string{"entity.documents == true\"\n        after", "entity.docs == true\"\n        after"},
 			"flows.onboarding.states.collect.on.change[0].when", "does not compile"},
@@ -299,6 +301,35 @@ func TestParse_Warnings(t *testing.T) {
 	}
 	if w := c.Warnings(); len(w) != 1 || w[0].Key != "flows.onboarding.start[2].permission" {
 		t.Errorf("warnings = %v", w)
+	}
+}
+
+func TestParse_Manage(t *testing.T) {
+	tests := []struct {
+		name string
+		edit string
+		want string
+		warn bool
+	}{
+		{"absent", "per_subject: one", "", false},
+		{"granted", "per_subject: one\n    manage: { permission: onboarding.start }", "onboarding.start", false},
+		{"not granted", "per_subject: one\n    manage: { permission: nobody.has }", "nobody.has", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := parseSample(t, [2]string{"per_subject: one", tc.edit})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f, _ := c.Flow("onboarding")
+			if got := f.ManagePermission(); got != tc.want {
+				t.Errorf("ManagePermission() = %q; want %q", got, tc.want)
+			}
+			w := c.Warnings()
+			if got := len(w) == 1 && w[0].Key == "flows.onboarding.manage.permission"; got != tc.warn {
+				t.Errorf("warnings = %v; want a manage warning: %v", w, tc.warn)
+			}
+		})
 	}
 }
 
@@ -438,7 +469,7 @@ func TestFlow_Mermaid(t *testing.T) {
 		t.Fatal(err)
 	}
 	f, _ := c.Flow("onboarding")
-	m := f.Mermaid()
+	m := f.MermaidAt()
 	for _, want := range []string{"stateDiagram-v2", "change by hr when entity.documents == true", "after 7d", "done"} {
 		if !strings.Contains(m, want) {
 			t.Errorf("mermaid lacks %q:\n%s", want, m)

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { FlowRun } from '@/api/flows'
-import { runHref, statusLabel, statusTone, subjectHref, timelineEntries } from './flowView'
+import { labelOf, runHref, statusLabel, statusTone, subjectHref, timelineEntries } from './flowView'
 
 const t = (key: string, values?: Record<string, unknown>) =>
   values ? `${key} ${JSON.stringify(values)}` : key
@@ -47,8 +47,8 @@ describe('flowView', () => {
       t
     )
     expect(entries.map((e) => e.summary)).toEqual([
-      'flows.log.timer {"state":"escalated","timer":"stalled"}',
-      'flows.log.start {"state":"collect"}',
+      'flows.log.timer {"state":"Escalated","timer":"Stalled"}',
+      'flows.log.start {"state":"Collect"}',
     ])
     expect(entries[0].current).toBe(true)
     expect(entries[0].tone).toBe('amber')
@@ -96,7 +96,7 @@ describe('flowView', () => {
     )
     expect(entries.map((e) => e.current)).toEqual([false, true, false, false])
     expect(entries[1].summary).toBe(
-      'flows.log.inBranch {"summary":"flows.log.done {\\"state\\":\\"legal\\"}","branch":"legal"}'
+      'flows.log.inBranch {"summary":"flows.log.done {\\"state\\":\\"Legal\\"}","branch":"Legal"}'
     )
   })
 
@@ -105,7 +105,7 @@ describe('flowView', () => {
       run({ log: [{ at: '2026-01-01T10:00:00Z', state: 'joined', via: 'join' }] }),
       t
     )
-    expect(entries[0].summary).toBe('flows.log.join {"state":"joined"}')
+    expect(entries[0].summary).toBe('flows.log.join {"state":"Joined"}')
   })
 
   it('marks no entry current once the run has finished', () => {
@@ -121,5 +121,16 @@ describe('flowView', () => {
     expect(subjectHref('PER-1', 'person')).toBe('/entity/person/PER-1')
     expect(subjectHref(undefined, 'person')).toBe('')
     expect(subjectHref('PER-1', undefined)).toBe('')
+  })
+})
+
+describe('labelOf', () => {
+  it.each([
+    ['Company details', 'details', 'Company details'],
+    ['check_vat', 'check_vat', 'Check vat'],
+    ['', 'billing-email', 'Billing email'],
+    [undefined, 'ready', 'Ready'],
+  ])('labelOf(%j, %j) is %j', (label, name, want) => {
+    expect(labelOf(label, name)).toBe(want)
   })
 })

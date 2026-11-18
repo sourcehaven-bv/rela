@@ -90,6 +90,7 @@ flows:
 | `deadline` | How long a run may take, such as `30d`. At least one minute. |
 | `retention` | When to clean up a finished run: `after` (a period, required) and `action` (`archive` or `delete`). |
 | `start` | The triggers that start a run. See below. |
+| `manage` | `permission:` names the permission that cancels and retries a run, and shows how a run works in the web app. Without it, the permissions of the `on: manual` starts do. See [Running flows](#running-flows). |
 | `initial` | The state a run starts in. Required. It may not be final. |
 | `states` | The states, by name. Required. |
 | `outside_edits` | Which subject properties people may change outside the flow while a run is open. See [Edits outside a flow](#edits-outside-a-flow). |
@@ -430,7 +431,29 @@ rela flow cancel RUN-4OSX           # cancel an unfinished run
 caller must hold its `permission` for the subject. A role held through a
 role relation to the subject counts. A subject the caller cannot read
 answers like a missing entity. `rela flow cancel` needs the same
-permission. In a project without acl.yaml, everyone may start and cancel.
+permission, or the flow's `manage` permission when it sets one. In a
+project without acl.yaml, everyone may start and cancel.
+
+Set `manage` when the people who start a run are not the people who
+manage it. In a self-service signup, a customer starts the flow on their
+own account and does its first step, but only staff may cancel it:
+
+```yaml
+flows:
+  signup:
+    subject: account
+    manage: { permission: signup.manage }
+    start:
+      - on: manual
+        permission: signup.start   # customers and staff hold this
+```
+
+A `manage` permission that no role in acl.yaml grants loads with a
+warning: nobody can then cancel or retry a run.
+
+A run follows the version of the flow it started on, so `manage` applies
+to runs started after you add it. A run that was already unfinished still
+accepts the start permission for cancel and retry until it ends.
 
 When a run starts, rela records the `_flow-run` entity and its `_carries`
 edge as `system:flow`, and then enters the initial state:
@@ -486,7 +509,12 @@ through a role relation.
 
 **In the web app.** The entity page of a subject shows a Flows panel with
 its runs. For each run it shows the state, why the run waits, and the
-step form:
+step form. A state or flow without a `label` shows its name in words:
+`check_vat` reads as "Check vat". The step form shows one field per row,
+labelled with the property's `label` from the schema, or with its name in
+words.
+
+Someone who manages the flow sees how the run works:
 
 - which roles the state waits for, and whether you hold one;
 - the timers of the state and when each fires;
@@ -495,6 +523,13 @@ step form:
   attempt;
 - the flow as a diagram with the current state marked, and the timeline:
   the start and the latest moves, with who made each.
+
+Someone who does not manage the flow, such as a customer who only fills
+in a step, sees the state, its status, and the step form when the step
+waits for them. Otherwise they see one line: the step waits for someone
+else, waits, is being processed, or failed and needs someone who manages
+the flow. This is presentation, not access control: every reader of the
+subject may still read the whole run over the API.
 
 The step form edits only the properties in the state's `writes:`, and
 sends only the ones you changed. When you complete the step, rela writes
@@ -510,8 +545,10 @@ already moved on, for example by a timer) or `settling` (the run moved,
 but a later output step failed and is retried).
 
 The panel also offers a Start button for each flow with an `on: manual`
-start, and Cancel and Retry buttons when you hold that start's
-permission. Retry tries the failed outputs of a step again now, instead of
+start. A flow with `per_subject: one` offers none while a run of it on
+the entity is unfinished. The panel shows Cancel and Retry buttons when
+you hold the flow's `manage` permission, or the start's permission when
+the flow sets no `manage`. Retry tries the failed outputs of a step again now, instead of
 waiting for the next attempt.
 
 The sidebar has two pages when the project has flows. **Flow tasks**
@@ -540,7 +577,7 @@ second completion is refused.
 
 | Route | What it does |
 | ----- | ------------ |
-| `GET /api/v1/_flows` | The flows of `flows.yaml`, with their diagrams |
+| `GET /api/v1/_flows` | The flows of `flows.yaml`, with their `per_subject` and diagrams |
 | `GET /api/v1/_flows/tasks?flow=&page=&per_page=` | Your tasks |
 | `GET /api/v1/_flows/runs?flow=&status=&page=&per_page=` | The runs you can read |
 | `GET /api/v1/_flows/runs?subject=PER-12` | The runs on one entity, with why each waits |
@@ -551,7 +588,9 @@ second completion is refused.
 | `POST /api/v1/_flows/runs/{id}/_retry` | Retry the failed outputs now |
 
 `_actions` on a run says whether `complete`, `cancel` and `retry` would
-be accepted for you, by the same checks the POST routes make. In a forked
+be accepted for you, by the same checks the POST routes make. `manage`
+says whether you hold the permission that cancels the run; the web app
+shows how the run works only when it is true. In a forked
 run, `complete` is false and each entry of `parallel` has its own
 `complete`; send that entry's `generation` to complete its step. A run you
 cannot read answers 404, like a missing entity. A missing role or
