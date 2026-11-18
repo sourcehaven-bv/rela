@@ -1,6 +1,7 @@
 import axios, { type AxiosInstance, type AxiosResponse } from 'axios'
 import { toApiError } from './errors'
 import { apiUrl } from './base'
+import { isProvisioningResponse, startProvisioningPoll } from './tenantProvisioning'
 
 // The error types and helpers live in errors.ts; re-export so existing
 // `from '@/api'` / `from '@/api/client'` importers keep working.
@@ -21,8 +22,29 @@ class ApiClient {
     // catch sites read .message / .validationErrors / getScriptError()
     // instead of branching on the rejection shape.
     this.client.interceptors.response.use(
-      (response) => response,
-      (error: unknown) => Promise.reject(toApiError(error)),
+      (response) => {
+        // A 202 with status "provisioning" carries no data the caller asked
+        // for (TKT-TNPRV8): show the setting-up screen and fail the call
+        // rather than hand the status on as data.
+        if (isProvisioningResponse(response.status, response.data)) {
+          void startProvisioningPoll()
+          return Promise.reject(toApiError(new Error('tenant_provisioning')))
+        }
+        return response
+      },
+      (error: unknown) => {
+        // A write during the create, and a create that is throttled, failed
+        // or needs an operator, is a 503 provisioning problem: show the
+        // same screen, which keeps polling.
+        if (
+          axios.isAxiosError(error) &&
+          error.response &&
+          isProvisioningResponse(error.response.status, error.response.data)
+        ) {
+          void startProvisioningPoll()
+        }
+        return Promise.reject(toApiError(error))
+      },
     )
   }
 

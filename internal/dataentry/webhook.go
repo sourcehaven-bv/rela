@@ -2,11 +2,13 @@ package dataentry
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/readtime"
 	"github.com/Sourcehaven-BV/rela/internal/script"
+	"github.com/Sourcehaven-BV/rela/internal/state"
 )
 
 // errWebhookActionMissing is returned when the configured provisioning action id
@@ -59,6 +62,17 @@ const webhookActionTimeout = 15 * time.Second
 // (IdPs retry on a slow/failed response) is a no-op rather than a duplicate
 // provision. The window need only exceed the IdP's retry span.
 const webhookDedupTTL = 10 * time.Minute
+
+// webhookClaimTTL is how long an id stays claimed by a delivery that is still
+// running. It exceeds [webhookActionTimeout] by a wide margin, so a running
+// delivery keeps its claim. It is short so that a claim whose release could
+// not be saved lapses before the IdP stops retrying: the event then runs on a
+// later retry instead of being lost.
+const webhookClaimTTL = 2 * time.Minute
+
+// webhookRetryAfter is the Retry-After, in seconds, of a webhook the receiver
+// asks the IdP to deliver again.
+const webhookRetryAfter = "30"
 
 // webhookVerifier verifies a signed webhook JWT and projects the claims the
 // receiver acts on. Declared at the call site (returning the local WebhookClaims
@@ -220,7 +234,7 @@ func (a *App) SetWebhookReceiver(v webhookVerifier, actionID string, roles webho
 		return
 	}
 	a.webhook = &webhookReceiver{
-		verify: v, actionID: actionID, seen: newSeenSet(webhookDedupTTL), roles: roles, org: logOrgEvents{},
+		verify: v, actionID: actionID, seen: newSeenSet(webhookDedupTTL, a.kv), roles: roles, org: logOrgEvents{},
 	}
 }
 
@@ -251,8 +265,15 @@ func (a *App) registerWebhookRoutes(mux *http.ServeMux) {
 // verification failure it answers 401 and nothing runs. A webhook that lacks a
 // claim its family requires answers 400. An `organization.*` event goes to
 // the organization handler; every other event goes to dispatch, which runs
-// the action. A redelivered webhook (same id) is acknowledged with 200
-// without re-dispatching.
+// the action.
+//
+// Dedup on the webhook id (jti) is a claim in the [seenSet]. A delivery
+// claims its id before it runs the handler. A redelivery of a handled id is
+// acknowledged with 200 without running again. A copy that arrives while
+// another delivery of the same id still runs gets 503 with Retry-After, so the
+// IdP delivers it again rather than losing it if the running one fails. A
+// handler failure releases the claim, so the retry runs. An id-less webhook
+// cannot be deduped and is always processed.
 //
 //archplan:auth=none reason="the body is a JWT signed by the IdP; verified before dispatch"
 func (rec *webhookReceiver) handle(
@@ -286,13 +307,26 @@ func (rec *webhookReceiver) handle(
 		return
 	}
 
-	// Dedup on the webhook id (jti). An id-less webhook can't be deduped, so it is
-	// always processed — at-least-once is acceptable because the action is
-	// idempotent (it upserts by sub).
-	if claims.ID != "" && !rec.seen.add(claims.ID) {
-		slog.Info("idp webhook deduped", "id", claims.ID, "event", claims.Event)
-		w.WriteHeader(http.StatusOK)
-		return
+	if claims.ID != "" {
+		claim, seenErr := rec.seen.claim(r.Context(), claims.ID)
+		switch {
+		case seenErr != nil:
+			// Without the stored set a replay cannot be told apart, so the
+			// webhook is refused and the IdP delivers it again.
+			slog.Error("idp webhook: the dedup set is unavailable; asking the IdP to retry", "error", seenErr)
+			retryWebhook(w, "dedup unavailable")
+			return
+		case claim == seenDone:
+			slog.Info("idp webhook deduped", "id", claims.ID, "event", claims.Event)
+			w.WriteHeader(http.StatusOK)
+			return
+		case claim == seenInFlight:
+			// Another delivery of this id is running. If it fails, this copy
+			// is the one that must run, so ask for it again later.
+			slog.Info("idp webhook already in flight; asking the IdP to retry", "id", claims.ID, "event", claims.Event)
+			retryWebhook(w, "already in flight")
+			return
+		}
 	}
 
 	if family == familyOrganization {
@@ -301,10 +335,15 @@ func (rec *webhookReceiver) handle(
 		err = dispatch(r.Context(), claims)
 	}
 	if err != nil {
-		// The handler failed (IdP fetch error, script error, ...). Return 502 so the
-		// IdP retries; drop the id from the seen-set so the retry isn't deduped.
+		// The handler failed (IdP fetch error, script error, ...). Return 502 so
+		// the IdP retries, and release the claim so the retry runs.
 		if claims.ID != "" {
-			rec.seen.forget(claims.ID)
+			if relErr := rec.seen.release(r.Context(), claims.ID); relErr != nil {
+				// The claim lapses after webhookClaimTTL, so a later retry
+				// still runs.
+				slog.Error("idp webhook: releasing the claim failed; it lapses by itself",
+					"id", claims.ID, "error", relErr)
+			}
 		}
 		if family == familyOrganization {
 			slog.Warn("idp webhook organization handler failed", "event", claims.Event, "error", err)
@@ -314,7 +353,24 @@ func (rec *webhookReceiver) handle(
 		http.Error(w, "handler failed", http.StatusBadGateway)
 		return
 	}
+	if claims.ID != "" {
+		if err = rec.seen.finish(r.Context(), claims.ID); err != nil {
+			// The webhook was handled but its id could not be marked done.
+			// Ask for a retry rather than leave a replay open; the retry is
+			// harmless because the handlers are idempotent.
+			slog.Error("idp webhook: recording the id failed; asking the IdP to retry", "id", claims.ID, "error", err)
+			retryWebhook(w, "dedup unavailable")
+			return
+		}
+	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// retryWebhook answers 503 with Retry-After, so the IdP delivers the webhook
+// again.
+func retryWebhook(w http.ResponseWriter, msg string) {
+	w.Header().Set("Retry-After", webhookRetryAfter)
+	http.Error(w, msg, http.StatusServiceUnavailable)
 }
 
 // dispatchWebhookAction runs the provisioning action with the webhook's claims as
@@ -425,19 +481,61 @@ func storeAssertedRoles(
 
 // --- dedup seen-set -------------------------------------------------------
 
-// seenSet is a small TTL set of recently-processed webhook ids. It bounds memory
-// by evicting expired entries on each add; the id space per window is tiny (one
-// per membership change), so no size cap is needed beyond the TTL sweep.
+// webhookSeenKey is the state.KV key that holds the seen-set. state.KV is the
+// store's own runtime state, so on postgres it lives in the tenant's schema
+// and outlives the App: evicting a tenant no longer resets the set, and a
+// captured webhook cannot be replayed after a reopen (BUG-ZO33J9M). Every
+// process serving the schema shares it too.
+const webhookSeenKey = "webhooks/idp-seen.json"
+
+// webhookSeenMax bounds the persisted set. The id space per TTL window is
+// tiny (one per membership change), so this is only a ceiling on a flood of
+// distinct signed webhooks; the oldest ids go first.
+const webhookSeenMax = 4096
+
+// seenState is where a webhook id stands in the [seenSet].
+type seenState int
+
+const (
+	// seenNew: the id was not known, and the caller now holds its claim.
+	seenNew seenState = iota
+	// seenInFlight: another delivery holds the id's claim.
+	seenInFlight
+	// seenDone: a delivery of the id was handled within the TTL.
+	seenDone
+)
+
+// seenEntry is one id in the [seenSet]. An entry that is not Done is a claim
+// of a delivery still running.
+type seenEntry struct {
+	At   time.Time `json:"at"`
+	Done bool      `json:"done,omitempty"`
+}
+
+// seenSet records the webhook ids that were handled within the TTL, and
+// claims the ids a delivery is handling now (BUG-ZO33J9M). Every operation
+// loads, sweeps and saves the set under one mutex, so the check and the claim
+// are one step: two copies of one id that arrive together cannot both run.
+// A done id expires after ttl, a claim after claimTTL.
+//
+// The kv copy carries the set across eviction and across processes. Two
+// processes can still race between load and save and both claim one id; that
+// leaves the at-least-once delivery the handlers already tolerate (the action
+// upserts by sub). A kv read or write failure fails the call, and the
+// webhook gets 503 so the IdP retries.
 type seenSet struct {
-	mu  sync.Mutex
-	ttl time.Duration
-	at  map[string]time.Time
+	mu       sync.Mutex
+	ttl      time.Duration
+	claimTTL time.Duration
+	at       map[string]seenEntry
+	// kv persists the set. Nil: the set is in memory only (tests).
+	kv state.KV
 	// now is injectable for tests; nil ⇒ time.Now.
 	now func() time.Time
 }
 
-func newSeenSet(ttl time.Duration) *seenSet {
-	return &seenSet{ttl: ttl, at: make(map[string]time.Time)}
+func newSeenSet(ttl time.Duration, kv state.KV) *seenSet {
+	return &seenSet{ttl: ttl, claimTTL: webhookClaimTTL, at: make(map[string]seenEntry), kv: kv}
 }
 
 func (s *seenSet) clock() time.Time {
@@ -447,27 +545,122 @@ func (s *seenSet) clock() time.Time {
 	return time.Now()
 }
 
-// add records id and reports whether it was NEW (true) or already present within
-// the TTL (false). Expired entries are swept on each call.
-func (s *seenSet) add(id string) bool {
+// claim reports where id stands. When it was neither done nor claimed, it
+// claims id for the caller and saves the claim before it returns [seenNew].
+// It fails when the stored set cannot be read or written: a replay could
+// then pass unnoticed.
+func (s *seenSet) claim(ctx context.Context, id string) (seenState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.loadLocked(ctx); err != nil {
+		return seenNew, err
+	}
 	now := s.clock()
-	for k, t := range s.at {
-		if now.Sub(t) > s.ttl {
+	s.sweepLocked(now)
+	if e, ok := s.at[id]; ok {
+		if e.Done {
+			return seenDone, nil
+		}
+		return seenInFlight, nil
+	}
+	s.at[id] = seenEntry{At: now}
+	if err := s.saveLocked(ctx); err != nil {
+		delete(s.at, id)
+		return seenNew, err
+	}
+	return seenNew, nil
+}
+
+// finish marks a claimed id done, so a redelivery within the TTL is deduped.
+func (s *seenSet) finish(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.loadLocked(ctx); err != nil {
+		return err
+	}
+	now := s.clock()
+	s.sweepLocked(now)
+	s.at[id] = seenEntry{At: now, Done: true}
+	return s.saveLocked(ctx)
+}
+
+// release drops the claim on id after its handler failed, so the IdP's
+// retry runs. A done id is left as it is. When the release cannot be saved,
+// the claim lapses after claimTTL.
+func (s *seenSet) release(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.loadLocked(ctx); err != nil {
+		return err
+	}
+	s.sweepLocked(s.clock())
+	if e, ok := s.at[id]; !ok || e.Done {
+		return nil
+	}
+	delete(s.at, id)
+	return s.saveLocked(ctx)
+}
+
+func (s *seenSet) sweepLocked(now time.Time) {
+	for k, e := range s.at {
+		ttl := s.ttl
+		if !e.Done {
+			ttl = s.claimTTL
+		}
+		if now.Sub(e.At) > ttl {
 			delete(s.at, k)
 		}
 	}
-	if t, ok := s.at[id]; ok && now.Sub(t) <= s.ttl {
-		return false
+	for len(s.at) >= webhookSeenMax {
+		var oldest string
+		for k, e := range s.at {
+			if oldest == "" || e.At.Before(s.at[oldest].At) {
+				oldest = k
+			}
+		}
+		delete(s.at, oldest)
 	}
-	s.at[id] = now
-	return true
 }
 
-// forget drops id so a retried-after-failure webhook isn't deduped.
-func (s *seenSet) forget(id string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.at, id)
+// loadLocked merges the persisted set into memory. The kv copy is
+// authoritative for ids another process or an earlier App recorded or forgot,
+// so it replaces the in-memory map when it reads. A missing set is empty; a
+// read that fails is an error.
+func (s *seenSet) loadLocked(ctx context.Context) error {
+	if s.kv == nil {
+		return nil
+	}
+	data, err := s.kv.Get(ctx, webhookSeenKey)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read the dedup set: %w", err)
+	}
+	var at map[string]seenEntry
+	if err := json.Unmarshal(data, &at); err != nil {
+		// Our own write is unreadable: start over rather than refuse every
+		// webhook until an operator deletes it.
+		slog.Warn("idp webhook: the stored dedup set is unreadable; starting a new one", "error", err)
+		at = nil
+	}
+	s.at = at
+	if s.at == nil {
+		s.at = make(map[string]seenEntry)
+	}
+	return nil
+}
+
+func (s *seenSet) saveLocked(ctx context.Context) error {
+	if s.kv == nil {
+		return nil
+	}
+	data, err := json.Marshal(s.at)
+	if err == nil {
+		err = s.kv.Put(ctx, webhookSeenKey, data)
+	}
+	if err != nil {
+		return fmt.Errorf("save the dedup set: %w", err)
+	}
+	return nil
 }

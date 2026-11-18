@@ -50,24 +50,15 @@ type noLock struct{}
 
 func (noLock) Lock(context.Context) (func(), error) { return func() {}, nil }
 
-// copyFlowRuns copies every unfinished run with its definition. A run's id,
-// subject, state and pending mark are kept; its revision starts again at 1.
+// copyFlowRuns copies every unfinished run with its definition and its whole
+// state ([flowrun.CopyRun]).
 func (c *copier) copyFlowRuns(ctx context.Context) error {
 	if c.src.runs == nil {
 		return nil
 	}
-	var runs []flowrun.Run
-	q := flowrun.Query{Limit: flowrun.MaxPage}
-	for {
-		page, err := c.src.runs.List(ctx, q)
-		if err != nil {
-			return fmt.Errorf("read flow runs: %w", err)
-		}
-		runs = append(runs, page...)
-		if len(page) < q.Limit {
-			break
-		}
-		q.After = page[len(page)-1].ID
+	runs, err := flowrun.ListAll(ctx, c.src.runs)
+	if err != nil {
+		return fmt.Errorf("read flow runs: %w", err)
 	}
 	if len(runs) == 0 {
 		return nil
@@ -87,18 +78,8 @@ func (c *copier) copyFlowRuns(ctx context.Context) error {
 		return nil
 	}
 	for _, r := range runs {
-		def, err := c.src.runs.Definition(ctx, r.Flow, r.Version)
-		if err != nil {
-			c.rep.Errors = append(c.rep.Errors, fmt.Sprintf("flow run %s: definition: %v", r.ID, err))
-			continue
-		}
-		_, err = c.dst.FlowRuns.Create(ctx, flowrun.NewRun{
-			ID: r.ID, Flow: r.Flow, Version: r.Version, Definition: def,
-			Subject: r.Subject, Singleton: r.Singleton, At: r.CreatedAt,
-			Instance: r.Instance, Pending: r.Pending, Log: r.Log,
-		})
-		if err != nil {
-			c.rep.Errors = append(c.rep.Errors, fmt.Sprintf("flow run %s: %v", r.ID, err))
+		if err := flowrun.CopyRun(ctx, c.src.runs, c.dst.FlowRuns, r); err != nil {
+			c.rep.Errors = append(c.rep.Errors, err.Error())
 			continue
 		}
 		c.rep.FlowRuns++

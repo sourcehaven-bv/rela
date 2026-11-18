@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 )
 
 // tenantLockClass is the first key of the advisory lock that guards a
@@ -43,7 +45,7 @@ const eraseLockTimeout = "30s"
 func pinSchema(ctx context.Context, dsn, schema string) (io.Closer, error) {
 	ctx, cancel := context.WithTimeout(ctx, schemaCheckTimeout)
 	defer cancel()
-	conn, err := pgx.Connect(ctx, dsn)
+	conn, err := pgstore.ConnectDirect(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("check schema: %w", err)
 	}
@@ -111,7 +113,7 @@ func (p pinnedConn) Close() error {
 func dropSchema(ctx context.Context, dsn, schema string) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, eraseTimeout)
 	defer cancel()
-	conn, err := pgx.Connect(ctx, dsn)
+	conn, err := pgstore.ConnectDirect(ctx, dsn)
 	if err != nil {
 		// pgx redacts the password in connect errors.
 		return false, fmt.Errorf("connect: %w", err)
@@ -174,7 +176,7 @@ var ErrTenantDatabase = errors.New("tenant: this database serves tenants (it has
 func RefuseTenantDatabase(ctx context.Context, dsn string) error {
 	ctx, cancel := context.WithTimeout(ctx, schemaCheckTimeout)
 	defer cancel()
-	conn, err := pgx.Connect(ctx, dsn)
+	conn, err := pgstore.ConnectDirect(ctx, dsn)
 	if err != nil {
 		return fmt.Errorf("check database: %w", err)
 	}
@@ -221,7 +223,7 @@ func refuseTenantDatabase(ctx context.Context, conn *pgx.Conn) error {
 func CheckBareTarget(ctx context.Context, dsn string) error {
 	ctx, cancel := context.WithTimeout(ctx, schemaCheckTimeout)
 	defer cancel()
-	conn, err := pgx.Connect(ctx, dsn)
+	conn, err := pgstore.ConnectDirect(ctx, dsn)
 	if err != nil {
 		return fmt.Errorf("check database: %w", err)
 	}

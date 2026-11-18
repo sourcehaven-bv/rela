@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 )
 
 // buildName labels this build in skip and failure messages.
@@ -129,7 +130,7 @@ func Database(tb TB) string {
 func SchemaIn(tb TB, db string) (dsn, schema string) {
 	tb.Helper()
 	ctx := context.Background()
-	conn, err := pgx.Connect(ctx, db)
+	conn, err := pgstore.ConnectDirect(ctx, db)
 	if err != nil {
 		tb.Fatalf("connect: %v", err)
 		return "", ""
@@ -204,10 +205,6 @@ func adminConn(tb TB, dsn string) *pgxpool.Pool {
 // The setting is threaded through the DSN rather than a pgxpool.Config because
 // appbuild's recipe takes a DSN string and builds its own pool — the seam that
 // exists so appbuild owns the pool's lifecycle.
-//
-// Built by re-serializing the parsed config rather than appending "?search_path="
-// to the caller's string: pgx accepts both URL and key/value ("host=x dbname=y")
-// DSNs, and query-string surgery silently produces garbage for the latter.
 func dsnWithSearchPath(base, schema string) (string, error) {
 	cfg, err := pgx.ParseConfig(base)
 	if err != nil {
@@ -216,31 +213,21 @@ func dsnWithSearchPath(base, schema string) (string, error) {
 	return dsnFor(base, cfg.Database, schema)
 }
 
-// dsnFor rebuilds base for database, with search_path pinned to schema and
-// public when schema is not empty.
+// dsnFor returns base pointed at database, with search_path pinned to
+// schema and public when schema is not empty. Every other setting of base is
+// kept (BUG-BR9CXF).
 func dsnFor(base, database, schema string) (string, error) {
-	cfg, err := pgx.ParseConfig(base)
+	dsn, err := pgstore.WithDatabase(base, database)
 	if err != nil {
-		return "", fmt.Errorf("parse %s: %w", testDBEnv, err)
+		return "", fmt.Errorf("%s: %w", testDBEnv, err)
 	}
-	kv := []string{
-		"host=" + cfg.Host,
-		fmt.Sprintf("port=%d", cfg.Port),
-		"user=" + cfg.User,
-		"dbname=" + database,
+	if schema == "" {
+		return dsn, nil
 	}
-	if schema != "" {
-		kv = append(kv, "search_path="+schema+",public")
+	if dsn, err = pgstore.PinSearchPath(dsn, schema); err != nil {
+		return "", fmt.Errorf("%s: %w", testDBEnv, err)
 	}
-	if cfg.Password != "" {
-		kv = append(kv, "password="+cfg.Password)
-	}
-	// TLSConfig is nil exactly when the DSN disabled it; preserve that, since
-	// the CI container speaks plaintext and would reject a negotiated upgrade.
-	if cfg.TLSConfig == nil {
-		kv = append(kv, "sslmode=disable")
-	}
-	return strings.Join(kv, " "), nil
+	return dsn, nil
 }
 
 // quoteIdent renders a generated schema name as a quoted identifier. The names

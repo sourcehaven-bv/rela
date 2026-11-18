@@ -4,7 +4,15 @@ type: bug
 title: Tenant DSN derivation drops sslmode and other base_dsn settings, downgrading TLS to prefer
 description: tenant.dsnForSchema re-serializes base_dsn keeping only host, port, user, dbname, password and search_path. sslmode=verify-full becomes the libpq default prefer (unverified TLS with plaintext fallback); pool_max_conns and other settings are lost.
 priority: critical
-status: backlog
+why1: tenant.dsnForSchema rebuilt each tenant DSN from host, port, user, dbname, password and search_path only, so sslmode and every other base_dsn setting were dropped and libpq defaulted to sslmode=prefer.
+why2: To change one setting (search_path) the code re-serialized the DSN from parsed fields instead of editing the operator DSN.
+why3: The same rebuild was copied to docscapture, backendtest and the listener test helper, and no test compared the parsed TLS and pool config before and after.
+why4: DSN editing had no single owner, so each caller wrote its own serializer.
+why5: The DSN was treated as a string to rebuild rather than an operator setting to preserve, and no review step checked TLS settings on derived connections.
+prevention: pgstore.PinSearchPath and pgstore.WithDatabase change only the one setting and keep every other setting; all callers use them. TestDSNHelpers_KeepBaseSettings round-trips TLS and pool config; TestPinSearchPath_RefusesOtherSpellings refuses a second search_path spelling.
+started: "2026-11-16"
+completed: "2026-11-16"
+status: done
 ---
 
 ## Summary

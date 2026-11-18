@@ -1096,7 +1096,9 @@
       "noResults": "Geen resultaten",
       "searching": "Zoeken...",
       "selected": "{number} geselecteerd"
-    }
+    },
+    "provisioning": "Je organisatie wordt ingericht. Dit duurt even.",
+    "provisioningFailed": "Het inrichten van je organisatie is niet gelukt. Probeer het later opnieuw, of neem contact op met je beheerder als het blijft mislukken."
   },
   "switcher": {
     "projects": "Projecten",

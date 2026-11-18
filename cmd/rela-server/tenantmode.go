@@ -538,6 +538,8 @@ type tenantHost struct {
 	registry *tenant.Registry[*tenantResident]
 	// resolver is closed after the registry.
 	resolver io.Closer
+	// sweeper opens evicted tenants with due background work.
+	sweeper *tenant.Sweeper
 }
 
 // close ends the host's provisioning runs, then closes the registry and
@@ -646,6 +648,10 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 		return nil, err
 	}
 	th.resolver = resolver
+	if th.sweeper, err = tenant.NewSweeper(resolver, th.registry); err != nil {
+		th.close()
+		return nil, err
+	}
 	return th, nil
 }
 
@@ -734,11 +740,23 @@ func runTenantMode(f *serverFlags, accessLog *slog.Logger) int {
 		defer close(revalidated)
 		th.revalidate(ctx, tenant.RevalidateInterval)
 	}()
-	serveErr := serveUntilSignal(newHTTPServer(th.addr, th.handler))
+	// Open evicted tenants whose timers or jobs are due, so they run without
+	// a request (TKT-ZOU5BCT).
+	swept := make(chan struct{})
+	go func() {
+		defer close(swept)
+		th.sweeper.Run(ctx, tenant.SweepInterval)
+	}()
+	httpSrv := newHTTPServer(th.addr, th.handler)
+	// End every tenant's streams when shutdown starts, so the drain does not
+	// wait out the grace for each open tab (TKT-N3X235N).
+	httpSrv.RegisterOnShutdown(th.registry.RevokeAll)
+	serveErr := serveUntilSignal(httpSrv)
 	stop()
-	// Wait for a revalidation pass in progress before the registry and
-	// the resolver it uses close.
+	// Wait for a revalidation or sweep pass in progress before the registry
+	// and the resolver it uses close.
 	<-revalidated
+	<-swept
 	th.close()
 	if serveErr != nil {
 		slog.Error("server stopped", "error", serveErr)

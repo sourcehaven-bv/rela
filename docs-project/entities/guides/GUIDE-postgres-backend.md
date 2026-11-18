@@ -680,7 +680,10 @@ derived from its verified `org_id` claim:
   name never depends on what the org id contains, so an org id cannot
   inject SQL or reach another schema.
 - The connection is `$RELA_DATABASE_URL` with only `search_path` changed to
-  that schema. Every other setting, including TLS, is kept.
+  that schema. Every other setting, including TLS, is kept. A single
+  connection outside the pool, such as the one that checks a tenant's
+  schema at open, leaves out the pool settings such as `pool_max_conns`,
+  which PostgreSQL would refuse.
 
 A table records which tenants exist: `rela_control.tenants`. It has one row
 per tenant with the schema name, the org id and a status. The
@@ -732,6 +735,36 @@ Tenant mode sizes are flags, with environment variables as defaults:
 The server also holds a small pool of at most four connections to read the
 control table. It reads one row per request, by primary key, and keeps no
 cache, so a status change applies to the next request.
+
+A tenant's background work runs only while the tenant is open: its flow
+runs, channel session timers and queued jobs. Once a minute the server reads
+the earliest due time of each active tenant, one row per tenant, and opens a
+tenant that is not open but has work due. It keeps that tenant open for 30
+seconds, so its workers run, and then leaves it to be closed as usual. One
+pass opens at most two tenants, and a tenant it opened is left alone for ten
+minutes, so a run that keeps failing does not reopen it every minute. When
+the tenant's earliest due time is still the same after it was opened, the
+work did not clear, and the wait doubles each time, up to six hours. A
+tenant whose due work cannot be read, for example because its schema is
+damaged, is logged and skipped; the others are still swept. So a timer of a
+tenant nobody uses fires at most a few minutes late. Maintenance
+with no due time, such as the version sweep and removing soft-deleted rows,
+runs the next time the tenant opens.
+
+The IdP webhook's replay protection lives in the tenant's own state, so it
+survives the tenant being closed and reopened. A delivery first claims the
+webhook's id. A redelivery of an id that was handled gets 200 and does not
+run again. A copy that arrives while another delivery of the same id still
+runs gets 503 with `Retry-After`, so the IdP delivers it again rather than
+lose it. When the handler fails, the claim is released, so the IdP's retry
+runs. If the release cannot be saved, the claim lapses after two minutes,
+and a later retry still runs. When the state cannot be read or written, the
+webhook gets 503 with `Retry-After`, so the IdP delivers it again rather
+than a replay passing unnoticed.
+
+On shutdown, the server first ends every tenant's live-update and
+co-editing streams, so open browser tabs do not hold the shutdown for its
+whole grace period. It then closes the tenants in parallel.
 
 Every tenant shares the project configuration (`schema.yaml`,
 `data-entry.yaml`, `acl.yaml`, scripts). Each tenant has its own store,
@@ -854,8 +887,11 @@ A create that failed part way is finished by the next one. If another
 server is creating the tenant, requests get the same 202 for 5 seconds
 without starting a create, so polling does not use up the start rate.
 
-A client calling the API can poll `GET /api/v1/_tenant`. The SPA does
-not handle the provisioning state yet. The route answers 200 with
+A client calling the API can poll `GET /api/v1/_tenant`. The web app
+does: on a 202 provisioning answer, or a 503 `tenant_provisioning`,
+`provisioning_busy`, `provisioning_failed` or `provisioning_needs_operator`,
+it shows a "setting up" screen, polls the route and reloads once the status
+is `active` or `suspended`, or the route answers 401 or 403. The route answers 200 with
 `{"status":"active"}`, `{"status":"provisioning"}` or
 `{"status":"suspended"}` for the caller's own verified org, and nothing
 about any other org. An org that has no tenant gets 403 `unknown_tenant`,

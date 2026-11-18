@@ -4,7 +4,15 @@ type: bug
 title: Flow runs are missing from tenant data export
 description: A project or tenant export copies entities, relations and attachments but not the flow run store. Open runs lose their state after an export and import.
 priority: medium
-status: backlog
+why1: ExportMarkdownData and copyData copied entities, relations and attachments, but not the flow run store.
+why2: The flow run store is a separate store outside the graph, added after the export code was written.
+why3: Adding a project store did not require extending export and import; nothing checked that the export covers every store.
+why4: Export and import were written as a list of graph parts, not as a copy of every store the project owns.
+why5: There is no inventory of project stores that export and import are checked against; AM-export-covers-every-project-store is meant to provide it.
+prevention: flowrun.CopyRun copies a run with its definition; the sqlite db dump, db load and import-fs paths carry runs. TestMarkdownData_FlowRunsRoundTrip pins the round trip. Measure AM-export-covers-every-project-store tracks the general rule.
+started: "2026-11-16"
+completed: "2026-11-16"
+status: done
 ---
 
 ## Description

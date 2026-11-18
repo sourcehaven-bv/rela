@@ -18,6 +18,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filelock"
+	"github.com/Sourcehaven-BV/rela/internal/flowrun"
+	"github.com/Sourcehaven-BV/rela/internal/flowrun/kvflowrun"
+	"github.com/Sourcehaven-BV/rela/internal/flowrun/sqliteflowrun"
 	"github.com/Sourcehaven-BV/rela/internal/fsimport"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -42,11 +45,17 @@ type DataSummary struct {
 	Relations   int
 	Attachments int
 	Records     int
+	// FlowRuns counts the unfinished flow runs copied with their state.
+	FlowRuns int
 }
 
 func (s DataSummary) String() string {
-	return fmt.Sprintf("%d entities, %d relations, %d attachments, %d records",
+	out := fmt.Sprintf("%d entities, %d relations, %d attachments, %d records",
 		s.Entities, s.Relations, s.Attachments, s.Records)
+	if s.FlowRuns > 0 {
+		out += fmt.Sprintf(", %d flow runs", s.FlowRuns)
+	}
+	return out
 }
 
 // DataImportOptions tunes [ImportMarkdownData].
@@ -131,6 +140,12 @@ func ImportMarkdownData(
 		if svcErr != nil {
 			return svcErr
 		}
+		// The run store writes on the transaction's connection too, so the
+		// runs commit or roll back with the rows (TKT-TWLN8UB).
+		runs, svcErr := sqliteflowrun.NewInTx(conn)
+		if svcErr != nil {
+			return svcErr
+		}
 		// Record rows commit or roll back with the rest of the import.
 		recordStore, svcErr := sqliterecords.NewInTx(conn)
 		if svcErr != nil {
@@ -142,7 +157,8 @@ func ImportMarkdownData(
 			Meta:   meta,
 			Target: fsimport.Target{
 				Store: view, State: svc.kv, Comments: svc.comments, Migrations: svc.migState,
-				Records: recordStore,
+				FlowRuns: runs,
+				Records:  recordStore,
 			},
 			Exclude:   databaseFilesBelow(fromDir, paths),
 			Principal: p,
@@ -192,7 +208,10 @@ func databaseFilesBelow(dir string, paths *project.Context) []string {
 // ExportMarkdownData writes every entity, relation and attachment in the
 // project's SQLite database as a markdown project into toDir, and every
 // record row into toDir/records in the file record backend's layout (one
-// JSON line per row). Together with
+// JSON line per row). When the project declares flows it also writes the
+// unfinished flow runs, with their state and definitions, into the run store
+// the markdown project keeps under .rela/ (BUG-EWG0R90): without them every
+// run header would say the run is open while nothing could move it. Together with
 // [DumpProjectConfig] the result is a project the filesystem build opens.
 //
 // Records are read raw, as the entities are: this is an operator copy of the
@@ -229,6 +248,10 @@ func ExportMarkdownData(
 	if err != nil {
 		return DataSummary{}, err
 	}
+	meta, flows, err := withDeclaredFlows(ctx, paths.Root, db, meta)
+	if err != nil {
+		return DataSummary{}, err
+	}
 	src, err := sqlitestore.New(ctx, db)
 	if err != nil {
 		return DataSummary{}, err
@@ -250,12 +273,65 @@ func ExportMarkdownData(
 	if err == nil {
 		sum.Records, err = exportRecords(ctx, fsys, db, meta, toDir)
 	}
+	if err == nil && flows {
+		sum.FlowRuns, err = exportFlowRuns(ctx, fsys, db, toDir)
+	}
 	if err != nil {
 		// The refusal above would block a plain retry, so say what to remove.
-		return sum, fmt.Errorf("%w; the export is incomplete: remove %s from %s before trying again",
-			err, strings.Join(markdownDataDirs, ", "), toDir)
+		return sum, fmt.Errorf("%w; the export is incomplete: remove %s, %s and %s from %s before trying again",
+			err, strings.Join(markdownDataDirs, ", "), filepath.Join(project.CacheDir, kvflowrun.RunsKey),
+			filepath.Join(project.CacheDir, kvflowrun.DefinitionsKey), toDir)
 	}
 	return sum, nil
+}
+
+// withDeclaredFlows adds the `_flow-run` type to meta when the project's
+// flows.yaml declares flows, as the server does at boot, so the run headers
+// are exported like any other row. It reports whether it did.
+func withDeclaredFlows(
+	ctx context.Context, root string, db *sqlitedb.DB, meta *metamodel.Metamodel,
+) (*metamodel.Metamodel, bool, error) {
+	loader, err := layerProjectConfig(root, db)
+	if err != nil {
+		return nil, false, err
+	}
+	data, err := readFlowsFile(ctx, loader)
+	if err != nil || data == nil {
+		return meta, false, err
+	}
+	m, err := withFlowRuns(data, meta)
+	if err != nil {
+		return nil, false, err
+	}
+	return m, m != meta, nil
+}
+
+// exportFlowRuns copies every unfinished run of the database into the KV
+// run store of the markdown project at toDir, which is where the file tier
+// and `rela db import-fs` read it. It refuses a target that already holds
+// runs rather than merge into them.
+func exportFlowRuns(ctx context.Context, fsys storage.FS, db *sqlitedb.DB, toDir string) (int, error) {
+	src, err := sqliteflowrun.New(db.DB())
+	if err != nil {
+		return 0, err
+	}
+	kv, err := buildStateKV(fsys, &project.Context{Root: toDir, CacheDir: filepath.Join(toDir, project.CacheDir)})
+	if err != nil {
+		return 0, err
+	}
+	dst, err := kvflowrun.New(kv, filelock.ProcessPrivate{})
+	if err != nil {
+		return 0, err
+	}
+	existing, err := dst.List(ctx, flowrun.Query{Limit: 1})
+	if err != nil {
+		return 0, fmt.Errorf("read the target's flow runs: %w", err)
+	}
+	if len(existing) > 0 {
+		return 0, fmt.Errorf("%s already holds flow runs; export into a directory without them",
+			filepath.Join(toDir, project.CacheDir))
+	}
+	return flowrun.CopyRuns(ctx, src, dst)
 }
 
 // exportRecords copies every record row from the database into the file

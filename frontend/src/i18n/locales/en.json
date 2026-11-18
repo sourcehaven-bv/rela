@@ -1096,7 +1096,9 @@
       "noResults": "No Results",
       "searching": "Searching...",
       "selected": "{number} selected"
-    }
+    },
+    "provisioning": "Setting up your organization. This takes a moment.",
+    "provisioningFailed": "Setting up your organization did not finish. Try again later, or contact your administrator if it keeps failing."
   },
   "switcher": {
     "projects": "Projects",

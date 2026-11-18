@@ -226,6 +226,23 @@ func (r *ClusterResolver) Check(ctx context.Context) error {
 	return r.control.ready(ctx)
 }
 
+// dueReader reads which tenants have background work due. The postgres
+// control reader implements it.
+type dueReader interface {
+	dueTenants(ctx context.Context, until time.Time) ([]DueTenant, error)
+}
+
+// DueTenants lists the active tenants whose earliest flow run, channel
+// session timer or queued job is due at or before until, for a [Sweeper].
+// It reads one row per tenant.
+func (r *ClusterResolver) DueTenants(ctx context.Context, until time.Time) ([]DueTenant, error) {
+	d, ok := r.control.(dueReader)
+	if !ok {
+		return nil, ErrUnsupportedBuild
+	}
+	return d.dueTenants(ctx, until)
+}
+
 // Close releases the resolver's connections. Safe on a nil resolver.
 func (r *ClusterResolver) Close() error {
 	if r == nil || r.closer == nil {

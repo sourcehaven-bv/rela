@@ -1187,6 +1187,9 @@ deps:
   backendtest:
     mayDependOn:
       - appbuild
+      # pgstore: ConnectDirect and the DSN helpers, from the postgres-tagged
+      # file only.
+      - pgstore
     canUse:
       - pgx
   # tenant resolves a verified org to the store it may reach (RES-D54281). It
@@ -1691,13 +1694,13 @@ deps:
       - principal
       - script
       - store
+      # pgstore is used ONLY by the postgres-tagged scratch_postgres.go, to
+      # connect and pin the private schema a postgres docs build seeds its
+      # fixture into. It never reaches the default build (scratch_fs.go is a
+      # no-op), so the "default build must not link pgx" rule is unaffected.
+      - pgstore
     canUse:
       - chromedp
-      # pgx is used ONLY by the postgres-tagged scratch_postgres.go, to CREATE
-      # and DROP the private schema a postgres docs build seeds its fixture
-      # into. It never reaches the default build (scratch_fs.go is a no-op),
-      # so the "default build must not link pgx" rule is unaffected.
-      - pgx
   # docscli is the command layer for the rela-docs binary. It owns the
   # docscapture edge (and thus chromedp) so internal/cli — and the rela /
   # rela-server binaries — never link the browser. See internal/docscli.

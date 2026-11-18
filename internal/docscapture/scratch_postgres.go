@@ -13,10 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 )
 
 // scratchDropTimeout bounds the scratch-schema DROP at cleanup.
@@ -43,10 +41,7 @@ const scratchDropTimeout = 30 * time.Second
 //
 // It is deliberately the same mechanism internal/appbuild/backendtest uses to
 // isolate the wiring tests, for the same reason and with the same failure
-// modes — see dsnWithSearchPath there. The duplication is forced by
-// arch-lint (docscapture may not depend on a test helper package) and is
-// small; the alternative, sharing a package between them, would put a
-// pgx-importing dependency on every consumer of either.
+// modes. Both derive the DSN with pgstore.PinSearchPath.
 //
 // Nil: the returned cleanup is never nil — callers may defer it unconditionally.
 func scratchBackend(ctx context.Context, _ string) ([]appbuild.Option, func(), error) {
@@ -57,13 +52,7 @@ func scratchBackend(ctx context.Context, _ string) ([]appbuild.Option, func(), e
 				"set RELA_DATABASE_URL (env-only, never a flag)")
 	}
 
-	// pgxpool.ParseConfig, not pgx.Connect: the DSN may carry pool-only keys
-	// such as pool_max_conns, which pgx would send to the server (BUG-JQO2PH).
-	poolCfg, err := pgxpool.ParseConfig(base)
-	if err != nil {
-		return nil, func() {}, fmt.Errorf("parse RELA_DATABASE_URL: %w", err)
-	}
-	admin, err := pgx.ConnectConfig(ctx, poolCfg.ConnConfig)
+	admin, err := pgstore.ConnectDirect(ctx, base)
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("connect to RELA_DATABASE_URL: %w", err)
 	}
@@ -117,32 +106,14 @@ func scratchSchemaName() (string, error) {
 }
 
 // dsnWithSearchPath pins search_path to the scratch schema, keeping public on
-// the path for pg_trgm (the search backend's operators live there).
-//
-// Built by re-serializing the parsed config rather than appending
-// "?search_path=" to the caller's string: pgx accepts both URL and key/value
-// ("host=x dbname=y") DSNs, and query-string surgery silently produces garbage
-// for the latter.
+// the path for pg_trgm, and keeps every other setting of base, TLS included
+// (BUG-BR9CXF).
 func dsnWithSearchPath(base, schema string) (string, error) {
-	cfg, err := pgx.ParseConfig(base)
+	dsn, err := pgstore.PinSearchPath(base, schema)
 	if err != nil {
-		return "", fmt.Errorf("parse RELA_DATABASE_URL: %w", err)
+		return "", fmt.Errorf("RELA_DATABASE_URL: %w", err)
 	}
-	kv := []string{
-		"host=" + cfg.Host,
-		fmt.Sprintf("port=%d", cfg.Port),
-		"user=" + cfg.User,
-		"dbname=" + cfg.Database,
-		"search_path=" + schema + ",public",
-	}
-	if cfg.Password != "" {
-		kv = append(kv, "password="+cfg.Password)
-	}
-	// TLSConfig is nil exactly when the DSN disabled it; preserve that.
-	if cfg.TLSConfig == nil {
-		kv = append(kv, "sslmode=disable")
-	}
-	return strings.Join(kv, " "), nil
+	return dsn, nil
 }
 
 // quoteIdent renders the generated schema name as a quoted identifier. The

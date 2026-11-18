@@ -23,6 +23,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
 )
 
@@ -188,7 +189,7 @@ func TestTenantMCP_CloseReleasesTheSchemaLock(t *testing.T) {
 	require.NoError(t, err)
 
 	held := func() bool {
-		conn, err := pgx.Connect(context.Background(), os.Getenv("RELA_TEST_DATABASE_URL"))
+		conn, err := pgstore.ConnectDirect(context.Background(), os.Getenv("RELA_TEST_DATABASE_URL"))
 		require.NoError(t, err)
 		defer func() { _ = conn.Close(context.Background()) }()
 		var n int
@@ -218,7 +219,7 @@ func TestTenantMCP_CloseReleasesTheSchemaLock(t *testing.T) {
 func TestTenantDB_RefusesAMissingSchema(t *testing.T) {
 	root, schemaA, _ := writeTwoTenantProject(t)
 	db := os.Getenv("RELA_DATABASE_URL")
-	conn, err := pgx.Connect(context.Background(), db)
+	conn, err := pgstore.ConnectDirect(context.Background(), db)
 	require.NoError(t, err)
 	defer func() { _ = conn.Close(context.Background()) }()
 	_, err = conn.Exec(context.Background(), "DROP SCHEMA "+pgx.Identifier{schemaA}.Sanitize()+" CASCADE")
@@ -299,7 +300,7 @@ func TestDB_RefusesATenantDatabaseOutsideAProject(t *testing.T) {
 	projectPath, tenantOrg = "", ""
 	t.Cleanup(func() { projectPath, tenantOrg = oldPath, oldOrg })
 
-	conn, err := pgx.Connect(context.Background(), db)
+	conn, err := pgstore.ConnectDirect(context.Background(), db)
 	require.NoError(t, err)
 	defer func() { _ = conn.Close(context.Background()) }()
 	publicTables := func() int {

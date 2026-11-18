@@ -5,7 +5,9 @@ title: 'tenant mode: background work and webhook dedup across eviction; faster s
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-11-16"
+completed: "2026-11-16"
+status: done
 ---
 
 ## Description
