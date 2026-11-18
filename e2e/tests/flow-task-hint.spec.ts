@@ -84,7 +84,7 @@ test.describe("flow task hint", () => {
     await na.expectShowing(MESSAGE);
     await expect(na.card).toHaveAttribute("data-entity-id", person.id);
 
-    await na.card.getByRole("link", { name: "Open" }).click();
+    await na.openOffer("Open");
     await expect(appPage).toHaveURL(
       new RegExp(`/entity/person/${person.id}\\?run=`),
     );
@@ -115,8 +115,7 @@ test.describe("flow task hint", () => {
 
     await appPage.goto(`${serverUrl}/list/persons`);
     await na.expectShowing(MESSAGE);
-    await na.card.getByRole("button", { name: "Not now" }).click();
-    await na.card.getByRole("menuitem", { name: "Remind me in 1d" }).click();
+    await na.snoozeFor("1d");
     await expect(na.card).toHaveCount(0);
 
     await flows.openEntity("person", person.id);

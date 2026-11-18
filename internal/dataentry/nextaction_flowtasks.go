@@ -17,7 +17,11 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/nextaction"
 )
 
-// flowTaskCandidates yields the reader's waiting flow tasks as the
+// flowTaskSource answers a `source: flow_tasks` next-action source. It is
+// its own type so the App does not grow a method per source kind.
+type flowTaskSource struct{ app *App }
+
+// candidates yields the reader's waiting flow tasks as the
 // candidates of a `source: flow_tasks` next-action source, oldest first.
 //
 // The tasks come from [FlowService.Tasks], the call behind the Flow tasks
@@ -34,9 +38,10 @@ import (
 // A request with no bound identity contributes nothing, like a per-user
 // condition (see [nextaction.ErrIdentityRequired]): the hint is advisory
 // and must not fail the page it sits on.
-func (a *App) flowTaskCandidates(
+func (f flowTaskSource) candidates(
 	ctx context.Context, meta *metamodel.Metamodel, src dataentryconfig.NextActionSource, want nextaction.Want,
 ) ([]nextaction.Candidate, error) {
+	a := f.app
 	if a.flows == nil || meta == nil {
 		return nil, nil
 	}
@@ -54,7 +59,7 @@ func (a *App) flowTaskCandidates(
 		return nil, fmt.Errorf("next-action flow tasks: %w", err)
 	}
 	tasks = firstTasks(tasks, want)
-	subjects, err := a.flowTaskSubjects(ctx, tasks, subjectType)
+	subjects, err := f.subjects(ctx, tasks, subjectType)
 	if err != nil {
 		return nil, err
 	}
@@ -139,13 +144,14 @@ func firstTasks(tasks []flowview.Task, want nextaction.Want) []flowview.Task {
 	return out
 }
 
-// flowTaskSubjects reads the tasks' subjects through the caller's read gate:
+// subjects reads the tasks' subjects through the caller's read gate:
 // one id-bounded read per subject type, never one per task. The result is
 // keyed by the task's subject address, and each entity is redacted. An
 // address that names no face takes the first readable face of the id.
-func (a *App) flowTaskSubjects(
+func (f flowTaskSource) subjects(
 	ctx context.Context, tasks []flowview.Task, subjectType map[string]string,
 ) (map[string]*entityPkg.Entity, error) {
+	a := f.app
 	byType := map[string][]string{}
 	addrs := map[string]entityPkg.Address{}
 	for _, t := range tasks {

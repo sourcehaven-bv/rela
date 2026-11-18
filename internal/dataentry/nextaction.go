@@ -40,7 +40,7 @@ import (
 //   - Count  -> GraphCount over the type, for the entity-less first-run case.
 //     Uses the ungated count deliberately: see countCandidates.
 //   - Source flow_tasks -> FlowService.Tasks, the Flow tasks list itself
-//     (see flowTaskCandidates).
+//     (see flowTaskSource.candidates).
 //   - Context -> the entity the page is about (see contextCandidates). The
 //     page's source filter already dropped context sources for any other
 //     type, so this only runs on a page about an entity of src.Context.
@@ -75,7 +75,7 @@ func (a *App) nextActionCandidates(
 		if src.IsFlowTasks() {
 			// The task list reads every face of the run headers and gates
 			// them itself; a flow_tasks source has no source world.
-			return a.flowTaskCandidates(ctx, meta, src, want)
+			return flowTaskSource{app: a}.candidates(ctx, meta, src, want)
 		}
 		// The SOURCE world is resolved per source, before any read, and
 		// REPLACES whatever world the request carried. See
