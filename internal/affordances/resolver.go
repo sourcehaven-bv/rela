@@ -1178,6 +1178,11 @@ func (r *PolicyResolver) passes(
 		// coverage-ignore-end
 	}
 	if len(prog.Traversals()) > 0 {
+		if IsHistoricalSubject(ctx) {
+			// A past row's relations are not answered, by design: the grant
+			// is denied on every row, so a warning per row would be noise.
+			return false
+		}
 		traversal, terr := r.traversalFor(ctx, bc.entity)
 		if terr != nil {
 			slog.Warn("affordances: related() not answered; denying grant",

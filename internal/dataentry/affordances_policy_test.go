@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -26,9 +27,11 @@ import (
 // the App's store as the relation lookup. This exercises the full
 // production chain end-to-end: acl.yaml → affordances.New →
 // policyResolver → wire shape / 403 / audit.
-func buildPolicyApp(t *testing.T, aclYAML string, sink audit.Audit) *App {
+//
+//nolint:unparam,nolintlint // extra is passed only by the sqlite-tagged as-of tests, so unparam fires under default tags only
+func buildPolicyApp(t *testing.T, aclYAML string, sink audit.Audit, extra ...appbuildtest.Option) *App {
 	t.Helper()
-	app := buildAppWithACLAndAudit(t, acl.NopACL{}, sink)
+	app := buildAppWithACLAndAudit(t, acl.NopACL{}, sink, extra...)
 
 	var policy acl.Policy
 	if err := yaml.Unmarshal([]byte(aclYAML), &policy); err != nil {

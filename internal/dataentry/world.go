@@ -444,6 +444,14 @@ func worldCapablePath(path string) bool {
 	if trimmed == "_dashboard/card" {
 		return true
 	}
+	// The EIGHTH: one gantt chart (TKT-6KLUT3U). Every node read takes the
+	// world from ctx: the full build through the list pipeline's scoped
+	// headers, the outside parents through store.InWorld, and the drill
+	// closure through its GraphQuery. Refusing the world showed the default
+	// world's spans on a page bound to another one.
+	if isGanttPath(trimmed) {
+		return true
+	}
 	if strings.HasPrefix(trimmed, "_") {
 		return false
 	}
@@ -832,4 +840,10 @@ func resolutionRuleAt(
 		return r.String(), &pos
 	}
 	return r.String(), nil
+}
+
+// isGanttPath matches `_gantts/{id}`, one gantt chart.
+func isGanttPath(trimmed string) bool {
+	id, ok := strings.CutPrefix(trimmed, "_gantts/")
+	return ok && id != "" && !strings.Contains(id, "/")
 }

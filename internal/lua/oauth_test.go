@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -134,6 +135,32 @@ func TestOAuth_RefusedInTx(t *testing.T) {
 	}
 	if len(f.calls) != 0 {
 		t.Fatalf("broker called inside a transaction: %v", f.calls)
+	}
+}
+
+// instantStore declares point-in-time reads so a test can bind an instant.
+type instantStore struct{ store.Store }
+
+func (instantStore) ReadsAtInstant() bool { return true }
+
+// A token is for a call outside the store, so a script reading a past
+// instant gets none, and cannot invalidate one either (TKT-6KLUT3U).
+func TestOAuth_RefusedAtAPastInstant(t *testing.T) {
+	deps, _ := newHistoryWorld(t)
+	f := &fakeOAuth{}
+	deps.OAuth = f
+	ctx, err := store.BindReadInstant(connectorCtx(), instantStore{}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, src := range []string{`rela.oauth.access_token("crm")`, `rela.oauth.invalidate("crm", "tok-crm")`} {
+		_, err := runOAuth(ctx, t, deps, lua.Capabilities{Tokens: []string{"crm"}}, src)
+		if err == nil || !strings.Contains(err.Error(), "past instant") {
+			t.Fatalf("%s: err = %v, want a past-instant refusal", src, err)
+		}
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("broker called at a past instant: %v", f.calls)
 	}
 }
 

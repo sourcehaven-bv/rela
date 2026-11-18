@@ -119,7 +119,7 @@ func TestBatch_UnsupportedStoreIs501(t *testing.T) {
 	var got v1.Schema
 	require.NoError(t, json.Unmarshal(sch.Body.Bytes(), &got))
 	require.False(t, got.Capabilities.AtomicBatch)
-	require.Contains(t, sch.Body.String(), `"capabilities":{"atomic_batch":false}`)
+	require.Contains(t, sch.Body.String(), `"capabilities":{"atomic_batch":false,`)
 }
 
 // TestBatch_CrossOriginRefused: a cookie-bearing request keeps the

@@ -196,6 +196,13 @@ var perCollectionVerbs = []string{"create"}
 // "unknown" sentinel.
 func (svc affordanceService) computeActions(ctx context.Context, e *entityPkg.Entity) map[string]bool {
 	out := make(map[string]bool, len(perItemVerbs))
+	if _, past := asOfFromContext(ctx); past {
+		// A read at an instant is read-only: no verb is offered.
+		for _, v := range perItemVerbs {
+			out[v] = false
+		}
+		return out
+	}
 	for _, v := range perItemVerbs {
 		if v == "rename" {
 			out[v] = svc.renameAllowed(ctx, e)
@@ -232,7 +239,15 @@ func (svc affordanceService) renameAllowed(ctx context.Context, e *entityPkg.Ent
 func (svc affordanceService) computeCollectionActions(ctx context.Context, entityType string) map[string]bool {
 	out := make(map[string]bool, len(perCollectionVerbs))
 	faces := metamodel.FaceOrderOf(svc.meta(), entityType)
+	_, past := asOfFromContext(ctx)
 	for _, v := range perCollectionVerbs {
+		if past {
+			out[v] = false
+			for _, f := range faces {
+				out[v+"@"+f] = false
+			}
+			continue
+		}
 		if len(faces) == 0 {
 			out[v] = svc.acl().AuthorizeWrite(ctx, translateVerb(v, entityType, "", "")).Allow
 			continue
@@ -1576,6 +1591,16 @@ func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *ent
 	redacted := redactedPropertyNames(verdicts)
 	result.Redacted = &redacted
 	result.Updated = updatedWhenWhole(e.UpdatedAt, len(redacted) == 0 && len(e.Inaccessible) == 0)
+	if _, past := asOfFromContext(ctx); past {
+		// A read at an instant is read-only: it offers no transition, copy,
+		// conversion or detail action. Attachment bytes keep no history, so
+		// none are listed rather than today's bytes under past names.
+		faces := svc.computeFaces(ctx, e)
+		result.Faces = &faces
+		attachments := map[string][]v1.Attachment{}
+		result.Attachments = &attachments
+		return
+	}
 	if transitions := svc.computeTransitions(ctx, e, verdicts); transitions != nil {
 		result.Transitions = &transitions
 	}

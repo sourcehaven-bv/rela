@@ -557,6 +557,10 @@ type Capabilities struct {
 	// rolls a failed transaction back. False on the markdown-file and
 	// memory stores, where that endpoint answers 501.
 	AtomicBatch bool `json:"atomic_batch"`
+	// AsOf reports that reads take `?as_of=<RFC 3339 instant>` and answer
+	// with the state at that instant. False on the markdown-file and memory
+	// stores, which keep no version history and answer such a read with 501.
+	AsOf bool `json:"as_of"`
 }
 
 // World is the JSON representation of one declared world — a named
