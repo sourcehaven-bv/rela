@@ -1,7 +1,9 @@
 import axios, { type AxiosInstance, type AxiosResponse } from 'axios'
-import { toApiError } from './errors'
+import { ApiError, toApiError } from './errors'
 import { apiUrl } from './base'
 import { isProvisioningResponse, startProvisioningPoll } from './tenantProvisioning'
+import { carriesAsOf, currentAsOf } from './asOf'
+import { t } from '@/i18n'
 
 // The error types and helpers live in errors.ts; re-export so existing
 // `from '@/api'` / `from '@/api/client'` importers keep working.
@@ -16,6 +18,29 @@ class ApiClient {
       headers: {
         'Content-Type': 'application/json',
       },
+    })
+
+    // A page reading at a past instant sends the instant with every read
+    // the server can answer at it, and writes nothing (see asOf.ts).
+    this.client.interceptors.request.use((config) => {
+      const at = currentAsOf()
+      if (!at) return config
+      const method = (config.method ?? 'get').toLowerCase()
+      if (method !== 'get' && method !== 'head') {
+        const message = t('asOf.readOnly')
+        return Promise.reject(
+          new ApiError(message, {
+            kind: 'http',
+            status: 422,
+            problem: { type: 'as_of_read_only', title: message, status: 422 },
+            original: null,
+          }),
+        )
+      }
+      if (carriesAsOf(config.url ?? '')) {
+        config.params = { ...(config.params ?? {}), as_of: at }
+      }
+      return config
     })
 
     // Every failure is normalized to a single ApiError (BUG-X9VNE1):

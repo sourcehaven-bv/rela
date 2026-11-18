@@ -23,6 +23,7 @@ import { usePageHeaderOutlet } from '@/composables/usePageHeader'
 import { usePresentationOutlet } from '@/composables/usePresentation'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { unknownWorldQuery } from '@/composables/useWorld'
+import AsOfBanner from '@/components/common/AsOfBanner.vue'
 import ActivityBar from '@/components/common/ActivityBar.vue'
 import RlAppShell from 'rela-components/components/layout/RlAppShell.vue'
 import NextActionCard from '@/components/NextActionCard.vue'
@@ -347,6 +348,7 @@ watch(
            server applies the operator's placement for the page, so the card
            is always mounted and simply renders nothing where none is owed. -->
       <NextActionCard v-if="!presentation.presenting.value" />
+      <AsOfBanner v-if="!presentation.presenting.value" />
       <RouterView />
       <RlToastHost :toasts="toasts" @dismiss="dismissToast" />
       <ScriptErrorDialog />
