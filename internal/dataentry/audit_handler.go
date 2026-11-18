@@ -109,7 +109,8 @@ type changesResponse struct {
 // face for a holder of history:read, else the uniform 404. The records are
 // those of that face only, from its latest lifecycle, and each is gated by
 // [visibility.EntityChanges]: a record naming an entity the principal cannot
-// read is left out, and a record's text is cut to what names no entity.
+// read is left out, and a record's text is cut to what names no entity and
+// no property the principal does not see on every row of the type.
 //
 //archplan:auth=required
 func handleV1Changes(a *App, w http.ResponseWriter, r *http.Request) {
@@ -146,7 +147,8 @@ func handleV1Changes(a *App, w http.ResponseWriter, r *http.Request) {
 		writeV1JSON(w, http.StatusOK, changesResponse{Changes: []visibility.ChangeRecord{}, WorldFaceAbsent: true})
 		return
 	}
-	page, next, err := visibility.EntityChanges(r.Context(), h.log, readableIDs(a.visibleReader.readableTypes),
+	readable := readableIDs(a.visibleReader.readableTypes)
+	page, next, err := visibility.EntityChanges(r.Context(), h.log, readable, a.fieldResolver,
 		visibility.ChangesQuery{Ref: subject.ref, Type: typeName, Before: before, Limit: limit})
 	if err != nil {
 		writeGateError(w, r, err)

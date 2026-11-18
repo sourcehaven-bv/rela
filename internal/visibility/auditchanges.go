@@ -43,6 +43,14 @@ type ReadableIDs interface {
 	ReadableTypes(ctx context.Context, ids []string) (map[string]string, error)
 }
 
+// FieldVisibility answers whether the principal sees a property on every
+// row of a type. A change list names a changed property only when it does,
+// because a summary that names a hidden property tells when its value
+// changed.
+type FieldVisibility interface {
+	FieldVisibleOnEveryRow(ctx context.Context, entityType, property string) bool
+}
+
 // ChangeRecord is one entry of an entity's change list as a reader may see
 // it. It is built field by field from an audit record, never copied, so a
 // field the record gains later stays off this view until it is added here.
@@ -95,7 +103,7 @@ const changeScanRounds = 4
 // Records left out do not shorten a page while the source has more: the
 // page reads on, up to [changeScanRounds] reads.
 func EntityChanges(
-	ctx context.Context, src AuditEntries, readable ReadableIDs, q ChangesQuery,
+	ctx context.Context, src AuditEntries, readable ReadableIDs, fields FieldVisibility, q ChangesQuery,
 ) ([]ChangeRecord, int64, error) {
 	eq := audit.EntityQuery{ID: q.Ref.ID, Face: q.Ref.Face.String(), Ops: ChangeOps}
 	var out []ChangeRecord
@@ -113,7 +121,7 @@ func EntityChanges(
 			if len(out) == q.Limit {
 				return out, out[len(out)-1].Seq, nil
 			}
-			out = append(out, changeRecord(e))
+			out = append(out, changeRecord(ctx, fields, e))
 		}
 		if len(entries) <= q.Limit {
 			return out, 0, nil
@@ -211,8 +219,12 @@ func otherIDs(rec audit.Record, id string) []string {
 	return out
 }
 
-func changeRecord(e audit.Entry) ChangeRecord {
+func changeRecord(ctx context.Context, fields FieldVisibility, e audit.Entry) ChangeRecord {
 	r := e.Record
+	summary := ChangeSummary(r.Summary)
+	if props, found := strings.CutPrefix(summary, updatedPrefix); found {
+		summary = visibleUpdate(ctx, fields, r.Subject, props)
+	}
 	return ChangeRecord{
 		Seq:     e.Seq,
 		Time:    r.Time,
@@ -222,7 +234,7 @@ func changeRecord(e audit.Entry) ChangeRecord {
 		After:   copySubject(r.After),
 		User:    r.Principal.User,
 		Tool:    r.Principal.Tool,
-		Summary: ChangeSummary(r.Summary),
+		Summary: summary,
 		Trigger: TriggerKind(r.TriggeredBy),
 	}
 }
@@ -235,6 +247,29 @@ func copySubject(s *audit.Subject) *audit.Subject {
 		Kind: s.Kind, Type: s.Type, ID: s.ID, Face: s.Face,
 		RelationType: s.RelationType, FromID: s.FromID, FromFace: s.FromFace, ToID: s.ToID,
 	}
+}
+
+// updatedPrefix starts the summary of an update that lists its properties.
+const updatedPrefix = "updated: "
+
+// visibleUpdate returns the summary of an update that changed props, naming
+// only the properties the principal sees on every row of the subject's type.
+// A relation's properties are never named: their visibility is judged per
+// relation, which this list does not do.
+func visibleUpdate(ctx context.Context, fields FieldVisibility, subject *audit.Subject, props string) string {
+	if subject == nil || subject.Kind != "entity" {
+		return "updated"
+	}
+	var shown []string
+	for _, p := range strings.Split(props, ",") {
+		if fields.FieldVisibleOnEveryRow(ctx, subject.Type, p) {
+			shown = append(shown, p)
+		}
+	}
+	if len(shown) == 0 {
+		return "updated"
+	}
+	return updatedPrefix + strings.Join(shown, ",")
 }
 
 // name is a configuration name: a property, type, face, conversion or

@@ -229,13 +229,13 @@ func TestEntityChanges_HidesRecordsNamingHiddenEntities(t *testing.T) {
 	readable := readableSet{"DOC-1": "doc", "PUB-1": "doc", "PUB-2": "doc"}
 	q := visibility.ChangesQuery{Ref: entity.Ref{ID: "DOC-1"}, Type: "doc", Limit: 2}
 
-	page, next, err := visibility.EntityChanges(ctx, src, readable, q)
+	page, next, err := visibility.EntityChanges(ctx, src, readable, allFields{}, q)
 	require.NoError(t, err)
 	require.Equal(t, []int64{8, 3}, changeSeqs(page))
 	require.Equal(t, int64(3), next)
 
 	q.Before = next
-	page, next, err = visibility.EntityChanges(ctx, src, readable, q)
+	page, next, err = visibility.EntityChanges(ctx, src, readable, allFields{}, q)
 	require.NoError(t, err)
 	require.Equal(t, []int64{1}, changeSeqs(page))
 	require.Zero(t, next)
@@ -265,7 +265,7 @@ func TestEntityChanges_BodyNamesNoHiddenID(t *testing.T) {
 		src.entries = append([]audit.Entry{{Seq: int64(i + 1), Record: r}}, src.entries...)
 	}
 	readable := readableSet{"DOC-1": "doc", "PUB-1": "doc"}
-	page, _, err := visibility.EntityChanges(ctx, src, readable,
+	page, _, err := visibility.EntityChanges(ctx, src, readable, allFields{},
 		visibility.ChangesQuery{Ref: entity.Ref{ID: "DOC-1"}, Type: "doc", Limit: 50})
 	require.NoError(t, err)
 	require.Len(t, page, len(recs))
@@ -285,9 +285,49 @@ func TestEntityChanges_ScanCap(t *testing.T) {
 	}
 	src.entries = append(src.entries, entityEntry(1, audit.OpCreateEntity, "doc", "DOC-1"))
 	q := visibility.ChangesQuery{Ref: entity.Ref{ID: "DOC-1"}, Type: "doc", Limit: 5}
-	page, next, err := visibility.EntityChanges(ctx, src, readableSet{"DOC-1": "doc"}, q)
+	page, next, err := visibility.EntityChanges(ctx, src, readableSet{"DOC-1": "doc"}, allFields{}, q)
 	require.NoError(t, err)
 	require.Empty(t, page)
 	require.NotZero(t, next)
 	require.LessOrEqual(t, src.calls, 4)
+}
+
+// allFields shows every property.
+type allFields struct{}
+
+func (allFields) FieldVisibleOnEveryRow(context.Context, string, string) bool { return true }
+
+// hiddenFields hides the named properties of every type.
+type hiddenFields map[string]bool
+
+func (h hiddenFields) FieldVisibleOnEveryRow(_ context.Context, _, property string) bool {
+	return !h[property]
+}
+
+// TestEntityChanges_SummaryNamesNoHiddenProperty: an update summary names
+// only the properties the reader sees on every row, and a relation update
+// names none.
+func TestEntityChanges_SummaryNamesNoHiddenProperty(t *testing.T) {
+	ctx := context.Background()
+	update := func(seq int64, summary string) audit.Entry {
+		e := entityEntry(seq, audit.OpUpdateEntity, "doc", "DOC-1")
+		e.Record.Summary = summary
+		return e
+	}
+	rel := relationEntry(1, "DOC-1", "", "PUB-1")
+	rel.Record.Op, rel.Record.Summary = audit.OpUpdateRelation, "updated: note"
+	src := &fakeEntries{entries: []audit.Entry{
+		update(4, "updated: title,salary"),
+		update(3, "updated: salary"),
+		update(2, "updated"),
+		rel,
+	}}
+	page, _, err := visibility.EntityChanges(ctx, src, readableSet{"DOC-1": "doc", "PUB-1": "doc"},
+		hiddenFields{"salary": true}, visibility.ChangesQuery{Ref: entity.Ref{ID: "DOC-1"}, Type: "doc", Limit: 10})
+	require.NoError(t, err)
+	var got []string
+	for _, c := range page {
+		got = append(got, c.Summary)
+	}
+	require.Equal(t, []string{"updated: title", "updated", "updated", "updated"}, got)
 }
