@@ -63,5 +63,9 @@ body:
     "ticket": "ticket_form"
   },
   "piles_available": false,
-  "piles": null
+  "piles": null,
+  "audit": {
+    "changes": false,
+    "global": false
+  }
 }

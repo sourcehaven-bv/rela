@@ -226,8 +226,8 @@ var changeOps = []string{
 	audit.OpCreateRelation,
 }
 
-func entityQuery(id, face string) sqlaudit.EntityQuery {
-	return sqlaudit.EntityQuery{ID: id, Face: face, Ops: changeOps}
+func entityQuery(id, face string) sqlaudit.SubjectQuery {
+	return sqlaudit.SubjectQuery{ID: id, Face: face, Ops: changeOps}
 }
 
 func seqsOf(entries []sqlaudit.Entry) []int64 {
@@ -278,7 +278,7 @@ func testForEntityPages(t *testing.T, h Harness) {
 	require.NoError(t, err)
 	require.Empty(t, got)
 
-	got, err = h.Log.ForEntity(ctx, sqlaudit.EntityQuery{ID: "CTL-2"}, 0, 10)
+	got, err = h.Log.ForEntity(ctx, sqlaudit.SubjectQuery{ID: "CTL-2"}, 0, 10)
 	require.NoError(t, err)
 	require.Empty(t, got, "no ops reads nothing")
 }

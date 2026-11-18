@@ -235,7 +235,7 @@ func (l *Log) anchor(ctx context.Context, q sqlexec.Querier) (seq int64, hash st
 }
 
 // subjectRow is one audit_subjects row of a record: an entity id it names,
-// the face it names it at ('' for every face), and whether the record begins
+// the face it names it at (empty for every face), and whether the record begins
 // a lifecycle of that id and face.
 type subjectRow struct {
 	id     string
@@ -244,7 +244,7 @@ type subjectRow struct {
 }
 
 // subjectRows returns the distinct entity ids rec names, sorted by id. An id
-// named at two different faces is stored at '' (every face). A create starts
+// named at two different faces is stored with an empty face (every face). A create starts
 // its subject's lifecycle; a rename or conversion starts its After's.
 func subjectRows(rec audit.Record) []subjectRow {
 	var rows []subjectRow

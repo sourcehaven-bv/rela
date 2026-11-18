@@ -333,9 +333,9 @@ type Record struct {
 	Source string `json:"source,omitempty"`
 }
 
-// EntityQuery names the records a database log's ForEntity reads: those of one face
+// SubjectQuery names the records a database log's ForEntity reads: those of one face
 // of an entity, with one of the listed ops.
-type EntityQuery struct {
+type SubjectQuery struct {
 	ID string
 	// Face is the face to read; '' for an unfaced type. Records stored
 	// without a face belong to every face and are read too.

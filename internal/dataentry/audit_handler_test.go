@@ -18,11 +18,11 @@ import (
 // it was asked.
 type fakeAuditLog struct {
 	entries []audit.Entry
-	queries []audit.EntityQuery
+	queries []audit.SubjectQuery
 }
 
 func (f *fakeAuditLog) ForEntity(
-	_ context.Context, q audit.EntityQuery, before int64, limit int,
+	_ context.Context, q audit.SubjectQuery, before int64, limit int,
 ) ([]audit.Entry, error) {
 	f.queries = append(f.queries, q)
 	return f.page(before, limit), nil

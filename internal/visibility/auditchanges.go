@@ -34,7 +34,7 @@ var ChangeOps = []string{
 // of an entity's records, newest first, paged by seq. sqlaudit.Log
 // implements it.
 type AuditEntries interface {
-	ForEntity(ctx context.Context, q audit.EntityQuery, before int64, limit int) ([]audit.Entry, error)
+	ForEntity(ctx context.Context, q audit.SubjectQuery, before int64, limit int) ([]audit.Entry, error)
 }
 
 // ReadableIDs answers which of ids the principal may read some face of, with
@@ -105,7 +105,7 @@ const changeScanRounds = 4
 func EntityChanges(
 	ctx context.Context, src AuditEntries, readable ReadableIDs, fields FieldVisibility, q ChangesQuery,
 ) ([]ChangeRecord, int64, error) {
-	eq := audit.EntityQuery{ID: q.Ref.ID, Face: q.Ref.Face.String(), Ops: ChangeOps}
+	eq := audit.SubjectQuery{ID: q.Ref.ID, Face: q.Ref.Face.String(), Ops: ChangeOps}
 	var out []ChangeRecord
 	before := q.Before
 	for range changeScanRounds {

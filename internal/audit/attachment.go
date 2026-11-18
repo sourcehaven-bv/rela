@@ -55,7 +55,7 @@ func AttachmentRejected(ctx context.Context, entityType, entityID, property, fil
 // AttachRendered returns the [OpAttachRender] record for a file
 // rela.attach_render stored. source names what was rendered, such as
 // `document="audit-report" entry="AUD-1" format="pdf"`. face is the face of
-// the entity that got the file, '' for an unfaced type.
+// the entity that got the file, empty for an unfaced type.
 func AttachRendered(
 	ctx context.Context, entityType, entityID, face, property, fileName, sha256 string, size int64, source string,
 ) Record {

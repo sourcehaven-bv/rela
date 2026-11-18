@@ -12,7 +12,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
-	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -130,7 +129,7 @@ func handleV1Changes(a *App, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	typeName := parts[0]
-	ref, err := entityPkg.ParseRef(parts[1])
+	ref, err := parseHistoryAddress(parts[1])
 	if err != nil {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
@@ -224,10 +223,11 @@ func handleV1Audit(a *App, w http.ResponseWriter, r *http.Request) {
 		resp.NextBefore = resp.Records[len(resp.Records)-1].Seq
 	}
 	a.auditSink.Record(audit.Stamp(ctx, audit.Record{
-		Time:      time.Now().UTC(),
-		Op:        audit.OpAuditRead,
-		Principal: principal.From(ctx),
-		Summary:   fmt.Sprintf("before=%d limit=%d served=%d", before, limit, len(resp.Records)),
+		Time:       time.Now().UTC(),
+		Op:         audit.OpAuditRead,
+		Principal:  principal.From(ctx),
+		AssertedBy: audit.AssertedByFrom(ctx),
+		Summary:    fmt.Sprintf("before=%d limit=%d served=%d", before, limit, len(resp.Records)),
 	}))
 	writeV1JSON(w, http.StatusOK, resp)
 }

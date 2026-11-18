@@ -60,5 +60,9 @@ body:
     }
   ],
   "piles_available": true,
-  "piles": null
+  "piles": null,
+  "audit": {
+    "changes": false,
+    "global": false
+  }
 }

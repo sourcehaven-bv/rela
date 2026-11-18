@@ -151,7 +151,7 @@ type fakeEntries struct {
 	calls   int
 }
 
-func (f *fakeEntries) ForEntity(_ context.Context, q audit.EntityQuery, before int64, limit int) ([]audit.Entry, error) {
+func (f *fakeEntries) ForEntity(_ context.Context, q audit.SubjectQuery, before int64, limit int) ([]audit.Entry, error) {
 	f.calls++
 	var out []audit.Entry
 	for _, e := range f.entries {

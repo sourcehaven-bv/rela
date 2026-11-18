@@ -22,8 +22,8 @@ func (l *Log) Newest(ctx context.Context, before int64, limit int) ([]Entry, err
 		upperBound(before), limit)
 }
 
-// EntityQuery is [audit.EntityQuery].
-type EntityQuery = audit.EntityQuery
+// SubjectQuery is [audit.SubjectQuery].
+type SubjectQuery = audit.SubjectQuery
 
 // ForEntity returns up to limit records that name q.ID at q.Face, with an op
 // in q.Ops and a seq below before, newest first. A record names an id when
@@ -37,7 +37,7 @@ type EntityQuery = audit.EntityQuery
 // grow with the log.
 //
 // It is ungated; see [Log.Newest].
-func (l *Log) ForEntity(ctx context.Context, q EntityQuery, before int64, limit int) ([]Entry, error) {
+func (l *Log) ForEntity(ctx context.Context, q SubjectQuery, before int64, limit int) ([]Entry, error) {
 	if len(q.Ops) == 0 {
 		return nil, nil
 	}
