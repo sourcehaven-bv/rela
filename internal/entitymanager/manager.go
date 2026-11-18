@@ -971,7 +971,7 @@ func (m *Manager) CreateEntity(
 	if err := prepareCreate(ctx, m, e, opts, e.Properties); err != nil {
 		return nil, err
 	}
-	created, warnings, err := createCore(ctx, m.deps, e.Type, createCoreArgs(e, opts))
+	created, warnings, err := createCore(ctx, m.deps, e.Type, createCoreArgs(m, e, opts))
 	if err != nil {
 		return nil, err
 	}
@@ -987,8 +987,9 @@ func (m *Manager) CreateEntity(
 }
 
 // createCoreArgs are the createCore options of a create of e with opts.
-func createCoreArgs(e *entity.Entity, opts entity.CreateOptions) createCoreOpts {
+func createCoreArgs(m *Manager, e *entity.Entity, opts entity.CreateOptions) createCoreOpts {
 	return createCoreOpts{
+		record:          auditCreate(m),
 		ID:              opts.ID,
 		IDPrefix:        opts.Prefix,
 		TemplateVariant: opts.Variant,
@@ -1059,22 +1060,25 @@ func finishCreate(
 ) (*entity.CreateResult, error) {
 	result := &entity.CreateResult{Entity: created, Warnings: warnings}
 
-	// Audit the durable write now, before automation re-writes or the
-	// cascade run. createCore has already persisted the entity; if a
-	// later step fails (the post-automation upsert, or a cascade that
-	// hard-errors) the entity is still on disk, so the audit log must
-	// already reflect it. Recording after the cascade left a window
-	// where a committed write produced no audit record.
+	// createCore wrote the audit record with the entity, so a later step
+	// that fails (the post-automation upsert, or a cascade that hard-errors)
+	// leaves the entity and its record in place.
 	recordCreate(ctx, m, created)
 	return createFollowUps(ctx, m, result, skipAutomation)
 }
 
-// recordCreate writes the audit record of the durable create of created and
-// notifies the aliases of it: the part of [finishCreate] that must follow
-// every committed create.
+// recordCreate notifies the aliases of the durable create of created: the
+// part of [finishCreate] that must follow every committed create. The audit
+// record was written with the entity ([auditCreate]).
 func recordCreate(ctx context.Context, m *Manager, created *entity.Entity) {
-	m.recordEntityAudit(ctx, audit.OpCreateEntity, created, "created")
 	notifyAliasesOfCreate(ctx, m.deps.AliasRewriter, created.ID, created.Face)
+}
+
+// auditCreate is the createCoreOpts.record of a create through the manager.
+func auditCreate(m *Manager) func(context.Context, store.Store, *entity.Entity) error {
+	return func(ctx context.Context, st store.Store, e *entity.Entity) error {
+		return m.recordEntityAudit(ctx, st, audit.OpCreateEntity, e, "created")
+	}
 }
 
 // createFollowUps runs the on-create automations and the cascade of
@@ -1758,11 +1762,16 @@ func (m *Manager) updateCore(
 	// zero condition: an unconditional write, for a caller that owns the
 	// whole entity (UpdateEntity).
 	txCheck = chainTxChecks(txCheck, relationRuleCheck(m.deps, oldEntity, e))
+	summary := updateEntitySummary(oldEntity, e)
 	write := func(st store.Store) error {
-		_, werr := st.UpdateEntityIf(ctx, e, store.UpdateCondition{
+		if _, werr := st.UpdateEntityIf(ctx, e, store.UpdateCondition{
 			ExpectedVersion: store.EntityVersion(expectedVersion),
-		})
-		return werr
+		}); werr != nil {
+			return werr
+		}
+		// The record joins the write's transaction (DEC-U78WD7Y), before
+		// the cascade runs.
+		return m.recordEntityAudit(ctx, st, audit.OpUpdateEntity, e, summary)
 	}
 	// A replace joined to this update (PatchWithRelations) is checked and
 	// written in the same transaction.
@@ -1793,11 +1802,6 @@ func (m *Manager) updateCore(
 	if joined != nil {
 		joined.committed = true
 	}
-
-	// Audit the durable write now, before the cascade run. The entity
-	// is already persisted; gating the audit on cascade success left a
-	// window where a committed write produced no audit record.
-	m.recordEntityAudit(ctx, audit.OpUpdateEntity, e, updateEntitySummary(oldEntity, e))
 
 	if !ranAutomation {
 		return result, nil
@@ -2187,14 +2191,16 @@ func deleteFamily(
 		res      *store.DeleteResult
 		captured *cascadeCapture
 	)
-	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
-		txCtx := store.ContextInTx(ctx)
+	txErr := auditTx(ctx, m.deps, true, func(txCtx context.Context, tx store.Store) error {
 		if pErr := pre.check(txCtx, tx); pErr != nil {
 			return pErr
 		}
 		var dErr error
 		res, captured, dErr = m.deleteEntityInTx(txCtx, tx, id, cascade, authorized, guardedOwned)
-		return dErr
+		if dErr != nil {
+			return dErr
+		}
+		return auditFamilyDelete(txCtx, m, tx, id, cascade, res, captured)
 	})
 	if txErr != nil {
 		undoFailedDelete(ctx, m, undo, txErr)
@@ -2253,23 +2259,6 @@ func deleteFamily(
 		}
 	}
 
-	// Audit exactly what the store reports deleting. Cascade-deleted
-	// relations carry triggered_by so the log attributes them to this
-	// delete; recordRelationAudit reads it from cascadeCtx.
-	cascadeCtx := ctx
-	if cascade && len(res.DeletedRelations) > 0 {
-		cascadeCtx = audit.WithTriggeredBy(ctx, "cascade:delete-entity:"+id)
-	}
-	for _, rel := range res.DeletedRelations {
-		m.recordRelationAudit(cascadeCtx, audit.OpDeleteRelation, rel, "deleted")
-	}
-
-	cascaded := 0
-	if cascade {
-		cascaded = len(res.DeletedRelations)
-	}
-	m.recordFamilyDeleteAudit(ctx, res.DeletedEntities, cascaded)
-
 	out := &entity.DeleteResult{
 		DeletedEntities:  res.DeletedEntities,
 		DeletedRelations: res.DeletedRelations,
@@ -2282,6 +2271,36 @@ func deleteFamily(
 		}
 	}
 	return out, nil
+}
+
+// auditFamilyDelete writes the audit records of the delete of family id on
+// tx, in its transaction: exactly what the store reports deleting, then the
+// owned entities that went with it. Cascade-deleted relations carry
+// triggered_by so the log attributes them to this delete.
+func auditFamilyDelete(
+	ctx context.Context, m *Manager, tx store.Store, id string, cascade bool,
+	res *store.DeleteResult, captured *cascadeCapture,
+) error {
+	cascadeCtx := ctx
+	if cascade && len(res.DeletedRelations) > 0 {
+		cascadeCtx = audit.WithTriggeredBy(ctx, "cascade:delete-entity:"+id)
+	}
+	for _, rel := range res.DeletedRelations {
+		if err := m.recordRelationAudit(cascadeCtx, tx, audit.OpDeleteRelation, rel, "deleted"); err != nil {
+			return err
+		}
+	}
+	cascaded := 0
+	if cascade {
+		cascaded = len(res.DeletedRelations)
+	}
+	if err := m.recordFamilyDeleteAudit(ctx, tx, res.DeletedEntities, cascaded); err != nil {
+		return err
+	}
+	if captured == nil {
+		return nil
+	}
+	return auditOwnedDeletes(ctx, m, tx, id, captured.owned)
 }
 
 // familyRows returns every stored face of the entity family id, in the
@@ -2548,7 +2567,9 @@ func (m *Manager) authorizeFamily(
 // summary, as DeleteEntityFace does. The cascade count describes the family
 // delete as a whole, so it goes on the first record only; repeating it would
 // read as that many relations per face.
-func (m *Manager) recordFamilyDeleteAudit(ctx context.Context, deleted []*entity.Entity, cascaded int) {
+func (m *Manager) recordFamilyDeleteAudit(
+	ctx context.Context, st store.Store, deleted []*entity.Entity, cascaded int,
+) error {
 	for i, e := range deleted {
 		summary := "deleted"
 		if !e.Face.IsImplicit() {
@@ -2557,8 +2578,34 @@ func (m *Manager) recordFamilyDeleteAudit(ctx context.Context, deleted []*entity
 		if i == 0 && cascaded > 0 {
 			summary = fmt.Sprintf("%s (cascade: %d relations)", summary, cascaded)
 		}
-		m.recordEntityAudit(ctx, audit.OpDeleteEntity, e, summary)
+		if err := m.recordEntityAudit(ctx, st, audit.OpDeleteEntity, e, summary); err != nil {
+			return err
+		}
 	}
+	return nil
+}
+
+// auditFaceDelete writes the audit records of the delete of the face row
+// current on tx, in its transaction: the edges the store removed with it,
+// then the face.
+func auditFaceDelete(
+	ctx context.Context, m *Manager, tx store.Store, current *entity.Entity, res *store.DeleteResult,
+) error {
+	cascadeCtx := ctx
+	if len(res.DeletedRelations) > 0 {
+		ref := entity.FormatStateRef(current.ID, current.Face)
+		cascadeCtx = audit.WithTriggeredBy(ctx, "cascade:delete-face:"+ref)
+	}
+	for _, rel := range res.DeletedRelations {
+		if err := m.recordRelationAudit(cascadeCtx, tx, audit.OpDeleteRelation, rel, "deleted"); err != nil {
+			return err
+		}
+	}
+	summary := fmt.Sprintf("deleted face %s", current.Face)
+	if len(res.DeletedRelations) > 0 {
+		summary = fmt.Sprintf("deleted face %s (cascade: %d relations)", current.Face, len(res.DeletedRelations))
+	}
+	return m.recordEntityAudit(ctx, tx, audit.OpDeleteEntity, current, summary)
 }
 
 // facesStillStored reports whether any row in deleted is still in the store,
@@ -2600,10 +2647,12 @@ func facesStillStored(ctx context.Context, st store.Store, deleted []*entity.Ent
 //
 // Nil-safe throughout: a transactional backend returns nil on error, and a
 // failure on the first relation removes nothing. Either way this is a no-op.
+// A sink that records in the transaction is only wired on a backend that
+// rolls back, so with one this records nothing.
 func (m *Manager) recordPartialCascade(
 	ctx context.Context, cascadeTB string, res *store.DeleteResult, captured *cascadeCapture,
 ) {
-	if res == nil {
+	if res == nil || auditsInTx(m.deps) {
 		return
 	}
 	// A face-authorization denial after the store delete returns the full
@@ -2616,7 +2665,8 @@ func (m *Manager) recordPartialCascade(
 	for _, e := range res.DeletedEntities {
 		m.recordDeleteVersion(ctx, e)
 	}
-	m.recordFamilyDeleteAudit(ctx, res.DeletedEntities, len(res.DeletedRelations))
+	// The best-effort sink never fails.
+	_ = m.recordFamilyDeleteAudit(ctx, m.deps.Store, res.DeletedEntities, len(res.DeletedRelations))
 	if len(res.DeletedRelations) == 0 {
 		return
 	}
@@ -2632,7 +2682,7 @@ func (m *Manager) recordPartialCascade(
 	}
 
 	for _, rel := range res.DeletedRelations {
-		m.recordRelationAudit(cascadeCtx, audit.OpDeleteRelation, rel, "deleted")
+		_ = m.recordRelationAudit(cascadeCtx, m.deps.Store, audit.OpDeleteRelation, rel, "deleted")
 
 		snap := rel
 		if s, ok := snapshots[relationKey(rel)]; ok {
@@ -2737,8 +2787,7 @@ func deleteFace(
 		lastFace           bool
 		incoming, outgoing []*entity.Relation
 	)
-	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
-		txCtx := store.ContextInTx(ctx)
+	txErr := auditTx(ctx, m.deps, true, func(txCtx context.Context, tx store.Store) error {
 		// Re-read the face under the transaction (BUG-J3PBFN). The read above
 		// only answers not-found and denial early; the version and audit
 		// record must carry the row this transaction deletes, not one a
@@ -2774,7 +2823,10 @@ func deleteFace(
 		// The store decides "last face" again under its own lock. Every edge
 		// it removed must be one authorized above; otherwise fail, so a
 		// transactional backend rolls the delete back.
-		return requireAuthorizedEdges(res.DeletedRelations, incoming, outgoing)
+		if eErr := requireAuthorizedEdges(res.DeletedRelations, incoming, outgoing); eErr != nil {
+			return eErr
+		}
+		return auditFaceDelete(txCtx, m, tx, current, res)
 	})
 	if txErr != nil {
 		undoFailedDelete(ctx, m, fg.undo, txErr)
@@ -2784,7 +2836,7 @@ func deleteFace(
 		return nil, txErr
 	}
 
-	// Version capture, audit and relation attribution after commit, exactly
+	// Version capture and relation attribution after commit, exactly
 	// as DeleteEntity orders them and for the same reasons.
 	m.recordDeleteVersion(ctx, current)
 	notifyAliasesOfFaceDelete(ctx, m.deps.AliasRewriter, id, face)
@@ -2794,19 +2846,9 @@ func deleteFace(
 		m.notifyAliasesOfDelete(ctx, id)
 	}
 	ref := entity.FormatStateRef(id, face)
-	cascadeCtx := ctx
-	if len(res.DeletedRelations) > 0 {
-		cascadeCtx = audit.WithTriggeredBy(ctx, "cascade:delete-face:"+ref)
-	}
 	for _, rel := range res.DeletedRelations {
 		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, 0, "", "", "cascade:delete-face:"+ref)
-		m.recordRelationAudit(cascadeCtx, audit.OpDeleteRelation, rel, "deleted")
 	}
-	summary := fmt.Sprintf("deleted face %s", face)
-	if len(res.DeletedRelations) > 0 {
-		summary = fmt.Sprintf("deleted face %s (cascade: %d relations)", face, len(res.DeletedRelations))
-	}
-	m.recordEntityAudit(ctx, audit.OpDeleteEntity, current, summary)
 
 	// The face's references are gone; bytes no remaining face references
 	// go with them (ruling 4, RR-0SD5ER). A whole-family delete needs no
@@ -3009,16 +3051,18 @@ func (m *Manager) RenameEntity(
 
 	// Authorize and rename inside ONE Tx, as DeleteEntity does: the store
 	// renames the family it finds under its own lock, not the one read above.
-	// Version capture, alias rewriting and audit stay outside the callback.
+	// The audit records join the Tx; version capture and alias rewriting stay
+	// outside the callback.
 	var (
 		res     *entity.RenameResult
 		renamed []*entity.Entity
 	)
-	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
-		txCtx := store.ContextWithTxView(ctx, tx)
+	txErr := auditTx(ctx, m.deps, true, func(txCtx context.Context, tx store.Store) error {
 		var rErr error
-		res, renamed, rErr = r.inTx(txCtx, tx)
-		return rErr
+		if res, renamed, rErr = r.inTx(txCtx, tx); rErr != nil {
+			return rErr
+		}
+		return r.audit(txCtx, tx, renamed)
 	})
 	if txErr != nil {
 		recordRenameRefusal(ctx, m, oldID, txErr)
@@ -3026,6 +3070,9 @@ func (m *Manager) RenameEntity(
 		// cannot, so a denial after the store rename leaves it standing, and
 		// the logs must say so (the same reasoning as recordPartialCascade).
 		if res != nil && !familyStillStored(ctx, m.deps.Store, oldID) {
+			// Only the best-effort sink is wired on a store that keeps a
+			// failed rename, and it never fails.
+			_ = r.audit(ctx, m.deps.Store, renamed)
 			r.record(ctx, renamed)
 		}
 		undoFailedRename(ctx, m, renameUndo)
@@ -3125,27 +3172,47 @@ func familyStillStored(ctx context.Context, st store.Store, id string) bool {
 	return len(family) > 0
 }
 
-// record writes the audit records and versions of a rename that happened:
-// one rename record and one rename version per moved face, since each face
-// is its own version lineage, then the alias rewrite and the relation rename
-// versions, which are per family.
-func (r *familyRename) record(ctx context.Context, renamed []*entity.Entity) {
-	m, oldID, newID, preRenameRels := r.m, r.oldID, r.newID, r.preRenameRels
+// audit writes the audit records of a rename on st, the transaction view
+// it ran on: one rename (or convert) record per moved face, then one record
+// per other body the store rewrote.
+func (r *familyRename) audit(ctx context.Context, st store.Store, renamed []*entity.Entity) error {
 	// No rows means the post-rename read failed (its error is what the
-	// caller returns). The per-face records need those rows; the alias rewrite
-	// and relation versions below do not, so they still run.
+	// caller returns). The per-face records need those rows.
 	if len(renamed) == 0 {
 		slog.Error("audit.write_failed",
 			"stage", "rename-postfetch",
-			"new_id", newID,
+			"new_id", r.newID,
 			"error", "renamed faces could not be read")
 	}
 	for _, e := range renamed {
+		var err error
 		if r.conversionFrom != "" {
-			recordConversionAudit(ctx, m, r.conversionName, oldID, r.conversionFrom, e)
+			err = recordConversionAudit(ctx, r.m, st, r.conversionName, r.oldID, r.conversionFrom, e)
 		} else {
-			m.recordRenameAudit(ctx, oldID, e)
+			err = r.m.recordRenameAudit(ctx, st, r.oldID, e)
 		}
+		if err != nil {
+			return err
+		}
+	}
+	for _, rw := range r.rewritten {
+		if rw.ID == r.newID {
+			continue
+		}
+		if err := recordMentionRewriteAudit(ctx, r.m, st, r.oldID, r.newID, rw); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// record writes the versions of a rename that happened: one rename version
+// per moved face, since each face is its own version lineage, then the alias
+// rewrite and the relation rename versions, which are per family. The audit
+// records were written in the transaction ([familyRename.audit]).
+func (r *familyRename) record(ctx context.Context, renamed []*entity.Entity) {
+	m, oldID, newID, preRenameRels := r.m, r.oldID, r.newID, r.preRenameRels
+	for _, e := range renamed {
 		// Capture the rename as a version event carrying the old id (prev_id),
 		// so a renamed entity's history is walkable back to its former id. Only
 		// the choke-point knows old->new; a later sweep sees the renamed entity
@@ -3155,12 +3222,6 @@ func (r *familyRename) record(ctx context.Context, renamed []*entity.Entity) {
 			rec.PrevFace, rec.HasPrevFace = source, true
 		}
 		recordVersion(ctx, m, rec, e)
-	}
-
-	for _, rw := range r.rewritten {
-		if rw.ID != newID {
-			recordMentionRewriteAudit(ctx, m, oldID, newID, rw)
-		}
 	}
 
 	// Rewrite id-keyed references for the same reason the version above carries
@@ -3272,19 +3333,17 @@ func (m *Manager) CreateRelation(
 				return err
 			}
 		}
-		return writeRelationCreate(ctx, st, m.deps.Meta, key, rel, nil)
+		if err := writeRelationCreate(ctx, st, m.deps.Meta, key, rel, nil); err != nil {
+			return err
+		}
+		return m.recordRelationAudit(ctx, st, audit.OpCreateRelation, rel, "created")
 	}
-	var createErr error
 	// An owning edge reads its neighbors' edges to decide whether it may
 	// exist, and a relation rule reads the ends' edges, so the reads and the
 	// write share one Tx for the same reason.
 	inTx := relTypeIsOrdered(m.deps.Meta, key.Type) || relTypeHasMax(m.deps.Meta, key.Type) ||
 		metamodel.IsOwning(m.deps.Meta, key.Type) || ruled
-	if inTx {
-		createErr = m.deps.Store.Tx(ctx, func(st store.Store) error { return create(store.ContextInTx(ctx), st) })
-	} else {
-		createErr = create(ctx, m.deps.Store)
-	}
+	createErr := auditTx(ctx, m.deps, inTx, create)
 	if createErr != nil {
 		if errors.Is(createErr, store.ErrConflict) {
 			return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists,
@@ -3292,7 +3351,6 @@ func (m *Manager) CreateRelation(
 		}
 		return nil, createErr
 	}
-	m.recordRelationAudit(ctx, audit.OpCreateRelation, rel, "created")
 	return rel, nil
 }
 
@@ -3485,8 +3543,7 @@ func (m *Manager) UpdateRelation(
 	// first update would be lost.
 	var rel *entity.Relation
 	var oldProps map[string]any
-	err := m.deps.Store.Tx(ctx, func(view store.Store) error {
-		txCtx := store.ContextInTx(ctx)
+	err := auditTx(ctx, m.deps, true, func(txCtx context.Context, view store.Store) error {
 		// Addressed by TAIL as well as triple (BUG-64MU2Q): the default-tail
 		// edge is a DIFFERENT relation on a faced source, and the merge below
 		// would write the caller's properties onto it.
@@ -3509,31 +3566,23 @@ func (m *Manager) UpdateRelation(
 		// Snapshot pre-update meta keys so the audit summary names exactly
 		// which keys changed (values never appear).
 		oldProps = cloneProperties(rel.Properties)
-
-		if rel.Properties == nil && (len(opts.Properties) > 0 || len(opts.MetaUnset) > 0) {
-			rel.Properties = make(map[string]any)
-		}
-		maps.Copy(rel.Properties, opts.Properties)
-		for _, k := range opts.MetaUnset {
-			delete(rel.Properties, k)
-		}
-		if opts.Content != nil {
-			rel.Content = *opts.Content
-		}
+		mergeRelationOptions(rel, opts)
 
 		// UpdateRelation, not upsert: the read above established the triple
 		// exists (else ErrRelationNotFound), so this is unambiguously an
 		// update (BUG-ZWTDH9).
-		_, wErr := view.UpdateRelation(txCtx, key, store.RelationData{
+		if _, wErr := view.UpdateRelation(txCtx, key, store.RelationData{
 			Properties: rel.Properties,
 			Content:    rel.Content,
-		})
-		return wErr
+		}); wErr != nil {
+			return wErr
+		}
+		return m.recordRelationAudit(txCtx, view, audit.OpUpdateRelation, rel,
+			updateRelationSummary(oldProps, rel.Properties))
 	})
 	if err != nil {
 		return nil, err
 	}
-	m.recordRelationAudit(ctx, audit.OpUpdateRelation, rel, updateRelationSummary(oldProps, rel.Properties))
 
 	// Engine-initiated renumber when an order PATCH collapsed sibling
 	// spacing. Errors are operator-visible (slog.Error) but do not fail
@@ -3541,6 +3590,21 @@ func (m *Manager) UpdateRelation(
 	m.runRenumberAfterUpdate(ctx, key, touchedOut, touchedIn)
 
 	return rel, nil
+}
+
+// mergeRelationOptions applies the property, unset and content changes of
+// opts to rel.
+func mergeRelationOptions(rel *entity.Relation, opts entity.RelationOptions) {
+	if rel.Properties == nil && (len(opts.Properties) > 0 || len(opts.MetaUnset) > 0) {
+		rel.Properties = make(map[string]any)
+	}
+	maps.Copy(rel.Properties, opts.Properties)
+	for _, k := range opts.MetaUnset {
+		delete(rel.Properties, k)
+	}
+	if opts.Content != nil {
+		rel.Content = *opts.Content
+	}
 }
 
 // DeleteRelation removes the relation key names. The tail in key addresses
@@ -3586,7 +3650,9 @@ func deleteRelation(ctx context.Context, m *Manager, key entity.RelationKey, exp
 		}
 		return fmt.Errorf("delete relation: %w", store.ErrNotFound)
 	}
-	if expect != "" || relationWritesChecked(m.deps, key) {
+	// A sink that records in the transaction takes the transactional path,
+	// which reads, deletes and records on one view.
+	if expect != "" || relationWritesChecked(m.deps, key) || auditsInTx(m.deps) {
 		return deleteRelationIfVersion(ctx, m, key, expect)
 	}
 	// Fetch pre-delete AFTER authz (BUG-K6FEVB: a denied delete must return
@@ -3608,7 +3674,8 @@ func deleteRelation(ctx context.Context, m *Manager, key entity.RelationKey, exp
 		return fmt.Errorf("delete relation: %w", err)
 	}
 	if getErr == nil {
-		m.recordRelationAudit(ctx, audit.OpDeleteRelation, rel, "deleted")
+		// The best-effort sink (auditsInTx is false here) never fails.
+		_ = m.recordRelationAudit(ctx, m.deps.Store, audit.OpDeleteRelation, rel, "deleted")
 	}
 	return nil
 }

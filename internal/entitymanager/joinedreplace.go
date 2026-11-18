@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -32,8 +31,8 @@ import (
 //
 // An error from the replace is a [*JoinedRelationError], so the caller can
 // report it as a relation error. The created edges are returned in the order
-// of creates. Their versions and audit records are written after the commit,
-// also when the update's cascade fails after it.
+// of creates. Their audit records are written in the transaction, their
+// versions after the commit, also when the update's cascade fails after it.
 //
 // A function, not a method, to keep Manager under its plimsoll line.
 func PatchWithRelations(
@@ -63,10 +62,6 @@ func PatchWithRelations(
 	if j.committed {
 		for _, r := range j.deleted {
 			m.recordRelationVersion(ctx, store.VersionOpDelete, r, ids[r.Identity()], "", "", "")
-			m.recordRelationAudit(ctx, audit.OpDeleteRelation, r, "deleted")
-		}
-		for _, rel := range rp.rels {
-			m.recordRelationAudit(ctx, audit.OpCreateRelation, rel, "created")
 		}
 	}
 	if err != nil {
@@ -137,11 +132,12 @@ func (j *joinedReplace) after(ctx context.Context, write func(store.Store) error
 		if err := write(view); err != nil {
 			return err
 		}
-		deleted, err := j.rp.apply(store.ContextInTx(ctx), view)
+		txCtx := store.ContextWithTxView(ctx, view)
+		deleted, err := j.rp.apply(txCtx, view)
 		if err != nil {
 			return &JoinedRelationError{Err: err}
 		}
 		j.deleted = deleted
-		return nil
+		return j.rp.audit(txCtx, view, deleted)
 	}
 }

@@ -8,6 +8,8 @@
 package sqliteaudit
 
 import (
+	"database/sql"
+
 	"github.com/Sourcehaven-BV/rela/internal/audit/sqlaudit"
 	"github.com/Sourcehaven-BV/rela/internal/sqlexec/sqliteexec"
 )
@@ -20,6 +22,20 @@ type DB = sqliteexec.DB
 // Nil: rejected, so a wiring mistake fails at construction.
 func New(db DB) (*sqlaudit.Log, error) {
 	h, err := sqliteexec.New(db)
+	if err != nil {
+		return nil, err
+	}
+	return sqlaudit.New(h, sqlaudit.Dialect{Name: "sqliteaudit"})
+}
+
+// NewInTx returns a log over conn, the connection of an open sqlitestore
+// transaction (sqlitestore.TxConn). An append runs in a savepoint of that
+// transaction, so it commits or rolls back with the write it records. The
+// log is valid only until the transaction ends.
+//
+// Nil: conn rejected.
+func NewInTx(conn *sql.Conn) (*sqlaudit.Log, error) {
+	h, err := sqliteexec.NewInTx(conn, "audit")
 	if err != nil {
 		return nil, err
 	}

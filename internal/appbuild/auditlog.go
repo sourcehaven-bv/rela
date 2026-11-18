@@ -1,7 +1,11 @@
 package appbuild
 
 import (
+	"context"
+
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/audit/sqlaudit"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -46,6 +50,36 @@ func withSQLAudit(
 	}
 	withSink := *base
 	withSink.cfg.Audit = sink
+	if join := joinAuditFor(st); join != nil {
+		withSink.cfg.Audit = txAuditSink{Sink: sink, join: join}
+	}
 	withSink.sqlAudit = sink
 	return &withSink, keep, nil
 }
+
+// joinAudit returns the audit log of the open store transaction that view
+// belongs to. It fails when view is not a transaction view of the database
+// store, which rolls the write back.
+type joinAudit func(view store.Store) (*sqlaudit.Log, error)
+
+// txAuditSink is the database audit sink of a store whose transactions the
+// log can join. It is an [entitymanager.TxAudit]: the entity manager appends
+// the record of an entity or relation write in the write's own transaction,
+// so a failed append rolls the write back (DEC-U78WD7Y). Records of
+// everything else, such as a denied write, go through the embedded sink's
+// queue.
+type txAuditSink struct {
+	*sqlaudit.Sink
+	join joinAudit
+}
+
+// RecordTx appends rec in the transaction of view.
+func (s txAuditSink) RecordTx(ctx context.Context, view store.Store, rec audit.Record) error {
+	log, err := s.join(view)
+	if err != nil {
+		return err
+	}
+	return log.Append(ctx, rec)
+}
+
+var _ entitymanager.TxAudit = txAuditSink{}

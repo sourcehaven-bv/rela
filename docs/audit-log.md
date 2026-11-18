@@ -104,17 +104,22 @@ rela audit verify --expect-head 1042:9f86d08...
 
 ### Delivery
 
-In this release the record is appended after the entity write commits,
-by a background writer that appends the queued records in batches. A
-failed batch is retried for about 20 seconds and then logged as
-`audit.write_failed` and dropped, as on the filesystem build. The queue
+The record of an entity or relation write is appended inside the write's
+own database transaction. The write and its record commit together. If
+the append fails, the write fails and is rolled back, so a committed
+write always has its record. This covers creates, updates, deletes
+(soft and permanent), restores, purges, renames, conversions, moves, copies
+and the writes of automations.
+
+Other records describe an event that is not a stored write, such as a
+refused write (`denied-write`) or the use of elevated access
+(`acl-bypass`). These go through a background writer that appends
+queued records in batches. A failed batch is retried for about 20
+seconds and then logged as `audit.write_failed` and dropped. The queue
 holds at most 100,000 records; records that arrive when it is full are
 dropped and counted. On shutdown the writer drains its queue for up to
-ten seconds and logs how many records it could not write.
-
-So on these builds, a crash loses the records still in the queue, not
-only the one being written. Appending inside the write's own
-transaction, so that a write and its record commit together, is planned.
+ten seconds and logs how many records it could not write. A crash loses
+the queued records of this second kind only.
 
 ### Moving JSONL files into the database
 

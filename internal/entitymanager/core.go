@@ -42,7 +42,16 @@ type createCoreOpts struct {
 	// [max+1, max+mintSpread]. Set by [createCore] after a lost mint; 0 or 1
 	// picks max+1.
 	mintSpread int
+	// record writes the audit record of the create on the store the entity
+	// was written to, in its transaction when the sink records there
+	// ([emitWrite]). Each caller supplies its own, since a cascade's record
+	// differs from a direct create's. Required by [createCore].
+	record func(ctx context.Context, st store.Store, e *entity.Entity) error
 }
+
+// errCreateUnaudited is a createCore call without a record func: a create
+// that would leave no audit record.
+var errCreateUnaudited = errors.New("entitymanager: createCore: no audit record func")
 
 // resolveCandidateID returns the ID to use for the candidate entity
 // being built by [buildCandidateEntity]. Three branches:
@@ -103,6 +112,9 @@ func candidatePlaceholderID(def *metamodel.EntityDef, requestedPrefix string) st
 func createCore(
 	ctx context.Context, deps Deps, entityType string, opts createCoreOpts,
 ) (*entity.Entity, []entity.Warning, error) {
+	if opts.record == nil {
+		return nil, nil, errCreateUnaudited
+	}
 	for attempt := 1; ; attempt++ {
 		e, warnings, err := createCoreOnce(ctx, deps, entityType, opts)
 		// A generated ID is minted from a scan, so a concurrent create of the
@@ -169,7 +181,10 @@ func createCoreOnce(
 	// excludeSelfID is empty: on create there is no prior version of this
 	// entity to exclude.
 	err = writeWithUniqueCheck(ctx, deps, e, "", func(st store.Store) error {
-		return st.CreateEntity(ctx, e)
+		if cErr := st.CreateEntity(ctx, e); cErr != nil {
+			return cErr
+		}
+		return opts.record(ctx, st, e)
 	})
 	if err != nil {
 		// A derived unique-property index (pgstore, TKT-3Q0GP1) rejects a

@@ -97,8 +97,7 @@ func deleteRelationIfVersion(
 		return err
 	}
 	var rel *entity.Relation
-	err = m.deps.Store.Tx(ctx, func(view store.Store) error {
-		txCtx := store.ContextInTx(ctx)
+	err = auditTx(ctx, m.deps, true, func(txCtx context.Context, view store.Store) error {
 		got, gErr := view.GetRelation(txCtx, key)
 		if gErr != nil {
 			return fmt.Errorf("delete relation: %w", gErr)
@@ -115,12 +114,11 @@ func deleteRelationIfVersion(
 			return fmt.Errorf("delete relation: %w", dErr)
 		}
 		rel = got
-		return nil
+		return m.recordRelationAudit(txCtx, view, audit.OpDeleteRelation, rel, "deleted")
 	})
 	if err != nil {
 		return err
 	}
 	m.recordRelationVersion(ctx, store.VersionOpDelete, rel, ids[rel.Identity()], "", "", "")
-	m.recordRelationAudit(ctx, audit.OpDeleteRelation, rel, "deleted")
 	return nil
 }

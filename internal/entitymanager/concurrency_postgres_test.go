@@ -104,6 +104,10 @@ func (s *alternatingStore) pick() store.Store {
 	return s.Store
 }
 
+// TxRollsBack reports what both stores do: a failed Tx leaves nothing
+// written. The wrapper has no Unwrap, so it states the capability itself.
+func (s *alternatingStore) TxRollsBack() bool { return true }
+
 func (s *alternatingStore) Tx(ctx context.Context, fn func(store.Store) error) error {
 	return s.pick().Tx(ctx, fn)
 }

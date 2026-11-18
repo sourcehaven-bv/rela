@@ -243,8 +243,11 @@ func uniqueValues(meta *metamodel.Metamodel, e *entity.Entity) []uniqueProp {
 //
 // The callback holds a schema-wide lock on the multi-process database backend
 // and the write mutex on single-process backends, so write must be a plain
-// store write — never a public Manager call (automations, audit, cascades and
-// version capture stay outside), and never slow external I/O.
+// store write — never a public Manager call (automations, cascades and
+// version capture stay outside), and never slow external I/O. The one
+// exception is the audit record of the write, which write appends on the
+// same view ([emitWrite]) when the sink is a [TxAudit]; a transaction is
+// then always opened.
 func writeWithUniqueCheck(
 	ctx context.Context, deps Deps, e *entity.Entity, excludeSelfID string, write func(st store.Store) error,
 ) error {
@@ -271,11 +274,10 @@ func writeChecked(
 		return err
 	}
 	capture := writeCaptureFor(ctx, e)
-	if txCheck == nil && capture == nil && len(uniqueValues(deps.Meta, e)) == 0 {
+	if txCheck == nil && capture == nil && len(uniqueValues(deps.Meta, e)) == 0 && !auditsInTx(deps) {
 		return write(deps.Store)
 	}
-	return deps.Store.Tx(ctx, func(view store.Store) error {
-		txCtx := store.ContextWithTxView(ctx, view)
+	return auditTx(ctx, deps, true, func(txCtx context.Context, view store.Store) error {
 		if txCheck != nil {
 			if err := txCheck(txCtx); err != nil {
 				return err

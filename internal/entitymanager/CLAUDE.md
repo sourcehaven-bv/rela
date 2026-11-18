@@ -122,6 +122,15 @@ for the user-facing reference. Rules for new code:
   weaken the spoofing defense — the test pins both the read-only contract and
   the can't-forge invariant. Do not add a *setter* or any path from a
   script-controlled value into audit attribution.
+- **A write's audit record goes on the write's own store view.** On
+  postgres and sqlite the sink is a `TxAudit`: the record is appended in the
+  write's transaction, and an append error fails and rolls back the write
+  (DEC-U78WD7Y). A new write path opens its transaction with `auditTx` and
+  emits through `emitWrite(ctx, deps, view, rec)` inside the closure, never
+  after the commit. `auditTx` also holds a best-effort sink's records until
+  the commit, so a rolled-back write is never recorded. Records that
+  describe no stored write (`denied-write`, `acl-bypass`, version tags) stay
+  on `Audit.Record`.
 - **Constructor takes `Audit` as a required collaborator.**
   `entitymanager.Deps.Audit` and `appbuild.New` reject nil. Tests use
   `audit.Nop{}` (explicit opt-out) or `audit.NewMemory()` when asserting.

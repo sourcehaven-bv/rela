@@ -130,11 +130,13 @@ func recreateEntity(ctx context.Context, m *Manager, e *entity.Entity, allowRefs
 
 	// `unique: true` natural keys are enforced atomically with the write.
 	if err := writeWithUniqueCheck(ctx, m.deps, e, e.ID, func(st store.Store) error {
-		return persistRecreate(ctx, st, e)
+		if err := persistRecreate(ctx, st, e); err != nil {
+			return err
+		}
+		return m.recordEntityAudit(ctx, st, audit.OpCreateEntity, e, "created")
 	}); err != nil {
 		return nil, err
 	}
-	m.recordEntityAudit(ctx, audit.OpCreateEntity, e, "created")
 	// A restore is a create to id-keyed side stores: what they hold under
 	// the id may belong to another entity that used it in between.
 	notifyAliasesOfCreate(ctx, m.deps.AliasRewriter, e.ID, e.Face)

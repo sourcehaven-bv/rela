@@ -77,13 +77,13 @@ type LinkedResult struct {
 // caller's global roles only, never from the source id (pinned by
 // acl.TestRelationWrite_DecisionIgnoresSourceID).
 //
-// The entity audit record, the alias notification, the automations and
-// the cascade run after the commit, as they do for CreateEntity, followed
-// by the relation audit record. A failure there is
-// [LinkedResult.FollowUpErr], not an error, because the writes are
-// committed. When the transaction fails on a store that cannot roll back
-// and the entity stays written, those steps still run for it, so no entity
-// exists without its audit record, and the error is a *[KeptEntityError]. A
+// The audit records of the entity and the edge are written in the
+// transaction, each after its row. The alias notification, the automations
+// and the cascade run after the commit, as they do for CreateEntity. A
+// failure there is [LinkedResult.FollowUpErr], not an error, because the
+// writes are committed. When the transaction fails on a store that cannot
+// roll back and the entity stays written, those steps still run for it, and
+// the error is a *[KeptEntityError]. A
 // failed check, and a refused entity write, are reported so that
 // [WroteNothing] knows them.
 //
@@ -96,14 +96,14 @@ func CreateLinked(ctx context.Context, m *Manager, lc LinkedCreate) (*LinkedResu
 		return nil, beforeWriteError{err}
 	}
 	opts := lc.Options
-	err = m.deps.Store.Tx(ctx, func(view store.Store) error {
-		return t.run(store.ContextInTx(ctx), view)
+	err = auditTx(ctx, m.deps, true, func(txCtx context.Context, view store.Store) error {
+		return t.run(txCtx, view)
 	})
 	if err != nil {
 		// On a store that rolls back nothing stayed, and a read-back could
 		// find another caller's create that took the freed id.
 		if t.created != nil && !store.TxRollsBack(m.deps.Store) &&
-			finishKept(ctx, m, t.created, t.warnings, t.written, opts.SkipAutomation) {
+			finishKept(ctx, m, t.created, t.warnings, opts.SkipAutomation) {
 
 			return nil, &KeptEntityError{Entity: t.created, Err: err}
 		}
@@ -111,10 +111,7 @@ func CreateLinked(ctx context.Context, m *Manager, lc LinkedCreate) (*LinkedResu
 	}
 	out := t.out
 	out.Create, out.FollowUpErr = finishCreate(ctx, m, t.created, t.warnings, opts.SkipAutomation)
-	if t.written != nil {
-		m.recordRelationAudit(ctx, audit.OpCreateRelation, t.written, "created")
-		out.Relation = t.written
-	}
+	out.Relation = t.written
 	return out, nil
 }
 
@@ -159,7 +156,7 @@ func prepareLinkedCreate(ctx context.Context, m *Manager, lc LinkedCreate) (*lin
 }
 
 // run is the transaction: BeforeWrite, the edge's checks, the entity, the
-// edge, then InTx. txCtx is marked with [store.ContextInTx].
+// edge, then InTx. txCtx carries view ([store.ContextWithTxView]).
 func (t *linkedCreate) run(txCtx context.Context, view store.Store) error {
 	if t.lc.BeforeWrite != nil {
 		if err := t.lc.BeforeWrite(txCtx, view); err != nil {
@@ -172,7 +169,7 @@ func (t *linkedCreate) run(txCtx context.Context, view store.Store) error {
 	}
 	deps := t.m.deps
 	deps.Store = view
-	c, w, err := createCore(txCtx, deps, t.lc.Entity.Type, createCoreArgs(t.lc.Entity, t.lc.Options))
+	c, w, err := createCore(txCtx, deps, t.lc.Entity.Type, createCoreArgs(t.m, t.lc.Entity, t.lc.Options))
 	if err != nil {
 		if isEntityStoreWriteError(err) {
 			return err
@@ -227,7 +224,9 @@ func (t *linkedCreate) writeRelation(ctx context.Context, view store.Store, id s
 		return nil
 	}
 	t.written = t.rel
-	return nil
+	// A failed record fails the create even when the edge is best effort:
+	// the edge is written, and must not stay without its record.
+	return t.m.recordRelationAudit(ctx, view, audit.OpCreateRelation, t.rel, "created")
 }
 
 // finishKept runs the post-commit steps of [CreateLinked] for an entity
@@ -236,8 +235,7 @@ func (t *linkedCreate) writeRelation(ctx context.Context, view store.Store, id s
 // entity is gone and nothing runs. Their failures are logged: the caller
 // already gets the transaction's error.
 func finishKept(
-	ctx context.Context, m *Manager, created *entity.Entity, warnings []entity.Warning,
-	rel *entity.Relation, skipAutomation bool,
+	ctx context.Context, m *Manager, created *entity.Entity, warnings []entity.Warning, skipAutomation bool,
 ) bool {
 	if _, err := m.deps.Store.GetEntity(ctx, created.Ref()); err != nil {
 		return false
@@ -245,12 +243,6 @@ func finishKept(
 	if _, err := finishCreate(ctx, m, created, warnings, skipAutomation); err != nil {
 		slog.WarnContext(ctx, "entitymanager: CreateLinked: a step after the kept create failed",
 			"entity", created.ID, "error", err)
-	}
-	if rel == nil {
-		return true
-	}
-	if _, err := m.deps.Store.GetRelation(ctx, rel.Identity()); err == nil {
-		m.recordRelationAudit(ctx, audit.OpCreateRelation, rel, "created")
 	}
 	return true
 }
