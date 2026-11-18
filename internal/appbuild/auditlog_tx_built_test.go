@@ -4,6 +4,8 @@ package appbuild_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -17,7 +19,10 @@ import (
 // record of an entity write is appended in the write's transaction, so an
 // append that fails takes the write with it.
 func TestAuditFailureRollsTheWriteBack(t *testing.T) {
-	svc, err := discover(t, writeMinimalProject(t))
+	root := writeMinimalProject(t)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "metamodel.yaml"),
+		[]byte(metamodelYAML+"relations:\n  refs:\n    from: [doc]\n    to: [doc]\n"), 0o644))
+	svc, err := discover(t, root)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })
 	log := svc.AuditLog()
@@ -52,6 +57,17 @@ func TestAuditFailureRollsTheWriteBack(t *testing.T) {
 	got, err := svc.Store().GetEntity(ctx, created.Entity.Ref())
 	require.NoError(t, err)
 	require.Equal(t, "before", got.GetString("title"), "the update whose record failed was rolled back")
+
+	_, err = svc.EntityManager().CreateRelation(ctx, entity.RelationKey{
+		From: created.Entity.ID, Type: "refs", To: created.Entity.ID,
+	}, entity.RelationOptions{})
+	require.ErrorContains(t, err, "audit refused")
+	var rels int
+	for _, lErr := range svc.Store().ListRelations(ctx, store.RelationQuery{Type: "refs"}) {
+		require.NoError(t, lErr)
+		rels++
+	}
+	require.Zero(t, rels, "the relation create whose record failed was rolled back")
 
 	_, err = svc.EntityManager().DeleteEntity(ctx, created.Entity.ID, false)
 	require.ErrorContains(t, err, "audit refused")

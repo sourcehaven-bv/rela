@@ -226,8 +226,8 @@ func maybeRenumberSide(
 //
 // Each side runs in its own [store.Transactor.Tx], separate from the
 // caller's update: a renumber failure must not roll back a write that
-// already succeeded. The rewrites are audited after commit, one record per
-// write, the same approach cascadeHost uses for cascade deletes. The
+// already succeeded. Each rewrite is audited inside its side's transaction,
+// one record per write, as cascadeHost does for cascade deletes. The
 // triggered-by marker distinguishes them from the user-initiated
 // UpdateRelation that spawned them (issue #886).
 //
