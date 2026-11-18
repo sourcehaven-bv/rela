@@ -902,7 +902,7 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	// After resolveSectionCreate, which indexes sections in step with the
 	// view config. Before ownerRows and the header create menu, so a hidden
 	// section contributes nothing.
-	sections = omitHiddenEmpty(sections)
+	sections = omitHiddenSections(sections)
 
 	// Build response
 	entityDef := s.Meta.Entities[result.Entry.Type]

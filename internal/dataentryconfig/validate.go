@@ -844,6 +844,11 @@ func validateSidePanelSections(formID string, panel *SidePanelConfig) []string {
 				"form %q: side_panel section[%d] sets hide_empty, which a side panel does not support",
 				formID, i))
 		}
+		if sec.Permission != "" {
+			errs = append(errs, fmt.Sprintf(
+				"form %q: side_panel section[%d] sets permission, which a side panel does not support",
+				formID, i))
+		}
 		errs = append(errs, refuseSidePanelTableKeys(formID, i, sec)...)
 		for j, f := range sec.Fields {
 			errs = append(errs, validateSpan(f.Span,
