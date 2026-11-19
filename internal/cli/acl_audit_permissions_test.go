@@ -171,6 +171,14 @@ header_buttons:
     permission: report:sales
 `,
 		},
+		{
+			name: "list add to pile",
+			yaml: `
+list_buttons:
+  add_to_pile:
+    permission: report:sales
+`,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

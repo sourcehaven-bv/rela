@@ -45,6 +45,8 @@ export interface Config {
    * here; `/_sidebar` serves the per-principal answer as `header_buttons`.
    */
   header_buttons?: { history?: ChromeToggle; add_to_pile?: ChromeToggle }
+  /** The `list_buttons:` toggles as configured; resolved on `/_sidebar`. */
+  list_buttons?: { add_to_pile?: ChromeToggle }
   actions?: Record<string, ActionConfig>
   navigation: NavigationEntry[]
   /** Tabbed screens keyed by page id (TKT-ITQ0HL). Absent without `pages:`. */
@@ -880,6 +882,14 @@ export interface SidebarHeaderButtons {
   add_to_pile: boolean
 }
 
+/**
+ * Which built-in list and search buttons the server shows this principal
+ * (`list_buttons:`). A UX filter, not access control.
+ */
+export interface SidebarListButtons {
+  add_to_pile: boolean
+}
+
 /** The `records:` block of a `display: line` dashboard card. */
 export interface DashboardRecords {
   type: string
@@ -1358,6 +1368,11 @@ export interface SidebarData {
    * Absent from an older server, where every button shows.
    */
   header_buttons?: SidebarHeaderButtons
+  /**
+   * The `list_buttons:` toggles resolved for this principal. Absent from an
+   * older server, where every button shows.
+   */
+  list_buttons?: SidebarListButtons
 }
 
 /**

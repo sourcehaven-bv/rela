@@ -185,3 +185,60 @@ func TestPageChrome_NamedDashboardGatedPerPrincipal(t *testing.T) {
 		})
 	}
 }
+
+func sidebarListButtons(ctx context.Context, t *testing.T, app *App) v1.SidebarListButtons {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidebar", http.NoBody).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	app.views.handleV1Sidebar(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET _sidebar: %d %s", rec.Code, rec.Body)
+	}
+	var resp v1.SidebarResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode sidebar: %v", err)
+	}
+	return resp.ListButtons
+}
+
+// `list_buttons:` resolves per principal like `header_buttons:`.
+func TestListButtons_ResolvedPerPrincipal(t *testing.T) {
+	gated := dataentryconfig.ChromeToggle{Permission: "admin:read"}
+	off := dataentryconfig.ChromeToggle{Off: true}
+
+	cases := []struct {
+		name      string
+		toggle    dataentryconfig.ChromeToggle
+		policy    bool
+		principal string
+		want      bool
+	}{
+		{name: "default shows", want: true},
+		{name: "off hides from everyone", toggle: off, policy: true, principal: "alice", want: false},
+		{name: "holder sees gated", toggle: gated, policy: true, principal: "alice", want: true},
+		{name: "non-holder does not", toggle: gated, policy: true, principal: "bob", want: false},
+		{name: "no acl.yaml shows gated", toggle: gated, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newTestAppV1(t)
+			cur := app.State()
+			next := *cur
+			cfg := *cur.Cfg
+			cfg.ListButtons = dataentryconfig.ListButtonsConfig{AddToPile: tc.toggle}
+			next.Cfg = &cfg
+			app.schema.Publish(&next)
+			ctx := t.Context()
+			if tc.policy {
+				d := mustNewACL(t, gatedNavPolicy(), app.store)
+				setTestACL(t, app, d)
+				ctx = gateCtxFor(principalCtx(tc.principal), t, d)
+			} else {
+				setTestACL(t, app, acl.NopACL{})
+			}
+			if got := sidebarListButtons(ctx, t, app).AddToPile; got != tc.want {
+				t.Errorf("list_buttons.add_to_pile = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

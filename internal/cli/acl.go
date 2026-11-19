@@ -363,6 +363,7 @@ func (d *dataEntryPermissions) UsedPermissions() []string {
 	}
 	add(d.cfg.HeaderButtons.History.Permission)
 	add(d.cfg.HeaderButtons.AddToPile.Permission)
+	add(d.cfg.ListButtons.AddToPile.Permission)
 	for _, tree := range dataentryconfig.NavigationTrees(d.cfg) {
 		perms = append(perms, navigationPermissions(tree.Entries)...)
 	}
