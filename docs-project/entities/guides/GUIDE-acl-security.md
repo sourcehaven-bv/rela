@@ -2781,6 +2781,13 @@ Limits of the Changes tab, accepted on purpose:
   record exists, but nothing about it.
 - A relation record written before faces were recorded names no face,
   so it shows on every face of the entity it leaves from.
+- A record written before faces were recorded can start a list only for
+  an unfaced type. The migration that added faces marked the old create,
+  rename and conversion records as starts, but gave them no face, so they
+  never start the list of a faced entity. If a faced entity reuses the id
+  of an entity deleted before that migration, its Changes tab can show
+  the earlier entity's records. Records written after the migration name
+  their face and start the list as they should.
 - The `face` and `starts` columns of `audit_subjects` index the stored
   record but are not part of its hash. Someone who can write to the
   database could change them to hide records from a Changes tab, and
