@@ -53,8 +53,10 @@ const props = withDefaults(
     subjectType?: string
     /** Link the title to the run's own page. */
     linkTitle?: boolean
+    /** Leave the flow label out; the run's own page already shows it as the page title. */
+    hideTitle?: boolean
   }>(),
-  { subjectType: '', linkTitle: false }
+  { subjectType: '', linkTitle: false, hideTitle: false }
 )
 
 const emit = defineEmits<{
@@ -187,7 +189,7 @@ async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: str
 <template>
   <article class="flow-run-card" data-testid="flow-run" :data-run-id="shown.id">
     <header class="flow-run-card__header">
-      <h3 class="flow-run-card__title">
+      <h3 v-if="!hideTitle" class="flow-run-card__title">
         <RouterLink v-if="linkTitle" :to="space.href(runHref(shown.id))">
           {{ labelOf(shown.flow_label, shown.flow) }}
         </RouterLink>

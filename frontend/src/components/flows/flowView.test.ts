@@ -108,6 +108,25 @@ describe('flowView', () => {
     expect(entries[0].summary).toBe('flows.log.join {"state":"joined"}')
   })
 
+  it('names the actor by title when the server sends one', () => {
+    const entries = timelineEntries(
+      run({
+        log: [
+          {
+            at: '2026-01-01T10:00:00Z',
+            state: 'collect',
+            via: 'start',
+            by: 'PSN-5',
+            by_title: 'Nina',
+          },
+          { at: '2026-01-02T10:00:00Z', state: 'review', via: 'change', by: 'ann' },
+        ],
+      }),
+      t
+    )
+    expect(entries.map((e) => e.actor)).toEqual(['ann', 'Nina'])
+  })
+
   it('marks no entry current once the run has finished', () => {
     const entries = timelineEntries(
       run({ active: false, log: [{ at: '2026-01-01T10:00:00Z', state: 'finished', via: 'done' }] }),

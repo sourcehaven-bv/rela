@@ -469,18 +469,36 @@ func (c *FlowControl) unnamedViews(ctx context.Context, cl *caller, hdrs []*enti
 	return out, nil
 }
 
-// nameSubjects sets the subject title of each run, in one header batch.
+// nameSubjects sets the subject title of each run and, when principals
+// are person entities, the title of who caused each timeline entry, in
+// one header batch. An actor is named only when its id reads as an
+// entity of the person type: without person mapping a principal is a
+// login, which may happen to equal an unrelated entity's id.
 func (c *FlowControl) nameSubjects(ctx context.Context, runs []flowview.Run) error {
-	addrs := make([]string, len(runs))
-	for i, r := range runs {
-		addrs[i] = r.Subject
+	addrs := make([]string, 0, len(runs))
+	for _, r := range runs {
+		addrs = append(addrs, r.Subject)
 	}
-	titles, err := c.titles(ctx, addrs)
+	person := pilePersonType(c.d)
+	if person != "" {
+		for _, r := range runs {
+			for _, e := range r.Log {
+				addrs = append(addrs, e.By)
+			}
+		}
+	}
+	titles, err := c.typedTitles(ctx, addrs)
 	if err != nil {
 		return err
 	}
 	for i := range runs {
-		runs[i].SubjectTitle = titles[runs[i].Subject]
+		runs[i].SubjectTitle = titles[runs[i].Subject].title
+		for j := range runs[i].Log {
+			e := &runs[i].Log[j]
+			if t, ok := titles[e.By]; ok && person != "" && t.typ == person && t.title != e.By {
+				e.ByTitle = t.title
+			}
+		}
 	}
 	return nil
 }
@@ -995,7 +1013,23 @@ func (c *FlowControl) carried(ctx context.Context, hdrs []store.EntityHeader) (m
 // in one gated header batch ([metamodel.Metamodel.WholeDisplayTitle]). An
 // address the caller cannot read, or that does not parse, is left out.
 func (c *FlowControl) titles(ctx context.Context, addrs []string) (map[string]string, error) {
-	out := map[string]string{}
+	typed, err := c.typedTitles(ctx, addrs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(typed))
+	for a, t := range typed {
+		out[a] = t.title
+	}
+	return out, nil
+}
+
+// typedTitle is an entity's display title with its type.
+type typedTitle struct{ title, typ string }
+
+// typedTitles is titles with each entity's type.
+func (c *FlowControl) typedTitles(ctx context.Context, addrs []string) (map[string]typedTitle, error) {
+	out := map[string]typedTitle{}
 	byRef := map[entity.Ref]string{}
 	for _, a := range addrs {
 		if a == "" {
@@ -1018,10 +1052,11 @@ func (c *FlowControl) titles(ctx context.Context, addrs []string) (map[string]st
 		}
 		addr := byRef[ref]
 		if c.meta == nil {
-			out[addr] = addr
+			out[addr] = typedTitle{title: addr, typ: rh.Header.Type}
 			continue
 		}
-		out[addr] = c.meta.WholeDisplayTitle(addr, rh.Header.Type, rh.Header.Properties)
+		out[addr] = typedTitle{title: c.meta.WholeDisplayTitle(addr, rh.Header.Type, rh.Header.Properties),
+			typ: rh.Header.Type}
 	}
 	return out, nil
 }

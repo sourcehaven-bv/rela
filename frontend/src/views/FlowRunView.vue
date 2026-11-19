@@ -82,7 +82,7 @@ on('entity:changed', (data) => {
         </RouterLink>
         <span v-else>{{ t('flows.list.hiddenSubject') }}</span>
       </p>
-      <FlowRunCard :run="run" :subject-type="subjectType" @changed="load" @gone="load" />
+      <FlowRunCard :run="run" :subject-type="subjectType" hide-title @changed="load" @gone="load" />
     </template>
   </PageLayout>
 </template>

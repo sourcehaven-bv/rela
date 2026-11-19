@@ -26,6 +26,9 @@ const { t } = useI18n()
 
 const roles = computed(() => (props.waiting.roles ?? []).join(', '))
 
+// A step whose job failed for good waits for a retry, not for anyone.
+const jobFailed = computed(() => props.waiting.pending?.job?.phase === 'failed')
+
 // The keys are literal so the i18n guard sees them used.
 const failKindKeys: Record<NonNullable<FlowJob['fail_kind']>, string> = {
   exhausted: 'flows.waiting.jobFailKind.exhausted',
@@ -36,10 +39,11 @@ const failKindKeys: Record<NonNullable<FlowJob['fail_kind']>, string> = {
 
 function jobLine(job: FlowJob): string {
   if (job.phase === 'failed') {
-    return t('flows.waiting.jobFailed', {
-      n: job.failed,
-      why: t(failKindKeys[job.fail_kind ?? 'exhausted']),
-    })
+    return t(
+      'flows.waiting.jobFailed',
+      { n: job.failed, why: t(failKindKeys[job.fail_kind ?? 'exhausted']) },
+      job.failed
+    )
   }
   const attempt = { n: Math.min(job.failed + 1, job.attempts), max: job.attempts }
   if (job.phase === 'waiting') {
@@ -92,7 +96,7 @@ function branchVerdict(b: { holds: boolean; failed?: boolean }): string {
       <strong v-if="waiting.you_hold">{{ t('flows.waiting.youHold') }}</strong>
       <span v-else>{{ t('flows.waiting.youDoNotHold') }}</span>
     </p>
-    <p v-else-if="!waiting.stranded" class="flow-waiting__line">
+    <p v-else-if="!waiting.stranded && !jobFailed" class="flow-waiting__line">
       {{ t('flows.waiting.noRoles') }}
     </p>
     <p v-if="waiting.claimed_by" class="flow-waiting__line">
