@@ -100,10 +100,10 @@ func (d Direction) IsIncoming() bool {
 // accretion. Splitting it would churn the YAML shape for no design gain —
 // a breaking change to every project's config file, made to satisfy a lint.
 // A genuinely new top-level key therefore raises the pin by one; `account`
-// (TKT-MJTD12), `pages` (TKT-ITQ0HL), `piles` (TKT-K3RJLH) and `channels`
+// (TKT-MJTD12), `pages` (TKT-ITQ0HL), `piles` (TKT-K3RJLH), `channels`
 // (TKT-91BK6F) and `header_buttons` (TKT-31822PN) are the most recent.
 //
-//plimsoll:max-fields=30
+//plimsoll:max-fields=31
 type Config struct {
 	Version     string                       `yaml:"version"`
 	App         AppConfig                    `yaml:"app"`
