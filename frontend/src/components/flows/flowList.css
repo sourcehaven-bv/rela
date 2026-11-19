@@ -29,6 +29,16 @@
   font-weight: 600;
 }
 
+/* The app link style, as .cell-link in DashboardView. */
+.flow-list__link {
+  color: var(--rl-color-accent);
+  text-decoration: none;
+}
+
+.flow-list__link:hover {
+  text-decoration: underline;
+}
+
 .flow-list__empty,
 .flow-list__muted {
   color: var(--rl-color-text-muted);

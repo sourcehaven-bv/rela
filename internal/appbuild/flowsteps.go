@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"sort"
 	"time"
@@ -297,6 +298,9 @@ func (c *FlowControl) RunList(ctx context.Context, flowName, status string, page
 		v.Active = !flow.Status(v.Status).Terminal()
 		out.Runs = append(out.Runs, v)
 	}
+	if err := c.nameSubjects(ctx, out.Runs); err != nil {
+		return flowview.Runs{}, err
+	}
 	return out, nil
 }
 
@@ -340,9 +344,22 @@ func splitRuns(hdrs []*entity.Entity, runs []flowrun.Run) (byID map[flow.RunID]f
 }
 
 // views builds the run views of hdrs, which passed the row gate, with the
-// stored state of the active runs among runs. Detail adds the waiting
-// reason, the timeline and the diagram.
+// stored state of the active runs among runs, and names their subjects.
+// Detail adds the waiting reason, the timeline and the diagram.
 func (c *FlowControl) views(ctx context.Context, cl *caller, hdrs []*entity.Entity, runs []flowrun.Run,
+	detail bool) ([]flowview.Run, error) {
+	out, err := c.unnamedViews(ctx, cl, hdrs, runs, detail)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.nameSubjects(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// unnamedViews is views without the subject titles.
+func (c *FlowControl) unnamedViews(ctx context.Context, cl *caller, hdrs []*entity.Entity, runs []flowrun.Run,
 	detail bool) ([]flowview.Run, error) {
 	byID, active, finished := splitRuns(hdrs, runs)
 	// A finished run keeps only its header, so its subject comes from the
@@ -422,6 +439,22 @@ func (c *FlowControl) views(ctx context.Context, cl *caller, hdrs []*entity.Enti
 		out = append(out, v)
 	}
 	return out, nil
+}
+
+// nameSubjects sets the subject title of each run, in one header batch.
+func (c *FlowControl) nameSubjects(ctx context.Context, runs []flowview.Run) error {
+	addrs := make([]string, len(runs))
+	for i, r := range runs {
+		addrs[i] = r.Subject
+	}
+	titles, err := c.titles(ctx, addrs)
+	if err != nil {
+		return err
+	}
+	for i := range runs {
+		runs[i].SubjectTitle = titles[runs[i].Subject]
+	}
+	return nil
 }
 
 // subjectOf reads the subject at ref through the gate, once per
@@ -872,6 +905,17 @@ func (c *FlowControl) Tasks(ctx context.Context, flowName string, page, perPage 
 	out.Total = len(out.Tasks)
 	lo, hi := pageRange(len(out.Tasks), page, perPage)
 	out.Tasks = out.Tasks[lo:hi]
+	addrs := make([]string, len(out.Tasks))
+	for i, t := range out.Tasks {
+		addrs[i] = t.Subject
+	}
+	titles, err := c.titles(ctx, addrs)
+	if err != nil {
+		return flowview.Tasks{}, err
+	}
+	for i := range out.Tasks {
+		out.Tasks[i].SubjectTitle = titles[out.Tasks[i].Subject]
+	}
 	return out, nil
 }
 
@@ -912,6 +956,41 @@ func (c *FlowControl) carried(ctx context.Context, hdrs []store.EntityHeader) (m
 			return nil, err
 		}
 		out[r.From] = r.To
+	}
+	return out, nil
+}
+
+// titles maps each subject address in addrs to its display title, read
+// in one gated header batch ([metamodel.Metamodel.WholeDisplayTitle]). An
+// address the caller cannot read, or that does not parse, is left out.
+func (c *FlowControl) titles(ctx context.Context, addrs []string) (map[string]string, error) {
+	out := map[string]string{}
+	byRef := map[entity.Ref]string{}
+	for _, a := range addrs {
+		if a == "" {
+			continue
+		}
+		if ref, err := entity.ParseRef(a); err == nil {
+			byRef[ref] = a
+		}
+	}
+	if len(byRef) == 0 {
+		return out, nil
+	}
+	got, err := c.rows.ResolveHeadersErr(ctx, slices.Collect(maps.Keys(byRef)))
+	if err != nil {
+		return nil, err
+	}
+	for ref, rh := range got {
+		if !rh.Served() {
+			continue
+		}
+		addr := byRef[ref]
+		if c.meta == nil {
+			out[addr] = addr
+			continue
+		}
+		out[addr] = c.meta.WholeDisplayTitle(addr, rh.Header.Type, rh.Header.Properties)
 	}
 	return out, nil
 }

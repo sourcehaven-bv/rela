@@ -27,15 +27,25 @@ func stepProject(t *testing.T) (*appbuild.Services, *appbuild.FlowControl) {
 // stepProjectWith is stepProject with extra appended to acl.yaml.
 func stepProjectWith(t *testing.T, extra string) (*appbuild.Services, *appbuild.FlowControl) {
 	t.Helper()
+	return stepProjectEdit(t, "name", func(p string) string { return p + extra })
+}
+
+// stepProjectEdit is stepProject with display as the person's display
+// property and acl.yaml passed through edit.
+func stepProjectEdit(t *testing.T, display string, edit func(string) string) (*appbuild.Services,
+	*appbuild.FlowControl) {
+	t.Helper()
 	root := writeFlowProject(t)
 	schema, err := os.ReadFile(filepath.Join("..", "flowcfg", "testdata", "schema.yaml"))
 	require.NoError(t, err)
-	writeMetamodelBody(t, root, string(schema)+"  buddy:\n    label: buddy\n    from: [person]\n    to: [person]\n")
+	named := strings.Replace(string(schema), "    label: Person\n",
+		"    label: Person\n    display_property: "+display+"\n", 1)
+	writeMetamodelBody(t, root, named+"  buddy:\n    label: buddy\n    from: [person]\n    to: [person]\n")
 	policy, err := os.ReadFile(filepath.Join(root, "acl.yaml"))
 	require.NoError(t, err)
 	p := strings.Replace(string(policy), "assignments:\n", "assignments:\n  alice: hr\n  bob: manager\n  carol: manager\n", 1)
-	p += "role_relations:\n  buddy:\n    confers: hr\n" + extra
-	writePolicy(t, root, p)
+	p += "role_relations:\n  buddy:\n    confers: hr\n"
+	writePolicy(t, root, edit(p))
 	svc, err := appbuildOnDisk(t, root)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })
@@ -286,6 +296,87 @@ func TestFlowControl_Startable(t *testing.T) {
 			} else {
 				require.NotErrorIs(t, err, flowview.ErrForbidden)
 			}
+		})
+	}
+}
+
+// TestFlowControl_SubjectTitle pins that the run list, the tasks, the run
+// detail and the subject's runs name the subject by its title; the list
+// does so for an active and a finished run.
+func TestFlowControl_SubjectTitle(t *testing.T) {
+	svc, ctl := stepProject(t)
+	addFlowPerson(t, svc, "PER-1", map[string]any{"name": "Ada"})
+	addFlowPerson(t, svc, "PER-2", map[string]any{"name": "Bea"})
+	alice := flowUser(t, svc, "alice")
+	r1, err := ctl.Start(alice, "onboarding", "PER-1")
+	require.NoError(t, err)
+	r2, err := ctl.Start(alice, "onboarding", "PER-2")
+	require.NoError(t, err)
+	require.NoError(t, ctl.Cancel(alice, r2))
+	want := map[string]string{string(r1): "Ada", string(r2): "Bea"}
+
+	list, err := ctl.RunList(alice, "", "", 1, 50)
+	require.NoError(t, err)
+	require.Len(t, list.Runs, 2)
+	for _, r := range list.Runs {
+		require.Equal(t, want[r.ID], r.SubjectTitle, "list %s", r.ID)
+	}
+	tasks, err := ctl.Tasks(alice, "", 1, 50)
+	require.NoError(t, err)
+	require.Len(t, tasks.Tasks, 1)
+	require.Equal(t, "Ada", tasks.Tasks[0].SubjectTitle)
+	run, err := ctl.Run(alice, r1)
+	require.NoError(t, err)
+	require.Equal(t, "Ada", run.SubjectTitle)
+	runs, err := ctl.SubjectRuns(alice, "PER-1")
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	require.Equal(t, "Ada", runs[0].SubjectTitle)
+}
+
+// TestFlowControl_SubjectTitleHidden pins that a subject is named by its
+// address when `visible:` hides a property its title is made of, also one
+// placeholder of a templated title, in the run list, the tasks and the run.
+func TestFlowControl_SubjectTitleHidden(t *testing.T) {
+	// The flow's guards and templates read every field but salary, so
+	// only salary may be hidden. hr (alice) holds the waiting role and
+	// does not see salary; manager (bob) sees every field.
+	var shown strings.Builder
+	for _, f := range []string{"name", "status", "documents", "stage", "started", "task_count"} {
+		shown.WriteString("        - field: " + f + "\n")
+	}
+	hide := func(p string) string {
+		return strings.Replace(p, "  hr:\n    read: [person, task]\n",
+			"  hr:\n    read: [person, task]\n    visible:\n      person:\n"+shown.String(), 1)
+	}
+	tests := []struct {
+		name, display, full string
+	}{
+		{name: "property", display: "salary", full: "5000"},
+		{name: "template", display: `"{name} {salary}"`, full: "Ada 5000"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, ctl := stepProjectEdit(t, tc.display, hide)
+			addFlowPerson(t, svc, "PER-1", map[string]any{"name": "Ada", "salary": 5000})
+			alice := flowUser(t, svc, "alice")
+			id, err := ctl.Start(alice, "onboarding", "PER-1")
+			require.NoError(t, err)
+
+			for user, want := range map[string]string{"alice": "PER-1", "bob": tc.full} {
+				ctx := flowUser(t, svc, user)
+				list, lerr := ctl.RunList(ctx, "", "", 1, 50)
+				require.NoError(t, lerr)
+				require.Len(t, list.Runs, 1, user)
+				require.Equal(t, want, list.Runs[0].SubjectTitle, "list %s", user)
+				run, rerr := ctl.Run(ctx, id)
+				require.NoError(t, rerr)
+				require.Equal(t, want, run.SubjectTitle, "run %s", user)
+			}
+			tasks, err := ctl.Tasks(alice, "", 1, 50)
+			require.NoError(t, err)
+			require.Len(t, tasks.Tasks, 1)
+			require.Equal(t, "PER-1", tasks.Tasks[0].SubjectTitle)
 		})
 	}
 }

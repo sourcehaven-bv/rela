@@ -649,6 +649,9 @@ Both lists read at most 500 (tasks) or 1,000 (runs) runs, the oldest
 tasks and the newest runs; past that they say the list is cut short, and a
 filter narrows it. The task list matches
 each run against the current `flows.yaml`.
+Each row names its subject by the subject's display title. When you
+cannot read a property that the title is made of, the row shows the
+subject's id instead.
 
 Each run also has its own page. A finished run keeps only its header, so
 its page shows the flow, the final state, when the run started and ended,
